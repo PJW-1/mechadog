@@ -101,6 +101,42 @@ def test_detection_requires_consecutive_frames(cfg: dict) -> None:
     assert cfg["vision"]["detect_consecutive_frames"] >= 2
 
 
+def test_two_stage_detector_declared(cfg: dict) -> None:
+    """COCO 범용 + PPE 전용 2단 구조가 선언되어 있어야 한다 (DR-12)."""
+    vision = cfg["vision"]
+    assert "coco" in vision, "COCO 범용 검출기 설정 누락"
+    assert "ppe" in vision, "PPE 전용 모델 설정 누락"
+
+
+def test_ppe_violation_classes_are_subset(cfg: dict) -> None:
+    """위반 클래스는 학습 클래스의 부분집합이어야 한다.
+
+    오타나 클래스명 변경 시 위반 판정이 조용히 동작하지 않는 것을 막는다.
+    """
+    ppe = cfg["vision"]["ppe"]
+    assert set(ppe["violation_classes"]) <= set(ppe["classes"])
+
+
+def test_ppe_excludes_person_class(cfg: dict) -> None:
+    """person 은 COCO 검출기가 담당한다. PPE 모델에서 중복 학습하지 않는다 (FR-9.1.1)."""
+    assert "person" not in cfg["vision"]["ppe"]["classes"]
+
+
+def test_providers_fallback_ends_with_cpu(cfg: dict) -> None:
+    """EP 목록의 마지막은 CPU 여야 한다.
+
+    GPU 를 못 쓰는 팀원 PC 나 CI 러너에서도 동작해야 한다 (DR-13).
+    """
+    providers = cfg["vision"]["providers"]
+    assert providers[-1] == "CPUExecutionProvider"
+
+
+def test_inference_fps_not_above_stream_fps(cfg: dict) -> None:
+    """추론 주기가 스트림 fps 를 넘을 수 없다."""
+    vision = cfg["vision"]
+    assert 0 < vision["inference_fps"] <= vision["target_fps"]
+
+
 def test_reconnect_backoff_is_increasing(cfg: dict) -> None:
     """지수 백오프는 단조 증가해야 한다 (FR-5.3)."""
     backoff = cfg["vision"]["reconnect_backoff_s"]

@@ -115,6 +115,31 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 - **부수 효과 (불리한 점)** — **최소 회전 반경**이 생긴다(비홀로노믹 제약). 좁은 공간에서 제자리 선회로 빠져나올 수 없어 후진 활용이 중요해지고, Phase 2 경로 추종이 복잡해진다.
 - **재검토 조건** — OI-8에서 `transform()` yaw가 실제 동작함이 확인될 경우, FR-3.5에 몸통 yaw 추종을 추가한다.
 
+#### DR-12. 검출 모델을 하나로 전부 학습하지 않는다 (COCO 범용 + PPE 전용 분담)
+
+- **검토한 대안** — 사람·PPE·일상 물체를 모두 포함한 단일 모델을 직접 학습
+- **채택하지 않은 이유** — ① 학습 클래스가 많아질수록 데이터셋 수집·라벨링 비용이 급증한다. ② 특히 FR-8 변화 감지는 시연 환경에 실제로 놓이는 일상 객체(의자·가방·상자·병 등)를 알아야 하는데, 이를 직접 학습하려면 사실상 COCO를 재구축하는 셈이다.
+- **채택안** — **2단 구조 + 게이팅**
+  | | 담당 | 학습 |
+  | :--- | :--- | :--- |
+  | ① COCO 사전학습 범용 검출기 | `person` + 79개 일상 객체 (FR-3, FR-8) | **불필요** |
+  | ② PPE 전용 모델 | `helmet`/`no_helmet`/`vest`/`no_vest` (FR-9) | 직접 학습 (4클래스) |
+
+  ②는 ①이 `person`을 검출한 프레임에서만 실행하므로 평균 연산량이 1패스 수준으로 유지된다.
+- **효과** — 직접 학습 범위가 **4클래스로 축소**되고, 변화 감지 어휘는 **80클래스**를 공짜로 얻는다.
+- **재검토 조건** — COCO 검출기의 `person` 검출률이 시연 환경에서 부족할 경우, ①을 자체 학습 모델로 교체하거나 fine-tune을 검토한다.
+
+#### DR-13. TensorRT를 도입하지 않는다
+
+- **검토한 대안** — ONNX Runtime의 TensorRT EP로 전환하여 추론을 가속
+- **채택하지 않은 이유**
+  1. **이득이 없다.** 추론은 프레임 예산 66.7ms(15fps) 중 약 3.5ms를 쓴다. TensorRT로 2ms를 아껴도 전체의 3%다. 가장 작은 숫자를 최적화하는 일이다.
+  2. **엔진을 공유할 수 없다.** TensorRT 엔진은 GPU 아키텍처와 TensorRT 버전에 맞춰 컴파일되므로 팀원 간 산출물 공유가 불가능하고, 각자 빌드해야 한다. 3인 병렬 개발 구조와 충돌한다.
+  3. **NVIDIA 전용이다.** 팀원 중 한 명이라도 AMD·Intel 그래픽이면 사용할 수 없다. DirectML은 DX12 GPU 전체에서 동작한다.
+  4. CUDA·cuDNN·TensorRT 버전 정합성 문제로 환경 구축 비용이 크다.
+- **채택안** — **DirectML EP**(개발 PC) + **CPU EP**(CI). `select_providers()` 로 자동 폴백.
+- **재검토 조건** — 로컬 LLM/VLM을 도입하는 경우. 그때는 TensorRT-LLM이 실질적 차이를 만든다. 다만 본 설계는 VLM을 Tier 3 클라우드에 두므로 해당하지 않는다.
+
 ---
 
 ## 2. 시스템 아키텍처
@@ -223,8 +248,30 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 | :--- | :--- | :--- |
 | MechDog ESP32 | Arduino / C++17 | `HW_MechDog.h`, `mech_base_types.h`, `WiFi.h`, `WiFiUdp.h` |
 | XIAO ESP32S3 | Arduino / C++17 | `esp_camera.h`, `WiFi.h`, ESP32 HTTP 서버 |
-| Host PC | Python 3.12 | OpenCV, onnxruntime-directml, FastAPI, uvicorn, websockets, PyYAML |
+| Host PC (런타임) | Python 3.12 | OpenCV, **onnxruntime** (Win: DirectML EP / Linux CI: CPU EP), FastAPI, uvicorn, websockets, PyYAML |
+| Host PC (모델 학습) | Python 3.12 | **`ultralytics`** — PPE 모델 학습 및 ONNX export (FR-9.1) |
 | Host PC (Phase 2) | ROS2 Jazzy (WSL2) | `slam_toolbox`, `rviz2`, `tf2` |
+
+**추론 실행 프로바이더 (EP) 선택**
+
+| EP | 대상 | 용도 | 판단 |
+| :--- | :--- | :--- | :--- |
+| **DirectML** | **모든 DX12 GPU** (NVIDIA·AMD·Intel) | 개발 PC 전체 | ⭐ **채택** — 팀원 GPU가 달라도 동작 |
+| CPU | 모든 환경 | **CI 러너**(리눅스), 단위 시험 | 채택 |
+| CUDA | NVIDIA 전용 | — | 미채택 (이식성 손실, 이득 미미) |
+| TensorRT | NVIDIA + TensorRT 설치 | — | **미채택** (근거: DR-13) |
+
+> `select_providers()` 로 **DirectML → CUDA → CPU 순 자동 폴백**을 구현한다. 팀원 PC 사양이 달라도 같은 코드가 동작해야 한다.
+
+**이전 프로젝트 자산 재사용**
+
+| 자산 | 출처 | 판단 |
+| :--- | :--- | :--- |
+| `onnx_detector.py` (230줄) — EP 자동선택 · COCO 80클래스 · 전/후처리 · NMS | `ros2_amr_fleet_control/src/` | **재사용.** ROS2 비의존, COCO 범용 검출기 구조가 FR-3.1과 일치 |
+| `ConnectionManager` — WebSocket 브로드캐스트, 바이너리 JPEG 전송 | 동일 프로젝트 `web_dashboard/app.py` | **패턴 재사용.** AMR 특화 로직은 교체 |
+| 대시보드 HTML/Canvas 골격 (483줄) | 동일 프로젝트 `static/` | **골격만 재사용.** 위젯은 본 프로젝트 텔레메트리로 교체 |
+| `vision_preprocessor.py` — 블러·글레어·CLAHE 증강 (21.6ms) | 동일 프로젝트 | **미사용.** 카메라 열화 시뮬레이션 목적이며 본 프로젝트에 불필요 |
+| PPE 모델 `best.onnx` (10클래스) | `safety-integrated/` | **미사용.** 새 데이터셋으로 직접 학습한다 (A-9) |
 
 ### 2.6 음성 및 상태 표시 역할 분담
 
@@ -279,7 +326,17 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 
 ### FR-3: 사람 인지 및 경비 대응 [P1]
 
-- **FR-3.1 (영상 파이프라인)** XIAO 비전 노드는 MJPEG over HTTP로 영상을 송출하고, Host PC가 이를 수신하여 YOLOv8(ONNX Runtime)으로 `person` 클래스를 검출한다.
+- **FR-3.1 (영상 파이프라인)** XIAO 비전 노드는 MJPEG over HTTP로 영상을 송출하고, Host PC가 이를 수신하여 **2단 검출 구조**로 처리한다 (근거: DR-12).
+  ```
+  매 프레임 ─ ① COCO 사전학습 범용 검출기 (학습 불요)
+                → person + 79개 일상 객체
+                → FR-3 경비 대응 · FR-8 변화 감지
+                     │
+                     └─ person 검출 프레임에서만
+                          └─ ② PPE 전용 모델 (직접 학습)
+                                → FR-9 산업안전 판정
+  ```
+  - **FR-3.1.1 (게이팅)** ②는 ①이 `person`을 검출한 프레임에서만 실행한다. 사람이 없는 프레임에서 PPE 추론을 돌리지 않아 평균 연산량을 1패스 수준으로 유지한다.
 - **FR-3.2 (Alert 전환)** 신뢰도 임계값(기본 0.5) 이상의 사람이 **연속 3프레임** 검출되면 `STATE_ALERT`로 전환한다. 단발 오검출로 상태가 튀지 않도록 한다.
 - **FR-3.3 (Alert Stance)** `transform()`으로 몸체를 전방 상향(Pitch Up 15°)으로 세워 경계 태세를 취한다.
 - **FR-3.4 (Warning Broadcast)** 침입자 인지 시 경고 신호를 발령한다. Advanced Kit의 **MP3 모듈 / WonderEcho 음성 모듈**을 활용하며, 미장착 시 대시보드 시각 경보로 대체한다.
@@ -381,7 +438,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 - **FR-8.1 (기준 등록)** 각 구역에서 스냅샷과 함께 **검출 객체 목록**(클래스 + 개수 + 화면 내 대략 위치)을 기준값으로 저장한다.
 - **FR-8.2 (비교 방식 — 필수 제약)** 비교는 **객체 목록 단위로 수행한다. 픽셀 단위 이미지 차분을 사용해서는 안 된다.**
   - 근거: 로봇이 동일 자세로 복귀하지 못하고(수 cm 이동·수 도 회전), 4족 보행은 매 스텝 몸 높이·피치가 변하며, 조명도 변한다. 픽셀 차분은 오검출이 폭발하여 사용 불가능하다.
-- **FR-8.3 (변화 분류)** 비교 결과를 아래로 분류하고 대시보드에 표시한다.
+- **FR-8.3 (변화 분류)** 비교 대상은 **①번 COCO 범용 검출기의 80클래스**다. 의자·가방·상자·병 등 일상 객체를 포괄하므로 시연 환경에서 실제로 놓이는 물건을 감지할 수 있다. 비교 결과를 아래로 분류하고 대시보드에 표시한다.
   | 분류 | 조건 |
   | :--- | :--- |
   | **물체 반출** | 기준에 있던 객체가 사라짐 |
@@ -392,7 +449,14 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 
 ### FR-9: 산업 안전 관리 (PPE 미착용 감지) [P1]
 
-- **FR-9.1 (모델)** 기보유 자산 `safety-integrated/inference/best.onnx` 를 이관하여 사용한다. 클래스는 `Hardhat` / `NO-Hardhat` / `Safety Vest` / `NO-Safety Vest` / `Mask` / `NO-Mask` / `Person` 이며, 위반 클래스는 `{NO-Hardhat, NO-Safety Vest}` 로 한다.
+- **FR-9.1 (모델)** PPE 전용 모델을 **새 데이터셋으로 직접 학습**한다. 학습 클래스는 최소 아래 4종으로 하고, 위반 클래스는 `{no_helmet, no_vest}` 로 한다.
+  | 클래스 | 의미 |
+  | :--- | :--- |
+  | `helmet` / `no_helmet` | 안전모 착용 / 미착용 |
+  | `vest` / `no_vest` | 안전조끼 착용 / 미착용 |
+
+  - **FR-9.1.1** `person` 은 학습 대상에서 제외한다. FR-3.1의 ①번 COCO 검출기가 담당하므로 중복 학습이 불필요하다.
+  - **FR-9.1.2** 학습 프레임워크 버전(`ultralytics` 및 모델 계열)은 착수 시점에 확정하고 **`config.yaml`에 기록**한다. 재현 가능해야 한다.
 - **FR-9.2 (판정 자세 — 물리 제약 대응)** 카메라 높이가 약 15cm이므로 근거리에서는 사람의 머리가 화각을 벗어나 안전모를 판정할 수 없다. 따라서:
   - **FR-9.2.1** 사람 검출 시 `transform()` 으로 **Pitch Up 자세**(FR-3.3 Alert Stance)를 취한 뒤 판정한다.
   - **FR-9.2.2** 판정 유효 거리는 **3m 이상**을 기본값으로 하고 `config.yaml`에서 관리한다. 그보다 근거리에서는 판정을 보류한다.
@@ -613,6 +677,8 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 | OI-6 | MP3 / WonderEcho 모듈 제어 인터페이스 (FR-3.4) | M3 |
 | OI-7 | LiDAR 노드 방식 확정 — XIAO 겸임 vs 별도 ESP32-C3 | M4 |
 | **OI-8** | **`transform()`의 yaw 파라미터가 실제 동작하는가** (FR-3.5.1 분기점) | **M0** |
+| **OI-13** | **PPE 데이터셋 확보 방식** — 공개 데이터셋(1~2 M/D) vs 직접 촬영·라벨링(4~6 M/D) | M0 |
+| **OI-14** | **팀원 PC의 GPU 사양** — 성능 측정 기준 PC 지정 필요 여부 | M0 |
 | **OI-10** | **WonderEcho 통신 방식** — I2C인가 UART인가 (위키는 I2C 포트, 모듈 문서는 UART 프레이밍) | M3 |
 | **OI-11** | WonderEcho 플랫폼의 재생 문구 입력란이 자유 텍스트인지 (임의 문장 합성 가능 범위) | M3 |
 | **OI-12** | 눈 LED 하드웨어 — Advanced Kit의 dot matrix / RGB 모듈로 대체 가능한지 | M3 |
