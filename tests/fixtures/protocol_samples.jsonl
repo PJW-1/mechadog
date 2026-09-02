@@ -1,0 +1,12 @@
+{"_case": "MOVE 전진", "seq": 1, "ts": 1756800000000, "type": "MOVE", "step": 60, "angle": 0}
+{"_case": "MOVE 좌선회", "seq": 2, "ts": 1756800000100, "type": "MOVE", "step": 60, "angle": 20}
+{"_case": "MOVE 후진", "seq": 3, "ts": 1756800000200, "type": "MOVE", "step": -60, "angle": 0}
+{"_case": "MOVE 경계 최대", "seq": 4, "ts": 1756800000300, "type": "MOVE", "step": 100, "angle": 30}
+{"_case": "MOVE 경계 최소", "seq": 5, "ts": 1756800000400, "type": "MOVE", "step": -100, "angle": -30}
+{"_case": "STOP", "seq": 6, "ts": 1756800000500, "type": "STOP"}
+{"_case": "POSE Pitch Up (Alert Stance)", "seq": 7, "ts": 1756800000600, "type": "POSE", "pitch": 15, "roll": 0, "height": 0, "dur": 300}
+{"_case": "GAIT 파라미터", "seq": 8, "ts": 1756800000700, "type": "GAIT", "lift_time": 120, "ground_time": 180, "height": 25}
+{"_case": "ACTION 앉기", "seq": 9, "ts": 1756800000800, "type": "ACTION", "id": 3}
+{"_case": "LED L3 경보 (점멸)", "seq": 10, "ts": 1756800000900, "type": "LED", "color": "red", "blink_hz": 2}
+{"_case": "LED L0 순찰 (상시점등)", "seq": 11, "ts": 1756800001000, "type": "LED", "color": "blue", "blink_hz": 0}
+{"_case": "SOUND 경고 방송", "seq": 12, "ts": 1756800001100, "type": "SOUND", "phrase_id": 181}

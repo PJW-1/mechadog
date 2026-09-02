@@ -41,6 +41,8 @@ models/*
 logs/
 *.log
 *.jsonl
+# 정본 픽스처는 산출물이 아니라 소스다 (CONTRIBUTING 5.2)
+!tests/fixtures/*.jsonl
 snapshots/
 blackbox/
 maps/*

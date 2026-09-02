@@ -1,0 +1,5 @@
+{"_case": "미지 타입 — 폐기 + WARN (FR-5.1 규칙 4)", "_expect": "discard_warn", "seq": 20, "ts": 1756800002000, "type": "FUTURE_CMD", "foo": 1}
+{"_case": "step 범위 초과 — 클램핑", "_expect": "clamp", "seq": 21, "ts": 1756800002100, "type": "MOVE", "step": 500, "angle": 0}
+{"_case": "angle 범위 초과 — 클램핑", "_expect": "clamp", "seq": 22, "ts": 1756800002200, "type": "MOVE", "step": 60, "angle": -90}
+{"_case": "type 누락 — 폐기", "_expect": "discard", "seq": 23, "ts": 1756800002300, "step": 60}
+{"_case": "seq 누락 — 폐기", "_expect": "discard", "ts": 1756800002400, "type": "STOP"}
