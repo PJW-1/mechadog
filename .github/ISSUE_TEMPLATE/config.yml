@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: 설계 문서 (PRD)
-    url: https://github.com/OWNER/REPO/blob/main/docs/PRD_Physical_AI_Guard_Robot.md
+    url: https://github.com/PJW-1/mechadog/blob/main/docs/PRD_Physical_AI_Guard_Robot.md
     about: 요구사항과 설계 결정 기록을 먼저 확인하세요
   - name: 작업 분해 구조 (WBS)
-    url: https://github.com/OWNER/REPO/blob/main/docs/WBS.md
+    url: https://github.com/PJW-1/mechadog/blob/main/docs/WBS.md
     about: 워크패키지 ID와 완료 기준을 확인하세요

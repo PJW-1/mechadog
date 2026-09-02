@@ -1,5 +1,8 @@
-# 기본 — 전체 변경은 팀 리뷰
-*                                   @OWNER
+# ⚠️ 팀원 계정 확정 후 @MEMBER_A / @MEMBER_B / @MEMBER_C 를 교체할 것
+#    (교체 전에는 해당 경로의 CODEOWNERS 리뷰 요구가 동작하지 않는다)
+
+# 기본 — 소유자가 최종 승인
+*                                   @PJW-1
 
 # A · 임베디드
 /firmware_mechdog_motion/           @MEMBER_A
