@@ -1,27 +1,43 @@
-# ⚠️ 팀원 계정 확정 후 @MEMBER_A / @MEMBER_B / @MEMBER_C 를 교체할 것
-#    (교체 전에는 해당 경로의 CODEOWNERS 리뷰 요구가 동작하지 않는다)
+# ══════════════════════════════════════════════════════════════
+#  CODEOWNERS
+#
+#  main 브랜치는 "Require review from Code Owners" 가 켜져 있다.
+#  따라서 아래 규칙에 걸리는 모든 변경은 해당 소유자의 승인 없이
+#  main 에 머지되지 않는다.
+#
+#  ⚠️ 개인(비조직) 저장소에서는 "Restrict who can push" 를 쓸 수 없다.
+#     대신 이 파일 + Code Owner 리뷰 필수 조합으로 main 을 통제한다.
+#
+#  ⚠️ 유효하지 않은 계정을 적으면 해당 규칙이 무시되어 통제에 구멍이
+#     생긴다. 팀원 계정이 확정될 때까지 전부 소유자로 둔다.
+# ══════════════════════════════════════════════════════════════
 
-# 기본 — 소유자가 최종 승인
+# 전체 — 소유자 승인 필수
 *                                   @PJW-1
 
+# ──────────────────────────────────────────────────────────────
+#  팀원 GitHub 계정 확정 후 아래 주석을 해제한다.
+#  (해제 전까지는 위 * 규칙이 모든 경로를 담당한다)
+# ──────────────────────────────────────────────────────────────
+#
 # A · 임베디드
-/firmware_mechdog_motion/           @MEMBER_A
-/third_party/                       @MEMBER_A
-
+# /firmware_mechdog_motion/         @MEMBER_A
+# /third_party/                     @MEMBER_A
+#
 # B · 인지·AI
-/firmware_xiao_vision/              @MEMBER_B
-/host/vision/                       @MEMBER_B
-/host/dashboard/static/             @MEMBER_B
-
+# /firmware_xiao_vision/            @MEMBER_B
+# /host/vision/                     @MEMBER_B
+# /host/dashboard/static/           @MEMBER_B
+#
 # C · 시스템·통합
-/host/behavior/                     @MEMBER_C
-/host/dashboard/                    @MEMBER_C
-/host/common/                       @MEMBER_C
-/tests/                             @MEMBER_C
-/docs/                              @MEMBER_C
-/.github/                           @MEMBER_C
-
+# /host/behavior/                   @MEMBER_C
+# /host/dashboard/                  @MEMBER_C
+# /host/common/                     @MEMBER_C
+# /tests/                           @MEMBER_C
+# /docs/                            @MEMBER_C
+# /.github/                         @MEMBER_C
+#
 # ⚠️ 통신 규약 — 3인 전원 리뷰 (CONTRIBUTING.md 5절)
-/host/common/protocol.py                            @MEMBER_A @MEMBER_B @MEMBER_C
-/firmware_mechdog_motion/src/command_parser.h       @MEMBER_A @MEMBER_B @MEMBER_C
-/firmware_mechdog_motion/src/command_parser.cpp     @MEMBER_A @MEMBER_B @MEMBER_C
+# /host/common/protocol.py                        @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C
+# /firmware_mechdog_motion/src/command_parser.h   @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C
+# /firmware_mechdog_motion/src/command_parser.cpp @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C
