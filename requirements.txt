@@ -10,8 +10,8 @@ opencv-python>=4.10
 
 # ── ONNX 추론 (WBS 3.3.1) ─────────────────────────────────────
 # DirectML EP 는 Windows 전용이다. 리눅스 CI 에서는 CPU 빌드를 쓴다.
-#  · Windows 개발 PC : RTX 3080 GPU 가속 (실측 6.4ms)
-#  · Linux CI        : import 및 단위 시험만 수행
+#  · Windows 개발 PC : DirectML EP — 모든 DX12 GPU 에서 동작 (DR-13)
+#  · Linux CI        : CPU EP — import 및 단위 시험만 수행
 onnxruntime-directml>=1.19 ; sys_platform == "win32"
 onnxruntime>=1.19          ; sys_platform != "win32"
 

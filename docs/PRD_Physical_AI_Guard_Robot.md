@@ -55,7 +55,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 #### DR-3. 온보드 Edge AI 추론을 하지 않는다
 
 - **검토한 대안** — XIAO ESP32S3에서 경량 사람 검출 모델(FOMO / ESP-DL 계열)을 직접 추론
-- **채택하지 않은 이유** — ESP32-S3급에서의 사람 검출은 96×96 그레이스케일 기준 수 FPS 수준이고, MJPEG 스트리밍을 동시에 수행하면 더 낮아진다. 반면 Host PC(RTX 3080 + ONNX Runtime)에서는 **6.4ms 추론이 이미 실측 확보**되어 있어 정확도·속도 양쪽에서 비교가 되지 않는다.
+- **채택하지 않은 이유** — ESP32-S3급에서의 사람 검출은 96×96 그레이스케일 기준 수 FPS 수준이고, MJPEG 스트리밍을 동시에 수행하면 더 낮아진다. 반면 데스크탑 GPU(RTX 3080)에서는 동급 모델이 한 자릿수 ms로 추론되며, 정확도 면에서도 훨씬 큰 모델을 쓸 수 있다. **정확도·속도 양쪽에서 비교가 되지 않는다.**
 - **채택안** — XIAO는 **영상 송출만 전담**하고, YOLOv8 추론은 Host PC(Tier 2)에서 수행
 - **트레이드오프** — Wi-Fi 단절 시 사람 인지 기능이 정지한다. 이를 NFR-2.6(Graceful Degradation)으로 명세하여, 인지 기능이 죽어도 순찰·회피는 유지되도록 설계한다.
 - **재검토 조건** — 무선 환경이 열악하여 오프보드 인지 지연이 NFR-1.1(250ms)을 상시 초과할 경우
@@ -201,7 +201,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 | :--- | :--- | :--- |
 | Hiwonder MechDog (Advanced Kit) | ESP32 메인보드, 8× 코어리스 서보(링크 구조), IMU, 초음파 | Arduino IDE 지원, 소스 오픈 |
 | Seeed XIAO ESP32S3 Sense | Xtensa 듀얼코어 240MHz, 8MB PSRAM, OV2640, PDM 마이크, microSD | 배터리 패드(BAT+/BAT−) + 충전 IC 내장 |
-| Host PC | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080, ROS2 Jazzy | ONNX Runtime DirectML 6.4ms 실측 보유 |
+| Host PC | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080, ROS2 Jazzy | 추론·SLAM·대시보드 전담. ⚠️ 팀원 PC 사양 확인 필요 (OI-14) |
 | (미사용) ESP32-S3 비전 모듈 | Advanced Kit 포함품 | XIAO 사용으로 예비 부품 처리 |
 | (활용 검토) WonderEcho 음성 / MP3 모듈 | Advanced Kit 포함품 | **FR-3.4 경고 방송에 활용** |
 
@@ -262,16 +262,6 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 | TensorRT | NVIDIA + TensorRT 설치 | — | **미채택** (근거: DR-13) |
 
 > `select_providers()` 로 **DirectML → CUDA → CPU 순 자동 폴백**을 구현한다. 팀원 PC 사양이 달라도 같은 코드가 동작해야 한다.
-
-**이전 프로젝트 자산 재사용**
-
-| 자산 | 출처 | 판단 |
-| :--- | :--- | :--- |
-| `onnx_detector.py` (230줄) — EP 자동선택 · COCO 80클래스 · 전/후처리 · NMS | `ros2_amr_fleet_control/src/` | **재사용.** ROS2 비의존, COCO 범용 검출기 구조가 FR-3.1과 일치 |
-| `ConnectionManager` — WebSocket 브로드캐스트, 바이너리 JPEG 전송 | 동일 프로젝트 `web_dashboard/app.py` | **패턴 재사용.** AMR 특화 로직은 교체 |
-| 대시보드 HTML/Canvas 골격 (483줄) | 동일 프로젝트 `static/` | **골격만 재사용.** 위젯은 본 프로젝트 텔레메트리로 교체 |
-| `vision_preprocessor.py` — 블러·글레어·CLAHE 증강 (21.6ms) | 동일 프로젝트 | **미사용.** 카메라 열화 시뮬레이션 목적이며 본 프로젝트에 불필요 |
-| PPE 모델 `best.onnx` (10클래스) | `safety-integrated/` | **미사용.** 새 데이터셋으로 직접 학습한다 (A-9) |
 
 ### 2.6 음성 및 상태 표시 역할 분담
 
@@ -337,6 +327,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
                                 → FR-9 산업안전 판정
   ```
   - **FR-3.1.1 (게이팅)** ②는 ①이 `person`을 검출한 프레임에서만 실행한다. 사람이 없는 프레임에서 PPE 추론을 돌리지 않아 평균 연산량을 1패스 수준으로 유지한다.
+  - **FR-3.1.2 (①번 검출기 선정)** ①은 **COCO 사전학습 모델을 기본안**으로 하되, 모델 계열은 M2 착수 시점에 평가하여 확정한다 (OI-15). 프레임 예산에 여유가 크므로(NFR-1.2) **경량 모델을 고집하지 않고 정확도가 높은 쪽을 선택한다.** 특히 FR-8 변화 감지는 시연 환경에 놓이는 임의의 물체를 인식해야 하므로, **개방 어휘(open-vocabulary) 검출기**가 고정 80클래스보다 유리할 수 있다. 선정 결과와 근거는 `config.yaml`과 본 문서에 기록한다.
 - **FR-3.2 (Alert 전환)** 신뢰도 임계값(기본 0.5) 이상의 사람이 **연속 3프레임** 검출되면 `STATE_ALERT`로 전환한다. 단발 오검출로 상태가 튀지 않도록 한다.
 - **FR-3.3 (Alert Stance)** `transform()`으로 몸체를 전방 상향(Pitch Up 15°)으로 세워 경계 태세를 취한다.
 - **FR-3.4 (Warning Broadcast)** 침입자 인지 시 경고 신호를 발령한다. Advanced Kit의 **MP3 모듈 / WonderEcho 음성 모듈**을 활용하며, 미장착 시 대시보드 시각 경보로 대체한다.
@@ -347,7 +338,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 
 ### FR-4: 웹 미션 대시보드 [P1]
 
-기존 `ros2_amr_fleet_control` 프로젝트의 FastAPI + WebSocket 관제 UI를 재사용한다.
+FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 
 - **FR-4.1** 실시간 FPV 영상과 검출 바운딩박스 오버레이를 표시한다.
 - **FR-4.2** 텔레메트리(배터리 전압, IMU 피치/롤/요, 초음파 거리, 현재 FSM 상태, 링크 지연)를 10 Hz로 스트리밍하여 차트/게이지로 표시한다.
@@ -484,7 +475,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 | ID | 항목 | 목표 | 측정 방법 |
 | :--- | :--- | :--- | :--- |
 | NFR-1.1 | **E2E 인지 지연** (촬영 → 검출 → 명령 도달) | ≤ 250 ms | 프레임 타임스탬프와 명령 수신 시각 차 |
-| NFR-1.2 | YOLO 추론 시간 | ≤ 15 ms | 기보유 실측 6.4ms 대비 여유 확보 |
+| NFR-1.2 | 객체 검출 추론 시간 | ≤ 15 ms | 2단 구조 합산 기준. **본 프로젝트에서 실측하여 확정한다** (WBS 6.3.1) |
 | NFR-1.3 | MJPEG 스트림 | ≥ 15 fps @ VGA | 수신 프레임 카운트 |
 | NFR-1.4 | 명령 → 서보 반영 | ≤ 50 ms | 온보드 타임스탬프 |
 | NFR-1.5 | **온보드 반사 정지** (초음파 → 정지) | **≤ 50 ms** | 안전 요구. Host PC 미경유 |
@@ -677,6 +668,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 | OI-6 | MP3 / WonderEcho 모듈 제어 인터페이스 (FR-3.4) | M3 |
 | OI-7 | LiDAR 노드 방식 확정 — XIAO 겸임 vs 별도 ESP32-C3 | M4 |
 | **OI-8** | **`transform()`의 yaw 파라미터가 실제 동작하는가** (FR-3.5.1 분기점) | **M0** |
+| **OI-15** | **①번 범용 검출기 모델 선정** — COCO 고정 80클래스 vs 개방 어휘(open-vocabulary) 검출기. FR-8 변화 감지 대상 어휘가 판단 근거 | M2 |
 | **OI-13** | **PPE 데이터셋 확보 방식** — 공개 데이터셋(1~2 M/D) vs 직접 촬영·라벨링(4~6 M/D) | M0 |
 | **OI-14** | **팀원 PC의 GPU 사양** — 성능 측정 기준 PC 지정 필요 여부 | M0 |
 | **OI-10** | **WonderEcho 통신 방식** — I2C인가 UART인가 (위키는 I2C 포트, 모듈 문서는 UART 프레이밍) | M3 |
@@ -736,4 +728,3 @@ mechdog_physical_ai/
 - [MechDog Wiki — Python Programming Projects](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/4.Python_Programming_Projects.html)
 - [MechDog Wiki — IOT Expanded Lesson](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/9.IOT_Expanded_Lesson.html)
 - [MechDog Wiki — Resources Download](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/resources_download.html)
-- 내부 자산: `ros2_amr_fleet_control` — ONNX Runtime 추론 파이프라인 및 FastAPI 관제 대시보드 재사용원
