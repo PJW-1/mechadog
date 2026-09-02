@@ -16,9 +16,9 @@ jobs:
     name: Python Quality (ruff + pytest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -50,7 +50,7 @@ jobs:
     name: Firmware Quality (clang-format + cppcheck)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Detect firmware sources
         id: detect
@@ -99,7 +99,7 @@ jobs:
           - { dir: firmware_mechdog_motion, fqbn: 'esp32:esp32:esp32',          name: 'MechDog-Motion' }
           - { dir: firmware_xiao_vision,    fqbn: 'esp32:esp32:XIAO_ESP32S3',   name: 'XIAO-Vision' }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Detect sketch
         id: sketch
@@ -146,7 +146,7 @@ jobs:
 
       - name: Upload artifacts
         if: steps.sketch.outputs.found == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ matrix.target.name }}
           path: |
@@ -163,15 +163,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
         continue-on-error: true
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: artifacts/**/*
