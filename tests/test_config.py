@@ -101,6 +101,18 @@ def test_detection_requires_consecutive_frames(cfg: dict) -> None:
     assert cfg["vision"]["detect_consecutive_frames"] >= 2
 
 
+def test_tip_angle_separates_posture_from_fall(cfg: dict) -> None:
+    """전도 임계는 의도된 자세와 실제 전도 사이에 있어야 한다 (DR-16).
+
+    앉기 자세의 몸통 피치는 30~45°에 달한다. 임계를 그 아래로 두면
+    앉을 때마다 페일세이프가 발동해 기능이 성립하지 않고, 결국 팀이
+    전도 감지를 꺼버려 서보 보호가 완전히 사라진다.
+    """
+    tip = cfg["safety"]["tip_angle_deg"]
+    assert tip >= 55, "의도된 자세(최대 45°)와 겹친다 — DR-16 위반"
+    assert tip <= 80, "실제 전도(약 90°)를 놓칠 수 있다"
+
+
 def test_two_stage_detector_declared(cfg: dict) -> None:
     """COCO 범용 + PPE 전용 2단 구조가 선언되어 있어야 한다 (DR-12)."""
     vision = cfg["vision"]

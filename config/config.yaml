@@ -21,7 +21,11 @@ safety:                 # ⚠️ Tier 1 — 온보드에서만 판정 (PRD 2.2 �
   obstacle_stop_cm: 25        # FR-2.2
   battery_warn_v: 7.0         # NFR-2.3
   battery_shutdown_v: 6.6     # NFR-2.3
-  tip_angle_deg: 45           # NFR-2.4
+  # NFR-2.4 — 전도 감지. 목적은 전도 방지가 아니라 스톨로 인한 서보
+  # 기어 파손·과열 방지다. 임계 60°는 의도된 자세(앉기 30~45°)와 실제
+  # 전도(약 90°) 사이의 빈 구간이다. 상태 억제 플래그를 쓰지 않고
+  # 각도만으로 분리한다 (DR-16). OI-17 실측 후 확정.
+  tip_angle_deg: 60
   tip_duration_ms: 2000       # NFR-2.4
 
 gait:                   # HW_MechDog API 파라미터 (DR-1)
