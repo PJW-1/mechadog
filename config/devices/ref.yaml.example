@@ -1,0 +1,30 @@
+# 개체별 프로파일 (WBS 2.4.1)
+#  · 실행 시 --device <unit-id> 로 지정. 미지정이면 기동을 거부한다.
+#  · 이 파일을 <unit-id>.yaml 로 복사하여 실측값을 채운다.
+#  · 서보 오프셋은 개체마다 다르므로 반드시 실측할 것.
+
+device_id: ref          # ref(기준기 · B의 로봇) | dev1 | dev2
+owner: B
+is_reference: true      # ⚠️ 게이트 검수는 기준기에서만 인정 (CONTRIBUTING 6절)
+
+network:
+  mechdog_ip: "192.168.0.101"
+  xiao_ip: "192.168.0.102"
+  cmd_port: 5001
+  telemetry_port: 5101
+
+# MechDog_offset[9] — 0번은 steering, 1~8번은 PWM 서보 (위키 기준)
+servo_offset: [0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+# 보행 명령 대비 실제 이동량 (FR-6.4 gait odometry)
+#  시연할 바닥에서 실측할 것 — 카펫/장판에 따라 달라진다
+gait_calibration:
+  forward_mm_per_sec: null    # move(60, 0) 1초당 실제 전진 거리
+  turn_deg_per_sec: null      # move(0, 20) 1초당 실제 회전 각도
+  measured_on: null           # 측정 바닥 (예: "장판", "카펫")
+
+measured:                     # docs/HARDWARE_VERIFICATION.md 와 동기화
+  body_weight_g: null
+  payload_pass_g: null        # 부하 테스트 통과 최대 하중
+  runtime_min: null
+  wifi_rssi_dbm: null

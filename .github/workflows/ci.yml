@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── WBS 5.3.1 · Python 품질 ────────────────────────────────
+  python-quality:
+    name: Python Quality (ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest pytest-cov pyyaml
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Format check (ruff)
+        run: ruff format --check .
+
+      # 하드웨어 없이 검증 가능한 순수 로직만 대상 (WBS 6.2)
+      #  · FSM 상태 전이 전수 검증
+      #  · 메시지 직렬화 / 범위 클램핑 / seq 역전 폐기
+      #  · 안전 판정 조건 조합
+      #  · config 스키마 검증
+      - name: Unit tests
+        run: pytest -q --cov=host --cov-report=term-missing
+
+  # ── WBS 5.3.2 · 펌웨어 정적 분석 ──────────────────────────
+  firmware-quality:
+    name: Firmware Quality (clang-format + cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect firmware sources
+        id: detect
+        run: |
+          COUNT=$(find firmware_mechdog_motion firmware_xiao_vision \
+                    -name '*.cpp' -o -name '*.h' -o -name '*.ino' 2>/dev/null | wc -l)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "펌웨어 소스 $COUNT 개 발견"
+
+      - name: Install tools
+        if: steps.detect.outputs.count != '0'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck clang-format
+
+      # 스타일 위반 시 실패한다
+      - name: Format check
+        if: steps.detect.outputs.count != '0'
+        run: |
+          find firmware_mechdog_motion firmware_xiao_vision \
+               \( -name '*.cpp' -o -name '*.h' -o -name '*.ino' \) \
+               -not -path '*/third_party/*' -print0 \
+            | xargs -0 -r clang-format --dry-run --Werror
+
+      # ⚠️ --error-exitcode=1 : 문제 발견 시 반드시 실패한다.
+      #    (구 워크플로우는 0으로 두어 어떤 문제도 잡히지 않았다 — PRD 6.1)
+      - name: Static analysis (cppcheck)
+        if: steps.detect.outputs.count != '0'
+        run: |
+          cppcheck --enable=warning,style,performance,portability \
+                   --suppress=missingIncludeSystem \
+                   --inline-suppr \
+                   --error-exitcode=1 \
+                   -i third_party \
+                   firmware_mechdog_motion firmware_xiao_vision
+
+  # ── WBS 5.3.3 · 펌웨어 빌드 ───────────────────────────────
+  firmware-build:
+    name: Firmware Build (${{ matrix.target.name }})
+    runs-on: ubuntu-latest
+    needs: firmware-quality
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { dir: firmware_mechdog_motion, fqbn: 'esp32:esp32:esp32',          name: 'MechDog-Motion' }
+          - { dir: firmware_xiao_vision,    fqbn: 'esp32:esp32:XIAO_ESP32S3',   name: 'XIAO-Vision' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect sketch
+        id: sketch
+        run: |
+          if find "${{ matrix.target.dir }}" -name '*.ino' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ matrix.target.dir }}에 스케치가 없어 빌드를 건너뜁니다 (WBS 4.1/4.2 미착수)"
+          fi
+
+      - name: Setup arduino-cli
+        if: steps.sketch.outputs.found == 'true'
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        if: steps.sketch.outputs.found == 'true'
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      # OI-5: HW_MechDog 라이브러리 라이선스 확인 후 third_party/ 벤더링 필요 (RISK-07)
+      - name: Link vendored libraries
+        if: steps.sketch.outputs.found == 'true'
+        run: |
+          mkdir -p "$HOME/Arduino/libraries"
+          if [ -d third_party ]; then
+            find third_party -mindepth 1 -maxdepth 1 -type d \
+              -exec cp -r {} "$HOME/Arduino/libraries/" \;
+          fi
+          arduino-cli lib list || true
+
+      - name: Compile
+        if: steps.sketch.outputs.found == 'true'
+        run: |
+          arduino-cli compile \
+            --fqbn "${{ matrix.target.fqbn }}" \
+            --warnings all \
+            --export-binaries \
+            "${{ matrix.target.dir }}"
+
+      - name: Upload artifacts
+        if: steps.sketch.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.target.name }}
+          path: |
+            ${{ matrix.target.dir }}/build/**/*.bin
+            ${{ matrix.target.dir }}/build/**/*.elf
+          if-no-files-found: warn
+
+  # ── WBS 5.3.4 · 릴리스 ────────────────────────────────────
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [python-quality, firmware-build]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+        continue-on-error: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/**/*

@@ -1,0 +1,68 @@
+# ── 시크릿 (절대 커밋 금지) ──────────────────────────
+.env
+.env.*
+!.env.example
+config/secrets.yaml
+
+# ── 개체별 로컬 설정 ────────────────────────────────
+# 개체 프로파일 템플릿은 커밋하고, 실측 캘리브레이션 값은 로컬 유지
+config/devices/*.local.yaml
+
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── 임베디드 빌드 산출물 ────────────────────────────
+.pio/
+build/
+*.bin
+*.elf
+*.map
+*.hex
+
+# ── AI 모델 가중치 (용량 큼 — 별도 배포) ────────────
+*.pt
+*.onnx
+*.engine
+models/*
+!models/README.md
+
+# ── 런타임 산출물 ───────────────────────────────────
+logs/
+*.log
+*.jsonl
+snapshots/
+blackbox/
+maps/*
+!maps/README.md
+recordings/
+*.bag
+*.db3
+
+# ── ROS2 ───────────────────────────────────────────
+install/
+log/
+devel/
+
+# ── 벤더링 라이브러리 (라이선스 확인 후 결정 — OI-5) ─
+# third_party/HW_MechDog/
+
+# ── OS / 에디터 ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*~

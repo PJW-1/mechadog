@@ -1,0 +1,138 @@
+# MechDog Physical AI Security & Patrol Robot
+
+Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자율 경비·순찰 4족 보행 로봇** 프로젝트입니다.
+
+MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **HAL로 취급**하고, 그 위에 **인지 → 판단 → 항법** 자율 스택을 새로 얹는 것이 목표입니다.
+
+📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
+📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
+🧭 **[측위 방식 비교 — LiDAR vs 스마트폰 VIO](docs/LOCALIZATION_OPTIONS.md)** ← 결정 대기  
+🔧 **[M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**  
+🤝 **[협업 규칙](CONTRIBUTING.md)**
+
+---
+
+## 아키텍처 — 스타 토폴로지
+
+모든 노드는 독립 전원을 가지며, **로봇 위의 노드끼리는 배선하지 않습니다.** Host PC가 허브입니다.
+
+```
+                  ┌──────────────────────────────┐
+                  │       HOST PC (허브)          │
+                  │  YOLOv8 · FSM · 대시보드      │
+                  └──┬──────────────┬────────────┘
+        MJPEG ↑      │              │ UDP 명령 ↓ / 텔레메트리 ↑
+        ┌────────────┴───────┐  ┌───┴──────────────────┐
+        │ XIAO ESP32S3 Sense │  │ MechDog ESP32        │
+        │ 독립 LiPo, 테이프 부착│  │ 커스텀 Arduino 펌웨어  │
+        │ 카메라 → MJPEG 송출  │  │ HAL + 온보드 안전 로직 │
+        └────────────────────┘  └──────────────────────┘
+                  ✕ ─── 노드 간 배선 없음 ─── ✕
+```
+
+### 3-Tier 레이턴시 분리
+
+| 계층 | 위치 | 담당 | 지연 |
+| :--- | :--- | :--- | :--- |
+| **Reflex** | MechDog ESP32 | 충돌 정지, 페일세이프, 저전압/전도 대응 | < 50 ms |
+| **Cognition** | Host PC | 사람 인지, 행동 FSM, [P2] SLAM | 100~200 ms |
+| **Reasoning** | 클라우드 | VLM 현장 판독, 이벤트 리포트 | 1~3 초 |
+
+> **불변 규칙**: 안전 판단은 절대 온보드 밖으로 내보내지 않는다. Host PC가 꺼져도 로봇은 스스로 멈춘다.
+
+---
+
+## 핵심 기능
+
+### Phase 1 — 자율 경비 로봇 (ROS2 미사용)
+
+1. **원격 제어 링크 & 페일세이프** — 300ms 명령 타임아웃, 링크 두절/저전압/전도 시 자동 안전 정지
+2. **자율 순찰 및 장애물 회피** — Trot 보행, 초음파 25cm 온보드 반사 정지, 주기적 주변 스캔
+3. **사람 인지 및 경비 대응** — YOLOv8 검출 → 경계 자세 → 타겟 락온 추종 → 경고 발령
+4. **웹 미션 대시보드** — FPV 스트리밍, 텔레메트리 차트, 수동 오버라이드, E-Stop, 이벤트 피드
+
+### Phase 2 — SLAM 확장 (조건부)
+
+5. **LiDAR SLAM & 위험구역 출동** — LD06 + ROS2 `slam_toolbox`로 맵 생성, 웨이포인트 순찰, 위험구역 긴급 진입
+
+> Phase 2 착수 조건: MechDog 탑재 여력이 약 100g 이상일 것. 미달 시 ArUco 마커 기반으로 대체.
+
+---
+
+## 하드웨어
+
+| 노드 | 장비 | 전원 |
+| :--- | :--- | :--- |
+| Motion | Hiwonder MechDog (Advanced Kit) — ESP32, 8× 코어리스 서보, IMU, 초음파 | 2S 리튬 7.4V (순정) |
+| Vision | Seeed XIAO ESP32S3 Sense — OV2640, 8MB PSRAM | 3.7V 1000mAh LiPo + 470µF 커패시터 |
+| Host | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080 | — |
+| LiDAR *(P2)* | LD06 / LD19 | 별도 |
+
+---
+
+## 마일스톤
+
+| | 내용 | ROS2 | 상태 |
+| :--- | :--- | :---: | :--- |
+| **M0** | 하드웨어 검증 (Wi-Fi 가용성, 무게 실측, 3대 캘리브레이션) | — | ⬜ 진행 예정 |
+| **M1** | 제어 링크 & 페일세이프 | ✕ | ⬜ |
+| **M2** | 비전 파이프라인 & 대시보드 | ✕ | ⬜ |
+| **M3** | 행동 FSM 통합 — **여기서 완결된 산출물** | ✕ | ⬜ |
+| **M4** | LiDAR & 매핑 | ○ | ⬜ 조건부 |
+| **M5** | 웨이포인트 순찰 & 위험구역 출동 | ○ | ⬜ 조건부 |
+
+👉 **다음 작업: [M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**
+
+---
+
+## 프로젝트 구조
+
+```
+mechdog_physical_ai/
+├── docs/
+│   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 · 설계 결정(DR)
+│   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
+│   ├── LOCALIZATION_OPTIONS.md           # 측위 방식 비교 및 결정
+│   └── HARDWARE_VERIFICATION.md          # M0 실측 리포트
+├── config/
+│   ├── config.yaml                      # 전역 파라미터 (매직 넘버 0개 목표)
+│   ├── devices/                         # 개체별 프로파일 (서보 오프셋 등)
+│   └── .env.example                     # 시크릿 템플릿
+├── firmware_mechdog_motion/src/         # MechDog ESP32 (Arduino)
+├── firmware_xiao_vision/src/            # XIAO ESP32S3 (Arduino)
+├── host/                                # Host PC (Python)
+│   ├── vision/                          # 스트림 수신 · YOLO 추론
+│   ├── behavior/                        # FSM · 명령 송신
+│   ├── telemetry/                       # 텔레메트리 수신
+│   ├── dashboard/                       # FastAPI + WebSocket + UI
+│   └── common/                          # 통신 규약 · 로깅 · config
+├── tests/                               # pytest (하드웨어 불요)
+├── tools/                               # 목업 · 지연 측정 · 텔레오퍼레이션
+├── third_party/                         # HW_MechDog 벤더링
+├── models/                              # ONNX 가중치 (git 제외)
+├── maps/                                # 지도 산출물 (git 제외)
+└── .github/
+    ├── workflows/ci.yml                 # CI/CD
+    ├── ISSUE_TEMPLATE/
+    └── PULL_REQUEST_TEMPLATE.md
+```
+
+## 팀 구성
+
+| 역할 | 담당 | 로봇 |
+| :--- | :--- | :--- |
+| **A · 임베디드** | 하드웨어 검증 · 모션 펌웨어 · 온보드 안전 로직 | 개발기 |
+| **B · 인지·AI** | 비전 노드 · YOLO 추론 · 대시보드 화면 · 측위 | **기준기(REF)** — 측위 센서 장착, 시연 담당 |
+| **C · 시스템·통합** | 통신 규약 · FSM · 대시보드 서버 · CI/CD · 문서 | 개발기 |
+
+> 게이트 검수는 **기준기에서만** 인정한다. 상세는 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## 엔지니어링 원칙
+
+| 축 | 적용 |
+| :--- | :--- |
+| **파라미터화** | 매직 넘버 0개. 전 상수를 `config.yaml`로 분리, Dev/Prod 프로파일 |
+| **예외 처리** | 패킷 손실·역전 방어, 스트림 지수 백오프 재연결, Graceful Degradation |
+| **성능** | 추론 워커 분리, 최신 프레임 우선 드롭 정책, 누수 점검 |
+| **로깅** | JSON Lines 구조화 로그 + 레벨링 + 로테이션 + 이벤트 블랙박스 |
+| **CI/CD** | FSM 전이·패킷 파싱·안전 판정을 **하드웨어 없이** pytest로 전수 검증 |

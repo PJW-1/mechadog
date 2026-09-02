@@ -1,0 +1,565 @@
+# [PRD v1.0] MechDog Physical AI 자율 경비·순찰 로봇
+## Product Requirements Document & System Architecture Specification
+
+---
+
+## 1. 문서 제어 (Document Control)
+
+| 항목 | 내용 |
+| :--- | :--- |
+| **프로젝트명** | MechDog Physical AI Security & Patrol Quadruped Robot |
+| **문서 버전** | **v1.0.0** |
+| **상태** | Draft / In-Review |
+| **최종 수정** | 2026-09-02 |
+| **대상 플랫폼** | Hiwonder MechDog (ESP32, Advanced Kit) + Seeed XIAO ESP32S3 Sense + Host PC |
+| **저장소** | `C:\Users\pjw\Desktop\mechdog_physical_ai` |
+
+### 1.1 프로젝트 비전
+
+Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform`, `set_gait_params`)를 제공하지만, 그 위에는 앱 원격조작과 사전 정의 액션 재생만 존재한다. 본 프로젝트는 그 API를 **HAL(Hardware Abstraction Layer)로 취급**하고, 그 위에 **인지(Perception) → 판단(Behavior FSM) → 항법(Navigation)** 계층을 새로 구축하여 자율 경비·순찰 임무를 수행하는 Physical AI 시스템을 만든다.
+
+> 이는 상용 4족 로봇(예: Boston Dynamics Spot)의 개발 방식과 동일한 구조다. 제조사가 보행·균형을 제공하고, 개발자는 그 위에 자율 스택을 얹는다. **본 프로젝트의 기술적 기여는 IK가 아니라 자율성 계층에 있다.**
+
+### 1.2 문제 정의 및 솔루션
+
+- **Problem** — 교육용 4족 로봇은 (a) 사람이 계속 조종해야 하고, (b) 환경을 인지하지 못하며, (c) 통신이 끊기면 위험한 상태로 방치된다.
+- **Solution**
+  1. **Thin-Client / Offboard Brain 아키텍처** — 무거운 추론과 SLAM은 Host PC가, 안전에 직결되는 반사 동작은 로봇이 담당하는 3-Tier 레이턴시 분리
+  2. **행동 상태 머신(Behavior FSM)** 기반 자율 순찰 · 장애물 회피 · 침입자 인지 및 추종
+  3. **Fail-Safe First** — 통신 두절·저전압·전도 시 로봇이 스스로 안전 상태로 진입
+  4. **4대 엔지니어링 축 + CI/CD** — 파라미터화 / 예외처리 / 성능 / 로깅을 자동 검증
+
+### 1.3 설계 결정 기록 (Design Decisions & Rejected Alternatives)
+
+본 절은 **검토했으나 채택하지 않은 설계 대안**과 그 이유를 기록한다. 4족 보행 로봇 프로젝트에서 자연스럽게 떠오르는 접근들이지만, 본 하드웨어 구성과 개발 여건에서는 성립하지 않거나 비용 대비 효과가 낮다고 판단한 것들이다.
+
+프로젝트 진행 중 "왜 저렇게 안 했지?"라는 재검토가 반복되는 것을 막고, 전제가 바뀌었을 때 어떤 결정을 다시 열어야 하는지를 명확히 하기 위함이다.
+
+---
+
+#### DR-1. 8-DOF 역기구학(IK) 엔진을 직접 구현하지 않는다
+
+- **검토한 대안** — 링크 구조 4족의 IK를 직접 유도하여 서보 각도를 산출하고, Trot/Walk/Crawl 보행 생성기를 자체 구현
+- **채택하지 않은 이유** — Hiwonder가 `HW_MechDog.h` / `mech_base_types.h`를 오픈소스로 제공하며, `move(step_length, angle)` · `transform(pose, duration)` · `set_gait_params(...)` 수준의 API로 IK와 보행 생성이 이미 완비되어 있다. 이를 다시 구현하는 것은 검증된 코드를 미검증 코드로 교체하는 일이며, 프로젝트의 실제 난제(자율 인지·판단·항법)에 쓸 시간을 소모한다.
+- **채택안** — 해당 라이브러리를 **HAL로 취급**하고 그 위에 자율 스택을 구축한다. 상용 4족 로봇 개발과 동일한 계층 구조다.
+- **재검토 조건** — 라이브러리가 제공하지 않는 보행 패턴이 임무상 필수가 될 경우
+
+#### DR-2. 노드 간 유선 통신 프로토콜(UART + CRC16)을 쓰지 않는다
+
+- **검토한 대안** — 비전 노드와 모션 노드를 UART로 배선하고, `[HEADER][LEN][CMD][PAYLOAD][CRC16]` 형식의 고속 전이중 패킷 프로토콜 구현
+- **채택하지 않은 이유** — 비전 노드(XIAO)는 **독립 전원으로 본체에 부착만 하는 구성**이다. 배선을 도입하면 이 구조의 최대 이점인 *본체 무개조 · 노드 간 고장 격리 · 독립 개발*이 모두 사라진다. 또한 두 노드 모두 Wi-Fi를 내장하고 있어 유선 링크가 제공하는 이점이 크지 않다.
+  - 부가 정정: CRC16은 오류를 **검출**하는 수단이며 왜곡을 방지하지 못한다. 본 문서는 "검출 후 폐기" 로 명세한다.
+- **채택안** — Host PC를 허브로 하는 **Wi-Fi 스타 토폴로지 + UDP/JSON 메시지**(FR-5)
+- **재검토 조건** — 메인 ESP32의 Wi-Fi를 쓸 수 없는 것으로 판명될 경우(RISK-01). 이때는 XIAO에서 UART 2가닥만 최소 연결한다.
+
+#### DR-3. 온보드 Edge AI 추론을 하지 않는다
+
+- **검토한 대안** — XIAO ESP32S3에서 경량 사람 검출 모델(FOMO / ESP-DL 계열)을 직접 추론
+- **채택하지 않은 이유** — ESP32-S3급에서의 사람 검출은 96×96 그레이스케일 기준 수 FPS 수준이고, MJPEG 스트리밍을 동시에 수행하면 더 낮아진다. 반면 Host PC(RTX 3080 + ONNX Runtime)에서는 **6.4ms 추론이 이미 실측 확보**되어 있어 정확도·속도 양쪽에서 비교가 되지 않는다.
+- **채택안** — XIAO는 **영상 송출만 전담**하고, YOLOv8 추론은 Host PC(Tier 2)에서 수행
+- **트레이드오프** — Wi-Fi 단절 시 사람 인지 기능이 정지한다. 이를 NFR-2.6(Graceful Degradation)으로 명세하여, 인지 기능이 죽어도 순찰·회피는 유지되도록 설계한다.
+- **재검토 조건** — 무선 환경이 열악하여 오프보드 인지 지연이 NFR-1.1(250ms)을 상시 초과할 경우
+
+#### DR-4. 클라우드에 제어 루프를 올리지 않는다
+
+- **검토한 대안** — 인지·판단 전체를 클라우드 AI로 처리하여 로봇과 PC를 모두 얇게 유지
+- **채택하지 않은 이유** — 인터넷 왕복은 지연이 100~300ms에 지터가 크고, 연결이 끊기면 로봇이 제어 불능 상태가 된다. 실시간 제어 루프에 부적합하다.
+- **채택안** — **3-Tier 레이턴시 분리**(2.2절). 클라우드는 비실시간 추론(현장 위험요소 판독, 이벤트 리포트)인 Tier 3에만 배치하며, 이 경로의 실패가 주행에 영향을 주지 않도록 격리한다.
+
+#### DR-5. 온보드 SLAM을 시도하지 않는다
+
+- **검토한 대안** — ESP32-S3의 8MB PSRAM에 TinySLAM/CoreSLAM 계열 경량 SLAM을 이식
+- **채택하지 않은 이유** — 이론적으로 소형 occupancy grid는 PSRAM에 올릴 수 있으나, 구현·튜닝 난도가 높아 프로젝트 전체를 잠식할 위험이 크다. XIAO는 이미 카메라와 Wi-Fi 스트리밍으로 자원이 포화 상태다.
+- **채택안** — 로봇은 스캔 데이터를 중계만 하고, SLAM은 Host PC에서 수행(FR-6.1)
+
+#### DR-6. LiDAR를 MechDog 메인보드에 직결하지 않는다
+
+- **검토한 대안** — LD06을 메인 ESP32의 UART에 연결하고 메인보드가 스캔을 중계
+- **채택하지 않은 이유** — ① 확장 포트(I2C 2개)가 비전 모듈·초음파·Wi-Fi 모듈로 이미 점유되어 있다. ② 더 결정적으로, **메인 ESP32의 최우선 실시간 태스크는 8개 서보의 보행 제어**다. 여기에 4,500 pts/s 스트림 수신과 무선 중계를 얹으면 제어 루프에 지터가 발생하고, 4족 보행에서 제어 지터는 곧 전도로 이어진다.
+- **채택안** — LiDAR를 **독립 노드**로 분리(XIAO 겸임 또는 별도 ESP32-C3, OI-7에서 확정)
+
+#### DR-7. 보행 중 연속 LiDAR 스캔을 하지 않는다 (Stop-and-Scan 채택)
+
+- **검토한 대안** — 순찰하며 실시간으로 연속 스캔하여 맵을 갱신
+- **채택하지 않은 이유** — 2D LiDAR는 스캔 평면이 수평임을 가정하는데, 4족 보행은 매 스텝마다 피치·롤이 변동한다. **피치가 10° 틀어지면 5m 거리에서 스캔 평면이 약 87cm 상하로 쓸려** 바닥·천장을 찍고 맵이 오염된다.
+- **채택안** — **정지 → 자세 안정 → 스캔 → 이동**을 반복하는 Stop-and-Scan(FR-6.2) + IMU 기반 스캔 유효성 필터(FR-6.3)
+- **재검토 조건** — Stop-and-Scan으로 맵이 안정적으로 생성된 이후, IMU 기반 de-skewing을 적용한 연속 스캔을 차기 과제로 검토
+
+#### DR-8. 위치 추정 수단 없이 "구역 출동"을 명세하지 않는다
+
+- **검토한 대안** — 위험구역 알람 수신 시 해당 좌표로 이동하는 기능을 초기 요구사항에 포함
+- **채택하지 않은 이유** — MechDog에는 **엔코더가 없고 SLAM도 없다.** 위치를 알 방법이 없는 상태에서 "좌표로 이동"은 구현 불가능한 명세다.
+- **채택안** — 해당 기능을 **FR-6으로 분리하여 Phase 2로 이연**하고, LiDAR SLAM 확보를 전제 조건으로 명시. Phase 2 착수 불가 시(RISK-02) **ArUco 마커 기반 구역 정의**로 대체한다.
+- **보완** — 엔코더 부재는 SLAM 도입 후에도 남는 문제이므로, 보행 명령 기반 gait odometry 캘리브레이션(FR-6.4)으로 prior를 공급한다.
+
+#### DR-9. Phase 1에서 ROS2를 쓰지 않으며, Phase 2에서도 nav2를 쓰지 않는다
+
+- **검토한 대안** — 처음부터 ROS2 기반으로 전체 스택을 구성하고 nav2로 경로계획까지 처리
+- **채택하지 않은 이유** — ROS2 SLAM의 실패 양상(tf 트리 단절, 타임스탬프 불일치, frame_id 오류, odom 드리프트)은 **원인 파악에 상당한 숙련을 요구**한다. 개발 인력의 ROS2 숙련도가 낮은 현 상황에서 이를 초기부터 도입하면 진행이 정체될 위험이 크다.
+- **채택안** — Phase 1(M1~M3)을 **순수 Python 단일 프로세스로 완결**한다. ROS2는 Phase 2에서 `slam_toolbox` 한 가지로 범위를 한정하여 *"스캔을 넣으면 맵과 위치를 반환하는 블랙박스"* 로만 사용하고, 경로 추종은 Python에서 웨이포인트 추적으로 직접 구현한다.
+- **rviz2는 예외적으로 채택** — DR-7의 스캔 왜곡 문제는 시각화 없이 진단이 불가능하다. 동등한 시각화를 자체 제작하는 비용이 rviz2 학습 비용보다 크다.
+
+#### DR-10. XIAO 전원으로 USB 보조배터리를 쓰지 않는다
+
+- **검토한 대안** — 시판 USB 보조배터리를 본체에 부착하여 XIAO에 급전
+- **채택하지 않은 이유** — 최소형 보조배터리도 60~120g으로, **LiDAR(약 50g)보다 무겁다.** 소형 4족의 제한된 탑재 여력을 전원 하나에 소진하게 된다.
+- **채택안** — XIAO ESP32S3 내장 충전 회로와 BAT 패드를 이용한 **3.7V 1000mAh LiPo(약 20g)** 직결. Wi-Fi 송신 피크에 의한 브라운아웃 방지를 위해 벌크 커패시터를 병설한다(2.4절).
+
+#### DR-11. 제자리 회전(Spot Turn)을 전제하지 않는다
+
+- **검토한 대안** — 제자리에서 몸을 돌려 시야를 바꾸고, 회피·추종·360° 스캔을 수행
+- **채택하지 않은 이유** — `HW_MechDog` API는 `move(step_length, angle)`이며 **angle은 −30~30°의 조향각**이다. 즉 **걸어가며 방향을 트는 arc 조향**이고 제자리 회전이 아니다. 내장 액션 16개(`left_foot_kick`, `stand_four_legs`, `rotation_pitch`, `rotation_roll`, `normal_attitude` 등)에도 yaw 회전 액션이 없다.
+  - **몸통 yaw도 역학적으로 어렵다.** 다리는 관절 2자유도가 모두 앞뒤 평면에 있어 **발을 좌우로 옮길 수 없고**, 허리 관절도 없다. `mech_pose_t`의 `{roll, pitch, yaw}` 중 yaw 필드는 존재하나 실제 동작 여부가 미검증이다(OI-8).
+- **채택안** — 회전은 **선회 보행(arc)** 으로만 수행한다. FR-2.3·FR-2.4·FR-3.5를 이에 맞게 정의한다.
+- **부수 효과 (유리한 점)** — Scan matching은 스캔 간 겹침이 클 때 잘 수렴한다. 제자리 45° 선회는 겹침이 적어 정합이 어려운데, **arc 조향은 조금씩 이동+회전하므로 겹침이 커서 정합에 오히려 유리하다.**
+- **부수 효과 (불리한 점)** — **최소 회전 반경**이 생긴다(비홀로노믹 제약). 좁은 공간에서 제자리 선회로 빠져나올 수 없어 후진 활용이 중요해지고, Phase 2 경로 추종이 복잡해진다.
+- **재검토 조건** — OI-8에서 `transform()` yaw가 실제 동작함이 확인될 경우, FR-3.5에 몸통 yaw 추종을 추가한다.
+
+---
+
+## 2. 시스템 아키텍처
+
+### 2.1 스타 토폴로지 (Star Topology)
+
+본 시스템의 **핵심 설계 원칙은 "로봇 위의 노드끼리 배선하지 않는다"** 이다. 모든 노드는 독립 전원을 가지며 Host PC를 허브로 하는 성형 구조로 통신한다.
+
+```
+                    ┌───────────────────────────────────────────┐
+                    │            HOST PC  (허브)                 │
+                    │  Windows 11 + WSL2 / RTX 3080             │
+                    │  · YOLOv8 ONNX Runtime  (사람 인지)        │
+                    │  · Behavior FSM         (판단)             │
+                    │  · FastAPI + WebSocket  (관제 대시보드)     │
+                    │  · [Phase 2] ROS2 slam_toolbox            │
+                    └───┬───────────────┬───────────────┬───────┘
+        MJPEG(HTTP) ↑   │               │ UDP cmd ↓     │ UDP scan ↑
+                        │               │ UDP tlm ↑     │  [Phase 2]
+    ┌───────────────────┴──┐   ┌────────┴──────────┐   ┌┴──────────────────┐
+    │ VISION NODE          │   │ MOTION NODE       │   │ LIDAR NODE        │
+    │ XIAO ESP32S3 Sense   │   │ MechDog ESP32     │   │ (Phase 2 결정)     │
+    │ 독립 LiPo · 테이프 부착│   │ 커스텀 Arduino 펌웨어│   │ LD06 + 중계 MCU   │
+    │                      │   │                   │   │                   │
+    │ · OV2640 → MJPEG     │   │ · HW_MechDog HAL  │   │ · UART 230400 수신 │
+    │ · Wi-Fi HTTP 서버     │   │ · Wi-Fi 명령 수신  │   │ · UDP 중계         │
+    │ · 추론 없음           │   │ · 초음파 즉시정지   │   │                   │
+    │                      │   │ · 하트비트 페일세이프│   │                   │
+    └──────────────────────┘   └───────────────────┘   └───────────────────┘
+              ✕ ────────── 노드 간 물리 배선 없음 ────────── ✕
+```
+
+**이 구조의 이점**
+
+| 항목 | 효과 |
+| :--- | :--- |
+| 통합 리스크 | MechDog 본체를 개조하지 않음. 비전 노드 고장이 보행에 영향 없음 |
+| 개발 병렬성 | 비전 노드와 모션 노드를 독립적으로 개발·테스트 가능 |
+| 교체 용이성 | 카메라 노드를 다른 보드로 바꿔도 프로토콜만 맞으면 됨 |
+| 전원 격리 | 서보 구동 시 발생하는 전압 강하가 카메라에 영향 없음 |
+
+### 2.2 3-Tier 레이턴시 계층
+
+**어떤 로직을 어디에 둘 것인가**를 레이턴시 요구사항으로 결정한다. 이 표를 위반하는 설계는 반려한다.
+
+| 계층 | 위치 | 담당 로직 | 허용 지연 | 통신 단절 시 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier 1 · Reflex** | MechDog ESP32 (온보드) | 초음파 충돌 정지, 하트비트 감시, 저전압 셧다운, 전도 감지, 서보 토크 해제 | **< 50 ms** | **독립 동작 필수** |
+| **Tier 2 · Cognition** | Host PC (로컬 Wi-Fi) | 사람 인지(YOLO), 행동 FSM, 경로 추종, [P2] SLAM | 100 ~ 200 ms | Tier 1이 안전 정지 |
+| **Tier 3 · Reasoning** | 클라우드 (선택) | VLM 현장 판독, 이벤트 요약 리포트, 이상 패턴 분석 | 1 ~ 3 초 | 기능 저하만, 주행 무관 |
+
+> **불변 규칙 (Invariant)**: 안전에 직결되는 판단은 절대 Tier 2/3으로 올리지 않는다. Host PC가 꺼져도 로봇은 스스로 멈춰야 한다.
+
+### 2.3 하드웨어 구성 및 BOM
+
+**보유 자산**
+
+| 항목 | 사양 | 비고 |
+| :--- | :--- | :--- |
+| Hiwonder MechDog (Advanced Kit) | ESP32 메인보드, 8× 코어리스 서보(링크 구조), IMU, 초음파 | Arduino IDE 지원, 소스 오픈 |
+| Seeed XIAO ESP32S3 Sense | Xtensa 듀얼코어 240MHz, 8MB PSRAM, OV2640, PDM 마이크, microSD | 배터리 패드(BAT+/BAT−) + 충전 IC 내장 |
+| Host PC | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080, ROS2 Jazzy | ONNX Runtime DirectML 6.4ms 실측 보유 |
+| (미사용) ESP32-S3 비전 모듈 | Advanced Kit 포함품 | XIAO 사용으로 예비 부품 처리 |
+| (활용 검토) WonderEcho 음성 / MP3 모듈 | Advanced Kit 포함품 | **FR-3.4 경고 방송에 활용** |
+
+**추가 구매 필요**
+
+| 부품 | 사양 | 예상 무게 | Phase | 용도 |
+| :--- | :--- | ---: | :---: | :--- |
+| LiPo 배터리 | **3.7V 1000mAh** (예: 603450) | ~20 g | 1 | XIAO 전원 |
+| 벌크 커패시터 | 470 ~ 1000 µF / 6.3V 이상 | ~2 g | 1 | Wi-Fi TX 피크 흡수, 브라운아웃 방지 |
+| 2D LiDAR | **LD06 / LD19** (12m, UART 230400) | ~50 g | 2 | SLAM |
+| 중계 MCU | ESP32-C3 SuperMini | ~3 g | 2 | LiDAR → UDP (선택지 B인 경우) |
+| 마스트/마운트 | 3D 프린트 | 20~40 g | 2 | LiDAR 거치 |
+
+**Phase 1 추가 중량: 약 22 g** · **Phase 2 누적 추가 중량: 약 95 ~ 115 g**
+
+> ⚠️ **미해결 관문** — MechDog의 공식 스펙에 무게·치수·탑재중량이 공개되어 있지 않다. **Phase 2 착수 전 실측 필수.** 약 100g의 상부 하중을 이고 보행 가능한지가 SLAM 계획 전체의 성립 조건이다. (RISK-02)
+
+### 2.4 전원 설계
+
+**MechDog 본체** — 2S 리튬 (7.4V 공칭, 8.4V 2A 충전기 확정)
+
+| 임계값 | 전압 | 동작 |
+| :--- | ---: | :--- |
+| 정상 | > 7.0 V | 통상 운용 |
+| 경고 | ≤ 7.0 V | 대시보드 경고, 순찰 중단 후 대기 |
+| 셧다운 | ≤ 6.6 V | `STATE_FAILSAFE` 진입, 엎드린 자세로 서보 토크 해제 |
+
+**XIAO 비전 노드** — 3.7V 1000mAh LiPo
+
+| 항목 | 값 | 산출 근거 |
+| :--- | :--- | :--- |
+| 평균 소비전류 | 180 ~ 250 mA | 카메라 구동(~50mA) + Wi-Fi 연속 송신 |
+| 순간 피크 | 300 ~ 500 mA | Wi-Fi TX 버스트 |
+| 실사용 용량 | ~800 mAh | 정격의 약 80% (레귤레이터 드롭아웃 3.4~3.5V 컷) |
+| **예상 구동시간** | **약 3 ~ 4 시간** | 800mAh ÷ 220mA |
+
+> **설계 지침**: 500mAh 셀은 1C 한계가 500mA라 Wi-Fi 피크에서 전압 강하 → 브라운아웃 리셋이 발생한다. 1000mAh + 벌크 커패시터로 여유를 확보한다.
+>
+> **참고**: 비전 노드 구동시간은 병목이 아니다. 8개 서보를 구동하는 MechDog 본체가 먼저 방전된다(추정 30~60분). 실측하여 본 문서에 반영할 것.
+
+### 2.5 소프트웨어 스택
+
+| 노드 | 언어/런타임 | 주요 의존성 |
+| :--- | :--- | :--- |
+| MechDog ESP32 | Arduino / C++17 | `HW_MechDog.h`, `mech_base_types.h`, `WiFi.h`, `WiFiUdp.h` |
+| XIAO ESP32S3 | Arduino / C++17 | `esp_camera.h`, `WiFi.h`, ESP32 HTTP 서버 |
+| Host PC | Python 3.12 | OpenCV, onnxruntime-directml, FastAPI, uvicorn, websockets, PyYAML |
+| Host PC (Phase 2) | ROS2 Jazzy (WSL2) | `slam_toolbox`, `rviz2`, `tf2` |
+
+---
+
+## 3. 기능 요구사항 (Functional Requirements)
+
+> 표기: **[P1]** = Phase 1 (필수) · **[P2]** = Phase 2 (확장)
+
+### FR-1: 원격 제어 링크 및 페일세이프 [P1]
+
+가장 먼저 구현하고 가장 마지막까지 지켜야 할 요구사항이다. 다른 모든 기능이 이 위에 얹힌다.
+
+- **FR-1.1** MechDog ESP32는 커스텀 Arduino 펌웨어로 Wi-Fi STA 모드에 접속하고, UDP 포트에서 제어 명령을 수신해야 한다.
+- **FR-1.2** 수신한 명령을 `HW_MechDog` API 호출로 변환하여 실행해야 한다.
+- **FR-1.3 (Command Timeout — 최우선 안전 요구사항)** 마지막 유효 명령 수신 후 **300 ms** 동안 신규 명령이 없으면 즉시 `move(0, 0)`으로 정지해야 한다. 마지막 명령을 계속 실행해서는 안 된다.
+- **FR-1.4** 10 Hz 주기로 텔레메트리(상태, 거리, IMU, 배터리)를 Host PC로 송신해야 한다.
+- **FR-1.5 (Link Loss)** 3초 이상 통신이 복구되지 않으면 `STATE_FAILSAFE`로 전환하여 안정 자세(엎드림)를 취해야 한다.
+- **FR-1.6 (Sequence Guard)** 명령 패킷의 `seq`가 직전 수신값보다 작거나 같으면(UDP 순서 역전·중복) 해당 패킷을 폐기해야 한다.
+
+### FR-2: 자율 순찰 및 장애물 회피 [P1]
+
+- **FR-2.1** `CMD_START_PATROL` 수신 시 Trot 보행으로 자율 전진을 수행한다 (`STATE_PATROL`).
+- **FR-2.2 (온보드 반사 정지)** 초음파 측정거리가 **25 cm 미만**이면 **Host PC 판단을 기다리지 않고** 로봇이 즉시 정지해야 한다. (Tier 1)
+- **FR-2.3 (회피 기동)** 정지 후 Host PC가 `STATE_AVOID`로 전환하여 **후진 → 선회 보행(arc) → 전방 재확인** 시퀀스를 지시한다. 제자리 회전이 불가하므로 **후진 거리를 충분히 확보**해야 한다(기본 20cm 이상, `config.yaml`). (Tier 2, 근거: DR-11)
+- **FR-2.4 (주기 스캔)** 순찰 중 설정 주기(기본 10초)마다 정지하여 `transform()`으로 **상체 피치**를 제어하는 주변 스캔을 3초간 수행하고 순찰을 재개한다 (`STATE_SCAN`). **좌우 시야 확보는 몸통 yaw가 불가하므로 선회 보행으로 수행한다** (근거: DR-11).
+- **FR-2.5** 순찰 타이머, 회피 거리, 스캔 주기 등 모든 상수는 하드코딩하지 않고 `config.yaml`에서 로드해야 한다.
+
+### FR-3: 사람 인지 및 경비 대응 [P1]
+
+- **FR-3.1 (영상 파이프라인)** XIAO 비전 노드는 MJPEG over HTTP로 영상을 송출하고, Host PC가 이를 수신하여 YOLOv8(ONNX Runtime)으로 `person` 클래스를 검출한다.
+- **FR-3.2 (Alert 전환)** 신뢰도 임계값(기본 0.5) 이상의 사람이 **연속 3프레임** 검출되면 `STATE_ALERT`로 전환한다. 단발 오검출로 상태가 튀지 않도록 한다.
+- **FR-3.3 (Alert Stance)** `transform()`으로 몸체를 전방 상향(Pitch Up 15°)으로 세워 경계 태세를 취한다.
+- **FR-3.4 (Warning Broadcast)** 침입자 인지 시 경고 신호를 발령한다. Advanced Kit의 **MP3 모듈 / WonderEcho 음성 모듈**을 활용하며, 미장착 시 대시보드 시각 경보로 대체한다.
+- **FR-3.5 (Target Tracking)** 검출 바운딩박스 중심의 화면 내 x축 편차에 비례하여 **선회 보행(arc)** 으로 타겟을 시야 중앙에 유지한다 (`STATE_TRACK`). 데드존을 두어 미세 진동을 억제한다. 제자리 선회가 불가하므로 **로봇이 타겟 방향으로 접근하며 방향을 트는 동작**이 되며, 이는 경비 로봇의 대응 동작으로 타당하다. (근거: DR-11)
+- **FR-3.5.1 (조건부)** OI-8에서 `transform()` yaw 동작이 확인되면, 편차가 작을 때는 **발을 고정한 몸통 yaw**로 시선만 돌려 불필요한 이동을 줄인다.
+- **FR-3.6 (Target Lost)** 5초간 타겟 미검출 시 `STATE_PATROL`로 복귀한다.
+- **FR-3.7 (Event Logging)** 탐지 시점의 스냅샷(JPEG), 타임스탬프, 신뢰도, 바운딩박스를 이벤트 로그에 기록하고 대시보드로 실시간 푸시한다.
+
+### FR-4: 웹 미션 대시보드 [P1]
+
+기존 `ros2_amr_fleet_control` 프로젝트의 FastAPI + WebSocket 관제 UI를 재사용한다.
+
+- **FR-4.1** 실시간 FPV 영상과 검출 바운딩박스 오버레이를 표시한다.
+- **FR-4.2** 텔레메트리(배터리 전압, IMU 피치/롤/요, 초음파 거리, 현재 FSM 상태, 링크 지연)를 10 Hz로 스트리밍하여 차트/게이지로 표시한다.
+- **FR-4.3 (수동 오버라이드)** 가상 조이스틱 또는 키보드로 자율 모드를 중단하고 수동 조작할 수 있어야 한다. 오버라이드 중에도 **FR-2.2 온보드 반사 정지는 유지**된다.
+- **FR-4.4 (E-Stop)** 화면 상시 노출 비상정지 버튼. 클릭 시 즉시 정지 및 `STATE_FAILSAFE` 진입.
+- **FR-4.5 (Event Feed)** 사람 감지, 회피, 페일세이프 등 이벤트를 스냅샷과 함께 시간순으로 표시한다.
+- **FR-4.6 [P2] (Zone Manager)** SLAM 맵 위에서 순찰 웨이포인트와 위험구역을 지정하고 출동 명령을 트리거한다.
+
+### FR-5: 통신 메시지 스펙 [P1]
+
+> 노드가 물리적으로 배선되지 않는 구조이므로 전송 계층은 Wi-Fi이다. 유선 프로토콜을 채택하지 않은 이유는 DR-2 참조.
+
+#### FR-5.1 제어 명령 (Host PC → MechDog ESP32, UDP)
+
+송신 주기 **10 Hz 고정** (명령 변화가 없어도 계속 송신하여 FR-1.3 타임아웃을 갱신한다).
+
+```json
+{"seq": 1234, "ts": 1756800000123, "type": "MOVE",  "step": 60, "angle": 12}
+{"seq": 1235, "ts": 1756800000223, "type": "POSE",  "pitch": 15, "roll": 0, "height": 0, "dur": 300}
+{"seq": 1236, "ts": 1756800000323, "type": "GAIT",  "lift_time": 120, "ground_time": 180, "height": 25}
+{"seq": 1237, "ts": 1756800000423, "type": "STOP"}
+{"seq": 1238, "ts": 1756800000523, "type": "ACTION", "id": 7}
+```
+
+| 필드 | 범위 | HW_MechDog 매핑 |
+| :--- | :--- | :--- |
+| `step` | −100 ~ 100 (mm) | `move(step, angle)` 제1인자 |
+| `angle` | −30 ~ 30 (deg) | `move(step, angle)` 제2인자 |
+| `pitch`/`roll` | 라이브러리 허용 범위 | `transform(pose, dur)` |
+| `id` | 0 ~ 15 | 내장 액션 그룹 |
+
+**수신측 검증 규칙** — ① `seq` 역전/중복 폐기(FR-1.6) ② 필드 범위 클램핑 ③ 파싱 실패 시 패킷 폐기하되 타임아웃 카운터는 갱신하지 않음.
+
+#### FR-5.2 텔레메트리 (MechDog ESP32 → Host PC, UDP, 10 Hz)
+
+```json
+{
+  "seq": 88, "ts": 1756800000500,
+  "state": "PATROL",
+  "dist_cm": 47,
+  "imu": {"pitch": 1.2, "roll": -0.4, "yaw": 183.5},
+  "batt_v": 7.62,
+  "last_cmd_age_ms": 34,
+  "flags": {"lowbatt": false, "tipped": false, "link_ok": true}
+}
+```
+
+#### FR-5.3 영상 (XIAO → Host PC)
+
+- `http://<XIAO_IP>:81/stream` — multipart/x-mixed-replace MJPEG
+- 기본 해상도 **VGA 640×480 @ 15 fps**, 대역 부족 시 QVGA 320×240으로 폴백
+- Host PC는 스트림 단절 시 **지수 백오프(1s → 2s → 4s, 최대 30s)** 로 자동 재연결해야 한다.
+
+#### FR-5.4 스캔 데이터 [P2]
+
+- LiDAR 노드 → Host PC, UDP. LD06 원시 패킷을 그대로 중계 (약 28.8 KB/s).
+- Host PC 측에서 파싱하여 ROS2 `sensor_msgs/LaserScan`으로 변환한다.
+
+### FR-6: LiDAR SLAM 및 위험구역 출동 [P2]
+
+> 위치 추정 수단이 확보된 전제 위에서만 성립하므로 Phase 2로 분리한다. 근거는 DR-8 참조.
+>
+> ⚠️ **측위 방식은 미확정이다.** LiDAR SLAM(Track A)과 스마트폰 VIO(Track B) 두 후보를 병행 검토 중이며, 게이트 테스트 결과로 결정한다. 상세 비교와 결정 매트릭스는 **[측위 방식 비교 문서](LOCALIZATION_OPTIONS.md)** 를 따른다. 아래 FR-6은 두 트랙에 공통 적용된다.
+
+- **FR-6.1 (매핑 / 측위)** 선택된 트랙의 센서 입력으로 공간을 인식하고 로봇의 위치·자세를 추정한다. **Track A**: LD06 스캔 + odometry prior → ROS2 `slam_toolbox`가 2D occupancy grid 생성. **Track B**: ARCore VIO가 6자유도 pose를 미터 단위로 제공. ROS2의 역할은 **"스캔을 넣으면 맵과 위치를 반환하는 블랙박스"** 로 한정하며, 경로계획·행동 로직은 Python 계층에 둔다.
+- **FR-6.2 (Stop-and-Scan)** 초기 매핑은 **정지 → 자세 안정 대기 → 스캔 취득 → 이동**을 반복하는 방식으로 수행한다. 보행 중 연속 스캔은 차기 과제로 둔다. (근거: RISK-03)
+- **FR-6.3 (스캔 유효성 필터)** IMU 기준 |pitch| 또는 |roll|이 임계값(기본 5°)을 초과하는 시점의 스캔은 폐기한다.
+- **FR-6.4 (Gait Odometry)** 엔코더가 없으므로 "보행 명령 1초당 이동거리"를 실측 캘리브레이션하여 SLAM의 odometry prior로 제공한다. IMU yaw를 회전량 추정에 사용한다.
+- **FR-6.5 (Dispatch)** 대시보드에서 지정한 위험구역으로 웨이포인트 추종 이동한다 (`STATE_HAZARD_DISPATCH`). **목표는 반드시 맵 프레임에 고정된 앵커/웨이포인트 객체로 지정하며, 누적 오도메트리 좌표값으로 지정해서는 안 된다** (드리프트 내성 확보). 경로는 **최소 회전 반경을 존중**해야 한다(DR-11).
+- **FR-6.6 (Pose Validity)** SLAM pose가 **500 ms** 이상 갱신되지 않거나 추정 신뢰도가 임계값 미만이면 즉시 정지하고 `STATE_LOST`로 전환한다.
+- **FR-6.6.1 (센서 상시 장착)** 측위는 주행 중 지속적으로 필요하므로 **측위 센서는 시연·운용 중 탈거할 수 없다.** 매핑만 수행하고 센서를 제거하면 저장된 지도는 활용 불가능한 산출물이 된다.
+- **FR-6.7 (Hazard Inspection)** 목표 도달 시 제자리 선회 스캔을 수행하고, 캡처 이미지를 **Tier 3 클라우드 VLM**에 전송하여 위험요소 판독 리포트를 생성한다. 이 경로는 비실시간이며 주행에 영향을 주지 않아야 한다.
+
+---
+
+## 4. 비기능 요구사항 (Non-Functional Requirements)
+
+### NFR-1: 성능 및 레이턴시
+
+| ID | 항목 | 목표 | 측정 방법 |
+| :--- | :--- | :--- | :--- |
+| NFR-1.1 | **E2E 인지 지연** (촬영 → 검출 → 명령 도달) | ≤ 250 ms | 프레임 타임스탬프와 명령 수신 시각 차 |
+| NFR-1.2 | YOLO 추론 시간 | ≤ 15 ms | 기보유 실측 6.4ms 대비 여유 확보 |
+| NFR-1.3 | MJPEG 스트림 | ≥ 15 fps @ VGA | 수신 프레임 카운트 |
+| NFR-1.4 | 명령 → 서보 반영 | ≤ 50 ms | 온보드 타임스탬프 |
+| NFR-1.5 | **온보드 반사 정지** (초음파 → 정지) | **≤ 50 ms** | 안전 요구. Host PC 미경유 |
+| NFR-1.6 | 대시보드 텔레메트리 | 10 Hz | WebSocket 수신 주기 |
+
+> **명시적 비목표(Non-Goal)** — 보행 제어 주기(50Hz)는 `HW_MechDog` 라이브러리가 보장한다. 본 프로젝트는 이를 구현하지 않으며, **커스텀 로직이 보행 제어 루프를 방해하지 않을 것**만을 요구사항으로 삼는다. 온보드 코드에 블로킹 지연이나 장시간 인터럽트 차단을 두어서는 안 된다.
+
+### NFR-2: 신뢰성 및 안전성
+
+| ID | 항목 | 요구사항 |
+| :--- | :--- | :--- |
+| NFR-2.1 | Command Timeout | 300 ms 무명령 → 정지 (FR-1.3) |
+| NFR-2.2 | Link Loss | 3 s 무통신 → `STATE_FAILSAFE`, 안정 자세 |
+| NFR-2.3 | 저전압 | 7.0 V 경고 / 6.6 V 셧다운 및 서보 토크 해제 |
+| NFR-2.4 | 전도 감지 | \|roll\| 또는 \|pitch\| > 45°가 2초 지속 → 서보 토크 해제 (기어 파손 방지) |
+| NFR-2.5 | Watchdog | ESP32 하드웨어 WDT 활성화, 행(hang) 시 1초 이내 자동 리셋 |
+| NFR-2.6 | Graceful Degradation | 비전 노드 단절 시에도 순찰·회피는 계속 동작해야 한다 (사람 인지 기능만 비활성) |
+| NFR-2.7 | E-Stop 우선순위 | 대시보드 E-Stop은 모든 상태에서 최우선 처리 |
+
+### NFR-3: 코드 품질 — 4대 엔지니어링 축
+
+| 축 | 적용 지점 |
+| :--- | :--- |
+| **① 파라미터화 및 가독성** | 모든 상수를 `config/config.yaml`로 분리 (Wi-Fi SSID, IP/포트, YOLO 임계값, FSM 타이머, 보행 파라미터, 안전 임계값). 시크릿은 `.env`. Dev/Prod 프로파일 분리. 펌웨어는 `config.h` + NVS 저장. **하드코딩된 매직 넘버 0개**를 목표로 한다 |
+| **② 예외 처리 및 안정성** | 패킷 손실·순서역전·범위이탈 방어(FR-1.6), 카메라 스트림 지수 백오프 재연결(FR-5.3), 검출 실패 시 안전측 판단, 저전압·전도 대응, 모든 외부 I/O에 타임아웃 |
+| **③ 성능 및 메모리 관리** | 추론을 별도 워커 스레드로 분리, **최신 프레임만 처리하는 드롭 정책**(큐 적체 방지), MJPEG 디코드 병목 프로파일링, 장시간 구동 메모리 누수 점검 |
+| **④ 로깅** | 구조화 로그(JSON Lines) + 레벨링(DEBUG/INFO/WARN/ERROR), 로테이션, 모든 상태 전이 기록, 이벤트 블랙박스(스냅샷 + 텔레메트리 스냅샷), 재현 가능한 컨텍스트(seq, ts, state) 포함 |
+
+---
+
+## 5. 행동 상태 전이표 (FSM)
+
+FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 무관하게 항상 우선한다.
+
+| 현재 상태 | 트리거 | 다음 상태 | 액션 | Tier |
+| :--- | :--- | :--- | :--- | :---: |
+| `IDLE` | `CMD_START_PATROL` | `PATROL` | Trot 보행 개시 | 2 |
+| `PATROL` | 초음파 < 25 cm | `AVOID` | **즉시 정지(온보드)** 후 회피 시퀀스 | 1→2 |
+| `PATROL` | person 3프레임 연속 검출 | `ALERT` | Pitch Up 15°, 경고 발령, 스냅샷 저장 | 2 |
+| `PATROL` | 순찰 타이머 10 s 만료 | `SCAN` | 정지 후 상체 스캔 3초 | 2 |
+| `AVOID` | 회피 시퀀스 완료 & 전방 clear | `PATROL` | 순찰 재개 | 2 |
+| `SCAN` | 스캔 완료 | `PATROL` | 순찰 재개 | 2 |
+| `ALERT` | 타겟 x축 편차 > 데드존 | `TRACK` | 제자리 선회로 중앙 정렬 | 2 |
+| `TRACK` | 타겟 중앙 정렬 유지 | `ALERT` | 경계 자세 유지 | 2 |
+| `ALERT` / `TRACK` | 타겟 미검출 5 s 지속 | `PATROL` | 순찰 복귀 | 2 |
+| *ANY* | 대시보드 수동 오버라이드 | `MANUAL` | 조이스틱 직결 (반사 정지는 유지) | 2 |
+| *ANY* | **명령 타임아웃 300 ms** | (온보드 정지) | `move(0,0)` — FSM 무관 | **1** |
+| *ANY* | **링크 두절 3 s / 저전압 / 전도** | `FAILSAFE` | 안정 자세, 서보 토크 해제 | **1** |
+| *ANY* | **E-Stop** | `FAILSAFE` | 즉시 정지 | 1 |
+| `FAILSAFE` | 조건 해소 + 수동 리셋 | `IDLE` | 자동 복귀 금지. 반드시 사용자 확인 | 2 |
+| *ANY* `[P2]` | 위험구역 알람 | `HAZARD_DISPATCH` | 웨이포인트 추종 이동 | 2 |
+| `HAZARD_DISPATCH` `[P2]` | 목표 도달 | `HAZARD_SCAN` | 선회 스캔 + 클라우드 VLM 판독 | 2→3 |
+| *ANY* `[P2]` | SLAM pose 500 ms 미갱신 | `LOST` | 즉시 정지, 재측위 대기 | 2 |
+
+> **설계 규칙**: `FAILSAFE`에서 자동으로 빠져나오지 않는다. 원인 해소 후 사용자가 명시적으로 리셋해야 한다.
+
+---
+
+## 6. CI/CD 파이프라인
+
+### 6.1 현행 워크플로우의 문제점
+
+`.github/workflows/firmware_ci.yml`의 아래 항목을 수정해야 한다.
+
+| # | 문제 | 조치 |
+| :-- | :--- | :--- |
+| 1 | `cppcheck --error-exitcode=0` → **어떤 문제를 찾아도 절대 실패하지 않음** | `--error-exitcode=1` + baseline 억제 파일 도입 |
+| 2 | clang-format을 설치만 하고 실행 스텝이 없음 | `clang-format --dry-run --Werror` 추가 |
+| 3 | PRD에 명시된 단위 테스트·릴리스 스텝이 워크플로우에 없음 | 아래 6.2로 재구성 |
+| 4 | 존재하지 않는 디렉터리를 대상으로 하여 잡이 실패 | 실제 디렉터리 구조에 맞게 경로 갱신 |
+| 5 | Python 계층에 대한 검증이 전무 | pytest / ruff 잡 신설 |
+
+### 6.2 개정 파이프라인
+
+```
+[ Git Push / PR ]
+      │
+      ├─▶ Job 1: Python Quality
+      │     · ruff (lint + format check)
+      │     · pytest  ← 하드웨어 없이 검증 가능한 순수 로직
+      │         - FSM 상태 전이 테이블 전수 검증
+      │         - 명령 JSON 직렬화/역직렬화 및 범위 클램핑
+      │         - seq 역전·중복 폐기 로직
+      │         - 타임아웃/페일세이프 판정 로직
+      │         - config.yaml 스키마 검증
+      │     · coverage 리포트
+      │
+      ├─▶ Job 2: Firmware Quality
+      │     · clang-format --dry-run --Werror
+      │     · cppcheck (--error-exitcode=1)
+      │
+      ├─▶ Job 3: Firmware Build (matrix)
+      │     · arduino-cli 또는 PlatformIO
+      │     · [firmware_mechdog_motion] esp32:esp32:esp32
+      │     · [firmware_xiao_vision]    esp32:esp32:XIAO_ESP32S3
+      │     · 빌드 산출물(.bin/.elf) 아티팩트 업로드
+      │
+      └─▶ Job 4: Release (tag push 시)
+            · Semantic Versioning 태그
+            · 펌웨어 바이너리 첨부 릴리스 생성
+```
+
+> **핵심 원칙** — 임베디드에서 값싸게 자동화되는 것은 **하드웨어에 의존하지 않는 순수 로직**이다. FSM 전이, 패킷 파싱, 안전 판정 로직을 하드웨어 접근에서 분리하여 설계하면 CI에서 전수 검증할 수 있다. 이를 위해 온보드 코드도 **로직 계층과 HAL 호출 계층을 분리**한다.
+
+> ⚠️ **선결 과제** — `HW_MechDog` 라이브러리는 GitHub Actions 러너에 없다. 라이브러리를 `third_party/`로 벤더링하거나 CI 캐시에 배치해야 펌웨어 빌드 잡이 성립한다. 라이선스 확인 필요. (RISK-07)
+
+---
+
+## 7. 마일스톤 및 검수 기준
+
+### Phase 1 — 자율 경비 로봇 (ROS2 미사용)
+
+| 마일스톤 | 산출물 | 검수 기준 (Acceptance Criteria) |
+| :--- | :--- | :--- |
+| **M0. 하드웨어 검증** | 검증 리포트 | ① 메인 ESP32 WiFiScan 예제로 AP 스캔 성공 및 RSSI 기록 ② MechDog 실측 무게·치수 기록 ③ 순정 배터리 연속 보행 시간 실측 |
+| **M1. 제어 링크 & 페일세이프** | 양측 펌웨어, `config.yaml`, Python 송신기 | ① 키보드로 로봇 조종 성공 ② **송신 중단 후 300ms 내 정지 확인** ③ 텔레메트리 10Hz 수신 ④ 저전압/전도 페일세이프 동작 확인 |
+| **M2. 비전 파이프라인 & 대시보드** | XIAO 펌웨어, YOLO 워커, FastAPI 대시보드 | ① VGA 15fps 이상 스트리밍 ② 사람 검출 박스 표시 ③ **E2E 인지 지연 250ms 이하 측정치 제시** ④ 스트림 강제 차단 후 자동 재연결 확인 |
+| **M3. 행동 FSM 통합** | FSM 엔진, 이벤트 로거 | ① 순찰 → 장애물 → 회피 → 순찰 자동 순환 ② 사람 등장 시 ALERT/TRACK 전이 및 복귀 ③ 전 상태 전이가 구조화 로그에 기록 ④ **10분 무개입 연속 주행 성공** |
+
+**M3 완료 시점에서 프로젝트는 완결된 산출물이다.** FR-1~FR-5 전체와 NFR 전항이 충족된다.
+
+### Phase 2 — SLAM 확장 (조건부 착수)
+
+> **착수 조건**: M0에서 측정한 탑재 여력이 약 100g 이상일 것. 미달 시 Phase 2를 ArUco 마커 기반 구역 정의로 대체한다.
+
+| 마일스톤 | 산출물 | 검수 기준 |
+| :--- | :--- | :--- |
+| **M4. LiDAR & 매핑** | LiDAR 노드, ROS2 브리지, gait odometry 캘리브레이션 | ① 스캔 UDP 무손실 수신 ② rviz2에서 스캔 정상 표시 ③ **Stop-and-Scan으로 실내 1개 공간 맵 생성** ④ 스캔 유효성 필터 동작 확인 |
+| **M5. 웨이포인트 순찰 & 위험구역 출동** | Zone Manager UI, 웨이포인트 추종기 | ① 맵 클릭으로 목표 지정 → 자율 도달 ② `STATE_LOST` 정상 발동 ③ 위험구역 도착 후 VLM 리포트 생성 |
+
+---
+
+## 8. 리스크 레지스터
+
+| ID | 리스크 | 영향 | 대응 | 상태 |
+| :--- | :--- | :---: | :--- | :--- |
+| **RISK-01** | 메인 ESP32 자체 Wi-Fi 사용 불가 (안테나 차폐 등) | 高 | XIAO에서 UART 2가닥 연결로 명령 중계 (배선 최소 추가) | **가능으로 가정**, M0에서 검증 |
+| **RISK-02** | MechDog 탑재중량 부족으로 LiDAR 장착 불가 | 高 | Phase 2를 ArUco 마커 기반으로 대체 | **미실측 — M0 필수** |
+| **RISK-03** | 보행 진동으로 2D 스캔 평면 왜곡 (피치 10° = 5m에서 약 87cm 편차) | 高 | ① Stop-and-Scan(FR-6.2) ② IMU 유효성 필터(FR-6.3) ③ 소프트 마운트 | 설계 반영 |
+| **RISK-04** | 엔코더 부재로 odometry prior 없음 → SLAM 정확도 저하 | 中 | Gait odometry 캘리브레이션(FR-6.4) + IMU yaw | 설계 반영 |
+| **RISK-05** | Wi-Fi 대역 경합 (MJPEG + 스캔 동시) | 中 | **ESP32/ESP32-S3는 2.4GHz 전용이므로 로봇 링크를 5GHz로 옮길 수 없다.** ① Host PC를 5GHz/유선으로 붙여 AP의 2.4GHz 부하를 절감 ② 개발 전용 AP로 채널 분리 ③ 해상도·fps 적응 조절 | 설계 반영 |
+| **RISK-06** | ROS2 숙련도 부족으로 디버깅 정체 | 中 | Phase 1을 ROS2 없이 완결. Phase 2에서도 ROS2를 SLAM 전용으로 격리(nav2 미사용) | **설계로 회피** |
+| **RISK-07** | `HW_MechDog` 라이브러리가 CI 러너에 부재 | 中 | `third_party/` 벤더링 + 라이선스 확인 | 미해결 |
+| **RISK-08** | XIAO Wi-Fi TX 피크로 브라운아웃 리셋 | 低 | 1000mAh 셀 + 470~1000µF 벌크 커패시터 | 설계 반영 |
+| **RISK-09** | WSL2 기본 NAT로 로봇→WSL2 UDP 도달 불가 | 低 | `.wslconfig`에 `networkingMode=mirrored` (Win11 빌드 26200 지원) | 해법 확보 |
+
+---
+
+## 9. 미확정 사항 (Open Issues)
+
+| # | 항목 | 해소 시점 |
+| :-- | :--- | :--- |
+| OI-1 | 메인 ESP32 Wi-Fi 가용 여부 및 RSSI | M0 |
+| OI-2 | MechDog 실측 무게 / 치수 / 탑재 여력 | M0 |
+| OI-3 | 메인보드 여유 UART 핀 노출 여부 (RISK-01 대비책용) | M0 |
+| OI-4 | 순정 배터리 연속 보행 시간 | M0 |
+| OI-5 | `HW_MechDog` 라이브러리 라이선스 및 재배포 가능 여부 | M1 이전 |
+| OI-6 | MP3 / WonderEcho 모듈 제어 인터페이스 (FR-3.4) | M3 |
+| OI-7 | LiDAR 노드 방식 확정 — XIAO 겸임 vs 별도 ESP32-C3 | M4 |
+| **OI-8** | **`transform()`의 yaw 파라미터가 실제 동작하는가** (FR-3.5.1 분기점) | **M0** |
+| **OI-9** | **측위 트랙 확정** — Track A(LiDAR) / B(폰 VIO) / C(마커). [비교 문서](LOCALIZATION_OPTIONS.md) 게이트 테스트 | **M0** |
+
+---
+
+## 10. 프로젝트 구조 (목표)
+
+```
+mechdog_physical_ai/
+├── README.md
+├── docs/
+│   ├── PRD_Physical_AI_Guard_Robot.md    # 본 문서
+│   ├── HARDWARE_VERIFICATION.md          # M0 실측 리포트
+│   └── archive/                        # 초기 구상 노트
+├── config/
+│   ├── config.yaml                       # 전 파라미터 (Dev/Prod 프로파일)
+│   └── .env.example                      # 시크릿 템플릿
+├── firmware_mechdog_motion/              # MechDog ESP32 (Arduino)
+│   ├── src/
+│   │   ├── main.cpp
+│   │   ├── command_parser.*              # HAL 비의존 → 테스트 대상
+│   │   ├── safety_monitor.*              # HAL 비의존 → 테스트 대상
+│   │   └── hal_mechdog.*                 # HW_MechDog 래퍼
+│   └── config.h
+├── firmware_xiao_vision/                 # XIAO ESP32S3 (Arduino)
+│   └── src/main.cpp                      # 카메라 + MJPEG 서버
+├── host/                                 # Host PC (Python)
+│   ├── vision/
+│   │   ├── stream_client.py              # MJPEG 수신 + 재연결
+│   │   └── detector.py                   # YOLOv8 ONNX
+│   ├── behavior/
+│   │   ├── fsm.py                        # 순수 로직 → 테스트 대상
+│   │   └── commander.py                  # UDP 송신
+│   ├── telemetry/
+│   │   └── receiver.py
+│   ├── dashboard/
+│   │   ├── server.py                     # FastAPI + WebSocket
+│   │   └── static/
+│   └── common/
+│       ├── protocol.py                   # 순수 로직 → 테스트 대상
+│       └── logging_setup.py
+├── tests/                                # pytest (하드웨어 불요)
+├── third_party/                          # HW_MechDog 벤더링
+└── .github/workflows/ci.yml
+```
+
+---
+
+## 부록 A. 참고 자료
+
+- [MechDog Wiki — Getting Ready](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/1.Getting_Ready.html)
+- [MechDog Wiki — Arduino Programming Projects](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/5.Arduino_Programming_Projects.html)
+- [MechDog Wiki — Python Programming Projects](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/4.Python_Programming_Projects.html)
+- [MechDog Wiki — IOT Expanded Lesson](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/9.IOT_Expanded_Lesson.html)
+- [MechDog Wiki — Resources Download](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/resources_download.html)
+- 내부 자산: `ros2_amr_fleet_control` — ONNX Runtime 추론 파이프라인 및 FastAPI 관제 대시보드 재사용원

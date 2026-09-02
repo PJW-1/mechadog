@@ -1,0 +1,108 @@
+"""config.yaml 스키마 검증.
+
+NFR-3① (파라미터화)의 최소 안전망이다. 코드가 참조하는 키가 설정에서
+사라지면 런타임이 아니라 CI에서 잡히게 한다.
+
+WBS 4.4.1 의 config 로더가 구현되면 이 테스트를 로더 기반으로 확장한다.
+"""
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+
+# 코드가 의존하는 키 — 안전 임계값은 Tier 1 판정에 직결되므로 누락을 허용하지 않는다
+REQUIRED_SECTIONS = (
+    "network",
+    "safety",
+    "gait",
+    "fsm",
+    "vision",
+    "localization",
+    "logging",
+)
+
+REQUIRED_SAFETY_KEYS = (
+    "cmd_timeout_ms",
+    "link_loss_failsafe_ms",
+    "obstacle_stop_cm",
+    "battery_warn_v",
+    "battery_shutdown_v",
+    "tip_angle_deg",
+    "tip_duration_ms",
+)
+
+
+@pytest.fixture(scope="module")
+def cfg() -> dict:
+    assert CONFIG_PATH.exists(), f"설정 파일 없음: {CONFIG_PATH}"
+    with CONFIG_PATH.open(encoding="utf-8") as f:
+        loaded = yaml.safe_load(f)
+    assert isinstance(loaded, dict), "config.yaml 최상위는 매핑이어야 한다"
+    return loaded
+
+
+def test_profile_is_valid(cfg: dict) -> None:
+    assert cfg.get("profile") in {"dev", "prod"}
+
+
+@pytest.mark.parametrize("section", REQUIRED_SECTIONS)
+def test_required_sections_exist(cfg: dict, section: str) -> None:
+    assert section in cfg, f"필수 섹션 누락: {section}"
+
+
+@pytest.mark.parametrize("key", REQUIRED_SAFETY_KEYS)
+def test_required_safety_keys_exist(cfg: dict, key: str) -> None:
+    assert key in cfg["safety"], f"안전 파라미터 누락: safety.{key}"
+
+
+def test_battery_thresholds_ordered(cfg: dict) -> None:
+    """저전압 셧다운은 경고보다 낮아야 한다 (NFR-2.3).
+
+    2S 리튬 기준. 순서가 뒤바뀌면 셧다운이 먼저 걸려 로봇이 기동하지 못한다.
+    """
+    safety = cfg["safety"]
+    assert safety["battery_shutdown_v"] < safety["battery_warn_v"]
+    # 셀당 3.3V(=6.6V) 미만은 과방전 영역이므로 하한을 둔다
+    assert safety["battery_shutdown_v"] >= 6.6
+
+
+def test_command_timeout_shorter_than_link_loss(cfg: dict) -> None:
+    """정지(FR-1.3)가 페일세이프(FR-1.5)보다 먼저 발동해야 한다."""
+    safety = cfg["safety"]
+    assert safety["cmd_timeout_ms"] < safety["link_loss_failsafe_ms"]
+
+
+def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
+    """명령 타임아웃은 Tier 1 예산(FR-1.3 = 300ms) 이내여야 한다."""
+    assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 300
+
+
+def test_gait_params_within_api_range(cfg: dict) -> None:
+    """HW_MechDog API 허용 범위 (DR-1).
+
+    move(step_length, angle) — step -100~100mm, angle -30~30deg.
+    범위를 벗어난 값은 라이브러리가 어떻게 처리할지 보장되지 않는다.
+    """
+    gait = cfg["gait"]
+    assert -100 <= gait["step_length_mm"] <= 100
+    assert -30 <= gait["turn_angle_deg"] <= 30
+
+
+def test_localization_track_is_known(cfg: dict) -> None:
+    """측위 트랙은 docs/LOCALIZATION_OPTIONS.md 의 후보 중 하나여야 한다."""
+    assert cfg["localization"]["track"] in {"none", "lidar", "phone_vio", "aruco"}
+
+
+def test_detection_requires_consecutive_frames(cfg: dict) -> None:
+    """단발 오검출로 ALERT 로 튀지 않도록 2프레임 이상을 요구한다 (FR-3.2)."""
+    assert cfg["vision"]["detect_consecutive_frames"] >= 2
+
+
+def test_reconnect_backoff_is_increasing(cfg: dict) -> None:
+    """지수 백오프는 단조 증가해야 한다 (FR-5.3)."""
+    backoff = cfg["vision"]["reconnect_backoff_s"]
+    assert len(backoff) >= 2
+    assert backoff == sorted(backoff)

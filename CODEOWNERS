@@ -1,0 +1,24 @@
+# 기본 — 전체 변경은 팀 리뷰
+*                                   @OWNER
+
+# A · 임베디드
+/firmware_mechdog_motion/           @MEMBER_A
+/third_party/                       @MEMBER_A
+
+# B · 인지·AI
+/firmware_xiao_vision/              @MEMBER_B
+/host/vision/                       @MEMBER_B
+/host/dashboard/static/             @MEMBER_B
+
+# C · 시스템·통합
+/host/behavior/                     @MEMBER_C
+/host/dashboard/                    @MEMBER_C
+/host/common/                       @MEMBER_C
+/tests/                             @MEMBER_C
+/docs/                              @MEMBER_C
+/.github/                           @MEMBER_C
+
+# ⚠️ 통신 규약 — 3인 전원 리뷰 (CONTRIBUTING.md 5절)
+/host/common/protocol.py                            @MEMBER_A @MEMBER_B @MEMBER_C
+/firmware_mechdog_motion/src/command_parser.h       @MEMBER_A @MEMBER_B @MEMBER_C
+/firmware_mechdog_motion/src/command_parser.cpp     @MEMBER_A @MEMBER_B @MEMBER_C
