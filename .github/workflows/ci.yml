@@ -23,11 +23,13 @@ jobs:
           python-version: '3.12'
           cache: pip
 
+      # requirements.txt 는 환경 마커로 플랫폼을 분기한다.
+      # onnxruntime-directml 은 Windows 전용이므로 리눅스 러너에서는
+      # onnxruntime(CPU)이 설치된다.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest pytest-cov pyyaml
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
         run: ruff check .
