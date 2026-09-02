@@ -21,6 +21,11 @@ REQUIRED_SECTIONS = (
     "fsm",
     "vision",
     "localization",
+    "escalation",
+    "auth",
+    "posture",
+    "change_detect",
+    "zones",
     "logging",
 )
 
@@ -147,6 +152,70 @@ def test_inference_fps_not_above_stream_fps(cfg: dict) -> None:
     """추론 주기가 스트림 fps 를 넘을 수 없다."""
     vision = cfg["vision"]
     assert 0 < vision["inference_fps"] <= vision["target_fps"]
+
+
+def test_escalation_led_covers_all_levels(cfg: dict) -> None:
+    """L0~L3 과 페일세이프의 색상이 모두 정의되어 있어야 한다 (PRD 5.1).
+
+    색상이 빠지면 그 단계에서 로봇 상태를 읽을 수 없다.
+    """
+    led = cfg["escalation"]["led"]
+    for key in ("l0_patrol", "l1_observe", "l2_auth_request", "l3_alarm", "failsafe"):
+        assert key in led, f"에스컬레이션 색상 누락: {key}"
+        assert isinstance(led[key], str)
+
+
+def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
+    """L3·페일세이프는 자동 해제하지 않는다 (PRD 5.1 해제 규칙)."""
+    assert cfg["escalation"]["l3_requires_manual_reset"] is True
+
+
+def test_auth_bound_to_track_id(cfg: dict) -> None:
+    """인증은 추적 ID 에 귀속되어야 한다 (FR-3.6.2).
+
+    아니면 인원이 여러 명일 때 누가 인증되었는지 구분할 수 없다.
+    """
+    assert cfg["auth"]["bind_to_track_id"] is True
+
+
+def test_auth_timeouts_are_ordered(cfg: dict) -> None:
+    """인증 유효시간이 시도 타임아웃보다 길어야 한다 (FR-10.2.4 / 10.3)."""
+    auth = cfg["auth"]
+    assert auth["session_valid_s"] > auth["timeout_s"]
+    assert auth["max_attempts"] >= 1
+
+
+def test_posture_returns_before_move(cfg: dict) -> None:
+    """상향 자세에서는 지면이 안 보이므로 이동 전 복귀해야 한다 (FR-9.2.3)."""
+    assert cfg["posture"]["return_before_move"] is True
+
+
+def test_posture_steps_are_known(cfg: dict) -> None:
+    """자세 상승 단계는 정의된 수단만 사용한다 (FR-9.2.2).
+
+    stand_two_legs 는 측위 센서 장착 시 전도 위험으로 제외한다.
+    """
+    steps = cfg["posture"]["escalation_steps"]
+    assert steps, "자세 상승 단계가 비어 있다"
+    assert set(steps) <= {"pitch_up", "sit", "back_off"}
+    assert "stand_two_legs" not in steps
+
+
+def test_change_detect_confirms_over_cycles(cfg: dict) -> None:
+    """물체 변화는 연속 사이클 확인 후 확정한다 (FR-8.4).
+
+    단 person 출현은 즉시 처리한다.
+    """
+    cd = cfg["change_detect"]
+    assert cd["confirm_cycles"] >= 2
+    assert cd["person_immediate"] is True
+
+
+def test_zones_are_declared(cfg: dict) -> None:
+    """순찰 구역 A~E 가 선언되어 있어야 한다 (FR-7.1)."""
+    zones = cfg["zones"]
+    assert len(zones["ids"]) >= 2
+    assert zones["arrival_radius_mm"] > 0
 
 
 def test_reconnect_backoff_is_increasing(cfg: dict) -> None:

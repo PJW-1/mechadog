@@ -34,14 +34,17 @@
 - [ ] 판단 로직을 HAL 호출과 분리 (pytest 가능)
 - [ ] **온보드 안전 로직(Tier 1)을 Host PC로 옮기지 않았음**
 
-## ⚠️ 통신 규약 변경 여부
+## 통신 규약 변경 여부
 
-- [ ] **이 PR은 메시지 스키마를 변경하지 않습니다**
+- [ ] 스키마 변경 없음
+- [ ] **하위 호환 추가** (새 `type` / 옵션 필드) — 자유롭게 진행. 아래에 변경 내용만 기재
+- [ ] **파괴적 변경** (필드명·단위·의미·범위 변경, 타입 삭제) — 아래 4곳을 함께 수정
 
-<!-- 스키마를 변경하는 경우 아래를 모두 체크하고 3인 전원 리뷰를 받으세요 -->
-- [ ] 3인 전원 합의 완료
-- [ ] `host/common/protocol.py` 수정
-- [ ] `firmware_mechdog_motion/src/command_parser.*` 수정
-- [ ] `host/behavior/commander.py` 수정
-- [ ] `tools/mock_mechdog.py` 수정
-- [ ] `tests/test_protocol.py` 갱신
+<!-- 파괴적 변경인 경우에만 체크 -->
+- [ ] `host/common/protocol.py`
+- [ ] `firmware_mechdog_motion/src/command_parser.*`
+- [ ] `tools/mock_mechdog.py`
+- [ ] `tests/fixtures/protocol_samples.jsonl` (정본 픽스처)
+
+변경 내용:
+<!-- 예: SOUND 타입 추가 (phrase_id 필드) -->
