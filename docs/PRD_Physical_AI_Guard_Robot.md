@@ -138,7 +138,9 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
   3. **NVIDIA 전용이다.** 팀원 중 한 명이라도 AMD·Intel 그래픽이면 사용할 수 없다. DirectML은 DX12 GPU 전체에서 동작한다.
   4. CUDA·cuDNN·TensorRT 버전 정합성 문제로 환경 구축 비용이 크다.
 - **채택안** — **DirectML EP**(개발 PC) + **CPU EP**(CI). `select_providers()` 로 자동 폴백.
-- **재검토 조건** — 로컬 LLM/VLM을 도입하는 경우. 그때는 TensorRT-LLM이 실질적 차이를 만든다. 다만 본 설계는 VLM을 Tier 3 클라우드에 두므로 해당하지 않는다.
+- **재검토 조건**
+  1. 로컬 LLM/VLM을 도입하는 경우. 그때는 TensorRT-LLM이 실질적 차이를 만든다. 다만 본 설계는 VLM을 Tier 3 클라우드에 두므로 현재는 해당하지 않는다.
+  2. FR-3.1.2에서 **무거운 검출기(개방 어휘 계열 등)를 채택**하여 추론이 프레임 예산의 상당 비율을 차지하게 되는 경우. 단 그때도 **엔진 공유 불가·NVIDIA 종속 문제는 그대로 남으므로**, TensorRT보다 **모델 경량화** 또는 **추론 주기 하향(`vision.inference_fps`)** 을 먼저 검토한다.
 
 ---
 
@@ -201,7 +203,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 | :--- | :--- | :--- |
 | Hiwonder MechDog (Advanced Kit) | ESP32 메인보드, 8× 코어리스 서보(링크 구조), IMU, 초음파 | Arduino IDE 지원, 소스 오픈 |
 | Seeed XIAO ESP32S3 Sense | Xtensa 듀얼코어 240MHz, 8MB PSRAM, OV2640, PDM 마이크, microSD | 배터리 패드(BAT+/BAT−) + 충전 IC 내장 |
-| Host PC | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080, ROS2 Jazzy | 추론·SLAM·대시보드 전담. ⚠️ 팀원 PC 사양 확인 필요 (OI-14) |
+| Host PC | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080, ROS2 Jazzy | 추론·SLAM·대시보드 전담. **RTX 3080을 임시 기준 PC로 지정**(WBS 8절). 팀 내 RTX 5070 1대 확인, 나머지 1대 미확인 (OI-14) |
 | (미사용) ESP32-S3 비전 모듈 | Advanced Kit 포함품 | XIAO 사용으로 예비 부품 처리 |
 | (활용 검토) WonderEcho 음성 / MP3 모듈 | Advanced Kit 포함품 | **FR-3.4 경고 방송에 활용** |
 
@@ -670,7 +672,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 | **OI-8** | **`transform()`의 yaw 파라미터가 실제 동작하는가** (FR-3.5.1 분기점) | **M0** |
 | **OI-15** | **①번 범용 검출기 모델 선정** — COCO 고정 80클래스 vs 개방 어휘(open-vocabulary) 검출기. FR-8 변화 감지 대상 어휘가 판단 근거 | M2 |
 | **OI-13** | **PPE 데이터셋 확보 방식** — 공개 데이터셋(1~2 M/D) vs 직접 촬영·라벨링(4~6 M/D) | M0 |
-| **OI-14** | **팀원 PC의 GPU 사양** — 성능 측정 기준 PC 지정 필요 여부 | M0 |
+| **OI-14** | **세 번째 팀원의 GPU 사양 및 기준 PC 확정** — 확인: RTX 5070 / RTX 3080. **RTX 3080을 임시 기준 PC로 둠**(WBS 8절). 나머지 1대와 역할 배정 미정 | M0 |
 | **OI-10** | **WonderEcho 통신 방식** — I2C인가 UART인가 (위키는 I2C 포트, 모듈 문서는 UART 프레이밍) | M3 |
 | **OI-11** | WonderEcho 플랫폼의 재생 문구 입력란이 자유 텍스트인지 (임의 문장 합성 가능 범위) | M3 |
 | **OI-12** | 눈 LED 하드웨어 — Advanced Kit의 dot matrix / RGB 모듈로 대체 가능한지 | M3 |
