@@ -8,6 +8,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
 🧭 **[측위 방식 비교 — LiDAR vs 스마트폰 VIO](docs/LOCALIZATION_OPTIONS.md)** ← 결정 대기  
 🔧 **[M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**  
+🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 🤝 **[협업 규칙](CONTRIBUTING.md)**
 
 ---

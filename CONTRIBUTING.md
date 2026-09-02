@@ -1,6 +1,8 @@
 # 협업 규칙 (Contributing)
 
 > 3인 팀 · 4주 · [WBS](docs/WBS.md) 기준
+>
+> **절차는 이 문서, 구현 기준은 [엔지니어링 가이드](docs/ENGINEERING_GUIDE.md)** (로깅·테스트·CI)
 
 ---
 
