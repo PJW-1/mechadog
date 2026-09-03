@@ -158,7 +158,9 @@ change_detect:
 # ⚠️ 구역 "식별"은 ArUco 마커로 하며 측위와 무관하다 (바코드 읽기).
 #    구역 "이동"은 측위가 필요하므로 Phase 2 이며 localization.track 에 종속된다.
 zones:
-  ids: [A, B, C, D, E]
+  # FR-7.1 — 시연 규모에 맞춘다. 방 하나에서 하는 온라인 시연에는 2~3개가 적정하고
+  # 5개는 화면상 구분이 어렵다. 구역이 늘면 마커도 그만큼 출력해야 한다.
+  ids: [A, B, C]
   marker_map: {}               # FR-8 — ArUco ID -> 구역 라벨
   arrival_radius_mm: 300       # FR-7.4 (Phase 2)
   random_after_first_cycle: true  # FR-7.3
