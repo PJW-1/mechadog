@@ -1,4 +1,4 @@
-# [PRD v1.0] MechDog Physical AI 자율 경비·순찰 로봇
+# [PRD v1.0] MechDog Physical AI 경비·산업안전 점검 로봇
 ## Product Requirements Document & System Architecture Specification
 
 ---
@@ -7,7 +7,7 @@
 
 | 항목 | 내용 |
 | :--- | :--- |
-| **프로젝트명** | MechDog Physical AI Security & Patrol Quadruped Robot |
+| **프로젝트명** | MechDog Physical AI Security & Industrial-Safety Inspection Quadruped Robot |
 | **문서 버전** | **v1.0.0** |
 | **상태** | Draft / In-Review |
 | **최종 수정** | 2026-09-02 |
@@ -56,7 +56,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 
 - **검토한 대안** — XIAO ESP32S3에서 경량 사람 검출 모델(FOMO / ESP-DL 계열)을 직접 추론
 - **채택하지 않은 이유** — ESP32-S3급에서의 사람 검출은 96×96 그레이스케일 기준 수 FPS 수준이고, MJPEG 스트리밍을 동시에 수행하면 더 낮아진다. 반면 데스크탑 GPU(RTX 3080)에서는 동급 모델이 한 자릿수 ms로 추론되며, 정확도 면에서도 훨씬 큰 모델을 쓸 수 있다. **정확도·속도 양쪽에서 비교가 되지 않는다.**
-- **채택안** — XIAO는 **영상 송출만 전담**하고, YOLOv8 추론은 Host PC(Tier 2)에서 수행
+- **채택안** — XIAO는 **영상 송출만 전담**하고, 객체 검출 추론은 Host PC(Tier 2)에서 수행
 - **트레이드오프** — Wi-Fi 단절 시 사람 인지 기능이 정지한다. 이를 NFR-2.6(Graceful Degradation)으로 명세하여, 인지 기능이 죽어도 순찰·회피는 유지되도록 설계한다.
 - **재검토 조건** — 무선 환경이 열악하여 오프보드 인지 지연이 NFR-1.1(250ms)을 상시 초과할 경우
 
@@ -206,7 +206,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
                     ┌───────────────────────────────────────────┐
                     │            HOST PC  (허브)                 │
                     │  Windows 11 + WSL2 / RTX 3080             │
-                    │  · YOLOv8 ONNX Runtime  (사람 인지)        │
+                    │  · ONNX Runtime 검출기  (사람 인지)        │
                     │  · Behavior FSM         (판단)             │
                     │  · FastAPI + WebSocket  (관제 대시보드)     │
                     │  · [Phase 2] ROS2 slam_toolbox            │
@@ -242,7 +242,7 @@ Hiwonder MechDog은 완성도 높은 **저수준 모션 API**(`move`, `transform
 | 계층 | 위치 | 담당 로직 | 허용 지연 | 통신 단절 시 |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tier 1 · Reflex** | MechDog ESP32 (온보드) | 초음파 충돌 정지, 하트비트 감시, 저전압 셧다운, 전도 감지, 서보 토크 해제 | **< 50 ms** | **독립 동작 필수** |
-| **Tier 2 · Cognition** | Host PC (로컬 Wi-Fi) | 사람 인지(YOLO), 행동 FSM, 경로 추종, [P2] SLAM | 100 ~ 200 ms | Tier 1이 안전 정지 |
+| **Tier 2 · Cognition** | Host PC (로컬 Wi-Fi) | 사람 인지 · PPE 판정 · 변화 감지, 행동 FSM, 경로 추종, [P2] SLAM | 100 ~ 200 ms | Tier 1이 안전 정지 |
 | **Tier 3 · Reasoning** | 클라우드 (선택) | VLM 현장 판독, 이벤트 요약 리포트, 이상 패턴 분석 | 1 ~ 3 초 | 기능 저하만, 주행 무관 |
 
 > **불변 규칙 (Invariant)**: 안전에 직결되는 판단은 절대 Tier 2/3으로 올리지 않는다. Host PC가 꺼져도 로봇은 스스로 멈춰야 한다.
@@ -809,7 +809,7 @@ mechdog_physical_ai/
 ├── host/                                 # Host PC (Python)
 │   ├── vision/
 │   │   ├── stream_client.py              # MJPEG 수신 + 재연결
-│   │   └── detector.py                   # YOLOv8 ONNX
+│   │   └── detector.py                   # 객체 검출 ONNX
 │   ├── behavior/
 │   │   ├── fsm.py                        # 순수 로직 → 테스트 대상
 │   │   └── commander.py                  # UDP 송신
