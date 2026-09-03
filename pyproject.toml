@@ -7,7 +7,11 @@ requires-python = ">=3.12"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-exclude = ["third_party", ".venv", "build"]
+# 마크다운은 포맷 대상에서 제외한다.
+# ruff 0.16 부터 .md 안의 파이썬 코드 블록도 포맷 검사 대상이 되었는데,
+# 문서의 예시 코드는 설명을 위해 일부러 압축하거나 안티패턴으로 쓴 것이라
+# 포맷터가 강제할 대상이 아니다. 코드 품질 게이트는 실제 소스에만 건다.
+exclude = ["third_party", ".venv", "build", "*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH"]
