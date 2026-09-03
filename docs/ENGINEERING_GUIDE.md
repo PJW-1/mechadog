@@ -286,6 +286,54 @@ ruff check . && ruff format --check . && pytest -q
 
 ---
 
+# 3.5 환경은 통일하지 않는다
+
+팀은 **각자의 GPU · OS 환경에서 개발한다.** 동일 환경 재현은 요구사항이 아니며,
+컨테이너로 호스트 스택을 묶지도 않는다 (DR-17).
+
+## 통일하는 것은 셋뿐이다
+
+| | 왜 |
+| :--- | :--- |
+| **메시지 스키마** | 송·수신을 다른 사람이 만든다 → [PROTOCOL.md](PROTOCOL.md) |
+| **`.onnx` 산출물** | 누가 만들든 나머지가 그대로 쓴다 |
+| **성능 수치의 출처** | 보고서 숫자는 기준 PC 실측 한 벌만 (WBS 8절) |
+
+세 번째는 환경 통일이 아니라 **측정 기준 고정**이다. PC 가 달라도 되고, NFR 수치만
+기준 PC 에서 뽑아 문서화하고 나머지는 참고치로 병기한다.
+
+## 그래서 실행 프로바이더는 교집합으로 고른다
+
+`config.vision.providers` 는 **선호 순서**이지 요구사항이 아니다. 설치된 패키지에 따라
+사용 가능한 EP 가 다르므로, 반드시 실제 가용 목록과 교집합을 취한다.
+
+```python
+# ❌ 설정을 그대로 넘기면 없는 EP 에 대해 경고가 쏟아진다
+session = ort.InferenceSession(path, providers=cfg["vision"]["providers"])
+
+# ✅ 설치된 것만 남긴다
+available = ort.get_available_providers()
+providers = [p for p in cfg["vision"]["providers"] if p in available]
+if not providers:
+    raise RuntimeError(f"사용 가능한 EP 없음. 설치됨={available}")
+session = ort.InferenceSession(path, providers=providers)
+log.info("execution_provider", extra={"selected": providers[0], "available": available})
+```
+
+| 그 사람이 설치한 패키지 | 선택되는 EP |
+| :--- | :--- |
+| `onnxruntime-directml` (기본) | DirectML — DX12 GPU 전체. NVIDIA 포함 |
+| `onnxruntime-gpu` | CUDA |
+| `onnxruntime` (CI 러너) | CPU |
+
+**같은 코드, 같은 모델 파일, 다른 환경.** 이것이 DR-13 이 TensorRT 를 배제한 이유이기도
+하다 — TensorRT 엔진은 GPU 아키텍처마다 다시 빌드해야 해서 이 구조가 성립하지 않는다.
+
+> 선택된 EP 를 **기동 시 반드시 로그로 남긴다.** DirectML 은 미지원 연산을 조용히 CPU 로
+> 내려보내므로, 어느 EP 로 돌고 있는지 기록이 없으면 성능 이상의 원인을 찾을 수 없다.
+
+---
+
 # 4. 4대 엔지니어링 축 — 구현 지침
 
 | 축 | 하지 말 것 | 할 것 |
