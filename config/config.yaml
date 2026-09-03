@@ -89,7 +89,12 @@ vision:
   # 추적·인증은 개인별이지만 눈 LED 와 스피커가 하나뿐이라
   # 에스컬레이션 표현은 로봇 단위로 축약해야 한다.
   max_tracked_persons: 5       # FR-3.8.5 — 초과 시 bbox 큰 순 유지 + WARN
+  # FR-3.8.2 — 주 대상은 가장 가까운(bbox 최대) 대상. 단일 기준이다.
+  # 판정 결과(에스컬레이션 단계)를 기준으로 쓰면 순환 논리가 된다 —
+  # 단계는 판정으로 올라가고 판정은 주 대상만 받으므로.
+  primary_target_criterion: nearest
   primary_target_hold_ms: 2000 # FR-3.8.3 — 주 대상 최소 유지 시간
+  primary_target_seq_lock: true # FR-3.8.3 — 시퀀스 진행 중 전환 금지 (히스테리시스보다 강함)
 
   # ── 스트림 ──
   detect_consecutive_frames: 3 # FR-3.2 — 단발 오검출 억제

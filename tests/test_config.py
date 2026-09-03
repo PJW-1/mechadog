@@ -295,24 +295,44 @@ def test_posture_aborts_on_target_lost(cfg: dict) -> None:
 
 
 def test_multi_target_policy_is_max(cfg: dict) -> None:
-    """에스컬레이션은 전 대상 중 최고 단계를 채택한다 (FR-3.8.1).
+    """미인증 인원이 있으면 에스컬레이션을 유지한다 (FR-3.8.1).
 
-    눈 LED 와 스피커가 하나뿐이라 개인별 병렬 표현이 불가능하다. 최댓값을
-    취하는 것이 안전측이며, 한 명이 인증되어도 다른 미인증자가 있으면
-    단계가 유지된다 — 실제 출입 통제와 같다.
+    인증 상태는 마커·암구호 이벤트로 결정되며 주 대상 여부와 무관하게
+    대상별로 집계된다. 최댓값을 취하는 것이 안전측이다.
     """
     assert cfg["escalation"].get("multi_target_policy") == "max"
 
 
-def test_primary_target_has_hold_time(cfg: dict) -> None:
-    """주 대상 전환에 히스테리시스가 있어야 한다 (FR-3.8.3).
+def test_primary_target_criterion_is_not_judgment_based(cfg: dict) -> None:
+    """주 대상 선정 기준은 판정 결과가 아니어야 한다 (FR-3.8.2).
 
-    프레임마다 주 대상이 바뀌면 로봇이 자세와 방향을 계속 번복하여 어떤
-    동작도 완결하지 못한다. FR-9.2.4 의 루프와 같은 실패 양상이다.
+    판정 결과(에스컬레이션 단계)를 기준으로 쓰면 순환 논리가 된다 —
+    단계는 판정으로 올라가고, 판정은 주 대상에게만 수행하므로 비주 대상의
+    단계는 영원히 올라가지 않는다.
+
+    bbox 높이는 판정과 무관하게 매 프레임 측정되므로 순환이 없다.
     """
+    criterion = cfg["vision"].get("primary_target_criterion")
+    assert criterion == "nearest", (
+        f"주 대상 기준이 '{criterion}' 이다. 판정 결과 기반 기준은 순환 논리다 — "
+        "'nearest'(bbox 최대)를 쓴다"
+    )
+
+
+def test_primary_target_has_hold_time(cfg: dict) -> None:
+    """주 대상 전환에 히스테리시스가 있어야 한다 (FR-3.8.3)."""
     hold = cfg["vision"].get("primary_target_hold_ms")
     assert hold is not None, "primary_target_hold_ms 가 없다"
     assert hold >= 1000, f"{hold}ms 는 너무 짧다 — 자세 시퀀스가 완결되지 않는다"
+
+
+def test_primary_target_sequence_lock(cfg: dict) -> None:
+    """자세 상승·인증 시퀀스 진행 중에는 주 대상을 바꾸지 않는다 (FR-3.8.3).
+
+    히스테리시스 시간이 지나도 전환하면 안 된다. 자세를 올리는 중에 주 대상이
+    바뀌면 그 시퀀스 자체가 무의미해지므로, 시퀀스 락이 히스테리시스보다 강하다.
+    """
+    assert cfg["vision"].get("primary_target_seq_lock") is True
 
 
 def test_tracked_persons_has_upper_bound(cfg: dict) -> None:
