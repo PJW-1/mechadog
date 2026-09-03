@@ -29,7 +29,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
         MJPEG ↑      │              │ UDP 명령 ↓ / 텔레메트리 ↑
         ┌────────────┴───────┐  ┌───┴──────────────────┐
         │ XIAO ESP32S3 Sense │  │ MechDog ESP32        │
-        │ 독립 LiPo, 테이프 부착│  │ 커스텀 Arduino 펌웨어  │
+        │ 보조배터리 USB 급전   │  │ 커스텀 Arduino 펌웨어  │
         │ 카메라 → MJPEG 송출  │  │ HAL + 온보드 안전 로직 │
         └────────────────────┘  └──────────────────────┘
                   ✕ ─── 노드 간 배선 없음 ─── ✕
@@ -74,7 +74,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 
 | | 기능 | 내용 |
 | :--- | :--- | :--- |
-| FR-6 | LiDAR SLAM | LD06 + ROS2 `slam_toolbox` 맵 생성, 웨이포인트 순찰 |
+| FR-6 | LiDAR SLAM | LD19 + ROS2 `slam_toolbox` 맵 생성, 웨이포인트 순찰 |
 | FR-7 | 구역 순찰 · 랜덤 자율주행 | A~E 구역 간 자율 이동, 위험구역 긴급 진입 |
 
 > Phase 2 착수 조건: MechDog 탑재 여력이 약 100g 이상일 것. 미달 시 스마트폰 VIO 또는 ArUco로 대체합니다.
@@ -88,9 +88,9 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 | 노드 | 장비 | 전원 |
 | :--- | :--- | :--- |
 | Motion | Hiwonder MechDog (Advanced Kit) — ESP32, 8× 코어리스 서보, IMU, 초음파 | 2S 리튬 7.4V (순정) |
-| Vision | Seeed XIAO ESP32S3 Sense — OV2640, 8MB PSRAM | 3.7V 1000mAh LiPo + 470µF 커패시터 |
+| Vision | Seeed XIAO ESP32S3 Sense — OV2640, 8MB PSRAM | **보조배터리 USB-C** (DR-10) |
 | Host | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080 | — |
-| LiDAR *(P2)* | LD06 / LD19 | 별도 |
+| LiDAR *(P2)* | **FHL-LD19 (D500 키트)** + ESP32-DevKitC V4 중계 | 보조배터리 공용 |
 
 ---
 
