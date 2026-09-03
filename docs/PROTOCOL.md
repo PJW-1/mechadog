@@ -105,6 +105,29 @@
 > **`device_id` 는 필수다.** 다중 개체를 돌릴 때 송신자를 IP 로 구분하면 안 된다. DHCP 로 바뀔 수 있고, 호스트가 컨테이너 안이면 출처가 게이트웨이로 보인다 (DR-17).
 >
 > ESP32 는 파일 로깅을 하지 않는다. **텔레메트리가 곧 로그다.**
+
+### 수신측 검증 규칙
+
+제어 명령과 대칭이다. **송신은 펌웨어(L1·L2), 수신은 호스트(팀장)** 이므로 같은 인터페이스 위험을 갖는다.
+
+| # | 규칙 |
+| :-- | :--- |
+| ① | `seq` 역전·중복 폐기 |
+| ② | `seq` · `device_id` · `state` · `imu` · `flags` 중 하나라도 없으면 폐기 |
+| ③ | **모르는 `state` 는 폐기 + WARN** — 상태 추가를 하위 호환으로 만든다 |
+| ④ | `batt_v` 가 2S 리튬 물리 범위(6.0~8.4V) 밖이거나 `dist_cm` 이 음수면 폐기 |
+
+### 정본 픽스처
+
+| 파일 | 역할 |
+| :--- | :--- |
+| `tests/fixtures/telemetry_samples.jsonl` | 유효 레코드 — **FSM 상태 8종 전부 + 안전 임계 경계값** |
+| `tests/fixtures/telemetry_invalid.jsonl` | 폐기 대상 + 기대 동작 |
+| `tests/test_telemetry_fixtures.py` | 스키마 + **`config.yaml` 안전 임계와의 교차 검증** |
+
+> **교차 검증이 핵심이다.** 픽스처에 `battery_warn_v` · `battery_shutdown_v` · `tip_angle_deg` ·
+> `obstacle_stop_cm` · `cmd_timeout_ms` · `link_loss_failsafe_ms` 의 **경계값이 정확히 등장해야** 하며,
+> 없으면 CI 가 실패한다. **config 를 바꾸면 픽스처도 함께 바꾸도록 강제**하는 장치다.
 > 자세한 내용은 [엔지니어링 가이드](ENGINEERING_GUIDE.md) 1장.
 
 ---

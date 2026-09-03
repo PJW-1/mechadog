@@ -159,7 +159,8 @@ Refs: WBS 3.2.1, FR-1.3, NFR-2.1
 - `host/common/protocol.py` — Python 직렬화
 - `firmware_mechdog_motion/src/command_parser.*` — C++ 파서
 - `tools/mock_mechdog.py` — 목업
-- `tests/fixtures/protocol_samples.jsonl` — 정본 픽스처
+- `tests/fixtures/protocol_samples.jsonl` — 제어 명령 정본 픽스처
+- `tests/fixtures/telemetry_samples.jsonl` — **텔레메트리 정본 픽스처** (안전 임계 경계값 포함)
 
 ### 5.4 규약은 팀장이 정해 전파한다
 

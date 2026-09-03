@@ -223,3 +223,36 @@ def test_reconnect_backoff_is_increasing(cfg: dict) -> None:
     backoff = cfg["vision"]["reconnect_backoff_s"]
     assert len(backoff) >= 2
     assert backoff == sorted(backoff)
+
+
+# ── PPE 판정 조건 — 거리 기반 파라미터 재유입 방지 ──────────────
+
+FORBIDDEN_PPE_KEYS = (
+    "min_distance_m",  # DR-15 — 미터 거리를 구하지 않는다
+    "max_distance_m",
+    "require_pitch_up",  # FR-9.2.1 — 자세 상승은 판정 전제가 아니다
+)
+
+
+@pytest.mark.parametrize("key", FORBIDDEN_PPE_KEYS)
+def test_ppe_has_no_distance_based_keys(cfg: dict, key: str) -> None:
+    """PPE 판정에 거리 기반 파라미터를 두지 않는다 (DR-15).
+
+    거리를 측정할 수단이 없다 — 깊이 모델과 초음파를 모두 배제했고, 초음파는
+    정면 근거리만 본다. 구현할 수 없는 파라미터가 설정에 남아 있으면
+    PRD 와 충돌하고, 구현자가 어느 쪽을 따를지 알 수 없다.
+
+    `require_pitch_up` 도 금지한다. 자세 상승은 판정의 전제가 아니라
+    bbox 클리핑 시의 대응 수단이며(FR-9.2.2), 단계는 posture 절이 정의한다.
+    """
+    assert key not in cfg["vision"]["ppe"], (
+        f"vision.ppe.{key} 는 DR-15/FR-9.2.1 과 충돌한다. "
+        "판정은 require_head_visible(bbox 클리핑)으로 한다"
+    )
+
+
+def test_ppe_uses_bbox_clipping_condition(cfg: dict) -> None:
+    """판정 조건은 bbox 상단 클리핑 여부다 (FR-9.2.1)."""
+    ppe = cfg["vision"]["ppe"]
+    assert ppe.get("require_head_visible") is True, "require_head_visible 이 없거나 꺼져 있다"
+    assert ppe.get("head_margin_px", 0) > 0, "head_margin_px 가 없거나 0 이다"

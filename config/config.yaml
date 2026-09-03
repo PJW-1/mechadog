@@ -69,8 +69,14 @@ vision:
     conf_threshold: 0.5
     classes: [helmet, no_helmet, vest, no_vest]
     violation_classes: [no_helmet, no_vest]
-    min_distance_m: 3.0        # FR-9.2.2 — 근거리는 판정 보류
-    require_pitch_up: true     # FR-9.2.1 — Alert Stance 에서 판정
+    # ── 판정 조건 (FR-9.2.1) ──
+    # ⚠️ 미터 거리를 쓰지 않는다 (DR-15). 거리를 측정할 수단이 없다 —
+    # 깊이 모델과 초음파를 모두 배제했고, 초음파는 정면 근거리만 본다.
+    # 요구사항의 실체는 "머리가 화각에 들어오는가"이므로 bbox 로 직접 판정한다.
+    require_head_visible: true  # person bbox 상단이 프레임 경계에 닿지 않을 때만 판정
+    head_margin_px: 8           # 상단 경계로부터 이 픽셀 이내면 클리핑으로 본다
+    # 자세 상승은 판정의 전제가 아니라 클리핑 시의 대응 수단이다 (FR-9.2.2).
+    # 단계 정의는 posture.escalation_steps 를 따른다.
 
   # ── 스트림 ──
   detect_consecutive_frames: 3 # FR-3.2 — 단발 오검출 억제

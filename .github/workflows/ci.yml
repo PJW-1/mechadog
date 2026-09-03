@@ -43,7 +43,10 @@ jobs:
       #  · 안전 판정 조건 조합
       #  · config 스키마 검증
       - name: Unit tests
-        run: pytest -q --cov=host --cov-report=term-missing
+        # host/ 에 아직 Python 코드가 없어 --cov 는 "No data was collected" 경고만
+        # 남기고 수치가 무의미하다. 첫 Host 모듈이 들어올 때 아래로 교체한다.
+        #   pytest -q --cov=host --cov-report=term-missing --cov-fail-under=70
+        run: pytest -q
 
   # ── WBS 5.3.2 · 펌웨어 정적 분석 ──────────────────────────
   firmware-quality:
