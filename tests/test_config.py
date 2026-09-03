@@ -289,3 +289,34 @@ def test_posture_escalation_has_retry_limit(cfg: dict) -> None:
 def test_posture_aborts_on_target_lost(cfg: dict) -> None:
     """자세 상승 중 대상이 이탈하면 즉시 중단해야 한다 (FR-9.2.4)."""
     assert cfg["posture"].get("abort_on_target_lost") is True
+
+
+# ── 다중 대상 처리 (FR-3.8) ────────────────────────────────────
+
+
+def test_multi_target_policy_is_max(cfg: dict) -> None:
+    """에스컬레이션은 전 대상 중 최고 단계를 채택한다 (FR-3.8.1).
+
+    눈 LED 와 스피커가 하나뿐이라 개인별 병렬 표현이 불가능하다. 최댓값을
+    취하는 것이 안전측이며, 한 명이 인증되어도 다른 미인증자가 있으면
+    단계가 유지된다 — 실제 출입 통제와 같다.
+    """
+    assert cfg["escalation"].get("multi_target_policy") == "max"
+
+
+def test_primary_target_has_hold_time(cfg: dict) -> None:
+    """주 대상 전환에 히스테리시스가 있어야 한다 (FR-3.8.3).
+
+    프레임마다 주 대상이 바뀌면 로봇이 자세와 방향을 계속 번복하여 어떤
+    동작도 완결하지 못한다. FR-9.2.4 의 루프와 같은 실패 양상이다.
+    """
+    hold = cfg["vision"].get("primary_target_hold_ms")
+    assert hold is not None, "primary_target_hold_ms 가 없다"
+    assert hold >= 1000, f"{hold}ms 는 너무 짧다 — 자세 시퀀스가 완결되지 않는다"
+
+
+def test_tracked_persons_has_upper_bound(cfg: dict) -> None:
+    """동시 추적 인원에 상한이 있어야 한다 (FR-3.8.5)."""
+    n = cfg["vision"].get("max_tracked_persons")
+    assert n is not None, "max_tracked_persons 가 없다"
+    assert 2 <= n <= 20, f"상한 {n}명은 비현실적이다"

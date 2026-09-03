@@ -85,6 +85,12 @@ vision:
     # 자세 상승은 판정의 전제가 아니라 클리핑 시의 대응 수단이다 (FR-9.2.2).
     # 단계 정의는 posture.escalation_steps 를 따른다.
 
+  # ── 다중 대상 처리 (FR-3.8) ──
+  # 추적·인증은 개인별이지만 눈 LED 와 스피커가 하나뿐이라
+  # 에스컬레이션 표현은 로봇 단위로 축약해야 한다.
+  max_tracked_persons: 5       # FR-3.8.5 — 초과 시 bbox 큰 순 유지 + WARN
+  primary_target_hold_ms: 2000 # FR-3.8.3 — 주 대상 최소 유지 시간
+
   # ── 스트림 ──
   detect_consecutive_frames: 3 # FR-3.2 — 단발 오검출 억제
   resolution: VGA              # VGA | QVGA (FR-5.3)
@@ -104,7 +110,8 @@ localization:           # ⚠️ 미확정 — docs/LOCALIZATION_OPTIONS.md 게�
 # ══════════════════════════════════════════════════════════════
 escalation:
   l1_to_l2_hold_s: 10          # L1 관찰이 이만큼 지속되고 미인증이면 L2
-  l3_requires_manual_reset: true  # L3·F 는 자동 해제하지 않는다
+  l3_requires_manual_reset: true
+  multi_target_policy: max      # FR-3.8.1 — 전 대상 중 최고 단계를 로봇 단계로 채택  # L3·F 는 자동 해제하지 않는다
   led:                          # FR-10.4 — 눈 색깔로 단계 표시
     l0_patrol: blue
     l1_observe: yellow
