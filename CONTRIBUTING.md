@@ -4,6 +4,9 @@
 >
 > **절차는 이 문서, 구현 기준은 [엔지니어링 가이드](docs/ENGINEERING_GUIDE.md)** (로깅·테스트·CI)
 > **메시지 스키마 정본은 [통신 프로토콜](docs/PROTOCOL.md)** — 팀장이 결정하여 전파한다
+>
+> **환경 세팅**: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` — 기준값 약 40초.
+> 크게 초과하면 원인을 팀에 공유해 주세요 (DR-17 재검토 트리거).
 
 ---
 

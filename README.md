@@ -15,6 +15,8 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 📡 **[통신 프로토콜 정본 — 명령 7종·검증 규칙](docs/PROTOCOL.md)**  
 🤝 **[협업 규칙](CONTRIBUTING.md)**
 
+> **처음 클론했다면** — `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` (약 40초)
+
 ---
 
 ## 아키텍처 — 스타 토폴로지
