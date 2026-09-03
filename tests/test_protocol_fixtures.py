@@ -146,3 +146,16 @@ def test_led_colors_exist_in_config(samples: list[dict]) -> None:
     for m in samples:
         if m["type"] == "LED":
             assert m["color"] in palette, f"{m['_case']}: 알 수 없는 색상 '{m['color']}'"
+
+
+def test_protocol_doc_documents_every_known_type() -> None:
+    """docs/PROTOCOL.md 는 모든 명령 타입을 문서화해야 한다.
+
+    스키마는 팀장이 정해 전파하므로, 전파용 문서가 픽스처보다 뒤처지면
+    구현자가 잘못된 정본을 보고 만든다. 문서 갱신 누락을 여기서 막는다.
+    """
+    doc = ROOT / "docs" / "PROTOCOL.md"
+    assert doc.exists(), f"프로토콜 정본 문서 없음: {doc}"
+    body = doc.read_text(encoding="utf-8")
+    missing = [t for t in sorted(KNOWN_TYPES) if f'"{t}"' not in body and f"`{t}`" not in body]
+    assert not missing, f"PROTOCOL.md 에 없는 타입: {missing}"
