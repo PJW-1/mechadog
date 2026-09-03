@@ -10,6 +10,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
 🧭 **[측위 방식 비교 — LiDAR vs 스마트폰 VIO](docs/LOCALIZATION_OPTIONS.md)** ← 결정 대기  
 🔧 **[M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**  
+🔌 **[하드웨어 조립·배선 — 무납땜 구성](docs/HARDWARE_ASSEMBLY.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 📡 **[통신 프로토콜 정본 — 명령 7종·검증 규칙](docs/PROTOCOL.md)**  
 🤝 **[협업 규칙](CONTRIBUTING.md)**
@@ -118,7 +119,8 @@ mechdog_physical_ai/
 │   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 7종)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준
 │   ├── LOCALIZATION_OPTIONS.md          # 측위 방식 비교 및 결정
-│   └── HARDWARE_VERIFICATION.md         # M0 실측 리포트
+│   ├── HARDWARE_ASSEMBLY.md           # 조립 · 배선 · 전원 (무납땜)
+│   └── HARDWARE_VERIFICATION.md       # M0 실측 리포트
 ├── config/
 │   ├── config.yaml                      # 전역 파라미터 (매직 넘버 0개 목표)
 │   ├── devices/                         # 개체별 프로파일 (서보 오프셋 등)

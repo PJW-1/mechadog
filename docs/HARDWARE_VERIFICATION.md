@@ -170,6 +170,7 @@ networkingMode=mirrored
 ### 측정 후 반영할 문서
 
 - [ ] PRD 2.3절 BOM — 실측 무게 반영
+- [ ] [하드웨어 조립·배선](HARDWARE_ASSEMBLY.md) 6절 발주 전 확인 목록 ①~⑦
 - [ ] PRD 2.4절 전원 설계 — 실측 지속시간 반영
 - [ ] PRD 8절 리스크 레지스터 — RISK-01/02 상태 갱신
 - [ ] PRD 9절 미확정 사항 — OI-1~OI-4 해소 처리
