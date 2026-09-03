@@ -75,6 +75,13 @@ vision:
     # 요구사항의 실체는 "머리가 화각에 들어오는가"이므로 bbox 로 직접 판정한다.
     require_head_visible: true  # person bbox 상단이 프레임 경계에 닿지 않을 때만 판정
     head_margin_px: 8           # 상단 경계로부터 이 픽셀 이내면 클리핑으로 본다
+    # ── 대상 정지 조건 (FR-9.2.0) ──
+    # 이동하는 대상은 추종이 불가능하다. 로봇 10~30cm/s vs 사람 120~150cm/s.
+    # 게다가 상향 자세에서는 이동할 수 없어(FR-9.2.3) 루프에 빠진다.
+    require_target_static: true # 대상이 정지 상태일 때만 자세 상승 시퀀스 개시
+    static_threshold_px: 20     # bbox 중심 이동량이 이 값 이하면 정지로 본다
+    static_frames: 5            # 위 조건이 이 프레임 수만큼 지속되어야 한다
+    max_posture_retries: 2      # FR-9.2.4 — 초과 시 PPE_UNDETERMINED 기록 후 순찰 재개
     # 자세 상승은 판정의 전제가 아니라 클리핑 시의 대응 수단이다 (FR-9.2.2).
     # 단계 정의는 posture.escalation_steps 를 따른다.
 
@@ -127,6 +134,7 @@ posture:
   settle_ms: 500               # 자세 변경 후 안정 대기
   back_off_mm: 300             # 3단계 후진 거리
   return_before_move: true     # FR-9.2.3 — 이동 전 기본 자세 복귀
+  abort_on_target_lost: true   # FR-9.2.4 — 자세 상승 중 대상 이탈 시 즉시 중단·복귀
 
 # ── 변화 감지 (FR-8) ──────────────────────────────────────────
 change_detect:

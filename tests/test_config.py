@@ -256,3 +256,36 @@ def test_ppe_uses_bbox_clipping_condition(cfg: dict) -> None:
     ppe = cfg["vision"]["ppe"]
     assert ppe.get("require_head_visible") is True, "require_head_visible 이 없거나 꺼져 있다"
     assert ppe.get("head_margin_px", 0) > 0, "head_margin_px 가 없거나 0 이다"
+
+
+# ── 자세 상승 루프 방지 (FR-9.2.0 / FR-9.2.4) ──────────────────
+
+
+def test_ppe_requires_static_target(cfg: dict) -> None:
+    """자세 상승은 대상이 정지 상태일 때만 개시한다 (FR-9.2.0).
+
+    이동하는 대상은 추종이 불가능하다 — MechDog Trot 약 10~30cm/s 대
+    사람 보행 120~150cm/s 로 5~15배 차이이고, 제자리 회전도 불가하다(DR-11).
+    게다가 상향 자세에서는 이동할 수 없으므로(FR-9.2.3) 대상이 움직이면
+    `자세 상승 → 이탈 → 복귀 → 이동 → 재클리핑` 루프에 빠진다.
+    """
+    ppe = cfg["vision"]["ppe"]
+    assert ppe.get("require_target_static") is True, "require_target_static 이 없거나 꺼져 있다"
+    assert ppe.get("static_threshold_px", 0) > 0
+    assert ppe.get("static_frames", 0) >= 2, "단발 프레임으로 정지를 판정하면 안 된다"
+
+
+def test_posture_escalation_has_retry_limit(cfg: dict) -> None:
+    """자세 상승 재시도에 상한이 있어야 한다 (FR-9.2.4).
+
+    상한이 없으면 대상이 계속 움직일 때 로봇이 자세만 오르내리며 순찰로
+    돌아가지 못한다. 관측자에게는 고장으로 보인다.
+    """
+    retries = cfg["vision"]["ppe"].get("max_posture_retries")
+    assert retries is not None, "max_posture_retries 가 없다 — 루프 상한이 없다"
+    assert 1 <= retries <= 5, f"재시도 {retries}회는 비현실적이다"
+
+
+def test_posture_aborts_on_target_lost(cfg: dict) -> None:
+    """자세 상승 중 대상이 이탈하면 즉시 중단해야 한다 (FR-9.2.4)."""
+    assert cfg["posture"].get("abort_on_target_lost") is True
