@@ -34,6 +34,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # docs/ASSIGNMENTS.md 는 WBS 에서 생성된다. WBS 만 고치고 재생성하지 않으면
+      # 담당자별 부하가 실제와 다르게 표시되므로 여기서 막는다.
+      - name: Generated docs are up to date
+        run: python tools/wbs_assignments.py --check
+
       - name: Lint (ruff)
         run: ruff check .
 
