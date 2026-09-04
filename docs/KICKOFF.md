@@ -128,6 +128,7 @@ OI-12·OI-7(닫힘) · OI-15(모델 선정, M2) · **OI-18(대응 시나리오, 
 | M0 실측 | [HARDWARE_VERIFICATION.md](HARDWARE_VERIFICATION.md) |
 | 내 워크패키지·일정 | [WBS.md](WBS.md) |
 | **왜 이렇게 정했나** | [PRD](PRD_Physical_AI_Guard_Robot.md) 1.3 DR-1~17 |
+| **모르는 용어가 나왔다** | [용어 사전](GLOSSARY.md) |
 | 측위 트랙 판단 | [LOCALIZATION_OPTIONS.md](LOCALIZATION_OPTIONS.md) |
 | 브랜치·PR 절차 | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 
