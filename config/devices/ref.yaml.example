@@ -3,9 +3,15 @@
 #  · 이 파일을 <unit-id>.yaml 로 복사하여 실측값을 채운다.
 #  · 서보 오프셋은 개체마다 다르므로 반드시 실측할 것.
 
-device_id: ref          # ref(기준기 · B의 로봇) | dev1 | dev2
-owner: B
-is_reference: true      # ⚠️ 게이트 검수는 기준기에서만 인정 (CONTRIBUTING 6절)
+device_id: ref          # ref | dev1 | dev2  (2.4.1 에서 확정)
+owner: B                # 담당 인원은 WBS 4절 배정을 따른다 (A/B/C 는 작업 성격 분류)
+
+# ⚠️ 기준기는 Phase 별로 다르다 — LiDAR 를 3대 중 2대에만 장착하기 때문이다.
+#   phase1_reference : 순정 상태 개체. G1~G3 게이트 검수와 NFR 수치의 출처
+#   phase2_reference : LiDAR 장착 개체. Phase 2 측위·매핑 검수
+#   한 개체가 둘을 겸할 수 없다 — 순정 기준을 유지해야 NFR 출처가 흔들리지 않는다.
+#   상세: docs/WBS.md 8절 · CONTRIBUTING.md 1절
+reference_role: phase1   # phase1 | phase2 | none
 
 network:
   mechdog_ip: "192.168.0.101"
