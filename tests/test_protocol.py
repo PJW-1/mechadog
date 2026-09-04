@@ -533,3 +533,99 @@ def test_onboard_states_need_no_host_notification() -> None:
     """
     assert set(p.ONBOARD_STATES) == {"PATROL", "AVOID", "FAILSAFE"}
     assert p.ONBOARD_STATES < p.FSM_STATES
+
+
+# ══════════════════════════════════════════════════════════════
+#  악성·기형 입력 — UDP 수신부는 죽어서는 안 된다
+# ══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("bad", [[], {}, 7, None, True])
+def test_non_string_type_is_discarded_without_crashing(bad: object) -> None:
+    """`{"type": []}` 가 수신 루프를 죽이던 버그의 회귀 시험.
+
+    `[] in frozenset(...)` 은 `TypeError: unhashable type` 을 던진다. 폐기보다
+    나쁘다 — 관제가 멈춘다. 목록과 대조하기 **전에** 문자열인지 확인해야 한다.
+    """
+    msg = p.serialize({"seq": 1, "ts": 1, "type": bad})
+    result = p.CommandDecoder().decode(msg)
+    assert result.verdict is p.Verdict.DISCARD
+    assert not result.refreshes_link
+
+
+@pytest.mark.parametrize("bad", [[], {}, 7, None, True])
+def test_non_string_telemetry_state_is_discarded_without_crashing(bad: object) -> None:
+    record = {**_valid_telemetry(), "state": bad}
+    result = p.TelemetryDecoder().decode(p.serialize(record))
+    assert result.verdict is p.Verdict.DISCARD
+
+
+@pytest.mark.parametrize("bad", [[], {}, 7, None])
+def test_non_string_state_command_value_is_discarded(bad: object) -> None:
+    msg = p.serialize({"seq": 1, "ts": 1, "type": "STATE", "state": bad})
+    assert not p.CommandDecoder().decode(msg).accepted
+
+
+# ── seq·ts 는 정수만 ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"), [("seq", 1.5), ("seq", "1"), ("ts", "어제"), ("ts", 1.5)]
+)
+def test_non_integer_seq_or_ts_is_discarded(field: str, bad: object) -> None:
+    msg = {"seq": 1, "ts": 1, "type": "STOP", field: bad}
+    result = p.CommandDecoder().decode(p.serialize(msg))
+    assert result.verdict is p.Verdict.DISCARD
+    assert field in result.reason
+
+
+def test_fractional_seq_no_longer_swallows_the_next_command() -> None:
+    """`seq: 1.5` 를 받아들이면 게이트는 `1` 로 기억하고 메시지엔 `1.5` 가 남는다.
+
+    그 상태에서 정상적인 `seq: 1` 이 "중복"으로 폐기된다 — **실수 하나가 정상
+    명령 하나를 삼킨다.** 정수만 받으면 이 경로가 생기지 않는다.
+    """
+    decoder = p.CommandDecoder()
+    assert not decoder.decode('{"seq":1.5,"ts":1,"type":"STOP"}').accepted
+    assert decoder.last_seq is None, "폐기된 패킷이 게이트를 오염시키면 안 된다"
+    assert decoder.decode('{"seq":1,"ts":1,"type":"STOP"}').accepted
+
+
+@pytest.mark.parametrize(("field", "bad"), [("seq", 1.5), ("ts", "어제")])
+def test_non_integer_telemetry_seq_or_ts_is_discarded(field: str, bad: object) -> None:
+    record = {**_valid_telemetry(), field: bad}
+    assert not p.TelemetryDecoder().decode(p.serialize(record)).accepted
+
+
+# ── 인코더가 관리하는 필드는 넘길 수 없다 ────────────────────
+
+
+@pytest.mark.parametrize("reserved", ["seq", "ts", "type"])
+def test_command_encoder_rejects_reserved_fields(reserved: str) -> None:
+    """예약 필드를 덮어쓰면 **단조 증가 seq 보장이 깨진다.**
+
+    그것이 인코더가 지키는 유일한 계약이므로 우회를 허용하지 않는다.
+    """
+    encoder = p.CommandEncoder(clock=FakeClock())
+    with pytest.raises(ValueError, match="인코더가 관리하는 필드"):
+        encoder.build("MOVE", step=60, angle=0, **{reserved: 999})
+
+
+@pytest.mark.parametrize("reserved", sorted(p.TELEMETRY_MANAGED))
+def test_telemetry_encoder_rejects_reserved_fields(reserved: str) -> None:
+    """특히 `device_id` — 덮을 수 있으면 **송신자를 위조할 수 있다** (DR-17).
+
+    본문의 나머지 필드는 `build()` 의 명명 인자여서 `extra` 에 닿지 않는다.
+    실제로 위조 가능한 것은 `seq`·`ts`·`device_id` 셋뿐이다.
+    """
+    encoder = p.TelemetryEncoder("mechdog-ref", clock=FakeClock())
+    with pytest.raises(ValueError, match="인코더가 관리하는 필드"):
+        encoder.build(**{**_telemetry_kwargs(), reserved: "위조"})
+
+
+def test_telemetry_encoder_still_accepts_additive_extras() -> None:
+    """예약 필드가 아닌 추가 필드는 자유롭게 실을 수 있어야 한다 (PROTOCOL.md 4절)."""
+    encoder = p.TelemetryEncoder("mechdog-ref", clock=FakeClock())
+    msg = encoder.build(**_telemetry_kwargs(), events={"timeout_stops": 3})
+    assert msg["events"] == {"timeout_stops": 3}
+    assert p.TelemetryDecoder().decode(p.serialize(msg)).accepted

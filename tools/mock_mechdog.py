@@ -172,16 +172,22 @@ class MockRobot:
         # 규칙 ③ — 받아들인 패킷만 링크 타임아웃을 갱신한다.
         msg = result.message
         self._link_seen = True
+        # ⚠️ **명령마다 자기가 바꾸는 것만 바꾼다.** 나머지는 유지해야 한다.
+        # 실물 로봇은 다음 지시가 올 때까지 현재 자세와 보행을 이어가며, 호스트는
+        # 상태가 바뀔 때만 STATE 를, 자세를 바꿀 때만 POSE 를 보내고 MOVE 는
+        # 10Hz 로 보낸다. 명령 하나가 다른 값을 0 으로 되돌리면 뒤따르는 MOVE
+        # 한 건에 자세가 사라져, 자세 상승 시퀀스(FR-9.2.2)를 시험할 수 없다.
         kind = msg["type"]
+        prev = self._last
+        moving = kind == "MOVE"
         self._last = _LastCommand(
             at_ms=now_ms,
             type=kind,
-            step=msg.get("step", 0.0) if kind == "MOVE" else 0.0,
-            angle=msg.get("angle", 0.0) if kind == "MOVE" else 0.0,
-            pitch=msg.get("pitch", self._last.pitch) if kind == "POSE" else 0.0,
-            # STATE 만이 이 값을 갱신한다. 다른 명령이 와도 유지해야 한다 —
-            # 호스트는 STATE 를 상태가 바뀔 때만 보내고 MOVE 는 10Hz 로 보낸다.
-            host_state=msg["state"] if kind == "STATE" else self._last.host_state,
+            # STOP 은 move(0,0) 이므로 보행만 멈춘다. 자세는 그대로다.
+            step=msg["step"] if moving else (0.0 if kind == "STOP" else prev.step),
+            angle=msg["angle"] if moving else (0.0 if kind == "STOP" else prev.angle),
+            pitch=msg["pitch"] if kind == "POSE" else prev.pitch,
+            host_state=msg["state"] if kind == "STATE" else prev.host_state,
         )
         return result
 

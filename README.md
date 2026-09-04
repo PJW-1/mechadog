@@ -13,7 +13,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 🔧 **[M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**  
 🔌 **[하드웨어 조립·배선 — 무납땜 구성](docs/HARDWARE_ASSEMBLY.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
-📡 **[통신 프로토콜 정본 — 명령 7종·검증 규칙](docs/PROTOCOL.md)**  
+📡 **[통신 프로토콜 정본 — 명령 8종·검증 규칙](docs/PROTOCOL.md)**  
 🤝 **[협업 규칙](CONTRIBUTING.md)**
 
 > **처음 클론했다면** — `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` (약 40초)
@@ -120,7 +120,7 @@ mechdog_physical_ai/
 │   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 · 설계 결정(DR)
 │   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
 │   ├── KICKOFF.md                       # 착수 상태 — 여기서 시작
-│   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 7종)
+│   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 8종)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준
 │   ├── LOCALIZATION_OPTIONS.md          # 측위 방식 비교 및 결정
 │   ├── HARDWARE_ASSEMBLY.md           # 조립 · 배선 · 전원 (무납땜)

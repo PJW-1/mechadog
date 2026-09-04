@@ -192,9 +192,9 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 tests/
 ├── conftest.py                  공통 픽스처 — fake clock · config      ✅
 ├── fixtures/
-│   ├── protocol_samples.jsonl   정본 (7종 + 경계값)      ✅
+│   ├── protocol_samples.jsonl   정본 (8종 + 경계값)      ✅
 │   ├── protocol_invalid.jsonl   폐기·클램핑 대상          ✅
-│   ├── telemetry_samples.jsonl  상태 8종 + 안전 경계값    ✅
+│   ├── telemetry_samples.jsonl  상태 13종 + 안전 경계값   ✅
 │   └── telemetry_invalid.jsonl  폐기 대상                 ✅
 ├── test_config.py               config 스키마·불변조건    ✅
 ├── test_protocol_fixtures.py    픽스처 일관성             ✅
