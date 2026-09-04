@@ -40,6 +40,27 @@
 **3인 · 4주 · 총 70 M/D.** 팀장 3주차 피크 부하 150% 이며, **L1·L2 의 펌웨어가 끝나는 시점과
 겹치므로 이관으로 해소한다.** 트리거와 이관 대상은 [WBS 담당자 기준](WBS.md) 절 참조.
 
+### L1 · L2 — LiDAR 도착 전 Phase 1 책임 범위
+
+**L1·L2는 이 기간에 한 팀으로 움직인다.** 담당은 로봇 위에서 실행되는 모든 것과 실물
+검증이다. 목표는 Host PC가 **안전하게 움직이고 멈추며, 영상을 보내는 로봇**을 실제 장비로
+쓸 수 있게 만드는 것이다. LiDAR·SLAM·ROS2는 장비 도착 뒤의 Phase 2로 미룬다.
+
+| 범위 | 완료 산출물 |
+| :--- | :--- |
+| **M0 실물 검증** | MechDog Wi-Fi/RSSI, IMU·초음파·배터리 전압 접근, `move()`·`transform()`·내장 액션, XIAO MJPEG fps·전원 안정성, 무게·부하·서보 오프셋을 측정해 [하드웨어 검증](HARDWARE_VERIFICATION.md)과 기기 프로파일에 기록 |
+| **MechDog 모션·안전 펌웨어** | `firmware_mechdog_motion/` — Wi-Fi STA, UDP 제어 명령 8종 수신, `protocol_samples.jsonl` 기준 C++ 파서, 300ms 명령 타임아웃 정지, 3초 링크 두절 failsafe, 초음파 25cm 미만 반사 정지, 저전압·전도 대응, 10Hz 텔레메트리 송신 |
+| **XIAO 비전 노드 펌웨어** | `firmware_xiao_vision/` — 카메라 초기화, VGA/QVGA MJPEG 스트림 송출, 프레임레이트·브라운아웃·재연결 안정화. **AI 추론은 여기서 하지 않고 Host PC가 맡는다.** |
+| **펌웨어 품질·통합** | Arduino 빌드/정적 분석 CI, Python과 같은 골든 픽스처를 쓰는 C++ 파서 검증, `HW_MechDog` 라이브러리의 라이선스·벤더링 가능 여부 확인 |
+
+**팀장에게 넘길 완료 기준**은 세 가지다.
+
+1. Host PC의 UDP 명령을 실제 MechDog가 수신하고, 안전 정지·텔레메트리가 동작한다.
+2. XIAO의 MJPEG URL을 Host PC가 안정적으로 수신할 수 있다.
+3. 실측값과 개체별 설정이 문서·`config/devices/`에 기록돼 재현할 수 있다.
+
+**지금 L1·L2 범위가 아닌 것**: `host/`의 통신 Python·config 로더·로깅, 사람/PPE/변화 감지, FSM·인증, 대시보드, LiDAR·SLAM·ROS2.
+
 ### 하드웨어 (Track A 전제)
 
 | | 확정 |
