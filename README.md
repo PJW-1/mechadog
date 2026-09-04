@@ -14,6 +14,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 🔌 **[하드웨어 조립·배선 — 무납땜 구성](docs/HARDWARE_ASSEMBLY.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 📡 **[통신 프로토콜 정본 — 명령 8종·검증 규칙](docs/PROTOCOL.md)**  
+📖 **[용어 사전 — 문서 읽다 막히면 여기](docs/GLOSSARY.md)** ← 처음 보는 분  
 🤝 **[협업 규칙](CONTRIBUTING.md)**
 
 > **처음 클론했다면** — `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` (약 40초)
