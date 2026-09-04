@@ -53,6 +53,10 @@
 | `track_id` | 사람 관련 이벤트 (FR-3.6) |
 | `zone` | 구역 관련 이벤트 (FR-8) |
 
+> **이 표는 규칙이 아니라 검증 대상이다.** 통신 규약과 같은 방식으로 골든 픽스처
+> (`tests/fixtures/log_samples.jsonl`)를 두고 `test_logging.py` 가 대조한다 — 컨텍스트가 빠진
+> 레코드는 CI 에서 걸린다. 사람이 매번 기억해서 넣는 구조로는 반드시 빠진다 (CONTRIBUTING 5절).
+>
 > **컨텍스트가 없으면 사후 재구성이 불가능하다.** *"왜 그때 L3로 갔는가"* 를 답할 수 있어야 하고, 그것이 **DR-9(FSM 채택)의 실질적 근거**다.
 
 ## 1.2 레벨 정책
@@ -195,12 +199,14 @@ tests/
 │   ├── protocol_samples.jsonl   정본 (8종 + 경계값)      ✅
 │   ├── protocol_invalid.jsonl   폐기·클램핑 대상          ✅
 │   ├── telemetry_samples.jsonl  상태 13종 + 안전 경계값   ✅
-│   └── telemetry_invalid.jsonl  폐기 대상                 ✅
+│   ├── telemetry_invalid.jsonl  폐기 대상                 ✅
+│   └── log_samples.jsonl        로그 필수 컨텍스트 정본   (4.4.2)
 ├── test_config.py               config 스키마·불변조건    ✅
 ├── test_protocol_fixtures.py    픽스처 일관성             ✅
 ├── test_telemetry_fixtures.py   픽스처 ↔ config 교차검증  ✅
 ├── test_protocol.py             직렬화·검증 구현          ✅
 ├── test_mock_mechdog.py         가상 MechDog             ✅
+├── test_logging.py              필수 컨텍스트 강제        (4.4.2)
 ├── test_safety.py               타임아웃·저전압·전도·조합
 ├── test_fsm.py                  전이표 전수
 ├── test_escalation.py           L0~L3 진입·해제
