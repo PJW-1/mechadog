@@ -12,6 +12,7 @@
 시각을 주입하므로 30초 뒤의 전도도, 10분간의 방전도 여기서 즉시 검증된다.
 """
 
+import itertools
 import json
 
 import pytest
@@ -37,10 +38,19 @@ def _robot(config: dict, **faults: object) -> MockRobot:
     )
 
 
-def _feed(robot: MockRobot, now_ms: int, encoder: p.CommandEncoder | None = None) -> None:
+#: 명령마다 새 seq 를 준다. 같은 seq 를 두 번 보내면 규칙 ①로 폐기되어,
+#: 테스트가 "명령을 보냈다"고 착각한 채 실제로는 아무것도 전달되지 않는다.
+_SEQ = itertools.count(1)
+
+
+def _encoder(now_ms: int) -> p.CommandEncoder:
+    return p.CommandEncoder(clock=lambda: now_ms, start_seq=next(_SEQ))
+
+
+def _feed(robot: MockRobot, now_ms: int) -> None:
     """유효 명령 한 건을 먹인다. 링크를 살려 두는 것이 목적이다."""
-    encoder = encoder or p.CommandEncoder(clock=lambda: now_ms)
-    robot.receive(encoder.move(60, 0), now_ms)
+    result = robot.receive(_encoder(now_ms).move(60, 0), now_ms)
+    assert result is not None and result.accepted, "명령이 전달되지 않으면 시험이 무의미하다"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -237,7 +247,7 @@ def test_reports_only_states_the_robot_can_know(config: dict) -> None:
     나머지 5종을 실으려면 호스트가 상태를 내려보내야 한다 — 규약의 열린 구멍.
     """
     onboard = {"PATROL", "AVOID", "FAILSAFE"}
-    assert onboard < set(p.TELEMETRY_STATES)
+    assert onboard < set(p.FSM_STATES)
 
     seen = set()
     for faults in ({}, {"obstacle_at_s": 0}, {"tip_at_s": 0}):
@@ -346,3 +356,82 @@ def test_log_line_distinguishes_loss_discard_and_clamp(config: dict) -> None:
     assert "클램핑 step" in _describe(clamped)
     assert _describe(discarded).startswith("폐기(")
     assert _describe(None) == "유실"
+
+
+# ══════════════════════════════════════════════════════════════
+#  STATE — 로봇은 호스트가 알려준 상태를 되돌려준다
+# ══════════════════════════════════════════════════════════════
+
+
+def _send_state(robot: MockRobot, state: str, now_ms: int) -> None:
+    result = robot.receive(_encoder(now_ms).state(state), now_ms)
+    assert result is not None and result.accepted, "STATE 가 전달되지 않으면 시험이 무의미하다"
+
+
+def test_host_state_is_echoed_back(config: dict) -> None:
+    """호스트가 알려준 상태가 텔레메트리에 그대로 실려야 한다."""
+    robot = _robot(config)
+    _feed(robot, START_MS)
+    _send_state(robot, "ALERT", START_MS)
+    assert json.loads(robot.telemetry(START_MS))["state"] == "ALERT"
+
+
+def test_host_state_survives_subsequent_commands(config: dict) -> None:
+    """STATE 는 상태가 바뀔 때만 오고 MOVE 는 10Hz 로 온다.
+
+    MOVE 하나에 상태가 지워지면 로봇 보고가 0.1초마다 PATROL 로 되돌아간다.
+    """
+    robot = _robot(config)
+    _send_state(robot, "TRACK", START_MS)
+    for tick in range(1, 20):
+        _feed(robot, START_MS + tick * 100)
+    assert json.loads(robot.telemetry(START_MS + 2_000))["state"] == "TRACK"
+
+
+def test_tier1_overrides_host_state(config: dict) -> None:
+    """⚠️ **호스트가 뭐라 하든 온보드 안전 판정이 우선한다** (PRD 2.2 불변 규칙).
+
+    이 순서가 뒤집히면 Tier 1 이 Tier 2 에 종속되어 계층 구조의 의미가 사라진다.
+    """
+    tipped = _robot(config, tip_at_s=0)
+    _feed(tipped, START_MS)
+    _send_state(tipped, "PATROL", START_MS)
+    assert tipped.state(START_MS) == "FAILSAFE", "전도 중에는 호스트 말을 따르지 않는다"
+
+    obstacle = _robot(config, obstacle_at_s=0)
+    _feed(obstacle, START_MS)
+    _send_state(obstacle, "TRACK", START_MS)
+    assert obstacle.state(START_MS) == "AVOID", "반사 정지 중에는 호스트 말을 따르지 않는다"
+
+
+def test_unknown_host_state_is_ignored_and_previous_one_kept(config: dict) -> None:
+    """미지 상태는 폐기하되, 직전에 알던 상태를 잃어버리면 안 된다."""
+    robot = _robot(config)
+    _send_state(robot, "ALERT", START_MS)
+    bogus = p.serialize({"seq": next(_SEQ), "ts": START_MS, "type": "STATE", "state": "DANCING"})
+    result = robot.receive(bogus, START_MS)
+
+    assert result is not None
+    assert result.verdict is p.Verdict.DISCARD_WARN
+    assert json.loads(robot.telemetry(START_MS))["state"] == "ALERT"
+
+
+def test_defaults_to_patrol_before_any_state_command(config: dict) -> None:
+    """STATE 를 못 받았어도 센서와 모순되지 않는 값을 내야 한다."""
+    robot = _robot(config)
+    _feed(robot, START_MS)
+    assert robot.state(START_MS) == "PATROL"
+
+
+@pytest.mark.parametrize("state", sorted(p.FSM_STATES))
+def test_echoed_records_still_pass_host_validation(config: dict, state: str) -> None:
+    """8종을 되돌려줘도 호스트 검증을 통과해야 한다.
+
+    특히 규칙 ⑤ — 전도 중에 호스트가 PATROL 을 지시하면, 그대로 실어 보냈다가는
+    `tipped:true` + `PATROL` 이 되어 호스트가 자기 레코드를 폐기한다.
+    Tier 1 우선 규칙이 이것을 원리적으로 막는다.
+    """
+    robot = _robot(config, tip_at_s=0)
+    _feed(robot, START_MS)
+    _send_state(robot, state, START_MS)
+    assert p.TelemetryDecoder().decode(robot.telemetry(START_MS)).accepted

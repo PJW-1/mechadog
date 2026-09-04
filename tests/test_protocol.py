@@ -216,6 +216,7 @@ def test_encoder_convenience_methods_cover_every_type() -> None:
         encoder.action(7),
         encoder.led("red", 2),
         encoder.sound(181),
+        encoder.state("ALERT"),
     ]
     types = set()
     for raw in emitted:
@@ -350,7 +351,7 @@ def test_telemetry_encoder_rejects_unknown_state() -> None:
 
 def test_known_states_match_golden_fixture() -> None:
     """구현의 상태 목록과 정본 픽스처가 어긋나면 안 된다."""
-    assert set(p.TELEMETRY_STATES) == {m["state"] for m in TELEMETRY_SAMPLES}
+    assert set(p.FSM_STATES) == {m["state"] for m in TELEMETRY_SAMPLES}
 
 
 # ── 픽스처 생성기 ────────────────────────────────────────────
@@ -431,3 +432,67 @@ def test_system_clock_is_epoch_milliseconds() -> None:
     now = p.system_clock_ms()
     assert isinstance(now, int)
     assert now > 1_700_000_000_000  # 2023-11 이후. 초 단위였다면 여기서 걸린다
+
+
+# ══════════════════════════════════════════════════════════════
+#  STATE — 호스트가 자기 FSM 상태를 로봇에게 알려준다
+# ══════════════════════════════════════════════════════════════
+
+
+def test_state_command_round_trip() -> None:
+    encoder = p.CommandEncoder(clock=FakeClock())
+    result = p.CommandDecoder().decode(encoder.state("ALERT"))
+    assert result.verdict is p.Verdict.ACCEPT
+    assert result.message["state"] == "ALERT"
+
+
+@pytest.mark.parametrize("state", sorted(p.FSM_STATES))
+def test_state_command_accepts_every_fsm_state(state: str) -> None:
+    """8종 전부 전달 가능해야 한다. 하나라도 막히면 그 상태는 로봇에 도달하지 못한다."""
+    encoder = p.CommandEncoder(clock=FakeClock())
+    assert p.CommandDecoder().decode(encoder.state(state)).accepted
+
+
+def test_unknown_state_value_is_discarded_with_warning() -> None:
+    """텔레메트리 규칙 ③과 대칭 — 같은 이유로 상태 추가가 하위 호환이 된다."""
+    result = p.CommandDecoder().decode('{"seq":1,"ts":1,"type":"STATE","state":"DANCING"}')
+    assert result.verdict is p.Verdict.DISCARD_WARN
+    assert not result.refreshes_link
+
+
+def test_encoder_rejects_unknown_state() -> None:
+    """보내는 쪽은 엄격하다 — 송신측 버그를 로봇이 폐기한 뒤에 알면 늦다."""
+    with pytest.raises(ValueError, match="알 수 없는 상태"):
+        p.CommandEncoder(clock=FakeClock()).state("DANCING")
+
+
+def test_state_is_backward_compatible_with_older_firmware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**STATE 를 모르는 펌웨어가 무시해도 아무것도 깨지지 않아야 한다.**
+
+    additive 변경의 근거가 이것이다 (PROTOCOL.md 4절). 규칙 ④가 미지 타입을
+    폐기 + WARN 으로 처리하므로, 호스트가 먼저 보내기 시작해도 기존 동작에
+    영향이 없고 펌웨어는 나중에 핸들러를 추가하면 된다.
+
+    `COMMAND_TYPES` 에서 STATE 를 빼서 **STATE 도입 이전의 수신자를 재현한다.**
+    """
+    monkeypatch.setattr(p, "COMMAND_TYPES", p.COMMAND_TYPES - {"STATE"})
+    decoder = p.CommandDecoder()
+
+    assert decoder.decode('{"seq":1,"ts":1,"type":"MOVE","step":60,"angle":0}').accepted
+
+    old = decoder.decode('{"seq":2,"ts":2,"type":"STATE","state":"ALERT"}')
+    assert old.verdict is p.Verdict.DISCARD_WARN, "죽지 않고 경고만 남겨야 한다"
+    assert not old.refreshes_link
+
+    # 그리고 그 다음 명령이 정상 처리된다 — 수신자가 망가지지 않았다
+    assert decoder.decode('{"seq":3,"ts":3,"type":"MOVE","step":60,"angle":0}').accepted
+
+
+def test_onboard_states_are_a_subset_of_fsm_states() -> None:
+    """온보드가 아는 상태는 FSM 상태의 부분집합이어야 한다.
+
+    로봇만 아는 상태가 생기면 호스트 FSM 전이표에 없는 값이 텔레메트리로 올라온다.
+    """
+    assert p.ONBOARD_STATES < p.FSM_STATES

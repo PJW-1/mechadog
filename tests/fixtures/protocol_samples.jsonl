@@ -10,3 +10,5 @@
 {"_case": "LED L3 경보 (점멸)", "seq": 10, "ts": 1756800000900, "type": "LED", "color": "red", "blink_hz": 2}
 {"_case": "LED L0 순찰 (상시점등)", "seq": 11, "ts": 1756800001000, "type": "LED", "color": "blue", "blink_hz": 0}
 {"_case": "SOUND 경고 방송", "seq": 12, "ts": 1756800001100, "type": "SOUND", "phrase_id": 181}
+{"_case": "STATE 호스트 FSM 상태 통보 (경계)", "seq": 13, "ts": 1756800001200, "type": "STATE", "state": "ALERT"}
+{"_case": "STATE 온보드가 스스로 아는 상태", "seq": 14, "ts": 1756800001300, "type": "STATE", "state": "PATROL"}

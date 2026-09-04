@@ -37,10 +37,10 @@ from typing import Any
 #  1. 규약 상수 — PROTOCOL.md 2절 · 5절
 # ══════════════════════════════════════════════════════════════
 
-#: 제어 명령 7종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
-#: 항상 하위 호환이다 (PROTOCOL.md 4절).
+#: 제어 명령 8종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
+#: 항상 하위 호환이다 (PROTOCOL.md 4절). `STATE` 가 그 첫 사례다.
 COMMAND_TYPES: frozenset[str] = frozenset(
-    {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND"}
+    {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE"}
 )
 
 #: 모든 명령의 공통 필수 필드.
@@ -55,10 +55,11 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "ACTION": frozenset({"id"}),
     "LED": frozenset({"color", "blink_hz"}),
     "SOUND": frozenset({"phrase_id"}),
+    "STATE": frozenset({"state"}),
 }
 
 #: 문자열로 받는 필드. 나머지 필수 필드는 전부 수치다.
-STRING_FIELDS: frozenset[str] = frozenset({"color"})
+STRING_FIELDS: frozenset[str] = frozenset({"color", "state"})
 
 #: 클램핑 대상 — PROTOCOL.md 가 범위를 명시한 필드만이다.
 #: POSE·GAIT 는 "라이브러리 허용 범위"로만 규정되어 실측 전까지 클램핑하지
@@ -71,9 +72,19 @@ CLAMP_RANGES: dict[str, tuple[float, float]] = {
 
 #: FSM 상태 8종 (PRD 5절). 모르는 상태는 폐기 + WARN 이며, 명령 타입과 같은
 #: 이유로 상태 추가를 하위 호환으로 만든다.
-TELEMETRY_STATES: frozenset[str] = frozenset(
+#:
+#: **FSM 은 Host PC 에서 돈다.** 로봇은 자기가 `ALERT` 인지 `TRACK` 인지 알 수 없고
+#: (그 판단의 근거인 카메라 영상을 호스트가 본다), 온보드가 스스로 아는 것은
+#: `FAILSAFE`·`AVOID`·`PATROL` 셋뿐이다. 나머지는 `STATE` 명령으로 호스트가
+#: 내려보내고 로봇은 받아적어 텔레메트리에 되돌려준다.
+#:
+#: 그래서 이 집합은 **명령(`STATE`)과 텔레메트리(`state`) 양쪽에서 쓰인다.**
+FSM_STATES: frozenset[str] = frozenset(
     {"PATROL", "SCAN", "AVOID", "ALERT", "TRACK", "LOST", "FAILSAFE", "HAZARD_DISPATCH"}
 )
+
+#: 온보드가 센서만으로 판정할 수 있는 상태. 나머지는 호스트가 알려줘야 한다.
+ONBOARD_STATES: frozenset[str] = frozenset({"PATROL", "AVOID", "FAILSAFE"})
 
 #: 텔레메트리 필수 필드 — PROTOCOL.md 5절 규칙 ②가 열거한 그대로다.
 #: 여기 없는 필드(`ts`·`dist_cm`·`batt_v`)는 **있을 때만** 검증한다. 규약이
@@ -253,6 +264,8 @@ class CommandEncoder:
         missing = REQUIRED_FIELDS[type_] - fields.keys()
         if missing:
             raise ValueError(f"{type_} 필수 필드 누락: {sorted(missing)}")
+        if type_ == "STATE" and fields["state"] not in FSM_STATES:
+            raise ValueError(f"알 수 없는 상태: {fields['state']!r}")
 
         msg = {"seq": self._seq, "ts": self._clock(), "type": type_, **fields}
         self._seq += 1
@@ -283,6 +296,16 @@ class CommandEncoder:
 
     def sound(self, phrase_id: int) -> str:
         return self.encode("SOUND", phrase_id=phrase_id)
+
+    def state(self, state: str) -> str:
+        """호스트의 FSM 상태를 로봇에게 알려준다.
+
+        로봇은 이것을 판단 근거로 쓰지 않는다 — **받아적어 텔레메트리에 되돌려줄
+        뿐이다.** Tier 1 안전 판정은 이 값과 무관하게 온보드가 우선한다
+        (PRD 2.2 불변 규칙). 즉 호스트가 `PATROL` 이라고 해도 로봇이 전도를
+        감지했다면 로봇은 `FAILSAFE` 를 보고한다.
+        """
+        return self.encode("STATE", state=state)
 
 
 class CommandDecoder:
@@ -336,6 +359,11 @@ class CommandDecoder:
             elif not _is_number(value):
                 return DecodeResult(Verdict.DISCARD, f"{name} 가 수치가 아님")
 
+        # 모르는 상태값 — 폐기 + WARN. 텔레메트리 규칙 ③과 대칭이며, 같은
+        # 이유로 상태 추가를 하위 호환으로 만든다.
+        if type_ == "STATE" and msg["state"] not in FSM_STATES:
+            return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {msg['state']!r}")
+
         # ② 범위 초과는 폐기가 아니라 클램핑
         return _accept(*apply_clamps(msg))
 
@@ -377,7 +405,7 @@ class TelemetryEncoder:
         flags: dict[str, bool],
         **extra: Any,
     ) -> dict[str, Any]:
-        if state not in TELEMETRY_STATES:
+        if state not in FSM_STATES:
             raise ValueError(f"알 수 없는 상태: {state!r}")
         missing_imu = [f for f in IMU_FIELDS if f not in imu]
         if missing_imu:
@@ -452,7 +480,7 @@ class TelemetryDecoder:
 
         # ③ 모르는 상태 — 폐기 + WARN
         state = msg["state"]
-        if state not in TELEMETRY_STATES:
+        if state not in FSM_STATES:
             return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {state!r}")
 
         # ④ 물리적으로 불가능한 값
