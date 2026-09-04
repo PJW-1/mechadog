@@ -149,6 +149,7 @@ OI-12·OI-7(닫힘) · OI-15(모델 선정, M2) · **OI-18(대응 시나리오, 
 | 로깅·테스트·CI 를 짠다 | [ENGINEERING_GUIDE.md](ENGINEERING_GUIDE.md) |
 | 조립·배선·발주 | [HARDWARE_ASSEMBLY.md](HARDWARE_ASSEMBLY.md) |
 | M0 실측 | [HARDWARE_VERIFICATION.md](HARDWARE_VERIFICATION.md) |
+| **내 할 일만 보고 싶다** | **[담당자별 작업 목록](ASSIGNMENTS.md)** |
 | 내 워크패키지·일정 | [WBS.md](WBS.md) |
 | **왜 이렇게 정했나** | [PRD](PRD_Physical_AI_Guard_Robot.md) 1.3 DR-1~17 |
 | **모르는 용어가 나왔다** | [용어 사전](GLOSSARY.md) |

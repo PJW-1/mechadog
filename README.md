@@ -9,6 +9,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 🚀 **[착수 상태 — 여기서 시작하세요](docs/KICKOFF.md)** ← 새 세션·새 팀원  
 📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
 📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
+🙋 **[담당자별 작업 목록 — 내 일이 뭔지](docs/ASSIGNMENTS.md)** ← 자기 할 일  
 🧭 **[측위 방식 비교 — LiDAR vs 스마트폰 VIO](docs/LOCALIZATION_OPTIONS.md)** ← 결정 대기  
 🔧 **[M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**  
 🔌 **[하드웨어 조립·배선 — 무납땜 구성](docs/HARDWARE_ASSEMBLY.md)**  
