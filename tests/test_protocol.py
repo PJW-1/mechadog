@@ -8,8 +8,10 @@ C++ 파서도 같은 픽스처를 통과해야 하므로(M1), 여기서 확인�
 케이스를 추가할 때 테스트 코드를 고칠 필요가 없다.
 """
 
+import re
+
 import pytest
-from conftest import FIXTURES, FakeClock, load_jsonl
+from conftest import FIXTURES, ROOT, FakeClock, load_jsonl
 
 from host.common import protocol as p
 
@@ -495,4 +497,39 @@ def test_onboard_states_are_a_subset_of_fsm_states() -> None:
 
     로봇만 아는 상태가 생기면 호스트 FSM 전이표에 없는 값이 텔레메트리로 올라온다.
     """
+    assert p.ONBOARD_STATES < p.FSM_STATES
+
+
+def test_fsm_states_match_the_prd_transition_table() -> None:
+    """**FSM 상태 목록의 정본은 PRD 5절 전이표다.** 코드가 그것과 일치해야 한다.
+
+    FR-4.2 가 대시보드에 "현재 FSM 상태"를 스트리밍하도록 요구하므로, 전이표에
+    있고 `FSM_STATES` 에 없는 상태는 **화면에 표시할 수 없는 상태**가 된다.
+    반대로 코드에만 있는 상태는 전이표에 근거가 없다.
+
+    실제로 이런 일이 있었다 — 전이표는 13종인데 규약은 8종만 인정하여
+    `IDLE`·`MANUAL`·`AUTH_WAIT` 를 호스트가 로봇에게 알려줄 수 없었다.
+    `STATE` 명령이 없던 동안에는 아무도 그 필드를 채울 수 없어 드러나지 않았다.
+    """
+    prd = ROOT / "docs" / "PRD_Physical_AI_Guard_Robot.md"
+    body = prd.read_text(encoding="utf-8")
+    table = body[body.index("## 5. 행동 상태 전이표") : body.index("### 5.1 대응 에스컬레이션")]
+
+    # 전이표는 상태와 트리거를 같은 표기로 쓴다. 트리거만 걸러낸다.
+    triggers = {"CMD_START_PATROL"}
+    documented = set(re.findall(r"`([A-Z][A-Z_]{2,})`", table)) - triggers
+
+    assert documented == set(p.FSM_STATES), (
+        f"전이표에만 있음: {sorted(documented - set(p.FSM_STATES))} / "
+        f"코드에만 있음: {sorted(set(p.FSM_STATES) - documented)}"
+    )
+
+
+def test_onboard_states_need_no_host_notification() -> None:
+    """온보드 3종은 로봇이 센서만으로 판정한다 — `STATE` 없이도 보고할 수 있다.
+
+    이 구분이 흐려지면 "링크가 끊겼는데 호스트가 알려주지 않아 상태를 모른다"는
+    모순이 생긴다. `FAILSAFE` 는 링크 두절 시에도 보고되어야 한다.
+    """
+    assert set(p.ONBOARD_STATES) == {"PATROL", "AVOID", "FAILSAFE"}
     assert p.ONBOARD_STATES < p.FSM_STATES
