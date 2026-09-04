@@ -65,7 +65,7 @@
 
 ### `STATE` — 왜 상태를 로봇에게 알려주는가
 
-**FSM 은 Host PC 에서 돈다** (PRD 5절). 그런데 텔레메트리에는 FSM 상태 8종이 들어가는
+**FSM 은 Host PC 에서 돈다** (PRD 5절). 그런데 텔레메트리에는 FSM 상태 13종이 들어가는
 `state` 필드가 있다. **로봇은 자기가 `ALERT` 인지 `TRACK` 인지 알 방법이 없다** — 그 판단의
 근거인 카메라 영상을 호스트가 보기 때문이다. 온보드가 스스로 아는 것은 셋뿐이다.
 
@@ -193,7 +193,7 @@
 
 | 파일 | 역할 |
 | :--- | :--- |
-| `tests/fixtures/telemetry_samples.jsonl` | 유효 레코드 — **FSM 상태 8종 전부 + 안전 임계 경계값** |
+| `tests/fixtures/telemetry_samples.jsonl` | 유효 레코드 — **FSM 상태 13종 전부 + 안전 임계 경계값** |
 | `tests/fixtures/telemetry_invalid.jsonl` | 폐기 대상 + 기대 동작 |
 | `tests/test_telemetry_fixtures.py` | 스키마 + **`config.yaml` 안전 임계와의 교차 검증** |
 
