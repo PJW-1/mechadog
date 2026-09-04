@@ -200,6 +200,7 @@ tests/
 ├── test_protocol_fixtures.py    픽스처 일관성             ✅
 ├── test_telemetry_fixtures.py   픽스처 ↔ config 교차검증  ✅
 ├── test_protocol.py             직렬화·검증 구현          ✅
+├── test_mock_mechdog.py         가상 MechDog             ✅
 ├── test_safety.py               타임아웃·저전압·전도·조합
 ├── test_fsm.py                  전이표 전수
 ├── test_escalation.py           L0~L3 진입·해제
@@ -284,10 +285,12 @@ Push / PR (main · dev)
 ### 커버리지 게이트 — 켜져 있다
 
 ```yaml
-run: pytest -q --cov=host --cov-report=term-missing --cov-fail-under=70
+run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=70
 ```
 
-첫 Host 모듈(`host/common/protocol.py`)이 들어온 시점에 켰다. 그 전에는 `host/` 에 Python 코드가
+첫 Host 모듈(`host/common/protocol.py`)이 들어온 시점에 켰다. `tools/` 를 함께 세는 이유는
+가상 MechDog(`mock_mechdog.py`)이 **시험 도구가 아니라 시험 대상**이기 때문이다 — 목업이
+틀리면 그것으로 검증한 호스트 코드가 전부 헛것이 된다. 그 전에는 `host/` 에 Python 코드가
 없어 **"No data was collected" 경고만 남고 수치가 무의미**했다 — CI 는 통과하지만 아무것도
 검증하지 않는 상태였으므로, 착각을 만들지 않기 위해 일부러 꺼 두었던 것이다.
 
