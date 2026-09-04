@@ -103,8 +103,10 @@ vision:
   inference_fps: 7             # 추론 프레임 스킵 (FSM 10Hz 대비 충분)
   reconnect_backoff_s: [1, 2, 4, 8, 16, 30]  # FR-5.3
 
-localization:           # ⚠️ 미확정 — docs/LOCALIZATION_OPTIONS.md 게이트 결과로 결정
-  track: none                 # none | lidar | phone_vio | aruco
+localization:           # Track A(LiDAR) 확정 — OI-9 닫힘 (docs/LOCALIZATION_OPTIONS.md 0절)
+  # Phase 1 은 측위를 쓰지 않으므로 none 이다. Phase 2 에서 lidar 로 바꾼다.
+  # phone_vio 는 탈락했으므로 허용값에서 제거했다 — 남겨 두면 누가 다시 넣는다.
+  track: none                 # none | lidar | aruco
   settle_delay_ms: 750        # 정지 후 스캔 전 대기 (공통 원칙 4)
   move_increment_mm: 250      # 공통 원칙 5
   turn_increment_deg: 30      # 공통 원칙 5
