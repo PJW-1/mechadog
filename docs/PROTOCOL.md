@@ -116,6 +116,11 @@
 | ② | `seq` · `device_id` · `state` · `imu` · `flags` 중 하나라도 없으면 폐기 |
 | ③ | **모르는 `state` 는 폐기 + WARN** — 상태 추가를 하위 호환으로 만든다 |
 | ④ | `batt_v` 가 2S 리튬 물리 범위(6.0~8.4V) 밖이거나 `dist_cm` 이 음수면 폐기 |
+| ⑤ | `flags.tipped` 인데 `state` 가 `FAILSAFE` 가 아니면 **폐기 + WARN** |
+
+> **⑤ 는 값이 아니라 레코드 안의 모순을 본다.** `tipped` 는 온보드 안전 로직이 이미 발동했다는 뜻이므로 상태는 `FAILSAFE` 여야 한다. 순찰 중이라고 보고하는 레코드는 둘 중 하나가 틀린 것이고, 어느 쪽이든 그것을 믿고 대시보드를 갱신하면 안 된다.
+>
+> `lowbatt` 은 다르다. 경고 수준이라 `PATROL` 과 공존할 수 있으므로 모순이 아니다 — ⑤ 를 `flags` 전체로 확대하면 정상 레코드를 폐기하게 된다.
 
 ### 정본 픽스처
 
@@ -141,6 +146,10 @@
 | `tests/fixtures/protocol_samples.jsonl` | 유효 메시지 정본 (7종 + 경계값) |
 | `tests/fixtures/protocol_invalid.jsonl` | 폐기·클램핑 대상 + 기대 동작 |
 | `tests/test_protocol_fixtures.py` | 픽스처 자체의 일관성 검증 |
+| **`host/common/protocol.py`** | **송신·수신 구현 (Python).** 이 문서의 구현체이며 C++ 파서의 참조 구현 |
+| `tests/test_protocol.py` | 위 구현을 픽스처로 검증 — 기대값을 `_expect` 에서 읽는다 |
+
+> **문서가 정본이고 구현은 둘(Python·C++)이다.** `protocol.py` 를 정본으로 삼지 않는 이유는 펌웨어가 그것을 import 할 수 없기 때문이다. 대신 양쪽 모두 같은 픽스처를 통과하게 하여 어긋남을 CI 로 막는다.
 
 **송신측(Python)과 수신측(C++)은 같은 픽스처로 검증한다.** 한쪽만 바꾸면 CI 가 실패한다.
 

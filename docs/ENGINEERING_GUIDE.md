@@ -190,13 +190,16 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 
 ```
 tests/
-├── conftest.py                  공통 픽스처 — fake clock · config · mock robot
+├── conftest.py                  공통 픽스처 — fake clock · config      ✅
 ├── fixtures/
 │   ├── protocol_samples.jsonl   정본 (7종 + 경계값)      ✅
-│   └── protocol_invalid.jsonl   폐기·클램핑 대상          ✅
+│   ├── protocol_invalid.jsonl   폐기·클램핑 대상          ✅
+│   ├── telemetry_samples.jsonl  상태 8종 + 안전 경계값    ✅
+│   └── telemetry_invalid.jsonl  폐기 대상                 ✅
 ├── test_config.py               config 스키마·불변조건    ✅
 ├── test_protocol_fixtures.py    픽스처 일관성             ✅
-├── test_protocol.py             직렬화 왕복 (3.1.1 후)
+├── test_telemetry_fixtures.py   픽스처 ↔ config 교차검증  ✅
+├── test_protocol.py             직렬화·검증 구현          ✅
 ├── test_safety.py               타임아웃·저전압·전도·조합
 ├── test_fsm.py                  전이표 전수
 ├── test_escalation.py           L0~L3 진입·해제
@@ -274,20 +277,23 @@ Push / PR (main · dev)
 
 | 시점 | 추가 | WBS |
 | :--- | :--- | :--- |
-| **첫 Host 모듈 커밋 시** | **커버리지 게이트** — 아래 참조 | 5.3.1 |
+| ~~첫 Host 모듈 커밋 시~~ | ~~커버리지 게이트~~ — **완료 (WBS 3.1.1)** | 5.3.1 |
 | M1 | **C++ 파서 픽스처 대조 잡** (호스트 컴파일) | 6.2.1 |
 | M2 | 성능 회귀 감시 (선택) | 6.3.1 |
 
-### 커버리지는 지금 켜져 있지 않다
-
-`--cov=host` 를 켜두었으나 `host/` 에 Python 코드가 없어 **"No data was collected" 경고만 남고
-수치가 무의미**했다. CI 는 통과하지만 아무것도 검증하지 않으므로, 착각을 만들지 않기 위해 **제거했다.**
-
-**첫 Host 모듈이 들어오는 PR 에서 아래로 교체한다.**
+### 커버리지 게이트 — 켜져 있다
 
 ```yaml
 run: pytest -q --cov=host --cov-report=term-missing --cov-fail-under=70
 ```
+
+첫 Host 모듈(`host/common/protocol.py`)이 들어온 시점에 켰다. 그 전에는 `host/` 에 Python 코드가
+없어 **"No data was collected" 경고만 남고 수치가 무의미**했다 — CI 는 통과하지만 아무것도
+검증하지 않는 상태였으므로, 착각을 만들지 않기 위해 일부러 꺼 두었던 것이다.
+
+> **기준선은 70% 이며 현재 실측은 100% 다.** 하한을 실측치까지 올리지 않는 이유는, 그렇게 하면
+> 커버리지를 낮추지 않는 것 자체가 목적이 되어 **의미 없는 테스트를 쓰게 만들기** 때문이다.
+> 70%는 "핵심 경로가 검증되지 않은 채 머지되는 것"을 막는 하한이다.
 
 `ci.yml` 해당 위치에 이 줄이 주석으로 남아 있다. **`--cov-fail-under` 가 없으면 커버리지는
 게이트가 아니라 장식이다** — 숫자만 찍히고 아무도 보지 않는다.
