@@ -29,7 +29,7 @@ INVALID = FIXTURES / "protocol_invalid.jsonl"
 CONFIG = ROOT / "config" / "config.yaml"
 
 # PRD FR-5.1 — 제어 명령 타입
-KNOWN_TYPES = {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND"}
+KNOWN_TYPES = {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE"}
 
 # 타입별 필수 필드 (seq / ts / type 은 공통 필수)
 REQUIRED_FIELDS = {
@@ -40,6 +40,7 @@ REQUIRED_FIELDS = {
     "ACTION": {"id"},
     "LED": {"color", "blink_hz"},
     "SOUND": {"phrase_id"},
+    "STATE": {"state"},
 }
 
 # HW_MechDog API 허용 범위 (DR-1)

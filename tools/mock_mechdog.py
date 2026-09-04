@@ -116,6 +116,8 @@ class _LastCommand:
     step: float = 0.0
     angle: float = 0.0
     pitch: float = 0.0
+    #: 호스트가 `STATE` 로 알려준 FSM 상태. 로봇은 판단에 쓰지 않고 되돌려준다.
+    host_state: str = ""
 
 
 class MockRobot:
@@ -170,12 +172,16 @@ class MockRobot:
         # 규칙 ③ — 받아들인 패킷만 링크 타임아웃을 갱신한다.
         msg = result.message
         self._link_seen = True
+        kind = msg["type"]
         self._last = _LastCommand(
             at_ms=now_ms,
-            type=msg["type"],
-            step=msg.get("step", 0.0) if msg["type"] == "MOVE" else 0.0,
-            angle=msg.get("angle", 0.0) if msg["type"] == "MOVE" else 0.0,
-            pitch=msg.get("pitch", self._last.pitch) if msg["type"] == "POSE" else 0.0,
+            type=kind,
+            step=msg.get("step", 0.0) if kind == "MOVE" else 0.0,
+            angle=msg.get("angle", 0.0) if kind == "MOVE" else 0.0,
+            pitch=msg.get("pitch", self._last.pitch) if kind == "POSE" else 0.0,
+            # STATE 만이 이 값을 갱신한다. 다른 명령이 와도 유지해야 한다 —
+            # 호스트는 STATE 를 상태가 바뀔 때만 보내고 MOVE 는 10Hz 로 보낸다.
+            host_state=msg["state"] if kind == "STATE" else self._last.host_state,
         )
         return result
 
@@ -221,19 +227,17 @@ class MockRobot:
         return not self._link_seen or self.last_cmd_age_ms(now_ms) > self._safety["cmd_timeout_ms"]
 
     def state(self, now_ms: int) -> str:
-        """⚠️ **로봇이 스스로 알 수 있는 상태만 낸다.**
+        """**Tier 1 판정이 먼저, 그 다음이 호스트가 알려준 상태다.**
 
-        FSM 은 Host PC 에서 돈다 (PRD 5절). 로봇은 자기가 `ALERT` 인지 `TRACK`
-        인지 알 방법이 없다 — 그 판단은 호스트에 있고, 명령 7종 중 상태를
-        알려주는 것이 없다. 그래서 여기서 나오는 값은 세 가지뿐이다.
+        FSM 은 Host PC 에서 돈다 (PRD 5절). 로봇이 센서만으로 아는 것은 셋뿐이고
+        (`FAILSAFE`·`AVOID`·`PATROL`), 나머지 5종은 호스트가 `STATE` 명령으로
+        알려준 것을 받아적어 되돌려준다.
 
-          · `FAILSAFE` — 링크 두절 · 저전압 · 전도 (전부 Tier 1 온보드 판정)
-          · `AVOID`    — 초음파 반사 정지 (FR-2.2, Tier 1)
-          · `PATROL`   — 그 외
-
-        나머지 5종을 텔레메트리에 실으려면 호스트가 상태를 내려보내야 한다.
-        규약의 열린 구멍이며 팀장 판단 대기 중이다.
+        **순서가 규약이다** (PRD 2.2 불변 규칙) — 호스트가 `PATROL` 이라고 해도
+        로봇이 전도를 감지했으면 `FAILSAFE` 를 보고한다. 온보드 안전 판정이 호스트의
+        인식에 굴복하면 Tier 1 이 Tier 2 에 종속되어 이 구조의 의미가 사라진다.
         """
+        # ── Tier 1 — 온보드 센서 판정. 호스트의 말보다 우선한다 ──
         if not self.link_ok(now_ms):
             return "FAILSAFE"
         if self.tipped(now_ms):
@@ -242,7 +246,11 @@ class MockRobot:
             return "FAILSAFE"
         if self.distance_cm(now_ms) < self._safety["obstacle_stop_cm"]:
             return "AVOID"
-        return "PATROL"
+
+        # ── Tier 2 — 호스트가 알려준 상태를 되돌려준다 ──
+        # 못 받았으면 PATROL 로 둔다. 로봇이 아는 한 링크는 살아 있고 위험도
+        # 없으므로, 걷는 중이라고 보는 것이 센서와 모순되지 않는 유일한 선택이다.
+        return self._last.host_state or "PATROL"
 
     # ── 송신 ────────────────────────────────────────────────
 
