@@ -43,8 +43,9 @@ COMMAND_TYPES: frozenset[str] = frozenset(
     {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE"}
 )
 
-#: 모든 명령의 공통 필수 필드.
+#: 모든 명령의 공통 필수 필드. `seq`·`ts` 는 **정수**, `type` 은 문자열이다.
 COMMON_REQUIRED: tuple[str, ...] = ("seq", "ts", "type")
+COMMON_REQUIRED_SET: frozenset[str] = frozenset(COMMON_REQUIRED)
 
 #: 타입별 필수 필드.
 REQUIRED_FIELDS: dict[str, frozenset[str]] = {
@@ -115,6 +116,11 @@ ONBOARD_STATES: frozenset[str] = frozenset({"PATROL", "AVOID", "FAILSAFE"})
 TELEMETRY_REQUIRED: tuple[str, ...] = ("seq", "device_id", "state", "imu", "flags")
 IMU_FIELDS: tuple[str, ...] = ("pitch", "roll", "yaw")
 FLAG_FIELDS: tuple[str, ...] = ("lowbatt", "tipped", "link_ok")
+
+#: `TelemetryEncoder` 가 스스로 채우며 `extra` 로 덮을 수 없는 필드.
+#: 나머지 본문 필드(`state`·`dist_cm`·`imu`·`batt_v`·`last_cmd_age_ms`·`flags`)는
+#: `build()` 의 **명명 인자**이므로 애초에 `extra` 에 닿지 않는다 — 파이썬이 막는다.
+TELEMETRY_MANAGED: frozenset[str] = frozenset({"seq", "ts", "device_id"})
 
 #: 2S 리튬 물리 범위 (셀당 3.0~4.2V). 이 밖의 값은 측정 오류이므로 폐기한다.
 #: 저전압 **판정** 임계(config.safety.battery_*)와는 다른 것이다 — 이것은
@@ -189,6 +195,26 @@ def system_clock_ms() -> int:
 def _is_number(value: Any) -> bool:
     """bool 은 수치로 보지 않는다 — `True` 가 `1` 로 통과하면 안 된다."""
     return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _is_int(value: Any) -> bool:
+    """`seq`·`ts` 전용. 실수를 허용하면 조용히 잘려 나간다.
+
+    `seq: 1.5` 를 받아들이면 순서 게이트는 `int()` 로 잘라 `1` 로 기억하고
+    메시지에는 `1.5` 가 남아 **둘이 어긋난다.** 그리고 뒤이어 오는 정상적인
+    `seq: 1` 이 "중복"으로 폐기된다. 규약이 정수라고 못박은 이유가 이것이다.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _known(value: Any, allowed: frozenset[str]) -> bool:
+    """문자열인지 먼저 확인한 뒤 목록과 대조한다.
+
+    ⚠️ **이 순서가 안전 장치다.** UDP 로는 무엇이든 들어온다. `{"type": []}` 를
+    받으면 `[] in frozenset(...)` 이 `TypeError: unhashable type` 을 던지고
+    수신 루프가 죽는다 — 관제가 멈추는 것이므로 폐기보다 나쁘다.
+    """
+    return isinstance(value, str) and value in allowed
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -284,10 +310,15 @@ class CommandEncoder:
         """
         if type_ not in COMMAND_TYPES:
             raise ValueError(f"알 수 없는 명령 타입: {type_!r}")
+        # 예약 키를 넘기면 자동 생성값이 덮여 **단조 증가 seq 보장이 깨진다.**
+        # 인코더가 지키는 유일한 계약이므로 우회를 허용하지 않는다.
+        reserved = COMMON_REQUIRED_SET & fields.keys()
+        if reserved:
+            raise ValueError(f"인코더가 관리하는 필드는 넘길 수 없다: {sorted(reserved)}")
         missing = REQUIRED_FIELDS[type_] - fields.keys()
         if missing:
             raise ValueError(f"{type_} 필수 필드 누락: {sorted(missing)}")
-        if type_ == "STATE" and fields["state"] not in FSM_STATES:
+        if type_ == "STATE" and not _known(fields["state"], FSM_STATES):
             raise ValueError(f"알 수 없는 상태: {fields['state']!r}")
 
         msg = {"seq": self._seq, "ts": self._clock(), "type": type_, **fields}
@@ -360,11 +391,14 @@ class CommandDecoder:
         for key in COMMON_REQUIRED:
             if key not in msg:
                 return DecodeResult(Verdict.DISCARD, f"공통 필수 필드 누락: {key}")
-        if not _is_number(msg["seq"]):
-            return DecodeResult(Verdict.DISCARD, "seq 가 수치가 아님")
+        for key in ("seq", "ts"):
+            if not _is_int(msg[key]):
+                return DecodeResult(Verdict.DISCARD, f"{key} 가 정수가 아님")
+        if not isinstance(msg["type"], str):
+            return DecodeResult(Verdict.DISCARD, "type 이 문자열이 아님")
 
         # ① seq 역전·중복
-        if not self._gate.admit(int(msg["seq"])):
+        if not self._gate.admit(msg["seq"]):
             return DecodeResult(Verdict.DISCARD, "seq 역전·중복")
 
         # ④ 모르는 타입 — 폐기 + WARN
@@ -384,7 +418,7 @@ class CommandDecoder:
 
         # 모르는 상태값 — 폐기 + WARN. 텔레메트리 규칙 ③과 대칭이며, 같은
         # 이유로 상태 추가를 하위 호환으로 만든다.
-        if type_ == "STATE" and msg["state"] not in FSM_STATES:
+        if type_ == "STATE" and not _known(msg["state"], FSM_STATES):
             return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {msg['state']!r}")
 
         # ② 범위 초과는 폐기가 아니라 클램핑
@@ -428,7 +462,7 @@ class TelemetryEncoder:
         flags: dict[str, bool],
         **extra: Any,
     ) -> dict[str, Any]:
-        if state not in FSM_STATES:
+        if not _known(state, FSM_STATES):
             raise ValueError(f"알 수 없는 상태: {state!r}")
         missing_imu = [f for f in IMU_FIELDS if f not in imu]
         if missing_imu:
@@ -436,6 +470,11 @@ class TelemetryEncoder:
         missing_flags = [f for f in FLAG_FIELDS if f not in flags]
         if missing_flags:
             raise ValueError(f"flags 필드 누락: {missing_flags}")
+        # `extra` 로 `device_id` 를 덮으면 **송신자를 위조할 수 있다.** 다중 개체
+        # 운용에서 그것이 유일한 구분 수단이므로(DR-17) 우회를 허용하지 않는다.
+        reserved = TELEMETRY_MANAGED & extra.keys()
+        if reserved:
+            raise ValueError(f"인코더가 관리하는 필드는 넘길 수 없다: {sorted(reserved)}")
 
         msg = {
             "seq": self._seq,
@@ -482,8 +521,11 @@ class TelemetryDecoder:
         for key in TELEMETRY_REQUIRED:
             if key not in msg:
                 return DecodeResult(Verdict.DISCARD, f"필수 필드 누락: {key}")
-        if not _is_number(msg["seq"]):
-            return DecodeResult(Verdict.DISCARD, "seq 가 수치가 아님")
+        if not _is_int(msg["seq"]):
+            return DecodeResult(Verdict.DISCARD, "seq 가 정수가 아님")
+        # `ts` 는 규칙 ②의 필수 목록에 없으므로 있을 때만 본다.
+        if "ts" in msg and not _is_int(msg["ts"]):
+            return DecodeResult(Verdict.DISCARD, "ts 가 정수가 아님")
         if not isinstance(msg["device_id"], str) or not msg["device_id"]:
             return DecodeResult(Verdict.DISCARD, "device_id 가 비어 있음")
 
@@ -498,12 +540,18 @@ class TelemetryDecoder:
                 return DecodeResult(Verdict.DISCARD, f"flags.{name} 누락 또는 비불리언")
 
         # ① seq 역전·중복 — 개체별로 센다
-        if not self._gate.admit(int(msg["seq"]), msg["device_id"]):
+        if not self._gate.admit(msg["seq"], msg["device_id"]):
             return DecodeResult(Verdict.DISCARD, "seq 역전·중복")
 
         # ③ 모르는 상태 — 폐기 + WARN
+        #
+        # ⚠️ **기형과 미지를 구분한다.** WARN 은 "상대가 새 상태를 쓰기
+        # 시작했다"는 신호 채널이므로(하위 호환 확장의 근거), 문자열이 아닌
+        # 기형 값을 여기 섞으면 그 신호가 묻힌다. 기형은 조용히 폐기한다.
         state = msg["state"]
-        if state not in FSM_STATES:
+        if not isinstance(state, str):
+            return DecodeResult(Verdict.DISCARD, "state 가 문자열이 아님")
+        if not _known(state, FSM_STATES):
             return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {state!r}")
 
         # ④ 물리적으로 불가능한 값

@@ -435,3 +435,35 @@ def test_echoed_records_still_pass_host_validation(config: dict, state: str) -> 
     _feed(robot, START_MS)
     _send_state(robot, state, START_MS)
     assert p.TelemetryDecoder().decode(robot.telemetry(START_MS)).accepted
+
+
+def test_posture_survives_following_commands(config: dict) -> None:
+    """**자세는 다음 지시가 올 때까지 유지된다.**
+
+    호스트는 자세를 바꿀 때만 `POSE` 를 보내고 `MOVE` 는 10Hz 로 보낸다. 명령
+    하나가 피치를 0 으로 되돌리면 뒤따르는 `MOVE` 한 건에 자세가 사라져,
+    자세 상승 시퀀스(FR-9.2.2)가 먹혔는지 호스트가 확인할 방법이 없다.
+    """
+    robot = _robot(config)
+    encoder = p.CommandEncoder(clock=lambda: START_MS, start_seq=next(_SEQ) * 1000)
+    robot.receive(encoder.pose(15, 0, 0, 300), START_MS)
+    assert json.loads(robot.telemetry(START_MS))["imu"]["pitch"] == 15
+
+    for follow_up in (
+        encoder.stop(),
+        encoder.state("ALERT"),
+        encoder.led("red", 2),
+        encoder.move(60, 0),
+    ):
+        robot.receive(follow_up, START_MS)
+        pitch = json.loads(robot.telemetry(START_MS))["imu"]["pitch"]
+        assert pitch == 15, f"자세가 사라졌다: {follow_up}"
+
+
+def test_new_pose_replaces_the_previous_one(config: dict) -> None:
+    """유지는 하되 새 `POSE` 는 반영해야 한다 — 복귀(FR-9.2.3)가 이 경로다."""
+    robot = _robot(config)
+    encoder = p.CommandEncoder(clock=lambda: START_MS, start_seq=next(_SEQ) * 1000)
+    robot.receive(encoder.pose(15, 0, 0, 300), START_MS)
+    robot.receive(encoder.pose(0, 0, 0, 300), START_MS)
+    assert json.loads(robot.telemetry(START_MS))["imu"]["pitch"] == 0
