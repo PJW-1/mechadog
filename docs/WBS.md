@@ -389,7 +389,7 @@
 | ID | 워크패키지 | 산출물 | 완료 기준 (DoD) | R | 선행 | M/D | 연계 |
 | :--- | :--- | :--- | :--- | :---: | :--- | ---: | :--- |
 | 4.4.1 | config 로더 및 스키마 검증 | `config/config.yaml`, `config/devices/*.yaml`, `common/config.py` | 전 파라미터가 YAML에서 로드됨. **누락·범위이탈 시 기동 거부.** Dev/Prod 프로파일 분리. **`--device <unit-id>` 미지정 시 기동 거부** | C | 2.4.1 | 1.0 | FR-2.5, NFR-3① |
-| 4.4.2 | JSON Lines 로거 및 로테이션 | `common/logging_setup.py` | 레벨링 + 로테이션 동작. **모든 로그에 seq·ts·state·`device_id` 컨텍스트 포함** | B | — | 1.0 | NFR-3④ |
+| 4.4.2 | JSON Lines 로거 및 로테이션 | `common/logging_setup.py` + `tests/fixtures/log_samples.jsonl` | 레벨링 + 로테이션 동작. **모든 로그에 seq·ts·state·`device_id` 컨텍스트 포함** — ⚠️ **문서 규칙에 의존하지 않고 골든 픽스처로 강제한다.** `log_samples.jsonl`(필수 컨텍스트 6개 + 레벨 4종 + 엣지트리거·주기요약 예)과 `tests/test_logging.py` 를 함께 넣어, 컨텍스트가 빠진 레코드를 CI 가 폐기 판정한다 (통신 규약과 같은 방식 · CONTRIBUTING 5절) | B | — | 1.0 | NFR-3④ |
 | 4.4.3 | 이벤트 블랙박스 | `common/blackbox.py` | 사람감지 시 스냅샷 JPEG + 텔레메트리 스냅샷 저장, 대시보드 푸시. **비주 대상도 기록한다**(FR-3.8.4) | B | 4.4.2, 3.3.3 | 0.5 | FR-3.9 |
 
 #### 4.5 관제 대시보드 서버 — 3.5 M/D
