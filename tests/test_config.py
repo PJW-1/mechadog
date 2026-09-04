@@ -97,8 +97,12 @@ def test_gait_params_within_api_range(cfg: dict) -> None:
 
 
 def test_localization_track_is_known(cfg: dict) -> None:
-    """측위 트랙은 docs/LOCALIZATION_OPTIONS.md 의 후보 중 하나여야 한다."""
-    assert cfg["localization"]["track"] in {"none", "lidar", "phone_vio", "aruco"}
+    """측위 트랙은 docs/LOCALIZATION_OPTIONS.md 가 인정하는 값이어야 한다.
+
+    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다** (OI-9 닫힘, 2026-09-05).
+    탈락한 선택지를 설정에 남겨 두면 근거를 모르는 사람이 다시 넣는다.
+    """
+    assert cfg["localization"]["track"] in {"none", "lidar", "aruco"}
 
 
 def test_detection_requires_consecutive_frames(cfg: dict) -> None:

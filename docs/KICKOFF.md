@@ -115,14 +115,14 @@ M2 착수 전 실제 진척 기준으로 다시 산정한다. 트리거와 이�
 | **OI-2** | 무게 · 치수 · 탑재 여력 · **마스트 차폐 기준 높이** | 발주 판정 |
 | OI-3 | 여유 UART 핀 노출 여부 | RISK-01 대비 |
 | OI-4 | 순정 배터리 연속 보행 시간 | |
-| **OI-9** | **측위 트랙 확정** (Track A 디폴트, 게이트 결과로) | 발주 판정 |
+| ~~OI-9~~ | ~~측위 트랙 확정~~ → **닫힘: Track A(LiDAR) 확정 · 폰 VIO 탈락** ([근거](LOCALIZATION_OPTIONS.md) 0절) | ✅ |
 | **OI-13** | PPE 데이터셋 확보 방식 — **공수 3배 차이** | 공수 확정 |
 | OI-14 | 기준 PC — 팀장 PC 사양 확인만 남음 | |
 | OI-16 | 카메라 수직 화각 실측 | FR-9.2.2 선행 |
 | OI-17 | 앉기 자세 몸통 피치 실측 | NFR-2.4 임계 확정 |
 
 **나머지 열린 항목**: OI-5(라이브러리 라이선스) · OI-6/10/11(음성 모듈) · OI-8(yaw, 착수 조건 아님) ·
-OI-12·OI-7(닫힘) · OI-15(모델 선정, M2) · **OI-18(대응 시나리오, M2)** · **OI-19(온라인 시연 방식, M3)**
+OI-7·OI-9·OI-12(닫힘) · OI-15(모델 선정, M2) · **OI-18(대응 시나리오, M2)** · **OI-19(온라인 시연 방식, M3)**
 
 ---
 
@@ -153,7 +153,7 @@ OI-12·OI-7(닫힘) · OI-15(모델 선정, M2) · **OI-18(대응 시나리오, 
 | 내 워크패키지·일정 | [WBS.md](WBS.md) |
 | **왜 이렇게 정했나** | [PRD](PRD_Physical_AI_Guard_Robot.md) 1.3 DR-1~17 |
 | **모르는 용어가 나왔다** | [용어 사전](GLOSSARY.md) |
-| 측위 트랙 판단 | [LOCALIZATION_OPTIONS.md](LOCALIZATION_OPTIONS.md) |
+| **왜 LiDAR 인가 · 폰 VIO 는 왜 탈락했나** | [LOCALIZATION_OPTIONS.md](LOCALIZATION_OPTIONS.md) 0절 |
 | 브랜치·PR 절차 | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 
 ---
