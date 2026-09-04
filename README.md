@@ -6,6 +6,7 @@ Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자�
 
 MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **HAL로 취급**하고, 그 위에 **인지 → 판단 → 항법** 자율 스택을 새로 얹는 것이 목표입니다.
 
+🚀 **[착수 상태 — 여기서 시작하세요](docs/KICKOFF.md)** ← 새 세션·새 팀원  
 📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
 📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
 🧭 **[측위 방식 비교 — LiDAR vs 스마트폰 VIO](docs/LOCALIZATION_OPTIONS.md)** ← 결정 대기  
@@ -118,6 +119,7 @@ mechdog_physical_ai/
 ├── docs/
 │   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 · 설계 결정(DR)
 │   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
+│   ├── KICKOFF.md                       # 착수 상태 — 여기서 시작
 │   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 7종)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준
 │   ├── LOCALIZATION_OPTIONS.md          # 측위 방식 비교 및 결정
