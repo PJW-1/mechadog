@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main, dev]
+    # WBS 5.3.4 · release 잡은 refs/tags/v* 에서만 동작한다. 이 줄이 없으면
+    # 태그 push 로 워크플로우 자체가 트리거되지 않아 릴리스가 생성될 수 없다.
+    tags: ['v*']
   pull_request:
     branches: [main, dev]
 
