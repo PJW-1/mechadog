@@ -12,3 +12,4 @@
 {"_case": "SOUND 경고 방송", "seq": 12, "ts": 1756800001100, "type": "SOUND", "phrase_id": 181}
 {"_case": "STATE 호스트 FSM 상태 통보 (경계)", "seq": 13, "ts": 1756800001200, "type": "STATE", "state": "ALERT"}
 {"_case": "STATE 온보드가 스스로 아는 상태", "seq": 14, "ts": 1756800001300, "type": "STATE", "state": "PATROL"}
+{"_case": "STATE 호스트 전용 상태 (온보드는 알 수 없다)", "seq": 15, "ts": 1756800001400, "type": "STATE", "state": "AUTH_WAIT"}

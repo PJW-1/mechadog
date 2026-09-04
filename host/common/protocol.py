@@ -70,8 +70,8 @@ CLAMP_RANGES: dict[str, tuple[float, float]] = {
     "id": (0, 15),  # 내장 액션 그룹
 }
 
-#: FSM 상태 8종 (PRD 5절). 모르는 상태는 폐기 + WARN 이며, 명령 타입과 같은
-#: 이유로 상태 추가를 하위 호환으로 만든다.
+#: FSM 상태. 모르는 상태는 폐기 + WARN 이며, 명령 타입과 같은 이유로 상태
+#: 추가를 하위 호환으로 만든다.
 #:
 #: **FSM 은 Host PC 에서 돈다.** 로봇은 자기가 `ALERT` 인지 `TRACK` 인지 알 수 없고
 #: (그 판단의 근거인 카메라 영상을 호스트가 본다), 온보드가 스스로 아는 것은
@@ -79,8 +79,31 @@ CLAMP_RANGES: dict[str, tuple[float, float]] = {
 #: 내려보내고 로봇은 받아적어 텔레메트리에 되돌려준다.
 #:
 #: 그래서 이 집합은 **명령(`STATE`)과 텔레메트리(`state`) 양쪽에서 쓰인다.**
+#:
+#: ⚠️ **정본은 PRD 5절 전이표이며, 이 집합은 그것과 정확히 일치해야 한다.**
+#: FR-4.2 가 대시보드에 "현재 FSM 상태"를 스트리밍하도록 요구하므로, 전이표에
+#: 있고 여기 없는 상태는 **화면에 표시할 수 없는 상태**가 된다. 임의로 골라
+#: 담으면 그 기준이 문서 어디에도 없어 반드시 다시 어긋난다 —
+#: `test_fsm_states_match_the_prd_transition_table` 이 대조한다.
 FSM_STATES: frozenset[str] = frozenset(
-    {"PATROL", "SCAN", "AVOID", "ALERT", "TRACK", "LOST", "FAILSAFE", "HAZARD_DISPATCH"}
+    {
+        # ── 온보드가 센서만으로 판정 가능 (Tier 1) ──
+        "PATROL",
+        "AVOID",
+        "FAILSAFE",
+        # ── 호스트 FSM 전용 — `STATE` 명령으로 내려온다 (Tier 2) ──
+        "IDLE",
+        "SCAN",
+        "ALERT",
+        "TRACK",
+        "LOST",
+        "AUTH_WAIT",
+        "MANUAL",
+        # ── Phase 2 — 측위가 확보된 뒤에 쓰인다 ──
+        "HAZARD_DISPATCH",
+        "HAZARD_SCAN",
+        "ZONE_INSPECT",
+    }
 )
 
 #: 온보드가 센서만으로 판정할 수 있는 상태. 나머지는 호스트가 알려줘야 한다.

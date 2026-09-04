@@ -31,14 +31,22 @@ CONFIG = ROOT / "config" / "config.yaml"
 
 # PRD FR-2.1 ~ FR-6.7 — FSM 상태
 KNOWN_STATES = {
+    # 온보드가 센서만으로 판정 가능
     "PATROL",
-    "SCAN",
     "AVOID",
+    "FAILSAFE",
+    # 호스트 FSM 전용 — STATE 명령으로 내려온다
+    "IDLE",
+    "SCAN",
     "ALERT",
     "TRACK",
     "LOST",
-    "FAILSAFE",
+    "AUTH_WAIT",
+    "MANUAL",
+    # Phase 2
     "HAZARD_DISPATCH",
+    "HAZARD_SCAN",
+    "ZONE_INSPECT",
 }
 
 # FR-5.2 — 최상위 필수 필드
