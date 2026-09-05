@@ -26,7 +26,7 @@ OUT = ROOT / "docs" / "ASSIGNMENTS.md"
 #: WBS 3절 사전의 행 구조 — 8칸 고정.
 #: `ID | 워크패키지 | 산출물 | 완료 기준(DoD) | R | 선행 | M/D | 연계`
 _COLUMNS = 8
-_ID, _NAME, _R, _PRED, _MD = 0, 1, 4, 5, 6
+_ID, _NAME, _DELIV, _R, _PRED, _MD = 0, 1, 2, 4, 5, 6
 
 #: 담당자 배정 규칙 — 정본은 [WBS 4절 담당자 기준]이다.
 #: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4.1`(ROS2 컨테이너)이 이관된다.
@@ -54,9 +54,15 @@ GROUPS: dict[str, str] = {
 class WorkPackage:
     wid: str
     name: str
+    deliverable: str  # 무엇을 만들면 되는가 — 초보가 가장 먼저 찾는 정보
     role: str  # A · B · C (작업 성격)
     predecessor: str
     effort: float
+
+    @property
+    def ready(self) -> bool:
+        """선행이 없으면 지금 바로 시작할 수 있다."""
+        return self.predecessor == "—"
 
     @property
     def group(self) -> str:
@@ -99,6 +105,7 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
             WorkPackage(
                 wid=wid,
                 name=_clean(cells[_NAME]),
+                deliverable=_clean(cells[_DELIV]) or "—",
                 role=_clean(cells[_R]),
                 predecessor=_clean(cells[_PRED]) or "—",
                 effort=float(effort),
@@ -107,11 +114,37 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
     return sorted(packages, key=WorkPackage.sort_key)
 
 
+def _table(packages: list[WorkPackage], *, with_predecessor: bool) -> list[str]:
+    head = (
+        "| WBS | 할 일 | 만들 것 | 기다리는 것 | M/D |"
+        if with_predecessor
+        else ("| WBS | 할 일 | 만들 것 | M/D |")
+    )
+    rule = (
+        "| :--- | :--- | :--- | :--- | ---: |"
+        if with_predecessor
+        else "| :--- | :--- | :--- | ---: |"
+    )
+    rows = []
+    for p in packages:
+        cells = [f"`{p.wid}`", p.name, p.deliverable]
+        if with_predecessor:
+            cells.append(p.predecessor)
+        cells.append(f"{p.effort:.1f}")
+        rows.append("| " + " | ".join(cells) + " |")
+    return [head, rule, *rows]
+
+
 def render(packages: list[WorkPackage]) -> str:
-    """담당자별 마크다운을 만든다. 사람이 읽는 것이 목적이므로 소계를 먼저 둔다."""
+    """담당자별 마크다운을 만든다.
+
+    **정렬 기준은 대분류가 아니라 "지금 할 수 있는가" 다.** 처음 보는 사람이 묻는 것은
+    *"내 일이 어느 대분류에 속하나"* 가 아니라 *"오늘 뭘 잡으면 되나"* 이기 때문이다.
+    대분류 소계는 총량을 보기 위한 것이므로 뒤로 뺀다.
+    """
     total = sum(p.effort for p in packages)
     lines: list[str] = [
-        "# 담당자별 작업 목록",
+        "# 내가 할 일",
         "",
         "> ⚠️ **이 파일은 생성된다. 직접 고치지 마라.**",
         "> 정본은 [WBS 3절 사전](WBS.md)이며, 여기는 그것을 담당자 기준으로 펼친 것이다.",
@@ -122,36 +155,51 @@ def render(packages: list[WorkPackage]) -> str:
         ">",
         "> WBS 를 고치고 재생성하지 않으면 `tests/test_assignments.py` 가 CI 에서 실패한다.",
         "",
-        "| 항목 | 값 |",
-        "| :--- | :--- |",
-        f"| **워크패키지** | {len(packages)}건 |",
-        f"| **총 공수** | {total:.1f} M/D (원공수) |",
-        "| **배정 규칙** | `R=A` → L1·L2 · `3.9`·`5.4.1` 이관 · 나머지(`B`·`C`) → 팀장 |",
-        "| **일정 배치** | [WBS 6절 4주 일정](WBS.md) |",
+        "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행이 없어 지금 바로 시작할 수 있는 것들이다.",
+        "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 3절 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
-        "---",
-        "",
-        "## 한눈에 보기",
-        "",
-        "| 담당 | 건수 | 공수 | 비중 |",
-        "| :--- | ---: | ---: | ---: |",
+        "| 담당 | 지금 가능 | 대기 | 합계 | 공수 |",
+        "| :--- | ---: | ---: | ---: | ---: |",
     ]
     for owner in OWNERS:
         mine = [p for p in packages if p.owner == owner]
-        effort = sum(p.effort for p in mine)
-        share = effort / total * 100 if total else 0
-        lines.append(f"| **{owner}** | {len(mine)}건 | **{effort:.1f}** M/D | {share:.0f}% |")
-    lines += ["", "---", ""]
+        ready = [p for p in mine if p.ready]
+        lines.append(
+            f"| **{owner}** | 🟢 {len(ready)}건 | ⏳ {len(mine) - len(ready)}건 | "
+            f"{len(mine)}건 | **{sum(p.effort for p in mine):.1f}** M/D |"
+        )
+    lines += [
+        f"| | | | **{len(packages)}건** | **{total:.1f}** M/D |",
+        "",
+        "---",
+        "",
+    ]
 
     for owner, scope in OWNERS.items():
         mine = [p for p in packages if p.owner == owner]
-        effort = sum(p.effort for p in mine)
+        ready = [p for p in mine if p.ready]
+        waiting = [p for p in mine if not p.ready]
         lines += [
-            f"## {owner} — {effort:.1f} M/D · {len(mine)}건",
+            f"## {owner}",
             "",
             f"**담당 영역** — {scope}",
             "",
-            "### 대분류별 소계",
+            f"**{sum(p.effort for p in mine):.1f} M/D · {len(mine)}건**",
+            "",
+            f"### 🟢 지금 시작할 수 있다 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",
+            "",
+            "선행 작업이 없다. 이 중 아무거나 먼저 잡아도 된다.",
+            "",
+            *_table(ready, with_predecessor=False),
+            "",
+            f"### ⏳ 선행이 끝나야 시작한다 — {len(waiting)}건 · "
+            f"{sum(p.effort for p in waiting):.1f} M/D",
+            "",
+            "**기다리는 것** 열의 번호가 끝나면 시작할 수 있다.",
+            "",
+            *_table(waiting, with_predecessor=True),
+            "",
+            "<details><summary>대분류별 소계</summary>",
             "",
             "| 대분류 | 건수 | 공수 |",
             "| :--- | ---: | ---: |",
@@ -163,23 +211,7 @@ def render(packages: list[WorkPackage]) -> str:
             lines.append(
                 f"| **{gid}.0** {gname} | {len(grouped)}건 | {sum(p.effort for p in grouped):.1f} |"
             )
-        lines += ["", "### 워크패키지"]
-
-        for gid, gname in GROUPS.items():
-            grouped = [p for p in mine if p.group == gid]
-            if not grouped:
-                continue
-            lines += [
-                "",
-                f"**{gid}.0 {gname}** — {sum(p.effort for p in grouped):.1f} M/D",
-                "",
-                "| WBS | 작업 | 선행 | M/D |",
-                "| :--- | :--- | :--- | ---: |",
-            ]
-            lines += [
-                f"| `{p.wid}` | {p.name} | {p.predecessor} | {p.effort:.1f} |" for p in grouped
-            ]
-        lines += ["", "---", ""]
+        lines += ["", "</details>", "", "---", ""]
 
     lines += [
         "> **여기 없는 작업은 프로젝트 범위 밖이다** (WBS 0절 100% 규칙).",

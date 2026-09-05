@@ -256,7 +256,7 @@ def test_telemetry_invalid_fixture_matches_expected_verdict() -> None:
 
 
 def test_telemetry_seq_is_tracked_per_device() -> None:
-    """한 카운터로 묶으면 개체끼리 서로의 패킷을 폐기한다 (WBS 8절)."""
+    """한 카운터로 묶으면 개체끼리 서로의 패킷을 폐기한다 (WBS 7절)."""
     decoder = p.TelemetryDecoder()
     encoders = {
         "mechdog-a": p.TelemetryEncoder("mechdog-a", clock=FakeClock(), start_seq=100),
