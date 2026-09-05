@@ -321,41 +321,44 @@ DecodeResult Reject(Verdict verdict, const char* reason) {
 // 타입별 필수 필드가 모두 있고 종류가 맞는지 본다. 문자열이어야 할 자리에 숫자가
 // 오는 것도 폐기 사유다 — 알려진 값 목록과 대조하기 전에 걸러야 안전하다 (규칙 ⑤).
 const char* CheckRequired(CmdType type, const RawMsg& m) {
+  // 필드 이름을 함께 들고 사유 문자열에 끼워 넣고 싶지만, 그러려면 런타임
+  // 문자열 조립이 필요하다. 온보드에서 버퍼를 잡거나 정적 버퍼를 공유하는 쪽 모두
+  // 값에 비해 대가가 크다. 타입(`to_string(CmdType)`)과 사유만으로도 어느 필드가
+  // 문제인지는 규약 표에서 바로 좁혀진다.
   struct Req {
     const Field* field;
-    const char* name;
     bool wants_string;
   };
   Req reqs[4];
   int n = 0;
   switch (type) {
     case CmdType::Move:
-      reqs[n++] = {&m.step, "step", false};
-      reqs[n++] = {&m.angle, "angle", false};
+      reqs[n++] = {&m.step, false};
+      reqs[n++] = {&m.angle, false};
       break;
     case CmdType::Pose:
-      reqs[n++] = {&m.pitch, "pitch", false};
-      reqs[n++] = {&m.roll, "roll", false};
-      reqs[n++] = {&m.height, "height", false};
-      reqs[n++] = {&m.dur, "dur", false};
+      reqs[n++] = {&m.pitch, false};
+      reqs[n++] = {&m.roll, false};
+      reqs[n++] = {&m.height, false};
+      reqs[n++] = {&m.dur, false};
       break;
     case CmdType::Gait:
-      reqs[n++] = {&m.lift_time, "lift_time", false};
-      reqs[n++] = {&m.ground_time, "ground_time", false};
-      reqs[n++] = {&m.height, "height", false};
+      reqs[n++] = {&m.lift_time, false};
+      reqs[n++] = {&m.ground_time, false};
+      reqs[n++] = {&m.height, false};
       break;
     case CmdType::Action:
-      reqs[n++] = {&m.id, "id", false};
+      reqs[n++] = {&m.id, false};
       break;
     case CmdType::Led:
-      reqs[n++] = {&m.color, "color", true};
-      reqs[n++] = {&m.blink_hz, "blink_hz", false};
+      reqs[n++] = {&m.color, true};
+      reqs[n++] = {&m.blink_hz, false};
       break;
     case CmdType::Sound:
-      reqs[n++] = {&m.phrase_id, "phrase_id", false};
+      reqs[n++] = {&m.phrase_id, false};
       break;
     case CmdType::State:
-      reqs[n++] = {&m.state, "state", true};
+      reqs[n++] = {&m.state, true};
       break;
     case CmdType::Stop:
     case CmdType::Unknown:
