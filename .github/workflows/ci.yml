@@ -97,6 +97,25 @@ jobs:
                    -i third_party \
                    firmware_mechdog_motion firmware_xiao_vision
 
+      # ── WBS 4.1.3 · C++ 파서 골든 픽스처 대조 ────────────────
+      #
+      #  CONTRIBUTING 5.2 가 요구하는 "C++ 파서를 호스트 컴파일로 픽스처와 대조"
+      #  가 여기서 실제로 돈다. Python 쪽(test_protocol_fixtures.py)과 **같은
+      #  파일**을 읽으므로, 스키마를 한쪽만 바꾸면 둘 중 하나가 반드시 깨진다.
+      #
+      #  실물 없이 도는 것이 요점이다 — 펌웨어 로직을 로봇 3대에 의존하지 않고
+      #  매 PR 마다 검증한다 (HAL 분리 원칙).
+      - name: Host unit test (command parser)
+        if: hashFiles('firmware_mechdog_motion/test/*.cpp') != ''
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/src/command_parser.cpp \
+              firmware_mechdog_motion/test/test_command_parser.cpp \
+              -o build/test_command_parser
+          ./build/test_command_parser tests/fixtures
+
   # ── WBS 5.3.3 · 펌웨어 빌드 ───────────────────────────────
   firmware-build:
     name: Firmware Build (${{ matrix.target.name }})
