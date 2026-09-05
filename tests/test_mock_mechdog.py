@@ -107,7 +107,7 @@ def test_starts_in_failsafe_until_first_command(config: dict) -> None:
 
 
 def test_command_timeout_stops_but_does_not_change_state(config: dict) -> None:
-    """300ms 무명령은 Tier 1 반사(`move(0,0)`)이지 상태 전이가 아니다 (PRD 5절)."""
+    """300ms 무명령은 Tier 1 반사(`move(0,0)`)이지 상태 전이가 아니다 (아키텍처 3절)."""
     robot = _robot(config)
     _feed(robot, START_MS)
     timeout_ms = config["safety"]["cmd_timeout_ms"]
@@ -242,7 +242,7 @@ def test_corrupt_telemetry_is_rejected_by_the_host(config: dict) -> None:
 
 
 def test_reports_only_states_the_robot_can_know(config: dict) -> None:
-    """FSM 은 호스트에 있다 (PRD 5절). 로봇이 낼 수 있는 상태는 셋뿐이다.
+    """FSM 은 호스트에 있다 (아키텍처 3절). 로봇이 낼 수 있는 상태는 셋뿐이다.
 
     나머지 5종을 실으려면 호스트가 상태를 내려보내야 한다 — 규약의 열린 구멍.
     """
@@ -389,7 +389,7 @@ def test_host_state_survives_subsequent_commands(config: dict) -> None:
 
 
 def test_tier1_overrides_host_state(config: dict) -> None:
-    """⚠️ **호스트가 뭐라 하든 온보드 안전 판정이 우선한다** (PRD 2.2 불변 규칙).
+    """⚠️ **호스트가 뭐라 하든 온보드 안전 판정이 우선한다** (아키텍처 1.2 불변 규칙).
 
     이 순서가 뒤집히면 Tier 1 이 Tier 2 에 종속되어 계층 구조의 의미가 사라진다.
     """

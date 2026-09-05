@@ -6,16 +6,15 @@ Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자�
 
 MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **HAL로 취급**하고, 그 위에 **인지 → 판단 → 항법** 자율 스택을 새로 얹는 것이 목표입니다.
 
-🚀 **[착수 상태 — 여기서 시작하세요](docs/KICKOFF.md)** ← 새 세션·새 팀원  
 📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
 📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
 🙋 **[담당자별 작업 목록 — 내 일이 뭔지](docs/ASSIGNMENTS.md)** ← 자기 할 일  
-🧭 **[측위 방식 — Track A(LiDAR) 확정](docs/LOCALIZATION_OPTIONS.md)** ← 폰 VIO 탈락 근거  
+🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 18건  
 🔧 **[M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**  
 🔌 **[하드웨어 조립·배선 — 무납땜 구성](docs/HARDWARE_ASSEMBLY.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 📡 **[통신 프로토콜 정본 — 명령 8종·검증 규칙](docs/PROTOCOL.md)**  
-📖 **[용어 사전 — 문서 읽다 막히면 여기](docs/GLOSSARY.md)** ← 처음 보는 분  
+🏗 **[시스템 아키텍처 — 구조·상태·품질 기준](docs/ARCHITECTURE.md)** ← 용어 부록 포함  
 🤝 **[협업 규칙](CONTRIBUTING.md)**
 
 > **처음 클론했다면** — `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` (약 40초)
@@ -119,14 +118,15 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 ```
 mechdog_physical_ai/
 ├── docs/
-│   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 · 설계 결정(DR)
-│   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
-│   ├── KICKOFF.md                       # 착수 상태 — 여기서 시작
+│   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 (FR · 마일스톤 · 리스크 · OI)
+│   ├── ARCHITECTURE.md                  # 구조 · FSM · 품질 기준 · 용어
+│   ├── DECISIONS.md                     # 설계 결정 기록 (ADR 18건)
 │   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 8종)
+│   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
+│   ├── ASSIGNMENTS.md                   # 담당자별 작업 목록 (WBS 에서 생성)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준
-│   ├── LOCALIZATION_OPTIONS.md          # 측위 방식 비교 및 결정
-│   ├── HARDWARE_ASSEMBLY.md           # 조립 · 배선 · 전원 (무납땜)
-│   └── HARDWARE_VERIFICATION.md       # M0 실측 리포트
+│   ├── HARDWARE_ASSEMBLY.md             # 조립 · 배선 · 전원 (무납땜)
+│   └── HARDWARE_VERIFICATION.md         # M0 검증 체크리스트
 ├── config/
 │   ├── config.yaml                      # 전역 파라미터 (매직 넘버 0개 목표)
 │   ├── devices/                         # 개체별 프로파일 (서보 오프셋 등)
@@ -149,6 +149,34 @@ mechdog_physical_ai/
     ├── ISSUE_TEMPLATE/
     └── PULL_REQUEST_TEMPLATE.md
 ```
+
+## 문서 지도 — 언제 무엇을 보나
+
+| 상황 | 문서 |
+| :--- | :--- |
+| **내 할 일만 보고 싶다** | **[담당자별 작업 목록](docs/ASSIGNMENTS.md)** |
+| **파서·직렬화를 구현한다** | [PROTOCOL.md](docs/PROTOCOL.md) ← **PRD 가 아니다** |
+| 무엇을 만드는가 (기능 요구사항) | [PRD](docs/PRD_Physical_AI_Guard_Robot.md) |
+| 어떤 구조인가 · FSM · 품질 기준 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **왜 이렇게 정했나 · 무엇을 왜 안 했나** | [DECISIONS.md](docs/DECISIONS.md) |
+| **모르는 용어가 나왔다** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) 부록 |
+| 로깅 · 테스트 · CI 를 짠다 | [ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) |
+| 브랜치 · PR · 코드 규약 | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| 조립 · 배선 · 발주 | [HARDWARE_ASSEMBLY.md](docs/HARDWARE_ASSEMBLY.md) |
+| M0 검증 | [HARDWARE_VERIFICATION.md](docs/HARDWARE_VERIFICATION.md) |
+| 내 워크패키지 · 일정 | [WBS.md](docs/WBS.md) |
+
+## 처음 보면 틀리기 쉬운 것
+
+| | |
+| :--- | :--- |
+| **측위 결정이 늦어도 착수는 안 막힌다** | Phase 1 의 P1 7종은 측위를 쓰지 않는다. 변화 감지조차 마커 한 장이면 된다 |
+| **로봇은 걷는 사람을 못 따라간다** | 10~30cm/s 대 120~150cm/s. **판정 대상은 정지한 작업자**다 (FR-9.2.0) |
+| **자세를 올린 상태로는 이동할 수 없다** | 전방 지면이 안 보인다. 대상이 움직이면 루프에 빠지므로 재시도 상한이 있다 (FR-9.2.4) |
+| **ArUco 마커와 ARCore 앵커는 다르다** | 마커는 인쇄물, 앵커는 가상 좌표. 구역 마커는 Phase 2 에서 불필요해지지만 **사원증은 대체 불가** |
+| **눈 LED 는 장식이 아니다** | 관측 가능한 상태 출력이며 디버깅 수단이다 |
+| **L3 는 관리자 확인으로만 해제된다** | PPE 위반·물체 변화는 인증할 주체가 없다 |
+| **`FR-8.0` 은 Phase 1 전용 우회 수단** | 측위가 확보되면 폐기된다 |
 
 ## 팀 구성
 

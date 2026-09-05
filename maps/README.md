@@ -1,6 +1,6 @@
 # 지도 산출물
 
-측위 트랙에 따라 내용이 달라진다 (`docs/LOCALIZATION_OPTIONS.md`).
+측위 트랙에 따라 내용이 달라진다 (`docs/DECISIONS.md` ADR-18).
 
 | 트랙 | 산출물 |
 | :--- | :--- |

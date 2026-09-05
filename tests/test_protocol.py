@@ -500,8 +500,8 @@ def test_onboard_states_are_a_subset_of_fsm_states() -> None:
     assert p.ONBOARD_STATES < p.FSM_STATES
 
 
-def test_fsm_states_match_the_prd_transition_table() -> None:
-    """**FSM 상태 목록의 정본은 PRD 5절 전이표다.** 코드가 그것과 일치해야 한다.
+def test_fsm_states_match_the_transition_table() -> None:
+    """**FSM 상태 목록의 정본은 아키텍처 문서의 전이표다.** 코드가 그것과 일치해야 한다.
 
     FR-4.2 가 대시보드에 "현재 FSM 상태"를 스트리밍하도록 요구하므로, 전이표에
     있고 `FSM_STATES` 에 없는 상태는 **화면에 표시할 수 없는 상태**가 된다.
@@ -511,9 +511,9 @@ def test_fsm_states_match_the_prd_transition_table() -> None:
     `IDLE`·`MANUAL`·`AUTH_WAIT` 를 호스트가 로봇에게 알려줄 수 없었다.
     `STATE` 명령이 없던 동안에는 아무도 그 필드를 채울 수 없어 드러나지 않았다.
     """
-    prd = ROOT / "docs" / "PRD_Physical_AI_Guard_Robot.md"
-    body = prd.read_text(encoding="utf-8")
-    table = body[body.index("## 5. 행동 상태 전이표") : body.index("### 5.1 대응 에스컬레이션")]
+    doc = ROOT / "docs" / "ARCHITECTURE.md"
+    body = doc.read_text(encoding="utf-8")
+    table = body[body.index("## 3. 행동 상태 전이표") : body.index("### 3.1 대응 에스컬레이션")]
 
     # 전이표는 상태와 트리거를 같은 표기로 쓴다. 트리거만 걸러낸다.
     triggers = {"CMD_START_PATROL"}
