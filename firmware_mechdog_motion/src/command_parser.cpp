@@ -42,7 +42,9 @@ constexpr double kExactIntLimit = 9007199254740992.0;  // 2^53
 // 중첩 건너뛰기 깊이 한도. 규약에 중첩이 없으므로 이 값에 닿는 입력은 이미 비정상이다.
 constexpr int kMaxSkipDepth = 32;
 
-bool IsWs(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+bool IsWs(char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
 
 const char* SkipWs(const char* p, const char* end) {
   while (p < end && IsWs(*p)) ++p;
@@ -173,8 +175,7 @@ const char* ScanValue(const char* p, const char* end, Value* out) {
 }
 
 bool KeyIs(const Value& key, const char* name) {
-  return key.str_plain && key.str_len == strlen(name) &&
-         memcmp(key.str, name, key.str_len) == 0;
+  return key.str_plain && key.str_len == strlen(name) && memcmp(key.str, name, key.str_len) == 0;
 }
 
 bool StrEq(const Value& v, const char* lit) {
