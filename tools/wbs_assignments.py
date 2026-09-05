@@ -26,7 +26,10 @@ OUT = ROOT / "docs" / "ASSIGNMENTS.md"
 #: WBS 3절 사전의 행 구조 — 8칸 고정.
 #: `ID | 워크패키지 | 산출물 | 완료 기준(DoD) | R | 선행 | M/D | 연계`
 _COLUMNS = 8
-_ID, _NAME, _DELIV, _R, _PRED, _MD = 0, 1, 2, 4, 5, 6
+_ID, _NAME, _DELIV, _DOD, _R, _PRED, _MD = 0, 1, 2, 3, 4, 5, 6
+
+#: 완료 표기 — WBS 사전의 DoD 칸 끝에 붙인다. 진척은 여기 한 곳에서만 관리한다.
+DONE_MARK = "[완료]"
 
 #: 담당자 배정 규칙 — 정본은 [WBS 4절 담당자 기준]이다.
 #: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4.1`(ROS2 컨테이너)이 이관된다.
@@ -58,6 +61,7 @@ class WorkPackage:
     role: str  # A · B · C (작업 성격)
     predecessor: str
     effort: float
+    done: bool
 
     @property
     def ready(self) -> bool:
@@ -109,6 +113,7 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
                 role=_clean(cells[_R]),
                 predecessor=_clean(cells[_PRED]) or "—",
                 effort=float(effort),
+                done=DONE_MARK in cells[_DOD],
             )
         )
     return sorted(packages, key=WorkPackage.sort_key)
@@ -158,18 +163,23 @@ def render(packages: list[WorkPackage]) -> str:
         "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행이 없어 지금 바로 시작할 수 있는 것들이다.",
         "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 3절 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
-        "| 담당 | 지금 가능 | 대기 | 합계 | 공수 |",
-        "| :--- | ---: | ---: | ---: | ---: |",
+        "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 전체 |",
+        "| :--- | ---: | ---: | ---: | ---: | ---: |",
     ]
+    left = 0.0
     for owner in OWNERS:
         mine = [p for p in packages if p.owner == owner]
-        ready = [p for p in mine if p.ready]
+        todo = [p for p in mine if not p.done]
+        ready = [p for p in todo if p.ready]
+        remaining = sum(p.effort for p in todo)
+        left += remaining
         lines.append(
-            f"| **{owner}** | 🟢 {len(ready)}건 | ⏳ {len(mine) - len(ready)}건 | "
-            f"{len(mine)}건 | **{sum(p.effort for p in mine):.1f}** M/D |"
+            f"| **{owner}** | {len(mine) - len(todo)}건 | 🟢 {len(ready)}건 | "
+            f"⏳ {len(todo) - len(ready)}건 | **{remaining:.1f}** M/D | "
+            f"{sum(p.effort for p in mine):.1f} M/D |"
         )
     lines += [
-        f"| | | | **{len(packages)}건** | **{total:.1f}** M/D |",
+        f"| | | | | **{left:.1f}** M/D | **{total:.1f}** M/D |",
         "",
         "---",
         "",
@@ -177,14 +187,17 @@ def render(packages: list[WorkPackage]) -> str:
 
     for owner, scope in OWNERS.items():
         mine = [p for p in packages if p.owner == owner]
-        ready = [p for p in mine if p.ready]
-        waiting = [p for p in mine if not p.ready]
+        done = [p for p in mine if p.done]
+        todo = [p for p in mine if not p.done]
+        ready = [p for p in todo if p.ready]
+        waiting = [p for p in todo if not p.ready]
         lines += [
             f"## {owner}",
             "",
             f"**담당 영역** — {scope}",
             "",
-            f"**{sum(p.effort for p in mine):.1f} M/D · {len(mine)}건**",
+            f"**남은 공수 {sum(p.effort for p in todo):.1f} M/D · {len(todo)}건** "
+            f"(전체 {sum(p.effort for p in mine):.1f} M/D · {len(mine)}건)",
             "",
             f"### 🟢 지금 시작할 수 있다 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",
             "",
@@ -198,6 +211,13 @@ def render(packages: list[WorkPackage]) -> str:
             "**기다리는 것** 열의 번호가 끝나면 시작할 수 있다.",
             "",
             *_table(waiting, with_predecessor=True),
+            "",
+            f"<details><summary>✅ 완료 — {len(done)}건 · "
+            f"{sum(p.effort for p in done):.1f} M/D</summary>",
+            "",
+            *_table(done, with_predecessor=False),
+            "",
+            "</details>",
             "",
             "<details><summary>대분류별 소계</summary>",
             "",
