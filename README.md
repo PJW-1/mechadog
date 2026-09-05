@@ -10,8 +10,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
 🙋 **[담당자별 작업 목록 — 내 일이 뭔지](docs/ASSIGNMENTS.md)** ← 자기 할 일  
 🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 18건  
-🔧 **[M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**  
-🔌 **[하드웨어 조립·배선 — 무납땜 구성](docs/HARDWARE_ASSEMBLY.md)**  
+🔌 **[하드웨어 — 착수 게이트 · LiDAR 배선 · 발주](docs/HARDWARE.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 📡 **[통신 프로토콜 정본 — 명령 8종·검증 규칙](docs/PROTOCOL.md)**  
 🏗 **[시스템 아키텍처 — 구조·상태·품질 기준](docs/ARCHITECTURE.md)** ← 용어 부록 포함  
@@ -109,7 +108,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 | **M4** | LiDAR & 매핑 | ○ | ⬜ 조건부 |
 | **M5** | 웨이포인트 순찰 & 위험구역 출동 | ○ | ⬜ 조건부 |
 
-👉 **다음 작업: [M0 하드웨어 검증 체크리스트](docs/HARDWARE_VERIFICATION.md)**
+👉 **다음 작업: [하드웨어 착수 게이트 G1~G3](docs/HARDWARE.md)**
 
 ---
 
@@ -125,8 +124,7 @@ mechdog_physical_ai/
 │   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
 │   ├── ASSIGNMENTS.md                   # 담당자별 작업 목록 (WBS 에서 생성)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준
-│   ├── HARDWARE_ASSEMBLY.md             # 조립 · 배선 · 전원 (무납땜)
-│   └── HARDWARE_VERIFICATION.md         # M0 검증 체크리스트
+│   └── HARDWARE.md                      # 착수 게이트 · LiDAR 배선 · 발주
 ├── config/
 │   ├── config.yaml                      # 전역 파라미터 (매직 넘버 0개 목표)
 │   ├── devices/                         # 개체별 프로파일 (서보 오프셋 등)
@@ -162,8 +160,7 @@ mechdog_physical_ai/
 | **모르는 용어가 나왔다** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) 부록 |
 | 로깅 · 테스트 · CI 를 짠다 | [ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) |
 | 브랜치 · PR · 코드 규약 | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| 조립 · 배선 · 발주 | [HARDWARE_ASSEMBLY.md](docs/HARDWARE_ASSEMBLY.md) |
-| M0 검증 | [HARDWARE_VERIFICATION.md](docs/HARDWARE_VERIFICATION.md) |
+| 조립 · 배선 · 발주 · 착수 게이트 | [HARDWARE.md](docs/HARDWARE.md) |
 | 내 워크패키지 · 일정 | [WBS.md](docs/WBS.md) |
 
 ## 처음 보면 틀리기 쉬운 것
