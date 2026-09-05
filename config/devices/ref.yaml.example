@@ -30,7 +30,7 @@ gait_calibration:
   turn_deg_per_sec: null      # move(0, 20) 1초당 실제 회전 각도
   measured_on: null           # 측정 바닥 (예: "장판", "카펫")
 
-measured:                     # docs/HARDWARE_VERIFICATION.md 와 동기화
+measured:                     # docs/HARDWARE.md 1절 착수 확인 H1~H3 결과와 동기화
   body_weight_g: null
   payload_pass_g: null        # 부하 테스트 통과 최대 하중
   runtime_min: null
