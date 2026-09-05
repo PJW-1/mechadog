@@ -27,6 +27,7 @@ C++ 구현이다. 둘이 어긋나면 같은 골든 픽스처를 보는 CI 가 �
 """
 
 import json
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -61,6 +62,13 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
 
 #: 문자열로 받는 필드. 나머지 필수 필드는 전부 수치다.
 STRING_FIELDS: frozenset[str] = frozenset({"color", "state"})
+INTEGER_FIELDS: frozenset[str] = frozenset({"dur", "lift_time", "ground_time", "id", "phrase_id"})
+NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
+    "POSE": ("dur",),
+    "GAIT": ("lift_time", "ground_time", "height"),
+    "LED": ("blink_hz",),
+    "SOUND": ("phrase_id",),
+}
 
 #: 클램핑 대상 — PROTOCOL.md 가 범위를 명시한 필드만이다.
 #: POSE·GAIT 는 "라이브러리 허용 범위"로만 규정되어 실측 전까지 클램핑하지
@@ -110,10 +118,18 @@ FSM_STATES: frozenset[str] = frozenset(
 #: 온보드가 센서만으로 판정할 수 있는 상태. 나머지는 호스트가 알려줘야 한다.
 ONBOARD_STATES: frozenset[str] = frozenset({"PATROL", "AVOID", "FAILSAFE"})
 
-#: 텔레메트리 필수 필드 — PROTOCOL.md 5절 규칙 ②가 열거한 그대로다.
-#: 여기 없는 필드(`ts`·`dist_cm`·`batt_v`)는 **있을 때만** 검증한다. 규약이
-#: 요구하지 않는 필드를 구현이 요구하면, 규약을 지킨 송신측이 조용히 폐기된다.
-TELEMETRY_REQUIRED: tuple[str, ...] = ("seq", "device_id", "state", "imu", "flags")
+#: 텔레메트리 필수 필드 — 안전 판단과 장애 분석에 필요한 최소 레코드다.
+TELEMETRY_REQUIRED: tuple[str, ...] = (
+    "seq",
+    "ts",
+    "device_id",
+    "state",
+    "dist_cm",
+    "imu",
+    "batt_v",
+    "last_cmd_age_ms",
+    "flags",
+)
 IMU_FIELDS: tuple[str, ...] = ("pitch", "roll", "yaw")
 FLAG_FIELDS: tuple[str, ...] = ("lowbatt", "tipped", "link_ok")
 
@@ -193,8 +209,8 @@ def system_clock_ms() -> int:
 
 
 def _is_number(value: Any) -> bool:
-    """bool 은 수치로 보지 않는다 — `True` 가 `1` 로 통과하면 안 된다."""
-    return isinstance(value, int | float) and not isinstance(value, bool)
+    """bool·NaN·무한대는 수치로 보지 않는다."""
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _is_int(value: Any) -> bool:
@@ -215,6 +231,23 @@ def _known(value: Any, allowed: frozenset[str]) -> bool:
     수신 루프가 죽는다 — 관제가 멈추는 것이므로 폐기보다 나쁘다.
     """
     return isinstance(value, str) and value in allowed
+
+
+def _command_field_error(type_: str, fields: dict[str, Any]) -> str | None:
+    """타입별 필드의 자료형과 최소 의미 범위를 검사한다."""
+    for name in REQUIRED_FIELDS[type_]:
+        value = fields[name]
+        if name in STRING_FIELDS:
+            if not isinstance(value, str):
+                return f"{name} 가 문자열이 아님"
+        elif not _is_number(value):
+            return f"{name} 가 유한한 수가 아님"
+        elif name in INTEGER_FIELDS and not _is_int(value):
+            return f"{name} 가 정수가 아님"
+    for name in NONNEGATIVE_FIELDS.get(type_, ()):
+        if fields[name] < 0:
+            return f"{name} 가 음수"
+    return None
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -242,7 +275,7 @@ def apply_clamps(msg: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
 
 def serialize(msg: dict[str, Any]) -> str:
     """한 줄 JSON 으로 만든다. 줄바꿈이 없어야 JSONL·UDP 양쪽에서 안전하다."""
-    return json.dumps(msg, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(msg, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 
 
 def strip_meta(msg: dict[str, Any]) -> dict[str, Any]:
@@ -274,6 +307,9 @@ class _SeqGate:
     def last_seq(self, sender: str = "") -> int | None:
         return self._last.get(sender)
 
+    def reset(self, sender: str = "") -> None:
+        self._last.pop(sender, None)
+
     def admit(self, seq: int, sender: str = "") -> bool:
         last = self._last.get(sender)
         if last is not None and seq <= last:
@@ -295,6 +331,8 @@ class CommandEncoder:
     """
 
     def __init__(self, clock: Callable[[], int] = system_clock_ms, start_seq: int = 1) -> None:
+        if not _is_int(start_seq) or start_seq < 1:
+            raise ValueError("start_seq 는 1 이상의 정수여야 함")
         self._clock = clock
         self._seq = start_seq
 
@@ -320,8 +358,13 @@ class CommandEncoder:
             raise ValueError(f"{type_} 필수 필드 누락: {sorted(missing)}")
         if type_ == "STATE" and not _known(fields["state"], FSM_STATES):
             raise ValueError(f"알 수 없는 상태: {fields['state']!r}")
+        if error := _command_field_error(type_, fields):
+            raise ValueError(error)
 
-        msg = {"seq": self._seq, "ts": self._clock(), "type": type_, **fields}
+        timestamp = self._clock()
+        if not _is_int(timestamp) or timestamp < 0:
+            raise ValueError("clock 은 0 이상의 epoch 밀리초 정수를 반환해야 함")
+        msg = {"seq": self._seq, "ts": timestamp, "type": type_, **fields}
         self._seq += 1
         msg, _ = apply_clamps(msg)
         return msg
@@ -374,6 +417,8 @@ class CommandDecoder:
 
     def __init__(self) -> None:
         self._gate = _SeqGate()
+        self._latest_ts: int | None = None
+        self._session_started_ts: int | None = None
 
     @property
     def last_seq(self) -> int | None:
@@ -394,12 +439,29 @@ class CommandDecoder:
         for key in ("seq", "ts"):
             if not _is_int(msg[key]):
                 return DecodeResult(Verdict.DISCARD, f"{key} 가 정수가 아님")
+        if msg["seq"] < 1 or msg["ts"] < 0:
+            return DecodeResult(Verdict.DISCARD, "seq 또는 ts 가 음수 범위")
         if not isinstance(msg["type"], str):
             return DecodeResult(Verdict.DISCARD, "type 이 문자열이 아님")
+
+        # Host 재시작 핸드셰이크. 새 프로세스는 STOP seq=1 로 시작하며,
+        # 이전 세션보다 새 시각일 때만 게이트를 연다. 이후 지연 도착한 옛
+        # 데이터그램은 세션 시작 시각으로 한 번 더 막는다.
+        if self._session_started_ts is not None and msg["ts"] < self._session_started_ts:
+            return DecodeResult(Verdict.DISCARD, "이전 Host 세션의 패킷")
+        if (
+            self._gate.last_seq() is not None
+            and msg["seq"] == 1
+            and msg["type"] == "STOP"
+            and (self._latest_ts is None or msg["ts"] > self._latest_ts)
+        ):
+            self._gate.reset()
+            self._session_started_ts = msg["ts"]
 
         # ① seq 역전·중복
         if not self._gate.admit(msg["seq"]):
             return DecodeResult(Verdict.DISCARD, "seq 역전·중복")
+        self._latest_ts = max(self._latest_ts or msg["ts"], msg["ts"])
 
         # ④ 모르는 타입 — 폐기 + WARN
         type_ = msg["type"]
@@ -409,12 +471,8 @@ class CommandDecoder:
         for name in sorted(REQUIRED_FIELDS[type_]):
             if name not in msg:
                 return DecodeResult(Verdict.DISCARD, f"{type_} 필수 필드 누락: {name}")
-            value = msg[name]
-            if name in STRING_FIELDS:
-                if not isinstance(value, str):
-                    return DecodeResult(Verdict.DISCARD, f"{name} 가 문자열이 아님")
-            elif not _is_number(value):
-                return DecodeResult(Verdict.DISCARD, f"{name} 가 수치가 아님")
+        if error := _command_field_error(type_, msg):
+            return DecodeResult(Verdict.DISCARD, error)
 
         # 모르는 상태값 — 폐기 + WARN. 텔레메트리 규칙 ③과 대칭이며, 같은
         # 이유로 상태 추가를 하위 호환으로 만든다.
@@ -442,8 +500,10 @@ class TelemetryEncoder:
         clock: Callable[[], int] = system_clock_ms,
         start_seq: int = 1,
     ) -> None:
-        if not device_id:
+        if not isinstance(device_id, str) or not device_id:
             raise ValueError("device_id 는 필수다 — IP 로 송신자를 구분하면 안 된다 (DR-17)")
+        if not _is_int(start_seq) or start_seq < 1:
+            raise ValueError("start_seq 는 1 이상의 정수여야 함")
         self._device_id = device_id
         self._clock = clock
         self._seq = start_seq
@@ -470,15 +530,32 @@ class TelemetryEncoder:
         missing_flags = [f for f in FLAG_FIELDS if f not in flags]
         if missing_flags:
             raise ValueError(f"flags 필드 누락: {missing_flags}")
+        if not _is_number(dist_cm) or dist_cm < 0:
+            raise ValueError("dist_cm 은 0 이상의 유한한 수여야 한다")
+        if not _is_number(batt_v) or not BATT_MIN_V <= batt_v <= BATT_MAX_V:
+            raise ValueError(f"batt_v 물리 범위 이탈: {batt_v}")
+        if not _is_int(last_cmd_age_ms) or last_cmd_age_ms < 0:
+            raise ValueError("last_cmd_age_ms 는 0 이상의 정수여야 한다")
+        for name in IMU_FIELDS:
+            if not _is_number(imu[name]):
+                raise ValueError(f"imu.{name} 가 유한한 수가 아님")
+        if not 0 <= imu["yaw"] < 360:
+            raise ValueError("imu.yaw 는 0 이상 360 미만이어야 한다")
+        for name in FLAG_FIELDS:
+            if not isinstance(flags[name], bool):
+                raise ValueError(f"flags.{name} 가 불리언이 아님")
         # `extra` 로 `device_id` 를 덮으면 **송신자를 위조할 수 있다.** 다중 개체
         # 운용에서 그것이 유일한 구분 수단이므로(DR-17) 우회를 허용하지 않는다.
         reserved = TELEMETRY_MANAGED & extra.keys()
         if reserved:
             raise ValueError(f"인코더가 관리하는 필드는 넘길 수 없다: {sorted(reserved)}")
 
+        timestamp = self._clock()
+        if not _is_int(timestamp) or timestamp < 0:
+            raise ValueError("clock 은 0 이상의 epoch 밀리초 정수를 반환해야 함")
         msg = {
             "seq": self._seq,
-            "ts": self._clock(),
+            "ts": timestamp,
             "device_id": self._device_id,
             "state": state,
             "dist_cm": dist_cm,
@@ -508,6 +585,10 @@ class TelemetryDecoder:
     def last_seq(self, device_id: str) -> int | None:
         return self._gate.last_seq(device_id)
 
+    def reset_device(self, device_id: str) -> None:
+        """상위 연결 관리자가 개체 재기동을 확인했을 때 seq 기준을 초기화한다."""
+        self._gate.reset(device_id)
+
     def decode(self, raw: str | bytes) -> DecodeResult:
         parsed = _parse(raw)
         if isinstance(parsed, DecodeResult):
@@ -523,9 +604,10 @@ class TelemetryDecoder:
                 return DecodeResult(Verdict.DISCARD, f"필수 필드 누락: {key}")
         if not _is_int(msg["seq"]):
             return DecodeResult(Verdict.DISCARD, "seq 가 정수가 아님")
-        # `ts` 는 규칙 ②의 필수 목록에 없으므로 있을 때만 본다.
-        if "ts" in msg and not _is_int(msg["ts"]):
+        if not _is_int(msg["ts"]):
             return DecodeResult(Verdict.DISCARD, "ts 가 정수가 아님")
+        if msg["seq"] < 1 or msg["ts"] < 0:
+            return DecodeResult(Verdict.DISCARD, "seq 또는 ts 가 음수 범위")
         if not isinstance(msg["device_id"], str) or not msg["device_id"]:
             return DecodeResult(Verdict.DISCARD, "device_id 가 비어 있음")
 
@@ -535,6 +617,8 @@ class TelemetryDecoder:
         for name in IMU_FIELDS:
             if not _is_number(imu.get(name)):
                 return DecodeResult(Verdict.DISCARD, f"imu.{name} 누락 또는 비수치")
+        if not 0 <= imu["yaw"] < 360:
+            return DecodeResult(Verdict.DISCARD, f"imu.yaw 범위 이탈: {imu['yaw']}")
         for name in FLAG_FIELDS:
             if not isinstance(flags.get(name), bool):
                 return DecodeResult(Verdict.DISCARD, f"flags.{name} 누락 또는 비불리언")
@@ -555,14 +639,15 @@ class TelemetryDecoder:
             return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {state!r}")
 
         # ④ 물리적으로 불가능한 값
-        batt_v = msg.get("batt_v")
-        if batt_v is not None and (
-            not _is_number(batt_v) or not BATT_MIN_V <= batt_v <= BATT_MAX_V
-        ):
+        batt_v = msg["batt_v"]
+        if not _is_number(batt_v) or not BATT_MIN_V <= batt_v <= BATT_MAX_V:
             return DecodeResult(Verdict.DISCARD, f"batt_v 물리 범위 이탈: {batt_v}")
-        dist_cm = msg.get("dist_cm")
-        if dist_cm is not None and (not _is_number(dist_cm) or dist_cm < 0):
+        dist_cm = msg["dist_cm"]
+        if not _is_number(dist_cm) or dist_cm < 0:
             return DecodeResult(Verdict.DISCARD, f"dist_cm 음수: {dist_cm}")
+        last_cmd_age_ms = msg["last_cmd_age_ms"]
+        if not _is_int(last_cmd_age_ms) or last_cmd_age_ms < 0:
+            return DecodeResult(Verdict.DISCARD, "last_cmd_age_ms 가 0 이상의 정수가 아님")
 
         # ⑤ 플래그와 상태의 모순 — 안전측으로 폐기 + WARN
         # `tipped` 는 온보드 안전 로직이 이미 발동했다는 뜻이므로 상태는

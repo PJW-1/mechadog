@@ -64,11 +64,6 @@ class WorkPackage:
     done: bool
 
     @property
-    def ready(self) -> bool:
-        """선행이 없으면 지금 바로 시작할 수 있다."""
-        return self.predecessor == "—"
-
-    @property
     def group(self) -> str:
         return self.wid.split(".")[0]
 
@@ -119,6 +114,55 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
     return sorted(packages, key=WorkPackage.sort_key)
 
 
+def _dependency_ids(token: str, packages: list[WorkPackage]) -> set[str]:
+    """선행 표기의 한 토큰을 실제 워크패키지 ID로 펼친다.
+
+    `4.3.1` 같은 정확한 ID, `4.1` 같은 묶음, `3.2.1~4`와
+    `2.1~2.4` 같은 범위를 지원한다. WBS 밖 조건(예: 장비 도착)은
+    매칭되는 ID가 없으므로 완료 전까지 대기로 남는다.
+    """
+    token = token.strip()
+    by_id = {p.wid for p in packages}
+    if token in by_id:
+        return {token}
+
+    if "~" not in token:
+        prefix = f"{token}."
+        return {wid for wid in by_id if wid.startswith(prefix)}
+
+    start_text, end_text = (part.strip() for part in token.split("~", 1))
+    try:
+        start = tuple(int(part) for part in start_text.split("."))
+        if "." in end_text:
+            end = tuple(int(part) for part in end_text.split("."))
+        else:
+            end = (*start[:-1], int(end_text))
+    except ValueError:
+        return set()
+    if len(start) != len(end):
+        return set()
+
+    matched = set()
+    for wid in by_id:
+        parts = tuple(int(part) for part in wid.split("."))
+        if len(parts) >= len(start) and start <= parts[: len(start)] <= end:
+            matched.add(wid)
+    return matched
+
+
+def is_ready(package: WorkPackage, packages: list[WorkPackage]) -> bool:
+    """선행 작업이 없거나, 명시된 선행 작업이 모두 완료됐는지 판정한다."""
+    if package.predecessor == "—":
+        return True
+
+    by_id = {p.wid: p for p in packages}
+    for token in package.predecessor.split(","):
+        dependencies = _dependency_ids(token, packages)
+        if not dependencies or not all(by_id[wid].done for wid in dependencies):
+            return False
+    return True
+
+
 def _table(packages: list[WorkPackage], *, with_predecessor: bool) -> list[str]:
     head = (
         "| WBS | 할 일 | 만들 것 | 기다리는 것 | M/D |"
@@ -160,7 +204,7 @@ def render(packages: list[WorkPackage]) -> str:
         ">",
         "> WBS 를 고치고 재생성하지 않으면 `tests/test_assignments.py` 가 CI 에서 실패한다.",
         "",
-        "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행이 없어 지금 바로 시작할 수 있는 것들이다.",
+        "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행 작업이 없거나 모두 끝난 것들이다.",
         "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 3절 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
         "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 전체 |",
@@ -170,7 +214,7 @@ def render(packages: list[WorkPackage]) -> str:
     for owner in OWNERS:
         mine = [p for p in packages if p.owner == owner]
         todo = [p for p in mine if not p.done]
-        ready = [p for p in todo if p.ready]
+        ready = [p for p in todo if is_ready(p, packages)]
         remaining = sum(p.effort for p in todo)
         left += remaining
         lines.append(
@@ -189,8 +233,8 @@ def render(packages: list[WorkPackage]) -> str:
         mine = [p for p in packages if p.owner == owner]
         done = [p for p in mine if p.done]
         todo = [p for p in mine if not p.done]
-        ready = [p for p in todo if p.ready]
-        waiting = [p for p in todo if not p.ready]
+        ready = [p for p in todo if is_ready(p, packages)]
+        waiting = [p for p in todo if not is_ready(p, packages)]
         lines += [
             f"## {owner}",
             "",
@@ -201,7 +245,7 @@ def render(packages: list[WorkPackage]) -> str:
             "",
             f"### 🟢 지금 시작할 수 있다 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",
             "",
-            "선행 작업이 없다. 이 중 아무거나 먼저 잡아도 된다.",
+            "선행 작업이 없거나 모두 완료됐다. 이 중 하나를 잡으면 된다.",
             "",
             *_table(ready, with_predecessor=False),
             "",

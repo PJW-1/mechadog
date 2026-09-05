@@ -45,8 +45,8 @@ fsm:
   track_deadzone_px: 40       # FR-3.5
 
 vision:
-  # ── 실행 프로바이더 ── DirectML→CUDA→CPU 자동 폴백 (아키텍처 1.5, DR-13)
-  providers: [DmlExecutionProvider, CUDAExecutionProvider, CPUExecutionProvider]
+  # ── 실행 프로바이더 ── Windows GPU 우선, CI·비지원 환경은 CPU 폴백 (DR-13)
+  providers: [DmlExecutionProvider, CPUExecutionProvider]
 
   # ── ① COCO 범용 검출기 (학습 불요, DR-12) ──
   # FR-3 사람 인지 + FR-8 변화 감지 대상 객체를 담당
@@ -103,7 +103,7 @@ vision:
   inference_fps: 7             # 추론 프레임 스킵 (FSM 10Hz 대비 충분)
   reconnect_backoff_s: [1, 2, 4, 8, 16, 30]  # FR-5.3
 
-localization:           # Track A(LiDAR) 확정 — OI-9 닫힘 (docs/LOCALIZATION_OPTIONS.md 0절)
+localization:           # Track A(LiDAR) 확정 — OI-9 닫힘 (docs/DECISIONS.md ADR-18)
   # Phase 1 은 측위를 쓰지 않으므로 none 이다. Phase 2 에서 lidar 로 바꾼다.
   # phone_vio 는 탈락했으므로 허용값에서 제거했다 — 남겨 두면 누가 다시 넣는다.
   track: none                 # none | lidar | aruco

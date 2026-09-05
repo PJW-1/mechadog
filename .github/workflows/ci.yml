@@ -53,7 +53,7 @@ jobs:
       - name: Unit tests
         # 첫 Host 모듈(host/common/protocol.py · WBS 3.1.1)이 들어오면서 커버리지
         # 게이트를 켰다. 그 전에는 측정 대상이 없어 수치가 무의미했다.
-        run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=70
+        run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=80
 
   # ── WBS 5.3.2 · 펌웨어 정적 분석 ──────────────────────────
   firmware-quality:

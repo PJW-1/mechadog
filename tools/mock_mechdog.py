@@ -36,12 +36,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-
 # `python tools/mock_mechdog.py` 로 직접 실행해도 host/ 를 찾게 한다.
 # (pytest 는 pyproject 의 pythonpath 설정으로 해결된다)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from host.common.config import load_base_config  # noqa: E402
 from host.common.protocol import (  # noqa: E402
     BATT_MAX_V,
     BATT_MIN_V,
@@ -56,12 +55,8 @@ CONFIG = ROOT / "config" / "config.yaml"
 
 
 def load_config(path: Path = CONFIG) -> dict:
-    """⚠️ 임시 로더. WBS 4.4.1 의 `common/config.py` 가 들어오면 그것으로 교체한다.
-
-    지금 포트·임계값을 코드에 박으면 4.4.1 에서 걷어내야 하므로, 임시로라도
-    YAML 을 읽는 쪽이 낫다 (NFR-3① 매직 넘버 0개).
-    """
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    """목업은 개체 캘리브레이션이 필요 없으므로 검증된 전역 설정만 읽는다."""
+    return load_base_config(path)
 
 
 # ══════════════════════════════════════════════════════════════

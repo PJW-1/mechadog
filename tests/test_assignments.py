@@ -13,7 +13,7 @@ import re
 import pytest
 from conftest import ROOT
 
-from tools.wbs_assignments import OUT, WorkPackage, main, parse_wbs, render
+from tools.wbs_assignments import OUT, WorkPackage, is_ready, main, parse_wbs, render
 
 
 @pytest.fixture(scope="module")
@@ -78,3 +78,18 @@ def test_generated_file_warns_against_hand_editing() -> None:
 def test_render_is_deterministic(packages: list[WorkPackage]) -> None:
     """같은 입력에 같은 출력이어야 `--check` 대조가 성립한다."""
     assert render(packages) == render(parse_wbs())
+
+
+def test_completed_predecessor_unlocks_work(packages: list[WorkPackage]) -> None:
+    """선행 칸이 비어 있을 때만 준비로 보던 회귀를 막는다."""
+    by_id = {p.wid: p for p in packages}
+    assert is_ready(by_id["3.4.1"], packages), "완료된 3.1.1이 FSM 착수를 막고 있다"
+    assert is_ready(by_id["4.1.3"], packages), "완료된 3.1.1·3.1.2가 C++ 파서를 막고 있다"
+    assert is_ready(by_id["4.3.2"], packages), "완료된 4.3.1이 UDP commander를 막고 있다"
+
+
+def test_group_and_range_predecessors_stay_blocked(packages: list[WorkPackage]) -> None:
+    """묶음 선행은 그 안의 작업이 모두 끝나야 풀린다."""
+    by_id = {p.wid: p for p in packages}
+    assert not is_ready(by_id["2.5"], packages)
+    assert not is_ready(by_id["3.2.5"], packages)
