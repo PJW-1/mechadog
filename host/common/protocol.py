@@ -81,11 +81,11 @@ CLAMP_RANGES: dict[str, tuple[float, float]] = {
 #:
 #: 그래서 이 집합은 **명령(`STATE`)과 텔레메트리(`state`) 양쪽에서 쓰인다.**
 #:
-#: ⚠️ **정본은 PRD 5절 전이표이며, 이 집합은 그것과 정확히 일치해야 한다.**
+#: ⚠️ **정본은 아키텍처 문서의 전이표이며, 이 집합은 그것과 정확히 일치해야 한다.**
 #: FR-4.2 가 대시보드에 "현재 FSM 상태"를 스트리밍하도록 요구하므로, 전이표에
 #: 있고 여기 없는 상태는 **화면에 표시할 수 없는 상태**가 된다. 임의로 골라
 #: 담으면 그 기준이 문서 어디에도 없어 반드시 다시 어긋난다 —
-#: `test_fsm_states_match_the_prd_transition_table` 이 대조한다.
+#: `test_fsm_states_match_the_transition_table` 이 대조한다.
 FSM_STATES: frozenset[str] = frozenset(
     {
         # ── 온보드가 센서만으로 판정 가능 (Tier 1) ──
@@ -356,7 +356,7 @@ class CommandEncoder:
 
         로봇은 이것을 판단 근거로 쓰지 않는다 — **받아적어 텔레메트리에 되돌려줄
         뿐이다.** Tier 1 안전 판정은 이 값과 무관하게 온보드가 우선한다
-        (PRD 2.2 불변 규칙). 즉 호스트가 `PATROL` 이라고 해도 로봇이 전도를
+        (아키텍처 1.2 불변 규칙). 즉 호스트가 `PATROL` 이라고 해도 로봇이 전도를
         감지했다면 로봇은 `FAILSAFE` 를 보고한다.
         """
         return self.encode("STATE", state=state)

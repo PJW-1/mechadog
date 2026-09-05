@@ -97,7 +97,7 @@ def test_gait_params_within_api_range(cfg: dict) -> None:
 
 
 def test_localization_track_is_known(cfg: dict) -> None:
-    """측위 트랙은 docs/LOCALIZATION_OPTIONS.md 가 인정하는 값이어야 한다.
+    """측위 트랙은 docs/DECISIONS.md ADR-18 이 인정하는 값이어야 한다.
 
     `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다** (OI-9 닫힘, 2026-09-05).
     탈락한 선택지를 설정에 남겨 두면 근거를 모르는 사람이 다시 넣는다.
@@ -159,7 +159,7 @@ def test_inference_fps_not_above_stream_fps(cfg: dict) -> None:
 
 
 def test_escalation_led_covers_all_levels(cfg: dict) -> None:
-    """L0~L3 과 페일세이프의 색상이 모두 정의되어 있어야 한다 (PRD 5.1).
+    """L0~L3 과 페일세이프의 색상이 모두 정의되어 있어야 한다 (아키텍처 3.1).
 
     색상이 빠지면 그 단계에서 로봇 상태를 읽을 수 없다.
     """
@@ -170,7 +170,7 @@ def test_escalation_led_covers_all_levels(cfg: dict) -> None:
 
 
 def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
-    """L3·페일세이프는 자동 해제하지 않는다 (PRD 5.1 해제 규칙)."""
+    """L3·페일세이프는 자동 해제하지 않는다 (아키텍처 3.1 해제 규칙)."""
     assert cfg["escalation"]["l3_requires_manual_reset"] is True
 
 

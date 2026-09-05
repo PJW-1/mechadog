@@ -1,6 +1,6 @@
 ---
 name: 설계 결정
-about: 설계 대안 검토 및 결정 기록 (PRD 1.3 DR 항목 후보)
+about: 설계 대안 검토 및 결정 기록 (DECISIONS.md DR 항목 후보)
 title: "[DECISION] "
 labels: decision
 ---
@@ -26,4 +26,4 @@ labels: decision
 
 - [ ] `docs/PRD_Physical_AI_Guard_Robot.md` (DR 항목 추가)
 - [ ] `docs/WBS.md`
-- [ ] `docs/LOCALIZATION_OPTIONS.md`
+- [ ] `docs/DECISIONS.md`

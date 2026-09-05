@@ -86,7 +86,7 @@ jobs:
             | xargs -0 -r clang-format --dry-run --Werror
 
       # ⚠️ --error-exitcode=1 : 문제 발견 시 반드시 실패한다.
-      #    (구 워크플로우는 0으로 두어 어떤 문제도 잡히지 않았다 — PRD 6.1)
+      #    (구 워크플로우는 0으로 두어 어떤 문제도 잡히지 않았다 — 아키텍처 4.1)
       - name: Static analysis (cppcheck)
         if: steps.detect.outputs.count != '0'
         run: |

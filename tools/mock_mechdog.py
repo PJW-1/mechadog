@@ -229,17 +229,17 @@ class MockRobot:
         return self.last_cmd_age_ms(now_ms) <= self._safety["link_loss_failsafe_ms"]
 
     def stopped_by_timeout(self, now_ms: int) -> bool:
-        """300ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다 (PRD 5절)."""
+        """300ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다 (아키텍처 3절)."""
         return not self._link_seen or self.last_cmd_age_ms(now_ms) > self._safety["cmd_timeout_ms"]
 
     def state(self, now_ms: int) -> str:
         """**Tier 1 판정이 먼저, 그 다음이 호스트가 알려준 상태다.**
 
-        FSM 은 Host PC 에서 돈다 (PRD 5절). 로봇이 센서만으로 아는 것은 셋뿐이고
+        FSM 은 Host PC 에서 돈다 (아키텍처 3절). 로봇이 센서만으로 아는 것은 셋뿐이고
         (`FAILSAFE`·`AVOID`·`PATROL`), 나머지 5종은 호스트가 `STATE` 명령으로
         알려준 것을 받아적어 되돌려준다.
 
-        **순서가 규약이다** (PRD 2.2 불변 규칙) — 호스트가 `PATROL` 이라고 해도
+        **순서가 규약이다** (아키텍처 1.2 불변 규칙) — 호스트가 `PATROL` 이라고 해도
         로봇이 전도를 감지했으면 `FAILSAFE` 를 보고한다. 온보드 안전 판정이 호스트의
         인식에 굴복하면 Tier 1 이 Tier 2 에 종속되어 이 구조의 의미가 사라진다.
         """
