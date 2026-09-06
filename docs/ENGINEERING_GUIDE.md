@@ -270,10 +270,10 @@ tests/fixtures/protocol_samples.jsonl
 파이프라인 구성은 [아키텍처 4절](ARCHITECTURE.md), PR 전 로컬 실행은
 [CONTRIBUTING 8절](../CONTRIBUTING.md)에 있다. 여기서는 **왜 그 게이트인지**만 적는다.
 
-### 커버리지 하한 70% — 실측 100% 인데 왜 70 인가
+### 커버리지 하한 80%
 
 ```yaml
-run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=70
+run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=80
 ```
 
 - **`--cov-fail-under` 가 없으면 커버리지는 게이트가 아니라 장식이다.** 숫자만 찍히고 아무도 안 본다.
@@ -330,7 +330,6 @@ log.info("execution_provider", extra={"selected": providers[0], "available": ava
 | 그 사람이 설치한 패키지 | 선택되는 EP |
 | :--- | :--- |
 | `onnxruntime-directml` (기본) | DirectML — DX12 GPU 전체. NVIDIA 포함 |
-| `onnxruntime-gpu` | CUDA |
 | `onnxruntime` (CI 러너) | CPU |
 
 **같은 코드, 같은 모델 파일, 다른 환경.** 이것이 DR-13 이 TensorRT 를 배제한 이유이기도

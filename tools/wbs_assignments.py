@@ -26,7 +26,10 @@ OUT = ROOT / "docs" / "ASSIGNMENTS.md"
 #: WBS 3절 사전의 행 구조 — 8칸 고정.
 #: `ID | 워크패키지 | 산출물 | 완료 기준(DoD) | R | 선행 | M/D | 연계`
 _COLUMNS = 8
-_ID, _NAME, _DELIV, _R, _PRED, _MD = 0, 1, 2, 4, 5, 6
+_ID, _NAME, _DELIV, _DOD, _R, _PRED, _MD = 0, 1, 2, 3, 4, 5, 6
+
+#: 완료 표기 — WBS 사전의 DoD 칸 끝에 붙인다. 진척은 여기 한 곳에서만 관리한다.
+DONE_MARK = "[완료]"
 
 #: 담당자 배정 규칙 — 정본은 [WBS 4절 담당자 기준]이다.
 #: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4.1`(ROS2 컨테이너)이 이관된다.
@@ -58,11 +61,7 @@ class WorkPackage:
     role: str  # A · B · C (작업 성격)
     predecessor: str
     effort: float
-
-    @property
-    def ready(self) -> bool:
-        """선행이 없으면 지금 바로 시작할 수 있다."""
-        return self.predecessor == "—"
+    done: bool
 
     @property
     def group(self) -> str:
@@ -109,9 +108,59 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
                 role=_clean(cells[_R]),
                 predecessor=_clean(cells[_PRED]) or "—",
                 effort=float(effort),
+                done=DONE_MARK in cells[_DOD],
             )
         )
     return sorted(packages, key=WorkPackage.sort_key)
+
+
+def _dependency_ids(token: str, packages: list[WorkPackage]) -> set[str]:
+    """선행 표기의 한 토큰을 실제 워크패키지 ID로 펼친다.
+
+    `4.3.1` 같은 정확한 ID, `4.1` 같은 묶음, `3.2.1~4`와
+    `2.1~2.4` 같은 범위를 지원한다. WBS 밖 조건(예: 장비 도착)은
+    매칭되는 ID가 없으므로 완료 전까지 대기로 남는다.
+    """
+    token = token.strip()
+    by_id = {p.wid for p in packages}
+    if token in by_id:
+        return {token}
+
+    if "~" not in token:
+        prefix = f"{token}."
+        return {wid for wid in by_id if wid.startswith(prefix)}
+
+    start_text, end_text = (part.strip() for part in token.split("~", 1))
+    try:
+        start = tuple(int(part) for part in start_text.split("."))
+        if "." in end_text:
+            end = tuple(int(part) for part in end_text.split("."))
+        else:
+            end = (*start[:-1], int(end_text))
+    except ValueError:
+        return set()
+    if len(start) != len(end):
+        return set()
+
+    matched = set()
+    for wid in by_id:
+        parts = tuple(int(part) for part in wid.split("."))
+        if len(parts) >= len(start) and start <= parts[: len(start)] <= end:
+            matched.add(wid)
+    return matched
+
+
+def is_ready(package: WorkPackage, packages: list[WorkPackage]) -> bool:
+    """선행 작업이 없거나, 명시된 선행 작업이 모두 완료됐는지 판정한다."""
+    if package.predecessor == "—":
+        return True
+
+    by_id = {p.wid: p for p in packages}
+    for token in package.predecessor.split(","):
+        dependencies = _dependency_ids(token, packages)
+        if not dependencies or not all(by_id[wid].done for wid in dependencies):
+            return False
+    return True
 
 
 def _table(packages: list[WorkPackage], *, with_predecessor: bool) -> list[str]:
@@ -155,21 +204,26 @@ def render(packages: list[WorkPackage]) -> str:
         ">",
         "> WBS 를 고치고 재생성하지 않으면 `tests/test_assignments.py` 가 CI 에서 실패한다.",
         "",
-        "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행이 없어 지금 바로 시작할 수 있는 것들이다.",
+        "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행 작업이 없거나 모두 끝난 것들이다.",
         "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 3절 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
-        "| 담당 | 지금 가능 | 대기 | 합계 | 공수 |",
-        "| :--- | ---: | ---: | ---: | ---: |",
+        "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 전체 |",
+        "| :--- | ---: | ---: | ---: | ---: | ---: |",
     ]
+    left = 0.0
     for owner in OWNERS:
         mine = [p for p in packages if p.owner == owner]
-        ready = [p for p in mine if p.ready]
+        todo = [p for p in mine if not p.done]
+        ready = [p for p in todo if is_ready(p, packages)]
+        remaining = sum(p.effort for p in todo)
+        left += remaining
         lines.append(
-            f"| **{owner}** | 🟢 {len(ready)}건 | ⏳ {len(mine) - len(ready)}건 | "
-            f"{len(mine)}건 | **{sum(p.effort for p in mine):.1f}** M/D |"
+            f"| **{owner}** | {len(mine) - len(todo)}건 | 🟢 {len(ready)}건 | "
+            f"⏳ {len(todo) - len(ready)}건 | **{remaining:.1f}** M/D | "
+            f"{sum(p.effort for p in mine):.1f} M/D |"
         )
     lines += [
-        f"| | | | **{len(packages)}건** | **{total:.1f}** M/D |",
+        f"| | | | | **{left:.1f}** M/D | **{total:.1f}** M/D |",
         "",
         "---",
         "",
@@ -177,18 +231,21 @@ def render(packages: list[WorkPackage]) -> str:
 
     for owner, scope in OWNERS.items():
         mine = [p for p in packages if p.owner == owner]
-        ready = [p for p in mine if p.ready]
-        waiting = [p for p in mine if not p.ready]
+        done = [p for p in mine if p.done]
+        todo = [p for p in mine if not p.done]
+        ready = [p for p in todo if is_ready(p, packages)]
+        waiting = [p for p in todo if not is_ready(p, packages)]
         lines += [
             f"## {owner}",
             "",
             f"**담당 영역** — {scope}",
             "",
-            f"**{sum(p.effort for p in mine):.1f} M/D · {len(mine)}건**",
+            f"**남은 공수 {sum(p.effort for p in todo):.1f} M/D · {len(todo)}건** "
+            f"(전체 {sum(p.effort for p in mine):.1f} M/D · {len(mine)}건)",
             "",
             f"### 🟢 지금 시작할 수 있다 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",
             "",
-            "선행 작업이 없다. 이 중 아무거나 먼저 잡아도 된다.",
+            "선행 작업이 없거나 모두 완료됐다. 이 중 하나를 잡으면 된다.",
             "",
             *_table(ready, with_predecessor=False),
             "",
@@ -198,6 +255,13 @@ def render(packages: list[WorkPackage]) -> str:
             "**기다리는 것** 열의 번호가 끝나면 시작할 수 있다.",
             "",
             *_table(waiting, with_predecessor=True),
+            "",
+            f"<details><summary>✅ 완료 — {len(done)}건 · "
+            f"{sum(p.effort for p in done):.1f} M/D</summary>",
+            "",
+            *_table(done, with_predecessor=False),
+            "",
+            "</details>",
             "",
             "<details><summary>대분류별 소계</summary>",
             "",

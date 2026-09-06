@@ -60,7 +60,7 @@ def test_encoder_reproduces_every_sample() -> None:
 
 
 def test_invalid_fixture_matches_expected_verdict() -> None:
-    """폐기·클램핑 픽스처의 `_expect` 대로 판정되어야 한다 (규칙 ①~④)."""
+    """폐기·클램핑 픽스처의 `_expect` 대로 판정되어야 한다 (규칙 ①~⑤)."""
     decoder = p.CommandDecoder()
     for msg in INVALID:
         result = decoder.decode(p.serialize(p.strip_meta(msg)))
@@ -94,6 +94,21 @@ def test_seq_advances_even_when_content_is_rejected() -> None:
     assert decoder.decode('{"seq":5,"ts":1,"type":"FUTURE_CMD"}').warns
     assert decoder.last_seq == 5
     assert not decoder.decode('{"seq":5,"ts":2,"type":"STOP"}').accepted
+
+
+def test_newer_stop_seq_one_recovers_after_host_restart() -> None:
+    decoder = p.CommandDecoder()
+    assert decoder.decode('{"seq":500,"ts":1000,"type":"STOP"}').accepted
+    assert decoder.decode('{"seq":1,"ts":2000,"type":"STOP"}').accepted
+    assert decoder.decode('{"seq":2,"ts":2100,"type":"MOVE","step":10,"angle":0}').accepted
+    assert not decoder.decode('{"seq":501,"ts":1500,"type":"MOVE","step":10,"angle":0}').accepted
+
+
+def test_old_restart_handshake_does_not_reset_sequence() -> None:
+    decoder = p.CommandDecoder()
+    assert decoder.decode('{"seq":10,"ts":2000,"type":"STOP"}').accepted
+    assert not decoder.decode('{"seq":1,"ts":1000,"type":"STOP"}').accepted
+    assert decoder.last_seq == 10
 
 
 # ── 규칙 ② 클램핑 ────────────────────────────────────────────
@@ -177,6 +192,25 @@ def test_non_numeric_field_is_discarded(value: object) -> None:
     assert p.CommandDecoder().decode(p.serialize(msg)).verdict is p.Verdict.DISCARD
 
 
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_command_field_is_discarded(value: str) -> None:
+    raw = f'{{"seq":1,"ts":1,"type":"MOVE","step":{value},"angle":0}}'
+    assert p.CommandDecoder().decode(raw).verdict is p.Verdict.DISCARD
+
+
+@pytest.mark.parametrize(
+    ("type_", "fields"),
+    [
+        ("POSE", {"pitch": 0, "roll": 0, "height": 0, "dur": -1}),
+        ("GAIT", {"lift_time": -1, "ground_time": 1, "height": 1}),
+        ("LED", {"color": "red", "blink_hz": -1}),
+    ],
+)
+def test_negative_duration_or_rate_is_discarded(type_: str, fields: dict) -> None:
+    msg = {"seq": 1, "ts": 1, "type": type_, **fields}
+    assert p.CommandDecoder().decode(p.serialize(msg)).verdict is p.Verdict.DISCARD
+
+
 def test_led_color_must_be_string() -> None:
     msg = {"seq": 1, "ts": 1, "type": "LED", "color": 7, "blink_hz": 2}
     assert p.CommandDecoder().decode(p.serialize(msg)).verdict is p.Verdict.DISCARD
@@ -207,7 +241,7 @@ def test_encoder_seq_is_monotonic_and_ts_comes_from_clock() -> None:
 
 
 def test_encoder_convenience_methods_cover_every_type() -> None:
-    """편의 메서드가 7종 전부를 덮어야 한다. 빠지면 호출부가 문자열을 쓰게 된다."""
+    """편의 메서드가 8종 전부를 덮어야 한다. 빠지면 호출부가 문자열을 쓰게 된다."""
     encoder = p.CommandEncoder(clock=FakeClock())
     decoder = p.CommandDecoder()
     emitted = [
@@ -310,6 +344,24 @@ def test_telemetry_battery_physical_range(batt_v: float, accepted: bool) -> None
 def test_telemetry_negative_distance_is_discarded() -> None:
     record = {**_valid_telemetry(), "dist_cm": -5}
     assert not p.TelemetryDecoder().decode(p.serialize(record)).accepted
+
+
+def test_telemetry_nonfinite_imu_is_discarded() -> None:
+    raw = p.serialize(_valid_telemetry()).replace('"pitch":1.2', '"pitch":NaN')
+    assert not p.TelemetryDecoder().decode(raw).accepted
+
+
+def test_telemetry_negative_command_age_is_discarded() -> None:
+    record = {**_valid_telemetry(), "last_cmd_age_ms": -1}
+    assert not p.TelemetryDecoder().decode(p.serialize(record)).accepted
+
+
+def test_telemetry_sequence_can_be_reset_after_confirmed_reconnect() -> None:
+    decoder = p.TelemetryDecoder()
+    first = {**_valid_telemetry(), "seq": 100}
+    assert decoder.decode(p.serialize(first)).accepted
+    decoder.reset_device("mechdog-a")
+    assert decoder.decode(p.serialize(_valid_telemetry())).accepted
 
 
 def test_telemetry_tipped_must_agree_with_state() -> None:
@@ -450,7 +502,7 @@ def test_state_command_round_trip() -> None:
 
 @pytest.mark.parametrize("state", sorted(p.FSM_STATES))
 def test_state_command_accepts_every_fsm_state(state: str) -> None:
-    """8종 전부 전달 가능해야 한다. 하나라도 막히면 그 상태는 로봇에 도달하지 못한다."""
+    """13종 전부 전달 가능해야 한다. 하나라도 막히면 그 상태는 로봇에 도달하지 못한다."""
     encoder = p.CommandEncoder(clock=FakeClock())
     assert p.CommandDecoder().decode(encoder.state(state)).accepted
 
@@ -591,8 +643,20 @@ def test_fractional_seq_no_longer_swallows_the_next_command() -> None:
     assert decoder.decode('{"seq":1,"ts":1,"type":"STOP"}').accepted
 
 
+@pytest.mark.parametrize(("field", "bad"), [("seq", 0), ("ts", -1)])
+def test_negative_seq_or_ts_is_discarded(field: str, bad: int) -> None:
+    msg = {"seq": 1, "ts": 1, "type": "STOP", field: bad}
+    assert not p.CommandDecoder().decode(p.serialize(msg)).accepted
+
+
 @pytest.mark.parametrize(("field", "bad"), [("seq", 1.5), ("ts", "어제")])
 def test_non_integer_telemetry_seq_or_ts_is_discarded(field: str, bad: object) -> None:
+    record = {**_valid_telemetry(), field: bad}
+    assert not p.TelemetryDecoder().decode(p.serialize(record)).accepted
+
+
+@pytest.mark.parametrize(("field", "bad"), [("seq", 0), ("ts", -1)])
+def test_negative_telemetry_seq_or_ts_is_discarded(field: str, bad: int) -> None:
     record = {**_valid_telemetry(), field: bad}
     assert not p.TelemetryDecoder().decode(p.serialize(record)).accepted
 

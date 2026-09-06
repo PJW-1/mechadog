@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from host.common.config import ConfigError, load_base_config, load_config
+
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
 
 # 코드가 의존하는 키 — 안전 임계값은 Tier 1 판정에 직결되므로 누락을 허용하지 않는다
@@ -51,6 +53,63 @@ def cfg() -> dict:
 
 def test_profile_is_valid(cfg: dict) -> None:
     assert cfg.get("profile") in {"dev", "prod"}
+
+
+def test_base_loader_validates_current_config() -> None:
+    assert load_base_config(CONFIG_PATH)["profile"] == "dev"
+
+
+def test_device_is_required() -> None:
+    with pytest.raises(ConfigError, match="--device"):
+        load_config(None)
+
+
+def test_missing_device_profile_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="설정 파일 없음"):
+        load_config("missing", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+
+def _write_device_profile(path: Path, *, device_id: str = "ref") -> None:
+    example = CONFIG_PATH.parent / "devices" / "ref.yaml.example"
+    profile = yaml.safe_load(example.read_text(encoding="utf-8"))
+    profile["device_id"] = device_id
+    path.write_text(yaml.safe_dump(profile, allow_unicode=True), encoding="utf-8")
+
+
+def test_device_profile_is_deep_merged(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml")
+    (tmp_path / "ref.local.yaml").write_text("network:\n  cmd_port: 6201\n", encoding="utf-8")
+
+    loaded = load_config("ref", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+    assert loaded["device_id"] == "ref"
+    assert loaded["network"]["cmd_port"] == 6201
+    assert loaded["network"]["telemetry_port"] == 5101
+    assert loaded["safety"]["cmd_timeout_ms"] == 300
+
+
+def test_device_id_mismatch_is_rejected(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml", device_id="another")
+    with pytest.raises(ConfigError, match="device_id 불일치"):
+        load_config("ref", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+
+def test_invalid_servo_offsets_are_rejected(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml")
+    (tmp_path / "ref.local.yaml").write_text("servo_offset: [0, 1]\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="9개"):
+        load_config("ref", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+
+def test_prod_rejects_placeholder_calibration(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml")
+    base = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    base["profile"] = "prod"
+    prod_path = tmp_path / "prod.yaml"
+    prod_path.write_text(yaml.safe_dump(base, allow_unicode=True), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="owner_id"):
+        load_config("ref", config_path=prod_path, devices_dir=tmp_path)
 
 
 @pytest.mark.parametrize("section", REQUIRED_SECTIONS)
@@ -149,7 +208,9 @@ def test_providers_fallback_ends_with_cpu(cfg: dict) -> None:
     GPU 를 못 쓰는 팀원 PC 나 CI 러너에서도 동작해야 한다 (DR-13).
     """
     providers = cfg["vision"]["providers"]
+    assert providers[0] == "DmlExecutionProvider"
     assert providers[-1] == "CPUExecutionProvider"
+    assert "CUDAExecutionProvider" not in providers
 
 
 def test_inference_fps_not_above_stream_fps(cfg: dict) -> None:

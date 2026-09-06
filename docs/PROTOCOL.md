@@ -63,6 +63,12 @@
 > `MOVE` 는 **호(arc) 조향**이다. 제자리 회전은 지원하지 않는다 (DR-11).
 > `SOUND` 는 사전 등록된 문구만 재생한다. 실시간 TTS 가 아니다.
 
+### Host 재시작
+
+Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 연결의 첫 명령은 반드시
+**`STOP`, `seq: 1`** 이어야 한다. 로봇은 마지막 명령보다 최신 `ts`인 이 패킷을 받으면
+순서 기준을 초기화한다. 새 연결 시작 시각보다 오래된 지연 패킷은 폐기한다.
+
 ### `STATE` — 왜 상태를 로봇에게 알려주는가
 
 **FSM 은 Host PC 에서 돈다** (아키텍처 3절). 그런데 텔레메트리에는 FSM 상태 13종이 들어가는
@@ -117,9 +123,9 @@
 
 ---
 
-## 3. 수신측 검증 규칙 — 4개
+## 3. 수신측 검증 규칙 — 5개
 
-이 4개는 **펌웨어에서 반드시 이 순서로** 구현한다.
+이 5개는 **펌웨어에서 반드시 이 순서로** 구현한다.
 
 | # | 규칙 | 이유 |
 | :-- | :--- | :--- |
@@ -180,7 +186,7 @@
 | # | 규칙 |
 | :-- | :--- |
 | ① | `seq` 역전·중복 폐기 |
-| ② | `seq` · `device_id` · `state` · `imu` · `flags` 중 하나라도 없으면 폐기 |
+| ② | `seq` · `ts` · `device_id` · `state` · `dist_cm` · `imu` · `batt_v` · `last_cmd_age_ms` · `flags` 중 하나라도 없으면 폐기 |
 | ③ | **모르는 `state` 는 폐기 + WARN** — 상태 추가를 하위 호환으로 만든다 |
 | ④ | `batt_v` 가 2S 리튬 물리 범위(6.0~8.4V) 밖이거나 `dist_cm` 이 음수면 폐기 |
 | ⑤ | `flags.tipped` 인데 `state` 가 `FAILSAFE` 가 아니면 **폐기 + WARN** |
@@ -210,7 +216,7 @@
 
 | 파일 | 역할 |
 | :--- | :--- |
-| `tests/fixtures/protocol_samples.jsonl` | 유효 메시지 정본 (7종 + 경계값) |
+| `tests/fixtures/protocol_samples.jsonl` | 유효 메시지 정본 (8종 + 경계값) |
 | `tests/fixtures/protocol_invalid.jsonl` | 폐기·클램핑 대상 + 기대 동작 |
 | `tests/test_protocol_fixtures.py` | 픽스처 자체의 일관성 검증 |
 | **`host/common/protocol.py`** | **송신·수신 구현 (Python).** 이 문서의 구현체이며 C++ 파서의 참조 구현 |
@@ -222,8 +228,8 @@
 
 ### 구현자 체크리스트
 
-- [ ] 7종 전부 파싱되는가 (`protocol_samples.jsonl` 전 라인)
-- [ ] 규칙 ①~④ 가 순서대로 동작하는가 (`protocol_invalid.jsonl` 의 `_expect` 대로)
+- [ ] 8종 전부 파싱되는가 (`protocol_samples.jsonl` 전 라인)
+- [ ] 규칙 ①~⑤ 가 순서대로 동작하는가 (`protocol_invalid.jsonl` 의 `_expect` 대로)
 - [ ] `step` 500 → 100 으로 **클램핑**되는가 (폐기가 아니라)
 - [ ] `type: "FUTURE_CMD"` 수신 시 크래시 없이 WARN 만 남기는가
 - [ ] 파싱 실패 패킷이 타임아웃 카운터를 갱신하지 **않는가**

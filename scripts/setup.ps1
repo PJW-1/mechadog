@@ -68,6 +68,11 @@ $eps = & $py -c "import onnxruntime as ort; print(','.join(ort.get_available_pro
 Write-Host "`n  사용 가능한 실행 프로바이더: $eps" -ForegroundColor Green
 if ($eps -notmatch 'CPUExecutionProvider') {
     Write-Host "  CPU EP 가 없습니다 — 설치가 정상적이지 않습니다." -ForegroundColor Red
+    exit 1
+}
+if ($eps -notmatch 'DmlExecutionProvider') {
+    Write-Host "  DirectML EP 가 없습니다 — GPU 추론 환경이 설치되지 않았습니다." -ForegroundColor Red
+    exit 1
 }
 
 # ── 결과 ────────────────────────────────────────
