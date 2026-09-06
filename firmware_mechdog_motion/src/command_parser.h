@@ -42,13 +42,15 @@ enum class Verdict : uint8_t {
   DiscardWarn,
 };
 
-// ── 제어 명령 8종 (PROTOCOL.md 2절) ─────────────────────────
+// ── 제어 명령 10종 (PROTOCOL.md 2절) ─────────────────────────
 enum class CmdType : uint8_t {
   Unknown = 0,
   Move,
   Pose,
   Gait,
   Stop,
+  Estop,
+  ResetSafe,
   Action,
   Led,
   Sound,
@@ -170,6 +172,8 @@ class CommandParser {
  private:
   bool has_last_ = false;
   int64_t last_seq_ = 0;
+  int64_t latest_ts_ = -1;
+  int64_t session_started_ts_ = -1;
 };
 
 // ── 로깅·시험용 이름 변환 ────────────────────────────────────

@@ -38,10 +38,10 @@ from typing import Any
 #  1. 규약 상수 — PROTOCOL.md 2절 · 5절
 # ══════════════════════════════════════════════════════════════
 
-#: 제어 명령 8종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
+#: 제어 명령 10종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
 #: 항상 하위 호환이다 (PROTOCOL.md 4절). `STATE` 가 그 첫 사례다.
 COMMAND_TYPES: frozenset[str] = frozenset(
-    {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE"}
+    {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE", "ESTOP", "RESET_SAFE"}
 )
 
 #: 모든 명령의 공통 필수 필드. `seq`·`ts` 는 **정수**, `type` 은 문자열이다.
@@ -54,6 +54,8 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "POSE": frozenset({"pitch", "roll", "height", "dur"}),
     "GAIT": frozenset({"lift_time", "ground_time", "height"}),
     "STOP": frozenset(),
+    "ESTOP": frozenset(),
+    "RESET_SAFE": frozenset(),
     "ACTION": frozenset({"id"}),
     "LED": frozenset({"color", "blink_hz"}),
     "SOUND": frozenset({"phrase_id"}),
@@ -210,7 +212,12 @@ def system_clock_ms() -> int:
 
 def _is_number(value: Any) -> bool:
     """bool·NaN·무한대는 수치로 보지 않는다."""
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _is_int(value: Any) -> bool:
@@ -220,7 +227,8 @@ def _is_int(value: Any) -> bool:
     메시지에는 `1.5` 가 남아 **둘이 어긋난다.** 그리고 뒤이어 오는 정상적인
     `seq: 1` 이 "중복"으로 폐기된다. 규약이 정수라고 못박은 이유가 이것이다.
     """
-    return isinstance(value, int) and not isinstance(value, bool)
+    # C++ 파서가 double로 읽어도 정확히 표현할 수 있는 정수만 전송한다.
+    return isinstance(value, int) and not isinstance(value, bool) and abs(value) < 1 << 53
 
 
 def _known(value: Any, allowed: frozenset[str]) -> bool:
@@ -244,6 +252,10 @@ def _command_field_error(type_: str, fields: dict[str, Any]) -> str | None:
             return f"{name} 가 유한한 수가 아님"
         elif name in INTEGER_FIELDS and not _is_int(value):
             return f"{name} 가 정수가 아님"
+        elif name in INTEGER_FIELDS - {"id"} and value > (1 << 31) - 1:
+            return f"{name} 가 32비트 정수 범위를 초과함"
+        elif name in {"pitch", "roll", "height", "blink_hz"} and abs(value) > 3.4028234663852886e38:
+            return f"{name} 가 32비트 실수 범위를 초과함"
     for name in NONNEGATIVE_FIELDS.get(type_, ()):
         if fields[name] < 0:
             return f"{name} 가 음수"
@@ -286,7 +298,7 @@ def strip_meta(msg: dict[str, Any]) -> dict[str, Any]:
 def _parse(raw: str | bytes) -> dict[str, Any] | DecodeResult:
     try:
         msg = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError):
         # 규칙 ③ — 폐기하되 타임아웃 카운터를 갱신하지 않는다.
         return DecodeResult(Verdict.DISCARD, "파싱 실패")
     if not isinstance(msg, dict):
@@ -361,6 +373,8 @@ class CommandEncoder:
         if error := _command_field_error(type_, fields):
             raise ValueError(error)
 
+        if not _is_int(self._seq):
+            raise ValueError("seq 범위 소진: 새 세션으로 연결해야 함")
         timestamp = self._clock()
         if not _is_int(timestamp) or timestamp < 0:
             raise ValueError("clock 은 0 이상의 epoch 밀리초 정수를 반환해야 함")
@@ -384,6 +398,14 @@ class CommandEncoder:
 
     def stop(self) -> str:
         return self.encode("STOP")
+
+    def estop(self) -> str:
+        """온보드 FAILSAFE를 래치한다. 일반 STOP으로는 해제되지 않는다."""
+        return self.encode("ESTOP")
+
+    def reset_safe(self) -> str:
+        """원인 해소 후 사용자 확인에 의해서만 호출한다. 복귀 상태는 IDLE."""
+        return self.encode("RESET_SAFE")
 
     def action(self, action_id: int) -> str:
         return self.encode("ACTION", id=action_id)
@@ -550,6 +572,8 @@ class TelemetryEncoder:
         if reserved:
             raise ValueError(f"인코더가 관리하는 필드는 넘길 수 없다: {sorted(reserved)}")
 
+        if not _is_int(self._seq):
+            raise ValueError("seq 범위 소진: 새 세션으로 연결해야 함")
         timestamp = self._clock()
         if not _is_int(timestamp) or timestamp < 0:
             raise ValueError("clock 은 0 이상의 epoch 밀리초 정수를 반환해야 함")

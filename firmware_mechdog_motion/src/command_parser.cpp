@@ -15,6 +15,8 @@
 
 #include "command_parser.h"
 
+#include <float.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,6 +65,7 @@ const char* ScanString(const char* p, const char* end, Value* out) {
     const char c = *p;
     if (c == '\\') {
       plain = false;
+      if (end - p < 2) return nullptr;
       p += 2;  // 이스케이프 한 쌍을 통째로 건너뛴다
       continue;
     }
@@ -106,6 +109,7 @@ const char* ScanNumber(const char* p, const char* end, Value* out) {
   buf[len] = '\0';
   char* stop = nullptr;
   const double v = strtod(buf, &stop);
+  if (!isfinite(v)) return nullptr;
   if (stop != buf + len) return nullptr;  // 뒤에 쓰레기가 붙어 있다
 
   if (out != nullptr) {
@@ -279,6 +283,8 @@ CmdType ParseType(const Value& v) {
   if (StrEq(v, "POSE")) return CmdType::Pose;
   if (StrEq(v, "GAIT")) return CmdType::Gait;
   if (StrEq(v, "STOP")) return CmdType::Stop;
+  if (StrEq(v, "ESTOP")) return CmdType::Estop;
+  if (StrEq(v, "RESET_SAFE")) return CmdType::ResetSafe;
   if (StrEq(v, "ACTION")) return CmdType::Action;
   if (StrEq(v, "LED")) return CmdType::Led;
   if (StrEq(v, "SOUND")) return CmdType::Sound;
@@ -361,6 +367,8 @@ const char* CheckRequired(CmdType type, const RawMsg& m) {
       reqs[n++] = {&m.state, true};
       break;
     case CmdType::Stop:
+    case CmdType::Estop:
+    case CmdType::ResetSafe:
     case CmdType::Unknown:
     default:
       break;
@@ -373,6 +381,19 @@ const char* CheckRequired(CmdType type, const RawMsg& m) {
     } else if (k != Kind::Number) {
       return "수치여야 할 필드가 수치가 아님";
     }
+    const Field* field = reqs[i].field;
+    if ((field == &m.pitch || field == &m.roll || field == &m.height || field == &m.blink_hz) &&
+        fabs(field->value.num) > FLT_MAX)
+      return "32비트 실수 범위 초과";
+    const bool integer = field == &m.dur || field == &m.lift_time || field == &m.ground_time ||
+                         field == &m.id || field == &m.phrase_id;
+    if (integer && !field->value.num_is_int) return "정수 필드에 비정수";
+    const bool nonnegative = field == &m.dur || field == &m.lift_time || field == &m.ground_time ||
+                             field == &m.phrase_id || field == &m.blink_hz ||
+                             (type == CmdType::Gait && field == &m.height);
+    if (nonnegative && field->value.num < 0) return "음수 필드";
+    if (integer && field != &m.id && field->value.num > 2147483647.0)
+      return "32비트 정수 범위 초과";
   }
   return nullptr;
 }
@@ -412,6 +433,14 @@ DecodeResult CommandParser::decode(const char* raw, size_t len) {
   }
 
   const int64_t seq = static_cast<int64_t>(m.seq.value.num);
+  const int64_t ts = static_cast<int64_t>(m.ts.value.num);
+  if (seq < 1 || ts < 0) return Reject(Verdict::Discard, "seq 또는 ts 범위 이탈");
+  if (session_started_ts_ >= 0 && ts < session_started_ts_)
+    return Reject(Verdict::Discard, "이전 Host 세션의 패킷");
+  if (has_last_ && seq == 1 && StrEq(m.type.value, "STOP") && ts > latest_ts_) {
+    has_last_ = false;
+    session_started_ts_ = ts;
+  }
 
   // 규칙 ① — seq 역전·중복
   //
@@ -422,6 +451,7 @@ DecodeResult CommandParser::decode(const char* raw, size_t len) {
   if (has_last_ && seq <= last_seq_) return Reject(Verdict::Discard, "seq 역전·중복");
   has_last_ = true;
   last_seq_ = seq;
+  if (ts > latest_ts_) latest_ts_ = ts;
 
   // 규칙 ④ — 모르는 타입은 폐기 + WARN
   const CmdType type = ParseType(m.type.value);
@@ -493,6 +523,8 @@ bool CommandParser::last_seq(int64_t* out) const {
 void CommandParser::reset() {
   has_last_ = false;
   last_seq_ = 0;
+  latest_ts_ = -1;
+  session_started_ts_ = -1;
 }
 
 const char* to_string(Verdict v) {
@@ -518,6 +550,10 @@ const char* to_string(CmdType t) {
       return "GAIT";
     case CmdType::Stop:
       return "STOP";
+    case CmdType::Estop:
+      return "ESTOP";
+    case CmdType::ResetSafe:
+      return "RESET_SAFE";
     case CmdType::Action:
       return "ACTION";
     case CmdType::Led:

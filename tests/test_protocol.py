@@ -253,6 +253,8 @@ def test_encoder_convenience_methods_cover_every_type() -> None:
         encoder.led("red", 2),
         encoder.sound(181),
         encoder.state("ALERT"),
+        encoder.estop(),
+        encoder.reset_safe(),
     ]
     types = set()
     for raw in emitted:

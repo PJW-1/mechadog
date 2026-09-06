@@ -38,6 +38,7 @@ mechadog::Verdict ExpectedOf(const char* line) {
   if (strstr(p, "discard_warn") != nullptr) return mechadog::Verdict::DiscardWarn;
   if (strstr(p, "discard") != nullptr) return mechadog::Verdict::Discard;
   if (strstr(p, "clamp") != nullptr) return mechadog::Verdict::Accept;
+  if (strstr(p, "accept") != nullptr) return mechadog::Verdict::Accept;
   return mechadog::Verdict::Discard;
 }
 
@@ -252,6 +253,8 @@ int main(int argc, char** argv) {
   Check(bad_lines >= 6, "이상 픽스처가 6줄 이상", nullptr);
 
   TestFieldValues();
+  Check(RunFixture(dir, "protocol_sessions.jsonl", false) >= 13, "세션 재시작과 숫자 의미 검증",
+        nullptr);
   TestClamping();
   TestSeqGate();
   TestTypeSafety();
