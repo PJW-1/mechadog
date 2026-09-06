@@ -7,8 +7,8 @@ Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자�
 MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **HAL로 취급**하고, 그 위에 **인지 → 판단 → 항법** 자율 스택을 새로 얹는 것이 목표입니다.
 
 📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
-📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
-🙋 **[담당자별 작업 목록 — 내 일이 뭔지](docs/ASSIGNMENTS.md)** ← 자기 할 일  
+📋 **[WBS — 작업 ID·선행·DoD 정본](docs/WBS.md)**<br>
+🙋 **[담당자별 작업 목록 — 지금 할 일](docs/ASSIGNMENTS.md)** ← 매일 보는 문서<br>
 🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 19건<br>
 🔌 **[하드웨어 — 착수 확인 · LiDAR 배선 · 발주](docs/HARDWARE.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
@@ -121,8 +121,8 @@ mechdog_physical_ai/
 │   ├── ARCHITECTURE.md                  # 구조 · FSM · 품질 기준 · 용어
 │   ├── DECISIONS.md                     # 설계 결정 기록 (ADR 19건)
 │   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 10종)
-│   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
-│   ├── ASSIGNMENTS.md                   # 담당자별 작업 목록 (WBS 에서 생성)
+│   ├── WBS.md                           # 작업 ID · 선행 · DoD 정본
+│   ├── ASSIGNMENTS.md                   # 진행 현황 · 담당 목록 (WBS에서 생성)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준
 │   └── HARDWARE.md                      # 착수 확인 · LiDAR 배선 · 발주
 ├── config/
@@ -161,7 +161,8 @@ mechdog_physical_ai/
 | 로깅 · 테스트 · CI 를 짠다 | [ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) |
 | 브랜치 · PR · 코드 규약 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 조립 · 배선 · 발주 · 착수 확인 | [HARDWARE.md](docs/HARDWARE.md) |
-| 내 워크패키지 · 일정 | [WBS.md](docs/WBS.md) |
+| **오늘 시작할 작업과 대기 작업** | **[ASSIGNMENTS.md](docs/ASSIGNMENTS.md)** |
+| 작업의 상세 DoD·선행 관계 | [WBS.md](docs/WBS.md) |
 
 ## 처음 보면 틀리기 쉬운 것
 
@@ -183,7 +184,7 @@ mechdog_physical_ai/
 | **B · 인지·AI** | 비전 노드 · 객체 검출 · 대시보드 화면 | 로봇 3대 영상, Host PC 추론 |
 | **C · 시스템·통합** | 통신 규약 · FSM · 대시보드 서버 · CI/CD · 문서 | Host PC와 전체 Fleet |
 
-> A/B/C는 사람 이름이 아니라 작업 성격이다. 실제 인원 배정은 [WBS 4절](docs/WBS.md)을 따른다.
+> A/B/C는 사람 이름이 아니라 작업 성격이다. 실제 인원 배정은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)를 따른다.
 > 기준기는 Phase별로 나뉜다. `phase1_reference`는 LiDAR 미장착 P1 표준 구성,
 > `phase2_reference`는 LiDAR 장착 2대 중 측위 검수용 1대다. 상세는 [CONTRIBUTING.md](CONTRIBUTING.md).
 

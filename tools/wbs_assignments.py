@@ -1,8 +1,7 @@
-"""담당자별 작업 목록 생성기 (WBS 7.1).
+"""WBS 작업 사전에서 담당자별 작업 목록을 생성한다.
 
-`docs/WBS.md` 3절 사전을 파싱해 **누가 무엇을 하는가**를 `docs/ASSIGNMENTS.md` 로
-펼친다. WBS 는 산출물 기준으로 분해되어 있어서(0절 작성 규칙), 담당자 한 사람의
-할 일이 7개 대분류에 흩어진다. `R` 열을 눈으로 훑어야 자기 일을 알 수 있다.
+`docs/WBS.md`의 작업 사전을 파싱해 **누가 무엇을 하는가**를
+`docs/ASSIGNMENTS.md`로 펼친다. 팀원은 생성된 파일에서 지금 시작할 수 있는 일만 본다.
 
 **왜 손으로 쓰지 않는가** — 같은 숫자를 두 곳에 두면 반드시 어긋난다. 이 프로젝트에서
 이미 여러 번 일어났다(총 공수 69.0 vs 70.0, 절 제목 5.5 vs 하위 합 6.5, 명령 7종 vs 8종).
@@ -23,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WBS = ROOT / "docs" / "WBS.md"
 OUT = ROOT / "docs" / "ASSIGNMENTS.md"
 
-#: WBS 3절 사전의 행 구조 — 8칸 고정.
+#: WBS 작업 사전의 행 구조 — 8칸 고정.
 #: `ID | 워크패키지 | 산출물 | 완료 기준(DoD) | R | 선행 | M/D | 연계`
 _COLUMNS = 8
 _ID, _NAME, _DELIV, _DOD, _R, _PRED, _MD = 0, 1, 2, 3, 4, 5, 6
@@ -31,7 +30,7 @@ _ID, _NAME, _DELIV, _DOD, _R, _PRED, _MD = 0, 1, 2, 3, 4, 5, 6
 #: 완료 표기 — WBS 사전의 DoD 칸 끝에 붙인다. 진척은 여기 한 곳에서만 관리한다.
 DONE_MARK = "[완료]"
 
-#: 담당자 배정 규칙 — 정본은 [WBS 4절 담당자 기준]이다.
+#: 담당자 배정 규칙 — 역할 범위는 CONTRIBUTING 1절에 기록한다.
 #: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4.1`(ROS2 컨테이너)이 이관된다.
 #: 나머지 `B`·`C` 가 팀장 몫이다.
 TRANSFERRED_TO_L: tuple[str, ...] = ("3.9", "5.4.1")
@@ -82,13 +81,12 @@ def _clean(cell: str) -> str:
 
 
 def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
-    """3절 사전에서 워크패키지를 뽑는다. 2절 트리·4절 롤업은 대상이 아니다."""
+    """작업 사전에서 워크패키지를 뽑는다."""
     body = path.read_text(encoding="utf-8")
-    start = body.index("## 3. WBS 사전")
-    end = body.index("## 4. 공수 롤업")
+    start = body.index("## 작업 사전")
 
     packages: list[WorkPackage] = []
-    for line in body[start:end].splitlines():
+    for line in body[start:].splitlines():
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -196,16 +194,16 @@ def render(packages: list[WorkPackage]) -> str:
         "# 내가 할 일",
         "",
         "> ⚠️ **이 파일은 생성된다. 직접 고치지 마라.**",
-        "> 정본은 [WBS 3절 사전](WBS.md)이며, 여기는 그것을 담당자 기준으로 펼친 것이다.",
+        "> 정본은 [WBS 작업 사전](WBS.md)이며, 여기는 그것을 담당자 기준으로 펼친 것이다.",
         ">",
         "> ```",
         "> python tools/wbs_assignments.py",
         "> ```",
         ">",
-        "> WBS 를 고치고 재생성하지 않으면 `tests/test_assignments.py` 가 CI 에서 실패한다.",
+        "> 작업 범위·선행·DoD·상태를 바꿨을 때만 WBS를 고치고 이 파일을 재생성한다.",
         "",
         "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행 작업이 없거나 모두 끝난 것들이다.",
-        "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 3절 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
+        "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 작업 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
         "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 전체 |",
         "| :--- | ---: | ---: | ---: | ---: | ---: |",
@@ -278,8 +276,7 @@ def render(packages: list[WorkPackage]) -> str:
         lines += ["", "</details>", "", "---", ""]
 
     lines += [
-        "> **여기 없는 작업은 프로젝트 범위 밖이다** (WBS 0절 100% 규칙).",
-        "> 할 일이 새로 생기면 WBS 3절에 워크패키지로 등재한 뒤 이 파일을 재생성한다.",
+        "> 할 일이 새로 생기거나 선행·상태가 바뀌면 WBS 작업 사전에 반영한 뒤 이 파일을 재생성한다.",
         "",
     ]
     return "\n".join(lines)

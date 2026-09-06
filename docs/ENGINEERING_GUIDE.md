@@ -1,6 +1,6 @@
 # 엔지니어링 가이드 — 로깅 · 테스트 · CI
 
-> 코드를 쓸 때 참조하는 실무 기준. 무엇을 만들지는 [PRD](PRD_Physical_AI_Guard_Robot.md)·[WBS](WBS.md)에, **어떻게 만들지는 이 문서**에 있다.
+> 코드를 쓸 때 참조하는 실무 기준. 무엇을 만들지는 [PRD](PRD_Physical_AI_Guard_Robot.md)·[ASSIGNMENTS](ASSIGNMENTS.md)에, 상세 DoD는 [WBS](WBS.md)에 있다. **어떻게 만들지는 이 문서**에 있다.
 > 협업 절차는 [CONTRIBUTING](../CONTRIBUTING.md) 참조.
 
 | 항목 | 내용 |
@@ -41,7 +41,7 @@
 | :--- | :--- |
 | `ts` | 여러 노드의 로그를 **시간축에 정렬**하기 위함 |
 | `level` | 레벨링 |
-| **`device_id`** | **3대 운용이므로 어느 개체의 로그인지 구분 필수** (WBS 7절) |
+| **`device_id`** | **3대 운용이므로 어느 개체의 로그인지 구분 필수** ([CONTRIBUTING 1절](../CONTRIBUTING.md)) |
 | `seq` | 명령·텔레메트리와 **상호 참조** |
 | `state` | 당시 FSM 상태 |
 | `escalation` | 당시 에스컬레이션 단계 |
@@ -304,7 +304,7 @@ run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under
 | :--- | :--- |
 | **메시지 스키마** | 송·수신을 다른 사람이 만든다 → [PROTOCOL.md](PROTOCOL.md) |
 | **`.onnx` 산출물** | 누가 만들든 나머지가 그대로 쓴다 |
-| **성능 수치의 출처** | 보고서 숫자는 기준 PC 실측 한 벌만 (WBS 7절) |
+| **성능 수치의 출처** | 보고서 숫자는 기준 PC 실측 한 벌만 ([CONTRIBUTING 1절](../CONTRIBUTING.md)) |
 
 세 번째는 환경 통일이 아니라 **측정 기준 고정**이다. PC 가 달라도 되고, NFR 수치만
 기준 PC 에서 뽑아 문서화하고 나머지는 참고치로 병기한다.

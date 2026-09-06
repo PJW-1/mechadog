@@ -153,7 +153,7 @@ struct DecodeResult {
 // seq 게이트 상태를 들고 있으므로 수신 소켓 하나당 하나를 둔다.
 //
 // ⚠️ 송신자가 여럿이면 인스턴스도 여럿이어야 한다. 3대를 한 카운터로 묶으면
-//    개체끼리 서로의 패킷을 폐기한다 (WBS 8절, protocol.py `_SeqGate` 주석).
+//    개체끼리 서로의 패킷을 폐기한다 (CONTRIBUTING 1절, protocol.py `_SeqGate` 주석).
 //    온보드는 호스트 하나만 상대하므로 인스턴스 하나로 충분하다.
 class CommandParser {
  public:

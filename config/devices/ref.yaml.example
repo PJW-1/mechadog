@@ -11,7 +11,7 @@ owner_id: unassigned    # 실제 담당자 계정/식별자. A/B/C 작업 성격
 #   phase2_reference : LiDAR 장착 개체. Phase 2 측위·매핑 검수
 #   LiDAR 장착 2대 중 1대만 phase2_reference이며, 나머지 1대는 개발·재현용이다.
 #   한 개체가 둘을 겸할 수 없다 — Phase 1 표준 구성을 유지해야 NFR 출처가 흔들리지 않는다.
-#   상세: docs/WBS.md 8절 · CONTRIBUTING.md 1절
+#   상세: CONTRIBUTING.md 1절
 reference_role: phase1   # phase1 | phase2 | none
 
 network:
