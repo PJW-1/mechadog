@@ -28,6 +28,23 @@
 
 ### 지나가면서 같이 확인할 것
 
+**2026-09-06 공식 문서 대조:** 대상은 Hiwonder MechDog + Seeed XIAO ESP32S3 Sense다.
+MechDog는 ESP32·8개 서보·초음파·IMU를 포함하며, WonderEcho/MP3는 Advanced/Ultimate 키트 구성품이다.
+키트 등급이 확인되기 전에는 음성 모듈 보유를 확정하지 않는다.
+[MechDog 구성품](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/1.Getting_Ready.html)
+
+XIAO Sense는 구형 OV2640과 현행 OV3660이 있으므로 실물 센서 모델을 기록한다.
+8MB PSRAM과 HTTP 영상 스트리밍 예제는 제공되지만 VGA 15fps·E2E 250ms는 우리 구성에서 측정할 목표다.
+XIAO는 영상 송출, Host는 객체/PPE 추론을 맡긴다. 3대 동시 Wi-Fi 영상은 별도로 부하 검수한다.
+[Seeed 사양](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/),
+[카메라 예제](https://wiki.seeedstudio.com/xiao_esp32s3_camera_usage/)
+
+MechDog 공식 Arduino 예제에서 `move(step, angle)`·`transform(...)`·`set_gait_params(...)`를 확인했다.
+예제의 긴 `delay()`를 통신·안전 루프에 그대로 사용하지 않는다. 타임아웃 검사와 동작 시퀀스를
+분리하고, HAL 호출 중에도 정지 명령이 제때 실행되는지 G1에서 측정한다.
+액션 그룹·서보 토크 해제의 실제 API와 중단 가능 여부는 반입한 라이브러리 버전으로 확인한다.
+[공식 Arduino 예제](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/5.Arduino_Programming_Projects.html)
+
 | 항목 | 왜 | 반영처 |
 | :--- | :--- | :--- |
 | **최소 회전 반경** (OI-22) | 제자리 회전이 불가하므로(DR-11) 경로가 호로만 그려진다. 이 값에서 **필요 시연 공간 규격**이 나온다 | 장소 선정 (OI-19 와 연동) |

@@ -65,7 +65,12 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
 
 
 def _finite_number(value: Any) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _require_positive(mapping: dict[str, Any], key: str) -> None:
@@ -75,7 +80,7 @@ def _require_positive(mapping: dict[str, Any], key: str) -> None:
 
 
 def validate_base_config(config: dict[str, Any]) -> None:
-    if config.get("profile") not in {"dev", "prod"}:
+    if not isinstance(config.get("profile"), str) or config["profile"] not in {"dev", "prod"}:
         raise ConfigError("profile 은 dev 또는 prod 여야 함")
     missing = [
         section for section in REQUIRED_SECTIONS if not isinstance(config.get(section), dict)
@@ -103,6 +108,38 @@ def validate_base_config(config: dict[str, Any]) -> None:
         raise ConfigError("명령 정지가 링크 페일세이프보다 먼저 동작해야 함")
     if safety["battery_shutdown_v"] >= safety["battery_warn_v"]:
         raise ConfigError("배터리 셧다운 전압은 경고 전압보다 낮아야 함")
+    if not 6.0 <= safety["battery_shutdown_v"] < safety["battery_warn_v"] <= 8.4:
+        raise ConfigError("배터리 임계값은 2S 검증 범위 6.0~8.4V 안이어야 함")
+    if not 0 < safety["tip_angle_deg"] < 90:
+        raise ConfigError("전도 임계각은 0도 초과 90도 미만이어야 함")
+    if 1000 / network["cmd_rate_hz"] >= safety["cmd_timeout_ms"]:
+        raise ConfigError("명령 송신 주기는 명령 타임아웃보다 짧아야 함")
+
+    track = config["localization"].get("track")
+    if not isinstance(track, str) or track not in {"none", "lidar", "aruco"}:
+        raise ConfigError("localization.track 은 none, lidar, aruco 중 하나여야 함")
+    ppe = config["vision"].get("ppe")
+    if not isinstance(ppe, dict) or not ppe:
+        raise ConfigError("vision.ppe 필수 설정 누락")
+    for name in (
+        "input_size",
+        "head_margin_px",
+        "static_threshold_px",
+        "static_frames",
+        "max_posture_retries",
+    ):
+        _require_positive(ppe, name)
+    for name in ("input_size", "static_frames", "max_posture_retries"):
+        if not isinstance(ppe[name], int) or isinstance(ppe[name], bool):
+            raise ConfigError(f"vision.ppe.{name} 는 정수여야 함")
+    confidence = ppe.get("conf_threshold")
+    if not _finite_number(confidence) or not 0 < confidence <= 1:
+        raise ConfigError("vision.ppe.conf_threshold 는 0 초과 1 이하여야 함")
+    for name in ("require_head_visible", "require_target_static"):
+        if ppe.get(name) is not True:
+            raise ConfigError(f"vision.ppe.{name} 안전 판정 조건은 켜져 있어야 함")
+    if ppe["static_frames"] < 2 or not 1 <= ppe["max_posture_retries"] <= 5:
+        raise ConfigError("PPE 정지 판정은 2프레임 이상, 재시도는 1~5회여야 함")
 
     providers = config["vision"].get("providers")
     if not isinstance(providers, list) or not providers:
@@ -116,7 +153,11 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
         raise ConfigError(
             f"개체 프로파일 device_id 불일치: 요청={device_id!r}, 파일={config.get('device_id')!r}"
         )
-    if config.get("reference_role") not in {"phase1", "phase2", "none"}:
+    if not isinstance(config.get("reference_role"), str) or config["reference_role"] not in {
+        "phase1",
+        "phase2",
+        "none",
+    }:
         raise ConfigError("reference_role 은 phase1, phase2, none 중 하나여야 함")
 
     offsets = config.get("servo_offset")

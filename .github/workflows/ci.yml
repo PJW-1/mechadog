@@ -136,6 +136,10 @@ jobs:
           if find "${{ matrix.target.dir }}" -name '*.ino' | grep -q .; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              echo "::error::릴리스에는 ${{ matrix.target.name }} 스케치가 필요합니다"
+              exit 1
+            fi
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "::notice::${{ matrix.target.dir }}에 스케치가 없어 빌드를 건너뜁니다 (WBS 4.1/4.2 미착수)"
           fi
@@ -181,7 +185,7 @@ jobs:
           path: |
             ${{ matrix.target.dir }}/build/**/*.bin
             ${{ matrix.target.dir }}/build/**/*.elf
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ── WBS 5.3.4 · 릴리스 ────────────────────────────────────
   release:
@@ -197,10 +201,20 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
-        continue-on-error: true
+
+      - name: Verify release firmware
+        shell: bash
+        run: |
+          for target in MechDog-Motion XIAO-Vision; do
+            if ! find "artifacts/firmware-$target" -type f -name '*.bin' -print -quit | grep -q .; then
+              echo "::error::$target 바이너리가 없습니다"
+              exit 1
+            fi
+          done
 
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: artifacts/**/*

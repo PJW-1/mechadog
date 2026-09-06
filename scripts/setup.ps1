@@ -23,7 +23,10 @@ Set-Location $root
 
 function Step($name, $block) {
     $t = Get-Date
-    & $block
+    & $block | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "$name 실패 (종료 코드: $LASTEXITCODE)"
+    }
     $sec = ((Get-Date) - $t).TotalSeconds
     Write-Host ("  {0,-28} {1,6:N1} s" -f $name, $sec) -ForegroundColor DarkGray
     return $sec
@@ -34,6 +37,7 @@ $total = 0
 
 # ── 1. Python 확인 ──────────────────────────────
 $ver = (python --version 2>&1) -replace 'Python\s*', ''
+if ($LASTEXITCODE -ne 0) { throw 'Python 버전 확인 실패' }
 if (-not $ver) {
     Write-Host "python 명령을 찾을 수 없습니다." -ForegroundColor Red
     Write-Host "  https://www.python.org/downloads/ 에서 3.12 이상을 설치하고" -ForegroundColor Yellow
@@ -65,6 +69,7 @@ $total += Step "pytest" { & $py -m pytest -q }
 
 # ── 5. 실행 프로바이더 ──────────────────────────
 $eps = & $py -c "import onnxruntime as ort; print(','.join(ort.get_available_providers()))"
+if ($LASTEXITCODE -ne 0) { throw 'ONNX Runtime 실행 프로바이더 확인 실패' }
 Write-Host "`n  사용 가능한 실행 프로바이더: $eps" -ForegroundColor Green
 if ($eps -notmatch 'CPUExecutionProvider') {
     Write-Host "  CPU EP 가 없습니다 — 설치가 정상적이지 않습니다." -ForegroundColor Red
