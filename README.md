@@ -9,7 +9,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
 📋 **[WBS — 작업 분해 구조 및 일정](docs/WBS.md)**  
 🙋 **[담당자별 작업 목록 — 내 일이 뭔지](docs/ASSIGNMENTS.md)** ← 자기 할 일  
-🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 18건  
+🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 19건<br>
 🔌 **[하드웨어 — 착수 확인 · LiDAR 배선 · 발주](docs/HARDWARE.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 📡 **[통신 프로토콜 정본 — 명령 10종·검증 규칙](docs/PROTOCOL.md)**
@@ -119,7 +119,7 @@ mechdog_physical_ai/
 ├── docs/
 │   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 (FR · 마일스톤 · 리스크 · OI)
 │   ├── ARCHITECTURE.md                  # 구조 · FSM · 품질 기준 · 용어
-│   ├── DECISIONS.md                     # 설계 결정 기록 (ADR 18건)
+│   ├── DECISIONS.md                     # 설계 결정 기록 (ADR 19건)
 │   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 10종)
 │   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
 │   ├── ASSIGNMENTS.md                   # 담당자별 작업 목록 (WBS 에서 생성)
