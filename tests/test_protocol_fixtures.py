@@ -29,7 +29,18 @@ INVALID = FIXTURES / "protocol_invalid.jsonl"
 CONFIG = ROOT / "config" / "config.yaml"
 
 # PRD FR-5.1 — 제어 명령 타입
-KNOWN_TYPES = {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE"}
+KNOWN_TYPES = {
+    "MOVE",
+    "POSE",
+    "GAIT",
+    "STOP",
+    "ACTION",
+    "LED",
+    "SOUND",
+    "STATE",
+    "ESTOP",
+    "RESET_SAFE",
+}
 
 # 타입별 필수 필드 (seq / ts / type 은 공통 필수)
 REQUIRED_FIELDS = {
@@ -37,6 +48,8 @@ REQUIRED_FIELDS = {
     "POSE": {"pitch", "roll", "height", "dur"},
     "GAIT": {"lift_time", "ground_time", "height"},
     "STOP": set(),
+    "ESTOP": set(),
+    "RESET_SAFE": set(),
     "ACTION": {"id"},
     "LED": {"color", "blink_hz"},
     "SOUND": {"phrase_id"},

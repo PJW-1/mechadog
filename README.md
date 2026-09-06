@@ -12,7 +12,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 18건  
 🔌 **[하드웨어 — 착수 확인 · LiDAR 배선 · 발주](docs/HARDWARE.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
-📡 **[통신 프로토콜 정본 — 명령 8종·검증 규칙](docs/PROTOCOL.md)**  
+📡 **[통신 프로토콜 정본 — 명령 10종·검증 규칙](docs/PROTOCOL.md)**
 🏗 **[시스템 아키텍처 — 구조·상태·품질 기준](docs/ARCHITECTURE.md)** ← 용어 부록 포함  
 🤝 **[협업 규칙](CONTRIBUTING.md)**
 
@@ -80,7 +80,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 | FR-6 | LiDAR SLAM | LD19 + ROS2 `slam_toolbox` 맵 생성, 웨이포인트 순찰 |
 | FR-7 | 구역 순찰 · 랜덤 자율주행 | A~E 구역 간 자율 이동, 위험구역 긴급 진입 |
 
-> Phase 2 착수 조건: MechDog 탑재 여력이 약 100g 이상일 것. 미달 시 ArUco 마커 방식으로 축소합니다.
+> Phase 2 착수 조건: 보조배터리·마스트·센서를 포함한 실제 최종 구성으로 H3 탑재 검수를 통과할 것. 과거 100g 기준 대신 [하드웨어 검수](docs/HARDWARE.md)를 따릅니다. 미달 시 ArUco 마커 방식으로 축소합니다.
 >
 > **FR-8은 Phase 2가 아닙니다.** 변화 감지에 필요한 건 "지금 어느 구역인가"뿐이고, 그건 구역마다 마커 한 장이면 됩니다. 정밀 좌표가 필요한 것은 구역 *사이를 이동하는* FR-7 쪽입니다.
 
@@ -91,7 +91,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 | 노드 | 장비 | 전원 |
 | :--- | :--- | :--- |
 | Motion | Hiwonder MechDog (Advanced Kit) — ESP32, 8× 코어리스 서보, IMU, 초음파 | 2S 리튬 7.4V (순정) |
-| Vision | Seeed XIAO ESP32S3 Sense — OV2640, 8MB PSRAM | **보조배터리 USB-C** (DR-10) |
+| Vision | Seeed XIAO ESP32S3 Sense — OV3660(현행) / OV2640(구형), 8MB PSRAM | **보조배터리 USB-C** (DR-10) |
 | Host | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080 | — |
 | LiDAR *(P2)* | **FHL-LD19 (D500 키트)** + ESP32-DevKitC V4 중계 | 보조배터리 공용 |
 
@@ -120,7 +120,7 @@ mechdog_physical_ai/
 │   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 (FR · 마일스톤 · 리스크 · OI)
 │   ├── ARCHITECTURE.md                  # 구조 · FSM · 품질 기준 · 용어
 │   ├── DECISIONS.md                     # 설계 결정 기록 (ADR 18건)
-│   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 8종)
+│   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 10종)
 │   ├── WBS.md                           # 작업 분해 · 일정 · 추적 매트릭스
 │   ├── ASSIGNMENTS.md                   # 담당자별 작업 목록 (WBS 에서 생성)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준

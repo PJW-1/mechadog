@@ -139,6 +139,7 @@ class MockRobot:
         self._now_ms = start_ms
         self._last = _LastCommand(at_ms=start_ms)
         self._link_seen = False  # 한 번이라도 유효 명령을 받았는가
+        self._failsafe_latched = False
         self.stats = Stats()
 
     # ── 수신 ────────────────────────────────────────────────
@@ -150,6 +151,8 @@ class MockRobot:
         수신 통계에도 잡히지 않는다. UDP 에서 실제로 일어나는 일이다.
         """
         self._now_ms = now_ms
+        # 복구 패킷으로 시각을 덮기 전에 단절을 판정한다.
+        self._update_safety(now_ms)
         if self._rng.random() < self._faults.drop_rate:
             self.stats.dropped += 1
             return None
@@ -174,15 +177,21 @@ class MockRobot:
         # 한 건에 자세가 사라져, 자세 상승 시퀀스(FR-9.2.2)를 시험할 수 없다.
         kind = msg["type"]
         prev = self._last
-        moving = kind == "MOVE"
+        if kind == "ESTOP":
+            self._failsafe_latched = True
+        reset = kind == "RESET_SAFE" and not self._physical_fault(now_ms)
+        if reset:
+            self._failsafe_latched = False
+        moving = kind == "MOVE" and not self._failsafe_latched
+        stop = kind in {"STOP", "ESTOP", "RESET_SAFE"} or self._failsafe_latched
         self._last = _LastCommand(
             at_ms=now_ms,
             type=kind,
             # STOP 은 move(0,0) 이므로 보행만 멈춘다. 자세는 그대로다.
-            step=msg["step"] if moving else (0.0 if kind == "STOP" else prev.step),
-            angle=msg["angle"] if moving else (0.0 if kind == "STOP" else prev.angle),
-            pitch=msg["pitch"] if kind == "POSE" else prev.pitch,
-            host_state=msg["state"] if kind == "STATE" else prev.host_state,
+            step=msg["step"] if moving else (0.0 if stop else prev.step),
+            angle=msg["angle"] if moving else (0.0 if stop else prev.angle),
+            pitch=msg["pitch"] if kind == "POSE" and not self._failsafe_latched else prev.pitch,
+            host_state="IDLE" if reset else (msg["state"] if kind == "STATE" else prev.host_state),
         )
         return result
 
@@ -227,6 +236,24 @@ class MockRobot:
         """300ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다 (아키텍처 3절)."""
         return not self._link_seen or self.last_cmd_age_ms(now_ms) > self._safety["cmd_timeout_ms"]
 
+    def _physical_fault(self, now_ms: int) -> bool:
+        return self.tipped(now_ms) or self.battery_v(now_ms) <= self._safety["battery_shutdown_v"]
+
+    def _update_safety(self, now_ms: int) -> None:
+        if self._physical_fault(now_ms) or (self._link_seen and not self.link_ok(now_ms)):
+            self._failsafe_latched = True
+        if (
+            self._failsafe_latched
+            or self.stopped_by_timeout(now_ms)
+            or self.distance_cm(now_ms) < self._safety["obstacle_stop_cm"]
+        ):
+            self._last.step = self._last.angle = 0.0
+
+    def motion(self, now_ms: int) -> dict[str, float]:
+        """실제 서보 대신 관측하는 보행 출력. 정지 시 과거 MOVE를 되살리지 않는다."""
+        self._update_safety(now_ms)
+        return {"step": self._last.step, "angle": self._last.angle}
+
     def state(self, now_ms: int) -> str:
         """**Tier 1 판정이 먼저, 그 다음이 호스트가 알려준 상태다.**
 
@@ -239,11 +266,8 @@ class MockRobot:
         인식에 굴복하면 Tier 1 이 Tier 2 에 종속되어 이 구조의 의미가 사라진다.
         """
         # ── Tier 1 — 온보드 센서 판정. 호스트의 말보다 우선한다 ──
-        if not self.link_ok(now_ms):
-            return "FAILSAFE"
-        if self.tipped(now_ms):
-            return "FAILSAFE"
-        if self.battery_v(now_ms) <= self._safety["battery_shutdown_v"]:
+        self._update_safety(now_ms)
+        if self._failsafe_latched or not self.link_ok(now_ms):
             return "FAILSAFE"
         if self.distance_cm(now_ms) < self._safety["obstacle_stop_cm"]:
             return "AVOID"
@@ -279,6 +303,8 @@ class MockRobot:
                 "tipped": tipped,
                 "link_ok": self.link_ok(now_ms),
             },
+            motion=self.motion(now_ms),
+            safety_latched=self._failsafe_latched,
         )
 
     def _imu(self, now_ms: int, *, tipped: bool) -> dict[str, float]:

@@ -20,7 +20,7 @@
 
 ---
 
-## 2. 제어 명령 — 8종
+## 2. 제어 명령 — 10종
 
 모든 메시지는 **한 줄 JSON**이며 `seq` · `ts` · `type` 3개 필드를 공통 필수로 갖는다.
 
@@ -43,6 +43,10 @@
 | `ts` | **int** | Host PC 기준 epoch **밀리초** (초 아님) |
 | `type` | **str** | 대문자 고정 |
 
+정수 전송 범위는 C++ 파서의 정밀도에 맞춰 절댓값 **2^53 미만**이다. `seq >= 1`, `ts >= 0`이며,
+`dur`·`lift_time`·`ground_time`·`phrase_id`는 **0~2^31−1 정수**다.
+`GAIT.height`와 `LED.blink_hz`는 음수가 될 수 없다. NaN·무한대·변환 범위 초과 수치는 폐기한다.
+
 > **타입을 지키는 것이 검사 대상이다.** `seq: 1.5` 같은 실수를 받아들이면 순서 게이트는
 > 잘라서 `1` 로 기억하고 메시지에는 `1.5` 가 남아 **둘이 어긋난다.** 그 뒤에 오는 정상적인
 > `seq: 1` 이 "중복"으로 폐기된다 — **실수 하나가 정상 명령 하나를 삼킨다.**
@@ -55,6 +59,8 @@
 | `POSE` | `pitch`, `roll`, `height`, `dur` | 라이브러리 허용 범위 / dur ms | `transform(pose, dur)` |
 | `GAIT` | `lift_time`, `ground_time`, `height` | ms / ms / mm | `set_gait_params(...)` |
 | `STOP` | — | — | `move(0, 0)` |
+| `ESTOP` | — | — | 온보드 FAILSAFE 래치 + 즉시 보행 정지 |
+| `RESET_SAFE` | — | — | 원인 해소 후 안전 래치 해제, 보행 0·IDLE 복귀 |
 | `ACTION` | `id` | 0~15 | 내장 액션 그룹 |
 | `LED` | `color`, `blink_hz` | `config.escalation.led` 색상명 / 0 = 상시점등 | 눈 LED |
 | `SOUND` | `phrase_id` | WonderEcho 사전 등록 문구 ID | 문구 재생 |
@@ -68,6 +74,24 @@
 Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 연결의 첫 명령은 반드시
 **`STOP`, `seq: 1`** 이어야 한다. 로봇은 마지막 명령보다 최신 `ts`인 이 패킷을 받으면
 순서 기준을 초기화한다. 새 연결 시작 시각보다 오래된 지연 패킷은 폐기한다.
+
+### 안전 정지와 해제
+
+`STOP`은 일반 보행 정지이고 FAILSAFE를 해제하지 않는다. `ESTOP` 또는 링크 두절·저전압·전도로
+진입한 FAILSAFE는 원인이 사라져도 유지한다. 래치 중 MOVE·POSE·GAIT·ACTION을 실행하지 않는다.
+유효 패킷은 링크 상태 확인에는 사용할 수 있지만, 이동이나 `STATE` 값으로 래치를 해제할 수 없다.
+
+사용자가 확인했을 때만 `RESET_SAFE`를 보낸다. 수신측은 링크가 복구됐고 저전압·전도 원인이
+해소됐을 때만 IDLE로 복귀한다. 이전 MOVE는 폐기하며 새 이동 명령 전까지 정지한다.
+장애물 반사 정지는 리셋과 무관하게 항상 유지한다. 패킷 수락과 실제 안전 해제는 다르므로
+송신측은 텔레메트리의 `state=IDLE`, `safety_latched=false`를 확인해야 한다.
+
+`ESTOP`/`RESET_SAFE`는 2026-09-06 안전 계약 확장이다. 구형 펌웨어는 이 명령을 무시하므로
+**명령 추가의 구문 호환성이 안전 기능 호환성을 뜻하지 않는다.** 실기 운용 전 송수신을 함께
+갱신하고 비상정지·수동 해제 검수를 수행한다. 신뢰할 수 있는 제어 송신자 검증은 UDP 셸의 책임이다.
+
+텔레메트리에는 `safety_latched`(bool)를 추가한다. 목업의 `motion`은 적용된 보행 출력
+`{step, angle}`을 관측하는 개발용 필드이며 실측 속도·위치가 아니다.
 
 ### `STATE` — 왜 상태를 로봇에게 알려주는가
 
@@ -216,7 +240,8 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
 
 | 파일 | 역할 |
 | :--- | :--- |
-| `tests/fixtures/protocol_samples.jsonl` | 유효 메시지 정본 (8종 + 경계값) |
+| `tests/fixtures/protocol_samples.jsonl` | 유효 메시지 정본 (10종 + 경계값) |
+| `tests/fixtures/protocol_sessions.jsonl` | Host 재시작·이전 세션 폐기·정수/부호 검증 |
 | `tests/fixtures/protocol_invalid.jsonl` | 폐기·클램핑 대상 + 기대 동작 |
 | `tests/test_protocol_fixtures.py` | 픽스처 자체의 일관성 검증 |
 | **`host/common/protocol.py`** | **송신·수신 구현 (Python).** 이 문서의 구현체이며 C++ 파서의 참조 구현 |
@@ -228,7 +253,7 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
 
 ### 구현자 체크리스트
 
-- [ ] 8종 전부 파싱되는가 (`protocol_samples.jsonl` 전 라인)
+- [ ] 10종 전부 파싱되는가 (`protocol_samples.jsonl` 전 라인)
 - [ ] 규칙 ①~⑤ 가 순서대로 동작하는가 (`protocol_invalid.jsonl` 의 `_expect` 대로)
 - [ ] `step` 500 → 100 으로 **클램핑**되는가 (폐기가 아니라)
 - [ ] `type: "FUTURE_CMD"` 수신 시 크래시 없이 WARN 만 남기는가
