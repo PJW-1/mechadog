@@ -27,8 +27,8 @@ OUT = ROOT / "docs" / "ASSIGNMENTS.md"
 _COLUMNS = 8
 _ID, _NAME, _DELIV, _DOD, _R, _PRED, _MD = 0, 1, 2, 3, 4, 5, 6
 
-#: 완료 표기 — WBS 사전의 DoD 칸 끝에 붙인다. 진척은 여기 한 곳에서만 관리한다.
-DONE_MARK = "[완료]"
+#: 완료 표기 — `[완료]`와 `[완료 · PR #18]`처럼 근거가 붙은 형식을 모두 인식한다.
+DONE_MARK = "[완료"
 
 #: 담당자 배정 규칙 — 역할 범위는 CONTRIBUTING 1절에 기록한다.
 #: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4.1`(ROS2 컨테이너)이 이관된다.

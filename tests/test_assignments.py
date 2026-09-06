@@ -63,6 +63,7 @@ def test_render_is_deterministic(packages: list[WorkPackage]) -> None:
 def test_completed_predecessor_unlocks_work(packages: list[WorkPackage]) -> None:
     """선행 칸이 비어 있을 때만 준비로 보던 회귀를 막는다."""
     by_id = {p.wid: p for p in packages}
+    assert by_id["4.1.3"].done, "근거가 붙은 완료 표기를 인식하지 못한다"
     assert is_ready(by_id["3.4.1"], packages), "완료된 3.1.1이 FSM 착수를 막고 있다"
     assert is_ready(by_id["4.1.3"], packages), "완료된 3.1.1·3.1.2가 C++ 파서를 막고 있다"
     assert is_ready(by_id["4.3.2"], packages), "완료된 4.3.1이 UDP commander를 막고 있다"
