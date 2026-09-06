@@ -241,7 +241,7 @@ def test_encoder_seq_is_monotonic_and_ts_comes_from_clock() -> None:
 
 
 def test_encoder_convenience_methods_cover_every_type() -> None:
-    """편의 메서드가 8종 전부를 덮어야 한다. 빠지면 호출부가 문자열을 쓰게 된다."""
+    """편의 메서드가 10종 전부를 덮어야 한다. 빠지면 호출부가 문자열을 쓰게 된다."""
     encoder = p.CommandEncoder(clock=FakeClock())
     decoder = p.CommandDecoder()
     emitted = [

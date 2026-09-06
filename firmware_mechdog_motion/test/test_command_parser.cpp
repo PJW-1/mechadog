@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
   printf("protocol_invalid.jsonl  %d 줄\n", bad_lines);
 
   // 픽스처가 사라지거나 비면 조용히 통과해 버린다. 그것부터 막는다.
-  Check(ok_lines >= 15, "정본 픽스처가 8종 전부를 덮는다 (15줄 이상)", nullptr);
+  Check(ok_lines >= 15, "정본 픽스처가 10종 전부를 덮는다 (15줄 이상)", nullptr);
   Check(bad_lines >= 6, "이상 픽스처가 6줄 이상", nullptr);
 
   TestFieldValues();

@@ -425,7 +425,7 @@ def test_defaults_to_patrol_before_any_state_command(config: dict) -> None:
 
 @pytest.mark.parametrize("state", sorted(p.FSM_STATES))
 def test_echoed_records_still_pass_host_validation(config: dict, state: str) -> None:
-    """8종을 되돌려줘도 호스트 검증을 통과해야 한다.
+    """FSM 상태 13종을 되돌려줘도 호스트 검증을 통과해야 한다.
 
     특히 규칙 ⑤ — 전도 중에 호스트가 PATROL 을 지시하면, 그대로 실어 보냈다가는
     `tipped:true` + `PATROL` 이 되어 호스트가 자기 레코드를 폐기한다.

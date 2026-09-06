@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════
 //  WBS 4.1.3 · C++ 명령 파서 — Host PC → MechDog 제어 명령 수신 검증
 //
-//  정본 : docs/PROTOCOL.md 2절(명령 8종) · 3절(검증 규칙 ①~⑤)
+//  정본 : docs/PROTOCOL.md 2절(명령 10종) · 3절(검증 규칙 ①~⑤)
 //  참조 : host/common/protocol.py `CommandDecoder` — 규칙과 그 순서가 같아야 한다
 //  검증 : tests/fixtures/protocol_samples.jsonl  (전부 ACCEPT)
 //         tests/fixtures/protocol_invalid.jsonl  (`_expect` 대로 판정)
