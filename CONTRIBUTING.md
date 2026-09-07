@@ -268,11 +268,15 @@ MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run �
 실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
 `firmware_mechdog_motion/README.md`를 따른다.
 
-펌웨어 컴파일 확인:
+펌웨어 포맷과 컴파일 확인:
 
 ```bash
+clang-format --dry-run --Werror firmware_mechdog_motion/src/*.cpp firmware_mechdog_motion/src/*.h
 arduino-cli compile --fqbn esp32:esp32:esp32 firmware_mechdog_motion
 ```
+
+> `clang-format` 은 `requirements-dev.txt` 에 들어 있다. **없으면 포맷 위반을 CI 에서만 알게 되고
+> 그때는 이미 PR 이 빨간불이다** — 실제로 그렇게 한 번 겪었다.
 
 ---
 
