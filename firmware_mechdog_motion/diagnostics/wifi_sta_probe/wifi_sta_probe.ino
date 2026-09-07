@@ -18,8 +18,7 @@ void setup() {
 
   Serial.printf("WIFI_STA_CONNECTING ssid=\"%s\"\n", kTestSsid);
   const unsigned long started_ms = millis();
-  while (WiFi.status() != WL_CONNECTED &&
-         millis() - started_ms < kConnectTimeoutMs) {
+  while (WiFi.status() != WL_CONNECTED && millis() - started_ms < kConnectTimeoutMs) {
     delay(250);
     Serial.print('.');
   }

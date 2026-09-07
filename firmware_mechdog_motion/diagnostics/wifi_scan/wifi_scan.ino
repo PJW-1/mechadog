@@ -16,13 +16,9 @@ void scanNetworks() {
 
   Serial.printf("WIFI_SCAN_COUNT=%d\n", count);
   for (int index = 0; index < count; ++index) {
-    Serial.printf(
-        "WIFI_AP index=%d ssid=\"%s\" rssi=%d channel=%d encryption=%d\n",
-        index + 1,
-        WiFi.SSID(index).c_str(),
-        WiFi.RSSI(index),
-        WiFi.channel(index),
-        static_cast<int>(WiFi.encryptionType(index)));
+    Serial.printf("WIFI_AP index=%d ssid=\"%s\" rssi=%d channel=%d encryption=%d\n", index + 1,
+                  WiFi.SSID(index).c_str(), WiFi.RSSI(index), WiFi.channel(index),
+                  static_cast<int>(WiFi.encryptionType(index)));
   }
   WiFi.scanDelete();
   Serial.println("WIFI_SCAN_END");
