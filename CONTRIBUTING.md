@@ -264,7 +264,11 @@ ruff check . && ruff format --check .
 pytest -q
 ```
 
-펌웨어는 컴파일만 확인:
+MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run 구성으로 컴파일한다.
+실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
+`firmware_mechdog_motion/README.md`를 따른다.
+
+펌웨어 컴파일 확인:
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32 firmware_mechdog_motion
