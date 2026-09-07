@@ -405,3 +405,19 @@ def test_tracked_persons_has_upper_bound(cfg: dict) -> None:
     n = cfg["vision"].get("max_tracked_persons")
     assert n is not None, "max_tracked_persons 가 없다"
     assert 2 <= n <= 20, f"상한 {n}명은 비현실적이다"
+
+
+def test_committed_device_profiles_load_and_validate() -> None:
+    """**커밋된 개체 프로파일은 실제로 로드돼야 한다.**
+
+    지금까지 개체 프로파일 검증은 임시 디렉터리에 만든 가짜 파일로만 돌았다.
+    그래서 저장소에 들어온 실제 프로파일이 스키마를 어겨도 아무도 몰랐다.
+    실측값을 형상관리에 넣기 시작했으므로 여기서 함께 잠근다.
+    """
+    devices_dir = CONFIG_PATH.parent / "devices"
+    profiles = sorted(p for p in devices_dir.glob("*.yaml") if not p.name.endswith(".local.yaml"))
+    assert profiles, "커밋된 개체 프로파일이 없다 (`*.yaml.example` 은 대상이 아니다)"
+    for path in profiles:
+        loaded = load_config(path.stem, config_path=CONFIG_PATH, devices_dir=devices_dir)
+        assert loaded["device_id"] == path.stem
+        assert len(loaded["servo_offset"]) == 9
