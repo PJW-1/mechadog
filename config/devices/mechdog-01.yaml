@@ -1,0 +1,41 @@
+# 개체 프로파일 — mechdog-01 (WBS 2.4.1 부분)
+#
+# 실측 원본은 저장소 밖(팀장 PC 백업 폴더 `servo_offset.txt`·`wifi_hardware_test.txt`)에
+# 있다. **보정값을 여기 옮긴 이유는 한 대의 텍스트 파일에만 두면 그 PC 와 함께
+# 사라지기 때문이다** — 잃으면 로봇이 비뚤게 걷고 다시 재야 한다.
+#
+# ⚠️ `2.4.1` 은 3대 전부를 요구하므로 아직 완료가 아니다. 나머지 2대는 L1·L2 몫이다.
+# 확인 경위는 docs/HARDWARE.md 1절 참조.
+
+device_id: mechdog-01
+owner_id: unassigned # prod 프로파일로 올릴 때 실제 담당자로 채운다
+
+# `2.4.1` 에서 3대의 역할을 함께 정한다. 그 전에는 어느 쪽도 아니다.
+reference_role: none
+
+network:
+  # 2026-09-07 확인 때 받은 IP 는 `192.168.5.2` 였으나 그것은 XIAO 카메라 모듈의
+  # AP(`HW_ESP32S3CAM`)가 준 주소다. **실제 운용 공유기에서는 달라지므로 적지 않는다**
+  # — 틀린 주소가 적혀 있는 것이 비어 있는 것보다 나쁘다. `2.4.2` 에서 확정한다.
+  mechdog_ip: null
+  xiao_ip: null
+  cmd_port: 5001
+  telemetry_port: 5101
+
+# MechDog_offset[9] — 0번은 steering, 1~8번은 PWM 서보.
+# 2026-09-07 `COM9` 로 실측. 개체마다 다르므로 다른 기체에 복사하지 않는다.
+servo_offset: [0, -36, -82, -14, -97, 3, 100, 36, 62]
+
+# 보행 명령 대비 실제 이동량 (FR-6.4). **시연할 바닥에서 재야 한다** —
+# 카펫과 장판에서 값이 달라진다.
+gait_calibration:
+  forward_mm_per_sec: null
+  turn_deg_per_sec: null
+  measured_on: null
+
+measured:
+  body_weight_g: null # H3 은 합·불만 보므로 무게를 재지 않는다
+  payload_pass_g: null
+  runtime_min: null
+  # 모듈 AP 에 거의 맞닿은 거리에서의 값이다. 시연 거리 값이 아니다.
+  wifi_rssi_dbm: -15
