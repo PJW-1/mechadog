@@ -444,7 +444,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
             · 펌웨어 바이너리 첨부 릴리스 생성
 ```
 
-> ⚠️ **선결 과제** — `HW_MechDog` 라이브러리는 GitHub Actions 러너에 없다. 라이브러리를 `third_party/`로 벤더링하거나 CI 캐시에 배치해야 펌웨어 빌드 잡이 성립한다. 라이선스 확인 필요. (RISK-07)
+> ⚠️ **`HW_MechDog` 라이브러리는 CI 러너에 없고 넣을 수도 없다** — 라이선스 표기가 없어 재배포 불가로 확정됐다 (OI-5 · ADR-20). 그래서 CI 는 `MECHADOG_ENABLE_ACTUATORS=0` **dry-run 빌드**로 네트워크·파서·안전 로직만 검증한다. **명령 파서는 호스트에서 `g++` 로 컴파일해 골든 픽스처를 물리므로** 규약 이중 구현의 어긋남은 그대로 잡힌다. 실제 구동 빌드 절차는 `firmware_mechdog_motion/README.md` 참조. (RISK-07)
 
 ---
 
@@ -486,14 +486,14 @@ mechdog_physical_ai/
 │   ├── udp_probe.py                   ✅ UDP 왕복 측정
 │   └── wbs_assignments.py             ✅ 담당자별 작업 목록 생성
 ├── tests/                             ✅ pytest — 하드웨어 불요
-├── third_party/                       ⬜ HW_MechDog 벤더링 (5.1.2 — OI-5 라이선스 미해결)
+├── third_party/                       ❌ **비워 둔다** — 벤더 라이브러리는 라이선스 표기가 없어 재배포 불가 (ADR-20)
 ├── models/ · maps/                    ⬜ 가중치 · 지도 산출물 (git 제외)
 └── .github/workflows/ci.yml           ✅ Python 품질 · 펌웨어 품질 · 빌드 · 릴리스
 ```
 
-> **`third_party/` 가 비어 있는 것이 지금 유일한 구조적 공백이다.** 실제 구동 빌드는
-> 라이브러리를 로컬에서만 결합하고 있어서(PR #23), `5.1.2` DoD 가 요구하는 *"저장소에
-> 포함"* 과 어긋난다. `OI-5`(재배포 가능 여부)가 열린 채로 `4.1.2` 를 막고 있다.
+> **`third_party/` 는 의도적으로 비어 있다.** 벤더 라이브러리를 넣을 수 없다는 것이 확인됐고
+> (ADR-20), 실제 구동 빌드는 각자 로컬에서 결합한다. 절차는
+> `firmware_mechdog_motion/README.md` 에 있다.
 
 ---
 
