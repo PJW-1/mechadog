@@ -125,7 +125,7 @@ class Teleop:
             return None
         if key in ESTOP_KEYS:
             self._last_key = None
-            self._behavior.event(Event.ONBOARD_FAILSAFE)
+            self._behavior.event(Event.ESTOP)
             return self._behavior.commander.emergency_stop()
         if key in RESET_KEYS:
             self._last_key = None
