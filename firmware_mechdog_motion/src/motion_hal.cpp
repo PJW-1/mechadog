@@ -5,7 +5,7 @@
 // 없는 상태로 구동 빌드를 켜면 여기서 멈추고 받는 곳과 둘 곳을 알려준다.
 // 안내 없이 "No such file" 만 나오면 처음 보는 사람은 원인을 알 수 없다.
 #if !__has_include("HW_MechDog.h")
-#error "HW_MechDog.h 가 없습니다. 공식 설치본 MechDog V1.3 에서 예제 소스를 추출해 이 스케치 폴더에 두세요. 절차: firmware_mechdog_motion/README.md"
+#error "HW_MechDog.h 없음 — README.md 의 '실제 구동 빌드' 절차대로 벤더 파일을 받아 두세요"
 #endif
 #include "HW_MechDog.h"
 
