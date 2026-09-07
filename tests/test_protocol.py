@@ -569,9 +569,19 @@ def test_fsm_states_match_the_transition_table() -> None:
     body = doc.read_text(encoding="utf-8")
     table = body[body.index("## 3. 행동 상태 전이표") : body.index("### 3.1 대응 에스컬레이션")]
 
-    # 전이표는 상태와 트리거를 같은 표기로 쓴다. 트리거만 걸러낸다.
-    triggers = {"CMD_START_PATROL"}
-    documented = set(re.findall(r"`([A-Z][A-Z_]{2,})`", table)) - triggers
+    # **표의 1열(현재 상태)과 3열(다음 상태)만 읽는다.**
+    # 이전에는 구역 전체에서 대문자 백틱을 긁어모았는데, 그러면 트리거와 설명문의
+    # 식별자까지 상태로 오인한다 — 실제로 `TRANSITIONS` 를 언급하자 깨졌다.
+    # 표에서 뽑되 열 위치를 고정하는 것이 유일하게 안 깨지는 방법이다.
+    documented: set[str] = set()
+    for line in table.splitlines():
+        if not line.startswith("|") or line.startswith("| :---") or "현재 상태" in line:
+            continue
+        cells = line.strip().strip("|").split("|")
+        if len(cells) < 3:
+            continue
+        for cell in (cells[0], cells[2]):
+            documented.update(re.findall(r"`([A-Z][A-Z_]{2,})`", cell))
 
     assert documented == set(p.FSM_STATES), (
         f"전이표에만 있음: {sorted(documented - set(p.FSM_STATES))} / "
