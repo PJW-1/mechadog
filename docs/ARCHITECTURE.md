@@ -434,48 +434,52 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 
 ---
 
-## 5. 프로젝트 구조 (목표)
+## 5. 프로젝트 구조
+
+**`✅` 는 지금 있는 것, `⬜` 는 계획이다.** 표시가 없으면 디렉터리 자체가 아직 없다.
 
 ```
 mechdog_physical_ai/
-├── README.md
-├── docs/
-│   ├── PRD_Physical_AI_Guard_Robot.md    # 본 문서
-│   └── HARDWARE.md                       # 착수 확인 · LiDAR 배선 · 발주
-│   └── archive/                        # 초기 구상 노트
+├── docs/                                 PRD · ARCHITECTURE · DECISIONS · PROTOCOL
+│                                         WBS · ASSIGNMENTS · ENGINEERING_GUIDE · HARDWARE
 ├── config/
-│   ├── config.yaml                       # 전 파라미터 (Dev/Prod 프로파일)
-│   └── .env.example                      # 시크릿 템플릿
-├── firmware_mechdog_motion/              # MechDog ESP32 (Arduino)
-│   ├── src/
-│   │   ├── main.cpp
-│   │   ├── command_parser.*              # HAL 비의존 → 테스트 대상
-│   │   ├── safety_monitor.*              # HAL 비의존 → 테스트 대상
-│   │   └── hal_mechdog.*                 # HW_MechDog 래퍼
-│   └── config.h
-├── firmware_xiao_vision/                 # XIAO ESP32S3 (Arduino)
-│   └── src/main.cpp                      # 카메라 + MJPEG 서버
-├── host/                                 # Host PC (Python)
-│   ├── vision/
-│   │   ├── stream_client.py              # MJPEG 수신 + 재연결
-│   │   └── detector.py                   # 객체 검출 ONNX
+│   ├── config.yaml                    ✅ 전 파라미터 (Dev/Prod 프로파일)
+│   ├── devices/mechdog-01.yaml        ✅ 개체별 실측값 (서보 오프셋 등)
+│   └── .env.example                   ✅ 시크릿 템플릿
+├── firmware_mechdog_motion/              MechDog ESP32 (Arduino)
+│   ├── firmware_mechdog_motion.ino    ✅ Wi-Fi STA · UDP 수신 · SAFE 래치
+│   ├── src/command_parser.*           ✅ HAL 비의존 → 호스트에서 g++ 로 시험
+│   ├── src/motion_hal.*               ✅ HW_MechDog 래퍼
+│   ├── src/safety_monitor.*           ⬜ 온보드 안전 감시기 (3.2.x)
+│   ├── test/test_command_parser.cpp   ✅ CI 가 컴파일·실행하고 골든 픽스처를 물린다
+│   └── diagnostics/                   ✅ wifi_scan · wifi_sta_probe (H2 확인용)
+├── firmware_xiao_vision/              ⬜ 카메라 + MJPEG 서버 (4.2)
+├── host/                                 Host PC (Python)
 │   ├── behavior/
-│   │   ├── fsm.py                        # 순수 로직 → 테스트 대상
-│   │   └── commander.py                  # UDP 송신
-│   ├── telemetry/
-│   │   └── receiver.py
-│   ├── dashboard/
-│   │   ├── server.py                     # FastAPI + WebSocket
-│   │   └── static/
-│   └── common/
-│       ├── protocol.py                   # 순수 로직 → 테스트 대상
-│       └── logging_setup.py
-├── tests/                                # pytest (하드웨어 불요)
-├── third_party/                          # HW_MechDog 벤더링
-└── .github/workflows/ci.yml
+│   │   ├── commander.py               ✅ 10Hz 고정 송신 — 소켓을 만지지 않는다
+│   │   └── fsm.py                     ✅ 전이표 (IDLE · MANUAL · FAILSAFE)
+│   ├── common/
+│   │   ├── protocol.py                ✅ 규약 구현 — 이 파일이 C++ 파서의 참조 구현
+│   │   ├── config.py                  ✅ 로더 + 스키마 검증
+│   │   └── logging_setup.py           ⬜ JSON Lines 로거 (4.4.2)
+│   ├── vision/                        ⬜ 스트림 수신 · 객체 검출 (3.3 · 4.3.3~5)
+│   ├── telemetry/                     ⬜ 텔레메트리 수신 (4.3.4)
+│   └── dashboard/                     ⬜ FastAPI + WebSocket + UI (4.5 · 4.6)
+├── tools/
+│   ├── mock_mechdog.py                ✅ 가상 MechDog — 로봇 없이 호스트를 검증
+│   ├── teleop.py                      ✅ 키보드 수동 조작
+│   ├── mechdog_command.py             ✅ 실기 시험 송신기 (safety · move · watchdog)
+│   ├── udp_probe.py                   ✅ UDP 왕복 측정
+│   └── wbs_assignments.py             ✅ 담당자별 작업 목록 생성
+├── tests/                             ✅ pytest — 하드웨어 불요
+├── third_party/                       ⬜ HW_MechDog 벤더링 (5.1.2 — OI-5 라이선스 미해결)
+├── models/ · maps/                    ⬜ 가중치 · 지도 산출물 (git 제외)
+└── .github/workflows/ci.yml           ✅ Python 품질 · 펌웨어 품질 · 빌드 · 릴리스
 ```
 
----
+> **`third_party/` 가 비어 있는 것이 지금 유일한 구조적 공백이다.** 실제 구동 빌드는
+> 라이브러리를 로컬에서만 결합하고 있어서(PR #23), `5.1.2` DoD 가 요구하는 *"저장소에
+> 포함"* 과 어긋난다. `OI-5`(재배포 가능 여부)가 열린 채로 `4.1.2` 를 막고 있다.
 
 ---
 
