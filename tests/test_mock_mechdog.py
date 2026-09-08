@@ -112,9 +112,9 @@ def test_command_timeout_stops_but_does_not_change_state(config: dict) -> None:
     _feed(robot, START_MS)
     timeout_ms = config["safety"]["cmd_timeout_ms"]
 
-    assert not robot.stopped_by_timeout(START_MS + timeout_ms)
-    assert robot.stopped_by_timeout(START_MS + timeout_ms + 1)
-    assert robot.state(START_MS + timeout_ms + 1) == "PATROL"
+    assert not robot.stopped_by_timeout(START_MS + timeout_ms - 1)
+    assert robot.stopped_by_timeout(START_MS + timeout_ms)
+    assert robot.state(START_MS + timeout_ms) == "PATROL"
 
 
 def test_link_loss_enters_failsafe(config: dict) -> None:

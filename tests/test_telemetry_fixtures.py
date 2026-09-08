@@ -50,7 +50,17 @@ KNOWN_STATES = {
 }
 
 # FR-5.2 — 최상위 필수 필드
-REQUIRED_TOP = ("seq", "ts", "device_id", "state", "dist_cm", "imu", "batt_v", "flags")
+REQUIRED_TOP = (
+    "seq",
+    "ts",
+    "device_id",
+    "boot_id",
+    "state",
+    "dist_cm",
+    "imu",
+    "batt_v",
+    "flags",
+)
 REQUIRED_IMU = ("pitch", "roll", "yaw")
 REQUIRED_FLAGS = ("lowbatt", "tipped", "link_ok")
 
@@ -109,6 +119,11 @@ def test_device_id_is_present_and_distinct(samples: list[dict]) -> None:
     """
     ids = {m["device_id"] for m in samples}
     assert len(ids) >= 2, f"픽스처에 개체가 하나뿐이다: {ids}"
+
+
+def test_boot_id_is_present(samples: list[dict]) -> None:
+    for m in samples:
+        assert isinstance(m["boot_id"], str) and m["boot_id"], f"{m['_case']}: boot_id 누락"
 
 
 def test_states_are_known(samples: list[dict]) -> None:
@@ -247,3 +262,9 @@ def test_unknown_state_case_exists(invalid: list[dict]) -> None:
 def test_device_id_missing_case_exists(invalid: list[dict]) -> None:
     """device_id 누락 폐기 케이스가 있어야 한다 (DR-17)."""
     assert any("device_id" not in m for m in invalid), "device_id 누락 케이스가 없다"
+
+
+def test_boot_id_missing_case_exists(invalid: list[dict]) -> None:
+    assert any("device_id" in m and "boot_id" not in m for m in invalid), (
+        "boot_id 단독 누락 케이스가 없다"
+    )

@@ -77,7 +77,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 
 | | 기능 | 내용 |
 | :--- | :--- | :--- |
-| FR-6 | LiDAR SLAM | LD19 + ROS2 `slam_toolbox` 맵 생성, 웨이포인트 순찰 |
+| FR-6 | LiDAR SLAM | 12m급 2D LiDAR + ROS2 `slam_toolbox` 맵 생성, 웨이포인트 순찰 |
 | FR-7 | 구역 순찰 · 랜덤 자율주행 | A~E 구역 간 자율 이동, 위험구역 긴급 진입 |
 
 > Phase 2 착수 조건: 보조배터리·마스트·센서를 포함한 실제 최종 구성으로 H3 탑재 검수를 통과할 것. 과거 100g 기준 대신 [하드웨어 검수](docs/HARDWARE.md)를 따릅니다. 미달 시 ArUco 마커 방식으로 축소합니다.
@@ -93,7 +93,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 | Motion | Hiwonder MechDog (Advanced Kit) — ESP32, 8× 코어리스 서보, IMU, 초음파 | 2S 리튬 7.4V (순정) |
 | Vision | Seeed XIAO ESP32S3 Sense — OV3660(현행) / OV2640(구형), 8MB PSRAM | **보조배터리 USB-C** (DR-10) |
 | Host | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080 | — |
-| LiDAR *(P2)* | **FHL-LD19 (D500 키트)** + ESP32-DevKitC V4 중계 | 보조배터리 공용 |
+| LiDAR *(P2)* | **12m급 2D LiDAR 재선정 중** + 필요 시 ESP32-DevKitC 중계 | 보조배터리 공용 |
 
 ---
 
@@ -102,7 +102,7 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 | | 내용 | ROS2 | 상태 |
 | :--- | :--- | :---: | :--- |
 | **M0** | 하드웨어 착수 확인 (H1 백업·H2 Wi-Fi·H3 탑재 보행, 3대 캘리브레이션) | — | 🔶 **H1·H2 통과** · H3 는 LiDAR 도착 후 |
-| **M1** | 제어 링크 & 페일세이프 | ✕ | 🔶 키보드 조종·300ms 정지 확인 · 텔레메트리 송신 남음 |
+| **M1** | 제어 링크 & 페일세이프 | ✕ | 🔶 키보드 조종·300ms 정지 확인 · 텔레메트리 송신, 저전압·전도·통합 안전관리 남음 |
 | **M2** | 비전 파이프라인 & 대시보드 | ✕ | ⬜ |
 | **M3** | 행동 FSM 통합 — **여기서 완결된 산출물** | ✕ | ⬜ |
 | **M4** | LiDAR & 매핑 | ○ | ⬜ 조건부 |

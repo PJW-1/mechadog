@@ -36,6 +36,7 @@ class Reading:
     """받아들인 레코드 하나. **판정 결과가 아니라 관측값이다.**"""
 
     device_id: str
+    boot_id: str
     seq: int
     state: str
     batt_v: float | None
@@ -49,6 +50,7 @@ class Reading:
         flags = msg["flags"]
         return cls(
             device_id=msg["device_id"],
+            boot_id=msg["boot_id"],
             seq=msg["seq"],
             state=msg["state"],
             batt_v=msg.get("batt_v"),
@@ -97,15 +99,19 @@ class TelemetryReceiver:
 
     def __init__(self, decoder: TelemetryDecoder | None = None) -> None:
         self._decoder = decoder if decoder is not None else TelemetryDecoder()
-        self._last_onboard: dict[str, str] = {}
+        self._last_onboard: dict[tuple[str, str], str] = {}
+        self._current_boot: dict[str, str] = {}
 
     @property
     def decoder(self) -> TelemetryDecoder:
         return self._decoder
 
-    def last_onboard_state(self, device_id: str) -> str | None:
+    def last_onboard_state(self, device_id: str, boot_id: str | None = None) -> str | None:
         """그 개체가 마지막으로 보고한 **온보드 상태**. 호스트 전용 상태는 담지 않는다."""
-        return self._last_onboard.get(device_id)
+        selected_boot = boot_id if boot_id is not None else self._current_boot.get(device_id)
+        if selected_boot is None:
+            return None
+        return self._last_onboard.get((device_id, selected_boot))
 
     def ingest(self, raw: str | bytes) -> Ingested:
         """레코드 하나를 받아 사건으로 바꾼다.
@@ -132,8 +138,15 @@ class TelemetryReceiver:
         if reading.state not in ONBOARD_STATES:
             return ()
 
-        previous = self._last_onboard.get(reading.device_id)
-        self._last_onboard[reading.device_id] = reading.state
+        session = (reading.device_id, reading.boot_id)
+        previous = self._last_onboard.get(session)
+        self._last_onboard[session] = reading.state
+        self._current_boot[reading.device_id] = reading.boot_id
+
+        # 10Hz 주기 보고는 상태 변화가 아니다. 동일 사건을 반복 발행하면 로그와
+        # WebSocket 피드가 초당 10건씩 쌓이므로 엣지에서만 사건을 만든다.
+        if previous == reading.state:
+            return ()
 
         events: list[Event] = []
         if recovery := RECOVERY_EVENTS.get((previous or "", reading.state)):
