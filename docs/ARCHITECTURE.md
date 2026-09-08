@@ -489,7 +489,7 @@ mechdog_physical_ai/
 │   │   ├── protocol.py                ✅ 규약 구현 — 이 파일이 C++ 파서의 참조 구현
 │   │   ├── config.py                  ✅ 로더 + 스키마 검증
 │   │   └── logging_setup.py           ✅ JSON Lines 로거 + 샘플링 (4.4.2)
-│   ├── vision/                        ⬜ 스트림 수신 · 객체 검출 (3.3 · 4.3.3~5)
+│   ├── vision/                        ✅ MJPEG 파서·프레임 큐 (4.3.3) — 재연결 4.3.4~5 · 검출 3.3 ⬜
 │   ├── telemetry/                     ✅ 텔레메트리 수신·사건 변환 (4.3.6)
 │   ├── runtime.py                     ✅ 실제 UDP 운용 루프 — 실시간·소켓이 갇힌 곳 (4.3.7)
 │   └── dashboard/                     ⬜ FastAPI + WebSocket + UI (4.5 · 4.6)

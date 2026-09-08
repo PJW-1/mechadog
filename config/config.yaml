@@ -11,7 +11,11 @@ network:
   # 개체별 IP/포트는 devices/*.yaml 에서 덮어쓴다 (WBS 2.4.2)
   cmd_port: 5001        # Host PC → MechDog (UDP)
   telemetry_port: 5101  # MechDog → Host PC (UDP)
-  vision_stream_url: "http://192.168.0.100:81/stream"
+  # ⚠️ 스트림 URL 을 여기 적지 않는다. **개체 프로파일의 `xiao_ip` 에서 조립한다.**
+  # 고정 주소를 적어 두면 실제 공유기에서 달라지고, **틀린 주소가 적혀 있는 것이
+  # 비어 있는 것보다 나쁘다** — `mechdog_ip` 를 `null` 로 둔 것과 같은 이유다.
+  vision_control_port: 80   # 상태·프로파일 (XIAO 펌웨어)
+  vision_stream_port: 81    # MJPEG. 스트림이 오래 점유하므로 제어 포트와 분리한다
   cmd_rate_hz: 10       # FR-5.1 — 변화 없어도 고정 송신
   telemetry_rate_hz: 10 # FR-1.4
 
@@ -51,6 +55,15 @@ fsm:
 vision:
   # ── 실행 프로바이더 ── Windows GPU 우선, CI·비지원 환경은 CPU 폴백 (DR-13)
   providers: [DmlExecutionProvider, CPUExecutionProvider]
+
+  # ── 스트림 ──
+  # 카메라가 초당 몇 장을 보낼지. ⚠️ **상한을 두는 목적은 낮추는 것이 아니라
+  # 예측 가능하게 만드는 것이다.** 상한이 없으면 JPEG 크기가 화면 내용에 따라
+  # 변하고 발열에 따라 fps 가 흘러서, 명령 타임아웃(300ms) 대비 최악 부하를
+  # 계산할 수 없다. 호스트가 기동 시 이 값을 XIAO 에 내려보낸다.
+  # 15fps 는 NFR-1.3 최소값이고 25fps 는 지연(프레임 주기 40ms)과 airtime 의
+  # 절충점이다 — 30fps 로 올려도 7ms 만 더 얻는다.
+  stream_fps_limit: 25
 
   # 이 시간 동안 프레임이 없으면 **비전 단절**로 본다 (NFR-2.6).
   # ⚠️ `safety.link_loss_failsafe_ms` 와 의도적으로 다른 절에 둔다 —

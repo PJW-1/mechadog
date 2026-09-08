@@ -26,9 +26,21 @@ HTTP_READY status=http://192.168..../ stream=http://192.168....:81/stream
 - 상태: `http://<XIAO-IP>/`
 - VGA: `http://<XIAO-IP>/profile?name=VGA`
 - QVGA: `http://<XIAO-IP>/profile?name=QVGA`
+- 프레임률 상한: `http://<XIAO-IP>/profile?name=VGA&fps=25` (1~60, 선택 인자)
 - 영상: `http://<XIAO-IP>:81/stream`
 
+### 프레임률 상한
+
+`fps` 는 **호스트가 기동 시 `config.yaml` 의 `vision.stream_fps_limit` 값으로 내려보낸다.**
+펌웨어 기본값(25)은 폴백이며, 사람이 손으로 바꿀 일은 검수 때뿐이다.
+
+⚠️ **상한의 목적은 낮추는 것이 아니라 예측 가능하게 만드는 것이다.** 상한이 없으면 JPEG
+크기가 화면 내용에 따라 변하고 발열에 따라 fps 가 흘러서, 명령 타임아웃(300ms) 대비 최악
+부하를 계산할 수 없다. 구현은 **프레임을 잡은 뒤에 버리는** 방식이다 — 먼저 기다렸다가
+잡으면 그 사이 시간만큼 낡은 프레임을 보내게 된다.
+
 스트림을 10초 이상 열면 시리얼 모니터에 `STREAM_STATS ... fps=...`가 5초마다 출력된다.
+`bytes_avg`·`kbps`·`skipped` 가 함께 나오므로 **대역폭을 추정하지 않고 읽을 수 있다.**
 WBS 4.2.2 완료에는 **VGA에서 15fps 이상**이 두 번 연속 확인되어야 한다.
 
 > ⚠️ **스트림은 한 클라이언트만 받는다.** 스트림 핸들러는 연결이 끊길 때까지 반환하지 않으므로
