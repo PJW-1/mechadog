@@ -82,10 +82,42 @@ def test_unfilled_rows_are_skipped(tmp_path: Path) -> None:
 def test_counter_uses_the_host_clock() -> None:
     """⚠️ **`Date.now()` 여야 한다.** 다른 시계를 쓰면 동기 문제가 되살아난다."""
     page = counter_page()
-    assert "Date.now() % 100000" in page
+    assert "Date.now()" in page
     assert "requestAnimationFrame" in page
 
 
-def test_counter_pads_to_five_digits() -> None:
-    """자릿수가 흔들리면 프레임에서 읽을 때 오독한다."""
-    assert 'padStart(5, "0")' in counter_page()
+def test_counter_splits_coarse_digits_from_a_bar() -> None:
+    """⚠️ **빨리 바뀌는 자리는 숫자로 읽을 수 없다.**
+
+    화면이 60Hz 로만 갱신되고 카메라 노출이 두 갱신을 걸치므로 하위 자리가 뭉개진다
+    — 실기에서 4·5번째 자리가 실제로 읽히지 않았다. 그래서 느린 숫자(100ms)와
+    연속적인 막대(0~100ms)로 나눈다.
+    """
+    page = counter_page()
+    assert "Math.floor(now / 100) % 1000" in page, "숫자는 100ms 단위"
+    assert "(now % 100)" in page, "막대는 그 안의 0~100ms"
+    assert 'padStart(3, "0")' in page, "자릿수가 흔들리면 오독한다"
+
+
+# ── ⚠️ CLI 덮어쓰기도 network 절이다 ────────────────────────
+def test_xiao_ip_override_goes_into_network() -> None:
+    """**최상위에 넣으면 조용히 무시된다.**
+
+    실제로 그렇게 만들어서 카메라를 향하게 두고 나서야 걸렸다. 같은 실수를
+    프로파일 판독·런타임·이 도구 세 곳에서 했다.
+    """
+    from host.common.config import load_config
+    from host.vision.stream_client import stream_endpoints
+    from tools.latency_probe import with_xiao_ip
+
+    config = with_xiao_ip(load_config("mechdog-01"), "192.168.1.100")
+    assert config["network"]["xiao_ip"] == "192.168.1.100"
+    assert stream_endpoints(config).stream == "http://192.168.1.100:81/stream"
+
+
+def test_override_none_keeps_the_profile_value() -> None:
+    from host.common.config import load_config
+    from tools.latency_probe import with_xiao_ip
+
+    config = with_xiao_ip(load_config("mechdog-01"), None)
+    assert config["network"]["xiao_ip"] is None

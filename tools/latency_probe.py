@@ -23,6 +23,7 @@ import csv
 import json
 import statistics
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -39,18 +40,38 @@ COUNTER_HTML = """<!doctype html>
 <meta charset="utf-8">
 <title>MechDog 지연 측정 카운터</title>
 <style>
-  html, body { margin: 0; background: #000; color: #fff; overflow: hidden; }
-  #v { font: 700 26vw/1.05 "Consolas", "Courier New", monospace;
-       letter-spacing: 0.04em; text-align: center; margin-top: 6vh; }
-  #h { font: 400 3vw/1.4 sans-serif; text-align: center; color: #7f7f7f; }
+  html, body { margin: 0; background: #000; color: #9a9a9a; overflow: hidden;
+               font: 700 1vw/1.4 "Consolas", "Courier New", monospace; }
+  #d { font-size: 16vw; text-align: center; letter-spacing: 0.08em; margin-top: 4vh; }
+  #track { position: relative; height: 22vh; margin: 3vh 2vw; background: #101010;
+           border: 0.4vh solid #4a4a4a; }
+  #bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #8e8e8e; }
+  .tick { position: absolute; top: 0; bottom: 0; width: 0.5vw; background: #d8d8d8; }
+  #h { font: 400 1.5vw/1.6 sans-serif; text-align: center; color: #6e6e6e; }
 </style>
-<div id="v">00000</div>
-<div id="h">호스트 시계 하위 5자리 (ms) · 전체화면으로 두고 카메라를 향하게 한다</div>
+<div id="d">000</div>
+<div id="track"><div id="bar"></div></div>
+<div id="h">위 숫자 = 100ms 단위 · 막대 = 그 안의 0~100ms (눈금 10ms)</div>
 <script>
-  const v = document.getElementById("v");
+  const d = document.getElementById("d");
+  const bar = document.getElementById("bar");
+  const track = document.getElementById("track");
+  for (let i = 1; i < 10; i++) {
+    const t = document.createElement("div");
+    t.className = "tick";
+    t.style.left = (i * 10) + "%";
+    track.appendChild(t);
+  }
   function tick() {
     // ⚠️ Date.now() 는 이 호스트의 시계다. 측정 쪽과 같은 시계이므로 동기가 필요 없다.
-    v.textContent = String(Date.now() % 100000).padStart(5, "0");
+    //
+    // ⚠️ **숫자로 하위 자리를 읽을 수 없다.** 화면은 60Hz 로만 다시 그려지고 카메라
+    // 노출이 두 번의 갱신을 걸치므로 빨리 바뀌는 자리가 뭉개진다 — 실제로 4·5번째
+    // 자리가 읽히지 않았다. 그래서 **느리게 바뀌는 숫자(100ms)와 연속적인 막대**로
+    // 나눈다. 막대는 흐려져도 가장자리 위치가 남으므로 눈금으로 읽을 수 있다.
+    const now = Date.now();
+    d.textContent = String(Math.floor(now / 100) % 1000).padStart(3, "0");
+    bar.style.width = (now % 100) + "%";
     requestAnimationFrame(tick);
   }
   tick();
@@ -60,6 +81,18 @@ COUNTER_HTML = """<!doctype html>
 
 def counter_page() -> str:
     return COUNTER_HTML
+
+
+def with_xiao_ip(config: Mapping[str, Any], ip: str | None) -> dict[str, Any]:
+    """`--xiao-ip` 덮어쓰기. **주소는 `network` 절 안이다.**
+
+    ⚠️ 최상위에 넣으면 조용히 무시된다 — 실제로 그렇게 만들어서 카메라를 향하게
+    두고 나서야 걸렸다. 프로파일·런타임·이 도구까지 같은 실수를 세 곳에서 했다.
+    """
+    merged = dict(config)
+    if ip:
+        merged["network"] = dict(config["network"], xiao_ip=ip)
+    return merged
 
 
 def latency_ms(arrival_ms: int, shown_ms: int, *, modulus: int = MODULUS) -> int:
@@ -106,9 +139,7 @@ def cmd_page(args: argparse.Namespace) -> int:
 
 # ── ② 프레임 수집 ───────────────────────────────────────────
 def cmd_capture(args: argparse.Namespace) -> int:
-    config = dict(load_config(args.device))
-    if args.xiao_ip:
-        config["xiao_ip"] = args.xiao_ip
+    config = with_xiao_ip(load_config(args.device), args.xiao_ip)
     endpoints = stream_endpoints(config)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
