@@ -96,7 +96,17 @@ def validate_base_config(config: dict[str, Any]) -> None:
     for name in ("cmd_rate_hz", "telemetry_rate_hz"):
         _require_positive(network, name)
     # 상한이 없으면 최악 부하를 계산할 수 없다 (config 주석 참고).
-    _require_positive(config["vision"], "stream_fps_limit")
+    vision = config["vision"]
+    _require_positive(vision, "stream_fps_limit")
+    _require_positive(vision, "stall_timeout_ms")
+    backoff = vision.get("reconnect_backoff_s")
+    if not isinstance(backoff, list) or not backoff:
+        raise ConfigError("vision.reconnect_backoff_s 는 비어 있지 않은 목록이어야 함")
+    if not all(_finite_number(step) and step > 0 for step in backoff):
+        raise ConfigError("vision.reconnect_backoff_s 는 양수만 담아야 함")
+    if list(backoff) != sorted(backoff):
+        # 지수 백오프가 아니면 이름과 동작이 어긋난다 — 줄어드는 간격은 폭주가 된다.
+        raise ConfigError("vision.reconnect_backoff_s 는 증가하는 순서여야 함")
 
     safety = config["safety"]
     missing_safety = [name for name in REQUIRED_SAFETY_KEYS if name not in safety]

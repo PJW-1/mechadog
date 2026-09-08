@@ -305,3 +305,135 @@ def decode_jpeg(payload: bytes) -> Any:
     if image is None:
         raise ValueError("JPEG 디코드 실패 — 깨진 프레임")
     return image
+
+
+# ══════════════════════════════════════════════════════════════
+#  연결과 재연결 (WBS 4.3.4 · FR-5.3 · NFR-3②)
+# ══════════════════════════════════════════════════════════════
+def boundary_from(content_type: str) -> str:
+    """`Content-Type` 헤더에서 경계를 뽑는다. 없으면 기본값.
+
+    **응답이 알려주는 값을 쓴다.** 우리 펌웨어의 경계를 코드에 박아 두면 펌웨어가
+    이름을 바꾸는 순간 조용히 프레임이 하나도 안 나온다.
+    """
+    for token in content_type.split(";"):
+        key, _, value = token.partition("=")
+        if key.strip().lower() == "boundary":
+            return value.strip().strip('"') or DEFAULT_BOUNDARY
+    return DEFAULT_BOUNDARY
+
+
+@dataclass(slots=True)
+class StreamStats:
+    """연결이 몇 번 끊겼고 몇 번 되살아났는지."""
+
+    connects: int = 0
+    failures: int = 0
+    frames: int = 0
+    stalls: int = 0
+    backoff_slept_s: float = 0.0
+
+
+class StreamReader:
+    """스트림에 붙어 프레임을 흘려주고, 끊기면 **지수 백오프로 되붙는다.**
+
+    ⚠️ **백오프를 되돌리는 시점이 "연결 성공" 이 아니라 "프레임 수신" 이다.** 붙자마자
+    끊기는 상태에서 연결만으로 초기화하면 **1초 간격으로 영원히 재시도**하게 되고,
+    그것은 백오프를 두지 않은 것과 같다.
+
+    ⚠️ **멈춘 스트림도 끊긴 것으로 본다.** TCP 는 상대가 조용해진 것과 살아 있는 것을
+    구분해 주지 않으므로, 프레임이 `vision.stall_timeout_ms` 동안 없으면 끊고 다시
+    붙는다 — 그것이 비전 단절의 정의다 (NFR-2.6).
+    """
+
+    def __init__(
+        self,
+        config: Mapping[str, Any],
+        *,
+        endpoints: StreamEndpoints | None = None,
+        opener: Any = None,
+        clock: Any = None,
+        sleeper: Any = None,
+    ) -> None:
+        from host.common.protocol import system_clock_ms
+
+        vision = config["vision"]
+        backoff = list(vision["reconnect_backoff_s"])
+        if not backoff or any(float(step) <= 0 for step in backoff):
+            raise ValueError("vision.reconnect_backoff_s 는 양수 목록이어야 함")
+        self._endpoints = endpoints if endpoints is not None else stream_endpoints(config)
+        self._backoff = [float(step) for step in backoff]
+        self._stall_ms = int(vision["stall_timeout_ms"])
+        self._read_bytes = 4096
+        self._opener = opener if opener is not None else urllib.request.urlopen
+        self._clock = clock if clock is not None else system_clock_ms
+        self._sleeper = sleeper if sleeper is not None else _default_sleeper
+        self.stats = StreamStats()
+
+    @property
+    def url(self) -> str:
+        return self._endpoints.stream
+
+    def frames(self, *, max_frames: int | None = None, max_failures: int | None = None):
+        """프레임을 흘려준다. **재연결은 안에서 알아서 한다.**
+
+        생성기로 둔 이유 — 호출부(지연 측정·추론 워커)가 `for frame in ...` 만 쓰면
+        되고 연결 상태를 신경 쓰지 않는다.
+        """
+        produced = 0
+        attempt = 0
+        while max_failures is None or self.stats.failures <= max_failures:
+            got_frame = False
+            try:
+                for frame in self._read_once():
+                    got_frame = True
+                    attempt = 0  # 프레임을 받았을 때만 백오프를 되돌린다
+                    produced += 1
+                    yield frame
+                    if max_frames is not None and produced >= max_frames:
+                        return
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                LOG.warning("stream_error", url=self.url, error=str(exc))
+            self.stats.failures += 1
+            # 지금 시도 회차로 대기 시간을 정하고 **그 다음에** 회차를 올린다.
+            # 먼저 올리면 첫 재시도가 `backoff[1]` 이 되어 1초 단계를 건너뛴다.
+            delay = self._backoff[min(attempt, len(self._backoff) - 1)]
+            LOG.warning("stream_reconnect", after_s=delay, attempt=attempt + 1)
+            self.stats.backoff_slept_s += delay
+            self._sleeper(delay)
+            if not got_frame:
+                attempt += 1
+
+    def _read_once(self):
+        """한 번 붙어서 끊길 때까지 프레임을 낸다."""
+        response = self._opener(self.url, timeout=self._stall_ms / 1000)  # noqa: S310
+        self.stats.connects += 1
+        with response:
+            content_type = ""
+            headers = getattr(response, "headers", None)
+            if headers is not None:
+                content_type = headers.get("Content-Type", "") or ""
+            parser = MjpegParser(boundary_from(content_type))
+            LOG.info("stream_connected", url=self.url, boundary=boundary_from(content_type))
+            last_frame_ms = self._clock()
+            while True:
+                chunk = response.read(self._read_bytes)
+                now = self._clock()
+                if not chunk:
+                    LOG.warning("stream_closed", url=self.url)
+                    return
+                for frame in parser.feed(chunk, now):
+                    self.stats.frames += 1
+                    last_frame_ms = now
+                    yield frame
+                if now - last_frame_ms >= self._stall_ms:
+                    # 바이트는 오는데 프레임이 안 만들어지는 경우도 여기서 걸린다.
+                    self.stats.stalls += 1
+                    LOG.warning("stream_stalled", silent_ms=now - last_frame_ms)
+                    return
+
+
+def _default_sleeper(seconds: float) -> None:
+    import time
+
+    time.sleep(seconds)
