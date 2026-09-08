@@ -31,7 +31,7 @@
     │ XIAO ESP32S3 Sense   │   │ MechDog ESP32     │   │ (Phase 2 결정)     │
     │ 보조배터리 USB 급전   │   │ 커스텀 Arduino 펌웨어│   │ 2D LiDAR + 중계 노드│
     │                      │   │                   │   │                   │
-    │ · OV2640 → MJPEG     │   │ · HW_MechDog HAL  │   │ · UART 230400 수신 │
+    │ · OV3660 → MJPEG     │   │ · HW_MechDog HAL  │   │ · UART 230400 수신 │
     │ · Wi-Fi HTTP 서버     │   │ · Wi-Fi 명령 수신  │   │ · UDP 중계         │
     │ · 추론 없음           │   │ · 초음파 즉시정지   │   │                   │
     │                      │   │ · 하트비트 페일세이프│   │                   │
@@ -77,7 +77,7 @@
 | 항목 | 사양 | 비고 |
 | :--- | :--- | :--- |
 | Hiwonder MechDog (Advanced Kit) | ESP32 메인보드, 8× 코어리스 서보(링크 구조), IMU, 초음파 | Arduino IDE 지원, 소스 오픈 |
-| Seeed XIAO ESP32S3 Sense | Xtensa 듀얼코어 240MHz, 8MB PSRAM, OV2640, PDM 마이크, microSD | 배터리 패드(BAT+/BAT−) + 충전 IC 내장 |
+| Seeed XIAO ESP32S3 Sense | Xtensa 듀얼코어 240MHz, 8MB PSRAM, **OV3660(실물 확인)**, PDM 마이크, microSD | 배터리 패드(BAT+/BAT−) + 충전 IC 내장 |
 | Host PC | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080, ROS2 Jazzy | 추론·SLAM·대시보드 전담. **RTX 3080을 임시 기준 PC로 지정**([CONTRIBUTING 1절](../CONTRIBUTING.md)). 팀 내 RTX 5070 1대 확인, 나머지 1대 미확인 (OI-14) |
 | (미사용) ESP32-S3 비전 모듈 | Advanced Kit 포함품 | XIAO 사용으로 예비 부품 처리 |
 | (활용 검토) WonderEcho 음성 / MP3 모듈 | Advanced Kit 포함품 | **FR-3.4 경고 방송에 활용** |
@@ -479,7 +479,7 @@ mechdog_physical_ai/
 │   ├── src/safety_monitor.*           ⬜ 온보드 안전 감시기 (3.2.x)
 │   ├── test/test_command_parser.cpp   ✅ CI 가 컴파일·실행하고 골든 픽스처를 물린다
 │   └── diagnostics/                   ✅ wifi_scan · wifi_sta_probe (H2 확인용)
-├── firmware_xiao_vision/              ⬜ 카메라 + MJPEG 서버 (4.2)
+├── firmware_xiao_vision/              ✅ 카메라 + MJPEG 서버 (4.2)
 ├── host/                                 Host PC (Python)
 │   ├── behavior/
 │   │   ├── actions.py                 ✅ 상태별 모션 — PATROL·AVOID (3.5.1)

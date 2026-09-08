@@ -126,7 +126,7 @@ jobs:
       matrix:
         target:
           - { dir: firmware_mechdog_motion, fqbn: 'esp32:esp32:esp32',          name: 'MechDog-Motion' }
-          - { dir: firmware_xiao_vision,    fqbn: 'esp32:esp32:XIAO_ESP32S3',   name: 'XIAO-Vision' }
+          - { dir: firmware_xiao_vision,    fqbn: 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi', name: 'XIAO-Vision' }
     steps:
       - uses: actions/checkout@v7
 
@@ -136,12 +136,8 @@ jobs:
           if find "${{ matrix.target.dir }}" -name '*.ino' | grep -q .; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-              echo "::error::릴리스에는 ${{ matrix.target.name }} 스케치가 필요합니다"
-              exit 1
-            fi
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::${{ matrix.target.dir }}에 스케치가 없어 해당 타깃 빌드를 건너뜁니다"
+            echo "::error::${{ matrix.target.dir }}에 ${{ matrix.target.name }} 스케치가 없습니다"
+            exit 1
           fi
 
       - name: Setup arduino-cli
