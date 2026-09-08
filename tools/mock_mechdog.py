@@ -142,6 +142,12 @@ class MockRobot:
         self._last = _LastCommand(at_ms=start_ms)
         self._link_seen = False  # 한 번이라도 유효 명령을 받았는가
         self._failsafe_latched = False
+        # 후진하면 장애물이 멀어진다. ⚠️ **거친 모형이다** — 목적은 정확한 거리가
+        # 아니라 *"물러나면 언젠가 풀린다"* 는 단조 관계뿐이다. 그것이 없으면 호스트의
+        # 회피 시퀀스가 끝까지 도는지 확인할 수 없다. 실제 해제 판정은 로봇의 센서가
+        # 하고, 여기서는 보폭(mm)을 초당 이동량으로 간주한다 (대략 1초에 한 걸음).
+        self._retreat_mm = 0.0
+        self._motion_at_ms = start_ms
         self.stats = Stats()
 
     # ── 수신 ────────────────────────────────────────────────
@@ -218,9 +224,13 @@ class MockRobot:
         return round(max(BATT_MIN_V, drained), 2)
 
     def distance_cm(self, now_ms: int) -> int:
-        """초음파. 장애물 주입 전에는 복도를 걷는 정도의 값을 흔들어 준다."""
+        """초음파. 장애물 주입 전에는 복도를 걷는 정도의 값을 흔들어 준다.
+
+        장애물이 있으면 **후진한 만큼 멀어진다** — 위 `_retreat_mm` 설명 참고.
+        """
         if self._fault_active(self._faults.obstacle_at_s, now_ms):
-            return max(0, self._safety["obstacle_stop_cm"] - 5)
+            base = max(0, self._safety["obstacle_stop_cm"] - 5)
+            return int(base + self._retreat_mm / 10.0)
         return int(170 + 30 * math.sin(self._elapsed_s(now_ms)))
 
     def tipped(self, now_ms: int) -> bool:
@@ -241,14 +251,27 @@ class MockRobot:
     def _physical_fault(self, now_ms: int) -> bool:
         return self.tipped(now_ms) or self.battery_v(now_ms) <= self._safety["battery_shutdown_v"]
 
+    def _integrate_retreat(self, now_ms: int) -> None:
+        """후진 중이면 물러난 거리를 누적한다. 전진은 되돌리지 않는다 —
+        장애물이 다시 다가오는 것은 별개의 상황이고 주입으로 표현한다."""
+        elapsed_s = max(0.0, (now_ms - self._motion_at_ms) / 1000.0)
+        self._motion_at_ms = now_ms
+        if self._last.step < 0:
+            self._retreat_mm += abs(self._last.step) * elapsed_s
+
     def _update_safety(self, now_ms: int) -> None:
+        self._integrate_retreat(now_ms)
         if self._physical_fault(now_ms) or (self._link_seen and not self.link_ok(now_ms)):
             self._failsafe_latched = True
-        if (
-            self._failsafe_latched
-            or self.stopped_by_timeout(now_ms)
-            or self.distance_cm(now_ms) < self._safety["obstacle_stop_cm"]
-        ):
+        if self._failsafe_latched or self.stopped_by_timeout(now_ms):
+            self._last.step = self._last.angle = 0.0
+            return
+        # ⚠️ **근거리 반사 정지는 전진만 막는다** (FR-2.2 · FR-2.3).
+        #
+        # 전부 막으면 회피 시퀀스가 성립하지 않는다 — 정지 후 후진하라는 요구사항
+        # 자체가 실행 불가가 된다. 초음파는 정면만 보므로 물러나는 것이 유일한 탈출
+        # 경로이고, 후진 거리는 설정으로 제한된다.
+        if self.distance_cm(now_ms) < self._safety["obstacle_stop_cm"] and self._last.step > 0:
             self._last.step = self._last.angle = 0.0
 
     def motion(self, now_ms: int) -> dict[str, float]:
@@ -304,6 +327,10 @@ class MockRobot:
                 "lowbatt": batt_v <= self._safety["battery_warn_v"],
                 "tipped": tipped,
                 "link_ok": self.link_ok(now_ms),
+                # 온보드 반사 정지가 지금 걸려 있는가. `state` 의 AVOID 로는 해제를
+                # 알 수 없어서(호스트가 알려준 값이 되돌아온 것일 수 있다) 별도로
+                # 보고한다 (ADR-22).
+                "obstacle": self.distance_cm(now_ms) < self._safety["obstacle_stop_cm"],
             },
             motion=self.motion(now_ms),
             safety_latched=self._failsafe_latched,

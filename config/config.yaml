@@ -43,6 +43,10 @@ fsm:
   alert_pitch_up_deg: 15      # FR-3.3
   target_lost_timeout_s: 5    # FR-3.6
   track_deadzone_px: 40       # FR-3.5
+  # FR-2.3 — 회피 시퀀스(후진→선회→재확인)를 최대 몇 번 되풀이할지.
+  # 다 쓰고도 못 빠져나오면 멈춘 채로 둔다 — 계속 흔들면 기어만 상하고,
+  # 갇힌 상황은 사람이 봐야 한다. 자동 복구를 만들지 않는 것과 같은 원칙이다.
+  avoid_attempts: 3
 
 vision:
   # ── 실행 프로바이더 ── Windows GPU 우선, CI·비지원 환경은 CPU 폴백 (DR-13)

@@ -198,9 +198,19 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
   "imu": {"pitch": 1.2, "roll": -0.4, "yaw": 183.5},
   "batt_v": 7.62,
   "last_cmd_age_ms": 34,
-  "flags": {"lowbatt": false, "tipped": false, "link_ok": true}
+  "flags": {"lowbatt": false, "tipped": false, "link_ok": true, "obstacle": false}
 }
 ```
+
+> ⚠️ **`flags.obstacle` 은 `state` 로 대체할 수 없다.** *"온보드 근거리 반사 정지가 지금
+> 걸려 있는가"* 이며, 없으면 구형 펌웨어로 보고 넘어간다(선택 필드).
+>
+> `state` 의 `AVOID` 로 충분해 보이지만 그렇지 않다. 호스트가 `AVOID` 를 `STATE` 로 내려보내면
+> 로봇이 그 값을 되돌려주므로, **장애물이 사라진 뒤에도 `state` 는 계속 `AVOID` 로 온다.**
+> 되돌아온 값이 로봇의 판정인지 우리 말의 반향인지 구분할 수 없어 **해제를 알 수 없다.**
+> `safety_latched` 가 `FAILSAFE` 에 대해 같은 문제를 푸는 방식과 동일하다 (ADR-22).
+>
+> 실제로 이것이 없던 동안 목업 시험에서 **회피 시퀀스가 3회 전부 돌고도 빠져나오지 못했다.**
 
 > **`device_id` 와 `boot_id` 는 필수다.** `device_id` 는 물리 개체를, `boot_id` 는 그 개체의 한 번의 부팅을 구분한다. ESP32는 부팅할 때마다 새 불투명 문자열(권장: 난수 64비트의 16자리 hex)을 만들고 해당 부팅 동안 유지한다. 호스트는 `(device_id, boot_id)`별로 `seq`를 검사하므로 재부팅 후 `seq=1`을 즉시 받을 수 있다. 송신자를 IP로 구분하면 DHCP·컨테이너 경계 때문에 잘못 연결될 수 있다 (DR-17).
 >

@@ -53,6 +53,12 @@ class Reading:
     #: 이 값이 계속 커지면 **로봇이 우리 명령을 폐기하고 있다** — 호스트 재시작으로
     #: seq 가 되돌아간 경우가 대표적이다 (PROTOCOL 4절 세션 개시).
     last_cmd_age_ms: int | None = None
+    #: **온보드 근거리 반사 정지가 지금 걸려 있는가.** 없으면 `None` (구형 펌웨어).
+    #:
+    #: ⚠️ `state == "AVOID"` 로는 해제를 알 수 없다 — 그 값은 호스트가 `STATE` 로
+    #: 내려보낸 것이 되돌아온 것일 수도 있다 (ADR-22). 이 플래그는 로봇의 센서
+    #: 판정이며 반향되지 않는다.
+    obstacle: bool | None = None
 
     @classmethod
     def of(cls, msg: Mapping[str, Any]) -> Reading:
@@ -69,6 +75,7 @@ class Reading:
             link_ok=flags["link_ok"],
             safety_latched=msg.get("safety_latched"),
             last_cmd_age_ms=msg.get("last_cmd_age_ms"),
+            obstacle=flags.get("obstacle"),
         )
 
 
@@ -94,8 +101,12 @@ ONBOARD_EVENTS: dict[str, Event] = {
     "AVOID": Event.ONBOARD_AVOID,
 }
 
-#: 온보드 상태에서 빠져나온 것을 알리는 사건. 로봇이 `AVOID` 를 벗어나
-#: `PATROL` 을 보고하면 회피가 끝난 것이다 — 호스트는 그것으로만 알 수 있다.
+#: 온보드 상태에서 빠져나온 것을 알리는 사건.
+#:
+#: ⚠️ **이것만으로는 부족하다.** 호스트가 `AVOID` 를 `STATE` 로 알려주면 로봇이 그
+#: 값을 되돌려주므로, 장애물이 사라져도 `state` 는 계속 `AVOID` 로 온다. 그래서
+#: 해제의 정본은 `flags.obstacle` 의 참→거짓 변화이며(ADR-22) 이 표는 그 플래그를
+#: 보내지 않는 펌웨어를 위한 폴백이다.
 RECOVERY_EVENTS: dict[tuple[str, str], Event] = {
     ("AVOID", "PATROL"): Event.AVOID_CLEARED,
 }
@@ -112,6 +123,7 @@ class TelemetryReceiver:
         self._decoder = decoder if decoder is not None else TelemetryDecoder()
         self._last_onboard: dict[tuple[str, str], str] = {}
         self._current_boot: dict[str, str] = {}
+        self._last_obstacle: dict[str, bool] = {}
 
     @property
     def decoder(self) -> TelemetryDecoder:
@@ -136,10 +148,24 @@ class TelemetryReceiver:
 
         reading = Reading.of(result.message)
         return Ingested(
-            events=self._events_for(reading),
+            events=self._obstacle_events(reading) + self._events_for(reading),
             reading=reading,
             warns=result.warns,
         )
+
+    def _obstacle_events(self, reading: Reading) -> tuple[Event, ...]:
+        """근거리 반사 정지 플래그의 **변화**를 사건으로 바꾼다 (ADR-22).
+
+        참→거짓이 곧 *"전방이 비었다"* 는 로봇의 보고다. 거짓→참은 `state` 의
+        `AVOID` 가 이미 같은 것을 말하므로 여기서 따로 내지 않는다.
+        """
+        if reading.obstacle is None:
+            return ()
+        previous = self._last_obstacle.get(reading.device_id)
+        self._last_obstacle[reading.device_id] = reading.obstacle
+        if previous is True and reading.obstacle is False:
+            return (Event.AVOID_CLEARED,)
+        return ()
 
     def _events_for(self, reading: Reading) -> tuple[Event, ...]:
         """상태 보고를 사건으로 바꾼다. **표를 보고 옮기기만 한다.**"""

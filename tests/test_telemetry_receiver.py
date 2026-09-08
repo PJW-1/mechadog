@@ -250,3 +250,57 @@ def test_events_drive_the_fsm(clock) -> None:
 def test_reading_is_immutable() -> None:
     with pytest.raises(AttributeError):
         Reading("a", "boot-a", 1, "PATROL", 8.0, 100, False, False, True).state = "ALERT"  # type: ignore[misc]
+
+
+# ── ⚠️ 해제는 플래그로만 확실히 알 수 있다 (ADR-22) ──────────
+def test_obstacle_flag_release_clears_avoid() -> None:
+    """**`state` 로는 해제를 알 수 없다.**
+
+    호스트가 `AVOID` 를 `STATE` 로 알려주면 로봇이 그 값을 되돌려주므로, 장애물이
+    사라져도 `state` 는 계속 `AVOID` 로 온다. 실제 목업 실행에서 회피 시퀀스가
+    3회 전부 돌고도 빠져나오지 못한 원인이 이것이었다.
+    """
+    r = TelemetryReceiver()
+    blocked = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": True}
+    clear = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": False}
+    assert Event.ONBOARD_AVOID in r.ingest(record(state="AVOID", flags=blocked)).events
+    # 호스트가 알려준 AVOID 가 되돌아오는 상황 — 상태만 보면 변화가 없다.
+    out = r.ingest(record(state="AVOID", flags=clear))
+    assert Event.AVOID_CLEARED in out.events, "플래그가 풀렸으면 해제다"
+
+
+def test_obstacle_flag_engaging_does_not_duplicate_the_event() -> None:
+    """거짓→참은 `state` 의 `AVOID` 가 이미 말하므로 따로 내지 않는다."""
+    r = TelemetryReceiver()
+    clear = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": False}
+    blocked = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": True}
+    r.ingest(record(state="PATROL", flags=clear))
+    out = r.ingest(record(state="AVOID", flags=blocked))
+    assert out.events == (Event.ONBOARD_AVOID,)
+
+
+def test_obstacle_flag_is_tracked_per_device() -> None:
+    r = TelemetryReceiver()
+    blocked = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": True}
+    clear = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": False}
+    enc_a = TelemetryEncoder(device_id="dev-a", boot_id="b1")
+    enc_b = TelemetryEncoder(device_id="dev-b", boot_id="b1")
+    common = {
+        "state": "AVOID",
+        "dist_cm": 20,
+        "imu": {"pitch": 0.0, "roll": 0.0, "yaw": 0.0},
+        "batt_v": 8.0,
+        "last_cmd_age_ms": 30,
+    }
+    r.ingest(enc_a.encode(flags=blocked, **common))
+    out = r.ingest(enc_b.encode(flags=clear, **common))
+    assert Event.AVOID_CLEARED not in out.events, "다른 개체의 해제로 오인하면 안 된다"
+
+
+def test_missing_obstacle_flag_falls_back_to_the_state_pair() -> None:
+    """플래그를 보내지 않는 펌웨어에서는 예전 규칙이 남아 있어야 한다."""
+    r = TelemetryReceiver()
+    r.ingest(record(state="AVOID", dist_cm=20))
+    out = r.ingest(record(state="PATROL", dist_cm=150))
+    assert out.events == (Event.AVOID_CLEARED,)
+    assert out.reading is not None and out.reading.obstacle is None

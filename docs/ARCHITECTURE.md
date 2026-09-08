@@ -482,6 +482,7 @@ mechdog_physical_ai/
 ├── firmware_xiao_vision/              ⬜ 카메라 + MJPEG 서버 (4.2)
 ├── host/                                 Host PC (Python)
 │   ├── behavior/
+│   │   ├── actions.py                 ✅ 상태별 모션 — PATROL·AVOID (3.5.1)
 │   │   ├── commander.py               ✅ 10Hz 고정 송신 — 소켓을 만지지 않는다
 │   │   └── fsm.py                     ✅ 전이표 13상태 + 가드·타이머 (3.4.1~3)
 │   ├── common/
