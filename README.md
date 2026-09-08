@@ -131,7 +131,7 @@ mechdog_physical_ai/
 │   ├── devices/                         # 개체별 프로파일 (서보 오프셋 등)
 │   └── .env.example                     # 시크릿 템플릿
 ├── firmware_mechdog_motion/src/         # MechDog ESP32 (Arduino)
-├── firmware_xiao_vision/src/            # XIAO ESP32S3 (Arduino)
+├── firmware_xiao_vision/                # XIAO ESP32S3 카메라 + MJPEG (Arduino)
 ├── host/                                # Host PC (Python)
 │   ├── vision/                          # 스트림 수신 · 객체 검출 추론
 │   ├── behavior/                        # FSM · 명령 송신

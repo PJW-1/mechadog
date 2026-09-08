@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 config/secrets.yaml
+firmware_xiao_vision/wifi_secrets.h
 
 # ── 개체별 로컬 설정 ────────────────────────────────
 # 개체 프로파일 템플릿은 커밋하고, 실측 캘리브레이션 값은 로컬 유지
