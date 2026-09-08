@@ -35,6 +35,15 @@ DONE_MARK = "[완료"
 #: 나머지 `B`·`C` 가 팀장 몫이다.
 TRANSFERRED_TO_L: tuple[str, ...] = ("3.9", "5.4.1")
 
+#: `R=A`(임베디드·하드웨어 성격)인데 **팀장이 직접 수행한** 워크패키지.
+#:
+#: 성격 분류(A/B/C)는 *"어떤 종류의 일인가"* 이고 사람이 아니다(CONTRIBUTING 1절).
+#: 착수 초기에 실기가 팀장 손에 있어서 하드웨어·펌웨어 항목 일부를 팀장이 직접
+#: 처리했고, **그 사실을 담당별 목록에 반영하지 않으면 누가 무엇을 했는지 기록이
+#: 사라진다.** 남은 공수에는 영향이 없다(전부 완료 항목이므로) — 바뀌는 것은
+#: **완료 실적이 어느 쪽에 잡히는가** 뿐이다.
+DONE_BY_S: tuple[str, ...] = ("2.1.0", "2.1.1", "4.1.1", "4.1.3", "5.1.2")
+
 OWNERS: dict[str, str] = {
     "L1·L2": "펌웨어 · 하드웨어 · 온보드 안전로직 · 펌웨어 CI · 공간·항법",
     "S": "비전 · PPE · 변화감지 · 인증 · FSM · 통신 · config·로깅 · 대시보드 · 시험 · 문서",
@@ -68,6 +77,8 @@ class WorkPackage:
 
     @property
     def owner(self) -> str:
+        if self.wid in DONE_BY_S:  # 성격은 A 지만 팀장이 실제로 수행했다
+            return "S"
         if any(self.wid.startswith(p) for p in TRANSFERRED_TO_L):
             return "L1·L2"
         return "L1·L2" if self.role == "A" else "S"
@@ -222,6 +233,10 @@ def render(packages: list[WorkPackage]) -> str:
         )
     lines += [
         f"| | | | | **{left:.1f}** M/D | **{total:.1f}** M/D |",
+        "",
+        f"> **{', '.join('`' + w + '`' for w in DONE_BY_S)} 는 성격상 임베디드(`R=A`)지만 "
+        "팀장이 직접 수행했다.** 그래서 완료 실적을 팀장 쪽에 잡는다 — 성격 분류는 "
+        "사람이 아니다(CONTRIBUTING 1절). 남은 공수에는 영향이 없다.",
         "",
         "---",
         "",
