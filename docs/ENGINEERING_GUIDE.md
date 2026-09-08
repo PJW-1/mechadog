@@ -200,15 +200,18 @@ tests/
 │   ├── protocol_invalid.jsonl   폐기·클램핑 대상          ✅
 │   ├── telemetry_samples.jsonl  상태 13종 + 안전 경계값   ✅
 │   ├── telemetry_invalid.jsonl  폐기 대상                 ✅
-│   └── log_samples.jsonl        로그 필수 컨텍스트 정본   (4.4.2)
+│   ├── log_samples.jsonl        로그 필수 컨텍스트 정본   ✅
+│   └── log_invalid.jsonl        컨텍스트 누락·레벨 오류   ✅
 ├── test_config.py               config 스키마·불변조건    ✅
 ├── test_protocol_fixtures.py    픽스처 일관성             ✅
 ├── test_telemetry_fixtures.py   픽스처 ↔ config 교차검증  ✅
 ├── test_protocol.py             직렬화·검증 구현          ✅
 ├── test_mock_mechdog.py         가상 MechDog             ✅
-├── test_logging.py              필수 컨텍스트 강제        (4.4.2)
+├── test_logging.py              필수 컨텍스트 강제        ✅
+├── test_fsm_guards.py           가드·타이머               ✅
+├── test_runtime.py              운용 루프 (가짜 소켓)     ✅
 ├── test_safety.py               타임아웃·저전압·전도·조합
-├── test_fsm.py                  전이표 전수
+├── test_fsm.py                  전이표 전수               ✅
 ├── test_escalation.py           L0~L3 진입·해제
 ├── test_tracker.py              ID 연속성
 ├── test_change_detect.py        객체 목록 비교

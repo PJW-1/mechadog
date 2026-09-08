@@ -31,13 +31,26 @@ from typing import Any
 from host.behavior.commander import Commander
 from host.behavior.fsm import Behavior, Event, behavior_from_config
 from host.common.config import ConfigError, load_config
+from host.common.logging_setup import (
+    ERROR_ON_ENTER,
+    EdgeTrigger,
+    LogContext,
+    PeriodicSummary,
+    event_logger,
+    setup_logging,
+)
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 
-LOG = logging.getLogger("mechadog.runtime")
+LOG = event_logger("mechadog.runtime")
 
 #: 한 번에 받아들이는 최대 바이트. 텔레메트리 한 줄은 300 바이트를 넘지 않는다.
 RECV_BYTES = 2048
+
+
+def _peer_text(peer: tuple[str, int] | None) -> str:
+    """로그에 실을 상대 표기. 튜플을 그대로 문자열로 만들면 읽기 어렵다."""
+    return f"{peer[0]}:{peer[1]}" if peer else "학습 대기"
 
 
 def open_socket(bind_port: int) -> socket.socket:
@@ -86,6 +99,7 @@ class Runtime:
         device_id: str,
         robot_ip: str | None = None,
         clock: Callable[[], int] = system_clock_ms,
+        context: LogContext | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -108,6 +122,12 @@ class Runtime:
         self._ignored_since_ms: int | None = None
         self._cmd_timeout_ms = int(config["safety"]["cmd_timeout_ms"])
         self._stats = Stats()
+        # 로깅 컨텍스트와 샘플링. **매 수신마다 한 줄씩 찍으면 10Hz × 운용시간이 되고
+        # 정작 중요한 전이가 묻힌다** (ENGINEERING_GUIDE 1.3).
+        self._log = context if context is not None else LogContext(device_id=device_id)
+        self._log.observe(state=self._behavior.state)
+        self._edge = EdgeTrigger()
+        self._summary = PeriodicSummary(interval_ms=1000)
 
     @property
     def behavior(self) -> Behavior:
@@ -120,6 +140,11 @@ class Runtime:
     @property
     def stats(self) -> Stats:
         return self._stats
+
+    @property
+    def context(self) -> LogContext:
+        """로그에 실리는 공통 컨텍스트. 대시보드도 같은 값을 본다."""
+        return self._log
 
     @property
     def peer(self) -> tuple[str, int] | None:
@@ -135,30 +160,47 @@ class Runtime:
         out = self._receiver.ingest(raw)
         if out.reading is None:
             self._stats.discarded += 1
-            LOG.debug("폐기 %s", out.discarded)
+            self._summary.count("discarded")
+            # ⚠️ 폐기는 **요약으로만** 남긴다. 30% 손상 구간에서는 초당 3줄이 되고,
+            # 그때 알고 싶은 것은 개별 사유가 아니라 *"얼마나 깨지고 있나"* 다.
+            if out.warns and self._edge.changed("discard_reason", out.discarded):
+                LOG.warning("telemetry_discarded", reason=out.discarded)
             return out
 
         if out.reading.device_id != self._device_id:
             # ⚠️ 링크 시각을 갱신하지 않고 사건도 적용하지 않는다. 남의 패킷으로
             # "살아 있음" 을 세면 우리 로봇의 침묵이 가려진다.
             self._stats.foreign += 1
-            LOG.warning(
-                "다른 개체의 텔레메트리 — 기대 %s, 수신 %s",
-                self._device_id,
-                out.reading.device_id,
-            )
+            if self._edge.changed("foreign", out.reading.device_id):
+                LOG.warning(
+                    "foreign_device",
+                    expected=self._device_id,
+                    received=out.reading.device_id,
+                )
             return Ingested(discarded=f"다른 개체: {out.reading.device_id}")
 
         self._stats.accepted += 1
+        self._log.observe(seq=out.reading.seq)
+        self._summary.count("accepted")
+        if out.reading.batt_v is not None:
+            self._summary.observe("batt_v", out.reading.batt_v)
+        if out.reading.last_cmd_age_ms is not None:
+            self._summary.observe("last_cmd_age_ms", float(out.reading.last_cmd_age_ms))
         self._watch_command_uptake(out.reading.last_cmd_age_ms, now_ms)
         self._behavior.note_telemetry(now_ms)
         self._behavior.note_onboard_state(out.reading.state)
         self._behavior.note_robot_latch(out.reading.safety_latched)
         self._settle_reset(out.reading.safety_latched, now_ms)
+        # 로봇이 보고하는 온보드 상태의 **변화만** 남긴다. 같은 값이 10Hz 로 오는 것이
+        # 정상이므로 매번 찍으면 로그가 그것으로 덮인다.
+        if self._edge.changed("robot_state", out.reading.state):
+            LOG.info(
+                "robot_state",
+                reported=out.reading.state,
+                latched=out.reading.safety_latched,
+            )
         for event in out.events:
-            if self._behavior.event(event, now_ms=now_ms):
-                self._stats.transitions += 1
-                LOG.info("전이 %s → %s", event.name, self._behavior.state)
+            self._apply(event, now_ms)
         return out
 
     def _watch_command_uptake(self, age_ms: int | None, now_ms: int) -> None:
@@ -180,27 +222,65 @@ class Runtime:
         if now_ms - self._ignored_since_ms >= self._link_ignored_warn_ms:
             self._ignored_since_ms = now_ms
             LOG.warning(
-                "로봇이 우리 명령을 받아들이지 않는다 — 마지막 수락 명령 %dms 전 "
-                "(seq 세션 개시 실패 가능. PROTOCOL 4절)",
-                age_ms,
+                "commands_ignored",
+                last_cmd_age_ms=age_ms,
+                hint="세션 개시 실패 가능 (PROTOCOL 4절)",
             )
+
+    def _log_transition(self, previous: str) -> None:
+        """**최우선 로깅 지점** — 전 전이 + 트리거 (ENGINEERING_GUIDE 1.4).
+
+        페일세이프 진입은 기능 상실이므로 `ERROR` 다 (레벨 정책 1.2). 상태 이름을
+        여기 박지 않고 `ERROR_ON_ENTER` 표를 본다.
+        """
+        after = self._behavior.state
+        self._log.observe(state=after)
+        trigger = self._behavior.last_trigger
+        emit = LOG.error if after in ERROR_ON_ENTER else LOG.info
+        emit(
+            "fsm_transition",
+            **{
+                "from": previous,
+                "to": after,
+                "trigger": trigger.name if trigger is not None else None,
+            },
+        )
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
         before = self._behavior.state
         lines = self._behavior.tick(now_ms)
-        after = self._behavior.state
-        if after != before:
+        if self._behavior.state != before:
             self._stats.transitions += 1
-            LOG.info("전이 (타이머·감시) %s → %s", before, after)
+            self._log_transition(before)
         if lines:
             self._stats.ticks += 1
             self._stats.sent += len(lines)
-            self._stats.note_state(after)
+            self._stats.note_state(self._behavior.state)
+            self._summary.count("sent", len(lines))
+        # 주기 요약 — fps·지연·카운터를 1초에 한 줄로 (1.3)
+        digest = self._summary.drain(now_ms)
+        if digest:
+            LOG.info("telemetry_summary", **digest)
         return lines
 
+    def _apply(self, event: Event, now_ms: int) -> bool:
+        """사건을 넣고 **전이했으면 반드시 남긴다.**
+
+        ⚠️ 이 경로를 우회하면 로그의 `state` 가 실제와 어긋난다. 처음에는
+        `start_patrol()` 만 직접 `behavior.event()` 를 불렀는데, 그 결과 15초 실행에서
+        **앞 6초의 모든 레코드가 `IDLE` 로 찍혔다** — 로봇은 순찰 중이었다.
+        로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
+        """
+        before = self._behavior.state
+        if not self._behavior.event(event, now_ms=now_ms):
+            return False
+        self._stats.transitions += 1
+        self._log_transition(before)
+        return True
+
     def start_patrol(self, now_ms: int) -> bool:
-        return self._behavior.event(Event.START_PATROL, now_ms=now_ms)
+        return self._apply(Event.START_PATROL, now_ms)
 
     #: 명령이 무시되는 상태가 이만큼 이어지면 경고한다. 한 번 튄 것으로 떠들지 않는다.
     _link_ignored_warn_ms = 1000
@@ -218,16 +298,14 @@ class Runtime:
         self._reset_pending = True
         self._commander.halt()
         self._commander.once("RESET_SAFE")
-        LOG.info("사람이 리셋을 요청했다 — 로봇의 래치 해제를 기다린다")
+        LOG.info("reset_requested", waiting_for="safety_latched=false")
 
     def _settle_reset(self, latched: bool | None, now_ms: int) -> None:
         """로봇이 래치를 풀었다고 보고하면 그때 `RESET_CONFIRMED` 를 넣는다."""
         if not self._reset_pending or latched is not False:
             return
         self._reset_pending = False
-        if self._behavior.event(Event.RESET_CONFIRMED, now_ms=now_ms):
-            self._stats.transitions += 1
-            LOG.info("로봇 래치 해제 확인 — %s", self._behavior.state)
+        self._apply(Event.RESET_CONFIRMED, now_ms)
 
     def emergency_stop(self) -> str:
         """종료 전문. **틱을 기다리지 않는다.**
@@ -257,10 +335,10 @@ class Runtime:
         # 세션 개시로 인정한다. 틱이 한 번이라도 앞서면 seq 1 을 다른 명령이 쓴다.
         self._session_open = self._commander.open_session()
         LOG.info(
-            "운용 시작 — 수신 :%d · 송신 %s · 개체 %s",
-            self._telemetry_port,
-            self._peer or "(첫 텔레메트리로 학습)",
-            self._device_id,
+            "runtime_started",
+            listen_port=self._telemetry_port,
+            peer=_peer_text(self._peer),
+            period_ms=self._commander.period_ms,
         )
         try:
             while end_ms is None or clock() < end_ms:
@@ -284,7 +362,7 @@ class Runtime:
                     out = self.ingest(data, clock())
                     if self._peer is None and out.reading is not None:
                         self._peer = (addr[0], self._cmd_port)
-                        LOG.info("상대를 배웠다 — %s", self._peer)
+                        LOG.info("peer_learned", peer=_peer_text(self._peer))
                 self._send(sock, self.tick(clock()))
         finally:
             self._shutdown(sock)
@@ -309,14 +387,14 @@ class Runtime:
             with contextlib.suppress(OSError):
                 sock.sendto(line.encode("utf-8"), self._peer)
         LOG.info(
-            "종료 — 틱 %d · 송신 %d · 수락 %d · 폐기 %d · 타개체 %d · 전이 %d · 상태 %s",
-            self._stats.ticks,
-            self._stats.sent,
-            self._stats.accepted,
-            self._stats.discarded,
-            self._stats.foreign,
-            self._stats.transitions,
-            self._stats.states,
+            "runtime_stopped",
+            ticks=self._stats.ticks,
+            sent=self._stats.sent,
+            accepted=self._stats.accepted,
+            discarded=self._stats.discarded,
+            foreign=self._stats.foreign,
+            transitions=self._stats.transitions,
+            states=self._stats.states,
         )
 
 
@@ -334,24 +412,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="기동 시 사람이 원인 해소를 확인한 것으로 보고 RESET_SAFE 를 보낸다",
     )
-    parser.add_argument("--log-level", default="INFO", help="DEBUG · INFO · WARNING")
+    parser.add_argument(
+        "--log-level", default=None, help="config.logging.level 을 덮어쓴다 (DEBUG 실행용)"
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=args.log_level.upper(),
-        format="%(asctime)s %(levelname)-7s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    # ⚠️ 설정을 읽기 전에는 우리 로거가 없다. 여기서만 표준 출력을 쓴다.
     try:
         config = load_config(args.device)
     except (ConfigError, OSError) as exc:
-        LOG.error("설정을 읽을 수 없다 — %s", exc)
+        logging.basicConfig(level="ERROR")
+        logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
         return 2
 
-    runtime = Runtime(config, device_id=args.device, robot_ip=args.robot_ip)
+    if args.log_level:  # CLI 가 `config.logging.level` 을 덮어쓴다 (DEBUG 실행용)
+        config = dict(config)
+        config["logging"] = dict(config["logging"], level=args.log_level.upper())
+    context = setup_logging(config, device_id=args.device)
+
+    runtime = Runtime(config, device_id=args.device, robot_ip=args.robot_ip, context=context)
     sock = open_socket(runtime.telemetry_port)
     try:
         if args.reset_on_start:
@@ -360,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime.start_patrol(system_clock_ms())
         runtime.serve(sock, duration_s=args.duration)
     except KeyboardInterrupt:
-        LOG.info("중단 요청 — ESTOP 을 보내고 끝낸다")
+        LOG.info("interrupted", action="ESTOP 송신 후 종료")
     finally:
         sock.close()
     return 0

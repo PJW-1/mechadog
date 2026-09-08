@@ -165,7 +165,7 @@
 | ID | 워크패키지 | 산출물 | 완료 기준 (DoD) | R | 선행 | M/D | 연계 |
 | :--- | :--- | :--- | :--- | :---: | :--- | ---: | :--- |
 | 4.4.1 | config 로더 및 스키마 검증 | `config/config.yaml`, `config/devices/*.yaml`, `common/config.py` | 전역 설정과 개체 프로파일이 병합됨. **누락·범위이탈 시 기동 거부.** Dev/Prod 검증 분리. **`--device <unit-id>` 미지정 시 기동 거부** **[완료]** | C | — | 1.0 | FR-2.5, NFR-3① |
-| 4.4.2 | JSON Lines 로거 및 로테이션 | `common/logging_setup.py` + `tests/fixtures/log_samples.jsonl` | 레벨링 + 로테이션 동작. **모든 로그에 seq·ts·state·`device_id` 컨텍스트 포함** — ⚠️ **문서 규칙에 의존하지 않고 골든 픽스처로 강제한다.** `log_samples.jsonl`(필수 컨텍스트 6개 + 레벨 4종 + 엣지트리거·주기요약 예)과 `tests/test_logging.py` 를 함께 넣어, 컨텍스트가 빠진 레코드를 CI 가 폐기 판정한다 (통신 규약과 같은 방식 · CONTRIBUTING 5절) | B | — | 1.0 | NFR-3④ |
+| **4.4.2** | **JSON Lines 로거 및 로테이션** | `common/logging_setup.py` + `tests/fixtures/log_samples.jsonl`·`log_invalid.jsonl` | 레벨링 + 로테이션 동작. **모든 로그에 seq·ts·state·`device_id` 컨텍스트 포함** — ⚠️ **문서 규칙에 의존하지 않고 골든 픽스처로 강제한다.** `log_samples.jsonl`(필수 컨텍스트 6개 + 레벨 4종 + 엣지트리거·주기요약 예)과 `log_invalid.jsonl`(누락·레벨오류 16건, **사유까지 대조**)을 `tests/test_logging.py` 가 물린다. 컨텍스트는 **핸들러 필터가 넣는다** — 로거에 붙이면 자식 로거에서 전파된 레코드에 적용되지 않아 하나도 실리지 않는다. 샘플링도 도구로 강제했다(`EdgeTrigger`·`PeriodicSummary`) — **15초 운용에서 23줄**이며 매 수신마다 찍으면 150줄이 넘는다. 페일세이프 진입은 `ERROR`·에스컬레이션 `F` 로 남는다. ⚠️ **로그의 `state` 가 실제와 어긋나면 로그가 없는 것보다 나쁘다** — `start_patrol` 만 로깅을 우회해 앞 6초가 `IDLE` 로 찍힌 것을 실기에서 찾아 사건 적용 경로를 하나로 합쳤다 **[완료 · 목업 UDP 검증]** | B | — | 1.0 | NFR-3④ |
 | 4.4.3 | 이벤트 블랙박스 | `common/blackbox.py` | 사람감지 시 스냅샷 JPEG + 텔레메트리 스냅샷 저장, 대시보드 푸시. **비주 대상도 기록한다**(FR-3.8.4) | B | 4.4.2, 3.3.3 | 0.5 | FR-3.9 |
 
 #### 4.5 관제 대시보드 서버 — 3.5 M/D
