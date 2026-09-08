@@ -119,7 +119,9 @@ class Runtime:
         # 상태별 모션을 붙인다 (3.5.1). 만들 수 없는 것은 등록하지 않고 이유를 남기며,
         # 등록되지 않은 상태는 `Behavior` 가 정지로 처리한다 — 안전측 기본값이다.
         self._actions = register_actions(self._behavior, config)
-        host = robot_ip or config.get("mechdog_ip")
+        # ⚠️ `network` 절 안에 있다. 최상위에서 찾으면 프로파일에 주소를 적어도
+        # 못 읽고, 첫 텔레메트리가 올 때까지 아무것도 보내지 않는 상태가 된다.
+        host = robot_ip or network.get("mechdog_ip")
         self._peer: tuple[str, int] | None = (host, self._cmd_port) if host else None
         self._reset_pending = False
         self._session_open: str | None = None

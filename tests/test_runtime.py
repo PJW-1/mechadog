@@ -60,9 +60,20 @@ class FakeSocket:
 
 @pytest.fixture
 def config(cfg: dict) -> dict:
-    """개체 파일 없이 런타임을 만들 수 있는 최소 설정."""
+    """개체 파일 없이 런타임을 만들 수 있는 최소 설정.
+
+    ⚠️ **주소는 `network` 절 안에 넣는다.** 최상위에 넣어 주면 시험이 실물보다
+    친절해져서, 코드가 최상위를 읽는 버그를 통과시킨다 — 실제로 그랬다.
+    """
     merged = dict(cfg)
-    merged["mechdog_ip"] = PEER[0]
+    merged["network"] = dict(cfg["network"], mechdog_ip=PEER[0])
+    return merged
+
+
+def _without_robot_ip(cfg: dict) -> dict:
+    """주소를 모르는 상태 — 첫 텔레메트리로 배우는 경로를 시험한다."""
+    merged = dict(cfg)
+    merged["network"] = dict(cfg["network"], mechdog_ip=None)
     return merged
 
 
@@ -201,8 +212,7 @@ def test_loop_receives_and_reacts(config: dict, clock: FakeClock) -> None:
 
 def test_peer_is_learned_from_the_first_telemetry(cfg: dict, clock: FakeClock) -> None:
     """`mechdog_ip` 가 비어 있으면 첫 텔레메트리를 보낸 곳으로 답한다."""
-    no_ip = dict(cfg)
-    no_ip["mechdog_ip"] = None
+    no_ip = _without_robot_ip(cfg)
     r = Runtime(no_ip, device_id=DEVICE, clock=clock)
     assert r.peer is None
     enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
@@ -213,8 +223,7 @@ def test_peer_is_learned_from_the_first_telemetry(cfg: dict, clock: FakeClock) -
 
 def test_nothing_is_sent_before_the_peer_is_known(cfg: dict, clock: FakeClock) -> None:
     """상대를 모르면 보내지 않는다 — 조용히 버리는 것이 맞다."""
-    no_ip = dict(cfg)
-    no_ip["mechdog_ip"] = None
+    no_ip = _without_robot_ip(cfg)
     r = Runtime(no_ip, device_id=DEVICE, clock=clock)
     sock = FakeSocket(clock)
     r.serve(sock, duration_s=0.5, clock=clock)
@@ -290,8 +299,7 @@ def test_session_open_waits_for_an_unknown_peer(cfg: dict, clock: FakeClock) -> 
     """상대를 늦게 알았어도 **첫 datagram 은 여전히 세션 개시**여야 한다."""
     import json
 
-    no_ip = dict(cfg)
-    no_ip["mechdog_ip"] = None
+    no_ip = _without_robot_ip(cfg)
     r = Runtime(no_ip, device_id=DEVICE, clock=clock)
     enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
     sock = FakeSocket(clock, [(clock.ms + 300, telemetry(enc))])

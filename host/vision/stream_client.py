@@ -246,10 +246,14 @@ def stream_endpoints(config: Mapping[str, Any]) -> StreamEndpoints:
     **틀린 주소가 적혀 있는 것이 비어 있는 것보다 나쁘다** — `mechdog_ip` 를
     `null` 로 둔 것과 같은 이유다 (`config/devices/*.yaml`).
     """
-    host = config.get("xiao_ip")
-    if not isinstance(host, str) or not host.strip():
-        raise ValueError("xiao_ip 가 비어 있음 — config/devices/<개체>.yaml 에 실측 주소를 넣는다")
     network = config["network"]
+    # ⚠️ 주소는 `network` 절 안에 있다. 최상위에서 찾으면 값이 있어도 못 읽는다 —
+    # 실제로 그렇게 만들었고, 시험이 최상위에 값을 넣어 주고 있어서 통과했다.
+    host = network.get("xiao_ip")
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError(
+            "network.xiao_ip 가 비어 있음 — config/devices/<개체>.yaml 에 실측 주소를 넣는다"
+        )
     return StreamEndpoints(
         control=f"http://{host}:{int(network['vision_control_port'])}",
         stream=f"http://{host}:{int(network['vision_stream_port'])}/stream",

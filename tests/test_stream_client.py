@@ -29,6 +29,14 @@ def jpeg(size: int = 32, marker: bytes = b"x") -> bytes:
     return JPEG_SOI + marker * size + JPEG_EOI
 
 
+def _with_xiao(cfg: dict, ip: str | None) -> dict:
+    """⚠️ **주소는 `network` 절 안에 있다.** 최상위에 넣어 주면 시험이 실물보다
+    친절해져서, 코드가 최상위를 읽는 버그를 통과시킨다 — 실제로 그랬다."""
+    merged = dict(cfg)
+    merged["network"] = dict(cfg["network"], xiao_ip=ip)
+    return merged
+
+
 def part(payload: bytes, *, boundary: str = DEFAULT_BOUNDARY, length: bool = True) -> bytes:
     """펌웨어가 실제로 보내는 형식 그대로 만든다."""
     head = f"\r\n--{boundary}\r\nContent-Type: image/jpeg\r\n"
@@ -173,7 +181,7 @@ def test_capacity_must_be_positive() -> None:
 
 # ── 주소 조립 (하드코딩 IP 제거) ─────────────────────────────
 def test_endpoints_come_from_the_device_profile(cfg: dict) -> None:
-    config = dict(cfg, xiao_ip="192.168.1.55")
+    config = _with_xiao(cfg, "192.168.1.55")
     endpoints = stream_endpoints(config)
     assert endpoints.control == "http://192.168.1.55:80"
     assert endpoints.stream == "http://192.168.1.55:81/stream"
@@ -185,7 +193,7 @@ def test_missing_xiao_ip_is_refused(cfg: dict) -> None:
     그래서 전역 설정에 고정 URL 을 두지 않고, 실측 주소가 없으면 거부한다.
     """
     with pytest.raises(ValueError, match="xiao_ip"):
-        stream_endpoints(dict(cfg, xiao_ip=None))
+        stream_endpoints(_with_xiao(cfg, None))
 
 
 def test_global_config_has_no_hardcoded_stream_url(cfg: dict) -> None:
@@ -223,7 +231,7 @@ def test_profile_is_applied_from_config(cfg: dict) -> None:
     seen: list[tuple[str, float]] = []
     body = {"ok": True, "profile": "VGA", "fps_limit": 25}
     result = apply_profile(
-        dict(cfg, xiao_ip="10.0.0.9"),
+        _with_xiao(cfg, "10.0.0.9"),
         opener=_fake_opener(body, seen),
         timeout_s=2.5,
     )
@@ -235,7 +243,7 @@ def test_profile_is_applied_from_config(cfg: dict) -> None:
 
 def test_profile_values_track_the_config(cfg: dict) -> None:
     seen: list[tuple[str, float]] = []
-    tweaked = dict(cfg, xiao_ip="10.0.0.9")
+    tweaked = _with_xiao(cfg, "10.0.0.9")
     tweaked["vision"] = dict(cfg["vision"], resolution="QVGA", stream_fps_limit=12)
     apply_profile(tweaked, opener=_fake_opener({"ok": True}, seen))
     assert seen[0][0].endswith("name=QVGA&fps=12")
@@ -245,7 +253,7 @@ def test_camera_rejection_is_raised(cfg: dict) -> None:
     seen: list[tuple[str, float]] = []
     with pytest.raises(ValueError, match="거부"):
         apply_profile(
-            dict(cfg, xiao_ip="10.0.0.9"),
+            _with_xiao(cfg, "10.0.0.9"),
             opener=_fake_opener({"ok": False, "error": "fps out of range"}, seen),
         )
 
@@ -338,7 +346,7 @@ class _FakeNetwork:
 
 def _reader(cfg: dict, net: _FakeNetwork, clock=None) -> StreamReader:
     return StreamReader(
-        dict(cfg, xiao_ip="10.0.0.9"),
+        _with_xiao(cfg, "10.0.0.9"),
         opener=net.opener,
         clock=clock or (lambda: 0),
         sleeper=net.sleeper,
@@ -425,7 +433,7 @@ def test_silent_stream_is_treated_as_broken(cfg: dict) -> None:
     ticks = iter([0, 0, 500, 1000, 1500, 2000, 2500] + [3000] * 20)
     net = _FakeNetwork([_FakeStream([b"garbage"] * 6), _FakeStream([part(jpeg(20))])])
     reader = StreamReader(
-        dict(cfg, xiao_ip="10.0.0.9"),
+        _with_xiao(cfg, "10.0.0.9"),
         opener=net.opener,
         clock=lambda: next(ticks),
         sleeper=net.sleeper,
@@ -455,7 +463,51 @@ def test_backoff_must_be_positive_and_increasing(cfg: dict) -> None:
 
 
 def test_reader_refuses_empty_backoff(cfg: dict) -> None:
-    bad = dict(cfg, xiao_ip="10.0.0.9")
+    bad = _with_xiao(cfg, "10.0.0.9")
     bad["vision"] = dict(cfg["vision"], reconnect_backoff_s=[])
     with pytest.raises(ValueError):
         StreamReader(bad)
+
+
+# ══════════════════════════════════════════════════════════════
+#  ⚠️ 실제 개체 프로파일의 구조를 물린다
+# ══════════════════════════════════════════════════════════════
+def test_endpoints_read_the_real_device_profile() -> None:
+    """**시험이 만든 사전이 아니라 저장소의 실제 파일을 쓴다.**
+
+    주소가 `network` 절 안에 있는데 코드가 최상위를 읽고 있었고, 시험은 최상위에
+    값을 넣어 주고 있어서 통과했다. 실기 세션에서야 드러났을 버그다.
+    """
+    from host.common.config import load_config
+
+    config = load_config("mechdog-01")
+    assert "xiao_ip" in config["network"], "프로파일 구조가 바뀌면 여기서 걸린다"
+    assert "xiao_ip" not in config, "최상위에는 없다 — 코드가 여기를 읽으면 안 된다"
+
+    config["network"]["xiao_ip"] = "192.168.1.77"
+    endpoints = stream_endpoints(config)
+    assert endpoints.stream == "http://192.168.1.77:81/stream"
+    assert endpoints.control == "http://192.168.1.77:80"
+
+
+def test_real_profile_leaves_the_address_empty() -> None:
+    """실측 전에는 비워 두는 것이 정본이다 — 틀린 주소보다 낫다."""
+    from host.common.config import load_config
+
+    config = load_config("mechdog-01")
+    assert config["network"]["xiao_ip"] is None
+    with pytest.raises(ValueError, match="network.xiao_ip"):
+        stream_endpoints(config)
+
+
+def test_runtime_reads_the_robot_address_from_network() -> None:
+    """같은 실수가 명령 쪽에도 있었다 — `mechdog_ip` 도 `network` 절 안이다."""
+    from conftest import FakeClock
+
+    from host.common.config import load_config
+    from host.runtime import Runtime
+
+    config = load_config("mechdog-01")
+    config["network"]["mechdog_ip"] = "192.168.1.88"
+    runtime = Runtime(config, device_id="mechdog-01", clock=FakeClock())
+    assert runtime.peer == ("192.168.1.88", config["network"]["cmd_port"])
