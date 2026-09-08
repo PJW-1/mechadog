@@ -48,6 +48,14 @@ vision:
   # ── 실행 프로바이더 ── Windows GPU 우선, CI·비지원 환경은 CPU 폴백 (DR-13)
   providers: [DmlExecutionProvider, CPUExecutionProvider]
 
+  # 이 시간 동안 프레임이 없으면 **비전 단절**로 본다 (NFR-2.6).
+  # ⚠️ `safety.link_loss_failsafe_ms` 와 의도적으로 다른 절에 둔다 —
+  # 로봇 링크 두절은 **안전 문제**라 페일세이프로 가지만, 비전 단절은
+  # **기능 저하**라 순찰·회피를 계속하고 사람 인지만 끈다. 둘을 같은 절에
+  # 두면 언젠가 같은 대응으로 묶이고, 그러면 카메라가 딸꾹질할 때마다
+  # 로봇이 멈춘다.
+  stall_timeout_ms: 2000
+
   # ── ① COCO 범용 검출기 (학습 불요, DR-12) ──
   # FR-3 사람 인지 + FR-8 변화 감지 대상 객체를 담당
   coco:

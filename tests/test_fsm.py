@@ -287,3 +287,123 @@ def test_behavior_keeps_sending_while_state_is_unchanged(clock: FakeClock) -> No
         count += len(b.tick(clock.ms))
         clock.advance(100)
     assert count == 21, "첫 틱의 STATE 1건 + 매 틱 STOP 20건"
+
+
+# ── 이탈 훅 (WBS 3.4.2) ───────────────────────────────────────
+def test_exit_hook_fires_before_the_entry_hook() -> None:
+    """**뒷정리가 새 상태의 준비보다 먼저다.**
+
+    `SCAN` 을 떠날 때 스캔 타이머를 멈추지 않고 `PATROL` 진입에서 순찰 타이머를
+    켜면 두 타이머가 겹쳐 도는 순간이 생긴다.
+    """
+    f = Fsm(initial="SCAN")
+    order: list[str] = []
+    f.on_exit("SCAN", lambda old, new: order.append(f"exit {old}->{new}"))
+    f.on_enter("PATROL", lambda old, new: order.append(f"enter {old}->{new}"))
+    assert f.handle(Event.SCAN_DONE)
+    assert order == ["exit SCAN->PATROL", "enter SCAN->PATROL"]
+
+
+def test_exit_hook_does_not_fire_when_no_transition_happens() -> None:
+    f = Fsm(initial="ALERT")
+    seen: list[str] = []
+    f.on_exit("ALERT", lambda _old, new: seen.append(new))
+    assert f.handle(Event.PPE_VIOLATION) is False  # 같은 상태 — 전이 아님
+    assert seen == []
+
+
+# ── 두 링크를 다르게 대응한다 (NFR-2.6 · WBS 3.4.2) ───────────
+def test_robot_link_loss_goes_to_failsafe(clock: FakeClock) -> None:
+    """로봇 링크 두절은 **안전 문제**다 — 명령이 닿지 않으므로 멈춰야 한다."""
+    b = Behavior(Commander(p.CommandEncoder(clock=clock), period_ms=100), link_loss_ms=3000)
+    b.event(Event.START_PATROL)
+    b.note_telemetry(clock.ms)
+    clock.advance(2900)
+    b.tick(clock.ms)
+    assert b.state == "PATROL", "3초 전에는 두절로 보지 않는다"
+    clock.advance(100)
+    b.tick(clock.ms)
+    assert b.state == "FAILSAFE"
+
+
+def test_vision_stall_keeps_patrolling(clock: FakeClock) -> None:
+    """**비전 단절은 기능 저하다** (NFR-2.6) — 순찰·회피는 계속하고 인지만 끈다.
+
+    이 둘을 같은 사건으로 묶으면 **카메라가 딸꾹질할 때마다 로봇이 멈춘다.**
+    """
+    b = Behavior(
+        Commander(p.CommandEncoder(clock=clock), period_ms=100),
+        link_loss_ms=3000,
+        vision_stall_ms=2000,
+    )
+    b.event(Event.START_PATROL)
+    b.note_telemetry(clock.ms)
+    b.note_vision(clock.ms)
+    clock.advance(2500)
+    b.note_telemetry(clock.ms)  # 로봇은 살아 있다
+    b.tick(clock.ms)
+    assert b.state == "PATROL", "비전이 죽어도 순찰은 계속된다"
+    assert b.degraded is True, "저하 상태가 관측 가능해야 한다"
+
+
+def test_vision_recovery_clears_the_degraded_flag(clock: FakeClock) -> None:
+    b = Behavior(Commander(p.CommandEncoder(clock=clock)), vision_stall_ms=2000)
+    b.note_vision(clock.ms)
+    clock.advance(2000)
+    b.tick(clock.ms)
+    assert b.degraded is True
+    b.note_vision(clock.ms)
+    assert b.degraded is False
+
+
+def test_links_are_not_watched_before_the_first_message(clock: FakeClock) -> None:
+    """**기동 직후를 두절로 보면 켜는 순간 페일세이프가 걸린다.**"""
+    b = Behavior(Commander(p.CommandEncoder(clock=clock)), link_loss_ms=100)
+    b.event(Event.START_PATROL)
+    clock.advance(10_000)
+    b.tick(clock.ms)
+    assert b.state == "PATROL"
+    assert b.degraded is False
+
+
+def test_link_watch_runs_before_the_directive_is_applied(clock: FakeClock) -> None:
+    """두절을 **이번 틱에** 반영해야 그 틱의 명령이 페일세이프에 맞는다.
+
+    나중에 보면 한 주기 동안 낡은 상태의 명령이 나간다.
+    """
+    b = Behavior(Commander(p.CommandEncoder(clock=clock), period_ms=100), link_loss_ms=1000)
+    b.event(Event.MANUAL_ON)
+    b.commander.drive(step=80, angle=0)
+    b.note_telemetry(clock.ms)
+    clock.advance(1000)
+    lines = b.tick(clock.ms)
+    assert b.state == "FAILSAFE"
+    assert json.loads(lines[-1])["type"] == "STOP", "같은 틱에서 이미 정지가 나가야 한다"
+
+
+def test_timeouts_must_be_positive(clock: FakeClock) -> None:
+    with pytest.raises(ValueError):
+        Behavior(Commander(p.CommandEncoder(clock=clock)), link_loss_ms=0)
+
+
+def test_behavior_reads_both_timeouts_from_the_real_config(clock: FakeClock, cfg: dict) -> None:
+    """**코드에 박힌 숫자가 아니라 `config.yaml` 이 정본이어야 한다** (NFR-3①).
+
+    두 값이 서로 다른 절에서 오는 것도 함께 고정한다 — `safety` 는 안전 임계,
+    `vision` 은 기능 저하 임계다. 한 절로 합치면 언젠가 같은 대응으로 묶인다.
+    """
+    from host.behavior.fsm import behavior_from_config
+
+    b = behavior_from_config(Commander(p.CommandEncoder(clock=clock)), cfg)
+    b.event(Event.START_PATROL)
+    b.note_telemetry(clock.ms)
+    b.note_vision(clock.ms)
+
+    clock.advance(int(cfg["vision"]["stall_timeout_ms"]))
+    b.note_telemetry(clock.ms)
+    b.tick(clock.ms)
+    assert b.degraded is True and b.state == "PATROL"
+
+    clock.advance(int(cfg["safety"]["link_loss_failsafe_ms"]))
+    b.tick(clock.ms)
+    assert b.state == "FAILSAFE"
