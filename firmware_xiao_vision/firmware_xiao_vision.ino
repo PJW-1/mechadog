@@ -42,6 +42,14 @@ constexpr uint32_t kWifiTimeoutMs = 20000;
 constexpr uint32_t kReconnectIntervalMs = 5000;
 constexpr uint32_t kFpsReportIntervalMs = 5000;
 
+// 프레임률 상한의 기본값. 호스트가 기동 시 config.yaml 값으로 덮어쓴다.
+// ⚠️ 상한의 목적은 낮추는 것이 아니라 **예측 가능하게 만드는 것**이다. 상한이
+// 없으면 JPEG 크기가 화면 내용에 따라 변하고 발열에 따라 fps 가 흘러서, 명령
+// 타임아웃 대비 최악 부하를 계산할 수 없다.
+constexpr uint32_t kDefaultFpsLimit = 25;
+constexpr uint32_t kMinFpsLimit = 1;
+constexpr uint32_t kMaxFpsLimit = 60;
+
 constexpr char kStreamContentType[] = "multipart/x-mixed-replace;boundary=mechdog-frame-boundary";
 constexpr char kStreamBoundary[] = "\r\n--mechdog-frame-boundary\r\n";
 
@@ -51,6 +59,7 @@ framesize_t g_frame_size = FRAMESIZE_VGA;
 const char* g_profile_name = "VGA";
 bool g_camera_ready = false;
 uint32_t g_last_reconnect_ms = 0;
+uint32_t g_fps_limit = kDefaultFpsLimit;
 
 bool hasCredentials() {
   return strcmp(MECHDOG_WIFI_SSID, "YOUR_WIFI_SSID") != 0 && strlen(MECHDOG_WIFI_SSID) > 0;
@@ -158,18 +167,20 @@ esp_err_t sendJson(httpd_req_t* request, const char* body) {
 esp_err_t statusHandler(httpd_req_t* request) {
   sensor_t* sensor = esp_camera_sensor_get();
   const uint16_t pid = sensor == nullptr ? 0 : sensor->id.PID;
-  char body[256];
+  char body[288];
   snprintf(body, sizeof(body),
-           "{\"ok\":true,\"sensor\":\"%s\",\"profile\":\"%s\",\"psram_free\":%u,"
-           "\"rssi\":%d,\"stream\":\"http://%s:%u/stream\"}",
-           sensorName(pid), g_profile_name, static_cast<unsigned>(ESP.getFreePsram()), WiFi.RSSI(),
+           "{\"ok\":true,\"sensor\":\"%s\",\"profile\":\"%s\",\"fps_limit\":%u,"
+           "\"psram_free\":%u,\"rssi\":%d,\"stream\":\"http://%s:%u/stream\"}",
+           sensorName(pid), g_profile_name, static_cast<unsigned>(g_fps_limit),
+           static_cast<unsigned>(ESP.getFreePsram()), WiFi.RSSI(),
            WiFi.localIP().toString().c_str(), kStreamPort);
   return sendJson(request, body);
 }
 
 esp_err_t profileHandler(httpd_req_t* request) {
-  char query[48] = {};
+  char query[64] = {};
   char name[12] = {};
+  char fps_text[8] = {};
   const size_t query_length = httpd_req_get_url_query_len(request);
   if (query_length == 0 || query_length >= sizeof(query) ||
       httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
@@ -199,9 +210,23 @@ esp_err_t profileHandler(httpd_req_t* request) {
   g_frame_size = requested_size;
   g_profile_name = requested_name;
 
-  char body[80];
-  snprintf(body, sizeof(body), "{\"ok\":true,\"profile\":\"%s\"}", g_profile_name);
-  Serial.printf("PROFILE_CHANGED profile=%s\n", g_profile_name);
+  // fps 는 선택 인자다. 없으면 현재 상한을 유지한다 — 해상도만 바꾸는 호출을
+  // 막지 않기 위해서다.
+  if (httpd_query_key_value(query, "fps", fps_text, sizeof(fps_text)) == ESP_OK) {
+    const long requested_fps = strtol(fps_text, nullptr, 10);
+    if (requested_fps < static_cast<long>(kMinFpsLimit) ||
+        requested_fps > static_cast<long>(kMaxFpsLimit)) {
+      httpd_resp_set_status(request, "400 Bad Request");
+      return sendJson(request, "{\"ok\":false,\"error\":\"fps out of range\"}");
+    }
+    g_fps_limit = static_cast<uint32_t>(requested_fps);
+  }
+
+  char body[112];
+  snprintf(body, sizeof(body), "{\"ok\":true,\"profile\":\"%s\",\"fps_limit\":%u}", g_profile_name,
+           static_cast<unsigned>(g_fps_limit));
+  Serial.printf("PROFILE_CHANGED profile=%s fps_limit=%u\n", g_profile_name,
+                static_cast<unsigned>(g_fps_limit));
   return sendJson(request, body);
 }
 
@@ -214,13 +239,34 @@ esp_err_t streamHandler(httpd_req_t* request) {
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
 
   uint32_t frame_count = 0;
+  uint32_t skipped = 0;
+  uint32_t sent_bytes = 0;
   int64_t report_started_us = esp_timer_get_time();
+  int64_t next_due_us = report_started_us;
   while (result == ESP_OK) {
     camera_fb_t* frame = esp_camera_fb_get();
     if (frame == nullptr) {
       Serial.println("WARN stream: frame capture failed");
       result = ESP_FAIL;
       break;
+    }
+
+    // ── 프레임률 상한 ──
+    // ⚠️ **잡은 뒤에 버린다.** 먼저 기다렸다가 잡으면 그 사이 시간만큼 낡은
+    // 프레임을 보내게 된다. 상한의 목적은 신선한 프레임을 덜 보내는 것이고
+    // 낡은 프레임을 보내는 것이 아니다.
+    const int64_t now_us = esp_timer_get_time();
+    if (now_us < next_due_us) {
+      esp_camera_fb_return(frame);
+      ++skipped;
+      continue;
+    }
+    const int64_t period_us = 1000000 / static_cast<int64_t>(g_fps_limit);
+    next_due_us += period_us;
+    if (next_due_us <= now_us) {
+      // 크게 밀렸으면 과거를 따라잡지 않고 지금 기준으로 재동기한다. 몰아
+      // 보내면 순간 폭주가 되고 명령 패킷의 순서를 더 밀어낸다.
+      next_due_us = now_us + period_us;
     }
 
     char header[96];
@@ -241,15 +287,25 @@ esp_err_t streamHandler(httpd_req_t* request) {
       result =
           httpd_resp_send_chunk(request, reinterpret_cast<const char*>(frame->buf), frame->len);
     }
+    sent_bytes += static_cast<uint32_t>(frame->len);
     esp_camera_fb_return(frame);
 
     ++frame_count;
-    const int64_t now_us = esp_timer_get_time();
-    if (now_us - report_started_us >= static_cast<int64_t>(kFpsReportIntervalMs) * 1000) {
-      const float fps = frame_count * 1000000.0F / static_cast<float>(now_us - report_started_us);
-      Serial.printf("STREAM_STATS profile=%s fps=%.1f\n", g_profile_name, fps);
+    const int64_t report_now_us = esp_timer_get_time();
+    if (report_now_us - report_started_us >= static_cast<int64_t>(kFpsReportIntervalMs) * 1000) {
+      const float elapsed_s = static_cast<float>(report_now_us - report_started_us) / 1000000.0F;
+      const float fps = static_cast<float>(frame_count) / elapsed_s;
+      // 평균 프레임 크기를 함께 남긴다 — fps 만으로는 대역폭을 알 수 없고,
+      // JPEG 크기는 화면 내용에 따라 변한다. Wi-Fi 경합을 따질 때 필요한 값이다.
+      const uint32_t bytes_avg = frame_count == 0 ? 0 : sent_bytes / frame_count;
+      Serial.printf("STREAM_STATS profile=%s fps=%.1f limit=%u bytes_avg=%u skipped=%u kbps=%.0f\n",
+                    g_profile_name, fps, static_cast<unsigned>(g_fps_limit),
+                    static_cast<unsigned>(bytes_avg), static_cast<unsigned>(skipped),
+                    static_cast<double>(sent_bytes) * 8.0 / 1000.0 / elapsed_s);
       frame_count = 0;
-      report_started_us = now_us;
+      skipped = 0;
+      sent_bytes = 0;
+      report_started_us = report_now_us;
     }
   }
 

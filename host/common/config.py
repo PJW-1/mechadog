@@ -89,12 +89,14 @@ def validate_base_config(config: dict[str, Any]) -> None:
         raise ConfigError(f"필수 설정 섹션 누락: {missing}")
 
     network = config["network"]
-    for name in ("cmd_port", "telemetry_port"):
+    for name in ("cmd_port", "telemetry_port", "vision_control_port", "vision_stream_port"):
         port = network.get(name)
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise ConfigError(f"network.{name} 는 1~65535 정수여야 함")
     for name in ("cmd_rate_hz", "telemetry_rate_hz"):
         _require_positive(network, name)
+    # 상한이 없으면 최악 부하를 계산할 수 없다 (config 주석 참고).
+    _require_positive(config["vision"], "stream_fps_limit")
 
     safety = config["safety"]
     missing_safety = [name for name in REQUIRED_SAFETY_KEYS if name not in safety]

@@ -211,6 +211,7 @@ tests/
 ├── test_fsm_guards.py           가드·타이머               ✅
 ├── test_runtime.py              운용 루프 (가짜 소켓)     ✅
 ├── test_actions.py              PATROL·AVOID 시퀀스       ✅
+├── test_stream_client.py        MJPEG 파서·프레임 큐      ✅
 ├── test_safety.py               타임아웃·저전압·전도·조합
 ├── test_fsm.py                  전이표 전수               ✅
 ├── test_escalation.py           L0~L3 진입·해제
