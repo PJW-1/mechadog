@@ -112,6 +112,22 @@ class Commander:
         self.halt()
         return self._encoder.estop()
 
+    def open_session(self) -> str:
+        """새 호스트 프로세스의 **첫 전문** (`STOP` seq=1).
+
+        ⚠️ **프로세스에서 가장 먼저 인코딩해야 한다.** 로봇은 seq 역전을 폐기하므로,
+        재시작해서 seq 가 1 로 돌아간 호스트는 이전 세션의 최대 seq 를 넘을 때까지
+        **통째로 무시된다** — 10Hz 로 10분 운용했다면 그 뒤 10분 동안 `ESTOP` 조차
+        닿지 않는다. 규약은 그래서 **`STOP` seq=1 + 더 새로운 ts** 를 세션 개시
+        신호로 정해 두었다 (PROTOCOL 4절). 이 전문이 정확히 그 신호다.
+
+        `STATE` 나 `RESET_SAFE` 가 먼저 나가면 신호가 성립하지 않는다. 실제로
+        `--reset-on-start` 로 첫 전문이 `RESET_SAFE` 가 되어 목업이 우리 명령을
+        159건 폐기했다.
+        """
+        self.halt()
+        return self._encoder.encode("STOP")
+
     def clear_safe(self) -> str:
         """**즉시 보낼 `RESET_SAFE` 전문을 돌려준다.**
 
@@ -122,6 +138,15 @@ class Commander:
         return self._encoder.reset_safe()
 
     # ── 주기 송신 ──────────────────────────────────────────────
+    @property
+    def next_due_ms(self) -> int | None:
+        """다음 송신 예정 시각. `None` 이면 아직 첫 틱을 돌지 않았다.
+
+        운용 루프가 소켓을 얼마나 기다려도 되는지 계산하는 데 쓴다. 루프가 자기
+        마감을 따로 세면 두 개의 시계가 생기고 언젠가 어긋난다.
+        """
+        return self._next_due
+
     def due(self, now_ms: int) -> bool:
         return self._next_due is None or now_ms >= self._next_due
 

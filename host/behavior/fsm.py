@@ -36,6 +36,7 @@ from enum import StrEnum
 from typing import Any
 
 from host.behavior.commander import Commander
+from host.common.protocol import ONBOARD_STATES
 
 #: 모든 상태에서 받는 전이의 출발지 표기.
 ANY = "*"
@@ -150,6 +151,27 @@ EXCLUSIVE: dict[str, frozenset[Event]] = {
     "FAILSAFE": frozenset({Event.RESET_CONFIRMED}),
 }
 
+#: **로봇의 안전 래치가 걸려 있는 동안 막는 사건** (WBS 3.4.3).
+#:
+#: `EXCLUSIVE` 는 상태로 막고 이쪽은 로봇의 보고로 막는다. 둘이 필요한 이유가 있다 —
+#: `EXCLUSIVE` 만으로는 *"호스트가 FAILSAFE 를 떠나도 되는가"* 를 판단할 수 없다.
+#: 그 답은 표에 없고 **로봇의 래치가 풀렸는지**에 있다.
+#:
+#: ⚠️ 이것이 없으면 다음이 성립한다. 로봇이 전도로 멈춰 있는데 조작자가 리셋을
+#: 누르면 호스트만 `IDLE` 로 나오고, 같은 상태의 반복 보고는 사건을 재발행하지
+#: 않으므로 **어떤 텔레메트리도 그 어긋남을 고치지 못한다.** 로봇은 잠겨 있어
+#: 움직이지 않지만 **관제 화면이 거짓을 말한다.**
+#:
+#: ⚠️ **`state == "FAILSAFE"` 로 막으면 안 된다.** `FAILSAFE` 는 `STATE` 명령으로도
+#: 내려가므로 로봇이 되돌려준 값이 *우리가 알려준 것의 반향*인지 *로봇 자신의
+#: 판정*인지 구분할 수 없다. 반향으로 막으면 호스트가 스스로를 영구히 잠근다.
+#: 규약이 `safety_latched` 를 둔 이유가 정확히 이것이다 (PROTOCOL 2절).
+#:
+#: 래치를 보고하지 않는(구형) 펌웨어에서는 막지 않는다. 알 수 없는 것을 근거로
+#: 잠그면 해제 수단이 없어지고, 그 조합은 규약이 *"실기 운용 전 송수신을 함께
+#: 갱신한다"* 로 이미 금지한 상태다.
+LATCH_GUARDED: frozenset[Event] = frozenset({Event.RESET_CONFIRMED})
+
 #: 상태별 지시. **모든 상태가 여기 있어야 한다** — 상태만 추가하고 지시를
 #: 빠뜨리면 그 상태에서 아무 명령도 안 나가므로 생성 시 예외로 막는다.
 DIRECTIVES: dict[str, Directive] = {
@@ -169,6 +191,37 @@ DIRECTIVES: dict[str, Directive] = {
 }
 
 INITIAL = "IDLE"
+
+
+@dataclass(frozen=True, slots=True)
+class StateTimer:
+    """상태에 머문 시간이 임계를 넘으면 사건을 낸다.
+
+    `path` 는 `config.yaml` 에서 값을 읽을 경로이고 `unit_ms` 는 그 값의 단위다
+    (설정 키가 `_s` 로 끝나므로 1000). **코드에 숫자를 두지 않기 위한 표기다.**
+    """
+
+    state: str
+    event: Event
+    path: tuple[str, ...]
+    unit_ms: int = 1000
+
+
+#: 상태 타이머. **표이며 분기문이 아니다** — `if state == "PATROL" and elapsed > 10`
+#: 을 엔진에 넣으면 상태 이름이 다시 코드로 들어온다.
+#:
+#: ⚠️ **전도 2초는 여기 없다.** 그것은 온보드 Tier 1 이며(`3.2.3`) 호스트가
+#: 흉내내면 로봇이 이미 토크를 뗀 뒤에 호스트가 또 판정하는 이중 판정이 된다.
+#: 마찬가지로 명령 타임아웃 300ms 도 호스트의 일이 아니다 (아키텍처 1.2).
+#:
+#: ⚠️ **대상 상실 5초도 여기 없다.** 그것은 *상태에 머문 시간*이 아니라
+#: *마지막 검출 이후 시간*이다. 상태 타이머로 만들면 사람이 계속 서 있어도
+#: 5초마다 `ALERT` 를 떠난다. 그래서 `note_target()` 감시로 따로 둔다.
+TIMERS: tuple[StateTimer, ...] = (
+    StateTimer("PATROL", Event.SCAN_DUE, ("fsm", "patrol_scan_interval_s")),
+    StateTimer("SCAN", Event.SCAN_DONE, ("fsm", "scan_duration_s")),
+    StateTimer("AUTH_WAIT", Event.AUTH_FAILED, ("auth", "timeout_s")),
+)
 
 #: 상태 전용 모션 시퀀스의 서명. 송신기에 의도를 세우는 것이 전부이며
 #: 소켓을 만지지 않는다.
@@ -217,6 +270,28 @@ class Fsm:
         """
         self._exit_hooks.setdefault(state, []).append(hook)
 
+    def _target_for(self, event: Event) -> str | None:
+        """이 사건이 데려갈 상태. 전이가 없으면 `None`. **표에만 묻는다.**
+
+        `can()` 과 `handle()` 이 같은 답을 쓰도록 조회를 여기 한 곳에 모았다.
+        따로 쓰면 한쪽만 고쳐지는 날이 온다.
+        """
+        allowed = EXCLUSIVE.get(self._state)
+        if allowed is not None and event not in allowed:
+            return None
+        target = self._table.get((self._state, event)) or self._table.get((ANY, event))
+        if target is None or target == self._state:
+            return None
+        return target
+
+    def can(self, event: Event) -> bool:
+        """지금 이 사건이 전이를 만드는가. **감시자가 헛발질을 줄이는 데 쓴다.**
+
+        예를 들어 대상 상실 감시는 `ALERT`·`TRACK` 에서만 의미가 있는데, 그 판단을
+        상태 이름으로 하면 감시자 안에 상태 이름이 생긴다. 표에 물으면 안 생긴다.
+        """
+        return self._target_for(event) is not None
+
     def handle(self, event: Event) -> bool:
         """전이했으면 `True`. **모르는 사건은 조용히 무시한다.**
 
@@ -224,11 +299,8 @@ class Fsm:
         지금 상태와 무관한 사건이 오는 것은 정상이다. `FAILSAFE` 중에
         `TARGET_LOST` 가 와도 그건 버그가 아니다.
         """
-        allowed = EXCLUSIVE.get(self._state)
-        if allowed is not None and event not in allowed:
-            return False
-        target = self._table.get((self._state, event)) or self._table.get((ANY, event))
-        if target is None or target == self._state:
+        target = self._target_for(event)
+        if target is None:
             return False
         previous, self._state = self._state, target
         for hook in self._exit_hooks.get(previous, ()):
@@ -256,8 +328,12 @@ class Behavior:
         *,
         link_loss_ms: int = 3000,
         vision_stall_ms: int = 2000,
+        timers: Mapping[str, tuple[Event, int]] | None = None,
+        target_lost_ms: int | None = None,
     ) -> None:
         if link_loss_ms <= 0 or vision_stall_ms <= 0:
+            raise ValueError("타임아웃은 1 이상이어야 함")
+        if target_lost_ms is not None and target_lost_ms <= 0:
             raise ValueError("타임아웃은 1 이상이어야 함")
         self._commander = commander
         self._fsm = fsm if fsm is not None else Fsm()
@@ -267,6 +343,17 @@ class Behavior:
         self._last_telemetry_ms: int | None = None
         self._last_vision_ms: int | None = None
         self._degraded = False
+        # ⚠️ 타이머 기본값이 "없음" 인 것은 의도다. 생성자 기본값은 시험 편의용이고
+        # 실제 운용은 `behavior_from_config` 로 만든다 — 코드에 숫자를 박으면
+        # `config.yaml` 을 고쳐도 동작이 안 바뀐다 (NFR-3①).
+        self._timers: dict[str, tuple[Event, int]] = dict(timers or {})
+        self._target_lost_ms = target_lost_ms
+        self._last_target_ms: int | None = None
+        self._onboard_state: str | None = None
+        self._robot_latched: bool | None = None
+        self._known_state = self._fsm.state
+        self._state_since_ms: int | None = None
+        self._fired: set[str] = set()
 
     # ── 두 링크는 다르게 대응한다 (NFR-2.6) ────────────────────
     #
@@ -286,6 +373,38 @@ class Behavior:
         self._last_vision_ms = now_ms
         self._degraded = False
 
+    def note_target(self, now_ms: int) -> None:
+        """대상이 보인다. **검출될 때마다** 부른다 (FR-3.6).
+
+        대상 상실은 *상태에 머문 시간*이 아니라 *마지막 검출 이후 시간*이다.
+        그래서 링크 감시와 같은 모양이고 상태 타이머와는 다르다.
+        """
+        self._last_target_ms = now_ms
+
+    def note_onboard_state(self, state: str) -> None:
+        """로봇이 보고한 **온보드 상태**를 기억한다. **표시용이며 가드의 근거가 아니다.**
+
+        호스트 전용 상태(`ALERT`·`TRACK` 등)는 담지 않는다. 그것은 우리가 `STATE`
+        로 내려보낸 값이 되돌아온 것이라 판단 근거가 아니다 — 수신기가 사건을
+        만들지 않는 것과 같은 이유다.
+        """
+        if state in ONBOARD_STATES:
+            self._onboard_state = state
+
+    def note_robot_latch(self, latched: bool | None) -> None:
+        """로봇의 안전 래치 보고. **`LATCH_GUARDED` 가 보는 유일한 값이다.**"""
+        self._robot_latched = latched
+
+    @property
+    def onboard_state(self) -> str | None:
+        """로봇이 마지막으로 보고한 온보드 상태. 대시보드가 어긋남을 보이는 데 쓴다."""
+        return self._onboard_state
+
+    @property
+    def robot_latched(self) -> bool | None:
+        """로봇의 안전 래치. `None` 이면 아직 보고를 못 받았거나 구형 펌웨어다."""
+        return self._robot_latched
+
     @property
     def degraded(self) -> bool:
         """**비전만 죽은 상태.** 순찰은 계속되며 사람 인지가 비활성이다."""
@@ -298,12 +417,57 @@ class Behavior:
             self._last_telemetry_ms is not None
             and now_ms - self._last_telemetry_ms >= self._link_loss_ms
         ):
-            self._fsm.handle(Event.LINK_LOST)
+            self._handle(Event.LINK_LOST, now_ms)
         if (
             self._last_vision_ms is not None
             and now_ms - self._last_vision_ms >= self._vision_stall_ms
         ):
             self._degraded = True
+
+    def _watch_target(self, now_ms: int) -> None:
+        """마지막 검출 이후 임계가 지나면 `TARGET_LOST` (FR-3.6).
+
+        **지금 상태에서 그 사건이 전이를 만들 때만 본다** — 표에 물어보므로
+        여기에 `ALERT`·`TRACK` 같은 이름이 들어오지 않는다.
+        """
+        if self._target_lost_ms is None or self._last_target_ms is None:
+            return
+        if not self._fsm.can(Event.TARGET_LOST):
+            return
+        if now_ms - self._last_target_ms < self._target_lost_ms:
+            return
+        if self._handle(Event.TARGET_LOST, now_ms):
+            # 이미 반영했으므로 다음 검출까지 다시 재지 않는다.
+            self._last_target_ms = None
+
+    def _watch_timers(self, now_ms: int) -> None:
+        """상태에 머문 시간이 임계를 넘으면 사건을 낸다 (FR-2.4)."""
+        entry = self._timers.get(self._fsm.state)
+        if entry is None or self._state_since_ms is None:
+            return
+        if self._fsm.state in self._fired:
+            return
+        event, after_ms = entry
+        if now_ms - self._state_since_ms < after_ms:
+            return
+        # ⚠️ **한 번만 발화한다.** 전이가 막혀 있으면(가드·봉인) 매 틱마다 같은
+        # 사건을 다시 내게 되고, 그러면 로그가 초당 10건씩 쌓인다.
+        self._fired.add(self._fsm.state)
+        self._handle(event, now_ms)
+
+    def _mark_state(self, now_ms: int | None) -> None:
+        """상태가 바뀌었으면 진입 시각을 새로 적고 발화 기록을 비운다."""
+        if self._fsm.state == self._known_state:
+            return
+        self._known_state = self._fsm.state
+        self._state_since_ms = now_ms  # None 이면 다음 틱이 채운다
+        self._fired.clear()
+
+    def _handle(self, event: Event, now_ms: int | None) -> bool:
+        changed = self._fsm.handle(event)
+        if changed:
+            self._mark_state(now_ms)
+        return changed
 
     @property
     def state(self) -> str:
@@ -323,12 +487,18 @@ class Behavior:
             raise ValueError(f"{state} 는 시퀀스를 쓰는 상태가 아니다")
         self._sequences[state] = sequence
 
-    def event(self, event: Event) -> bool:
+    def event(self, event: Event, now_ms: int | None = None) -> bool:
         """사건을 넣는다. **여기서 `ESTOP` 전문을 만들지 않는다** — 로봇이 이미
         스스로 멈춘 상태를 호스트가 따라가는 것일 뿐이다. 사람이 누른 비상정지는
         송신기의 `emergency_stop()` 이 전문을 돌려준다.
+
+        `now_ms` 를 주면 상태 진입 시각이 정확해진다. 생략하면 다음 틱이 채우므로
+        타이머가 최대 한 주기(100ms) 늦게 시작한다 — 10초 타이머에는 무해하지만
+        **운용 루프는 반드시 넘긴다.**
         """
-        return self._fsm.handle(event)
+        if event in LATCH_GUARDED and self._robot_latched is True:
+            return False
+        return self._handle(event, now_ms)
 
     def tick(self, now_ms: int) -> list[str]:
         """링크를 살피고, 상태에 맞는 지시를 적용하고, 송신기의 틱 결과를 돌려준다.
@@ -337,7 +507,12 @@ class Behavior:
         명령이 페일세이프 상태에 맞는다. 나중에 보면 한 주기 동안 낡은 상태의
         명령이 나간다.
         """
-        self._watch_links(now_ms)
+        if self._state_since_ms is None:
+            self._state_since_ms = now_ms
+        self._mark_state(now_ms)  # 시각 없이 들어온 사건을 여기서 보정한다
+        self._watch_links(now_ms)  # 안전이 먼저
+        self._watch_target(now_ms)
+        self._watch_timers(now_ms)
         state = self._fsm.state
         directive = self._fsm.directive
         if directive is Directive.HALT:
@@ -353,6 +528,18 @@ class Behavior:
         return self._commander.tick(now_ms)
 
 
+def _lookup(config: Mapping[str, Any], path: tuple[str, ...]) -> int:
+    """설정 경로를 따라가 정수를 꺼낸다. **없으면 조용히 넘기지 않는다.**
+
+    빠진 키를 기본값으로 때우면 `config.yaml` 에서 항목을 지워도 동작이 그대로라
+    설정이 정본이 아니게 된다. 그래서 `KeyError` 를 그대로 올린다.
+    """
+    node: Any = config
+    for key in path:
+        node = node[key]
+    return int(node)
+
+
 def behavior_from_config(
     commander: Commander,
     config: Mapping[str, Any],
@@ -366,9 +553,14 @@ def behavior_from_config(
     두 값이 서로 다른 절에서 오는 것에 주의한다 — `safety` 는 안전 임계이고
     `vision` 은 기능 저하 임계다. 같은 절에 두면 언젠가 같은 대응으로 묶인다.
     """
+    timers: dict[str, tuple[Event, int]] = {}
+    for timer in TIMERS:
+        timers[timer.state] = (timer.event, _lookup(config, timer.path) * timer.unit_ms)
     return Behavior(
         commander,
         fsm,
         link_loss_ms=int(config["safety"]["link_loss_failsafe_ms"]),
         vision_stall_ms=int(config["vision"]["stall_timeout_ms"]),
+        timers=timers,
+        target_lost_ms=_lookup(config, ("fsm", "target_lost_timeout_s")) * 1000,
     )

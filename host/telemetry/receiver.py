@@ -44,6 +44,15 @@ class Reading:
     tipped: bool
     lowbatt: bool
     link_ok: bool
+    #: 로봇의 **자체 안전 래치**. `state` 와 달리 호스트가 내려보낸 값의 반향이
+    #: 아니다 — `FAILSAFE` 는 `STATE` 로도 내려가므로 되돌아온 것과 구분할 수 없다.
+    #: 그래서 규약이 *"송신측은 `safety_latched=false` 를 확인해야 한다"* 고 못박았다
+    #: (PROTOCOL 2절 안전 정지와 해제). 구형 펌웨어는 이 필드가 없어 `None` 이다.
+    safety_latched: bool | None = None
+    #: 로봇이 **마지막으로 받아들인** 명령의 경과 시각. 우리가 10Hz 로 보내는데도
+    #: 이 값이 계속 커지면 **로봇이 우리 명령을 폐기하고 있다** — 호스트 재시작으로
+    #: seq 가 되돌아간 경우가 대표적이다 (PROTOCOL 4절 세션 개시).
+    last_cmd_age_ms: int | None = None
 
     @classmethod
     def of(cls, msg: Mapping[str, Any]) -> Reading:
@@ -58,6 +67,8 @@ class Reading:
             tipped=flags["tipped"],
             lowbatt=flags["lowbatt"],
             link_ok=flags["link_ok"],
+            safety_latched=msg.get("safety_latched"),
+            last_cmd_age_ms=msg.get("last_cmd_age_ms"),
         )
 
 
