@@ -290,3 +290,172 @@ def test_parsed_frame_decodes() -> None:
     frames = MjpegParser().feed(part(payload), 1000)
     assert len(frames) == 1
     assert decode_jpeg(frames[0].payload).shape == (8, 8, 3)
+
+
+# ══════════════════════════════════════════════════════════════
+#  연결과 재연결 (WBS 4.3.4)
+# ══════════════════════════════════════════════════════════════
+from host.vision.stream_client import StreamReader, boundary_from  # noqa: E402
+
+
+class _FakeStream:
+    """응답 하나를 흉내낸다. `chunks` 를 다 내주면 연결이 끊긴 것으로 본다."""
+
+    def __init__(self, chunks: list[bytes], *, content_type: str = "") -> None:
+        self._chunks = list(chunks)
+        self.headers = {"Content-Type": content_type}
+
+    def read(self, _size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def __enter__(self) -> _FakeStream:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+class _FakeNetwork:
+    """붙을 때마다 미리 정한 대본대로 응답하거나 실패한다."""
+
+    def __init__(self, script: list[object]) -> None:
+        self.script = list(script)
+        self.opened = 0
+        self.slept: list[float] = []
+
+    def opener(self, _url: str, timeout: float = 0.0):  # noqa: ARG002
+        self.opened += 1
+        if not self.script:
+            raise OSError("대본 소진")
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def sleeper(self, seconds: float) -> None:
+        self.slept.append(seconds)
+
+
+def _reader(cfg: dict, net: _FakeNetwork, clock=None) -> StreamReader:
+    return StreamReader(
+        dict(cfg, xiao_ip="10.0.0.9"),
+        opener=net.opener,
+        clock=clock or (lambda: 0),
+        sleeper=net.sleeper,
+    )
+
+
+# ── 경계는 응답이 알려준다 ───────────────────────────────────
+def test_boundary_comes_from_the_response() -> None:
+    """펌웨어의 경계를 코드에 박으면 이름이 바뀌는 순간 프레임이 0개가 된다."""
+    assert boundary_from("multipart/x-mixed-replace;boundary=abc-123") == "abc-123"
+    assert boundary_from('multipart/x-mixed-replace; boundary="quoted"') == "quoted"
+    assert boundary_from("multipart/x-mixed-replace") == DEFAULT_BOUNDARY
+    assert boundary_from("") == DEFAULT_BOUNDARY
+
+
+def test_reader_uses_the_advertised_boundary(cfg: dict) -> None:
+    wire = part(jpeg(20), boundary="server-side")
+    net = _FakeNetwork(
+        [_FakeStream([wire], content_type="multipart/x-mixed-replace;boundary=server-side")]
+    )
+    frames = list(_reader(cfg, net).frames(max_frames=1))
+    assert len(frames) == 1
+
+
+# ── 백오프 ───────────────────────────────────────────────────
+def test_backoff_grows_then_saturates(cfg: dict) -> None:
+    """1 → 2 → 4 … 로 늘고 마지막 값에서 멈춘다 (최대 30초)."""
+    net = _FakeNetwork([OSError("refused")] * 8)
+    reader = _reader(cfg, net)
+    list(reader.frames(max_failures=7))
+    expected = cfg["vision"]["reconnect_backoff_s"]
+    assert net.slept[: len(expected)] == [float(s) for s in expected]
+    assert net.slept[-1] == float(expected[-1]), "마지막 값에서 포화한다"
+
+
+def test_backoff_resets_only_after_a_frame(cfg: dict) -> None:
+    """⚠️ **연결 성공으로 되돌리면 1초 간격 영구 재시도가 된다.**
+
+    붙자마자 끊기는 상태에서는 백오프가 계속 늘어야 한다.
+    """
+    net = _FakeNetwork([_FakeStream([b""]), _FakeStream([b""]), _FakeStream([b""])])
+    reader = _reader(cfg, net)
+    list(reader.frames(max_failures=2))
+    assert net.slept == [1.0, 2.0, 4.0], "프레임이 없었으니 계속 늘어난다"
+
+
+def test_backoff_resets_when_a_frame_arrives(cfg: dict) -> None:
+    net = _FakeNetwork(
+        [
+            OSError("첫 시도 실패"),
+            _FakeStream([part(jpeg(20))]),  # 프레임 하나 받고 끊김
+            OSError("다시 실패"),
+        ]
+    )
+    reader = _reader(cfg, net)
+    list(reader.frames(max_failures=2))
+    assert net.slept[0] == 1.0
+    assert net.slept[1] == 1.0, "프레임을 받았으므로 다시 1초부터"
+
+
+def test_stream_recovers_and_keeps_yielding(cfg: dict) -> None:
+    """차단 뒤 자동 복구 — DoD 조항이다."""
+    net = _FakeNetwork(
+        [
+            _FakeStream([part(jpeg(10))]),
+            OSError("강제 차단"),
+            _FakeStream([part(jpeg(20)) + part(jpeg(30))]),
+        ]
+    )
+    reader = _reader(cfg, net)
+    frames = list(reader.frames(max_frames=3))
+    assert [f.size_bytes for f in frames] == [14, 24, 34]
+    assert net.opened == 3, "세 번 붙었다 — 그중 한 번은 열리지도 않았다"
+    assert reader.stats.connects == 2, "connects 는 실제로 열린 횟수만 센다"
+    assert reader.stats.failures >= 1
+
+
+# ── 멈춘 스트림 ──────────────────────────────────────────────
+def test_silent_stream_is_treated_as_broken(cfg: dict) -> None:
+    """⚠️ **TCP 는 조용한 것과 살아 있는 것을 구분해 주지 않는다.**
+
+    바이트는 오는데 프레임이 안 만들어지는 경우도 끊긴 것으로 본다 (NFR-2.6).
+    """
+    ticks = iter([0, 0, 500, 1000, 1500, 2000, 2500] + [3000] * 20)
+    net = _FakeNetwork([_FakeStream([b"garbage"] * 6), _FakeStream([part(jpeg(20))])])
+    reader = StreamReader(
+        dict(cfg, xiao_ip="10.0.0.9"),
+        opener=net.opener,
+        clock=lambda: next(ticks),
+        sleeper=net.sleeper,
+    )
+    frames = list(reader.frames(max_frames=1))
+    assert reader.stats.stalls >= 1, "침묵을 감지해야 한다"
+    assert len(frames) == 1, "그 뒤 다시 붙어 프레임을 받는다"
+
+
+# ── 설정 검증 ────────────────────────────────────────────────
+def test_backoff_must_be_positive_and_increasing(cfg: dict) -> None:
+    """줄어드는 간격은 백오프가 아니라 폭주다."""
+    from host.common.config import ConfigError, validate_base_config
+
+    broken = dict(cfg)
+    broken["vision"] = dict(cfg["vision"], reconnect_backoff_s=[4, 2, 1])
+    with pytest.raises(ConfigError, match="증가하는"):
+        validate_base_config(broken)
+
+    broken["vision"] = dict(cfg["vision"], reconnect_backoff_s=[])
+    with pytest.raises(ConfigError, match="비어 있지 않은"):
+        validate_base_config(broken)
+
+    broken["vision"] = dict(cfg["vision"], reconnect_backoff_s=[1, 0, 4])
+    with pytest.raises(ConfigError, match="양수"):
+        validate_base_config(broken)
+
+
+def test_reader_refuses_empty_backoff(cfg: dict) -> None:
+    bad = dict(cfg, xiao_ip="10.0.0.9")
+    bad["vision"] = dict(cfg["vision"], reconnect_backoff_s=[])
+    with pytest.raises(ValueError):
+        StreamReader(bad)

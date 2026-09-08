@@ -519,6 +519,7 @@ mechdog_physical_ai/
 │   ├── teleop.py                      ✅ 키보드 수동 조작
 │   ├── mechdog_command.py             ✅ 실기 시험 송신기 (safety · move · watchdog)
 │   ├── udp_probe.py                   ✅ UDP 왕복 측정
+│   ├── latency_probe.py               ✅ E2E 지연 하네스 — 화면 카운터 촬영 (6.1.2)
 │   └── wbs_assignments.py             ✅ 담당자별 작업 목록 생성
 ├── tests/                             ✅ pytest — 하드웨어 불요
 ├── third_party/                       ❌ **비워 둔다** — 벤더 라이브러리는 라이선스 표기가 없어 재배포 불가 (ADR-20)
