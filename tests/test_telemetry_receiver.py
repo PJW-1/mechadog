@@ -31,6 +31,7 @@ def record(**over) -> str:
     """정상 레코드 하나. 바꿀 필드만 넘긴다."""
     base = {
         "device_id": "mechdog-a",
+        "boot_id": "boot-a-001",
         "state": "PATROL",
         "dist_cm": 180,
         "imu": {"pitch": 1.0, "roll": 0.0, "yaw": 180.0},
@@ -40,8 +41,10 @@ def record(**over) -> str:
     }
     base.update(over)
     device_id = base.pop("device_id")
+    boot_id = base.pop("boot_id")
     flags = base.pop("flags")
-    encoder = _ENCODERS.setdefault(device_id, TelemetryEncoder(device_id=device_id))
+    session = f"{device_id}/{boot_id}"
+    encoder = _ENCODERS.setdefault(session, TelemetryEncoder(device_id=device_id, boot_id=boot_id))
     return encoder.encode(flags=flags, **base)
 
 
@@ -71,6 +74,29 @@ def test_robot_reporting_avoid_becomes_an_event() -> None:
     r = TelemetryReceiver()
     out = r.ingest(record(state="AVOID", dist_cm=20))
     assert Event.ONBOARD_AVOID in out.events
+
+
+@pytest.mark.parametrize(
+    ("state", "flags"),
+    [
+        ("AVOID", {"lowbatt": False, "tipped": False, "link_ok": True}),
+        ("FAILSAFE", {"lowbatt": False, "tipped": True, "link_ok": True}),
+    ],
+)
+def test_repeated_onboard_state_is_edge_triggered(state: str, flags: dict[str, bool]) -> None:
+    r = TelemetryReceiver()
+    assert r.ingest(record(state=state, flags=flags)).events
+    for _ in range(20):
+        assert r.ingest(record(state=state, flags=flags)).events == ()
+
+
+def test_new_boot_does_not_inherit_previous_onboard_state() -> None:
+    r = TelemetryReceiver()
+    r.ingest(record(state="AVOID", dist_cm=20, boot_id="boot-a-001"))
+    rebooted = r.ingest(record(state="PATROL", boot_id="boot-a-002"))
+    assert rebooted.accepted
+    assert rebooted.events == ()
+    assert r.last_onboard_state("mechdog-a") == "PATROL"
 
 
 def test_leaving_avoid_reports_recovery() -> None:
@@ -143,8 +169,8 @@ def test_discarded_records_produce_no_events() -> None:
 def test_sequence_reversal_is_discarded_per_device() -> None:
     """개체별 seq 게이트 — 한 개체의 역전이 다른 개체를 막으면 안 된다."""
     r = TelemetryReceiver()
-    enc_a = TelemetryEncoder(device_id="mechdog-a")
-    enc_b = TelemetryEncoder(device_id="mechdog-b")
+    enc_a = TelemetryEncoder(device_id="mechdog-a", boot_id="boot-a-001")
+    enc_b = TelemetryEncoder(device_id="mechdog-b", boot_id="boot-b-001")
     common = {
         "state": "PATROL",
         "dist_cm": 100,
@@ -223,4 +249,4 @@ def test_events_drive_the_fsm(clock) -> None:
 
 def test_reading_is_immutable() -> None:
     with pytest.raises(AttributeError):
-        Reading("a", 1, "PATROL", 8.0, 100, False, False, True).state = "ALERT"  # type: ignore[misc]
+        Reading("a", "boot-a", 1, "PATROL", 8.0, 100, False, False, True).state = "ALERT"  # type: ignore[misc]

@@ -29,7 +29,7 @@ C++ 구현이다. 둘이 어긋나면 같은 골든 픽스처를 보는 CI 가 �
 import json
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -125,6 +125,7 @@ TELEMETRY_REQUIRED: tuple[str, ...] = (
     "seq",
     "ts",
     "device_id",
+    "boot_id",
     "state",
     "dist_cm",
     "imu",
@@ -138,7 +139,7 @@ FLAG_FIELDS: tuple[str, ...] = ("lowbatt", "tipped", "link_ok")
 #: `TelemetryEncoder` 가 스스로 채우며 `extra` 로 덮을 수 없는 필드.
 #: 나머지 본문 필드(`state`·`dist_cm`·`imu`·`batt_v`·`last_cmd_age_ms`·`flags`)는
 #: `build()` 의 **명명 인자**이므로 애초에 `extra` 에 닿지 않는다 — 파이썬이 막는다.
-TELEMETRY_MANAGED: frozenset[str] = frozenset({"seq", "ts", "device_id"})
+TELEMETRY_MANAGED: frozenset[str] = frozenset({"seq", "ts", "device_id", "boot_id"})
 
 #: 2S 리튬 물리 범위 (셀당 3.0~4.2V). 이 밖의 값은 측정 오류이므로 폐기한다.
 #: 저전압 **판정** 임계(config.safety.battery_*)와는 다른 것이다 — 이것은
@@ -314,15 +315,15 @@ class _SeqGate:
     """
 
     def __init__(self) -> None:
-        self._last: dict[str, int] = {}
+        self._last: dict[Hashable, int] = {}
 
-    def last_seq(self, sender: str = "") -> int | None:
+    def last_seq(self, sender: Hashable = "") -> int | None:
         return self._last.get(sender)
 
-    def reset(self, sender: str = "") -> None:
+    def reset(self, sender: Hashable = "") -> None:
         self._last.pop(sender, None)
 
-    def admit(self, seq: int, sender: str = "") -> bool:
+    def admit(self, seq: int, sender: Hashable = "") -> bool:
         last = self._last.get(sender)
         if last is not None and seq <= last:
             return False
@@ -519,14 +520,18 @@ class TelemetryEncoder:
     def __init__(
         self,
         device_id: str,
+        boot_id: str,
         clock: Callable[[], int] = system_clock_ms,
         start_seq: int = 1,
     ) -> None:
         if not isinstance(device_id, str) or not device_id:
             raise ValueError("device_id 는 필수다 — IP 로 송신자를 구분하면 안 된다 (DR-17)")
+        if not isinstance(boot_id, str) or not boot_id or len(boot_id) > 64:
+            raise ValueError("boot_id 는 1~64자의 문자열이어야 함")
         if not _is_int(start_seq) or start_seq < 1:
             raise ValueError("start_seq 는 1 이상의 정수여야 함")
         self._device_id = device_id
+        self._boot_id = boot_id
         self._clock = clock
         self._seq = start_seq
 
@@ -581,6 +586,7 @@ class TelemetryEncoder:
             "seq": self._seq,
             "ts": timestamp,
             "device_id": self._device_id,
+            "boot_id": self._boot_id,
             "state": state,
             "dist_cm": dist_cm,
             "imu": dict(imu),
@@ -606,12 +612,17 @@ class TelemetryDecoder:
     def __init__(self) -> None:
         self._gate = _SeqGate()
 
-    def last_seq(self, device_id: str) -> int | None:
-        return self._gate.last_seq(device_id)
+    @staticmethod
+    def _session_key(device_id: str, boot_id: str) -> tuple[str, str]:
+        return device_id, boot_id
 
-    def reset_device(self, device_id: str) -> None:
-        """상위 연결 관리자가 개체 재기동을 확인했을 때 seq 기준을 초기화한다."""
-        self._gate.reset(device_id)
+    def last_seq(self, device_id: str, boot_id: str) -> int | None:
+        """해당 개체의 **한 부팅 세션**에서 마지막으로 받은 seq."""
+        return self._gate.last_seq(self._session_key(device_id, boot_id))
+
+    def forget_session(self, device_id: str, boot_id: str) -> None:
+        """시험·명시적 세션 폐기용. 정상 재부팅은 새 boot_id 로 자동 분리된다."""
+        self._gate.reset(self._session_key(device_id, boot_id))
 
     def decode(self, raw: str | bytes) -> DecodeResult:
         parsed = _parse(raw)
@@ -634,6 +645,8 @@ class TelemetryDecoder:
             return DecodeResult(Verdict.DISCARD, "seq 또는 ts 가 음수 범위")
         if not isinstance(msg["device_id"], str) or not msg["device_id"]:
             return DecodeResult(Verdict.DISCARD, "device_id 가 비어 있음")
+        if not isinstance(msg["boot_id"], str) or not msg["boot_id"] or len(msg["boot_id"]) > 64:
+            return DecodeResult(Verdict.DISCARD, "boot_id 가 비어 있거나 64자를 초과함")
 
         imu, flags = msg["imu"], msg["flags"]
         if not isinstance(imu, dict) or not isinstance(flags, dict):
@@ -647,8 +660,10 @@ class TelemetryDecoder:
             if not isinstance(flags.get(name), bool):
                 return DecodeResult(Verdict.DISCARD, f"flags.{name} 누락 또는 비불리언")
 
-        # ① seq 역전·중복 — 개체별로 센다
-        if not self._gate.admit(msg["seq"], msg["device_id"]):
+        # ① seq 역전·중복 — 개체와 부팅 세션별로 센다. ESP32가 재부팅해
+        # seq=1로 돌아와도 새 boot_id이면 즉시 받아들인다.
+        session_key = self._session_key(msg["device_id"], msg["boot_id"])
+        if not self._gate.admit(msg["seq"], session_key):
             return DecodeResult(Verdict.DISCARD, "seq 역전·중복")
 
         # ③ 모르는 상태 — 폐기 + WARN
