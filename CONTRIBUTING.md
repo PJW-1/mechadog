@@ -60,8 +60,9 @@ feature ●    ●         ●    ●    ●                   작업 브랜치
 
 > **GitHub 설정 확인 주의** — [CODEOWNERS](CODEOWNERS)는 리뷰어를 지정할 뿐, 파일 하나만으로 승인을 강제하지 않는다.
 > 실제 강제에는 `main`의 branch protection/ruleset에서 **PR·필수 CI·Code Owner 승인·강제 푸시 금지**를 켜야 한다.
-> 2026-09-05 일반 권한 계정에서 확인 가능한 범위로는 `main`과 `dev` 모두 보호 상태이며 Python/Firmware Quality가
-> 필수 체크로 보인다. PR·승인·강제 푸시 세부값은 저장소 관리자 `@PJW-1`이 설정 화면에서 최종 확인한다.
+> 2026-09-08 `main`과 `dev` 모두 보호 상태이며 **Python Quality, Firmware Quality,
+> MechDog-Motion 빌드, XIAO-Vision 빌드** 네 검사가 머지 필수다. `main`은 Code Owner 승인 1건도
+> 요구하며, 두 브랜치 모두 강제 푸시·삭제를 막는다.
 
 ### 작업 흐름
 

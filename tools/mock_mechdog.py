@@ -135,7 +135,9 @@ class MockRobot:
         self._rng = random.Random(self._faults.seed)
         self._start_ms = start_ms
         self._decoder = CommandDecoder()
-        self._encoder = TelemetryEncoder(device_id, clock=lambda: self._now_ms)
+        self._encoder = TelemetryEncoder(
+            device_id, f"mock-{start_ms:016x}", clock=lambda: self._now_ms
+        )
         self._now_ms = start_ms
         self._last = _LastCommand(at_ms=start_ms)
         self._link_seen = False  # 한 번이라도 유효 명령을 받았는가
@@ -234,7 +236,7 @@ class MockRobot:
 
     def stopped_by_timeout(self, now_ms: int) -> bool:
         """300ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다 (아키텍처 3절)."""
-        return not self._link_seen or self.last_cmd_age_ms(now_ms) > self._safety["cmd_timeout_ms"]
+        return not self._link_seen or self.last_cmd_age_ms(now_ms) >= self._safety["cmd_timeout_ms"]
 
     def _physical_fault(self, now_ms: int) -> bool:
         return self.tipped(now_ms) or self.battery_v(now_ms) <= self._safety["battery_shutdown_v"]

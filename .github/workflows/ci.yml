@@ -141,7 +141,7 @@ jobs:
               exit 1
             fi
             echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::${{ matrix.target.dir }}에 스케치가 없어 빌드를 건너뜁니다 (WBS 4.1/4.2 미착수)"
+            echo "::notice::${{ matrix.target.dir }}에 스케치가 없어 해당 타깃 빌드를 건너뜁니다"
           fi
 
       - name: Setup arduino-cli

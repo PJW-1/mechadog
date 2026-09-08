@@ -21,7 +21,7 @@ def test_huge_command_number_is_discarded_and_next_packet_survives():
 
 
 def test_huge_telemetry_number_is_discarded():
-    record = TelemetryEncoder("unit").build(
+    record = TelemetryEncoder("unit", "boot-unit-001").build(
         "PATROL",
         50,
         {"pitch": 0, "roll": 0, "yaw": 0},

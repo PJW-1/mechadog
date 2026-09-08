@@ -295,14 +295,16 @@ def test_telemetry_seq_is_tracked_per_device() -> None:
     """한 카운터로 묶으면 개체끼리 서로의 패킷을 폐기한다 (CONTRIBUTING 1절)."""
     decoder = p.TelemetryDecoder()
     encoders = {
-        "mechdog-a": p.TelemetryEncoder("mechdog-a", clock=FakeClock(), start_seq=100),
-        "mechdog-b": p.TelemetryEncoder("mechdog-b", clock=FakeClock(), start_seq=1),
+        "mechdog-a": p.TelemetryEncoder(
+            "mechdog-a", "boot-a-001", clock=FakeClock(), start_seq=100
+        ),
+        "mechdog-b": p.TelemetryEncoder("mechdog-b", "boot-b-001", clock=FakeClock(), start_seq=1),
     }
     for device, encoder in encoders.items():
         result = decoder.decode(encoder.encode(**_telemetry_kwargs()))
         assert result.accepted, f"{device}: {result.reason}"
-    assert decoder.last_seq("mechdog-a") == 100
-    assert decoder.last_seq("mechdog-b") == 1
+    assert decoder.last_seq("mechdog-a", "boot-a-001") == 100
+    assert decoder.last_seq("mechdog-b", "boot-b-001") == 1
 
 
 def test_telemetry_unknown_state_is_discarded_with_warning() -> None:
@@ -358,12 +360,14 @@ def test_telemetry_negative_command_age_is_discarded() -> None:
     assert not p.TelemetryDecoder().decode(p.serialize(record)).accepted
 
 
-def test_telemetry_sequence_can_be_reset_after_confirmed_reconnect() -> None:
+def test_telemetry_sequence_restarts_automatically_after_reboot() -> None:
     decoder = p.TelemetryDecoder()
     first = {**_valid_telemetry(), "seq": 100}
     assert decoder.decode(p.serialize(first)).accepted
-    decoder.reset_device("mechdog-a")
-    assert decoder.decode(p.serialize(_valid_telemetry())).accepted
+    rebooted = {**_valid_telemetry(), "boot_id": "boot-a-002", "seq": 1}
+    assert decoder.decode(p.serialize(rebooted)).accepted
+    assert decoder.last_seq("mechdog-a", "boot-a-001") == 100
+    assert decoder.last_seq("mechdog-a", "boot-a-002") == 1
 
 
 def test_telemetry_tipped_must_agree_with_state() -> None:
@@ -386,21 +390,28 @@ def test_telemetry_lowbatt_during_patrol_is_not_a_contradiction() -> None:
 
 def test_telemetry_encoder_round_trip() -> None:
     """가상 MechDog(WBS 6.1.1)이 내보낼 레코드가 그대로 수신 검증을 통과해야 한다."""
-    encoder = p.TelemetryEncoder("mechdog-ref", clock=FakeClock())
+    encoder = p.TelemetryEncoder("mechdog-ref", "boot-ref-001", clock=FakeClock())
     result = p.TelemetryDecoder().decode(encoder.encode(**_telemetry_kwargs()))
     assert result.accepted, result.reason
     assert result.message["device_id"] == "mechdog-ref"
+    assert result.message["boot_id"] == "boot-ref-001"
 
 
 def test_telemetry_encoder_requires_device_id() -> None:
     """송신자를 IP 로 구분하면 안 된다 — DHCP 로 바뀌고 컨테이너면 게이트웨이로 보인다."""
     with pytest.raises(ValueError, match="device_id"):
-        p.TelemetryEncoder("", clock=FakeClock())
+        p.TelemetryEncoder("", "boot-ref-001", clock=FakeClock())
+
+
+@pytest.mark.parametrize("boot_id", ["", 7, "x" * 65])
+def test_telemetry_encoder_requires_valid_boot_id(boot_id: object) -> None:
+    with pytest.raises(ValueError, match="boot_id"):
+        p.TelemetryEncoder("mechdog-ref", boot_id, clock=FakeClock())  # type: ignore[arg-type]
 
 
 def test_telemetry_encoder_rejects_unknown_state() -> None:
     with pytest.raises(ValueError, match="알 수 없는 상태"):
-        p.TelemetryEncoder("mechdog-ref", clock=FakeClock()).build(
+        p.TelemetryEncoder("mechdog-ref", "boot-ref-001", clock=FakeClock()).build(
             **{**_telemetry_kwargs(), "state": "DANCING"}
         )
 
@@ -430,6 +441,7 @@ def _valid_telemetry() -> dict:
         "seq": 1,
         "ts": 1_756_800_000_000,
         "device_id": "mechdog-a",
+        "boot_id": "boot-a-001",
         **_telemetry_kwargs(),
     }
 
@@ -473,11 +485,11 @@ def test_telemetry_encoder_rejects_incomplete_nested_field(dropped: str) -> None
     kwargs = _telemetry_kwargs()
     kwargs[dropped] = {}
     with pytest.raises(ValueError, match=f"{dropped} 필드 누락"):
-        p.TelemetryEncoder("mechdog-ref", clock=FakeClock()).build(**kwargs)
+        p.TelemetryEncoder("mechdog-ref", "boot-ref-001", clock=FakeClock()).build(**kwargs)
 
 
 def test_telemetry_encoder_seq_is_monotonic() -> None:
-    encoder = p.TelemetryEncoder("mechdog-ref", clock=FakeClock())
+    encoder = p.TelemetryEncoder("mechdog-ref", "boot-ref-001", clock=FakeClock())
     assert encoder.next_seq == 1
     encoder.build(**_telemetry_kwargs())
     assert encoder.next_seq == 2
@@ -692,16 +704,16 @@ def test_telemetry_encoder_rejects_reserved_fields(reserved: str) -> None:
     """특히 `device_id` — 덮을 수 있으면 **송신자를 위조할 수 있다** (DR-17).
 
     본문의 나머지 필드는 `build()` 의 명명 인자여서 `extra` 에 닿지 않는다.
-    실제로 위조 가능한 것은 `seq`·`ts`·`device_id` 셋뿐이다.
+    실제로 위조 가능한 것은 `seq`·`ts`·`device_id`·`boot_id` 넷뿐이다.
     """
-    encoder = p.TelemetryEncoder("mechdog-ref", clock=FakeClock())
+    encoder = p.TelemetryEncoder("mechdog-ref", "boot-ref-001", clock=FakeClock())
     with pytest.raises(ValueError, match="인코더가 관리하는 필드"):
         encoder.build(**{**_telemetry_kwargs(), reserved: "위조"})
 
 
 def test_telemetry_encoder_still_accepts_additive_extras() -> None:
     """예약 필드가 아닌 추가 필드는 자유롭게 실을 수 있어야 한다 (PROTOCOL.md 4절)."""
-    encoder = p.TelemetryEncoder("mechdog-ref", clock=FakeClock())
+    encoder = p.TelemetryEncoder("mechdog-ref", "boot-ref-001", clock=FakeClock())
     msg = encoder.build(**_telemetry_kwargs(), events={"timeout_stops": 3})
     assert msg["events"] == {"timeout_stops": 3}
     assert p.TelemetryDecoder().decode(p.serialize(msg)).accepted

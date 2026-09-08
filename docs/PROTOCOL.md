@@ -33,6 +33,8 @@
 {"seq": 1239, "ts": 1756800000623, "type": "LED",    "color": "red", "blink_hz": 2}
 {"seq": 1240, "ts": 1756800000723, "type": "SOUND",  "phrase_id": 181}
 {"seq": 1241, "ts": 1756800000823, "type": "STATE",  "state": "ALERT"}
+{"seq": 1242, "ts": 1756800000923, "type": "ESTOP"}
+{"seq": 1243, "ts": 1756800001023, "type": "RESET_SAFE"}
 ```
 
 ### 공통 필드
@@ -190,6 +192,7 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
 {
   "seq": 88, "ts": 1756800000500,
   "device_id": "mechdog-b",
+  "boot_id": "7f3a91c2e8b40d65",
   "state": "PATROL",
   "dist_cm": 47,
   "imu": {"pitch": 1.2, "roll": -0.4, "yaw": 183.5},
@@ -199,7 +202,7 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
 }
 ```
 
-> **`device_id` 는 필수다.** 다중 개체를 돌릴 때 송신자를 IP 로 구분하면 안 된다. DHCP 로 바뀔 수 있고, 호스트가 컨테이너 안이면 출처가 게이트웨이로 보인다 (DR-17).
+> **`device_id` 와 `boot_id` 는 필수다.** `device_id` 는 물리 개체를, `boot_id` 는 그 개체의 한 번의 부팅을 구분한다. ESP32는 부팅할 때마다 새 불투명 문자열(권장: 난수 64비트의 16자리 hex)을 만들고 해당 부팅 동안 유지한다. 호스트는 `(device_id, boot_id)`별로 `seq`를 검사하므로 재부팅 후 `seq=1`을 즉시 받을 수 있다. 송신자를 IP로 구분하면 DHCP·컨테이너 경계 때문에 잘못 연결될 수 있다 (DR-17).
 >
 > ESP32 는 파일 로깅을 하지 않는다. **텔레메트리가 곧 로그다.**
 
@@ -209,8 +212,8 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
 
 | # | 규칙 |
 | :-- | :--- |
-| ① | `seq` 역전·중복 폐기 |
-| ② | `seq` · `ts` · `device_id` · `state` · `dist_cm` · `imu` · `batt_v` · `last_cmd_age_ms` · `flags` 중 하나라도 없으면 폐기 |
+| ① | 같은 `(device_id, boot_id)` 안에서 `seq` 역전·중복 폐기. 새 `boot_id`의 `seq=1`은 수락 |
+| ② | `seq` · `ts` · `device_id` · `boot_id` · `state` · `dist_cm` · `imu` · `batt_v` · `last_cmd_age_ms` · `flags` 중 하나라도 없으면 폐기 |
 | ③ | **모르는 `state` 는 폐기 + WARN** — 상태 추가를 하위 호환으로 만든다 |
 | ④ | `batt_v` 가 2S 리튬 물리 범위(6.0~8.4V) 밖이거나 `dist_cm` 이 음수면 폐기 |
 | ⑤ | `flags.tipped` 인데 `state` 가 `FAILSAFE` 가 아니면 **폐기 + WARN** |

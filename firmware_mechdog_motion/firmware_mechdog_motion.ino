@@ -177,6 +177,13 @@ void loop() {
   const uint32_t now = millis();
 
   if (WiFi.status() != WL_CONNECTED) {
+    // WiFiUDP의 로컬 소켓은 인터페이스가 끊긴 뒤에도 started 상태로 남을 수
+    // 있다. 명시적으로 닫아야 재접속 뒤 같은 포트에 다시 bind한다.
+    if (g_udp_started) {
+      g_udp.stop();
+      g_udp_started = false;
+      Serial.println("UDP stopped; waiting for Wi-Fi reconnect");
+    }
     latchFailsafe("Wi-Fi disconnected");
     if (now - g_last_reconnect_attempt_ms >= kReconnectIntervalMs) {
       g_last_reconnect_attempt_ms = now;
@@ -192,8 +199,8 @@ void loop() {
   // tick newer than `now`; subtracting that from the older unsigned value wraps.
   const uint32_t watchdog_now = millis();
   if (g_have_valid_command && !g_safe_latched &&
-      watchdog_now - g_last_valid_command_ms > kCommandTimeoutMs) {
-    latchFailsafe("command timeout > 300 ms");
+      watchdog_now - g_last_valid_command_ms >= kCommandTimeoutMs) {
+    latchFailsafe("command timeout >= 300 ms");
   }
 
   delay(1);
