@@ -477,7 +477,7 @@ mechdog_physical_ai/
 │   │   ├── config.py                  ✅ 로더 + 스키마 검증
 │   │   └── logging_setup.py           ⬜ JSON Lines 로거 (4.4.2)
 │   ├── vision/                        ⬜ 스트림 수신 · 객체 검출 (3.3 · 4.3.3~5)
-│   ├── telemetry/                     ⬜ 텔레메트리 수신 (4.3.4)
+│   ├── telemetry/                     ⬜ 텔레메트리 수신·사건 변환 (4.3.6)
 │   └── dashboard/                     ⬜ FastAPI + WebSocket + UI (4.5 · 4.6)
 ├── tools/
 │   ├── mock_mechdog.py                ✅ 가상 MechDog — 로봇 없이 호스트를 검증
