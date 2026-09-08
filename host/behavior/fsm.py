@@ -30,9 +30,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from host.behavior.commander import Commander
 
@@ -193,6 +194,7 @@ class Fsm:
             raise ValueError(f"지시가 정의되지 않은 초기 상태: {initial!r}")
         self._state = initial
         self._hooks: dict[str, list[Callable[[str, str], None]]] = {}
+        self._exit_hooks: dict[str, list[Callable[[str, str], None]]] = {}
 
     @property
     def state(self) -> str:
@@ -205,6 +207,15 @@ class Fsm:
     def on_enter(self, state: str, hook: Callable[[str, str], None]) -> None:
         """상태 진입 훅. 인자는 `(이전 상태, 새 상태)` 다."""
         self._hooks.setdefault(state, []).append(hook)
+
+    def on_exit(self, state: str, hook: Callable[[str, str], None]) -> None:
+        """상태 이탈 훅. 인자는 `(떠나는 상태, 갈 상태)` 다.
+
+        **이탈 훅이 진입 훅보다 먼저 불린다.** 뒷정리가 새 상태의 준비보다 앞서야
+        한다 — `SCAN` 을 떠날 때 스캔 타이머를 멈추지 않고 `PATROL` 진입에서
+        순찰 타이머를 켜면, 두 타이머가 겹쳐 도는 순간이 생긴다.
+        """
+        self._exit_hooks.setdefault(state, []).append(hook)
 
     def handle(self, event: Event) -> bool:
         """전이했으면 `True`. **모르는 사건은 조용히 무시한다.**
@@ -220,6 +231,8 @@ class Fsm:
         if target is None or target == self._state:
             return False
         previous, self._state = self._state, target
+        for hook in self._exit_hooks.get(previous, ()):
+            hook(previous, target)
         for hook in self._hooks.get(target, ()):
             hook(previous, target)
         return True
@@ -236,10 +249,61 @@ class Behavior:
     등록되지 않은 상태에서 이전 의도를 그대로 두면 로봇이 계속 걸어간다.
     """
 
-    def __init__(self, commander: Commander, fsm: Fsm | None = None) -> None:
+    def __init__(
+        self,
+        commander: Commander,
+        fsm: Fsm | None = None,
+        *,
+        link_loss_ms: int = 3000,
+        vision_stall_ms: int = 2000,
+    ) -> None:
+        if link_loss_ms <= 0 or vision_stall_ms <= 0:
+            raise ValueError("타임아웃은 1 이상이어야 함")
         self._commander = commander
         self._fsm = fsm if fsm is not None else Fsm()
         self._sequences: dict[str, Sequence] = {}
+        self._link_loss_ms = link_loss_ms
+        self._vision_stall_ms = vision_stall_ms
+        self._last_telemetry_ms: int | None = None
+        self._last_vision_ms: int | None = None
+        self._degraded = False
+
+    # ── 두 링크는 다르게 대응한다 (NFR-2.6) ────────────────────
+    #
+    # 로봇 링크 두절은 **안전 문제**다 — 명령이 닿지 않으므로 페일세이프로 간다.
+    # 비전 단절은 **기능 저하**다 — 순찰·회피는 계속하고 사람 인지만 끈다.
+    #
+    # 둘을 같은 사건으로 묶으면 **카메라가 딸꾹질할 때마다 로봇이 멈춘다.**
+    # 반대로 로봇 링크를 저하로 취급하면 명령이 닿지 않는 채로 계속 걸어간다.
+    # 그래서 타임아웃도 다른 설정 절에 둔다 — `safety` vs `vision`.
+
+    def note_telemetry(self, now_ms: int) -> None:
+        """로봇이 살아 있다는 증거. 텔레메트리를 받을 때마다 부른다."""
+        self._last_telemetry_ms = now_ms
+
+    def note_vision(self, now_ms: int) -> None:
+        """비전 프레임이 왔다. 받을 때마다 부른다."""
+        self._last_vision_ms = now_ms
+        self._degraded = False
+
+    @property
+    def degraded(self) -> bool:
+        """**비전만 죽은 상태.** 순찰은 계속되며 사람 인지가 비활성이다."""
+        return self._degraded
+
+    def _watch_links(self, now_ms: int) -> None:
+        # 아직 한 번도 못 받았으면 감시하지 않는다 — 기동 직후를 두절로 보면
+        # 켜는 순간 페일세이프가 걸린다.
+        if (
+            self._last_telemetry_ms is not None
+            and now_ms - self._last_telemetry_ms >= self._link_loss_ms
+        ):
+            self._fsm.handle(Event.LINK_LOST)
+        if (
+            self._last_vision_ms is not None
+            and now_ms - self._last_vision_ms >= self._vision_stall_ms
+        ):
+            self._degraded = True
 
     @property
     def state(self) -> str:
@@ -267,7 +331,13 @@ class Behavior:
         return self._fsm.handle(event)
 
     def tick(self, now_ms: int) -> list[str]:
-        """상태에 맞는 지시를 적용하고 송신기의 틱 결과를 돌려준다."""
+        """링크를 살피고, 상태에 맞는 지시를 적용하고, 송신기의 틱 결과를 돌려준다.
+
+        **링크 감시가 지시 적용보다 먼저다.** 두절을 이번 틱에 반영해야 그 틱의
+        명령이 페일세이프 상태에 맞는다. 나중에 보면 한 주기 동안 낡은 상태의
+        명령이 나간다.
+        """
+        self._watch_links(now_ms)
         state = self._fsm.state
         directive = self._fsm.directive
         if directive is Directive.HALT:
@@ -281,3 +351,24 @@ class Behavior:
         # YIELD 은 건드리지 않는다 — 조작자가 세운 의도를 살려둔다.
         self._commander.announce(state)
         return self._commander.tick(now_ms)
+
+
+def behavior_from_config(
+    commander: Commander,
+    config: Mapping[str, Any],
+    fsm: Fsm | None = None,
+) -> Behavior:
+    """설정에서 두 타임아웃을 읽어 `Behavior` 를 만든다.
+
+    **생성자 기본값은 시험 편의용이고 실제 운용은 이 함수를 쓴다.** 코드에 박힌
+    숫자를 정본으로 두면 `config.yaml` 을 고쳐도 동작이 안 바뀐다 (NFR-3①).
+
+    두 값이 서로 다른 절에서 오는 것에 주의한다 — `safety` 는 안전 임계이고
+    `vision` 은 기능 저하 임계다. 같은 절에 두면 언젠가 같은 대응으로 묶인다.
+    """
+    return Behavior(
+        commander,
+        fsm,
+        link_loss_ms=int(config["safety"]["link_loss_failsafe_ms"]),
+        vision_stall_ms=int(config["vision"]["stall_timeout_ms"]),
+    )
