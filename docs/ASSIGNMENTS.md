@@ -15,8 +15,8 @@
 | 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 전체 |
 | :--- | ---: | ---: | ---: | ---: | ---: |
 | **L1·L2** | 7건 | 🟢 9건 | ⏳ 22건 | **20.0** M/D | 24.5 M/D |
-| **S** | 16건 | 🟢 10건 | ⏳ 34건 | **38.0** M/D | 49.5 M/D |
-| | | | | **58.0** M/D | **74.0** M/D |
+| **S** | 17건 | 🟢 9건 | ⏳ 34건 | **37.0** M/D | 49.5 M/D |
+| | | | | **57.0** M/D | **74.0** M/D |
 
 ---
 
@@ -104,9 +104,9 @@
 
 **담당 영역** — 비전 · PPE · 변화감지 · 인증 · FSM · 통신 · config·로깅 · 대시보드 · 시험 · 문서
 
-**남은 공수 38.0 M/D · 44건** (전체 49.5 M/D · 60건)
+**남은 공수 37.0 M/D · 43건** (전체 49.5 M/D · 60건)
 
-### 🟢 지금 시작할 수 있다 — 10건 · 9.0 M/D
+### 🟢 지금 시작할 수 있다 — 9건 · 8.0 M/D
 
 선행 작업이 없거나 모두 완료됐다. 이 중 하나를 잡으면 된다.
 
@@ -119,7 +119,6 @@
 | `3.7.1` | PPE 데이터셋 확보 및 라벨링 | `datasets/ppe/` + 데이터 카드 | 1.5 |
 | `3.8.3` | 에스컬레이션 L0~L3 상태기 | `behavior/escalation.py` | 1.0 |
 | `4.2.1` | 카메라 초기화 및 해상도 프로파일 | `firmware_xiao_vision/main.cpp` | 0.5 |
-| `4.4.2` | JSON Lines 로거 및 로테이션 | `common/logging_setup.py` + `tests/fixtures/log_samples.jsonl` | 1.0 |
 | `4.5.3` | 명령 API (오버라이드·E-Stop) | 동일 | 0.5 |
 | `6.2.2` | FSM 전이 pytest 전수 검증 | `tests/test_fsm.py` | 1.0 |
 
@@ -164,7 +163,7 @@
 | `7.1` | README 및 문서 정리 | `README.md`, `docs/` | 6.4.3 | 0.5 |
 | `7.2` | 데모 영상 제작 | 데모 영상 | 6.4.3 | 0.5 |
 
-<details><summary>✅ 완료 — 16건 · 11.5 M/D</summary>
+<details><summary>✅ 완료 — 17건 · 12.5 M/D</summary>
 
 | WBS | 할 일 | 만들 것 | M/D |
 | :--- | :--- | :--- | ---: |
@@ -179,6 +178,7 @@
 | `4.3.6` | 텔레메트리 수신 및 사건 변환 | `telemetry/receiver.py` | 1.0 |
 | `4.3.7` | 호스트 운용 런타임 | `host/runtime.py` | 1.0 |
 | `4.4.1` | config 로더 및 스키마 검증 | `config/config.yaml`, `config/devices/*.yaml`, `common/config.py` | 1.0 |
+| `4.4.2` | JSON Lines 로거 및 로테이션 | `common/logging_setup.py` + `tests/fixtures/log_samples.jsonl`·`log_invalid.jsonl` | 1.0 |
 | `4.6.5` | 키보드 텔레오퍼레이션 | `tools/teleop.py` | 0.5 |
 | `5.2.1` | Git 저장소 초기화 및 브랜치 전략 | `.gitignore`, 브랜치 규칙 문서 | 0.5 |
 | `5.2.2` | 브랜치 보호 및 PR 템플릿 | 저장소 설정, `.github/` | 0.5 |

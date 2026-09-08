@@ -150,7 +150,9 @@ def test_robot_failsafe_report_drives_the_host(config: dict, clock: FakeClock) -
         clock.ms,
     )
     assert r.behavior.state == "FAILSAFE"
-    assert r.stats.transitions == 1
+    # 순찰 시작(IDLE→PATROL)과 페일세이프 진입 둘 다 센다. **한쪽만 세면 로그도
+    # 한쪽만 남는다** — 실제로 start_patrol 이 빠져 앞 6초가 IDLE 로 찍혔다.
+    assert r.stats.transitions == 2
 
 
 # ── 루프 ─────────────────────────────────────────────────────
@@ -310,7 +312,10 @@ def test_warns_when_the_robot_keeps_ignoring_commands(config, clock, caplog) -> 
         for _ in range(30):
             clock.advance(100)
             r.ingest(telemetry(enc, last_cmd_age_ms=9000), clock.ms)
-    assert any("받아들이지 않는다" in m for m in caplog.messages)
+    events = [getattr(r, "event", None) for r in caplog.records]
+    assert "commands_ignored" in events
+    detail = next(r.detail for r in caplog.records if getattr(r, "event", "") == "commands_ignored")
+    assert detail["last_cmd_age_ms"] == 9000, "왜 그렇게 판단했는지가 로그에 있어야 한다"
 
 
 def test_healthy_uptake_is_silent(config, clock, caplog) -> None:
@@ -323,7 +328,7 @@ def test_healthy_uptake_is_silent(config, clock, caplog) -> None:
         for _ in range(30):
             clock.advance(100)
             r.ingest(telemetry(enc, last_cmd_age_ms=40), clock.ms)
-    assert not [m for m in caplog.messages if "받아들이지 않는다" in m]
+    assert "commands_ignored" not in [getattr(r, "event", None) for r in caplog.records]
 
 
 # ── 리셋 핸드셰이크 ──────────────────────────────────────────
@@ -344,3 +349,74 @@ def test_reset_waits_for_the_robot_latch_report(config: dict, clock: FakeClock) 
     clear = {"lowbatt": False, "tipped": False, "link_ok": True}
     r.ingest(telemetry(enc, state="PATROL", flags=clear, safety_latched=False), clock.ms)
     assert r.behavior.state == "IDLE", "로봇이 풀렸다고 보고한 뒤에 복귀한다"
+
+
+# ── ⚠️ 로그의 state 가 실제와 어긋나면 안 된다 (4.4.2) ────────
+def test_start_patrol_is_logged_like_any_other_transition(config, clock, caplog) -> None:
+    """**처음에 이 경로만 로깅을 우회해서 앞 6초가 `IDLE` 로 찍혔다.**
+
+    로봇은 순찰 중이었다. 로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
+    """
+    import logging
+
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        r.start_patrol(clock.ms)
+    row = next(rec for rec in caplog.records if getattr(rec, "event", "") == "fsm_transition")
+    assert row.detail == {"from": "IDLE", "to": "PATROL", "trigger": "START_PATROL"}
+    assert r.context.state == "PATROL", "로그 컨텍스트도 함께 움직여야 한다"
+
+
+def test_failsafe_entry_is_logged_at_error(config, clock, caplog) -> None:
+    """페일세이프 진입은 **기능 상실**이라 ERROR 다 (레벨 정책 1.2)."""
+    import logging
+
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    r.start_patrol(clock.ms)
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        r.ingest(
+            telemetry(
+                enc, state="FAILSAFE", flags={"lowbatt": False, "tipped": True, "link_ok": True}
+            ),
+            clock.ms,
+        )
+    row = next(rec for rec in caplog.records if getattr(rec, "event", "") == "fsm_transition")
+    assert row.levelname == "ERROR"
+    assert row.detail["trigger"] == "ONBOARD_FAILSAFE"
+    assert r.context.escalation == "F"
+
+
+def test_repeated_robot_state_is_not_logged_every_tick(config, clock, caplog) -> None:
+    """같은 상태가 10Hz 로 오는 것이 정상이다 — 매번 찍으면 로그가 그것으로 덮인다."""
+    import logging
+
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        for _ in range(30):
+            clock.advance(100)
+            r.ingest(telemetry(enc, state="PATROL"), clock.ms)
+    reported = [rec for rec in caplog.records if getattr(rec, "event", "") == "robot_state"]
+    assert len(reported) == 1, "변화 없이 30건 받았으면 한 줄이다"
+
+
+def test_periodic_summary_is_emitted_once_per_second(config, clock, caplog) -> None:
+    """폐기가 30% 섞여도 초당 한 줄로 모인다 — 개별 사유가 아니라 비율이 알고 싶다."""
+    import logging
+
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        for _ in range(30):  # 3초
+            clock.advance(100)
+            r.ingest(telemetry(enc), clock.ms)
+            r.ingest(b"{broken", clock.ms)
+            r.tick(clock.ms)
+    digests = [rec for rec in caplog.records if getattr(rec, "event", "") == "telemetry_summary"]
+    # 첫 호출은 주기를 **시작만** 하므로 t=100 의 것은 요약을 내지 않는다. 그래서
+    # 3초 동안 두 줄이고, 첫 줄에는 시작 이전에 모인 카운터도 함께 실린다.
+    assert len(digests) == 2
+    assert digests[0].detail["accepted"] == 11
+    assert digests[0].detail["discarded"] == 11
+    assert digests[1].detail["accepted"] == 10, "이후 창은 정확히 1초분이다"

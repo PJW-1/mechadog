@@ -352,6 +352,7 @@ class Behavior:
         self._onboard_state: str | None = None
         self._robot_latched: bool | None = None
         self._known_state = self._fsm.state
+        self._last_trigger: Event | None = None
         self._state_since_ms: int | None = None
         self._fired: set[str] = set()
 
@@ -466,8 +467,18 @@ class Behavior:
     def _handle(self, event: Event, now_ms: int | None) -> bool:
         changed = self._fsm.handle(event)
         if changed:
+            self._last_trigger = event
             self._mark_state(now_ms)
         return changed
+
+    @property
+    def last_trigger(self) -> Event | None:
+        """마지막 전이를 일으킨 사건. **로그의 `trigger` 가 이 값이다.**
+
+        트리거 없는 전이 로그는 *"왜 그때 그 판단을 했는가"* 에 답하지 못한다 —
+        그것이 로깅 설계의 목적이고 규칙 기반 FSM 을 고른 실질적 근거다 (DR-9).
+        """
+        return self._last_trigger
 
     @property
     def state(self) -> str:

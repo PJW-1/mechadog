@@ -6,6 +6,7 @@ pytest 로 닫을 수 있는 범위를 결정한다 (ENGINEERING_GUIDE 2.1).
 """
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,27 @@ class FakeClock:
 @pytest.fixture
 def clock() -> FakeClock:
     return FakeClock()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_logging():
+    """`mechadog` 로거 상태를 시험마다 되돌린다.
+
+    ⚠️ **`setup_logging` 은 `propagate = False` 를 건다.** 실제 운용에서는 옳다 —
+    루트로 새 나가면 누가 `basicConfig` 를 부른 순간 줄이 두 번 찍힌다. 그런데
+    `caplog` 는 루트에 핸들러를 달아 잡으므로, 한 시험이 전파를 끊어 두면 **이후
+    시험들이 아무 로그도 못 본다.**
+
+    실제로 `test_logging.py` 를 넣은 뒤 `test_runtime.py` 의 로깅 시험이 단독으로는
+    통과하고 전체 실행에서는 실패했다. 시험 간 누수는 이렇게 나타난다.
+    """
+    logger = logging.getLogger("mechadog")
+    saved = (logger.handlers[:], logger.filters[:], logger.level, logger.propagate)
+    yield
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        handler.close()
+    logger.handlers, logger.filters, logger.level, logger.propagate = saved
 
 
 @pytest.fixture(scope="session")
