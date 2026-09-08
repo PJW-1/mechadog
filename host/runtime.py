@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from host.behavior.actions import register_actions
 from host.behavior.commander import Commander
 from host.behavior.fsm import Behavior, Event, behavior_from_config
 from host.common.config import ConfigError, load_config
@@ -115,6 +116,9 @@ class Runtime:
             clock=clock,
         )
         self._behavior = behavior_from_config(self._commander, config)
+        # 상태별 모션을 붙인다 (3.5.1). 만들 수 없는 것은 등록하지 않고 이유를 남기며,
+        # 등록되지 않은 상태는 `Behavior` 가 정지로 처리한다 — 안전측 기본값이다.
+        self._actions = register_actions(self._behavior, config)
         host = robot_ip or config.get("mechdog_ip")
         self._peer: tuple[str, int] | None = (host, self._cmd_port) if host else None
         self._reset_pending = False
@@ -140,6 +144,11 @@ class Runtime:
     @property
     def stats(self) -> Stats:
         return self._stats
+
+    @property
+    def actions(self) -> dict[str, str]:
+        """등록된 상태별 모션과, 못 만든 것의 이유."""
+        return dict(self._actions)
 
     @property
     def context(self) -> LogContext:
@@ -339,6 +348,7 @@ class Runtime:
             listen_port=self._telemetry_port,
             peer=_peer_text(self._peer),
             period_ms=self._commander.period_ms,
+            actions=self._actions,
         )
         try:
             while end_ms is None or clock() < end_ms:

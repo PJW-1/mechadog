@@ -136,6 +136,15 @@ TELEMETRY_REQUIRED: tuple[str, ...] = (
 IMU_FIELDS: tuple[str, ...] = ("pitch", "roll", "yaw")
 FLAG_FIELDS: tuple[str, ...] = ("lowbatt", "tipped", "link_ok")
 
+#: 있으면 검사하고 없으면 넘어가는 플래그. **하위 호환으로 추가된 것들이다.**
+#:
+#: `obstacle` 은 **온보드 근거리 반사 정지가 지금 걸려 있는가** 다. 왜 `state` 로
+#: 부족한지는 [ADR-22](../../docs/DECISIONS.md) 에 적었다 — 요약하면 `state` 의
+#: `AVOID` 는 호스트가 `STATE` 로 내려보낸 값이 되돌아온 것일 수도 있어서,
+#: **해제됐는지를 그 값으로 알 수 없다.** `safety_latched` 가 `FAILSAFE` 에 대해
+#: 같은 문제를 푸는 방식과 동일하다.
+OPTIONAL_FLAG_FIELDS: tuple[str, ...] = ("obstacle",)
+
 #: `TelemetryEncoder` 가 스스로 채우며 `extra` 로 덮을 수 없는 필드.
 #: 나머지 본문 필드(`state`·`dist_cm`·`imu`·`batt_v`·`last_cmd_age_ms`·`flags`)는
 #: `build()` 의 **명명 인자**이므로 애초에 `extra` 에 닿지 않는다 — 파이썬이 막는다.
@@ -659,6 +668,9 @@ class TelemetryDecoder:
         for name in FLAG_FIELDS:
             if not isinstance(flags.get(name), bool):
                 return DecodeResult(Verdict.DISCARD, f"flags.{name} 누락 또는 비불리언")
+        for name in OPTIONAL_FLAG_FIELDS:
+            if name in flags and not isinstance(flags[name], bool):
+                return DecodeResult(Verdict.DISCARD, f"flags.{name} 가 불리언이 아님")
 
         # ① seq 역전·중복 — 개체와 부팅 세션별로 센다. ESP32가 재부팅해
         # seq=1로 돌아와도 새 boot_id이면 즉시 받아들인다.
