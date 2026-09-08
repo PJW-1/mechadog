@@ -352,6 +352,16 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 > **설계 규칙 ③** — 이 표는 **호스트 FSM** 의 정본이다. `Tier 1` 로 표시된 온보드 반사는 호스트가
 > 흉내내지 않고 **보고를 받아 따라간다** (`AVOID`·`FAILSAFE`). 구현은 `host/behavior/fsm.py` 이며,
 > 문서와 코드의 전이 쌍이 어긋나면 CI 가 실패한다.
+>
+> **설계 규칙 ④** — **표에 시각을 넣지 않는다.** 시간으로 생기는 사건은 두 종류로 나뉘고 성질이
+> 다르다. *상태에 머문 시간*(순찰 10초·스캔 3초·인증 30초)은 상태 타이머이고, *마지막 입력 이후
+> 시간*(대상 상실 5초·링크 두절 3초·비전 단절 2초)은 감시다. 상실을 상태 타이머로 만들면 사람이
+> 계속 서 있어도 5초마다 `ALERT` 를 떠난다. 임계는 전부 `config.yaml` 에 있다.
+>
+> **설계 규칙 ⑤** — **`FAILSAFE` 를 떠날지는 로봇이 정한다.** 호스트는 `RESET_SAFE` 를 보내고
+> 로봇이 `safety_latched=false` 를 보고할 때까지 기다린 뒤에야 `IDLE` 로 간다. ⚠️ 이 판단에
+> 텔레메트리의 `state` 를 쓰면 안 된다 — `FAILSAFE` 는 `STATE` 로도 내려가므로 **반향과 로봇의
+> 판정을 구분할 수 없고**, 반향으로 잠그면 호스트가 스스로를 영구히 잠근다 ([ADR-21](DECISIONS.md)).
 
 ### 3.1 대응 에스컬레이션 단계 (Escalation Ladder)
 
@@ -473,14 +483,14 @@ mechdog_physical_ai/
 ├── host/                                 Host PC (Python)
 │   ├── behavior/
 │   │   ├── commander.py               ✅ 10Hz 고정 송신 — 소켓을 만지지 않는다
-│   │   └── fsm.py                     ✅ 전이표 (IDLE · MANUAL · FAILSAFE)
+│   │   └── fsm.py                     ✅ 전이표 13상태 + 가드·타이머 (3.4.1~3)
 │   ├── common/
 │   │   ├── protocol.py                ✅ 규약 구현 — 이 파일이 C++ 파서의 참조 구현
 │   │   ├── config.py                  ✅ 로더 + 스키마 검증
 │   │   └── logging_setup.py           ⬜ JSON Lines 로거 (4.4.2)
 │   ├── vision/                        ⬜ 스트림 수신 · 객체 검출 (3.3 · 4.3.3~5)
 │   ├── telemetry/                     ✅ 텔레메트리 수신·사건 변환 (4.3.6)
-│   ├── runtime.py                     ⬜ 실제 UDP·FSM·Commander 운용 루프 (4.3.7)
+│   ├── runtime.py                     ✅ 실제 UDP 운용 루프 — 실시간·소켓이 갇힌 곳 (4.3.7)
 │   └── dashboard/                     ⬜ FastAPI + WebSocket + UI (4.5 · 4.6)
 ├── tools/
 │   ├── mock_mechdog.py                ✅ 가상 MechDog — 로봇 없이 호스트를 검증
