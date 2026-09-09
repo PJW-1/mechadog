@@ -1,4 +1,4 @@
-"""MJPEG 파서 및 프레임 큐 (WBS 4.3.3 · FR-5.3 · NFR-1.3).
+"""MJPEG 수신·복구·최신 프레임 큐 (WBS 4.3.3~4.3.5 · FR-5.3 · NFR-1.3).
 
 XIAO 가 `multipart/x-mixed-replace` 로 보내는 바이트를 프레임으로 자른다.
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import urllib.error
 import urllib.request
 from collections import deque
@@ -191,13 +192,22 @@ class FrameQueue:
     정상이므로(15fps 수신 · 7fps 추론), 큐가 밀리면 **오래된 프레임을 처리하는 것이
     아니라 버리는 것**이 맞다. 낡은 프레임으로 판단하면 로봇이 과거를 보고 움직인다.
 
-    정책의 실제 입증(추론 부하 아래 큐 길이 로그)은 `4.3.5` 소관이다.
+    수신과 추론은 서로 다른 스레드에서 이 객체를 함께 쓰므로 모든 복합 연산을 잠근다.
+    1초마다 수신·처리·드롭·최대 깊이를 한 줄로 남겨 실제 부하에서 정책을 검증한다.
     """
 
     capacity: int = 2
     _items: deque[Frame] = field(default_factory=deque)
     received: int = 0
+    processed: int = 0
     dropped: int = 0
+    max_depth: int = 0
+    _window_received: int = 0
+    _window_processed: int = 0
+    _window_dropped: int = 0
+    _window_max_depth: int = 0
+    _summary_due_ms: int | None = None
+    _lock: Any = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.capacity < 1:
@@ -205,31 +215,89 @@ class FrameQueue:
 
     @property
     def depth(self) -> int:
-        return len(self._items)
+        with self._lock:
+            return len(self._items)
 
     def put(self, frame: Frame) -> bool:
         """넣는다. **버린 것이 있으면 `True`.**"""
-        self.received += 1
-        dropped = False
-        while len(self._items) >= self.capacity:
-            self._items.popleft()
-            self.dropped += 1
-            dropped = True
-        self._items.append(frame)
+        with self._lock:
+            self.received += 1
+            self._window_received += 1
+            dropped = False
+            while len(self._items) >= self.capacity:
+                self._items.popleft()
+                self.dropped += 1
+                self._window_dropped += 1
+                dropped = True
+            self._items.append(frame)
+            depth = len(self._items)
+            self.max_depth = max(self.max_depth, depth)
+            self._window_max_depth = max(self._window_max_depth, depth)
+            summary = self._summary_if_due(frame.received_ms)
+        self._emit_summary(summary)
         return dropped
 
     def get(self) -> Frame | None:
         """가장 오래된 것부터 하나. 비었으면 `None`."""
-        return self._items.popleft() if self._items else None
+        with self._lock:
+            if not self._items:
+                return None
+            self.processed += 1
+            self._window_processed += 1
+            return self._items.popleft()
 
-    def latest(self) -> Frame | None:
+    def latest(self, *, now_ms: int | None = None) -> Frame | None:
         """**가장 새 것 하나만** 꺼내고 나머지를 버린다 — 추론이 쓰는 경로다."""
-        if not self._items:
+        with self._lock:
+            while len(self._items) > 1:
+                self._items.popleft()
+                self.dropped += 1
+                self._window_dropped += 1
+            if not self._items:
+                summary = self._summary_if_due(now_ms)
+                frame = None
+            else:
+                frame = self._items.popleft()
+                self.processed += 1
+                self._window_processed += 1
+                summary = self._summary_if_due(now_ms)
+                if summary is not None and now_ms is not None:
+                    summary["latest_age_ms"] = max(0, now_ms - frame.received_ms)
+                    summary["latest_seq"] = frame.seq
+        self._emit_summary(summary)
+        return frame
+
+    def _summary_if_due(self, now_ms: int | None) -> dict[str, int | float] | None:
+        """1초에 한 번 큐 상태를 모은다. 호출할 때는 잠금을 잡고 있어야 한다."""
+        if now_ms is None:
             return None
-        while len(self._items) > 1:
-            self._items.popleft()
-            self.dropped += 1
-        return self._items.popleft()
+        if self._summary_due_ms is None:
+            self._summary_due_ms = now_ms + 1000
+            return None
+        if now_ms < self._summary_due_ms:
+            return None
+        self._summary_due_ms += 1000
+        if self._summary_due_ms <= now_ms:
+            self._summary_due_ms = now_ms + 1000
+        received = self._window_received
+        summary: dict[str, int | float] = {
+            "frames_received": received,
+            "frames_processed": self._window_processed,
+            "frames_dropped": self._window_dropped,
+            "drop_rate": round(self._window_dropped / received, 3) if received else 0.0,
+            "queue_depth": len(self._items),
+            "queue_depth_max": self._window_max_depth,
+        }
+        self._window_received = 0
+        self._window_processed = 0
+        self._window_dropped = 0
+        self._window_max_depth = len(self._items)
+        return summary
+
+    @staticmethod
+    def _emit_summary(summary: dict[str, int | float] | None) -> None:
+        if summary is not None:
+            LOG.info("frame_queue_summary", **summary)
 
 
 # ── 주소 조립 (WBS ③ · 하드코딩 IP 제거) ─────────────────────

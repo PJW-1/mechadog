@@ -1,4 +1,4 @@
-"""MJPEG 파서 및 프레임 큐 검증 (WBS 4.3.3 · FR-5.3).
+"""MJPEG 수신·복구·최신 프레임 큐 검증 (WBS 4.3.3~4.3.5 · FR-5.3).
 
 **카메라 없이 검증한다.** 파서가 바이트만 받으므로 실제 XIAO 가 보내는 것과 같은
 전문을 만들어 먹이면 된다 — 수신기(`4.3.6`)를 목업으로 검증한 것과 같은 방식이다.
@@ -177,6 +177,45 @@ def test_empty_queue_returns_none() -> None:
 def test_capacity_must_be_positive() -> None:
     with pytest.raises(ValueError):
         FrameQueue(capacity=0)
+
+
+def test_slow_consumer_gets_only_latest_and_queue_depth_is_logged(monkeypatch) -> None:
+    """25fps 수신·5fps 소비에서도 적체 없이 매번 가장 최신 프레임을 처리한다.
+
+    실제 추론 워커는 `3.3.2`에서 붙지만, 생산자와 소비자의 속도 차이는 가상 시각으로
+    재현할 수 있다. 2초 동안 40ms마다 넣고 200ms마다 꺼내면 FIFO라면 40프레임이
+    뒤처진다. 최신 우선 정책에서는 소비 순번이 4·9·14…로 현재 생산자를 따라간다.
+    """
+
+    class Sink:
+        def __init__(self) -> None:
+            self.records: list[tuple[str, dict]] = []
+
+        def info(self, event: str, **detail) -> None:
+            self.records.append((event, detail))
+
+    sink = Sink()
+    monkeypatch.setattr("host.vision.stream_client.LOG", sink)
+    queue = FrameQueue(capacity=2)
+    consumed: list[int] = []
+
+    for seq in range(50):
+        now_ms = seq * 40  # 25fps 입력
+        queue.put(Frame(jpeg(), now_ms, seq))
+        if (seq + 1) % 5 == 0:  # 5fps의 느린 추론 소비자
+            frame = queue.latest(now_ms=now_ms)
+            assert frame is not None
+            consumed.append(frame.seq)
+
+    assert consumed == list(range(4, 50, 5)), "소비 시점의 최신 순번이어야 한다"
+    assert queue.depth == 0
+    assert queue.max_depth == 2, "설정한 큐 상한을 넘지 않는다"
+    assert queue.received == 50 and queue.processed == 10 and queue.dropped == 40
+
+    summaries = [detail for event, detail in sink.records if event == "frame_queue_summary"]
+    assert summaries, "운용 로그에서 드롭 정책을 검증할 수 있어야 한다"
+    assert all(summary["queue_depth_max"] <= 2 for summary in summaries)
+    assert any(summary["frames_dropped"] > 0 for summary in summaries)
 
 
 # ── 주소 조립 (하드코딩 IP 제거) ─────────────────────────────
