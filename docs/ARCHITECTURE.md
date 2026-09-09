@@ -78,7 +78,7 @@
 | :--- | :--- | :--- |
 | Hiwonder MechDog (Advanced Kit) | ESP32 메인보드, 8× 코어리스 서보(링크 구조), IMU, 초음파 | Arduino IDE 지원, 소스 오픈 |
 | Seeed XIAO ESP32S3 Sense | Xtensa 듀얼코어 240MHz, 8MB PSRAM, **OV3660(실물 확인)**, PDM 마이크, microSD | 배터리 패드(BAT+/BAT−) + 충전 IC 내장 |
-| Host PC | Windows 11 + WSL2 Ubuntu 24.04, RTX 3080, ROS2 Jazzy | 추론·SLAM·대시보드 전담. **RTX 3080을 임시 기준 PC로 지정**([CONTRIBUTING 1절](../CONTRIBUTING.md)). 팀 내 RTX 5070 1대 확인, 나머지 1대 미확인 (OI-14) |
+| Host PC | Windows 11 + WSL2 Ubuntu 24.04, **RTX 3080 10GB · i7-10700K · RAM 32GB** (데스크탑), ROS2 Jazzy | 추론·SLAM·대시보드 전담. **기준 PC 확정 (2026-09-09, OI-14 닫힘)**([CONTRIBUTING 1절](../CONTRIBUTING.md)). 팀원 PC 사양은 성능에 영향이 없다 — 추론이 이 한 대에 모여 있고, DirectML 은 어느 GPU 에서든 돈다 |
 | (미사용) ESP32-S3 비전 모듈 | Advanced Kit 포함품 | XIAO 사용으로 예비 부품 처리 |
 | (활용 검토) WonderEcho 음성 / MP3 모듈 | Advanced Kit 포함품 | **FR-3.4 경고 방송에 활용** |
 
@@ -215,14 +215,29 @@ XIAO · 중계 MCU · LD19 를 **한 보조배터리에서 급전**한다. LiDAR
 
 | EP | 대상 | 용도 | 판단 |
 | :--- | :--- | :--- | :--- |
-| **DirectML** | **모든 DX12 GPU** (NVIDIA·AMD·Intel) | 개발 PC 전체 | ⭐ **채택** — 팀원 GPU가 달라도 동작 |
+| **DirectML** | **모든 DX12 GPU** (NVIDIA·AMD·Intel) | 개발 PC 전체 | ⭐ **채택** — **설치 한 줄이면 누구 PC 에서든 돈다** |
 | CPU | 모든 환경 | **CI 러너**(리눅스), 단위 시험 | 채택 |
-| CUDA | NVIDIA 전용 | — | 미채택 (이식성 손실, 이득 미미) |
-| TensorRT | NVIDIA + TensorRT 설치 | — | **미채택** (근거: DR-13) |
+| CUDA | NVIDIA 전용 | — | 미채택 — **더 빠르지만 그 빠름이 필요 없다** (아래) |
+| TensorRT | NVIDIA + TensorRT 설치 | — | **미채택** — **모델 파일을 주고받을 수 없다** (GPU 세대마다 재빌드, DR-13) |
 
 > `select_providers()` 로 **DirectML → CPU 순서로 되는 것을 골라 쓴다**(자동 폴백).
-> 팀원 PC 의 GPU 가 달라도 **같은 코드가 그대로 돌아야 한다** — 설정은 선호 순서일 뿐이고,
-> 실제로는 그 PC 에서 쓸 수 있는 것과의 교집합을 취한다.
+> 설정은 선호 순서일 뿐이고, 실제로는 그 PC 에서 쓸 수 있는 것과의 교집합을 취한다.
+
+**왜 DirectML 인가 — 쉽게 말하면 협업이 편해서다.**
+
+| | |
+| :--- | :--- |
+| **누구 PC 에서든 돈다** | NVIDIA·AMD·Intel 상관없고, GPU 가 없으면 CPU 로 떨어진다. **팀원 사양을 물어볼 필요가 없다** |
+| **설치가 한 줄이다** | `onnxruntime-directml` 하나. CUDA 는 CUDA·cuDNN·onnxruntime 버전을 **3대에 각각** 맞춰야 한다 |
+| **CI 에서도 같은 코드가 돈다** | GitHub 러너에는 GPU 가 없다. 그래서 CPU 경로는 어차피 필요하고, 매 PR 마다 자동 검증된다 |
+| **모델 파일을 그대로 주고받는다** | 같은 `.onnx` 를 아무 PC 에나 복사하면 된다 |
+
+**그리고 CUDA 로 바꿔서 얻는 것이 없다.** 추론률을 10fps 로 잡았으므로 한 프레임에 쓸 수
+있는 시간이 **100ms** 인데, 여기서 아끼는 것은 **몇 ms 단위**다. 예산의 몇 %를 줄이려고
+위 네 가지를 전부 포기하는 거래다.
+
+> **재검토** — `3.3.1` 에서 검출 실측이 **30ms 를 넘으면** CUDA EP 를 다시 본다.
+> 그때도 순서는 **모델 경량화 → 추론 주기 하향 → CUDA** 다 (ADR-13).
 
 ### 1.6 음성 및 상태 표시 역할 분담
 
@@ -559,7 +574,7 @@ mechdog_physical_ai/
 | **HAL** (Hardware Abstraction Layer) | 하드웨어를 부르는 **창구**를 한 곳으로 모은 층 | 벤더 라이브러리(`HW_MechDog`)를 감싸서, 위쪽 코드가 하드웨어를 직접 만지지 않게 한다 |
 | **Tier 1 / 2 / 3** | 판단을 **얼마나 급한지**로 나눈 3단 | Tier 1 = 로봇이 즉시(안전), Tier 2 = 노트북이(판단), Tier 3 = 클라우드가(리포트) |
 | **기준기** (Reference Unit) | 특정 Phase의 성능을 재는 **표준 로봇** | `phase1_reference`(LiDAR 미장착 P1 표준 구성)와 `phase2_reference`(LiDAR 장착 측위 검수용)를 따로 지정한다 |
-| **기준 PC** | 성능 수치를 재는 **표준 노트북** | 팀장 PC. "빠른 PC 에서만 되는 것"을 성능 달성으로 세지 않기 위함 |
+| **기준 PC** | 성능 수치를 재는 **표준 PC** | 팀장 데스크탑 (RTX 3080 10GB · i7-10700K · RAM 32GB). "빠른 PC 에서만 되는 것"을 성능 달성으로 세지 않기 위함 |
 
 ### 2. 로봇이 무엇을 하는지
 
@@ -606,7 +621,7 @@ mechdog_physical_ai/
 | **클리핑** | 대상이 화면 밖으로 **잘린 상태** | 카메라가 지면 15cm 에 있어 머리가 잘린다. 그때 자세를 올려 다시 본다 |
 | **ONNX** | 여러 프레임워크에서 **공통으로 쓰는 모델 파일 형식** | 학습은 어디서 하든 실행은 이 형식으로 통일한다 |
 | **실행 프로바이더** (EP) | 모델을 **어느 장치로 돌릴지** 고르는 설정 | DirectML(GPU)을 우선하고 CPU로 폴백한다 |
-| **DirectML** | 윈도우에서 **어느 회사 GPU 든** 쓰게 해주는 층 | 팀원 GPU 가 NVIDIA·AMD·Intel 로 달라서 이걸 골랐다 |
+| **DirectML** | 윈도우에서 **어느 회사 GPU 든** 쓰게 해주는 층 | 설치 한 줄이면 누구 PC 에서든 돌아서 골랐다 — 협업이 편하다 |
 | **NMS** | 같은 대상에 겹쳐 잡힌 상자를 **하나로 정리** | 검출 후처리 단계 |
 | **추적** (tracking) | 프레임이 바뀌어도 **같은 사람임을 유지** | 각 사람에게 `track_id` 를 붙인다. 인증을 그 ID 에 귀속시킨다 |
 | **개방 어휘** (open-vocabulary) | 학습하지 않은 물체도 **이름을 말하면 찾는** 모델 | 변화 감지 후보 기술. 선정 미결 (OI-15) |
