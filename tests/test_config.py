@@ -214,9 +214,46 @@ def test_providers_fallback_ends_with_cpu(cfg: dict) -> None:
 
 
 def test_inference_fps_not_above_stream_fps(cfg: dict) -> None:
-    """추론 주기가 스트림 fps 를 넘을 수 없다."""
+    """추론률의 상한은 **실제 수신률**이다.
+
+    ⚠️ 이 시험은 `target_fps` 와 비교하고 있었다. 그 값은 NFR-1.3 이 요구하는
+    *하한*(≥15fps)이고 실제 수신률은 `stream_fps_limit`(25fps)이다. 하한을 상한으로
+    쓰면 25fps 를 받는데도 추론률을 15 위로 못 올려, 지키려던 불변식과 무관한
+    제약이 된다. 실제로 문서·코드가 "25fps 수신"을 적는 동안 이 시험만 15 를 봤다.
+    """
     vision = cfg["vision"]
-    assert 0 < vision["inference_fps"] <= vision["target_fps"]
+    assert 0 < vision["inference_fps"] <= vision["stream_fps_limit"]
+    # 수신 상한이 요구 하한보다 낮으면 NFR-1.3 자체가 깨진다.
+    assert vision["stream_fps_limit"] >= vision["target_fps"]
+
+
+def test_inference_above_stream_limit_is_rejected(cfg: dict) -> None:
+    """불변식은 시험이 아니라 **로더**가 지켜야 한다.
+
+    개체 프로파일이 값을 덮어쓸 수 있으므로 커밋된 `config.yaml` 만 검사하면
+    실제로 기동하는 설정은 검사되지 않는다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["inference_fps"] = broken["vision"]["stream_fps_limit"] + 1
+    with pytest.raises(ConfigError, match="stream_fps_limit"):
+        validate_base_config(broken)
+
+
+def test_stream_limit_below_nfr_floor_is_rejected(cfg: dict) -> None:
+    """수신 상한이 NFR-1.3 하한 미달이면 기동 전에 막는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["stream_fps_limit"] = broken["vision"]["target_fps"] - 1
+    broken["vision"]["inference_fps"] = 1
+    with pytest.raises(ConfigError, match="NFR-1.3"):
+        validate_base_config(broken)
 
 
 def test_escalation_led_covers_all_levels(cfg: dict) -> None:

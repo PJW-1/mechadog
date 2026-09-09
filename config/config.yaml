@@ -124,7 +124,10 @@ vision:
   # ── 스트림 ──
   detect_consecutive_frames: 3 # FR-3.2 — 단발 오검출 억제
   resolution: VGA              # VGA | QVGA (FR-5.3)
-  target_fps: 15               # NFR-1.3
+  # ⚠️ **요구 하한이지 실제 수신률이 아니다.** NFR-1.3 이 요구하는 최소값이며
+  # 실제로 카메라가 보내는 값은 위의 `stream_fps_limit` 이다. 이 둘을 섞으면
+  # 25fps 를 받는데도 문서·시험이 15fps 를 수신률로 믿는다.
+  target_fps: 15               # NFR-1.3 하한 (실제 수신률은 stream_fps_limit)
   # 2026-09-09 실기에서 VGA 25fps 수신과 동시에 명령 RTT 3.2ms 평균,
   # 프레임 도착→디코드→STOP ACK p95 69ms 를 확인했다. FSM 과 같은 10Hz 로
   # 맞춰 사건 발생 후 다음 추론까지의 최대 대기를 143ms(7fps)→100ms 로 줄인다.
