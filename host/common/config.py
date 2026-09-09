@@ -99,6 +99,16 @@ def validate_base_config(config: dict[str, Any]) -> None:
     vision = config["vision"]
     _require_positive(vision, "stream_fps_limit")
     _require_positive(vision, "stall_timeout_ms")
+    _require_positive(vision, "target_fps")
+    _require_positive(vision, "inference_fps")
+    # ⚠️ **추론률의 상한은 `target_fps` 가 아니라 `stream_fps_limit` 이다.**
+    # `target_fps` 는 NFR-1.3 이 요구하는 *하한*(≥15fps)이고 실제 수신률은 상한값이다.
+    # 하한을 상한으로 쓰면 25fps 를 받는데도 추론률을 15 위로 못 올린다 — 지키려던
+    # 불변식("낡은 프레임으로 판단하지 않는다")과 무관한 제약이 된다.
+    if vision["inference_fps"] > vision["stream_fps_limit"]:
+        raise ConfigError("vision.inference_fps 는 vision.stream_fps_limit 을 넘을 수 없음")
+    if vision["stream_fps_limit"] < vision["target_fps"]:
+        raise ConfigError("vision.stream_fps_limit 이 NFR-1.3 하한(target_fps) 미달")
     backoff = vision.get("reconnect_backoff_s")
     if not isinstance(backoff, list) or not backoff:
         raise ConfigError("vision.reconnect_backoff_s 는 비어 있지 않은 목록이어야 함")

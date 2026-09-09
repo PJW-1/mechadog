@@ -13,6 +13,7 @@ import pytest
 
 from tools.latency_probe import (
     MODULUS,
+    budget_note,
     counter_page,
     latency_ms,
     read_readings,
@@ -63,6 +64,26 @@ def test_quantization_is_reported_not_hidden() -> None:
 def test_empty_samples_refused() -> None:
     with pytest.raises(ValueError):
         summarize([])
+
+
+# ── 예산 문구 ───────────────────────────────────────────────
+def test_budget_note_does_not_claim_nfr_pass() -> None:
+    """⚠️ **부분 구간에 통과 도장을 찍지 않는다.**
+
+    예전 출력은 `NFR-1.1 예산 250ms 대비 최악값 … → 통과` 였다. 이 도구는 촬영→도착만
+    재는데 NFR-1.1 정의가 `촬영 → 검출 → 명령 적용 ACK` 로 좁혀지면서, 부분 구간을
+    전체 예산에 대고 합격시키는 문구가 됐다.
+    """
+    note = budget_note({"max_ms": 105}, 250)
+    assert "통과" not in note
+    assert "42.0%" in note, "예산의 몇 %를 쓰는지 보여야 한다"
+    assert "포함되지 않았다" in note, "빠진 구간을 반드시 적는다"
+
+
+def test_budget_note_still_fails_hard_when_segment_alone_exceeds() -> None:
+    """구간 하나가 이미 전체 예산을 넘었다면 그것만으로 미달이 확정된다."""
+    note = budget_note({"max_ms": 300}, 250)
+    assert "미달 확정" in note
 
 
 # ── CSV ─────────────────────────────────────────────────────

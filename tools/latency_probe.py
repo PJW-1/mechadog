@@ -1,8 +1,13 @@
-"""E2E 지연 측정 하네스 (WBS 6.1.2 · NFR-1.1).
+"""촬영→호스트 도착 구간 측정 하네스 (WBS 6.1.2 · NFR-1.1 의 첫 구간).
 
 **호스트가 자기 화면에 자기 시계를 띄우고 카메라가 그 화면을 찍는다.** 프레임에 찍힌
 값과 도착 시각의 차가 지연이며, **둘이 같은 시계라 동기가 필요 없다** (아키텍처
 NFR-1.1 절).
+
+⚠️ **이 도구가 재는 것은 NFR-1.1 전체가 아니다.** NFR-1.1 은 단일 프레임의
+`촬영 → 검출 → 명령 적용 ACK` 이고, 여기서 나오는 값은 그중 **촬영 → 호스트 도착**
+하나뿐이다. 디코드·추론·연속 3프레임 확인·명령 왕복·물리 구동은 빠져 있으므로
+**이 값으로 250ms 통과 판정을 내리면 안 된다** — 남은 구간이 공짜인 것처럼 보인다.
 
 프레임에 촬영 시각을 넣는 방식은 채택하지 않았다 — XIAO 에 시계가 없어 오프셋을
 추정해야 하고 그 오차가 재려는 대상(왕복)에 종속되기 때문이다.
@@ -126,6 +131,24 @@ def summarize(samples: list[int], *, refresh_hz: float = 60.0) -> dict[str, Any]
     }
 
 
+def budget_note(stats: Mapping[str, Any], budget_ms: int) -> str:
+    """예산 대비 **이 구간의 몫**. 통과 판정이 아니다.
+
+    ⚠️ 예전에는 `NFR-1.1 예산 250ms 대비 최악값 … → 통과` 를 찍었다. 이 도구는
+    촬영→도착만 재므로, 부분 구간을 전체 예산에 대고 합격 도장을 찍은 것이었다.
+    남은 구간(디코드·추론·연속 확인·명령 왕복·구동)을 재기 전에는 판정할 수 없다.
+    """
+    worst = int(stats["max_ms"])
+    share = round(100.0 * worst / budget_ms, 1)
+    if worst > budget_ms:
+        return f"촬영→도착 최악 {worst}ms 가 이미 예산 {budget_ms}ms 를 넘었다 → **미달 확정**"
+    return (
+        f"촬영→도착 최악 {worst}ms = 예산 {budget_ms}ms 의 {share}%. "
+        "**나머지 구간(디코드·추론·연속 3프레임 확인·명령 왕복·구동)은 포함되지 않았다** "
+        "— NFR-1.1 판정이 아니다"
+    )
+
+
 # ── ① 카운터 페이지 ─────────────────────────────────────────
 def cmd_page(args: argparse.Namespace) -> int:
     out = Path(args.out)
@@ -202,12 +225,10 @@ def cmd_report(args: argparse.Namespace) -> int:
         print("shown_ms 가 채워진 행이 없다 — 프레임 속 숫자를 먼저 적는다.")
         return 1
     stats = summarize(samples, refresh_hz=args.refresh_hz)
-    print("E2E 지연 (촬영 → 호스트 도착)")
+    print("촬영 → 호스트 도착 (NFR-1.1 의 첫 구간)")
     for key, value in stats.items():
         print(f"  {key:16s} {value}")
-    budget = args.budget_ms
-    verdict = "통과" if stats["max_ms"] <= budget else "미달"
-    print(f"\nNFR-1.1 예산 {budget}ms 대비 최악값 {stats['max_ms']}ms → **{verdict}**")
+    print(f"\n{budget_note(stats, args.budget_ms)}")
     print("표본:", samples)
     return 0
 
@@ -232,7 +253,12 @@ def build_parser() -> argparse.ArgumentParser:
     report = sub.add_parser("report", help="shown_ms 를 채운 CSV 로 통계")
     report.add_argument("--readings", default="logs/latency/readings.csv")
     report.add_argument("--refresh-hz", type=float, default=60.0)
-    report.add_argument("--budget-ms", type=int, default=250)
+    report.add_argument(
+        "--budget-ms",
+        type=int,
+        default=250,
+        help="NFR-1.1 전체 예산. 이 구간이 그중 몇 %를 쓰는지만 보여준다 (판정 아님)",
+    )
     report.set_defaults(func=cmd_report)
     return parser
 
