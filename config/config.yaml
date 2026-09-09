@@ -125,7 +125,10 @@ vision:
   detect_consecutive_frames: 3 # FR-3.2 — 단발 오검출 억제
   resolution: VGA              # VGA | QVGA (FR-5.3)
   target_fps: 15               # NFR-1.3
-  inference_fps: 7             # 추론 프레임 스킵 (FSM 10Hz 대비 충분)
+  # 2026-09-09 실기에서 VGA 25fps 수신과 동시에 명령 RTT 3.2ms 평균,
+  # 프레임 도착→디코드→STOP ACK p95 69ms 를 확인했다. FSM 과 같은 10Hz 로
+  # 맞춰 사건 발생 후 다음 추론까지의 최대 대기를 143ms(7fps)→100ms 로 줄인다.
+  inference_fps: 10
   reconnect_backoff_s: [1, 2, 4, 8, 16, 30]  # FR-5.3
 
 localization:           # Track A(LiDAR) 확정 — OI-9 닫힘 (docs/DECISIONS.md ADR-18)
