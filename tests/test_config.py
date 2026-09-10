@@ -166,7 +166,7 @@ def test_localization_track_is_known(cfg: dict) -> None:
 
 def test_detection_requires_consecutive_frames(cfg: dict) -> None:
     """단발 오검출로 ALERT 로 튀지 않도록 2프레임 이상을 요구한다 (FR-3.2)."""
-    assert cfg["vision"]["detect_consecutive_frames"] >= 2
+    assert cfg["vision"]["detect_hits_required"] >= 2
 
 
 def test_tip_angle_separates_posture_from_fall(cfg: dict) -> None:

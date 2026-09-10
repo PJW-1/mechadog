@@ -121,6 +121,19 @@ def validate_base_config(config: dict[str, Any]) -> None:
         if family is not None and (not isinstance(family, str) or not family.strip()):
             raise ConfigError(f"vision.{section}.model_family 는 null 이거나 비어 있지 않은 문자열")
 
+    # 사람 판정 (FR-3.2) — **시간 기반이다.** 프레임 수로 두면 추론률에 종속된다.
+    _require_positive(vision, "detect_window_ms")
+    _require_positive(vision, "detect_hits_required")
+    # ⚠️ 창 안에 그만큼의 관측이 들어갈 수 없으면 **영원히 확정되지 않는다.**
+    # 추론률과 창 길이가 함께 정해 주는 상한이라 둘 중 하나만 봐서는 잡히지 않는다.
+    capacity = vision["detect_window_ms"] / 1000 * vision["inference_fps"]
+    if vision["detect_hits_required"] > capacity:
+        raise ConfigError(
+            f"vision.detect_hits_required({vision['detect_hits_required']}) 가 "
+            f"창 안 최대 관측 수({capacity:.1f} = {vision['detect_window_ms']}ms x "
+            f"{vision['inference_fps']}fps) 를 넘어 영원히 확정되지 않음"
+        )
+
     backoff = vision.get("reconnect_backoff_s")
     if not isinstance(backoff, list) or not backoff:
         raise ConfigError("vision.reconnect_backoff_s 는 비어 있지 않은 목록이어야 함")
