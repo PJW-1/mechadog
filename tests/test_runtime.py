@@ -11,9 +11,11 @@ from conftest import FakeClock
 
 from host.behavior.escalation import Level
 from host.behavior.fsm import Event
+from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
 from host.runtime import Runtime, watch_console
+from host.vision.detector import Detection
 from host.vision.person import Sighting
 from host.vision.tracker import Track
 from host.vision.worker import VisionResult
@@ -115,7 +117,8 @@ def vision_result(
 ) -> VisionResult:
     """런타임 통합 시험용 판정 결과."""
     return VisionResult(
-        detections=(),
+        detections=(Detection("person", 0.9, (0.0, 0.0, 10.0, 20.0)),) if hits else (),
+        jpeg=b"test-jpeg",
         frame_seq=seq,
         frame_received_ms=at_ms,
         completed_ms=at_ms,
@@ -411,6 +414,45 @@ def test_stalled_camera_does_not_hold_alert_forever(config: dict, clock: FakeClo
     assert runtime.behavior.state == "PATROL"
 
 
+def test_confirmed_person_is_recorded_once_and_published(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    """확정 엣지 한 번이 JPEG·텔레메트리 저장과 대시보드 사건 한 건이 된다."""
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    published = []
+    vision = FakeVision()
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=blackbox,
+        event_publisher=published.append,
+    )
+    encoder = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(clock.ms)
+    runtime.ingest(telemetry(encoder), clock.ms)
+
+    vision.result = vision_result(1, 100, present=True, hits=3, last_seen_ms=100)
+    runtime.tick(100)
+    runtime.tick(150)  # 같은 결과 슬롯을 다시 읽어도 중복 기록하지 않는다
+
+    entries = blackbox.feed()
+    assert len(entries) == 1
+    assert published == entries
+    assert entries[0].jpeg_path is not None
+    assert entries[0].jpeg_path.read_bytes() == b"test-jpeg"
+    assert entries[0].state == "ALERT"
+    assert entries[0].escalation == "L1"
+    assert entries[0].telemetry["device_id"] == DEVICE
+    assert entries[0].telemetry["available"] is True
+    assert entries[0].telemetry["seq"] == 1
+    assert len(entries[0].tracks) == 1
+    assert entries[0].detections[0]["label"] == "person"
+
+
 # ── 대응 에스컬레이션 배선 (3.8.3) ──────────────────────────
 #
 # 단계기 자체는 `test_escalation.py` 가 전수로 본다. 여기서 보는 것은 **연결**이다 —
@@ -569,12 +611,15 @@ def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> 
     monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
     monkeypatch.setattr(runtime_module, "setup_logging", lambda *_args, **_kw: None)
     monkeypatch.setattr(runtime_module, "build_worker", lambda _cfg: vision)
+    blackbox = object()
+    monkeypatch.setattr(runtime_module, "EventBlackbox", lambda _cfg: blackbox)
     monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
     monkeypatch.setattr(runtime_module, "open_socket", lambda _port: CliSocket())
 
     result = runtime_module.main(["--device", DEVICE, "--duration", "0", "--xiao-ip", "192.0.2.10"])
     assert result == 0
     assert captured["vision"] is vision
+    assert captured["blackbox"] is blackbox
     assert captured["config"]["network"]["xiao_ip"] == "192.0.2.10"
     assert captured["duration_s"] == 0.0
     assert captured["closed"] is True

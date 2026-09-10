@@ -111,6 +111,7 @@ def test_result_appears_and_is_not_blocking(cfg: dict, monkeypatch) -> None:
         result = worker.latest()
     assert isinstance(result, VisionResult)
     assert result.detections[0].label == "person"
+    assert result.jpeg.startswith(b"\xff\xd8"), "블랙박스에는 수신 JPEG 원본이 필요하다"
     assert result.frame_received_ms > 0, "프레임 도착 시각을 함께 들고 다녀야 한다"
 
 
