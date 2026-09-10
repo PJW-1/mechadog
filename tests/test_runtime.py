@@ -62,6 +62,20 @@ class FakeSocket:
         return [json.loads(line)["type"] for _at, line in self.sent]
 
 
+class OversizedDatagramSocket(FakeSocket):
+    """Windows의 WSAEMSGSIZE를 첫 수신에서 한 번 재현한다."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock)
+        self._raised = False
+
+    def recvfrom(self, size: int) -> tuple[bytes, tuple[str, int]]:
+        if not self._raised:
+            self._raised = True
+            raise OSError(10040, "message too long")
+        return super().recvfrom(size)
+
+
 class FakeVision:
     """Runtime이 비전 워커의 수명을 실제로 소유하는지 확인하는 최소 가짜."""
 
@@ -245,11 +259,28 @@ def test_loop_sends_at_the_configured_rate(config: dict, clock: FakeClock) -> No
 
 
 def test_loop_ends_with_estop(config: dict, clock: FakeClock) -> None:
-    """**종료 전문은 ESTOP 이다.** 호스트가 사라진 뒤 로봇이 계속 걷지 않게 한다."""
+    """종료 ESTOP은 UDP 한 건 유실에도 남도록 같은 전문을 세 번 보낸다."""
     r = Runtime(config, device_id=DEVICE, clock=clock)
     sock = FakeSocket(clock)
     r.serve(sock, duration_s=0.5, clock=clock)
-    assert sock.types()[-1] == "ESTOP"
+    assert sock.types()[-3:] == ["ESTOP", "ESTOP", "ESTOP"]
+    assert len({payload for _at, payload in sock.sent[-3:]}) == 1
+
+
+def test_oversized_windows_datagram_is_dropped(config: dict, clock: FakeClock, caplog) -> None:
+    """WSAEMSGSIZE 한 건이 운용 루프와 종료 ESTOP을 막지 않는다."""
+    import logging
+
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = OversizedDatagramSocket(clock)
+    with caplog.at_level(logging.WARNING, logger="mechadog.runtime"):
+        r.serve(sock, duration_s=0.2, clock=clock)
+
+    assert "telemetry_datagram_too_large" in [
+        getattr(record, "event", None) for record in caplog.records
+    ]
+    assert r.stats.discarded == 1
+    assert sock.types()[-3:] == ["ESTOP", "ESTOP", "ESTOP"]
 
 
 def test_loop_receives_and_reacts(config: dict, clock: FakeClock) -> None:

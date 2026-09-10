@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import hashlib
+import urllib.error
 from pathlib import Path
 
+from tools import fetch_models
 from tools.fetch_models import SAMPLES, WEIGHTS, Weight, sha256_of, verify
 
 
@@ -97,3 +99,23 @@ def test_readme_quotes_the_same_numbers() -> None:
             else:
                 # 사진은 해시를 문서에 옮기지 않는다(3장이라 표가 길어진다). 파일명만 맞춘다.
                 assert Path(weight.dest).name in readme, f"{weight.dest}: README 에 없다"
+
+
+def test_download_error_is_reported_without_traceback(monkeypatch, capsys) -> None:
+    weight = Weight(
+        dest="model.onnx",
+        url="https://example.invalid/model.onnx",
+        size=1,
+        sha256="0" * 64,
+        note="시험용",
+    )
+    monkeypatch.setattr(fetch_models, "WEIGHTS", (weight,))
+    monkeypatch.setattr(fetch_models, "verify", lambda _weight, _path: "파일 없음")
+
+    def fail(_weight, _path):
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(fetch_models, "download", fail)
+
+    assert fetch_models.run(check_only=False, force=False) == 1
+    assert "다운로드 실패" in capsys.readouterr().out

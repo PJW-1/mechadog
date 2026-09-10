@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import sys
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -156,7 +157,12 @@ def run(*, check_only: bool, force: bool, samples: bool = False) -> int:
         problem = verify(weight, path)
         if problem and not check_only:
             print(f"  {problem}")
-            download(weight, path)
+            try:
+                download(weight, path)
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                print(f"  ❌ 다운로드 실패 — {exc}")
+                failures += 1
+                continue
             problem = verify(weight, path)
             if problem:
                 # ⚠️ 검증 실패한 파일을 남기지 않는다. 남기면 다음 실행이 그것을 쓴다.
