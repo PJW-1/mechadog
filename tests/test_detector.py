@@ -256,7 +256,7 @@ def test_detect_returns_original_image_coordinates(cfg: dict) -> None:
 
 
 def test_detect_drops_below_confidence(cfg: dict) -> None:
-    """임계값 미달은 버린다 (FR-3.2 는 그 위에서 연속 3프레임을 본다)."""
+    """임계값 미달은 버린다 (FR-3.2 는 그 위에서 시간 창 안의 횟수를 본다)."""
     raw = _raw_with_one_box(index=1, class_id=0, objectness=0.3, class_score=0.3)
     det, _ = _detector(cfg, raw)
     assert det.detect(np.zeros((480, 640, 3), dtype=np.uint8)) == []

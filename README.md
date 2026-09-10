@@ -47,8 +47,12 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 | **Reasoning** | 클라우드 | VLM 현장 판독, 이벤트 리포트 | 1~3 초 |
 
 2026-09-09 실기에서 XIAO VGA 25fps 수신 중에도 메인 ESP32 명령 RTT는 평균
-3.2ms·최대 15.4ms·손실 0%였다. 현재 통신은 병목이 아니며, 인지 체감 지연은
-10fps 추론 주기·연속 3프레임 확인·모델 실행 시간·물리 구동이 좌우한다.
+3.2ms·최대 15.4ms·손실 0%였다. **통신은 병목이 아니다.**
+
+2026-09-10 실기로 인지 구간까지 쟀다 — **YOLOX-S** 검출이 기준 PC(RTX 3080·DirectML)에서
+**p95 8.6ms**, 2~3m 사람 검출 **0.89~0.92**. 추론률을 수신률과 같은 **25fps** 로 올려
+프레임 도착→검출 완료가 **49.9 → 24.4ms** 로 줄었다. 사람 판정은 **300ms 안에 3회**이며
+프레임 수가 아니라 시간으로 센다 ([ADR-25](docs/DECISIONS.md)).
 
 > **불변 규칙**: 안전 판단은 절대 온보드 밖으로 내보내지 않는다. Host PC가 꺼져도 로봇은 스스로 멈춘다.
 
@@ -137,7 +141,7 @@ mechdog_physical_ai/
 ├── firmware_mechdog_motion/src/         # MechDog ESP32 (Arduino)
 ├── firmware_xiao_vision/                # XIAO ESP32S3 카메라 + MJPEG (Arduino)
 ├── host/                                # Host PC (Python)
-│   ├── vision/                          # 스트림 수신 · 객체 검출 추론
+│   ├── vision/                          # 스트림 수신 · 검출기 · 추론 워커 · 사람 게이트
 │   ├── behavior/                        # FSM · 명령 송신
 │   ├── telemetry/                       # 텔레메트리 수신
 │   ├── dashboard/                       # FastAPI + WebSocket + UI
