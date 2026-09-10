@@ -42,6 +42,7 @@ from host.common.logging_setup import (
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.telemetry.receiver import Ingested, TelemetryReceiver
+from host.vision.worker import TickIntervals
 
 LOG = event_logger("mechadog.runtime")
 
@@ -101,6 +102,7 @@ class Runtime:
         robot_ip: str | None = None,
         clock: Callable[[], int] = system_clock_ms,
         context: LogContext | None = None,
+        vision: Any = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -134,6 +136,17 @@ class Runtime:
         self._log.observe(state=self._behavior.state)
         self._edge = EdgeTrigger()
         self._summary = PeriodicSummary(interval_ms=1000)
+        # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
+        # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
+        self._vision = vision
+        # ⚠️ **정상값을 미리 심는다.** `EdgeTrigger` 는 첫 관측을 변화로 보므로, 심지
+        # 않으면 기동할 때마다 `vision_worker_unhealthy` 와 `vision_recovered` 가
+        # 거짓으로 찍힌다 — 실제로 그렇게 찍혔다. **거짓 경보는 진짜 경보를 묻는다.**
+        self._edge.changed("vision_healthy", True)
+        self._edge.changed("vision_stalled", False)
+        # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
+        # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
+        self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
 
     @property
     def behavior(self) -> Behavior:
@@ -146,6 +159,16 @@ class Runtime:
     @property
     def stats(self) -> Stats:
         return self._stats
+
+    @property
+    def intervals(self) -> TickIntervals:
+        """틱 **간격** 분포. 개수(`stats.ticks`)로는 최악을 알 수 없다."""
+        return self._intervals
+
+    @property
+    def vision(self) -> Any:
+        """붙어 있는 추론 워커. 없으면 `None` (비전 없이도 운용된다)."""
+        return self._vision
 
     @property
     def actions(self) -> dict[str, str]:
@@ -214,6 +237,34 @@ class Runtime:
             self._apply(event, now_ms)
         return out
 
+    def _poll_vision(self, now_ms: int) -> None:
+        """검출 결과를 **무블로킹으로** 집어 온다. 없으면 그냥 지나간다.
+
+        ⚠️ **여기서 절대 기다리지 않는다.** 프레임을 기다리면 카메라 사정이 명령
+        주기를 흔들고, 그러면 로봇이 `cmd_timeout_ms` 를 넘겨 멈춘다.
+
+        ⚠️ **검출 결과를 FSM 사건으로 바꾸지 않는다** — `person` 필터와 연속 3프레임
+        판정은 `3.3.3` 의 일이다. 여기까지가 배관이다.
+        """
+        if self._vision is None:
+            return
+        result = self._vision.latest()
+        if result is not None and self._edge.changed("vision_seq", result.frame_seq):
+            self._summary.count("detections", len(result.detections))
+        # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
+        # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
+        healthy = self._vision.healthy()
+        if self._edge.changed("vision_healthy", healthy) and not healthy:
+            LOG.error("vision_worker_unhealthy")
+        stalled = self._vision.stalled(now_ms)
+        if self._edge.changed("vision_stalled", stalled):
+            # 비전 단절은 **기능 저하**다 — 페일세이프로 가지 않고 인지만 끈다
+            # (config `vision.stall_timeout_ms` 주석 · NFR-2.6).
+            LOG.warning(
+                "vision_stalled" if stalled else "vision_recovered",
+                age_ms=self._vision.age_ms(now_ms),
+            )
+
     def _watch_command_uptake(self, age_ms: int | None, now_ms: int) -> None:
         """⚠️ **로봇이 우리 명령을 폐기하고 있는지 본다.**
 
@@ -259,6 +310,7 @@ class Runtime:
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
+        self._poll_vision(now_ms)
         before = self._behavior.state
         lines = self._behavior.tick(now_ms)
         if self._behavior.state != before:
@@ -269,6 +321,8 @@ class Runtime:
             self._stats.sent += len(lines)
             self._stats.note_state(self._behavior.state)
             self._summary.count("sent", len(lines))
+            # 전문이 나온 회전만 센다 — 그것이 로봇이 체감하는 주기다.
+            self._intervals.note(now_ms)
         # 주기 요약 — fps·지연·카운터를 1초에 한 줄로 (1.3)
         digest = self._summary.drain(now_ms)
         if digest:
@@ -394,10 +448,14 @@ class Runtime:
                 sock.sendto(line.encode("utf-8"), self._peer)
 
     def _shutdown(self, sock: socket.socket) -> None:
+        # ⚠️ **`ESTOP` 을 먼저 보낸다.** 워커 정리를 기다리다 늦으면, 로봇을 멈추는
+        # 신호가 스레드 조인 뒤로 밀린다. 순서가 안전을 결정한다.
         line = self.emergency_stop()
         if self._peer is not None:
             with contextlib.suppress(OSError):
                 sock.sendto(line.encode("utf-8"), self._peer)
+        if self._vision is not None:
+            self._vision.stop()
         LOG.info(
             "runtime_stopped",
             ticks=self._stats.ticks,
@@ -407,6 +465,8 @@ class Runtime:
             foreign=self._stats.foreign,
             transitions=self._stats.transitions,
             states=self._stats.states,
+            # 개수만으로는 루프가 밀렸는지 알 수 없다 — 간격 분포를 함께 남긴다.
+            tick_interval=self._intervals.digest(),
         )
 
 
