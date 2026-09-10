@@ -297,3 +297,27 @@ def test_formatter_keeps_unicode_readable() -> None:
     record.detail = {"reason": "seq 역전·중복"}
     line = JsonlFormatter().format(record)
     assert "seq 역전·중복" in line
+
+
+def test_detail_may_be_named_level_or_event() -> None:
+    """⚠️ **드물게 지나가는 경로에서 죽지 않게 한다.**
+
+    `_emit(level, event, /, ...)` 이 위치 전용이 아니면 `log.info("x", level="L0")` 이
+    `TypeError` 를 낸다. 그 줄은 평소에 지나가지 않으므로 시험을 통과한 뒤 운용
+    중에만 죽는다 — 실제로 경보 확인 로그에서 그랬다.
+    """
+    log = event_logger("mechadog.test_kwargs")
+    records: list[logging.LogRecord] = []
+
+    class _Grab(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Grab()
+    log.logger.addHandler(handler)
+    log.logger.setLevel(logging.INFO)
+    try:
+        log.info("alarm_confirm_ignored", level="L0", event="ignored")
+    finally:
+        log.logger.removeHandler(handler)
+    assert records[0].detail == {"level": "L0", "event": "ignored"}

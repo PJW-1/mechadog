@@ -9,10 +9,11 @@ from __future__ import annotations
 import pytest
 from conftest import FakeClock
 
+from host.behavior.escalation import Level
 from host.behavior.fsm import Event
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
-from host.runtime import Runtime
+from host.runtime import Runtime, watch_console
 from host.vision.person import Sighting
 from host.vision.worker import VisionResult
 
@@ -371,6 +372,132 @@ def test_stalled_camera_does_not_hold_alert_forever(config: dict, clock: FakeClo
     assert runtime.behavior.state == "PATROL"
 
 
+# ── 대응 에스컬레이션 배선 (3.8.3) ──────────────────────────
+#
+# 단계기 자체는 `test_escalation.py` 가 전수로 본다. 여기서 보는 것은 **연결**이다 —
+# 어느 축이 어느 사건을 실제로 받는지는 런타임을 지나야만 드러난다.
+
+
+def _walk_in(runtime: Runtime, vision: FakeVision, *, seq: int, at_ms: int) -> None:
+    """사람이 확정된 결과를 한 번 흘려 넣는다."""
+    vision.result = vision_result(seq, at_ms, present=True, hits=3, last_seen_ms=at_ms)
+    runtime.tick(at_ms)
+
+
+def test_confirmed_person_raises_observe_level(config: dict, clock: FakeClock) -> None:
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    assert runtime.escalation.level is Level.L0
+
+    _walk_in(runtime, vision, seq=1, at_ms=100)
+    assert runtime.escalation.level is Level.L1
+    assert runtime.behavior.state == "ALERT", "두 축이 함께 움직인다"
+
+
+def test_standing_unauthenticated_person_reaches_auth_request(
+    config: dict, clock: FakeClock
+) -> None:
+    """L2 승격은 **틱이 돌아야** 일어난다 — 사건이 아니라 시간이 정한다."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+    for i in range(hold_ms // 100 + 1):
+        _walk_in(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+    assert runtime.escalation.level is Level.L2
+
+
+def test_auth_timeout_raises_alarm_without_passing_through_apply(
+    config: dict, clock: FakeClock
+) -> None:
+    """⚠️ **경보로 올라가는 유일한 실제 경로다.**
+
+    `AUTH_FAILED` 는 `AUTH_WAIT` 의 30초 상태 타이머가 `Behavior` 안에서 만든다.
+    `_apply` 를 지나지 않으므로, 전이의 트리거를 보고 단계 축에 넣지 않으면
+    **인증 실패가 경보를 만들지 못한다.**
+    """
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.start_patrol(clock.ms)
+    runtime.behavior.event(Event.PERSON_FOUND, now_ms=1000)
+    runtime.behavior.event(Event.AUTH_REQUIRED, now_ms=1000)
+    assert runtime.behavior.state == "AUTH_WAIT"
+
+    timeout_ms = int(config["auth"]["timeout_s"]) * 1000
+    runtime.tick(1000)
+    runtime.tick(1000 + timeout_ms)
+    assert runtime.behavior.last_trigger is Event.AUTH_FAILED
+    assert runtime.escalation.level is Level.L3
+
+
+def test_alarm_survives_the_person_leaving(config: dict, clock: FakeClock) -> None:
+    """FSM 은 순찰로 돌아가도 **경보는 남는다** — 그것이 별도 축인 이유다."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    _walk_in(runtime, vision, seq=1, at_ms=100)
+    runtime.behavior.event(Event.PPE_VIOLATION, now_ms=200)
+    runtime.escalation.note_event("PPE_VIOLATION", 200)
+
+    lost_ms = int(config["fsm"]["target_lost_timeout_s"]) * 1000
+    vision.result = vision_result(2, 300, present=False, hits=0, last_seen_ms=100)
+    runtime.tick(300)
+    runtime.tick(100 + lost_ms)
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L3
+
+
+def test_confirm_alarm_is_the_way_back(config: dict, clock: FakeClock) -> None:
+    """**해제 수단 없는 래치는 시연을 끝낸다.** 그 수단이 여기 있다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.start_patrol(clock.ms)
+    runtime.escalation.note_event("PPE_VIOLATION", clock.ms)
+    assert runtime.confirm_alarm(clock.ms + 1) is True
+    assert runtime.escalation.level is Level.L0
+    assert runtime.confirm_alarm(clock.ms + 2) is False, "두 번 눌러도 흐트러지지 않는다"
+
+
+def test_onboard_failsafe_raises_f_and_reset_returns(config: dict, clock: FakeClock) -> None:
+    """F 해제는 **로봇이 래치를 풀었다고 보고할 때** 일어난다 (PROTOCOL 2절)."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(clock.ms)
+    runtime.ingest(telemetry(enc, state="FAILSAFE", safety_latched=True), clock.ms)
+    assert runtime.escalation.level is Level.F
+
+    runtime.request_reset()
+    runtime.ingest(telemetry(enc, state="IDLE", safety_latched=False), clock.advance(100))
+    assert runtime.behavior.state == "IDLE"
+    assert runtime.escalation.level is Level.L0
+
+
+def test_estop_cannot_be_used_to_clear_an_alarm(config: dict, clock: FakeClock) -> None:
+    """비상정지를 눌렀다 푸는 것으로 경보가 지워지면 안 된다 — L3 로 되돌아온다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(clock.ms)
+    runtime.escalation.note_event("PPE_VIOLATION", clock.ms)
+    runtime.ingest(telemetry(enc, state="FAILSAFE", safety_latched=True), clock.ms)
+    assert runtime.escalation.level is Level.F
+
+    runtime.request_reset()
+    runtime.ingest(telemetry(enc, state="IDLE", safety_latched=False), clock.advance(100))
+    assert runtime.escalation.level is Level.L3
+
+
+def test_log_context_carries_the_live_level(config: dict, clock: FakeClock, caplog) -> None:
+    """로그의 `escalation` 은 상태에서 유도한 값이 아니라 **단계기의 지금 값**이다."""
+    import logging
+
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.start_patrol(clock.ms)
+    runtime.escalation.note_event("AUTH_FAILED", clock.ms)
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        runtime.tick(clock.ms)
+    assert runtime.context.as_dict()["escalation"] == "L3"
+    assert runtime.context.state == "PATROL", "상태 축은 따로 움직인다"
+
+
 def test_dead_vision_worker_marks_degraded(config: dict, clock: FakeClock) -> None:
     vision = FakeVision()
     vision.alive = False
@@ -592,3 +719,36 @@ def test_periodic_summary_is_emitted_once_per_second(config, clock, caplog) -> N
     assert digests[0].detail["accepted"] == 11
     assert digests[0].detail["discarded"] == 11
     assert digests[1].detail["accepted"] == 10, "이후 창은 정확히 1초분이다"
+
+
+def test_console_keys_map_to_the_two_confirmations(config: dict, clock: FakeClock) -> None:
+    """⚠️ **두 확인은 다른 키다.** 하나로 묶으면 비상정지를 푸는 조작이 경보를 지운다.
+
+    `stream` 을 주입해 키 대응을 시험한다 — 콘솔 없이 닫을 수 있는 부분을 `tty`
+    핑계로 시험 밖에 두면, 조용히 어긋난 뒤 시연에서야 드러난다.
+    """
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.start_patrol(clock.ms)
+    runtime.escalation.note_event("PPE_VIOLATION", clock.ms)
+
+    watch_console(runtime, ["c\n", "\n", "q\n"])
+    assert runtime.escalation.level is Level.L3, "요청만 세우고 단계는 틱이 바꾼다"
+    runtime.tick(clock.advance(100))
+    assert runtime.escalation.level is Level.L0
+
+
+def test_console_reset_key_asks_for_reset(config: dict, clock: FakeClock) -> None:
+    import json
+
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(clock.ms)
+    runtime.ingest(telemetry(enc, state="FAILSAFE", safety_latched=True), clock.ms)
+
+    watch_console(runtime, ["R\n"])
+    lines_out = runtime.tick(clock.advance(100))
+    assert any(json.loads(line)["type"] == "RESET_SAFE" for line in lines_out), (
+        "확인은 틱에 실려 나간다 — 틱을 앞지르는 것은 ESTOP 하나뿐이다"
+    )
+    runtime.ingest(telemetry(enc, state="IDLE", safety_latched=False), clock.advance(100))
+    assert runtime.escalation.level is Level.L0
