@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="MechaDog 로봇 관제 웹 구조와 인터랙션을 검증하기 위한 디자인 프로토타입"
+    />
+    <title>MechaDog Command Center</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./console.css" />
+    <link rel="stylesheet" href="./spatial.css?v=demo1" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">본문으로 이동</a>
+    <div class="prototype-banner"><b>UI 미리보기</b><span>기존 예시 데이터 · 실제 장비 미연결</span><button id="preview-mode" aria-pressed="true">예시 데이터 켜짐</button></div>
+
+    <div class="app-shell">
+      <aside class="side-rail" aria-label="주요 메뉴">
+        <a class="brand" href="#dashboard" aria-label="MechaDog 대시보드">
+          <span class="brand-mark">MD</span>
+          <span class="brand-name">MechaDog<small>COMMAND CENTER</small></span>
+        </a>
+
+        <span class="nav-group-label">운영 워크스페이스</span>
+        <nav class="primary-nav" aria-label="운영 화면">
+          <button class="nav-item is-active" data-view="dashboard">
+            <span>01</span>관제
+          </button>
+          <button class="nav-item" data-view="missions">
+            <span>02</span>임무
+          </button>
+          <button class="nav-item" data-view="events">
+            <span>03</span>이벤트 <b class="nav-count" data-pending-count>3</b>
+          </button>
+          <button class="nav-item" data-view="history">
+            <span>04</span>운행 기록
+          </button>
+          <button class="nav-item" data-view="zones">
+            <span>05</span>구역·지도
+          </button>
+          <button class="nav-item" data-view="robot">
+            <span>06</span>장치·센서
+          </button>
+        </nav>
+
+        <div class="rail-footnote"><i></i><span>로컬 워크스페이스<small>장비 연결 대기</small></span></div>
+        <button class="nav-item nav-settings" data-view="settings">
+          <span>07</span>안전·설정
+        </button>
+      </aside>
+
+      <div class="app-main">
+        <header class="top-bar">
+          <div class="robot-select-wrap">
+            <span class="eyebrow">선택 장치</span>
+            <button class="robot-select" id="robot-selector" aria-label="MD-01 장치 및 센서 상태 보기">
+              MD-01 <span>▾</span>
+            </button>
+          </div>
+
+          <div class="connection-cluster" aria-label="연결 상태">
+            <span class="connection-item"><i></i>서버 미연결</span>
+            <span class="connection-item"><i></i>로봇 미연결</span>
+            <span class="connection-item"><i></i>영상 대기</span>
+          </div>
+
+          <div class="top-actions">
+            <span class="top-clock" id="header-clock"></span>
+            <button class="estop-button" id="estop-open">
+              <span class="estop-dot"></span>
+              <span><b>긴급 정지</b><small>E-STOP · SHIFT+E</small></span>
+            </button>
+          </div>
+        </header>
+
+        <div class="stale-alert" id="stale-alert" role="alert" hidden>
+          <strong>텔레메트리 만료</strong>
+          <span>예시 연결 만료 상태 — 제어권을 해제하고 이동·임무 시작을 잠갔습니다.</span>
+          <button id="restore-telemetry">데모 복구</button>
+        </div>
+
+        <main id="main-content" tabindex="-1">
+          <section class="view is-visible" id="view-dashboard" data-title="실시간 관제">
+            <div class="workspace-heading"><div><span class="section-kicker">MECHADOG / SPATIAL OPERATIONS</span><h1>현장을 한눈에<span class="heading-dot"></span></h1><p>공간을 살피고, 로봇을 확인하고, 위험에 대응합니다.</p></div><button class="ghost-button" data-jump="missions">임무 관리 ↗</button></div>
+            <div class="spatial-workspace">
+              <section class="spatial-stage" aria-labelledby="spatial-title">
+                <div class="spatial-topline"><div><span class="section-kicker">FACILITY / 01</span><h2 id="spatial-title">산업 안전 관제</h2></div><span class="concept-label">공간 콘셉트 · 실측 지도 아님</span></div>
+                <canvas id="facility-canvas" tabindex="0" aria-label="천장이 열린 공장 3D 개념도. 드래그 또는 방향키로 회전, 더하기·빼기 키로 확대·축소합니다." aria-describedby="spatial-help"></canvas>
+                <div id="facility-fallback" class="facility-fallback" hidden><strong>3D 표시를 사용할 수 없습니다</strong><p>WebGL을 지원하는 브라우저에서 공간을 둘러볼 수 있습니다. 구역 선택과 기존 관제 기능은 계속 사용할 수 있습니다.</p></div>
+                <div class="spatial-zone-nav" aria-label="개념 구역 선택"><button data-facility-zone="all" aria-pressed="true">전체</button><button data-facility-zone="A" aria-pressed="false"><i></i>A 입구</button><button data-facility-zone="B" aria-pressed="false"><i></i>B 조립</button><button data-facility-zone="C" aria-pressed="false"><i></i>C 자재</button></div>
+                <div class="spatial-footer"><div class="spatial-view-controls" aria-label="3D 시야 조작"><button id="facility-orbit" aria-pressed="false">자동 회전</button><button id="facility-top" aria-pressed="false">상공 시야</button><button id="facility-reset" aria-label="공장 전체 시야 초기화">↺ 초기화</button><button id="facility-zoom-in" aria-label="공장 확대">＋</button><button id="facility-zoom-out" aria-label="공장 축소">−</button></div><span id="spatial-help">드래그하여 회전 · 휠로 확대</span></div>
+              </section>
+              <aside class="spatial-inspector" aria-label="선택 구역과 로봇">
+                <section class="robot-portrait"><div class="portrait-title"><span class="section-kicker">YOUR FIELD ROBOT</span><span class="offline-chip">미연결</span></div><div class="robot-image-slot" id="robot-image-slot"><span class="robot-watermark" aria-hidden="true">MD–01</span><img src="./assets/hiwonder-mechdog.jpg" width="1200" height="1200" alt="노란 알루미늄 프레임과 전면 초음파 센서를 가진 Hiwonder MechDog 기본 기체" decoding="async" /></div><div class="portrait-caption"><div><h2>MechDog<span>01</span></h2><p>Hiwonder · Advanced Kit</p></div><button class="portrait-link" data-jump="robot" aria-label="MechDog 장치 상세 보기">↗</button></div></section>
+                <section class="spatial-context"><span class="section-kicker">AREA INTELLIGENCE</span><h3 id="facility-zone-title">전체 시설</h3><p id="facility-zone-description">입구, 조립, 자재 보관. 구역을 선택해 확인 항목을 살펴보세요.</p><div class="inspection-tags" id="facility-zone-tags"><span>PPE 확인</span><span>출입 인증</span><span>물품 변화</span></div><div class="spatial-boundary"><span>위치 데이터</span><b>미수신</b></div><button class="text-button" data-jump="events">이벤트 검토로 이동 ↗</button></section>
+              </aside>
+            </div>
+            <div class="overview-strip" aria-label="운영 요약">
+              <div><span>선택 장치</span><strong>MD-01 <small>MechDog</small></strong></div>
+              <div><span>현재 임무 · 예시</span><strong id="overview-mission">순찰 중 <small>01</small></strong></div>
+              <button data-jump="events"><span>검토 대기 · 예시</span><strong><b data-pending-count>3</b><small>건</small><em>검토하기 ↗</em></strong></button>
+              <div><span>측위 상태</span><strong class="muted-value">미연결 <small>LiDAR</small></strong></div>
+            </div>
+            <div class="dashboard-grid">
+              <section class="mission-hero ruled-panel">
+                <div class="section-kicker">CURRENT MISSION · 예시</div>
+                <div class="mission-title-row">
+                  <div>
+                    <p class="mission-number">PATROL <span>/ 01</span></p>
+                    <h2 id="mission-heading">순찰 진행 중</h2>
+                  </div>
+                  <div class="state-seals">
+                    <div class="escalation-seal">
+                      <span>경보 단계</span>
+                      <strong>L0</strong>
+                      <small>NORMAL</small>
+                    </div>
+                    <div class="state-seal" id="state-seal">
+                      <span>FSM</span>
+                      <strong>PATROL</strong>
+                      <small>동작 상태</small>
+                    </div>
+                  </div>
+                </div>
+                <div class="progress-line" aria-label="임무 진행률 64%">
+                  <span style="width: 64%"></span>
+                </div>
+                <div class="mission-meta">
+                  <span><small>진행률</small><b>64%</b></span>
+                  <span><small>경과</small><b>18:42</b></span>
+                  <span><small>현재 구역</small><b>ZONE B</b></span>
+                  <button class="inline-action" id="mission-toggle">일시정지</button>
+                </div>
+              </section>
+
+              <section class="video-panel" aria-label="로봇 전방 카메라 연결 상태">
+                <div class="video-topline">
+                  <span><i class="connection-dot"></i>전방 카메라 <b>CAM-01</b></span>
+                  <button class="ghost-button" id="camera-focus" aria-pressed="false">넓게 보기 ↗</button>
+                </div>
+                <div class="camera-empty"><div class="camera-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3" y="7" width="18" height="18" rx="4"/><path d="m21 13 8-4v14l-8-4M8 12h8M8 17h4"/></svg></div><span class="section-kicker">WAITING FOR VIDEO</span><h2>카메라 연결 대기</h2><p>영상이 연결되면 이곳에서 감지 결과를 함께 확인합니다.</p><button class="text-button" data-jump="robot">장치 연결 상태 확인 →</button></div>
+                <div class="video-footer">
+                  <span>프레임 <b>— FPS</b></span><span>지연 <b>— ms</b></span><span class="media-note">원본 영상 미수신</span>
+                </div>
+              </section>
+
+              <section class="telemetry-panel ruled-panel">
+                <div class="panel-heading">
+                  <div>
+                    <span class="section-kicker">ROBOT HEALTH</span>
+                    <h2>기체 상태</h2>
+                  </div>
+                  <span class="freshness" id="freshness">예시 값</span>
+                </div>
+
+                <div class="metric-feature">
+                  <span>배터리 전압</span>
+                  <strong>7.62<small>V</small></strong>
+                  <div class="battery-rail"><i style="width: 78%"></i></div>
+                  <em>정상 범위 · 예시</em>
+                </div>
+
+                <div class="metric-row">
+                  <div><span>DISTANCE</span><strong>47<small>cm</small></strong></div>
+                  <div><span>PITCH</span><strong>-3.2<small>°</small></strong></div>
+                  <div><span>ROLL</span><strong>+1.8<small>°</small></strong></div>
+                  <div><span>CMD AGE</span><strong>34<small>ms</small></strong></div>
+                </div>
+
+                <div class="spark-chart" aria-label="최근 배터리 변화 데모 차트">
+                  <div class="chart-label"><span>BATTERY / 30 MIN</span><span>8.04 → 7.62 V</span></div>
+                  <svg viewBox="0 0 440 86" role="img" aria-hidden="true">
+                    <polyline points="0,12 36,14 72,19 110,20 145,28 184,30 220,38 258,41 294,55 330,51 368,65 404,70 440,74" />
+                    <line x1="0" x2="440" y1="74" y2="74" />
+                  </svg>
+                </div>
+              </section>
+
+              <section class="control-panel ruled-panel" id="control-panel">
+                <div class="panel-heading">
+                  <div>
+                    <span class="section-kicker">MANUAL OVERRIDE</span>
+                    <h2>수동 제어</h2>
+                  </div>
+                  <span class="owner-badge" id="owner-badge">OWNER 없음</span>
+                </div>
+
+                <div class="control-lock" id="control-lock">
+                  <p>자율 임무와 수동 명령은 동시에 실행되지 않습니다.</p>
+                  <button class="primary-button" id="claim-control">제어권 요청</button>
+                </div>
+
+                <div class="drive-controls" id="drive-controls" hidden>
+                  <p class="control-help">누르고 있는 동안만 이동 · 놓으면 즉시 STOP</p>
+                  <div class="dpad" aria-label="데드맨 수동 조작">
+                    <button data-command="FORWARD" class="drive-up">앞</button>
+                    <button data-command="LEFT" class="drive-left" aria-label="왼쪽 호 선회">좌선회</button>
+                    <button data-command="STOP" class="drive-stop">정지</button>
+                    <button data-command="RIGHT" class="drive-right" aria-label="오른쪽 호 선회">우선회</button>
+                    <button data-command="BACK" class="drive-down">뒤</button>
+                  </div>
+                  <div class="command-status">
+                    <span>LAST COMMAND</span>
+                    <strong id="last-command">STOP</strong>
+                  </div>
+                  <button class="text-button danger-text" id="release-control">제어권 반납</button>
+                </div>
+              </section>
+
+              <section class="event-panel ruled-panel">
+                <div class="panel-heading">
+                  <div>
+                    <span class="section-kicker">LATEST EVENTS</span>
+                    <h2>검토할 이벤트 <b data-pending-count>3</b></h2>
+                  </div>
+                  <button class="text-button" data-jump="events">전체 보기 ↗</button>
+                </div>
+
+                <div class="event-list">
+                  <article class="event-row is-critical">
+                    <time>19:04:21</time>
+                    <div><span>PPE</span><strong>안전모 미착용 감지</strong><small>ZONE B · 신뢰도 89%</small></div>
+                    <button>검토</button>
+                  </article>
+                  <article class="event-row">
+                    <time>18:58:06</time>
+                    <div><span>OBJECT</span><strong>통로 내 신규 물체</strong><small>ZONE A · 기준 이미지 비교</small></div>
+                    <button>검토</button>
+                  </article>
+                  <article class="event-row">
+                    <time>18:44:32</time>
+                    <div><span>AUTH</span><strong>미등록 배지 접근</strong><small>GATE 02 · 2회 시도</small></div>
+                    <button>검토</button>
+                  </article>
+                </div>
+              </section>
+
+              <section class="timeline-panel ruled-panel">
+                <div class="panel-heading">
+                  <div>
+                    <span class="section-kicker">STATE TIMELINE</span>
+                    <h2>동작 상태</h2>
+                  </div>
+                  <span class="system-time" id="system-time">19:08:22 KST</span>
+                </div>
+                <ol class="state-timeline">
+                  <li class="is-complete"><time>18:49</time><span>READY</span><small>사전 점검 통과</small></li>
+                  <li class="is-complete"><time>18:50</time><span>WALK</span><small>ZONE A 이동</small></li>
+                  <li class="is-current"><time>18:56</time><span>PATROL</span><small>ZONE B 순찰 중</small></li>
+                  <li><time>—</time><span>RETURN</span><small>대기</small></li>
+                </ol>
+              </section>
+            </div>
+          </section>
+
+          <section class="view" id="view-robot" data-title="장치·센서">
+            <div class="page-intro twin-intro">
+              <span class="section-kicker">DEVICE & SENSOR HEALTH</span>
+              <h1>장치·센서 <span>/ MD-01</span></h1>
+              <p>로봇의 연결, 배터리, 자세와 관절 상태를 한곳에서 확인합니다. 현재 값은 데모이며 이 화면에서 모터를 직접 제어하지 않습니다.</p>
+            </div>
+
+            <div class="twin-layout">
+              <section class="twin-stage ruled-panel">
+                <div class="twin-toolbar">
+                  <div>
+                    <span class="section-kicker">POSE VIEWER</span>
+                    <strong>마우스 또는 손가락으로 회전</strong>
+                  </div>
+                  <div>
+                    <button class="ghost-button" id="twin-reset">시점 초기화</button>
+                    <button class="ghost-button is-active" id="twin-rotate" aria-pressed="true">자동 회전 ON</button>
+                  </div>
+                </div>
+                <div class="canvas-wrap">
+                  <canvas id="robot-canvas" aria-label="MD-01 사족보행 로봇 3D 디지털 트윈"></canvas>
+                  <div class="axis-legend" aria-hidden="true"><i class="axis-x"></i>X <i class="axis-y"></i>Y <i class="axis-z"></i>Z</div>
+                  <div class="twin-live-label"><i></i>DEMO POSE</div>
+                  <p class="webgl-fallback" id="webgl-fallback" hidden>이 브라우저에서는 3D 보기를 사용할 수 없습니다.</p>
+                </div>
+                <div class="pose-strip">
+                  <span><small>ROLL</small><b>+01.8°</b></span>
+                  <span><small>PITCH</small><b>-03.2°</b></span>
+                  <span><small>YAW</small><b>128.4°</b></span>
+                  <span><small>자세 데이터</small><b>예시</b></span>
+                </div>
+              </section>
+
+              <aside class="twin-data">
+                <section class="ruled-panel twin-health">
+                  <div class="panel-heading">
+                    <div><span class="section-kicker">SYSTEM HEALTH</span><h2>MD-01 상태</h2></div>
+                    <span class="freshness">예시 값</span>
+                  </div>
+                  <div class="twin-status-grid">
+                    <span><small>FSM</small><b>PATROL</b></span>
+                    <span><small>BATTERY</small><b>7.62 V</b></span>
+                    <span><small>센서 온도</small><b>미수신</b></span>
+                    <span><small>수신 신호</small><b>미수신</b></span>
+                  </div>
+                </section>
+
+                <section class="ruled-panel node-panel">
+                  <div class="panel-heading">
+                    <div><span class="section-kicker">STAR TOPOLOGY</span><h2>노드 연결</h2></div>
+                    <span class="freshness">연결 대기</span>
+                  </div>
+                  <div class="node-list">
+                    <span><i></i><b>MOTION</b><small>모션 노드 · 미연결</small></span>
+                    <span><i></i><b>VISION</b><small>영상 노드 · 미연결</small></span>
+                    <span><i></i><b>LIDAR</b><small>PHASE 2 · 미연결</small></span>
+                  </div>
+                </section>
+
+                <section class="ruled-panel reference-panel">
+                  <span class="section-kicker">REFERENCE ASSIGNMENT</span>
+                  <h2>기준기 역할</h2>
+                  <div><small>PHASE 1 · NO LIDAR</small><b>미지정</b></div>
+                  <div><small>PHASE 2 · LIDAR</small><b>미지정</b></div>
+                  <p>기체별 실측을 마친 후 기준기 역할을 배정합니다.</p>
+                </section>
+
+                <section class="ruled-panel joint-panel">
+                  <div class="panel-heading">
+                    <div><span class="section-kicker">8 SERVO CHANNELS</span><h2>관절 상태</h2></div>
+                    <span class="joint-ok">예시 자세</span>
+                  </div>
+                  <div class="joint-list">
+                    <article><b>LF</b><span>HIP <em>+18°</em></span><span>KNEE <em>-34°</em></span></article>
+                    <article><b>RF</b><span>HIP <em>-16°</em></span><span>KNEE <em>-31°</em></span></article>
+                    <article><b>LR</b><span>HIP <em>+12°</em></span><span>KNEE <em>-28°</em></span></article>
+                    <article><b>RR</b><span>HIP <em>-14°</em></span><span>KNEE <em>-30°</em></span></article>
+                  </div>
+                </section>
+
+                <div class="twin-notice">
+                  <span>SAFETY BOUNDARY</span>
+                  <p>3D 트윈은 상태를 읽기 위한 화면입니다. 관절 명령과 Tier 1 안전 제어는 이 화면에 연결하지 않습니다.</p>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="view" id="view-missions" data-title="임무 관리">
+            <div class="page-intro">
+              <span class="section-kicker">MISSION CONTROL</span>
+              <h1>임무 관리</h1>
+              <p>사전 점검을 확인하고 순찰을 시작하세요. 수동 조작으로 전환하면 순찰이 일시정지됩니다.</p>
+            </div>
+            <div class="two-column-page">
+              <section class="ruled-panel preflight-panel">
+                <div class="panel-heading"><h2>사전 점검 · 예시</h2><span class="pass-badge" id="preflight-result">확인 중</span></div>
+                <ul class="check-list">
+                  <li data-check="telemetry"><i>01</i><span><b>로봇 데이터</b><small>연결 상태 확인</small></span><em>—</em></li>
+                  <li data-check="battery"><i>02</i><span><b>배터리 전압</b><small>예시 7.62 V</small></span><em>—</em></li>
+                  <li data-check="safety"><i>03</i><span><b>비상정지 상태</b><small>정지 요청 없음</small></span><em>—</em></li>
+                  <li data-check="control"><i>04</i><span><b>제어권 충돌</b><small>수동 제어자 없음</small></span><em>—</em></li>
+                </ul>
+                <p class="action-help" id="mission-start-help" role="status"></p>
+                <button class="primary-button wide" id="start-mission">PATROL / 02 시작</button>
+              </section>
+              <section class="ruled-panel mission-queue">
+                <div class="panel-heading"><h2>임무 목록 · 예시</h2><span class="secondary-label">MD-01</span></div>
+                <article class="queue-card is-running" data-mission-number="1"><span>RUNNING · 예시</span><h3>PATROL / 01</h3><p>ZONE A → B → C</p><strong>64%</strong></article>
+                <article class="queue-card" data-mission-number="2"><span>대기 · 예시</span><h3>PATROL / 02</h3><p>ZONE D → E</p><strong>0%</strong></article>
+                <p class="action-help">구역 순서는 검토용 예시입니다. 구역 간 자율 이동은 측위 검증 이후 활성화합니다.</p>
+              </section>
+              <section class="ruled-panel scope-panel">
+                <div><span class="section-kicker">COOPERATIVE MISSIONS</span><h2>협동 시나리오 결정 대기</h2></div>
+                <p>구역 분담, 이벤트 공유, 협조 추적 중 구현 범위가 확정되지 않았습니다. 결정 전까지 단일 기체 임무만 실행합니다.</p>
+                <span class="pending-badge">범위 확정 전</span>
+              </section>
+            </div>
+          </section>
+
+          <section class="view" id="view-events" data-title="이벤트 센터">
+            <div class="page-intro compact">
+              <span class="section-kicker">EVENT REVIEW</span>
+              <h1>이벤트 센터</h1>
+              <p>감지 근거를 확인하고 검토 상태를 정리하세요. 현재 목록과 판정은 이번 미리보기에서만 유지됩니다.</p>
+            </div>
+            <div class="review-toolbar">
+              <div class="filter-bar" role="group" aria-label="이벤트 유형">
+                <button class="is-active" data-event-filter="all" aria-pressed="true">전체 <b data-filter-count="all">4</b></button>
+                <button data-event-filter="PPE" aria-pressed="false">PPE <b data-filter-count="PPE">2</b></button>
+                <button data-event-filter="AUTH" aria-pressed="false">인증 <b data-filter-count="AUTH">1</b></button>
+                <button data-event-filter="OBJECT" aria-pressed="false">물품 변화 <b data-filter-count="OBJECT">1</b></button>
+              </div>
+              <div class="review-search"><label class="sr-only" for="event-search">이벤트 내용·구역 검색</label><input id="event-search" type="search" placeholder="내용·구역 검색" autocomplete="off"/><label class="sr-only" for="event-status">검토 상태</label><select id="event-status"><option value="all">모든 상태</option><option value="pending">검토 대기</option><option value="confirmed">확인 완료</option><option value="dismissed">오탐 처리</option></select></div>
+            </div>
+            <section class="ruled-panel event-table-wrap">
+              <div class="table-caption"><span>이벤트 목록 <b id="event-result-count">4</b></span><span>미리보기 기록</span></div>
+              <table class="event-table">
+                <thead><tr><th>시각</th><th>유형</th><th>내용</th><th>구역</th><th>상태</th><th></th></tr></thead>
+                <tbody id="event-table-body"></tbody>
+              </table>
+              <div class="empty-state" id="event-empty" hidden><strong>조건에 맞는 이벤트가 없습니다.</strong><p>검색어나 필터를 바꿔 다시 확인하세요.</p><button class="ghost-button" id="clear-event-filters">필터 초기화</button></div>
+            </section>
+            <p class="action-help">AI 감지는 최종 판정이 아닙니다. 원본 영상·추적 대상·구역 정책을 함께 확인하세요.</p>
+          </section>
+
+          <section class="view" id="view-history" data-title="운행 기록">
+            <div class="page-intro compact">
+              <span class="section-kicker">OPERATION ARCHIVE</span>
+              <h1>운행 기록</h1>
+              <p>임무·상태 전이·명령 seq·후속 텔레메트리·이벤트를 동일한 시간축에서 추적합니다.</p>
+            </div>
+            <div class="history-grid">
+              <section class="ruled-panel history-summary">
+                <span class="section-kicker">THIS PREVIEW SESSION</span><strong id="reviewed-count">0<small>건</small></strong><p>이번 미리보기에서 검토한 이벤트</p><div class="history-note"><span>순찰 거리</span><b>측위 데이터 미수신</b><p>LiDAR 측위가 연결된 후 실제 이동 거리를 확인할 수 있습니다.</p></div>
+              </section>
+              <section class="ruled-panel log-list">
+                <div class="panel-heading"><h2>최근 세션 · 예시</h2><span class="secondary-label">운영 기록</span></div>
+                <article><time>SEP 04 · 18:49</time><div><b>PATROL / 01</b><small>진행 중 · 18분 42초</small></div><em>LIVE</em></article>
+                <article><time>SEP 04 · 15:10</time><div><b>ZONE D INSPECTION</b><small>완료 · 이벤트 2건</small></div><em>DONE</em></article>
+                <article><time>SEP 04 · 10:32</time><div><b>MORNING PATROL</b><small>중단 · 네트워크 만료</small></div><em class="warn">STOP</em></article>
+              </section>
+            </div>
+            <section class="ruled-panel session-audit"><div class="panel-heading"><div><span class="section-kicker">LOCAL PREVIEW ACTIVITY</span><h2>이번 미리보기 조작 이력</h2></div><button class="ghost-button" id="export-audit" disabled>CSV 내보내기 ↓</button></div><p class="action-help">이 브라우저에서 수행한 UI 조작만 기록합니다. 실제 로봇 명령 이력이나 서버 감사 로그가 아닙니다.</p><ol id="audit-list" aria-live="polite"></ol><div class="empty-state" id="audit-empty">아직 기록된 조작이 없습니다.</div></section>
+          </section>
+
+          <section class="view" id="view-zones" data-title="구역·지도">
+            <div class="page-intro compact">
+              <span class="section-kicker">ZONES & LOCALIZATION</span>
+              <h1>구역·지도</h1>
+              <p>LiDAR 지도를 기반으로 순찰 구역과 감지 정책을 확인합니다. 현재 구역 배치는 개념도이며 실제 좌표가 아닙니다.</p>
+            </div>
+            <div class="zone-layout">
+              <section class="zone-map" aria-label="순찰 구역 개념도">
+                <div class="map-grid"></div>
+                <div class="zone-shape zone-a"><span>A</span><small>ENTRY</small></div>
+                <div class="zone-shape zone-b"><span>B</span><small>ASSEMBLY</small></div>
+                <div class="zone-shape zone-c"><span>C</span><small>STORAGE</small></div>
+                <div class="phase2-lock">
+                  <span>PHASE 2 · LOCKED</span>
+                  <strong>Track A · LiDAR SLAM</strong>
+                  <p>센서 검증과 최소 회전 반경 실측을 마친 후 지도와 순찰 경로를 연결합니다.</p>
+                </div>
+                <span class="phase-label">구역 개념도 · 실측 지도 없음</span>
+              </section>
+              <section class="ruled-panel zone-list">
+                <div class="panel-heading"><h2>순찰 구역 · 예시</h2><span class="secondary-label">3개</span></div>
+                <article><span class="zone-code">A</span><div><b>입구 통로</b><small>PPE · 침입 감지</small></div><em>ACTIVE</em></article>
+                <article><span class="zone-code">B</span><div><b>조립 구역</b><small>PPE · 물체 변화</small></div><em>ACTIVE</em></article>
+                <article><span class="zone-code">C</span><div><b>자재 보관</b><small>침입 · 물체 변화</small></div><em>ACTIVE</em></article>
+              </section>
+            </div>
+          </section>
+
+          <section class="view" id="view-settings" data-title="안전·설정">
+            <div class="page-intro compact">
+              <span class="section-kicker">SAFETY & SYSTEM POLICY</span>
+              <h1>안전·설정</h1>
+              <p>사용자 권한, PPE 정책과 운영 임계값을 관리합니다. 하위 안전 제어는 웹에서 변경할 수 없습니다.</p>
+            </div>
+            <div class="settings-grid">
+              <section class="ruled-panel settings-block"><div><h2>연결 끊김 상태 확인</h2><p>미리보기에서 데이터 만료 시 제어 잠금을 확인합니다.</p></div><button class="ghost-button" id="stale-toggle">연결 만료 시험</button></section>
+              <section class="ruled-panel settings-block"><div><h2>운영 임계값</h2><p>만료 시간과 감지 임계값은 연결된 장치 설정에서 읽어옵니다.</p></div><span class="settings-value">설정 미수신</span></section>
+              <section class="ruled-panel settings-block"><div><h2>PPE 정책</h2><p>Phase 1 판정 대상은 안전모와 안전조끼로 제한합니다.</p></div><span class="settings-value">HELMET · VEST</span></section>
+              <section class="ruled-panel settings-block pending"><div><h2>사용자·권한</h2><p>로컬 계정과 단일 운영자 모드 중 방식이 아직 확정되지 않았습니다.</p></div><span class="settings-value">DECISION PENDING</span></section>
+              <section class="ruled-panel settings-block"><div><h2>감사·진단 로그</h2><p>명령 seq, 상태 전이, 설정 변경 이력을 읽기 전용으로 보존합니다.</p></div><span class="settings-value">READ ONLY</span></section>
+              <section class="ruled-panel settings-block locked"><div><h2>Tier 1 안전 제어</h2><p>MCU 로컬 영역 · 웹 변경 불가</p></div><span>LOCKED</span></section>
+              <section class="ruled-panel settings-block"><div><h2>미리보기 초기화</h2><p>현재 UI의 예시 상태만 초기화합니다. 검토 이력은 새로고침 전까지 유지됩니다.</p></div><button class="ghost-button" id="reset-preview">예시 상태 초기화</button></section>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <nav class="mobile-nav" aria-label="모바일 주요 메뉴">
+      <button class="is-active" data-view="dashboard">관제</button>
+      <button data-view="missions">임무</button>
+      <button data-view="events">이벤트</button>
+      <button data-view="history">운행 기록</button>
+      <button data-view="zones">구역·지도</button>
+      <button data-view="robot">장치·센서</button>
+      <button data-view="settings">안전·설정</button>
+    </nav>
+
+    <dialog class="estop-dialog" id="estop-dialog" aria-labelledby="estop-title">
+      <form method="dialog">
+        <span class="dialog-index">SAFETY / 01</span>
+        <h2 id="estop-title">긴급정지 UI를<br />확인할까요?</h2>
+        <p>장비 미연결 상태입니다. 미리보기의 이동과 임무를 잠그고 정지 확인 대기를 표시합니다. 실제 정지 명령은 전송되지 않습니다.</p>
+        <div class="dialog-actions">
+          <button value="cancel" class="ghost-button">취소</button>
+          <button value="confirm" class="estop-confirm">미리보기 제어 잠금</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <dialog class="review-dialog" id="review-dialog" aria-labelledby="review-title">
+      <div class="review-dialog-header"><div><span class="section-kicker" id="review-id"></span><h2 id="review-title">이벤트 상세</h2></div><button class="icon-button" id="review-close" aria-label="이벤트 상세 닫기">×</button></div>
+      <div class="review-dialog-body"><div class="review-detail-meta" id="review-meta"></div><div class="evidence-placeholder"><span class="evidence-symbol" aria-hidden="true">▧</span><strong>원본 프레임 미연결</strong><p>이 기록은 화면 검토용 예시입니다. 실제 증거 이미지는 제공되지 않았습니다.</p></div><section class="review-guidance"><h3>확인할 항목</h3><p id="review-guidance"></p></section>
+      <form id="review-form"><label for="review-decision">검토 상태</label><select id="review-decision"><option value="pending">검토 대기</option><option value="confirmed">확인 완료</option><option value="dismissed">오탐 처리</option></select><label for="review-note">검토 메모 <span>오탐 처리 시 필수</span></label><textarea id="review-note" maxlength="600" rows="3" placeholder="판정 근거와 추가 확인할 내용을 남기세요."></textarea><p class="action-help">예시 판정은 현재 페이지에서만 유지되며 실제 운영 기록으로 저장되지 않습니다.</p><div class="review-dialog-actions"><button type="button" class="ghost-button" id="review-cancel">닫기</button><button type="submit" class="primary-button">예시 판정 적용</button></div></form></div>
+    </dialog>
+    <script src="./operation-state.js"></script>
+    <script src="./app.js"></script>
+    <script src="./review.js"></script>
+    <script src="./spatial.js?v=demo1"></script>
+  </body>
+</html>
