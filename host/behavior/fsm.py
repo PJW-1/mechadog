@@ -58,10 +58,10 @@ class Event(StrEnum):
     ONBOARD_AVOID = "ONBOARD_AVOID"  # 초음파 25cm 반사 정지를 로봇이 보고했다
     AVOID_CLEARED = "AVOID_CLEARED"  # 회피 시퀀스 완료 & 전방 clear
     # ── 사람 대응 ──
-    PERSON_FOUND = "PERSON_FOUND"  # 3프레임 연속 검출 (FR-3.1)
+    PERSON_FOUND = "PERSON_FOUND"  # 300ms 시간 창 안에 3회 검출 (FR-3.2)
     TARGET_OFF_CENTER = "TARGET_OFF_CENTER"  # x축 편차 > 데드존 (FR-3.5)
     TARGET_CENTERED = "TARGET_CENTERED"  # 중앙 정렬 유지
-    TARGET_LOST = "TARGET_LOST"  # 미검출 5s 지속 (FR-3.6)
+    TARGET_LOST = "TARGET_LOST"  # 미검출 5s 지속 (FR-3.7)
     PPE_VIOLATION = "PPE_VIOLATION"  # 보호구 미착용 확정 (FR-9.3)
     # ── 인증 ──
     AUTH_REQUIRED = "AUTH_REQUIRED"  # 미인증 상태 지속 → L2
@@ -374,8 +374,12 @@ class Behavior:
         self._last_vision_ms = now_ms
         self._degraded = False
 
+    def note_vision_stalled(self) -> None:
+        """비전 워커가 단절·중단을 확정했다. 인지만 기능 저하로 표시한다."""
+        self._degraded = True
+
     def note_target(self, now_ms: int) -> None:
-        """대상이 보인다. **검출될 때마다** 부른다 (FR-3.6).
+        """대상이 보인다. **검출될 때마다** 부른다 (FR-3.7).
 
         대상 상실은 *상태에 머문 시간*이 아니라 *마지막 검출 이후 시간*이다.
         그래서 링크 감시와 같은 모양이고 상태 타이머와는 다르다.
@@ -426,7 +430,7 @@ class Behavior:
             self._degraded = True
 
     def _watch_target(self, now_ms: int) -> None:
-        """마지막 검출 이후 임계가 지나면 `TARGET_LOST` (FR-3.6).
+        """마지막 검출 이후 임계가 지나면 `TARGET_LOST` (FR-3.7).
 
         **지금 상태에서 그 사건이 전이를 만들 때만 본다** — 표에 물어보므로
         여기에 `ALERT`·`TRACK` 같은 이름이 들어오지 않는다.

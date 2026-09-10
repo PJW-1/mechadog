@@ -3,8 +3,8 @@
 **시간을 만들지 않으므로 가상 시간으로 전수 검증된다.** `now_ms` 를 받는 설계가
 여기서 값을 한다 — 실기 14초를 기다리지 않고 같은 판정을 재현한다.
 
-⚠️ 핵심 시험은 **추론률을 바꿔도 판정 기준이 흔들리지 않는가** 다. 프레임 수로
-정의했을 때 같은 "3프레임" 이 7fps 에서 429ms, 25fps 에서 120ms 였다.
+시간 창은 최대 관측 간격을 고정한다. 다만 필요한 히트 수와 관측 기회가 남아 있어
+확인 지연은 추론률에 따라 달라진다. 그래서 25fps는 실측으로 고정한다.
 """
 
 from __future__ import annotations
@@ -86,13 +86,13 @@ def test_best_box_is_reported_for_tracking(cfg: dict) -> None:
     assert result.box is not None
 
 
-# ── ⚠️ 추론률에 종속되지 않는다 ─────────────────────────────
+# ── 고정 시간 창의 경계 ────────────────────────────────────
 @pytest.mark.parametrize("fps", [7, 10, 15, 20, 25])
-def test_confirmation_takes_the_same_time_at_any_rate(cfg: dict, fps: int) -> None:
-    """⚠️ **이것이 프레임 수를 버린 이유다.**
+def test_confirmation_stays_within_the_window_at_supported_rates(cfg: dict, fps: int) -> None:
+    """지원 추론률에서는 세 히트가 고정 시간 창 안에 들어온다.
 
-    `연속 3프레임` 은 7fps 에서 429ms, 25fps 에서 120ms 로 **3.5배** 달라졌다.
-    시간 창으로 정의하면 어느 추론률에서도 확정에 걸리는 시간이 창 안에 머문다.
+    확인 시간 자체는 7fps 286ms, 25fps 80ms로 다르다. 시간 창이 고정하는 것은
+    같은 히트를 인정할 최대 간격이며, 성능이 추론률과 완전히 독립적이라는 뜻은 아니다.
     """
     gate = PersonGate(cfg)
     step = round(1000 / fps)
@@ -115,8 +115,27 @@ def test_rate_too_low_for_the_window_is_refused_at_load(cfg: dict) -> None:
     from copy import deepcopy
 
     broken = deepcopy(cfg)
-    broken["vision"]["inference_fps"] = 5  # 300ms 창에 1.5회밖에 안 들어간다
+    broken["vision"]["inference_fps"] = 5  # 300ms 창에 양 끝 포함 최대 2회만 들어간다
     with pytest.raises(ConfigError, match="영원히 확정되지 않음"):
+        validate_base_config(broken)
+
+
+def test_inclusive_window_capacity_accepts_seven_fps(cfg: dict) -> None:
+    """0·143·286ms 세 관측은 300ms 창 안이다 — 양 끝을 포함해 계산한다."""
+    from copy import deepcopy
+
+    changed = deepcopy(cfg)
+    changed["vision"]["inference_fps"] = 7
+    validate_base_config(changed)
+
+
+@pytest.mark.parametrize("name", ["detect_window_ms", "detect_hits_required"])
+def test_person_gate_counts_must_be_integers(cfg: dict, name: str) -> None:
+    from copy import deepcopy
+
+    broken = deepcopy(cfg)
+    broken["vision"][name] = 2.5
+    with pytest.raises(ConfigError, match="양의 정수"):
         validate_base_config(broken)
 
 
@@ -124,7 +143,8 @@ def test_rate_too_low_for_the_window_is_refused_at_load(cfg: dict) -> None:
 def test_release_requires_an_empty_window(cfg: dict) -> None:
     """⚠️ **진입과 대칭으로 두면 경계에서 떨린다.**
 
-    그 떨림이 ALERT↔PATROL 전이를 왕복시킨다. 그래서 해제는 창이 **완전히** 빌 때만이다.
+    후속 추적 판단이 흔들리지 않도록 해제는 창이 **완전히** 빌 때만이다.
+    ALERT 해제의 5초 타이머는 런타임 통합 시험에서 별도로 검증한다.
     """
     gate = PersonGate(cfg)
     assert _feed(gate, "###", fps=20)[-1] is True
@@ -178,6 +198,18 @@ def test_reset_clears_the_window(cfg: dict) -> None:
     gate.reset()
     assert gate.present is False
     assert gate.last is None
+
+
+def test_long_observation_gap_starts_a_new_confirmation(cfg: dict) -> None:
+    """재연결 첫 프레임이 끊기기 전 히트를 이어받지 않는다."""
+    gate = PersonGate(cfg)
+    _feed(gate, "###", fps=25)
+    assert gate.present is True
+
+    resumed = gate.observe(1000 + gate.window_ms + 100, [_person()])
+    assert resumed.present is False
+    assert resumed.hits == 1
+    assert resumed.last_seen_ms == 1000 + gate.window_ms + 100
 
 
 # ── 실기 데이터 재현 ────────────────────────────────────────
