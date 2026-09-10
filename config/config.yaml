@@ -77,8 +77,11 @@ vision:
   # FR-3 사람 인지 + FR-8 변화 감지 대상 객체를 담당
   coco:
     model_path: "models/coco.onnx"
-    model_family: null        # 착수 시 확정 후 기록 (FR-9.1.2 재현성)
-    input_size: 640
+    # 확정 (2026-09-10, OI-15 닫힘 · ADR-24) — YOLOX-S, Apache-2.0 / Megvii Inc.
+    # 이 값으로 `host/vision/detector.py` 의 어댑터가 결정된다. 모르는 이름은 거부된다.
+    # ⚠️ 가중치를 바꾸면 이 값과 `coco_labels.py` 의 순서를 함께 확인한다.
+    model_family: yolox
+    input_size: 640           # YOLOX 격자(stride 8/16/32)의 배수여야 한다
     conf_threshold: 0.5        # FR-3.2
     iou_threshold: 0.45
     person_class: person
