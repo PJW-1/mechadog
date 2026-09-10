@@ -32,6 +32,7 @@ from typing import Any
 from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
 from host.vision.detector import Detection
+from host.vision.person import PersonGate, Sighting
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
 
 LOG = event_logger("mechadog.vision")
@@ -58,6 +59,9 @@ class VisionResult:
     frame_received_ms: int
     completed_ms: int
     inference_ms: float
+    #: 사람 판정 (FR-3.2). ⚠️ **게이트는 추론마다 관측해야 한다** — 메인 루프(10Hz)에서
+    #: 부르면 25fps 결과 중 10개만 보게 되고, 그러면 추론률을 올린 이유가 사라진다.
+    sighting: Sighting
 
 
 @dataclass
@@ -96,6 +100,7 @@ class VisionWorker:
         vision = config["vision"]
         self._detector = detector
         self._reader = reader
+        self._gate = PersonGate(config)
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
@@ -191,6 +196,11 @@ class VisionWorker:
     def queue(self) -> FrameQueue:
         return self._queue
 
+    @property
+    def gate(self) -> PersonGate:
+        """사람 판정 게이트. 스트림이 끊기면 호출부가 `reset()` 한다."""
+        return self._gate
+
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:
         try:
@@ -240,12 +250,14 @@ class VisionWorker:
         completed = self._clock()
         elapsed = float(completed - started_ms)
         self.stats.note(elapsed)
+        sighting = self._gate.observe(completed, detections)
         result = VisionResult(
             detections=tuple(detections),
             frame_seq=frame.seq,
             frame_received_ms=frame.received_ms,
             completed_ms=completed,
             inference_ms=elapsed,
+            sighting=sighting,
         )
         with self._slot_lock:
             # ⚠️ **덮어쓴다. 쌓지 않는다.** 낡은 검출로 판단하면 로봇이 과거를 보고

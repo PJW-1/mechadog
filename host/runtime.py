@@ -144,6 +144,7 @@ class Runtime:
         # 거짓으로 찍힌다 — 실제로 그렇게 찍혔다. **거짓 경보는 진짜 경보를 묻는다.**
         self._edge.changed("vision_healthy", True)
         self._edge.changed("vision_stalled", False)
+        self._edge.changed("person", False)  # 첫 관측이 변화로 잡히지 않게
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
@@ -251,6 +252,21 @@ class Runtime:
         result = self._vision.latest()
         if result is not None and self._edge.changed("vision_seq", result.frame_seq):
             self._summary.count("detections", len(result.detections))
+        # ⚠️ **판정은 워커가 추론마다 했고, 여기서는 결과만 읽는다.** 게이트를 이 틱
+        # (10Hz)에서 돌리면 25fps 결과 중 10개만 보게 되고 추론률을 올린 이유가 사라진다.
+        #
+        # ⚠️ **변화 여부는 게이트의 `changed` 가 아니라 우리 기준으로 본다.** 게이트는
+        # 25fps 로 도니까 한 틱 사이에 확정→해제가 다 지나갈 수 있고, 그러면 그 순간의
+        # `changed` 는 우리가 못 본 전이를 가리킨다.
+        if result is not None and self._edge.changed("person", result.sighting.present):
+            event = Event.PERSON_FOUND if result.sighting.present else Event.TARGET_LOST
+            LOG.info(
+                "person_gate",
+                present=result.sighting.present,
+                hits=result.sighting.hits,
+                score=round(result.sighting.best_score, 3),
+            )
+            self._apply(event, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
         # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
         healthy = self._vision.healthy()
