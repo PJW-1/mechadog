@@ -15,6 +15,7 @@ from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
 from host.runtime import Runtime, watch_console
 from host.vision.person import Sighting
+from host.vision.tracker import Track
 from host.vision.worker import VisionResult
 
 DEVICE = "mechdog-01"
@@ -112,6 +113,13 @@ def vision_result(
             best_score=0.9 if hits else 0.0,
             last_seen_ms=last_seen_ms,
             box=(0.0, 0.0, 10.0, 20.0) if hits else None,
+        ),
+        # 추적 결과는 검출이 있을 때만 붙는다 — 보이지 않는 대상을 결과로 내보내지
+        # 않는 것이 추적기의 계약이다 (`3.3.4`).
+        tracks=(
+            (Track(track_id=1, box=(0.0, 0.0, 10.0, 20.0), score=0.9, last_seen_ms=at_ms),)
+            if hits
+            else ()
         ),
     )
 

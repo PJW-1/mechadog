@@ -138,6 +138,25 @@ def validate_base_config(config: dict[str, Any]) -> None:
             f"{period_ms}ms) + 1) 를 넘어 영원히 확정되지 않음"
         )
 
+    # 다중 인원 추적 (FR-3.6) — 소실 버퍼도 **시간이다.** 프레임 수로 두면
+    # 같은 30프레임이 10fps 3초 · 25fps 1.2초가 된다 (결정 22·25번과 같은 형태).
+    tracker = vision.get("tracker")
+    if not isinstance(tracker, dict):
+        raise ConfigError("vision.tracker 절이 없음")
+    _require_positive(tracker, "iou_match_threshold")
+    _require_positive(tracker, "track_lost_ms")
+    _require_positive(vision, "max_tracked_persons")
+    if tracker["iou_match_threshold"] >= 1:
+        # 1.0 은 완전히 같은 박스만 잇는다는 뜻이라 어떤 대상도 이어지지 않는다.
+        raise ConfigError("vision.tracker.iou_match_threshold 는 1 미만이어야 함")
+    # ⚠️ 소실 버퍼가 추론 주기보다 짧으면 **한 번만 놓쳐도 ID 가 바뀐다.** 실기
+    # 통과율이 52% 였으므로(ADR-25) 한 프레임 공백은 예외가 아니라 일상이다.
+    if tracker["track_lost_ms"] < period_ms:
+        raise ConfigError(
+            f"vision.tracker.track_lost_ms({tracker['track_lost_ms']}ms) 가 추론 주기"
+            f"({period_ms}ms) 보다 짧아 한 번만 놓쳐도 ID 가 바뀜"
+        )
+
     backoff = vision.get("reconnect_backoff_s")
     if not isinstance(backoff, list) or not backoff:
         raise ConfigError("vision.reconnect_backoff_s 는 비어 있지 않은 목록이어야 함")

@@ -34,6 +34,7 @@ from host.common.protocol import system_clock_ms
 from host.vision.detector import Detection
 from host.vision.person import PersonGate, Sighting
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
+from host.vision.tracker import PersonTracker, Track
 
 LOG = event_logger("mechadog.vision")
 
@@ -62,6 +63,14 @@ class VisionResult:
     #: 사람 판정 (FR-3.2). ⚠️ **게이트는 추론마다 관측해야 한다** — 메인 루프(10Hz)에서
     #: 부르면 25fps 결과 중 10개만 보게 되고, 그러면 추론률을 올린 이유가 사라진다.
     sighting: Sighting
+    #: 지속 ID 가 붙은 사람들 (FR-3.6 · `3.3.4`). **이번 프레임에 보인 대상만**이며
+    #: 소실 버퍼에 있는 대상은 들어 있지 않다.
+    #:
+    #: ⚠️ **게이트와 목적이 다르다.** 게이트는 *"사람이 있는가"*(로봇 단위)이고 이쪽은
+    #: *"누구인가"*(개인별)다. 인증이 ID 에 귀속되므로 둘을 합칠 수 없다 (FR-3.6.2).
+    #: 추적도 게이트와 같은 이유로 **추론마다** 돌려야 한다 — 10Hz 로 관측하면
+    #: 프레임 간 겹침이 그만큼 줄어 ID 가 끊긴다.
+    tracks: tuple[Track, ...]
 
 
 @dataclass
@@ -101,6 +110,7 @@ class VisionWorker:
         self._detector = detector
         self._reader = reader
         self._gate = PersonGate(config)
+        self._tracker = PersonTracker(config)
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
@@ -251,6 +261,7 @@ class VisionWorker:
         elapsed = float(completed - started_ms)
         self.stats.note(elapsed)
         sighting = self._gate.observe(completed, detections)
+        tracks = self._tracker.update(detections, completed)
         result = VisionResult(
             detections=tuple(detections),
             frame_seq=frame.seq,
@@ -258,6 +269,7 @@ class VisionWorker:
             completed_ms=completed,
             inference_ms=elapsed,
             sighting=sighting,
+            tracks=tracks,
         )
         with self._slot_lock:
             # ⚠️ **덮어쓴다. 쌓지 않는다.** 낡은 검출로 판단하면 로봇이 과거를 보고
