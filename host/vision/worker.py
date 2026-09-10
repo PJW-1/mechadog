@@ -103,6 +103,7 @@ class VisionWorker:
         # (ADR-23). 상한 없이 돌리면 GPU 가 허용하는 만큼 돌아 전력과 GIL 을 낭비한다.
         self._period_ms = max(1, round(1000 / float(vision["inference_fps"])))
         self._next_due_ms: int | None = None
+        self._started_ms: int | None = None
 
         self._stop = threading.Event()
         self._slot_lock = threading.Lock()
@@ -129,6 +130,9 @@ class VisionWorker:
         opened = self._clock()
         self._detector.open()
         LOG.info("vision_detector_opened", ms=self._clock() - opened)
+        # 첫 프레임 전에도 단절 시간을 잴 기준이 필요하다. 세션 준비 시간은 기동 비용이고,
+        # 실제 카메라 대기는 수신 스레드가 뜬 뒤부터이므로 여기서 시계를 시작한다.
+        self._started_ms = self._clock()
         for name, target in (("vision-recv", self._recv_loop), ("vision-infer", self._infer_loop)):
             thread = threading.Thread(target=target, name=name, daemon=True)
             thread.start()
@@ -170,11 +174,14 @@ class VisionWorker:
     def stalled(self, now_ms: int) -> bool:
         """비전 단절 판정 (NFR-2.6).
 
-        ⚠️ **결과가 아직 없는 것과 끊긴 것을 구분한다.** 기동 직후에는 결과가 없는
-        것이 정상이고, 그때 단절로 보면 매 기동마다 거짓 경보가 난다.
+        ⚠️ **기동 직후 유예와 영구 미연결을 구분한다.** 첫 결과 전에는 워커 기동
+        시각을 기준으로 재고, 한 번 결과가 나온 뒤에는 마지막 완료 시각을 기준으로 잰다.
+        그러지 않으면 카메라가 처음부터 꺼져 있을 때 영원히 정상으로 남는다.
         """
         age = self.age_ms(now_ms)
-        return age is not None and age > self._stall_ms
+        if age is not None:
+            return age > self._stall_ms
+        return self._started_ms is not None and now_ms - self._started_ms > self._stall_ms
 
     def healthy(self) -> bool:
         """두 스레드가 아직 살아 있나. **죽은 워커는 조용하다.**"""

@@ -66,13 +66,23 @@ def test_cpu_only_fallback_is_logged_as_warning(caplog: pytest.LogCaptureFixture
     GPU 가 있는 환경에서 CPU 로 떨어진 것은 사고이므로 INFO 로 묻지 않는다.
     """
     with caplog.at_level("INFO", logger="mechadog.vision"):
-        log_selection([CPU_PROVIDER], ["AzureExecutionProvider", CPU_PROVIDER])
+        log_selection([CPU_PROVIDER], [CPU_PROVIDER], PREFERRED)
     assert [r.levelname for r in caplog.records] == ["WARNING"]
     assert caplog.records[0].event == "execution_provider_cpu_only"
 
 
 def test_gpu_selection_is_logged_as_info(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level("INFO", logger="mechadog.vision"):
-        log_selection([DML, CPU_PROVIDER], [DML, CPU_PROVIDER])
+        log_selection([DML, CPU_PROVIDER], [DML, CPU_PROVIDER], PREFERRED)
     assert caplog.records[0].event == "execution_provider"
     assert caplog.records[0].detail["selected"] == DML
+
+
+def test_intentional_cpu_selection_is_not_called_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CPU를 명시적으로 1순위로 둔 환경까지 장애로 부르면 로그가 거짓이 된다."""
+    with caplog.at_level("INFO", logger="mechadog.vision"):
+        log_selection([CPU_PROVIDER], [CPU_PROVIDER], [CPU_PROVIDER])
+    assert [r.levelname for r in caplog.records] == ["INFO"]
+    assert caplog.records[0].event == "execution_provider"

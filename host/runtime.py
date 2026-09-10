@@ -42,7 +42,7 @@ from host.common.logging_setup import (
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.telemetry.receiver import Ingested, TelemetryReceiver
-from host.vision.worker import TickIntervals
+from host.vision.worker import TickIntervals, build_worker
 
 LOG = event_logger("mechadog.runtime")
 
@@ -394,6 +394,10 @@ class Runtime:
         기다리는 시간을 송신기의 다음 마감에서 가져온다. 루프가 자기 마감을 따로
         세면 시계가 둘이 되고, 그때부터 어느 쪽이 진짜인지 알 수 없다.
         """
+        # 세션 생성·워밍업은 운용 루프 전에 끝낸다. 루프 안에서 처음 열면 DirectML
+        # 초기화가 300ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
+        if self._vision is not None:
+            self._vision.start()
         started = clock()
         end_ms = started + int(duration_s * 1000) if duration_s is not None else None
         # ⚠️ **루프보다 먼저 인코딩한다.** 이것이 프로세스의 seq=1 이어야 로봇이
@@ -477,6 +481,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", required=True, help="개체 id — config/devices/<id>.yaml")
     parser.add_argument("--robot-ip", default=None, help="설정의 mechdog_ip 를 덮어쓴다")
+    parser.add_argument("--xiao-ip", default=None, help="설정의 xiao_ip 를 덮어쓴다")
+    parser.add_argument(
+        "--no-vision",
+        action="store_true",
+        help="진단용: 카메라·검출 워커 없이 모션 런타임만 실행한다",
+    )
     parser.add_argument("--duration", type=float, default=None, help="N초 후 종료 (기본 무한)")
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
     parser.add_argument(
@@ -503,9 +513,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.log_level:  # CLI 가 `config.logging.level` 을 덮어쓴다 (DEBUG 실행용)
         config = dict(config)
         config["logging"] = dict(config["logging"], level=args.log_level.upper())
+    if args.xiao_ip:
+        config = dict(config)
+        config["network"] = dict(config["network"], xiao_ip=args.xiao_ip)
     context = setup_logging(config, device_id=args.device)
 
-    runtime = Runtime(config, device_id=args.device, robot_ip=args.robot_ip, context=context)
+    vision = None if args.no_vision else build_worker(config)
+    runtime = Runtime(
+        config,
+        device_id=args.device,
+        robot_ip=args.robot_ip,
+        context=context,
+        vision=vision,
+    )
     sock = open_socket(runtime.telemetry_port)
     try:
         if args.reset_on_start:

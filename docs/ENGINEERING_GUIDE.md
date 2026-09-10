@@ -324,13 +324,18 @@ run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under
 # ❌ 설정을 그대로 넘기면 없는 EP 에 대해 경고가 쏟아진다
 session = ort.InferenceSession(path, providers=cfg["vision"]["providers"])
 
-# ✅ 설치된 것만 남긴다
+# ✅ 설치된 것만 남기되 CPU를 마지막 수단으로 붙인다
 available = ort.get_available_providers()
 providers = [p for p in cfg["vision"]["providers"] if p in available]
-if not providers:
+if "CPUExecutionProvider" in available and "CPUExecutionProvider" not in providers:
+    providers.append("CPUExecutionProvider")
+if not providers:  # CPU EP조차 없으면 설치가 깨진 것이다
     raise RuntimeError(f"사용 가능한 EP 없음. 설치됨={available}")
 session = ort.InferenceSession(path, providers=providers)
-log.info("execution_provider", extra={"selected": providers[0], "available": available})
+if providers[0] == "CPUExecutionProvider" and cfg["vision"]["providers"][0] != providers[0]:
+    log.warning("execution_provider_cpu_only", extra={"available": available})
+else:
+    log.info("execution_provider", extra={"selected": providers[0], "available": available})
 ```
 
 | 그 사람이 설치한 패키지 | 선택되는 EP |
@@ -341,8 +346,9 @@ log.info("execution_provider", extra={"selected": providers[0], "available": ava
 **같은 코드, 같은 모델 파일, 다른 환경.** 이것이 DR-13 이 TensorRT 를 배제한 이유이기도
 하다 — TensorRT 엔진은 GPU 아키텍처마다 다시 빌드해야 해서 이 구조가 성립하지 않는다.
 
-> 선택된 EP 를 **기동 시 반드시 로그로 남긴다.** DirectML 은 미지원 연산을 조용히 CPU 로
-> 내려보내므로, 어느 EP 로 돌고 있는지 기록이 없으면 성능 이상의 원인을 찾을 수 없다.
+> 선택된 EP 를 **기동 시 반드시 로그로 남긴다.** 설정이 DirectML 우선인데 CPU만
+> 선택되면, 설치 목록에 CPU 하나만 있더라도 `WARNING`이다. DirectML 은 미지원 연산을
+> 조용히 CPU 로 내려보내므로, 어느 EP 로 돌고 있는지 기록이 없으면 성능 이상의 원인을 찾을 수 없다.
 
 ---
 

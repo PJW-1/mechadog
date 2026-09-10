@@ -58,6 +58,32 @@ class FakeSocket:
         return [json.loads(line)["type"] for _at, line in self.sent]
 
 
+class FakeVision:
+    """Runtime이 비전 워커의 수명을 실제로 소유하는지 확인하는 최소 가짜."""
+
+    def __init__(self) -> None:
+        self.starts = 0
+        self.stops = 0
+
+    def start(self) -> None:
+        self.starts += 1
+
+    def stop(self) -> None:
+        self.stops += 1
+
+    def latest(self):
+        return None
+
+    def healthy(self) -> bool:
+        return True
+
+    def stalled(self, _now_ms: int) -> bool:
+        return False
+
+    def age_ms(self, _now_ms: int):
+        return None
+
+
 @pytest.fixture
 def config(cfg: dict) -> dict:
     """개체 파일 없이 런타임을 만들 수 있는 최소 설정.
@@ -248,6 +274,50 @@ def test_start_patrol_is_explicit(config: dict, clock: FakeClock) -> None:
     r.serve(sock, duration_s=0.5, clock=clock)
     assert r.behavior.state == "IDLE"
     assert set(sock.types()) == {"STOP", "STATE", "ESTOP"}
+
+
+def test_serve_owns_vision_worker_lifecycle(config: dict, clock: FakeClock) -> None:
+    """실행 진입점이 워커를 넘기면 운용 루프가 시작과 정리를 빠뜨리지 않는다."""
+    vision = FakeVision()
+    r = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    r.serve(FakeSocket(clock), duration_s=0.2, clock=clock)
+    assert vision.starts == 1
+    assert vision.stops == 1
+
+
+def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> None:
+    """정식 CLI가 별도 수동 조립 없이 실제 비전 경로를 붙인다."""
+    import host.runtime as runtime_module
+
+    vision = FakeVision()
+    captured: dict = {}
+
+    class CliRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, cfg, **kwargs) -> None:
+            captured["config"] = cfg
+            captured.update(kwargs)
+
+        def serve(self, _sock, *, duration_s=None) -> None:
+            captured["duration_s"] = duration_s
+
+    class CliSocket:
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
+    monkeypatch.setattr(runtime_module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(runtime_module, "build_worker", lambda _cfg: vision)
+    monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
+    monkeypatch.setattr(runtime_module, "open_socket", lambda _port: CliSocket())
+
+    result = runtime_module.main(["--device", DEVICE, "--duration", "0", "--xiao-ip", "192.0.2.10"])
+    assert result == 0
+    assert captured["vision"] is vision
+    assert captured["config"]["network"]["xiao_ip"] == "192.0.2.10"
+    assert captured["duration_s"] == 0.0
+    assert captured["closed"] is True
 
 
 def test_estop_event_is_not_forged_by_the_runtime(config: dict, clock: FakeClock) -> None:
