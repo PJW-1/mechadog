@@ -88,6 +88,10 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if missing:
         raise ConfigError(f"필수 설정 섹션 누락: {missing}")
 
+    blackbox_dir = config["logging"].get("blackbox_dir")
+    if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
+        raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
+
     network = config["network"]
     for name in ("cmd_port", "telemetry_port", "vision_control_port", "vision_stream_port"):
         port = network.get(name)

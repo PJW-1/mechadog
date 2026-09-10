@@ -526,3 +526,15 @@ def test_tracker_section_is_required(cfg: dict) -> None:
     del broken["vision"]["tracker"]
     with pytest.raises(ConfigError, match="vision.tracker"):
         validate_base_config(broken)
+
+
+def test_blackbox_directory_is_required(cfg: dict) -> None:
+    """기록 위치가 비어 있으면 첫 사건 때가 아니라 기동 시점에 실패해야 한다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["logging"]["blackbox_dir"] = "  "
+    with pytest.raises(ConfigError, match="logging.blackbox_dir"):
+        validate_base_config(broken)
