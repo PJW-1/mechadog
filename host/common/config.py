@@ -109,6 +109,18 @@ def validate_base_config(config: dict[str, Any]) -> None:
         raise ConfigError("vision.inference_fps 는 vision.stream_fps_limit 을 넘을 수 없음")
     if vision["stream_fps_limit"] < vision["target_fps"]:
         raise ConfigError("vision.stream_fps_limit 이 NFR-1.3 하한(target_fps) 미달")
+    # 검출기 절 — 값이 음수·0 이면 추론이 조용히 이상해진다(빈 결과, 격자 불일치).
+    for section in ("coco", "ppe"):
+        spec = vision.get(section)
+        if not isinstance(spec, dict):
+            raise ConfigError(f"vision.{section} 절이 없음")
+        _require_positive(spec, "input_size")
+        _require_positive(spec, "conf_threshold")
+        family = spec.get("model_family")
+        # `null` 은 "아직 정하지 않았다" 는 뜻으로 허용한다. 빈 문자열은 실수다.
+        if family is not None and (not isinstance(family, str) or not family.strip()):
+            raise ConfigError(f"vision.{section}.model_family 는 null 이거나 비어 있지 않은 문자열")
+
     backoff = vision.get("reconnect_backoff_s")
     if not isinstance(backoff, list) or not backoff:
         raise ConfigError("vision.reconnect_backoff_s 는 비어 있지 않은 목록이어야 함")
