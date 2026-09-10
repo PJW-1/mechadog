@@ -205,3 +205,23 @@ def test_command_cli_safety_move_and_watchdog(monkeypatch: pytest.MonkeyPatch, c
     assert "SAFETY RESULT" in output
     assert "MOVE RESULT" in output
     assert "WATCHDOG RESULT" in output
+
+
+def test_command_cli_reports_timeout_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    class TimeoutClient:
+        def __init__(self, _host: str, _port: int, _timeout: float) -> None:
+            pass
+
+        def send(self, _command_type: str, **_fields: object) -> dict[str, object]:
+            raise TimeoutError("timed out")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(mechdog_command, "Client", TimeoutClient)
+    monkeypatch.setattr(sys, "argv", ["mechdog_command.py", "127.0.0.1", "safety"])
+
+    assert mechdog_command.main() == 2
+    assert "통신 실패" in capsys.readouterr().err

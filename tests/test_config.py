@@ -144,6 +144,29 @@ def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
     assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 300
 
 
+@pytest.mark.parametrize(
+    "section,key",
+    [
+        ("fsm", "patrol_scan_interval_s"),
+        ("fsm", "scan_duration_s"),
+        ("fsm", "target_lost_timeout_s"),
+        ("fsm", "avoid_attempts"),
+        ("auth", "timeout_s"),
+        ("escalation", "l1_to_l2_hold_s"),
+    ],
+)
+def test_runtime_timer_keys_are_validated_before_startup(cfg: dict, section: str, key: str) -> None:
+    """운용 중 KeyError가 아니라 설정 경로를 포함한 ConfigError로 끝낸다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    del broken[section][key]
+    with pytest.raises(ConfigError, match=rf"{key} .*유한한 수"):
+        validate_base_config(broken)
+
+
 def test_gait_params_within_api_range(cfg: dict) -> None:
     """HW_MechDog API 허용 범위 (DR-1).
 

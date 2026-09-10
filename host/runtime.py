@@ -26,6 +26,7 @@ import logging
 import socket
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -51,6 +52,14 @@ LOG = event_logger("mechadog.runtime")
 
 #: 한 번에 받아들이는 최대 바이트. 텔레메트리 한 줄은 300 바이트를 넘지 않는다.
 RECV_BYTES = 2048
+WSAEMSGSIZE = 10040
+SHUTDOWN_ESTOP_REPEATS = 3
+SHUTDOWN_ESTOP_INTERVAL_S = 0.02
+
+
+def _is_oversized_datagram(exc: OSError) -> bool:
+    """Windows가 수신 버퍼보다 큰 UDP 전문에 붙이는 오류만 가려낸다."""
+    return getattr(exc, "winerror", None) == WSAEMSGSIZE or exc.errno == WSAEMSGSIZE
 
 
 def _peer_text(peer: tuple[str, int] | None) -> str:
@@ -539,6 +548,17 @@ class Runtime:
                     pass
                 except ConnectionResetError:
                     pass  # Windows ICMP — 위 open_socket 설명 참고
+                except OSError as exc:
+                    if not _is_oversized_datagram(exc):
+                        raise
+                    # 프로토콜 최대 크기를 넘는 한 건 때문에 운용 루프 전체가
+                    # 끝나서는 안 된다. 다른 소켓 오류는 고장을 숨기지 않고 올린다.
+                    self._stats.discarded += 1
+                    LOG.warning(
+                        "telemetry_datagram_too_large",
+                        max_bytes=RECV_BYTES,
+                        winerror=WSAEMSGSIZE,
+                    )
                 else:
                     out = self.ingest(data, clock())
                     if self._peer is None and out.reading is not None:
@@ -567,8 +587,14 @@ class Runtime:
         # 신호가 스레드 조인 뒤로 밀린다. 순서가 안전을 결정한다.
         line = self.emergency_stop()
         if self._peer is not None:
-            with contextlib.suppress(OSError):
-                sock.sendto(line.encode("utf-8"), self._peer)
+            payload = line.encode("utf-8")
+            # UDP 한 건의 유실로 300ms 온보드 타임아웃까지 마지막 동작이 남는 것을
+            # 줄인다. 같은 seq의 중복은 멱등이고, 첫 건이 도착하면 나머지는 무시된다.
+            for attempt in range(SHUTDOWN_ESTOP_REPEATS):
+                with contextlib.suppress(OSError):
+                    sock.sendto(payload, self._peer)
+                if attempt + 1 < SHUTDOWN_ESTOP_REPEATS:
+                    time.sleep(SHUTDOWN_ESTOP_INTERVAL_S)
         if self._vision is not None:
             self._vision.stop()
         LOG.info(

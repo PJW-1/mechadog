@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import socket
+import sys
 import time
 
 
@@ -13,6 +15,9 @@ class Client:
         self.target = (host, port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(timeout)
+        if hasattr(socket, "SIO_UDP_CONNRESET"):
+            with contextlib.suppress(OSError):
+                self.sock.ioctl(socket.SIO_UDP_CONNRESET, False)
         self.timeout = timeout
         self.seq = 0
 
@@ -37,7 +42,10 @@ class Client:
     def receive(self, expected_seq: int) -> dict[str, object]:
         deadline = time.monotonic() + self.timeout
         while True:
-            self.sock.settimeout(max(0.001, deadline - time.monotonic()))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("응답 대기 시간 초과")
+            self.sock.settimeout(max(0.001, remaining))
             reply, source = self.sock.recvfrom(2048)
             decoded = json.loads(reply)
             if decoded.get("seq") != expected_seq:
@@ -132,11 +140,15 @@ def main() -> int:
     args = parser.parse_args()
     client = Client(args.host, args.port, args.timeout)
     try:
-        if args.action == "safety":
-            return run_safety(client)
-        if args.action == "move":
-            return run_move(client, args.step, args.angle, args.duration)
-        return run_watchdog(client, args.step, args.angle, args.duration)
+        try:
+            if args.action == "safety":
+                return run_safety(client)
+            if args.action == "move":
+                return run_move(client, args.step, args.angle, args.duration)
+            return run_watchdog(client, args.step, args.angle, args.duration)
+        except OSError as exc:
+            print(f"통신 실패: {exc}", file=sys.stderr)
+            return 2
     finally:
         client.close()
 
