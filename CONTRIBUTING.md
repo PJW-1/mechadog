@@ -285,6 +285,17 @@ python tools/fetch_models.py
 > `DmlExecutionProvider` 가 보여야 한다. 기동 로그의 `execution_provider` 로도
 > 확인된다 — **CPU 로 떨어지면 `WARNING`** 이 남는다.
 
+> ⚠️ **개발 콘솔은 cp949 다 — `print()` 에 ASCII·한글 밖의 문자를 넣으면 죽는다.**
+> `—`(U+2014)·`·`(U+00B7) 같은 문자를 만나면 `UnicodeEncodeError` 가 나고, 그 줄이
+> 기동 배너면 **프로그램 자체가 시작되지 않는다** (실제로 `runtime` 의 콘솔 안내와
+> `fetch_models.py` 에서 각각 한 번 겪었다). 로거는 살아남는다 — 콘솔 핸들러가
+> 치환하기 때문이며 `print()` 만의 문제다.
+>
+> - 파일로 쓸 때는 `encoding="utf-8"` 을 명시한다.
+> - 콘솔로 낼 때는 **ASCII 와 한글만** 쓰거나, `fetch_models.py` 처럼
+>   `io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")` 로 감싼다.
+> - **`ruff` 와 `pytest` 는 이것을 잡지 못한다** — 시험은 `print` 를 지나가지 않는다.
+
 MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run 구성으로 컴파일한다.
 실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
 `firmware_mechdog_motion/README.md`를 따른다.

@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -47,7 +47,8 @@ _LOGRECORD_KEYS: frozenset[str] = frozenset(vars(logging.LogRecord("", 0, "", 0,
 
 #: 상태에서 곧바로 유도되는 에스컬레이션 단계.
 #:
-#: ⚠️ **임시다.** `L1`~`L3` 는 대응 강도 축이고 `3.8.3` 이 채운다. 다만 페일세이프는
+#: ⚠️ **대응 단계를 연결하지 않았을 때의 대비값이다.** 정본은 `3.8.3` 의
+#: `Escalation` 이며 `bind_escalation()` 으로 연결한다. 다만 페일세이프는
 #: 에스컬레이션 표에서 `F` 로 이미 정해져 있고(아키텍처 3.1), 로봇이 쓰러져 있는데
 #: 로그에 `L0`(정상 순찰)이 찍히면 **로그가 거짓을 말한다.** 그래서 이 하나만 유도한다.
 BASELINE_ESCALATION: dict[str, str] = {"FAILSAFE": "F"}
@@ -77,16 +78,34 @@ class LogContext:
     seq: int = 0
     state: str = "IDLE"
     escalation: str = DEFAULT_ESCALATION
+    #: 대응 단계를 **물어볼 대상**. 값을 복사해 두는 구조로는 갱신을 잊는 날이 온다 —
+    #: 단계는 사건·시간·확인 어느 쪽으로도 바뀌므로 갱신 지점이 하나가 아니다.
+    #: 그래서 값이 아니라 함수를 들고 있고, 레코드마다 지금 값을 묻는다.
+    escalation_source: Callable[[], str] | None = field(default=None, repr=False)
+
+    def bind_escalation(self, source: Callable[[], str]) -> None:
+        """대응 단계의 정본을 연결한다 (`3.8.3`). **연결되면 상태 유도를 쓰지 않는다.**"""
+        self.escalation_source = source
 
     def observe(self, *, seq: int | None = None, state: str | None = None) -> None:
-        """수신·전이 때마다 부른다. 에스컬레이션은 상태에서 유도한다."""
+        """수신·전이 때마다 부른다. 단계가 연결되지 않았으면 상태에서 유도한다."""
         if seq is not None:
             self.seq = seq
         if state is not None:
             self.state = state
+        if self.escalation_source is not None:
+            self.escalation = self.escalation_source()
+        elif state is not None:
             self.escalation = BASELINE_ESCALATION.get(state, DEFAULT_ESCALATION)
 
     def as_dict(self) -> dict[str, Any]:
+        """레코드마다 불린다 — **그래서 여기서 단계를 다시 묻는다.**
+
+        묻는 값을 `escalation` 에 되쓰는 것은 의도다. 정본은 연결된 함수이고 필드는
+        마지막으로 실린 값의 사본이라, 대시보드·시험이 읽어도 로그와 어긋나지 않는다.
+        """
+        if self.escalation_source is not None:
+            self.escalation = self.escalation_source()
         return {
             "device_id": self.device_id,
             "seq": self.seq,
@@ -174,7 +193,12 @@ class EventLogger(logging.LoggerAdapter):
     def __init__(self, logger: logging.Logger) -> None:
         super().__init__(logger, {})
 
-    def _emit(self, level: int, event: str, **detail: Any) -> None:
+    def _emit(self, level: int, event: str, /, **detail: Any) -> None:
+        """⚠️ **`/` 는 장식이 아니다.** 위치 전용으로 두지 않으면 `level=` 이나
+        `event=` 라는 이름의 근거를 실을 수 없고, 실으면 *"인자가 두 번 들어왔다"*
+        는 `TypeError` 로 **그 줄을 지나가는 순간 죽는다.** 로그는 드물게 지나가는
+        경로에 많으므로 그 죽음은 시험을 통과한 뒤 운용 중에 나타난다 — 실제로
+        `alarm_confirm_ignored` 를 쓰다 만났다."""
         if not self.logger.isEnabledFor(level):
             return  # 문자열·사전을 만들기 전에 끊는다 (DEBUG 가 매 프레임 도는 자리)
         extra: dict[str, Any] = {"event": event}
@@ -186,16 +210,16 @@ class EventLogger(logging.LoggerAdapter):
             extra["detail"] = clean
         self.logger.log(level, event, extra=extra)
 
-    def debug(self, event: str, **detail: Any) -> None:  # type: ignore[override]
+    def debug(self, event: str, /, **detail: Any) -> None:  # type: ignore[override]
         self._emit(logging.DEBUG, event, **detail)
 
-    def info(self, event: str, **detail: Any) -> None:  # type: ignore[override]
+    def info(self, event: str, /, **detail: Any) -> None:  # type: ignore[override]
         self._emit(logging.INFO, event, **detail)
 
-    def warning(self, event: str, **detail: Any) -> None:  # type: ignore[override]
+    def warning(self, event: str, /, **detail: Any) -> None:  # type: ignore[override]
         self._emit(logging.WARNING, event, **detail)
 
-    def error(self, event: str, **detail: Any) -> None:  # type: ignore[override]
+    def error(self, event: str, /, **detail: Any) -> None:  # type: ignore[override]
         self._emit(logging.ERROR, event, **detail)
 
 

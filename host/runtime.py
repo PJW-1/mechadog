@@ -24,12 +24,15 @@ import argparse
 import contextlib
 import logging
 import socket
+import sys
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from host.behavior.actions import register_actions
 from host.behavior.commander import Commander
+from host.behavior.escalation import Escalation
 from host.behavior.fsm import Behavior, Event, behavior_from_config
 from host.common.config import ConfigError, load_config
 from host.common.logging_setup import (
@@ -126,6 +129,13 @@ class Runtime:
         host = robot_ip or network.get("mechdog_ip")
         self._peer: tuple[str, int] | None = (host, self._cmd_port) if host else None
         self._reset_pending = False
+        # ⚠️ **`_reset_pending` 과 다른 것이다.** 저것은 *로봇이 래치를 풀었다고
+        # 보고할 때까지 기다리는 중*이고, 이 둘은 *사람이 눌렀고 아직 틱이 처리하지
+        # 않았다*는 뜻이다. 콘솔·대시보드는 운용 루프와 다른 스레드에 있으므로
+        # 거기서 단계나 송신기를 직접 만지면 루프가 전문을 만드는 중간에 바뀐다.
+        # 급한 것은 `ESTOP` 하나뿐이다 (DR-16).
+        self._alarm_confirm_asked = False
+        self._reset_asked = False
         self._session_open: str | None = None
         self._ignored_since_ms: int | None = None
         self._cmd_timeout_ms = int(config["safety"]["cmd_timeout_ms"])
@@ -148,10 +158,21 @@ class Runtime:
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
+        # 대응 강도 축 (3.8.3). FSM 상태와 **직교한다** — 같은 `ALERT` 에서도 단계가
+        # 다르면 눈 색깔과 음향이 다르다.
+        self._escalation = Escalation(config)
+        # ⚠️ **값을 넣지 않고 물어볼 대상을 넘긴다.** 단계는 사건·시간·확인 어느
+        # 쪽으로도 바뀌므로 갱신 지점이 하나가 아니고, 복사해 두면 반드시 어긋난다.
+        self._log.bind_escalation(lambda: self._escalation.level.value)
 
     @property
     def behavior(self) -> Behavior:
         return self._behavior
+
+    @property
+    def escalation(self) -> Escalation:
+        """대응 단계. **대시보드와 확인 경로가 보는 정본이다** (아키텍처 3.1)."""
+        return self._escalation
 
     @property
     def commander(self) -> Commander:
@@ -258,8 +279,14 @@ class Runtime:
             self._behavior.note_vision(result.completed_ms)
             # 확정 여부와 별개로 마지막 실제 person 히트를 기록한다. 게이트 해제는
             # 300ms 판정이고, FSM의 TARGET_LOST는 마지막 검출 뒤 5초이므로 섞지 않는다.
-            if result.sighting.last_seen_ms is not None and result.sighting.hits > 0:
-                self._behavior.note_target(result.sighting.last_seen_ms)
+            seen_ms = result.sighting.last_seen_ms if result.sighting.hits > 0 else None
+            if seen_ms is not None:
+                self._behavior.note_target(seen_ms)
+            # 대응 단계는 확정과 실제 검출을 **둘 다** 본다 — 확정으로 L1 에 올라가고
+            # 마지막 검출로 L1 을 내린다. 하나로 합치면 창이 빌 때마다 단계가 흔들린다.
+            self._escalation.note_person(
+                present=result.sighting.present, last_seen_ms=seen_ms, now_ms=now_ms
+            )
         # ⚠️ **판정은 워커가 추론마다 했고, 여기서는 결과만 읽는다.** 게이트를 이 틱
         # (10Hz)에서 돌리면 25fps 결과 중 10개만 보게 되고 추론률을 올린 이유가 사라진다.
         #
@@ -338,11 +365,23 @@ class Runtime:
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
+        self._drain_confirmations(now_ms)
         self._poll_vision(now_ms)
+        # 단계의 시간 조건 — L1 해제(5초)와 L2 승격(10초). **전이와 무관하게 돈다.**
+        #
+        # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
+        # 눈 LED·음향을 단계에서 내려보내기 시작하면(`4.7.3`) 한 주기씩 밀린다.
+        self._escalation.tick(now_ms)
         before = self._behavior.state
         lines = self._behavior.tick(now_ms)
         if self._behavior.state != before:
             self._stats.transitions += 1
+            # 감시자·상태 타이머가 만든 사건은 `_apply` 를 지나지 않는다 — 30초
+            # 무응답이 내는 `AUTH_FAILED` 가 그렇다. 여기서 단계 축에 넣지 않으면
+            # **경보로 올라갈 유일한 실제 경로가 빠진다.**
+            trigger = self._behavior.last_trigger
+            if trigger is not None:
+                self._escalation.note_event(trigger.name, now_ms)
             self._log_transition(before)
         if lines:
             self._stats.ticks += 1
@@ -366,7 +405,12 @@ class Runtime:
         로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
         """
         before = self._behavior.state
-        if not self._behavior.event(event, now_ms=now_ms):
+        accepted = self._behavior.event(event, now_ms=now_ms)
+        # ⚠️ **받아들여졌는지를 함께 넘긴다.** 올리는 것은 전이 여부와 무관하지만
+        # (`ALERT` 의 PPE 위반) 내리는 것은 그렇지 않다 — 로봇 래치가 걸려 있으면
+        # `RESET_CONFIRMED` 가 거부되고, 그때 F 를 풀면 호스트만 풀린다.
+        self._escalation.note_event(event.name, now_ms, accepted=accepted)
+        if not accepted:
             return False
         self._stats.transitions += 1
         self._log_transition(before)
@@ -392,6 +436,45 @@ class Runtime:
         self._commander.halt()
         self._commander.once("RESET_SAFE")
         LOG.info("reset_requested", waiting_for="safety_latched=false")
+
+    def confirm_alarm(self, now_ms: int) -> bool:
+        """사람이 **경보(L3)를 확인했다** — 유일한 L3 해제 경로다 (아키텍처 3.1).
+
+        `request_reset()` 과 나눠 둔 이유가 있다. 저쪽은 *물리 상태*(넘어졌나·배터리·
+        링크)를 확인하고 로봇의 래치가 풀릴 때까지 기다리는 일이고, 이쪽은 *상황
+        판단*(침입자가 갔나·안전모·물건)이라 로봇에 보낼 것이 없다. 하나로 묶으면
+        **비상정지를 눌렀다 푸는 것으로 경보를 지우는 길**이 생긴다.
+        """
+        released = self._escalation.confirm_alarm(now_ms)
+        if not released:
+            LOG.info("alarm_confirm_ignored", level=self._escalation.level.value)
+        return released
+
+    def ask_alarm_confirm(self) -> None:
+        """**다른 스레드에서 부른다** — 콘솔 키·대시보드 버튼의 진입점이다.
+
+        여기서 곧바로 풀지 않는 이유는 스레드다. 운용 루프가 전문을 만드는 중간에
+        단계가 바뀌면 그 틱의 명령이 어느 단계의 것인지 말할 수 없게 된다.
+        """
+        self._alarm_confirm_asked = True
+
+    def ask_reset(self) -> None:
+        """페일세이프(F) 해제 요청을 예약한다. **다른 스레드에서 부른다.**"""
+        self._reset_asked = True
+
+    def _drain_confirmations(self, now_ms: int) -> None:
+        """사람이 누른 확인을 **판단보다 먼저** 처리한다.
+
+        먼저 처리해야 이번 틱의 명령이 새 단계에 맞는다. 나중에 보면 한 주기 동안
+        해제된 단계의 명령이 나간다 — 링크 감시를 지시 적용보다 앞에 둔 것과 같은
+        이유다.
+        """
+        if self._alarm_confirm_asked:
+            self._alarm_confirm_asked = False
+            self.confirm_alarm(now_ms)
+        if self._reset_asked:
+            self._reset_asked = False
+            self.request_reset()
 
     def _settle_reset(self, latched: bool | None, now_ms: int) -> None:
         """로봇이 래치를 풀었다고 보고하면 그때 `RESET_CONFIRMED` 를 넣는다."""
@@ -502,6 +585,35 @@ class Runtime:
         )
 
 
+#: 콘솔 확인 키. **경보 해제와 페일세이프 해제는 다른 키다** (아키텍처 3.1).
+#:
+#: 확인해야 하는 것이 다르기 때문이다 — F 는 물리 상태(넘어졌나·배터리·링크),
+#: L3 는 상황 판단(침입자가 갔나·안전모·물건). 하나로 묶으면 비상정지를 풀는 조작이
+#: 경보까지 지운다.
+#: ⚠️ **여기에는 ASCII 와 한글만 쓴다.** 개발 콘솔은 cp949 이고 `print()` 가
+#: `—`(U+2014) 같은 문자를 만나면 `UnicodeEncodeError` 로 **기동 자체가 실패한다** —
+#: 실제로 이 배너에 붙였다가 그렇게 됐다 (CONTRIBUTING 8절).
+CONSOLE_HELP = """관리자 확인 (키를 누르고 Enter)
+  c   경보(L3) 확인: 상황을 확인했다
+  r   페일세이프(F) 해제 요청: 원인을 확인했다"""
+
+
+def watch_console(runtime: Runtime, stream: Any = None) -> None:
+    """확인 키를 읽어 **요청만 넣는다.** 처리는 운용 루프가 한다.
+
+    ⚠️ **한 글자 즉시 입력이 아니라 Enter 를 받는다.** 확인은 되돌릴 수 없는 조작이
+    아니지만 *"경보를 껐다"* 는 기록을 남기므로, 지나가다 키가 눌리는 것으로
+    일어나지 않는 편이 낫다. `teleop` 이 즉시 입력을 쓰는 것은 조종이 연속 동작이기
+    때문이고 여기는 아니다.
+    """
+    for line in stream if stream is not None else sys.stdin:
+        key = line.strip().lower()
+        if key == "c":
+            runtime.ask_alarm_confirm()
+        elif key == "r":
+            runtime.ask_reset()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m host.runtime",
@@ -555,6 +667,11 @@ def main(argv: list[str] | None = None) -> int:
         vision=vision,
     )
     sock = open_socket(runtime.telemetry_port)
+    # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
+    # 바로 끝나고, 파이프로 돌리면 남의 출력을 키로 읽는다.
+    if sys.stdin is not None and sys.stdin.isatty():
+        threading.Thread(target=watch_console, args=(runtime,), daemon=True).start()
+        print(CONSOLE_HELP)
     try:
         if args.reset_on_start:
             runtime.request_reset()
