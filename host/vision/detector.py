@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -251,10 +252,34 @@ class Detector:
         return self._adapter
 
     def open(self) -> None:
-        """세션을 만든다. **없는 모델을 조용히 넘기지 않는다.**"""
+        """세션을 만들고 **파이프라인 전체를 한 번 미리 흘린다.**
+
+        ⚠️ **첫 프레임은 느리다 — 그리고 원인이 추론이 아니었다.** 실측에서 첫
+        프레임이 122ms 였고 둘째부터 9~10ms 였다. 구간을 쪼개 보니 **전처리 78.8ms
+        + 추론 5.2ms** 였다. 즉 대부분이 **OpenCV 의 첫 호출 초기화**이고 GPU 커널
+        준비는 그중 일부다.
+
+        그래서 세션만 미리 돌리면 **절반만 데워진다** — 실제로 그렇게 만들어서
+        첫 프레임이 108ms 로 거의 그대로였다. 전처리까지 함께 흘려야 한다.
+
+        기동 직후 사람이 서 있으면 그 판정 하나가 예산(25ms)의 4배를 쓰므로, 비용을
+        프레임이 아니라 기동 시점에 지불한다.
+        """
         if self._session is not None:
             return
         self._session = self._factory(self._model_path, self._preferred)
+        self._warm_up()
+
+    def _warm_up(self) -> None:
+        """빈 프레임으로 **전처리 → 추론**을 한 번 지나간다. 결과는 쓰지 않는다."""
+        assert self._session is not None
+        size = self._adapter.input_size
+        started = time.perf_counter()
+        # ⚠️ 텐서를 직접 만들지 않고 **어댑터의 전처리를 통과시킨다.** 그래야
+        # OpenCV 초기화가 여기서 끝난다 — 그것이 첫 프레임 비용의 대부분이었다.
+        prep = self._adapter.preprocess(np.zeros((size, size, 3), dtype=np.uint8))
+        self._session.run(None, {self._input_name(): prep.tensor})
+        LOG.info("detector_warmed_up", ms=round((time.perf_counter() - started) * 1000, 1))
 
     def detect(self, image: np.ndarray) -> list[Detection]:
         """프레임 하나 → 검출 목록. 임계값 미달과 겹침은 여기서 걸러진다."""

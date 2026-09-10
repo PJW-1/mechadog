@@ -265,6 +265,26 @@ ruff check . && ruff format --check .
 pytest -q
 ```
 
+**검출을 실제로 돌려 볼 때만** 가중치가 추가로 필요하다 (시험은 없이도 전부 돈다).
+
+```bash
+python tools/fetch_models.py
+```
+
+> ⚠️ **`onnxruntime` 과 `onnxruntime-directml` 을 같이 깔면 안 된다.** 둘은 같은
+> `onnxruntime` 이름을 점유하는데, **에러 없이 한쪽이 다른 쪽을 가린다.** 실제로
+> 이 PC 에 둘 다 깔려 있었고 DirectML 이 목록에서 사라져 **CPU 로 도는 것을 몰랐다**
+> (61.9ms → 교체 후 8.2ms). Windows 는 `onnxruntime-directml` **하나만** 남긴다.
+>
+> ```bash
+> pip uninstall -y onnxruntime onnxruntime-directml
+> pip install onnxruntime-directml     # Windows
+> python -c "import onnxruntime as o; print(o.get_available_providers())"
+> ```
+>
+> `DmlExecutionProvider` 가 보여야 한다. 기동 로그의 `execution_provider` 로도
+> 확인된다 — **CPU 로 떨어지면 `WARNING`** 이 남는다.
+
 MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run 구성으로 컴파일한다.
 실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
 `firmware_mechdog_motion/README.md`를 따른다.
