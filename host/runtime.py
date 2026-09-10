@@ -252,29 +252,39 @@ class Runtime:
         if self._vision is None:
             return
         result = self._vision.latest()
-        if result is not None and self._edge.changed("vision_seq", result.frame_seq):
+        fresh = result is not None and self._edge.changed("vision_seq", result.frame_seq)
+        if fresh:
             self._summary.count("detections", len(result.detections))
+            self._behavior.note_vision(result.completed_ms)
+            # 확정 여부와 별개로 마지막 실제 person 히트를 기록한다. 게이트 해제는
+            # 300ms 판정이고, FSM의 TARGET_LOST는 마지막 검출 뒤 5초이므로 섞지 않는다.
+            if result.sighting.last_seen_ms is not None and result.sighting.hits > 0:
+                self._behavior.note_target(result.sighting.last_seen_ms)
         # ⚠️ **판정은 워커가 추론마다 했고, 여기서는 결과만 읽는다.** 게이트를 이 틱
         # (10Hz)에서 돌리면 25fps 결과 중 10개만 보게 되고 추론률을 올린 이유가 사라진다.
         #
         # ⚠️ **변화 여부는 게이트의 `changed` 가 아니라 우리 기준으로 본다.** 게이트는
         # 25fps 로 도니까 한 틱 사이에 확정→해제가 다 지나갈 수 있고, 그러면 그 순간의
         # `changed` 는 우리가 못 본 전이를 가리킨다.
-        if result is not None and self._edge.changed("person", result.sighting.present):
-            event = Event.PERSON_FOUND if result.sighting.present else Event.TARGET_LOST
+        if fresh and self._edge.changed("person", result.sighting.present):
             LOG.info(
                 "person_gate",
                 present=result.sighting.present,
                 hits=result.sighting.hits,
                 score=round(result.sighting.best_score, 3),
             )
-            self._apply(event, now_ms)
+            # `present=False`는 게이트 확정이 풀렸다는 뜻일 뿐, 5초 대상 상실 사건이
+            # 아니다. TARGET_LOST는 Behavior의 마지막 검출 타이머가 발생시킨다.
+            if result.sighting.present:
+                self._apply(Event.PERSON_FOUND, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
         # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
         healthy = self._vision.healthy()
         if self._edge.changed("vision_healthy", healthy) and not healthy:
             LOG.error("vision_worker_unhealthy")
         stalled = self._vision.stalled(now_ms)
+        if not healthy or stalled:
+            self._behavior.note_vision_stalled()
         if self._edge.changed("vision_stalled", stalled):
             # 비전 단절은 **기능 저하**다 — 페일세이프로 가지 않고 인지만 끈다
             # (config `vision.stall_timeout_ms` 주석 · NFR-2.6).

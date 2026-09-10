@@ -45,7 +45,7 @@ fsm:
   scan_duration_s: 3
   scan_pitch_deg: 15          # yaw는 불가 — DR-11
   alert_pitch_up_deg: 15      # FR-3.3
-  target_lost_timeout_s: 5    # FR-3.6
+  target_lost_timeout_s: 5    # FR-3.7
   track_deadzone_px: 40       # FR-3.5
   # FR-2.3 — 회피 시퀀스(후진→선회→재확인)를 최대 몇 번 되풀이할지.
   # 다 쓰고도 못 빠져나오면 멈춘 채로 둔다 — 계속 흔들면 기어만 상하고,
@@ -136,8 +136,8 @@ vision:
   # 막혔다(경계의 2연속이 0개). 짧은 구간(120~240ms)이 건너뛰기에 사라지기 때문이다.
   detect_window_ms: 300        # 이 시간 안에
   detect_hits_required: 3      # 이만큼 검출되면 사람으로 확정한다
-  # ⚠️ 해제는 **창이 완전히 빌 때**만 한다. 진입과 대칭으로 두면 경계에서 떨리고,
-  # 그 떨림이 ALERT↔PATROL 전이를 왕복시킨다.
+  # ⚠️ 해제는 **창이 완전히 빌 때**만 한다. 진입과 대칭으로 두면 게이트가 경계에서
+  # 떨린다. FSM의 TARGET_LOST는 이 해제와 별개로 마지막 실제 검출부터 5초를 센다.
   resolution: VGA              # VGA | QVGA (FR-5.3)
   # ⚠️ **요구 하한이지 실제 수신률이 아니다.** NFR-1.3 이 요구하는 최소값이며
   # 실제로 카메라가 보내는 값은 위의 `stream_fps_limit` 이다. 이 둘을 섞으면
@@ -153,8 +153,8 @@ vision:
   # 20fps 에서 놓치는 둘은 **120ms 짜리 짧은 검출**이다 — 3회를 채우려면 관측이
   # 3개 들어가야 하는데 50ms 간격으로는 2개뿐이다. 수신률과 같게 두면 프레임을
   # 하나도 버리지 않으므로 그 구간이 살아난다.
-  # ⚠️ 이 값을 바꿔도 위의 `detect_window_ms` 가 시간으로 정의돼 있어 판정 기준은
-  # 흔들리지 않는다 — 그것이 프레임 수를 버린 이유다.
+  # ⚠️ 시간 창은 최대 관측 간격을 고정하지만, 확인 지연과 창 안의 히트 기회는
+  # 여전히 추론률의 영향을 받는다. 이 값을 바꾸면 검출률·오검출률을 다시 잰다.
   inference_fps: 25
   reconnect_backoff_s: [1, 2, 4, 8, 16, 30]  # FR-5.3
 
@@ -228,4 +228,4 @@ logging:                # NFR-3④
   dir: logs
   rotate_mb: 10
   rotate_keep: 5
-  blackbox_dir: blackbox      # FR-3.7
+  blackbox_dir: blackbox      # FR-3.9

@@ -1,4 +1,4 @@
-"""전이 가드 및 타이머 검증 (WBS 3.4.3 · FR-2.4 · FR-3.6).
+"""전이 가드 및 타이머 검증 (WBS 3.4.3 · FR-2.4 · FR-3.7).
 
 가드도 타이머도 **표에 담겨 있어서 전수로 돌려볼 수 있다.** 조건을 `if` 로
 흩어놓으면 "어떤 타이머가 존재하지 않는 전이를 겨누고 있는지" 를 세는 것 자체가
@@ -204,7 +204,7 @@ def test_blocked_timer_fires_only_once(clock, cfg) -> None:
 
 # ── 대상 상실 감시 ───────────────────────────────────────────
 def test_target_lost_after_the_configured_timeout(clock, cfg) -> None:
-    """5초간 미검출이면 순찰로 복귀 (FR-3.6)."""
+    """5초간 미검출이면 순찰로 복귀 (FR-3.7)."""
     b = _behavior(clock, cfg)
     b.event(Event.START_PATROL, now_ms=clock.ms)
     b.note_target(clock.ms)

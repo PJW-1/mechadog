@@ -13,6 +13,8 @@ from host.behavior.fsm import Event
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
 from host.runtime import Runtime
+from host.vision.person import Sighting
+from host.vision.worker import VisionResult
 
 DEVICE = "mechdog-01"
 PEER = ("127.0.0.1", 5001)
@@ -64,6 +66,9 @@ class FakeVision:
     def __init__(self) -> None:
         self.starts = 0
         self.stops = 0
+        self.result: VisionResult | None = None
+        self.alive = True
+        self.is_stalled = False
 
     def start(self) -> None:
         self.starts += 1
@@ -72,16 +77,42 @@ class FakeVision:
         self.stops += 1
 
     def latest(self):
-        return None
+        return self.result
 
     def healthy(self) -> bool:
-        return True
+        return self.alive
 
     def stalled(self, _now_ms: int) -> bool:
-        return False
+        return self.is_stalled
 
     def age_ms(self, _now_ms: int):
-        return None
+        return None if self.result is None else _now_ms - self.result.completed_ms
+
+
+def vision_result(
+    seq: int,
+    at_ms: int,
+    *,
+    present: bool,
+    hits: int,
+    last_seen_ms: int | None,
+) -> VisionResult:
+    """런타임 통합 시험용 판정 결과."""
+    return VisionResult(
+        detections=(),
+        frame_seq=seq,
+        frame_received_ms=at_ms,
+        completed_ms=at_ms,
+        inference_ms=1.0,
+        sighting=Sighting(
+            present=present,
+            changed=True,
+            hits=hits,
+            best_score=0.9 if hits else 0.0,
+            last_seen_ms=last_seen_ms,
+            box=(0.0, 0.0, 10.0, 20.0) if hits else None,
+        ),
+    )
 
 
 @pytest.fixture
@@ -283,6 +314,69 @@ def test_serve_owns_vision_worker_lifecycle(config: dict, clock: FakeClock) -> N
     r.serve(FakeSocket(clock), duration_s=0.2, clock=clock)
     assert vision.starts == 1
     assert vision.stops == 1
+
+
+def test_gate_release_waits_for_target_lost_timeout(config: dict, clock: FakeClock) -> None:
+    """300ms 게이트 해제를 5초 대상 상실 사건으로 잘못 쓰지 않는다."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+
+    vision.result = vision_result(1, 100, present=True, hits=3, last_seen_ms=100)
+    runtime.tick(100)
+    assert runtime.behavior.state == "ALERT"
+
+    vision.result = vision_result(2, 401, present=False, hits=0, last_seen_ms=100)
+    runtime.tick(401)
+    assert runtime.behavior.state == "ALERT", "게이트 해제는 TARGET_LOST가 아니다"
+
+    timeout_ms = int(config["fsm"]["target_lost_timeout_s"] * 1000)
+    runtime.tick(100 + timeout_ms - 1)
+    assert runtime.behavior.state == "ALERT"
+    runtime.tick(100 + timeout_ms)
+    assert runtime.behavior.state == "PATROL"
+
+
+def test_vision_stall_marks_degraded_and_recovers(config: dict, clock: FakeClock) -> None:
+    """첫 프레임이 없거나 워커가 죽어도 기능 저하 상태가 실제 FSM에 반영된다."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+
+    vision.is_stalled = True
+    runtime.tick(2001)
+    assert runtime.behavior.degraded is True
+    assert runtime.behavior.state == "PATROL", "비전 단절은 순찰을 막지 않는다"
+
+    vision.is_stalled = False
+    vision.result = vision_result(1, 2100, present=False, hits=0, last_seen_ms=None)
+    runtime.tick(2100)
+    assert runtime.behavior.degraded is False
+
+
+def test_stalled_camera_does_not_hold_alert_forever(config: dict, clock: FakeClock) -> None:
+    """마지막 양성 결과가 슬롯에 남아도 5초 뒤에는 순찰로 복귀한다."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+
+    vision.result = vision_result(1, 100, present=True, hits=3, last_seen_ms=100)
+    runtime.tick(100)
+    assert runtime.behavior.state == "ALERT"
+
+    vision.is_stalled = True
+    runtime.tick(2101)
+    assert runtime.behavior.degraded is True
+    runtime.tick(100 + int(config["fsm"]["target_lost_timeout_s"] * 1000))
+    assert runtime.behavior.state == "PATROL"
+
+
+def test_dead_vision_worker_marks_degraded(config: dict, clock: FakeClock) -> None:
+    vision = FakeVision()
+    vision.alive = False
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.tick(clock.ms)
+    assert runtime.behavior.degraded is True
 
 
 def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> None:
