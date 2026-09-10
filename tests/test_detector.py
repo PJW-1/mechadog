@@ -80,6 +80,26 @@ def test_preprocess_anchors_top_left_not_center() -> None:
     assert prep.tensor[0, 0, 0, 0] == pytest.approx(200.0), "좌상단은 영상이어야 한다"
 
 
+def test_preprocess_matches_the_reference_rounding() -> None:
+    """⚠️ **원본은 버림이다.** `yolox/data/data_augment.py` 의 `int(shape * r)`.
+
+    VGA·QVGA 는 비율이 정수라 차이가 없지만, 비정수 비율에서 반올림하면 1픽셀
+    어긋나 **모델이 학습 때 본 것과 다른 그림**이 된다. 처음 반올림으로 썼다가
+    원본을 대조해서 고쳤다.
+    """
+    adapter = YoloxAdapter(INPUT)
+    # 480x700 → ratio = 640/700. 높이 480*ratio = 438.857 이라 **버림 438 / 반올림 439**
+    # 로 갈린다. 폭은 정확히 640 이 되어 갈리지 않으므로 높이로 판별한다.
+    prep = adapter.preprocess(np.full((480, 700, 3), 200, dtype=np.uint8))
+    ratio = 640 / 700
+    truncated, rounded = int(480 * ratio), round(480 * ratio)
+    assert truncated != rounded, "이 치수는 두 방식이 갈려야 시험이 성립한다"
+
+    column = prep.tensor[0, 0, :, 0]  # 첫 열 — 여백이 시작되는 행이 축소된 높이다
+    filled = int((column != YOLOX_PAD_VALUE).sum())
+    assert filled == truncated, f"버림 {truncated} 이어야 함 (반올림이면 {rounded})"
+
+
 def test_preprocess_does_not_normalize() -> None:
     """⚠️ **YOLOX 는 0~255 를 그대로 받는다.**
 
