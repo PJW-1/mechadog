@@ -70,6 +70,37 @@ WEIGHTS: tuple[Weight, ...] = (
     ),
 )
 
+#: 검출 **정확도**를 눈으로 확인할 실제 사진. `--samples` 로만 받는다.
+#:
+#: ⚠️ **잡음으로는 정확도를 확인할 수 없다.** `/255` 로 고장낸 전처리도 잡음에서
+#: 정상과 똑같이 0건을 낸다. 사람과 물체가 실제로 찍힌 사진이 있어야 구분된다.
+#:
+#: ⚠️ **저장소에 넣지 않는다.** COCO 주석은 CC-BY-4.0 이지만 **사진 자체는 Flickr
+#: 개별 라이선스**다. 벤더 라이브러리를 벤더링하지 않은 것(ADR-20)과 같은 판단이다.
+SAMPLES: tuple[Weight, ...] = (
+    Weight(
+        dest="datasets/coco_samples/000000001000.jpg",
+        url="http://images.cocodataset.org/val2017/000000001000.jpg",
+        size=321_136,
+        sha256="24bb77a31928404e45a0454b06f6a0bd54a8db103590c9d7917288a1e0269f05",
+        note="사람 7명 + 테니스 라켓 — 간판 기능(person) 확인",
+    ),
+    Weight(
+        dest="datasets/coco_samples/000000004495.jpg",
+        url="http://images.cocodataset.org/val2017/000000004495.jpg",
+        size=106_634,
+        sha256="cf670ca35fb16e59ecce82eecf9bf1f60d2ee333be81b61c4ea390be2c7e7b2b",
+        note="500x375 → ratio 1.28 — **letterbox 되돌리기 확인** (대부분의 COCO 사진은 1.0)",
+    ),
+    Weight(
+        dest="datasets/coco_samples/000000000139.jpg",
+        url="http://images.cocodataset.org/val2017/000000000139.jpg",
+        size=161_811,
+        sha256="ffe0f0cec3b2e27aab1967229cdf0a0d7751dcdd5800322f0b8ac0dffb3b8a8d",
+        note="실내 — person·chair·potted plant, FR-8 변화감지 어휘 확인",
+    ),
+)
+
 
 def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
@@ -113,9 +144,9 @@ def download(weight: Weight, path: Path) -> None:
         partial.unlink(missing_ok=True)
 
 
-def run(*, check_only: bool, force: bool) -> int:
+def run(*, check_only: bool, force: bool, samples: bool = False) -> int:
     failures = 0
-    for weight in WEIGHTS:
+    for weight in WEIGHTS + (SAMPLES if samples else ()):
         path = ROOT / weight.dest
         print(f"\n{weight.dest}  —  {weight.note}")
 
@@ -152,8 +183,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fetch_models", description=__doc__)
     parser.add_argument("--check", action="store_true", help="받지 않고 검증만 한다")
     parser.add_argument("--force", action="store_true", help="있어도 다시 받는다")
+    parser.add_argument(
+        "--samples",
+        action="store_true",
+        help="검출 정확도 확인용 실제 사진까지 받는다 (CI 에는 불필요)",
+    )
     args = parser.parse_args(argv)
-    return run(check_only=args.check, force=args.force)
+    return run(check_only=args.check, force=args.force, samples=args.samples)
 
 
 if __name__ == "__main__":

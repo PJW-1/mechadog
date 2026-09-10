@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from tools.fetch_models import WEIGHTS, Weight, sha256_of, verify
+from tools.fetch_models import SAMPLES, WEIGHTS, Weight, sha256_of, verify
 
 
 def _weight(payload: bytes, *, sha: str | None = None) -> Weight:
@@ -67,19 +67,33 @@ def test_manifest_is_filled_in() -> None:
     릴리스 자산에 게시된 다이제스트가 없어서 우리가 계산해 박아 넣는 값이다.
     """
     assert WEIGHTS, "받을 파일이 하나는 있어야 한다"
-    for weight in WEIGHTS:
+    for weight in WEIGHTS + SAMPLES:
         assert len(weight.sha256) == 64, f"{weight.dest}: SHA-256 이 64자여야 함"
         assert set(weight.sha256) <= set("0123456789abcdef"), "소문자 16진수"
         assert weight.size > 0
-        assert weight.url.startswith("https://"), "평문 HTTP 로 받지 않는다"
         assert weight.note, "출처와 라이선스를 적는다"
+
+
+def test_weights_are_fetched_over_https() -> None:
+    """가중치는 코드로 실행되는 것에 가까우므로 평문으로 받지 않는다.
+
+    ⚠️ 검증용 사진(`SAMPLES`)은 COCO 가 `http://images.cocodataset.org` 로만 서비스해
+    예외다. **해시로 대조하므로 중간에 바뀌면 잡힌다** — 그것이 이 예외를 감당하는
+    근거다.
+    """
+    for weight in WEIGHTS:
+        assert weight.url.startswith("https://")
 
 
 def test_readme_quotes_the_same_numbers() -> None:
     """⚠️ **정본은 스크립트다.** 문서의 숫자가 어긋나면 사람이 잘못된 값을 대조한다."""
-    readme = (Path(__file__).resolve().parents[1] / "models" / "README.md").read_text(
-        encoding="utf-8"
-    )
-    for weight in WEIGHTS:
-        assert weight.sha256 in readme, f"{weight.dest}: README 의 해시가 다르다"
-        assert f"{weight.size:,}" in readme or str(weight.size) in readme
+    root = Path(__file__).resolve().parents[1]
+    for group, name in ((WEIGHTS, "models"), (SAMPLES, "datasets")):
+        readme = (root / name / "README.md").read_text(encoding="utf-8")
+        for weight in group:
+            if group is WEIGHTS:
+                assert weight.sha256 in readme, f"{weight.dest}: README 의 해시가 다르다"
+                assert f"{weight.size:,}" in readme or str(weight.size) in readme
+            else:
+                # 사진은 해시를 문서에 옮기지 않는다(3장이라 표가 길어진다). 파일명만 맞춘다.
+                assert Path(weight.dest).name in readme, f"{weight.dest}: README 에 없다"

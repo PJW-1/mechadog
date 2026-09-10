@@ -48,6 +48,11 @@ snapshots/
 blackbox/
 maps/*
 !maps/README.md
+
+# 검증용 실제 사진 — COCO 주석은 CC-BY-4.0 이지만 사진은 Flickr 개별 라이선스다.
+# `python tools/fetch_models.py --samples` 로 받는다.
+datasets/*
+!datasets/README.md
 recordings/
 *.bag
 *.db3
