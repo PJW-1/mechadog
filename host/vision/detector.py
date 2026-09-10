@@ -111,9 +111,12 @@ class YoloxAdapter:
         size = self.input_size
         height, width = image.shape[:2]
         ratio = min(size / height, size / width)
+        # ⚠️ **버림이다. 반올림이 아니다.** 원본 `preproc` 이 `int(shape * r)` 를 쓴다
+        # (`yolox/data/data_augment.py`). VGA·QVGA 는 비율이 정수라 차이가 없지만,
+        # 다른 해상도에서 1픽셀 어긋나면 **모델이 학습 때 본 것과 다른 그림**이 된다.
         resized = cv2.resize(
             image,
-            (int(round(width * ratio)), int(round(height * ratio))),
+            (int(width * ratio), int(height * ratio)),
             interpolation=cv2.INTER_LINEAR,
         )
         canvas = np.full((size, size, 3), YOLOX_PAD_VALUE, dtype=np.uint8)
