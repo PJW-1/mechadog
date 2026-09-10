@@ -351,5 +351,5 @@ def _make_onnx_session(path: Path, preferred: Sequence[str]) -> Any:
 
     available = list(ort.get_available_providers())
     chosen = select_providers(preferred, available)
-    log_selection(chosen, available)
+    log_selection(chosen, available, preferred)
     return ort.InferenceSession(str(path), providers=chosen)

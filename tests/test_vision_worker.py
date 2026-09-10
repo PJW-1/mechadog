@@ -228,6 +228,28 @@ def test_stalled_distinguishes_startup_from_disconnect(cfg: dict, monkeypatch) -
     assert worker.age_ms(now_ms=10_000_000) is None
 
 
+def test_stalled_when_first_frame_never_arrives(cfg: dict, monkeypatch) -> None:
+    """기동 유예가 끝났는데 첫 프레임이 없으면 카메라 미연결이다."""
+
+    class Clock:
+        ms = 1000
+
+        def __call__(self) -> int:
+            return self.ms
+
+    clock = Clock()
+    worker = _worker(cfg, _FakeReader(count=0), _FakeDetector(), monkeypatch, clock=clock)
+    worker.start()
+    try:
+        clock.ms += cfg["vision"]["stall_timeout_ms"]
+        assert worker.stalled(clock.ms) is False, "경계 시각까지는 기동 유예다"
+        clock.ms += 1
+        assert worker.stalled(clock.ms) is True
+        assert worker.age_ms(clock.ms) is None, "첫 프레임이 없다는 사실도 구분돼야 한다"
+    finally:
+        worker.stop()
+
+
 def test_stalled_after_timeout(cfg: dict, monkeypatch) -> None:
     detector = _FakeDetector()
     worker = _worker(cfg, _FakeReader(), detector, monkeypatch)

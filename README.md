@@ -153,6 +153,17 @@ mechdog_physical_ai/
     └── PULL_REQUEST_TEMPLATE.md
 ```
 
+## 호스트 런타임 실행
+
+비전 워커는 기본으로 함께 시작한다. DHCP로 받은 주소가 개체 프로파일에 아직 없으면
+실행할 때 덮어쓴다.
+
+```powershell
+python -m host.runtime --device mechdog-01 --robot-ip <로봇-IP> --xiao-ip <XIAO-IP> --patrol
+```
+
+카메라와 모델을 제외하고 모션 링크만 진단할 때에만 `--no-vision`을 붙인다.
+
 ## 문서 지도 — 언제 무엇을 보나
 
 | 상황 | 문서 |

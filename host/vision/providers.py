@@ -68,13 +68,24 @@ def select_providers(
     return chosen
 
 
-def log_selection(chosen: Sequence[str], available: Sequence[str]) -> None:
+def log_selection(
+    chosen: Sequence[str], available: Sequence[str], preferred: Sequence[str]
+) -> None:
     """무엇으로 도는지 기록한다. **GPU 를 기대했는데 CPU 면 경고로 올린다.**
 
     같은 코드가 세 환경(개발 PC · CI · 팀원 PC)에서 다르게 도는 것이 정상인 구조라,
     로그가 없으면 성능 수치의 출처를 알 수 없다.
     """
-    fell_back = chosen[:1] == [CPU_PROVIDER] and len(available) > 1
+    # 설치가 잘못되어 CPU 하나만 보이는 경우가 가장 중요한 폴백이다. 사용 가능 EP 수로
+    # 판단하면 바로 그 경우를 INFO 로 숨긴다. 설정이 GPU를 우선했는지와 실제 선택을 비교한다.
+    gpu_expected = bool(preferred) and preferred[0] != CPU_PROVIDER
+    fell_back = chosen[:1] == [CPU_PROVIDER] and gpu_expected
     event = "execution_provider_cpu_only" if fell_back else "execution_provider"
     emit = LOG.warning if fell_back else LOG.info
-    emit(event, selected=chosen[0], order=list(chosen), available=list(available))
+    emit(
+        event,
+        selected=chosen[0],
+        order=list(chosen),
+        preferred=list(preferred),
+        available=list(available),
+    )
