@@ -35,6 +35,7 @@ from host.behavior.actions import register_actions
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation
 from host.behavior.fsm import Behavior, Event, behavior_from_config
+from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config
 from host.common.logging_setup import (
     ERROR_ON_ENTER,
@@ -115,6 +116,8 @@ class Runtime:
         clock: Callable[[], int] = system_clock_ms,
         context: LogContext | None = None,
         vision: Any = None,
+        blackbox: EventBlackbox | None = None,
+        event_publisher: Callable[[BlackboxEntry], None] | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -158,6 +161,15 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
+        # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
+        # FastAPI/WebSocket 서버(4.5.1)가 생기면 같은 항목을 publisher로 받는다.
+        # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
+        self._blackbox = blackbox
+        self._event_publisher = event_publisher
+        self._last_telemetry: dict[str, Any] = {
+            "device_id": device_id,
+            "available": False,
+        }
         # ⚠️ **정상값을 미리 심는다.** `EdgeTrigger` 는 첫 관측을 변화로 보므로, 심지
         # 않으면 기동할 때마다 `vision_worker_unhealthy` 와 `vision_recovered` 가
         # 거짓으로 찍힌다 — 실제로 그렇게 찍혔다. **거짓 경보는 진짜 경보를 묻는다.**
@@ -245,6 +257,23 @@ class Runtime:
             return Ingested(discarded=f"다른 개체: {out.reading.device_id}")
 
         self._stats.accepted += 1
+        self._last_telemetry = {
+            "device_id": out.reading.device_id,
+            "available": True,
+            "boot_id": out.reading.boot_id,
+            "seq": out.reading.seq,
+            "state": out.reading.state,
+            "batt_v": out.reading.batt_v,
+            "dist_cm": out.reading.dist_cm,
+            "last_cmd_age_ms": out.reading.last_cmd_age_ms,
+            "safety_latched": out.reading.safety_latched,
+            "flags": {
+                "tipped": out.reading.tipped,
+                "lowbatt": out.reading.lowbatt,
+                "link_ok": out.reading.link_ok,
+                "obstacle": out.reading.obstacle,
+            },
+        }
         self._log.observe(seq=out.reading.seq)
         self._summary.count("accepted")
         if out.reading.batt_v is not None:
@@ -313,6 +342,7 @@ class Runtime:
             # 아니다. TARGET_LOST는 Behavior의 마지막 검출 타이머가 발생시킨다.
             if result.sighting.present:
                 self._apply(Event.PERSON_FOUND, now_ms)
+                self._record_person_event(result)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
         # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
         healthy = self._vision.healthy()
@@ -328,6 +358,36 @@ class Runtime:
                 "vision_stalled" if stalled else "vision_recovered",
                 age_ms=self._vision.age_ms(now_ms),
             )
+
+    def _record_person_event(self, result: Any) -> None:
+        """확정 검출의 원본과 판단 근거를 한 번 저장하고 이벤트 채널에 넘긴다.
+
+        게이트의 거짓→참 엣지에서만 호출되므로 10Hz 반복 저장은 일어나지 않는다.
+        저장·대시보드 오류가 제어 루프를 죽이면 로깅이 안전보다 우선하는 꼴이 되므로
+        두 실패는 각각 기록하고 제어는 계속한다.
+        """
+        if self._blackbox is None:
+            return
+        try:
+            entry = self._blackbox.record(
+                "person_found",
+                jpeg=result.jpeg,
+                tracks=result.tracks,
+                detections=result.detections,
+                telemetry=self._last_telemetry,
+                state=self._behavior.state,
+                escalation=self._escalation.level.value,
+                now_ms=result.completed_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 — 기록 실패가 10Hz 제어를 죽이면 안 된다
+            LOG.error("blackbox_record_failed", error=f"{type(exc).__name__}: {exc}")
+            return
+        if self._event_publisher is None:
+            return
+        try:
+            self._event_publisher(entry)
+        except Exception as exc:  # noqa: BLE001 — 브라우저 단절은 제어 실패가 아니다
+            LOG.error("dashboard_event_publish_failed", error=f"{type(exc).__name__}: {exc}")
 
     def _watch_command_uptake(self, age_ms: int | None, now_ms: int) -> None:
         """⚠️ **로봇이 우리 명령을 폐기하고 있는지 본다.**
@@ -685,12 +745,14 @@ def main(argv: list[str] | None = None) -> int:
     context = setup_logging(config, device_id=args.device)
 
     vision = None if args.no_vision else build_worker(config)
+    blackbox = EventBlackbox(config)
     runtime = Runtime(
         config,
         device_id=args.device,
         robot_ip=args.robot_ip,
         context=context,
         vision=vision,
+        blackbox=blackbox,
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
