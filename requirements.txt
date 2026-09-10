@@ -12,6 +12,12 @@ opencv-python>=4.10
 # DirectML EP 는 Windows 전용이다. 리눅스 CI 에서는 CPU 빌드를 쓴다.
 #  · Windows 개발 PC : DirectML EP — 모든 DX12 GPU 에서 동작 (DR-13)
 #  · Linux CI        : CPU EP — import 및 단위 시험만 수행
+#
+# ⚠️ **둘을 같이 깔면 안 된다.** 같은 `onnxruntime` 이름을 점유해서 **에러 없이
+# 한쪽이 다른 쪽을 가린다.** 실제로 개발 PC 에 둘 다 깔려 있었고, DirectML 이
+# EP 목록에서 사라져 CPU 로 도는 것을 몰랐다 — 검출 61.9ms 였고 하나만 남긴 뒤
+# 8.2ms 가 됐다. 아래 마커는 새 환경을 위한 것이며, **이미 섞인 환경은 둘 다 지우고
+# 하나만 다시 깔아야 한다** (CONTRIBUTING 8절).
 onnxruntime-directml>=1.19 ; sys_platform == "win32"
 onnxruntime>=1.19          ; sys_platform != "win32"
 

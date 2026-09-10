@@ -143,9 +143,9 @@ mechdog_physical_ai/
 │   ├── dashboard/                       # FastAPI + WebSocket + UI
 │   └── common/                          # 통신 규약 · 로깅 · config
 ├── tests/                               # pytest (하드웨어 불요)
-├── tools/                               # 목업 · 지연 측정 · 텔레오퍼레이션
+├── tools/                               # 목업 · 지연 측정 · 텔레오퍼레이션 · 가중치 받기
 ├── third_party/                         # HW_MechDog 벤더링
-├── models/                              # ONNX 가중치 (git 제외)
+├── models/                              # ONNX 가중치 (git 제외 · `tools/fetch_models.py` 로 받는다)
 ├── maps/                                # 지도 산출물 (git 제외)
 └── .github/
     ├── workflows/ci.yml                 # CI/CD

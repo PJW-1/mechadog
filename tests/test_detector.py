@@ -192,6 +192,33 @@ def _detector(cfg: dict, raw: np.ndarray) -> tuple[Detector, _FakeSession]:
     return det, session
 
 
+def test_open_warms_up_through_preprocess_not_just_the_session(cfg: dict) -> None:
+    """⚠️ **첫 프레임 비용의 대부분이 추론이 아니라 전처리였다.**
+
+    실측 — 첫 프레임 122ms = **전처리 78.8ms + 추론 5.2ms**. OpenCV 의 첫 호출
+    초기화가 지배한다. 그래서 세션만 미리 돌리면 절반만 데워지고, 실제로 그렇게
+    만들어서 첫 프레임이 108ms 로 거의 그대로였다.
+
+    전처리를 통과했는지 확인하는 방법 — 워밍업 입력은 **`YOLOX_PAD_VALUE` 로 채운
+    여백이 없는 정사각**이므로, 세션에 들어온 텐서가 0 이면 전처리를 지난 것이다
+    (전처리를 건너뛰고 텐서를 직접 만들어도 0 이므로, 값이 아니라 **호출 여부**를
+    본다).
+    """
+    det, session = _detector(cfg, _raw_with_one_box(index=1, class_id=0))
+    calls: list[tuple[int, int]] = []
+    original = det.adapter.preprocess
+
+    def spy(image):
+        calls.append(image.shape[:2])
+        return original(image)
+
+    det._adapter.preprocess = spy  # type: ignore[method-assign]
+    det.open()
+
+    assert calls == [(INPUT, INPUT)], "전처리를 지나야 OpenCV 초기화가 끝난다"
+    assert session.fed["images"].shape == (1, 3, INPUT, INPUT)
+
+
 def test_detect_returns_original_image_coordinates(cfg: dict) -> None:
     """⚠️ **letterbox 를 되돌린다.**
 
@@ -242,13 +269,21 @@ def test_detect_sorts_by_score(cfg: dict) -> None:
     assert [d.label for d in found] == ["bottle", "person"]
 
 
-def test_missing_model_file_stops_with_the_procedure(cfg: dict) -> None:
+def test_missing_model_file_stops_with_the_procedure(cfg: dict, tmp_path) -> None:
     """⚠️ **없는 가중치를 조용히 넘기지 않는다.**
 
     벤더 라이브러리를 `#error` 가드로 처리한 것(ADR-20)과 같은 원칙이다. 빈 결과를
     내면 "사람이 없는 것"과 구별되지 않는다.
+
+    ⚠️ **없는 경로를 명시한다.** 처음에는 `models/` 가 비어 있다는 로컬 상태에
+    기대어 통과했고, 가중치를 실제로 받은 순간 깨졌다. **환경에 기대어 통과하는
+    시험은 통과해도 아무것도 증명하지 않는다.**
     """
-    det = Detector(cfg, labels=COCO_CLASSES)  # 실제 팩토리 — models/ 는 비어 있다
+    from copy import deepcopy
+
+    broken = deepcopy(cfg)
+    broken["vision"]["coco"]["model_path"] = str(tmp_path / "없는파일.onnx")
+    det = Detector(broken, labels=COCO_CLASSES)  # 실제 팩토리
     with pytest.raises(ModelMissingError, match="models/README.md"):
         det.open()
 
