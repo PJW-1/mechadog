@@ -458,3 +458,48 @@ def test_committed_device_profiles_load_and_validate() -> None:
         loaded = load_config(path.stem, config_path=CONFIG_PATH, devices_dir=devices_dir)
         assert loaded["device_id"] == path.stem
         assert len(loaded["servo_offset"]) == 9
+
+
+def test_track_lost_buffer_must_survive_one_missed_inference(cfg: dict) -> None:
+    """⚠️ 소실 버퍼가 추론 주기보다 짧으면 **한 번만 놓쳐도 ID 가 바뀐다.**
+
+    실기 통과율이 52% 였으므로(ADR-25) 한 프레임 공백은 예외가 아니라 일상이다.
+    ID 가 바뀌면 인증 세션도 만료되므로(FR-3.6.3) 이것은 편의가 아니라 정책이다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    period_ms = round(1000 / cfg["vision"]["inference_fps"])
+    broken = deepcopy(cfg)
+    broken["vision"]["tracker"]["track_lost_ms"] = period_ms - 1
+    with pytest.raises(ConfigError, match="track_lost_ms"):
+        validate_base_config(broken)
+
+    ok = deepcopy(cfg)
+    ok["vision"]["tracker"]["track_lost_ms"] = period_ms
+    validate_base_config(ok)  # 경계는 통과한다
+
+
+def test_full_overlap_only_matching_is_rejected(cfg: dict) -> None:
+    """겹침 임계 1.0 은 **완전히 같은 박스만** 잇는다는 뜻이라 아무도 이어지지 않는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["tracker"]["iou_match_threshold"] = 1.0
+    with pytest.raises(ConfigError, match="iou_match_threshold"):
+        validate_base_config(broken)
+
+
+def test_tracker_section_is_required(cfg: dict) -> None:
+    """절이 없으면 기본값으로 때우지 않는다 — 설정이 정본이 아니게 된다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    del broken["vision"]["tracker"]
+    with pytest.raises(ConfigError, match="vision.tracker"):
+        validate_base_config(broken)

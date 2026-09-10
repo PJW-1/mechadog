@@ -378,3 +378,19 @@ def test_worker_threads_are_daemons(cfg: dict, monkeypatch) -> None:
         names = {t.name for t in threading.enumerate() if t.name.startswith("vision-")}
         assert names == {"vision-recv", "vision-infer"}
         assert all(t.daemon for t in threading.enumerate() if t.name.startswith("vision-"))
+
+
+def test_result_carries_persistent_track_ids(cfg: dict, monkeypatch) -> None:
+    """추적을 **추론마다** 돌린다 (`3.3.4` · FR-3.6).
+
+    ⚠️ 메인 루프(10Hz)에서 돌리면 25fps 결과 중 10개만 보게 되어 프레임 간 겹침이
+    그만큼 줄고 **ID 가 끊긴다** — 게이트를 워커에 둔 것과 같은 이유다.
+    """
+    detector = _FakeDetector()
+    worker = _worker(cfg, _FakeReader(), detector, monkeypatch)
+    with worker:
+        assert _wait_until(lambda: detector.calls >= 3)
+        result = worker.latest()
+    assert result is not None
+    assert [t.track_id for t in result.tracks] == [1], "같은 자리의 사람은 ID 를 유지한다"
+    assert result.tracks[0].score == pytest.approx(0.9)
