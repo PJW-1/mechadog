@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from host.common.config import repo_path
 from host.common.logging_setup import event_logger
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class EventBlackbox:
         directory = logging_config.get("blackbox_dir")
         if not isinstance(directory, str) or not directory.strip():
             raise ValueError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
-        self._dir = Path(directory)
+        self._dir = repo_path(directory)
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _new_entry_dir(self, now_ms: int, event_type: str) -> Path:

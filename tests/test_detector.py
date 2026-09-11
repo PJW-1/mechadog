@@ -308,6 +308,23 @@ def test_missing_model_file_stops_with_the_procedure(cfg: dict, tmp_path) -> Non
         det.open()
 
 
+def test_model_is_found_from_any_working_directory(
+    cfg: dict, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """⚠️ **`models/coco.onnx` 는 저장소 기준이다** — 실행 위치(CWD) 기준이면 못 찾는다."""
+    from host.common.config import ROOT
+
+    monkeypatch.chdir(tmp_path)
+    opened: list = []
+
+    def factory(path, _providers):
+        opened.append(path)
+        return _FakeSession(_raw_with_one_box(index=1, class_id=0))
+
+    Detector(cfg, labels=COCO_CLASSES, session_factory=factory).open()
+    assert opened == [ROOT / cfg["vision"]["coco"]["model_path"]]
+
+
 def test_model_family_must_be_recorded(cfg: dict) -> None:
     """재현성 — 계열이 비면 몇 달 뒤 같은 결과를 못 만든다 (FR-9.1.2)."""
     from copy import deepcopy

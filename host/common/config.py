@@ -42,6 +42,16 @@ class ConfigError(ValueError):
     """설정 누락이나 범위 오류 때문에 안전하게 기동할 수 없음."""
 
 
+def repo_path(value: str | Path) -> Path:
+    """설정의 상대 경로를 **저장소 루트 기준**으로 푼다. 절대 경로는 그대로 둔다.
+
+    실행 위치(CWD) 기준으로 두면 저장소 밖에서 띄웠을 때 모델을 못 찾고, 로그와
+    블랙박스가 띄운 자리마다 흩어진다.
+    """
+    path = Path(value)
+    return path if path.is_absolute() else ROOT / path
+
+
 def _read_mapping(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise ConfigError(f"설정 파일 없음: {path}")
