@@ -37,7 +37,11 @@ safety:                 # ⚠️ Tier 1 — 온보드에서만 판정 (아키텍
 
 gait:                   # HW_MechDog API 파라미터 (DR-1)
   step_length_mm: 60          # -100 ~ 100
-  turn_angle_deg: 20          # -30 ~ 30 (arc 조향. 제자리 회전 불가 — DR-11)
+  # -30 ~ 30 (arc 조향. 제자리 회전 불가 — DR-11)
+  # ⚠️ **양수는 반시계 = 로봇의 좌회전**이다 (PROTOCOL 부호 규약). 회피 시퀀스가
+  # 이 값을 그대로 쓰므로 **회피는 좌회전한다** — `turn_deg_per_sec` 에 들어갈
+  # 값도 그래서 좌선회 실측값이다.
+  turn_angle_deg: 20
   lift_time_ms: 120
   ground_time_ms: 180
   lift_height_mm: 25

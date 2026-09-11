@@ -150,15 +150,54 @@ def avoid_phases(config: Mapping[str, Any]) -> tuple[Phase, ...] | None:
 
     gait = config["gait"]
     settle_ms = int(config["localization"]["settle_delay_ms"])
-    reverse_ms = int(config["gait"]["reverse_distance_mm"] / float(forward) * 1000)
-    turn_ms = int(config["localization"]["turn_increment_deg"] / float(turn) * 1000)
+    increment_deg = float(config["localization"]["turn_increment_deg"])
+    clearance_mm = float(gait["reverse_distance_mm"])
+    step_mm = abs(float(gait["step_length_mm"]))
+    turn_deg = float(gait["turn_angle_deg"])
+    # 온보드가 이미 멈췄다. 자세가 가라앉기 전에 걷기 시작하면 첫 걸음이 튄다.
+    settle = Phase("settle", 0.0, 0.0, settle_ms)
+    # 멈춰서 로봇의 다음 보고를 기다린다. 전방이 비면 로봇이 `PATROL` 을 보고한다.
+    verify = Phase("verify", 0.0, 0.0, settle_ms)
+
+    # ⚠️ **후진하며 선회한다 — 물러난 뒤 전진하며 돌지 않는다.**
+    #
+    # 2026-09-11 실측이 원래 설계를 무효로 만들었다. 제자리 회전이 불가하므로
+    # (ADR-11) 선회는 이동을 동반하는데, **전진하며 돌면 후진으로 번 여유를 그대로
+    # 되돌려 준다.**
+    #
+    #     후진 200mm 확보 → 30도 선회 중 전진 370mm  →  순 여유 **-170mm**
+    #
+    # 즉 회피가 장애물에 **더 붙었다.** 후진하며 돌면 같은 선회 속도(6.6 vs 6.8
+    # 도/s)로 **여유를 벌면서** 돈다 — 30도에 315mm 후퇴다. 요가 `angle` 단독으로
+    # 결정되므로(PROTOCOL 부호 규약) 후진에서도 같은 부호가 같은 방향이다.
+    reverse_turn_deg = calibration.get("reverse_turn_deg_per_sec")
+    reverse_turn_mm = calibration.get("reverse_turn_mm_per_sec")
+    if reverse_turn_deg and reverse_turn_mm and reverse_turn_deg > 0 and reverse_turn_mm > 0:
+        # **각도와 여유 둘 다 만족시킨다** — 둘 중 오래 걸리는 쪽을 쓴다. 각도만
+        # 보면 여유가 모자랄 수 있고, 여유만 보면 방향 전환이 모자라 장애물을
+        # 돌아가지 못한다.
+        for_angle_ms = increment_deg / float(reverse_turn_deg) * 1000
+        for_clearance_ms = clearance_mm / float(reverse_turn_mm) * 1000
+        duration_ms = int(max(for_angle_ms, for_clearance_ms))
+        return (
+            settle,
+            Phase("reverse_turn", -step_mm, turn_deg, duration_ms),
+            verify,
+        )
+
+    # ⚠️ **후진 선회를 재지 않은 개체는 옛 구간표로 돈다.** 그 개체에서는 위의
+    # 여유 문제가 그대로 남아 있으므로 `2.2.3` 을 먼저 재야 한다.
+    #
+    # 후진 속도도 전진 속도가 아니다 — 실측에서 **25% 느렸다**(103.9 대 78.0).
+    # 재지 않았으면 전진 값으로 되돌아가고, 그 개체의 후진량은 그만큼 틀린다.
+    reverse_speed = calibration.get("reverse_mm_per_sec") or forward
+    reverse_ms = int(clearance_mm / float(reverse_speed) * 1000)
+    turn_ms = int(increment_deg / float(turn) * 1000)
     return (
-        # 온보드가 이미 멈췄다. 자세가 가라앉기 전에 걷기 시작하면 첫 걸음이 튄다.
-        Phase("settle", 0.0, 0.0, settle_ms),
-        Phase("reverse", -abs(float(gait["step_length_mm"])), 0.0, reverse_ms),
-        Phase("turn", abs(float(gait["step_length_mm"])), float(gait["turn_angle_deg"]), turn_ms),
-        # 멈춰서 로봇의 다음 보고를 기다린다. 전방이 비면 로봇이 `PATROL` 을 보고한다.
-        Phase("verify", 0.0, 0.0, settle_ms),
+        settle,
+        Phase("reverse", -step_mm, 0.0, reverse_ms),
+        Phase("turn", step_mm, turn_deg, turn_ms),
+        verify,
     )
 
 

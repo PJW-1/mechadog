@@ -29,9 +29,19 @@ servo_offset: [0, -36, -82, -14, -97, 3, 100, 36, 62]
 # 보행 명령 대비 실제 이동량 (FR-6.4). **시연할 바닥에서 재야 한다** —
 # 카펫과 장판에서 값이 달라진다.
 gait_calibration:
-  forward_mm_per_sec: null
-  turn_deg_per_sec: null
-  measured_on: null
+  forward_mm_per_sec: 103.9
+  # 2026-09-11 실측 — **후진이 전진보다 25% 느리다.** 회피 시퀀스가 후진 시간을
+  # 전진 속도로 계산하고 있어 200mm 목표에서 50mm 가 부족했다.
+  # 두 배터리 상태(저전압 77.4 / 만충 78.0)에서 같은 비율이 나와 전압 영향이 아니다.
+  reverse_mm_per_sec: 78.0
+  turn_deg_per_sec: 6.8
+  # 2026-09-11 실측 — **후진하며 선회**(`move(-60, +20)`). 6.1초 창에서 40~41도를
+  # 돌면서 420~430mm 물러났다. 선회 속도는 전진 선회(6.8)와 사실상 같은데
+  # **여유는 벌어진다** — 회피 시퀀스가 이 조합을 쓰는 이유다(ADR-29).
+  # 창 길이와 무관한 불변량은 **각도당 후퇴 10.5mm** 다.
+  reverse_turn_deg_per_sec: 6.6
+  reverse_turn_mm_per_sec: 69.7
+  measured_on: "2026-09-11"
 
 measured:
   body_weight_g: null # H3 은 합·불만 보므로 무게를 재지 않는다

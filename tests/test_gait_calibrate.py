@@ -11,16 +11,30 @@ from pathlib import Path
 
 import pytest
 
-from tools.gait_calibrate import Trial, build_parser, summarize, write_profile
+from tools.gait_calibrate import (
+    Trial,
+    build_parser,
+    report_avoid_clearance,
+    summarize,
+    write_profile,
+)
 
 
-def _trial(index: int, *, actual_s: float, measured: float, requested_s: float = 3.0) -> Trial:
+def _trial(
+    index: int,
+    *,
+    actual_s: float,
+    measured: float,
+    requested_s: float = 3.0,
+    secondary: float | None = None,
+) -> Trial:
     return Trial(
         index=index,
         requested_s=requested_s,
         actual_s=actual_s,
         packets=int(actual_s * 10) + 1,
         measured=measured,
+        secondary=secondary,
     )
 
 
@@ -112,7 +126,7 @@ def test_write_records_the_value_and_the_date(tmp_path: Path) -> None:
 def test_write_keeps_indentation(tmp_path: Path) -> None:
     """들여쓰기를 잃으면 YAML 이 깨져 기동이 안 된다."""
     root = _profile(tmp_path)
-    path = write_profile("mechdog-01", "turn_right", 42.0, root=root)
+    path = write_profile("mechdog-01", "turn_left", 42.0, root=root)
     assert path is not None
     assert "  turn_deg_per_sec: 42.0\n" in path.read_text(encoding="utf-8")
 
@@ -140,26 +154,29 @@ def test_defaults_meet_the_three_trial_rule() -> None:
 
 
 # ── 네 모드 (2.2.3 ①~④) ───────────────────────────────────
-def test_all_four_modes_are_offered() -> None:
-    """전진·후진·우선회·좌선회. **후진과 좌선회는 가정 확인용이다.**"""
-    for mode in ("forward", "reverse", "turn_right", "turn_left"):
+def test_all_modes_are_offered() -> None:
+    """전진·후진·좌선회·우선회 + **후진 선회**(회피 개선안).
+
+    `forward` 와 `turn_left` 만 설정에 들어가고 나머지는 **가정 확인용**이다.
+    """
+    for mode in ("forward", "reverse", "turn_right", "turn_left", "reverse_turn"):
         args = build_parser().parse_args(["--host", "1.2.3.4", "--mode", mode])
         assert args.mode == mode
 
 
 def test_only_the_configured_directions_have_profile_keys() -> None:
-    """⚠️ **후진과 좌선회는 적을 곳이 없다 — 그래서 적지 않는다.**
+    """⚠️ **후진과 우선회는 적을 곳이 없다 — 그래서 적지 않는다.**
 
     설정에는 `forward_mm_per_sec` 과 `turn_deg_per_sec` 뿐이고, 회피 시퀀스는
-    전진 속도로 후진 시간을 계산하며 선회도 우선회만 쓴다. 값을 임의로 적으면
-    *"쟀다"* 로 보이지만 어느 방향의 값인지 알 수 없게 된다.
+    전진 속도로 후진 시간을 계산하며 선회도 `+turn_angle_deg`(**좌회전**)만 쓴다.
+    값을 임의로 적으면 *"쟀다"* 로 보이지만 어느 방향의 값인지 알 수 없게 된다.
     """
     from tools.gait_calibrate import PROFILE_KEYS
 
-    assert set(PROFILE_KEYS) == {"forward", "turn_right"}
+    assert set(PROFILE_KEYS) == {"forward", "turn_left"}
 
 
-@pytest.mark.parametrize("mode", ["reverse", "turn_left"])
+@pytest.mark.parametrize("mode", ["reverse", "turn_right"])
 def test_assumption_modes_refuse_to_write(tmp_path: Path, capsys, mode: str) -> None:
     root = _profile(tmp_path)
     assert write_profile("mechdog-01", mode, 123.4, root=root) is None
@@ -168,9 +185,64 @@ def test_assumption_modes_refuse_to_write(tmp_path: Path, capsys, mode: str) -> 
 
 
 @pytest.mark.parametrize(
-    "mode,unit", [("forward", "mm/s"), ("reverse", "mm/s"), ("turn_right", "도/s")]
+    "mode,unit", [("forward", "mm/s"), ("reverse", "mm/s"), ("turn_left", "도/s")]
 )
 def test_units_follow_the_mode(capsys, mode: str, unit: str) -> None:
     """후진은 거리(mm)고 선회는 각도(도)다 — 단위가 섞이면 값이 조용히 틀린다."""
     summarize([_trial(1, actual_s=3.0, measured=300.0)], mode)
     assert unit in capsys.readouterr().out
+
+
+# ── 부 측정 (사용자 지적으로 추가) ─────────────────────────
+def test_secondary_is_none_when_not_measured() -> None:
+    """⚠️ **안 잰 것을 0 으로 채우면 *"쟀다"* 가 된다.**"""
+    t = _trial(1, actual_s=3.0, measured=300.0)
+    assert t.secondary is None
+    assert t.secondary_rate is None
+
+
+def test_secondary_rate_uses_the_same_window() -> None:
+    t = _trial(1, actual_s=3.0, measured=45.0, secondary=150.0)
+    assert t.rate == pytest.approx(15.0)  # 도/s
+    assert t.secondary_rate == pytest.approx(50.0)  # mm/s
+
+
+def test_every_mode_defines_both_measurements() -> None:
+    """모드마다 주·부 측정이 정의돼 있어야 입력 안내가 틀리지 않는다."""
+    from tools.gait_calibrate import MEASURES, PROFILE_KEYS
+
+    assert set(MEASURES) == {
+        "forward",
+        "reverse",
+        "turn_right",
+        "turn_left",
+        "reverse_turn",
+    }
+    assert set(PROFILE_KEYS) <= set(MEASURES)
+    for mode, (what, unit, second_what, second_unit) in MEASURES.items():
+        assert unit != second_unit, f"{mode}: 주·부 단위가 같으면 뒤바뀌어도 모른다"
+        assert what and second_what
+
+
+# ── 회피 여유 산수 (ADR-11 의 결과) ────────────────────────
+def test_avoid_clearance_warns_when_the_turn_eats_the_gap(cfg: dict, capsys) -> None:
+    """⚠️ **제자리 회전이 불가하므로 선회가 앞으로 간다.**
+
+    후진으로 확보한 여유를 선회가 되돌려 주며, 되돌려 주는 양이 더 크면 **같은
+    장애물에 다시 붙는다.** `avoid_phases` 는 시간만 계산하므로 이 산수를 하지
+    않는다 — 그래서 측정 도구가 한다.
+    """
+    # 30도 선회에 3초가 걸리고 그 동안 100mm/s 로 가면 300mm — 후진 200mm 를 넘는다
+    report_avoid_clearance(10.0, 100.0, cfg)
+    out = capsys.readouterr().out
+    assert "순 여유" in out
+    assert "여유가 음수다" in out
+
+
+def test_avoid_clearance_is_quiet_when_the_gap_holds(cfg: dict, capsys) -> None:
+    # 30도 선회에 0.5초, 그 동안 40mm — 200mm 중 160mm 가 남는다
+    report_avoid_clearance(60.0, 80.0, cfg)
+    out = capsys.readouterr().out
+    assert "순 여유" in out
+    assert "여유가 음수다" not in out
+    assert "여유가 얇다" not in out
