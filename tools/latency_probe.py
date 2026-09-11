@@ -35,6 +35,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.common.config import load_config  # noqa: E402
+from host.common.console import survive_encoding_errors  # noqa: E402
 from host.vision.stream_client import StreamReader, stream_endpoints  # noqa: E402
 
 #: 화면에 표시하는 자릿수. epoch 밀리초 13자리는 카메라로 읽을 수 없다.
@@ -264,6 +265,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     args = build_parser().parse_args(argv)
     return int(args.func(args))
 

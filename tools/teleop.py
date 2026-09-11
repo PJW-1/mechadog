@@ -36,6 +36,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]
 
 from host.behavior.commander import Commander  # noqa: E402
 from host.behavior.fsm import Behavior, Event  # noqa: E402
+from host.common.console import survive_encoding_errors  # noqa: E402
 
 #: 키 → (전진 배수, 선회 배수). 방향키와 WASD 를 둘 다 받는다.
 #:
@@ -212,6 +213,9 @@ def read_keys() -> Iterator[str]:
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 조작용
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     ap = argparse.ArgumentParser(prog="teleop", description="키보드 수동 조작")
     ap.add_argument("--host", required=True, help="로봇 IP (목업이면 127.0.0.1)")
     ap.add_argument("--port", type=int, default=5001)

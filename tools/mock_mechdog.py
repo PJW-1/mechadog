@@ -41,6 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.common.config import load_base_config  # noqa: E402
+from host.common.console import survive_encoding_errors  # noqa: E402
 from host.common.protocol import (  # noqa: E402
     BATT_MAX_V,
     BATT_MIN_V,
@@ -469,6 +470,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     args = build_parser().parse_args(argv)
     cfg = load_config()
     robot = MockRobot(
