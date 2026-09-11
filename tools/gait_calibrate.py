@@ -1,8 +1,16 @@
 """보행 이동량 실측 도구 (WBS 2.2.3 · FR-6.4).
 
-    python tools/gait_calibrate.py --host 192.168.1.50 --mode forward
-    python tools/gait_calibrate.py --host 192.168.1.50 --mode turn --trials 5
+    python tools/gait_calibrate.py --host <ip> --mode forward --write
+    python tools/gait_calibrate.py --host <ip> --mode reverse        # 가정 확인용
+    python tools/gait_calibrate.py --host <ip> --mode turn_right --write
+    python tools/gait_calibrate.py --host <ip> --mode turn_left      # 좌우 비대칭 확인
     python tools/gait_calibrate.py --host 127.0.0.1 --mode forward --dry-run   # 목업 연습
+
+**네 모드를 재는 이유가 다르다.** `forward` 와 `turn_right` 는 설정에 들어갈 값이고,
+`reverse` 와 `turn_left` 는 **코드가 세운 가정을 확인하는 측정**이다 — 회피 시퀀스는
+전진 속도로 후진 시간을 계산하고(`actions.avoid_phases`) 선회도 우선회 한 방향만
+쓴다. 즉 *"후진 = 전진"* 과 *"좌 = 우"* 를 가정한다. 4족 트롯에서 그것이 성립할
+이유는 없고, 개체 프로파일의 서보 오프셋도 비대칭이다.
 
 ⚠️ **이 도구는 거리를 재지 못한다.** 로봇에 오도메트리가 없고 텔레메트리 송신도
 아직 없다(`4.1.4`). 거리·각도는 **사람이 줄자와 각도기로** 재서 입력한다. 도구가
@@ -43,6 +51,18 @@ from host.behavior.commander import Commander  # noqa: E402
 from host.common.config import load_config  # noqa: E402
 from host.common.console import survive_encoding_errors  # noqa: E402
 from host.common.protocol import CommandEncoder, system_clock_ms  # noqa: E402
+
+#: 모드 → 개체 프로파일 키. **둘만 있다.**
+#:
+#: ⚠️ **후진과 좌선회는 적을 곳이 없다.** 설정에는 `forward_mm_per_sec` 과
+#: `turn_deg_per_sec` 뿐인데, 회피 시퀀스는 **전진 속도로 후진 시간을 계산하고**
+#: (`actions.avoid_phases`) 선회도 **우선회 한 방향만** 쓴다. 즉 *"후진 = 전진"* 과
+#: *"좌 = 우"* 를 가정하고 있다. 그 두 가정을 재 보는 것이 나머지 두 모드의
+#: 목적이므로 **자동으로 적지 않고 사람이 비교해 판단하게 한다.**
+PROFILE_KEYS: dict[str, str] = {
+    "forward": "forward_mm_per_sec",
+    "turn_right": "turn_deg_per_sec",
+}
 
 #: 구동 전 정지 시간. 온보드가 자세를 가라앉힐 시간을 준다 (회피 시퀀스의 `settle` 과 같은 이유).
 SETTLE_S = 1.0
@@ -103,8 +123,9 @@ def drive_window(
 
 def ask_measurement(mode: str, index: int, total: int) -> float | None:
     """사람이 잰 값을 받는다. 빈 입력이면 그 시행을 버린다."""
-    unit = "mm" if mode == "forward" else "도"
-    what = "이동 거리" if mode == "forward" else "회전 각도"
+    turning = mode.startswith("turn")
+    unit = "도" if turning else "mm"
+    what = "회전 각도" if turning else "이동 거리"
     while True:
         raw = input(f"  [{index}/{total}] {what}({unit})? 엔터만 치면 이 시행을 버린다: ").strip()
         if not raw:
@@ -122,7 +143,7 @@ def ask_measurement(mode: str, index: int, total: int) -> float | None:
 
 def summarize(trials: list[Trial], mode: str) -> float | None:
     """평균 비율을 낸다. **퍼짐이 크면 경고한다.**"""
-    unit = "mm/s" if mode == "forward" else "도/s"
+    unit = "도/s" if mode.startswith("turn") else "mm/s"
     if not trials:
         print("\n쓸 수 있는 시행이 없다.")
         return None
@@ -162,7 +183,19 @@ def write_profile(
     바닥에서 잰 값인가"* 를 잃고, 그러면 다시 재야 하는지 알 수 없다.
     """
     path = root / f"{device}.yaml"
-    key = "forward_mm_per_sec" if mode == "forward" else "turn_deg_per_sec"
+    key = PROFILE_KEYS.get(mode)
+    if key is None:
+        # ⚠️ **후진은 적을 곳이 없다.** 설정에는 `forward_mm_per_sec` 과
+        # `turn_deg_per_sec` 뿐이고, 회피 시퀀스는 **전진 속도로 후진 시간을
+        # 계산한다**(`actions.avoid_phases`). 즉 *"후진 속도 = 전진 속도"* 를
+        # 가정하고 있다. 그 가정이 맞는지 재 보는 것이 `reverse` 모드의
+        # 목적이므로 값을 자동으로 적지 않고 **사람이 비교해 판단하게 한다.**
+        print(
+            f"⚠️ `{mode}` 는 설정에 적을 키가 없다 — 전진 값과 비교해 차이가 크면 "
+            "`reverse_mm_per_sec` 을 새로 만들어야 한다",
+            file=sys.stderr,
+        )
+        return None
     text = path.read_text(encoding="utf-8")
     today = time.strftime("%Y-%m-%d")
     lines = text.splitlines(keepends=True)
@@ -187,7 +220,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gait_calibrate", description="보행 이동량 실측")
     parser.add_argument("--device", default="mechdog-01", help="개체 id")
     parser.add_argument("--host", required=True, help="로봇 IP (목업이면 127.0.0.1)")
-    parser.add_argument("--mode", choices=("forward", "turn"), required=True)
+    parser.add_argument(
+        "--mode", choices=("forward", "reverse", "turn_right", "turn_left"), required=True
+    )
     parser.add_argument("--seconds", type=float, default=3.0, help="한 시행의 구동 시간")
     parser.add_argument("--trials", type=int, default=3, help="시행 횟수 (2.2.3 은 3회 이상)")
     parser.add_argument("--write", action="store_true", help="개체 프로파일에 결과를 적는다")
@@ -204,14 +239,27 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 측
     config = load_config(args.device)
     gait, network = config["gait"], config["network"]
     step = float(gait["step_length_mm"])
-    angle = float(gait["turn_angle_deg"]) if args.mode == "turn" else 0.0
+    if args.mode == "reverse":
+        step = -step
+    # ⚠️ **양수가 우선회다** (`teleop` 의 `right: +1.0`). 회피 시퀀스는
+    # `turn_angle_deg` 를 그대로 쓰므로 **우선회 한 방향만** 쓴다. 좌선회를 함께
+    # 재는 이유는 `3.5.4` TRACK 락온이 x편차 비례로 양쪽을 쓰기 때문이며, 서보
+    # 오프셋이 비대칭이라 좌우가 같을 이유가 없다.
+    turn = float(gait["turn_angle_deg"])
+    angle = {"turn_right": turn, "turn_left": -turn}.get(args.mode, 0.0)
     peer = (args.host, int(network["cmd_port"]))
     period_ms = 1000 // int(network["cmd_rate_hz"])
 
     print(f"개체 {args.device} · {peer[0]}:{peer[1]} · {args.mode}")
     print(f"명령 move({step:g}, {angle:g}) · 한 시행 {args.seconds:g}초 · {args.trials}회")
-    if args.mode == "turn":
-        print("⚠️ 제자리 회전은 불가하다 (ADR-11) — 원호로 돌므로 **시작·끝 방향**을 잰다")
+    if args.mode.startswith("turn"):
+        print(
+            "⚠️ 제자리 회전은 불가하다 (ADR-11) — **원호로 돌면서 앞으로도 간다.**\n"
+            "   각도를 입력하되 **시작·끝 위치도 함께 표시**해 두면 회피 선회 구간의\n"
+            '   실제 이동을 나중에 알 수 있다 (`Phase("turn", +60mm, ±20°)`).'
+        )
+    if args.mode not in PROFILE_KEYS:
+        print(f"⚠️ `{args.mode}` 는 설정에 적을 키가 없다 — 가정 확인용 측정이다")
     print("⚠️ 시연할 바닥에서 잰다. 카펫과 장판에서 값이 다르다.\n")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -260,7 +308,10 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 측
             return 1
         write_profile(args.device, args.mode, mean)
     else:
-        key = "forward_mm_per_sec" if args.mode == "forward" else "turn_deg_per_sec"
+        key = PROFILE_KEYS.get(args.mode)
+        if key is None:
+            print("\n적을 키가 없는 모드다 — 전진·우선회 값과 비교한다")
+            return 0
         print(f"\n적으려면 --write. 손으로 적으려면 `{key}: {mean:.1f}`")
     return 0
 
