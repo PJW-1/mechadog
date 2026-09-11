@@ -1,7 +1,8 @@
 # 통신 프로토콜 정본
 
-> **이 문서가 정본이다.** 송신(Python)과 수신(C++ 펌웨어)은 이 문서만 보고 구현한다.
-> 스키마는 팀장이 결정하여 전파한다. 합의 대상이 아니다.
+> **이 문서와 [LiDAR 링크 확장](PROTOCOL_LIDAR.md)이 정본이다.** 송신(Python)과
+> 수신(C++ 펌웨어)은 두 문서만 보고 구현한다. 스키마는 팀장이 결정하여 전파한다.
+> 합의 대상이 아니다.
 >
 > 상세 배경과 설계 근거는 [PRD FR-5](PRD_Physical_AI_Guard_Robot.md) 참조.
 
@@ -14,6 +15,7 @@
 | 제어 명령 | Host PC → MechDog ESP32 | UDP | **10 Hz 고정** |
 | 텔레메트리 | MechDog ESP32 → Host PC | UDP | 10 Hz |
 | 영상 | XIAO → Host PC | HTTP MJPEG | 15 fps |
+| LiDAR 스캔 `[Phase 2]` | 중계 ESP32 → Host PC | UDP | 정지 중 5 Hz |
 
 > 제어 명령은 **변화가 없어도 계속 보낸다.** 수신측 타임아웃(300ms)을 갱신하는 것이
 > 곧 "링크가 살아 있다"는 신호이기 때문이다. 별도 하트비트를 두지 않는다.
