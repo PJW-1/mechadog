@@ -141,6 +141,11 @@ def avoid_phases(config: Mapping[str, Any]) -> tuple[Phase, ...] | None:
     거리를 시간으로 바꾸는 데 필요한 값이 `gait_calibration` 이며, 그것은 시연할
     바닥에서 재야 한다 (카펫과 장판에서 다르다 · WBS 2.2). 추정값을 넣어 걷게 하면
     후진이 모자라 같은 장애물에 다시 붙거나 지나치게 물러난다.
+
+    ⚠️ **기체마다 따로 재야 한다 — 다른 기체의 값을 복사하면 안 된다.** 서보
+    오프셋이 개체마다 다르고 그 비대칭이 곧 속도·선회율·직진 편향의 차이로
+    나온다. 복사한 값으로는 시간이 틀리게 계산되므로 **그 기체의 회피가 장애물에
+    더 붙거나 지나치게 물러난다.**
     """
     calibration = config.get("gait_calibration") or {}
     forward = calibration.get("forward_mm_per_sec")

@@ -42,6 +42,7 @@ from host.behavior.patrol import (
 )
 from host.behavior.zones import ZoneStore
 from host.common.config import ConfigError
+from host.common.console import survive_encoding_errors
 from host.common.lidar_link import (
     Scan,
     ScanDecoder,
@@ -435,6 +436,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠️ **가장 먼저 부른다.** cp949 콘솔에서는 `--help` 조차 `—` 때문에 죽었다 —
+    # `argparse` 가 도움말을 stdout 에 쓰는 순간이라 인자 처리보다 앞이어야 한다.
+    # 같은 함정을 저장소에서 네 번째로 밟았다 (CONTRIBUTING 8절).
+    survive_encoding_errors()
     args = build_parser().parse_args(argv)
     if not args.simulate and (not args.device or not args.lidar_device):
         print(

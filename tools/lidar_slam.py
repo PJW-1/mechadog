@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.common.config import ConfigError
+from host.common.console import survive_encoding_errors
 from host.common.lidar_link import (
     Scan,
     ScanDecoder,
@@ -268,6 +269,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     args = build_parser().parse_args(argv)
     if not args.simulate and (not args.device or not args.lidar_device):
         print(
