@@ -238,6 +238,24 @@ def test_discarded_record_does_not_refresh_the_link(config: dict, clock: FakeClo
     assert r.behavior.state == "FAILSAFE"
 
 
+def test_command_ack_is_not_counted_as_discarded_telemetry(config: dict, clock: FakeClock) -> None:
+    """⚠️ **로봇의 명령 응답은 같은 소켓으로 돌아온다** — 텔레메트리 폐기로 세지 않는다.
+
+    세면 실기에서 폐기가 초당 10건씩 늘어 진짜 손상을 가린다. 목업은 응답을 보내지
+    않아 드러나지 않았다. 전문은 펌웨어 `sendAck` 가 만드는 모양 그대로다.
+    """
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    ack = (
+        b'{"ok":true,"verdict":"ACCEPT","seq":3,"type":"MOVE","applied":true,'
+        b'"safe_latched":false,"failsafe_count":0,"actuators":true}'
+    )
+    for _ in range(10):
+        assert not r.ingest(ack, clock.ms).accepted
+    assert r.stats.discarded == 0
+    r.ingest(b'{"seq":9,"device_id":"mechdog-01"', clock.ms)  # 진짜 손상은 여전히 센다
+    assert r.stats.discarded == 1
+
+
 # ── 사건 적용 ────────────────────────────────────────────────
 def test_robot_failsafe_report_drives_the_host(config: dict, clock: FakeClock) -> None:
     r = Runtime(config, device_id=DEVICE, clock=clock)

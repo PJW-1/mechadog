@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import logging
 import socket
 import sys
@@ -62,6 +63,20 @@ SHUTDOWN_ESTOP_INTERVAL_S = 0.02
 def _is_oversized_datagram(exc: OSError) -> bool:
     """Windows가 수신 버퍼보다 큰 UDP 전문에 붙이는 오류만 가려낸다."""
     return getattr(exc, "winerror", None) == WSAEMSGSIZE or exc.errno == WSAEMSGSIZE
+
+
+def _is_command_ack(raw: str | bytes) -> bool:
+    """로봇이 명령마다 돌려주는 응답(펌웨어 `sendAck`)인가. **텔레메트리가 아니다.**
+
+    명령을 텔레메트리 소켓에서 보내므로 응답도 그 소켓으로 돌아온다. 텔레메트리
+    폐기로 세면 실기에서 폐기가 초당 10건씩 늘어 **진짜 손상을 가린다** — 목업은
+    응답을 보내지 않아 시험에서 드러나지 않았다.
+    """
+    try:
+        msg = json.loads(raw)
+    except (ValueError, RecursionError):
+        return False
+    return isinstance(msg, dict) and "verdict" in msg and "applied" in msg
 
 
 def _peer_text(peer: tuple[str, int] | None) -> str:
@@ -247,6 +262,9 @@ class Runtime:
         """텔레메트리 한 줄을 넣는다. 사건까지 적용하고 결과를 돌려준다."""
         out = self._receiver.ingest(raw)
         if out.reading is None:
+            if _is_command_ack(raw):
+                self._summary.count("acks")
+                return Ingested(discarded="명령 응답")
             self._stats.discarded += 1
             self._summary.count("discarded")
             # ⚠️ 폐기는 **요약으로만** 남긴다. 30% 손상 구간에서는 초당 3줄이 되고,
