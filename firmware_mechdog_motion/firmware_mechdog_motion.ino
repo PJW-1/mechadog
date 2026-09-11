@@ -1,27 +1,52 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp_timer.h>
 
 #include "src/command_parser.h"
 #include "src/motion_hal.h"
+#include "src/sensor_hal.h"
+#include "src/telemetry_publisher.h"
+
+#if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
+#error "Provide both private Wi-Fi build settings, or neither to use saved NVS settings."
+#endif
 
 namespace {
 
 constexpr uint16_t kCommandPort = 5001;
 constexpr uint32_t kCommandTimeoutMs = 300;
 constexpr uint32_t kReconnectIntervalMs = 3000;
+constexpr uint32_t kSensorStatusLogIntervalMs = 1000;
+constexpr size_t kSerialTxBufferBytes = 1024;
+// config/config.yaml safety.link_loss_failsafe_ms and battery_warn_v.
+// These report link health and a warning; they add no new shutdown behavior.
+constexpr uint32_t kLinkHealthyAgeMs = 3000;
+constexpr float kBatteryWarningV = 7.0f;
 constexpr size_t kPacketBufferSize = 512;
 
 WiFiUDP g_udp;
 mechadog::CommandParser g_parser;
 mechadog::MotionHal g_motion;
+mechadog::SensorHal g_sensors;
+mechadog::TelemetryPublisher g_telemetry;
 
 char g_packet[kPacketBufferSize + 1];
 bool g_safe_latched = true;
 bool g_have_valid_command = false;
-uint32_t g_last_valid_command_ms = 0;
+uint64_t g_last_valid_command_ms = 0;
+uint64_t g_next_sensor_status_log_ms = 0;
+uint64_t g_previous_loop_us = 0;
+uint64_t g_max_loop_gap_us = 0;
+uint32_t g_sensor_status_dropped = 0;
 uint32_t g_last_reconnect_attempt_ms = 0;
 uint32_t g_failsafe_count = 0;
 bool g_udp_started = false;
+bool g_wifi_connected = false;
+mechadog::FsmState g_reported_state = mechadog::FsmState::Idle;
+
+uint64_t uptimeMs() {
+  return static_cast<uint64_t>(esp_timer_get_time()) / 1000;
+}
 
 void sendText(const char* text) {
   g_udp.beginPacket(g_udp.remoteIP(), g_udp.remotePort());
@@ -66,12 +91,18 @@ bool applyCommand(const mechadog::Command& command) {
       if (WiFi.status() != WL_CONNECTED) return false;
       g_motion.stop();
       g_safe_latched = false;
+      g_reported_state = mechadog::FsmState::Idle;
       Serial.println("SAFE latch cleared; waiting for a new MOVE");
       return true;
 
     case mechadog::CmdType::Move:
       if (g_safe_latched) return false;
       g_motion.move(command.step, command.angle);
+      return true;
+
+    case mechadog::CmdType::State:
+      // Host FSM state is stored and echoed, never used to clear a safety latch.
+      g_reported_state = command.state;
       return true;
 
     default:
@@ -116,7 +147,10 @@ void handlePacket(int packet_size) {
   }
 
   g_have_valid_command = true;
-  g_last_valid_command_ms = millis();
+  g_last_valid_command_ms = uptimeMs();
+  // Only an accepted protocol command identifies the telemetry destination and
+  // anchors its epoch clock. PINGs, malformed packets and replay drops do not.
+  g_telemetry.observe_command(g_udp.remoteIP(), decoded.command.ts);
   const bool applied = applyCommand(decoded.command);
   Serial.printf("CMD: seq=%lld type=%s applied=%d safe=%d\n",
                 static_cast<long long>(decoded.command.seq),
@@ -131,15 +165,15 @@ void connectSavedWifi() {
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
+#if defined(MECHADOG_WIFI_SSID) && defined(MECHADOG_WIFI_PASSWORD)
+  // Optional private build settings provision a board without saved credentials.
+  // Never print these values or place the private header in the repository.
+  WiFi.begin(MECHADOG_WIFI_SSID, MECHADOG_WIFI_PASSWORD);
+#else
   WiFi.begin();  // Reuse the router credentials already saved in ESP32 NVS.
-
-  Serial.print("Connecting to saved Wi-Fi");
-  const uint32_t started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < 20000) {
-    delay(250);
-    Serial.print('.');
-  }
-  Serial.println();
+#endif
+  g_last_reconnect_attempt_ms = millis();
+  Serial.println("Connecting to saved Wi-Fi; SAFE latch remains ON");
 }
 
 void startUdpIfNeeded() {
@@ -152,36 +186,120 @@ void startUdpIfNeeded() {
   }
 }
 
-}  // namespace
+void pollTelemetry() {
+  const mechadog::SensorSnapshot sensors = g_sensors.snapshot(millis());
+  const uint64_t now = uptimeMs();
+  const uint64_t command_age = now - g_last_valid_command_ms;
+  mechadog::TelemetrySample sample;
+  // Acquisition validity/freshness does not certify body axes or voltage
+  // calibration. Sensor-enabled builds remain actuator-OFF diagnostics.
+  sample.sensors_valid = sensors.all_valid();
+  sample.state = g_safe_latched ? mechadog::FsmState::Failsafe : g_reported_state;
+  sample.dist_cm = sensors.dist_cm;
+  sample.pitch = sensors.pitch;
+  sample.roll = sensors.roll;
+  sample.yaw = sensors.yaw;
+  sample.batt_v = sensors.batt_v;
+  sample.last_cmd_age_ms = static_cast<int64_t>(command_age);
+  sample.lowbatt = sensors.batt_valid && sensors.batt_v <= kBatteryWarningV;
+  // Fall detection is not implemented: false means no onboard tipped-stop has
+  // been activated. It does NOT establish a verified upright posture.
+  sample.tipped = false;
+  sample.link_ok = g_have_valid_command && command_age <= kLinkHealthyAgeMs;
+  // No onboard obstacle-stop detector is connected in this firmware stage.
+  sample.include_obstacle = false;
+  sample.safety_latched = g_safe_latched;
+  // Publisher enforces 100 ms cadence and rejects missing/invalid sensor data.
+  g_telemetry.poll(sample);
 
-void setup() {
-  Serial.begin(115200);
-  delay(300);
-  Serial.println("MechDog command receiver booting");
-
-  g_motion.begin();
-  g_motion.stop();
-  connectSavedWifi();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    startUdpIfNeeded();
-    Serial.printf("Wi-Fi connected: %s RSSI=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    Serial.printf("Actuators: %s, initial SAFE latch: ON\n",
-                  g_motion.actuators_enabled() ? "ON" : "OFF");
-  } else {
-    Serial.println("Wi-Fi connection failed; SAFE latch remains ON");
+  if (now >= g_next_sensor_status_log_ms) {
+    g_next_sensor_status_log_ms = now + kSensorStatusLogIntervalMs;
+    // Snapshot values are diagnostic context; invalid values are not certified
+    // measurements. Report validity/errors alongside them without changing flags.
+    char status[768];
+    const int length = snprintf(
+        status, sizeof(status),
+        "Sensor status: task_started=%u imu_valid=%u imu_error=%s dist_valid=%u dist_error=%s "
+        "batt_valid=%u batt_error=%s battery_raw=%u adc_mv=%lu adc_source=%s "
+        "pitch=%.3f roll=%.3f yaw=%.3f "
+        "dist_cm=%.3f batt_v=%.3f loop_gap_max_us=%llu heap_free=%u heap_min=%u log_dropped=%lu "
+        "imu_timing=%s imu_fault_ms=%lu imu_wake_late_ms=%lu imu_cycle_ms=%lu "
+        "imu_stage_mask=%u imu_filter_us=%llu sonar_us=%llu adc_us=%llu\n",
+        static_cast<unsigned>(sensors.task_started), static_cast<unsigned>(sensors.imu_valid),
+        mechadog::sensor_error_name(sensors.imu_error), static_cast<unsigned>(sensors.dist_valid),
+        mechadog::sensor_error_name(sensors.dist_error), static_cast<unsigned>(sensors.batt_valid),
+        mechadog::sensor_error_name(sensors.batt_error), static_cast<unsigned>(sensors.battery_raw),
+        static_cast<unsigned long>(sensors.battery_adc_mv),
+        mechadog::battery_adc_calibration_name(sensors.battery_adc_calibration), sensors.pitch,
+        sensors.roll, sensors.yaw, sensors.dist_cm, sensors.batt_v,
+        static_cast<unsigned long long>(g_max_loop_gap_us), ESP.getFreeHeap(), ESP.getMinFreeHeap(),
+        static_cast<unsigned long>(g_sensor_status_dropped),
+        mechadog::sensor_timing_fault_reason_name(sensors.timing_fault.reason),
+        static_cast<unsigned long>(sensors.timing_fault.fault_tick_ms),
+        static_cast<unsigned long>(sensors.timing_fault.wake_late_ms),
+        static_cast<unsigned long>(sensors.timing_fault.cycle_elapsed_ms),
+        static_cast<unsigned>(sensors.timing_fault.stages_measured_mask),
+        static_cast<unsigned long long>(sensors.timing_fault.imu_filter_us),
+        static_cast<unsigned long long>(sensors.timing_fault.sonar_us),
+        static_cast<unsigned long long>(sensors.timing_fault.adc_us));
+    // Leave room for the ESP32 FIFO counted by availableForWrite as well as
+    // the whole line in the TX ring. Logging is best-effort: other startup
+    // writers may still contend. Only diagnostics are dropped, never samples.
+    if (length > 0 && static_cast<size_t>(length) < sizeof(status) &&
+        Serial.availableForWrite() >= length + 128) {
+      Serial.write(reinterpret_cast<const uint8_t*>(status), static_cast<size_t>(length));
+      g_max_loop_gap_us = 0;
+    } else {
+      ++g_sensor_status_dropped;
+    }
   }
 }
 
+}  // namespace
+
+void setup() {
+  // Arduino-ESP32 2.0.12 otherwise defaults to an unbuffered UART transmitter.
+  Serial.setTxBufferSize(kSerialTxBufferBytes);
+  Serial.begin(115200);
+  delay(300);
+  Serial.println("MechDog command receiver booting");
+  Serial.printf("Runtime: cpu_mhz=%u uart_tx_buffer=%u\n", getCpuFrequencyMhz(),
+                static_cast<unsigned>(kSerialTxBufferBytes));
+
+  g_motion.begin();
+  g_motion.stop();
+  const bool sensors_started = g_sensors.begin();
+  Serial.printf("Sensors: enabled=%d task_started=%d\n", g_sensors.enabled(), sensors_started);
+  if (g_sensors.enabled()) {
+    Serial.println("Sensor diagnostics: body axes unverified, yaw relative, battery uncalibrated");
+  }
+  connectSavedWifi();
+  if (!g_telemetry.begin()) {
+    Serial.println("Telemetry initialization failed; command receiver remains available");
+  }
+  Serial.printf("Actuators: %s, initial SAFE latch: ON\n",
+                g_motion.actuators_enabled() ? "ON" : "OFF");
+}
+
 void loop() {
+  const uint64_t loop_us = static_cast<uint64_t>(esp_timer_get_time());
+  if (g_previous_loop_us != 0 && loop_us - g_previous_loop_us > g_max_loop_gap_us) {
+    g_max_loop_gap_us = loop_us - g_previous_loop_us;
+  }
+  g_previous_loop_us = loop_us;
   const uint32_t now = millis();
 
   if (WiFi.status() != WL_CONNECTED) {
     // WiFiUDP의 로컬 소켓은 인터페이스가 끊긴 뒤에도 started 상태로 남을 수
     // 있다. 명시적으로 닫아야 재접속 뒤 같은 포트에 다시 bind한다.
-    if (g_udp_started) {
-      g_udp.stop();
-      g_udp_started = false;
+    if (g_wifi_connected) {
+      if (g_udp_started) {
+        g_udp.stop();
+        g_udp_started = false;
+      }
+      // Clear publisher socket/peer once per disconnect, not every loop tick.
+      g_telemetry.disconnected();
+      g_wifi_connected = false;
       Serial.println("UDP stopped; waiting for Wi-Fi reconnect");
     }
     latchFailsafe("Wi-Fi disconnected");
@@ -190,18 +308,25 @@ void loop() {
       WiFi.reconnect();
     }
   } else {
+    if (!g_wifi_connected) {
+      g_wifi_connected = true;
+      Serial.printf("Wi-Fi connected: %s RSSI=%d\n", WiFi.localIP().toString().c_str(),
+                    WiFi.RSSI());
+    }
     startUdpIfNeeded();
     const int packet_size = g_udp.parsePacket();
     if (packet_size > 0) handlePacket(packet_size);
   }
 
-  // Read time again after packet handling. A command can record millis() one
-  // tick newer than `now`; subtracting that from the older unsigned value wraps.
-  const uint32_t watchdog_now = millis();
+  // Read monotonic time again after packet handling. The command timestamp can
+  // be newer than the loop's earlier capture; keep the age in 64-bit uptime.
+  const uint64_t watchdog_now = uptimeMs();
   if (g_have_valid_command && !g_safe_latched &&
       watchdog_now - g_last_valid_command_ms >= kCommandTimeoutMs) {
     latchFailsafe("command timeout >= 300 ms");
   }
 
+  // Safety decisions precede acquisition snapshot and telemetry publication.
+  pollTelemetry();
   delay(1);
 }
