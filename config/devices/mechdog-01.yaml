@@ -10,6 +10,12 @@
 device_id: mechdog-01
 owner_id: unassigned # prod 프로파일로 올릴 때 실제 담당자로 채운다
 
+# 펌웨어가 텔레메트리 `device_id` 로 보내는 이름. **보드 MAC 에서 만들므로 위의 설정 이름과
+# 다르다** (`mechdog-<MAC 12자리>` · `telemetry_publisher.cpp`). 없으면 호스트가 이 로봇의
+# 텔레메트리를 전부 남의 것으로 버린다 — 2026-09-12 실기에서 그랬다. 보드(ESP32)를 바꾸면
+# 이 값도 바뀐다. 부팅 UART 의 `Telemetry identity:` 줄에서 읽는다.
+telemetry_device_id: mechdog-3c8a1f333208
+
 # `2.4.1` 에서 3대의 역할을 함께 정한다. 그 전에는 어느 쪽도 아니다.
 reference_role: none
 

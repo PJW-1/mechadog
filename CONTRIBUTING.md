@@ -299,7 +299,8 @@ python tools/fetch_models.py
 
 MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run 구성으로 컴파일한다.
 실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
-`firmware_mechdog_motion/README.md`를 따른다.
+`firmware_mechdog_motion/README.md`의 *"구동·센서 통합 빌드 준비"* 절을 따르고,
+준비 상태는 `python tools/firmware_env.py`로 점검한다. **벤더 파일은 절대 커밋하지 않는다**(ADR-20).
 
 펌웨어 포맷과 컴파일 확인:
 

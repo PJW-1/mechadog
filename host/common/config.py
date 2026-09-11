@@ -52,6 +52,18 @@ def repo_path(value: str | Path) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
+def telemetry_ids(config: dict[str, Any], device_id: str) -> frozenset[str]:
+    """이 개체의 텔레메트리로 받아들이는 `device_id` 들.
+
+    ⚠️ **펌웨어는 설정 이름이 아니라 보드 MAC 으로 만든 이름을 보낸다**
+    (`mechdog-<MAC 12자리>` · `telemetry_publisher.cpp`). 그래서 설정 이름(`mechdog-01`)으로만
+    대조하면 우리 로봇의 텔레메트리를 전부 남의 것으로 버린다 — 2026-09-12 실기에서 그랬다.
+    개체 프로파일의 `telemetry_device_id` 로 잇고, 목업은 설정 이름을 그대로 보내므로 둘 다 받는다.
+    """
+    named = config.get("telemetry_device_id")
+    return frozenset({device_id, named}) if named else frozenset({device_id})
+
+
 def _read_mapping(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise ConfigError(f"설정 파일 없음: {path}")
@@ -272,6 +284,9 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
         raise ConfigError(
             f"개체 프로파일 device_id 불일치: 요청={device_id!r}, 파일={config.get('device_id')!r}"
         )
+    named = config.get("telemetry_device_id")
+    if named is not None and (not isinstance(named, str) or not named.strip()):
+        raise ConfigError("telemetry_device_id 는 비어 있지 않은 문자열이어야 함")
     if not isinstance(config.get("reference_role"), str) or config["reference_role"] not in {
         "phase1",
         "phase2",

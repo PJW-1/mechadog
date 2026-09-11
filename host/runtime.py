@@ -38,7 +38,7 @@ from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import Behavior, Event, behavior_from_config
 from host.common.blackbox import BlackboxEntry, EventBlackbox
-from host.common.config import ConfigError, load_config
+from host.common.config import ConfigError, load_config, telemetry_ids
 from host.common.logging_setup import (
     ERROR_ON_ENTER,
     EdgeTrigger,
@@ -140,6 +140,8 @@ class Runtime:
         if rate_hz <= 0:
             raise ConfigError("network.cmd_rate_hz 는 1 이상이어야 함")
         self._device_id = device_id
+        # 우리 로봇의 텔레메트리로 받아들이는 이름 — 펌웨어는 MAC 이름을 보낸다 (`telemetry_ids`).
+        self._own_ids = telemetry_ids(dict(config), device_id)
         self._cmd_port = int(network["cmd_port"])
         self._telemetry_port = int(network["telemetry_port"])
         self._receiver = TelemetryReceiver()
@@ -273,14 +275,14 @@ class Runtime:
                 LOG.warning("telemetry_discarded", reason=out.discarded)
             return out
 
-        if out.reading.device_id != self._device_id:
+        if out.reading.device_id not in self._own_ids:
             # ⚠️ 링크 시각을 갱신하지 않고 사건도 적용하지 않는다. 남의 패킷으로
             # "살아 있음" 을 세면 우리 로봇의 침묵이 가려진다.
             self._stats.foreign += 1
             if self._edge.changed("foreign", out.reading.device_id):
                 LOG.warning(
                     "foreign_device",
-                    expected=self._device_id,
+                    expected=sorted(self._own_ids),
                     received=out.reading.device_id,
                 )
             return Ingested(discarded=f"다른 개체: {out.reading.device_id}")

@@ -10,10 +10,14 @@
 #define MECHADOG_ENABLE_SENSORS 0
 #endif
 
-#if MECHADOG_ENABLE_SENSORS && MECHADOG_ENABLE_ACTUATORS
-#error \
-    "SensorHal and vendor actuators cannot run together: shared Wire/IMU ownership is not integrated"
-#endif
+// I2C port 0 (Wire, SDA22/SCL23) belongs to this HAL's task, in actuator builds
+// too. The vendor library wraps the same port as `IIC1` (TwoWire(0), same pins)
+// but touches it only in MechDog::homeostasis(), UltrasoundSonar and MP3Sensor.
+// MotionHal calls only MechDog_init() and move(), which use no I2C (vendor
+// sources 2024-08 and the precompiled kinematics library, checked 2026-09-12).
+// Never call those vendor I2C features from firmware sources; a future I2C
+// device must share this HAL's bus instead. tests/test_firmware_vendor_boundary.py
+// enforces the boundary.
 
 namespace mechadog {
 

@@ -3,7 +3,14 @@
 몸체 ESP32가 UDP 5001번 포트로 JSON 명령을 받고 Hiwonder 보행 API를 호출한다.
 명령 형식의 정본은 [`docs/PROTOCOL.md`](../docs/PROTOCOL.md)다.
 
+> **구동·센서 빌드를 하려면 먼저 아래 *"구동·센서 통합 빌드 준비"* 절을 본다.** 벤더 파일은
+> 저장소에 없어 각자 받아야 하며(ADR-20), 준비 상태는 `python tools/firmware_env.py` 로 점검한다.
+
 ## 4.1.4 현재 상태 — 정지 수신 및 재부팅 2회 통과 (2026-09-12)
+
+> **최신 (2026-09-12 02:40 이후):** mechdog-01 에는 **센서+구동 통합 빌드**가 설치돼 있다
+> (앱 SHA-256 `288d77cf…fe75486`). 공중 보행 중 텔레메트리 10Hz 를 확인했다 — 아래
+> *"구동·센서 통합 빌드 준비"* 6단계의 실기 결과. 아래 retry1 기록은 그 이전 상태다.
 
 **후속 수정 적용:** `fix/4.1.4-reboot-timing`에서는 3초마다 수행하던
 `WiFi.reconnect()`의 강제 disconnect를 제거했다. 이미 AP에 연결돼 있으면 DHCP를
@@ -187,8 +194,9 @@ C++11 encoder 검사 5,412건, Python decoder의 C++ 출력 18건 및 선택 필
 뜻하지 않으며, 실행 중 전체 CPU 부하·메모리와 구동 공존도 검증 완료로 표시하지 않는다.
 
 기본값은 `MECHADOG_ENABLE_SENSORS=0`, `MECHADOG_ENABLE_ACTUATORS=0`이다.
-센서 ON은 **actuator OFF 진단 전용**이다. 센서 HAL과 벤더 구동 코드가 공유하는
-I²C 버스·IMU 소유권을 통합하지 않았으므로 두 기능을 함께 켜지 않는다.
+**2026-09-12부터 두 기능을 함께 켤 수 있다** — I²C 0번 포트는 센서 HAL이 쥐고 벤더의 I²C
+기능은 부르지 않는다(아래 *"구동·센서 통합 빌드 준비"* 5단계). 통합 빌드는 발을 띄운 공중
+보행에서 텔레메트리 10Hz·IMU 타이밍을 확인했고, 바닥 보행과 장시간 운용은 남아 있다.
 센서 측정 유효 플래그와 본체 축 검증·배터리 보정 완료 여부는 서로 다르다.
 실제 보정, 축·부호 검증, 순정 복원 시험과 정식 통합은 남아 있다.
 현재 yaw는 필터 기준 상대 자세이며 나침반의 절대 방위가 아니다.
@@ -261,10 +269,12 @@ NVS에 유효한 STA 접속 정보가 없는 최초 설치에는 아래 선택 �
 센서를 켜는 빌드는 다음 라이브러리가 외부 Arduino 라이브러리 경로에 있어야 한다.
 
 - **SensorLib v0.2.1**: `SensorQMI8658.hpp`를 제공한다. 현재 구현은 이 버전의 API를 기준으로 한다.
-- **벤더 MadgwickAHRS**: 공식 Arduino 예제 자료에 포함된 `MadgwickAHRS.h`와 구현 파일을 사용한다.
+- **Madgwick 1.2.0**: `MadgwickAHRS.h`를 제공한다. Arduino 라이브러리 관리자에서 받으며, 벤더
+  예제 자료의 사본 대신 이것으로 센서 빌드가 `--warnings all`로 컴파일됐다(2026-09-12).
 
+설치 명령은 아래 *"구동·센서 통합 빌드 준비"* 2단계에 있다.
 현재 CI의 MechDog 컴파일은 **센서 OFF / actuator OFF 기본 빌드**다.
-센서 ON 경로는 외부 SensorLib와 벤더 MadgwickAHRS가 필요하며, 이 의존성을 준비하는
+센서 ON 경로는 외부 SensorLib와 Madgwick이 필요하며, 이 의존성을 준비하는
 CI 단계는 아직 없다. 따라서 CI 성공은 센서 ON 코드의 컴파일, 실제 센서 취득,
 10Hz 송신이나 구동 공존을 검증한 결과가 아니다. 센서 ON 빌드는 위의 core 버전과
 아래 명령으로 로컬에서 별도 확인한다.
@@ -280,88 +290,155 @@ arduino-cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" --buil
 모든 센서의 유효값이 필요하며, 오류 중에는 정상 텔레메트리를 만들지 않는다.
 Wi-Fi는 위에서 선택한 설정으로 접속하고 재접속은 루프에서 처리한다. 부팅 시 20초 대기는 제거했다.
 
-## 실제 구동 빌드 — 벤더 파일을 직접 받아야 한다
+## 구동·센서 통합 빌드 준비 — 벤더 파일·라이브러리·보드 패키지
 
 **저장소에 없는 파일이 필요하다.** Hiwonder 예제 소스에 라이선스 표기가 없어 재배포할 수
-없기 때문이다 ([ADR-20](../docs/DECISIONS.md)). 각자 공식 예제 자료에서 준비한다.
+없기 때문이다 ([ADR-20](../docs/DECISIONS.md)). 각자 받아 두고, **빌드 전에 점검 도구로 확인한다.**
 
-### 받는 곳
+> **2026-09-12 · 이 절차 그대로 센서+구동 통합 빌드가 컴파일됐다** (core 2.0.12 ·
+> flash 800,921 B (61%) · 정적 RAM 49,092 B). **공중 보행 중 텔레메트리 10Hz 를 실기로
+> 확인했다**(mechdog-01) — 아래 6단계. 바닥 보행·장시간 운용은 남아 있다.
 
-**Hiwonder의 `Arduino Programming Projects.zip`** —
-[Hiwonder Wiki · Resources Download](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/8.Resources_Download.html)
-에서 Arduino 예제 자료를 찾는다. 벤더 Arduino 소스와 예제 라이브러리는 이 자료에서 확인한다.
+### 0단계 — 점검부터 한다
 
-**정정:** 이전 안내는 `MechDog V1.3.exe`를 설치하면 Arduino 예제가 나온다고 설명했다.
-2026-09-11 자료 직접 확인 결과와 달라, Arduino 소스의 받는 곳을 위 ZIP으로 바로잡았다.
-설치 프로그램과 Arduino 예제 압축 파일을 같은 배포물로 취급하지 않는다.
+```powershell
+python tools/firmware_env.py
+```
 
-### 둘 곳 — 두 군데다
+벤더 파일 11개(크기·SHA-256) · 벤더 파일이 git 에서 무시되는가 · 라이브러리 4개의 버전 ·
+보드 패키지 2.0.12 를 본다. **점검만 하며 받지도 설치하지도 않는다.** 전부 `OK` 가 아니면
+아래 순서로 채운 뒤 다시 돌린다. 격리 폴더를 다른 곳에 두었으면 `--arduino-dir` 로 알려 준다.
 
-**① 선택한 구동 예제의 벤더 소스 → 스케치 폴더에 배치**
+### 1단계 — 도구: Arduino IDE 2 에 들어 있는 `arduino-cli`
 
-아래는 기존 motion HAL 안내에서 사용한 파일 구성이다. 새로 받은 예제의 전체 의존성을
-검증한 확정 목록이 아니므로, 선택한 예제의 추가 소스·헤더도 함께 확인해야 한다.
+따로 설치할 필요가 없다. Arduino IDE 2 설치본 안에 있다.
+
+```powershell
+$cli = "$env:LOCALAPPDATA\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe"
+```
+
+### 2단계 — 격리 폴더에 보드 패키지와 센서 라이브러리 설치
+
+MechDog 는 core **2.0.12** 로 고정이고 XIAO 는 최신 core 를 쓴다. 한 Arduino 설정에 두 버전을
+둘 수 없으므로 **MechDog 전용 폴더**(`%USERPROFILE%\.arduino-mechdog`)를 쓴다 — 쓰던 IDE
+설정은 건드리지 않는다. 저장소 밖이므로 git 과도 무관하다.
+
+```powershell
+$env:ARDUINO_DIRECTORIES_DATA = "$HOME\.arduino-mechdog\data"
+$env:ARDUINO_DIRECTORIES_DOWNLOADS = "$HOME\.arduino-mechdog\staging"
+$env:ARDUINO_DIRECTORIES_USER = "$HOME\.arduino-mechdog\user"
+$env:ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS = "https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json"
+& $cli core update-index
+& $cli core install esp32:esp32@2.0.12
+& $cli lib update-index
+& $cli lib install SensorLib@0.2.1 Madgwick@1.2.0
+```
+
+환경 변수는 **그 PowerShell 창에서만** 유효하므로 컴파일도 같은 창에서 한다. 용량은 받는
+캐시 약 0.85GB(`staging` — 설치 뒤 지워도 된다)와 설치본 약 2.8GB 다. SensorLib 은 **0.2.1
+이어야 한다** — 센서 HAL 이 이 버전 API 에 맞춰져 있다(최신 0.4.x 가 아니다).
+
+### 3단계 — 벤더 파일: 받는 곳과 둘 곳
+
+**받는 곳** — Hiwonder 의 `Arduino Programming Projects.zip`
+([Hiwonder Wiki · Resources Download](https://wiki.hiwonder.com/projects/MechDog/en/latest/docs/8.Resources_Download.html)).
+설치 프로그램 `MechDog V1.3.exe` 와 같은 배포물이 아니다(2026-09-11 확인).
+
+**① 벤더 소스 11개 → 스케치 루트** (`src/` 가 아니다)
 
 ```
 firmware_mechdog_motion/
 ├── firmware_mechdog_motion.ino
-├── HW_MechDog.cpp   HW_MechDog.h      ← 여기부터 벤더 파일
+├── HW_MechDog.cpp   HW_MechDog.h      ← 벤더 (git 무시)
 ├── Hiwonder.cpp     Hiwonder.h
 ├── Servo.cpp        Servo.h
 ├── WMMatrixLed.cpp  WMMatrixLed.h
 ├── pwm_servo.cpp    pwm_servo.h
 ├── action.h
-└── src/                               ← 우리 파일 (건드리지 않는다)
-    ├── command_parser.*
-    ├── motion_hal.*
-    ├── sensor_hal.*
-    ├── telemetry_encoder.*
-    └── telemetry_publisher.*
+└── src/                               ← 우리 파일
 ```
 
-**Arduino는 스케치 루트뿐 아니라 `src/` 아래의 소스도 재귀적으로 컴파일한다.**
-이전의 “스케치 폴더 `.cpp`만 자동 컴파일한다”는 설명은 잘못됐다.
-위 배치는 현재 코드의 include 경로를 위한 것이며, `src/`를 컴파일에서 제외하기 위한 규칙이 아니다.
-라이브러리 탐색과 추가 소스의 중복 컴파일 여부는 선택한 배치에서 확인한다.
+`src/motion_hal.cpp` 는 `"../HW_MechDog.h"` 로 부른다. `src/` 의 파일에서는 스케치 루트가
+포함 경로에 없어서, 예전 안내대로 `"HW_MechDog.h"` 로 두면 **파일이 있어도 못 찾았다**
+(2026-09-12 확인). 헤더를 `src/` 에 한 벌 더 복사하는 우회는 필요 없다.
 
-**② 선택한 예제의 Arduino 라이브러리 → 라이브러리 폴더**
-
-아래 두 항목은 기존 구동 예제 기준이다. QMI8658 센서 진단 경로에는 위에서 설명한
-SensorLib v0.2.1과 벤더 MadgwickAHRS가 별도로 필요하다. 이 둘을 설치했다고
-구동 예제 전체의 의존성 확인이 끝나는 것은 아니다.
+**② 벤더 라이브러리 2개 → `%USERPROFILE%\.arduino-mechdog\user\libraries\`**
 
 ```
-<Arduino 스케치북>/libraries/
-├── MechDog_Arduino/     quad_kinematics.h · mech_base_types.h · precompiled 바이너리
-└── MPU6050/             MIT (Copyright ⓒ 2019 ElectronicCats)
+libraries/
+├── MechDog_Arduino/   name=mechdog 1.2.5 — quad_kinematics.h · mech_base_types.h · 미리 컴파일된 .a
+└── MPU6050/           1.3.1 (ElectronicCats · MIT)
 ```
 
-스케치북 위치는 Arduino IDE 의 `File → Preferences → Sketchbook location` 에 있다.
-기본값은 Windows 에서 `%USERPROFILE%\Documents\Arduino` 다.
+`HW_MechDog.h` 가 이 둘을 다시 부르므로 ①만으로는 빌드되지 않는다.
 
-> `HW_MechDog.h` 가 `quad_kinematics.h`·`mech_base_types.h`·`MPU6050.h` 를 다시 부르므로
-> **①만 복사하면 빌드되지 않는다.** ②까지 있어야 한다.
+> ⚠️ **`.gitignore` 가 벤더 파일 11개의 이름을 막는다** (루트와 `src/` 모두). 복사한 뒤
+> `git status` 에 하나라도 보이면 **그 자리에서 멈춘다** — 공개 저장소에 올라가면 라이선스
+> 위반이다. 점검 도구의 `git 무시` 항목이 같은 것을 본다.
+>
+> 해시의 기준은 `tools/firmware_env.py` 의 `VENDOR_FILES` 다(2026-09-12 통합 빌드를 통과한
+> 조합). 다른 배포본이면 해시가 다르게 나오는데, **틀렸다는 뜻이 아니라 검증하지 않은 조합**이라는
+> 뜻이다 — 통합 빌드와 실기 확인을 다시 거친 뒤 표를 갱신한다.
 
-### 구동 빌드 설정 — 센서 진단과 분리
-
-구동 빌드는 실제 기체 검증을 위한 별도 단계다. 센서 진단 빌드에서 구동 기능을 함께 켜지 않는다.
-현재 저장소의 기본값을 유지하고, 벤더 파일과 실물 검증 준비가 끝난 뒤 구동 설정을 별도로 적용한다.
-
-```cpp
-#define MECHADOG_ENABLE_ACTUATORS 1  // 별도 구동 빌드에서만 적용
-#define MECHADOG_ENABLE_SENSORS 0
-```
+### 4단계 — 컴파일
 
 ```powershell
-arduino-cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmware_mechdog_motion
+# 센서 + 구동 (통합). 구동만이면 SENSORS=0, 센서만이면 ACTUATORS=0
+& $cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" --build-property "compiler.cpp.extra_flags=-DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_ENABLE_ACTUATORS=1" firmware_mechdog_motion
 ```
 
-**파일이 없으면 컴파일이 안내와 함께 멈춘다** — `HW_MechDog.h 가 없습니다 …` 라는
-`#error` 가 나오면 위 ①을 빠뜨린 것이다.
+⚠️ **벤더 파일이 스케치 폴더에 있으면 `--warnings all` 을 쓰지 않는다.** 벤더 코드의 경고
+(반환값 누락 · 괄호 · 미사용 변수)가 오류로 바뀌어 **구동을 끈 빌드까지** 실패한다 — 스케치
+루트의 `.cpp` 는 설정과 무관하게 항상 함께 컴파일되기 때문이다. CI 와 같은 조건으로 **우리
+코드만** 확인하려면 벤더 파일이 없는 사본에서 컴파일한다.
 
-⚠️ **업로드하면 `MechDog_init()` 이 서보를 초기화한다.** 처음에는 몸통을 받쳐 **네 발을 띄운
-상태**에서 시험한다. 보정값은 `mechdog` NVS namespace 에서 읽으며, 업로드 전에
-순정 펌웨어 백업(H1)과 보정값을 따로 남긴다 — [하드웨어 1절](../docs/HARDWARE.md).
+```bash
+git ls-files -z firmware_mechdog_motion | xargs -0 cp --parents -t <빈 폴더>
+```
+
+### 5단계 — I²C 규칙: 벤더의 I²C 기능은 부르지 않는다
+
+센서 HAL 이 **I²C 0번 포트(SDA22/SCL23)** 를 쥔다. 벤더도 같은 포트·핀을 `IIC1` 로 감싸지만
+그것을 여는 곳은 `homeostasis()`(자세 균형)·`UltrasoundSonar`·`MP3Sensor` 뿐이고, 우리가 쓰는
+`MechDog_init()`·`move()` 는 I²C 를 쓰지 않는다(벤더 소스 2024-08 판과 미리 컴파일된 라이브러리의
+기호로 확인). 그래서 **그 셋을 우리 코드에서 부르지 않는 것**이 통합의 조건이며
+`tests/test_firmware_vendor_boundary.py` 가 막는다. 앞으로 I²C 장치를 붙일 때도(WonderEcho 등)
+벤더 클래스가 아니라 센서 HAL 의 버스를 통한다.
+
+벤더는 부팅 때 **배터리 감시 태스크**도 띄운다 — GPIO34 를 0.1초마다 읽고 `raw×3.6` 이 7.0V
+미만이면 부저를 울린다. 우리 센서 HAL 도 같은 핀을 읽는다. ADC 접근은 드라이버가 순서를
+맞추지만 실기로는 아직 보지 않았다.
+
+### 6단계 — 업로드와 첫 실기 확인
+
+이 절은 **컴파일까지**다. 업로드는 아래 *"순정 기체에서 업로드하기 전"* 절을 따른다 — 일반
+업로드는 NVS 의 보정값을 덮을 수 있다. ⚠️ **업로드하면 `MechDog_init()` 이 서보를 초기화한다.**
+처음에는 몸통을 받쳐 **네 발을 띄운 상태**로 시험한다. 확인할 것:
+
+- 걷는 중에도 텔레메트리가 10Hz 로 오는가 (`tools/telemetry_probe.py`)
+- UART 에 `imu_timing` 오류가 없는가 — 센서 태스크는 40ms 늦으면 **재부팅까지 IMU 를 끄고**,
+  그러면 텔레메트리 전체가 멈춘다. 보행 계산과 같은 코어에서 돈다
+- 배터리 값이 벤더 부저 경고와 어긋나지 않는가
+
+#### 2026-09-12 실기 결과 — mechdog-01, 네 발을 띄운 공중 보행
+
+설치 전에 기체의 파티션 표(`app0` = 0x10000, 1,310,720 B)를 읽고 이전 앱·NVS·`otadata` 를
+개발 PC 에 백업한 뒤, `esptool write_flash -u 0x10000` 으로 **앱만** 기록했다(해시 검증 통과).
+`otadata` 가 `app0` 을 가리키는 것도 확인했다. 백업은 저장소 밖에 둔다.
+
+| 시험 | 결과 |
+| :--- | :--- |
+| 부팅 | `Actuators: ON` · `Sensors: enabled=1` · Wi-Fi 4.5초 · IMU·거리·배터리 유효 · `imu_timing=none` |
+| 공중 보행 20초 (`mechdog_command.py move --step 60 --angle -8`) | `MOVE` 200/200 적용 · 텔레메트리 340/340 수락 · **9.998Hz** · seq 누락 0 · 최대 간격 0.11초 · `imu_timing=none` · 명령이 끊기자 워치독 래치 |
+| `host.runtime --reset-on-start --patrol` 25초 | 로봇의 `latched=false` 보고로 리셋 정착 → **1초 안에 PATROL** → SCAN → PATROL → SCAN · 틱 간격 p95 110ms · 종료 `ESTOP` 래치 |
+
+⚠️ **발견 — 배터리 흔들림이 텔레메트리를 버린다.** 정지 중 배터리 측정값이 7.72~8.46V(중앙값
+8.25V)로 흔들렸고, 1초 진단 34개 중 9개가 8.4V 를 넘었다. 넘는 순간의 텔레메트리는 인코더가
+통째로 버리므로(`battery outside [6.0,8.4]` 22초 기록) SCAN 구간에서 수신이 초당 2~6건까지
+떨어졌다. **완충 직후에는 대부분이 버려져 호스트가 링크 두절(3초)로 FAILSAFE 에 들어갈 수
+있다.** 대응은 별도 작업이다.
+
+한계 — 발을 띄운 짧은 시험이다. 바닥 보행(부하)·장시간 운용·IMU 축은 확인하지 않았다.
 
 ### 왜 저장소에 넣지 않는가
 
@@ -370,14 +447,15 @@ arduino-cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmwa
 | 벤더 구동 예제 소스 | 사용한 배포본의 재배포 허가 확인이 필요해 저장소에 포함하지 않음. 일부 새 예제에는 저작권 헤더가 있어 기존의 '표기 전무' 설명을 전체 파일로 확대하지 않음 |
 | `MechDog_Arduino` | `license.txt` 는 BSD 인데 **저작권자가 Adafruit** 이다 — 껍데기와 함께 딸려온 파일로 보여 근거로 쓸 수 없다 |
 | `MPU6050` | MIT — 명확하다 |
-| 이번 외부 센서 라이브러리 | SensorLib v0.2.1은 MIT, 벤더 MadgwickAHRS에는 GPL 헤더가 있음. 이번 저장소 변경에 외부 소스를 포함하지 않음 |
+| 외부 센서 라이브러리 | SensorLib v0.2.1은 MIT. 자세 필터는 Arduino 라이브러리 관리자의 Madgwick 1.2.0을 쓴다(벤더 사본에는 GPL 헤더가 있음). 어느 쪽도 저장소에 포함하지 않음 |
 
 명시된 라이선스가 없으면 기본값은 저작권자 전권이다. 상세는 [ADR-20](../docs/DECISIONS.md).
 
 ## PC 시험 명령
 
 아래는 시험 도구의 사용법이다. 실제 전원 조건과 설치된 앱을 확인해 적용한다.
-현재 설치 앱은 구동 OFF 정지 진단용이며 재부팅 후 IMU 오류는 미해결이다.
+mechdog-01의 현재 설치 앱은 센서+구동 통합 빌드다(2026-09-12). 재부팅 후 IMU 오류는 그 전
+retry1의 제한 시험에서 재발하지 않았다(맨 위 4.1.4 절).
 
 ### 텔레메트리 수신 전용
 

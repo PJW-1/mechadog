@@ -16,7 +16,7 @@ Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자�
 
 로봇은 한 번의 순찰에서 **경비**(침입자 인지·인증·경보)와 **산업안전 점검**(보호구 미착용 감지)을 **동시에** 수행합니다. 같은 카메라 프레임에서 두 판정이 함께 나옵니다.
 
-MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **HAL로 취급**하고, 그 위에 **인지 → 판단 → 항법** 자율 스택을 새로 얹는 것이 목표입니다.
+MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)를 **HAL로 취급**하고, 그 위에 **인지 → 판단 → 항법** 자율 스택을 새로 얹는 것이 목표입니다. 이 라이브러리는 라이선스 표기가 없어 저장소에 넣지 않습니다([ADR-20](docs/DECISIONS.md)).
 
 📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
 📋 **[WBS — 작업 ID·선행·DoD 정본](docs/WBS.md)**<br>
@@ -29,6 +29,8 @@ MechDog이 제공하는 오픈소스 모션 라이브러리(`HW_MechDog`)를 **H
 🤝 **[협업 규칙](CONTRIBUTING.md)**
 
 > **처음 클론했다면** — `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` (약 40초)
+>
+> **로봇 펌웨어(구동·센서)를 빌드하려면** 벤더 파일을 따로 받아야 한다 — [펌웨어 README](firmware_mechdog_motion/README.md)의 *구동·센서 통합 빌드 준비* 절, 점검은 `python tools/firmware_env.py`
 
 ---
 

@@ -41,7 +41,7 @@ from host.behavior.patrol import (
     drive_params_from_config,
 )
 from host.behavior.zones import ZoneStore
-from host.common.config import ConfigError
+from host.common.config import ConfigError, telemetry_ids
 from host.common.console import survive_encoding_errors
 from host.common.lidar_link import (
     Scan,
@@ -175,6 +175,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
 
     scan_decoder = ScanDecoder()
     telemetry = TelemetryReceiver()
+    # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
+    own_ids = telemetry_ids(config, args.device)
 
     # ① 세션 개시 — **가장 먼저 인코딩해야 한다** (`Commander.open_session` 주석).
     session_line = controller.commander.open_session()
@@ -197,12 +199,12 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     LOG.warning("telemetry_unknown_state")
                 if not ingested.accepted or ingested.reading is None:
                     continue
-                if ingested.reading.device_id != args.device:
+                if ingested.reading.device_id not in own_ids:
                     # 세 로봇이 같은 포트로 말한다. 다른 개체의 안전 상태와 IMU가
                     # 섞이면 엉뚱한 로봇의 자세로 경로를 계산한다 (DR-17).
                     LOG.warning(
                         "foreign_telemetry",
-                        expected=args.device,
+                        expected=sorted(own_ids),
                         received=ingested.reading.device_id,
                     )
                     continue
