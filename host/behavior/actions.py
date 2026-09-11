@@ -228,9 +228,7 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
     # ⚠️ **보정을 재지 않은 개체는 0 이다** — 그 개체의 순찰은 휜다(`2.2.3`).
     # 다른 기체의 값을 기본값으로 두면 **틀린 방향으로 휘게** 만든다.
     bias_deg = float((config.get("gait_calibration") or {}).get("straight_bias_deg") or 0.0)
-    behavior.register_sequence(
-        "PATROL", PatrolSequence(config["gait"]["step_length_mm"], bias_deg)
-    )
+    behavior.register_sequence("PATROL", PatrolSequence(config["gait"]["step_length_mm"], bias_deg))
     result["PATROL"] = "등록" if bias_deg else "등록 (직진 보정 미실측 — 휜다)"
     if not bias_deg:
         LOG.warning(
