@@ -109,6 +109,15 @@ class Teleop:
         self._last_key: str | None = None
         self._last_ms: int | None = None
         self._quit = False
+        # ⚠️ **세션 개시 전문을 가장 먼저 인코딩한다** (`Commander.open_session` 주석).
+        # 이것 없이 켜면 첫 전문이 `STATE` seq=1 이 되어, 앞서 다른 도구를 쓴 로봇이
+        # **비상정지(`X`)까지** 이전 세션의 seq 를 넘을 때까지 전부 폐기한다.
+        self._session_line = behavior.commander.open_session()
+
+    @property
+    def session_line(self) -> str:
+        """**첫 datagram 으로 보낼 전문** (`STOP` seq=1). 키 입력보다 먼저 보낸다."""
+        return self._session_line
 
     @property
     def quit_requested(self) -> bool:
@@ -238,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 조
                 sock.sendto(line.encode(), target)
             except OSError as exc:
                 print(f"send 실패: {exc}", file=sys.stderr)
+
+    # 키를 읽기 시작하기 전에 보낸다 — 그래야 첫 키가 무엇이든 세션 개시 뒤에 나간다.
+    send([teleop.session_line])
 
     keys: list[str] = []
     lock = threading.Lock()

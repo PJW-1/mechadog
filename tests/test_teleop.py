@@ -171,6 +171,7 @@ def test_the_whole_session_is_accepted_by_the_receiver(clock: FakeClock) -> None
     """조작 한 세션을 그대로 규약 수신기에 물린다 — 로봇이 보는 것과 같은 판정."""
     t = make(clock)
     decoder = CommandDecoder()
+    assert decoder.decode(t.session_line).accepted
     script = ["up", "up", "left", "right", " ", "down", "x", "r", "w"]
     for key in script:
         if urgent := t.press(key, clock.ms):
@@ -179,6 +180,36 @@ def test_the_whole_session_is_accepted_by_the_receiver(clock: FakeClock) -> None
             result = decoder.decode(line)
             assert result.accepted, f"거부됨: {result.reason} / {line}"
         clock.advance(100)
+
+
+def test_first_wire_opens_a_session(clock: FakeClock) -> None:
+    """첫 전문은 **`STOP` seq=1** 이어야 로봇이 세션 개시로 인정한다 (PROTOCOL 2절)."""
+    session = json.loads(make(clock).session_line)
+    assert (session["type"], session["seq"]) == ("STOP", 1)
+
+
+def test_estop_is_heard_after_an_earlier_host_session(clock: FakeClock) -> None:
+    """⚠️ **다른 도구를 쓴 로봇에 teleop 을 켜도 비상정지가 닿아야 한다.**
+
+    세션 개시가 없던 동안 첫 전문은 `STATE` seq=1 이었고, 로봇은 이전 세션의 seq 를
+    넘을 때까지 `ESTOP` 까지 전부 폐기했다. 새 수신기로만 시험해서 드러나지 않았다.
+    """
+    decoder = CommandDecoder()
+    earlier = Commander(CommandEncoder(clock=clock), period_ms=100)
+    assert decoder.decode(earlier.open_session()).accepted
+    for _ in range(50):
+        clock.advance(100)
+        for line in earlier.tick(clock.ms):
+            decoder.decode(line)
+    clock.advance(1000)
+
+    t = make(clock)
+    assert decoder.decode(t.session_line).accepted
+    for line in t.tick(clock.ms):
+        assert decoder.decode(line).accepted
+    wire = t.press("x", clock.ms)
+    assert wire is not None
+    assert decoder.decode(wire).accepted, "비상정지가 이전 세션의 seq 에 막혔다"
 
 
 def test_manual_event_is_idempotent(clock: FakeClock) -> None:
