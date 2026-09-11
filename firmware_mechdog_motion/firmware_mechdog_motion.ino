@@ -1,6 +1,8 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
+#include <freertos/queue.h>
 
 #include "src/command_parser.h"
 #include "src/motion_hal.h"
@@ -43,6 +45,80 @@ uint32_t g_failsafe_count = 0;
 bool g_udp_started = false;
 bool g_wifi_connected = false;
 mechadog::FsmState g_reported_state = mechadog::FsmState::Idle;
+
+struct WifiDiagnosticEvent {
+  uint32_t callback_ms;
+  uint32_t event;
+  uint8_t reason;
+};
+constexpr size_t kWifiDiagnosticQueueLength = 16;
+StaticQueue_t g_wifi_diagnostic_queue_storage;
+uint8_t g_wifi_diagnostic_queue_bytes[kWifiDiagnosticQueueLength * sizeof(WifiDiagnosticEvent)];
+QueueHandle_t g_wifi_diagnostic_queue = nullptr;
+uint32_t g_wifi_diagnostic_dropped = 0;
+uint32_t g_connect_attempt_count = 0;
+
+void onWifiDiagnosticEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event != ARDUINO_EVENT_WIFI_STA_START && event != ARDUINO_EVENT_WIFI_STA_CONNECTED &&
+      event != ARDUINO_EVENT_WIFI_STA_DISCONNECTED && event != ARDUINO_EVENT_WIFI_STA_GOT_IP &&
+      event != ARDUINO_EVENT_WIFI_STA_LOST_IP) {
+    return;
+  }
+  // Arduino dispatches this after its own reconnect handler. This is callback
+  // delivery time, not the physical event timestamp. Never do I/O or reconnect
+  // from this callback; its bounded queue is drained by loop().
+  const WifiDiagnosticEvent record = {millis(), static_cast<uint32_t>(event),
+                                      event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED
+                                          ? info.wifi_sta_disconnected.reason
+                                          : uint8_t{0}};
+  if (g_wifi_diagnostic_queue != nullptr &&
+      xQueueSend(g_wifi_diagnostic_queue, &record, 0) != pdTRUE) {
+    __atomic_fetch_add(&g_wifi_diagnostic_dropped, 1, __ATOMIC_RELAXED);
+  }
+}
+
+void pollWifiDiagnostics() {
+  WifiDiagnosticEvent event;
+  // Keep the oldest pending event until UART has room; limit work to one event
+  // per loop. Queue overflow is explicit and does not alter sensor acquisition.
+  if (g_wifi_diagnostic_queue == nullptr ||
+      xQueuePeek(g_wifi_diagnostic_queue, &event, 0) != pdTRUE) {
+    return;
+  }
+  char text[192];
+  const int length = snprintf(
+      text, sizeof(text), "Wi-Fi event: callback_ms=%lu event=%lu reason=%u dropped=%lu\n",
+      static_cast<unsigned long>(event.callback_ms), static_cast<unsigned long>(event.event),
+      static_cast<unsigned>(event.reason),
+      static_cast<unsigned long>(__atomic_load_n(&g_wifi_diagnostic_dropped, __ATOMIC_RELAXED)));
+  if (length > 0 && static_cast<size_t>(length) < sizeof(text) &&
+      Serial.availableForWrite() >= length + 128) {
+    Serial.write(reinterpret_cast<const uint8_t*>(text), static_cast<size_t>(length));
+    xQueueReceive(g_wifi_diagnostic_queue, &event, 0);
+  }
+}
+
+void retryWifiWithoutDisconnect() {
+  // WiFi.reconnect() in Arduino-ESP32 2.0.12 first calls esp_wifi_disconnect().
+  // Doing that every three seconds can interrupt association or DHCP. Preserve
+  // an associated AP and ask the driver to connect without tearing it down.
+  wifi_ap_record_t ap;
+  if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) return;
+  const uint64_t started_us = static_cast<uint64_t>(esp_timer_get_time());
+  const esp_err_t result = esp_wifi_connect();
+  const uint64_t elapsed_us = static_cast<uint64_t>(esp_timer_get_time()) - started_us;
+  ++g_connect_attempt_count;
+  char text[192];
+  const int length =
+      snprintf(text, sizeof(text), "Wi-Fi retry: at_ms=%llu count=%lu result=%ld elapsed_us=%llu\n",
+               static_cast<unsigned long long>(started_us / 1000),
+               static_cast<unsigned long>(g_connect_attempt_count), static_cast<long>(result),
+               static_cast<unsigned long long>(elapsed_us));
+  if (length > 0 && static_cast<size_t>(length) < sizeof(text) &&
+      Serial.availableForWrite() >= length + 128) {
+    Serial.write(reinterpret_cast<const uint8_t*>(text), static_cast<size_t>(length));
+  }
+}
 
 uint64_t uptimeMs() {
   return static_cast<uint64_t>(esp_timer_get_time()) / 1000;
@@ -159,6 +235,10 @@ void handlePacket(int packet_size) {
 }
 
 void connectSavedWifi() {
+  g_wifi_diagnostic_queue =
+      xQueueCreateStatic(kWifiDiagnosticQueueLength, sizeof(WifiDiagnosticEvent),
+                         g_wifi_diagnostic_queue_bytes, &g_wifi_diagnostic_queue_storage);
+  WiFi.onEvent(onWifiDiagnosticEvent);
   WiFi.mode(WIFI_STA);
   // Command latency matters more than power saving on the body MCU. Modem sleep
   // can delay UDP bursts long enough to trip the 300 ms motion watchdog.
@@ -305,7 +385,7 @@ void loop() {
     latchFailsafe("Wi-Fi disconnected");
     if (now - g_last_reconnect_attempt_ms >= kReconnectIntervalMs) {
       g_last_reconnect_attempt_ms = now;
-      WiFi.reconnect();
+      retryWifiWithoutDisconnect();
     }
   } else {
     if (!g_wifi_connected) {
@@ -328,5 +408,6 @@ void loop() {
 
   // Safety decisions precede acquisition snapshot and telemetry publication.
   pollTelemetry();
+  pollWifiDiagnostics();
   delay(1);
 }
