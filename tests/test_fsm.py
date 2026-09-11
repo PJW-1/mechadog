@@ -24,6 +24,23 @@ from host.behavior.fsm import (
 )
 from host.common import protocol as p
 
+STATE_EVENT_PAIRS = tuple((state, event) for state in DIRECTIVES for event in Event)
+
+
+def _expected_target(state: str, event: Event) -> str | None:
+    """전이표 자체로부터 한 조합의 기대값을 계산한다."""
+    allowed = EXCLUSIVE.get(state)
+    if allowed is not None and event not in allowed:
+        return None
+    exact = next(
+        (item.dst for item in TRANSITIONS if item.src == state and item.event is event), None
+    )
+    fallback = next(
+        (item.dst for item in TRANSITIONS if item.src == ANY and item.event is event), None
+    )
+    target = exact or fallback
+    return None if target is None or target == state else target
+
 
 # ── 표 자체의 구조 ────────────────────────────────────────────
 def test_table_covers_exactly_the_protocol_state_set() -> None:
@@ -77,6 +94,21 @@ def test_code_table_matches_the_architecture_document() -> None:
         f"코드에만 있음: {sorted(in_code - documented)} / "
         f"문서에만 있음: {sorted(documented - in_code)}"
     )
+
+
+@pytest.mark.parametrize(
+    ("state", "event"),
+    STATE_EVENT_PAIRS,
+    ids=lambda value: value.value if isinstance(value, Event) else value,
+)
+def test_every_state_event_pair_matches_the_table(state: str, event: Event) -> None:
+    """13개 상태 × 모든 사건을 전수로 돌려 전이·무시·자기 전이를 함께 검증한다."""
+    fsm = Fsm(initial=state)
+    expected = _expected_target(state, event)
+
+    assert fsm.can(event) is (expected is not None)
+    assert fsm.handle(event) is (expected is not None)
+    assert fsm.state == (expected or state)
 
 
 def test_no_state_is_a_dead_end() -> None:

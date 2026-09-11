@@ -259,6 +259,8 @@ esp_err_t streamHandler(httpd_req_t* request) {
     if (now_us < next_due_us) {
       esp_camera_fb_return(frame);
       ++skipped;
+      // 프레임 큐가 연달아 준비돼 있어도 HTTP/Wi-Fi 태스크가 실행될 틈을 준다.
+      vTaskDelay(1);
       continue;
     }
     const int64_t period_us = 1000000 / static_cast<int64_t>(g_fps_limit);
@@ -313,7 +315,21 @@ esp_err_t streamHandler(httpd_req_t* request) {
   return result;
 }
 
+void stopServers() {
+  if (g_stream_server != nullptr) {
+    httpd_stop(g_stream_server);
+    g_stream_server = nullptr;
+  }
+  if (g_control_server != nullptr) {
+    httpd_stop(g_control_server);
+    g_control_server = nullptr;
+  }
+}
+
 bool startServers() {
+  // 이전 시도가 한 서버만 열고 실패했을 수 있다. 남은 핸들을 정리한 뒤
+  // 두 서버를 한 세트로 다시 시작한다.
+  stopServers();
   httpd_config_t control_config = HTTPD_DEFAULT_CONFIG();
   control_config.server_port = kControlPort;
   control_config.ctrl_port = 32768;
@@ -331,6 +347,7 @@ bool startServers() {
       httpd_register_uri_handler(g_control_server, &status_uri) != ESP_OK ||
       httpd_register_uri_handler(g_control_server, &profile_uri) != ESP_OK) {
     Serial.println("ERROR http_server: control server start failed");
+    stopServers();
     return false;
   }
 
@@ -344,6 +361,7 @@ bool startServers() {
   if (httpd_start(&g_stream_server, &stream_config) != ESP_OK ||
       httpd_register_uri_handler(g_stream_server, &stream_uri) != ESP_OK) {
     Serial.println("ERROR http_server: stream server start failed");
+    stopServers();
     return false;
   }
 
@@ -374,9 +392,14 @@ void loop() {
     return;
   }
 
-  if (WiFi.status() != WL_CONNECTED && millis() - g_last_reconnect_ms >= kReconnectIntervalMs) {
+  if (millis() - g_last_reconnect_ms >= kReconnectIntervalMs) {
     g_last_reconnect_ms = millis();
-    if (connectWifi() && g_stream_server == nullptr) {
+    if (WiFi.status() != WL_CONNECTED) {
+      connectWifi();
+    }
+    // Wi-Fi는 살아 있는데 서버 시작만 실패한 경우도 다시 시도한다.
+    if (WiFi.status() == WL_CONNECTED &&
+        (g_stream_server == nullptr || g_control_server == nullptr)) {
       startServers();
     }
   }

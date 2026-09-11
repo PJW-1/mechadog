@@ -258,3 +258,111 @@ logging:                # NFR-3④
   rotate_mb: 10
   rotate_keep: 5
   blackbox_dir: blackbox      # FR-3.9
+
+# ══════════════════════════════════════════════════════════════
+#  LiDAR 측위 · 매핑 · 구역 순찰 (FR-6 · FR-7 · Phase 2 · ADR-18)
+#
+#  단위는 **규약과 같다** — mm · deg · ms (PROTOCOL.md 2절). 내부 계산의
+#  m · rad 로는 `host/common/units.py` 가 경계에서 한 번만 바꾼다.
+#
+#  ⚠️ 여기에는 **다른 절에 없는 값만** 둔다. 아래는 그대로 읽어 쓴다:
+#       safety.obstacle_stop_cm · cmd_timeout_ms · link_loss_failsafe_ms
+#       gait.step_length_mm · turn_angle_deg · reverse_distance_mm
+#       localization.settle_delay_ms · move_increment_mm · pose_timeout_ms · track
+#       zones.ids · arrival_radius_mm · random_after_first_cycle
+#       network.cmd_port · telemetry_port · cmd_rate_hz  ·  fsm.avoid_attempts
+#     같은 값을 두 곳에 두면 언젠가 한쪽만 고쳐지고, 그때 **어느 쪽이 실제로
+#     쓰이는지 코드를 읽어야 알 수 있다.**
+# ══════════════════════════════════════════════════════════════
+
+lidar:
+  # ── 중계 노드 링크 (ESP32 DevKit → Host PC · UDP) ─────────────
+  # 제어(5001)·텔레메트리(5101)와 **다른 포트**여야 한다. 같이 쓰면 한 소켓에
+  # 두 스키마가 섞여 들어와 서로를 "모르는 타입"으로 폐기한다.
+  scan_port: 5201
+  # 이 시간 동안 스캔이 없으면 LiDAR 링크 두절로 본다.
+  # ⚠️ `safety.link_loss_failsafe_ms` 와 **의도적으로 다른 값이다.** 로봇 링크
+  # 두절은 안전 문제이고, LiDAR 두절은 측위 능력의 상실이라 `LOST` 로 간다.
+  # 비전의 `stall_timeout_ms` 가 같은 이유로 안전 절 밖에 있다.
+  scan_stall_timeout_ms: 1500
+
+  # ── 센서 유효 범위 ────────────────────────────────────────────
+  # 하한은 로봇 몸통 반사를 걸러내고, 상한은 정합이 성립하는 거리다 —
+  # 넓은 공터에서는 벽이 안 잡혀 스캔 정합이 무의미해진다 (ADR-18 각주).
+  # ⚠️ 12m급 제품이 확정되면(OI 진행 중) 상한을 실측 유효 사거리로 고친다.
+  range_min_mm: 120
+  range_max_mm: 8000
+  # 정지 상태에서 몇 장을 모아 중앙값으로 합칠지 (ADR-7).
+  scan_batch: 3
+
+  # ── 점유격자 ─────────────────────────────────────────────────
+  # 5cm 는 로봇 폭(약 20cm) 대비 4셀이라 문틈을 구분하고, A* 격자가
+  # 10m x 10m 에서 200x200 으로 남아 완전 탐색이 감당된다.
+  resolution_mm: 50
+  initial_span_cells: 200      # 200 x 50mm = 10m. 경계에 닿으면 자동 확장한다
+  expand_pad_cells: 60         # 확장할 때 붙이는 여유 (매 사이클 재할당 방지)
+  # 로그오즈 가중치. 점유를 자유보다 크게 두는 이유 — 벽은 한 번 봐도 벽이지만
+  # 빈 공간은 여러 번 통과해야 확신할 수 있다. 반대로 두면 벽이 지워진다.
+  hit_logodds: 0.9
+  miss_logodds: -0.4
+  occupied_logodds: 1.0        # 이 값 이상이면 막힌 셀
+  free_logodds: -1.0           # 이 값 이하만 **확실히 빈** 셀 (미관측과 구분)
+
+  # ── 스캔 정합 (측위) ──────────────────────────────────────────
+  # 탐색 반경 = localization.move_increment_mm x 이 비율. 한 사이클 이동량보다
+  # 좁으면 정상 이동을 놓치고, 넓히면 탐색이 제곱으로 커진다.
+  search_span_ratio: 0.6
+  search_step_mm: 40
+  search_angle_deg: 8
+  search_angle_step_deg: 2
+  # 이만큼 관측된 셀이 있어야 정합을 시도한다. 빈 지도에 정합하면 점수가 전부
+  # 0 이라 탐색 격자의 첫 후보가 우연히 채택된다.
+  min_known_cells: 50
+
+  # ── 경로 계획 ────────────────────────────────────────────────
+  # 로봇 실측 폭의 절반. ⚠️ `2.2.1` 실측 후 확정한다.
+  robot_radius_mm: 150
+  # 경로 추종 오차를 위한 **추가** 여유. 팽창은 `robot_radius_mm + 이 값`이다.
+  #
+  # ⚠️ **0 으로 두면 안 된다.** 팽창이 로봇 반경과 같으면 경로 중심선이 벽에서
+  #    정확히 반경만큼 떨어져 지나가고, 그 위를 완벽히 걸어도 LiDAR 가
+  #    `estop_distance_mm` 를 읽는다 — **정상 순찰이 비상정지로 끝난다.**
+  #    실제로 겪었다 (반경 150 = E-STOP 150 → 한 사이클에 E-STOP 6회).
+  #    호 조향밖에 없는 로봇에 추종 오차 0 을 요구할 수 없다 (DR-11).
+  tracking_margin_mm: 100
+  path_simplify_mm: 80         # 웨이포인트 단순화 허용 오차
+  waypoint_radius_mm: 100      # 중간 웨이포인트 통과 판정 (도착은 zones.arrival_radius_mm)
+  # 방위 오차가 이 안이면 직진한다. 좁히면 호 조향밖에 없는 로봇이 진동한다.
+  heading_tolerance_deg: 8
+  # 이 이상 틀어져 있으면 전진 호로 돌아설 수 없어 후진 호로 바꾼다 (DR-11).
+  reverse_threshold_deg: 90
+
+  # ── 신규 장애물 ──────────────────────────────────────────────
+  # 이 거리 안의 빔만 후보로 본다. 측위 오차가 거리에 비례하므로 멀리서
+  # 판정하면 오탐이 늘고, 오탐 하나가 통로를 막는다.
+  new_obstacle_check_radius_mm: 1500
+  new_obstacle_margin_mm: 250     # 측위 오차 여유. 좁히면 벽을 신규 장애물로 본다
+  new_obstacle_confirmations: 2   # 연속 확인 횟수 (change_detect.confirm_cycles 와 같은 발상)
+  obstacle_mark_radius_mm: 300    # 동적 마스크에 찍을 반경 (로봇 반경 + 여유)
+
+  # ── 호스트측 위험 판정 ───────────────────────────────────────
+  # ⚠️ **온보드 초음파(safety.obstacle_stop_cm)를 대체하지 않는다.** 초음파는
+  #    정면 근거리만 보고(DR-15) Tier 1 이며, 이 값은 LiDAR 가 보는 360° 중
+  #    전방 부채꼴에 대한 **호스트의 추가 판정**이다. 둘 중 먼저 걸리는 쪽이
+  #    이긴다. 온보드 임계(25cm)보다 짧게 두어 온보드가 먼저 반응하게 한다.
+  #    ⚠️ **`robot_radius_mm + tracking_margin_mm` 보다 작아야 한다.** 크면
+  #    계획된 경로 자체가 E-STOP 거리를 지나간다 (위 `tracking_margin_mm` 각주).
+  #    `settings._validate` 가 기동 시에 확인한다.
+  estop_distance_mm: 100
+  forward_fan_deg: 20             # 전방으로 볼 부채꼴 반각
+
+  # ── 시뮬레이션 (실기 연결 전 검증 · WBS 12절) ─────────────────
+  # ⚠️ 이 값들은 **실측이 아니다.** `gait_calibration.forward_mm_per_sec` 가
+  #    채워지면 그것을 쓴다. 지금 여기 있는 것은 알고리즘을 돌려보기 위한
+  #    명목값이며, 이 숫자로 실기 성능을 말하지 않는다.
+  sim:
+    forward_mm_per_sec: 200       # 명목. 실측은 gait_calibration 소관
+    turn_deg_per_sec: 25          # 명목
+    scan_noise_mm: 10
+    dropout_rate: 0.02            # 빔 유실률
+    beams: 360

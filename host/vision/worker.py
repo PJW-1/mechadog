@@ -57,6 +57,9 @@ class VisionResult:
     """
 
     detections: tuple[Detection, ...]
+    #: 블랙박스에 보관할 **수신 JPEG 원본**. 다시 인코딩하면 시간과 화질이 달라져
+    #: 사건 당시 실제 입력을 보존했다는 의미가 사라진다 (FR-3.9).
+    jpeg: bytes
     frame_seq: int
     frame_received_ms: int
     completed_ms: int
@@ -274,6 +277,7 @@ class VisionWorker:
         markers = self._badges.read(image) if tracks else ()
         result = VisionResult(
             detections=tuple(detections),
+            jpeg=frame.payload,
             frame_seq=frame.seq,
             frame_received_ms=frame.received_ms,
             completed_ms=completed,

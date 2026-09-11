@@ -583,7 +583,8 @@ mechdog_physical_ai/
 │   ├── common/
 │   │   ├── protocol.py                ✅ 규약 구현 — 이 파일이 C++ 파서의 참조 구현
 │   │   ├── config.py                  ✅ 로더 + 스키마 검증
-│   │   └── logging_setup.py           ✅ JSON Lines 로거 + 샘플링 (4.4.2)
+│   │   ├── logging_setup.py           ✅ JSON Lines 로거 + 샘플링 (4.4.2)
+│   │   └── blackbox.py                🔶 JPEG·텔레메트리 저장 + 런타임 연결, WS 푸시는 4.5.1 뒤
 │   ├── vision/                        ✅ MJPEG 수신·재연결·큐·검출기·추론 워커·사람 게이트·다중 인원 추적 (3.3.1~4, 4.3.3~5)·사원증 마커 판독 (3.8.1)
 │   ├── telemetry/                     ✅ 텔레메트리 수신·사건 변환 (4.3.6)
 │   ├── runtime.py                     ✅ UDP 운용 루프 + 비전 워커 수명 관리 (4.3.7, 3.3.2)

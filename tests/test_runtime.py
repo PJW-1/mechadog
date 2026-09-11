@@ -11,10 +11,12 @@ from conftest import FakeClock
 
 from host.behavior.escalation import Level
 from host.behavior.fsm import Event
+from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
 from host.runtime import Runtime, watch_console
 from host.vision.badge import Marker
+from host.vision.detector import Detection
 from host.vision.person import Sighting
 from host.vision.tracker import Track
 from host.vision.worker import VisionResult
@@ -63,6 +65,20 @@ class FakeSocket:
         return [json.loads(line)["type"] for _at, line in self.sent]
 
 
+class OversizedDatagramSocket(FakeSocket):
+    """Windows의 WSAEMSGSIZE를 첫 수신에서 한 번 재현한다."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock)
+        self._raised = False
+
+    def recvfrom(self, size: int) -> tuple[bytes, tuple[str, int]]:
+        if not self._raised:
+            self._raised = True
+            raise OSError(10040, "message too long")
+        return super().recvfrom(size)
+
+
 class FakeVision:
     """Runtime이 비전 워커의 수명을 실제로 소유하는지 확인하는 최소 가짜."""
 
@@ -103,7 +119,8 @@ def vision_result(
 ) -> VisionResult:
     """런타임 통합 시험용 판정 결과."""
     return VisionResult(
-        detections=(),
+        detections=(Detection("person", 0.9, (0.0, 0.0, 10.0, 20.0)),) if hits else (),
+        jpeg=b"test-jpeg",
         frame_seq=seq,
         frame_received_ms=at_ms,
         completed_ms=at_ms,
@@ -249,11 +266,28 @@ def test_loop_sends_at_the_configured_rate(config: dict, clock: FakeClock) -> No
 
 
 def test_loop_ends_with_estop(config: dict, clock: FakeClock) -> None:
-    """**종료 전문은 ESTOP 이다.** 호스트가 사라진 뒤 로봇이 계속 걷지 않게 한다."""
+    """종료 ESTOP은 UDP 한 건 유실에도 남도록 같은 전문을 세 번 보낸다."""
     r = Runtime(config, device_id=DEVICE, clock=clock)
     sock = FakeSocket(clock)
     r.serve(sock, duration_s=0.5, clock=clock)
-    assert sock.types()[-1] == "ESTOP"
+    assert sock.types()[-3:] == ["ESTOP", "ESTOP", "ESTOP"]
+    assert len({payload for _at, payload in sock.sent[-3:]}) == 1
+
+
+def test_oversized_windows_datagram_is_dropped(config: dict, clock: FakeClock, caplog) -> None:
+    """WSAEMSGSIZE 한 건이 운용 루프와 종료 ESTOP을 막지 않는다."""
+    import logging
+
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = OversizedDatagramSocket(clock)
+    with caplog.at_level(logging.WARNING, logger="mechadog.runtime"):
+        r.serve(sock, duration_s=0.2, clock=clock)
+
+    assert "telemetry_datagram_too_large" in [
+        getattr(record, "event", None) for record in caplog.records
+    ]
+    assert r.stats.discarded == 1
+    assert sock.types()[-3:] == ["ESTOP", "ESTOP", "ESTOP"]
 
 
 def test_loop_receives_and_reacts(config: dict, clock: FakeClock) -> None:
@@ -382,6 +416,45 @@ def test_stalled_camera_does_not_hold_alert_forever(config: dict, clock: FakeClo
     assert runtime.behavior.degraded is True
     runtime.tick(100 + int(config["fsm"]["target_lost_timeout_s"] * 1000))
     assert runtime.behavior.state == "PATROL"
+
+
+def test_confirmed_person_is_recorded_once_and_published(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    """확정 엣지 한 번이 JPEG·텔레메트리 저장과 대시보드 사건 한 건이 된다."""
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    published = []
+    vision = FakeVision()
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=blackbox,
+        event_publisher=published.append,
+    )
+    encoder = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(clock.ms)
+    runtime.ingest(telemetry(encoder), clock.ms)
+
+    vision.result = vision_result(1, 100, present=True, hits=3, last_seen_ms=100)
+    runtime.tick(100)
+    runtime.tick(150)  # 같은 결과 슬롯을 다시 읽어도 중복 기록하지 않는다
+
+    entries = blackbox.feed()
+    assert len(entries) == 1
+    assert published == entries
+    assert entries[0].jpeg_path is not None
+    assert entries[0].jpeg_path.read_bytes() == b"test-jpeg"
+    assert entries[0].state == "ALERT"
+    assert entries[0].escalation == "L1"
+    assert entries[0].telemetry["device_id"] == DEVICE
+    assert entries[0].telemetry["available"] is True
+    assert entries[0].telemetry["seq"] == 1
+    assert len(entries[0].tracks) == 1
+    assert entries[0].detections[0]["label"] == "person"
 
 
 # ── 대응 에스컬레이션 배선 (3.8.3) ──────────────────────────
@@ -542,12 +615,15 @@ def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> 
     monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
     monkeypatch.setattr(runtime_module, "setup_logging", lambda *_args, **_kw: None)
     monkeypatch.setattr(runtime_module, "build_worker", lambda _cfg: vision)
+    blackbox = object()
+    monkeypatch.setattr(runtime_module, "EventBlackbox", lambda _cfg: blackbox)
     monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
     monkeypatch.setattr(runtime_module, "open_socket", lambda _port: CliSocket())
 
     result = runtime_module.main(["--device", DEVICE, "--duration", "0", "--xiao-ip", "192.0.2.10"])
     assert result == 0
     assert captured["vision"] is vision
+    assert captured["blackbox"] is blackbox
     assert captured["config"]["network"]["xiao_ip"] == "192.0.2.10"
     assert captured["duration_s"] == 0.0
     assert captured["closed"] is True

@@ -88,6 +88,10 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if missing:
         raise ConfigError(f"필수 설정 섹션 누락: {missing}")
 
+    blackbox_dir = config["logging"].get("blackbox_dir")
+    if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
+        raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
+
     network = config["network"]
     for name in ("cmd_port", "telemetry_port", "vision_control_port", "vision_stream_port"):
         port = network.get(name)
@@ -204,6 +208,21 @@ def validate_base_config(config: dict[str, Any]) -> None:
         raise ConfigError("전도 임계각은 0도 초과 90도 미만이어야 함")
     if 1000 / network["cmd_rate_hz"] >= safety["cmd_timeout_ms"]:
         raise ConfigError("명령 송신 주기는 명령 타임아웃보다 짧아야 함")
+
+    # 운용 루프가 직접 읽는 타이머다. 빠진 키가 Runtime 생성 중 KeyError로
+    # 터지기 전에 ConfigError로 설명한다.
+    for section, names in {
+        "fsm": (
+            "patrol_scan_interval_s",
+            "scan_duration_s",
+            "target_lost_timeout_s",
+            "avoid_attempts",
+        ),
+        "auth": ("timeout_s",),
+        "escalation": ("l1_to_l2_hold_s",),
+    }.items():
+        for name in names:
+            _require_positive(config[section], name)
 
     track = config["localization"].get("track")
     if not isinstance(track, str) or track not in {"none", "lidar", "aruco"}:
