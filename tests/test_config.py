@@ -528,6 +528,20 @@ def test_tracker_section_is_required(cfg: dict) -> None:
         validate_base_config(broken)
 
 
+def test_profile_links_the_firmware_telemetry_name() -> None:
+    """펌웨어 이름(`mechdog-<MAC>`)과 설정 이름을 **둘 다** 이 개체로 받는다."""
+    from host.common.config import telemetry_ids, validate_device_config
+
+    config = load_config("mechdog-01")
+    ids = telemetry_ids(config, "mechdog-01")
+    assert ids == {"mechdog-01", config["telemetry_device_id"]}
+    assert telemetry_ids({}, "mechdog-02") == {"mechdog-02"}, "없으면 설정 이름만"
+
+    broken = dict(config, telemetry_device_id="  ")
+    with pytest.raises(ConfigError, match="telemetry_device_id"):
+        validate_device_config(broken, "mechdog-01")
+
+
 def test_blackbox_directory_is_required(cfg: dict) -> None:
     """기록 위치가 비어 있으면 첫 사건 때가 아니라 기동 시점에 실패해야 한다."""
     from copy import deepcopy

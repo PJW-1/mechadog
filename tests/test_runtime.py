@@ -224,6 +224,24 @@ def test_foreign_telemetry_produces_no_events(config: dict, clock: FakeClock) ->
     assert r.behavior.state == "PATROL", "남의 로봇이 넘어져도 우리 상태는 그대로다"
 
 
+def test_firmware_mac_name_is_our_robot(config: dict, clock: FakeClock) -> None:
+    """⚠️ **펌웨어는 설정 이름이 아니라 MAC 으로 만든 이름을 보낸다** (`mechdog-<MAC>`).
+
+    프로파일의 `telemetry_device_id` 로 잇지 않으면 우리 로봇의 텔레메트리를 전부 남의
+    것으로 버린다 — 2026-09-12 실기에서 151건 전부가 foreign 이었다. 목업은 설정 이름을
+    그대로 보내므로 그것도 받는다.
+    """
+    named = dict(config, telemetry_device_id="mechdog-3c8a1f333208")
+    r = Runtime(named, device_id=DEVICE, clock=clock)
+    firmware = TelemetryEncoder(device_id="mechdog-3c8a1f333208", boot_id="boot-1")
+    mock = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    stranger = TelemetryEncoder(device_id="mechdog-aaaaaaaaaaaa", boot_id="boot-1")
+    assert r.ingest(telemetry(firmware), clock.ms).accepted
+    assert r.ingest(telemetry(mock), clock.ms).accepted
+    assert not r.ingest(telemetry(stranger), clock.ms).accepted
+    assert r.stats.foreign == 1
+
+
 def test_discarded_record_does_not_refresh_the_link(config: dict, clock: FakeClock) -> None:
     """깨진 패킷을 살아 있음으로 세면 페일세이프가 걸리지 않는다 (규칙 ③)."""
     r = Runtime(config, device_id=DEVICE, clock=clock)
