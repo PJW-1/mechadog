@@ -238,6 +238,24 @@ def test_discarded_record_does_not_refresh_the_link(config: dict, clock: FakeClo
     assert r.behavior.state == "FAILSAFE"
 
 
+def test_command_ack_is_not_counted_as_discarded_telemetry(config: dict, clock: FakeClock) -> None:
+    """⚠️ **로봇의 명령 응답은 같은 소켓으로 돌아온다** — 텔레메트리 폐기로 세지 않는다.
+
+    세면 실기에서 폐기가 초당 10건씩 늘어 진짜 손상을 가린다. 목업은 응답을 보내지
+    않아 드러나지 않았다. 전문은 펌웨어 `sendAck` 가 만드는 모양 그대로다.
+    """
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    ack = (
+        b'{"ok":true,"verdict":"ACCEPT","seq":3,"type":"MOVE","applied":true,'
+        b'"safe_latched":false,"failsafe_count":0,"actuators":true}'
+    )
+    for _ in range(10):
+        assert not r.ingest(ack, clock.ms).accepted
+    assert r.stats.discarded == 0
+    r.ingest(b'{"seq":9,"device_id":"mechdog-01"', clock.ms)  # 진짜 손상은 여전히 센다
+    assert r.stats.discarded == 1
+
+
 # ── 사건 적용 ────────────────────────────────────────────────
 def test_robot_failsafe_report_drives_the_host(config: dict, clock: FakeClock) -> None:
     r = Runtime(config, device_id=DEVICE, clock=clock)
@@ -512,6 +530,42 @@ def test_auth_timeout_raises_alarm_without_passing_through_apply(
     runtime.tick(1000)
     runtime.tick(1000 + timeout_ms)
     assert runtime.behavior.last_trigger is Event.AUTH_FAILED
+    assert runtime.escalation.level is Level.L3
+
+
+def test_person_near_an_idle_robot_raises_no_level(config: dict, clock: FakeClock) -> None:
+    """⚠️ (잠정) **대기 중인 로봇 앞을 지나간 사람으로 경보가 뜨면 안 된다.**
+
+    대기에서는 `AUTH_WAIT` 로 갈 수 없어, 10초 머물다 떠난 사람이 곧바로 L3 가 됐다 —
+    시연 준비 중 팀원 때문에 빨간 경보가 뜨고 관리자 확인이 필요했다.
+    """
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    assert runtime.behavior.state == "IDLE"
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+    lost_ms = int(config["fsm"]["target_lost_timeout_s"]) * 1000
+    last = 100 + hold_ms + 1000
+    for i, at in enumerate(range(100, last + 1, 100)):
+        _stand(runtime, vision, seq=i + 1, at_ms=at)
+    vision.result = vision_result(9999, last + 100, present=False, hits=0, last_seen_ms=last)
+    runtime.tick(last + 100)
+    runtime.tick(last + lost_ms + 100)
+    assert runtime.escalation.level is Level.L0
+
+
+def test_manual_takeover_stands_down_but_keeps_an_alarm(config: dict, clock: FakeClock) -> None:
+    """(잠정) 수동 조종으로 넘어가면 L1·L2 는 내리고 **L3 는 남긴다** (관리자 확인만)."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    _walk_in(runtime, vision, seq=1, at_ms=100)
+    assert runtime.escalation.level is Level.L1
+    runtime.behavior.event(Event.MANUAL_ON, now_ms=200)
+    runtime.tick(200)
+    assert runtime.escalation.level is Level.L0
+
+    runtime.escalation.note_event("PPE_VIOLATION", 300)
+    runtime.tick(400)
     assert runtime.escalation.level is Level.L3
 
 

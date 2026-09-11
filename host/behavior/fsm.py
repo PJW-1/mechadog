@@ -192,6 +192,14 @@ DIRECTIVES: dict[str, Directive] = {
 
 INITIAL = "IDLE"
 
+#: **대응 단계(3.8.3)를 올리지 않는 상태** — 순찰 임무 밖이다.
+#:
+#: ⚠️ **잠정이다 (2026-09-12 · 확정 전).** 단계 축은 FSM 과 직교하도록 설계됐지만
+#: (아키텍처 3.1), 대기 중에는 `AUTH_WAIT` 로 갈 수 없어서 로봇 앞에 머물다 떠난
+#: 사람이 곧바로 L3 경보가 됐다 — 시연 준비 중 팀원 때문에 빨간 경보가 뜬다.
+#: 래치된 단계(L3·F)는 여기서도 그대로다. 확정되면 아키텍처 3.1 에 올린다.
+STANDBY: frozenset[str] = frozenset({"IDLE", "MANUAL"})
+
 
 @dataclass(frozen=True, slots=True)
 class StateTimer:
@@ -414,6 +422,11 @@ class Behavior:
     def degraded(self) -> bool:
         """**비전만 죽은 상태.** 순찰은 계속되며 사람 인지가 비활성이다."""
         return self._degraded
+
+    @property
+    def standby(self) -> bool:
+        """순찰 임무 밖인가 (`STANDBY` · 잠정). 대응 단계를 올리지 않는다."""
+        return self._fsm.state in STANDBY
 
     def _watch_links(self, now_ms: int) -> None:
         # 아직 한 번도 못 받았으면 감시하지 않는다 — 기동 직후를 두절로 보면

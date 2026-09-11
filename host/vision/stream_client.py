@@ -6,8 +6,8 @@ XIAO 가 `multipart/x-mixed-replace` 로 보내는 바이트를 프레임으로 
 연결과 재연결은 `4.3.4` 가 맡는다. 수신기(`4.3.6`)를 그렇게 만들어 둔 것과 같은
 이유다 — 로봇도 카메라도 없이 시험된다.
 
-예외는 `apply_profile()` 하나다. 기동 시 **한 번** 제어 포트로 설정을 내려보내는
-일회성 요청이며 스트림 연결과 무관하다.
+예외는 `apply_profile()` 하나다. 제어 포트로 설정을 내려보내는 요청이며, 실제 운용에서는
+`build_worker` 가 **연결할 때마다** 부른다 — 카메라가 재부팅하면 펌웨어 기본값으로 돌아간다.
 
 ⚠️ **경계 desync 를 무해하게 넘긴다.** MJPEG 은 프레임마다 경계 문자열이 오는 구조라
 한 번 어긋나면 그 뒤가 전부 쓰레기가 된다. 그래서 ① JPEG 시작 표식(`FFD8`)이 없는
@@ -427,6 +427,7 @@ class StreamReader:
         opener: Any = None,
         clock: Any = None,
         sleeper: Any = None,
+        before_connect: Any = None,
     ) -> None:
         from host.common.protocol import system_clock_ms
 
@@ -441,6 +442,8 @@ class StreamReader:
         self._opener = opener if opener is not None else urllib.request.urlopen
         self._clock = clock if clock is not None else system_clock_ms
         self._sleeper = sleeper if sleeper is not None else _default_sleeper
+        #: 연결 시도마다 먼저 부른다 (`build_worker` 가 카메라 프로파일을 싣는다).
+        self._before_connect = before_connect
         self.stats = StreamStats()
 
     @property
@@ -479,6 +482,8 @@ class StreamReader:
 
     def _read_once(self):
         """한 번 붙어서 끊길 때까지 프레임을 낸다."""
+        if self._before_connect is not None:
+            self._before_connect()
         response = self._opener(self.url, timeout=self._stall_ms / 1000)  # noqa: S310
         self.stats.connects += 1
         with response:

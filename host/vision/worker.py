@@ -24,6 +24,7 @@ OpenCV · numpy). 그 구간에서는 GIL 을 놓으므로 메인 스레드가 �
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -306,10 +307,18 @@ def build_worker(
     """설정만으로 실제 워커를 만든다. **여기서만 카메라와 GPU 를 만진다.**"""
     from host.vision.coco_labels import COCO_CLASSES
     from host.vision.detector import Detector
-    from host.vision.stream_client import StreamReader
+    from host.vision.stream_client import StreamReader, apply_profile
+
+    def push_profile() -> None:
+        # ⚠️ **연결할 때마다 내려보낸다.** 이 호출이 어디에도 없어서 `vision.resolution`·
+        # `stream_fps_limit` 을 고쳐도 카메라가 그대로였다. 실패해도 스트림은 카메라
+        # 기본값으로 받는다 — 사유는 `apply_profile` 이 이미 남긴다.
+        with contextlib.suppress(OSError, ValueError):
+            apply_profile(config)
 
     detector = Detector(config, section=section, labels=labels or COCO_CLASSES)
-    return VisionWorker(config, detector=detector, reader=StreamReader(config))
+    reader = StreamReader(config, before_connect=push_profile)
+    return VisionWorker(config, detector=detector, reader=reader)
 
 
 @dataclass

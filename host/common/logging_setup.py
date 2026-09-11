@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from host.common.config import repo_path
+
 #: 전 레코드 필수 컨텍스트 (ENGINEERING_GUIDE 1.1). **6개다.**
 #:
 #: 하나라도 없으면 사후 재구성이 불가능해진다 — `device_id` 가 없으면 3대 중 누구인지
@@ -342,7 +344,7 @@ def setup_logging(
         existing.close()
     context_filter = ContextFilter(ctx)
 
-    directory = log_dir if log_dir is not None else Path(str(section["dir"]))
+    directory = log_dir if log_dir is not None else repo_path(str(section["dir"]))
     directory.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
         directory / f"{device_id}.jsonl",

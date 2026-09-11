@@ -248,6 +248,15 @@ class Escalation:
         if self._level is Level.L2:
             self._enter(Level.L0, reason="authenticated", now_ms=now_ms)
 
+    def stand_down(self, now_ms: int) -> None:
+        """임무 밖(대기·수동)이다 — **래치되지 않은 단계(L1·L2)를 내린다** (잠정).
+
+        L3·F 는 그대로다. 사람이 확인해야 풀린다는 규칙은 상태와 무관하다.
+        무엇이 임무 밖인지는 `fsm.STANDBY` 가 정한다.
+        """
+        if self._level in (Level.L1, Level.L2):
+            self._release("standby", now_ms)
+
     def note_authentication_lost(self) -> None:
         """인증이 더 이상 유효하지 않다 — 유효 시간 만료(FR-10.2.4)나 미인증자 합류.
 

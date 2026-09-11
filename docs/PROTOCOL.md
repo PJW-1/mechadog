@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | 제어 명령 | Host PC → MechDog ESP32 | UDP | **10 Hz 고정** |
 | 텔레메트리 | MechDog ESP32 → Host PC | UDP | 10 Hz |
-| 영상 | XIAO → Host PC | HTTP MJPEG | 15 fps |
+| 영상 | XIAO → Host PC | HTTP MJPEG | 25 fps 상한 (NFR-1.3 하한 15 fps) |
 | LiDAR 스캔 `[Phase 2]` | 중계 ESP32 → Host PC | UDP | 정지 중 5 Hz |
 
 > 제어 명령은 **변화가 없어도 계속 보낸다.** 수신측 타임아웃(300ms)을 갱신하는 것이
@@ -75,7 +75,7 @@
 >
 > ⚠️ **처음 이 문서에 `step × angle` 이라고 적었고 그것은 틀렸다.** 근거가 `behavior/patrol.py` 의
 > 주석이었는데 **그 주석 자체가 검증되지 않은 가정**이었다. `host/slam/simulation.py` 의
-> `apply_move` 도 `sign(step)` 을 곱하고 있어 **후진 선회를 반대로 모사한다** — 실물과 맞지 않는다.
+> `apply_move` 도 `sign(step)` 을 곱해 **후진 선회를 반대로 모사하고 있었다** — 같은 날 함께 고쳤다.
 >
 > 벤더 서명이 `move(float speed_x, float angle_rate)` 인 것도 함께 적어 둔다 — **각도가 아니라 회전
 > 속도**이며, 그래서 같은 `angle` 을 오래 보내면 더 많이 돈다. `gait_calibration.turn_deg_per_sec` 가

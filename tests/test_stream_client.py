@@ -463,6 +463,23 @@ def test_stream_recovers_and_keeps_yielding(cfg: dict) -> None:
     assert reader.stats.failures >= 1
 
 
+def test_profile_hook_runs_before_every_connection(cfg: dict) -> None:
+    """⚠️ **카메라가 재부팅하면 펌웨어 기본값으로 돌아간다** — 붙을 때마다 다시 싣는다."""
+    net = _FakeNetwork(
+        [_FakeStream([part(jpeg(10))]), OSError("강제 차단"), _FakeStream([part(jpeg(20))])]
+    )
+    before: list[int] = []
+    reader = StreamReader(
+        _with_xiao(cfg, "10.0.0.9"),
+        opener=net.opener,
+        clock=lambda: 0,
+        sleeper=net.sleeper,
+        before_connect=lambda: before.append(net.opened),
+    )
+    list(reader.frames(max_frames=2))
+    assert before == [0, 1, 2], "실패한 시도를 포함해 연결을 열기 전에 매번 불린다"
+
+
 # ── 멈춘 스트림 ──────────────────────────────────────────────
 def test_silent_stream_is_treated_as_broken(cfg: dict) -> None:
     """⚠️ **TCP 는 조용한 것과 살아 있는 것을 구분해 주지 않는다.**

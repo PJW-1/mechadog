@@ -538,3 +538,14 @@ def test_blackbox_directory_is_required(cfg: dict) -> None:
     broken["logging"]["blackbox_dir"] = "  "
     with pytest.raises(ConfigError, match="logging.blackbox_dir"):
         validate_base_config(broken)
+
+
+def test_relative_paths_resolve_against_the_repo_not_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """⚠️ **저장소 밖에서 띄워도 같은 곳을 본다.** 절대 경로는 건드리지 않는다."""
+    from host.common.config import ROOT, repo_path
+
+    monkeypatch.chdir(tmp_path)
+    assert repo_path("models/coco.onnx") == ROOT / "models" / "coco.onnx"
+    assert repo_path(tmp_path / "logs") == tmp_path / "logs"

@@ -29,6 +29,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from host.common.config import repo_path
 from host.common.logging_setup import event_logger
 from host.vision.providers import log_selection, select_providers
 
@@ -245,7 +246,7 @@ class Detector:
         self._labels = tuple(labels)
         self._conf = float(spec["conf_threshold"])
         self._iou = float(spec.get("iou_threshold", 0.45))
-        self._model_path = Path(spec["model_path"])
+        self._model_path = repo_path(spec["model_path"])
         self._preferred = list(vision["providers"])
         self._factory = session_factory or _make_onnx_session
         self._session: Any | None = None
