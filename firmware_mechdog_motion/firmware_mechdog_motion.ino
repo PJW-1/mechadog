@@ -7,6 +7,7 @@
 #include "src/command_parser.h"
 #include "src/motion_hal.h"
 #include "src/sensor_hal.h"
+#include "src/stationary_ota.h"
 #include "src/telemetry_publisher.h"
 
 #if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
@@ -349,6 +350,10 @@ void setup() {
 
   g_motion.begin();
   g_motion.stop();
+  if (!mechadog::beginStationaryOta()) {
+    Serial.println("OTA initialization failed; restarting for bootloader recovery");
+    ESP.restart();
+  }
   const bool sensors_started = g_sensors.begin();
   Serial.printf("Sensors: enabled=%d task_started=%d\n", g_sensors.enabled(), sensors_started);
   if (g_sensors.enabled()) {
@@ -410,5 +415,8 @@ void loop() {
   // Safety decisions precede acquisition snapshot and telemetry publication.
   pollTelemetry();
   pollWifiDiagnostics();
+#if MECHADOG_ENABLE_OTA
+  mechadog::pollStationaryOta(WiFi.status() == WL_CONNECTED, g_sensors.snapshot(millis()));
+#endif
   delay(1);
 }

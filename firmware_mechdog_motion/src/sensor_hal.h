@@ -20,6 +20,7 @@
 // enforces the boundary.
 
 namespace mechadog {
+constexpr uint32_t kSensorMaxAgeMs = 200;
 
 enum class SensorError : uint8_t {
   None,

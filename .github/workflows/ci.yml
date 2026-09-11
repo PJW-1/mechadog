@@ -116,6 +116,15 @@ jobs:
               -o build/test_command_parser
           ./build/test_command_parser tests/fixtures
 
+      - name: Host unit test (OTA health window)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_ota_health.cpp \
+              -o build/test_ota_health
+          ./build/test_ota_health
+
       - name: Host unit test (telemetry encoder)
         if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
         run: |

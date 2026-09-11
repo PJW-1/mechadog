@@ -91,7 +91,7 @@ constexpr uint8_t kBatterySamples = 9;  // Odd count: the median is a real sampl
 constexpr uint8_t kImuAddress = 0x6A;
 constexpr uint8_t kSonarAddress = 0x77;
 constexpr uint32_t kSamplePeriodMs = 40;  // Official Madgwick filter.begin(25).
-constexpr uint32_t kMaxAgeMs = 200;
+constexpr uint32_t kMaxAgeMs = kSensorMaxAgeMs;
 constexpr uint32_t kCalibrationTimeoutMs = 2000;
 constexpr uint8_t kCalibrationSamples = 11;  // First sample + ten pairwise averages.
 
