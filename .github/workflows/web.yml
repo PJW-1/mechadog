@@ -1,0 +1,41 @@
+name: Web CI
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'web/design-prototype/**'
+      - '.github/workflows/web.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'web/design-prototype/**'
+      - '.github/workflows/web.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-quality:
+    name: Web Quality (build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/design-prototype
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/design-prototype/.nvmrc
+          cache: npm
+          cache-dependency-path: web/design-prototype/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --engine-strict
+      - name: Build static web
+        run: npm run build
+      - name: Test web behavior and module imports
+        run: npm test
