@@ -60,6 +60,26 @@
 | type | 필수 필드 | 범위 | HW_MechDog 매핑 |
 | :--- | :--- | :--- | :--- |
 | `MOVE` | `step`, `angle` | −100~100 mm / −30~30 deg | `move(step, angle)` |
+
+> ⚠️ **`angle` 의 부호 — 양수는 반시계(CCW) = 로봇의 좌회전이다.** ROS REP-103 과 같은 규약이며
+> **2026-09-11 실물로 확인했다** (`angle=+20` 에서 위에서 봤을 때 반시계).
+>
+> **이 한 줄이 없어서 `tools/teleop.py` 의 좌우가 뒤집힌 채로 있었다** — `right` 에 양수를 주고 있었고,
+> 시험(`test_teleop.py`)이 그 가정을 함께 못 박아 **시험도 틀려 있었다.** 펌웨어가 dry-run
+> (`MECHADOG_ENABLE_ACTUATORS=0`)이던 동안에는 서보가 돌지 않아 실물로도 드러날 수 없었다.
+>
+> ⚠️ **`step` 의 부호는 회전 방향에 영향을 주지 않는다 — 요는 `angle` 단독으로 결정된다.**
+>
+> **2026-09-11 실물 확인.** `move(-60, +20)` 은 엉덩이가 오른쪽으로 가며 후진했고(코는 왼쪽 = 반시계),
+> `move(-60, -20)` 은 엉덩이가 왼쪽(코는 오른쪽 = 시계)이었다. 즉 **후진에서도 양수가 반시계**다.
+>
+> ⚠️ **처음 이 문서에 `step × angle` 이라고 적었고 그것은 틀렸다.** 근거가 `behavior/patrol.py` 의
+> 주석이었는데 **그 주석 자체가 검증되지 않은 가정**이었다. `host/slam/simulation.py` 의
+> `apply_move` 도 `sign(step)` 을 곱하고 있어 **후진 선회를 반대로 모사한다** — 실물과 맞지 않는다.
+>
+> 벤더 서명이 `move(float speed_x, float angle_rate)` 인 것도 함께 적어 둔다 — **각도가 아니라 회전
+> 속도**이며, 그래서 같은 `angle` 을 오래 보내면 더 많이 돈다. `gait_calibration.turn_deg_per_sec` 가
+> 그 비율의 실측값이다.
 | `POSE` | `pitch`, `roll`, `height`, `dur` | 라이브러리 허용 범위 / dur ms | `transform(pose, dur)` |
 | `GAIT` | `lift_time`, `ground_time`, `height` | ms / ms / mm | `set_gait_params(...)` |
 | `STOP` | — | — | `move(0, 0)` |

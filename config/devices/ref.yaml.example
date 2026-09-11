@@ -27,7 +27,19 @@ servo_offset: [0, 0, 0, 0, 0, 0, 0, 0, 0]
 #  시연할 바닥에서 실측할 것 — 카펫/장판에 따라 달라진다
 gait_calibration:
   forward_mm_per_sec: null    # move(60, 0) 1초당 실제 전진 거리
+  # move(-60, 0) 1초당 실제 후진 거리. **비면 전진 값을 쓴다** — 그러면 회피
+  # 후진량이 그만큼 틀린다(mechdog-01 실측은 전진의 75%).
+  reverse_mm_per_sec: null
   turn_deg_per_sec: null      # move(60, 20) 원호 선회 시 1초당 실제 회전 각도
+  # move(60, 0) 직진 중 **방향이 틀어지는 비율**. mechdog-01 은 좌로 1.0 도/s 이며
+  # **요(회전)이라 각도 바이어스로 상쇄할 수 있다.** 횡슬립이면 각도로는 못 잡는다 —
+  # 어느 쪽인지는 창을 길게 잡고 각도가 자라는지 보면 갈린다.
+  forward_yaw_drift_deg_per_sec: null
+  # move(-60, 20) — **후진하며 선회**. 회피 시퀀스가 쓰는 조합이다(ADR-29).
+  # **비면 옛 구간표(후진 → 전진 선회)로 돌아가고, 그 개체의 회피는 순 여유가
+  # 음수일 수 있다** — mechdog-01 에서 -170mm 였다. 둘 다 재야 적용된다.
+  reverse_turn_deg_per_sec: null
+  reverse_turn_mm_per_sec: null
   measured_on: null           # 측정 바닥 (예: "장판", "카펫")
 
 measured:                     # 실측 근거는 docs/HARDWARE.md 1절과 PR 본문에 기록

@@ -38,20 +38,26 @@ from host.behavior.commander import Commander  # noqa: E402
 from host.behavior.fsm import Behavior, Event  # noqa: E402
 
 #: 키 → (전진 배수, 선회 배수). 방향키와 WASD 를 둘 다 받는다.
+#:
+#: ⚠️ **좌우가 뒤집혀 있었다** (2026-09-11 실물 조종에서 발견). `angle` 의 양수는
+#: **반시계 = 로봇의 좌회전**인데(ROS REP-103 과 같은 규약), 여기서는 `right` 에
+#: 양수를 주고 있었다. 펌웨어가 dry-run 이던 동안에는 드러날 수 없었다 — 서보가
+#: 돌지 않으니 방향을 확인할 방법이 없었다. 규약에 부호가 적혀 있지 않았던 것이
+#: 근본 원인이며 `docs/PROTOCOL.md` 에 함께 명시했다.
 BINDINGS: dict[str, tuple[float, float]] = {
     "up": (1.0, 0.0),
     "down": (-1.0, 0.0),
-    "left": (0.0, -1.0),
-    "right": (0.0, 1.0),
+    "left": (0.0, 1.0),
+    "right": (0.0, -1.0),
     "w": (1.0, 0.0),
     "s": (-1.0, 0.0),
-    "a": (0.0, -1.0),
-    "d": (0.0, 1.0),
+    "a": (0.0, 1.0),
+    "d": (0.0, -1.0),
 }
 #: 전진하면서 선회 — 대각 입력. 제자리 회전은 불가하므로(DR-11) 선회는 항상 호다.
 DIAGONALS: dict[str, tuple[float, float]] = {
-    "q": (1.0, -1.0),
-    "e": (1.0, 1.0),
+    "q": (1.0, 1.0),
+    "e": (1.0, -1.0),
 }
 
 HALT_KEYS = frozenset({" ", "\r", "\n"})

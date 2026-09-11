@@ -232,3 +232,115 @@ def test_avoid_only_registers_on_sequence_states(clock, cfg) -> None:
     b = _behavior(clock, cfg)
     with pytest.raises(ValueError):
         b.register_sequence("FAILSAFE", PatrolSequence(60))
+
+
+# ── 후진 속도는 전진 속도가 아니다 (2026-09-11 실측) ────────
+def test_reverse_uses_its_own_measured_speed(cfg) -> None:
+    """⚠️ **실측이 코드의 가정을 깼다.** 전진 103.9 · 후진 78.0 mm/s — 25% 느리다.
+
+    전진 값으로 후진 시간을 계산하면 200mm 목표에서 **50mm 가 부족해** 같은
+    장애물에 다시 붙는다. 두 배터리 상태에서 같은 비율이 나와 전압 영향이 아니다.
+    """
+    merged = _cfg(cfg)
+    merged["gait_calibration"] = dict(
+        merged["gait_calibration"], forward_mm_per_sec=100.0, reverse_mm_per_sec=75.0
+    )
+    phases = avoid_phases(merged)
+    assert phases is not None
+    reverse = next(ph for ph in phases if ph.name == "reverse")
+    # 200mm / 75mm/s = 2.667s — 전진 값으로 나눴다면 2.0s 였다
+    assert reverse.duration_ms == 2666
+    assert reverse.duration_ms > 2000, "전진 속도로 나누면 이 시험이 실패한다"
+
+
+def test_reverse_falls_back_to_forward_when_unmeasured(cfg) -> None:
+    """재지 않은 개체는 전진 값으로 돈다 — 회피를 아예 끄는 것보다 낫다.
+
+    ⚠️ 다만 **그 개체의 후진량은 그만큼 틀린다.** 되돌아가는 것이 옳다는 뜻이
+    아니라, 재기 전까지의 차악이라는 뜻이다.
+    """
+    merged = _cfg(cfg)
+    merged["gait_calibration"] = dict(
+        merged["gait_calibration"], forward_mm_per_sec=100.0, reverse_mm_per_sec=None
+    )
+    phases = avoid_phases(merged)
+    assert phases is not None
+    reverse = next(ph for ph in phases if ph.name == "reverse")
+    assert reverse.duration_ms == 2000  # 200 / 100
+
+
+# ── 후진하며 선회 (ADR-29 · 2026-09-11 실측이 설계를 바꿨다) ─
+MEASURED = {
+    "forward_mm_per_sec": 103.9,
+    "reverse_mm_per_sec": 78.0,
+    "turn_deg_per_sec": 6.8,
+    "reverse_turn_deg_per_sec": 6.6,
+    "reverse_turn_mm_per_sec": 69.7,
+    "measured_on": "2026-09-11",
+}
+
+
+def _measured(cfg: dict, **override: float | None) -> dict:
+    merged = dict(cfg)
+    merged["gait_calibration"] = dict(MEASURED, **override)
+    return merged
+
+
+def test_reverse_turn_replaces_the_reverse_then_turn_pair(cfg) -> None:
+    """⚠️ **전진하며 돌면 후진으로 번 여유를 되돌려 준다.**
+
+    제자리 회전이 불가하므로(ADR-11) 선회가 반드시 이동을 동반하는데, 실측
+    선회 속도가 6.8 도/s 라 30도에 4.4초가 걸리고 그 동안 84mm/s 로 **370mm 를
+    전진했다** — 후진 200mm 를 다 먹고 **순 여유가 -170mm**, 즉 회피가 장애물에
+    더 붙었다. 후진하며 돌면 한 구간으로 줄고 여유가 양수가 된다.
+    """
+    phases = avoid_phases(_measured(cfg))
+    assert phases is not None
+    assert [ph.name for ph in phases] == ["settle", "reverse_turn", "verify"]
+    escape = phases[1]
+    assert escape.step_mm < 0, "후진이어야 여유가 벌어진다"
+    assert escape.angle_deg == cfg["gait"]["turn_angle_deg"], "부호는 그대로 좌선회"
+
+
+def test_reverse_turn_gains_clearance_instead_of_losing_it(cfg) -> None:
+    """**이 시험이 수정의 목적이다** — 순 여유가 목표(200mm)를 넘는지 본다."""
+    phases = avoid_phases(_measured(cfg))
+    assert phases is not None
+    escape = next(ph for ph in phases if ph.name == "reverse_turn")
+    retreat_mm = escape.duration_ms / 1000 * MEASURED["reverse_turn_mm_per_sec"]
+    assert retreat_mm >= cfg["gait"]["reverse_distance_mm"]
+    assert retreat_mm == pytest.approx(316.8, abs=1.0)
+
+
+def test_reverse_turn_time_satisfies_the_slower_of_the_two_goals(cfg) -> None:
+    """각도와 여유 **둘 다** 만족해야 한다.
+
+    각도만 보면 여유가 모자랄 수 있고, 여유만 보면 방향 전환이 모자라 같은
+    장애물을 다시 만난다. 그래서 오래 걸리는 쪽을 쓴다.
+    """
+    # 각도가 느린 쪽: 30도 / 6.6 = 4.545s > 200mm / 69.7 = 2.869s
+    by_angle = avoid_phases(_measured(cfg))
+    assert by_angle is not None
+    assert by_angle[1].duration_ms == 4545
+
+    # 여유가 느린 쪽: 30도 / 30 = 1.0s < 200mm / 50 = 4.0s
+    by_clearance = avoid_phases(
+        _measured(cfg, reverse_turn_deg_per_sec=30.0, reverse_turn_mm_per_sec=50.0)
+    )
+    assert by_clearance is not None
+    assert by_clearance[1].duration_ms == 4000
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"reverse_turn_deg_per_sec": None}, {"reverse_turn_mm_per_sec": None}],
+)
+def test_half_measured_reverse_turn_keeps_the_old_phases(cfg, override: dict) -> None:
+    """⚠️ **한쪽만 재고 적용하면 시간을 아무 값으로나 계산하게 된다.**
+
+    둘 다 있어야 각도·여유 두 목표를 비교할 수 있다. 없으면 옛 구간표로 돌아가고
+    — 그 개체에서는 위의 여유 문제가 그대로 남으므로 `2.2.3` 을 먼저 재야 한다.
+    """
+    phases = avoid_phases(_measured(cfg, **override))
+    assert phases is not None
+    assert [ph.name for ph in phases] == ["settle", "reverse", "turn", "verify"]

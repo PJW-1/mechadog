@@ -24,6 +24,12 @@ def last(lines: list[str]) -> dict:
     return json.loads(lines[-1])
 
 
+#: ⚠️ **이 표가 뒤집힌 채로 시험에 고정돼 있었다** (2026-09-11 실물 조종에서 발견).
+#:
+#: `angle` 의 양수는 **반시계 = 로봇의 좌회전**인데(`docs/PROTOCOL.md` 부호 규약)
+#: `right` 에 양수를 주고 있었다. 시험이 그 가정을 함께 못 박고 있었으므로 **시험도
+#: 틀려 있었다** — 규약에 부호가 적혀 있지 않아 검증할 근거가 없었고, 펌웨어가
+#: dry-run 이던 동안에는 서보가 돌지 않아 실물로도 드러날 수 없었다.
 @pytest.mark.parametrize(
     ("key", "expected"),
     [
@@ -31,16 +37,30 @@ def last(lines: list[str]) -> dict:
         ("w", (60, 0)),
         ("down", (-60, 0)),
         ("s", (-60, 0)),
-        ("left", (0, -20)),
-        ("a", (0, -20)),
-        ("right", (0, 20)),
-        ("d", (0, 20)),
-        ("q", (60, -20)),
-        ("e", (60, 20)),
+        # 좌 = 양수 (반시계)
+        ("left", (0, 20)),
+        ("a", (0, 20)),
+        ("right", (0, -20)),
+        ("d", (0, -20)),
+        ("q", (60, 20)),
+        ("e", (60, -20)),
     ],
 )
 def test_key_maps_to_step_and_angle(key: str, expected: tuple[float, float]) -> None:
     assert resolve(key, step_mm=60, turn_deg=20) == expected
+
+
+def test_left_is_positive_and_right_is_negative() -> None:
+    """부호 규약을 **단독으로** 못 박는다 — 표를 고칠 때 함께 봐야 한다.
+
+    ⚠️ 양수 = 반시계 = 좌회전 (ROS REP-103 과 같은 규약). 2026-09-11 실물에서
+    `angle=+20` 이 반시계로 도는 것을 확인했다.
+    """
+    left = resolve("left", step_mm=60, turn_deg=20)
+    right = resolve("right", step_mm=60, turn_deg=20)
+    assert left is not None and right is not None
+    assert left[1] > 0, "좌회전은 양수여야 한다"
+    assert right[1] < 0, "우회전은 음수여야 한다"
 
 
 def test_non_movement_key_resolves_to_nothing() -> None:
