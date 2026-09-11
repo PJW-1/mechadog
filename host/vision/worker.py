@@ -31,6 +31,7 @@ from typing import Any
 
 from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
+from host.vision.badge import BadgeReader, Marker
 from host.vision.detector import Detection
 from host.vision.person import PersonGate, Sighting
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
@@ -71,6 +72,12 @@ class VisionResult:
     #: 추적도 게이트와 같은 이유로 **추론마다** 돌려야 한다 — 10Hz 로 관측하면
     #: 프레임 간 겹침이 그만큼 줄어 ID 가 끊긴다.
     tracks: tuple[Track, ...]
+    #: 이 프레임에서 읽은 사원증 마커 (FR-10.1 · `3.8.1`).
+    #:
+    #: ⚠️ **추적 대상이 있을 때만 읽는다** — FR-3.1.1 의 PPE 게이팅과 같은 원칙이고,
+    #: 애초에 귀속시킬 사람이 없으면 인증이 성립하지 않는다. 마커 없는 VGA 프레임에
+    #: 0.75ms 가 들므로 빈 순찰 구간에서 그만큼을 아낀다.
+    markers: tuple[Marker, ...]
 
 
 @dataclass
@@ -111,6 +118,7 @@ class VisionWorker:
         self._reader = reader
         self._gate = PersonGate(config)
         self._tracker = PersonTracker(config)
+        self._badges = BadgeReader(config)
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
@@ -262,6 +270,8 @@ class VisionWorker:
         self.stats.note(elapsed)
         sighting = self._gate.observe(completed, detections)
         tracks = self._tracker.update(detections, completed)
+        # 사람이 없으면 사원증도 읽지 않는다 (위 `markers` 주석).
+        markers = self._badges.read(image) if tracks else ()
         result = VisionResult(
             detections=tuple(detections),
             frame_seq=frame.seq,
@@ -270,6 +280,7 @@ class VisionWorker:
             inference_ms=elapsed,
             sighting=sighting,
             tracks=tracks,
+            markers=markers,
         )
         with self._slot_lock:
             # ⚠️ **덮어쓴다. 쌓지 않는다.** 낡은 검출로 판단하면 로봇이 과거를 보고

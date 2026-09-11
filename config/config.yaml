@@ -212,7 +212,17 @@ auth:
   max_attempts: 2              # FR-10.3
   timeout_s: 30                # FR-10.3
   bind_to_track_id: true       # FR-3.6.2 — 인증을 추적 ID 에 귀속
-  badge_marker_map: {}         # FR-10.1 — ArUco ID -> 사번/이름
+  # FR-10.1 — 사원증에 인쇄할 ArUco 사전.
+  #
+  # ⚠️ **바꾸면 인쇄한 사원증도 바꿔야 한다.** 그래서 코드가 아니라 여기 둔다.
+  # 비트가 적을수록 작게·멀리서도 읽힌다 — 사원증은 1~3m 에서 VGA 로 읽어야 하고
+  # 필요한 ID 는 팀 규모만큼이므로 4x4·50개로 충분하다.
+  badge_dictionary: DICT_4X4_50
+  # FR-10.1 — ArUco ID -> 사번/이름. **여기 없는 ID 는 미승인이다.**
+  # 시연용 두 장이며 실제 운용에서는 발급 대장이 정본이 된다.
+  badge_marker_map:
+    0: "EMP-001"
+    1: "EMP-002"
   passphrase_command_ids: []   # FR-10.2 — WonderEcho 인식 ID 목록
 
 # ── 자세 상승 (FR-9.2.2) ──────────────────────────────────────

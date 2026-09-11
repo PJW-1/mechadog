@@ -94,7 +94,7 @@ RAISED_BY: dict[str, Level] = {
     "ESTOP": Level.F,
 }
 
-#: 인증 성공으로 보는 사건. L1·L2 를 L0 으로 내린다 (FR-10).
+#: 인증 성공으로 보는 사건. **L2 만** L0 으로 내린다 (FR-10) — `note_authenticated` 참고.
 AUTH_CLEARS: frozenset[str] = frozenset({"AUTH_OK"})
 
 #: F 해제로 보는 사건. **`RESET_CONFIRMED` 는 로봇이 래치를 풀었다는 확인이다**
@@ -226,17 +226,37 @@ class Escalation:
             self.raise_to(Level.L1, reason="person_present", now_ms=now_ms)
 
     def note_authenticated(self, now_ms: int) -> None:
-        """인증 성공 (FR-10). **L1·L2 를 L0 으로 내리고 승격을 막는다.**
+        """인증 성공 (FR-10). **L2 를 L0 으로 내리고 승격을 막는다.**
 
         ⚠️ **L3 는 내리지 않는다.** 진입 원인이 인증 실패였더라도 원인별 해제를
         만들지 않기로 했다(모듈 주석). 통과 사실은 `authenticated` 로 **표시만**
         하고 해제는 관리자 확인이 한다.
+
+        ⚠️ **L1 도 내리지 않는다.** 단계 표에 `L1` 의 해제는 *미검출 5초* 하나뿐이며
+        *인증 성공*은 `L2` 줄에만 있다. 처음에는 둘을 같이 내렸는데, 그러면 인증된
+        사람이 앞에 서 있는 동안 **10Hz 로 `L0↔L1` 이 진동한다** — 관측이 L1 로
+        올리고 인증이 곧바로 L0 으로 내리기 때문이다. 실기에서 초당 20줄씩 로그가
+        쏟아지고 눈 LED 가 파랑/노랑으로 깜빡이는 것으로 드러났다. **시험 786건이
+        놓쳤다** — 두 호출을 번갈아 반복하는 시험이 없었기 때문이다.
+
+        인증된 사람 앞에서 L1(관찰)에 머무는 것은 옳다. 로봇은 그 사람을 실제로
+        보고 있고, 승격만 하지 않는다.
         """
         self._authenticated = True
         if self.latched:
             return
-        if self._level in (Level.L1, Level.L2):
+        if self._level is Level.L2:
             self._enter(Level.L0, reason="authenticated", now_ms=now_ms)
+
+    def note_authentication_lost(self) -> None:
+        """인증이 더 이상 유효하지 않다 — 유효 시간 만료(FR-10.2.4)나 미인증자 합류.
+
+        ⚠️ **표시만 지운다. 단계는 올리지 않는다.** 만료된 순간 경보로 뛰면 60초마다
+        한 번씩 경보가 울린다. 승격은 평소처럼 `tick()` 의 시간 조건이 정한다 — 즉
+        L1 에 머문 시간이 이미 임계를 넘었다면 다음 틱에 L2 로 올라가고, 그것이
+        *"만료 후 재인증을 요구한다"* (FR-10.2.4) 의 뜻이다.
+        """
+        self._authenticated = False
 
     def tick(self, now_ms: int) -> None:
         """시간으로 정해지는 것들을 처리한다 — L1 해제 · **L2 승격** · L2 승급.

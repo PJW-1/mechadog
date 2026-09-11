@@ -157,6 +157,26 @@ def validate_base_config(config: dict[str, Any]) -> None:
             f"({period_ms}ms) 보다 짧아 한 번만 놓쳐도 ID 가 바뀜"
         )
 
+    # 인증 (FR-10) — 사원증 사전과 발급 대장.
+    # 절의 존재는 `REQUIRED_SECTIONS` 가 이미 본다 — 여기서 또 보면 죽은 코드가 된다.
+    auth = config["auth"]
+    dictionary = auth.get("badge_dictionary")
+    # 이름이 `cv2.aruco` 에 있는지는 `BadgeReader` 가 기동 때 확인한다 — 여기서
+    # `cv2` 를 import 하면 설정 검증이 OpenCV 를 요구하게 된다.
+    if not isinstance(dictionary, str) or not dictionary.strip():
+        raise ConfigError("auth.badge_dictionary 는 비어 있지 않은 문자열이어야 함")
+    _require_positive(auth, "session_valid_s")
+    _require_positive(auth, "max_attempts")
+    _require_positive(auth, "timeout_s")
+    badges = auth.get("badge_marker_map")
+    if badges is None or not isinstance(badges, dict):
+        raise ConfigError("auth.badge_marker_map 은 사전(dict)이어야 함")
+    for key, value in badges.items():
+        if not isinstance(key, int) or isinstance(key, bool):
+            raise ConfigError(f"auth.badge_marker_map 키는 ArUco ID(정수)여야 함: {key!r}")
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"auth.badge_marker_map[{key}] 는 비어 있지 않은 문자열이어야 함")
+
     backoff = vision.get("reconnect_backoff_s")
     if not isinstance(backoff, list) or not backoff:
         raise ConfigError("vision.reconnect_backoff_s 는 비어 있지 않은 목록이어야 함")

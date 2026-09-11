@@ -114,7 +114,7 @@
 | `3.5.4` | TRACK 락온 제어기 | `behavior/tracker.py` | 1.0 |
 | `3.6.1` | 구역별 기준 스냅샷·객체목록 저장 | `behavior/change_detect.py` | 1.0 |
 | `3.7.1` | PPE 데이터셋 확보 및 라벨링 | `datasets/ppe/` + 데이터 카드 | 1.5 |
-| `3.8.1` | 사원증 ArUco 인증 | `behavior/auth.py` | 0.5 |
+| `3.8.1` | 사원증 ArUco 인증 | `behavior/auth.py`, `vision/badge.py`, `tools/make_badges.py` | 0.5 |
 | `4.4.3` | 이벤트 블랙박스 | `common/blackbox.py` | 0.5 |
 | `4.5.3` | 명령 API (오버라이드·E-Stop) | 동일 | 0.5 |
 | `5.3.4` | 릴리스 잡 | 동일 | 0.5 |

@@ -14,6 +14,7 @@ from host.behavior.fsm import Event
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
 from host.runtime import Runtime, watch_console
+from host.vision.badge import Marker
 from host.vision.person import Sighting
 from host.vision.tracker import Track
 from host.vision.worker import VisionResult
@@ -98,6 +99,7 @@ def vision_result(
     present: bool,
     hits: int,
     last_seen_ms: int | None,
+    markers: tuple[Marker, ...] = (),
 ) -> VisionResult:
     """런타임 통합 시험용 판정 결과."""
     return VisionResult(
@@ -121,6 +123,8 @@ def vision_result(
             if hits
             else ()
         ),
+        # 사원증은 기본적으로 보이지 않는다 — 인증 경로를 보는 시험만 넣어 준다.
+        markers=markers,
     )
 
 
@@ -760,3 +764,142 @@ def test_console_reset_key_asks_for_reset(config: dict, clock: FakeClock) -> Non
     )
     runtime.ingest(telemetry(enc, state="IDLE", safety_latched=False), clock.advance(100))
     assert runtime.escalation.level is Level.L0
+
+
+# ── 사원증 인증 배선 (3.8.1) ────────────────────────────────
+#
+# 판정기 자체는 `test_auth.py` 가 전수로 본다. 여기서 보는 것은 **연결**이다 —
+# 특히 `3.8.3` 을 올릴 때 비워 둔 `AUTH_REQUIRED` 자리가 실제로 채워졌는가.
+
+
+def _badge(marker_id: int) -> tuple[Marker, ...]:
+    """추적 박스 (0,0)~(10,20) 안에 있는 사원증 하나."""
+    return (Marker(marker_id=marker_id, center=(5.0, 10.0)),)
+
+
+def _stand(runtime: Runtime, vision: FakeVision, *, seq: int, at_ms: int, markers=()) -> None:
+    vision.result = vision_result(
+        seq, at_ms, present=True, hits=3, last_seen_ms=at_ms, markers=markers
+    )
+    runtime.tick(at_ms)
+
+
+def test_auth_request_is_issued_when_the_level_reaches_l2(config: dict, clock: FakeClock) -> None:
+    """⚠️ **`3.8.3` 이 비워 둔 자리다.**
+
+    L2 에 올라도 `AUTH_REQUIRED` 를 내는 쪽이 없으면 `AUTH_WAIT` 에 못 들어가고,
+    그러면 30초 타이머가 돌지 않아 `AUTH_FAILED` 를 낼 경로가 사라진다 — L2 가
+    출구 없이 남는다.
+    """
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+    for i in range(hold_ms // 100 + 1):
+        _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+    assert runtime.escalation.level is Level.L2
+    assert runtime.behavior.state == "AUTH_WAIT"
+
+
+def test_full_walkthrough_person_to_authenticated(config: dict, clock: FakeClock) -> None:
+    """사람 등장 → 관찰 → 인증 요구 → 사원증 제시 → 정상 복귀. **한 바퀴다.**"""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+
+    _stand(runtime, vision, seq=1, at_ms=100)
+    assert (runtime.escalation.level, runtime.behavior.state) == (Level.L1, "ALERT")
+
+    for i in range(1, hold_ms // 100 + 1):
+        _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+    assert (runtime.escalation.level, runtime.behavior.state) == (Level.L2, "AUTH_WAIT")
+
+    at = 100 + hold_ms + 100
+    marker_id = next(iter(config["auth"]["badge_marker_map"]))
+    _stand(runtime, vision, seq=999, at_ms=at, markers=_badge(marker_id))
+    assert runtime.escalation.level is Level.L0, "인증 성공은 L2 를 L0 으로 내린다"
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.auth.holder(1, at) == config["auth"]["badge_marker_map"][marker_id]
+
+
+def test_unknown_badges_exhaust_attempts_and_alarm(config: dict, clock: FakeClock) -> None:
+    """등록되지 않은 사원증 2장 → `AUTH_FAILED` → L3 (FR-10.3)."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    _stand(runtime, vision, seq=1, at_ms=100, markers=_badge(41))
+    assert runtime.escalation.level is Level.L1, "한 번 실패로는 경보가 아니다"
+    _stand(runtime, vision, seq=2, at_ms=200, markers=_badge(42))
+    assert runtime.escalation.level is Level.L3
+
+
+def test_expired_session_asks_again(config: dict, clock: FakeClock) -> None:
+    """FR-10.2.4 — 유효 시간이 지나면 다시 인증을 요구한다.
+
+    ⚠️ 인증 표시를 `AUTH_OK` **사건**만으로 유지하면 만료를 놓쳐 **그 사람 앞에서는
+    영원히 승격되지 않는다.** 그래서 매번 상태를 물어 반영한다.
+    """
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    marker_id = next(iter(config["auth"]["badge_marker_map"]))
+    _stand(runtime, vision, seq=1, at_ms=100, markers=_badge(marker_id))
+    assert runtime.escalation.authenticated is True
+
+    valid_ms = int(config["auth"]["session_valid_s"]) * 1000
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+    at = 100 + valid_ms
+    for i in range(hold_ms // 100 + 2):  # 만료 뒤에도 계속 서 있다
+        _stand(runtime, vision, seq=100 + i, at_ms=at + i * 100)
+    assert runtime.escalation.authenticated is False
+    assert runtime.escalation.level is Level.L2
+
+
+def test_session_dies_with_the_track(config: dict, clock: FakeClock) -> None:
+    """FR-3.6.3 — 추적 ID 가 사라지면 세션도 만료된다."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    marker_id = next(iter(config["auth"]["badge_marker_map"]))
+    _stand(runtime, vision, seq=1, at_ms=100, markers=_badge(marker_id))
+    assert runtime.auth.holder(1, 100) is not None
+
+    vision.result = vision_result(2, 200, present=False, hits=0, last_seen_ms=100)
+    runtime.tick(200)
+    assert runtime.auth.holder(1, 200) is None
+
+
+def test_patrol_survives_a_reset_on_start(config: dict, clock: FakeClock) -> None:
+    """⚠️ **실기가 잡은 결함이다.** `--reset-on-start` 와 `--patrol` 을 함께 주면
+    순찰이 조용히 취소됐다.
+
+    기동 때 해제를 요청하고 곧바로 순찰을 시작하면, 로봇이 `safety_latched=true`
+    를 보고해 호스트가 `FAILSAFE` 로 따라간 뒤 **해제가 정착하면서 `IDLE` 로
+    내려온다.** 로그에는 순찰을 시작했다고 적혀 있어서 더 나쁘다.
+    """
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.request_reset()
+    runtime.ask_patrol()
+
+    # 래치된 로봇이 먼저 보고한다 — 호스트가 따라가 FAILSAFE 로 간다.
+    runtime.ingest(telemetry(enc, state="FAILSAFE", safety_latched=True), clock.ms)
+    assert runtime.behavior.state == "FAILSAFE"
+    runtime.tick(clock.advance(100))
+
+    # 로봇이 래치를 풀면 IDLE 로 내려오고, **그때** 순찰이 시작된다.
+    runtime.ingest(telemetry(enc, state="IDLE", safety_latched=False), clock.advance(100))
+    assert runtime.behavior.state == "IDLE"
+    runtime.tick(clock.advance(100))
+    assert runtime.behavior.state == "PATROL", "해제 뒤에 순찰이 살아나야 한다"
+
+
+def test_asking_patrol_twice_does_not_double_fire(config: dict, clock: FakeClock) -> None:
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.ask_patrol()
+    runtime.tick(clock.ms)
+    before = runtime.stats.transitions
+    runtime.tick(clock.advance(100))
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.stats.transitions == before
