@@ -344,3 +344,44 @@ def test_half_measured_reverse_turn_keeps_the_old_phases(cfg, override: dict) ->
     phases = avoid_phases(_measured(cfg, **override))
     assert phases is not None
     assert [ph.name for ph in phases] == ["settle", "reverse", "turn", "verify"]
+
+
+# ── 직진 보정 (2026-09-12 · 데드밴드 실측) ─────────────────
+def test_patrol_carries_the_measured_straight_bias(clock, cfg) -> None:
+    """⚠️ **각도 0 을 보내면 똑바로 가지 않는다.**
+
+    실측에서 직진 명령이 좌로 1.0 도/s 씩 돌았다 — 10초 구간마다 9cm 씩 밀리고
+    방향은 누적된다. 그래서 보정 각도를 직진 명령에 얹는다.
+    """
+    merged = _cfg(cfg)
+    merged["gait_calibration"] = dict(merged["gait_calibration"], straight_bias_deg=-8.0)
+    b = _behavior(clock, merged)
+    register_actions(b, merged)
+    b.event(Event.START_PATROL, now_ms=clock.ms)
+    assert moves(b, clock.ms)[0]["angle"] == -8.0
+
+
+def test_patrol_without_a_measured_bias_sends_zero(clock, cfg) -> None:
+    """⚠️ **다른 기체의 값을 기본값으로 두면 틀린 방향으로 휜다.**
+
+    재지 않은 개체는 0 이며, 그 사실이 기동 로그에 남는다 — 조용히 휘게 두지
+    않는다. 편향은 개체마다 방향도 크기도 다르다.
+    """
+    merged = _cfg(cfg)
+    b = _behavior(clock, merged)
+    report = register_actions(b, merged)
+    b.event(Event.START_PATROL, now_ms=clock.ms)
+    assert moves(b, clock.ms)[0]["angle"] == 0.0
+    assert "미실측" in report["PATROL"]
+
+
+def test_avoid_phases_do_not_take_the_straight_bias(cfg) -> None:
+    """회피 구간은 보정을 받지 않는다 — **선회 각도가 바뀌면 도는 양이 틀린다.**
+
+    보정은 *직진* 명령을 곧게 만드는 값이고, 회피는 이미 각도를 의도적으로 준다.
+    """
+    merged = _measured(cfg, straight_bias_deg=-8.0)
+    phases = avoid_phases(merged)
+    assert phases is not None
+    escape = next(ph for ph in phases if ph.name == "reverse_turn")
+    assert escape.angle_deg == cfg["gait"]["turn_angle_deg"]

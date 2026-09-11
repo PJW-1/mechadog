@@ -47,13 +47,23 @@ class PatrolSequence:
 
     10초 타이머는 `3.4.3` 이 `SCAN` 으로 보내고, 장애물은 로봇이 `AVOID` 를 보고해
     빠져나간다. 그래서 이 시퀀스는 *"순찰 중일 때 계속 앞으로"* 하나만 맡는다.
+
+    ⚠️ **각도 0 을 보내면 똑바로 가지 않는다.** `mechdog-01` 은 직진 명령에서
+    **좌로 1.0 도/s** 씩 요가 돈다(2026-09-11 실측 · 10초에 10도). 10초 구간마다
+    9cm 씩 밀리고 방향은 누적된다. 그래서 실측한 보정 각도를 **직진 명령에 얹는다.**
+
+    ⚠️ **이것은 개루프 보정이라 바닥·배터리가 바뀌면 다시 틀린다.** 제대로 된
+    해법은 요를 보고 닫는 것이며(측위의 `patrol.steering_for` 는 이미 폐루프,
+    펌웨어 텔레메트리 `4.1.4` 가 오면 IMU 요로 직접), 이 보정은 **측위 없는
+    Phase 1 순찰이 벽으로 휘지 않게 하는 임시 수단**이다.
     """
 
-    def __init__(self, step_mm: float) -> None:
+    def __init__(self, step_mm: float, bias_deg: float = 0.0) -> None:
         self._step_mm = float(step_mm)
+        self._bias_deg = float(bias_deg)
 
     def __call__(self, commander: Commander, now_ms: int) -> None:  # noqa: ARG002
-        commander.drive(self._step_mm, 0.0)
+        commander.drive(self._step_mm, self._bias_deg)
 
 
 class AvoidSequence:
@@ -215,8 +225,17 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
     """
     result: dict[str, str] = {}
 
-    behavior.register_sequence("PATROL", PatrolSequence(config["gait"]["step_length_mm"]))
-    result["PATROL"] = "등록"
+    # ⚠️ **보정을 재지 않은 개체는 0 이다** — 그 개체의 순찰은 휜다(`2.2.3`).
+    # 다른 기체의 값을 기본값으로 두면 **틀린 방향으로 휘게** 만든다.
+    bias_deg = float((config.get("gait_calibration") or {}).get("straight_bias_deg") or 0.0)
+    behavior.register_sequence("PATROL", PatrolSequence(config["gait"]["step_length_mm"], bias_deg))
+    result["PATROL"] = "등록" if bias_deg else "등록 (직진 보정 미실측 — 휜다)"
+    if not bias_deg:
+        LOG.warning(
+            "straight_bias_unmeasured",
+            effect="직진 명령이 그대로 나가 순찰이 한쪽으로 휜다",
+            remedy="tools/gait_calibrate.py --mode forward --bias-deg <각도> (WBS 2.2.3)",
+        )
 
     phases = avoid_phases(config)
     if phases is None:

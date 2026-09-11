@@ -98,13 +98,19 @@ SECONDARY_KEYS: dict[str, str] = {"reverse_turn": "reverse_turn_mm_per_sec"}
 #: 후진 200mm 로 물러난 뒤 선회하는데, 그 선회가 앞으로 150mm 를 되돌려 주면
 #: **순 여유가 50mm 밖에 남지 않고 같은 장애물에 다시 붙는다.** 그 산수를 하려면
 #: 선회 중 이동량이 있어야 한다.
+#: ⚠️ **거리는 전부 "시작점 → 끝점 직선거리(현)" 다.**
+#:
+#: 작은 각도에서는 현·정면 성분·호 길이가 거의 같아 표기가 없어도 문제가 없었다.
+#: 93.5도를 돌린 측정에서 셋이 **32% 까지 갈렸고** 그때 혼동이 드러났다. 현으로
+#: 적으면 각도와 함께 나머지로 변환된다 — `정면 성분 = 현 x cos(각/2)`,
+#: `반경 = 현 / (2 sin(각/2))`. 호 길이는 줄자로 재기 어렵고 쓸 데도 없다.
 MEASURES: dict[str, tuple[str, str, str, str]] = {
-    "forward": ("이동 거리", "mm", "방향 변화", "도"),
-    "reverse": ("이동 거리", "mm", "방향 변화", "도"),
-    "turn_right": ("방향 변화", "도", "이동 거리", "mm"),
-    "turn_left": ("방향 변화", "도", "이동 거리", "mm"),
+    "forward": ("직선거리", "mm", "방향 변화", "도"),
+    "reverse": ("직선거리", "mm", "방향 변화", "도"),
+    "turn_right": ("방향 변화", "도", "직선거리", "mm"),
+    "turn_left": ("방향 변화", "도", "직선거리", "mm"),
     # 회피의 답. **후진과 선회를 동시에** 하면 선회가 여유를 깎지 않는다.
-    "reverse_turn": ("방향 변화", "도", "후퇴 거리", "mm"),
+    "reverse_turn": ("방향 변화", "도", "후퇴 직선거리", "mm"),
 }
 
 #: 구동 전 정지 시간. 온보드가 자세를 가라앉힐 시간을 준다 (회피 시퀀스의 `settle` 과 같은 이유).
@@ -292,6 +298,33 @@ def looks_swapped(mode: str, primary: float, secondary: float | None) -> bool:
     if unit == "도" and abs(primary) > DEGREE_TYPO_LIMIT:
         return True
     return second_unit == "도" and secondary is not None and abs(secondary) > DEGREE_TYPO_LIMIT
+
+
+def discard_reason(acks: Acks, host: str) -> str | None:
+    """이 시행을 버려야 하는 이유. 쓸 만하면 `None`.
+
+    ⚠️ **응답이 하나도 없는 것을 통과시키고 있었다.** `응답 없음` 을 *"목업이거나
+    ACK 미지원"* 으로 넘기고 측정값을 그대로 물었다 — 실기 주소가 비어 있으면
+    패킷이 아무 데도 도착하지 않는데 **사람은 그것을 모르고 줄자 값을 넣는다.**
+    2026-09-12 에 실제로 겪었다: 전원을 다시 켠 로봇이 DHCP 로 다른 주소를 받아
+    갔고, 도구는 조용히 빈 주소로 10초를 쏜 뒤 거리를 물었다.
+
+    목업(`127.*`)은 ACK 를 주지 않아도 정상이므로 그쪽만 통과시킨다.
+    """
+    if acks.total == 0:
+        if host.startswith("127."):
+            return None
+        return (
+            f"**{host} 가 한 번도 응답하지 않았다.** 주소가 바뀌었거나 꺼져 있다 — "
+            "패킷이 아무 데도 도착하지 않았으므로 로봇은 한 발도 움직이지 않았다."
+        )
+    if acks.applied == 0:
+        # 응답은 오는데 하나도 적용하지 않았다. 침묵 300ms 로 래치가 걸린 경우다.
+        return (
+            f"**로봇이 적용한 명령이 0개다.** 래치 {acks.latched}회 · "
+            f"폐기 {acks.discarded}회 — 침묵이 300ms 를 넘었거나 원인이 남아 있다."
+        )
+    return None
 
 
 def ask_measurement(mode: str, index: int, total: int) -> tuple[float, float | None] | None:
@@ -601,15 +634,9 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 측
             print(f"    실제 송신 창 {actual:.3f}초 · 패킷 {packets}개 · {acks.describe()}")
             if args.dry_run:
                 continue
-            # ⚠️ **로봇이 하나도 적용하지 않았으면 묻지 않는다.** 그 상태에서 거리를
-            # 받아 적으면 *"쟀다"* 가 되고, 실제로는 서 있던 로봇의 값이 된다.
-            # 오늘 이 실패를 겪었다 — 침묵 1초에 워치독이 걸려 전부 무시됐다.
-            if acks.total > 0 and acks.applied == 0:
-                print(
-                    f"    ⚠️ **로봇이 적용한 명령이 0개다.** 래치 {acks.latched}회 · "
-                    f"폐기 {acks.discarded}회 — 이 시행을 버린다.\n"
-                    "       래치가 걸렸다면 침묵이 300ms 를 넘었거나 원인이 남아 있다."
-                )
+            reason = discard_reason(acks, args.host)
+            if reason is not None:
+                print(f"    ⚠️ {reason}\n       이 시행을 버린다.")
                 continue
             answer = ask_measurement(args.mode, index, args.trials)
             if answer is None:
