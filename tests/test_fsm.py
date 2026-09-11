@@ -439,3 +439,148 @@ def test_behavior_reads_both_timeouts_from_the_real_config(clock: FakeClock, cfg
     clock.advance(int(cfg["safety"]["link_loss_failsafe_ms"]))
     b.tick(clock.ms)
     assert b.state == "FAILSAFE"
+
+
+# ── 전수 검증 (WBS 6.2.2) ─────────────────────────────────────────
+
+
+def _all_defined_pairs() -> set[tuple[str, Event]]:
+    """전이표에서 실제로 유효한 (상태, 이벤트) 쌍을 전개한다. ANY를 모든 상태로 펼친다."""
+    pairs = set()
+    states = sorted(DIRECTIVES)
+    for t in TRANSITIONS:
+        if t.src == ANY:
+            for s in states:
+                pairs.add((s, t.event))
+        else:
+            pairs.add((t.src, t.event))
+    return pairs
+
+
+def _undefined_pairs() -> list[tuple[str, Event]]:
+    """전이표에 없는 (상태, 이벤트) 쌍. EXCLUSIVE로 막힌 것도 미정의다."""
+    defined = _all_defined_pairs()
+    states = sorted(DIRECTIVES)
+    result = []
+    for state in states:
+        exclusive = EXCLUSIVE.get(state)
+        for event in Event:
+            if (state, event) not in defined:
+                result.append((state, event))
+            elif exclusive is not None and event not in exclusive:
+                # EXCLUSIVE 봉인: 정의돼 있어도 EXCLUSIVE에 없으면 차단됨
+                result.append((state, event))
+    return result
+
+
+@pytest.mark.parametrize(
+    "transition", TRANSITIONS, ids=lambda t: f"{t.src}__{t.event.name}__{t.dst}"
+)
+def test_every_defined_transition_fires(transition: Transition) -> None:
+    """전이표의 모든 행이 실제로 동작한다.
+
+    ⚠️ ANY 출발지는 모든 상태에서 시도한다 — 하나라도 실패하면 표가 거짓이다.
+    """
+    sources = sorted(DIRECTIVES) if transition.src == ANY else [transition.src]
+    for src in sources:
+        if src == transition.dst:
+            continue
+        exclusive = EXCLUSIVE.get(src)
+        if exclusive is not None and transition.event not in exclusive:
+            continue  # EXCLUSIVE 봉인으로 막힌 조합은 별도 테스트
+        f = Fsm(initial=src)
+        result = f.handle(transition.event)
+        assert result, f"{src} + {transition.event.name} → {transition.dst} 가 동작하지 않는다"
+        assert f.state == transition.dst, (
+            f"{src} + {transition.event.name}: 기대 {transition.dst}, 실제 {f.state}"
+        )
+
+
+@pytest.mark.parametrize(
+    "state,event", _undefined_pairs(), ids=[f"{s}__{e.name}" for s, e in _undefined_pairs()]
+)
+def test_undefined_transition_is_silently_ignored(state: str, event: Event) -> None:
+    """표에 없는 조합은 상태를 바꾸지 않는다.
+
+    13상태 × 27이벤트 = 351개 조합 중 정의된 전이를 빼면 나머지는 무시돼야 한다.
+    이 시험이 **한 쌍이라도 빠지면 실패한다** — 전수의 뜻이 그것이다.
+    """
+    f = Fsm(initial=state)
+    result = f.handle(event)
+    assert not result, f"{state} + {event.name} 이 전이했다 — 표에 없는 조합이다"
+    assert f.state == state, f"{state} → {f.state} (이벤트: {event.name})"
+
+
+@pytest.mark.parametrize("event", [e for e in Event if e != Event.RESET_CONFIRMED])
+def test_failsafe_blocks_every_event_except_reset(event: Event) -> None:
+    """FAILSAFE는 RESET_CONFIRMED 외의 모든 사건을 무시한다.
+
+    ⚠️ 이것이 DR-16의 핵심이다 — 원인이 사라져도 사람이 확인해야 나온다.
+    """
+    f = Fsm(initial="FAILSAFE")
+    assert not f.handle(event), f"FAILSAFE에서 {event.name}이 통과했다"
+    assert f.state == "FAILSAFE"
+
+
+def test_no_self_loops_in_transition_table() -> None:
+    """전이표에 src == dst인 행이 없다.
+
+    자기로 가는 전이는 *"상태가 안 바뀐다"* 와 구분되지 않고, 훅도 재실행된다.
+    의도적이면 주석과 함께 이 시험을 고쳐야 한다.
+    """
+    loops = [t for t in TRANSITIONS if t.src == t.dst]
+    assert not loops, f"자기 전이: {[(t.src, t.event.name) for t in loops]}"
+
+
+def test_phase2_hazard_path() -> None:
+    """Phase 2 위험구역 경로: PATROL → HAZARD_DISPATCH → HAZARD_SCAN → PATROL."""
+    f = Fsm(initial="PATROL")
+    assert f.handle(Event.HAZARD_ALARM) and f.state == "HAZARD_DISPATCH"
+    assert f.handle(Event.HAZARD_ARRIVED) and f.state == "HAZARD_SCAN"
+    assert f.handle(Event.HAZARD_SCAN_DONE) and f.state == "PATROL"
+
+
+def test_phase2_lost_path() -> None:
+    """Phase 2 측위 상실: ANY → LOST → PATROL."""
+    for state in sorted(DIRECTIVES):
+        if state == "LOST":
+            continue
+        exclusive = EXCLUSIVE.get(state)
+        if exclusive is not None and Event.POSE_STALE not in exclusive:
+            continue
+        f = Fsm(initial=state)
+        assert f.handle(Event.POSE_STALE) and f.state == "LOST"
+        assert f.handle(Event.POSE_REACQUIRED) and f.state == "PATROL"
+
+
+def test_phase2_zone_inspect_path() -> None:
+    """Phase 2 구역 검사: PATROL → ZONE_INSPECT → PATROL or ALERT."""
+    f = Fsm(initial="PATROL")
+    assert f.handle(Event.ZONE_ARRIVED) and f.state == "ZONE_INSPECT"
+    # 변화 없음 → 순찰 복귀
+    f2 = Fsm(initial="ZONE_INSPECT")
+    assert f2.handle(Event.ZONE_CLEAR) and f2.state == "PATROL"
+    # 변화 있음 → 경보
+    f3 = Fsm(initial="ZONE_INSPECT")
+    assert f3.handle(Event.ZONE_CHANGED) and f3.state == "ALERT"
+
+
+def test_exhaustive_coverage_counts() -> None:
+    """전수 검증의 커버리지를 명시한다 — 숫자가 바뀌면 이 시험이 알려준다."""
+    all_pairs = {(s, e) for s in DIRECTIVES for e in Event}
+    defined = _all_defined_pairs()
+    # EXCLUSIVE로 차단된 쌍 계산
+    blocked = set()
+    for state, allowed in EXCLUSIVE.items():
+        for e in Event:
+            if e not in allowed and (state, e) in defined:
+                blocked.add((state, e))
+    effective = defined - blocked
+    undefined = all_pairs - effective
+    assert len(all_pairs) == len(DIRECTIVES) * len(Event)
+    assert effective | undefined | blocked == all_pairs
+    # ⚠️ **숫자를 박아 둔다.** `> 0` 으로 두면 주석이 하는 말("숫자가 바뀌면 알려
+    # 준다")을 코드가 하지 않는다 — 전이를 추가·삭제해도 조용히 통과한다.
+    # 값이 바뀌면 **의도한 변경인지 확인하고** 여기를 함께 고친다.
+    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 27, 28)
+    assert (len(effective), len(blocked), len(undefined)) == (94, 6, 257)
