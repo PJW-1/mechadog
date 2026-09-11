@@ -211,26 +211,34 @@ def test_arc_steering_keeps_walking() -> None:
     `step == 0` 이면서 `angle != 0` 인 명령은 로봇이 할 수 없는 동작이다 —
     합치기 전의 `TURN_LEFT` 가 정확히 그것을 뜻했다.
     """
-    for error_deg in (15, 45, 80, -15, -45, -80):
+    # 후진 임계(90도)를 넘는 값까지 함께 본다 — **조향 부호는 걸음의 방향과
+    # 무관하게 항상 오차 부호를 따른다**(2026-09-11 실측). 예전에는 ±80 까지만
+    # 봐서 전진 구간만 검증했고, 그래서 후진 구간의 뒤집힌 부호가 살아남았다.
+    for error_deg in (15, 45, 80, 100, 170, -15, -45, -80, -100, -170):
         steering = steering_for(math.radians(error_deg), DRIVE)
         assert steering.step_mm != 0.0, error_deg
         assert steering.angle_deg != 0.0, error_deg
-        assert math.copysign(1, steering.angle_deg) == math.copysign(1, error_deg)
+        assert math.copysign(1, steering.angle_deg) == math.copysign(1, error_deg), error_deg
 
 
-def test_reverse_arc_flips_the_steering_sign() -> None:
-    """목표가 거의 뒤에 있으면 후진 호로 돌아선다.
+def test_reverse_arc_keeps_the_steering_sign() -> None:
+    """목표가 거의 뒤에 있으면 후진 호로 돌아선다. **조향 부호는 그대로다.**
 
-    부호가 뒤집히는 이유 — 요 변화는 `step x angle` 을 따르므로, `step` 이
-    음수일 때 같은 방향으로 돌려면 `angle` 도 음수여야 한다. 이것을 틀리면
-    로봇이 목표에서 **더 멀어지는 쪽으로** 후진한다.
+    ⚠️ **이 시험은 틀린 부호를 굳혀 두고 있었다.** 예전 이름은
+    `test_reverse_arc_flips_the_steering_sign` 이었고 근거는 요 변화가
+    `step x angle` 을 따른다는 추정이었다. 2026-09-11 실기에서 `move(-60,+20)` 과
+    `move(-60,-20)` 을 몰아 보니 **후진에서도 `angle` 양수가 반시계**였다 —
+    `angle` 이 각속도 명령이라 걸음의 부호가 곱해지지 않는다.
+
+    뒤집힌 부호는 로봇을 목표에서 **더 멀어지는 쪽으로** 후진시킨다. 그래서
+    부호를 시험 이름에 적어 둔다.
     """
     steering = steering_for(math.radians(170), DRIVE)
-    assert steering.step_mm < 0
-    assert steering.angle_deg < 0
+    assert steering.step_mm < 0, "목표가 뒤에 있으면 후진한다"
+    assert steering.angle_deg > 0, "왼쪽 뒤 목표 → 반시계(+) 로 돌아야 오차가 줄어든다"
     mirrored = steering_for(math.radians(-170), DRIVE)
     assert mirrored.step_mm < 0
-    assert mirrored.angle_deg > 0
+    assert mirrored.angle_deg < 0
 
 
 def test_steering_stays_inside_protocol_ranges() -> None:

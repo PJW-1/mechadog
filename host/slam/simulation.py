@@ -10,10 +10,20 @@
 (`config/devices/mechdog-01.yaml`). 시연할 바닥에서 재야 하는 값이라
 카펫과 장판에서 달라진다.
 
-호 조향 모델도 근사다 — 요 변화를 `step x angle` 에 비례한다고 두었다. 실기의
-호 반경은 보행 시퀀스가 정하므로 이 비례는 **부호와 크기 순서만** 맞다.
-알고리즘이 방위 오차를 줄이는 방향으로 도는지 확인하기에는 충분하고,
-경로 추종의 정밀도를 논하기에는 부족하다.
+호 조향 모델도 근사다 — 요 변화를 **`angle` 에 비례**한다고 두었다. 실기의 호
+반경은 보행 시퀀스가 정하므로 이 비례는 **부호와 크기 순서만** 맞다. 알고리즘이
+방위 오차를 줄이는 방향으로 도는지 확인하기에는 충분하고, 경로 추종의 정밀도를
+논하기에는 부족하다.
+
+⚠️ **처음에는 `step x angle` 에 비례한다고 두었고 2026-09-11 실측이 반증했다.**
+후진에서도 `angle` 양수가 반시계이며, 벤더 API 원형이 `move(speed_x, angle_rate)`
+인 것과도 맞는다 — `angle` 은 **각속도 명령**이라 걸음의 부호가 곱해지지 않는다.
+뒤집힌 모델은 후진 구간에서 시뮬레이터를 **실기와 반대로** 돌게 만들었다.
+
+⚠️ **명목 모델이므로 실측에서 드러난 비대칭은 넣지 않았다** — 후진이 전진의
+75%(78.0 대 104.0 mm/s)이고 우선회가 좌선회의 절반(3.56 대 6.8 도/s)이며 직진이
+좌로 1.0 도/s 휜다. 넣으려면 명목값을 방향별로 늘려야 하고, 그것은 *"공간을
+재는 대상"* 을 넘어 **실기 성능 모형**이 되는 일이다 (위의 첫 경고).
 """
 
 from __future__ import annotations
@@ -121,12 +131,12 @@ def apply_move(
     # 보폭 100mm 를 명목 속도의 기준으로 둔다 (규약 상한 100mm 의 절반이 아니라
     # 상한 자체다 — 최대 보폭이 최대 속도라고 보는 것이 자연스럽다).
     speed_m_s = params.forward_mm_per_sec / 1000.0 * (step_mm / 100.0)
-    # 요 변화는 `step x angle` 부호를 따른다 — 후진에서 조향 부호가 뒤집히는
-    # 것을 이 곱이 재현한다 (`patrol.steering_for` 주석). 30deg 는 규약의
-    # 조향 상한이므로 여기서 비율의 기준이 된다.
-    yaw_rate = (
-        math.radians(params.turn_deg_per_sec) * (angle_deg / 30.0) * (1.0 if step_mm > 0 else -1.0)
-    )
+    # ⚠️ **요 변화는 `angle` 단독으로 결정된다 — `step` 의 부호를 곱하지 않는다.**
+    # 여기에는 `(1.0 if step_mm > 0 else -1.0)` 이 곱해져 있었고 근거는
+    # `patrol.steering_for` 의 추정 주석이었다. 2026-09-11 실기에서 후진에서도
+    # `angle` 양수가 반시계인 것이 확인돼 그 곱을 없앴다 (PROTOCOL 부호 규약).
+    # 30deg 는 규약의 조향 상한이므로 여기서 비율의 기준이 된다.
+    yaw_rate = math.radians(params.turn_deg_per_sec) * (angle_deg / 30.0)
     new_yaw = wrap_pi(yaw + yaw_rate * dt_s)
     travel = speed_m_s * dt_s
     return x + travel * math.cos(new_yaw), y + travel * math.sin(new_yaw), new_yaw

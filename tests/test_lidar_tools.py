@@ -168,13 +168,20 @@ def test_forward_move_advances_along_the_heading() -> None:
     assert yaw == pytest.approx(0.0)
 
 
-def test_reverse_arc_turns_the_same_way_as_the_controller_intends() -> None:
-    """요 변화가 `step x angle` 부호를 따른다 — 후진에서 조향이 뒤집히는 근거."""
+def test_yaw_follows_the_angle_alone() -> None:
+    """⚠️ **요는 `angle` 단독으로 결정된다 — `step` 의 부호를 곱하지 않는다.**
+
+    예전 이 시험은 `move(-60,-20)` 이 반시계로 돈다고 단정했다(모델에 `sign(step)`
+    이 곱해져 있었기 때문이다). 2026-09-11 실기가 반증했다 — 후진에서도 `angle`
+    양수가 반시계이며, 벤더 API 원형이 `move(speed_x, angle_rate)` 인 것과 맞는다.
+    """
     params = simulation.SimParams(200.0, 25.0, 0.0, 0.0, 90, 8.0)
     _, _, forward_yaw = simulation.apply_move((0.0, 0.0, 0.0), 60.0, 20.0, 1.0, params)
-    _, _, reverse_yaw = simulation.apply_move((0.0, 0.0, 0.0), -60.0, -20.0, 1.0, params)
+    _, _, reverse_same = simulation.apply_move((0.0, 0.0, 0.0), -60.0, 20.0, 1.0, params)
+    _, _, reverse_opposite = simulation.apply_move((0.0, 0.0, 0.0), -60.0, -20.0, 1.0, params)
     assert forward_yaw > 0
-    assert reverse_yaw > 0, "후진 + 반대 조향은 같은 방향으로 돌아야 한다"
+    assert reverse_same == pytest.approx(forward_yaw), "같은 angle 은 걸음 방향과 무관하게 같은 요"
+    assert reverse_opposite < 0, "후진에 음수 조향이면 시계 방향이다"
 
 
 def test_waypoint_walk_turns_before_it_steps() -> None:

@@ -144,12 +144,20 @@ def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
     | :--- | :--- | :--- |
     | 허용 오차 이내 | 직진 | 조향을 넣으면 목표를 지나쳐 진동한다 |
     | 그 밖 ~ 후진 임계 | 전진 + 최대 조향 | 호를 그리며 방위를 줄인다 |
-    | 후진 임계 초과 | **후진 + 반대 조향** | 목표가 거의 뒤에 있으면 전진 호는 멀어진다 |
+    | 후진 임계 초과 | **후진 + 같은 방향 조향** | 목표가 거의 뒤에 있으면 전진 호는 멀어진다 |
 
-    후진에서 조향 부호가 뒤집히는 이유 — 호 조향의 요 변화는 대략
-    `step × angle` 에 비례하므로, `step` 이 음수일 때 같은 방향으로 돌려면
-    `angle` 도 음수여야 한다. 이 부호를 틀리면 로봇이 목표에서 **더 멀어지는
-    쪽으로** 후진하며 영원히 못 도착한다.
+    ⚠️ **조향 부호는 걸음의 방향과 무관하다 — 2026-09-11 실측이 이것을 바로잡았다.**
+
+    여기에는 *"후진에서는 조향 부호를 뒤집는다"* 고 적혀 있었고 근거는 요 변화가
+    `step × angle` 에 비례한다는 추정이었다. **실기에서 반증됐다** — `move(-60,+20)`
+    과 `move(-60,-20)` 을 몰아 보니 **후진에서도 `angle` 양수가 반시계**였다. 벤더
+    API 원형이 `move(float speed_x, float angle_rate)` 인 것과도 맞는다: `angle` 은
+    **각속도 명령**이라 걸음의 부호가 곱해지지 않는다 (`docs/PROTOCOL.md` 부호 규약).
+
+    그래서 방위 오차를 줄이는 조향은 **전진이든 후진이든 같은 부호**다. 뒤집으면
+    로봇이 목표에서 **더 멀어지는 쪽으로** 후진하며 영원히 못 도착한다 — 뒤집힌
+    코드가 정확히 그 상태였고, **시험도 그 부호를 굳혀 두고 있었다**(`teleop` 의
+    좌우가 뒤바뀐 채 시험에 박혀 있던 것과 같은 형태다).
 
     ⚠️ **크게 틀어져 있으면 보폭을 줄인다.** 호의 반경은 대략 `step / angle` 이므로
     보폭을 줄이는 것이 곧 **더 급히 도는 것**이다. 조향만 키우고 보폭을 그대로
@@ -171,7 +179,8 @@ def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
             params.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
             direction * params.turn_deg * scale,
         )
-    return Steering(-params.step_mm * (1.0 - TURN_STEP_REDUCTION), -direction * params.turn_deg)
+    # 조향 부호는 전진과 같다 — 요가 `angle` 단독으로 결정되기 때문이다(위 주석).
+    return Steering(-params.step_mm * (1.0 - TURN_STEP_REDUCTION), direction * params.turn_deg)
 
 
 @dataclass
