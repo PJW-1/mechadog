@@ -505,6 +505,15 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 측
         )
     if args.mode not in PROFILE_KEYS:
         print(f"⚠️ `{args.mode}` 는 설정에 적을 키가 없다 — 가정 확인용 측정이다")
+    if args.dry_run and not args.host.startswith("127."):
+        # ⚠️ **연습 실행도 실제로 걷는다.** `--dry-run` 이 건너뛰는 것은 *사람의
+        # 측정 입력*뿐이고 `MOVE` 는 그대로 나간다 — 목업으로 명령 부호를 확인한
+        # 것이 이 경로였다. 그래서 **엔터 대기도 없다**: 실기에 걸면 아무도 붙잡고
+        # 있지 않은 상태로 명령한 시간만큼 걷는다.
+        print(
+            f"⚠️ **연습 실행이지만 {args.host} 로 `MOVE` 를 그대로 보낸다** — 로봇이\n"
+            "   켜져 있으면 붙잡는 사람 없이 걷는다. 목업(127.0.0.1)에서만 쓴다."
+        )
     print("⚠️ 시연할 바닥에서 잰다. 카펫과 장판에서 값이 다르다.\n")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
