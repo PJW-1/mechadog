@@ -237,15 +237,18 @@ def select_next(
     if not remaining:
         return Plan(None)
 
+    # ⚠️ **막힌 구역은 그 구역만 건너뛴다.** 첫 후보만 풀고 빈 계획을 돌려주면
+    # 호출부(`patrol._replan`)가 *방문한 구역이 있다* 는 이유로 사이클을 끝내서,
+    # 뒤에 남은 갈 수 있는 구역까지 그 사이클에서 빠진다.
     sequential = cycle == 0 or not random_after_first_cycle
     if sequential:
-        label = remaining[0]
-        return plan_to(label, candidates[label], start, grid, blocked, params)
+        return _first_reachable(remaining, candidates, start, grid, blocked, params)
 
     if not visited:
         chooser = rng if rng is not None else random
         label = chooser.choice(remaining)
-        return plan_to(label, candidates[label], start, grid, blocked, params)
+        rest = [other for other in remaining if other != label]
+        return _first_reachable([label, *rest], candidates, start, grid, blocked, params)
 
     best = Plan(None)
     for label in remaining:
@@ -253,3 +256,20 @@ def select_next(
         if plan.reachable and (not best.reachable or plan.length_m < best.length_m):
             best = plan
     return best
+
+
+def _first_reachable(
+    labels: Sequence[str],
+    candidates: dict[str, Point],
+    start: Point,
+    grid: OccupancyGrid,
+    blocked: np.ndarray,
+    params: PlanParams,
+) -> Plan:
+    """순서대로 풀어 **처음 도달 가능한** 구역의 계획. 막힌 구역은 남긴 채 넘어간다."""
+    for label in labels:
+        plan = plan_to(label, candidates[label], start, grid, blocked, params)
+        if plan.reachable:
+            return plan
+        LOG.warning("zone_skipped_unreachable", label=label)
+    return Plan(None)

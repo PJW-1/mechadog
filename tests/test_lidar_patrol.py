@@ -491,6 +491,25 @@ def test_sequential_when_random_is_disabled() -> None:
     assert controller.target == "A"
 
 
+def test_blocked_zone_does_not_end_the_cycle_early() -> None:
+    """⚠️ **막힌 구역 하나가 뒤에 남은 구역까지 건너뛰게 하면 안 된다.**
+
+    첫 사이클에서 다음 구역(B)이 막혀 있으면 계획이 비었고, 방문한 구역이 있다는
+    이유로 사이클이 끝나 **갈 수 있는 C 를 한 번도 안 갔다.**
+    """
+    grid = open_room()
+    grid.cells[16:25, 76:85] = 3.0  # B(4.0, 1.0) 를 장애물로 덮는다
+    controller = build(grid=grid)
+    controller.start()
+    controller.visited = frozenset({"A"})
+    controller.observe_telemetry(Reading(), 1000)
+    controller.pose = (2.0, 2.0, 0.0)
+    controller._last_pose_ms = 1000
+    controller.step(1000)
+    assert controller.target == "C"
+    assert controller.cycle == 0, "C 를 두고 사이클을 끝냈다"
+
+
 def test_arrival_marks_the_zone_and_moves_on() -> None:
     controller = build()
     controller.start()
