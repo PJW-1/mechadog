@@ -48,7 +48,7 @@ import socket
 import statistics
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,7 +74,22 @@ PROFILE_KEYS: dict[str, str] = {
     # 하므로 설정에 들어갈 값도 좌선회 실측값이다. 처음에는 우선회를 적게 만들었고,
     # 실물로 몰아 보니 `turn_right` 가 반시계로 돌았다.
     "turn_left": "turn_deg_per_sec",
+    # ⚠️ **2026-09-11 실측이 키를 만들었다.** 처음에는 후진·후진 선회에 적을 곳이
+    # 없었다 — 회피 시퀀스가 *"후진 = 전진"* 을 가정했기 때문이다. 실측에서 후진이
+    # 25% 느리고 전진 선회가 여유를 다 먹는 것이 드러나 세 키가 생겼고
+    # ([ADR-29](../docs/DECISIONS.md)), 이제 **도구가 직접 적을 수 있다.**
+    # 손으로 YAML 을 고치면 `measured_on` 이 빠지거나 들여쓰기가 깨진다.
+    "reverse": "reverse_mm_per_sec",
+    "reverse_turn": "reverse_turn_deg_per_sec",
 }
+
+#: 모드 → 부 측정을 적을 키. **부 측정이 설정에 들어가는 것은 후진 선회뿐이다.**
+#:
+#: ⚠️ 회피는 **각도와 여유 두 목표 중 느린 쪽**으로 시간을 잡으므로
+#: (`actions.avoid_phases`) 각도만 적으면 여유 목표를 계산할 수 없다. 그래서
+#: 후진 선회는 **두 키가 다 있어야** 새 구간표가 켜진다 — 하나만 적히면 개체는
+#: 조용히 옛 4구간표(순 여유 음수)로 돌아간다.
+SECONDARY_KEYS: dict[str, str] = {"reverse_turn": "reverse_turn_mm_per_sec"}
 
 #: 모드 → (주 측정 이름, 주 단위, 부 측정 이름, 부 단위).
 #:
@@ -318,13 +333,23 @@ def summarize(
             )
     if len(rates) < 3:
         print("  ⚠️ WBS 2.2.3 은 **3회 이상 평균**을 요구한다.")
-    second_rates = [t.secondary_rate for t in trials if t.secondary_rate is not None]
-    if second_rates:
-        second_mean = statistics.fmean(second_rates)
-        print(f"  부 측정 평균 {second_mean:.1f} {second_rate_unit}  (n={len(second_rates)})")
+    second_mean = secondary_mean(trials)
+    if second_mean is not None:
+        counted = sum(1 for t in trials if t.secondary_rate is not None)
+        print(f"  부 측정 평균 {second_mean:.1f} {second_rate_unit}  (n={counted})")
         if mode.startswith("turn") and config is not None:
             report_avoid_clearance(mean, second_mean, config)
     return mean
+
+
+def secondary_mean(trials: Sequence[Trial]) -> float | None:
+    """부 측정의 평균. **잰 시행만 센다** — 안 잰 것을 0 으로 채우면 *"쟀다"* 가 된다.
+
+    후진 선회에서는 이 값이 **설정에 들어간다**(`reverse_turn_mm_per_sec`). 회피가
+    각도와 여유 두 목표를 비교하려면 후퇴 속도가 있어야 하기 때문이다.
+    """
+    rates = [t.secondary_rate for t in trials if t.secondary_rate is not None]
+    return statistics.fmean(rates) if rates else None
 
 
 def report_avoid_clearance(
@@ -359,7 +384,12 @@ def report_avoid_clearance(
 
 
 def write_profile(
-    device: str, mode: str, value: float, *, root: Path = Path("config/devices")
+    device: str,
+    mode: str,
+    value: float,
+    *,
+    secondary: float | None = None,
+    root: Path = Path("config/devices"),
 ) -> Path | None:
     """개체 프로파일에 적는다. **`measured_on` 을 함께 적는다.**
 
@@ -373,34 +403,50 @@ def write_profile(
     path = root / f"{device}.yaml"
     key = PROFILE_KEYS.get(mode)
     if key is None:
-        # ⚠️ **후진은 적을 곳이 없다.** 설정에는 `forward_mm_per_sec` 과
-        # `turn_deg_per_sec` 뿐이고, 회피 시퀀스는 **전진 속도로 후진 시간을
-        # 계산한다**(`actions.avoid_phases`). 즉 *"후진 속도 = 전진 속도"* 를
-        # 가정하고 있다. 그 가정이 맞는지 재 보는 것이 `reverse` 모드의
-        # 목적이므로 값을 자동으로 적지 않고 **사람이 비교해 판단하게 한다.**
+        # ⚠️ **우선회는 적을 곳이 없다.** 회피는 `+turn_angle_deg`(좌선회)만 쓰고
+        # 설정에도 방향별 선회 키가 없다. 값을 임의로 적으면 *"쟀다"* 로 보이지만
+        # **어느 방향의 값인지 알 수 없게 된다.** `3.5.4` TRACK 락온이 양쪽을 쓰게
+        # 되면 그때 키를 만든다.
         print(
-            f"⚠️ `{mode}` 는 설정에 적을 키가 없다 — 전진 값과 비교해 차이가 크면 "
-            "`reverse_mm_per_sec` 을 새로 만들어야 한다",
+            f"⚠️ `{mode}` 는 설정에 적을 키가 없다 — 좌선회 값과 비교해 차이가 크면 "
+            "방향별 선회 키를 새로 만들어야 한다",
             file=sys.stderr,
         )
         return None
+    second_key = SECONDARY_KEYS.get(mode)
+    if second_key is not None and secondary is None:
+        # ⚠️ **반만 적으면 개체가 조용히 옛 구간표로 돌아간다.** 두 목표를 비교할
+        # 수 없으므로 `avoid_phases` 가 새 구간을 만들지 않는다 — 적힌 값은 있는데
+        # 쓰이지 않는, 가장 알아채기 어려운 상태가 된다.
+        print(
+            f"⚠️ `{mode}` 는 `{key}` 와 `{second_key}` 가 **둘 다** 있어야 회피에 쓰인다 — "
+            "부 측정이 없어 적지 않는다",
+            file=sys.stderr,
+        )
+        return None
+    writes = {key: value}
+    if second_key is not None and secondary is not None:
+        writes[second_key] = secondary
     text = path.read_text(encoding="utf-8")
     today = time.strftime("%Y-%m-%d")
     lines = text.splitlines(keepends=True)
-    touched = False
+    touched: set[str] = set()
     for i, line in enumerate(lines):
-        if line.lstrip().startswith(f"{key}:"):
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[i] = f"{indent}{key}: {value:.1f}\n"
-            touched = True
-        elif line.lstrip().startswith("measured_on:"):
-            indent = line[: len(line) - len(line.lstrip())]
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        for name, number in writes.items():
+            if stripped.startswith(f"{name}:"):
+                lines[i] = f"{indent}{name}: {number:.1f}\n"
+                touched.add(name)
+        if stripped.startswith("measured_on:"):
             lines[i] = f'{indent}measured_on: "{today}"\n'
-    if not touched:
-        print(f"⚠️ {path} 에서 `{key}:` 줄을 찾지 못했다 — 손으로 적는다", file=sys.stderr)
+    missing = [name for name in writes if name not in touched]
+    if missing:
+        print(f"⚠️ {path} 에서 `{missing}` 줄을 찾지 못했다 — 손으로 적는다", file=sys.stderr)
         return None
     path.write_text("".join(lines), encoding="utf-8")
-    print(f"\n{path} 에 {key}: {value:.1f} · measured_on: {today} 를 적었다")
+    written = " · ".join(f"{name}: {number:.1f}" for name, number in writes.items())
+    print(f"\n{path} 에 {written} · measured_on: {today} 를 적었다")
     return path
 
 
@@ -525,7 +571,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 측
         if len(trials) < 3:
             print("\n⚠️ 3회 미만이므로 적지 않는다 (WBS 2.2.3)", file=sys.stderr)
             return 1
-        write_profile(args.device, args.mode, mean)
+        write_profile(args.device, args.mode, mean, secondary=secondary_mean(trials))
     else:
         key = PROFILE_KEYS.get(args.mode)
         if key is None:

@@ -97,7 +97,10 @@ PROFILE = """device_id: mechdog-01
 
 gait_calibration:
   forward_mm_per_sec: null
+  reverse_mm_per_sec: null
   turn_deg_per_sec: null
+  reverse_turn_deg_per_sec: null
+  reverse_turn_mm_per_sec: null
   measured_on: null
 """
 
@@ -165,23 +168,46 @@ def test_all_modes_are_offered() -> None:
 
 
 def test_only_the_configured_directions_have_profile_keys() -> None:
-    """⚠️ **후진과 우선회는 적을 곳이 없다 — 그래서 적지 않는다.**
+    """⚠️ **우선회는 적을 곳이 없다 — 그래서 적지 않는다.**
 
-    설정에는 `forward_mm_per_sec` 과 `turn_deg_per_sec` 뿐이고, 회피 시퀀스는
-    전진 속도로 후진 시간을 계산하며 선회도 `+turn_angle_deg`(**좌회전**)만 쓴다.
+    회피는 `+turn_angle_deg`(**좌회전**)만 쓰고 설정에 방향별 선회 키가 없다.
     값을 임의로 적으면 *"쟀다"* 로 보이지만 어느 방향의 값인지 알 수 없게 된다.
+
+    나머지 넷은 **실측이 키를 만들어서** 적을 곳이 생겼다 — 후진이 25% 느리고
+    전진 선회가 회피 여유를 다 먹는 것이 드러났기 때문이다(ADR-29).
     """
     from tools.gait_calibrate import PROFILE_KEYS
 
-    assert set(PROFILE_KEYS) == {"forward", "turn_left"}
+    assert set(PROFILE_KEYS) == {"forward", "turn_left", "reverse", "reverse_turn"}
+    assert "turn_right" not in PROFILE_KEYS
 
 
-@pytest.mark.parametrize("mode", ["reverse", "turn_right"])
-def test_assumption_modes_refuse_to_write(tmp_path: Path, capsys, mode: str) -> None:
+def test_the_unmeasured_direction_refuses_to_write(tmp_path: Path, capsys) -> None:
     root = _profile(tmp_path)
-    assert write_profile("mechdog-01", mode, 123.4, root=root) is None
+    assert write_profile("mechdog-01", "turn_right", 123.4, root=root) is None
     assert "적을 키가 없다" in capsys.readouterr().err
     assert "null" in (root / "mechdog-01.yaml").read_text(encoding="utf-8")
+
+
+def test_reverse_turn_refuses_to_write_only_half(tmp_path: Path, capsys) -> None:
+    """⚠️ **반만 적히면 개체가 조용히 옛 구간표로 돌아간다.**
+
+    회피는 각도 목표와 여유 목표 중 느린 쪽으로 시간을 잡으므로 두 키가 다
+    있어야 새 구간이 켜진다. 하나만 적으면 *"적었는데 안 쓰인다"* 는, 가장
+    알아채기 어려운 상태가 된다.
+    """
+    root = _profile(tmp_path)
+    assert write_profile("mechdog-01", "reverse_turn", 6.6, root=root) is None
+    assert "둘 다" in capsys.readouterr().err
+
+
+def test_reverse_turn_writes_both_keys(tmp_path: Path) -> None:
+    root = _profile(tmp_path)
+    path = write_profile("mechdog-01", "reverse_turn", 6.6, secondary=69.7, root=root)
+    assert path is not None
+    text = path.read_text(encoding="utf-8")
+    assert "reverse_turn_deg_per_sec: 6.6" in text
+    assert "reverse_turn_mm_per_sec: 69.7" in text
 
 
 @pytest.mark.parametrize(
