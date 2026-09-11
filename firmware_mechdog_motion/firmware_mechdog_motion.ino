@@ -272,7 +272,8 @@ void pollTelemetry() {
   const uint64_t command_age = now - g_last_valid_command_ms;
   mechadog::TelemetrySample sample;
   // Acquisition validity/freshness does not certify body axes or voltage
-  // calibration. Sensor-enabled builds remain actuator-OFF diagnostics.
+  // calibration. Sensors may now run with actuators (sensor_hal.h I2C rule);
+  // coexistence while walking is unverified on hardware.
   sample.sensors_valid = sensors.all_valid();
   sample.state = g_safe_latched ? mechadog::FsmState::Failsafe : g_reported_state;
   sample.dist_cm = sensors.dist_cm;

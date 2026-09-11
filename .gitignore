@@ -62,8 +62,15 @@ install/
 log/
 devel/
 
-# ── 벤더링 라이브러리 (라이선스 확인 후 결정 — OI-5) ─
-# third_party/HW_MechDog/
+# ── 벤더 파일 — 재배포 불가, 절대 커밋 금지 (ADR-20) ──
+# 구동 빌드는 Hiwonder 벤더 소스를 스케치 폴더에 두어야 컴파일된다(펌웨어 README).
+# 문서대로 복사한 뒤 `git add .` 한 번이면 공개 저장소에 올라가므로 여기서 막는다.
+firmware_mechdog_motion/**/HW_MechDog.*
+firmware_mechdog_motion/**/Hiwonder.*
+firmware_mechdog_motion/**/Servo.*
+firmware_mechdog_motion/**/WMMatrixLed.*
+firmware_mechdog_motion/**/pwm_servo.*
+firmware_mechdog_motion/**/action.h
 
 # ── OS / 에디터 ─────────────────────────────────────
 .DS_Store

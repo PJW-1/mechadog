@@ -112,8 +112,8 @@ TaskHandle_t g_sensor_task = nullptr;
 AcquisitionRecord g_published;
 SensorError g_start_error = SensorError::Starting;
 
-// This task exclusively owns Wire. The compile-time actuator exclusion prevents
-// the vendor's independent IMU task from initializing/accessing the same bus.
+// This task exclusively owns Wire. The vendor's IMU task (homeostasis) and its
+// other IIC1 features are never started by our sources (sensor_hal.h).
 // No I2C operation occurs while the snapshot mutex is held.
 bool read_bytes(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
   Wire.beginTransmission(address);
