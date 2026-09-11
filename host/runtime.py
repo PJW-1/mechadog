@@ -32,8 +32,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from host.behavior.actions import register_actions
+from host.behavior.auth import Authenticator, Outcome
 from host.behavior.commander import Commander
-from host.behavior.escalation import Escalation
+from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import Behavior, Event, behavior_from_config
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config
@@ -148,6 +149,8 @@ class Runtime:
         # 급한 것은 `ESTOP` 하나뿐이다 (DR-16).
         self._alarm_confirm_asked = False
         self._reset_asked = False
+        #: 순찰을 예약했다. ⚠️ **리셋이 정착한 뒤에 시작해야 한다** — 아래 참고.
+        self._patrol_asked = False
         self._session_open: str | None = None
         self._ignored_since_ms: int | None = None
         self._cmd_timeout_ms = int(config["safety"]["cmd_timeout_ms"])
@@ -185,10 +188,18 @@ class Runtime:
         # ⚠️ **값을 넣지 않고 물어볼 대상을 넘긴다.** 단계는 사건·시간·확인 어느
         # 쪽으로도 바뀌므로 갱신 지점이 하나가 아니고, 복사해 두면 반드시 어긋난다.
         self._log.bind_escalation(lambda: self._escalation.level.value)
+        # 사원증 인증 (3.8.1). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
+        # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 여기서 정한다.
+        self._auth = Authenticator(config)
 
     @property
     def behavior(self) -> Behavior:
         return self._behavior
+
+    @property
+    def auth(self) -> Authenticator:
+        """인증 세션. 대시보드가 *"누가 인증됐나"* 를 보이는 데 쓴다 (FR-3.6.2)."""
+        return self._auth
 
     @property
     def escalation(self) -> Escalation:
@@ -325,6 +336,7 @@ class Runtime:
             self._escalation.note_person(
                 present=result.sighting.present, last_seen_ms=seen_ms, now_ms=now_ms
             )
+            self._judge_auth(result, now_ms)
         # ⚠️ **판정은 워커가 추론마다 했고, 여기서는 결과만 읽는다.** 게이트를 이 틱
         # (10Hz)에서 돌리면 25fps 결과 중 10개만 보게 되고 추론률을 올린 이유가 사라진다.
         #
@@ -358,6 +370,42 @@ class Runtime:
                 "vision_stalled" if stalled else "vision_recovered",
                 age_ms=self._vision.age_ms(now_ms),
             )
+
+    def _judge_auth(self, result: Any, now_ms: int) -> None:
+        """사원증을 판정하고 **사건으로 옮긴다** (FR-10.1 · `3.8.1`).
+
+        ⚠️ **인증 표시는 사건이 아니라 상태에서 가져온다.** `AUTH_OK` 사건만 보면
+        60초 유효 시간이 지난 것(FR-10.2.4)과 미인증자가 새로 합류한 것(FR-3.8.1)을
+        놓친다 — 둘 다 사건이 없는 변화다. 그래서 매번 *"보이는 전원이 인증됐나"*
+        를 물어 에스컬레이션에 반영한다.
+        """
+        self._auth.note_tracks(result.tracks)
+        outcome = self._auth.observe(result.markers, result.tracks, now_ms)
+        if outcome is Outcome.GRANTED:
+            self._apply(Event.AUTH_OK, now_ms)
+        elif outcome is Outcome.EXHAUSTED:
+            # 2회 실패 — 30초 무응답과 같은 결론이다 (FR-10.3).
+            self._apply(Event.AUTH_FAILED, now_ms)
+        if self._auth.all_authenticated(result.tracks, now_ms):
+            self._escalation.note_authenticated(now_ms)
+        else:
+            self._escalation.note_authentication_lost()
+
+    def _request_auth(self, now_ms: int) -> None:
+        """L2 에 올랐으면 인증을 요구한다 (FR-10 · 아키텍처 3.1).
+
+        ⚠️ **이것이 없으면 `AUTH_WAIT` 에 들어가지 못해 30초 타이머가 돌지 않는다.**
+        그러면 `AUTH_FAILED` 를 낼 경로가 사라져 L2 가 출구 없이 남는다 —
+        `3.8.3` 을 올릴 때 비워 둔 자리가 여기다.
+
+        전이 가능 여부를 **표에 묻는다** — 그래야 상태 이름이 여기 들어오지 않고,
+        이미 `AUTH_WAIT` 면 자동으로 한 번만 발행된다.
+        """
+        if self._escalation.level is not Level.L2:
+            return
+        if not self._behavior.fsm.can(Event.AUTH_REQUIRED):
+            return
+        self._apply(Event.AUTH_REQUIRED, now_ms)
 
     def _record_person_event(self, result: Any) -> None:
         """확정 검출의 원본과 판단 근거를 한 번 저장하고 이벤트 채널에 넘긴다.
@@ -441,6 +489,7 @@ class Runtime:
         # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
         # 눈 LED·음향을 단계에서 내려보내기 시작하면(`4.7.3`) 한 주기씩 밀린다.
         self._escalation.tick(now_ms)
+        self._request_auth(now_ms)
         before = self._behavior.state
         lines = self._behavior.tick(now_ms)
         if self._behavior.state != before:
@@ -531,6 +580,21 @@ class Runtime:
         """페일세이프(F) 해제 요청을 예약한다. **다른 스레드에서 부른다.**"""
         self._reset_asked = True
 
+    def ask_patrol(self) -> None:
+        """순찰을 예약한다. **리셋이 정착한 뒤 `IDLE` 에서 시작한다.**
+
+        ⚠️ **`start_patrol()` 을 바로 부르면 리셋과 순서가 어긋난다.** 실기에서
+        이렇게 나타났다 — 기동 때 해제를 요청하고 곧바로 순찰을 시작하면, 로봇이
+        `safety_latched=true` 를 보고해 호스트가 `FAILSAFE` 로 따라간 뒤 해제가
+        정착하면서 `IDLE` 로 내려온다. 즉 **`--reset-on-start` 와 `--patrol` 을
+        함께 주면 순찰이 조용히 취소된다.** 로그만 보면 순찰을 시작했다고 적혀
+        있어서 더 나쁘다.
+
+        그래서 의도를 세워 두고 **전이표가 허락할 때** 발행한다 — `START_PATROL`
+        은 `IDLE` 에서만 전이를 만들므로 상태 이름이 여기 들어오지 않는다.
+        """
+        self._patrol_asked = True
+
     def _drain_confirmations(self, now_ms: int) -> None:
         """사람이 누른 확인을 **판단보다 먼저** 처리한다.
 
@@ -544,6 +608,15 @@ class Runtime:
         if self._reset_asked:
             self._reset_asked = False
             self.request_reset()
+        # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
+        # 순찰을 `IDLE` 로 되돌린다.
+        if (
+            self._patrol_asked
+            and not self._reset_pending
+            and self._behavior.fsm.can(Event.START_PATROL)
+        ):
+            self._patrol_asked = False
+            self.start_patrol(now_ms)
 
     def _settle_reset(self, latched: bool | None, now_ms: int) -> None:
         """로봇이 래치를 풀었다고 보고하면 그때 `RESET_CONFIRMED` 를 넣는다."""
@@ -764,7 +837,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.reset_on_start:
             runtime.request_reset()
         if args.patrol:
-            runtime.start_patrol(system_clock_ms())
+            # ⚠️ **예약한다. 바로 시작하지 않는다.** 해제가 정착하면서 `IDLE` 로
+            # 내려오므로, 먼저 시작한 순찰은 조용히 취소된다 (`ask_patrol` 참고).
+            runtime.ask_patrol()
         runtime.serve(sock, duration_s=args.duration)
     except KeyboardInterrupt:
         LOG.info("interrupted", action="ESTOP 송신 후 종료")

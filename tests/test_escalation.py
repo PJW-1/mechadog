@@ -307,3 +307,65 @@ def test_rejected_event_still_raises(esc: Escalation) -> None:
     """`ALERT` 에서의 PPE 위반은 전이표에 없다 — 그것이 에스컬레이션 소관인 이유다."""
     esc.note_event("PPE_VIOLATION", T0, accepted=False)
     assert esc.level is Level.L3
+
+
+def test_expired_authentication_allows_escalation_again(esc: Escalation, cfg: dict) -> None:
+    """FR-10.2.4 — 유효 시간이 지나면 다시 인증을 요구해야 한다.
+
+    ⚠️ 만료를 표시하지 못하면 **한 번 인증한 사람 앞에서는 영원히 승격되지 않는다.**
+    """
+    _see(esc, T0)
+    esc.note_event("AUTH_OK", T0)
+    _stand_still(esc, cfg)
+    assert esc.level is Level.L1, "인증된 동안에는 승격되지 않는다"
+
+    esc.note_authentication_lost()
+    assert esc.authenticated is False
+    now = T0 + cfg["escalation"]["l1_to_l2_hold_s"] * 1000 + 500
+    _see(esc, now)
+    esc.tick(now)
+    assert esc.level is Level.L2, "만료 뒤에는 다시 인증을 요구한다"
+
+
+def test_losing_authentication_does_not_itself_raise(esc: Escalation) -> None:
+    """만료된 순간 단계가 뛰면 60초마다 한 번씩 경보가 울린다.
+
+    ⚠️ `AUTH_OK` 는 **L1 을 내리지 않는다** — 표의 `L1` 해제 조건은 *미검출 5초*
+    하나뿐이다. 그래서 관찰 중이던 단계는 그대로 L1 이고, **만료 자체로도 그대로
+    L1 이어야 한다** — 올리는 것은 관측과 시간이다.
+    """
+    _see(esc, T0)
+    esc.note_event("AUTH_OK", T0)
+    assert esc.level is Level.L1
+    esc.note_authentication_lost()
+    assert esc.level is Level.L1
+
+
+def test_authenticated_person_does_not_make_the_level_flap(esc: Escalation, caplog) -> None:
+    """⚠️ **실기가 잡은 결함이다.** 인증된 사람 앞에서 단계가 진동하면 안 된다.
+
+    런타임은 추론마다 `note_person()` 과 `note_authenticated()` 를 **둘 다** 부른다.
+    인증이 `L1` 까지 내리면 관측이 다시 올려 **10Hz 로 `L0↔L1` 이 왕복하고**, 초당
+    20줄씩 로그가 쌓이며 눈 LED 가 깜빡인다. 단계 표의 `L1` 해제 조건은 *미검출
+    5초* 하나뿐이다.
+
+    이 시험은 **전이 횟수**를 센다 — 마지막 단계만 보면 진동을 놓친다.
+    """
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="mechadog.escalation"):
+        for step in range(100):  # 4초 동안 25fps
+            now = T0 + step * 40
+            _see(esc, now)
+            esc.note_authenticated(now)
+    transitions = [r for r in caplog.records if getattr(r, "event", "") == "escalation"]
+    assert esc.level is Level.L1
+    assert len(transitions) == 1, f"전이가 {len(transitions)}회 — 진동한다"
+
+
+def test_authentication_still_releases_auth_request(esc: Escalation, cfg: dict) -> None:
+    """위 수정이 표의 `L2 → L0` 을 깨뜨리지 않았는지 함께 못 박는다."""
+    at = _stand_still(esc, cfg)
+    assert esc.level is Level.L2
+    esc.note_authenticated(at)
+    assert esc.level is Level.L0

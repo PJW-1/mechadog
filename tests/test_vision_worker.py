@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 
+import numpy as np
 import pytest
 
 from host.common.config import load_config
@@ -85,8 +86,16 @@ class _FakeDetector:
 
 
 def _worker(cfg: dict, reader, detector, monkeypatch, **kw) -> VisionWorker:
-    # JPEG 디코드는 이 시험의 대상이 아니다 — 가짜 바이트가 통과하게 둔다.
-    monkeypatch.setattr("host.vision.worker.decode_jpeg", lambda payload: payload)
+    # JPEG 디코드는 이 시험의 대상이 아니다 — 다만 **모양은 실물과 같아야 한다.**
+    #
+    # ⚠️ 처음에는 `lambda payload: payload` 로 바이트를 그대로 흘렸는데, 사원증
+    # 마커 읽기(`3.8.1`)가 붙자 `detectMarkers` 가 바이트를 거부해 시험 4건이
+    # 깨졌다. **가짜가 실물보다 친절하면 시험 결과도 실물과 무관해진다** — 실제
+    # `decode_jpeg` 는 ndarray 를 돌려준다.
+    monkeypatch.setattr(
+        "host.vision.worker.decode_jpeg",
+        lambda _payload: np.full((48, 64, 3), 200, dtype=np.uint8),
+    )
     return VisionWorker(cfg, reader=reader, detector=detector, **kw)
 
 
