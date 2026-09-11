@@ -153,6 +153,14 @@ def astar(start: Cell, goal: Cell, blocked: np.ndarray) -> list[Cell] | None:
                 continue
             if blocked[neighbour] and neighbour != goal:
                 continue
+            if d_row != 0 and d_col != 0:
+                # 대각선 양옆의 직교 셀 중 하나라도 막혔으면 그 모서리를
+                # 가로지르지 않는다. 목적 셀만 비어 있어도 실제 로봇 몸체는
+                # 두 장애물 사이를 통과해야 하므로 충돌 경로다.
+                side_a = (current[0] + d_row, current[1])
+                side_b = (current[0], current[1] + d_col)
+                if blocked[side_a] or blocked[side_b]:
+                    continue
             tentative = g_score[current] + cost
             if tentative < g_score.get(neighbour, math.inf):
                 g_score[neighbour] = tentative

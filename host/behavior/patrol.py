@@ -495,7 +495,11 @@ class PatrolController:
             return urgent
 
         self._settle_reset()
-        if self.phase is Phase.HALTED or self.phase is Phase.IDLE or self.phase is Phase.LOST:
+        if self.safety.last_seen_ms is None:
+            # 최초 텔레메트리 전에 움직이면 로봇이 아직 부팅 중인 정상 상황에도
+            # 경로 추종이 시작된다. 링크가 확인될 때까지 정지한다.
+            self.commander.halt()
+        elif self.phase is Phase.HALTED or self.phase is Phase.IDLE or self.phase is Phase.LOST:
             self.commander.halt()
         elif self.safety.obstacle_active:
             # **온보드가 이미 멈췄다.** 호스트는 그 판정을 흉내내지 않고 의도만
@@ -534,7 +538,9 @@ class PatrolController:
         # ② 텔레메트리 침묵 — 링크가 끊겼다.
         #    ⚠️ **명령 송신을 멈추지 않는다.** 10Hz 송신이 곧 링크 신호이므로
         #    (PROTOCOL 1절), 멈추면 링크가 돌아왔을 때 로봇이 그것을 모른다.
-        silent = self.safety.last_seen_ms is None or (
+        # 기동 직후 아직 한 건도 받지 못한 상태는 두절과 다르다. 여기서
+        # HALTED로 보내면 첫 패킷이 수 ms 늦은 정상 상황도 수동 리셋이 필요하다.
+        silent = self.safety.last_seen_ms is not None and (
             now_ms - self.safety.last_seen_ms > self.drive.link_loss_ms
         )
         if silent and self.phase not in (Phase.IDLE, Phase.HALTED):

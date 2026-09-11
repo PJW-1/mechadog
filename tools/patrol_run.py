@@ -18,7 +18,7 @@
       `state=IDLE` · `safety_latched=false` 로 해제를 확인한다.
 
     python tools/patrol_run.py --simulate --cycles 2
-    python tools/patrol_run.py --device mechdog-01
+    python tools/patrol_run.py --device mechdog-01 --lidar-device lidar-01
 """
 
 from __future__ import annotations
@@ -63,6 +63,11 @@ from host.telemetry.receiver import TelemetryReceiver
 LOG = event_logger("mechadog.tools.patrol_run")
 
 RECV_BYTES = 65536
+
+# 종료 신호도 UDP다. 한 번만 보내면 유실 시 온보드 타임아웃까지 마지막 MOVE가
+# 남으므로 기본 런타임과 같은 횟수·간격으로 동일 ESTOP 전문을 반복한다.
+SHUTDOWN_ESTOP_REPEATS = 3
+SHUTDOWN_ESTOP_INTERVAL_S = 0.05
 
 #: 시뮬레이션에서 `--reset-after-estop` 이 자동으로 풀어 줄 최대 횟수.
 #: 실기에서는 **사람이 확인해야만** 풀리므로 (DR-16) 이것은 검증 편의이며,
@@ -140,6 +145,23 @@ def send(
             sock.sendto(line.encode("utf-8"), peer)
 
 
+def stop_for_shutdown(
+    controller: PatrolController,
+    sock: socket.socket,
+    peer: tuple[str, int] | None,
+) -> None:
+    """프로세스 종료 전에 같은 ESTOP 데이터그램을 세 번 보낸다."""
+    line = controller.emergency_stop("순찰 프로세스 종료")
+    if peer is None:
+        return
+    payload = line.encode("utf-8")
+    for attempt in range(SHUTDOWN_ESTOP_REPEATS):
+        with contextlib.suppress(OSError):
+            sock.sendto(payload, peer)
+        if attempt + 1 < SHUTDOWN_ESTOP_REPEATS:
+            time.sleep(SHUTDOWN_ESTOP_INTERVAL_S)
+
+
 def serve_real(args: argparse.Namespace, config: dict, controller: PatrolController) -> int:
     """실기 운용. 두 소켓을 논블로킹으로 훑고 마감에 맞춰 전문을 낸다."""
     network = config["network"]
@@ -174,6 +196,15 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     LOG.warning("telemetry_unknown_state")
                 if not ingested.accepted or ingested.reading is None:
                     continue
+                if ingested.reading.device_id != args.device:
+                    # 세 로봇이 같은 포트로 말한다. 다른 개체의 안전 상태와 IMU가
+                    # 섞이면 엉뚱한 로봇의 자세로 경로를 계산한다 (DR-17).
+                    LOG.warning(
+                        "foreign_telemetry",
+                        expected=args.device,
+                        received=ingested.reading.device_id,
+                    )
+                    continue
                 if peer is None:
                     # `mechdog_ip` 가 비어 있으면 첫 텔레메트리를 보낸 곳을
                     # 상대로 삼는다. 개체 판별은 `device_id` 가 이미 끝냈고
@@ -196,6 +227,13 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                 scan = scan_of(result)
                 if scan is None:
                     continue
+                if scan.device_id != args.lidar_device:
+                    LOG.warning(
+                        "foreign_lidar_scan",
+                        expected=args.lidar_device,
+                        received=scan.device_id,
+                    )
+                    continue
                 # ③ 위험은 즉시 나간다.
                 urgent = controller.guard_scan(scan)
                 if urgent:
@@ -217,10 +255,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     except KeyboardInterrupt:
         LOG.info("interrupted")
     finally:
-        # 종료 전에 정지를 확실히 보낸다. 링크가 끊겨도 로봇은 300ms 뒤 스스로
-        # 멈추지만, 우리가 멈춘 것과 타임아웃으로 멈춘 것은 로그에서 다르다.
-        controller.commander.halt()
-        send(cmd_sock, peer, controller.commander.tick(system_clock_ms()))
+        stop_for_shutdown(controller, cmd_sock, peer)
         scan_sock.close()
         tlm_sock.close()
         cmd_sock.close()
@@ -367,6 +402,11 @@ class _FakeReading:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="자율 순찰 — A* 경로로 구역을 돈다")
     parser.add_argument("--device", default=None, help="개체 프로파일 (실기 운용 시 필수)")
+    parser.add_argument(
+        "--lidar-device",
+        default=None,
+        help="LiDAR 중계 노드 device_id (실기 운용 시 필수)",
+    )
     parser.add_argument("--simulate", action="store_true", help="소켓 없이 알고리즘만 돌린다")
     parser.add_argument("--robot", default=None, help="로봇 IP. 없으면 첫 텔레메트리 송신자")
     parser.add_argument("--maps", default=None, help="지도·구역 경로. 기본은 maps/")
@@ -396,8 +436,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not args.simulate and not args.device:
-        print("[Patrol] --device <unit-id> 또는 --simulate 가 필요하다", file=sys.stderr)
+    if not args.simulate and (not args.device or not args.lidar_device):
+        print(
+            "[Patrol] 실기는 --device <unit-id>와 --lidar-device <relay-id>가 모두 필요하다; "
+            "알고리즘만 확인하려면 --simulate를 쓴다",
+            file=sys.stderr,
+        )
         return 2
     try:
         config = settings.load(None if args.simulate else args.device)

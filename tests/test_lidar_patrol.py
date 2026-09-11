@@ -166,6 +166,21 @@ def test_first_datagram_is_stop_with_seq_one() -> None:
     assert isinstance(first["ts"], int), "ts 는 정수 밀리초다 (초 단위 실수가 아니다)"
 
 
+def test_startup_waits_for_first_telemetry_without_latching() -> None:
+    """첫 패킷이 수 ms 늦었다는 이유로 수동 RESET이 필요한 상태가 되면 안 된다."""
+    controller = build()
+    controller.start()
+    controller.pose = (2.0, 2.0, 0.0)
+    controller._last_pose_ms = 1000
+    controller.step(1000)
+    assert controller.phase is Phase.PLANNING
+    assert controller.commander.intent.type_ == "STOP"
+
+    controller.observe_telemetry(Reading(), 1010)
+    controller.step(1010)
+    assert controller.phase is Phase.MOVING
+
+
 def test_timestamps_are_integer_milliseconds() -> None:
     """합치기 전 코드는 `time.time()` 을 그대로 실어 규칙 ⑤ 로 폐기됐다."""
     controller = build()

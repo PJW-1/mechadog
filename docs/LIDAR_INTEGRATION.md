@@ -1,16 +1,14 @@
 # LiDAR 측위·순찰 병합 노트 (FR-6 · FR-7 · Phase 2)
 
 > 외부에서 작성한 **LiDAR SLAM · 구역 순찰 알고리즘**을 이 저장소의 규약과 구조에
-> 맞춰 합친 결과다. 이 문서는 **무엇을 고쳤고 무엇이 팀장 확인을 기다리는지**를
-> 적는다.
+> 맞춰 합친 결과다. 이 문서는 **무엇을 고쳤고 어떤 결정이 확정됐는지**를 적는다.
 >
-> **배치는 README 의 각 폴더 용도를 따랐다** (1절). 기존 파일 중 **값을 바꾼 것은
-> 없고**, 두 파일에 절·항목을 **추가**했다 (2절 말미). 기존 시험 전량이 그대로
-> 통과한다 — 확인 방법은 6절.
+> **배치는 README 의 각 폴더 용도를 따랐다** (1절). 설정값은 바꾸지 않고
+> `config.yaml`과 `requirements-dev.txt`에 항목을 추가했으며, 팀장 리뷰에서
+> `PROTOCOL.md`에 LiDAR 정본 확장 링크를 더했다. 확인 방법은 6절에 있다.
 >
-> ⚠️ **`docs/PROTOCOL.md` 는 손대지 않았다.** 스키마는 팀장이 결정한다고
-> 적혀 있어(그 문서 머리말) 새 링크 규약은 `docs/PROTOCOL_LIDAR.md` 로
-> 분리해 두었다. `maps/README.md` · `CODEOWNERS` 도 그대로다.
+> `docs/PROTOCOL.md`가 `docs/PROTOCOL_LIDAR.md`를 정본 확장으로 참조한다.
+> LiDAR 규약은 별도 문서에 두되 기존 제어·텔레메트리 규약과 같은 효력을 갖는다.
 
 ---
 
@@ -188,18 +186,14 @@
 
 ---
 
-## 3. 팀장 확인이 필요한 것 — 4가지
+## 3. 리뷰 결과와 남은 Phase 2 전환 조건
 
-### ① 스캔 링크 스키마 (필수)
+### ① 스캔 링크 스키마 — 승인
 
-`docs/PROTOCOL_LIDAR.md` 7절의 표에 승인·수정을 표시해 주시면 됩니다.
-**`docs/PROTOCOL.md` 는 손대지 않았습니다.**
+2026-09-11 S 팀장 리뷰에서 `SCAN`·deg/mm·점 단위 폐기·포트 5201을 승인했다.
+확정값은 `docs/PROTOCOL_LIDAR.md` 7절에 있다.
 
-새 링크는 기존 규약의 어떤 필드도 바꾸지 않으므로 **추가(additive)** 이지만,
-포트와 수신 루프가 하나씩 늘어나므로 새 `type` 하나를 더하는 것보다 큽니다.
-스키마 결정은 팀장 소관이라 적혀 있어(PROTOCOL.md 머리말) 확인을 요청합니다.
-
-### ② 기존 파일에 **추가**한 두 곳을 확인해 주십시오
+### ② 기존 파일에 추가한 두 곳 — 검토 완료
 
 값을 바꾼 곳은 없고, 절과 항목을 뒤에 붙였습니다.
 
@@ -232,12 +226,11 @@
 (CONTRIBUTING 1절) 그 값으로 실기 순찰을 돌리면 스캔을 기다리다 정지하고,
 그때 원인을 찾기 어렵습니다.
 
-### ④ 새 경로의 `CODEOWNERS` 담당
+### ④ 새 경로의 `CODEOWNERS` 담당 — 현재 규칙 유지
 
-`host/slam/` · `tools/lidar_*` · `tools/patrol_run.py` ·
-`tools/zone_select.py` 의 담당을 정해 주십시오. 지금은 `*` 규칙(@PJW-1)이
-받습니다. `docs/PROTOCOL_LIDAR.md` 와 `lidar_link.py` 는 규약 성격이라
-**3인 전원 리뷰** 대상으로 두는 것이 규약 파일들과 일관됩니다.
+팀원 계정이 아직 `CODEOWNERS`에 확정되지 않았으므로 현재 `*` 규칙(`@PJW-1`)을
+유지한다. 계정 확정 뒤 `host/slam/`과 LiDAR 규약 경로를 실제 담당자 규칙에
+포함한다.
 
 ---
 
@@ -262,8 +255,8 @@
 일이고 순찰 자체와 무관하다.
 
 `tools/zone_select.py` 는 클릭으로 구역을 찍는 도구라 실제로 matplotlib 가
-필요하다. 없으면 `ImportError` 가 나므로 `requirements-lidar.txt` 를 함께
-두었다. 관제 화면의 정본은 대시보드(`4.5`·`4.6`)이며 `viz.py` 는 그것이 붙기
+필요하다. 없으면 `ImportError` 가 나므로 `requirements-dev.txt`에 추가했다.
+관제 화면의 정본은 대시보드(`4.5`·`4.6`)이며 `viz.py` 는 그것이 붙기
 전까지의 개발 수단이다.
 
 ---
@@ -444,8 +437,8 @@ python tools/patrol_run.py  --simulate --cycles 2 --seed 5    # 순찰
 
 # ④ 목업으로 링크까지 (터미널 3개)
 python tools/mock_lidar.py --walk --host 127.0.0.1
-python tools/mock_mechdog.py --device mechdog-mock
-python tools/patrol_run.py --device mechdog-01 --robot 127.0.0.1
+python tools/mock_mechdog.py --device mechdog-01
+python tools/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot 127.0.0.1
 ```
 
 `--simulate` 는 `localization.track` 이 `none` 이어도 돌아간다. 실기 모드는
@@ -481,7 +474,7 @@ python tools/patrol_run.py --device mechdog-01 --robot 127.0.0.1
 | 대시보드 연결 (FR-4.2) | `host/dashboard/` 가 아직 없다 (`4.5`·`4.6`) |
 | 구역 도착 시 카메라 판독 (FR-8) | `change_detect` 소관. 훅 자리만 비워 뒀다 — 기다릴 시간을 여기서 정하면 그 값이 두 곳에 생긴다 |
 | ArUco 구역 식별 (FR-8 `marker_map`) | 구역 *식별*은 측위와 무관한 별 작업이다 (`config.yaml` zones 절 각주) |
-| 중계 노드 펌웨어 (C++) | `docs/PROTOCOL_LIDAR.md` 승인 후. 픽스처는 준비돼 있다 |
+| 중계 노드 펌웨어 (C++) | 규약은 승인됐고 픽스처도 준비됐다. Phase 2 착수 승인 뒤 구현한다 |
 | `gait_calibration` 기반 실이동량 | `mechdog-01.yaml` 의 실측값이 비어 있다. 시뮬레이션은 **명목값**을 쓰며 그 숫자로 실기 성능을 말하지 않는다 |
 | LiDAR 유효 사거리 확정 | 제품 재선정 중 (ADR-18). `range_max_mm: 8000` 은 잠정값 |
 | 루프 클로저 | 스캔 정합만 있다. 큰 공간에서 누적 오차가 남는다 — **넣지 않은 것이 의도적이다**: `scan_match.py` 는 P2 에서 `slam_toolbox` 로 교체될 자리이므로 여기에 성능을 더 들이면 버리는 일이 늘고 교체하지 않을 이유를 만든다 (ADR-9) |

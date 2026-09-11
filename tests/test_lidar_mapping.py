@@ -308,6 +308,20 @@ def test_match_skips_on_an_empty_map() -> None:
     assert result.score == 0
 
 
+def test_failed_match_keeps_the_search_center() -> None:
+    """점수 0일 때 탐색 격자의 첫 후보로 자세가 튀어서는 안 된다."""
+    grid = blank()
+    grid.cells[0:10, 0:10] = -3.0
+    grid.cells[0, 0] = 3.0
+    params = MatchParams(0.1, 0.05, 0.1, 0.05, 1.0, min_known_cells=20)
+    center = (2.0, 2.0, 0.3)
+    points = np.array([[0.2, 0.0], [0.0, 0.2]])
+    result = match(grid, points, center, params)
+    assert not result.skipped
+    assert result.score == 0
+    assert result.pose == center
+
+
 def test_predict_extrapolates_the_last_step() -> None:
     assert predict((0.0, 0.0, 0.0), (0.1, 0.2, 0.3))[0] == pytest.approx(0.2)
     assert predict((0.0, 0.0, 0.0), (0.1, 0.2, 0.3))[1] == pytest.approx(0.4)
@@ -367,6 +381,14 @@ def test_astar_starts_even_from_a_blocked_cell() -> None:
     blocked = np.zeros((20, 20), dtype=bool)
     blocked[1, 1] = True
     assert astar((1, 1), (10, 10), blocked) is not None
+
+
+def test_astar_does_not_cut_through_blocked_corners() -> None:
+    """대각 목적 셀이 비어 있어도 양옆 벽 사이로 로봇 몸체는 못 지나간다."""
+    blocked = np.zeros((3, 3), dtype=bool)
+    blocked[0, 1] = True
+    blocked[1, 0] = True
+    assert astar((0, 0), (1, 1), blocked) is None
 
 
 def test_diagonal_moves_cost_more_than_straight() -> None:

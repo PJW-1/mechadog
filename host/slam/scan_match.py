@@ -197,7 +197,11 @@ def match(
                 if score > best_score:
                     best_score = score
                     best_pose = (x, y, wrap_pi(yaw))
-    return MatchResult(best_pose, max(best_score, 0))
+    if best_score <= 0:
+        # 겹친 점이 하나도 없으면 첫 탐색 후보가 우연히 best_pose가 된다.
+        # 실패 결과에는 입력 중심을 보존해야 위치가 탐색 창 끝으로 튀지 않는다.
+        return MatchResult(center, 0)
+    return MatchResult(best_pose, best_score)
 
 
 def integrate_scan(

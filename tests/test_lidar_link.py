@@ -194,6 +194,33 @@ def test_points_over_the_cap_are_discarded() -> None:
     assert decoder.validate(row).verdict is Verdict.DISCARD
 
 
+@pytest.mark.parametrize(
+    "point",
+    (
+        [0.0, 1000.5],
+        [0.0, 1000, -1],
+        [0.0, 1000, 256],
+        [0.0, 1000, 12.5],
+    ),
+)
+def test_point_types_and_quality_range_follow_the_wire_schema(point: list[float]) -> None:
+    decoder = ScanDecoder()
+    result = decoder.validate(
+        {
+            "seq": 1,
+            "ts": 1,
+            "type": "SCAN",
+            "device_id": "lidar-a",
+            "boot_id": "b",
+            "points": [point, [90.0, 1200, 100]],
+        }
+    )
+    scan = scan_of(result)
+    assert scan is not None
+    assert scan.dropped == 1
+    assert len(scan.points) == 1
+
+
 def test_empty_scan_is_accepted() -> None:
     """점이 없는 것은 링크 문제가 아니라 센서가 아무것도 못 본 것이다."""
     decoder = ScanDecoder()

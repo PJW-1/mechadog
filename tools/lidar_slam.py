@@ -8,7 +8,7 @@ LiDAR 는 스캔면이 수평이라고 가정하므로, 이동 중 스캔은 정
 명령 소켓을 아예 열지 않는 이유가 그것이다.
 
     python tools/lidar_slam.py --simulate            # 가상 공간으로 알고리즘 확인
-    python tools/lidar_slam.py --device mechdog-01   # 실기 (LiDAR 중계 노드 필요)
+    python tools/lidar_slam.py --device mechdog-01 --lidar-device lidar-01
 
 산출물은 `maps/` 로 간다 — `slam_map.npy` · `map_meta.json` · `slam_map.png`.
 앞의 둘은 **한 쌍이다**: 메타 없이는 격자가 그냥 숫자 배열이다.
@@ -67,7 +67,32 @@ def open_scan_socket(port: int, timeout_s: float) -> socket.socket:
     return sock
 
 
-def collect_real(sock: socket.socket, decoder: ScanDecoder, batch_size: int) -> list[Scan]:
+def prepare_real_capture(sock: socket.socket, step: int, settle_s: float) -> None:
+    """사용자 이동이 끝난 뒤 안정된 최신 스캔만 남긴다.
+
+    중계 노드는 계속 송신하므로 단순히 대기한 뒤 읽으면 이동 중 패킷이 소켓
+    버퍼에 남아 있다. Enter로 정지를 확인하고 안정화 시간을 기다린 다음,
+    그동안 쌓인 패킷을 비워 다음 수신부터 새 배치를 만든다.
+    """
+    input(f"[SLAM] 위치 {step + 1}: 로봇을 옮겨 완전히 세운 뒤 Enter를 누르세요. ")
+    time.sleep(settle_s)
+    timeout = sock.gettimeout()
+    sock.setblocking(False)
+    try:
+        while True:
+            sock.recvfrom(RECV_BYTES)
+    except (BlockingIOError, OSError):
+        pass
+    finally:
+        sock.settimeout(timeout)
+
+
+def collect_real(
+    sock: socket.socket,
+    decoder: ScanDecoder,
+    batch_size: int,
+    expected_device_id: str | None = None,
+) -> list[Scan]:
     """정지 상태에서 스캔 여러 장을 모은다. **폐기된 패킷은 세지 않는다.**"""
     batch: list[Scan] = []
     while len(batch) < batch_size:
@@ -86,6 +111,13 @@ def collect_real(sock: socket.socket, decoder: ScanDecoder, batch_size: int) -> 
             continue
         scan = scan_of(result)
         if scan is not None:
+            if expected_device_id is not None and scan.device_id != expected_device_id:
+                LOG.warning(
+                    "foreign_lidar_scan",
+                    expected=expected_device_id,
+                    received=scan.device_id,
+                )
+                continue
             if scan.dropped:
                 LOG.debug("scan_points_dropped", dropped=scan.dropped, kept=len(scan.points))
             batch.append(scan)
@@ -147,9 +179,9 @@ def run(args: argparse.Namespace, config: dict) -> int:
                     for index in range(batch_size)
                 ]
             else:
-                time.sleep(settle_s)  # 정지 후 안정 대기 (공통 원칙 4)
                 assert sock is not None
-                batch = collect_real(sock, decoder, batch_size)
+                prepare_real_capture(sock, step, settle_s)
+                batch = collect_real(sock, decoder, batch_size, args.lidar_device)
                 if not batch:
                     continue
 
@@ -161,6 +193,10 @@ def run(args: argparse.Namespace, config: dict) -> int:
 
             center = predict(previous_pose, pose)
             result = match(grid, points_robot, center, match_params)
+            if not result.skipped and result.score == 0:
+                # 정합 실패 자세로 누적하면 한 번의 실패가 영구적인 가짜 벽이 된다.
+                LOG.warning("scan_match_failed", step=step)
+                continue
             previous_pose = pose
             pose = result.pose if not result.skipped else center
             integrate_scan(
@@ -215,6 +251,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", default=None, help="개체 프로파일 (실기 운용 시 필수)")
     parser.add_argument(
+        "--lidar-device",
+        default=None,
+        help="LiDAR 중계 노드 device_id (실기 운용 시 필수)",
+    )
+    parser.add_argument(
         "--simulate",
         action="store_true",
         help="가상 LiDAR 로 알고리즘만 확인 (하드웨어 불요)",
@@ -228,8 +269,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not args.simulate and not args.device:
-        print("[SLAM] --device <unit-id> 또는 --simulate 가 필요하다", file=sys.stderr)
+    if not args.simulate and (not args.device or not args.lidar_device):
+        print(
+            "[SLAM] 실기는 --device <unit-id>와 --lidar-device <relay-id>가 모두 필요하다; "
+            "알고리즘만 확인하려면 --simulate를 쓴다",
+            file=sys.stderr,
+        )
         return 2
     try:
         config = settings.load(None if args.simulate else args.device)

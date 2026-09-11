@@ -1,9 +1,8 @@
 """LiDAR 중계 노드 링크 — ESP32 DevKit → Host PC (UDP).
 
-**정본은 이 파일이 아니라 [docs/PROTOCOL_LIDAR.md](../../docs/PROTOCOL_LIDAR.md) 이며,
-그 문서는 아직 제안 상태다** (스키마 확정은 팀장 소관 · PROTOCOL.md 머리말).
-`docs/PROTOCOL.md` 는 손대지 않았다 — 새 링크는 **추가(additive)** 이므로 기존
-규약의 어떤 줄도 바꾸지 않고 붙는다 (PROTOCOL.md 4절).
+**정본은 이 파일이 아니라 [docs/PROTOCOL_LIDAR.md](../../docs/PROTOCOL_LIDAR.md) 다.**
+`docs/PROTOCOL.md`가 그 문서를 LiDAR 링크의 정본 확장으로 지정한다. 새 링크는
+**추가(additive)** 이므로 기존 제어·텔레메트리 규약은 바꾸지 않는다.
 
 왜 별도 링크인가 — LiDAR 를 로봇 메인보드에 직결하지 않기로 했고(ADR-6), 중계
 MCU 가 UART 를 받아 UDP 로 올린다(아키텍처 2절 LIDAR NODE). 즉 **제어 명령도
@@ -129,13 +128,15 @@ def _valid_point(raw: Any) -> tuple[float, float] | None:
     if not isinstance(raw, list | tuple) or not POINT_MIN_LEN <= len(raw) <= POINT_MAX_LEN:
         return None
     angle_deg, dist_mm = raw[0], raw[1]
-    if not _is_number(angle_deg) or not _is_number(dist_mm):
+    if not _is_number(angle_deg) or not _is_int(dist_mm):
         return None
     if dist_mm <= 0:
         # 0 은 LD19 계열이 "측정 실패"로 쓰는 값이고 음수는 물리적으로 없다.
         return None
-    if len(raw) == POINT_MAX_LEN and not _is_number(raw[2]):
-        return None
+    if len(raw) == POINT_MAX_LEN:
+        quality = raw[2]
+        if not _is_int(quality) or not 0 <= quality <= 255:
+            return None
     return math.radians(float(angle_deg)) % (2 * math.pi), float(dist_mm) / 1000.0
 
 

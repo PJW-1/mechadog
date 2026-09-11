@@ -301,6 +301,38 @@ def test_collect_real_ignores_discarded_packets(lidar_config: dict) -> None:
     assert len(batch[0].points) == 2
 
 
+def test_collect_real_ignores_another_lidar_device() -> None:
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.queue = [
+                encode_scan(
+                    seq=1,
+                    ts_ms=1,
+                    device_id="lidar-other",
+                    boot_id="a",
+                    points_wire=[[0.0, 1000]],
+                ).encode(),
+                encode_scan(
+                    seq=1,
+                    ts_ms=2,
+                    device_id="lidar-wanted",
+                    boot_id="b",
+                    points_wire=[[0.0, 1200]],
+                ).encode(),
+            ]
+
+        def recvfrom(self, _size: int) -> tuple[bytes, tuple[str, int]]:
+            if not self.queue:
+                raise TimeoutError
+            return self.queue.pop(0), ("127.0.0.1", 1)
+
+    batch = lidar_slam.collect_real(
+        FakeSocket(), ScanDecoder(), 1, expected_device_id="lidar-wanted"
+    )
+    assert len(batch) == 1
+    assert batch[0].device_id == "lidar-wanted"
+
+
 def test_collect_real_warns_on_unknown_type() -> None:
     class FakeSocket:
         def __init__(self) -> None:
@@ -528,6 +560,26 @@ def test_send_delivers_to_a_loopback_listener() -> None:
     finally:
         listener.close()
         sender.close()
+
+
+def test_patrol_shutdown_repeats_the_same_estop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lidar_config: dict
+) -> None:
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.payloads: list[bytes] = []
+
+        def sendto(self, payload: bytes, _peer: tuple[str, int]) -> None:
+            self.payloads.append(payload)
+
+    seed_maps(tmp_path)
+    controller = patrol_run.build_controller(lidar_config, tmp_path, seed=1)
+    sock = FakeSocket()
+    monkeypatch.setattr(patrol_run.time, "sleep", lambda _seconds: None)
+    patrol_run.stop_for_shutdown(controller, sock, ("127.0.0.1", 5001))  # type: ignore[arg-type]
+    assert len(sock.payloads) == patrol_run.SHUTDOWN_ESTOP_REPEATS
+    assert len(set(sock.payloads)) == 1
+    assert json.loads(sock.payloads[0])["type"] == "ESTOP"
 
 
 def test_open_socket_is_non_blocking() -> None:
