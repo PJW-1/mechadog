@@ -22,6 +22,10 @@ ROOT = Path(__file__).resolve().parents[1]
 WBS = ROOT / "docs" / "WBS.md"
 OUT = ROOT / "docs" / "ASSIGNMENTS.md"
 
+sys.path.insert(0, str(ROOT))
+
+from host.common.console import survive_encoding_errors  # noqa: E402
+
 #: WBS 작업 사전의 행 구조 — 8칸 고정.
 #: `ID | 워크패키지 | 산출물 | 완료 기준(DoD) | R | 선행 | M/D | 연계`
 _COLUMNS = 8
@@ -298,6 +302,9 @@ def render(packages: list[WorkPackage]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     parser = argparse.ArgumentParser(prog="wbs_assignments", description="담당자별 작업 목록 생성")
     parser.add_argument("--check", action="store_true", help="쓰지 않고 커밋본과 대조만 한다")
     args = parser.parse_args(argv)

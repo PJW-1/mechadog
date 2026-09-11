@@ -8,6 +8,11 @@ import json
 import socket
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from host.common.console import survive_encoding_errors
 
 
 class Client:
@@ -123,6 +128,9 @@ def run_watchdog(client: Client, step: float, angle: float, duration: float) -> 
 
 
 def main() -> int:
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("host")
     parser.add_argument("--port", type=int, default=5001)

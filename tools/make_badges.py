@@ -32,6 +32,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.common.config import load_base_config  # noqa: E402
+from host.common.console import survive_encoding_errors  # noqa: E402
 
 DPI = 300
 #: A4 세로. 인치 → 픽셀.
@@ -69,6 +70,9 @@ def sheet(dictionary: object, marker_id: int, label: str, side_cm: float) -> np.
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     parser = argparse.ArgumentParser(prog="make_badges", description="사원증 마커 생성")
     parser.add_argument("--out", type=Path, default=Path("datasets/badges"))
     parser.add_argument("--side-cm", type=float, default=14.0, help="마커 변 길이 (기본 14cm)")

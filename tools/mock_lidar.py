@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from host.common.console import survive_encoding_errors
 from host.common.lidar_link import encode_scan
 from host.common.protocol import system_clock_ms
 from host.common.units import ms_to_s
@@ -110,6 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
+    # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
+    survive_encoding_errors()
     return run(build_parser().parse_args(argv))
 
 
