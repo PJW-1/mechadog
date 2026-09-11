@@ -461,6 +461,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seconds", type=float, default=3.0, help="한 시행의 구동 시간")
     parser.add_argument("--trials", type=int, default=3, help="시행 횟수 (2.2.3 은 3회 이상)")
+    parser.add_argument(
+        "--bias-deg",
+        type=float,
+        default=0.0,
+        help="모든 모드의 angle 에 더한다 — 직진 요 편향 보정값을 찾을 때 쓴다",
+    )
     parser.add_argument("--write", action="store_true", help="개체 프로파일에 결과를 적는다")
     parser.add_argument(
         "--dry-run", action="store_true", help="측정 입력 없이 송신 창만 확인한다 (목업 연습)"
@@ -468,30 +474,44 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def command_for(
+    mode: str, gait: Mapping[str, Any], *, bias_deg: float = 0.0
+) -> tuple[float, float]:
+    """모드 → 보낼 `move(step, angle)`. **부호가 이 표에 다 들어 있다.**
+
+    ⚠️ **양수 = 반시계 = 좌회전** (PROTOCOL 부호 규약, 2026-09-11 실물 확인).
+    처음에는 *"양수가 우선회"* 라고 적었고 근거는 `teleop` 의 `right: +1.0` 이었다
+    — **그 teleop 이 좌우가 뒤바뀐 상태였다.** 회피는 `+turn_angle_deg` 를 그대로
+    쓰므로 **좌선회 한 방향만** 쓰고, 양쪽을 재는 이유는 `3.5.4` TRACK 락온이
+    x편차 비례로 둘 다 쓰며 서보 오프셋이 비대칭이기 때문이다.
+
+    ⚠️ **요는 `angle` 단독으로 결정된다 — `step × angle` 이 아니다.**
+    2026-09-11 실물: `move(-60,+20)` 은 엉덩이가 오른쪽으로 가며 후진했고(코는
+    왼쪽 = 반시계), `move(-60,-20)` 은 그 반대였다. `patrol.steering_for` 주석과
+    `slam.simulation.apply_move` 는 `sign(step)` 을 곱하고 있었는데 **그 가정이
+    반증됐다** — 처음에는 그 주석을 근거로 여기서도 음수를 보냈다.
+
+    `bias_deg` 는 **직진 요 편향 보정값을 찾기 위한** 것이다. 찾는 것은 *"방향
+    변화가 0 이 되는 각도"* 이고, 그 값이 나오면 순찰의 직진 명령이 그 각도를
+    실어 보내면 된다. ⚠️ 작은 각도의 응답이 선형인지는 모른다 — `angle=20` 이
+    6.8 도/s 니 1 도/s 는 약 -3 이겠지만 **데드밴드가 있으면 아무 변화도 없다.**
+    그것을 확인하는 것도 이 측정의 목적이다.
+    """
+    step = float(gait["step_length_mm"])
+    if mode in ("reverse", "reverse_turn"):
+        step = -step
+    turn = float(gait["turn_angle_deg"])
+    angle = {"turn_left": turn, "turn_right": -turn, "reverse_turn": turn}.get(mode, 0.0)
+    return step, angle + float(bias_deg)
+
+
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 측정용
     # ⚠️ **가장 먼저 부른다.** cp949 콘솔에서 `⚠️` 가 있는 첫 `print` 가 죽는다.
     survive_encoding_errors()
     args = build_parser().parse_args(argv)
     config = load_config(args.device)
-    gait, network = config["gait"], config["network"]
-    step = float(gait["step_length_mm"])
-    if args.mode in ("reverse", "reverse_turn"):
-        step = -step
-    # ⚠️ **양수가 우선회다** (`teleop` 의 `right: +1.0`). 회피 시퀀스는
-    # `turn_angle_deg` 를 그대로 쓰므로 **우선회 한 방향만** 쓴다. 좌선회를 함께
-    # 재는 이유는 `3.5.4` TRACK 락온이 x편차 비례로 양쪽을 쓰기 때문이며, 서보
-    # 오프셋이 비대칭이라 좌우가 같을 이유가 없다.
-    # ⚠️ **양수 = 반시계 = 좌회전** (PROTOCOL 부호 규약, 2026-09-11 실물 확인).
-    #
-    # ⚠️ **요는 `angle` 단독으로 결정된다 — `step × angle` 이 아니다.**
-    #
-    # 2026-09-11 실물 확인: `move(-60,+20)` 은 엉덩이가 오른쪽으로 가며 후진했고
-    # (코는 왼쪽 = 반시계), `move(-60,-20)` 은 그 반대였다. 즉 후진에서도 `angle`
-    # 양수가 반시계다. `patrol.steering_for` 주석과 `slam.simulation.apply_move` 는
-    # `sign(step)` 을 곱하고 있었는데 **그 가정이 반증됐다** — 처음에는 그 주석을
-    # 근거로 여기서도 음수를 보냈다.
-    turn = float(gait["turn_angle_deg"])
-    angle = {"turn_left": turn, "turn_right": -turn, "reverse_turn": turn}.get(args.mode, 0.0)
+    network = config["network"]
+    step, angle = command_for(args.mode, config["gait"], bias_deg=args.bias_deg)
     peer = (args.host, int(network["cmd_port"]))
     period_ms = 1000 // int(network["cmd_rate_hz"])
 
@@ -577,6 +597,16 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 실기 측
     if mean is None:
         return 1
     if args.write:
+        if args.bias_deg:
+            # ⚠️ **보정 각도를 준 측정은 프로파일 값이 아니다.** `forward_mm_per_sec`
+            # 은 *보정 없는* 직진 속도를 뜻하며, 여기서 나온 값을 적으면 이름과
+            # 내용이 어긋난 채로 회피 시간 계산에 들어간다.
+            print(
+                f"\n⚠️ `--bias-deg {args.bias_deg:g}` 을 준 측정은 적지 않는다 — "
+                "프로파일 값은 보정 없는 직진 기준이다",
+                file=sys.stderr,
+            )
+            return 1
         if len(trials) < 3:
             print("\n⚠️ 3회 미만이므로 적지 않는다 (WBS 2.2.3)", file=sys.stderr)
             return 1

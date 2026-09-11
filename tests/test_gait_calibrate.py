@@ -272,3 +272,38 @@ def test_avoid_clearance_is_quiet_when_the_gap_holds(cfg: dict, capsys) -> None:
     assert "순 여유" in out
     assert "여유가 음수다" not in out
     assert "여유가 얇다" not in out
+
+
+# ── 명령 부호 (두 번 틀렸던 자리) ──────────────────────────
+def test_command_signs_follow_the_convention(cfg: dict) -> None:
+    """⚠️ **양수 = 반시계 = 왼쪽.** 이 표가 뒤집혀서 두 번 고쳤다.
+
+    `teleop` 의 좌우가 실제로 뒤바뀐 상태였고 그 값을 근거로 삼았다. 그래서
+    부호를 주석이 아니라 **시험**에 적는다.
+    """
+    from tools.gait_calibrate import command_for
+
+    turn = float(cfg["gait"]["turn_angle_deg"])
+    step = float(cfg["gait"]["step_length_mm"])
+    assert command_for("forward", cfg["gait"]) == (step, 0.0)
+    assert command_for("reverse", cfg["gait"]) == (-step, 0.0)
+    assert command_for("turn_left", cfg["gait"]) == (step, turn)
+    assert command_for("turn_right", cfg["gait"]) == (step, -turn)
+    # 후진 선회는 **후진 + 좌선회와 같은 부호** — 요가 `angle` 단독이기 때문이다.
+    assert command_for("reverse_turn", cfg["gait"]) == (-step, turn)
+
+
+def test_bias_is_added_to_every_mode(cfg: dict) -> None:
+    """직진 보정 실측 — `forward` 에 반대 각도를 실어 편향이 0 이 되는 값을 찾는다."""
+    from tools.gait_calibrate import command_for
+
+    step = float(cfg["gait"]["step_length_mm"])
+    assert command_for("forward", cfg["gait"], bias_deg=-3.0) == (step, -3.0)
+    turn = float(cfg["gait"]["turn_angle_deg"])
+    assert command_for("turn_left", cfg["gait"], bias_deg=-3.0) == (step, turn - 3.0)
+
+
+def test_bias_defaults_to_zero() -> None:
+    """⚠️ 기본이 0 이어야 한다 — 보정이 섞인 값을 프로파일에 적으면 이름과 내용이 어긋난다."""
+    args = build_parser().parse_args(["--host", "1.2.3.4", "--mode", "forward"])
+    assert args.bias_deg == 0.0
