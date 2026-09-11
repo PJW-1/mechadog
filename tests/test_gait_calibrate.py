@@ -307,3 +307,26 @@ def test_bias_defaults_to_zero() -> None:
     """⚠️ 기본이 0 이어야 한다 — 보정이 섞인 값을 프로파일에 적으면 이름과 내용이 어긋난다."""
     args = build_parser().parse_args(["--host", "1.2.3.4", "--mode", "forward"])
     assert args.bias_deg == 0.0
+
+
+# ── 뒤바뀐 입력 (실기에서 실제로 겪었다) ───────────────────
+def test_swapped_entry_is_caught() -> None:
+    """⚠️ **12초 우선회에서 각도 자리에 거리를 넣었다.**
+
+    도구는 그대로 받아 평균 60.5 도/s · 퍼짐 82% 를 냈다. 퍼짐 경고가 살려
+    주긴 했지만 **세 시행을 다 같은 순서로 뒤바꾸면 퍼짐도 작아진다** — 그러면
+    각도와 거리가 맞바뀐 값이 조용히 남는다.
+    """
+    from tools.gait_calibrate import looks_swapped
+
+    assert looks_swapped("turn_right", 1070.0, 43.0), "각도 자리에 mm 가 들어왔다"
+    assert looks_swapped("forward", 1070.0, 1080.0), "부 측정(도) 자리에 mm 가 들어왔다"
+
+
+def test_plausible_measurements_pass() -> None:
+    from tools.gait_calibrate import looks_swapped
+
+    assert not looks_swapped("turn_right", 43.0, 1080.0)
+    assert not looks_swapped("forward", 1040.0, 10.0)
+    assert not looks_swapped("reverse_turn", 40.5, 425.0)
+    assert not looks_swapped("forward", 1040.0, None), "안 잰 부 측정은 의심하지 않는다"

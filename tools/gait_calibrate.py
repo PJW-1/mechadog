@@ -273,26 +273,59 @@ def _ask_number(prompt: str, *, allow_blank: bool, allow_zero: bool = False) -> 
         return value
 
 
+#: 이 각도를 넘는 "방향 변화" 는 **거리와 순서를 바꿔 입력한 것**으로 본다.
+#: 한 바퀴를 돌려면 실측 비율로 100초가 걸리므로 12초 창에서는 나올 수 없다.
+DEGREE_TYPO_LIMIT = 360.0
+
+
+def looks_swapped(mode: str, primary: float, secondary: float | None) -> bool:
+    """주·부 측정이 **뒤바뀐 것처럼 보이는가.**
+
+    실제로 겪었다 — 12초 우선회 3회 중 2회에서 각도 자리에 거리(1070mm)를,
+    거리 자리에 각도(43도)를 넣었다. 도구는 그대로 받아 **평균 60.5 도/s ·
+    퍼짐 82%** 를 냈고, `--write` 였다면 그 값이 프로파일에 적혔다.
+
+    ⚠️ **퍼짐 경고만으로는 부족하다.** 세 시행을 다 같은 순서로 뒤바꿔 넣으면
+    퍼짐이 작아서 경고가 뜨지 않는다 — 조용히 각도와 거리가 맞바뀐 값이 남는다.
+    """
+    _what, unit, _second_what, second_unit = MEASURES[mode]
+    if unit == "도" and abs(primary) > DEGREE_TYPO_LIMIT:
+        return True
+    return second_unit == "도" and secondary is not None and abs(secondary) > DEGREE_TYPO_LIMIT
+
+
 def ask_measurement(mode: str, index: int, total: int) -> tuple[float, float | None] | None:
     """주 측정과 부 측정을 받는다. 주 측정이 비면 **그 시행을 버린다.**
 
     부 측정은 비워도 된다 — 재지 못한 것을 0 으로 채우면 *"쟀다"* 가 되므로
     `None` 으로 남긴다.
+
+    뒤바뀐 것처럼 보이면 **한 번 되묻는다.** 같은 값을 두 번 넣으면 그대로 쓴다
+    — 사람이 확인한 것이므로 도구가 더 고집할 일이 아니다.
     """
     what, unit, second_what, second_unit = MEASURES[mode]
-    primary = _ask_number(
-        f"  [{index}/{total}] {what}({unit})? 엔터만 치면 이 시행을 버린다: ",
-        allow_blank=True,
-    )
-    if primary is None:
-        return None
-    # ⚠️ 방향 변화는 **0 일 수 있다** (완벽히 직진). 거리는 0 이면 안 움직인 것이다.
-    secondary = _ask_number(
-        f"       {second_what}({second_unit})? 안 쟀으면 엔터: ",
-        allow_blank=True,
-        allow_zero=(second_unit == "도"),
-    )
-    return primary, secondary
+    asked_again = False
+    while True:
+        primary = _ask_number(
+            f"  [{index}/{total}] {what}({unit})? 엔터만 치면 이 시행을 버린다: ",
+            allow_blank=True,
+        )
+        if primary is None:
+            return None
+        # ⚠️ 방향 변화는 **0 일 수 있다** (완벽히 직진). 거리는 0 이면 안 움직인 것이다.
+        secondary = _ask_number(
+            f"       {second_what}({second_unit})? 안 쟀으면 엔터: ",
+            allow_blank=True,
+            allow_zero=(second_unit == "도"),
+        )
+        if asked_again or not looks_swapped(mode, primary, secondary):
+            return primary, secondary
+        asked_again = True
+        print(
+            f"    ⚠️ {DEGREE_TYPO_LIMIT:.0f}도를 넘는 방향 변화다 — **{what}({unit})과 "
+            f"{second_what}({second_unit})의 순서가 바뀐 것 아닌가?**\n"
+            "       다시 입력한다. 같은 값을 넣으면 그대로 쓴다."
+        )
 
 
 def summarize(
