@@ -351,10 +351,14 @@ class Runtime:
                 self._behavior.note_target(seen_ms)
             # 대응 단계는 확정과 실제 검출을 **둘 다** 본다 — 확정으로 L1 에 올라가고
             # 마지막 검출로 L1 을 내린다. 하나로 합치면 창이 빌 때마다 단계가 흔들린다.
-            self._escalation.note_person(
-                present=result.sighting.present, last_seen_ms=seen_ms, now_ms=now_ms
-            )
-            self._judge_auth(result, now_ms)
+            #
+            # ⚠️ (잠정) **임무 밖(대기·수동)에서는 올리지 않는다** (`fsm.STANDBY`). 인증도
+            # 보지 않는다 — 대기 중 모르는 사원증 2장이 `AUTH_FAILED` 로 L3 를 만든다.
+            if not self._behavior.standby:
+                self._escalation.note_person(
+                    present=result.sighting.present, last_seen_ms=seen_ms, now_ms=now_ms
+                )
+                self._judge_auth(result, now_ms)
         # ⚠️ **판정은 워커가 추론마다 했고, 여기서는 결과만 읽는다.** 게이트를 이 틱
         # (10Hz)에서 돌리면 25fps 결과 중 10개만 보게 되고 추론률을 올린 이유가 사라진다.
         #
@@ -501,6 +505,9 @@ class Runtime:
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
         self._drain_confirmations(now_ms)
+        # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
+        if self._behavior.standby:
+            self._escalation.stand_down(now_ms)
         self._poll_vision(now_ms)
         # 단계의 시간 조건 — L1 해제(5초)와 L2 승격(10초). **전이와 무관하게 돈다.**
         #

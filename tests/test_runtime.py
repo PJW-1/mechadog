@@ -533,6 +533,42 @@ def test_auth_timeout_raises_alarm_without_passing_through_apply(
     assert runtime.escalation.level is Level.L3
 
 
+def test_person_near_an_idle_robot_raises_no_level(config: dict, clock: FakeClock) -> None:
+    """⚠️ (잠정) **대기 중인 로봇 앞을 지나간 사람으로 경보가 뜨면 안 된다.**
+
+    대기에서는 `AUTH_WAIT` 로 갈 수 없어, 10초 머물다 떠난 사람이 곧바로 L3 가 됐다 —
+    시연 준비 중 팀원 때문에 빨간 경보가 뜨고 관리자 확인이 필요했다.
+    """
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    assert runtime.behavior.state == "IDLE"
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+    lost_ms = int(config["fsm"]["target_lost_timeout_s"]) * 1000
+    last = 100 + hold_ms + 1000
+    for i, at in enumerate(range(100, last + 1, 100)):
+        _stand(runtime, vision, seq=i + 1, at_ms=at)
+    vision.result = vision_result(9999, last + 100, present=False, hits=0, last_seen_ms=last)
+    runtime.tick(last + 100)
+    runtime.tick(last + lost_ms + 100)
+    assert runtime.escalation.level is Level.L0
+
+
+def test_manual_takeover_stands_down_but_keeps_an_alarm(config: dict, clock: FakeClock) -> None:
+    """(잠정) 수동 조종으로 넘어가면 L1·L2 는 내리고 **L3 는 남긴다** (관리자 확인만)."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(clock.ms)
+    _walk_in(runtime, vision, seq=1, at_ms=100)
+    assert runtime.escalation.level is Level.L1
+    runtime.behavior.event(Event.MANUAL_ON, now_ms=200)
+    runtime.tick(200)
+    assert runtime.escalation.level is Level.L0
+
+    runtime.escalation.note_event("PPE_VIOLATION", 300)
+    runtime.tick(400)
+    assert runtime.escalation.level is Level.L3
+
+
 def test_alarm_survives_the_person_leaving(config: dict, clock: FakeClock) -> None:
     """FSM 은 순찰로 돌아가도 **경보는 남는다** — 그것이 별도 축인 이유다."""
     vision = FakeVision()
