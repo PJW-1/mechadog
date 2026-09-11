@@ -116,6 +116,40 @@ jobs:
               -o build/test_command_parser
           ./build/test_command_parser tests/fixtures
 
+      - name: Host unit test (telemetry encoder)
+        if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/src/command_parser.cpp \
+              firmware_mechdog_motion/src/telemetry_encoder.cpp \
+              firmware_mechdog_motion/test/test_telemetry_encoder.cpp \
+              -o build/test_telemetry_encoder
+          ./build/test_telemetry_encoder
+          ./build/test_telemetry_encoder --emit-fixtures > build/telemetry-emitted.jsonl
+          ./build/test_telemetry_encoder --emit-optional-fixtures > build/telemetry-optional.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from host.common.protocol import TelemetryDecoder, Verdict
+
+          decoder = TelemetryDecoder()
+          records = Path('build/telemetry-emitted.jsonl').read_text(encoding='utf-8').splitlines()
+          assert records, 'C++ encoder emitted no records'
+          for line in records:
+              result = decoder.validate(json.loads(line))
+              assert result.verdict is Verdict.ACCEPT, result
+          print(f'Python decoder accepted {len(records)} C++ telemetry records')
+          optional = Path('build/telemetry-optional.jsonl').read_text(encoding='utf-8').splitlines()
+          values = [json.loads(line) for line in optional]
+          assert [value['flags'].get('obstacle') for value in values] == [False, None, True]
+          decoder = TelemetryDecoder()
+          for value in values:
+              assert decoder.validate(value).verdict is Verdict.ACCEPT
+          print('Python decoder accepted omitted/present obstacle fields')
+          PY
+
   # ── WBS 5.3.3 · 펌웨어 빌드 ───────────────────────────────
   firmware-build:
     name: Firmware Build (${{ matrix.target.name }})
@@ -125,8 +159,14 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { dir: firmware_mechdog_motion, fqbn: 'esp32:esp32:esp32',          name: 'MechDog-Motion' }
-          - { dir: firmware_xiao_vision,    fqbn: 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi', name: 'XIAO-Vision' }
+          - dir: firmware_mechdog_motion
+            fqbn: 'esp32:esp32:esp32:FlashMode=dio,FlashFreq=40'
+            core: 'esp32:esp32@2.0.12'
+            name: 'MechDog-Motion'
+          - dir: firmware_xiao_vision
+            fqbn: 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi'
+            core: 'esp32:esp32'
+            name: 'XIAO-Vision'
     steps:
       - uses: actions/checkout@v7
 
@@ -151,7 +191,7 @@ jobs:
           arduino-cli config add board_manager.additional_urls \
             https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32
+          arduino-cli core install "${{ matrix.target.core }}"
 
       # OI-5: HW_MechDog 라이브러리 라이선스 확인 후 third_party/ 벤더링 필요 (RISK-07)
       - name: Link vendored libraries
