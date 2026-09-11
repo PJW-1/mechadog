@@ -2,7 +2,15 @@
 
 ## 웹 화면 미리보기
 
-**[웹 관제 대시보드 디자인 프로토타입](web/design-prototype/README.md)** — 실행 방법과 화면 설명. 가상 메카독·예시 데이터만 표시하며 실제 로봇 제어에 연결되지 않은 디자인 검토본입니다.
+**[웹 관제 대시보드 디자인 프로토타입](web/design-prototype/README.md)** — 새 관제 디자인, 전체 작업 페이지, 로봇 3D 상세와 시점·위치 옆 수동 제어를 제공합니다. 예시 화면이며 실제 장비·DB에 연결되지 않았습니다.
+
+Node.js 24.19.0 기준으로 다음을 실행한 뒤 http://127.0.0.1:4175/#dashboard 를 엽니다.
+
+```sh
+cd web/design-prototype
+npm ci
+npm run dev
+```
 
 Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자율 순찰 4족 보행 로봇** 프로젝트입니다.
 
