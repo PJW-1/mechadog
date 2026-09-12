@@ -18,6 +18,8 @@ import pytest
 
 from host.behavior.change_detect import (
     BaselineStore,
+    Change,
+    ChangeConfirmer,
     ChangeKind,
     ObjectEntry,
     ZoneBaseline,
@@ -380,3 +382,151 @@ def test_comparison_never_takes_an_image():
 
     params = set(inspect.signature(classify_changes).parameters)
     assert params == {"baseline", "detections", "frame_size", "watch_classes"}
+
+
+# ══════════════════════════════════════════════════════════════
+#  3.6.3 오검출 억제 (FR-8.4)
+# ══════════════════════════════════════════════════════════════
+
+REMOVED = Change(ChangeKind.REMOVED, "bottle", 1, (2, 2))
+ADDED = Change(ChangeKind.ADDED, "laptop", 1, (1, 1))
+PERSON = Change(ChangeKind.PERSON, "person", 1, None)
+
+
+def _confirmer(cycles: int = 2, *, immediate: bool = True) -> ChangeConfirmer:
+    return ChangeConfirmer(
+        {"change_detect": {"confirm_cycles": cycles, "person_immediate": immediate}}
+    )
+
+
+def test_a_single_cycle_never_confirms():
+    """**이것이 억제다.** 한 번 본 변화로는 경보하지 않는다."""
+    assert _confirmer().observe("A", [REMOVED]) == ()
+
+
+def test_two_consecutive_cycles_confirm():
+    conf = _confirmer()
+    conf.observe("A", [REMOVED])
+    assert conf.observe("A", [REMOVED]) == (REMOVED,)
+
+
+def test_a_confirmed_change_is_not_raised_again():
+    """물건이 없어진 자리는 계속 비어 있다. 사이클마다 경보하면 못 쓴다."""
+    conf = _confirmer()
+    conf.observe("A", [REMOVED])
+    conf.observe("A", [REMOVED])
+    assert conf.observe("A", [REMOVED]) == ()
+    assert conf.observe("A", [REMOVED]) == ()
+
+
+def test_an_interrupted_streak_starts_over():
+    conf = _confirmer()
+    conf.observe("A", [REMOVED])
+    conf.observe("A", [])  # 끊김
+    assert conf.observe("A", [REMOVED]) == ()
+    assert conf.observe("A", [REMOVED]) == (REMOVED,)
+
+
+def test_a_change_that_returns_can_be_confirmed_again():
+    """물건이 돌아왔다 다시 나가면 그것은 새 사건이다."""
+    conf = _confirmer()
+    conf.observe("A", [REMOVED])
+    conf.observe("A", [REMOVED])
+    conf.observe("A", [])  # 물건이 돌아왔다
+    conf.observe("A", [REMOVED])
+    assert conf.observe("A", [REMOVED]) == (REMOVED,)
+
+
+def test_person_is_confirmed_immediately():
+    """FR-8.4 단서 — 다음 사이클을 기다리면 이미 지나가 버린다."""
+    assert _confirmer().observe("A", [PERSON]) == (PERSON,)
+
+
+def test_person_immediate_can_be_turned_off():
+    conf = _confirmer(immediate=False)
+    assert conf.observe("A", [PERSON]) == ()
+    assert conf.observe("A", [PERSON]) == (PERSON,)
+
+
+def test_person_does_not_shortcut_object_changes():
+    """같은 사이클에 둘이 와도 물체는 여전히 두 번 봐야 한다."""
+    conf = _confirmer()
+    assert conf.observe("A", [REMOVED, PERSON]) == (PERSON,)
+
+
+def test_zones_are_counted_separately():
+    """A 구역에서 본 변화가 B 구역의 횟수를 채우면 안 된다."""
+    conf = _confirmer()
+    conf.observe("A", [REMOVED])
+    assert conf.observe("B", [REMOVED]) == ()
+
+
+def test_different_changes_are_counted_separately():
+    """한 사이클에 둘이 와도 각자의 횟수를 센다."""
+    conf = _confirmer()
+    conf.observe("A", [REMOVED])
+    # REMOVED 는 두 번째라 확정, ADDED 는 첫 번째라 아직이다.
+    assert conf.observe("A", [REMOVED, ADDED]) == (REMOVED,)
+    # 다음 사이클에 ADDED 만 남으면 그것이 두 번째가 되어 확정된다.
+    assert conf.observe("A", [ADDED]) == (ADDED,)
+
+
+def test_cycle_count_comes_from_config():
+    conf = _confirmer(cycles=3)
+    assert conf.confirm_cycles == 3
+    conf.observe("A", [REMOVED])
+    conf.observe("A", [REMOVED])
+    assert conf.observe("A", [REMOVED]) == (REMOVED,)
+
+
+def test_one_cycle_config_confirms_at_once():
+    assert _confirmer(cycles=1).observe("A", [REMOVED]) == (REMOVED,)
+
+
+def test_forget_drops_the_accumulated_count():
+    """기준을 다시 뜨면 옛 기준으로 센 횟수가 새 확정을 앞당기면 안 된다."""
+    conf = _confirmer()
+    conf.observe("A", [REMOVED])
+    conf.forget("A")
+    assert conf.observe("A", [REMOVED]) == ()
+
+
+def test_forget_is_safe_on_an_unknown_zone():
+    _confirmer().forget("Z")
+
+
+def test_real_config_drives_the_confirmer(cfg):
+    conf = ChangeConfirmer(cfg)
+    assert conf.confirm_cycles == cfg["change_detect"]["confirm_cycles"] == 2
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"confirm_cycles": 0},
+        {"confirm_cycles": "2"},
+        {"confirm_cycles": True},
+        {"person_immediate": "yes"},
+    ],
+)
+def test_bad_confirmer_config_is_rejected(section):
+    with pytest.raises(ValueError):
+        ChangeConfirmer({"change_detect": section})
+
+
+def test_confirmer_requires_the_section():
+    with pytest.raises(ValueError):
+        ChangeConfirmer({})
+
+
+def test_observation_and_confirmation_flow_together(cfg, tmp_path):
+    """`3.6.1` → `3.6.2` → `3.6.3` 을 한 번에 흘려 본다."""
+    store = _store(tmp_path)
+    conf = ChangeConfirmer(cfg)
+    watch = cfg["vision"]["coco"]["change_watch_classes"]
+
+    base = store.register("A", [_det("bottle", 540, 400)], frame_size=FRAME, now_ms=NOW)
+    gone = classify_changes(base, [], frame_size=FRAME, watch_classes=watch)
+    assert conf.observe("A", gone) == ()  # 한 사이클로는 경보하지 않는다
+    (confirmed,) = conf.observe("A", gone)
+    assert confirmed.kind is ChangeKind.REMOVED

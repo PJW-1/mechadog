@@ -28,8 +28,8 @@
 된다. 사람 출현은 FR-8.4 에서 **즉시** 다루는 별개 경로다.
 
 저장 형식은 JSON 한 벌 + 스냅샷 한 장이며 구역 ID 로 찾는다. 비교는
-`classify_changes()` 다. **오검출 억제(`3.6.3`)는 아직 없다** — 여기서 나오는
-변화는 *한 사이클의 관찰*이지 확정이 아니며, 연속 2사이클 확인은 다음 작업이다.
+`classify_changes()`, 확정은 `ChangeConfirmer` 다 — **한 사이클의 관찰과 확정된
+변화는 다른 것**이며 경보로 올라가는 것은 뒤엣것뿐이다 (FR-8.4).
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ __all__ = [
     "ZoneBaseline",
     "summarize_detections",
     "classify_changes",
+    "ChangeConfirmer",
     "BaselineStore",
 ]
 
@@ -219,6 +220,92 @@ def classify_changes(
     if people:
         changes.append(Change(kind=ChangeKind.PERSON, label=PERSON_LABEL, count=people, cell=None))
     return tuple(changes)
+
+
+class ChangeConfirmer:
+    """연속 같은 변화가 이어질 때만 확정한다 (WBS 3.6.3 · FR-8.4).
+
+    한 사이클의 관찰은 흔들린다 — 조명이 바뀌거나 로봇이 조금 달리 서기만 해도
+    검출기가 물건 하나를 놓친다. 그것을 그대로 경보로 올리면 **시연 내내 거짓
+    반출이 뜬다.** 그래서 `confirm_cycles` 번 연속 같은 변화가 보일 때만 확정한다.
+
+    ⚠️ **`person` 출현은 즉시 확정한다** (FR-8.4 단서 · `person_immediate`).
+    사람은 기다리는 대상이 아니다. 다음 사이클을 기다리는 동안 이미 지나가 버리고,
+    경비 로봇이 사람을 한 사이클 늦게 아는 것은 기능이 없는 것과 같다.
+
+    ⚠️ **구역마다 따로 센다.** A 구역에서 본 변화가 B 구역의 횟수를 채우면 안 된다.
+
+    ⚠️ **한 번 확정한 변화는 다시 확정하지 않는다.** 물건이 없어진 자리는 다음
+    사이클에도 계속 없으므로, 누적을 그냥 두면 **같은 반출이 사이클마다 경보로
+    올라간다.** 확정한 것은 사라질 때까지 조용히 유지한다.
+
+    시간을 재지 않는다 — 사이클을 센다. 스캔 주기가 바뀌어도 의미가 흔들리지
+    않게 하기 위해서다(`vision.tracker.track_lost_ms` 가 프레임 수 대신 시간을
+    쓰는 것과 같은 이유, 방향만 반대다).
+    """
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        section = config.get("change_detect")
+        if not isinstance(section, Mapping):
+            raise ValueError("change_detect 설정이 필요함")
+        cycles = section.get("confirm_cycles", 2)
+        if not isinstance(cycles, int) or isinstance(cycles, bool) or cycles < 1:
+            raise ValueError("change_detect.confirm_cycles 는 1 이상 정수여야 함")
+        immediate = section.get("person_immediate", True)
+        if not isinstance(immediate, bool):
+            raise ValueError("change_detect.person_immediate 는 참·거짓이어야 함")
+        self._cycles = cycles
+        self._person_immediate = immediate
+        #: 구역 → (변화 키 → 연속 관찰 횟수)
+        self._streaks: dict[str, dict[tuple[Any, ...], int]] = {}
+        #: 구역 → 이미 확정해서 다시 올리지 않는 변화 키
+        self._confirmed: dict[str, set[tuple[Any, ...]]] = {}
+
+    @property
+    def confirm_cycles(self) -> int:
+        return self._cycles
+
+    @staticmethod
+    def _key(change: Change) -> tuple[Any, ...]:
+        return (change.kind, change.label, change.count, change.cell)
+
+    def observe(self, zone_id: str, changes: Iterable[Change]) -> tuple[Change, ...]:
+        """한 사이클의 관찰을 넣고 **이번에 확정된 것만** 돌려준다.
+
+        같은 변화를 계속 보더라도 확정은 한 번뿐이다. 변화가 사라지면 횟수도
+        확정 기록도 지워져, 다시 나타나면 처음부터 센다.
+        """
+        observed = tuple(changes)
+        seen = {self._key(change): change for change in observed}
+        streaks = self._streaks.setdefault(zone_id, {})
+        confirmed = self._confirmed.setdefault(zone_id, set())
+
+        # 이번에 안 보인 것은 연속이 끊겼다. 확정 기록도 같이 지운다 — 물건이
+        # 돌아왔는데 기록이 남아 있으면 다시 나갔을 때 확정이 안 된다.
+        for key in list(streaks):
+            if key not in seen:
+                del streaks[key]
+        confirmed &= set(seen)
+
+        newly: list[Change] = []
+        for key, change in seen.items():
+            if change.kind is ChangeKind.PERSON and self._person_immediate:
+                if key not in confirmed:
+                    confirmed.add(key)
+                    newly.append(change)
+                continue
+            streaks[key] = streaks.get(key, 0) + 1
+            if streaks[key] >= self._cycles and key not in confirmed:
+                confirmed.add(key)
+                newly.append(change)
+        return tuple(newly)
+
+    def forget(self, zone_id: str) -> None:
+        """구역의 누적을 버린다. **기준을 다시 뜨면 호출한다** — 옛 기준으로 센
+        횟수가 새 기준의 확정을 앞당기면 안 된다.
+        """
+        self._streaks.pop(zone_id, None)
+        self._confirmed.pop(zone_id, None)
 
 
 class BaselineStore:
