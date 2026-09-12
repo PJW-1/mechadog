@@ -2,7 +2,7 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {extname,resolve,sep} from 'node:path';
 const root=process.cwd();const port=4175;const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.woff2':'font/woff2','.txt':'text/plain'};
-const files=new Set(['index.html','styles.css','panels.css','app.js','operations.js','panels.js','webmcp.js','scene.js','scene-materials.js','robot-view.js','icons.js','factory-layout.json']);
+const files=new Set(['index.html','styles.css','panels.css','app.js','operations.js','panels.js','robot-link.js','webmcp.js','scene.js','scene-materials.js','robot-view.js','icons.js','factory-layout.json']);
 const server=http.createServer(async(req,res)=>{
 try{if(!['127.0.0.1:'+port,'localhost:'+port].includes(req.headers.host)){res.writeHead(403).end();return}
 const pathname=decodeURIComponent(new URL(req.url,'http://127.0.0.1').pathname);

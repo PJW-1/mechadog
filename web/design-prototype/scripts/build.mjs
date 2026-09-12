@@ -1,7 +1,7 @@
 import {mkdir,copyFile,cp} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
-const publicFiles=['index.html','styles.css','panels.css','app.js','operations.js','panels.js','webmcp.js','scene.js','scene-materials.js','robot-view.js','icons.js','factory-layout.json'];
+const publicFiles=['index.html','styles.css','panels.css','app.js','operations.js','panels.js','robot-link.js','webmcp.js','scene.js','scene-materials.js','robot-view.js','icons.js','factory-layout.json'];
 await mkdir('build',{recursive:true});
 for(const file of publicFiles){if(file.endsWith('.js')){const result=spawnSync(process.execPath,['--check',file],{encoding:'utf8'});if(result.status!==0)throw new Error(result.stderr)}await copyFile(file,resolve('build',file))}
 await mkdir('build/vendor/addons/controls',{recursive:true});
