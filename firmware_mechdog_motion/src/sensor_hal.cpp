@@ -14,6 +14,10 @@
 
 #include "MadgwickAHRS.h"
 #include "SensorQMI8658.hpp"
+
+#if MECHADOG_SENSOR_CORE >= portNUM_PROCESSORS
+#error "MECHADOG_SENSOR_CORE is unavailable on this FreeRTOS target"
+#endif
 #endif
 
 namespace mechadog {
@@ -112,6 +116,28 @@ SemaphoreHandle_t g_snapshot_mutex = nullptr;
 TaskHandle_t g_sensor_task = nullptr;
 AcquisitionRecord g_published;
 SensorError g_start_error = SensorError::Starting;
+// The sensor task exclusively owns the accumulator. Only its 1 Hz copy uses
+// this separate static mutex, always with a zero wait on both cores.
+StaticSemaphore_t g_performance_mutex_storage;
+SemaphoreHandle_t g_performance_mutex = nullptr;
+SensorPerformanceSnapshot g_performance;
+SensorPerformanceSnapshot g_published_performance;
+uint64_t g_next_performance_publish_us = 0;
+
+void publish_performance(uint64_t now_us) {
+  if (now_us < g_next_performance_publish_us) return;
+  g_next_performance_publish_us = now_us + 1000000;
+  g_performance.captured_us = now_us;
+  g_performance.execution_core = static_cast<int8_t>(xPortGetCoreID());
+  // Scan the fixed 4096-byte task stack only at diagnostic publication cadence.
+  g_performance.stack_min_free_bytes = uxTaskGetStackHighWaterMark(nullptr);
+  if (xSemaphoreTake(g_performance_mutex, 0) != pdTRUE) {
+    if (g_performance.publish_dropped != UINT32_MAX) ++g_performance.publish_dropped;
+    return;
+  }
+  g_published_performance = g_performance;
+  xSemaphoreGive(g_performance_mutex);
+}
 
 // This task exclusively owns Wire. The vendor's IMU task (homeostasis) and its
 // other IIC1 features are never started by our sources (sensor_hal.h).
@@ -318,6 +344,7 @@ void sensor_task(void*) {
   const TickType_t period = pdMS_TO_TICKS(kSamplePeriodMs);
 
   for (;;) {
+    const uint64_t cycle_started_us = static_cast<uint64_t>(esp_timer_get_time());
     const TickType_t cycle_started = xTaskGetTickCount();
     const TickType_t wake_lateness = cycle_started - last_wake;
     SensorTimingFault cycle_timing;
@@ -423,6 +450,21 @@ void sensor_task(void*) {
       last_wake = xTaskGetTickCount();
     }
     publish(record);
+    // This is elapsed wall time, not task CPU usage: preemption, driver waits
+    // and the existing sensor publication are included. The fixed statistics
+    // bookkeeping below and vTaskDelayUntil are outside the measured body.
+    const uint64_t cycle_finished_us = static_cast<uint64_t>(esp_timer_get_time());
+    g_performance.cycle.observe(cycle_finished_us - cycle_started_us);
+    // Keep the exact tick-derived lateness used by the existing fault latch.
+    g_performance.wake.observe(static_cast<uint64_t>(wake_lateness) * portTICK_PERIOD_MS * 1000);
+    if (cycle_timing.stages_measured_mask & kSensorTimingStageImuFilter) {
+      g_performance.imu.observe(cycle_timing.imu_filter_us);
+    }
+    if (cycle_timing.stages_measured_mask & kSensorTimingStageSonar) {
+      g_performance.sonar.observe(cycle_timing.sonar_us);
+    }
+    g_performance.adc.observe(cycle_timing.adc_us);
+    publish_performance(cycle_finished_us);
     vTaskDelayUntil(&last_wake, period);
   }
 }
@@ -455,14 +497,36 @@ bool SensorHal::begin() {
     g_start_error = SensorError::TaskCreationFailed;
     return false;
   }
-  if (xTaskCreatePinnedToCore(sensor_task, "MechDogSensors", 4096, nullptr, 3, &g_sensor_task, 0) !=
-      pdPASS) {
+  if (g_performance_mutex == nullptr) {
+    g_performance_mutex = xSemaphoreCreateMutexStatic(&g_performance_mutex_storage);
+  }
+  if (g_performance_mutex == nullptr) {
+    g_start_error = SensorError::TaskCreationFailed;
+    return false;
+  }
+  if (xTaskCreatePinnedToCore(sensor_task, "MechDogSensors", 4096, nullptr, 3, &g_sensor_task,
+                              MECHADOG_SENSOR_CORE) != pdPASS) {
     g_sensor_task = nullptr;
     g_start_error = SensorError::TaskCreationFailed;
     return false;
   }
   return true;
 #else
+  return false;
+#endif
+}
+
+bool SensorHal::performance_snapshot(SensorPerformanceSnapshot& out) const {
+#if MECHADOG_ENABLE_SENSORS
+  if (g_performance_mutex == nullptr || xSemaphoreTake(g_performance_mutex, 0) != pdTRUE) {
+    return false;
+  }
+  const bool available = g_published_performance.captured_us != 0;
+  if (available) out = g_published_performance;
+  xSemaphoreGive(g_performance_mutex);
+  return available;
+#else
+  (void)out;
   return false;
 #endif
 }

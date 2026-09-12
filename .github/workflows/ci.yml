@@ -125,6 +125,24 @@ jobs:
               -o build/test_ota_health
           ./build/test_ota_health
 
+      - name: Host unit test (OTA reboot deadline)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_reboot_deadline.cpp \
+              -o build/test_reboot_deadline
+          ./build/test_reboot_deadline
+
+      - name: Host unit test (sensor timing statistics)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_sensor_timing_stats.cpp \
+              -o build/test_sensor_timing_stats
+          ./build/test_sensor_timing_stats
+
       - name: Host unit test (telemetry encoder)
         if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
         run: |

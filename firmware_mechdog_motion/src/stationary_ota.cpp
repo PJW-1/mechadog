@@ -1,6 +1,7 @@
 #include "stationary_ota.h"
 
 #include "ota_health.h"
+#include "reboot_deadline.h"
 #include "sensor_hal.h"
 
 #if MECHADOG_ENABLE_OTA
@@ -46,7 +47,7 @@ std::atomic<bool> g_healthy{false};
 std::atomic<bool> g_confirm_requested{false};
 std::atomic<bool> g_confirmed{false};
 std::atomic<bool> g_updating{false};
-std::atomic<uint32_t> g_reboot_at{0};
+mechadog::RebootDeadline g_reboot;
 mechadog::OtaHealth g_health;
 esp_timer_handle_t g_verify_timer = nullptr;
 httpd_handle_t g_server = nullptr;
@@ -175,7 +176,7 @@ esp_err_t updateHandler(httpd_req_t* req) {
       err == ESP_OK
           ? reply(req, "202 Accepted", "{\"staged\":true,\"rebooting\":true}")
           : reply(req, "400 Bad Request", "{\"staged\":false,\"rebooting_previous\":true}");
-  g_reboot_at = millis() + 500;
+  g_reboot.schedule(millis(), 500);
   return sent;
 }
 
@@ -243,7 +244,7 @@ bool beginStationaryOta() {
 
 void pollStationaryOta(bool wifi_connected, const SensorSnapshot& sample) {
 #if MECHADOG_ENABLE_OTA
-  if (g_reboot_at != 0 && static_cast<int32_t>(millis() - g_reboot_at.load()) >= 0) esp_restart();
+  if (g_reboot.due(millis())) esp_restart();
   if (wifi_connected && !g_start_requested.exchange(true)) {
     if (xTaskCreatePinnedToCore(startServer, "ota-start", 6144, nullptr, 2, nullptr, 0) != pdPASS)
       g_start_requested = false;
@@ -267,7 +268,7 @@ void pollStationaryOta(bool wifi_connected, const SensorSnapshot& sample) {
       Serial.println("OTA confirmed: authenticated PC + healthy stationary runtime");
       // Confirming writes otadata and can pause cache/sensor acquisition.
       // Reboot the now-VALID image to restart filters after this flash write.
-      if (g_pending) g_reboot_at = millis() + 500;
+      if (g_pending) g_reboot.schedule(millis(), 500);
     }
   }
 #else

@@ -53,7 +53,8 @@ digest를 초기 마이그레이션에서 비교했다. 이후 무선 시험 후
 ## 빌드와 PC 도구
 
 검증 SDK: Arduino-ESP32 2.0.12 / ESP-IDF 4.4.5, ESP32 DIO 40MHz, CPU 240MHz.
-SDK bootloader rollback을 사용한다. Pi 5 코드/추론 부하는 변경하지 않았다.
+SDK bootloader rollback을 사용한다. AI 모델은 사용자 PC에서 실행하고,
+PC와 메크독 ESP32가 통신한다. 이 업데이트는 PC 추론 코드를 변경하지 않는다.
 HTTPS는 ESP32 별도 태스크, PC GUI는 별도 프로세스를 사용한다. CPU 사용률을
 정밀 계측한 것은 아니며 실제 센서·telemetry 검증 결과와 구분한다.
 

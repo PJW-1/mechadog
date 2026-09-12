@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "motion_hal.h"  // Read the actuator default as well as build overrides.
+#include "sensor_timing_stats.h"
 
 #ifndef MECHADOG_ENABLE_SENSORS
 #define MECHADOG_ENABLE_SENSORS 0
@@ -18,6 +19,15 @@
 // Never call those vendor I2C features from firmware sources; a future I2C
 // device must share this HAL's bus instead. tests/test_firmware_vendor_boundary.py
 // enforces the boundary.
+
+// Core 0 is the unchanged reference. Core 1 is an opt-in A/B candidate only.
+#ifndef MECHADOG_SENSOR_CORE
+#define MECHADOG_SENSOR_CORE 0
+#endif
+#if MECHADOG_SENSOR_CORE != 0 && MECHADOG_SENSOR_CORE != 1
+#error "MECHADOG_SENSOR_CORE must be 0 (reference) or 1 (A/B candidate)"
+#endif
+
 
 namespace mechadog {
 constexpr uint32_t kSensorMaxAgeMs = 200;
@@ -117,6 +127,9 @@ class SensorHal {
   bool begin();
   // Nonblocking snapshot copy. Contention or stale data yields valid=false.
   SensorSnapshot snapshot(uint32_t now_ms) const;
+  // Separate 1 Hz diagnostic copy; do not burden the normal sensor snapshot.
+  // False means disabled/not published/contended, never zero-cost execution.
+  bool performance_snapshot(SensorPerformanceSnapshot& out) const;
   static bool enabled() { return MECHADOG_ENABLE_SENSORS != 0; }
 };
 
