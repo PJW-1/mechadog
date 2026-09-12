@@ -516,8 +516,8 @@ bool SensorHal::begin() {
 #endif
 }
 
-bool SensorHal::performance_snapshot(SensorPerformanceSnapshot& out) const {
 #if MECHADOG_ENABLE_SENSORS
+bool SensorHal::performance_snapshot(SensorPerformanceSnapshot& out) const {
   if (g_performance_mutex == nullptr || xSemaphoreTake(g_performance_mutex, 0) != pdTRUE) {
     return false;
   }
@@ -525,11 +525,12 @@ bool SensorHal::performance_snapshot(SensorPerformanceSnapshot& out) const {
   if (available) out = g_published_performance;
   xSemaphoreGive(g_performance_mutex);
   return available;
-#else
-  (void)out;
-  return false;
-#endif
 }
+#else
+bool SensorHal::performance_snapshot(SensorPerformanceSnapshot&) const {
+  return false;
+}
+#endif
 
 SensorSnapshot SensorHal::snapshot(uint32_t now_ms) const {
 #if MECHADOG_ENABLE_SENSORS
