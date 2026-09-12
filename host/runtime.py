@@ -48,6 +48,7 @@ from host.common.logging_setup import (
     setup_logging,
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
+from host.dashboard.state import DashboardState
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.worker import TickIntervals, build_worker
 
@@ -134,12 +135,15 @@ class Runtime:
         vision: Any = None,
         blackbox: EventBlackbox | None = None,
         event_publisher: Callable[[BlackboxEntry], None] | None = None,
+        dashboard: DashboardState | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
         if rate_hz <= 0:
             raise ConfigError("network.cmd_rate_hz 는 1 이상이어야 함")
         self._device_id = device_id
+        self._dashboard = dashboard
+        self._telemetry_received_at: int | None = None
         # 우리 로봇의 텔레메트리로 받아들이는 이름 — 펌웨어는 MAC 이름을 보낸다 (`telemetry_ids`).
         self._own_ids = telemetry_ids(dict(config), device_id)
         self._cmd_port = int(network["cmd_port"])
@@ -288,6 +292,8 @@ class Runtime:
             return Ingested(discarded=f"다른 개체: {out.reading.device_id}")
 
         self._stats.accepted += 1
+        if self._dashboard is not None:
+            self._telemetry_received_at = self._dashboard.now()
         self._last_telemetry = {
             "device_id": out.reading.device_id,
             "available": True,
@@ -296,6 +302,11 @@ class Runtime:
             "state": out.reading.state,
             "batt_v": out.reading.batt_v,
             "dist_cm": out.reading.dist_cm,
+            "imu": {
+                "pitch": out.reading.pitch,
+                "roll": out.reading.roll,
+                "yaw": out.reading.yaw,
+            },
             "last_cmd_age_ms": out.reading.last_cmd_age_ms,
             "safety_latched": out.reading.safety_latched,
             "flags": {
@@ -539,6 +550,13 @@ class Runtime:
         digest = self._summary.drain(now_ms)
         if digest:
             LOG.info("telemetry_summary", **digest)
+        if self._dashboard is not None:
+            self._dashboard.publish(
+                telemetry=self._last_telemetry if self._last_telemetry["available"] else None,
+                state=self._behavior.state,
+                escalation=self._escalation.level.value,
+                received_at=self._telemetry_received_at,
+            )
         return lines
 
     def _apply(self, event: Event, now_ms: int) -> bool:
@@ -814,6 +832,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="진단용: 카메라·검출 워커 없이 모션 런타임만 실행한다",
     )
     parser.add_argument("--duration", type=float, default=None, help="N초 후 종료 (기본 무한)")
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        help="PC 로컬 읽기 전용 관제 서버 포트 (기본 비활성, 예: 8000)",
+    )
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
     parser.add_argument(
         "--reset-on-start",
@@ -828,6 +852,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
+        raise SystemExit("dashboard-port must be between 1 and 65535")
     # ⚠️ 설정을 읽기 전에는 우리 로거가 없다. 여기서만 표준 출력을 쓴다.
     try:
         config = load_config(args.device)
@@ -846,6 +872,11 @@ def main(argv: list[str] | None = None) -> int:
 
     vision = None if args.no_vision else build_worker(config)
     blackbox = EventBlackbox(config)
+    dashboard = (
+        DashboardState(args.device, stale_after_ms=int(config["safety"]["link_loss_failsafe_ms"]))
+        if args.dashboard_port is not None
+        else None
+    )
     runtime = Runtime(
         config,
         device_id=args.device,
@@ -853,6 +884,7 @@ def main(argv: list[str] | None = None) -> int:
         context=context,
         vision=vision,
         blackbox=blackbox,
+        dashboard=dashboard,
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
@@ -867,7 +899,12 @@ def main(argv: list[str] | None = None) -> int:
             # ⚠️ **예약한다. 바로 시작하지 않는다.** 해제가 정착하면서 `IDLE` 로
             # 내려오므로, 먼저 시작한 순찰은 조용히 취소된다 (`ask_patrol` 참고).
             runtime.ask_patrol()
-        runtime.serve(sock, duration_s=args.duration)
+        with contextlib.ExitStack() as stack:
+            if dashboard is not None:
+                from host.dashboard.server import running_server
+
+                stack.enter_context(running_server(dashboard, args.dashboard_port))
+            runtime.serve(sock, duration_s=args.duration)
     except KeyboardInterrupt:
         LOG.info("interrupted", action="ESTOP 송신 후 종료")
     finally:
