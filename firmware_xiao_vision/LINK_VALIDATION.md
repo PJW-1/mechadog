@@ -167,3 +167,20 @@ Installed final image: 960,528 bytes, SHA256
 `75220cd187bad425de94263d8afcb459fe05a28717c8be23344d4fb635ab7a79`.
 The source in the private build and repository matched; the flash write was
 verified and the final captures were taken after installing that image.
+
+### Screen timestamp check
+
+After the user aimed the camera at the same PC's browser counter, 12 original
+JPEGs and their PC arrival epoch timestamps were saved. Eight had unambiguous
+three-digit readings; one lacked visible digits and three showed transitions or
+ghosting and were excluded. The counter advances once per 100ms and wraps every
+100 seconds. The partially clipped/blurred bar was not interpolated.
+
+The resulting timestamp-to-arrival intervals in milliseconds were
+`(6,106]`, `(37,137]`, `(51,151]`, `(60,160]`, `(78,178]`, `(77,177]`,
+`(44,144]`, and `(53,153]`. These are 100ms-wide bounds from visible counter
+buckets, not exact samples or latency percentiles. They assume no 100-second
+wrap alias, supported by continuous live reception. Display refresh and exposure
+uncertainty were not separately calibrated. Eight readable frames over roughly
+four seconds cannot establish a long-run bound; the earlier 1,097.9ms stall
+still stands. Inference, commands and physical response were not measured.
