@@ -13,6 +13,12 @@
 #ifndef MECHADOG_ENABLE_TASK_WDT
 #define MECHADOG_ENABLE_TASK_WDT 0
 #endif
+#ifndef MECHADOG_WATCHDOG_FAULT_PROBE
+#define MECHADOG_WATCHDOG_FAULT_PROBE 0
+#endif
+#if MECHADOG_WATCHDOG_FAULT_PROBE && !MECHADOG_ENABLE_TASK_WDT
+#error "Fault probe requires the independent watchdog and an actuator-OFF bench"
+#endif
 #if MECHADOG_ENABLE_TASK_WDT
 #include <esp_system.h>
 
@@ -22,6 +28,8 @@
 #if MECHADOG_ENABLE_ACTUATORS
 #error "Task WDT candidate is restricted to actuator-OFF diagnostic builds"
 #endif
+// Stationary OTA uses its own task. The loop deadline remains active during
+// transfers, confirmation and flash operations; there is no maintenance feed.
 #endif
 
 #if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
@@ -417,16 +425,29 @@ void setup() {
   Serial.printf("Actuators: %s, initial SAFE latch: ON\n",
                 g_motion.actuators_enabled() ? "ON" : "OFF");
 #if MECHADOG_ENABLE_TASK_WDT
-  // setup() runs inside loopTask. Do not wait for DHCP before subscribing.
+  // setup() runs inside loopTask. Monitor progress without waiting for DHCP.
   // Errors are fatal in this actuator-OFF build, never silently unprotected.
   ESP_ERROR_CHECK(mechadog::startTaskWatchdog());
-  Serial.printf("Task WDT: loopTask subscribed, timeout_s=%lu panic=1 reset_reason=%d\n",
-                static_cast<unsigned long>(mechadog::kTaskWatchdogTimeoutSeconds),
+  Serial.printf("Loop watchdog: deadline_ms=%lu poll_ms=%lu SDK_WDT=unchanged reset_reason=%d\n",
+                static_cast<unsigned long>(mechadog::kLoopWatchdogDeadlineUs / 1000),
+                static_cast<unsigned long>(mechadog::kLoopWatchdogPollMs),
                 static_cast<int>(esp_reset_reason()));
 #endif
 }
 
 void loop() {
+#if MECHADOG_WATCHDOG_FAULT_PROBE
+  // Explicit bench-only UART fault injection. Never in default/release builds.
+  // No startup hang and no network trigger; a fresh H is required after boot.
+  if (Serial.available() && Serial.read() == 'H') {
+    Serial.println("WDT_FAULT_PROBE H accepted; feed then intentional loop hang");
+    Serial.flush();
+    ESP_ERROR_CHECK(mechadog::feedTaskWatchdog());
+    for (;;) {
+      asm volatile("nop");
+    }
+  }
+#endif
   const uint64_t loop_us = static_cast<uint64_t>(esp_timer_get_time());
   if (g_previous_loop_us != 0 && loop_us - g_previous_loop_us > g_max_loop_gap_us) {
     g_max_loop_gap_us = loop_us - g_previous_loop_us;

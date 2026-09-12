@@ -1,78 +1,137 @@
-// SDK call contract/error paths; this cannot measure real watchdog reset latency.
+// Host simulation of production state/adapter code; NOT hardware timing.
 #include <stdio.h>
 #include <stdlib.h>
-
-#include <string>
+#include <string.h>
 
 #include "task_watchdog.h"
-
-// Do not use assert(): some optimizing toolchains define NDEBUG by default.
+namespace {
+int owner_tag, other_tag, monitor_tag;
+int64_t clock_us = 0;
+TaskHandle_t current = &owner_tag;
+BaseType_t create_result = pdPASS;
+TaskFunction_t task_fn = nullptr;
+int critical_depth = 0, checks = 0, delays = 0, restarts = 0;
+struct Restart {};
+struct StopMonitor {};
 void check(bool condition) {
+  ++checks;
   if (!condition) {
-    fputs("Task WDT SDK contract check failed\n", stderr);
+    fprintf(stderr, "Loop watchdog check %d failed\n", checks);
     abort();
   }
 }
-
-namespace {
-std::string calls;
-esp_err_t init_result = ESP_OK;
-esp_err_t status_result = ESP_ERR_NOT_FOUND;
-esp_err_t add_result = ESP_OK;
-esp_err_t reset_result = ESP_OK;
-constexpr esp_err_t kInjectedError = 99;
-
 void clear() {
-  calls.clear();
-  init_result = ESP_OK;
-  status_result = ESP_ERR_NOT_FOUND;
-  add_result = ESP_OK;
-  reset_result = ESP_OK;
+  auto& state = mechadog::watchdog_detail::runtime();
+  state.progress = mechadog::watchdog_detail::Progress{};
+  state.owner = nullptr;
+  state.monitor = nullptr;
+  clock_us = 0;
+  current = &owner_tag;
+  create_result = pdPASS;
+  task_fn = nullptr;
+  delays = 0;
+  restarts = 0;
+  check(critical_depth == 0);
 }
 }  // namespace
-
-esp_err_t esp_task_wdt_init(uint32_t seconds, bool panic) {
-  check(seconds == 1 && panic);
-  calls += 'I';
-  return init_result;
+void testEnterCritical(portMUX_TYPE*) {
+  check(critical_depth++ == 0);
 }
-esp_err_t esp_task_wdt_status(TaskHandle_t task) {
-  check(task == nullptr);
-  calls += 'S';
-  return status_result;
+void testExitCritical(portMUX_TYPE*) {
+  check(--critical_depth == 0);
 }
-esp_err_t esp_task_wdt_add(TaskHandle_t task) {
-  check(task == nullptr);
-  calls += 'A';
-  return add_result;
+int64_t esp_timer_get_time() {
+  check(critical_depth == 1);
+  return clock_us;
 }
-esp_err_t esp_task_wdt_reset() {
-  calls += 'R';
-  return reset_result;
+TaskHandle_t xTaskGetCurrentTaskHandle() {
+  return current;
 }
-
+BaseType_t xPortGetCoreID() {
+  return 1;
+}
+// Exact FreeRTOS API signature: changing void* to const void* would change the mock overload.
+// cppcheck-suppress constParameterPointer
+BaseType_t xTaskCreatePinnedToCore(TaskFunction_t fn, const char* name, uint32_t stack, void* arg,
+                                   UBaseType_t priority, TaskHandle_t* handle, BaseType_t core) {
+  check(critical_depth == 0 && strcmp(name, "loop_monitor") == 0);
+  check(stack == 3072 && arg == nullptr && priority == 23 && core == 1);
+  if (create_result == pdPASS) {
+    task_fn = fn;
+    *handle = &monitor_tag;
+  }
+  return create_result;
+}
+void vTaskDelay(TickType_t ticks) {
+  check(critical_depth == 0 && ticks == 10);
+  clock_us += 10000;
+  if (++delays > 76) throw StopMonitor{};
+}
+void esp_restart() {
+  check(critical_depth == 0);
+  ++restarts;
+  throw Restart{};
+}
 int main() {
+  using mechadog::feedTaskWatchdog;
+  using mechadog::startTaskWatchdog;
+  using mechadog::watchdog_detail::overdue;
   clear();
-  check(mechadog::startTaskWatchdog() == ESP_OK && calls == "ISAR");
+  check(!mechadog::taskWatchdogArmed());
+  check(feedTaskWatchdog() == ESP_ERR_INVALID_STATE && !overdue());
+  current = nullptr;
+  check(startTaskWatchdog() == ESP_ERR_INVALID_STATE);
   clear();
-  status_result = ESP_OK;
-  check(mechadog::startTaskWatchdog() == ESP_OK && calls == "ISR");
+  create_result = 0;
+  check(startTaskWatchdog() == ESP_ERR_NO_MEM && !overdue());
+  check(!mechadog::taskWatchdogArmed());
+  check(feedTaskWatchdog() == ESP_ERR_INVALID_STATE);
+  create_result = pdPASS;
+  check(startTaskWatchdog() == ESP_OK);
+  check(mechadog::taskWatchdogArmed());
+  check(startTaskWatchdog() == ESP_ERR_INVALID_STATE);
+  current = &other_tag;
+  clock_us = 700000;
+  check(feedTaskWatchdog() == ESP_ERR_INVALID_STATE);
+  current = &owner_tag;
+  clock_us = 749999;
+  check(!overdue());
+  clock_us = 750000;
+  check(overdue() && feedTaskWatchdog() == ESP_ERR_TIMEOUT && overdue());
   clear();
-  init_result = kInjectedError;
-  check(mechadog::startTaskWatchdog() == kInjectedError && calls == "I");
+  check(startTaskWatchdog() == ESP_OK);
+  clock_us = 750001;
+  check(feedTaskWatchdog() == ESP_ERR_TIMEOUT);  // Late feed before observer also latches.
+  clock_us = 1;
+  check(overdue());
   clear();
-  status_result = kInjectedError;
-  check(mechadog::startTaskWatchdog() == kInjectedError && calls == "IS");
+  clock_us = 9000000000LL;
+  check(startTaskWatchdog() == ESP_OK);
+  for (int i = 0; i < 10000; ++i) {
+    clock_us += 50000;
+    check(feedTaskWatchdog() == ESP_OK && !overdue());
+  }
+  --clock_us;
+  check(overdue());  // Monotonic clock reversal fails closed.
   clear();
-  add_result = kInjectedError;
-  check(mechadog::startTaskWatchdog() == kInjectedError && calls == "ISA");
+  check(startTaskWatchdog() == ESP_OK);
+  clock_us = 749999;
+  check(feedTaskWatchdog() == ESP_OK);
+  clock_us += 749999;
+  check(!overdue());
+  ++clock_us;
+  check(overdue());
   clear();
-  reset_result = kInjectedError;
-  check(mechadog::startTaskWatchdog() == kInjectedError && calls == "ISAR");
-  clear();
-  check(mechadog::feedTaskWatchdog() == ESP_OK && calls == "R");
-  clear();
-  reset_result = kInjectedError;
-  check(mechadog::feedTaskWatchdog() == kInjectedError && calls == "R");
-  puts("Task WDT SDK contract: 8 cases passed; hardware timing unverified");
+  check(startTaskWatchdog() == ESP_OK && task_fn != nullptr);
+  current = &monitor_tag;
+  try {
+    task_fn(nullptr);  // Real observer loop with simulated clock.
+    check(false);
+  } catch (const Restart&) {
+    check(clock_us == 750000 && restarts == 1 && delays == 75);
+  } catch (const StopMonitor&) {
+    check(false);  // Observer must not feed its owner on behalf.
+  }
+  check(critical_depth == 0);
+  printf("Loop watchdog: %d assertions passed; hardware reset latency UNVERIFIED\n", checks);
 }

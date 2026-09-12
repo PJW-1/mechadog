@@ -10,7 +10,7 @@ void setup() {
   Serial.printf("WDT probe boot: reset_reason=%d\n", static_cast<int>(esp_reset_reason()));
   Serial.println("Receive-only until H is sent. H deliberately hangs loopTask once.");
   ESP_ERROR_CHECK(mechadog::startTaskWatchdog());
-  Serial.println("WDT probe armed: timeout_s=1 panic=1");
+  Serial.println("Loop watchdog probe: deadline_ms=750 poll_ms=10 SDK_WDT=unchanged");
 }
 
 void loop() {

@@ -18,6 +18,9 @@
 #include <cstring>
 
 #include "motion_hal.h"
+#if MECHADOG_ENABLE_TASK_WDT
+#include "task_watchdog.h"
+#endif
 
 #if MECHADOG_ENABLE_ACTUATORS
 #error "Stationary OTA requires actuators OFF; moving maintenance is not integrated"
@@ -96,14 +99,27 @@ void rebootDeadline(void*) {
 esp_err_t statusHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
   const auto* running = esp_ota_get_running_partition();
-  char body[512];
+  bool watchdog_armed = false;
+  unsigned watchdog_deadline_ms = 0;
+#if MECHADOG_ENABLE_TASK_WDT
+  watchdog_armed = mechadog::taskWatchdogArmed();
+  watchdog_deadline_ms = mechadog::kLoopWatchdogDeadlineUs / 1000;
+#endif
+  bool fault_probe = false;
+#if MECHADOG_WATCHDOG_FAULT_PROBE
+  fault_probe = true;
+#endif
+  char body[768];
   snprintf(body, sizeof(body),
            "{\"mac\":\"%s\",\"boot\":\"%s\",\"version\":\"%s\","
            "\"slot\":\"%s\",\"image_sha256\":\"%s\",\"healthy\":%s,"
-           "\"confirmed\":%s,\"updating\":%s,\"actuators\":false,\"slot_size\":%lu}",
+           "\"confirmed\":%s,\"updating\":%s,\"actuators\":false,\"slot_size\":%lu,"
+           "\"loop_watchdog_armed\":%s,\"loop_watchdog_deadline_ms\":%u,"
+           "\"watchdog_fault_probe\":%s}",
            g_mac, g_boot, MECHADOG_OTA_VERSION, running->label, g_image_sha,
            g_healthy ? "true" : "false", g_confirmed ? "true" : "false",
-           g_updating ? "true" : "false", static_cast<unsigned long>(kSlotSize));
+           g_updating ? "true" : "false", static_cast<unsigned long>(kSlotSize),
+           watchdog_armed ? "true" : "false", watchdog_deadline_ms, fault_probe ? "true" : "false");
   return reply(req, "200 OK", body);
 }
 

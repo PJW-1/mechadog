@@ -142,7 +142,7 @@ jobs:
               firmware_mechdog_motion/test/test_sensor_timing_stats.cpp \
               -o build/test_sensor_timing_stats
           ./build/test_sensor_timing_stats
-      - name: Host unit test (task watchdog SDK contract)
+      - name: Host unit test (independent loop watchdog, simulated time)
         run: |
           mkdir -p build
           g++ -std=c++11 -Wall -Wextra -Werror -O1 \
@@ -252,13 +252,39 @@ jobs:
       - name: Compile task watchdog candidates (not release artifacts)
         if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
         run: |
+          arduino-cli lib install SensorLib@0.2.1 Madgwick@1.2.0
           arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
             --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0' \
             --build-path "$RUNNER_TEMP/watchdog-motion" firmware_mechdog_motion
           arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0 -DMECHADOG_ENABLE_SENSORS=1' \
+            --build-path "$RUNNER_TEMP/watchdog-sensors" firmware_mechdog_motion
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0 -DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_WATCHDOG_FAULT_PROBE=1' \
+            --build-path "$RUNNER_TEMP/watchdog-live-probe" firmware_mechdog_motion
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
             --build-property "compiler.cpp.extra_flags=-I$GITHUB_WORKSPACE/firmware_mechdog_motion/src" \
             --build-path "$RUNNER_TEMP/watchdog-probe" \
             firmware_mechdog_motion/diagnostics/watchdog_probe
+
+      - name: Compile stationary OTA with loop watchdog (not a release artifact)
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        run: |
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property "compiler.cpp.extra_flags=-include $GITHUB_WORKSPACE/firmware_mechdog_motion/test/ota_compile_settings.h" \
+            --build-path "$RUNNER_TEMP/watchdog-ota" firmware_mechdog_motion
+
+      - name: Reject unqualified actuator watchdog combination
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        run: |
+          if arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=1' \
+            --build-path "$RUNNER_TEMP/watchdog-actuator-guard" firmware_mechdog_motion \
+            > "$RUNNER_TEMP/watchdog-actuator-guard.log" 2>&1; then
+            echo "::error::Unqualified watchdog/actuator combination compiled"
+            exit 1
+          fi
+          grep -F 'Task WDT candidate is restricted to actuator-OFF diagnostic builds' "$RUNNER_TEMP/watchdog-actuator-guard.log"
 
       - name: Upload artifacts
         if: steps.sketch.outputs.found == 'true'
