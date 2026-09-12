@@ -23,5 +23,6 @@ onnxruntime>=1.19          ; sys_platform != "win32"
 
 # ── 관제 대시보드 (WBS 4.5) ───────────────────────────────────
 fastapi>=0.115
+anyio>=4.0
 uvicorn[standard]>=0.32
 websockets>=13.0

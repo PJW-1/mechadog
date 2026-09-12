@@ -351,3 +351,22 @@ def test_watched_change_classes_exist_in_vocabulary(cfg: dict) -> None:
 
 def test_person_class_is_in_vocabulary(cfg: dict) -> None:
     assert cfg["vision"]["coco"]["person_class"] in COCO_CLASSES
+
+
+@pytest.mark.parametrize("size", [32, 640])
+def test_repeated_decode_preserves_grid_coordinates_and_input(size: int) -> None:
+    adapter = YoloxAdapter(size)
+    cells = [(x, y, s) for s in YOLOX_STRIDES for y in range(size // s) for x in range(size // s)]
+    raw = np.zeros((1, len(cells), 7), dtype=np.float32)
+    raw[0, :, :2] = 0.25
+    raw[0, :, 4:] = [0.8, 0.25, 0.75]
+    saved = raw.copy()
+    expected = np.array(
+        [[(x - 0.25) * s, (y - 0.25) * s, (x + 0.75) * s, (y + 0.75) * s] for x, y, s in cells]
+    )
+    for _ in range(3):
+        boxes, scores, ids = adapter.decode([raw])
+        np.testing.assert_array_equal(boxes, expected)
+        np.testing.assert_allclose(scores, 0.6)
+        np.testing.assert_array_equal(ids, 1)
+        np.testing.assert_array_equal(raw, saved)
