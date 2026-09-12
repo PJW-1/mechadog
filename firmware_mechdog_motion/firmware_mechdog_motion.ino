@@ -7,6 +7,7 @@
 #include "src/command_parser.h"
 #include "src/motion_hal.h"
 #include "src/sensor_hal.h"
+#include "src/stationary_ota.h"
 #include "src/telemetry_publisher.h"
 
 #if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
@@ -40,6 +41,9 @@ uint64_t g_next_sensor_status_log_ms = 0;
 uint64_t g_previous_loop_us = 0;
 uint64_t g_max_loop_gap_us = 0;
 uint32_t g_sensor_status_dropped = 0;
+uint64_t g_next_sensor_performance_log_ms = 500;
+uint32_t g_sensor_performance_dropped = 0;
+uint8_t g_sensor_performance_metric = 0;
 uint32_t g_last_reconnect_attempt_ms = 0;
 uint32_t g_failsafe_count = 0;
 bool g_udp_started = false;
@@ -266,6 +270,35 @@ void startUdpIfNeeded() {
   }
 }
 
+void pollSensorPerformance(uint64_t now) {
+  if (!g_sensors.enabled() || now < g_next_sensor_performance_log_ms) return;
+  g_next_sensor_performance_log_ms = now + kSensorStatusLogIntervalMs;
+  // This larger copy happens only once per second, independently of the normal
+  // SensorSnapshot read on every loop. Each metric is emitted every five seconds.
+  mechadog::SensorPerformanceSnapshot performance;
+  if (!g_sensors.performance_snapshot(performance)) {
+    if (g_sensor_performance_dropped != UINT32_MAX) ++g_sensor_performance_dropped;
+    return;
+  }
+  const mechadog::SensorElapsedDistribution* metrics[] = {&performance.cycle, &performance.wake,
+                                                          &performance.imu, &performance.sonar,
+                                                          &performance.adc};
+  const char* names[] = {"cycle", "wake", "imu", "sonar", "adc"};
+  char text[mechadog::kSensorPerformanceLineBytes];
+  const int length = mechadog::format_sensor_performance_line(
+      text, sizeof(text), performance, *metrics[g_sensor_performance_metric],
+      names[g_sensor_performance_metric], MECHADOG_SENSOR_CORE, g_sensor_performance_dropped);
+  // p95/p99 are estimated histogram upper bounds, not exact percentiles. These
+  // are wall durations, not task CPU percentages. As with Sensor status, this
+  // is best-effort capacity guarding; other startup UART writers can contend.
+  if (length > 0 && Serial.availableForWrite() >= length + 128) {
+    Serial.write(reinterpret_cast<const uint8_t*>(text), static_cast<size_t>(length));
+  } else if (g_sensor_performance_dropped != UINT32_MAX) {
+    ++g_sensor_performance_dropped;
+  }
+  g_sensor_performance_metric = (g_sensor_performance_metric + 1) % 5;
+}
+
 void pollTelemetry() {
   const mechadog::SensorSnapshot sensors = g_sensors.snapshot(millis());
   const uint64_t now = uptimeMs();
@@ -294,6 +327,10 @@ void pollTelemetry() {
   g_telemetry.poll(sample);
 
   if (now >= g_next_sensor_status_log_ms) {
+    if (g_next_sensor_status_log_ms == 0) {
+      // Start halfway between status emissions, even when setup was slow.
+      g_next_sensor_performance_log_ms = now + kSensorStatusLogIntervalMs / 2;
+    }
     g_next_sensor_status_log_ms = now + kSensorStatusLogIntervalMs;
     // Snapshot values are diagnostic context; invalid values are not certified
     // measurements. Report validity/errors alongside them without changing flags.
@@ -334,6 +371,7 @@ void pollTelemetry() {
       ++g_sensor_status_dropped;
     }
   }
+  pollSensorPerformance(now);
 }
 
 }  // namespace
@@ -349,6 +387,10 @@ void setup() {
 
   g_motion.begin();
   g_motion.stop();
+  if (!mechadog::beginStationaryOta()) {
+    Serial.println("OTA initialization failed; restarting for bootloader recovery");
+    ESP.restart();
+  }
   const bool sensors_started = g_sensors.begin();
   Serial.printf("Sensors: enabled=%d task_started=%d\n", g_sensors.enabled(), sensors_started);
   if (g_sensors.enabled()) {
@@ -410,5 +452,8 @@ void loop() {
   // Safety decisions precede acquisition snapshot and telemetry publication.
   pollTelemetry();
   pollWifiDiagnostics();
+#if MECHADOG_ENABLE_OTA
+  mechadog::pollStationaryOta(WiFi.status() == WL_CONNECTED, g_sensors.snapshot(millis()));
+#endif
   delay(1);
 }
