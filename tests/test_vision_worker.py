@@ -282,6 +282,76 @@ def test_stop_is_idempotent_and_bounded(cfg: dict, monkeypatch) -> None:
     assert (time.perf_counter() - started) < 2.0
 
 
+def test_worker_stop_signals_a_reader_with_no_frames(cfg: dict, monkeypatch) -> None:
+    class NoFrameReader:
+        def __init__(self):
+            self.entered = threading.Event()
+            self.stopped = threading.Event()
+            self.closed = threading.Event()
+            self.stop_calls = 0
+
+        def frames(self):
+            try:
+                self.entered.set()
+                self.stopped.wait(1)
+                yield from ()
+            finally:
+                self.closed.set()
+
+        def stop(self):
+            self.stop_calls += 1
+            self.stopped.set()
+
+    reader = NoFrameReader()
+    worker = _worker(cfg, reader, _FakeDetector(), monkeypatch)
+    worker.start()
+    try:
+        assert reader.entered.wait(1)
+        worker.stop(timeout_s=0.5)
+        assert reader.stop_calls == 1
+        assert reader.closed.is_set()
+        assert not worker.healthy()
+        assert worker._threads == []
+    finally:
+        worker.stop(timeout_s=0.5)
+
+
+def test_worker_keeps_unfinished_read_reference_and_does_not_spawn_a_duplicate(cfg, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+
+    class PendingReader:
+        calls = 0
+
+        def frames(self):
+            try:
+                self.calls += 1
+                entered.set()
+                release.wait(1)
+                yield _frame(1)
+            finally:
+                closed.set()
+
+    reader = PendingReader()
+    worker = _worker(cfg, reader, _FakeDetector(), monkeypatch)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        worker.stop(timeout_s=0.001)
+        assert worker._threads, "종료 중인 기존 연결을 잊으면 중복 연결이 생긴다"
+        assert not worker.healthy()
+        worker.start()
+        assert reader.calls == 1
+        release.set()
+        worker.stop(timeout_s=0.5)
+        assert worker._threads == []
+        assert closed.is_set()
+    finally:
+        release.set()
+        worker.stop(timeout_s=0.5)
+
+
 def test_queue_is_shared_and_drops_old_frames(cfg: dict, monkeypatch) -> None:
     """수신이 추론보다 빠른 것이 정상이다 — 큐가 드롭을 센다 (4.3.5)."""
     queue = FrameQueue()
@@ -404,3 +474,64 @@ def test_result_carries_persistent_track_ids(cfg: dict, monkeypatch) -> None:
     assert result is not None
     assert [t.track_id for t in result.tracks] == [1], "같은 자리의 사람은 ID 를 유지한다"
     assert result.tracks[0].score == pytest.approx(0.9)
+
+
+@pytest.mark.parametrize(
+    "stage,method", [("_gate", "observe"), ("_tracker", "update"), ("_badges", "read")]
+)
+def test_postprocessing_failure_keeps_old_result_and_recovers(cfg, monkeypatch, stage, method):
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch, clock=lambda: 2000)
+    worker._run_one(_frame(1), 1900)
+    previous = worker.latest()
+    assert previous is not None
+    target = getattr(worker, stage)
+    original = getattr(target, method)
+
+    def fail(*_args):
+        raise RuntimeError("postprocessing unavailable")
+
+    monkeypatch.setattr(target, method, fail)
+    worker._run_one(_frame(2), 1900)
+    assert worker.latest() is previous
+    assert worker.stats.errors == 1
+    assert worker.stats.inferences == 1
+    monkeypatch.setattr(target, method, original)
+    worker._run_one(_frame(3), 1900)
+    assert worker.latest().frame_seq == 3
+    assert worker.stats.inferences == 2
+
+
+def test_result_timing_includes_badge_processing(cfg, monkeypatch):
+    now = [2000]
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch, clock=lambda: now[0])
+
+    def read(_image):
+        now[0] += 40
+        return ()
+
+    monkeypatch.setattr(worker._badges, "read", read)
+    worker._run_one(_frame(1), 1990)
+    assert worker.latest().completed_ms == 2040
+    assert worker.latest().inference_ms == 50
+
+
+def test_stop_uses_one_budget_for_two_pending_threads(cfg, monkeypatch):
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch)
+    now = [10.0]
+    waits = []
+
+    class PendingThread:
+        name = "pending"
+
+        def join(self, timeout):
+            waits.append(timeout)
+            now[0] += timeout
+
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr("host.vision.worker.time.monotonic", lambda: now[0])
+    worker._threads = [PendingThread(), PendingThread()]
+    worker.stop(timeout_s=0.5)
+    assert waits == pytest.approx([0.5, 0.0])
+    assert len(worker._threads) == 2

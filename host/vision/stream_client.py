@@ -17,6 +17,7 @@ XIAO 가 `multipart/x-mixed-replace` 로 보내는 바이트를 프레임으로 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import threading
@@ -441,7 +442,8 @@ class StreamReader:
         self._read_bytes = 4096
         self._opener = opener if opener is not None else urllib.request.urlopen
         self._clock = clock if clock is not None else system_clock_ms
-        self._sleeper = sleeper if sleeper is not None else _default_sleeper
+        self._stop = threading.Event()
+        self._sleeper = sleeper if sleeper is not None else self._stop.wait
         #: 연결 시도마다 먼저 부른다 (`build_worker` 가 카메라 프로파일을 싣는다).
         self._before_connect = before_connect
         self.stats = StreamStats()
@@ -449,6 +451,14 @@ class StreamReader:
     @property
     def url(self) -> str:
         return self._endpoints.stream
+
+    def stop(self) -> None:
+        """재접속을 막고 백오프를 깨운다. 진행 중인 읽기는 기존 소켓 제한 후 닫힌다.
+
+        HTTPResponse.close()를 여기서 부르면 다른 스레드의 read가 잡은 버퍼 잠금을
+        기다릴 수 있다. 응답 정리는 읽기를 소유한 스레드가 with 블록에서 한다.
+        """
+        self._stop.set()
 
     def frames(self, *, max_frames: int | None = None, max_failures: int | None = None):
         """프레임을 흘려준다. **재연결은 안에서 알아서 한다.**
@@ -458,18 +468,27 @@ class StreamReader:
         """
         produced = 0
         attempt = 0
-        while max_failures is None or self.stats.failures <= max_failures:
+        while not self._stop.is_set() and (
+            max_failures is None or self.stats.failures <= max_failures
+        ):
             got_frame = False
             try:
-                for frame in self._read_once():
-                    got_frame = True
-                    attempt = 0  # 프레임을 받았을 때만 백오프를 되돌린다
-                    produced += 1
-                    yield frame
-                    if max_frames is not None and produced >= max_frames:
-                        return
+                # 소비자가 중간에 닫아도 내부 generator의 HTTP 응답을 함께 정리한다.
+                with contextlib.closing(self._read_once()) as connection:
+                    for frame in connection:
+                        if self._stop.is_set():
+                            return
+                        got_frame = True
+                        attempt = 0  # 프레임을 받았을 때만 백오프를 되돌린다
+                        produced += 1
+                        yield frame
+                        if max_frames is not None and produced >= max_frames:
+                            return
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-                LOG.warning("stream_error", url=self.url, error=str(exc))
+                if not self._stop.is_set():
+                    LOG.warning("stream_error", url=self.url, error=str(exc))
+            if self._stop.is_set():
+                return
             self.stats.failures += 1
             # 지금 시도 회차로 대기 시간을 정하고 **그 다음에** 회차를 올린다.
             # 먼저 올리면 첫 재시도가 `backoff[1]` 이 되어 1초 단계를 건너뛴다.
@@ -482,11 +501,17 @@ class StreamReader:
 
     def _read_once(self):
         """한 번 붙어서 끊길 때까지 프레임을 낸다."""
+        if self._stop.is_set():
+            return
         if self._before_connect is not None:
             self._before_connect()
+        if self._stop.is_set():
+            return
         response = self._opener(self.url, timeout=self._stall_ms / 1000)  # noqa: S310
         self.stats.connects += 1
         with response:
+            if self._stop.is_set():
+                return
             content_type = ""
             headers = getattr(response, "headers", None)
             if headers is not None:
@@ -494,8 +519,15 @@ class StreamReader:
             parser = MjpegParser(boundary_from(content_type))
             LOG.info("stream_connected", url=self.url, boundary=boundary_from(content_type))
             last_frame_ms = self._clock()
-            while True:
-                chunk = response.read(self._read_bytes)
+            # HTTPResponse.read 는 요청 크기를 채우려고 다음 프레임까지 기다릴 수 있다.
+            # read1 은 이미 도착한 조각부터 넘긴다. 기존 read 전용 응답도 지원한다.
+            read_available = getattr(response, "read1", None)
+            if not callable(read_available):
+                read_available = response.read
+            while not self._stop.is_set():
+                chunk = read_available(self._read_bytes)
+                if self._stop.is_set():
+                    return
                 now = self._clock()
                 if not chunk:
                     LOG.warning("stream_closed", url=self.url)
@@ -509,9 +541,3 @@ class StreamReader:
                     self.stats.stalls += 1
                     LOG.warning("stream_stalled", silent_ms=now - last_frame_ms)
                     return
-
-
-def _default_sleeper(seconds: float) -> None:
-    import time
-
-    time.sleep(seconds)
