@@ -184,3 +184,46 @@ wrap alias, supported by continuous live reception. Display refresh and exposure
 uncertainty were not separately calibrated. Eight readable frames over roughly
 four seconds cannot establish a long-run bound; the earlier 1,097.9ms stall
 still stands. Inference, commands and physical response were not measured.
+
+## Short PC development check (2026-09-12)
+
+The user deferred long endurance tests in favor of software development. The
+PC detector now retains its fixed YOLOX coordinate grid (201,600 bytes at input
+640), removing repeated grid allocation without changing numeric output.
+The worker handles failures in person gating, tracking and badge decoding as
+frame errors, preserving the previous result and allowing the next frame to
+run. Result completion time now includes these postprocessing stages. Thread
+shutdown shares one join timeout instead of waiting the full timeout per thread;
+it cannot forcibly cancel a native inference or a blocking injected reader.
+
+Use the short, camera-only diagnostic from the repository root:
+
+```powershell
+python tools/vision_link_check.py --camera-ip 192.168.0.42 --seconds 15 --output-dir logs/vision-new-run
+```
+
+Use the camera's current IP and a new output directory. The tool accepts at most
+60 seconds, opens no robot command sockets, and changes no camera profile.
+It runs the existing model/queue/rate settings and saves the first original JPEG,
+sampled result records, structured event logs and a summary. The observed result
+count can be lower than worker totals because it reads the latest-result slot.
+PC arrival-to-result time excludes camera exposure/network and robot response;
+queue drops retain the already configured production policy. This tool is not a
+full runtime launcher or acceptance certificate.
+
+This revision passed **1,800 offline tests in 11.30 seconds** and Python lint/
+format checks. A 100-pair alternating decode microbenchmark returned identical
+arrays: median 1.1871ms before / 1.0623ms after. Ten paired model runs on two
+preserved camera images also returned identical detections; complete detector
+medians were 6.87775 / 6.8869ms, essentially unchanged. Both used the same warmed
+session with DirectML and CPU providers; no per-operator GPU claim is made.
+
+The attempted 15-second live check received **zero frames** from the previous
+camera address, with three failed connection attempts. Model startup succeeded
+and all worker threads stopped; this is a failed live check, not proof of a
+working current camera link. Its initial console log lacked structured error
+details; the tool now also writes `events.jsonl` for subsequent diagnostics.
+The first offline comparison hit OpenCV's Windows Unicode-path read limitation;
+the byte-decoding retry passed, and the unsuccessful attempt was retained.
+No new camera firmware was installed in this PC-only change. The prior wireless
+stall, live inference latency and combined camera/LiDAR traffic remain unverified.
