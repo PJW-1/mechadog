@@ -1,4 +1,4 @@
-"""구역별 기준 스냅샷·객체 목록 저장 (WBS 3.6.1 · FR-8.1).
+"""구역 기준 저장과 변화 분류 (WBS 3.6.1 · 3.6.2 · FR-8.1/8.2/8.3).
 
 구역에 도착하면 그 자리의 **기준**을 남긴다 — 스냅샷 한 장과 *"무엇이 몇 개,
 대략 어디에 있었는가"*. 다음 사이클에 같은 구역을 다시 보고 이 기준과 견주는
@@ -27,8 +27,9 @@
 물건이 아니다. 기준에 사람이 섞이면 그 사람이 자리를 뜬 것만으로 *"반출"* 이
 된다. 사람 출현은 FR-8.4 에서 **즉시** 다루는 별개 경로다.
 
-저장 형식은 JSON 한 벌 + 스냅샷 한 장이며 구역 ID 로 찾는다. 비교(`3.6.2`)와
-오검출 억제(`3.6.3`) 는 이 파일에 이어 붙는다 — 지금은 기준을 남기는 데까지다.
+저장 형식은 JSON 한 벌 + 스냅샷 한 장이며 구역 ID 로 찾는다. 비교는
+`classify_changes()` 다. **오검출 억제(`3.6.3`)는 아직 없다** — 여기서 나오는
+변화는 *한 사이클의 관찰*이지 확정이 아니며, 연속 2사이클 확인은 다음 작업이다.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ import json
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -45,9 +47,12 @@ from host.vision.detector import Detection
 
 __all__ = [
     "PERSON_LABEL",
+    "ChangeKind",
+    "Change",
     "ObjectEntry",
     "ZoneBaseline",
     "summarize_detections",
+    "classify_changes",
     "BaselineStore",
 ]
 
@@ -129,6 +134,91 @@ def summarize_detections(
         ObjectEntry(label=label, count=count, cell=(column, row))
         for (label, column, row), count in sorted(tally.items())
     )
+
+
+class ChangeKind(StrEnum):
+    """FR-8.3 의 세 분류. 표가 정본이며 여기 이름이 그것과 1:1 이다."""
+
+    REMOVED = "removed"  # 물체 반출 — 기준에 있던 객체가 사라짐
+    ADDED = "added"  # 물체 반입 — 기준에 없던 객체가 추가됨
+    PERSON = "person"  # 인원 출현 — 기준에 없던 person 검출
+
+
+@dataclass(frozen=True, slots=True)
+class Change:
+    """변화 한 건. `count` 는 **몇 개가** 늘거나 줄었는지다."""
+
+    kind: ChangeKind
+    label: str
+    count: int
+    cell: tuple[int, int] | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind.value,
+            "label": self.label,
+            "count": self.count,
+            "cell": list(self.cell) if self.cell is not None else None,
+        }
+
+
+def classify_changes(
+    baseline: ZoneBaseline,
+    detections: Iterable[Detection],
+    *,
+    frame_size: tuple[int, int],
+    watch_classes: Iterable[str],
+) -> tuple[Change, ...]:
+    """기준과 현재를 **목록으로** 견주어 FR-8.3 의 세 분류를 낸다.
+
+    ⚠️ **픽셀을 보지 않는다** (FR-8.2 필수 제약). 입력은 기준 목록과 현재 검출
+    목록뿐이고 이미지가 들어오지 않는다 — 시그니처 자체가 그 제약이다.
+
+    ⚠️ **현재 프레임은 기준이 떠진 격자로 뭉갠다** — 설정의 격자가 아니다.
+    설정을 3×3 에서 6×6 으로 바꾼 뒤 옛 기준과 견주면, 설정 격자를 쓸 경우 같은
+    물건이 다른 칸에 잡혀 반출과 반입이 동시에 나온다. 기준의 격자를 따라가면
+    **칸의 의미가 현재 설정과 다를 뿐 비교 자체는 성립한다.** 새 격자로 보고
+    싶으면 기준을 다시 떠야 한다.
+
+    ⚠️ **감시 목록 밖의 라벨은 무시한다** (`vision.coco.change_watch_classes`).
+    COCO 80 에 있어도 시연 소품이 아니면 변화로 보지 않는다 — 지나가는 사람의
+    휴대폰이 *"반입"* 으로 잡히면 경보가 쓸모없어진다. 어휘에 아예 없는 물건은
+    검출되지도 않으므로 애초에 조용히 빠진다(FR-8.3 주석).
+
+    ⚠️ **`person` 은 개수를 세지 않는다.** 기준에 사람이 없는 것은 당연하므로
+    (3.6.1) *"몇 명 늘었는가"* 가 아니라 *"있는가"* 만 묻는다. 몇 명인지는
+    `count` 에 담아 두되 분류는 한 건이다.
+    """
+    watched = frozenset(watch_classes)
+    # ⚠️ 제너레이터가 들어올 수 있다. 두 번 훑으므로 먼저 굳힌다 — 안 그러면
+    # 두 번째 순회가 비어 사람이 영영 잡히지 않는다.
+    frame = tuple(detections)
+    # 기준이 떠진 격자로 현재를 뭉갠다. 설정이 그 뒤 바뀌었어도 **양쪽이 같은
+    # 격자**라야 비교가 성립한다.
+    current = summarize_detections(frame, frame_size=frame_size, grid=baseline.grid)
+
+    before: Counter[tuple[str, int, int]] = Counter()
+    for entry in baseline.objects:
+        if entry.label in watched:
+            before[(entry.label, entry.cell[0], entry.cell[1])] += entry.count
+    after: Counter[tuple[str, int, int]] = Counter()
+    for entry in current:
+        if entry.label in watched:
+            after[(entry.label, entry.cell[0], entry.cell[1])] += entry.count
+
+    changes: list[Change] = []
+    for key in sorted(set(before) | set(after)):
+        label, column, row = key
+        delta = after[key] - before[key]
+        if delta == 0:
+            continue
+        kind = ChangeKind.ADDED if delta > 0 else ChangeKind.REMOVED
+        changes.append(Change(kind=kind, label=label, count=abs(delta), cell=(column, row)))
+
+    people = sum(1 for detection in frame if detection.label == PERSON_LABEL)
+    if people:
+        changes.append(Change(kind=ChangeKind.PERSON, label=PERSON_LABEL, count=people, cell=None))
+    return tuple(changes)
 
 
 class BaselineStore:

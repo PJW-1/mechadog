@@ -18,7 +18,10 @@ import pytest
 
 from host.behavior.change_detect import (
     BaselineStore,
+    ChangeKind,
     ObjectEntry,
+    ZoneBaseline,
+    classify_changes,
     summarize_detections,
 )
 from host.vision.detector import Detection
@@ -250,3 +253,130 @@ def test_baseline_with_a_different_schema_is_rejected(tmp_path):
     meta.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError):
         store.load("A")
+
+
+# ══════════════════════════════════════════════════════════════
+#  3.6.2 객체 목록 비교 및 변화 분류 (FR-8.2/8.3)
+# ══════════════════════════════════════════════════════════════
+
+WATCH = ("chair", "backpack", "handbag", "bottle", "suitcase", "laptop", "book")
+
+
+def _baseline(*detections) -> ZoneBaseline:
+    return ZoneBaseline(
+        zone_id="A",
+        captured_ms=NOW,
+        frame_size=FRAME,
+        grid=GRID,
+        objects=summarize_detections(detections, frame_size=FRAME, grid=GRID),
+        snapshot=None,
+    )
+
+
+def _classify(baseline, detections, *, watch=WATCH):
+    return classify_changes(baseline, detections, frame_size=FRAME, watch_classes=watch)
+
+
+def test_no_change_reports_nothing():
+    base = _baseline(_det("chair", 100, 100), _det("bottle", 540, 400))
+    assert _classify(base, [_det("chair", 105, 105), _det("bottle", 545, 405)]) == ()
+
+
+def test_removed_object_is_carried_out():
+    """FR-8.3 — 기준에 있던 객체가 사라짐."""
+    base = _baseline(_det("chair", 100, 100), _det("bottle", 540, 400))
+    (change,) = _classify(base, [_det("chair", 100, 100)])
+    assert change.kind is ChangeKind.REMOVED
+    assert (change.label, change.count, change.cell) == ("bottle", 1, (2, 2))
+
+
+def test_added_object_is_carried_in():
+    """FR-8.3 — 기준에 없던 객체가 추가됨."""
+    base = _baseline(_det("chair", 100, 100))
+    (change,) = _classify(base, [_det("chair", 100, 100), _det("laptop", 320, 240)])
+    assert change.kind is ChangeKind.ADDED
+    assert (change.label, change.count, change.cell) == ("laptop", 1, (1, 1))
+
+
+def test_person_appearing_is_its_own_kind():
+    """FR-8.3 — 기준에 없던 person 검출. 기준에는 사람이 아예 없다(3.6.1)."""
+    base = _baseline(_det("chair", 100, 100))
+    (change,) = _classify(base, [_det("chair", 100, 100), _det("person", 320, 240)])
+    assert change.kind is ChangeKind.PERSON
+    assert change.cell is None
+
+
+def test_person_count_is_reported_as_one_change():
+    base = _baseline()
+    (change,) = _classify(base, [_det("person", 100, 100), _det("person", 500, 400)])
+    assert change.count == 2
+
+
+def test_moving_an_object_reads_as_removed_and_added():
+    """칸이 바뀌면 두 건이다. 같은 물건인지 로봇은 알 수 없다."""
+    base = _baseline(_det("bottle", 100, 100))
+    kinds = {c.kind for c in _classify(base, [_det("bottle", 540, 400)])}
+    assert kinds == {ChangeKind.REMOVED, ChangeKind.ADDED}
+
+
+def test_count_change_in_the_same_cell_is_one_entry():
+    base = _baseline(_det("book", 100, 100))
+    (change,) = _classify(base, [_det("book", 100, 100), _det("book", 110, 110)])
+    assert (change.kind, change.count) == (ChangeKind.ADDED, 1)
+
+
+def test_unwatched_labels_are_ignored():
+    """시연 소품이 아닌 것이 반입으로 잡히면 경보가 쓸모없어진다."""
+    base = _baseline(_det("chair", 100, 100))
+    assert _classify(base, [_det("chair", 100, 100), _det("tv", 320, 240)]) == ()
+
+
+def test_unwatched_label_in_the_baseline_is_also_ignored():
+    base = _baseline(_det("chair", 100, 100), _det("tv", 320, 240))
+    assert _classify(base, [_det("chair", 100, 100)]) == ()
+
+
+def test_watch_list_comes_from_config(cfg):
+    assert tuple(cfg["vision"]["coco"]["change_watch_classes"]) == WATCH
+
+
+def test_detections_may_be_a_generator():
+    """제너레이터를 두 번 훑으면 두 번째가 비어 사람이 영영 안 잡힌다."""
+    base = _baseline(_det("chair", 100, 100))
+    stream = (d for d in [_det("chair", 100, 100), _det("person", 320, 240)])
+    (change,) = _classify(base, stream)
+    assert change.kind is ChangeKind.PERSON
+
+
+def test_empty_baseline_sees_everything_as_added():
+    base = _baseline()
+    kinds = [c.kind for c in _classify(base, [_det("chair", 100, 100)])]
+    assert kinds == [ChangeKind.ADDED]
+
+
+def test_empty_frame_sees_everything_as_removed():
+    base = _baseline(_det("chair", 100, 100))
+    kinds = [c.kind for c in _classify(base, [])]
+    assert kinds == [ChangeKind.REMOVED]
+
+
+def test_changes_are_serialisable():
+    base = _baseline()
+    (change,) = _classify(base, [_det("chair", 100, 100)])
+    assert change.as_dict() == {"kind": "added", "label": "chair", "count": 1, "cell": [0, 0]}
+    (person,) = _classify(base, [_det("person", 10, 10)])
+    assert person.as_dict()["cell"] is None
+
+
+def test_the_baseline_grid_wins_over_the_current_config():
+    """설정을 바꿔도 옛 기준과의 비교는 그 기준의 격자로 성립한다."""
+    coarse = ZoneBaseline("A", NOW, FRAME, (1, 1), (ObjectEntry("chair", 1, (0, 0)),), None)
+    assert _classify(coarse, [_det("chair", 630, 470)]) == ()
+
+
+def test_comparison_never_takes_an_image():
+    """FR-8.2 — 시그니처 자체가 픽셀 차분을 막는다."""
+    import inspect
+
+    params = set(inspect.signature(classify_changes).parameters)
+    assert params == {"baseline", "detections", "frame_size", "watch_classes"}
