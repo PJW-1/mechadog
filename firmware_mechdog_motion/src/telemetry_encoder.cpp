@@ -146,8 +146,9 @@ const char* InvalidSampleReason(const TelemetrySample& sample) {
     return "non-finite IMU value";
   }
   if (sample.yaw < 0.0 || sample.yaw >= 360.0) return "yaw outside [0,360)";
-  if (!isfinite(sample.batt_v) || sample.batt_v < 6.0 || sample.batt_v > 8.4) {
-    return "battery outside [6.0,8.4]";
+  // Upper bound carries a 0.2 V measurement margin over the 8.4 V full charge (ADR-30).
+  if (!isfinite(sample.batt_v) || sample.batt_v < 6.0 || sample.batt_v > 8.6) {
+    return "battery outside [6.0,8.6]";
   }
   if (!ValidInteger(sample.last_cmd_age_ms, 0)) return "invalid command age";
   if (sample.tipped && sample.state != FsmState::Failsafe) {
