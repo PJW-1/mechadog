@@ -377,6 +377,17 @@ void setup() {
   delay(1000);
   Serial.println("BOOT mechdog-xiao-vision");
 
+  // 접속 타임아웃의 status만으로 AP 미발견·인증 실패를 구분할 수 없다.
+  // 자격정보를 출력하거나 연결 정책을 바꾸지 않고 드라이버의 사유만 남긴다.
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+    if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+      Serial.printf("WIFI_DISCONNECTED reason=%u\n",
+                    static_cast<unsigned>(info.wifi_sta_disconnected.reason));
+    } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+      Serial.println("WIFI_ASSOCIATED");
+    }
+  });
+
   g_camera_ready = initializeCamera();
   if (!g_camera_ready) {
     return;

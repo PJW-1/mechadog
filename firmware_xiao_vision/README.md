@@ -21,6 +21,17 @@ WIFI_READY ip=192.168.... rssi=...
 HTTP_READY status=http://192.168..../ stream=http://192.168....:81/stream
 ```
 
+`WARN wifi_connect: status=6`만으로 비밀번호 오류를 단정하지 않는다.
+`WIFI_ASSOCIATED`는 AP 연결, `WIFI_DISCONNECTED reason=<숫자>`는 드라이버의
+연결 종료 사유다. 사용 중인 ESP-IDF 버전의 reason 정의와 대조한다.
+로그는 SSID·비밀번호를 출력하지 않으며 기존 재연결 정책은 변경하지 않는다.
+
+카메라를 본체용 ESP32 코어 환경과 별도로 빌드할 수 있다.
+2026-09-12 해당 XIAO에서 코어 2.0.12 후보는 앱 로그를 확인하지 못했고,
+별도 설치한 코어 3.3.11과 `esp32:esp32:XIAO_ESP32S3:PSRAM=opi`에서는
+OV3660·PSRAM 초기화를 확인했다. 이는 해당 장치 관측이며 SDK만이 원인이라는
+확정은 아니다. Wi-Fi·영상 수신 검증은 별도이며 이 관측만으로 완료 처리하지 않는다.
+
 ## 실물 검수
 
 - 상태: `http://<XIAO-IP>/`
