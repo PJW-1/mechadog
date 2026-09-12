@@ -1,0 +1,9 @@
+{
+  "data_dir": "./runtime",
+  "lock_file": "./runtime/operation.lock",
+  "port": "COM_PORT_TO_REPLACE",
+  "mac": "VERIFIED_ROBOT_MAC_TO_REPLACE",
+  "ota_client": "./client.json",
+  "packages": ["./reviewed-package/package.json"],
+  "partition_table": "./reviewed-package/firmware_mechdog_motion.ino.partitions.bin"
+}
