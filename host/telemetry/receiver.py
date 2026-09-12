@@ -59,6 +59,9 @@ class Reading:
     #: 내려보낸 것이 되돌아온 것일 수도 있다 (ADR-22). 이 플래그는 로봇의 센서
     #: 판정이며 반향되지 않는다.
     obstacle: bool | None = None
+    pitch: float | None = None
+    roll: float | None = None
+    yaw: float | None = None
 
     @classmethod
     def of(cls, msg: Mapping[str, Any]) -> Reading:
@@ -76,6 +79,9 @@ class Reading:
             safety_latched=msg.get("safety_latched"),
             last_cmd_age_ms=msg.get("last_cmd_age_ms"),
             obstacle=flags.get("obstacle"),
+            pitch=msg["imu"]["pitch"],
+            roll=msg["imu"]["roll"],
+            yaw=msg["imu"]["yaw"],
         )
 
 

@@ -232,3 +232,9 @@ python -m host.runtime --device mechdog-01 --robot-ip <로봇-IP> --xiao-ip <XIA
 | **성능** | 추론 워커 분리, 최신 프레임 우선 드롭 정책, 누수 점검 |
 | **로깅** | JSON Lines 구조화 로그 + 레벨링 + 로테이션 + 이벤트 블랙박스 |
 | **CI/CD** | FSM 전이·패킷 파싱·안전 판정을 **하드웨어 없이** pytest로 전수 검증 |
+
+## PC 관제 서버 개발
+
+Host 런타임의 `--dashboard-port 8000` 옵션으로 로컬 텔레메트리 HTTP/WS 서버를
+함께 실행한다. 다중 화면에 10Hz 상태를 전달하며 미수신·오래된 값을 구분한다.
+실행·로봇 없는 시험·후속 화면/API 범위는 [관제 서버 안내](docs/DASHBOARD.md)를 참고한다.
