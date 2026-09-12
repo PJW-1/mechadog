@@ -28,7 +28,6 @@
 #error "MECHADOG_SENSOR_CORE must be 0 (reference) or 1 (A/B candidate)"
 #endif
 
-
 namespace mechadog {
 constexpr uint32_t kSensorMaxAgeMs = 200;
 
