@@ -476,7 +476,7 @@ python tools/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot
 | ArUco 구역 식별 (FR-8 `marker_map`) | 구역 *식별*은 측위와 무관한 별 작업이다 (`config.yaml` zones 절 각주) |
 | 중계 노드 펌웨어 (C++) | 규약은 승인됐고 픽스처도 준비됐다. Phase 2 착수 승인 뒤 구현한다 |
 | `gait_calibration` 기반 실이동량 | `mechdog-01.yaml` 의 실측값이 비어 있다. 시뮬레이션은 **명목값**을 쓰며 그 숫자로 실기 성능을 말하지 않는다 |
-| LiDAR 유효 사거리 확정 | 제품 재선정 중 (ADR-18). `range_max_mm: 8000` 은 잠정값 |
+| LiDAR 유효 사거리 확정 | 제품은 **LD19 (D500 키트)** 로 확정됐다 (ADR-18). `range_max_mm: 8000` 은 실물로 재기 전까지 잠정값이다 |
 | 루프 클로저 | 스캔 정합만 있다. 큰 공간에서 누적 오차가 남는다 — **넣지 않은 것이 의도적이다**: `scan_match.py` 는 P2 에서 `slam_toolbox` 로 교체될 자리이므로 여기에 성능을 더 들이면 버리는 일이 늘고 교체하지 않을 이유를 만든다 (ADR-9) |
 | **ROS2 컨테이너 · LaserScan 브리지 · tf** | 0절 말미. 담당·선행이 제 몫이 아니거나 `WBS 2.2.3` 이 안 끝났다 |
 | **경로 추종 정밀도** | 시드에 따라 좁은 구간에서 E-STOP 이 1회 걸린다 (3개 중 1개). **실측 보행 속도 없이는 튜닝할 수 없다** — 호 반경은 보행 시퀀스가 정하고 `gait_calibration` 이 비어 있다. 지금 이득을 내려면 `TURN_STEP_REDUCTION` 과 `waypoint_radius_mm` 를 만져야 하는데, 근거가 명목값이라 실기에서 다시 맞춰야 한다. `2.4.1` 실측 후 착수한다 |

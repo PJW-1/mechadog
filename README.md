@@ -116,7 +116,7 @@ MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)
 | Motion | Hiwonder MechDog (Advanced Kit) — ESP32, 8× 코어리스 서보, IMU, 초음파 | 2S 리튬 7.4V (순정) |
 | Vision | Seeed XIAO ESP32S3 Sense — OV3660(현행) / OV2640(구형), 8MB PSRAM | **보조배터리 USB-C** (DR-10) |
 | Host | Windows 11 + WSL2 Ubuntu 24.04 — **RTX 3080 10GB · i7-10700K · RAM 32GB** (기준 PC) | — |
-| LiDAR *(P2)* | **12m급 2D LiDAR 재선정 중** + 필요 시 ESP32-DevKitC 중계 | 보조배터리 공용 |
+| LiDAR *(P2)* | **LD19 (D500 키트)** · 12m급 2D + 필요 시 ESP32-DevKitC 중계 | 보조배터리 공용 |
 
 ---
 
