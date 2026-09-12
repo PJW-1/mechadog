@@ -1,9 +1,10 @@
 param(
-    [string]$DevelopmentRoot = 'C:/dev/mechadog-voice-20260913',
-    [string]$OutputName = 'offline-stream-package'
+    [Parameter(Mandatory = $true)][string]$DevelopmentRoot,
+    [string]$OutputName = 'offline-stream-package',
+    [switch]$WithSpeaker
 )
 $ErrorActionPreference = 'Stop'
-$sdk = Join-Path $DevelopmentRoot 'offline-stream-1.12.16'
+$sdk = Join-Path $DevelopmentRoot $(if ($WithSpeaker) { 'offline-speaker-1.12.16' } else { 'offline-stream-1.12.16' })
 if ($OutputName -notmatch '^offline-stream-package(-[A-Za-z0-9]+)*$') { throw 'Invalid package output name' }
 $output = Join-Path $DevelopmentRoot $OutputName
 if (Test-Path -LiteralPath $output) { throw 'Package destination exists; refusing overwrite' }

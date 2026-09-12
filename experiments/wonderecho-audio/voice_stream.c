@@ -8,8 +8,11 @@
 #include "ci130x_core_eclic.h"
 #include "sdk_default_config.h"
 #include <string.h>
+#if WE_HOST_PROMPT_ONLY
+#include "voice_prompt.h"
+#endif
 
-/* UART0 is a compile-candidate routing choice, not verified WonderEcho USB wiring. */
+/* WonderEcho V3 USB UART0 verified by WEC1 captures on 2026-09-13. */
 #if CONFIG_CI_LOG_UART || MSG_COM_USE_UART_EN || COMMAND_LINE_CONSOLE_EN
 #error "Stream candidate must exclusively own UART0; disable SDK log/command UARTs"
 #endif
@@ -17,6 +20,8 @@
 #define EV_STOP 2u
 #define EV_QUERY 4u
 #define EV_AUDIO 8u
+#define EV_PROMPT 16u
+#define EV_PROMPT_DONE 32u
 #define QUEUE_FRAMES 8
 #define MAX_FRAMES 250u /* Five-second bench capture, not indefinite recording. */
 enum { WE_READY = 1, WE_STARTED = 2, WE_FINISHED = 3, WE_FAILED = 4 };
@@ -30,6 +35,8 @@ static volatile int accepting, capture_end;
 static Frame partial;
 static size_t partial_count;
 static uint16_t produced;
+static volatile uint32_t queue_peak;
+static uint32_t encode_peak, send_peak;
 
 static TickType_t ms_ticks(uint32_t ms)
 {
@@ -58,6 +65,8 @@ void we_stream_submit(const int16_t *samples, size_t count)
             } else if (++produced == MAX_FRAMES) {
                 accepting = 0; capture_end = WE_LIMIT;
             }
+            uint32_t queued = uxQueueMessagesWaiting(frames);
+            if (queued > queue_peak) queue_peak = queued;
             partial_count = 0;
         }
     }
@@ -107,6 +116,21 @@ static int status_packet(uint16_t phase, uint16_t reason, uint32_t sent)
     return send_bytes(p, sizeof(p));
 }
 
+/* One bounded diagnostic packet per capture; timings include task preemption. */
+static void diagnostic_packet(uint32_t elapsed, uint32_t sent, uint32_t reason)
+{
+    uint8_t p[48] = {0xa5,0xa5,0x5a,0x5a};
+    put16(p + 6, 0x0109); put16(p + 8, 32); put16(p + 10, 0x0100);
+    put32(p + 12, 0x12345678);
+    put32(p + 16, elapsed); put32(p + 20, encode_peak); put32(p + 24, send_peak);
+    put32(p + 28, queue_peak); put32(p + 32, produced); put32(p + 36, sent);
+    put32(p + 40, configTICK_RATE_HZ); put32(p + 44, reason);
+    uint16_t sum = 0;
+    for (unsigned i = 16; i < sizeof(p); ++i) sum += p[i];
+    put16(p + 4, sum);
+    send_bytes(p, sizeof(p));
+}
+
 void UART0_IRQHandler(void)
 {
     static uint8_t command[16];
@@ -130,6 +154,9 @@ void UART0_IRQHandler(void)
             if (command[6] == 8) event = EV_START;
             if (command[6] == 6) event = EV_STOP;
             if (command[6] == 2) event = EV_QUERY;
+#if WE_HOST_PROMPT_ONLY
+            if (command[6] == 11) event = EV_PROMPT;
+#endif
         }
         if (event) {
             if (worker) xTaskNotifyFromISR(worker, event, eSetBits, &wake);
@@ -160,16 +187,50 @@ static void stream_task(void *unused)
     int active = 0;
     uint32_t sent = 0;
     TickType_t last_audio = 0, session_start = 0;
+#if WE_HOST_PROMPT_ONLY
+    int prompting = 0, prompt_fault = 0;
+    TickType_t prompt_start = 0;
+#endif
     eclic_irq_set_priority(UART0_IRQn, 6, 0);
     UARTInterruptConfig(UART0, UART_BaudRate115200);
     for (;;) {
         uint32_t events = 0;
         xTaskNotifyWait(0, UINT32_MAX, &events, ms_ticks(100));
+#if WE_HOST_PROMPT_ONLY
+        if ((events & EV_STOP) && prompting) {
+            we_prompt_cancel(); prompting = 0; prompt_fault = 1;
+        }
+        if ((events & EV_PROMPT) && !(events & EV_STOP) && !active && !prompting) {
+            if (prompt_fault) status_packet(WE_FAILED, 8, 0);
+            else {
+                stop_capture(); sent = 0;
+                if (we_prompt_start(worker, EV_PROMPT_DONE) != 0) status_packet(WE_FAILED, 8, 0);
+                else {
+                    prompting = 1; prompt_start = xTaskGetTickCount();
+                    if (!status_packet(5, WE_OK, 0)) {
+                        we_prompt_cancel(); prompting = 0; prompt_fault = 1;
+                    }
+                }
+            }
+        }
+        if (prompting) {
+            int done = we_prompt_result();
+            if (done == 1) {
+                prompting = 0;
+                if (status_packet(6, WE_OK, 0)) events |= EV_START;
+            } else if (done < 0 || xTaskGetTickCount() - prompt_start >= ms_ticks(5000)) {
+                we_prompt_cancel(); prompting = 0; prompt_fault = 1;
+                status_packet(WE_FAILED, 8, 0);
+            }
+            if (prompting) continue; /* No microphone capture during the prompt. */
+        }
+#endif
         if (events & EV_STOP) {
             stop_capture(); active = 0;
             status_packet(WE_FINISHED, WE_STOP, sent);
         } else if ((events & EV_START) && !active) {
             stop_capture(); sent = 0; produced = 0;
+            queue_peak = encode_peak = send_peak = 0;
             if (we_encoder_init() != 0) status_packet(WE_FAILED, WE_CODEC, sent);
             else if (!status_packet(WE_STARTED, WE_OK, sent)) we_encoder_close();
             else {
@@ -185,8 +246,13 @@ static void stream_task(void *unused)
         for (unsigned i = 0; i < QUEUE_FRAMES && xQueueReceive(frames, &frame, 0) == pdPASS; ++i) {
             last_audio = xTaskGetTickCount();
             int bytes = we_encode_frame(frame.pcm, WE_PCM_SAMPLES, frame.sequence, packet, sizeof(packet));
+            uint32_t encode_elapsed = xTaskGetTickCount() - last_audio;
+            if (encode_elapsed > encode_peak) encode_peak = encode_elapsed;
             if (bytes < 0) { reason = WE_CODEC; break; }
+            TickType_t tx_start = xTaskGetTickCount();
             if (!send_bytes(packet, (size_t)bytes)) { reason = WE_TX_TIMEOUT; break; }
+            uint32_t tx_elapsed = xTaskGetTickCount() - tx_start;
+            if (tx_elapsed > send_peak) send_peak = tx_elapsed;
             ++sent;
         }
         if (!reason && capture_end && (capture_end != WE_LIMIT || !uxQueueMessagesWaiting(frames)))
@@ -196,6 +262,7 @@ static void stream_task(void *unused)
             reason = WE_CAPTURE_TIMEOUT;
         if (reason) {
             stop_capture(); active = 0;
+            diagnostic_packet(now - session_start, sent, (uint32_t)reason);
             status_packet(reason == WE_LIMIT ? WE_FINISHED : WE_FAILED, reason, sent);
         }
     }
@@ -212,7 +279,9 @@ int we_stream_init(void)
         frames = 0; tx_space = 0;
         return -2;
     }
-    if (xTaskCreate(stream_task, "voice_stream", 2048, NULL, 3, &worker) != pdPASS) {
+    /* Share priority 4 with the SDK capture task; keep timer service (5) above both.
+     * Priority 3 capture diagnostics showed up to 52 ms wall time per 20 ms frame. */
+    if (xTaskCreate(stream_task, "voice_stream", 2048, NULL, 4, &worker) != pdPASS) {
         vQueueDelete(frames); vSemaphoreDelete(tx_space);
         frames = 0; tx_space = 0;
         return -3;

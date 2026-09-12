@@ -1,15 +1,17 @@
 param(
-    [string]$DevelopmentRoot = 'C:/dev/mechadog-voice-20260913',
+    [Parameter(Mandatory = $true)][string]$DevelopmentRoot,
     [switch]$WithEncoder,
-    [switch]$WithStream
+    [switch]$WithStream,
+    [switch]$WithSpeaker
 )
 $ErrorActionPreference = 'Stop'
-$sdkName = if ($WithStream) { 'offline-stream-1.12.16' } elseif ($WithEncoder) { 'offline-codec-1.12.16' } else { 'offline-ci1302-1.12.16' }
+if ($WithSpeaker) { $WithStream = $true }
+$sdkName = if ($WithSpeaker) { 'offline-speaker-1.12.16' } elseif ($WithStream) { 'offline-stream-1.12.16' } elseif ($WithEncoder) { 'offline-codec-1.12.16' } else { 'offline-ci1302-1.12.16' }
 $artifact = if ($WithStream) { 'offline-stream' } elseif ($WithEncoder) { 'offline-codec' } else { 'offline-ci1302' }
 $sdk = Join-Path $DevelopmentRoot $sdkName
 $project = Join-Path $sdk 'projects/offline_asr_sample/project_file'
 $bin = Join-Path $DevelopmentRoot 'toolchain/gcc_fix_raissrc/bin'
-$log = Join-Path $DevelopmentRoot ($artifact + '-build.log')
+$log = Join-Path $DevelopmentRoot ($(if ($WithSpeaker) { 'offline-speaker' } else { $artifact }) + '-build.log')
 if (-not (Test-Path -LiteralPath (Join-Path $sdk 'candidate-manifest.json'))) {
     throw 'Run prepare_offline.py first. This builds only an ELF and never flashes.'
 }
@@ -36,6 +38,7 @@ try {
         $makeArgs = @('-j4')
         if ($WithStream) {
             Set-Content -LiteralPath 'strict_stream.mk' -Encoding ascii -Value 'build/objs/voice_stream.o: C_FLAGS += -Wall -Wextra -Werror'
+            if ($WithSpeaker) { Add-Content -LiteralPath 'strict_stream.mk' -Encoding ascii -Value 'build/objs/voice_prompt.o: C_FLAGS += -Wall -Wextra -Werror' }
             $makeArgs += @('-f', 'makefile', '-f', 'strict_stream.mk')
         }
         $makeArgs += @(('PROJECT_NAME=' + $artifact), ('build/' + $artifact + '.elf'))

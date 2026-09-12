@@ -7,6 +7,7 @@ import re
 import shutil
 from pathlib import Path
 
+from fix_codec_cleanup import fix as fix_codec_cleanup
 from fix_sdk_startup import fix_startup
 
 
@@ -124,6 +125,12 @@ def main():
             str(p.relative_to(target)): hashlib.sha256(p.read_bytes()).hexdigest() for p in changes
         },
     }
+    (target / "stream-manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    # The cleanup patch validates that this is the isolated stream candidate.
+    # Include its final source hashes after it updates source_file.prj.
+    manifest["files"].update(fix_codec_cleanup(target))
     (target / "stream-manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
