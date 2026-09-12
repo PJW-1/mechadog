@@ -154,7 +154,10 @@ TELEMETRY_MANAGED: frozenset[str] = frozenset({"seq", "ts", "device_id", "boot_i
 #: 저전압 **판정** 임계(config.safety.battery_*)와는 다른 것이다 — 이것은
 #: "물리적으로 가능한가"이고 그것은 "안전한가"이다.
 BATT_MIN_V: float = 6.0
-BATT_MAX_V: float = 8.4
+#: 상한은 만충 8.4V 에 **측정 여유 0.2V** 를 더한 값이다 — ADC 보정·분압 저항
+#: 오차 합 ±2~3% 와 실측 최댓값 8.46V 가 근거다 (ADR-30). 여유가 없으면 **충전을
+#: 마친 로봇의 정상 레코드가 통째로 폐기된다.**
+BATT_MAX_V: float = 8.6
 
 #: 메타 필드 — 픽스처의 주석용이며 전송 대상이 아니다.
 META_FIELDS: frozenset[str] = frozenset({"_case", "_expect"})

@@ -291,6 +291,20 @@ def test_telemetry_invalid_fixture_matches_expected_verdict() -> None:
         assert result.verdict.value == msg["_expect"], f"{_case(msg)}: {result.reason}"
 
 
+def test_telemetry_accepts_a_freshly_charged_pack() -> None:
+    """만충은 8.4V 를 넘는다 — 그 줄을 버리면 배터리뿐 아니라 상태·거리·IMU 가 함께 사라진다.
+
+    2026-09-12 실기에서 정지 중 34건 중 9건이 8.4V 를 넘어 폐기됐다 (ADR-30).
+    """
+    decoder = p.TelemetryDecoder()
+    base = p.strip_meta(TELEMETRY_SAMPLES[0])
+    cases = ((8.46, p.Verdict.ACCEPT), (8.6, p.Verdict.ACCEPT), (8.61, p.Verdict.DISCARD))
+    for offset, (volts, expected) in enumerate(cases, start=1):
+        message = dict(base, seq=base["seq"] + offset, batt_v=volts)
+        result = decoder.decode(p.serialize(message))
+        assert result.verdict is expected, f"{volts}V: {result.reason}"
+
+
 def test_telemetry_seq_is_tracked_per_device() -> None:
     """한 카운터로 묶으면 개체끼리 서로의 패킷을 폐기한다 (CONTRIBUTING 1절)."""
     decoder = p.TelemetryDecoder()
@@ -337,7 +351,7 @@ def test_telemetry_missing_flag_is_discarded(nested: str) -> None:
 
 @pytest.mark.parametrize(
     ("batt_v", "accepted"),
-    [(6.0, True), (8.4, True), (5.9, False), (8.5, False), (14.8, False)],
+    [(6.0, True), (8.4, True), (8.6, True), (5.9, False), (8.61, False), (14.8, False)],
 )
 def test_telemetry_battery_physical_range(batt_v: float, accepted: bool) -> None:
     """물리 범위 밖의 값은 측정 오류다. 저전압 **판정** 임계와는 다른 것이다."""

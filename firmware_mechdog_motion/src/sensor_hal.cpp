@@ -87,6 +87,7 @@ constexpr int kBatteryPin = 34;
 constexpr uint32_t kDefaultAdcVrefMv = 1100;  // ESP32 Arduino 2.0.12 fallback.
 // Official MechDog V1.0/V1.2: VIN -- R1 30k -- ADC_BAT -- R5 10k -- GND.
 constexpr float kBatteryDividerRatio = 4.0f;
+constexpr uint8_t kBatterySamples = 9;  // Odd count: the median is a real sample.
 constexpr uint8_t kImuAddress = 0x6A;
 constexpr uint8_t kSonarAddress = 0x77;
 constexpr uint32_t kSamplePeriodMs = 40;  // Official Madgwick filter.begin(25).
@@ -240,8 +241,27 @@ BatteryAdcCalibration initialize_battery() {
   }
 }
 
+// A single ADC read swings by hundreds of millivolts while the servos draw current
+// (7.72-8.46 V observed at rest on 2026-09-12). The median of a short burst drops
+// those spikes; a mean would carry them into the reported value. Nine reads cost far
+// less than a millisecond of the 100 ms cycle.
+uint16_t read_battery_median() {
+  uint16_t samples[kBatterySamples];
+  for (uint8_t i = 0; i < kBatterySamples; ++i) samples[i] = analogRead(kBatteryPin);
+  for (uint8_t i = 1; i < kBatterySamples; ++i) {
+    const uint16_t value = samples[i];
+    uint8_t j = i;
+    while (j > 0 && samples[j - 1] > value) {
+      samples[j] = samples[j - 1];
+      --j;
+    }
+    samples[j] = value;
+  }
+  return samples[kBatterySamples / 2];
+}
+
 void acquire_battery(AcquisitionRecord& record) {
-  const uint16_t raw = analogRead(kBatteryPin);
+  const uint16_t raw = read_battery_median();
   record.value.battery_raw = raw;
   record.value.battery_adc_mv = 0;
   record.value.batt_v = 0.0f;

@@ -78,7 +78,7 @@ int EmitFixtures() {
   sample.yaw = 0.0;
   sample.last_cmd_age_ms = 0;
   if (!Emit(encoder, sample, 0)) return 1;
-  sample.batt_v = 8.4;
+  sample.batt_v = 8.6;
   sample.lowbatt = false;
   sample.yaw = nextafter(360.0, 0.0);
   sample.last_cmd_age_ms = TelemetryEncoder::kMaxWireInteger;
@@ -262,8 +262,8 @@ void TestNumericValidation() {
   sample = Sample();
   sample.batt_v = nextafter(6.0, 0.0);
   ExpectRejected(encoder, sample, "battery just below 6.0 refused");
-  sample.batt_v = nextafter(8.4, 9.0);
-  ExpectRejected(encoder, sample, "battery just above 8.4 refused");
+  sample.batt_v = nextafter(8.6, 9.0);
+  ExpectRejected(encoder, sample, "battery just above 8.6 refused");
   sample = Sample();
   sample.yaw = -0.01;
   ExpectRejected(encoder, sample, "negative yaw refused");
@@ -284,7 +284,7 @@ void TestNumericValidation() {
   sample.last_cmd_age_ms = 0;
   char out[kBufferSize];
   Check(encoder.encode(sample, 0, out, sizeof(out)).ok, "inclusive lower numeric bounds accepted");
-  sample.batt_v = 8.4;
+  sample.batt_v = 8.6;  // Full charge plus measurement margin (ADR-30).
   sample.dist_cm = DBL_MAX;
   sample.pitch = -DBL_MAX;
   sample.roll = DBL_MAX;

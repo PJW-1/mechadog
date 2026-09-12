@@ -65,7 +65,7 @@ REQUIRED_IMU = ("pitch", "roll", "yaw")
 REQUIRED_FLAGS = ("lowbatt", "tipped", "link_ok")
 
 # 2S 리튬 물리 범위 — 셀당 3.0~4.2V
-BATT_MIN, BATT_MAX = 6.0, 8.4
+BATT_MIN, BATT_MAX = 6.0, 8.6  # 만충 8.4V + 측정 여유 0.2V (ADR-30)
 
 
 def _load(path: Path) -> list[dict]:
