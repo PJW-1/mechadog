@@ -10,6 +10,20 @@
 #include "src/stationary_ota.h"
 #include "src/telemetry_publisher.h"
 
+#ifndef MECHADOG_ENABLE_TASK_WDT
+#define MECHADOG_ENABLE_TASK_WDT 0
+#endif
+#if MECHADOG_ENABLE_TASK_WDT
+#include <esp_system.h>
+
+#include "src/task_watchdog.h"
+// Vendor startup can move the body after a reset. Qualify reboot behavior
+// before enabling this option in an actuator build.
+#if MECHADOG_ENABLE_ACTUATORS
+#error "Task WDT candidate is restricted to actuator-OFF diagnostic builds"
+#endif
+#endif
+
 #if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
 #error "Provide both private Wi-Fi build settings, or neither to use saved NVS settings."
 #endif
@@ -402,6 +416,14 @@ void setup() {
   }
   Serial.printf("Actuators: %s, initial SAFE latch: ON\n",
                 g_motion.actuators_enabled() ? "ON" : "OFF");
+#if MECHADOG_ENABLE_TASK_WDT
+  // setup() runs inside loopTask. Do not wait for DHCP before subscribing.
+  // Errors are fatal in this actuator-OFF build, never silently unprotected.
+  ESP_ERROR_CHECK(mechadog::startTaskWatchdog());
+  Serial.printf("Task WDT: loopTask subscribed, timeout_s=%lu panic=1 reset_reason=%d\n",
+                static_cast<unsigned long>(mechadog::kTaskWatchdogTimeoutSeconds),
+                static_cast<int>(esp_reset_reason()));
+#endif
 }
 
 void loop() {
@@ -454,6 +476,9 @@ void loop() {
   pollWifiDiagnostics();
 #if MECHADOG_ENABLE_OTA
   mechadog::pollStationaryOta(WiFi.status() == WL_CONNECTED, g_sensors.snapshot(millis()));
+#endif
+#if MECHADOG_ENABLE_TASK_WDT
+  ESP_ERROR_CHECK(mechadog::feedTaskWatchdog());
 #endif
   delay(1);
 }

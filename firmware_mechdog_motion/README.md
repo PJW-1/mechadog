@@ -9,6 +9,89 @@
 선택 기능인 [정지 진단용 Wi-Fi 업데이트](OTA.md)는 구동 OFF 전용이다.
 최초 파티션 전환/데이터 보존과 이후 HTTPS 업데이트 절차를 구분한다.
 
+## 3.2.4 태스크 워치독 후보 — 부팅 시험 실패 (2026-09-12)
+
+**현재 WDT ON 후보를 설치하지 않는다.** `wdt1`(앱 SHA
+`3b86d15bab767c842fcd75afa2d2016846372e19f6febc1a6295bfbda8c2d320`)을 구동 OFF로
+실제 설치했으나 Wi-Fi 초기화 중 TWDT가 `IDLE (CPU 0)`의 갱신 누락을 보고하고
+반복 재부팅했다. 오류 당시 CPU0 실행 태스크는 `wifi`로 기록됐다.
+앱/기존 보호 영역 기록 검증은 통과했지만 정상 부하 검증은 실패했으며,
+검증된 이전 `retry1` 앱으로 복원을 완료했다. 제한 시간을 늘리거나 Idle 감시를 제거하여
+문제를 숨기는 변경은 적용하지 않았다. 아래는 실패 후보의 구현·시험 절차 기록이다.
+
+복원 앱 SHA는 `a99c0bd647670a42aee8432ca146027c3e1326164eafb03356a3a919d94cdd88`이다.
+앱 및 부트·파티션·기존 NVS/PHY·순정 VFS의 설치 전후 검증, 보정 9개 원본 일치를 확인했다.
+복원 후 구동 OFF·SAFE ON으로 STOP/STATE IDLE만 송신한 35초 시험에서 352건,
+10.042Hz, seq1~354 중 누락2, 최대 수신 간격141ms를 기록했다. 같은 boot에서 추가
+재부팅 없이 수신 기준을 통과했으며 무손실·장시간 안정성 또는 센서 정확도 보증은 아니다.
+현재 실물은 추가 1초 WDT 옵션을 사용하지 않는 이전 앱이다.
+
+`MECHADOG_ENABLE_TASK_WDT=1`을 지정하면 Arduino `loopTask`를 ESP-IDF의
+Task Watchdog에 등록한다. 센서·통신·안전 처리가 끝난 루프 말미에서만 갱신하므로
+루프가 돌아오지 않으면 워치독이 이를 감지할 수 있다. `enableLoopWDT()`의 자동 갱신이나
+별도 타이머/스레드를 통한 대리 갱신은 사용하지 않는다. 초기화·등록·갱신 실패는
+`ESP_ERROR_CHECK`로 처리하며 성공으로 기록하지 않는다.
+
+이 옵션의 기본값은 **0**이다. 실물 정상 부하/고장 주입/리셋 지연 시험 전에는
+구동 OFF 진단 빌드에만 허용하며 `MECHADOG_ENABLE_ACTUATORS=1`과 함께 켜면
+컴파일을 거부한다. 기존 설치 앱·서보·보정 데이터는 이번 코드 추가로 바뀌지 않는다.
+
+구현 기준은 Arduino-ESP32 **2.0.12 / ESP-IDF 4.4.5**다. 이미 존재하는 TWDT를
+`esp_task_wdt_init(1, true)`로 재설정하고 CPU0 Idle 등 기존 감시 대상을 삭제하지 않는다.
+따라서 전역 TWDT의 시간 제한도 기본 5초에서 1초로 바뀐다. 새 태스크/센서 버스 접근/
+Pi 5의 실시간 루프 변경은 없으며 ESP32 루프당 갱신 호출 1회가 추가된다.
+실제 CPU 점유율과 Wi-Fi/NVS 등 정상 부하에서의 오탐 여부는 실기로 검증해야 한다.
+
+**1초 설정과 1초 이내 리셋 완료는 다르다.** 이 SDK API는 정수 초를 받으며
+여러 감시 태스크의 갱신 시점, 인터럽트 및 panic 출력 지연이 영향을 준다.
+엄격한 WBS의 리셋 시간 요구는 아직 통과하지 않았다. 계측 결과 없이 제한을 늘리거나
+다른 하드웨어 타이머로 바꾸지 않는다. 초기 `setup()` 완료 전의 정지, 센서 태스크가
+yield하면서 데이터만 갱신하지 않는 경우는 이번 loopTask 감시 범위에 포함되지 않는다.
+기존 300ms **명령 수신 중단** 감시기와도 다른 기능이다.
+
+저장소 루트에서 구동 OFF 후보를 빌드한다(실물 설치 명령 아님).
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 \
+  --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0' \
+  --build-path build/wdt-motion firmware_mechdog_motion
+```
+
+독립 시험 스케치 `diagnostics/watchdog_probe`에는 모터·I2C·Wi-Fi·벤더 라이브러리가 없다.
+기동 후 UART로 대문자 `H`를 받을 때만 마지막 갱신 뒤 의도적으로 무한루프에 들어간다.
+리셋 뒤에는 새 `H`를 받아야 다시 주입되므로 자동 반복 리셋을 만들지 않는다.
+공용 워치독 헤더를 재사용하기 위해 `src`의 **절대 경로**를 include 경로로 지정한다.
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 \
+  --build-property 'compiler.cpp.extra_flags=-I/absolute/path/to/mechadog/firmware_mechdog_motion/src' \
+  --build-path build/wdt-probe firmware_mechdog_motion/diagnostics/watchdog_probe
+```
+
+시험 스케치를 본체에 설치하면 기존 텔레메트리 앱을 대체한다. 설치 전 앱/복원 파일을
+확정하고 기존 개체별 보호 영역 검증 절차를 적용해야 한다. 이 문서의 빌드는 설치가 아니다.
+실기 검수는 ① 정상 부하에서 불필요한 리셋 없음 ② `H` 주입 후 새 boot/reset reason
+③ 고장 시점부터 리셋까지 1초 이내의 계측 근거 ④ 본체 후보의 SAFE 유지 순서로 진행한다.
+UART 호스트 도착 간격에는 버퍼/부팅 시간이 섞이므로 정밀 리셋 시각으로 취급하지 않는다.
+JTAG/OpenOCD 디버깅이 워치독을 비활성화할 수 있어 그 조건도 기록해야 한다.
+
+CI에는 SDK 호출 순서/오류 전파 8경로 시험과 구동 OFF 후보·독립 시험 스케치 빌드를
+추가했다. 워치독 시험 바이너리는 릴리스 산출물에 넣지 않는다. 실제 하드웨어 타이머
+동작은 PC 시험으로 증명할 수 없어 WBS 3.2.4 완료 표시는 보류한다.
+
+2026-09-12 로컬 검증: SDK 계약 시험 8경로 통과, WDT ON 본체(센서 OFF)
+flash 736321/RAM 46576 bytes, WDT ON+센서 ON 본체 flash 771693/RAM 47532 bytes,
+단독 시험 스케치 flash 260993/RAM 21344 bytes로 세 빌드 통과.
+구동 ON+WDT 조합은 지정한 컴파일 오류로 차단됨을 확인했다. 포맷·YAML·diff 검사와
+새 워치독 코드 정적 분석은 통과했다. 로컬 Cppcheck 2.21 전체 분석에는 기존
+`MotionHal::actuators_enabled`의 `functionStatic` 지적이 남으며, `.ino` 명시 분석의
+센서 OFF 상수 조건 지적도 기존 코드다. 해당 경고를 숨기기 위한 CI 예외는 추가하지 않았다.
+GitHub CI는 아직 실행하지 않았다. 이후 실물 설치에서 위 부팅 실패를 확인했으며,
+의도적 고장 주입이나 리셋 지연 검수는 수행하지 않았다.
+
+근거: [ESP-IDF v4.4.5 공식 워치독 문서](https://docs.espressif.com/projects/esp-idf/en/v4.4.5/esp32/api-reference/system/wdts.html),
+설치된 core `esp_task_wdt.h`, `cores/esp32/main.cpp`, `esp32-hal-misc.c`, ESP32 DIO `sdkconfig.h`.
+
 ## 4.1.4 현재 상태 — 정지 수신 및 재부팅 2회 통과 (2026-09-12)
 
 > **최신 (2026-09-12 02:40 이후):** mechdog-01 에는 **센서+구동 통합 빌드**가 설치돼 있다

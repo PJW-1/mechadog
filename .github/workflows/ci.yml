@@ -142,6 +142,15 @@ jobs:
               firmware_mechdog_motion/test/test_sensor_timing_stats.cpp \
               -o build/test_sensor_timing_stats
           ./build/test_sensor_timing_stats
+      - name: Host unit test (task watchdog SDK contract)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/test/watchdog_stubs \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_task_watchdog.cpp \
+              -o build/test_task_watchdog
+          ./build/test_task_watchdog
 
       - name: Host unit test (telemetry encoder)
         if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
@@ -239,6 +248,17 @@ jobs:
             --warnings all \
             --export-binaries \
             "${{ matrix.target.dir }}"
+
+      - name: Compile task watchdog candidates (not release artifacts)
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        run: |
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0' \
+            --build-path "$RUNNER_TEMP/watchdog-motion" firmware_mechdog_motion
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property "compiler.cpp.extra_flags=-I$GITHUB_WORKSPACE/firmware_mechdog_motion/src" \
+            --build-path "$RUNNER_TEMP/watchdog-probe" \
+            firmware_mechdog_motion/diagnostics/watchdog_probe
 
       - name: Upload artifacts
         if: steps.sketch.outputs.found == 'true'
