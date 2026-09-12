@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -152,7 +153,8 @@ class VisionWorker:
 
         **데몬으로 둔다** — 메인이 끝나면 프로세스가 죽어야 한다.
         """
-        if self._threads:
+        self._threads = [thread for thread in self._threads if thread.is_alive()]
+        if self._threads or self._stop.is_set():
             return
         opened = self._clock()
         self._detector.open()
@@ -167,12 +169,24 @@ class VisionWorker:
         LOG.info("vision_worker_started", period_ms=self._period_ms)
 
     def stop(self, timeout_s: float = JOIN_TIMEOUT_S) -> None:
-        """정지 신호를 주고 **제한 시간만** 기다린다."""
+        """정지 신호를 주고 두 스레드의 join에 하나의 대기 예산을 쓴다.
+
+        실행 중인 네이티브 추론을 강제 중단하지 않는다. 주입된 reader.stop()은
+        비블로킹이어야 하며, 아직 살아 있는 스레드는 다음 stop에서도 추적한다.
+        """
+        deadline = time.monotonic() + max(0.0, timeout_s)
         self._stop.set()
+        stop_reader = getattr(self._reader, "stop", None)
+        if callable(stop_reader):
+            try:
+                stop_reader()
+            except Exception as exc:  # noqa: BLE001 — 읽기 정리 실패가 join을 건너뛰면 안 된다
+                self._note_error("vision_reader_stop_failed", exc)
         for thread in self._threads:
-            thread.join(timeout=timeout_s)
-        alive = [t.name for t in self._threads if t.is_alive()]
-        self._threads.clear()
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        # 아직 끝나지 않은 읽기를 잊지 않는다. 다음 stop에서도 회수를 기다릴 수 있다.
+        self._threads = [thread for thread in self._threads if thread.is_alive()]
+        alive = [thread.name for thread in self._threads]
         LOG.info(
             "vision_worker_stopped",
             inferences=self.stats.inferences,
@@ -212,7 +226,11 @@ class VisionWorker:
 
     def healthy(self) -> bool:
         """두 스레드가 아직 살아 있나. **죽은 워커는 조용하다.**"""
-        return bool(self._threads) and all(t.is_alive() for t in self._threads)
+        return (
+            not self._stop.is_set()
+            and bool(self._threads)
+            and all(t.is_alive() for t in self._threads)
+        )
 
     @property
     def queue(self) -> FrameQueue:
@@ -225,14 +243,23 @@ class VisionWorker:
 
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:
+        frames = None
         try:
-            for frame in self._frames():
+            frames = iter(self._frames())
+            for frame in frames:
                 if self._stop.is_set():
                     return
                 self._queue.put(frame)
                 self.stats.frames_in += 1
         except Exception as exc:  # noqa: BLE001 — 스레드에서 새면 조용히 사라진다
             self._note_error("vision_recv_failed", exc)
+        finally:
+            close_frames = getattr(frames, "close", None)
+            if callable(close_frames):
+                try:
+                    close_frames()
+                except Exception as exc:  # noqa: BLE001
+                    self._note_error("vision_recv_close_failed", exc)
 
     def _frames(self) -> Iterable[Frame]:
         return self._reader.frames()
@@ -266,16 +293,17 @@ class VisionWorker:
         try:
             image = decode_jpeg(frame.payload)
             detections = self._detector.detect(image)
+            observed = self._clock()
+            sighting = self._gate.observe(observed, detections)
+            tracks = self._tracker.update(detections, observed)
+            # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
+            markers = self._badges.read(image) if tracks else ()
         except Exception as exc:  # noqa: BLE001
             self._note_error("vision_inference_failed", exc, seq=frame.seq)
             return
         completed = self._clock()
         elapsed = float(completed - started_ms)
         self.stats.note(elapsed)
-        sighting = self._gate.observe(completed, detections)
-        tracks = self._tracker.update(detections, completed)
-        # 사람이 없으면 사원증도 읽지 않는다 (위 `markers` 주석).
-        markers = self._badges.read(image) if tracks else ()
         result = VisionResult(
             detections=tuple(detections),
             jpeg=frame.payload,

@@ -103,6 +103,10 @@ class YoloxAdapter:
                 f"input_size 는 {max(YOLOX_STRIDES)} 의 양의 배수여야 함: {input_size}"
             )
         self.input_size = int(input_size)
+        # 입력 크기가 고정된 동안 좌표 격자도 같다. 프레임마다 재할당하지 않는다.
+        self._grid_data = self._grid()
+        for values in self._grid_data:
+            values.flags.writeable = False
 
     def preprocess(self, image: np.ndarray) -> Preprocessed:
         if image.ndim != 3 or image.shape[2] != 3:
@@ -150,7 +154,7 @@ class YoloxAdapter:
         if raw.ndim != 2 or raw.shape[1] < 6:
             raise ValueError(f"[N, 5+클래스] 출력이 필요함: shape={raw.shape}")
 
-        grid, stride = self._grid()
+        grid, stride = self._grid_data
         if raw.shape[0] != grid.shape[0]:
             raise ValueError(
                 f"후보 수가 격자와 다름 — input_size 가 모델과 어긋났다: "

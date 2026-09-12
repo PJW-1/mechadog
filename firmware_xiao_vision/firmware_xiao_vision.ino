@@ -8,6 +8,12 @@
 #include <esp_camera.h>
 #include <esp_http_server.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
+#include <lwip/sockets.h>
+
+#ifndef MECHDOG_STREAM_TCP_NODELAY
+#define MECHDOG_STREAM_TCP_NODELAY 1
+#endif
 
 #if __has_include("wifi_secrets.h")
 #include "wifi_secrets.h"
@@ -38,7 +44,6 @@ constexpr int kPinPclk = 13;
 
 constexpr uint16_t kControlPort = 80;
 constexpr uint16_t kStreamPort = 81;
-constexpr uint32_t kWifiTimeoutMs = 20000;
 constexpr uint32_t kReconnectIntervalMs = 5000;
 constexpr uint32_t kFpsReportIntervalMs = 5000;
 
@@ -58,6 +63,8 @@ httpd_handle_t g_stream_server = nullptr;
 framesize_t g_frame_size = FRAMESIZE_VGA;
 const char* g_profile_name = "VGA";
 bool g_camera_ready = false;
+bool g_wifi_initialized = false;
+bool g_wifi_reported = false;
 uint32_t g_last_reconnect_ms = 0;
 uint32_t g_fps_limit = kDefaultFpsLimit;
 
@@ -139,23 +146,24 @@ bool connectWifi() {
     return false;
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.persistent(false);
-  WiFi.setAutoReconnect(true);
-  WiFi.setSleep(false);
-  WiFi.begin(MECHDOG_WIFI_SSID, MECHDOG_WIFI_PASSWORD);
-
-  const uint32_t started_ms = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started_ms < kWifiTimeoutMs) {
-    delay(250);
+  if (!g_wifi_initialized) {
+    if (!WiFi.mode(WIFI_STA)) {
+      Serial.println("WARN wifi_init: station mode failed");
+      return false;
+    }
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(true);
+    WiFi.setSleep(false);
+    if (WiFi.begin(MECHDOG_WIFI_SSID, MECHDOG_WIFI_PASSWORD) == WL_CONNECT_FAILED) {
+      Serial.println("WARN wifi_init: station configuration failed");
+      return false;
+    }
+    g_wifi_initialized = true;
+    g_last_reconnect_ms = millis();
   }
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.printf("WARN wifi_connect: status=%d\n", static_cast<int>(WiFi.status()));
-    return false;
-  }
-
-  Serial.printf("WIFI_READY ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  return true;
+  // Association and DHCP progress asynchronously. Do not tear them down with
+  // another credential-bearing begin() just because address acquisition is slow.
+  return WiFi.status() == WL_CONNECTED;
 }
 
 esp_err_t sendJson(httpd_req_t* request, const char* body) {
@@ -231,6 +239,32 @@ esp_err_t profileHandler(httpd_req_t* request) {
 }
 
 esp_err_t streamHandler(httpd_req_t* request) {
+  const int socket_fd = httpd_req_to_sockfd(request);
+  int no_delay = -1;
+  socklen_t option_length = sizeof(no_delay);
+  if (socket_fd < 0 ||
+      getsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, &no_delay, &option_length) != 0) {
+    Serial.println("WARN stream_socket: cannot read TCP_NODELAY");
+    return ESP_FAIL;
+  }
+  Serial.printf("STREAM_SOCKET nodelay_before=%d\n", no_delay);
+#if MECHDOG_STREAM_TCP_NODELAY
+  no_delay = 1;
+  if (setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay)) != 0) {
+    Serial.println("WARN stream_socket: cannot set TCP_NODELAY");
+    return ESP_FAIL;
+  }
+#endif
+  option_length = sizeof(no_delay);
+  if (getsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, &no_delay, &option_length) != 0) {
+    return ESP_FAIL;
+  }
+#if MECHDOG_STREAM_TCP_NODELAY
+  if (no_delay != 1) {
+    return ESP_FAIL;
+  }
+#endif
+  Serial.printf("STREAM_SOCKET nodelay_actual=%d\n", no_delay);
   esp_err_t result = httpd_resp_set_type(request, kStreamContentType);
   if (result != ESP_OK) {
     return result;
@@ -241,10 +275,18 @@ esp_err_t streamHandler(httpd_req_t* request) {
   uint32_t frame_count = 0;
   uint32_t skipped = 0;
   uint32_t sent_bytes = 0;
+  int64_t capture_total_us = 0;
+  int64_t capture_max_us = 0;
+  int64_t send_total_us = 0;
+  int64_t send_max_us = 0;
+  int64_t age_total_us = 0;
+  int64_t age_max_us = 0;
   int64_t report_started_us = esp_timer_get_time();
   int64_t next_due_us = report_started_us;
   while (result == ESP_OK) {
+    const int64_t capture_started_us = esp_timer_get_time();
     camera_fb_t* frame = esp_camera_fb_get();
+    const int64_t captured_us = esp_timer_get_time();
     if (frame == nullptr) {
       Serial.println("WARN stream: frame capture failed");
       result = ESP_FAIL;
@@ -271,28 +313,45 @@ esp_err_t streamHandler(httpd_req_t* request) {
       next_due_us = now_us + period_us;
     }
 
-    char header[96];
+    // Boundary and JPEG metadata share one HTTP chunk; the JPEG buffer stays in place.
+    char header[160];
     const int header_length =
-        snprintf(header, sizeof(header), "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
-                 static_cast<unsigned>(frame->len));
+        snprintf(header, sizeof(header), "%sContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+                 kStreamBoundary, static_cast<unsigned>(frame->len));
     if (header_length <= 0 || static_cast<size_t>(header_length) >= sizeof(header)) {
       esp_camera_fb_return(frame);
       result = ESP_FAIL;
       break;
     }
 
-    result = httpd_resp_send_chunk(request, kStreamBoundary, strlen(kStreamBoundary));
-    if (result == ESP_OK) {
-      result = httpd_resp_send_chunk(request, header, static_cast<size_t>(header_length));
-    }
+    const int64_t send_started_us = esp_timer_get_time();
+    result = httpd_resp_send_chunk(request, header, static_cast<size_t>(header_length));
     if (result == ESP_OK) {
       result =
           httpd_resp_send_chunk(request, reinterpret_cast<const char*>(frame->buf), frame->len);
     }
-    sent_bytes += static_cast<uint32_t>(frame->len);
+    const int64_t sent_us = esp_timer_get_time();
+    const int64_t capture_us = captured_us - capture_started_us;
+    const int64_t send_us = sent_us - send_started_us;
+    // Camera driver timestamp is on this ESP's monotonic clock. This is local
+    // frame age at send start, not PC arrival latency or optical E2E latency.
+    const int64_t timestamp_us =
+        static_cast<int64_t>(frame->timestamp.tv_sec) * 1000000 + frame->timestamp.tv_usec;
+    const int64_t age_us = send_started_us > timestamp_us ? send_started_us - timestamp_us : 0;
+    if (result == ESP_OK) {
+      capture_total_us += capture_us;
+      capture_max_us = max(capture_max_us, capture_us);
+      send_total_us += send_us;
+      send_max_us = max(send_max_us, send_us);
+      age_total_us += age_us;
+      age_max_us = max(age_max_us, age_us);
+      sent_bytes += static_cast<uint32_t>(frame->len);
+      ++frame_count;
+    } else {
+      Serial.printf("STREAM_SEND_FAILED result=0x%x elapsed_us=%lld\n", result, send_us);
+    }
     esp_camera_fb_return(frame);
 
-    ++frame_count;
     const int64_t report_now_us = esp_timer_get_time();
     if (report_now_us - report_started_us >= static_cast<int64_t>(kFpsReportIntervalMs) * 1000) {
       const float elapsed_s = static_cast<float>(report_now_us - report_started_us) / 1000000.0F;
@@ -304,9 +363,20 @@ esp_err_t streamHandler(httpd_req_t* request) {
                     g_profile_name, fps, static_cast<unsigned>(g_fps_limit),
                     static_cast<unsigned>(bytes_avg), static_cast<unsigned>(skipped),
                     static_cast<double>(sent_bytes) * 8.0 / 1000.0 / elapsed_s);
+      if (frame_count > 0) {
+        Serial.printf(
+            "STREAM_TIMING capture_avg_us=%lld capture_max_us=%lld send_avg_us=%lld "
+            "send_max_us=%lld age_avg_us=%lld age_max_us=%lld rssi=%d heap=%u\n",
+            capture_total_us / frame_count, capture_max_us, send_total_us / frame_count,
+            send_max_us, age_total_us / frame_count, age_max_us, WiFi.RSSI(),
+            static_cast<unsigned>(ESP.getFreeHeap()));
+      }
       frame_count = 0;
       skipped = 0;
       sent_bytes = 0;
+      capture_total_us = capture_max_us = 0;
+      send_total_us = send_max_us = 0;
+      age_total_us = age_max_us = 0;
       report_started_us = report_now_us;
     }
   }
@@ -375,7 +445,18 @@ bool startServers() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("BOOT mechdog-xiao-vision");
+  Serial.println("BOOT mechdog-xiao-vision link-diagnostics-v1");
+
+  // 접속 타임아웃의 status만으로 AP 미발견·인증 실패를 구분할 수 없다.
+  // 자격정보를 출력하거나 연결 정책을 바꾸지 않고 드라이버의 사유만 남긴다.
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+    if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+      Serial.printf("WIFI_DISCONNECTED reason=%u\n",
+                    static_cast<unsigned>(info.wifi_sta_disconnected.reason));
+    } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+      Serial.println("WIFI_ASSOCIATED");
+    }
+  });
 
   g_camera_ready = initializeCamera();
   if (!g_camera_ready) {
@@ -394,8 +475,24 @@ void loop() {
 
   if (millis() - g_last_reconnect_ms >= kReconnectIntervalMs) {
     g_last_reconnect_ms = millis();
-    if (WiFi.status() != WL_CONNECTED) {
+    if (!g_wifi_initialized) {
       connectWifi();
+    } else if (WiFi.status() != WL_CONNECTED) {
+      g_wifi_reported = false;
+      wifi_ap_record_t access_point{};
+      if (esp_wifi_sta_get_ap_info(&access_point) == ESP_OK) {
+        Serial.println("WIFI_WAIT_IP");
+      } else {
+        // Reuse the existing configuration. Unlike begin()/reconnect(), this
+        // fallback does not deliberately disconnect an associated station.
+        const esp_err_t reconnect_result = esp_wifi_connect();
+        Serial.printf("WIFI_RETRY result=0x%x status=%d\n", reconnect_result,
+                      static_cast<int>(WiFi.status()));
+      }
+    }
+    if (WiFi.status() == WL_CONNECTED && !g_wifi_reported) {
+      Serial.printf("WIFI_READY ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      g_wifi_reported = true;
     }
     // Wi-Fi는 살아 있는데 서버 시작만 실패한 경우도 다시 시도한다.
     if (WiFi.status() == WL_CONNECTED &&
