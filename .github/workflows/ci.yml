@@ -45,6 +45,11 @@ jobs:
       - name: Format check (ruff)
         run: ruff format --check .
 
+      - name: PC maintenance offline tests
+        run: |
+          python -m pip install -r tools/pc_control/requirements.txt
+          python -m unittest discover -s tools/pc_control -p 'test_*.py'
+
       # 하드웨어 없이 검증 가능한 순수 로직만 대상 (WBS 6.2)
       #  · FSM 상태 전이 전수 검증
       #  · 메시지 직렬화 / 범위 클램핑 / seq 역전 폐기
