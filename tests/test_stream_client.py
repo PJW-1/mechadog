@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -408,6 +409,137 @@ def test_reader_uses_the_advertised_boundary(cfg: dict) -> None:
     )
     frames = list(_reader(cfg, net).frames(max_frames=1))
     assert len(frames) == 1
+
+
+class _Read1Stream(_FakeStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        super().__init__(chunks)
+        self.read1_calls = 0
+        self.closed = False
+
+    def read(self, _size: int) -> bytes:
+        raise AssertionError("read1 응답에서 요청 크기를 채우는 read 를 호출하면 안 된다")
+
+    def read1(self, _size: int) -> bytes:
+        self.read1_calls += 1
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def __exit__(self, *_exc: object) -> None:
+        self.closed = True
+
+
+def test_reader_prefers_read1_for_a_short_frame_tail(cfg: dict) -> None:
+    payload = jpeg(20)
+    wire = part(payload)
+    stream = _Read1Stream([wire[:-4], wire[-4:]])
+    net = _FakeNetwork([stream])
+    frames = list(_reader(cfg, net).frames(max_frames=1))
+    assert [frame.payload for frame in frames] == [payload]
+    assert stream.read1_calls == 2
+    assert stream.closed
+    assert net.slept == []
+
+
+@pytest.mark.parametrize("noncallable_read1", [False, True])
+def test_reader_falls_back_to_read_when_read1_is_unavailable(cfg: dict, noncallable_read1):
+    stream = _FakeStream([part(jpeg(20))])
+    if noncallable_read1:
+        stream.read1 = None
+    net = _FakeNetwork([stream])
+    frames = list(_reader(cfg, net).frames(max_frames=1))
+    assert len(frames) == 1
+    assert frames[0].size_bytes == 24
+    assert net.opened == 1 and net.slept == []
+
+
+def test_read1_eof_reconnects_and_can_use_a_read_only_response(cfg: dict) -> None:
+    initial = _Read1Stream([part(jpeg(10))])
+    net = _FakeNetwork([initial, _FakeStream([part(jpeg(20))])])
+    reader = _reader(cfg, net)
+    frames = list(reader.frames(max_frames=2))
+    assert [frame.size_bytes for frame in frames] == [14, 24]
+    assert initial.read1_calls == 2  # 한 프레임 뒤 EOF를 읽고 종료한다.
+    assert initial.closed
+    assert net.opened == 2 and net.slept == [1.0]
+    assert reader.stats.connects == 2 and reader.stats.failures == 1
+
+
+def test_stop_wakes_backoff_and_never_opens_another_connection(cfg: dict, monkeypatch) -> None:
+    monkeypatch.setitem(cfg["vision"], "reconnect_backoff_s", [30])
+    net = _FakeNetwork([OSError("offline")])
+    reader = StreamReader(_with_xiao(cfg, "10.0.0.9"), opener=net.opener)
+    waiting = threading.Event()
+    wait = reader._sleeper
+
+    def watched_wait(seconds):
+        waiting.set()
+        return wait(seconds)
+
+    reader._sleeper = watched_wait
+    thread = threading.Thread(target=lambda: list(reader.frames()), daemon=True)
+    thread.start()
+    try:
+        assert waiting.wait(1), "실제 중단 가능한 30초 백오프에 들어가야 한다"
+        reader.stop()
+        thread.join(timeout=0.5)
+        assert not thread.is_alive()
+        assert net.opened == 1
+        assert list(reader.frames()) == []
+        assert net.opened == 1
+    finally:
+        reader.stop()
+        thread.join(timeout=1)
+
+
+def test_stop_during_empty_read_closes_after_the_existing_socket_timeout(cfg, monkeypatch) -> None:
+    monkeypatch.setitem(cfg["vision"], "stall_timeout_ms", 50)
+    entered = threading.Event()
+
+    class SilentResponse(_Read1Stream):
+        def read1(self, _size):
+            entered.set()
+            threading.Event().wait(0.05)
+            raise TimeoutError("no camera bytes")
+
+    response = SilentResponse([])
+    calls = []
+
+    def opener(_url, *, timeout):
+        calls.append(timeout)
+        return response
+
+    reader = StreamReader(_with_xiao(cfg, "10.0.0.9"), opener=opener)
+    thread = threading.Thread(target=lambda: list(reader.frames()), daemon=True)
+    thread.start()
+    try:
+        assert entered.wait(1)
+        reader.stop()
+        thread.join(timeout=0.5)
+        assert not thread.is_alive()
+        assert response.closed
+        assert calls == [0.05]
+        assert reader.stats.failures == 0, "정상 종료를 링크 실패로 세면 안 된다"
+    finally:
+        reader.stop()
+        thread.join(timeout=1)
+
+
+def test_stop_during_profile_hook_does_not_open_the_stream(cfg: dict) -> None:
+    net = _FakeNetwork([])
+    reader = StreamReader(
+        _with_xiao(cfg, "10.0.0.9"), opener=net.opener, before_connect=lambda: reader.stop()
+    )
+    assert list(reader.frames()) == []
+    assert net.opened == 0
+
+
+def test_closing_frame_iterator_closes_its_active_http_response(cfg: dict) -> None:
+    response = _Read1Stream([part(jpeg(20))])
+    reader = _reader(cfg, _FakeNetwork([response]))
+    frames = reader.frames()
+    assert next(frames).size_bytes == 24
+    frames.close()
+    assert response.closed
 
 
 # ── 백오프 ───────────────────────────────────────────────────

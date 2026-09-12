@@ -34,6 +34,10 @@ OV3660·PSRAM 초기화를 확인했다. 이는 해당 장치 관측이며 SDK�
 
 ## 실물 검수
 
+PC 모델 처리 경계, 재접속 수정, 전송 계측과 독립 검증 명령은
+[연결 검증 기록](LINK_VALIDATION.md)을 참고한다. PC 5GHz/카메라 2.4GHz를 같은 LAN에서
+사용하는지 확인하며, USB 업데이트 완료와 영상 속도 검증은 구분한다.
+
 - 상태: `http://<XIAO-IP>/`
 - VGA: `http://<XIAO-IP>/profile?name=VGA`
 - QVGA: `http://<XIAO-IP>/profile?name=QVGA`

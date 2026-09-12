@@ -282,6 +282,76 @@ def test_stop_is_idempotent_and_bounded(cfg: dict, monkeypatch) -> None:
     assert (time.perf_counter() - started) < 2.0
 
 
+def test_worker_stop_signals_a_reader_with_no_frames(cfg: dict, monkeypatch) -> None:
+    class NoFrameReader:
+        def __init__(self):
+            self.entered = threading.Event()
+            self.stopped = threading.Event()
+            self.closed = threading.Event()
+            self.stop_calls = 0
+
+        def frames(self):
+            try:
+                self.entered.set()
+                self.stopped.wait(1)
+                yield from ()
+            finally:
+                self.closed.set()
+
+        def stop(self):
+            self.stop_calls += 1
+            self.stopped.set()
+
+    reader = NoFrameReader()
+    worker = _worker(cfg, reader, _FakeDetector(), monkeypatch)
+    worker.start()
+    try:
+        assert reader.entered.wait(1)
+        worker.stop(timeout_s=0.5)
+        assert reader.stop_calls == 1
+        assert reader.closed.is_set()
+        assert not worker.healthy()
+        assert worker._threads == []
+    finally:
+        worker.stop(timeout_s=0.5)
+
+
+def test_worker_keeps_unfinished_read_reference_and_does_not_spawn_a_duplicate(cfg, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+
+    class PendingReader:
+        calls = 0
+
+        def frames(self):
+            try:
+                self.calls += 1
+                entered.set()
+                release.wait(1)
+                yield _frame(1)
+            finally:
+                closed.set()
+
+    reader = PendingReader()
+    worker = _worker(cfg, reader, _FakeDetector(), monkeypatch)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        worker.stop(timeout_s=0.001)
+        assert worker._threads, "종료 중인 기존 연결을 잊으면 중복 연결이 생긴다"
+        assert not worker.healthy()
+        worker.start()
+        assert reader.calls == 1
+        release.set()
+        worker.stop(timeout_s=0.5)
+        assert worker._threads == []
+        assert closed.is_set()
+    finally:
+        release.set()
+        worker.stop(timeout_s=0.5)
+
+
 def test_queue_is_shared_and_drops_old_frames(cfg: dict, monkeypatch) -> None:
     """수신이 추론보다 빠른 것이 정상이다 — 큐가 드롭을 센다 (4.3.5)."""
     queue = FrameQueue()
