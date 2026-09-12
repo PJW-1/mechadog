@@ -12,7 +12,7 @@
 #include <lwip/sockets.h>
 
 #ifndef MECHDOG_STREAM_TCP_NODELAY
-#define MECHDOG_STREAM_TCP_NODELAY 0
+#define MECHDOG_STREAM_TCP_NODELAY 1
 #endif
 
 #if __has_include("wifi_secrets.h")
@@ -313,10 +313,11 @@ esp_err_t streamHandler(httpd_req_t* request) {
       next_due_us = now_us + period_us;
     }
 
-    char header[96];
+    // Boundary and JPEG metadata share one HTTP chunk; the JPEG buffer stays in place.
+    char header[160];
     const int header_length =
-        snprintf(header, sizeof(header), "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
-                 static_cast<unsigned>(frame->len));
+        snprintf(header, sizeof(header), "%sContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+                 kStreamBoundary, static_cast<unsigned>(frame->len));
     if (header_length <= 0 || static_cast<size_t>(header_length) >= sizeof(header)) {
       esp_camera_fb_return(frame);
       result = ESP_FAIL;
@@ -324,10 +325,7 @@ esp_err_t streamHandler(httpd_req_t* request) {
     }
 
     const int64_t send_started_us = esp_timer_get_time();
-    result = httpd_resp_send_chunk(request, kStreamBoundary, strlen(kStreamBoundary));
-    if (result == ESP_OK) {
-      result = httpd_resp_send_chunk(request, header, static_cast<size_t>(header_length));
-    }
+    result = httpd_resp_send_chunk(request, header, static_cast<size_t>(header_length));
     if (result == ESP_OK) {
       result =
           httpd_resp_send_chunk(request, reinterpret_cast<const char*>(frame->buf), frame->len);

@@ -93,6 +93,11 @@ def metrics(rows: Sequence[dict[str, Any]], elapsed_s: float) -> dict[str, Any]:
         "gap_max_ms": max(gaps) if gaps else None,
         "decode_p95_us": percentile([r["decode_us"] for r in rows]),
         "decode_max_us": max((r["decode_us"] for r in rows), default=None),
+        # Keep the first-call outlier in all-frame metrics and acceptance. Lazy imports
+        # may make startup slower; show later calls separately instead of hiding it.
+        "first_decode_us": rows[0]["decode_us"] if rows else None,
+        "decode_after_first_p95_us": percentile([r["decode_us"] for r in rows[1:]]),
+        "decode_after_first_max_us": max((r["decode_us"] for r in rows[1:]), default=None),
         "jpeg_mean_bytes": sum(r["bytes"] for r in rows) / len(rows) if rows else None,
         "all_vga": vga,
         # Full-window rate prevents a short burst followed by silence passing the check.

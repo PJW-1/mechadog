@@ -103,6 +103,28 @@ def test_rate_metrics_require_full_window_rate_and_vga():
     assert metrics([], 1.0)["fps"] is None
 
 
+def test_first_decode_cost_is_separate_but_not_removed_from_total_metrics():
+    rows = [
+        {
+            "received_monotonic_s": i / 20,
+            "decode_us": cost,
+            "bytes": 1000,
+            "width": 640,
+            "height": 480,
+        }
+        for i, cost in enumerate([180000, 900, 1200])
+    ]
+    result = metrics(rows, 0.15)
+    assert result["first_decode_us"] == 180000
+    assert result["decode_after_first_p95_us"] == 1200
+    assert result["decode_after_first_max_us"] == 1200
+    assert result["decode_max_us"] == 180000
+    assert result["decode_p95_us"] == 180000
+    assert result["frames"] == 3
+    assert metrics(rows[:1], 0.1)["decode_after_first_max_us"] is None
+    assert metrics([], 1)["first_decode_us"] is None
+
+
 @pytest.mark.parametrize("corrupt", [False, True])
 def test_fast_vga_requires_clean_parser_for_acceptance(tmp_path, monkeypatch, corrupt):
     monkeypatch.setattr(Response, "interval_s", 0.01)

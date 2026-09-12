@@ -27,8 +27,11 @@ This follows `docs/ARCHITECTURE.md`, rather than moving models onto an ESP.
 
 VGA, JPEG quality 12, two PSRAM frame buffers and the existing 25fps cap are
 unchanged. No model, additional frame-skipping policy or image-quality reduction
-was introduced. `MECHDOG_STREAM_TCP_NODELAY` defaults to **0**; the experimental
-enabled setting and metadata coalescing were not retained as optimizations.
+was introduced. Following the additional comparisons below,
+`MECHDOG_STREAM_TCP_NODELAY` defaults to **1**. The boundary and JPEG metadata
+share one HTTP chunk, followed by the original JPEG buffer: two chunks instead
+of three, without allocating or copying another JPEG. A build override of `0`
+remains available for comparison.
 
 ## Network check before testing
 
@@ -80,7 +83,7 @@ timeouts and rejected candidates are preserved. Session results:
 | Final app, PC 5GHz | Room scene | 486 frames/30s, 16.44fps; VGA rate check passed |
 | Final app, PC 5GHz, new stream connection | Room scene | 1,883 frames/120s, 15.71fps; VGA rate check passed |
 
-The final two room-scene runs decoded **2,369 VGA frames over 150 seconds**,
+The initial two room-scene runs decoded **2,369 VGA frames over 150 seconds**,
 with zero parser discards or resynchronizations. Full-window rates were
 16.19fps and 15.69fps. Arrival-gap p95 was about 109ms in both runs and the
 largest observed gap was 195ms. JPEG decode p95 was 1.36ms and 1.27ms;
@@ -106,3 +109,61 @@ error; subsequent live video independently confirmed the application running.
 The PC's complete offline test suite passed **1,785 tests** on 2026-09-12,
 including stream-reader shutdown and measurement-tool cases. Python lint and
 format checks passed. These software checks do not replace device tests.
+
+## Additional fixed-scene comparisons (2026-09-12)
+
+A later 180-second observation included a user-directed camera repositioning.
+Its 17.80fps average is retained in raw evidence but is not a fixed-scene baseline.
+After the user fixed the camera toward room objects, these runs followed:
+
+| Setting | Duration | Frames | Interval fps | Arrival-gap p95 / maximum |
+| --- | ---: | ---: | ---: | --- |
+| Baseline | 60s | 764 | 12.76 | 137.9 / 307.3ms |
+| TCP_NODELAY only | 90s | 1,504 | 16.73 | 110.3 / 170.1ms |
+| Baseline restored | 60s | 956 | 15.97 | 115.2 / 245.6ms |
+| Combined metadata only | 90s | 1,471 | 16.36 | 106.2 / 162.6ms |
+| Both changes | 90s | 1,518 | 16.90 | 107.0 / 171.0ms |
+
+All these captures completed with zero parser discards or resynchronizations;
+the first baseline failed the 15fps rate requirement. The baseline's variation
+from 12.76 to 15.97fps means the full before/after difference cannot be attributed
+to code. The combined candidate showed a modest rate increase versus the restored
+baseline, with shorter observed long gaps in those short comparison runs. This is an in-room comparison, not a
+controlled RF experiment or a guarantee of sustained 15fps in every network.
+
+TCP_NODELAY is a supported way to disable Nagle's small-packet batching;
+it is not a general throughput switch. See the
+[Espressif lwIP guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/lwip.html).
+The installed core uses precompiled ESP-IDF libraries: changing an application
+header alone does not rebuild the TCP send buffer. No such workaround was used.
+
+The measurement tool now reports first-call decoding separately from later
+calls. First decode included lazy library loading (about 162–169ms in the fixed
+scene comparisons); subsequent calls peaked at about 2–2.4ms. The original
+all-frame maximum, percentiles, frame count and rate acceptance still include
+the first call. This reporting change passed 36 tool tests and Python lint/format
+checks; the firmware also passed clang-format 18 checks.
+
+The rebuilt final app subsequently received **5,187 VGA frames in 300 seconds**:
+17.30fps interval / 17.29fps full-window, arrival-gap p95 105.3ms, no parser
+discards or resynchronizations. However, there was **one 1,097.9ms arrival gap**
+about 142.6 seconds into the run. The corresponding ESP log recorded a 1,093.1ms
+socket send, so this was not just PC JPEG decoding. The run passed the existing
+15fps / 2-second-stall camera check, but does not establish a 250ms end-to-end
+bound or eliminate wireless stalls. Later decode calls peaked at 2.75ms; the
+165ms first-call cost remains included in the raw all-frame statistics.
+
+A separate 120-second check used the project's actual `StreamReader`, its
+default 4096-byte reads, default opener and configured socket timeout. It
+received and decoded 2,306 VGA frames (19.23fps interval / 19.21fps full-window),
+with one connection, no reconnect failures, and receiver exit 20.4ms after the
+stop request. Its maximum frame gap was 523.2ms. JPEGs averaged 18.8KB versus
+23.9KB in the 300-second run, so the higher FPS must not be presented as a reader
+speedup. Internal parser counters are not exposed by `StreamReader`; this check
+does not independently establish zero parser resynchronizations. No model or
+robot runtime was started.
+
+Installed final image: 960,528 bytes, SHA256
+`75220cd187bad425de94263d8afcb459fe05a28717c8be23344d4fb635ab7a79`.
+The source in the private build and repository matched; the flash write was
+verified and the final captures were taken after installing that image.
