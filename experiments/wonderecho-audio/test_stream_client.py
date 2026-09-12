@@ -1,5 +1,6 @@
 """Synthetic control/sequence fixtures; no microphone or serial interaction."""
 
+import struct
 import unittest
 
 from protocol import Packet
@@ -15,6 +16,29 @@ def audio(sequence):
 
 
 class StreamTests(unittest.TestCase):
+    def test_prompt_must_finish_before_capture(self):
+        state = Capture(prompt=True)
+        state.accept(status(1))
+        state.accept(status(5))
+        with self.assertRaisesRegex(ValueError, "before prompt"):
+            state.accept(status(2))
+
+    def test_prompt_then_capture_sequence(self):
+        state = Capture(prompt=True)
+        for phase in (1, 5, 6, 2):
+            state.accept(status(phase))
+        for i in range(250):
+            state.accept(audio(i))
+        state.accept(status(3, 250, 2))
+        self.assertTrue(state.finished)
+
+    def test_unsolicited_or_out_of_order_prompt_rejected(self):
+        for expect, phase in ((False, 5), (True, 6)):
+            state = Capture(prompt=expect)
+            state.accept(status(1))
+            with self.assertRaises(ValueError):
+                state.accept(status(phase))
+
     def active(self):
         state = Capture()
         state.accept(status(1))
@@ -55,6 +79,23 @@ class StreamTests(unittest.TestCase):
     def test_device_overflow_is_failure(self):
         with self.assertRaisesRegex(ValueError, "reason 3"):
             self.active().accept(status(4, reason=3))
+
+    def test_diagnostics_do_not_turn_overflow_into_success(self):
+        state = self.active()
+        state.accept(audio(0))
+        state.accept(
+            Packet(0x109, 0x100, 0x12345678, struct.pack("<8I", 100, 20, 3, 8, 9, 1, 1000, 3))
+        )
+        self.assertEqual(state.diagnostics[0]["queue_peak"], 8)
+        with self.assertRaisesRegex(ValueError, "reason 3"):
+            state.accept(status(4, 1, 3))
+        self.assertFalse(state.finished)
+
+    def test_diagnostics_wrong_frame_count_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Inconsistent"):
+            self.active().accept(
+                Packet(0x109, 0x100, 0x12345678, struct.pack("<8I", 100, 20, 3, 8, 9, 2, 1000, 3))
+            )
 
     def test_truncated_payload_rejected(self):
         with self.assertRaises(ValueError):

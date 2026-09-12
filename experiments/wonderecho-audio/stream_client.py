@@ -5,11 +5,11 @@ implement this protocol. Do not run on the robot's serial port.
 """
 
 import argparse
+import contextlib
 import json
 import struct
 import time
 import wave
-from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,12 +32,15 @@ def send_command(device, kind):
 
 
 class Capture:
-    def __init__(self):
+    def __init__(self, prompt=False):
+        self.expect_prompt = prompt
+        self.prompt_phase = 0
         self.ready = False
         self.started = False
         self.finished = False
         self.frames = []
         self.events = []
+        self.diagnostics = []
 
     def accept(self, packet):
         if packet.fill_data != 0x12345678:
@@ -54,6 +57,8 @@ class Capture:
                     raise ValueError("Unexpected READY; possible device reboot")
                 self.ready = True
             elif phase == 2:
+                if self.expect_prompt and self.prompt_phase != 6:
+                    raise ValueError("Recording began before prompt completion")
                 if not self.ready or self.started or sent or reason:
                     raise ValueError("Unexpected STARTED")
                 self.started = True
@@ -65,8 +70,47 @@ class Capture:
                 self.finished = True
             elif phase == 4:
                 raise ValueError(f"Device stopped with reason {reason}, sent {sent}")
+            elif phase in (5, 6):
+                if (
+                    not self.expect_prompt
+                    or not self.ready
+                    or self.started
+                    or sent
+                    or reason
+                    or self.prompt_phase != (0 if phase == 5 else 5)
+                ):
+                    raise ValueError("Unexpected prompt phase")
+                self.prompt_phase = phase
             else:
                 raise ValueError("Unknown device state")
+        elif packet.message_type == 0x109:
+            if (
+                not self.started
+                or self.finished
+                or self.diagnostics
+                or packet.version != 0x100
+                or len(packet.payload) != 32
+            ):
+                raise ValueError("Invalid capture diagnostics")
+            values = struct.unpack("<8I", packet.payload)
+            keys = (
+                "elapsed_ticks",
+                "encode_max_ticks",
+                "send_max_ticks",
+                "queue_peak",
+                "produced",
+                "sent",
+                "tick_hz",
+                "reason",
+            )
+            metrics = dict(zip(keys, values, strict=True))
+            if (
+                not metrics["tick_hz"]
+                or metrics["sent"] != len(self.frames)
+                or not metrics["sent"] <= metrics["produced"] <= MAX_FRAMES
+            ):
+                raise ValueError("Inconsistent capture diagnostics")
+            self.diagnostics.append(metrics)
         elif packet.message_type == 0x105:
             if not self.started or self.finished:
                 raise ValueError("Audio outside an active capture")
@@ -131,17 +175,24 @@ def save_wave(frames, destination):
         wav.writeframes(output)
 
 
-def capture(port, folder):
+def capture(port, folder, prompt=False):
     import serial
 
     folder.mkdir(parents=True, exist_ok=False)
-    decoder, result = Decoder(max_payload=128), Capture()
+    decoder, result = Decoder(max_payload=128), Capture(prompt=prompt)
     device = serial.Serial(port=None, baudrate=115200, timeout=0.1, write_timeout=0.5)
     device.dtr = False
     device.rts = False
     device.port = port
     started_command = False
-    report = {"port": port, "baudrate": 115200, "success": False, "source": "physical USB capture"}
+    capture_timed = False
+    report = {
+        "port": port,
+        "baudrate": 115200,
+        "success": False,
+        "prompt_requested": prompt,
+        "source": "physical USB capture",
+    }
     try:
         device.open()
         with (folder / "uart.bin").open("xb") as raw:
@@ -165,8 +216,11 @@ def capture(port, folder):
                 for packet in packets:
                     result.accept(packet)
                 if result.ready and not started_command:
-                    send_command(device, 0x108)
+                    send_command(device, 0x10B if prompt else 0x108)
                     started_command = True
+                    deadline = time.monotonic() + 8
+                if result.started and not capture_timed:
+                    capture_timed = True
                     deadline = time.monotonic() + 8
         save_wave(result.frames, folder / "voice.wav")
         report["success"] = True
@@ -176,12 +230,13 @@ def capture(port, folder):
     finally:
         if device.is_open:
             if started_command and not result.finished:
-                with suppress(serial.SerialException, TimeoutError):
+                with contextlib.suppress(serial.SerialException, TimeoutError):
                     send_command(device, 0x106)
             device.close()
         report.update(
             frames=len(result.frames),
             events=result.events,
+            diagnostics=result.diagnostics,
             checksum_errors=decoder.checksum_errors,
             length_errors=decoder.length_errors,
             timeouts=decoder.timeouts,
@@ -198,6 +253,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--out", type=Path, help="New measurement directory; existing directories are refused"
     )
+    parser.add_argument(
+        "--prompt",
+        action="store_true",
+        help="Play the module prompt before recording; requires speaker firmware",
+    )
     args = parser.parse_args()
     now = datetime.now(timezone(timedelta(hours=9)))
     output = args.out or (
@@ -207,4 +267,4 @@ if __name__ == "__main__":
         / now.strftime("%Y-%m-%d")
         / now.strftime("WonderEcho_audio_%H%M%S")
     )
-    print(json.dumps(capture(args.port, output), indent=2))
+    print(json.dumps(capture(args.port, output, prompt=args.prompt), indent=2))

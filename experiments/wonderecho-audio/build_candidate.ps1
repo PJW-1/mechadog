@@ -1,4 +1,4 @@
-param([string]$DevelopmentRoot = 'C:/dev/mechadog-voice-20260913')
+param([Parameter(Mandatory = $true)][string]$DevelopmentRoot)
 $ErrorActionPreference = 'Stop'
 $sdk = Join-Path $DevelopmentRoot 'candidate-sdk-2.2.7'
 $project = Join-Path $sdk 'projects/offline_asr_llm_aiot_uart_sample/project_file'

@@ -19,7 +19,13 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def build(root, output, code_package="offline-stream-package-startupfix"):
+def build(
+    root,
+    output,
+    code_package="offline-stream-package-startupfix",
+    firmware_version="2.0.1",
+    code_version=101,
+):
     factory = root / "recovery/2.2 CI1302_English_SingleMic_V00729_UART1_115200_2M.bin"
     if Path(code_package).name != code_package:
         raise ValueError("Expected a package directory name")
@@ -68,13 +74,13 @@ def build(root, output, code_package="offline-stream-package-startupfix"):
         "--firmware-name",
         "WonderEcho_Stream_Bench",
         "--firmware-version",
-        "2.0.1",
+        firmware_version,
         "--boot-file",
         str(boot),
         "--user-code",
         str(code),
         "--user-code-version",
-        "101",
+        str(code_version),
         "--user-code-size",
         str(info["code_space_before_next_partition"]),
     ]
@@ -133,5 +139,7 @@ if __name__ == "__main__":
     parser.add_argument("root", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--code-package", default="offline-stream-package-startupfix")
+    parser.add_argument("--firmware-version", default="2.0.1")
+    parser.add_argument("--code-version", type=int, default=101)
     args = parser.parse_args()
-    build(args.root, args.output, args.code_package)
+    build(args.root, args.output, args.code_package, args.firmware_version, args.code_version)
