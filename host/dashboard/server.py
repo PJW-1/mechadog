@@ -1,4 +1,11 @@
-"""PC 로컬 읽기 전용 FastAPI/WS 서버. 명령 API와 영상은 후속 WBS다."""
+"""PC 로컬 FastAPI/WS 서버 — 텔레메트리 방송과 명령 API (WBS 4.5.1 · 4.5.3).
+
+⚠️ **명령 API 가 붙으면서 더 이상 읽기 전용이 아니다.** `commands` 를 넘기지
+않으면 예전처럼 읽기 전용으로 뜨고, 넘기면 `/api/command/*` 가 열린다. 이
+경로는 **로봇을 실제로 움직이므로** WebSocket 과 같은 로컬 출처 검사를 건다.
+
+영상 송출은 후속 WBS 다.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +18,10 @@ from contextlib import asynccontextmanager, contextmanager
 
 import uvicorn
 from anyio import CancelScope
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
+from host.dashboard.commands import CommandService
 from host.dashboard.state import DashboardState
 
 PERIOD_S = 0.1
@@ -69,7 +78,19 @@ async def _receive_close(websocket: WebSocket) -> int | None:
     return None if message["type"] == "websocket.disconnect" else 1008
 
 
-def create_app(state: DashboardState) -> FastAPI:
+def _local_origins(port: int) -> set[str]:
+    """이 서버 자신을 가리키는 출처만 허용한다.
+
+    명령 경로가 붙었으므로 이 검사는 **로봇이 움직이는 것을 막는 문**이다.
+    브라우저의 다른 탭에서 들어온 요청이 순찰을 멈추게 두지 않는다.
+    """
+    allowed = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
+    if port == 80:
+        allowed.update({"http://127.0.0.1", "http://localhost"})
+    return allowed
+
+
+def create_app(state: DashboardState, commands: CommandService | None = None) -> FastAPI:
     hub = TelemetryHub(state)
 
     @asynccontextmanager
@@ -88,7 +109,7 @@ def create_app(state: DashboardState) -> FastAPI:
     async def health():
         return {
             "service": "telemetry",
-            "read_only": True,
+            "read_only": commands is None,
             "clients": len(hub.clients),
             "coalesced_updates": hub.coalesced,
         }
@@ -97,16 +118,55 @@ def create_app(state: DashboardState) -> FastAPI:
     async def telemetry():
         return state.snapshot()
 
+    if commands is not None:
+
+        def _rejected_origin(request: Request) -> JSONResponse | None:
+            origin = request.headers.get("origin")
+            if origin is None:
+                return None  # 브라우저가 아닌 도구(curl·시험)는 출처를 붙이지 않는다
+            if origin in _local_origins(request.url.port or 80):
+                return None
+            return JSONResponse({"error": "origin"}, status_code=403)
+
+        @app.post("/api/command/estop")
+        async def estop(request: Request):
+            """**어떤 상태에서도 통한다.** 조건을 검사하지 않는다 (FR-4.4)."""
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            return commands.estop().as_dict()
+
+        @app.post("/api/command/manual")
+        async def manual(request: Request):
+            """`{"on": true|false}` 로 수동 오버라이드를 잡거나 놓는다."""
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            on = body.get("on")
+            if not isinstance(on, bool):
+                return JSONResponse({"error": "on"}, status_code=400)
+            result = commands.manual_on() if on else commands.manual_off()
+            return result.as_dict()
+
+        @app.post("/api/command/drive")
+        async def drive(request: Request):
+            """`MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            try:
+                step = float(body["step"])
+                angle = float(body["angle"])
+            except (KeyError, TypeError, ValueError):
+                return JSONResponse({"error": "fields"}, status_code=400)
+            return commands.drive(step, angle).as_dict()
+
     @app.websocket("/ws/telemetry")
     async def websocket_telemetry(websocket: WebSocket):
         origin = websocket.headers.get("origin")
-        port = websocket.url.port or 80
-        allowed_origins = {
-            f"http://127.0.0.1:{port}",
-            f"http://localhost:{port}",
-        }
-        if port == 80:
-            allowed_origins.update({"http://127.0.0.1", "http://localhost"})
+        allowed_origins = _local_origins(websocket.url.port or 80)
         if origin is not None and origin not in allowed_origins:
             await websocket.close(code=1008)
             return
