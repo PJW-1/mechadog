@@ -21,6 +21,25 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 - `ws://127.0.0.1:8000/ws/telemetry`: 10Hz 상태 스트림.
 - `http://127.0.0.1:8000/docs`: HTTP API 확인. 관제 화면은 후속 4.6 작업이다.
 
+## 관제 화면의 three.js
+
+`/` 로 서빙하는 `web/design-prototype` 은 3D 현장을 그리려고 three.js 를
+`/vendor/three.module.js`, `/vendor/addons/...` 로 불러온다. **그 `vendor/` 폴더는
+소스 트리에 없다** — 프로토타입 개발 서버(`scripts/server.mjs`)가 요청을
+`node_modules/three` 로 돌려주고, `npm run build` 는 `build/vendor` 로 복사해 넣는다.
+
+그래서 대시보드 서버도 같은 규칙으로 `/vendor/*` 를 붙인다. 빌드본을 `static_dir`
+로 넘기면 그 안의 `vendor/` 를 쓰고, 소스 폴더면 `node_modules/three` 에서 찾는다.
+
+```powershell
+cd web/design-prototype
+npm install     # 한 번만. three.js 를 받는다
+```
+
+`node_modules` 가 없으면 `/vendor/*` 는 404 이고 **3D 현장만 비어 보인다.**
+텔레메트리·명령 API·`/live` 는 three.js 를 쓰지 않으므로 그대로 동작한다 —
+`/live` 만 확인하면 이 상태를 놓치기 쉽다.
+
 기본 바인딩은 `127.0.0.1`이다. 브라우저 WS는 같은 포트의 localhost/127.0.0.1
 Origin만 허용한다. 로컬 비브라우저 클라이언트는 Origin 없이 연결할 수 있다.
 임의 웹사이트·다른 PC에 개방한 원격 운용 서버가 아니다.

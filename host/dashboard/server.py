@@ -33,6 +33,11 @@ SEND_TIMEOUT_S = 1.0
 MAX_CLIENTS = 16
 CAMERA_PERIOD_S = 0.1
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "design-prototype"
+# 3D 현장은 three.js 를 `/vendor/*` 로 불러오는데 그 폴더는 소스 트리에 없다.
+# 프로토타입 개발 서버(web/design-prototype/scripts/server.mjs)가 요청을
+# node_modules/three 로 돌려주고, `npm run build` 는 build/vendor 로 복사해 넣는다.
+# 소스 폴더를 그대로 mount 하면 three.js 가 전부 404 가 나고 3D 화면만 통째로
+# 빈다 — `/live` 는 three.js 를 쓰지 않아 멀쩡하므로 눈에 띄지 않는다.
 
 
 class TelemetryHub:
@@ -94,6 +99,25 @@ def _local_origins(port: int) -> set[str]:
     if port == 80:
         allowed.update({"http://127.0.0.1", "http://localhost"})
     return allowed
+
+
+def _mount_three(app: FastAPI, static_dir: Path) -> None:
+    """`/vendor/*` 를 three.js 로 연결한다 — `scripts/server.mjs` 와 같은 규칙이다.
+
+    빌드본을 넘겨받았으면 그 안에 `vendor/` 가 이미 있으므로 손대지 않는다.
+    소스 폴더면 `node_modules/three` 에서 찾아 붙인다. 둘 다 없으면 붙이지
+    않는다 — 3D 화면만 비고 텔레메트리·명령·`/live` 는 그대로 동작한다.
+    """
+    if (static_dir / "vendor").is_dir():
+        return
+    three = static_dir / "node_modules" / "three"
+    addons = three / "examples" / "jsm"
+    build = three / "build"
+    if not (addons.is_dir() and build.is_dir()):
+        return
+    # `/vendor/addons` 를 먼저 붙여야 뒤의 `/vendor` 가 가로채지 않는다.
+    app.mount("/vendor/addons", StaticFiles(directory=addons), name="three-addons")
+    app.mount("/vendor", StaticFiles(directory=build), name="three")
 
 
 def create_app(
@@ -260,6 +284,7 @@ def create_app(
             return Response(content=live_html, media_type="text/html")
 
     if static_dir is not None and static_dir.is_dir():
+        _mount_three(app, static_dir)
         # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
         # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
