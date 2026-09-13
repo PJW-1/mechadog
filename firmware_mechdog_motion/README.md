@@ -11,6 +11,10 @@
 
 ## 3.2.4 제어 루프 감시 — 정지 OTA 통합 (2026-09-13)
 
+PC 쪽에서 실제로 어떤 순서로 검증했는지는
+[루프 워치독 실물 검증 절차](../docs/WATCHDOG_VERIFICATION.md)에 정리돼 있다.
+기체·빌드 고정값, 단계별 통과 기준, 안전 규칙, 사고 시 복구 절차를 포함한다.
+
 **옵션 기본값은 OFF지만 검증된 정지 OTA 패키지는 명시적으로 ON이다.**
 `MECHADOG_ENABLE_TASK_WDT=1`, `MECHADOG_ENABLE_OTA=1`, 센서 ON·구동 OFF로
 통합 설치했다. 시험용 H 명령이 없는 최종본은 `MECHADOG_WATCHDOG_FAULT_PROBE=0`이다.
