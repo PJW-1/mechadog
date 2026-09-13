@@ -39,7 +39,10 @@ export function csvCell(value) {
 export function toCsv(rows,headers){return '\ufeff'+[headers,...rows].map(row=>row.map(csvCell).join(',')).join('\r\n')}
 
 export class Operations {
- constructor({storage=null,clock=nowDefault}={}) {
+ // `link` 를 주면 수동 명령이 실제로 대시보드로 나간다 (WBS 4.6.3). 주지 않으면
+ // 지금까지와 똑같이 웹 상태와 이력만 바뀐다 — **예시 모드가 기본이다.**
+ constructor({storage=null,clock=nowDefault,link=null}={}) {
+  this.link=link;this.linkError=null;
   this.storage=storage;this.clock=clock;this.listeners=new Set();
   this.demo=true;this.stale=false;this.estop=false;this.role='operator';this.selected='MD-01';
   this.control=null;this.command='STOP';this.mission={status:'idle',robot:'MD-01',zone:'생산 구역',id:null};
@@ -80,14 +83,25 @@ export class Operations {
    this.storage.setItem(STORAGE_KEY,JSON.stringify({version:1,reviews,policies:this.policies}));this.storageAvailable=true;
   }catch{this.storageAvailable=false}
  }
- get blocked(){return !this.demo||this.stale||this.estop||this.role!=='operator'}
- requireControlContext(){if(this.blocked)throw new Error(!this.demo?'실제 제어는 연결되지 않았습니다.':this.stale?'예시 수신 만료 상태입니다.':this.estop?'예시 정지 잠금을 먼저 해제하세요.':'시연 역할을 운영자로 선택하세요.')}
+ // 실제 연결(link)이 있으면 예시 모드가 아니어도 조작이 열린다. 링크가 없을
+ // 때의 차단 사유는 그대로다 — **붙일 서버가 없는데 열어 두지 않는다.**
+ get live(){return !this.demo&&!!this.link}
+ get blocked(){return (!this.demo&&!this.link)||this.stale||this.estop||this.role!=='operator'}
+ requireControlContext(){if(this.blocked)throw new Error(!this.demo&&!this.link?'실제 제어는 연결되지 않았습니다.':this.stale?'예시 수신 만료 상태입니다.':this.estop?'예시 정지 잠금을 먼저 해제하세요.':'시연 역할을 운영자로 선택하세요.')}
+ // 전송 실패를 삼키지 않는다. 화면이 "보냈다" 고 말하면 안 되는 경우다.
+ noteLinkError(action,error){this.linkError=action+': '+(error?.message||String(error));this.log('전송 실패',this.linkError,'LIVE_LINK');this.emit('mode')}
  stop(reason='조작 해제'){
   const moving=this.command!=='STOP';this.command='STOP';
+  // 멈춤은 **움직이고 있었는지와 무관하게** 내보낸다. 웹이 STOP 이라고 믿는
+  // 것과 로봇이 실제로 선 것은 다른 일이고, 어긋났을 때 손해가 큰 쪽이다.
+  if(this.live)this.link.drive('STOP').catch(error=>this.noteLinkError('정지',error));
   if(moving){this.log('STOP',reason);this.emit('command')}
  }
  release(reason='제어권 반납'){
   const active=this.control||this.command!=='STOP';this.command='STOP';this.control=null;
+  // 제어권을 놓으면 서버 쪽 MANUAL 도 함께 푼다. 웹만 놓고 로봇이 수동에
+  // 남아 있으면 자율 주행이 돌아오지 않는다.
+  if(active&&this.live)this.link.manual(false).catch(error=>this.noteLinkError('수동 해제',error));
   if(active){this.log('제어권 해제',reason);this.emit('command')}
  }
  suspend(reason){
@@ -99,12 +113,29 @@ export class Operations {
  setStale(value){this.stale=!!value;if(value)this.suspend('예시 수신 만료');this.log('예시 연결 상태',value?'만료':'복구 · 자동 재개 안 함');this.emit('mode')}
  setRole(role){if(!['operator','reviewer','technician'].includes(role))throw new Error('알 수 없는 시연 역할입니다.');this.suspend('시연 역할 변경');this.role=role;this.log('시연 역할',role+' · 실제 인증 아님');this.emit('mode')}
  selectRobot(id){if(!ROBOTS.includes(id))throw new Error('알 수 없는 로봇입니다.');if(this.selected!==id)this.release('관측 장치 전환');this.selected=id;this.log('로봇 시점 선택',id);this.emit('robot')}
- claim(){this.requireControlContext();this.suspend('수동 조작 전환');this.control=this.selected;this.log('예시 제어권 요청',this.selected+' · 실제 권한/ACK 아님');this.emit('command')}
+ claim(){
+  this.requireControlContext();this.suspend('수동 조작 전환');this.control=this.selected;
+  if(this.live){
+   // 서버 쪽 MANUAL 진입. 실패하면 제어권을 잡은 척하지 않는다.
+   this.link.manual(true).catch(error=>{this.control=null;this.noteLinkError('수동 진입',error);this.emit('command')});
+   this.log('수동 제어권 요청',this.selected+' · 서버 MANUAL 요청','LIVE_LINK');
+  }else{
+   this.log('예시 제어권 요청',this.selected+' · 실제 권한/ACK 아님');
+  }
+  this.emit('command');
+ }
  move(command){
   if(command==='STOP'){this.stop();return}
   this.requireControlContext();if(this.control!==this.selected)throw new Error('먼저 예시 제어권을 요청하세요.');
   if(!ALLOWED_COMMANDS.includes(command))throw new Error('허용되지 않은 방향입니다.');
-  this.command=command;this.log('예시 명령',command+' · 전송 안 함');this.emit('command');
+  this.command=command;
+  if(this.live){
+   this.link.drive(command).catch(error=>this.noteLinkError('수동 명령',error));
+   this.log('수동 명령',command+' · 서버 전송','LIVE_LINK');
+  }else{
+   this.log('예시 명령',command+' · 전송 안 함');
+  }
+  this.emit('command');
  }
  startMission({robot=this.selected,zone='생산 구역',acknowledged=false}={}){
   this.requireControlContext();if(!acknowledged)throw new Error('예시 임무라는 안내를 먼저 확인해 주세요.');
@@ -119,7 +150,15 @@ export class Operations {
  pauseMission(){if(this.mission.status!=='running')return;this.setMissionStatus('paused');this.log('예시 임무 일시정지');this.emit('mission')}
  resumeMission(){this.requireControlContext();if(this.mission.status!=='paused')throw new Error('일시정지된 임무가 없습니다.');this.release('순찰 재개');this.setMissionStatus('running');this.log('예시 임무 재개');this.emit('mission')}
  endMission(){if(this.role!=='operator')throw new Error('운영자 시연 역할에서 종료하세요.');if(!['running','paused'].includes(this.mission.status))return;this.release('임무 종료');this.setMissionStatus('ended');const session=this.sessions.find(s=>s.id===this.mission.id);if(session)session.endedAt=this.clock();this.log('예시 임무 종료');this.emit('mission')}
- requestEstop(){this.suspend('예시 긴급 정지');this.estop=true;this.log('예시 정지 잠금','실물 명령 전송 없음 / ACK 없음');this.emit('mode')}
+ // ⚠️ **비상정지는 조건을 검사하지 않는다** (FR-4.4). 제어권이 없어도, 역할이
+ // 무엇이어도, 이미 잠겨 있어도 누르면 나간다. 서버 쪽 `estop()` 도 같은 규칙이다.
+ requestEstop(){
+  const live=this.live;
+  if(live)this.link.estop().catch(error=>this.noteLinkError('비상정지',error));
+  this.suspend('긴급 정지');this.estop=true;
+  this.log(live?'긴급 정지':'예시 정지 잠금',live?'서버 ESTOP 전송':'실물 명령 전송 없음 / ACK 없음',live?'LIVE_LINK':undefined);
+  this.emit('mode');
+ }
  clearPreviewStop(){this.estop=false;this.log('예시 잠금 초기화','실물 안전 잠금 해제 아님 · 자동 재개 안 함');this.emit('mode')}
  queryEvents({type='all',status='all',robot='all',query=''}={}){
   const q=query.trim().toLocaleLowerCase();
