@@ -130,17 +130,23 @@ void setup() {
 }
 
 void sendScan(const mechadog::ScanPoint* points, size_t n) {
-  const auto res = encoder.encode(points, n, NowMs(), json_buf, sizeof(json_buf));
-  if (!res.ok) {
-    Serial.printf("[lidar] encode failed: %s\n", res.reason);
-    return;
-  }
-  if (!send_enabled || WiFi.status() != WL_CONNECTED) return;
+  // 완성된 한 바퀴(~450점)는 json_buf 에 통째로 못 들어간다 —
+  // kChunkPoints 씩 잘라 보낸다. 각 조각도 규약상 유효한 SCAN 이고
+  // 호스트가 각도 빈 집계로 합친다.
+  for (size_t off = 0; off < n; off += kChunkPoints) {
+    const size_t take = (n - off < kChunkPoints) ? (n - off) : kChunkPoints;
+    const auto res = encoder.encode(points + off, take, NowMs(), json_buf, sizeof(json_buf));
+    if (!res.ok) {
+      Serial.printf("[lidar] encode failed: %s\n", res.reason);
+      return;
+    }
+    if (!send_enabled || WiFi.status() != WL_CONNECTED) return;
 
-  udp.beginPacket(host_ip, LIDAR_HOST_PORT);
-  udp.write(reinterpret_cast<const uint8_t*>(json_buf), res.length);
-  if (udp.endPacket() == 1) {
-    ++scans_sent;
+    udp.beginPacket(host_ip, LIDAR_HOST_PORT);
+    udp.write(reinterpret_cast<const uint8_t*>(json_buf), res.length);
+    if (udp.endPacket() == 1) {
+      ++scans_sent;
+    }
   }
 }
 
