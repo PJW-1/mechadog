@@ -48,8 +48,8 @@ static char json_buf[mechadog::ScanEncoder::CapacityFor(kChunkPoints + 16)];
 mechadog::Ld19Parser parser;
 mechadog::ScanAssembler assembler;
 mechadog::ScanEncoder encoder;
-WiFiUDP feed_udp;   // 수신용
-WiFiUDP scan_udp;   // 송신용
+WiFiUDP feed_udp;  // 수신용
+WiFiUDP scan_udp;  // 송신용
 
 char device_id[32];
 char boot_id[24];
@@ -61,7 +61,9 @@ uint32_t feed_bytes = 0;
 uint32_t scans_sent = 0;
 uint32_t last_stats_ms = 0;
 
-int64_t NowMs() { return esp_timer_get_time() / 1000; }
+int64_t NowMs() {
+  return esp_timer_get_time() / 1000;  // uptime ms — 노드 자체 시계
+}
 
 void makeDeviceId() {
   uint8_t mac[6];

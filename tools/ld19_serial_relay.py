@@ -83,7 +83,9 @@ class Ld19Parser:
         self.frame = {
             "speed_dps": b[2] | (b[3] << 8),
             "start_cdeg": b[4] | (b[5] << 8),
-            "points": [(b[6 + i * 3] | (b[7 + i * 3] << 8), b[8 + i * 3]) for i in range(POINTS_PER_FRAME)],
+            "points": [
+                (b[6 + i * 3] | (b[7 + i * 3] << 8), b[8 + i * 3]) for i in range(POINTS_PER_FRAME)
+            ],
             "end_cdeg": b[42] | (b[43] << 8),
             "stamp_ms": b[44] | (b[45] << 8),
         }
@@ -139,7 +141,10 @@ def run(args: argparse.Namespace) -> int:
         feed = (args.fwd_host, args.fwd_port)
         pkts = bytes_sent = 0
         started = time.monotonic()
-        print(f"[ld19-relay] {args.serial} @{args.baud} →UDP {feed[0]}:{feed[1]} (raw feed)", flush=True)
+        print(
+            f"[ld19-relay] {args.serial} @{args.baud} →UDP {feed[0]}:{feed[1]} (raw feed)",
+            flush=True,
+        )
         try:
             with serial.Serial(args.serial, args.baud, timeout=1) as port:
                 while True:
@@ -171,14 +176,20 @@ def run(args: argparse.Namespace) -> int:
             seq += 1
             wire = [[a / 100.0, d] for a, d in chunk]
             line = encode_scan(
-                seq=seq, ts_ms=system_clock_ms(),
-                device_id=args.device, boot_id=boot_id, points_wire=wire,
+                seq=seq,
+                ts_ms=system_clock_ms(),
+                device_id=args.device,
+                boot_id=boot_id,
+                points_wire=wire,
             )
             with contextlib.suppress(OSError):
                 sock.sendto(line.encode("utf-8"), peer)
                 scans_sent += 1
 
-    print(f"[ld19-relay] {args.serial} @{args.baud} → {peer[0]}:{peer[1]} · device={args.device} boot={boot_id}", flush=True)
+    print(
+        f"[ld19-relay] {args.serial} @{args.baud} → {peer[0]}:{peer[1]} · device={args.device} boot={boot_id}",
+        flush=True,
+    )
     stats_at = time.monotonic()
     try:
         with serial.Serial(args.serial, args.baud, timeout=1) as port:
@@ -218,8 +229,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1", help="SCAN 수신 호스트")
     p.add_argument("--port", type=int, default=5201, help="SCAN 수신 포트 (lidar.scan_port)")
     p.add_argument("--device", default="lidar-pc-relay", help="device_id")
-    p.add_argument("--fwd-host", default=None,
-                   help="설정 시 파싱 없이 생 바이트를 이 IP 로 UDP 전달 (udp_feed 스케치)")
+    p.add_argument(
+        "--fwd-host",
+        default=None,
+        help="설정 시 파싱 없이 생 바이트를 이 IP 로 UDP 전달 (udp_feed 스케치)",
+    )
     p.add_argument("--fwd-port", type=int, default=5202)
     return p
 

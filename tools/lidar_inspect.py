@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import statistics
 import sys
 import time
@@ -25,8 +24,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from ld19_serial_relay import Ld19Parser, ScanAssembler
+
 from host.common.console import survive_encoding_errors
-from ld19_serial_relay import Ld19Parser, ScanAssembler, CDEG_PER_REV
 
 BIN_CDEG = 500  # 5도 빈
 
@@ -61,9 +61,7 @@ def run(args: argparse.Namespace) -> int:
     # ── 회전·프레임 통계 ──
     elapsed = time.monotonic() - started
     pts_per_scan = [len(s) for s in scans]
-    invalid_ratio = [
-        sum(1 for _, d in s if d == 0) / len(s) if s else 0.0 for s in scans
-    ]
+    invalid_ratio = [sum(1 for _, d in s if d == 0) / len(s) if s else 0.0 for s in scans]
     # LD19 speed 필드는 deg/s 단위 그대로다 (실측 ~3580 ≈ 9.9 rev/s)
 
     # ── 각도 빈별 통계 (시간 방향 산포) ──
@@ -78,44 +76,73 @@ def run(args: argparse.Namespace) -> int:
         ds = bins[b]
         med = statistics.median(ds)
         std = statistics.pstdev(ds) if len(ds) > 1 else 0.0
-        bin_rows.append({
-            "deg": b / 100.0, "n": len(ds),
-            "median_mm": med, "std_mm": round(std, 1),
-            "min_mm": min(ds), "max_mm": max(ds),
-        })
+        bin_rows.append(
+            {
+                "deg": b / 100.0,
+                "n": len(ds),
+                "median_mm": med,
+                "std_mm": round(std, 1),
+                "min_mm": min(ds),
+                "max_mm": max(ds),
+            }
+        )
 
     all_d = [d for s in scans for _, d in s if d > 0]
     noise = [r["std_mm"] for r in bin_rows if r["n"] >= 20 and r["median_mm"] < 8000]
 
     print(f"\n═══ 수집 — {len(scans)} 회전 / {elapsed:.1f}s ═══", flush=True)
-    print(f"프레임       : {parser.frames_ok} (crc_fail={parser.crc_failures} resync={parser.resyncs})", flush=True)
-    print(f"회전 속도    : {statistics.median(speeds):.0f} deg/s ≈ {statistics.median(speeds)/360:.1f} rev/s", flush=True)
-    print(f"점/회전      : 중앙 {statistics.median(pts_per_scan):.0f} (min {min(pts_per_scan)} ~ max {max(pts_per_scan)})", flush=True)
-    print(f"무효점 비율  : {statistics.median(invalid_ratio)*100:.1f}% (dist=0)", flush=True)
-    print(f"거리 분포    : min {min(all_d)}mm · 중앙 {statistics.median(all_d):.0f}mm · max {max(all_d)}mm", flush=True)
+    print(
+        f"프레임       : {parser.frames_ok} (crc_fail={parser.crc_failures} resync={parser.resyncs})",
+        flush=True,
+    )
+    print(
+        f"회전 속도    : {statistics.median(speeds):.0f} deg/s ≈ {statistics.median(speeds) / 360:.1f} rev/s",
+        flush=True,
+    )
+    print(
+        f"점/회전      : 중앙 {statistics.median(pts_per_scan):.0f} (min {min(pts_per_scan)} ~ max {max(pts_per_scan)})",
+        flush=True,
+    )
+    print(f"무효점 비율  : {statistics.median(invalid_ratio) * 100:.1f}% (dist=0)", flush=True)
+    print(
+        f"거리 분포    : min {min(all_d)}mm · 중앙 {statistics.median(all_d):.0f}mm · max {max(all_d)}mm",
+        flush=True,
+    )
     if noise:
-        print(f"빈별 σ(측정 산포): 중앙 {statistics.median(noise):.1f}mm · p95 {sorted(noise)[int(len(noise)*0.95)]:.1f}mm", flush=True)
+        print(
+            f"빈별 σ(측정 산포): 중앙 {statistics.median(noise):.1f}mm · p95 {sorted(noise)[int(len(noise) * 0.95)]:.1f}mm",
+            flush=True,
+        )
 
     print("\n═══ 각도 빈별 (5°) — n·중앙mm·σmm·범위 ═══", flush=True)
     for r in bin_rows:
-        print(f"  {r['deg']:6.1f}°  n={r['n']:3d}  med={r['median_mm']:5.0f}  σ={r['std_mm']:5.1f}  [{r['min_mm']}~{r['max_mm']}]", flush=True)
+        print(
+            f"  {r['deg']:6.1f}°  n={r['n']:3d}  med={r['median_mm']:5.0f}  σ={r['std_mm']:5.1f}  [{r['min_mm']}~{r['max_mm']}]",
+            flush=True,
+        )
 
     if args.out:
         report = {
-            "serial": args.serial, "baud": args.baud, "scans": len(scans),
+            "serial": args.serial,
+            "baud": args.baud,
+            "scans": len(scans),
             "elapsed_s": round(elapsed, 2),
-            "frames_ok": parser.frames_ok, "crc_fail": parser.crc_failures,
+            "frames_ok": parser.frames_ok,
+            "crc_fail": parser.crc_failures,
             "resync": parser.resyncs,
             "speed_median_raw": statistics.median(speeds),
             "pts_per_scan_median": statistics.median(pts_per_scan),
             "invalid_ratio_median": statistics.median(invalid_ratio),
-            "dist_min_mm": min(all_d), "dist_max_mm": max(all_d),
+            "dist_min_mm": min(all_d),
+            "dist_max_mm": max(all_d),
             "dist_median_mm": statistics.median(all_d),
             "bin_std_median_mm": statistics.median(noise) if noise else None,
             "bins": bin_rows,
         }
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        Path(args.out).write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         print(f"\n[inspect] 저장: {args.out}", flush=True)
     return 0
 
