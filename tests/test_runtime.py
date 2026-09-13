@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from conftest import FakeClock
 
@@ -116,12 +118,18 @@ def vision_result(
     hits: int,
     last_seen_ms: int | None,
     markers: tuple[Marker, ...] = (),
+    # 기본은 **화면 중앙**이다. 구석에 두면 추종(`3.5.4`)이 켜져 `ALERT` 가
+    # 아니라 `TRACK` 으로 가고, 사람 인지를 보려던 시험이 추종 시험이 된다.
+    box: tuple[float, float, float, float] = (300.0, 200.0, 340.0, 400.0),
+    frame_width: int = 640,
 ) -> VisionResult:
     """런타임 통합 시험용 판정 결과."""
     return VisionResult(
-        detections=(Detection("person", 0.9, (0.0, 0.0, 10.0, 20.0)),) if hits else (),
+        detections=(Detection("person", 0.9, box),) if hits else (),
         jpeg=b"test-jpeg",
         frame_seq=seq,
+        frame_width=frame_width,
+        frame_height=480,
         frame_received_ms=at_ms,
         completed_ms=at_ms,
         inference_ms=1.0,
@@ -131,15 +139,11 @@ def vision_result(
             hits=hits,
             best_score=0.9 if hits else 0.0,
             last_seen_ms=last_seen_ms,
-            box=(0.0, 0.0, 10.0, 20.0) if hits else None,
+            box=box if hits else None,
         ),
         # 추적 결과는 검출이 있을 때만 붙는다 — 보이지 않는 대상을 결과로 내보내지
         # 않는 것이 추적기의 계약이다 (`3.3.4`).
-        tracks=(
-            (Track(track_id=1, box=(0.0, 0.0, 10.0, 20.0), score=0.9, last_seen_ms=at_ms),)
-            if hits
-            else ()
-        ),
+        tracks=((Track(track_id=1, box=box, score=0.9, last_seen_ms=at_ms),) if hits else ()),
         # 사원증은 기본적으로 보이지 않는다 — 인증 경로를 보는 시험만 넣어 준다.
         markers=markers,
     )
@@ -921,8 +925,12 @@ def test_console_reset_key_asks_for_reset(config: dict, clock: FakeClock) -> Non
 
 
 def _badge(marker_id: int) -> tuple[Marker, ...]:
-    """추적 박스 (0,0)~(10,20) 안에 있는 사원증 하나."""
-    return (Marker(marker_id=marker_id, center=(5.0, 10.0)),)
+    """기본 추적 박스 (300,200)~(340,400) 안에 있는 사원증 하나.
+
+    ⚠️ **박스 밖에 두면 인증이 사람에게 귀속되지 않는다** (FR-3.6.2) — 시험이
+    조용히 "인증 안 됨" 으로 바뀐다. 기본 박스를 옮기면 여기도 함께 옮긴다.
+    """
+    return (Marker(marker_id=marker_id, center=(320.0, 300.0)),)
 
 
 def _stand(runtime: Runtime, vision: FakeVision, *, seq: int, at_ms: int, markers=()) -> None:
@@ -1051,3 +1059,101 @@ def test_asking_patrol_twice_does_not_double_fire(config: dict, clock: FakeClock
     runtime.tick(clock.advance(100))
     assert runtime.behavior.state == "PATROL"
     assert runtime.stats.transitions == before
+
+
+# ── TRACK 락온 배선 (WBS 3.5.4 · FR-3.5) ─────────────────────────
+
+
+def _move(lines: list[str]) -> dict | None:
+    """전문 목록에서 마지막 `MOVE` 를 꺼낸다."""
+    moves = [json.loads(line) for line in lines if '"type":"MOVE"' in line]
+    return moves[-1] if moves else None
+
+
+def _tracking_runtime(config: dict, clock: FakeClock) -> tuple[Runtime, FakeVision]:
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    return runtime, vision
+
+
+def _sighting(runtime: Runtime, vision: FakeVision, *, seq: int, at_ms: int, box) -> None:
+    vision.result = vision_result(seq, at_ms, present=True, hits=3, last_seen_ms=at_ms, box=box)
+    runtime.tick(at_ms)
+
+
+def test_off_center_person_moves_alert_into_track(config: dict, clock: FakeClock) -> None:
+    """⚠️ **이 사건을 내는 곳이 없었다.** `TARGET_OFF_CENTER` 는 전이표에 있었지만
+    아무도 발행하지 않아 `TRACK` 은 도달 불가능한 상태였다 — 3.5.4 가 병합됐는데도
+    추종은 한 번도 켜지지 않았다."""
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 200.0, 340.0, 400.0))
+    assert runtime.behavior.state == "ALERT", "중앙이면 경계 자세에 머문다"
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.state == "TRACK", "화면 왼쪽 끝이면 추종으로 간다"
+
+
+def test_returning_to_center_leaves_track(config: dict, clock: FakeClock) -> None:
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.state == "TRACK"
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 200.0, 340.0, 400.0))
+    assert runtime.behavior.state == "ALERT"
+
+
+def test_track_turns_toward_the_target(config: dict, clock: FakeClock) -> None:
+    """부호가 뒤집히면 로봇이 **대상 반대쪽으로 돈다.**
+
+    화면 x 는 오른쪽이 양수인데 `PROTOCOL` 은 양수가 좌회전이다. 둘을 그대로
+    이으면 추종이 대상을 놓치는 방향으로 간다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.sequence_for("TRACK") is not None, "등록 안 되면 명령이 안 나간다"
+    left = _move(runtime.tick(200))
+    assert left is not None, "추종 중에는 명령이 나가야 한다"
+    assert left["angle"] > 0, "왼쪽에 있으면 좌회전(양수)이다"
+    assert left["step"] > 0, "제자리 회전이 불가하므로 조향에 보폭이 따라붙는다 (DR-11)"
+
+    _sighting(runtime, vision, seq=2, at_ms=300, box=(580.0, 200.0, 620.0, 400.0))
+    right = _move(runtime.tick(400))
+    assert right is not None
+    assert right["angle"] < 0, "오른쪽이면 우회전(음수)"
+
+
+def test_track_stops_instead_of_spinning_on_a_stale_command(config: dict, clock: FakeClock) -> None:
+    """⚠️ **가장 위험한 경우다.** 비전이 죽어도 마지막 지시가 남아 있으면 로봇은
+    그 각도로 계속 돈다. `FR-3.7` 의 5초 타이머가 `TRACK` 을 빠져나가기 전까지
+    맴돌게 되므로, 지시가 낡으면 **정지를 보낸다.**
+
+    아무것도 보내지 않는 것과 다르다 — 안 보내면 로봇이 `cmd_timeout_ms` 까지
+    직전 명령을 유지한다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.state == "TRACK"
+    fresh = _move(runtime.tick(200))
+    assert fresh is not None and fresh["angle"] > 0
+
+    stale_at = 100 + int(config["safety"]["cmd_timeout_ms"]) + 200
+    stale = _move(runtime.tick(stale_at))
+    assert stale is not None, "보내지 않으면 로봇이 직전 명령을 유지한다 — 정지를 보낸다"
+    assert (stale["step"], stale["angle"]) == (0.0, 0.0), "낡은 지시로 돌지 않는다"
+
+
+def test_no_box_raises_no_track_event(config: dict, clock: FakeClock) -> None:
+    """대상이 사라진 판단은 5초 타이머 소관이다 (FR-3.7).
+
+    여기서 `TARGET_CENTERED` 를 내면 **대상이 없어졌는데 중앙에 들어왔다고
+    보고하는 꼴**이 되어 `TRACK` 이 `ALERT` 로 되돌아간다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.state == "TRACK"
+    vision.result = vision_result(2, 200, present=True, hits=0, last_seen_ms=100)
+    runtime.tick(200)
+    assert runtime.behavior.state == "TRACK", "박스가 없다고 중앙 정렬로 보지 않는다"

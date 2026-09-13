@@ -428,6 +428,15 @@ class Behavior:
         """순찰 임무 밖인가 (`STANDBY` · 잠정). 대응 단계를 올리지 않는다."""
         return self._fsm.state in STANDBY
 
+    @property
+    def tracking(self) -> bool:
+        """추종 지시를 만들 자리인가 (`ALERT`·`TRACK` · `3.5.4`).
+
+        ⚠️ **둘 다 포함한다.** `ALERT` 를 빼면 중앙에서 벗어나도 `TARGET_OFF_CENTER`
+        를 낼 곳이 없어 `TRACK` 으로 들어가지 못한다 — 추종이 영영 시작되지 않는다.
+        """
+        return self._fsm.state in {"ALERT", "TRACK"}
+
     def _watch_links(self, now_ms: int) -> None:
         # 아직 한 번도 못 받았으면 감시하지 않는다 — 기동 직후를 두절로 보면
         # 켜는 순간 페일세이프가 걸린다.
@@ -514,6 +523,14 @@ class Behavior:
         if DIRECTIVES.get(state) is not Directive.SEQUENCE:
             raise ValueError(f"{state} 는 시퀀스를 쓰는 상태가 아니다")
         self._sequences[state] = sequence
+
+    def sequence_for(self, state: str) -> Sequence | None:
+        """등록된 시퀀스를 돌려준다. 없으면 `None`.
+
+        추종(`3.5.4`)처럼 **바깥에서 지시를 넣어 줘야 하는** 시퀀스가 있어서
+        열어 둔다 — 검출은 비전 쪽에서 오고 명령은 여기서 나간다.
+        """
+        return self._sequences.get(state)
 
     def event(self, event: Event, now_ms: int | None = None) -> bool:
         """사건을 넣는다. **여기서 `ESTOP` 전문을 만들지 않는다** — 로봇이 이미

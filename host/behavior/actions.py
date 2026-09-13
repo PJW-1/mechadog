@@ -66,6 +66,61 @@ class PatrolSequence:
         commander.drive(self._step_mm, self._bias_deg)
 
 
+class TrackSequence:
+    """`TRACK` 에서 추종 지시를 `MOVE` 로 내보낸다 (WBS 3.5.4 · FR-3.5).
+
+    ⚠️ **지시를 여기서 만들지 않는다.** 편차→보폭·각도 계산은 `LockOnTracker` 가
+    하고, 그것을 부르는 곳은 검출이 들어오는 자리다(`runtime._poll_vision`).
+    이 시퀀스는 **가장 최근 지시를 명령 주기로 옮기는 일만** 한다 — 비전은
+    25fps 로 오고 명령은 10Hz 로 나가므로 둘을 같은 자리에 두면 하나가 다른
+    하나를 끌고 간다.
+
+    ⚠️ **낡은 지시로는 돌지 않는다 — 이 시퀀스의 존재 이유다.** 비전이 죽거나
+    대상이 사라져도 마지막 지시가 남아 있으면 로봇은 **그 각도로 계속 돈다.**
+    `FR-3.7` 의 5초 대상 상실 타이머가 `TRACK` 을 빠져나가기 전까지 그만큼을
+    맴돌게 된다. 그래서 지시에 나이를 매기고, 넘으면 **정지를 보낸다** — 아무것도
+    보내지 않는 것과 다르다. 안 보내면 로봇이 `cmd_timeout_ms` 까지 직전 명령을
+    유지한다.
+    """
+
+    def __init__(self, max_age_ms: int) -> None:
+        if max_age_ms <= 0:
+            raise ValueError("max_age_ms 는 0 보다 커야 함")
+        self._max_age_ms = int(max_age_ms)
+        self._command: tuple[float, float] | None = None
+        self._at_ms: int | None = None
+
+    @property
+    def max_age_ms(self) -> int:
+        return self._max_age_ms
+
+    def note(self, step_mm: float, angle_deg: float, now_ms: int) -> None:
+        """새 추종 지시를 받는다. 검출이 들어올 때마다 불린다."""
+        self._command = (float(step_mm), float(angle_deg))
+        self._at_ms = int(now_ms)
+
+    def forget(self, _previous: str = "", _target: str = "") -> None:
+        """`TRACK` 에 들어갈 때 부른다 — 지난 추종의 잔상으로 출발하지 않는다.
+
+        전이 훅으로 걸리므로 `(previous, target)` 을 받는다. 쓰지는 않는다.
+        """
+        self._command = None
+        self._at_ms = None
+
+    def stale(self, now_ms: int) -> bool:
+        if self._command is None or self._at_ms is None:
+            return True
+        return now_ms - self._at_ms > self._max_age_ms
+
+    def __call__(self, commander: Commander, now_ms: int) -> None:
+        if self.stale(now_ms):
+            # 지시가 없거나 낡았다. **직전 명령을 유지시키지 않는다.**
+            commander.drive(0.0, 0.0)
+            return
+        step_mm, angle_deg = self._command  # type: ignore[misc]
+        commander.drive(step_mm, angle_deg)
+
+
 class AvoidSequence:
     """정지 → 후진 → 선회 → 전방 재확인. 안 풀리면 정해진 횟수만큼 되풀이한다.
 
@@ -236,6 +291,14 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
             effect="직진 명령이 그대로 나가 순찰이 한쪽으로 휜다",
             remedy="tools/gait_calibrate.py --mode forward --bias-deg <각도> (WBS 2.2.3)",
         )
+
+    # ⚠️ **추종 지시의 유효기간은 명령 타임아웃보다 짧아야 한다.** 길면 로봇이
+    # 스스로 멈추기 전에 낡은 각도로 도는 구간이 생긴다.
+    track_max_age = int(config["safety"]["cmd_timeout_ms"])
+    track = TrackSequence(track_max_age)
+    behavior.register_sequence("TRACK", track)
+    behavior.fsm.on_enter("TRACK", track.forget)
+    result["TRACK"] = "등록"
 
     phases = avoid_phases(config)
     if phases is None:
