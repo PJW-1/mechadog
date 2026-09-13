@@ -981,13 +981,19 @@ def test_full_walkthrough_person_to_authenticated(config: dict, clock: FakeClock
 
 
 def test_unknown_badges_exhaust_attempts_and_alarm(config: dict, clock: FakeClock) -> None:
-    """등록되지 않은 사원증 2장 → `AUTH_FAILED` → L3 (FR-10.3)."""
+    """등록되지 않은 사원증 2장 → `AUTH_FAILED` → L3 (FR-10.3).
+
+    미등록 마커는 안정성 게이트(1초 창 내 3프레임)를 통과해야 시도로 센다 —
+    1프레임 ArUco 오검출이 시도를 소진시키는 것을 실기에서 확인했다.
+    """
     vision = FakeVision()
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)
-    _stand(runtime, vision, seq=1, at_ms=100, markers=_badge(41))
+    for i in range(3):
+        _stand(runtime, vision, seq=1 + i, at_ms=100 + i * 100, markers=_badge(41))
     assert runtime.escalation.level is Level.L1, "한 번 실패로는 경보가 아니다"
-    _stand(runtime, vision, seq=2, at_ms=200, markers=_badge(42))
+    for i in range(3):
+        _stand(runtime, vision, seq=10 + i, at_ms=400 + i * 100, markers=_badge(42))
     assert runtime.escalation.level is Level.L3
 
 
