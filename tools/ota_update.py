@@ -18,12 +18,23 @@ SLOT_SIZE = 0xF0000
 
 def load_package(path):
     package = json.loads(Path(path).read_text(encoding="utf-8"))
-    if (
-        package.get("actuators_enabled") is not False
-        or package.get("actuator_off_elf_reviewed") is not True
-        or package.get("ota_protocol") != 1
-    ):
-        raise ValueError("Package must be a reviewed actuator-OFF OTA image")
+    protocol = package.get("ota_protocol")
+    if protocol == 1:
+        if (
+            package.get("actuators_enabled") is not False
+            or package.get("actuator_off_elf_reviewed") is not True
+        ):
+            raise ValueError("Package must be a reviewed actuator-OFF OTA image")
+    elif protocol == 2:
+        # 구동 가능 이미지는 /firmware 가 구동 스위치가 닫혀 있을 때만 받는다는
+        # 런타임 게이트가 ELF 에서 확인된 패키지만 받는다 (ADR-31).
+        if (
+            package.get("actuators_runtime_gated") is not True
+            or package.get("actuator_gate_elf_reviewed") is not True
+        ):
+            raise ValueError("Protocol 2 images must carry an ELF-reviewed runtime actuator gate")
+    else:
+        raise ValueError("Package must declare a known ota_protocol")
     data = Path(package["application"]).read_bytes()
     if not 256 <= len(data) <= SLOT_SIZE:
         raise ValueError("Image does not fit the preserved-data OTA partition")
@@ -89,9 +100,17 @@ class RobotOta:
 
     def status(self):
         result = self.request("GET", "/status")
-        if result.get("mac") != self.config["mac"] or result.get("actuators") is not False:
-            raise ValueError("Wrong device or non-stationary firmware")
+        if result.get("mac") != self.config["mac"]:
+            raise ValueError("Wrong device")
         return result
+
+    def set_actuators(self, enabled):
+        return self.request(
+            "POST",
+            "/actuators",
+            body=json.dumps({"enabled": enabled}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
 
     def wait_ready(self, expected=None, previous_boot=None, timeout=65, confirm=True):
         deadline = time.monotonic() + timeout
@@ -131,6 +150,9 @@ class RobotOta:
     def update(self, manifest):
         package, data = load_package(manifest)
         before = self.status()
+        if before.get("actuators") is not False:
+            # 정지 OTA — 구동 스위치가 열려 있으면 로봇도 거부한다. 먼저 끈다.
+            raise ValueError("Actuators are on; run action=actuators --set off first")
         if not before.get("healthy") or not before.get("confirmed"):
             raise ValueError("Current app must first be healthy and confirmed")
         if package.get("mac") != before["mac"]:
@@ -154,13 +176,16 @@ class RobotOta:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("status", "confirm", "update"))
+    parser.add_argument("action", choices=("status", "confirm", "update", "actuators"))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--package", type=Path)
+    parser.add_argument("--set", choices=("on", "off"))
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     if args.action == "update" and args.package is None:
         parser.error("update requires --package")
+    if args.action == "actuators" and args.set is None:
+        parser.error("actuators requires --set on|off")
     args.report.parent.mkdir(parents=True, exist_ok=True)
     with args.report.open("x", encoding="utf-8") as report:
         try:
@@ -169,6 +194,11 @@ def main():
                 result = {"state": "STATUS", "status": client.status()}
             elif args.action == "confirm":
                 result = {"state": "CONFIRMED", "status": client.wait_ready()}
+            elif args.action == "actuators":
+                result = {
+                    "state": "ACTUATORS_" + args.set.upper(),
+                    "request": client.set_actuators(args.set == "on"),
+                }
             else:
                 result = client.update(args.package)
         except (OSError, ValueError, KeyError, RuntimeError, http.client.HTTPException) as exc:

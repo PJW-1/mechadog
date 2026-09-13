@@ -147,6 +147,16 @@ jobs:
               firmware_mechdog_motion/test/test_sensor_timing_stats.cpp \
               -o build/test_sensor_timing_stats
           ./build/test_sensor_timing_stats
+      - name: Host unit test (motion HAL runtime gate)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/src/motion_hal.cpp \
+              firmware_mechdog_motion/test/test_motion_hal.cpp \
+              -o build/test_motion_hal
+          ./build/test_motion_hal
+
       - name: Host unit test (independent loop watchdog, simulated time)
         run: |
           mkdir -p build

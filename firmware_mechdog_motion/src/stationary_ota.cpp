@@ -22,9 +22,8 @@
 #include "task_watchdog.h"
 #endif
 
-#if MECHADOG_ENABLE_ACTUATORS
-#error "Stationary OTA requires actuators OFF; moving maintenance is not integrated"
-#endif
+// 구동 가능 빌드와의 통합은 실행시간 규칙이다 — 컴파일 금지가 아니라
+// **구동 스위치가 닫혀 있을 때만** /firmware 를 받는다 (ADR-31).
 #if !CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
 #error "OTA requires the SDK bootloader rollback contract"
 #endif
@@ -50,6 +49,8 @@ std::atomic<bool> g_healthy{false};
 std::atomic<bool> g_confirm_requested{false};
 std::atomic<bool> g_confirmed{false};
 std::atomic<bool> g_updating{false};
+// 0 없음 · +1 켜기 · -1 끄기. HTTP 태스크가 세우고 루프 소유자가 적용한다.
+std::atomic<int> g_actuators_request{0};
 mechadog::RebootDeadline g_reboot;
 mechadog::OtaHealth g_health;
 esp_timer_handle_t g_verify_timer = nullptr;
@@ -117,12 +118,14 @@ esp_err_t statusHandler(httpd_req_t* req) {
   snprintf(body, sizeof(body),
            "{\"mac\":\"%s\",\"boot\":\"%s\",\"version\":\"%s\","
            "\"slot\":\"%s\",\"image_sha256\":\"%s\",\"healthy\":%s,"
-           "\"confirmed\":%s,\"updating\":%s,\"actuators\":false,\"slot_size\":%lu,"
+           "\"confirmed\":%s,\"updating\":%s,\"actuators\":%s,\"slot_size\":%lu,"
            "\"loop_watchdog_armed\":%s,\"loop_watchdog_deadline_ms\":%u,"
            "\"watchdog_fault_probe\":%s}",
            g_mac, g_boot, MECHADOG_OTA_VERSION, running->label, g_image_sha,
            g_healthy ? "true" : "false", g_confirmed ? "true" : "false",
-           g_updating ? "true" : "false", static_cast<unsigned long>(kSlotSize), watchdog_armed,
+           g_updating ? "true" : "false",
+           mechadog::actuatorsRuntimeEnabled() ? "true" : "false",
+           static_cast<unsigned long>(kSlotSize), watchdog_armed,
            watchdog_deadline_ms, fault_probe);
   return reply(req, "200 OK", body);
 }
@@ -134,8 +137,33 @@ esp_err_t confirmHandler(httpd_req_t* req) {
   return reply(req, "202 Accepted", "{\"confirmation_requested\":true}");
 }
 
+// 구동 스위치를 원격으로 여닫는다. 요청만 받고 실제 정지·잠금·적용은 루프가
+// 한다 — HTTP 태스크에서 서보 드라이버를 만지지 않는다. 켜기는 전송 중에는
+// 거부한다: flash 기록 중에 몸이 움직이기 시작하면 "정지 OTA" 가 깨진다.
+esp_err_t actuatorsHandler(httpd_req_t* req) {
+  if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  char body[65];
+  const int len = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (len <= 0) return reply(req, "400 Bad Request", "{\"error\":\"body\"}");
+  body[len] = '\0';
+  const bool wants_on =
+      strstr(body, "\"enabled\":true") != nullptr || strstr(body, "\"enabled\": true") != nullptr;
+  const bool wants_off = strstr(body, "\"enabled\":false") != nullptr ||
+                         strstr(body, "\"enabled\": false") != nullptr;
+  if (wants_on == wants_off)
+    return reply(req, "400 Bad Request", "{\"error\":\"expected {\\\"enabled\\\":bool}\"}");
+  if (wants_on && g_updating)
+    return reply(req, "409 Conflict", "{\"error\":\"updating\"}");
+  g_actuators_request.store(wants_on ? 1 : -1);
+  return reply(req, "202 Accepted",
+               wants_on ? "{\"requested\":\"on\"}" : "{\"requested\":\"off\"}");
+}
+
 esp_err_t updateHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  // 정지 OTA: 구동 스위치가 열려 있으면 받지 않는다. 끄는 요청은 /actuators.
+  if (mechadog::actuatorsRuntimeEnabled())
+    return reply(req, "409 Conflict", "{\"error\":\"actuators_on\"}");
   if (!g_confirmed || g_updating || !g_healthy)
     return reply(req, "409 Conflict", "{\"error\":\"not_ready\"}");
   char expected[65] = {};
@@ -216,9 +244,11 @@ void startServer(void*) {
     const httpd_uri_t status = {"/status", HTTP_GET, statusHandler, nullptr};
     const httpd_uri_t confirm = {"/confirm", HTTP_POST, confirmHandler, nullptr};
     const httpd_uri_t update = {"/firmware", HTTP_POST, updateHandler, nullptr};
+    const httpd_uri_t actuators = {"/actuators", HTTP_POST, actuatorsHandler, nullptr};
     g_started = httpd_register_uri_handler(g_server, &status) == ESP_OK &&
                 httpd_register_uri_handler(g_server, &confirm) == ESP_OK &&
-                httpd_register_uri_handler(g_server, &update) == ESP_OK;
+                httpd_register_uri_handler(g_server, &update) == ESP_OK &&
+                httpd_register_uri_handler(g_server, &actuators) == ESP_OK;
   }
   Serial.printf("OTA HTTPS: started=%d version=%s port=8443\n", bool(g_started),
                 MECHADOG_OTA_VERSION);
@@ -228,6 +258,15 @@ void startServer(void*) {
 #endif
 
 namespace mechadog {
+
+int consumeOtaActuatorRequest() {
+#if MECHADOG_ENABLE_OTA
+  return g_actuators_request.exchange(0);
+#else
+  return 0;
+#endif
+}
+
 bool beginStationaryOta() {
 #if MECHADOG_ENABLE_OTA
   const auto* running = esp_ota_get_running_partition();

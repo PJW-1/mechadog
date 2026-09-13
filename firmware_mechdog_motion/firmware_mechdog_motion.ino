@@ -497,6 +497,18 @@ void loop() {
   pollWifiDiagnostics();
 #if MECHADOG_ENABLE_OTA
   mechadog::pollStationaryOta(WiFi.status() == WL_CONNECTED, g_sensors.snapshot(millis()));
+  const int actuator_request = mechadog::consumeOtaActuatorRequest();
+  if (actuator_request != 0) {
+    if (actuator_request < 0) {
+      // 끄기: 잠금이 서보에 실제 정지를 전달할 수 있게 게이트를 닫기 전에 잠근다.
+      latchFailsafe("actuators disabled for maintenance");
+      mechadog::actuatorsSetRuntime(false);
+    } else {
+      // 켜기: 게이트를 연 뒤에도 잠금 상태로 둔다 — 다시 걸으려면 RESET_SAFE.
+      mechadog::actuatorsSetRuntime(true);
+      latchFailsafe("actuators enabled; reset before motion");
+    }
+  }
 #endif
 #if MECHADOG_ENABLE_TASK_WDT
   ESP_ERROR_CHECK(mechadog::feedTaskWatchdog());

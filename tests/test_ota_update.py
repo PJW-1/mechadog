@@ -38,12 +38,42 @@ def test_reviewed_package(tmp_path):
     assert load_package(manifest)[1] == app.read_bytes()
 
 
+def write_actuator_capable_package(tmp_path, **changes):
+    manifest, app = write_package(tmp_path)
+    package = json.loads(manifest.read_text(encoding="utf-8"))
+    package.update(
+        {
+            "ota_protocol": 2,
+            "actuators_capable": True,
+            "actuators_runtime_gated": True,
+            "actuator_gate_elf_reviewed": True,
+        }
+    )
+    package.pop("actuators_enabled", None)
+    package.pop("actuator_off_elf_reviewed", None)
+    package.update(changes)
+    manifest.write_text(json.dumps(package))
+    return manifest, app
+
+
+def test_actuator_capable_gated_package(tmp_path):
+    manifest, app = write_actuator_capable_package(tmp_path)
+    assert load_package(manifest)[1] == app.read_bytes()
+
+
+@pytest.mark.parametrize("field,value", [("actuators_runtime_gated", False), ("actuator_gate_elf_reviewed", False)])
+def test_actuator_capable_without_gate_rejected(tmp_path, field, value):
+    manifest, _ = write_actuator_capable_package(tmp_path, **{field: value})
+    with pytest.raises(ValueError):
+        load_package(manifest)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
         ("actuators_enabled", True),
         ("actuator_off_elf_reviewed", False),
-        ("ota_protocol", 2),
+        ("ota_protocol", 3),
         ("application_sha256", "wrong"),
         ("image_sha256", "wrong"),
     ],
@@ -90,6 +120,41 @@ def test_wrong_robot_rejected():
     client.request = MagicMock(return_value={"mac": "other", "actuators": False})
     with pytest.raises(ValueError):
         client.status()
+
+
+def test_status_reports_runtime_actuators():
+    # 구동 가능 펌웨어의 /status 는 런타임 값을 보고한다 — MAC만 확인한다.
+    client = RobotOta.__new__(RobotOta)
+    client.config = {"mac": "expected"}
+    client.request = MagicMock(return_value={"mac": "expected", "actuators": True})
+    assert client.status()["actuators"] is True
+
+
+def test_update_refuses_while_actuators_on(tmp_path):
+    manifest, _ = write_package(tmp_path)
+    client = RobotOta.__new__(RobotOta)
+    client.config = {"mac": "robot"}
+    client.request = MagicMock(
+        return_value={
+            "mac": "robot",
+            "actuators": True,
+            "healthy": True,
+            "confirmed": True,
+            "image_sha256": "other",
+        }
+    )
+    with pytest.raises(ValueError, match="actuators --set off"):
+        client.update(manifest)
+
+
+def test_set_actuators_posts_enabled_flag():
+    client = RobotOta.__new__(RobotOta)
+    client.request = MagicMock(return_value={"requested": "off"})
+    client.set_actuators(False)
+    method, endpoint = client.request.call_args.args[:2]
+    body = client.request.call_args.kwargs["body"]
+    assert (method, endpoint) == ("POST", "/actuators")
+    assert json.loads(body) == {"enabled": False}
 
 
 def test_large_upload_reads_early_rejection_without_sending_body():
@@ -175,6 +240,7 @@ def test_already_installed_no_flash(tmp_path):
         return_value={
             "healthy": True,
             "confirmed": True,
+            "actuators": False,
             "mac": "robot",
             "image_sha256": package["image_sha256"],
         }

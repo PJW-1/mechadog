@@ -1,8 +1,15 @@
 # 정지 진단용 Wi-Fi 업데이트
 
 2026-09-12 사용자 승인으로 추가한 선택 기능이다. 기본은
-`MECHADOG_ENABLE_OTA=0`이며 현재 **센서 ON / 구동 OFF** 전용이다.
-보행 성능이나 AI 모델을 변경하는 기능은 아니다.
+`MECHADOG_ENABLE_OTA=0`이다. 보행 성능이나 AI 모델을 변경하는 기능은 아니다.
+
+**정지 불변 조건은 그대로다 — 지키는 방법이 바뀌었다 (ADR-31).** 예전에는
+구동 OFF 빌드만이 이 기능을 가질 수 있었다(`#error`). 이제 구동 가능 빌드도
+가질 수 있지만, `/firmware` 는 **런타임 구동 게이트가 닫혀 있을 때만**
+받는다. 게이트는 인증된 `POST /actuators {"enabled":false}` 가 닫는다 —
+끄면 정지 명령이 서보에 닿은 뒤 안전 래치가 걸리고, 게이트가 닫힌 동안은
+`RESET_SAFE` 가 와도 서보가 움직이지 않는다. 켜기는 전송 중에는 거부되고,
+켜진 뒤에도 래치가 유지되어 다시 걸으려면 사람의 `RESET_SAFE` 가 필요하다.
 
 ## 업데이트 흐름
 
@@ -83,13 +90,19 @@ private 헤더에 `MECHADOG_OTA_TOKEN`, `MECHADOG_OTA_CERT`, `MECHADOG_OTA_KEY`,
 
 `tools/ota_update.py`의 private config는 host, port, mac, certificate 경로,
 certificate_sha256, token을 가진다. package manifest는 application 경로,
-application_sha256, image_sha256, mac, ota_protocol=1,
-actuators_enabled=false, actuator_off_elf_reviewed=true를 가진다. manifest는
-로컬 검토 기록이며 디지털 서명이 아니다. 신뢰하는 PC에서 ELF 구동 OFF
-경로를 검토한 패키지만 사용한다.
+application_sha256, image_sha256, mac을 가지고 프로토콜별로 다르다.
+
+| ota_protocol | 이미지 | 필수 필드 |
+|---|---|---|
+| 1 | 구동 OFF 전용 | `actuators_enabled=false`, `actuator_off_elf_reviewed=true` |
+| 2 | 구동 가능 + 런타임 게이트 | `actuators_runtime_gated=true`, `actuator_gate_elf_reviewed=true` — `/firmware` 가 게이트가 닫혀 있을 때만 받는다는 것을 ELF 로 확인한 패키지 |
+
+manifest는 로컬 검토 기록이며 디지털 서명이 아니다. 신뢰하는 PC에서 ELF
+검토를 마친 패키지만 사용한다.
 
 ```text
 python tools/ota_update.py status --config PRIVATE_CLIENT.json --report NEW_STATUS.json
+python tools/ota_update.py actuators --set off --config PRIVATE_CLIENT.json --report NEW_REQ.json
 python tools/ota_update.py update --config PRIVATE_CLIENT.json --package REVIEWED_PACKAGE.json --report NEW_RESULT.json
 ```
 

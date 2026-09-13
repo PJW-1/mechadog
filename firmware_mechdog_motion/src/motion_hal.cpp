@@ -1,5 +1,7 @@
 #include "motion_hal.h"
 
+#include <atomic>
+
 #if MECHADOG_ENABLE_ACTUATORS
 // 벤더 라이브러리는 저장소에 없다 — 라이선스 표기가 없어 재배포할 수 없다 (ADR-20).
 // 없는 상태로 구동 빌드를 켜면 여기서 멈추고 받는 곳과 둘 곳을 알려준다.
@@ -17,7 +19,19 @@ MechDog g_mechdog;
 }
 #endif
 
+namespace {
+// 구동 가능 빌드는 켜진 채로 깨어난다 — 평소에는 보행 펌웨어다. 정지가 필요한
+// 유지보수(OTA)는 인증된 PC가 이 스위치를 끄고 나서야 열린다.
+std::atomic<bool> g_actuators_requested{true};
+}  // namespace
+
 namespace mechadog {
+
+bool actuatorsRuntimeEnabled() {
+  return MECHADOG_ENABLE_ACTUATORS != 0 && g_actuators_requested.load();
+}
+
+void actuatorsSetRuntime(bool enabled) { g_actuators_requested.store(enabled); }
 
 bool MotionHal::begin() {
 #if MECHADOG_ENABLE_ACTUATORS
@@ -29,7 +43,7 @@ bool MotionHal::begin() {
 
 void MotionHal::move(float step_mm, float angle_deg) {
 #if MECHADOG_ENABLE_ACTUATORS
-  g_mechdog.move(step_mm, angle_deg);
+  if (actuatorsRuntimeEnabled()) g_mechdog.move(step_mm, angle_deg);
 #else
   (void)step_mm;
   (void)angle_deg;
@@ -38,12 +52,10 @@ void MotionHal::move(float step_mm, float angle_deg) {
 
 void MotionHal::stop() {
 #if MECHADOG_ENABLE_ACTUATORS
-  g_mechdog.move(0, 0);
+  if (actuatorsRuntimeEnabled()) g_mechdog.move(0, 0);
 #endif
 }
 
-bool MotionHal::actuators_enabled() const {
-  return MECHADOG_ENABLE_ACTUATORS != 0;
-}
+bool MotionHal::actuators_enabled() const { return actuatorsRuntimeEnabled(); }
 
 }  // namespace mechadog
