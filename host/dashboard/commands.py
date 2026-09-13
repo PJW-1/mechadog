@@ -66,10 +66,12 @@ class CommandService:
         behavior: Behavior,
         commander: Commander,
         send: Callable[[str], None],
+        request_reset: Callable[[], None] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
         self._send = send
+        self._request_reset = request_reset
 
     @property
     def state(self) -> str:
@@ -139,3 +141,24 @@ class CommandService:
             )
         self._commander.drive(step, angle)
         return CommandResult(command="drive", accepted=True, state=self._behavior.state)
+
+    def reset(self) -> CommandResult:
+        """사람이 원인 해소를 확인하고 누르는 `FAILSAFE` 해제 요청.
+
+        즉시 보내지 않고 예약한다 — 실제 `RESET_SAFE` 전문은 운용 루프의 다음
+        틱이 만들어 보낸다 (해제는 급하지 않고, `ESTOP` 만이 틱을 앞지른다).
+        """
+        if self._request_reset is None:
+            return CommandResult(
+                command="reset",
+                accepted=False,
+                state=self._behavior.state,
+                detail="해제 경로가 연결되지 않았다",
+            )
+        self._request_reset()
+        return CommandResult(
+            command="reset",
+            accepted=True,
+            state=self._behavior.state,
+            detail="안전 해제를 요청했다 — 로봇이 래치 해제를 보고할 때까지 기다린다",
+        )

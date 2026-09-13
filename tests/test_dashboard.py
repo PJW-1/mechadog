@@ -280,6 +280,10 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
 
         def __init__(self, _config, **kwargs):
             self.dashboard = kwargs["dashboard"]
+            self.behavior = None
+            self.commander = None
+            self.send_immediate = lambda _line: None
+            self.ask_reset = lambda: None
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -288,7 +292,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
     captured = []
 
     @contextmanager
-    def fake_server(state, port):
+    def fake_server(state, port, **_kwargs):
         assert port == 8000
         captured.append(state)
         events.append("server_started")
