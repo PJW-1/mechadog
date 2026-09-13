@@ -310,6 +310,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 트리거는 `v*` 전부를 받으므로 SemVer 형식은 여기서 걸러야 한다.
+      # 잘못된 태그가 빈 릴리스를 만들기 전에 잡에서 실패시킨다.
+      - name: Verify tag is SemVer
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if ! [[ "$tag" =~ $semver ]]; then
+            echo "::error::태그 '$tag' 는 SemVer 가 아닙니다 — v<주>.<부>.<수> 형식(예: v1.2.3, v1.0.0-rc.1)만 릴리스합니다"
+            exit 1
+          fi
+          echo "SemVer 태그 확인: $tag"
+
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
