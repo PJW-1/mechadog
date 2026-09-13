@@ -57,7 +57,6 @@ PC 환경 구축은 **[SETUP.md](SETUP.md)** 를 따른다. 모델 파일은 이
 | `transcribe_local.py` | 완료된 5초 16 kHz PCM16 캡처만 로컬 faster-whisper 로 처리 |
 | `build_prompt_audio.py` | 합성 원본을 모듈이 받는 16 kHz 모노 16-bit 로 변환·정규화. 48~128,000 바이트 제한 검사 |
 | `synth_prompt_orpheus.py` | Orpheus 한국어 합성(권장). `--temperature 0.4` 를 쓸 것 — 0.6 에서는 "신원"을 오발음했다 |
-| `synth_prompt_qwen.py`, `synth_prompt_supertonic.py`, `synth_prompt_variants.py` | 다른 TTS 후보 비교용 |
 | `synth_scenario.py` | 출입 통제 4문구 일괄 생성. 현재 용량 초과라 그대로는 안 들어간다 |
 
 **장치 쪽 (SDK 에 적용하는 소스·패치)**

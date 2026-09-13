@@ -13,8 +13,3 @@ safetensors==0.8.0
 snac==1.2.1
 soundfile==0.14.0
 numpy==2.5.3
-
-# Supertonic(ONNX) 로 합성을 비교해 볼 때만 필요하다.
-onnxruntime==1.30.0
-librosa==1.0.0
-PyYAML==6.0.3
