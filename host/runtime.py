@@ -34,6 +34,7 @@ from typing import Any
 
 from host.behavior.actions import register_actions
 from host.behavior.auth import Authenticator, Outcome
+from host.behavior.change_detect import BaselineStore, ChangeConfirmer, classify_changes
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import Behavior, Event, behavior_from_config
@@ -191,6 +192,18 @@ class Runtime:
         # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
         self._tracker = LockOnTracker(config)
         self._track_sequence = self._behavior.sequence_for("TRACK")
+        # 구역 변화 감지 (FR-8 · `3.6.x`). 구역 "식별" 은 ArUco 마커로 하며 측위와
+        # 무관하다 — 바코드를 읽는 것과 같다(config `zones` 주석). 그래서 Phase 1
+        # 에서도 쓸 수 있다.
+        self._baselines = BaselineStore(config)
+        self._confirmer = ChangeConfirmer(config)
+        zone_markers = (config.get("zones") or {}).get("marker_map") or {}
+        self._zone_markers = {int(key): str(value) for key, value in zone_markers.items()}
+        self._watch_classes = tuple(config["vision"]["coco"]["change_watch_classes"])
+        self._zone: str | None = None
+        #: 이번 점검에서 관찰한 프레임 수. **시간이 아니라 사이클을 센다** —
+        #: `ChangeConfirmer` 가 사이클 단위이므로 같은 축으로 세야 어긋나지 않는다.
+        self._zone_cycles = 0
         # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
         # FastAPI/WebSocket 서버(4.5.1)가 생기면 같은 항목을 publisher로 받는다.
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
@@ -398,6 +411,7 @@ class Runtime:
                 self._record_person_event(result)
         if fresh:
             self._track(result, now_ms)
+            self._inspect_zone(result, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
         # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
         healthy = self._vision.healthy()
@@ -463,6 +477,99 @@ class Runtime:
             )
         if self._track_sequence is not None:
             self._track_sequence.note(command.step, command.angle, now_ms)
+
+    def _zone_of(self, result: Any) -> str | None:
+        """이번 프레임에 보이는 구역 마커. 없으면 `None`.
+
+        ⚠️ **둘 이상 보이면 아무것도 고르지 않는다.** 구역 경계에 서면 두 장이
+        같이 잡히는데, 아무 쪽이나 고르면 **엉뚱한 구역의 기준과 견주어** 물건이
+        통째로 사라졌다고 보고한다. 한 장만 보일 때까지 기다린다.
+        """
+        seen = {
+            self._zone_markers[marker.marker_id]
+            for marker in result.markers
+            if marker.marker_id in self._zone_markers
+        }
+        return next(iter(seen)) if len(seen) == 1 else None
+
+    def _inspect_zone(self, result: Any, now_ms: int) -> None:
+        """구역 마커를 보고 기준과 견준다 (WBS 3.6.x · FR-8).
+
+        ⚠️ **픽셀을 보지 않는다** (FR-8.2 필수 제약). 비교는 `classify_changes` 가
+        객체 목록으로만 하고 이미지는 기준 스냅샷 보관용으로만 쓴다.
+
+        ⚠️ **사람 대응이 우선이다.** `ALERT`·`TRACK` 에서는 돌지 않는다 — 사람을
+        보고 있는데 물건 목록을 견주면 대응이 한 박자 늦는다.
+        """
+        state = self._behavior.state
+        if state == "PATROL":
+            zone = self._zone_of(result)
+            if zone is None:
+                # ⚠️ **마커가 안 보이면 그 구역을 떠난 것이다.** 비우지 않으면 다음
+                # 순회에 같은 구역을 다시 점검하지 못한다 — 순찰은 도는 것이므로
+                # 같은 마커를 몇 번이고 다시 만난다.
+                self._zone = None
+                return
+            if zone != self._zone and self._apply(Event.ZONE_ARRIVED, now_ms):
+                self._zone = zone
+                self._zone_cycles = 0
+                # 지난 점검의 누적을 끌고 들어가지 않는다 — 다른 시점의 관찰이
+                # 이번 사이클 수를 채우면 한 번 보고 확정하는 꼴이 된다.
+                self._confirmer.forget(zone)
+                LOG.info("zone_arrived", zone=zone)
+            return
+        if state != "ZONE_INSPECT" or self._zone is None:
+            return
+
+        zone = self._zone
+        width = int(getattr(result, "frame_width", 0) or 0)
+        height = int(getattr(result, "frame_height", 0) or 0)
+        if width <= 0 or height <= 0:
+            return
+        self._zone_cycles += 1
+
+        baseline = self._baselines.load(zone)
+        if baseline is None:
+            # FR-8.1 — 기준이 없으면 **이번 것이 기준이다.** 기준 없이 견주면
+            # 처음 보는 물건이 전부 반입으로 잡혀 첫 순찰이 경보로 뒤덮인다.
+            self._baselines.register(
+                zone,
+                result.detections,
+                frame_size=(width, height),
+                now_ms=now_ms,
+                jpeg=result.jpeg,
+            )
+            LOG.info("zone_baseline_registered", zone=zone, objects=len(result.detections))
+            self._leave_zone(now_ms)
+            return
+
+        changes = classify_changes(
+            baseline,
+            result.detections,
+            frame_size=(width, height),
+            watch_classes=self._watch_classes,
+        )
+        confirmed = self._confirmer.observe(zone, changes)
+        if confirmed:
+            LOG.warning(
+                "zone_changed",
+                zone=zone,
+                changes=[change.as_dict() for change in confirmed],
+            )
+            # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
+            self._apply(Event.ZONE_CHANGED, now_ms)
+            self._zone_cycles = 0
+            return
+        # ⚠️ **영원히 서 있지 않는다.** 확정에 필요한 사이클을 다 보고도 아무것도
+        # 안 나오면 순찰로 돌아간다. 여기서 나가지 않으면 카메라가 흔들리는 동안
+        # 로봇이 구역 앞에 멈춘 채로 남는다.
+        if self._zone_cycles >= self._confirmer.confirm_cycles:
+            LOG.info("zone_clear", zone=zone, cycles=self._zone_cycles)
+            self._leave_zone(now_ms)
+
+    def _leave_zone(self, now_ms: int) -> None:
+        self._zone_cycles = 0
+        self._apply(Event.ZONE_CLEAR, now_ms)
 
     def _judge_auth(self, result: Any, now_ms: int) -> None:
         """사원증을 판정하고 **사건으로 옮긴다** (FR-10.1 · `3.8.1`).
