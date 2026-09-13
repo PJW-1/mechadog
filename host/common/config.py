@@ -294,13 +294,17 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
     }:
         raise ConfigError("reference_role 은 phase1, phase2, none 중 하나여야 함")
 
+    # ⚠️ **`null` 은 "아직 안 쟀다" 이며 0 아홉 개와 다르다.** 0 은 *"보정이
+    # 필요 없다"* 는 뜻이 되고, 이 값은 유실 대비 보관본이라(호스트는 읽기만
+    # 하고 로봇에 보내지 않는다) 틀린 기록이 그대로 남는다. 3대 중 아직
+    # 안 잰 기체가 있으므로 비워 두는 길을 남긴다.
     offsets = config.get("servo_offset")
-    if (
+    if offsets is not None and (
         not isinstance(offsets, list)
         or len(offsets) != 9
         or not all(_finite_number(value) for value in offsets)
     ):
-        raise ConfigError("servo_offset 은 유한한 수 9개여야 함")
+        raise ConfigError("servo_offset 은 유한한 수 9개이거나 null 이어야 함")
 
     network = config["network"]
     for name in ("cmd_port", "telemetry_port"):
@@ -308,13 +312,16 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise ConfigError(f"network.{name} 는 1~65535 정수여야 함")
 
+    calibration = config.get("gait_calibration")
+    if isinstance(calibration, dict):
+        _validate_posture_amplitude(calibration)
+
     if config["profile"] == "prod":
         if not isinstance(config.get("owner_id"), str) or config["owner_id"] in {
             "",
             "unassigned",
         }:
             raise ConfigError("prod 프로파일은 실제 owner_id 가 필요함")
-        calibration = config.get("gait_calibration")
         if not isinstance(calibration, dict):
             raise ConfigError("prod 프로파일은 보행 캘리브레이션 실측값이 필요함")
         for name in ("forward_mm_per_sec", "turn_deg_per_sec"):
@@ -323,6 +330,45 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
                 raise ConfigError(f"prod gait_calibration.{name} 실측값이 필요함")
         if not isinstance(calibration.get("measured_on"), str) or not calibration["measured_on"]:
             raise ConfigError("prod gait_calibration.measured_on 기록이 필요함")
+
+
+def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
+    """트롯 보행 중 자세 진폭 (WBS 2.2.3 ②).
+
+    ⚠️ **0 을 거부하는 것이 이 함수의 존재 이유다.** WBS 가 그 함정을 이미
+    적어 두었다 — 자리만 만들어 두면 누군가 0 을 채우고 *"쟀다"* 로 보인다.
+    진폭 0 은 로봇이 걷지 않았다는 뜻이므로 측정값일 수 없다.
+
+    없으면 통과한다. 아직 재지 않은 기체가 있고(3대 중 1대만 끝났다) 없는 것과
+    0 인 것은 다르다 — 없으면 `FR-6.2.2` 판단을 미루면 되지만 0 이면 **흔들리지
+    않는다고 잘못 읽는다.**
+    """
+    amplitude = calibration.get("posture_amplitude")
+    if amplitude is None:
+        return
+    if not isinstance(amplitude, dict):
+        raise ConfigError("gait_calibration.posture_amplitude 는 매핑이어야 함")
+
+    for name in ("stride_hz", "pitch_p95_deg", "pitch_max_deg", "roll_p95_deg", "roll_max_deg"):
+        value = amplitude.get(name)
+        if not _finite_number(value) or value <= 0:
+            raise ConfigError(f"posture_amplitude.{name} 는 0 보다 큰 실측값이어야 함")
+
+    # 최대가 p95 보다 작으면 둘 중 하나를 잘못 옮겨 적은 것이다.
+    for axis in ("pitch", "roll"):
+        if amplitude[f"{axis}_max_deg"] < amplitude[f"{axis}_p95_deg"]:
+            raise ConfigError(f"posture_amplitude.{axis}_max_deg 가 p95 보다 작음")
+
+    cycles = amplitude.get("cycles")
+    if not isinstance(cycles, int) or isinstance(cycles, bool) or cycles < 30:
+        raise ConfigError("posture_amplitude.cycles 는 30 이상 정수여야 함")
+
+    # 폰으로 잰 것과 온보드 IMU 로 잰 것은 장착 위치·강성이 달라 값이 달라진다.
+    # 어느 쪽인지 모르면 비교할 수 없으므로 값과 함께 남긴다.
+    if amplitude.get("source") not in {"phone_imu", "onboard_imu"}:
+        raise ConfigError("posture_amplitude.source 는 phone_imu 또는 onboard_imu 여야 함")
+    if not isinstance(amplitude.get("measured_on"), str) or not amplitude["measured_on"]:
+        raise ConfigError("posture_amplitude.measured_on 기록이 필요함")
 
 
 def load_base_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:

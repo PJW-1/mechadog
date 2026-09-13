@@ -480,7 +480,9 @@ def test_committed_device_profiles_load_and_validate() -> None:
     for path in profiles:
         loaded = load_config(path.stem, config_path=CONFIG_PATH, devices_dir=devices_dir)
         assert loaded["device_id"] == path.stem
-        assert len(loaded["servo_offset"]) == 9
+        offsets = loaded["servo_offset"]
+        # 아직 안 잰 기체는 `null` 이다 — 0 아홉 개로 때우지 않는다.
+        assert offsets is None or len(offsets) == 9
 
 
 def test_track_lost_buffer_must_survive_one_missed_inference(cfg: dict) -> None:
@@ -563,3 +565,103 @@ def test_relative_paths_resolve_against_the_repo_not_the_cwd(
     monkeypatch.chdir(tmp_path)
     assert repo_path("models/coco.onnx") == ROOT / "models" / "coco.onnx"
     assert repo_path(tmp_path / "logs") == tmp_path / "logs"
+
+
+# ── 트롯 보행 자세 진폭 (WBS 2.2.3 ②) ────────────────────────────────
+
+
+def _amplitude(**overrides: object) -> dict:
+    """실제 `mechdog-02` 값에서 출발해 한 곳만 망가뜨린다."""
+    from copy import deepcopy
+
+    config = deepcopy(load_config("mechdog-02"))
+    config["gait_calibration"]["posture_amplitude"].update(overrides)
+    return config
+
+
+def test_measured_posture_amplitude_is_loaded() -> None:
+    """`FR-6.2.2` 판단이 이 값에 걸려 있다 — 읽히는지부터 본다."""
+    amplitude = load_config("mechdog-02")["gait_calibration"]["posture_amplitude"]
+    assert amplitude["source"] == "phone_imu", "온보드 IMU 가 아님을 값 옆에 남긴다"
+    assert amplitude["roll_p95_deg"] > amplitude["pitch_p95_deg"], "트롯은 롤이 더 흔들린다"
+    assert amplitude["cycles"] >= 30
+
+
+def test_zero_amplitude_is_refused() -> None:
+    """⚠️ **0 은 측정값이 아니라 안 걸었다는 뜻이다.**
+
+    자리만 만들어 두면 누군가 0 을 채우고 *"쟀다"* 로 보인다 — WBS 가 이미
+    적어 둔 함정이다. 통과시키면 *"흔들리지 않는다"* 로 잘못 읽는다.
+    """
+    from host.common.config import ConfigError, validate_device_config
+
+    for name in ("stride_hz", "pitch_p95_deg", "pitch_max_deg", "roll_p95_deg", "roll_max_deg"):
+        broken = _amplitude(**{name: 0})
+        with pytest.raises(ConfigError, match=name):
+            validate_device_config(broken, "mechdog-02")
+
+
+def test_max_below_p95_is_refused() -> None:
+    """최대가 p95 보다 작으면 둘을 바꿔 적은 것이다."""
+    from host.common.config import ConfigError, validate_device_config
+
+    broken = _amplitude(roll_max_deg=1.0)
+    with pytest.raises(ConfigError, match="roll_max_deg"):
+        validate_device_config(broken, "mechdog-02")
+
+
+def test_unknown_amplitude_source_is_refused() -> None:
+    """폰과 온보드 IMU 는 장착 위치·강성이 달라 값이 달라진다 — 섞으면 비교가 깨진다."""
+    from host.common.config import ConfigError, validate_device_config
+
+    for value in ("추정", "", None):
+        broken = _amplitude(source=value)
+        with pytest.raises(ConfigError, match="source"):
+            validate_device_config(broken, "mechdog-02")
+
+
+def test_too_few_cycles_is_refused() -> None:
+    """사이클이 적으면 p95 가 통계가 아니다."""
+    from host.common.config import ConfigError, validate_device_config
+
+    broken = _amplitude(cycles=5)
+    with pytest.raises(ConfigError, match="cycles"):
+        validate_device_config(broken, "mechdog-02")
+
+
+def test_missing_amplitude_still_passes() -> None:
+    """⚠️ **없는 것과 0 인 것은 다르다.**
+
+    3대 중 2대는 아직 재지 않았다. 없으면 `FR-6.2.2` 판단을 미루면 되지만
+    0 이면 흔들리지 않는다고 잘못 읽는다 — 그래서 없는 쪽만 통과시킨다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_device_config
+
+    config = deepcopy(load_config("mechdog-02"))
+    del config["gait_calibration"]["posture_amplitude"]
+    validate_device_config(config, "mechdog-02")
+
+
+def test_unit_profiles_are_not_copies_of_each_other() -> None:
+    """⚠️ **한 기체의 값을 다른 기체에 복사하지 않는다** (CONTRIBUTING 6절).
+
+    서보 오프셋 비대칭이 개체마다 다르고 그 차이가 곧 속도·선회율·직진 편향의
+    차이로 나온다. 실제로 `mechdog-01` 은 직진이 **좌**로 휘고 `mechdog-02` 는
+    **우**로 휜다 — `straight_bias_deg` 를 옮겨 적었으면 편향을 상쇄하는 대신
+    **두 배로 키웠을** 자리다.
+
+    이 시험이 잠그는 것은 *"값이 맞다"* 가 아니라 *"두 파일이 서로 다른 기체를
+    가리킨다"* 는 것이다.
+    """
+    one = load_config("mechdog-01")
+    two = load_config("mechdog-02")
+
+    # 신원은 번호가 아니라 보드 MAC 이다. 번호는 2.4.1 에서 바뀔 수 있다.
+    assert one["telemetry_device_id"] != two["telemetry_device_id"]
+
+    # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
+    assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
+    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "straight_bias_deg"):
+        assert two["gait_calibration"][name] is None, f"{name} 은 이 기체로 다시 재야 한다"
