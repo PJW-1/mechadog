@@ -17,21 +17,40 @@ let storage=null;try{storage=localStorage}catch{/* Restricted browsers can still
 //   1) 주소창에  ?api=http://127.0.0.1:8000
 //   2) index.html 에  <meta name="mechadog-api" content="http://127.0.0.1:8000">
 // 로컬 주소만 받는다. 원격 주소를 적어도 붙지 않는다.
-function resolveApiBase(){
+async function resolveApiBase(){
  try{
   const fromQuery=new URLSearchParams(location.search).get('api');
   const fromMeta=document.querySelector('meta[name="mechadog-api"]')?.content;
   const raw=(fromQuery||fromMeta||'').trim();
-  if(!raw)return null;
-  const url=new URL(raw,location.href);
-  if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return null;
-  return url.origin;
+  if(raw){
+    const url=new URL(raw,location.href);
+    if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return null;
+    return url.origin;
+  }
+  // 대시보드 서버가 이 페이지를 직접 서빙하면 같은 출처가 곧 API 다.
+  // 단, hostname 이 localhost 라는 것만으로는 붙지 않는다 — file:// 이나
+  // 다른 로컬 개발 서버 위에서 열렸을 수 있으므로 /health 로 확인한다.
+  if(!['127.0.0.1','localhost','[::1]'].includes(location.hostname))return null;
+  const probe=await fetch('/health',{signal:globalThis.AbortSignal?.timeout?.(1500)}).catch(()=>null);
+  if(!probe?.ok)return null;
+  const info=await probe.json().catch(()=>null);
+  return info?.service==='telemetry'?location.origin:null;
  }catch{return null}
 }
-const apiBase=resolveApiBase();
+const apiBase=await resolveApiBase();
 const link=apiBase?new RobotLink({baseUrl:apiBase}):null;
 const operations=new Operations({storage,link});
-if(link)operations.setDemo(false);
+if(link){
+ operations.setDemo(false);
+ // 실제 카메라는 XIAO 가 단일 클라이언트만 받으므로 서버가 비전 워커의
+ // 최신 프레임을 재송출하는 /camera/stream 을 연다 — 판정에 들어간 화면과
+ // 같은 영상이다.
+ const frame=$('isaac-frame'),fpv=$('fpv');
+ frame.src=apiBase+'/camera/stream';
+ frame.hidden=false;
+ if(fpv)fpv.hidden=true;
+ frame.onerror=()=>{$('camera-status').textContent='영상 수신 실패 · 서버 확인';};
+}
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
 const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,
@@ -69,8 +88,9 @@ function syncMain(){
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
  $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'실제 지도·위치 미수신 · 예시 숨김';
- $('frame-source').textContent=operations.demo?(operations.stale?'예시 수신 만료 · 갱신 대기':'예시 화면 · 실시간 아님'):'영상 미수신 · 연결 대기';
- $('camera-status').textContent='실제 영상 미연결';
+ $('frame-source').textContent=operations.live?'실시간 · 로봇 카메라':(operations.demo?(operations.stale?'예시 수신 만료 · 갱신 대기':'예시 화면 · 실시간 아님'):'영상 미수신 · 연결 대기');
+ $('camera-status').textContent=operations.live?'실시간 수신 중':'실제 영상 미연결';
+ $('frame-time').innerHTML=operations.live?'실시간 스트림 수신 중 <span class="muted">· 관측 전용</span>':'마지막 영상 수신　— <span class="muted">· 관측 전용</span>';
  $('estop').classList.toggle('preview-latched',operations.estop);
  $('estop').setAttribute('aria-label',operations.live?'긴급 정지 · 로봇에 즉시 전송':operations.estop?'긴급 정지 안내 · 웹 예시 정지 잠금 중':'긴급 정지 안내 · 실제 장비 미연결');
  // 버튼에 적힌 말과 실제로 하는 일이 다르면 안 된다.

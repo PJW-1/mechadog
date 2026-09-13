@@ -4,7 +4,9 @@
 않으면 예전처럼 읽기 전용으로 뜨고, 넘기면 `/api/command/*` 가 열린다. 이
 경로는 **로봇을 실제로 움직이므로** WebSocket 과 같은 로컬 출처 검사를 건다.
 
-영상 송출은 후속 WBS 다.
+카메라 영상은 XIAO 스트림이 **단일 클라이언트**라 비전 워커가 점유한 채널을
+뺏으면 추론이 끊긴다. 그래서 여기서는 XIAO 에 새로 붙지 않고 워커가 방금
+추론에 쓴 JPEG 를 재송출한다 — 화면에 보이는 것이 곧 판정에 들어간 것이다.
 """
 
 from __future__ import annotations
@@ -13,13 +15,15 @@ import asyncio
 import contextlib
 import socket
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
 
 import uvicorn
 from anyio import CancelScope
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from host.dashboard.commands import CommandService
 from host.dashboard.state import DashboardState
@@ -27,6 +31,8 @@ from host.dashboard.state import DashboardState
 PERIOD_S = 0.1
 SEND_TIMEOUT_S = 1.0
 MAX_CLIENTS = 16
+CAMERA_PERIOD_S = 0.1
+DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "design-prototype"
 
 
 class TelemetryHub:
@@ -90,7 +96,12 @@ def _local_origins(port: int) -> set[str]:
     return allowed
 
 
-def create_app(state: DashboardState, commands: CommandService | None = None) -> FastAPI:
+def create_app(
+    state: DashboardState,
+    commands: CommandService | None = None,
+    camera: Callable[[], bytes | None] | None = None,
+    static_dir: Path | None = None,
+) -> FastAPI:
     hub = TelemetryHub(state)
 
     @asynccontextmanager
@@ -117,6 +128,34 @@ def create_app(state: DashboardState, commands: CommandService | None = None) ->
     @app.get("/api/telemetry")
     async def telemetry():
         return state.snapshot()
+
+    if camera is not None:
+
+        @app.get("/camera/snapshot.jpg")
+        async def camera_snapshot():
+            jpeg = camera()
+            if jpeg is None:
+                return JSONResponse({"error": "no_frame"}, status_code=503)
+            return Response(
+                content=jpeg,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get("/camera/stream")
+        async def camera_stream():
+            async def frames() -> Iterator[bytes]:
+                last: bytes | None = None
+                while True:
+                    jpeg = camera()
+                    if jpeg is not None and jpeg is not last:
+                        last = jpeg
+                        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+                    await asyncio.sleep(CAMERA_PERIOD_S)
+
+            return StreamingResponse(
+                frames(), media_type="multipart/x-mixed-replace; boundary=frame"
+            )
 
     if commands is not None:
 
@@ -148,6 +187,14 @@ def create_app(state: DashboardState, commands: CommandService | None = None) ->
                 return JSONResponse({"error": "on"}, status_code=400)
             result = commands.manual_on() if on else commands.manual_off()
             return result.as_dict()
+
+        @app.post("/api/command/reset")
+        async def reset(request: Request):
+            """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            return commands.reset().as_dict()
 
         @app.post("/api/command/drive")
         async def drive(request: Request):
@@ -203,11 +250,31 @@ def create_app(state: DashboardState, commands: CommandService | None = None) ->
             with CancelScope(shield=True):
                 await asyncio.gather(*tasks, return_exceptions=True)
 
+    live_page = Path(__file__).resolve().parent / "static" / "live.html"
+    if live_page.is_file():
+        # 최소 실기 화면 — 디자인 프로토타입과 무관하게 카메라+이동만 단독 동작한다.
+        live_html = live_page.read_text(encoding="utf-8")
+
+        @app.get("/live")
+        async def live():
+            return Response(content=live_html, media_type="text/html")
+
+    if static_dir is not None and static_dir.is_dir():
+        # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
+        # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
+
     return app
 
 
 @contextmanager
-def running_server(state: DashboardState, port: int) -> Iterator[uvicorn.Server]:
+def running_server(
+    state: DashboardState,
+    port: int,
+    commands: CommandService | None = None,
+    camera: Callable[[], bytes | None] | None = None,
+    static_dir: Path | None = DEFAULT_STATIC_DIR,
+) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     ready = threading.Event()
     failures: list[BaseException] = []
@@ -219,7 +286,7 @@ def running_server(state: DashboardState, port: int) -> Iterator[uvicorn.Server]
 
     server = LocalServer(
         uvicorn.Config(
-            create_app(state),
+            create_app(state, commands=commands, camera=camera, static_dir=static_dir),
             host="127.0.0.1",
             port=port,
             log_level="warning",

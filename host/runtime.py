@@ -52,7 +52,7 @@ from host.common.logging_setup import (
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.dashboard.state import DashboardState
 from host.telemetry.receiver import Ingested, TelemetryReceiver
-from host.vision.worker import TickIntervals, build_worker
+from host.vision.worker import TickIntervals, VisionWorker, build_worker
 
 LOG = event_logger("mechadog.runtime")
 
@@ -164,6 +164,9 @@ class Runtime:
         # 못 읽고, 첫 텔레메트리가 올 때까지 아무것도 보내지 않는 상태가 된다.
         host = robot_ip or network.get("mechdog_ip")
         self._peer: tuple[str, int] | None = (host, self._cmd_port) if host else None
+        # 운용 루프의 송신 소켓 — 대시보드 명령(ESTOP 등)이 다음 틱을 기다리지
+        # 않게 즉시 보내는 경로가 쓴다. `serve` 가 시작할 때 채워진다.
+        self._sock: socket.socket | None = None
         self._reset_pending = False
         # ⚠️ **`_reset_pending` 과 다른 것이다.** 저것은 *로봇이 래치를 풀었다고
         # 보고할 때까지 기다리는 중*이고, 이 둘은 *사람이 눌렀고 아직 틱이 처리하지
@@ -861,6 +864,7 @@ class Runtime:
         # 초기화가 300ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
         if self._vision is not None:
             self._vision.start()
+        self._sock = sock
         started = clock()
         end_ms = started + int(duration_s * 1000) if duration_s is not None else None
         # ⚠️ **루프보다 먼저 인코딩한다.** 이것이 프로세스의 seq=1 이어야 로봇이
@@ -911,6 +915,19 @@ class Runtime:
         finally:
             self._shutdown(sock)
         return self._stats
+
+    def send_immediate(self, line: str) -> None:
+        """다음 틱을 기다리지 않고 전문 한 줄을 즉시 보낸다.
+
+        대시보드 `CommandService` 가 쓴다 — ESTOP 은 100ms 틱 하나도 기다리면
+        안 된다. 상대를 아직 모르면(텔레메트리 0건) 조용히 버린다 — 보낼 곳이
+        없는데 세우는 것보다, FSM 은 어차피 `halt` 로 내려간다.
+        """
+        sock, peer = self._sock, self._peer
+        if sock is None or peer is None:
+            return
+        with contextlib.suppress(OSError):
+            sock.sendto(line.encode("utf-8"), peer)
 
     def _send(self, sock: socket.socket, lines: list[str]) -> None:
         if self._peer is None:
@@ -981,6 +998,16 @@ def watch_console(runtime: Runtime, stream: Any = None) -> None:
             runtime.ask_alarm_confirm()
         elif key == "r":
             runtime.ask_reset()
+
+
+def _latest_jpeg(vision: VisionWorker) -> Callable[[], bytes | None]:
+    """대시보드 카메라 경로가 매번 호출하는 최신 프레임 공급자."""
+
+    def grab() -> bytes | None:
+        result = vision.latest()
+        return result.jpeg if result is not None else None
+
+    return grab
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1066,9 +1093,24 @@ def main(argv: list[str] | None = None) -> int:
             runtime.ask_patrol()
         with contextlib.ExitStack() as stack:
             if dashboard is not None:
+                from host.dashboard.commands import CommandService
                 from host.dashboard.server import running_server
 
-                stack.enter_context(running_server(dashboard, args.dashboard_port))
+                commands = CommandService(
+                    runtime.behavior,
+                    runtime.commander,
+                    runtime.send_immediate,
+                    request_reset=runtime.ask_reset,
+                )
+                camera = _latest_jpeg(vision) if vision is not None else None
+                stack.enter_context(
+                    running_server(
+                        dashboard,
+                        args.dashboard_port,
+                        commands=commands,
+                        camera=camera,
+                    )
+                )
             runtime.serve(sock, duration_s=args.duration)
     except KeyboardInterrupt:
         LOG.info("interrupted", action="ESTOP 송신 후 종료")
