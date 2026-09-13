@@ -98,7 +98,7 @@ def test_unregistered_badge_is_rejected(auth: Authenticator) -> None:
 
 def test_nothing_to_judge_without_markers_or_tracks(auth: Authenticator) -> None:
     assert auth.observe([], [_track(1)], T0) is Outcome.NOTHING
-    assert auth.observe([_marker(0)], [], T0) is Outcome.NOTHING
+    assert auth.observe([_marker(7)], [], T0) is Outcome.NOTHING
 
 
 # ── 시도 횟수 (FR-10.3) ────────────────────────────────────
@@ -150,9 +150,45 @@ def test_marker_binds_to_the_person_holding_it(auth: Authenticator) -> None:
 
 
 def test_a_marker_nobody_holds_is_ignored(auth: Authenticator) -> None:
-    """⚠️ **벽이나 화면에 떠 있는 마커가 인증을 만들어 내면 안 된다.**"""
-    assert auth.observe([_marker(0, at=(620.0, 20.0))], [_track(1)], T0) is Outcome.NOTHING
+    """미등록 마커는 어느 박스에도 들지 않으면 시도로 세지 않고 무시한다."""
+    left, right = _track(1, x=100.0), _track(2, x=400.0)
+    assert (
+        auth.observe([_marker(7, at=(620.0, 20.0))], [left, right], T0)
+        is Outcome.NOTHING
+    )
     assert auth.holder(1, T0) is None
+    assert auth.holder(2, T0) is None
+    assert auth.attempts(1) == 0 and auth.attempts(2) == 0
+
+
+def test_lone_track_owns_a_marker_outside_its_box(auth: Authenticator) -> None:
+    """⚠️ 탭 근접 제시 — 몸이 프레임을 채워 박스 밖으로 나간 사원증도 인증한다."""
+    assert auth.observe([_marker(0, at=(620.0, 20.0))], [_track(1)], T0) is Outcome.GRANTED
+    assert auth.holder(1, T0) is not None
+
+
+def test_a_badge_seen_without_any_track_is_deferred(auth: Authenticator) -> None:
+    """⚠️ 추적 없이 읽힌 등록 사원증은 보류됐다가 다음에 나타난 대상에게 붙는다."""
+    assert auth.observe([_marker(0)], [], T0) is Outcome.BADGE_SEEN
+    auth.note_tracks([_track(9)])
+    assert auth.holder(9, T0 + 100) is not None
+
+
+def test_an_unregistered_marker_without_any_track_is_ignored(auth: Authenticator) -> None:
+    """추적이 없을 때 미등록 마커는 시도로 세지 않는다 — 구역 마커 간섭 방지."""
+    assert auth.observe([_marker(7)], [], T0) is Outcome.NOTHING
+
+
+def test_a_zone_marker_never_burns_an_attempt(cfg: dict) -> None:
+    """⚠️ 구역 마커(FR-8)는 같은 사전이라 박스 안에 들어와도 인증 시도가 아니다."""
+    zone_cfg = dict(cfg)
+    zone_cfg["zones"] = dict(cfg.get("zones") or {}, marker_map={10: "A"})
+    zoned = Authenticator(zone_cfg)
+    assert (
+        zoned.observe([_marker(10, at=(160.0, 250.0))], [_track(1)], T0)
+        is Outcome.NOTHING
+    )
+    assert zoned.attempts(1) == 0
 
 
 def test_overlapping_boxes_bind_to_the_nearest(auth: Authenticator) -> None:
