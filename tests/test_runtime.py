@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from conftest import FakeClock
@@ -1157,3 +1158,153 @@ def test_no_box_raises_no_track_event(config: dict, clock: FakeClock) -> None:
     vision.result = vision_result(2, 200, present=True, hits=0, last_seen_ms=100)
     runtime.tick(200)
     assert runtime.behavior.state == "TRACK", "박스가 없다고 중앙 정렬로 보지 않는다"
+
+
+# ── 구역 변화 감지 배선 (WBS 3.6.x · FR-8) ───────────────────────
+
+ZONE_MARKER = 7
+
+
+def _zone_config(config: dict, tmp_path: Path) -> dict:
+    """구역 마커를 붙이고 기준을 임시 폴더에 쓰게 한다.
+
+    ⚠️ **저장소에 쓰지 않는다.** 기준은 디스크에 남으므로, 기본 경로를 그대로
+    두면 시험이 저장소를 더럽히고 다음 시험이 남의 기준과 견주게 된다.
+    """
+    from copy import deepcopy
+
+    changed = deepcopy(config)
+    changed["zones"]["marker_map"] = {ZONE_MARKER: "A"}
+    changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
+    return changed
+
+
+def _zone_frame(seq: int, at_ms: int, *, detections, markers=()) -> VisionResult:
+    """사람은 없고 물건만 있는 프레임."""
+    return VisionResult(
+        detections=tuple(detections),
+        jpeg=b"zone-jpeg",
+        frame_seq=seq,
+        frame_width=640,
+        frame_height=480,
+        frame_received_ms=at_ms,
+        completed_ms=at_ms,
+        inference_ms=1.0,
+        sighting=Sighting(
+            present=False, changed=True, hits=0, best_score=0.0, last_seen_ms=None, box=None
+        ),
+        tracks=(),
+        markers=markers,
+    )
+
+
+def _thing(label: str, x: float = 100.0) -> Detection:
+    return Detection(label, 0.9, (x, 100.0, x + 40.0, 200.0))
+
+
+def _zone_runtime(config: dict, clock: FakeClock, tmp_path: Path):
+    cfg = _zone_config(config, tmp_path)
+    vision = FakeVision()
+    runtime = Runtime(cfg, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(0)
+    return runtime, vision, cfg
+
+
+def _see(runtime, vision, *, seq, at_ms, detections, marker=True) -> None:
+    vision.result = _zone_frame(
+        seq,
+        at_ms,
+        detections=detections,
+        markers=(Marker(marker_id=ZONE_MARKER, center=(320.0, 240.0)),) if marker else (),
+    )
+    runtime.tick(at_ms)
+
+
+def test_zone_marker_moves_patrol_into_inspect(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ **이 사건을 내는 곳이 없었다.** `ZONE_ARRIVED`·`ZONE_CLEAR`·`ZONE_CHANGED`
+    가 전이표에 다 있는데 아무도 발행하지 않아 `ZONE_INSPECT` 는 도달 불가능한
+    상태였다 — 3.6.x 가 병합됐는데도 변화 감지는 한 번도 돌지 않았다."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    assert runtime.behavior.state == "PATROL"
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    assert runtime.behavior.state == "ZONE_INSPECT"
+
+
+def test_first_visit_registers_a_baseline_and_returns_to_patrol(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """FR-8.1 — 기준 없이 견주면 처음 보는 물건이 전부 반입으로 잡힌다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL", "기준을 뜬 뒤에는 순찰로 돌아간다"
+    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
+    assert saved.exists(), "기준이 디스크에 남아야 다음 순회에서 견줄 수 있다"
+
+
+def test_a_new_object_is_confirmed_and_raises_an_alarm(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])  # 기준 등록
+    assert runtime.behavior.state == "PATROL"
+
+    _see(runtime, vision, seq=3, at_ms=1000, detections=[_thing("chair")], marker=False)
+    changed = [_thing("chair"), _thing("bottle", 400.0)]
+    # 도착 프레임은 전이만 한다 — 비교는 다음 프레임부터다.
+    _see(runtime, vision, seq=4, at_ms=1100, detections=changed)
+    assert runtime.behavior.state == "ZONE_INSPECT"
+    _see(runtime, vision, seq=5, at_ms=1200, detections=changed)
+    assert runtime.behavior.state == "ZONE_INSPECT", "한 사이클로는 확정하지 않는다 (FR-8.4)"
+    assert runtime.escalation.level is Level.L0, "확정 전에는 경보로 올리지 않는다"
+    _see(runtime, vision, seq=6, at_ms=1300, detections=changed)
+    assert runtime.behavior.state == "ALERT", "연속 2사이클이면 확정이다"
+    assert runtime.escalation.level is Level.L3, "물체 변화 확정은 L3 다"
+
+
+def test_an_unchanged_zone_returns_to_patrol(config: dict, clock: FakeClock, tmp_path: Path):
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    _see(runtime, vision, seq=3, at_ms=1000, detections=[_thing("chair")], marker=False)
+    for seq, at in ((4, 1100), (5, 1200), (6, 1300), (7, 1400)):
+        _see(runtime, vision, seq=seq, at_ms=at, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL", "변화가 없으면 구역 앞에 서 있지 않는다"
+    assert runtime.escalation.level is Level.L0
+
+
+def test_two_zone_markers_pick_nothing(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ 경계에 서면 두 장이 같이 잡힌다. 아무 쪽이나 고르면 **엉뚱한 구역의
+    기준과 견주어** 물건이 통째로 사라졌다고 보고한다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(_zone_config(config, tmp_path))
+    cfg["zones"]["marker_map"] = {ZONE_MARKER: "A", ZONE_MARKER + 1: "B"}
+    vision = FakeVision()
+    runtime = Runtime(cfg, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(0)
+    vision.result = _zone_frame(
+        1,
+        100,
+        detections=[_thing("chair")],
+        markers=(
+            Marker(marker_id=ZONE_MARKER, center=(200.0, 240.0)),
+            Marker(marker_id=ZONE_MARKER + 1, center=(440.0, 240.0)),
+        ),
+    )
+    runtime.tick(100)
+    assert runtime.behavior.state == "PATROL", "한 장만 보일 때까지 기다린다"
+
+
+def test_inspection_holds_still(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ 걸어 들어가면서 찍으면 기준과 현재가 다른 자리에서 찍힌다."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    vision.result = _zone_frame(
+        1, 100, detections=[_thing("chair")], markers=(Marker(ZONE_MARKER, (320.0, 240.0)),)
+    )
+    lines = runtime.tick(100)
+    assert runtime.behavior.state == "ZONE_INSPECT"
+    move = _move(lines)
+    assert move is not None, "보내지 않으면 로봇이 직전 순찰 명령을 유지한다"
+    assert (move["step"], move["angle"]) == (0.0, 0.0)

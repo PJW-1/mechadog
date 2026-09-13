@@ -66,6 +66,18 @@ class PatrolSequence:
         commander.drive(self._step_mm, self._bias_deg)
 
 
+class HoldSequence:
+    """제자리에 선다 (`ZONE_INSPECT` · FR-8).
+
+    ⚠️ **아무것도 보내지 않는 것과 다르다.** 안 보내면 로봇은 `cmd_timeout_ms`
+    까지 직전 명령을 유지하므로, 순찰에서 막 들어왔으면 **걸어 들어가면서**
+    구역을 본다. 기준 스냅샷은 같은 자리에서 찍혀야 비교가 성립한다.
+    """
+
+    def __call__(self, commander: Commander, now_ms: int) -> None:  # noqa: ARG002
+        commander.drive(0.0, 0.0)
+
+
 class TrackSequence:
     """`TRACK` 에서 추종 지시를 `MOVE` 로 내보낸다 (WBS 3.5.4 · FR-3.5).
 
@@ -294,6 +306,9 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
 
     # ⚠️ **추종 지시의 유효기간은 명령 타임아웃보다 짧아야 한다.** 길면 로봇이
     # 스스로 멈추기 전에 낡은 각도로 도는 구간이 생긴다.
+    behavior.register_sequence("ZONE_INSPECT", HoldSequence())
+    result["ZONE_INSPECT"] = "등록"
+
     track_max_age = int(config["safety"]["cmd_timeout_ms"])
     track = TrackSequence(track_max_age)
     behavior.register_sequence("TRACK", track)
