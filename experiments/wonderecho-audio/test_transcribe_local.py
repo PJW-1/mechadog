@@ -1,8 +1,7 @@
 import json
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
-
 from transcribe_local import claimed_name, validate_capture
 
 
@@ -12,14 +11,8 @@ class RecognitionGuards(unittest.TestCase):
         self.assertEqual(claimed_name("사원홍길동입니다."), "홍길동")
 
     def test_ambiguous_and_non_identity_text(self):
-        for text in (
-            "",
-            "하나 둘 셋",
-            "사원 홍길동 또는 김철수입니다",
-            "홍길동입니다",
-            "사원입니다",
-            "사원 123입니다",
-        ):
+        for text in ("", "하나 둘 셋", "사원 홍길동 또는 김철수입니다",
+                     "홍길동입니다", "사원입니다", "사원 123입니다"):
             self.assertIsNone(claimed_name(text))
 
     def test_repeated_same_name_and_conflicting_names(self):
@@ -36,18 +29,8 @@ class RecognitionGuards(unittest.TestCase):
     def test_missing_finish_cannot_pass(self):
         with tempfile.TemporaryDirectory() as root:
             folder = Path(root)
-            (folder / "capture.json").write_text(
-                json.dumps(
-                    {
-                        "success": True,
-                        "frames": 250,
-                        "checksum_errors": 0,
-                        "length_errors": 0,
-                        "timeouts": 0,
-                        "events": [],
-                    }
-                )
-            )
+            (folder / "capture.json").write_text(json.dumps(dict(success=True, frames=250,
+                checksum_errors=0, length_errors=0, timeouts=0, events=[])))
             with self.assertRaisesRegex(ValueError, "successfully completed"):
                 validate_capture(folder)
 

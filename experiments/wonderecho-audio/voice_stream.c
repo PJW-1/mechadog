@@ -131,6 +131,21 @@ static void diagnostic_packet(uint32_t elapsed, uint32_t sent, uint32_t reason)
     send_bytes(p, sizeof(p));
 }
 
+#if WE_HOST_PROMPT_ONLY
+static void prompt_diagnostic_packet(void)
+{
+    uint32_t values[16];
+    uint8_t p[80] = {0xa5,0xa5,0x5a,0x5a};
+    we_prompt_snapshot(values);
+    put16(p + 6, 0x010c); put16(p + 8, 64); put16(p + 10, 0x0100);
+    put32(p + 12, 0x12345678);
+    for (unsigned i = 0; i < 16; ++i) put32(p + 16 + 4*i, values[i]);
+    uint16_t sum = 0;
+    for (unsigned i = 16; i < sizeof(p); ++i) sum += p[i];
+    put16(p + 4, sum); send_bytes(p, sizeof(p));
+}
+#endif
+
 void UART0_IRQHandler(void)
 {
     static uint8_t command[16];
@@ -217,8 +232,10 @@ static void stream_task(void *unused)
             int done = we_prompt_result();
             if (done == 1) {
                 prompting = 0;
+                prompt_diagnostic_packet();
                 if (status_packet(6, WE_OK, 0)) events |= EV_START;
             } else if (done < 0 || xTaskGetTickCount() - prompt_start >= ms_ticks(5000)) {
+                prompt_diagnostic_packet();
                 we_prompt_cancel(); prompting = 0; prompt_fault = 1;
                 status_packet(WE_FAILED, 8, 0);
             }
@@ -288,3 +305,4 @@ int we_stream_init(void)
     }
     return 0;
 }
+

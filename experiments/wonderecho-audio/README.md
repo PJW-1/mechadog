@@ -1,30 +1,89 @@
-# WonderEcho 음성 전송·로컬 인식 개발 초안
+# WonderEcho 음성 — 안내 재생·녹음·PC 한국어 인식
 
-PR #83의 초기 스냅샷에 녹음 종료 처리·진단·반복 안정화와 PC 한국어 인식 후속 소스를 추가했다. **현재 안내 재생은 별도 실물 검증 중인 개발 후보다. 이 폴더 전체를 v5 실물 검증 완료 펌웨어로 취급하거나 그대로 설치하지 않는다.**
+모듈이 마이크와 스피커를 맡고, **판단은 PC가 한다.** 모듈에서 한국어 인식을 하지 않는다.
 
-## 검증된 범위와 개발 중인 범위
-
-- 기존 v2는250프레임을 받았지만 종료 메시지가 없어 실패했다. `fix_codec_cleanup.py`는 Speex NB 할당/해제 짝과 SB 중복 해제를 수정한다. v3 첫 정상종료 후 반복 큐초과, v4 계측에서는 인코딩 최대52ms(선점 포함)가 관측됐다.
-- v5는 녹음 워커 우선순위3→4 변경 후 기존 별도 실물 작업에서5초녹음5회 각250프레임/FIN/오류0을 확인했다. 최대 인코딩10~18ms·큐1/8이었다. 장시간·여러화자 검증은 아니다. 이 수치는 원래 v5 설치본의 측정이며 아래 재생 후보의 측정이 아니다.
-- `transcribe_local.py`는 완료된5초16kHz PCM16 캡처만 로컬 PC의 승인된 faster-whisper medium/CUDA 모델로 처리한다. 말한 이름 추출은 신원 인증이 아니다. 텍스트를 실행 명령으로 쓰지 않는다. 기존 작업의 한국어 인식 실측이 있으며 모델 로딩·녹음 시간과 추론 시간을 구분한다.
-- `voice_prompt.*`, `prepare_speaker.py`, `build_speaker_image.py`와 `--prompt`는 새 안내 재생 후보다. 패키지 구조의 오프라인 시험과 원래 v5 녹음 성공을 구분한다. 이 게시 작업은 안내 음성 출력·재생/녹음 전환을 기기에서 검증하지 않았다.
-- 게시 작업은 실행 중인 원본 개발 폴더를 변경하지 않고 파일 내용이 안정적인 시점의 복사본을 만들었다. 이후 원본 변경은 자동 반영되지 않는다. SDK·도구 바이너리·모델·음원·실측 원본은 포함하지 않았다.
-
-## 구성과 재현
-
-- `protocol.py`, `stream_client.py`: WEC1 프레임·길이·체크섬·순번·종료·진단 해석, USB 제한시간 캡처. 연속250프레임과 정상 종료가 없으면 성공으로 표시하지 않는다.
-- `voice_stream.*`, `voice_encoder.*`: 장치의 마이크 수집/압축/전송 어댑터. AI 음성 인식은 Host PC에서 실행한다.
-- `prepare_*.py`, `fix_*.py`: 사용자가 별도로 확보한 호환 SDK 사본을 준비한다. 원본 SDK와 공장 복구 이미지를 보존하고 확인한 입력 해시에만 적용한다.
-- `build_*.ps1`, `package_stream.ps1`: `-DevelopmentRoot`를 명시해야 한다. 호환 Offline SDK1.12.16/GCC9.2.0, CI1302 보드·클록·핀·리소스를 검증한 개발환경이 선행이다. 초기2.2.7 후보는 클록 호환 실패를 재현하는 기록용이며 설치 경로가 아니다.
-- `requirements-pc.txt`는 수신/디코드, `requirements-stt.txt`는 승인 모델을 사용하는 선택적 PC 인식 환경이다. `requirements-pc-tested.txt`는 기존 Windows 시험 환경의 버전 기록이다. 모델은 자동 다운로드하지 않고 로컬 파일만 연다.
-
-```powershell
-python -m pip install -r experiments/wonderecho-audio/requirements-pc.txt
-python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'
-# 기기 연결·적합성이 확인된 환경에서만 실행한다. 출력은 Git 밖의 개인 폴더다.
-./experiments/wonderecho-audio/recognize_voice.ps1 -DevelopmentRoot D:/voice-private -OutputRoot D:/measurements -Port COM99
+```
+[음성 모듈]                                   [PC]
+ 마이크 → 코덱 ADC → Speex 압축(3 KB/s) ──→ faster-whisper medium (CUDA)
+                                            → "사원 홍길동입니다."
+                                            → 이름 추출
+ 스피커 ← 코덱 DAC ← TC8002D 앰프  ←──────  재생 명령
 ```
 
-위 COM99는 예시다. 본체나 다른 모듈 포트를 사용하지 않는다. `recognize_voice.ps1`의 기본은 안내 재생 없이 녹음한다. `-Prompt`는 해당 후보가 실제 설치·검증된 경우에만 사용한다. 공개 저장소의 파일을 내려받았다는 사실은 빌드·플래시 준비 완료를 뜻하지 않는다.
+PC 환경 구축은 **[SETUP.md](SETUP.md)** 를 따른다. 모델 파일은 이 저장소에 없다.
 
-현재 WBS3.5.5/4.7 계열의 개발 근거이며 공장 문구/ID 방식의 전체 완료 판정은 하지 않는다. 무선 중계·상시 서비스·사원 DB 대조·장시간 검증은 남아 있다. 본체/카메라 기능을 바꾸지 않는다.
+## 검증된 것
+
+2026-09-14 실물에서 **안내 재생 → 5초 녹음 → 한국어 인식 → 이름 추출** 전 과정이 통과했다.
+
+| 단계 | 결과 |
+|---|---|
+| 스피커 안내 재생 | 사용자 청취 확인(2회 재현) |
+| 녹음 | 250프레임, checksum·length·timeout 오류 0, 정상 종료 |
+| 인식 | `"사원 홍길동입니다."` `no_speech_prob` 0.042 |
+| 이름 추출 | `claimed_name: "홍길동"` |
+
+`identity_verified` 는 항상 `false` 다. **말한 이름을 받아 적은 것이지 신원을 인증한 것이 아니다.** 인증은 상위 시스템의 몫이고, 인식 텍스트를 실행 명령으로 쓰지 않는다.
+
+## 검증되지 않은 것
+
+- **한국어 인식 정확도를 측정하지 않았다.** 위 결과는 특정 발화 한 건이다. 여러 화자·소음·장시간은 미검증이다.
+- 사원 DB 대조, 무선 중계, 상시 서비스는 구현하지 않았다.
+- 이 폴더는 소스와 절차만 담는다. **벤더 SDK·펌웨어 이미지·모델·음원·측정 원본은 포함하지 않는다.** 파일을 내려받았다는 것이 빌드·설치 준비 완료를 뜻하지 않는다.
+
+## 하드웨어에서 확인한 사실
+
+무음 추적 과정에서 확정한 것들이다. 같은 실수를 반복하지 않기 위해 남긴다.
+
+**스피커 앰프는 `TC8002D`** — 8002 계열 클래스-AB **아날로그** 파워앰프(SOP-8, 보드 뒷면 각인으로 확인). 핀1=SD(high면 셧다운), 핀4=-IN(오디오 입력).
+
+→ **앰프가 아날로그 입력이므로 오디오는 내장 코덱의 아날로그 출력으로 나가야 한다.** IIS0 패드나 PDM 블록으로 내보내려던 시도는 처음부터 성립하지 않았다. Hiwonder 문서의 "digital signals into analog" 는 앰프가 아니라 코덱 DAC 을 가리키는 표현이다.
+
+**앰프 기동 지연** — 셧다운에서 깨어나는 데 시간이 걸려 **음원 앞에 250 ms 무음이 없으면 첫 음절이 잘린다.** 실제로 "신원을"이 "인원을"로 들렸다. 벤더 SDK 에도 `vTaskDelay(300); //等待功放开启` 주석이 있다.
+
+**예약 레지스터를 읽지 말 것** — 진단으로 내장 코덱 레지스터 `0x00~0x3B` 를 재생 중에 읽었더니 아날로그 출력이 죽었다. `0x00~0x2F` 로 줄이자 소리가 났다. `reg30` 다음은 예약 영역과 ALC 레지스터다. **읽기 전용 진단이라도 하드웨어에 부작용이 있다.** (범위만 되돌린 A/B 재현으로 확정하지는 않았다 — 유력한 설명이다.)
+
+**모듈은 I²C 슬레이브 `0x64`** (`i2c_protocol_module.c`, 100 kHz). 로봇의 초음파 `0x77`·Wi-Fi 모듈 `0x69` 와 충돌하지 않는다.
+
+**user 영역 여유는 실측 53,248 바이트** — 16 kHz 16-bit 로 약 1.66초분이다. 문구를 여러 개 넣으려면 압축이 필요하다.
+
+## 파일 구성
+
+**PC 쪽**
+
+| 파일 | 역할 |
+|---|---|
+| `protocol.py`, `stream_client.py` | WEC1 프레임·체크섬·순번·진단 해석, 캡처. 250프레임 연속과 정상 종료가 없으면 성공으로 표시하지 않는다 |
+| `transcribe_local.py` | 완료된 5초 16 kHz PCM16 캡처만 로컬 faster-whisper 로 처리 |
+| `build_prompt_audio.py` | 합성 원본을 모듈이 받는 16 kHz 모노 16-bit 로 변환·정규화. 48~128,000 바이트 제한 검사 |
+| `synth_prompt_orpheus.py` | Orpheus 한국어 합성(권장). `--temperature 0.4` 를 쓸 것 — 0.6 에서는 "신원"을 오발음했다 |
+| `synth_prompt_qwen.py`, `synth_prompt_supertonic.py`, `synth_prompt_variants.py` | 다른 TTS 후보 비교용 |
+| `synth_scenario.py` | 출입 통제 4문구 일괄 생성. 현재 용량 초과라 그대로는 안 들어간다 |
+
+**장치 쪽 (SDK 에 적용하는 소스·패치)**
+
+| 파일 | 역할 |
+|---|---|
+| `voice_stream.*`, `voice_encoder.*` | 마이크 수집·압축·전송 어댑터 |
+| `voice_prompt.*` | 안내 재생과 진단 스냅샷 |
+| `prepare_*.py`, `fix_*.py`, `trace_*.py` | 별도로 확보한 호환 SDK 사본에 적용하는 준비·수정 스크립트. 원본 SDK 와 공장 복구 이미지를 보존하고 확인된 입력 해시에만 적용한다 |
+| `build_*.ps1`, `package_stream.ps1`, `build_speaker_image.py` | `-DevelopmentRoot` 를 명시해야 한다. 호환 Offline SDK 1.12.16 / GCC 9.2.0 환경이 선행이다 |
+
+`fix_speaker_pa.py` 는 벤더 원본의 `pad_config_for_power_amplifier()` 호출을 복구하며, **수정 후 파일이 벤더 원본과 바이트 단위로 같아야 통과**하는 검사를 포함한다.
+
+## 시험
+
+```bash
+python -m pip install -r experiments/wonderecho-audio/requirements-pc.txt
+python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'
+```
+
+기기 없이 도는 오프라인 시험이다. 실제 캡처는 `SETUP.md` 의 절차를 따른다.
+
+## 주의
+
+- **포트를 확인하고 쓸 것.** 본체나 다른 모듈의 포트를 쓰지 않는다. 음성 모듈과 본체가 둘 다 CH340 이라 VID/PID 로는 구분되지 않는다 — 한쪽 USB 를 뽑아 사라지는 포트로 확인한다.
+- **음성 모듈 USB 와 로봇 I²C 포트의 5V 를 동시에 인가하지 않는다.** 역전류 위험이 있다.
+- 패키징 후 `user_code/` 에 파일이 3개인지, `[1]code.bin` 이 64,264 바이트인지 확인하고 이미지를 만든다. 공식 merge 를 건너뛰면 두 번째 코어 코드가 빠진 채로 크기 검사만 통과한다.
+
+현재 WBS 3.5.5 / 4.7 계열의 근거다. 공장 문구·ID 방식의 전체 완료 판정은 하지 않는다. 본체·카메라 기능을 바꾸지 않는다.

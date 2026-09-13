@@ -1,0 +1,20 @@
+# 안내 음원을 직접 합성할 때만 필요하다. 인식만 할 거면 requirements-stt.txt 로 충분하다.
+#
+# torch 는 여기에 넣지 않았다. CUDA 빌드를 GPU 세대에 맞춰 골라야 해서, pip 가 기본
+# 인덱스에서 고르면 Windows 에서 CPU 전용이 깔린다. SETUP.md 를 따라 먼저 설치할 것:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128    # RTX 50 시리즈
+#
+# 검증 환경: torch 2.11.0+cu128 / RTX 5070 (compute_cap 12.0)
+
+transformers==4.57.3
+tokenizers==0.22.2
+safetensors==0.8.0
+snac==1.2.1
+soundfile==0.14.0
+numpy==2.5.3
+
+# Supertonic(ONNX) 로 합성을 비교해 볼 때만 필요하다.
+onnxruntime==1.30.0
+librosa==1.0.0
+PyYAML==6.0.3
