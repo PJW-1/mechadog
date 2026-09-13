@@ -181,3 +181,20 @@ test('a trailing slash in the base url does not double up', async () => {
   await new RobotLink({ baseUrl: 'http://host:8000/', fetch: fetchImpl }).estop();
   assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/estop');
 });
+
+// ── 브라우저에서만 드러나는 결함 ─────────────────────────────────
+
+test('fetch is never invoked as a method of the link', async () => {
+  // ⚠️ **이것을 어기면 브라우저에서 아무 명령도 나가지 않는다.** 네이티브 fetch 는
+  // `this` 가 창이 아니면 `Illegal invocation` 으로 거부한다. 주입한 가짜 fetch 는
+  // `this` 를 보지 않으므로 나머지 시험 전부가 통과하면서 실물만 죽는다 —
+  // 실제로 그랬고, 브라우저로 띄워 보고서야 잡았다.
+  let seenThis = 'unset';
+  const impl = function (url, init) {
+    seenThis = this;
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+  };
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: impl });
+  await link.estop();
+  assert.notEqual(seenThis, link, 'fetch 가 링크 객체를 this 로 받으면 브라우저가 거부한다');
+});

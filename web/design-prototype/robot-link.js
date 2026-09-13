@@ -50,7 +50,12 @@ export class RobotLink {
   constructor({ baseUrl = '', fetch: fetchImpl = globalThis.fetch, motion = {} } = {}) {
     if (typeof fetchImpl !== 'function') throw new Error('fetch 구현이 필요합니다.');
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.fetch = fetchImpl;
+    // ⚠️ **`bind` 를 빼면 브라우저에서 아무 명령도 나가지 않는다.**
+    // 네이티브 `fetch` 는 `this` 가 창이 아니면 `Illegal invocation` 으로 거부한다.
+    // `this.fetch(...)` 로 부르면 `this` 는 이 링크 객체이므로 전부 실패한다.
+    // 주입한 가짜 fetch 는 `this` 를 보지 않으므로 묶어도 그대로 동작한다 —
+    // 그래서 **시험만으로는 이 결함이 잡히지 않는다.** 실제로 그랬다.
+    this.fetch = fetchImpl.bind(globalThis);
     this.motion = { step: 60, angle: 20, ...motion };
   }
 

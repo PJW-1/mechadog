@@ -72,7 +72,9 @@ function syncMain(){
  $('frame-source').textContent=operations.demo?(operations.stale?'예시 수신 만료 · 갱신 대기':'예시 화면 · 실시간 아님'):'영상 미수신 · 연결 대기';
  $('camera-status').textContent='실제 영상 미연결';
  $('estop').classList.toggle('preview-latched',operations.estop);
- $('estop').setAttribute('aria-label',operations.estop?'긴급 정지 안내 · 웹 예시 정지 잠금 중':'긴급 정지 안내 · 실제 장비 미연결');
+ $('estop').setAttribute('aria-label',operations.live?'긴급 정지 · 로봇에 즉시 전송':operations.estop?'긴급 정지 안내 · 웹 예시 정지 잠금 중':'긴급 정지 안내 · 실제 장비 미연결');
+ // 버튼에 적힌 말과 실제로 하는 일이 다르면 안 된다.
+ {const note=$('estop').querySelector('.mobile-stop-note');if(note)note.textContent=operations.live?'연결됨 · 즉시 전송':'장비 미연결 · 정지 전송 불가';}
  $('demo-toggle').innerHTML=icon(playing?'pause':'play');
  $('demo-toggle').setAttribute('aria-label',playing?'예시 순찰 일시정지':operations.mission.status==='paused'?'예시 순찰 재개':'예시 순찰 준비');
  $('demo-toggle').disabled=operations.blocked&&!playing;
@@ -143,7 +145,14 @@ $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$(
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
 $('demo-toggle').addEventListener('click',()=>attempt(()=>{if(operations.mission.status==='running')operations.pauseMission();else if(operations.mission.status==='paused')operations.resumeMission();else navigate('missions')}));
 function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!$('stop-dialog').open)$('stop-dialog').showModal()}
-$('estop').addEventListener('click',openStopDialog);
+// 연결돼 있으면 비상정지는 한 번 눌러 바로 나간다. 모달을 한 단계 끼우면 급할 때
+// 그만큼 늦고, 그 모달은 "장비가 연결되지 않았어요" 라고 거짓을 말한다. 연결이
+// 없을 때만 안내를 띄운다 — 그때는 실제로 보낼 곳이 없다.
+function onEstopPressed(){
+ if(operations.live){operations.requestEstop();toast(operations.linkError||'비상정지를 보냈습니다.');return}
+ openStopDialog();
+}
+$('estop').addEventListener('click',onEstopPressed);
 $('stop-preview').addEventListener('click',()=>operations.requestEstop());
 document.addEventListener('keydown',event=>{
  if(event.key==='Escape'){operations.stop('Escape');if(!$('stop-dialog').open)navigate('dashboard')}
