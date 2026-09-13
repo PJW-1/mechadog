@@ -132,6 +132,32 @@ def run(args: argparse.Namespace) -> int:
     import serial  # pyserial — 없으면 여기서야 죽는다
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    if args.fwd_host:
+        # ── 생 바이트 전달 모드 — 파싱 없이 ESP32 udp_feed 스케치로 흘린다.
+        # LD19→ESP32 물리 배선 없이 노드 처리 체인을 실물 바이트로 시험한다.
+        feed = (args.fwd_host, args.fwd_port)
+        pkts = bytes_sent = 0
+        started = time.monotonic()
+        print(f"[ld19-relay] {args.serial} @{args.baud} →UDP {feed[0]}:{feed[1]} (raw feed)", flush=True)
+        try:
+            with serial.Serial(args.serial, args.baud, timeout=1) as port:
+                while True:
+                    data = port.read(1024)
+                    if data:
+                        with contextlib.suppress(OSError):
+                            sock.sendto(data, feed)
+                        pkts += 1
+                        bytes_sent += len(data)
+                    if time.monotonic() - started >= 5.0:
+                        started = time.monotonic()
+                        print(f"[ld19-relay] fwd pkts={pkts} bytes={bytes_sent}", flush=True)
+        except KeyboardInterrupt:
+            print(f"[ld19-relay] 종료 — {bytes_sent}B 전달", flush=True)
+        finally:
+            sock.close()
+        return 0
+
     peer = (args.host, args.port)
     boot_id = secrets.token_hex(8)
     parser, assembler = Ld19Parser(), ScanAssembler()
@@ -192,6 +218,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1", help="SCAN 수신 호스트")
     p.add_argument("--port", type=int, default=5201, help="SCAN 수신 포트 (lidar.scan_port)")
     p.add_argument("--device", default="lidar-pc-relay", help="device_id")
+    p.add_argument("--fwd-host", default=None,
+                   help="설정 시 파싱 없이 생 바이트를 이 IP 로 UDP 전달 (udp_feed 스케치)")
+    p.add_argument("--fwd-port", type=int, default=5202)
     return p
 
 
