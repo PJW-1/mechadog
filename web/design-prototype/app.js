@@ -17,22 +17,27 @@ let storage=null;try{storage=localStorage}catch{/* Restricted browsers can still
 //   1) 주소창에  ?api=http://127.0.0.1:8000
 //   2) index.html 에  <meta name="mechadog-api" content="http://127.0.0.1:8000">
 // 로컬 주소만 받는다. 원격 주소를 적어도 붙지 않는다.
-function resolveApiBase(){
+async function resolveApiBase(){
  try{
   const fromQuery=new URLSearchParams(location.search).get('api');
   const fromMeta=document.querySelector('meta[name="mechadog-api"]')?.content;
   const raw=(fromQuery||fromMeta||'').trim();
-  if(!raw){
-    // 대시보드 서버가 이 페이지를 직접 서빙하면 같은 출처가 곧 API 다.
-    // file:// 로 연 화면은 hostname 이 비어 있어 예시 모드로 남는다.
-    return ['127.0.0.1','localhost','[::1]'].includes(location.hostname)?location.origin:null;
+  if(raw){
+    const url=new URL(raw,location.href);
+    if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return null;
+    return url.origin;
   }
-  const url=new URL(raw,location.href);
-  if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return null;
-  return url.origin;
+  // 대시보드 서버가 이 페이지를 직접 서빙하면 같은 출처가 곧 API 다.
+  // 단, hostname 이 localhost 라는 것만으로는 붙지 않는다 — file:// 이나
+  // 다른 로컬 개발 서버 위에서 열렸을 수 있으므로 /health 로 확인한다.
+  if(!['127.0.0.1','localhost','[::1]'].includes(location.hostname))return null;
+  const probe=await fetch('/health',{signal:globalThis.AbortSignal?.timeout?.(1500)}).catch(()=>null);
+  if(!probe?.ok)return null;
+  const info=await probe.json().catch(()=>null);
+  return info?.service==='telemetry'?location.origin:null;
  }catch{return null}
 }
-const apiBase=resolveApiBase();
+const apiBase=await resolveApiBase();
 const link=apiBase?new RobotLink({baseUrl:apiBase}):null;
 const operations=new Operations({storage,link});
 if(link){
