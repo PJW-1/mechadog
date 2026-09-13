@@ -51,9 +51,11 @@ ScanEncodeResult ScanEncoder::encode(const ScanPoint* points, size_t count, int6
   for (size_t i = 0; i < count; ++i) {
     // 각도는 소수 둘째자리 고정(cdeg 그대로) — %f 없이 정수만으로 출력한다
     char point[20];
-    const size_t plen = static_cast<size_t>(
-        snprintf(point, sizeof(point), "%s[%u.%02u,%u]", i == 0 ? "" : ",",
-                 points[i].angle_cdeg / 100, points[i].angle_cdeg % 100, points[i].dist_mm));
+    const size_t plen =
+        static_cast<size_t>(snprintf(point, sizeof(point), "%s[%u.%02u,%u]", i == 0 ? "" : ",",
+                                     static_cast<unsigned>(points[i].angle_cdeg / 100),
+                                     static_cast<unsigned>(points[i].angle_cdeg % 100),
+                                     static_cast<unsigned>(points[i].dist_mm)));
     if (plen == 0 || used + plen + 2 >= capacity) {
       return ScanEncodeResult(false, 0, "점 직렬화가 버퍼를 초과");
     }
