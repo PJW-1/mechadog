@@ -320,3 +320,51 @@ def test_cli_rejects_invalid_port_before_loading_config(port, monkeypatch):
     monkeypatch.setattr(module, "load_config", unexpected)
     with pytest.raises(SystemExit, match="dashboard-port"):
         module.main(["--device", "test", "--dashboard-port", port])
+
+
+def _fake_prototype(root, *, with_node_modules=True, with_build_vendor=False):
+    """소스 폴더 모양만 흉내낸다. 실제 three.js 나 npm 은 필요 없다."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "index.html").write_text("<h1>ops</h1>", encoding="utf-8")
+    if with_build_vendor:
+        (root / "vendor").mkdir()
+        (root / "vendor" / "three.module.js").write_text("// built", encoding="utf-8")
+    if with_node_modules:
+        three = root / "node_modules" / "three"
+        (three / "build").mkdir(parents=True)
+        (three / "build" / "three.module.js").write_text("// pkg", encoding="utf-8")
+        (three / "examples" / "jsm" / "controls").mkdir(parents=True)
+        (three / "examples" / "jsm" / "controls" / "OrbitControls.js").write_text(
+            "// orbit", encoding="utf-8"
+        )
+    return root
+
+
+def test_three_is_served_from_node_modules_when_prototype_is_unbuilt(tmp_path, clock):
+    """소스 폴더에는 vendor/ 가 없다. 그대로 붙이면 3D 화면이 통째로 404 였다."""
+    static_dir = _fake_prototype(tmp_path / "design-prototype")
+    state = DashboardState("mechdog-01", stale_after_ms=1000, clock=clock)
+    with TestClient(create_app(state, static_dir=static_dir)) as client:
+        assert client.get("/vendor/three.module.js").text == "// pkg"
+        assert client.get("/vendor/addons/controls/OrbitControls.js").text == "// orbit"
+        # 정적 마운트와 API 는 그대로여야 한다.
+        assert client.get("/").status_code == 200
+        assert client.get("/api/telemetry").status_code == 200
+
+
+def test_built_prototype_keeps_its_own_vendor(tmp_path, clock):
+    """빌드본은 vendor/ 를 직접 갖고 있다. node_modules 로 덮어쓰지 않는다."""
+    static_dir = _fake_prototype(tmp_path / "build", with_node_modules=True, with_build_vendor=True)
+    state = DashboardState("mechdog-01", stale_after_ms=1000, clock=clock)
+    with TestClient(create_app(state, static_dir=static_dir)) as client:
+        assert client.get("/vendor/three.module.js").text == "// built"
+
+
+def test_missing_three_leaves_the_rest_of_the_dashboard_working(tmp_path, clock):
+    """three.js 가 없어도 텔레메트리·정적 페이지는 떠야 한다. 3D 만 빈다."""
+    static_dir = _fake_prototype(tmp_path / "bare", with_node_modules=False)
+    state = DashboardState("mechdog-01", stale_after_ms=1000, clock=clock)
+    with TestClient(create_app(state, static_dir=static_dir)) as client:
+        assert client.get("/vendor/three.module.js").status_code == 404
+        assert client.get("/").status_code == 200
+        assert client.get("/api/telemetry").status_code == 200
