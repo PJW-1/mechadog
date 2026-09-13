@@ -581,7 +581,7 @@ class Runtime:
         """
         self._auth.note_tracks(result.tracks)
         outcome = self._auth.observe(result.markers, result.tracks, now_ms)
-        if outcome is Outcome.GRANTED:
+        if outcome in (Outcome.GRANTED, Outcome.BADGE_SEEN):
             self._apply(Event.AUTH_OK, now_ms)
         elif outcome is Outcome.EXHAUSTED:
             # 2회 실패 — 30초 무응답과 같은 결론이다 (FR-10.3).

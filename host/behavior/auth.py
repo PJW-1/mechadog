@@ -18,8 +18,13 @@
 안에 있는지를 본다. 사원증은 몸 앞에 들기 때문이다. 둘 이상이 포함하면 박스가
 더 큰(가까운) 쪽이다 — FR-3.8.2 와 같은 단일 기준이다.
 
-**아무 박스에도 들지 않은 마커는 무시한다.** 벽에 붙은 마커나 화면에 떠 있는
-마커가 아무도 없는 방에서 인증을 만들어 내면 안 된다.
+**기하가 안 통할 때의 완화 규칙이 있다.** 카메라에 바짝 붙어 사원증을 대면
+몸이 프레임을 가득 채워 `person` 검출이 무너진다 — 2026-09-13 실기에서 실제로
+확인했다. 그래서 추적이 한 명뿐이면 박스 밖 마커도 그 사람에게 귀속하고, 추적이
+아예 없어도 **등록된** 마커는 `BADGE_SEEN` 으로 올린다 — 인증은 런타임이
+`AUTH_WAIT` 맥락에서 판단한다. 보류된 승인은 다음에 나타난 추적에 붙는다.
+미등록 마커는 주인이 없으면 무시한다 — 같은 사전을 쓰는 구역 마커가 인증
+시도를 태우면 안 되기 때문이다.
 
 ⚠️ **같은 마커를 반복해서 봐도 시도 횟수는 한 번이다.** 25fps 로 도는데 프레임마다
 세면 `max_attempts: 2` 가 **80ms 에 소진된다** — 사원증을 한 번 들어 보이는 것이
@@ -51,6 +56,7 @@ class Outcome(Enum):
 
     NOTHING = "nothing"  # 볼 것이 없었다
     GRANTED = "granted"  # 승인 — `AUTH_OK`
+    BADGE_SEEN = "badge_seen"  # 등록 사원증을 읽었으나 귀속할 추적이 없다 — `AUTH_OK`
     REJECTED = "rejected"  # 등록되지 않은 사원증. 기회가 남았다
     EXHAUSTED = "exhausted"  # 시도 횟수 초과 — `AUTH_FAILED` (FR-10.3)
 
@@ -82,7 +88,11 @@ class Authenticator:
         self._valid_ms = int(auth["session_valid_s"]) * 1000
         self._max_attempts = int(auth["max_attempts"])
         self._bind_to_track = bool(auth["bind_to_track_id"])
+        # 구역 마커 ID 대역 — 같은 ArUco 사전을 쓰므로 인증 시도와 섞이면 안 된다.
+        self._zone_ids = {int(k) for k in ((config.get("zones") or {}).get("marker_map") or {})}
         self._sessions: dict[int, Session] = {}
+        #: 추적 없이 읽힌 등록 사원증의 보류 승인 — 다음에 나타난 추적에 붙는다.
+        self._pending: tuple[str, int] | None = None
 
     # ── 상태 ────────────────────────────────────────────────
     def holder(self, track_id: int, now_ms: int) -> str | None:
@@ -120,6 +130,23 @@ class Authenticator:
             if track_id not in alive:
                 del self._sessions[track_id]
                 LOG.info("auth_session_dropped", track_id=track_id, reason="track_lost")
+        # 사람 없이 읽힌 사원증(탭 근접 제시)은 다음에 나타난 가장 가까운 대상에게
+        # 붙는다 — 귀속 없이 `GRANTED` 만 내리면 재등장한 대상이 미인증으로
+        # 다시 에스컬레이션을 일으킨다.
+        if self._pending is not None and tracks:
+            holder, granted_ms = self._pending
+            target = max(tracks, key=lambda t: t.height)
+            session = self._sessions.setdefault(target.track_id, Session())
+            if session.holder is None:
+                session.holder, session.granted_ms = holder, granted_ms
+                LOG.info(
+                    "auth_granted",
+                    track_id=target.track_id,
+                    holder=holder,
+                    valid_s=self._valid_ms // 1000,
+                    reason="deferred_attach",
+                )
+            self._pending = None
 
     def observe(self, markers: Sequence[Marker], tracks: Sequence[Track], now_ms: int) -> Outcome:
         """마커와 대상을 넣고 판정 하나를 낸다.
@@ -127,18 +154,28 @@ class Authenticator:
         여러 마커가 보이면 **승인이 우선**이다 — 승인된 사원증을 든 사람이 있는데
         옆의 모르는 마커 때문에 경보로 가면 안 된다.
         """
-        if not markers or not tracks:
+        if not markers:
             return Outcome.NOTHING
         outcome = Outcome.NOTHING
+        loose_badge = False
         for marker in markers:
+            if marker.marker_id in self._zone_ids:
+                continue  # 구역 마커 — 인증과 무관하다
             track = self._owner(marker, tracks)
+            if track is None and len(tracks) == 1:
+                track = tracks[0]  # 한 명뿐이면 박스 밖이라도 그 사람이다
             if track is None:
-                continue  # 아무 박스에도 들지 않은 마커 — 벽이나 화면이다
+                if marker.marker_id in self._badges:
+                    loose_badge = True
+                    self._pending = (self._badges[marker.marker_id], now_ms)
+                continue
             result = self._judge(marker, track, now_ms)
             if result is Outcome.GRANTED:
                 return result
             if result is not Outcome.NOTHING:
                 outcome = result
+        if loose_badge and outcome is Outcome.NOTHING:
+            return Outcome.BADGE_SEEN
         return outcome
 
     def _judge(self, marker: Marker, track: Track, now_ms: int) -> Outcome:
@@ -178,6 +215,8 @@ class Authenticator:
         ⚠️ `bind_to_track_id` 가 꺼져 있으면 대상 하나에 몰아 준다 — 추적 없이
         운용하는 진단용 경로이며, 그때는 여러 명을 구분할 수 없다.
         """
+        if not tracks:
+            return None
         if not self._bind_to_track:
             return max(tracks, key=lambda t: t.height)
         x, y = marker.center
