@@ -35,6 +35,13 @@
 같은 사원증을 계속 들고 있는 경우는 이 규칙으로 잡히지 않지만, **`AUTH_WAIT` 의
 30초 타이머가 그 경로를 덮는다**(FR-10.3). 두 장치가 서로를 보완하므로 여기에
 새 시간 상수를 만들지 않는다.
+
+⚠️ **미등록 마커는 안정 검출 후에만 시도로 센다.** ArUco 는 배경 무늬·모서리를
+없는 ID 로 한 프레임짜리 오검출하는 일이 흔하다 — 2026-09-13 실기에서 없는
+마커 ID 17 이 1프레임 디코딩돼 두 번째 시도를 소진시키는 것을 실제로 봤다.
+그래서 미등록 마커는 짧은 창 안에서 `unknown_marker_min_frames` 회 이상 읽혀야
+시도로 넘긴다. 등록 마커에는 이 게이트를 걸지 않는다 — 즉시 인증이 요구사항이고,
+발급 대장에 있는 ID 가 우연히 오검출될 확률은 대장 크기만큼 작다.
 """
 
 from __future__ import annotations
@@ -93,6 +100,10 @@ class Authenticator:
         self._sessions: dict[int, Session] = {}
         #: 추적 없이 읽힌 등록 사원증의 보류 승인 — 다음에 나타난 추적에 붙는다.
         self._pending: tuple[str, int] | None = None
+        #: 미등록 마커의 안정성 게이트 — 1프레임 오검출이 시도를 태우면 안 된다.
+        self._min_unknown_frames = int(auth.get("unknown_marker_min_frames", 3))
+        #: 미등록 마커 후보 — ID -> (창 안에서 읽힌 횟수, 마지막으로 읽힌 시각).
+        self._unproven: dict[int, tuple[int, int]] = {}
 
     # ── 상태 ────────────────────────────────────────────────
     def holder(self, track_id: int, now_ms: int) -> str | None:
@@ -184,8 +195,11 @@ class Authenticator:
             return Outcome.NOTHING  # 이미 유효한 세션이 있다
         if marker.marker_id in session.seen:
             return Outcome.NOTHING  # 같은 사원증을 다시 본 것은 새 시도가 아니다
-        session.seen.add(marker.marker_id)
         holder = self._badges.get(marker.marker_id)
+        if holder is None and not self._proven(marker.marker_id, now_ms):
+            return Outcome.NOTHING  # 아직 안정 검출이 아니다 — 시도로 세지 않는다
+        session.seen.add(marker.marker_id)
+        self._unproven.pop(marker.marker_id, None)
         if holder is not None:
             session.holder = holder
             session.granted_ms = now_ms
@@ -208,6 +222,17 @@ class Authenticator:
             exhausted=exhausted,
         )
         return Outcome.EXHAUSTED if exhausted else Outcome.REJECTED
+
+    def _proven(self, marker_id: int, now_ms: int) -> bool:
+        """미등록 마커가 충분히 안정적으로 읽혔는가 — 노이즈는 시도가 아니다.
+
+        짧은 창(1초) 안에서 `unknown_marker_min_frames` 회 읽혀야 한다. 창을 넘어
+        떨어진 카운트는 버린다 — 간헐 오검출이 시간을 두고 누적되면 안 된다.
+        """
+        count, last = self._unproven.get(marker_id, (0, 0))
+        count = count + 1 if now_ms - last <= 1000 else 1
+        self._unproven[marker_id] = (count, now_ms)
+        return count >= self._min_unknown_frames
 
     def _owner(self, marker: Marker, tracks: Sequence[Track]) -> Track | None:
         """마커를 든 사람. **중심이 박스 안에 있는가**로 정한다.

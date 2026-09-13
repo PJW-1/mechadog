@@ -194,6 +194,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(auth, "session_valid_s")
     _require_positive(auth, "max_attempts")
     _require_positive(auth, "timeout_s")
+    _require_positive(auth, "unknown_marker_min_frames")
     badges = auth.get("badge_marker_map")
     if badges is None or not isinstance(badges, dict):
         raise ConfigError("auth.badge_marker_map 은 사전(dict)이어야 함")

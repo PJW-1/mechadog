@@ -90,10 +90,48 @@ def test_registered_badge_is_granted(auth: Authenticator, cfg: dict) -> None:
     assert auth.holder(1, T0) == cfg["auth"]["badge_marker_map"][0]
 
 
+def _show_badge(auth: Authenticator, marker_id: int, tracks: list, start_ms: int) -> Outcome:
+    """미등록 마커를 안정 검출 게이트(3프레임)까지 통과시킨다."""
+    outcome = Outcome.NOTHING
+    for step in range(3):
+        outcome = auth.observe([_marker(marker_id)], tracks, start_ms + step * 40)
+    return outcome
+
+
 def test_unregistered_badge_is_rejected(auth: Authenticator) -> None:
     """**대장에 없는 ID 는 미승인이다.** 화이트리스트가 정본이다."""
-    assert auth.observe([_marker(42)], [_track(1)], T0) is Outcome.REJECTED
+    assert _show_badge(auth, 42, [_track(1)], T0) is Outcome.REJECTED
     assert auth.holder(1, T0) is None
+
+
+# ── 미등록 마커 안정성 게이트 ─────────────────────────────
+def test_a_single_frame_unknown_marker_is_not_an_attempt(auth: Authenticator) -> None:
+    """⚠️ 1프레임 ArUco 오검출이 인증 시도를 태우면 안 된다 — 2026-09-13 실기에서
+    없는 마커 ID 가 1프레임 디코딩돼 `max_attempts` 를 소진시키는 것을 봤다."""
+    tracks = [_track(1)]
+    for step in range(2):  # 게이트 미만 — 시도로 세지 않는다
+        assert auth.observe([_marker(17)], tracks, T0 + step * 40) is Outcome.NOTHING
+    assert auth.attempts(1) == 0
+
+
+def test_an_unknown_marker_stable_for_three_frames_is_an_attempt(auth: Authenticator) -> None:
+    tracks = [_track(1)]
+    assert _show_badge(auth, 17, tracks, T0) is Outcome.REJECTED
+    assert auth.attempts(1) == 1
+
+
+def test_a_stale_unknown_marker_does_not_accumulate(auth: Authenticator) -> None:
+    """창을 넘어 떨어진 검출은 누적되지 않는다 — 간헐 노이즈가 시간을 두고 쌓이면 안 된다."""
+    tracks = [_track(1)]
+    auth.observe([_marker(17)], tracks, T0)
+    auth.observe([_marker(17)], tracks, T0 + 3000)  # 창 밖 — 카운트 리셋
+    auth.observe([_marker(17)], tracks, T0 + 6000)
+    assert auth.attempts(1) == 0
+
+
+def test_a_registered_badge_is_still_instant(auth: Authenticator) -> None:
+    """등록 마커는 게이트 없이 첫 프레임에 승인한다 — 즉시 인증이 요구사항이다."""
+    assert auth.observe([_marker(0)], [_track(1)], T0) is Outcome.GRANTED
 
 
 def test_nothing_to_judge_without_markers_or_tracks(auth: Authenticator) -> None:
@@ -109,8 +147,8 @@ def test_the_same_badge_seen_again_is_not_a_new_attempt(auth: Authenticator) -> 
     된다. 프레임 수로 세다 실패한 것이 이 저장소에 이미 세 번 있다(결정 22·25·27번).
     """
     tracks = [_track(1)]
-    assert auth.observe([_marker(42)], tracks, T0) is Outcome.REJECTED
-    for step in range(1, 60):  # 같은 사원증을 2.4초 동안 들고 있다
+    assert _show_badge(auth, 42, tracks, T0) is Outcome.REJECTED
+    for step in range(3, 60):  # 같은 사원증을 2.4초 동안 들고 있다
         assert auth.observe([_marker(42)], tracks, T0 + step * 40) is Outcome.NOTHING
     assert auth.attempts(1) == 1
 
@@ -119,16 +157,17 @@ def test_a_second_different_badge_exhausts_the_attempts(auth: Authenticator, cfg
     """다른 사원증을 두 번째로 들어 보이는 것이 두 번째 시도다 (FR-10.3)."""
     assert cfg["auth"]["max_attempts"] == 2
     tracks = [_track(1)]
-    assert auth.observe([_marker(42)], tracks, T0) is Outcome.REJECTED
-    assert auth.observe([_marker(43)], tracks, T0 + 1000) is Outcome.EXHAUSTED
+    assert _show_badge(auth, 42, tracks, T0) is Outcome.REJECTED
+    assert _show_badge(auth, 43, tracks, T0 + 1000) is Outcome.EXHAUSTED
     assert auth.attempts(1) == 2
 
 
 def test_attempts_are_counted_per_person(auth: Authenticator) -> None:
     """한 사람의 실패가 옆 사람의 기회를 깎으면 안 된다 (FR-3.6.2)."""
     left, right = _track(1, x=100.0), _track(2, x=400.0)
-    auth.observe([_marker(42, at=(160.0, 250.0))], [left, right], T0)
-    auth.observe([_marker(43, at=(160.0, 250.0))], [left, right], T0 + 1000)
+    for step in range(3):
+        auth.observe([_marker(42, at=(160.0, 250.0))], [left, right], T0 + step * 40)
+        auth.observe([_marker(43, at=(160.0, 250.0))], [left, right], T0 + 1000 + step * 40)
     assert auth.attempts(1) == 2
     assert auth.attempts(2) == 0
 
@@ -243,7 +282,7 @@ def test_a_surviving_track_keeps_its_session(auth: Authenticator) -> None:
 
 def test_attempts_reset_with_the_track(auth: Authenticator) -> None:
     """새 사람이 앞 사람의 실패 횟수를 물려받으면 즉시 경보가 된다."""
-    auth.observe([_marker(42)], [_track(1)], T0)
+    _show_badge(auth, 42, [_track(1)], T0)
     assert auth.attempts(1) == 1
     auth.note_tracks([])
     assert auth.attempts(1) == 0
@@ -286,7 +325,7 @@ def test_empty_badge_map_is_allowed_but_authenticates_nobody(cfg: dict) -> None:
 
     validate_base_config(empty)
     auth = Authenticator(empty)
-    assert auth.observe([_marker(0)], [_track(1)], T0) is Outcome.REJECTED
+    assert _show_badge(auth, 0, [_track(1)], T0) is Outcome.REJECTED
 
 
 def test_badge_map_keys_must_be_marker_ids(cfg: dict) -> None:
