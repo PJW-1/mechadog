@@ -37,6 +37,7 @@ from host.behavior.auth import Authenticator, Outcome
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import Behavior, Event, behavior_from_config
+from host.behavior.tracker import LockOnTracker
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
 from host.common.logging_setup import (
@@ -185,6 +186,11 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
+        # 추종(`3.5.4`)은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
+        # 오고 명령은 10Hz 로 나가므로, 명령 쪽에서 계산하면 프레임을 버리게 된다.
+        # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
+        self._tracker = LockOnTracker(config)
+        self._track_sequence = self._behavior.sequence_for("TRACK")
         # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
         # FastAPI/WebSocket 서버(4.5.1)가 생기면 같은 항목을 publisher로 받는다.
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
@@ -390,6 +396,8 @@ class Runtime:
             if result.sighting.present:
                 self._apply(Event.PERSON_FOUND, now_ms)
                 self._record_person_event(result)
+        if fresh:
+            self._track(result, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
         # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
         healthy = self._vision.healthy()
@@ -405,6 +413,56 @@ class Runtime:
                 "vision_stalled" if stalled else "vision_recovered",
                 age_ms=self._vision.age_ms(now_ms),
             )
+
+    def _track(self, result: Any, now_ms: int) -> None:
+        """대표 박스의 x편차를 추종 지시로 바꿔 사건과 시퀀스에 넘긴다 (`3.5.4` · FR-3.5).
+
+        ⚠️ **`ALERT`·`TRACK` 에서만 돈다.** 순찰 중에 사람이 스쳐도 여기서 각도를
+        만들면 순찰 경로가 흔들린다 — 추종으로 들어갈지는 `PERSON_FOUND` 가 정하고
+        전이표가 지킨다. 여기는 *"얼마나 돌지"* 만 맡는다.
+
+        ⚠️ **박스가 없으면 아무 사건도 내지 않는다.** 대상이 사라진 판단은
+        `FR-3.7` 의 5초 타이머 소관이고, 여기서 `TARGET_CENTERED` 를 내면
+        **대상이 없어졌는데 중앙에 들어왔다고 보고하는 꼴**이 되어 `TRACK` 이
+        `ALERT` 로 되돌아간다.
+        """
+        if not self._behavior.tracking:
+            return
+        box = result.sighting.box
+        if box is None:
+            return
+        width = int(getattr(result, "frame_width", 0) or 0)
+        if width <= 0:
+            return
+        center_x = (float(box[0]) + float(box[2])) / 2.0
+        try:
+            command = self._tracker.update(center_x, width)
+        except ValueError as exc:
+            # 데드존이 화면 반폭 이상이면 추종이 성립하지 않는다. 설정 오류이며
+            # 이 프레임을 버리고 다음으로 간다 — 여기서 죽으면 순찰까지 멈춘다.
+            if self._edge.changed("track_config_bad", True):
+                LOG.error("track_unusable", reason=str(exc))
+            return
+        self._edge.changed("track_config_bad", False)
+        # ⚠️ **전이를 먼저, 지시는 그다음이다.** `TRACK` 진입 훅이 지난 추종의
+        # 잔상을 지우므로(`TrackSequence.forget`), 순서를 뒤집으면 방금 넣은 지시가
+        # 함께 지워져 **추종 첫 주기가 통째로 정지로 나간다.**
+        #
+        # 같은 판정이 이어지는 동안은 사건을 내지 않는다 — 25fps 로 같은 전이를
+        # 수백 번 넣으면 로그가 전이로 뒤덮이고 단계 축도 흔들린다.
+        if self._edge.changed("track_centered", command.centered):
+            LOG.info(
+                "track_command",
+                centered=command.centered,
+                deviation_px=round(command.deviation_px, 1),
+                angle=round(command.angle, 2),
+                step=round(command.step, 1),
+            )
+            self._apply(
+                Event.TARGET_CENTERED if command.centered else Event.TARGET_OFF_CENTER, now_ms
+            )
+        if self._track_sequence is not None:
+            self._track_sequence.note(command.step, command.angle, now_ms)
 
     def _judge_auth(self, result: Any, now_ms: int) -> None:
         """사원증을 판정하고 **사건으로 옮긴다** (FR-10.1 · `3.8.1`).

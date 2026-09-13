@@ -63,6 +63,11 @@ class VisionResult:
     #: 사건 당시 실제 입력을 보존했다는 의미가 사라진다 (FR-3.9).
     jpeg: bytes
     frame_seq: int
+    #: 디코드한 원본 프레임의 크기. ⚠️ **설정의 `vision.resolution` 을 믿지 않는다** —
+    #: 검출 박스는 원본 픽셀 좌표이고, 카메라가 요청과 다른 크기를 보내면 추종이
+    #: 화면 중앙을 엉뚱한 곳으로 잡는다. 실제로 디코드한 것을 싣는다 (`3.5.4`).
+    frame_width: int
+    frame_height: int
     frame_received_ms: int
     completed_ms: int
     inference_ms: float
@@ -292,6 +297,7 @@ class VisionWorker:
         """한 프레임을 검출한다. **예외가 스레드를 죽이지 못하게 한다.**"""
         try:
             image = decode_jpeg(frame.payload)
+            height, width = int(image.shape[0]), int(image.shape[1])
             detections = self._detector.detect(image)
             observed = self._clock()
             sighting = self._gate.observe(observed, detections)
@@ -308,6 +314,8 @@ class VisionWorker:
             detections=tuple(detections),
             jpeg=frame.payload,
             frame_seq=frame.seq,
+            frame_width=width,
+            frame_height=height,
             frame_received_ms=frame.received_ms,
             completed_ms=completed,
             inference_ms=elapsed,
