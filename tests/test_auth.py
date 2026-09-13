@@ -152,10 +152,7 @@ def test_marker_binds_to_the_person_holding_it(auth: Authenticator) -> None:
 def test_a_marker_nobody_holds_is_ignored(auth: Authenticator) -> None:
     """미등록 마커는 어느 박스에도 들지 않으면 시도로 세지 않고 무시한다."""
     left, right = _track(1, x=100.0), _track(2, x=400.0)
-    assert (
-        auth.observe([_marker(7, at=(620.0, 20.0))], [left, right], T0)
-        is Outcome.NOTHING
-    )
+    assert auth.observe([_marker(7, at=(620.0, 20.0))], [left, right], T0) is Outcome.NOTHING
     assert auth.holder(1, T0) is None
     assert auth.holder(2, T0) is None
     assert auth.attempts(1) == 0 and auth.attempts(2) == 0
@@ -184,10 +181,7 @@ def test_a_zone_marker_never_burns_an_attempt(cfg: dict) -> None:
     zone_cfg = dict(cfg)
     zone_cfg["zones"] = dict(cfg.get("zones") or {}, marker_map={10: "A"})
     zoned = Authenticator(zone_cfg)
-    assert (
-        zoned.observe([_marker(10, at=(160.0, 250.0))], [_track(1)], T0)
-        is Outcome.NOTHING
-    )
+    assert zoned.observe([_marker(10, at=(160.0, 250.0))], [_track(1)], T0) is Outcome.NOTHING
     assert zoned.attempts(1) == 0
 
 

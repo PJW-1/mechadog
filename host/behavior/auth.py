@@ -89,9 +89,7 @@ class Authenticator:
         self._max_attempts = int(auth["max_attempts"])
         self._bind_to_track = bool(auth["bind_to_track_id"])
         # 구역 마커 ID 대역 — 같은 ArUco 사전을 쓰므로 인증 시도와 섞이면 안 된다.
-        self._zone_ids = {
-            int(k) for k in ((config.get("zones") or {}).get("marker_map") or {})
-        }
+        self._zone_ids = {int(k) for k in ((config.get("zones") or {}).get("marker_map") or {})}
         self._sessions: dict[int, Session] = {}
         #: 추적 없이 읽힌 등록 사원증의 보류 승인 — 다음에 나타난 추적에 붙는다.
         self._pending: tuple[str, int] | None = None
