@@ -28,17 +28,39 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 소스 트리에 없다** — 프로토타입 개발 서버(`scripts/server.mjs`)가 요청을
 `node_modules/three` 로 돌려주고, `npm run build` 는 `build/vendor` 로 복사해 넣는다.
 
-그래서 대시보드 서버도 같은 규칙으로 `/vendor/*` 를 붙인다. 빌드본을 `static_dir`
-로 넘기면 그 안의 `vendor/` 를 쓰고, 소스 폴더면 `node_modules/three` 에서 찾는다.
+그래서 대시보드 서버도 같은 규칙으로 `/vendor/*` 를 붙인다. `resolve_web_root()`
+가 **빌드본을 먼저** 고르고(`build/vendor` 가 있으면 `build/` 를 통째로 서빙),
+없으면 소스 폴더의 `vendor/` 나 `node_modules/three` 를 쓴다.
 
 ```powershell
 cd web/design-prototype
 npm install     # 한 번만. three.js 를 받는다
 ```
 
-`node_modules` 가 없으면 `/vendor/*` 는 404 이고 **3D 현장만 비어 보인다.**
-텔레메트리·명령 API·`/live` 는 three.js 를 쓰지 않으므로 그대로 동작한다 —
-`/live` 만 확인하면 이 상태를 놓치기 쉽다.
+⚠️ **`npm install` 을 건너뛰면 3D 만 비는 것이 아니라 화면이 통째로 죽는다.**
+`app.js` 가 `scene.js` 를 정적으로 `import` 하고 그것이 `three` 를 끌어오므로,
+vendor 가 없으면 모듈 실행이 **첫 줄에서 멈춘다** — 패널도 조이스틱도 비상정지도
+나오지 않고 머리말만 남은 껍데기가 뜬다. 원인을 알려 주는 표시가 화면에 전혀 없다.
+
+그래서 자산이 없으면 **프로토타입을 아예 띄우지 않는다.** `/` 는 `/live` 로 307
+넘김이 되고, 서버 로그에 `web_prototype_unavailable` 과 고치는 명령이 남는다.
+죽은 화면을 보여 주는 것보다 동작하는 최소 화면이 낫다.
+
+## 관제 화면이 둘인 이유
+
+혼동이 있었으므로 적어 둔다 — **두 화면은 서로 다른 파일이고 목적이 다르다.**
+
+| 경로 | 파일 | 쓰임 |
+| :--- | :--- | :--- |
+| `/` | `web/design-prototype/` (여러 모듈 + three.js) | 전체 관제 프로토타입. 3D 현장·패널·사건·구역까지. 빌드가 필요하다 |
+| `/live` | `host/dashboard/static/live.html` (한 파일 89줄) | 실기 최소 화면. 카메라 + 이동 + 비상정지만. **의존성이 없어 항상 뜬다** |
+
+둘 다 같은 `/api/command/{manual,drive,estop}` 을 쓴다(`/live` 는 `reset` 도 쓴다).
+**조작 경로가 갈라져 있지 않다** — 화면만 둘이다.
+
+⚠️ **그래도 조이스틱과 비상정지 구현은 두 벌이다**(프로토타입은 `robot-link.js`,
+`/live` 는 자체 인라인 스크립트). 한쪽을 고치면 다른 쪽은 그대로다. 어느 쪽을
+정본으로 삼을지는 아직 정해지지 않았다.
 
 기본 바인딩은 `127.0.0.1`이다. 브라우저 WS는 같은 포트의 localhost/127.0.0.1
 Origin만 허용한다. 로컬 비브라우저 클라이언트는 Origin 없이 연결할 수 있다.

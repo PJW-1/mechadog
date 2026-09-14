@@ -22,9 +22,10 @@ from pathlib import Path
 import uvicorn
 from anyio import CancelScope
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from host.common.logging_setup import event_logger
 from host.dashboard.commands import CommandService
 from host.dashboard.state import DashboardState
 
@@ -32,6 +33,8 @@ PERIOD_S = 0.1
 SEND_TIMEOUT_S = 1.0
 MAX_CLIENTS = 16
 CAMERA_PERIOD_S = 0.1
+LOG = event_logger("mechadog.dashboard")
+
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "design-prototype"
 # 3D 현장은 three.js 를 `/vendor/*` 로 불러오는데 그 폴더는 소스 트리에 없다.
 # 프로토타입 개발 서버(web/design-prototype/scripts/server.mjs)가 요청을
@@ -99,6 +102,28 @@ def _local_origins(port: int) -> set[str]:
     if port == 80:
         allowed.update({"http://127.0.0.1", "http://localhost"})
     return allowed
+
+
+def resolve_web_root(static_dir: Path) -> Path | None:
+    """프로토타입을 실제로 띄울 수 있는 폴더를 고른다. 없으면 `None`.
+
+    ⚠️ **three.js 가 없으면 화면이 "3D 만 비는" 것이 아니라 통째로 죽는다.**
+    `app.js` 가 `scene.js` 를 정적으로 `import` 하고 그것이 `three` 를 끌어오므로,
+    vendor 가 없으면 모듈 실행이 첫 줄에서 멈춘다 — 패널도, 조이스틱도,
+    비상정지도 나오지 않고 머리말만 남은 껍데기가 뜬다. 실제로 그렇게 떴다.
+    `npm install` 을 건너뛴 팀원에게는 **원인을 알 수 없는 빈 화면**이다.
+
+    그래서 띄울 수 없으면 **띄우지 않는다** — 호출부가 `/live` 로 돌린다.
+    죽은 화면을 보여 주는 것보다 동작하는 최소 화면이 낫다.
+    """
+    build = static_dir / "build"
+    if (build / "vendor").is_dir():
+        return build  # 완성된 배포본 — 그대로 쓴다
+    if (static_dir / "vendor").is_dir():
+        return static_dir
+    if (static_dir / "node_modules" / "three" / "build").is_dir():
+        return static_dir
+    return None
 
 
 def _mount_three(app: FastAPI, static_dir: Path) -> None:
@@ -284,10 +309,26 @@ def create_app(
             return Response(content=live_html, media_type="text/html")
 
     if static_dir is not None and static_dir.is_dir():
-        _mount_three(app, static_dir)
-        # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
-        # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
+        web_root = resolve_web_root(static_dir)
+        if web_root is None:
+            # ⚠️ **죽은 화면을 내주지 않는다.** three.js 자산이 없으면 프로토타입은
+            # 첫 줄에서 멈춰 껍데기만 뜬다. 무엇이 잘못됐는지 화면에 아무 단서가
+            # 없으므로, 동작하는 `/live` 로 보내고 고치는 방법을 로그에 남긴다.
+            LOG.warning(
+                "web_prototype_unavailable",
+                static_dir=str(static_dir),
+                effect="관제 프로토타입(/) 대신 최소 화면(/live) 으로 보낸다",
+                remedy="cd web/design-prototype && npm install (또는 npm run build)",
+            )
+
+            @app.get("/")
+            async def prototype_unavailable() -> RedirectResponse:
+                return RedirectResponse(url="/live", status_code=307)
+        else:
+            _mount_three(app, web_root)
+            # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
+            # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.
+            app.mount("/", StaticFiles(directory=web_root, html=True), name="web")
 
     return app
 

@@ -19,6 +19,7 @@ from host.dashboard.server import (
     TelemetryHub,
     _send_updates,
     create_app,
+    resolve_web_root,
     running_server,
 )
 from host.dashboard.state import DashboardState
@@ -368,3 +369,61 @@ def test_missing_three_leaves_the_rest_of_the_dashboard_working(tmp_path, clock)
         assert client.get("/vendor/three.module.js").status_code == 404
         assert client.get("/").status_code == 200
         assert client.get("/api/telemetry").status_code == 200
+
+
+# ── 웹 프로토타입 서빙 (WBS 4.5.x) ───────────────────────────────
+
+
+def _prototype(root, *, vendor_in=None, node_modules=False):
+    """프로토타입 폴더를 흉내 낸다. `vendor_in` 은 'build' 또는 '' (원본 폴더)."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "index.html").write_text("<h1>prototype</h1>", encoding="utf-8")
+    if vendor_in is not None:
+        target = root / vendor_in if vendor_in else root
+        (target / "vendor").mkdir(parents=True, exist_ok=True)
+        if vendor_in:
+            (target / "index.html").write_text("<h1>built</h1>", encoding="utf-8")
+    if node_modules:
+        (root / "node_modules" / "three" / "build").mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def test_web_root_prefers_the_built_bundle(tmp_path):
+    """빌드본이 있으면 그것을 쓴다 — vendor 가 이미 안에 들어 있다."""
+    root = _prototype(tmp_path / "proto", vendor_in="build")
+    assert resolve_web_root(root) == root / "build"
+
+
+def test_web_root_falls_back_to_the_source_folder(tmp_path):
+    assert resolve_web_root(_prototype(tmp_path / "a", vendor_in="")) == tmp_path / "a"
+    assert resolve_web_root(_prototype(tmp_path / "b", node_modules=True)) == tmp_path / "b"
+
+
+def test_web_root_is_none_without_three_assets(tmp_path):
+    assert resolve_web_root(_prototype(tmp_path / "bare")) is None
+
+
+def test_a_prototype_without_three_redirects_to_the_working_page(tmp_path, clock):
+    """⚠️ **죽은 화면을 내주지 않는다.**
+
+    `app.js` 가 `scene.js` 를 정적으로 `import` 하고 그것이 `three` 를 끌어오므로,
+    vendor 가 없으면 모듈이 첫 줄에서 멈춘다 — 패널도 조이스틱도 비상정지도 없는
+    껍데기가 뜬다. `npm install` 을 건너뛴 사람에게는 **원인을 알 수 없는 빈
+    화면**이며, 실제로 그렇게 떴다. 동작하는 `/live` 로 보낸다.
+    """
+    bare = _prototype(tmp_path / "bare")
+    app = create_app(state_at(clock), static_dir=bare)
+    with TestClient(app) as client:
+        response = client.get("/", follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == "/live"
+        assert client.get("/live").status_code == 200, "보낸 곳은 실제로 떠야 한다"
+
+
+def test_a_complete_prototype_is_served_at_the_root(tmp_path, clock):
+    ready = _prototype(tmp_path / "ready", vendor_in="")
+    app = create_app(state_at(clock), static_dir=ready)
+    with TestClient(app) as client:
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "prototype" in response.text
