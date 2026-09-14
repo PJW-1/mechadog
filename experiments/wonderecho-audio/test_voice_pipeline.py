@@ -1,0 +1,201 @@
+"""Scenario/robotlink/transport unit tests — no serial, mic, or GPU required."""
+
+import types
+import unittest
+from unittest import mock
+
+import robotlink
+import scenarios
+import voice_pipeline as vp
+
+
+class FakeCtx:
+    """Records scenario side effects without hardware."""
+
+    def __init__(self, answers=(), roster_docs="", status="배터리 8.5볼트"):
+        self.lines = []
+        self.events = []
+        self.answers = list(answers)
+        self.docs = roster_docs
+        self.status = status
+        self.commands = []
+
+    def say(self, text):
+        self.lines.append(text)
+
+    def listen(self, _timeout_s=12.0):
+        return self.answers.pop(0) if self.answers else ""
+
+    def retrieve(self, _query):
+        return self.docs
+
+    def robot_status(self):
+        return self.status
+
+    def command(self, action):
+        self.commands.append(action)
+        return True
+
+    def event(self, role, text):
+        self.events.append((role, text))
+
+
+class ScenarioTriggerTests(unittest.TestCase):
+    def test_trigger_phrases_map_to_registry_names(self):
+        for phrase, name in scenarios.TRIGGERS.items():
+            self.assertIn(name, scenarios.SCENARIOS)
+            self.assertEqual(scenarios.match_trigger(f"메카독{phrase}해줘"), name)
+
+    def test_unrelated_query_falls_through(self):
+        self.assertIsNone(scenarios.match_trigger("오늘점심뭐야"))
+        self.assertIsNone(scenarios.match_trigger(""))
+
+    def test_every_scenario_has_desc_and_callable(self):
+        self.assertGreaterEqual(len(scenarios.SCENARIOS), 10)
+        for name, (desc, func) in scenarios.SCENARIOS.items():
+            self.assertTrue(desc, name)
+            self.assertTrue(callable(func), name)
+
+
+class GuardScenarioTests(unittest.TestCase):
+    def test_known_name_is_verified(self):
+        ctx = FakeCtx(answers=["김민수 입니다"])
+        scenarios.sc_guard(ctx)
+        self.assertTrue(any("확인되었습니다" in line for line in ctx.lines))
+
+    def test_unknown_name_is_denied(self):
+        ctx = FakeCtx(answers=["홍길동 입니다"])
+        scenarios.sc_guard(ctx)
+        self.assertTrue(any("확인되지 않았습니다" in line for line in ctx.lines))
+        self.assertFalse(any("확인되었습니다" in line for line in ctx.lines))
+
+    def test_silence_is_logged_not_verified(self):
+        ctx = FakeCtx(answers=[])
+        scenarios.sc_guard(ctx)
+        self.assertTrue(any("응답이 없습니다" in line for line in ctx.lines))
+        self.assertTrue(any(role == "system" for role, _ in ctx.events))
+
+
+class RobotlinkTests(unittest.TestCase):
+    def test_whitelist_exact_match_only(self):
+        self.assertEqual(robotlink.match_action("메카독비상정지"), None)  # 부분 문자열 불가
+        self.assertIsNotNone(robotlink.match_action("비상정지"))
+        self.assertIsNotNone(robotlink.match_action("비상 정지!"))  # 구두점 정규화
+        self.assertIsNone(robotlink.match_action("앞으로가"))
+        self.assertIsNone(robotlink.match_action("정지하고싶어"))
+
+    def test_no_arbitrary_commands(self):
+        # 화이트리스트에 없는 동작은 절대 명령으로 변하지 않는다
+        for query in ("공격해", "달려", "문열어", "따라와"):
+            self.assertIsNone(robotlink.match_action(query))
+
+    def test_answer_query_runs_whitelisted_action(self):
+        with mock.patch.object(robotlink, "run_action", return_value=(True, "")) as run:
+            handled, spoken = robotlink.answer_query("비상정지")
+        self.assertTrue(handled)
+        self.assertIn("비상 정지", spoken)
+        run.assert_called_once_with("estop", robotlink.DEFAULT_BASE)
+
+    def test_answer_query_status_uses_real_telemetry(self):
+        with mock.patch.object(
+            robotlink, "fetch_status", return_value="배터리 8.54볼트, 동작 상태 IDLE"
+        ):
+            handled, spoken = robotlink.answer_query("배터리 어때")
+        self.assertTrue(handled)
+        self.assertIn("8.54", spoken)
+
+    def test_answer_query_unreachable_robot_is_honest(self):
+        with mock.patch.object(robotlink, "fetch_status", return_value=None):
+            handled, spoken = robotlink.answer_query("상태 알려줘")
+        self.assertTrue(handled)
+        self.assertIn("확인할 수 없습니다", spoken)
+
+    def test_answer_query_passes_llm_questions_through(self):
+        handled, _ = robotlink.answer_query("회사 복지 제도가 뭐야")
+        self.assertFalse(handled)
+
+    def test_run_action_maps_endpoints(self):
+        calls = []
+
+        def fake_post(_base, path, body, _timeout=3.0):
+            calls.append((path, body))
+            return {"ok": True}
+
+        with mock.patch.object(robotlink, "_post", side_effect=fake_post):
+            self.assertEqual(robotlink.run_action("estop")[0], True)
+            robotlink.run_action("manual_on")
+            robotlink.run_action("manual_off")
+            self.assertFalse(robotlink.run_action("self_destruct")[0])
+        self.assertEqual(
+            calls,
+            [
+                ("/api/command/estop", {}),
+                ("/api/command/manual", {"manual": True}),
+                ("/api/command/manual", {"manual": False}),
+            ],
+        )
+
+
+class HubScenarioQueueTests(unittest.TestCase):
+    def test_scenario_item_flows_through_say_queue(self):
+        hub = vp.Hub("test")
+        hub.enqueue_say("공지입니다")
+        hub.enqueue_scenario("guard", urgent=True)
+        items = [item for _, _, item in hub.drain_say()]
+        self.assertEqual(items[0], ("scenario", "guard"))  # urgent 먼저
+        self.assertEqual(items[1], "공지입니다")
+
+    def test_unknown_scenario_rejected_by_handler(self):
+        hub = vp.Hub("test")
+        handler_cls = vp.make_handler(hub)
+        req = types.SimpleNamespace(
+            path="/scenario",
+            headers={"Content-Length": "0"},
+            rfile=__import__("io").BytesIO(b'{"name": "nope"}'),
+            wfile=__import__("io").BytesIO(),
+            sent=[],
+        )
+
+        class FakeHandler(req.__class__):
+            pass
+
+        h = handler_cls.__new__(handler_cls)
+        h.path, h.headers, h.rfile = req.path, req.headers, req.rfile
+        h.wfile, h.request_version = req.wfile, "HTTP/1.1"
+        h.send_response = lambda code: req.sent.append(code)
+        h.send_header = lambda *_a: None
+        h.end_headers = lambda: None
+        h.do_POST()
+        self.assertEqual(req.sent[0], 404)
+        self.assertEqual(hub.say_q.qsize(), 0)
+        del FakeHandler
+
+
+class TransportTests(unittest.TestCase):
+    def test_open_transport_requires_port(self):
+        with self.assertRaises(ValueError):
+            vp.open_transport(types.SimpleNamespace(port=None, baud=0))
+
+    def test_serial_transport_surface(self):
+        # 하드웨어 없이 인터페이스 계약만 확인 — 미래 Wi-Fi 구현이 따라야 할 표면
+        import transport
+
+        dev = mock.Mock()
+        dev.is_open = True
+        dev.in_waiting = 7
+        dev.write.side_effect = lambda b: len(b)
+        dev.read.return_value = b"ab"
+        with mock.patch.object(transport, "open_port", return_value=dev):
+            link = transport.SerialTransport("COM99", 921600)
+        self.assertEqual(link.kind, "serial")
+        self.assertEqual(link.write(b"data"), 4)
+        self.assertEqual(link.read(2), b"ab")
+        self.assertEqual(link.in_waiting, 7)
+        link.send_command(0x106)
+        dev.write.assert_called()  # command packet framed by stream_client
+        link.close()
+        dev.close.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()
