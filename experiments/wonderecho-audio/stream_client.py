@@ -31,6 +31,59 @@ def send_command(device, kind):
         raise TimeoutError("Incomplete voice command write")
 
 
+BAUD_RATES = (921600, 115200)
+
+
+def open_port(port, baudrate):
+    import serial
+
+    device = serial.Serial(port=None, baudrate=baudrate, timeout=0.1, write_timeout=0.5)
+    device.dtr = False
+    device.rts = False
+    device.port = port
+    device.open()
+    return device
+
+
+def probe_baud(port, candidates=BAUD_RATES):
+    """Return the baud rate that yields a WEC1 READY response to QUERY."""
+    import serial
+
+    for baud in candidates:
+        device = open_port(port, baud)
+        try:
+            send_command(device, 0x106)  # stop a stale capture first
+            time.sleep(0.1)
+            device.read(device.in_waiting or 1)
+            send_command(device, 0x102)
+            probe = Decoder(max_payload=128)
+            deadline = time.monotonic() + 0.8
+            while time.monotonic() < deadline:
+                data = device.read(min(device.in_waiting, 512) or 1)
+                for packet in probe.feed(data, now=time.monotonic()):
+                    if (
+                        packet.message_type == 0x102
+                        and packet.version == 0x100
+                        and packet.fill_data == 0x12345678
+                        and len(packet.payload) == STATUS.size
+                    ):
+                        identity, phase, reason, sent, rate = STATUS.unpack(packet.payload)
+                        if (
+                            identity == b"WEC1"
+                            and phase == 1
+                            and not sent
+                            and not reason
+                            and rate == 16000
+                        ):
+                            device.close()
+                            return baud
+            device.close()
+        except (serial.SerialException, TimeoutError):
+            if device.is_open:
+                device.close()
+    raise TimeoutError(f"No WEC1 handshake on {port} at {candidates}")
+
+
 class Capture:
     def __init__(self, prompt=False, loopback=False):
         self.expect_prompt = prompt
@@ -239,27 +292,24 @@ def save_wave(frames, destination):
         wav.writeframes(output)
 
 
-def capture(port, folder, prompt=False, loopback=False):
+def capture(port, folder, prompt=False, loopback=False, baud=0):
     import serial
 
     folder.mkdir(parents=True, exist_ok=False)
     decoder, result = Decoder(max_payload=128), Capture(prompt=prompt, loopback=loopback)
-    device = serial.Serial(port=None, baudrate=115200, timeout=0.1, write_timeout=0.5)
-    device.dtr = False
-    device.rts = False
-    device.port = port
+    baudrate = baud or probe_baud(port)
+    device = open_port(port, baudrate)
     started_command = False
     capture_timed = False
     report = {
         "port": port,
-        "baudrate": 115200,
+        "baudrate": baudrate,
         "success": False,
         "prompt_requested": prompt,
         "loopback": loopback,
         "source": "physical USB capture",
     }
     try:
-        device.open()
         with (folder / "uart.bin").open("xb") as raw:
             send_command(device, 0x102)
             deadline = time.monotonic() + 3
@@ -330,6 +380,9 @@ if __name__ == "__main__":
         action="store_true",
         help="Record the microphone while the prompt plays; speaker output appears in voice.wav",
     )
+    parser.add_argument(
+        "--baud", type=int, default=0, help="UART baud rate; 0 (default) probes 921600 then 115200"
+    )
     args = parser.parse_args()
     if args.prompt and args.loopback:
         parser.error("--prompt and --loopback are mutually exclusive")
@@ -342,5 +395,8 @@ if __name__ == "__main__":
         / now.strftime("WonderEcho_audio_%H%M%S")
     )
     print(
-        json.dumps(capture(args.port, output, prompt=args.prompt, loopback=args.loopback), indent=2)
+        json.dumps(
+            capture(args.port, output, prompt=args.prompt, loopback=args.loopback, baud=args.baud),
+            indent=2,
+        )
     )

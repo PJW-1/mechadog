@@ -7,6 +7,11 @@
 #include "ci130x_uart.h"
 #include "ci130x_core_eclic.h"
 #include "sdk_default_config.h"
+#include "codec_manager.h"
+#include "board.h"
+#include "ci130x_pdm.h"
+#include "ci130x_scu.h"
+#include "ci130x_gpio.h"
 #include <string.h>
 #if WE_HOST_PROMPT_ONLY
 #include "voice_prompt.h"
@@ -22,6 +27,8 @@
 #define EV_AUDIO 8u
 #define EV_PROMPT 16u
 #define EV_PROMPT_DONE 32u
+#define EV_LOOP 64u
+#define EV_RXDATA 128u
 #define QUEUE_FRAMES 8
 #define MAX_FRAMES 250u /* Five-second bench capture, not indefinite recording. */
 enum { WE_READY = 1, WE_STARTED = 2, WE_FINISHED = 3, WE_FAILED = 4 };
@@ -144,45 +151,238 @@ static void prompt_diagnostic_packet(void)
     for (unsigned i = 16; i < sizeof(p); ++i) sum += p[i];
     put16(p + 4, sum); send_bytes(p, sizeof(p));
 }
+
+/* Analog output chain readback: PA polarity, PC4 pad, CODEC DAC registers. */
+static void prompt_hw_packet(const uint32_t *values)
+{
+    uint8_t p[80] = {0xa5,0xa5,0x5a,0x5a};
+    put16(p + 6, 0x010d); put16(p + 8, 64); put16(p + 10, 0x0100);
+    put32(p + 12, 0x12345678);
+    for (unsigned i = 0; i < 16; ++i) put32(p + 16 + 4*i, values[i]);
+    uint16_t sum = 0;
+    for (unsigned i = 16; i < sizeof(p); ++i) sum += p[i];
+    put16(p + 4, sum); send_bytes(p, sizeof(p));
+}
 #endif
+
+/* ---- Host->module audio streaming (v23) ----------------------------------
+   Wire format: same 16-byte header as every other packet
+   (a5a5 5a5a | sum | type | len | ver | 0x12345678), then `len` payload bytes.
+   type 0x0110 PLAY_DATA carries raw PCM16LE mono 16 kHz; type 0x0111 PLAY_END
+   (len 0) flushes the partial block, drains the DMA ring, mutes the amp and
+   reports WE_FINISHED. Playback lazily starts on the first PLAY_DATA packet. */
+#define RX_RING_SIZE 16384u          /* ~178 ms of headroom at 921600 baud */
+#define PLAY_BLOCK_SIZE 1024u        /* 512 samples = 32 ms per DMA block */
+#define PLAY_BLOCK_NUM 2u            /* two DMA blocks per queued buffer */
+#define PLAY_BUF_COUNT 24u           /* 24 x 2048 B = 48 KB = 1.5 s of audio */
+#define PLAY_BUF_BYTES (PLAY_BLOCK_SIZE * PLAY_BLOCK_NUM)
+#define PLAY_MAX_PAYLOAD 2048u
+#define PLAY_WARMUP_MS 400u          /* measured TC8002D wake time (v22: ~400 ms) */
+
+/* Same diagnostics the prompt path exposes; reset per stream for clean reads. */
+extern volatile uint32_t we_output_irqs, we_tx_peak;
+
+static uint8_t rx_ring[RX_RING_SIZE];
+static volatile uint32_t rx_head, rx_tail;
+static uint32_t rx_dropped, rx_bad_packets;
+
+static uint8_t play_pool[PLAY_BUF_COUNT * PLAY_BUF_BYTES];
+static int play_state;             /* 0 idle, 1 warming, 2 playing */
+static uint8_t *play_cur;
+static uint32_t play_fill;
+static TickType_t play_pa_on, play_last_data;
+static uint32_t play_bytes_in, play_bufs_in, play_underrun, play_level_peak;
+static int play_cfg_rc, play_start_rc;
+static volatile int we_prompting;  /* flash-prompt owns codec 1 output */
+
+static void play_abort(void)
+{
+    if (play_state) {
+        cm_stop_codec(1, CODEC_OUTPUT);
+        power_amplifier_off();
+    }
+    play_state = 0; play_cur = 0; play_fill = 0;
+}
+
+static void play_begin(void)
+{
+    cm_pcm_buffer_info_t bi;
+    memset(&bi, 0, sizeof(bi));
+    bi.play_buffer_info.block_num = PLAY_BLOCK_NUM;
+    bi.play_buffer_info.buffer_num = PLAY_BUF_COUNT;
+    bi.play_buffer_info.block_size = PLAY_BLOCK_SIZE;
+    bi.play_buffer_info.buffer_size = PLAY_BUF_BYTES;
+    bi.play_buffer_info.pcm_buffer = play_pool;
+    cm_config_pcm_buffer(1, CODEC_OUTPUT, &bi);
+    play_last_data = xTaskGetTickCount();
+    cm_sound_info_t si = { .sample_rate = 16000, .channel_flag = 1,
+                           .sample_depth = IIS_DW_16BIT };
+    play_cfg_rc = cm_config_codec(1, CODEC_OUTPUT, &si);
+    /* Same analog chain the prompt path needs: PDM block powers the HPOUT
+       driver, and reg2d DAC gain is only ever set via cm_set_codec_dac_gain
+       (fresh config leaves it at the power-up default). */
+    scu_set_device_gate((uint32_t)PDM, ENABLE);
+    scu_set_device_reset((uint32_t)PDM);
+    scu_set_device_reset_release((uint32_t)PDM);
+    pdm_power_up(PDM_CURRENT_128I);
+    pdm_hpout_mute_disable();
+    cm_set_codec_dac_gain(1, 0, 40);
+    we_output_irqs = 0; we_tx_peak = 0;
+    power_amplifier_on();
+    play_pa_on = xTaskGetTickCount();
+    play_state = 1;
+    play_bytes_in = play_bufs_in = play_underrun = play_level_peak = 0;
+    play_start_rc = -1;
+}
+
+/* Pull `len` payload bytes out of the ring into playback buffers. */
+static void play_consume(uint32_t len)
+{
+    play_last_data = xTaskGetTickCount();
+    play_bytes_in += len;
+    while (len) {
+        if (!play_cur) {
+            uint32_t buf = 0;
+            cm_get_pcm_buffer(1, &buf, 0);
+            if (!buf) {          /* all buffers queued — drop this payload only */
+                rx_tail = (rx_tail + len) % RX_RING_SIZE;
+                ++play_underrun; return;
+            }
+            play_cur = (uint8_t *)buf; play_fill = 0;
+        }
+        uint32_t n = PLAY_BUF_BYTES - play_fill;
+        if (n > len) n = len;
+        uint32_t tail = rx_tail;
+        for (uint32_t i = 0; i < n; ++i) {
+            play_cur[play_fill + i] = rx_ring[tail];
+            tail = (tail + 1) % RX_RING_SIZE;
+        }
+        rx_tail = tail;
+        play_fill += n; len -= n;
+        if (play_fill == PLAY_BUF_BYTES) {
+            cm_write_codec(1, play_cur, 0);
+            ++play_bufs_in; play_cur = 0;
+            uint32_t lvl = cm_output_busy_count(1);
+            if (lvl > play_level_peak) play_level_peak = lvl;
+        }
+    }
+}
+
+/* One play diagnostic packet per stream; mirrors diagnostic_packet framing. */
+static void play_diagnostic_packet(void)
+{
+    uint8_t p[56] = {0xa5,0xa5,0x5a,0x5a};
+    put16(p + 6, 0x0112); put16(p + 8, 40); put16(p + 10, 0x0100);
+    put32(p + 12, 0x12345678);
+    put32(p + 16, play_bytes_in); put32(p + 20, play_bufs_in);
+    put32(p + 24, play_underrun); put32(p + 28, rx_dropped);
+    put32(p + 32, we_output_irqs); put32(p + 36, we_tx_peak);
+    put32(p + 40, (uint32_t)play_cfg_rc); put32(p + 44, (uint32_t)play_start_rc);
+    put32(p + 48, play_level_peak); put32(p + 52, rx_bad_packets);
+    uint16_t sum = 0;
+    for (unsigned i = 16; i < sizeof(p); ++i) sum += p[i];
+    put16(p + 4, sum);
+    send_bytes(p, sizeof(p));
+}
+
+static void play_finish(void)
+{
+    if (play_cur) {                 /* zero-pad the partial buffer */
+        memset(play_cur + play_fill, 0, PLAY_BUF_BYTES - play_fill);
+        cm_write_codec(1, play_cur, 0);
+        ++play_bufs_in; play_cur = 0; play_fill = 0;
+    }
+    if (play_state) {
+        int was_playing = play_state == 2;
+        play_state = 0;
+        /* Drain first: cm_stop_codec would discard buffers still queued. */
+        TickType_t deadline = xTaskGetTickCount() + ms_ticks(2500);
+        while (was_playing && cm_output_busy_count(1)
+               && xTaskGetTickCount() < deadline)
+            vTaskDelay(ms_ticks(10));
+        cm_stop_codec(1, CODEC_OUTPUT);
+        power_amplifier_off();
+        status_packet(WE_FINISHED, WE_OK, play_bytes_in);
+        play_diagnostic_packet();
+    }
+}
 
 void UART0_IRQHandler(void)
 {
-    static uint8_t command[16];
-    static unsigned used;
     BaseType_t wake = pdFALSE;
     if (UART_MaskIntState(UART0, UART_TXInt)) {
         UART_IntMaskConfig(UART0, UART_TXInt, ENABLE);
         UART_IntClear(UART0, UART_TXInt);
         if (tx_space) xSemaphoreGiveFromISR(tx_space, &wake);
     }
-    /* Bounded work even if the host sends noise continuously. */
+    /* Drain the FIFO into the ring; the worker parses packets. */
+    int got = 0;
     for (unsigned n = 0; n < 64 && !UART_FLAGSTAT(UART0, UART_RXFE); ++n) {
         uint32_t raw = UART0->UARTRdDR; /* Read each FIFO entry exactly once. */
-        if (raw & 0xF00) { used = 0; continue; }
-        command[used++] = (uint8_t)raw;
-        if (used != sizeof(command)) continue;
-        const uint8_t fixed[] = {0xa5,0xa5,0x5a,0x5a,0,0};
-        const uint8_t tail[] = {0,0,0,1,0x78,0x56,0x34,0x12};
-        uint32_t event = 0;
-        if (!memcmp(command, fixed, 6) && !memcmp(command + 8, tail, 8) && command[7] == 1) {
-            if (command[6] == 8) event = EV_START;
-            if (command[6] == 6) event = EV_STOP;
-            if (command[6] == 2) event = EV_QUERY;
-#if WE_HOST_PROMPT_ONLY
-            if (command[6] == 11) event = EV_PROMPT;
-#endif
-        }
-        if (event) {
-            if (worker) xTaskNotifyFromISR(worker, event, eSetBits, &wake);
-            used = 0;
-        } else {
-            memmove(command, command + 1, 15);
-            used = 15;
-        }
+        if (raw & 0xF00) continue;
+        uint32_t next = (rx_head + 1) % RX_RING_SIZE;
+        if (next != rx_tail) { rx_ring[rx_head] = (uint8_t)raw; rx_head = next; got = 1; }
+        else ++rx_dropped;
     }
+    if (got && worker) xTaskNotifyFromISR(worker, EV_RXDATA, eSetBits, &wake);
     UART_IntClear(UART0, UART_RXInt);
     portYIELD_FROM_ISR(wake);
+}
+
+static uint32_t rx_avail(void)
+{
+    return (rx_head + RX_RING_SIZE - rx_tail) % RX_RING_SIZE;
+}
+
+/* Parse framed packets out of the ring; commands map to the same event bits
+   the old sliding-window matcher produced. */
+static uint32_t drain_rx_ring(void)
+{
+    static uint8_t hdr[16];
+    uint32_t events = 0;
+    for (;;) {
+        if (rx_avail() < 16) return events;
+        for (unsigned i = 0; i < 16; ++i)
+            hdr[i] = rx_ring[(rx_tail + i) % RX_RING_SIZE];
+        if (hdr[0] != 0xa5 || hdr[1] != 0xa5 || hdr[2] != 0x5a || hdr[3] != 0x5a ||
+            hdr[7] != 1 || hdr[10] != 0 || hdr[11] != 1 ||
+            hdr[12] != 0x78 || hdr[13] != 0x56 || hdr[14] != 0x34 || hdr[15] != 0x12) {
+            rx_tail = (rx_tail + 1) % RX_RING_SIZE;
+            continue;
+        }
+        uint32_t len = (uint32_t)hdr[8] | ((uint32_t)hdr[9] << 8);
+        if (len > PLAY_MAX_PAYLOAD) {
+            rx_tail = (rx_tail + 1) % RX_RING_SIZE;
+            continue;
+        }
+        if (rx_avail() < 16 + len) return events;
+        /* Payload checksum (host: sum(payload) & 0xffff). A skipped/corrupt
+           UART byte would otherwise reach the speaker as loud noise. */
+        uint32_t sum = 0;
+        for (uint32_t i = 0; i < len; ++i)
+            sum += rx_ring[(rx_tail + 16 + i) % RX_RING_SIZE];
+        if ((sum & 0xffffu) != ((uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8))) {
+            rx_tail = (rx_tail + 16 + len) % RX_RING_SIZE;
+            ++rx_bad_packets;
+            continue;
+        }
+        rx_tail = (rx_tail + 16) % RX_RING_SIZE;
+        if (hdr[6] == 0x10 && len) {             /* PLAY_DATA */
+            if (!play_state && !we_prompting) play_begin();
+            if (play_state) play_consume(len);
+            else rx_tail = (rx_tail + len) % RX_RING_SIZE;
+        } else {
+            rx_tail = (rx_tail + len) % RX_RING_SIZE;
+            if (hdr[6] == 0x11) events |= 0x10000u;      /* internal: play end */
+            if (hdr[6] == 8) events |= EV_START;
+            if (hdr[6] == 6) events |= EV_STOP;
+            if (hdr[6] == 2) events |= EV_QUERY;
+#if WE_HOST_PROMPT_ONLY
+            if (hdr[6] == 11) events |= EV_PROMPT;
+            if (hdr[6] == 14) events |= EV_LOOP;
+#endif
+        }
+    }
 }
 
 static void stop_capture(void)
@@ -205,15 +405,46 @@ static void stream_task(void *unused)
 #if WE_HOST_PROMPT_ONLY
     int prompting = 0, prompt_fault = 0;
     TickType_t prompt_start = 0;
+    uint32_t mid_hw[16];
+    int mid_hw_taken = 0;
 #endif
+    /* Pre-charge the codec-1 output path once at boot. On a cold start the
+       DAC bias / HPOUT coupling take a while to ramp, which ate the head of
+       the first stream; with IF_JUST_CLOSE_HPOUT_WHILE_NO_PLAY the bias then
+       stays charged for later streams. The pool is .bss zeros, so this plays
+       silence while the amplifier stays off (no boot pop). */
+    {
+        cm_pcm_buffer_info_t bi;
+        memset(&bi, 0, sizeof(bi));
+        bi.play_buffer_info.block_num = PLAY_BLOCK_NUM;
+        bi.play_buffer_info.buffer_num = PLAY_BUF_COUNT;
+        bi.play_buffer_info.block_size = PLAY_BLOCK_SIZE;
+        bi.play_buffer_info.buffer_size = PLAY_BUF_BYTES;
+        bi.play_buffer_info.pcm_buffer = play_pool;
+        if (cm_config_pcm_buffer(1, CODEC_OUTPUT, &bi) == 0) {
+            cm_sound_info_t si = { .sample_rate = 16000, .channel_flag = 1,
+                                   .sample_depth = IIS_DW_16BIT };
+            cm_config_codec(1, CODEC_OUTPUT, &si);
+            scu_set_device_gate((uint32_t)PDM, ENABLE);
+            scu_set_device_reset((uint32_t)PDM);
+            scu_set_device_reset_release((uint32_t)PDM);
+            pdm_power_up(PDM_CURRENT_128I);
+            pdm_hpout_mute_disable();
+            cm_set_codec_dac_gain(1, 0, 40);
+            cm_start_codec(1, CODEC_OUTPUT);
+            vTaskDelay(ms_ticks(1500));
+            cm_stop_codec(1, CODEC_OUTPUT);
+        }
+    }
     eclic_irq_set_priority(UART0_IRQn, 6, 0);
-    UARTInterruptConfig(UART0, UART_BaudRate115200);
+    UARTInterruptConfig(UART0, UART_BaudRate921600);
     for (;;) {
         uint32_t events = 0;
         xTaskNotifyWait(0, UINT32_MAX, &events, ms_ticks(100));
+        events |= drain_rx_ring();
 #if WE_HOST_PROMPT_ONLY
         if ((events & EV_STOP) && prompting) {
-            we_prompt_cancel(); prompting = 0; prompt_fault = 1;
+            we_prompt_cancel(); prompting = 0; we_prompting = 0; prompt_fault = 1;
         }
         if ((events & EV_PROMPT) && !(events & EV_STOP) && !active && !prompting) {
             if (prompt_fault) status_packet(WE_FAILED, 8, 0);
@@ -221,28 +452,72 @@ static void stream_task(void *unused)
                 stop_capture(); sent = 0;
                 if (we_prompt_start(worker, EV_PROMPT_DONE) != 0) status_packet(WE_FAILED, 8, 0);
                 else {
-                    prompting = 1; prompt_start = xTaskGetTickCount();
+                    prompting = 1; we_prompting = 1; prompt_start = xTaskGetTickCount();
+                    mid_hw_taken = 0;
                     if (!status_packet(5, WE_OK, 0)) {
-                        we_prompt_cancel(); prompting = 0; prompt_fault = 1;
+                        we_prompt_cancel(); prompting = 0; we_prompting = 0; prompt_fault = 1;
                     }
+                }
+            }
+        }
+        if ((events & EV_LOOP) && !(events & EV_STOP) && !active && !prompting) {
+            if (prompt_fault) status_packet(WE_FAILED, 8, 0);
+            else {
+                stop_capture(); sent = 0; produced = 0;
+                queue_peak = encode_peak = send_peak = 0;
+                if (we_encoder_init() != 0) status_packet(WE_FAILED, WE_CODEC, sent);
+                else if (we_prompt_start(worker, EV_PROMPT_DONE) != 0) {
+                    we_encoder_close(); status_packet(WE_FAILED, 8, 0);
+                } else if (!status_packet(WE_STARTED, WE_OK, 0)) {
+                    we_prompt_cancel(); we_encoder_close();
+                } else {
+                    last_audio = session_start = prompt_start = xTaskGetTickCount();
+                    active = 1; prompting = 1; we_prompting = 1; mid_hw_taken = 0;
+                    taskENTER_CRITICAL(); accepting = 1; taskEXIT_CRITICAL();
                 }
             }
         }
         if (prompting) {
             int done = we_prompt_result();
-            if (done == 1) {
-                prompting = 0;
-                prompt_diagnostic_packet();
-                if (status_packet(6, WE_OK, 0)) events |= EV_START;
-            } else if (done < 0 || xTaskGetTickCount() - prompt_start >= ms_ticks(5000)) {
-                prompt_diagnostic_packet();
-                we_prompt_cancel(); prompting = 0; prompt_fault = 1;
-                status_packet(WE_FAILED, 8, 0);
+            if (!mid_hw_taken && xTaskGetTickCount() - prompt_start >= ms_ticks(400)) {
+                we_prompt_hw_snapshot(mid_hw, 1); mid_hw_taken = 1;
             }
-            if (prompting) continue; /* No microphone capture during the prompt. */
+            if (done == 1) {
+                uint32_t post_hw[16];
+                /* v20: keep replaying the prompt while alternating the PC4
+                   amp-enable level; each pass resets the timeout budget. */
+                if (we_prompt_advance()) {
+                    prompt_start = xTaskGetTickCount();
+                    mid_hw_taken = 0;
+                    continue;
+                }
+                prompting = 0; we_prompting = 0;
+                prompt_diagnostic_packet();
+                if (mid_hw_taken) prompt_hw_packet(mid_hw);
+                we_prompt_hw_snapshot(post_hw, 2); prompt_hw_packet(post_hw);
+                if (!active && status_packet(6, WE_OK, 0)) events |= EV_START;
+            } else if (done < 0 || xTaskGetTickCount() - prompt_start >= ms_ticks(5000)) {
+                uint32_t post_hw[16];
+                prompt_diagnostic_packet();
+                if (mid_hw_taken) prompt_hw_packet(mid_hw);
+                we_prompt_hw_snapshot(post_hw, 2); prompt_hw_packet(post_hw);
+                we_prompt_cancel(); prompting = 0; we_prompting = 0; prompt_fault = 1;
+                if (!active) status_packet(WE_FAILED, 8, 0);
+            }
+            if (prompting && !active) continue; /* No microphone capture during the prompt. */
         }
 #endif
+        /* Streaming playback state machine (v23). */
+        if (events & 0x10000u) play_finish();
+        if (play_state == 1 && xTaskGetTickCount() - play_pa_on >= ms_ticks(PLAY_WARMUP_MS)) {
+            play_start_rc = cm_start_codec(1, CODEC_OUTPUT);
+            play_state = 2;
+        }
+        if (play_state &&
+            xTaskGetTickCount() - play_last_data >= ms_ticks(3000))
+            play_finish();      /* host went away mid-stream */
         if (events & EV_STOP) {
+            play_abort();
             stop_capture(); active = 0;
             status_packet(WE_FINISHED, WE_STOP, sent);
         } else if ((events & EV_START) && !active) {
