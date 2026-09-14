@@ -7,11 +7,12 @@ import {RobotDetailView} from './robot-view.js';
 import {RobotLink} from './robot-link.js';
 import {VoiceLink,resolveVoiceBase} from './voice-link.js';
 import {VisionFeed} from './vision-feed.js';
+import {EventFeed} from './event-feed.js';
 
 renderIcons();
 const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
-let visionFeed=null,visionStatus={state:'connecting'};
+let visionFeed=null,visionStatus={state:'connecting'},eventFeed=null;
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -76,6 +77,13 @@ if(link){
   visionFeed=new VisionFeed({url:apiBase.replace(/^http/,'ws')+'/ws/vision',canvas:frame,onStatus:status=>{visionStatus=status;syncVisionStatus()}});
   visionFeed.start();
  }
+ // 실시간 사건도 같은 서버에서 온다 (WBS 4.6.4) — /ws/events 는 비전 채널과
+ // 무관하게 항상 있다. 백로그를 먼저 넘겨주므로 늦게 열어도 최근 사건을 본다.
+ eventFeed=new EventFeed({url:apiBase.replace(/^http/,'ws')+'/ws/events',
+  onEvent:event=>operations.ingestLiveEvent(event),
+  onGap:dropped=>operations.noteEventGap(dropped),
+  onStatus:status=>operations.setEventFeed(status)});
+ eventFeed.start();
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
@@ -134,8 +142,9 @@ function syncMain(){
  document.querySelector('.mission-heading h2').textContent='예시 임무 · '+(operations.mission.status==='idle'?'시작 전':operations.mission.zone+' · '+missionStatus);
  document.querySelectorAll('.mission-progress .step').forEach((element,index)=>{element.classList.remove('done');element.classList.toggle('current',index===(operations.mission.status==='idle'?0:['running','paused'].includes(operations.mission.status)?1:2));element.textContent=index===0?'대기':index===1?(operations.mission.status==='paused'?'일시정지':'점검'):'종료'});
  const events=operations.queryEvents(),pending=events.filter(event=>event.review==='pending').length;
+ const liveCount=events.filter(event=>event.source==='LIVE_FEED').length;
  document.querySelector('.event-summary strong').textContent=(operations.demo?'예시·저장 사건':'저장 사건')+' · 검토 대기 '+pending+'건';
- document.querySelector('.event-summary p').textContent=events.length?'검토 메모와 판단 근거를 확인하세요.':'실시간 사건은 수신되지 않았습니다.';
+ document.querySelector('.event-summary p').textContent=liveCount?'실시간 '+liveCount+'건 포함 · 검토 메모와 판단 근거를 확인하세요.':events.length?'검토 메모와 판단 근거를 확인하세요.':'실시간 사건은 수신되지 않았습니다.';
  $('attention-marker').setAttribute('aria-label','예시 사건 검토 열기');
 }
 operations.subscribe(reason=>{syncMain();panels.refresh(reason)});
@@ -214,7 +223,7 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));
-window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
+window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();eventFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
 const unregisterTools=registerPageTools({document,store:operations,navigate,onError:()=>operations.log('페이지 도구 등록 실패','일반 화면 조작은 계속 사용 가능')});
 window.addEventListener('pagehide',event=>{if(!event.persisted)unregisterTools()});
 $('retry-render').addEventListener('click',()=>location.reload());
