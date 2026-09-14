@@ -202,7 +202,10 @@ $('estop').addEventListener('click',onEstopPressed);
 $('stop-preview').addEventListener('click',()=>operations.requestEstop());
 document.addEventListener('keydown',event=>{
  if(event.key==='Escape'){operations.stop('Escape');if(!$('stop-dialog').open)navigate('dashboard')}
- if(event.shiftKey&&event.key.toLowerCase()==='e'&&!/INPUT|TEXTAREA|SELECT/.test(event.target.tagName)){openStopDialog();event.preventDefault()}
+ // 단축키도 버튼과 **같은 경로**를 탄다 (FR-4.4). 예전에는 여기서 모달만 열어
+ // 연결돼 있어도 한 번 더 눌러야 나갔다 — 버튼 쪽 주석이 "모달을 한 단계 끼우면
+ // 급할 때 그만큼 늦다" 고 적어 둔 바로 그 문제를 단축키만 안고 있었다.
+ if(event.shiftKey&&event.key.toLowerCase()==='e'&&!/INPUT|TEXTAREA|SELECT/.test(event.target.tagName)){onEstopPressed();event.preventDefault()}
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));

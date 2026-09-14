@@ -145,6 +145,7 @@ class Runtime:
             raise ConfigError("network.cmd_rate_hz 는 1 이상이어야 함")
         self._device_id = device_id
         self._dashboard = dashboard
+        self._clock = clock
         self._telemetry_received_at: int | None = None
         # 우리 로봇의 텔레메트리로 받아들이는 이름 — 펌웨어는 MAC 이름을 보낸다 (`telemetry_ids`).
         self._own_ids = telemetry_ids(dict(config), device_id)
@@ -793,6 +794,23 @@ class Runtime:
         """페일세이프(F) 해제 요청을 예약한다. **다른 스레드에서 부른다.**"""
         self._reset_asked = True
 
+    def apply_external(self, event: Event) -> bool:
+        """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**
+
+        ⚠️ **`behavior.event()` 를 직접 부르는 대신 이것을 쓴다.** 직접 부르면 전이는
+        일어나지만 `_apply()` 가 묶어 둔 **대응 단계 갱신과 전이 로그가 함께 빠진다.**
+        2026-09-14 실기에서 그렇게 드러났다 — E-Stop 이 로봇을 잠갔는데 단계가 `L0`
+        (파랑) 에 머물러 **눈 LED 가 흰색으로 바뀌지 않았고**(FR-10.4), `MANUAL` 26.7초의
+        전이도 로그에 한 줄도 남지 않았다. 같은 기록에서 온보드가 스스로 잠근 쪽은
+        `F` 까지 정상으로 올라갔다 — **차이는 잠긴 이유가 아니라 어느 경로로 들어왔는가**였다.
+
+        ⚠️ **예약이 아니라 즉시 적용이다.** `ask_reset()`·`ask_alarm_confirm()` 은 틱을
+        기다리지만 이쪽은 그럴 수 없다 — `ESTOP` 은 틱 하나도 기다리면 안 되고
+        (`estop()` 이 전문을 받은 자리에서 보내는 것과 같은 이유), `MANUAL_ON` 은
+        결과를 그 자리에서 화면에 돌려줘야 한다.
+        """
+        return self._apply(event, self._clock())
+
     def ask_patrol(self) -> None:
         """순찰을 예약한다. **리셋이 정착한 뒤 `IDLE` 에서 시작한다.**
 
@@ -1101,6 +1119,7 @@ def main(argv: list[str] | None = None) -> int:
                     runtime.commander,
                     runtime.send_immediate,
                     request_reset=runtime.ask_reset,
+                    apply_event=runtime.apply_external,
                 )
                 camera = _latest_jpeg(vision) if vision is not None else None
                 stack.enter_context(
