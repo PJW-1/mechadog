@@ -9,10 +9,11 @@ import {registerPageTools} from '../static/webmcp.js';
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
 const source=(await readFile(new URL('../static/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
 const layout=JSON.parse(await readFile(new URL('../static/factory-layout.json',import.meta.url),'utf8'));
-async function boot(hash='dashboard'){
+async function boot(hash='dashboard',{health=null}={}){
  const dom=new JSDOM(html,{url:'http://127.0.0.1:4175/#'+hash,runScripts:'outside-only',pretendToBeVisual:true}),window=dom.window,document=window.document,registered=new Map(),revoked=[];
  let store,panels,view,robotView,robotViewCount=0;const failures=[];window.addEventListener('error',event=>failures.push(event.error));
- window.fetch=async()=>({ok:true,json:async()=>layout});window.URL.createObjectURL=()=> 'blob:local-test';window.URL.revokeObjectURL=url=>revoked.push(url);
+ // health 를 주면 대시보드 서버가 내보낸 화면처럼 실제 연결 경로로 뜬다.
+ window.fetch=async url=>({ok:true,json:async()=>health&&String(url).endsWith('/health')?health:layout});window.URL.createObjectURL=()=> 'blob:local-test';window.URL.revokeObjectURL=url=>revoked.push(url);
  document.modelContext={registerTool:tool=>registered.set(tool.name,tool)};
  window.HTMLDialogElement.prototype.showModal=function(){this.open=true};
  document.documentElement.requestFullscreen=async()=>{document.documentElement.dataset.fullscreenRequested='true'};
@@ -21,9 +22,12 @@ async function boot(hash='dashboard'){
  class View{
   constructor(options){view=this;this.onRobot=options.onRobot;this.onObservation=options.onObservation;this.onError=options.onError}selectRobot(id){this.selected=id}setPatrolRobot(id){this.patrolRobot=id}setPlaying(value){this.playing=value}setCameraVisible(value){this.cameraVisible=value}setWorldVisible(value){this.worldVisible=value}setActive(value){this.active=value}setView(mode){this.mode=mode}focusZone(zone){this.zone=zone}zoom(){}orbit(){}resize(){}dispose(){this.disposed=true}
  }
+ let visionFeed=null;
+ class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){return Promise.resolve({})}}
+ class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class RobotView{constructor({canvas}){robotView=this;this.canvas=canvas;robotViewCount++}setActive(value){this.active=value}resize(){}orbit(angle){this.angle=angle}zoom(value){this.zoomValue=value}reset(){this.resetCalled=true}dispose(){this.disposed=true}}
- await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView);
- return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount}};
+ await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VisionFeed){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,Feed);
+ return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed}};
 }
 
 test('application opens direct hash, aligns 3D and camera selection, routes named scene buttons',async()=>{
@@ -123,6 +127,29 @@ test('fullscreen includes external workspace panels as well as the factory app',
  const {dom,document}=await boot();document.querySelector('#fullscreen').click();assert.equal(document.documentElement.dataset.fullscreenRequested,'true');dom.window.close();
 });
 
+test('served by the dashboard, the robot view draws /ws/vision and says what it actually receives',async()=>{
+ const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:0}}),{dom,document,store,failures}=state,feed=state.visionFeed;
+ const text=id=>document.querySelector('#'+id).textContent;
+ assert.equal(store.live,true);assert.deepEqual(failures,[]);
+ assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/vision');assert.equal(feed.options.canvas,document.querySelector('#vision-frame'));assert.equal(feed.started,true);
+ assert.equal(document.querySelector('#vision-frame').hidden,false);assert.equal(document.querySelector('#fpv').hidden,true);
+ // 연결만 됐다고 "실시간" 이라 하지 않는다.
+ assert.equal(text('frame-source'),'영상 연결 중');assert.doesNotMatch(text('camera-status'),/실시간/);
+ feed.options.onStatus({state:'live',lastFrameAt:Date.UTC(2026,8,14,10,0,0),frameSeq:12,width:640,height:480,detections:3,persons:2});
+ assert.equal(text('frame-source'),'실시간 · 검출 박스');assert.equal(text('camera-status'),'실시간 수신 중 · 검출 3건 · 사람 2명');assert.equal(text('camera-resolution'),'640 × 480');assert.doesNotMatch(text('frame-time'),/—/);
+ assert.equal(document.querySelector('#app').classList.contains('vision-has-frame'),true);
+ feed.options.onStatus({state:'stale',lastFrameAt:Date.UTC(2026,8,14,10,0,0),frameSeq:12,width:640,height:480,detections:3,persons:2});
+ // 다른 화면 갱신이 멈춘 상태를 "실시간" 으로 덮어쓰지 않는다.
+ store.selectRobot('MD-02');
+ assert.equal(text('frame-source'),'영상 멈춤 · 마지막 장면');assert.equal(text('camera-status'),'새 영상 없음');
+ dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
+ dom.window.close();
+});
+test('without a vision channel the robot view does not try to connect',async()=>{
+ const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:null}}),{dom,document}=state;
+ assert.equal(state.visionFeed,null);assert.equal(document.querySelector('#camera-status').textContent,'비전 채널 없음');
+ dom.window.close();
+});
 test('camera expand, collapse and reopen keep labels and rendering in sync',async()=>{
  const {dom,document,view,store}=await boot();
  const dock=document.querySelector('#camera-dock'),expand=document.querySelector('#expand-camera'),collapse=document.querySelector('#collapse-camera');

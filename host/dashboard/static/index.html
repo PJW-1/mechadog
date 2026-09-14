@@ -67,7 +67,7 @@
 <header class="camera-header"><span data-icon="camera"></span><h2 id="camera-title">MD-01 · 로봇 시점</h2><div><button id="expand-camera" aria-label="로봇 시점 크게 보기" title="크게 보기"><span data-icon="expand"></span><span>확대</span></button><button id="collapse-camera" aria-label="로봇 시점 접기" aria-expanded="true"><span data-icon="minus"></span><span>접기</span></button></div></header>
 <div class="camera-body">
 <div class="camera-status"><span class="current-video">현재 영상</span><span id="camera-status">영상 미연결</span><span id="camera-resolution" hidden>가상 시점</span></div>
-<div class="camera-viewport" id="camera-viewport"><canvas id="fpv" aria-label="선택한 로봇의 가상 3D 시점"></canvas><img id="isaac-frame" alt="Isaac Sim에서 수신한 지상 카메라 영상" hidden><span class="frame-badge" id="frame-source">예시 화면 · 실시간 아님</span><span class="camera-axis" id="camera-axis" hidden>MD-01 / FRONT</span></div>
+<div class="camera-viewport" id="camera-viewport"><canvas id="fpv" aria-label="선택한 로봇의 가상 3D 시점"></canvas><canvas id="vision-frame" aria-label="로봇 카메라 영상과 검출 박스" hidden></canvas><span class="frame-badge" id="frame-source">예시 화면 · 실시간 아님</span><span class="camera-axis" id="camera-axis" hidden>MD-01 / FRONT</span></div>
 <footer class="camera-footer"><span id="frame-time">마지막 영상 수신　— <span class="muted">· 관측 전용</span></span><div class="camera-robot-switch" aria-label="카메라 로봇 전환"><button data-robot="MD-01" class="selected" aria-pressed="true">MD-01</button><button data-robot="MD-02" aria-pressed="false">MD-02</button><button data-robot="MD-03" aria-pressed="false">MD-03</button></div></footer>
 </div>
 </section>
