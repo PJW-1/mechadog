@@ -25,6 +25,7 @@ Usage:
     python voice_pipeline.py --port COM8 --model C:\\dev\\voice\\models\\EXAONE-*.gguf
     python voice_pipeline.py --model ... --dry-llm-only     # text in/out, no hardware
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,11 +40,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import serial  # noqa: F401  (type only; stream_client already imports it)
-
+from play_client import CHUNK, PREFILL, end_packet, play_packet
 from stream_client import (
-    STATUS, Decoder, open_port, probe_baud, send_command, make_decoder,
+    STATUS,
+    Decoder,
+    make_decoder,
+    open_port,
+    probe_baud,
+    send_command,
 )
-from play_client import play_packet, end_packet, CHUNK, PREFILL
 
 SYSTEM = (
     "너는 산업 현장을 순찰하는 네발 경비 로봇 '메카독'이다. "
@@ -73,21 +78,24 @@ class Hub:
     drained between listening turns. `say` items play even in standby —
     관제 공지가 대기 중인 로봇에서도 나가야 하므로.
     """
+
     def __init__(self, robot_id):
         self.robot_id = robot_id
-        self.mode = "active"          # active | standby
-        self.activity = "boot"        # listening | thinking | speaking | idle
+        self.mode = "active"  # active | standby
+        self.activity = "boot"  # listening | thinking | speaking | idle
         self.events = deque(maxlen=200)
         self.say_q = queue.PriorityQueue()
         self._seq = 0
         self.lock = threading.Lock()
 
     def event(self, role, text):
-        self.events.append({
-            "ts": time.strftime("%H:%M:%S"),
-            "role": role,               # user | robot | admin | system
-            "text": text,
-        })
+        self.events.append(
+            {
+                "ts": time.strftime("%H:%M:%S"),
+                "role": role,  # user | robot | admin | system
+                "text": text,
+            }
+        )
 
     def enqueue_say(self, text, urgent=False):
         with self.lock:
@@ -208,6 +216,7 @@ def make_handler(hub):
 
         def log_message(self, *a):
             pass
+
     return H
 
 
@@ -223,7 +232,7 @@ def _strip_wake(text):
     norm = _PUNCT.sub("", text)
     for w in WAKE_PREFIXES:
         if norm.startswith(w):
-            return norm[len(w):]
+            return norm[len(w) :]
     return None
 
 
@@ -244,7 +253,7 @@ def load_knowledge():
 
 def _bigrams(s):
     n = _PUNCT.sub("", s)
-    return {n[i:i + 2] for i in range(len(n) - 1)}
+    return {n[i : i + 2] for i in range(len(n) - 1)}
 
 
 def retrieve(docs, query, max_chars=1200):
@@ -252,15 +261,17 @@ def retrieve(docs, query, max_chars=1200):
     q = _bigrams(query)
     if not q or not docs:
         return ""
+
     def score(d):
         name, body = d
         return len(q & _bigrams(body)) + 3 * len(q & _bigrams(name))
+
     scored = sorted(docs, key=score, reverse=True)
     out, used = [], 0
     for name, body in scored[:3]:
         if score((name, body)) == 0 or used >= max_chars:
             break
-        chunk = body[:max_chars - used]
+        chunk = body[: max_chars - used]
         out.append(f"[{name}]\n{chunk}")
         used += len(chunk)
     return "\n\n".join(out)
@@ -282,9 +293,12 @@ def _wait_phase(device, decoder, phase, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for packet in _pump(device, decoder):
-            if packet.message_type == 0x102 and len(packet.payload) == STATUS.size:
-                if STATUS.unpack(packet.payload)[1] == phase:
-                    return True
+            if (
+                packet.message_type == 0x102
+                and len(packet.payload) == STATUS.size
+                and STATUS.unpack(packet.payload)[1] == phase
+            ):
+                return True
     raise TimeoutError(f"no status phase {phase} within {timeout}s")
 
 
@@ -298,6 +312,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
     """
     import av
     import numpy as np
+
     for attempt in range(3):
         send_command(device, 0x102)
         try:
@@ -312,15 +327,18 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
     pcm_decoder = make_decoder()
     resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
     pcm = bytearray()
-    rms_history = []          # per-20 ms-frame RMS
+    rms_history = []  # per-20 ms-frame RMS
     speech_seen = False
     last_speech = 0.0
     deadline = time.monotonic() + timeout_s
     done = False
     while not done and time.monotonic() < deadline:
         for packet in _pump(device, decoder):
-            if (packet.message_type == 0x105 and len(packet.payload) == 43
-                    and packet.payload[0] == 42):
+            if (
+                packet.message_type == 0x105
+                and len(packet.payload) == 43
+                and packet.payload[0] == 42
+            ):
                 for frame in pcm_decoder.decode(av.Packet(packet.payload[1:])):
                     for out in resampler.resample(frame):
                         pcm.extend(bytes(out.planes[0])[: out.samples * 2])
@@ -330,8 +348,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
                 if vad:
                     now = time.monotonic()
                     # 소음 바닥: 발화 전 초기 25프레임(500ms)의 중앙값
-                    floor = (np.median(rms_history[:25])
-                             if len(rms_history) >= 25 else 200.0)
+                    floor = np.median(rms_history[:25]) if len(rms_history) >= 25 else 200.0
                     if rms > max(floor * 3.0, 300.0):
                         speech_seen, last_speech = True, now
                     if speech_seen and now - last_speech > 1.0:
@@ -349,21 +366,23 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
 
 def transcribe(model, pcm_bytes):
     import numpy as np
+
     audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-    segments, _ = model.transcribe(audio, language="ko", beam_size=5,
-                                 vad_filter=True)
+    segments, _ = model.transcribe(audio, language="ko", beam_size=5, vad_filter=True)
     return " ".join(seg.text.strip() for seg in segments).strip()
 
 
 def reply(llm, history, user_text, context=""):
     if context:
-        user_text = (f"[참고 자료]\n{context}\n\n"
-                     f"[질문] {user_text}\n"
-                     "(답변은 참고 자료의 내용만 근거로 한다. 자료에 없으면 없다고 말한다.)")
+        user_text = (
+            f"[참고 자료]\n{context}\n\n"
+            f"[질문] {user_text}\n"
+            "(답변은 참고 자료의 내용만 근거로 한다. 자료에 없으면 없다고 말한다.)"
+        )
     history.append({"role": "user", "content": user_text})
     out = llm.create_chat_completion(
-        messages=[{"role": "system", "content": SYSTEM}] + history,
-        max_tokens=96, temperature=0.6)
+        messages=[{"role": "system", "content": SYSTEM}] + history, max_tokens=96, temperature=0.6
+    )
     text = out["choices"][0]["message"]["content"].strip()
     history.append({"role": "assistant", "content": text})
     return text
@@ -372,14 +391,18 @@ def reply(llm, history, user_text, context=""):
 def _to_pcm16k(data, rate):
     """float32 mono -> 16 kHz PCM16 bytes."""
     import numpy as np
+
     if data.ndim > 1:
         data = data.mean(axis=1)
     if rate != 16000:
         import av
+
         resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
         frame = av.AudioFrame.from_ndarray(
             np.ascontiguousarray(data.astype(np.float32)).reshape(1, -1),
-            format="flt", layout="mono")
+            format="flt",
+            layout="mono",
+        )
         frame.sample_rate = rate
         out = bytearray()
         for f in resampler.resample(frame):
@@ -392,17 +415,19 @@ def _to_pcm16k(data, rate):
 
 def synth_piper(voice, text, length_scale=1.0):
     """Piper (CPU, ~0.2 s/sentence) -> 16 kHz PCM16. Default for the live loop."""
-    from piper import SynthesisConfig
     import numpy as np
+    from piper import SynthesisConfig
+
     syn = SynthesisConfig(length_scale=length_scale) if length_scale != 1.0 else None
     pcm = bytearray()
     for chunk in voice.synthesize(text, syn_config=syn):
         pcm.extend(chunk.audio_int16_bytes)
     import av
+
     resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
     frame = av.AudioFrame.from_ndarray(
-        np.frombuffer(bytes(pcm), dtype=np.int16).reshape(1, -1),
-        format="s16", layout="mono")
+        np.frombuffer(bytes(pcm), dtype=np.int16).reshape(1, -1), format="s16", layout="mono"
+    )
     frame.sample_rate = voice.config.sample_rate
     out = bytearray()
     for f in resampler.resample(frame):
@@ -414,8 +439,9 @@ def synth_piper(voice, text, length_scale=1.0):
 
 def synth_orpheus(text, device="cuda:0"):
     """Orpheus 3B (GPU, ~30 s/sentence) -> 16 kHz PCM16. Higher quality, offline."""
-    import synth_prompt_orpheus as orpheus
     import soundfile as sf
+    import synth_prompt_orpheus as orpheus
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         target = tmp.name
     try:
@@ -431,7 +457,7 @@ def stream_play(device, pcm, pad_s=0.25):
     pcm = b"\x00" * int(32000 * pad_s) + pcm
     t0, sent = time.monotonic(), 0
     for offset in range(0, len(pcm), CHUNK):
-        payload = pcm[offset:offset + CHUNK]
+        payload = pcm[offset : offset + CHUNK]
         if device.write(play_packet(payload)) != 16 + len(payload):
             raise TimeoutError("incomplete PLAY_DATA write")
         sent += len(payload)
@@ -451,26 +477,35 @@ def main():
     ap.add_argument("--baud", type=int, default=0)
     ap.add_argument("--turns", type=int, default=0, help="0 = loop forever")
     ap.add_argument("--tts", choices=["piper", "orpheus"], default="piper")
-    ap.add_argument("--speed", type=float, default=1.2,
-                    help="piper length_scale — 1.0 원속, 크면 느려짐 (기본 1.2)")
-    ap.add_argument("--piper-model", type=Path,
-                    default=Path(r"C:\dev\voice\piper\ko_KR-kss-medium.onnx"))
-    ap.add_argument("--dry-llm-only", action="store_true",
-                    help="no mic/speaker; type user text, see the reply text")
-    ap.add_argument("--web", type=int, default=0,
-                    help="관제 API HTTP 포트 — 0이면 비활성 (예: 8090)")
-    ap.add_argument("--robot-id", default="mechadog-01",
-                    help="관제웹에 표시할 로봇 식별자")
+    ap.add_argument(
+        "--speed",
+        type=float,
+        default=1.2,
+        help="piper length_scale — 1.0 원속, 크면 느려짐 (기본 1.2)",
+    )
+    ap.add_argument(
+        "--piper-model", type=Path, default=Path(r"C:\dev\voice\piper\ko_KR-kss-medium.onnx")
+    )
+    ap.add_argument(
+        "--dry-llm-only",
+        action="store_true",
+        help="no mic/speaker; type user text, see the reply text",
+    )
+    ap.add_argument(
+        "--web", type=int, default=0, help="관제 API HTTP 포트 — 0이면 비활성 (예: 8090)"
+    )
+    ap.add_argument("--robot-id", default="mechadog-01", help="관제웹에 표시할 로봇 식별자")
     args = ap.parse_args()
 
     if args.say:
         from piper import PiperVoice
+
         piper = PiperVoice.load(str(args.piper_model))
         baud = args.baud or probe_baud(args.port)
         device = open_port(args.port, baud)
         try:
             pcm_out = synth_piper(piper, args.say, args.speed)
-            print(f"[tts] {len(pcm_out)/64000:.1f}s audio -> {args.port} @ {baud}")
+            print(f"[tts] {len(pcm_out) / 64000:.1f}s audio -> {args.port} @ {baud}")
             stream_play(device, pcm_out)
         finally:
             device.close()
@@ -484,6 +519,7 @@ def main():
         start_web(hub, args.web)
 
     from llama_cpp import Llama
+
     llm = Llama(model_path=str(args.model), n_gpu_layers=-1, n_ctx=4096, verbose=False)
     history = []
     knowledge = load_knowledge()
@@ -493,9 +529,11 @@ def main():
     device, decoder, stt, piper = None, None, None, None
     if args.tts == "piper":
         from piper import PiperVoice
+
         piper = PiperVoice.load(str(args.piper_model))
     if not args.dry_llm_only:
         from faster_whisper import WhisperModel
+
         stt = WhisperModel(args.whisper, device="cuda", compute_type="float16")
         baud = args.baud or probe_baud(args.port)
         device = open_port(args.port, baud)
@@ -529,7 +567,7 @@ def main():
                 if not speech_seen:
                     print("[vad] no speech — skip")
                     continue
-                print(f"[vad] captured {len(pcm)/32000:.1f}s")
+                print(f"[vad] captured {len(pcm) / 32000:.1f}s")
                 hub.activity = "thinking"
                 text = transcribe(stt, pcm)
                 print(f"[stt] {text!r}")
@@ -559,26 +597,32 @@ def main():
                     continue
                 if any(w in query for w in EMERGENCY_WORDS):
                     print("[cmd] EMERGENCY — logged")
-                    with open("emergency_log.txt", "a", encoding="utf-8") as f:
+                    with Path("emergency_log.txt").open("a", encoding="utf-8") as f:
                         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text!r}\n")
                     hub.event("system", f"비상: {text}")
                     hub.activity = "speaking"
-                    _say(device, piper,
-                         "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
-                         args.speed)
+                    _say(
+                        device,
+                        piper,
+                        "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
+                        args.speed,
+                    )
                     continue
                 text = query or "불렀어?"
             hub.activity = "thinking"
             t0 = time.time()
             answer = reply(llm, history, text, retrieve(knowledge, text))
             hub.event("robot", answer)
-            print(f"[llm] {answer!r} ({time.time()-t0:.1f}s)")
+            print(f"[llm] {answer!r} ({time.time() - t0:.1f}s)")
             if args.dry_llm_only:
                 continue
             t0 = time.time()
-            pcm_out = (synth_piper(piper, answer, args.speed)
-                       if args.tts == "piper" else synth_orpheus(answer))
-            print(f"[tts] {len(pcm_out)/64000:.1f}s audio ({time.time()-t0:.1f}s synth)")
+            pcm_out = (
+                synth_piper(piper, answer, args.speed)
+                if args.tts == "piper"
+                else synth_orpheus(answer)
+            )
+            print(f"[tts] {len(pcm_out) / 64000:.1f}s audio ({time.time() - t0:.1f}s synth)")
             hub.activity = "speaking"
             stream_play(device, pcm_out)
     except KeyboardInterrupt:

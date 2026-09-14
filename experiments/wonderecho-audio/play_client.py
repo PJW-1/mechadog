@@ -10,7 +10,9 @@ first audible sample.
 --record also starts a microphone capture (command 0x108) so the speaker
 output is measurable in the returned voice.wav (loopback verification).
 """
+
 import argparse
+import contextlib
 import json
 import math
 import struct
@@ -19,16 +21,18 @@ import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from protocol import Decoder, HEADER
-from stream_client import STATUS, open_port, probe_baud, send_command, save_wave
+from protocol import HEADER, Decoder
+from stream_client import STATUS, open_port, probe_baud, save_wave, send_command
 
-CHUNK = 2048        # PCM16 bytes per PLAY_DATA packet (32 ms; firmware max payload)
-PREFILL = 4096      # bytes sent unpaced at stream start (~128 ms; pool fills during warmup anyway)
+CHUNK = 2048  # PCM16 bytes per PLAY_DATA packet (32 ms; firmware max payload)
+PREFILL = 4096  # bytes sent unpaced at stream start (~128 ms; pool fills during warmup anyway)
 
 
 def play_packet(payload):
-    return HEADER.pack(0x5A5AA5A5, sum(payload) & 0xFFFF, 0x110,
-                       len(payload), 0x100, 0x12345678) + payload
+    return (
+        HEADER.pack(0x5A5AA5A5, sum(payload) & 0xFFFF, 0x110, len(payload), 0x100, 0x12345678)
+        + payload
+    )
 
 
 def end_packet():
@@ -45,20 +49,27 @@ def load_pcm(source, tone_seconds=0.0, pad_s=0.0):
     samples = int(16000 * tone_seconds)
     pcm = bytearray()
     for i in range(samples):
-        envelope = min(1.0, i / 800, (samples - i) / 800)   # 50 ms edge ramps
+        envelope = min(1.0, i / 800, (samples - i) / 800)  # 50 ms edge ramps
         pcm += struct.pack("<h", int(12000 * envelope * math.sin(2 * math.pi * 440 * i / 16000)))
     return pad + bytes(pcm)
 
 
 def play(port, pcm, folder, record=False, baud=0):
     import serial
+
     folder.mkdir(parents=True, exist_ok=False)
     baudrate = baud or probe_baud(port)
     device = open_port(port, baudrate)
     decoder = Decoder(max_payload=256)
     frames = []
-    report = {"port": port, "baudrate": baudrate, "pcm_bytes": len(pcm),
-              "record": record, "success": False, "source": "physical USB playback"}
+    report = {
+        "port": port,
+        "baudrate": baudrate,
+        "pcm_bytes": len(pcm),
+        "record": record,
+        "success": False,
+        "source": "physical USB playback",
+    }
     try:
         send_command(device, 0x102)
         ready = False
@@ -79,15 +90,18 @@ def play(port, pcm, folder, record=False, baud=0):
             while not started and time.monotonic() < deadline:
                 data = device.read(min(device.in_waiting, 4096) or 1)
                 for packet in decoder.feed(data, now=time.monotonic()):
-                    if packet.message_type == 0x102 and len(packet.payload) == STATUS.size:
-                        if STATUS.unpack(packet.payload)[1] == 2:
-                            started = True
+                    if (
+                        packet.message_type == 0x102
+                        and len(packet.payload) == STATUS.size
+                        and STATUS.unpack(packet.payload)[1] == 2
+                    ):
+                        started = True
             if not started:
                 raise TimeoutError("Capture did not start")
         t0 = time.monotonic()
         sent_bytes = 0
         for offset in range(0, len(pcm), CHUNK):
-            payload = pcm[offset:offset + CHUNK]
+            payload = pcm[offset : offset + CHUNK]
             if device.write(play_packet(payload)) != 16 + len(payload):
                 raise TimeoutError("Incomplete PLAY_DATA write")
             sent_bytes += len(payload)
@@ -109,15 +123,30 @@ def play(port, pcm, folder, record=False, baud=0):
                     _, phase, reason, sent, _ = STATUS.unpack(packet.payload)
                     if phase == 3 and reason == 0:
                         report["device_bytes"] = sent
-                        report["finished_lag_ms"] = round((time.monotonic() - t0) * 1000
-                                                          - len(pcm) / 32, 1)
+                        report["finished_lag_ms"] = round(
+                            (time.monotonic() - t0) * 1000 - len(pcm) / 32, 1
+                        )
                         play_done = sent == len(pcm)
                 elif packet.message_type == 0x112 and len(packet.payload) in (32, 36, 40):
-                    keys = ("bytes_in", "bufs_in", "underrun", "rx_dropped",
-                            "output_irqs", "tx_peak", "cfg_rc", "start_rc",
-                            "level_peak", "rx_bad")[:len(packet.payload) // 4]
-                    report["play_diagnostics"] = dict(zip(
-                        keys, struct.unpack(f"<{len(packet.payload)//4}I", packet.payload)))
+                    keys = (
+                        "bytes_in",
+                        "bufs_in",
+                        "underrun",
+                        "rx_dropped",
+                        "output_irqs",
+                        "tx_peak",
+                        "cfg_rc",
+                        "start_rc",
+                        "level_peak",
+                        "rx_bad",
+                    )[: len(packet.payload) // 4]
+                    report["play_diagnostics"] = dict(
+                        zip(
+                            keys,
+                            struct.unpack(f"<{len(packet.payload) // 4}I", packet.payload),
+                            strict=True,
+                        )
+                    )
                 elif packet.message_type == 0x105 and record and len(frames) < 250:
                     if len(packet.payload) == 43 and packet.payload[0] == 42:
                         frames.append(packet.payload[1:])
@@ -129,8 +158,12 @@ def play(port, pcm, folder, record=False, baud=0):
             while time.monotonic() < deadline:
                 data = device.read(min(device.in_waiting, 4096) or 1)
                 for packet in decoder.feed(data, now=time.monotonic()):
-                    if (packet.message_type == 0x105 and len(frames) < 250
-                            and len(packet.payload) == 43 and packet.payload[0] == 42):
+                    if (
+                        packet.message_type == 0x105
+                        and len(frames) < 250
+                        and len(packet.payload) == 43
+                        and packet.payload[0] == 42
+                    ):
                         frames.append(packet.payload[1:])
             if frames:
                 save_wave(frames, folder / "voice.wav")
@@ -141,10 +174,8 @@ def play(port, pcm, folder, record=False, baud=0):
         raise
     finally:
         if device.is_open:
-            try:
+            with contextlib.suppress(serial.SerialException, TimeoutError):
                 send_command(device, 0x106)
-            except (serial.SerialException, TimeoutError):
-                pass
             device.close()
         (folder / "play.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
@@ -152,23 +183,40 @@ def play(port, pcm, folder, record=False, baud=0):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", required=True, help="Confirmed voice-module COM port; never the robot")
+    parser.add_argument(
+        "--port", required=True, help="Confirmed voice-module COM port; never the robot"
+    )
     parser.add_argument("--wav", type=Path, help="Mono 16 kHz PCM16 WAV to stream")
-    parser.add_argument("--tone", type=float, default=0.0,
-                        help="Seconds of 440 Hz test tone when --wav is absent")
-    parser.add_argument("--pad", type=float, default=0.3,
-                        help="Seconds of silence prepended to mask amp/DAC power-on pop")
-    parser.add_argument("--record", action="store_true",
-                        help="Capture the microphone during playback into voice.wav")
-    parser.add_argument("--baud", type=int, default=0,
-                        help="UART baud rate; 0 (default) probes 921600 then 115200")
-    parser.add_argument("--out", type=Path, help="New measurement directory; existing directories are refused")
+    parser.add_argument(
+        "--tone", type=float, default=0.0, help="Seconds of 440 Hz test tone when --wav is absent"
+    )
+    parser.add_argument(
+        "--pad",
+        type=float,
+        default=0.3,
+        help="Seconds of silence prepended to mask amp/DAC power-on pop",
+    )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help="Capture the microphone during playback into voice.wav",
+    )
+    parser.add_argument(
+        "--baud", type=int, default=0, help="UART baud rate; 0 (default) probes 921600 then 115200"
+    )
+    parser.add_argument(
+        "--out", type=Path, help="New measurement directory; existing directories are refused"
+    )
     args = parser.parse_args()
     if not args.wav and not args.tone:
         args.tone = 1.0
     now = datetime.now(timezone(timedelta(hours=9)))
-    output = args.out or (Path(__file__).resolve().parents[2] / "로봇독 프로젝트" /
-                          "05_실물_측정결과" / now.strftime("%Y-%m-%d") /
-                          now.strftime("WonderEcho_play_%H%M%S"))
+    output = args.out or (
+        Path(__file__).resolve().parents[2]
+        / "로봇독 프로젝트"
+        / "05_실물_측정결과"
+        / now.strftime("%Y-%m-%d")
+        / now.strftime("WonderEcho_play_%H%M%S")
+    )
     pcm = load_pcm(args.wav, args.tone, args.pad)
     print(json.dumps(play(args.port, pcm, output, record=args.record, baud=args.baud), indent=2))
