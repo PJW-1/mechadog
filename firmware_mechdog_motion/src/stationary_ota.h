@@ -10,8 +10,13 @@
 
 namespace mechadog {
 struct SensorSnapshot;
-// Optional, actuator-OFF maintenance updater. No motor or Wire operations.
+// Optional maintenance updater. No motor or Wire operations. Actuator-OFF
+// builds are always parked; actuator builds are parked only in SERVICE mode.
 bool beginStationaryOta();
 void pollStationaryOta(bool wifi_connected, const SensorSnapshot& sample);
+// True while the body is guaranteed stationary: always in actuator-OFF
+// builds, in actuator builds only while SERVICE mode has parked it. Defined
+// by the sketch; the update/confirm handlers reject while it returns false.
+bool serviceModeParked();
 }  // namespace mechadog
 #endif

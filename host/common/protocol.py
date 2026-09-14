@@ -38,10 +38,22 @@ from typing import Any
 #  1. 규약 상수 — PROTOCOL.md 2절 · 5절
 # ══════════════════════════════════════════════════════════════
 
-#: 제어 명령 10종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
+#: 제어 명령 11종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
 #: 항상 하위 호환이다 (PROTOCOL.md 4절). `STATE` 가 그 첫 사례다.
 COMMAND_TYPES: frozenset[str] = frozenset(
-    {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE", "ESTOP", "RESET_SAFE"}
+    {
+        "MOVE",
+        "POSE",
+        "GAIT",
+        "STOP",
+        "ACTION",
+        "LED",
+        "SOUND",
+        "STATE",
+        "ESTOP",
+        "RESET_SAFE",
+        "SERVICE",
+    }
 )
 
 #: 모든 명령의 공통 필수 필드. `seq`·`ts` 는 **정수**, `type` 은 문자열이다.
@@ -60,10 +72,15 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "LED": frozenset({"color", "blink_hz"}),
     "SOUND": frozenset({"phrase_id"}),
     "STATE": frozenset({"state"}),
+    "SERVICE": frozenset({"mode"}),
 }
 
+#: SERVICE 명령의 mode 값. 모르는 값은 폐기 + WARN — 상태와 같은 이유로
+#: 모드 추가를 하위 호환으로 만든다.
+SERVICE_MODES: frozenset[str] = frozenset({"enter", "exit"})
+
 #: 문자열로 받는 필드. 나머지 필수 필드는 전부 수치다.
-STRING_FIELDS: frozenset[str] = frozenset({"color", "state"})
+STRING_FIELDS: frozenset[str] = frozenset({"color", "state", "mode"})
 INTEGER_FIELDS: frozenset[str] = frozenset({"dur", "lift_time", "ground_time", "id", "phrase_id"})
 NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
     "POSE": ("dur",),
@@ -143,7 +160,7 @@ FLAG_FIELDS: tuple[str, ...] = ("lowbatt", "tipped", "link_ok")
 #: `AVOID` 는 호스트가 `STATE` 로 내려보낸 값이 되돌아온 것일 수도 있어서,
 #: **해제됐는지를 그 값으로 알 수 없다.** `safety_latched` 가 `FAILSAFE` 에 대해
 #: 같은 문제를 푸는 방식과 동일하다.
-OPTIONAL_FLAG_FIELDS: tuple[str, ...] = ("obstacle",)
+OPTIONAL_FLAG_FIELDS: tuple[str, ...] = ("obstacle", "service")
 
 #: `TelemetryEncoder` 가 스스로 채우며 `extra` 로 덮을 수 없는 필드.
 #: 나머지 본문 필드(`state`·`dist_cm`·`imu`·`batt_v`·`last_cmd_age_ms`·`flags`)는
@@ -383,6 +400,8 @@ class CommandEncoder:
             raise ValueError(f"{type_} 필수 필드 누락: {sorted(missing)}")
         if type_ == "STATE" and not _known(fields["state"], FSM_STATES):
             raise ValueError(f"알 수 없는 상태: {fields['state']!r}")
+        if type_ == "SERVICE" and not _known(fields["mode"], SERVICE_MODES):
+            raise ValueError(f"알 수 없는 서비스 모드: {fields['mode']!r}")
         if error := _command_field_error(type_, fields):
             raise ValueError(error)
 
@@ -438,6 +457,15 @@ class CommandEncoder:
         감지했다면 로봇은 `FAILSAFE` 를 보고한다.
         """
         return self.encode("STATE", state=state)
+
+    def service(self, mode: str) -> str:
+        """SERVICE 모드 전환 — 루프 워치독을 단 런타임 진입/해제.
+
+        `enter` 는 몸을 주차(safe 래치 + 보행 차단)한 뒤 워치독을 걸고,
+        `exit` 는 워치독을 해제한다. 해제 후에도 safe 래치는 남으므로
+        보행 복귀에는 `RESET_SAFE` 가 필요하다.
+        """
+        return self.encode("SERVICE", mode=mode)
 
 
 class CommandDecoder:
@@ -513,6 +541,8 @@ class CommandDecoder:
         # 이유로 상태 추가를 하위 호환으로 만든다.
         if type_ == "STATE" and not _known(msg["state"], FSM_STATES):
             return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {msg['state']!r}")
+        if type_ == "SERVICE" and not _known(msg["mode"], SERVICE_MODES):
+            return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 서비스 모드: {msg['mode']!r}")
 
         # ② 범위 초과는 폐기가 아니라 클램핑
         return _accept(*apply_clamps(msg))
