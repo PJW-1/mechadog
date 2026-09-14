@@ -38,6 +38,11 @@ PERIOD_S = 0.1
 SEND_TIMEOUT_S = 1.0
 MAX_CLIENTS = 16
 CAMERA_PERIOD_S = 0.1
+# 새 추론 결과가 나왔는지 보는 주기. ⚠️ **추론 주기(25fps = 40ms)보다 짧아야 한다.**
+# 0.1 이던 때는 확인 사이에 나온 결과가 버려져 화면이 초당 10장으로 묶였다 —
+# 4.5.2 실측 "초당 9.8" 이 추론률이 아니라 이 상한이었다. 한 번 보는 일은 최신
+# 참조를 꺼내 같은 객체인지 비교하는 것뿐이다. 기존 MJPEG 폴링 주기와 섞지 않는다.
+VISION_POLL_PERIOD_S = 0.01
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
 # 관제 화면은 빌드 없이 이 폴더를 그대로 내보낸다. three.js 도 `static/vendor/` 에
 # 함께 싣는다 — 설치에 기대면 빠뜨렸을 때 app.js 가 첫 import 에서 실패해 화면의
@@ -152,7 +157,7 @@ class VisionHub:
     async def run(self) -> None:
         while True:
             self.broadcast()
-            await asyncio.sleep(CAMERA_PERIOD_S)
+            await asyncio.sleep(VISION_POLL_PERIOD_S)
 
 
 async def _send_updates(websocket: WebSocket, queue: asyncio.Queue) -> None:

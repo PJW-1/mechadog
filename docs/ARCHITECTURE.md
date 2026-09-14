@@ -596,7 +596,7 @@ mechdog_physical_ai/
 │   ├── vision/                        ✅ MJPEG 수신·재연결·큐·검출기·추론 워커·사람 게이트·다중 인원 추적 (3.3.1~4, 4.3.3~5)·사원증 마커 판독 (3.8.1)
 │   ├── telemetry/                     ✅ 텔레메트리 수신·사건 변환 (4.3.6)
 │   ├── runtime.py                     ✅ UDP 운용 루프 + 비전 워커 수명 관리 (4.3.7, 3.3.2)
-│   └── dashboard/                     ⬜ FastAPI + WebSocket + UI (4.5 · 4.6)
+│   └── dashboard/                     ✅ FastAPI + WS + 실제 검출 FPV (4.5 · 4.6.1)
 ├── tools/
 │   ├── mock_mechdog.py                ✅ 가상 MechDog — 로봇 없이 호스트를 검증
 │   ├── teleop.py                      ✅ 키보드 수동 조작

@@ -5,10 +5,26 @@ import {OperationalPanels} from './panels.js';
 import {registerPageTools} from './webmcp.js';
 import {RobotDetailView} from './robot-view.js';
 import {RobotLink} from './robot-link.js';
+import {VisionFeed} from './vision-feed.js';
 
 renderIcons();
 const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
+let visionFeed=null,visionStatus={state:'connecting'};
+// 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
+// "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
+const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
+function syncVisionStatus(){
+ $('app').classList.toggle('vision-has-frame',!!visionStatus.lastFrameAt);
+ if(!operations.live)return;
+ const [badge,status]=VISION_TEXT[visionStatus.state]||VISION_TEXT.connecting;
+ $('frame-source').textContent=badge;
+ $('camera-status').textContent=visionStatus.state==='live'?status+' · 검출 '+visionStatus.detections+'건 · 사람 '+visionStatus.persons+'명':status;
+ $('camera-resolution').hidden=visionStatus.state!=='live';
+ if(visionStatus.state==='live')$('camera-resolution').textContent=visionStatus.width+' × '+visionStatus.height;
+ const at=visionStatus.lastFrameAt?new Date(visionStatus.lastFrameAt).toLocaleTimeString('ko-KR',{hour12:false}):'—';
+ $('frame-time').innerHTML='마지막 영상 수신　'+at+' <span class="muted">· 관측 전용</span>';
+}
 const cameraDock=$('camera-dock'),cameraHome=cameraDock.parentElement,cameraNext=cameraDock.nextElementSibling;
 let storage=null;try{storage=localStorage}catch{/* Restricted browsers can still use session-only drafts. */}
 // 실제 대시보드 연결은 **명시적으로 켤 때만** 붙는다 (WBS 4.6.3). 주소를 주지
@@ -42,14 +58,19 @@ const link=apiBase?new RobotLink({baseUrl:apiBase}):null;
 const operations=new Operations({storage,link});
 if(link){
  operations.setDemo(false);
- // 실제 카메라는 XIAO 가 단일 클라이언트만 받으므로 서버가 비전 워커의
- // 최신 프레임을 재송출하는 /camera/stream 을 연다 — 판정에 들어간 화면과
- // 같은 영상이다.
- const frame=$('isaac-frame'),fpv=$('fpv');
- frame.src=apiBase+'/camera/stream';
+ // 로봇 시점 창은 /ws/vision 을 그린다 (WBS 4.6.1) — 검출 박스와 그 박스를
+ // 계산한 JPEG 가 한 메시지로 온다. 카메라 스트림에 박스를 얹지 않는다.
+ // 비전을 끄고 띄우면(--no-vision) /health 의 vision_clients 가 null 이고
+ // 채널이 없으므로 연결을 시도하지 않는다.
+ const frame=$('vision-frame'),fpv=$('fpv');
  frame.hidden=false;
  if(fpv)fpv.hidden=true;
- frame.onerror=()=>{$('camera-status').textContent='영상 수신 실패 · 서버 확인';};
+ const health=await fetch(apiBase+'/health').then(response=>response.json()).catch(()=>null);
+ if(health?.vision_clients===null)visionStatus={state:'off'};
+ else{
+  visionFeed=new VisionFeed({url:apiBase.replace(/^http/,'ws')+'/ws/vision',canvas:frame,onStatus:status=>{visionStatus=status;syncVisionStatus()}});
+  visionFeed.start();
+ }
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
@@ -88,9 +109,14 @@ function syncMain(){
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
  $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'실제 지도·위치 미수신 · 예시 숨김';
- $('frame-source').textContent=operations.live?'실시간 · 로봇 카메라':(operations.demo?(operations.stale?'예시 수신 만료 · 갱신 대기':'예시 화면 · 실시간 아님'):'영상 미수신 · 연결 대기');
- $('camera-status').textContent=operations.live?'실시간 수신 중':'실제 영상 미연결';
- $('frame-time').innerHTML=operations.live?'실시간 스트림 수신 중 <span class="muted">· 관측 전용</span>':'마지막 영상 수신　— <span class="muted">· 관측 전용</span>';
+ if(operations.live)syncVisionStatus();
+ else{
+  $('app').classList.remove('vision-has-frame');
+  $('frame-source').textContent=operations.demo?(operations.stale?'예시 수신 만료 · 갱신 대기':'예시 화면 · 실시간 아님'):'영상 미수신 · 연결 대기';
+  $('camera-status').textContent='실제 영상 미연결';
+  $('camera-resolution').hidden=true;
+  $('frame-time').innerHTML='마지막 영상 수신　— <span class="muted">· 관측 전용</span>';
+ }
  $('estop').classList.toggle('preview-latched',operations.estop);
  $('estop').setAttribute('aria-label',operations.live?'긴급 정지 · 로봇에 즉시 전송':operations.estop?'긴급 정지 안내 · 웹 예시 정지 잠금 중':'긴급 정지 안내 · 실제 장비 미연결');
  // 버튼에 적힌 말과 실제로 하는 일이 다르면 안 된다.
@@ -180,7 +206,7 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));
-window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){robotView?.dispose();panels.dispose();view?.dispose()}});
+window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
 const unregisterTools=registerPageTools({document,store:operations,navigate,onError:()=>operations.log('페이지 도구 등록 실패','일반 화면 조작은 계속 사용 가능')});
 window.addEventListener('pagehide',event=>{if(!event.persisted)unregisterTools()});
 $('retry-render').addEventListener('click',()=>location.reload());

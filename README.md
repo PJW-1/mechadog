@@ -160,7 +160,7 @@ mechdog_physical_ai/
 │   ├── vision/                          # 스트림 수신 · 검출기 · 추론 워커 · 사람 게이트
 │   ├── behavior/                        # FSM · 명령 송신
 │   ├── telemetry/                       # 텔레메트리 수신
-│   ├── dashboard/                       # FastAPI + WebSocket + UI (WBS 4.5 · 미착수)
+│   ├── dashboard/                       # FastAPI + WS + UI (4.5 · 4.6.1 완료)
 │   └── common/                          # 통신 규약 · 로깅 · config
 ├── tests/                               # pytest (하드웨어 불요)
 ├── tools/                               # 목업 · 지연 측정 · 텔레오퍼레이션 · 가중치 받기

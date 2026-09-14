@@ -7,9 +7,11 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from websockets.sync.client import connect
@@ -18,6 +20,7 @@ from host.common.protocol import TelemetryEncoder
 from host.dashboard.server import (
     DEFAULT_STATIC_DIR,
     MAX_CLIENTS,
+    VISION_POLL_PERIOD_S,
     TelemetryHub,
     VisionHub,
     _send_updates,
@@ -408,6 +411,14 @@ def test_vision_hub_sends_each_inference_once_and_keeps_only_the_latest():
         assert _decode_vision(late.get_nowait())[0]["frame_seq"] == 4
 
     asyncio.run(scenario())
+
+
+def test_vision_poll_is_faster_than_inference():
+    """확인 주기가 추론 주기보다 길면 그 사이의 결과가 버려져 화면 fps 가 묶인다."""
+    config = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+    inference_fps = yaml.safe_load(config.read_text(encoding="utf-8"))["vision"]["inference_fps"]
+    inference_period_s = 1.0 / inference_fps
+    assert inference_period_s / 2 >= VISION_POLL_PERIOD_S
 
 
 def test_vision_socket_streams_boxes_with_their_jpeg(clock):
