@@ -225,3 +225,51 @@ def test_service_reports_the_current_state(service):
     assert svc.state == "IDLE"
     behavior.event(Event.START_PATROL, now_ms=1000)
     assert svc.state == "PATROL" == behavior.state
+
+
+# ── 사건은 런타임의 `_apply` 경로로 들어간다 (2026-09-14 실기) ──
+
+
+def test_commands_route_events_through_the_given_hook(cfg):
+    """**`behavior.event()` 를 직접 부르면 대응 단계와 전이 로그가 함께 빠진다.**
+
+    실기에서 E-Stop 이 로봇을 잠갔는데 단계가 `L0`(파랑) 에 머물러 눈 LED 가 흰색으로
+    바뀌지 않았고(FR-10.4), `MANUAL` 26.7초의 전이도 로그에 한 줄도 남지 않았다.
+    런타임이 `_apply` 에 그 둘을 묶어 두었으므로 명령도 그 경로로 들어가야 한다.
+    """
+    sent: list[str] = []
+    commander = Commander()
+    behavior = behavior_from_config(commander, cfg)
+    seen: list[Event] = []
+
+    def applied(event: Event) -> bool:
+        seen.append(event)
+        return behavior.event(event)
+
+    service = CommandService(behavior, commander, sent.append, apply_event=applied)
+    service.manual_on()
+    service.manual_off()
+    service.estop()
+    assert seen == [Event.MANUAL_ON, Event.MANUAL_OFF, Event.ESTOP]
+    assert behavior.state == "FAILSAFE"
+
+
+def test_runtime_wires_the_apply_hook_so_escalation_follows_estop(cfg, clock):
+    """런타임에 붙었을 때 **E-Stop 이 대응 단계를 `F` 로 올려야 한다.**
+
+    `+0.0s` 온보드 자체 래치는 `F` 까지 올라가는데 버튼으로 잠근 쪽만 `L0` 에
+    머물렀던 것이 실기의 증상이다 — 차이는 잠긴 이유가 아니라 들어온 경로였다.
+    """
+    from host.runtime import Runtime
+
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    service = CommandService(
+        runtime.behavior,
+        runtime.commander,
+        lambda _line: None,
+        apply_event=runtime.apply_external,
+    )
+    assert runtime.escalation.level.value == "L0"
+    service.estop()
+    assert runtime.behavior.state == "FAILSAFE"
+    assert runtime.escalation.level.value == "F", "E-Stop 이 단계를 올려야 눈 LED 가 흰색이 된다"

@@ -131,6 +131,35 @@ def test_host_only_state_in_between_does_not_lose_the_recovery() -> None:
     assert r.ingest(record(state="PATROL")).events == (Event.AVOID_CLEARED,)
 
 
+#: `FAILSAFE` 레코드의 플래그. 규칙 ⑤ 가 `tipped` 를 `FAILSAFE` 와만 묶는다.
+_TIPPED = {"lowbatt": False, "tipped": True, "link_ok": True}
+
+
+def test_relatching_after_a_host_only_state_is_still_an_event() -> None:
+    """`FAILSAFE → IDLE → FAILSAFE` 는 **재진입이지 반복이 아니다.**
+
+    2026-09-14 실기에서 이것을 놓쳤다. 호스트 전용 상태가 값을 갱신하지 않으므로
+    기억이 `FAILSAFE` 에 머물렀고, 로봇이 다시 잠겼을 때 `previous == state` 가 되어
+    엣지로 보이지 않았다. **로봇은 잠겼는데 호스트는 `IDLE`·`L0`(파랑) 로 남는다** —
+    관제 화면이 정상 순찰 가능 상태로 보인다.
+    """
+    r = TelemetryReceiver()
+    assert r.ingest(record(state="FAILSAFE", flags=_TIPPED)).events == (Event.ONBOARD_FAILSAFE,)
+    assert r.ingest(record(state="IDLE")).events == ()
+    assert r.ingest(record(state="MANUAL")).events == ()
+    assert r.ingest(record(state="FAILSAFE", flags=_TIPPED)).events == (Event.ONBOARD_FAILSAFE,)
+
+
+def test_returning_to_the_same_onboard_state_does_not_repeat_afterwards() -> None:
+    """재진입 한 번만 사건이고 그 뒤의 10Hz 반복은 다시 조용해야 한다."""
+    r = TelemetryReceiver()
+    r.ingest(record(state="FAILSAFE", flags=_TIPPED))
+    r.ingest(record(state="IDLE"))
+    assert r.ingest(record(state="FAILSAFE", flags=_TIPPED)).events == (Event.ONBOARD_FAILSAFE,)
+    for _ in range(20):
+        assert r.ingest(record(state="FAILSAFE", flags=_TIPPED)).events == ()
+
+
 # ── ⚠️ 호스트가 안전을 판정하지 않는다 (아키텍처 1.2) ──────────
 def test_low_voltage_alone_does_not_trigger_failsafe() -> None:
     """**전압이 낮아도 호스트가 페일세이프를 만들지 않는다.**

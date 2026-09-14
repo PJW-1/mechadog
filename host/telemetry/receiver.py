@@ -128,6 +128,7 @@ class TelemetryReceiver:
     def __init__(self, decoder: TelemetryDecoder | None = None) -> None:
         self._decoder = decoder if decoder is not None else TelemetryDecoder()
         self._last_onboard: dict[tuple[str, str], str] = {}
+        self._left_onboard: set[tuple[str, str]] = set()
         self._current_boot: dict[str, str] = {}
         self._last_obstacle: dict[str, bool] = {}
 
@@ -175,20 +176,29 @@ class TelemetryReceiver:
 
     def _events_for(self, reading: Reading) -> tuple[Event, ...]:
         """상태 보고를 사건으로 바꾼다. **표를 보고 옮기기만 한다.**"""
+        session = (reading.device_id, reading.boot_id)
         # 호스트 전용 상태(`ALERT`·`TRACK` 등)는 우리가 `STATE` 로 내려보낸 값이
-        # 되돌아온 것이므로 새 정보가 없다. 기억도 하지 않는다 — 기억하면
+        # 되돌아온 것이므로 새 정보가 없다. **값은 기억하지 않는다** — 기억하면
         # `AVOID → ALERT → PATROL` 같은 경로에서 회복을 놓친다.
+        #
+        # ⚠️ **다만 지나갔다는 사실은 남긴다.** 이것을 빼면 `FAILSAFE → IDLE →
+        # FAILSAFE` 가 "값이 같으니 변화 없음" 으로 접혀 **재진입 사건이 사라진다.**
+        # 2026-09-14 실기에서 그렇게 나타났다 — 로봇은 잠겨 있는데 호스트는 `IDLE`·
+        # `L0`(파랑) 로 남아 관제 화면이 정상 순찰 가능 상태로 보였다.
         if reading.state not in ONBOARD_STATES:
+            self._left_onboard.add(session)
             return ()
 
-        session = (reading.device_id, reading.boot_id)
         previous = self._last_onboard.get(session)
         self._last_onboard[session] = reading.state
         self._current_boot[reading.device_id] = reading.boot_id
+        returned = session in self._left_onboard
+        self._left_onboard.discard(session)
 
         # 10Hz 주기 보고는 상태 변화가 아니다. 동일 사건을 반복 발행하면 로그와
         # WebSocket 피드가 초당 10건씩 쌓이므로 엣지에서만 사건을 만든다.
-        if previous == reading.state:
+        # **호스트 전용 상태를 거쳐 돌아온 것은 값이 같아도 엣지다.**
+        if previous == reading.state and not returned:
             return ()
 
         events: list[Event] = []
