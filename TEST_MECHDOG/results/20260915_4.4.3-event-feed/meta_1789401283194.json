@@ -1,0 +1,62 @@
+{
+  "ts_ms": 1789401283194,
+  "event": "person_found",
+  "state": "IDLE",
+  "escalation": "L0",
+  "tracks": [
+    {
+      "track_id": 12,
+      "box": [
+        110.74615478515625,
+        15.572479248046875,
+        592.2922668457031,
+        473.3822937011719
+      ],
+      "score": 0.8491741418838501
+    }
+  ],
+  "detections": [
+    {
+      "label": "person",
+      "score": 0.8491741418838501,
+      "box": [
+        110.74615478515625,
+        15.572479248046875,
+        592.2922668457031,
+        473.3822937011719
+      ]
+    },
+    {
+      "label": "clock",
+      "score": 0.6117021441459656,
+      "box": [
+        98.79497838020325,
+        264.78307723999023,
+        131.2549431324005,
+        294.21520805358887
+      ]
+    }
+  ],
+  "telemetry": {
+    "device_id": "mechdog-3c8a1f333208",
+    "available": true,
+    "boot_id": "755578beb4da658a",
+    "seq": 3025,
+    "state": "IDLE",
+    "batt_v": 8.564000129699707,
+    "dist_cm": 4,
+    "imu": {
+      "pitch": 3.2684226036071777,
+      "roll": 3.127887010574341,
+      "yaw": 286.4051208496094
+    },
+    "last_cmd_age_ms": 73,
+    "safety_latched": false,
+    "flags": {
+      "tipped": false,
+      "lowbatt": false,
+      "link_ok": true,
+      "obstacle": null
+    }
+  }
+}

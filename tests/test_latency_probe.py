@@ -107,17 +107,25 @@ def test_counter_uses_the_host_clock() -> None:
     assert "requestAnimationFrame" in page
 
 
-def test_counter_splits_coarse_digits_from_a_bar() -> None:
+def test_counter_splits_coarse_digits_from_countable_cells() -> None:
     """⚠️ **빨리 바뀌는 자리는 숫자로 읽을 수 없다.**
 
     화면이 60Hz 로만 갱신되고 카메라 노출이 두 갱신을 걸치므로 하위 자리가 뭉개진다
     — 실기에서 4·5번째 자리가 실제로 읽히지 않았다. 그래서 느린 숫자(100ms)와
-    연속적인 막대(0~100ms)로 나눈다.
+    하위 자리를 나눈다.
+
+    ⚠️ **하위 자리를 연속 막대로 두지 않는다.** 가장자리를 읽으려면 막대의 양 끝이
+    프레임 안에 있고 포화되지 않아야 하는데 실기에서 둘 다 깨졌다(2026-09-15) —
+    화면을 크게 대면 끝이 잘리고, 꽉 채우면 하얗게 떠서 가장자리가 사라졌다.
+    **칸은 세기만 하면 되므로** 잘려도 남은 칸을 세고 떠도 칸 사이 틈이 남는다.
     """
     page = counter_page()
     assert "Math.floor(now / 100) % 1000" in page, "숫자는 100ms 단위"
-    assert "(now % 100)" in page, "막대는 그 안의 0~100ms"
+    assert "Math.floor((now % 100) / 10)" in page, "칸은 10ms 단위"
     assert 'padStart(3, "0")' in page, "자릿수가 흔들리면 오독한다"
+    assert page.count('className = "cell"') == 1 and "for (let i = 0; i < 10; i++)" in page, (
+        "칸은 10개다 — 개수가 바뀌면 읽는 규칙도 바뀐다"
+    )
 
 
 # ── ⚠️ CLI 덮어쓰기도 network 절이다 ────────────────────────
@@ -142,3 +150,72 @@ def test_override_none_keeps_the_profile_value() -> None:
 
     config = with_xiao_ip(load_config("mechdog-01"), None)
     assert config["network"]["xiao_ip"] is None
+
+
+# ── 전 구간 사슬 (chain) ──────────────────────────────────────
+
+
+def test_chain_sums_each_frame_before_taking_statistics() -> None:
+    """**구간별 p95 를 더하지 않는다.**
+
+    서로 다른 프레임의 최악값을 합치면 실제로는 일어나지 않는 경로가 만들어진다.
+    2026-09-14 기록이 그렇게 278ms 를 냈고, 그중 한 값은 시작점이 달라 구간이
+    겹치기까지 했다. 아래 두 프레임은 각 구간의 최악이 서로 다른 프레임에 있다.
+    """
+    from tools.latency_probe import chain_stats
+
+    rows = [
+        {"capture_ms": 150, "decode_infer_ms": 10, "ack_ms_from_detect": 10},
+        {"capture_ms": 90, "decode_infer_ms": 40, "ack_ms_from_detect": 60},
+    ]
+    stats = chain_stats(rows)
+    # 구간별 최악을 더하면 150+40+60 = 250 이지만 실제 프레임 합은 170·190 이다.
+    assert stats["합계(프레임별)"]["max_ms"] == 190
+    assert stats["n"] == 2
+
+
+def test_chain_report_skips_rows_without_an_ack(tmp_path: Path, capsys) -> None:
+    """ACK 이 없거나 숫자를 안 적은 행은 사슬이 끊긴 것이다 — 합에 넣으면 안 된다."""
+    from types import SimpleNamespace
+
+    import tools.latency_probe as probe
+
+    readings = tmp_path / "chain_readings.csv"
+    with readings.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["file", "arrival_ms", "completed_ms", "ack_ms", "applied", "shown_ms"])
+        writer.writerow(["a.jpg", 1000, 1030, 1070, True, 900])
+        writer.writerow(["b.jpg", 2000, 2030, "", False, 1900])  # ACK 미수신
+        writer.writerow(["c.jpg", 3000, 3030, 3070, True, ""])  # 숫자 미기입
+    code = probe.cmd_chain_report(
+        SimpleNamespace(readings=str(readings), refresh_hz=60.0, budget_ms=250)
+    )
+    assert code == 0
+    assert "표본 1" in capsys.readouterr().out, "쓸 수 있는 행은 a.jpg 하나뿐이다"
+
+
+def test_ack_matching_ignores_telemetry_and_other_sequences() -> None:
+    """같은 소켓으로 10Hz 텔레메트리가 함께 들어온다.
+
+    아무 전문이나 첫 번째를 ACK 로 세면 **텔레메트리 도착 시각을 지연으로 적게 된다.**
+    """
+    import json as _json
+
+    from tools.latency_probe import _await_ack
+
+    packets = [
+        _json.dumps({"seq": 7, "state": "IDLE", "batt_v": 8.0}).encode(),  # 텔레메트리
+        _json.dumps({"seq": 41, "verdict": "Accept", "applied": True}).encode(),  # 앞 명령
+        _json.dumps({"seq": 42, "verdict": "Accept", "applied": True}).encode(),  # 우리 것
+    ]
+
+    class FakeSocket:
+        def settimeout(self, _value):
+            pass
+
+        def recvfrom(self, _size):
+            return packets.pop(0), ("10.0.0.1", 5001)
+
+    ack_ms, applied = _await_ack(FakeSocket(), 42, deadline_ms=2**62)
+    assert ack_ms is not None and applied is True
+    assert packets == [], "세 전문을 모두 소비하고 42 번에서 멈춘다"
