@@ -39,6 +39,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import phrases
 import robotlink
 import scenarios
 import serial  # noqa: F401  (type only; stream_client already imports it)
@@ -179,6 +180,18 @@ def make_handler(hub):
                     200,
                     [{"name": n, "desc": d} for n, (d, _) in scenarios.SCENARIOS.items()],
                 )
+            elif self.path == "/phrases":
+                cats = {}
+                for cat, text, custom in phrases.all_lines():
+                    cats.setdefault(cat, []).append({"text": text, "custom": custom})
+                _api(
+                    self,
+                    200,
+                    [
+                        {"category": cat, "count": len(lines), "lines": lines}
+                        for cat, lines in cats.items()
+                    ],
+                )
             elif self.path == "/transcript":
                 _api(self, 200, list(hub.events))
             elif self.path == "/":
@@ -216,6 +229,18 @@ def make_handler(hub):
                     return
                 hub.enqueue_scenario(name, req.get("urgent"))
                 _api(self, 200, {"queued": hub.say_q.qsize()})
+            elif self.path == "/phrases":
+                try:
+                    cat = phrases.add_custom(req.get("category") or "", req.get("text") or "")
+                except ValueError as e:
+                    _api(self, 400, {"error": str(e)})
+                    return
+                _api(self, 200, {"category": cat, "added": True})
+            elif self.path == "/phrases/delete":
+                if not phrases.remove_custom(req.get("category") or "", req.get("text") or ""):
+                    _api(self, 404, {"error": "추가된 문구만 삭제할 수 있습니다"})
+                    return
+                _api(self, 200, {"removed": True})
             elif self.path == "/mode":
                 mode = req.get("mode")
                 if mode in ("active", "standby"):
