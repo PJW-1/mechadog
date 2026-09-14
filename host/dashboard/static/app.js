@@ -80,7 +80,7 @@ if(link){
  // 실시간 사건도 같은 서버에서 온다 (WBS 4.6.4) — /ws/events 는 비전 채널과
  // 무관하게 항상 있다. 백로그를 먼저 넘겨주므로 늦게 열어도 최근 사건을 본다.
  eventFeed=new EventFeed({url:apiBase.replace(/^http/,'ws')+'/ws/events',
-  onEvent:event=>operations.ingestLiveEvent(event),
+  onEvent:event=>operations.ingestLiveEvent(event,apiBase),
   onGap:dropped=>operations.noteEventGap(dropped),
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();

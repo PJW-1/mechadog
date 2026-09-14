@@ -198,3 +198,28 @@ class EventBlackbox:
         """가장 최근에 완성된 기록. 기록이 없으면 ``None``."""
         entries = self.feed()
         return entries[-1] if entries else None
+
+    def snapshot_bytes(self, entry: str) -> bytes | None:
+        """기록 디렉터리 이름 하나로 그 사건의 JPEG 를 읽는다. 없으면 ``None``.
+
+        ⚠️ **이름은 브라우저에서 온다.** 사건 전문에는 절대 경로 대신 디렉터리 이름만
+        싣는데(`4.4.3`), 화면이 그림을 보려면 그 이름으로 되돌아 찾아야 한다. 즉 이
+        함수의 입력은 **바깥에서 오는 문자열**이므로 경로로 쓰기 전에 잘라야 한다.
+
+        ⚠️ **검증을 부르는 쪽에 두지 않는다.** 저장 구조를 아는 것은 이 클래스뿐이고,
+        서버가 경로를 조립하게 하면 규칙이 두 곳에 생긴다 — 한쪽만 고쳐지는 순간
+        디렉터리 밖 파일이 열린다.
+
+        막는 것 셋 — ① 경로 구분자와 `..` 가 든 이름 ② 빈 이름·숨김 이름
+        ③ 심볼릭 링크 등으로 기록 폴더 **밖을 가리키게 된 결과 경로**.
+        """
+        if not entry or entry.startswith(".") or entry != Path(entry).name:
+            return None
+        target = (self._dir / entry / "snapshot.jpg").resolve()
+        try:
+            target.relative_to(self._dir.resolve())
+        except ValueError:
+            return None
+        if not target.is_file():
+            return None
+        return target.read_bytes()

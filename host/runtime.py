@@ -1165,6 +1165,9 @@ def main(argv: list[str] | None = None) -> int:
                         camera=camera,
                         # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다 (WBS 4.5.2).
                         vision=vision.latest if vision is not None else None,
+                        # 사건 전문에는 디렉터리 이름만 실으므로(`4.4.3`) 그림은 여기서
+                        # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
+                        event_snapshot=(None if blackbox is None else blackbox.snapshot_bytes),
                     )
                 )
             runtime.serve(sock, duration_s=args.duration)

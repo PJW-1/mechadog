@@ -298,6 +298,7 @@ def create_app(
     camera: Callable[[], bytes | None] | None = None,
     static_dir: Path | None = None,
     vision: Callable[[], Any] | None = None,
+    event_snapshot: Callable[[str], bytes | None] | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -336,6 +337,27 @@ def create_app(
     @app.get("/api/telemetry")
     async def telemetry():
         return state.snapshot()
+
+    @app.get("/events/{entry}/snapshot.jpg")
+    async def event_snapshot_image(entry: str):
+        """사건 하나의 저장된 그림. **지금 화면이 아니라 그때 장면이다.**
+
+        ⚠️ **사건 전문에 JPEG 를 싣지 않기 때문에 이 경로가 필요하다**(`4.4.3`) —
+        프레임 하나가 수십 KB 라 사건 소켓에 실으면 텔레메트리를 밀어낸다. 대신
+        디렉터리 이름만 보내고 그림은 여기서 꺼낸다.
+
+        ⚠️ **이름 검증은 블랙박스가 한다.** 저장 구조를 아는 것이 거기뿐이고,
+        여기서 경로를 조립하면 규칙이 두 곳에 생겨 한쪽만 고쳐질 수 있다.
+        """
+        jpeg = event_snapshot(entry) if event_snapshot is not None else None
+        if jpeg is None:
+            return JSONResponse({"error": "no_snapshot"}, status_code=404)
+        return Response(
+            content=jpeg,
+            media_type="image/jpeg",
+            # 사건 그림은 바뀌지 않는다 — 한 번 받으면 다시 받지 않게 둔다.
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
 
     if camera is not None:
 
@@ -459,6 +481,7 @@ def running_server(
     camera: Callable[[], bytes | None] | None = None,
     static_dir: Path | None = DEFAULT_STATIC_DIR,
     vision: Callable[[], Any] | None = None,
+    event_snapshot: Callable[[str], bytes | None] | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     ready = threading.Event()
@@ -472,7 +495,12 @@ def running_server(
     server = LocalServer(
         uvicorn.Config(
             create_app(
-                state, commands=commands, camera=camera, static_dir=static_dir, vision=vision
+                state,
+                commands=commands,
+                camera=camera,
+                static_dir=static_dir,
+                vision=vision,
+                event_snapshot=event_snapshot,
             ),
             host="127.0.0.1",
             port=port,
