@@ -181,8 +181,6 @@ void sendText(const char* text) {
 
 bool serviceModeActive();
 bool loopWatchdogArmed();
-bool enterServiceMode();
-bool exitServiceMode();
 
 void sendAck(const mechadog::DecodeResult& decoded, bool applied) {
   char response[320];
