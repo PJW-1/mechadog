@@ -583,6 +583,7 @@ mechdog_physical_ai/
 │   ├── test/test_command_parser.cpp   ✅ CI 가 컴파일·실행하고 골든 픽스처를 물린다
 │   └── diagnostics/                   ✅ wifi_scan · wifi_sta_probe (H2 확인용)
 ├── firmware_xiao_vision/              ✅ 카메라 + MJPEG 서버 (4.2)
+├── firmware_lidar_relay/              🔶 LD19 UART → Wi-Fi UDP 중계 — **WBS 미등재 · Phase 2 승인 전**
 ├── host/                                 Host PC (Python)
 │   ├── behavior/
 │   │   ├── actions.py                 ✅ 상태별 모션 — PATROL·AVOID (3.5.1)
@@ -592,11 +593,12 @@ mechdog_physical_ai/
 │   │   ├── protocol.py                ✅ 규약 구현 — 이 파일이 C++ 파서의 참조 구현
 │   │   ├── config.py                  ✅ 로더 + 스키마 검증
 │   │   ├── logging_setup.py           ✅ JSON Lines 로거 + 샘플링 (4.4.2)
-│   │   └── blackbox.py                🔶 JPEG·텔레메트리 저장 + 런타임 연결, WS 푸시는 4.5.1 뒤
+│   │   └── blackbox.py                ✅ JPEG·텔레메트리 저장 + WS 푸시 + 사건 스냅샷 조회 (4.4.3)
 │   ├── vision/                        ✅ MJPEG 수신·재연결·큐·검출기·추론 워커·사람 게이트·다중 인원 추적 (3.3.1~4, 4.3.3~5)·사원증 마커 판독 (3.8.1)
 │   ├── telemetry/                     ✅ 텔레메트리 수신·사건 변환 (4.3.6)
 │   ├── runtime.py                     ✅ UDP 운용 루프 + 비전 워커 수명 관리 (4.3.7, 3.3.2)
-│   └── dashboard/                     ✅ FastAPI + WS + 실제 검출 FPV (4.5 · 4.6.1)
+│   ├── dashboard/                     ✅ FastAPI + WS + 검출 FPV · 명령 API · 사건 피드 (4.5 · 4.6.1/3/4)
+│   └── slam/                          🔶 점유격자·스캔정합·경로계획 — **Phase 2 승인 전이라 실기 미연결**
 ├── tools/
 │   ├── mock_mechdog.py                ✅ 가상 MechDog — 로봇 없이 호스트를 검증
 │   ├── teleop.py                      ✅ 키보드 수동 조작
