@@ -1,0 +1,15 @@
+# 1차 — 카메라가 90도 눕고 역광 (검출 0건, 전송은 정상)
+health: {'service': 'telemetry', 'read_only': False, 'clients': 0, 'coalesced_updates': 0, 'vision_clients': 1}
+프레임 295건 · 9.86/s · seq 중복 0
+JPEG 형식 오류 0 · 화면 밖 박스 0
+크기 640x480 · 검출 라벨 {}
+사람 추적 박스가 있는 프레임 0건
+마지막 헤더 예: {"frame_seq": 901, "width": 640, "height": 480} detections [] tracks []
+
+# 2차 — 카메라를 세운 뒤
+health: {'service': 'telemetry', 'read_only': False, 'clients': 0, 'coalesced_updates': 0, 'vision_clients': 1}
+프레임 294건 · 9.83/s · seq 중복 0
+JPEG 형식 오류 0 · 화면 밖 박스 0
+크기 640x480 · 검출 라벨 {'person': 304, 'tv': 459, 'remote': 74, 'bottle': 71, 'traffic light': 60, 'chair': 1}
+사람 추적 박스가 있는 프레임 294건
+마지막 헤더 예: {"frame_seq": 1401, "width": 640, "height": 480} detections [{'label': 'person', 'score': 0.902, 'box': [22.7, 2.4, 510.6, 478.4]}, {'label': 'tv', 'score': 0.832, 'box': [604.3, 148.0, 640.0, 256.3]}] tracks [{'track_id': 2, 'score': 0.902, 'box': [22.7, 2.4, 510.6, 478.4]}]
