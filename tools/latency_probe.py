@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import socket
 import statistics
 import sys
 from collections.abc import Mapping
@@ -36,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.common.config import load_config  # noqa: E402
 from host.common.console import survive_encoding_errors  # noqa: E402
-from host.vision.stream_client import StreamReader, stream_endpoints  # noqa: E402
+from host.common.protocol import CommandEncoder, system_clock_ms  # noqa: E402
+from host.vision.stream_client import StreamReader, decode_jpeg, stream_endpoints  # noqa: E402
 
 #: 화면에 표시하는 자릿수. epoch 밀리초 13자리는 카메라로 읽을 수 없다.
 #: 5자리는 100초마다 되돌아오므로 1초 미만 지연에는 모호함이 없다.
@@ -48,36 +50,41 @@ COUNTER_HTML = """<!doctype html>
 <style>
   html, body { margin: 0; background: #000; color: #9a9a9a; overflow: hidden;
                font: 700 1vw/1.4 "Consolas", "Courier New", monospace; }
-  #d { font-size: 16vw; text-align: center; letter-spacing: 0.08em; margin-top: 4vh; }
-  #track { position: relative; height: 22vh; margin: 3vh 2vw; background: #101010;
-           border: 0.4vh solid #4a4a4a; }
-  #bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #8e8e8e; }
-  .tick { position: absolute; top: 0; bottom: 0; width: 0.5vw; background: #d8d8d8; }
-  #h { font: 400 1.5vw/1.6 sans-serif; text-align: center; color: #6e6e6e; }
+  #d { font-size: 20vw; text-align: center; letter-spacing: 0.08em; margin-top: 2vh;
+       color: #ffffff; }
+  /* ⚠️ **연속 막대를 쓰지 않는다.** 가장자리 위치를 읽으려면 막대의 양 끝이 프레임
+     안에 있어야 하고 포화되지 않아야 하는데, 실기에서 둘 다 깨졌다 — 화면을 크게
+     대면 끝이 잘리고, 꽉 채우면 하얗게 떠서 가장자리가 사라졌다(2026-09-15).
+     **칸으로 나누면 세기만 하면 된다** — 잘려도 남은 칸을 세고, 떠도 칸 사이 틈이
+     남는다. 분해능 10ms 는 모니터 양자화(60Hz = 16.7ms)보다 어차피 촘촘하다. */
+  #cells { display: flex; gap: 1.4vw; margin: 2vh 3vw; height: 20vh; }
+  .cell { flex: 1; background: #0b0b0b; border: 0.5vh solid #3a3a3a; }
+  .cell.on { background: #ffffff; border-color: #ffffff; }
+  #h { font: 400 1.6vw/1.6 sans-serif; text-align: center; color: #6e6e6e; }
 </style>
 <div id="d">000</div>
-<div id="track"><div id="bar"></div></div>
-<div id="h">위 숫자 = 100ms 단위 · 막대 = 그 안의 0~100ms (눈금 10ms)</div>
+<div id="cells"></div>
+<div id="h">위 숫자 = 100ms 단위 · 켜진 칸 수 x 10ms 를 더한다</div>
 <script>
   const d = document.getElementById("d");
-  const bar = document.getElementById("bar");
-  const track = document.getElementById("track");
-  for (let i = 1; i < 10; i++) {
-    const t = document.createElement("div");
-    t.className = "tick";
-    t.style.left = (i * 10) + "%";
-    track.appendChild(t);
+  const wrap = document.getElementById("cells");
+  const cells = [];
+  for (let i = 0; i < 10; i++) {
+    const c = document.createElement("div");
+    c.className = "cell";
+    wrap.appendChild(c);
+    cells.push(c);
   }
   function tick() {
     // ⚠️ Date.now() 는 이 호스트의 시계다. 측정 쪽과 같은 시계이므로 동기가 필요 없다.
     //
     // ⚠️ **숫자로 하위 자리를 읽을 수 없다.** 화면은 60Hz 로만 다시 그려지고 카메라
     // 노출이 두 번의 갱신을 걸치므로 빨리 바뀌는 자리가 뭉개진다 — 실제로 4·5번째
-    // 자리가 읽히지 않았다. 그래서 **느리게 바뀌는 숫자(100ms)와 연속적인 막대**로
-    // 나눈다. 막대는 흐려져도 가장자리 위치가 남으므로 눈금으로 읽을 수 있다.
+    // 자리가 읽히지 않았다. 그래서 **느리게 바뀌는 숫자(100ms)와 칸**으로 나눈다.
     const now = Date.now();
     d.textContent = String(Math.floor(now / 100) % 1000).padStart(3, "0");
-    bar.style.width = (now % 100) + "%";
+    const lit = Math.floor((now % 100) / 10);
+    for (let i = 0; i < 10; i++) cells[i].classList.toggle("on", i <= lit);
     requestAnimationFrame(tick);
   }
   tick();
@@ -207,6 +214,200 @@ def cmd_capture(args: argparse.Namespace) -> int:
     return 0 if rows else 1
 
 
+# ── 전 구간 사슬 ────────────────────────────────────────────
+def _await_ack(sock: socket.socket, seq: int, deadline_ms: int) -> tuple[int | None, bool]:
+    """그 `seq` 의 ACK 가 올 때까지 기다린다. **텔레메트리는 흘려보낸다.**
+
+    ⚠️ 명령을 텔레메트리 소켓에서 보내므로 응답도 그 소켓으로 돌아온다 — 같은 소켓에
+    10Hz 텔레메트리가 함께 들어오므로 `seq` 로 골라야 한다. 아무 전문이나 첫 번째를
+    ACK 로 세면 **텔레메트리 도착 시각을 지연이라고 적게 된다.**
+    """
+    while True:
+        remaining = deadline_ms - system_clock_ms()
+        if remaining <= 0:
+            return None, False
+        sock.settimeout(remaining / 1000.0)
+        try:
+            raw, _ = sock.recvfrom(4096)
+        except (TimeoutError, OSError):
+            return None, False
+        now = system_clock_ms()
+        try:
+            msg = json.loads(raw)
+        except (ValueError, RecursionError):
+            continue
+        if not (isinstance(msg, dict) and "verdict" in msg and "applied" in msg):
+            continue  # 텔레메트리다
+        if int(msg.get("seq", -1)) != seq:
+            continue  # 앞 명령의 ACK — 버린다
+        return now, bool(msg.get("applied"))
+
+
+def cmd_chain(args: argparse.Namespace) -> int:
+    """한 프레임을 **도착 → 검출 → 명령 ACK** 까지 따라가며 시각을 적는다.
+
+    ⚠️ **런타임과 동시에 돌리지 않는다** — 텔레메트리 포트를 두 프로세스가 바인드할 수
+    없다. 이 도구만 단독으로 띄운다.
+
+    ⚠️ **로봇은 움직이지 않는다.** 보내는 것은 `STOP`(`move(0,0)`) 뿐이고 서 있는
+    로봇에게는 아무 일도 일어나지 않는다. 2026-09-09 기준선도 같은 방식이었다.
+
+    ⚠️ **표본이 아닌 프레임에도 `STOP` 을 보낸다.** 표본만 보내면 간격이 온보드 300ms
+    명령 타임아웃을 넘겨 **측정 도중에 로봇이 잠긴다** — 그러면 `applied` 가 거짓이
+    되어 재려던 구간이 달라진다. 표본이 아닌 명령의 ACK 는 `seq` 대조에서 걸러진다.
+    """
+    from host.vision.coco_labels import COCO_CLASSES
+    from host.vision.detector import Detector
+
+    config = with_xiao_ip(load_config(args.device), args.xiao_ip)
+    network = config["network"]
+    robot_ip = args.robot_ip or network.get("mechdog_ip")
+    if not robot_ip:
+        print("로봇 IP 가 없다 - --robot-ip 를 주거나 개체 프로파일에 적는다.")
+        return 1
+    peer = (str(robot_ip), int(network["cmd_port"]))
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    detector = Detector(config, labels=COCO_CLASSES)
+    detector.open()  # 첫 프레임 122ms 문제를 여기서 털어낸다
+
+    endpoints = stream_endpoints(config)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("", int(network["telemetry_port"])))
+    encoder = CommandEncoder()
+    reader = StreamReader(config, endpoints=endpoints)
+    print(f"연결: 카메라 {endpoints.stream} · 로봇 {peer[0]}:{peer[1]}")
+
+    rows: list[dict[str, Any]] = []
+    every = max(1, args.every)
+    seen = 0
+    try:
+        for frame in reader.frames(max_failures=args.max_failures):
+            seen += 1
+            if seen % every:
+                sock.sendto(encoder.stop().encode("utf-8"), peer)  # 링크 유지용
+                continue
+            image = decode_jpeg(frame.payload)
+            detections = detector.detect(image)
+            completed_ms = system_clock_ms()
+            telegram = encoder.stop()
+            seq = int(json.loads(telegram)["seq"])
+            sock.sendto(telegram.encode("utf-8"), peer)
+            sent_ms = system_clock_ms()
+            ack_ms, applied = _await_ack(sock, seq, sent_ms + args.ack_timeout_ms)
+            name = f"chain_{len(rows) + 1:02d}.jpg"
+            (out / name).write_bytes(frame.payload)
+            rows.append(
+                {
+                    "file": name,
+                    "frame_seq": frame.seq,
+                    "arrival_ms": frame.received_ms,
+                    "completed_ms": completed_ms,
+                    "cmd_seq": seq,
+                    "sent_ms": sent_ms,
+                    "ack_ms": ack_ms,
+                    "applied": applied,
+                    "detections": len(detections),
+                    "decode_infer_ms": completed_ms - frame.received_ms,
+                    "ack_ms_from_detect": None if ack_ms is None else ack_ms - completed_ms,
+                }
+            )
+            print(
+                f"  {name}  도착~검출 {rows[-1]['decode_infer_ms']}ms  "
+                f"검출~ACK {rows[-1]['ack_ms_from_detect']}ms  applied={applied}"
+            )
+            if len(rows) >= args.count:
+                break
+    finally:
+        sock.close()
+
+    (out / "chain.json").write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    readings = out / "chain_readings.csv"
+    with readings.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["file", "arrival_ms", "completed_ms", "ack_ms", "applied", "shown_ms"])
+        for row in rows:
+            writer.writerow(
+                [
+                    row["file"],
+                    row["arrival_ms"],
+                    row["completed_ms"],
+                    row["ack_ms"],
+                    row["applied"],
+                    "",
+                ]
+            )
+    missing = [r["file"] for r in rows if r["ack_ms"] is None]
+    if missing:
+        print(f"\n[경고] ACK 미수신 {len(missing)}건: {', '.join(missing)}")
+    rejected = [r["file"] for r in rows if r["ack_ms"] is not None and not r["applied"]]
+    if rejected:
+        print(
+            f"\n[경고] applied=false {len(rejected)}건 - 로봇이 잠겨 있으면 이렇게 나온다."
+            " 안전 해제 후 다시 잰다."
+        )
+    print(f"\n프레임 {len(rows)}장 · 스트림 통계: {reader.stats}")
+    print(f"다음: {readings.resolve()} 의 shown_ms 를 채우고 chain-report 를 실행한다.")
+    return 0 if rows else 1
+
+
+def chain_stats(rows: list[dict[str, Any]], *, refresh_hz: float = 60.0) -> dict[str, Any]:
+    """구간별 통계와 **같은 프레임의 합**을 낸다.
+
+    ⚠️ **구간별 p95 를 더하지 않는다.** 서로 다른 프레임의 최악값을 합치면 실제로는
+    일어나지 않는 경로가 만들어진다 — 2026-09-14 기록이 그렇게 278ms 를 냈고, 그중
+    한 값은 시작점이 달라 구간이 겹치기까지 했다. 합은 **프레임마다 먼저 더한 뒤**
+    그 분포를 본다.
+    """
+    capture = [r["capture_ms"] for r in rows]
+    infer = [r["decode_infer_ms"] for r in rows]
+    command = [r["ack_ms_from_detect"] for r in rows]
+    total = [c + i + m for c, i, m in zip(capture, infer, command, strict=True)]
+    return {
+        "n": len(rows),
+        "촬영~도착": summarize(capture, refresh_hz=refresh_hz),
+        "도착~검출": summarize(infer, refresh_hz=refresh_hz),
+        "검출~ACK": summarize(command, refresh_hz=refresh_hz),
+        "합계(프레임별)": summarize(total, refresh_hz=refresh_hz),
+    }
+
+
+def cmd_chain_report(args: argparse.Namespace) -> int:
+    rows: list[dict[str, Any]] = []
+    with Path(args.readings).open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            shown = (row.get("shown_ms") or "").strip()
+            ack = (row.get("ack_ms") or "").strip()
+            if not shown or not ack:
+                continue
+            arrival, completed = int(row["arrival_ms"]), int(row["completed_ms"])
+            rows.append(
+                {
+                    "capture_ms": latency_ms(arrival, int(shown)),
+                    "decode_infer_ms": completed - arrival,
+                    "ack_ms_from_detect": int(ack) - completed,
+                }
+            )
+    if not rows:
+        print("shown_ms 와 ack_ms 가 모두 있는 행이 없다.")
+        return 1
+    stats = chain_stats(rows, refresh_hz=args.refresh_hz)
+    print(f"NFR-1.1 단일 프레임 사슬 - 표본 {stats['n']}")
+    for name in ("촬영~도착", "도착~검출", "검출~ACK", "합계(프레임별)"):
+        print(f"\n[{name}]")
+        for key, value in stats[name].items():
+            print(f"  {key:16s} {value}")
+    worst = int(stats["합계(프레임별)"]["max_ms"])
+    verdict = "충족" if worst <= args.budget_ms else "미달"
+    print(f"\n최악 프레임 {worst}ms / 예산 {args.budget_ms}ms -> {verdict}")
+    print("[주의] 물리 구동은 NFR-1.4(명령 -> 서보 <=50ms) 로 따로 잰다 - 이 예산에 없다.")
+    return 0
+
+
 # ── ③ 통계 ──────────────────────────────────────────────────
 def read_readings(path: Path) -> list[int]:
     """`shown_ms` 가 채워진 행만 읽어 지연으로 바꾼다."""
@@ -261,6 +462,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="NFR-1.1 전체 예산. 이 구간이 그중 몇 %를 쓰는지만 보여준다 (판정 아님)",
     )
     report.set_defaults(func=cmd_report)
+
+    chain = sub.add_parser("chain", help="도착 → 검출 → 명령 ACK 를 한 프레임씩 따라간다")
+    chain.add_argument("--device", required=True)
+    chain.add_argument("--xiao-ip", default=None, help="개체 프로파일 값을 덮어쓴다")
+    chain.add_argument("--robot-ip", default=None, help="개체 프로파일 값을 덮어쓴다")
+    chain.add_argument("--count", type=int, default=12)
+    chain.add_argument("--every", type=int, default=5, help="N 프레임마다 한 장 표본")
+    chain.add_argument("--max-failures", type=int, default=3)
+    chain.add_argument("--ack-timeout-ms", type=int, default=500)
+    chain.add_argument("--out", default="logs/latency")
+    chain.set_defaults(func=cmd_chain)
+
+    chain_report = sub.add_parser("chain-report", help="사슬 통계 — 프레임마다 더한 뒤 분포를 본다")
+    chain_report.add_argument("--readings", default="logs/latency/chain_readings.csv")
+    chain_report.add_argument("--refresh-hz", type=float, default=60.0)
+    chain_report.add_argument("--budget-ms", type=int, default=250, help="NFR-1.1 예산")
+    chain_report.set_defaults(func=cmd_chain_report)
     return parser
 
 
