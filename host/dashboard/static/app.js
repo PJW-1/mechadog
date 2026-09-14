@@ -5,6 +5,7 @@ import {OperationalPanels} from './panels.js';
 import {registerPageTools} from './webmcp.js';
 import {RobotDetailView} from './robot-view.js';
 import {RobotLink} from './robot-link.js';
+import {VoiceLink,resolveVoiceBase} from './voice-link.js';
 import {VisionFeed} from './vision-feed.js';
 
 renderIcons();
@@ -56,6 +57,10 @@ async function resolveApiBase(){
 const apiBase=await resolveApiBase();
 const link=apiBase?new RobotLink({baseUrl:apiBase}):null;
 const operations=new Operations({storage,link});
+// 음성 중계는 대시보드 명령 링크와 별개다 — voice_pipeline --web 이 떠 있으면
+// 로컬 기본 주소(127.0.0.1:8090)로 자동으로 붙고, 없으면 패널이 준비만 표시한다.
+const voiceBase=await resolveVoiceBase();
+const voiceLink=voiceBase?new VoiceLink({baseUrl:voiceBase}):null;
 if(link){
  operations.setDemo(false);
  // 로봇 시점 창은 /ws/vision 을 그린다 (WBS 4.6.1) — 검출 박스와 그 박스를
@@ -74,7 +79,7 @@ if(link){
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
-const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,
+const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,
  onManualObservation:mount=>{
   if(mount)mount.append(cameraDock);
   else if(cameraDock.parentElement!==cameraHome)cameraHome.insertBefore(cameraDock,cameraNext);
@@ -136,7 +141,7 @@ function syncMain(){
 operations.subscribe(reason=>{syncMain();panels.refresh(reason)});
 
 function navigate(page){
- const target=['dashboard','missions','events','records','zones','devices','settings'].includes(page)?page:'dashboard';
+ const target=['dashboard','missions','events','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
  if(location.hash!=='#'+target)location.hash=target;
  openPage(target);
 }

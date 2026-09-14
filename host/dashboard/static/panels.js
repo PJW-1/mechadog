@@ -1,15 +1,15 @@
 import {REVIEW_STATES,ROBOTS,SOURCE_REVISION} from './operations.js';
 import {icon} from './icons.js';
 
-const TITLES={missions:'순찰 · 제어',events:'사건 검토',records:'운영 기록',zones:'공간 · 구역',devices:'장치 상태',settings:'운영 설정'};
+const TITLES={missions:'순찰 · 제어',events:'사건 검토',records:'운영 기록',zones:'공간 · 구역',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
 const STATUS={idle:'시작 전',running:'예시 진행 중',paused:'일시정지',ended:'종료'};
 const MANUAL_KEYS={KeyW:'FORWARD',KeyA:'LEFT',KeyS:'BACKWARD',KeyD:'RIGHT'};
 const time=value=>value==null?'—':new Date(value).toLocaleString('ko-KR',{hour12:false});
 
 // All record content is text, never HTML. Files stay in this browser session.
 export class OperationalPanels {
- constructor({store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,document=globalThis.document}){
-  Object.assign(this,{store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,document});
+ constructor({store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,voiceLink=null,document=globalThis.document}){
+  Object.assign(this,{store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,voiceLink,document});
   this.view='dashboard';this.zones=[];this.eventId=null;this.zoneId=null;
   this.filters={type:'all',status:'all',robot:'all',query:''};this.urls=new Set();
   this.reviewDrafts=new Map();this.policyDrafts=new Map();this.activeHold=null;
@@ -69,9 +69,10 @@ export class OperationalPanels {
   if(this.activeHold)this.store.stop('패널 갱신');
   // Return the shared camera before replacing its temporary workspace parent.
   this.onManualObservation?.(null);
+  this.clearVoicePoll();
   this.activeHold=null;this.view=view;this.title.textContent=TITLES[view]||'';
   this.container.dataset.page=view;this.container.replaceChildren();if(!TITLES[view])return;
-  const intro=this.el('div',{class:'op-intro'},this.note({missions:'순찰 계획과 제어 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
+  const intro=this.el('div',{class:'op-intro'},this.note({missions:'순찰 계획과 제어 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태를 보고, 타자로 방송을 보냅니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
   this.container.append(intro,this.el('div',{class:'op-feedback',role:'status','aria-live':'polite'}));
   this[view==='zones'?'zonePage':view]();
  }
@@ -158,6 +159,56 @@ export class OperationalPanels {
    if(this.view==='events')this.render('events');
    this.onToast('저장 기록을 열었어요. 실시간 연결은 변경되지 않습니다.');
   }catch(error){if(url)this.document.defaultView.URL.revokeObjectURL(url);throw error}
+ }
+ // ── 음성 중계 (WBS 4.7.14) ───────────────────────────────────────
+ // 음성 링크는 메인 루프가 단독 소유하고 웹은 큐로 요청한다 — 대기 중인
+ // 로봇에도 공지는 나간다. 폴링은 이 화면을 보고 있을 때만 돈다.
+ clearVoicePoll(){if(this.voiceTimer){clearInterval(this.voiceTimer);this.voiceTimer=null}}
+ voice(){
+  const link=this.voiceLink;
+  this.voiceStatusEl=this.el('div',{class:'op-facts'});
+  this.voiceEventsEl=this.el('div',{class:'op-voice-log','aria-live':'polite'});
+  const input=this.el('input',{type:'text',name:'방송 문장',maxlength:300,placeholder:'로봇에게 말시킬 문장을 입력하세요'});
+  const send=urgent=>this.run(async()=>{
+   if(!link)throw new Error('음성 서버에 연결되지 않았습니다. voice_pipeline 을 --web 으로 실행하세요.');
+   const text=input.value.trim();if(!text)throw new Error('방송할 문장을 입력하세요.');
+   await link.say(text,{urgent});input.value='';
+   this.onToast(urgent?'긴급 방송을 대기열 맨 앞에 넣었어요.':'방송을 대기열에 넣었어요.');this.pollVoice();
+  });
+  input.addEventListener('keydown',event=>{if(event.key==='Enter')send(false)});
+  const form=this.el('div',{class:'op-form-grid'},
+   this.field('방송 문장',input),
+   this.el('div',{class:'op-toolbar'},
+    this.button('말하기',()=>send(false),{disabled:!link}),
+    this.button('긴급 방송',()=>send(true),{disabled:!link,'data-tone':'warn'}),
+    this.button('대기/깨우기',()=>this.run(async()=>{await link.mode();this.pollVoice()}),{disabled:!link})));
+  this.container.append(
+   this.section('로봇 음성 상태',
+    link?this.note('음성 서버 연결됨 — '+link.baseUrl):this.note('음성 서버 미연결 — voice_pipeline 을 --web 으로 실행하면 자동으로 붙습니다.','warning'),
+    this.voiceStatusEl),
+   this.section('관제 방송',form,
+    this.note('대기 모드의 로봇에도 공지는 나갑니다. 긴급 방송은 대기열 맨 앞에 들어갑니다.')),
+   this.section('최근 발화',this.voiceEventsEl));
+  if(link){this.pollVoice();this.voiceTimer=setInterval(()=>this.pollVoice(),2000)}
+ }
+ async pollVoice(){
+  if(this.view!=='voice'||!this.voiceLink){this.clearVoicePoll();return}
+  try{
+   const s=await this.voiceLink.status();
+   const mode={active:'대화 활성',standby:'대기 모드'}[s.mode]||s.mode;
+   this.voiceStatusEl.replaceChildren(...[
+    ['로봇',s.robot],['모드',mode],['동작',s.activity],['방송 대기',s.say_queue+'건'],
+   ].map(([k,v])=>this.el('div',{},this.el('dt',{},k),this.el('dd',{},v))));
+   const role={user:'현장 발화',robot:'로봇 응답',admin:'관제 방송',system:'시스템'};
+   this.voiceEventsEl.replaceChildren(...s.events.slice().reverse().map(e=>
+    this.el('div',{class:'op-voice-row '+e.role},
+     this.el('span',{class:'op-row-meta'},e.ts,this.badge(role[e.role]||e.role)),
+     this.el('span',{},e.text))));
+   if(!s.events.length)this.voiceEventsEl.append(this.note('아직 기록된 발화가 없습니다.'));
+  }catch(error){
+   this.voiceStatusEl.replaceChildren(this.note('음성 서버 응답 없음 — '+error.message,'warning'));
+   this.clearVoicePoll();
+  }
  }
  missions(){
   const store=this.store,active=['running','paused'].includes(store.mission.status);
