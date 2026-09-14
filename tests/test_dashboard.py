@@ -606,3 +606,31 @@ def test_cli_omits_the_publisher_without_a_dashboard(cfg, monkeypatch):
     monkeypatch.setattr(module.sys, "stdin", None)
     assert module.main(["--device", "test", "--no-vision"]) == 0
     assert captured["publisher"] is None
+
+
+def test_event_snapshot_route_serves_the_recorded_picture(clock):
+    """사건 그림은 **지금 화면이 아니라 그때 장면**이다 (WBS 4.6.4)."""
+    app = create_app(
+        state_at(clock), event_snapshot=lambda entry: b"jpeg" if entry == "ok" else None
+    )
+    with TestClient(app) as client:
+        found = client.get("/events/ok/snapshot.jpg")
+        assert found.status_code == 200
+        assert found.content == b"jpeg"
+        assert found.headers["content-type"] == "image/jpeg"
+        assert client.get("/events/nope/snapshot.jpg").status_code == 404
+
+
+def test_event_snapshot_route_is_absent_without_a_resolver(clock):
+    """읽기 전용으로 띄우면 사건 그림도 나가지 않는다 — 404 로 닫는다."""
+    app = create_app(state_at(clock))
+    with TestClient(app) as client:
+        assert client.get("/events/anything/snapshot.jpg").status_code == 404
+
+
+def test_event_snapshot_route_does_not_need_a_camera(clock):
+    """⚠️ 카메라 없이도 지난 사건 그림은 보여야 한다 — 저장은 이미 끝났다."""
+    app = create_app(state_at(clock), camera=None, event_snapshot=lambda _e: b"jpeg")
+    with TestClient(app) as client:
+        assert client.get("/events/x/snapshot.jpg").status_code == 200
+        assert client.get("/camera/snapshot.jpg").status_code == 404
