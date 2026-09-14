@@ -1060,6 +1060,37 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _publish_event(dashboard: DashboardState) -> Callable[[BlackboxEntry], None]:
+    """블랙박스 기록 하나를 관제 화면이 읽을 형태로 바꿔 넘긴다.
+
+    ⚠️ **JPEG 바이트를 보내지 않는다.** 사건 채널은 상태 전문과 같은 JSON 소켓이고,
+    프레임 하나가 수십 KB 다 — 거기 실으면 사건 하나가 텔레메트리를 밀어낸다.
+    그림은 블랙박스가 디스크에 갖고 있으므로 **가리키는 이름만** 보낸다.
+
+    ⚠️ **절대 경로를 브라우저에 보내지 않는다.** 화면에 쓸 일이 없고 PC 의 폴더
+    구조를 드러낸다. 기록 디렉터리 이름이면 되돌아 찾을 수 있다.
+    """
+
+    def publish(entry: BlackboxEntry) -> None:
+        dashboard.record_event(
+            {
+                "event": entry.event_type,
+                "ts_ms": entry.ts_ms,
+                "state": entry.state,
+                "escalation": entry.escalation,
+                # 비주 대상도 함께 남긴다 (FR-3.8.4) — 주 대상만 보내면 옆에 있던
+                # 사람이 기록에서 사라진다.
+                "tracks": entry.tracks,
+                "detections": entry.detections,
+                "telemetry": entry.telemetry,
+                "entry": entry.meta_path.parent.name,
+                "snapshot": entry.jpeg_path.name if entry.jpeg_path is not None else None,
+            }
+        )
+
+    return publish
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
@@ -1095,6 +1126,10 @@ def main(argv: list[str] | None = None) -> int:
         vision=vision,
         blackbox=blackbox,
         dashboard=dashboard,
+        # 사건을 관제 화면으로 밀어 준다 (WBS 4.4.3). ⚠️ **저장만으로는 완료가
+        # 아니다** — 블랙박스는 디스크에 남기고 사람은 화면을 본다. 이 연결이
+        # 없으면 기록은 쌓이는데 아무도 모른다. 실제로 그 상태였다.
+        event_publisher=(None if dashboard is None else _publish_event(dashboard)),
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가

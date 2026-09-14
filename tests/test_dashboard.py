@@ -449,3 +449,160 @@ def test_vision_socket_rejects_foreign_origin(clock):
         client.websocket_connect("/ws/vision", headers={"origin": "https://other.test"}),
     ):
         pytest.fail("Foreign origin accepted")
+
+
+# ── 사건 피드 (WBS 4.4.3 · FR-3.9) ───────────────────────────────
+
+
+def _event(n: int) -> dict:
+    return {"event": "person_found", "ts_ms": 1000 + n, "entry": f"e{n}"}
+
+
+def test_events_reach_a_browser_that_connects_later(clock):
+    """⚠️ **브라우저는 로봇보다 늦게 열리고 새로고침도 한다.**
+
+    붙는 순간부터만 보내면 그 전에 있던 사람 감지가 화면에 영영 나오지 않는다.
+    """
+    state = state_at(clock)
+    state.record_event(_event(1))
+    state.record_event(_event(2))
+    with TestClient(create_app(state)) as client, client.websocket_connect("/ws/events") as ws:
+        first, second = ws.receive_json(), ws.receive_json()
+        assert [first["entry"], second["entry"]] == ["e1", "e2"]
+        assert first["type"] == "event" and first["seq"] == 1
+
+
+def test_a_new_event_is_pushed_without_coalescing(clock):
+    """⚠️ **사건은 합치지 않는다.** 텔레메트리처럼 최신만 남기면 기록이 사라진다."""
+    state = state_at(clock)
+    with TestClient(create_app(state)) as client, client.websocket_connect("/ws/events") as ws:
+        for n in (1, 2, 3):
+            state.record_event(_event(n))
+        received = [ws.receive_json()["entry"] for _ in range(3)]
+    assert received == ["e1", "e2", "e3"], "세 건 모두 도착해야 한다"
+
+
+def test_a_dropped_event_is_announced_not_hidden(clock):
+    """⚠️ **공백을 조용히 넘기지 않는다.**
+
+    오래 끊겼으면 앞쪽이 버퍼에서 밀려 나가는데, 말하지 않으면 사람이 *"그 사이에
+    아무 일도 없었다"* 고 읽는다. 사건 피드에서 그것은 거짓 안심이다.
+    """
+    from host.dashboard.state import EVENT_BUFFER
+
+    state = state_at(clock)
+    for n in range(EVENT_BUFFER + 5):
+        state.record_event(_event(n))
+    with TestClient(create_app(state)) as client, client.websocket_connect("/ws/events") as ws:
+        gap = ws.receive_json()
+        assert gap["type"] == "event_gap"
+        assert gap["dropped"] == 5, "버퍼를 넘어 못 준 건수를 알려 준다"
+
+
+def test_the_event_channel_is_read_only(clock):
+    state = state_at(clock)
+    with TestClient(create_app(state)) as client, client.websocket_connect("/ws/events") as ws:
+        ws.send_text("drive")
+        with pytest.raises(WebSocketDisconnect) as caught:
+            ws.receive_json()
+    assert caught.value.code == 1008
+
+
+def test_health_reports_the_event_channel(clock):
+    with TestClient(create_app(state_at(clock))) as client:
+        health = client.get("/health").json()
+    assert health["event_clients"] == 0
+    assert health["events_overflowed"] == 0
+
+
+def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
+    """⚠️ **어댑터가 있어도 CLI 가 꽂지 않으면 사건은 화면에 못 간다.**
+
+    `4.4.3` 이 멈춰 있던 이유가 정확히 그것이다 — 블랙박스는 기록하고
+    `event_publisher` 훅도 있었지만 아무도 넘기지 않아 발행이 죽어 있었다.
+    어댑터를 직접 넣어 시험하면 이 구멍이 보이지 않으므로 **CLI 를 본다.**
+    """
+    import host.runtime as module
+
+    captured: dict = {}
+
+    class FakeSocket:
+        def close(self):
+            pass
+
+    class FakeRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, _config, **kwargs):
+            captured["publisher"] = kwargs.get("event_publisher")
+            captured["dashboard"] = kwargs["dashboard"]
+            self.behavior = None
+            self.commander = None
+            self.send_immediate = lambda _line: None
+            self.ask_reset = lambda: None
+            self.apply_external = lambda _event: True
+
+        def serve(self, _sock, **_kwargs):
+            pass
+
+    @contextmanager
+    def fake_server(_state, _port, **_kwargs):
+        yield
+
+    monkeypatch.setattr(module, "load_config", lambda _device: cfg)
+    monkeypatch.setattr(module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(module, "EventBlackbox", lambda _cfg: None)
+    monkeypatch.setattr(module, "Runtime", FakeRuntime)
+    monkeypatch.setattr(module, "open_socket", lambda _port: FakeSocket())
+    monkeypatch.setattr(module.sys, "stdin", None)
+    monkeypatch.setattr("host.dashboard.server.running_server", fake_server)
+    assert module.main(["--device", "test", "--no-vision", "--dashboard-port", "8000"]) == 0
+
+    publisher = captured["publisher"]
+    assert callable(publisher), "CLI 가 발행 어댑터를 넘겨야 한다"
+    # 실제로 그 대시보드에 꽂혔는지 본다 — 아무 데도 안 가는 함수면 의미가 없다.
+    board = captured["dashboard"]
+    before = board.event_seq
+    publisher(
+        SimpleNamespace(
+            event_type="person_found",
+            ts_ms=1,
+            state="ALERT",
+            escalation="L1",
+            tracks=[{"track_id": 1}],
+            detections=[],
+            telemetry={},
+            meta_path=Path("bb/entry-1/meta.json"),
+            jpeg_path=Path("bb/entry-1/frame.jpg"),
+        )
+    )
+    assert board.event_seq == before + 1, "넘긴 어댑터가 이 대시보드로 들어가야 한다"
+
+
+def test_cli_omits_the_publisher_without_a_dashboard(cfg, monkeypatch):
+    """대시보드가 없으면 발행할 곳도 없다 — 빈 어댑터를 만들지 않는다."""
+    import host.runtime as module
+
+    captured: dict = {}
+
+    class FakeSocket:
+        def close(self):
+            pass
+
+    class FakeRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, _config, **kwargs):
+            captured["publisher"] = kwargs.get("event_publisher")
+
+        def serve(self, _sock, **_kwargs):
+            pass
+
+    monkeypatch.setattr(module, "load_config", lambda _device: cfg)
+    monkeypatch.setattr(module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(module, "EventBlackbox", lambda _cfg: None)
+    monkeypatch.setattr(module, "Runtime", FakeRuntime)
+    monkeypatch.setattr(module, "open_socket", lambda _port: FakeSocket())
+    monkeypatch.setattr(module.sys, "stdin", None)
+    assert module.main(["--device", "test", "--no-vision"]) == 0
+    assert captured["publisher"] is None
