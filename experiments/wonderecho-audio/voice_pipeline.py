@@ -39,16 +39,12 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import robotlink
+import scenarios
 import serial  # noqa: F401  (type only; stream_client already imports it)
 from play_client import CHUNK, PREFILL, end_packet, play_packet
-from stream_client import (
-    STATUS,
-    Decoder,
-    make_decoder,
-    open_port,
-    probe_baud,
-    send_command,
-)
+from stream_client import STATUS, Decoder, make_decoder
+from transport import open_transport
 
 SYSTEM = (
     "너는 산업 현장을 순찰하는 네발 경비 로봇 '메카독'이다. "
@@ -111,12 +107,19 @@ class Hub:
             except queue.Empty:
                 return items
 
+    def enqueue_scenario(self, name, urgent=False):
+        with self.lock:
+            self._seq += 1
+            self.say_q.put((0 if urgent else 1, self._seq, ("scenario", name)))
+        self.event("system", f"시나리오 요청: {name}")
+
     def snapshot(self):
         return {
             "robot": self.robot_id,
             "mode": self.mode,
             "activity": self.activity,
             "say_queue": self.say_q.qsize(),
+            "scenarios": list(scenarios.SCENARIOS),
             "events": list(self.events)[-30:],
         }
 
@@ -170,6 +173,12 @@ def make_handler(hub):
         def do_GET(self):
             if self.path == "/status":
                 _api(self, 200, hub.snapshot())
+            elif self.path == "/scenarios":
+                _api(
+                    self,
+                    200,
+                    [{"name": n, "desc": d} for n, (d, _) in scenarios.SCENARIOS.items()],
+                )
             elif self.path == "/transcript":
                 _api(self, 200, list(hub.events))
             elif self.path == "/":
@@ -195,6 +204,17 @@ def make_handler(hub):
                     _api(self, 400, {"error": "empty text"})
                     return
                 hub.enqueue_say(text, req.get("urgent"))
+                _api(self, 200, {"queued": hub.say_q.qsize()})
+            elif self.path == "/scenario":
+                name = (req.get("name") or "").strip()
+                if name not in scenarios.SCENARIOS:
+                    _api(
+                        self,
+                        404,
+                        {"error": "unknown scenario", "scenarios": list(scenarios.SCENARIOS)},
+                    )
+                    return
+                hub.enqueue_scenario(name, req.get("urgent"))
                 _api(self, 200, {"queued": hub.say_q.qsize()})
             elif self.path == "/mode":
                 mode = req.get("mode")
@@ -314,10 +334,10 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
     import numpy as np
 
     for attempt in range(3):
-        send_command(device, 0x102)
+        device.send_command(0x102)
         try:
             _wait_phase(device, decoder, READY, 3)
-            send_command(device, 0x108)
+            device.send_command(0x108)
             _wait_phase(device, decoder, STARTED, 3)
             break
         except TimeoutError:
@@ -352,7 +372,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
                     if rms > max(floor * 3.0, 300.0):
                         speech_seen, last_speech = True, now
                     if speech_seen and now - last_speech > 1.0:
-                        send_command(device, 0x106)
+                        device.send_command(0x106)
                         done = True
             elif packet.message_type == 0x102 and len(packet.payload) == STATUS.size:
                 if STATUS.unpack(packet.payload)[1] == FINISHED:
@@ -468,6 +488,54 @@ def stream_play(device, pcm, pad_s=0.25):
         raise TimeoutError("incomplete PLAY_END write")
 
 
+class ScenarioCtx:
+    """What a scenario function gets: hardware access without serial ownership.
+
+    The main loop stays the sole owner of the transport; scenarios borrow it
+    through these narrow methods so they can say/listen/check the robot but
+    never touch UART framing directly.
+    """
+
+    def __init__(self, device, decoder, stt, piper, hub, knowledge, args):
+        self.device, self.decoder, self.stt, self.piper = device, decoder, stt, piper
+        self.hub, self.knowledge, self.args = hub, knowledge, args
+
+    def say(self, text):
+        self.hub.activity = "speaking(scenario)"
+        self.hub.event("robot", text)
+        print(f"[scenario] {text!r}")
+        if self.device is not None:  # dry-llm 모드에서는 출력만
+            _say(self.device, self.piper, text, self.args.speed)
+
+    def listen(self, timeout_s=12.0):
+        self.hub.activity = "listening(scenario)"
+        try:
+            pcm, heard = capture_pcm(self.device, self.decoder, timeout_s=timeout_s)
+        except TimeoutError:
+            return ""
+        if not heard:
+            return ""
+        text = transcribe(self.stt, pcm)
+        self.hub.event("user", text)
+        print(f"[scenario stt] {text!r}")
+        return text
+
+    def retrieve(self, query):
+        return retrieve(self.knowledge, query)
+
+    def robot_status(self):
+        return robotlink.fetch_status(self.args.robot_api)
+
+    def command(self, action):
+        """Whitelisted robot actions only — free text never reaches the robot."""
+        ok, err = robotlink.run_action(action, self.args.robot_api)
+        self.hub.event("system", f"명령 {action}: {'성공' if ok else err}")
+        return ok
+
+    def event(self, role, text):
+        self.hub.event(role, text)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
@@ -495,17 +563,21 @@ def main():
         "--web", type=int, default=0, help="관제 API HTTP 포트 — 0이면 비활성 (예: 8090)"
     )
     ap.add_argument("--robot-id", default="mechadog-01", help="관제웹에 표시할 로봇 식별자")
+    ap.add_argument(
+        "--robot-api",
+        default=robotlink.DEFAULT_BASE,
+        help="로봇 관제 API 베이스 (상태 조회·화이트리스트 명령용)",
+    )
     args = ap.parse_args()
 
     if args.say:
         from piper import PiperVoice
 
         piper = PiperVoice.load(str(args.piper_model))
-        baud = args.baud or probe_baud(args.port)
-        device = open_port(args.port, baud)
+        device = open_transport(args)
         try:
             pcm_out = synth_piper(piper, args.say, args.speed)
-            print(f"[tts] {len(pcm_out) / 64000:.1f}s audio -> {args.port} @ {baud}")
+            print(f"[tts] {len(pcm_out) / 64000:.1f}s audio -> {device.port} @ {device.baud}")
             stream_play(device, pcm_out)
         finally:
             device.close()
@@ -535,23 +607,34 @@ def main():
         from faster_whisper import WhisperModel
 
         stt = WhisperModel(args.whisper, device="cuda", compute_type="float16")
-        baud = args.baud or probe_baud(args.port)
-        device = open_port(args.port, baud)
+        device = open_transport(args)
         decoder = Decoder(max_payload=128)
-        print(f"[link] {args.port} @ {baud}")
+        print(f"[link] {device.kind} {device.port} @ {device.baud}")
 
+    ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args)
     turn = 0
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
-            # 관제 공지 큐 처리 — 대기 모드에서도 방송은 나간다
-            for _, _, notice in hub.drain_say():
+            # 관제 공지·시나리오 큐 처리 — 대기 모드에서도 방송은 나간다
+            for _, _, item in hub.drain_say():
+                if isinstance(item, tuple) and item[0] == "scenario":
+                    name = item[1]
+                    desc, func = scenarios.SCENARIOS[name]
+                    print(f"[scenario] run {name} ({desc})")
+                    hub.event("system", f"시나리오 실행: {name}")
+                    try:
+                        func(ctx)
+                    except Exception as e:
+                        print(f"[scenario] {name} failed: {e}")
+                        hub.event("system", f"시나리오 실패: {name}: {e}")
+                    continue
                 if args.dry_llm_only:
-                    print(f"[notice] {notice!r}")
+                    print(f"[notice] {item!r}")
                     continue
                 hub.activity = "speaking(notice)"
-                print(f"[notice] {notice!r}")
-                _say(device, piper, notice, args.speed)
+                print(f"[notice] {item!r}")
+                _say(device, piper, item, args.speed)
             if args.dry_llm_only:
                 text = input("you> ").strip()
                 if not text:
@@ -607,6 +690,27 @@ def main():
                         "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
                         args.speed,
                     )
+                    continue
+                # 규칙 기반 시나리오 트리거 — LLM보다 먼저 잡는다 (판정은 결정론적)
+                scn_name = scenarios.match_trigger(_PUNCT.sub("", query or ""))
+                if scn_name:
+                    desc, func = scenarios.SCENARIOS[scn_name]
+                    print(f"[scenario] voice trigger {scn_name} ({desc})")
+                    hub.event("system", f"시나리오 실행: {scn_name}")
+                    try:
+                        func(ctx)
+                    except Exception as e:
+                        print(f"[scenario] {scn_name} failed: {e}")
+                        hub.event("system", f"시나리오 실패: {scn_name}: {e}")
+                    continue
+                # 로봇 상태 질의 / 화이트리스트 명령 — 실측·실행 결과를 그대로 말한다
+                handled, spoken = robotlink.answer_query(query or "", args.robot_api)
+                if handled:
+                    print(f"[robotlink] {spoken!r}")
+                    hub.event("robot", spoken)
+                    hub.activity = "speaking"
+                    if not args.dry_llm_only:
+                        _say(device, piper, spoken, args.speed)
                     continue
                 text = query or "불렀어?"
             hub.activity = "thinking"
