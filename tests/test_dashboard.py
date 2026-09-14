@@ -7,6 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,8 +19,10 @@ from host.dashboard.server import (
     DEFAULT_STATIC_DIR,
     MAX_CLIENTS,
     TelemetryHub,
+    VisionHub,
     _send_updates,
     create_app,
+    encode_vision_frame,
     running_server,
 )
 from host.dashboard.state import DashboardState
@@ -343,3 +346,92 @@ def test_dashboard_ships_its_page_and_three_without_install(clock):
         assert client.get("/live").status_code == 200
         # 정적 마운트가 API 를 가리지 않는다.
         assert client.get("/api/telemetry").status_code == 200
+
+
+# ── 검출 오버레이 (WBS 4.5.2) ───────────────────────────────────────────
+
+
+def _vision_result(seq=7, jpeg=b"JPEG-BYTES"):
+    """워커 결과 모양만 흉내낸다 — 서버는 속성만 읽는다."""
+    return SimpleNamespace(
+        frame_seq=seq,
+        frame_width=640,
+        frame_height=480,
+        completed_ms=1234,
+        jpeg=jpeg,
+        detections=(
+            SimpleNamespace(label="person", score=0.91234, box=(10.04, 20.0, 110.0, 300.26)),
+        ),
+        tracks=(SimpleNamespace(track_id=3, score=0.9, box=(10.0, 20.0, 110.0, 300.0)),),
+    )
+
+
+def _decode_vision(message: bytes):
+    size = int.from_bytes(message[:4], "big")
+    return json.loads(message[4 : 4 + size]), message[4 + size :]
+
+
+def test_vision_frame_keeps_boxes_with_the_jpeg_they_were_computed_on():
+    """박스와 JPEG 가 한 메시지다 — 둘로 나누면 송신 취소 때 다음 사진에 박스가 붙는다."""
+    result = _vision_result()
+    header, jpeg = _decode_vision(encode_vision_frame(result))
+    assert jpeg == result.jpeg
+    assert header == {
+        "type": "vision",
+        "frame_seq": 7,
+        "width": 640,
+        "height": 480,
+        "completed_ms": 1234,
+        "detections": [{"label": "person", "score": 0.912, "box": [10.0, 20.0, 110.0, 300.3]}],
+        "tracks": [{"track_id": 3, "score": 0.9, "box": [10.0, 20.0, 110.0, 300.0]}],
+    }
+
+
+def test_vision_hub_sends_each_inference_once_and_keeps_only_the_latest():
+    async def scenario():
+        current = {"result": None}
+        hub = VisionHub(lambda: current["result"])
+        slow, fast = hub.subscribe(), hub.subscribe()
+        assert not hub.broadcast()  # 결과가 아직 없다
+        current["result"] = _vision_result(jpeg=b"")
+        assert not hub.broadcast()  # 사진 없는 결과는 보내지 않는다
+        for seq in range(5):
+            current["result"] = _vision_result(seq=seq)
+            assert hub.broadcast()
+            assert not hub.broadcast()  # 같은 추론을 다시 보내지 않는다
+            assert _decode_vision(fast.get_nowait())[0]["frame_seq"] == seq
+        assert slow.qsize() == 1
+        assert _decode_vision(slow.get_nowait())[0]["frame_seq"] == 4
+        assert hub.coalesced == 4
+        # 늦게 붙은 화면은 다음 추론을 기다리지 않고 마지막 프레임부터 받는다.
+        late = hub.subscribe()
+        assert _decode_vision(late.get_nowait())[0]["frame_seq"] == 4
+
+    asyncio.run(scenario())
+
+
+def test_vision_socket_streams_boxes_with_their_jpeg(clock):
+    result = _vision_result()
+    app = create_app(state_at(clock), vision=lambda: result)
+    with TestClient(app) as client, client.websocket_connect("/ws/vision") as ws:
+        header, jpeg = _decode_vision(ws.receive_bytes())
+        assert jpeg == result.jpeg
+        assert header["detections"][0]["label"] == "person"
+        assert client.get("/health").json()["vision_clients"] == 1
+
+
+def test_vision_channel_is_absent_without_a_vision_worker(clock):
+    with TestClient(create_app(state_at(clock))) as client:
+        assert client.get("/health").json()["vision_clients"] is None
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect("/ws/vision"):
+            pytest.fail("vision channel opened without a worker")
+
+
+def test_vision_socket_rejects_foreign_origin(clock):
+    app = create_app(state_at(clock), vision=_vision_result)
+    with (
+        TestClient(app) as client,
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect("/ws/vision", headers={"origin": "https://other.test"}),
+    ):
+        pytest.fail("Foreign origin accepted")

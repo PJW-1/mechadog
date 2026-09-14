@@ -1,4 +1,4 @@
-"""PC 로컬 FastAPI/WS 서버 — 텔레메트리 방송과 명령 API (WBS 4.5.1 · 4.5.3).
+"""PC 로컬 FastAPI/WS 서버 — 텔레메트리·검출 방송과 명령 API (WBS 4.5.1 · 4.5.2 · 4.5.3).
 
 ⚠️ **명령 API 가 붙으면서 더 이상 읽기 전용이 아니다.** `commands` 를 넘기지
 않으면 예전처럼 읽기 전용으로 뜨고, 넘기면 `/api/command/*` 가 열린다. 이
@@ -7,17 +7,23 @@
 카메라 영상은 XIAO 스트림이 **단일 클라이언트**라 비전 워커가 점유한 채널을
 뺏으면 추론이 끊긴다. 그래서 여기서는 XIAO 에 새로 붙지 않고 워커가 방금
 추론에 쓴 JPEG 를 재송출한다 — 화면에 보이는 것이 곧 판정에 들어간 것이다.
+
+검출 오버레이(`/ws/vision` · WBS 4.5.2)는 **박스를 계산한 바로 그 JPEG 와 박스를
+한 메시지로** 보낸다. 영상 스트림과 박스를 따로 보내면 추론 지연만큼 박스가
+다른 장면 위에 그려진다.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import socket
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from anyio import CancelScope
@@ -74,6 +80,81 @@ class TelemetryHub:
             await asyncio.sleep(max(0, deadline - loop.time()))
 
 
+def encode_vision_frame(result: Any) -> bytes:
+    """검출 결과 하나를 WS 바이너리 메시지 하나로 만든다.
+
+    ``[헤더 길이 uint32 big-endian][UTF-8 JSON 헤더][JPEG]``
+
+    ⚠️ **텍스트 헤더와 JPEG 를 두 메시지로 나누지 않는다.** 송신 시간 초과로 둘째가
+    취소되면 다음 JPEG 가 앞 헤더와 짝지어져 박스가 엉뚱한 사진에 그려진다.
+    박스는 원본 픽셀 좌표 ``[x1, y1, x2, y2]`` 이고 ``width``·``height`` 로 화면에
+    맞춰 늘린다. 필드 이름은 블랙박스 기록과 같다.
+    """
+    header = {
+        "type": "vision",
+        "frame_seq": result.frame_seq,
+        "width": result.frame_width,
+        "height": result.frame_height,
+        "completed_ms": result.completed_ms,
+        "detections": [
+            {"label": d.label, "score": round(d.score, 3), "box": [round(v, 1) for v in d.box]}
+            for d in result.detections
+        ],
+        "tracks": [
+            {
+                "track_id": t.track_id,
+                "score": round(t.score, 3),
+                "box": [round(v, 1) for v in t.box],
+            }
+            for t in result.tracks
+        ],
+    }
+    raw = json.dumps(header, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return len(raw).to_bytes(4, "big") + raw + result.jpeg
+
+
+class VisionHub:
+    """검출 프레임 방송. **새 추론 결과가 나왔을 때만**, 연결마다 최신 한 장만 남긴다."""
+
+    def __init__(self, source: Callable[[], Any]) -> None:
+        self.source = source
+        self.clients: set[asyncio.Queue] = set()
+        self.coalesced = 0
+        self._last: Any = None
+        self._last_message: bytes | None = None
+
+    def subscribe(self) -> asyncio.Queue | None:
+        if len(self.clients) >= MAX_CLIENTS:
+            return None
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        # 새 화면은 다음 추론을 기다리지 않고 마지막 프레임부터 받는다 — 카메라가
+        # 멈춰 있으면 영영 빈 화면이 된다. 낡았는지는 `completed_ms` 로 가린다.
+        if self._last_message is not None:
+            queue.put_nowait(self._last_message)
+        self.clients.add(queue)
+        return queue
+
+    def broadcast(self) -> bool:
+        result = self.source()
+        # 워커는 추론마다 결과 객체를 새로 만든다. 같은 객체면 같은 추론이다 — seq 는
+        # 카메라가 다시 붙으면 처음부터 다시 셀 수 있어 비교 기준으로 쓰지 않는다.
+        if result is None or result is self._last or not result.jpeg:
+            return False
+        self._last = result
+        message = self._last_message = encode_vision_frame(result)
+        for queue in self.clients:
+            if queue.full():
+                queue.get_nowait()
+                self.coalesced += 1
+            queue.put_nowait(message)
+        return True
+
+    async def run(self) -> None:
+        while True:
+            self.broadcast()
+            await asyncio.sleep(CAMERA_PERIOD_S)
+
+
 async def _send_updates(websocket: WebSocket, queue: asyncio.Queue) -> None:
     while True:
         message = await queue.get()
@@ -81,10 +162,63 @@ async def _send_updates(websocket: WebSocket, queue: asyncio.Queue) -> None:
             await websocket.send_json(message)
 
 
+async def _send_frames(websocket: WebSocket, queue: asyncio.Queue) -> None:
+    while True:
+        message = await queue.get()
+        async with asyncio.timeout(SEND_TIMEOUT_S):
+            await websocket.send_bytes(message)
+
+
 async def _receive_close(websocket: WebSocket) -> int | None:
     message = await websocket.receive()
     # close는 송신 태스크를 회수한 다음 핸들러 하나에서만 보낸다.
     return None if message["type"] == "websocket.disconnect" else 1008
+
+
+async def _serve_subscriber(
+    websocket: WebSocket,
+    hub: TelemetryHub | VisionHub,
+    send: Callable[[WebSocket, asyncio.Queue], Awaitable[None]],
+    read_only_reason: str,
+) -> None:
+    """방송 채널 하나의 연결 수명 — 출처 검사, 연결 상한, 느린 연결 차단, 회수."""
+    origin = websocket.headers.get("origin")
+    allowed_origins = _local_origins(websocket.url.port or 80)
+    if origin is not None and origin not in allowed_origins:
+        await websocket.close(code=1008)
+        return
+    queue = hub.subscribe()
+    if queue is None:
+        await websocket.close(code=1013)
+        return
+    tasks: list[asyncio.Task] = []
+    try:
+        await websocket.accept()
+        tasks = [
+            asyncio.create_task(send(websocket, queue)),
+            asyncio.create_task(_receive_close(websocket)),
+        ]
+        done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for pending in _pending:
+            pending.cancel()
+        await asyncio.gather(*_pending, return_exceptions=True)
+        for task in done:
+            if task.result() == 1008:
+                async with asyncio.timeout(SEND_TIMEOUT_S):
+                    await websocket.close(code=1008, reason=read_only_reason)
+    except TimeoutError:
+        with contextlib.suppress(TimeoutError, OSError, RuntimeError):
+            async with asyncio.timeout(SEND_TIMEOUT_S):
+                await websocket.close(code=1013, reason="Client too slow")
+    except (WebSocketDisconnect, OSError, asyncio.CancelledError):
+        pass
+    finally:
+        hub.clients.discard(queue)
+        for task in tasks:
+            task.cancel()
+        # ASGI 접속 수명이 취소돼도 연결별 송수신 태스크는 회수한다.
+        with CancelScope(shield=True):
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _local_origins(port: int) -> set[str]:
@@ -104,17 +238,22 @@ def create_app(
     commands: CommandService | None = None,
     camera: Callable[[], bytes | None] | None = None,
     static_dir: Path | None = None,
+    vision: Callable[[], Any] | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
+    vision_hub = VisionHub(vision) if vision is not None else None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        task = asyncio.create_task(hub.run())
+        tasks = [asyncio.create_task(hub.run())]
+        if vision_hub is not None:
+            tasks.append(asyncio.create_task(vision_hub.run()))
         try:
             yield
         finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     app = FastAPI(title="MechDog telemetry", lifespan=lifespan)
     app.state.hub = hub
@@ -126,6 +265,8 @@ def create_app(
             "read_only": commands is None,
             "clients": len(hub.clients),
             "coalesced_updates": hub.coalesced,
+            # 비전이 없으면 null — "연결 0" 과 "채널 없음" 을 구분한다.
+            "vision_clients": None if vision_hub is None else len(vision_hub.clients),
         }
 
     @app.get("/api/telemetry")
@@ -215,43 +356,15 @@ def create_app(
 
     @app.websocket("/ws/telemetry")
     async def websocket_telemetry(websocket: WebSocket):
-        origin = websocket.headers.get("origin")
-        allowed_origins = _local_origins(websocket.url.port or 80)
-        if origin is not None and origin not in allowed_origins:
-            await websocket.close(code=1008)
-            return
-        queue = hub.subscribe()
-        if queue is None:
-            await websocket.close(code=1013)
-            return
-        tasks: list[asyncio.Task] = []
-        try:
-            await websocket.accept()
-            tasks = [
-                asyncio.create_task(_send_updates(websocket, queue)),
-                asyncio.create_task(_receive_close(websocket)),
-            ]
-            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for pending in _pending:
-                pending.cancel()
-            await asyncio.gather(*_pending, return_exceptions=True)
-            for task in done:
-                if task.result() == 1008:
-                    async with asyncio.timeout(SEND_TIMEOUT_S):
-                        await websocket.close(code=1008, reason="Telemetry channel is read-only")
-        except TimeoutError:
-            with contextlib.suppress(TimeoutError, OSError, RuntimeError):
-                async with asyncio.timeout(SEND_TIMEOUT_S):
-                    await websocket.close(code=1013, reason="Client too slow")
-        except (WebSocketDisconnect, OSError, asyncio.CancelledError):
-            pass
-        finally:
-            hub.clients.discard(queue)
-            for task in tasks:
-                task.cancel()
-            # ASGI 접속 수명이 취소돼도 연결별 송수신 태스크는 회수한다.
-            with CancelScope(shield=True):
-                await asyncio.gather(*tasks, return_exceptions=True)
+        await _serve_subscriber(websocket, hub, _send_updates, "Telemetry channel is read-only")
+
+    if vision_hub is not None:
+
+        @app.websocket("/ws/vision")
+        async def websocket_vision(websocket: WebSocket):
+            await _serve_subscriber(
+                websocket, vision_hub, _send_frames, "Vision channel is read-only"
+            )
 
     live_page = Path(__file__).resolve().parent / "static" / "live.html"
     if live_page.is_file():
@@ -277,6 +390,7 @@ def running_server(
     commands: CommandService | None = None,
     camera: Callable[[], bytes | None] | None = None,
     static_dir: Path | None = DEFAULT_STATIC_DIR,
+    vision: Callable[[], Any] | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     ready = threading.Event()
@@ -289,7 +403,9 @@ def running_server(
 
     server = LocalServer(
         uvicorn.Config(
-            create_app(state, commands=commands, camera=camera, static_dir=static_dir),
+            create_app(
+                state, commands=commands, camera=camera, static_dir=static_dir, vision=vision
+            ),
             host="127.0.0.1",
             port=port,
             log_level="warning",

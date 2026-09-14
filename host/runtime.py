@@ -1109,6 +1109,8 @@ def main(argv: list[str] | None = None) -> int:
                         args.dashboard_port,
                         commands=commands,
                         camera=camera,
+                        # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다 (WBS 4.5.2).
+                        vision=vision.latest if vision is not None else None,
                     )
                 )
             runtime.serve(sock, duration_s=args.duration)
