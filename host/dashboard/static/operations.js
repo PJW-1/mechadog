@@ -47,7 +47,7 @@ export class Operations {
   this.demo=true;this.stale=false;this.estop=false;this.role='operator';this.selected='MD-01';
   this.control=null;this.command='STOP';this.mission={status:'idle',robot:'MD-01',zone:'생산 구역',id:null};
   this.records=[];this.sessions=[];this.events=demoEvents();this.policies={};this.storageAvailable=!!storage;
-  this.serial=0;this.load();
+  this.liveFeed={state:'off',received:0,dropped:0};this.serial=0;this.load();
  }
  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn)}
  emit(reason){for(const fn of this.listeners)fn(reason)}
@@ -180,6 +180,24 @@ export class Operations {
   const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:meta.event,category:'SYSTEM',robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,auth:'필드 미제공',ppe:'필드 미제공',detail:'Git 블랙박스 형식의 저장 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
   this.events.unshift(event);this.log('블랙박스 파일 가져오기',event.id,'LOCAL_IMPORTED_REVIEW');this.emit('import');return event;
  }
+ // ── 실시간 사건 피드 (WBS 4.6.4) ────────────────────────────────
+ // `/ws/events` 의 사건은 기록이다 — 합치지 않고 한 건씩 목록에 넣는다.
+ // 스냅샷은 파일명만 오므로 화면 그림은 붙이지 않는다(가져오기로만 본다).
+ ingestLiveEvent(payload){
+  const seq=payload.seq,id='LIVE-'+seq;
+  if(this.events.some(e=>e.id===id))return this.events.find(e=>e.id===id);
+  // 실시간 사건은 세션 메모리에만 둔다 — 원본은 블랙박스가 디스크에 갖고 있다.
+  if(this.events.filter(e=>e.source==='LIVE_FEED').length>=100)this.events.splice(this.events.findLastIndex(e=>e.source==='LIVE_FEED'),1);
+  const device=cleanText(payload.telemetry?.device_id,80)||'장치 미상';
+  const person=(payload.tracks||[]).length;
+  const event={id,seq,source:'LIVE_FEED',title:cleanText(payload.event,160),category:payload.event==='person_found'?'AUTH':'SYSTEM',robot:device,zone:'구역 미수신',event:cleanText(payload.event,160),state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),auth:'미판정',ppe:'별도 판정',detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':'')+(payload.snapshot?'원본 스냅샷은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다. 서버는 그림을 보내지 않으므로 블랙박스 파일로 확인하세요.':'스냅샷 파일이 없는 사건입니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:null,
+   meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
+  this.events.unshift(event);this.log('실시간 사건 수신',id+' · '+event.title,'LIVE_EVENT_FEED');this.emit('import');return event;
+ }
+ noteEventGap(dropped){
+  this.log('사건 수신 공백',dropped+'건을 버퍼에서 놓쳤습니다 · 서버가 조용히 넘기지 않고 알려준 것','LIVE_EVENT_FEED');this.emit('import');
+ }
+ setEventFeed(status){const prev=this.liveFeed;this.liveFeed=status;if(prev.state!==status.state)this.emit('mode')}
  savePolicy(id,{helmet,vest,note}){
   if(!/^[a-z0-9-]{1,80}$/.test(id)||typeof helmet!=='boolean'||typeof vest!=='boolean')throw new Error('정책 입력을 확인해 주세요.');
   this.policies[id]={helmet,vest,note:cleanText(note,500)};this.save();

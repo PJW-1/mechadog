@@ -22,16 +22,17 @@ async function boot(hash='dashboard',{health=null}={}){
  class View{
   constructor(options){view=this;this.onRobot=options.onRobot;this.onObservation=options.onObservation;this.onError=options.onError}selectRobot(id){this.selected=id}setPatrolRobot(id){this.patrolRobot=id}setPlaying(value){this.playing=value}setCameraVisible(value){this.cameraVisible=value}setWorldVisible(value){this.worldVisible=value}setActive(value){this.active=value}setView(mode){this.mode=mode}focusZone(zone){this.zone=zone}zoom(){}orbit(){}resize(){}dispose(){this.disposed=true}
  }
- let visionFeed=null;
+ let visionFeed=null,eventFeed=null;
  const linkCalls=[];
  class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}}
  class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
+ class EventStub{constructor(options){eventFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class RobotView{constructor({canvas}){robotView=this;this.canvas=canvas;robotViewCount++}setActive(value){this.active=value}resize(){}orbit(angle){this.angle=angle}zoom(value){this.zoomValue=value}reset(){this.resetCalled=true}dispose(){this.disposed=true}}
  // 음성 중계는 시험에서 연결하지 않는다 — 링크가 없을 때의 패널만 검증한다.
  class VoiceStub{status(){return Promise.resolve({})}transcript(){return Promise.resolve([])}say(){return Promise.resolve({})}mode(){return Promise.resolve({})}}
  const resolveVoiceBase=async()=>null;
- await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed);
- return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},linkCalls};
+ await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed,EventFeed){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed,EventStub);
+ return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},get eventFeed(){return eventFeed},linkCalls};
 }
 
 test('application opens direct hash, aligns 3D and camera selection, routes named scene buttons',async()=>{
@@ -148,6 +149,20 @@ test('served by the dashboard, the robot view draws /ws/vision and says what it 
  assert.equal(text('frame-source'),'영상 멈춤 · 마지막 장면');assert.equal(text('camera-status'),'새 영상 없음');
  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
  dom.window.close();
+});
+test('served by the dashboard, live events flow from /ws/events into the review list',async()=>{
+ const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:0}}),{dom,document,store,failures}=state,feed=state.eventFeed;
+ assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/events');assert.equal(feed.started,true);
+ feed.options.onStatus({state:'live',received:0,dropped:0,malformed:0});
+ assert.equal(store.liveFeed.state,'live');
+ // 서버가 보내는 사건 하나 — person_found 는 검토 대상으로 들어온다.
+ feed.options.onEvent({seq:7,event:'person_found',ts_ms:1000,state:'OBSERVE',escalation:'L1',tracks:[{track_id:3,box:[1,2,3,4],score:0.9}],detections:[],telemetry:{device_id:'MD-01'},entry:'20260914_120000_person_found',snapshot:'snapshot.jpg'});
+ const event=store.events.find(e=>e.id==='LIVE-7');assert.ok(event);assert.equal(event.source,'LIVE_FEED');assert.equal(event.robot,'MD-01');assert.equal(event.review,'pending');
+ document.querySelector('[data-view="events"]').click();
+ assert.match(document.querySelector('#panel-content').textContent,/실시간 수신 연결됨/);assert.match(document.querySelector('.op-event-list').textContent,/person_found/);assert.match(document.querySelector('.op-event-list').textContent,/실시간/);
+ feed.options.onGap(3);assert.match(store.records[0].detail,/3건/);
+ dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
+ assert.deepEqual(failures,[]);dom.window.close();
 });
 test('without a vision channel the robot view does not try to connect',async()=>{
  const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:null}}),{dom,document}=state;
