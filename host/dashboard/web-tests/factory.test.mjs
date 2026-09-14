@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {readFile,access} from 'node:fs/promises';
 import {resolve,dirname} from 'node:path';
 import * as THREE from 'three';
-import {buildFactoryMeshes,makeRobot,disposeFactoryResources} from '../scene-materials.js';
-import {getOverviewFrustum} from '../scene.js';
+import {buildFactoryMeshes,makeRobot,disposeFactoryResources} from '../static/scene-materials.js';
+import {getOverviewFrustum} from '../static/scene.js';
 
-const layout=JSON.parse(await readFile(new URL('../factory-layout.json',import.meta.url),'utf8'));
+const layout=JSON.parse(await readFile(new URL('../static/factory-layout.json',import.meta.url),'utf8'));
 test('factory is newly authored schema 2, metre/Z-up, with no claimed robot dynamics',()=>{
  assert.equal(layout.schemaVersion,2);assert.equal(layout.units,'m');assert.equal(layout.upAxis,'Z');
  assert.deepEqual(layout.dimensions,{width:48,depth:32});assert.deepEqual(layout.robots,[]);
@@ -64,7 +64,7 @@ test('overview contains the factory at desktop, wide and phone aspect ratios',()
  assert.ok(Math.abs(after.right/before.right-1)<.005,'No framing jump at the former 1.4 breakpoint');
 });
 test('every browser module import resolves within the shipped static output',async()=>{
- const base=resolve('build');const queue=[resolve(base,'app.js')];const visited=new Set();
+ const base=resolve('static');const queue=[resolve(base,'app.js')];const visited=new Set();
  while(queue.length){
   const file=queue.pop();if(visited.has(file))continue;visited.add(file);
   await access(file);const text=await readFile(file,'utf8');

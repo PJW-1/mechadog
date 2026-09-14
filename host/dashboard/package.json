@@ -7,9 +7,9 @@
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "dev": "node scripts/server.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "check": "node scripts/static-check.mjs",
+    "vendor": "node scripts/static-check.mjs --write",
+    "test": "node --test web-tests/*.test.mjs"
   },
   "dependencies": {
     "three": "0.186.0"

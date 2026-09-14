@@ -19,26 +19,50 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 - `http://127.0.0.1:8000/health`: 서버 상태, 연결 수, 느린 클라이언트의 상태 갱신 합침 횟수.
 - `http://127.0.0.1:8000/api/telemetry`: 최신 상태 한 건.
 - `ws://127.0.0.1:8000/ws/telemetry`: 10Hz 상태 스트림.
-- `http://127.0.0.1:8000/docs`: HTTP API 확인. 관제 화면은 후속 4.6 작업이다.
+- `http://127.0.0.1:8000/docs`: HTTP API 확인.
+- `http://127.0.0.1:8000/#dashboard`: 관제 화면 (아래 절).
+- `http://127.0.0.1:8000/live`: 최소 실기 화면 — 카메라 · 배터리/거리 · E-STOP · 안전 해제 · 수동 제어.
 
-## 관제 화면의 three.js
+## 관제 화면
 
-`/` 로 서빙하는 `web/design-prototype` 은 3D 현장을 그리려고 three.js 를
-`/vendor/three.module.js`, `/vendor/addons/...` 로 불러온다. **그 `vendor/` 폴더는
-소스 트리에 없다** — 프로토타입 개발 서버(`scripts/server.mjs`)가 요청을
-`node_modules/three` 로 돌려주고, `npm run build` 는 `build/vendor` 로 복사해 넣는다.
+화면은 **`host/dashboard/static/`** 에 있고 서버가 빌드 없이 그대로 내보낸다(WBS `4.6.x` 산출물 위치).
+2026-09-14 에 `web/design-prototype` 에서 옮겼다. 설계 검토용 프로토타입을 서버가 그 폴더째 내보내던
+구조였고, three.js 를 `node_modules` 에 기대서 **설치를 빠뜨리면 app.js 가 첫 import 에서 실패해 화면
+조작이 통째로 죽었다** — 3D 만 비는 것이 아니었다. 이제 three.js 를 `static/vendor/` 에 함께 싣는다.
 
-그래서 대시보드 서버도 같은 규칙으로 `/vendor/*` 를 붙인다. 빌드본을 `static_dir`
-로 넘기면 그 안의 `vendor/` 를 쓰고, 소스 폴더면 `node_modules/three` 에서 찾는다.
+| 파일 | 역할 |
+| --- | --- |
+| `index.html`, `styles.css` | 관제 화면과 공통 스타일 |
+| `panels.js`, `panels.css` | 작업 페이지와 수동 조작 |
+| `app.js`, `operations.js` | 화면 연결, 상태·검증 규칙 |
+| `robot-link.js` | 명령 API 연결 (E-Stop · 수동 · 조이스틱) |
+| `scene.js`, `scene-materials.js`, `robot-view.js` | 공장·로봇 3D, 장치 상세 |
+| `factory-layout.json` | 표시용 공장 배치 (실행 필수) |
+| `icons.js`, `webmcp.js` | 아이콘, 지원 브라우저의 페이지 도구 |
+| `live.html` | 최소 실기 화면 (`/live`) |
+| `vendor/` | three.js 0.186.0 — 화면이 실제로 불러오는 18개 파일과 `THREE-LICENSE.txt` |
+
+⚠️ **실데이터와 이어진 것은 명령(E-Stop · 수동 · 조이스틱)과 카메라뿐이다.** 서버가 이 화면을 내보내면
+`/health` 로 서버를 알아보고 명령 경로를 붙이므로, **수동 조작은 실제 로봇을 움직인다.** 텔레메트리
+게이지 · 검출 박스 · 사건 · 지도 · 위치는 아직 예시 데이터이며 화면이 "예시"로 표시한다. 요구사항 대조와
+남은 연결은 [DASHBOARD_FEATURES](DASHBOARD_FEATURES.md).
+
+⚠️ `styles.css` 는 글꼴을 Google Fonts 에서 받는다. 인터넷이 없으면 기본 글꼴로 보인다.
+
+### 개발 시험
+
+런타임에는 설치가 필요 없다. 화면 코드의 Node 시험만 `host/dashboard/` 에서 돈다.
 
 ```powershell
-cd web/design-prototype
-npm install     # 한 번만. three.js 를 받는다
+cd host/dashboard
+npm ci          # 시험용 jsdom · three
+npm run check   # JS 문법 + static/vendor 가 잠긴 three 버전과 같은지
+npm test        # 화면 동작 + 모든 import 가 static/ 안에서 해결되는지
 ```
 
-`node_modules` 가 없으면 `/vendor/*` 는 404 이고 **3D 현장만 비어 보인다.**
-텔레메트리·명령 API·`/live` 는 three.js 를 쓰지 않으므로 그대로 동작한다 —
-`/live` 만 확인하면 이 상태를 놓치기 쉽다.
+three 버전을 올리면 `package.json` 을 고친 뒤 `npm ci` → `npm run vendor` 로 `static/vendor` 를 다시
+채운다. 싣는 파일 목록은 `scripts/static-check.mjs` 에 있고, 모자라면 `npm test` 의 import 해석 시험이
+실패한다.
 
 기본 바인딩은 `127.0.0.1`이다. 브라우저 WS는 같은 포트의 localhost/127.0.0.1
 Origin만 허용한다. 로컬 비브라우저 클라이언트는 Origin 없이 연결할 수 있다.

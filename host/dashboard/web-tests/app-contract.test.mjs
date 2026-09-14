@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {JSDOM} from 'jsdom';
-import {Operations,ROBOTS} from '../operations.js';
-import {OperationalPanels} from '../panels.js';
-import {registerPageTools} from '../webmcp.js';
+import {Operations,ROBOTS} from '../static/operations.js';
+import {OperationalPanels} from '../static/panels.js';
+import {registerPageTools} from '../static/webmcp.js';
 
-const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
-const source=(await readFile(new URL('../app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
-const layout=JSON.parse(await readFile(new URL('../factory-layout.json',import.meta.url),'utf8'));
+const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
+const source=(await readFile(new URL('../static/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
+const layout=JSON.parse(await readFile(new URL('../static/factory-layout.json',import.meta.url),'utf8'));
 async function boot(hash='dashboard'){
  const dom=new JSDOM(html,{url:'http://127.0.0.1:4175/#'+hash,runScripts:'outside-only',pretendToBeVisual:true}),window=dom.window,document=window.document,registered=new Map(),revoked=[];
  let store,panels,view,robotView,robotViewCount=0;const failures=[];window.addEventListener('error',event=>failures.push(event.error));

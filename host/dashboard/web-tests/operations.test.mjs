@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Operations,parseBlackbox,csvCell,REVIEW_STATES} from '../operations.js';
+import {Operations,parseBlackbox,csvCell,REVIEW_STATES} from '../static/operations.js';
 
 const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
 const memory=()=>{const data=new Map();return {getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value)}};
