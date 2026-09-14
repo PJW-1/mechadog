@@ -1314,3 +1314,82 @@ def test_inspection_holds_still(config: dict, clock: FakeClock, tmp_path: Path):
     move = _move(lines)
     assert move is not None, "보내지 않으면 로봇이 직전 순찰 명령을 유지한다"
     assert (move["step"], move["angle"]) == (0.0, 0.0)
+
+
+# ── 사건이 관제 화면까지 닿는가 (WBS 4.4.3) ──────────────────────
+
+
+def test_a_confirmed_person_reaches_the_dashboard_event_feed(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ **저장만으로는 완료가 아니다.**
+
+    블랙박스는 디스크에 남기고 사람은 화면을 본다. 발행 연결이 없으면 기록은
+    쌓이는데 아무도 모른다 — `4.4.3` 이 그 상태로 멈춰 있었다.
+
+    여기서는 CLI 가 붙이는 어댑터(`_publish_event`)를 그대로 써서 **사람 확정 →
+    블랙박스 기록 → 관제 사건 버퍼**가 이어지는지 본다.
+    """
+    from copy import deepcopy
+
+    from host.common.blackbox import EventBlackbox
+    from host.dashboard.state import DashboardState
+    from host.runtime import _publish_event
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    board = DashboardState("mechdog-02", stale_after_ms=3000)
+
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=blackbox,
+        event_publisher=_publish_event(board),
+    )
+    runtime.start_patrol(clock.ms)
+    _stand(runtime, vision, seq=1, at_ms=100)
+
+    events, dropped = board.events_since(0)
+    assert dropped == 0
+    assert len(events) == 1, "확정 검출 한 번이 사건 하나가 된다"
+    event = events[0]
+    assert event["event"] == "person_found"
+    assert event["type"] == "event" and event["seq"] == 1
+    # 비주 대상도 함께 남는다 (FR-3.8.4).
+    assert event["tracks"], "추적 목록이 비어 있으면 옆에 있던 사람이 기록에서 사라진다"
+    # ⚠️ JPEG 바이트가 아니라 가리키는 이름이다 — 사건 소켓은 상태 전문과 같은 길이다.
+    assert isinstance(event["snapshot"], str | type(None))
+    assert "/" not in event["entry"] and "\\" not in event["entry"], "절대 경로를 보내지 않는다"
+    assert not any(isinstance(v, bytes) for v in event.values()), "바이트를 싣지 않는다"
+
+
+def test_the_gate_edge_publishes_one_event_not_one_per_tick(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """10Hz 로 같은 사람을 보는 동안 사건이 쌓이면 피드가 쓸모없어진다."""
+    from copy import deepcopy
+
+    from host.common.blackbox import EventBlackbox
+    from host.dashboard.state import DashboardState
+    from host.runtime import _publish_event
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    board = DashboardState("mechdog-02", stale_after_ms=3000)
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=EventBlackbox(cfg),
+        event_publisher=_publish_event(board),
+    )
+    runtime.start_patrol(clock.ms)
+    for i in range(5):
+        _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+    assert board.event_seq == 1, "게이트의 거짓→참 엣지에서만 한 번이다"
