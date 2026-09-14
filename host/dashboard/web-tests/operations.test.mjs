@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Operations,parseBlackbox,csvCell,REVIEW_STATES} from '../static/operations.js';
+import {Operations,parseBlackbox,csvCell,REVIEW_STATES,liveSnapshotUrl} from '../static/operations.js';
 
 const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
 const memory=()=>{const data=new Map();return {getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value)}};
@@ -74,4 +74,31 @@ test('CSV cells escape formula prefixes, quote and multiline data',()=>{
 });
 test('review export discloses source and excludes blob URL and embedded images',()=>{
  const op=new Operations();op.importBlackbox(raw(),'blob:private-image');const text=op.exportReview(),json=JSON.parse(text);assert.equal(json.live,false);assert.ok(!text.includes('blob:'));assert.ok(json.events.every(event=>event.snapshotIncluded===false));
+});
+
+// ── 사건 스냅샷 주소 (WBS 4.6.4) ─────────────────────────────
+test('a live event carries its snapshot address when the server can serve it', () => {
+ const store=new Operations({clock:()=>1});
+ const payload={seq:7,ts_ms:1789401235586,event:'person_found',state:'PATROL',escalation:'L1',
+  tracks:[{track_id:1,box:[0,0,10,10],score:0.8}],detections:[],telemetry:{device_id:'mechdog-01'},
+  entry:'1789401235586_person_found',snapshot:'snapshot.jpg'};
+ const event=store.ingestLiveEvent(payload,'http://127.0.0.1:8000');
+ assert.equal(event.snapshot,'http://127.0.0.1:8000/events/1789401235586_person_found/snapshot.jpg');
+ assert.match(event.detail,/함께 보여/);
+});
+
+test('without a server base, or without a picture, no address is invented', () => {
+ // 주소를 만들면 화면이 깨진 이미지를 그린다.
+ const store=new Operations({clock:()=>1});
+ const base={seq:8,ts_ms:2,event:'person_found',state:'PATROL',escalation:'L1',
+  tracks:[],detections:[],telemetry:{},entry:'e',snapshot:'snapshot.jpg'};
+ assert.equal(store.ingestLiveEvent(base,null).snapshot,null,'서버 없이 연 화면');
+ assert.equal(store.ingestLiveEvent({...base,seq:9,snapshot:null},'http://x').snapshot,null,'그림 없는 사건');
+ assert.equal(store.ingestLiveEvent({...base,seq:10,entry:null},'http://x').snapshot,null,'기록 이름 없음');
+});
+
+test('the entry name is escaped before it becomes an address', () => {
+ // 이름은 서버에서 오지만 주소 조각으로 쓰기 전에 감싼다.
+ assert.equal(liveSnapshotUrl('http://x',{entry:'a b/c',snapshot:'snapshot.jpg'}),
+  'http://x/events/a%20b%2Fc/snapshot.jpg');
 });

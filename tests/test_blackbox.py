@@ -94,3 +94,73 @@ def test_invalid_record_identity_is_rejected(
 ) -> None:
     with pytest.raises(ValueError):
         blackbox.record(event_type, now_ms=now_ms)
+
+
+# ── 사건 스냅샷 되찾기 (WBS 4.6.4) ────────────────────────────
+
+
+def test_snapshot_bytes_reads_the_recorded_jpeg(tmp_path, monkeypatch):
+    """사건 전문에는 디렉터리 이름만 실으므로 그림은 이름으로 되찾는다 (4.4.3 · 4.6.4)."""
+    import host.common.blackbox as module
+
+    monkeypatch.setattr(module, "repo_path", lambda _p: tmp_path / "blackbox")
+    box = module.EventBlackbox({"logging": {"blackbox_dir": "blackbox"}})
+    entry = box.record(
+        event_type="person_found",
+        now_ms=1,
+        state="PATROL",
+        escalation="L1",
+        tracks=[],
+        detections=[],
+        telemetry={},
+        jpeg=b"\xff\xd8fake\xff\xd9",
+    )
+    name = entry.meta_path.parent.name
+    assert box.snapshot_bytes(name) == b"\xff\xd8fake\xff\xd9"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "../secrets",
+        "a/../../etc",
+        "sub/dir",
+        r"sub\dir",
+        "",
+        ".hidden",
+        ".",
+        "..",
+    ],
+)
+def test_snapshot_bytes_refuses_names_that_leave_the_folder(entry, tmp_path, monkeypatch):
+    """⚠️ **이름은 브라우저에서 온다.** 경로로 쓰기 전에 잘라야 한다.
+
+    검증을 서버가 아니라 여기 두는 이유 — 저장 구조를 아는 것이 이 클래스뿐이고,
+    양쪽에 규칙을 두면 한쪽만 고쳐지는 순간 폴더 밖 파일이 열린다.
+    """
+    import host.common.blackbox as module
+
+    monkeypatch.setattr(module, "repo_path", lambda _p: tmp_path / "blackbox")
+    box = module.EventBlackbox({"logging": {"blackbox_dir": "blackbox"}})
+    (tmp_path / "secrets").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "secrets" / "snapshot.jpg").write_bytes(b"nope")
+    assert box.snapshot_bytes(entry) is None
+
+
+def test_snapshot_bytes_returns_none_for_an_event_without_a_picture(tmp_path, monkeypatch):
+    """그림 없는 사건이 있다 — 없는 것을 빈 바이트로 만들지 않는다."""
+    import host.common.blackbox as module
+
+    monkeypatch.setattr(module, "repo_path", lambda _p: tmp_path / "blackbox")
+    box = module.EventBlackbox({"logging": {"blackbox_dir": "blackbox"}})
+    entry = box.record(
+        event_type="person_found",
+        now_ms=2,
+        state="PATROL",
+        escalation="L1",
+        tracks=[],
+        detections=[],
+        telemetry={},
+        jpeg=None,
+    )
+    assert box.snapshot_bytes(entry.meta_path.parent.name) is None

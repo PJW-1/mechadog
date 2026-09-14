@@ -14,6 +14,13 @@ export function demoEvents() {
  ];
 }
 
+// 사건 하나의 스냅샷 주소. **기록 이름과 파일명이 둘 다 있어야 만든다** — 하나라도
+// 없으면 그림 없는 사건이고, 주소를 만들면 화면이 깨진 이미지를 그린다.
+export function liveSnapshotUrl(baseUrl,payload){
+ if(!baseUrl||!payload?.entry||!payload?.snapshot)return null;
+ return baseUrl+'/events/'+encodeURIComponent(payload.entry)+'/snapshot.jpg';
+}
+
 function cleanText(value,max=1000){return typeof value==='string'?value.trim().slice(0,max):''}
 export function parseBlackbox(value) {
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('meta.json 객체를 선택해 주세요.');
@@ -182,15 +189,17 @@ export class Operations {
  }
  // ── 실시간 사건 피드 (WBS 4.6.4) ────────────────────────────────
  // `/ws/events` 의 사건은 기록이다 — 합치지 않고 한 건씩 목록에 넣는다.
- // 스냅샷은 파일명만 오므로 화면 그림은 붙이지 않는다(가져오기로만 본다).
- ingestLiveEvent(payload){
+ // ⚠️ **사건 전문에는 파일명만 온다** — JPEG 를 실으면 사건 하나가 텔레메트리를
+ // 밀어낸다(4.4.3). 그림은 서버의 `/events/<기록>/snapshot.jpg` 에서 받는다.
+ // `snapshotBase` 가 없으면(서버 없이 연 화면) 예전처럼 그림 없이 목록만 남는다.
+ ingestLiveEvent(payload,snapshotBase=null){
   const seq=payload.seq,id='LIVE-'+seq;
   if(this.events.some(e=>e.id===id))return this.events.find(e=>e.id===id);
   // 실시간 사건은 세션 메모리에만 둔다 — 원본은 블랙박스가 디스크에 갖고 있다.
   if(this.events.filter(e=>e.source==='LIVE_FEED').length>=100)this.events.splice(this.events.findLastIndex(e=>e.source==='LIVE_FEED'),1);
   const device=cleanText(payload.telemetry?.device_id,80)||'장치 미상';
   const person=(payload.tracks||[]).length;
-  const event={id,seq,source:'LIVE_FEED',title:cleanText(payload.event,160),category:payload.event==='person_found'?'AUTH':'SYSTEM',robot:device,zone:'구역 미수신',event:cleanText(payload.event,160),state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),auth:'미판정',ppe:'별도 판정',detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':'')+(payload.snapshot?'원본 스냅샷은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다. 서버는 그림을 보내지 않으므로 블랙박스 파일로 확인하세요.':'스냅샷 파일이 없는 사건입니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:null,
+  const event={id,seq,source:'LIVE_FEED',title:cleanText(payload.event,160),category:payload.event==='person_found'?'AUTH':'SYSTEM',robot:device,zone:'구역 미수신',event:cleanText(payload.event,160),state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),auth:'미판정',ppe:'별도 판정',detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':'')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':'스냅샷 파일이 없는 사건입니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
   this.events.unshift(event);this.log('실시간 사건 수신',id+' · '+event.title,'LIVE_EVENT_FEED');this.emit('import');return event;
  }
