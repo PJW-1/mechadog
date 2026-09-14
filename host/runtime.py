@@ -1028,7 +1028,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dashboard-port",
         type=int,
         default=None,
-        help="PC 로컬 읽기 전용 관제 서버 포트 (기본 비활성, 예: 8000)",
+        help="PC 로컬 관제 서버 포트 — 텔레메트리·검출 방송과 명령 API (기본 비활성, 예: 8000)",
     )
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
     parser.add_argument(
