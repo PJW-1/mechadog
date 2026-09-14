@@ -223,7 +223,7 @@
 
 `slam_toolbox` 는 `odom` → `base_link` 변환을 요구한다. **우리에게 오도메트리가
 없다** — `config/devices/*.yaml` 의 `gait_calibration.forward_mm_per_sec` ·
-`turn_deg_per_sec` 가 비어 있고 그 실측이 `WBS 2.2.3` 로 미착수다.
+`turn_deg_per_sec` 는 `mechdog-01` 에서 실측됐다 (2026-09-11 · 좌선회 **6.8 도/s**). ⚠️ **다만 한 기체뿐이고 좌우가 크게 다르다** — 우선회는 3.56 도/s 로 **절반**이며(`2.2.3` ⑤) `mechdog-02`·`-03` 은 미측정이다. 기체마다 편향의 방향까지 다르므로 값을 복사하지 않는다.
 
 ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom` 드리프트인데,
 우리는 드리프트가 아니라 **odom 자체가 없는** 상태다. 그래서 P2 착수 전에
