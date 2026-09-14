@@ -27,7 +27,10 @@ async function boot(hash='dashboard',{health=null}={}){
  class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}}
  class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class RobotView{constructor({canvas}){robotView=this;this.canvas=canvas;robotViewCount++}setActive(value){this.active=value}resize(){}orbit(angle){this.angle=angle}zoom(value){this.zoomValue=value}reset(){this.resetCalled=true}dispose(){this.disposed=true}}
- await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VisionFeed){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,Feed);
+ // 음성 중계는 시험에서 연결하지 않는다 — 링크가 없을 때의 패널만 검증한다.
+ class VoiceStub{status(){return Promise.resolve({})}transcript(){return Promise.resolve([])}say(){return Promise.resolve({})}mode(){return Promise.resolve({})}}
+ const resolveVoiceBase=async()=>null;
+ await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed);
  return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},linkCalls};
 }
 
