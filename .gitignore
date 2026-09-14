@@ -83,3 +83,7 @@ desktop.ini
 .idea/
 *.swp
 *~
+
+# ── 음성 캐시 (생성물, 대용량 바이너리 — gen_voice_cache.py로 재생성 가능) ──
+experiments/wonderecho-audio/voice_cache/
+experiments/wonderecho-audio/emergency_log.txt

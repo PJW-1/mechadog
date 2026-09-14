@@ -1,9 +1,10 @@
-"""Scenario/robotlink/transport unit tests — no serial, mic, or GPU required."""
+"""Scenario/robotlink/transport/phrases unit tests — no serial, mic, or GPU required."""
 
 import types
 import unittest
 from unittest import mock
 
+import phrases as phr
 import robotlink
 import scenarios
 import voice_pipeline as vp
@@ -51,10 +52,31 @@ class ScenarioTriggerTests(unittest.TestCase):
         self.assertIsNone(scenarios.match_trigger(""))
 
     def test_every_scenario_has_desc_and_callable(self):
-        self.assertGreaterEqual(len(scenarios.SCENARIOS), 10)
+        self.assertGreaterEqual(len(scenarios.SCENARIOS), 30)
         for name, (desc, func) in scenarios.SCENARIOS.items():
             self.assertTrue(desc, name)
             self.assertTrue(callable(func), name)
+
+    def test_scenario_categories_cover_factory_situations(self):
+        names = set(scenarios.SCENARIOS)
+        # 신원·보안
+        self.assertIn("guard", names)
+        self.assertIn("visitor_check", names)
+        # 안전 경고
+        self.assertIn("ppe_warning", names)
+        self.assertIn("restricted_zone", names)
+        self.assertIn("forklift_pass", names)
+        # 화재·응급
+        self.assertIn("fire_evac", names)
+        self.assertIn("emergency_response", names)
+        # 순찰·안내·일정
+        self.assertIn("patrol_notice", names)
+        self.assertIn("visitor_guide", names)
+        self.assertIn("shift_notice", names)
+        # 기상·야간·훈련·정보
+        self.assertIn("night_patrol", names)
+        self.assertIn("drill_evac", names)
+        self.assertIn("robot_briefing", names)
 
 
 class GuardScenarioTests(unittest.TestCase):
@@ -62,18 +84,82 @@ class GuardScenarioTests(unittest.TestCase):
         ctx = FakeCtx(answers=["김민수 입니다"])
         scenarios.sc_guard(ctx)
         self.assertTrue(any("확인되었습니다" in line for line in ctx.lines))
+        self.assertTrue(any("김민수" in line for line in ctx.lines))
 
     def test_unknown_name_is_denied(self):
         ctx = FakeCtx(answers=["홍길동 입니다"])
         scenarios.sc_guard(ctx)
-        self.assertTrue(any("확인되지 않았습니다" in line for line in ctx.lines))
-        self.assertFalse(any("확인되었습니다" in line for line in ctx.lines))
+        # 거부 문구는 identity_fail 라이브러리 중 하나가 나와야 한다
+        self.assertTrue(any(line in phr.PHRASES["identity_fail"] for line in ctx.lines))
+        self.assertFalse(any(line in phr.PHRASES["identity_ok"] for line in ctx.lines))
 
     def test_silence_is_logged_not_verified(self):
         ctx = FakeCtx(answers=[])
         scenarios.sc_guard(ctx)
         self.assertTrue(any("응답이 없습니다" in line for line in ctx.lines))
         self.assertTrue(any(role == "system" for role, _ in ctx.events))
+
+
+class PhraseLibraryTests(unittest.TestCase):
+    def test_all_categories_nonempty(self):
+        for cat, lines in phr.PHRASES.items():
+            self.assertGreater(len(lines), 0, cat)
+
+    def test_library_is_large(self):
+        total = sum(len(lines) for lines in phr.PHRASES.values())
+        self.assertGreaterEqual(total, 100)  # 실사 매뉴얼 기반 대량 문구
+
+    def test_phrases_are_spoken_korean(self):
+        for cat, text in phr.all_lines():
+            self.assertIsInstance(text, str)
+            self.assertTrue(text.strip(), cat)
+            # TTS 읽기 적합 — 마크다운·이모지·영어 약어 없음
+            self.assertNotIn("*", text)
+            self.assertNotIn("```", text)
+            self.assertNotRegex(text, r"[\U0001F300-\U0001FAFF]")
+
+    def test_pick_returns_phrase_from_category(self):
+        line = phr.pick("ppe_helmet")
+        self.assertIn(line, phr.PHRASES["ppe_helmet"])
+
+    def test_pick_unknown_category_is_empty(self):
+        self.assertEqual(phr.pick("nonexistent"), "")
+
+
+class NewScenarioTests(unittest.TestCase):
+    def test_fire_evac_speaks_three_stages(self):
+        ctx = FakeCtx()
+        scenarios.sc_fire_evac(ctx)
+        self.assertGreaterEqual(len(ctx.lines), 3)
+        self.assertTrue(any("대피" in line or "비상구" in line for line in ctx.lines))
+
+    def test_emergency_response_asks_location(self):
+        ctx = FakeCtx(answers=["3번 창고"])
+        scenarios.sc_emergency_response(ctx)
+        self.assertTrue(any("위치" in line for line in ctx.lines))
+        self.assertTrue(any("3번 창고" in line for line in ctx.lines))
+
+    def test_ppe_scenarios_use_phrase_library(self):
+        for scn in (scenarios.sc_ppe_helmet, scenarios.sc_ppe_vest, scenarios.sc_ppe_warning):
+            ctx = FakeCtx()
+            scn(ctx)
+            self.assertTrue(ctx.lines)
+            self.assertTrue(any("안전" in line or "보호구" in line for line in ctx.lines))
+
+    def test_visitor_check_guides_without_badge(self):
+        ctx = FakeCtx(answers=["아니요 없어요"])
+        scenarios.sc_visitor_check(ctx)
+        self.assertTrue(any("방문증" in line or "안내 데스크" in line for line in ctx.lines))
+
+    def test_robot_briefing_reports_telemetry(self):
+        ctx = FakeCtx(status="배터리 8.5볼트, 동작 상태 IDLE")
+        scenarios.sc_robot_briefing(ctx)
+        self.assertTrue(any("8.5" in line for line in ctx.lines))
+
+    def test_robot_briefing_honest_when_unreachable(self):
+        ctx = FakeCtx(status=None)
+        scenarios.sc_robot_briefing(ctx)
+        self.assertTrue(any(line in phr.PHRASES["status_fail"] for line in ctx.lines))
 
 
 class RobotlinkTests(unittest.TestCase):
