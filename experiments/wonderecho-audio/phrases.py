@@ -12,7 +12,10 @@
 
 from __future__ import annotations
 
+import json
 import random
+import re
+from pathlib import Path
 
 PHRASES: dict[str, list[str]] = {
     # ── 호출 응답·인사 ────────────────────────────────────────────────────
@@ -253,16 +256,88 @@ PHRASES: dict[str, list[str]] = {
 }
 
 
+# ── 관리자 추가 문구 (phrases_custom.json) ───────────────────────────────
+# 기본 문구(PHRASES)는 코드에 고정하고, 관제웹에서 관리자가 추가한 문구만
+# JSON 파일로 떨어뜨린다 — 기본 멘트는 검증된 상수라 삭제·수정 대상이 아니다.
+
+CUSTOM_PATH = Path(__file__).with_name("phrases_custom.json")
+
+
+def load_custom(path: Path | None = None) -> dict[str, list[str]]:
+    """phrases_custom.json → {category: [lines]}. 없거나 깨지면 빈 dict."""
+    p = path or CUSTOM_PATH
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        str(cat): [str(t) for t in lines if str(t).strip()]
+        for cat, lines in data.items()
+        if isinstance(lines, list)
+    }
+
+
+CUSTOM = load_custom()
+
+
+def _save_custom(path: Path | None = None):
+    p = path or CUSTOM_PATH
+    p.write_text(
+        json.dumps(CUSTOM, ensure_ascii=False, indent=1, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def merged() -> dict[str, list[str]]:
+    """기본 + 관리자 추가 문구의 합본. 카테고리 순서는 기본 → 신규."""
+    out = {cat: list(lines) for cat, lines in PHRASES.items()}
+    for cat, lines in CUSTOM.items():
+        out.setdefault(cat, []).extend(lines)
+    return out
+
+
+def add_custom(category: str, text: str) -> str:
+    """관리자 문구 추가. 정규화된 카테고리명을 반환한다."""
+    cat = re.sub(r"[^a-z0-9_]", "", category.strip().lower())
+    if not cat:
+        raise ValueError("카테고리는 영문 소문자·숫자·밑줄만 가능합니다")
+    text = text.strip()
+    if not text:
+        raise ValueError("문구가 비어 있습니다")
+    if len(text) > 200:
+        raise ValueError("문구는 200자 이내로 입력하세요")
+    if text in PHRASES.get(cat, []) or text in CUSTOM.get(cat, []):
+        raise ValueError("이미 있는 문구입니다")
+    CUSTOM.setdefault(cat, []).append(text)
+    _save_custom()
+    return cat
+
+
+def remove_custom(category: str, text: str) -> bool:
+    """관리자가 추가한 문구만 삭제 가능 — 기본 문구는 건드리지 않는다."""
+    lines = CUSTOM.get(category, [])
+    if text not in lines:
+        return False
+    lines.remove(text)
+    if not lines:
+        CUSTOM.pop(category, None)
+    _save_custom()
+    return True
+
+
 def pick(category: str, rng: random.Random | None = None) -> str:
     """카테고리에서 문구 하나를 고른다. 없으면 빈 문자열."""
-    lines = PHRASES.get(category, [])
+    lines = merged().get(category, [])
     if not lines:
         return ""
     return (rng or random).choice(lines)
 
 
 def all_lines():
-    """모든 문구를 (category, text)로 내보낸다 — 캐시 생성·검수용."""
+    """모든 문구를 (category, text, custom)로 내보낸다 — 캐시 생성·검수용."""
     for cat, lines in PHRASES.items():
         for text in lines:
-            yield cat, text
+            yield cat, text, False
+    for cat, lines in CUSTOM.items():
+        for text in lines:
+            yield cat, text, True

@@ -110,7 +110,7 @@ class PhraseLibraryTests(unittest.TestCase):
         self.assertGreaterEqual(total, 100)  # 실사 매뉴얼 기반 대량 문구
 
     def test_phrases_are_spoken_korean(self):
-        for cat, text in phr.all_lines():
+        for cat, text, _custom in phr.all_lines():
             self.assertIsInstance(text, str)
             self.assertTrue(text.strip(), cat)
             # TTS 읽기 적합 — 마크다운·이모지·영어 약어 없음
@@ -124,6 +124,70 @@ class PhraseLibraryTests(unittest.TestCase):
 
     def test_pick_unknown_category_is_empty(self):
         self.assertEqual(phr.pick("nonexistent"), "")
+
+
+class CustomPhraseTests(unittest.TestCase):
+    """관리자 추가 문구: JSON 저장·병합·삭제. 기본 문구는 건드리지 않는다."""
+
+    def setUp(self):
+        self.tmp = __import__("tempfile").TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = __import__("pathlib").Path(self.tmp.name) / "custom.json"
+        self.patcher_path = mock.patch.object(phr, "CUSTOM_PATH", self.path)
+        self.patcher_path.start()
+        self.addCleanup(self.patcher_path.stop)
+        self.orig = dict(phr.CUSTOM)
+        phr.CUSTOM.clear()
+        self.addCleanup(phr.CUSTOM.update, self.orig)
+
+    def test_add_persists_and_merges(self):
+        cat = phr.add_custom("Greeting", "관리자가 추가한 인사말")
+        self.assertEqual(cat, "greeting")
+        self.assertIn("관리자가 추가한 인사말", phr.merged()["greeting"])
+        saved = phr.load_custom(self.path)
+        self.assertEqual(saved["greeting"], ["관리자가 추가한 인사말"])
+
+    def test_new_category_allowed(self):
+        phr.add_custom("zone_b3", "B3 구역 안내 문구입니다")
+        self.assertIn("zone_b3", phr.merged())
+
+    def test_pick_includes_custom(self):
+        phr.CUSTOM["only_custom"] = ["유일한 문구"]
+        for _ in range(20):
+            self.assertEqual(phr.pick("only_custom"), "유일한 문구")
+
+    def test_remove_only_custom(self):
+        phr.add_custom("greeting", "삭제 대상 문구")
+        self.assertFalse(phr.remove_custom("greeting", "네, 메카독입니다. 무엇을 도와드릴까요?"))
+        self.assertTrue(phr.remove_custom("greeting", "삭제 대상 문구"))
+        self.assertNotIn("삭제 대상 문구", phr.merged()["greeting"])
+
+    def test_add_validates_input(self):
+        for cat, text in (
+            ("", "문구"),
+            ("greeting", ""),
+            ("카테고리!", "문구"),
+            ("greeting", "x" * 201),
+        ):
+            with self.assertRaises(ValueError):
+                phr.add_custom(cat, text)
+
+    def test_duplicate_rejected(self):
+        phr.add_custom("greeting", "중복 문구")
+        with self.assertRaises(ValueError):
+            phr.add_custom("greeting", "중복 문구")
+        with self.assertRaises(ValueError):
+            phr.add_custom("greeting", phr.PHRASES["greeting"][0])
+
+    def test_load_custom_tolerates_missing_and_corrupt(self):
+        self.assertEqual(phr.load_custom(self.path), {})
+        self.path.write_text("{not json", encoding="utf-8")
+        self.assertEqual(phr.load_custom(self.path), {})
+
+    def test_all_lines_marks_custom(self):
+        phr.add_custom("greeting", "추가 표시 문구")
+        rows = [(c, t, cu) for c, t, cu in phr.all_lines() if t == "추가 표시 문구"]
+        self.assertEqual(rows, [("greeting", "추가 표시 문구", True)])
 
 
 class NewScenarioTests(unittest.TestCase):
