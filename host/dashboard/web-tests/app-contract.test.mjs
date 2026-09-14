@@ -23,11 +23,12 @@ async function boot(hash='dashboard',{health=null}={}){
   constructor(options){view=this;this.onRobot=options.onRobot;this.onObservation=options.onObservation;this.onError=options.onError}selectRobot(id){this.selected=id}setPatrolRobot(id){this.patrolRobot=id}setPlaying(value){this.playing=value}setCameraVisible(value){this.cameraVisible=value}setWorldVisible(value){this.worldVisible=value}setActive(value){this.active=value}setView(mode){this.mode=mode}focusZone(zone){this.zone=zone}zoom(){}orbit(){}resize(){}dispose(){this.disposed=true}
  }
  let visionFeed=null;
- class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){return Promise.resolve({})}}
+ const linkCalls=[];
+ class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}}
  class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class RobotView{constructor({canvas}){robotView=this;this.canvas=canvas;robotViewCount++}setActive(value){this.active=value}resize(){}orbit(angle){this.angle=angle}zoom(value){this.zoomValue=value}reset(){this.resetCalled=true}dispose(){this.disposed=true}}
  await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VisionFeed){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,Feed);
- return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed}};
+ return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},linkCalls};
 }
 
 test('application opens direct hash, aligns 3D and camera selection, routes named scene buttons',async()=>{
@@ -168,4 +169,24 @@ test('page-tool contracts use UI state and reject invalid actions (mock registry
 test('unsupported and rejected WebMCP registration do not break normal use',async()=>{
  const dom=new JSDOM(''),store=new Operations(),errors=[];assert.doesNotThrow(()=>registerPageTools({document:dom.window.document,store,navigate:()=>{}})());
  dom.window.document.modelContext={registerTool:()=>Promise.reject(new Error('unavailable'))};const cleanup=registerPageTools({document:dom.window.document,store,navigate:()=>{},onError:error=>errors.push(error.message)});await new Promise(resolve=>setImmediate(resolve));assert.equal(errors.length,3);cleanup();dom.window.close();
+});
+
+test('connected, the E-Stop shortcut sends straight away instead of opening the notice',async()=>{
+ // FR-4.4 는 단축키를 요구한다. 예전에는 Shift+E 가 모달만 열어 연결돼 있어도 한 번
+ // 더 눌러야 나갔다 — 버튼 쪽 주석이 "모달을 한 단계 끼우면 급할 때 그만큼 늦다" 고
+ // 적어 둔 바로 그 문제를 단축키만 안고 있었다.
+ const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:0}}),{dom,document,store}=state;
+ assert.equal(store.live,true);
+ document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'E',shiftKey:true}));
+ assert.deepEqual(state.linkCalls,['estop']);
+ assert.equal(document.querySelector('#stop-dialog').open,false,'연결돼 있으면 안내를 끼우지 않는다');
+ dom.window.close();
+});
+test('without a link the E-Stop shortcut still opens the notice',async()=>{
+ // 보낼 곳이 없을 때는 안내가 맞다 — 그때만 모달이다.
+ const {dom,document,store}=await boot();
+ assert.equal(store.live,false);
+ document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'E',shiftKey:true}));
+ assert.equal(document.querySelector('#stop-dialog').open,true);
+ dom.window.close();
 });

@@ -69,11 +69,19 @@ class CommandService:
         commander: Commander,
         send: Callable[[str], None],
         request_reset: Callable[[], None] | None = None,
+        apply_event: Callable[[Event], bool] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
         self._send = send
         self._request_reset = request_reset
+        # ⚠️ **사건은 `apply_event` 로 넣는다. `behavior.event()` 를 직접 부르지 않는다.**
+        # 직접 부르면 전이는 일어나지만 **대응 단계 갱신과 전이 로그가 함께 빠진다** —
+        # 런타임의 `_apply()` 가 그 둘을 묶어 두고 있기 때문이다. 2026-09-14 실기에서
+        # E-Stop 이 로봇을 잠갔는데 단계가 `L0`(파랑) 에 머물러 **눈 LED 가 흰색으로
+        # 바뀌지 않았다**(FR-10.4). 같은 실기에서 `MANUAL` 26.7초의 전이도 로그에 한
+        # 줄도 남지 않았다. 런타임이 없는 시험에서는 전이만 필요하므로 기본값을 둔다.
+        self._apply_event = apply_event if apply_event is not None else behavior.event
 
     @property
     def state(self) -> str:
@@ -87,7 +95,7 @@ class CommandService:
         """
         telegram = self._commander.emergency_stop()
         self._send(telegram)
-        self._behavior.event(Event.ESTOP)
+        self._apply_event(Event.ESTOP)
         return CommandResult(
             command="estop",
             accepted=True,
@@ -98,7 +106,7 @@ class CommandService:
     def manual_on(self) -> CommandResult:
         """수동 오버라이드 진입. `FAILSAFE` 에서는 거절된다."""
         before = self._behavior.state
-        accepted = self._behavior.event(Event.MANUAL_ON)
+        accepted = self._apply_event(Event.MANUAL_ON)
         if not accepted:
             return CommandResult(
                 command="manual_on",
@@ -114,7 +122,7 @@ class CommandService:
     def manual_off(self) -> CommandResult:
         """수동 오버라이드 해제. `MANUAL` 이 아니면 거절된다."""
         before = self._behavior.state
-        accepted = self._behavior.event(Event.MANUAL_OFF)
+        accepted = self._apply_event(Event.MANUAL_OFF)
         if not accepted:
             return CommandResult(
                 command="manual_off",
