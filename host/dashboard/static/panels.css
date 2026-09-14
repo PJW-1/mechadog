@@ -239,3 +239,11 @@
 .workspace-open .op-posture-buttons .op-button{flex:1;padding:8px 5px;font-size:11px}
 .op-camera-capability{color:var(--muted);font-size:12px;margin:12px 0 0}
 @media(max-width:800px){.op-camera-posture{grid-column:1/-1;margin-top:16px;padding-top:16px}}
+
+/* 음성 중계 패널 (WBS 4.7.14) */
+.op-voice-log{border-top:1px solid #55566a;max-height:340px;overflow:auto}
+.op-voice-row{display:flex;gap:10px;align-items:baseline;padding:9px 12px;border-bottom:1px solid #454659;font-size:13px;line-height:1.55}
+.op-voice-row .op-row-meta{flex:none;min-width:150px;justify-content:flex-start}
+.op-voice-row.admin{border-left:2px solid #edc657}
+.op-voice-row.robot{border-left:2px solid #7ec8a9}
+.op-voice-row.system{border-left:2px solid #55566a;color:#aeabc0}
