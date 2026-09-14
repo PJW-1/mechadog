@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
-import {Operations} from '../operations.js';
-import {OperationalPanels} from '../panels.js';
+import {Operations} from '../static/operations.js';
+import {OperationalPanels} from '../static/panels.js';
 
 const zones=[{id:'central-corridor',label:'중앙 순찰 통로',center:[0,0],size:[6,29]}];
 function setup(){

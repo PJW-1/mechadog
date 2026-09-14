@@ -4,12 +4,20 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - 'web/design-prototype/**'
+      - 'host/dashboard/static/**'
+      - 'host/dashboard/web-tests/**'
+      - 'host/dashboard/scripts/**'
+      - 'host/dashboard/package.json'
+      - 'host/dashboard/package-lock.json'
       - '.github/workflows/web.yml'
   pull_request:
     branches: [main, dev]
     paths:
-      - 'web/design-prototype/**'
+      - 'host/dashboard/static/**'
+      - 'host/dashboard/web-tests/**'
+      - 'host/dashboard/scripts/**'
+      - 'host/dashboard/package.json'
+      - 'host/dashboard/package-lock.json'
       - '.github/workflows/web.yml'
 
 permissions:
@@ -21,21 +29,23 @@ concurrency:
 
 jobs:
   web-quality:
-    name: Web Quality (build + test)
+    name: Web Quality (static check + test)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: web/design-prototype
+        working-directory: host/dashboard
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version-file: web/design-prototype/.nvmrc
+          node-version-file: host/dashboard/.nvmrc
           cache: npm
-          cache-dependency-path: web/design-prototype/package-lock.json
+          cache-dependency-path: host/dashboard/package-lock.json
       - name: Install locked dependencies
         run: npm ci --engine-strict
-      - name: Build static web
-        run: npm run build
+      # 화면은 빌드 없이 서버가 static/ 을 그대로 내보낸다. 실린 three.js 가
+      # 잠긴 버전과 같은지와 JS 문법을 확인한다.
+      - name: Check shipped static files
+        run: npm run check
       - name: Test web behavior and module imports
         run: npm test

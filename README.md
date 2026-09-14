@@ -1,16 +1,17 @@
 # MechDog Physical AI — 경비 · 산업안전 점검 4족 로봇
 
-## 웹 화면 미리보기
+## 관제 화면
 
-**[웹 관제 대시보드 디자인 프로토타입](web/design-prototype/README.md)** — 새 관제 디자인, 전체 작업 페이지, 로봇 3D 상세와 시점·위치 옆 수동 제어를 제공합니다. 예시 화면이며 실제 장비·DB에 연결되지 않았습니다.
-
-Node.js 24.19.0 기준으로 다음을 실행한 뒤 http://127.0.0.1:4175/#dashboard 를 엽니다.
+**[관제 대시보드](docs/DASHBOARD.md)** — 3D 현장 관제, 작업 페이지, 수동 제어 · 비상정지. 화면은
+`host/dashboard/static/` 에 있고 런타임의 관제 서버가 **설치 없이** 내보냅니다.
 
 ```sh
-cd web/design-prototype
-npm ci
-npm run dev
+python -m host.runtime --device mechdog-01 --robot-ip <로봇 IP> --no-vision --dashboard-port 8000
 ```
+
+http://127.0.0.1:8000/#dashboard 를 엽니다(최소 실기 화면은 `/live`). 로봇 없이 보려면 가상 로봇
+`python tools/mock_mechdog.py --device mechdog-01` 을 먼저 띄우고 `--robot-ip 127.0.0.1` 로 실행합니다.
+⚠️ 서버가 내보낸 화면의 수동 조작은 **실제 로봇을 움직입니다.**
 
 Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자율 순찰 4족 보행 로봇** 프로젝트입니다.
 

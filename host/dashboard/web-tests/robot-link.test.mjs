@@ -8,8 +8,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Operations } from '../operations.js';
-import { RobotLink, motionFor } from '../robot-link.js';
+import { Operations } from '../static/operations.js';
+import { RobotLink, motionFor } from '../static/robot-link.js';
 
 /** 호출을 기록하는 가짜 fetch. `fail` 을 주면 그 경로만 실패시킨다. */
 function fakeFetch({ fail = null, status = 200 } = {}) {
