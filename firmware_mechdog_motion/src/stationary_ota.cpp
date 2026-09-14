@@ -126,16 +126,16 @@ esp_err_t statusHandler(httpd_req_t* req) {
            g_mac, g_boot, MECHADOG_OTA_VERSION, running->label, g_image_sha,
            g_healthy ? "true" : "false", g_confirmed ? "true" : "false",
            g_updating ? "true" : "false", MECHADOG_ENABLE_ACTUATORS ? "true" : "false",
-           mechadog::serviceModeParked() ? "true" : "false",
-           static_cast<unsigned long>(kSlotSize), watchdog_armed,
-           watchdog_deadline_ms, fault_probe);
+           mechadog::serviceModeParked() ? "true" : "false", static_cast<unsigned long>(kSlotSize),
+           watchdog_armed, watchdog_deadline_ms, fault_probe);
   return reply(req, "200 OK", body);
 }
 
 esp_err_t confirmHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
   // Confirming reboots a pending image; an actuator build must be parked.
-  if (!mechadog::serviceModeParked()) return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
+  if (!mechadog::serviceModeParked())
+    return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
   if (!g_healthy || g_updating) return reply(req, "409 Conflict", "{\"error\":\"not_healthy\"}");
   g_confirm_requested = true;
   return reply(req, "202 Accepted", "{\"confirmation_requested\":true}");
@@ -145,7 +145,8 @@ esp_err_t updateHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
   // Flash writes end in a reboot; an actuator build accepts them only while
   // SERVICE mode has parked the body. Actuator-OFF builds are always parked.
-  if (!mechadog::serviceModeParked()) return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
+  if (!mechadog::serviceModeParked())
+    return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
   if (!g_confirmed || g_updating || !g_healthy)
     return reply(req, "409 Conflict", "{\"error\":\"not_ready\"}");
   char expected[65] = {};

@@ -194,8 +194,8 @@ void sendAck(const mechadog::DecodeResult& decoded, bool applied) {
            mechadog::to_string(decoded.verdict), static_cast<long long>(decoded.command.seq),
            mechadog::to_string(decoded.command.type), applied ? "true" : "false",
            g_safe_latched ? "true" : "false", static_cast<unsigned long>(g_failsafe_count),
-           g_motion.actuators_enabled() ? "true" : "false",
-           serviceModeActive() ? "true" : "false", loopWatchdogArmed() ? "true" : "false");
+           g_motion.actuators_enabled() ? "true" : "false", serviceModeActive() ? "true" : "false",
+           loopWatchdogArmed() ? "true" : "false");
   sendText(response);
 }
 
