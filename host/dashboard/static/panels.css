@@ -169,7 +169,7 @@
 .op-manual-camera .camera-header{height:44px}
 .op-manual-camera .camera-header h2{font-size:16px}
 .op-manual-camera .camera-status{padding:8px 16px;font-size:12px}
-.op-manual-camera .camera-dock .camera-viewport{height:280px;margin:0;border-left:0;border-right:0;border-radius:0}
+.op-manual-camera .camera-dock .camera-viewport{aspect-ratio:var(--vision-aspect,4/3);max-height:60vh;margin:0;border-left:0;border-right:0;border-radius:0}
 .op-manual-camera .camera-footer{height:36px;font-size:12px}
 .op-manual-camera .frame-badge{font-size:12px}
 .op-manual-controls{grid-area:controls;border-top:1px solid var(--rule);padding-top:20px;position:sticky;top:0}
@@ -203,7 +203,7 @@
  .op-manual-camera .camera-header{height:36px;padding:0 12px}
  .op-manual-camera .camera-header h2{font-size:14px}
  .op-manual-camera .camera-status{padding:4px 12px;font-size:11px}
- .op-manual-camera .camera-dock .camera-viewport{height:180px}
+ .op-manual-camera .camera-dock .camera-viewport{max-height:44vh}
  .op-manual-camera .camera-footer{height:30px;padding:0 12px;font-size:11px}
  .op-manual-controls{position:static;display:grid;grid-template-columns:minmax(0,1fr) 168px;column-gap:16px;align-items:start;padding-top:0;border-top:0}
  .op-manual-controls h4{font-size:14px}
