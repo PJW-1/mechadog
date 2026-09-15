@@ -330,6 +330,24 @@ def _is_sleep_cmd(norm):
     return any(norm == w or norm.endswith(w) for w in SLEEP_WORDS)
 
 
+def route_query(query):
+    """정규화된 질의의 처리 경로 — 구체적인 규칙이 넓은 단어 검사보다 먼저다.
+
+    "비상정지" 는 비상 전파가 아니라 정지 명령이고, "비상접수" 는 접수 시나리오다.
+    부분일치 단어 검사(EMERGENCY_WORDS·상태 질의)가 먼저 오면 이 둘을 삼켜 버린다.
+    """
+    norm = query or ""
+    if robotlink.match_action(norm) is not None:
+        return "action"
+    if scenarios.match_trigger(norm) is not None:
+        return "scenario"
+    if any(w in norm for w in EMERGENCY_WORDS):
+        return "emergency"
+    if robotlink.is_status_query(norm):
+        return "status"
+    return "llm"
+
+
 def load_knowledge():
     """knowledge/*.txt -> [(name, body)] 회사 데이터 조각들."""
     docs = []
@@ -758,7 +776,8 @@ def main():
                 if query is None:
                     print("[cmd] no wake word — ignore")
                     continue
-                if any(w in query for w in EMERGENCY_WORDS):
+                route = route_query(query)
+                if route == "emergency":
                     print("[cmd] EMERGENCY — logged")
                     with Path("emergency_log.txt").open("a", encoding="utf-8") as f:
                         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text!r}\n")
@@ -771,9 +790,9 @@ def main():
                         args.speed,
                     )
                     continue
-                # 규칙 기반 시나리오 트리거 — LLM보다 먼저 잡는다 (판정은 결정론적)
-                scn_name = scenarios.match_trigger(_PUNCT.sub("", query or ""))
-                if scn_name:
+                if route == "scenario":
+                    # 규칙 기반 시나리오 트리거 — LLM보다 먼저 잡는다 (판정은 결정론적)
+                    scn_name = scenarios.match_trigger(query)
                     desc, func = scenarios.SCENARIOS[scn_name]
                     print(f"[scenario] voice trigger {scn_name} ({desc})")
                     hub.event("system", f"시나리오 실행: {scn_name}")
@@ -783,9 +802,9 @@ def main():
                         print(f"[scenario] {scn_name} failed: {e}")
                         hub.event("system", f"시나리오 실패: {scn_name}: {e}")
                     continue
-                # 로봇 상태 질의 / 화이트리스트 명령 — 실측·실행 결과를 그대로 말한다
-                handled, spoken = robotlink.answer_query(query or "", args.robot_api)
-                if handled:
+                if route in ("action", "status"):
+                    # 화이트리스트 명령 / 로봇 상태 질의 — 실측·실행 결과를 그대로 말한다
+                    _, spoken = robotlink.answer_query(query, args.robot_api)
                     print(f"[robotlink] {spoken!r}")
                     hub.event("robot", spoken)
                     hub.activity = "speaking"
