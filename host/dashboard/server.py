@@ -324,6 +324,8 @@ def create_app(
     async def health():
         return {
             "service": "telemetry",
+            # 화면의 연결 전환 목록이 런타임마다 어느 개체를 보는지 표시하는 데 쓴다.
+            "device_id": state.snapshot()["device_id"],
             "read_only": commands is None,
             "clients": len(hub.clients),
             "coalesced_updates": hub.coalesced,

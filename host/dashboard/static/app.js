@@ -23,7 +23,11 @@ function syncVisionStatus(){
  $('frame-source').textContent=badge;
  $('camera-status').textContent=visionStatus.state==='live'?status+' · 검출 '+visionStatus.detections+'건 · 사람 '+visionStatus.persons+'명':status;
  $('camera-resolution').hidden=visionStatus.state!=='live';
- if(visionStatus.state==='live')$('camera-resolution').textContent=visionStatus.width+' × '+visionStatus.height;
+ if(visionStatus.state==='live'){
+  $('camera-resolution').textContent=visionStatus.width+' × '+visionStatus.height;
+  // 칸이 영상 비율을 따라가야 옆여백이 안 생긴다 — 프레임 크기가 곧 정답이다.
+  if(visionStatus.width>0&&visionStatus.height>0)document.documentElement.style.setProperty('--vision-aspect',visionStatus.width+' / '+visionStatus.height);
+ }
  const at=visionStatus.lastFrameAt?new Date(visionStatus.lastFrameAt).toLocaleTimeString('ko-KR',{hour12:false}):'—';
  $('frame-time').innerHTML='마지막 영상 수신　'+at+' <span class="muted">· 관측 전용</span>';
 }
@@ -85,6 +89,50 @@ if(link){
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();
 }
+// 연결 전환 — 같은 PC에 떠 있는 다른 런타임(실기·시뮬)으로 화면을 옮긴다.
+// 각 런타임의 /health 가 device_id 를 돌려주므로 버튼마다 개체 이름을 단다.
+// 전환은 ?api= 로 다시 여는 것뿐 — resolveApiBase 가 로컬 주소만 받으므로 안전하다.
+const SOURCE_PORTS=[8000,8001];
+const sourceSwitch=$('source-switch'),sourceMenu=$('source-menu');
+async function probeSources(){
+ const current=apiBase||location.origin;
+ const hits=await Promise.all(SOURCE_PORTS.map(async port=>{
+  const origin='http://127.0.0.1:'+port;
+  try{
+   const response=await fetch(origin+'/health',{signal:globalThis.AbortSignal?.timeout?.(1200)});
+   const info=response.ok?await response.json():null;
+   if(info?.service!=='telemetry')return null;
+   return {origin,port,device:info.device_id||'이름 없음',current:origin===current};
+  }catch{return null}
+ }));
+ return hits.filter(Boolean).sort((a,b)=>a.port-b.port);
+}
+function renderSourceMenu(list){
+ sourceMenu.textContent='';
+ if(!list.length){const empty=document.createElement('p');empty.className='source-menu-empty';empty.textContent='응답하는 런타임이 없습니다.';sourceMenu.append(empty);return}
+ for(const source of list){
+  const item=document.createElement('button');
+  item.type='button';item.setAttribute('role','menuitem');
+  item.className='source-item'+(source.current?' current':'');
+  item.disabled=source.current;
+  const name=document.createElement('strong');name.textContent=source.device;
+  const kind=document.createElement('span');kind.className='source-kind';
+  kind.textContent=source.device.endsWith('-sim')?'시뮬레이션':'실기';
+  const addr=document.createElement('small');addr.textContent='127.0.0.1:'+source.port;
+  item.append(name,kind,addr);
+  item.addEventListener('click',()=>{location.href=location.pathname+'?api='+encodeURIComponent(source.origin)+location.hash});
+  sourceMenu.append(item);
+ }
+}
+async function toggleSourceMenu(){
+ if(!sourceMenu.hidden){sourceMenu.hidden=true;sourceSwitch.setAttribute('aria-expanded','false');return}
+ sourceMenu.hidden=false;sourceSwitch.setAttribute('aria-expanded','true');
+ const loading=document.createElement('p');loading.className='source-menu-empty';loading.textContent='런타임 찾는 중…';
+ sourceMenu.textContent='';sourceMenu.append(loading);
+ renderSourceMenu(await probeSources());
+}
+sourceSwitch.addEventListener('click',toggleSourceMenu);
+document.addEventListener('click',event=>{if(!sourceMenu.hidden&&!event.target.closest('.source-switch'))toggleSourceMenu()});
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
 const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,
