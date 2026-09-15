@@ -36,14 +36,14 @@ async function boot(hash='dashboard',{health=null,search=''}={}){
 }
 
 test('application opens direct hash, aligns 3D and camera selection, routes named scene buttons',async()=>{
- const {dom,document,store,view,failures}=await boot('events');assert.equal(document.querySelector('#panel-title').textContent,'사건 검토');assert.equal(document.querySelector('#detail-panel').hidden,false);
+ const {dom,document,store,view,failures}=await boot('events');assert.equal(document.querySelector('#map-placeholder').hidden,true);assert.equal(document.querySelector('#panel-title').textContent,'사건 검토');assert.equal(document.querySelector('#detail-panel').hidden,false);
  document.querySelector('[data-camera="top"]').click();assert.equal(document.querySelector('#panel-title').textContent,'공간 · 구역');
  document.querySelector('[data-camera="robot"]').click();assert.equal(document.querySelector('#panel-title').textContent,'장치 상태');
  document.querySelector('[data-robot="MD-02"]').click();assert.equal(store.selected,'MD-02');assert.equal(view.selected,'MD-02');assert.match(document.querySelector('#camera-title').textContent,/MD-02/);assert.deepEqual(failures,[]);dom.window.close();
 });
 test('navigation releases manual control, real-data mode hides preview without claiming connection',async()=>{
  const {dom,document,store,view}=await boot('missions');store.claim();store.move('FORWARD');document.querySelector('[data-view="events"]').click();assert.equal(store.command,'STOP');assert.equal(store.control,null);
- store.setDemo(false);assert.equal(document.querySelector('#app').classList.contains('data-waiting'),true);assert.equal(view.cameraVisible,false);assert.equal(view.playing,false);assert.match(document.querySelector('#frame-source').textContent,/미수신/);dom.window.close();
+ store.setDemo(false);assert.match(document.querySelector('.actual-status').textContent,/장비 미연결/);document.querySelector('[data-view="settings"]').click();assert.match(document.querySelector('#panel-content').textContent,/실제 로봇연결 안 됨/);document.querySelector('[data-view="events"]').click();assert.equal(document.querySelector('#app').classList.contains('data-waiting'),true);assert.equal(view.cameraVisible,false);assert.equal(view.playing,false);assert.match(document.querySelector('#frame-source').textContent,/미수신/);dom.window.close();
 });
 
 test('WASD requires ownership, holds one direction and Space cancels without automatic restart',async()=>{
@@ -138,6 +138,12 @@ test('served by the dashboard, the robot view draws /ws/vision and says what it 
  assert.equal(store.live,true);assert.deepEqual(failures,[]);
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/vision');assert.equal(feed.options.canvas,document.querySelector('#vision-frame'));assert.equal(feed.started,true);
  assert.equal(document.querySelector('#vision-frame').hidden,false);assert.equal(document.querySelector('#fpv').hidden,true);
+ // 실제로 붙어 있는데 하단 상태 칸이 "장비 미연결" 이라고 하면 안 된다 — 로봇 상태를 아는 척도 하지 않는다.
+ assert.doesNotMatch(document.querySelector('.actual-status').textContent,/미연결/);assert.match(document.querySelector('.actual-status').textContent,/로봇 상태 미표시/);
+ // 지도가 없으니 예시 공장 3D 를 그리지 않고 "지도 없음" 을 말한다 (#159 가 되살렸던 예시 로봇·경고 표시 포함).
+ assert.equal(state.view.active,false);assert.equal(document.querySelector('#map-placeholder').hidden,false);assert.match(document.querySelector('#scene-subtitle').textContent,/지도 없음/);
+ // 설정 화면의 "실제 로봇" 칸도 연결을 사실대로 말한다 (고정 "연결 안 됨" 이 아니다).
+ document.querySelector('[data-view="settings"]').click();assert.match(document.querySelector('#panel-content').textContent,/실제 로봇관제 서버 연결됨/);document.querySelector('#close-panel').click();
  // 연결만 됐다고 "실시간" 이라 하지 않는다.
  assert.equal(text('frame-source'),'영상 연결 중');assert.doesNotMatch(text('camera-status'),/실시간/);
  feed.options.onStatus({state:'live',lastFrameAt:Date.UTC(2026,8,14,10,0,0),frameSeq:12,width:640,height:480,detections:3,persons:2});
