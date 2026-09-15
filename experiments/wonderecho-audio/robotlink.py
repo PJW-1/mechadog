@@ -143,7 +143,6 @@ _COMMAND_ENDINGS = sorted(
         "했죠",
         "했어요",
         "했어",
-        "에",
         "시켜",
         "해라",
         "하기",
@@ -167,6 +166,10 @@ def match_action(query: str):
     norm = _norm(query)
     if norm in ACTIONS:
         return ACTIONS[norm]
+    # 합성 음성에서 "비상정지해줘"가 "비상정지에"로 인식된 실측 사례만
+    # 좁게 허용한다. "에"를 공통 어미로 벗기면 "순찰시작에"도 보행 명령이 된다.
+    if norm == "비상정지에":
+        return ACTIONS["비상정지"]
     stripped = norm
     for _ in range(3):  # "해주세요"처럼 중첩 어미 대비
         for ending in _COMMAND_ENDINGS:
