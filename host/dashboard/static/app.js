@@ -169,7 +169,7 @@ function syncMain(){
  $('camera-title').textContent=selected+' · 로봇 시점';$('camera-axis').textContent=selected+' / FRONT';
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
- $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'실제 지도·위치 미수신 · 예시 숨김';
+ $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'예시 공간 · 연결된 로봇의 실제 위치는 미수신';
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');
@@ -251,6 +251,42 @@ function setCameraDockState({expanded=false,collapsed=false}){
 }
 $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$('camera-dock').classList.contains('expanded')}));
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
+// 카메라 창 자유 배치 — 헤더를 끌어 옮기고, 우하단 그립을 끌어 크기를 바꾼다.
+// 통합 관제에서만 동작한다 — 순찰·제어에서는 칸이 문서 흐름(position:static)이라
+// 끌면 레이아웃이 깨진다. 크기는 너비만 바꾸고 높이는 --vision-aspect 가 맞춘다.
+{
+ const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header'),grip=$('camera-resize');
+ const clampTo=(v,min,max)=>Math.min(max,Math.max(min,v));
+ const dockInStage=()=>dock.parentElement===stage&&currentPage==='dashboard';
+ header.addEventListener('pointerdown',event=>{
+  if(!dockInStage()||event.target.closest('button'))return;
+  event.preventDefault();
+  dock.classList.remove('expanded');
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';
+  const offX=event.clientX-d.left,offY=event.clientY-d.top;
+  const move=move=>{
+   dock.style.left=clampTo(move.clientX-s.left-offX,0,s.width-dock.offsetWidth)+'px';
+   dock.style.top=clampTo(move.clientY-s.top-offY,0,s.height-dock.offsetHeight)+'px';
+  };
+  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);view?.resize()};
+  header.setPointerCapture(event.pointerId);
+  header.addEventListener('pointermove',move);
+  header.addEventListener('pointerup',up);
+  header.addEventListener('pointercancel',up);
+ });
+ grip.addEventListener('pointerdown',event=>{
+  if(!dockInStage())return;
+  event.preventDefault();
+  const s=stage.getBoundingClientRect(),startW=dock.getBoundingClientRect().width,startX=event.clientX;
+  const move=move=>{dock.style.width=clampTo(startW+move.clientX-startX,280,Math.min(s.width-20,1100))+'px'};
+  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up)};
+  grip.setPointerCapture(event.pointerId);
+  grip.addEventListener('pointermove',move);
+  grip.addEventListener('pointerup',up);
+  grip.addEventListener('pointercancel',up);
+ });
+}
 $('demo-toggle').addEventListener('click',()=>attempt(()=>{if(operations.mission.status==='running')operations.pauseMission();else if(operations.mission.status==='paused')operations.resumeMission();else navigate('missions')}));
 function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!$('stop-dialog').open)$('stop-dialog').showModal()}
 // 연결돼 있으면 비상정지는 한 번 눌러 바로 나간다. 모달을 한 단계 끼우면 급할 때
