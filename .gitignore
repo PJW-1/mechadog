@@ -88,3 +88,6 @@ desktop.ini
 experiments/wonderecho-audio/voice_cache/
 experiments/wonderecho-audio/emergency_log.txt
 experiments/wonderecho-audio/phrases_custom.json
+
+# 시뮬 실행 산출물 (로그·미리보기) — Git에 올리지 않는다
+sim/out/
