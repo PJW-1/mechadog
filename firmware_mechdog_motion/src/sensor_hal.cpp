@@ -158,6 +158,24 @@ bool read_bytes(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
   return true;
 }
 
+// Same read, but the register write ends with STOP before a fresh read request —
+// the sequence the vendor's UltrasoundSonar uses. The ultrasonic module runs its
+// own MCU; after a repeated START it returned only the low byte with the high
+// byte as 0, so distances wrapped every 25.6 cm (2026-09-15 target test: 30 cm
+// read 3.4-4.0 cm, 100 cm read 0-25.5 cm). The IMU keeps the repeated START.
+bool read_bytes_after_stop(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
+  Wire.beginTransmission(address);
+  const bool register_written = Wire.write(reg) == 1;
+  if (Wire.endTransmission(true) != 0 || !register_written) return false;
+  if (Wire.requestFrom(address, length, true) != length) return false;
+  for (size_t index = 0; index < length; ++index) {
+    const int byte = Wire.read();
+    if (byte < 0) return false;
+    out[index] = static_cast<uint8_t>(byte);
+  }
+  return true;
+}
+
 void publish(const AcquisitionRecord& record) {
   // Even a reader stalled unexpectedly must not block the acquisition task.
   if (xSemaphoreTake(g_snapshot_mutex, pdMS_TO_TICKS(2)) != pdTRUE) return;
@@ -229,7 +247,7 @@ bool read_imu(IMUdata& acc, IMUdata& gyr, SensorError& error) {
 void acquire_sonar(AcquisitionRecord& record) {
   uint8_t bytes[2] = {};
   record.value.dist_valid = false;
-  if (!read_bytes(kSonarAddress, 0x00, bytes, sizeof(bytes))) {
+  if (!read_bytes_after_stop(kSonarAddress, 0x00, bytes, sizeof(bytes))) {
     record.value.dist_error = SensorError::ReadFailed;
     return;
   }
