@@ -371,5 +371,34 @@ class TransportTests(unittest.TestCase):
         dev.close.assert_called_once()
 
 
+class RouteQueryTests(unittest.TestCase):
+    """우선순위 라우팅 — 구체 규칙이 넓은 단어 검사보다 먼저다."""
+
+    def test_exact_command_beats_emergency_word(self):
+        # "비상정지" 는 "비상" 을 포함하지만 전파가 아니라 정지 명령이다.
+        self.assertEqual(vp.route_query("비상정지"), "action")
+        self.assertEqual(vp.route_query("긴급정지"), "action")
+        self.assertEqual(vp.route_query("스톱"), "action")
+        self.assertEqual(vp.route_query("순찰시작"), "action")
+
+    def test_scenario_trigger_beats_emergency_word(self):
+        # "비상접수" 는 "비상" 을 포함하지만 접수 시나리오다.
+        self.assertEqual(vp.route_query("비상접수"), "scenario")
+        self.assertEqual(vp.route_query("화재대피"), "scenario")
+
+    def test_plain_emergency_still_routes(self):
+        self.assertEqual(vp.route_query("비상"), "emergency")
+        self.assertEqual(vp.route_query("도와줘"), "emergency")
+        self.assertEqual(vp.route_query("지금비상상황이야"), "emergency")
+
+    def test_status_query(self):
+        self.assertEqual(vp.route_query("배터리어때"), "status")
+        self.assertEqual(vp.route_query("지금상태알려줘"), "status")
+
+    def test_unrelated_goes_to_llm(self):
+        self.assertEqual(vp.route_query("오늘점심뭐야"), "llm")
+        self.assertEqual(vp.route_query(""), "llm")
+
+
 if __name__ == "__main__":
     unittest.main()

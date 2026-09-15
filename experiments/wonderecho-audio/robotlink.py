@@ -137,6 +137,14 @@ def run_action(action: str, base=DEFAULT_BASE):
     return True, ""
 
 
+_STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전")
+
+
+def is_status_query(norm_query: str) -> bool:
+    """정규화된 질의가 로봇 상태 질의인지 — 라우팅 우선순위 판정용."""
+    return any(w in norm_query for w in _STATUS_WORDS)
+
+
 def answer_query(query: str, base=DEFAULT_BASE):
     """상태 질의면 실측 요약 문자열, 명령이면 실행 결과 문자열, 아니면 None.
 
@@ -148,7 +156,7 @@ def answer_query(query: str, base=DEFAULT_BASE):
         name, ack = action
         ok, err = run_action(name, base)
         return True, ack if ok else err
-    if any(w in norm for w in ("배터리", "상태", "온도", "보고", "잔량", "충전")):
+    if is_status_query(norm):
         st = fetch_status(base)
         return (
             True,
