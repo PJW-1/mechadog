@@ -1,0 +1,22 @@
+{
+  "walking": {
+    "ok": true,
+    "verdict": "ACCEPT",
+    "seq": 34,
+    "type": "ACTION",
+    "applied": false,
+    "safe_latched": false,
+    "failsafe_count": 3,
+    "actuators": true
+  },
+  "stopped": {
+    "ok": true,
+    "verdict": "ACCEPT",
+    "seq": 49,
+    "type": "ACTION",
+    "applied": true,
+    "safe_latched": false,
+    "failsafe_count": 3,
+    "actuators": true
+  }
+}

@@ -394,6 +394,18 @@ void handlePacket(int packet_size) {
   // anchors its epoch clock. PINGs, malformed packets and replay drops do not.
   g_telemetry.observe_command(g_udp.remoteIP(), decoded.command.ts);
   const bool applied = applyCommand(decoded.command);
+  // ⚠️ **온보드가 스스로 눈을 감은 시간은 호스트 침묵으로 세지 않는다.** 벤더
+  // `action_run` 은 구간마다 delay() 로 블로킹한다(실측 1,062ms). 그동안 loop() 가
+  // 멈춰 UDP 수신도 타임아웃 검사도 함께 멈추므로, 깨어나면 «300ms 넘게 명령이
+  // 없었다» 로 보여 **로봇이 제 낮잠 때문에 래치한다** — 2026-09-15 실기에서 ACTION 1
+  // 직후 failsafe_count 9→10. 호스트는 10Hz 송신을 한 번도 끊지 않았고 밀렸던 전문은
+  // 10ms 안에 몰려 처리됐다. 침묵한 것은 호스트가 아니라 우리였다.
+  //
+  // 대안이던 «그냥 래치한다» 는 더 나쁘다 — 액션마다 호스트가 RESET_SAFE 를 보내게
+  // 되어 **안전 래치를 자동으로 푸는 습관**을 가르친다. 호스트가 정말 죽었다면 액션이
+  // 끝난 뒤 300ms 안에 그대로 래치된다(최악 약 1.3초). 그 사이 동작은 서기·앉기·
+  // 엎드리기뿐이라 몸이 이동하지 않는다 — 위험이 유계다.
+  g_last_valid_command_ms = uptimeMs();
   Serial.printf("CMD: seq=%lld type=%s applied=%d safe=%d\n",
                 static_cast<long long>(decoded.command.seq),
                 mechadog::to_string(decoded.command.type), applied, g_safe_latched);

@@ -1,0 +1,418 @@
+[
+  {
+    "t_ms": 1,
+    "send": "RESET_SAFE"
+  },
+  {
+    "t_ms": 7,
+    "ack": "STOP",
+    "seq": 1,
+    "applied": true,
+    "latched": true,
+    "fc": 0
+  },
+  {
+    "t_ms": 15,
+    "ack": "RESET_SAFE",
+    "seq": 2,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 35,
+    "ack": "STOP",
+    "seq": 3,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 129,
+    "ack": "STOP",
+    "seq": 4,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 256,
+    "ack": "STOP",
+    "seq": 5,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 382,
+    "ack": "STOP",
+    "seq": 6,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 505,
+    "ack": "STOP",
+    "seq": 7,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 632,
+    "ack": "STOP",
+    "seq": 8,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 765,
+    "ack": "STOP",
+    "seq": 9,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 887,
+    "ack": "STOP",
+    "seq": 10,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 994,
+    "ack": "STOP",
+    "seq": 11,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1115,
+    "ack": "STOP",
+    "seq": 12,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1242,
+    "ack": "STOP",
+    "seq": 13,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1361,
+    "ack": "STOP",
+    "seq": 14,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1493,
+    "ack": "STOP",
+    "seq": 15,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1518,
+    "send": "ACTION"
+  },
+  {
+    "t_ms": 1521,
+    "ack": "ACTION",
+    "seq": 16,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1524,
+    "ack": "STOP",
+    "seq": 17,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1631,
+    "ack": "STOP",
+    "seq": 18,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1743,
+    "ack": "STOP",
+    "seq": 19,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1864,
+    "ack": "STOP",
+    "seq": 20,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 1980,
+    "ack": "STOP",
+    "seq": 21,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2104,
+    "ack": "STOP",
+    "seq": 22,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2229,
+    "ack": "STOP",
+    "seq": 23,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2335,
+    "ack": "STOP",
+    "seq": 24,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2445,
+    "ack": "STOP",
+    "seq": 25,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2568,
+    "ack": "STOP",
+    "seq": 26,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2696,
+    "ack": "STOP",
+    "seq": 27,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2821,
+    "ack": "STOP",
+    "seq": 28,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 2921,
+    "ack": "STOP",
+    "seq": 29,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3048,
+    "ack": "STOP",
+    "seq": 30,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3181,
+    "ack": "STOP",
+    "seq": 31,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3301,
+    "ack": "STOP",
+    "seq": 32,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3426,
+    "ack": "STOP",
+    "seq": 33,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3536,
+    "ack": "STOP",
+    "seq": 34,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3660,
+    "ack": "STOP",
+    "seq": 35,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3781,
+    "ack": "STOP",
+    "seq": 36,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3883,
+    "ack": "STOP",
+    "seq": 37,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 3989,
+    "ack": "STOP",
+    "seq": 38,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4103,
+    "ack": "STOP",
+    "seq": 39,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4215,
+    "ack": "STOP",
+    "seq": 40,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4317,
+    "ack": "STOP",
+    "seq": 41,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4447,
+    "ack": "STOP",
+    "seq": 42,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4556,
+    "ack": "STOP",
+    "seq": 43,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4680,
+    "ack": "STOP",
+    "seq": 44,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4795,
+    "ack": "STOP",
+    "seq": 45,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 4912,
+    "ack": "STOP",
+    "seq": 46,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 5037,
+    "ack": "STOP",
+    "seq": 47,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 5151,
+    "ack": "STOP",
+    "seq": 48,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 5256,
+    "ack": "STOP",
+    "seq": 49,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 5372,
+    "ack": "STOP",
+    "seq": 50,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  },
+  {
+    "t_ms": 5476,
+    "ack": "STOP",
+    "seq": 51,
+    "applied": true,
+    "latched": false,
+    "fc": 0
+  }
+]
