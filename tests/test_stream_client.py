@@ -19,6 +19,7 @@ from host.vision.stream_client import (
     FrameQueue,
     MjpegParser,
     StreamEndpoints,
+    apply_orientation,
     apply_profile,
     decode_jpeg,
     stream_endpoints,
@@ -307,6 +308,59 @@ def test_endpoints_can_be_passed_in(cfg: dict) -> None:
         opener=_fake_opener({"ok": True}, seen),
     )
     assert seen[0][0].startswith("http://1.2.3.4:80/profile")
+
+
+# ── 장착 방향 보정 ───────────────────────────────────────────
+def _rotated(cfg: dict, rot: int) -> dict:
+    merged = _with_xiao(cfg, "10.0.0.9")
+    merged["vision"] = dict(cfg["vision"], mount_rotation=rot)
+    return merged
+
+
+def test_default_orientation_sends_nothing(cfg: dict) -> None:
+    """0도는 펌웨어 기본값과 같다 — 보낼 것이 없다."""
+    seen: list[tuple[str, float]] = []
+    assert apply_orientation(_rotated(cfg, 0), opener=_fake_opener({"ok": True}, seen)) == 0
+    assert seen == []
+
+
+def test_rotated_mount_is_pushed_at_startup(cfg: dict) -> None:
+    """⚠️ **펌웨어에만 두면 재부팅마다 풀린다** — `/orient` 가 바꾸는 값은 XIAO 의
+    평범한 전역 변수라 전원을 껐다 켜면 사라진다. 설정이 정본이다 (NFR-3①)."""
+    seen: list[tuple[str, float]] = []
+    assert apply_orientation(_rotated(cfg, 180), opener=_fake_opener({"ok": True}, seen)) == 180
+    assert seen[0][0] == "http://10.0.0.9:80/orient?rot=180"
+
+
+def test_profile_application_also_pushes_orientation(cfg: dict) -> None:
+    """둘을 따로 부르게 두면 한쪽만 불리는 자리가 생긴다."""
+    seen: list[tuple[str, float]] = []
+    apply_profile(_rotated(cfg, 180), opener=_fake_opener({"ok": True}, seen))
+    assert [url for url, _ in seen] == [
+        "http://10.0.0.9:80/profile?name=VGA&fps=25",
+        "http://10.0.0.9:80/orient?rot=180",
+    ]
+
+
+def test_old_firmware_without_orient_does_not_stop_startup(cfg: dict) -> None:
+    """⚠️ `/orient` 는 2026-09-15 에 생긴 경로다. 그 전 펌웨어는 모른다.
+
+    보정이 안 되는 것과 카메라를 못 쓰는 것은 다르다 — 여기서 예외를 올리면
+    **구형 펌웨어가 꽂힌 기체에서 호스트가 통째로 죽는다.**
+    """
+
+    def refusing(_url: str, **_kwargs):
+        raise OSError("HTTP 404")
+
+    assert apply_orientation(_rotated(cfg, 180), opener=refusing) is None
+
+
+def test_a_camera_refusal_is_not_fatal_either(cfg: dict) -> None:
+    seen: list[tuple[str, float]] = []
+    result = apply_orientation(
+        _rotated(cfg, 180), opener=_fake_opener({"ok": False, "error": "rot"}, seen)
+    )
+    assert result is None
 
 
 # ── 디코드 ───────────────────────────────────────────────────

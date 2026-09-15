@@ -363,7 +363,46 @@ def apply_profile(
         LOG.warning("profile_rejected", url=url, response=body)
         raise ValueError(f"카메라가 프로파일을 거부했다: {body}")
     LOG.info("profile_applied", profile=body.get("profile"), fps_limit=body.get("fps_limit"))
+    apply_orientation(config, endpoints=target, timeout_s=timeout_s, opener=opener)
     return body
+
+
+def apply_orientation(
+    config: Mapping[str, Any],
+    *,
+    endpoints: StreamEndpoints | None = None,
+    timeout_s: float = 3.0,
+    opener: Any = None,
+) -> int | None:
+    """장착 방향 보정을 카메라에 내려보낸다. 적용한 각도, 건너뛰었으면 ``None``.
+
+    ⚠️ **펌웨어에만 두면 재부팅마다 풀린다.** `/orient` 가 바꾸는 것은 XIAO 의 평범한
+    전역 변수라 전원을 껐다 켜면 사라진다 — 뒤집어 단 카메라가 매 부팅마다 뒤집힌
+    영상을 보낸다. 그래서 `resolution`·`stream_fps_limit` 과 같은 규칙을 적용한다:
+    **설정이 정본이고 호스트가 기동 때 내려보낸다** (NFR-3①).
+
+    ⚠️ **실패해도 기동을 막지 않는다.** `/orient` 는 2026-09-15 에 생긴 경로라 그 전
+    펌웨어는 404 로 답한다. 보정이 안 되는 것과 카메라를 아예 못 쓰는 것은 다르므로,
+    여기서 예외를 올리면 **구형 펌웨어가 꽂힌 기체에서 호스트가 통째로 죽는다.**
+    경고만 남기고 넘어간다.
+    """
+    rotation = int(config["vision"].get("mount_rotation", 0))
+    if rotation == 0:
+        return 0  # 기본 방향이면 펌웨어 기본값과 같다 — 보낼 것이 없다
+    target = endpoints if endpoints is not None else stream_endpoints(config)
+    url = f"{target.control}/orient?rot={rotation}"
+    fetch = opener if opener is not None else urllib.request.urlopen
+    try:
+        with fetch(url, timeout=timeout_s) as response:  # noqa: S310 — 설정에서 온 http URL
+            body = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        LOG.warning("orientation_apply_failed", url=url, error=str(exc), effect="보정 없이 계속한다")
+        return None
+    if not body.get("ok"):
+        LOG.warning("orientation_rejected", url=url, response=body)
+        return None
+    LOG.info("orientation_applied", rot=rotation)
+    return rotation
 
 
 def decode_jpeg(payload: bytes) -> Any:
