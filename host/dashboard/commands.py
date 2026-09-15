@@ -70,11 +70,13 @@ class CommandService:
         send: Callable[[str], None],
         request_reset: Callable[[], None] | None = None,
         apply_event: Callable[[Event], bool] | None = None,
+        ask_patrol: Callable[[], None] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
         self._send = send
         self._request_reset = request_reset
+        self._ask_patrol = ask_patrol
         # ⚠️ **사건은 `apply_event` 로 넣는다. `behavior.event()` 를 직접 부르지 않는다.**
         # 직접 부르면 전이는 일어나지만 **대응 단계 갱신과 전이 로그가 함께 빠진다** —
         # 런타임의 `_apply()` 가 그 둘을 묶어 두고 있기 때문이다. 2026-09-14 실기에서
@@ -171,4 +173,71 @@ class CommandService:
             accepted=True,
             state=self._behavior.state,
             detail="안전 해제를 요청했다 — 로봇이 래치 해제를 보고할 때까지 기다린다",
+        )
+
+    #: 자율 동작 상태 — "순찰 정지" 가 받을 수 있는 상태들이다.
+    _AUTONOMOUS = frozenset(
+        {
+            "PATROL",
+            "SCAN",
+            "AVOID",
+            "ALERT",
+            "TRACK",
+            "AUTH_WAIT",
+            "HAZARD_DISPATCH",
+            "HAZARD_SCAN",
+        }
+    )
+
+    def patrol(self) -> CommandResult:
+        """순찰 시작을 **예약**한다 — 리셋 정착 후 `IDLE` 에서 발행된다 (WBS 4.7.11).
+
+        `runtime.ask_patrol()` 경로를 쓴다 — `START_PATROL` 을 바로 넣으면 기동
+        리셋과 순서가 어긋나 순찰이 조용히 취소되는 함정이 실기에서 드러났다.
+        예약이므로 반환값은 "의도를 받았다"이지 "순찰 중"이 아니다.
+        """
+        if self._ask_patrol is None:
+            return CommandResult(
+                command="patrol",
+                accepted=False,
+                state=self._behavior.state,
+                detail="순찰 경로가 연결되지 않았다",
+            )
+        self._ask_patrol()
+        return CommandResult(
+            command="patrol",
+            accepted=True,
+            state=self._behavior.state,
+            detail="순찰을 예약했다 — FSM 이 허락하는 시점에 시작된다",
+        )
+
+    def patrol_stop(self) -> CommandResult:
+        """자율 동작을 멈추고 `IDLE` 로 내린다.
+
+        전이표에 `PATROL → IDLE` 직행 사건이 없으므로 **수동을 한 번 거친다** —
+        `MANUAL_ON` 으로 자율을 끊고(로봇 halt) 곧바로 `MANUAL_OFF` 로 내려
+        `IDLE` 에 정착한다. `ESTOP` 과 달리 래치를 걸지 않아 해제 절차가
+        필요 없는, "정상 정지"다.
+        """
+        if self._behavior.state not in self._AUTONOMOUS:
+            return CommandResult(
+                command="patrol_stop",
+                accepted=False,
+                state=self._behavior.state,
+                detail="자율 동작 중이 아니다",
+            )
+        entered = self.manual_on()
+        if not entered.accepted:
+            return CommandResult(
+                command="patrol_stop",
+                accepted=False,
+                state=self._behavior.state,
+                detail=entered.detail,
+            )
+        released = self.manual_off()
+        return CommandResult(
+            command="patrol_stop",
+            accepted=released.accepted,
+            state=self._behavior.state,
+            detail="수동을 거쳐 대기로 내렸다",
         )

@@ -70,12 +70,20 @@ ACTIONS = {
     "수동제어": ("manual_on", "수동 제어로 전환합니다"),
     "자동모드": ("manual_off", "수동 제어를 해제합니다"),
     "수동해제": ("manual_off", "수동 제어를 해제합니다"),
+    "순찰시작": ("patrol_start", "순찰을 시작합니다"),
+    "순찰개시": ("patrol_start", "순찰을 시작합니다"),
+    "순찰해": ("patrol_start", "순찰을 시작합니다"),
+    "순찰정지": ("patrol_stop", "순찰을 정지합니다"),
+    "순찰중지": ("patrol_stop", "순찰을 정지합니다"),
+    "순찰멈춰": ("patrol_stop", "순찰을 정지합니다"),
 }
 
 _ENDPOINTS = {
     "estop": "/api/command/estop",
     "manual_on": "/api/command/manual",
     "manual_off": "/api/command/manual",
+    "patrol_start": "/api/command/patrol",
+    "patrol_stop": "/api/command/patrol",
 }
 
 
@@ -95,15 +103,21 @@ def run_action(action: str, base=DEFAULT_BASE):
         if action == "estop":
             res = _post(base, _ENDPOINTS[action], {})
         elif action == "manual_on":
-            res = _post(base, _ENDPOINTS[action], {"manual": True})
+            res = _post(base, _ENDPOINTS[action], {"on": True})
         elif action == "manual_off":
-            res = _post(base, _ENDPOINTS[action], {"manual": False})
+            res = _post(base, _ENDPOINTS[action], {"on": False})
+        elif action == "patrol_start":
+            res = _post(base, _ENDPOINTS[action], {"action": "start"})
+        elif action == "patrol_stop":
+            res = _post(base, _ENDPOINTS[action], {"action": "stop"})
         else:
             return False, "지원하지 않는 명령입니다"
     except OSError:
         return False, "로봇 관제 서버에 연결할 수 없습니다"
-    if res.get("ok") is False or res.get("error"):
-        return False, "로봇이 명령을 거부했습니다"
+    # CommandResult.as_dict() 는 accepted 필드를 돌려준다 — 거절(accepted=False)도
+    # 200 으로 오므로 본문을 봐야 한다. detail 은 서버가 만든 한국어 사유다.
+    if res.get("error") or res.get("accepted") is not True:
+        return False, res.get("detail") or "로봇이 명령을 거부했습니다"
     return True, ""
 
 

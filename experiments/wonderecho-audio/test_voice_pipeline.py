@@ -269,21 +269,41 @@ class RobotlinkTests(unittest.TestCase):
 
         def fake_post(_base, path, body, _timeout=3.0):
             calls.append((path, body))
-            return {"ok": True}
+            return {"accepted": True}
 
         with mock.patch.object(robotlink, "_post", side_effect=fake_post):
             self.assertEqual(robotlink.run_action("estop")[0], True)
             robotlink.run_action("manual_on")
             robotlink.run_action("manual_off")
+            robotlink.run_action("patrol_start")
+            robotlink.run_action("patrol_stop")
             self.assertFalse(robotlink.run_action("self_destruct")[0])
         self.assertEqual(
             calls,
             [
                 ("/api/command/estop", {}),
-                ("/api/command/manual", {"manual": True}),
-                ("/api/command/manual", {"manual": False}),
+                ("/api/command/manual", {"on": True}),
+                ("/api/command/manual", {"on": False}),
+                ("/api/command/patrol", {"action": "start"}),
+                ("/api/command/patrol", {"action": "stop"}),
             ],
         )
+
+    def test_patrol_phrases_whitelisted(self):
+        self.assertEqual(robotlink.match_action("순찰 시작"), ("patrol_start", "순찰을 시작합니다"))
+        self.assertEqual(robotlink.match_action("순찰 정지"), ("patrol_stop", "순찰을 정지합니다"))
+        self.assertIsNone(robotlink.match_action("순찰 열심히 해"))  # 부분 문자열 불가
+
+    def test_run_action_speaks_rejection_detail(self):
+        """거절(accepted=False)도 200으로 오므로 본문을 보고 사유를 말한다."""
+        with mock.patch.object(
+            robotlink,
+            "_post",
+            return_value={"accepted": False, "detail": "자율 동작 중이 아니다"},
+        ):
+            ok, spoken = robotlink.run_action("patrol_stop")
+        self.assertFalse(ok)
+        self.assertEqual(spoken, "자율 동작 중이 아니다")
 
 
 class HubScenarioQueueTests(unittest.TestCase):
