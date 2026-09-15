@@ -107,3 +107,15 @@ test('voice panel phrase section is disabled without a link',()=>{
  assert.equal(button(document,'문구 보기').disabled,true);
  assert.equal(button(document,'문구 추가').disabled,true);
 });
+test('device command buttons dispatch through the link (dialog falls back when unavailable)',()=>{
+ const calls=[];
+ const link={service:async mode=>{calls.push(['service',mode]);return{accepted:true}},resetSafe:async()=>{calls.push(['reset']);return{accepted:true}},patrol:async action=>{calls.push(['patrol',action]);return{accepted:true}},manual:async()=>({accepted:true}),drive:async()=>({accepted:true})};
+ const {document,panels,store}=setup();store.link=link;store.setDemo(false);panels.render('missions');
+ // jsdom에는 dialog.showModal이 없어 확인 창을 건너뛰고 바로 보낸다 — 실제 브라우저에서는 확인 창이 먼저 뜬다.
+ button(document,'서비스 모드 진입 — 패치용 워치독').click();
+ assert.deepEqual(calls,[['service','enter']]);
+ button(document,'안전 해제 (RESET_SAFE)').click();
+ assert.deepEqual(calls[1],['reset']);
+ button(document,'실제 순찰 정지').click();
+ assert.deepEqual(calls[2],['patrol','stop']);
+});
