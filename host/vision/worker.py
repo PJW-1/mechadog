@@ -132,8 +132,9 @@ class VisionWorker:
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
-        # ⚠️ **추론률 상한을 지킨다.** 큐에는 25fps 로 들어오지만 추론은 10fps 다
-        # (ADR-23). 상한 없이 돌리면 GPU 가 허용하는 만큼 돌아 전력과 GIL 을 낭비한다.
+        # ⚠️ **추론률 상한을 지킨다** — `vision.inference_fps`(지금 25 · 수신률과 같다). 10fps 로
+        # 두던 때가 있었으나 짧은 검출 구간을 놓쳐 25 로 올렸다(ADR-23 · 3.3.3).
+        # 상한 없이 돌리면 GPU 가 허용하는 만큼 돌아 전력과 GIL 을 낭비한다.
         self._period_ms = max(1, round(1000 / float(vision["inference_fps"])))
         self._next_due_ms: int | None = None
         self._started_ms: int | None = None
