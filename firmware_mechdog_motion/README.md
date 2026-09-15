@@ -6,7 +6,9 @@
 > **구동·센서 빌드를 하려면 먼저 아래 *"구동·센서 통합 빌드 준비"* 절을 본다.** 벤더 파일은
 > 저장소에 없어 각자 받아야 하며(ADR-20), 준비 상태는 `python tools/firmware_env.py` 로 점검한다.
 
-선택 기능인 [정지 진단용 Wi-Fi 업데이트](OTA.md)는 구동 OFF 전용이다.
+선택 기능인 [정지 진단용 Wi-Fi 업데이트](OTA.md)는 **정지 상태 전용**이다.
+구동 OFF 빌드에서는 항상 사용할 수 있고, 구동 빌드에서는 아래 SERVICE 모드
+(2026-09-15)로 로봇을 주차시킨 상태에서만 `/firmware`·`/confirm`을 받는다.
 최초 파티션 전환/데이터 보존과 이후 HTTPS 업데이트 절차를 구분한다.
 
 ## 3.2.4 제어 루프 감시 — 정지 OTA 통합 (2026-09-13)
@@ -117,9 +119,42 @@ Task Watchdog에 등록한다. 센서·통신·안전 처리가 끝난 루프 �
 별도 타이머/스레드를 통한 대리 갱신은 사용하지 않는다. 초기화·등록·갱신 실패는
 `ESP_ERROR_CHECK`로 처리하며 성공으로 기록하지 않는다.
 
-이 옵션의 기본값은 **0**이다. 실물 정상 부하/고장 주입/리셋 지연 시험 전에는
-구동 OFF 진단 빌드에만 허용하며 `MECHADOG_ENABLE_ACTUATORS=1`과 함께 켜면
-컴파일을 거부한다. 기존 설치 앱·서보·보정 데이터는 이번 코드 추가로 바뀌지 않는다.
+이 옵션의 기본값은 **0**이다. 09-12~13에는 구동 OFF 진단 빌드에만 허용하고
+`MECHADOG_ENABLE_ACTUATORS=1`과 함께 켜면 컴파일을 거부했으나,
+**09-15 SERVICE 모드로 바뀌었다** — 구동 빌드에서도 조합은 컴파일되되
+부팅 시에는 절대 arm 하지 않고, SERVICE 모드 진입(몸 주차 → 보행 차단)이
+선행된 뒤에만 런타임으로 arm 한다. 자세한 순서는 아래 절과
+[PROTOCOL.md](../docs/PROTOCOL.md)의 `SERVICE` 항을 본다.
+기존 설치 앱·서보·보정 데이터는 이번 코드 추가로 바뀌지 않는다.
+
+## SERVICE 모드 — 구동 빌드 런타임 워치독 (2026-09-15)
+
+워치독을 별도 구동OFF 펌웨어가 아니라 구동 펌웨어의 확장팩으로 둔다.
+`MECHADOG_ENABLE_TASK_WDT=1`과 `MECHADOG_ENABLE_ACTUATORS=1`을 함께 켜면
+`MECHADOG_SERVICE_MODE=1`이 도출되고 부팅 시 워치독은 해제 상태다.
+
+- **진입**: `SERVICE mode=enter` 명령 또는 캐리어보드 사용자 버튼(GPIO5,
+  벤더 `Key_Pin`, 액티브 로우 풀업, 50ms 디바운스, 눌림 에지 토글) —
+  몸 정지 → SAFE 래치 → MOVE/POSE 차단 → 데드라인 arm. 워치독 재부팅은
+  구조적으로 정지 상태에서만 발사된다(벤더 초기화 거동 = 일반 부팅과 동일).
+- **해제**: `SERVICE mode=exit` 또는 버튼 재입력 — disarm 먼저, SAFE 래치는
+  유지된다. 보행 복귀에는 별도 `RESET_SAFE`가 필요하다.
+- **의도적 행위**이므로 `failsafe_count`를 올리지 않는다. 상태는 ACK의
+  `service_mode`·`wdt_armed`와 텔레메트리 `flags.service`로 확인한다.
+- 서비스 모드 중 정지 OTA(`/firmware`·`/confirm`)를 받는다 — 주차 상태가
+  아니면 `not_parked`(409)로 거절한다.
+- 구동OFF 진단 빌드는 기존처럼 부팅 시 arm 된다 — SERVICE 모드는 없다.
+
+확장팩 후보 빌드(실물 설치 명령 아님, private_ota.h 경로는 각자의 것):
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 \
+  --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_ENABLE_ACTUATORS=1 -DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_OTA=1 -DMECHADOG_OTA_VERSION=\"svc-dev\" -include /path/to/private_ota.h' \
+  --build-path build/svc-motion firmware_mechdog_motion
+```
+
+실기 검증(버튼 토글·보행 차단·정지 상태 재부팅·서비스 OTA)은
+플래시 후에 진행한다 — 작성 시점 미실시.
 
 구현 기준은 Arduino-ESP32 **2.0.12 / ESP-IDF 4.4.5**다. 이미 존재하는 TWDT를
 `esp_task_wdt_init(1, true)`로 재설정하고 CPU0 Idle 등 기존 감시 대상을 삭제하지 않는다.

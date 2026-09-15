@@ -10,7 +10,7 @@ int64_t clock_us = 0;
 TaskHandle_t current = &owner_tag;
 BaseType_t create_result = pdPASS;
 TaskFunction_t task_fn = nullptr;
-int critical_depth = 0, checks = 0, delays = 0, restarts = 0;
+int critical_depth = 0, checks = 0, delays = 0, restarts = 0, deletes = 0;
 struct Restart {};
 struct StopMonitor {};
 void check(bool condition) {
@@ -31,6 +31,7 @@ void clear() {
   task_fn = nullptr;
   delays = 0;
   restarts = 0;
+  deletes = 0;
   check(critical_depth == 0);
 }
 }  // namespace
@@ -71,6 +72,10 @@ void esp_restart() {
   check(critical_depth == 0);
   ++restarts;
   throw Restart{};
+}
+void vTaskDelete(TaskHandle_t handle) {
+  check(critical_depth == 0 && handle == &monitor_tag);
+  ++deletes;
 }
 int main() {
   using mechadog::feedTaskWatchdog;
@@ -132,6 +137,19 @@ int main() {
   } catch (const StopMonitor&) {
     check(false);  // Observer must not feed its owner on behalf.
   }
+  // SERVICE-mode runtime disarm: armed flag drops before the monitor is
+  // deleted, feeds stop counting, and a later arm re-binds the caller.
+  clear();
+  check(mechadog::disarmTaskWatchdog() == ESP_ERR_INVALID_STATE && deletes == 0);
+  check(startTaskWatchdog() == ESP_OK);
+  check(mechadog::disarmTaskWatchdog() == ESP_OK && deletes == 1);
+  check(!mechadog::taskWatchdogArmed() && !overdue());
+  check(feedTaskWatchdog() == ESP_ERR_INVALID_STATE);
+  clock_us = 9000000;
+  check(!overdue());  // Disarmed progress can never expire.
+  check(startTaskWatchdog() == ESP_OK && mechadog::taskWatchdogArmed());
+  check(feedTaskWatchdog() == ESP_OK);
+  check(mechadog::disarmTaskWatchdog() == ESP_OK && deletes == 2);
   check(critical_depth == 0);
   printf("Loop watchdog: %d assertions passed; hardware reset latency UNVERIFIED\n", checks);
 }

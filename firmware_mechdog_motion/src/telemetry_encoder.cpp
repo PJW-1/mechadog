@@ -215,6 +215,10 @@ TelemetryEncodeResult TelemetryEncoder::encode(const TelemetrySample& sample, in
     writer.text(",\"obstacle\":");
     writer.boolean(sample.obstacle);
   }
+  if (sample.include_service_mode) {
+    writer.text(",\"service\":");
+    writer.boolean(sample.service_mode);
+  }
   writer.text("},\"safety_latched\":");
   writer.boolean(sample.safety_latched);
   writer.character('}');
