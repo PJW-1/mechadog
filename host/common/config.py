@@ -252,6 +252,25 @@ def validate_base_config(config: dict[str, Any]) -> None:
         for name in names:
             _require_positive(config[section], name)
 
+    # ⚠️ **«고개를 드는» 자세각은 음수다** — 2026-09-15 실기로 확정했다
+    # (`POSE pitch=+15` → IMU 17.4, 앞이 내려감 / `-15` → -11.6, 앞이 올라감).
+    # PROTOCOL 2절과 config 주석이 그것을 적어 두었지만 **지키는 코드가 없었다.**
+    #
+    # 여기서 막는 이유 — 같은 실수가 이미 한 번 났다. `tools/teleop.py` 의 좌우가
+    # 뒤바뀐 채 **시험이 그 버그를 굳혀 두고 있었다**(`2.2.3` 기록). 부호는 실측으로만
+    # 알 수 있고 한번 틀리면 눈으로 보고서야 아는 종류라, 실측한 결론을 설정 검증에
+    # 박아 둔다. 양수로 되돌리면 경계 자세가 **바닥을 보게 되고** 가까이 있는 사람의
+    # 머리가 더 잘린다(FR-9.2.2 가 자세로 풀려던 것과 정반대).
+    for section, name in (("fsm", "alert_pitch_deg"), ("posture", "pitch_up_deg")):
+        value = config[section].get(name)
+        if not _finite_number(value):
+            raise ConfigError(f"{section}.{name} 는 유한한 수여야 함")
+        if value >= 0:
+            raise ConfigError(
+                f"{section}.{name}({value}) 가 0 이상이다 — 고개를 드는 자세는 음수다"
+                " (양수 pitch 는 앞이 내려간다 · PROTOCOL 2절, 2026-09-15 실측)"
+            )
+
     track = config["localization"].get("track")
     if not isinstance(track, str) or track not in {"none", "lidar", "aruco"}:
         raise ConfigError("localization.track 은 none, lidar, aruco 중 하나여야 함")
