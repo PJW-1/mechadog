@@ -42,7 +42,6 @@ def fetch_status(base=DEFAULT_BASE):
     except OSError:
         return None
     tele = snap.get("telemetry") or {}
-    esc = snap.get("escalation") or {}
     parts = []
     if tele.get("batt_v") is not None:
         parts.append(f"배터리 {tele['batt_v']:.2f}볼트")
@@ -50,8 +49,11 @@ def fetch_status(base=DEFAULT_BASE):
         parts.append(f"내부 온도 {tele['temp_c']:.0f}도")
     if snap.get("state"):
         parts.append(f"동작 상태 {snap['state']}")
-    if esc.get("level") is not None:
-        parts.append(f"대응 단계 {esc['level']}")
+    # /api/telemetry 의 escalation 은 'L0'~'L3' 문자열이다 (객체가 아니다).
+    esc = snap.get("escalation")
+    level = esc.get("level") if isinstance(esc, dict) else esc
+    if level:
+        parts.append(f"대응 단계 {level}")
     if snap.get("stale"):
         parts.append("링크 지연 상태")
     return ", ".join(parts) if parts else "상태 데이터 없음"
