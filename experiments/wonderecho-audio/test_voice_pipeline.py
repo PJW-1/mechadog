@@ -336,6 +336,40 @@ class RobotlinkTests(unittest.TestCase):
         self.assertIn("L3", st)
         self.assertIn("링크 지연", st)
 
+    def test_command_endings_match(self):
+        # 자연 발화 어미 변형은 명령으로 간다.
+        for phrase in (
+            "비상정지해",
+            "비상정지해줘",
+            "비상정지해주세요",
+            "순찰시작해",
+            "스톱해라",
+            "수동모드로전환해줘" if False else "수동제어해줘",
+            "수동모드로전환해줘",
+            "자동모드로바꿔",
+            "수동모드로전환해",
+            "순찰정지해",
+        ):
+            self.assertIsNotNone(robotlink.match_action(phrase), phrase)
+
+    def test_negation_and_condition_never_match(self):
+        # 어미 목록에 없는 꼬리는 절대 명령이 안 된다 — 부정·의문 안전.
+        for phrase in (
+            "비상정지하지마",
+            "비상정지할까",
+            "순찰시작할까봐",
+            "비상정지하면",
+            "비상정지하자",
+            "순찰해제",
+        ):
+            self.assertIsNone(robotlink.match_action(phrase), phrase)
+
+    def test_partial_phrase_still_no_match(self):
+        # "순찰해" 자체는 등록된 명령이지만, "순찰" 만으로는 안 된다.
+        self.assertIsNone(robotlink.match_action("순찰"))
+        self.assertIsNone(robotlink.match_action("정지"))
+        self.assertIsNone(robotlink.match_action("비상"))
+
 
 class HubScenarioQueueTests(unittest.TestCase):
     def test_scenario_item_flows_through_say_queue(self):
