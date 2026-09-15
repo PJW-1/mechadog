@@ -107,15 +107,24 @@ test('voice panel phrase section is disabled without a link',()=>{
  assert.equal(button(document,'문구 보기').disabled,true);
  assert.equal(button(document,'문구 추가').disabled,true);
 });
-test('device command buttons dispatch through the link (dialog falls back when unavailable)',()=>{
- const calls=[];
+test('device commands still ask before sending when the dialog is unavailable',()=>{
+ const calls=[],prompts=[];
  const link={service:async mode=>{calls.push(['service',mode]);return{accepted:true}},resetSafe:async()=>{calls.push(['reset']);return{accepted:true}},patrol:async action=>{calls.push(['patrol',action]);return{accepted:true}},manual:async()=>({accepted:true}),drive:async()=>({accepted:true})};
- const {document,panels,store}=setup();store.link=link;store.setDemo(false);panels.render('missions');
- // jsdom에는 dialog.showModal이 없어 확인 창을 건너뛰고 바로 보낸다 — 실제 브라우저에서는 확인 창이 먼저 뜬다.
+ const {dom,document,panels,store}=setup();store.link=link;store.setDemo(false);panels.render('missions');
+ // 이 DOM 에는 #confirm-dialog 가 없다 — 확인을 건너뛰지 않고 브라우저 기본 확인 창으로 묻는다.
+ let answer=false;dom.window.confirm=message=>{prompts.push(message);return answer};
+ button(document,'서비스 모드 진입 — 패치용 워치독').click();
+ button(document,'안전 해제 (RESET_SAFE)').click();
+ button(document,'실제 순찰 시작').click();
+ assert.deepEqual(calls,[]);assert.equal(prompts.length,3);assert.match(prompts[1],/원인이 제거.*주변에 사람이 없는지/);
+ // 확인 창 자체가 없는 환경도 보내지 않는다.
+ dom.window.confirm=undefined;button(document,'안전 해제 (RESET_SAFE)').click();assert.deepEqual(calls,[]);
+ answer=true;dom.window.confirm=message=>{prompts.push(message);return answer};
  button(document,'서비스 모드 진입 — 패치용 워치독').click();
  assert.deepEqual(calls,[['service','enter']]);
  button(document,'안전 해제 (RESET_SAFE)').click();
  assert.deepEqual(calls[1],['reset']);
- button(document,'실제 순찰 정지').click();
- assert.deepEqual(calls[2],['patrol','stop']);
+ // 정지는 안전 방향이라 묻지 않는다.
+ const asked=prompts.length;button(document,'실제 순찰 정지').click();
+ assert.deepEqual(calls[2],['patrol','stop']);assert.equal(prompts.length,asked);
 });

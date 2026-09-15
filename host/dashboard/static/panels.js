@@ -89,10 +89,10 @@ export class OperationalPanels {
   this.container.scrollTop=top;
  }
  // 중요한 모드 변경(서비스·안전 해제·순찰 시작)은 확인 대화상자를 거친다.
- // 대화상자를 쓸 수 없는 환경(구형 DOM·시험)에서는 바로 실행한다.
+ // 대화상자를 쓸 수 없으면 브라우저 기본 확인 창으로 묻는다 — 확인 없이 보내는 길을 두지 않는다(#172).
  confirmDevice({icon:name='lock',title,body,confirm='예, 실행합니다',danger=false,action}){
   const dialog=this.document.getElementById('confirm-dialog');
-  if(!dialog||typeof dialog.showModal!=='function'){this.run(action);return}
+  if(!dialog||typeof dialog.showModal!=='function'){if(this.document.defaultView?.confirm?.(title+'\n\n'+body)===true)this.run(action);return}
   this.document.getElementById('confirm-icon').innerHTML=icon(name);
   this.document.getElementById('confirm-title').textContent=title;
   this.document.getElementById('confirm-body').textContent=body;
@@ -101,6 +101,8 @@ export class OperationalPanels {
   dialog.returnValue='';
   dialog.onclose=()=>{if(dialog.returnValue==='yes')this.run(action)};
   dialog.showModal();
+  // 초점은 "아니요"에 둔다 — 창이 뜨자마자 누른 Enter 로 래치가 풀리거나 로봇이 걸으면 안 된다.
+  this.document.getElementById('confirm-no').focus();
  }
  events(){
   const feed=this.store.liveFeed||{state:'off'};

@@ -166,12 +166,12 @@ test('device commands on 순찰·제어 follow the telemetry feed without rebuil
  assert.equal(toggle(),button);assert.match(button.textContent,/서비스 모드 해제/);
  // 모드 변경은 확인 대화상자를 거친다 — 취소하면 명령이 나가지 않고, 예를 눌러야 전송된다.
  const dialog=document.querySelector('#confirm-dialog'),confirm=()=>{dialog.returnValue='yes';dialog.dispatchEvent(new dom.window.Event('close'))},dismiss=()=>{dialog.returnValue='';dialog.dispatchEvent(new dom.window.Event('close'))};
- button.click();assert.equal(dialog.open,true);assert.match(dialog.querySelector('#confirm-title').textContent,/해제/);dismiss();
+ button.click();assert.equal(dialog.open,true);assert.match(dialog.querySelector('#confirm-title').textContent,/해제/);assert.equal(document.activeElement,dialog.querySelector('#confirm-no'));dismiss();
  await new Promise(resolve=>setTimeout(resolve,0));assert.deepEqual(linkCalls,[]);
  button.click();confirm();await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(linkCalls,['service:exit']);
  const reset=section().querySelector('[data-reset-safe="confirm"]');
- reset.click();assert.equal(dialog.open,true);assert.match(dialog.querySelector('#confirm-body').textContent,/원인이 제거.*주변에 사람이 없는지/);dismiss();
+ reset.click();assert.equal(dialog.open,true);assert.match(dialog.querySelector('#confirm-body').textContent,/원인이 제거.*주변에 사람이 없는지/);assert.equal(document.activeElement,dialog.querySelector('#confirm-no'));dismiss();
  await new Promise(resolve=>setTimeout(resolve,0));assert.deepEqual(linkCalls,['service:exit']);
  reset.click();confirm();await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(linkCalls,['service:exit','reset']);
