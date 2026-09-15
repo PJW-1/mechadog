@@ -450,11 +450,21 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
     return bytes(pcm), speech_seen
 
 
+# Whisper 도메인 바이어스 — 웨이크워드/명령어 어휘를 알려 주면 "메카독"이
+# "내카도"·"레카독"으로 깨지는 오청을 크게 줄인다 (합성 음성 종단간 검증에서 확인).
+STT_PROMPT = (
+    "메카독, 비상정지, 긴급정지, 스톱, 수동모드, 수동제어, 자동모드, 수동해제, "
+    "순찰시작, 순찰정지, 순찰멈춰, 배터리 상태, 메카독 로봇 음성 명령."
+)
+
+
 def transcribe(model, pcm_bytes):
     import numpy as np
 
     audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-    segments, _ = model.transcribe(audio, language="ko", beam_size=5, vad_filter=True)
+    segments, _ = model.transcribe(
+        audio, language="ko", beam_size=5, vad_filter=True, initial_prompt=STT_PROMPT
+    )
     return " ".join(seg.text.strip() for seg in segments).strip()
 
 
