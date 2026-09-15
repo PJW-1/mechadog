@@ -27,6 +27,7 @@ _CMD = re.compile(r"^명령 (\S+): (.*)")
 _SCN_RUN = re.compile(r"^시나리오 실행: (\S+)")
 _SCN_FAIL = re.compile(r"^시나리오 실패: (\S+): (.*)")
 _EMERGENCY = re.compile(r"^비상: (.*)")
+_ROBOT_EVT = re.compile(r"^(\S+) \(state=(\S+) 단계=(\S+)\)")
 #: 경고성 시스템 이벤트를 가르는 표지 — 경고·미착용·미등록·거부 계열 문구.
 _WARN = re.compile(r"경고|미착용|미등록|거부|미확인|위반")
 
@@ -39,7 +40,17 @@ def summarize(events: list[dict], date: str = "") -> dict:
     commands = Counter()
     emergencies = []
     warnings = []
+    robot_events = Counter()
+    robot_event_log = []
     for e in events:
+        if e["role"] == "robot_evt":
+            # 로봇 측 사건(관제 /api/events) — 종류별로 모은다.
+            text = e.get("text", "")
+            m = _ROBOT_EVT.match(text)
+            kind = m.group(1) if m else text.split(maxsplit=1)[0]
+            robot_events[kind] += 1
+            robot_event_log.append({"ts": e.get("ts", ""), "text": text})
+            continue
         if e["role"] != "system":
             continue
         text = e.get("text", "")
@@ -63,6 +74,8 @@ def summarize(events: list[dict], date: str = "") -> dict:
         "commands": dict(commands),
         "emergencies": emergencies,
         "warnings": warnings,
+        "robot_events": dict(robot_events),
+        "robot_event_log": robot_event_log,
         "first_ts": events[0].get("ts", "") if events else "",
         "last_ts": events[-1].get("ts", "") if events else "",
     }
@@ -78,9 +91,14 @@ def render_markdown(summary: dict) -> str:
     lines += [
         f"- 기록 구간: {summary['first_ts']} ~ {summary['last_ts']}",
         f"- 전체 이벤트: {summary['total']}건",
-        f"- 발화(사용자): {summary['by_role'].get('user', 0)}건 / 응답(로봇): {summary['by_role'].get('robot', 0)}건 / 관제 공지: {summary['by_role'].get('admin', 0)}건",
+        f"- 발화(사용자): {summary['by_role'].get('user', 0)}건 / 응답(로봇): {summary['by_role'].get('robot', 0)}건 / 관제 공지: {summary['by_role'].get('admin', 0)}건 / 로봇 사건: {summary['by_role'].get('robot_evt', 0)}건",
         "",
     ]
+    if summary["robot_events"]:
+        lines.append("## 로봇 사건 (관제 이벤트 피드)")
+        lines += [f"- {kind}: {n}건" for kind, n in summary["robot_events"].items()]
+        lines += [f"  - {e['ts']} {e['text']}" for e in summary["robot_event_log"][:20]]
+        lines.append("")
     if summary["scenario_runs"]:
         lines.append("## 시나리오 실행")
         lines += [f"- {name}: {n}회" for name, n in summary["scenario_runs"].items()]

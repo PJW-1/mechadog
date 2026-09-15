@@ -6,9 +6,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import daily_report
 import eventlog
+import robotlink
 
 
 class JournalTest(unittest.TestCase):
@@ -73,6 +75,56 @@ class JournalTest(unittest.TestCase):
         self.assertEqual(len(hub.events), 1)
         self.assertIsNone(hub.report_today())
 
+    def test_poll_robot_events_merges_into_journal(self):
+        """로봇 측 사건이 음성 저널에 robot_evt 역할로 합쳐진다 (4.7.12)."""
+        import voice_pipeline
+
+        with tempfile.TemporaryDirectory() as d:
+            journal = eventlog.EventJournal(d)
+            hub = voice_pipeline.Hub("mechadog-01", journal=journal)
+            payload = (
+                [{"event": "person_found", "state": "PATROL", "escalation": "L1", "seq": 7}],
+                0,
+                7,
+            )
+            with mock.patch.object(robotlink, "fetch_events", return_value=payload):
+                hub.poll_robot_events("http://x", interval=0)
+            journal.close()
+            events = eventlog.load_events(list(Path(d).glob("voice-*.jsonl"))[0])
+        self.assertEqual(events[0]["role"], "robot_evt")
+        self.assertIn("person_found", events[0]["text"])
+        self.assertIn("state=PATROL", events[0]["text"])
+        self.assertEqual(hub.robot_cursor, 7)
+
+    def test_poll_robot_events_announces_gap(self):
+        """버퍼에서 밀린 사건은 건수를 남긴다 — 조용한 공백은 거짓 안심이다."""
+        import voice_pipeline
+
+        hub = voice_pipeline.Hub("mechadog-01")
+        with mock.patch.object(robotlink, "fetch_events", return_value=([], 3, 10)):
+            hub.poll_robot_events("http://x", interval=0)
+        self.assertEqual(hub.events[0]["text"], "event_gap (dropped=3)")
+        self.assertEqual(hub.robot_cursor, 10)
+
+    def test_poll_robot_events_survives_dashboard_outage(self):
+        """관제가 꺼져 있어도 음성 루프는 산다 — 실패는 조용히 넘긴다."""
+        import voice_pipeline
+
+        hub = voice_pipeline.Hub("mechadog-01")
+        with mock.patch.object(robotlink, "fetch_events", return_value=None):
+            hub.poll_robot_events("http://x", interval=0)
+        self.assertEqual(len(hub.events), 0)
+        self.assertEqual(hub.robot_cursor, 0)
+
+    def test_poll_robot_events_respects_interval(self):
+        import voice_pipeline
+
+        hub = voice_pipeline.Hub("mechadog-01")
+        with mock.patch.object(robotlink, "fetch_events", return_value=([], 0, 5)) as fetch:
+            hub.poll_robot_events("http://x", interval=60)
+            hub.poll_robot_events("http://x", interval=60)  # 간격 안 — 안 부른다
+        self.assertEqual(fetch.call_count, 1)
+
 
 class ReportTest(unittest.TestCase):
     def _events(self):
@@ -114,6 +166,18 @@ class ReportTest(unittest.TestCase):
         self.assertIn("비상 접수", md)
         self.assertIn("도와줘", md)
         self.assertIn("안전모 미착용 경고", md)
+
+    def test_robot_events_aggregated(self):
+        evts = self._events() + [
+            {"ts": "10:00:00", "role": "robot_evt", "text": "person_found (state=PATROL 단계=L1)"},
+            {"ts": "10:05:00", "role": "robot_evt", "text": "person_found (state=PATROL 단계=L2)"},
+            {"ts": "10:10:00", "role": "robot_evt", "text": "event_gap (dropped=2)"},
+        ]
+        s = daily_report.summarize(evts, date="2026-09-15")
+        self.assertEqual(s["robot_events"], {"person_found": 2, "event_gap": 1})
+        md = daily_report.render_markdown(s)
+        self.assertIn("로봇 사건", md)
+        self.assertIn("person_found: 2건", md)
 
     def test_main_writes_report_file(self):
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as out:

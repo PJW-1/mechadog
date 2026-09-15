@@ -87,6 +87,8 @@ class Hub:
         self._seq = 0
         self.lock = threading.Lock()
         self._journal = journal  # EventJournal | None — 날짜별 JSONL 영속 기록
+        self.robot_cursor = 0  # 관제 /api/events 폴링 커서
+        self._robot_next_poll = 0.0
 
     def event(self, role, text):
         self.events.append(
@@ -105,6 +107,30 @@ class Hub:
             return None
         date = time.strftime("%Y-%m-%d")
         return daily_report.summarize(eventlog.load_events(self._journal.path_for(date)), date=date)
+
+    def poll_robot_events(self, base, interval=5.0):
+        """관제 `/api/events` 커서 폴링 → 로봇 측 사건을 전사·저널에 합친다 (4.7.12).
+
+        메인 루프의 턴 사이에 부른다. 연결 실패는 조용히 넘긴다 — 관제가 꺼져
+        있어도 음성 루프는 살아야 한다. `dropped` 가 있으면 유실 사실을 남긴다.
+        """
+        now = time.monotonic()
+        if now < self._robot_next_poll:
+            return
+        self._robot_next_poll = now + interval
+        res = robotlink.fetch_events(base, self.robot_cursor)
+        if res is None:
+            return
+        events, dropped, latest = res
+        if dropped:
+            # /ws/events 의 event_gap 과 같은 의미 — 조용히 넘기면 기록에 빈틈이 생긴다
+            self.event("robot_evt", f"event_gap (dropped={dropped})")
+        for e in events:
+            kind = e.get("event", "?")
+            state = e.get("state") or "?"
+            esc = e.get("escalation") or "?"
+            self.event("robot_evt", f"{kind} (state={state} 단계={esc})")
+        self.robot_cursor = latest
 
     def enqueue_say(self, text, urgent=False):
         with self.lock:
@@ -668,6 +694,8 @@ def main():
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
+            # 로봇 측 사건(검출 확정 등)을 저널에 합친다 — 몇 초에 한 번씩만.
+            hub.poll_robot_events(args.robot_api)
             # 관제 공지·시나리오 큐 처리 — 대기 모드에서도 방송은 나간다
             for _, _, item in hub.drain_say():
                 if isinstance(item, tuple) and item[0] == "scenario":

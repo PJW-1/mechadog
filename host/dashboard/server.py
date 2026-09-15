@@ -338,6 +338,20 @@ def create_app(
     async def telemetry():
         return state.snapshot()
 
+    @app.get("/api/events")
+    async def events(since: int = 0):
+        """`since` 순번 뒤의 사건을 돌려준다 — WS 를 못 쓰는 쪽(음성 저널)을 위한 폴링 경로.
+
+        `/ws/events` 와 같은 버퍼다. `dropped` 가 0 이 아니면 버퍼에서 밀려
+        못 주는 사건이 있었다는 뜻이니 조용히 넘기지 않는다 (4.4.3 규약).
+        """
+        found, dropped = state.events_since(since)
+        return {
+            "events": found,
+            "dropped": dropped,
+            "latest": state.event_seq,
+        }
+
     @app.get("/events/{entry}/snapshot.jpg")
     async def event_snapshot_image(entry: str):
         """사건 하나의 저장된 그림. **지금 화면이 아니라 그때 장면이다.**
