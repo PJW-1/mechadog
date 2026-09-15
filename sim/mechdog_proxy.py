@@ -165,6 +165,28 @@ def attach_camera(robot_prim_path: str, cam_path: str | None = None):
     return cam
 
 
+def attach_overview_camera(robot_prim_path: str, cam_path: str | None = None):
+    """로봇을 뒤·위에서 비추는 조망 카메라 — 관제 웹이 시뮬 공장을 보는 눈.
+
+    로봇 prim 의 자식으로 달아 키네마틱이 옮길 때마다 따라간다 (체이스 캠).
+    로봇 로컬 좌표로 뒤 1.1m·위 0.75m 에 두고 로봇 중심을 향해 ~30° 내다본다.
+    """
+    import numpy as np
+    from isaacsim.sensors.camera import Camera
+
+    if cam_path is None:
+        cam_path = f"{robot_prim_path}/overview_cam"
+
+    cam = Camera(
+        prim_path=cam_path,
+        resolution=(960, 540),  # 관제 스테이지는 가로가 넓다 — 16:9
+        translation=np.array([-1.1, 0.0, 0.75]),
+        orientation=np_tilt_quat(-30.0),
+    )
+    cam.set_clipping_range(0.01, 1000000.0)
+    return cam
+
+
 def np_cam_offset():
     import numpy as np
 
@@ -174,7 +196,12 @@ def np_cam_offset():
 
 
 def np_cam_quat():
-    """아래로 7° 기운 카메라.
+    """아래로 7° 기운 FPV 카메라 — `np_tilt_quat` 참고."""
+    return np_tilt_quat(SPEC.cam_tilt_deg)
+
+
+def np_tilt_quat(tilt_deg: float):
+    """전방에서 tilt 만큼 기운 카메라의 쿼터니언 — 음수면 아래를 본다.
 
     isaacsim `Camera` 생성자·`set_local_pose` 의 기본 `camera_axes="world"` 는
     로컬 +X 가 시선·+Z 가 위다 (내부에서 USD 축으로 변환한다).
@@ -183,7 +210,7 @@ def np_cam_quat():
     """
     import numpy as np
 
-    t = math.radians(-SPEC.cam_tilt_deg)  # tilt 가 음수면 아래를 본다
+    t = math.radians(-tilt_deg)  # tilt 가 음수면 아래를 본다
     f = np.array([math.cos(t), 0.0, -math.sin(t)])
     u = np.array([math.sin(t), 0.0, math.cos(t)])
     left = np.cross(u, f)  # +Y = 좌측 (우손 좌표계)

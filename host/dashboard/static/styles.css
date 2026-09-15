@@ -79,6 +79,12 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 
 .scene-stage { position: relative; min-height: 0; isolation: isolate; overflow: hidden; background: var(--bg) }
 #world { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none }
+/* 시뮬 조망 스트림 — 연결되면 스테이지를 덮어 3D 지도 대신 실제 시뮬 공장을 보여준다.
+   끊기면 hidden 으로 돌아가 아래 #world 가 다시 보인다. */
+.sim-overview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 2; background: #101218 }
+/* 시뮬 조망이 뜬 동안 3D 지도 전용 UI(시야 전환·예시 마커·범례·조작 버튼)는 숨긴다 */
+.scene-stage.sim-live #world,.scene-stage.sim-live .markers,.scene-stage.sim-live .attention-marker,
+.scene-stage.sim-live .scene-legend,.scene-stage.sim-live .view-switch,.scene-stage.sim-live .scene-controls { visibility: hidden }
 .scene-heading { position: absolute; top: 22px; left: var(--r-heading-x); z-index: 3; display: flex; gap: 29px; align-items: baseline; pointer-events: none }
 .scene-heading h1 { font-size: 36px; font-weight: 800; letter-spacing: -.035em; line-height: 1.35; white-space: nowrap }
 .scene-heading p { color: #e3deef; font-size: 16px; white-space: nowrap }

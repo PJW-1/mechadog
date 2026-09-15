@@ -15,17 +15,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class MjpegServer:
-    """latest 프레임을 나눠주는 경량 MJPEG 서버."""
+    """latest 프레임을 나눠주는 경량 MJPEG 서버 — 채널(경로)마다 따로 든다.
+
+    `/stream` 은 로봇 FPV, `/overview` 는 로봇을 따라가는 조망 카메라다.
+    """
 
     def __init__(self, port: int = 8080) -> None:
         self._lock = threading.Lock()
-        self._latest_jpeg: bytes | None = None
+        self._latest_jpeg: dict[str, bytes] = {}
         self._fps_limit = 25
         self.port = port
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
-    def update(self, rgb) -> None:
+    def update(self, rgb, channel: str = "/stream") -> None:
         """메인 루프에서 호출 — RGB(HWC uint8)를 JPEG 로 바꿔 최신본을 올린다."""
         if rgb is None or getattr(rgb, "size", 0) == 0:
             return
@@ -36,7 +39,7 @@ class MjpegServer:
         )
         if ok:
             with self._lock:
-                self._latest_jpeg = buf.tobytes()
+                self._latest_jpeg[channel] = buf.tobytes()
 
     def _handler(self):
         outer = self
@@ -68,7 +71,8 @@ class MjpegServer:
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                if self.path not in ("/stream", "/"):
+                channel = "/stream" if self.path == "/" else self.path
+                if channel not in ("/stream", "/overview"):
                     self.send_error(404)
                     return
                 self.send_response(200)
@@ -76,7 +80,7 @@ class MjpegServer:
                 self.end_headers()
                 while True:
                     with outer._lock:
-                        jpeg = outer._latest_jpeg
+                        jpeg = outer._latest_jpeg.get(channel)
                     if jpeg is None:
                         import time
 

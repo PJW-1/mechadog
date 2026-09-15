@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     from sim.mechdog_proxy import (  # noqa: E402
         KinematicState,
         attach_camera,
+        attach_overview_camera,
         build_robot,
     )
     from sim.people_spawner import spawn_workers  # noqa: E402
@@ -85,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     robot_path = build_robot(stage)
     workers = spawn_workers(stage, zones["person_zones"], count=args.workers)
     camera = attach_camera(robot_path)
+    overview = attach_overview_camera(robot_path)
 
     if args.spawn:
         sx, sy, syaw = (float(v) for v in args.spawn.split(","))
@@ -98,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
 
     world.reset()
     camera.initialize()
+    overview.initialize()
 
     robot_xf = UsdGeom.Xformable(stage.GetPrimAtPath(robot_path))
     print(
@@ -135,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
             frame = camera.get_rgba()
             if frame is not None and getattr(frame, "size", 0):
                 stream.update(frame[..., :3])
+            # 조망은 한 프레임 걸러 송출 — 관제용이라 12fps 면 충분하고
+            # 인코딩 부하를 반으로 줄인다.
+            ov = overview.get_rgba()
+            if ov is not None and getattr(ov, "size", 0) and frames % 2 == 0:
+                stream.update(ov[..., :3], "/overview")
             frames += 1
     except KeyboardInterrupt:
         crash_log.write_text("KeyboardInterrupt\n", encoding="utf-8")

@@ -13,6 +13,8 @@ renderIcons();
 const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
 let visionFeed=null,visionStatus={state:'connecting'},eventFeed=null;
+// 시뮬 조망 스트림이 메인 스테이지를 덮고 있으면 true — 부제목 표기에 쓴다.
+let simOverviewLive=false;
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -76,6 +78,17 @@ if(link){
  frame.hidden=false;
  if(fpv)fpv.hidden=true;
  const health=await fetch(apiBase+'/health').then(response=>response.json()).catch(()=>null);
+ // 시뮬 개체는 /health 가 조망 스트림 주소를 준다 — 살아있는지 한 번 확인하고
+ // 나서 src 를 단다. 없거나 죽어 있으면 아래 3D 지도가 그대로 보인다.
+ if(health?.overview_url){
+  fetch(health.overview_url,{signal:globalThis.AbortSignal?.timeout?.(2500)}).then(response=>{
+   if(!response.ok)return;
+   response.body?.cancel();
+   const img=$('sim-overview');
+   img.src=health.overview_url;img.hidden=false;
+   $('stage').classList.add('sim-live');simOverviewLive=true;syncMain();
+  }).catch(()=>{});
+ }
  if(health?.vision_clients===null)visionStatus={state:'off'};
  else{
   visionFeed=new VisionFeed({url:apiBase.replace(/^http/,'ws')+'/ws/vision',canvas:frame,onStatus:status=>{visionStatus=status;syncVisionStatus()}});
@@ -169,7 +182,7 @@ function syncMain(){
  $('camera-title').textContent=selected+' · 로봇 시점';$('camera-axis').textContent=selected+' / FRONT';
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
- $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'예시 공간 · 연결된 로봇의 실제 위치는 미수신';
+ $('scene-subtitle').textContent=simOverviewLive?'시뮬레이션 공장 · 실시간':operations.demo?'예시 공간 · 실제 위치 미수신':'예시 공간 · 연결된 로봇의 실제 위치는 미수신';
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');

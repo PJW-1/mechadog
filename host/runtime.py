@@ -1164,6 +1164,9 @@ def main(argv: list[str] | None = None) -> int:
                         args.dashboard_port,
                         commands=commands,
                         camera=camera,
+                        # 시뮬은 조망 스트림 주소를 프로파일에 싣는다 — 관제 화면이
+                        # 시뮬 공장을 그대로 띄우는 데 쓴다. 실기는 키가 없어 None.
+                        overview_url=config.get("network", {}).get("overview_url"),
                         # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다 (WBS 4.5.2).
                         vision=vision.latest if vision is not None else None,
                         # 사건 전문에는 디렉터리 이름만 실으므로(`4.4.3`) 그림은 여기서

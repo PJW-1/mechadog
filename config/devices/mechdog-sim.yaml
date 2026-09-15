@@ -36,6 +36,9 @@ network:
   telemetry_port: 5102
   vision_stream_port: 8080
   vision_control_port: 8080
+  # 조망 카메라 — 로봇을 따라가는 3인칭 눈. 관제 화면이 시뮬 공장 전체를
+  # 보여주는 데 쓴다. 실기 개체에는 이 키가 없다 (관제는 3D 지도가 그 역할).
+  overview_url: "http://127.0.0.1:8080/overview"
 
 # 시뮬 프록시의 운동학은 sim/mechdog_spec.py 가 실측값을 박아 두므로,
 # 여기 다시 적는 보정값은 **실기 개체 보정이지 시뮬이 읽는 값이 아니다.**

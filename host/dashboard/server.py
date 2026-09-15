@@ -299,6 +299,7 @@ def create_app(
     static_dir: Path | None = None,
     vision: Callable[[], Any] | None = None,
     event_snapshot: Callable[[str], bytes | None] | None = None,
+    overview_url: str | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -326,6 +327,9 @@ def create_app(
             "service": "telemetry",
             # 화면의 연결 전환 목록이 런타임마다 어느 개체를 보는지 표시하는 데 쓴다.
             "device_id": state.snapshot()["device_id"],
+            # 시뮬 조망 스트림 — 대시보드가 시뮬 공장을 메인 화면으로 띄울 때 쓴다.
+            # 실기 개체는 키가 없어 null 이다.
+            "overview_url": overview_url,
             "read_only": commands is None,
             "clients": len(hub.clients),
             "coalesced_updates": hub.coalesced,
@@ -528,6 +532,7 @@ def running_server(
     static_dir: Path | None = DEFAULT_STATIC_DIR,
     vision: Callable[[], Any] | None = None,
     event_snapshot: Callable[[str], bytes | None] | None = None,
+    overview_url: str | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     ready = threading.Event()
@@ -547,6 +552,7 @@ def running_server(
                 static_dir=static_dir,
                 vision=vision,
                 event_snapshot=event_snapshot,
+                overview_url=overview_url,
             ),
             host="127.0.0.1",
             port=port,

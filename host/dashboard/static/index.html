@@ -61,6 +61,9 @@
 <button data-camera="robot" aria-pressed="false"><span data-icon="device"></span>장치</button>
 </div>
 <canvas id="world" aria-label="3D 공장. 드래그로 회전, 휠로 확대. 키보드는 아래 시야 조작 버튼을 사용하세요."></canvas>
+<!-- 시뮬 개체에 붙으면 sim/run_factory.py 의 조망 카메라 MJPEG 이 이 자리에 뜬다.
+     실기·미연결이면 hidden 유지 — 아래 #world 의 3D 지도가 그대로 보인다. -->
+<img id="sim-overview" class="sim-overview" alt="시뮬레이션 공장 조망 화면" hidden>
 <div id="scene-failure" class="scene-failure" hidden><h2>3D 화면을 열지 못했어요</h2><p>브라우저의 하드웨어 가속 설정을 확인한 뒤 다시 열어 주세요. 장비 상태는 아래에서 확인할 수 있습니다.</p><button id="retry-render">다시 열기</button></div>
 <div id="markers" class="markers" aria-label="예시 로봇 위치"></div><button id="attention-marker" class="attention-marker"><span>!</span>확인 필요 · 예시 <span data-icon="arrow"></span></button>
 <div class="scene-legend"><span class="route-swatch"></span>예시 순찰 경로 </div>
