@@ -111,6 +111,11 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 *FAILSAFE / F · 온보드 FAILSAFE · 안전 래치 잠김* → **"로봇 수신 끊김 · 15.5 s 전"** (배지 "수신 끊김", 수신 0.0 Hz)
 를 표시했다. 콘솔 오류 0.
 
+**실기 확인 (2026-09-15 · mechdog-01)** — 잠금 상태로 붙여 장치 화면에 `FAILSAFE / F · 온보드 FAILSAFE` · 8.57 V · IMU ·
+명령 수락 27 ms 가 들어왔고, 로봇 전원을 끄자 *"로봇 수신 끊김 · 15.5 s 전"* 으로 바뀌었다. ⚠️ **충전기를 꽂은 동안
+수신률이 1.7 Hz** 였다(분리하자 9.0 Hz) — 팩 전압이 폐기 상한 8.6V 에 붙어 펌웨어가 줄을 보내지 않는다. 런타임의 초당
+수락 수와 같았다. **충전기를 꽂은 채 시연하지 않는다.** 원자료 `TEST_MECHDOG/results/20260915_4.6.2-telemetry-gauges/`.
+
 ⚠️ `styles.css` 는 글꼴을 Google Fonts 에서 받는다. 인터넷이 없으면 기본 글꼴로 보인다.
 
 ### 개발 시험
