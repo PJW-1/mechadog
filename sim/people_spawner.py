@@ -41,7 +41,7 @@ def _try_spawn_character(stage, prim_path: str, prefer: int = 0) -> bool:
             return False
         candidates = [
             "/Isaac/People/Characters/original_male_adult_construction_05/male_adult_construction_05.usd",
-            "/Isaac/People/Characters/male_adult_construction_03/male_adult_construction_03.usd",
+            "/Isaac/People/Characters/male_adult_construction_05_new/male_adult_construction_05_new.usd",
         ]
         # 작업자마다 다른 에셋부터 시도 — 전원 동일 인물이면 학습 다양성이 없다
         candidates = candidates[prefer:] + candidates[:prefer]

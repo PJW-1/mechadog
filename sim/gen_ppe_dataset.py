@@ -128,16 +128,12 @@ def _char_world_xy(stage, worker_path: str):
     char 의 월드 바운딩박스 중심을 쓰고, 못 재면 prim 변환으로 폴백한다."""
     from pxr import Usd, UsdGeom  # noqa: N806
 
+    # ComputeWorldBound 는 스킨드 메시의 디포머를 바인드 자세로 재평가해
+    # 입혀둔 팔 내림 애니메이션을 풀어버린다 (실측 확인) — 바운드 대신
+    # char prim 의 월드 변환만 쓴다 (루트 대비 오프셋 ~2cm로 충분히 정확).
     prim = stage.GetPrimAtPath(worker_path + "/char")
     if not prim or not prim.IsValid():
         prim = stage.GetPrimAtPath(worker_path)
-    cache = UsdGeom.BBoxCache(
-        Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render]
-    )
-    box = cache.ComputeWorldBound(prim).ComputeAlignedBox()
-    if not box.IsEmpty():
-        lo, hi = box.GetMin(), box.GetMax()
-        return (float(lo[0]) + float(hi[0])) / 2, (float(lo[1]) + float(hi[1])) / 2
     m = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
     t = m.ExtractTranslation()
     return float(t[0]), float(t[1])
@@ -179,21 +175,43 @@ def _set_visible(prim, on: bool) -> None:
     img.MakeVisible() if on else img.MakeInvisible()
 
 
-def _arm_joint_recipe(stage, wrec, world, settle: int = 8) -> dict:
-    """캐릭터 스켈레톤에서 팔 관절을 찾아 "팔을 내리는 회전"을 자동 캘리브레이션한다.
+def _rot4(axis: str, deg: float):
+    """축·각도 → 4x4 회전행렬 (numpy)."""
+    import numpy as np
 
-    캐릭터 에셋은 T자 포즈로 스폰된다 — 학습 데이터가 T자 일변도면 모델이
-    팔 내린 실제 작업자를 못 잡는다. 관절의 로컬 회전축 규약은 에셋마다
-    다르므로 추측하지 않는다: 각 관절을 ±X/Y/Z 로 돌려 보고 몸통 바운딩박스의
-    수평 면적(팔 벌림의 직접 지표)을 가장 많이 줄인 축·부호를 채택한다.
-    리그가 매 스텝 관절을 덮어쓰면 면적이 안 줄어든다 — 그 경우 빈 dict 를
-    돌려주고 T자 그대로 둔다 (거짓 성공 주장을 하지 않기 위해).
+    a = np.deg2rad(deg)
+    c, s = np.cos(a), np.sin(a)
+    r = np.eye(4)
+    if axis == "X":
+        r[1, 1], r[1, 2], r[2, 1], r[2, 2] = c, -s, s, c
+    elif axis == "Y":
+        r[0, 0], r[0, 2], r[2, 0], r[2, 2] = c, s, -s, c
+    else:
+        r[0, 0], r[0, 1], r[1, 0], r[1, 1] = c, -s, s, c
+    return r
 
-    반환: {joint_rel_path: (axis: "X"|"Y"|"Z", sign: ±1, min_deg, max_deg)}
+
+def _apply_arms_down(stage, wrec, rng: random.Random, _worker_idx: int) -> bool:
+    """캐릭터 작업자의 스킨드 메시에 팔 내린 자세를 CPU 로 구워 넣는다.
+
+    이 리그(Character Creator — `RL_BoneRoot/...`)는 관절이 prim 으로 존재하지
+    않고 `skel:joints` 목록 + `skel:bindTransforms` 행렬로만 저장된다.
+    SkelAnimation 을 skel:animationSource 로 거는 길은 렌더러 평가 타이밍에
+    좌우돼 간헐적으로 바인드 자세(T자)로 되돌아갔다 — 대신 정점을 직접
+    변형해 결과를 확정한다.
+
+    주의 — 이 에셋의 bindTransforms 는 **전치 저장**(변환이 행3에 있음)되어
+    있어 로드 직후 전치해 열 벡터 규약으로 통일한다. 로컬 휴지 변환은
+    `inv(부모바인드) @ 자식바인드` 로 복원한다. 팔을 내리는 축은 추측하지
+    않는다: 각 축·부호로 돌려 보고 손 말단의 스켈레톤공간 z 를 가장 낮추는
+    조합을 채택한다 (렌더 없이 순수 체인 수학).
+
+    반환: 베이크 성공 여부.
     """
     if wrec.get("asset") != "character":
-        return {}
-    from pxr import Usd, UsdGeom, UsdSkel  # noqa: N806
+        return False
+    import numpy as np
+    from pxr import UsdSkel
 
     base = wrec["path"] + "/char"
     skel_prim = None
@@ -202,99 +220,152 @@ def _arm_joint_recipe(stage, wrec, world, settle: int = 8) -> dict:
             skel_prim = prim
             break
     if skel_prim is None:
-        print(f"[pose] {wrec['path']}: Skeleton prim 없음")
-        return {}
-
-    # 스켈레톤 애니메이션이 매 스텝 관절 로컬 트랜스폼을 덮어쓰면 수동 회전이
-    # 무력하다 — 애니메이션 prim 을 끄고 재시도한다 (T자는 정지 프레임의
-    # 산물이므로, 꺼지면 자유롭게 포즈를 잡을 수 있다).
-    for prim in stage.Traverse():
-        if not str(prim.GetPath()).startswith(base):
-            continue
-        if prim.GetTypeName() in ("SkelAnimation", "Animation"):
-            prim.SetActive(False)
-        rel = prim.GetRelationship("skel:animationSource")
-        if rel:
-            rel.ClearTargets(False)
+        return False
 
     skel = UsdSkel.Skeleton(skel_prim)
-    joints = [str(p) for p in skel.GetJointsAttr().Get()]
-    arm = [
-        j
-        for j in joints
-        if any(k in j.lower() for k in ("shoulder", "clavicle", "upperarm", "forearm", "elbow"))
-    ]
-    if not arm:
-        print(f"[pose] 팔 관절 이름 매칭 실패 — joints {len(joints)}개: {joints[:8]}")
-        return {}
-    print(f"[pose] 팔 관절 후보 {len(arm)}개: {arm[:6]}")
+    joints = [str(x) for x in skel.GetJointsAttr().Get()]
+    # 전치 저장된 행렬 → 열 벡터 규약으로 통일
+    bind = [np.array(m, dtype=float).T for m in (skel.GetBindTransformsAttr().Get() or [])]
+    if not joints or len(bind) != len(joints):
+        return False
 
-    def extent() -> float:
-        cache = UsdGeom.BBoxCache(
-            Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render]
-        )
-        box = cache.ComputeWorldBound(stage.GetPrimAtPath(base)).ComputeAlignedBox()
-        if box.IsEmpty():
-            return 1e9
-        lo, hi = box.GetMin(), box.GetMax()
-        return (float(hi[0]) - float(lo[0])) * (float(hi[1]) - float(lo[1]))
+    parent = {j: (j.rsplit("/", 1)[0] if "/" in j else None) for j in joints}
+    jidx = {j: i for i, j in enumerate(joints)}
+    locals_rest = []
+    for j in joints:
+        pp = parent[j]
+        pm = bind[jidx[pp]] if pp in jidx else np.eye(4)
+        locals_rest.append(np.linalg.inv(pm) @ bind[jidx[j]])
 
-    for _ in range(settle):
-        world.step(render=True)
-    base_area = extent()
-    recipe: dict = {}
-    axes = {"X": None, "Y": None, "Z": None}
-    for jrel in arm:
-        jprim = stage.GetPrimAtPath(skel_prim.GetPath().AppendPath(jrel))
-        if not jprim.IsValid():
-            continue
-        xf = UsdGeom.Xformable(jprim)
-        best = (base_area, None, 1)
-        for ax in axes:
-            mk = getattr(xf, f"AddRotate{ax}Op")
-            for s in (1, -1):
-                op = mk()
-                op.Set(55.0 * s)
-                for _ in range(settle):
-                    world.step(render=True)
-                area = extent()
-                if area < best[0] * 0.97:
-                    best = (area, ax, s)
-                op.Set(0.0)
-        if best[1] is not None:
-            deep = "forearm" in jrel.lower() or "elbow" in jrel.lower()
-            recipe[jrel] = (best[1], best[2], 25.0 if deep else 40.0, 60.0 if deep else 85.0)
-    if recipe:
-        print(f"[pose] 팔 관절 캘리브레이션 성공 — {len(recipe)}개 관절, 면적 {base_area:.2f}㎡")
-    else:
-        print("[pose] 관절 회전이 메시에 반영되지 않음 — T자 유지")
-    for _ in range(settle):
-        world.step(render=True)
-    return recipe
+    def world_mat(jname: str, mods: dict):
+        m = np.eye(4)
+        chain = []
+        j = jname
+        while j is not None:
+            chain.append(j)
+            j = parent.get(j)
+        for j in reversed(chain):
+            m = m @ locals_rest[jidx[j]]
+            if j in mods:
+                m = m @ mods[j]
+        return m
+
+    # 손 말단 = 각 쪽에서 가장 깊은 hand/finger 관절
+    leaves = {}
+    for side in ("L_", "R_"):
+        arm_j = [j for j in joints if side in j and ("hand" in j.lower() or "finger" in j.lower())]
+        leaves[side] = max(arm_j, key=len) if arm_j else None
+    if not all(leaves.values()):
+        return False
+
+    mods = {}
+    for side in ("L_", "R_"):
+        leaf = leaves[side]
+        upper = f"{side.lower()}upperarm"
+        for jname in [j for j in joints if j.rsplit("/", 1)[-1].lower() == upper]:
+            z0 = world_mat(leaf, mods)[2, 3]
+            best = (z0, "Z", 1)
+            for ax in "XYZ":
+                for sgn in (1, -1):
+                    mods[jname] = _rot4(ax, 65 * sgn)
+                    z1 = world_mat(leaf, mods)[2, 3]
+                    if z1 < best[0]:
+                        best = (z1, ax, sgn)
+            best_deg = 65
+            for deg in (45, 55, 65, 75, 85):
+                mods[jname] = _rot4(best[1], deg * best[2])
+                if world_mat(leaf, mods)[2, 3] < best[0]:
+                    best_deg = deg
+            # 작업자마다 팔 각도를 살짝 다르게 — 자세 일변도 방지
+            deg = max(40.0, min(90.0, best_deg + rng.uniform(-12.0, 12.0)))
+            mods[jname] = _rot4(best[1], deg * best[2])
+
+    # 팔꿈치를 살짝 굽혀 자연스럽게 (10~30도, 내리는 축 자동 탐색)
+    for jname in [j for j in joints if j.rsplit("/", 1)[-1].lower() in ("l_forearm", "r_forearm")]:
+        leaf = leaves["L_" if "/L_" in jname else "R_"]
+        z0 = world_mat(leaf, mods)[2, 3]
+        best = (z0, None, 1)
+        for ax in "XYZ":
+            for sgn in (1, -1):
+                trial = dict(mods)
+                trial[jname] = _rot4(ax, 20 * sgn)
+                z1 = world_mat(leaf, trial)[2, 3]
+                if z1 < best[0] * 0.999:
+                    best = (z1, ax, sgn)
+        if best[1]:
+            mods[jname] = _rot4(best[1], rng.uniform(10.0, 30.0) * best[2])
+
+    # CPU 스키닝 베이크 — 변형된 정점을 points 에 직접 쓴다. 렌더러의
+    # 스키닝 평가는 타이밍·무효화 경합으로 불안정했다(간헐 T자 회귀).
+    # 정점을 구우면 결과가 확정적이고 이후 prim 이동과 무관하게 유지된다.
+    _bake_char_pose(stage, base, joints, bind, world_mat, mods)
+    return True
 
 
-def _pose_ops_for(stage, wrec, recipe: dict) -> list:
-    """캘리브레이션 레시피대로 이 작업자의 관절 회전 op 를 만든다 (최초 1회)."""
-    if wrec.get("asset") != "character" or not recipe:
-        return []
-    from pxr import UsdGeom  # noqa: N806
+def _bake_char_pose(stage, char_path, joints, bind, world_mat, mods):
+    """자세를 스킨드 메시 정점에 CPU 선형 블렌드 스키닝으로 구워 넣는다.
 
-    base = wrec["path"] + "/char"
-    skel_path = None
+    스키닝 행렬 skin_j = posedJ_j @ inv(bind_j) 를 각 정점에 가중합으로
+    적용한 뒤 inv(geomBindTransform) 을 곱해 로컬 points 로 되돌린다 —
+    디포머가 바인드 자세(≈항등)로 재평가해도 구운 자세가 그대로 보인다.
+    """
+    import numpy as np
+    from pxr import Gf, UsdGeom  # noqa: N806
+
+    jidx = {j: i for i, j in enumerate(joints)}
+    skin = [world_mat(j, mods) @ np.linalg.inv(bind[jidx[j]]) for j in joints]
+    n_mesh = n_vert = 0
+    max_d = 0.0
+    seen = []
     for prim in stage.Traverse():
-        if str(prim.GetPath()).startswith(base) and prim.GetTypeName() == "Skeleton":
-            skel_path = prim.GetPath()
-            break
-    if skel_path is None:
-        return []
-    ops = []
-    for jrel, (ax, sign, lo, hi) in recipe.items():
-        jprim = stage.GetPrimAtPath(skel_path.AppendPath(jrel))
-        if not jprim.IsValid():
+        path = str(prim.GetPath())
+        if not path.startswith(char_path + "/"):
             continue
-        op = getattr(UsdGeom.Xformable(jprim), f"AddRotate{ax}Op")()
-        ops.append((op, sign, lo, hi))
-    return ops
+        seen.append(f"{prim.GetTypeName()}:{path.rsplit('/', 1)[-1]}")
+        mesh = UsdGeom.Mesh(prim)
+        if not mesh:
+            continue
+        pts_attr = mesh.GetPointsAttr()
+        pts = pts_attr.Get()
+        if pts is None or len(pts) == 0:
+            continue
+        api = UsdGeom.PrimvarsAPI(prim)
+        pv_ji = api.GetPrimvar("skel:jointIndices")
+        pv_jw = api.GetPrimvar("skel:jointWeights")
+        if not pv_ji or not pv_jw:
+            continue
+        gb_attr = prim.GetAttribute("skel:geomBindTransform")
+        gb = np.array(gb_attr.Get(), dtype=float).T if gb_attr and gb_attr.Get() else np.eye(4)
+        # GetIndices() 는 비인덱스 primvar 에서 빈 배열을 돌려준다 —
+        # None 이 아니므로 falsy 로 판정해야 Get() 폴백이 동작한다.
+        joint_idx = pv_ji.GetIndices() or pv_ji.Get()
+        weights = pv_jw.GetIndices() or pv_jw.Get()
+        if not joint_idx or not weights:
+            continue
+        joint_idx, weights = list(joint_idx), list(weights)
+        mj = prim.GetAttribute("skel:joints")
+        if mj and mj.Get():
+            remap = [jidx.get(str(m), 0) for m in mj.Get()]
+            joint_idx = [remap[x] for x in joint_idx]
+        n = len(pts)
+        epv = len(joint_idx) // n if n else 0
+        if epv == 0:
+            continue
+        p_hom = np.hstack([np.array(pts, dtype=float), np.ones((n, 1))])
+        pb = (gb @ p_hom.T).T
+        d_skel = np.zeros((n, 4))
+        for k in range(epv):
+            wc = np.array([weights[v * epv + k] for v in range(n)])
+            mstack = np.stack([skin[joint_idx[v * epv + k]] for v in range(n)])
+            d_skel += wc[:, None] * np.einsum("nij,nj->ni", mstack, pb)
+        local = (np.linalg.inv(gb) @ d_skel.T).T
+        max_d = max(max_d, float(np.abs(local[:, :3] - np.array(pts)).max()))
+        pts_attr.Set([Gf.Vec3f(float(r[0]), float(r[1]), float(r[2])) for r in local])
+        n_mesh += 1
+        n_vert += n
+    print(f"[bake] {char_path}: {n_mesh} meshes, {n_vert} verts, max move {max_d:.3f}m")
+    if n_mesh == 0:
+        print(f"[bake]   {len(seen)} prims under char: {seen[:20]}")
 
 
 def _find_ppe_prims(stage, worker_path: str) -> dict[str, list]:
@@ -403,15 +474,15 @@ def main(argv=None) -> int:
                     Gf.Vec3f(*rgb)
                 )
 
-    # T자 포즈 해소 — 같은 에셋이면 스켈레톤이 같으니 한 명으로 캘리브레이션해
-    # 전원에게 같은 레시피를 적용한다. 리그가 관절을 덮어쓰면 recipe 가 비고,
-    # 그 경우 팔은 T자로 둔다 (바꿨다고 주장하지 않는다).
-    recipe = next(
-        (_arm_joint_recipe(stage, w, world) for w in workers if w["asset"] == "character"),
-        {},
-    )
-    for wrec in workers:
-        wrec["pose_ops"] = _pose_ops_for(stage, wrec, recipe)
+    # T자 포즈 해소 — 자작 SkelAnimation(관절 로컬 트랜스폼 1프레임)을 각
+    # 작업자 스켈레톤의 skel:animationSource 에 연결한다. 관절 prim 이 없는
+    # 리그라 관절 회전 op 는 무효이고 애니메이션만 먹는다 (dbg 검증됨).
+    # 실패한 작업자는 바인드 자세(T자)로 둔다 — 바꿨다고 주장하지 않는다.
+    n_posed = 0
+    for i, wrec in enumerate(workers):
+        wrec["posed"] = _apply_arms_down(stage, wrec, rng, i)
+        n_posed += wrec["posed"]
+    print(f"[pose] 팔 내림 적용 — {n_posed}/{len(workers)}명")
 
     floor_clear = _floor_probe()
 
@@ -433,6 +504,8 @@ def main(argv=None) -> int:
         while made < args.count and attempts < args.count + 30:
             attempts += 1
             # ── 작업자 무작위화: 위치·방향·착용 조합(가시성 토글) ──
+            # 위치 이동은 안전하다 — 자세는 정점에 베이크돼 스키닝 재평가와
+            # 무관하게 유지된다 (SkelAnimation 시절엔 이동 시 T자로 돌아갔다).
             combos = []
             for wrec in workers:
                 zone = zones["person_zones"][rng.randrange(len(zones["person_zones"]))]
@@ -451,9 +524,6 @@ def main(argv=None) -> int:
                             _set_visible(prim, part in combo)
                 else:
                     combo = wrec["wears"]
-                # 팔 자세 무작위화 — 캘리브레이션된 축·부호로 범위 안 랜덤 각도
-                for op, sign, lo, hi in wrec["pose_ops"]:
-                    op.Set(sign * rng.uniform(lo, hi))
                 tag = "f" if wrec["asset"] == "fallback" else "c"
                 combos.append(f"{tag}:" + ("+".join(combo) or "none"))
                 wrec["combo"] = combo
