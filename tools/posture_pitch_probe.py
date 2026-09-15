@@ -34,11 +34,19 @@ MIN_SAMPLES = 10
 
 
 def drain(sock: socket.socket) -> None:
+    """읽지 않은 전문을 버린다.
+
+    ⚠️ **`ConnectionResetError` 도 함께 삼킨다.** Windows 는 아직 아무도 듣지 않는
+    포트로 보낸 뒤 돌아온 ICMP Port Unreachable 을 **다음 `recvfrom` 의**
+    `ConnectionResetError` 로 돌려준다. UDP 에 연결이 없으므로 의미 없는 오류이고,
+    로봇이 아직 안 켜졌거나 방금 재부팅한 것은 정상이다. 삼키지 않으면 측정이
+    시작하자마자 죽는다 — 목업 사전 점검에서 실제로 그랬다.
+    """
     sock.setblocking(False)
     try:
         while True:
             sock.recvfrom(65535)
-    except BlockingIOError:
+    except (BlockingIOError, ConnectionResetError):
         pass
 
 
@@ -75,6 +83,20 @@ def run_stage(sock, send, enc, make_telegram, settle_s: float, hold_s: float):
         try:
             data, _ = sock.recvfrom(65535)
         except BlockingIOError:
+            time.sleep(0.005)
+            continue
+        except ConnectionResetError:
+            # ⚠️ **Windows 전용이고 무시해야 하는 오류다.** 로봇이 아직 안 켜졌거나
+            # 재부팅 중이면 보낸 명령에 ICMP Port Unreachable 이 돌아오고, Windows 는
+            # 그것을 **다음 `recvfrom` 의** `ConnectionResetError` 로 준다. UDP 에
+            # 연결이 없으므로 의미 없는 통보이며 여기서 죽으면 측정이 시작하자마자
+            # 끝난다 — 목업 사전 점검에서 실제로 그랬다.
+            #
+            # ⚠️ **`SIO_UDP_CONNRESET` 로 끄는 방법은 CPython 에서 쓸 수 없다.**
+            # `socket` 이 허용하는 ioctl 은 `SIO_KEEPALIVE_VALS`·`SIO_LOOPBACK_FAST_PATH`·
+            # `SIO_RCVALL` 뿐이고, 값을 직접 넣어도 `invalid ioctl command` 로 거부된다
+            # (3.12.10 확인). 저장소 여러 곳에 그 설정이 있지만 `hasattr` 가 항상 거짓이라
+            # **한 번도 실행되지 않는다.** 예외를 잡는 쪽이 유일한 방어다.
             time.sleep(0.005)
             continue
         try:
@@ -135,7 +157,14 @@ def main() -> int:
     # 두면 둘이 같은 자리로 들어온다 — 따로 두면 ACK 가 임시 포트로 가서 방화벽에
     # 걸리거나 아무도 읽지 않는다(2026-09-15 실기에서 ACK 를 하나도 못 받았다).
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # ⚠️ **`SO_REUSEADDR` 를 쓰지 않는다 — 포트 충돌이 조용히 넘어간다.**
+    # 런타임이 같은 포트를 잡고 있는데 이 옵션으로 묶으면 **bind 가 오류 없이
+    # 성공하고 패킷은 하나도 안 온다.** 이 PC 에서 재현했다 — 보낸 20개 중 먼저
+    # 묶은 쪽이 20개, 나중이 0개였다. 옵션을 빼면 그 자리에서 `WinError 10048` 로
+    # 실패한다. 측정 도구에서 «표본 0» 은 오류로 드러나야 한다. 조용히 빈 결과가
+    # 나오면 원인을 로봇 쪽에서 찾게 된다(실제로 그렇게 헤맸다).
+    #
+    # UDP 에는 이 옵션이 필요 없다 — TCP 의 `TIME_WAIT` 재바인드 문제가 없다.
     sock.bind(("0.0.0.0", args.telemetry_port))
     sock.setblocking(False)
 

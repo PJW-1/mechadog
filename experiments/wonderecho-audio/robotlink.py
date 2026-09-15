@@ -42,7 +42,6 @@ def fetch_status(base=DEFAULT_BASE):
     except OSError:
         return None
     tele = snap.get("telemetry") or {}
-    esc = snap.get("escalation") or {}
     parts = []
     if tele.get("batt_v") is not None:
         parts.append(f"배터리 {tele['batt_v']:.2f}볼트")
@@ -50,8 +49,11 @@ def fetch_status(base=DEFAULT_BASE):
         parts.append(f"내부 온도 {tele['temp_c']:.0f}도")
     if snap.get("state"):
         parts.append(f"동작 상태 {snap['state']}")
-    if esc.get("level") is not None:
-        parts.append(f"대응 단계 {esc['level']}")
+    # /api/telemetry 의 escalation 은 'L0'~'L3' 문자열이다 (객체가 아니다).
+    esc = snap.get("escalation")
+    level = esc.get("level") if isinstance(esc, dict) else esc
+    if level:
+        parts.append(f"대응 단계 {level}")
     if snap.get("stale"):
         parts.append("링크 지연 상태")
     return ", ".join(parts) if parts else "상태 데이터 없음"
@@ -137,6 +139,14 @@ def run_action(action: str, base=DEFAULT_BASE):
     return True, ""
 
 
+_STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전")
+
+
+def is_status_query(norm_query: str) -> bool:
+    """정규화된 질의가 로봇 상태 질의인지 — 라우팅 우선순위 판정용."""
+    return any(w in norm_query for w in _STATUS_WORDS)
+
+
 def answer_query(query: str, base=DEFAULT_BASE):
     """상태 질의면 실측 요약 문자열, 명령이면 실행 결과 문자열, 아니면 None.
 
@@ -148,7 +158,7 @@ def answer_query(query: str, base=DEFAULT_BASE):
         name, ack = action
         ok, err = run_action(name, base)
         return True, ack if ok else err
-    if any(w in norm for w in ("배터리", "상태", "온도", "보고", "잔량", "충전")):
+    if is_status_query(norm):
         st = fetch_status(base)
         return (
             True,
