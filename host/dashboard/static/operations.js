@@ -54,7 +54,7 @@ export class Operations {
   this.demo=true;this.stale=false;this.estop=false;this.role='operator';this.selected='MD-01';
   this.control=null;this.command='STOP';this.mission={status:'idle',robot:'MD-01',zone:'생산 구역',id:null};
   this.records=[];this.sessions=[];this.events=demoEvents();this.policies={};this.storageAvailable=!!storage;
-  this.liveFeed={state:'off',received:0,dropped:0};this.serial=0;this.load();
+  this.liveFeed={state:'off',received:0,dropped:0};this.telemetry={state:'off'};this.serial=0;this.load();
  }
  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn)}
  emit(reason){for(const fn of this.listeners)fn(reason)}
@@ -207,6 +207,8 @@ export class Operations {
   this.log('사건 수신 공백',dropped+'건을 버퍼에서 놓쳤습니다 · 서버가 조용히 넘기지 않고 알려준 것','LIVE_EVENT_FEED');this.emit('import');
  }
  setEventFeed(status){const prev=this.liveFeed;this.liveFeed=status;if(prev.state!==status.state)this.emit('mode')}
+ // 로봇 상태 게이지 (WBS 4.6.2). 초당 10번 오므로 전체 화면을 다시 그리는 'mode' 가 아니라 'telemetry' 로 알린다.
+ setTelemetry(view){this.telemetry=view;this.emit('telemetry')}
  savePolicy(id,{helmet,vest,note}){
   if(!/^[a-z0-9-]{1,80}$/.test(id)||typeof helmet!=='boolean'||typeof vest!=='boolean')throw new Error('정책 입력을 확인해 주세요.');
   this.policies[id]={helmet,vest,note:cleanText(note,500)};this.save();

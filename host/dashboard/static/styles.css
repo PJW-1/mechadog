@@ -142,6 +142,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .actual-status { gap: 24px }
 .actual-status>span svg { width: 52px; height: 52px; color: #77758e }
 .actual-status strong { font-size: 15px; font-weight: 500; white-space: nowrap }
+.actual-status[data-tone=stale] strong,.actual-status[data-tone=closed] strong { color: #e9c978 }
 .actual-status p,.event-summary p { font-size: 12px; line-height: 1.6; color: var(--muted); margin-top: 10px }
 .event-summary { gap: 17px }
 .event-summary>span { align-self: flex-start; margin-top: 17px }

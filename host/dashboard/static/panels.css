@@ -138,6 +138,13 @@
 .detail-panel .robot-status-sheet h2{font-size:22px}
 .robot-status-sheet .op-facts{gap:0 24px}.robot-status-sheet .op-facts>div{padding:14px 0}
 .robot-status-sheet .op-toolbar{margin-top:24px}
+/* 로봇 상태 추이 (WBS 4.6.2) */
+.robot-status-charts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.op-spark{margin:0;border:1px solid #424356;padding:10px 12px}
+.op-spark figcaption{font-size:11px;color:#9796ae;margin-bottom:6px}
+.op-spark svg{display:block;width:100%;height:48px}
+.op-spark polyline{fill:none;stroke:#edc657;stroke-width:1.5;vector-effect:non-scaling-stroke}
+.op-spark-range,.op-spark-empty{font-size:11px;color:#c0bfd3;margin:6px 0 0}
 @media(max-width:1700px){.safety-note{display:none}.main-nav{gap:6px}.main-nav button{font-size:15px}}
 @media(max-width:1100px){.workspace-open #panel-content{padding:24px 28px 44px}.robot-detail-layout{gap:28px;grid-template-columns:1fr 1fr}.robot-model-stage{height:310px}.op-mission-columns{grid-template-columns:1fr}.workspace-open .op-filters{grid-template-columns:repeat(4,1fr)}.workspace-open .op-filters>.op-field:first-child{grid-column:1/-1}.workspace-open .op-evidence-workspace{gap:24px}.workspace-open [data-page=settings]{grid-template-columns:170px minmax(0,1fr);column-gap:28px}}
 @media(max-width:800px){
