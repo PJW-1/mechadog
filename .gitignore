@@ -89,5 +89,6 @@ experiments/wonderecho-audio/voice_cache/
 experiments/wonderecho-audio/emergency_log.txt
 experiments/wonderecho-audio/phrases_custom.json
 
-# 시뮬 실행 산출물 (로그·미리보기) — Git에 올리지 않는다
-sim/out/
+# 시뮬은 로컬 전용으로 둔다 (WBS 미등재 — 팀 합의 후 다시 올린다).
+# 로컬 사본은 local/sim-overview 브랜치에 있다.
+sim/
