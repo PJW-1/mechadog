@@ -685,3 +685,40 @@ def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
         assert load_with(good)["vision"]["mount_rotation"] == good
     with pytest.raises(ConfigError, match="mount_rotation"):
         load_with(90)
+
+
+# ── 자세각 부호 (2026-09-15 실측 · PROTOCOL 2절) ──────────────────
+
+
+def test_head_up_postures_are_negative(cfg: dict) -> None:
+    """⚠️ **«고개를 드는» 자세각은 음수다.** 실측으로만 알 수 있는 값이다.
+
+    `POSE pitch=+15` → IMU 17.4, **앞이 내려감** / `-15` → -11.6, 앞이 올라감.
+    이름이 *"Pitch Up"* 이라 양수로 적혀 있었고 실제로는 바닥을 보게 만들었다.
+    """
+    assert cfg["fsm"]["alert_pitch_deg"] < 0, "경계 자세는 고개를 든다 (FR-3.3)"
+    assert cfg["posture"]["pitch_up_deg"] < 0, "자세 상승은 고개를 든다 (FR-9.2.2)"
+    assert cfg["fsm"]["scan_pitch_deg"] < 0, "스캔은 위를 훑는다"
+
+
+@pytest.mark.parametrize(
+    ("section", "name"),
+    [("fsm", "alert_pitch_deg"), ("posture", "pitch_up_deg")],
+)
+def test_positive_head_up_angle_is_refused(cfg: dict, section: str, name: str) -> None:
+    """⚠️ **양수로 되돌리면 기동을 막는다.**
+
+    같은 실수가 이미 한 번 났다 — `tools/teleop.py` 의 좌우가 뒤바뀐 채 **시험이
+    그 버그를 굳혀 두고 있었다.** 부호는 눈으로 보고서야 아는 종류라, 실측한
+    결론을 검증에 박아 둔다. 양수면 경계 자세가 바닥을 보고 가까운 사람의 머리가
+    **더 잘린다** — `FR-9.2.2` 가 자세로 풀려던 것과 정반대다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (15, 0):
+        broken = deepcopy(cfg)
+        broken[section][name] = bad
+        with pytest.raises(ConfigError, match=name):
+            validate_base_config(broken)
