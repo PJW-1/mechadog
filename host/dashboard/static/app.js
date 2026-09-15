@@ -102,7 +102,10 @@ function syncObservationView(){
  const manual=currentPage==='missions',dashboard=currentPage==='dashboard';
  $('app').classList.toggle('observation-waiting',!operations.demo||operations.stale);
  view?.setWorldVisible(dashboard);
- view?.setActive(!observationFailed&&(dashboard||(manual&&operations.demo&&!operations.stale)));
+ // ⚠️ **실제 데이터 모드에서는 예시 공장 3D 를 그리지 않는다.** 지도가 없는데(LiDAR 미연결) 가상 공장과
+ // 예시 로봇 3대·"확인 필요" 표시가 실제 화면에 섞이면 배치와 위치를 아는 것처럼 보인다. 숨긴 캔버스를
+ // 계속 그릴 이유도 없다. LiDAR 지도가 생기면 이 자리는 2D 지도로 채운다.
+ view?.setActive(!observationFailed&&operations.demo&&(dashboard||(manual&&!operations.stale)));
  view?.setCameraVisible(!observationFailed&&(dashboard||manual)&&operations.demo&&!operations.stale&&(manual||!cameraDock.classList.contains('collapsed')));
 }
 function reportObservationError(message){
@@ -122,7 +125,8 @@ function syncMain(){
  // 화면에 없으므로(4.6.2) 연결됐다고 해서 상태를 아는 척하지도 않는다.
  document.querySelector('.actual-status strong').textContent=operations.live?'관제 서버 연결됨 · 로봇 상태 미표시':'현장 상태 확인 불가 · 장비 미연결';
  document.querySelector('.actual-status p').textContent=operations.live?'영상·사건·명령은 실제 로봇 경로입니다. 배터리·FSM 상태는 아직 이 화면에 표시하지 않습니다.':'웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.';
- $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'예시 공간 · 연결된 로봇의 실제 위치는 미수신';
+ $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'지도 없음 · 예시 공장 숨김';
+ $('map-placeholder').hidden=operations.demo;
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');
