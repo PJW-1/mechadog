@@ -42,7 +42,7 @@ enum class Verdict : uint8_t {
   DiscardWarn,
 };
 
-// ── 제어 명령 10종 (PROTOCOL.md 2절) ─────────────────────────
+// ── 제어 명령 11종 (PROTOCOL.md 2절) ─────────────────────────
 enum class CmdType : uint8_t {
   Unknown = 0,
   Move,
@@ -55,6 +55,16 @@ enum class CmdType : uint8_t {
   Led,
   Sound,
   State,
+  Service,
+};
+
+// ── SERVICE 명령의 mode 값 ───────────────────────────────────
+// state 와 같은 규칙이다 — 알려진 값 목록과 대조하고, 모르는 값은
+// 폐기 + WARN 으로 둬야 모드 추가가 하위 호환이 된다.
+enum class ServiceMode : uint8_t {
+  Unknown = 0,
+  Enter,
+  Exit,
 };
 
 // ── FSM 상태 13종 ────────────────────────────────────────────
@@ -137,6 +147,8 @@ struct Command {
   int32_t phrase_id = 0;  // SOUND
 
   FsmState state = FsmState::Unknown;  // STATE
+
+  ServiceMode service_mode = ServiceMode::Unknown;  // SERVICE
 
   uint8_t clamped = kClampNone;  // ClampFlag 비트합
 };

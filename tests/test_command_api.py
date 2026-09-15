@@ -294,6 +294,45 @@ def test_service_reports_the_current_state(service):
     assert svc.state == "PATROL" == behavior.state
 
 
+# ── 서비스 모드 (SERVICE 전문) ──────────────────────────────────
+
+
+def test_service_enter_queues_a_one_shot_telegram(service):
+    """진입은 다음 틱에 실어 보낸다 — 주차 명령이라 급하지 않다."""
+    svc, _behavior, sent = service
+    result = svc.service("enter")
+    assert result.accepted is True
+    assert sent == []  # tick 이 만들 때까지 전문이 나가지 않는다
+    telegrams = svc._commander.tick(10_000)
+    assert any('"type":"SERVICE"' in t and '"mode":"enter"' in t for t in telegrams)
+
+
+def test_service_exit_queues_exit_mode(service):
+    svc, _behavior, _sent = service
+    assert svc.service("exit").accepted is True
+    telegrams = svc._commander.tick(10_000)
+    assert any('"mode":"exit"' in t for t in telegrams)
+
+
+def test_service_rejects_an_unknown_mode(service):
+    svc, _behavior, _sent = service
+    result = svc.service("reboot")
+    assert result.accepted is False
+    telegrams = svc._commander.tick(10_000)
+    assert not any('"SERVICE"' in t for t in telegrams)
+
+
+def test_service_endpoint_round_trips(client):
+    http, _behavior, _sent = client
+    body = http.post("/api/command/service", json={"mode": "enter"}).json()
+    assert body["accepted"] is True
+
+
+def test_service_endpoint_rejects_a_non_string_mode(client):
+    http, _behavior, _sent = client
+    assert http.post("/api/command/service", json={"mode": 1}).status_code == 400
+
+
 # ── 사건은 런타임의 `_apply` 경로로 들어간다 (2026-09-14 실기) ──
 
 

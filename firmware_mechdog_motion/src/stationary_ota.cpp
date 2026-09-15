@@ -22,8 +22,11 @@
 #include "task_watchdog.h"
 #endif
 
-#if MECHADOG_ENABLE_ACTUATORS
-#error "Stationary OTA requires actuators OFF; moving maintenance is not integrated"
+// Actuator builds carry OTA only when the runtime SERVICE mode exists to park
+// the body first (task-watchdog expansion builds). Without it there is no
+// stationary guarantee, so moving maintenance stays unintegrated.
+#if MECHADOG_ENABLE_ACTUATORS && !MECHADOG_ENABLE_TASK_WDT
+#error "Stationary OTA requires actuators OFF or the SERVICE-mode watchdog build"
 #endif
 #if !CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
 #error "OTA requires the SDK bootloader rollback contract"
@@ -117,18 +120,24 @@ esp_err_t statusHandler(httpd_req_t* req) {
   snprintf(body, sizeof(body),
            "{\"mac\":\"%s\",\"boot\":\"%s\",\"version\":\"%s\","
            "\"slot\":\"%s\",\"image_sha256\":\"%s\",\"healthy\":%s,"
-           "\"confirmed\":%s,\"updating\":%s,\"actuators\":false,\"slot_size\":%lu,"
-           "\"loop_watchdog_armed\":%s,\"loop_watchdog_deadline_ms\":%u,"
-           "\"watchdog_fault_probe\":%s}",
+           "\"confirmed\":%s,\"updating\":%s,\"actuators\":%s,\"service_mode\":%s,"
+           "\"parked\":%s,\"slot_size\":%lu,\"loop_watchdog_armed\":%s,"
+           "\"loop_watchdog_deadline_ms\":%u,\"watchdog_fault_probe\":%s}",
            g_mac, g_boot, MECHADOG_OTA_VERSION, running->label, g_image_sha,
            g_healthy ? "true" : "false", g_confirmed ? "true" : "false",
-           g_updating ? "true" : "false", static_cast<unsigned long>(kSlotSize), watchdog_armed,
-           watchdog_deadline_ms, fault_probe);
+           g_updating ? "true" : "false", MECHADOG_ENABLE_ACTUATORS ? "true" : "false",
+           mechadog::serviceModeParked() ? "true" : "false",
+           mechadog::otaParkedForReboot() ? "true" : "false", static_cast<unsigned long>(kSlotSize),
+           watchdog_armed, watchdog_deadline_ms, fault_probe);
   return reply(req, "200 OK", body);
 }
 
 esp_err_t confirmHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  // Confirming reboots a pending image; an actuator build must be parked or
+  // safe-latched (pending-verify refuses RESET_SAFE, so latched = stationary).
+  if (!mechadog::otaParkedForReboot())
+    return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
   if (!g_healthy || g_updating) return reply(req, "409 Conflict", "{\"error\":\"not_healthy\"}");
   g_confirm_requested = true;
   return reply(req, "202 Accepted", "{\"confirmation_requested\":true}");
@@ -136,6 +145,10 @@ esp_err_t confirmHandler(httpd_req_t* req) {
 
 esp_err_t updateHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  // Flash writes end in a reboot; an actuator build accepts them only while
+  // SERVICE mode has parked the body. Actuator-OFF builds are always parked.
+  if (!mechadog::serviceModeParked())
+    return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
   if (!g_confirmed || g_updating || !g_healthy)
     return reply(req, "409 Conflict", "{\"error\":\"not_ready\"}");
   char expected[65] = {};
@@ -294,6 +307,14 @@ void pollStationaryOta(bool wifi_connected, const SensorSnapshot& sample) {
 #else
   (void)wifi_connected;
   (void)sample;
+#endif
+}
+
+bool otaPendingVerify() {
+#if MECHADOG_ENABLE_OTA
+  return g_pending && !g_confirmed;
+#else
+  return false;
 #endif
 }
 }  // namespace mechadog

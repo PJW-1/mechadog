@@ -1,0 +1,51 @@
+# 개체 프로파일 — mechdog-sim (시뮬레이션 전용 · sim/run_factory.py)
+#
+# ⚠️ **실기체가 아니다.** 이 프로파일의 대상은 `sim/run_factory.py` 가 띄우는
+# Isaac Sim 공장 씬의 가상 MechDog 다. 시뮬레이터가 실기와 **같은 UDP 프로토콜**
+# (`host/common/protocol.py` 의 CommandDecoder/TelemetryEncoder)을 말하므로,
+# `python -m host.runtime --device mechdog-sim` 하나로 대시보드·비전 파이프라인·
+# 명령 서비스가 실기에 붙는 것과 동일하게 시뮬레이터에 붙는다.
+#
+# 포트 역할:
+#   mechdog_ip:5001  명령 (MOVE/STOP/ESTOP/RESET_SAFE) — sim/protocol_server.py
+#   telemetry_port:5101  텔레메트리 수신 — 시뮬이 이 포트로 10Hz 송신
+#   xiao_ip:8080    MJPEG FPV 스트림 — sim/web_stream.py (`/stream`)
+#
+# `vision_control_port` 의 /profile 은 ACK 만 한다 — 시뮬 카메라 해상도는
+# mechdog_spec.py 가 실측값으로 고정하므로 name 은 반영되지 않고, fps 는
+# MJPEG 송출 상한으로만 반영된다 (sim/web_stream.py).
+
+device_id: mechdog-sim
+owner_id: sim
+reference_role: none
+
+# 시뮬은 서보가 없다 — 측정값이 아니라 "해당 없음"의 null 이다.
+servo_offset: null
+
+# 목업 관례대로 설정 이름을 그대로 보낸다 (protocol_server.py 의 device_id 와 일치).
+telemetry_device_id: mechdog-sim
+
+network:
+  mechdog_ip: 127.0.0.1
+  xiao_ip: 127.0.0.1
+  cmd_port: 5001
+  # ⚠️ 실기 규격은 5101 이지만, 같은 PC 에 실기용 런타임이 5101 을 이미 묶고
+  # 있을 수 있다. Windows 는 같은 UDP 포트를 둘이 묶으면 한쪽으로만 보낸다 —
+  # 시뮬은 5102 로 받는다. 시뮬이 텔레메트리를 명령 출발 포트로 돌려내므로
+  # (sim/protocol_server.py 의 peer 규칙) 호스트는 바꾼 포트에서 그대로 받는다.
+  telemetry_port: 5102
+  vision_stream_port: 8080
+  vision_control_port: 8080
+
+# 시뮬 프록시의 운동학은 sim/mechdog_spec.py 가 실측값을 박아 두므로,
+# 여기 다시 적는 보정값은 **실기 개체 보정이지 시뮬이 읽는 값이 아니다.**
+# host 쪽(회피 시퀀스 시간 계산)이 읽는 값이므로 실측 개체와 같은 수치를 둔다.
+gait_calibration:
+  forward_mm_per_sec: 104.0
+  forward_yaw_drift_deg_per_sec: 1.0
+  straight_bias_deg: -8.0
+  reverse_mm_per_sec: 78.0
+  turn_deg_per_sec: 6.8
+  reverse_turn_deg_per_sec: 6.6
+  reverse_turn_mm_per_sec: 69.7
+  measured_on: "2026-09-11"
