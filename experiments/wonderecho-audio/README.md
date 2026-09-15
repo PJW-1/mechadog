@@ -30,8 +30,11 @@
 >   현장 확인이 필요한 명령은 의도적으로 제외했다.
 > - **대화·경고 이력 + 일일 리포트 (4.7.12)** — `eventlog.py`가 모든 발화·응답·
 >   시나리오·명령·비상 이벤트를 `logs/voice-YYYY-MM-DD.jsonl`에 날짜별로 남긴다
->   (쓰기 실패는 로그만 — 음성 루프를 멈추지 않음). `daily_report.py`가 하루를
->   집계해 마크다운 리포트를 만들고, `GET /report`가 당일 요약을 돌려준다.
+>   (쓰기 실패는 로그만 — 음성 루프를 멈추지 않음). 로봇 측 사건(person_found 등
+>   블랙박스 확정 검출)도 `GET /api/events?since=` 커서 폴링으로 `robot_evt`
+>   역할로 합쳐진다 — 음성 로그와 로봇 로그가 한 리포트에 모인다.
+>   `daily_report.py`가 하루를 집계해 마크다운 리포트를 만들고, `GET /report`가
+>   당일 요약을 돌려준다.
 >
 > 관제 API는 `/status` 상태 브리핑, `/say` 공지 방송(긴급 우선 큐), `/scenario`
 > 시나리오 트리거, `/scenarios` 목록, `/mode`, `/transcript`, `/report` — 링크는 메인 루프가

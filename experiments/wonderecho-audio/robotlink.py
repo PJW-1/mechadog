@@ -57,6 +57,22 @@ def fetch_status(base=DEFAULT_BASE):
     return ", ".join(parts) if parts else "상태 데이터 없음"
 
 
+def fetch_events(base=DEFAULT_BASE, since=0):
+    """GET /api/events?since=N → (events, dropped, latest) 또는 None (연결 실패).
+
+    로봇 측 사건(person_found 등 블랙박스 확정 검출)을 음성 저널로 옮기는 폴링
+    경로다 — `/ws/events` 는 브라우저용이라 여기서는 HTTP 커서 폴링을 쓴다.
+    """
+    try:
+        res = _get(base, f"/api/events?since={since}")
+    except OSError:
+        return None
+    events = res.get("events")
+    if not isinstance(events, list):
+        return None
+    return events, res.get("dropped", 0), res.get("latest", since)
+
+
 # ── 화이트리스트 명령 ──────────────────────────────────────────────────────
 # 정규화된 발화가 패턴과 정확히 일치할 때만 동작한다.
 # estop은 음성으로도 즉시 걸 수 있어야 하므로 포함. reset(래치 해제)처럼

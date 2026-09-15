@@ -636,3 +636,29 @@ def test_event_snapshot_route_does_not_need_a_camera(clock):
     with TestClient(app) as client:
         assert client.get("/events/x/snapshot.jpg").status_code == 200
         assert client.get("/camera/snapshot.jpg").status_code == 404
+
+
+def test_events_http_polling_returns_events_after_cursor(clock):
+    """음성 저널처럼 WS 를 못 쓰는 쪽의 폴링 경로다 (4.7.12)."""
+    state = state_at(clock)
+    state.record_event(_event(1))
+    state.record_event(_event(2))
+    with TestClient(create_app(state)) as client:
+        body = client.get("/api/events?since=0").json()
+        assert [e["entry"] for e in body["events"]] == ["e1", "e2"]
+        assert body["latest"] == 2 and body["dropped"] == 0
+        # 커서 뒤만 온다 — 재폴링은 중복 없이.
+        body = client.get("/api/events?since=1").json()
+        assert [e["entry"] for e in body["events"]] == ["e2"]
+
+
+def test_events_http_reports_dropped(clock):
+    """폴링 쪽도 공백을 숨기지 않는다 — WS 의 event_gap 과 같은 규약."""
+    from host.dashboard.state import EVENT_BUFFER
+
+    state = state_at(clock)
+    for n in range(EVENT_BUFFER + 5):
+        state.record_event(_event(n))
+    with TestClient(create_app(state)) as client:
+        body = client.get("/api/events?since=0").json()
+        assert body["dropped"] == 5
