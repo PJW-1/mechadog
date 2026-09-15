@@ -318,17 +318,21 @@ jobs:
             --build-property "compiler.cpp.extra_flags=-include $GITHUB_WORKSPACE/firmware_mechdog_motion/test/ota_compile_settings.h" \
             --build-path "$RUNNER_TEMP/watchdog-ota" firmware_mechdog_motion
 
-      - name: Reject unqualified actuator watchdog combination
+      - name: Actuator watchdog only via runtime SERVICE mode
         if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
         run: |
-          if arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
-            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=1' \
-            --build-path "$RUNNER_TEMP/watchdog-actuator-guard" firmware_mechdog_motion \
-            > "$RUNNER_TEMP/watchdog-actuator-guard.log" 2>&1; then
-            echo "::error::Unqualified watchdog/actuator combination compiled"
-            exit 1
-          fi
-          grep -F 'Task WDT candidate is restricted to actuator-OFF diagnostic builds' "$RUNNER_TEMP/watchdog-actuator-guard.log"
+          # WBS 3.2.4 service-mode expansion: TASK_WDT+ACTUATORS is now legal —
+          # the qualification moved from a compile-time ban to a runtime order
+          # (park body + latch + block motion, then arm). Actuator builds
+          # cannot compile in CI (vendor HW_MechDog library is local-only), so
+          # guard the contract at source level:
+          #  1) the sketch derives MECHADOG_SERVICE_MODE for TASK_WDT+ACTUATORS
+          #  2) boot arming stays restricted to actuator-OFF builds
+          #  3) the old hard compile ban is gone (service mode replaced it)
+          sketch=firmware_mechdog_motion/firmware_mechdog_motion.ino
+          grep -q 'define MECHADOG_SERVICE_MODE 1' "$sketch"
+          grep -q 'MECHADOG_ENABLE_TASK_WDT && !MECHADOG_ENABLE_ACTUATORS' "$sketch"
+          ! grep -q 'restricted to actuator-OFF diagnostic builds' "$sketch"
 
       - name: Upload artifacts
         if: steps.sketch.outputs.found == 'true'

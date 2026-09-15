@@ -18,6 +18,9 @@
   #reset { background:#7a5c00; width:100%; font-size:14px; }
   #manual { background:#2d6a4f; width:100%; }
   #manual.on { background:#b5651d; }
+  #service { background:#3d5a80; width:100%; font-size:14px; }
+  #service.on { background:#8f2d56; }
+  #svc-badge { display:none; color:#ff9db0; font-weight:700; }
   .pad { display:grid; grid-template-columns:repeat(3,60px); gap:4px; }
   .pad button { height:52px; font-size:20px; }
   #log { font-size:12px; color:#9a9ab0; height:120px; overflow-y:auto; white-space:pre-wrap; }
@@ -31,6 +34,7 @@
   <span class="kv" id="batt">--</span>
   <span class="kv" id="dist">--</span>
   <span class="kv" id="imu">--</span>
+  <span id="svc-badge">SERVICE</span>
 </header>
 <main>
   <div>
@@ -40,6 +44,7 @@
     <button id="estop">■ E-STOP</button>
     <button id="reset">안전 해제 — 원인 확인 후에만 누르세요</button>
     <button id="manual">수동 제어 켜기</button>
+    <button id="service">서비스 모드 — 패치용 워치독 진입</button>
     <div class="pad">
       <span></span><button data-d="FORWARD">▲</button><span></span>
       <button data-d="LEFT">◀</button><button data-d="STOP">■</button><button data-d="RIGHT">▶</button>
@@ -71,6 +76,14 @@ manualBtn.onclick=async()=>{
 for(const b of document.querySelectorAll('[data-d]'))
   b.onclick=()=>{if(!manualOn){log('수동 제어를 먼저 켜세요');return;}post('/api/command/drive',MOTION[b.dataset.d]);};
 
+const serviceBtn=document.getElementById('service');
+let serviceOn=false;
+serviceBtn.onclick=()=>{
+  const want=serviceOn?'exit':'enter';
+  if(want==='enter'&&!confirm('서비스 모드: 로봇이 주차되고 루프 워치독이 켜집니다. 보행 복귀에는 해제 후 안전 해제가 필요합니다. 진입할까요?'))return;
+  post('/api/command/service',{mode:want});
+};
+
 async function poll(){
   try{
     const r=await fetch('/api/telemetry');const d=await r.json();const t=d.telemetry||{};
@@ -78,6 +91,11 @@ async function poll(){
     document.getElementById('batt').textContent='BAT '+(t.batt_v!=null?t.batt_v.toFixed(2)+'V':'--');
     document.getElementById('dist').textContent='DIST '+(t.dist_cm!=null?t.dist_cm.toFixed(0)+'cm':'--');
     document.getElementById('imu').textContent=t.imu?`IMU p${t.imu.pitch.toFixed(0)} r${t.imu.roll.toFixed(0)}`:'';
+    const svc=!!(t.flags&&t.flags.service);
+    if(svc!==serviceOn){serviceOn=svc;serviceBtn.classList.toggle('on',svc);
+      serviceBtn.textContent=svc?'서비스 모드 해제 — 워치독 끄기':'서비스 모드 — 패치용 워치독 진입';
+      document.getElementById('svc-badge').style.display=svc?'inline':'none';
+      log(svc?'로봇이 서비스 모드로 보고함 (워치독 단)':'서비스 모드 해제 보고');}
   }catch(e){}
   setTimeout(poll,500);
 }

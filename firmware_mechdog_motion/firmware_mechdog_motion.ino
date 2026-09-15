@@ -23,13 +23,23 @@
 #include <esp_system.h>
 
 #include "src/task_watchdog.h"
-// Vendor startup can move the body after a reset. Qualify reboot behavior
-// before enabling this option in an actuator build.
+// Vendor startup can move the body after a reset, so an actuator build never
+// arms the watchdog at boot. Instead it exposes SERVICE mode: entering parks
+// the body and blocks motion first, then arms the deadline — a watchdog
+// restart can therefore only fire while the robot is already standing still,
+// which is the same vendor-init motion as every normal boot (physically
+// verified on gate-20260913). Reboot-while-walking stays structurally absent.
 #if MECHADOG_ENABLE_ACTUATORS
-#error "Task WDT candidate is restricted to actuator-OFF diagnostic builds"
+#define MECHADOG_SERVICE_MODE 1
+#else
+#define MECHADOG_SERVICE_MODE 0
 #endif
 // Stationary OTA uses its own task. The loop deadline remains active during
 // transfers, confirmation and flash operations; there is no maintenance feed.
+#endif
+
+#ifndef MECHADOG_SERVICE_MODE
+#define MECHADOG_SERVICE_MODE 0
 #endif
 
 #if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
@@ -56,6 +66,8 @@ mechadog::SensorHal g_sensors;
 mechadog::TelemetryPublisher g_telemetry;
 
 char g_packet[kPacketBufferSize + 1];
+// 마지막 MOVE 가 정지가 아니었는가. ACTION 가드가 본다.
+bool g_walking = false;
 bool g_safe_latched = true;
 bool g_have_valid_command = false;
 uint64_t g_last_valid_command_ms = 0;
@@ -71,6 +83,19 @@ uint32_t g_failsafe_count = 0;
 bool g_udp_started = false;
 bool g_wifi_connected = false;
 mechadog::FsmState g_reported_state = mechadog::FsmState::Idle;
+
+#if MECHADOG_SERVICE_MODE
+// SERVICE mode parks the body and arms the loop watchdog; the arming order is
+// documented at the compile guard above. The carrier-board user button
+// (vendor Hiwonder.cpp Key_Pin = GPIO5, active low, pull-up) toggles it
+// without a host — useful when the board is on the bench for patching.
+constexpr uint8_t kServiceButtonPin = 5;
+constexpr uint32_t kServiceButtonDebounceMs = 50;
+bool g_service_mode = false;
+bool g_service_button_raw = true;  // pull-up: released reads HIGH
+uint32_t g_service_button_since_ms = 0;
+bool g_service_button_pressed = false;
+#endif
 
 struct WifiDiagnosticEvent {
   uint32_t callback_ms;
@@ -156,17 +181,21 @@ void sendText(const char* text) {
   g_udp.endPacket();
 }
 
+bool serviceModeActive();
+bool loopWatchdogArmed();
+
 void sendAck(const mechadog::DecodeResult& decoded, bool applied) {
-  char response[240];
+  char response[320];
   snprintf(response, sizeof(response),
            "{\"ok\":%s,\"verdict\":\"%s\",\"seq\":%lld,\"type\":\"%s\","
            "\"applied\":%s,\"safe_latched\":%s,\"failsafe_count\":%lu,"
-           "\"actuators\":%s}",
+           "\"actuators\":%s,\"service_mode\":%s,\"wdt_armed\":%s}",
            decoded.verdict == mechadog::Verdict::Accept ? "true" : "false",
            mechadog::to_string(decoded.verdict), static_cast<long long>(decoded.command.seq),
            mechadog::to_string(decoded.command.type), applied ? "true" : "false",
            g_safe_latched ? "true" : "false", static_cast<unsigned long>(g_failsafe_count),
-           g_motion.actuators_enabled() ? "true" : "false");
+           g_motion.actuators_enabled() ? "true" : "false", serviceModeActive() ? "true" : "false",
+           loopWatchdogArmed() ? "true" : "false");
   sendText(response);
 }
 
@@ -179,28 +208,139 @@ void latchFailsafe(const char* reason) {
   g_motion.stop();
 }
 
+bool serviceModeActive() {
+#if MECHADOG_SERVICE_MODE
+  return g_service_mode;
+#else
+  return false;
+#endif
+}
+
+bool loopWatchdogArmed() {
+#if MECHADOG_ENABLE_TASK_WDT
+  return mechadog::taskWatchdogArmed();
+#else
+  return false;
+#endif
+}
+
+#if MECHADOG_SERVICE_MODE
+// Park first, arm second: motion is latched and blocked before the deadline is
+// armed, so a watchdog restart can only happen to a standing robot. The safe
+// latch is set directly rather than through latchFailsafe — entering service
+// mode is a deliberate operator action, not a fault, so failsafe_count must
+// not move.
+bool enterServiceMode() {
+  g_motion.stop();
+  g_safe_latched = true;
+  g_service_mode = true;
+  const esp_err_t err = mechadog::startTaskWatchdog();
+  if (err == ESP_ERR_INVALID_STATE) {
+    Serial.println("SERVICE mode: watchdog already armed");
+    return true;
+  }
+  if (err != ESP_OK) {
+    // The body is parked regardless; only the deadline arm failed. The host
+    // sees wdt_armed=false in the ACK and telemetry.
+    Serial.printf("SERVICE mode: watchdog arm failed err=%ld\n", static_cast<long>(err));
+    return false;
+  }
+  Serial.println("SERVICE mode: motion blocked, loop watchdog armed");
+  return true;
+}
+
+bool exitServiceMode() {
+  if (!g_service_mode) return false;
+  const esp_err_t err = mechadog::disarmTaskWatchdog();
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    Serial.printf("SERVICE exit: watchdog disarm failed err=%ld\n", static_cast<long>(err));
+    return false;
+  }
+  g_service_mode = false;
+  // The safe latch stays set: returning to motion still requires RESET_SAFE.
+  Serial.println("SERVICE mode: exited; SAFE latch remains ON");
+  return true;
+}
+
+void pollServiceButton() {
+  const bool raw = digitalRead(kServiceButtonPin) == LOW;
+  const uint32_t now = millis();
+  if (raw != g_service_button_raw) {
+    g_service_button_raw = raw;
+    g_service_button_since_ms = now;
+    return;
+  }
+  if (now - g_service_button_since_ms < kServiceButtonDebounceMs) return;
+  if (raw == g_service_button_pressed) return;
+  g_service_button_pressed = raw;
+  if (!raw) return;  // press edge only; release carries no action
+  if (g_service_mode) {
+    exitServiceMode();
+  } else {
+    enterServiceMode();
+  }
+}
+#endif
+
 bool applyCommand(const mechadog::Command& command) {
   switch (command.type) {
     case mechadog::CmdType::Stop:
+      g_walking = false;
       g_motion.stop();
       return true;
 
     case mechadog::CmdType::Estop:
+      g_walking = false;
       latchFailsafe("ESTOP command");
       return true;
 
     case mechadog::CmdType::ResetSafe:
       if (WiFi.status() != WL_CONNECTED) return false;
+      // A pending-verify OTA image must stay parked until confirmed: clearing
+      // the latch would let motion start while the 90 s verify deadline (or
+      // the confirm reboot) can still restart the robot mid-gait.
+      if (mechadog::otaPendingVerify()) return false;
       g_motion.stop();
+      // Clearing the latch while in service mode is accepted but motion stays
+      // blocked by the service flag — RESET alone must not resume a parked
+      // service robot. Exiting service mode re-latches anyway.
       g_safe_latched = false;
       g_reported_state = mechadog::FsmState::Idle;
       Serial.println("SAFE latch cleared; waiting for a new MOVE");
       return true;
 
     case mechadog::CmdType::Move:
-      if (g_safe_latched) return false;
+      if (g_safe_latched || serviceModeActive()) return false;
       g_motion.move(command.step, command.angle);
+      // 보행 중인지 기록한다. ACTION 가드가 이 값을 본다 — 호스트가 되돌려준
+      // `state` 는 반향이라 쓰지 않는다(ADR-22).
+      g_walking = (command.step != 0.0F || command.angle != 0.0F);
       return true;
+
+    case mechadog::CmdType::Pose:
+      if (g_safe_latched) return false;
+      g_motion.pose(command.pitch, command.roll, command.height, static_cast<int>(command.dur));
+      return true;
+
+    case mechadog::CmdType::Action:
+      // ⚠️ **걷는 중에는 받지 않는다.** 벤더 `action_run` 은 구간마다 delay() 로
+      // 블로킹하므로 그동안 loop() 가 통째로 멈춘다 — UDP 수신도, 300ms 명령
+      // 타임아웃 검사도 함께 멈춘다. 걷다가 멈추면 **타임아웃이 자기 자신 때문에
+      // 걸린다.** 정지 상태에서만 1초를 감수한다 (NFR-1 비목표: 온보드 블로킹 금지).
+      if (g_walking) {
+        Serial.println("ACTION refused: walking");
+        return false;
+      }
+      // 래치 중에도 받는다 — `FAILSAFE` 안정 자세(엎드림)가 이 경로로 온다.
+      return g_motion.action(static_cast<int>(command.action_id));
+
+    case mechadog::CmdType::Service:
+#if MECHADOG_SERVICE_MODE
+      return command.service_mode == mechadog::ServiceMode::Enter ? enterServiceMode()
+                                                                  : exitServiceMode();
+#else
+      return false;  // no runtime-armed watchdog in this build
+#endif
 
     case mechadog::CmdType::State:
       // Host FSM state is stored and echoed, never used to clear a safety latch.
@@ -254,6 +394,18 @@ void handlePacket(int packet_size) {
   // anchors its epoch clock. PINGs, malformed packets and replay drops do not.
   g_telemetry.observe_command(g_udp.remoteIP(), decoded.command.ts);
   const bool applied = applyCommand(decoded.command);
+  // ⚠️ **온보드가 스스로 눈을 감은 시간은 호스트 침묵으로 세지 않는다.** 벤더
+  // `action_run` 은 구간마다 delay() 로 블로킹한다(실측 1,062ms). 그동안 loop() 가
+  // 멈춰 UDP 수신도 타임아웃 검사도 함께 멈추므로, 깨어나면 «300ms 넘게 명령이
+  // 없었다» 로 보여 **로봇이 제 낮잠 때문에 래치한다** — 2026-09-15 실기에서 ACTION 1
+  // 직후 failsafe_count 9→10. 호스트는 10Hz 송신을 한 번도 끊지 않았고 밀렸던 전문은
+  // 10ms 안에 몰려 처리됐다. 침묵한 것은 호스트가 아니라 우리였다.
+  //
+  // 대안이던 «그냥 래치한다» 는 더 나쁘다 — 액션마다 호스트가 RESET_SAFE 를 보내게
+  // 되어 **안전 래치를 자동으로 푸는 습관**을 가르친다. 호스트가 정말 죽었다면 액션이
+  // 끝난 뒤 300ms 안에 그대로 래치된다(최악 약 1.3초). 그 사이 동작은 서기·앉기·
+  // 엎드리기뿐이라 몸이 이동하지 않는다 — 위험이 유계다.
+  g_last_valid_command_ms = uptimeMs();
   Serial.printf("CMD: seq=%lld type=%s applied=%d safe=%d\n",
                 static_cast<long long>(decoded.command.seq),
                 mechadog::to_string(decoded.command.type), applied, g_safe_latched);
@@ -345,6 +497,8 @@ void pollTelemetry() {
   // No onboard obstacle-stop detector is connected in this firmware stage.
   sample.include_obstacle = false;
   sample.safety_latched = g_safe_latched;
+  sample.service_mode = serviceModeActive();
+  sample.include_service_mode = MECHADOG_SERVICE_MODE != 0;
   // Publisher enforces 100 ms cadence and rejects missing/invalid sensor data.
   g_telemetry.poll(sample);
 
@@ -398,6 +552,27 @@ void pollTelemetry() {
 
 }  // namespace
 
+namespace mechadog {
+// OTA handlers ask these before accepting a write or a confirmation reboot.
+// Actuator-OFF builds are always parked; actuator builds park via SERVICE
+// mode (writes) or any engaged safe latch (confirm after the update reboot —
+// pending-verify images refuse RESET_SAFE below, so latched means stationary).
+bool serviceModeParked() {
+#if MECHADOG_ENABLE_ACTUATORS
+  return serviceModeActive();
+#else
+  return true;
+#endif
+}
+bool otaParkedForReboot() {
+#if MECHADOG_ENABLE_ACTUATORS
+  return serviceModeActive() || g_safe_latched;
+#else
+  return true;
+#endif
+}
+}  // namespace mechadog
+
 void setup() {
   // Arduino-ESP32 2.0.12 otherwise defaults to an unbuffered UART transmitter.
   Serial.setTxBufferSize(kSerialTxBufferBytes);
@@ -424,7 +599,7 @@ void setup() {
   }
   Serial.printf("Actuators: %s, initial SAFE latch: ON\n",
                 g_motion.actuators_enabled() ? "ON" : "OFF");
-#if MECHADOG_ENABLE_TASK_WDT
+#if MECHADOG_ENABLE_TASK_WDT && !MECHADOG_ENABLE_ACTUATORS
   // setup() runs inside loopTask. Monitor progress without waiting for DHCP.
   // Errors are fatal in this actuator-OFF build, never silently unprotected.
   ESP_ERROR_CHECK(mechadog::startTaskWatchdog());
@@ -432,6 +607,12 @@ void setup() {
                 static_cast<unsigned long>(mechadog::kLoopWatchdogDeadlineUs / 1000),
                 static_cast<unsigned long>(mechadog::kLoopWatchdogPollMs),
                 static_cast<int>(esp_reset_reason()));
+#elif MECHADOG_SERVICE_MODE
+  // Actuator build: the watchdog stays disarmed until SERVICE mode parks the
+  // body. Arming at boot would allow a restart while the legs are powered.
+  pinMode(kServiceButtonPin, INPUT_PULLUP);
+  Serial.printf("Service mode available: button=GPIO%u command=SERVICE mode=enter|exit\n",
+                static_cast<unsigned>(kServiceButtonPin));
 #endif
 }
 
@@ -498,8 +679,15 @@ void loop() {
 #if MECHADOG_ENABLE_OTA
   mechadog::pollStationaryOta(WiFi.status() == WL_CONNECTED, g_sensors.snapshot(millis()));
 #endif
+#if MECHADOG_SERVICE_MODE
+  pollServiceButton();
+#endif
 #if MECHADOG_ENABLE_TASK_WDT
-  ESP_ERROR_CHECK(mechadog::feedTaskWatchdog());
+  // Runtime-armed builds feed only while armed; boot-armed builds are always
+  // armed so this is identical to the previous unconditional feed for them.
+  if (mechadog::taskWatchdogArmed()) {
+    ESP_ERROR_CHECK(mechadog::feedTaskWatchdog());
+  }
 #endif
   delay(1);
 }

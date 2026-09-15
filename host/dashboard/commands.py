@@ -189,6 +189,29 @@ class CommandService:
         }
     )
 
+    def service(self, mode: str) -> CommandResult:
+        """온보드 서비스 모드 전환 (`SERVICE` 전문, WBS 3.2.4 확장).
+
+        `enter` 는 로봇을 주차시키고 루프 워치독을 건다 — OTA·진단 중 행거를
+        잡기 위한 것이다. `exit` 는 워치독을 해제한다; safe 래치는 남으므로
+        보행 복귀에는 별도 `RESET_SAFE` 가 필요하다. 급하지 않으므로 다음
+        틱에 실어 보낸다 (`once` — `reset` 과 같은 이유).
+        """
+        if mode not in ("enter", "exit"):
+            return CommandResult(
+                command="service",
+                accepted=False,
+                state=self._behavior.state,
+                detail=f"모르는 서비스 모드: {mode!r} (enter|exit)",
+            )
+        self._commander.once("SERVICE", mode=mode)
+        return CommandResult(
+            command="service",
+            accepted=True,
+            state=self._behavior.state,
+            detail=f"서비스 모드 {mode} 를 다음 틱에 보낸다 — ACK 의 service_mode·wdt_armed 로 확인",
+        )
+
     def patrol(self) -> CommandResult:
         """순찰 시작을 **예약**한다 — 리셋 정착 후 `IDLE` 에서 발행된다 (WBS 4.7.11).
 

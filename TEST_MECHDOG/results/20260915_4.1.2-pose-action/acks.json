@@ -1,0 +1,158 @@
+[
+  {
+    "step": "RESET_SAFE",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 6,
+      "type": "RESET_SAFE",
+      "applied": true,
+      "safe_latched": false,
+      "failsafe_count": 4,
+      "actuators": true
+    }
+  },
+  {
+    "step": "POSE pitch=15 (앞을 든다)",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 23,
+      "type": "POSE",
+      "applied": true,
+      "safe_latched": false,
+      "failsafe_count": 4,
+      "actuators": true
+    }
+  },
+  {
+    "step": "POSE 복귀",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 44,
+      "type": "POSE",
+      "applied": true,
+      "safe_latched": false,
+      "failsafe_count": 4,
+      "actuators": true
+    }
+  },
+  {
+    "step": "POSE height=-20 (낮춘다)",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 65,
+      "type": "POSE",
+      "applied": true,
+      "safe_latched": false,
+      "failsafe_count": 4,
+      "actuators": true
+    }
+  },
+  {
+    "step": "POSE 복귀",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 86,
+      "type": "POSE",
+      "applied": true,
+      "safe_latched": false,
+      "failsafe_count": 4,
+      "actuators": true
+    }
+  },
+  {
+    "step": "ACTION 0 stand_four_legs",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 108,
+      "type": "ACTION",
+      "applied": true,
+      "safe_latched": false,
+      "failsafe_count": 4,
+      "actuators": true
+    }
+  },
+  {
+    "step": "ACTION 1 sit_dowm",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 134,
+      "type": "ACTION",
+      "applied": true,
+      "safe_latched": true,
+      "failsafe_count": 5,
+      "actuators": true
+    }
+  },
+  {
+    "step": "ACTION 0 복귀",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 160,
+      "type": "ACTION",
+      "applied": true,
+      "safe_latched": true,
+      "failsafe_count": 5,
+      "actuators": true
+    }
+  },
+  {
+    "step": "ACTION 9 (표에 없음 → 거절)",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 185,
+      "type": "ACTION",
+      "applied": false,
+      "safe_latched": true,
+      "failsafe_count": 5,
+      "actuators": true
+    }
+  },
+  {
+    "step": "걷는 중 ACTION 1 (거절되어야 함)",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 199,
+      "type": "ACTION",
+      "applied": true,
+      "safe_latched": true,
+      "failsafe_count": 5,
+      "actuators": true
+    }
+  },
+  {
+    "step": "정지 후 ACTION 1 (받아야 함)",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 218,
+      "type": "ACTION",
+      "applied": true,
+      "safe_latched": true,
+      "failsafe_count": 5,
+      "actuators": true
+    }
+  },
+  {
+    "step": "ACTION 0 복귀",
+    "ack": {
+      "ok": true,
+      "verdict": "ACCEPT",
+      "seq": 243,
+      "type": "ACTION",
+      "applied": true,
+      "safe_latched": true,
+      "failsafe_count": 5,
+      "actuators": true
+    }
+  }
+]

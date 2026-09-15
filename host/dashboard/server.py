@@ -454,6 +454,22 @@ def create_app(
                 return rejected
             return commands.reset().as_dict()
 
+        @app.post("/api/command/service")
+        async def service(request: Request):
+            """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.
+
+            진입은 로봇을 주차시키고 루프 워치독을 건다(패치·진단용). 해제 후에도
+            safe 래치는 남으므로 보행 복귀에는 `/api/command/reset` 이 필요하다.
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            mode = body.get("mode")
+            if not isinstance(mode, str):
+                return JSONResponse({"error": "mode"}, status_code=400)
+            return commands.service(mode).as_dict()
+
         @app.post("/api/command/drive")
         async def drive(request: Request):
             """`MANUAL` 에서만 받는다. 다음 틱에 반영된다."""

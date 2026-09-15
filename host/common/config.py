@@ -127,6 +127,11 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(vision, "stall_timeout_ms")
     _require_positive(vision, "target_fps")
     _require_positive(vision, "inference_fps")
+    # 장착 방향 보정은 0 또는 180 뿐이다 — 펌웨어가 vflip+hmirror 합성으로 구현하므로
+    # 90·270 은 만들 수 없다. 여기서 막지 않으면 카메라가 400 을 돌려주고 그것을
+    # 기동 경고로만 보게 된다.
+    if vision.get("mount_rotation", 0) not in (0, 180):
+        raise ConfigError("vision.mount_rotation 은 0 또는 180 이어야 함")
     # ⚠️ **추론률의 상한은 `target_fps` 가 아니라 `stream_fps_limit` 이다.**
     # `target_fps` 는 NFR-1.3 이 요구하는 *하한*(≥15fps)이고 실제 수신률은 상한값이다.
     # 하한을 상한으로 쓰면 25fps 를 받는데도 추론률을 15 위로 못 올린다 — 지키려던

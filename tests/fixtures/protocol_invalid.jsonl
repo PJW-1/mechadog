@@ -4,3 +4,6 @@
 {"_case": "type 누락 — 폐기", "_expect": "discard", "seq": 23, "ts": 1756800002300, "step": 60}
 {"_case": "seq 누락 — 폐기", "_expect": "discard", "ts": 1756800002400, "type": "STOP"}
 {"_case": "STATE 미지 상태 — 폐기 + WARN", "_expect": "discard_warn", "seq": 24, "ts": 1756800002500, "type": "STATE", "state": "DANCING"}
+{"_case": "SERVICE mode 누락 — 폐기", "_expect": "discard", "seq": 25, "ts": 1756800002600, "type": "SERVICE"}
+{"_case": "SERVICE 미지 모드 — 폐기 + WARN", "_expect": "discard_warn", "seq": 26, "ts": 1756800002700, "type": "SERVICE", "mode": "reboot"}
+{"_case": "SERVICE mode 가 문자열이 아님 — 폐기", "_expect": "discard", "seq": 27, "ts": 1756800002800, "type": "SERVICE", "mode": 1}
