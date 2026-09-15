@@ -55,7 +55,9 @@ def drain(sock: socket.socket) -> None:
 
 
 def summarize(samples: list[dict], label: str) -> dict:
-    pitches = sorted(abs(s["imu"]["pitch"]) for s in samples if "pitch" in s["imu"])
+    # 부호 검증이 목적이므로 pitch 는 부호를 지우지 않는다 — abs() 를 걸면
+    # "들었다/숙였다" 를 판정할 수 없다 (2026-09-15 실측: 명령 -15° → IMU 음수 = 앞이 올라감).
+    pitches = sorted(s["imu"]["pitch"] for s in samples if "pitch" in s["imu"])
     rolls = sorted(abs(s["imu"]["roll"]) for s in samples if "roll" in s["imu"])
 
     def stats(vals):
@@ -100,11 +102,14 @@ def main() -> int:
     time.sleep(1.0)
 
     results = []
+    # 부호 실측 확정 (2026-09-15): 명령 pitch 음수 = 고개 들기(IMU 음수), 양수 = 숙이기.
+    # 이 시험은 "고친 부호가 맞는가" 를 재확인한다 — 양수 하나를 끝에 두어 양쪽 방향을 본다.
     stages = [
         ("baseline-stand", None),  # 기본 자세 기준선
-        ("pitch+10", {"pitch": 10, "roll": 0, "height": 0, "dur": 1500}),
-        ("pitch+20", {"pitch": 20, "roll": 0, "height": 0, "dur": 1500}),
-        ("pitch+30", {"pitch": 30, "roll": 0, "height": 0, "dur": 1500}),
+        ("pitch-10", {"pitch": -10, "roll": 0, "height": 0, "dur": 1500}),  # 들기
+        ("pitch-20", {"pitch": -20, "roll": 0, "height": 0, "dur": 1500}),
+        ("pitch-30", {"pitch": -30, "roll": 0, "height": 0, "dur": 1500}),
+        ("pitch+15", {"pitch": 15, "roll": 0, "height": 0, "dur": 1500}),  # 숙이기 대조
         ("sit-low", {"pitch": 0, "roll": 0, "height": -25, "dur": 1500}),  # 앉기(낮춤) 후보
         ("restore", {"pitch": 0, "roll": 0, "height": 0, "dur": 1500}),
     ]
