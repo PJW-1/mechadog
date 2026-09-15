@@ -31,7 +31,7 @@ SKIN_RGB = (0.85, 0.65, 0.55)
 WORKWEAR_RGB = (0.25, 0.30, 0.35)  # 작업복 남청색
 
 
-def _try_spawn_character(stage, prim_path: str) -> bool:
+def _try_spawn_character(stage, prim_path: str, prefer: int = 0) -> bool:
     """Isaac 사람 에셋을 찾아본다. 있으면 True."""
     try:
         from isaacsim.storage.native import get_assets_root_path
@@ -43,6 +43,8 @@ def _try_spawn_character(stage, prim_path: str) -> bool:
             "/Isaac/People/Characters/original_male_adult_construction_05/male_adult_construction_05.usd",
             "/Isaac/People/Characters/male_adult_construction_03/male_adult_construction_03.usd",
         ]
+        # 작업자마다 다른 에셋부터 시도 — 전원 동일 인물이면 학습 다양성이 없다
+        candidates = candidates[prefer:] + candidates[:prefer]
         from isaacsim.core.utils.stage import add_reference_to_stage
 
         for cand in candidates:
@@ -129,7 +131,7 @@ def spawn_workers(
         path = f"/World/Workers/worker_{i}"
         inner = f"{path}/char"
         stage.DefinePrim(path, "Xform")
-        asset = "character" if _try_spawn_character(stage, inner) else "fallback"
+        asset = "character" if _try_spawn_character(stage, inner, prefer=i) else "fallback"
         if asset == "fallback":
             _spawn_fallback_humanoid(stage, inner, wears, mat_cache)
         api = UsdGeom.XformCommonAPI(stage.GetPrimAtPath(path))

@@ -49,7 +49,7 @@ CLASS_IDS = {"helmet": 0, "no_helmet": 1, "vest": 2, "no_vest": 3}
 #: 만든다 — 참조 캐릭터의 ComputeWorldBound 는 스폰 위치를 반영하지 않는
 #: 로컬 바운드를 돌려주는 함정이 있어 믿을 수 없다 (실측 확인됨).
 #: (z0, z1, 반폭) — 170cm 성인. 폴백 인형과 캐릭터 에셋 둘 다 이 비율 안에 든다.
-HEAD_ZONE = (1.48, 1.78, 0.17)
+HEAD_ZONE = (1.50, 1.75, 0.16)
 TORSO_ZONE = (0.80, 1.42, 0.26)
 
 #: 이 픽셀보다 작은 투영 박스는 라벨하지 않는다 — 학습에 잡음만 된다.
@@ -92,6 +92,28 @@ def _project_box(corners, cam_pos, rot_inv, k, size):
     if x2 - x1 < MIN_BOX_PX or y2 - y1 < MIN_BOX_PX:
         return None
     return (x1, y1, x2, y2)
+
+
+def _floor_probe():
+    """(x, y) 가 열린 바닥인지 — 위에서 내려쏴 z>0.35 지오메트리에 맞으면 랙 안."""
+    try:
+        import carb
+        from omni.physx import get_physx_scene_query_interface
+
+        sq = get_physx_scene_query_interface()
+
+        def clear(x: float, y: float) -> bool:
+            try:
+                hit = sq.raycast_closest(carb.Float3(x, y, 2.6), carb.Float3(0.0, 0.0, -1.0), 5.0)
+            except Exception:
+                return True
+            if not hit or not hit.get("hit"):
+                return True
+            return float(hit["position"][2]) < 0.35
+
+        return clear
+    except Exception:
+        return lambda *_args: True
 
 
 def _zone_corners(wx: float, wy: float, zone: tuple):
@@ -157,6 +179,124 @@ def _set_visible(prim, on: bool) -> None:
     img.MakeVisible() if on else img.MakeInvisible()
 
 
+def _arm_joint_recipe(stage, wrec, world, settle: int = 8) -> dict:
+    """캐릭터 스켈레톤에서 팔 관절을 찾아 "팔을 내리는 회전"을 자동 캘리브레이션한다.
+
+    캐릭터 에셋은 T자 포즈로 스폰된다 — 학습 데이터가 T자 일변도면 모델이
+    팔 내린 실제 작업자를 못 잡는다. 관절의 로컬 회전축 규약은 에셋마다
+    다르므로 추측하지 않는다: 각 관절을 ±X/Y/Z 로 돌려 보고 몸통 바운딩박스의
+    수평 면적(팔 벌림의 직접 지표)을 가장 많이 줄인 축·부호를 채택한다.
+    리그가 매 스텝 관절을 덮어쓰면 면적이 안 줄어든다 — 그 경우 빈 dict 를
+    돌려주고 T자 그대로 둔다 (거짓 성공 주장을 하지 않기 위해).
+
+    반환: {joint_rel_path: (axis: "X"|"Y"|"Z", sign: ±1, min_deg, max_deg)}
+    """
+    if wrec.get("asset") != "character":
+        return {}
+    from pxr import Usd, UsdGeom, UsdSkel  # noqa: N806
+
+    base = wrec["path"] + "/char"
+    skel_prim = None
+    for prim in stage.Traverse():
+        if str(prim.GetPath()).startswith(base) and prim.GetTypeName() == "Skeleton":
+            skel_prim = prim
+            break
+    if skel_prim is None:
+        print(f"[pose] {wrec['path']}: Skeleton prim 없음")
+        return {}
+
+    # 스켈레톤 애니메이션이 매 스텝 관절 로컬 트랜스폼을 덮어쓰면 수동 회전이
+    # 무력하다 — 애니메이션 prim 을 끄고 재시도한다 (T자는 정지 프레임의
+    # 산물이므로, 꺼지면 자유롭게 포즈를 잡을 수 있다).
+    for prim in stage.Traverse():
+        if not str(prim.GetPath()).startswith(base):
+            continue
+        if prim.GetTypeName() in ("SkelAnimation", "Animation"):
+            prim.SetActive(False)
+        rel = prim.GetRelationship("skel:animationSource")
+        if rel:
+            rel.ClearTargets(False)
+
+    skel = UsdSkel.Skeleton(skel_prim)
+    joints = [str(p) for p in skel.GetJointsAttr().Get()]
+    arm = [
+        j
+        for j in joints
+        if any(k in j.lower() for k in ("shoulder", "clavicle", "upperarm", "forearm", "elbow"))
+    ]
+    if not arm:
+        print(f"[pose] 팔 관절 이름 매칭 실패 — joints {len(joints)}개: {joints[:8]}")
+        return {}
+    print(f"[pose] 팔 관절 후보 {len(arm)}개: {arm[:6]}")
+
+    def extent() -> float:
+        cache = UsdGeom.BBoxCache(
+            Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render]
+        )
+        box = cache.ComputeWorldBound(stage.GetPrimAtPath(base)).ComputeAlignedBox()
+        if box.IsEmpty():
+            return 1e9
+        lo, hi = box.GetMin(), box.GetMax()
+        return (float(hi[0]) - float(lo[0])) * (float(hi[1]) - float(lo[1]))
+
+    for _ in range(settle):
+        world.step(render=True)
+    base_area = extent()
+    recipe: dict = {}
+    axes = {"X": None, "Y": None, "Z": None}
+    for jrel in arm:
+        jprim = stage.GetPrimAtPath(skel_prim.GetPath().AppendPath(jrel))
+        if not jprim.IsValid():
+            continue
+        xf = UsdGeom.Xformable(jprim)
+        best = (base_area, None, 1)
+        for ax in axes:
+            mk = getattr(xf, f"AddRotate{ax}Op")
+            for s in (1, -1):
+                op = mk()
+                op.Set(55.0 * s)
+                for _ in range(settle):
+                    world.step(render=True)
+                area = extent()
+                if area < best[0] * 0.97:
+                    best = (area, ax, s)
+                op.Set(0.0)
+        if best[1] is not None:
+            deep = "forearm" in jrel.lower() or "elbow" in jrel.lower()
+            recipe[jrel] = (best[1], best[2], 25.0 if deep else 40.0, 60.0 if deep else 85.0)
+    if recipe:
+        print(f"[pose] 팔 관절 캘리브레이션 성공 — {len(recipe)}개 관절, 면적 {base_area:.2f}㎡")
+    else:
+        print("[pose] 관절 회전이 메시에 반영되지 않음 — T자 유지")
+    for _ in range(settle):
+        world.step(render=True)
+    return recipe
+
+
+def _pose_ops_for(stage, wrec, recipe: dict) -> list:
+    """캘리브레이션 레시피대로 이 작업자의 관절 회전 op 를 만든다 (최초 1회)."""
+    if wrec.get("asset") != "character" or not recipe:
+        return []
+    from pxr import UsdGeom  # noqa: N806
+
+    base = wrec["path"] + "/char"
+    skel_path = None
+    for prim in stage.Traverse():
+        if str(prim.GetPath()).startswith(base) and prim.GetTypeName() == "Skeleton":
+            skel_path = prim.GetPath()
+            break
+    if skel_path is None:
+        return []
+    ops = []
+    for jrel, (ax, sign, lo, hi) in recipe.items():
+        jprim = stage.GetPrimAtPath(skel_path.AppendPath(jrel))
+        if not jprim.IsValid():
+            continue
+        op = getattr(UsdGeom.Xformable(jprim), f"AddRotate{ax}Op")()
+        ops.append((op, sign, lo, hi))
+    return ops
+
+
 def _find_ppe_prims(stage, worker_path: str) -> dict[str, list]:
     """작업자 아래에서 PPE 부위 prim 을 찾는다.
 
@@ -218,7 +358,7 @@ def main(argv=None) -> int:
 
     import cv2
     from isaacsim.core.api import World
-    from pxr import Gf, UsdGeom  # noqa: N806
+    from pxr import Gf, UsdGeom, UsdShade  # noqa: N806
 
     from sim.factory_world import build_factory
     from sim.mechdog_proxy import attach_camera, build_robot
@@ -241,6 +381,39 @@ def main(argv=None) -> int:
     # 작업자별 토글 가능한 PPE prim 목록 — 부위 prim 이 있으면 조합 무작위화 가능
     for wrec in workers:
         wrec["ppe"] = _find_ppe_prims(stage, wrec["path"])
+
+    # PPE 색 입히기 — 캐릭터 에셋의 조끼·안전모 메시는 몸 전체와 같은
+    # BaseColor 텍스처 아틀라스를 써서 회색 톤으로 나온다. 머티리얼 바인딩
+    # 교체는 스킨드 메시 렌더 경로에서 무시되므로 (실측), 에셋 셰이더에
+    # diffuse_tint 를 직접 넣어 색을 곱한다 — 텍스처 디테일은 살고 색만 입혀진다.
+    from pxr import Sdf
+
+    from sim.people_spawner import HELMET_RGB, VEST_RGB
+
+    for wrec in workers:
+        looks = wrec["path"] + "/char/Looks/"
+        for prim in stage.Traverse():
+            path = str(prim.GetPath())
+            if not path.startswith(looks) or prim.GetTypeName() != "Shader":
+                continue
+            low = path.lower()
+            rgb = HELMET_RGB if "hardhat" in low else VEST_RGB if "safetyvest" in low else None
+            if rgb is not None:
+                UsdShade.Shader(prim).CreateInput("diffuse_tint", Sdf.ValueTypeNames.Color3f).Set(
+                    Gf.Vec3f(*rgb)
+                )
+
+    # T자 포즈 해소 — 같은 에셋이면 스켈레톤이 같으니 한 명으로 캘리브레이션해
+    # 전원에게 같은 레시피를 적용한다. 리그가 관절을 덮어쓰면 recipe 가 비고,
+    # 그 경우 팔은 T자로 둔다 (바꿨다고 주장하지 않는다).
+    recipe = next(
+        (_arm_joint_recipe(stage, w, world) for w in workers if w["asset"] == "character"),
+        {},
+    )
+    for wrec in workers:
+        wrec["pose_ops"] = _pose_ops_for(stage, wrec, recipe)
+
+    floor_clear = _floor_probe()
 
     robot_xf = UsdGeom.Xformable(stage.GetPrimAtPath(robot_path))
     walk = zones["walkable"]  # (x0, x1, y0, y1)
@@ -278,6 +451,9 @@ def main(argv=None) -> int:
                             _set_visible(prim, part in combo)
                 else:
                     combo = wrec["wears"]
+                # 팔 자세 무작위화 — 캘리브레이션된 축·부호로 범위 안 랜덤 각도
+                for op, sign, lo, hi in wrec["pose_ops"]:
+                    op.Set(sign * rng.uniform(lo, hi))
                 tag = "f" if wrec["asset"] == "fallback" else "c"
                 combos.append(f"{tag}:" + ("+".join(combo) or "none"))
                 wrec["combo"] = combo
@@ -291,20 +467,25 @@ def main(argv=None) -> int:
             #    15%는 완전 무작위(부정 배경 프레임도 데이터다) ──
             focus = rng.choice(workers)
             roll = rng.random()
-            if roll < 0.85:
-                ang = rng.uniform(0, 2 * math.pi)
-                dist = rng.uniform(2.5, 8.0) if roll < 0.70 else rng.uniform(1.2, 2.5)
-                fx, fy = _char_world_xy(stage, focus["path"])
-                rx = fx - math.cos(ang) * dist
-                ry = fy - math.sin(ang) * dist
-                rx = min(max(rx, walk[0] + 0.5), walk[1] - 0.5)
-                ry = min(max(ry, walk[2] + 0.5), walk[3] - 0.5)
-                ryaw = math.degrees(math.atan2(fy - ry, fx - rx))
-                ryaw += rng.uniform(-20.0, 20.0)
-            else:
-                rx = rng.uniform(walk[0] + 0.5, walk[1] - 0.5)
-                ry = rng.uniform(walk[2] + 0.5, walk[3] - 0.5)
-                ryaw = rng.uniform(0.0, 360.0)
+            rx = ry = ryaw = 0.0
+            for _try in range(8):
+                if roll < 0.85:
+                    ang = rng.uniform(0, 2 * math.pi)
+                    dist = rng.uniform(2.5, 8.0) if roll < 0.70 else rng.uniform(1.2, 2.5)
+                    fx, fy = _char_world_xy(stage, focus["path"])
+                    rx = fx - math.cos(ang) * dist
+                    ry = fy - math.sin(ang) * dist
+                    rx = min(max(rx, walk[0] + 0.5), walk[1] - 0.5)
+                    ry = min(max(ry, walk[2] + 0.5), walk[3] - 0.5)
+                    ryaw = math.degrees(math.atan2(fy - ry, fx - rx))
+                    ryaw += rng.uniform(-20.0, 20.0)
+                else:
+                    rx = rng.uniform(walk[0] + 0.5, walk[1] - 0.5)
+                    ry = rng.uniform(walk[2] + 0.5, walk[3] - 0.5)
+                    ryaw = rng.uniform(0.0, 360.0)
+                # 로봇이 랙 안에 들어가면 카메라가 선반을 뚫고 찍는다 — 재시도
+                if floor_clear(rx, ry):
+                    break
             ops = robot_xf.GetOrderedXformOps()
             if not ops:  # 첫 프레임은 op 가 없다 — 만들어 둔다
                 robot_xf.AddTranslateOp().Set(Gf.Vec3d(rx, ry, 0.0))
@@ -324,8 +505,28 @@ def main(argv=None) -> int:
                 continue
             rgb = rgba[..., :3]
             # 카메라가 선반·벽 안에 들어간 프레임은 완전 검정 — 버린다.
+            # 평균 밝기만으론 반만 검정인 프레임이 통과하므로 어두운 픽셀
+            # 비율도 같이 본다 (유용한 저조도 부정 프레임은 0.55 기준 안에 든다).
             if float(rgb.mean()) < 5.0:
                 continue
+            dark = float((rgb.mean(axis=2) < 20.0).mean())
+            if dark > 0.55:
+                continue
+            # 센서 도메인 갭 축소 — 시뮬 렌더는 실기보다 지나치게 깨끗하다.
+            # 60% 프레임에 가우시안 노이즈, 그 절반에 미세 블러를 입혀 실기
+            # 카메라의 ISP 잡음을 흉낸다 (라벨은 기하에서 나오므로 영향 없음).
+            if rng.random() < 0.6:
+                import numpy as np
+
+                nprng = np.random.default_rng(rng.randrange(1 << 30))
+                sigma = rng.uniform(1.0, 4.5)
+                rgb = np.clip(
+                    rgb.astype(np.float32) + nprng.normal(0.0, sigma, rgb.shape),
+                    0.0,
+                    255.0,
+                ).astype(np.uint8)
+                if rng.random() < 0.5:
+                    rgb = cv2.GaussianBlur(rgb, (3, 3), 0)
             depth = camera.get_depth()
             cam_pos, cam_quat = camera.get_world_pose("world")
             rot_inv = _quat_to_mat(cam_quat).T
@@ -341,7 +542,7 @@ def main(argv=None) -> int:
                     u = k[0, 2] - k[0, 0] * c[1] / c[0] if c[0] > 0.03 else -1
                     v = k[1, 2] - k[1, 1] * c[2] / c[0] if c[0] > 0.03 else -1
                     print(
-                        f"[dbg] {wrec['path'].rsplit('/',1)[-1]} root={wrec['pos']} "
+                        f"[dbg] {wrec['path'].rsplit('/', 1)[-1]} root={wrec['pos']} "
                         f"char=({cx:.2f},{cy:.2f}) cam=({c[0]:.2f},{c[1]:.2f},{c[2]:.2f}) "
                         f"px=({u:.0f},{v:.0f})"
                     )
