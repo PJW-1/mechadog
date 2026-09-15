@@ -171,7 +171,7 @@ class Teleop:
 def open_socket() -> socket.socket:
     """송신용 UDP 소켓.
 
-    아직 아무도 듣지 않는 포트로내면 ICMP Port Unreachable 이 돌아오고,
+    아직 아무도 듣지 않는 포트로 보내면 ICMP Port Unreachable 이 돌아오고,
     Windows 는 그것을 다음 소켓 조작의 `ConnectionResetError` 로 돌려준다. UDP 에는
     연결이 없으므로 의미 없는 오류이며, 로봇 전원이 늦게 들어오는 것은 정상이다.
 

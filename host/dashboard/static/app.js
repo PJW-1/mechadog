@@ -33,22 +33,14 @@ function syncVisionStatus(){
 }
 const cameraDock=$('camera-dock'),cameraHome=cameraDock.parentElement,cameraNext=cameraDock.nextElementSibling;
 let storage=null;try{storage=localStorage}catch{/* Restricted browsers can still use session-only drafts. */}
-// 실제 대시보드 연결은 **명시적으로 켤 때만** 붙는다 (WBS 4.6.3). 주소를 주지
-// 않으면 링크가 없고 웹은 예시 모드 그대로다 — 공개된 화면이 저 혼자 로봇을
-// 움직이게 두지 않는다. 켜는 법은 둘 중 하나다.
-//   1) 주소창에  ?api=http://127.0.0.1:8000
-//   2) index.html 에  <meta name="mechadog-api" content="http://127.0.0.1:8000">
-// 로컬 주소만 받는다. 원격 주소를 적어도 붙지 않는다.
+// 실제 대시보드 연결은 **대시보드 서버가 이 페이지를 직접 내보냈을 때만** 붙는다
+// (WBS 4.6.3). 그 밖에서 열면 링크가 없고 웹은 예시 모드 그대로다 — 공개된 화면이
+// 저 혼자 로봇을 움직이게 두지 않는다.
+// ⚠️ **다른 출처의 API 를 가리키는 길은 두지 않는다.** 예전의 `?api=`·`<meta>` 는
+// 다른 포트를 받았지만, 서버의 출처 검사가 그 페이지의 명령(비상정지 포함)과 WS 를
+// 전부 거절해 **연결된 척하고 아무것도 못 보내는 화면**이 됐다.
 async function resolveApiBase(){
  try{
-  const fromQuery=new URLSearchParams(location.search).get('api');
-  const fromMeta=document.querySelector('meta[name="mechadog-api"]')?.content;
-  const raw=(fromQuery||fromMeta||'').trim();
-  if(raw){
-    const url=new URL(raw,location.href);
-    if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return null;
-    return url.origin;
-  }
   // 대시보드 서버가 이 페이지를 직접 서빙하면 같은 출처가 곧 API 다.
   // 단, hostname 이 localhost 라는 것만으로는 붙지 않는다 — file:// 이나
   // 다른 로컬 개발 서버 위에서 열렸을 수 있으므로 /health 로 확인한다.
@@ -89,50 +81,6 @@ if(link){
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();
 }
-// 연결 표시 — :8000 이 유일한 관제 포트다. 실기든 시뮬이든 런타임은 항상
-// :8000 에 띄운다(다른 포트는 쓰지 않는다 — 포트를 나누면 출처 검사가 명령을
-// 막는다). 이 메뉴는 전환이 아니라 지금 :8000 에 붙은 개체가 무엇인지 보여준다.
-const SOURCE_PORTS=[8000];
-const sourceSwitch=$('source-switch'),sourceMenu=$('source-menu');
-async function probeSources(){
- const current=apiBase||location.origin;
- const hits=await Promise.all(SOURCE_PORTS.map(async port=>{
-  const origin='http://127.0.0.1:'+port;
-  try{
-   const response=await fetch(origin+'/health',{signal:globalThis.AbortSignal?.timeout?.(1200)});
-   const info=response.ok?await response.json():null;
-   if(info?.service!=='telemetry')return null;
-   return {origin,port,device:info.device_id||'이름 없음',current:origin===current};
-  }catch{return null}
- }));
- return hits.filter(Boolean).sort((a,b)=>a.port-b.port);
-}
-function renderSourceMenu(list){
- sourceMenu.textContent='';
- if(!list.length){const empty=document.createElement('p');empty.className='source-menu-empty';empty.textContent='응답하는 런타임이 없습니다.';sourceMenu.append(empty);return}
- for(const source of list){
-  const item=document.createElement('button');
-  item.type='button';item.setAttribute('role','menuitem');
-  item.className='source-item'+(source.current?' current':'');
-  item.disabled=source.current;
-  const name=document.createElement('strong');name.textContent=source.device;
-  const kind=document.createElement('span');kind.className='source-kind';
-  kind.textContent=source.device.endsWith('-sim')?'시뮬레이션':'실기';
-  const addr=document.createElement('small');addr.textContent='127.0.0.1:'+source.port;
-  item.append(name,kind,addr);
-  item.addEventListener('click',()=>{location.href=location.pathname+'?api='+encodeURIComponent(source.origin)+location.hash});
-  sourceMenu.append(item);
- }
-}
-async function toggleSourceMenu(){
- if(!sourceMenu.hidden){sourceMenu.hidden=true;sourceSwitch.setAttribute('aria-expanded','false');return}
- sourceMenu.hidden=false;sourceSwitch.setAttribute('aria-expanded','true');
- const loading=document.createElement('p');loading.className='source-menu-empty';loading.textContent='런타임 찾는 중…';
- sourceMenu.textContent='';sourceMenu.append(loading);
- renderSourceMenu(await probeSources());
-}
-sourceSwitch.addEventListener('click',toggleSourceMenu);
-document.addEventListener('click',event=>{if(!sourceMenu.hidden&&!event.target.closest('.source-switch'))toggleSourceMenu()});
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
 const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,
