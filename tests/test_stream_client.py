@@ -317,11 +317,11 @@ def _rotated(cfg: dict, rot: int) -> dict:
     return merged
 
 
-def test_default_orientation_sends_nothing(cfg: dict) -> None:
-    """0도는 펌웨어 기본값과 같다 — 보낼 것이 없다."""
+def test_default_orientation_is_pushed_to_clear_a_previous_rotation(cfg: dict) -> None:
+    """호스트만 재시작해도 설정이 정본이어야 하므로 0도 역시 명시해서 보낸다."""
     seen: list[tuple[str, float]] = []
     assert apply_orientation(_rotated(cfg, 0), opener=_fake_opener({"ok": True}, seen)) == 0
-    assert seen == []
+    assert seen[0][0] == "http://10.0.0.9:80/orient?rot=0"
 
 
 def test_rotated_mount_is_pushed_at_startup(cfg: dict) -> None:

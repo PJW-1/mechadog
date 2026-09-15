@@ -374,7 +374,7 @@ def apply_orientation(
     timeout_s: float = 3.0,
     opener: Any = None,
 ) -> int | None:
-    """장착 방향 보정을 카메라에 내려보낸다. 적용한 각도, 건너뛰었으면 ``None``.
+    """장착 방향 보정을 카메라에 내려보낸다. 적용한 각도, 실패했으면 ``None``.
 
     ⚠️ **펌웨어에만 두면 재부팅마다 풀린다.** `/orient` 가 바꾸는 것은 XIAO 의 평범한
     전역 변수라 전원을 껐다 켜면 사라진다 — 뒤집어 단 카메라가 매 부팅마다 뒤집힌
@@ -387,8 +387,6 @@ def apply_orientation(
     경고만 남기고 넘어간다.
     """
     rotation = int(config["vision"].get("mount_rotation", 0))
-    if rotation == 0:
-        return 0  # 기본 방향이면 펌웨어 기본값과 같다 — 보낼 것이 없다
     target = endpoints if endpoints is not None else stream_endpoints(config)
     url = f"{target.control}/orient?rot={rotation}"
     fetch = opener if opener is not None else urllib.request.urlopen
