@@ -8,11 +8,12 @@ import {RobotLink} from './robot-link.js';
 import {VoiceLink,resolveVoiceBase} from './voice-link.js';
 import {VisionFeed} from './vision-feed.js';
 import {EventFeed} from './event-feed.js';
+import {TelemetryFeed,describeTelemetry} from './telemetry-feed.js';
 
 renderIcons();
 const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
-let visionFeed=null,visionStatus={state:'connecting'},eventFeed=null;
+let visionFeed=null,visionStatus={state:'connecting'},eventFeed=null,telemetryFeed=null;
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -80,6 +81,9 @@ if(link){
   onGap:dropped=>operations.noteEventGap(dropped),
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();
+ // 로봇 상태 게이지 (WBS 4.6.2) — /ws/telemetry 는 표시용 10Hz 다. 수신률은 새 seq 로만 센다.
+ telemetryFeed=new TelemetryFeed({url:apiBase.replace(/^http/,'ws')+'/ws/telemetry',onUpdate:view=>operations.setTelemetry(view)});
+ telemetryFeed.start();
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
@@ -120,11 +124,7 @@ function syncMain(){
  $('camera-title').textContent=selected+' · 로봇 시점';$('camera-axis').textContent=selected+' / FRONT';
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
- // 하단 상태 칸은 **연결 여부를 사실대로** 말한다. 이 글자를 고정해 두면 실제 로봇에
- // 붙어 있어도 "장비 미연결" 이라고 뜬다. 로봇 상태(배터리·FSM) 게이지는 아직 이
- // 화면에 없으므로(4.6.2) 연결됐다고 해서 상태를 아는 척하지도 않는다.
- document.querySelector('.actual-status strong').textContent=operations.live?'관제 서버 연결됨 · 로봇 상태 미표시':'현장 상태 확인 불가 · 장비 미연결';
- document.querySelector('.actual-status p').textContent=operations.live?'영상·사건·명령은 실제 로봇 경로입니다. 배터리·FSM 상태는 아직 이 화면에 표시하지 않습니다.':'웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.';
+ syncTelemetry();
  $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'지도 없음 · 예시 공장 숨김';
  $('map-placeholder').hidden=operations.demo;
  if(operations.live)syncVisionStatus();
@@ -152,7 +152,17 @@ function syncMain(){
  document.querySelector('.event-summary p').textContent=liveCount?'실시간 '+liveCount+'건 포함 · 검토 메모와 판단 근거를 확인하세요.':events.length?'검토 메모와 판단 근거를 확인하세요.':'실시간 사건은 수신되지 않았습니다.';
  $('attention-marker').setAttribute('aria-label','예시 사건 검토 열기');
 }
-operations.subscribe(reason=>{syncMain();panels.refresh(reason)});
+// 하단 상태 칸 — 연결 여부와 로봇 상태를 **사실대로** 말한다 (4.6.2). 연결이 없으면 예시 문구다.
+// 연결됐어도 로봇에서 받은 값이 없거나 끊겼으면 그렇게 말한다 — 아는 척하지 않는다.
+function syncTelemetry(){
+ const card=document.querySelector('.actual-status');
+ if(!operations.live){card.dataset.tone='off';card.querySelector('strong').textContent='현장 상태 확인 불가 · 장비 미연결';card.querySelector('p').textContent='웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.';$('state-time').textContent='—';return}
+ const text=describeTelemetry(operations.telemetry);
+ card.dataset.tone=text.tone;card.querySelector('strong').textContent=text.headline;card.querySelector('p').textContent=text.summary;
+ $('state-time').textContent=text.age;
+}
+// 텔레메트리는 초당 10번 온다 — 화면 전체(syncMain)를 다시 맞추지 않고 상태 칸과 게이지만 고친다.
+operations.subscribe(reason=>{if(reason==='telemetry'){syncTelemetry();panels.refresh(reason);return}syncMain();panels.refresh(reason)});
 
 function navigate(page){
  const target=['dashboard','missions','events','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
@@ -281,7 +291,7 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));
-window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();eventFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
+window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();eventFeed?.stop();telemetryFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
 const unregisterTools=registerPageTools({document,store:operations,navigate,onError:()=>operations.log('페이지 도구 등록 실패','일반 화면 조작은 계속 사용 가능')});
 window.addEventListener('pagehide',event=>{if(!event.persisted)unregisterTools()});
 $('retry-render').addEventListener('click',()=>location.reload());

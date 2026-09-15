@@ -1,5 +1,6 @@
 import {REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
+import {describeTelemetry} from './telemetry-feed.js';
 
 const TITLES={missions:'순찰 · 제어',events:'사건 검토',records:'운영 기록',zones:'공간 · 구역',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
 const STATUS={idle:'시작 전',running:'예시 진행 중',paused:'일시정지',ended:'종료'};
@@ -78,6 +79,8 @@ export class OperationalPanels {
  }
  refresh(reason){
   if(this.view==='dashboard')return;
+  // 초당 10번 오는 로봇 상태는 게이지만 고친다 — 화면을 통째로 다시 그리면 입력·초점·3D 미리보기가 날아간다.
+  if(reason==='telemetry'){this.refreshTelemetry();return}
   if(reason==='command'){this.refreshControl();return}
   this.render(this.view);
  }
@@ -454,10 +457,9 @@ export class OperationalPanels {
    this.el('div',{class:'robot-model-stage'},this.robotCanvas,this.robotPreviewNotice),
    this.el('div',{class:'robot-view-controls','aria-label':'로봇 모델 시야 조작'},[['left','왼쪽 회전'],['right','오른쪽 회전'],['in','확대'],['out','축소'],['reset','시점 초기화']].map(([action,label])=>this.button(label,()=>this.onRobotViewAction?.(action),{'data-robot-action':action}))),
    this.note('드래그로 회전 · 휠로 확대 · 공통 예시 형상이며 실제 자세·관절 상태를 나타내지 않습니다.'));
+  this.statusLive=this.el('div',{class:'robot-status-live','aria-live':'off'});this.fillRobotStatus();
   const status=this.el('section',{class:'robot-status-sheet','aria-label':store.selected+' 상태'},
-   this.el('div',{class:'op-status-heading'},this.el('h2',{},'로봇 상태'),this.badge('연결 대기')),
-   this.note('실제 장비에서 수신된 값이 없습니다. 마지막 수신 시각과 상태는 연결 후 표시됩니다.'),
-   this.facts([['연결 · 마지막 수신','미연결 / —'],['실제 device_id','미수신'],['FSM · 대응 단계','미수신 / 미수신'],['배터리 전압','— V · 미수신'],['전방 거리','— cm · 미수신'],['IMU pitch / roll / yaw','— / — / —'],['링크 · 안전 래치','미수신 / 미수신'],['마지막 명령 수락 나이','— ms · 미수신']]),
+   this.statusLive,
    this.el('div',{class:'op-toolbar'},this.button('관제에서 가상 시점 보기',()=>this.onFocusRobot(store.selected),{class:'op-button primary'}),this.button('순찰 · 제어 열기',()=>this.onNavigate('missions'))));
   this.container.append(this.el('div',{class:'op-device-switch','aria-label':'상세 로봇 선택'},ROBOTS.map(id=>this.button([this.el('strong',{},id),this.el('span',{},'미연결')],()=>store.selectRobot(id),{'aria-label':id+' 상태 보기','aria-pressed':id===store.selected,class:'op-button'+(id===store.selected?' selected':'')}))),this.el('div',{class:'robot-detail-layout'},preview,status));
   this.onRobotPreview?.(this.robotCanvas);
@@ -468,6 +470,38 @@ export class OperationalPanels {
    this.previewSelect('진단 노드',['MechDog 모션','XIAO 비전','LiDAR 중계']),
    this.facts([['마지막 접속','미수신'],['펌웨어 버전','미수신'],['IP · 포트','미수신'],['최근 오류','미수신 · 오류 없음으로 판단하지 않음']]),
    this.previewButton('진단 기록 조회'),this.note('개체별 역할·기준기 배정은 아직 확정하지 않았습니다. 네트워크 비밀번호와 비밀키는 표시하지 않습니다.')));
+ }
+ // 로봇 상태 게이지 (WBS 4.6.2). 10Hz 로 다시 채우므로 **버튼은 이 안에 두지 않는다** — 누르는 중인
+ // 버튼이 교체되면 클릭이 사라진다. 값은 describeTelemetry 한 곳에서 문구로 만든다.
+ fillRobotStatus(){
+  const store=this.store,text=describeTelemetry(store.telemetry),live=store.live;
+  const rows=live&&text.rows?text.rows:[['연결 · 마지막 수신','미연결 / —'],['실제 device_id','미수신'],['FSM · 대응 단계','미수신 / 미수신'],['배터리 전압','— V · 미수신'],['전방 거리','— cm · 미수신'],['IMU pitch / roll / yaw','— / — / —'],['링크 · 안전 래치','미수신 / 미수신'],['마지막 명령 수락 나이','— ms · 미수신']];
+  const [badgeText,badgeTone]=live?text.badge:['연결 대기',''];
+  const note=!live?this.note('실제 장비에서 수신된 값이 없습니다. 마지막 수신 시각과 상태는 연결 후 표시됩니다.')
+   :text.tone==='stale'?this.note('마지막으로 받은 값입니다 — 지금 상태로 판단하지 마세요.','warning')
+   :text.tone==='closed'?this.note('상태 채널이 끊겨 다시 연결하는 중입니다. 아래는 끊기기 전 값입니다.','warning')
+   :!text.rows?this.note('관제 서버에는 붙었지만 로봇에서 받은 상태가 아직 없습니다.')
+   :this.note('표시는 초당 10번 갱신합니다. 수신률·누락은 새 seq 로만 셉니다 — 같은 값의 반복은 세지 않습니다.');
+  const history=store.telemetry?.history||[];
+  const charts=live&&text.rows?this.el('div',{class:'robot-status-charts'},this.sparkline(history,'battV','배터리','V',2),this.sparkline(history,'distCm','전방 거리','cm',0)):null;
+  this.statusLive.replaceChildren(...[this.el('div',{class:'op-status-heading'},this.el('h2',{},'로봇 상태'),this.badge(badgeText,badgeTone)),note,this.facts(rows),charts].filter(Boolean));
+ }
+ refreshTelemetry(){if(this.view==='devices'&&this.statusLive?.isConnected)this.fillRobotStatus()}
+ /** 최근 60초 추이. 새 seq 로 받은 값만 점이 된다. 그림은 SVG 선 하나와 최소·최대·마지막 값. */
+ sparkline(history,key,label,unit,digits){
+  const points=history.filter(point=>Number.isFinite(point[key]));
+  const figure=this.el('figure',{class:'op-spark'},this.el('figcaption',{},label+' · 최근 60초'));
+  if(points.length<2){figure.append(this.el('p',{class:'op-spark-empty'},'추이 수집 중'));return figure}
+  const values=points.map(point=>point[key]),min=Math.min(...values),max=Math.max(...values);
+  const t0=points[0].t,dt=(points.at(-1).t-t0)||1,span=(max-min)||1,W=240,H=48;
+  const svg=this.document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');
+  const line=this.document.createElementNS('http://www.w3.org/2000/svg','polyline');
+  line.setAttribute('points',points.map(point=>`${((point.t-t0)/dt*W).toFixed(1)},${(H-3-(point[key]-min)/span*(H-6)).toFixed(1)}`).join(' '));
+  svg.append(line);
+  const fmt=value=>value.toFixed(digits)+' '+unit;
+  figure.append(svg,this.el('p',{class:'op-spark-range'},'최소 '+fmt(min)+' · 최대 '+fmt(max)+' · 지금 '+fmt(values.at(-1))));
+  return figure;
  }
  setRobotPreviewError(message){
   this.robotPreviewError=message||'';
@@ -489,7 +523,7 @@ export class OperationalPanels {
   this.container.append(this.section('대응 단계 · 안전 해제 구분',this.el('ol',{class:'op-escalation'},[
    ['L0','평상 단계','L1에서 사람 미검출 5초면 L0 복귀'],['L1','대상 관찰','300ms 내 3회 검출 · 미인증 10초면 L2'],['L2','인증 대응','미검출 5초 / 인증 30초 초과 / 2회 실패 시 L3'],['L3','관리자 판단 필요','관리자 확인과 조치로 해제 · PPE 판정과 별개'],['F','안전 잠금','원인 확인 → RESET_SAFE → 래치 해제 보고 확인']
   ].map(([level,title,detail])=>this.el('li',{},this.el('span',{class:'op-level'},level),this.el('div',{},this.el('strong',{},title),this.el('p',{},detail))))),this.note('정본의 설정값을 읽기 전용으로 표시합니다. F 이전에 L3였다면 F 해제 뒤 L3가 유지됩니다. 사건 검토 저장은 두 잠금을 모두 해제하지 않습니다.')));
-  this.container.append(this.section('연결과 구현 기준',this.facts([['실제 로봇',store.live?'관제 서버 연결됨 · 로봇 상태는 /live 에서':'연결 안 됨'],['구역 / 사원증 관리 서버','미구현 · 실제 CRUD 제공 안 함'],['저장 범위','예시 검토·PPE 초안: 브라우저 / 나머지: 세션']])));
+  this.container.append(this.section('연결과 구현 기준',this.facts([['실제 로봇',store.live?'관제 서버 연결됨 · 로봇 상태는 장치 화면에서':'연결 안 됨'],['구역 / 사원증 관리 서버','미구현 · 실제 CRUD 제공 안 함'],['저장 범위','예시 검토·PPE 초안: 브라우저 / 나머지: 세션']])));
  }
  managementPreview(){
   if(this.settingsSection==='badges'){
