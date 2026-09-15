@@ -22,7 +22,6 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 - `ws://127.0.0.1:8000/ws/vision`: 검출 오버레이 — JPEG 와 박스를 한 메시지로 (아래 절). 카메라가 있을 때만 열린다.
 - `http://127.0.0.1:8000/docs`: HTTP API 확인.
 - `http://127.0.0.1:8000/#dashboard`: 관제 화면 (아래 절).
-- `http://127.0.0.1:8000/live`: 최소 실기 화면 — 카메라 · 배터리/거리 · E-STOP · 안전 해제 · 수동 제어.
 
 ## 관제 화면
 
@@ -42,7 +41,6 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 | `scene.js`, `scene-materials.js`, `robot-view.js` | 공장·로봇 3D, 장치 상세 |
 | `factory-layout.json` | 표시용 공장 배치 (실행 필수) |
 | `icons.js`, `webmcp.js` | 아이콘, 지원 브라우저의 페이지 도구 |
-| `live.html` | 최소 실기 화면 (`/live`) |
 | `vendor/` | three.js 0.186.0 — 화면이 실제로 불러오는 19개 파일과 `THREE-LICENSE.txt` |
 
 ⚠️ **실데이터와 이어진 것은 명령(E-Stop · 수동 · 조이스틱 · 순찰 시작/정지) · 검출 FPV · 사건 피드다.** 서버가 이 화면을
@@ -83,6 +81,10 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 - **하단 상태 칸** — 연결되면 로봇 상태 한 줄(`mechdog-01 · PATROL · L0` / 배터리 · 거리 · 수신률 · 경고). 로봇에서
   받은 값이 없으면 "로봇 상태 미수신", 끊기면 **"로봇 수신 끊김 · N s 전"** 과 *"마지막 값 — 지금 상태로 판단하지 마세요"*.
   자세한 값과 추이는 장치 화면(아래 절).
+- **순찰·제어 → 실제 장비 명령** — 실제 순찰 시작·정지 · 서비스 모드 진입·해제 · 안전 해제(`RESET_SAFE`). 없앤 `/live`
+  최소 화면의 기능을 옮겼다(#168). 상태 칸(상태 수신 · FSM/온보드 · 안전 래치 · 서비스 모드)은 `/ws/telemetry` 로 채우며,
+  **서비스 플래그를 보내지 않는 펌웨어면 "꺼짐" 이 아니라 "모름"** 이라 적는다. ⚠️ **안전 해제는 지금 버튼 한 번이다** —
+  확인 단계(DR-16)를 붙일지는 아직 정하지 않았다.
 
 ### 로봇 상태 게이지 — `telemetry-feed.js` (WBS 4.6.2)
 

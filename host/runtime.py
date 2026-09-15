@@ -335,6 +335,9 @@ class Runtime:
                 "lowbatt": out.reading.lowbatt,
                 "link_ok": out.reading.link_ok,
                 "obstacle": out.reading.obstacle,
+                # 서비스 모드 — 대시보드 토글이 이 값으로 라벨을 맞춘다.
+                # 여기서 빠뜨리면 화면이 켜진 서비스 모드를 "꺼짐"으로 표시한다.
+                "service": out.reading.service,
             },
         }
         self._log.observe(seq=out.reading.seq)

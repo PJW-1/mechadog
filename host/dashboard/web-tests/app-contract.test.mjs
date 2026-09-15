@@ -25,7 +25,7 @@ async function boot(hash='dashboard',{health=null,search=''}={}){
  }
  let visionFeed=null,eventFeed=null,telemetryFeed=null;
  const linkCalls=[];
- class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}}
+ class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}service(mode){linkCalls.push('service:'+mode);return Promise.resolve({accepted:true})}patrol(action){linkCalls.push('patrol:'+action);return Promise.resolve({accepted:true})}resetSafe(){linkCalls.push('reset');return Promise.resolve({accepted:true})}}
  class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class TelemetryStub{constructor(options){telemetryFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class EventStub{constructor(options){eventFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
@@ -151,6 +151,23 @@ test('served by the dashboard, robot state from /ws/telemetry fills the status c
  assert.match(card(),/로봇 수신 끊김 · 4\.2 s 전/);assert.match(sheet(),/수신 끊김/);assert.match(sheet(),/지금 상태로 판단하지 마세요/);
  assert.equal(document.querySelector('.actual-status').dataset.tone,'stale');
  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
+ dom.window.close();
+});
+test('device commands on 순찰·제어 follow the telemetry feed without rebuilding their buttons',async()=>{
+ const state=await boot('missions',{health:{service:'telemetry',vision_clients:0}}),{dom,document,failures,linkCalls}=state,feed=state.telemetryFeed;
+ const section=()=>[...document.querySelectorAll('.op-section')].find(s=>s.querySelector('h3')?.textContent==='실제 장비 명령');
+ const toggle=()=>section().querySelector('[data-service="toggle"]');
+ assert.match(section().textContent,/서비스 모드미수신/);assert.equal(toggle().disabled,false);
+ const snap=service=>({deviceId:'mechdog-01',state:'IDLE',escalation:'L0',ageMs:30,stale:false,runtimeStale:false,telemetry:{deviceId:'x',bootId:'b',seq:1,state:'FAILSAFE',battV:8.1,distCm:90,imu:{pitch:0,roll:0,yaw:0},lastCmdAgeMs:20,safetyLatched:true,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true,service}}});
+ const button=toggle();
+ feed.options.onUpdate({state:'live',snapshot:snap(true),rateHz:10,lost:0,history:[]});
+ assert.match(section().textContent,/서비스 모드켜짐/);assert.match(section().textContent,/안전 래치걸림/);assert.match(section().textContent,/IDLE · 온보드 FAILSAFE/);
+ // 10Hz 로 칸을 고쳐도 버튼은 같은 요소다 — 누르는 순간 교체되면 클릭이 사라진다.
+ assert.equal(toggle(),button);assert.match(button.textContent,/서비스 모드 해제/);
+ button.click();await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(linkCalls,['service:exit']);
+ feed.options.onUpdate({state:'live',snapshot:snap(null),rateHz:10,lost:0,history:[]});
+ assert.match(section().textContent,/모름 · 펌웨어가 알리지 않음/);assert.deepEqual(failures,[]);
  dom.window.close();
 });
 test('without the dashboard server there is no telemetry feed and the gauges stay unfilled',async()=>{

@@ -325,6 +325,23 @@ export class OperationalPanels {
   this.container.querySelector('.op-section').before(manual);
   this.onManualObservation?.(cameraMount);
   this.updateRobotObservation(this.robotObservation);
+  // 실제 장비 명령 — 폐기된 /live 최소 화면에만 있던 기능을 관제로 옮긴 것.
+  // 상태 칸은 /ws/telemetry 피드로 초당 10번 고친다(refreshTelemetry). ⚠️ **버튼은 교체하지 않고 글자만 바꾼다** —
+  // 누르는 순간 버튼이 새로 만들어지면 클릭이 사라진다. 서비스 토글은 누를 때의 실측값으로 방향을 정한다.
+  {
+   this.deviceFacts=this.el('div',{class:'op-device-facts'});
+   this.serviceButton=this.button('',()=>store.requestService(store.serviceMode!==true),{disabled:!store.live,'data-service':'toggle'});
+   this.fillDeviceCommands();
+   this.container.append(this.section('실제 장비 명령',
+    this.deviceFacts,
+    this.el('div',{class:'op-toolbar'},
+     this.button('실제 순찰 시작',()=>store.requestPatrol(true),{disabled:!store.live}),
+     this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live}),
+     this.serviceButton,
+     this.button('안전 해제 (RESET_SAFE)',()=>store.requestResetSafe(),{disabled:!store.live})),
+    store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
+    this.note('서비스 모드는 로봇을 주차시키고 루프 워치독을 겁니다(패치·OTA용). 해제 후에도 안전 래치는 남으므로 보행 복귀에는 안전 해제가 필요합니다.')));
+  }
   if(store.blocked)this.container.append(this.note(store.estop?'예시 정지 잠금 상태입니다. 설정에서 웹 예시 잠금만 초기화할 수 있습니다.':'예시 모드·수신 상태·운영자 시연 역할을 설정에서 확인하세요.','warning'),this.button('운영 설정',()=>this.openDisplaySettings()));
   this.refreshControl();
   this.container.append(this.previewSection('순찰 계획 · 구역별 진행',
@@ -486,7 +503,20 @@ export class OperationalPanels {
   const charts=live&&text.rows?this.el('div',{class:'robot-status-charts'},this.sparkline(history,'battV','배터리','V',2),this.sparkline(history,'distCm','전방 거리','cm',0)):null;
   this.statusLive.replaceChildren(...[this.el('div',{class:'op-status-heading'},this.el('h2',{},'로봇 상태'),this.badge(badgeText,badgeTone)),note,this.facts(rows),charts].filter(Boolean));
  }
- refreshTelemetry(){if(this.view==='devices'&&this.statusLive?.isConnected)this.fillRobotStatus()}
+ refreshTelemetry(){
+  if(this.view==='devices'&&this.statusLive?.isConnected)this.fillRobotStatus();
+  if(this.view==='missions'&&this.deviceFacts?.isConnected)this.fillDeviceCommands();
+ }
+ fillDeviceCommands(){
+  const store=this.store,t=store.live?store.deviceTelemetry:null,text=describeTelemetry(store.telemetry),svc=store.serviceMode;
+  const received=t?(text.tone==='live'?'실시간':text.tone==='stale'?'끊김 · '+text.age+' · 마지막 값':'채널 끊김 · 마지막 값'):'미수신';
+  this.deviceFacts.replaceChildren(this.facts([
+   ['상태 수신',received],
+   ['FSM · 온보드',t?(store.fsmState||'기동 전')+' · 온보드 '+(t.state||'—'):'미수신'],
+   ['안전 래치',t?(t.safetyLatched?'걸림':'해제됨'):'미수신'],
+   ['서비스 모드',!t?'미수신':svc===null?'모름 · 펌웨어가 알리지 않음':svc?'켜짐 · 루프 워치독 동작 중':'꺼짐']]));
+  this.serviceButton.textContent=svc===true?'서비스 모드 해제 — 워치독 끄기':'서비스 모드 진입 — 패치용 워치독';
+ }
  /** 최근 60초 추이. 새 seq 로 받은 값만 점이 된다. 그림은 SVG 선 하나와 최소·최대·마지막 값. */
  sparkline(history,key,label,unit,digits){
   const points=history.filter(point=>Number.isFinite(point[key]));

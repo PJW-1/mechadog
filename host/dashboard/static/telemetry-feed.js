@@ -54,6 +54,8 @@ export function decodeTelemetryMessage(data) {
         tipped: flags.tipped === true,
         obstacle: flags.obstacle === true,
         linkOk: flags.link_ok === true,
+        // 선택 필드다 — 확장 이전 펌웨어는 보내지 않는다. **없는 것을 '꺼짐' 으로 읽지 않는다.**
+        service: typeof flags.service === 'boolean' ? flags.service : null,
       },
     };
   }

@@ -10,6 +10,7 @@ import test from 'node:test';
 
 import { Operations } from '../static/operations.js';
 import { RobotLink, motionFor } from '../static/robot-link.js';
+import { decodeTelemetryMessage } from '../static/telemetry-feed.js';
 
 /** 호출을 기록하는 가짜 fetch. `fail` 을 주면 그 경로만 실패시킨다. */
 function fakeFetch({ fail = null, status = 200 } = {}) {
@@ -197,4 +198,61 @@ test('fetch is never invoked as a method of the link', async () => {
   const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: impl });
   await link.estop();
   assert.notEqual(seenThis, link, 'fetch 가 링크 객체를 this 로 받으면 브라우저가 거부한다');
+});
+
+// ── 실제 장비 명령 (/live 폐기로 관제에 붙인 것) ──────────────────
+
+test('service sends mode to the command endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.service('enter');
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/service');
+  assert.deepEqual(fetchImpl.calls[0].body, { mode: 'enter' });
+  await link.service('exit');
+  assert.deepEqual(fetchImpl.calls[1].body, { mode: 'exit' });
+});
+
+test('resetSafe and patrol hit their own endpoints', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.resetSafe();
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/reset');
+  await link.patrol('start');
+  assert.equal(fetchImpl.calls[1].url, 'http://host:8000/api/command/patrol');
+  assert.deepEqual(fetchImpl.calls[1].body, { action: 'start' });
+  await link.patrol('stop');
+  assert.deepEqual(fetchImpl.calls[2].body, { action: 'stop' });
+});
+
+test('device commands never leave when there is no link', () => {
+  const ops = new Operations({ link: null });
+  ops.setDemo(false);
+  assert.throws(() => ops.requestService(true), /실제 제어는 연결되지 않았습니다/);
+  assert.throws(() => ops.requestPatrol(true), /실제 제어는 연결되지 않았습니다/);
+  assert.throws(() => ops.requestResetSafe(), /실제 제어는 연결되지 않았습니다/);
+});
+
+test('a refused service request is surfaced, not swallowed', async () => {
+  const impl = async () => ({ ok: true, status: 200, json: async () => ({ accepted: false, detail: 'FAILSAFE 에서는 받지 않는다' }) });
+  const ops = liveOps(impl);
+  await assert.rejects(() => ops.requestService(true), /거절/);
+  assert.equal(ops.records[0].action, '실제 서비스 모드 진입 응답');
+});
+
+test('device state is read from the telemetry feed, and a missing service flag is unknown, not off', () => {
+  const snapshot = (flags) =>
+    decodeTelemetryMessage(JSON.stringify({
+      type: 'telemetry', device_id: 'mechdog-01', state: 'IDLE', escalation: 'L0', stale: false, telemetry_age_ms: 30,
+      telemetry: { boot_id: 'b', seq: 3, state: 'FAILSAFE', batt_v: 8.1, dist_cm: 90, imu: { pitch: 0, roll: 0, yaw: 0 }, safety_latched: true, flags },
+    }));
+  const ops = new Operations({ link: null });
+  assert.equal(ops.serviceMode, null);
+  assert.equal(ops.safetyLatched, null);
+  ops.setTelemetry({ state: 'live', snapshot: snapshot({ lowbatt: false, tipped: false, link_ok: true, service: true }) });
+  assert.equal(ops.serviceMode, true);
+  assert.equal(ops.safetyLatched, true);
+  assert.equal(ops.fsmState, 'IDLE');
+  // 확장 이전 펌웨어 — service 를 보내지 않는다. 꺼짐으로 읽으면 켜진 서비스 모드를 놓친다.
+  ops.setTelemetry({ state: 'live', snapshot: snapshot({ lowbatt: false, tipped: false, link_ok: true }) });
+  assert.equal(ops.serviceMode, null);
 });

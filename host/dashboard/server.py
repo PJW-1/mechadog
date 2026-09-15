@@ -502,15 +502,6 @@ def create_app(
                 websocket, vision_hub, _send_frames, "Vision channel is read-only"
             )
 
-    live_page = Path(__file__).resolve().parent / "static" / "live.html"
-    if live_page.is_file():
-        # 최소 실기 화면 — 디자인 프로토타입과 무관하게 카메라+이동만 단독 동작한다.
-        live_html = live_page.read_text(encoding="utf-8")
-
-        @app.get("/live")
-        async def live():
-            return Response(content=live_html, media_type="text/html")
-
     if static_dir is not None and static_dir.is_dir():
         # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
         # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.

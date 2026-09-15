@@ -167,6 +167,29 @@ export class Operations {
   this.emit('mode');
  }
  clearPreviewStop(){this.estop=false;this.log('예시 잠금 초기화','실물 안전 잠금 해제 아님 · 자동 재개 안 함');this.emit('mode')}
+ // ── 실제 장비 명령 (폐기된 /live 최소 화면의 기능을 관제로 옮긴 것) ──────
+ // 장비 상태는 /ws/telemetry 피드(setTelemetry · 4.6.2)에서 읽는다 — 따로 폴링하지 않는다.
+ // 로봇에서 받은 값이 없으면 null 이다. 끊겼으면 마지막 값이며, 화면이 끊김을 함께 말한다.
+ get deviceTelemetry(){return this.telemetry?.snapshot?.telemetry??null}
+ get serviceMode(){return this.deviceTelemetry?.flags.service??null}
+ get safetyLatched(){return this.deviceTelemetry?this.deviceTelemetry.safetyLatched:null}
+ get fsmState(){return this.telemetry?.snapshot?.state??''}
+ // 실제 명령의 공통 경로 — 링크가 없으면 절대 나가지 않고, 거절도 숨기지 않는다.
+ requestDevice(label,send){
+  if(!this.live)throw new Error('실제 제어는 연결되지 않았습니다.');
+  this.log('실제 '+label+' 요청',this.selected,'LIVE_LINK');
+  return send().then(result=>{
+   const rejected=result&&result.accepted===false;
+   this.log('실제 '+label+' 응답',(rejected?'거절 · ':'')+(result?.detail||JSON.stringify(result)),'LIVE_LINK');
+   // 상태 변화는 텔레메트리 피드가 곧 가져온다. 여기서는 기록이 바뀐 것만 알린다.
+   this.emit('device');
+   if(rejected)throw new Error('거절됨 — '+(result.detail||'로봇이 거절했습니다.'));
+   return result;
+  },error=>{this.noteLinkError(label,error);throw error});
+ }
+ requestService(on){return this.requestDevice('서비스 모드 '+(on?'진입':'해제'),()=>this.link.service(on?'enter':'exit'))}
+ requestResetSafe(){return this.requestDevice('안전 해제',()=>this.link.resetSafe())}
+ requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
  queryEvents({type='all',status='all',robot='all',query=''}={}){
   const q=query.trim().toLocaleLowerCase();
   return this.events.filter(e=>(this.demo||e.source!=='DEMO')&&(type==='all'||e.category===type)&&(status==='all'||e.review===status)&&(robot==='all'||e.robot===robot)&&(!q||[e.id,e.title,e.robot,e.zone,e.event,e.note].join(' ').toLocaleLowerCase().includes(q)));

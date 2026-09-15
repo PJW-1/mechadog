@@ -276,6 +276,17 @@ def test_events_drive_the_fsm(clock) -> None:
     assert b.state == "FAILSAFE"
 
 
+def test_service_flag_is_carried_and_absent_means_unknown() -> None:
+    """**서비스 모드를 빠뜨리면 화면이 켜진 서비스 모드를 '꺼짐' 으로 보인다** (2026-09-15 실기).
+
+    선택 필드라 확장 이전 펌웨어는 보내지 않는다 — 그때는 `False` 가 아니라 `None` 이다.
+    """
+    r = TelemetryReceiver()
+    on = {"lowbatt": False, "tipped": False, "link_ok": True, "service": True}
+    assert r.ingest(record(device_id="mechdog-svc", flags=on)).reading.service is True
+    assert r.ingest(record(device_id="mechdog-old")).reading.service is None
+
+
 def test_reading_is_immutable() -> None:
     with pytest.raises(AttributeError):
         Reading("a", "boot-a", 1, "PATROL", 8.0, 100, False, False, True).state = "ALERT"  # type: ignore[misc]

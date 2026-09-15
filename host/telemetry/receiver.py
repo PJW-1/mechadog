@@ -59,6 +59,10 @@ class Reading:
     #: 내려보낸 것이 되돌아온 것일 수도 있다 (ADR-22). 이 플래그는 로봇의 센서
     #: 판정이며 반향되지 않는다.
     obstacle: bool | None = None
+    #: 온보드 서비스 모드가 켜져 있는가. 없으면 `None` (확장 이전 펌웨어).
+    #: 대시보드의 서비스 토글 라벨이 이 값을 본다 — 여기서 빠지면 화면이
+    #: 영영 "꺼짐" 만 표시한다 (2026-09-15 실기에서 확인).
+    service: bool | None = None
     pitch: float | None = None
     roll: float | None = None
     yaw: float | None = None
@@ -79,6 +83,7 @@ class Reading:
             safety_latched=msg.get("safety_latched"),
             last_cmd_age_ms=msg.get("last_cmd_age_ms"),
             obstacle=flags.get("obstacle"),
+            service=flags.get("service"),
             pitch=msg["imu"]["pitch"],
             roll=msg["imu"]["roll"],
             yaw=msg["imu"]["yaw"],
