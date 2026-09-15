@@ -90,11 +90,9 @@ SIM_IMU_DRIFT_DEG_PER_TICK = 0.02
 
 def open_socket(port: int) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR 를 쓰지 않는다 — Windows 에서 UDP 는 같은 포트에 조용히 이중
+    # 바인드돼 패킷을 하나도 못 받는다. 점유 중이면 bind 가 즉시 실패해야 한다.
     sock.bind(("", port))
-    if hasattr(socket, "SIO_UDP_CONNRESET"):
-        with contextlib.suppress(OSError):
-            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
     sock.setblocking(False)
     return sock
 

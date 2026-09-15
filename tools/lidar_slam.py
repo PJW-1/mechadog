@@ -57,13 +57,9 @@ RECV_BYTES = 65536
 
 def open_scan_socket(port: int, timeout_s: float) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR 를 쓰지 않는다 — Windows 에서 UDP 는 같은 포트에 조용히 이중
+    # 바인드돼 패킷을 하나도 못 받는다. 점유 중이면 bind 가 즉시 실패해야 한다.
     sock.bind(("", port))
-    if hasattr(socket, "SIO_UDP_CONNRESET"):
-        # Windows — 상대가 없을 때 ICMP 로 인해 recvfrom 이 예외를 던지는 것을 막는다
-        # (`host/runtime.py open_socket` 과 같은 처리).
-        with contextlib.suppress(OSError):
-            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
     sock.settimeout(timeout_s)
     return sock
 

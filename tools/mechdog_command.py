@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import socket
 import sys
@@ -20,9 +19,6 @@ class Client:
         self.target = (host, port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(timeout)
-        if hasattr(socket, "SIO_UDP_CONNRESET"):
-            with contextlib.suppress(OSError):
-                self.sock.ioctl(socket.SIO_UDP_CONNRESET, False)
         self.timeout = timeout
         self.seq = 0
 
@@ -51,7 +47,12 @@ class Client:
             if remaining <= 0:
                 raise TimeoutError("응답 대기 시간 초과")
             self.sock.settimeout(max(0.001, remaining))
-            reply, source = self.sock.recvfrom(2048)
+            try:
+                reply, source = self.sock.recvfrom(2048)
+            except OSError:
+                # Windows — 상대 포트가 없을 때 돌아오는 ICMP 가 recvfrom 의
+                # ConnectionResetError 로 나타난다. 데드라인까지 계속 기다린다.
+                continue
             decoded = json.loads(reply)
             if decoded.get("seq") != expected_seq:
                 continue
@@ -63,7 +64,10 @@ class Client:
 
     def send_raw(self, raw: bytes) -> dict[str, object]:
         self.sock.sendto(raw, self.target)
-        reply, source = self.sock.recvfrom(2048)
+        try:
+            reply, source = self.sock.recvfrom(2048)
+        except OSError as exc:
+            raise TimeoutError("응답 대기 중 소켓 오류") from exc
         decoded = json.loads(reply)
         print(f"{source[0]}:{source[1]} {decoded}")
         return decoded
