@@ -89,10 +89,10 @@ if(link){
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();
 }
-// 연결 전환 — 같은 PC에 떠 있는 다른 런타임(실기·시뮬)으로 화면을 옮긴다.
-// 각 런타임의 /health 가 device_id 를 돌려주므로 버튼마다 개체 이름을 단다.
-// 전환은 ?api= 로 다시 여는 것뿐 — resolveApiBase 가 로컬 주소만 받으므로 안전하다.
-const SOURCE_PORTS=[8000,8001];
+// 연결 표시 — :8000 이 유일한 관제 포트다. 실기든 시뮬이든 런타임은 항상
+// :8000 에 띄운다(다른 포트는 쓰지 않는다 — 포트를 나누면 출처 검사가 명령을
+// 막는다). 이 메뉴는 전환이 아니라 지금 :8000 에 붙은 개체가 무엇인지 보여준다.
+const SOURCE_PORTS=[8000];
 const sourceSwitch=$('source-switch'),sourceMenu=$('source-menu');
 async function probeSources(){
  const current=apiBase||location.origin;

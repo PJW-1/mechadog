@@ -309,6 +309,33 @@ class RobotlinkTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(spoken, "자율 동작 중이 아니다")
 
+    def test_fetch_status_parses_real_payload_shape(self):
+        # 실제 /api/telemetry 페이로드: escalation 은 'L0' 문자열, telemetry 는
+        # 중첩 객체이거나 아직 없으면 None. 이전엔 fetch_status 자체를 mock 해서
+        # escalation 문자열에 .get 을 부르는 크래시를 놓쳤다.
+        real_payload = {
+            "type": "telemetry",
+            "device_id": "mechdog-01",
+            "state": "IDLE",
+            "escalation": "L0",
+            "telemetry": {"batt_v": 8.54, "temp_c": 41.2},
+            "stale": False,
+        }
+        with mock.patch.object(robotlink, "_get", return_value=real_payload):
+            st = robotlink.fetch_status()
+        self.assertIn("8.54", st)
+        self.assertIn("IDLE", st)
+        self.assertIn("L0", st)
+
+    def test_fetch_status_no_telemetry_yet(self):
+        # 시뮬·링크 전 상태 — telemetry=None 이 와도 죽지 않는다.
+        payload = {"state": "FAILSAFE", "escalation": "L3", "telemetry": None, "stale": True}
+        with mock.patch.object(robotlink, "_get", return_value=payload):
+            st = robotlink.fetch_status()
+        self.assertIn("FAILSAFE", st)
+        self.assertIn("L3", st)
+        self.assertIn("링크 지연", st)
+
 
 class HubScenarioQueueTests(unittest.TestCase):
     def test_scenario_item_flows_through_say_queue(self):
