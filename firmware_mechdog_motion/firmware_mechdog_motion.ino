@@ -6,6 +6,7 @@
 
 #include "src/command_parser.h"
 #include "src/motion_hal.h"
+#include "src/motion_safety_state.h"
 #include "src/sensor_hal.h"
 #include "src/stationary_ota.h"
 #include "src/telemetry_publisher.h"
@@ -66,9 +67,7 @@ mechadog::SensorHal g_sensors;
 mechadog::TelemetryPublisher g_telemetry;
 
 char g_packet[kPacketBufferSize + 1];
-// 마지막 MOVE 가 정지가 아니었는가. ACTION 가드가 본다.
-bool g_walking = false;
-bool g_safe_latched = true;
+mechadog::MotionSafetyState g_motion_state;
 bool g_have_valid_command = false;
 uint64_t g_last_valid_command_ms = 0;
 uint64_t g_next_sensor_status_log_ms = 0;
@@ -91,7 +90,6 @@ mechadog::FsmState g_reported_state = mechadog::FsmState::Idle;
 // without a host — useful when the board is on the bench for patching.
 constexpr uint8_t kServiceButtonPin = 5;
 constexpr uint32_t kServiceButtonDebounceMs = 50;
-bool g_service_mode = false;
 bool g_service_button_raw = true;  // pull-up: released reads HIGH
 uint32_t g_service_button_since_ms = 0;
 bool g_service_button_pressed = false;
@@ -193,24 +191,25 @@ void sendAck(const mechadog::DecodeResult& decoded, bool applied) {
            decoded.verdict == mechadog::Verdict::Accept ? "true" : "false",
            mechadog::to_string(decoded.verdict), static_cast<long long>(decoded.command.seq),
            mechadog::to_string(decoded.command.type), applied ? "true" : "false",
-           g_safe_latched ? "true" : "false", static_cast<unsigned long>(g_failsafe_count),
+           g_motion_state.safe_latched ? "true" : "false",
+           static_cast<unsigned long>(g_failsafe_count),
            g_motion.actuators_enabled() ? "true" : "false", serviceModeActive() ? "true" : "false",
            loopWatchdogArmed() ? "true" : "false");
   sendText(response);
 }
 
 void latchFailsafe(const char* reason) {
-  if (!g_safe_latched) {
+  if (!g_motion_state.safe_latched) {
     ++g_failsafe_count;
     Serial.printf("FAILSAFE: %s\n", reason);
   }
-  g_safe_latched = true;
+  g_motion_state.latch();
   g_motion.stop();
 }
 
 bool serviceModeActive() {
 #if MECHADOG_SERVICE_MODE
-  return g_service_mode;
+  return g_motion_state.service_mode;
 #else
   return false;
 #endif
@@ -232,8 +231,7 @@ bool loopWatchdogArmed() {
 // not move.
 bool enterServiceMode() {
   g_motion.stop();
-  g_safe_latched = true;
-  g_service_mode = true;
+  g_motion_state.enter_service();
   const esp_err_t err = mechadog::startTaskWatchdog();
   if (err == ESP_ERR_INVALID_STATE) {
     Serial.println("SERVICE mode: watchdog already armed");
@@ -250,14 +248,16 @@ bool enterServiceMode() {
 }
 
 bool exitServiceMode() {
-  if (!g_service_mode) return false;
+  if (!g_motion_state.service_mode) return false;
   const esp_err_t err = mechadog::disarmTaskWatchdog();
   if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
     Serial.printf("SERVICE exit: watchdog disarm failed err=%ld\n", static_cast<long>(err));
     return false;
   }
-  g_service_mode = false;
-  // The safe latch stays set: returning to motion still requires RESET_SAFE.
+  // RESET_SAFE is accepted while SERVICE is active, so re-park and re-latch
+  // explicitly before returning control to normal motion.
+  g_motion.stop();
+  g_motion_state.exit_service();
   Serial.println("SERVICE mode: exited; SAFE latch remains ON");
   return true;
 }
@@ -274,7 +274,7 @@ void pollServiceButton() {
   if (raw == g_service_button_pressed) return;
   g_service_button_pressed = raw;
   if (!raw) return;  // press edge only; release carries no action
-  if (g_service_mode) {
+  if (g_motion_state.service_mode) {
     exitServiceMode();
   } else {
     enterServiceMode();
@@ -285,12 +285,11 @@ void pollServiceButton() {
 bool applyCommand(const mechadog::Command& command) {
   switch (command.type) {
     case mechadog::CmdType::Stop:
-      g_walking = false;
+      g_motion_state.stop();
       g_motion.stop();
       return true;
 
     case mechadog::CmdType::Estop:
-      g_walking = false;
       latchFailsafe("ESTOP command");
       return true;
 
@@ -304,21 +303,21 @@ bool applyCommand(const mechadog::Command& command) {
       // Clearing the latch while in service mode is accepted but motion stays
       // blocked by the service flag — RESET alone must not resume a parked
       // service robot. Exiting service mode re-latches anyway.
-      g_safe_latched = false;
+      g_motion_state.reset_safe();
       g_reported_state = mechadog::FsmState::Idle;
       Serial.println("SAFE latch cleared; waiting for a new MOVE");
       return true;
 
     case mechadog::CmdType::Move:
-      if (g_safe_latched || serviceModeActive()) return false;
+      if (!g_motion_state.can_move()) return false;
       g_motion.move(command.step, command.angle);
       // 보행 중인지 기록한다. ACTION 가드가 이 값을 본다 — 호스트가 되돌려준
       // `state` 는 반향이라 쓰지 않는다(ADR-22).
-      g_walking = (command.step != 0.0F || command.angle != 0.0F);
+      g_motion_state.note_move(command.step, command.angle);
       return true;
 
     case mechadog::CmdType::Pose:
-      if (g_safe_latched) return false;
+      if (g_motion_state.safe_latched) return false;
       g_motion.pose(command.pitch, command.roll, command.height, static_cast<int>(command.dur));
       return true;
 
@@ -327,7 +326,7 @@ bool applyCommand(const mechadog::Command& command) {
       // 블로킹하므로 그동안 loop() 가 통째로 멈춘다 — UDP 수신도, 300ms 명령
       // 타임아웃 검사도 함께 멈춘다. 걷다가 멈추면 **타임아웃이 자기 자신 때문에
       // 걸린다.** 정지 상태에서만 1초를 감수한다 (NFR-1 비목표: 온보드 블로킹 금지).
-      if (g_walking) {
+      if (!g_motion_state.can_action()) {
         Serial.println("ACTION refused: walking");
         return false;
       }
@@ -408,7 +407,7 @@ void handlePacket(int packet_size) {
   g_last_valid_command_ms = uptimeMs();
   Serial.printf("CMD: seq=%lld type=%s applied=%d safe=%d\n",
                 static_cast<long long>(decoded.command.seq),
-                mechadog::to_string(decoded.command.type), applied, g_safe_latched);
+                mechadog::to_string(decoded.command.type), applied, g_motion_state.safe_latched);
   sendAck(decoded, applied);
 }
 
@@ -482,7 +481,7 @@ void pollTelemetry() {
   // calibration. Sensors may now run with actuators (sensor_hal.h I2C rule);
   // verified walking in the air on 2026-09-12, floor walking still pending.
   sample.sensors_valid = sensors.all_valid();
-  sample.state = g_safe_latched ? mechadog::FsmState::Failsafe : g_reported_state;
+  sample.state = g_motion_state.safe_latched ? mechadog::FsmState::Failsafe : g_reported_state;
   sample.dist_cm = sensors.dist_cm;
   sample.pitch = sensors.pitch;
   sample.roll = sensors.roll;
@@ -496,7 +495,7 @@ void pollTelemetry() {
   sample.link_ok = g_have_valid_command && command_age <= kLinkHealthyAgeMs;
   // No onboard obstacle-stop detector is connected in this firmware stage.
   sample.include_obstacle = false;
-  sample.safety_latched = g_safe_latched;
+  sample.safety_latched = g_motion_state.safe_latched;
   sample.service_mode = serviceModeActive();
   sample.include_service_mode = MECHADOG_SERVICE_MODE != 0;
   // Publisher enforces 100 ms cadence and rejects missing/invalid sensor data.
@@ -566,7 +565,7 @@ bool serviceModeParked() {
 }
 bool otaParkedForReboot() {
 #if MECHADOG_ENABLE_ACTUATORS
-  return serviceModeActive() || g_safe_latched;
+  return serviceModeActive() || g_motion_state.safe_latched;
 #else
   return true;
 #endif
@@ -668,7 +667,7 @@ void loop() {
   // Read monotonic time again after packet handling. The command timestamp can
   // be newer than the loop's earlier capture; keep the age in 64-bit uptime.
   const uint64_t watchdog_now = uptimeMs();
-  if (g_have_valid_command && !g_safe_latched &&
+  if (g_have_valid_command && !g_motion_state.safe_latched &&
       watchdog_now - g_last_valid_command_ms >= kCommandTimeoutMs) {
     latchFailsafe("command timeout >= 300 ms");
   }
