@@ -88,6 +88,14 @@ if(link){
   onGap:dropped=>operations.noteEventGap(dropped),
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();
+ // 서비스 모드·안전 래치 같은 장비 상태는 사건이 아니라 /api/telemetry 에 실린다.
+ // 순찰·제어 화면이 버튼 라벨을 실측값으로 맞추려면 주기적으로 읽어야 한다.
+ setInterval(async()=>{
+  try{
+   const response=await fetch(apiBase+'/api/telemetry',{signal:globalThis.AbortSignal?.timeout?.(1500)});
+   if(response.ok)operations.noteTelemetry((await response.json())?.telemetry);
+  }catch{/* 끊긴 사이클은 넘긴다 — 다음 주기에 다시 읽는다. */}
+ },2000);
 }
 // 연결 전환 — 같은 PC에 떠 있는 다른 런타임(실기·시뮬)으로 화면을 옮긴다.
 // 각 런타임의 /health 가 device_id 를 돌려주므로 버튼마다 개체 이름을 단다.

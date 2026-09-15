@@ -350,7 +350,6 @@ def test_dashboard_ships_its_page_and_three_without_install(clock):
             "/vendor/addons/controls/OrbitControls.js",
         ):
             assert client.get(path).status_code == 200, path
-        assert client.get("/live").status_code == 200
         # 정적 마운트가 API 를 가리지 않는다.
         assert client.get("/api/telemetry").status_code == 200
 

@@ -54,6 +54,8 @@ export class Operations {
   this.demo=true;this.stale=false;this.estop=false;this.role='operator';this.selected='MD-01';
   this.control=null;this.command='STOP';this.mission={status:'idle',robot:'MD-01',zone:'생산 구역',id:null};
   this.records=[];this.sessions=[];this.events=demoEvents();this.policies={};this.storageAvailable=!!storage;
+  // 실제 장비 상태 — /api/telemetry 폴러가 noteTelemetry 로 채운다. null 은 미수신.
+  this.serviceMode=null;this.safetyLatched=null;this.fsmState='';
   this.liveFeed={state:'off',received:0,dropped:0};this.serial=0;this.load();
  }
  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn)}
@@ -167,6 +169,30 @@ export class Operations {
   this.emit('mode');
  }
  clearPreviewStop(){this.estop=false;this.log('예시 잠금 초기화','실물 안전 잠금 해제 아님 · 자동 재개 안 함');this.emit('mode')}
+ // ── 실제 장비 명령 (폐기된 /live 최소 화면의 기능을 관제로 옮긴 것) ──────
+ // 서버 텔레메트리 스냅샷을 스토어에 반영한다. 세 필드가 바뀔 때만 갱신한다 —
+ // 폴러는 몇 초마다 오므로 매번 다시 그리면 드래프트가 날아간다.
+ noteTelemetry(payload){
+  const t=payload&&typeof payload==='object'?payload:{},flags=t.flags||{};
+  const service=flags.service===true,latched=t.safety_latched===true,state=typeof t.state==='string'?t.state:'';
+  if(service===this.serviceMode&&latched===this.safetyLatched&&state===this.fsmState)return;
+  this.serviceMode=service;this.safetyLatched=latched;this.fsmState=state;this.emit('telemetry');
+ }
+ // 실제 명령의 공통 경로 — 링크가 없으면 절대 나가지 않고, 거절도 숨기지 않는다.
+ requestDevice(label,send){
+  if(!this.live)throw new Error('실제 제어는 연결되지 않았습니다.');
+  this.log('실제 '+label+' 요청',this.selected,'LIVE_LINK');
+  return send().then(result=>{
+   const rejected=result&&result.accepted===false;
+   this.log('실제 '+label+' 응답',(rejected?'거절 · ':'')+(result?.detail||JSON.stringify(result)),'LIVE_LINK');
+   this.emit('telemetry');
+   if(rejected)throw new Error('거절됨 — '+(result.detail||'로봇이 거절했습니다.'));
+   return result;
+  },error=>{this.noteLinkError(label,error);throw error});
+ }
+ requestService(on){return this.requestDevice('서비스 모드 '+(on?'진입':'해제'),()=>this.link.service(on?'enter':'exit'))}
+ requestResetSafe(){return this.requestDevice('안전 해제',()=>this.link.resetSafe())}
+ requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
  queryEvents({type='all',status='all',robot='all',query=''}={}){
   const q=query.trim().toLocaleLowerCase();
   return this.events.filter(e=>(this.demo||e.source!=='DEMO')&&(type==='all'||e.category===type)&&(status==='all'||e.review===status)&&(robot==='all'||e.robot===robot)&&(!q||[e.id,e.title,e.robot,e.zone,e.event,e.note].join(' ').toLocaleLowerCase().includes(q)));

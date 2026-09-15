@@ -322,6 +322,20 @@ export class OperationalPanels {
   this.container.querySelector('.op-section').before(manual);
   this.onManualObservation?.(cameraMount);
   this.updateRobotObservation(this.robotObservation);
+  // 실제 장비 명령 — 폐기된 /live 최소 화면에만 있던 기능을 관제로 옮긴 것.
+  // 서비스 모드·안전 래치는 /api/telemetry 폴러가 채우는 실측값을 보여 준다.
+  {
+   const svc=store.serviceMode;
+   this.container.append(this.section('실제 장비 명령',
+    this.facts([['FSM 상태',store.fsmState||'미수신'],['안전 래치',store.safetyLatched===null?'미수신':store.safetyLatched?'걸림':'해제됨'],['서비스 모드',svc===null?'미수신':svc?'켜짐 · 루프 워치독 동작 중':'꺼짐']]),
+    this.el('div',{class:'op-toolbar'},
+     this.button('실제 순찰 시작',()=>store.requestPatrol(true),{disabled:!store.live}),
+     this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live}),
+     this.button(svc?'서비스 모드 해제 — 워치독 끄기':'서비스 모드 진입 — 패치용 워치독',()=>store.requestService(!svc),{disabled:!store.live,'data-service':'toggle'}),
+     this.button('안전 해제 (RESET_SAFE)',()=>store.requestResetSafe(),{disabled:!store.live})),
+    store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
+    this.note('서비스 모드는 로봇을 주차시키고 루프 워치독을 겁니다(패치·OTA용). 해제 후에도 안전 래치는 남으므로 보행 복귀에는 안전 해제가 필요합니다.')));
+  }
   if(store.blocked)this.container.append(this.note(store.estop?'예시 정지 잠금 상태입니다. 설정에서 웹 예시 잠금만 초기화할 수 있습니다.':'예시 모드·수신 상태·운영자 시연 역할을 설정에서 확인하세요.','warning'),this.button('운영 설정',()=>this.openDisplaySettings()));
   this.refreshControl();
   this.container.append(this.previewSection('순찰 계획 · 구역별 진행',

@@ -89,4 +89,19 @@ export class RobotLink {
   drive(command) {
     return this.post('/api/command/drive', motionFor(command, this.motion));
   }
+
+  /** 서비스 모드 전환 — 'enter'|'exit'. 해제 후 보행 복귀에는 resetSafe() 가 필요하다. */
+  service(mode) {
+    return this.post('/api/command/service', { mode });
+  }
+
+  /** FAILSAFE 안전 래치 해제 요청 — 서버가 다음 틱에 RESET_SAFE 를 보낸다. */
+  resetSafe() {
+    return this.post('/api/command/reset', {});
+  }
+
+  /** 실제 순찰 예약/정지 — action 은 'start'|'stop'. */
+  patrol(action) {
+    return this.post('/api/command/patrol', { action });
+  }
 }

@@ -198,3 +198,55 @@ test('fetch is never invoked as a method of the link', async () => {
   await link.estop();
   assert.notEqual(seenThis, link, 'fetch 가 링크 객체를 this 로 받으면 브라우저가 거부한다');
 });
+
+// ── 실제 장비 명령 (/live 폐기로 관제에 붙인 것) ──────────────────
+
+test('service sends mode to the command endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.service('enter');
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/service');
+  assert.deepEqual(fetchImpl.calls[0].body, { mode: 'enter' });
+  await link.service('exit');
+  assert.deepEqual(fetchImpl.calls[1].body, { mode: 'exit' });
+});
+
+test('resetSafe and patrol hit their own endpoints', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.resetSafe();
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/reset');
+  await link.patrol('start');
+  assert.equal(fetchImpl.calls[1].url, 'http://host:8000/api/command/patrol');
+  assert.deepEqual(fetchImpl.calls[1].body, { action: 'start' });
+  await link.patrol('stop');
+  assert.deepEqual(fetchImpl.calls[2].body, { action: 'stop' });
+});
+
+test('device commands never leave when there is no link', () => {
+  const ops = new Operations({ link: null });
+  ops.setDemo(false);
+  assert.throws(() => ops.requestService(true), /실제 제어는 연결되지 않았습니다/);
+  assert.throws(() => ops.requestPatrol(true), /실제 제어는 연결되지 않았습니다/);
+  assert.throws(() => ops.requestResetSafe(), /실제 제어는 연결되지 않았습니다/);
+});
+
+test('a refused service request is surfaced, not swallowed', async () => {
+  const impl = async () => ({ ok: true, status: 200, json: async () => ({ accepted: false, detail: 'FAILSAFE 에서는 받지 않는다' }) });
+  const ops = liveOps(impl);
+  await assert.rejects(() => ops.requestService(true), /거절/);
+  assert.equal(ops.records[0].action, '실제 서비스 모드 진입 응답');
+});
+
+test('telemetry snapshots drive the service toggle label', () => {
+  const ops = new Operations({ link: null });
+  assert.equal(ops.serviceMode, null);
+  ops.noteTelemetry({ state: 'IDLE', safety_latched: false, flags: { service: true } });
+  assert.equal(ops.serviceMode, true);
+  assert.equal(ops.fsmState, 'IDLE');
+  // 같은 스냅샷이 다시 와도 갱신 사건을 내지 않는다 — 폴러는 몇 초마다 온다.
+  let fired = 0;
+  ops.subscribe(() => fired++);
+  ops.noteTelemetry({ state: 'IDLE', safety_latched: false, flags: { service: true } });
+  assert.equal(fired, 0);
+});
