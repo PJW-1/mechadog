@@ -238,6 +238,8 @@ $('reset-view').addEventListener('click',()=>{view?.setView('overview');toast('�
 $('fullscreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{toast('이 브라우저에서는 전체 화면을 사용할 수 없어요.')}});
 function setCameraDockState({expanded=false,collapsed=false}){
  const dock=$('camera-dock'),expand=$('expand-camera'),collapse=$('collapse-camera');
+ if(expanded){dock.saveDockGeom?.();dock.style.left='';dock.style.top='';dock.style.bottom='';dock.style.width=''}
+ else if(!expanded&&dock.classList.contains('expanded'))dock.restoreDockGeom?.();
  dock.classList.toggle('expanded',expanded);dock.classList.toggle('collapsed',collapsed);
  const expandLabel=expanded?'로봇 시점 원래 크기로':'로봇 시점 크게 보기';
  expand.setAttribute('aria-label',expandLabel);expand.title=expandLabel;
@@ -251,37 +253,52 @@ function setCameraDockState({expanded=false,collapsed=false}){
 }
 $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$('camera-dock').classList.contains('expanded')}));
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
-// 카메라 창 자유 배치 — 헤더를 끌어 옮기고, 우하단 그립을 끌어 크기를 바꾼다.
+// 카메라 창 자유 배치 — 헤더를 끌어 옮기고, 변·모서리를 끌어 크기를 바꾼다.
 // 통합 관제에서만 동작한다 — 순찰·제어에서는 칸이 문서 흐름(position:static)이라
 // 끌면 레이아웃이 깨진다. 크기는 너비만 바꾸고 높이는 --vision-aspect 가 맞춘다.
 {
- const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header'),grip=$('camera-resize');
+ const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header');
  const clampTo=(v,min,max)=>Math.min(max,Math.max(min,v));
  const dockInStage=()=>dock.parentElement===stage&&currentPage==='dashboard';
+ // 확대·접기 전의 자유 위치를 기억해 돌아올 때 복원한다.
+ let dockGeom=null;
+ const saveGeom=()=>{dockGeom={left:dock.style.left,top:dock.style.top,bottom:dock.style.bottom,width:dock.style.width}};
+ const restoreGeom=()=>{if(dockGeom)Object.assign(dock.style,dockGeom)};
+ dock.saveDockGeom=saveGeom;dock.restoreDockGeom=restoreGeom;
  header.addEventListener('pointerdown',event=>{
   if(!dockInStage()||event.target.closest('button'))return;
   event.preventDefault();
-  dock.classList.remove('expanded');
   const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  // ⚠️ 순서가 중요하다 — expanded 를 지우면 기본 위치로 돌아가므로, 보이는
+  // 위치(rect)를 먼저 재고 나서 지운다. 그래야 끌기 시작해도 창이 안 뛴다.
+  dock.classList.remove('expanded');
   dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';
   const offX=event.clientX-d.left,offY=event.clientY-d.top;
   const move=move=>{
-   dock.style.left=clampTo(move.clientX-s.left-offX,0,s.width-dock.offsetWidth)+'px';
-   dock.style.top=clampTo(move.clientY-s.top-offY,0,s.height-dock.offsetHeight)+'px';
+   dock.style.left=clampTo(move.clientX-s.left-offX,0,Math.max(0,s.width-dock.offsetWidth))+'px';
+   dock.style.top=clampTo(move.clientY-s.top-offY,0,Math.max(0,s.height-dock.offsetHeight))+'px';
   };
-  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);view?.resize()};
-  header.setPointerCapture(event.pointerId);
+  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  header.setPointerCapture?.(event.pointerId);
   header.addEventListener('pointermove',move);
   header.addEventListener('pointerup',up);
   header.addEventListener('pointercancel',up);
  });
- grip.addEventListener('pointerdown',event=>{
+ const aspect=()=>{const w=visionStatus.width,h=visionStatus.height;return w>0&&h>0?w/h:4/3};
+ for(const grip of dock.querySelectorAll('.camera-resize'))grip.addEventListener('pointerdown',event=>{
   if(!dockInStage())return;
   event.preventDefault();
-  const s=stage.getBoundingClientRect(),startW=dock.getBoundingClientRect().width,startX=event.clientX;
-  const move=move=>{dock.style.width=clampTo(startW+move.clientX-startX,280,Math.min(s.width-20,1100))+'px'};
-  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up)};
-  grip.setPointerCapture(event.pointerId);
+  const edge=grip.dataset.edge,s=stage.getBoundingClientRect(),startW=dock.getBoundingClientRect().width,startX=event.clientX,startY=event.clientY;
+  const move=move=>{
+   const dx=move.clientX-startX,dy=move.clientY-startY;
+   const grown=edge==='e'?dx:edge==='s'?dy*aspect():Math.max(dx,dy*aspect());
+   dock.style.width=clampTo(startW+grown,280,Math.min(s.width-20,1100))+'px';
+   // 너비가 커지면 오른쪽 경계를 넘을 수 있다 — 왼쪽을 당겨 안에 둔다.
+   const over=dock.getBoundingClientRect().right-s.right;
+   if(over>0)dock.style.left=clampTo((dock.offsetLeft||0)-over,0,s.width)+'px';
+  };
+  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  grip.setPointerCapture?.(event.pointerId);
   grip.addEventListener('pointermove',move);
   grip.addEventListener('pointerup',up);
   grip.addEventListener('pointercancel',up);

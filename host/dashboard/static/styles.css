@@ -101,8 +101,11 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .camera-dock { position: absolute; z-index: 6; left: var(--r-camera-shell-x); bottom: 16px; width: var(--r-camera-shell-w); background: var(--panel); border: 1px solid #5d5c70; box-shadow: 0 12px 32px #0c0c1c40; border-radius: 5px; overflow: hidden }
 .camera-header { display: flex; align-items: center; height: 49px; gap: 13px; padding: 0 13px 0 17px; border-bottom: 1px solid var(--rule); cursor: grab; touch-action: none }
 .camera-header:active { cursor: grabbing }
-.camera-resize { position: absolute; right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize; touch-action: none; z-index: 2 }
-.camera-resize:before { content: ""; position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-right: 2px solid #8f8fa8; border-bottom: 2px solid #8f8fa8 }
+.camera-resize { position: absolute; touch-action: none; z-index: 2 }
+.resize-e { top: 0; right: 0; width: 7px; height: 100%; cursor: ew-resize }
+.resize-s { left: 0; bottom: 0; height: 7px; width: 100%; cursor: ns-resize }
+.resize-se { right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize }
+.resize-se:before { content: ""; position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-right: 2px solid #8f8fa8; border-bottom: 2px solid #8f8fa8 }
 .camera-dock.expanded .camera-resize, .camera-dock.collapsed .camera-resize { display: none }
 .op-manual-camera .camera-resize { display: none }
 .op-manual-camera .camera-header { cursor: default }
