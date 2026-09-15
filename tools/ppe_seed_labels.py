@@ -40,7 +40,8 @@ sys.path.insert(0, str(ROOT))
 from host.vision.detector import Detector, ModelMissingError  # noqa: E402
 
 #: config.yaml `vision.ppe.classes` 순서와 반드시 일치시킨다.
-CLASS_IDS = {"helmet": 0, "no_helmet": 1, "vest": 2, "no_vest": 3}
+CLASS_IDS = {"helmet": 0, "no_helmet": 1, "vest": 2, "no_vest": 3,
+             "person_down": 4}  # 쓰러진 작업자 — 자동 판정은 못 하고 수동 라벨용
 CLASS_NAMES = tuple(CLASS_IDS)
 
 # ── 색상 범위 (OpenCV HSV: H 0-179) ─────────────────────────

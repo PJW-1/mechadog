@@ -43,7 +43,8 @@ for _s in (sys.stdout, sys.stderr):
         rc(errors="replace")
 
 #: `tools/ppe_seed_labels.py` 의 CLASS_IDS 와 반드시 일치시킨다.
-CLASS_IDS = {"helmet": 0, "no_helmet": 1, "vest": 2, "no_vest": 3}
+CLASS_IDS = {"helmet": 0, "no_helmet": 1, "vest": 2, "no_vest": 3,
+             "person_down": 4}  # 쓰러진 작업자 — 안전사고 이벤트 클래스
 
 #: 부위 박스는 prim 바운드가 아니라 **작업자의 알려진 위치 + 표준 인체 비율**로
 #: 만든다 — 참조 캐릭터의 ComputeWorldBound 는 스폰 위치를 반영하지 않는
@@ -51,6 +52,17 @@ CLASS_IDS = {"helmet": 0, "no_helmet": 1, "vest": 2, "no_vest": 3}
 #: (z0, z1, 반폭) — 170cm 성인. 폴백 인형과 캐릭터 에셋 둘 다 이 비율 안에 든다.
 HEAD_ZONE = (1.50, 1.75, 0.16)
 TORSO_ZONE = (0.80, 1.42, 0.26)
+
+#: 작업자 자세 분포 — 공장 실제 상황 반영 (서기/집기/선반작업/쭈그림/이동/쓰러짐).
+#: NVIDIA SDG-Warehouse 등 안전 데이터셋의 시나리오 분류를 따른다.
+POSE_MIX = (
+    ("stand", 0.45),   # 기본 서기 — 팔 내림
+    ("bend", 0.20),    # 허리 숙임 — 상자 집기·바닥 작업
+    ("reach", 0.12),   # 팔 들어올림 — 선반 상단 작업
+    ("squat", 0.10),   # 쭈그림 — 저위치 작업
+    ("stride", 0.08),  # 걷기 중간 자세 — 통로 이동
+    ("fallen", 0.05),  # 쓰러짐 — 안전 사고 이벤트 (person_down 라벨)
+)
 
 #: 이 픽셀보다 작은 투영 박스는 라벨하지 않는다 — 학습에 잡음만 된다.
 MIN_BOX_PX = 8
@@ -147,8 +159,11 @@ def _center_depth(corners, cam_pos, rot_inv):
     return float((rot_inv @ (c - cam_pos))[0])
 
 
-def _occluded(box, part_depth, depth_img):
-    """박스 중심 픽셀의 씬 깊이가 부위보다 유의미하게 가까우면 가려진 것."""
+def _occluded(box, part_depth, depth_img, margin: float = 0.25):
+    """박스 중심 픽셀의 씬 깊이가 부위보다 유의미하게 가까우면 가려진 것.
+
+    margin — 박스 중심이 몸 안쪽에 깊이 있는 큰 박스(쓰러진 사람)는 표면이
+    정상적으로도 0.3m+ 가까울 수 있어 여유를 둔다."""
     x1, y1, x2, y2 = box
     u, v = int((x1 + x2) / 2), int((y1 + y2) / 2)
     h, w = depth_img.shape[:2]
@@ -156,7 +171,7 @@ def _occluded(box, part_depth, depth_img):
         return True
     scene_d = float(depth_img[v, u])
     # 깊이 유효치가 없거나(하늘 등) 부위가 더 가까우면 보인다
-    return scene_d > 0 and scene_d < part_depth - 0.25
+    return scene_d > 0 and scene_d < part_depth - margin
 
 
 def _yolo(cls, box, size):
@@ -191,8 +206,246 @@ def _rot4(axis: str, deg: float):
     return r
 
 
-def _apply_arms_down(stage, wrec, rng: random.Random, _worker_idx: int) -> bool:
-    """캐릭터 작업자의 스킨드 메시에 팔 내린 자세를 CPU 로 구워 넣는다.
+def _deepest(joints, keywords, side=None):
+    """키워드가 들어간 가장 깊은 관절 — 없으면 None."""
+    cands = [
+        j for j in joints
+        if any(k in j.rsplit("/", 1)[-1].lower() for k in keywords)
+        and (side is None or f"/{side}" in j)
+    ]
+    return max(cands, key=len) if cands else None
+
+
+def _search_rot(jname, world_mat, mods, score, want_min=True,
+                degs=(45, 55, 65, 75, 85), trial_deg=60):
+    """jname 을 각 축·부호·각도로 돌려 score(mods) 를 극소/극대화하는 조합을 찾는다.
+
+    mods 는 호출 중 임시로 바뀌었다가 원래대로 돌아온다.
+    반환 (axis, sign, deg) — 개선 없으면 None.
+    """
+    cur = mods.get(jname)
+    best_s = score(mods)
+    best = None
+    for ax in "XYZ":
+        for sgn in (1, -1):
+            mods[jname] = _rot4(ax, trial_deg * sgn)
+            s = score(mods)
+            if (s < best_s if want_min else s > best_s):
+                best_s, best = s, (ax, sgn)
+    bd = float(trial_deg)
+    if best:
+        for deg in degs:
+            mods[jname] = _rot4(best[0], deg * best[1])
+            s = score(mods)
+            if (s < best_s if want_min else s > best_s):
+                best_s, bd = s, float(deg)
+    if cur is None:
+        mods.pop(jname, None)
+    else:
+        mods[jname] = cur
+    return (best[0], best[1], bd) if best else None
+
+
+def _arms_down(joints, world_mat, mods, leaves, rng, sides=("L_", "R_")):
+    """팔 내림 — 손 말단 z 를 가장 낮추는 축을 수치 탐색. 팔꿈치는 살짝 굽힘."""
+    for side in sides:
+        leaf = leaves.get(side)
+        if not leaf:
+            continue
+        upper = f"{side.lower()}upperarm"
+        for jname in [j for j in joints if j.rsplit("/", 1)[-1].lower() == upper]:
+            r = _search_rot(
+                jname, world_mat, mods,
+                lambda m, lf=leaf: world_mat(lf, m)[2, 3], want_min=True,
+            )
+            if r:
+                deg = max(40.0, min(90.0, r[2] + rng.uniform(-12.0, 12.0)))
+                mods[jname] = _rot4(r[0], deg * r[1])
+    for jname in [j for j in joints
+                  if j.rsplit("/", 1)[-1].lower() in ("l_forearm", "r_forearm")]:
+        side = "L_" if "/L_" in jname else "R_"
+        leaf = leaves.get(side)
+        if side not in sides or not leaf:
+            continue
+        r = _search_rot(
+            jname, world_mat, mods,
+            lambda m, lf=leaf: world_mat(lf, m)[2, 3], want_min=True, degs=(20,),
+        )
+        if r:
+            mods[jname] = _rot4(r[0], rng.uniform(10.0, 30.0) * r[1])
+
+
+def _spine_bend(joints, world_mat, mods, rng, head_leaf):
+    """허리 숙임 — Waist/Spine01/Spine02 를 머리 z 를 낮추는 축으로 나눠 굽힌다."""
+    if not head_leaf:
+        return
+    for jname in [j for j in joints
+                  if j.rsplit("/", 1)[-1].lower() in ("waist", "spine01", "spine02")]:
+        r = _search_rot(
+            jname, world_mat, mods,
+            lambda m, h=head_leaf: world_mat(h, m)[2, 3], want_min=True,
+            degs=(8, 14, 20, 26), trial_deg=20,
+        )
+        if r:
+            deg = max(8.0, r[2] + rng.uniform(-4.0, 4.0))
+            mods[jname] = _rot4(r[0], deg * r[1])
+
+
+def _arm_up(joints, world_mat, mods, leaf, rng, side):
+    """한 팔 들어올림 — 손 말단 z 를 가장 높이는 축으로."""
+    upper = f"{side.lower()}upperarm"
+    for jname in [j for j in joints if j.rsplit("/", 1)[-1].lower() == upper]:
+        r = _search_rot(
+            jname, world_mat, mods,
+            lambda m, lf=leaf: world_mat(lf, m)[2, 3], want_min=False,
+            degs=(110, 130, 150, 170),
+        )
+        if r:
+            deg = min(180.0, r[2] + rng.uniform(-10.0, 10.0))
+            mods[jname] = _rot4(r[0], deg * r[1])
+
+
+def _fwd_axis(joints, world_mat, mods, feet):
+    """몸의 앞 방향(수평) — 발목→발가락 벡터로 추정. 없으면 None."""
+    import numpy as np
+
+    toe = _deepest(joints, ("toebase",)) or _deepest(joints, ("toe",))
+    if not toe:
+        return None
+    anc = toe.rsplit("/", 1)[0]
+    while anc and "foot" not in anc.rsplit("/", 1)[-1].lower():
+        anc = anc.rsplit("/", 1)[0] if "/" in anc else None
+    if not anc:
+        return None
+    d = world_mat(toe, mods)[:3, 3] - world_mat(anc, mods)[:3, 3]
+    d = np.array([d[0], d[1], 0.0])
+    n = float(np.linalg.norm(d))
+    return d / n if n > 1e-4 else None
+
+
+def _leg_fold(joints, world_mat, mods, feet, rng):
+    """쭈그림 — 양 대퇴를 몸 앞쪽으로 접고(전방 변위 최대) 종아리로 발을 아래로."""
+    import numpy as np
+
+    foot = feet.get("L_") or feet.get("R_")
+    fwd = _fwd_axis(joints, world_mat, mods, feet)
+    if not foot or fwd is None:
+        return
+    rest = world_mat(foot, mods)[:3, 3]
+
+    def fwd_disp(m, f=foot, r0=rest, fw=fwd):
+        p = world_mat(f, m)[:3, 3]
+        return float(np.dot(p - r0, fw))
+
+    found = None
+    for side in ("L_", "R_"):
+        for jname in [j for j in joints
+                      if j.rsplit("/", 1)[-1].lower() == f"{side.lower()}thigh"]:
+            if found is None:
+                found = _search_rot(jname, world_mat, mods, fwd_disp,
+                                    want_min=False, degs=(75, 90), trial_deg=75)
+            if found:
+                mods[jname] = _rot4(found[0], found[2] * found[1])
+    if found is None:
+        return
+    for side in ("L_", "R_"):
+        ft = feet.get(side)
+        if not ft:
+            continue
+        for jname in [j for j in joints
+                      if j.rsplit("/", 1)[-1].lower() == f"{side.lower()}calf"]:
+            r = _search_rot(jname, world_mat, mods,
+                            lambda m, f=ft: world_mat(f, m)[2, 3],
+                            want_min=True, degs=(90, 110))
+            if r:
+                mods[jname] = _rot4(r[0], r[2] * r[1])
+
+
+def _leg_stride(joints, world_mat, mods, feet, rng):
+    """걷기 중간 — 한쪽 다리 앞, 한쪽 뒤 (시상면 운동)."""
+    import numpy as np
+
+    foot_l = feet.get("L_")
+    fwd = _fwd_axis(joints, world_mat, mods, feet)
+    if not foot_l or fwd is None:
+        return
+    rest = world_mat(foot_l, mods)[:3, 3]
+
+    def fwd_disp(m, f=foot_l, r0=rest, fw=fwd):
+        p = world_mat(f, m)[:3, 3]
+        return float(np.dot(p - r0, fw))
+
+    found = None
+    for jname in [j for j in joints
+                  if j.rsplit("/", 1)[-1].lower() == "l_thigh"]:
+        found = _search_rot(jname, world_mat, mods, fwd_disp,
+                            want_min=False, degs=(20, 28, 36), trial_deg=30)
+        if found:
+            mods[jname] = _rot4(found[0], found[2] * found[1])
+    if found is None:
+        return
+    for jname in [j for j in joints
+                  if j.rsplit("/", 1)[-1].lower() == "r_thigh"]:
+        mods[jname] = _rot4(found[0], found[2] * -found[1])
+    for side in ("L_", "R_"):
+        ft = feet.get(side)
+        if not ft:
+            continue
+        for jname in [j for j in joints
+                      if j.rsplit("/", 1)[-1].lower() == f"{side.lower()}calf"]:
+            r = _search_rot(jname, world_mat, mods,
+                            lambda m, f=ft: world_mat(f, m)[2, 3],
+                            want_min=True, degs=(15, 25), trial_deg=20)
+            if r:
+                mods[jname] = _rot4(r[0], r[2] * r[1])
+
+
+def _body_fall(joints, world_mat, mods, rng, head_leaf):
+    """쓰러짐 — Hip 을 돌려 몸축을 수평으로 만든다.
+
+    축·부호는 머리 z 를 내리는 조합을 고른 뒤, 각도는 |머리z − 엉덩이z| 가
+    최소가 되는 값(≈90°)을 고른다 — 단순 최소화는 몸을 지나치게 돌려
+    발이 머리보다 높아지는 기울임이 생겼다.
+    """
+    hips = [j for j in joints if j.rsplit("/", 1)[-1].lower() == "hip"]
+    if not hips or not head_leaf:
+        return False
+    hip = hips[0]
+    z0 = world_mat(head_leaf, mods)[2, 3]
+    best_ax, best_sgn, best_z = None, 1, z0
+    for ax in "XYZ":
+        for sgn in (1, -1):
+            mods[hip] = _rot4(ax, 90 * sgn)
+            z1 = world_mat(head_leaf, mods)[2, 3]
+            if z1 < best_z:
+                best_z, best_ax, best_sgn = z1, ax, sgn
+    if best_ax is None:
+        return False
+    # 몸축 수평화 각도
+    hip_z0 = world_mat(hip, mods)[2, 3]
+    best_d, best_score = 90.0, 1e9
+    for deg in (75, 85, 95, 105):
+        mods[hip] = _rot4(best_ax, deg * best_sgn)
+        sc = abs(world_mat(head_leaf, mods)[2, 3] - hip_z0)
+        if sc < best_score:
+            best_score, best_d = sc, float(deg)
+    mods[hip] = _rot4(best_ax, (best_d + rng.uniform(-4.0, 4.0)) * best_sgn)
+    return True
+
+
+def _pick_pose(rng):
+    roll = rng.random()
+    acc = 0.0
+    for name, w in POSE_MIX:
+        acc += w
+        if roll < acc:
+            return name
+    return "stand"
+
+
+def _apply_pose(stage, wrec, rng: random.Random, _worker_idx: int,
+                 force_pose: str = None) -> bool:
+    """캐릭터 작업자에게 시나리오 자세를 CPU 로 구워 넣는다.
 
     이 리그(Character Creator — `RL_BoneRoot/...`)는 관절이 prim 으로 존재하지
     않고 `skel:joints` 목록 + `skel:bindTransforms` 행렬로만 저장된다.
@@ -200,18 +453,18 @@ def _apply_arms_down(stage, wrec, rng: random.Random, _worker_idx: int) -> bool:
     좌우돼 간헐적으로 바인드 자세(T자)로 되돌아갔다 — 대신 정점을 직접
     변형해 결과를 확정한다.
 
-    주의 — 이 에셋의 bindTransforms 는 **전치 저장**(변환이 행3에 있음)되어
-    있어 로드 직후 전치해 열 벡터 규약으로 통일한다. 로컬 휴지 변환은
-    `inv(부모바인드) @ 자식바인드` 로 복원한다. 팔을 내리는 축은 추측하지
-    않는다: 각 축·부호로 돌려 보고 손 말단의 스켈레톤공간 z 를 가장 낮추는
-    조합을 채택한다 (렌더 없이 순수 체인 수학).
+    자세는 POSE_MIX 분포로 뽑는다 (stand/bend/reach/squat/stride/fallen).
+    축·부호는 추측하지 않는다 — 각 축으로 돌려 보고 말단 관절의
+    스켈레톤공간 위치를 극대/극소화하는 조합을 채택한다 (순수 체인 수학).
 
-    반환: 베이크 성공 여부.
+    부산물 — 라벨용 앵커를 `wrec["_anchors"]` 에, 바닥 정렬 오프셋을
+    `wrec["_z_off"]` 에 저장한다. 쓰러짐·쭈그림처럼 발이 뜨는 자세는
+    worker 루트 z 를 내려 바닥에 붙인다.
     """
     if wrec.get("asset") != "character":
         return False
     import numpy as np
-    from pxr import UsdSkel
+    from pxr import Usd, UsdGeom, UsdSkel  # noqa: N806
 
     base = wrec["path"] + "/char"
     skel_prim = None
@@ -250,54 +503,65 @@ def _apply_arms_down(stage, wrec, rng: random.Random, _worker_idx: int) -> bool:
                 m = m @ mods[j]
         return m
 
-    # 손 말단 = 각 쪽에서 가장 깊은 hand/finger 관절
-    leaves = {}
-    for side in ("L_", "R_"):
-        arm_j = [j for j in joints if side in j and ("hand" in j.lower() or "finger" in j.lower())]
-        leaves[side] = max(arm_j, key=len) if arm_j else None
+    leaves = {
+        s: _deepest(joints, ("hand", "finger"), s) for s in ("L_", "R_")
+    }
     if not all(leaves.values()):
         return False
+    feet = {s: _deepest(joints, ("foot", "toe"), s) for s in ("L_", "R_")}
+    head_leaf = _deepest(joints, ("head", "neck"))
 
+    pose = force_pose or _pick_pose(rng)
     mods = {}
-    for side in ("L_", "R_"):
-        leaf = leaves[side]
-        upper = f"{side.lower()}upperarm"
-        for jname in [j for j in joints if j.rsplit("/", 1)[-1].lower() == upper]:
-            z0 = world_mat(leaf, mods)[2, 3]
-            best = (z0, "Z", 1)
-            for ax in "XYZ":
-                for sgn in (1, -1):
-                    mods[jname] = _rot4(ax, 65 * sgn)
-                    z1 = world_mat(leaf, mods)[2, 3]
-                    if z1 < best[0]:
-                        best = (z1, ax, sgn)
-            best_deg = 65
-            for deg in (45, 55, 65, 75, 85):
-                mods[jname] = _rot4(best[1], deg * best[2])
-                if world_mat(leaf, mods)[2, 3] < best[0]:
-                    best_deg = deg
-            # 작업자마다 팔 각도를 살짝 다르게 — 자세 일변도 방지
-            deg = max(40.0, min(90.0, best_deg + rng.uniform(-12.0, 12.0)))
-            mods[jname] = _rot4(best[1], deg * best[2])
+    if pose == "reach":
+        up = rng.choice(("L_", "R_"))
+        down = "R_" if up == "L_" else "L_"
+        _arms_down(joints, world_mat, mods, leaves, rng, sides=(down,))
+        _arm_up(joints, world_mat, mods, leaves[up], rng, up)
+    else:
+        _arms_down(joints, world_mat, mods, leaves, rng)
+        if pose == "bend":
+            _spine_bend(joints, world_mat, mods, rng, head_leaf)
+        elif pose == "squat":
+            _leg_fold(joints, world_mat, mods, feet, rng)
+        elif pose == "stride":
+            _leg_stride(joints, world_mat, mods, feet, rng)
+        elif pose == "fallen" and not _body_fall(
+            joints, world_mat, mods, rng, head_leaf
+        ):
+            pose = "stand"  # 관절 못 찾으면 서기로 폴백
 
-    # 팔꿈치를 살짝 굽혀 자연스럽게 (10~30도, 내리는 축 자동 탐색)
-    for jname in [j for j in joints if j.rsplit("/", 1)[-1].lower() in ("l_forearm", "r_forearm")]:
-        leaf = leaves["L_" if "/L_" in jname else "R_"]
-        z0 = world_mat(leaf, mods)[2, 3]
-        best = (z0, None, 1)
-        for ax in "XYZ":
-            for sgn in (1, -1):
-                trial = dict(mods)
-                trial[jname] = _rot4(ax, 20 * sgn)
-                z1 = world_mat(leaf, trial)[2, 3]
-                if z1 < best[0] * 0.999:
-                    best = (z1, ax, sgn)
-        if best[1]:
-            mods[jname] = _rot4(best[1], rng.uniform(10.0, 30.0) * best[2])
+    # 바닥 정렬 — 자세가 최저 관절을 들어올렸으면 루트를 내려 바닥에 붙인다.
+    # ⚠️ 전체 관절 min 은 못 쓴다 — RL_BoneRoot·IK 보조 관절이 항상 원점에
+    #    있어 min 이 0 이 된다. 몸통 관절(머리·양발·엉덩이)만 본다.
+    hip_roots = [j for j in joints if j.rsplit("/", 1)[-1].lower() == "hip"]
+    # 몸 관절 = Hip 하위 트리 — RL_BoneRoot·IK 보조 관절은 원점에 고정이라
+    # 포함하면 바운드가 원점까지 늘어 박스 중심이 몸에서 벗어난다.
+    body_j = ([j for j in joints
+               if j == hip_roots[0] or j.startswith(hip_roots[0] + "/")]
+              if hip_roots else joints)
+    all_p = np.array([world_mat(j, mods)[:3, 3] for j in body_j])
+    key = [j for j in (head_leaf, feet.get("L_"), feet.get("R_"))
+           if j] + hip_roots
+    z_min = min(float(world_mat(j, mods)[2, 3]) for j in key) if key else 0.0
+    skel_m = UsdGeom.Xformable(skel_prim).ComputeLocalToWorldTransform(
+        Usd.TimeCode.Default())
+    skel_z = float(skel_m.ExtractTranslation()[2])
+    floor_gap = skel_z + z_min
+    wrec["_z_off"] = (0.02 - floor_gap) if floor_gap > 0.05 else 0.0
 
-    # CPU 스키닝 베이크 — 변형된 정점을 points 에 직접 쓴다. 렌더러의
-    # 스키닝 평가는 타이밍·무효화 경합으로 불안정했다(간헐 T자 회귀).
-    # 정점을 구우면 결과가 확정적이고 이후 prim 이동과 무관하게 유지된다.
+    # 라벨 앵커 — 자세가 반영된 관절 위치로 부위 박스 중심을 잡는다.
+    chest = next(
+        (j for j in joints if j.rsplit("/", 1)[-1].lower() == "spine02"), None)
+    wrec["_skel"] = str(skel_prim.GetPath())
+    wrec["_anchors"] = {
+        "pose": pose,
+        "head": world_mat(head_leaf, mods)[:3, 3].copy() if head_leaf else None,
+        "chest": world_mat(chest, mods)[:3, 3].copy() if chest else None,
+        "body_min": all_p.min(axis=0),
+        "body_max": all_p.max(axis=0),
+    }
+
     _bake_char_pose(stage, base, joints, bind, world_mat, mods)
     return True
 
@@ -368,6 +632,89 @@ def _bake_char_pose(stage, char_path, joints, bind, world_mat, mods):
         print(f"[bake]   {len(seen)} prims under char: {seen[:20]}")
 
 
+def _center_box(center, half):
+    """중심 + 반폭 → 8 꼭짓점."""
+    cx, cy, cz = center
+    hx, hy, hz = half
+    return [(cx + dx, cy + dy, cz + dz)
+            for dx in (-hx, hx) for dy in (-hy, hy) for dz in (-hz, hz)]
+
+
+def _spawn_clutter(stage, rng, zones, n=9):
+    """바닥 잡동사니 풀 — 떨어진 화물·콘 대용·널빤지. 프레임마다 재배치된다.
+
+    언스킨드 prim 이라 텔레포트가 안전하다. 스킨드 작업자는 이동 시
+    스키닝 재평가 문제가 있었지만 베이크 후엔 무관하다.
+    """
+    from sim.factory_world import _box, _material
+
+    mats = [
+        _material(stage, "/World/Clutter/Looks/card", (0.60, 0.46, 0.28), 0.9),
+        _material(stage, "/World/Clutter/Looks/orange", (0.90, 0.35, 0.05), 0.6),
+        _material(stage, "/World/Clutter/Looks/dark", (0.25, 0.25, 0.28), 0.8),
+    ]
+    sizes = [
+        (0.45, 0.35, 0.30),  # 떨어진 상자
+        (0.30, 0.30, 0.55),  # 콘·표지 대용 (세로로 긴 것)
+        (0.90, 0.60, 0.10),  # 널빤지·파레트 조각
+    ]
+    prims = []
+    for i in range(n):
+        size = sizes[i % 3]
+        p = f"/World/Clutter/c{i}"
+        _box(stage, p, size, (0, 0, -10.0), mats[i % 3])  # 지하에 숨겨 시작
+        prims.append((p, size[2] / 2))
+    return prims
+
+
+def _scatter_clutter(stage, clutter, zones, rng):
+    """잡동사니 재배치 — 30%는 숨기고, 70%는 통로/작업 구역에 흩뿌린다."""
+    from pxr import Gf, UsdGeom  # noqa: N806
+
+    walk = zones["walkable"]
+    for path, half_z in clutter:
+        prim = stage.GetPrimAtPath(path)
+        api = UsdGeom.XformCommonAPI(prim)
+        if rng.random() < 0.30:
+            api.SetTranslate(Gf.Vec3d(0, 0, -10.0))  # 지하로 — 숨김
+            continue
+        if rng.random() < 0.30:
+            zone = zones["person_zones"][rng.randrange(len(zones["person_zones"]))]
+        else:
+            zone = walk
+        x = rng.uniform(zone[0] + 0.3, zone[1] - 0.3)
+        y = rng.uniform(zone[2] + 0.3, zone[3] - 0.3)
+        api.SetTranslate(Gf.Vec3d(x, y, half_z + 0.001))
+        api.SetRotate((0.0, 0.0, rng.uniform(0, 360)),
+                      UsdGeom.XformCommonAPI.RotationOrderZYX)
+
+
+def _collect_lights(stage):
+    """씬의 모든 라이트 prim + 기본 강도를 모은다 (에셋 내부 라이트 포함)."""
+    from pxr import UsdLux  # noqa: N806
+
+    out = []
+    for prim in stage.Traverse():
+        if prim.HasAPI(UsdLux.LightAPI):
+            attr = UsdLux.LightAPI(prim).GetIntensityAttr()
+            if attr and attr.Get() is not None:
+                out.append((attr, float(attr.Get())))
+    return out
+
+
+def _randomize_lights(lights, rng):
+    """프레임별 조명 무작위화 — 강도 지터 + 8% 확률 부분 정전(power sag)."""
+    level = "normal"
+    sag = rng.random() < 0.08
+    for attr, base in lights:
+        f = rng.uniform(0.55, 1.25)
+        if sag and rng.random() < 0.5:
+            f = rng.uniform(0.15, 0.35)
+            level = "dim"
+        attr.Set(base * f)
+    return level
+
+
 def _find_ppe_prims(stage, worker_path: str) -> dict[str, list]:
     """작업자 아래에서 PPE 부위 prim 을 찾는다.
 
@@ -411,6 +758,10 @@ def main(argv=None) -> int:
         default=25,
         help="무작위화 후 렌더 안정화 스텝 — ⚠️ 캐릭터 스킨드 메시는 prim 이동을 "
         "즉시 안 따라온다. 2스텝이면 메시가 이전 자리에 남아 라벨이 빈 공간에 뜬다",
+    )
+    p.add_argument(
+        "--pose-debug", action="store_true",
+        help="진단용: 작업자 자세를 POSE_MIX 무작위 대신 6종 순환으로 강제",
     )
     args = p.parse_args(argv)
 
@@ -480,11 +831,21 @@ def main(argv=None) -> int:
     # 실패한 작업자는 바인드 자세(T자)로 둔다 — 바꿨다고 주장하지 않는다.
     n_posed = 0
     for i, wrec in enumerate(workers):
-        wrec["posed"] = _apply_arms_down(stage, wrec, rng, i)
+        forced = ([n for n, _ in POSE_MIX][i % len(POSE_MIX)]
+                  if args.pose_debug else None)
+        wrec["posed"] = _apply_pose(stage, wrec, rng, i, force_pose=forced)
         n_posed += wrec["posed"]
-    print(f"[pose] 팔 내림 적용 — {n_posed}/{len(workers)}명")
+    print(f"[pose] 자세 적용 — {n_posed}/{len(workers)}명 "
+          f"({', '.join(w['_anchors']['pose'] for w in workers if w.get('_anchors'))})")
+    for w in workers:
+        if w.get("_anchors"):
+            print(f"  {w['path']}: {w['_anchors']['pose']} z_off={w['_z_off']:.2f}")
 
     floor_clear = _floor_probe()
+
+    clutter = _spawn_clutter(stage, rng, zones)
+    lights = _collect_lights(stage)
+    print(f"[scene] 잡동사니 {len(clutter)}개, 라이트 {len(lights)}개 수집")
 
     robot_xf = UsdGeom.Xformable(stage.GetPrimAtPath(robot_path))
     walk = zones["walkable"]  # (x0, x1, y0, y1)
@@ -493,7 +854,7 @@ def main(argv=None) -> int:
     manifest = out / "labels" / "train" / args.session / "_manifest.csv"
     mfile = manifest.open("w", newline="", encoding="utf-8")
     mw = csv.writer(mfile)
-    mw.writerow(["file", "robot_x", "robot_y", "robot_yaw_deg", "combos", "n_labels"])
+    mw.writerow(["file", "robot_x", "robot_y", "robot_yaw_deg", "combos", "poses", "light", "n_labels"])
 
     print(f"[gen] 씬 준비 — 작업자 {len(workers)}명, 목표 {args.count}프레임")
     t0 = time.time()
@@ -513,7 +874,7 @@ def main(argv=None) -> int:
                 wy = rng.uniform(zone[2], zone[3])
                 wyaw = rng.uniform(0.0, 360.0)
                 api = UsdGeom.XformCommonAPI(stage.GetPrimAtPath(wrec["path"]))
-                api.SetTranslate(Gf.Vec3d(wx, wy, 0.0))
+                api.SetTranslate(Gf.Vec3d(wx, wy, wrec.get("_z_off", 0.0)))
                 api.SetRotate((0.0, 0.0, wyaw), UsdGeom.XformCommonAPI.RotationOrderZYX)
                 if wrec["ppe"]["helmet"] or wrec["ppe"]["vest"]:
                     # 토글 가능한 부위가 있으면 조합을 무작위화한다 — 없으면
@@ -528,6 +889,10 @@ def main(argv=None) -> int:
                 combos.append(f"{tag}:" + ("+".join(combo) or "none"))
                 wrec["combo"] = combo
                 wrec["pos"] = (wx, wy)
+
+            # 씬 변수 — 잡동사니 재배치 + 조명 지터(간헐 정전)
+            _scatter_clutter(stage, clutter, zones, rng)
+            light_level = _randomize_lights(lights, rng) if lights else "na"
 
             # ── 로봇 포즈 — 실측 기하(FOV 74°×59°, 높이 0.15m, 하향 7°)로
             #    머리는 ~3.6m, 몸통은 ~2.3m, 온몸은 ~4m 부터 프레임에 들어온다.
@@ -585,18 +950,31 @@ def main(argv=None) -> int:
             # 센서 도메인 갭 축소 — 시뮬 렌더는 실기보다 지나치게 깨끗하다.
             # 60% 프레임에 가우시안 노이즈, 그 절반에 미세 블러를 입혀 실기
             # 카메라의 ISP 잡음을 흉낸다 (라벨은 기하에서 나오므로 영향 없음).
-            if rng.random() < 0.6:
+            if rng.random() < 0.85:
                 import numpy as np
 
                 nprng = np.random.default_rng(rng.randrange(1 << 30))
-                sigma = rng.uniform(1.0, 4.5)
-                rgb = np.clip(
-                    rgb.astype(np.float32) + nprng.normal(0.0, sigma, rgb.shape),
-                    0.0,
-                    255.0,
-                ).astype(np.uint8)
-                if rng.random() < 0.5:
-                    rgb = cv2.GaussianBlur(rgb, (3, 3), 0)
+                f32 = rgb.astype(np.float32)
+                # 노출 지터 — 실기 자동노출의 프레임별 밝기 차이
+                f32 *= rng.uniform(0.75, 1.35)
+                # 색온도 지터 — R/B 채널 미세 편차 (실기 화이트밸런스 흔들림)
+                f32[..., 0] *= rng.uniform(0.94, 1.06)
+                f32[..., 2] *= rng.uniform(0.94, 1.06)
+                # 비네트 — 렌즈 주변 감광 (30% 프레임)
+                if rng.random() < 0.3:
+                    hh, ww = f32.shape[:2]
+                    yy, xx = np.mgrid[0:hh, 0:ww]
+                    r2 = ((xx - ww / 2) / (ww / 2)) ** 2 + (
+                        (yy - hh / 2) / (hh / 2)) ** 2
+                    f32 *= (1.0 - 0.35 * np.clip(r2 - 0.4, 0.0, 1.0))[..., None]
+                # 가우시안 노이즈 — ISP 잡음 (기존)
+                if rng.random() < 0.7:
+                    sigma = rng.uniform(1.0, 4.5)
+                    f32 += nprng.normal(0.0, sigma, f32.shape)
+                rgb = np.clip(f32, 0.0, 255.0).astype(np.uint8)
+                # 블러 — 35% (걷기 흔들림 근사로 5x5 도 섞는다)
+                if rng.random() < 0.35:
+                    rgb = cv2.GaussianBlur(rgb, rng.choice(((3, 3), (5, 5))), 0)
             depth = camera.get_depth()
             cam_pos, cam_quat = camera.get_world_pose("world")
             rot_inv = _quat_to_mat(cam_quat).T
@@ -621,26 +999,73 @@ def main(argv=None) -> int:
             # ── 라벨 계산 — 위치 기반 부위 박스를 카메라로 투영 ──
             lines: list[str] = []
             boxes_for_preview: list[tuple[tuple, int]] = []
+            def _emit(corners, cls, occ_margin: float = 0.25):
+                box = _project_box(corners, cam_pos, rot_inv, k, size)
+                if box is None:
+                    return
+                pd = _center_depth(corners, cam_pos, rot_inv)
+                if pd <= 0:  # 전부 카메라 뒤
+                    return
+                if depth is not None and _occluded(box, pd, depth, occ_margin):
+                    return
+                lines.append(_yolo(cls, box, size))
+                boxes_for_preview.append((box, cls))
+
             for wrec in workers:
                 combo = wrec["combo"]
-                # 루트 위치(wrec["pos"])가 아니라 보이는 몸통의 실측 월드 위치
-                wx, wy = _char_world_xy(stage, wrec["path"])
-                for part, cls_w, cls_b, zone in (
-                    ("helmet", 0, 1, HEAD_ZONE),
-                    ("vest", 2, 3, TORSO_ZONE),
-                ):
-                    corners = _zone_corners(wx, wy, zone)
-                    box = _project_box(corners, cam_pos, rot_inv, k, size)
-                    if box is None:
-                        continue
-                    pd = _center_depth(corners, cam_pos, rot_inv)
-                    if pd <= 0:  # 전부 카메라 뒤
-                        continue
-                    if depth is not None and _occluded(box, pd, depth):
-                        continue
-                    cls = cls_w if part in combo else cls_b
-                    lines.append(_yolo(cls, box, size))
-                    boxes_for_preview.append((box, cls))
+                anch = wrec.get("_anchors")
+                sk = stage.GetPrimAtPath(wrec["_skel"]) if wrec.get("_skel") else None
+                if anch and sk:
+                    # 자세가 반영된 관절 위치 → 월드 좌표 부위 박스.
+                    # skel 공간 좌표를 Skeleton prim 의 로컬→월드로 변환한다.
+                    from pxr import Usd  # noqa: N806
+
+                    m = UsdGeom.Xformable(sk).ComputeLocalToWorldTransform(
+                        Usd.TimeCode.Default())
+
+                    def _tow(p):
+                        v = m.Transform(Gf.Vec3d(float(p[0]), float(p[1]), float(p[2])))
+                        return (v[0], v[1], v[2])
+
+                    if anch["head"] is not None:
+                        hx, hy, hz = _tow(anch["head"])
+                        _emit(_center_box((hx, hy, hz + 0.08), (0.15, 0.15, 0.16)),
+                              0 if "helmet" in combo else 1)
+                    if anch["chest"] is not None:
+                        cxw, cyw, czw = _tow(anch["chest"])
+                        if anch["pose"] == "fallen":
+                            # 누운 몸통은 수평 — 넓고 납작한 박스
+                            _emit(_center_box((cxw, cyw, czw), (0.45, 0.45, 0.20)),
+                                  2 if "vest" in combo else 3)
+                        else:
+                            _emit(_center_box((cxw, cyw, czw - 0.12), (0.28, 0.24, 0.34)),
+                                  2 if "vest" in combo else 3)
+                    if anch["pose"] == "fallen":
+                        # 쓰러진 작업자 전신 박스 — 관절 바운드를 월드로 변환
+                        lo, hi = anch["body_min"], anch["body_max"]
+                        wpts = [
+                            _tow(p) for p in (
+                                (x, y, z)
+                                for x in (lo[0], hi[0])
+                                for y in (lo[1], hi[1])
+                                for z in (lo[2], hi[2])
+                            )
+                        ]
+                        wl = [min(p[i] for p in wpts) - 0.15 for i in range(3)]
+                        wh = [max(p[i] for p in wpts) + 0.15 for i in range(3)]
+                        _emit(_center_box(
+                            tuple((a + b) / 2 for a, b in zip(wl, wh)),
+                            tuple((b - a) / 2 for a, b in zip(wl, wh)),
+                        ), CLASS_IDS["person_down"], occ_margin=0.6)
+                else:
+                    # 폴백 인형·앵커 없는 경우 — 고정 존 근사 (기존 경로)
+                    wx, wy = _char_world_xy(stage, wrec["path"])
+                    for part, cls_w, cls_b, zone in (
+                        ("helmet", 0, 1, HEAD_ZONE),
+                        ("vest", 2, 3, TORSO_ZONE),
+                    ):
+                        _emit(_zone_corners(wx, wy, zone),
+                              cls_w if part in combo else cls_b)
 
             name = f"{args.session}_{made:05d}"
             img_path = img_dir / f"{name}.jpg"
@@ -658,13 +1083,19 @@ def main(argv=None) -> int:
                     f"{ry:.2f}",
                     f"{ryaw:.1f}",
                     ";".join(combos),
+                    ";".join(
+                        (w.get("_anchors") or {}).get("pose", "-")
+                        for w in workers
+                    ),
+                    light_level,
                     len(lines),
                 ]
             )
 
             if args.preview:
                 vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR).copy()
-                colors = {0: (0, 140, 255), 1: (0, 0, 220), 2: (0, 220, 0), 3: (160, 160, 0)}
+                colors = {0: (0, 140, 255), 1: (0, 0, 220), 2: (0, 220, 0),
+                        3: (160, 160, 0), 4: (200, 0, 200)}
                 for box, cls in boxes_for_preview:
                     x1, y1, x2, y2 = (int(v) for v in box)
                     cv2.rectangle(vis, (x1, y1), (x2, y2), colors[cls], 1)
