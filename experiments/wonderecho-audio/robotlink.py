@@ -42,7 +42,6 @@ def fetch_status(base=DEFAULT_BASE):
     except OSError:
         return None
     tele = snap.get("telemetry") or {}
-    esc = snap.get("escalation") or {}
     parts = []
     if tele.get("batt_v") is not None:
         parts.append(f"배터리 {tele['batt_v']:.2f}볼트")
@@ -50,8 +49,11 @@ def fetch_status(base=DEFAULT_BASE):
         parts.append(f"내부 온도 {tele['temp_c']:.0f}도")
     if snap.get("state"):
         parts.append(f"동작 상태 {snap['state']}")
-    if esc.get("level") is not None:
-        parts.append(f"대응 단계 {esc['level']}")
+    # /api/telemetry 의 escalation 은 'L0'~'L3' 문자열이다 (객체가 아니다).
+    esc = snap.get("escalation")
+    level = esc.get("level") if isinstance(esc, dict) else esc
+    if level:
+        parts.append(f"대응 단계 {level}")
     if snap.get("stale"):
         parts.append("링크 지연 상태")
     return ", ".join(parts) if parts else "상태 데이터 없음"
@@ -107,10 +109,64 @@ def _norm(s):
     return re.sub(r"[\s,.!?~…:'\"·]+", "", s)
 
 
+# 명령 어미 — "비상정지해줘"처럼 끝에 붙는 서법·공손 어미만 벗긴다.
+# 부정어("하지마")·조건절은 여기 없어 절대 명령으로 번역되지 않는다.
+# 긴 어미부터 시도한다 ("로전환해줘"가 "해줘"보다 먼저 떨어져야 한다).
+_COMMAND_ENDINGS = sorted(
+    (
+        "으로전환해주세요",
+        "으로전환해줘",
+        "로전환해주세요",
+        "로전환해줘",
+        "으로바꿔주세요",
+        "으로바꿔줘",
+        "로바꿔주세요",
+        "로바꿔줘",
+        "해주십시오",
+        "해주세요",
+        "하십시오",
+        "으로전환",
+        "로전환해",
+        "로바꿔",
+        "으로바꿔",
+        "로전환",
+        "해주길",
+        "하세요",
+        "해줘요",
+        "주세요",
+        "해줘",
+        "시켜",
+        "해라",
+        "하기",
+        "해요",
+        "세요",
+        "해",
+        "줘",
+        "요",
+    ),
+    key=len,
+    reverse=True,
+)
+
+
 def match_action(query: str):
-    """정규화된 질의와 정확히 일치하는 화이트리스트 액션, 없으면 None."""
+    """화이트리스트 액션 — 정규화 후 정확 일치, 또는 명령 어미를 벗긴 일치.
+
+    "비상정지해"·"비상정지해줘" 같은 자연 발화를 받되, 어미 목록에 없는 꼬리
+    ("비상정지하지마", "비상정지할까")는 절대 명령이 되지 않는다.
+    """
     norm = _norm(query)
-    return ACTIONS.get(norm)
+    if norm in ACTIONS:
+        return ACTIONS[norm]
+    stripped = norm
+    for _ in range(3):  # "해주세요"처럼 중첩 어미 대비
+        for ending in _COMMAND_ENDINGS:
+            if stripped.endswith(ending) and len(stripped) > len(ending):
+                stripped = stripped[: -len(ending)]
+                break
+        else:
+            break
+    return ACTIONS.get(stripped)
 
 
 def run_action(action: str, base=DEFAULT_BASE):

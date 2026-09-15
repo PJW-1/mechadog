@@ -261,7 +261,11 @@ def validate_base_config(config: dict[str, Any]) -> None:
     # 알 수 있고 한번 틀리면 눈으로 보고서야 아는 종류라, 실측한 결론을 설정 검증에
     # 박아 둔다. 양수로 되돌리면 경계 자세가 **바닥을 보게 되고** 가까이 있는 사람의
     # 머리가 더 잘린다(FR-9.2.2 가 자세로 풀려던 것과 정반대).
-    for section, name in (("fsm", "alert_pitch_deg"), ("posture", "pitch_up_deg")):
+    for section, name in (
+        ("fsm", "alert_pitch_deg"),
+        ("fsm", "scan_pitch_deg"),
+        ("posture", "pitch_up_deg"),
+    ):
         value = config[section].get(name)
         if not _finite_number(value):
             raise ConfigError(f"{section}.{name} 는 유한한 수여야 함")

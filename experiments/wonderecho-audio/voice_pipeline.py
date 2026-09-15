@@ -163,29 +163,9 @@ class Hub:
         }
 
 
-PANEL_HTML = """<!doctype html><meta charset=utf-8><title>메카독 관제 음성</title>
-<style>body{font-family:sans-serif;max-width:560px;margin:2em auto}
-#ev{border:1px solid #ccc;height:16em;overflow:auto;padding:.5em;font-size:.9em}
-#ev div{margin:.2em 0}.admin{color:#06c}.robot{color:#060}.user{color:#333}
-input{width:75%}#st{font-weight:bold}</style>
-<h3>메카독 음성 패널</h3>
-<div id=st>…</div>
-<div style="margin:.6em 0"><input id=t placeholder="로봇에게 말시킬 문장">
-<button onclick="say(0)">말하기</button>
-<button onclick="say(1)">긴급 방송</button>
-<button onclick="fetch('/mode',{method:'POST',body:'{}'}).then(poll)">대기/깨우기</button></div>
-<div id=ev></div>
-<script>
-async function say(u){const t=document.getElementById('t');if(!t.value)return;
- await fetch('/say',{method:'POST',headers:{'Content-Type':'application/json'},
- body:JSON.stringify({text:t.value,urgent:!!u})});t.value='';poll()}
-async function poll(){const s=await(await fetch('/status')).json();
- document.getElementById('st').textContent=
-  `${s.robot} — ${s.mode} / ${s.activity} / 공지대기 ${s.say_queue}`;
- document.getElementById('ev').innerHTML=s.events.map(e=>
-  `<div class=${e.role}>[${e.ts}] ${e.role}: ${e.text}</div>`).join('')}
-setInterval(poll,2000);poll();
-</script>"""
+# 독립 음성 페이지는 없다 — 음성 기능은 관제 대시보드(:8000 의 음성 중계 패널)에
+# 통합됐고, 이 서버는 대시보드가 부르는 JSON API 만 제공한다.
+DASHBOARD_URL = "http://127.0.0.1:8000/#voice"
 
 
 def _api(handler, code, obj):
@@ -240,12 +220,10 @@ def make_handler(hub):
                     report if report is not None else {"error": "journal off"},
                 )
             elif self.path == "/":
-                body = PANEL_HTML.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
+                # 독립 패널 폐지 — 음성 화면은 관제 대시보드로 통합됐다.
+                self.send_response(302)
+                self.send_header("Location", DASHBOARD_URL)
                 self.end_headers()
-                self.wfile.write(body)
             else:
                 _api(self, 404, {"error": "not found"})
 

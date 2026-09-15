@@ -324,7 +324,7 @@ def create_app(
     async def health():
         return {
             "service": "telemetry",
-            # 화면의 연결 전환 목록이 런타임마다 어느 개체를 보는지 표시하는 데 쓴다.
+            # 이 서버가 어느 개체 프로파일로 떴는지 — 여러 런타임을 띄웠을 때 가려내는 데 쓴다.
             "device_id": state.snapshot()["device_id"],
             "read_only": commands is None,
             "clients": len(hub.clients),

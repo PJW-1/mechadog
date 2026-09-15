@@ -10,6 +10,7 @@ import test from 'node:test';
 
 import { Operations } from '../static/operations.js';
 import { RobotLink, motionFor } from '../static/robot-link.js';
+import { decodeTelemetryMessage } from '../static/telemetry-feed.js';
 
 /** 호출을 기록하는 가짜 fetch. `fail` 을 주면 그 경로만 실패시킨다. */
 function fakeFetch({ fail = null, status = 200 } = {}) {
@@ -238,15 +239,20 @@ test('a refused service request is surfaced, not swallowed', async () => {
   assert.equal(ops.records[0].action, '실제 서비스 모드 진입 응답');
 });
 
-test('telemetry snapshots drive the service toggle label', () => {
+test('device state is read from the telemetry feed, and a missing service flag is unknown, not off', () => {
+  const snapshot = (flags) =>
+    decodeTelemetryMessage(JSON.stringify({
+      type: 'telemetry', device_id: 'mechdog-01', state: 'IDLE', escalation: 'L0', stale: false, telemetry_age_ms: 30,
+      telemetry: { boot_id: 'b', seq: 3, state: 'FAILSAFE', batt_v: 8.1, dist_cm: 90, imu: { pitch: 0, roll: 0, yaw: 0 }, safety_latched: true, flags },
+    }));
   const ops = new Operations({ link: null });
   assert.equal(ops.serviceMode, null);
-  ops.noteTelemetry({ state: 'IDLE', safety_latched: false, flags: { service: true } });
+  assert.equal(ops.safetyLatched, null);
+  ops.setTelemetry({ state: 'live', snapshot: snapshot({ lowbatt: false, tipped: false, link_ok: true, service: true }) });
   assert.equal(ops.serviceMode, true);
+  assert.equal(ops.safetyLatched, true);
   assert.equal(ops.fsmState, 'IDLE');
-  // 같은 스냅샷이 다시 와도 갱신 사건을 내지 않는다 — 폴러는 몇 초마다 온다.
-  let fired = 0;
-  ops.subscribe(() => fired++);
-  ops.noteTelemetry({ state: 'IDLE', safety_latched: false, flags: { service: true } });
-  assert.equal(fired, 0);
+  // 확장 이전 펌웨어 — service 를 보내지 않는다. 꺼짐으로 읽으면 켜진 서비스 모드를 놓친다.
+  ops.setTelemetry({ state: 'live', snapshot: snapshot({ lowbatt: false, tipped: false, link_ok: true }) });
+  assert.equal(ops.serviceMode, null);
 });

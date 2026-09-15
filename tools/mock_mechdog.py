@@ -384,18 +384,15 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None) -> None:
     period_s = 1.0 / net["telemetry_rate_hz"]
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR 를 쓰지 않는다 — Windows 에서 UDP 는 같은 포트에 조용히 이중
+    # 바인드돼 명령을 하나도 못 받는다. 점유 중이면 bind 가 즉시 실패해야 한다.
     sock.bind(("", net["cmd_port"]))
     sock.setblocking(False)
 
-    # ⚠️ Windows 전용 — 이게 없으면 목업이 호스트보다 먼저 떠 있을 때 죽는다.
-    # 아직 아무도 듣지 않는 포트로 텔레메트리를 보내면 ICMP Port Unreachable 이
-    # 돌아오고, Windows 는 그것을 **다음 recvfrom 의 ConnectionResetError 로**
-    # 돌려준다. UDP 에는 연결이 없으므로 의미 없는 오류이며, 실제로 목업을
-    # 먼저 띄우는 것이 정상 사용 순서다. 아래 ioctl 로 그 통보를 끈다.
-    if hasattr(socket, "SIO_UDP_CONNRESET"):
-        with contextlib.suppress(OSError):
-            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
+    # ⚠️ Windows 전용 — 아직 아무도 듣지 않는 포트로 텔레메트리를 보내면 ICMP
+    # Port Unreachable 이 돌아오고, Windows 는 그것을 **다음 recvfrom 의
+    # ConnectionResetError 로** 돌려준다. `SIO_UDP_CONNRESET` 은 CPython 에 없어
+    # ioctl 로 끌 수 없으므로 아래 수신 루프가 그 예외를 잡아 넘긴다.
 
     log = _LogState()
     peer: tuple[str, int] | None = (peer_host, net["telemetry_port"]) if peer_host else None
@@ -411,8 +408,8 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None) -> None:
             except BlockingIOError:
                 break
             except ConnectionResetError:
-                # 위 ioctl 이 없는 경로(구 Windows 등)를 위한 이중 방어.
-                # 로봇 대역이 호스트 사정 때문에 죽으면 안 된다.
+                # Windows 의 헛된 ICMP 통보 — 로봇 대역이 호스트 사정 때문에
+                # 죽으면 안 된다.
                 continue
             if peer is None:
                 peer = (addr[0], net["telemetry_port"])

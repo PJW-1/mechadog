@@ -93,17 +93,15 @@ def open_socket(bind_port: int) -> socket.socket:
     ⚠️ **Windows 전용 처리가 하나 있다.** 아직 아무도 듣지 않는 포트로 보내면 ICMP
     Port Unreachable 이 돌아오고 Windows 는 그것을 *다음 `recvfrom` 의*
     `ConnectionResetError` 로 돌려준다. UDP 에 연결이 없으므로 의미 없는 오류이며,
-    로봇이 아직 안 켜진 것은 정상이다. 그래서 그 통보를 끈다.
+    로봇이 아직 안 켜진 것은 정상이다. 수신 루프가 `ConnectionResetError` 를 잡아
+    넘긴다 (`SIO_UDP_CONNRESET` 은 CPython 에 없어 ioctl 로는 끌 수 없다).
 
-    `hasattr` 로 감싸는 이유 — 이 상수는 파이썬 빌드에 따라 없다. 없는 채로 부르면
-    도구가 시작하자마자 죽는다 (`tools/teleop.py` 에서 실제로 겪었다).
+    ⚠️ `SO_REUSEADDR` 를 쓰지 않는다 — Windows 에서 UDP 소켓 둘이 이 옵션으로 같은
+    포트에 묶이면 둘째도 오류 없이 성공하고 패킷을 하나도 받지 못한다. 포트가 이미
+    점유돼 있으면 `bind` 가 즉시 실패하는 쪽이 낫다.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("", bind_port))
-    if hasattr(socket, "SIO_UDP_CONNRESET"):
-        with contextlib.suppress(OSError):
-            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
     return sock
 
 

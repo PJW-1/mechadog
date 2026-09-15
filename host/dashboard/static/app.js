@@ -8,11 +8,12 @@ import {RobotLink} from './robot-link.js';
 import {VoiceLink,resolveVoiceBase} from './voice-link.js';
 import {VisionFeed} from './vision-feed.js';
 import {EventFeed} from './event-feed.js';
+import {TelemetryFeed,describeTelemetry} from './telemetry-feed.js';
 
 renderIcons();
 const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
-let visionFeed=null,visionStatus={state:'connecting'},eventFeed=null;
+let visionFeed=null,visionStatus={state:'connecting'},eventFeed=null,telemetryFeed=null;
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -33,22 +34,14 @@ function syncVisionStatus(){
 }
 const cameraDock=$('camera-dock'),cameraHome=cameraDock.parentElement,cameraNext=cameraDock.nextElementSibling;
 let storage=null;try{storage=localStorage}catch{/* Restricted browsers can still use session-only drafts. */}
-// 실제 대시보드 연결은 **명시적으로 켤 때만** 붙는다 (WBS 4.6.3). 주소를 주지
-// 않으면 링크가 없고 웹은 예시 모드 그대로다 — 공개된 화면이 저 혼자 로봇을
-// 움직이게 두지 않는다. 켜는 법은 둘 중 하나다.
-//   1) 주소창에  ?api=http://127.0.0.1:8000
-//   2) index.html 에  <meta name="mechadog-api" content="http://127.0.0.1:8000">
-// 로컬 주소만 받는다. 원격 주소를 적어도 붙지 않는다.
+// 실제 대시보드 연결은 **대시보드 서버가 이 페이지를 직접 내보냈을 때만** 붙는다
+// (WBS 4.6.3). 그 밖에서 열면 링크가 없고 웹은 예시 모드 그대로다 — 공개된 화면이
+// 저 혼자 로봇을 움직이게 두지 않는다.
+// ⚠️ **다른 출처의 API 를 가리키는 길은 두지 않는다.** 예전의 `?api=`·`<meta>` 는
+// 다른 포트를 받았지만, 서버의 출처 검사가 그 페이지의 명령(비상정지 포함)과 WS 를
+// 전부 거절해 **연결된 척하고 아무것도 못 보내는 화면**이 됐다.
 async function resolveApiBase(){
  try{
-  const fromQuery=new URLSearchParams(location.search).get('api');
-  const fromMeta=document.querySelector('meta[name="mechadog-api"]')?.content;
-  const raw=(fromQuery||fromMeta||'').trim();
-  if(raw){
-    const url=new URL(raw,location.href);
-    if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return null;
-    return url.origin;
-  }
   // 대시보드 서버가 이 페이지를 직접 서빙하면 같은 출처가 곧 API 다.
   // 단, hostname 이 localhost 라는 것만으로는 붙지 않는다 — file:// 이나
   // 다른 로컬 개발 서버 위에서 열렸을 수 있으므로 /health 로 확인한다.
@@ -88,59 +81,10 @@ if(link){
   onGap:dropped=>operations.noteEventGap(dropped),
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();
- // 서비스 모드·안전 래치 같은 장비 상태는 사건이 아니라 /api/telemetry 에 실린다.
- // 순찰·제어 화면이 버튼 라벨을 실측값으로 맞추려면 주기적으로 읽어야 한다.
- setInterval(async()=>{
-  try{
-   const response=await fetch(apiBase+'/api/telemetry',{signal:globalThis.AbortSignal?.timeout?.(1500)});
-   if(response.ok)operations.noteTelemetry((await response.json())?.telemetry);
-  }catch{/* 끊긴 사이클은 넘긴다 — 다음 주기에 다시 읽는다. */}
- },2000);
+ // 로봇 상태 게이지 (WBS 4.6.2) — /ws/telemetry 는 표시용 10Hz 다. 수신률은 새 seq 로만 센다.
+ telemetryFeed=new TelemetryFeed({url:apiBase.replace(/^http/,'ws')+'/ws/telemetry',onUpdate:view=>operations.setTelemetry(view)});
+ telemetryFeed.start();
 }
-// 연결 전환 — 같은 PC에 떠 있는 다른 런타임(실기·시뮬)으로 화면을 옮긴다.
-// 각 런타임의 /health 가 device_id 를 돌려주므로 버튼마다 개체 이름을 단다.
-// 전환은 ?api= 로 다시 여는 것뿐 — resolveApiBase 가 로컬 주소만 받으므로 안전하다.
-const SOURCE_PORTS=[8000,8001];
-const sourceSwitch=$('source-switch'),sourceMenu=$('source-menu');
-async function probeSources(){
- const current=apiBase||location.origin;
- const hits=await Promise.all(SOURCE_PORTS.map(async port=>{
-  const origin='http://127.0.0.1:'+port;
-  try{
-   const response=await fetch(origin+'/health',{signal:globalThis.AbortSignal?.timeout?.(1200)});
-   const info=response.ok?await response.json():null;
-   if(info?.service!=='telemetry')return null;
-   return {origin,port,device:info.device_id||'이름 없음',current:origin===current};
-  }catch{return null}
- }));
- return hits.filter(Boolean).sort((a,b)=>a.port-b.port);
-}
-function renderSourceMenu(list){
- sourceMenu.textContent='';
- if(!list.length){const empty=document.createElement('p');empty.className='source-menu-empty';empty.textContent='응답하는 런타임이 없습니다.';sourceMenu.append(empty);return}
- for(const source of list){
-  const item=document.createElement('button');
-  item.type='button';item.setAttribute('role','menuitem');
-  item.className='source-item'+(source.current?' current':'');
-  item.disabled=source.current;
-  const name=document.createElement('strong');name.textContent=source.device;
-  const kind=document.createElement('span');kind.className='source-kind';
-  kind.textContent=source.device.endsWith('-sim')?'시뮬레이션':'실기';
-  const addr=document.createElement('small');addr.textContent='127.0.0.1:'+source.port;
-  item.append(name,kind,addr);
-  item.addEventListener('click',()=>{location.href=location.pathname+'?api='+encodeURIComponent(source.origin)+location.hash});
-  sourceMenu.append(item);
- }
-}
-async function toggleSourceMenu(){
- if(!sourceMenu.hidden){sourceMenu.hidden=true;sourceSwitch.setAttribute('aria-expanded','false');return}
- sourceMenu.hidden=false;sourceSwitch.setAttribute('aria-expanded','true');
- const loading=document.createElement('p');loading.className='source-menu-empty';loading.textContent='런타임 찾는 중…';
- sourceMenu.textContent='';sourceMenu.append(loading);
- renderSourceMenu(await probeSources());
-}
-sourceSwitch.addEventListener('click',toggleSourceMenu);
-document.addEventListener('click',event=>{if(!sourceMenu.hidden&&!event.target.closest('.source-switch'))toggleSourceMenu()});
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
 const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,
@@ -162,7 +106,10 @@ function syncObservationView(){
  const manual=currentPage==='missions',dashboard=currentPage==='dashboard';
  $('app').classList.toggle('observation-waiting',!operations.demo||operations.stale);
  view?.setWorldVisible(dashboard);
- view?.setActive(!observationFailed&&(dashboard||(manual&&operations.demo&&!operations.stale)));
+ // ⚠️ **실제 데이터 모드에서는 예시 공장 3D 를 그리지 않는다.** 지도가 없는데(LiDAR 미연결) 가상 공장과
+ // 예시 로봇 3대·"확인 필요" 표시가 실제 화면에 섞이면 배치와 위치를 아는 것처럼 보인다. 숨긴 캔버스를
+ // 계속 그릴 이유도 없다. LiDAR 지도가 생기면 이 자리는 2D 지도로 채운다.
+ view?.setActive(!observationFailed&&operations.demo&&(dashboard||(manual&&!operations.stale)));
  view?.setCameraVisible(!observationFailed&&(dashboard||manual)&&operations.demo&&!operations.stale&&(manual||!cameraDock.classList.contains('collapsed')));
 }
 function reportObservationError(message){
@@ -177,7 +124,9 @@ function syncMain(){
  $('camera-title').textContent=selected+' · 로봇 시점';$('camera-axis').textContent=selected+' / FRONT';
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
- $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'예시 공간 · 연결된 로봇의 실제 위치는 미수신';
+ syncTelemetry();
+ $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'지도 없음 · 예시 공장 숨김';
+ $('map-placeholder').hidden=operations.demo;
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');
@@ -203,7 +152,17 @@ function syncMain(){
  document.querySelector('.event-summary p').textContent=liveCount?'실시간 '+liveCount+'건 포함 · 검토 메모와 판단 근거를 확인하세요.':events.length?'검토 메모와 판단 근거를 확인하세요.':'실시간 사건은 수신되지 않았습니다.';
  $('attention-marker').setAttribute('aria-label','예시 사건 검토 열기');
 }
-operations.subscribe(reason=>{syncMain();panels.refresh(reason)});
+// 하단 상태 칸 — 연결 여부와 로봇 상태를 **사실대로** 말한다 (4.6.2). 연결이 없으면 예시 문구다.
+// 연결됐어도 로봇에서 받은 값이 없거나 끊겼으면 그렇게 말한다 — 아는 척하지 않는다.
+function syncTelemetry(){
+ const card=document.querySelector('.actual-status');
+ if(!operations.live){card.dataset.tone='off';card.querySelector('strong').textContent='현장 상태 확인 불가 · 장비 미연결';card.querySelector('p').textContent='웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.';$('state-time').textContent='—';return}
+ const text=describeTelemetry(operations.telemetry);
+ card.dataset.tone=text.tone;card.querySelector('strong').textContent=text.headline;card.querySelector('p').textContent=text.summary;
+ $('state-time').textContent=text.age;
+}
+// 텔레메트리는 초당 10번 온다 — 화면 전체(syncMain)를 다시 맞추지 않고 상태 칸과 게이지만 고친다.
+operations.subscribe(reason=>{if(reason==='telemetry'){syncTelemetry();panels.refresh(reason);return}syncMain();panels.refresh(reason)});
 
 function navigate(page){
  const target=['dashboard','missions','events','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
@@ -332,7 +291,7 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));
-window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();eventFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
+window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();eventFeed?.stop();telemetryFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
 const unregisterTools=registerPageTools({document,store:operations,navigate,onError:()=>operations.log('페이지 도구 등록 실패','일반 화면 조작은 계속 사용 가능')});
 window.addEventListener('pagehide',event=>{if(!event.persisted)unregisterTools()});
 $('retry-render').addEventListener('click',()=>location.reload());

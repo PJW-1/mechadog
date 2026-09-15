@@ -309,6 +309,67 @@ class RobotlinkTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(spoken, "자율 동작 중이 아니다")
 
+    def test_fetch_status_parses_real_payload_shape(self):
+        # 실제 /api/telemetry 페이로드: escalation 은 'L0' 문자열, telemetry 는
+        # 중첩 객체이거나 아직 없으면 None. 이전엔 fetch_status 자체를 mock 해서
+        # escalation 문자열에 .get 을 부르는 크래시를 놓쳤다.
+        real_payload = {
+            "type": "telemetry",
+            "device_id": "mechdog-01",
+            "state": "IDLE",
+            "escalation": "L0",
+            "telemetry": {"batt_v": 8.54, "temp_c": 41.2},
+            "stale": False,
+        }
+        with mock.patch.object(robotlink, "_get", return_value=real_payload):
+            st = robotlink.fetch_status()
+        self.assertIn("8.54", st)
+        self.assertIn("IDLE", st)
+        self.assertIn("L0", st)
+
+    def test_fetch_status_no_telemetry_yet(self):
+        # 시뮬·링크 전 상태 — telemetry=None 이 와도 죽지 않는다.
+        payload = {"state": "FAILSAFE", "escalation": "L3", "telemetry": None, "stale": True}
+        with mock.patch.object(robotlink, "_get", return_value=payload):
+            st = robotlink.fetch_status()
+        self.assertIn("FAILSAFE", st)
+        self.assertIn("L3", st)
+        self.assertIn("링크 지연", st)
+
+    def test_command_endings_match(self):
+        # 자연 발화 어미 변형은 명령으로 간다.
+        for phrase in (
+            "비상정지해",
+            "비상정지해줘",
+            "비상정지해주세요",
+            "순찰시작해",
+            "스톱해라",
+            "수동모드로전환해줘" if False else "수동제어해줘",
+            "수동모드로전환해줘",
+            "자동모드로바꿔",
+            "수동모드로전환해",
+            "순찰정지해",
+        ):
+            self.assertIsNotNone(robotlink.match_action(phrase), phrase)
+
+    def test_negation_and_condition_never_match(self):
+        # 어미 목록에 없는 꼬리는 절대 명령이 안 된다 — 부정·의문 안전.
+        for phrase in (
+            "비상정지하지마",
+            "비상정지할까",
+            "순찰시작할까봐",
+            "비상정지하면",
+            "비상정지하자",
+            "순찰해제",
+        ):
+            self.assertIsNone(robotlink.match_action(phrase), phrase)
+
+    def test_partial_phrase_still_no_match(self):
+        # "순찰해" 자체는 등록된 명령이지만, "순찰" 만으로는 안 된다.
+        self.assertIsNone(robotlink.match_action("순찰"))
+        self.assertIsNone(robotlink.match_action("정지"))
+        self.assertIsNone(robotlink.match_action("비상"))
+
 
 class HubScenarioQueueTests(unittest.TestCase):
     def test_scenario_item_flows_through_say_queue(self):

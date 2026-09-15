@@ -54,9 +54,7 @@ export class Operations {
   this.demo=true;this.stale=false;this.estop=false;this.role='operator';this.selected='MD-01';
   this.control=null;this.command='STOP';this.mission={status:'idle',robot:'MD-01',zone:'생산 구역',id:null};
   this.records=[];this.sessions=[];this.events=demoEvents();this.policies={};this.storageAvailable=!!storage;
-  // 실제 장비 상태 — /api/telemetry 폴러가 noteTelemetry 로 채운다. null 은 미수신.
-  this.serviceMode=null;this.safetyLatched=null;this.fsmState='';
-  this.liveFeed={state:'off',received:0,dropped:0};this.serial=0;this.load();
+  this.liveFeed={state:'off',received:0,dropped:0};this.telemetry={state:'off'};this.serial=0;this.load();
  }
  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn)}
  emit(reason){for(const fn of this.listeners)fn(reason)}
@@ -170,14 +168,12 @@ export class Operations {
  }
  clearPreviewStop(){this.estop=false;this.log('예시 잠금 초기화','실물 안전 잠금 해제 아님 · 자동 재개 안 함');this.emit('mode')}
  // ── 실제 장비 명령 (폐기된 /live 최소 화면의 기능을 관제로 옮긴 것) ──────
- // 서버 텔레메트리 스냅샷을 스토어에 반영한다. 세 필드가 바뀔 때만 갱신한다 —
- // 폴러는 몇 초마다 오므로 매번 다시 그리면 드래프트가 날아간다.
- noteTelemetry(payload){
-  const t=payload&&typeof payload==='object'?payload:{},flags=t.flags||{};
-  const service=flags.service===true,latched=t.safety_latched===true,state=typeof t.state==='string'?t.state:'';
-  if(service===this.serviceMode&&latched===this.safetyLatched&&state===this.fsmState)return;
-  this.serviceMode=service;this.safetyLatched=latched;this.fsmState=state;this.emit('telemetry');
- }
+ // 장비 상태는 /ws/telemetry 피드(setTelemetry · 4.6.2)에서 읽는다 — 따로 폴링하지 않는다.
+ // 로봇에서 받은 값이 없으면 null 이다. 끊겼으면 마지막 값이며, 화면이 끊김을 함께 말한다.
+ get deviceTelemetry(){return this.telemetry?.snapshot?.telemetry??null}
+ get serviceMode(){return this.deviceTelemetry?.flags.service??null}
+ get safetyLatched(){return this.deviceTelemetry?this.deviceTelemetry.safetyLatched:null}
+ get fsmState(){return this.telemetry?.snapshot?.state??''}
  // 실제 명령의 공통 경로 — 링크가 없으면 절대 나가지 않고, 거절도 숨기지 않는다.
  requestDevice(label,send){
   if(!this.live)throw new Error('실제 제어는 연결되지 않았습니다.');
@@ -185,7 +181,8 @@ export class Operations {
   return send().then(result=>{
    const rejected=result&&result.accepted===false;
    this.log('실제 '+label+' 응답',(rejected?'거절 · ':'')+(result?.detail||JSON.stringify(result)),'LIVE_LINK');
-   this.emit('telemetry');
+   // 상태 변화는 텔레메트리 피드가 곧 가져온다. 여기서는 기록이 바뀐 것만 알린다.
+   this.emit('device');
    if(rejected)throw new Error('거절됨 — '+(result.detail||'로봇이 거절했습니다.'));
    return result;
   },error=>{this.noteLinkError(label,error);throw error});
@@ -233,6 +230,8 @@ export class Operations {
   this.log('사건 수신 공백',dropped+'건을 버퍼에서 놓쳤습니다 · 서버가 조용히 넘기지 않고 알려준 것','LIVE_EVENT_FEED');this.emit('import');
  }
  setEventFeed(status){const prev=this.liveFeed;this.liveFeed=status;if(prev.state!==status.state)this.emit('mode')}
+ // 로봇 상태 게이지 (WBS 4.6.2). 초당 10번 오므로 전체 화면을 다시 그리는 'mode' 가 아니라 'telemetry' 로 알린다.
+ setTelemetry(view){this.telemetry=view;this.emit('telemetry')}
  savePolicy(id,{helmet,vest,note}){
   if(!/^[a-z0-9-]{1,80}$/.test(id)||typeof helmet!=='boolean'||typeof vest!=='boolean')throw new Error('정책 입력을 확인해 주세요.');
   this.policies[id]={helmet,vest,note:cleanText(note,500)};this.save();

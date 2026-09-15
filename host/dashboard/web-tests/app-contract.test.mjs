@@ -5,12 +5,13 @@ import {JSDOM} from 'jsdom';
 import {Operations,ROBOTS} from '../static/operations.js';
 import {OperationalPanels} from '../static/panels.js';
 import {registerPageTools} from '../static/webmcp.js';
+import {describeTelemetry} from '../static/telemetry-feed.js';
 
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
 const source=(await readFile(new URL('../static/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
 const layout=JSON.parse(await readFile(new URL('../static/factory-layout.json',import.meta.url),'utf8'));
-async function boot(hash='dashboard',{health=null}={}){
- const dom=new JSDOM(html,{url:'http://127.0.0.1:4175/#'+hash,runScripts:'outside-only',pretendToBeVisual:true}),window=dom.window,document=window.document,registered=new Map(),revoked=[];
+async function boot(hash='dashboard',{health=null,search=''}={}){
+ const dom=new JSDOM(html,{url:'http://127.0.0.1:4175/'+search+'#'+hash,runScripts:'outside-only',pretendToBeVisual:true}),window=dom.window,document=window.document,registered=new Map(),revoked=[];
  let store,panels,view,robotView,robotViewCount=0;const failures=[];window.addEventListener('error',event=>failures.push(event.error));
  // health 를 주면 대시보드 서버가 내보낸 화면처럼 실제 연결 경로로 뜬다.
  window.fetch=async url=>({ok:true,json:async()=>health&&String(url).endsWith('/health')?health:layout});window.URL.createObjectURL=()=> 'blob:local-test';window.URL.revokeObjectURL=url=>revoked.push(url);
@@ -22,28 +23,29 @@ async function boot(hash='dashboard',{health=null}={}){
  class View{
   constructor(options){view=this;this.onRobot=options.onRobot;this.onObservation=options.onObservation;this.onError=options.onError}selectRobot(id){this.selected=id}setPatrolRobot(id){this.patrolRobot=id}setPlaying(value){this.playing=value}setCameraVisible(value){this.cameraVisible=value}setWorldVisible(value){this.worldVisible=value}setActive(value){this.active=value}setView(mode){this.mode=mode}focusZone(zone){this.zone=zone}zoom(){}orbit(){}resize(){}dispose(){this.disposed=true}
  }
- let visionFeed=null,eventFeed=null;
+ let visionFeed=null,eventFeed=null,telemetryFeed=null;
  const linkCalls=[];
- class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}}
+ class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}service(mode){linkCalls.push('service:'+mode);return Promise.resolve({accepted:true})}patrol(action){linkCalls.push('patrol:'+action);return Promise.resolve({accepted:true})}resetSafe(){linkCalls.push('reset');return Promise.resolve({accepted:true})}}
  class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
+ class TelemetryStub{constructor(options){telemetryFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class EventStub{constructor(options){eventFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class RobotView{constructor({canvas}){robotView=this;this.canvas=canvas;robotViewCount++}setActive(value){this.active=value}resize(){}orbit(angle){this.angle=angle}zoom(value){this.zoomValue=value}reset(){this.resetCalled=true}dispose(){this.disposed=true}}
  // 음성 중계는 시험에서 연결하지 않는다 — 링크가 없을 때의 패널만 검증한다.
  class VoiceStub{status(){return Promise.resolve({})}transcript(){return Promise.resolve([])}say(){return Promise.resolve({})}mode(){return Promise.resolve({})}phrases(){return Promise.resolve([])}addPhrase(){return Promise.resolve({})}deletePhrase(){return Promise.resolve({})}}
  const resolveVoiceBase=async()=>null;
- await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed,EventFeed){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed,EventStub);
- return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},get eventFeed(){return eventFeed},linkCalls};
+ await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed,EventFeed,TelemetryFeed,describeTelemetry){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed,EventStub,TelemetryStub,describeTelemetry);
+ return {dom,window,document,store,panels,view,registered,revoked,failures,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},get eventFeed(){return eventFeed},get telemetryFeed(){return telemetryFeed},linkCalls};
 }
 
 test('application opens direct hash, aligns 3D and camera selection, routes named scene buttons',async()=>{
- const {dom,document,store,view,failures}=await boot('events');assert.equal(document.querySelector('#panel-title').textContent,'사건 검토');assert.equal(document.querySelector('#detail-panel').hidden,false);
+ const {dom,document,store,view,failures}=await boot('events');assert.equal(document.querySelector('#map-placeholder').hidden,true);assert.equal(document.querySelector('#panel-title').textContent,'사건 검토');assert.equal(document.querySelector('#detail-panel').hidden,false);
  document.querySelector('[data-camera="top"]').click();assert.equal(document.querySelector('#panel-title').textContent,'공간 · 구역');
  document.querySelector('[data-camera="robot"]').click();assert.equal(document.querySelector('#panel-title').textContent,'장치 상태');
  document.querySelector('[data-robot="MD-02"]').click();assert.equal(store.selected,'MD-02');assert.equal(view.selected,'MD-02');assert.match(document.querySelector('#camera-title').textContent,/MD-02/);assert.deepEqual(failures,[]);dom.window.close();
 });
 test('navigation releases manual control, real-data mode hides preview without claiming connection',async()=>{
  const {dom,document,store,view}=await boot('missions');store.claim();store.move('FORWARD');document.querySelector('[data-view="events"]').click();assert.equal(store.command,'STOP');assert.equal(store.control,null);
- store.setDemo(false);assert.equal(document.querySelector('#app').classList.contains('data-waiting'),true);assert.equal(view.cameraVisible,false);assert.equal(view.playing,false);assert.match(document.querySelector('#frame-source').textContent,/미수신/);dom.window.close();
+ store.setDemo(false);assert.match(document.querySelector('.actual-status').textContent,/장비 미연결/);document.querySelector('[data-view="settings"]').click();assert.match(document.querySelector('#panel-content').textContent,/실제 로봇연결 안 됨/);document.querySelector('[data-view="events"]').click();assert.equal(document.querySelector('#app').classList.contains('data-waiting'),true);assert.equal(view.cameraVisible,false);assert.equal(view.playing,false);assert.match(document.querySelector('#frame-source').textContent,/미수신/);dom.window.close();
 });
 
 test('WASD requires ownership, holds one direction and Space cancels without automatic restart',async()=>{
@@ -132,12 +134,59 @@ test('fullscreen includes external workspace panels as well as the factory app',
  const {dom,document}=await boot();document.querySelector('#fullscreen').click();assert.equal(document.documentElement.dataset.fullscreenRequested,'true');dom.window.close();
 });
 
+test('served by the dashboard, robot state from /ws/telemetry fills the status card and the device gauges in place',async()=>{
+ const state=await boot('devices',{health:{service:'telemetry',vision_clients:0}}),{dom,document,store,failures}=state,feed=state.telemetryFeed;
+ assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/telemetry');assert.equal(feed.started,true);assert.deepEqual(failures,[]);
+ const card=()=>document.querySelector('.actual-status').textContent,sheet=()=>document.querySelector('.robot-status-sheet').textContent;
+ const snapshot=(extra={})=>({deviceId:'mechdog-01',state:'PATROL',escalation:'L1',ageMs:40,stale:false,runtimeStale:false,telemetry:{deviceId:'mechdog-3c8a1f333208',bootId:'b',seq:9,state:'IDLE',battV:7.64,distCm:52,imu:{pitch:0.4,roll:-1.2,yaw:180},lastCmdAgeMs:70,safetyLatched:false,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true}},...extra});
+ const history=[{t:0,battV:7.7,distCm:60},{t:1000,battV:7.66,distCm:55},{t:2000,battV:7.64,distCm:52}];
+ const canvas=document.querySelector('.robot-detail-canvas'),views=state.robotViewCount,button=document.querySelector('.robot-status-sheet .op-toolbar button');
+ feed.options.onUpdate({state:'live',snapshot:snapshot(),rateHz:10,lost:0,history});
+ assert.match(card(),/mechdog-01 · PATROL · L1/);assert.match(card(),/배터리 7\.64 V · 거리 52 cm · 수신 10\.0 Hz/);
+ assert.match(sheet(),/7\.64 V/);assert.match(sheet(),/PATROL \/ L1 · 온보드 IDLE/);assert.match(sheet(),/실시간/);assert.match(sheet(),/최소 7\.64 V · 최대 7\.70 V/);
+ // 10Hz 로 다시 채워도 3D 미리보기와 버튼은 그대로다 — 화면 전체를 다시 그리지 않는다.
+ assert.equal(document.querySelector('.robot-detail-canvas'),canvas);assert.equal(state.robotViewCount,views);assert.equal(document.querySelector('.robot-status-sheet .op-toolbar button'),button);
+ // 로봇이 끊기면 마지막 값은 남기되 끊겼다고 말한다.
+ feed.options.onUpdate({state:'live',snapshot:snapshot({stale:true,ageMs:4200}),rateHz:0,lost:0,history});
+ assert.match(card(),/로봇 수신 끊김 · 4\.2 s 전/);assert.match(sheet(),/수신 끊김/);assert.match(sheet(),/지금 상태로 판단하지 마세요/);
+ assert.equal(document.querySelector('.actual-status').dataset.tone,'stale');
+ dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
+ dom.window.close();
+});
+test('device commands on 순찰·제어 follow the telemetry feed without rebuilding their buttons',async()=>{
+ const state=await boot('missions',{health:{service:'telemetry',vision_clients:0}}),{dom,document,failures,linkCalls}=state,feed=state.telemetryFeed;
+ const section=()=>[...document.querySelectorAll('.op-section')].find(s=>s.querySelector('h3')?.textContent==='실제 장비 명령');
+ const toggle=()=>section().querySelector('[data-service="toggle"]');
+ assert.match(section().textContent,/서비스 모드미수신/);assert.equal(toggle().disabled,false);
+ const snap=service=>({deviceId:'mechdog-01',state:'IDLE',escalation:'L0',ageMs:30,stale:false,runtimeStale:false,telemetry:{deviceId:'x',bootId:'b',seq:1,state:'FAILSAFE',battV:8.1,distCm:90,imu:{pitch:0,roll:0,yaw:0},lastCmdAgeMs:20,safetyLatched:true,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true,service}}});
+ const button=toggle();
+ feed.options.onUpdate({state:'live',snapshot:snap(true),rateHz:10,lost:0,history:[]});
+ assert.match(section().textContent,/서비스 모드켜짐/);assert.match(section().textContent,/안전 래치걸림/);assert.match(section().textContent,/IDLE · 온보드 FAILSAFE/);
+ // 10Hz 로 칸을 고쳐도 버튼은 같은 요소다 — 누르는 순간 교체되면 클릭이 사라진다.
+ assert.equal(toggle(),button);assert.match(button.textContent,/서비스 모드 해제/);
+ button.click();await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(linkCalls,['service:exit']);
+ feed.options.onUpdate({state:'live',snapshot:snap(null),rateHz:10,lost:0,history:[]});
+ assert.match(section().textContent,/모름 · 펌웨어가 알리지 않음/);assert.deepEqual(failures,[]);
+ dom.window.close();
+});
+test('without the dashboard server there is no telemetry feed and the gauges stay unfilled',async()=>{
+ const state=await boot('devices'),{dom,document}=state;
+ assert.equal(state.telemetryFeed,null);assert.match(document.querySelector('.robot-status-sheet').textContent,/미수신/);assert.match(document.querySelector('.actual-status').textContent,/장비 미연결/);
+ dom.window.close();
+});
 test('served by the dashboard, the robot view draws /ws/vision and says what it actually receives',async()=>{
  const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:0}}),{dom,document,store,failures}=state,feed=state.visionFeed;
  const text=id=>document.querySelector('#'+id).textContent;
  assert.equal(store.live,true);assert.deepEqual(failures,[]);
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/vision');assert.equal(feed.options.canvas,document.querySelector('#vision-frame'));assert.equal(feed.started,true);
  assert.equal(document.querySelector('#vision-frame').hidden,false);assert.equal(document.querySelector('#fpv').hidden,true);
+ // 실제로 붙어 있는데 하단 상태 칸이 "장비 미연결" 이라고 하면 안 된다 — 로봇 상태를 아는 척도 하지 않는다.
+ assert.doesNotMatch(document.querySelector('.actual-status').textContent,/미연결/);assert.match(document.querySelector('.actual-status').textContent,/상태 채널 연결 중/);
+ // 지도가 없으니 예시 공장 3D 를 그리지 않고 "지도 없음" 을 말한다 (#159 가 되살렸던 예시 로봇·경고 표시 포함).
+ assert.equal(state.view.active,false);assert.equal(document.querySelector('#map-placeholder').hidden,false);assert.match(document.querySelector('#scene-subtitle').textContent,/지도 없음/);
+ // 설정 화면의 "실제 로봇" 칸도 연결을 사실대로 말한다 (고정 "연결 안 됨" 이 아니다).
+ document.querySelector('[data-view="settings"]').click();assert.match(document.querySelector('#panel-content').textContent,/실제 로봇관제 서버 연결됨 · 로봇 상태는 장치 화면에서/);document.querySelector('#close-panel').click();
  // 연결만 됐다고 "실시간" 이라 하지 않는다.
  assert.equal(text('frame-source'),'영상 연결 중');assert.doesNotMatch(text('camera-status'),/실시간/);
  feed.options.onStatus({state:'live',lastFrameAt:Date.UTC(2026,8,14,10,0,0),frameSeq:12,width:640,height:480,detections:3,persons:2});
@@ -167,6 +216,12 @@ test('served by the dashboard, live events flow from /ws/events into the review 
 test('without a vision channel the robot view does not try to connect',async()=>{
  const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:null}}),{dom,document}=state;
  assert.equal(state.visionFeed,null);assert.equal(document.querySelector('#camera-status').textContent,'비전 채널 없음');
+ dom.window.close();
+});
+test('a page from another origin cannot point itself at the robot API with ?api=',async()=>{
+ // 다른 출처의 API 로 붙으면 서버 출처 검사가 비상정지·WS 를 전부 거절한다 — 연결된 척하는 화면이 된다.
+ const {dom,store,failures}=await boot('dashboard',{search:'?api=http://127.0.0.1:8000'});
+ assert.equal(store.live,false);assert.deepEqual(failures,[]);
  dom.window.close();
 });
 test('camera expand, collapse and reopen keep labels and rendering in sync',async()=>{

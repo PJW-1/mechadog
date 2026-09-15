@@ -703,7 +703,7 @@ def test_head_up_postures_are_negative(cfg: dict) -> None:
 
 @pytest.mark.parametrize(
     ("section", "name"),
-    [("fsm", "alert_pitch_deg"), ("posture", "pitch_up_deg")],
+    [("fsm", "alert_pitch_deg"), ("fsm", "scan_pitch_deg"), ("posture", "pitch_up_deg")],
 )
 def test_positive_head_up_angle_is_refused(cfg: dict, section: str, name: str) -> None:
     """⚠️ **양수로 되돌리면 기동을 막는다.**
