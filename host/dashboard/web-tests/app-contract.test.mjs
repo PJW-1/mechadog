@@ -166,6 +166,12 @@ test('device commands on 순찰·제어 follow the telemetry feed without rebuil
  assert.equal(toggle(),button);assert.match(button.textContent,/서비스 모드 해제/);
  button.click();await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(linkCalls,['service:exit']);
+ const reset=section().querySelector('[data-reset-safe="confirm"]');let prompt='';
+ state.window.confirm=message=>{prompt=message;return false};
+ reset.click();await new Promise(resolve=>setTimeout(resolve,0));
+ assert.match(prompt,/원인이 제거.*주변에 사람이 없는지/);assert.deepEqual(linkCalls,['service:exit']);
+ state.window.confirm=()=>true;reset.click();await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(linkCalls,['service:exit','reset']);
  feed.options.onUpdate({state:'live',snapshot:snap(null),rateHz:10,lost:0,history:[]});
  assert.match(section().textContent,/모름 · 펌웨어가 알리지 않음/);assert.deepEqual(failures,[]);
  dom.window.close();

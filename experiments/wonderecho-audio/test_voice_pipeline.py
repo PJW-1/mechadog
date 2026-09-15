@@ -349,6 +349,15 @@ class RobotlinkTests(unittest.TestCase):
             "자동모드로바꿔",
             "수동모드로전환해",
             "순찰정지해",
+            # 실제 합성 음성 STT에서 "해줘"가 아래 어미로 흔들렸다(#171).
+            "비상정지해져",
+            "비상정지해죠",
+            "비상정지하죠",
+            "비상정지했죠",
+            "비상정지했어요",
+            "비상정지했어",
+            # 실제 합성 음성에서 "비상정지해줘"가 이렇게 인식된 사례만 허용한다.
+            "비상정지에",
         ):
             self.assertIsNotNone(robotlink.match_action(phrase), phrase)
 
@@ -361,6 +370,9 @@ class RobotlinkTests(unittest.TestCase):
             "비상정지하면",
             "비상정지하자",
             "순찰해제",
+            "순찰시작에",
+            "비상정지에 대해 알려줘",
+            "순찰시작에 문제가 있어",
         ):
             self.assertIsNone(robotlink.match_action(phrase), phrase)
 
@@ -369,6 +381,36 @@ class RobotlinkTests(unittest.TestCase):
         self.assertIsNone(robotlink.match_action("순찰"))
         self.assertIsNone(robotlink.match_action("정지"))
         self.assertIsNone(robotlink.match_action("비상"))
+
+
+class TranscribeTests(unittest.TestCase):
+    def test_domain_prompt_is_passed_to_whisper_without_changing_audio_result(self):
+        seen = {}
+
+        class FakeModel:
+            def transcribe(self, audio, **kwargs):
+                seen["samples"] = len(audio)
+                seen["kwargs"] = kwargs
+                return [
+                    types.SimpleNamespace(text=" 메카독 "),
+                    types.SimpleNamespace(text="순찰 시작 "),
+                ], {}
+
+        text = vp.transcribe(FakeModel(), b"\x00\x00\xff\x7f")
+
+        self.assertEqual(text, "메카독 순찰 시작")
+        self.assertEqual(seen["samples"], 2)
+        self.assertEqual(
+            seen["kwargs"],
+            {
+                "language": "ko",
+                "beam_size": 5,
+                "vad_filter": True,
+                "initial_prompt": vp.STT_PROMPT,
+            },
+        )
+        self.assertIn("메카독", vp.STT_PROMPT)
+        self.assertIn("비상정지", vp.STT_PROMPT)
 
 
 class HubScenarioQueueTests(unittest.TestCase):
