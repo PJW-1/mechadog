@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1a1a2a">
+<title>MechaDog · 현장 관제</title>
+<meta name="description" content="현장을 입체적으로 살펴보고, 선택한 로봇의 시점을 바로 확인하는 MechaDog 관제실.">
+<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./panels.css">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/"}}</script>
+<script type="module" src="./app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#scene-title">본문으로 이동</a>
+<div id="app">
+<header class="topbar">
+<a class="brand" href="#dashboard" aria-label="MechaDog 현장 관제">MechaDog</a>
+<nav aria-label="주 메뉴" class="main-nav">
+<button data-view="dashboard" class="active" aria-current="page">통합 관제</button>
+<button data-view="missions">순찰 · 제어</button>
+<button data-view="events">사건</button>
+<button data-view="records">기록</button>
+<button data-view="zones">구역</button>
+<button data-view="devices">장치</button>
+<button data-view="voice">음성</button>
+<button data-view="settings">설정</button>
+</nav>
+<div class="source-status"><span class="status-dot"></span><span id="source-status">시뮬레이션</span><span class="muted">실제 장비 미연결</span></div>
+<div class="safety-note"><span data-icon="lock"></span><span>실시간 제어 잠김 <small>미연결 · 정지 명령 전달 불가</small></span></div>
+<button class="estop" id="estop"><span data-icon="stop"></span><span>긴급 정지<small class="mobile-stop-note">장비 미연결 · 정지 전송 불가</small></span></button>
+</header>
+
+<section class="fleet-band" aria-label="로봇 선택">
+<div class="fleet-list">
+<button class="robot-tab selected" data-robot="MD-01" aria-pressed="true">
+<canvas class="robot-preview" data-preview="MD-01" aria-hidden="true"></canvas>
+<span><strong>MD-01 <span data-icon="camera"></span></strong></span>
+<span class="robot-health"><span class="status-dot"></span>미연결</span>
+</button>
+<button class="robot-tab" data-robot="MD-02" aria-pressed="false">
+<canvas class="robot-preview" data-preview="MD-02" aria-hidden="true"></canvas>
+<span><strong>MD-02</strong></span>
+<span class="robot-health"><span class="status-dot"></span>미연결</span>
+</button>
+<button class="robot-tab" data-robot="MD-03" aria-pressed="false">
+<canvas class="robot-preview" data-preview="MD-03" aria-hidden="true"></canvas>
+<span><strong>MD-03</strong></span>
+<span class="robot-health"><span class="status-dot"></span>미연결</span>
+</button>
+</div>
+<p class="last-received">상태 수신 <span id="state-time">—</span> · 실제 위치 미수신</p>
+</section>
+
+<main class="scene-stage" id="stage">
+<div class="scene-heading"><h1 id="scene-title" tabindex="-1">현장 전체 보기</h1><p id="scene-subtitle">예시 공간 · 실제 위치 미수신</p></div>
+<div class="segmented view-switch" aria-label="3D 시야 선택">
+<button class="selected" data-camera="overview" aria-pressed="true"><span data-icon="cube"></span>전체</button>
+<button data-camera="top" aria-pressed="false"><span data-icon="zones"></span>구역</button>
+<button data-camera="robot" aria-pressed="false"><span data-icon="device"></span>장치</button>
+</div>
+<canvas id="world" aria-label="3D 공장. 드래그로 회전, 휠로 확대. 키보드는 아래 시야 조작 버튼을 사용하세요."></canvas>
+<div id="scene-failure" class="scene-failure" hidden><h2>3D 화면을 열지 못했어요</h2><p>브라우저의 하드웨어 가속 설정을 확인한 뒤 다시 열어 주세요. 장비 상태는 아래에서 확인할 수 있습니다.</p><button id="retry-render">다시 열기</button></div>
+<div id="markers" class="markers" aria-label="예시 로봇 위치"></div><button id="attention-marker" class="attention-marker"><span>!</span>확인 필요 · 예시 <span data-icon="arrow"></span></button>
+<div class="scene-legend"><span class="route-swatch"></span>예시 순찰 경로 </div>
+
+<section class="camera-dock" id="camera-dock" aria-labelledby="camera-title">
+<header class="camera-header"><span data-icon="camera"></span><h2 id="camera-title">MD-01 · 로봇 시점</h2><div><button id="expand-camera" aria-label="로봇 시점 크게 보기" title="크게 보기"><span data-icon="expand"></span><span>확대</span></button><button id="collapse-camera" aria-label="로봇 시점 접기" aria-expanded="true"><span data-icon="minus"></span><span>접기</span></button></div></header>
+<div class="camera-body">
+<div class="camera-status"><span class="current-video">현재 영상</span><span id="camera-status">영상 미연결</span><span id="camera-resolution" hidden>가상 시점</span></div>
+<div class="camera-viewport" id="camera-viewport"><canvas id="fpv" aria-label="선택한 로봇의 가상 3D 시점"></canvas><canvas id="vision-frame" aria-label="로봇 카메라 영상과 검출 박스" hidden></canvas><span class="frame-badge" id="frame-source">예시 화면 · 실시간 아님</span><span class="camera-axis" id="camera-axis" hidden>MD-01 / FRONT</span></div>
+<footer class="camera-footer"><span id="frame-time">마지막 영상 수신　— <span class="muted">· 관측 전용</span></span><div class="camera-robot-switch" aria-label="카메라 로봇 전환"><button data-robot="MD-01" class="selected" aria-pressed="true">MD-01</button><button data-robot="MD-02" aria-pressed="false">MD-02</button><button data-robot="MD-03" aria-pressed="false">MD-03</button></div></footer>
+</div>
+</section>
+
+<div class="scene-controls" aria-label="3D 시야 조작">
+<button id="orbit-left" aria-label="왼쪽으로 회전" title="왼쪽으로 회전"><span data-icon="rotate"></span></button>
+<button id="zoom-out" aria-label="3D 축소" title="축소"><span data-icon="minus"></span></button>
+<button id="zoom-in" aria-label="3D 확대" title="확대"><span data-icon="plus"></span></button>
+<button id="reset-view" aria-label="기본 시야로 복원" title="기본 시야"><span data-icon="target"></span>시점 초기화</button>
+<button id="fullscreen" aria-label="현장 화면 전체 화면" title="전체 화면"><span data-icon="expand"></span></button>
+</div>
+</main>
+
+<footer class="operation-rail">
+<section class="mission-summary"><div class="mission-heading"><span data-icon="document"></span><h2>예시 임무 · 생산 구역 점검 <span>(시뮬레이션)</span></h2></div><div class="mission-progress"><button id="demo-toggle" aria-label="웹 예시 순찰 재생"><span data-icon="play"></span></button><span class="step done">대기</span><span class="step current">점검</span><span class="step">복귀</span><span id="demo-status">예시 정지</span></div></section>
+<section class="actual-status"><span data-icon="offline"></span><div><strong>현장 상태 확인 불가 · 장비 미연결</strong><p>시뮬레이션 화면으로, 실제 장비가 연결되어 있지 않습니다.</p></div></section>
+<section class="event-summary"><span data-icon="document"></span><div><strong>예시 사건 · 검토 대기</strong><p>화면에 확인이 필요한 사례가 있습니다.</p></div><button id="open-events" class="outline-button">사건 열기 <span data-icon="arrow"></span></button></section>
+</footer>
+<main id="detail-panel" class="detail-panel" aria-labelledby="panel-title" hidden><header><h1 id="panel-title" tabindex="-1"></h1><button id="close-panel" aria-label="관제로 돌아가기"><span data-icon="home"></span>관제로 돌아가기</button></header><div id="panel-content"></div></main>
+</div>
+<dialog id="stop-dialog" aria-labelledby="stop-title"><form method="dialog"><span class="dialog-symbol" data-icon="stop"></span><h2 id="stop-title">실제 장비가 연결되지 않았어요</h2><p>이 화면에서는 실물 로봇에 정지 명령을 보낼 수 없습니다. 실제 위험이 있으면 기체의 물리 정지 수단을 사용하세요.</p><p>아래 버튼은 웹 예시 재생만 중지합니다.</p><button id="stop-preview" value="stop" class="estop">웹 예시 중지</button><button value="cancel" class="outline-button">닫기</button></form></dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

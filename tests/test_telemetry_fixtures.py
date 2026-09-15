@@ -1,7 +1,7 @@
 """텔레메트리 정본 픽스처 검증 (FR-5.2).
 
 제어 명령과 마찬가지로, 텔레메트리도 **보내는 쪽과 받는 쪽을 다른 사람이
-작성한다** — 펌웨어는 L1·L2, 호스트 수신은 팀장이다(WBS 담당자 기준).
+작성한다** — 펌웨어는 L1·L2, 호스트 수신은 팀장이다(ASSIGNMENTS 담당 기준).
 불일치하면 대시보드가 조용히 빈 값을 표시하거나, 안전 플래그를 놓친다.
 
 그래서 제어 명령(`test_protocol_fixtures.py`)과 동일한 방식으로 정본 픽스처를 둔다.
@@ -31,23 +31,41 @@ CONFIG = ROOT / "config" / "config.yaml"
 
 # PRD FR-2.1 ~ FR-6.7 — FSM 상태
 KNOWN_STATES = {
+    # 온보드가 센서만으로 판정 가능
     "PATROL",
-    "SCAN",
     "AVOID",
+    "FAILSAFE",
+    # 호스트 FSM 전용 — STATE 명령으로 내려온다
+    "IDLE",
+    "SCAN",
     "ALERT",
     "TRACK",
     "LOST",
-    "FAILSAFE",
+    "AUTH_WAIT",
+    "MANUAL",
+    # Phase 2
     "HAZARD_DISPATCH",
+    "HAZARD_SCAN",
+    "ZONE_INSPECT",
 }
 
 # FR-5.2 — 최상위 필수 필드
-REQUIRED_TOP = ("seq", "ts", "device_id", "state", "dist_cm", "imu", "batt_v", "flags")
+REQUIRED_TOP = (
+    "seq",
+    "ts",
+    "device_id",
+    "boot_id",
+    "state",
+    "dist_cm",
+    "imu",
+    "batt_v",
+    "flags",
+)
 REQUIRED_IMU = ("pitch", "roll", "yaw")
 REQUIRED_FLAGS = ("lowbatt", "tipped", "link_ok")
 
 # 2S 리튬 물리 범위 — 셀당 3.0~4.2V
-BATT_MIN, BATT_MAX = 6.0, 8.4
+BATT_MIN, BATT_MAX = 6.0, 8.6  # 만충 8.4V + 측정 여유 0.2V (ADR-30)
 
 
 def _load(path: Path) -> list[dict]:
@@ -101,6 +119,11 @@ def test_device_id_is_present_and_distinct(samples: list[dict]) -> None:
     """
     ids = {m["device_id"] for m in samples}
     assert len(ids) >= 2, f"픽스처에 개체가 하나뿐이다: {ids}"
+
+
+def test_boot_id_is_present(samples: list[dict]) -> None:
+    for m in samples:
+        assert isinstance(m["boot_id"], str) and m["boot_id"], f"{m['_case']}: boot_id 누락"
 
 
 def test_states_are_known(samples: list[dict]) -> None:
@@ -239,3 +262,9 @@ def test_unknown_state_case_exists(invalid: list[dict]) -> None:
 def test_device_id_missing_case_exists(invalid: list[dict]) -> None:
     """device_id 누락 폐기 케이스가 있어야 한다 (DR-17)."""
     assert any("device_id" not in m for m in invalid), "device_id 누락 케이스가 없다"
+
+
+def test_boot_id_missing_case_exists(invalid: list[dict]) -> None:
+    assert any("device_id" in m and "boot_id" not in m for m in invalid), (
+        "boot_id 단독 누락 케이스가 없다"
+    )

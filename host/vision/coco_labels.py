@@ -1,0 +1,98 @@
+"""COCO 80클래스 이름과 순서 (WBS 3.3.1).
+
+⚠️ **순서가 모델과의 계약이다.** 가중치는 클래스를 번호로 내보내므로, 이 목록의
+순서가 학습 때와 다르면 **사람을 자전거로 부르면서도 오류는 나지 않는다.** 그래서
+가중치를 바꿀 때는 이 목록이 그 가중치의 것과 같은지 확인한다.
+
+⚠️ **이것은 설정이 아니라 모델의 일부다.** `config.yaml` 에 두지 않는 이유 — 튜닝할
+값이 아니고, 사람이 고칠 수 있게 두면 언젠가 순서가 흐트러진다. 바뀌어야 하는
+상황은 "다른 가중치를 쓴다" 하나뿐이고 그때는 코드가 함께 바뀐다.
+
+출처 — COCO 2017 검출 80클래스. YOLOX 공식 배포 가중치가 쓰는 순서와 같다
+(`yolox/data/datasets/coco_classes.py`).
+"""
+
+from __future__ import annotations
+
+COCO_CLASSES: tuple[str, ...] = (
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
+)

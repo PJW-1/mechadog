@@ -20,3 +20,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# host/ 를 import 가능하게 한다. 저장소 루트를 sys.path 에 넣는 표준 방법이며,
+# 이것이 없으면 tests/ 에서 `from host.common import ...` 가 실패한다.
+pythonpath = ["."]

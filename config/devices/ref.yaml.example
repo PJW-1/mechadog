@@ -3,9 +3,21 @@
 #  · 이 파일을 <unit-id>.yaml 로 복사하여 실측값을 채운다.
 #  · 서보 오프셋은 개체마다 다르므로 반드시 실측할 것.
 
-device_id: ref          # ref(기준기 · B의 로봇) | dev1 | dev2
-owner: B
-is_reference: true      # ⚠️ 게이트 검수는 기준기에서만 인정 (CONTRIBUTING 6절)
+device_id: ref          # 실제 unit-id는 2.4.1 에서 확정
+owner_id: unassigned    # 실제 담당자 계정/식별자. A/B/C 작업 성격 문자를 넣지 않는다
+
+# 펌웨어가 텔레메트리로 보내는 이름 — 보드 MAC 에서 만들어 위의 device_id 와 다르다.
+# 부팅 UART 의 `Telemetry identity: mechdog-xxxxxxxxxxxx` 를 옮겨 적는다. 없으면 호스트가
+# 이 로봇의 텔레메트리를 남의 것으로 버린다.
+# telemetry_device_id: mechdog-xxxxxxxxxxxx
+
+# ⚠️ 기준기는 Phase 별로 다르다 — LiDAR 를 3대 중 2대에만 장착하기 때문이다.
+#   phase1_reference : Phase 1 표준 구성(LiDAR 미장착). G1~G3 검수와 P1 NFR 수치의 출처
+#   phase2_reference : LiDAR 장착 개체. Phase 2 측위·매핑 검수
+#   LiDAR 장착 2대 중 1대만 phase2_reference이며, 나머지 1대는 개발·재현용이다.
+#   한 개체가 둘을 겸할 수 없다 — Phase 1 표준 구성을 유지해야 NFR 출처가 흔들리지 않는다.
+#   상세: CONTRIBUTING.md 1절
+reference_role: phase1   # phase1 | phase2 | none
 
 network:
   mechdog_ip: "192.168.0.101"
@@ -17,13 +29,39 @@ network:
 servo_offset: [0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 # 보행 명령 대비 실제 이동량 (FR-6.4 gait odometry)
-#  시연할 바닥에서 실측할 것 — 카펫/장판에 따라 달라진다
+#
+# ⚠️ **기체마다 따로 재야 한다 — 다른 기체의 값을 복사하면 안 된다.**
+#
+# 위의 `servo_offset` 이 개체마다 다르고, 그 비대칭이 곧 속도·선회율·직진 편향의
+# 차이로 나온다. mechdog-01 실측이 그것을 보여 준다.
+#
+#     좌선회 6.8 도/s  대  우선회 3.56 도/s      (1.91배)
+#     전진 104.0 mm/s  대  후진 78.0 mm/s        (75%)
+#     직진이 좌로 1.0 도/s 휜다                   (요 회전)
+#
+# **이 비대칭은 기체마다 방향도 크기도 다르게 나온다.** 복사한 값으로는 회피
+# 구간의 시간이 틀리게 계산되어 **그 기체가 장애물에 더 붙는다.**
+#
+# ⚠️ 시연할 바닥에서 재야 한다 — 카펫과 장판에서 달라진다.
+# 측정: `python tools/gait_calibrate.py --device <unit-id> --host <ip> --mode <모드>`
 gait_calibration:
   forward_mm_per_sec: null    # move(60, 0) 1초당 실제 전진 거리
-  turn_deg_per_sec: null      # move(0, 20) 1초당 실제 회전 각도
+  # move(-60, 0) 1초당 실제 후진 거리. **비면 전진 값을 쓴다** — 그러면 회피
+  # 후진량이 그만큼 틀린다(mechdog-01 실측은 전진의 75%).
+  reverse_mm_per_sec: null
+  turn_deg_per_sec: null      # move(60, 20) 원호 선회 시 1초당 실제 회전 각도
+  # move(60, 0) 직진 중 **방향이 틀어지는 비율**. mechdog-01 은 좌로 1.0 도/s 이며
+  # **요(회전)이라 각도 바이어스로 상쇄할 수 있다.** 횡슬립이면 각도로는 못 잡는다 —
+  # 어느 쪽인지는 창을 길게 잡고 각도가 자라는지 보면 갈린다.
+  forward_yaw_drift_deg_per_sec: null
+  # move(-60, 20) — **후진하며 선회**. 회피 시퀀스가 쓰는 조합이다(ADR-29).
+  # **비면 옛 구간표(후진 → 전진 선회)로 돌아가고, 그 개체의 회피는 순 여유가
+  # 음수일 수 있다** — mechdog-01 에서 -170mm 였다. 둘 다 재야 적용된다.
+  reverse_turn_deg_per_sec: null
+  reverse_turn_mm_per_sec: null
   measured_on: null           # 측정 바닥 (예: "장판", "카펫")
 
-measured:                     # docs/HARDWARE_VERIFICATION.md 와 동기화
+measured:                     # 실측 근거는 docs/HARDWARE.md 1절과 PR 본문에 기록
   body_weight_g: null
   payload_pass_g: null        # 부하 테스트 통과 최대 하중
   runtime_min: null

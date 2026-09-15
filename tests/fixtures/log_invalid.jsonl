@@ -1,0 +1,16 @@
+{"_case":"device_id 누락 — 3대 중 누구인지 알 수 없다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"seq 누락 — 어느 텔레메트리를 보고 판단했는지 짚을 수 없다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"state 누락 — 당시 상태를 모르면 전이를 재구성할 수 없다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":1234,"escalation":"L0","event":"fsm_transition"}
+{"_case":"escalation 누락 — 왜 L3 로 갔는지 답할 수 없게 된다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":1234,"state":"ALERT","event":"escalation"}
+{"_case":"ts 누락 — 여러 노드의 로그를 시간축에 정렬할 수 없다","_expect":"필수 컨텍스트 누락","level":"INFO","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"level 누락","_expect":"필수 컨텍스트 누락","ts":1756800000123,"device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"필수 컨텍스트가 둘 이상 없다 — 사유에 전부 나열해야 한다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","event":"fsm_transition"}
+{"_case":"파이썬 레벨 이름을 그대로 씀 — 정본은 WARN 이다","_expect":"알 수 없는 레벨","ts":1756800000123,"level":"WARNING","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":"stream_reconnect"}
+{"_case":"소문자 레벨","_expect":"알 수 없는 레벨","ts":1756800000123,"level":"info","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"ts 가 초 단위 실수 — 프로토콜과 축이 어긋난다","_expect":"ts 가 epoch 밀리초 정수가 아님","ts":1756800000.123,"level":"INFO","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"ts 가 음수","_expect":"ts 가 epoch 밀리초 정수가 아님","ts":-1,"level":"INFO","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"seq 가 문자열 — 상호 참조가 깨진다","_expect":"seq 가 0 이상 정수가 아님","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":"1234","state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"device_id 가 빈 문자열","_expect":"device_id 가 비어 있음","ts":1756800000123,"level":"INFO","device_id":"","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"event 이름이 없다 — 무슨 일이 있었는지 알 수 없다","_expect":"event 이름이 없음","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0"}
+{"_case":"event 가 빈 문자열","_expect":"event 이름이 없음","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":""}
+{"_case":"detail 이 객체가 아니다 — 키로 조회할 수 없다","_expect":"detail 이 객체가 아님","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition","detail":["PATROL","ALERT"]}

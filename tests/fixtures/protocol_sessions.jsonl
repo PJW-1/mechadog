@@ -1,0 +1,17 @@
+{"seq":100,"ts":1000,"type":"MOVE","step":60,"angle":0,"_expect":"accept"}
+{"seq":1,"ts":1001,"type":"STOP","_expect":"accept"}
+{"seq":101,"ts":1000,"type":"MOVE","step":60,"angle":0,"_expect":"discard"}
+{"seq":2,"ts":1002,"type":"MOVE","step":60,"angle":0,"_expect":"accept"}
+{"seq":3,"ts":1003,"type":"POSE","pitch":0,"roll":0,"height":0,"dur":-1,"_expect":"discard"}
+{"seq":4,"ts":1004,"type":"SOUND","phrase_id":1.5,"_expect":"discard"}
+{"seq":5,"ts":1005,"type":"GAIT","lift_time":10.5,"ground_time":20,"height":20,"_expect":"discard"}
+{"seq":6,"ts":1006,"type":"LED","color":"red","blink_hz":-1,"_expect":"discard"}
+{"seq":7,"ts":1007,"type":"ESTOP","_expect":"accept"}
+{"seq":8,"ts":1008,"type":"RESET_SAFE","_expect":"accept"}
+{"seq":0,"ts":1009,"type":"STOP","_expect":"discard"}
+{"seq":9,"ts":-1,"type":"STOP","_expect":"discard"}
+{"seq":9,"ts":1009,"type":"POSE","pitch":0,"roll":0,"height":0,"dur":0,"_expect":"accept"}
+{"seq":10,"ts":1010,"type":"POSE","pitch":0,"roll":0,"height":0,"dur":2147483648,"_expect":"discard"}
+{"seq":11,"ts":1011,"type":"POSE","pitch":1e39,"roll":0,"height":0,"dur":1,"_expect":"discard"}
+{"seq":9007199254740992,"ts":1012,"type":"STOP","_expect":"discard"}
+{"seq":12,"ts":1012,"type":"STOP","_expect":"accept"}

@@ -1,8 +1,8 @@
 # 협업 규칙 (Contributing)
 
-> 3인 팀 · 4주 · [WBS](docs/WBS.md) 기준
+> 3인 팀 · 4주 · 매일 볼 작업 목록은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)
 >
-> **처음이라면 [착수 상태](docs/KICKOFF.md)를 먼저 읽으세요.**
+> **처음이라면 [README](README.md)의 문서 지도를 먼저 보세요.**
 > **절차는 이 문서, 구현 기준은 [엔지니어링 가이드](docs/ENGINEERING_GUIDE.md)** (로깅·테스트·CI)
 > **메시지 스키마 정본은 [통신 프로토콜](docs/PROTOCOL.md)** — 팀장이 결정하여 전파한다
 >
@@ -19,7 +19,22 @@
 | **B · 인지·AI** | 3.3 인지로직, 4.2 비전펌웨어, 4.3 스트림, 4.6 화면, 6.1.2·6.3 | `firmware_xiao_vision/`, `host/vision/`, `host/dashboard/static/` |
 | **C · 시스템·통합** | 1.0 문서, 3.1 통신규약, 3.4 FSM, 4.5 서버, 5.2·5.3.1, 6.2·6.4 | `host/behavior/`, `host/dashboard/`, `host/common/`, `tests/`, `docs/` |
 
-**기준기(REF)** = B의 로봇. 측위 센서는 여기에만 장착하며, **게이트 검수는 반드시 기준기에서** 수행한다.
+> **A · B · C 는 작업 성격 분류이지 사람 이름이 아니다.** 위 표는 "누가" 가 아니라 "어떤 성격의 작업이 어느
+> 디렉터리에 있는지" 를 나타낸다. **실제 인원 배정은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)** 에 생성되며, 한 사람이 두 영역을 겸할 수 있다.
+
+### 기준기(Reference Unit)
+
+게이트 검수를 수행하는 지정 개체다. **LiDAR 를 3대 전부에 달지 못하므로 Phase 별로 나눈다.**
+
+| 구분 | 정의 | 검수 범위 |
+| :--- | :--- | :--- |
+| **`phase1_reference`** | **Phase 1 표준 구성**(LiDAR 미장착)의 지정 개체 | G1·G2·G3 검수, **Phase 1 NFR 성능 수치의 출처** |
+| **`phase2_reference`** | 측위 센서(LiDAR)를 장착한 지정 개체 | Phase 2 측위·매핑 검수 |
+
+- 두 기준기는 **[WBS 2.4.1](docs/WBS.md)에서 지정**하고 물리적으로 표시한다.
+- LiDAR 는 2대에 장착하고, 그중 **1대를 `phase2_reference`** 로 지정한다. 나머지 LiDAR 장착기는 개발·재현용이다.
+- **게이트 검수는 반드시 해당 Phase 의 기준기에서** 수행한다. 개발기 통과는 검수로 인정하지 않는다.
+- 권장 배치: **LiDAR 미장착 개체를 `phase1_reference`** 로 둔다. Phase 1 표준 물리 구성이 유지되어 NFR 수치의 기준이 흔들리지 않는다.
 
 ---
 
@@ -35,15 +50,19 @@ dev  ───●────●───●─────●────●─
 feature ●    ●         ●    ●    ●                   작업 브랜치
 ```
 
-| 브랜치 | 용도 | 적용된 보호 규칙 |
+| 브랜치 | 용도 | 저장소 운영 정책(의도) |
 | :--- | :--- | :--- |
 | **`main`** | 릴리스·시연에 쓰는 안정 버전 | PR 필수 · CI 통과 필수 · **Code Owner(@PJW-1) 승인 필수** · 강제푸시·삭제 금지 |
-| **`dev`** | 통합 브랜치. 모든 기능이 여기 모인다 | PR 필수 · CI 통과 필수 · 승인 1명 · 강제푸시·삭제 금지 |
-
-> **`main` 통제 방식** — 개인(비조직) 저장소에서는 GitHub의 *Restrict who can push* 기능을 쓸 수 없다. 대신 [CODEOWNERS](CODEOWNERS)에 `* @PJW-1` 을 두고 **Code Owner 리뷰를 필수**로 걸었다. 결과적으로 **소유자 승인 없이는 어떤 PR도 `main` 에 머지되지 않는다.**
+| **`dev`** | 통합 브랜치. 모든 기능이 여기 모인다 | PR 필수 · CI 통과 필수 · 리뷰 권장(필수 아님) · 강제푸시·삭제 금지 |
 | `feature/<wbs-id>-<설명>` | 작업 브랜치 | 자유. `dev`로 PR |
 | `fix/<설명>` | 버그 수정 | `dev`로 PR |
 | `docs/<설명>` | 문서만 수정 | `dev`로 PR |
+
+> **GitHub 설정 확인 주의** — [CODEOWNERS](CODEOWNERS)는 리뷰어를 지정할 뿐, 파일 하나만으로 승인을 강제하지 않는다.
+> 실제 강제에는 `main`의 branch protection/ruleset에서 **PR·필수 CI·Code Owner 승인·강제 푸시 금지**를 켜야 한다.
+> 2026-09-08 `main`과 `dev` 모두 보호 상태이며 **Python Quality, Firmware Quality,
+> MechDog-Motion 빌드, XIAO-Vision 빌드** 네 검사가 머지 필수다. `main`은 Code Owner 승인 1건도
+> 요구하며, 두 브랜치 모두 강제 푸시·삭제를 막는다.
 
 ### 작업 흐름
 
@@ -57,6 +76,27 @@ git switch -c feature/3.2.1-command-timeout
 
 작업 후 `dev`로 PR을 올린다. **`main`으로 직접 PR을 올리지 않는다.**
 
+### 여러 작업을 동시에 돌릴 때 — 작업 폴더를 나눈다
+
+⚠️ **한 폴더를 여럿이 함께 쓰면 편집이 사라진다.** 실제로 2026-09-15 까지 세 번
+일어났다 — 한쪽이 편집 중인데 다른 쪽이 같은 폴더에서 `git reset --hard` 를 하면
+커밋되지 않은 작업이 그대로 지워진다. 사람이 여러 PC 로 나눠 일할 때는 생기지
+않고, **한 PC 에서 여러 작업을 병렬로 돌릴 때만** 생긴다(AI 에이전트를 여러 개
+띄우는 경우가 대표적이다).
+
+```bash
+git worktree add -b feature/<이름> ../mechadog-<이름> origin/dev
+```
+
+- 기본 체크아웃 폴더는 **읽기·확인용으로 두고 거기서 작업하지 않는다.** 여러 작업이
+  기본으로 잡는 자리라 충돌 지점이다.
+- 공용 폴더에서 **`git reset --hard` 를 쓰지 않는다.** 치워야 하면 WIP 커밋을 쓴다 —
+  `git stash` 도 스택이 워크트리 사이에 공유되어 남의 것을 꺼낼 수 있다.
+- 남이 작업 중인 파일·브랜치·PR 을 임의로 커밋하거나 머지하지 않는다. 커밋되지 않은
+  작업을 발견하면 **백업만 하고 소유자에게 알린다.**
+- 병합이 끝난 워크트리는 정리하되, 지우기 전에 미커밋 변경·비밀 파일(`*.key` 등)·
+  백업되지 않은 빌드 산출물이 없는지 본다.
+
 ### `dev` → `main` 승격
 
 게이트 검수(G1~G3)를 통과한 시점에만 소유자가 `dev` → `main` PR을 만들어 머지한다.
@@ -67,7 +107,7 @@ git switch -c feature/3.2.1-command-timeout
 | G2 통과 (M2 완료) | `v0.2.0` |
 | G3 통과 (M3 완료) | `v1.0.0` |
 
-> **브랜치명에 WBS ID를 넣는다.** 어떤 워크패키지의 작업인지 추적되어야 한다.
+> 기능 작업은 가능하면 브랜치명에 관련 WBS ID를 넣는다. 긴급 수정과 문서 정리는 설명형 이름만으로도 충분하다.
 
 ## 3. 커밋 메시지
 
@@ -115,12 +155,41 @@ Refs: WBS 3.2.1, FR-1.3, NFR-2.1
 | 항목 | 규칙 |
 | :--- | :--- |
 | **대상 브랜치** | **`dev`.** `main` 반영은 소유자가 릴리스 시점에만 수행한다 |
-| 크기 | **워크패키지 1개 = PR 1개.** 여러 WBS를 한 PR에 섞지 않는다 |
+| 크기 | 하나의 응집된 변경으로 묶는다. 관련된 워크패키지가 여러 개면 PR 본문에 ID를 모두 적는다 |
 | 리뷰어 | **`dev` 는 승인 없이 머지 가능** (CI 통과가 게이트). 리뷰는 권장이며 강제하지 않는다. **`main` 은 소유자 승인 필수** |
 | CI | 전 잡 통과 필수 |
 | DoD | [WBS 사전](docs/WBS.md)의 해당 워크패키지 완료 기준을 PR 본문에 인용하고 충족 근거를 적는다 |
 
 ---
+
+### 4.1 작업을 끝냈을 때
+
+**작업 완료 = 해당 WBS의 DoD 충족 + 검증 근거 + `dev` 병합.** PR은 변경·검증 근거를 보관한다.
+팀원은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)에서 🟢 작업을 고르고, 일반 코드 PR에서는 WBS를 수정하지 않는다.
+
+| 상황 | 처리 |
+| :--- | :--- |
+| 로컬 구현 / 열린 PR / 로컬 수정 패치 | 진행 중. `dev`의 WBS 완료로 집계하지 않는다 |
+| DoD 충족, 검증 완료 | PR 본문에 완료한 WBS ID와 근거를 기록한다. 일반 코드 PR에 WBS 수정은 넣지 않는다 |
+| 위 PR이 `dev`에 병합됨 | 작업 완료. 연결 Issue가 있으면 완료로 닫고, 추가 작업이 없는 병합 브랜치를 삭제한다. PR 기록은 남긴다 |
+| 코드만 병합했고 DoD에 필요한 실기 검증이 남음 | WBS는 미완료 유지. Issue도 열어 두고 남은 검증을 명시한다 |
+| G1~G3 검수 통과 | 해당 마일스톤 완료. 별도 `dev` → `main` 승격·태그 절차를 진행한다 |
+
+팀장은 주간 리뷰나 마일스톤 종료 때 병합된 PR의 근거를 확인해 WBS의 `[완료]`를 일괄 반영한다.
+WBS를 고친 경우에만 다음 명령으로 담당자 목록을 재생성한다. `docs/ASSIGNMENTS.md`는 직접 수정하지 않는다.
+
+```bash
+python tools/wbs_assignments.py
+python tools/wbs_assignments.py --check
+```
+
+완료 표시는 병합된 PR 전체를 자동 완료 처리하지 않고 DoD 근거가 확인된 작업만 반영한다.
+실기 검증이 남은 작업은 미완료로 둔다. 완료 이후 발견한 버그는 별도 수정 작업으로 추적한다.
+
+Issue는 필요할 때 해당 WBS 단위로 만든다. 과거 완료 작업 전부를 Issue로 다시 만들 필요는 없다.
+현재 기본 브랜치는 `dev`이므로, DoD까지 충족하는 PR 본문에 `Closes #이슈번호`를 넣으면 병합 시 자동 종료된다.
+검증이나 일부 구현이 남아 있으면 `Refs #이슈번호`로만 참조한다. 기본 브랜치를 바꾸면 자동 종료 조건도 다시 확인한다.
+[GitHub Issue 연결 규칙](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
 
 ## 5. 통신 규약 변경 규칙
 
@@ -181,9 +250,10 @@ Refs: WBS 3.2.1, FR-1.3, NFR-2.1
 | 규칙 | 내용 |
 | :--- | :--- |
 | **개체 프로파일 필수** | 모든 실기 실행은 `--device <unit-id>` 로 자신의 프로파일을 지정한다. 기본값 사용 금지 |
-| **실측값은 문서에 기록** | 무게·전압·fps·지연 측정치는 반드시 [HARDWARE_VERIFICATION.md](docs/HARDWARE_VERIFICATION.md)에 기입한다. 채팅이나 메모에만 남기지 않는다 |
-| **성능 수치의 출처 명시** | NFR 측정치는 **기준기 실측값**으로 문서화하고, 개체별 편차는 참고치로 병기한다 |
-| **안전 로직은 온보드에서 이동 금지** | 초음파 반사 정지·명령 타임아웃·저전압·전도 감지는 Tier 1이다. Host PC로 올리는 PR은 반려한다 ([PRD 2.2 불변 규칙](docs/PRD_Physical_AI_Guard_Robot.md)) |
+| **보정값은 기체별로 잰다 — 복사 금지** | `servo_offset` 과 `gait_calibration` 은 **그 기체에서 직접 재서** 그 기체의 프로파일에만 적는다. 다른 기체의 값을 복사하거나 한 대의 값을 3대 공용으로 쓰는 PR 은 반려한다. 근거는 실측이다 — `mechdog-01` 에서 좌선회가 우선회의 **1.91배**(6.8 대 3.56 도/s)이고 직진이 좌로 **1.0 도/s** 휘며 후진이 전진의 **75%** 다. 이런 비대칭의 출처가 개체별 서보 오프셋(`[0, -36, -82, -14, -97, 3, 100, 36, 62]`)이므로 **기체마다 방향도 크기도 다르게 나온다.** 복사한 값은 회피 구간의 시간을 틀리게 계산해 **그 기체를 장애물에 더 붙게** 만든다 (WBS `2.2.3`·`2.4.1`) |
+| **확인 결과는 PR 본문에** | 전압·fps·지연 확인 결과는 PR 본문에 남긴다. 채팅이나 메모에만 남기지 않는다. **`config` 로 들어갈 값은 `config/` 가 정본**이고 별도 리포트 문서는 두지 않는다. 원자료(csv·json·콘솔 로그)까지 남길 때만 `TEST_MECHDOG/results/<날짜-시각>/` 에 둔다 |
+| **성능 수치의 출처 명시** | Phase 1 NFR 측정치는 **`phase1_reference` 실측값**으로 문서화하고, 개체별 편차는 참고치로 병기한다 |
+| **안전 로직은 온보드에서 이동 금지** | 초음파 반사 정지·명령 타임아웃·저전압·전도 감지는 Tier 1이다. Host PC로 올리는 PR은 반려한다 ([아키텍처 1.2 불변 규칙](docs/ARCHITECTURE.md)) |
 
 ---
 
@@ -198,6 +268,16 @@ Refs: WBS 3.2.1, FR-1.3, NFR-2.1
 
 **HAL 분리 원칙** — 판단 로직(FSM·안전 판정·패킷 파싱)은 하드웨어 호출과 분리하여 작성한다. **하드웨어 없이 pytest로 검증 가능해야 한다.**
 
+### 넘어서는 안 되는 선
+
+| 규칙 | 근거 |
+| :--- | :--- |
+| **Tier 1 안전 로직을 Host PC 로 옮기지 않는다** | [아키텍처 1.2](docs/ARCHITECTURE.md) 불변 규칙. PC 가 꺼져도 로봇은 스스로 멈춘다 |
+| **안전 로직에 상태 억제 플래그를 쓰지 않는다** | DR-16. 임계값 조정으로 해결한다 |
+| **온보드 코드에 블로킹 지연을 두지 않는다** | 보행 제어 루프 방해 금지 (NFR-1 비목표) |
+| **거리(미터)를 구하려 하지 않는다** | DR-15. 측정 수단이 없다. bbox 로 직접 판정한다 |
+| **제자리 회전을 전제하지 않는다** | DR-11. 기구 구조상 불가 — 라이브러리 한계가 아니다 |
+
 ---
 
 ## 8. 로컬 검증 (PR 전)
@@ -207,11 +287,51 @@ ruff check . && ruff format --check .
 pytest -q
 ```
 
-펌웨어는 컴파일만 확인:
+**검출을 실제로 돌려 볼 때만** 가중치가 추가로 필요하다 (시험은 없이도 전부 돈다).
 
 ```bash
+python tools/fetch_models.py
+```
+
+> ⚠️ **`onnxruntime` 과 `onnxruntime-directml` 을 같이 깔면 안 된다.** 둘은 같은
+> `onnxruntime` 이름을 점유하는데, **에러 없이 한쪽이 다른 쪽을 가린다.** 실제로
+> 이 PC 에 둘 다 깔려 있었고 DirectML 이 목록에서 사라져 **CPU 로 도는 것을 몰랐다**
+> (61.9ms → 교체 후 8.2ms). Windows 는 `onnxruntime-directml` **하나만** 남긴다.
+>
+> ```bash
+> pip uninstall -y onnxruntime onnxruntime-directml
+> pip install onnxruntime-directml     # Windows
+> python -c "import onnxruntime as o; print(o.get_available_providers())"
+> ```
+>
+> `DmlExecutionProvider` 가 보여야 한다. 기동 로그의 `execution_provider` 로도
+> 확인된다 — **CPU 로 떨어지면 `WARNING`** 이 남는다.
+
+> ⚠️ **개발 콘솔은 cp949 다 — `print()` 에 ASCII·한글 밖의 문자를 넣으면 죽는다.**
+> `—`(U+2014)·`·`(U+00B7) 같은 문자를 만나면 `UnicodeEncodeError` 가 나고, 그 줄이
+> 기동 배너면 **프로그램 자체가 시작되지 않는다** (실제로 `runtime` 의 콘솔 안내와
+> `fetch_models.py` 에서 각각 한 번 겪었다). 로거는 살아남는다 — 콘솔 핸들러가
+> 치환하기 때문이며 `print()` 만의 문제다.
+>
+> - 파일로 쓸 때는 `encoding="utf-8"` 을 명시한다.
+> - 콘솔로 낼 때는 **ASCII 와 한글만** 쓰거나, `fetch_models.py` 처럼
+>   `io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")` 로 감싼다.
+> - **`ruff` 와 `pytest` 는 이것을 잡지 못한다** — 시험은 `print` 를 지나가지 않는다.
+
+MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run 구성으로 컴파일한다.
+실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
+`firmware_mechdog_motion/README.md`의 *"구동·센서 통합 빌드 준비"* 절을 따르고,
+준비 상태는 `python tools/firmware_env.py`로 점검한다. **벤더 파일은 절대 커밋하지 않는다**(ADR-20).
+
+펌웨어 포맷과 컴파일 확인:
+
+```bash
+clang-format --dry-run --Werror firmware_mechdog_motion/src/*.cpp firmware_mechdog_motion/src/*.h
 arduino-cli compile --fqbn esp32:esp32:esp32 firmware_mechdog_motion
 ```
+
+> `clang-format` 은 `requirements-dev.txt` 에 들어 있다. **없으면 포맷 위반을 CI 에서만 알게 되고
+> 그때는 이미 PR 이 빨간불이다** — 실제로 그렇게 한 번 겪었다.
 
 ---
 

@@ -1,0 +1,173 @@
+{
+  "meta": {
+    "timestamp": "2026-09-12T02:36:54",
+    "epoch_ms": 1789148214337,
+    "host_ip": "192.168.45.183",
+    "subnet": "192.168.45.0/24",
+    "platform": "Windows-11-10.0.26200-SP0"
+  },
+  "nodes": {
+    "mechdog": {
+      "ip": "192.168.45.86",
+      "port": 5001,
+      "info": {
+        "seq": 10764,
+        "ts": 1077269,
+        "device_id": "mechdog-01",
+        "boot_id": "3ddbed7e2a57c682",
+        "state": "FAILSAFE",
+        "dist_cm": 0.0,
+        "imu": {
+          "pitch": 0.69,
+          "roll": 2.26,
+          "yaw": 0.0
+        },
+        "batt_v": 8.29,
+        "last_cmd_age_ms": 71862,
+        "safety_latched": true,
+        "flags": {
+          "lowbatt": false,
+          "tipped": false,
+          "link_ok": true
+        }
+      }
+    }
+  },
+  "summary": {
+    "PASS": 2,
+    "FAIL": 1,
+    "SKIP": 9
+  },
+  "checks": [
+    {
+      "id": "link",
+      "name": "로봇 UDP 링크",
+      "wbs": "2.4.2",
+      "status": "PASS",
+      "detail": "ACK 는 없지만 텔레메트리가 계속 온다 — 링크 정상",
+      "data": {
+        "path": "telemetry",
+        "discovery_record": {
+          "seq": 10764,
+          "ts": 1077269,
+          "device_id": "mechdog-01",
+          "boot_id": "3ddbed7e2a57c682",
+          "state": "FAILSAFE",
+          "dist_cm": 0.0,
+          "imu": {
+            "pitch": 0.69,
+            "roll": 2.26,
+            "yaw": 0.0
+          },
+          "batt_v": 8.29,
+          "last_cmd_age_ms": 71862,
+          "safety_latched": true,
+          "flags": {
+            "lowbatt": false,
+            "tipped": false,
+            "link_ok": true
+          }
+        }
+      }
+    },
+    {
+      "id": "rtt",
+      "name": "UDP 왕복 시간·손실률",
+      "wbs": "2.4.2",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 왕복 시간 측정을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "malformed",
+      "name": "기형 패킷 폐기",
+      "wbs": "3.1.2",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 폐기 판정을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "unknown_type",
+      "name": "미지 타입 폐기 (크래시 없음)",
+      "wbs": "3.1.2",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 미지 타입 판정을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "clamp",
+      "name": "범위 초과 클램핑",
+      "wbs": "3.1.2",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 클램핑 판정을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "seq_gate",
+      "name": "seq 역전·중복 폐기",
+      "wbs": "3.1.2",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 순서 게이트 판정을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "actuators",
+      "name": "서보 활성화 여부",
+      "wbs": "4.1.2",
+      "status": "SKIP",
+      "detail": "서보 비활성 빌드 (MECHADOG_ENABLE_ACTUATORS=0). 네트워크·파서·안전만 검증된다 — 실패가 아니다",
+      "data": {
+        "actuators": null
+      }
+    },
+    {
+      "id": "telemetry",
+      "name": "10Hz 텔레메트리 수신·스키마",
+      "wbs": "4.1.4",
+      "status": "PASS",
+      "detail": "30건 · 10.0Hz · 수락 30건",
+      "data": {
+        "count": 30,
+        "accepted": 30,
+        "seconds": 3.0,
+        "rate_hz": 10.0,
+        "senders": [
+          "192.168.45.86"
+        ],
+        "discard_reasons": []
+      }
+    },
+    {
+      "id": "cmd_timeout",
+      "name": "명령 타임아웃 페일세이프",
+      "wbs": "3.2.1",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 타임아웃 래치을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "estop",
+      "name": "ESTOP 래치 · MOVE 차단",
+      "wbs": "3.2.5",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 래치 상태 확인을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "reset_safe",
+      "name": "RESET_SAFE 수동 해제",
+      "wbs": "3.2.5",
+      "status": "SKIP",
+      "detail": "ACK 를 보내지 않는 상대라 래치 해제 확인을 관측할 방법이 없다 — 규약 판정은 골든 픽스처와 pytest 가 본다",
+      "data": {}
+    },
+    {
+      "id": "camera",
+      "name": "카메라 상태",
+      "wbs": "4.2.1",
+      "status": "FAIL",
+      "detail": "카메라를 찾지 못했다",
+      "data": {}
+    }
+  ]
+}

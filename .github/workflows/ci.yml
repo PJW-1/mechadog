@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main, dev]
+    # WBS 5.3.4 · release 잡은 refs/tags/v* 에서만 동작한다. 이 줄이 없으면
+    # 태그 push 로 워크플로우 자체가 트리거되지 않아 릴리스가 생성될 수 없다.
+    tags: ['v*']
   pull_request:
     branches: [main, dev]
 
@@ -31,11 +34,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # docs/ASSIGNMENTS.md 는 WBS 에서 생성된다. WBS 만 고치고 재생성하지 않으면
+      # 담당자별 부하가 실제와 다르게 표시되므로 여기서 막는다.
+      - name: Generated docs are up to date
+        run: python tools/wbs_assignments.py --check
+
       - name: Lint (ruff)
         run: ruff check .
 
       - name: Format check (ruff)
         run: ruff format --check .
+
+      - name: PC maintenance offline tests
+        run: |
+          python -m pip install -r tools/pc_control/requirements.txt
+          python -m unittest discover -s tools/pc_control -p 'test_*.py'
+
+      - name: Voice prototype offline tests
+        run: |
+          python -m pip install -r experiments/wonderecho-audio/requirements-pc.txt
+          python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'
 
       # 하드웨어 없이 검증 가능한 순수 로직만 대상 (WBS 6.2)
       #  · FSM 상태 전이 전수 검증
@@ -43,10 +61,9 @@ jobs:
       #  · 안전 판정 조건 조합
       #  · config 스키마 검증
       - name: Unit tests
-        # host/ 에 아직 Python 코드가 없어 --cov 는 "No data was collected" 경고만
-        # 남기고 수치가 무의미하다. 첫 Host 모듈이 들어올 때 아래로 교체한다.
-        #   pytest -q --cov=host --cov-report=term-missing --cov-fail-under=70
-        run: pytest -q
+        # 첫 Host 모듈(host/common/protocol.py · WBS 3.1.1)이 들어오면서 커버리지
+        # 게이트를 켰다. 그 전에는 측정 대상이 없어 수치가 무의미했다.
+        run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=80
 
   # ── WBS 5.3.2 · 펌웨어 정적 분석 ──────────────────────────
   firmware-quality:
@@ -59,6 +76,7 @@ jobs:
         id: detect
         run: |
           COUNT=$(find firmware_mechdog_motion firmware_xiao_vision \
+                    firmware_lidar_relay \
                     -name '*.cpp' -o -name '*.h' -o -name '*.ino' 2>/dev/null | wc -l)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "펌웨어 소스 $COUNT 개 발견"
@@ -74,12 +92,13 @@ jobs:
         if: steps.detect.outputs.count != '0'
         run: |
           find firmware_mechdog_motion firmware_xiao_vision \
+               firmware_lidar_relay \
                \( -name '*.cpp' -o -name '*.h' -o -name '*.ino' \) \
                -not -path '*/third_party/*' -print0 \
             | xargs -0 -r clang-format --dry-run --Werror
 
       # ⚠️ --error-exitcode=1 : 문제 발견 시 반드시 실패한다.
-      #    (구 워크플로우는 0으로 두어 어떤 문제도 잡히지 않았다 — PRD 6.1)
+      #    (구 워크플로우는 0으로 두어 어떤 문제도 잡히지 않았다 — 아키텍처 4.1)
       - name: Static analysis (cppcheck)
         if: steps.detect.outputs.count != '0'
         run: |
@@ -88,7 +107,124 @@ jobs:
                    --inline-suppr \
                    --error-exitcode=1 \
                    -i third_party \
-                   firmware_mechdog_motion firmware_xiao_vision
+                   firmware_mechdog_motion firmware_xiao_vision \
+                   firmware_lidar_relay
+
+      # ── WBS 4.1.3 · C++ 파서 골든 픽스처 대조 ────────────────
+      #
+      #  CONTRIBUTING 5.2 가 요구하는 "C++ 파서를 호스트 컴파일로 픽스처와 대조"
+      #  가 여기서 실제로 돈다. Python 쪽(test_protocol_fixtures.py)과 **같은
+      #  파일**을 읽으므로, 스키마를 한쪽만 바꾸면 둘 중 하나가 반드시 깨진다.
+      #
+      #  실물 없이 도는 것이 요점이다 — 펌웨어 로직을 로봇 3대에 의존하지 않고
+      #  매 PR 마다 검증한다 (HAL 분리 원칙).
+      - name: Host unit test (command parser)
+        if: hashFiles('firmware_mechdog_motion/test/*.cpp') != ''
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/src/command_parser.cpp \
+              firmware_mechdog_motion/test/test_command_parser.cpp \
+              -o build/test_command_parser
+          ./build/test_command_parser tests/fixtures
+
+      - name: Host unit test (OTA health window)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_ota_health.cpp \
+              -o build/test_ota_health
+          ./build/test_ota_health
+
+      - name: Host unit test (OTA reboot deadline)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_reboot_deadline.cpp \
+              -o build/test_reboot_deadline
+          ./build/test_reboot_deadline
+
+      - name: Host unit test (sensor timing statistics)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_sensor_timing_stats.cpp \
+              -o build/test_sensor_timing_stats
+          ./build/test_sensor_timing_stats
+      - name: Host unit test (independent loop watchdog, simulated time)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/test/watchdog_stubs \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_task_watchdog.cpp \
+              -o build/test_task_watchdog
+          ./build/test_task_watchdog
+
+      - name: Host unit test (telemetry encoder)
+        if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/src/command_parser.cpp \
+              firmware_mechdog_motion/src/telemetry_encoder.cpp \
+              firmware_mechdog_motion/test/test_telemetry_encoder.cpp \
+              -o build/test_telemetry_encoder
+          ./build/test_telemetry_encoder
+          ./build/test_telemetry_encoder --emit-fixtures > build/telemetry-emitted.jsonl
+          ./build/test_telemetry_encoder --emit-optional-fixtures > build/telemetry-optional.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from host.common.protocol import TelemetryDecoder, Verdict
+
+          decoder = TelemetryDecoder()
+          records = Path('build/telemetry-emitted.jsonl').read_text(encoding='utf-8').splitlines()
+          assert records, 'C++ encoder emitted no records'
+          for line in records:
+              result = decoder.validate(json.loads(line))
+              assert result.verdict is Verdict.ACCEPT, result
+          print(f'Python decoder accepted {len(records)} C++ telemetry records')
+          optional = Path('build/telemetry-optional.jsonl').read_text(encoding='utf-8').splitlines()
+          values = [json.loads(line) for line in optional]
+          assert [value['flags'].get('obstacle') for value in values] == [False, None, True]
+          decoder = TelemetryDecoder()
+          for value in values:
+              assert decoder.validate(value).verdict is Verdict.ACCEPT
+          print('Python decoder accepted omitted/present obstacle fields')
+          PY
+
+      # ── LiDAR 중계 노드 — LD19 파서/스캔 조립/SCAN 인코더 ──────
+      #  파이썬 수신측(lidar_link.ScanDecoder)의 규약 구현과 교차 검증한다.
+      - name: Host unit test (LiDAR relay)
+        if: hashFiles('firmware_lidar_relay/test/*.cpp') != ''
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -Wall -Wextra -Werror -O1 \
+              -I firmware_lidar_relay/src \
+              firmware_lidar_relay/src/ld19.cpp \
+              firmware_lidar_relay/src/scan_encoder.cpp \
+              firmware_lidar_relay/test/test_lidar_relay.cpp \
+              -o build/test_lidar_relay
+          ./build/test_lidar_relay
+          ./build/test_lidar_relay --emit-fixtures > build/lidar-emitted.jsonl
+          python3 - <<'PY'
+          from pathlib import Path
+          from host.common.lidar_link import ScanDecoder
+
+          decoder = ScanDecoder()
+          records = Path('build/lidar-emitted.jsonl').read_text(encoding='utf-8').splitlines()
+          assert records, 'C++ encoder emitted no scan records'
+          for line in records:
+              result = decoder.decode(line)
+              assert result.accepted, result
+          print(f'ScanDecoder accepted {len(records)} C++ scan datagrams')
+          PY
 
   # ── WBS 5.3.3 · 펌웨어 빌드 ───────────────────────────────
   firmware-build:
@@ -99,8 +235,18 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { dir: firmware_mechdog_motion, fqbn: 'esp32:esp32:esp32',          name: 'MechDog-Motion' }
-          - { dir: firmware_xiao_vision,    fqbn: 'esp32:esp32:XIAO_ESP32S3',   name: 'XIAO-Vision' }
+          - dir: firmware_mechdog_motion
+            fqbn: 'esp32:esp32:esp32:FlashMode=dio,FlashFreq=40'
+            core: 'esp32:esp32@2.0.12'
+            name: 'MechDog-Motion'
+          - dir: firmware_xiao_vision
+            fqbn: 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi'
+            core: 'esp32:esp32'
+            name: 'XIAO-Vision'
+          - dir: firmware_lidar_relay
+            fqbn: 'esp32:esp32:esp32:FlashMode=dio,FlashFreq=40'
+            core: 'esp32:esp32@2.0.12'
+            name: 'Lidar-Relay'
     steps:
       - uses: actions/checkout@v7
 
@@ -110,8 +256,8 @@ jobs:
           if find "${{ matrix.target.dir }}" -name '*.ino' | grep -q .; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::${{ matrix.target.dir }}에 스케치가 없어 빌드를 건너뜁니다 (WBS 4.1/4.2 미착수)"
+            echo "::error::${{ matrix.target.dir }}에 ${{ matrix.target.name }} 스케치가 없습니다"
+            exit 1
           fi
 
       - name: Setup arduino-cli
@@ -125,7 +271,7 @@ jobs:
           arduino-cli config add board_manager.additional_urls \
             https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32
+          arduino-cli core install "${{ matrix.target.core }}"
 
       # OI-5: HW_MechDog 라이브러리 라이선스 확인 후 third_party/ 벤더링 필요 (RISK-07)
       - name: Link vendored libraries
@@ -147,6 +293,43 @@ jobs:
             --export-binaries \
             "${{ matrix.target.dir }}"
 
+      - name: Compile task watchdog candidates (not release artifacts)
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        run: |
+          arduino-cli lib install SensorLib@0.2.1 Madgwick@1.2.0
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0' \
+            --build-path "$RUNNER_TEMP/watchdog-motion" firmware_mechdog_motion
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0 -DMECHADOG_ENABLE_SENSORS=1' \
+            --build-path "$RUNNER_TEMP/watchdog-sensors" firmware_mechdog_motion
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0 -DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_WATCHDOG_FAULT_PROBE=1' \
+            --build-path "$RUNNER_TEMP/watchdog-live-probe" firmware_mechdog_motion
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property "compiler.cpp.extra_flags=-I$GITHUB_WORKSPACE/firmware_mechdog_motion/src" \
+            --build-path "$RUNNER_TEMP/watchdog-probe" \
+            firmware_mechdog_motion/diagnostics/watchdog_probe
+
+      - name: Compile stationary OTA with loop watchdog (not a release artifact)
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        run: |
+          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property "compiler.cpp.extra_flags=-include $GITHUB_WORKSPACE/firmware_mechdog_motion/test/ota_compile_settings.h" \
+            --build-path "$RUNNER_TEMP/watchdog-ota" firmware_mechdog_motion
+
+      - name: Reject unqualified actuator watchdog combination
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        run: |
+          if arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
+            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=1' \
+            --build-path "$RUNNER_TEMP/watchdog-actuator-guard" firmware_mechdog_motion \
+            > "$RUNNER_TEMP/watchdog-actuator-guard.log" 2>&1; then
+            echo "::error::Unqualified watchdog/actuator combination compiled"
+            exit 1
+          fi
+          grep -F 'Task WDT candidate is restricted to actuator-OFF diagnostic builds' "$RUNNER_TEMP/watchdog-actuator-guard.log"
+
       - name: Upload artifacts
         if: steps.sketch.outputs.found == 'true'
         uses: actions/upload-artifact@v7
@@ -155,7 +338,7 @@ jobs:
           path: |
             ${{ matrix.target.dir }}/build/**/*.bin
             ${{ matrix.target.dir }}/build/**/*.elf
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ── WBS 5.3.4 · 릴리스 ────────────────────────────────────
   release:
@@ -166,15 +349,38 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 트리거는 `v*` 전부를 받으므로 SemVer 형식은 여기서 걸러야 한다.
+      # 잘못된 태그가 빈 릴리스를 만들기 전에 잡에서 실패시킨다.
+      - name: Verify tag is SemVer
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if ! [[ "$tag" =~ $semver ]]; then
+            echo "::error::태그 '$tag' 는 SemVer 가 아닙니다 — v<주>.<부>.<수> 형식(예: v1.2.3, v1.0.0-rc.1)만 릴리스합니다"
+            exit 1
+          fi
+          echo "SemVer 태그 확인: $tag"
+
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
-        continue-on-error: true
+
+      - name: Verify release firmware
+        shell: bash
+        run: |
+          for target in MechDog-Motion XIAO-Vision Lidar-Relay; do
+            if ! find "artifacts/firmware-$target" -type f -name '*.bin' -print -quit | grep -q .; then
+              echo "::error::$target 바이너리가 없습니다"
+              exit 1
+            fi
+          done
 
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: artifacts/**/*

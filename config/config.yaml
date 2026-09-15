@@ -11,11 +11,15 @@ network:
   # 개체별 IP/포트는 devices/*.yaml 에서 덮어쓴다 (WBS 2.4.2)
   cmd_port: 5001        # Host PC → MechDog (UDP)
   telemetry_port: 5101  # MechDog → Host PC (UDP)
-  vision_stream_url: "http://192.168.0.100:81/stream"
+  # ⚠️ 스트림 URL 을 여기 적지 않는다. **개체 프로파일의 `xiao_ip` 에서 조립한다.**
+  # 고정 주소를 적어 두면 실제 공유기에서 달라지고, **틀린 주소가 적혀 있는 것이
+  # 비어 있는 것보다 나쁘다** — `mechdog_ip` 를 `null` 로 둔 것과 같은 이유다.
+  vision_control_port: 80   # 상태·프로파일 (XIAO 펌웨어)
+  vision_stream_port: 81    # MJPEG. 스트림이 오래 점유하므로 제어 포트와 분리한다
   cmd_rate_hz: 10       # FR-5.1 — 변화 없어도 고정 송신
   telemetry_rate_hz: 10 # FR-1.4
 
-safety:                 # ⚠️ Tier 1 — 온보드에서만 판정 (PRD 2.2 불변 규칙)
+safety:                 # ⚠️ Tier 1 — 온보드에서만 판정 (아키텍처 1.2 불변 규칙)
   cmd_timeout_ms: 300         # FR-1.3
   link_loss_failsafe_ms: 3000 # FR-1.5
   obstacle_stop_cm: 25        # FR-2.2
@@ -25,12 +29,28 @@ safety:                 # ⚠️ Tier 1 — 온보드에서만 판정 (PRD 2.2 �
   # 기어 파손·과열 방지다. 임계 60°는 의도된 자세(앉기 30~45°)와 실제
   # 전도(약 90°) 사이의 빈 구간이다. 상태 억제 플래그를 쓰지 않고
   # 각도만으로 분리한다 (DR-16). OI-17 실측 후 확정.
+  # ⚠️ **전도 자동 감지는 이연됐다 (2026-09-10 · WBS 3.2.3 · Phase 2).** 이 두 값은
+  # 지우지 않는다 — 산정 근거(NFR-2.4.1)가 계산으로 유도된 값이고, IMU 드라이버가
+  # `FR-6.3` 때문에 만들어지면 그대로 쓴다. 지금은 사람의 `ESTOP` 이 그 역할을 한다.
   tip_angle_deg: 60
   tip_duration_ms: 2000       # NFR-2.4
 
 gait:                   # HW_MechDog API 파라미터 (DR-1)
+  # ⚠️ **보폭이 아니라 전진 속도 지령이다.** 벤더 서명이 `move(speed_x, angle_rate)` 이며
+  # `60` 의 실측 결과가 104 mm/s 다(`mechdog-01` · 2026-09-11). 이름의 `mm` 는 오해를 부른다.
   step_length_mm: 60          # -100 ~ 100
-  turn_angle_deg: 20          # -30 ~ 30 (arc 조향. 제자리 회전 불가 — DR-11)
+  # -30 ~ 30 (arc 조향. 제자리 회전 불가 — DR-11)
+  # ⚠️ **양수는 반시계 = 로봇의 좌회전**이다 (PROTOCOL 부호 규약). 회피 시퀀스가
+  # 이 값을 그대로 쓰므로 **회피는 좌회전한다** — `turn_deg_per_sec` 에 들어갈
+  # 값도 그래서 좌선회 실측값이다.
+  turn_angle_deg: 20
+  # ⏸ **아래 셋은 지금 로봇에 도달하지 않는다 (2026-09-15 확인).** 벤더의
+  # `set_gait_params` 가 `quad_kinematics` 에 있고 `MechDog` 클래스가 노출하지 않아
+  # `GAIT` 명령이 적용될 곳이 없다. 벤더는 초기화 때 `(150, 200, 25)` 를 한 번 부르고
+  # 끝이므로 **로봇은 항상 그 값으로 걷는다** — 아래 값은 그때 쓸 자리를 지켜둔 것이다.
+  # ⚠️ 지우지 않는 이유: 벤더가 노출하면 되살릴 값이고, 지금 지우면 "설정이 정본" 규칙
+  # (NFR-3①)에서 이 항목만 사라진다. 실질 영향은 **발 드는 높이 25mm 고정** 하나이며
+  # Phase 1 실내 평지 시연에서는 걸리지 않는다. 상세는 PROTOCOL.md 의 `GAIT` 각주.
   lift_time_ms: 120
   ground_time_ms: 180
   lift_height_mm: 25
@@ -41,19 +61,51 @@ fsm:
   scan_duration_s: 3
   scan_pitch_deg: 15          # yaw는 불가 — DR-11
   alert_pitch_up_deg: 15      # FR-3.3
-  target_lost_timeout_s: 5    # FR-3.6
+  target_lost_timeout_s: 5    # FR-3.7
   track_deadzone_px: 40       # FR-3.5
+  # FR-2.3 — 회피 시퀀스(후진→선회→재확인)를 최대 몇 번 되풀이할지.
+  # 다 쓰고도 못 빠져나오면 멈춘 채로 둔다 — 계속 흔들면 기어만 상하고,
+  # 갇힌 상황은 사람이 봐야 한다. 자동 복구를 만들지 않는 것과 같은 원칙이다.
+  avoid_attempts: 3
 
 vision:
-  # ── 실행 프로바이더 ── DirectML→CUDA→CPU 자동 폴백 (PRD 2.5, DR-13)
-  providers: [DmlExecutionProvider, CUDAExecutionProvider, CPUExecutionProvider]
+  # ── 실행 프로바이더 ── Windows GPU 우선, CI·비지원 환경은 CPU 폴백 (DR-13)
+  providers: [DmlExecutionProvider, CPUExecutionProvider]
+
+  # ── 스트림 ──
+  # 카메라가 초당 몇 장을 보낼지. ⚠️ **상한을 두는 목적은 낮추는 것이 아니라
+  # 예측 가능하게 만드는 것이다.** 상한이 없으면 JPEG 크기가 화면 내용에 따라
+  # 변하고 발열에 따라 fps 가 흘러서, 명령 타임아웃(300ms) 대비 최악 부하를
+  # 계산할 수 없다. 호스트가 기동 시 이 값을 XIAO 에 내려보낸다.
+  # 15fps 는 NFR-1.3 최소값이고 25fps 는 지연(프레임 주기 40ms)과 airtime 의
+  # 절충점이다 — 30fps 로 올려도 7ms 만 더 얻는다.
+  stream_fps_limit: 25
+
+  # 모듈을 광축 기준으로 180도 돌려 단 경우의 보정 (0 | 180).
+  #
+  # ⚠️ **펌웨어에만 두면 재부팅마다 풀린다.** `/orient` 로 바꾼 값은 XIAO 의 평범한
+  # 전역 변수라 전원을 껐다 켜면 사라진다. 그래서 `resolution`·`stream_fps_limit`
+  # 과 같은 규칙을 적용한다 — **설정이 정본이고 호스트가 기동 때 내려보낸다**(NFR-3①).
+  # 펌웨어 기본값은 폴백이다.
+  mount_rotation: 0
+
+  # 이 시간 동안 프레임이 없으면 **비전 단절**로 본다 (NFR-2.6).
+  # ⚠️ `safety.link_loss_failsafe_ms` 와 의도적으로 다른 절에 둔다 —
+  # 로봇 링크 두절은 **안전 문제**라 페일세이프로 가지만, 비전 단절은
+  # **기능 저하**라 순찰·회피를 계속하고 사람 인지만 끈다. 둘을 같은 절에
+  # 두면 언젠가 같은 대응으로 묶이고, 그러면 카메라가 딸꾹질할 때마다
+  # 로봇이 멈춘다.
+  stall_timeout_ms: 2000
 
   # ── ① COCO 범용 검출기 (학습 불요, DR-12) ──
   # FR-3 사람 인지 + FR-8 변화 감지 대상 객체를 담당
   coco:
     model_path: "models/coco.onnx"
-    model_family: null        # 착수 시 확정 후 기록 (FR-9.1.2 재현성)
-    input_size: 640
+    # 확정 (2026-09-10, OI-15 닫힘 · ADR-24) — YOLOX-S, Apache-2.0 / Megvii Inc.
+    # 이 값으로 `host/vision/detector.py` 의 어댑터가 결정된다. 모르는 이름은 거부된다.
+    # ⚠️ 가중치를 바꾸면 이 값과 `coco_labels.py` 의 순서를 함께 확인한다.
+    model_family: yolox
+    input_size: 640           # YOLOX 격자(stride 8/16/32)의 배수여야 한다
     conf_threshold: 0.5        # FR-3.2
     iou_threshold: 0.45
     person_class: person
@@ -85,6 +137,22 @@ vision:
     # 자세 상승은 판정의 전제가 아니라 클리핑 시의 대응 수단이다 (FR-9.2.2).
     # 단계 정의는 posture.escalation_steps 를 따른다.
 
+  # ── 다중 인원 추적 (FR-3.6) ──
+  tracker:
+    # 이 값 이상 겹치면 같은 사람으로 잇는다. 낮추면 스쳐 지나는 두 사람의 ID 가
+    # 서로 바뀌고, 높이면 빠르게 움직이는 사람이 매번 새 ID 를 받는다.
+    iou_match_threshold: 0.3
+    # 이 시간 동안 못 보면 ID 를 버린다.
+    #
+    # ⚠️ **프레임 수가 아니라 시간이다.** 원본 ByteTrack 은 `track_buffer=30 프레임`
+    # 으로 정의하는데 그러면 의미가 추론률에 종속된다 — 같은 30프레임이 10fps 에서
+    # 3초, 25fps 에서 1.2초다. 결정 22·25번과 같은 형태다.
+    #
+    # ⚠️ 늘리면 ID 가 오래 살아 인증 세션도 오래 산다(FR-3.6.2). 즉 이 값은 추적
+    # 편의가 아니라 **인증을 얼마나 오래 신뢰하는가**의 값이다. 1초는 게이트의
+    # 300ms 창보다 길어 깜빡임을 넘기고, 사람이 다른 사람으로 바뀌기에는 짧다.
+    track_lost_ms: 1000
+
   # ── 다중 대상 처리 (FR-3.8) ──
   # 추적·인증은 개인별이지만 눈 LED 와 스피커가 하나뿐이라
   # 에스컬레이션 표현은 로봇 단위로 축약해야 한다.
@@ -97,21 +165,50 @@ vision:
   primary_target_seq_lock: true # FR-3.8.3 — 시퀀스 진행 중 전환 금지 (히스테리시스보다 강함)
 
   # ── 스트림 ──
-  detect_consecutive_frames: 3 # FR-3.2 — 단발 오검출 억제
+  # ── 사람 판정 (FR-3.2) — **시간 기반이다** ──
+  # ⚠️ 예전에는 `detect_consecutive_frames: 3` 이었다. 프레임 수로 정의하면
+  # **의미가 추론률에 종속된다** — 같은 "3프레임" 이 7fps 에서 429ms, 10fps 에서
+  # 300ms, 25fps 에서 120ms 로 3.5배 달라진다. 즉 오검출 억제 강도와 확인 지연이
+  # 한 값에 묶여, 추론률을 바꾸면 둘이 같이 흔들린다(결정 22번과 같은 형태).
+  #
+  # 실측 근거 (2026-09-10 · 실기 343프레임) — 10fps 에서 진짜 검출 구간 10개 중
+  # **4개만** 조건을 채웠다. 25fps 에서는 10개 전부 인정되고 단발 8개가 전부
+  # 막혔다(경계의 2연속이 0개). 짧은 구간(120~240ms)이 건너뛰기에 사라지기 때문이다.
+  detect_window_ms: 300        # 이 시간 안에
+  detect_hits_required: 3      # 이만큼 검출되면 사람으로 확정한다
+  # ⚠️ 해제는 **창이 완전히 빌 때**만 한다. 진입과 대칭으로 두면 게이트가 경계에서
+  # 떨린다. FSM의 TARGET_LOST는 이 해제와 별개로 마지막 실제 검출부터 5초를 센다.
   resolution: VGA              # VGA | QVGA (FR-5.3)
-  target_fps: 15               # NFR-1.3
-  inference_fps: 7             # 추론 프레임 스킵 (FSM 10Hz 대비 충분)
+  # ⚠️ **요구 하한이지 실제 수신률이 아니다.** NFR-1.3 이 요구하는 최소값이며
+  # 실제로 카메라가 보내는 값은 위의 `stream_fps_limit` 이다. 이 둘을 섞으면
+  # 25fps 를 받는데도 문서·시험이 15fps 를 수신률로 믿는다.
+  target_fps: 15               # NFR-1.3 하한 (실제 수신률은 stream_fps_limit)
+  # 2026-09-10 실기 343프레임으로 다시 정했다 (10 → 25 = 수신률과 동일).
+  #
+  #   fps   진짜 구간 인정   단발 차단   추론 부하
+  #    10        4 / 10          2        8.2%   ← 이전 값. 절반 이상 놓쳤다
+  #    20        8 / 10          5       16.4%
+  #    25       10 / 10          8       20.5%   ← 채택
+  #
+  # 20fps 에서 놓치는 둘은 **120ms 짜리 짧은 검출**이다 — 3회를 채우려면 관측이
+  # 3개 들어가야 하는데 50ms 간격으로는 2개뿐이다. 수신률과 같게 두면 프레임을
+  # 하나도 버리지 않으므로 그 구간이 살아난다.
+  # ⚠️ 시간 창은 최대 관측 간격을 고정하지만, 확인 지연과 창 안의 히트 기회는
+  # 여전히 추론률의 영향을 받는다. 이 값을 바꾸면 검출률·오검출률을 다시 잰다.
+  inference_fps: 25
   reconnect_backoff_s: [1, 2, 4, 8, 16, 30]  # FR-5.3
 
-localization:           # ⚠️ 미확정 — docs/LOCALIZATION_OPTIONS.md 게이트 결과로 결정
-  track: none                 # none | lidar | phone_vio | aruco
+localization:           # Track A(LiDAR) 확정 — OI-9 닫힘 (docs/DECISIONS.md ADR-18)
+  # Phase 1 은 측위를 쓰지 않으므로 none 이다. Phase 2 에서 lidar 로 바꾼다.
+  # phone_vio 는 탈락했으므로 허용값에서 제거했다 — 남겨 두면 누가 다시 넣는다.
+  track: none                 # none | lidar | aruco
   settle_delay_ms: 750        # 정지 후 스캔 전 대기 (공통 원칙 4)
   move_increment_mm: 250      # 공통 원칙 5
   turn_increment_deg: 30      # 공통 원칙 5
   pose_timeout_ms: 500        # FR-6.6 — 초과 시 STATE_LOST
 
 # ══════════════════════════════════════════════════════════════
-#  에스컬레이션 (PRD 5.1) — FSM 상태와 직교하는 대응 강도 축
+#  에스컬레이션 (아키텍처 3.1) — FSM 상태와 직교하는 대응 강도 축
 # ══════════════════════════════════════════════════════════════
 escalation:
   l1_to_l2_hold_s: 10          # L1 관찰이 이만큼 지속되고 미인증이면 L2
@@ -136,7 +233,22 @@ auth:
   max_attempts: 2              # FR-10.3
   timeout_s: 30                # FR-10.3
   bind_to_track_id: true       # FR-3.6.2 — 인증을 추적 ID 에 귀속
-  badge_marker_map: {}         # FR-10.1 — ArUco ID -> 사번/이름
+  # 미등록 마커가 시도로 세어지기까지 필요한 안정 검출 횟수.
+  # 1프레임 ArUco 오검출(없는 ID 가 배경에서 디코딩)이 인증 시도를 소진시키는
+  # 것을 막는다 — 2026-09-13 실기에서 실제로 확인. 등록 마커는 이 게이트 없이
+  # 즉시 인증한다.
+  unknown_marker_min_frames: 3
+  # FR-10.1 — 사원증에 인쇄할 ArUco 사전.
+  #
+  # ⚠️ **바꾸면 인쇄한 사원증도 바꿔야 한다.** 그래서 코드가 아니라 여기 둔다.
+  # 비트가 적을수록 작게·멀리서도 읽힌다 — 사원증은 1~3m 에서 VGA 로 읽어야 하고
+  # 필요한 ID 는 팀 규모만큼이므로 4x4·50개로 충분하다.
+  badge_dictionary: DICT_4X4_50
+  # FR-10.1 — ArUco ID -> 사번/이름. **여기 없는 ID 는 미승인이다.**
+  # 시연용 두 장이며 실제 운용에서는 발급 대장이 정본이 된다.
+  badge_marker_map:
+    0: "EMP-001"
+    1: "EMP-002"
   passphrase_command_ids: []   # FR-10.2 — WonderEcho 인식 ID 목록
 
 # ── 자세 상승 (FR-9.2.2) ──────────────────────────────────────
@@ -153,6 +265,10 @@ change_detect:
   confirm_cycles: 2            # FR-8.4 — 연속 2사이클 동일 변화 시 확정
   person_immediate: true       # 단 person 출현은 즉시 처리
   snapshot_dir: snapshots
+  # FR-8.1 "대략 위치" 를 담는 격자 [열, 행]. **성기게 둔다.**
+  # 잘게 나누면 로봇이 몇 cm 달리 선 것만으로 같은 물건이 다른 칸에 잡혀
+  # 반출과 반입이 동시에 보고된다. 정밀도가 아니라 재현성을 사는 값이다.
+  baseline_grid: [3, 3]
 
 # ── 구역 (FR-7 / FR-8) ───────────────────────────────────────
 # ⚠️ 구역 "식별"은 ArUco 마커로 하며 측위와 무관하다 (바코드 읽기).
@@ -171,4 +287,112 @@ logging:                # NFR-3④
   dir: logs
   rotate_mb: 10
   rotate_keep: 5
-  blackbox_dir: blackbox      # FR-3.7
+  blackbox_dir: blackbox      # FR-3.9
+
+# ══════════════════════════════════════════════════════════════
+#  LiDAR 측위 · 매핑 · 구역 순찰 (FR-6 · FR-7 · Phase 2 · ADR-18)
+#
+#  단위는 **규약과 같다** — mm · deg · ms (PROTOCOL.md 2절). 내부 계산의
+#  m · rad 로는 `host/common/units.py` 가 경계에서 한 번만 바꾼다.
+#
+#  ⚠️ 여기에는 **다른 절에 없는 값만** 둔다. 아래는 그대로 읽어 쓴다:
+#       safety.obstacle_stop_cm · cmd_timeout_ms · link_loss_failsafe_ms
+#       gait.step_length_mm · turn_angle_deg · reverse_distance_mm
+#       localization.settle_delay_ms · move_increment_mm · pose_timeout_ms · track
+#       zones.ids · arrival_radius_mm · random_after_first_cycle
+#       network.cmd_port · telemetry_port · cmd_rate_hz  ·  fsm.avoid_attempts
+#     같은 값을 두 곳에 두면 언젠가 한쪽만 고쳐지고, 그때 **어느 쪽이 실제로
+#     쓰이는지 코드를 읽어야 알 수 있다.**
+# ══════════════════════════════════════════════════════════════
+
+lidar:
+  # ── 중계 노드 링크 (ESP32 DevKit → Host PC · UDP) ─────────────
+  # 제어(5001)·텔레메트리(5101)와 **다른 포트**여야 한다. 같이 쓰면 한 소켓에
+  # 두 스키마가 섞여 들어와 서로를 "모르는 타입"으로 폐기한다.
+  scan_port: 5201
+  # 이 시간 동안 스캔이 없으면 LiDAR 링크 두절로 본다.
+  # ⚠️ `safety.link_loss_failsafe_ms` 와 **의도적으로 다른 값이다.** 로봇 링크
+  # 두절은 안전 문제이고, LiDAR 두절은 측위 능력의 상실이라 `LOST` 로 간다.
+  # 비전의 `stall_timeout_ms` 가 같은 이유로 안전 절 밖에 있다.
+  scan_stall_timeout_ms: 1500
+
+  # ── 센서 유효 범위 ────────────────────────────────────────────
+  # 하한은 로봇 몸통 반사를 걸러내고, 상한은 정합이 성립하는 거리다 —
+  # 넓은 공터에서는 벽이 안 잡혀 스캔 정합이 무의미해진다 (ADR-18 각주).
+  # ⚠️ 12m급 제품이 확정되면(OI 진행 중) 상한을 실측 유효 사거리로 고친다.
+  range_min_mm: 120
+  range_max_mm: 8000
+  # 정지 상태에서 몇 장을 모아 중앙값으로 합칠지 (ADR-7).
+  scan_batch: 3
+
+  # ── 점유격자 ─────────────────────────────────────────────────
+  # 5cm 는 로봇 폭(약 20cm) 대비 4셀이라 문틈을 구분하고, A* 격자가
+  # 10m x 10m 에서 200x200 으로 남아 완전 탐색이 감당된다.
+  resolution_mm: 50
+  initial_span_cells: 200      # 200 x 50mm = 10m. 경계에 닿으면 자동 확장한다
+  expand_pad_cells: 60         # 확장할 때 붙이는 여유 (매 사이클 재할당 방지)
+  # 로그오즈 가중치. 점유를 자유보다 크게 두는 이유 — 벽은 한 번 봐도 벽이지만
+  # 빈 공간은 여러 번 통과해야 확신할 수 있다. 반대로 두면 벽이 지워진다.
+  hit_logodds: 0.9
+  miss_logodds: -0.4
+  occupied_logodds: 1.0        # 이 값 이상이면 막힌 셀
+  free_logodds: -1.0           # 이 값 이하만 **확실히 빈** 셀 (미관측과 구분)
+
+  # ── 스캔 정합 (측위) ──────────────────────────────────────────
+  # 탐색 반경 = localization.move_increment_mm x 이 비율. 한 사이클 이동량보다
+  # 좁으면 정상 이동을 놓치고, 넓히면 탐색이 제곱으로 커진다.
+  search_span_ratio: 0.6
+  search_step_mm: 40
+  search_angle_deg: 8
+  search_angle_step_deg: 2
+  # 이만큼 관측된 셀이 있어야 정합을 시도한다. 빈 지도에 정합하면 점수가 전부
+  # 0 이라 탐색 격자의 첫 후보가 우연히 채택된다.
+  min_known_cells: 50
+
+  # ── 경로 계획 ────────────────────────────────────────────────
+  # 로봇 실측 폭의 절반. ⚠️ `2.2.1` 실측 후 확정한다.
+  robot_radius_mm: 150
+  # 경로 추종 오차를 위한 **추가** 여유. 팽창은 `robot_radius_mm + 이 값`이다.
+  #
+  # ⚠️ **0 으로 두면 안 된다.** 팽창이 로봇 반경과 같으면 경로 중심선이 벽에서
+  #    정확히 반경만큼 떨어져 지나가고, 그 위를 완벽히 걸어도 LiDAR 가
+  #    `estop_distance_mm` 를 읽는다 — **정상 순찰이 비상정지로 끝난다.**
+  #    실제로 겪었다 (반경 150 = E-STOP 150 → 한 사이클에 E-STOP 6회).
+  #    호 조향밖에 없는 로봇에 추종 오차 0 을 요구할 수 없다 (DR-11).
+  tracking_margin_mm: 100
+  path_simplify_mm: 80         # 웨이포인트 단순화 허용 오차
+  waypoint_radius_mm: 100      # 중간 웨이포인트 통과 판정 (도착은 zones.arrival_radius_mm)
+  # 방위 오차가 이 안이면 직진한다. 좁히면 호 조향밖에 없는 로봇이 진동한다.
+  heading_tolerance_deg: 8
+  # 이 이상 틀어져 있으면 전진 호로 돌아설 수 없어 후진 호로 바꾼다 (DR-11).
+  reverse_threshold_deg: 90
+
+  # ── 신규 장애물 ──────────────────────────────────────────────
+  # 이 거리 안의 빔만 후보로 본다. 측위 오차가 거리에 비례하므로 멀리서
+  # 판정하면 오탐이 늘고, 오탐 하나가 통로를 막는다.
+  new_obstacle_check_radius_mm: 1500
+  new_obstacle_margin_mm: 250     # 측위 오차 여유. 좁히면 벽을 신규 장애물로 본다
+  new_obstacle_confirmations: 2   # 연속 확인 횟수 (change_detect.confirm_cycles 와 같은 발상)
+  obstacle_mark_radius_mm: 300    # 동적 마스크에 찍을 반경 (로봇 반경 + 여유)
+
+  # ── 호스트측 위험 판정 ───────────────────────────────────────
+  # ⚠️ **온보드 초음파(safety.obstacle_stop_cm)를 대체하지 않는다.** 초음파는
+  #    정면 근거리만 보고(DR-15) Tier 1 이며, 이 값은 LiDAR 가 보는 360° 중
+  #    전방 부채꼴에 대한 **호스트의 추가 판정**이다. 둘 중 먼저 걸리는 쪽이
+  #    이긴다. 온보드 임계(25cm)보다 짧게 두어 온보드가 먼저 반응하게 한다.
+  #    ⚠️ **`robot_radius_mm + tracking_margin_mm` 보다 작아야 한다.** 크면
+  #    계획된 경로 자체가 E-STOP 거리를 지나간다 (위 `tracking_margin_mm` 각주).
+  #    `settings._validate` 가 기동 시에 확인한다.
+  estop_distance_mm: 100
+  forward_fan_deg: 20             # 전방으로 볼 부채꼴 반각
+
+  # ── 시뮬레이션 (실기 연결 전 검증 · WBS 12절) ─────────────────
+  # ⚠️ 이 값들은 **실측이 아니다.** `gait_calibration.forward_mm_per_sec` 가
+  #    채워지면 그것을 쓴다. 지금 여기 있는 것은 알고리즘을 돌려보기 위한
+  #    명목값이며, 이 숫자로 실기 성능을 말하지 않는다.
+  sim:
+    forward_mm_per_sec: 200       # 명목. 실측은 gait_calibration 소관
+    turn_deg_per_sec: 25          # 명목
+    scan_noise_mm: 10
+    dropout_rate: 0.02            # 빔 유실률
+    beams: 360

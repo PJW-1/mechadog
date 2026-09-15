@@ -1,0 +1,9 @@
+node_modules/
+build/
+.impeccable/
+.openai/
+.env*
+*.log
+*.zip
+*.tgz
+dist/

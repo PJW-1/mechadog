@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from host.common.config import ConfigError, load_base_config, load_config
+
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
 
 # 코드가 의존하는 키 — 안전 임계값은 Tier 1 판정에 직결되므로 누락을 허용하지 않는다
@@ -53,6 +55,63 @@ def test_profile_is_valid(cfg: dict) -> None:
     assert cfg.get("profile") in {"dev", "prod"}
 
 
+def test_base_loader_validates_current_config() -> None:
+    assert load_base_config(CONFIG_PATH)["profile"] == "dev"
+
+
+def test_device_is_required() -> None:
+    with pytest.raises(ConfigError, match="--device"):
+        load_config(None)
+
+
+def test_missing_device_profile_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="설정 파일 없음"):
+        load_config("missing", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+
+def _write_device_profile(path: Path, *, device_id: str = "ref") -> None:
+    example = CONFIG_PATH.parent / "devices" / "ref.yaml.example"
+    profile = yaml.safe_load(example.read_text(encoding="utf-8"))
+    profile["device_id"] = device_id
+    path.write_text(yaml.safe_dump(profile, allow_unicode=True), encoding="utf-8")
+
+
+def test_device_profile_is_deep_merged(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml")
+    (tmp_path / "ref.local.yaml").write_text("network:\n  cmd_port: 6201\n", encoding="utf-8")
+
+    loaded = load_config("ref", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+    assert loaded["device_id"] == "ref"
+    assert loaded["network"]["cmd_port"] == 6201
+    assert loaded["network"]["telemetry_port"] == 5101
+    assert loaded["safety"]["cmd_timeout_ms"] == 300
+
+
+def test_device_id_mismatch_is_rejected(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml", device_id="another")
+    with pytest.raises(ConfigError, match="device_id 불일치"):
+        load_config("ref", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+
+def test_invalid_servo_offsets_are_rejected(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml")
+    (tmp_path / "ref.local.yaml").write_text("servo_offset: [0, 1]\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="9개"):
+        load_config("ref", config_path=CONFIG_PATH, devices_dir=tmp_path)
+
+
+def test_prod_rejects_placeholder_calibration(tmp_path: Path) -> None:
+    _write_device_profile(tmp_path / "ref.yaml")
+    base = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    base["profile"] = "prod"
+    prod_path = tmp_path / "prod.yaml"
+    prod_path.write_text(yaml.safe_dump(base, allow_unicode=True), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="owner_id"):
+        load_config("ref", config_path=prod_path, devices_dir=tmp_path)
+
+
 @pytest.mark.parametrize("section", REQUIRED_SECTIONS)
 def test_required_sections_exist(cfg: dict, section: str) -> None:
     assert section in cfg, f"필수 섹션 누락: {section}"
@@ -85,6 +144,29 @@ def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
     assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 300
 
 
+@pytest.mark.parametrize(
+    "section,key",
+    [
+        ("fsm", "patrol_scan_interval_s"),
+        ("fsm", "scan_duration_s"),
+        ("fsm", "target_lost_timeout_s"),
+        ("fsm", "avoid_attempts"),
+        ("auth", "timeout_s"),
+        ("escalation", "l1_to_l2_hold_s"),
+    ],
+)
+def test_runtime_timer_keys_are_validated_before_startup(cfg: dict, section: str, key: str) -> None:
+    """운용 중 KeyError가 아니라 설정 경로를 포함한 ConfigError로 끝낸다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    del broken[section][key]
+    with pytest.raises(ConfigError, match=rf"{key} .*유한한 수"):
+        validate_base_config(broken)
+
+
 def test_gait_params_within_api_range(cfg: dict) -> None:
     """HW_MechDog API 허용 범위 (DR-1).
 
@@ -97,13 +179,17 @@ def test_gait_params_within_api_range(cfg: dict) -> None:
 
 
 def test_localization_track_is_known(cfg: dict) -> None:
-    """측위 트랙은 docs/LOCALIZATION_OPTIONS.md 의 후보 중 하나여야 한다."""
-    assert cfg["localization"]["track"] in {"none", "lidar", "phone_vio", "aruco"}
+    """측위 트랙은 docs/DECISIONS.md ADR-18 이 인정하는 값이어야 한다.
+
+    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다** (OI-9 닫힘, 2026-09-05).
+    탈락한 선택지를 설정에 남겨 두면 근거를 모르는 사람이 다시 넣는다.
+    """
+    assert cfg["localization"]["track"] in {"none", "lidar", "aruco"}
 
 
 def test_detection_requires_consecutive_frames(cfg: dict) -> None:
     """단발 오검출로 ALERT 로 튀지 않도록 2프레임 이상을 요구한다 (FR-3.2)."""
-    assert cfg["vision"]["detect_consecutive_frames"] >= 2
+    assert cfg["vision"]["detect_hits_required"] >= 2
 
 
 def test_tip_angle_separates_posture_from_fall(cfg: dict) -> None:
@@ -145,17 +231,56 @@ def test_providers_fallback_ends_with_cpu(cfg: dict) -> None:
     GPU 를 못 쓰는 팀원 PC 나 CI 러너에서도 동작해야 한다 (DR-13).
     """
     providers = cfg["vision"]["providers"]
+    assert providers[0] == "DmlExecutionProvider"
     assert providers[-1] == "CPUExecutionProvider"
+    assert "CUDAExecutionProvider" not in providers
 
 
 def test_inference_fps_not_above_stream_fps(cfg: dict) -> None:
-    """추론 주기가 스트림 fps 를 넘을 수 없다."""
+    """추론률의 상한은 **실제 수신률**이다.
+
+    ⚠️ 이 시험은 `target_fps` 와 비교하고 있었다. 그 값은 NFR-1.3 이 요구하는
+    *하한*(≥15fps)이고 실제 수신률은 `stream_fps_limit`(25fps)이다. 하한을 상한으로
+    쓰면 25fps 를 받는데도 추론률을 15 위로 못 올려, 지키려던 불변식과 무관한
+    제약이 된다. 실제로 문서·코드가 "25fps 수신"을 적는 동안 이 시험만 15 를 봤다.
+    """
     vision = cfg["vision"]
-    assert 0 < vision["inference_fps"] <= vision["target_fps"]
+    assert 0 < vision["inference_fps"] <= vision["stream_fps_limit"]
+    # 수신 상한이 요구 하한보다 낮으면 NFR-1.3 자체가 깨진다.
+    assert vision["stream_fps_limit"] >= vision["target_fps"]
+
+
+def test_inference_above_stream_limit_is_rejected(cfg: dict) -> None:
+    """불변식은 시험이 아니라 **로더**가 지켜야 한다.
+
+    개체 프로파일이 값을 덮어쓸 수 있으므로 커밋된 `config.yaml` 만 검사하면
+    실제로 기동하는 설정은 검사되지 않는다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["inference_fps"] = broken["vision"]["stream_fps_limit"] + 1
+    with pytest.raises(ConfigError, match="stream_fps_limit"):
+        validate_base_config(broken)
+
+
+def test_stream_limit_below_nfr_floor_is_rejected(cfg: dict) -> None:
+    """수신 상한이 NFR-1.3 하한 미달이면 기동 전에 막는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["stream_fps_limit"] = broken["vision"]["target_fps"] - 1
+    broken["vision"]["inference_fps"] = 1
+    with pytest.raises(ConfigError, match="NFR-1.3"):
+        validate_base_config(broken)
 
 
 def test_escalation_led_covers_all_levels(cfg: dict) -> None:
-    """L0~L3 과 페일세이프의 색상이 모두 정의되어 있어야 한다 (PRD 5.1).
+    """L0~L3 과 페일세이프의 색상이 모두 정의되어 있어야 한다 (아키텍처 3.1).
 
     색상이 빠지면 그 단계에서 로봇 상태를 읽을 수 없다.
     """
@@ -166,7 +291,7 @@ def test_escalation_led_covers_all_levels(cfg: dict) -> None:
 
 
 def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
-    """L3·페일세이프는 자동 해제하지 않는다 (PRD 5.1 해제 규칙)."""
+    """L3·페일세이프는 자동 해제하지 않는다 (아키텍처 3.1 해제 규칙)."""
     assert cfg["escalation"]["l3_requires_manual_reset"] is True
 
 
@@ -340,3 +465,223 @@ def test_tracked_persons_has_upper_bound(cfg: dict) -> None:
     n = cfg["vision"].get("max_tracked_persons")
     assert n is not None, "max_tracked_persons 가 없다"
     assert 2 <= n <= 20, f"상한 {n}명은 비현실적이다"
+
+
+def test_committed_device_profiles_load_and_validate() -> None:
+    """**커밋된 개체 프로파일은 실제로 로드돼야 한다.**
+
+    지금까지 개체 프로파일 검증은 임시 디렉터리에 만든 가짜 파일로만 돌았다.
+    그래서 저장소에 들어온 실제 프로파일이 스키마를 어겨도 아무도 몰랐다.
+    실측값을 형상관리에 넣기 시작했으므로 여기서 함께 잠근다.
+    """
+    devices_dir = CONFIG_PATH.parent / "devices"
+    profiles = sorted(p for p in devices_dir.glob("*.yaml") if not p.name.endswith(".local.yaml"))
+    assert profiles, "커밋된 개체 프로파일이 없다 (`*.yaml.example` 은 대상이 아니다)"
+    for path in profiles:
+        loaded = load_config(path.stem, config_path=CONFIG_PATH, devices_dir=devices_dir)
+        assert loaded["device_id"] == path.stem
+        offsets = loaded["servo_offset"]
+        # 아직 안 잰 기체는 `null` 이다 — 0 아홉 개로 때우지 않는다.
+        assert offsets is None or len(offsets) == 9
+
+
+def test_track_lost_buffer_must_survive_one_missed_inference(cfg: dict) -> None:
+    """⚠️ 소실 버퍼가 추론 주기보다 짧으면 **한 번만 놓쳐도 ID 가 바뀐다.**
+
+    실기 통과율이 52% 였으므로(ADR-25) 한 프레임 공백은 예외가 아니라 일상이다.
+    ID 가 바뀌면 인증 세션도 만료되므로(FR-3.6.3) 이것은 편의가 아니라 정책이다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    period_ms = round(1000 / cfg["vision"]["inference_fps"])
+    broken = deepcopy(cfg)
+    broken["vision"]["tracker"]["track_lost_ms"] = period_ms - 1
+    with pytest.raises(ConfigError, match="track_lost_ms"):
+        validate_base_config(broken)
+
+    ok = deepcopy(cfg)
+    ok["vision"]["tracker"]["track_lost_ms"] = period_ms
+    validate_base_config(ok)  # 경계는 통과한다
+
+
+def test_full_overlap_only_matching_is_rejected(cfg: dict) -> None:
+    """겹침 임계 1.0 은 **완전히 같은 박스만** 잇는다는 뜻이라 아무도 이어지지 않는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["tracker"]["iou_match_threshold"] = 1.0
+    with pytest.raises(ConfigError, match="iou_match_threshold"):
+        validate_base_config(broken)
+
+
+def test_tracker_section_is_required(cfg: dict) -> None:
+    """절이 없으면 기본값으로 때우지 않는다 — 설정이 정본이 아니게 된다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    del broken["vision"]["tracker"]
+    with pytest.raises(ConfigError, match="vision.tracker"):
+        validate_base_config(broken)
+
+
+def test_profile_links_the_firmware_telemetry_name() -> None:
+    """펌웨어 이름(`mechdog-<MAC>`)과 설정 이름을 **둘 다** 이 개체로 받는다."""
+    from host.common.config import telemetry_ids, validate_device_config
+
+    config = load_config("mechdog-01")
+    ids = telemetry_ids(config, "mechdog-01")
+    assert ids == {"mechdog-01", config["telemetry_device_id"]}
+    assert telemetry_ids({}, "mechdog-02") == {"mechdog-02"}, "없으면 설정 이름만"
+
+    broken = dict(config, telemetry_device_id="  ")
+    with pytest.raises(ConfigError, match="telemetry_device_id"):
+        validate_device_config(broken, "mechdog-01")
+
+
+def test_blackbox_directory_is_required(cfg: dict) -> None:
+    """기록 위치가 비어 있으면 첫 사건 때가 아니라 기동 시점에 실패해야 한다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["logging"]["blackbox_dir"] = "  "
+    with pytest.raises(ConfigError, match="logging.blackbox_dir"):
+        validate_base_config(broken)
+
+
+def test_relative_paths_resolve_against_the_repo_not_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """⚠️ **저장소 밖에서 띄워도 같은 곳을 본다.** 절대 경로는 건드리지 않는다."""
+    from host.common.config import ROOT, repo_path
+
+    monkeypatch.chdir(tmp_path)
+    assert repo_path("models/coco.onnx") == ROOT / "models" / "coco.onnx"
+    assert repo_path(tmp_path / "logs") == tmp_path / "logs"
+
+
+# ── 트롯 보행 자세 진폭 (WBS 2.2.3 ②) ────────────────────────────────
+
+
+def _amplitude(**overrides: object) -> dict:
+    """실제 `mechdog-02` 값에서 출발해 한 곳만 망가뜨린다."""
+    from copy import deepcopy
+
+    config = deepcopy(load_config("mechdog-02"))
+    config["gait_calibration"]["posture_amplitude"].update(overrides)
+    return config
+
+
+def test_measured_posture_amplitude_is_loaded() -> None:
+    """`FR-6.2.2` 판단이 이 값에 걸려 있다 — 읽히는지부터 본다."""
+    amplitude = load_config("mechdog-02")["gait_calibration"]["posture_amplitude"]
+    assert amplitude["source"] == "phone_imu", "온보드 IMU 가 아님을 값 옆에 남긴다"
+    assert amplitude["roll_p95_deg"] > amplitude["pitch_p95_deg"], "트롯은 롤이 더 흔들린다"
+    assert amplitude["cycles"] >= 30
+
+
+def test_zero_amplitude_is_refused() -> None:
+    """⚠️ **0 은 측정값이 아니라 안 걸었다는 뜻이다.**
+
+    자리만 만들어 두면 누군가 0 을 채우고 *"쟀다"* 로 보인다 — WBS 가 이미
+    적어 둔 함정이다. 통과시키면 *"흔들리지 않는다"* 로 잘못 읽는다.
+    """
+    from host.common.config import ConfigError, validate_device_config
+
+    for name in ("stride_hz", "pitch_p95_deg", "pitch_max_deg", "roll_p95_deg", "roll_max_deg"):
+        broken = _amplitude(**{name: 0})
+        with pytest.raises(ConfigError, match=name):
+            validate_device_config(broken, "mechdog-02")
+
+
+def test_max_below_p95_is_refused() -> None:
+    """최대가 p95 보다 작으면 둘을 바꿔 적은 것이다."""
+    from host.common.config import ConfigError, validate_device_config
+
+    broken = _amplitude(roll_max_deg=1.0)
+    with pytest.raises(ConfigError, match="roll_max_deg"):
+        validate_device_config(broken, "mechdog-02")
+
+
+def test_unknown_amplitude_source_is_refused() -> None:
+    """폰과 온보드 IMU 는 장착 위치·강성이 달라 값이 달라진다 — 섞으면 비교가 깨진다."""
+    from host.common.config import ConfigError, validate_device_config
+
+    for value in ("추정", "", None):
+        broken = _amplitude(source=value)
+        with pytest.raises(ConfigError, match="source"):
+            validate_device_config(broken, "mechdog-02")
+
+
+def test_too_few_cycles_is_refused() -> None:
+    """사이클이 적으면 p95 가 통계가 아니다."""
+    from host.common.config import ConfigError, validate_device_config
+
+    broken = _amplitude(cycles=5)
+    with pytest.raises(ConfigError, match="cycles"):
+        validate_device_config(broken, "mechdog-02")
+
+
+def test_missing_amplitude_still_passes() -> None:
+    """⚠️ **없는 것과 0 인 것은 다르다.**
+
+    3대 중 2대는 아직 재지 않았다. 없으면 `FR-6.2.2` 판단을 미루면 되지만
+    0 이면 흔들리지 않는다고 잘못 읽는다 — 그래서 없는 쪽만 통과시킨다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_device_config
+
+    config = deepcopy(load_config("mechdog-02"))
+    del config["gait_calibration"]["posture_amplitude"]
+    validate_device_config(config, "mechdog-02")
+
+
+def test_unit_profiles_are_not_copies_of_each_other() -> None:
+    """⚠️ **한 기체의 값을 다른 기체에 복사하지 않는다** (CONTRIBUTING 6절).
+
+    서보 오프셋 비대칭이 개체마다 다르고 그 차이가 곧 속도·선회율·직진 편향의
+    차이로 나온다. 실제로 `mechdog-01` 은 직진이 **좌**로 휘고 `mechdog-02` 는
+    **우**로 휜다 — `straight_bias_deg` 를 옮겨 적었으면 편향을 상쇄하는 대신
+    **두 배로 키웠을** 자리다.
+
+    이 시험이 잠그는 것은 *"값이 맞다"* 가 아니라 *"두 파일이 서로 다른 기체를
+    가리킨다"* 는 것이다.
+    """
+    one = load_config("mechdog-01")
+    two = load_config("mechdog-02")
+
+    # 신원은 번호가 아니라 보드 MAC 이다. 번호는 2.4.1 에서 바뀔 수 있다.
+    assert one["telemetry_device_id"] != two["telemetry_device_id"]
+
+    # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
+    assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
+    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "straight_bias_deg"):
+        assert two["gait_calibration"][name] is None, f"{name} 은 이 기체로 다시 재야 한다"
+
+
+def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
+    """펌웨어가 vflip+hmirror 합성으로 구현하므로 90·270 은 만들 수 없다.
+
+    여기서 막지 않으면 카메라가 400 을 돌려주고 그것을 기동 경고로만 보게 된다.
+    """
+    _write_device_profile(tmp_path / "ref.yaml")
+    base = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+
+    def load_with(rotation: object):
+        base["vision"]["mount_rotation"] = rotation
+        path = tmp_path / "config.yaml"
+        path.write_text(yaml.safe_dump(base, allow_unicode=True), encoding="utf-8")
+        return load_config("ref", config_path=path, devices_dir=tmp_path)
+
+    for good in (0, 180):
+        assert load_with(good)["vision"]["mount_rotation"] == good
+    with pytest.raises(ConfigError, match="mount_rotation"):
+        load_with(90)

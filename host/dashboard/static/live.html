@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>MechDog 실기 관제</title>
+<style>
+  body { margin:0; background:#101018; color:#e8e8f0; font-family:system-ui,sans-serif; }
+  header { padding:10px 16px; background:#1c1c2c; display:flex; gap:16px; align-items:center; }
+  #state { font-weight:700; font-size:18px; }
+  #state.IDLE { color:#7fd47f; } #state.FAILSAFE { color:#ff6b6b; }
+  #state.MANUAL { color:#ffd166; }
+  main { display:flex; gap:12px; padding:12px; flex-wrap:wrap; }
+  #cam { width:640px; max-width:100%; background:#000; border:1px solid #444; image-rendering:pixelated; }
+  .panel { background:#1c1c2c; border:1px solid #333; border-radius:8px; padding:12px; min-width:230px; }
+  button { font-size:16px; padding:10px 14px; margin:4px; border:0; border-radius:6px; cursor:pointer; background:#3a3a55; color:#fff; }
+  button:active { background:#5a5a80; }
+  #estop { background:#c0392b; font-weight:700; width:100%; font-size:20px; padding:14px; }
+  #reset { background:#7a5c00; width:100%; font-size:14px; }
+  #manual { background:#2d6a4f; width:100%; }
+  #manual.on { background:#b5651d; }
+  .pad { display:grid; grid-template-columns:repeat(3,60px); gap:4px; }
+  .pad button { height:52px; font-size:20px; }
+  #log { font-size:12px; color:#9a9ab0; height:120px; overflow-y:auto; white-space:pre-wrap; }
+  .kv { color:#9ab; }
+</style>
+</head>
+<body>
+<header>
+  <span>MechDog</span>
+  <span id="state">연결중…</span>
+  <span class="kv" id="batt">--</span>
+  <span class="kv" id="dist">--</span>
+  <span class="kv" id="imu">--</span>
+</header>
+<main>
+  <div>
+    <img id="cam" src="/camera/stream" alt="로봇 카메라">
+  </div>
+  <div class="panel">
+    <button id="estop">■ E-STOP</button>
+    <button id="reset">안전 해제 — 원인 확인 후에만 누르세요</button>
+    <button id="manual">수동 제어 켜기</button>
+    <div class="pad">
+      <span></span><button data-d="FORWARD">▲</button><span></span>
+      <button data-d="LEFT">◀</button><button data-d="STOP">■</button><button data-d="RIGHT">▶</button>
+      <span></span><button data-d="BACKWARD">▼</button><span></span>
+    </div>
+    <div id="log"></div>
+  </div>
+</main>
+<script>
+const MOTION={FORWARD:{step:60,angle:0},BACKWARD:{step:-60,angle:0},LEFT:{step:0,angle:20},RIGHT:{step:0,angle:-20},STOP:{step:0,angle:0}};
+const logEl=document.getElementById('log');
+function log(m){logEl.textContent+=new Date().toLocaleTimeString()+' '+m+'\n';logEl.scrollTop=logEl.scrollHeight;}
+async function post(path,body){
+  try{
+    const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+    const j=await r.json();
+    log(path.split('/').pop()+': '+(j.accepted?'OK':'거절 '+(j.detail||j.error||'')));
+    return j;
+  }catch(e){log('전송 실패: '+e.message);}
+}
+document.getElementById('estop').onclick=()=>post('/api/command/estop',{});
+document.getElementById('reset').onclick=()=>post('/api/command/reset',{});
+const manualBtn=document.getElementById('manual');
+let manualOn=false;
+manualBtn.onclick=async()=>{
+  const j=await post('/api/command/manual',{on:!manualOn});
+  if(j&&j.accepted){manualOn=!manualOn;manualBtn.textContent=manualOn?'수동 제어 끄기':'수동 제어 켜기';manualBtn.classList.toggle('on',manualOn);}
+};
+for(const b of document.querySelectorAll('[data-d]'))
+  b.onclick=()=>{if(!manualOn){log('수동 제어를 먼저 켜세요');return;}post('/api/command/drive',MOTION[b.dataset.d]);};
+
+async function poll(){
+  try{
+    const r=await fetch('/api/telemetry');const d=await r.json();const t=d.telemetry||{};
+    const s=document.getElementById('state');s.textContent=d.state;s.className=d.state;
+    document.getElementById('batt').textContent='BAT '+(t.batt_v!=null?t.batt_v.toFixed(2)+'V':'--');
+    document.getElementById('dist').textContent='DIST '+(t.dist_cm!=null?t.dist_cm.toFixed(0)+'cm':'--');
+    document.getElementById('imu').textContent=t.imu?`IMU p${t.imu.pitch.toFixed(0)} r${t.imu.roll.toFixed(0)}`:'';
+  }catch(e){}
+  setTimeout(poll,500);
+}
+poll();
+document.getElementById('cam').onerror=()=>log('카메라 스트림 끊김');
+log('페이지 연결됨');
+</script>
+</body>
+</html>

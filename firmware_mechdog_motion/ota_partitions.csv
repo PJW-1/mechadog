@@ -1,0 +1,8 @@
+# OTA migration only. Do not use the Arduino generic boot_app0 at 0xe000.
+# Name, Type, SubType, Offset, Size
+nvs,data,nvs,0x9000,0x6000
+phy_init,data,phy,0xf000,0x1000
+ota_0,app,ota_0,0x10000,0xf0000
+ota_1,app,ota_1,0x100000,0xf0000
+otadata,data,ota,0x1f0000,0x2000
+vfs,data,fat,0x200000,0x200000

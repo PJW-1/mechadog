@@ -1,0 +1,21 @@
+# ══════════════════════════════════════════════════════════════
+#  펌웨어 C++ 포맷 규약 (WBS 5.3.2 · 펌웨어 품질 잡)
+#
+#  이 파일이 없으면 clang-format 이 LLVM 기본값(80칸)으로 동작한다.
+#  주석을 한국어로 쓰므로 80칸에서는 거의 모든 설명문이 걸리고,
+#  clang-format 이 CJK 문장을 임의로 접어 읽기 어려워진다.
+#
+#  ReflowComments: false — 주석 줄바꿈은 사람이 의미 단위로 정한다.
+#  기계가 다시 접으면 표·화살표 같은 정렬이 깨진다.
+# ══════════════════════════════════════════════════════════════
+---
+Language: Cpp
+BasedOnStyle: Google
+ColumnLimit: 100
+ReflowComments: false
+DerivePointerAlignment: false
+PointerAlignment: Left
+IndentWidth: 2
+AccessModifierOffset: -1
+AllowShortFunctionsOnASingleLine: Inline
+SortIncludes: CaseSensitive
