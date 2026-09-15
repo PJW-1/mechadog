@@ -489,7 +489,7 @@ export class OperationalPanels {
   this.container.append(this.section('대응 단계 · 안전 해제 구분',this.el('ol',{class:'op-escalation'},[
    ['L0','평상 단계','L1에서 사람 미검출 5초면 L0 복귀'],['L1','대상 관찰','300ms 내 3회 검출 · 미인증 10초면 L2'],['L2','인증 대응','미검출 5초 / 인증 30초 초과 / 2회 실패 시 L3'],['L3','관리자 판단 필요','관리자 확인과 조치로 해제 · PPE 판정과 별개'],['F','안전 잠금','원인 확인 → RESET_SAFE → 래치 해제 보고 확인']
   ].map(([level,title,detail])=>this.el('li',{},this.el('span',{class:'op-level'},level),this.el('div',{},this.el('strong',{},title),this.el('p',{},detail))))),this.note('정본의 설정값을 읽기 전용으로 표시합니다. F 이전에 L3였다면 F 해제 뒤 L3가 유지됩니다. 사건 검토 저장은 두 잠금을 모두 해제하지 않습니다.')));
-  this.container.append(this.section('연결과 구현 기준',this.facts([['실제 로봇 / 인증 서버','연결 안 됨'],['Isaac Sim 카메라','이 웹의 수신 연결은 미완료'],['구역 / 사원증 관리 서버','미구현 · 실제 CRUD 제공 안 함'],['저장 범위','예시 검토·PPE 초안: 브라우저 / 나머지: 세션']]),this.el('a',{href:'https://github.com/PJW-1/mechadog/tree/'+SOURCE_REVISION,target:'_blank',rel:'noopener noreferrer',class:'op-source-link'},'확인한 Git 정본 · '+SOURCE_REVISION.slice(0,8)+' ↗'),this.note('새 공장 Isaac 씬은 별도 제작되었지만, 상세 씬 렌더링·로봇 물리 모델·이 화면과의 영상 연동은 검증 완료 상태가 아닙니다.')));
+  this.container.append(this.section('연결과 구현 기준',this.facts([['실제 로봇 / 인증 서버','연결 안 됨'],['구역 / 사원증 관리 서버','미구현 · 실제 CRUD 제공 안 함'],['저장 범위','예시 검토·PPE 초안: 브라우저 / 나머지: 세션']]),this.el('a',{href:'https://github.com/PJW-1/mechadog/tree/'+SOURCE_REVISION,target:'_blank',rel:'noopener noreferrer',class:'op-source-link'},'확인한 Git 정본 · '+SOURCE_REVISION.slice(0,8)+' ↗')));
  }
  managementPreview(){
   if(this.settingsSection==='badges'){

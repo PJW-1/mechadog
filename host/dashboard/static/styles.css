@@ -45,16 +45,6 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .source-status { margin-left: auto; display: flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--muted); font-size: 15px }
 .source-status>.status-dot { display: none }
 .source-status>.muted:before { content: "·"; margin-right: 8px }
-.source-switch { position: relative }
-.source-switch>button { display: flex; align-items: center; gap: 7px; height: 42px; padding: 0 14px; background: transparent; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); font-size: 13px }
-.source-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 250px; padding: 6px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 12px 40px #08081ab0; z-index: 30 }
-.source-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; background: transparent; border: 0; border-radius: 4px; color: inherit; font: inherit; text-align: left; cursor: pointer }
-.source-item:hover:not(:disabled) { background: #ffffff14 }
-.source-item.current { opacity: .55; cursor: default }
-.source-item strong { font-size: 14px; font-weight: 600 }
-.source-kind { font-size: 11px; color: var(--muted); border: 1px solid var(--rule); border-radius: 20px; padding: 2px 8px }
-.source-item small { margin-left: auto; color: var(--muted) }
-.source-menu-empty { margin: 10px 12px; color: var(--muted); font-size: 13px }
 .safety-note { display: flex; align-items: center; gap: 12px; color: #d0cadd; white-space: nowrap; font-size: 15px; margin-left: 26px }
 .safety-note>span { color: #8f8ba5 }
 .safety-note>span:last-child { color: #cbc7dd }

@@ -275,7 +275,8 @@ def run(args: argparse.Namespace) -> int:
     tele_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     scan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     for sock, port in ((tele_sock, args.telemetry_port), (scan_sock, args.scan_port)):
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # SO_REUSEADDR 를 쓰지 않는다 — Windows 에서 UDP 는 같은 포트에 조용히
+        # 이중 바인드돼 표본 0 개로 끝난다. 점유 중이면 bind 가 즉시 실패해야 한다.
         sock.bind(("", port))
         sock.setblocking(False)
 
