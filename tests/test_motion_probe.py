@@ -124,12 +124,14 @@ def test_run_collects_segments(tmp_path: Path) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         t0 = time.monotonic()
         while not stop_flag.is_set():
-            # yaw 가 초당 30°씩 증가하는 가짜 기체 — 회전 관측 시뮬레이션
-            yaw = (time.monotonic() - t0) * 30.0 % 360
+            # yaw 가 초당 30°씩 증가하는 가짜 기체 — 회전 관측 시뮬레이션.
+            # pitch·roll 에도 사인 진동을 얹어 진폭 집계 열이 채워지는지 본다.
+            t = time.monotonic() - t0
+            yaw = t * 30.0 % 360
             raw = enc.encode(
                 "PATROL",
                 50.0,
-                {"pitch": 0.0, "roll": 0.0, "yaw": yaw},
+                {"pitch": 2.0 * math.sin(t * 6.0), "roll": 3.0 * math.sin(t * 4.0), "yaw": yaw},
                 7.8,
                 10,
                 {"lowbatt": False, "tipped": False, "link_ok": True},
@@ -192,17 +194,23 @@ def test_run_collects_segments(tmp_path: Path) -> None:
         assert int(row["imu_samples"]) > 0
         assert int(row["scans_after"]) > int(row["scans_before"])
         assert row["scan_dyaw_deg"] != ""  # 스캔 정합 변위도 기록됐다
+        assert 0.0 < float(row["pitch_abs_max_deg"]) <= 2.0
+        assert 0.0 < float(row["roll_abs_max_deg"]) <= 3.0
+        assert row["pitch_abs_p95_deg"] != ""
+        assert row["roll_abs_p95_deg"] != ""
 
-    # 명령 스트림 — 첫 전문은 STOP, move 구간엔 MOVE, settle·끝엔 STOP
+    # 명령 스트림 — 세션은 STOP·RESET_SAFE 로 열고, move 구간엔 MOVE,
+    # settle·끝엔 STOP. ⚠️ UDP 루프백에서도 첫 두 패킷은 순서가 뒤집힐 수
+    # 있으므로(실기에서 발생) 둘의 등장만 확인하고, 첫 MOVE 가 그 뒤인지만 본다.
     decoder = CommandDecoder()
     decoded = []
     for raw in captured:
         r = decoder.decode(raw)
         assert r.accepted, r.reason
         decoded.append(r.message)
-    assert decoded[0]["type"] == "STOP"
-    moves = [m for m in decoded if m["type"] == "MOVE"]
-    assert moves, "MOVE 가 하나도 송신되지 않음"
+    assert {m["type"] for m in decoded[:2]} == {"STOP", "RESET_SAFE"}
+    first_move = next(i for i, m in enumerate(decoded) if m["type"] == "MOVE")
+    assert first_move >= 2, "MOVE 가 세션 오프너보다 먼저 송신됨"
     assert decoded[-1]["type"] == "STOP"
 
 
