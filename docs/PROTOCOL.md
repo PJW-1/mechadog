@@ -81,7 +81,7 @@
 > 속도**이며, 그래서 같은 `angle` 을 오래 보내면 더 많이 돈다. `gait_calibration.turn_deg_per_sec` 가
 > 그 비율의 실측값이다.
 | `POSE` | `pitch`, `roll`, `height`, `dur` | 라이브러리 허용 범위 / dur ms | `transform(pose, dur)` |
-| `GAIT` | `lift_time`, `ground_time`, `height` | ms / ms / mm | `set_gait_params(...)` |
+| `GAIT` ⏸ | `lift_time`, `ground_time`, `height` | ms / ms / mm | **적용 경로 없음 — 수신·검증만 한다** |
 | `STOP` | — | — | `move(0, 0)` |
 | `ESTOP` | — | — | 온보드 FAILSAFE 래치 + 즉시 보행 정지 |
 | `RESET_SAFE` | — | — | 원인 해소 후 안전 래치 해제, 보행 0·IDLE 복귀 |
@@ -89,6 +89,26 @@
 | `LED` | `color`, `blink_hz` | `config.escalation.led` 색상명 / 0 = 상시점등 | 눈 LED |
 | `SOUND` | `phrase_id` | WonderEcho 사전 등록 문구 ID | 문구 재생 |
 | `STATE` | `state` | FSM 상태 13종 (아래 목록) | — (저장만) |
+
+> ⚠️ **`GAIT` 는 받아들이되 적용되지 않는다 (2026-09-15 확인).** 벤더의 `set_gait_params(swing, stand, stride_height)`
+> 는 `quad_kinematics` 에 있고 **`MechDog` 클래스가 노출하지 않는다.** 벤더는 초기화 때
+> `set_gait_params(150, 200, 25)` 를 한 번 부르고 끝이므로 **로봇은 항상 그 값으로 걷는다.**
+> 파서는 규약대로 검증하고 ACK 를 돌려주지만 **HAL 이 적용할 곳이 없다.**
+>
+> 타입을 지우지 않는 이유 — 지우면 파괴적 변경이라 픽스처·C++ 파서·송신을 함께 고쳐야 하고,
+> 벤더가 나중에 노출하면 되살릴 자리를 잃는다. 규칙 ④(모르는 타입 폐기)와 달리 **알지만 적용하지
+> 않는 상태**이므로 여기 명시한다. 되살리려면 벤더 헤더를 고쳐야 하는데 그것은 재배포 불가
+> 라이브러리를 수정하는 일이라 [ADR-20](DECISIONS.md) 과 부딪힌다.
+>
+> ⚠️ **실측이 이미 이것을 보고 있었다.** `2.2.3` 이 보행 주기를 **2.77Hz(361ms)** 로 재고
+> *"명령(`120+180=300ms` · 3.33Hz)보다 20% 느리다 — 서보가 명령 주기를 못 따라간다"* 고 적었는데,
+> **명령이 애초에 도달하지 않았다.** 로봇은 `150+200=350ms`(2.86Hz)로 걷고 있었고 실측 2.77Hz 가
+> 거기에 가깝다. 서보 성능 문제가 아니다.
+
+> ⚠️ **`step` 의 단위 표기(`mm`)는 오해를 부른다.** 벤더 서명이 `move(float speed_x, float angle_rate)`
+> 이므로 `step` 은 보폭이 아니라 **전진 속도 지령**이다. `step=60` 은 "60mm 보폭" 이 아니라 그 지령이며
+> 실측 결과가 **104 mm/s** 다(`mechdog-01` · 2026-09-11). 보폭은 `GAIT` 쪽이고 그것은 위와 같이
+> 적용되지 않는다.
 
 > `MOVE` 는 **호(arc) 조향**이다. 제자리 회전은 지원하지 않는다 (DR-11).
 > `SOUND` 는 사전 등록된 문구만 재생한다. 실시간 TTS 가 아니다.
