@@ -256,16 +256,17 @@ def main(argv=None) -> int:
                 wrec["combo"] = combo
                 wrec["pos"] = (wx, wy)
 
-            # ── 로봇 포즈 — 카메라는 z=0.15m·-7° 하향이라 사람 머리는
-            #    ~17m 이상, 몸통도 ~10m 이상이어야 프레임에 들어온다.
-            #    가까이 두면 라벨이 전부 프레임 밖이라 빈 데이터만 쌓인다.
-            #    70%는 작업자를 6~14m 에서 바라보게, 15%는 중거리(부분 가림),
+            # ── 로봇 포즈 — 실측 기하(FOV 74°×59°, 높이 0.15m, 하향 7°)로
+            #    머리는 ~3.6m, 몸통은 ~2.3m, 온몸은 ~4m 부터 프레임에 들어온다.
+            #    (⚠️ 옛 32° 화각 기준 "머리 17m" 는 오류값의 산물이었다.)
+            #    70%는 PPE 가 보이는 실효 거리 2.5~8m 에서 작업자를 바라보게,
+            #    15%는 시연 거리 근접(1.2~2.5m — 조끼만 보이는 것이 실제 물리),
             #    15%는 완전 무작위(부정 배경 프레임도 데이터다) ──
             focus = rng.choice(workers)
             roll = rng.random()
             if roll < 0.85:
                 ang = rng.uniform(0, 2 * math.pi)
-                dist = rng.uniform(6.0, 14.0) if roll < 0.70 else rng.uniform(3.0, 6.0)
+                dist = rng.uniform(2.5, 8.0) if roll < 0.70 else rng.uniform(1.2, 2.5)
                 rx = focus["pos"][0] - math.cos(ang) * dist
                 ry = focus["pos"][1] - math.sin(ang) * dist
                 rx = min(max(rx, walk[0] + 0.5), walk[1] - 0.5)
