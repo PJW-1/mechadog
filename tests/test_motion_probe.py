@@ -199,16 +199,18 @@ def test_run_collects_segments(tmp_path: Path) -> None:
         assert row["pitch_abs_p95_deg"] != ""
         assert row["roll_abs_p95_deg"] != ""
 
-    # 명령 스트림 — 첫 전문은 STOP, move 구간엔 MOVE, settle·끝엔 STOP
+    # 명령 스트림 — 세션은 STOP·RESET_SAFE 로 열고, move 구간엔 MOVE,
+    # settle·끝엔 STOP. ⚠️ UDP 루프백에서도 첫 두 패킷은 순서가 뒤집힐 수
+    # 있으므로(실기에서 발생) 둘의 등장만 확인하고, 첫 MOVE 가 그 뒤인지만 본다.
     decoder = CommandDecoder()
     decoded = []
     for raw in captured:
         r = decoder.decode(raw)
         assert r.accepted, r.reason
         decoded.append(r.message)
-    assert decoded[0]["type"] == "STOP"
-    moves = [m for m in decoded if m["type"] == "MOVE"]
-    assert moves, "MOVE 가 하나도 송신되지 않음"
+    assert {m["type"] for m in decoded[:2]} == {"STOP", "RESET_SAFE"}
+    first_move = next(i for i, m in enumerate(decoded) if m["type"] == "MOVE")
+    assert first_move >= 2, "MOVE 가 세션 오프너보다 먼저 송신됨"
     assert decoded[-1]["type"] == "STOP"
 
 
