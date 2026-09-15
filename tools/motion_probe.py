@@ -4,6 +4,7 @@
 시키면서, 그 사이에 관측된 것을 함께 적는다:
 
     - IMU yaw 변화량  — 텔레메트리(5101)에서 구간 시작·끝의 yaw 차이
+    - IMU 피치·롤 진폭 — 구간 안 |pitch|·|roll| 의 최대값과 p95 (WBS 2.2.3 ③)
     - 스캔 정합 이동량 — 라이다(5201) 구간 전·후 스캔의 scan-to-scan 정합
 
 산출물 두 개:
@@ -32,9 +33,10 @@ import csv
 import json
 import math
 import socket
+import statistics
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -165,6 +167,10 @@ class SegmentRecord:
     yaw_start: float | None = None
     yaw_end: float | None = None
     imu_samples: int = 0
+    # WBS 2.2.3 ③ — 구간 안의 피치·롤 절대값 표본. 트롯 진폭의 max/p95 를
+    # 낸다. 목록으로 들고 있어야 백분위를 계산할 수 있다.
+    pitch_abs: list[float] = field(default_factory=list)
+    roll_abs: list[float] = field(default_factory=list)
     scans_before: int = 0
     scans_after: int = 0
     displacement: dict[str, float | int | bool] | None = None
@@ -181,6 +187,17 @@ class SegmentRecord:
         return round(self.yaw_end - self.yaw_start, 2)
 
 
+def _amp_stats(samples: list[float]) -> tuple[float | None, float | None]:
+    """최대값과 p95. 표본이 2개 미만이면 p95 는 의미가 없어 비운다."""
+    if not samples:
+        return None, None
+    ordered = sorted(samples)
+    p95 = None
+    if len(ordered) >= 2:
+        p95 = round(statistics.quantiles(ordered, n=20)[18], 2)
+    return round(ordered[-1], 2), p95
+
+
 CSV_FIELDS = [
     "index",
     "rep",
@@ -194,6 +211,10 @@ CSV_FIELDS = [
     "imu_yaw_end_deg",
     "imu_yaw_delta_deg",
     "imu_samples",
+    "pitch_abs_max_deg",
+    "pitch_abs_p95_deg",
+    "roll_abs_max_deg",
+    "roll_abs_p95_deg",
     "scans_before",
     "scans_after",
     "scan_dx_m",
@@ -205,6 +226,8 @@ CSV_FIELDS = [
 
 def record_row(rec: SegmentRecord) -> dict[str, object]:
     disp = rec.displacement or {}
+    pitch_max, pitch_p95 = _amp_stats(rec.pitch_abs)
+    roll_max, roll_p95 = _amp_stats(rec.roll_abs)
     return {
         "index": rec.index,
         "rep": rec.rep,
@@ -218,6 +241,10 @@ def record_row(rec: SegmentRecord) -> dict[str, object]:
         "imu_yaw_end_deg": rec.yaw_end,
         "imu_yaw_delta_deg": rec.yaw_delta_deg,
         "imu_samples": rec.imu_samples,
+        "pitch_abs_max_deg": pitch_max if pitch_max is not None else "",
+        "pitch_abs_p95_deg": pitch_p95 if pitch_p95 is not None else "",
+        "roll_abs_max_deg": roll_max if roll_max is not None else "",
+        "roll_abs_p95_deg": roll_p95 if roll_p95 is not None else "",
         "scans_before": rec.scans_before,
         "scans_after": rec.scans_after,
         "scan_dx_m": disp.get("dx_m", ""),
@@ -352,6 +379,13 @@ def run(args: argparse.Namespace) -> int:
                             obs.telemetry_count += 1
                             if current is not None:
                                 current.imu_samples += 1
+                                for key, bucket in (
+                                    ("pitch", current.pitch_abs),
+                                    ("roll", current.roll_abs),
+                                ):
+                                    value = imu.get(key)
+                                    if isinstance(value, (int, float)):
+                                        bucket.append(abs(float(value)))
                             events.write(
                                 json.dumps(
                                     {
