@@ -27,8 +27,11 @@ class MechDogSpec:
     # ── 카메라 (XIAO 가 아니라 본체에 달린 FPV 시야 — 09-13 실측) ──
     cam_height_m: float = 0.15  # 바닥에서 렌즈까지
     cam_tilt_deg: float = -7.0  # 아래를 본다
-    cam_fov_h_deg: float = 32.0
-    cam_fov_v_deg: float = 24.0
+    # ⚠️ 확정값 74°/59° 다 (docs/measurements/2026-09-13-camera-fov.md).
+    # 이전 32°/48° 는 테이프 마커 배정 오류에서 나온 값 — 그대로 두면 합성
+    # 영상이 실제보다 ~2.4배 확대돼 나온다.
+    cam_fov_h_deg: float = 74.0
+    cam_fov_v_deg: float = 59.0
     cam_resolution: tuple = (640, 480)
     # 본체 앞쪽에 달려 있다 — 머리 전면 밖으로 살짝 돌출된 위치
     cam_forward_offset_m: float = 0.125
