@@ -321,16 +321,18 @@ jobs:
       - name: Actuator watchdog only via runtime SERVICE mode
         if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
         run: |
-          # WBS 3.2.4 service-mode expansion: the combination now MUST compile —
+          # WBS 3.2.4 service-mode expansion: TASK_WDT+ACTUATORS is now legal —
           # the qualification moved from a compile-time ban to a runtime order
-          # (park body + latch + block motion, then arm). Guard the contract:
-          # the sketch must still derive MECHADOG_SERVICE_MODE and gate arming
-          # on it, so a boot-armed actuator build cannot come back silently.
-          grep -q 'define MECHADOG_SERVICE_MODE 1' \
-            firmware_mechdog_motion/firmware_mechdog_motion.ino
-          arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
-            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=1' \
-            --build-path "$RUNNER_TEMP/watchdog-actuator-service" firmware_mechdog_motion
+          # (park body + latch + block motion, then arm). Actuator builds
+          # cannot compile in CI (vendor HW_MechDog library is local-only), so
+          # guard the contract at source level:
+          #  1) the sketch derives MECHADOG_SERVICE_MODE for TASK_WDT+ACTUATORS
+          #  2) boot arming stays restricted to actuator-OFF builds
+          #  3) the old hard compile ban is gone (service mode replaced it)
+          sketch=firmware_mechdog_motion/firmware_mechdog_motion.ino
+          grep -q 'define MECHADOG_SERVICE_MODE 1' "$sketch"
+          grep -q 'MECHADOG_ENABLE_TASK_WDT && !MECHADOG_ENABLE_ACTUATORS' "$sketch"
+          ! grep -q 'restricted to actuator-OFF diagnostic builds' "$sketch"
 
       - name: Upload artifacts
         if: steps.sketch.outputs.found == 'true'
