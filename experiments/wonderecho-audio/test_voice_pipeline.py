@@ -193,9 +193,13 @@ class CustomPhraseTests(unittest.TestCase):
 class NewScenarioTests(unittest.TestCase):
     def test_fire_evac_speaks_three_stages(self):
         ctx = FakeCtx()
-        scenarios.sc_fire_evac(ctx)
-        self.assertGreaterEqual(len(ctx.lines), 3)
-        self.assertTrue(any("대피" in line or "비상구" in line for line in ctx.lines))
+        # 실제 문구 선택은 무작위다. 특정 단어가 뽑힐 때만 통과시키면 플랫폼과
+        # 실행 순서에 따라 흔들리므로, 시나리오가 세 단계 카테고리를 정확히
+        # 요청하는지를 고정해서 검증한다.
+        with mock.patch.object(scenarios, "pick", side_effect=lambda category: category):
+            scenarios.sc_fire_evac(ctx)
+        self.assertEqual(ctx.lines, ["fire_detected", "fire_evac", "fire_report"])
+        self.assertIn(("system", "화재 대피 유도 방송"), ctx.events)
 
     def test_emergency_response_asks_location(self):
         ctx = FakeCtx(answers=["3번 창고"])
