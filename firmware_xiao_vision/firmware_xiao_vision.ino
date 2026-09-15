@@ -67,6 +67,10 @@ bool g_wifi_initialized = false;
 bool g_wifi_reported = false;
 uint32_t g_last_reconnect_ms = 0;
 uint32_t g_fps_limit = kDefaultFpsLimit;
+// 모듈을 광축 기준으로 180° 돌려 다는 장착(브래킷 위치 때문에 뒤집어야 하는
+// 경우)을 런타임에 바로잡는다. 물리 회전은 센서 레지스터의 vflip+hmirror
+// 합성과 같으므로 재플래시 없이 /orient?rot=180 한 번으로 교정된다.
+bool g_mount_rotated = false;
 
 bool hasCredentials() {
   return strcmp(MECHDOG_WIFI_SSID, "YOUR_WIFI_SSID") != 0 && strlen(MECHDOG_WIFI_SSID) > 0;
@@ -81,6 +85,16 @@ const char* sensorName(uint16_t pid) {
     default:
       return "UNKNOWN";
   }
+}
+
+// 장착 방향 보정을 센서 레지스터에 적용한다. 물리 180° 회전은 영상의
+// vflip+hmirror 와 같으므로, 뒤집어 단 경우 기본 보정에서 두 플래그를
+// 모두 반전하면 된다 — OV3660 은 (1,0) → (0,1) 이 된다.
+void applyOrientation(sensor_t* sensor) {
+  const bool ov3660 = (sensor->id.PID == OV3660_PID);
+  const int base_vflip = ov3660 ? 1 : 0;
+  sensor->set_vflip(sensor, base_vflip ^ (g_mount_rotated ? 1 : 0));
+  sensor->set_hmirror(sensor, g_mount_rotated ? 1 : 0);
 }
 
 bool initializeCamera() {
@@ -128,11 +142,7 @@ bool initializeCamera() {
     return false;
   }
 
-  // 현행 OV3660과 구형 OV2640을 모두 같은 펌웨어에서 식별한다.
-  // 모듈 장착 방향 때문에 OV3660 기본 영상은 뒤집혀 보인다.
-  if (sensor->id.PID == OV3660_PID) {
-    sensor->set_vflip(sensor, 1);
-  }
+  applyOrientation(sensor);
   sensor->set_framesize(sensor, g_frame_size);
 
   Serial.printf("CAMERA_READY sensor=%s psram_free=%u profile=%s\n", sensorName(sensor->id.PID),
@@ -178,9 +188,9 @@ esp_err_t statusHandler(httpd_req_t* request) {
   char body[288];
   snprintf(body, sizeof(body),
            "{\"ok\":true,\"sensor\":\"%s\",\"profile\":\"%s\",\"fps_limit\":%u,"
-           "\"psram_free\":%u,\"rssi\":%d,\"stream\":\"http://%s:%u/stream\"}",
+           "\"rot\":%u,\"psram_free\":%u,\"rssi\":%d,\"stream\":\"http://%s:%u/stream\"}",
            sensorName(pid), g_profile_name, static_cast<unsigned>(g_fps_limit),
-           static_cast<unsigned>(ESP.getFreePsram()), WiFi.RSSI(),
+           g_mount_rotated ? 180u : 0u, static_cast<unsigned>(ESP.getFreePsram()), WiFi.RSSI(),
            WiFi.localIP().toString().c_str(), kStreamPort);
   return sendJson(request, body);
 }
@@ -235,6 +245,35 @@ esp_err_t profileHandler(httpd_req_t* request) {
            static_cast<unsigned>(g_fps_limit));
   Serial.printf("PROFILE_CHANGED profile=%s fps_limit=%u\n", g_profile_name,
                 static_cast<unsigned>(g_fps_limit));
+  return sendJson(request, body);
+}
+
+esp_err_t orientHandler(httpd_req_t* request) {
+  char query[24] = {};
+  char rot_text[8] = {};
+  const size_t query_length = httpd_req_get_url_query_len(request);
+  if (query_length == 0 || query_length >= sizeof(query) ||
+      httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
+      httpd_query_key_value(query, "rot", rot_text, sizeof(rot_text)) != ESP_OK) {
+    httpd_resp_set_status(request, "400 Bad Request");
+    return sendJson(request, "{\"ok\":false,\"error\":\"rot must be 0 or 180\"}");
+  }
+  const long rot = strtol(rot_text, nullptr, 10);
+  if (rot != 0 && rot != 180) {
+    httpd_resp_set_status(request, "400 Bad Request");
+    return sendJson(request, "{\"ok\":false,\"error\":\"rot must be 0 or 180\"}");
+  }
+  sensor_t* sensor = esp_camera_sensor_get();
+  if (sensor == nullptr) {
+    httpd_resp_set_status(request, "500 Internal Server Error");
+    return sendJson(request, "{\"ok\":false,\"error\":\"camera sensor unavailable\"}");
+  }
+  g_mount_rotated = (rot == 180);
+  applyOrientation(sensor);
+
+  char body[96];
+  snprintf(body, sizeof(body), "{\"ok\":true,\"rot\":%ld}", rot);
+  Serial.printf("ORIENT_CHANGED rot=%ld\n", rot);
   return sendJson(request, body);
 }
 
@@ -413,9 +452,15 @@ bool startServers() {
   profile_uri.uri = "/profile";
   profile_uri.method = HTTP_GET;
   profile_uri.handler = profileHandler;
+
+  httpd_uri_t orient_uri{};
+  orient_uri.uri = "/orient";
+  orient_uri.method = HTTP_GET;
+  orient_uri.handler = orientHandler;
   if (httpd_start(&g_control_server, &control_config) != ESP_OK ||
       httpd_register_uri_handler(g_control_server, &status_uri) != ESP_OK ||
-      httpd_register_uri_handler(g_control_server, &profile_uri) != ESP_OK) {
+      httpd_register_uri_handler(g_control_server, &profile_uri) != ESP_OK ||
+      httpd_register_uri_handler(g_control_server, &orient_uri) != ESP_OK) {
     Serial.println("ERROR http_server: control server start failed");
     stopServers();
     return false;

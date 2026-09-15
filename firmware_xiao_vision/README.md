@@ -42,6 +42,7 @@ PC 모델 처리 경계, 재접속 수정, 전송 계측과 독립 검증 명령
 - VGA: `http://<XIAO-IP>/profile?name=VGA`
 - QVGA: `http://<XIAO-IP>/profile?name=QVGA`
 - 프레임률 상한: `http://<XIAO-IP>/profile?name=VGA&fps=25` (1~60, 선택 인자)
+- 장착 방향: `http://<XIAO-IP>/orient?rot=180` — 모듈을 광축 기준으로 180° 뒤집어 달았을 때 호출. `rot=0`으로 되돌린다. 센서 레지스터(vflip+hmirror)로 바로잡으므로 재플래시 없이 다음 프레임부터 적용된다. 재부팅하면 기본값(0)으로 돌아간다.
 - 영상: `http://<XIAO-IP>:81/stream`
 
 ### 프레임률 상한
