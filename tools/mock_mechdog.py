@@ -389,7 +389,7 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None) -> None:
     sock.bind(("", net["cmd_port"]))
     sock.setblocking(False)
 
-    # ⚠️ Windows 전용 — 아직 아무도 듣지 않는 포트로 텔레메트리를내면 ICMP
+    # ⚠️ Windows 전용 — 아직 아무도 듣지 않는 포트로 텔레메트리를 보내면 ICMP
     # Port Unreachable 이 돌아오고, Windows 는 그것을 **다음 recvfrom 의
     # ConnectionResetError 로** 돌려준다. `SIO_UDP_CONNRESET` 은 CPython 에 없어
     # ioctl 로 끌 수 없으므로 아래 수신 루프가 그 예외를 잡아 넘긴다.

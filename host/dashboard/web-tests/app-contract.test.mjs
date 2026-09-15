@@ -9,8 +9,8 @@ import {registerPageTools} from '../static/webmcp.js';
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
 const source=(await readFile(new URL('../static/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
 const layout=JSON.parse(await readFile(new URL('../static/factory-layout.json',import.meta.url),'utf8'));
-async function boot(hash='dashboard',{health=null}={}){
- const dom=new JSDOM(html,{url:'http://127.0.0.1:4175/#'+hash,runScripts:'outside-only',pretendToBeVisual:true}),window=dom.window,document=window.document,registered=new Map(),revoked=[];
+async function boot(hash='dashboard',{health=null,search=''}={}){
+ const dom=new JSDOM(html,{url:'http://127.0.0.1:4175/'+search+'#'+hash,runScripts:'outside-only',pretendToBeVisual:true}),window=dom.window,document=window.document,registered=new Map(),revoked=[];
  let store,panels,view,robotView,robotViewCount=0;const failures=[];window.addEventListener('error',event=>failures.push(event.error));
  // health 를 주면 대시보드 서버가 내보낸 화면처럼 실제 연결 경로로 뜬다.
  window.fetch=async url=>({ok:true,json:async()=>health&&String(url).endsWith('/health')?health:layout});window.URL.createObjectURL=()=> 'blob:local-test';window.URL.revokeObjectURL=url=>revoked.push(url);
@@ -167,6 +167,12 @@ test('served by the dashboard, live events flow from /ws/events into the review 
 test('without a vision channel the robot view does not try to connect',async()=>{
  const state=await boot('dashboard',{health:{service:'telemetry',vision_clients:null}}),{dom,document}=state;
  assert.equal(state.visionFeed,null);assert.equal(document.querySelector('#camera-status').textContent,'비전 채널 없음');
+ dom.window.close();
+});
+test('a page from another origin cannot point itself at the robot API with ?api=',async()=>{
+ // 다른 출처의 API 로 붙으면 서버 출처 검사가 비상정지·WS 를 전부 거절한다 — 연결된 척하는 화면이 된다.
+ const {dom,store,failures}=await boot('dashboard',{search:'?api=http://127.0.0.1:8000'});
+ assert.equal(store.live,false);assert.deepEqual(failures,[]);
  dom.window.close();
 });
 test('camera expand, collapse and reopen keep labels and rendering in sync',async()=>{
