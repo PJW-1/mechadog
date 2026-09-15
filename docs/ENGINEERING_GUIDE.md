@@ -156,6 +156,7 @@ def check_timeout(self):
     if time.time() - self.last_cmd > 0.3:
         self.hal.move(0, 0)
 
+
 # ✅ 테스트 가능 — 판정이 순수 함수
 def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
     return now_ms - last_cmd_ms > timeout_ms
@@ -227,9 +228,14 @@ tests/
 @pytest.fixture
 def clock():
     """주입 가능한 가짜 시계. 300ms 타임아웃을 0초에 검증한다."""
+
     class Clock:
-        def __init__(self): self.ms = 0
-        def advance(self, ms): self.ms += ms
+        def __init__(self):
+            self.ms = 0
+
+        def advance(self, ms):
+            self.ms += ms
+
     return Clock()
 
 
