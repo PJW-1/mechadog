@@ -292,6 +292,10 @@ bool applyCommand(const mechadog::Command& command) {
 
     case mechadog::CmdType::ResetSafe:
       if (WiFi.status() != WL_CONNECTED) return false;
+      // A pending-verify OTA image must stay parked until confirmed: clearing
+      // the latch would let motion start while the 90 s verify deadline (or
+      // the confirm reboot) can still restart the robot mid-gait.
+      if (mechadog::otaPendingVerify()) return false;
       g_motion.stop();
       // Clearing the latch while in service mode is accepted but motion stays
       // blocked by the service flag — RESET alone must not resume a parked
@@ -513,11 +517,20 @@ void pollTelemetry() {
 }  // namespace
 
 namespace mechadog {
-// OTA handlers ask this before accepting a write or confirmation reboot.
-// Actuator-OFF builds are always parked; actuator builds only in SERVICE mode.
+// OTA handlers ask these before accepting a write or a confirmation reboot.
+// Actuator-OFF builds are always parked; actuator builds park via SERVICE
+// mode (writes) or any engaged safe latch (confirm after the update reboot —
+// pending-verify images refuse RESET_SAFE below, so latched means stationary).
 bool serviceModeParked() {
 #if MECHADOG_ENABLE_ACTUATORS
   return serviceModeActive();
+#else
+  return true;
+#endif
+}
+bool otaParkedForReboot() {
+#if MECHADOG_ENABLE_ACTUATORS
+  return serviceModeActive() || g_safe_latched;
 #else
   return true;
 #endif

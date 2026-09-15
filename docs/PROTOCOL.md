@@ -135,6 +135,11 @@
 호스트 없이 벤치에서 패치할 때를 위한 물리 진입점이다. 버튼 해제에는 동작이
 없고 눌림 에지에서만 토글된다.
 
+정지 OTA(`/firmware`)는 구동 빌드에서 SERVICE 모드일 때만 받는다. `/confirm`은
+업데이트 재부팅 뒤의 pending-verify 이미지가 safe 래치를 켠 채 부팅되므로
+래치 상태로도 받는다 — 이 창에서는 `RESET_SAFE` 자체가 거절되어 래치가
+풀릴 수 없다.
+
 텔레메트리 `flags.service`(선택 필드)와 ACK 의 `service_mode`·`wdt_armed`로
 원격에서 모드를 확인할 수 있다.
 

@@ -121,20 +121,22 @@ esp_err_t statusHandler(httpd_req_t* req) {
            "{\"mac\":\"%s\",\"boot\":\"%s\",\"version\":\"%s\","
            "\"slot\":\"%s\",\"image_sha256\":\"%s\",\"healthy\":%s,"
            "\"confirmed\":%s,\"updating\":%s,\"actuators\":%s,\"service_mode\":%s,"
-           "\"slot_size\":%lu,\"loop_watchdog_armed\":%s,"
+           "\"parked\":%s,\"slot_size\":%lu,\"loop_watchdog_armed\":%s,"
            "\"loop_watchdog_deadline_ms\":%u,\"watchdog_fault_probe\":%s}",
            g_mac, g_boot, MECHADOG_OTA_VERSION, running->label, g_image_sha,
            g_healthy ? "true" : "false", g_confirmed ? "true" : "false",
            g_updating ? "true" : "false", MECHADOG_ENABLE_ACTUATORS ? "true" : "false",
-           mechadog::serviceModeParked() ? "true" : "false", static_cast<unsigned long>(kSlotSize),
+           mechadog::serviceModeParked() ? "true" : "false",
+           mechadog::otaParkedForReboot() ? "true" : "false", static_cast<unsigned long>(kSlotSize),
            watchdog_armed, watchdog_deadline_ms, fault_probe);
   return reply(req, "200 OK", body);
 }
 
 esp_err_t confirmHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
-  // Confirming reboots a pending image; an actuator build must be parked.
-  if (!mechadog::serviceModeParked())
+  // Confirming reboots a pending image; an actuator build must be parked or
+  // safe-latched (pending-verify refuses RESET_SAFE, so latched = stationary).
+  if (!mechadog::otaParkedForReboot())
     return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
   if (!g_healthy || g_updating) return reply(req, "409 Conflict", "{\"error\":\"not_healthy\"}");
   g_confirm_requested = true;
@@ -305,6 +307,14 @@ void pollStationaryOta(bool wifi_connected, const SensorSnapshot& sample) {
 #else
   (void)wifi_connected;
   (void)sample;
+#endif
+}
+
+bool otaPendingVerify() {
+#if MECHADOG_ENABLE_OTA
+  return g_pending && !g_confirmed;
+#else
+  return false;
 #endif
 }
 }  // namespace mechadog
