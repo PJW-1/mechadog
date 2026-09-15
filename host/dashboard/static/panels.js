@@ -338,7 +338,10 @@ export class OperationalPanels {
      this.button('실제 순찰 시작',()=>store.requestPatrol(true),{disabled:!store.live}),
      this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live}),
      this.serviceButton,
-     this.button('안전 해제 (RESET_SAFE)',()=>store.requestResetSafe(),{disabled:!store.live})),
+     this.button('안전 해제 (RESET_SAFE)',()=>{
+      const confirmed=this.document.defaultView.confirm('안전 정지 원인이 제거되었고 로봇 주변에 사람이 없는지 확인했습니까? 확인을 누르면 안전 잠금만 해제되며 자동 보행은 시작하지 않습니다.');
+      return confirmed?store.requestResetSafe():false;
+     },{disabled:!store.live,'data-reset-safe':'confirm'})),
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
     this.note('서비스 모드는 로봇을 주차시키고 루프 워치독을 겁니다(패치·OTA용). 해제 후에도 안전 래치는 남으므로 보행 복귀에는 안전 해제가 필요합니다.')));
   }
