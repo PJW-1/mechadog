@@ -56,6 +56,28 @@ gait:                   # HW_MechDog API 파라미터 (DR-1)
   lift_height_mm: 25
   reverse_distance_mm: 200    # FR-2.3 — 제자리 회전 불가로 후진 거리 확보
 
+# ── 내장 액션 (FR-1.2 · WBS 4.1.2) ────────────────────────────
+# 벤더 `action_run(이름)` 에 넘길 이름표. **숫자가 아니라 이름을 적는다** — 벤더는
+# 숫자 ID 를 갖고 있지 않고 `aclist[]` 를 이름으로 훑는다. 순서만 적어 두면 벤더가
+# 목록을 바꿨을 때 조용히 다른 동작이 나간다.
+#
+# ⚠️ **모르는 이름은 아무 일도 하지 않는다.** `act_run_func` 가 두 목록을 훑고 못
+# 찾으면 오류 없이 끝난다 — 오타 하나가 "조용한 무동작" 이 된다. 그래서 펌웨어가
+# 기동 때 이름이 실재하는지 확인하고 로그에 남긴다.
+#
+# ⚠️ **단일 구간 액션만 싣는다.** `action_run` 은 구간마다 `delay()` 로 블로킹하므로
+# 그동안 `loop()` 가 통째로 멈춘다 — UDP 수신도 300ms 명령 타임아웃 검사도 함께
+# 멈춘다(NFR-1 비목표: 온보드 블로킹 금지). 1,000ms 단일 구간은 정지 상태에서만
+# 받으므로 감당되지만 `nodding_motion`(5구간 1,700ms) 같은 것은 싣지 않는다.
+# 그리고 **펌웨어가 보행 중에는 거절한다** — 걷다가 멈추면 타임아웃이 자기 자신
+# 때문에 걸린다.
+actions:
+  id_map:
+    0: stand_four_legs   # 기본 자세 복귀 (FR-9.2.3 `posture.return_before_move`)
+    1: sit_dowm          # 앉기 — `posture.escalation_steps` 의 `sit`.
+                         # ⚠️ 벤더 오타 그대로다. 고쳐 적으면 못 찾는다
+    2: go_prone          # 엎드림 — `FAILSAFE` 안정 자세 (아키텍처 3.1 `F` 행)
+
 fsm:
   patrol_scan_interval_s: 10  # FR-2.4
   scan_duration_s: 3

@@ -66,6 +66,8 @@ mechadog::SensorHal g_sensors;
 mechadog::TelemetryPublisher g_telemetry;
 
 char g_packet[kPacketBufferSize + 1];
+// 마지막 MOVE 가 정지가 아니었는가. ACTION 가드가 본다.
+bool g_walking = false;
 bool g_safe_latched = true;
 bool g_have_valid_command = false;
 uint64_t g_last_valid_command_ms = 0;
@@ -283,10 +285,12 @@ void pollServiceButton() {
 bool applyCommand(const mechadog::Command& command) {
   switch (command.type) {
     case mechadog::CmdType::Stop:
+      g_walking = false;
       g_motion.stop();
       return true;
 
     case mechadog::CmdType::Estop:
+      g_walking = false;
       latchFailsafe("ESTOP command");
       return true;
 
@@ -308,7 +312,27 @@ bool applyCommand(const mechadog::Command& command) {
     case mechadog::CmdType::Move:
       if (g_safe_latched || serviceModeActive()) return false;
       g_motion.move(command.step, command.angle);
+      // 보행 중인지 기록한다. ACTION 가드가 이 값을 본다 — 호스트가 되돌려준
+      // `state` 는 반향이라 쓰지 않는다(ADR-22).
+      g_walking = (command.step != 0.0F || command.angle != 0.0F);
       return true;
+
+    case mechadog::CmdType::Pose:
+      if (g_safe_latched) return false;
+      g_motion.pose(command.pitch, command.roll, command.height, static_cast<int>(command.dur));
+      return true;
+
+    case mechadog::CmdType::Action:
+      // ⚠️ **걷는 중에는 받지 않는다.** 벤더 `action_run` 은 구간마다 delay() 로
+      // 블로킹하므로 그동안 loop() 가 통째로 멈춘다 — UDP 수신도, 300ms 명령
+      // 타임아웃 검사도 함께 멈춘다. 걷다가 멈추면 **타임아웃이 자기 자신 때문에
+      // 걸린다.** 정지 상태에서만 1초를 감수한다 (NFR-1 비목표: 온보드 블로킹 금지).
+      if (g_walking) {
+        Serial.println("ACTION refused: walking");
+        return false;
+      }
+      // 래치 중에도 받는다 — `FAILSAFE` 안정 자세(엎드림)가 이 경로로 온다.
+      return g_motion.action(static_cast<int>(command.action_id));
 
     case mechadog::CmdType::Service:
 #if MECHADOG_SERVICE_MODE
