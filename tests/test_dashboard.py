@@ -294,6 +294,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             # 명령은 런타임의 `_apply` 경로로 들어간다 — 대응 단계와 전이 로그가
             # 거기 묶여 있다 (2026-09-14 실기).
             self.apply_external = lambda _event: True
+            self.ask_patrol = lambda: None
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -541,6 +542,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.send_immediate = lambda _line: None
             self.ask_reset = lambda: None
             self.apply_external = lambda _event: True
+            self.ask_patrol = lambda: None
 
         def serve(self, _sock, **_kwargs):
             pass

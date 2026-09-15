@@ -418,6 +418,20 @@ def create_app(
             result = commands.manual_on() if on else commands.manual_off()
             return result.as_dict()
 
+        @app.post("/api/command/patrol")
+        async def patrol(request: Request):
+            """`{"action": "start"|"stop"}` — 시작은 예약, 정지는 수동 경유로 `IDLE` 에 정착."""
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            action = body.get("action")
+            if action == "start":
+                return commands.patrol().as_dict()
+            if action == "stop":
+                return commands.patrol_stop().as_dict()
+            return JSONResponse({"error": "action"}, status_code=400)
+
         @app.post("/api/command/reset")
         async def reset(request: Request):
             """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""

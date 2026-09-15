@@ -22,12 +22,19 @@
 > - **로봇 상태 음성 응답 (4.7.10)** — `robotlink.py`가 대시보드
 >   `GET /api/telemetry`를 읽어 "배터리 어때" 등의 질의에 **실측값**으로 답한다.
 > - **음성 명령 화이트리스트 (4.7.11)** — 정확히 일치하는 구문만 로봇 명령
->   엔드포인트로 간다 (`비상정지`→estop, `수동모드/수동해제`→manual on/off).
+>   엔드포인트로 간다 (`비상정지`→estop, `수동모드/수동해제`→manual on/off,
+>   `순찰시작/순찰정지`→`POST /api/command/patrol`). 순찰 시작은 런타임의
+>   `ask_patrol` 예약 경로를 타고(기동 리셋과의 순서 충돌 방지), 순찰 정지는
+>   `PATROL→MANUAL→IDLE` 수동 경유로 정상 정착한다 — 래치를 거는 ESTOP이 아니다.
 >   LLM 자유 텍스트는 절대 명령으로 변하지 않고, failsafe 해제(reset)처럼 사람의
 >   현장 확인이 필요한 명령은 의도적으로 제외했다.
+> - **대화·경고 이력 + 일일 리포트 (4.7.12)** — `eventlog.py`가 모든 발화·응답·
+>   시나리오·명령·비상 이벤트를 `logs/voice-YYYY-MM-DD.jsonl`에 날짜별로 남긴다
+>   (쓰기 실패는 로그만 — 음성 루프를 멈추지 않음). `daily_report.py`가 하루를
+>   집계해 마크다운 리포트를 만들고, `GET /report`가 당일 요약을 돌려준다.
 >
 > 관제 API는 `/status` 상태 브리핑, `/say` 공지 방송(긴급 우선 큐), `/scenario`
-> 시나리오 트리거, `/scenarios` 목록, `/mode`, `/transcript` — 링크는 메인 루프가
+> 시나리오 트리거, `/scenarios` 목록, `/mode`, `/transcript`, `/report` — 링크는 메인 루프가
 > 단독 소유하고 웹 요청은 큐로 직렬화한다. `knowledge/`의 문서들은 **전부 합성
 > 데모 데이터**이며 실사 자료가 아니다 — 실제 문서로 교체하면 그대로 동작.
 > 커스텀 펌웨어는 v27(`voice_stream.c` 체크섬 검증 + `voice_prompt.c` 부팅 코덱

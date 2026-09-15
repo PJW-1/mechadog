@@ -39,6 +39,8 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import daily_report
+import eventlog
 import phrases
 import robotlink
 import scenarios
@@ -76,7 +78,7 @@ class Hub:
     관제 공지가 대기 중인 로봇에서도 나가야 하므로.
     """
 
-    def __init__(self, robot_id):
+    def __init__(self, robot_id, journal=None):
         self.robot_id = robot_id
         self.mode = "active"  # active | standby
         self.activity = "boot"  # listening | thinking | speaking | idle
@@ -84,6 +86,7 @@ class Hub:
         self.say_q = queue.PriorityQueue()
         self._seq = 0
         self.lock = threading.Lock()
+        self._journal = journal  # EventJournal | None — 날짜별 JSONL 영속 기록
 
     def event(self, role, text):
         self.events.append(
@@ -93,6 +96,15 @@ class Hub:
                 "text": text,
             }
         )
+        if self._journal is not None:
+            self._journal.record(role, text)  # 실패해도 루프는 멈추지 않는다
+
+    def report_today(self):
+        """오늘 날짜의 저널을 집계한다. 저널이 없으면 None."""
+        if self._journal is None:
+            return None
+        date = time.strftime("%Y-%m-%d")
+        return daily_report.summarize(eventlog.load_events(self._journal.path_for(date)), date=date)
 
     def enqueue_say(self, text, urgent=False):
         with self.lock:
@@ -194,6 +206,13 @@ def make_handler(hub):
                 )
             elif self.path == "/transcript":
                 _api(self, 200, list(hub.events))
+            elif self.path == "/report":
+                report = hub.report_today()
+                _api(
+                    self,
+                    200 if report is not None else 404,
+                    report if report is not None else {"error": "journal off"},
+                )
             elif self.path == "/":
                 body = PANEL_HTML.encode()
                 self.send_response(200)
@@ -593,6 +612,11 @@ def main():
         default=robotlink.DEFAULT_BASE,
         help="로봇 관제 API 베이스 (상태 조회·화이트리스트 명령용)",
     )
+    ap.add_argument(
+        "--log-dir",
+        default=str(Path(__file__).with_name("logs")),
+        help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
+    )
     args = ap.parse_args()
 
     if args.say:
@@ -611,9 +635,12 @@ def main():
     if not args.model:
         ap.error("--model is required unless --say is used")
 
-    hub = Hub(args.robot_id)
+    journal = eventlog.EventJournal(args.log_dir) if args.log_dir else None
+    hub = Hub(args.robot_id, journal=journal)
     if args.web:
         start_web(hub, args.web)
+    if journal is not None:
+        print(f"[journal] {journal.dir}/voice-YYYY-MM-DD.jsonl — /report 로 당일 요약")
 
     from llama_cpp import Llama
 

@@ -150,6 +150,73 @@ def test_drive_sets_the_repeating_intent(service):
     assert sent == []
 
 
+# ── 순찰 시작/정지 (WBS 4.7.11) ──────────────────────────────────
+
+
+def test_patrol_reserves_through_the_runtime_hook(service):
+    """`START_PATROL` 을 바로 넣지 않는다 — 기동 리셋과 순서가 어긋나면
+    순찰이 조용히 취소되는 함정이 실기에서 드러났다 (`runtime.ask_patrol`)."""
+    svc, _behavior, _sent = service
+    asked: list[bool] = []
+    svc._ask_patrol = lambda: asked.append(True)
+    result = svc.patrol()
+    assert result.accepted is True
+    assert asked == [True]
+    assert "예약" in result.detail
+
+
+def test_patrol_is_refused_without_the_hook(service):
+    """순찰 경로가 연결되지 않은 서비스는 거짓 성공을 하지 않는다."""
+    svc, _behavior, _sent = service
+    result = svc.patrol()
+    assert result.accepted is False
+    assert "연결되지 않았다" in result.detail
+
+
+def test_patrol_stop_leaves_autonomy_and_parks_at_idle(service):
+    """`PATROL → IDLE` 직행 사건은 없다 — 수동을 한 번 거쳐 정상 정지한다."""
+    svc, behavior, _sent = service
+    behavior.event(Event.START_PATROL, now_ms=1000)
+    assert svc.patrol_stop().accepted is True
+    assert behavior.state == "IDLE"
+    # 수동 경유는 로봇을 멈추고 들어가는 경로다 — 멈춘 뒤 대기다.
+    assert svc._commander.intent.type_ == "STOP"
+
+
+def test_patrol_stop_is_refused_when_not_autonomous(service):
+    svc, behavior, _sent = service
+    result = svc.patrol_stop()
+    assert result.accepted is False
+    assert "자율 동작 중이 아니다" in result.detail
+    assert behavior.state == "IDLE"
+
+
+def test_patrol_stop_is_refused_in_failsafe(service):
+    """FAILSAFE 에서는 '순찰 정지'가 아니라 리셋 확인이 필요하다."""
+    svc, behavior, _sent = service
+    svc.estop()
+    result = svc.patrol_stop()
+    assert result.accepted is False
+    assert behavior.state == "FAILSAFE"
+
+
+def test_patrol_endpoint_routes_start_and_stop(cfg):
+    sent: list[str] = []
+    commander = Commander()
+    behavior = behavior_from_config(commander, cfg)
+    asked: list[bool] = []
+    svc = CommandService(behavior, commander, sent.append, ask_patrol=lambda: asked.append(True))
+    app = create_app(_state(), svc)
+    with TestClient(app) as http:
+        body = http.post("/api/command/patrol", json={"action": "start"}).json()
+        assert body["accepted"] is True and asked == [True]
+        behavior.event(Event.START_PATROL, now_ms=1000)
+        body = http.post("/api/command/patrol", json={"action": "stop"}).json()
+        assert body["accepted"] is True and body["state"] == "IDLE"
+        assert http.post("/api/command/patrol", json={"action": "bogus"}).status_code == 400
+        assert http.post("/api/command/patrol", json={}).status_code == 400
+
+
 # ── HTTP 경로 ────────────────────────────────────────────────────
 
 

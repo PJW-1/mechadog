@@ -1155,6 +1155,7 @@ def main(argv: list[str] | None = None) -> int:
                     runtime.send_immediate,
                     request_reset=runtime.ask_reset,
                     apply_event=runtime.apply_external,
+                    ask_patrol=runtime.ask_patrol,
                 )
                 camera = _latest_jpeg(vision) if vision is not None else None
                 stack.enter_context(
