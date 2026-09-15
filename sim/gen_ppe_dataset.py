@@ -100,6 +100,27 @@ def _zone_corners(wx: float, wy: float, zone: tuple):
     return [(wx + dx, wy + dy, z) for dx in (-half, half) for dy in (-half, half) for z in (z0, z1)]
 
 
+def _char_world_xy(stage, worker_path: str):
+    """보이는 몸통의 실제 월드 위치 — 캐릭터 에셋은 메시가 루트에서 어긋나 있어
+    worker 루트 translate 를 그대로 쓰면 박스가 빈 공간에 뜬다 (실측 확인).
+    char 의 월드 바운딩박스 중심을 쓰고, 못 재면 prim 변환으로 폴백한다."""
+    from pxr import Usd, UsdGeom  # noqa: N806
+
+    prim = stage.GetPrimAtPath(worker_path + "/char")
+    if not prim or not prim.IsValid():
+        prim = stage.GetPrimAtPath(worker_path)
+    cache = UsdGeom.BBoxCache(
+        Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render]
+    )
+    box = cache.ComputeWorldBound(prim).ComputeAlignedBox()
+    if not box.IsEmpty():
+        lo, hi = box.GetMin(), box.GetMax()
+        return (float(lo[0]) + float(hi[0])) / 2, (float(lo[1]) + float(hi[1])) / 2
+    m = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    t = m.ExtractTranslation()
+    return float(t[0]), float(t[1])
+
+
 def _center_depth(corners, cam_pos, rot_inv):
     """박스 중심의 카메라 전방 거리(m)."""
     import numpy as np
@@ -173,7 +194,13 @@ def main(argv=None) -> int:
     p.add_argument(
         "--preview", type=str, default=None, help="박스를 그린 검수용 이미지 저장 디렉터리"
     )
-    p.add_argument("--settle", type=int, default=2, help="무작위화 후 렌더 안정화 스텝 수")
+    p.add_argument(
+        "--settle",
+        type=int,
+        default=25,
+        help="무작위화 후 렌더 안정화 스텝 — ⚠️ 캐릭터 스킨드 메시는 prim 이동을 "
+        "즉시 안 따라온다. 2스텝이면 메시가 이전 자리에 남아 라벨이 빈 공간에 뜬다",
+    )
     args = p.parse_args(argv)
 
     rng = random.Random(args.seed)
@@ -267,11 +294,12 @@ def main(argv=None) -> int:
             if roll < 0.85:
                 ang = rng.uniform(0, 2 * math.pi)
                 dist = rng.uniform(2.5, 8.0) if roll < 0.70 else rng.uniform(1.2, 2.5)
-                rx = focus["pos"][0] - math.cos(ang) * dist
-                ry = focus["pos"][1] - math.sin(ang) * dist
+                fx, fy = _char_world_xy(stage, focus["path"])
+                rx = fx - math.cos(ang) * dist
+                ry = fy - math.sin(ang) * dist
                 rx = min(max(rx, walk[0] + 0.5), walk[1] - 0.5)
                 ry = min(max(ry, walk[2] + 0.5), walk[3] - 0.5)
-                ryaw = math.degrees(math.atan2(focus["pos"][1] - ry, focus["pos"][0] - rx))
+                ryaw = math.degrees(math.atan2(fy - ry, fx - rx))
                 ryaw += rng.uniform(-20.0, 20.0)
             else:
                 rx = rng.uniform(walk[0] + 0.5, walk[1] - 0.5)
@@ -295,17 +323,37 @@ def main(argv=None) -> int:
             if rgba is None or not getattr(rgba, "size", 0):
                 continue
             rgb = rgba[..., :3]
+            # 카메라가 선반·벽 안에 들어간 프레임은 완전 검정 — 버린다.
+            if float(rgb.mean()) < 5.0:
+                continue
             depth = camera.get_depth()
             cam_pos, cam_quat = camera.get_world_pose("world")
             rot_inv = _quat_to_mat(cam_quat).T
             k = camera.get_intrinsics_matrix()
+            if made == 0:
+                # 투영 검증 — 각 작업자의 몸통 중심이 어느 픽셀로 나가는지 출력해
+                # preview 이미지의 실제 사람 위치와 대조한다.
+                import numpy as np
+
+                for wrec in workers:
+                    cx, cy = _char_world_xy(stage, wrec["path"])
+                    c = rot_inv @ (np.array([cx, cy, 1.1]) - cam_pos)
+                    u = k[0, 2] - k[0, 0] * c[1] / c[0] if c[0] > 0.03 else -1
+                    v = k[1, 2] - k[1, 1] * c[2] / c[0] if c[0] > 0.03 else -1
+                    print(
+                        f"[dbg] {wrec['path'].rsplit('/',1)[-1]} root={wrec['pos']} "
+                        f"char=({cx:.2f},{cy:.2f}) cam=({c[0]:.2f},{c[1]:.2f},{c[2]:.2f}) "
+                        f"px=({u:.0f},{v:.0f})"
+                    )
+                print(f"[dbg] cam_pos={cam_pos} quat={cam_quat}")
 
             # ── 라벨 계산 — 위치 기반 부위 박스를 카메라로 투영 ──
             lines: list[str] = []
             boxes_for_preview: list[tuple[tuple, int]] = []
             for wrec in workers:
                 combo = wrec["combo"]
-                wx, wy = wrec["pos"]
+                # 루트 위치(wrec["pos"])가 아니라 보이는 몸통의 실측 월드 위치
+                wx, wy = _char_world_xy(stage, wrec["path"])
                 for part, cls_w, cls_b, zone in (
                     ("helmet", 0, 1, HEAD_ZONE),
                     ("vest", 2, 3, TORSO_ZONE),
