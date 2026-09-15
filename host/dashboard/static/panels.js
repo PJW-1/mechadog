@@ -82,7 +82,25 @@ export class OperationalPanels {
   // 초당 10번 오는 로봇 상태는 게이지만 고친다 — 화면을 통째로 다시 그리면 입력·초점·3D 미리보기가 날아간다.
   if(reason==='telemetry'){this.refreshTelemetry();return}
   if(reason==='command'){this.refreshControl();return}
+  // 재렌더가 패널을 통째로 갈아끼우므로 스크롤을 보존한다 — 안 하면
+  // 텔레메트리 갱신(2초)·명령 응답마다 화면이 맨 위로 튄다.
+  const top=this.container.scrollTop;
   this.render(this.view);
+  this.container.scrollTop=top;
+ }
+ // 중요한 모드 변경(서비스·안전 해제·순찰 시작)은 확인 대화상자를 거친다.
+ // 대화상자를 쓸 수 없는 환경(구형 DOM·시험)에서는 바로 실행한다.
+ confirmDevice({icon:name='lock',title,body,confirm='예, 실행합니다',danger=false,action}){
+  const dialog=this.document.getElementById('confirm-dialog');
+  if(!dialog||typeof dialog.showModal!=='function'){this.run(action);return}
+  this.document.getElementById('confirm-icon').innerHTML=icon(name);
+  this.document.getElementById('confirm-title').textContent=title;
+  this.document.getElementById('confirm-body').textContent=body;
+  const yes=this.document.getElementById('confirm-yes');
+  yes.textContent=confirm;yes.className=danger?'estop':'';
+  dialog.returnValue='';
+  dialog.onclose=()=>{if(dialog.returnValue==='yes')this.run(action)};
+  dialog.showModal();
  }
  events(){
   const feed=this.store.liveFeed||{state:'off'};
@@ -330,17 +348,19 @@ export class OperationalPanels {
   // 누르는 순간 버튼이 새로 만들어지면 클릭이 사라진다. 서비스 토글은 누를 때의 실측값으로 방향을 정한다.
   {
    this.deviceFacts=this.el('div',{class:'op-device-facts'});
-   this.serviceButton=this.button('',()=>store.requestService(store.serviceMode!==true),{disabled:!store.live,'data-service':'toggle'});
+   this.serviceButton=this.button('',()=>store.serviceMode===true
+    ?this.confirmDevice({icon:'lock',title:'서비스 모드를 해제하겠습니까?',body:'루프 워치독(750ms 감시)이 해제되고 이동 명령 차단이 풀립니다. 안전 래치는 그대로 남아 로봇은 아직 움직이지 않습니다 — 보행 복귀에는 "안전 해제"가 따로 필요합니다.',confirm:'예, 해제합니다',action:()=>store.requestService(false)})
+    :this.confirmDevice({icon:'lock',title:'서비스 모드에 진입하겠습니까?',body:'로봇이 그 자리에 주차하고 이동·자세 명령이 모두 거부됩니다. 루프 워치독이 750ms 데드라인으로 걸려 펌웨어 행거를 감지합니다. 패치·OTA 점검용 모드입니다.',confirm:'예, 진입합니다',action:()=>store.requestService(true)}),{disabled:!store.live,'data-service':'toggle'});
    this.fillDeviceCommands();
    this.container.append(this.section('실제 장비 명령',
     this.deviceFacts,
     this.el('div',{class:'op-toolbar'},
-     this.button('실제 순찰 시작',()=>store.requestPatrol(true),{disabled:!store.live}),
+     this.button('실제 순찰 시작',()=>this.confirmDevice({icon:'play',title:'실제 순찰을 시작하겠습니까?',body:'로봇이 자율 순찰을 시작합니다. 안전 래치가 해제된 상태여야 하며, 주행 경로에 사람·장애물이 없는지 먼저 확인하세요.',confirm:'예, 순찰을 시작합니다',action:()=>store.requestPatrol(true)}),{disabled:!store.live}),
      this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live}),
      this.serviceButton,
-     this.button('안전 해제 (RESET_SAFE)',()=>store.requestResetSafe(),{disabled:!store.live})),
+     this.button('안전 해제 (RESET_SAFE)',()=>this.confirmDevice({icon:'stop',title:'안전 래치를 해제하겠습니까?',body:'래치가 풀리면 다음 이동 명령부터 로봇이 실제로 움직입니다. 기체가 안정적인 자세인지, 주변에 발을 걸 물건이 없는지 눈으로 확인한 뒤 진행하세요.',confirm:'예, 해제합니다',danger:true,action:()=>store.requestResetSafe()}),{disabled:!store.live})),
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
-    this.note('서비스 모드는 로봇을 주차시키고 루프 워치독을 겁니다(패치·OTA용). 해제 후에도 안전 래치는 남으므로 보행 복귀에는 안전 해제가 필요합니다.')));
+    this.note('모드 변경 버튼은 누르면 확인 창이 뜹니다. 순찰 정지·비상 정지처럼 안전으로 가는 명령은 확인 없이 즉시 보냅니다. 서비스 모드 해제 후에도 안전 래치는 남습니다.')));
   }
   if(store.blocked)this.container.append(this.note(store.estop?'예시 정지 잠금 상태입니다. 설정에서 웹 예시 잠금만 초기화할 수 있습니다.':'예시 모드·수신 상태·운영자 시연 역할을 설정에서 확인하세요.','warning'),this.button('운영 설정',()=>this.openDisplaySettings()));
   this.refreshControl();
