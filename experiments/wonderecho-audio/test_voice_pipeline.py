@@ -309,6 +309,33 @@ class RobotlinkTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(spoken, "자율 동작 중이 아니다")
 
+    def test_fetch_status_parses_real_payload_shape(self):
+        # 실제 /api/telemetry 페이로드: escalation 은 'L0' 문자열, telemetry 는
+        # 중첩 객체이거나 아직 없으면 None. 이전엔 fetch_status 자체를 mock 해서
+        # escalation 문자열에 .get 을 부르는 크래시를 놓쳤다.
+        real_payload = {
+            "type": "telemetry",
+            "device_id": "mechdog-01",
+            "state": "IDLE",
+            "escalation": "L0",
+            "telemetry": {"batt_v": 8.54, "temp_c": 41.2},
+            "stale": False,
+        }
+        with mock.patch.object(robotlink, "_get", return_value=real_payload):
+            st = robotlink.fetch_status()
+        self.assertIn("8.54", st)
+        self.assertIn("IDLE", st)
+        self.assertIn("L0", st)
+
+    def test_fetch_status_no_telemetry_yet(self):
+        # 시뮬·링크 전 상태 — telemetry=None 이 와도 죽지 않는다.
+        payload = {"state": "FAILSAFE", "escalation": "L3", "telemetry": None, "stale": True}
+        with mock.patch.object(robotlink, "_get", return_value=payload):
+            st = robotlink.fetch_status()
+        self.assertIn("FAILSAFE", st)
+        self.assertIn("L3", st)
+        self.assertIn("링크 지연", st)
+
 
 class HubScenarioQueueTests(unittest.TestCase):
     def test_scenario_item_flows_through_say_queue(self):
@@ -369,6 +396,35 @@ class TransportTests(unittest.TestCase):
         dev.write.assert_called()  # command packet framed by stream_client
         link.close()
         dev.close.assert_called_once()
+
+
+class RouteQueryTests(unittest.TestCase):
+    """우선순위 라우팅 — 구체 규칙이 넓은 단어 검사보다 먼저다."""
+
+    def test_exact_command_beats_emergency_word(self):
+        # "비상정지" 는 "비상" 을 포함하지만 전파가 아니라 정지 명령이다.
+        self.assertEqual(vp.route_query("비상정지"), "action")
+        self.assertEqual(vp.route_query("긴급정지"), "action")
+        self.assertEqual(vp.route_query("스톱"), "action")
+        self.assertEqual(vp.route_query("순찰시작"), "action")
+
+    def test_scenario_trigger_beats_emergency_word(self):
+        # "비상접수" 는 "비상" 을 포함하지만 접수 시나리오다.
+        self.assertEqual(vp.route_query("비상접수"), "scenario")
+        self.assertEqual(vp.route_query("화재대피"), "scenario")
+
+    def test_plain_emergency_still_routes(self):
+        self.assertEqual(vp.route_query("비상"), "emergency")
+        self.assertEqual(vp.route_query("도와줘"), "emergency")
+        self.assertEqual(vp.route_query("지금비상상황이야"), "emergency")
+
+    def test_status_query(self):
+        self.assertEqual(vp.route_query("배터리어때"), "status")
+        self.assertEqual(vp.route_query("지금상태알려줘"), "status")
+
+    def test_unrelated_goes_to_llm(self):
+        self.assertEqual(vp.route_query("오늘점심뭐야"), "llm")
+        self.assertEqual(vp.route_query(""), "llm")
 
 
 if __name__ == "__main__":

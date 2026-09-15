@@ -27,6 +27,7 @@
 <button data-view="settings">설정</button>
 </nav>
 <div class="source-status"><span class="status-dot"></span><span id="source-status">시뮬레이션</span><span class="muted">실제 장비 미연결</span></div>
+<div class="source-switch"><button id="source-switch" aria-haspopup="menu" aria-expanded="false" title="이 PC의 다른 런타임(실기·시뮬)으로 전환"><span data-icon="device"></span><span>연결 전환</span></button><div id="source-menu" class="source-menu" role="menu" hidden></div></div>
 <div class="safety-note"><span data-icon="lock"></span><span>실시간 제어 잠김 <small>미연결 · 정지 명령 전달 불가</small></span></div>
 <button class="estop" id="estop"><span data-icon="stop"></span><span>긴급 정지<small class="mobile-stop-note">장비 미연결 · 정지 전송 불가</small></span></button>
 </header>
@@ -71,6 +72,9 @@
 <div class="camera-viewport" id="camera-viewport"><canvas id="fpv" aria-label="선택한 로봇의 가상 3D 시점"></canvas><canvas id="vision-frame" aria-label="로봇 카메라 영상과 검출 박스" hidden></canvas><span class="frame-badge" id="frame-source">예시 화면 · 실시간 아님</span><span class="camera-axis" id="camera-axis" hidden>MD-01 / FRONT</span></div>
 <footer class="camera-footer"><span id="frame-time">마지막 영상 수신　— <span class="muted">· 관측 전용</span></span><div class="camera-robot-switch" aria-label="카메라 로봇 전환"><button data-robot="MD-01" class="selected" aria-pressed="true">MD-01</button><button data-robot="MD-02" aria-pressed="false">MD-02</button><button data-robot="MD-03" aria-pressed="false">MD-03</button></div></footer>
 </div>
+<div class="camera-resize resize-e" data-edge="e" title="끌어서 크기 조절" aria-hidden="true"></div>
+<div class="camera-resize resize-s" data-edge="s" title="끌어서 크기 조절" aria-hidden="true"></div>
+<div class="camera-resize resize-se" data-edge="se" title="끌어서 크기 조절" aria-hidden="true"></div>
 </section>
 
 <div class="scene-controls" aria-label="3D 시야 조작">

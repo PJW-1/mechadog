@@ -45,6 +45,16 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .source-status { margin-left: auto; display: flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--muted); font-size: 15px }
 .source-status>.status-dot { display: none }
 .source-status>.muted:before { content: "·"; margin-right: 8px }
+.source-switch { position: relative }
+.source-switch>button { display: flex; align-items: center; gap: 7px; height: 42px; padding: 0 14px; background: transparent; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); font-size: 13px }
+.source-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 250px; padding: 6px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 12px 40px #08081ab0; z-index: 30 }
+.source-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; background: transparent; border: 0; border-radius: 4px; color: inherit; font: inherit; text-align: left; cursor: pointer }
+.source-item:hover:not(:disabled) { background: #ffffff14 }
+.source-item.current { opacity: .55; cursor: default }
+.source-item strong { font-size: 14px; font-weight: 600 }
+.source-kind { font-size: 11px; color: var(--muted); border: 1px solid var(--rule); border-radius: 20px; padding: 2px 8px }
+.source-item small { margin-left: auto; color: var(--muted) }
+.source-menu-empty { margin: 10px 12px; color: var(--muted); font-size: 13px }
 .safety-note { display: flex; align-items: center; gap: 12px; color: #d0cadd; white-space: nowrap; font-size: 15px; margin-left: 26px }
 .safety-note>span { color: #8f8ba5 }
 .safety-note>span:last-child { color: #cbc7dd }
@@ -89,7 +99,16 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .scene-controls button { height: 46px; width: 46px; background: #20212eea; border: 1px solid var(--rule); font-size: 14px; padding: 9px }
 #reset-view { order: -1; width: auto; min-width: 142px; padding-inline: 16px }
 .camera-dock { position: absolute; z-index: 6; left: var(--r-camera-shell-x); bottom: 16px; width: var(--r-camera-shell-w); background: var(--panel); border: 1px solid #5d5c70; box-shadow: 0 12px 32px #0c0c1c40; border-radius: 5px; overflow: hidden }
-.camera-header { display: flex; align-items: center; height: 49px; gap: 13px; padding: 0 13px 0 17px; border-bottom: 1px solid var(--rule) }
+.camera-header { display: flex; align-items: center; height: 49px; gap: 13px; padding: 0 13px 0 17px; border-bottom: 1px solid var(--rule); cursor: grab; touch-action: none }
+.camera-header:active { cursor: grabbing }
+.camera-resize { position: absolute; touch-action: none; z-index: 2 }
+.resize-e { top: 0; right: 0; width: 7px; height: 100%; cursor: ew-resize }
+.resize-s { left: 0; bottom: 0; height: 7px; width: 100%; cursor: ns-resize }
+.resize-se { right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize }
+.resize-se:before { content: ""; position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-right: 2px solid #8f8fa8; border-bottom: 2px solid #8f8fa8 }
+.camera-dock.expanded .camera-resize, .camera-dock.collapsed .camera-resize { display: none }
+.op-manual-camera .camera-resize { display: none }
+.op-manual-camera .camera-header { cursor: default }
 .camera-header h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 17px; font-weight: 500; letter-spacing: .005em; white-space: nowrap }
 .camera-header>div { display: flex; flex-shrink: 0; margin-left: auto; align-items: center }
 .camera-header button { flex-shrink: 0; white-space: nowrap; font-size: 12px; min-height: 31px; padding: 4px 10px; gap: 8px }
@@ -97,7 +116,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .camera-header button svg { width: 17px; height: 17px }
 .camera-status { display: flex; align-items: center; gap: 26px; height: 38px; padding: 0 12px; font-size: 13px; color: var(--muted) }
 .current-video { align-self: stretch; padding: 3px 10px 7px; color: var(--brass); font-weight: 600; border-bottom: 2px solid var(--brass) }
-.camera-viewport { position: relative; height: clamp(175px,21.7vh,290px); margin: 0 8px; background: #3c3f4a; overflow: hidden; border: 1px solid #656676; border-radius: 3px }
+.camera-viewport { position: relative; aspect-ratio: var(--vision-aspect,4/3); margin: 0 8px; background: #3c3f4a; overflow: hidden; border: 1px solid #656676; border-radius: 3px }
 .camera-viewport canvas { display: block; width: 100%; height: 100%; object-fit: contain }
 #vision-frame { position: absolute; inset: 0 }
 .camera-viewport canvas[hidden] { display: none }
@@ -108,7 +127,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .camera-robot-switch button { min-height: 32px; min-width: 79px; border: 1px solid var(--rule); padding: 4px 10px; font-size: 12px; color: #cecadf }
 .camera-robot-switch button.selected { border-color: var(--brass); color: var(--brass) }
 .camera-dock.expanded { left: 50%; bottom: 50%; width: min(920px,85%); transform: translate(-50%,50%); box-shadow: 0 20px 90px #080816bb }
-.camera-dock.expanded .camera-viewport { height: min(48vh,500px) }
+.camera-dock.expanded .camera-viewport { aspect-ratio: var(--vision-aspect,4/3); max-height: 72vh }
 .camera-dock.collapsed { width: min(440px,calc(100% - 32px)) }
 .camera-dock.collapsed .camera-body { display: none }
 
@@ -247,7 +266,7 @@ dialog button+button { margin-left: 8px }
  #reset-view { min-width: 106px; font-size: 10px; padding-inline: 9px }
  .scene-controls svg { width: 17px }
  .camera-dock { left: 14px; right: 14px; bottom: 12px; width: auto!important }
- .camera-viewport { height: 178px }
+ .camera-viewport { max-height: 42vh }
  .camera-header { height: 42px; padding-left: 12px; gap: 8px }
  .camera-header h2 { font-size: 13px }
  .camera-header>span svg { width: 18px }
@@ -259,7 +278,7 @@ dialog button+button { margin-left: 8px }
  .camera-robot-switch button { min-width: 49px; font-size: 10px; padding: 3px 6px; min-height: 28px }
  .frame-badge { font-size: 10px }
  .camera-dock.expanded { left: 14px; right: 14px; bottom: 12px; transform: none }
- .camera-dock.expanded .camera-viewport { height: 360px }
+ .camera-dock.expanded .camera-viewport { max-height: 56vh }
  .camera-dock.collapsed { bottom: 250px }
  .operation-rail { display: block; padding: 22px 20px }
  .operation-rail>section { min-height: auto }

@@ -23,7 +23,11 @@ function syncVisionStatus(){
  $('frame-source').textContent=badge;
  $('camera-status').textContent=visionStatus.state==='live'?status+' · 검출 '+visionStatus.detections+'건 · 사람 '+visionStatus.persons+'명':status;
  $('camera-resolution').hidden=visionStatus.state!=='live';
- if(visionStatus.state==='live')$('camera-resolution').textContent=visionStatus.width+' × '+visionStatus.height;
+ if(visionStatus.state==='live'){
+  $('camera-resolution').textContent=visionStatus.width+' × '+visionStatus.height;
+  // 칸이 영상 비율을 따라가야 옆여백이 안 생긴다 — 프레임 크기가 곧 정답이다.
+  if(visionStatus.width>0&&visionStatus.height>0)document.documentElement.style.setProperty('--vision-aspect',visionStatus.width+' / '+visionStatus.height);
+ }
  const at=visionStatus.lastFrameAt?new Date(visionStatus.lastFrameAt).toLocaleTimeString('ko-KR',{hour12:false}):'—';
  $('frame-time').innerHTML='마지막 영상 수신　'+at+' <span class="muted">· 관측 전용</span>';
 }
@@ -85,6 +89,50 @@ if(link){
   onStatus:status=>operations.setEventFeed(status)});
  eventFeed.start();
 }
+// 연결 표시 — :8000 이 유일한 관제 포트다. 실기든 시뮬이든 런타임은 항상
+// :8000 에 띄운다(다른 포트는 쓰지 않는다 — 포트를 나누면 출처 검사가 명령을
+// 막는다). 이 메뉴는 전환이 아니라 지금 :8000 에 붙은 개체가 무엇인지 보여준다.
+const SOURCE_PORTS=[8000];
+const sourceSwitch=$('source-switch'),sourceMenu=$('source-menu');
+async function probeSources(){
+ const current=apiBase||location.origin;
+ const hits=await Promise.all(SOURCE_PORTS.map(async port=>{
+  const origin='http://127.0.0.1:'+port;
+  try{
+   const response=await fetch(origin+'/health',{signal:globalThis.AbortSignal?.timeout?.(1200)});
+   const info=response.ok?await response.json():null;
+   if(info?.service!=='telemetry')return null;
+   return {origin,port,device:info.device_id||'이름 없음',current:origin===current};
+  }catch{return null}
+ }));
+ return hits.filter(Boolean).sort((a,b)=>a.port-b.port);
+}
+function renderSourceMenu(list){
+ sourceMenu.textContent='';
+ if(!list.length){const empty=document.createElement('p');empty.className='source-menu-empty';empty.textContent='응답하는 런타임이 없습니다.';sourceMenu.append(empty);return}
+ for(const source of list){
+  const item=document.createElement('button');
+  item.type='button';item.setAttribute('role','menuitem');
+  item.className='source-item'+(source.current?' current':'');
+  item.disabled=source.current;
+  const name=document.createElement('strong');name.textContent=source.device;
+  const kind=document.createElement('span');kind.className='source-kind';
+  kind.textContent=source.device.endsWith('-sim')?'시뮬레이션':'실기';
+  const addr=document.createElement('small');addr.textContent='127.0.0.1:'+source.port;
+  item.append(name,kind,addr);
+  item.addEventListener('click',()=>{location.href=location.pathname+'?api='+encodeURIComponent(source.origin)+location.hash});
+  sourceMenu.append(item);
+ }
+}
+async function toggleSourceMenu(){
+ if(!sourceMenu.hidden){sourceMenu.hidden=true;sourceSwitch.setAttribute('aria-expanded','false');return}
+ sourceMenu.hidden=false;sourceSwitch.setAttribute('aria-expanded','true');
+ const loading=document.createElement('p');loading.className='source-menu-empty';loading.textContent='런타임 찾는 중…';
+ sourceMenu.textContent='';sourceMenu.append(loading);
+ renderSourceMenu(await probeSources());
+}
+sourceSwitch.addEventListener('click',toggleSourceMenu);
+document.addEventListener('click',event=>{if(!sourceMenu.hidden&&!event.target.closest('.source-switch'))toggleSourceMenu()});
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
 const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,
@@ -121,7 +169,7 @@ function syncMain(){
  $('camera-title').textContent=selected+' · 로봇 시점';$('camera-axis').textContent=selected+' / FRONT';
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
- $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'실제 지도·위치 미수신 · 예시 숨김';
+ $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'예시 공간 · 연결된 로봇의 실제 위치는 미수신';
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');
@@ -190,6 +238,8 @@ $('reset-view').addEventListener('click',()=>{view?.setView('overview');toast('�
 $('fullscreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{toast('이 브라우저에서는 전체 화면을 사용할 수 없어요.')}});
 function setCameraDockState({expanded=false,collapsed=false}){
  const dock=$('camera-dock'),expand=$('expand-camera'),collapse=$('collapse-camera');
+ if(expanded){dock.saveDockGeom?.();dock.style.left='';dock.style.top='';dock.style.bottom='';dock.style.width=''}
+ else if(!expanded&&dock.classList.contains('expanded'))dock.restoreDockGeom?.();
  dock.classList.toggle('expanded',expanded);dock.classList.toggle('collapsed',collapsed);
  const expandLabel=expanded?'로봇 시점 원래 크기로':'로봇 시점 크게 보기';
  expand.setAttribute('aria-label',expandLabel);expand.title=expandLabel;
@@ -203,6 +253,57 @@ function setCameraDockState({expanded=false,collapsed=false}){
 }
 $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$('camera-dock').classList.contains('expanded')}));
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
+// 카메라 창 자유 배치 — 헤더를 끌어 옮기고, 변·모서리를 끌어 크기를 바꾼다.
+// 통합 관제에서만 동작한다 — 순찰·제어에서는 칸이 문서 흐름(position:static)이라
+// 끌면 레이아웃이 깨진다. 크기는 너비만 바꾸고 높이는 --vision-aspect 가 맞춘다.
+{
+ const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header');
+ const clampTo=(v,min,max)=>Math.min(max,Math.max(min,v));
+ const dockInStage=()=>dock.parentElement===stage&&currentPage==='dashboard';
+ // 확대·접기 전의 자유 위치를 기억해 돌아올 때 복원한다.
+ let dockGeom=null;
+ const saveGeom=()=>{dockGeom={left:dock.style.left,top:dock.style.top,bottom:dock.style.bottom,width:dock.style.width}};
+ const restoreGeom=()=>{if(dockGeom)Object.assign(dock.style,dockGeom)};
+ dock.saveDockGeom=saveGeom;dock.restoreDockGeom=restoreGeom;
+ header.addEventListener('pointerdown',event=>{
+  if(!dockInStage()||event.target.closest('button'))return;
+  event.preventDefault();
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  // ⚠️ 순서가 중요하다 — expanded 를 지우면 기본 위치로 돌아가므로, 보이는
+  // 위치(rect)를 먼저 재고 나서 지운다. 그래야 끌기 시작해도 창이 안 뛴다.
+  dock.classList.remove('expanded');
+  dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';
+  const offX=event.clientX-d.left,offY=event.clientY-d.top;
+  const move=move=>{
+   dock.style.left=clampTo(move.clientX-s.left-offX,0,Math.max(0,s.width-dock.offsetWidth))+'px';
+   dock.style.top=clampTo(move.clientY-s.top-offY,0,Math.max(0,s.height-dock.offsetHeight))+'px';
+  };
+  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  header.setPointerCapture?.(event.pointerId);
+  header.addEventListener('pointermove',move);
+  header.addEventListener('pointerup',up);
+  header.addEventListener('pointercancel',up);
+ });
+ const aspect=()=>{const w=visionStatus.width,h=visionStatus.height;return w>0&&h>0?w/h:4/3};
+ for(const grip of dock.querySelectorAll('.camera-resize'))grip.addEventListener('pointerdown',event=>{
+  if(!dockInStage())return;
+  event.preventDefault();
+  const edge=grip.dataset.edge,s=stage.getBoundingClientRect(),startW=dock.getBoundingClientRect().width,startX=event.clientX,startY=event.clientY;
+  const move=move=>{
+   const dx=move.clientX-startX,dy=move.clientY-startY;
+   const grown=edge==='e'?dx:edge==='s'?dy*aspect():Math.max(dx,dy*aspect());
+   dock.style.width=clampTo(startW+grown,280,Math.min(s.width-20,1100))+'px';
+   // 너비가 커지면 오른쪽 경계를 넘을 수 있다 — 왼쪽을 당겨 안에 둔다.
+   const over=dock.getBoundingClientRect().right-s.right;
+   if(over>0)dock.style.left=clampTo((dock.offsetLeft||0)-over,0,s.width)+'px';
+  };
+  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  grip.setPointerCapture?.(event.pointerId);
+  grip.addEventListener('pointermove',move);
+  grip.addEventListener('pointerup',up);
+  grip.addEventListener('pointercancel',up);
+ });
+}
 $('demo-toggle').addEventListener('click',()=>attempt(()=>{if(operations.mission.status==='running')operations.pauseMission();else if(operations.mission.status==='paused')operations.resumeMission();else navigate('missions')}));
 function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!$('stop-dialog').open)$('stop-dialog').showModal()}
 // 연결돼 있으면 비상정지는 한 번 눌러 바로 나간다. 모달을 한 단계 끼우면 급할 때
