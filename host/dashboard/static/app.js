@@ -117,6 +117,11 @@ function syncMain(){
  $('camera-title').textContent=selected+' · 로봇 시점';$('camera-axis').textContent=selected+' / FRONT';
  $('app').classList.toggle('data-waiting',!operations.demo);
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
+ // 하단 상태 칸은 **연결 여부를 사실대로** 말한다. 이 글자를 고정해 두면 실제 로봇에
+ // 붙어 있어도 "장비 미연결" 이라고 뜬다. 로봇 상태(배터리·FSM) 게이지는 아직 이
+ // 화면에 없으므로(4.6.2) 연결됐다고 해서 상태를 아는 척하지도 않는다.
+ document.querySelector('.actual-status strong').textContent=operations.live?'관제 서버 연결됨 · 로봇 상태 미표시':'현장 상태 확인 불가 · 장비 미연결';
+ document.querySelector('.actual-status p').textContent=operations.live?'영상·사건·명령은 실제 로봇 경로입니다. 배터리·FSM 상태는 아직 이 화면에 표시하지 않습니다.':'웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.';
  $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'예시 공간 · 연결된 로봇의 실제 위치는 미수신';
  if(operations.live)syncVisionStatus();
  else{

@@ -43,7 +43,7 @@ test('application opens direct hash, aligns 3D and camera selection, routes name
 });
 test('navigation releases manual control, real-data mode hides preview without claiming connection',async()=>{
  const {dom,document,store,view}=await boot('missions');store.claim();store.move('FORWARD');document.querySelector('[data-view="events"]').click();assert.equal(store.command,'STOP');assert.equal(store.control,null);
- store.setDemo(false);assert.equal(document.querySelector('#app').classList.contains('data-waiting'),true);assert.equal(view.cameraVisible,false);assert.equal(view.playing,false);assert.match(document.querySelector('#frame-source').textContent,/미수신/);dom.window.close();
+ store.setDemo(false);assert.match(document.querySelector('.actual-status').textContent,/장비 미연결/);assert.equal(document.querySelector('#app').classList.contains('data-waiting'),true);assert.equal(view.cameraVisible,false);assert.equal(view.playing,false);assert.match(document.querySelector('#frame-source').textContent,/미수신/);dom.window.close();
 });
 
 test('WASD requires ownership, holds one direction and Space cancels without automatic restart',async()=>{
@@ -138,6 +138,8 @@ test('served by the dashboard, the robot view draws /ws/vision and says what it 
  assert.equal(store.live,true);assert.deepEqual(failures,[]);
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/vision');assert.equal(feed.options.canvas,document.querySelector('#vision-frame'));assert.equal(feed.started,true);
  assert.equal(document.querySelector('#vision-frame').hidden,false);assert.equal(document.querySelector('#fpv').hidden,true);
+ // 실제로 붙어 있는데 하단 상태 칸이 "장비 미연결" 이라고 하면 안 된다 — 로봇 상태를 아는 척도 하지 않는다.
+ assert.doesNotMatch(document.querySelector('.actual-status').textContent,/미연결/);assert.match(document.querySelector('.actual-status').textContent,/로봇 상태 미표시/);
  // 연결만 됐다고 "실시간" 이라 하지 않는다.
  assert.equal(text('frame-source'),'영상 연결 중');assert.doesNotMatch(text('camera-status'),/실시간/);
  feed.options.onStatus({state:'live',lastFrameAt:Date.UTC(2026,8,14,10,0,0),frameSeq:12,width:640,height:480,detections:3,persons:2});
