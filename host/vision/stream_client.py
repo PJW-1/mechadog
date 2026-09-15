@@ -396,7 +396,9 @@ def apply_orientation(
         with fetch(url, timeout=timeout_s) as response:  # noqa: S310 — 설정에서 온 http URL
             body = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        LOG.warning("orientation_apply_failed", url=url, error=str(exc), effect="보정 없이 계속한다")
+        LOG.warning(
+            "orientation_apply_failed", url=url, error=str(exc), effect="보정 없이 계속한다"
+        )
         return None
     if not body.get("ok"):
         LOG.warning("orientation_rejected", url=url, response=body)
