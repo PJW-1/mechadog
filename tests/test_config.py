@@ -665,3 +665,23 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
     for name in ("forward_mm_per_sec", "turn_deg_per_sec", "straight_bias_deg"):
         assert two["gait_calibration"][name] is None, f"{name} 은 이 기체로 다시 재야 한다"
+
+
+def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
+    """펌웨어가 vflip+hmirror 합성으로 구현하므로 90·270 은 만들 수 없다.
+
+    여기서 막지 않으면 카메라가 400 을 돌려주고 그것을 기동 경고로만 보게 된다.
+    """
+    _write_device_profile(tmp_path / "ref.yaml")
+    base = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+
+    def load_with(rotation: object):
+        base["vision"]["mount_rotation"] = rotation
+        path = tmp_path / "config.yaml"
+        path.write_text(yaml.safe_dump(base, allow_unicode=True), encoding="utf-8")
+        return load_config("ref", config_path=path, devices_dir=tmp_path)
+
+    for good in (0, 180):
+        assert load_with(good)["vision"]["mount_rotation"] == good
+    with pytest.raises(ConfigError, match="mount_rotation"):
+        load_with(90)
