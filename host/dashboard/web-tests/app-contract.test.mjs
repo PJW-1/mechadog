@@ -164,7 +164,13 @@ test('device commands on 순찰·제어 follow the telemetry feed without rebuil
  assert.match(section().textContent,/서비스 모드켜짐/);assert.match(section().textContent,/안전 래치걸림/);assert.match(section().textContent,/IDLE · 온보드 FAILSAFE/);
  // 10Hz 로 칸을 고쳐도 버튼은 같은 요소다 — 누르는 순간 교체되면 클릭이 사라진다.
  assert.equal(toggle(),button);assert.match(button.textContent,/서비스 모드 해제/);
- button.click();await new Promise(resolve=>setTimeout(resolve,0));
+ // 모드 변경은 확인 대화상자를 거친다 — 취소하면 명령이 나가지 않고, 예를 눌러야 전송된다.
+ const dialog=document.querySelector('#confirm-dialog');
+ button.click();assert.equal(dialog.open,true);assert.match(dialog.querySelector('#confirm-title').textContent,/해제/);
+ dialog.returnValue='';dialog.dispatchEvent(new dom.window.Event('close'));
+ await new Promise(resolve=>setTimeout(resolve,0));assert.deepEqual(linkCalls,[]);
+ button.click();dialog.returnValue='yes';dialog.dispatchEvent(new dom.window.Event('close'));
+ await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(linkCalls,['service:exit']);
  feed.options.onUpdate({state:'live',snapshot:snap(null),rateHz:10,lost:0,history:[]});
  assert.match(section().textContent,/모름 · 펌웨어가 알리지 않음/);assert.deepEqual(failures,[]);
