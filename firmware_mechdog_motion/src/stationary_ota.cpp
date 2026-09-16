@@ -6,13 +6,13 @@
 
 #if MECHADOG_ENABLE_OTA
 #include <Arduino.h>
+#include <Wire.h>
 #include <esp_app_format.h>
 #include <esp_https_server.h>
 #include <esp_ota_ops.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <mbedtls/sha256.h>
-#include <Wire.h>
 
 #include <algorithm>
 #include <atomic>
@@ -109,9 +109,9 @@ void rebootDeadline(void*) {
 // 스캔하고, /i2c 는 저장된 문자열을 돌려주기만 한다.
 //
 // 주소만으로 부품을 확정할 수는 없다. 알려진 후보를 함께 적고 판단은 사람이 한다.
-constexpr int kBus1Sda = 22;   // IIC1 — sensor_hal.cpp 의 kSdaPin/kSclPin 과 같아야 한다
+constexpr int kBus1Sda = 22;  // IIC1 — sensor_hal.cpp 의 kSdaPin/kSclPin 과 같아야 한다
 constexpr int kBus1Scl = 23;
-constexpr int kBus2Sda = 19;   // IIC2 — 공식 IoT 레슨이 Wi-Fi 모듈(0x69)에 쓰는 버스
+constexpr int kBus2Sda = 19;  // IIC2 — 공식 IoT 레슨이 Wi-Fi 모듈(0x69)에 쓰는 버스
 constexpr int kBus2Scl = 13;
 
 char g_i2c_scan[320] = "{\"scanned\":false}";
