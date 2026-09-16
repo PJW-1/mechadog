@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path

@@ -91,11 +91,6 @@ def _fmt_production(rows):
     state_ko = {"running": "가동 중", "stopped": "정지", "idle": "대기"}
     parts = []
     for r in rows:
-        pct = (
-            round(r["completed_quantity"] * 100 / r["target_quantity"])
-            if r["target_quantity"]
-            else 0
-        )
         parts.append(
             f"{r['line_id']}라인은 목표 {r['target_quantity']:,}개 중"
             f" {r['completed_quantity']:,}개를 완료해"

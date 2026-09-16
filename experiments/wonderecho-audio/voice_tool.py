@@ -97,9 +97,13 @@ def play_tone(port=PORT, seconds=2.0):
         while not ready and time.monotonic() < deadline:
             data = device.read(min(device.in_waiting, 4096) or 1)
             for p in decoder.feed(data, now=time.monotonic()):
-                if p.message_type == 0x102 and len(p.payload) == STATUS.size:
-                    if p.payload[:4] == b"WEC1" and STATUS.unpack(p.payload)[1] == 1:
-                        ready = True
+                if (
+                    p.message_type == 0x102
+                    and len(p.payload) == STATUS.size
+                    and p.payload[:4] == b"WEC1"
+                    and STATUS.unpack(p.payload)[1] == 1
+                ):
+                    ready = True
         if not ready:
             raise TimeoutError("WEC1 READY 없음 — 펌웨어가 스트리밍을 지원 안 할 수 있음")
         t0, sent = time.monotonic(), 0
@@ -120,7 +124,8 @@ def play_tone(port=PORT, seconds=2.0):
                             "output_irqs", "tx_peak", "cfg_rc", "start_rc",
                             "level_peak", "rx_bad")[: len(p.payload) // 4]
                     diag["play_diagnostics"] = dict(
-                        zip(keys, struct.unpack(f"<{len(p.payload)//4}I", p.payload)))
+                        zip(keys, struct.unpack(f"<{len(p.payload)//4}I", p.payload),
+                            strict=False))
     finally:
         device.close()
     return diag.get("play_diagnostics", {"note": "진단 패킷 미수신"})
@@ -131,6 +136,7 @@ class App(tk.Tk):
         super().__init__()
         self.title("WonderEcho 음성 도구")
         self.proc = None
+        self._log_fh = None
         self._stopped_by_user = False
         self.lamp_state = "off"   # off | idle | speaking | error
         self.blink_on = True
@@ -198,8 +204,8 @@ class App(tk.Tk):
             lines.append(f"[음성 :8090] {v.get('mode')} / {v.get('activity')} / "
                          f"큐 {v.get('say_queue')}")
         else:
-            lines.append(f"[음성 :8090] 꺼져 있음")
-        lines.append(f"[MES :8095] " + ("가상 MES 정상" if m.get("ok") else "꺼져 있음"))
+            lines.append("[음성 :8090] 꺼져 있음")
+        lines.append("[MES :8095] " + ("가상 MES 정상" if m.get("ok") else "꺼져 있음"))
         if "error" in r:
             lines.append("[런타임 :8000] 꺼져 있음 (로봇 명령·상태 질의만 불가)")
         else:
@@ -292,13 +298,16 @@ class App(tk.Tk):
             self._stopped_by_user = True
             self.proc.terminate()
             self.proc = None
+            self._log_fh.close()
             self.log("... 파이프라인 종료 요청")
             return
         self._stopped_by_user = False
         self.log("... 파이프라인 기동 (모델 로딩 ~30초)")
+        # 자식 프로세스 수명 동안 열어 두는 stdout 수신처 — 컨텍스트 매니저 불가
+        self._log_fh = (LOG_DIR / "pipeline_stdout.log").open("ab")  # noqa: SIM115
         self.proc = subprocess.Popen(
             PIPELINE_CMD, cwd=str(HERE), env=ENV,
-            stdout=open(LOG_DIR / "pipeline_stdout.log", "ab"),
+            stdout=self._log_fh,
             stderr=subprocess.STDOUT)
         self.log(f"  PID {self.proc.pid} — 로그: logs/pipeline_stdout.log")
 
