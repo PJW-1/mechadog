@@ -26,7 +26,14 @@ struct SafetyThresholds {
   // 2표본 = 약 80ms 다. 실측에서 초음파는 기준보다 5~8% 짧게 읽으므로(`2.1.3`)
   // 임계를 넘겼다는 판정 자체는 안전측이다.
   uint8_t obstacle_samples = 2;
-  uint8_t clear_samples = 2;
+
+  // ⚠️ **푸는 쪽은 훨씬 신중해야 한다 (2026-09-17 실기).** 21cm 표적 앞에서
+  // 초음파가 **13% 꼴로 34cm 를 섞어 읽었다** — 표적 뒤 배경을 잡는 것으로
+  // 보이며, 흐트러짐은 단발이었다. 해제를 2표본으로 두었더니 차단이 **12초에
+  // 29번** 풀렸다 걸렸다 했고, 그때마다 전진이 잠깐씩 열리고 호스트는 `AVOID`
+  // 가 깜빡이는 것을 본다. 5표본(200ms)이면 단발·쌍발 흐트러짐으로는 풀리지
+  // 않는다. 해제가 200ms 늦는 것은 안전을 해치지 않는다 — 늦게 풀릴 뿐이다.
+  uint8_t clear_samples = 5;
 
   // 보행 중에는 전압이 순간적으로 내려간다. 한 표본으로 세우면 걷다가 멈춘다.
   uint8_t shutdown_samples = 3;
@@ -68,6 +75,9 @@ class SafetyMonitor {
 
   bool obstacle() const { return obstacle_; }
   bool lowbatt() const { return lowbatt_; }
+  // 로그가 **실제로 쓰인 임계**를 찍게 한다. 벤치 빌드에서 상수를 그대로 찍었더니
+  // `Battery shutdown: 8.04V <= 6.60V` 가 나와 기록이 서로 어긋났다 (2026-09-17).
+  const SafetyThresholds& thresholds() const { return thresholds_; }
 
   // ⚠️ **전진만 막는다.** 전부 막으면 `FR-2.3` 의 *"정지 후 후진"* 이 실행
   // 불가가 되어 회피가 성립하지 않는다 — 초음파는 정면만 보므로 물러나는 것이

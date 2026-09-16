@@ -55,8 +55,17 @@ int main() {
   check(distance_sample(monitor, now_ms, 27.0F).obstacle);
   check(distance_sample(monitor, now_ms, 27.0F).obstacle);
 
-  // 30cm 이상 연속 2표본이면 풀린다.
-  check(distance_sample(monitor, now_ms, 31.0F).obstacle);
+  // ⚠️ **단발·쌍발 흐트러짐으로는 풀리지 않는다 (2026-09-17 실기).** 21cm 표적
+  // 앞에서 초음파가 13% 꼴로 34cm 를 섞어 읽었고, 해제가 2표본이던 동안 차단이
+  // 12초에 29번 풀렸다 걸렸다 했다.
+  check(distance_sample(monitor, now_ms, 34.0F).obstacle);
+  check(distance_sample(monitor, now_ms, 16.0F).obstacle);
+  check(distance_sample(monitor, now_ms, 34.0F).obstacle);
+  check(distance_sample(monitor, now_ms, 34.0F).obstacle);
+  check(distance_sample(monitor, now_ms, 16.0F).obstacle);
+
+  // 30cm 이상이 연속 5표본(200ms) 이어져야 풀린다.
+  for (int i = 0; i < 4; ++i) check(distance_sample(monitor, now_ms, 31.0F).obstacle);
   check(!distance_sample(monitor, now_ms, 32.0F).obstacle);
   check(monitor.allows_move(60.0F));
 

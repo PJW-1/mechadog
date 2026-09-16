@@ -51,6 +51,14 @@
 #ifndef MECHADOG_BENCH_BATTERY_THRESHOLDS
 #define MECHADOG_BENCH_BATTERY_THRESHOLDS 0
 #endif
+// 값은 그날 배터리에 맞춰 빌드 때 준다 — ⚠️ **부하 강하를 빼고 고르면 안 된다.**
+// 실측(2026-09-17 · mechdog-01)에서 정지 8.32V 가 보행 중 8.04V 까지 내려앉았다.
+#ifndef MECHADOG_BENCH_BATTERY_WARN_V
+#define MECHADOG_BENCH_BATTERY_WARN_V 8.2f
+#endif
+#ifndef MECHADOG_BENCH_BATTERY_SHUTDOWN_V
+#define MECHADOG_BENCH_BATTERY_SHUTDOWN_V 8.0f
+#endif
 
 #if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
 #error "Provide both private Wi-Fi build settings, or neither to use saved NVS settings."
@@ -87,8 +95,8 @@ mechadog::SafetyMonitor makeSafetyMonitor() {
   thresholds.battery_shutdown_v = kBatteryShutdownV;
 #if MECHADOG_BENCH_BATTERY_THRESHOLDS
   // 만충 근처에서 교차가 생기도록 올린다 (벤치 전용).
-  thresholds.battery_warn_v = 8.2f;
-  thresholds.battery_shutdown_v = 8.0f;
+  thresholds.battery_warn_v = MECHADOG_BENCH_BATTERY_WARN_V;
+  thresholds.battery_shutdown_v = MECHADOG_BENCH_BATTERY_SHUTDOWN_V;
 #endif
   return mechadog::SafetyMonitor(thresholds);
 }
@@ -536,7 +544,7 @@ void pollTelemetry() {
   }
   if (safety.shutdown) {
     Serial.printf("Battery shutdown: %.2fV <= %.2fV\n", sensors.batt_v,
-                  static_cast<double>(kBatteryShutdownV));
+                  static_cast<double>(g_safety.thresholds().battery_shutdown_v));
     latchFailsafe("battery below shutdown threshold");
   }
   const uint64_t command_age = now - g_last_valid_command_ms;
