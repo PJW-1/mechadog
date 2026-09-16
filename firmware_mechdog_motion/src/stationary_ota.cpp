@@ -148,6 +148,9 @@ void scanI2cOnce() {
   snprintf(g_i2c_scan + used, cap - used,
            "],\"known\":{\"0x34\":\"WonderEcho i2c\",\"0x69\":\"wifi\","
            "\"0x6A\":\"QMI8658 imu\",\"0x77\":\"sonar\"}}");
+  // Wi-Fi 가 안 잡히면 /i2c 는 못 쓰지만 UART 부팅 로그는 남는다 — 버스가
+  // 붙어서 연결을 막는 경우를 이 한 줄로 진단할 수 있다.
+  Serial.printf("I2C scan: %s\n", g_i2c_scan);
 }
 
 esp_err_t i2cHandler(httpd_req_t* req) {
