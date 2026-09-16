@@ -144,11 +144,16 @@ def test_xiao_ip_override_goes_into_network() -> None:
     assert stream_endpoints(config).stream == "http://192.168.1.100:81/stream"
 
 
-def test_override_none_keeps_the_profile_value() -> None:
+def test_override_none_keeps_the_profile_value(committed_devices_dir: Path) -> None:
+    """`--xiao-ip` 없이 부르면 프로파일 값이 그대로 남는다.
+
+    커밋본을 봐야 한다 — `*.local.yaml` 오버레이를 타면 이 PC 의 실측 주소가
+    섞여 들어온다 (`conftest.py` 의 `committed_devices_dir`).
+    """
     from host.common.config import load_config
     from tools.latency_probe import with_xiao_ip
 
-    config = with_xiao_ip(load_config("mechdog-01"), None)
+    config = with_xiao_ip(load_config("mechdog-01", devices_dir=committed_devices_dir), None)
     assert config["network"]["xiao_ip"] is None
 
 
