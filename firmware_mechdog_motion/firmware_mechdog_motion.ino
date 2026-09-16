@@ -7,6 +7,7 @@
 #include "src/command_parser.h"
 #include "src/motion_hal.h"
 #include "src/motion_safety_state.h"
+#include "src/safety_monitor.h"
 #include "src/sensor_hal.h"
 #include "src/stationary_ota.h"
 #include "src/telemetry_publisher.h"
@@ -43,6 +44,22 @@
 #define MECHADOG_SERVICE_MODE 0
 #endif
 
+// ⚠️ **벤치 전용 — 기본 빌드에는 절대 켜지 않는다.** 가변전원이 없으면 7.0/6.6V
+// 교차를 만들 수 없으므로, 만충 근처에서 교차가 생기도록 임계만 올려 `3.2.2` 의
+// 동작(플래그 전환 · 셧다운 래치)을 실기에서 확인한다. 판정 코드는 정식 빌드와
+// 같은 경로이며, 확인이 끝나면 이 플래그를 끄고 다시 올린다.
+#ifndef MECHADOG_BENCH_BATTERY_THRESHOLDS
+#define MECHADOG_BENCH_BATTERY_THRESHOLDS 0
+#endif
+// 값은 그날 배터리에 맞춰 빌드 때 준다 — ⚠️ **부하 강하를 빼고 고르면 안 된다.**
+// 실측(2026-09-17 · mechdog-01)에서 정지 8.32V 가 보행 중 8.04V 까지 내려앉았다.
+#ifndef MECHADOG_BENCH_BATTERY_WARN_V
+#define MECHADOG_BENCH_BATTERY_WARN_V 8.2f
+#endif
+#ifndef MECHADOG_BENCH_BATTERY_SHUTDOWN_V
+#define MECHADOG_BENCH_BATTERY_SHUTDOWN_V 8.0f
+#endif
+
 #if defined(MECHADOG_WIFI_SSID) != defined(MECHADOG_WIFI_PASSWORD)
 #error "Provide both private Wi-Fi build settings, or neither to use saved NVS settings."
 #endif
@@ -58,6 +75,10 @@ constexpr size_t kSerialTxBufferBytes = 1024;
 // These report link health and a warning; they add no new shutdown behavior.
 constexpr uint32_t kLinkHealthyAgeMs = 3000;
 constexpr float kBatteryWarningV = 7.0f;
+// Tier 1 온보드 판정 임계 — config/config.yaml `safety` 절과 같은 값이다.
+constexpr float kBatteryShutdownV = 6.6f;  // safety.battery_shutdown_v (NFR-2.3)
+constexpr float kObstacleStopCm = 25.0f;   // safety.obstacle_stop_cm (FR-2.2)
+constexpr float kObstacleClearCm = 30.0f;  // 해제는 더 멀리서 — 경계 진동 방지
 constexpr size_t kPacketBufferSize = 512;
 
 WiFiUDP g_udp;
@@ -65,6 +86,22 @@ mechadog::CommandParser g_parser;
 mechadog::MotionHal g_motion;
 mechadog::SensorHal g_sensors;
 mechadog::TelemetryPublisher g_telemetry;
+
+mechadog::SafetyMonitor makeSafetyMonitor() {
+  mechadog::SafetyThresholds thresholds;
+  thresholds.obstacle_stop_cm = kObstacleStopCm;
+  thresholds.obstacle_clear_cm = kObstacleClearCm;
+  thresholds.battery_warn_v = kBatteryWarningV;
+  thresholds.battery_shutdown_v = kBatteryShutdownV;
+#if MECHADOG_BENCH_BATTERY_THRESHOLDS
+  // 만충 근처에서 교차가 생기도록 올린다 (벤치 전용).
+  thresholds.battery_warn_v = MECHADOG_BENCH_BATTERY_WARN_V;
+  thresholds.battery_shutdown_v = MECHADOG_BENCH_BATTERY_SHUTDOWN_V;
+#endif
+  return mechadog::SafetyMonitor(thresholds);
+}
+
+mechadog::SafetyMonitor g_safety = makeSafetyMonitor();
 
 char g_packet[kPacketBufferSize + 1];
 mechadog::MotionSafetyState g_motion_state;
@@ -310,6 +347,10 @@ bool applyCommand(const mechadog::Command& command) {
 
     case mechadog::CmdType::Move:
       if (!g_motion_state.can_move()) return false;
+      // ⚠️ **온보드 반사 정지 (3.2.6).** 호스트 판단을 기다리지 않는다. 걸려 있는
+      // 동안 **전진만** 거부한다 — 후진·선회는 통과시켜야 FR-2.3 의 «정지 후
+      // 후진» 이 성립한다. 초음파는 정면만 보므로 물러나는 것이 유일한 탈출로다.
+      if (!g_safety.allows_move(command.step)) return false;
       g_motion.move(command.step, command.angle);
       // 보행 중인지 기록한다. ACTION 가드가 이 값을 본다 — 호스트가 되돌려준
       // `state` 는 반향이라 쓰지 않는다(ADR-22).
@@ -478,28 +519,60 @@ void pollSensorPerformance(uint64_t now) {
 }
 
 void pollTelemetry() {
-  const mechadog::SensorSnapshot sensors = g_sensors.snapshot(millis());
+  const uint32_t sensor_now = millis();
+  const mechadog::SensorSnapshot sensors = g_sensors.snapshot(sensor_now);
   const uint64_t now = uptimeMs();
+
+  // ── Tier 1 판정 (3.2.2 · 3.2.6) — 발행보다 먼저 한다 ─────────────────
+  mechadog::SafetyReading reading;
+  reading.now_ms = sensor_now;
+  reading.dist_valid = sensors.dist_valid;
+  reading.dist_cm = sensors.dist_cm;
+  reading.dist_age_ms = sensors.dist_age_ms;
+  reading.batt_valid = sensors.batt_valid;
+  reading.batt_v = sensors.batt_v;
+  reading.batt_age_ms = sensors.batt_age_ms;
+  const mechadog::SafetyVerdict safety = g_safety.update(reading);
+
+  if (safety.obstacle_started) {
+    // 호스트에게 묻지 않고 즉시 세운다. 표본 나이를 함께 남겨 «감지 → 정지» 를
+    // 온보드 시각으로 입증한다 (3.2.6 DoD ①).
+    g_motion.stop();
+    g_motion_state.stop();
+    Serial.printf("Obstacle stop: dist=%.1fcm sample_age=%lums\n", sensors.dist_cm,
+                  static_cast<unsigned long>(safety.decision_age_ms));
+  }
+  if (safety.shutdown) {
+    Serial.printf("Battery shutdown: %.2fV <= %.2fV\n", sensors.batt_v,
+                  static_cast<double>(g_safety.thresholds().battery_shutdown_v));
+    latchFailsafe("battery below shutdown threshold");
+  }
   const uint64_t command_age = now - g_last_valid_command_ms;
   mechadog::TelemetrySample sample;
   // Acquisition validity/freshness does not certify body axes or voltage
   // calibration. Sensors may now run with actuators (sensor_hal.h I2C rule);
   // verified walking in the air on 2026-09-12, floor walking still pending.
   sample.sensors_valid = sensors.all_valid();
-  sample.state = g_motion_state.safe_latched ? mechadog::FsmState::Failsafe : g_reported_state;
+  // 래치가 가장 위다. 그다음이 온보드 반사 — 호스트는 이 보고로만 회피 시퀀스를
+  // 연다 (3.2.6 DoD ②③). 풀리면 호스트가 마지막으로 알려준 상태로 돌아간다.
+  sample.state = g_motion_state.safe_latched ? mechadog::FsmState::Failsafe
+                 : safety.obstacle           ? mechadog::FsmState::Avoid
+                                             : g_reported_state;
   sample.dist_cm = sensors.dist_cm;
   sample.pitch = sensors.pitch;
   sample.roll = sensors.roll;
   sample.yaw = sensors.yaw;
   sample.batt_v = sensors.batt_v;
   sample.last_cmd_age_ms = static_cast<int64_t>(command_age);
-  sample.lowbatt = sensors.batt_valid && sensors.batt_v <= kBatteryWarningV;
+  sample.lowbatt = safety.lowbatt;
   // Fall detection is not implemented: false means no onboard tipped-stop has
   // been activated. It does NOT establish a verified upright posture.
   sample.tipped = false;
   sample.link_ok = g_have_valid_command && command_age <= kLinkHealthyAgeMs;
-  // No onboard obstacle-stop detector is connected in this firmware stage.
-  sample.include_obstacle = false;
+  // 온보드 반사 정지가 지금 걸려 있는가. ⚠️ `state` 의 `AVOID` 로는 해제를 알 수
+  // 없다 — 호스트가 되돌려주는 반향과 구분되지 않기 때문이다 ([ADR-22]).
+  sample.obstacle = safety.obstacle;
+  sample.include_obstacle = true;
   sample.safety_latched = g_motion_state.safe_latched;
   sample.service_mode = serviceModeActive();
   sample.include_service_mode = MECHADOG_SERVICE_MODE != 0;

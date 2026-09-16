@@ -169,7 +169,12 @@ def is_ready(package: WorkPackage, packages: list[WorkPackage]) -> bool:
         return True
 
     by_id = {p.wid: p for p in packages}
-    for token in package.predecessor.split(","):
+    # ⚠️ 선행 표기는 쉼표와 가운뎃점을 섞어 쓴다 — `3.2.1·3.2.2·3.2.4, 3.2.6`.
+    # 쉼표로만 나누면 그 덩어리가 어떤 ID 와도 맞지 않아 **선행이 전부 끝나도
+    # 영원히 대기로 남는다**(2026-09-17 에 `3.2.5` 에서 드러났다). 가운뎃점을
+    # 쓰지 않는 조건 표기(`LiDAR·마스트 도착`)는 나눠도 여전히 ID 가 없으므로
+    # 대기로 남는다 — 의도한 동작이다.
+    for token in package.predecessor.replace("·", ",").split(","):
         dependencies = _dependency_ids(token, packages)
         if not dependencies or not all(by_id[wid].done for wid in dependencies):
             return False

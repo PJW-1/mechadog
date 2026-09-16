@@ -73,4 +73,19 @@ def test_group_and_range_predecessors_stay_blocked(packages: list[WorkPackage]) 
     """묶음 선행은 그 안의 작업이 모두 끝나야 풀린다."""
     by_id = {p.wid: p for p in packages}
     assert not is_ready(by_id["2.5"], packages)
-    assert not is_ready(by_id["3.2.5"], packages)
+    # WBS 밖 조건(장비 도착·승인)은 맞는 ID 가 없으므로 계속 대기다.
+    assert not is_ready(by_id["2.2.1"], packages)
+
+
+def test_dot_separated_predecessors_unlock_together(packages: list[WorkPackage]) -> None:
+    """가운뎃점으로 묶인 선행도 쉼표와 똑같이 읽어야 한다.
+
+    `3.2.5` 의 선행은 `3.2.1·3.2.2·3.2.4, 3.2.6` 이다. 쉼표로만 나누면 첫 덩어리가
+    어떤 ID 와도 맞지 않아 **선행이 전부 끝나도 영원히 대기로 남았다** — 2026-09-17
+    에 `3.2.2`·`3.2.6` 을 닫고도 다음 작업이 목록에 뜨지 않아 드러났다.
+    """
+    by_id = {p.wid: p for p in packages}
+    blocker = by_id["3.2.5"]
+    assert "·" in blocker.predecessor
+    parts = [by_id[wid] for wid in ("3.2.1", "3.2.2", "3.2.4", "3.2.6")]
+    assert is_ready(blocker, packages) == all(part.done for part in parts)
