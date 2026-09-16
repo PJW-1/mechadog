@@ -363,8 +363,12 @@ def m_drive(ctx: Ctx, mode: str) -> Result:
         )
     rates = [t["mm"] / t["actual_s"] for t in trials]
     mean = statistics.fmean(rates) if rates else None
-    data = {"trials": trials, "mm_per_s": round(mean, 1) if mean else None}
+    data = {"trials": trials, "mm_per_s": round(mean, 1) if mean is not None else None}
     verdict = "measured" if len(trials) >= 3 else ("fail" if not trials else "skipped")
+    # ⚠️ `mean` 의 falsy 검사가 아니라 `is not None` 이다. **0.0 은 빈 값이 아니라
+    # 관측값이다** — 안 움직이는 기체를 "측정 안 됨" 으로 적으면 가장 중요한 결과가
+    # 지워지고, 사람은 도구가 고장난 줄 알고 다시 잰다.
+    # 퍼짐은 평균 대비 비율이라 0 에서는 정의되지 않는다(0 나누기). 거기만 falsy 검사다.
     spread = statistics.stdev(rates) / mean if len(rates) >= 2 and mean else None
     return Result(
         f"{label} 이동량",
@@ -372,7 +376,7 @@ def m_drive(ctx: Ctx, mode: str) -> Result:
         verdict,
         f"평균 {mean:.1f} mm/s (n={len(trials)})"
         + (f" · 퍼짐 {spread * 100:.0f}%" if spread is not None else "")
-        if mean
+        if mean is not None
         else "유효 시행 없음",
         data,
     )
@@ -437,8 +441,9 @@ def m_turn(ctx: Ctx, mode: str) -> Result:
         f"선회율 {label}",
         "2.2.3",
         verdict,
-        f"평균 {mean:+.1f} °/s (n={len(trials)})" if mean else "유효 시행 없음",
-        {"trials": trials, "deg_per_s": round(mean, 1) if mean else None},
+        # 0.0 °/s 는 "안 돌았다" 는 관측값이다 — `m_drive` 와 같은 이유로 `is not None`.
+        f"평균 {mean:+.1f} °/s (n={len(trials)})" if mean is not None else "유효 시행 없음",
+        {"trials": trials, "deg_per_s": round(mean, 1) if mean is not None else None},
     )
 
 
