@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "motion_safety_state.h"
+
 namespace mechadog {
 
 // Tier 1 온보드 안전 판정 — 근거리 반사 정지(`3.2.6`)와 저전압 감시(`3.2.2`).
@@ -79,6 +81,12 @@ class SafetyMonitor {
   // `Battery shutdown: 8.04V <= 6.60V` 가 나와 기록이 서로 어긋났다 (2026-09-17).
   const SafetyThresholds& thresholds() const { return thresholds_; }
 
+  // **저전압 원인이 아직 남아 있는가.** 셧다운으로 래치한 뒤, 전압이 경고선 위로
+  // 회복될 때까지 참이다. ⚠️ **회복 기준이 셧다운선이 아니라 경고선인 이유** —
+  // 셧다운선 바로 위에서 떠는 배터리로 래치를 풀면, 다음 보행 부하에 다시 걸려
+  // 사람이 해제와 재래치를 반복하게 된다.
+  bool battery_critical() const { return shutdown_reported_; }
+
   // ⚠️ **전진만 막는다.** 전부 막으면 `FR-2.3` 의 *"정지 후 후진"* 이 실행
   // 불가가 되어 회피가 성립하지 않는다 — 초음파는 정면만 보므로 물러나는 것이
   // 유일한 탈출 경로다. 제자리 선회(step 0)와 정지도 통과시킨다.
@@ -98,6 +106,30 @@ class SafetyMonitor {
   uint32_t last_batt_sample_ms_ = UINT32_MAX;
   uint32_t decision_age_ms_ = 0;
 };
+
+// ── 우선순위 (PRD 안전 우선순위 · WBS 3.2.5) ──────────────────────────────
+//
+// **E-Stop · 명령 타임아웃 · 링크 두절 · 저전압 > 근거리 정지 > 호스트 명령.**
+// 앞의 넷은 `MotionSafetyState` 의 래치로 들어오고, 근거리 정지는 그 아래에서
+// 전진만 막는다. 조합 판정을 두 곳에 나눠 쓰면 한쪽만 고쳐져 어긋나므로
+// **여기 한 곳에 모은다** — 스케치는 이 함수만 부른다.
+
+// 보행 명령이 통과하는가. 래치·서비스 모드가 먼저이고, 그다음이 반사 정지다.
+inline bool move_allowed(const MotionSafetyState& state, const SafetyMonitor& safety,
+                         float step_mm) {
+  return state.can_move() && safety.allows_move(step_mm);
+}
+
+// 안전 래치를 풀 수 있는가. ⚠️ **원인이 남아 있으면 거부한다** — 저전압으로
+// 세운 기체를 그대로 풀어 주면 다음 `MOVE` 에서 다시 걷다가 또 걸린다.
+// 근거리 정지는 래치 원인이 아니므로 해제를 막지 않는다(전진만 막혀 있고
+// 후진으로 빠져나갈 수 있다).
+//
+// ⚠️ 전도(`NFR-2.4`)는 이 판정에 없다 — 감지 자체가 Phase 2 로 이연됐다.
+// 들어오면 여기에 한 줄 더 붙는다.
+inline bool reset_safe_allowed(const SafetyMonitor& safety) {
+  return !safety.battery_critical();
+}
 
 }  // namespace mechadog
 
