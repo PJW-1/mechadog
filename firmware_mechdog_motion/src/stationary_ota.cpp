@@ -220,9 +220,8 @@ esp_err_t i2cLiveHandler(httpd_req_t* req) {
   if (hi < lo) hi = lo;
   const int64_t started = esp_timer_get_time();
   char body[384];
-  size_t used = static_cast<size_t>(
-      snprintf(body, sizeof(body), "{\"live\":true,\"uptime_ms\":%lu",
-               static_cast<unsigned long>(millis())));
+  size_t used = static_cast<size_t>(snprintf(body, sizeof(body), "{\"live\":true,\"uptime_ms\":%lu",
+                                             static_cast<unsigned long>(millis())));
   if (bus_no <= 1) {
     used += static_cast<size_t>(snprintf(body + used, sizeof(body) - used, ",\"iic1\":["));
     used = liveScanBus(Wire, lo, hi, body, sizeof(body), used);
@@ -254,8 +253,8 @@ esp_err_t i2cReadHandler(httpd_req_t* req) {
     return reply(req, "400 Bad Request", "{\"error\":\"param_missing\"}");
   if (!queryByte(query, "addr", addr, bad) || !queryByte(query, "reg", reg, bad) ||
       !queryByte(query, "n", n, bad) || !queryByte(query, "stop", stop, bad) ||
-      !queryByte(query, "bus", bus_no, bad) || bad || n < 1 || n > 16 || stop > 1 ||
-      bus_no < 1 || bus_no > 2 || addr < 0x08 || addr > 0x77)
+      !queryByte(query, "bus", bus_no, bad) || bad || n < 1 || n > 16 || stop > 1 || bus_no < 1 ||
+      bus_no > 2 || addr < 0x08 || addr > 0x77)
     return reply(req, "400 Bad Request", "{\"error\":\"param\"}");
   TwoWire& bus = bus_no == 2 ? Wire1 : Wire;
   uint8_t buf[16] = {};
@@ -304,13 +303,11 @@ esp_err_t i2cWriteHandler(httpd_req_t* req) {
   char hexdata[65] = {};
   if (!queryHas(query, "addr") ||
       httpd_query_key_value(query, "data", hexdata, sizeof(hexdata)) != ESP_OK ||
-      !queryByte(query, "addr", addr, bad) ||
-      !queryByte(query, "bus", bus_no, bad) || bad || bus_no < 1 || bus_no > 2 ||
-      addr < 0x08 || addr > 0x77)
+      !queryByte(query, "addr", addr, bad) || !queryByte(query, "bus", bus_no, bad) || bad ||
+      bus_no < 1 || bus_no > 2 || addr < 0x08 || addr > 0x77)
     return reply(req, "400 Bad Request", "{\"error\":\"param\"}");
   const size_t hexlen = strlen(hexdata);
-  if (hexlen == 0 || hexlen % 2 != 0)
-    return reply(req, "400 Bad Request", "{\"error\":\"data\"}");
+  if (hexlen == 0 || hexlen % 2 != 0) return reply(req, "400 Bad Request", "{\"error\":\"data\"}");
   uint8_t bytes[32];
   const size_t count = hexlen / 2;
   for (size_t i = 0; i < count; ++i) {
@@ -332,8 +329,7 @@ esp_err_t i2cWriteHandler(httpd_req_t* req) {
   bus.setTimeOut(saved_timeout);
   mechadog::unlockI2cBus();
   char body[160];
-  snprintf(body, sizeof(body),
-           "{\"addr\":\"0x%02X\",\"wrote\":%u,\"tx\":%u,\"elapsed_ms\":%lu}",
+  snprintf(body, sizeof(body), "{\"addr\":\"0x%02X\",\"wrote\":%u,\"tx\":%u,\"elapsed_ms\":%lu}",
            addr, static_cast<unsigned>(wrote), tx,
            static_cast<unsigned long>((esp_timer_get_time() - started) / 1000));
   return reply(req, "200 OK", body);

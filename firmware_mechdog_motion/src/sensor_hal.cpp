@@ -244,13 +244,13 @@ bool read_imu(IMUdata& acc, IMUdata& gyr, SensorError& error) {
   uint8_t status = 0;
   bool ok = read_bytes(kImuAddress, 0x2E, &status, 1);
   if (ok && (status & 0x03) != 0x03) ok = false;
-  if (ok && (!g_qmi.getAccelerometer(acc.x, acc.y, acc.z) ||
-             !g_qmi.getGyroscope(gyr.x, gyr.y, gyr.z))) {
+  if (ok &&
+      (!g_qmi.getAccelerometer(acc.x, acc.y, acc.z) || !g_qmi.getGyroscope(gyr.x, gyr.y, gyr.z))) {
     ok = false;
   }
-  if (ok && (!isfinite(acc.x) || !isfinite(acc.y) || !isfinite(acc.z) || !isfinite(gyr.x) ||
-             !isfinite(gyr.y) || !isfinite(gyr.z) ||
-             (acc.x == 0.0f && acc.y == 0.0f && acc.z == 0.0f))) {
+  if (ok &&
+      (!isfinite(acc.x) || !isfinite(acc.y) || !isfinite(acc.z) || !isfinite(gyr.x) ||
+       !isfinite(gyr.y) || !isfinite(gyr.z) || (acc.x == 0.0f && acc.y == 0.0f && acc.z == 0.0f))) {
     error = SensorError::InvalidReading;
     ok = false;
   }
