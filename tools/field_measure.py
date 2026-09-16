@@ -238,7 +238,9 @@ def m_link(ctx: Ctx) -> Result:
     ok = rate >= 8.0
     print(f"    수신 {rate:.1f}Hz · state={r.state if r else '—'} · batt={r.batt_v if r else '—'}V")
     return Result(
-        "텔레메트리 링크", "전제", "pass" if ok else "fail",
+        "텔레메트리 링크",
+        "전제",
+        "pass" if ok else "fail",
         f"{rate:.1f}Hz 수신" + (f" · {r.state} · 래치={r.safety_latched}" if r else " · 무수신"),
         data,
     )
@@ -254,11 +256,15 @@ def m_cmd_timeout(ctx: Ctx) -> Result:
     print("  ⚠️ 로봇이 실제로 걷는다 — 주변을 비워 둔다.")
     if not _ask_yn("  준비됐나"):
         return Result("명령 두절 정지", "3.2.1", "skipped", "사용자 건너뜀", {})
-    drive_window(ctx.sock, ctx.peer, ctx.commander, step_mm=60, angle_deg=0, seconds=2.0, settle_s=1.0)
+    drive_window(
+        ctx.sock, ctx.peer, ctx.commander, step_mm=60, angle_deg=0, seconds=2.0, settle_s=1.0
+    )
     moving = tap.motion()
     if moving is not True:
         return Result(
-            "명령 두절 정지", "3.2.1", "fail",
+            "명령 두절 정지",
+            "3.2.1",
+            "fail",
             f"구동 창에 움직임이 감지되지 않았다(motion={moving}) — 두절 시험 무의미",
             {"motion_during_drive": moving},
         )
@@ -274,9 +280,7 @@ def m_cmd_timeout(ctx: Ctx) -> Result:
         if (
             still_at is None
             and len(quiet) >= 2
-            and all(
-                s.at > t0 + 0.15 for s in quiet
-            )
+            and all(s.at > t0 + 0.15 for s in quiet)
             and tap.motion(STILL_HOLD_S) is False
         ):
             still_at = time.perf_counter() - t0 - STILL_HOLD_S
@@ -284,7 +288,9 @@ def m_cmd_timeout(ctx: Ctx) -> Result:
             break
         time.sleep(0.05)
     # 래치 확인 — 조용히 한 번 더 움직여 보내 적용되지 않는지 본다.
-    _, _, acks = drive_window(ctx.sock, ctx.peer, ctx.commander, step_mm=60, angle_deg=0, seconds=0.5, settle_s=0.0)
+    _, _, acks = drive_window(
+        ctx.sock, ctx.peer, ctx.commander, step_mm=60, angle_deg=0, seconds=0.5, settle_s=0.0
+    )
     refused = acks.applied == 0 and acks.total > 0
     data = {
         "stop_latency_s": round(still_at, 3) if still_at is not None else None,
@@ -293,10 +299,14 @@ def m_cmd_timeout(ctx: Ctx) -> Result:
         "post_silence_acks": acks.total,
     }
     ok = still_at is not None and still_at < 1.0 and refused
-    print(f"    정지까지 {still_at if still_at is not None else '미검출':}초 · 래치 {latched_at}초 · 후속 MOVE 적용 {acks.applied}건")
+    print(
+        f"    정지까지 {still_at if still_at is not None else '미검출':}초 · 래치 {latched_at}초 · 후속 MOVE 적용 {acks.applied}건"
+    )
     seen = _ask_yn("  로봇 다리가 실제로 멈췄나")
     return Result(
-        "명령 두절 정지", "3.2.1", "pass" if (ok and seen) else "fail",
+        "명령 두절 정지",
+        "3.2.1",
+        "pass" if (ok and seen) else "fail",
         f"두절→정지 {still_at if still_at is not None else '?':}s · 래치 {latched_at}s · 후속 거부={'됨' if refused else '안 됨'} · 육안={'정지' if seen else '계속 움직임'}",
         data,
     )
@@ -315,14 +325,23 @@ def m_drive(ctx: Ctx, mode: str) -> Result:
             continue
         mark_t = time.perf_counter()
         actual, packets, acks = drive_window(
-            ctx.sock, ctx.peer, ctx.commander, step_mm=step, angle_deg=0,
-            seconds=3.0, settle_s=1.0,
+            ctx.sock,
+            ctx.peer,
+            ctx.commander,
+            step_mm=step,
+            angle_deg=0,
+            seconds=3.0,
+            settle_s=1.0,
         )
         yaw_drift = None
         if ctx.tap is not None:
             near = [s for s in ctx.tap.samples if s.at >= mark_t]
             if len(near) >= 5:
-                yaw_drift = round(near[-1].reading.yaw - near[0].reading.yaw, 1) if near[0].reading.yaw is not None and near[-1].reading.yaw is not None else None
+                yaw_drift = (
+                    round(near[-1].reading.yaw - near[0].reading.yaw, 1)
+                    if near[0].reading.yaw is not None and near[-1].reading.yaw is not None
+                    else None
+                )
         print(f"    송신 창 {actual:.2f}초 · 패킷 {packets} · {acks.describe()}")
         reason = discard_reason(acks, ctx.host)
         if reason is not None:
@@ -332,19 +351,29 @@ def m_drive(ctx: Ctx, mode: str) -> Result:
         if mm is None:
             continue
         drift = _ask_number("       방향 변화(도, 0=직진)? 모르면 엔터: ")
-        trials.append({
-            "mm": mm, "actual_s": round(actual, 3), "packets": packets,
-            "deg": drift, "imu_yaw_drift": yaw_drift, "acks": acks.describe(),
-        })
+        trials.append(
+            {
+                "mm": mm,
+                "actual_s": round(actual, 3),
+                "packets": packets,
+                "deg": drift,
+                "imu_yaw_drift": yaw_drift,
+                "acks": acks.describe(),
+            }
+        )
     rates = [t["mm"] / t["actual_s"] for t in trials]
     mean = statistics.fmean(rates) if rates else None
     data = {"trials": trials, "mm_per_s": round(mean, 1) if mean else None}
     verdict = "measured" if len(trials) >= 3 else ("fail" if not trials else "skipped")
     spread = statistics.stdev(rates) / mean if len(rates) >= 2 and mean else None
     return Result(
-        f"{label} 이동량", "2.2.3", verdict,
-        f"평균 {mean:.1f} mm/s (n={len(trials)})" + (f" · 퍼짐 {spread * 100:.0f}%" if spread is not None else "")
-        if mean else "유효 시행 없음",
+        f"{label} 이동량",
+        "2.2.3",
+        verdict,
+        f"평균 {mean:.1f} mm/s (n={len(trials)})"
+        + (f" · 퍼짐 {spread * 100:.0f}%" if spread is not None else "")
+        if mean
+        else "유효 시행 없음",
         data,
     )
 
@@ -369,8 +398,13 @@ def m_turn(ctx: Ctx, mode: str) -> Result:
             continue
         yaw0 = tap.latest.yaw if tap.latest else None
         actual, packets, acks = drive_window(
-            ctx.sock, ctx.peer, ctx.commander, step_mm=step, angle_deg=angle,
-            seconds=3.0, settle_s=1.0,
+            ctx.sock,
+            ctx.peer,
+            ctx.commander,
+            step_mm=step,
+            angle_deg=angle,
+            seconds=3.0,
+            settle_s=1.0,
         )
         time.sleep(0.4)  # 마지막 텔레메트리가 도착할 시간
         yaw1 = tap.latest.yaw if tap.latest else None
@@ -386,16 +420,23 @@ def m_turn(ctx: Ctx, mode: str) -> Result:
         print(f"    IMU 방향 변화 {delta:+.1f}° / {actual:.2f}s = {rate:+.1f}°/s")
         deg = _ask_number("       각도기 대조값(도)? 안 쟀으면 엔터: ")
         mm = _ask_number("       시작점→끝점 직선거리(mm)? 안 쟀으면 엔터: ")
-        trials.append({
-            "imu_delta_deg": round(delta, 1), "deg_per_s": round(rate, 1),
-            "actual_s": round(actual, 3), "protractor_deg": deg, "chord_mm": mm,
-            "acks": acks.describe(),
-        })
+        trials.append(
+            {
+                "imu_delta_deg": round(delta, 1),
+                "deg_per_s": round(rate, 1),
+                "actual_s": round(actual, 3),
+                "protractor_deg": deg,
+                "chord_mm": mm,
+                "acks": acks.describe(),
+            }
+        )
     rates = [t["deg_per_s"] for t in trials]
     mean = statistics.fmean(rates) if rates else None
     verdict = "measured" if len(trials) >= 3 else ("fail" if not trials else "skipped")
     return Result(
-        f"선회율 {label}", "2.2.3", verdict,
+        f"선회율 {label}",
+        "2.2.3",
+        verdict,
         f"평균 {mean:+.1f} °/s (n={len(trials)})" if mean else "유효 시행 없음",
         {"trials": trials, "deg_per_s": round(mean, 1) if mean else None},
     )
@@ -411,7 +452,9 @@ def m_gait_imu(ctx: Ctx) -> Result:
     if not _ask_yn("  준비됐나"):
         return Result("보행 진폭", "2.2.3③", "skipped", "사용자 건너뜀", {})
     t0 = time.perf_counter()
-    drive_window(ctx.sock, ctx.peer, ctx.commander, step_mm=60, angle_deg=0, seconds=3.0, settle_s=1.0)
+    drive_window(
+        ctx.sock, ctx.peer, ctx.commander, step_mm=60, angle_deg=0, seconds=3.0, settle_s=1.0
+    )
     samples = [s for s in tap.samples if t0 <= s.at <= time.perf_counter()]
     pitches = [s.reading.pitch for s in samples if s.reading.pitch is not None]
     rolls = [s.reading.roll for s in samples if s.reading.roll is not None]
@@ -424,15 +467,25 @@ def m_gait_imu(ctx: Ctx) -> Result:
         "roll_max": round(max(map(abs, rolls)), 2),
         "roll_p95": round(sorted(map(abs, rolls))[int(len(rolls) * 0.95)], 2),
     }
-    print(f"    pitch 최대 {data['pitch_max']}° · p95 {data['pitch_p95']}° / roll 최대 {data['roll_max']}° · p95 {data['roll_p95']}°")
-    return Result("보행 진폭", "2.2.3③", "measured", f"pitch p95 {data['pitch_p95']}° · roll p95 {data['roll_p95']}°", data)
+    print(
+        f"    pitch 최대 {data['pitch_max']}° · p95 {data['pitch_p95']}° / roll 최대 {data['roll_max']}° · p95 {data['roll_p95']}°"
+    )
+    return Result(
+        "보행 진폭",
+        "2.2.3③",
+        "measured",
+        f"pitch p95 {data['pitch_p95']}° · roll p95 {data['roll_p95']}°",
+        data,
+    )
 
 
 def m_teleop(ctx: Ctx) -> Result:
     """2-4. 방향 매핑 — 각 키를 한 번씩 보내고 사람이 방향을 확인한다."""
     keys = [
-        ("W 전진", 60, 0), ("S 후진", -60, 0),
-        ("A 좌선회", 0, 20), ("D 우선회", 0, -20),
+        ("W 전진", 60, 0),
+        ("S 후진", -60, 0),
+        ("A 좌선회", 0, 20),
+        ("D 우선회", 0, -20),
     ]
     outcomes: dict[str, str] = {}
     for label, step, angle in keys:
@@ -440,12 +493,22 @@ def m_teleop(ctx: Ctx) -> Result:
         if _ask("  엔터=실행 / s=건너뜀: ").lower() in ("s", "skip"):
             outcomes[label] = "skipped"
             continue
-        drive_window(ctx.sock, ctx.peer, ctx.commander, step_mm=step, angle_deg=angle, seconds=1.5, settle_s=0.8)
+        drive_window(
+            ctx.sock,
+            ctx.peer,
+            ctx.commander,
+            step_mm=step,
+            angle_deg=angle,
+            seconds=1.5,
+            settle_s=0.8,
+        )
         ok = _ask_yn(f"  로봇이 [{label.split()[0]}] 방향으로 움직였나")
         outcomes[label] = "ok" if ok else "WRONG"
     bad = [k for k, v in outcomes.items() if v == "WRONG"]
     return Result(
-        "텔레옵 방향", "2-4", "fail" if bad else "pass",
+        "텔레옵 방향",
+        "2-4",
+        "fail" if bad else "pass",
         "전부 일치" if not bad else f"뒤바뀜: {', '.join(bad)}",
         {"keys": outcomes},
     )
@@ -470,7 +533,9 @@ def m_service(ctx: Ctx) -> Result:
     ok_out, dt_out = tap.wait_flag(lambda r: r.service is False, timeout_s=5.0)
     data["cmd_enter_s"] = round(dt_in, 2) if ok_in else None
     data["cmd_exit_s"] = round(dt_out, 2) if ok_out else None
-    print(f"    명령 진입 {dt_in:.2f}s({'ok' if ok_in else '실패'}) · 해제 {dt_out:.2f}s({'ok' if ok_out else '실패'})")
+    print(
+        f"    명령 진입 {dt_in:.2f}s({'ok' if ok_in else '실패'}) · 해제 {dt_out:.2f}s({'ok' if ok_out else '실패'})"
+    )
     # GPIO5 — 사람이 누르고 도구가 감지한다
     gpio = None
     if _ask_yn("  GPIO5 흰색 버튼을 지금 눌러볼 수 있나"):
@@ -485,7 +550,9 @@ def m_service(ctx: Ctx) -> Result:
     data["gpio5"] = gpio
     ok = ok_in and ok_out and (gpio is None or gpio.get("enter_s") is not None)
     return Result(
-        "서비스 왕복", "확장팩 1-1/1-3", "pass" if ok else "fail",
+        "서비스 왕복",
+        "확장팩 1-1/1-3",
+        "pass" if ok else "fail",
         f"명령 enter={data['cmd_enter_s']}s exit={data['cmd_exit_s']}s · GPIO5={gpio}",
         data,
     )
@@ -532,10 +599,14 @@ def m_e2e(ctx: Ctx) -> Result:
     for line in ctx.commander.tick(system_clock_ms()):
         _send(ctx, line)
     if latency is None:
-        return Result("E2E 구동 지연", "3.3.3", "fail", "3초 안에 움직임 미검출", {"acks": acks.describe()})
+        return Result(
+            "E2E 구동 지연", "3.3.3", "fail", "3초 안에 움직임 미검출", {"acks": acks.describe()}
+        )
     print(f"    명령→IMU 반응 {latency * 1000:.0f}ms")
     return Result(
-        "E2E 구동 지연", "3.3.3", "measured",
+        "E2E 구동 지연",
+        "3.3.3",
+        "measured",
         f"송신→구동 {latency * 1000:.0f}ms (명령 채널+펌웨어+서보 응답 합계)",
         {"latency_ms": round(latency * 1000, 1), "acks": acks.describe()},
     )
@@ -609,7 +680,9 @@ def main() -> int:
         print(f"⚠️ 텔레메트리 포트 :{telemetry_port} bind 실패 — {exc}")
         print("   다른 런타임/도구가 잡고 있다. 자동 항목은 못 재고 수동 항목만 진행한다.")
 
-    ctx = Ctx(sock=sock, peer=peer, commander=commander, tap=tap, device=args.device, host=args.host)
+    ctx = Ctx(
+        sock=sock, peer=peer, commander=commander, tap=tap, device=args.device, host=args.host
+    )
     print(f"개체 {args.device} · {args.host}:{peer[1]} · 텔레메트리 :{telemetry_port}")
     print("⚠️ 관제 런타임이 떠 있으면 명령이 경합한다 — 측정 중에는 내려 둔다.\n")
 
@@ -632,7 +705,11 @@ def main() -> int:
                     continue
                 todo = [found]
             for fn in todo:
-                name = next(lbl for k, lbl, f2 in MENU if f2 is fn or (hasattr(f2, "__wrapped__") and f2.__wrapped__ is fn))
+                name = next(
+                    lbl
+                    for k, lbl, f2 in MENU
+                    if f2 is fn or (hasattr(f2, "__wrapped__") and f2.__wrapped__ is fn)
+                )
                 print(f"\n▶ {name}")
                 try:
                     result = fn(ctx)
