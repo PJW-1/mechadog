@@ -207,3 +207,94 @@ def test_blank_number_means_not_measured(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(field_measure, "_ask", lambda _p: "")
     assert field_measure._ask_number("이동 거리 mm: ") is None
+
+
+# ── 0 은 빈 값이 아니라 관측값이다 ────────────────────────────
+
+
+class _FakeTap:
+    """`m_turn` 이 보는 최소 표면 — yaw 가 변하지 않는(= 안 도는) 기체."""
+
+    def __init__(self) -> None:
+        self.latest = reading()  # yaw=0.0 고정
+
+    def wait_flag(self, _pred: object, **_kw: object) -> tuple[bool, float]:
+        # `_require_telemetry` 가 `timeout_s=` 를 키워드로 넘긴다 — 이름을 지켜야 한다.
+        return True, 0.0
+
+
+def _ctx(tap: object = None):
+    from tools.field_measure import Ctx
+
+    return Ctx(
+        sock=None, peer=("127.0.0.1", 5001), commander=None, tap=tap, device="d", host="127.0.0.1"
+    )
+
+
+def _stub_a_clean_run(monkeypatch: pytest.MonkeyPatch, measured: float) -> None:
+    """3회 모두 성공하고 줄자/각도 입력이 `measured` 인 시행을 흉내낸다."""
+    from tools import field_measure as fm
+    from tools.gait_calibrate import Acks
+
+    monkeypatch.setattr(fm, "_ask", lambda _p: "")  # 엔터 = 실행
+    monkeypatch.setattr(fm, "_ask_number", lambda _p, **_k: measured)
+    monkeypatch.setattr(fm, "drive_window", lambda *_a, **_k: (3.0, 30, Acks(total=30, applied=30)))
+    monkeypatch.setattr(fm.time, "sleep", lambda _s: None)
+
+
+def test_zero_distance_is_recorded_not_blanked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """⚠️ **안 움직이는 기체가 측정의 가장 중요한 결과다.**
+
+    `if mean` 은 `0.0` 을 빈 값으로 읽는다. 그러면 판정은 `measured` 인데 요약은
+    "유효 시행 없음" 이고 값은 `None` 이 되어 **세 기록이 서로 모순된다.** 사람은
+    도구가 고장난 줄 알고 로봇을 다시 세운다.
+    """
+    from tools.field_measure import m_drive
+
+    _stub_a_clean_run(monkeypatch, 0.0)
+    result = m_drive(_ctx(), "forward")
+
+    assert result.verdict == "measured"
+    assert result.data["mm_per_s"] == 0.0
+    assert "0.0 mm/s" in result.summary
+    assert "유효 시행 없음" not in result.summary
+
+
+def test_zero_turn_rate_is_recorded_not_blanked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """선회도 같다 — yaw 가 안 변한 것은 '못 쟀다' 가 아니라 '안 돌았다' 다."""
+    from tools.field_measure import m_turn
+
+    _stub_a_clean_run(monkeypatch, 0.0)
+    result = m_turn(_ctx(_FakeTap()), "turn_left")
+
+    assert result.verdict == "measured"
+    assert result.data["deg_per_s"] == 0.0
+    assert "+0.0 °/s" in result.summary
+
+
+def test_real_distance_still_reports_mean_and_spread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0 을 살리면서 정상 경로가 상하지 않았는지 — 312mm/3s = 104.0 mm/s."""
+    from tools.field_measure import m_drive
+
+    _stub_a_clean_run(monkeypatch, 312.0)
+    result = m_drive(_ctx(), "forward")
+
+    assert result.data["mm_per_s"] == 104.0
+    assert "104.0 mm/s (n=3)" in result.summary
+    assert "퍼짐 0%" in result.summary, "세 시행이 같으면 퍼짐은 0 이다"
+
+
+def test_no_trials_still_says_nothing_was_measured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**진짜로 못 잰 경우는 그대로 '유효 시행 없음' 이어야 한다.**
+
+    0 을 살리느라 빈 결과까지 값으로 만들면 반대쪽으로 거짓말한다.
+    """
+    from tools import field_measure as fm
+
+    _stub_a_clean_run(monkeypatch, 0.0)
+    monkeypatch.setattr(fm, "_ask", lambda _p: "s")  # 3회 모두 건너뜀
+    result = fm.m_drive(_ctx(), "forward")
+
+    assert result.verdict == "fail"
+    assert result.data["mm_per_s"] is None
+    assert result.summary == "유효 시행 없음"
