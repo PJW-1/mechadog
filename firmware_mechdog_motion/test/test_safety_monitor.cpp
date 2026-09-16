@@ -179,8 +179,8 @@ int main() {
           if (latched) state.latch();
 
           mechadog::SafetyMonitor safety;
-          uint32_t at = 1000;
           if (blocked) {
+            uint32_t at = 1000;
             distance_sample(safety, at, 10.0F);
             distance_sample(safety, at, 10.0F);
             check(safety.obstacle());
