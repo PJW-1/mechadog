@@ -160,7 +160,50 @@ fallback이다. 확장 방향(해도 되는 것과 구조상 하면 안 되는 �
 - **절대 옮기지 않을 것**: estop 해제·신원 판정·MES 수치 생성을 LLM에 넘기는
   방향 — 위 표의 경계를 깨는 일이라 채택 근거가 필요하다.
 
-## 9. 운영 메모
+## 9. 설정 DB 오버레이 — `voice_store.py`
+
+암구호형 트리거·명단·설정을 코드 수정 없이 운영 중에 바꾸는 층이다.
+`voice_data.db`(SQLite)가 있으면 테이블 내용이 코드 기본값보다 우선하고,
+없으면 코드 기본값 그대로 — **DB는 필수가 아니라 오버레이**다. git에 올라가지
+않으며 `python voice_store.py --seed`로 코드 기본값을 옮겨 만든다.
+
+| 테이블 | 내용 | 정본 | 소비자 |
+|---|---|---|---|
+| `keywords` | wake·sleep·resume·emergency·status·machine 단어 | DB 행 있으면 DB | `voice_pipeline`·`robotlink` |
+| `command_endings` | 벗겨낼 명령 어미 | 〃 | `robotlink.match_action` |
+| `action_commands` | 발화 구문 → (로봇 명령, 확인 멘트) | 〃 | `robotlink` |
+| `scenario_triggers` | 발화 구문 → 시나리오 이름 | 〃 | `scenarios.match_trigger` |
+| `factory_rules` | 키워드 → MES 엔드포인트 규칙 | 〃 | `factorylink.classify` |
+| `roster` | 신원 확인 직원 명단 | DB 행 있으면 DB, 없으면 `knowledge/직원명단.txt` | `scenarios.sc_guard` |
+| `phrases` | 응답 문구 **추가분** | 기본 문구는 코드 불변, DB는 얹기만 한다 | `phrases.merged` |
+| `settings` | follow_s·stt_prompt·API 주소·암구호류 키-값 | 키 있으면 DB 값 | `voice_pipeline` 등 |
+
+경계는 그대로다:
+
+- **보호 구문**: `비상정지`·`긴급정지`·`스톱`(PROTECTED_ACTIONS)은 DB가 지우거나
+  다른 명령으로 바꿔도 코드 기본값이 항상 합쳐진다.
+- **DB가 바꾸는 것**: "무슨 말이 트리거인가"뿐. 명령 실행은 robotlink의
+  화이트리스트와 로봇 런타임 게이트가 계속 판정하고, 신원 판정·MES 수치·
+  stale 판정도 코드가 한다. DB 행으로 새 시나리오를 만들 수는 없다 —
+  `scenario_triggers`는 기존 SCENARIOS 키로만 매핑된다.
+- **민감 값**: settings 키가 `pass|secret|token|code|key`를 포함하면
+  `--set` 에코와 `--dump` 출력에서 `***`로 가린다(평문 로그 방지).
+- **장애 시**: DB 없음·테이블 없음·SQL 오류는 전부 코드 기본값으로 fallback —
+  저장소 문제가 음성 루프를 죽이지 않는다.
+
+운영 CLI:
+
+```bash
+python voice_store.py --seed                  # 코드 기본값으로 생성/초기화
+python voice_store.py --dump                  # 전체 테이블 확인(민감값 마스킹)
+python voice_store.py --set follow_s 30       # 설정 변경
+python voice_store.py --add wake 메카독이      # 웨이크워드 추가
+python voice_store.py --add-roster 홍길동      # 직원 명단 추가
+python voice_store.py --del-roster 김민수      # 퇴사자 삭제
+python voice_store.py --add-phrase greeting "안녕하세요, 현장지원 로봇입니다."
+```
+
+## 10. 운영 메모
 
 - 기동: `start_voice.ps1` (COM5 + 관제 API `:8090`, MES `:8095` 자동 기동).
 - 관제 API: `/status` `/say` `/scenario` `/scenarios` `/phrases` `/mode`
@@ -171,4 +214,5 @@ fallback이다. 확장 방향(해도 되는 것과 구조상 하면 안 되는 �
   (4.7.9). 이 문서의 판정 구조는 전송층과 무관하게 그대로다.
 - 실기 왕복 확인(2026-09-17, COM5): "메카독 A라인 생산량 알려줘" → factory
   경로 결정론적 답변 확인. 알려진 빈틈: STT 오청(`생간량`)이 키워드를 빠져
-  llm로 새는 것 — 키워드 변형 흡수는 과제로 남아 있다.
+  llm로 새는 것 — `voice_store.py --add`로 오청 변형을 factory_rules에
+  올려 흡수할 수 있다.

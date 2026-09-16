@@ -16,6 +16,8 @@ import json
 import re
 import urllib.request
 
+import voice_store
+
 DEFAULT_BASE = "http://127.0.0.1:8000"
 
 
@@ -162,23 +164,27 @@ def match_action(query: str):
 
     "비상정지해"·"비상정지해줘" 같은 자연 발화를 받되, 어미 목록에 없는 꼬리
     ("비상정지하지마", "비상정지할까")는 절대 명령이 되지 않는다.
+    명령표·어미는 voice_data.db 오버레이가 우선하되, estop 구문은
+    voice_store.PROTECTED_ACTIONS가 항상 코드 기본값을 되돌린다.
     """
+    actions = voice_store.action_commands(ACTIONS)
     norm = _norm(query)
-    if norm in ACTIONS:
-        return ACTIONS[norm]
+    if norm in actions:
+        return actions[norm]
     # 합성 음성에서 "비상정지해줘"가 "비상정지에"로 인식된 실측 사례만
     # 좁게 허용한다. "에"를 공통 어미로 벗기면 "순찰시작에"도 보행 명령이 된다.
     if norm == "비상정지에":
-        return ACTIONS["비상정지"]
+        return actions["비상정지"]
     stripped = norm
+    endings = voice_store.command_endings(_COMMAND_ENDINGS)
     for _ in range(3):  # "해주세요"처럼 중첩 어미 대비
-        for ending in _COMMAND_ENDINGS:
+        for ending in endings:
             if stripped.endswith(ending) and len(stripped) > len(ending):
                 stripped = stripped[: -len(ending)]
                 break
         else:
             break
-    return ACTIONS.get(stripped)
+    return actions.get(stripped)
 
 
 def run_action(action: str, base=DEFAULT_BASE):
@@ -210,7 +216,7 @@ _STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전")
 
 def is_status_query(norm_query: str) -> bool:
     """정규화된 질의가 로봇 상태 질의인지 — 라우팅 우선순위 판정용."""
-    return any(w in norm_query for w in _STATUS_WORDS)
+    return any(w in norm_query for w in voice_store.words("status", _STATUS_WORDS))
 
 
 def answer_query(query: str, base=DEFAULT_BASE):

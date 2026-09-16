@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -65,6 +66,17 @@ class MesApiTest(unittest.TestCase):
         self.assertTrue(r["stale"])
         factory_mes.seed(self.db)  # 다른 테스트용 복원
 
+    def test_shipments_bad_days_is_400(self):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self._get("/api/shipments?days=abc")
+        self.assertEqual(cm.exception.code, 400)
+
+    def test_seed_ids_match_deadlines(self):
+        # SH 번호의 MMDD는 deadline과 같은 날짜에서 유도돼야 한다.
+        for r in self._get("/api/shipments?days=30")["data"]:
+            mmdd = r["deadline"][5:7] + r["deadline"][8:10]
+            self.assertIn(mmdd, r["shipment_id"])
+
 
 class FactoryLinkTest(unittest.TestCase):
     @classmethod
@@ -99,6 +111,9 @@ class FactoryLinkTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("출하", s)
         self.assertIn("한국정밀", s)
+        # deadline은 ISO 원문이 아니라 TTS용 한국어 날짜로 말한다.
+        self.assertIn("월", s)
+        self.assertNotIn("-09-", s)
 
     def test_schedule_priority(self):
         ok, s = fl.answer_query("작업지시 알려줘", self.base)
@@ -110,13 +125,32 @@ class FactoryLinkTest(unittest.TestCase):
         ok, s = fl.answer_query("불량 현황 알려줘", self.base)
         self.assertTrue(ok)
         self.assertIn("불량", s)
-        self.assertIn("LOT-C0917", s)
+        self.assertIn("LOT-C", s)
+        # 판정은 영어 코드가 아니라 한국어로 말한다.
+        self.assertIn("보류", s)
+        self.assertNotIn("hold", s)
 
     def test_unknown_line_answer(self):
         ok, s = fl.answer_query("Z라인 생산량", self.base)
         self.assertTrue(ok)
         self.assertIn("등록되어 있지 않습니다", s)
         self.assertIn("A, B, C", s)
+
+    def test_unknown_line_on_other_endpoints(self):
+        # production 외 엔드포인트도 없는 라인과 기록 0건을 구분한다.
+        for q in ("Z라인 작업지시", "Z라인 불량", "Z라인 설비점검"):
+            ok, s = fl.answer_query(q, self.base)
+            self.assertTrue(ok, q)
+            self.assertIn("등록되어 있지 않습니다", s, q)
+        # 등록된 라인에 기록이 없을 때는 '없다'고 정직하게 말해야 한다.
+        conn = sqlite3.connect(self.db)
+        conn.execute("DELETE FROM work_schedule WHERE line_id='B'")
+        conn.commit()
+        conn.close()
+        ok, s = fl.answer_query("B라인 작업지시", self.base)
+        self.assertTrue(ok)
+        self.assertIn("없습니다", s)
+        factory_mes.seed(self.db)  # 복원
 
     def test_stale_answer(self):
         conn = sqlite3.connect(self.db)
@@ -126,6 +160,21 @@ class FactoryLinkTest(unittest.TestCase):
         ok, s = fl.answer_query("생산 현황", self.base)
         self.assertTrue(ok)
         self.assertIn("허용 시간을 초과", s)
+        factory_mes.seed(self.db)
+
+    def test_stale_rows_excluded_not_blocked(self):
+        # 일부 행만 오래됐으면 신선한 행은 답하고 제외 사실을 알린다.
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "UPDATE production_status SET updated_at='2020-01-01T00:00:00+09:00' WHERE line_id='C'"
+        )
+        conn.commit()
+        conn.close()
+        ok, s = fl.answer_query("생산 현황", self.base)
+        self.assertTrue(ok)
+        self.assertIn("A라인", s)
+        self.assertNotIn("C라인은", s)  # stale 행은 답변에서 빠진다
+        self.assertIn("제외", s)
         factory_mes.seed(self.db)
 
     def test_api_down(self):

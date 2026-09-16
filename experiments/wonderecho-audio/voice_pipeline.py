@@ -46,6 +46,7 @@ import phrases
 import robotlink
 import scenarios
 import serial  # noqa: F401  (type only; stream_client already imports it)
+import voice_store
 from play_client import CHUNK, PREFILL, end_packet, play_packet
 from stream_client import STATUS, Decoder, make_decoder
 from transport import open_transport
@@ -63,11 +64,14 @@ READY, STARTED, FINISHED = 1, 2, 3
 # 음성 명령: "메카독 ..."으로 시작해야만 대답한다.
 # "그만/대기"는 대기 모드 전환(프로그램 종료는 Ctrl+C만 — 시연 중 오작동 방지),
 # 대기 중에는 "메카독 시작/깨워/일어나"로만 복귀한다.
+# 아래 상수들은 기본값(정본)이다 — voice_data.db가 있으면 같은 이름의
+# 테이블/키가 우선한다 (voice_store 참조).
 WAKE_PREFIXES = ("메카독", "메카도", "메카닭", "메카도기")  # STT 변형 흡수
 SLEEP_WORDS = ("그만", "꺼져", "대기해", "잠자")
 RESUME_WORDS = ("시작", "깨워", "일어나", "켜져")
 EMERGENCY_WORDS = ("도와줘", "살려줘", "비상", "응급")
 FOLLOW_S = 20.0  # 답변 후 이 시간 안의 발화는 웨이크워드 없이 받는다 (후속 대화)
+FOLLOW_MIN_CHARS = 3  # 후속 창에서 이 길이 미만의 발화는 잡음으로 본다
 _PUNCT = re.compile(r"[\s,.!?~…:'\"·]+")
 KNOW_DIR = Path(__file__).with_name("knowledge")
 
@@ -300,14 +304,14 @@ def start_web(hub, port):
 def _strip_wake(text):
     """Normalize STT text; return the query after a wake word, or None."""
     norm = _PUNCT.sub("", text)
-    for w in WAKE_PREFIXES:
+    for w in voice_store.words("wake", WAKE_PREFIXES):
         if norm.startswith(w):
             return norm[len(w) :]
     return None
 
 
 def _is_sleep_cmd(norm):
-    return any(norm == w or norm.endswith(w) for w in SLEEP_WORDS)
+    return any(norm == w or norm.endswith(w) for w in voice_store.words("sleep", SLEEP_WORDS))
 
 
 def route_query(query):
@@ -321,7 +325,7 @@ def route_query(query):
         return "action"
     if scenarios.match_trigger(norm) is not None:
         return "scenario"
-    if any(w in norm for w in EMERGENCY_WORDS):
+    if any(w in norm for w in voice_store.words("emergency", EMERGENCY_WORDS)):
         return "emergency"
     if factorylink.is_factory_query(norm):
         return "factory"
@@ -387,8 +391,11 @@ _MACHINE_NOTICE = (
 def machine_guard(query, answer):
     """기계·고장 질의의 LLM 답변에 매뉴얼 안내 고지를 붙인다 (결정론적)."""
     norm = _PUNCT.sub("", query or "")
-    if any(w in norm for w in _MACHINE_WORDS) and _MACHINE_NOTICE not in answer:
-        return answer.rstrip() + " " + _MACHINE_NOTICE
+    notice = voice_store.setting("machine_notice", _MACHINE_NOTICE)
+    if any(w in norm for w in voice_store.words("machine", _MACHINE_WORDS)) and (
+        notice not in answer
+    ):
+        return answer.rstrip() + " " + notice
     return answer
 
 
@@ -486,7 +493,11 @@ def transcribe(model, pcm_bytes):
 
     audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
     segments, _ = model.transcribe(
-        audio, language="ko", beam_size=5, vad_filter=True, initial_prompt=STT_PROMPT
+        audio,
+        language="ko",
+        beam_size=5,
+        vad_filter=True,
+        initial_prompt=voice_store.setting("stt_prompt", STT_PROMPT),
     )
     return " ".join(seg.text.strip() for seg in segments).strip()
 
@@ -664,12 +675,12 @@ def main():
     ap.add_argument("--robot-id", default="mechadog-01", help="관제웹에 표시할 로봇 식별자")
     ap.add_argument(
         "--robot-api",
-        default=robotlink.DEFAULT_BASE,
+        default=voice_store.setting("robot_api_base", robotlink.DEFAULT_BASE),
         help="로봇 관제 API 베이스 (상태 조회·화이트리스트 명령용)",
     )
     ap.add_argument(
         "--mes-api",
-        default=factorylink.DEFAULT_BASE,
+        default=voice_store.setting("mes_api_base", factorylink.DEFAULT_BASE),
         help="가상 MES API 베이스 (생산·출하·작업지시 조회용)",
     )
     ap.add_argument(
@@ -729,6 +740,10 @@ def main():
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
+            # 턴마다 설정을 다시 읽는다 — 운영 중 voice_data.db 수정이 살아있는
+            # 루프에 반영되게. DB가 없으면 코드 기본값이다.
+            follow_s = float(voice_store.setting("follow_s", FOLLOW_S, float))
+            follow_min = int(voice_store.setting("follow_min_chars", FOLLOW_MIN_CHARS, int))
             # 로봇 측 사건(검출 확정 등)을 저널에 합친다 — 몇 초에 한 번씩만.
             hub.poll_robot_events(args.robot_api)
             # 관제 공지·시나리오 큐 처리 — 대기 모드에서도 방송은 나간다
@@ -783,22 +798,22 @@ def main():
                     continue
                 query = _strip_wake(text)
                 if hub.mode == "standby":
-                    if query in RESUME_WORDS:
+                    if query in voice_store.words("resume", RESUME_WORDS):
                         hub.mode = "active"
                         print("[cmd] resume")
                         hub.event("system", "대화 재개")
                         hub.activity = "speaking"
                         _say(device, piper, "네, 대화를 다시 시작합니다.", args.speed)
-                        follow_until = time.monotonic() + FOLLOW_S
+                        follow_until = time.monotonic() + follow_s
                     continue
                 if query is None:
                     # 후속 대화 창: 직전 답변 직후엔 웨이크워드 없이 받는다.
-                    # 짧은 잡음(3자 미만)은 대화로 보지 않는다.
+                    # 짧은 잡음(follow_min 미만)은 대화로 보지 않는다.
                     follow = _PUNCT.sub("", text)
                     if (
                         hub.mode == "active"
                         and time.monotonic() < follow_until
-                        and len(follow) >= 3
+                        and len(follow) >= follow_min
                     ):
                         query = follow
                         print(f"[follow] 웨이크워드 생략 허용: {query!r}")
@@ -818,7 +833,7 @@ def main():
                         "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
                         args.speed,
                     )
-                    follow_until = time.monotonic() + FOLLOW_S
+                    follow_until = time.monotonic() + follow_s
                     continue
                 if route == "scenario":
                     # 규칙 기반 시나리오 트리거 — LLM보다 먼저 잡는다 (판정은 결정론적)
@@ -831,7 +846,7 @@ def main():
                     except Exception as e:
                         print(f"[scenario] {scn_name} failed: {e}")
                         hub.event("system", f"시나리오 실패: {scn_name}: {e}")
-                    follow_until = time.monotonic() + FOLLOW_S
+                    follow_until = time.monotonic() + follow_s
                     continue
                 if route == "factory":
                     # 가상 MES 조회 — 숫자·판정은 factorylink 템플릿이 결정한다
@@ -841,7 +856,7 @@ def main():
                     hub.activity = "speaking"
                     if not args.dry_llm_only:
                         _say(device, piper, spoken, args.speed)
-                    follow_until = time.monotonic() + FOLLOW_S
+                    follow_until = time.monotonic() + follow_s
                     continue
                 if route in ("action", "status"):
                     # 화이트리스트 명령 / 로봇 상태 질의 — 실측·실행 결과를 그대로 말한다
@@ -851,7 +866,7 @@ def main():
                     hub.activity = "speaking"
                     if not args.dry_llm_only:
                         _say(device, piper, spoken, args.speed)
-                    follow_until = time.monotonic() + FOLLOW_S
+                    follow_until = time.monotonic() + follow_s
                     continue
                 text = query or "불렀어?"
             hub.activity = "thinking"
@@ -872,7 +887,7 @@ def main():
             hub.activity = "speaking"
             try:
                 stream_play(device, pcm_out)
-                follow_until = time.monotonic() + FOLLOW_S
+                follow_until = time.monotonic() + follow_s
             except (OSError, TimeoutError) as e:
                 # 모듈 쓰기 거부(일시 행업 등)로 대화 루프 전체가 죽지 않게 한다
                 print(f"[audio] play failed: {e}")

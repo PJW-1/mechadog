@@ -21,13 +21,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import voice_store
 from phrases import pick
 
 KNOW_DIR = Path(__file__).with_name("knowledge")
 ROSTER_PATH = KNOW_DIR / "직원명단.txt"
 
 
-def load_roster():
+def _file_roster():
     """직원명단.txt 한 줄 = 사원 한 명. '#''은 주석."""
     if not ROSTER_PATH.is_file():
         return []
@@ -36,6 +37,11 @@ def load_roster():
         for ln in ROSTER_PATH.read_text(encoding="utf-8").splitlines()
         if ln.strip() and not ln.startswith("#")
     ]
+
+
+def load_roster():
+    """voice_data.db의 roster가 있으면 그쪽이 정본, 없으면 파일 명단."""
+    return list(voice_store.roster(_file_roster()))
 
 
 def _norm(s):
@@ -465,8 +471,12 @@ TRIGGERS = {
 
 
 def match_trigger(norm_query: str):
-    """정규화된 질의에서 시나리오 이름 반환, 없으면 None."""
-    for phrase, name in TRIGGERS.items():
+    """정규화된 질의에서 시나리오 이름 반환, 없으면 None.
+
+    트리거 표는 voice_data.db의 scenario_triggers가 우선하고, 없으면
+    위의 TRIGGERS 코드 기본값이 쓰인다 (voice_store 참조).
+    """
+    for phrase, name in voice_store.scenario_triggers(TRIGGERS).items():
         if phrase in norm_query:
             return name
     return None

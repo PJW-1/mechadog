@@ -109,38 +109,22 @@ def seed(db_path=DEFAULT_DB):
                 ("C", "MD-100 구동모듈", 600, 210, "stopped", now),
             ],
         )
-        conn.executemany(
-            "INSERT INTO shipment_schedule VALUES (?,?,?,?,?,?,?)",
+        # 출하 번호·LOT는 마감일/시드일에서 유도한다 — 다른 날 --seed 해도
+        # ID와 날짜가 어긋나지 않게.
+        ship_rows = []
+        for i, (customer, product, qty, dplus, dock) in enumerate(
             [
-                (
-                    "SH-0917-01",
-                    "한국정밀",
-                    "MD-100 구동모듈",
-                    400,
-                    (today + timedelta(days=1)).isoformat(),
-                    "2번 도크",
-                    now,
-                ),
-                (
-                    "SH-0918-01",
-                    "대성산업",
-                    "MD-200 센서모듈",
-                    300,
-                    (today + timedelta(days=3)).isoformat(),
-                    "1번 도크",
-                    now,
-                ),
-                (
-                    "SH-0920-01",
-                    "한국정밀",
-                    "MD-100 구동모듈",
-                    600,
-                    (today + timedelta(days=5)).isoformat(),
-                    "미정",
-                    now,
-                ),
+                ("한국정밀", "MD-100 구동모듈", 400, 1, "2번 도크"),
+                ("대성산업", "MD-200 센서모듈", 300, 3, "1번 도크"),
+                ("한국정밀", "MD-100 구동모듈", 600, 5, "미정"),
             ],
-        )
+            start=1,
+        ):
+            dl = today + timedelta(days=dplus)
+            ship_rows.append(
+                (f"SH-{dl:%m%d}-{i:02d}", customer, product, qty, dl.isoformat(), dock, now)
+            )
+        conn.executemany("INSERT INTO shipment_schedule VALUES (?,?,?,?,?,?,?)", ship_rows)
         conn.executemany(
             "INSERT INTO work_schedule VALUES (?,?,?,?,?,?,?,?)",
             [
@@ -180,9 +164,9 @@ def seed(db_path=DEFAULT_DB):
             "INSERT INTO inspection_log(line_id,lot,inspected,defects,result,updated_at)"
             " VALUES (?,?,?,?,?,?)",
             [
-                ("A", "LOT-A0917", 200, 3, "pass", now),
-                ("B", "LOT-B0916", 300, 0, "pass", now),
-                ("C", "LOT-C0917", 80, 12, "hold", now),
+                ("A", f"LOT-A{today:%m%d}", 200, 3, "pass", now),
+                ("B", f"LOT-B{today - timedelta(days=1):%m%d}", 300, 0, "pass", now),
+                ("C", f"LOT-C{today:%m%d}", 80, 12, "hold", now),
             ],
         )
         conn.executemany(
@@ -217,27 +201,34 @@ def _mark_stale(rows, stale_after):
     return rows
 
 
+def _known_lines(conn):
+    """모든 테이블에 등장하는 라인 ID — '등록된 라인'의 정본."""
+    out = set()
+    for t in ("production_status", "work_schedule", "inspection_log", "equipment_check"):
+        out.update(r[0] for r in conn.execute(f"SELECT DISTINCT line_id FROM {t}"))
+    return sorted(out)
+
+
 def query(db_path, endpoint, params, stale_after):
     """엔드포인트 → (rows, error). error가 있으면 rows 대신 메시지 dict."""
     conn = sqlite3.connect(db_path)
     try:
+        line = (params.get("line") or [None])[0]
+        if line:
+            line = line.upper()
+        # 라인 파라미터를 받는 엔드포인트는 공통으로 미등록 라인을 걸러낸다 —
+        # 없는 라인과 '기록 0건'을 구분 못 하면 음성 답변이 오해를 만든다.
+        line_eps = ("production", "schedule", "inspections", "equipment")
+        if line and endpoint in line_eps and line not in _known_lines(conn):
+            return {"error": "unknown_line", "valid_lines": _known_lines(conn)}
         if endpoint == "production":
-            line = (params.get("line") or [None])[0]
             if line:
                 rows = _rows(
                     conn,
                     "SELECT *, target_quantity - completed_quantity AS"
                     " remaining_quantity FROM production_status WHERE line_id=?",
-                    (line.upper(),),
+                    (line,),
                 )
-                if not rows:
-                    valid = [
-                        r["line_id"]
-                        for r in _rows(
-                            conn, "SELECT line_id FROM production_status ORDER BY line_id"
-                        )
-                    ]
-                    return {"error": "unknown_line", "valid_lines": valid}
             else:
                 rows = _rows(
                     conn,
@@ -245,7 +236,10 @@ def query(db_path, endpoint, params, stale_after):
                     " remaining_quantity FROM production_status ORDER BY line_id",
                 )
         elif endpoint == "shipments":
-            days = int((params.get("days") or [7])[0])
+            try:
+                days = int((params.get("days") or [7])[0])
+            except (TypeError, ValueError):
+                return {"error": "bad_param", "detail": "days must be an integer"}
             limit = (datetime.now(KST).date() + timedelta(days=days)).isoformat()
             rows = _rows(
                 conn,
@@ -253,23 +247,20 @@ def query(db_path, endpoint, params, stale_after):
                 (limit,),
             )
         elif endpoint == "schedule":
-            line = (params.get("line") or [None])[0]
             sql = "SELECT * FROM work_schedule WHERE status!='done'"
             args = ()
             if line:
                 sql += " AND line_id=?"
-                args = (line.upper(),)
+                args = (line,)
             rows = _rows(conn, sql + " ORDER BY priority", args)
         elif endpoint == "inspections":
-            line = (params.get("line") or [None])[0]
             sql = "SELECT * FROM inspection_log"
             args = ()
             if line:
                 sql += " WHERE line_id=?"
-                args = (line.upper(),)
+                args = (line,)
             rows = _rows(conn, sql + " ORDER BY id DESC LIMIT 10", args)
         elif endpoint == "equipment":
-            line = (params.get("line") or [None])[0]
             sql = (
                 "SELECT * FROM equipment_check e WHERE id IN"
                 " (SELECT MAX(id) FROM equipment_check GROUP BY equipment)"
@@ -277,7 +268,7 @@ def query(db_path, endpoint, params, stale_after):
             args = ()
             if line:
                 sql += " AND e.line_id=?"
-                args = (line.upper(),)
+                args = (line,)
             rows = _rows(conn, sql, args)
         else:
             return {"error": "unknown_endpoint"}
@@ -301,9 +292,10 @@ class Handler(BaseHTTPRequestHandler):
             res = query(self.db_path, ep, parse_qs(u.query), self.stale_after)
         except sqlite3.Error as e:
             return self._json({"error": f"db: {e}"}, 500)
-        if isinstance(res, dict) and res.get("error") == "unknown_endpoint":
-            return self._json(res, 404)
-        return self._json({"data": res} if isinstance(res, list) else res)
+        if isinstance(res, dict) and res.get("error"):
+            code = {"unknown_endpoint": 404, "bad_param": 400}.get(res["error"], 200)
+            return self._json(res, code)
+        return self._json({"data": res})
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode()

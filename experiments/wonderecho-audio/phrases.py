@@ -288,10 +288,24 @@ def _save_custom(path: Path | None = None):
     )
 
 
+def _db_phrases() -> dict[str, list[str]]:
+    """voice_data.db의 추가 문구 — 기본 문구는 코드가 유지하고 DB는 얹기만 한다."""
+    try:
+        import voice_store
+    except ImportError:
+        return {}
+    out: dict[str, list[str]] = {}
+    for cat, text in voice_store.all_phrases():
+        out.setdefault(cat, []).append(text)
+    return out
+
+
 def merged() -> dict[str, list[str]]:
-    """기본 + 관리자 추가 문구의 합본. 카테고리 순서는 기본 → 신규."""
+    """기본 + 관리자 추가 문구(JSON·DB)의 합본. 카테고리 순서는 기본 → 신규."""
     out = {cat: list(lines) for cat, lines in PHRASES.items()}
     for cat, lines in CUSTOM.items():
+        out.setdefault(cat, []).extend(lines)
+    for cat, lines in _db_phrases().items():
         out.setdefault(cat, []).extend(lines)
     return out
 
