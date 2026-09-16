@@ -795,7 +795,11 @@ def main():
                     # 후속 대화 창: 직전 답변 직후엔 웨이크워드 없이 받는다.
                     # 짧은 잡음(3자 미만)은 대화로 보지 않는다.
                     follow = _PUNCT.sub("", text)
-                    if hub.mode == "active" and time.monotonic() < follow_until and len(follow) >= 3:
+                    if (
+                        hub.mode == "active"
+                        and time.monotonic() < follow_until
+                        and len(follow) >= 3
+                    ):
                         query = follow
                         print(f"[follow] 웨이크워드 생략 허용: {query!r}")
                     else:

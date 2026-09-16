@@ -36,17 +36,24 @@ PORT = "COM5"
 SITE = r"C:\Users\a9800\AppData\Local\Programs\Python\Python312\Lib\site-packages"
 ENV = dict(os.environ)
 ENV["PATH"] = (
-    rf"{SITE}\torch\lib;{SITE}\nvidia\cublas\bin;{SITE}\nvidia\cuda_nvrtc\bin;"
-    + ENV["PATH"]
+    rf"{SITE}\torch\lib;{SITE}\nvidia\cublas\bin;{SITE}\nvidia\cuda_nvrtc\bin;" + ENV["PATH"]
 )
 
 PIPELINE_CMD = [
-    sys.executable, "-X", "utf8", "voice_pipeline.py",
-    "--port", PORT,
-    "--model", r"C:\dev\voice\models\EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf",
-    "--whisper", "medium",
-    "--web", "8090",
-    "--robot-id", "mechadog-02",
+    sys.executable,
+    "-X",
+    "utf8",
+    "voice_pipeline.py",
+    "--port",
+    PORT,
+    "--model",
+    r"C:\dev\voice\models\EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf",
+    "--whisper",
+    "medium",
+    "--web",
+    "8090",
+    "--robot-id",
+    "mechadog-02",
 ]
 
 
@@ -63,6 +70,7 @@ def module_port_state(pipeline_up):
     try:
         sys.path.insert(0, str(HERE))
         import serial
+
         s = serial.Serial(PORT, 921600, timeout=0.2)
         s.close()
         return "연결됨 (직접 제어 가능)"
@@ -73,8 +81,12 @@ def module_port_state(pipeline_up):
 def tone_pcm(seconds=2.0, freq=440):
     n = int(16000 * seconds)
     return b"".join(
-        struct.pack("<h", int(12000 * min(1.0, i / 800, (n - i) / 800)
-                               * math.sin(2 * math.pi * freq * i / 16000)))
+        struct.pack(
+            "<h",
+            int(
+                12000 * min(1.0, i / 800, (n - i) / 800) * math.sin(2 * math.pi * freq * i / 16000)
+            ),
+        )
         for i in range(n)
     )
 
@@ -108,7 +120,7 @@ def play_tone(port=PORT, seconds=2.0):
             raise TimeoutError("WEC1 READY 없음 — 펌웨어가 스트리밍을 지원 안 할 수 있음")
         t0, sent = time.monotonic(), 0
         for off in range(0, len(pcm), CHUNK):
-            payload = pcm[off:off + CHUNK]
+            payload = pcm[off : off + CHUNK]
             device.write(play_packet(payload))
             sent += len(payload)
             delay = t0 + max(0, sent - PREFILL) / 32000.0 - time.monotonic()
@@ -120,12 +132,23 @@ def play_tone(port=PORT, seconds=2.0):
             data = device.read(min(device.in_waiting, 4096) or 1)
             for p in decoder.feed(data, now=time.monotonic()):
                 if p.message_type == 0x112 and len(p.payload) in (32, 36, 40):
-                    keys = ("bytes_in", "bufs_in", "underrun", "rx_dropped",
-                            "output_irqs", "tx_peak", "cfg_rc", "start_rc",
-                            "level_peak", "rx_bad")[: len(p.payload) // 4]
+                    keys = (
+                        "bytes_in",
+                        "bufs_in",
+                        "underrun",
+                        "rx_dropped",
+                        "output_irqs",
+                        "tx_peak",
+                        "cfg_rc",
+                        "start_rc",
+                        "level_peak",
+                        "rx_bad",
+                    )[: len(p.payload) // 4]
                     diag["play_diagnostics"] = dict(
-                        zip(keys, struct.unpack(f"<{len(p.payload)//4}I", p.payload),
-                            strict=False))
+                        zip(
+                            keys, struct.unpack(f"<{len(p.payload) // 4}I", p.payload), strict=False
+                        )
+                    )
     finally:
         device.close()
     return diag.get("play_diagnostics", {"note": "진단 패킷 미수신"})
@@ -138,7 +161,7 @@ class App(tk.Tk):
         self.proc = None
         self._log_fh = None
         self._stopped_by_user = False
-        self.lamp_state = "off"   # off | idle | speaking | error
+        self.lamp_state = "off"  # off | idle | speaking | error
         self.blink_on = True
         self.build()
         self.refresh()
@@ -149,11 +172,9 @@ class App(tk.Tk):
         top.pack(padx=12, pady=8)
         lamp_col = tk.Frame(top)
         lamp_col.pack(side="left", padx=(0, 12))
-        self.lamp = tk.Canvas(lamp_col, width=46, height=46,
-                              highlightthickness=0, bg=self["bg"])
+        self.lamp = tk.Canvas(lamp_col, width=46, height=46, highlightthickness=0, bg=self["bg"])
         self.lamp.pack()
-        self.lamp_id = self.lamp.create_oval(6, 6, 40, 40, fill="#888",
-                                           outline="#333", width=2)
+        self.lamp_id = self.lamp.create_oval(6, 6, 40, 40, fill="#888", outline="#333", width=2)
         self.lamp_txt = tk.Label(lamp_col, text="확인 중", font=("", 9))
         self.lamp_txt.pack()
         btn_col = tk.Frame(top)
@@ -164,8 +185,9 @@ class App(tk.Tk):
             ("상태 새로고침", self.refresh),
         ):
             tk.Button(btn_col, text=label, width=26, command=cmd).pack(pady=3)
-        self.status = tk.Text(self, width=72, height=6, font=("Consolas", 9),
-                              bg="#f4f4f4", state="disabled")
+        self.status = tk.Text(
+            self, width=72, height=6, font=("Consolas", 9), bg="#f4f4f4", state="disabled"
+        )
         self.status.pack(padx=12, pady=(0, 4))
         self.out = tk.Text(self, width=72, height=14, font=("Consolas", 9))
         self.out.pack(padx=12, pady=(0, 10))
@@ -194,6 +216,7 @@ class App(tk.Tk):
             s = self.collect()
             port = module_port_state("error" not in s["voice"])
             self.after(0, lambda: self.apply_status(s, port, verbose=True))
+
         threading.Thread(target=work, daemon=True).start()
 
     def apply_status(self, s, port, verbose=False):
@@ -201,8 +224,9 @@ class App(tk.Tk):
         lines = []
         voice_up = "error" not in v
         if voice_up:
-            lines.append(f"[음성 :8090] {v.get('mode')} / {v.get('activity')} / "
-                         f"큐 {v.get('say_queue')}")
+            lines.append(
+                f"[음성 :8090] {v.get('mode')} / {v.get('activity')} / 큐 {v.get('say_queue')}"
+            )
         else:
             lines.append("[음성 :8090] 꺼져 있음")
         lines.append("[MES :8095] " + ("가상 MES 정상" if m.get("ok") else "꺼져 있음"))
@@ -210,8 +234,9 @@ class App(tk.Tk):
             lines.append("[런타임 :8000] 꺼져 있음 (로봇 명령·상태 질의만 불가)")
         else:
             t = r.get("telemetry") or {}
-            lines.append(f"[런타임 :8000] {r.get('device_id')} {r.get('state')} "
-                         f"batt={t.get('batt_v')}V")
+            lines.append(
+                f"[런타임 :8000] {r.get('device_id')} {r.get('state')} batt={t.get('batt_v')}V"
+            )
         lines.append(f"[모듈 {PORT}] {port}")
         self.set_status(lines)
 
@@ -221,8 +246,7 @@ class App(tk.Tk):
         ev = (v.get("events") or [])[-1] if voice_up else None
         module_missing = port == "모듈 없음/점검 필요"
         crashed = (
-            self.proc is not None and self.proc.poll() is not None
-            and not self._stopped_by_user
+            self.proc is not None and self.proc.poll() is not None and not self._stopped_by_user
         )
         act = v.get("activity") if voice_up else None
         if module_missing or crashed:
@@ -239,20 +263,19 @@ class App(tk.Tk):
     def _tick(self):
         """0.5초마다 램프 점멸, 2초마다 상태 자동 갱신."""
         self._n = getattr(self, "_n", 0) + 1
-        colors = {"off": "#888", "idle": "#2266ff", "speaking": "#2266ff",
-                  "error": "#ff2222"}
+        colors = {"off": "#888", "idle": "#2266ff", "speaking": "#2266ff", "error": "#ff2222"}
         blink_states = ("speaking", "error")
         on = (self._n % 2 == 0) if self.lamp_state in blink_states else True
-        self.lamp.itemconfig(
-            self.lamp_id, fill=colors[self.lamp_state] if on else "#f4f4f4")
-        labels = {"off": "꺼짐", "idle": "듣는 중", "speaking": "말하는 중",
-                  "error": "오류"}
+        self.lamp.itemconfig(self.lamp_id, fill=colors[self.lamp_state] if on else "#f4f4f4")
+        labels = {"off": "꺼짐", "idle": "듣는 중", "speaking": "말하는 중", "error": "오류"}
         self.lamp_txt.config(text=labels[self.lamp_state])
         if self._n % 4 == 0:  # 2초마다 자동 갱신 (조용히 — 로그 안 남김)
+
             def work():
                 s = self.collect()
                 port = module_port_state("error" not in s["voice"])
                 self.after(0, lambda: self.apply_status(s, port))
+
             threading.Thread(target=work, daemon=True).start()
         self.after(500, self._tick)
 
@@ -261,8 +284,11 @@ class App(tk.Tk):
     def _say_via_pipeline(self, text):
         body = json.dumps({"text": text}).encode()
         req = urllib.request.Request(
-            VOICE_API + "/say", data=body,
-            headers={"Content-Type": "application/json"}, method="POST")
+            VOICE_API + "/say",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=3) as r:
             return json.load(r)
 
@@ -288,8 +314,10 @@ class App(tk.Tk):
                 return
             self.log(f"  진단: {diag}")
             if diag.get("tx_peak"):
-                self.log("  → 디지털 경로 정상. 스피커에서 소리가 안 나면 "
-                         "앰프 enable/아날로그 출력 문제입니다.")
+                self.log(
+                    "  → 디지털 경로 정상. 스피커에서 소리가 안 나면 "
+                    "앰프 enable/아날로그 출력 문제입니다."
+                )
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -306,9 +334,8 @@ class App(tk.Tk):
         # 자식 프로세스 수명 동안 열어 두는 stdout 수신처 — 컨텍스트 매니저 불가
         self._log_fh = (LOG_DIR / "pipeline_stdout.log").open("ab")  # noqa: SIM115
         self.proc = subprocess.Popen(
-            PIPELINE_CMD, cwd=str(HERE), env=ENV,
-            stdout=self._log_fh,
-            stderr=subprocess.STDOUT)
+            PIPELINE_CMD, cwd=str(HERE), env=ENV, stdout=self._log_fh, stderr=subprocess.STDOUT
+        )
         self.log(f"  PID {self.proc.pid} — 로그: logs/pipeline_stdout.log")
 
 

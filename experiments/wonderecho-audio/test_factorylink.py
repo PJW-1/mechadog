@@ -57,8 +57,7 @@ class MesApiTest(unittest.TestCase):
     def test_stale_flag_from_server(self):
         conn = sqlite3.connect(self.db)
         conn.execute(
-            "UPDATE production_status SET updated_at='2020-01-01T00:00:00+09:00'"
-            " WHERE line_id='A'"
+            "UPDATE production_status SET updated_at='2020-01-01T00:00:00+09:00' WHERE line_id='A'"
         )
         conn.commit()
         conn.close()
@@ -121,9 +120,7 @@ class FactoryLinkTest(unittest.TestCase):
 
     def test_stale_answer(self):
         conn = sqlite3.connect(self.db)
-        conn.execute(
-            "UPDATE production_status SET updated_at='2020-01-01T00:00:00+09:00'"
-        )
+        conn.execute("UPDATE production_status SET updated_at='2020-01-01T00:00:00+09:00'")
         conn.commit()
         conn.close()
         ok, s = fl.answer_query("생산 현황", self.base)

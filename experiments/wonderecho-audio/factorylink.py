@@ -66,6 +66,7 @@ def is_factory_query(norm):
 # ── 결정론적 답변 템플릿 ──────────────────────────────────────────────────
 # 숫자는 코드가 포맷한다 — LLM이 '약 300개'처럼 뭉개는 일을 막는다.
 
+
 def _src_tag(row):
     """'데모 MES의 13시 42분 자료입니다' 꼬리표."""
     try:
@@ -77,10 +78,7 @@ def _src_tag(row):
 
 
 def _stale_answer(what):
-    return (
-        f"{what}의 마지막 갱신이 허용 시간을 초과했습니다. "
-        "최신 정보를 확인할 수 없습니다."
-    )
+    return f"{what}의 마지막 갱신이 허용 시간을 초과했습니다. 최신 정보를 확인할 수 없습니다."
 
 
 def _fmt_production(rows):

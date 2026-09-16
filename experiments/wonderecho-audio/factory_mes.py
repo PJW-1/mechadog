@@ -231,9 +231,12 @@ def query(db_path, endpoint, params, stale_after):
                     (line.upper(),),
                 )
                 if not rows:
-                    valid = [r["line_id"] for r in _rows(
-                        conn, "SELECT line_id FROM production_status ORDER BY line_id"
-                    )]
+                    valid = [
+                        r["line_id"]
+                        for r in _rows(
+                            conn, "SELECT line_id FROM production_status ORDER BY line_id"
+                        )
+                    ]
                     return {"error": "unknown_line", "valid_lines": valid}
             else:
                 rows = _rows(
@@ -246,15 +249,12 @@ def query(db_path, endpoint, params, stale_after):
             limit = (datetime.now(KST).date() + timedelta(days=days)).isoformat()
             rows = _rows(
                 conn,
-                "SELECT * FROM shipment_schedule WHERE deadline<=?"
-                " ORDER BY deadline",
+                "SELECT * FROM shipment_schedule WHERE deadline<=? ORDER BY deadline",
                 (limit,),
             )
         elif endpoint == "schedule":
             line = (params.get("line") or [None])[0]
-            sql = (
-                "SELECT * FROM work_schedule WHERE status!='done'"
-            )
+            sql = "SELECT * FROM work_schedule WHERE status!='done'"
             args = ()
             if line:
                 sql += " AND line_id=?"
