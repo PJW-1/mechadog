@@ -326,11 +326,16 @@ bool applyCommand(const mechadog::Command& command) {
       // 블로킹하므로 그동안 loop() 가 통째로 멈춘다 — UDP 수신도, 300ms 명령
       // 타임아웃 검사도 함께 멈춘다. 걷다가 멈추면 **타임아웃이 자기 자신 때문에
       // 걸린다.** 정지 상태에서만 1초를 감수한다 (NFR-1 비목표: 온보드 블로킹 금지).
+      //
+      // ⚠️ **SERVICE 중에도 받지 않는다.** 같은 1초 블로킹이 거기서는 재부팅이
+      // 된다 — `enterServiceMode()` 가 루프 워치독을 무장시키고(750ms) 그 마감을
+      // 넘기기 때문이다. 정비하려고 세워 둔 기체에서 일어나면 안 되는 일이다.
       if (!g_motion_state.can_action()) {
-        Serial.println("ACTION refused: walking");
+        Serial.println(g_motion_state.service_mode ? "ACTION refused: service mode"
+                                                   : "ACTION refused: walking");
         return false;
       }
-      // 래치 중에도 받는다 — `FAILSAFE` 안정 자세(엎드림)가 이 경로로 온다.
+      // 래치 중에는 받는다 — `FAILSAFE` 안정 자세(엎드림)가 이 경로로 온다.
       return g_motion.action(static_cast<int>(command.action_id));
 
     case mechadog::CmdType::Service:
