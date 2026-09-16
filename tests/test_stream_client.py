@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -732,11 +733,16 @@ def test_endpoints_read_the_real_device_profile() -> None:
     assert endpoints.control == "http://192.168.1.77:80"
 
 
-def test_real_profile_leaves_the_address_empty() -> None:
-    """실측 전에는 비워 두는 것이 정본이다 — 틀린 주소보다 낫다."""
+def test_real_profile_leaves_the_address_empty(committed_devices_dir: Path) -> None:
+    """실측 전에는 비워 두는 것이 정본이다 — 틀린 주소보다 낫다.
+
+    보는 대상은 **저장소에 커밋된 프로파일**이지 이 PC 의 실측 주소가 아니다.
+    `committed_devices_dir` 없이 읽으면 `*.local.yaml` 오버레이가 겹쳐 들어와
+    실기를 만지는 사람의 PC 에서만 깨진다 (`conftest.py`).
+    """
     from host.common.config import load_config
 
-    config = load_config("mechdog-01")
+    config = load_config("mechdog-01", devices_dir=committed_devices_dir)
     assert config["network"]["xiao_ip"] is None
     with pytest.raises(ValueError, match="network.xiao_ip"):
         stream_endpoints(config)
