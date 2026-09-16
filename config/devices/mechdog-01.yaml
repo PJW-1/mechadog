@@ -17,7 +17,7 @@ owner_id: unassigned # prod 프로파일로 올릴 때 실제 담당자로 채�
 telemetry_device_id: mechdog-3c8a1f333208
 
 # `2.4.1` 에서 3대의 역할을 함께 정한다. 그 전에는 어느 쪽도 아니다.
-reference_role: none
+reference_role: phase1   # G1 검수 기준기로 지정 (2026-09-17 · 팀장). LiDAR 미장착 Phase 1 표준 구성
 
 network:
   # 2026-09-07 확인 때 받은 IP 는 `192.168.5.2` 였으나 그것은 XIAO 카메라 모듈의
