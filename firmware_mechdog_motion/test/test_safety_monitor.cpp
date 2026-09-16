@@ -164,6 +164,62 @@ int main() {
     check(distance_sample(monitor_bench, t, 100.0F, 7.9F).shutdown);
   }
 
+  // ── 안전 조건 조합 전수 (WBS 3.2.5) ──────────────────────────────────
+  //
+  // **E-Stop·타임아웃·링크 두절·저전압 > 근거리 정지 > 호스트 명령.** 앞의 넷은
+  // 래치로 들어오므로 여기서는 «래치 여부 × 서비스 모드 × 반사 정지 × 명령 방향»
+  // 을 전수로 돌린다.
+  {
+    for (int latched = 0; latched <= 1; ++latched) {
+      for (int service = 0; service <= 1; ++service) {
+        for (int blocked = 0; blocked <= 1; ++blocked) {
+          mechadog::MotionSafetyState state;
+          state.reset_safe();
+          if (service) state.enter_service();
+          if (latched) state.latch();
+
+          mechadog::SafetyMonitor safety;
+          uint32_t at = 1000;
+          if (blocked) {
+            distance_sample(safety, at, 10.0F);
+            distance_sample(safety, at, 10.0F);
+            check(safety.obstacle());
+          }
+
+          const bool free_to_walk = !latched && !service;
+          // 전진: 래치·서비스가 먼저, 그다음 반사 정지.
+          check(mechadog::move_allowed(state, safety, 60.0F) == (free_to_walk && !blocked));
+          // 후진: 반사 정지는 막지 않는다. 래치·서비스는 그대로 막는다.
+          check(mechadog::move_allowed(state, safety, -60.0F) == free_to_walk);
+          // 정지(0)도 같은 규칙 — 반사 정지가 정지를 막을 이유가 없다.
+          check(mechadog::move_allowed(state, safety, 0.0F) == free_to_walk);
+          // 반사 정지는 래치 원인이 아니다 — 해제를 막지 않는다.
+          check(mechadog::reset_safe_allowed(safety));
+        }
+      }
+    }
+  }
+
+  // ── 저전압 원인이 남아 있으면 RESET_SAFE 를 거부한다 (3.2.5) ──────────
+  {
+    mechadog::SafetyMonitor safety;
+    uint32_t at = 1000;
+    check(mechadog::reset_safe_allowed(safety));  // 아무 일도 없으면 풀 수 있다
+
+    distance_sample(safety, at, 100.0F, 6.4F);
+    distance_sample(safety, at, 100.0F, 6.4F);
+    check(distance_sample(safety, at, 100.0F, 6.4F).shutdown);
+    check(!mechadog::reset_safe_allowed(safety));  // 원인이 남아 있다
+
+    // 셧다운선 위로 조금 올라온 것으로는 부족하다 — 다음 부하에 다시 걸린다.
+    distance_sample(safety, at, 100.0F, 6.8F);
+    check(!mechadog::reset_safe_allowed(safety));
+
+    // 경고선 위로 회복돼야 풀 수 있다.
+    distance_sample(safety, at, 100.0F, 7.4F);
+    check(mechadog::reset_safe_allowed(safety));
+  }
+
   std::printf("safety monitor: %d checks passed\n", checks);
   return 0;
 }

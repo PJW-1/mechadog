@@ -332,6 +332,14 @@ bool applyCommand(const mechadog::Command& command) {
 
     case mechadog::CmdType::ResetSafe:
       if (WiFi.status() != WL_CONNECTED) return false;
+      // ⚠️ **원인이 남아 있으면 풀지 않는다 (3.2.5).** 저전압으로 세운 기체를
+      // 그대로 풀어 주면 다음 MOVE 에서 걷다가 또 걸린다 — 사람은 해제 버튼만
+      // 반복해서 누르게 된다. 가상 로봇은 처음부터 이렇게 거부하고 있었고
+      // (`mock_mechdog._physical_fault`) 펌웨어만 받아 주고 있었다.
+      if (!mechadog::reset_safe_allowed(g_safety)) {
+        Serial.println("RESET_SAFE refused: battery still below shutdown threshold");
+        return false;
+      }
       // A pending-verify OTA image must stay parked until confirmed: clearing
       // the latch would let motion start while the 90 s verify deadline (or
       // the confirm reboot) can still restart the robot mid-gait.
@@ -346,11 +354,12 @@ bool applyCommand(const mechadog::Command& command) {
       return true;
 
     case mechadog::CmdType::Move:
-      if (!g_motion_state.can_move()) return false;
-      // ⚠️ **온보드 반사 정지 (3.2.6).** 호스트 판단을 기다리지 않는다. 걸려 있는
-      // 동안 **전진만** 거부한다 — 후진·선회는 통과시켜야 FR-2.3 의 «정지 후
-      // 후진» 이 성립한다. 초음파는 정면만 보므로 물러나는 것이 유일한 탈출로다.
-      if (!g_safety.allows_move(command.step)) return false;
+      // ⚠️ **우선순위는 `move_allowed` 한 곳에 있다 (3.2.5).** 래치·서비스 모드가
+      // 먼저이고 그다음이 온보드 반사 정지 (3.2.6) 다. 반사 정지는 호스트 판단을
+      // 기다리지 않으며 **전진만** 거부한다 — 후진·선회는 통과시켜야 FR-2.3 의
+      // «정지 후 후진» 이 성립한다. 초음파는 정면만 보므로 물러나는 것이 유일한
+      // 탈출로다.
+      if (!mechadog::move_allowed(g_motion_state, g_safety, command.step)) return false;
       g_motion.move(command.step, command.angle);
       // 보행 중인지 기록한다. ACTION 가드가 이 값을 본다 — 호스트가 되돌려준
       // `state` 는 반향이라 쓰지 않는다(ADR-22).
