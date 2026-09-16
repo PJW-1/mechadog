@@ -41,6 +41,7 @@ from pathlib import Path
 
 import daily_report
 import eventlog
+import factorylink
 import phrases
 import robotlink
 import scenarios
@@ -66,6 +67,7 @@ WAKE_PREFIXES = ("메카독", "메카도", "메카닭", "메카도기")  # STT �
 SLEEP_WORDS = ("그만", "꺼져", "대기해", "잠자")
 RESUME_WORDS = ("시작", "깨워", "일어나", "켜져")
 EMERGENCY_WORDS = ("도와줘", "살려줘", "비상", "응급")
+FOLLOW_S = 20.0  # 답변 후 이 시간 안의 발화는 웨이크워드 없이 받는다 (후속 대화)
 _PUNCT = re.compile(r"[\s,.!?~…:'\"·]+")
 KNOW_DIR = Path(__file__).with_name("knowledge")
 
@@ -321,6 +323,8 @@ def route_query(query):
         return "scenario"
     if any(w in norm for w in EMERGENCY_WORDS):
         return "emergency"
+    if factorylink.is_factory_query(norm):
+        return "factory"
     if robotlink.is_status_query(norm):
         return "status"
     return "llm"
@@ -366,7 +370,26 @@ def retrieve(docs, query, max_chars=1200):
 def _say(device, piper, text, speed):
     """고정 안내 멘트 재생 — piper 없으면(--tts orpheus) 조용히 건너뜀."""
     if piper is not None:
-        stream_play(device, synth_piper(piper, text, speed))
+        try:
+            stream_play(device, synth_piper(piper, text, speed))
+        except (OSError, TimeoutError) as e:
+            # 모듈이 한 번 쓰기를 거부해도 대화 루프는 살아있어야 한다
+            print(f"[audio] say failed: {e}")
+
+
+_MACHINE_WORDS = ("고장", "수리", "설비", "기계", "진단", "안돌", "멈췄", "이상소리")
+_MACHINE_NOTICE = (
+    "매뉴얼 기준 점검 항목을 안내해 드린 것이며, "
+    "실제 고장 판정과 수리는 담당 기술자가 수행해야 합니다."
+)
+
+
+def machine_guard(query, answer):
+    """기계·고장 질의의 LLM 답변에 매뉴얼 안내 고지를 붙인다 (결정론적)."""
+    norm = _PUNCT.sub("", query or "")
+    if any(w in norm for w in _MACHINE_WORDS) and _MACHINE_NOTICE not in answer:
+        return answer.rstrip() + " " + _MACHINE_NOTICE
+    return answer
 
 
 def _pump(device, decoder):
@@ -645,6 +668,11 @@ def main():
         help="로봇 관제 API 베이스 (상태 조회·화이트리스트 명령용)",
     )
     ap.add_argument(
+        "--mes-api",
+        default=factorylink.DEFAULT_BASE,
+        help="가상 MES API 베이스 (생산·출하·작업지시 조회용)",
+    )
+    ap.add_argument(
         "--log-dir",
         default=str(Path(__file__).with_name("logs")),
         help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
@@ -697,6 +725,7 @@ def main():
 
     ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args)
     turn = 0
+    follow_until = 0.0
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
@@ -760,10 +789,22 @@ def main():
                         hub.event("system", "대화 재개")
                         hub.activity = "speaking"
                         _say(device, piper, "네, 대화를 다시 시작합니다.", args.speed)
+                        follow_until = time.monotonic() + FOLLOW_S
                     continue
                 if query is None:
-                    print("[cmd] no wake word — ignore")
-                    continue
+                    # 후속 대화 창: 직전 답변 직후엔 웨이크워드 없이 받는다.
+                    # 짧은 잡음(3자 미만)은 대화로 보지 않는다.
+                    follow = _PUNCT.sub("", text)
+                    if (
+                        hub.mode == "active"
+                        and time.monotonic() < follow_until
+                        and len(follow) >= 3
+                    ):
+                        query = follow
+                        print(f"[follow] 웨이크워드 생략 허용: {query!r}")
+                    else:
+                        print("[cmd] no wake word — ignore")
+                        continue
                 route = route_query(query)
                 if route == "emergency":
                     print("[cmd] EMERGENCY — logged")
@@ -777,6 +818,7 @@ def main():
                         "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
                         args.speed,
                     )
+                    follow_until = time.monotonic() + FOLLOW_S
                     continue
                 if route == "scenario":
                     # 규칙 기반 시나리오 트리거 — LLM보다 먼저 잡는다 (판정은 결정론적)
@@ -789,6 +831,17 @@ def main():
                     except Exception as e:
                         print(f"[scenario] {scn_name} failed: {e}")
                         hub.event("system", f"시나리오 실패: {scn_name}: {e}")
+                    follow_until = time.monotonic() + FOLLOW_S
+                    continue
+                if route == "factory":
+                    # 가상 MES 조회 — 숫자·판정은 factorylink 템플릿이 결정한다
+                    _, spoken = factorylink.answer_query(query, args.mes_api)
+                    print(f"[factorylink] {spoken!r}")
+                    hub.event("robot", spoken)
+                    hub.activity = "speaking"
+                    if not args.dry_llm_only:
+                        _say(device, piper, spoken, args.speed)
+                    follow_until = time.monotonic() + FOLLOW_S
                     continue
                 if route in ("action", "status"):
                     # 화이트리스트 명령 / 로봇 상태 질의 — 실측·실행 결과를 그대로 말한다
@@ -798,11 +851,13 @@ def main():
                     hub.activity = "speaking"
                     if not args.dry_llm_only:
                         _say(device, piper, spoken, args.speed)
+                    follow_until = time.monotonic() + FOLLOW_S
                     continue
                 text = query or "불렀어?"
             hub.activity = "thinking"
             t0 = time.time()
             answer = reply(llm, history, text, retrieve(knowledge, text))
+            answer = machine_guard(text, answer)
             hub.event("robot", answer)
             print(f"[llm] {answer!r} ({time.time() - t0:.1f}s)")
             if args.dry_llm_only:
@@ -815,7 +870,13 @@ def main():
             )
             print(f"[tts] {len(pcm_out) / 64000:.1f}s audio ({time.time() - t0:.1f}s synth)")
             hub.activity = "speaking"
-            stream_play(device, pcm_out)
+            try:
+                stream_play(device, pcm_out)
+                follow_until = time.monotonic() + FOLLOW_S
+            except (OSError, TimeoutError) as e:
+                # 모듈 쓰기 거부(일시 행업 등)로 대화 루프 전체가 죽지 않게 한다
+                print(f"[audio] play failed: {e}")
+                hub.event("system", f"재생 실패: {e}")
     except KeyboardInterrupt:
         pass
     finally:
