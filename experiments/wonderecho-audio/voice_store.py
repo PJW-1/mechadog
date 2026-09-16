@@ -1,0 +1,413 @@
+"""Voice-module config store — 암구호·트리거·설정의 DB 오버레이.
+
+`voice_data.db`(SQLite)가 있으면 테이블 내용이 코드 기본값보다 우선한다.
+없으면 코드 기본값 그대로 — **DB는 필수가 아니라 오버레이**다.
+
+    python voice_store.py --seed          # 코드 기본값으로 DB 생성/재생성
+    python voice_store.py --dump          # 현재 테이블 내용 출력
+    python voice_store.py --set KEY VALUE # settings 값 변경
+    python voice_store.py --add KIND WORD # keywords 행 추가 (wake/sleep/...)
+    python voice_store.py --del KIND WORD # keywords 행 삭제
+
+설계 원칙:
+- 기본값의 정본은 각 소비자 모듈의 상수다. --seed는 그 값을 DB로 옮길 뿐이다.
+- DB 파일이 없거나 해당 항목이 비어 있으면 코드 기본값이 쓰인다 — CI·새 클론·
+  테스트는 DB 없이도 완전히 동작해야 한다.
+- estop 계열(PROTECTED_ACTIONS)은 DB가 지우거나 다른 명령으로 바꿔도 항상
+  코드 기본값이 합쳐진다 — 운영 실수로 비상정지가 죽지 않는다.
+- 이 DB는 "무슨 말이 트리거인가"만 바꾼다. 명령 실행 자체는 robotlink의
+  화이트리스트와 로봇 런타임 게이트가 계속 담당한다.
+- MES 데이터(mes_demo.db)는 '외부 시스템' 시뮬레이션이라 별도 DB다.
+  지식 문서(knowledge/*.txt)는 RAG 입력이라 파일을 유지한다.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+KST = timezone(timedelta(hours=9))
+DEFAULT_DB = Path(__file__).with_name("voice_data.db")
+
+# 비상정지 구문 — DB 오버레이가 제거·재매핑할 수 없는 최소 안전 집합.
+PROTECTED_ACTIONS = ("비상정지", "긴급정지", "스톱")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS keywords (
+    kind TEXT NOT NULL,            -- wake|sleep|resume|emergency|status|machine
+    word TEXT NOT NULL,
+    PRIMARY KEY (kind, word)
+);
+CREATE TABLE IF NOT EXISTS command_endings (
+    ending TEXT PRIMARY KEY        -- "해줘/로전환해줘" 등 벗겨낼 명령 어미
+);
+CREATE TABLE IF NOT EXISTS action_commands (
+    phrase TEXT PRIMARY KEY,       -- 정규화된 발화
+    action TEXT NOT NULL,          -- estop|manual_on|manual_off|patrol_start|patrol_stop
+    ack TEXT NOT NULL              -- 실행 후 읽는 확인 멘트
+);
+CREATE TABLE IF NOT EXISTS scenario_triggers (
+    phrase TEXT PRIMARY KEY,
+    scenario TEXT NOT NULL         -- scenarios.SCENARIOS 키
+);
+CREATE TABLE IF NOT EXISTS factory_rules (
+    keyword TEXT PRIMARY KEY,
+    endpoint TEXT NOT NULL,        -- production|shipments|schedule|inspections|equipment
+    needs_line INTEGER NOT NULL DEFAULT 0,  -- 라인 표기가 있을 때만 적용
+    attach_line INTEGER NOT NULL DEFAULT 0, -- params에 line을 담을지
+    priority INTEGER NOT NULL DEFAULT 100   -- 작을수록 먼저 평가
+);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS roster (
+    name TEXT PRIMARY KEY,           -- 신원 확인 명단 (scenarios.sc_guard)
+    note TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS phrases (
+    category TEXT NOT NULL,          -- phrases.PHRASES 카테고리 키
+    phrase TEXT NOT NULL,
+    PRIMARY KEY (category, phrase)
+);
+"""
+
+_KEYWORD_KINDS = ("wake", "sleep", "resume", "emergency", "status", "machine")
+
+# settings 키가 이 패턴에 걸리면 CLI 출력(--set 에코, --dump)에서 값을 가린다.
+# 암구호·방문자 코드 같은 값을 콘솔·로그에 평문으로 남기지 않기 위해서다.
+_SENSITIVE_KEY_RE = re.compile(r"pass|secret|token|code|key", re.I)
+
+
+def _code_defaults():
+    """각 모듈 상수에서 기본값을 모은다 — 순환 임포트 방지로 지연 임포트."""
+    import factorylink
+    import robotlink
+    import scenarios
+    import voice_pipeline as vp
+
+    return {
+        "keywords": {
+            "wake": list(vp.WAKE_PREFIXES),
+            "sleep": list(vp.SLEEP_WORDS),
+            "resume": list(vp.RESUME_WORDS),
+            "emergency": list(vp.EMERGENCY_WORDS),
+            "status": list(robotlink._STATUS_WORDS),
+            "machine": list(vp._MACHINE_WORDS),
+        },
+        "command_endings": list(robotlink._COMMAND_ENDINGS),
+        "action_commands": dict(robotlink.ACTIONS),
+        "scenario_triggers": dict(scenarios.TRIGGERS),
+        "factory_rules": list(factorylink.DEFAULT_RULES),
+        "roster": scenarios._file_roster(),
+        "settings": {
+            "follow_s": str(vp.FOLLOW_S),
+            "follow_min_chars": "3",
+            "stt_prompt": vp.STT_PROMPT,
+            "machine_notice": vp._MACHINE_NOTICE,
+            "robot_api_base": robotlink.DEFAULT_BASE,
+            "mes_api_base": factorylink.DEFAULT_BASE,
+        },
+    }
+
+
+def seed(db_path=DEFAULT_DB):
+    """코드 기본값으로 DB를 만든다 — 기존 테이블은 비우고 다시 채운다."""
+    d = _code_defaults()
+    now = datetime.now(KST).isoformat(timespec="seconds")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(SCHEMA)
+        for t in (
+            "keywords",
+            "command_endings",
+            "action_commands",
+            "scenario_triggers",
+            "factory_rules",
+            "settings",
+            "roster",
+            "phrases",
+        ):
+            conn.execute(f"DELETE FROM {t}")
+        conn.executemany(
+            "INSERT INTO keywords VALUES (?,?)",
+            [(kind, w) for kind, words in d["keywords"].items() for w in words],
+        )
+        conn.executemany(
+            "INSERT INTO command_endings VALUES (?)", [(e,) for e in d["command_endings"]]
+        )
+        conn.executemany(
+            "INSERT INTO action_commands VALUES (?,?,?)",
+            [(p, act, ack) for p, (act, ack) in d["action_commands"].items()],
+        )
+        conn.executemany(
+            "INSERT INTO scenario_triggers VALUES (?,?)",
+            list(d["scenario_triggers"].items()),
+        )
+        conn.executemany(
+            "INSERT INTO factory_rules VALUES (?,?,?,?,?)",
+            [tuple(r) for r in d["factory_rules"]],
+        )
+        conn.executemany(
+            "INSERT INTO settings VALUES (?,?,?)",
+            [(k, v, now) for k, v in d["settings"].items()],
+        )
+        conn.executemany(
+            "INSERT INTO roster VALUES (?,?)",
+            [(name, "직원명단.txt") for name in d["roster"]],
+        )
+        # phrases 테이블은 '추가 문구' 전용 — 시드는 비워 두고 기본 문구는 코드에 둔다.
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _connect(db_path):
+    p = Path(db_path or DEFAULT_DB)
+    return sqlite3.connect(p) if p.is_file() else None
+
+
+def _col_or_default(sql, params, default, db_path):
+    """1열 조회 → tuple. DB 없음·빈 결과·오류는 전부 코드 기본값."""
+    conn = _connect(db_path)
+    if conn is None:
+        return tuple(default)
+    try:
+        rows = [r[0] for r in conn.execute(sql, params)]
+        return tuple(rows) if rows else tuple(default)
+    except sqlite3.Error:
+        return tuple(default)
+    finally:
+        conn.close()
+
+
+def words(kind, default, db_path=None):
+    """keywords 테이블의 kind별 단어 목록 (비어 있으면 기본값)."""
+    return _col_or_default(
+        "SELECT word FROM keywords WHERE kind=? ORDER BY rowid",
+        (kind,),
+        default,
+        db_path,
+    )
+
+
+def command_endings(default, db_path=None):
+    """명령 어미 목록 — 긴 것부터 시도하는 기존 규칙을 그대로 둔다."""
+    rows = _col_or_default("SELECT ending FROM command_endings", (), default, db_path)
+    return sorted(rows, key=len, reverse=True)
+
+
+def action_commands(default, db_path=None):
+    """phrase → (action, ack). DB가 있으면 DB가 정본 + 보호 구문 강제."""
+    base = dict(default)
+    conn = _connect(db_path)
+    if conn is not None:
+        try:
+            rows = conn.execute("SELECT phrase, action, ack FROM action_commands").fetchall()
+            if rows:
+                base = {p: (a, ack) for p, a, ack in rows}
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+    for p in PROTECTED_ACTIONS:
+        if p in default:
+            base[p] = default[p]
+    return base
+
+
+def scenario_triggers(default, db_path=None):
+    """phrase → scenario 이름."""
+    conn = _connect(db_path)
+    if conn is None:
+        return dict(default)
+    try:
+        rows = conn.execute(
+            "SELECT phrase, scenario FROM scenario_triggers ORDER BY rowid"
+        ).fetchall()
+        return dict(rows) if rows else dict(default)
+    except sqlite3.Error:
+        return dict(default)
+    finally:
+        conn.close()
+
+
+def factory_rules(db_path=None):
+    """(keyword, endpoint, needs_line, attach_line, priority) 우선순위순."""
+    import factorylink  # 지연 임포트 — 기본값의 정본은 저쪽 모듈
+
+    conn = _connect(db_path)
+    if conn is not None:
+        try:
+            rows = [
+                tuple(r)
+                for r in conn.execute(
+                    "SELECT keyword, endpoint, needs_line, attach_line, priority"
+                    " FROM factory_rules ORDER BY priority, rowid"
+                )
+            ]
+            if rows:
+                return rows
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+    return sorted((tuple(r) for r in factorylink.DEFAULT_RULES), key=lambda r: r[4])
+
+
+def setting(key, default, cast=str, db_path=None):
+    """settings 키 하나 — 키가 있으면(빈 문자열도) 그 값, 없으면 기본값."""
+    conn = _connect(db_path)
+    if conn is not None:
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            if row is not None:
+                try:
+                    return cast(row[0])
+                except (TypeError, ValueError):
+                    return default
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+    return default
+
+
+def roster(default, db_path=None):
+    """신원 확인 명단 — 행이 있으면 DB가 정본(퇴사자 삭제 가능), 없으면 파일 명단."""
+    return _col_or_default("SELECT name FROM roster ORDER BY rowid", (), default, db_path)
+
+
+def all_phrases(db_path=None):
+    """DB 추가 문구 전체 [(category, phrase), ...] — 기본 문구는 코드에 둔다."""
+    conn = _connect(db_path)
+    if conn is None:
+        return []
+    try:
+        return [
+            tuple(r)
+            for r in conn.execute("SELECT category, phrase FROM phrases ORDER BY rowid").fetchall()
+        ]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
+def _masked(key, value):
+    return "***" if _SENSITIVE_KEY_RE.search(key) else value
+
+
+def dump(db_path=DEFAULT_DB):
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = [
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        ]
+        out = {}
+        for t in tables:
+            cols = [d[0] for d in conn.execute(f'SELECT * FROM "{t}"').description]
+            rows = [dict(zip(cols, r, strict=False)) for r in conn.execute(f'SELECT * FROM "{t}"')]
+            if t == "settings":
+                for r in rows:
+                    r["value"] = _masked(r["key"], r["value"])
+            out[t] = rows
+        return out
+    finally:
+        conn.close()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB)
+    ap.add_argument("--seed", action="store_true", help="코드 기본값으로 재생성")
+    ap.add_argument("--dump", action="store_true", help="테이블 전체 JSON 출력")
+    ap.add_argument("--set", nargs=2, metavar=("KEY", "VALUE"), help="settings 변경")
+    ap.add_argument(
+        "--add",
+        nargs=2,
+        metavar=("KIND", "WORD"),
+        help=f"keywords 추가 ({'|'.join(_KEYWORD_KINDS)})",
+    )
+    ap.add_argument("--del", dest="remove", nargs=2, metavar=("KIND", "WORD"), help="keywords 삭제")
+    ap.add_argument("--add-roster", metavar="NAME", help="직원 명단에 추가")
+    ap.add_argument("--del-roster", metavar="NAME", help="직원 명단에서 삭제")
+    ap.add_argument("--add-phrase", nargs=2, metavar=("CAT", "TEXT"), help="응답 문구 추가")
+    ap.add_argument("--del-phrase", nargs=2, metavar=("CAT", "TEXT"), help="응답 문구 삭제")
+    args = ap.parse_args()
+    if args.seed:
+        seed(args.db)
+        print(f"[store] seeded {args.db}")
+    if args.set:
+        conn = sqlite3.connect(args.db)
+        try:
+            conn.executescript(SCHEMA)
+            conn.execute(
+                "INSERT INTO settings VALUES (?,?,?) ON CONFLICT(key)"
+                " DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (
+                    args.set[0],
+                    args.set[1],
+                    datetime.now(KST).isoformat(timespec="seconds"),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        print(f"[store] {args.set[0]} = {_masked(args.set[0], args.set[1])}")
+    if args.add or args.remove:
+        conn = sqlite3.connect(args.db)
+        try:
+            conn.executescript(SCHEMA)
+            if args.add:
+                kind, word = args.add
+                if kind not in _KEYWORD_KINDS:
+                    ap.error(f"kind must be one of {_KEYWORD_KINDS}")
+                conn.execute("INSERT OR IGNORE INTO keywords VALUES (?,?)", (kind, word))
+                print(f"[store] +{kind}: {word}")
+            if args.remove:
+                kind, word = args.remove
+                n = conn.execute(
+                    "DELETE FROM keywords WHERE kind=? AND word=?", (kind, word)
+                ).rowcount
+                print(f"[store] -{kind}: {word} ({n}건)")
+            conn.commit()
+        finally:
+            conn.close()
+    if args.add_roster or args.del_roster or args.add_phrase or args.del_phrase:
+        conn = sqlite3.connect(args.db)
+        try:
+            conn.executescript(SCHEMA)
+            if args.add_roster:
+                conn.execute(
+                    "INSERT OR IGNORE INTO roster VALUES (?,?)",
+                    (args.add_roster, "cli"),
+                )
+                print(f"[store] +roster: {args.add_roster}")
+            if args.del_roster:
+                n = conn.execute("DELETE FROM roster WHERE name=?", (args.del_roster,)).rowcount
+                print(f"[store] -roster: {args.del_roster} ({n}건)")
+            if args.add_phrase:
+                conn.execute("INSERT OR IGNORE INTO phrases VALUES (?,?)", tuple(args.add_phrase))
+                print(f"[store] +phrase[{args.add_phrase[0]}]: {args.add_phrase[1]}")
+            if args.del_phrase:
+                n = conn.execute(
+                    "DELETE FROM phrases WHERE category=? AND phrase=?",
+                    tuple(args.del_phrase),
+                ).rowcount
+                print(f"[store] -phrase[{args.del_phrase[0]}] ({n}건)")
+            conn.commit()
+        finally:
+            conn.close()
+    if args.dump:
+        print(json.dumps(dump(args.db), ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
