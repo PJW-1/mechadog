@@ -63,6 +63,25 @@ def cfg() -> dict:
     return yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
 
 
+@pytest.fixture
+def committed_devices_dir(tmp_path: Path) -> Path:
+    """커밋된 개체 프로파일만 담은 디렉터리. `load_config(devices_dir=...)` 에 준다.
+
+    `load_config` 는 `<device>.local.yaml` 이 있으면 겹쳐 읽는다(`config.py`).
+    저장소의 정본을 검사하는 시험이 실제 `config/devices/` 를 가리키면 **오버레이
+    값을 보고 판정한다.** 그 파일은 실기 주소를 적어 두는 곳이므로, 결과적으로
+    실기를 만지는 사람의 PC 에서만 시험이 깨진다 — CI 는 오버레이가 없어 영원히
+    초록이다. 빨간 화면이 일상이 되면 진짜 회귀도 같이 묻힌다.
+
+    커밋본만 복사해 그 경로를 끊는다.
+    """
+    source = ROOT / "config" / "devices"
+    for path in source.glob("*.yaml"):
+        if not path.name.endswith(".local.yaml"):
+            (tmp_path / path.name).write_bytes(path.read_bytes())
+    return tmp_path
+
+
 def load_jsonl(path: Path) -> list[dict]:
     """골든 픽스처 로더. 빈 줄은 건너뛴다."""
     assert path.exists(), f"픽스처 없음: {path}"
