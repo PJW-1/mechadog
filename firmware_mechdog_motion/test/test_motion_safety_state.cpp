@@ -34,12 +34,16 @@ int main() {
   state.note_move(0.0F, 20.0F);
   state.enter_service();
   check(state.safe_latched && !state.walking && state.service_mode);
-  check(!state.can_move() && state.can_action());
+  // SERVICE 는 ACTION 도 막는다. 이 모드에서만 루프 워치독이 무장하고(750ms)
+  // 벤더 action_run 은 1초 남짓 blocking 이라, 받아주면 정비 중 보드가 재부팅된다.
+  check(!state.can_move() && !state.can_action());
 
   // RESET_SAFE may be acknowledged during SERVICE, but leaving SERVICE must
   // re-latch. The operator then performs a fresh post-maintenance reset.
   state.reset_safe();
   check(!state.safe_latched && state.service_mode && !state.can_move());
+  // 래치를 풀어도 SERVICE 인 동안에는 ACTION 이 다시 열리지 않는다.
+  check(!state.can_action());
   state.exit_service();
   check(state.safe_latched && !state.walking && !state.service_mode);
   check(!state.can_move() && state.can_action());
