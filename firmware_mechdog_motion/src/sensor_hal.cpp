@@ -113,6 +113,10 @@ SensorQMI8658 g_qmi;
 Madgwick g_filter;
 esp_adc_cal_characteristics_t g_battery_adc_chars = {};
 SemaphoreHandle_t g_snapshot_mutex = nullptr;
+// Wire 시퀀스 소유권. 이 태스크 밖의 I2C 접근(OTA 라이브 진단)도 같은 뮤텍스를
+// 잡는다. 재귀 뮤텍스: read_imu 가 잡은 채로 안쪽 read_bytes 도 다시 잡는다.
+StaticSemaphore_t g_wire_mutex_storage;
+SemaphoreHandle_t g_wire_mutex = nullptr;
 TaskHandle_t g_sensor_task = nullptr;
 AcquisitionRecord g_published;
 SensorError g_start_error = SensorError::Starting;
@@ -139,23 +143,30 @@ void publish_performance(uint64_t now_us) {
   xSemaphoreGive(g_performance_mutex);
 }
 
-// This task exclusively owns Wire. The vendor's IMU task (homeostasis) and its
-// other IIC1 features are never started by our sources (sensor_hal.h).
+// This task owns Wire sequences through g_wire_mutex; the OTA live-diagnostics
+// handlers take the same recursive mutex so a write+read pair is never split
+// by another task. The vendor's IMU task (homeostasis) and its other IIC1
+// features are never started by our sources (sensor_hal.h).
 // No I2C operation occurs while the snapshot mutex is held.
 bool read_bytes(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
   Wire.beginTransmission(address);
   const bool register_written = Wire.write(reg) == 1;
   const uint8_t result = Wire.endTransmission(false);
   // ESP32 Wire defers a repeated START transaction and retains its mutex until
   // requestFrom. Complete that path even when preparing the register failed.
   const size_t received = Wire.requestFrom(address, length, true);
-  if (!register_written || result != 0 || received != length) return false;
-  for (size_t index = 0; index < length; ++index) {
+  bool ok = register_written && result == 0 && received == length;
+  for (size_t index = 0; ok && index < length; ++index) {
     const int byte = Wire.read();
-    if (byte < 0) return false;
+    if (byte < 0) {
+      ok = false;
+      break;
+    }
     out[index] = static_cast<uint8_t>(byte);
   }
-  return true;
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  return ok;
 }
 
 // Same read, but the register write ends with STOP before a fresh read request —
@@ -164,16 +175,21 @@ bool read_bytes(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
 // byte as 0, so distances wrapped every 25.6 cm (2026-09-15 target test: 30 cm
 // read 3.4-4.0 cm, 100 cm read 0-25.5 cm). The IMU keeps the repeated START.
 bool read_bytes_after_stop(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
   Wire.beginTransmission(address);
   const bool register_written = Wire.write(reg) == 1;
-  if (Wire.endTransmission(true) != 0 || !register_written) return false;
-  if (Wire.requestFrom(address, length, true) != length) return false;
-  for (size_t index = 0; index < length; ++index) {
+  bool ok = register_written && Wire.endTransmission(true) == 0 &&
+            Wire.requestFrom(address, length, true) == length;
+  for (size_t index = 0; ok && index < length; ++index) {
     const int byte = Wire.read();
-    if (byte < 0) return false;
+    if (byte < 0) {
+      ok = false;
+      break;
+    }
     out[index] = static_cast<uint8_t>(byte);
   }
-  return true;
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  return ok;
 }
 
 void publish(const AcquisitionRecord& record) {
@@ -220,24 +236,27 @@ SensorError initialize_imu() {
 }
 
 bool read_imu(IMUdata& acc, IMUdata& gyr, SensorError& error) {
+  // g_qmi (SensorLib) does its own multi-op Wire sequences; hold the bus mutex
+  // across the whole status+accel+gyro read so OTA diagnostics cannot split it.
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
   // v0.2.1 getDataReady() masks an error (-1) into true. Read and validate the
   // status byte directly instead, and require fresh data from both sensors.
   uint8_t status = 0;
-  if (!read_bytes(kImuAddress, 0x2E, &status, 1)) {
-    error = SensorError::ReadFailed;
-    return false;
+  bool ok = read_bytes(kImuAddress, 0x2E, &status, 1);
+  if (ok && (status & 0x03) != 0x03) ok = false;
+  if (ok &&
+      (!g_qmi.getAccelerometer(acc.x, acc.y, acc.z) || !g_qmi.getGyroscope(gyr.x, gyr.y, gyr.z))) {
+    ok = false;
   }
-  if ((status & 0x03) != 0x03) {
-    error = SensorError::ReadFailed;
-    return false;
-  }
-  if (!g_qmi.getAccelerometer(acc.x, acc.y, acc.z) || !g_qmi.getGyroscope(gyr.x, gyr.y, gyr.z)) {
-    error = SensorError::ReadFailed;
-    return false;
-  }
-  if (!isfinite(acc.x) || !isfinite(acc.y) || !isfinite(acc.z) || !isfinite(gyr.x) ||
-      !isfinite(gyr.y) || !isfinite(gyr.z) || (acc.x == 0.0f && acc.y == 0.0f && acc.z == 0.0f)) {
+  if (ok &&
+      (!isfinite(acc.x) || !isfinite(acc.y) || !isfinite(acc.z) || !isfinite(gyr.x) ||
+       !isfinite(gyr.y) || !isfinite(gyr.z) || (acc.x == 0.0f && acc.y == 0.0f && acc.z == 0.0f))) {
     error = SensorError::InvalidReading;
+    ok = false;
+  }
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  if (!ok) {
+    if (error != SensorError::InvalidReading) error = SensorError::ReadFailed;
     return false;
   }
   error = SensorError::None;
@@ -522,6 +541,13 @@ bool SensorHal::begin() {
     g_start_error = SensorError::TaskCreationFailed;
     return false;
   }
+  if (g_wire_mutex == nullptr) {
+    g_wire_mutex = xSemaphoreCreateRecursiveMutexStatic(&g_wire_mutex_storage);
+  }
+  if (g_wire_mutex == nullptr) {
+    g_start_error = SensorError::TaskCreationFailed;
+    return false;
+  }
   if (xTaskCreatePinnedToCore(sensor_task, "MechDogSensors", 4096, nullptr, 3, &g_sensor_task,
                               MECHADOG_SENSOR_CORE) != pdPASS) {
     g_sensor_task = nullptr;
@@ -578,6 +604,25 @@ SensorSnapshot SensorHal::snapshot(uint32_t now_ms) const {
 #else
   (void)now_ms;
   return SensorSnapshot{};
+#endif
+}
+
+// OTA 라이브 진단 같은 비-센서 태스크 I2C 접근이 잡는 버스 뮤텍스.
+// nullptr 이면(센서 태스크 미시작/비활성 빌드) 버스를 쓰는 태스크가 없으므로
+// 그대로 진행해도 된다고 보고 true 를 돌려준다.
+bool lockI2cBus(uint32_t wait_ms) {
+#if MECHADOG_ENABLE_SENSORS
+  if (g_wire_mutex == nullptr) return true;
+  return xSemaphoreTakeRecursive(g_wire_mutex, pdMS_TO_TICKS(wait_ms)) == pdTRUE;
+#else
+  (void)wait_ms;
+  return true;
+#endif
+}
+
+void unlockI2cBus() {
+#if MECHADOG_ENABLE_SENSORS
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
 #endif
 }
 

@@ -102,13 +102,14 @@ void rebootDeadline(void*) {
 
 // I2C 버스에 무엇이 달려 있는지 부팅 시 한 번만 읽어 둔다 (WBS 2.1.2).
 //
-// **왜 부팅 시점인가.** SensorHal 의 센서 태스크가 Wire 를 배타적으로 소유한다
-// (sensor_hal.cpp 참조). HTTP 핸들러에서 같은 버스를 건드리면 초음파·IMU 읽기와
-// 경쟁하는데, 그 둘은 전도 감지와 정지 판정에 쓰이는 Tier 1 안전 입력이다.
-// 그래서 beginStationaryOta() 안에서 — 센서 태스크가 생성되기 전에 — 한 번만
-// 스캔하고, /i2c 는 저장된 문자열을 돌려주기만 한다.
+// **왜 부팅 시점인가.** 부팅 스냅샷은 센서 태스크가 생성되기 전에 한 번만 돌아
+// 경쟁이 없다. 요청 시점 재스캔은 /i2c/live 가 mechadog::lockI2cBus() 로 센서
+// 태스크와 트랜잭션을 상호배제한다 — HTTP 핸들러에서 같은 버스를 건드리는 동안
+// 초음파·IMU 읽기와 시퀀스가 섞이지 않게 한다.
 //
 // 주소만으로 부품을 확정할 수는 없다. 알려진 후보를 함께 적고 판단은 사람이 한다.
+// 주의: WonderEcho 의 0x64 는 장치 주소가 아니라 0x34 슬레이브 안의 "인식 결과"
+// 레지스터다 (공식 I2C 프로토콜 문서). 외부 버스에서 응답해야 할 주소는 0x34 이다.
 constexpr int kBus1Sda = 22;  // IIC1 — sensor_hal.cpp 의 kSdaPin/kSclPin 과 같아야 한다
 constexpr int kBus1Scl = 23;
 constexpr int kBus2Sda = 19;  // IIC2 — 공식 IoT 레슨이 Wi-Fi 모듈(0x69)에 쓰는 버스
@@ -145,13 +146,207 @@ void scanI2cOnce() {
   used += static_cast<size_t>(snprintf(g_i2c_scan + used, cap - used, "],\"iic2\":["));
   appendFound(Wire1, kBus2Sda, kBus2Scl, g_i2c_scan, cap, used);
   snprintf(g_i2c_scan + used, cap - used,
-           "],\"known\":{\"0x64\":\"WonderEcho voice\",\"0x69\":\"wifi\","
+           "],\"known\":{\"0x34\":\"WonderEcho i2c\",\"0x69\":\"wifi\","
            "\"0x6A\":\"QMI8658 imu\",\"0x77\":\"sonar\"}}");
 }
 
 esp_err_t i2cHandler(httpd_req_t* req) {
   if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
   return reply(req, "200 OK", g_i2c_scan);
+}
+
+// ---- 요청 시점 라이브 진단 ----
+//
+// 부팅 스냅샷과 달리 핸들러가 돌 때 버스를 다시 훑는다. 모든 Wire 접근은
+// mechadog::lockI2cBus() 를 잡고 주소마다 푼다 — 한 번에 오래 잠그면 센서
+// 태스크가 40 ms 주기를 넘겨 CycleElapsed 로 IMU 가 재부팅까지 멈춘다.
+// 단일 주소 프로브는 /i2c/live?bus=1&from=0x64&to=0x64 처럼 범위를 좁혀 쓴다.
+
+// 쿼리 값 파싱: 없으면 기본값 유지(true), 있지만 형식이 나쁘면 false.
+// "0x64" 와 "100" 둘 다 받는다.
+bool queryByte(const char* query, const char* key, uint8_t& out, bool& bad) {
+  char value[8] = {};
+  if (httpd_query_key_value(query, key, value, sizeof(value)) != ESP_OK) return true;
+  char* end = nullptr;
+  const long parsed = strtol(value, &end, 0);
+  if (end == value || *end != '\0' || parsed < 0 || parsed > 0xFF) {
+    bad = true;
+    return false;
+  }
+  out = static_cast<uint8_t>(parsed);
+  return true;
+}
+
+bool queryHas(const char* query, const char* key) {
+  char value[8];
+  return httpd_query_key_value(query, key, value, sizeof(value)) == ESP_OK;
+}
+
+size_t liveScanBus(TwoWire& bus, uint8_t lo, uint8_t hi, char* out, size_t cap, size_t used) {
+  const uint16_t saved_timeout = bus.getTimeOut();
+  bus.setTimeOut(5);  // 멈춘 슬레이브가 SDA 를 붙들어도 주소당 5 ms 에서 끊는다.
+  bool first = true;
+  for (uint16_t addr = lo; addr <= hi; ++addr) {
+    // 잠금 실패는 건너뛴다: 진단 요청이 센서 태스크를 기다리며 멈추지 않게.
+    if (!mechadog::lockI2cBus(20)) continue;
+    bus.beginTransmission(static_cast<uint8_t>(addr));
+    const uint8_t result = bus.endTransmission();
+    mechadog::unlockI2cBus();
+    if (result != 0) continue;
+    const int written = snprintf(out + used, cap - used, "%s\"0x%02X\"", first ? "" : ",",
+                                 static_cast<unsigned>(addr));
+    if (written <= 0 || static_cast<size_t>(written) >= cap - used) break;
+    used += static_cast<size_t>(written);
+    first = false;
+  }
+  bus.setTimeOut(saved_timeout);
+  return used;
+}
+
+esp_err_t i2cLiveHandler(httpd_req_t* req) {
+  if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  char query[96] = {};
+  const size_t qlen = httpd_req_get_url_query_len(req);
+  if (qlen >= sizeof(query) ||
+      (qlen && httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK))
+    return reply(req, "400 Bad Request", "{\"error\":\"query\"}");
+  uint8_t lo = 0x08, hi = 0x77, bus_no = 0;
+  bool bad = false;
+  if (!queryByte(query, "from", lo, bad) || !queryByte(query, "to", hi, bad) ||
+      !queryByte(query, "bus", bus_no, bad) || bad || bus_no > 2)
+    return reply(req, "400 Bad Request", "{\"error\":\"param\"}");
+  if (lo < 0x08) lo = 0x08;  // 예약 영역(0x00-0x07)은 건드리지 않는다.
+  if (hi > 0x77) hi = 0x77;
+  if (hi < lo) hi = lo;
+  const int64_t started = esp_timer_get_time();
+  char body[384];
+  size_t used = static_cast<size_t>(snprintf(body, sizeof(body), "{\"live\":true,\"uptime_ms\":%lu",
+                                             static_cast<unsigned long>(millis())));
+  if (bus_no <= 1) {
+    used += static_cast<size_t>(snprintf(body + used, sizeof(body) - used, ",\"iic1\":["));
+    used = liveScanBus(Wire, lo, hi, body, sizeof(body), used);
+    used += static_cast<size_t>(snprintf(body + used, sizeof(body) - used, "]"));
+  }
+  if (bus_no == 0 || bus_no == 2) {
+    used += static_cast<size_t>(snprintf(body + used, sizeof(body) - used, ",\"iic2\":["));
+    used = liveScanBus(Wire1, lo, hi, body, sizeof(body), used);
+    used += static_cast<size_t>(snprintf(body + used, sizeof(body) - used, "]"));
+  }
+  snprintf(body + used, sizeof(body) - used, ",\"elapsed_ms\":%lu}",
+           static_cast<unsigned long>((esp_timer_get_time() - started) / 1000));
+  return reply(req, "200 OK", body);
+}
+
+// 레지스터 읽기: /i2c/read?addr=0x34&reg=0x64&n=1&stop=0&bus=1
+// stop=0 은 IMU 방식(레지스터 쓰고 repeated START), 1 은 초음파 방식
+// (STOP 후 새 read). 벤더마다 요구 시퀀스가 달라 둘 다 지원한다.
+esp_err_t i2cReadHandler(httpd_req_t* req) {
+  if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  char query[96] = {};
+  const size_t qlen = httpd_req_get_url_query_len(req);
+  if (qlen >= sizeof(query) || qlen == 0 ||
+      httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK)
+    return reply(req, "400 Bad Request", "{\"error\":\"query\"}");
+  uint8_t addr = 0, reg = 0, n = 1, stop = 0, bus_no = 1;
+  bool bad = false;
+  if (!queryHas(query, "addr") || !queryHas(query, "reg"))
+    return reply(req, "400 Bad Request", "{\"error\":\"param_missing\"}");
+  if (!queryByte(query, "addr", addr, bad) || !queryByte(query, "reg", reg, bad) ||
+      !queryByte(query, "n", n, bad) || !queryByte(query, "stop", stop, bad) ||
+      !queryByte(query, "bus", bus_no, bad) || bad || n < 1 || n > 16 || stop > 1 || bus_no < 1 ||
+      bus_no > 2 || addr < 0x08 || addr > 0x77)
+    return reply(req, "400 Bad Request", "{\"error\":\"param\"}");
+  TwoWire& bus = bus_no == 2 ? Wire1 : Wire;
+  uint8_t buf[16] = {};
+  const int64_t started = esp_timer_get_time();
+  if (!mechadog::lockI2cBus(50))
+    return reply(req, "503 Service Unavailable", "{\"error\":\"bus_busy\"}");
+  const uint16_t saved_timeout = bus.getTimeOut();
+  bus.setTimeOut(5);
+  bus.beginTransmission(addr);
+  const bool wrote = bus.write(reg) == 1;
+  const uint8_t tx = bus.endTransmission(stop ? true : false);
+  size_t got = 0;
+  if (wrote && tx == 0) {
+    got = bus.requestFrom(addr, n, true);
+    for (size_t i = 0; i < got && i < sizeof(buf); ++i) {
+      const int b = bus.read();
+      if (b < 0) break;
+      buf[i] = static_cast<uint8_t>(b);
+    }
+  }
+  bus.setTimeOut(saved_timeout);
+  mechadog::unlockI2cBus();
+  char hex[33];
+  toHex(buf, got, hex);
+  char body[192];
+  snprintf(body, sizeof(body),
+           "{\"addr\":\"0x%02X\",\"reg\":\"0x%02X\",\"wrote\":%s,\"tx\":%u,"
+           "\"got\":%u,\"bytes\":\"%s\",\"elapsed_ms\":%lu}",
+           addr, reg, wrote ? "true" : "false", tx, static_cast<unsigned>(got), hex,
+           static_cast<unsigned long>((esp_timer_get_time() - started) / 1000));
+  return reply(req, "200 OK", body);
+}
+
+// 레지스터/데이터 쓰기: POST /i2c/write?addr=0x34&data=6e01
+// data 는 16진 문자열(첫 바이트가 보통 레지스터). WonderEcho 의 0x6E 방송
+// 트리거처럼 쓰기 동작을 실기 확인하는 용도다.
+esp_err_t i2cWriteHandler(httpd_req_t* req) {
+  if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  char query[160] = {};
+  const size_t qlen = httpd_req_get_url_query_len(req);
+  if (qlen >= sizeof(query) || qlen == 0 ||
+      httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK)
+    return reply(req, "400 Bad Request", "{\"error\":\"query\"}");
+  uint8_t addr = 0, bus_no = 1;
+  bool bad = false;
+  char hexdata[65] = {};
+  if (!queryHas(query, "addr") ||
+      httpd_query_key_value(query, "data", hexdata, sizeof(hexdata)) != ESP_OK ||
+      !queryByte(query, "addr", addr, bad) || !queryByte(query, "bus", bus_no, bad) || bad ||
+      bus_no < 1 || bus_no > 2 || addr < 0x08 || addr > 0x77)
+    return reply(req, "400 Bad Request", "{\"error\":\"param\"}");
+  const size_t hexlen = strlen(hexdata);
+  if (hexlen == 0 || hexlen % 2 != 0) return reply(req, "400 Bad Request", "{\"error\":\"data\"}");
+  uint8_t bytes[32];
+  const size_t count = hexlen / 2;
+  for (size_t i = 0; i < count; ++i) {
+    char pair[3] = {hexdata[2 * i], hexdata[2 * i + 1], 0};
+    char* end = nullptr;
+    const long v = strtol(pair, &end, 16);
+    if (end != pair + 2) return reply(req, "400 Bad Request", "{\"error\":\"data\"}");
+    bytes[i] = static_cast<uint8_t>(v);
+  }
+  TwoWire& bus = bus_no == 2 ? Wire1 : Wire;
+  const int64_t started = esp_timer_get_time();
+  if (!mechadog::lockI2cBus(50))
+    return reply(req, "503 Service Unavailable", "{\"error\":\"bus_busy\"}");
+  const uint16_t saved_timeout = bus.getTimeOut();
+  bus.setTimeOut(5);
+  bus.beginTransmission(addr);
+  const size_t wrote = bus.write(bytes, count);
+  const uint8_t tx = bus.endTransmission(true);
+  bus.setTimeOut(saved_timeout);
+  mechadog::unlockI2cBus();
+  char body[160];
+  snprintf(body, sizeof(body), "{\"addr\":\"0x%02X\",\"wrote\":%u,\"tx\":%u,\"elapsed_ms\":%lu}",
+           addr, static_cast<unsigned>(wrote), tx,
+           static_cast<unsigned long>((esp_timer_get_time() - started) / 1000));
+  return reply(req, "200 OK", body);
+}
+
+// 주차·안전 상태에서만 받는 재부팅. pending 이미지 상태로 재부팅하면
+// 부트로더가 롤백하므로 pending 여부를 응답에 포함한다.
+esp_err_t rebootHandler(httpd_req_t* req) {
+  if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  if (g_updating) return reply(req, "409 Conflict", "{\"error\":\"updating\"}");
+  if (!mechadog::otaParkedForReboot())
+    return reply(req, "409 Conflict", "{\"error\":\"not_parked\"}");
+  char body[128];
+  snprintf(body, sizeof(body), "{\"rebooting\":true,\"pending_rollback\":%s}",
+           (g_pending && !g_confirmed) ? "true" : "false");
+  g_reboot.schedule(millis(), 500);
+  return reply(req, "202 Accepted", body);
 }
 
 esp_err_t statusHandler(httpd_req_t* req) {
@@ -276,6 +471,7 @@ void startServer(void*) {
   config.httpd.max_open_sockets = 2;
   config.httpd.recv_wait_timeout = 5;
   config.httpd.send_wait_timeout = 5;
+  config.httpd.max_uri_handlers = 12;
   config.cacert_pem = reinterpret_cast<const uint8_t*>(kCertificate);
   config.cacert_len = sizeof(kCertificate);
   config.prvtkey_pem = reinterpret_cast<const uint8_t*>(kPrivateKey);
@@ -285,10 +481,18 @@ void startServer(void*) {
     const httpd_uri_t confirm = {"/confirm", HTTP_POST, confirmHandler, nullptr};
     const httpd_uri_t update = {"/firmware", HTTP_POST, updateHandler, nullptr};
     const httpd_uri_t i2c = {"/i2c", HTTP_GET, i2cHandler, nullptr};
+    const httpd_uri_t i2c_live = {"/i2c/live", HTTP_GET, i2cLiveHandler, nullptr};
+    const httpd_uri_t i2c_read = {"/i2c/read", HTTP_GET, i2cReadHandler, nullptr};
+    const httpd_uri_t i2c_write = {"/i2c/write", HTTP_POST, i2cWriteHandler, nullptr};
+    const httpd_uri_t reboot = {"/reboot", HTTP_POST, rebootHandler, nullptr};
     g_started = httpd_register_uri_handler(g_server, &status) == ESP_OK &&
                 httpd_register_uri_handler(g_server, &confirm) == ESP_OK &&
                 httpd_register_uri_handler(g_server, &update) == ESP_OK &&
-                httpd_register_uri_handler(g_server, &i2c) == ESP_OK;
+                httpd_register_uri_handler(g_server, &i2c) == ESP_OK &&
+                httpd_register_uri_handler(g_server, &i2c_live) == ESP_OK &&
+                httpd_register_uri_handler(g_server, &i2c_read) == ESP_OK &&
+                httpd_register_uri_handler(g_server, &i2c_write) == ESP_OK &&
+                httpd_register_uri_handler(g_server, &reboot) == ESP_OK;
   }
   Serial.printf("OTA HTTPS: started=%d version=%s port=8443\n", bool(g_started),
                 MECHADOG_OTA_VERSION);
