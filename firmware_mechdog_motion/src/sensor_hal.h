@@ -118,6 +118,14 @@ struct SensorSnapshot {
   bool all_valid() const { return imu_valid && dist_valid && batt_valid; }
 };
 
+// IIC1(Wire) 시퀀스 소유권을 센서 태스크와 공유하는 잠금. OTA 라이브 진단처럼
+// 센서 태스크 밖에서 같은 버스를 건드리는 코드는 잠긴 구간 안에서만 Wire 를
+// 쓴다. write+read 쌍이 다른 태스크에 의해 쪼개지지 않는다.
+// 뮤텍스가 없거나(센서 비활성 빌드, 태스크 미시작) 버스 경쟁자가 없으면
+// lock 은 곧바로 true 를 돌려준다.
+bool lockI2cBus(uint32_t wait_ms);
+void unlockI2cBus();
+
 // One physical sensor set; instantiate once. begin() only starts the dedicated
 // task: true means task creation succeeded, not that any sensor passed its test.
 // All Wire/ADC operations, including initialization, occur inside that task.
