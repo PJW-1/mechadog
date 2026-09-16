@@ -6,6 +6,7 @@
 
 #if MECHADOG_ENABLE_OTA
 #include <Arduino.h>
+#include <Wire.h>
 #include <esp_app_format.h>
 #include <esp_https_server.h>
 #include <esp_ota_ops.h>
@@ -97,6 +98,60 @@ void rebootDeadline(void*) {
   // A pending image has not proved both sensor/loop health and PC reachability.
   // The standard bootloader will roll it back on this restart.
   esp_restart();
+}
+
+// I2C 버스에 무엇이 달려 있는지 부팅 시 한 번만 읽어 둔다 (WBS 2.1.2).
+//
+// **왜 부팅 시점인가.** SensorHal 의 센서 태스크가 Wire 를 배타적으로 소유한다
+// (sensor_hal.cpp 참조). HTTP 핸들러에서 같은 버스를 건드리면 초음파·IMU 읽기와
+// 경쟁하는데, 그 둘은 전도 감지와 정지 판정에 쓰이는 Tier 1 안전 입력이다.
+// 그래서 beginStationaryOta() 안에서 — 센서 태스크가 생성되기 전에 — 한 번만
+// 스캔하고, /i2c 는 저장된 문자열을 돌려주기만 한다.
+//
+// 주소만으로 부품을 확정할 수는 없다. 알려진 후보를 함께 적고 판단은 사람이 한다.
+constexpr int kBus1Sda = 22;  // IIC1 — sensor_hal.cpp 의 kSdaPin/kSclPin 과 같아야 한다
+constexpr int kBus1Scl = 23;
+constexpr int kBus2Sda = 19;  // IIC2 — 공식 IoT 레슨이 Wi-Fi 모듈(0x69)에 쓰는 버스
+constexpr int kBus2Scl = 13;
+
+char g_i2c_scan[320] = "{\"scanned\":false}";
+
+void appendFound(TwoWire& bus, int sda, int scl, char* out, size_t cap, size_t& used) {
+  bus.begin(sda, scl, 100000);
+  // 이 스캔은 setup() 안에서 돈다. 기본 50 ms 타임아웃이면 빈 버스 한 개만 해도
+  // 112 x 50 ms = 5.6 초를 잡아먹고, 슬레이브가 SDA 를 붙들면 더 길어진다.
+  // OTA 로 올린 이미지는 90 초 안에 /confirm 을 받아야 하므로 부팅이 늦어지면
+  // 그대로 롤백된다 - 실제로 이 스캔 때문에 확정 창을 놓친 적이 있다.
+  // 주소당 5 ms 로 묶으면 두 버스 최악이 약 1.1 초다.
+  bus.setTimeOut(5);
+  bool first = true;
+  for (uint8_t addr = 0x08; addr < 0x78; ++addr) {
+    bus.beginTransmission(addr);
+    if (bus.endTransmission() != 0) continue;
+    const int written = snprintf(out + used, cap - used, "%s\"0x%02X\"", first ? "" : ",", addr);
+    if (written <= 0 || static_cast<size_t>(written) >= cap - used) return;
+    used += static_cast<size_t>(written);
+    first = false;
+  }
+  // SensorHal 이 곧 같은 Wire 를 쓴다. 짧은 타임아웃을 남겨두지 않는다.
+  bus.setTimeOut(50);
+}
+
+void scanI2cOnce() {
+  size_t used = 0;
+  const size_t cap = sizeof(g_i2c_scan);
+  used += static_cast<size_t>(snprintf(g_i2c_scan, cap, "{\"scanned\":true,\"iic1\":["));
+  appendFound(Wire, kBus1Sda, kBus1Scl, g_i2c_scan, cap, used);
+  used += static_cast<size_t>(snprintf(g_i2c_scan + used, cap - used, "],\"iic2\":["));
+  appendFound(Wire1, kBus2Sda, kBus2Scl, g_i2c_scan, cap, used);
+  snprintf(g_i2c_scan + used, cap - used,
+           "],\"known\":{\"0x64\":\"WonderEcho voice\",\"0x69\":\"wifi\","
+           "\"0x6A\":\"QMI8658 imu\",\"0x77\":\"sonar\"}}");
+}
+
+esp_err_t i2cHandler(httpd_req_t* req) {
+  if (!authorized(req)) return reply(req, "401 Unauthorized", "{\"error\":\"auth\"}");
+  return reply(req, "200 OK", g_i2c_scan);
 }
 
 esp_err_t statusHandler(httpd_req_t* req) {
@@ -229,9 +284,11 @@ void startServer(void*) {
     const httpd_uri_t status = {"/status", HTTP_GET, statusHandler, nullptr};
     const httpd_uri_t confirm = {"/confirm", HTTP_POST, confirmHandler, nullptr};
     const httpd_uri_t update = {"/firmware", HTTP_POST, updateHandler, nullptr};
+    const httpd_uri_t i2c = {"/i2c", HTTP_GET, i2cHandler, nullptr};
     g_started = httpd_register_uri_handler(g_server, &status) == ESP_OK &&
                 httpd_register_uri_handler(g_server, &confirm) == ESP_OK &&
-                httpd_register_uri_handler(g_server, &update) == ESP_OK;
+                httpd_register_uri_handler(g_server, &update) == ESP_OK &&
+                httpd_register_uri_handler(g_server, &i2c) == ESP_OK;
   }
   Serial.printf("OTA HTTPS: started=%d version=%s port=8443\n", bool(g_started),
                 MECHADOG_OTA_VERSION);
@@ -243,6 +300,9 @@ void startServer(void*) {
 namespace mechadog {
 bool beginStationaryOta() {
 #if MECHADOG_ENABLE_OTA
+  // 센서 태스크가 Wire 를 잡기 전에 끝낸다. setup() 에서 이 함수가
+  // g_sensors.begin() 보다 먼저 호출되는 순서에 의존한다.
+  scanI2cOnce();
   const auto* running = esp_ota_get_running_partition();
   const auto* next = esp_ota_get_next_update_partition(nullptr);
   if (!running || !next || running->size != kSlotSize || next->size != kSlotSize ||
