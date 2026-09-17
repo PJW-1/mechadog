@@ -21,13 +21,24 @@ FRAME_WIDTH = 640
 MIDPOINT = FRAME_WIDTH / 2
 
 
-def _tracker(cfg: dict, *, deadzone: float | None = None) -> LockOnTracker:
+#: `mechdog-01` 실측 (2026-09-11~12 · `config/devices/mechdog-01.yaml`).
+#: 우선회 데드밴드이며, 이보다 작은 명령은 **로봇이 아무것도 하지 않는다.**
+STEERING_DEADBAND_DEG = 3.3
+#: 그 기체의 직진 요 편향을 0 으로 만드는 값.
+STRAIGHT_BIAS_DEG = -8.0
+
+
+def _tracker(
+    cfg: dict, *, deadzone: float | None = None, bias: float | None = None
+) -> LockOnTracker:
     merged = {
         "fsm": dict(cfg["fsm"]),
         "gait": dict(cfg["gait"]),
     }
     if deadzone is not None:
         merged["fsm"]["track_deadzone_px"] = deadzone
+    if bias is not None:
+        merged["gait_calibration"] = {"straight_bias_deg": bias}
     return LockOnTracker(merged)
 
 
@@ -163,3 +174,51 @@ def test_same_input_gives_same_output(cfg):
     first = t.update(MIDPOINT + 137, FRAME_WIDTH)
     t.update(MIDPOINT - 300, FRAME_WIDTH)
     assert t.update(MIDPOINT + 137, FRAME_WIDTH) == first
+
+
+# ── 직진 편향 보정 (2026-09-18 실기) ─────────────────────────────
+
+
+def test_bias_is_exactly_the_units_measured_value(cfg):
+    """보정은 **그 기체의 실측값 그대로**이고, 값이 없는 기체는 건드리지 않는다.
+
+    다른 기체의 값을 빌려오면 방향도 크기도 달라 더 비뚤어진다 (HARDWARE 3절).
+    """
+    off_centre = MIDPOINT + 200
+    plain = _tracker(cfg).update(off_centre, FRAME_WIDTH)
+    biased = _tracker(cfg, bias=STRAIGHT_BIAS_DEG).update(off_centre, FRAME_WIDTH)
+    assert biased.angle == pytest.approx(plain.angle + STRAIGHT_BIAS_DEG)
+    assert biased.deviation_px == plain.deviation_px, "편차는 관측이라 보정이 닿지 않는다"
+
+
+def test_bias_stays_off_while_centred(cfg):
+    """중앙에서는 `step=0` 이라 걷지 않는다 — 걷지 않으면 드리프트도 없다.
+
+    서 있는 로봇에 편향만 주면 **제자리에서 돌라는 말**이 된다.
+    """
+    out = _tracker(cfg, bias=STRAIGHT_BIAS_DEG).update(MIDPOINT, FRAME_WIDTH)
+    assert out == TrackCommand(step=0.0, angle=0.0, centered=True, deviation_px=0.0)
+
+
+def test_bias_lifts_a_right_turn_out_of_the_steering_deadband(cfg):
+    """⚠️ **이것이 2026-09-18 실기에서 오른쪽을 못 쫓은 이유다.**
+
+    데드존 바로 바깥의 오른쪽 타겟은 `-0.77°` 를 만드는데, 기체의 조향 데드밴드가
+    `3.3°` 라 **로봇이 아무것도 하지 않는다.** 그동안 직진 드리프트는 왼쪽으로
+    계속 돌리므로 타겟에서 멀어진다. 편향을 더해야 명령이 데드밴드 밖으로 나간다.
+    """
+    right_of_centre = MIDPOINT + 50.8
+    before = _tracker(cfg).update(right_of_centre, FRAME_WIDTH)
+    assert abs(before.angle) < STEERING_DEADBAND_DEG, "보정 없이는 데드밴드에 먹힌다"
+
+    after = _tracker(cfg, bias=STRAIGHT_BIAS_DEG).update(right_of_centre, FRAME_WIDTH)
+    assert abs(after.angle) > STEERING_DEADBAND_DEG, "보정 뒤에는 로봇이 반응한다"
+    assert after.angle < 0, "오른쪽 타겟이면 우선회 쪽으로 더 밀려야 한다"
+    assert after.step > 0, "조향에는 보폭이 따라붙는다 (DR-11)"
+
+
+def test_biased_angle_still_stays_within_the_protocol_range(cfg):
+    """편향을 더해도 규약 범위를 넘지 않는다 — 넘으면 로봇이 잘라서 받는다."""
+    t = _tracker(cfg, bias=STRAIGHT_BIAS_DEG)
+    for x in (0, 1, 100, 320, 500, 639, 640):
+        assert -30.0 <= t.update(x, FRAME_WIDTH).angle <= 30.0
