@@ -16,7 +16,7 @@ import voice_pipeline as vp
 
 
 def _serve(db_path, stale_after=21600):
-    factory_mes.Handler.db_path = db_path
+    factory_mes.Handler.src = factory_mes.Backend(db_path=db_path)
     factory_mes.Handler.stale_after = stale_after
     srv = ThreadingHTTPServer(("127.0.0.1", 0), factory_mes.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
