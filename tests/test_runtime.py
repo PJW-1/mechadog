@@ -1166,6 +1166,31 @@ def test_no_box_raises_no_track_event(config: dict, clock: FakeClock) -> None:
     assert runtime.behavior.state == "TRACK", "박스가 없다고 중앙 정렬로 보지 않는다"
 
 
+def test_track_summary_keeps_the_jitter_visible(config: dict, clock: FakeClock, caplog) -> None:
+    """⚠️ **부호를 그대로 평균 내면 미세진동이 0 으로 상쇄된다.**
+
+    좌우로 떠는 것이 DoD 가 확인하라는 바로 그것인데, 평균이 0 이면 원자료만 보고
+    *"편차가 없었다"* 고 읽는다. 절대값을 넣어야 실기 근거가 된다 (`3.5.4`).
+    """
+    import logging
+
+    left = (20.0, 200.0, 60.0, 400.0)
+    right = (580.0, 200.0, 620.0, 400.0)
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        runtime.tick(0)  # 첫 호출은 요약 주기를 **시작만** 한다
+        for i in range(12):
+            box = left if i % 2 else right
+            _sighting(runtime, vision, seq=i + 1, at_ms=100 * (i + 1), box=box)
+    digests = [rec for rec in caplog.records if getattr(rec, "event", "") == "telemetry_summary"]
+    assert digests, "1초가 지났으면 요약이 나온다"
+    digest = digests[0].detail
+    assert digest["track_dev_px_avg"] > 200, "좌우 280px 진동이 0 으로 상쇄되면 안 된다"
+    assert digest["track_angle_deg_avg"] > 10, "조향각도 마찬가지다"
+    assert digest["track_off_center"] >= 2, "데드존 밖에 몇 프레임 있었는지가 남는다"
+
+
 # ── 구역 변화 감지 배선 (WBS 3.6.x · FR-8) ───────────────────────
 
 ZONE_MARKER = 7

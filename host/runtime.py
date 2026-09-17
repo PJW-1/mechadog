@@ -463,6 +463,13 @@ class Runtime:
                 LOG.error("track_unusable", reason=str(exc))
             return
         self._edge.changed("track_config_bad", False)
+        # 실기 검증 근거 — 1초 요약(`telemetry_summary`)에 추종 지표를 같이 싣는다.
+        # ⚠️ **절대값을 넣는다.** 부호를 그대로 평균 내면 좌우로 떠는 것이 0 으로
+        # 상쇄돼 미세진동이 감춰진다 — DoD 가 확인하라는 바로 그것이다 (`3.5.4`).
+        self._summary.observe("track_dev_px", abs(command.deviation_px))
+        self._summary.observe("track_angle_deg", abs(command.angle))
+        if not command.centered:
+            self._summary.count("track_off_center")
         # ⚠️ **전이를 먼저, 지시는 그다음이다.** `TRACK` 진입 훅이 지난 추종의
         # 잔상을 지우므로(`TrackSequence.forget`), 순서를 뒤집으면 방금 넣은 지시가
         # 함께 지워져 **추종 첫 주기가 통째로 정지로 나간다.**
