@@ -191,6 +191,21 @@ fallback이다. 확장 방향(해도 되는 것과 구조상 하면 안 되는 �
 - **장애 시**: DB 없음·테이블 없음·SQL 오류는 전부 코드 기본값으로 fallback —
   저장소 문제가 음성 루프를 죽이지 않는다.
 
+### 원격 백엔드 — Supabase
+
+`SUPABASE_URL` + `SUPABASE_ANON_KEY` 환경변수가 있으면 읽기는 Supabase
+PostgREST가 우선이다. 사슬은 `Supabase → 로컬 voice_data.db → 코드 기본값` —
+원격이 실패하거나 테이블이 비어 있으면 다음 단계로 내려간다(테이블 통삭제
+실수가 명단을 즉발로 날리지 않게). 매 턴 왕복을 막는 TTL 캐시는
+`VOICE_STORE_TTL`초(기본 60). 쓰기(`--remote` 플래그)는
+`SUPABASE_WRITE_KEY`(service role)가 필요 — 음성 PC에는 anon 키만 둔다.
+테이블 스키마와 anon 읽기 RLS 정책은 `supabase_setup.sql` 참조.
+
+가상 MES도 같은 구조다: `factory_mes.py`를 `MES_BACKEND=supabase`로 띄우면
+같은 Supabase 프로젝트의 MES 테이블을 읽는다. `/api/*` 응답 계약
+(`data`·`source`·`updated_at`·행 단위 `stale`·`unknown_line`)은 백엔드와
+무관하게 동일 — 이 판정은 서버가 아니라 이 코드가 한다.
+
 운영 CLI:
 
 ```bash
@@ -201,6 +216,8 @@ python voice_store.py --add wake 메카독이      # 웨이크워드 추가
 python voice_store.py --add-roster 홍길동      # 직원 명단 추가
 python voice_store.py --del-roster 김민수      # 퇴사자 삭제
 python voice_store.py --add-phrase greeting "안녕하세요, 현장지원 로봇입니다."
+# 같은 명령에 --remote를 붙이면 Supabase에 적용 (SUPABASE_WRITE_KEY 필요)
+python voice_store.py --seed --remote         # 코드 기본값을 Supabase로 업서트
 ```
 
 ## 10. 운영 메모

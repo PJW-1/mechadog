@@ -80,6 +80,12 @@ DB는 배포 필수품이 아니라 운영 오버레이며, git에도 올라가�
 명단·트리거·문구·설정의 테이블 구조와 CLI는 `voice_store.py` docstring과
 [VOICE_ROUTING.md](VOICE_ROUTING.md) 9절에 정리돼 있다.
 
+**Supabase 백엔드.** `SUPABASE_URL`+`SUPABASE_ANON_KEY`가 있으면 voice_store 읽기는
+PostgREST가 우선하고(60s TTL 캐시), 실패·빈 테이블이면 로컬 sqlite → 코드 기본값으로 내려간다.
+가상 MES도 `MES_BACKEND=supabase`로 띄우면 같은 프로젝트의 테이블을 읽는다 — `/api/*` 계약과
+stale/unknown_line 판정은 백엔드 무관하게 동일하다. 스키마·RLS·데모 시드는
+`supabase_setup.sql`, 원격 쓰기는 `voice_store.py --remote`(service 키 필요)로 한다.
+
 ```
 [음성 모듈]                                   [PC]
  마이크 → 코덱 ADC → Speex 압축(3 KB/s) ──→ faster-whisper medium (CUDA)

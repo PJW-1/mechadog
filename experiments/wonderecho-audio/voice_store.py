@@ -3,11 +3,21 @@
 `voice_data.db`(SQLite)가 있으면 테이블 내용이 코드 기본값보다 우선한다.
 없으면 코드 기본값 그대로 — **DB는 필수가 아니라 오버레이**다.
 
-    python voice_store.py --seed          # 코드 기본값으로 DB 생성/재생성
+    python voice_store.py --seed          # 코드 기본값으로 로컬 DB 생성/재생성
     python voice_store.py --dump          # 현재 테이블 내용 출력
     python voice_store.py --set KEY VALUE # settings 값 변경
     python voice_store.py --add KIND WORD # keywords 행 추가 (wake/sleep/...)
     python voice_store.py --del KIND WORD # keywords 행 삭제
+    python voice_store.py --remote ...    # 같은 명령을 Supabase에 적용 (SUPABASE_WRITE_KEY 필요)
+    python voice_store.py --seed --remote # 코드 기본값을 Supabase로 밀어 넣기
+
+원격 백엔드(Supabase):
+- SUPABASE_URL + SUPABASE_ANON_KEY가 있으면 읽기는 PostgREST가 우선이고
+  TTL 캐시(기본 60s, VOICE_STORE_TTL로 변경)로 매 턴 왕복을 막는다.
+- 읽기 사슬: Supabase → 로컬 voice_data.db → 코드 기본값. 앞 단계가
+  "비어 있거나 실패"하면 다음으로 내려간다 — 네트워크 장애에도 루프가 산다.
+- 쓰기(--remote)는 SUPABASE_WRITE_KEY(service role)가 필요하다.
+  음성 PC에는 anon 키만 두고 쓰기 키는 관리 도구에만 둘 것.
 
 설계 원칙:
 - 기본값의 정본은 각 소비자 모듈의 상수다. --seed는 그 값을 DB로 옮길 뿐이다.
@@ -17,7 +27,7 @@
   코드 기본값이 합쳐진다 — 운영 실수로 비상정지가 죽지 않는다.
 - 이 DB는 "무슨 말이 트리거인가"만 바꾼다. 명령 실행 자체는 robotlink의
   화이트리스트와 로봇 런타임 게이트가 계속 담당한다.
-- MES 데이터(mes_demo.db)는 '외부 시스템' 시뮬레이션이라 별도 DB다.
+- MES 데이터(mes_demo.db / Supabase MES 테이블)는 '외부 시스템'이라 별도다.
   지식 문서(knowledge/*.txt)는 RAG 입력이라 파일을 유지한다.
 """
 
@@ -25,10 +35,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import suparest
 
 KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path(__file__).with_name("voice_data.db")
@@ -172,6 +186,36 @@ def _connect(db_path):
     return sqlite3.connect(p) if p.is_file() else None
 
 
+# ── Supabase 원격 백엔드 ────────────────────────────────────────────────
+# 읽기 사슬: Supabase → 로컬 voice_data.db → 코드 기본값.
+# 원격이 "실패(None)"하거나 "비어 있으면" 다음 단계로 내려간다 — 테이블을
+# 통째로 비운 실수가 명단·트리거를 몽땅 즉발 삭제하지 않도록 하는 의도다.
+_REMOTE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+_REMOTE_KEY = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_KEY", "")
+_REMOTE_TTL = float(os.environ.get("VOICE_STORE_TTL", "60"))
+_remote_cache = {}  # (table, qs) -> (monotonic_ts, rows)
+
+
+def remote_enabled():
+    return bool(_REMOTE_URL and _REMOTE_KEY)
+
+
+def _remote_rows(table, params=None):
+    """Supabase 행 목록 → list | None(실패·미설정). TTL 캐시 + 장애 시 오래된 캐시."""
+    if not remote_enabled():
+        return None
+    ck = (table, json.dumps(params or {}, sort_keys=True, ensure_ascii=False))
+    now = time.monotonic()
+    hit = _remote_cache.get(ck)
+    if hit and now - hit[0] < _REMOTE_TTL:
+        return hit[1]
+    rows = suparest.get_rows(_REMOTE_URL, _REMOTE_KEY, table, params)
+    if rows is not None:
+        _remote_cache[ck] = (now, rows)
+        return rows
+    return hit[1] if hit else None
+
+
 def _col_or_default(sql, params, default, db_path):
     """1열 조회 → tuple. DB 없음·빈 결과·오류는 전부 코드 기본값."""
     conn = _connect(db_path)
@@ -188,6 +232,9 @@ def _col_or_default(sql, params, default, db_path):
 
 def words(kind, default, db_path=None):
     """keywords 테이블의 kind별 단어 목록 (비어 있으면 기본값)."""
+    rows = _remote_rows("keywords", {"kind": f"eq.{kind}", "select": "word", "order": "word"})
+    if rows:
+        return tuple(r["word"] for r in rows)
     return _col_or_default(
         "SELECT word FROM keywords WHERE kind=? ORDER BY rowid",
         (kind,),
@@ -198,6 +245,9 @@ def words(kind, default, db_path=None):
 
 def command_endings(default, db_path=None):
     """명령 어미 목록 — 긴 것부터 시도하는 기존 규칙을 그대로 둔다."""
+    rows = _remote_rows("command_endings", {"select": "ending"})
+    if rows:
+        return sorted((r["ending"] for r in rows), key=len, reverse=True)
     rows = _col_or_default("SELECT ending FROM command_endings", (), default, db_path)
     return sorted(rows, key=len, reverse=True)
 
@@ -205,16 +255,20 @@ def command_endings(default, db_path=None):
 def action_commands(default, db_path=None):
     """phrase → (action, ack). DB가 있으면 DB가 정본 + 보호 구문 강제."""
     base = dict(default)
-    conn = _connect(db_path)
-    if conn is not None:
-        try:
-            rows = conn.execute("SELECT phrase, action, ack FROM action_commands").fetchall()
-            if rows:
-                base = {p: (a, ack) for p, a, ack in rows}
-        except sqlite3.Error:
-            pass
-        finally:
-            conn.close()
+    rows = _remote_rows("action_commands", {"select": "phrase,action,ack"})
+    if rows:
+        base = {r["phrase"]: (r["action"], r["ack"]) for r in rows}
+    else:
+        conn = _connect(db_path)
+        if conn is not None:
+            try:
+                rows = conn.execute("SELECT phrase, action, ack FROM action_commands").fetchall()
+                if rows:
+                    base = {p: (a, ack) for p, a, ack in rows}
+            except sqlite3.Error:
+                pass
+            finally:
+                conn.close()
     for p in PROTECTED_ACTIONS:
         if p in default:
             base[p] = default[p]
@@ -223,6 +277,9 @@ def action_commands(default, db_path=None):
 
 def scenario_triggers(default, db_path=None):
     """phrase → scenario 이름."""
+    rows = _remote_rows("scenario_triggers", {"select": "phrase,scenario"})
+    if rows:
+        return {r["phrase"]: r["scenario"] for r in rows}
     conn = _connect(db_path)
     if conn is None:
         return dict(default)
@@ -237,10 +294,16 @@ def scenario_triggers(default, db_path=None):
         conn.close()
 
 
+_RULE_COLS = ("keyword", "endpoint", "needs_line", "attach_line", "priority")
+
+
 def factory_rules(db_path=None):
     """(keyword, endpoint, needs_line, attach_line, priority) 우선순위순."""
     import factorylink  # 지연 임포트 — 기본값의 정본은 저쪽 모듈
 
+    rows = _remote_rows("factory_rules", {"select": ",".join(_RULE_COLS), "order": "priority"})
+    if rows:
+        return [tuple(r[c] for c in _RULE_COLS) for r in rows]
     conn = _connect(db_path)
     if conn is not None:
         try:
@@ -262,6 +325,12 @@ def factory_rules(db_path=None):
 
 def setting(key, default, cast=str, db_path=None):
     """settings 키 하나 — 키가 있으면(빈 문자열도) 그 값, 없으면 기본값."""
+    rows = _remote_rows("settings", {"key": f"eq.{key}", "select": "value", "limit": "1"})
+    if rows:
+        try:
+            return cast(rows[0]["value"])
+        except (TypeError, ValueError):
+            return default
     conn = _connect(db_path)
     if conn is not None:
         try:
@@ -280,11 +349,17 @@ def setting(key, default, cast=str, db_path=None):
 
 def roster(default, db_path=None):
     """신원 확인 명단 — 행이 있으면 DB가 정본(퇴사자 삭제 가능), 없으면 파일 명단."""
+    rows = _remote_rows("roster", {"select": "name", "order": "name"})
+    if rows:
+        return tuple(r["name"] for r in rows)
     return _col_or_default("SELECT name FROM roster ORDER BY rowid", (), default, db_path)
 
 
 def all_phrases(db_path=None):
     """DB 추가 문구 전체 [(category, phrase), ...] — 기본 문구는 코드에 둔다."""
+    rows = _remote_rows("phrases", {"select": "category,phrase"})
+    if rows is not None:
+        return [(r["category"], r["phrase"]) for r in rows]
     conn = _connect(db_path)
     if conn is None:
         return []
@@ -323,6 +398,130 @@ def dump(db_path=DEFAULT_DB):
         conn.close()
 
 
+def _remote_main(args, ap):
+    """--remote 경로: 같은 작업을 Supabase에 적용한다 (쓰기 키 필요)."""
+    wkey = os.environ.get("SUPABASE_WRITE_KEY") or _REMOTE_KEY
+    if not (_REMOTE_URL and wkey):
+        ap.error("--remote에는 SUPABASE_URL과 SUPABASE_WRITE_KEY(또는 ANON_KEY)가 필요합니다")
+
+    def _ok(ok, what):
+        print(f"[remote] {what}: {'ok' if ok else 'FAILED'}")
+        return ok
+
+    if args.seed:
+        d = _code_defaults()
+        now = datetime.now(KST).isoformat(timespec="seconds")
+        tables = {
+            "keywords": [{"kind": k, "word": w} for k, ws in d["keywords"].items() for w in ws],
+            "command_endings": [{"ending": e} for e in d["command_endings"]],
+            "action_commands": [
+                {"phrase": p, "action": a, "ack": ack}
+                for p, (a, ack) in d["action_commands"].items()
+            ],
+            "scenario_triggers": [
+                {"phrase": p, "scenario": s} for p, s in d["scenario_triggers"].items()
+            ],
+            "factory_rules": [
+                dict(
+                    zip(
+                        ("keyword", "endpoint", "needs_line", "attach_line", "priority"),
+                        (r[0], r[1], bool(r[2]), bool(r[3]), r[4]),
+                        strict=True,
+                    )
+                )
+                for r in d["factory_rules"]
+            ],
+            "settings": [
+                {"key": k, "value": v, "updated_at": now} for k, v in d["settings"].items()
+            ],
+            "roster": [{"name": n, "note": "직원명단.txt"} for n in d["roster"]],
+            # phrases는 '추가 문구' 전용 — 시드는 비워 둔다 (기본 문구는 코드 정본)
+        }
+        for t, rows in tables.items():
+            _ok(suparest.upsert_rows(_REMOTE_URL, wkey, t, rows), f"seed {t} ({len(rows)}건)")
+    if args.set:
+        _ok(
+            suparest.upsert_rows(
+                _REMOTE_URL,
+                wkey,
+                "settings",
+                {
+                    "key": args.set[0],
+                    "value": args.set[1],
+                    "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
+                },
+            ),
+            f"set {args.set[0]} = {_masked(args.set[0], args.set[1])}",
+        )
+    if args.add:
+        kind, word = args.add
+        if kind not in _KEYWORD_KINDS:
+            ap.error(f"kind must be one of {_KEYWORD_KINDS}")
+        _ok(
+            suparest.upsert_rows(_REMOTE_URL, wkey, "keywords", {"kind": kind, "word": word}),
+            f"+{kind}: {word}",
+        )
+    if args.remove:
+        kind, word = args.remove
+        _ok(
+            suparest.delete_where(
+                _REMOTE_URL, wkey, "keywords", {"kind": f"eq.{kind}", "word": f"eq.{word}"}
+            ),
+            f"-{kind}: {word}",
+        )
+    if args.add_roster:
+        _ok(
+            suparest.upsert_rows(
+                _REMOTE_URL, wkey, "roster", {"name": args.add_roster, "note": "cli"}
+            ),
+            f"+roster: {args.add_roster}",
+        )
+    if args.del_roster:
+        _ok(
+            suparest.delete_where(_REMOTE_URL, wkey, "roster", {"name": f"eq.{args.del_roster}"}),
+            f"-roster: {args.del_roster}",
+        )
+    if args.add_phrase:
+        _ok(
+            suparest.upsert_rows(
+                _REMOTE_URL,
+                wkey,
+                "phrases",
+                {"category": args.add_phrase[0], "phrase": args.add_phrase[1]},
+            ),
+            f"+phrase[{args.add_phrase[0]}]",
+        )
+    if args.del_phrase:
+        _ok(
+            suparest.delete_where(
+                _REMOTE_URL,
+                wkey,
+                "phrases",
+                {"category": f"eq.{args.del_phrase[0]}", "phrase": f"eq.{args.del_phrase[1]}"},
+            ),
+            f"-phrase[{args.del_phrase[0]}]",
+        )
+    if args.dump:
+        rkey = _REMOTE_KEY or wkey
+        out = {}
+        for t in (
+            "keywords",
+            "command_endings",
+            "action_commands",
+            "scenario_triggers",
+            "factory_rules",
+            "settings",
+            "roster",
+            "phrases",
+        ):
+            rows = suparest.get_rows(_REMOTE_URL, rkey, t)
+            if t == "settings" and rows:
+                for r in rows:
+                    r["value"] = _masked(r.get("key", ""), r.get("value", ""))
+            out[t] = rows if rows is not None else f"<error: {t} 조회 실패>"
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -340,7 +539,15 @@ def main():
     ap.add_argument("--del-roster", metavar="NAME", help="직원 명단에서 삭제")
     ap.add_argument("--add-phrase", nargs=2, metavar=("CAT", "TEXT"), help="응답 문구 추가")
     ap.add_argument("--del-phrase", nargs=2, metavar=("CAT", "TEXT"), help="응답 문구 삭제")
+    ap.add_argument(
+        "--remote",
+        action="store_true",
+        help="위 작업을 로컬 DB가 아니라 Supabase에 적용 (SUPABASE_URL + WRITE_KEY 필요)",
+    )
     args = ap.parse_args()
+    if args.remote:
+        _remote_main(args, ap)
+        return
     if args.seed:
         seed(args.db)
         print(f"[store] seeded {args.db}")
