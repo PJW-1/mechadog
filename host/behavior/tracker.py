@@ -14,6 +14,10 @@
     ├───╳═╪═╳───┤            데드존 안       → 정지, TARGET_CENTERED
          데드존
 
+(이 부호는 **보정 전** 이야기다. 아래의 직진 편향을 더하면 보내는 값이 통째로
+밀리므로, 왼쪽 타겟에도 음수 `angle` 이 나갈 수 있다 — 그래도 **실제로 도는 방향은
+왼쪽**이다. 드리프트를 갚고 남는 것이 조향이기 때문이다.)
+
 ⚠️ **부호를 뒤집으면 타겟에서 멀어진다.** `PROTOCOL` 부호 규약은 *양수 = 반시계 =
 로봇의 좌회전* 이다. 화면 좌표 x 는 오른쪽으로 커지므로, 타겟이 오른쪽에 있으면
 편차가 **양수**이고 로봇은 **우회전**해야 한다 — 즉 `angle` 은 **음수**다. 편차
@@ -31,6 +35,31 @@
 에 임계를 추가하는 것이 순서다 (`gait_calibration` 이 없으면 회피 구간을 만들지
 않는 `actions.avoid_phases` 와 같은 원칙).
 
+⚠️ **직진 드리프트를 조향에 함께 싣는다 (2026-09-18).**
+
+**아래 숫자는 전부 `mechdog-01` 한 대의 실측이다 — 다른 기체에 쓰면 안 된다.**
+비대칭의 출처가 개체별 서보 오프셋이라 **기체마다 방향도 크기도 다르게 나온다**
+(HARDWARE 3절 · 복사 금지). 코드는 숫자를 박지 않고 그 기체의
+`gait_calibration.straight_bias_deg` 를 읽으며, 값이 없는 기체는 **보정하지 않는다.**
+
+`mechdog-01` 은 걷기만 해도 좌로 **1.0 °/s** 휘고, 우선회에는 약 **3.3°** 의
+데드밴드가 있다 (`config/devices/mechdog-01.yaml` · 2026-09-11~12 실측). 둘이
+겹치면 좌우가 이렇게 갈린다 —
+
+    명령 +0.77°(좌)  데드밴드에 먹혀 조향 0   + 드리프트 좌 1.0 =  좌 1.00 °/s
+    명령 -8.40°(우)  0.228 x (8.40-3.3)=1.16 - 드리프트 좌 1.0 =  우 0.16 °/s
+
+**왼쪽은 명령이 0 이 돼도 드리프트가 대신 돌려주고, 오른쪽은 드리프트를 먼저
+갚느라 남는 것이 없다.** 2026-09-18 실기에서 오른쪽 대상을 49초 쫓고도 편차가
+158 -> 233px 로 벌어졌고, 같은 날 왼쪽은 183 -> 11px 로 12초 만에 들어왔다.
+
+`gait_calibration.straight_bias_deg` 가 그 드리프트를 0 으로 만드는 값이며 **이미
+실측돼 있었다 — 쓰는 곳이 없었을 뿐이다.** 조향에 더하면 드리프트가 상쇄되고,
+총 명령이 데드밴드 밖으로 밀려나 **비례 제어의 죽은 저역까지 함께 살아난다.**
+
+⚠️ **중앙에 들어오면 더하지 않는다** — 그때는 `step=0` 이라 걷지 않고, 걷지 않으면
+드리프트도 없다. 서 있는 로봇에 편향만 주면 제자리에서 돌라는 말이 된다.
+
 거리 유지(FR-3.5.2)는 여기 없다. bbox **높이**로 하는 별개 제어이며 `3.5.4` 의
 완료 기준이 아니다.
 """
@@ -40,6 +69,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+
+from host.common.protocol import CLAMP_RANGES
 
 __all__ = ["TrackCommand", "LockOnTracker"]
 
@@ -87,6 +118,10 @@ class LockOnTracker:
         self._deadzone_px = deadzone
         self._step_mm = step
         self._max_turn_deg = turn
+        # 보정값이 없는 기체는 **보정하지 않는다.** 다른 기체의 값을 빌려오면 방향도
+        # 크기도 달라 오히려 더 비뚤어진다 (HARDWARE 3절 — 복사 금지).
+        bias = (config.get("gait_calibration") or {}).get("straight_bias_deg")
+        self._bias_deg = 0.0 if bias is None else float(bias)
 
     @property
     def deadzone_px(self) -> float:
@@ -118,6 +153,10 @@ class LockOnTracker:
 
         # 편차 부호와 조향 부호는 **반대다** — 위 주석 참조.
         angle = -magnitude * self._max_turn_deg if deviation > 0 else magnitude * self._max_turn_deg
+        # 걷는 동안에만 드리프트가 생기므로 여기서만 더한다. 더한 뒤에는 규약 범위를
+        # 넘을 수 있어 클램프한다 — 로봇은 범위 밖 `angle` 을 잘라서 받는다.
+        low, high = CLAMP_RANGES["angle"]
+        angle = min(max(angle + self._bias_deg, low), high)
         return TrackCommand(
             step=self._step_mm,
             angle=angle,

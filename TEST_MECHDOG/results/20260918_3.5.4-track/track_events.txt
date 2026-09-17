@@ -1,0 +1,81 @@
+00:41:01 INFO    [IDLE] robot_state · reported=FAILSAFE latched=True
+00:41:01 INFO    [IDLE] escalation · from=L0 to=F reason=ONBOARD_FAILSAFE led=white
+00:41:01 ERROR   [FAILSAFE] fsm_transition · from=IDLE to=FAILSAFE trigger=ONBOARD_FAILSAFE
+00:41:25 INFO    [FAILSAFE] escalation · from=F to=L0 reason=failsafe_confirmed led=blue
+00:41:25 INFO    [IDLE] fsm_transition · from=FAILSAFE to=IDLE trigger=RESET_CONFIRMED
+00:41:25 INFO    [IDLE] robot_state · reported=IDLE latched=False
+00:47:37 INFO    [IDLE] robot_state · reported=AVOID latched=False
+00:47:39 INFO    [IDLE] robot_state · reported=IDLE latched=False
+00:47:39 INFO    [IDLE] robot_state · reported=AVOID latched=False
+00:47:39 INFO    [IDLE] robot_state · reported=IDLE latched=False
+00:47:39 INFO    [IDLE] robot_state · reported=AVOID latched=False
+00:47:40 INFO    [IDLE] robot_state · reported=IDLE latched=False
+00:47:40 INFO    [IDLE] robot_state · reported=AVOID latched=False
+00:47:40 INFO    [IDLE] robot_state · reported=IDLE latched=False
+00:48:46 INFO    [IDLE] robot_state · reported=FAILSAFE latched=True
+00:48:46 INFO    [IDLE] escalation · from=L0 to=F reason=ONBOARD_FAILSAFE led=white
+00:48:46 ERROR   [FAILSAFE] fsm_transition · from=IDLE to=FAILSAFE trigger=ONBOARD_FAILSAFE
+00:49:54 INFO    [FAILSAFE] escalation · from=F to=L0 reason=failsafe_confirmed led=blue
+00:49:54 INFO    [IDLE] fsm_transition · from=FAILSAFE to=IDLE trigger=RESET_CONFIRMED
+00:49:54 INFO    [IDLE] robot_state · reported=IDLE latched=False
+00:50:30 INFO    [PATROL] fsm_transition · from=IDLE to=PATROL trigger=START_PATROL
+00:50:30 INFO    [PATROL] robot_state · reported=PATROL latched=False
+00:50:30 INFO    [PATROL] escalation · from=L0 to=L1 reason=person_present led=yellow
+00:50:40 INFO    [SCAN] fsm_transition · from=PATROL to=SCAN trigger=SCAN_DUE
+00:50:40 INFO    [SCAN] robot_state · reported=SCAN latched=False
+00:50:40 INFO    [SCAN] escalation · from=L1 to=L2 reason=unauthenticated_hold led=orange
+00:50:43 INFO    [PATROL] fsm_transition · from=SCAN to=PATROL trigger=SCAN_DONE
+00:50:43 INFO    [PATROL] robot_state · reported=PATROL latched=False
+00:50:44 INFO    [PATROL] escalation · from=L2 to=L3 reason=unauthenticated_left led=red
+00:50:48 INFO    [PATROL] robot_state · reported=AVOID latched=False
+00:50:48 INFO    [AVOID] fsm_transition · from=PATROL to=AVOID trigger=ONBOARD_AVOID
+00:50:48 INFO    [PATROL] fsm_transition · from=AVOID to=PATROL trigger=AVOID_CLEARED
+00:50:48 INFO    [PATROL] robot_state · reported=PATROL latched=False
+00:50:49 INFO    [PATROL] robot_state · reported=AVOID latched=False
+00:50:49 INFO    [AVOID] fsm_transition · from=PATROL to=AVOID trigger=ONBOARD_AVOID
+00:50:49 INFO    [PATROL] fsm_transition · from=AVOID to=PATROL trigger=AVOID_CLEARED
+00:50:49 INFO    [PATROL] robot_state · reported=PATROL latched=False
+00:50:50 INFO    [ALERT] fsm_transition · from=PATROL to=ALERT trigger=PERSON_FOUND
+00:50:50 INFO    [ALERT] track_command · centered=True deviation_px=-15.7 angle=0.0 step=0.0
+00:50:50 INFO    [ALERT] robot_state · reported=ALERT latched=False
+00:50:51 INFO    [ALERT] track_command · centered=False deviation_px=-94.7 angle=3.9 step=60.0
+00:50:51 INFO    [TRACK] fsm_transition · from=ALERT to=TRACK trigger=TARGET_OFF_CENTER
+00:50:51 INFO    [TRACK] robot_state · reported=TRACK latched=False
+00:51:01 INFO    [TRACK] track_command · centered=True deviation_px=-32.4 angle=0.0 step=0.0
+00:51:01 INFO    [ALERT] fsm_transition · from=TRACK to=ALERT trigger=TARGET_CENTERED
+00:51:01 INFO    [ALERT] robot_state · reported=ALERT latched=False
+00:51:02 INFO    [ALERT] track_command · centered=False deviation_px=-50.8 angle=0.77 step=60.0
+00:51:02 INFO    [TRACK] fsm_transition · from=ALERT to=TRACK trigger=TARGET_OFF_CENTER
+00:51:02 INFO    [TRACK] robot_state · reported=TRACK latched=False
+00:51:07 INFO    [TRACK] track_command · centered=True deviation_px=-1.7 angle=0.0 step=0.0
+00:51:07 INFO    [ALERT] fsm_transition · from=TRACK to=ALERT trigger=TARGET_CENTERED
+00:51:07 INFO    [ALERT] robot_state · reported=ALERT latched=False
+00:51:13 INFO    [PATROL] fsm_transition · from=ALERT to=PATROL trigger=TARGET_LOST
+00:51:13 INFO    [PATROL] robot_state · reported=PATROL latched=False
+00:51:21 INFO    [ALERT] fsm_transition · from=PATROL to=ALERT trigger=PERSON_FOUND
+00:51:21 INFO    [ALERT] robot_state · reported=ALERT latched=False
+00:51:22 INFO    [ALERT] track_command · centered=False deviation_px=213.5 angle=-12.39 step=60.0
+00:51:22 INFO    [TRACK] fsm_transition · from=ALERT to=TRACK trigger=TARGET_OFF_CENTER
+00:51:22 INFO    [TRACK] robot_state · reported=TRACK latched=False
+00:52:14 INFO    [TRACK] track_command · centered=True deviation_px=-39.1 angle=0.0 step=0.0
+00:52:14 INFO    [ALERT] fsm_transition · from=TRACK to=ALERT trigger=TARGET_CENTERED
+00:52:14 INFO    [ALERT] robot_state · reported=ALERT latched=False
+00:52:15 INFO    [ALERT] track_command · centered=False deviation_px=-40.9 angle=0.06 step=60.0
+00:52:15 INFO    [TRACK] fsm_transition · from=ALERT to=TRACK trigger=TARGET_OFF_CENTER
+00:52:15 INFO    [TRACK] robot_state · reported=TRACK latched=False
+00:52:15 INFO    [TRACK] track_command · centered=True deviation_px=-24.1 angle=0.0 step=0.0
+00:52:15 INFO    [ALERT] fsm_transition · from=TRACK to=ALERT trigger=TARGET_CENTERED
+00:52:15 INFO    [ALERT] robot_state · reported=ALERT latched=False
+00:52:15 INFO    [ALERT] track_command · centered=False deviation_px=-50.8 angle=0.77 step=60.0
+00:52:15 INFO    [TRACK] fsm_transition · from=ALERT to=TRACK trigger=TARGET_OFF_CENTER
+00:52:15 INFO    [TRACK] robot_state · reported=TRACK latched=False
+00:52:50 INFO    [PATROL] fsm_transition · from=TRACK to=PATROL trigger=TARGET_LOST
+00:52:50 INFO    [PATROL] robot_state · reported=PATROL latched=False
+00:52:52 INFO    [PATROL] robot_state · reported=AVOID latched=False
+00:52:52 INFO    [AVOID] fsm_transition · from=PATROL to=AVOID trigger=ONBOARD_AVOID
+00:52:52 INFO    [PATROL] fsm_transition · from=AVOID to=PATROL trigger=AVOID_CLEARED
+00:52:52 INFO    [PATROL] robot_state · reported=PATROL latched=False
+00:53:02 INFO    [SCAN] fsm_transition · from=PATROL to=SCAN trigger=SCAN_DUE
+00:53:02 INFO    [SCAN] escalation · from=L3 to=F reason=LINK_LOST led=white
+00:53:02 ERROR   [FAILSAFE] fsm_transition · from=SCAN to=FAILSAFE trigger=LINK_LOST
+00:59:51 INFO    [FAILSAFE] robot_state · reported=FAILSAFE latched=True
