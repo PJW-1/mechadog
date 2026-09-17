@@ -1418,3 +1418,29 @@ def test_the_gate_edge_publishes_one_event_not_one_per_tick(
     for i in range(5):
         _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
     assert board.event_seq == 1, "게이트의 거짓→참 엣지에서만 한 번이다"
+
+
+def test_alert_reentry_can_still_start_tracking(config: dict, clock: FakeClock) -> None:
+    """추종 구간을 나갔다 들어오면 **첫 판정이 다시 사건이 된다.**
+
+    ⚠️ 엣지 기억을 지우지 않으면 재진입 첫 판정이 *"변화 없음"* 으로 삼켜져
+    `TARGET_OFF_CENTER` 가 나가지 않는다. `3.5.3` 이 미착수라 `ALERT` 에는 시퀀스가
+    없어 로봇이 **정지한 채 갇힌다** — 2026-09-18 실기에서 편차 84px 대상을 앞에 두고
+    33초를 서 있다가 `TARGET_LOST` 로 빠져나왔다.
+    """
+    off_centre = (20.0, 200.0, 60.0, 400.0)
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=off_centre)
+    assert runtime.behavior.state == "TRACK"
+
+    # 조작자가 수동을 잡았다 놓는다 — 추종 구간을 벗어나는 가장 흔한 경로다.
+    runtime.apply_external(Event.MANUAL_ON)
+    runtime.apply_external(Event.MANUAL_OFF)
+    vision.result = vision_result(2, 200, present=False, hits=0, last_seen_ms=None)
+    runtime.tick(200)
+    runtime.start_patrol(300)
+
+    # 대상이 **데드존 밖 같은 쪽**에 다시 선다. 즉 `centered` 값이 직전과 같다.
+    _sighting(runtime, vision, seq=3, at_ms=400, box=off_centre)
+    assert runtime.behavior.state == "TRACK", "재진입 첫 판정이 삼켜지면 ALERT 에 갇힌다"

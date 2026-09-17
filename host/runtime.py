@@ -446,6 +446,12 @@ class Runtime:
         `ALERT` 로 되돌아간다.
         """
         if not self._behavior.tracking:
+            # ⚠️ **추종 구간을 벗어나면 엣지 기억을 지운다.** 남겨 두면 다시 `ALERT` 로
+            # 들어왔을 때 첫 판정이 *"변화 없음"* 으로 삼켜져 `TARGET_OFF_CENTER` 가
+            # 나가지 않는다. 그러면 `3.5.3` 이 미착수라 시퀀스가 없는 `ALERT` 에
+            # 정지한 채 갇힌다 — 2026-09-18 실기에서 편차 84px 대상을 앞에 두고
+            # 33초를 서 있었다.
+            self._edge.forget("track_centered")
             return
         box = result.sighting.box
         if box is None:

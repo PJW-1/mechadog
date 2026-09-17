@@ -1,0 +1,14 @@
+WBS 3.5.4 재검증 — 락온 지시 원자료 (2026-09-18 · mechdog-01)
+보정 straight_bias_deg=-8.0 적용 상태. deviation 음수=화면 왼쪽, angle 음수=우선회.
+
+02:05:05  dev=   -122.8  angle=  -2.09  step= 60.0  centered=False
+02:05:24  dev=     -3.9  angle=   0.00  step=  0.0  centered=True
+02:05:54  dev=   -103.9  angle=  -3.43  step= 60.0  centered=False
+02:06:09  dev=     21.1  angle=   0.00  step=  0.0  centered=True
+02:08:25  dev=    212.2  angle= -20.30  step= 60.0  centered=False
+02:08:59  dev=     35.4  angle=   0.00  step=  0.0  centered=True
+02:08:59  dev=     41.2  angle=  -8.08  step= 60.0  centered=False
+02:08:59  dev=     37.2  angle=   0.00  step=  0.0  centered=True
+02:08:59  dev=     44.3  angle=  -8.30  step= 60.0  centered=False
+02:08:59  dev=      3.3  angle=   0.00  step=  0.0  centered=True
+02:09:02  dev=    -88.0  angle=  -4.57  step= 60.0  centered=False

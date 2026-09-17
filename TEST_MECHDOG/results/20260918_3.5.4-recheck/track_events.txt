@@ -1,0 +1,59 @@
+WBS 3.5.4 재검증 — 사건 (2026-09-18 · mechdog-01)
+
+02:02:59 INFO    [IDLE] execution_provider · {"selected": "DmlExecutionProvider", "order": ["DmlExecutionProvider", "CPUExecutionProvider"], "preferred": ["DmlExecutionProvider", "CPUExecutionProvider"], "available": ["DmlExecutionProvider", "CPUExecutionProvider"]}
+02:03:00 INFO    [IDLE] runtime_started · {"listen_port": 5101, "peer": "192.168.1.102:5001", "period_ms": 100, "actions": {"PATROL": "등록", "ZONE_INSPECT": "등록", "TRACK": "등록", "AVOID": "등록"}}
+02:03:00 INFO    [IDLE] robot_state · {"reported": "FAILSAFE", "latched": true}
+02:03:00 INFO    [IDLE] escalation · {"from": "L0", "to": "F", "reason": "ONBOARD_FAILSAFE", "led": "white"}
+02:03:00 ERROR   [FAILSAFE] fsm_transition · {"from": "IDLE", "to": "FAILSAFE", "trigger": "ONBOARD_FAILSAFE"}
+02:03:00 INFO    [FAILSAFE] orientation_applied · {"rot": 180}
+02:03:00 INFO    [FAILSAFE] stream_connected · {"url": "http://192.168.1.101:81/stream", "boundary": "mechdog-frame-boundary"}
+02:05:04 INFO    [FAILSAFE] reset_requested · {"waiting_for": "safety_latched=false"}
+02:05:04 INFO    [FAILSAFE] escalation · {"from": "F", "to": "L0", "reason": "failsafe_confirmed", "led": "blue"}
+02:05:04 INFO    [IDLE] fsm_transition · {"from": "FAILSAFE", "to": "IDLE", "trigger": "RESET_CONFIRMED"}
+02:05:04 INFO    [IDLE] robot_state · {"reported": "IDLE", "latched": false}
+02:05:04 INFO    [PATROL] fsm_transition · {"from": "IDLE", "to": "PATROL", "trigger": "START_PATROL"}
+02:05:04 INFO    [PATROL] robot_state · {"reported": "PATROL", "latched": false}
+02:05:05 INFO    [PATROL] escalation · {"from": "L0", "to": "L1", "reason": "person_present", "led": "yellow"}
+02:05:05 INFO    [ALERT] fsm_transition · {"from": "PATROL", "to": "ALERT", "trigger": "PERSON_FOUND"}
+02:05:05 INFO    [TRACK] fsm_transition · {"from": "ALERT", "to": "TRACK", "trigger": "TARGET_OFF_CENTER"}
+02:05:05 INFO    [TRACK] robot_state · {"reported": "TRACK", "latched": false}
+02:05:15 INFO    [TRACK] escalation · {"from": "L1", "to": "L2", "reason": "unauthenticated_hold", "led": "orange"}
+02:05:24 INFO    [ALERT] fsm_transition · {"from": "TRACK", "to": "ALERT", "trigger": "TARGET_CENTERED"}
+02:05:24 INFO    [AUTH_WAIT] fsm_transition · {"from": "ALERT", "to": "AUTH_WAIT", "trigger": "AUTH_REQUIRED"}
+02:05:24 INFO    [AUTH_WAIT] robot_state · {"reported": "AUTH_WAIT", "latched": false}
+02:05:29 INFO    [AUTH_WAIT] escalation · {"from": "L2", "to": "L3", "reason": "unauthenticated_left", "led": "red"}
+02:05:54 INFO    [ALERT] fsm_transition · {"from": "AUTH_WAIT", "to": "ALERT", "trigger": "AUTH_FAILED"}
+02:05:54 INFO    [ALERT] robot_state · {"reported": "ALERT", "latched": false}
+02:05:54 INFO    [TRACK] fsm_transition · {"from": "ALERT", "to": "TRACK", "trigger": "TARGET_OFF_CENTER"}
+02:05:54 INFO    [TRACK] robot_state · {"reported": "TRACK", "latched": false}
+02:06:09 INFO    [ALERT] fsm_transition · {"from": "TRACK", "to": "ALERT", "trigger": "TARGET_CENTERED"}
+02:06:09 INFO    [ALERT] robot_state · {"reported": "ALERT", "latched": false}
+02:06:14 INFO    [PATROL] fsm_transition · {"from": "ALERT", "to": "PATROL", "trigger": "TARGET_LOST"}
+02:06:14 INFO    [PATROL] robot_state · {"reported": "PATROL", "latched": false}
+02:06:19 INFO    [MANUAL] fsm_transition · {"from": "PATROL", "to": "MANUAL", "trigger": "MANUAL_ON"}
+02:06:19 INFO    [IDLE] fsm_transition · {"from": "MANUAL", "to": "IDLE", "trigger": "MANUAL_OFF"}
+02:06:19 INFO    [IDLE] robot_state · {"reported": "IDLE", "latched": false}
+02:08:20 INFO    [PATROL] fsm_transition · {"from": "IDLE", "to": "PATROL", "trigger": "START_PATROL"}
+02:08:20 INFO    [PATROL] robot_state · {"reported": "PATROL", "latched": false}
+02:08:25 INFO    [ALERT] fsm_transition · {"from": "PATROL", "to": "ALERT", "trigger": "PERSON_FOUND"}
+02:08:25 INFO    [TRACK] fsm_transition · {"from": "ALERT", "to": "TRACK", "trigger": "TARGET_OFF_CENTER"}
+02:08:25 INFO    [TRACK] robot_state · {"reported": "TRACK", "latched": false}
+02:08:59 INFO    [ALERT] fsm_transition · {"from": "TRACK", "to": "ALERT", "trigger": "TARGET_CENTERED"}
+02:08:59 INFO    [ALERT] robot_state · {"reported": "ALERT", "latched": false}
+02:08:59 INFO    [TRACK] fsm_transition · {"from": "ALERT", "to": "TRACK", "trigger": "TARGET_OFF_CENTER"}
+02:08:59 INFO    [TRACK] robot_state · {"reported": "TRACK", "latched": false}
+02:08:59 INFO    [ALERT] fsm_transition · {"from": "TRACK", "to": "ALERT", "trigger": "TARGET_CENTERED"}
+02:08:59 INFO    [ALERT] robot_state · {"reported": "ALERT", "latched": false}
+02:08:59 INFO    [TRACK] fsm_transition · {"from": "ALERT", "to": "TRACK", "trigger": "TARGET_OFF_CENTER"}
+02:08:59 INFO    [TRACK] robot_state · {"reported": "TRACK", "latched": false}
+02:08:59 INFO    [ALERT] fsm_transition · {"from": "TRACK", "to": "ALERT", "trigger": "TARGET_CENTERED"}
+02:09:00 INFO    [ALERT] robot_state · {"reported": "ALERT", "latched": false}
+02:09:02 INFO    [TRACK] fsm_transition · {"from": "ALERT", "to": "TRACK", "trigger": "TARGET_OFF_CENTER"}
+02:09:02 INFO    [TRACK] robot_state · {"reported": "TRACK", "latched": false}
+02:09:06 INFO    [MANUAL] fsm_transition · {"from": "TRACK", "to": "MANUAL", "trigger": "MANUAL_ON"}
+02:09:06 INFO    [IDLE] fsm_transition · {"from": "MANUAL", "to": "IDLE", "trigger": "MANUAL_OFF"}
+02:09:06 INFO    [IDLE] robot_state · {"reported": "IDLE", "latched": false}
+02:09:45 INFO    [MANUAL] fsm_transition · {"from": "IDLE", "to": "MANUAL", "trigger": "MANUAL_ON"}
+02:09:45 INFO    [MANUAL] robot_state · {"reported": "MANUAL", "latched": false}
+02:10:18 INFO    [MANUAL] robot_state · {"reported": "AVOID", "latched": false}
+02:10:18 INFO    [MANUAL] robot_state · {"reported": "MANUAL", "latched": false}
