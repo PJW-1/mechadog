@@ -252,6 +252,19 @@ def validate_base_config(config: dict[str, Any]) -> None:
         for name in names:
             _require_positive(config[section], name)
 
+    # 추종 진입 임계는 조향 데드존보다 **넓어야** 한다. 같거나 좁으면 히스테리시스가
+    # 사라져 경계에서 `ALERT ⇄ TRACK` 이 왕복한다 (2026-09-18 실기 · 한 초에 3왕복).
+    fsm = config["fsm"]
+    deadzone = fsm.get("track_deadzone_px")
+    engage = fsm.get("track_engage_px")
+    if not _finite_number(deadzone) or deadzone < 0:
+        raise ConfigError("fsm.track_deadzone_px 는 0 이상의 유한한 수여야 함")
+    if not _finite_number(engage) or engage < deadzone:
+        raise ConfigError(
+            f"fsm.track_engage_px({engage}) 가 track_deadzone_px({deadzone}) 보다 좁다"
+            " — 진입·이탈 임계가 같으면 경계에서 왕복한다 (2026-09-18 실측 떨림 ±5px)"
+        )
+
     # ⚠️ **«고개를 드는» 자세각은 음수다** — 2026-09-15 실기로 확정했다
     # (`POSE pitch=+15` → IMU 17.4, 앞이 내려감 / `-15` → -11.6, 앞이 올라감).
     # PROTOCOL 2절과 config 주석이 그것을 적어 두었지만 **지키는 코드가 없었다.**

@@ -222,3 +222,18 @@ def test_biased_angle_still_stays_within_the_protocol_range(cfg):
     t = _tracker(cfg, bias=STRAIGHT_BIAS_DEG)
     for x in (0, 1, 100, 320, 500, 639, 640):
         assert -30.0 <= t.update(x, FRAME_WIDTH).angle <= 30.0
+
+
+def test_bias_leaves_a_left_turn_alone(cfg):
+    """⚠️ **보정은 드리프트를 거스르는 쪽에만 붙는다 (2026-09-18 재검증).**
+
+    좌 드리프트를 좌선회 명령에까지 갚으면 부호가 뒤집혀 **우 데드밴드 안**으로
+    들어간다. 실기에서 실제로 그랬다 — `dev -112.6px` 가 `+5.19°(좌)` 에서
+    `-2.81°(우)` 가 되어 조향 효과가 0 이 됐고, 왼쪽이 실제로 꺾이려면 편차가
+    **198px** 을 넘어야 했다. 데드존을 40px 로 정해 놓고 한쪽만 조용히 5배로 키운 셈이다.
+    """
+    left_of_centre = MIDPOINT - 112.6
+    plain = _tracker(cfg).update(left_of_centre, FRAME_WIDTH)
+    biased = _tracker(cfg, bias=STRAIGHT_BIAS_DEG).update(left_of_centre, FRAME_WIDTH)
+    assert biased.angle == pytest.approx(plain.angle), "좌선회에는 보정이 닿지 않는다"
+    assert biased.angle > STEERING_DEADBAND_DEG, "데드존 밖이면 기체가 실제로 좌선회한다"
