@@ -221,6 +221,11 @@ class Runtime:
         self._edge.changed("vision_healthy", True)
         self._edge.changed("vision_stalled", False)
         self._edge.changed("person", False)  # 첫 관측이 변화로 잡히지 않게
+        # 추종 **진입** 임계. 이탈은 조향 데드존이 정한다 — 둘을 갈라 두는 이유는
+        # `_track` 주석과 `config.yaml` 의 `track_engage_px` 항목에 있다.
+        self._track_engage_px = float(config["fsm"]["track_engage_px"])
+        # 직전 IMU 방위와 그 시각. 각속도는 차분이라 표본 하나를 들고 있어야 한다.
+        self._last_yaw: tuple[float, int] | None = None
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
@@ -346,6 +351,7 @@ class Runtime:
             self._summary.observe("batt_v", out.reading.batt_v)
         if out.reading.last_cmd_age_ms is not None:
             self._summary.observe("last_cmd_age_ms", float(out.reading.last_cmd_age_ms))
+        self._observe_yaw_rate(out.reading.yaw, now_ms)
         self._watch_command_uptake(out.reading.last_cmd_age_ms, now_ms)
         self._behavior.note_telemetry(now_ms)
         self._behavior.note_onboard_state(out.reading.state)
@@ -482,17 +488,27 @@ class Runtime:
         #
         # 같은 판정이 이어지는 동안은 사건을 내지 않는다 — 25fps 로 같은 전이를
         # 수백 번 넣으면 로그가 전이로 뒤덮이고 단계 축도 흔들린다.
-        if self._edge.changed("track_centered", command.centered):
+        #
+        # ⚠️ **전이 임계는 조향 데드존보다 넓다 (히스테리시스).** `command.centered` 는
+        # *"명령을 낼 것인가"* 를 40px 로 정하고 그대로 쓰지만, **`TRACK` 으로 들어가는
+        # 판단만** `track_engage_px`(50px)로 늦춘다. 하나로 두면 경계에서 bbox 가
+        # ±5px 떨리는 것이 그대로 왕복 전이가 된다 — 2026-09-18 실기에서 한 초에
+        # 3왕복했다(`35.4 → 41.2 → 37.2 → 44.3px`). 나오는 쪽은 좁은 임계 그대로여야
+        # 중앙에 든 대상을 늦게 놓지 않는다.
+        centered = (
+            command.centered
+            if self._behavior.state == "TRACK"
+            else abs(command.deviation_px) <= self._track_engage_px
+        )
+        if self._edge.changed("track_centered", centered):
             LOG.info(
                 "track_command",
-                centered=command.centered,
+                centered=centered,
                 deviation_px=round(command.deviation_px, 1),
                 angle=round(command.angle, 2),
                 step=round(command.step, 1),
             )
-            self._apply(
-                Event.TARGET_CENTERED if command.centered else Event.TARGET_OFF_CENTER, now_ms
-            )
+            self._apply(Event.TARGET_CENTERED if centered else Event.TARGET_OFF_CENTER, now_ms)
         if self._track_sequence is not None:
             self._track_sequence.note(command.step, command.angle, now_ms)
 
@@ -654,6 +670,32 @@ class Runtime:
             self._event_publisher(entry)
         except Exception as exc:  # noqa: BLE001 — 브라우저 단절은 제어 실패가 아니다
             LOG.error("dashboard_event_publish_failed", error=f"{type(exc).__name__}: {exc}")
+
+    def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
+        """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (`3.5.4` 좌우 대칭 근거).
+
+        ⚠️ **yaw 를 그대로 평균 내면 안 된다.** 0~360 이라 경계에서 뒤집히고
+        (359° 다음 1° 가 −358° 로 읽힌다), 좌우 대칭을 보려면 필요한 것은 방위가
+        아니라 *"얼마나 빨리 도는가"* 다. 그래서 차분을 ±180 으로 접어 시간으로 나눈다.
+
+        ⚠️ **부호를 살린다.** `track_dev_px` 는 좌우 진동을 감추지 않으려고 절대값을
+        쓰지만 여기는 반대다 — **어느 쪽으로 돌았는지가 재려는 것 자체다.** 화면
+        편차(px/s)는 대상까지의 거리에 종속돼 같은 런 안에서도 두 배씩 달라진다.
+        """
+        if yaw is None:
+            return
+        previous = self._last_yaw
+        self._last_yaw = (yaw, now_ms)
+        if previous is None:
+            return
+        prev_yaw, prev_ms = previous
+        elapsed_ms = now_ms - prev_ms
+        # 끊긴 구간을 가로질러 재지 않는다 — 텔레메트리가 10Hz 이므로 1초를 넘는
+        # 간격은 공백이고, 그 사이의 회전은 이 두 표본으로 복원되지 않는다.
+        if not 0 < elapsed_ms <= 1000:
+            return
+        delta_deg = (yaw - prev_yaw + 180.0) % 360.0 - 180.0
+        self._summary.observe("yaw_rate_deg_s", delta_deg * 1000.0 / elapsed_ms)
 
     def _watch_command_uptake(self, age_ms: int | None, now_ms: int) -> None:
         """⚠️ **로봇이 우리 명령을 폐기하고 있는지 본다.**

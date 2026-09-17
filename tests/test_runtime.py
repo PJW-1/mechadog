@@ -1444,3 +1444,59 @@ def test_alert_reentry_can_still_start_tracking(config: dict, clock: FakeClock) 
     # 대상이 **데드존 밖 같은 쪽**에 다시 선다. 즉 `centered` 값이 직전과 같다.
     _sighting(runtime, vision, seq=3, at_ms=400, box=off_centre)
     assert runtime.behavior.state == "TRACK", "재진입 첫 판정이 삼켜지면 ALERT 에 갇힌다"
+
+
+def test_engage_threshold_is_wider_than_the_steering_deadzone(
+    config: dict, clock: FakeClock
+) -> None:
+    """⚠️ **경계에서 `ALERT ⇄ TRACK` 이 왕복하던 것을 막는다 (2026-09-18 실기).**
+
+    bbox 중심이 데드존 경계를 ±5px 로 넘나들며 한 초에 3왕복했다. 진입 임계를
+    이탈 임계보다 넓게 두면 그 사이 구간에서 상태가 유지된다.
+    """
+    deadzone = config["fsm"]["track_deadzone_px"]
+    engage = config["fsm"]["track_engage_px"]
+    assert deadzone < engage, "이 시험의 전제 — 진입이 이탈보다 넓다"
+    between = (deadzone + engage) / 2  # 40 과 50 사이
+
+    def box_at(offset: float) -> tuple[float, float, float, float]:
+        centre = 320.0 + offset
+        return (centre - 20.0, 200.0, centre + 20.0, 400.0)
+
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=box_at(0))
+    assert runtime.behavior.state == "ALERT"
+
+    # 두 임계 사이 — 아직 들어가지 않는다.
+    _sighting(runtime, vision, seq=2, at_ms=200, box=box_at(between))
+    assert runtime.behavior.state == "ALERT", "진입 임계를 넘어야 추종을 연다"
+
+    # 진입 임계 밖 — 들어간다.
+    _sighting(runtime, vision, seq=3, at_ms=300, box=box_at(engage + 10))
+    assert runtime.behavior.state == "TRACK"
+
+    # 다시 두 임계 사이 — 나오지 않는다. **떨림이 왕복을 만들지 못한다.**
+    _sighting(runtime, vision, seq=4, at_ms=400, box=box_at(between))
+    assert runtime.behavior.state == "TRACK", "이탈은 좁은 데드존이 정한다"
+
+
+def test_yaw_rate_folds_the_compass_wrap(config: dict, clock: FakeClock, caplog) -> None:
+    """방위가 359° 에서 1° 로 넘어가도 **+2° 회전**이지 −358° 가 아니다.
+
+    ⚠️ yaw 를 그대로 평균 내면 경계 한 번에 요약이 통째로 망가진다. 좌우 대칭을
+    보려고 싣는 값이라 **부호도 살아 있어야** 한다 (`3.5.4`).
+    """
+    import logging
+
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        runtime.tick(0)  # 요약 주기를 시작만 한다
+        for i, yaw in enumerate((359.0, 1.0, 3.0), start=1):
+            runtime.ingest(telemetry(enc, imu={"pitch": 0.0, "roll": 0.0, "yaw": yaw}), 100 * i)
+        runtime.tick(1100)
+    digests = [rec for rec in caplog.records if getattr(rec, "event", "") == "telemetry_summary"]
+    assert digests, "1초가 지났으면 요약이 나온다"
+    # 359 -> 1 -> 3 은 100ms 마다 +2° 이므로 +20 °/s 다.
+    assert digests[0].detail["yaw_rate_deg_s_avg"] == pytest.approx(20.0)
