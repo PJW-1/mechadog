@@ -93,6 +93,15 @@ class TrackSequence:
     맴돌게 된다. 그래서 지시에 나이를 매기고, 넘으면 **정지를 보낸다** — 아무것도
     보내지 않는 것과 다르다. 안 보내면 로봇이 `cmd_timeout_ms` 까지 직전 명령을
     유지한다.
+
+    ⚠️ **그 나이는 `fsm.track_coast_ms` 다 — `safety.cmd_timeout_ms` 가 아니다.**
+    예전에는 후자를 빌려 썼는데 둘은 다른 관심사다. 하나는 *"링크가 살아 있는가"*,
+    하나는 *"관측이 신선한가"* 이고 우연히 같은 300ms 였다. 그래서 검출이 0.3초만
+    끊겨도 정지가 나가 **가다말다**가 됐다 — 2026-09-18 실기에서 `TRACK` 구간의
+    초당 지시가 중앙값 1/25 까지 떨어졌다. 4족 보행의 흔들림은 물리라 공백을 0 으로
+    만들 수 없고, 그렇다면 **짧은 공백은 이어 가고 긴 공백만 정지로 떨어뜨리는 것**이
+    맞다. 이어 가는 것에는 회전도 포함한다 — 화면 밖으로 빠진 대상은 그쪽으로 조금
+    더 돌아야 쫓을 수 있고(호로만 가능 · DR-11), 위험은 상한이 막는다.
     """
 
     def __init__(self, max_age_ms: int) -> None:
@@ -304,12 +313,11 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
             remedy="tools/gait_calibrate.py --mode forward --bias-deg <각도> (WBS 2.2.3)",
         )
 
-    # ⚠️ **추종 지시의 유효기간은 명령 타임아웃보다 짧아야 한다.** 길면 로봇이
-    # 스스로 멈추기 전에 낡은 각도로 도는 구간이 생긴다.
     behavior.register_sequence("ZONE_INSPECT", HoldSequence())
     result["ZONE_INSPECT"] = "등록"
 
-    track_max_age = int(config["safety"]["cmd_timeout_ms"])
+    # 추종 지시의 유효기간. **명령 타임아웃과 다른 값이다** — 위 `TrackSequence` 주석.
+    track_max_age = int(config["fsm"]["track_coast_ms"])
     track = TrackSequence(track_max_age)
     behavior.register_sequence("TRACK", track)
     behavior.fsm.on_enter("TRACK", track.forget)

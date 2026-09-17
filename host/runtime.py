@@ -226,6 +226,8 @@ class Runtime:
         self._track_engage_px = float(config["fsm"]["track_engage_px"])
         # 직전 IMU 방위와 그 시각. 각속도는 차분이라 표본 하나를 들고 있어야 한다.
         self._last_yaw: tuple[float, int] | None = None
+        # 직전 추종 지시 시각. 공백 길이를 재는 데 쓴다 (`track_gap_ms`).
+        self._last_track_ms: int | None = None
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
@@ -458,6 +460,7 @@ class Runtime:
             # 정지한 채 갇힌다 — 2026-09-18 실기에서 편차 84px 대상을 앞에 두고
             # 33초를 서 있었다.
             self._edge.forget("track_centered")
+            self._last_track_ms = None
             return
         box = result.sighting.box
         if box is None:
@@ -480,6 +483,13 @@ class Runtime:
         # 상쇄돼 미세진동이 감춰진다 — DoD 가 확인하라는 바로 그것이다 (`3.5.4`).
         self._summary.observe("track_dev_px", abs(command.deviation_px))
         self._summary.observe("track_angle_deg", abs(command.angle))
+        # ⚠️ **공백의 «길이» 를 남긴다.** 요약은 개수만 세므로 지시가 몇 번 나갔는지는
+        # 알아도 **얼마나 오래 비었는지**를 알 수 없었고, 그래서 `track_coast_ms` 를
+        # 한 번의 관측(중앙값 956ms)으로 어림해야 했다. 이 값이 쌓이면 상한이 맞는지
+        # 숫자로 판정된다 — 보행 흔들림이 만드는 공백은 기체·바닥마다 다르다.
+        if self._last_track_ms is not None:
+            self._summary.observe("track_gap_ms", float(now_ms - self._last_track_ms))
+        self._last_track_ms = now_ms
         if not command.centered:
             self._summary.count("track_off_center")
         # ⚠️ **전이를 먼저, 지시는 그다음이다.** `TRACK` 진입 훅이 지난 추종의
