@@ -94,6 +94,17 @@ constexpr float kBatteryDividerRatio = 4.0f;
 constexpr uint8_t kBatterySamples = 9;  // Odd count: the median is a real sample.
 constexpr uint8_t kImuAddress = 0x6A;
 constexpr uint8_t kSonarAddress = 0x77;
+
+// 눈 LED 는 초음파 모듈 안에 있다 (아키텍처 3.1 · OI-12 닫힘). 레지스터 배치는
+// 2026-09-18 실기에서 확정했다 — 벤더 자료가 없어 `diagnostics/led_probe` 로 직접
+// 찾았고, 다섯 색이 지시대로 나오는 것을 눈으로 확인했다.
+constexpr uint8_t kLedModeRegister = 0x02;
+constexpr uint8_t kLedModeUserColor = 0x00;  // 1 은 호흡등이라 상태 표시로 쓸 수 없다.
+constexpr uint8_t kLedFirstRegister = 0x03;  // 0x03~0x05 가 LED1, 0x06~0x08 이 LED2.
+constexpr uint8_t kLedChannelCount = 6;
+// 버스를 기다리는 한계. 센서 주기가 40ms 이므로 이보다 오래 잡히지 않는다.
+// 못 얻으면 실패로 돌려준다 — 제어 루프를 붙잡고 있는 것보다 낫다.
+constexpr uint32_t kLedBusWaitMs = 5;
 constexpr uint32_t kSamplePeriodMs = 40;  // Official Madgwick filter.begin(25).
 constexpr uint32_t kMaxAgeMs = kSensorMaxAgeMs;
 constexpr uint32_t kCalibrationTimeoutMs = 2000;
@@ -188,6 +199,17 @@ bool read_bytes_after_stop(uint8_t address, uint8_t reg, uint8_t* out, size_t le
     }
     out[index] = static_cast<uint8_t>(byte);
   }
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  return ok;
+}
+
+// 한 바이트 쓰기. 읽기 두 종류와 같은 잠금 규칙을 따른다 — write 는 쪼개지면
+// 안 되는 시퀀스이므로 재귀 뮤텍스를 잡은 채로 끝낸다.
+bool write_register(uint8_t address, uint8_t reg, uint8_t value) {
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
+  Wire.beginTransmission(address);
+  const bool queued = Wire.write(reg) == 1 && Wire.write(value) == 1;
+  const bool ok = queued && Wire.endTransmission(true) == 0;
   if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
   return ok;
 }
@@ -623,6 +645,32 @@ bool lockI2cBus(uint32_t wait_ms) {
 void unlockI2cBus() {
 #if MECHADOG_ENABLE_SENSORS
   if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+#endif
+}
+
+// 눈 LED (FR-10.4). 초음파와 같은 모듈·같은 버스이므로 이 HAL 이 쓴다 — 헤더 머리말의
+// «새 I2C 장치는 이 HAL 의 버스를 공유한다» 가 이 경우다.
+//
+// ⚠️ **부르는 쪽을 오래 잡지 않는다.** 제어 루프에서 불리므로 버스를 5ms 만 기다리고
+// 실패를 돌려준다. 색을 못 바꾸는 것은 기능 저하이지만, 루프가 멈추는 것은 안전 문제다.
+// ⚠️ **모드 레지스터를 매번 함께 쓴다.** 모듈이 자체 전원 흔들림으로 초기화되면 호흡등으로
+// 돌아가 색 지시를 무시한다. 쓰기 한 번 더가 그 경우를 스스로 복구한다.
+bool writeEyeLed(uint8_t r, uint8_t g, uint8_t b) {
+#if MECHADOG_ENABLE_SENSORS
+  if (!lockI2cBus(kLedBusWaitMs)) return false;
+  const uint8_t channels[kLedChannelCount] = {r, g, b, r, g, b};
+  bool ok = write_register(kSonarAddress, kLedModeRegister, kLedModeUserColor);
+  for (uint8_t index = 0; ok && index < kLedChannelCount; ++index) {
+    ok = write_register(kSonarAddress, static_cast<uint8_t>(kLedFirstRegister + index),
+                        channels[index]);
+  }
+  unlockI2cBus();
+  return ok;
+#else
+  (void)r;
+  (void)g;
+  (void)b;
+  return false;
 #endif
 }
 

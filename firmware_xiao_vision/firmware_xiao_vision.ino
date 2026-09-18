@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <Wire.h>
 #include <esp_camera.h>
 #include <esp_http_server.h>
 #include <esp_timer.h>
@@ -97,11 +98,72 @@ void applyOrientation(sensor_t* sensor) {
   sensor->set_hmirror(sensor, g_mount_rotated ? 1 : 0);
 }
 
+// OV3660 은 XCLK 가 돌기 시작한 뒤에야 SCCB 에 제대로 답한다. 그런데 드라이버는
+// 클럭을 켜자마자 ID 레지스터를 읽으므로, 차가운 상태에서는 쓰레기 값을 읽는다.
+//
+// ⚠️ **그 실패가 «카메라가 없다» 처럼 보인다.** 2026-09-18 실측에서 코어 2.0.17 은
+// `0x105 NOT_FOUND`, 3.3.11 은 `0x106 NOT_SUPPORTED` 로 끝났고, 둘 다 배선 불량과
+// 구분되지 않아 멀쩡한 하드웨어를 의심하게 만들었다. 같은 보드에서 XCLK 를 먼저
+// 200ms 돌린 뒤에는 `PID=0x3660` 으로 정상 초기화되고 VGA 프레임까지 나왔다.
+//
+// 그래서 **드라이버를 부르기 전에 클럭을 미리 돌려 센서를 깨운다.** 비용은 부팅
+// 250ms 뿐이고, 없으면 카메라가 아예 살아나지 않는다.
+void warmUpSensorClock() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  if (!ledcAttach(kPinXclk, 20000000, 1)) {
+    Serial.println("WARN camera_init: XCLK 워밍업 실패 - 그대로 진행한다");
+    return;
+  }
+  ledcWrite(kPinXclk, 1);  // 1비트 해상도에서 50% 듀티
+#else
+  ledcSetup(1, 20000000, 1);
+  ledcAttachPin(kPinXclk, 1);
+  ledcWrite(1, 1);
+#endif
+  delay(50);
+
+  // SCCB 를 한 번 열어 센서에게 말을 걸어 둔다.
+  //
+  // ⚠️ **클럭만 돌려서는 부족했다.** 2026-09-18 실측에서 클럭만 200ms 돌린 뒤의
+  // `esp_camera_init` 은 세 번 모두 `0x106 NOT_SUPPORTED` 였고, 같은 보드에서
+  // `Wire` 로 ID 레지스터를 한 번 읽어 본 뒤에는 통과했다. `Wire.begin` 이 SDA·SCL 에
+  // 내부 풀업을 걸어 주는데 새 `sccb-ng` 드라이버는 그것을 하지 않는 것으로 보인다.
+  //
+  // ⚠️ **읽은 값으로 분기하지 않는다.** 여기서 하는 일은 버스를 깨우는 것뿐이고,
+  // 센서 판정은 드라이버에 맡긴다 — 같은 일을 두 곳에서 하면 언젠가 어긋난다.
+  Wire.begin(kPinSiod, kPinSioc, 100000);
+  delay(50);
+  uint16_t chip_id = 0;
+  Wire.beginTransmission(0x3C);
+  Wire.write(0x30);
+  Wire.write(0x0A);
+  if (Wire.endTransmission(false) == 0 && Wire.requestFrom(0x3C, 1) == 1) {
+    chip_id = static_cast<uint16_t>(Wire.read()) << 8;
+    Wire.beginTransmission(0x3C);
+    Wire.write(0x30);
+    Wire.write(0x0B);
+    if (Wire.endTransmission(false) == 0 && Wire.requestFrom(0x3C, 1) == 1) {
+      chip_id |= Wire.read();
+    }
+  }
+  Serial.printf("SENSOR_PROBE chip_id=0x%04X\n", chip_id);
+  Wire.end();
+
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcDetach(kPinXclk);
+#else
+  ledcDetachPin(kPinXclk);
+#endif
+  delay(200);
+}
+
 bool initializeCamera() {
   if (!psramFound()) {
     Serial.println("ERROR camera_init: PSRAM을 찾지 못했습니다");
     return false;
   }
+
+  warmUpSensorClock();
 
   camera_config_t config{};
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -130,7 +192,27 @@ bool initializeCamera() {
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.grab_mode = CAMERA_GRAB_LATEST;
 
-  const esp_err_t error = esp_camera_init(&config);
+  // ⚠️ **초기화가 간헐적으로 실패한다.** 같은 보드·같은 전원에서 한 번은
+  // `CAMERA_READY` 가 나왔고, 다음 전원 인가에서는 `sccb-ng: W [6702]=fd fail` 로
+  // 죽었다. 센서가 깨어나는 시점이 매번 같지 않다는 뜻이다.
+  //
+  // 원인을 한 줄로 확정하지 못했으므로 **실패를 견디게 만든다** — 부분 자원을
+  // 되돌리고 클럭을 다시 깨운 뒤 다시 시도한다. 비용은 실패했을 때의 몇백 ms 뿐이고,
+  // 없으면 카메라가 죽은 채로 로봇이 순찰을 돈다.
+  esp_err_t error = ESP_FAIL;
+  for (int attempt = 1; attempt <= 3; ++attempt) {
+    error = esp_camera_init(&config);
+    if (error == ESP_OK) {
+      if (attempt > 1) {
+        Serial.printf("WARN camera_init: %d회째에 성공\n", attempt);
+      }
+      break;
+    }
+    Serial.printf("WARN camera_init attempt=%d error=0x%x\n", attempt, error);
+    esp_camera_deinit();
+    delay(300);
+    warmUpSensorClock();
+  }
   if (error != ESP_OK) {
     Serial.printf("ERROR camera_init: 0x%x\n", error);
     return false;
