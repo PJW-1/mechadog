@@ -347,21 +347,21 @@ def test_half_measured_reverse_turn_keeps_the_old_phases(cfg, override: dict) ->
 
 
 # ── 직진 보정 (2026-09-12 확정 · 2026-09-18 곡선으로 근거 정정) ────
-# ⚠️ 2026-09-12 에는 «데드밴드 3.3°» 로 설명했으나 그것은 틀렸다 — 응답에
-# 평평한 구간이 없고 순 회전 영점이 -5.4° 다 (docs/measurements/2026-09-18-turn-rate-curve.md).
-# 값 -8.0 자체는 그대로 쓴다.
+# ⚠️ 2026-09-12 에는 «데드밴드 3.3°» 로 설명했고 값도 -8.0 이었다. 둘 다 틀렸다 — 응답에
+# 평평한 구간이 없고 순 회전 영점은 **-5.0°** 다 (직접 실측).
+# docs/measurements/2026-09-18-turn-rate-curve.md
 def test_patrol_carries_the_measured_straight_bias(clock, cfg) -> None:
     """⚠️ **각도 0 을 보내면 똑바로 가지 않는다.**
 
-    실측에서 직진 명령이 좌로 1.0 도/s 씩 돌았다 — 10초 구간마다 9cm 씩 밀리고
-    방향은 누적된다. 그래서 보정 각도를 직진 명령에 얹는다.
+    실측에서 직진 명령이 좌로 **1.87 도/s** 씩 돌았다(2026-09-18 · IMU). 5m 직선이면
+    90도이고 방향은 누적된다. 그래서 보정 각도를 직진 명령에 얹는다.
     """
     merged = _cfg(cfg)
-    merged["gait_calibration"] = dict(merged["gait_calibration"], straight_bias_deg=-8.0)
+    merged["gait_calibration"] = dict(merged["gait_calibration"], straight_bias_deg=-5.0)
     b = _behavior(clock, merged)
     register_actions(b, merged)
     b.event(Event.START_PATROL, now_ms=clock.ms)
-    assert moves(b, clock.ms)[0]["angle"] == -8.0
+    assert moves(b, clock.ms)[0]["angle"] == -5.0
 
 
 def test_patrol_without_a_measured_bias_sends_zero(clock, cfg) -> None:
@@ -383,7 +383,7 @@ def test_avoid_phases_do_not_take_the_straight_bias(cfg) -> None:
 
     보정은 *직진* 명령을 곧게 만드는 값이고, 회피는 이미 각도를 의도적으로 준다.
     """
-    merged = _measured(cfg, straight_bias_deg=-8.0)
+    merged = _measured(cfg, straight_bias_deg=-5.0)
     phases = avoid_phases(merged)
     assert phases is not None
     escape = next(ph for ph in phases if ph.name == "reverse_turn")
