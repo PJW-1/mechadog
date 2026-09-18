@@ -49,8 +49,14 @@ class PatrolSequence:
     빠져나간다. 그래서 이 시퀀스는 *"순찰 중일 때 계속 앞으로"* 하나만 맡는다.
 
     ⚠️ **각도 0 을 보내면 똑바로 가지 않는다.** `mechdog-01` 은 직진 명령에서
-    **좌로 1.0 도/s** 씩 요가 돈다(2026-09-11 실측 · 10초에 10도). 10초 구간마다
-    9cm 씩 밀리고 방향은 누적된다. 그래서 실측한 보정 각도를 **직진 명령에 얹는다.**
+    **좌로 1.87 도/s** 씩 요가 돈다(2026-09-18 IMU 실측 · 5m 직선이면 90도).
+    방향이 누적되므로 실측한 보정 각도를 **직진 명령에 얹는다.**
+
+    ⚠️ **보정값은 «순 회전이 0 이 되는 각도» 이며 실측이어야 한다.** `mechdog-01` 은
+    `-5.0` 이다(2026-09-18 · 세 점 `0 → +1.87` · `-5 → -0.19` · `-8 → -1.40`).
+    예전 `-8.0` 은 두 점 눈대중 보간이었고 그 값으로 걸으면 **반대쪽으로** 1.40 도/s
+    휜다 — 8초에 11도라 **눈으로는 일직선으로 보이지만** 5m 직선이면 67도다.
+    절차는 `docs/measurements/2026-09-18-turn-rate-curve.md` 1절.
 
     ⚠️ **이것은 개루프 보정이라 바닥·배터리가 바뀌면 다시 틀린다.** 제대로 된
     해법은 요를 보고 닫는 것이며(측위의 `patrol.steering_for` 는 이미 폐루프,
@@ -76,6 +82,46 @@ class HoldSequence:
 
     def __call__(self, commander: Commander, now_ms: int) -> None:  # noqa: ARG002
         commander.drive(0.0, 0.0)
+
+
+class PostureHook:
+    """상태 경계에서 `POSE` 를 **한 번** 보낸다 (WBS 3.5.2 · 3.5.3 · FR-3.3).
+
+    ⚠️ **틱마다 보내지 않는다.** 벤더 `set_pose` 는 `dur` 동안 보간해 움직이므로,
+    매 틱 다시 보내면 그 보간이 계속 처음부터 시작해 **자세가 영원히 도착하지 않는다.**
+    자세는 한 번 보내면 유지되는 값이라 `Commander.announce` 와 같은 «바뀔 때만» 규칙이
+    맞는다.
+
+    ⚠️ **이탈 훅으로 중립을 되돌리는 것이 필수다.** 고개를 든 상태로는 전방 지면이
+    보이지 않아 **이동할 수 없다**(FR-9.2.3). FSM 이 이탈 훅을 진입 훅보다 먼저 부르므로
+    `SCAN → PATROL` 에서 중립 복귀가 순찰 시작보다 앞선다.
+
+    ⚠️ **부호 주의 — 음수가 «고개를 드는» 쪽이다.** 2026-09-15 IMU 실측으로 확정했고
+    (`POSE pitch=+15` → IMU 17.4, 앞이 내려감) `config` 의 `fsm.scan_pitch_deg`·
+    `fsm.alert_pitch_deg` 가 그래서 `-15` 다. 여기서 부호를 만들지 않고 **설정값을
+    그대로 싣는다** — 코드가 뒤집으면 설정을 고쳐도 동작이 안 바뀐다.
+
+    ⚠️ **안전 래치 중에는 로봇이 `POSE` 를 거절한다**(펌웨어 `safe_latched` 가드).
+    그래서 `ALERT` 에서 곧바로 `FAILSAFE` 로 갈 때의 중립 복귀는 닿지 않고 고개를 든
+    채로 남는다. 서 있는 상태라 위험하지 않고, 래치를 풀고 다시 자세 상태에 들어가면
+    복귀한다. 걷는 상태(`PATROL`)에 `POSE` 를 끼워 넣지 않는 이유는 그 반대다 —
+    트롯 중 자세 보간이 겹치면 걸음이 흔들린다.
+    """
+
+    def __init__(self, commander: Commander, pitch_deg: float, dur_ms: int) -> None:
+        if dur_ms <= 0:
+            raise ValueError("dur_ms 는 0 보다 커야 함")
+        self._commander = commander
+        self._pitch_deg = float(pitch_deg)
+        self._dur_ms = int(dur_ms)
+
+    @property
+    def pitch_deg(self) -> float:
+        return self._pitch_deg
+
+    def __call__(self, _previous: str = "", _target: str = "") -> None:
+        """전이 훅으로 걸린다 — `(이전, 다음)` 을 받지만 쓰지 않는다."""
+        self._commander.once("POSE", pitch=self._pitch_deg, roll=0.0, height=0.0, dur=self._dur_ms)
 
 
 class TrackSequence:
@@ -315,6 +361,27 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
 
     behavior.register_sequence("ZONE_INSPECT", HoldSequence())
     result["ZONE_INSPECT"] = "등록"
+
+    # ── 자세 상태 둘 (WBS 3.5.2 SCAN · 3.5.3 ALERT) ────────────────────────
+    #
+    # **둘은 같은 기전이고 값만 다르다** — 들어갈 때 `POSE` 를 한 번 보내고, 그 동안
+    # 제자리에 서 있고, 나갈 때 중립으로 되돌린다. 그래서 하나의 훅 클래스로 덮는다.
+    #
+    # ⚠️ **요 스캔은 없다.** 다리 2자유도가 모두 앞뒤 평면에 있어 몸통 요가 기하학적으로
+    # 불가능하고(DR-11) 규약의 `POSE` 에도 요 필드가 없다. `SCAN` 은 피치만 쓴다.
+    #
+    # ⚠️ **3초는 여기서 세지 않는다** — `fsm.patrol_scan_interval_s`·`scan_duration_s`
+    # 타이머가 이미 `SCAN_DONE` 을 낸다(`3.4.3`). 시퀀스가 시간을 또 재면 두 개의
+    # 시계가 같은 일을 하고, 어긋나는 날이 온다.
+    commander = behavior.commander
+    settle_ms = int(config["posture"]["settle_ms"])
+    neutral = PostureHook(commander, 0.0, settle_ms)
+    for state, key in (("SCAN", "scan_pitch_deg"), ("ALERT", "alert_pitch_deg")):
+        behavior.register_sequence(state, HoldSequence())
+        enter = PostureHook(commander, float(config["fsm"][key]), settle_ms)
+        behavior.fsm.on_enter(state, enter)
+        behavior.fsm.on_exit(state, neutral)
+        result[state] = f"등록 (pitch {enter.pitch_deg:+.0f}°)"
 
     # 추종 지시의 유효기간. **명령 타임아웃과 다른 값이다** — 위 `TrackSequence` 주석.
     track_max_age = int(config["fsm"]["track_coast_ms"])

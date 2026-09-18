@@ -388,3 +388,78 @@ def test_avoid_phases_do_not_take_the_straight_bias(cfg) -> None:
     assert phases is not None
     escape = next(ph for ph in phases if ph.name == "reverse_turn")
     assert escape.angle_deg == cfg["gait"]["turn_angle_deg"]
+
+
+# ── 자세 상태 (WBS 3.5.2 SCAN · 3.5.3 ALERT) ─────────────────
+#
+# ⚠️ **틱 시각을 반드시 진행시킨다.** 송신기는 10Hz 주기라 같은 ms 로 두 번 부르면
+# 두 번째가 빈 목록을 돌려주고 전문은 큐에 남는다 — 그것을 «안 보냈다» 로 읽으면
+# 시험이 거짓으로 통과하거나 거짓으로 실패한다.
+def poses(behavior: Behavior, now_ms: int) -> list[dict]:
+    return [m for m in sent(behavior, now_ms) if m["type"] == "POSE"]
+
+
+@pytest.mark.parametrize(
+    ("state", "key", "event"),
+    [("SCAN", "scan_pitch_deg", Event.SCAN_DUE), ("ALERT", "alert_pitch_deg", Event.PERSON_FOUND)],
+)
+def test_posture_state_sends_the_configured_pitch_once(clock, cfg, state, key, event) -> None:
+    """⚠️ **틱마다 보내면 자세가 도착하지 않는다.**
+
+    벤더 `set_pose` 는 `dur` 동안 보간해 움직이므로, 매 틱 다시 보내면 그 보간이
+    계속 처음부터 시작한다. 그래서 상태에 들어갈 때 **한 번만** 보낸다.
+    """
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    assert poses(b, 0) == [], "순찰 진입에는 자세가 없다"
+
+    b.event(event, now_ms=100)
+    assert b.state == state
+    first = poses(b, 100)
+    assert len(first) == 1, "진입 틱에 한 번 나간다"
+    assert first[0]["pitch"] == cfg["fsm"][key]
+    assert first[0]["pitch"] < 0, "음수가 «고개를 드는» 쪽이다 (2026-09-15 IMU 실측)"
+
+    assert poses(b, 200) == [], "다음 틱에는 다시 보내지 않는다"
+
+
+def test_leaving_a_posture_state_restores_neutral(clock, cfg) -> None:
+    """⚠️ **고개를 든 상태로는 이동할 수 없다** — 전방 지면이 안 보인다 (FR-9.2.3).
+
+    그래서 이탈 훅이 중립으로 되돌린다. FSM 이 이탈 훅을 진입 훅보다 먼저 부르므로
+    중립 복귀가 다음 상태의 준비보다 앞선다.
+    """
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.SCAN_DUE, now_ms=0)
+    assert poses(b, 0)[0]["pitch"] == cfg["fsm"]["scan_pitch_deg"]
+
+    b.event(Event.SCAN_DONE, now_ms=100)
+    assert b.state == "PATROL"
+    assert [m["pitch"] for m in poses(b, 100)] == [0], "중립으로 되돌린다"
+
+
+def test_alert_restores_neutral_before_tracking_walks(clock, cfg) -> None:
+    """`ALERT → TRACK` 은 **걷기 시작하는 전이다.** 고개를 든 채로 가면 안 된다."""
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.PERSON_FOUND, now_ms=0)
+    assert poses(b, 0)[0]["pitch"] == cfg["fsm"]["alert_pitch_deg"]
+
+    b.event(Event.TARGET_OFF_CENTER, now_ms=100)
+    assert b.state == "TRACK"
+    assert [m["pitch"] for m in poses(b, 100)] == [0], "추종으로 넘어가며 중립 복귀"
+
+
+def test_posture_states_stand_still(clock, cfg) -> None:
+    """자세를 잡는 동안 걷지 않는다 — 조준·경계는 정지 상태의 행동이다."""
+    b = _behavior(clock, _cfg(cfg))
+    report = register_actions(b, _cfg(cfg))
+    assert "pitch" in report["SCAN"] and "pitch" in report["ALERT"], "기동 로그에 값이 남는다"
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.SCAN_DUE, now_ms=0)
+    move = moves(b, 0)[0]
+    assert (move["step"], move["angle"]) == (0, 0)
