@@ -84,44 +84,92 @@ class HoldSequence:
         commander.drive(0.0, 0.0)
 
 
-class PostureHook:
-    """상태 경계에서 `POSE` 를 **한 번** 보낸다 (WBS 3.5.2 · 3.5.3 · FR-3.3).
+class PostureSequence:
+    """상태에 **머문 뒤** 자세를 잡고, **잡았을 때만** 되돌린다 (WBS 3.5.2 · 3.5.3 · FR-3.3).
 
-    ⚠️ **틱마다 보내지 않는다.** 벤더 `set_pose` 는 `dur` 동안 보간해 움직이므로,
-    매 틱 다시 보내면 그 보간이 계속 처음부터 시작해 **자세가 영원히 도착하지 않는다.**
-    자세는 한 번 보내면 유지되는 값이라 `Commander.announce` 와 같은 «바뀔 때만» 규칙이
-    맞는다.
+    시퀀스이자 두 전이 훅이다 — `register_sequence` 로 매 틱 불리고, `restart` 를
+    진입 훅에, `release` 를 이탈 훅에 건다. 셋이 한 객체여야 *"보냈는가"* 를 기억할
+    수 있다.
 
-    ⚠️ **이탈 훅으로 중립을 되돌리는 것이 필수다.** 고개를 든 상태로는 전방 지면이
-    보이지 않아 **이동할 수 없다**(FR-9.2.3). FSM 이 이탈 훅을 진입 훅보다 먼저 부르므로
-    `SCAN → PATROL` 에서 중립 복귀가 순찰 시작보다 앞선다.
+    ⚠️ **진입 즉시 보내면 안 된다 — 2026-09-18 실기에서 그렇게 만들었다가 잡았다.**
+    `ALERT` 는 조준 중에 `TRACK` 과 왕복하는데 그 체류가 **0.2~0.6초**였다(실측 10회).
+    자세 보간(`dur` = 500ms)이 끝나기 전에 중립이 오므로 **고개가 올라가려다 멈추고
+    다시 올라가려 한다** — 운용자 관찰 *"고개를 들려다가 움직이고 들려다가 움직이고"*.
+    그래서 `hold_ms` 이상 머문 뒤에 잡는다.
 
-    ⚠️ **부호 주의 — 음수가 «고개를 드는» 쪽이다.** 2026-09-15 IMU 실측으로 확정했고
-    (`POSE pitch=+15` → IMU 17.4, 앞이 내려감) `config` 의 `fsm.scan_pitch_deg`·
-    `fsm.alert_pitch_deg` 가 그래서 `-15` 다. 여기서 부호를 만들지 않고 **설정값을
-    그대로 싣는다** — 코드가 뒤집으면 설정을 고쳐도 동작이 안 바뀐다.
+    ⚠️ **이 왕복은 히스테리시스로 못 막는다.** 진입·이탈 임계를 갈라 둔 것(50/40px)은
+    **경계 떨림**을 막는 장치이고, 여기서 일어나는 것은 **검출 깜빡임으로 bbox 가 실제로
+    크게 움직이는 것**이다. 값이 진짜로 임계를 넘나든다.
+
+    ⚠️ **의미도 그쪽이 맞다.** 경계 자세는 *"자리를 잡았을 때"* 취하는 것이지 조준하는
+    중에 드는 것이 아니다. 그래서 왕복 구간에서는 `POSE` 가 **한 장도 나가지 않는다** —
+    잡지 않았으면 되돌릴 것도 없기 때문이다.
+
+    ⚠️ **`SCAN` 은 `hold_ms=0` 이다.** 타이머가 3초만 주는데 기다리면 자세 시간이 줄고,
+    `SCAN` 은 타이머가 열고 닫으므로 왕복하지 않는다.
+
+    ⚠️ **틱마다 보내지 않는다.** 벤더 `set_pose` 는 `dur` 동안 보간해 움직이므로 매 틱
+    다시 보내면 보간이 계속 처음부터 시작해 **자세가 영원히 도착하지 않는다.**
+
+    ⚠️ **부호 주의 — 음수가 «고개를 드는» 쪽이다** (2026-09-15 IMU 실측). 여기서 부호를
+    만들지 않고 설정값을 그대로 싣는다 — 코드가 뒤집으면 설정을 고쳐도 동작이 안 바뀐다.
 
     ⚠️ **안전 래치 중에는 로봇이 `POSE` 를 거절한다**(펌웨어 `safe_latched` 가드).
-    그래서 `ALERT` 에서 곧바로 `FAILSAFE` 로 갈 때의 중립 복귀는 닿지 않고 고개를 든
-    채로 남는다. 서 있는 상태라 위험하지 않고, 래치를 풀고 다시 자세 상태에 들어가면
-    복귀한다. 걷는 상태(`PATROL`)에 `POSE` 를 끼워 넣지 않는 이유는 그 반대다 —
-    트롯 중 자세 보간이 겹치면 걸음이 흔들린다.
+    `ALERT → FAILSAFE` 의 중립 복귀는 닿지 않고 고개를 든 채로 남는다 — 서 있는 상태라
+    위험하지 않고, 래치를 풀고 다시 자세 상태에 들어가면 복귀한다. 걷는 `PATROL` 에
+    `POSE` 를 끼워 넣지 **않는** 이유는 반대다(트롯 중 자세 보간이 겹치면 걸음이 흔들린다).
     """
 
-    def __init__(self, commander: Commander, pitch_deg: float, dur_ms: int) -> None:
+    def __init__(
+        self, commander: Commander, pitch_deg: float, dur_ms: int, hold_ms: int = 0
+    ) -> None:
         if dur_ms <= 0:
             raise ValueError("dur_ms 는 0 보다 커야 함")
+        if hold_ms < 0:
+            raise ValueError("hold_ms 는 0 이상이어야 함")
         self._commander = commander
         self._pitch_deg = float(pitch_deg)
         self._dur_ms = int(dur_ms)
+        self._hold_ms = int(hold_ms)
+        self._since_ms: int | None = None
+        self._sent = False
 
     @property
     def pitch_deg(self) -> float:
         return self._pitch_deg
 
-    def __call__(self, _previous: str = "", _target: str = "") -> None:
-        """전이 훅으로 걸린다 — `(이전, 다음)` 을 받지만 쓰지 않는다."""
-        self._commander.once("POSE", pitch=self._pitch_deg, roll=0.0, height=0.0, dur=self._dur_ms)
+    @property
+    def hold_ms(self) -> int:
+        return self._hold_ms
+
+    @property
+    def sent(self) -> bool:
+        """자세를 실제로 보냈는가. 이탈 훅이 이 값으로 중립 복귀를 가른다."""
+        return self._sent
+
+    def restart(self, _previous: str = "", _target: str = "") -> None:
+        """진입 훅. **체류 시각은 첫 틱에서 잡는다** — 훅은 시각을 받지 않는다."""
+        self._since_ms = None
+        self._sent = False
+
+    def release(self, _previous: str = "", _target: str = "") -> None:
+        """이탈 훅. **자세를 잡았을 때만** 중립으로 되돌린다."""
+        if not self._sent:
+            return
+        self._send(0.0)
+        self._sent = False
+
+    def _send(self, pitch_deg: float) -> None:
+        self._commander.once("POSE", pitch=pitch_deg, roll=0.0, height=0.0, dur=self._dur_ms)
+
+    def __call__(self, commander: Commander, now_ms: int) -> None:  # noqa: ARG002
+        if self._since_ms is None:
+            self._since_ms = now_ms
+        if not self._sent and now_ms - self._since_ms >= self._hold_ms:
+            self._send(self._pitch_deg)
+            self._sent = True
+        # 자세를 잡는 동안에도 그 뒤에도 제자리다 — 조준·경계는 정지 상태의 행동이다.
+        self._commander.drive(0.0, 0.0)
 
 
 class TrackSequence:
@@ -375,13 +423,18 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
     # 시계가 같은 일을 하고, 어긋나는 날이 온다.
     commander = behavior.commander
     settle_ms = int(config["posture"]["settle_ms"])
-    neutral = PostureHook(commander, 0.0, settle_ms)
+    # `SCAN` 은 즉시, `ALERT` 는 머문 뒤다 — 위 `PostureSequence` 주석의 실측 근거.
+    holds = {"SCAN": 0, "ALERT": int(config["posture"]["alert_hold_ms"])}
     for state, key in (("SCAN", "scan_pitch_deg"), ("ALERT", "alert_pitch_deg")):
-        behavior.register_sequence(state, HoldSequence())
-        enter = PostureHook(commander, float(config["fsm"][key]), settle_ms)
-        behavior.fsm.on_enter(state, enter)
-        behavior.fsm.on_exit(state, neutral)
-        result[state] = f"등록 (pitch {enter.pitch_deg:+.0f}°)"
+        posture = PostureSequence(commander, float(config["fsm"][key]), settle_ms, holds[state])
+        behavior.register_sequence(state, posture)
+        behavior.fsm.on_enter(state, posture.restart)
+        behavior.fsm.on_exit(state, posture.release)
+        result[state] = (
+            f"등록 (pitch {posture.pitch_deg:+.0f}° · {posture.hold_ms}ms 머문 뒤)"
+            if posture.hold_ms
+            else f"등록 (pitch {posture.pitch_deg:+.0f}° · 즉시)"
+        )
 
     # 추종 지시의 유효기간. **명령 타임아웃과 다른 값이다** — 위 `TrackSequence` 주석.
     track_max_age = int(config["fsm"]["track_coast_ms"])
