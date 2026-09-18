@@ -26,6 +26,7 @@ export function parseBlackbox(value) {
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('meta.json 객체를 선택해 주세요.');
  if(!Number.isSafeInteger(value.ts_ms)||value.ts_ms<0||value.ts_ms>8640000000000000)throw new Error('유효한 ts_ms가 없습니다.');
  for(const key of ['event','state','escalation'])if(typeof value[key]!=='string'||!value[key].trim()||value[key].length>160)throw new Error(key+' 필드를 확인해 주세요.');
+ if(value.mode!=null&&(typeof value.mode!=='string'||value.mode.length>40))throw new Error('mode 필드를 확인해 주세요.');
  for(const key of ['tracks','detections'])if(!Array.isArray(value[key])||value[key].length>128)throw new Error(key+' 배열 형식이 올바르지 않습니다.');
  const validBox=box=>Array.isArray(box)&&box.length===4&&box.every(n=>Number.isFinite(n)&&Math.abs(n)<1000000)&&box[2]>=box[0]&&box[3]>=box[1];
  for(const item of [...value.tracks,...value.detections]){
@@ -212,7 +213,7 @@ export class Operations {
   const existing=this.events.find(e=>e.importKey===key);
   if(existing){if(snapshot&&!existing.snapshot)existing.snapshot=snapshot;this.emit('import');return existing}
   if(this.events.filter(e=>e.source==='IMPORTED_BLACKBOX').length>=50)throw new Error('이번 세션에는 최대 50건까지 가져올 수 있습니다.');
-  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:meta.event,category:'SYSTEM',robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,auth:'필드 미제공',ppe:'필드 미제공',detail:'Git 블랙박스 형식의 저장 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
+  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:meta.event,category:'SYSTEM',robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,mode:cleanText(meta.mode,40)||null,auth:'필드 미제공',ppe:'필드 미제공',detail:'Git 블랙박스 형식의 저장 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
   this.events.unshift(event);this.log('블랙박스 파일 가져오기',event.id,'LOCAL_IMPORTED_REVIEW');this.emit('import');return event;
  }
  // ── 실시간 사건 피드 (WBS 4.6.4) ────────────────────────────────
@@ -227,7 +228,7 @@ export class Operations {
   if(this.events.filter(e=>e.source==='LIVE_FEED').length>=100)this.events.splice(this.events.findLastIndex(e=>e.source==='LIVE_FEED'),1);
   const device=cleanText(payload.telemetry?.device_id,80)||'장치 미상';
   const person=(payload.tracks||[]).length;
-  const event={id,seq,source:'LIVE_FEED',title:cleanText(payload.event,160),category:payload.event==='person_found'?'AUTH':'SYSTEM',robot:device,zone:'구역 미수신',event:cleanText(payload.event,160),state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),auth:'미판정',ppe:'별도 판정',detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':'')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':'스냅샷 파일이 없는 사건입니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
+  const event={id,seq,source:'LIVE_FEED',title:cleanText(payload.event,160),category:payload.event==='person_found'?'AUTH':'SYSTEM',robot:device,zone:'구역 미수신',event:cleanText(payload.event,160),state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:'미판정',ppe:'별도 판정',detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':'')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':'스냅샷 파일이 없는 사건입니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
   this.events.unshift(event);this.log('실시간 사건 수신',id+' · '+event.title,'LIVE_EVENT_FEED');this.emit('import');return event;
  }
