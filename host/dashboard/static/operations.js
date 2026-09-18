@@ -174,6 +174,9 @@ export class Operations {
  get serviceMode(){return this.deviceTelemetry?.flags.service??null}
  get safetyLatched(){return this.deviceTelemetry?this.deviceTelemetry.safetyLatched:null}
  get fsmState(){return this.telemetry?.snapshot?.state??''}
+ // 운용 모드 (FR-4.7). 로봇에서 받은 값이며 **모르면 null 이다** — 화면이 «경비» 로
+ // 추측하면 공장 순찰을 경비로 착각한다.
+ get missionMode(){return this.telemetry?.snapshot?.mode??null}
  // 실제 명령의 공통 경로 — 링크가 없으면 절대 나가지 않고, 거절도 숨기지 않는다.
  requestDevice(label,send){
   if(!this.live)throw new Error('실제 제어는 연결되지 않았습니다.');
@@ -190,6 +193,8 @@ export class Operations {
  requestService(on){return this.requestDevice('서비스 모드 '+(on?'진입':'해제'),()=>this.link.service(on?'enter':'exit'))}
  requestResetSafe(){return this.requestDevice('안전 해제',()=>this.link.resetSafe())}
  requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
+ // 전환은 IDLE·MANUAL 에서만 받는다 (FR-11.3). 거절 사유는 requestDevice 가 그대로 남긴다.
+ requestMode(name){return this.requestDevice('운용 모드 '+name,()=>this.link.mode(name))}
  queryEvents({type='all',status='all',robot='all',query=''}={}){
   const q=query.trim().toLocaleLowerCase();
   return this.events.filter(e=>(this.demo||e.source!=='DEMO')&&(type==='all'||e.category===type)&&(status==='all'||e.review===status)&&(robot==='all'||e.robot===robot)&&(!q||[e.id,e.title,e.robot,e.zone,e.event,e.note].join(' ').toLocaleLowerCase().includes(q)));

@@ -71,12 +71,16 @@ class CommandService:
         request_reset: Callable[[], None] | None = None,
         apply_event: Callable[[Event], bool] | None = None,
         ask_patrol: Callable[[], None] | None = None,
+        set_mode: Callable[[str], str | None] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
         self._send = send
         self._request_reset = request_reset
         self._ask_patrol = ask_patrol
+        # 운용 모드 전환 (`3.4.4`). ⚠️ **`Mission` 을 직접 쥐지 않는다** — 전환 가부는
+        # FSM 상태에 달렸고 그 둘을 잇는 곳은 런타임 하나다 (`runtime.set_mode`).
+        self._set_mode = set_mode
         # ⚠️ **사건은 `apply_event` 로 넣는다. `behavior.event()` 를 직접 부르지 않는다.**
         # 직접 부르면 전이는 일어나지만 **대응 단계 갱신과 전이 로그가 함께 빠진다** —
         # 런타임의 `_apply()` 가 그 둘을 묶어 두고 있기 때문이다. 2026-09-14 실기에서
@@ -263,4 +267,38 @@ class CommandService:
             accepted=released.accepted,
             state=self._behavior.state,
             detail="수동을 거쳐 대기로 내렸다",
+        )
+
+    def mission_mode(self, target: str) -> CommandResult:
+        """운용 모드 전환 (FR-4.7 · FR-11.3 · WBS 3.4.4).
+
+        ⚠️ **거절이 흔한 명령이다.** `IDLE`·`MANUAL` 밖에서는 받지 않고(대응 중에
+        판정 규칙이 바뀌면 진행 중인 인증·자세 시퀀스가 의미를 잃는다), 선행 기능이
+        없는 모드도 받지 않는다(FR-11.7). 두 경우 모두 **사유를 문장으로 돌려주어**
+        화면이 그대로 보여 준다 — 조용히 무시하면 조작자는 버튼 고장으로 읽는다.
+
+        ⚠️ **전환은 L3·F 를 풀지 않는다** (FR-11.4). 풀리면 *"경보가 뜨면 모드를
+        바꾼다"* 가 확인 없는 해제 요령이 된다 — 비상정지로 경보를 지우지 못하게 한
+        것(ADR-26)과 같은 이유다.
+        """
+        if not isinstance(target, str) or not target.strip():
+            return CommandResult(
+                command="mode",
+                accepted=False,
+                state=self._behavior.state,
+                detail="운용 모드 이름이 없다",
+            )
+        if self._set_mode is None:
+            return CommandResult(
+                command="mode",
+                accepted=False,
+                state=self._behavior.state,
+                detail="모드 전환 경로가 연결되지 않았다",
+            )
+        refused = self._set_mode(target)
+        return CommandResult(
+            command="mode",
+            accepted=refused is None,
+            state=self._behavior.state,
+            detail=refused if refused is not None else f"운용 모드를 {target} 로 바꿨다",
         )
