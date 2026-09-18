@@ -29,6 +29,8 @@ class TelemetryPublisher {
   uint64_t command_uptime_ms_ = 0;
   uint64_t next_publish_ms_ = 0;
   uint64_t next_error_log_ms_ = 0;
+  // 주기가 됐는데도 발행하지 못한 횟수. 조용한 침묵을 세는 유일한 수단이다.
+  uint32_t skipped_ = 0;
   char packet_[1536] = {};
 };
 
