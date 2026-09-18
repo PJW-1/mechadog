@@ -34,7 +34,11 @@ STRAIGHT_BIAS_DEG = -5.0
 
 
 def _tracker(
-    cfg: dict, *, deadzone: float | None = None, bias: float | None = None
+    cfg: dict,
+    *,
+    deadzone: float | None = None,
+    bias: float | None = None,
+    target_h: float | None = None,
 ) -> LockOnTracker:
     merged = {
         "fsm": dict(cfg["fsm"]),
@@ -44,6 +48,8 @@ def _tracker(
         merged["fsm"]["track_deadzone_px"] = deadzone
     if bias is not None:
         merged["gait_calibration"] = {"straight_bias_deg": bias}
+    if target_h is not None:
+        merged["fsm"]["track_target_height_px"] = target_h
     return LockOnTracker(merged)
 
 
@@ -242,3 +248,56 @@ def test_bias_leaves_a_left_turn_alone(cfg):
     biased = _tracker(cfg, bias=STRAIGHT_BIAS_DEG).update(left_of_centre, FRAME_WIDTH)
     assert biased.angle == pytest.approx(plain.angle), "좌선회에는 보정이 닿지 않는다"
     assert biased.angle > 0, "좌선회 부호가 유지된다"
+
+
+# ── 거리 유지 (FR-3.5.2 · 3.5.8) ──────────────────────────────
+OFF_CENTRE = MIDPOINT + 200  # 데드존 밖 — 조향이 살아 있는 자리
+
+
+def test_distance_keeping_is_off_until_the_target_height_is_measured(cfg) -> None:
+    """⚠️ **추정값을 넣지 않는다** — 화각·장착 높이·사람 키가 섞여 계산으로 못 세운다.
+
+    `straight_bias_deg` 와 같은 규칙이다. 값이 없는 동안은 거리 제어를 하지 않으며
+    **그 상태가 지금 기본값**이다.
+    """
+    t = _tracker(cfg)
+    full = t.update(OFF_CENTRE, FRAME_WIDTH, box_height=9999).step
+    assert full == pytest.approx(cfg["gait"]["step_length_mm"]), "목표가 없으면 감속하지 않는다"
+
+
+def test_step_tapers_as_the_target_fills_the_frame(cfg) -> None:
+    """목표 높이에 가까워질수록 보폭이 준다."""
+    t = _tracker(cfg, target_h=300.0)
+    far = t.update(OFF_CENTRE, FRAME_WIDTH, box_height=150.0).step
+    near = t.update(OFF_CENTRE, FRAME_WIDTH, box_height=330.0).step
+    closer = t.update(OFF_CENTRE, FRAME_WIDTH, box_height=360.0).step
+    assert far == pytest.approx(cfg["gait"]["step_length_mm"]), "멀면 최대 보폭이다"
+    assert far > near > closer, "가까워질수록 준다"
+
+
+def test_step_never_reaches_zero_before_the_stop_line(cfg) -> None:
+    """⚠️ **전진이 0 이면 조향도 죽는다 — 제자리 선회가 불가하다 (DR-11).**
+
+    목표 거리에 닿았는데 아직 정렬이 안 됐으면 **최소 보폭으로 계속 돈다**
+    (2026-09-19 결정). 여기서 0 을 내면 로봇이 대상을 비껴본 채로 굳는다.
+    """
+    t = _tracker(cfg, target_h=300.0)
+    floor = float(cfg["fsm"]["track_min_step_mm"])
+    stop_at = 300.0 * float(cfg["fsm"]["track_stop_ratio"])
+    just_inside = t.update(OFF_CENTRE, FRAME_WIDTH, box_height=stop_at - 1.0)
+    assert just_inside.step >= floor > 0, "정지선 직전까지는 돌 만큼 남긴다"
+    assert just_inside.angle != 0.0, "조향은 살아 있다"
+
+
+def test_crossing_the_stop_ratio_halts(cfg) -> None:
+    t = _tracker(cfg, target_h=300.0)
+    stop_at = 300.0 * float(cfg["fsm"]["track_stop_ratio"])
+    assert t.update(OFF_CENTRE, FRAME_WIDTH, box_height=stop_at).step == 0.0
+
+
+def test_a_missing_box_height_keeps_steering(cfg) -> None:
+    """⚠️ **높이를 모른다고 추종을 멈추면 안 된다** — 박스를 못 주는 프레임마다 로봇이 선다."""
+    t = _tracker(cfg, target_h=300.0)
+    out = t.update(OFF_CENTRE, FRAME_WIDTH, box_height=None)
+    assert out.step == pytest.approx(cfg["gait"]["step_length_mm"])
+    assert out.angle != 0.0

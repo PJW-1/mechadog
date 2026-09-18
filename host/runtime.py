@@ -494,8 +494,9 @@ class Runtime:
         if width <= 0:
             return
         center_x = (float(box[0]) + float(box[2])) / 2.0
+        box_height = float(box[3]) - float(box[1])
         try:
-            command = self._tracker.update(center_x, width)
+            command = self._tracker.update(center_x, width, box_height)
         except ValueError as exc:
             # 데드존이 화면 반폭 이상이면 추종이 성립하지 않는다. 설정 오류이며
             # 이 프레임을 버리고 다음으로 간다 — 여기서 죽으면 순찰까지 멈춘다.
@@ -508,6 +509,11 @@ class Runtime:
         # 상쇄돼 미세진동이 감춰진다 — DoD 가 확인하라는 바로 그것이다 (`3.5.4`).
         self._summary.observe("track_dev_px", abs(command.deviation_px))
         self._summary.observe("track_angle_deg", abs(command.angle))
+        # ⚠️ **거리 유지(`FR-3.5.2`)의 목표값을 정하려면 이 숫자부터 있어야 한다.**
+        # `fsm.track_target_height_px` 는 화각·장착 높이·사람 키가 섞여 계산으로
+        # 세울 수 없다 — 목표 거리(약 1.0m)에 서서 여기 찍히는 값을 읽어 채운다.
+        self._summary.observe("track_box_h_px", box_height)
+        self._summary.observe("track_step_mm", command.step)
         # ⚠️ **공백의 «길이» 를 남긴다.** 요약은 개수만 세므로 지시가 몇 번 나갔는지는
         # 알아도 **얼마나 오래 비었는지**를 알 수 없었고, 그래서 `track_coast_ms` 를
         # 한 번의 관측(중앙값 956ms)으로 어림해야 했다. 이 값이 쌓이면 상한이 맞는지

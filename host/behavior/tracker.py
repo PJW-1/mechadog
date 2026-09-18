@@ -107,8 +107,28 @@
 상세와 절차는 `docs/measurements/2026-09-18-turn-rate-curve.md` 와
 `TEST_MECHDOG/results/20260919_bias-symmetry/summary.md`.
 
-거리 유지(FR-3.5.2)는 여기 없다. bbox **높이**로 하는 별개 제어이며 `3.5.4` 의
-완료 기준이 아니다.
+## 거리 유지 (FR-3.5.2 · `3.5.8`)
+
+bbox **높이**로 한다 — 미터로 바꾸지 않는다 (DR-15). 목표 높이에 가까워질수록
+보폭을 줄이고, 정지 배율을 넘으면 0 으로 세운다.
+
+⚠️ **최소 보폭을 0 으로 두면 안 된다 — 전진이 없으면 조향도 죽는다.** 제자리 선회가
+불가하므로(DR-11) 호로만 돌고 호는 전진이 있어야 생긴다. 즉 **거리 유지와 정렬이 같은
+노브를 쓴다.** 목표 거리에 닿았는데 아직 정렬이 안 됐으면 최소 보폭으로 계속 돈다
+(2026-09-19 결정). 후진은 선택지가 아니다 — 25cm 를 막은 것이 **대상 본인일 수 있고**
+그때 물러나는 것은 경비 로봇으로서 틀린 행동이다 (ARCHITECTURE 설계 규칙 ④).
+
+⚠️ **목표 높이가 없으면 거리 제어를 하지 않는다** — `straight_bias_deg` 와 같은 규칙이고
+**추정값을 넣지 않는다.** 화각·장착 높이·사람 키가 섞인 값이라 계산으로 세우면 틀린다.
+1초 요약의 `track_box_h_px` 를 목표 거리에서 읽어 채운다.
+
+⚠️ **이것이 없으면 접근을 막는 것이 온보드 초음파(25cm)뿐이다** — 2026-09-19 실기에서
+로봇이 사람 코앞까지 왔다. **Tier 1 안전 반사가 거리 제어를 대신하는 상태**이며 반사는
+마지막 방어선이지 제어 루프가 아니다.
+
+⚠️ **가까워질수록 정렬이 어려워진다.** 같은 횡방향 거리가 3m 에서 9.5°, 0.5m 에서 45°
+이므로 **접근할수록 편차가 커진다.** 거리 유지가 없으면 로봇은 영영 정렬되지 않은 채
+계속 전진한다 — 실기에서 본 것이 이 기하다.
 """
 
 from __future__ import annotations
@@ -169,16 +189,49 @@ class LockOnTracker:
         # 크기도 달라 오히려 더 비뚤어진다 (HARDWARE 3절 — 복사 금지).
         bias = (config.get("gait_calibration") or {}).get("straight_bias_deg")
         self._bias_deg = 0.0 if bias is None else float(bias)
+        target_h = fsm.get("track_target_height_px")
+        self._target_h_px = None if target_h is None else float(target_h)
+        if self._target_h_px is not None and self._target_h_px <= 0:
+            raise ValueError("track_target_height_px 는 0 보다 커야 함")
+        self._stop_ratio = float(fsm["track_stop_ratio"])
+        if self._stop_ratio <= 1.0:
+            raise ValueError("track_stop_ratio 는 1.0 보다 커야 함")
+        self._min_step_mm = float(fsm["track_min_step_mm"])
+        if not 0.0 < self._min_step_mm <= self._step_mm:
+            raise ValueError("track_min_step_mm 은 0 초과 step_length_mm 이하여야 함")
 
     @property
     def deadzone_px(self) -> float:
         return self._deadzone_px
 
-    def update(self, center_x: float, frame_width: int) -> TrackCommand:
-        """한 프레임의 검출 중심으로 지시를 만든다.
+    def _step_for(self, box_height: float | None) -> float:
+        """목표 bbox 높이에 가까울수록 보폭을 줄인다 (FR-3.5.2 · `3.5.8`).
 
-        `center_x` 는 bbox 중심의 화면 x 좌표, `frame_width` 는 프레임 폭이다.
-        둘 다 픽셀이며 **미터로 바꾸지 않는다** (DR-15 · FR-3.5.2 와 같은 이유).
+        ⚠️ **최소에서 멎지 0 으로 가지 않는다** — 전진이 없으면 조향도 죽는다(DR-11).
+        완전히 세우는 것은 `track_stop_ratio` 를 넘었을 때뿐이다.
+        """
+        if self._target_h_px is None or box_height is None or box_height <= 0:
+            return self._step_mm  # 목표 미측정 — 거리 제어를 하지 않는다
+        ratio = float(box_height) / self._target_h_px
+        if ratio >= self._stop_ratio:
+            return 0.0
+        if ratio <= 1.0:
+            return self._step_mm  # 아직 멀다 — 최대로 간다
+        # 목표(1.0)에서 정지선 사이를 최대 → 최소로 편다.
+        t = (ratio - 1.0) / (self._stop_ratio - 1.0)
+        return self._step_mm + t * (self._min_step_mm - self._step_mm)
+
+    def update(
+        self, center_x: float, frame_width: int, box_height: float | None = None
+    ) -> TrackCommand:
+        """한 프레임의 검출로 지시를 만든다.
+
+        `center_x` 는 bbox 중심의 화면 x 좌표, `frame_width` 는 프레임 폭,
+        `box_height` 는 bbox 높이다. 전부 픽셀이며 **미터로 바꾸지 않는다**
+        (DR-15 · FR-3.5.2 와 같은 이유).
+
+        ⚠️ **`box_height` 가 없으면 거리 제어만 빠지고 조향은 그대로다** — 높이를
+        모른다고 추종을 멈추면 검출기가 박스를 못 주는 프레임마다 로봇이 선다.
         """
         if frame_width <= 0:
             raise ValueError("frame_width 는 1 이상이어야 함")
@@ -212,7 +265,7 @@ class LockOnTracker:
         low, high = CLAMP_RANGES["angle"]
         angle = min(max(angle, low), high)
         return TrackCommand(
-            step=self._step_mm,
+            step=self._step_for(box_height),
             angle=angle,
             centered=False,
             deviation_px=deviation,
