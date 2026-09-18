@@ -1,0 +1,70 @@
+WBS 3.5.2 SCAN · 3.5.3 ALERT 자세 — 실기 원자료 (2026-09-18 · mechdog-01)
+
+⚠️ 이 값은 mechdog-01 한 대의 것이다.
+
+`pitch_deg_avg` 는 1초 요약에 실은 IMU 피치다(#207 에서 추가).
+명령값은 -15 이고 IMU 는 -11.5 로 읽힌다 — 2026-09-15 기록과 같은 1:0.77 관계이며
+덜 올라간 것이 아니라 벤더 자세각과 IMU 각의 축척이 다른 것이다.
+
+시각      상태        pitch   acks  수신
+ 17:15:28  IDLE          3.2    10   10
+ 17:15:29  IDLE         3.34    10   10
+ 17:15:30  PATROL        3.3    11   10
+ 17:15:31  PATROL       1.11    10   10
+ 17:15:32  PATROL      -0.18    10   10
+ 17:15:33  PATROL        0.2    10   11
+ 17:15:34  ALERT        0.38    11    9
+ 17:15:35  ALERT       -5.63    11   10
+ 17:15:36  ALERT      -11.37    10   10
+ 17:15:37  ALERT      -11.53    10   10
+ 17:15:38  ALERT      -11.59    10   11
+ 17:15:39  ALERT      -11.56    10   10
+ 17:15:40  ALERT       -11.5    10    9
+ 17:15:41  ALERT      -11.54    10   10
+ 17:15:42  ALERT      -11.44    10   10
+ 17:15:43  ALERT      -11.49    10   10
+ 17:15:44  AUTH_WAIT  -11.44    13   10
+ 17:15:45  AUTH_WAIT  -11.51    10   10
+ 17:15:46  AUTH_WAIT  -11.49    10   10
+ 17:15:47  AUTH_WAIT  -11.53    10   10
+ 17:15:48  AUTH_WAIT  -11.58    10   10
+ 17:15:49  AUTH_WAIT  -11.58    10   10
+ 17:15:50  AUTH_WAIT  -11.52    10   11
+ 17:15:51  AUTH_WAIT  -11.54    10    9
+ 17:15:52  AUTH_WAIT  -11.52    10   11
+ 17:15:53  AUTH_WAIT  -11.61    10    9
+ 17:15:54  AUTH_WAIT  -11.69    10   10
+ 17:15:55  AUTH_WAIT  -11.62    10   10
+ 17:15:56  AUTH_WAIT  -11.55    10   11
+ 17:15:57  AUTH_WAIT  -11.59    10    9
+ 17:15:58  AUTH_WAIT  -11.57    10   10
+ 17:15:59  AUTH_WAIT  -11.47    10   10
+ 17:16:00  AUTH_WAIT  -11.51    10   10
+ 17:16:01  AUTH_WAIT  -11.55    10   10
+ 17:16:02  AUTH_WAIT  -11.57    10   11
+ 17:16:03  AUTH_WAIT  -11.58    10    9
+ 17:16:04  AUTH_WAIT  -11.62    10   10
+ 17:16:05  AUTH_WAIT   -11.6    10   10
+ 17:16:06  AUTH_WAIT  -11.61    10   10
+ 17:16:07  AUTH_WAIT  -11.55    10   10
+ 17:16:08  AUTH_WAIT  -11.56    10   10
+ 17:16:09  AUTH_WAIT  -11.62    10   10
+ 17:16:10  AUTH_WAIT  -11.61    10   10
+ 17:16:11  AUTH_WAIT  -11.55    10   10
+ 17:16:12  AUTH_WAIT  -11.49    10   11
+ 17:16:13  AUTH_WAIT  -11.54    10   10
+ 17:16:14  PATROL      -4.36    13    9
+ 17:16:15  PATROL       0.92    10   10
+ 17:16:16  PATROL        0.3    10   11
+ 17:16:17  PATROL       0.43    10    9
+ 17:16:18  PATROL       0.64    10   10
+
+── 전이 ──
+
+  17:15:29  IDLE       -> PATROL     START_PATROL
+  17:15:33  PATROL     -> ALERT      PERSON_FOUND (+4.0s)
+  17:15:43  ALERT      -> AUTH_WAIT  AUTH_REQUIRED (+10.0s)
+  17:16:13  AUTH_WAIT  -> ALERT      AUTH_FAILED (+30.0s)
+  17:16:13  ALERT      -> PATROL     TARGET_LOST (+0.0s)
+  17:16:19  PATROL     -> MANUAL     MANUAL_ON (+5.4s)
+  17:16:19  MANUAL     -> IDLE       MANUAL_OFF (+0.0s)
