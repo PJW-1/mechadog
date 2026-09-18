@@ -17,6 +17,7 @@ REQUIRED_SECTIONS = (
     "network",
     "safety",
     "gait",
+    "mission",
     "fsm",
     "vision",
     "localization",
@@ -113,6 +114,14 @@ def validate_base_config(config: dict[str, Any]) -> None:
     blackbox_dir = config["logging"].get("blackbox_dir")
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
         raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
+
+    # ⚠️ **이름 목록을 여기 적지 않는다** (FR-11.1). 고를 수 있는 모드와 그 선행
+    # 기능의 정본은 `behavior/mission.py` 하나이며, 목록을 두 곳에 두면 모드를
+    # 늘릴 때 한쪽만 고쳐진다 — `coco_labels` 를 `config.yaml` 에 두지 않은 것과
+    # 같은 이유다. 여기서는 **자리가 있고 값이 문자열인지**까지만 본다.
+    mode = config["mission"].get("mode")
+    if not isinstance(mode, str) or not mode.strip():
+        raise ConfigError("mission.mode 는 비어 있지 않은 문자열이어야 함")
 
     network = config["network"]
     for name in ("cmd_port", "telemetry_port", "vision_control_port", "vision_stream_port"):

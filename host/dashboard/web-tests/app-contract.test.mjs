@@ -25,7 +25,7 @@ async function boot(hash='dashboard',{health=null,search=''}={}){
  }
  let visionFeed=null,eventFeed=null,telemetryFeed=null;
  const linkCalls=[];
- class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}service(mode){linkCalls.push('service:'+mode);return Promise.resolve({accepted:true})}patrol(action){linkCalls.push('patrol:'+action);return Promise.resolve({accepted:true})}resetSafe(){linkCalls.push('reset');return Promise.resolve({accepted:true})}}
+ class Link{manual(){return Promise.resolve({})}drive(){return Promise.resolve({})}estop(){linkCalls.push('estop');return Promise.resolve({})}service(mode){linkCalls.push('service:'+mode);return Promise.resolve({accepted:true})}patrol(action){linkCalls.push('patrol:'+action);return Promise.resolve({accepted:true})}resetSafe(){linkCalls.push('reset');return Promise.resolve({accepted:true})}mode(name){linkCalls.push('mode:'+name);return Promise.resolve({accepted:true})}}
  class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class TelemetryStub{constructor(options){telemetryFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class EventStub{constructor(options){eventFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
@@ -138,12 +138,12 @@ test('served by the dashboard, robot state from /ws/telemetry fills the status c
  const state=await boot('devices',{health:{service:'telemetry',vision_clients:0}}),{dom,document,store,failures}=state,feed=state.telemetryFeed;
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/telemetry');assert.equal(feed.started,true);assert.deepEqual(failures,[]);
  const card=()=>document.querySelector('.actual-status').textContent,sheet=()=>document.querySelector('.robot-status-sheet').textContent;
- const snapshot=(extra={})=>({deviceId:'mechdog-01',state:'PATROL',escalation:'L1',ageMs:40,stale:false,runtimeStale:false,telemetry:{deviceId:'mechdog-3c8a1f333208',bootId:'b',seq:9,state:'IDLE',battV:7.64,distCm:52,imu:{pitch:0.4,roll:-1.2,yaw:180},lastCmdAgeMs:70,safetyLatched:false,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true}},...extra});
+ const snapshot=(extra={})=>({deviceId:'mechdog-01',state:'PATROL',escalation:'L1',mode:'guard',ageMs:40,stale:false,runtimeStale:false,telemetry:{deviceId:'mechdog-3c8a1f333208',bootId:'b',seq:9,state:'IDLE',battV:7.64,distCm:52,imu:{pitch:0.4,roll:-1.2,yaw:180},lastCmdAgeMs:70,safetyLatched:false,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true}},...extra});
  const history=[{t:0,battV:7.7,distCm:60},{t:1000,battV:7.66,distCm:55},{t:2000,battV:7.64,distCm:52}];
  const canvas=document.querySelector('.robot-detail-canvas'),views=state.robotViewCount,button=document.querySelector('.robot-status-sheet .op-toolbar button');
  feed.options.onUpdate({state:'live',snapshot:snapshot(),rateHz:10,lost:0,history});
- assert.match(card(),/mechdog-01 · PATROL · L1/);assert.match(card(),/배터리 7\.64 V · 거리 52 cm · 수신 10\.0 Hz/);
- assert.match(sheet(),/7\.64 V/);assert.match(sheet(),/PATROL \/ L1 · 온보드 IDLE/);assert.match(sheet(),/실시간/);assert.match(sheet(),/최소 7\.64 V · 최대 7\.70 V/);
+ assert.match(card(),/mechdog-01 · 경비 모드 · PATROL · L1/);assert.match(card(),/배터리 7\.64 V · 거리 52 cm · 수신 10\.0 Hz/);
+ assert.match(sheet(),/7\.64 V/);assert.match(sheet(),/PATROL \/ L1 · 온보드 IDLE/);assert.match(sheet(),/경비 모드/);assert.match(sheet(),/실시간/);assert.match(sheet(),/최소 7\.64 V · 최대 7\.70 V/);
  // 10Hz 로 다시 채워도 3D 미리보기와 버튼은 그대로다 — 화면 전체를 다시 그리지 않는다.
  assert.equal(document.querySelector('.robot-detail-canvas'),canvas);assert.equal(state.robotViewCount,views);assert.equal(document.querySelector('.robot-status-sheet .op-toolbar button'),button);
  // 로봇이 끊기면 마지막 값은 남기되 끊겼다고 말한다.

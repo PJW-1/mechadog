@@ -48,7 +48,7 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 채널이 있으면 판정에 사용한 JPEG와 그 프레임의 검출 박스를 함께 표시하고, 사건은 `/ws/events` 로 받아
 **그때 저장된 스냅샷과 함께** 목록에 쌓는다(`4.6.4` · 2026-09-15 실기).
 
-명령 API 는 다음 다섯이다 — 전부 같은 로컬 출처 검사를 건다.
+명령 API 는 다음 일곱이다 — 전부 같은 로컬 출처 검사를 건다.
 
 | 경로 | 무엇을 하나 |
 | --- | --- |
@@ -57,6 +57,13 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 | `POST /api/command/drive` | `{"step", "angle"}` — `MANUAL` 에서만 받고 다음 틱에 반영 |
 | `POST /api/command/patrol` | `{"action": "start"\|"stop"}` — 시작은 예약, 정지는 수동 경유로 `IDLE` 정착 |
 | `POST /api/command/reset` | 사람이 원인 해소를 확인한 뒤의 `FAILSAFE` 해제 **요청**. 실제 해제는 로봇의 래치 보고로만 |
+| `POST /api/command/service` | `{"mode": "enter"\|"exit"}` — 온보드 **정비** 상태. OTA·진단 중 액추에이터를 막는다 |
+| `POST /api/command/mode` | `{"mode": "guard"\|"factory"\|"assist"}` — **운용 모드** 전환 (FR-4.7 · `3.4.4`). `IDLE`·`MANUAL` 에서만 받고, 선행 기능이 없는 모드는 거절한다. 거절에는 사유가 붙는다 |
+
+⚠️ **`service` 와 `mode` 는 다른 축이다.** `service` 는 OTA·진단 중 액추에이터를 차단하는 **정비 상태**(펌웨어)이고,
+`mode` 는 정상 운용 중 Tier 2 판단을 고르는 **임무 모드**(호스트)다. 로봇에 내려가는 전문이 있는 쪽은 `service` 뿐이다.
+⚠️ **모드 전환은 경보(L3)와 안전 정지(F)를 풀지 않는다** (FR-11.4) — 풀리면 *"경보가 뜨면 모드를 바꾼다"* 가
+확인 없는 해제 요령이 된다. 지금 고를 수 있는 모드 목록은 `GET /health` 의 `modes` 에 있다.
 
 ⚠️ **음성으로도 이 명령들이 나간다** (`4.7.11`). `experiments/wonderecho-audio/robotlink.py` 의 화이트리스트가
 정규화 후 **정확히 일치**하는 발화만 받으며, `reset` 은 *사람의 현장 확인이 필요하다*는 이유로 의도적으로

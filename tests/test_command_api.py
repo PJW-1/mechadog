@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event, behavior_from_config
+from host.behavior.mission import Mission
 from host.dashboard.commands import CommandService
 from host.dashboard.server import create_app
 from host.dashboard.state import DashboardState
@@ -379,3 +380,91 @@ def test_runtime_wires_the_apply_hook_so_escalation_follows_estop(cfg, clock):
     service.estop()
     assert runtime.behavior.state == "FAILSAFE"
     assert runtime.escalation.level.value == "F", "E-Stop 이 단계를 올려야 눈 LED 가 흰색이 된다"
+
+
+# ── 운용 모드 전환 (WBS 3.4.4 · FR-4.7 · FR-11.3) ────────────────
+
+
+@pytest.fixture
+def mode_service(cfg):
+    """모드 전환이 실제로 연결된 서비스. 전환 가부는 런타임처럼 FSM 상태가 정한다."""
+    sent: list[str] = []
+    commander = Commander()
+    behavior = behavior_from_config(commander, cfg)
+    mission = Mission(cfg)
+    svc = CommandService(
+        behavior,
+        commander,
+        sent.append,
+        set_mode=lambda target: mission.switch(target, state=behavior.state),
+    )
+    return svc, behavior, mission
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_mode_switch_is_accepted_while_idle(mode_service):
+    svc, _behavior, mission = mode_service
+    result = svc.mission_mode("factory")
+    assert result.accepted is True
+    assert mission.mode == "factory"
+
+
+@pytest.mark.parametrize(
+    "state,events", [(s, e) for s, e in ROUTES.items() if s not in {"IDLE", "MANUAL"}]
+)
+@pytest.mark.usefixtures("unlock_modes")
+def test_mode_switch_is_refused_outside_standstill(mode_service, state, events):
+    """FR-11.3 — 대응 중에 판정 규칙이 바뀌면 진행 중인 시퀀스가 의미를 잃는다."""
+    svc, behavior, mission = mode_service
+    _drive_to(behavior, events)
+    assert behavior.state == state
+
+    result = svc.mission_mode("factory")
+    assert result.accepted is False
+    assert state in result.detail, "거절에는 사유가 붙는다"
+    assert mission.mode == "guard", "거절됐으면 모드는 그대로다"
+
+
+def test_mode_switch_without_a_wired_path_is_refused(service):
+    """연결되지 않은 채로 «바꿨다» 고 답하면 화면이 거짓을 말한다."""
+    svc, _behavior, _sent = service
+    assert svc.mission_mode("factory").accepted is False
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_mode_switch_rejects_an_empty_name(mode_service, value):
+    svc, _behavior, _mission = mode_service
+    assert svc.mission_mode(value).accepted is False
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_mode_endpoint_round_trips(cfg):
+    sent: list[str] = []
+    commander = Commander()
+    behavior = behavior_from_config(commander, cfg)
+    mission = Mission(cfg)
+    svc = CommandService(
+        behavior,
+        commander,
+        sent.append,
+        set_mode=lambda target: mission.switch(target, state=behavior.state),
+    )
+    with TestClient(create_app(_state(), svc)) as http:
+        body = http.post("/api/command/mode", json={"mode": "factory"}).json()
+        assert body["accepted"] is True
+        assert mission.mode == "factory"
+
+        assert http.post("/api/command/mode", json={"mode": 3}).status_code == 400
+
+
+def test_health_lists_only_the_modes_that_can_be_chosen(client):
+    """FR-11.7 — 서버가 **무엇을 고를 수 있는지** 스스로 말한다.
+
+    `factory`·`assist` 는 선행 구현(`3.7.3` · `4.7.15~17`)이 들어오면 자동으로
+    목록에 들어온다 — 그래서 여기서는 «경비는 언제나 있다» 만 못 박는다.
+    ⚠️ 화면은 이 값을 읽지 않고 버튼을 늘 띄운다. 거절 사유로 알리는 쪽을 골랐다.
+    """
+    http, _behavior, _sent = client
+    modes = http.get("/health").json()["modes"]
+    assert "guard" in modes
+    assert set(modes) <= {"guard", "factory", "assist"}

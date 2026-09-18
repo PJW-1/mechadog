@@ -104,4 +104,10 @@ export class RobotLink {
   patrol(action) {
     return this.post('/api/command/patrol', { action });
   }
+
+  // 운용 모드 전환 (FR-4.7 · FR-11.3). ⚠️ **온보드 `SERVICE` 와 다른 축이다** —
+  // 저쪽은 정비 상태이고 이쪽은 임무 모드다. 거절이 흔하므로 사유를 그대로 돌려준다.
+  mode(name) {
+    return this.post('/api/command/mode', { mode: name });
+  }
 }

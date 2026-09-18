@@ -31,6 +31,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from host.behavior.mission import available_modes
 from host.dashboard.commands import CommandService
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
@@ -334,6 +335,16 @@ def create_app(
             "event_clients": len(event_hub.clients),
             # 사건을 따라오지 못해 버린 건수. 0 이 아니면 화면이 기록을 놓쳤다.
             "events_overflowed": event_hub.overflowed,
+            # 지금 이 저장소에서 **고를 수 있는** 운용 모드 (FR-11.7). 선행 기능이
+            # 없는 모드는 빠진다.
+            # ⚠️ **화면은 아직 이 값을 읽지 않는다 (2026-09-19 · 의도된 선택).** 모드
+            # 버튼 셋을 늘 띄워 두고 **누르면 서버가 사유를 돌려준다** — FR-11.7 이
+            # 요구하는 것은 «거부한다» 이지 «버튼을 숨겨라» 가 아니고, 못 고르는 이유가
+            # 화면에 남는 편이 «버튼이 왜 없지» 보다 낫다. 여기 실어 두는 것은 운용자가
+            # 서버에 직접 물어볼 수 있게 하기 위해서다.
+            # ⚠️ 상태 전문에 싣지 않는다. 10Hz 로 흐르는 값이 아니라 기동 시점에
+            # 정해지는 사실이고, 매 주기 실으면 대역만 먹는다.
+            "modes": list(available_modes()),
         }
 
     @app.get("/api/telemetry")
@@ -471,6 +482,23 @@ def create_app(
             if not isinstance(mode, str):
                 return JSONResponse({"error": "mode"}, status_code=400)
             return commands.service(mode).as_dict()
+
+        @app.post("/api/command/mode")
+        async def mission_mode(request: Request):
+            """`{"mode": "guard"|"factory"|"assist"}` — 운용 모드 전환 (FR-4.7 · FR-11.3).
+
+            ⚠️ **온보드 `SERVICE` 와 다른 축이다.** 저쪽은 OTA·진단 중 액추에이터를
+            차단하는 정비 상태이고, 이쪽은 정상 운용 중 Tier 2 판단을 고르는 임무
+            모드다. 경로를 나눠 둔 이유가 그것이다.
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            mode = body.get("mode")
+            if not isinstance(mode, str):
+                return JSONResponse({"error": "mode"}, status_code=400)
+            return commands.mission_mode(mode).as_dict()
 
         @app.post("/api/command/drive")
         async def drive(request: Request):

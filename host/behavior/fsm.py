@@ -63,6 +63,10 @@ class Event(StrEnum):
     TARGET_CENTERED = "TARGET_CENTERED"  # 중앙 정렬 유지
     TARGET_LOST = "TARGET_LOST"  # 미검출 5s 지속 (FR-3.7)
     PPE_VIOLATION = "PPE_VIOLATION"  # 보호구 미착용 확정 (FR-9.3)
+    # 보호구 판정이 끝났다 — **적합과 `PPE_UNDETERMINED` 둘 다**다 (FR-11.6).
+    # ⚠️ 이름이 `PPE_OK` 가 아닌 이유가 그것이다. 미판정으로 끝난 대상 앞에서도
+    # 순찰로 돌아가야 하고, *"괜찮다"* 로 적으면 미판정을 적합으로 읽게 된다.
+    PPE_SETTLED = "PPE_SETTLED"
     # ── 인증 ──
     AUTH_REQUIRED = "AUTH_REQUIRED"  # 미인증 상태 지속 → L2
     AUTH_OK = "AUTH_OK"  # 사원증 또는 암구호 인증 성공
@@ -119,6 +123,11 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("TRACK", Event.TARGET_LOST, "PATROL"),
     # `ALERT` 에서의 PPE 위반은 상태가 그대로이므로 표에 없다 — 에스컬레이션(3.8.3) 소관
     Transition("TRACK", Event.PPE_VIOLATION, "ALERT"),
+    # ⚠️ **공장 모드의 순찰 복귀** (FR-11.6 · `3.4.4`). 이 줄이 없으면 복귀 경로가
+    # *대상 미검출 5초* 하나뿐이라 **보호구를 제대로 쓴 작업자가 서 있는 동안 로봇이
+    # 떠나지 못한다.** 사건을 내는 것은 판정기(`3.7.3`)이고 모드 게이트는
+    # `mission.py` 가 건다 — 경비 모드에서는 이 사건이 만들어지지 않는다.
+    Transition("ALERT", Event.PPE_SETTLED, "PATROL"),
     # ── 인증 ──
     Transition("ALERT", Event.AUTH_REQUIRED, "AUTH_WAIT"),
     Transition("AUTH_WAIT", Event.AUTH_OK, "PATROL"),
