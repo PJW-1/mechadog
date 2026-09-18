@@ -17,6 +17,14 @@ export const HISTORY_MS = 60000;
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 
+/** 운용 모드의 사람 이름 (FR-11.1). ⚠️ **모르는 이름을 지어내지 않는다** —
+ * 서버가 새 모드를 보내면 원문 그대로 보이게 두고, 화면이 뜻을 추측하지 않는다. */
+export const MODE_NAMES = Object.freeze({
+  guard: '경비 모드',
+  factory: '공장 모드',
+  assist: '현장지원 모드',
+});
+
 /** 텍스트 메시지 하나 → 화면이 쓰는 스냅샷. 형식이 틀리면 던진다. */
 export function decodeTelemetryMessage(data) {
   if (typeof data !== 'string') throw new Error('텔레메트리 메시지는 JSON 텍스트여야 합니다.');
@@ -63,6 +71,9 @@ export function decodeTelemetryMessage(data) {
     deviceId: message.device_id,
     state: typeof message.state === 'string' ? message.state : null,
     escalation: typeof message.escalation === 'string' ? message.escalation : null,
+    // 운용 모드 (FR-4.7 · FR-11.5). ⚠️ **없는 것을 기본값으로 읽지 않는다** —
+    // 모드를 모르는 채 «경비» 라고 그리면 공장 순찰을 경비로 착각한다.
+    mode: typeof message.mode === 'string' ? message.mode : null,
     telemetry,
     ageMs: isNumber(message.telemetry_age_ms) ? message.telemetry_age_ms : null,
     stale: message.stale !== false,
@@ -170,7 +181,7 @@ export function describeTelemetry(view) {
       headline = `로봇 수신 끊김 · ${ago(snapshot.ageMs)}`;
       summary = `마지막 값 — ${values}${flagged}. 지금 상태로 판단하지 마세요.`;
     } else {
-      headline = `${snapshot.deviceId} · ${snapshot.state ?? '기동 전'} · ${snapshot.escalation ?? '—'}`;
+      headline = `${snapshot.deviceId} · ${MODE_NAMES[snapshot.mode] ?? '모드 미수신'} · ${snapshot.state ?? '기동 전'} · ${snapshot.escalation ?? '—'}`;
       summary = `${values} · ${rate}${lost}${flagged}`;
     }
   }
@@ -179,6 +190,7 @@ export function describeTelemetry(view) {
     ? [
         ['연결 · 마지막 수신', `${tone === 'live' ? '수신 중' : '끊김'} / ${ago(snapshot.ageMs)}`],
         ['실제 device_id', `${snapshot.deviceId} · 펌웨어 ${telemetry.deviceId ?? '미상'}`],
+        ['운용 모드', MODE_NAMES[snapshot.mode] ?? '미수신 — 판단 규칙을 알 수 없음'],
         ['FSM · 대응 단계', `${snapshot.state ?? '기동 전'} / ${snapshot.escalation ?? '—'} · 온보드 ${telemetry.state ?? '—'}`],
         ['배터리 전압', `${telemetry.battV.toFixed(2)} V${telemetry.flags.lowbatt ? ' · 저전압 (로봇 판정)' : ''}`],
         ['전방 거리', `${Math.round(telemetry.distCm)} cm${telemetry.flags.obstacle ? ' · 근거리 정지' : ''}`],

@@ -56,6 +56,12 @@ _LOGRECORD_KEYS: frozenset[str] = frozenset(vars(logging.LogRecord("", 0, "", 0,
 BASELINE_ESCALATION: dict[str, str] = {"FAILSAFE": "F"}
 DEFAULT_ESCALATION = "L0"
 
+#: 운용 모드를 연결하지 않았을 때의 값 (FR-11.2 기본값과 같다).
+#:
+#: ⚠️ **이름 목록은 여기 두지 않는다.** 정본은 `behavior/mission.py` 이고, 로깅이
+#: 행동 축을 import 하면 층이 뒤집힌다 — 로거는 무엇이 실렸는지만 알면 된다.
+DEFAULT_MODE = "guard"
+
 #: 진입 자체가 **기능 상실**인 상태 — 레벨 정책의 `ERROR` 행이다 (1.2).
 #:
 #: 상태 이름을 호출부에 두지 않기 위해 여기 표로 둔다. `LOST`(측위 상실)는 Phase 2
@@ -80,6 +86,11 @@ class LogContext:
     seq: int = 0
     state: str = "IDLE"
     escalation: str = DEFAULT_ESCALATION
+    #: 운용 모드 (FR-11.5). **같은 `person` 검출이 모드에 따라 다른 결과를 낳으므로
+    #: 모드 없이 기록을 읽으면 판단 근거를 되짚을 수 없다.** 단계와 같은 이유로
+    #: 값이 아니라 물어볼 대상을 들고 있다 — 모드는 관제 화면에서도 바뀐다.
+    mode: str = DEFAULT_MODE
+    mode_source: Callable[[], str] | None = field(default=None, repr=False)
     #: 대응 단계를 **물어볼 대상**. 값을 복사해 두는 구조로는 갱신을 잊는 날이 온다 —
     #: 단계는 사건·시간·확인 어느 쪽으로도 바뀌므로 갱신 지점이 하나가 아니다.
     #: 그래서 값이 아니라 함수를 들고 있고, 레코드마다 지금 값을 묻는다.
@@ -88,6 +99,10 @@ class LogContext:
     def bind_escalation(self, source: Callable[[], str]) -> None:
         """대응 단계의 정본을 연결한다 (`3.8.3`). **연결되면 상태 유도를 쓰지 않는다.**"""
         self.escalation_source = source
+
+    def bind_mode(self, source: Callable[[], str]) -> None:
+        """운용 모드의 정본을 연결한다 (`3.4.4` · FR-11.5)."""
+        self.mode_source = source
 
     def observe(self, *, seq: int | None = None, state: str | None = None) -> None:
         """수신·전이 때마다 부른다. 단계가 연결되지 않았으면 상태에서 유도한다."""
@@ -99,6 +114,8 @@ class LogContext:
             self.escalation = self.escalation_source()
         elif state is not None:
             self.escalation = BASELINE_ESCALATION.get(state, DEFAULT_ESCALATION)
+        if self.mode_source is not None:
+            self.mode = self.mode_source()
 
     def as_dict(self) -> dict[str, Any]:
         """레코드마다 불린다 — **그래서 여기서 단계를 다시 묻는다.**
@@ -108,11 +125,14 @@ class LogContext:
         """
         if self.escalation_source is not None:
             self.escalation = self.escalation_source()
+        if self.mode_source is not None:
+            self.mode = self.mode_source()
         return {
             "device_id": self.device_id,
             "seq": self.seq,
             "state": self.state,
             "escalation": self.escalation,
+            "mode": self.mode,
         }
 
 
@@ -151,6 +171,7 @@ class JsonlFormatter(logging.Formatter):
             "seq": getattr(record, "seq", 0),
             "state": getattr(record, "state", "IDLE"),
             "escalation": getattr(record, "escalation", DEFAULT_ESCALATION),
+            "mode": getattr(record, "mode", DEFAULT_MODE),
             "event": getattr(record, "event", record.getMessage()),
         }
         detail = getattr(record, "detail", None)

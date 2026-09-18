@@ -64,6 +64,22 @@ def cfg() -> dict:
 
 
 @pytest.fixture
+def unlock_modes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """운용 모드의 **선행 기능 검사를 끈다** (FR-11.7 · WBS 3.4.4).
+
+    `factory` 는 PPE 판정기(`3.7.3`), `assist` 는 운영정보 라우터(`4.7.15~17`)가
+    있어야 켜진다. 아직 없으므로 **그 모드에서만 도는 판정 경로는 이 문을 열어야
+    시험할 수 있다** — 변화 감지(`3.6`)가 대표적이다.
+
+    ⚠️ **규칙 자체를 시험하는 곳에서는 쓰지 않는다.** 거부가 실제로 되는지는
+    `test_mission.py` 가 진짜 표로 본다.
+    """
+    from host.behavior import mission as mission_mod
+
+    monkeypatch.setattr(mission_mod, "REQUIRES", dict.fromkeys(mission_mod.MODES, ()))
+
+
+@pytest.fixture
 def committed_devices_dir(tmp_path: Path) -> Path:
     """커밋된 개체 프로파일만 담은 디렉터리. `load_config(devices_dir=...)` 에 준다.
 

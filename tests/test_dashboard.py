@@ -63,7 +63,7 @@ def test_initial_state_never_invents_healthy_readings(clock):
 def test_snapshot_detaches_mutable_inputs_and_outputs(clock):
     state = state_at(clock)
     telemetry = {"imu": {"pitch": 5}}
-    state.publish(telemetry=telemetry, state="IDLE", escalation="L0", received_at=0)
+    state.publish(telemetry=telemetry, state="IDLE", escalation="L0", mode="guard", received_at=0)
     telemetry["imu"]["pitch"] = 99
     first = state.snapshot()
     assert first["telemetry"]["imu"]["pitch"] == 5
@@ -75,7 +75,7 @@ def test_snapshot_detaches_mutable_inputs_and_outputs(clock):
 def test_stale_boundary_uses_receive_time_not_broadcast(clock, elapsed, stale):
     state = state_at(clock)
     clock.ms = elapsed
-    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", received_at=0)
+    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", mode="guard", received_at=0)
     assert state.snapshot()["stale"] is stale
     assert state.snapshot()["telemetry_age_ms"] == elapsed
     assert state.snapshot()["runtime_stale"] is False
@@ -83,7 +83,7 @@ def test_stale_boundary_uses_receive_time_not_broadcast(clock, elapsed, stale):
 
 def test_runtime_stall_is_separate_from_telemetry(clock):
     state = state_at(clock)
-    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", received_at=0)
+    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", mode="guard", received_at=0)
     clock.ms = 3100
     assert state.snapshot()["runtime_stale"]
     assert state.snapshot()["runtime_age_ms"] == 3100
@@ -136,7 +136,9 @@ def test_slow_subscriber_is_bounded_and_cannot_hold_up_another(clock):
         hub = TelemetryHub(state)
         slow, fast = hub.subscribe(), hub.subscribe()
         for seq in range(100):
-            state.publish(telemetry={"seq": seq}, state="IDLE", escalation="L0", received_at=0)
+            state.publish(
+                telemetry={"seq": seq}, state="IDLE", escalation="L0", mode="guard", received_at=0
+            )
             hub.broadcast()
             assert fast.get_nowait()["telemetry"]["seq"] == seq
         assert slow.qsize() == 1
@@ -295,6 +297,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             # 거기 묶여 있다 (2026-09-14 실기).
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
+            self.set_mode = lambda _mode: None
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -542,6 +545,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.ask_reset = lambda: None
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
+            self.set_mode = lambda _mode: None
 
         def serve(self, _sock, **_kwargs):
             pass
@@ -570,6 +574,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             ts_ms=1,
             state="ALERT",
             escalation="L1",
+            mode="guard",
             tracks=[{"track_id": 1}],
             detections=[],
             telemetry={},

@@ -17,12 +17,13 @@ import {
 } from '../static/telemetry-feed.js';
 
 /** 서버 `/ws/telemetry` 와 같은 모양. */
-function message({ seq = 1, boot = 'boot-a', batt = 7.8, dist = 120, stale = false, age = 50, telemetry = true, ...rest } = {}) {
+function message({ seq = 1, boot = 'boot-a', batt = 7.8, dist = 120, stale = false, age = 50, telemetry = true, mode = 'guard', ...rest } = {}) {
   return JSON.stringify({
     type: 'telemetry',
     device_id: 'mechdog-01',
     state: 'PATROL',
     escalation: 'L0',
+    mode,
     telemetry: telemetry
       ? {
           device_id: 'mechdog-3c8a1f333208',
@@ -124,9 +125,10 @@ const view = (overrides = {}) => ({ state: 'live', rateHz: 9.87, lost: 0, histor
 test('live values say who, what state, and how well the link receives', () => {
   const text = describeTelemetry(view());
   assert.equal(text.tone, 'live');
-  assert.equal(text.headline, 'mechdog-01 · PATROL · L0');
+  assert.equal(text.headline, 'mechdog-01 · 경비 모드 · PATROL · L0');
   assert.match(text.summary, /배터리 7\.80 V · 거리 120 cm · 수신 9\.9 Hz/);
   const rows = Object.fromEntries(text.rows);
+  assert.equal(rows['운용 모드'], '경비 모드');
   assert.equal(rows['배터리 전압'], '7.80 V');
   assert.equal(rows['IMU pitch / roll / yaw'], '1.3° / -0.5° / 90.0°');
   assert.match(rows['링크 지연 (RTT)'], /미측정/);
@@ -199,4 +201,26 @@ test('the feed goes live on the first message and reconnects after a drop, but n
   FakeSocket.made[1].onclose();
   t.mock.timers.tick(RETRY_MS * 3);
   assert.equal(FakeSocket.made.length, 2);
+});
+
+// ── 운용 모드 (WBS 3.4.4 · FR-4.7 · FR-11.5) ─────────────────────
+
+test('the mission mode is always on screen', () => {
+  const text = describeTelemetry(view({ snapshot: decodeTelemetryMessage(message({ mode: 'factory' })) }));
+  assert.match(text.headline, /공장 모드/);
+  assert.equal(Object.fromEntries(text.rows)['운용 모드'], '공장 모드');
+});
+
+test('a missing mode is said to be missing, never guessed', () => {
+  // ⚠️ 모드를 모르는 채 «경비» 라고 그리면 공장 순찰을 경비로 착각한다.
+  const snap = decodeTelemetryMessage(message({ mode: null }));
+  assert.equal(snap.mode, null);
+  const text = describeTelemetry(view({ snapshot: snap }));
+  assert.match(text.headline, /모드 미수신/);
+  assert.match(Object.fromEntries(text.rows)['운용 모드'], /미수신/);
+});
+
+test('an unknown mode name is shown as sent, not translated away', () => {
+  const text = describeTelemetry(view({ snapshot: decodeTelemetryMessage(message({ mode: 'sentry' })) }));
+  assert.match(text.headline, /모드 미수신/, '모르는 이름에 뜻을 지어내지 않는다');
 });

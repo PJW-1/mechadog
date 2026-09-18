@@ -15,6 +15,7 @@ from conftest import FakeClock
 
 from host.behavior.escalation import Level
 from host.behavior.fsm import Event
+from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
@@ -1279,9 +1280,14 @@ def _thing(label: str, x: float = 100.0) -> Detection:
 
 
 def _zone_runtime(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33 개정). 변화 감지는 경비 모드에서
+    아예 돌지 않으므로 기본 모드로 세우면 구역 사건이 하나도 나오지 않는다 —
+    호출부는 `unlock_modes` 로 선행 기능 검사를 먼저 열어야 한다."""
     cfg = _zone_config(config, tmp_path)
     vision = FakeVision()
-    runtime = Runtime(cfg, device_id=DEVICE, clock=clock, vision=vision)
+    runtime = Runtime(
+        cfg, device_id=DEVICE, clock=clock, vision=vision, mission=Mission(cfg, mode="factory")
+    )
     runtime.start_patrol(0)
     return runtime, vision, cfg
 
@@ -1296,6 +1302,7 @@ def _see(runtime, vision, *, seq, at_ms, detections, marker=True) -> None:
     runtime.tick(at_ms)
 
 
+@pytest.mark.usefixtures("unlock_modes")
 def test_zone_marker_moves_patrol_into_inspect(config: dict, clock: FakeClock, tmp_path: Path):
     """⚠️ **이 사건을 내는 곳이 없었다.** `ZONE_ARRIVED`·`ZONE_CLEAR`·`ZONE_CHANGED`
     가 전이표에 다 있는데 아무도 발행하지 않아 `ZONE_INSPECT` 는 도달 불가능한
@@ -1306,6 +1313,7 @@ def test_zone_marker_moves_patrol_into_inspect(config: dict, clock: FakeClock, t
     assert runtime.behavior.state == "ZONE_INSPECT"
 
 
+@pytest.mark.usefixtures("unlock_modes")
 def test_first_visit_registers_a_baseline_and_returns_to_patrol(
     config: dict, clock: FakeClock, tmp_path: Path
 ):
@@ -1318,6 +1326,7 @@ def test_first_visit_registers_a_baseline_and_returns_to_patrol(
     assert saved.exists(), "기준이 디스크에 남아야 다음 순회에서 견줄 수 있다"
 
 
+@pytest.mark.usefixtures("unlock_modes")
 def test_a_new_object_is_confirmed_and_raises_an_alarm(
     config: dict, clock: FakeClock, tmp_path: Path
 ):
@@ -1339,6 +1348,7 @@ def test_a_new_object_is_confirmed_and_raises_an_alarm(
     assert runtime.escalation.level is Level.L3, "물체 변화 확정은 L3 다"
 
 
+@pytest.mark.usefixtures("unlock_modes")
 def test_an_unchanged_zone_returns_to_patrol(config: dict, clock: FakeClock, tmp_path: Path):
     runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
     _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
@@ -1350,6 +1360,7 @@ def test_an_unchanged_zone_returns_to_patrol(config: dict, clock: FakeClock, tmp
     assert runtime.escalation.level is Level.L0
 
 
+@pytest.mark.usefixtures("unlock_modes")
 def test_two_zone_markers_pick_nothing(config: dict, clock: FakeClock, tmp_path: Path):
     """⚠️ 경계에 서면 두 장이 같이 잡힌다. 아무 쪽이나 고르면 **엉뚱한 구역의
     기준과 견주어** 물건이 통째로 사라졌다고 보고한다."""
@@ -1358,7 +1369,9 @@ def test_two_zone_markers_pick_nothing(config: dict, clock: FakeClock, tmp_path:
     cfg = deepcopy(_zone_config(config, tmp_path))
     cfg["zones"]["marker_map"] = {ZONE_MARKER: "A", ZONE_MARKER + 1: "B"}
     vision = FakeVision()
-    runtime = Runtime(cfg, device_id=DEVICE, clock=clock, vision=vision)
+    runtime = Runtime(
+        cfg, device_id=DEVICE, clock=clock, vision=vision, mission=Mission(cfg, mode="factory")
+    )
     runtime.start_patrol(0)
     vision.result = _zone_frame(
         1,
@@ -1373,6 +1386,7 @@ def test_two_zone_markers_pick_nothing(config: dict, clock: FakeClock, tmp_path:
     assert runtime.behavior.state == "PATROL", "한 장만 보일 때까지 기다린다"
 
 
+@pytest.mark.usefixtures("unlock_modes")
 def test_inspection_holds_still(config: dict, clock: FakeClock, tmp_path: Path):
     """⚠️ 걸어 들어가면서 찍으면 기준과 현재가 다른 자리에서 찍힌다."""
     runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
@@ -1612,3 +1626,103 @@ def test_blocked_forward_outside_tracking_is_not_logged(
     flags = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": True}
     runtime.ingest(telemetry(enc, state="AVOID", dist_cm=23, flags=flags), 200)
     assert runtime.behavior.state != "TRACK"
+# ── 운용 모드 게이트 (WBS 3.4.4 · FR-11) ─────────────────────────
+
+
+def test_guard_mode_never_lets_a_ppe_violation_raise_an_alarm(
+    config: dict, clock: FakeClock
+) -> None:
+    """⚠️ **게이트가 에스컬레이션보다 앞에 있어야 한다** (FR-11.1).
+
+    뒤에 두면 전이는 막히는데 단계만 올라가 **경비 순찰이 빨간 눈으로 남는다** —
+    경비 모드는 PPE 모델을 아예 돌리지 않으므로 해제할 근거도 만들 수 없다.
+    """
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.start_patrol(0)
+    assert runtime.mission.mode == "guard"
+
+    assert runtime.apply_external(Event.PPE_VIOLATION) is False
+    assert runtime.escalation.level is Level.L0, "막힌 사건은 단계도 올리지 않는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_mode_does_not_ask_for_a_badge(config: dict, clock: FakeClock) -> None:
+    """공장 모드에서 사람은 작업자다 — L2·`AUTH_WAIT` 가 없다 (ADR-33)."""
+    runtime = Runtime(
+        config, device_id=DEVICE, clock=clock, mission=Mission(config, mode="factory")
+    )
+    runtime.start_patrol(0)
+    runtime.apply_external(Event.PERSON_FOUND)
+    assert runtime.behavior.state == "ALERT"
+
+    assert runtime.apply_external(Event.AUTH_REQUIRED) is False
+    assert runtime.behavior.state == "ALERT", "인증 대기로 가지 않는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_mode_returns_to_patrol_once_ppe_is_settled(config: dict, clock: FakeClock) -> None:
+    """FR-11.6 — **보호구를 제대로 쓴 작업자 앞에서 로봇이 떠날 수 있어야 한다.**
+
+    이 전이가 없으면 복귀 경로가 *대상 미검출 5초* 하나뿐이라, 서 있는 작업자
+    앞에서 순찰이 끝나지 않는다.
+    """
+    runtime = Runtime(
+        config, device_id=DEVICE, clock=clock, mission=Mission(config, mode="factory")
+    )
+    runtime.start_patrol(0)
+    runtime.apply_external(Event.PERSON_FOUND)
+    assert runtime.behavior.state == "ALERT"
+
+    assert runtime.apply_external(Event.PPE_SETTLED) is True
+    assert runtime.behavior.state == "PATROL"
+
+
+def test_guard_mode_has_no_way_to_settle_ppe(config: dict, clock: FakeClock) -> None:
+    """같은 사건이 경비 모드에서는 전이를 만들지 않는다 — 표는 하나이고 모드가 고른다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.start_patrol(0)
+    runtime.apply_external(Event.PERSON_FOUND)
+    assert runtime.apply_external(Event.PPE_SETTLED) is False
+    assert runtime.behavior.state == "ALERT"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_mode_rides_on_the_log_context(config: dict, clock: FakeClock) -> None:
+    """FR-11.5 — **모드 없이 기록을 읽으면 판단 근거를 되짚을 수 없다.**
+
+    같은 `person` 검출이 모드에 따라 다른 결과를 낳기 때문이다.
+
+    ⚠️ **값이 아니라 물어볼 대상을 연결했는지**를 본다. 복사해 두면 관제 화면에서
+    바꾼 모드가 로그에 반영되지 않고, 그 어긋남은 사건을 되짚을 때에야 드러난다 —
+    대응 단계를 `bind_escalation` 으로 연결한 것과 같은 이유다.
+    """
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    assert runtime.context.as_dict()["mode"] == "guard"
+
+    assert runtime.set_mode("factory") is None
+    assert runtime.context.as_dict()["mode"] == "factory", "연결이 아니라 복사였다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_mode_switch_is_refused_while_patrolling(config: dict, clock: FakeClock) -> None:
+    """FR-11.3 — 대응 중에 판정 규칙이 바뀌면 진행 중인 시퀀스가 의미를 잃는다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    runtime.start_patrol(0)
+    assert "PATROL" in (runtime.set_mode("factory") or "")
+    assert runtime.mission.mode == "guard"
+
+
+def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None:
+    """모르는 모드는 **기본값으로 떨어지지 않고 기동을 거부한다** (WBS 3.4.4 ①)."""
+    import host.runtime as module
+
+    monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
+    assert module.main(["--device", "test", "--no-vision", "--mode", "safety"]) == 2
+
+
+def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -> None:
+    """FR-11.7 — 판정기 없이 켜면 로봇이 사람 앞에 서서 아무 판정도 내지 못한다."""
+    import host.runtime as module
+
+    monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
+    assert module.main(["--device", "test", "--no-vision", "--mode", "factory"]) == 2

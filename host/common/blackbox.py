@@ -37,6 +37,9 @@ class BlackboxEntry:
     event_type: str
     state: str
     escalation: str
+    #: 운용 모드 (FR-11.5). **같은 `person` 검출이 모드에 따라 다른 결과를
+    #: 낳으므로 모드 없이는 판단 근거를 되짚을 수 없다.**
+    mode: str
     tracks: list[dict[str, Any]]
     detections: list[dict[str, Any]]
     telemetry: dict[str, Any]
@@ -89,6 +92,7 @@ class EventBlackbox:
         telemetry: Mapping[str, Any] | None = None,
         state: str = "",
         escalation: str = "",
+        mode: str = "",
         now_ms: int,
     ) -> BlackboxEntry:
         """JPEG를 재인코딩하지 않고 사건의 모든 관측값과 함께 기록한다."""
@@ -110,6 +114,7 @@ class EventBlackbox:
             "event": event_type,
             "state": state,
             "escalation": escalation,
+            "mode": mode,
             "tracks": tracks_data,
             "detections": detections_data,
             "telemetry": telemetry_data,
@@ -135,6 +140,7 @@ class EventBlackbox:
             event_type=event_type,
             state=state,
             escalation=escalation,
+            mode=mode,
             tracks=tracks_data,
             detections=detections_data,
             telemetry=telemetry_data,
@@ -160,6 +166,10 @@ class EventBlackbox:
             event_type = metadata.get("event")
             state = metadata.get("state")
             escalation = metadata.get("escalation")
+            # ⚠️ **옛 기록에는 없다.** `3.4.4` 이전에 쌓인 것을 읽을 수 없게 만들면
+            # 모드를 넣은 대가로 과거 사건을 잃는다 — 빈 문자열로 두고 «모르는 모드»
+            # 로 읽히게 한다. 필수로 요구하는 쪽은 새로 쓰는 자리다.
+            mode = metadata.get("mode", "")
             tracks = metadata.get("tracks")
             detections = metadata.get("detections")
             telemetry = metadata.get("telemetry")
@@ -170,6 +180,7 @@ class EventBlackbox:
                 or not isinstance(event_type, str)
                 or not isinstance(state, str)
                 or not isinstance(escalation, str)
+                or not isinstance(mode, str)
                 or not isinstance(tracks, list)
                 or not isinstance(detections, list)
                 or not isinstance(telemetry, dict)
@@ -183,6 +194,7 @@ class EventBlackbox:
                     event_type=event_type,
                     state=state,
                     escalation=escalation,
+                    mode=mode,
                     tracks=tracks,
                     detections=detections,
                     telemetry=telemetry,
