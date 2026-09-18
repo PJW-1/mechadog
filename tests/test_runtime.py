@@ -1615,9 +1615,7 @@ def test_blocked_forward_during_tracking_is_logged_once(
     assert freed[0].detail["blocked_ms"] == 1200, "막혀 있던 길이를 남긴다"
 
 
-def test_blocked_forward_outside_tracking_is_not_logged(
-    config: dict, clock: FakeClock
-) -> None:
+def test_blocked_forward_outside_tracking_is_not_logged(config: dict, clock: FakeClock) -> None:
     """순찰 중 막힘은 `AVOID` 전이가 이미 기록한다 — 여기서 또 내면 중복이다."""
     runtime, _ = _tracking_runtime(config, clock)
     enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
@@ -1626,6 +1624,8 @@ def test_blocked_forward_outside_tracking_is_not_logged(
     flags = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": True}
     runtime.ingest(telemetry(enc, state="AVOID", dist_cm=23, flags=flags), 200)
     assert runtime.behavior.state != "TRACK"
+
+
 # ── 운용 모드 게이트 (WBS 3.4.4 · FR-11) ─────────────────────────
 
 
