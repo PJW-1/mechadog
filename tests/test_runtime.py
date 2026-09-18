@@ -1544,3 +1544,24 @@ def test_yaw_rate_folds_the_compass_wrap(config: dict, clock: FakeClock, caplog)
     assert digests, "1초가 지났으면 요약이 나온다"
     # 359 -> 1 -> 3 은 100ms 마다 +2° 이므로 +20 °/s 다.
     assert digests[0].detail["yaw_rate_deg_s_avg"] == pytest.approx(20.0)
+
+
+def test_person_already_in_view_when_patrol_starts_still_reaches_alert(
+    config: dict, clock: FakeClock
+) -> None:
+    """⚠️ **순찰을 시작할 때 이미 사람이 서 있으면 그냥 지나쳤다 (2026-09-19 실기).**
+
+    `PERSON_FOUND` 는 사람 게이트의 **상승 엣지**로만 나간다. 게이트가 순찰 전에
+    이미 켜져 있으면 엣지가 없어 사건이 발행되지 않고, 전이표에 `PATROL
+    --PERSON_FOUND--> ALERT` 가 있어도 도달하지 못한다. 실기에서 검출이 초당
+    10~40건이었는데도 `ALERT` 로 한 번도 가지 않았다 — 로봇은 직진만 했다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    centre = (300.0, 200.0, 340.0, 400.0)
+    # 순찰 **전에** 사람이 보인다. `IDLE` 에는 전이가 없으므로 상태는 그대로다.
+    _sighting(runtime, vision, seq=1, at_ms=100, box=centre)
+    assert runtime.behavior.state == "IDLE"
+    runtime.start_patrol(200)
+    # 같은 사람이 계속 보일 뿐 새 엣지는 없다 — 그래도 잡아야 한다.
+    _sighting(runtime, vision, seq=2, at_ms=300, box=centre)
+    assert runtime.behavior.state == "ALERT", "이미 보고 있던 사람도 순찰을 시작하면 잡는다"

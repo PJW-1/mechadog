@@ -37,7 +37,7 @@ from host.behavior.auth import Authenticator, Outcome
 from host.behavior.change_detect import BaselineStore, ChangeConfirmer, classify_changes
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
-from host.behavior.fsm import Behavior, Event, behavior_from_config
+from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.tracker import LockOnTracker
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
@@ -221,6 +221,21 @@ class Runtime:
         self._edge.changed("vision_healthy", True)
         self._edge.changed("vision_stalled", False)
         self._edge.changed("person", False)  # 첫 관측이 변화로 잡히지 않게
+        # ⚠️ **순찰에 들어갈 때 사람 게이트를 재장전한다.** `PERSON_FOUND` 는 상승
+        # 엣지로만 나가므로, 순찰을 시작하는 순간 **이미 사람이 보이고 있으면 엣지가
+        # 없어 로봇이 그 사람을 그냥 지나친다** — 2026-09-19 실기에서 그랬다. 게이트가
+        # 02:07:16 에 켜진 뒤 02:07:18 에 순찰이 시작됐고, 검출이 초당 10~40건인데도
+        # `ALERT` 로 한 번도 가지 않았다. 사람은 내내 보고 있었고 *"새로 나타났다"* 로
+        # 쳐지지 않았을 뿐이다 (FR-3.2).
+        #
+        # `PERSON_FOUND` 를 받는 상태는 `PATROL` 하나뿐이라 여기만 재장전하면 된다.
+        #
+        # ⚠️ **임무 밖에서 들어올 때만이다** (`STANDBY` = 대기·수동). 모든 `PATROL`
+        # 진입에서 재장전하면 **인증을 통과한 사람이 곧바로 다시 경보를 올린다** —
+        # `AUTH_WAIT → PATROL` 복귀 틱에 그 사람이 아직 화면에 있기 때문이다.
+        # 임무 중의 복귀(`SCAN`·`AUTH_WAIT`)는 게이트가 이미 살아 있으므로 건드리지
+        # 않는다. 낡은 것은 **순찰을 시작하는 순간의 게이트**뿐이다.
+        self._behavior.fsm.on_enter("PATROL", self._rearm_person_gate)
         # 추종 **진입** 임계. 이탈은 조향 데드존이 정한다 — 둘을 갈라 두는 이유는
         # `_track` 주석과 `config.yaml` 의 `track_engage_px` 항목에 있다.
         self._track_engage_px = float(config["fsm"]["track_engage_px"])
@@ -756,6 +771,11 @@ class Runtime:
                 "trigger": trigger.name if trigger is not None else None,
             },
         )
+
+    def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
+        """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
+        if previous in STANDBY:
+            self._edge.forget("person")
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
