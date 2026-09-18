@@ -21,10 +21,15 @@ FRAME_WIDTH = 640
 MIDPOINT = FRAME_WIDTH / 2
 
 
-#: `mechdog-01` 실측 (2026-09-11~12 · `config/devices/mechdog-01.yaml`).
-#: 우선회 데드밴드이며, 이보다 작은 명령은 **로봇이 아무것도 하지 않는다.**
-STEERING_DEADBAND_DEG = 3.3
-#: 그 기체의 직진 요 편향을 0 으로 만드는 값.
+#: **`mechdog-01` 한 대의 실측이다** (2026-09-18 곡선 · `config/devices/mechdog-01.yaml`).
+#: 순 회전이 0 이 되는 조향 각도. 이보다 덜 음수인 명령은 **우선회를 지시해도 드리프트가
+#: 더 커서 기체가 여전히 좌로 돈다.**
+#:
+#: ⚠️ 예전에는 이 자리에 «우선회 데드밴드 3.3°» 가 있었고 그것은 **틀렸다.** 응답에
+#: 평평한 구간이 없다 — `docs/measurements/2026-09-18-turn-rate-curve.md` 4절.
+YAW_ZERO_ANGLE_DEG = -5.4
+#: 그 기체의 직진 요 편향 보정. ⚠️ 실측 영점은 -5.4 이므로 2.6도 과보정이며, 방향별로
+#: 우선회에만 붙기 때문에 그대로 둔다 (프로파일 주석 참조).
 STRAIGHT_BIAS_DEG = -8.0
 
 
@@ -200,20 +205,20 @@ def test_bias_stays_off_while_centred(cfg):
     assert out == TrackCommand(step=0.0, angle=0.0, centered=True, deviation_px=0.0)
 
 
-def test_bias_lifts_a_right_turn_out_of_the_steering_deadband(cfg):
+def test_bias_pushes_a_right_turn_past_the_yaw_zero(cfg):
     """⚠️ **이것이 2026-09-18 실기에서 오른쪽을 못 쫓은 이유다.**
 
-    데드존 바로 바깥의 오른쪽 타겟은 `-0.77°` 를 만드는데, 기체의 조향 데드밴드가
-    `3.3°` 라 **로봇이 아무것도 하지 않는다.** 그동안 직진 드리프트는 왼쪽으로
-    계속 돌리므로 타겟에서 멀어진다. 편향을 더해야 명령이 데드밴드 밖으로 나간다.
+    데드존 바로 바깥의 오른쪽 타겟은 `-0.77°` 를 만드는데, 그 기체의 순 회전 영점이
+    `-5.4°` 다. 즉 **우선회를 지시해도 직진 드리프트가 더 커서 기체는 여전히 좌로
+    돈다** — 타겟에서 멀어진다. 편향을 더해야 명령이 영점을 넘어 실제로 우선회한다.
     """
     right_of_centre = MIDPOINT + 50.8
     before = _tracker(cfg).update(right_of_centre, FRAME_WIDTH)
-    assert abs(before.angle) < STEERING_DEADBAND_DEG, "보정 없이는 데드밴드에 먹힌다"
+    assert before.angle < 0, "오른쪽 타겟이면 우선회를 지시한다"
+    assert before.angle > YAW_ZERO_ANGLE_DEG, "그런데 영점을 못 넘어 순 회전은 여전히 좌다"
 
     after = _tracker(cfg, bias=STRAIGHT_BIAS_DEG).update(right_of_centre, FRAME_WIDTH)
-    assert abs(after.angle) > STEERING_DEADBAND_DEG, "보정 뒤에는 로봇이 반응한다"
-    assert after.angle < 0, "오른쪽 타겟이면 우선회 쪽으로 더 밀려야 한다"
+    assert after.angle < YAW_ZERO_ANGLE_DEG, "보정 뒤에는 영점을 넘어 실제로 우선회한다"
     assert after.step > 0, "조향에는 보폭이 따라붙는다 (DR-11)"
 
 
@@ -236,4 +241,19 @@ def test_bias_leaves_a_left_turn_alone(cfg):
     plain = _tracker(cfg).update(left_of_centre, FRAME_WIDTH)
     biased = _tracker(cfg, bias=STRAIGHT_BIAS_DEG).update(left_of_centre, FRAME_WIDTH)
     assert biased.angle == pytest.approx(plain.angle), "좌선회에는 보정이 닿지 않는다"
-    assert biased.angle > STEERING_DEADBAND_DEG, "데드존 밖이면 기체가 실제로 좌선회한다"
+    assert biased.angle > 0, "좌선회 부호가 유지된다"
+
+
+def test_bias_on_the_left_would_steer_away_from_a_near_target(cfg):
+    """⚠️ **작은 편차에서는 부호까지 뒤집힌다 — 좌측 보정을 닫아 둔 이유다.**
+
+    영점이 `-5.4°` 이므로 좌선회 명령이 그보다 작으면 보정을 더한 순간 **영점을 넘어
+    순 회전이 우가 된다.** 왼쪽에 있는 대상에게서 멀어진다는 뜻이다. 경계는 편차
+    116px 이며, 이 시험은 그 안쪽(68px)을 본다.
+    """
+    near_left = MIDPOINT - 68.0
+    command = _tracker(cfg).update(near_left, FRAME_WIDTH)
+    assert command.angle > 0, "보정이 없으면 왼쪽으로 돈다"
+    assert command.angle + STRAIGHT_BIAS_DEG < YAW_ZERO_ANGLE_DEG, (
+        "보정을 걸었다면 영점을 넘어 대상에서 멀어졌을 것이다"
+    )
