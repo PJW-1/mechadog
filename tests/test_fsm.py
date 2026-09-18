@@ -582,5 +582,6 @@ def test_exhaustive_coverage_counts() -> None:
     # ⚠️ **숫자를 박아 둔다.** `> 0` 으로 두면 주석이 하는 말("숫자가 바뀌면 알려
     # 준다")을 코드가 하지 않는다 — 전이를 추가·삭제해도 조용히 통과한다.
     # 값이 바뀌면 **의도한 변경인지 확인하고** 여기를 함께 고친다.
-    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 27, 28)
-    assert (len(effective), len(blocked), len(undefined)) == (94, 6, 257)
+    # 2026-09-19 `3.4.4` — `PPE_SETTLED` 와 `ALERT → PATROL` 복귀 전이를 더했다 (FR-11.6).
+    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 28, 29)
+    assert (len(effective), len(blocked), len(undefined)) == (95, 6, 269)

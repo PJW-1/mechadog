@@ -1,6 +1,6 @@
 import {REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
-import {describeTelemetry} from './telemetry-feed.js';
+import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
 
 const TITLES={missions:'순찰 · 제어',events:'사건 검토',records:'운영 기록',zones:'공간 · 구역',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
 const STATUS={idle:'시작 전',running:'예시 진행 중',paused:'일시정지',ended:'종료'};
@@ -360,8 +360,10 @@ export class OperationalPanels {
      this.button('실제 순찰 시작',()=>this.confirmDevice({icon:'play',title:'실제 순찰을 시작하겠습니까?',body:'로봇이 자율 순찰을 시작합니다. 안전 래치가 해제된 상태여야 하며, 주행 경로에 사람·장애물이 없는지 먼저 확인하세요.',confirm:'예, 순찰을 시작합니다',action:()=>store.requestPatrol(true)}),{disabled:!store.live}),
      this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live}),
      this.serviceButton,
+     this.modeButton('guard','경비'),this.modeButton('factory','공장'),this.modeButton('assist','현장지원'),
      this.button('안전 해제 (RESET_SAFE)',()=>this.confirmDevice({icon:'stop',title:'안전 래치를 해제하겠습니까?',body:'안전 정지 원인이 제거됐고 로봇 주변에 사람이 없는지 먼저 확인하세요. 래치가 풀리면 다음 이동 명령부터 로봇이 실제로 움직입니다 — 잠금만 해제되며 자동 보행은 시작하지 않습니다.',confirm:'예, 해제합니다',danger:true,action:()=>store.requestResetSafe()}),{disabled:!store.live,'data-reset-safe':'confirm'})),
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
+    this.note('운용 모드는 로봇이 멈춰 있을 때(대기·수동)만 바꿀 수 있고, 바꿔도 경보(L3)와 안전 정지(F)는 풀리지 않습니다. 선행 기능이 없는 모드는 서버가 거절하며 사유를 알려 줍니다.'),
     this.note('모드 변경 버튼은 누르면 확인 창이 뜹니다. 순찰 정지·비상 정지처럼 안전으로 가는 명령은 확인 없이 즉시 보냅니다. 서비스 모드 해제 후에도 안전 래치는 남습니다.')));
   }
   if(store.blocked)this.container.append(this.note(store.estop?'예시 정지 잠금 상태입니다. 설정에서 웹 예시 잠금만 초기화할 수 있습니다.':'예시 모드·수신 상태·운영자 시연 역할을 설정에서 확인하세요.','warning'),this.button('운영 설정',()=>this.openDisplaySettings()));
@@ -529,11 +531,18 @@ export class OperationalPanels {
   if(this.view==='devices'&&this.statusLive?.isConnected)this.fillRobotStatus();
   if(this.view==='missions'&&this.deviceFacts?.isConnected)this.fillDeviceCommands();
  }
+ // 운용 모드 전환 버튼 (FR-4.7 · FR-11.3). ⚠️ **지금 모드는 누를 수 없게 둔다** —
+ // 같은 모드로 바꾸는 것은 거절이 아니지만, 누를 수 있으면 «바뀌었나» 를 되묻게 된다.
+ modeButton(name,label){
+  const store=this.store;
+  return this.button(label+' 모드',()=>this.confirmDevice({icon:'lock',title:label+' 모드로 바꾸겠습니까?',body:'순찰 하나는 모드 하나로 돕니다. 경비는 인증, 공장은 보호구·물체 변화, 현장지원은 정보 안내만 합니다. 로봇이 멈춰 있을 때만 바뀌며 경보와 안전 정지는 풀리지 않습니다.',confirm:'예, 바꿉니다',action:()=>store.requestMode(name)}),{disabled:!store.live||store.missionMode===name,'data-mode':name});
+ }
  fillDeviceCommands(){
   const store=this.store,t=store.live?store.deviceTelemetry:null,text=describeTelemetry(store.telemetry),svc=store.serviceMode;
   const received=t?(text.tone==='live'?'실시간':text.tone==='stale'?'끊김 · '+text.age+' · 마지막 값':'채널 끊김 · 마지막 값'):'미수신';
   this.deviceFacts.replaceChildren(this.facts([
    ['상태 수신',received],
+   ['운용 모드',store.missionMode?(MODE_NAMES[store.missionMode]??store.missionMode):'미수신 — 판단 규칙을 알 수 없음'],
    ['FSM · 온보드',t?(store.fsmState||'기동 전')+' · 온보드 '+(t.state||'—'):'미수신'],
    ['안전 래치',t?(t.safetyLatched?'걸림':'해제됨'):'미수신'],
    ['서비스 모드',!t?'미수신':svc===null?'모름 · 펌웨어가 알리지 않음':svc?'켜짐 · 루프 워치독 동작 중':'꺼짐']]));

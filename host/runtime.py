@@ -38,6 +38,7 @@ from host.behavior.change_detect import BaselineStore, ChangeConfirmer, classify
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import Behavior, Event, behavior_from_config
+from host.behavior.mission import Mission
 from host.behavior.tracker import LockOnTracker
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
@@ -136,6 +137,7 @@ class Runtime:
         blackbox: EventBlackbox | None = None,
         event_publisher: Callable[[BlackboxEntry], None] | None = None,
         dashboard: DashboardState | None = None,
+        mission: Mission | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -144,6 +146,10 @@ class Runtime:
         self._device_id = device_id
         self._dashboard = dashboard
         self._clock = clock
+        # 운용 모드 (3.4.4). **FSM·에스컬레이션과 직교하는 세 번째 축**이며 표는
+        # 하나다 — 모드는 *어떤 사건이 생길 수 있는지*만 고른다 (FR-11 · ADR-33).
+        # `main()` 이 `--mode` 를 반영해 만들어 넘기고, 없으면 설정에서 만든다.
+        self._mission = mission if mission is not None else Mission(config)
         self._telemetry_received_at: int | None = None
         # 우리 로봇의 텔레메트리로 받아들이는 이름 — 펌웨어는 MAC 이름을 보낸다 (`telemetry_ids`).
         self._own_ids = telemetry_ids(dict(config), device_id)
@@ -237,6 +243,9 @@ class Runtime:
         # ⚠️ **값을 넣지 않고 물어볼 대상을 넘긴다.** 단계는 사건·시간·확인 어느
         # 쪽으로도 바뀌므로 갱신 지점이 하나가 아니고, 복사해 두면 반드시 어긋난다.
         self._log.bind_escalation(lambda: self._escalation.level.value)
+        # 같은 이유로 모드도 물어본다 (FR-11.5) — 관제 화면에서 바뀌므로 갱신 지점이
+        # 하나가 아니다.
+        self._log.bind_mode(lambda: self._mission.mode)
         # 사원증 인증 (3.8.1). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
         # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 여기서 정한다.
         self._auth = Authenticator(config)
@@ -249,6 +258,19 @@ class Runtime:
     def auth(self) -> Authenticator:
         """인증 세션. 대시보드가 *"누가 인증됐나"* 를 보이는 데 쓴다 (FR-3.6.2)."""
         return self._auth
+
+    @property
+    def mission(self) -> Mission:
+        """운용 모드 (FR-11). 대시보드가 표시·전환에 쓴다."""
+        return self._mission
+
+    def set_mode(self, target: str) -> str | None:
+        """관제 화면에서 온 모드 전환. 성공이면 `None`, 거절이면 사유 (FR-11.3).
+
+        ⚠️ **상태를 여기서 읽어 넘긴다.** `Mission` 이 `Behavior` 를 알면 모드 축을
+        FSM 없이 단독으로 시험할 수 없다 — 두 축을 잇는 곳은 런타임 하나다.
+        """
+        return self._mission.switch(target, state=self._behavior.state)
 
     @property
     def escalation(self) -> Escalation:
@@ -459,7 +481,13 @@ class Runtime:
         `FR-3.7` 의 5초 타이머 소관이고, 여기서 `TARGET_CENTERED` 를 내면
         **대상이 없어졌는데 중앙에 들어왔다고 보고하는 꼴**이 되어 `TRACK` 이
         `ALERT` 로 되돌아간다.
+
+        ⚠️ **현장지원 모드에서는 돌지 않는다** (FR-11.1 · ADR-34 규칙 2). 사건만
+        막으면 조향각은 매 프레임 계산돼 `TRACK` 시퀀스에 그대로 실린다 — 전이는
+        없는데 로봇이 사람을 따라 도는, 가장 설명하기 어려운 모양이 된다.
         """
+        if not self._mission.enables("track"):
+            return
         if not self._behavior.tracking:
             # ⚠️ **추종 구간을 벗어나면 엣지 기억을 지운다.** 남겨 두면 다시 `ALERT` 로
             # 들어왔을 때 첫 판정이 *"변화 없음"* 으로 삼켜져 `TARGET_OFF_CENTER` 가
@@ -551,7 +579,14 @@ class Runtime:
 
         ⚠️ **사람 대응이 우선이다.** `ALERT`·`TRACK` 에서는 돌지 않는다 — 사람을
         보고 있는데 물건 목록을 견주면 대응이 한 박자 늦는다.
+
+        ⚠️ **공장 모드에서만 돈다** (FR-11.1 · ADR-33 개정). 사건을 막는 것만으로는
+        모자라다 — 기준이 없는 구역에서 이 함수는 **그 자리에서 기준을 등록**하고,
+        그것은 사건이 아니라 디스크에 남는 상태다. 경비 순찰이 지나가며 남긴 기준을
+        다음 공장 순찰이 정본으로 쓰게 된다.
         """
+        if not self._mission.enables("change_detect"):
+            return
         state = self._behavior.state
         if state == "PATROL":
             zone = self._zone_of(result)
@@ -629,7 +664,13 @@ class Runtime:
         60초 유효 시간이 지난 것(FR-10.2.4)과 미인증자가 새로 합류한 것(FR-3.8.1)을
         놓친다 — 둘 다 사건이 없는 변화다. 그래서 매번 *"보이는 전원이 인증됐나"*
         를 물어 에스컬레이션에 반영한다.
+
+        ⚠️ **경비 모드에서만 돈다** (FR-11.1). `_apply` 게이트만으로는 모자라다 —
+        아래 `note_authenticated()` 는 사건이 아니라 **직접 호출**이라 그 게이트를
+        지나지 않고, 공장·현장지원 모드에서 사원증이 스쳐도 단계를 건드린다.
         """
+        if not self._mission.enables("auth"):
+            return
         self._auth.note_tracks(result.tracks)
         outcome = self._auth.observe(result.markers, result.tracks, now_ms)
         if outcome in (Outcome.GRANTED, Outcome.BADGE_SEEN):
@@ -676,6 +717,7 @@ class Runtime:
                 telemetry=self._last_telemetry,
                 state=self._behavior.state,
                 escalation=self._escalation.level.value,
+                mode=self._mission.mode,
                 now_ms=result.completed_ms,
             )
         except Exception as exc:  # noqa: BLE001 — 기록 실패가 10Hz 제어를 죽이면 안 된다
@@ -797,6 +839,7 @@ class Runtime:
                 telemetry=self._last_telemetry if self._last_telemetry["available"] else None,
                 state=self._behavior.state,
                 escalation=self._escalation.level.value,
+                mode=self._mission.mode,
                 received_at=self._telemetry_received_at,
             )
         return lines
@@ -809,6 +852,15 @@ class Runtime:
         **앞 6초의 모든 레코드가 `IDLE` 로 찍혔다** — 로봇은 순찰 중이었다.
         로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
         """
+        # ⚠️ **모드 게이트는 FSM 보다 앞이다** (FR-11.1 · `3.4.4`). 뒤에 두면 전이는
+        # 막아도 에스컬레이션이 올라가, 경비 모드에서 PPE 위반이 L3 경보를 만든다.
+        # 여기가 사건이 지나는 유일한 지점이라 **한 곳에서 한 번만** 거른다.
+        if not self._mission.allows(event.name):
+            # ⚠️ `event=` 로 적으면 안 된다 — 로거의 위치 전용 인자와 부딪혀
+            # `TypeError` 가 나고, 그 죽음은 이 게이트를 처음 타는 운용 중에 나온다.
+            # 모드는 레코드 컨텍스트에 이미 실린다 (FR-11.5).
+            LOG.debug("mission_gated", gated=event.name)
+            return False
         before = self._behavior.state
         accepted = self._behavior.event(event, now_ms=now_ms)
         # ⚠️ **받아들여졌는지를 함께 넘긴다.** 올리는 것은 전이 여부와 무관하지만
@@ -1121,6 +1173,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="PC 로컬 관제 서버 포트 — 텔레메트리·검출 방송과 명령 API (기본 비활성, 예: 8000)",
     )
+    parser.add_argument(
+        "--mode",
+        default=None,
+        # ⚠️ **`choices` 를 두지 않는다.** argparse 가 막으면 *"고를 수는 있지만 선행
+        # 기능이 없다"* 와 *"그런 모드가 없다"* 가 같은 오류로 뭉개진다. 판정은
+        # `Mission` 이 하고 사유를 문장으로 돌려준다 (FR-11.7).
+        help="운용 모드 — guard | factory | assist (config 의 mission.mode 를 덮어쓴다)",
+    )
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
     parser.add_argument(
         "--reset-on-start",
@@ -1151,6 +1211,7 @@ def _publish_event(dashboard: DashboardState) -> Callable[[BlackboxEntry], None]
                 "ts_ms": entry.ts_ms,
                 "state": entry.state,
                 "escalation": entry.escalation,
+                "mode": entry.mode,
                 # 비주 대상도 함께 남긴다 (FR-3.8.4) — 주 대상만 보내면 옆에 있던
                 # 사람이 기록에서 사라진다.
                 "tracks": entry.tracks,
@@ -1171,6 +1232,10 @@ def main(argv: list[str] | None = None) -> int:
     # ⚠️ 설정을 읽기 전에는 우리 로거가 없다. 여기서만 표준 출력을 쓴다.
     try:
         config = load_config(args.device)
+        # ⚠️ **모드는 여기서 정해진다** (FR-11.2 · `3.4.4`). 로거를 세우기 전에
+        # 만드는 이유는 **모르는 모드나 선행 기능 없는 모드로는 기동 자체를 거부**
+        # 하기 때문이다 (FR-11.7) — `ModeError` 가 `ConfigError` 라서 이 절이 잡는다.
+        mission = Mission(config, mode=args.mode)
     except (ConfigError, OSError) as exc:
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
@@ -1199,6 +1264,7 @@ def main(argv: list[str] | None = None) -> int:
         vision=vision,
         blackbox=blackbox,
         dashboard=dashboard,
+        mission=mission,
         # 사건을 관제 화면으로 밀어 준다 (WBS 4.4.3). ⚠️ **저장만으로는 완료가
         # 아니다** — 블랙박스는 디스크에 남기고 사람은 화면을 본다. 이 연결이
         # 없으면 기록은 쌓이는데 아무도 모른다. 실제로 그 상태였다.
@@ -1229,6 +1295,7 @@ def main(argv: list[str] | None = None) -> int:
                     request_reset=runtime.ask_reset,
                     apply_event=runtime.apply_external,
                     ask_patrol=runtime.ask_patrol,
+                    set_mode=runtime.set_mode,
                 )
                 camera = _latest_jpeg(vision) if vision is not None else None
                 stack.enter_context(
