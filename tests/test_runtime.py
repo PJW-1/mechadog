@@ -303,9 +303,10 @@ def test_loop_sends_at_the_configured_rate(config: dict, clock: FakeClock) -> No
     sock = FakeSocket(clock)
     stats = r.serve(sock, duration_s=1.0, clock=clock)
     assert stats.ticks == 11
-    # 반복 의도가 틱마다 하나, 거기에 `STATE` 알림이 1회 더 실린다.
-    # **틱이 빠진 것이 아니라 한 번만 보낼 것이 하나 더 나간 것이다.**
-    assert stats.sent == stats.ticks + 1
+    # 반복 의도가 틱마다 하나, 거기에 **한 번만 보낼 것이 둘** 더 실린다 —
+    # `STATE` 알림과 첫 단계 색(`LED` · `4.7.3`)이다.
+    # **틱이 빠진 것이 아니다.**
+    assert stats.sent == stats.ticks + 2
 
 
 def test_loop_ends_with_estop(config: dict, clock: FakeClock) -> None:
@@ -394,7 +395,8 @@ def test_start_patrol_is_explicit(config: dict, clock: FakeClock) -> None:
     sock = FakeSocket(clock)
     r.serve(sock, duration_s=0.5, clock=clock)
     assert r.behavior.state == "IDLE"
-    assert set(sock.types()) == {"STOP", "STATE", "ESTOP"}
+    # `LED` 는 걷는 것과 무관하다 — 기동 단계(L0)의 색을 한 번 내려보낸 것이다 (`4.7.3`).
+    assert set(sock.types()) == {"STOP", "STATE", "ESTOP", "LED"}
 
 
 def test_serve_owns_vision_worker_lifecycle(config: dict, clock: FakeClock) -> None:
@@ -1235,6 +1237,33 @@ def test_track_summary_keeps_the_jitter_visible(config: dict, clock: FakeClock, 
     assert digest["track_dev_px_avg"] > 200, "좌우 280px 진동이 0 으로 상쇄되면 안 된다"
     assert digest["track_angle_deg_avg"] > 10, "조향각도 마찬가지다"
     assert digest["track_off_center"] >= 2, "데드존 밖에 몇 프레임 있었는지가 남는다"
+
+
+# ── 눈 LED (WBS 4.7.3 · FR-10.4) ─────────────────────────────────
+
+
+def _typed(lines: list[str], type_: str) -> list[dict]:
+    return [json.loads(line) for line in lines if f'"type":"{type_}"' in line]
+
+
+def test_eye_led_follows_the_escalation_level(config: dict, clock: FakeClock) -> None:
+    """⚠️ **색은 계산돼 있었는데 보내는 곳이 없었다.**
+
+    `escalation.presentation()` 이 단계별 색을 내는데 그것이 로그에만 쓰여, 실기에서
+    눈이 펌웨어 기본값(파랑)에 머물렀다. `4.7.3` 이 진단 스케치로만 통과했던 이유다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+
+    first = _typed(runtime.tick(100), "LED")
+    assert [m["color"] for m in first] == ["blue"], "순찰은 L0 파랑이다"
+    assert first[0]["blink_hz"] == 0, "상시점등은 0 이다 — 규약이 `None` 을 받지 않는다"
+
+    assert not _typed(runtime.tick(200), "LED"), "같은 단계를 10Hz 로 도배하지 않는다"
+
+    vision.result = vision_result(1, 300, present=True, hits=3, last_seen_ms=300)
+    after = _typed(runtime.tick(300), "LED")
+    assert [m["color"] for m in after] == ["yellow"], "사람을 보면 L1 노랑으로 바뀐다"
 
 
 # ── 구역 변화 감지 배선 (WBS 3.6.x · FR-8) ───────────────────────

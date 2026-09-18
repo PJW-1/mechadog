@@ -823,6 +823,26 @@ class Runtime:
             },
         )
 
+    def _emit_eye_led(self) -> None:
+        """단계 색을 눈 LED 로 내려보낸다 (`4.7.3` · FR-10.4).
+
+        ⚠️ **색은 이미 계산돼 있었고 «보내는 곳» 만 없었다.** `escalation.presentation()`
+        이 단계별 색과 점멸을 내는데 그것이 **로그에만** 쓰이고 있어서, 실기에서 눈이
+        펌웨어 기본값(파랑)에 머물렀다. `4.7.3` 실기가 진단 스케치로만 통과했던 이유다.
+
+        ⚠️ **바뀔 때만 보낸다.** 10Hz 로 같은 색을 밀어 넣으면 눈 LED 가 초음파와 같은
+        I2C 버스를 계속 먹는다 — 펌웨어도 같은 이유로 색이 바뀔 때만 모듈에 쓴다.
+
+        ⚠️ **페일세이프 흰색을 여기서 만들지 않는다.** 래치 중에는 온보드가 흰색으로
+        덮는다. 링크가 끊겨 `F` 로 갔다면 호스트는 애초에 색을 보낼 수 없다.
+        """
+        seen = self._escalation.presentation()
+        # 규약은 `blink_hz` 를 필수·음수 불가로 두고 **0 을 상시점등**으로 읽는다.
+        # `None` 을 그대로 실으면 전문이 거부된다.
+        blink = 0.0 if seen.blink_hz is None else float(seen.blink_hz)
+        if self._edge.changed("eye_led", (seen.led, blink)):
+            self._commander.once("LED", color=seen.led, blink_hz=blink)
+
     def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
         if previous in STANDBY:
@@ -881,6 +901,8 @@ class Runtime:
         # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
         # 눈 LED·음향을 단계에서 내려보내기 시작하면(`4.7.3`) 한 주기씩 밀린다.
         self._escalation.tick(now_ms)
+        # 단계 색을 로봇에 내려보낸다 — 위 호출 바로 뒤가 제자리다 (`4.7.3`).
+        self._emit_eye_led()
         self._request_auth(now_ms)
         before = self._behavior.state
         lines = self._behavior.tick(now_ms)
