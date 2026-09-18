@@ -37,7 +37,7 @@ from host.behavior.auth import Authenticator, Outcome
 from host.behavior.change_detect import BaselineStore, ChangeConfirmer, classify_changes
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
-from host.behavior.fsm import Behavior, Event, behavior_from_config
+from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.behavior.tracker import LockOnTracker
 from host.common.blackbox import BlackboxEntry, EventBlackbox
@@ -227,6 +227,23 @@ class Runtime:
         self._edge.changed("vision_healthy", True)
         self._edge.changed("vision_stalled", False)
         self._edge.changed("person", False)  # 첫 관측이 변화로 잡히지 않게
+        self._edge.changed("track_blocked", False)
+        self._blocked_since_ms: int | None = None
+        # ⚠️ **순찰에 들어갈 때 사람 게이트를 재장전한다.** `PERSON_FOUND` 는 상승
+        # 엣지로만 나가므로, 순찰을 시작하는 순간 **이미 사람이 보이고 있으면 엣지가
+        # 없어 로봇이 그 사람을 그냥 지나친다** — 2026-09-19 실기에서 그랬다. 게이트가
+        # 02:07:16 에 켜진 뒤 02:07:18 에 순찰이 시작됐고, 검출이 초당 10~40건인데도
+        # `ALERT` 로 한 번도 가지 않았다. 사람은 내내 보고 있었고 *"새로 나타났다"* 로
+        # 쳐지지 않았을 뿐이다 (FR-3.2).
+        #
+        # `PERSON_FOUND` 를 받는 상태는 `PATROL` 하나뿐이라 여기만 재장전하면 된다.
+        #
+        # ⚠️ **임무 밖에서 들어올 때만이다** (`STANDBY` = 대기·수동). 모든 `PATROL`
+        # 진입에서 재장전하면 **인증을 통과한 사람이 곧바로 다시 경보를 올린다** —
+        # `AUTH_WAIT → PATROL` 복귀 틱에 그 사람이 아직 화면에 있기 때문이다.
+        # 임무 중의 복귀(`SCAN`·`AUTH_WAIT`)는 게이트가 이미 살아 있으므로 건드리지
+        # 않는다. 낡은 것은 **순찰을 시작하는 순간의 게이트**뿐이다.
+        self._behavior.fsm.on_enter("PATROL", self._rearm_person_gate)
         # 추종 **진입** 임계. 이탈은 조향 데드존이 정한다 — 둘을 갈라 두는 이유는
         # `_track` 주석과 `config.yaml` 의 `track_engage_px` 항목에 있다.
         self._track_engage_px = float(config["fsm"]["track_engage_px"])
@@ -388,6 +405,7 @@ class Runtime:
         self._behavior.note_onboard_state(out.reading.state)
         self._behavior.note_robot_latch(out.reading.safety_latched)
         self._settle_reset(out.reading.safety_latched, now_ms)
+        self._watch_track_blocked(out.reading, now_ms)
         # 로봇이 보고하는 온보드 상태의 **변화만** 남긴다. 같은 값이 10Hz 로 오는 것이
         # 정상이므로 매번 찍으면 로그가 그것으로 덮인다.
         if self._edge.changed("robot_state", out.reading.state):
@@ -504,8 +522,9 @@ class Runtime:
         if width <= 0:
             return
         center_x = (float(box[0]) + float(box[2])) / 2.0
+        box_height = float(box[3]) - float(box[1])
         try:
-            command = self._tracker.update(center_x, width)
+            command = self._tracker.update(center_x, width, box_height)
         except ValueError as exc:
             # 데드존이 화면 반폭 이상이면 추종이 성립하지 않는다. 설정 오류이며
             # 이 프레임을 버리고 다음으로 간다 — 여기서 죽으면 순찰까지 멈춘다.
@@ -518,6 +537,11 @@ class Runtime:
         # 상쇄돼 미세진동이 감춰진다 — DoD 가 확인하라는 바로 그것이다 (`3.5.4`).
         self._summary.observe("track_dev_px", abs(command.deviation_px))
         self._summary.observe("track_angle_deg", abs(command.angle))
+        # ⚠️ **거리 유지(`FR-3.5.2`)의 목표값을 정하려면 이 숫자부터 있어야 한다.**
+        # `fsm.track_target_height_px` 는 화각·장착 높이·사람 키가 섞여 계산으로
+        # 세울 수 없다 — 목표 거리(약 1.0m)에 서서 여기 찍히는 값을 읽어 채운다.
+        self._summary.observe("track_box_h_px", box_height)
+        self._summary.observe("track_step_mm", command.step)
         # ⚠️ **공백의 «길이» 를 남긴다.** 요약은 개수만 세므로 지시가 몇 번 나갔는지는
         # 알아도 **얼마나 오래 비었는지**를 알 수 없었고, 그래서 `track_coast_ms` 를
         # 한 번의 관측(중앙값 956ms)으로 어림해야 했다. 이 값이 쌓이면 상한이 맞는지
@@ -797,6 +821,52 @@ class Runtime:
                 "to": after,
                 "trigger": trigger.name if trigger is not None else None,
             },
+        )
+
+    def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
+        """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
+        if previous in STANDBY:
+            self._edge.forget("person")
+
+    def _watch_track_blocked(self, reading: Any, now_ms: int) -> None:
+        """추종 중에 온보드가 전진을 거부한 구간을 기록한다 (설계 규칙 ④ · FR-2.2).
+
+        ⚠️ **판단은 아무것도 바꾸지 않는다 — 기록만 붙인다.** `AVOID` 는 `PATROL`
+        에서만 열리는 것이 의도이고(추종 중에 회피를 돌리면 카메라가 대상을 놓쳐
+        회피가 임무를 취소한다), 그래서 추종 중 막힘에는 **대응할 상태가 없다.**
+        문제는 대응이 없는 것이 아니라 **일어난 줄도 몰랐다**는 것이다.
+
+        실제로 일어나는 일 — 온보드가 **전진만** 거부하고(`3.2.6`) 호 조향은 전진이
+        있어야 돌므로 로봇은 **선 채로** 멈춘다. 호스트는 `TRACK` 을 유지하며 지시를
+        계속 보내고, 대상이 계속 보이니 `TARGET_LOST` 도 돌지 않아 **그 자리에
+        머문다.** 안전한 정지이지만 «왜 멈췄는지» 가 로그에 없었다.
+
+        ⚠️ **2026-09-19 실기에서 운용자가 이것을 눈으로 봤다** — 순찰 중 사람을 발견한
+        로봇이 **코앞(온보드 정지 거리)까지 와서** 섰다. 원인은 `FR-3.5.2`(거리 유지)가
+        **미구현**이라 편차가 데드존 밖이면 거리와 무관하게 최대 보폭으로 전진하고,
+        멈추는 것이 초음파 반사뿐이기 때문이다. **Tier 1 안전 반사가 거리 제어를
+        대신하고 있다.** 이 로그가 그 빈도와 거리를 남겨 `FR-3.5.2` 의 목표값을 정할
+        근거가 된다.
+
+        ⚠️ **변화 때만 낸다.** 막힌 동안 10Hz 로 같은 줄을 쏟으면 그 로그가 런을 덮는다.
+        """
+        blocked = bool(reading.obstacle) and self._behavior.tracking
+        if not self._edge.changed("track_blocked", blocked):
+            return
+        if blocked:
+            self._blocked_since_ms = now_ms
+            LOG.warning(
+                "track_blocked",
+                state=self._behavior.state,
+                dist_cm=reading.dist_cm,
+            )
+            return
+        since = self._blocked_since_ms
+        self._blocked_since_ms = None
+        LOG.info(
+            "track_unblocked",
+            state=self._behavior.state,
+            blocked_ms=None if since is None else now_ms - since,
         )
 
     def tick(self, now_ms: int) -> list[str]:
