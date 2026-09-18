@@ -87,6 +87,41 @@ mechadog::MotionHal g_motion;
 mechadog::SensorHal g_sensors;
 mechadog::TelemetryPublisher g_telemetry;
 
+// ── 눈 LED (FR-10.4 · WBS 4.7.3) ─────────────────────────────────────────────
+// 호스트가 에스컬레이션 단계를 색으로 내려보내고(L0~L3), 래치가 걸리면 온보드가
+// 흰색으로 덮는다.
+//
+// ⚠️ **흰색을 호스트에 맡길 수 없다.** F 로 가는 원인 하나가 링크 두절인데, 그때는
+// 호스트가 아무것도 보낼 수 없다. 2026-09-18 점검에서 기체가 정확히 그 상태였다 —
+// Wi-Fi 가 끊겨 래치가 걸린 채였고 호스트는 색을 보낼 방법이 없었다.
+struct EyeColor {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+
+struct EyeNamedColor {
+  const char* name;
+  EyeColor color;
+};
+
+constexpr EyeColor kEyeWhite = {255, 255, 255};
+constexpr EyeColor kEyeOff = {0, 0, 0};
+
+// `config.yaml` 의 `escalation.led` 다섯 색만 안다. 모르는 색은 받지 않는다 —
+// 임의 색으로 바꾸거나 꺼 버리면 «LED 고장» 과 구별할 수 없다.
+constexpr EyeNamedColor kEyeColors[] = {
+    {"blue", {0, 0, 255}}, {"yellow", {255, 255, 0}}, {"orange", {255, 128, 0}},
+    {"red", {255, 0, 0}},  {"white", kEyeWhite},
+};
+
+EyeColor g_eye_commanded = {0, 0, 255};  // 호스트가 지시한 색. 기본은 L0 파랑이다.
+float g_eye_blink_hz = 0.0f;             // 0 이면 상시 점등. 규약상 L3 에만 붙는다.
+bool g_eye_blink_on = true;
+uint32_t g_eye_blink_toggled_ms = 0;
+bool g_eye_written = false;
+EyeColor g_eye_written_color = kEyeOff;
+
 mechadog::SafetyMonitor makeSafetyMonitor() {
   mechadog::SafetyThresholds thresholds;
   thresholds.obstacle_stop_cm = kObstacleStopCm;
@@ -319,6 +354,50 @@ void pollServiceButton() {
 }
 #endif
 
+bool eyeColorFor(const char* name, EyeColor& out) {
+  for (const EyeNamedColor& entry : kEyeColors) {
+    if (strcmp(entry.name, name) == 0) {
+      out = entry.color;
+      return true;
+    }
+  }
+  return false;
+}
+
+// 색이 바뀔 때만 모듈에 쓴다. 매 루프 쓰면 초음파와 같은 버스를 계속 먹는다.
+void pollEyeLed() {
+  const uint32_t now = millis();
+  EyeColor want = g_eye_commanded;
+  bool blink = g_eye_blink_hz > 0.0f;
+  // 래치 중에는 온보드가 흰색으로 덮고 점멸도 하지 않는다 — 아키텍처 3.1 표에서
+  // 점멸은 L3 경보에만 붙는다. 페일세이프는 «켜져 있음» 으로 보여야 한다.
+  if (g_motion_state.safe_latched) {
+    want = kEyeWhite;
+    blink = false;
+  }
+  if (blink) {
+    // ⚠️ delay() 로 만들지 않는다. 그렇게 하면 UDP 수신도 300ms 명령 타임아웃 검사도
+    // 함께 멈춘다 — `ACTION` 이 걷는 중에 거부되는 것과 같은 이유다.
+    const uint32_t half_period_ms = static_cast<uint32_t>(500.0f / g_eye_blink_hz);
+    if (now - g_eye_blink_toggled_ms >= half_period_ms) {
+      g_eye_blink_on = !g_eye_blink_on;
+      g_eye_blink_toggled_ms = now;
+    }
+    if (!g_eye_blink_on) want = kEyeOff;
+  } else {
+    g_eye_blink_on = true;
+  }
+  if (g_eye_written && want.r == g_eye_written_color.r && want.g == g_eye_written_color.g &&
+      want.b == g_eye_written_color.b) {
+    return;
+  }
+  // 실패하면 다음 루프에서 다시 시도한다. 표시가 실제 상태와 어긋난 채로 두지 않는다.
+  if (mechadog::writeEyeLed(want.r, want.g, want.b)) {
+    g_eye_written = true;
+    g_eye_written_color = want;
+  }
+}
+
 bool applyCommand(const mechadog::Command& command) {
   switch (command.type) {
     case mechadog::CmdType::Stop:
@@ -395,6 +474,24 @@ bool applyCommand(const mechadog::Command& command) {
 #else
       return false;  // no runtime-armed watchdog in this build
 #endif
+
+    case mechadog::CmdType::Led: {
+      EyeColor color;
+      // 모르는 색은 폐기가 아니라 «적용 안 됨» 이다. 규약이 색을 문자열로 두었고,
+      // 표시할 수 있는 것은 설정에 있는 다섯 색뿐이다. 직전 색은 그대로 둔다.
+      if (!eyeColorFor(command.color, color)) {
+        Serial.printf("LED refused: unknown color %s\n", command.color);
+        return false;
+      }
+      // ⚠️ **래치 중에도 받는다.** 눈은 구동 장치가 아니라 상태 출력이다. 다만 표시는
+      // 흰색이 이긴다 — 래치가 풀리면 여기 저장한 색이 곧바로 나온다.
+      g_eye_commanded = color;
+      g_eye_blink_hz = command.blink_hz;
+      g_eye_blink_on = true;
+      g_eye_blink_toggled_ms = millis();
+      pollEyeLed();
+      return true;
+    }
 
     case mechadog::CmdType::State:
       // Host FSM state is stored and echoed, never used to clear a safety latch.
@@ -760,6 +857,8 @@ void loop() {
   }
 
   // Safety decisions precede acquisition snapshot and telemetry publication.
+  // 눈 LED 도 그 뒤다 — 래치가 걸린 뒤의 흰색이 같은 회전에서 나가야 한다.
+  pollEyeLed();
   pollTelemetry();
   pollWifiDiagnostics();
 #if MECHADOG_ENABLE_OTA

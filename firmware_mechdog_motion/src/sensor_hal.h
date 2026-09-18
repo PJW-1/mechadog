@@ -126,6 +126,12 @@ struct SensorSnapshot {
 bool lockI2cBus(uint32_t wait_ms);
 void unlockI2cBus();
 
+// 눈 LED 색을 지금 쓴다 (FR-10.4 · WBS 4.7.3). 초음파 모듈에 내장된 RGB 두 개를
+// 같은 색으로 맞춘다. 버스를 5ms 만 기다리므로 제어 루프에서 불러도 된다.
+// false 는 «못 썼다» 이며, 조용히 성공한 척하지 않는다 — 센서를 끈 빌드에서도
+// false 다. 색은 바뀔 때만 쓰는 것이 부르는 쪽 책임이다.
+bool writeEyeLed(uint8_t r, uint8_t g, uint8_t b);
+
 // One physical sensor set; instantiate once. begin() only starts the dedicated
 // task: true means task creation succeeded, not that any sensor passed its test.
 // All Wire/ADC operations, including initialization, occur inside that task.
