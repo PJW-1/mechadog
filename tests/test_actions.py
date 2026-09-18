@@ -499,3 +499,39 @@ def test_posture_states_stand_still(clock, cfg) -> None:
     b.event(Event.SCAN_DUE, now_ms=0)
     move = moves(b, 0)[0]
     assert (move["step"], move["angle"]) == (0, 0)
+
+
+def test_auth_wait_holds_the_alert_posture(clock, cfg) -> None:
+    """⚠️ **로봇이 실제로 서서 사람을 상대하는 곳은 `AUTH_WAIT` 다.**
+
+    2026-09-18 실기에서 `ALERT` 체류는 **0.0~0.2초**였다 — 조준이 끝나면 에스컬레이션이
+    이미 L2 라 **같은 틱에** `AUTH_REQUIRED` 로 빠진다. 30초를 머문 곳은 `AUTH_WAIT`
+    이고, 그 30초가 **사원증을 읽어야 하는 시간**이라 고개를 든 자세가 곧 기능이다.
+    기다리지 않는다 — `ALERT` 와 달리 왕복하지 않는다.
+    """
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.PERSON_FOUND, now_ms=0)
+    assert poses(b, 0) == [], "ALERT 는 머문 뒤에 잡는다"
+
+    b.event(Event.AUTH_REQUIRED, now_ms=100)
+    assert b.state == "AUTH_WAIT"
+    entered = poses(b, 100)
+    assert len(entered) == 1 and entered[0]["pitch"] == cfg["fsm"]["alert_pitch_deg"]
+    assert poses(b, 200) == [], "한 번만 보낸다"
+
+    b.event(Event.AUTH_OK, now_ms=300)
+    assert b.state == "PATROL"
+    assert [m["pitch"] for m in poses(b, 300)] == [0], "걸어 나가기 전에 중립 복귀"
+
+
+def test_auth_wait_still_stands_still(clock, cfg) -> None:
+    """자세만 붙었고 **정지는 그대로다** — 지시를 `HALT` 에서 시퀀스로 옮긴 것뿐이다."""
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.PERSON_FOUND, now_ms=0)
+    b.event(Event.AUTH_REQUIRED, now_ms=0)
+    move = moves(b, 0)[0]
+    assert (move["step"], move["angle"]) == (0, 0)

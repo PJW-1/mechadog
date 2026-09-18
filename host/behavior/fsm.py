@@ -179,7 +179,12 @@ DIRECTIVES: dict[str, Directive] = {
     "MANUAL": Directive.YIELD,
     "FAILSAFE": Directive.HALT,
     "LOST": Directive.HALT,  # 즉시 정지 후 재측위 대기
-    "AUTH_WAIT": Directive.HALT,  # 정지한 채 인증을 기다린다
+    # ⚠️ **정지는 그대로이고 자세만 붙었다.** 등록된 시퀀스가 `drive(0, 0)` 을 보내므로
+    # 로봇이 서 있는 것은 `HALT` 와 같다. 바꾼 이유는 **여기가 로봇이 실제로 서서 사람을
+    # 상대하는 구간**이기 때문이다 — 2026-09-18 실기에서 `ALERT` 체류는 0.0~0.2초였고
+    # (조준이 끝나면 같은 틱에 `AUTH_REQUIRED` 로 빠진다) 30초를 머문 곳은 여기였다.
+    # 그리고 그 30초가 **사원증을 읽어야 하는 시간**이라 고개를 든 자세가 기능이다.
+    "AUTH_WAIT": Directive.SEQUENCE,  # 정지한 채 인증을 기다린다 + 경계 자세 (3.5.3)
     "PATROL": Directive.SEQUENCE,  # 3.5.1 순찰 행동
     "AVOID": Directive.SEQUENCE,  # 후진 200mm + 선회 (DR-11 로 제자리 회전 불가)
     "SCAN": Directive.SEQUENCE,  # 3.5.2 상체 스캔

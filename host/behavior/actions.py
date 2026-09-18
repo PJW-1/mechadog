@@ -424,8 +424,15 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
     commander = behavior.commander
     settle_ms = int(config["posture"]["settle_ms"])
     # `SCAN` 은 즉시, `ALERT` 는 머문 뒤다 — 위 `PostureSequence` 주석의 실측 근거.
-    holds = {"SCAN": 0, "ALERT": int(config["posture"]["alert_hold_ms"])}
-    for state, key in (("SCAN", "scan_pitch_deg"), ("ALERT", "alert_pitch_deg")):
+    # `AUTH_WAIT` 도 **같은 경계 자세**를 쓴다 — 자세는 상태가 아니라 «사람을 상대하는
+    # 구간» 의 것이고, 실측상 로봇이 서 있는 시간의 대부분이 거기다. 왕복하지 않으므로
+    # 기다리지 않는다.
+    holds = {"SCAN": 0, "ALERT": int(config["posture"]["alert_hold_ms"]), "AUTH_WAIT": 0}
+    for state, key in (
+        ("SCAN", "scan_pitch_deg"),
+        ("ALERT", "alert_pitch_deg"),
+        ("AUTH_WAIT", "alert_pitch_deg"),
+    ):
         posture = PostureSequence(commander, float(config["fsm"][key]), settle_ms, holds[state])
         behavior.register_sequence(state, posture)
         behavior.fsm.on_enter(state, posture.restart)
