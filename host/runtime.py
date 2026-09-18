@@ -354,6 +354,13 @@ class Runtime:
         if out.reading.last_cmd_age_ms is not None:
             self._summary.observe("last_cmd_age_ms", float(out.reading.last_cmd_age_ms))
         self._observe_yaw_rate(out.reading.yaw, now_ms)
+        if out.reading.pitch is not None:
+            # ⚠️ **«명령이 나갔다» 와 «자세가 도착했다» 는 다르다.** `POSE` 는 ACK 로
+            # 확인되지만 그것은 로봇이 받았다는 뜻일 뿐이고, 벤더 `set_pose` 가 `dur`
+            # 동안 보간해 실제로 기울었는지는 IMU 로만 알 수 있다. 2026-09-18 실기에서
+            # 자세가 올라가려다 멈추는 것을 **운용자 눈으로** 잡았는데, 그때 로그에는
+            # 근거가 없었다 — `yaw_rate` 때와 같은 자리다.
+            self._summary.observe("pitch_deg", float(out.reading.pitch))
         self._watch_command_uptake(out.reading.last_cmd_age_ms, now_ms)
         self._behavior.note_telemetry(now_ms)
         self._behavior.note_onboard_state(out.reading.state)
