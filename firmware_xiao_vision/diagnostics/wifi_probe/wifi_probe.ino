@@ -23,14 +23,22 @@ constexpr uint32_t kConnectTimeoutMs = 20000;
 
 const char* authName(wifi_auth_mode_t mode) {
   switch (mode) {
-    case WIFI_AUTH_OPEN: return "OPEN";
-    case WIFI_AUTH_WEP: return "WEP";
-    case WIFI_AUTH_WPA_PSK: return "WPA";
-    case WIFI_AUTH_WPA2_PSK: return "WPA2";
-    case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
-    case WIFI_AUTH_WPA3_PSK: return "WPA3";
-    case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3";
-    default: return "기타";
+    case WIFI_AUTH_OPEN:
+      return "OPEN";
+    case WIFI_AUTH_WEP:
+      return "WEP";
+    case WIFI_AUTH_WPA_PSK:
+      return "WPA";
+    case WIFI_AUTH_WPA2_PSK:
+      return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK:
+      return "WPA/WPA2";
+    case WIFI_AUTH_WPA3_PSK:
+      return "WPA3";
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+      return "WPA2/WPA3";
+    default:
+      return "기타";
   }
 }
 
@@ -50,8 +58,7 @@ void scan() {
     // ⚠️ 채널 14 이하가 2.4GHz 다. XIAO 는 5GHz 를 보지 못한다.
     if (is_target || i < 8) {
       Serial.printf("  %-28s ch=%2d rssi=%4d %s%s\n", WiFi.SSID(i).c_str(), WiFi.channel(i),
-                    WiFi.RSSI(i), authName(WiFi.encryptionType(i)),
-                    is_target ? "   ← 대상" : "");
+                    WiFi.RSSI(i), authName(WiFi.encryptionType(i)), is_target ? "   ← 대상" : "");
     }
   }
   Serial.printf("  대상 SSID %s\n",

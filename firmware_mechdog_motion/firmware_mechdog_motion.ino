@@ -111,8 +111,8 @@ constexpr EyeColor kEyeOff = {0, 0, 0};
 // `config.yaml` 의 `escalation.led` 다섯 색만 안다. 모르는 색은 받지 않는다 —
 // 임의 색으로 바꾸거나 꺼 버리면 «LED 고장» 과 구별할 수 없다.
 constexpr EyeNamedColor kEyeColors[] = {
-    {"blue", {0, 0, 255}},   {"yellow", {255, 255, 0}}, {"orange", {255, 128, 0}},
-    {"red", {255, 0, 0}},    {"white", kEyeWhite},
+    {"blue", {0, 0, 255}}, {"yellow", {255, 255, 0}}, {"orange", {255, 128, 0}},
+    {"red", {255, 0, 0}},  {"white", kEyeWhite},
 };
 
 EyeColor g_eye_commanded = {0, 0, 255};  // 호스트가 지시한 색. 기본은 L0 파랑이다.

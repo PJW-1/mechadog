@@ -48,9 +48,9 @@ struct Color {
 
 // 규약의 다섯 색(blue·yellow·orange·red·white)을 먼저 보고, 원색 셋으로 채널 순서를 가린다.
 const Color kColors[] = {
-    {"RED    (R255 G0   B0  )", 255, 0, 0},     {"GREEN  (R0   G255 B0  )", 0, 255, 0},
-    {"BLUE   (R0   G0   B255)", 0, 0, 255},     {"YELLOW (R255 G255 B0  )", 255, 255, 0},
-    {"ORANGE (R255 G128 B0  )", 255, 128, 0},   {"WHITE  (R255 G255 B255)", 255, 255, 255},
+    {"RED    (R255 G0   B0  )", 255, 0, 0},   {"GREEN  (R0   G255 B0  )", 0, 255, 0},
+    {"BLUE   (R0   G0   B255)", 0, 0, 255},   {"YELLOW (R255 G255 B0  )", 255, 255, 0},
+    {"ORANGE (R255 G128 B0  )", 255, 128, 0}, {"WHITE  (R255 G255 B255)", 255, 255, 255},
     {"OFF    (R0   G0   B0  )", 0, 0, 0},
 };
 
@@ -107,7 +107,8 @@ void setup() {
   read_distance();
 
   Serial.printf("LED_PROBE: 모드 레지스터 0x%02X 에 0 을 쓴다 (사용자 지정 색)\n", kRegMode);
-  Serial.println(write_reg(kRegMode, 0) ? "   쓰기 ACK 받음" : "   쓰기 실패 — 모듈이 이 주소에 없다");
+  Serial.println(write_reg(kRegMode, 0) ? "   쓰기 ACK 받음"
+                                        : "   쓰기 실패 — 모듈이 이 주소에 없다");
 }
 
 void loop() {

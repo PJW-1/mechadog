@@ -57,15 +57,18 @@ def hivis_ratio(img, box) -> float:
 
 def torso_of(person_box: list[float]) -> list[float]:
     x, y, w, h = person_box
-    return [x + w * (1 - TORSO_WIDTH) / 2, y + h * TORSO_TOP, w * TORSO_WIDTH, h * (TORSO_BOTTOM - TORSO_TOP)]
+    return [
+        x + w * (1 - TORSO_WIDTH) / 2,
+        y + h * TORSO_TOP,
+        w * TORSO_WIDTH,
+        h * (TORSO_BOTTOM - TORSO_TOP),
+    ]
 
 
 def main() -> int:
     records = json.loads(INDEX.read_text(encoding="utf-8"))
     targets = [
-        r
-        for r in records
-        if r["ds"] == "ds2" and any(b["cls"] == "person" for b in r["boxes"])
+        r for r in records if r["ds"] == "ds2" and any(b["cls"] == "person" for b in r["boxes"])
     ]
     print(f"ds2 사람 박스 있는 이미지: {len(targets)}장")
 

@@ -44,8 +44,8 @@ void checkLines() {
   pinMode(kPinSiod, INPUT);
   pinMode(kPinSioc, INPUT);
   delay(5);
-  Serial.printf("  풀업 없이  SDA=%d SCL=%d  (떠 있으면 값이 흔들린다)\n",
-                digitalRead(kPinSiod), digitalRead(kPinSioc));
+  Serial.printf("  풀업 없이  SDA=%d SCL=%d  (떠 있으면 값이 흔들린다)\n", digitalRead(kPinSiod),
+                digitalRead(kPinSioc));
 
   pinMode(kPinSiod, INPUT_PULLUP);
   pinMode(kPinSioc, INPUT_PULLUP);
@@ -60,8 +60,7 @@ void checkLines() {
   }
 
   // 데이터 선도 함께 본다. 리본이 통째로 빠졌는지 일부만 떴는지의 단서가 된다.
-  const int data_pins[] = {kPinD0, kPinD1, kPinD2, kPinD3,
-                           kPinD4, kPinD5, kPinD6, kPinD7};
+  const int data_pins[] = {kPinD0, kPinD1, kPinD2, kPinD3, kPinD4, kPinD5, kPinD6, kPinD7};
   Serial.print("  데이터선(D0~D7) 풀업: ");
   for (int pin : data_pins) {
     pinMode(pin, INPUT_PULLUP);
@@ -71,8 +70,8 @@ void checkLines() {
     Serial.print(digitalRead(pin));
   }
   Serial.println();
-  Serial.printf("  VSYNC=%d HREF=%d PCLK=%d\n", digitalRead(kPinVsync),
-                digitalRead(kPinHref), digitalRead(kPinPclk));
+  Serial.printf("  VSYNC=%d HREF=%d PCLK=%d\n", digitalRead(kPinVsync), digitalRead(kPinHref),
+                digitalRead(kPinPclk));
 }
 
 void scanBus(const char* label, bool with_clock, uint32_t speed) {

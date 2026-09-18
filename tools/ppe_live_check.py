@@ -28,8 +28,8 @@ import collections
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -92,8 +92,8 @@ def start_web(relay: FrameRelay, host: str, port: int) -> ThreadingHTTPServer:
         "display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px}"
         "img{max-width:100%;border:1px solid #333}</style>"
         "<h3>PPE 판정 — 초록 적합 · 빨강 위반 · 주황 확인불가</h3>"
-        f"<img src='/stream'>"
-    ).encode("utf-8")
+        "<img src='/stream'>"
+    ).encode()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.0"
@@ -113,9 +113,7 @@ def start_web(relay: FrameRelay, host: str, port: int) -> ThreadingHTTPServer:
 
         def _serve_stream(self) -> None:
             self.send_response(200)
-            self.send_header(
-                "Content-Type", f"multipart/x-mixed-replace; boundary={WEB_BOUNDARY}"
-            )
+            self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={WEB_BOUNDARY}")
             self.end_headers()
             last = -1
             try:
@@ -182,7 +180,7 @@ class ViolationWindow:
         return len(self._hits)
 
 
-def judge(ppe: list[Detection], frame_height: int, head_margin_px: int, use_clip: bool) -> Judgement:
+def judge(ppe: list[Detection], head_margin_px: int, use_clip: bool) -> Judgement:
     """PPE 검출 목록 → 세 상태 중 하나."""
     heads = [d for d in ppe if d.label in ("helmet", "no_helmet")]
     torsos = [d for d in ppe if d.label in ("vest", "no_vest")]
@@ -261,7 +259,7 @@ def process(
         if crop is None:
             out.append((person, Judgement(STATE_UNKNOWN, "크롭 실패", ()), origin))
             continue
-        judged = judge(ppe.detect(crop), crop.shape[0], head_margin, use_clip)
+        judged = judge(ppe.detect(crop), head_margin, use_clip)
         out.append((person, judged, origin))
     return out
 
@@ -292,8 +290,10 @@ def wait_for_camera(config, minutes: float) -> bool:
                 data = json.loads(response.read().decode("utf-8"))
             sensor = str(data.get("sensor", ""))
             if data.get("ok") and sensor and sensor != "UNKNOWN":
-                print(f"카메라 준비됨 — sensor={sensor} profile={data.get('profile')} "
-                      f"rssi={data.get('rssi')}")
+                print(
+                    f"카메라 준비됨 — sensor={sensor} profile={data.get('profile')} "
+                    f"rssi={data.get('rssi')}"
+                )
                 return True
             note = f"보드는 응답하는데 카메라가 아니다 (sensor={sensor or '없음'})"
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
@@ -306,8 +306,9 @@ def wait_for_camera(config, minutes: float) -> bool:
     return False
 
 
-def write_report(path, args, config, window_ms, hits, frames, elapsed,
-                 counts, reasons, events) -> None:
+def write_report(
+    path, args, config, window_ms, hits, frames, elapsed, counts, reasons, events
+) -> None:
     """시험 결과를 사람이 읽을 MD 로 남긴다.
 
     ⚠️ **합·불이 아니라 숫자를 적는다.** 엑셀 WBS 의 «결과·검증 요약» 칸이 요구하는
@@ -335,15 +336,26 @@ def write_report(path, args, config, window_ms, hits, frames, elapsed,
     add("")
     add("## 조건")
     add("")
-    add(f"- 영상: {'XIAO ' + str(args.xiao_ip) if args.xiao_ip else '이미지 폴더 ' + str(args.images)}")
+    add(
+        f"- 영상: {'XIAO ' + str(args.xiao_ip) if args.xiao_ip else '이미지 폴더 ' + str(args.images)}"
+    )
     add(f"- 프로바이더: {config['vision']['providers']}")
-    add(f"- 모델: `{ppe_cfg['model_path']}` · 입력 {ppe_cfg['input_size']} · conf {ppe_cfg['conf_threshold']}")
+    add(
+        f"- 모델: `{ppe_cfg['model_path']}` · 입력 {ppe_cfg['input_size']} · conf {ppe_cfg['conf_threshold']}"
+    )
     add(f"- 모델 sha256: `{digest}`")
-    add(f"- 위반 확정: {window_ms}ms 안 {hits}회"
-        + ("  (설정값 덮어씀 — 이 PC 가 느려 1.5초 안에 3회가 불가능하다)"
-           if args.window_ms or args.hits else ""))
-    add(f"- 머리 클리핑 판정: `head_margin_px` {ppe_cfg['head_margin_px']}px"
-        + (" · **끔**" if args.no_clip_rule else ""))
+    add(
+        f"- 위반 확정: {window_ms}ms 안 {hits}회"
+        + (
+            "  (설정값 덮어씀 — 이 PC 가 느려 1.5초 안에 3회가 불가능하다)"
+            if args.window_ms or args.hits
+            else ""
+        )
+    )
+    add(
+        f"- 머리 클리핑 판정: `head_margin_px` {ppe_cfg['head_margin_px']}px"
+        + (" · **끔**" if args.no_clip_rule else "")
+    )
     add("")
     add("## 결과")
     add("")
@@ -365,7 +377,9 @@ def write_report(path, args, config, window_ms, hits, frames, elapsed,
         add("경고 방송·눈 LED 적색·스냅샷 기록이 일어난다.")
         add("")
         for e in alarms:
-            add(f"- {e['t']:.1f}초 · 프레임 `{e['tag']}` · 창 안 {e['hits']}회 · 검출 {e['labels']}")
+            add(
+                f"- {e['t']:.1f}초 · 프레임 `{e['tag']}` · 창 안 {e['hits']}회 · 검출 {e['labels']}"
+            )
     else:
         add("확정된 위반이 없다. 아래 둘을 구분해서 봐야 한다.")
         add("")
@@ -380,8 +394,10 @@ def write_report(path, args, config, window_ms, hits, frames, elapsed,
         for e in seen_people:
             mark = " ★확정" if e["confirmed"] else ""
             why = (" / " + ", ".join(e["reasons"])) if e["reasons"] else ""
-            add(f"- {e['t']:.1f}초 · {e['people']}명 · {', '.join(e['states'])}{why}"
-                f" · 검출 {e['labels']}{mark}")
+            add(
+                f"- {e['t']:.1f}초 · {e['people']}명 · {', '.join(e['states'])}{why}"
+                f" · 검출 {e['labels']}{mark}"
+            )
     else:
         add("사람이 잡힌 프레임이 없다.")
     add("")
@@ -415,13 +431,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--window-ms", type=int, help="위반 확정 시간 창 덮어쓰기 (관찰용)")
     parser.add_argument("--hits", type=int, help="위반 확정 히트 수 덮어쓰기 (관찰용)")
     parser.add_argument("--show", action="store_true", help="창으로 띄운다 (GUI 필요)")
-    parser.add_argument("--web-port", type=int, default=8088,
-                        help="판정 화면을 내보낼 포트. 0 이면 끈다")
+    parser.add_argument(
+        "--web-port", type=int, default=8088, help="판정 화면을 내보낼 포트. 0 이면 끈다"
+    )
     parser.add_argument("--report", help="시험 결과를 정리한 MD 를 쓸 경로")
-    parser.add_argument("--wait-min", type=float, default=0.0,
-                        help="카메라가 살아날 때까지 이만큼(분) 기다린 뒤 시작한다")
-    parser.add_argument("--web-host", default="127.0.0.1",
-                        help="0.0.0.0 으로 두면 같은 공유기의 다른 기기에서도 본다")
+    parser.add_argument(
+        "--wait-min",
+        type=float,
+        default=0.0,
+        help="카메라가 살아날 때까지 이만큼(분) 기다린 뒤 시작한다",
+    )
+    parser.add_argument(
+        "--web-host",
+        default="127.0.0.1",
+        help="0.0.0.0 으로 두면 같은 공유기의 다른 기기에서도 본다",
+    )
     args = parser.parse_args(argv)
 
     import cv2
@@ -447,8 +471,10 @@ def main(argv: list[str] | None = None) -> int:
     hits = int(args.hits or ppe_cfg.get("violation_hits_required", 3))
     window = ViolationWindow(window_ms, hits)
     print(f"프로바이더 {config['vision']['providers']}")
-    print(f"위반 확정 조건 {window_ms}ms 안 {hits}회"
-          + ("  ← 설정값 덮어씀 (관찰용)" if args.window_ms or args.hits else ""))
+    print(
+        f"위반 확정 조건 {window_ms}ms 안 {hits}회"
+        + ("  ← 설정값 덮어씀 (관찰용)" if args.window_ms or args.hits else "")
+    )
     relay = FrameRelay()
     if args.web_port:
         start_web(relay, args.web_host, args.web_port)
@@ -567,8 +593,18 @@ def main(argv: list[str] | None = None) -> int:
     if reasons:
         print(f"확인불가 사유 {dict(reasons)}")
     if args.report:
-        write_report(Path(args.report), args, config, window_ms, hits,
-                     frames, elapsed, counts, reasons, events)
+        write_report(
+            Path(args.report),
+            args,
+            config,
+            window_ms,
+            hits,
+            frames,
+            elapsed,
+            counts,
+            reasons,
+            events,
+        )
         print(f"보고서 {args.report}")
     if args.show:
         cv2.destroyAllWindows()

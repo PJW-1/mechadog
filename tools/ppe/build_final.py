@@ -101,7 +101,7 @@ def main() -> int:
         for r in items:
             by_ds[r["ds"]].append(r)
         picked: list[dict] = []
-        for ds, sub in by_ds.items():
+        for sub in by_ds.values():
             rng.shuffle(sub)
             picked.extend(sub[: max(1, round(cap * len(sub) / len(items)))])
         rng.shuffle(picked)
