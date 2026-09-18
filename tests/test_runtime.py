@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -1565,3 +1566,49 @@ def test_person_already_in_view_when_patrol_starts_still_reaches_alert(
     # 같은 사람이 계속 보일 뿐 새 엣지는 없다 — 그래도 잡아야 한다.
     _sighting(runtime, vision, seq=2, at_ms=300, box=centre)
     assert runtime.behavior.state == "ALERT", "이미 보고 있던 사람도 순찰을 시작하면 잡는다"
+
+
+def test_blocked_forward_during_tracking_is_logged_once(
+    config: dict, clock: FakeClock, caplog
+) -> None:
+    """⚠️ **추종 중에 온보드가 전진을 거부해도 로그가 한 줄도 없었다.**
+
+    `AVOID` 는 `PATROL` 에서만 열리는 것이 의도라(설계 규칙 ④) 추종 중 막힘에는
+    대응할 상태가 없다. 문제는 대응이 없는 것이 아니라 **일어난 줄도 몰랐다**는
+    것이다 — 2026-09-19 실기에서 로봇이 사람 코앞까지 와서 선 것을 운용자가
+    **눈으로** 잡았고 로그에는 근거가 없었다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 200.0, 340.0, 400.0))
+    assert runtime.behavior.tracking, "추종 구간에서만 본다"
+
+    flags = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": True}
+    with caplog.at_level(logging.INFO):
+        runtime.ingest(telemetry(enc, state="AVOID", dist_cm=23, flags=flags), 200)
+        runtime.ingest(telemetry(enc, state="AVOID", dist_cm=23, flags=flags), 300)
+    blocked = [r for r in caplog.records if getattr(r, "event", "") == "track_blocked"]
+    assert len(blocked) == 1, "막힌 동안 10Hz 로 쏟지 않는다 — 변화 때 1회다"
+    assert blocked[0].detail["dist_cm"] == 23, "얼마나 가까워서 섰는지를 남긴다"
+
+    caplog.clear()
+    flags["obstacle"] = False
+    with caplog.at_level(logging.INFO):
+        runtime.ingest(telemetry(enc, state="TRACK", dist_cm=180, flags=flags), 1400)
+    freed = [r for r in caplog.records if getattr(r, "event", "") == "track_unblocked"]
+    assert len(freed) == 1
+    assert freed[0].detail["blocked_ms"] == 1200, "막혀 있던 길이를 남긴다"
+
+
+def test_blocked_forward_outside_tracking_is_not_logged(
+    config: dict, clock: FakeClock
+) -> None:
+    """순찰 중 막힘은 `AVOID` 전이가 이미 기록한다 — 여기서 또 내면 중복이다."""
+    runtime, _ = _tracking_runtime(config, clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(0)
+    assert not runtime.behavior.tracking
+    flags = {"lowbatt": False, "tipped": False, "link_ok": True, "obstacle": True}
+    runtime.ingest(telemetry(enc, state="AVOID", dist_cm=23, flags=flags), 200)
+    assert runtime.behavior.state != "TRACK"
