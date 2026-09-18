@@ -1130,14 +1130,21 @@ def test_track_turns_toward_the_target(config: dict, clock: FakeClock) -> None:
     assert right["angle"] < 0, "오른쪽이면 우회전(음수)"
 
 
-def test_track_stops_instead_of_spinning_on_a_stale_command(config: dict, clock: FakeClock) -> None:
-    """⚠️ **가장 위험한 경우다.** 비전이 죽어도 마지막 지시가 남아 있으면 로봇은
-    그 각도로 계속 돈다. `FR-3.7` 의 5초 타이머가 `TRACK` 을 빠져나가기 전까지
-    맴돌게 되므로, 지시가 낡으면 **정지를 보낸다.**
+def test_track_coasts_briefly_then_stops(config: dict, clock: FakeClock) -> None:
+    """짧은 검출 공백은 마지막 지시로 이어 가고, **상한을 넘으면 정지한다.**
 
-    아무것도 보내지 않는 것과 다르다 — 안 보내면 로봇이 `cmd_timeout_ms` 까지
-    직전 명령을 유지한다.
+    ⚠️ **이어 가는 이유** — 4족 보행의 흔들림이 만드는 검출 공백은 물리라 0 이 될 수
+    없다. 유효기간을 `cmd_timeout_ms`(0.3초)에 묶어 두었더니 끊길 때마다 정지가 나가
+    **가다말다**가 됐다 (2026-09-18 실기 · `TRACK` 구간 초당 지시 중앙값 1/25).
+
+    ⚠️ **상한이 있는 이유** — 없으면 대상이 사라져도 `FR-3.7` 의 5초 타이머가 `TRACK`
+    을 빠져나갈 때까지 낡은 각도로 맴돈다. 정지를 **보내는** 것도 같은 이유다. 아무것도
+    안 보내면 로봇이 `cmd_timeout_ms` 까지 직전 명령을 유지한다.
     """
+    coast = int(config["fsm"]["track_coast_ms"])
+    timeout = int(config["safety"]["cmd_timeout_ms"])
+    assert timeout < coast, "이 시험의 전제 — 상한은 명령 타임아웃과 별개이고 더 길다"
+
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
@@ -1145,10 +1152,47 @@ def test_track_stops_instead_of_spinning_on_a_stale_command(config: dict, clock:
     fresh = _move(runtime.tick(200))
     assert fresh is not None and fresh["angle"] > 0
 
-    stale_at = 100 + int(config["safety"]["cmd_timeout_ms"]) + 200
-    stale = _move(runtime.tick(stale_at))
+    # 명령 타임아웃은 지났지만 상한 안이다 — 회전을 포함해 그대로 이어 간다.
+    coasting = _move(runtime.tick(100 + timeout + 50))
+    assert coasting is not None
+    assert (coasting["step"], coasting["angle"]) == (fresh["step"], fresh["angle"])
+
+    # 상한을 넘었다.
+    stale = _move(runtime.tick(100 + coast + 50))
     assert stale is not None, "보내지 않으면 로봇이 직전 명령을 유지한다 — 정지를 보낸다"
     assert (stale["step"], stale["angle"]) == (0.0, 0.0), "낡은 지시로 돌지 않는다"
+
+
+def test_track_gap_is_measured_within_one_episode(config: dict, clock: FakeClock, caplog) -> None:
+    """공백의 **길이**를 남긴다 — `track_coast_ms` 가 맞는지 판정할 근거다.
+
+    ⚠️ 추종을 벗어났다 다시 들어온 구간을 가로질러 재지 않는다. 그 사이는 공백이
+    아니라 **추종을 하지 않은 시간**이고, 섞이면 분포가 통째로 오염된다.
+    """
+    import logging
+
+    box = (20.0, 200.0, 60.0, 400.0)
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        runtime.tick(0)  # 요약 주기를 시작만 한다
+        _sighting(runtime, vision, seq=1, at_ms=100, box=box)
+        _sighting(runtime, vision, seq=2, at_ms=300, box=box)  # 200ms 공백 — 센다
+
+        # 조작자가 수동을 잡았다 놓는다. 그동안은 추종이 아니다.
+        runtime.apply_external(Event.MANUAL_ON)
+        runtime.apply_external(Event.MANUAL_OFF)
+        vision.result = vision_result(3, 400, present=False, hits=0, last_seen_ms=None)
+        runtime.tick(400)
+        runtime.start_patrol(500)
+
+        # 재진입 — 300ms 에서 800ms 까지의 500ms 는 **공백이 아니다.**
+        _sighting(runtime, vision, seq=4, at_ms=800, box=box)
+        _sighting(runtime, vision, seq=5, at_ms=1000, box=box)  # 200ms 공백 — 센다
+        runtime.tick(1100)
+    digests = [rec for rec in caplog.records if getattr(rec, "event", "") == "telemetry_summary"]
+    assert digests, "1초가 지났으면 요약이 나온다"
+    assert digests[0].detail["track_gap_ms_avg"] == pytest.approx(200.0)
 
 
 def test_no_box_raises_no_track_event(config: dict, clock: FakeClock) -> None:

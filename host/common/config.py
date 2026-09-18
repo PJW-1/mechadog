@@ -265,6 +265,19 @@ def validate_base_config(config: dict[str, Any]) -> None:
             " — 진입·이탈 임계가 같으면 경계에서 왕복한다 (2026-09-18 실측 떨림 ±5px)"
         )
 
+    # 추종 지시를 이어 가는 상한은 **대상 상실 타이머보다 짧아야 한다.** 같거나 길면
+    # 상한이 하는 일이 없어지고, 대상이 사라진 뒤에도 `TRACK` 이 끝날 때까지 낡은
+    # 각도로 계속 돈다 — 이 값을 둔 이유가 바로 그것을 막는 것이다.
+    lost_ms = float(config["fsm"]["target_lost_timeout_s"]) * 1000.0
+    coast = fsm.get("track_coast_ms")
+    if not _finite_number(coast) or coast <= 0:
+        raise ConfigError("fsm.track_coast_ms 는 0 보다 큰 유한한 수여야 함")
+    if coast >= lost_ms:
+        raise ConfigError(
+            f"fsm.track_coast_ms({coast}) 가 target_lost_timeout_s({lost_ms:.0f}ms) 이상이다"
+            " — 상한이 없으면 대상이 사라져도 낡은 각도로 계속 돈다"
+        )
+
     # ⚠️ **«고개를 드는» 자세각은 음수다** — 2026-09-15 실기로 확정했다
     # (`POSE pitch=+15` → IMU 17.4, 앞이 내려감 / `-15` → -11.6, 앞이 올라감).
     # PROTOCOL 2절과 config 주석이 그것을 적어 두었지만 **지키는 코드가 없었다.**
