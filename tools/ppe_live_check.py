@@ -367,7 +367,7 @@ def write_report(
         add("")
         add("확인불가 사유")
         add("")
-        for reason, n in reasons.most_common():
+        for reason, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
             add(f"- {reason} {n}건")
     add("")
     add("## 알람 이력")
