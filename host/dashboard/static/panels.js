@@ -140,7 +140,7 @@ export class OperationalPanels {
   const status=this.select('검토 결과',Object.entries(REVIEW_STATES),draft.status,remember);
   const memo=this.el('textarea',{name:'검토 메모',rows:4,maxlength:2000,placeholder:'판단 근거와 후속 조치를 남겨 주세요. 오탐은 근거 필수.',oninput:remember},draft.note);
   const form=this.el('form',{class:'op-review-form',onsubmit:submit=>{submit.preventDefault();this.run(()=>{this.store.reviewEvent(event.id,status.value,memo.value);this.reviewDrafts.delete(event.id);this.onToast(event.source==='DEMO'&&this.store.storageAvailable?'이 브라우저에 검토를 저장했어요.':'이번 세션에 검토를 저장했어요. 내보내기로 보관하세요.')})}},this.field('검토 결과',status),this.field('검토 메모',memo),this.el('button',{type:'submit',class:'op-button primary',disabled:this.store.role==='technician'},'검토 저장'));
-  this.eventDetail.append(this.el('div',{class:'op-row-meta'},event.id,this.badge(event.source==='DEMO'?'실제 사건 아님':event.source==='LIVE_FEED'?'실시간 수신 사건':'과거 저장 기록')),this.el('h3',{class:'op-detail-title'},event.title),this.note(event.detail),this.facts([['FSM',event.state],['대응 단계',event.escalation],['출입 인증',event.auth],['PPE',event.ppe]]));
+  this.eventDetail.append(this.el('div',{class:'op-row-meta'},event.id,this.badge(event.source==='DEMO'?'실제 사건 아님':event.source==='LIVE_FEED'?'실시간 수신 사건':'과거 저장 기록')),this.el('h3',{class:'op-detail-title'},event.title),this.note(event.detail),this.facts([['FSM',event.state],['대응 단계',event.escalation],['운용 모드',MODE_NAMES[event.mode]??event.mode??'기록 없음'],['출입 인증',event.auth],['PPE',event.ppe]]));
   if(event.snapshot)this.eventDetail.append(this.evidenceImage(event));
   else this.eventDetail.append(this.el('div',{class:'op-evidence-empty'},this.el('strong',{},'첨부된 스냅샷 없음'),this.el('span',{},'3D 예시 화면은 이 사건의 증거가 아닙니다.')));
   if(event.meta){

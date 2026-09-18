@@ -267,7 +267,7 @@ class Escalation:
         """
         self._authenticated = False
 
-    def tick(self, now_ms: int) -> None:
+    def tick(self, now_ms: int, *, require_auth: bool = True) -> None:
         """시간으로 정해지는 것들을 처리한다 — L1 해제 · **L2 승격** · L2 승급.
 
         ⚠️ **L1 과 L2 에서 대상 상실의 뜻이 다르다.** L1 은 그냥 지나간 사람이므로
@@ -275,15 +275,21 @@ class Escalation:
         경보로 올라간다 — 미인증 통과는 경비 대응 대상이다(FR-10.3 과 같은 결론).
         L2 를 L0 으로 내리면 **인증을 무시하고 지나가는 것이 가장 이득인** 정책이
         된다.
+
+        `require_auth=False` 인 공장·현장지원 모드는 L1 관찰까지만 쓰고 인증 단계는
+        만들지 않는다. 사람 상실은 경비 모드와 달리 경보가 아니라 L0 복귀다.
         """
         if self._lost(now_ms):
             if self._level is Level.L1:
                 self._release("target_lost", now_ms)
                 return
             if self._level is Level.L2:
-                self.raise_to(Level.L3, reason="unauthenticated_left", now_ms=now_ms)
+                if require_auth:
+                    self.raise_to(Level.L3, reason="unauthenticated_left", now_ms=now_ms)
+                else:
+                    self._release("target_lost", now_ms)
                 return
-        if self._level is Level.L1 and not self._authenticated:
+        if require_auth and self._level is Level.L1 and not self._authenticated:
             since = self._l1_since_ms
             if since is not None and now_ms - since >= self._hold_ms:
                 self.raise_to(Level.L2, reason="unauthenticated_hold", now_ms=now_ms)

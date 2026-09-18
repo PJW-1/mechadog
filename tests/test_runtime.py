@@ -303,10 +303,10 @@ def test_loop_sends_at_the_configured_rate(config: dict, clock: FakeClock) -> No
     sock = FakeSocket(clock)
     stats = r.serve(sock, duration_s=1.0, clock=clock)
     assert stats.ticks == 11
-    # 반복 의도가 틱마다 하나, 거기에 **한 번만 보낼 것이 둘** 더 실린다 —
-    # `STATE` 알림과 첫 단계 색(`LED` · `4.7.3`)이다.
+    # 반복 의도가 틱마다 하나, 거기에 `STATE` 한 건과 LED 두 건이 더 실린다 —
+    # 첫 단계 색과 1초 뒤 UDP 유실 복구용 재전송이다.
     # **틱이 빠진 것이 아니다.**
-    assert stats.sent == stats.ticks + 2
+    assert stats.sent == stats.ticks + 3
 
 
 def test_loop_ends_with_estop(config: dict, clock: FakeClock) -> None:
@@ -1266,6 +1266,18 @@ def test_eye_led_follows_the_escalation_level(config: dict, clock: FakeClock) ->
     assert [m["color"] for m in after] == ["yellow"], "사람을 보면 L1 노랑으로 바뀐다"
 
 
+def test_eye_led_is_reannounced_after_peer_is_learned(cfg: dict, clock: FakeClock) -> None:
+    """첫 LED가 peer 학습 전에 소진돼도 현재 색을 다시 내려보낸다."""
+    runtime = Runtime(_without_robot_ip(cfg), device_id=DEVICE, clock=clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    sock = FakeSocket(clock, [(clock.ms + 250, telemetry(enc, state="IDLE"))])
+
+    runtime.serve(sock, duration_s=1.2, clock=clock)
+
+    assert runtime.peer == PEER
+    assert "LED" in sock.types()
+
+
 # ── 구역 변화 감지 배선 (WBS 3.6.x · FR-8) ───────────────────────
 
 ZONE_MARKER = 7
@@ -1686,6 +1698,37 @@ def test_factory_mode_does_not_ask_for_a_badge(config: dict, clock: FakeClock) -
 
     assert runtime.apply_external(Event.AUTH_REQUIRED) is False
     assert runtime.behavior.state == "ALERT", "인증 대기로 가지 않는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("mode", ["factory", "assist"])
+def test_modes_without_auth_never_enter_auth_escalation(
+    config: dict, clock: FakeClock, mode: str
+) -> None:
+    """인증을 끈 모드는 사람을 오래 봐도 L2·L3 인증 단계로 올라가지 않는다."""
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode=mode),
+    )
+    runtime.start_patrol(0)
+
+    first_ms = 100
+    vision.result = vision_result(1, first_ms, present=True, hits=3, last_seen_ms=first_ms)
+    runtime.tick(first_ms)
+    assert runtime.escalation.level is Level.L1
+
+    held_ms = first_ms + int(config["escalation"]["l1_to_l2_hold_s"] * 1000)
+    vision.result = vision_result(2, held_ms, present=True, hits=3, last_seen_ms=held_ms)
+    runtime.tick(held_ms)
+    assert runtime.escalation.level is Level.L1
+
+    lost_ms = held_ms + int(config["fsm"]["target_lost_timeout_s"] * 1000)
+    runtime.tick(lost_ms)
+    assert runtime.escalation.level is Level.L0
 
 
 @pytest.mark.usefixtures("unlock_modes")

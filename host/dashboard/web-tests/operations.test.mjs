@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Operations,parseBlackbox,csvCell,REVIEW_STATES,liveSnapshotUrl} from '../static/operations.js';
 
-const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
+const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',mode:'guard',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
 const memory=()=>{const data=new Map();return {getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value)}};
 
 test('initial state is preview only, stopped, unowned, no real telemetry',()=>{
@@ -55,10 +55,10 @@ test('query combines filters and demo-off does not hide imported files',()=>{
 });
 test('blackbox importer matches current raw fields and copies input',()=>{
  const input=raw(),parsed=parseBlackbox(input);assert.notEqual(parsed,input);input.tracks[0].score=0;assert.equal(parsed.tracks[0].score,.85);
- const op=new Operations(),event=op.importBlackbox(parsed);assert.equal(event.escalation,'L1');assert.equal(event.auth,'필드 미제공');assert.equal(event.ppe,'필드 미제공');assert.equal(event.snapshot,null);
+ const op=new Operations(),event=op.importBlackbox(parsed);assert.equal(event.escalation,'L1');assert.equal(event.mode,'guard');assert.equal(event.auth,'필드 미제공');assert.equal(event.ppe,'필드 미제공');assert.equal(event.snapshot,null);
 });
 test('bad blackbox fields are rejected',()=>{
- for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}
+ for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.mode={}},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}
 });
 test('only matching full metadata deduplicates; devices and evidence stay distinct',()=>{
  const op=new Operations(),a=op.importBlackbox(raw(),'blob:a');assert.equal(op.importBlackbox(raw(),'blob:duplicate'),a);assert.equal(a.snapshot,'blob:a');
@@ -79,11 +79,12 @@ test('review export discloses source and excludes blob URL and embedded images',
 // ── 사건 스냅샷 주소 (WBS 4.6.4) ─────────────────────────────
 test('a live event carries its snapshot address when the server can serve it', () => {
  const store=new Operations({clock:()=>1});
- const payload={seq:7,ts_ms:1789401235586,event:'person_found',state:'PATROL',escalation:'L1',
+ const payload={seq:7,ts_ms:1789401235586,event:'person_found',state:'PATROL',escalation:'L1',mode:'factory',
   tracks:[{track_id:1,box:[0,0,10,10],score:0.8}],detections:[],telemetry:{device_id:'mechdog-01'},
   entry:'1789401235586_person_found',snapshot:'snapshot.jpg'};
  const event=store.ingestLiveEvent(payload,'http://127.0.0.1:8000');
  assert.equal(event.snapshot,'http://127.0.0.1:8000/events/1789401235586_person_found/snapshot.jpg');
+ assert.equal(event.mode,'factory');
  assert.match(event.detail,/함께 보여/);
 });
 

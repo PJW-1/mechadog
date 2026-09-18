@@ -30,6 +30,9 @@ test('review form validates false positive, stores evidence note and keeps draft
 test('review text is never treated as executable HTML',()=>{
  const {document,panels,store}=setup();store.events[0].title='<img src=x onerror=alert(1)>';store.events[0].note='<script>bad</script>';panels.render('events');assert.equal(document.querySelectorAll('script,img').length,0);assert.ok(document.querySelector('.op-detail-title').textContent.includes('<img'));
 });
+test('event detail displays the mission mode recorded with the event',()=>{
+ const {document,panels,store}=setup();store.events[0].mode='factory';panels.render('events');assert.match(document.querySelector('.op-event-detail').textContent,/공장/);
+});
 test('manual keyboard hold stops on keyup and blur without replacing held DOM',()=>{
  const {dom,document,panels,store}=setup();panels.render('missions');button(document,'예시 제어권 요청').click();const forward=document.querySelector('[data-drive="FORWARD"]');
  forward.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));assert.equal(store.command,'FORWARD');assert.equal(document.querySelector('[data-drive="FORWARD"]'),forward);
