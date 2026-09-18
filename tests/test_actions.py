@@ -346,7 +346,10 @@ def test_half_measured_reverse_turn_keeps_the_old_phases(cfg, override: dict) ->
     assert [ph.name for ph in phases] == ["settle", "reverse", "turn", "verify"]
 
 
-# ── 직진 보정 (2026-09-12 · 데드밴드 실측) ─────────────────
+# ── 직진 보정 (2026-09-12 확정 · 2026-09-18 곡선으로 근거 정정) ────
+# ⚠️ 2026-09-12 에는 «데드밴드 3.3°» 로 설명했으나 그것은 틀렸다 — 응답에
+# 평평한 구간이 없고 순 회전 영점이 -5.4° 다 (docs/measurements/2026-09-18-turn-rate-curve.md).
+# 값 -8.0 자체는 그대로 쓴다.
 def test_patrol_carries_the_measured_straight_bias(clock, cfg) -> None:
     """⚠️ **각도 0 을 보내면 똑바로 가지 않는다.**
 
