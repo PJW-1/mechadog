@@ -1,0 +1,14 @@
+02:44:04 INFO    [IDLE] runtime_started 路 listen_port=5101 peer=192.168.1.101:5001 period_ms=100 actions={'PATROL': '霌
+02:44:04 INFO    [IDLE] escalation 路 from=L0 to=F reason=ONBOARD_FAILSAFE led=white
+02:44:04 INFO    [FAILSAFE] orientation_applied 路 rot=180
+02:44:48 INFO    [FAILSAFE] escalation 路 from=F to=L0 reason=failsafe_confirmed led=blue
+02:55:58 INFO    [AVOID] escalation 路 from=L0 to=L1 reason=person_present led=yellow
+02:56:08 INFO    [TRACK] escalation 路 from=L1 to=L2 reason=unauthenticated_hold led=orange
+02:56:38 INFO    [AUTH_WAIT] escalation 路 from=L2 to=L3 reason=AUTH_FAILED led=red
+03:02:17 INFO    [IDLE] runtime_started 路 listen_port=5101 peer=192.168.1.101:5001 period_ms=100 actions={'PATROL': '霌
+03:02:17 INFO    [IDLE] escalation 路 from=L0 to=F reason=ONBOARD_FAILSAFE led=white
+03:02:18 INFO    [FAILSAFE] orientation_applied 路 rot=180
+03:02:37 INFO    [FAILSAFE] escalation 路 from=F to=L0 reason=failsafe_confirmed led=blue
+03:02:53 INFO    [SCAN] escalation 路 from=L0 to=L1 reason=person_present led=yellow
+03:03:03 INFO    [PATROL] escalation 路 from=L1 to=L2 reason=unauthenticated_hold led=orange
+03:03:03 INFO    [PATROL] escalation 路 from=L2 to=L3 reason=unauthenticated_left led=red
