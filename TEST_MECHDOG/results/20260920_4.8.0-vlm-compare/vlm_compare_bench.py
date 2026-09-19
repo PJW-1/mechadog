@@ -158,8 +158,7 @@ def main() -> int:
             "kind": "one",
             "images": [long_a[0]],
             "prompt": (
-                "Is there an object that has fallen over or collapsed? "
-                "Answer with yes or no only."
+                "Is there an object that has fallen over or collapsed? Answer with yes or no only."
             ),
             "expected": "?",
         },
@@ -190,8 +189,10 @@ def main() -> int:
             "vram_peak_gb": peak_gb(),
         }
         results.append(row)
-        print(f"  [{row['id']:26}] {elapsed:5.2f}s  기대={row['expected']:3}  답={answer[:90]}",
-              flush=True)
+        print(
+            f"  [{row['id']:26}] {elapsed:5.2f}s  기대={row['expected']:3}  답={answer[:90]}",
+            flush=True,
+        )
 
     summary = {
         "model": MODEL_ID,
