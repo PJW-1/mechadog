@@ -19,6 +19,10 @@ from host.behavior.tracker import LockOnTracker, TrackCommand
 
 FRAME_WIDTH = 640
 MIDPOINT = FRAME_WIDTH / 2
+#: VGA 세로. ⚠️ **거리 제어의 천장이다.** 카메라가 15cm 높이라 0.7~2.0m 전 구간에서
+#: 발이 화면 밖이고, bbox 높이가 `480 - y1` 로 퇴화해 이 값을 넘을 수 없다
+#: (2026-09-20 실측 · `config/config.yaml` 의 `track_target_height_px` 각주와 같은 사실).
+FRAME_HEIGHT = 480
 
 
 #: **`mechdog-01` 한 대의 실측이다** (2026-09-18 곡선 · `config/devices/mechdog-01.yaml`).
@@ -254,15 +258,37 @@ def test_bias_leaves_a_left_turn_alone(cfg):
 OFF_CENTRE = MIDPOINT + 200  # 데드존 밖 — 조향이 살아 있는 자리
 
 
-def test_distance_keeping_is_off_until_the_target_height_is_measured(cfg) -> None:
+def test_distance_keeping_is_off_when_the_target_height_is_unmeasured(cfg) -> None:
     """⚠️ **추정값을 넣지 않는다** — 화각·장착 높이·사람 키가 섞여 계산으로 못 세운다.
 
-    `straight_bias_deg` 와 같은 규칙이다. 값이 없는 동안은 거리 제어를 하지 않으며
-    **그 상태가 지금 기본값**이다.
+    `straight_bias_deg` 와 같은 규칙이다. 실측 전인 기체는 거리 제어를 하지 않는다.
+
+    ⚠️ **«그 상태가 지금 기본값» 이라는 단언은 걷어냈다** — `mechdog-01` 은 2026-09-20 에
+    실측해 채웠다. 여기서 보는 것은 **기전**이지 배포값이 아니다.
     """
-    t = _tracker(cfg)
+    merged = {"fsm": dict(cfg["fsm"]), "gait": dict(cfg["gait"])}
+    merged["fsm"]["track_target_height_px"] = None
+    t = LockOnTracker(merged)
     full = t.update(OFF_CENTRE, FRAME_WIDTH, box_height=9999).step
     assert full == pytest.approx(cfg["gait"]["step_length_mm"]), "목표가 없으면 감속하지 않는다"
+
+
+def test_the_stop_line_is_reachable_inside_the_frame(cfg) -> None:
+    """⚠️ **정지선이 프레임 천장 위에 있으면 로봇은 영원히 서지 않는다.**
+
+    2026-09-19 실기의 「코앞까지 온다」 가 이것이었다 — 1.0m 실측 392 에 비율 1.25 면
+    정지선이 **490px** 이고 480px 프레임에서는 나올 수 없는 값이다. 머리가 다 잘려도
+    ratio 는 1.22 에서 멎고 보폭만 최소로 줄어 초음파 25cm 까지 기어간다.
+
+    값을 다시 잴 때 이 관계를 깨뜨리면 여기서 걸린다.
+    """
+    target = cfg["fsm"]["track_target_height_px"]
+    if target is None:
+        pytest.skip("거리 제어 미측정 기체 — 정지선이 없다")
+    stop_line = float(target) * float(cfg["fsm"]["track_stop_ratio"])
+    assert stop_line < FRAME_HEIGHT, (
+        f"정지선 {stop_line:.0f}px 이 프레임 {FRAME_HEIGHT}px 을 넘는다"
+    )
 
 
 def test_step_tapers_as_the_target_fills_the_frame(cfg) -> None:
