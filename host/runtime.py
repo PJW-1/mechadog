@@ -53,6 +53,8 @@ from host.common.logging_setup import (
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.dashboard.state import DashboardState
 from host.telemetry.receiver import Ingested, TelemetryReceiver
+from host.vision.vlm_reader import VlmReader
+from host.vision.vlm_worker import VlmWorker
 from host.vision.worker import TickIntervals, VisionWorker, build_worker
 
 LOG = event_logger("mechadog.runtime")
@@ -139,6 +141,7 @@ class Runtime:
         event_publisher: Callable[[BlackboxEntry], None] | None = None,
         dashboard: DashboardState | None = None,
         mission: Mission | None = None,
+        vlm_reader: VlmReader | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -213,6 +216,20 @@ class Runtime:
         #: 이번 점검에서 관찰한 프레임 수. **시간이 아니라 사이클을 센다** —
         #: `ChangeConfirmer` 가 사이클 단위이므로 같은 축으로 세야 어긋나지 않는다.
         self._zone_cycles = 0
+        # 상황 판독 (FR-8 · `4.8.0` · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
+        # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
+        #
+        # ⚠️ **세션은 아직 주입되지 않는다.** 팩토리가 없으면 판독기는 «없음» 으로
+        # 동작하고 `submit()` 은 늘 거짓을 돌려준다 — 변화 감지는 그대로 돈다.
+        # Tier 3 이므로 이것이 정상 동작이다(ADR-35 결정 6).
+        self._vlm = VlmWorker(
+            vlm_reader
+            if vlm_reader is not None
+            else VlmReader(None, budget_ms=int(config["vision"]["vlm"]["budget_ms"]))
+        )
+        #: 이번 구역에서 판독을 이미 걸었나. **구역당 한 번만 건다** — 사이클마다
+        #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다.
+        self._zone_vlm_asked = False
         # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
         # FastAPI/WebSocket 서버(4.5.1)가 생기면 같은 항목을 publisher로 받는다.
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
@@ -289,7 +306,11 @@ class Runtime:
         ⚠️ **상태를 여기서 읽어 넘긴다.** `Mission` 이 `Behavior` 를 알면 모드 축을
         FSM 없이 단독으로 시험할 수 없다 — 두 축을 잇는 곳은 런타임 하나다.
         """
-        return self._mission.switch(target, state=self._behavior.state)
+        reason = self._mission.switch(target, state=self._behavior.state)
+        if reason is None:
+            # 모드가 곧 적재 프로파일이다 (ADR-35 결정 5). 거절된 전환에는 걸지 않는다.
+            self._apply_load_profile(target)
+        return reason
 
     @property
     def escalation(self) -> Escalation:
@@ -313,6 +334,11 @@ class Runtime:
     def vision(self) -> Any:
         """붙어 있는 추론 워커. 없으면 `None` (비전 없이도 운용된다)."""
         return self._vision
+
+    @property
+    def vlm(self) -> VlmWorker:
+        """상황 판독 워커. **가중치가 없어도 객체는 있다** — 그때는 늘 거절한다."""
+        return self._vlm
 
     @property
     def actions(self) -> dict[str, str]:
@@ -625,6 +651,7 @@ class Runtime:
             if zone != self._zone and self._apply(Event.ZONE_ARRIVED, now_ms):
                 self._zone = zone
                 self._zone_cycles = 0
+                self._zone_vlm_asked = False
                 # 지난 점검의 누적을 끌고 들어가지 않는다 — 다른 시점의 관찰이
                 # 이번 사이클 수를 채우면 한 번 보고 확정하는 꼴이 된다.
                 self._confirmer.forget(zone)
@@ -639,6 +666,7 @@ class Runtime:
         if width <= 0 or height <= 0:
             return
         self._zone_cycles += 1
+        self._read_zone_scene(zone, result, now_ms)
 
         baseline = self._baselines.load(zone)
         if baseline is None:
@@ -679,8 +707,55 @@ class Runtime:
             LOG.info("zone_clear", zone=zone, cycles=self._zone_cycles)
             self._leave_zone(now_ms)
 
+    def _read_zone_scene(self, zone: str, result: Any, now_ms: int) -> None:
+        """구역에 선 동안 장면을 한 번 읽는다 (`4.8.0` · ADR-35 호출 시점 ②).
+
+        ⚠️ **막지 않는다.** 판독은 0.65초라 여기서 기다리면 메인 틱이 밀리고 로봇이
+        `cmd_timeout_ms`(300ms)로 선다. 걸어 두고 결과는 다음 틱에 줍는다 —
+        `_poll_vision` 이 검출 결과를 읽는 방식과 같다.
+
+        ⚠️ **사건을 만들지 않는다.** 판독은 관찰이며 판정은 FSM 이 한다
+        (ADR-35 결정 2). 지금은 기록까지이고, 문장으로 옮기는 것은 `4.8.1` 이다.
+        """
+        if not self._zone_vlm_asked and self._vlm.submit(result.jpeg, now_ms=now_ms):
+            self._zone_vlm_asked = True
+            LOG.info("zone_reading_requested", zone=zone)
+        reading = self._vlm.take()
+        if reading is None:
+            return
+        LOG.info(
+            "zone_reading",
+            zone=zone,
+            degraded=reading.degraded,
+            reason=reading.reason,
+            **{answer.key: answer.value for answer in reading.answers},
+        )
+
+    def _apply_load_profile(self, mode: str) -> None:
+        """모드가 곧 적재 프로파일이다 (ADR-35 결정 5).
+
+        VLM(4.1GB)과 음성 LLM(4.9GB)은 10GB 카드에 같이 올라가지 못한다. 그래서
+        `factory` 에서만 판독기를 올리고 떠날 때 내린다.
+
+        ⚠️ **스레드로 뺀다 — 적재가 5.5초다.** 전환은 `IDLE`·`MANUAL` 에서만 받지만
+        (`mission.SWITCHABLE`) 그동안도 명령은 10Hz 로 나가야 한다. 올라오는 중에는
+        `submit()` 이 거짓을 돌려주고 판독을 그냥 건너뛴다.
+        """
+        want = mode == "factory"
+        if want == self._vlm.available:
+            return
+        threading.Thread(
+            target=self._vlm.load if want else self._vlm.unload,
+            name="vlm-profile",
+            daemon=True,
+        ).start()
+
     def _leave_zone(self, now_ms: int) -> None:
         self._zone_cycles = 0
+        # ⚠️ **구역을 떠나면 그 구역의 판독도 버린다.** 남겨 두면 다음 구역에서 지난
+        # 구역의 답을 자기 것으로 읽는다 — `ChangeConfirmer.forget` 과 같은 이유다.
+        self._zone_vlm_asked = False
+        self._vlm.take()
         self._apply(Event.ZONE_CLEAR, now_ms)
 
     def _judge_auth(self, result: Any, now_ms: int) -> None:

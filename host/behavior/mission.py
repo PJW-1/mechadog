@@ -96,8 +96,8 @@ ENABLED: dict[str, frozenset[str]] = {
 #: 저장소에 들어오는 순간 별도 조치 없이 열린다.
 REQUIRES: dict[str, tuple[str, ...]] = {
     "guard": (),
-    # `3.7.3` 위반 판정 + 게이팅 + 클리핑 검사
-    "factory": ("host.vision.ppe_detector",),
+    # `3.7.3` 위반 판정 + 게이팅 + 클리핑 검사 · `4.8.0` 상황 판독
+    "factory": ("host.vision.ppe_detector", "host.vision.vlm_reader"),
     # `4.7.15` 운영 데이터 원본 · `4.7.16` 질의 라우터 · `4.7.17` 신선도 계약
     "assist": ("host.factory_ops.service", "host.factory_ops.router"),
 }
