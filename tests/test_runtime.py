@@ -24,6 +24,7 @@ from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import Sighting
 from host.vision.tracker import Track
+from host.vision.vlm_reader import VlmReader
 from host.vision.worker import VisionResult
 
 DEVICE = "mechdog-01"
@@ -1320,17 +1321,54 @@ def _thing(label: str, x: float = 100.0) -> Detection:
     return Detection(label, 0.9, (x, 100.0, x + 40.0, 200.0))
 
 
-def _zone_runtime(config: dict, clock: FakeClock, tmp_path: Path):
+def _zone_runtime(config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None):
     """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33 개정). 변화 감지는 경비 모드에서
     아예 돌지 않으므로 기본 모드로 세우면 구역 사건이 하나도 나오지 않는다 —
     호출부는 `unlock_modes` 로 선행 기능 검사를 먼저 열어야 한다."""
     cfg = _zone_config(config, tmp_path)
     vision = FakeVision()
     runtime = Runtime(
-        cfg, device_id=DEVICE, clock=clock, vision=vision, mission=Mission(cfg, mode="factory")
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(cfg, mode="factory"),
+        vlm_reader=vlm_reader,
     )
     runtime.start_patrol(0)
     return runtime, vision, cfg
+
+
+class FakeVlmSession:
+    """판독 세션 대역. **모델을 흉내 내지 않고 답만 돌려준다.**"""
+
+    def __init__(self, answer: str = "yes") -> None:
+        self._answer = answer
+        self.asked: list[str] = []
+        self.closed = 0
+
+    def ask(self, image: object, prompt: str) -> str:
+        assert image == b"zone-jpeg", "구역 프레임의 JPEG 이 그대로 넘어와야 한다"
+        self.asked.append(prompt)
+        return self._answer
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+def _loaded_reader(session: FakeVlmSession) -> VlmReader:
+    reader = VlmReader(lambda: session, budget_ms=10_000)
+    reader.load()
+    return reader
+
+
+def _settle(runtime, timeout_s: float = 5.0) -> None:
+    """판독 스레드가 끝날 때까지 기다린다. 결과는 다음 틱이 줍는다."""
+    import time as _time
+
+    deadline = _time.monotonic() + timeout_s
+    while runtime.vlm.busy and _time.monotonic() < deadline:
+        _time.sleep(0.005)
 
 
 def _see(runtime, vision, *, seq, at_ms, detections, marker=True) -> None:
@@ -1439,6 +1477,119 @@ def test_inspection_holds_still(config: dict, clock: FakeClock, tmp_path: Path):
     move = _move(lines)
     assert move is not None, "보내지 않으면 로봇이 직전 순찰 명령을 유지한다"
     assert (move["step"], move["angle"]) == (0.0, 0.0)
+
+
+# ── 구역에서 장면을 읽는가 (WBS 4.8.0 · ADR-35) ──────────────────
+#
+# ⚠️ **이 절이 있는 이유** — `3.5.4` 가 «모듈만 있고 부르는 곳이 없어» 병합 뒤에도
+# 추종이 한 번도 켜지지 않았다. 판독기도 같은 모양이 될 수 있어 **호출부를 시험으로
+# 잠근다.** 아래가 깨지면 판독기는 있으나 아무도 부르지 않는 상태다.
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_zone_inspection_asks_the_vlm(config: dict, clock: FakeClock, tmp_path: Path):
+    """구역에 서면 판독을 건다 (ADR-35 호출 시점 ②)."""
+    session = FakeVlmSession()
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path, vlm_reader=_loaded_reader(session))
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    assert runtime.behavior.state == "ZONE_INSPECT"
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    _settle(runtime)
+    assert session.asked, "구역에 섰는데 판독을 한 번도 걸지 않았다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_the_vlm_is_asked_once_per_visit_not_once_per_cycle(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """⚠️ 사이클마다 걸면 0.65초짜리 판독이 같은 장면을 거듭 본다."""
+    session = FakeVlmSession()
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path, vlm_reader=_loaded_reader(session))
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    for seq, at_ms in ((2, 200), (3, 300), (4, 400)):
+        _see(runtime, vision, seq=seq, at_ms=at_ms, detections=[_thing("chair")])
+        _settle(runtime)
+    assert runtime.vlm.submitted == 1, "구역 한 번에 한 번만 걸어야 한다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_zone_inspection_never_blocks_on_the_vlm(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ 여기서 막히면 로봇이 `cmd_timeout_ms`(300ms)로 구역 앞에 주저앉는다."""
+    import time as _time
+
+    class Slow(FakeVlmSession):
+        def ask(self, image: object, prompt: str) -> str:
+            _time.sleep(0.25)
+            return super().ask(image, prompt)
+
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path, vlm_reader=_loaded_reader(Slow()))
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    started = _time.monotonic()
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    elapsed = _time.monotonic() - started
+    assert elapsed < 0.1, f"틱이 {elapsed:.3f}초 걸렸다 — 판독이 메인을 막고 있다"
+    _settle(runtime)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_change_detection_runs_without_any_vlm(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ Tier 3 이다 — 판독기가 없어도 변화 감지는 그대로 확정까지 간다."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)  # 판독기 주입 없음
+    assert runtime.vlm.available is False
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    assert runtime.vlm.submitted == 0
+    assert runtime.behavior.state in {"ZONE_INSPECT", "PATROL"}
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_leaving_a_zone_drops_its_pending_reading(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ 남겨 두면 다음 구역에서 지난 구역의 답을 자기 것으로 읽는다."""
+    session = FakeVlmSession()
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path, vlm_reader=_loaded_reader(session))
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    _settle(runtime)
+    # 마커가 사라지면 구역을 떠난 것이다.
+    _see(runtime, vision, seq=3, at_ms=300, detections=[_thing("chair")], marker=False)
+    assert runtime.vlm.take() is None, "떠난 구역의 판독이 남아 있다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_switching_modes_loads_and_releases_the_reader(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """모드가 곧 적재 프로파일이다 (ADR-35 결정 5).
+
+    ⚠️ VLM(4.1GB)과 음성 LLM(4.9GB)은 10GB 카드에 같이 올라가지 못한다.
+    """
+    import time as _time
+
+    session = FakeVlmSession()
+    cfg = _zone_config(config, tmp_path)
+    reader = VlmReader(lambda: session, budget_ms=10_000)
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=FakeVision(),
+        mission=Mission(cfg, mode="guard"),
+        vlm_reader=reader,
+    )
+    assert runtime.vlm.available is False, "경비 모드에서는 올리지 않는다"
+
+    assert runtime.set_mode("factory") is None
+    deadline = _time.monotonic() + 5.0
+    while not runtime.vlm.available and _time.monotonic() < deadline:
+        _time.sleep(0.005)
+    assert runtime.vlm.available is True, "공장 모드 진입에 판독기가 올라오지 않았다"
+
+    assert runtime.set_mode("guard") is None
+    deadline = _time.monotonic() + 5.0
+    while runtime.vlm.available and _time.monotonic() < deadline:
+        _time.sleep(0.005)
+    assert runtime.vlm.available is False, "모드를 떠났는데 VRAM 을 놓지 않았다"
+    assert session.closed == 1
 
 
 # ── 사건이 관제 화면까지 닿는가 (WBS 4.4.3) ──────────────────────

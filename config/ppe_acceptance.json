@@ -1,0 +1,36 @@
+{
+  "orientation_step_s": 15,
+  "orientations": ["정면", "우측", "후면", "좌측"],
+  "scenarios": {
+    "xiao": {
+      "description": "실제 기체의 15cm 장착 XIAO 카메라로 수행하는 FR-9 검수",
+      "segments": [
+        {"key": "standing-all", "condition": "직립·전신", "wear": "전부 착용", "expected": "적합"},
+        {"key": "standing-nohelmet", "condition": "직립·전신", "wear": "안전모 미착용", "expected": "위반"},
+        {"key": "standing-novest", "condition": "직립·전신", "wear": "조끼 미착용", "expected": "위반"},
+        {"key": "standing-none", "condition": "직립·전신", "wear": "둘 다 미착용", "expected": "위반"},
+        {"key": "crouching-all", "condition": "웅크림·전신", "wear": "전부 착용", "expected": "적합"},
+        {"key": "crouching-nohelmet", "condition": "웅크림·전신", "wear": "안전모 미착용", "expected": "위반"},
+        {"key": "crouching-novest", "condition": "웅크림·전신", "wear": "조끼 미착용", "expected": "위반"},
+        {"key": "crouching-none", "condition": "웅크림·전신", "wear": "둘 다 미착용", "expected": "위반"},
+        {"key": "clipped-base", "condition": "기본 자세·머리 잘림", "wear": "전부 착용", "expected": "확인불가"},
+        {"key": "pitch-up", "condition": "pitch_up 뒤 전신", "wear": "전부 착용", "expected": "적합"},
+        {"key": "sit", "condition": "sit 뒤 전신", "wear": "전부 착용", "expected": "적합"},
+        {"key": "back-off", "condition": "back_off 뒤 전신", "wear": "전부 착용", "expected": "적합"}
+      ]
+    },
+    "webcam": {
+      "description": "XIAO를 사용할 수 없을 때의 비승인 PC 사전 관찰",
+      "segments": [
+        {"key": "h100-all", "condition": "100cm 수평", "wear": "전부 착용", "expected": "적합"},
+        {"key": "h100-nohelmet", "condition": "100cm 수평", "wear": "안전모 미착용", "expected": "위반"},
+        {"key": "h100-novest", "condition": "100cm 수평", "wear": "조끼 미착용", "expected": "위반"},
+        {"key": "h100-none", "condition": "100cm 수평", "wear": "둘 다 미착용", "expected": "위반"},
+        {"key": "h30-all", "condition": "30cm 대각", "wear": "전부 착용", "expected": "적합"},
+        {"key": "h30-nohelmet", "condition": "30cm 대각", "wear": "안전모 미착용", "expected": "위반"},
+        {"key": "h30-novest", "condition": "30cm 대각", "wear": "조끼 미착용", "expected": "위반"},
+        {"key": "h30-none", "condition": "30cm 대각", "wear": "둘 다 미착용", "expected": "위반"}
+      ]
+    }
+  }
+}

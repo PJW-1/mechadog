@@ -1,70 +1,42 @@
 ---
 name: ppe-pc-test
-description: PPE 검출 모델을 개발 PC 웹캠으로 시험한다. 사용자가 "PPE 검출시스템 PC버젼 테스트"라고 하면 tools/ppe_live_check.py 를 웹캠·구간 모드로 띄우고, "테스트 종료"라고 하면 내리고 결과 리포트를 남긴다. PPE 웹캠 테스트, PPE PC 테스트, 안전모 조끼 검출 확인 요청에도 쓴다.
+description: 실제 XIAO 카메라로 PPE 검수를 실행한다. XIAO를 쓸 수 없을 때만 PC 웹캠 사전 관찰로 전환한다.
 ---
 
-# PPE 검출 PC 시험
+# PPE 검수
 
-XIAO 를 쓸 수 없을 때 **PC 웹캠으로 모델 거동과 판정 규칙만 먼저 보는** 절차다.
-도구는 `tools/ppe_live_check.py` 이고, 이 스킬은 그 도구를 시험 절차에 맞춰 부른다.
+정본 절차는 `docs/PPE_ACCEPTANCE.md`, 시나리오는 `config/ppe_acceptance.json`이다.
+이 스킬에는 프로젝트 규칙을 복제하지 않고 실행 방법만 둔다.
 
-⚠️ **여기서 나온 수치는 FR-9 통과 판정이 아니다.** XIAO 와 센서·ISP·압축이 달라 같은
-장면도 다르게 나온다. 통과 기준은 XIAO 실기 프레임으로 잰다(OI-13).
+## XIAO 실기 시작
 
-## 시작 — 사용자가 "PPE 검출시스템 PC버젼 테스트" 라고 할 때
-
-백그라운드로 실행하고 브라우저로 화면을 연다.
+사용자에게 시험 개체와 XIAO IP를 확인하고 다음처럼 실행한다. `--device`를 생략하지 않는다.
 
 ```bash
-python tools/ppe_live_check.py --webcam 0 --seconds 600 --segments \
-  --web-port 8008 --window-ms 8000 --hits 3 \
-  --report TEST_MECHDOG/results/<YYYYMMDD>_ppe-pc-test/summary.md
+python tools/ppe_live_check.py --device <unit-id> --xiao-ip <ip> \
+  --seconds 900 --segments --scenario xiao --web-port 8008 \
+  --report TEST_MECHDOG/results/<YYYYMMDD>_ppe-xiao/summary.md \
+  --session TEST_MECHDOG/results/<YYYYMMDD>_ppe-xiao/session.json
 ```
 
-`--window-ms 8000 --hits 3` 을 붙이는 이유는 이 PC 가 GPU 를 못 써서 추론이 프레임당
-2~3초이기 때문이다(`config/devices/mechdog-01.local.yaml` — DirectML 은 오류 없이 빈
-결과를 준다). 설정 정본인 1500ms 안에 3회는 판정이 한 번밖에 들어가지 못해 **알람이
-원리적으로 뜨지 않는다.** 8초 창이면 3회가 성립한다. **설정 파일은 고치지 않는다** —
-실행 인자로만 덮어쓰므로 시험이 비정상 종료해도 저장소에 임시값이 남지 않는다.
+설정 정본인 `violation_window_ms`와 `violation_hits_required`를 덮어쓰지 않는다. 브라우저에서
+현재 조건에 맞는 구간을 누르고, 화면 안내에 따라 방향을 바꾼다. 이 도구는 읽기 전용이며
+로봇 자세나 이동 명령을 보내지 않는다. `pitch_up`·`sit`·`back_off` 구간은 별도의 안전한
+조작 경로로 해당 자세가 된 것을 확인한 뒤 선택한다.
 
-## 시험 절차를 함께 안내한다
+## 정상 종료
 
-장소는 실내 방(ROOM). 한 구간마다 몸을 360도 돌리며 90도마다 15초씩 서서 1분을 채운다.
-
-- ① 100cm 높이 수평 촬영 — 전부 착용 / 안전모 미착용 / 조끼 미착용 / 둘 다 미착용
-- ② 30cm 높이(모니터 세로 길이) 대각 촬영 — 같은 네 가지
-
-⚠️ **구간 버튼을 누르라고 반드시 안내한다.** 화면의 여덟 버튼 중 지금 입고 있는 상태를
-누르면 그것이 그 시간의 정답이 되고, 오판정이 그 기준으로 집계된다. 누르지 않은 동안의
-판정은 집계에서 빠진다. 방향(정면·우측·후면·좌측)은 버튼이 아니라 경과 시간으로 나뉘며
-화면이 «몇 초 뒤 회전» 을 띄운다.
-
-## 종료 — 사용자가 "테스트 종료" 라고 할 때
-
-`--seconds` 가 남아 있으면 프로세스를 내린다.
+브라우저의 **시험 종료 및 결과 저장** 버튼을 누른다. 브라우저를 쓸 수 없으면 다음 요청을
+보낸다.
 
 ```powershell
-Get-CimInstance Win32_Process -Filter "Name like '%python%'" |
-  Where-Object { $_.CommandLine -like "*ppe_live_check*" } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Invoke-WebRequest -Method Post http://127.0.0.1:8008/stop
 ```
 
-⚠️ **리포트는 `--report` 로 지정한 경로에 종료 시점에 쓰인다.** 강제로 내리면 그 파일이
-안 남으므로, 되도록 `--seconds` 를 채워 정상 종료시킨다. 급히 내렸다면 콘솔 로그가 유일한
-기록이다.
+`Stop-Process -Force`를 쓰지 않는다. 강제 종료는 MD와 최종 JSON을 남길 기회를 없앤다.
 
-그다음 리포트를 읽고 사용자에게 요약한다. 판정 분포·알람 횟수·구간별 정상판정 비율과,
-눈으로 본 것 중 기록할 만한 것을 덧붙인다.
+## PC 웹캠 대체 관찰
 
-## 시험 중에 안내할 것
-
-- 안전모·조끼를 쓰고 서면 적합, 벗으면 위반으로 바뀌어야 한다.
-- 머리가 화면 위쪽에 잘리거나 상체에 가리면 확인불가가 나온다. 안전모를 못 본 것과 안 쓴
-  것은 다르므로 **정상 동작**이다.
-- 박스가 사람을 늦게 따라온다. 추론이 2~3초라 정상이다.
-
-## 이 도구로 판정하지 않는 것
-
-- 성능 수치. 기준 PC 는 RTX 3080 이고 거기서 8.2ms 가 실측돼 있다. 여기 값은 CPU 폴백이다.
-- FR-9 판정 로직. 추적 ID 귀속·자세 상승·에스컬레이션은 `host/vision/ppe_detector.py`
-  에서 따로 만든다. 이 도구는 프레임 단위로만 본다.
+XIAO를 사용할 수 없을 때만 `--webcam 0 --scenario webcam`으로 실행할 수 있다. 느린 PC에서
+시간 창을 덮어쓸 수 있지만 그 결과는 FR-9 합격 근거가 아니다. 기준 PC의 8.2ms 기록은
+COCO 1단 검출만의 값이며, PPE를 포함한 2단 전체 성능은 XIAO 실기에서 별도로 측정한다.

@@ -1,0 +1,124 @@
+{
+  "model": "Qwen/Qwen2-VL-2B-Instruct",
+  "dtype": "bfloat16",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "load_seconds": 10.03,
+  "vram_after_load_gb": 4.12,
+  "vram_peak_gb": 4.28,
+  "cases": [
+    {
+      "id": "1a_identical",
+      "kind": "two",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg",
+        "blackbox\\1789664597680_person_found\\snapshot.jpg"
+      ],
+      "prompt": "Are these two images identical? Answer with yes or no only.",
+      "expected": "yes",
+      "answer": "no",
+      "seconds": 0.89,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "1b_different",
+      "kind": "two",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg",
+        "blackbox\\1789660061713_person_found\\snapshot.jpg"
+      ],
+      "prompt": "Are these two images identical? Answer with yes or no only.",
+      "expected": "no",
+      "answer": "no",
+      "seconds": 0.34,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "2a_consecutive",
+      "kind": "two",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg",
+        "blackbox\\1789664609573_person_found\\snapshot.jpg"
+      ],
+      "prompt": "The first image is the reference and the second is the current view of the same place. Did any object appear, disappear, or fall over? Answer with yes or no only.",
+      "expected": "no",
+      "answer": "no",
+      "seconds": 0.36,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "2b_consecutive_other",
+      "kind": "two",
+      "images": [
+        "blackbox\\1789660061713_person_found\\snapshot.jpg",
+        "blackbox\\1789660066201_person_found\\snapshot.jpg"
+      ],
+      "prompt": "The first image is the reference and the second is the current view of the same place. Did any object appear, disappear, or fall over? Answer with yes or no only.",
+      "expected": "no",
+      "answer": "no",
+      "seconds": 0.36,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "3a_cross_session_yesno",
+      "kind": "two",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg",
+        "blackbox\\1789666217924_person_found\\snapshot.jpg"
+      ],
+      "prompt": "The first image is the reference and the second is the current view of the same place. Did any object appear, disappear, or fall over? Answer with yes or no only.",
+      "expected": "?",
+      "answer": "no",
+      "seconds": 0.34,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "3b_cross_session_describe",
+      "kind": "two",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg",
+        "blackbox\\1789666217924_person_found\\snapshot.jpg"
+      ],
+      "prompt": "The first image is the reference and the second is the current view of the same place. Describe in one sentence what changed.",
+      "expected": "?",
+      "answer": "The person is no longer visible in the image.",
+      "seconds": 0.78,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "4a_person_down",
+      "kind": "one",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg"
+      ],
+      "prompt": "Is there a person lying on the floor? Answer with yes or no only.",
+      "expected": "no",
+      "answer": "no",
+      "seconds": 0.22,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "4b_fallen_object",
+      "kind": "one",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg"
+      ],
+      "prompt": "Is there an object that has fallen over or collapsed? Answer with yes or no only.",
+      "expected": "?",
+      "answer": "no",
+      "seconds": 0.2,
+      "vram_peak_gb": 4.28
+    },
+    {
+      "id": "4c_blocked_path",
+      "kind": "one",
+      "images": [
+        "blackbox\\1789664597680_person_found\\snapshot.jpg"
+      ],
+      "prompt": "Is the walkway blocked by an obstacle? Answer with yes or no only.",
+      "expected": "?",
+      "answer": "yes",
+      "seconds": 0.22,
+      "vram_peak_gb": 4.28
+    }
+  ]
+}
