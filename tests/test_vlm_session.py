@@ -44,7 +44,7 @@ def test_factory_is_none_without_a_vlm_section() -> None:
 
 
 def test_factory_does_not_load_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """⚠️ 팩토리를 만드는 것과 5.5초짜리 적재는 다른 일이다."""
+    """⚠️ 팩토리를 만드는 것과 14.5초짜리 적재는 다른 일이다."""
     monkeypatch.setattr(vlm_session, "missing_packages", lambda: ())
     made: list[str] = []
 
