@@ -7,6 +7,7 @@
 
     python tools/ppe_live_check.py --xiao-ip 192.168.0.42
     python tools/ppe_live_check.py --images datasets/ppe/raw/ds1/valid   # 카메라 없이
+    python tools/ppe_live_check.py --webcam 0 --seconds 600 --segments   # PC 웹캠 + 구간 라벨
 
 판정은 세 갈래다 (PRD FR-9.2.1 · FR-9.3).
 
@@ -19,6 +20,14 @@
 
 ⚠️ **사람이 없으면 PPE 모델을 돌리지 않는다** (FR-3.1.1 게이팅). 배경 프레임의
 오검출을 원천 차단하는 것이 2단 구조의 실질 이득이다.
+
+⚠️ **`--webcam` 으로 잰 숫자는 FR-9 판정 근거가 아니다.** XIAO 와 센서·ISP·압축이 달라
+같은 장면도 다르게 나온다. 통과 판정은 XIAO 실기 프레임으로 한다(OI-13). 카메라를 못
+쓰는 동안 모델 거동과 판정 규칙을 먼저 보는 용도다.
+
+⚠️ **`--segments` 의 정확도는 사람 손에 묶여 있다.** 옷을 갈아입는 시간과 버튼을 누르는
+시각이 어긋나면 그만큼 정답이 밀린다. 경향으로 읽고, 합격 판정은 라벨을 붙인 촬영본으로
+오프라인에서 낸다.
 """
 
 from __future__ import annotations
@@ -60,6 +69,152 @@ STATE_COLOR = {STATE_OK: (0, 200, 0), STATE_VIOLATION: (0, 0, 255), STATE_UNKNOW
 #: 브라우저로 볼 때 쓰는 경계 문자열.
 WEB_BOUNDARY = "mechdog-ppe-frame"
 
+#: 촬영 절차의 여덟 구간. `--segments` 를 줬을 때만 쓴다 (2026-09-19 · PC 웹캠 점검).
+#:
+#: ⚠️ **오알람을 세려면 정답이 필요하다.** 화면이 «위반» 이라고 할 때 그것이 맞는지는
+#: 그 순간 사람이 무엇을 입고 있었는지를 알아야 판정할 수 있다. 도구는 알 수 없으므로
+#: 사람이 버튼으로 알려 준다. 안 누르면 그 구간의 판정은 집계에서 빠진다 — 모르는 것을
+#: 맞혔다고 세지 않는다.
+SEGMENTS: list[dict[str, str]] = [
+    {"key": "h100-all", "height": "100cm 수평", "wear": "전부 착용", "expected": STATE_OK},
+    {
+        "key": "h100-nohelmet",
+        "height": "100cm 수평",
+        "wear": "안전모 미착용",
+        "expected": STATE_VIOLATION,
+    },
+    {
+        "key": "h100-novest",
+        "height": "100cm 수평",
+        "wear": "조끼 미착용",
+        "expected": STATE_VIOLATION,
+    },
+    {
+        "key": "h100-none",
+        "height": "100cm 수평",
+        "wear": "둘 다 미착용",
+        "expected": STATE_VIOLATION,
+    },
+    {"key": "h30-all", "height": "30cm 대각", "wear": "전부 착용", "expected": STATE_OK},
+    {
+        "key": "h30-nohelmet",
+        "height": "30cm 대각",
+        "wear": "안전모 미착용",
+        "expected": STATE_VIOLATION,
+    },
+    {
+        "key": "h30-novest",
+        "height": "30cm 대각",
+        "wear": "조끼 미착용",
+        "expected": STATE_VIOLATION,
+    },
+    {"key": "h30-none", "height": "30cm 대각", "wear": "둘 다 미착용", "expected": STATE_VIOLATION},
+]
+SEGMENT_BY_KEY = {s["key"]: s for s in SEGMENTS}
+
+#: 한 구간 안에서 몸을 360도 돌리며 90도마다 머무는 시간. 네 방향이면 1분이다.
+ORIENT_STEP_S = 15
+ORIENTATIONS = ["정면", "우측", "후면", "좌측"]
+SEGMENT_TARGET_S = ORIENT_STEP_S * len(ORIENTATIONS)
+
+
+class SegmentLog:
+    """사람이 고른 구간을 정답으로 삼아 판정을 모은다.
+
+    방향은 버튼을 따로 두지 않고 **구간 시작 후 경과 시간으로** 나눈다. 15초마다
+    누르게 하면 그 손동작이 화면을 가리고 자세도 흐트러지기 때문이다. 늦게 돌면 그
+    몫은 앞 방향에 섞이므로, 방향별 수치는 경향으로만 읽는다.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.current: str | None = None
+        self.started: float | None = None
+        self.stats: dict[str, dict[str, Any]] = {}
+
+    def _slot(self, key: str) -> dict[str, Any]:
+        return self.stats.setdefault(
+            key,
+            {
+                "verdicts": {STATE_VIOLATION: 0, STATE_OK: 0, STATE_UNKNOWN: 0},
+                "orientations": {
+                    name: {STATE_VIOLATION: 0, STATE_OK: 0, STATE_UNKNOWN: 0}
+                    for name in ORIENTATIONS
+                },
+                "frames": 0,
+                "seconds": 0.0,
+            },
+        )
+
+    def select(self, key: str | None) -> str:
+        """구간을 바꾼다. 이전 구간의 관측 시간을 닫고 새 구간을 연다."""
+        now = time.monotonic()
+        with self._lock:
+            if self.current and self.started:
+                slot = self._slot(self.current)
+                slot["seconds"] = round(slot["seconds"] + (now - self.started), 1)
+            self.current = key
+            self.started = now if key else None
+        if not key:
+            return "구간 해제"
+        spec = SEGMENT_BY_KEY[key]
+        return f"{spec['height']} · {spec['wear']}"
+
+    def facing(self) -> str | None:
+        with self._lock:
+            if not self.started:
+                return None
+            index = int((time.monotonic() - self.started) // ORIENT_STEP_S)
+        return ORIENTATIONS[min(index, len(ORIENTATIONS) - 1)]
+
+    def observe(self, states: list[str]) -> None:
+        """한 프레임의 판정들을 지금 구간에 더한다."""
+        facing = self.facing()
+        with self._lock:
+            if not self.current:
+                return
+            slot = self._slot(self.current)
+            slot["frames"] += 1
+            for state in states:
+                slot["verdicts"][state] = slot["verdicts"].get(state, 0) + 1
+                if facing:
+                    bucket = slot["orientations"][facing]
+                    bucket[state] = bucket.get(state, 0) + 1
+
+    def status(self) -> dict[str, Any]:
+        """브라우저가 0.5초마다 읽어 가는 현재 상태."""
+        facing = self.facing()
+        with self._lock:
+            spec = SEGMENT_BY_KEY.get(self.current or "")
+            elapsed = int(time.monotonic() - self.started) if self.started else None
+        return {
+            "key": self.current,
+            "label": f"{spec['height']} · {spec['wear']}" if spec else None,
+            "expected": spec["expected"] if spec else None,
+            "elapsed_s": elapsed,
+            "target_s": SEGMENT_TARGET_S,
+            "facing": facing,
+            "facing_left_s": (ORIENT_STEP_S - elapsed % ORIENT_STEP_S)
+            if elapsed is not None
+            else None,
+        }
+
+    def snapshot(self) -> dict[str, dict[str, Any]]:
+        now = time.monotonic()
+        with self._lock:
+            out = {
+                key: {
+                    **value,
+                    "verdicts": dict(value["verdicts"]),
+                    "orientations": {n: dict(c) for n, c in value["orientations"].items()},
+                }
+                for key, value in self.stats.items()
+            }
+            if self.current and self.started:
+                live = out.setdefault(self.current, {"seconds": 0.0})
+                live["seconds"] = round(live.get("seconds", 0.0) + (now - self.started), 1)
+        return out
+
 
 class FrameRelay:
     """판정을 그린 프레임을 브라우저로 중계한다.
@@ -85,14 +240,40 @@ class FrameRelay:
             return self._jpeg, self._seq
 
 
-def start_web(relay: FrameRelay, host: str, port: int) -> ThreadingHTTPServer:
+#: `--segments` 일 때만 화면에 붙는 조각. 버튼이 곧 «그 시간의 정답» 이다.
+SEGMENT_PANEL = (
+    "<div id='seg' style='display:grid;grid-template-columns:1fr 1fr;gap:6px;max-width:520px'></div>"
+    "<div id='now' style='font-size:16px;font-weight:700'></div>"
+    "<button onclick=\"fetch('/segment?key=',{method:'POST'})\">구간 해제</button>"
+    "<script>"
+    "let drawn=false;"
+    "async function poll(){try{const s=await(await fetch('/status')).json();"
+    "if(!drawn){drawn=true;document.getElementById('seg').innerHTML=s.segments.map(x=>"
+    "`<button data-k='${x.key}' onclick=\"fetch('/segment?key=${x.key}',{method:'POST'})\">"
+    "${x.height}<br><small>${x.wear} → ${x.expected}</small></button>`).join('');}"
+    "document.querySelectorAll('#seg button').forEach(b=>"
+    "b.style.outline=b.dataset.k===s.key?'2px solid #6cf':'none');"
+    "document.getElementById('now').textContent=s.key?"
+    "`${s.label} — ${s.elapsed_s}/${s.target_s}초 · 지금 ${s.facing} · ${s.facing_left_s}초 뒤 90도 회전`:"
+    "'구간 미선택 — 이 동안의 판정은 집계에서 빠진다';"
+    "}catch(e){}}"
+    "setInterval(poll,500);poll();"
+    "</script>"
+)
+
+
+def start_web(
+    relay: FrameRelay, host: str, port: int, segments: SegmentLog | None = None
+) -> ThreadingHTTPServer:
     page = (
         "<!doctype html><meta charset='utf-8'><title>PPE 판정 화면</title>"
         "<style>body{margin:0;background:#111;color:#eee;font:14px system-ui;"
         "display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px}"
-        "img{max-width:100%;border:1px solid #333}</style>"
+        "img{max-width:100%;border:1px solid #333}"
+        "button{background:#222;color:#eee;border:1px solid #444;border-radius:6px;"
+        "padding:6px 10px;cursor:pointer;text-align:left}</style>"
         "<h3>PPE 판정 — 초록 적합 · 빨강 위반 · 주황 확인불가</h3>"
-        "<img src='/stream'>"
+        "<img src='/stream'>" + (SEGMENT_PANEL if segments is not None else "")
     ).encode()
 
     class Handler(BaseHTTPRequestHandler):
@@ -101,9 +282,33 @@ def start_web(relay: FrameRelay, host: str, port: int) -> ThreadingHTTPServer:
         def log_message(self, *args) -> None:  # 콘솔을 판정 로그만 남기게 둔다
             pass
 
+        def do_POST(self) -> None:
+            """구간 선택. 버튼이 누른 값이 그때부터의 정답이 된다."""
+            path, _, query = self.path.partition("?")
+            if segments is None or path != "/segment":
+                self.send_error(404)
+                return
+            key = query.removeprefix("key=") or None
+            if key is not None and key not in SEGMENT_BY_KEY:
+                self.send_error(400)
+                return
+            print(f"  구간 → {segments.select(key)}")
+            self.send_response(204)
+            self.end_headers()
+
         def do_GET(self) -> None:
             if self.path.startswith("/stream"):
                 self._serve_stream()
+            elif self.path.startswith("/status") and segments is not None:
+                import json
+
+                payload = {**segments.status(), "segments": SEGMENTS}
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -306,8 +511,67 @@ def wait_for_camera(config, minutes: float) -> bool:
     return False
 
 
+def segment_section(add, snapshot: dict[str, dict[str, Any]]) -> None:
+    """구간을 눌러 가며 봤을 때만 쓰는 절. **정답을 알 때만 오판정을 셀 수 있다.**
+
+    비율의 분모는 그 구간의 판정 전부(정상 + 오판정 + 확인불가)이고, «정상판정 비율»
+    만 확인불가를 뺀 값이다 — 판정을 내린 것 중 맞힌 비율이다.
+    """
+    total_right = total_judged = 0
+    rows: list[str] = []
+    for number, spec in enumerate(SEGMENTS, start=1):
+        stats = snapshot.get(spec["key"])
+        wrong_state = STATE_VIOLATION if spec["expected"] == STATE_OK else STATE_OK
+        title = f"{spec['height']} · {spec['wear']} (정상 = {spec['expected']} 판정)"
+        if not stats or not stats.get("frames"):
+            rows.append(f"{number}. {title} — 관측 없음")
+            continue
+        verdicts = stats["verdicts"]
+        right = verdicts.get(spec["expected"], 0)
+        wrong = verdicts.get(wrong_state, 0)
+        unknown = verdicts.get(STATE_UNKNOWN, 0)
+        total = right + wrong + unknown
+        total_right += right
+        total_judged += right + wrong
+
+        def pct(n: int, base: int = total) -> str:
+            return f"{n / base:.0%}" if base else "-"
+
+        rows.append(
+            f"{number}. {title} — {stats['seconds']}초 · 프레임 {stats['frames']}장 · 판정 {total}건"
+        )
+        rows.append(f"   - 정상판정 {right}건 · {pct(right)}")
+        rows.append(f"   - 오판정({wrong_state}) {wrong}건 · {pct(wrong)}")
+        rows.append(f"   - 확인불가 {unknown}건 · {pct(unknown)}")
+        rows.append(f"   - 정상판정 비율(확인불가 제외) {pct(right, right + wrong)}")
+        for name in ORIENTATIONS:
+            counts = stats["orientations"].get(name, {})
+            seen = sum(counts.values())
+            if not seen:
+                continue
+            rows.append(
+                f"   - 방향 {name} {seen}건 — 정상 {counts.get(spec['expected'], 0)}건 · "
+                f"오판정 {counts.get(wrong_state, 0)}건 · 확인불가 {counts.get(STATE_UNKNOWN, 0)}건"
+            )
+
+    overall = f"{total_right / total_judged:.0%}" if total_judged else "판정 없음"
+    add("")
+    add(
+        f"## 구간별 결과 — 전체 정상판정 {overall} (정상 {total_right} / 정상+오판정 {total_judged})"
+    )
+    add("")
+    add("사람이 버튼으로 알려 준 구간이 그 시간의 정답이다. 누르지 않은 동안은 빠진다.")
+    add("")
+    for row in rows:
+        add(row)
+    add("")
+    add("⚠️ **이 수치는 경향이다.** 옷을 갈아입는 시간, 버튼을 누르는 시각, 몸을 돌리는")
+    add("시점이 모두 사람 손에 달려 있어 정답과 화면이 수 초씩 어긋난다. 방향은 버튼조차")
+    add("없이 경과 시간으로 나눈다. 합격 판정은 라벨을 붙인 촬영본으로 오프라인에서 낸다.")
+
+
 def write_report(
-    path, args, config, window_ms, hits, frames, elapsed, counts, reasons, events
+    path, args, config, window_ms, hits, frames, elapsed, counts, reasons, events, segment_log=None
 ) -> None:
     """시험 결과를 사람이 읽을 MD 로 남긴다.
 
@@ -369,6 +633,8 @@ def write_report(
         add("")
         for reason, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
             add(f"- {reason} {n}건")
+    if segment_log is not None:
+        segment_section(add, segment_log.snapshot())
     add("")
     add("## 알람 이력")
     add("")
@@ -420,6 +686,12 @@ def main(argv: list[str] | None = None) -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--xiao-ip", help="카메라 IP. 스트림을 직접 연다")
     source.add_argument("--images", help="폴더 안의 이미지를 대신 쓴다 (카메라 없이 점검)")
+    source.add_argument(
+        "--webcam",
+        type=int,
+        metavar="N",
+        help="PC 웹캠 N 번을 쓴다. XIAO 가 없을 때 모델 거동만 먼저 보는 용도",
+    )
     parser.add_argument("--device", default="mechdog-01", help="개체 프로파일 이름")
     parser.add_argument("--seconds", type=float, default=30.0, help="스트림 관찰 시간")
     parser.add_argument("--crop-pad", type=float, default=0.08, help="person bbox 여유 비율")
@@ -435,6 +707,11 @@ def main(argv: list[str] | None = None) -> int:
         "--web-port", type=int, default=8088, help="판정 화면을 내보낼 포트. 0 이면 끈다"
     )
     parser.add_argument("--report", help="시험 결과를 정리한 MD 를 쓸 경로")
+    parser.add_argument(
+        "--segments",
+        action="store_true",
+        help="웹 화면에 촬영 구간 버튼을 띄운다. 누른 구간이 정답이 되어 오판정을 센다",
+    )
     parser.add_argument(
         "--wait-min",
         type=float,
@@ -476,8 +753,11 @@ def main(argv: list[str] | None = None) -> int:
         + ("  ← 설정값 덮어씀 (관찰용)" if args.window_ms or args.hits else "")
     )
     relay = FrameRelay()
+    segment_log = SegmentLog() if args.segments else None
     if args.web_port:
-        start_web(relay, args.web_host, args.web_port)
+        start_web(relay, args.web_host, args.web_port, segment_log)
+    elif segment_log is not None:
+        print("⚠️ --segments 는 웹 화면에서 누르는 버튼이다. --web-port 를 끄면 쓸 수 없다")
 
     save_dir = Path(args.save_dir) if args.save_dir else None
     if save_dir:
@@ -514,6 +794,9 @@ def main(argv: list[str] | None = None) -> int:
                 reasons[judged.reason] += 1
             annotate(image, person, judged, origin)
 
+        if segment_log is not None:
+            segment_log.observe([j.state for _, j, _ in results])
+
         elapsed_s = round(time.monotonic() - started, 1)
         events.append(
             {
@@ -545,7 +828,29 @@ def main(argv: list[str] | None = None) -> int:
             cv2.imshow("ppe_live_check", image)
             cv2.waitKey(1)
 
-    if args.images:
+    if args.webcam is not None:
+        # ⚠️ **XIAO 와 같은 화면이 아니다.** 센서도 ISP 도 JPEG 압축도 다르므로 여기서 잰
+        # 숫자를 FR-9 통과 판정에 쓰지 않는다(OI-13). 카메라가 없거나 전원이 불안정할 때
+        # 모델 거동과 판정 규칙을 먼저 보는 용도다.
+        capture = cv2.VideoCapture(args.webcam, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
+        if not capture.isOpened():
+            print(f"웹캠 {args.webcam} 을 열지 못했다 — 번호를 바꿔 본다")
+            return 2
+        print(f"웹캠 {args.webcam} — {args.seconds:.0f}초 관찰")
+        try:
+            index = 0
+            while time.monotonic() - started < args.seconds:
+                ok, image = capture.read()
+                if not ok:
+                    time.sleep(0.05)
+                    continue
+                index += 1
+                handle(image, f"cam{index:05d}")
+        except KeyboardInterrupt:
+            print("\n중단됨")
+        finally:
+            capture.release()
+    elif args.images:
         folder = Path(args.images)
         files = sorted(p for p in folder.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
         if not files:
@@ -604,6 +909,7 @@ def main(argv: list[str] | None = None) -> int:
             counts,
             reasons,
             events,
+            segment_log,
         )
         print(f"보고서 {args.report}")
     if args.show:
