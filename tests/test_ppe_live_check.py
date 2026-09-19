@@ -120,6 +120,52 @@ def test_window_releases_only_when_it_is_completely_empty() -> None:
     assert window.confirmed is False
 
 
+def test_window_reset_makes_acceptance_segments_independent() -> None:
+    window = ppe.ViolationWindow(8000, 3)
+    for now in (0, 1000, 2000):
+        window.observe(True, now)
+    assert window.confirmed is True
+
+    window.reset()
+
+    assert window.confirmed is False
+    assert window.hits == 0
+
+
+def test_xiao_acceptance_plan_covers_required_postures() -> None:
+    specs, step_s, orientations = ppe.load_acceptance_plan(ppe.DEFAULT_ACCEPTANCE_PLAN, "xiao")
+    keys = {spec["key"] for spec in specs}
+    assert {"standing-all", "crouching-all", "clipped-base", "pitch-up", "sit", "back-off"} <= keys
+    assert step_s > 0
+    assert orientations == ["정면", "우측", "후면", "좌측"]
+
+
+def test_segment_report_separates_coverage_from_conditional_accuracy() -> None:
+    specs = [
+        {"key": "all", "condition": "전신", "wear": "전부 착용", "expected": ppe.STATE_OK},
+        {
+            "key": "clipped",
+            "condition": "머리 잘림",
+            "wear": "전부 착용",
+            "expected": ppe.STATE_UNKNOWN,
+        },
+    ]
+    log = ppe.SegmentLog(specs, 15, ["정면"])
+    log.select("all")
+    log.observe([ppe.STATE_OK, ppe.STATE_UNKNOWN])
+    log.select("clipped")
+    log.observe([ppe.STATE_UNKNOWN])
+    lines = []
+
+    ppe.segment_section(lines.append, log)
+
+    text = "\n".join(lines)
+    assert "판정 가능률 50%" in text
+    assert "실효 성공률 67%" in text
+    assert "조건부 정확도(확인불가 제외) 100%" in text
+    assert "보류 일치율 100%" in text
+
+
 # ── person 크롭 (MODEL_PLAN 1.6) ────────────────────────────────────
 
 
@@ -218,6 +264,35 @@ def test_web_page_is_served_on_the_chosen_port() -> None:
         server.server_close()
 
 
+def test_web_controls_select_a_segment_reset_the_window_and_stop() -> None:
+    relay = ppe.FrameRelay()
+    stop_event = ppe.threading.Event()
+    specs = [{"key": "all", "condition": "전신", "wear": "전부 착용", "expected": ppe.STATE_OK}]
+    segments = ppe.SegmentLog(specs, 15, ["정면"])
+    reset_calls = []
+    server = ppe.start_web(
+        relay,
+        "127.0.0.1",
+        0,
+        segments,
+        stop_event,
+        lambda: reset_calls.append(True),
+    )
+    try:
+        port = server.server_address[1]
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/segment?key=all", method="POST")
+        urllib.request.urlopen(request, timeout=5).close()
+        assert segments.status()["key"] == "all"
+        assert reset_calls == [True]
+
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/stop", method="POST")
+        urllib.request.urlopen(request, timeout=5).close()
+        assert stop_event.is_set()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 # ── 카메라 대기 ────────────────────────────────────────────────────
 
 
@@ -278,7 +353,10 @@ def test_wait_for_camera_survives_a_silent_board(monkeypatch: pytest.MonkeyPatch
 def report_args(tmp_path: Path, **overrides: object) -> SimpleNamespace:
     base = {
         "xiao_ip": "10.0.0.5",
+        "webcam": None,
         "images": None,
+        "device": "mechdog-01",
+        "scenario": "xiao",
         "window_ms": None,
         "hits": None,
         "no_clip_rule": False,
@@ -391,10 +469,13 @@ def test_main_runs_offline_and_writes_a_report(
     monkeypatch.setattr(ppe, "Detector", fake_detector)
 
     report = tmp_path / "out" / "report.md"
+    session = tmp_path / "out" / "session.json"
     code = ppe.main(
         [
             "--images",
             str(folder),
+            "--device",
+            "mechdog-01",
             "--web-port",
             "0",
             "--hits",
@@ -403,11 +484,18 @@ def test_main_runs_offline_and_writes_a_report(
             str(tmp_path / "frames"),
             "--report",
             str(report),
+            "--session",
+            str(session),
         ]
     )
 
     assert code == 0
     assert report.is_file()
+    assert session.is_file()
+    raw = json.loads(session.read_text(encoding="utf-8"))
+    assert raw["source"] == f"이미지 폴더 {folder}"
+    assert raw["device"] == "mechdog-01"
+    assert raw["events"][0]["segment"] is None
     text = report.read_text(encoding="utf-8")
     assert ppe.STATE_VIOLATION in text
     assert (tmp_path / "frames" / "sample.jpg").is_file()

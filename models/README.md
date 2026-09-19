@@ -10,7 +10,7 @@
 | 파일 | 용도 | 확보 방법 | 상태 |
 | :--- | :--- | :--- | :--- |
 | `coco.onnx` | ① 범용 검출기 — 사람 검출(FR-3) + 변화 감지 대상 객체(FR-8) | **YOLOX-S 공식 배포 ONNX 를 받아 이름만 바꾼다.** 학습·export 불요 | ✅ 계열 확정 (ADR-24) |
-| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **새 데이터셋으로 직접 학습**한다. `person` 은 ①이 담당하므로 학습 대상에서 제외 | ⬜ 데이터셋 미정 |
+| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | 팀 학습 산출물을 받아 아래 크기·SHA-256을 확인한다. `person`은 ①이 담당한다 | ✅ 학습·ONNX export 완료, XIAO 실기 검수 대기 |
 
 ---
 
@@ -79,13 +79,17 @@ models/
 └── ppe.onnx
 ```
 
+`ppe.onnx`의 정본 식별값은 크기 **3,654,680바이트**, SHA-256
+`ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`이다. 자체 학습
+산출물이라 공개 다운로드 URL은 없으며 팀 공유 저장소에서 받은 뒤 두 값을 반드시 확인한다.
+학습·export 재현 절차는 `firmware_xiao_vision/PPE_Train.md`에 있다.
+
 경로는 `config/config.yaml` 의 `vision.coco.model_path` / `vision.ppe.model_path` 에서 관리한다.
 
 ## 확정 시 반드시 기록할 것
 
 모델 계열과 학습 프레임워크 버전을 `config.yaml` 의 `vision.coco.model_family` /
-`vision.ppe.model_family` 에 적는다. `coco` 는 **`yolox` 로 확정**했고 `ppe` 는 아직
-`null` 이다.
+`vision.ppe.model_family` 에 적는다. `coco` 와 `ppe` 모두 **`yolox` 로 확정**됐다.
 
 `model_family` 는 장식이 아니라 **동작을 고르는 값**이다 —
 `host/vision/detector.py` 의 `ADAPTERS` 에서 전처리·디코딩 규약을 결정하며,
