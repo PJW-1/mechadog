@@ -54,6 +54,7 @@ from host.common.protocol import CommandEncoder, system_clock_ms
 from host.dashboard.state import DashboardState
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.vlm_reader import VlmReader
+from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
 from host.vision.worker import TickIntervals, VisionWorker, build_worker
 
@@ -219,13 +220,16 @@ class Runtime:
         # 상황 판독 (FR-8 · `4.8.0` · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
-        # ⚠️ **세션은 아직 주입되지 않는다.** 팩토리가 없으면 판독기는 «없음» 으로
-        # 동작하고 `submit()` 은 늘 거짓을 돌려준다 — 변화 감지는 그대로 돈다.
-        # Tier 3 이므로 이것이 정상 동작이다(ADR-35 결정 6).
+        # ⚠️ **의존성이 없으면 팩토리가 `None` 이고 판독은 «없음» 으로 동작한다** —
+        # `submit()` 은 늘 거짓을 돌려주고 변화 감지는 그대로 돈다. Tier 3 이므로
+        # 이것이 정상 동작이다(ADR-35 결정 6). 설치 절차는 `models/README.md` ③.
         self._vlm = VlmWorker(
             vlm_reader
             if vlm_reader is not None
-            else VlmReader(None, budget_ms=int(config["vision"]["vlm"]["budget_ms"]))
+            else VlmReader(
+                build_session_factory(config),
+                budget_ms=int(config["vision"]["vlm"]["budget_ms"]),
+            )
         )
         #: 이번 구역에서 판독을 이미 걸었나. **구역당 한 번만 건다** — 사이클마다
         #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다.
