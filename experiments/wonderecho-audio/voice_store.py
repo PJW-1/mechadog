@@ -1,34 +1,13 @@
-"""Voice-module config store — 암구호·트리거·설정의 DB 오버레이.
+"""Voice operational data: settings, roster and additional phrases.
 
-`voice_data.db`(SQLite)가 있으면 테이블 내용이 코드 기본값보다 우선한다.
-없으면 코드 기본값 그대로 — **DB는 필수가 아니라 오버레이**다.
-
-    python voice_store.py --seed          # 코드 기본값으로 빈 로컬 DB 초기화
-    python voice_store.py --dump          # 현재 테이블 내용 출력
-    python voice_store.py --set KEY VALUE # settings 값 변경
-    python voice_store.py --add KIND WORD # keywords 행 추가 (wake/sleep/...)
-    python voice_store.py --del KIND WORD # keywords 행 삭제
-    python voice_store.py --remote ...    # 같은 명령을 Supabase에 적용 (SUPABASE_WRITE_KEY 필요)
-    python voice_store.py --seed --remote # 코드 기본값을 Supabase로 밀어 넣기
-
-원격 백엔드(Supabase):
-- SUPABASE_URL + SUPABASE_ANON_KEY가 있으면 읽기는 PostgREST가 우선이고
-  TTL 캐시(기본 60s, VOICE_STORE_TTL로 변경)로 매 턴 왕복을 막는다.
-- 읽기 사슬: Supabase → 로컬 voice_data.db → 코드 기본값. 일반 설정은 앞 단계가
-  비거나 실패하면 다음으로 내려간다. roster는 빈 결과·오류 시 승인 대상 0명이다.
-- 쓰기(--remote)는 SUPABASE_WRITE_KEY(service role)가 필요하다.
-  음성 PC에는 anon 키만 두고 쓰기 키는 관리 도구에만 둘 것.
-
-설계 원칙:
-- 기본값의 정본은 각 소비자 모듈의 상수다. --seed는 그 값을 DB로 옮길 뿐이다.
-- DB 파일이 없거나 해당 항목이 비어 있으면 코드 기본값이 쓰인다 — CI·새 클론·
-  테스트는 DB 없이도 완전히 동작해야 한다.
-- estop 계열(PROTECTED_ACTIONS)은 DB가 지우거나 다른 명령으로 바꿔도 항상
-  코드 기본값이 합쳐진다 — 운영 실수로 비상정지가 죽지 않는다.
-- 이 DB는 "무슨 말이 트리거인가"만 바꾼다. 명령 실행 자체는 robotlink의
-  화이트리스트와 로봇 런타임 게이트가 계속 담당한다.
-- MES 데이터(mes_demo.db / Supabase MES 테이블)는 '외부 시스템'이라 별도다.
-  지식 문서(knowledge/*.txt)는 RAG 입력이라 파일을 유지한다.
+Fixed routing rules live in <DB stem>.rules.json (see voice_rules.py).
+    python voice_store.py --seed
+    python voice_store.py --dump
+    python voice_store.py --rules          # show effective local rules
+    python voice_store.py --add wake 메카봇 # edit the local rule file
+    python voice_store.py --set follow_s 20
+Remote reads/writes apply only to the three operational tables. Roster failures
+remain fail-closed. Migrate old databases with migrate_voice_db.py first.
 """
 
 from __future__ import annotations
@@ -43,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import suparest
+import voice_rules
 from sqlite_admin import backup_database, has_rows, open_readonly
 
 KST = timezone(timedelta(hours=9))
@@ -52,30 +32,6 @@ DEFAULT_DB = Path(__file__).with_name("voice_data.db")
 PROTECTED_ACTIONS = ("비상정지", "긴급정지", "스톱")
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS keywords (
-    kind TEXT NOT NULL,            -- wake|sleep|resume|emergency|status|machine
-    word TEXT NOT NULL,
-    PRIMARY KEY (kind, word)
-);
-CREATE TABLE IF NOT EXISTS command_endings (
-    ending TEXT PRIMARY KEY        -- "해줘/로전환해줘" 등 벗겨낼 명령 어미
-);
-CREATE TABLE IF NOT EXISTS action_commands (
-    phrase TEXT PRIMARY KEY,       -- 정규화된 발화
-    action TEXT NOT NULL,          -- estop|manual_on|manual_off|patrol_start|patrol_stop
-    ack TEXT NOT NULL              -- 실행 후 읽는 확인 멘트
-);
-CREATE TABLE IF NOT EXISTS scenario_triggers (
-    phrase TEXT PRIMARY KEY,
-    scenario TEXT NOT NULL         -- scenarios.SCENARIOS 키
-);
-CREATE TABLE IF NOT EXISTS factory_rules (
-    keyword TEXT PRIMARY KEY,
-    endpoint TEXT NOT NULL,        -- production|shipments|schedule|inspections|equipment
-    needs_line INTEGER NOT NULL DEFAULT 0,  -- 라인 표기가 있을 때만 적용
-    attach_line INTEGER NOT NULL DEFAULT 0, -- params에 line을 담을지
-    priority INTEGER NOT NULL DEFAULT 100   -- 작을수록 먼저 평가
-);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -92,7 +48,8 @@ CREATE TABLE IF NOT EXISTS phrases (
 );
 """
 
-_KEYWORD_KINDS = ("wake", "sleep", "resume", "emergency", "status", "machine")
+_KEYWORD_KINDS = voice_rules.KINDS
+TABLES = ("settings", "roster", "phrases")
 
 # settings 키가 이 패턴에 걸리면 CLI 출력(--set 에코, --dump)에서 값을 가린다.
 # 암구호·방문자 코드 같은 값을 콘솔·로그에 평문으로 남기지 않기 위해서다.
@@ -107,18 +64,6 @@ def _code_defaults():
     import voice_pipeline as vp
 
     return {
-        "keywords": {
-            "wake": list(vp.WAKE_PREFIXES),
-            "sleep": list(vp.SLEEP_WORDS),
-            "resume": list(vp.RESUME_WORDS),
-            "emergency": list(vp.EMERGENCY_WORDS),
-            "status": list(robotlink._STATUS_WORDS),
-            "machine": list(vp._MACHINE_WORDS),
-        },
-        "command_endings": list(robotlink._COMMAND_ENDINGS),
-        "action_commands": dict(robotlink.ACTIONS),
-        "scenario_triggers": dict(scenarios.TRIGGERS),
-        "factory_rules": list(factorylink.DEFAULT_RULES),
         "roster": scenarios._file_roster(),
         "settings": {
             "follow_s": str(vp.FOLLOW_S),
@@ -140,40 +85,12 @@ def seed(db_path=DEFAULT_DB, *, reset=False):
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA)
-        tables = (
-            "keywords",
-            "command_endings",
-            "action_commands",
-            "scenario_triggers",
-            "factory_rules",
-            "settings",
-            "roster",
-            "phrases",
-        )
+        tables = TABLES
         conn.execute("BEGIN IMMEDIATE")
         if not reset and has_rows(conn, tables):
             return False
         for t in tables:
             conn.execute(f"DELETE FROM {t}")
-        conn.executemany(
-            "INSERT INTO keywords VALUES (?,?)",
-            [(kind, w) for kind, words in d["keywords"].items() for w in words],
-        )
-        conn.executemany(
-            "INSERT INTO command_endings VALUES (?)", [(e,) for e in d["command_endings"]]
-        )
-        conn.executemany(
-            "INSERT INTO action_commands VALUES (?,?,?)",
-            [(p, act, ack) for p, (act, ack) in d["action_commands"].items()],
-        )
-        conn.executemany(
-            "INSERT INTO scenario_triggers VALUES (?,?)",
-            list(d["scenario_triggers"].items()),
-        )
-        conn.executemany(
-            "INSERT INTO factory_rules VALUES (?,?,?,?,?)",
-            [tuple(r) for r in d["factory_rules"]],
-        )
         conn.executemany(
             "INSERT INTO settings VALUES (?,?,?)",
             [(k, v, now) for k, v in d["settings"].items()],
@@ -227,111 +144,34 @@ def _remote_rows(table, params=None, *, allow_stale=True):
     return hit[1] if hit and allow_stale else None
 
 
-def _col_or_default(sql, params, default, db_path):
-    """1열 조회 → tuple. DB 없음·빈 결과·오류는 전부 코드 기본값."""
-    conn = _connect(db_path)
-    if conn is None:
-        return tuple(default)
-    try:
-        rows = [r[0] for r in conn.execute(sql, params)]
-        return tuple(rows) if rows else tuple(default)
-    except sqlite3.Error:
-        return tuple(default)
-    finally:
-        conn.close()
-
-
 def words(kind, default, db_path=None):
-    """keywords 테이블의 kind별 단어 목록 (비어 있으면 기본값)."""
-    rows = _remote_rows("keywords", {"kind": f"eq.{kind}", "select": "word", "order": "word"})
-    if rows:
-        return tuple(r["word"] for r in rows)
-    return _col_or_default(
-        "SELECT word FROM keywords WHERE kind=? ORDER BY rowid",
-        (kind,),
-        default,
-        db_path,
-    )
+    return tuple(voice_rules.load(db_path or DEFAULT_DB)["keywords"].get(kind, default))
 
 
 def command_endings(default, db_path=None):
-    """명령 어미 목록 — 긴 것부터 시도하는 기존 규칙을 그대로 둔다."""
-    rows = _remote_rows("command_endings", {"select": "ending"})
-    if rows:
-        return sorted((r["ending"] for r in rows), key=len, reverse=True)
-    rows = _col_or_default("SELECT ending FROM command_endings", (), default, db_path)
-    return sorted(rows, key=len, reverse=True)
+    return sorted(
+        voice_rules.load(db_path or DEFAULT_DB).get("command_endings", default),
+        key=len,
+        reverse=True,
+    )
 
 
 def action_commands(default, db_path=None):
-    """phrase → (action, ack). DB가 있으면 DB가 정본 + 보호 구문 강제."""
-    base = dict(default)
-    rows = _remote_rows("action_commands", {"select": "phrase,action,ack"})
-    if rows:
-        base = {r["phrase"]: (r["action"], r["ack"]) for r in rows}
-    else:
-        conn = _connect(db_path)
-        if conn is not None:
-            try:
-                rows = conn.execute("SELECT phrase, action, ack FROM action_commands").fetchall()
-                if rows:
-                    base = {p: (a, ack) for p, a, ack in rows}
-            except sqlite3.Error:
-                pass
-            finally:
-                conn.close()
-    for p in PROTECTED_ACTIONS:
-        if p in default:
-            base[p] = default[p]
+    data = voice_rules.load(db_path or DEFAULT_DB).get("action_commands", default)
+    base = {p: tuple(v) for p, v in data.items()}
+    protected = voice_rules.defaults()["action_commands"]
+    for phrase in PROTECTED_ACTIONS:
+        base[phrase] = tuple(protected[phrase])
     return base
 
 
 def scenario_triggers(default, db_path=None):
-    """phrase → scenario 이름."""
-    rows = _remote_rows("scenario_triggers", {"select": "phrase,scenario"})
-    if rows:
-        return {r["phrase"]: r["scenario"] for r in rows}
-    conn = _connect(db_path)
-    if conn is None:
-        return dict(default)
-    try:
-        rows = conn.execute(
-            "SELECT phrase, scenario FROM scenario_triggers ORDER BY rowid"
-        ).fetchall()
-        return dict(rows) if rows else dict(default)
-    except sqlite3.Error:
-        return dict(default)
-    finally:
-        conn.close()
-
-
-_RULE_COLS = ("keyword", "endpoint", "needs_line", "attach_line", "priority")
+    return voice_rules.load(db_path or DEFAULT_DB).get("scenario_triggers", default)
 
 
 def factory_rules(db_path=None):
-    """(keyword, endpoint, needs_line, attach_line, priority) 우선순위순."""
-    import factorylink  # 지연 임포트 — 기본값의 정본은 저쪽 모듈
-
-    rows = _remote_rows("factory_rules", {"select": ",".join(_RULE_COLS), "order": "priority"})
-    if rows:
-        return [tuple(r[c] for c in _RULE_COLS) for r in rows]
-    conn = _connect(db_path)
-    if conn is not None:
-        try:
-            rows = [
-                tuple(r)
-                for r in conn.execute(
-                    "SELECT keyword, endpoint, needs_line, attach_line, priority"
-                    " FROM factory_rules ORDER BY priority, rowid"
-                )
-            ]
-            if rows:
-                return rows
-        except sqlite3.Error:
-            pass
-        finally:
-            conn.close()
-    return sorted((tuple(r) for r in factorylink.DEFAULT_RULES), key=lambda r: r[4])
+    rows = voice_rules.load(db_path or DEFAULT_DB)["factory_rules"]
+    return sorted((tuple(r) for r in rows), key=lambda r: r[4])
 
 
 def setting(key, default, cast=str, db_path=None):
@@ -401,6 +241,67 @@ def all_phrases(db_path=None):
         conn.close()
 
 
+def validate_phrase(category, text):
+    if not isinstance(category, str) or not re.fullmatch(r"[a-z0-9_]+", category):
+        raise ValueError("문구 카테고리 형식 오류")
+    if not isinstance(text, str) or not text.strip() or len(text) > 200 or "\x00" in text:
+        raise ValueError("문구는 비어 있지 않은 200자 이내 문자열이어야 합니다")
+
+
+def edit_phrase(category, text, *, remove=False, db_path=None):
+    """The admin UI and CLI use the same store; no separate JSON write path."""
+    validate_phrase(category, text)
+    if remote_enabled() and db_path is None:
+        key = os.environ.get("SUPABASE_WRITE_KEY")
+        if not key:
+            raise ValueError("원격 문구 편집에는 관리용 SUPABASE_WRITE_KEY가 필요합니다")
+        if remove:
+            ok = suparest.delete_where(
+                _REMOTE_URL,
+                key,
+                "phrases",
+                {
+                    "category": f"eq.{category}",
+                    "phrase": f"eq.{text}",
+                },
+            )
+        else:
+            ok = suparest.upsert_rows(
+                _REMOTE_URL,
+                key,
+                "phrases",
+                {
+                    "category": category,
+                    "phrase": text,
+                },
+                ignore_duplicates=True,
+            )
+        if not ok:
+            raise ValueError("원격 문구 저장 실패")
+        for cache_key in list(_remote_cache):
+            if cache_key[0] == "phrases":
+                del _remote_cache[cache_key]
+        return True
+    try:
+        conn = sqlite3.connect(db_path or DEFAULT_DB)
+    except sqlite3.Error as exc:
+        raise ValueError("문구 DB 열기 실패") from exc
+    try:
+        conn.executescript(SCHEMA)
+        if remove:
+            cursor = conn.execute(
+                "DELETE FROM phrases WHERE category=? AND phrase=?", (category, text)
+            )
+        else:
+            cursor = conn.execute("INSERT OR IGNORE INTO phrases VALUES (?,?)", (category, text))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as exc:
+        raise ValueError("문구 DB 저장 실패") from exc
+    finally:
+        conn.close()
+
+
 def _masked(key, value):
     return "***" if _SENSITIVE_KEY_RE.search(key) else value
 
@@ -457,25 +358,6 @@ def _remote_main(args, ap):
         d = _code_defaults()
         now = datetime.now(KST).isoformat(timespec="seconds")
         tables = {
-            "keywords": [{"kind": k, "word": w} for k, ws in d["keywords"].items() for w in ws],
-            "command_endings": [{"ending": e} for e in d["command_endings"]],
-            "action_commands": [
-                {"phrase": p, "action": a, "ack": ack}
-                for p, (a, ack) in d["action_commands"].items()
-            ],
-            "scenario_triggers": [
-                {"phrase": p, "scenario": s} for p, s in d["scenario_triggers"].items()
-            ],
-            "factory_rules": [
-                dict(
-                    zip(
-                        ("keyword", "endpoint", "needs_line", "attach_line", "priority"),
-                        (r[0], r[1], bool(r[2]), bool(r[3]), r[4]),
-                        strict=True,
-                    )
-                )
-                for r in d["factory_rules"]
-            ],
             "settings": [
                 {"key": k, "value": v, "updated_at": now} for k, v in d["settings"].items()
             ],
@@ -500,22 +382,6 @@ def _remote_main(args, ap):
                 },
             ),
             f"set {args.set[0]} = {_masked(args.set[0], args.set[1])}",
-        )
-    if args.add:
-        kind, word = args.add
-        if kind not in _KEYWORD_KINDS:
-            ap.error(f"kind must be one of {_KEYWORD_KINDS}")
-        _ok(
-            suparest.upsert_rows(_REMOTE_URL, wkey, "keywords", {"kind": kind, "word": word}),
-            f"+{kind}: {word}",
-        )
-    if args.remove:
-        kind, word = args.remove
-        _ok(
-            suparest.delete_where(
-                _REMOTE_URL, wkey, "keywords", {"kind": f"eq.{kind}", "word": f"eq.{word}"}
-            ),
-            f"-{kind}: {word}",
         )
     if args.add_roster:
         _ok(
@@ -552,16 +418,7 @@ def _remote_main(args, ap):
     if args.dump:
         rkey = _REMOTE_KEY or wkey
         out = {}
-        for t in (
-            "keywords",
-            "command_endings",
-            "action_commands",
-            "scenario_triggers",
-            "factory_rules",
-            "settings",
-            "roster",
-            "phrases",
-        ):
+        for t in TABLES:
             rows = suparest.get_rows(_REMOTE_URL, rkey, t)
             if t == "settings" and rows:
                 for r in rows:
@@ -581,9 +438,11 @@ def main():
         "--add",
         nargs=2,
         metavar=("KIND", "WORD"),
-        help=f"keywords 추가 ({'|'.join(_KEYWORD_KINDS)})",
+        help=f"로컬 JSON 호출어 추가 ({'|'.join(_KEYWORD_KINDS)})",
     )
-    ap.add_argument("--del", dest="remove", nargs=2, metavar=("KIND", "WORD"), help="keywords 삭제")
+    ap.add_argument(
+        "--del", dest="remove", nargs=2, metavar=("KIND", "WORD"), help="로컬 JSON 호출어 삭제"
+    )
     ap.add_argument("--add-roster", metavar="NAME", help="직원 명단에 추가")
     ap.add_argument("--del-roster", metavar="NAME", help="직원 명단에서 삭제")
     ap.add_argument("--add-phrase", nargs=2, metavar=("CAT", "TEXT"), help="응답 문구 추가")
@@ -593,7 +452,13 @@ def main():
         action="store_true",
         help="위 작업을 로컬 DB가 아니라 Supabase에 적용 (SUPABASE_URL + WRITE_KEY 필요)",
     )
+    ap.add_argument("--rules", action="store_true", help="유효한 로컬 규칙 JSON 출력")
     args = ap.parse_args()
+    if args.remote and (args.add or args.remove or args.rules):
+        ap.error("고정 규칙은 PC의 JSON 파일에서 관리합니다. --remote와 함께 쓸 수 없습니다")
+    for pair in (args.add_phrase, args.del_phrase):
+        if pair:
+            validate_phrase(*pair)
     if args.reset and (not args.seed or args.remote):
         ap.error("--reset은 로컬 --seed와 함께만 사용합니다")
     if args.remote:
@@ -620,24 +485,23 @@ def main():
             conn.close()
         print(f"[store] {args.set[0]} = {_masked(args.set[0], args.set[1])}")
     if args.add or args.remove:
-        conn = sqlite3.connect(args.db)
-        try:
-            conn.executescript(SCHEMA)
-            if args.add:
-                kind, word = args.add
-                if kind not in _KEYWORD_KINDS:
-                    ap.error(f"kind must be one of {_KEYWORD_KINDS}")
-                conn.execute("INSERT OR IGNORE INTO keywords VALUES (?,?)", (kind, word))
-                print(f"[store] +{kind}: {word}")
-            if args.remove:
-                kind, word = args.remove
-                n = conn.execute(
-                    "DELETE FROM keywords WHERE kind=? AND word=?", (kind, word)
-                ).rowcount
-                print(f"[store] -{kind}: {word} ({n}건)")
-            conn.commit()
-        finally:
-            conn.close()
+        path = voice_rules.path_for(args.db)
+        data = voice_rules.read(path) if path.exists() else voice_rules.defaults()
+        for operation, pair in (("add", args.add), ("remove", args.remove)):
+            if not pair:
+                continue
+            kind, word = pair
+            if kind not in _KEYWORD_KINDS:
+                ap.error(f"kind must be one of {_KEYWORD_KINDS}")
+            values = data["keywords"][kind]
+            if operation == "add" and word not in values:
+                values.append(word)
+            elif operation == "remove" and word in values:
+                values.remove(word)
+        voice_rules.save(path, data)
+        print(f"[rules] {path}")
+    if args.rules:
+        print(json.dumps(voice_rules.load(args.db), ensure_ascii=False, indent=2))
     if args.add_roster or args.del_roster or args.add_phrase or args.del_phrase:
         conn = sqlite3.connect(args.db)
         try:

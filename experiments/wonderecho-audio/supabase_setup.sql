@@ -13,30 +13,7 @@ SET LOCAL search_path = public;
 
 -- ═══ voice_store 테이블 ═══════════════════════════════════════════════
 
-create table if not exists keywords (
-    kind text not null,               -- wake|sleep|resume|emergency|status|machine
-    word text not null,
-    primary key (kind, word)
-);
-create table if not exists command_endings (
-    ending text primary key           -- 벗겨낼 명령 어미
-);
-create table if not exists action_commands (
-    phrase text primary key,
-    action text not null,             -- estop|manual_on|manual_off|patrol_start|patrol_stop
-    ack text not null                 -- 실행 후 읽는 확인 멘트
-);
-create table if not exists scenario_triggers (
-    phrase text primary key,
-    scenario text not null            -- scenarios.SCENARIOS 키만 허용(코드가 검증)
-);
-create table if not exists factory_rules (
-    keyword text primary key,
-    endpoint text not null,           -- production|shipments|schedule|inspections|equipment
-    needs_line boolean not null default false,
-    attach_line boolean not null default false,
-    priority integer not null default 100
-);
+-- 고정 규칙5개는 PC JSON으로 관리한다. 기존 원격 규칙 테이블은 자동 삭제하지 않는다.
 create table if not exists settings (
     key text primary key,
     value text not null,
@@ -115,9 +92,6 @@ do $checks$
 declare item record;
 begin
     for item in select * from (values
-        ('keywords', 'voice_keyword_kind', $$kind in ('wake','sleep','resume','emergency','status','machine') and btrim(word) <> ''$$),
-        ('action_commands', 'voice_action_allowed', $$action in ('estop','manual_on','manual_off','patrol_start','patrol_stop') and (phrase not in ('비상정지','긴급정지','스톱') or action='estop')$$),
-        ('factory_rules', 'voice_factory_rule', $$endpoint in ('production','shipments','schedule','inspections','equipment') and priority >= 0$$),
         ('production_status', 'demo_production_values', $$target_quantity >= 0 and completed_quantity >= 0 and state in ('running','stopped','idle')$$),
         ('shipment_schedule', 'demo_shipment_quantity', $$quantity >= 0$$),
         ('work_schedule', 'demo_work_values', $$priority >= 0 and status in ('pending','in_progress','done')$$),
@@ -138,8 +112,7 @@ do $$
 declare t text;
 begin
     foreach t in array array[
-        'keywords','command_endings','action_commands','scenario_triggers',
-        'factory_rules','settings','roster','phrases',
+        'settings','roster','phrases',
         'production_status','shipment_schedule','work_schedule',
         'inspection_log','equipment_check'
     ] loop

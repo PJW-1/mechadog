@@ -71,7 +71,7 @@ class TransferTest(unittest.TestCase):
     def test_failed_write_rolls_back_earlier_tables(self):
         transfer.import_sqlite(self.bundle, self.target)
         with closing(sqlite3.connect(self.target)) as conn, conn:
-            conn.execute("DELETE FROM keywords")
+            conn.execute("DELETE FROM roster")
             conn.execute("DELETE FROM equipment_check")
             conn.execute(
                 "CREATE TRIGGER fail_import BEFORE INSERT ON equipment_check BEGIN SELECT RAISE(ABORT,'test'); END"
@@ -79,7 +79,7 @@ class TransferTest(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             transfer.import_sqlite(self.bundle, self.target)
         with closing(sqlite3.connect(self.target)) as conn, conn:
-            self.assertEqual(conn.execute("SELECT count(*) FROM keywords").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT count(*) FROM roster").fetchone()[0], 0)
 
     def test_main_database_tables_rejected(self):
         self.bundle["tables"]["incidents"] = []
@@ -88,7 +88,7 @@ class TransferTest(unittest.TestCase):
 
     def test_invalid_action_and_secret_setting_rejected_without_values(self):
         bad = copy.deepcopy(self.bundle)
-        bad["tables"]["action_commands"][0]["action"] = "reset_safe"
+        bad["rules"]["action_commands"]["순찰시작"][0] = "reset_safe"
         with self.assertRaises(ValueError):
             transfer.validate(bad)
         bad = copy.deepcopy(self.bundle)
@@ -102,8 +102,6 @@ class TransferTest(unittest.TestCase):
         mutations = [
             ("production_status", "completed_quantity", -1),
             ("production_status", "updated_at", "2026-09-01T01:00:00"),
-            ("factory_rules", "needs_line", "false"),
-            ("factory_rules", "endpoint", "../../command/estop"),
             ("shipment_schedule", "deadline", "2026-02-30"),
             ("inspection_log", "defects", 10000),
         ]
@@ -113,7 +111,7 @@ class TransferTest(unittest.TestCase):
                 bad["tables"][table][0][col] = value
                 with self.assertRaises(ValueError):
                     transfer.validate(bad)
-        self.bundle["tables"]["keywords"].append(self.bundle["tables"]["keywords"][0].copy())
+        self.bundle["tables"]["roster"].append(self.bundle["tables"]["roster"][0].copy())
         with self.assertRaises(ValueError):
             transfer.validate(self.bundle)
 

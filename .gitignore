@@ -102,3 +102,7 @@ experiments/wonderecho-audio/*.db.*.bak
 # 되살리려면 `git show bb4d704` — 15개 파일 1,801줄이 거기 있다 (#153 로 들어와
 # #160 에서 되돌림). 브랜치가 아니라 커밋을 적는다: 브랜치는 사라질 수 있다.
 sim/
+
+# Local routing configuration migrated from the voice DB.
+experiments/wonderecho-audio/*.rules.json
+experiments/wonderecho-audio/*.json.migrated.bak

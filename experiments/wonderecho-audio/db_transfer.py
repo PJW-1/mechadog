@@ -7,6 +7,7 @@ The safety-history tables (robots/mission_runs/incidents/zones) are out of scope
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -17,19 +18,15 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import factory_mes
+import voice_rules
 import voice_store
 from sqlite_admin import backup_database, open_readonly
 
 # Explicit column lists are also the import boundary. No SQL identifier comes from a file.
 VOICE = {
-    "keywords": ("kind", "word"),
     "settings": ("key", "value", "updated_at"),
     "roster": ("name", "note"),
-    "action_commands": ("phrase", "action", "ack"),
-    "factory_rules": ("keyword", "endpoint", "needs_line", "attach_line", "priority"),
     "phrases": ("category", "phrase"),
-    "command_endings": ("ending",),
-    "scenario_triggers": ("phrase", "scenario"),
 }
 MES = {
     "production_status": (
@@ -64,7 +61,7 @@ MES = {
 }
 HISTORY = ("inspection_log", "equipment_check")
 TABLES = {**VOICE, **MES}
-KEYS = {t: cols[:1] for t, cols in TABLES.items()}
+KEYS = {t: cols[:1] for t, cols in {**TABLES, **voice_rules.LEGACY}.items()}
 KEYS.update(keywords=("kind", "word"), phrases=("category", "phrase"))
 ENDPOINTS = {"production", "shipments", "schedule", "inspections", "equipment"}
 
@@ -82,7 +79,7 @@ def _timestamp(value):
 
 
 def _validate_row(table, row):
-    if not isinstance(row, dict) or set(row) != set(TABLES[table]):
+    if not isinstance(row, dict) or set(row) != set({**TABLES, **voice_rules.LEGACY}[table]):
         raise ValueError("컬럼 불일치")
     integers = {
         "priority",
@@ -165,12 +162,14 @@ def _validate_row(table, row):
 
 def validate(bundle):
     """Validate every row before opening a target DB; errors never include values."""
-    if not isinstance(bundle, dict) or bundle.get("format_version") != 1:
+    if not isinstance(bundle, dict) or bundle.get("format_version") not in (1, 2):
         raise ValueError("지원하지 않는 묶음 버전")
     if bundle.get("data_kind") != "synthetic-demo":
         raise ValueError("이 도구는 합성 데모 데이터 전용")
+    bundle = copy.deepcopy(bundle)
     tables = bundle.get("tables")
-    if not isinstance(tables, dict) or not tables or set(tables) - TABLES.keys():
+    allowed = {**TABLES, **voice_rules.LEGACY} if bundle["format_version"] == 1 else TABLES
+    if not isinstance(tables, dict) or not tables or set(tables) - allowed.keys():
         raise ValueError("지원하지 않는 테이블: 메인 안전 이력 DB는 대상이 아닙니다")
     for table, rows in tables.items():
         if not isinstance(rows, list):
@@ -191,12 +190,21 @@ def validate(bundle):
     actions = {r["phrase"] for r in tables.get("action_commands", [])}
     if actions & {r["phrase"] for r in tables.get("scenario_triggers", [])}:
         raise ValueError("action_commands와 scenario_triggers에 같은 구문이 있음")
+    if bundle["format_version"] == 1:
+        if set(tables) & voice_rules.LEGACY.keys():
+            bundle["rules"] = voice_rules.from_legacy(tables)
+            for table in voice_rules.LEGACY:
+                tables.pop(table, None)
+        bundle["format_version"] = 2
+    if "rules" in bundle:
+        voice_rules.validate(bundle["rules"])
     return bundle
 
 
 def export_bundle(voice_db=None, mes_db=None):
     tables = {}
     sources = []
+    rules = None
     for path, spec in ((voice_db, VOICE), (mes_db, MES)):
         if path is None:
             continue
@@ -204,6 +212,16 @@ def export_bundle(voice_db=None, mes_db=None):
         try:
             conn.row_factory = sqlite3.Row
             conn.execute("BEGIN")  # one consistent snapshot across tables
+            if spec is VOICE:
+                names = {
+                    r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                if names & voice_rules.LEGACY.keys():
+                    raise ValueError("먼저 migrate_voice_db.py --db <음성DB>로 이전하세요")
+                path_rules = voice_rules.path_for(path)
+                rules = (
+                    voice_rules.read(path_rules) if path_rules.exists() else voice_rules.defaults()
+                )
             for table, cols in spec.items():
                 names = ",".join(f'"{c}"' for c in cols)
                 rows = [dict(r) for r in conn.execute(f'SELECT {names} FROM "{table}"')]
@@ -213,11 +231,12 @@ def export_bundle(voice_db=None, mes_db=None):
             conn.close()
     return validate(
         {
-            "format_version": 1,
+            "format_version": 2,
             "data_kind": "synthetic-demo",
             "exported_at": datetime.now(UTC).isoformat(),
             "sources": sources,
             "tables": tables,
+            **({"rules": rules} if rules is not None else {}),
         }
     )
 
@@ -234,10 +253,12 @@ def _ensure_history_keys(conn):
 
 def import_sqlite(bundle, target):
     """Merge into a local DB. Existing business keys win; bad rows roll back together."""
-    validate(bundle)
+    bundle = validate(bundle)
     backup = backup_database(target)
     conn = sqlite3.connect(target)
     counts = {}
+    rules_path = voice_rules.path_for(target)
+    created_rules = False
     try:
         # executescript would commit a pending transaction: split this trusted DDL instead.
         conn.execute("BEGIN IMMEDIATE")
@@ -273,13 +294,22 @@ def import_sqlite(bundle, target):
                 )
                 inserted += cursor.rowcount
             counts[table] = {"inserted": inserted, "kept": len(rows) - inserted}
+        if "rules" in bundle and not rules_path.exists():
+            voice_rules.save(rules_path, bundle["rules"])
+            created_rules = True
         conn.commit()
     except Exception:
         conn.rollback()
+        if created_rules:
+            rules_path.unlink(missing_ok=True)
         raise
     finally:
         conn.close()
-    return {"backup": str(backup) if backup else None, "tables": counts}
+    return {
+        "backup": str(backup) if backup else None,
+        "tables": counts,
+        "rules": "created" if created_rules else "kept existing or not supplied",
+    }
 
 
 def _literal(value):
@@ -294,10 +324,11 @@ def _literal(value):
 
 def supabase_sql(bundle):
     """Generate reviewable transactional SQL; retain timestamps and target identity IDs."""
-    validate(bundle)
+    bundle = validate(bundle)
     lines = [
         "-- Synthetic demo data ONLY. Run supabase_setup.sql first.",
         "-- Existing keys win. No main safety-history tables are modified.",
+        "-- Routing rules are PC JSON, not SQL: use db_transfer.py rules to extract them.",
         "BEGIN;",
         "SET LOCAL standard_conforming_strings = on;",
     ]
@@ -340,10 +371,10 @@ def main():
         required=True,
         help="입력이 실제 직원/생산 자료가 아닌 합성 데이터임을 표시",
     )
-    for name in ("check", "sql", "import"):
+    for name in ("check", "sql", "import", "rules"):
         sub = commands.add_parser(name)
         sub.add_argument("bundle", type=Path)
-        if name == "sql":
+        if name in ("sql", "rules"):
             sub.add_argument("--output", required=True, type=Path)
         if name == "import":
             sub.add_argument("--db", required=True, type=Path)
@@ -356,6 +387,12 @@ def main():
             bundle = validate(json.loads(args.bundle.read_text(encoding="utf-8-sig")))
             if args.command == "sql":
                 _write_new(args.output, supabase_sql(bundle))
+            elif args.command == "rules":
+                if "rules" not in bundle:
+                    raise ValueError("이 묶음에는 음성 규칙이 없습니다")
+                _write_new(
+                    args.output, json.dumps(bundle["rules"], ensure_ascii=False, indent=2) + "\n"
+                )
             elif args.command == "import":
                 print(json.dumps(import_sqlite(bundle, args.db), ensure_ascii=False, indent=2))
         print(

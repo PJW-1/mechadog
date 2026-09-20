@@ -160,67 +160,40 @@ fallback이다. 확장 방향(해도 되는 것과 구조상 하면 안 되는 �
 - **절대 옮기지 않을 것**: estop 해제·신원 판정·MES 수치 생성을 LLM에 넘기는
   방향 — 위 표의 경계를 깨는 일이라 채택 근거가 필요하다.
 
-## 9. 설정 DB 오버레이 — `voice_store.py`
+## 9. 운영 데이터 3테이블 + 고정 규칙 JSON
 
-암구호형 트리거·명단·설정을 코드 수정 없이 운영 중에 바꾸는 층이다.
-`voice_data.db`(SQLite)가 있으면 테이블 내용이 코드 기본값보다 우선하고,
-없으면 코드 기본값 그대로 — **DB는 필수가 아니라 오버레이**다. git에 올라가지
-않으며 `python voice_store.py --seed`로 코드 기본값을 옮겨 만든다.
+| 저장 위치 | 내용 | 소비자 |
+| --- | --- | --- |
+| DB settings | 후속 발화 시간·STT 힌트·API 주소 | voice_pipeline 등 |
+| DB roster | 신원 확인 명단; 사용 중 빈 결과·오류는 승인 0명 | scenarios.sc_guard |
+| DB phrases | 관리자가 추가한 응답; 기본 문구는 코드 | phrases, 관리자 화면, 캐시 생성 |
+| voice_data.rules.json | keywords·command_endings·action_commands·scenario_triggers·factory_rules | 발화 라우팅 |
 
-| 테이블 | 내용 | 정본 | 소비자 |
-|---|---|---|---|
-| `keywords` | wake·sleep·resume·emergency·status·machine 단어 | DB 행 있으면 DB | `voice_pipeline`·`robotlink` |
-| `command_endings` | 벗겨낼 명령 어미 | 〃 | `robotlink.match_action` |
-| `action_commands` | 발화 구문 → (로봇 명령, 확인 멘트) | 〃 | `robotlink` |
-| `scenario_triggers` | 발화 구문 → 시나리오 이름 | 〃 | `scenarios.match_trigger` |
-| `factory_rules` | 키워드 → MES 엔드포인트 규칙 | 〃 | `factorylink.classify` |
-| `roster` | 신원 확인 직원 명단 | DB 사용 중 빈 명단/오류는 0명, DB 미사용 시에만 파일 | `scenarios.sc_guard` |
-| `phrases` | 응답 문구 **추가분** | 기본 문구는 코드 불변, DB는 얹기만 한다 | `phrases.merged` |
-| `settings` | follow_s·stt_prompt·API 주소 등의 키-값 | 키 있으면 DB 값 | `voice_pipeline` 등 |
+JSON이 없으면 기존 코드 규칙을 사용한다. 파일이 바뀔 때만 검증/파싱하며 고정 규칙에
+DB/HTTP 요청을 보내지 않는다. 명령·시나리오 동일 구문 충돌, 미등록 명령/시나리오/API를
+거부한다. 비상정지 3개 보호 구문과 실제 실행 화이트리스트는 코드에 유지한다.
+기존 8테이블의 사용자 수정값은 명시적 이전으로 보존한다. 자동 삭제/초기화는 하지 않는다.
 
-경계는 그대로다:
-
-- **보호 구문**: `비상정지`·`긴급정지`·`스톱`(PROTECTED_ACTIONS)은 DB가 지우거나
-  다른 명령으로 바꿔도 코드 기본값이 항상 합쳐진다.
-- **DB가 바꾸는 것**: "무슨 말이 트리거인가"뿐. 명령 실행은 robotlink의
-  화이트리스트와 로봇 런타임 게이트가 계속 판정하고, 신원 판정·MES 수치·
-  stale 판정도 코드가 한다. DB 행으로 새 시나리오를 만들 수는 없다 —
-  `scenario_triggers`는 기존 SCENARIOS 키로만 매핑된다.
-- **민감 값**: settings 키가 `pass|secret|token|code|key`를 포함하면
-  `--set` 에코와 `--dump` 출력에서 `***`로 가린다(평문 로그 방지).
-- **장애 시**: 일반 설정은 코드 기본값을 쓸 수 있다. 단, 사용 중인 `roster`의
-  빈 명단·조회 실패는 승인 대상 0명이다. 파일 명단으로 다시 승인하지 않는다.
-
-### 원격 백엔드 — Supabase
-
-`SUPABASE_URL` + `SUPABASE_ANON_KEY` 환경변수가 있으면 읽기는 Supabase
-PostgREST가 우선이다. 사슬은 `Supabase → 로컬 voice_data.db → 코드 기본값` —
-일반 설정은 원격 실패/빈 결과에 다음 단계로 내려간다. 신원 명단은 빈 결과·오류를
-승인 0명으로 처리하며 만료된 캐시를 재사용하지 않는다. TTL 캐시는
-`VOICE_STORE_TTL`초(기본 60). 쓰기(`--remote` 플래그)는
-`SUPABASE_WRITE_KEY`(service role)가 필요 — 음성 PC에는 anon 키만 둔다.
-테이블 스키마와 anon 읽기 RLS 정책은 `supabase_setup.sql` 참조.
-
-가상 MES도 같은 구조다: `factory_mes.py`를 `MES_BACKEND=supabase`로 띄우면
-같은 Supabase 프로젝트의 MES 테이블을 읽는다. `/api/*` 응답 계약
-(`data`·`source`·`updated_at`·행 단위 `stale`·`unknown_line`)은 백엔드와
-무관하게 동일 — 이 판정은 서버가 아니라 이 코드가 한다.
-
-운영 CLI:
-
-```bash
-python voice_store.py --seed                  # 빈 DB만 초기화 (기존 자료 보존)
-python voice_store.py --dump                  # 전체 테이블 확인(민감값 마스킹)
-python voice_store.py --set follow_s 30       # 설정 변경
-python voice_store.py --add wake 메카독이      # 웨이크워드 추가
-python voice_store.py --add-roster 홍길동      # 직원 명단 추가
-python voice_store.py --del-roster 김민수      # 퇴사자 삭제
+```powershell
+# 기존 설치를 업그레이드할 때 먼저 실행. 신규 설치는 --seed.
+python migrate_voice_db.py --db voice_data.db --check
+python migrate_voice_db.py --db voice_data.db
+python voice_store.py --dump
+python voice_store.py --rules
+python voice_store.py --set follow_s 30
+python voice_store.py --add wake 메카독이  # 로컬 규칙 JSON
+python voice_store.py --add-roster 홍길동
 python voice_store.py --add-phrase greeting "안녕하세요, 현장지원 로봇입니다."
-# 같은 명령에 --remote를 붙이면 Supabase에 적용 (SUPABASE_WRITE_KEY 필요)
-python voice_store.py --seed --remote         # 누락 기본 행 추가 (기존 키 값 보존)
 ```
 
-가져오기·백업·명시적 초기화와 메인 안전 이력 DB의 경계는 [DB_GUIDE.md](DB_GUIDE.md)를 참조한다.
+Supabase는 settings·roster·phrases만 원격 조회한다. 일반 설정은 원격→로컬→기본값,
+명단은 원격 오류/빈 결과 시 승인 0명이다. 만료된 명단 캐시를 재사용하지 않는다.
+기본 TTL은 60초(`VOICE_STORE_TTL`). `--remote` 쓰기는 관리용 `SUPABASE_WRITE_KEY`가
+필요하고 로컬 규칙 명령 `--add/--del/--rules`와 함께 쓸 수 없다.
+
+가상 MES 서버는 기존 5개 테이블을 계속 사용한다. MES 질문 분기·최신값 판단·결정론적
+응답 및 LLM의 역할 구분은 그대로다. 전체 컬럼·이전/백업·v1 묶음 호환과
+Supabase 설치 절차는 [DB_GUIDE.md](DB_GUIDE.md)에 있다.
 
 ## 10. 운영 메모
 
@@ -233,5 +206,5 @@ python voice_store.py --seed --remote         # 누락 기본 행 추가 (기존
   (4.7.9). 이 문서의 판정 구조는 전송층과 무관하게 그대로다.
 - 실기 왕복 확인(2026-09-17, COM5): "메카독 A라인 생산량 알려줘" → factory
   경로 결정론적 답변 확인. 알려진 빈틈: STT 오청(`생간량`)이 키워드를 빠져
-  llm로 새는 것 — `voice_store.py --add`로 오청 변형을 factory_rules에
-  올려 흡수할 수 있다.
+  llm로 새는 것 — `voice_data.rules.json`의 factory_rules에 오청 변형을
+  추가해 흡수할 수 있다. `--add`는 wake 등 keywords 전용이다.

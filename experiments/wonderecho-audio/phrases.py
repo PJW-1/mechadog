@@ -12,10 +12,10 @@
 
 from __future__ import annotations
 
-import json
 import random
 import re
-from pathlib import Path
+
+import voice_store
 
 PHRASES: dict[str, list[str]] = {
     # ── 호출 응답·인사 ────────────────────────────────────────────────────
@@ -256,44 +256,11 @@ PHRASES: dict[str, list[str]] = {
 }
 
 
-# ── 관리자 추가 문구 (phrases_custom.json) ───────────────────────────────
-# 기본 문구(PHRASES)는 코드에 고정하고, 관제웹에서 관리자가 추가한 문구만
-# JSON 파일로 떨어뜨린다 — 기본 멘트는 검증된 상수라 삭제·수정 대상이 아니다.
-
-CUSTOM_PATH = Path(__file__).with_name("phrases_custom.json")
-
-
-def load_custom(path: Path | None = None) -> dict[str, list[str]]:
-    """phrases_custom.json → {category: [lines]}. 없거나 깨지면 빈 dict."""
-    p = path or CUSTOM_PATH
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return {
-        str(cat): [str(t) for t in lines if str(t).strip()]
-        for cat, lines in data.items()
-        if isinstance(lines, list)
-    }
-
-
-CUSTOM = load_custom()
-
-
-def _save_custom(path: Path | None = None):
-    p = path or CUSTOM_PATH
-    p.write_text(
-        json.dumps(CUSTOM, ensure_ascii=False, indent=1, sort_keys=True),
-        encoding="utf-8",
-    )
+# 추가 문구의 정본은 phrases 테이블 하나다. 구 JSON은 이전 도구로 가져온다.
 
 
 def _db_phrases() -> dict[str, list[str]]:
     """voice_data.db의 추가 문구 — 기본 문구는 코드가 유지하고 DB는 얹기만 한다."""
-    try:
-        import voice_store
-    except ImportError:
-        return {}
     out: dict[str, list[str]] = {}
     for cat, text in voice_store.all_phrases():
         out.setdefault(cat, []).append(text)
@@ -301,12 +268,11 @@ def _db_phrases() -> dict[str, list[str]]:
 
 
 def merged() -> dict[str, list[str]]:
-    """기본 + 관리자 추가 문구(JSON·DB)의 합본. 카테고리 순서는 기본 → 신규."""
+    """기본 + DB 추가 문구의 합본. 카테고리 순서는 기본 → 신규."""
     out = {cat: list(lines) for cat, lines in PHRASES.items()}
-    for cat, lines in CUSTOM.items():
-        out.setdefault(cat, []).extend(lines)
     for cat, lines in _db_phrases().items():
-        out.setdefault(cat, []).extend(lines)
+        dest = out.setdefault(cat, [])
+        dest.extend(text for text in lines if text not in dest)
     return out
 
 
@@ -320,23 +286,18 @@ def add_custom(category: str, text: str) -> str:
         raise ValueError("문구가 비어 있습니다")
     if len(text) > 200:
         raise ValueError("문구는 200자 이내로 입력하세요")
-    if text in PHRASES.get(cat, []) or text in CUSTOM.get(cat, []):
+    if text in PHRASES.get(cat, []) or text in _db_phrases().get(cat, []):
         raise ValueError("이미 있는 문구입니다")
-    CUSTOM.setdefault(cat, []).append(text)
-    _save_custom()
+    if not voice_store.edit_phrase(cat, text):
+        raise ValueError("이미 있는 문구입니다")
     return cat
 
 
 def remove_custom(category: str, text: str) -> bool:
     """관리자가 추가한 문구만 삭제 가능 — 기본 문구는 건드리지 않는다."""
-    lines = CUSTOM.get(category, [])
-    if text not in lines:
+    if text in PHRASES.get(category, []) or text not in _db_phrases().get(category, []):
         return False
-    lines.remove(text)
-    if not lines:
-        CUSTOM.pop(category, None)
-    _save_custom()
-    return True
+    return voice_store.edit_phrase(category, text, remove=True)
 
 
 def pick(category: str, rng: random.Random | None = None) -> str:
@@ -352,6 +313,7 @@ def all_lines():
     for cat, lines in PHRASES.items():
         for text in lines:
             yield cat, text, False
-    for cat, lines in CUSTOM.items():
+    for cat, lines in _db_phrases().items():
         for text in lines:
-            yield cat, text, True
+            if text not in PHRASES.get(cat, []):
+                yield cat, text, True

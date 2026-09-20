@@ -266,7 +266,14 @@ def make_handler(hub):
                     return
                 _api(self, 200, {"category": cat, "added": True})
             elif self.path == "/phrases/delete":
-                if not phrases.remove_custom(req.get("category") or "", req.get("text") or ""):
+                try:
+                    removed = phrases.remove_custom(
+                        req.get("category") or "", req.get("text") or ""
+                    )
+                except ValueError as e:
+                    _api(self, 400, {"error": str(e)})
+                    return
+                if not removed:
                     _api(self, 404, {"error": "추가된 문구만 삭제할 수 있습니다"})
                     return
                 _api(self, 200, {"removed": True})
