@@ -35,7 +35,7 @@ from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
 from host.vision.badge import BadgeReader, Marker
 from host.vision.detector import Detection
-from host.vision.person import PersonGate, Sighting
+from host.vision.person import FallenGate, FallenVerdict, PersonGate, Sighting
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
 from host.vision.tracker import PersonTracker, Track
 
@@ -82,6 +82,12 @@ class VisionResult:
     #: 추적도 게이트와 같은 이유로 **추론마다** 돌려야 한다 — 10Hz 로 관측하면
     #: 프레임 간 겹침이 그만큼 줄어 ID 가 끊긴다.
     tracks: tuple[Track, ...]
+    #: 쓰러짐 규칙 판정 (FR-9 · `4.8.3` · ADR-35 대안 ⓓ).
+    #:
+    #: ⚠️ **VLM 과 둘이다.** 저쪽은 구역당 한 번이고 이쪽은 추론마다 돈다 — 가장 급한
+    #: 사건을 0.4초짜리 모델 하나에만 맡기지 않는다. 게이트·추적과 같은 이유로 여기서
+    #: 재야 한다(메인 루프 10Hz 에서 보면 25fps 중 10개만 본다).
+    fallen: FallenVerdict
     #: 이 프레임에서 읽은 사원증 마커 (FR-10.1 · `3.8.1`).
     #:
     #: ⚠️ **추적 대상이 있을 때만 읽는다** — FR-3.1.1 의 PPE 게이팅과 같은 원칙이고,
@@ -127,6 +133,7 @@ class VisionWorker:
         self._detector = detector
         self._reader = reader
         self._gate = PersonGate(config)
+        self._fallen = FallenGate(config)
         self._tracker = PersonTracker(config)
         self._badges = BadgeReader(config)
         self._queue = queue if queue is not None else FrameQueue()
@@ -303,6 +310,12 @@ class VisionWorker:
             observed = self._clock()
             sighting = self._gate.observe(observed, detections)
             tracks = self._tracker.update(detections, observed)
+            # ⚠️ **대표 박스로 본다** — 게이트가 고른 그 사람이다. 모든 사람을 재면
+            # 누가 쓰러졌는지 말할 수 없고, 추적 ID 를 함께 넘겨야 다른 사람의 정지가
+            # 이번 사람 몫을 채우지 않는다.
+            fallen = self._fallen.observe(
+                observed, sighting.box, track_id=tracks[0].track_id if tracks else None
+            )
             # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
             markers = self._badges.read(image) if tracks else ()
         except Exception as exc:  # noqa: BLE001
@@ -321,6 +334,7 @@ class VisionWorker:
             completed_ms=completed,
             inference_ms=elapsed,
             sighting=sighting,
+            fallen=fallen,
             tracks=tracks,
             markers=markers,
         )
