@@ -32,6 +32,7 @@ import argparse
 import json
 import queue
 import re
+import sqlite3
 import tempfile
 import threading
 import time
@@ -655,6 +656,10 @@ class ScenarioCtx:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    try:
+        voice_store.check_schema()
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        ap.exit(1, f"[voice-db] {exc}\n")
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
     ap.add_argument("--model", type=Path, help="GGUF chat model path")
     ap.add_argument("--say", help="synthesize this text and play it once, then exit")

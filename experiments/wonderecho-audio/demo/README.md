@@ -1,8 +1,9 @@
 # 팀 공유용 음성·MES 합성 데이터
 
-`voice_mes.json`에 기존 로컬 DB의 **내용 전체(8테이블 27행)**와 **발화 규칙 162개**를
+`voice_mes.json`에 기존 로컬 DB의 **음성3테이블 12행 + MES5테이블 15행**과 **발화 규칙 162개**를
 담았다. 직원명·고객명·제품·실적은 합성 데모이며 실제 회사의 운영 자료가 아니다.
 SQLite 실행 파일은 생성물로 두고 JSON·스키마·가져오기 SQL을 버전 관리한다.
+음성 DB 정본은 3테이블이다. 여기서 합산한 8개는 구형 음성8테이블 스키마가 아니다.
 
 | 데이터 | 파일/테이블 | 개수 |
 | --- | --- | --- |
@@ -22,13 +23,12 @@ SQLite 실행 파일은 생성물로 두고 JSON·스키마·가져오기 SQL을
 
 ## 내려받아서 같은 DB 만들기
 
-PR 브랜치에서 확인할 때는 저장소를 클론한 후 아래 브랜치로 이동한다.
-`dev`에 병합된 뒤에는 `dev`에서 같은 명령을 실행하면 된다.
+저장소를 클론한 후 `dev`에서 실행한다.
 
 ```powershell
 git clone https://github.com/PJW-1/mechadog.git
 cd mechadog
-git switch --track origin/fix/voice-db-import-20260920
+git switch dev
 cd experiments/wonderecho-audio
 
 # Python 3.12. DB 생성만 할 때는 GPU·모델·로봇 연결·추가 pip 설치가 필요 없다.
@@ -54,6 +54,7 @@ mes_demo.db            # MES 5테이블
 ```powershell
 python db_transfer.py check demo/voice_mes.json
 python voice_store.py --dump
+python voice_store.py --check-schema
 python voice_store.py --rules
 
 # MES 조회 서버만 실행. 로봇·음성 모듈에는 명령을 보내지 않는다.

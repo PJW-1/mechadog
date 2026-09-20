@@ -19,15 +19,12 @@ from urllib.parse import urlsplit
 
 import factory_mes
 import voice_rules
+import voice_schema
 import voice_store
 from sqlite_admin import backup_database, open_readonly
 
 # Explicit column lists are also the import boundary. No SQL identifier comes from a file.
-VOICE = {
-    "settings": ("key", "value", "updated_at"),
-    "roster": ("name", "note"),
-    "phrases": ("category", "phrase"),
-}
+VOICE = voice_schema.COLUMNS
 MES = {
     "production_status": (
         "line_id",
@@ -264,7 +261,7 @@ def import_sqlite(bundle, target):
         conn.execute("BEGIN IMMEDIATE")
         ddl = ""
         if set(bundle["tables"]) & VOICE.keys():
-            ddl += voice_store.SCHEMA
+            voice_schema.initialize(conn, extra_tables=MES)
         if set(bundle["tables"]) & MES.keys():
             ddl += factory_mes.SCHEMA
         for statement in ddl.split(";"):

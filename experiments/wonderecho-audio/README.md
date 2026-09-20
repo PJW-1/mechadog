@@ -6,6 +6,10 @@
 규칙162개를 재현한다. 데이터/PC 시험과 모듈 청취 성공은 별도이며 로봇 탑재 오디오 중계는
 WBS 4.7.9 작업으로 남아 있다.
 
+**음성 DB 정본은 3테이블**(`settings`, `roster`, `phrases`) + 규칙 JSON이다.
+구형 음성8테이블은 `migrate_voice_db.py`로 백업·이전한 뒤 사용한다.
+`python voice_store.py --check-schema`로 검사한다. MES5테이블은 별도 DB다.
+
 > **현재 상태 (WBS 4.7.4~4.7.7 · 4.7.10·4.7.11 · 4.7.14)** — `voice_pipeline.py`가
 > 종단 대화 루프다: 모듈 마이크 → faster-whisper → 로컬 GGUF LLM → Piper TTS →
 > 모듈 스피커. `start_voice.ps1`로 기동(COM5 + 관제 API :8090). 웨이크워드

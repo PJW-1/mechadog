@@ -23,6 +23,7 @@ from pathlib import Path
 
 import suparest
 import voice_rules
+import voice_schema
 from sqlite_admin import backup_database, has_rows, open_readonly
 
 KST = timezone(timedelta(hours=9))
@@ -31,25 +32,10 @@ DEFAULT_DB = Path(__file__).with_name("voice_data.db")
 # 비상정지 구문 — DB 오버레이가 제거·재매핑할 수 없는 최소 안전 집합.
 PROTECTED_ACTIONS = ("비상정지", "긴급정지", "스톱")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS roster (
-    name TEXT PRIMARY KEY,           -- 신원 확인 명단 (scenarios.sc_guard)
-    note TEXT DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS phrases (
-    category TEXT NOT NULL,          -- phrases.PHRASES 카테고리 키
-    phrase TEXT NOT NULL,
-    PRIMARY KEY (category, phrase)
-);
-"""
+SCHEMA = voice_schema.SCHEMA
 
 _KEYWORD_KINDS = voice_rules.KINDS
-TABLES = ("settings", "roster", "phrases")
+TABLES = tuple(voice_schema.COLUMNS)
 
 # settings 키가 이 패턴에 걸리면 CLI 출력(--set 에코, --dump)에서 값을 가린다.
 # 암구호·방문자 코드 같은 값을 콘솔·로그에 평문으로 남기지 않기 위해서다.
@@ -84,11 +70,13 @@ def seed(db_path=DEFAULT_DB, *, reset=False):
         backup_database(db_path)
     conn = sqlite3.connect(db_path)
     try:
-        conn.executescript(SCHEMA)
         tables = TABLES
         conn.execute("BEGIN IMMEDIATE")
-        if not reset and has_rows(conn, tables):
+        voice_schema.validate(conn, allow_empty=True)
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='settings'").fetchone()
+        if not reset and exists and has_rows(conn, tables):
             return False
+        voice_schema.initialize(conn)
         for t in tables:
             conn.execute(f"DELETE FROM {t}")
         conn.executemany(
@@ -112,6 +100,32 @@ def _connect(db_path):
         return open_readonly(p) if p.is_file() else None
     except (OSError, sqlite3.Error):
         return None
+
+
+def check_schema(db_path=None):
+    """Startup/administration preflight; no writes, no settings values exposed."""
+    path = Path(db_path or DEFAULT_DB)
+    if path.with_name("phrases_custom.json").exists():
+        raise ValueError(
+            "구형 추가 문구 JSON: migrate_voice_db.py로 phrases 테이블에 먼저 이전하세요"
+        )
+    version = None
+    if path.exists():
+        conn = open_readonly(path)
+        try:
+            version = voice_schema.validate(conn)
+        finally:
+            conn.close()
+    config = voice_rules.path_for(path)
+    if config.exists():
+        voice_rules.read(config)
+    return {
+        "schema_version": version,
+        "canonical_version": voice_schema.VERSION,
+        "tables": list(TABLES),
+        "database": str(path),
+        "rules": str(config) if config.exists() else "code defaults",
+    }
 
 
 # ── Supabase 원격 백엔드 ────────────────────────────────────────────────
@@ -287,7 +301,8 @@ def edit_phrase(category, text, *, remove=False, db_path=None):
     except sqlite3.Error as exc:
         raise ValueError("문구 DB 열기 실패") from exc
     try:
-        conn.executescript(SCHEMA)
+        conn.execute("BEGIN IMMEDIATE")
+        voice_schema.initialize(conn)
         if remove:
             cursor = conn.execute(
                 "DELETE FROM phrases WHERE category=? AND phrase=?", (category, text)
@@ -433,6 +448,9 @@ def main():
     ap.add_argument("--seed", action="store_true", help="빈 DB를 코드 기본값으로 초기화")
     ap.add_argument("--reset", action="store_true", help="--seed와 함께: 백업 후 로컬 DB 초기화")
     ap.add_argument("--dump", action="store_true", help="테이블 전체 JSON 출력")
+    ap.add_argument(
+        "--check-schema", action="store_true", help="정본 3테이블/규칙 검사 (읽기 전용)"
+    )
     ap.add_argument("--set", nargs=2, metavar=("KEY", "VALUE"), help="settings 변경")
     ap.add_argument(
         "--add",
@@ -462,15 +480,24 @@ def main():
     if args.reset and (not args.seed or args.remote):
         ap.error("--reset은 로컬 --seed와 함께만 사용합니다")
     if args.remote:
+        if args.check_schema:
+            ap.error("--check-schema는 로컬 SQLite 검사입니다")
         _remote_main(args, ap)
         return
+    try:
+        status = check_schema(args.db)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        ap.exit(1, f"[store] {exc}\n")
+    if args.check_schema:
+        print(json.dumps(status, ensure_ascii=False, indent=2))
     if args.seed:
         changed = seed(args.db, reset=args.reset)
         print(f"[store] {'seeded' if changed else 'kept existing data'} {args.db}")
     if args.set:
         conn = sqlite3.connect(args.db)
         try:
-            conn.executescript(SCHEMA)
+            conn.execute("BEGIN IMMEDIATE")
+            voice_schema.initialize(conn)
             conn.execute(
                 "INSERT INTO settings VALUES (?,?,?) ON CONFLICT(key)"
                 " DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
@@ -505,7 +532,8 @@ def main():
     if args.add_roster or args.del_roster or args.add_phrase or args.del_phrase:
         conn = sqlite3.connect(args.db)
         try:
-            conn.executescript(SCHEMA)
+            conn.execute("BEGIN IMMEDIATE")
+            voice_schema.initialize(conn)
             if args.add_roster:
                 conn.execute(
                     "INSERT OR IGNORE INTO roster VALUES (?,?)",

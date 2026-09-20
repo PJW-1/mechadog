@@ -1,8 +1,25 @@
 # 음성 설정과 합성 MES 데이터 관리
 
-음성 DB는 **8개에서 3개 테이블로 줄였다**. 운영자가 바꾸는 설정·명단·추가 응답은 DB,
+음성 DB 정본은 **3테이블(`settings`, `roster`, `phrases`)로 확정**했다.
+8테이블 음성 DB는 이전 입력으로만 지원하며, 두 구조를 선택해서 운용하지 않는다.
+운영자가 바꾸는 설정·명단·추가 응답은 DB,
 고정 발화 규칙은 `voice_data.rules.json`으로 관리한다. PC에서 읽는 데이터이며
 WonderEcho 펌웨어에 DB나 AI 모델을 넣지 않는다. 기능이나 명령 종류를 줄인 것이 아니다.
+
+SQLite의 단일 정의는 `voice_schema.py`이며 생성·관리·가져오기·이전 도구가 함께 쓴다.
+정본 `PRAGMA user_version`은 **2**다. 음성 실행 시작과 CLI 관리는 구형 규칙 테이블,
+다른 영역의 테이블, 불완전한 컬럼/기본키, 알 수 없는 버전을 발견하면 이전 안내와 함께
+중단한다. DB를 무시하고 기본 규칙으로 계속 실행하거나 자동 삭제하지 않는다.
+다음 읽기 전용 검사로 설치 상태를 확인한다.
+
+```powershell
+python voice_store.py --check-schema
+```
+
+이전 최적화판의 정확한 3테이블/버전0 DB도 읽을 수 있다. 아래 이전 도구를 실행하면
+전체 백업 후 데이터를 재시드하지 않고 버전2로 등록한다. 버전2를 다시 이전하면 변경하지 않는다.
+**음성3 + 별도 MES5 = 공유 묶음 총8**이며, 구형 음성8테이블과 다른 뜻이다.
+`demo_preview.db` 같은 합쳐진 확인용 DB를 음성 실행 DB로 지정하면 거부한다.
 
 **팀원이 같은 데이터를 설치하려면:** [공유 데이터 안내](demo/README.md)를 따라
 `python prepare_demo.py --output-dir .`를 실행한다. 저장소의 합성 JSON에서
@@ -73,10 +90,13 @@ JSON 안의 빈 목록은 해당 규칙을 끄는 명시적 설정이다(비상�
 ### 기존 8테이블 DB 이전
 
 DB/설정 편집 프로세스를 종료한 뒤 실행한다. 서비스 중 자동 이전하지 않는다.
+`phrases_custom.json`만 있고 DB가 없다면 먼저 `python prepare_demo.py --output-dir .`로
+실행 DB를 만든 뒤 아래 명령을 실행한다. 기존 JSON의 문구는 이전 시 DB로 가져온다.
 
 ```powershell
 python migrate_voice_db.py --db voice_data.db --check
 python migrate_voice_db.py --db voice_data.db
+python voice_store.py --db voice_data.db --check-schema
 ```
 
 검증 → SQLite 전체 백업 → 유효한 규칙 JSON 저장 → 5개 규칙 테이블 제거 순서다.

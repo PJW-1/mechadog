@@ -14,14 +14,9 @@ import warnings
 from functools import lru_cache
 from pathlib import Path
 
+from voice_schema import LEGACY
+
 KINDS = ("wake", "sleep", "resume", "emergency", "status", "machine")
-LEGACY = {
-    "keywords": ("kind", "word"),
-    "command_endings": ("ending",),
-    "action_commands": ("phrase", "action", "ack"),
-    "scenario_triggers": ("phrase", "scenario"),
-    "factory_rules": ("keyword", "endpoint", "needs_line", "attach_line", "priority"),
-}
 PROTECTED = ("비상정지", "긴급정지", "스톱")
 _cache = {}
 

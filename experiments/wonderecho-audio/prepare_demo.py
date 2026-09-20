@@ -15,6 +15,7 @@ from pathlib import Path
 
 import db_transfer
 import voice_rules
+import voice_schema
 from sqlite_admin import open_readonly
 
 DEFAULT_BUNDLE = Path(__file__).with_name("demo") / "voice_mes.json"
@@ -32,6 +33,8 @@ def prepare(output_dir, bundle_path=DEFAULT_BUNDLE):
         if path.exists():
             conn = open_readonly(path)
             try:
+                if spec is db_transfer.VOICE:
+                    voice_schema.validate(conn)
                 names = {
                     r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }

@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import voice_rules
+import voice_schema
 import voice_store
 from sqlite_admin import backup_database, open_readonly
 
@@ -55,15 +56,18 @@ def migrate(db_path, *, check=False):
     )
     try:
         conn.execute("BEGIN" if check else "BEGIN IMMEDIATE")
+        version = voice_schema.validate(conn, allow_legacy=True)
         legacy, rules, phrases, custom = _plan(conn, db_path)
         result = {
+            "from_version": version,
+            "to_version": voice_schema.VERSION,
             "legacy_rows": {t: len(rows) for t, rows in legacy.items()},
             "custom_phrases": len(phrases),
             "rules_file": str(voice_rules.path_for(db_path)) if legacy else None,
             "backup": None,
             "changed": False,
         }
-        if check or not (legacy or custom.exists()):
+        if check or not (legacy or custom.exists() or version != voice_schema.VERSION):
             return result
         # A separate read connection can back up while this connection holds the write lock.
         result["backup"] = str(backup_database(db_path))
@@ -75,7 +79,7 @@ def migrate(db_path, *, check=False):
             voice_rules.save(voice_rules.path_for(db_path), rules)
         for table in legacy:
             conn.execute(f'DROP TABLE "{table}"')
-        conn.execute("PRAGMA user_version=2")
+        voice_schema.initialize(conn)
         conn.commit()
         result["changed"] = True
         # Rename after commit: even an interrupted rename can only cause an idempotent reimport.
