@@ -1,5 +1,11 @@
 # PC 환경 구축 — 음성 인식·합성
 
+**DB 설치 정본:** [DB_GUIDE.md](DB_GUIDE.md)의 음성3테이블 + 규칙 JSON 구성이다.
+팀 합성 자료는 `python prepare_demo.py --output-dir .`로 만들고
+`python voice_store.py --check-schema`로 확인한다. 기존 음성8테이블 DB는 먼저
+`python migrate_voice_db.py --db voice_data.db`로 백업·이전한다.
+추가 응답은 `phrases` 테이블에만 저장하며 `phrases_custom.json`은 구버전 이전 입력이다.
+
 WonderEcho 모듈이 마이크와 스피커를 맡고, **판단은 전부 이 PC가 한다.** 모듈에서는 한국어 인식을 하지 않는다 — 모듈 CPU로는 불가능하고, 인식은 PC의 GPU가 한다.
 
 ```

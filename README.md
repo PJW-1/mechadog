@@ -2,6 +2,9 @@
 
 ## 관제 화면
 
+음성모듈 팀 설치·합성 DB 자료는 **[음성·MES 데이터 안내](experiments/wonderecho-audio/demo/README.md)**에서
+확인할 수 있습니다. 음성 DB 3테이블, MES 5테이블과 발화 규칙을 한 명령으로 재현합니다.
+
 **[관제 대시보드](docs/DASHBOARD.md)** — 3D 현장 관제, 작업 페이지, 수동 제어 · 비상정지. 화면은
 `host/dashboard/static/` 에 있고 런타임의 관제 서버가 **설치 없이** 내보냅니다.
 

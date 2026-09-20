@@ -64,7 +64,7 @@ class MesApiTest(unittest.TestCase):
         conn.close()
         r = self._get("/api/production?line=A")["data"][0]
         self.assertTrue(r["stale"])
-        factory_mes.seed(self.db)  # 다른 테스트용 복원
+        factory_mes.seed(self.db, reset=True)  # 다른 테스트용 복원
 
     def test_shipments_bad_days_is_400(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:
@@ -150,7 +150,7 @@ class FactoryLinkTest(unittest.TestCase):
         ok, s = fl.answer_query("B라인 작업지시", self.base)
         self.assertTrue(ok)
         self.assertIn("없습니다", s)
-        factory_mes.seed(self.db)  # 복원
+        factory_mes.seed(self.db, reset=True)  # 복원
 
     def test_stale_answer(self):
         conn = sqlite3.connect(self.db)
@@ -160,7 +160,7 @@ class FactoryLinkTest(unittest.TestCase):
         ok, s = fl.answer_query("생산 현황", self.base)
         self.assertTrue(ok)
         self.assertIn("허용 시간을 초과", s)
-        factory_mes.seed(self.db)
+        factory_mes.seed(self.db, reset=True)
 
     def test_stale_rows_excluded_not_blocked(self):
         # 일부 행만 오래됐으면 신선한 행은 답하고 제외 사실을 알린다.
@@ -175,7 +175,7 @@ class FactoryLinkTest(unittest.TestCase):
         self.assertIn("A라인", s)
         self.assertNotIn("C라인은", s)  # stale 행은 답변에서 빠진다
         self.assertIn("제외", s)
-        factory_mes.seed(self.db)
+        factory_mes.seed(self.db, reset=True)
 
     def test_api_down(self):
         ok, s = fl.answer_query("생산 현황", "http://127.0.0.1:9")
