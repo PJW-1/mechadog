@@ -454,7 +454,7 @@ class HallucinationFilterTests(unittest.TestCase):
     @staticmethod
     def _model(segments):
         class FakeModel:
-            def transcribe(self, audio, **kwargs):
+            def transcribe(self, *_a, **_k):
                 return segments, {}
 
         return FakeModel()
@@ -462,9 +462,7 @@ class HallucinationFilterTests(unittest.TestCase):
     def test_high_no_speech_prob_segment_is_dropped(self):
         segs = [
             types.SimpleNamespace(text=" 메카독 ", no_speech_prob=0.05),
-            types.SimpleNamespace(
-                text=" 오늘도 시청해 주셔서 감사합니다. ", no_speech_prob=0.753
-            ),
+            types.SimpleNamespace(text=" 오늘도 시청해 주셔서 감사합니다. ", no_speech_prob=0.753),
         ]
         text = vp.transcribe(self._model(segs), b"\x00\x00\xff\x7f")
         self.assertEqual(text, "메카독")
@@ -495,9 +493,7 @@ class PassphraseTests(unittest.TestCase):
     def test_configured_list_overrides_code_default(self):
         import json
 
-        with mock.patch.object(
-            vp.voice_store, "setting", return_value=json.dumps(["새 암구호"])
-        ):
+        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps(["새 암구호"])):
             self.assertTrue(vp.match_passphrase("새 암구호입니다"))
             self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
 
@@ -510,9 +506,7 @@ class AuthLinkTests(unittest.TestCase):
     """로봇 FSM 과의 연결 — 대조 결과만 보내고 인식 텍스트는 보내지 않는다."""
 
     def test_robot_state_returns_fsm_state(self):
-        with mock.patch.object(
-            robotlink, "_get", return_value={"state": "AUTH_WAIT"}
-        ) as get:
+        with mock.patch.object(robotlink, "_get", return_value={"state": "AUTH_WAIT"}) as get:
             self.assertEqual(robotlink.robot_state(), "AUTH_WAIT")
             get.assert_called_once()
 
@@ -523,7 +517,7 @@ class AuthLinkTests(unittest.TestCase):
     def test_post_auth_result_sends_only_the_verdict(self):
         captured = {}
 
-        def fake_post(base, path, body, timeout=3.0):
+        def fake_post(_base, path, body, **_k):
             captured["path"], captured["body"] = path, body
             return {"accepted": True}
 

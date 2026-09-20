@@ -503,9 +503,7 @@ def test_auth_fail_returns_to_alert(service):
     assert behavior.state == "ALERT"
 
 
-@pytest.mark.parametrize(
-    "state,events", [(s, e) for s, e in ROUTES.items() if s != "ALERT"]
-)
+@pytest.mark.parametrize("state,events", [(s, e) for s, e in ROUTES.items() if s != "ALERT"])
 def test_auth_is_refused_outside_auth_wait(service, state, events):
     """**인증 대기 중이 아니면 판정 결과를 받지 않는다** — 임의 시각에 `ok` 를
     밀어 넣어 인증을 통과하는 경로가 없어야 한다. (ALERT 는 AUTH_WAIT 의 전신이라
@@ -562,9 +560,7 @@ def test_auth_endpoint_does_not_execute_speech(client):
     """인식 텍스트를 그대로 받는 엔드포인트가 아니다 — `text` 필드를 내도
     명령으로 실행되지 않는다 (임의 음성 → 로봇 명령 경로 차단)."""
     http, behavior, sent = client
-    body = http.post(
-        "/api/command/auth", json={"result": "ok", "text": "순찰 시작해"}
-    ).json()
+    body = http.post("/api/command/auth", json={"result": "ok", "text": "순찰 시작해"}).json()
     assert body["accepted"] is False
     assert behavior.state == "IDLE"
     assert sent == []
