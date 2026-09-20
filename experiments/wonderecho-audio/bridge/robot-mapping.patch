@@ -1,0 +1,41 @@
+--- a/firmware_mechdog_motion/src/voice_dispatch.cpp
++++ b/firmware_mechdog_motion/src/voice_dispatch.cpp
+@@ -27,9 +27,9 @@
+ const char* voiceCmdName(uint8_t id) {
+   switch (id) {
+     case 1: return "GO-STRAIGHT";
+-    case 2: return "TURN-LEFT";
+-    case 3: return "TURN-RIGHT";
+-    case 4: return "GO-BACKWARD";
++    case 3: return "TURN-LEFT";
++    case 4: return "TURN-RIGHT";
++    case 2: return "GO-BACKWARD";
+     case 9: return "STOP";
+     case 10: return "STAND-UP";
+     case 11: return "LIE-DOWN";
+@@ -37,7 +37,7 @@
+     case 26: return "HELLO";
+     case 27: return "INTRODUCE-YOURSELF";
+     case 28: return "SHOW-A-SKILL";
+-    case 29: return "DIVE-FORWARD";
++    case 29: return "MARCH";
+     case 30: return "SHAKE-HEAD";
+     default: return "?";
+   }
+@@ -106,13 +106,13 @@
+     case 1:  // GO-STRAIGHT — "Move forward"
+       voiceMove(motion, state, safety, id, 40.0F, 0.0F);
+       break;
+-    case 2:  // TURN-LEFT — +angle 은 반시계 = 좌회전 (PROTOCOL 부호 규약)
++    case 3:  // TURN-LEFT — +angle 은 반시계 = 좌회전 (PROTOCOL 부호 규약)
+       voiceMove(motion, state, safety, id, 30.0F, 20.0F);
+       break;
+-    case 3:  // TURN-RIGHT
++    case 4:  // TURN-RIGHT
+       voiceMove(motion, state, safety, id, 30.0F, -20.0F);
+       break;
+-    case 4:  // GO-BACKWARD — 후진은 장애물 반사 정지에서도 허용되는 탈출로다
++    case 2:  // GO-BACKWARD — 후진은 장애물 반사 정지에서도 허용되는 탈출로다
+       voiceMove(motion, state, safety, id, -40.0F, 0.0F);
+       break;
+     case 9:  // STOP
