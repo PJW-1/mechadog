@@ -3,6 +3,7 @@
 Requires the local vendor SDK and CI1302 image; generated fixtures stay local.
 The ROM strncmp pointer is bound to host strncmp; playback hardware is not tested.
 """
+
 import hashlib
 import json
 import os
@@ -17,13 +18,13 @@ OUT.mkdir(parents=True, exist_ok=True)
 PLAYER = SDK / "components/player/audio_play"
 raw = Path("<OUT_DIR>/35-diag.bin").read_bytes()
 voice_start, voice_size = struct.unpack_from("<II", raw, 8192 + 166 + 4 * 17 + 4)
-voice = raw[voice_start:voice_start + voice_size]
+voice = raw[voice_start : voice_start + voice_size]
 count = struct.unpack_from("<H", voice)[0]
 rows = []
 for index in range(count):
     ident, offset, size = struct.unpack_from("<HII", voice, 2 + index * 10)
     assert offset + size <= len(voice)
-    data = voice[offset:offset + size]
+    data = voice[offset : offset + size]
     is_mp3 = data[:3] == b"ID3" and data[20:22] == b"CI"
     if is_mp3:
         assert struct.unpack_from("<I", data, 22)[0] == size
@@ -40,12 +41,15 @@ while depth:
     end += 1
 function = body[start:end]
 types = (PLAYER / "audio_play_decoder.h").read_text(encoding="utf-8")
-types = types[types.index("typedef enum"):types.index("} prompt_decoder_config;") + len("} prompt_decoder_config;")]
+types = types[
+    types.index("typedef enum") : types.index("} prompt_decoder_config;")
+    + len("} prompt_decoder_config;")
+]
 fixture = "\n".join(
     f"{{{ident},{size},{is_mp3},{{{','.join(str(b) for b in head)}}}}},"
     for ident, size, is_mp3, head in rows
 )
-harness = r'''
+harness = r"""
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -57,10 +61,14 @@ harness = r'''
 struct rom_stub { struct { int (*strncmp_p)(const char*,const char*,size_t); } newlibcfunc; };
 static const struct rom_stub host_rom = {{strncmp}};
 #define MASK_ROM_LIB_FUNC (&host_rom)
-'''
+"""
 harness += types + "\n" + function + "\n"
-harness += "struct fixture {unsigned id, size, mp3; uint8_t head[64];};\nstatic const struct fixture fixtures[]={\n" + fixture + "\n};\n"
-harness += r'''
+harness += (
+    "struct fixture {unsigned id, size, mp3; uint8_t head[64];};\nstatic const struct fixture fixtures[]={\n"
+    + fixture
+    + "\n};\n"
+)
+harness += r"""
 int main(int argc, char **argv) {
     if (argc>1) CHECK(strcmp(argv[1],"force-failure")!=0);
     unsigned accepted=0, rejected=0;
@@ -95,7 +103,7 @@ int main(int argc, char **argv) {
     printf("mp3_enabled=%d accepted=%u rejected=%u PCM48=PASS invalid_CI=PASS\n",AUDIO_PLAY_SUPPT_MP3_PROMPT,accepted,rejected);
     return 0;
 }
-'''
+"""
 harness = harness.replace("assert(", "CHECK(")
 (OUT / "parser_regression.c").write_text(harness, encoding="utf-8")
 zig = Path("<ZIG_EXE>")
@@ -105,7 +113,25 @@ env["ZIG_GLOBAL_CACHE_DIR"] = str(ROOT / "zig-global-cache")
 results = []
 for enabled in (0, 1):
     exe = OUT / f"parser_mp3_{enabled}.exe"
-    proc = subprocess.run([str(zig), "cc", "-std=c11", "-Wall", "-Wextra", "-O1", f"-DAUDIO_PLAY_SUPPT_MP3_PROMPT={enabled}", "-I", str(PLAYER), str(OUT / "parser_regression.c"), "-o", str(exe)], capture_output=True, env=env, timeout=90)
+    proc = subprocess.run(
+        [
+            str(zig),
+            "cc",
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-O1",
+            f"-DAUDIO_PLAY_SUPPT_MP3_PROMPT={enabled}",
+            "-I",
+            str(PLAYER),
+            str(OUT / "parser_regression.c"),
+            "-o",
+            str(exe),
+        ],
+        capture_output=True,
+        env=env,
+        timeout=90,
+    )
     (OUT / f"compile-{enabled}.log").write_bytes(proc.stdout + proc.stderr)
     if proc.returncode:
         raise RuntimeError(proc.stderr.decode(errors="replace"))
@@ -113,6 +139,15 @@ for enabled in (0, 1):
     assert negative.returncode == 1 and b"check failed" in negative.stderr
     run = subprocess.run([str(exe)], capture_output=True, check=True, timeout=30)
     results.append(run.stdout.decode().strip())
-report = {"actual_sdk_function_sha256": hashlib.sha256(function.encode()).hexdigest(), "image_sha256": hashlib.sha256(raw).hexdigest(), "factory_mp3_voices": 156, "metadata_entries": 1, "runs": results, "checks_always_enabled": True, "harness_negative_control": True, "physical_playback_tested": False}
+report = {
+    "actual_sdk_function_sha256": hashlib.sha256(function.encode()).hexdigest(),
+    "image_sha256": hashlib.sha256(raw).hexdigest(),
+    "factory_mp3_voices": 156,
+    "metadata_entries": 1,
+    "runs": results,
+    "checks_always_enabled": True,
+    "harness_negative_control": True,
+    "physical_playback_tested": False,
+}
 (ROOT / "header-regression.json").write_text(json.dumps(report, indent=2) + "\n")
 print(json.dumps(report, indent=2))

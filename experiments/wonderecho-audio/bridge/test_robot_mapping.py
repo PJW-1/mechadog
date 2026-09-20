@@ -1,14 +1,15 @@
 """Compile the corrected robot dispatcher against bounded fake hardware."""
+
 import os
 import re
 import subprocess
 from pathlib import Path
 
-ROOT=Path('<WE_SDK_TREE>')
-ZIG=Path('<ZIG_EXE>')
-source=(ROOT/'voice_dispatch.corrected.cpp').read_text(encoding='utf-8')
-source=re.sub(r'^#include[^\n]*\n','',source,flags=re.MULTILINE)
-prefix=r'''
+ROOT = Path("<WE_SDK_TREE>")
+ZIG = Path("<ZIG_EXE>")
+source = (ROOT / "voice_dispatch.corrected.cpp").read_text(encoding="utf-8")
+source = re.sub(r"^#include[^\n]*\n", "", source, flags=re.MULTILINE)
+prefix = r"""
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -47,8 +48,8 @@ bool otaPendingVerify() { return pending; }
 bool lockI2cBus(int) { return true; }
 void unlockI2cBus() {}
 }
-'''
-suffix=r'''
+"""
+suffix = r"""
 int main() {
     using namespace mechadog;
     MotionHal m; MotionSafetyState s; SafetyMonitor safety;
@@ -70,16 +71,33 @@ int main() {
     pending=false; dispatch(m,s,safety,0xe0); assert(m.moves==before);
     puts("PASS: actual robot dispatcher directions, labels, stop, safety/OTA gates, unknown IDs");
 }
-'''
-test = ROOT / 'test_robot_mapping.cpp'
-test.write_text(prefix + source + suffix, encoding='utf-8')
-env=os.environ.copy()
-env['ZIG_LOCAL_CACHE_DIR']=str(ROOT/'zig-local-cache')
-env['ZIG_GLOBAL_CACHE_DIR']=str(ROOT/'zig-global-cache')
-exe=ROOT/'test_robot_mapping.exe'
-with (ROOT/'robot-test-compile.log').open('wb') as out:
-    subprocess.run([str(ZIG),'c++','-std=c++17','-Wall','-Wextra','-Werror','-O0',str(test),'-o',str(exe)],
-                   env=env,stdout=out,stderr=subprocess.STDOUT,check=True,timeout=180)
-result=subprocess.run([str(exe)],capture_output=True,check=True,timeout=10)
-(ROOT/'robot-test.log').write_bytes(result.stdout+result.stderr)
+"""
+test = ROOT / "test_robot_mapping.cpp"
+test.write_text(prefix + source + suffix, encoding="utf-8")
+env = os.environ.copy()
+env["ZIG_LOCAL_CACHE_DIR"] = str(ROOT / "zig-local-cache")
+env["ZIG_GLOBAL_CACHE_DIR"] = str(ROOT / "zig-global-cache")
+exe = ROOT / "test_robot_mapping.exe"
+with (ROOT / "robot-test-compile.log").open("wb") as out:
+    subprocess.run(
+        [
+            str(ZIG),
+            "c++",
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-O0",
+            str(test),
+            "-o",
+            str(exe),
+        ],
+        env=env,
+        stdout=out,
+        stderr=subprocess.STDOUT,
+        check=True,
+        timeout=180,
+    )
+result = subprocess.run([str(exe)], capture_output=True, check=True, timeout=10)
+(ROOT / "robot-test.log").write_bytes(result.stdout + result.stderr)
 print(result.stdout.decode())
