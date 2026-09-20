@@ -22,7 +22,7 @@ from host.common.protocol import TelemetryEncoder
 from host.runtime import Runtime, watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
-from host.vision.person import Sighting
+from host.vision.person import FallenVerdict, Sighting
 from host.vision.tracker import Track
 from host.vision.vlm_reader import VlmReader
 from host.vision.worker import VisionResult
@@ -145,6 +145,9 @@ def vision_result(
             last_seen_ms=last_seen_ms,
             box=box if hits else None,
         ),
+        # 쓰러짐 판정은 **여기서 재지 않는다** — 이 빌더는 판정 결과를 흉내 내는
+        # 자리이고, 규칙 자체는 `test_fallen_gate.py` 가 전수로 닫는다.
+        fallen=FallenVerdict(fallen=False, changed=False, candidate=False, aspect=None, still_ms=0),
         # 추적 결과는 검출이 있을 때만 붙는다 — 보이지 않는 대상을 결과로 내보내지
         # 않는 것이 추적기의 계약이다 (`3.3.4`).
         tracks=((Track(track_id=1, box=box, score=0.9, last_seen_ms=at_ms),) if hits else ()),
@@ -1312,6 +1315,7 @@ def _zone_frame(seq: int, at_ms: int, *, detections, markers=()) -> VisionResult
         sighting=Sighting(
             present=False, changed=True, hits=0, best_score=0.0, last_seen_ms=None, box=None
         ),
+        fallen=FallenVerdict(fallen=False, changed=False, candidate=False, aspect=None, still_ms=0),
         tracks=(),
         markers=markers,
     )
@@ -1949,3 +1953,63 @@ def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -
 
     monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
     assert module.main(["--device", "test", "--no-vision", "--mode", "factory"]) == 2
+
+
+# ── 쓰러짐이 기록까지 가는가 (WBS 4.8.3 · FR-9) ──────────────────
+#
+# ⚠️ **여기도 호출부를 잠근다.** 규칙 자체는 `test_fallen_gate.py` 가 전수로 닫았다.
+# 남은 위험은 `3.5.4` 와 같은 모양 — 게이트는 도는데 런타임이 결과를 읽지 않아
+# 판정이 어디에도 남지 않는 것이다.
+
+
+def _fell(runtime: Runtime, vision: FakeVision, *, seq: int, at_ms: int, changed: bool) -> None:
+    """워커가 쓰러짐을 확정해 온 프레임."""
+    from dataclasses import replace
+
+    vision.result = replace(
+        vision_result(seq, at_ms, present=True, hits=3, last_seen_ms=at_ms),
+        fallen=FallenVerdict(
+            fallen=True, changed=changed, candidate=True, aspect=3.25, still_ms=3000
+        ),
+    )
+    runtime.tick(at_ms)
+
+
+def _fallen_runtime(config: dict, clock: FakeClock, tmp_path: Path):
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    vision = FakeVision()
+    runtime = Runtime(cfg, device_id=DEVICE, clock=clock, vision=vision, blackbox=blackbox)
+    runtime.start_patrol(clock.ms)
+    return runtime, vision, blackbox
+
+
+def test_a_confirmed_fall_is_recorded_with_its_reason(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """확정만으로는 부족하다 — **왜 그렇게 봤는지**가 사진 옆에 남아야 한다."""
+    runtime, vision, blackbox = _fallen_runtime(config, clock, tmp_path)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=True)
+
+    falls = [entry for entry in blackbox.feed() if entry.event_type == "person_fallen"]
+    assert falls, "쓰러짐을 확정했는데 기록이 없다 — 게이트를 아무도 읽지 않는다"
+    judgement = falls[0].judgement
+    assert judgement["fallen"] is True
+    assert judgement["aspect"] == pytest.approx(3.25)
+    assert judgement["still_ms"] == 3000
+
+
+def test_a_fall_is_recorded_once_not_every_tick(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ 쓰러진 사람은 계속 쓰러져 있다 — 10Hz 로 기록하면 디스크가 찬다."""
+    runtime, vision, blackbox = _fallen_runtime(config, clock, tmp_path)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=True)
+    for i in range(4):
+        _fell(runtime, vision, seq=i + 2, at_ms=200 + i * 100, changed=False)
+
+    falls = [entry for entry in blackbox.feed() if entry.event_type == "person_fallen"]
+    assert len(falls) == 1, "엣지에서만 한 번이어야 한다"

@@ -231,6 +231,9 @@ class Runtime:
                 budget_ms=int(config["vision"]["vlm"]["budget_ms"]),
             )
         )
+        #: 쓰러짐 확정 기준. 기록에 함께 실어 **그때 무슨 기준이었는지**를 남긴다 —
+        #: 설정을 고친 뒤 옛 기록을 보면 기준을 알 수 없다.
+        self._fallen_confirm_ms = int(config["vision"]["fallen"]["confirm_ms"])
         #: 이번 구역에서 판독을 이미 걸었나. **구역당 한 번만 건다** — 사이클마다
         #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다.
         self._zone_vlm_asked = False
@@ -502,6 +505,7 @@ class Runtime:
                 self._apply(Event.PERSON_FOUND, now_ms)
                 self._record_person_event(result)
         if fresh:
+            self._observe_fallen(result)
             self._track(result, now_ms)
             self._inspect_zone(result, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
@@ -711,6 +715,38 @@ class Runtime:
             LOG.info("zone_clear", zone=zone, cycles=self._zone_cycles)
             self._leave_zone(now_ms)
 
+    def _observe_fallen(self, result: Any) -> None:
+        """쓰러짐 판정의 **엣지에서만** 남긴다 (`4.8.3` · FR-9).
+
+        ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
+        같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
+
+        ⚠️ **사건(FSM 전이)을 내지 않는다.** `PERSON_DOWN` 은 전이표에 없고, 새로
+        만들면 에스컬레이션·모드 게이트까지 번진다. 지금은 **기록까지**이며 사건으로
+        옮기는 것은 별도 작업이다 — ADR-35 가 *"판정은 FSM 이 한다"* 고 적은 그 자리다.
+        """
+        verdict = getattr(result, "fallen", None)
+        if verdict is None or not verdict.changed:
+            return
+        LOG.warning(
+            "fallen_changed",
+            fallen=verdict.fallen,
+            aspect=verdict.aspect,
+            still_ms=verdict.still_ms,
+        )
+        if not verdict.fallen:
+            return
+        self._record_scene(
+            "person_fallen",
+            result,
+            {
+                "fallen": True,
+                "aspect": verdict.aspect,
+                "still_ms": verdict.still_ms,
+                "confirm_ms": self._fallen_confirm_ms,
+            },
+        )
+
     def _read_zone_scene(self, zone: str, result: Any, now_ms: int) -> None:
         """구역에 선 동안 장면을 한 번 읽는다 (`4.8.0` · ADR-35 호출 시점 ②).
 
@@ -727,12 +763,23 @@ class Runtime:
         reading = self._vlm.take()
         if reading is None:
             return
+        answers = {answer.key: answer.value for answer in reading.answers}
         LOG.info(
+            "zone_reading", zone=zone, degraded=reading.degraded, reason=reading.reason, **answers
+        )
+        self._record_scene(
             "zone_reading",
-            zone=zone,
-            degraded=reading.degraded,
-            reason=reading.reason,
-            **{answer.key: answer.value for answer in reading.answers},
+            result,
+            {
+                "zone": zone,
+                "degraded": reading.degraded,
+                "reason": reading.reason,
+                "answers": answers,
+                # ⚠️ **원문을 함께 남긴다.** 판독이 이상할 때 사람이 볼 것은 참/거짓이
+                # 아니라 모델이 실제로 뱉은 글이다.
+                "raw": {answer.key: answer.raw for answer in reading.answers},
+                "latency_ms": {answer.key: answer.latency_ms for answer in reading.answers},
+            },
         )
 
     def _apply_load_profile(self, mode: str) -> None:
@@ -811,11 +858,23 @@ class Runtime:
         저장·대시보드 오류가 제어 루프를 죽이면 로깅이 안전보다 우선하는 꼴이 되므로
         두 실패는 각각 기록하고 제어는 계속한다.
         """
+        self._record_scene("person_found", result)
+
+    def _record_scene(
+        self, event_type: str, result: Any, judgement: dict[str, Any] | None = None
+    ) -> None:
+        """사진과 **그릴 수 없는 판단 근거**를 한자리에 남긴다.
+
+        ⚠️ **검출 박스와 달리 이것들은 그림이 없다.** 쓰러짐 판정(`4.8.3`)은 숫자이고
+        VLM 판독(`4.8.0`)은 문장이라, 사진 옆에 적어 두지 않으면 나중에 *"왜 그렇게
+        판정했나"* 를 되짚을 방법이 없다.
+        """
         if self._blackbox is None:
             return
         try:
             entry = self._blackbox.record(
-                "person_found",
+                event_type,
+                judgement=judgement,
                 jpeg=result.jpeg,
                 tracks=result.tracks,
                 detections=result.detections,
