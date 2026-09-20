@@ -18,7 +18,17 @@ import urllib.parse
 import urllib.request
 
 
-def _request(method, base, key, table, params=None, body=None, upsert=False, timeout=3.0):
+def _request(
+    method,
+    base,
+    key,
+    table,
+    params=None,
+    body=None,
+    upsert=False,
+    timeout=3.0,
+    ignore_duplicates=False,
+):
     url = f"{base.rstrip('/')}/rest/v1/{table}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -28,7 +38,9 @@ def _request(method, base, key, table, params=None, body=None, upsert=False, tim
         "Accept": "application/json",
     }
     if upsert:
-        headers["Prefer"] = "resolution=merge-duplicates"
+        headers["Prefer"] = "resolution=" + (
+            "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
+        )
     data = json.dumps(body, ensure_ascii=False).encode() if body is not None else None
     if data is not None:
         headers["Content-Type"] = "application/json"
@@ -53,11 +65,20 @@ def get_rows(base, key, table, params=None, timeout=3.0):
     return _request("GET", base, key, table, params, timeout=timeout)
 
 
-def upsert_rows(base, key, table, rows, timeout=5.0):
+def upsert_rows(base, key, table, rows, timeout=5.0, *, ignore_duplicates=False):
     """PK 기준 upsert — rows는 dict 또는 dict 리스트. 성공 시 True."""
     if isinstance(rows, dict):
         rows = [rows]
-    out = _request("POST", base, key, table, body=rows, upsert=True, timeout=timeout)
+    out = _request(
+        "POST",
+        base,
+        key,
+        table,
+        body=rows,
+        upsert=True,
+        timeout=timeout,
+        ignore_duplicates=ignore_duplicates,
+    )
     return out is not None
 
 

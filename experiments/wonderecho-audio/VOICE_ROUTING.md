@@ -174,9 +174,9 @@ fallback이다. 확장 방향(해도 되는 것과 구조상 하면 안 되는 �
 | `action_commands` | 발화 구문 → (로봇 명령, 확인 멘트) | 〃 | `robotlink` |
 | `scenario_triggers` | 발화 구문 → 시나리오 이름 | 〃 | `scenarios.match_trigger` |
 | `factory_rules` | 키워드 → MES 엔드포인트 규칙 | 〃 | `factorylink.classify` |
-| `roster` | 신원 확인 직원 명단 | DB 행 있으면 DB, 없으면 `knowledge/직원명단.txt` | `scenarios.sc_guard` |
+| `roster` | 신원 확인 직원 명단 | DB 사용 중 빈 명단/오류는 0명, DB 미사용 시에만 파일 | `scenarios.sc_guard` |
 | `phrases` | 응답 문구 **추가분** | 기본 문구는 코드 불변, DB는 얹기만 한다 | `phrases.merged` |
-| `settings` | follow_s·stt_prompt·API 주소·암구호류 키-값 | 키 있으면 DB 값 | `voice_pipeline` 등 |
+| `settings` | follow_s·stt_prompt·API 주소 등의 키-값 | 키 있으면 DB 값 | `voice_pipeline` 등 |
 
 경계는 그대로다:
 
@@ -188,15 +188,15 @@ fallback이다. 확장 방향(해도 되는 것과 구조상 하면 안 되는 �
   `scenario_triggers`는 기존 SCENARIOS 키로만 매핑된다.
 - **민감 값**: settings 키가 `pass|secret|token|code|key`를 포함하면
   `--set` 에코와 `--dump` 출력에서 `***`로 가린다(평문 로그 방지).
-- **장애 시**: DB 없음·테이블 없음·SQL 오류는 전부 코드 기본값으로 fallback —
-  저장소 문제가 음성 루프를 죽이지 않는다.
+- **장애 시**: 일반 설정은 코드 기본값을 쓸 수 있다. 단, 사용 중인 `roster`의
+  빈 명단·조회 실패는 승인 대상 0명이다. 파일 명단으로 다시 승인하지 않는다.
 
 ### 원격 백엔드 — Supabase
 
 `SUPABASE_URL` + `SUPABASE_ANON_KEY` 환경변수가 있으면 읽기는 Supabase
 PostgREST가 우선이다. 사슬은 `Supabase → 로컬 voice_data.db → 코드 기본값` —
-원격이 실패하거나 테이블이 비어 있으면 다음 단계로 내려간다(테이블 통삭제
-실수가 명단을 즉발로 날리지 않게). 매 턴 왕복을 막는 TTL 캐시는
+일반 설정은 원격 실패/빈 결과에 다음 단계로 내려간다. 신원 명단은 빈 결과·오류를
+승인 0명으로 처리하며 만료된 캐시를 재사용하지 않는다. TTL 캐시는
 `VOICE_STORE_TTL`초(기본 60). 쓰기(`--remote` 플래그)는
 `SUPABASE_WRITE_KEY`(service role)가 필요 — 음성 PC에는 anon 키만 둔다.
 테이블 스키마와 anon 읽기 RLS 정책은 `supabase_setup.sql` 참조.
@@ -209,7 +209,7 @@ PostgREST가 우선이다. 사슬은 `Supabase → 로컬 voice_data.db → 코�
 운영 CLI:
 
 ```bash
-python voice_store.py --seed                  # 코드 기본값으로 생성/초기화
+python voice_store.py --seed                  # 빈 DB만 초기화 (기존 자료 보존)
 python voice_store.py --dump                  # 전체 테이블 확인(민감값 마스킹)
 python voice_store.py --set follow_s 30       # 설정 변경
 python voice_store.py --add wake 메카독이      # 웨이크워드 추가
@@ -217,8 +217,10 @@ python voice_store.py --add-roster 홍길동      # 직원 명단 추가
 python voice_store.py --del-roster 김민수      # 퇴사자 삭제
 python voice_store.py --add-phrase greeting "안녕하세요, 현장지원 로봇입니다."
 # 같은 명령에 --remote를 붙이면 Supabase에 적용 (SUPABASE_WRITE_KEY 필요)
-python voice_store.py --seed --remote         # 코드 기본값을 Supabase로 업서트
+python voice_store.py --seed --remote         # 누락 기본 행 추가 (기존 키 값 보존)
 ```
+
+가져오기·백업·명시적 초기화와 메인 안전 이력 DB의 경계는 [DB_GUIDE.md](DB_GUIDE.md)를 참조한다.
 
 ## 10. 운영 메모
 

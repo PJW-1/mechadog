@@ -69,22 +69,19 @@ LLM은 SQL, 숫자, 상태, 로봇 명령을 만들지 않는다. 오래된 값�
 
 ### 설정 데이터의 정본 — `voice_data.db` (선택적 오버레이)
 
-암구호형 트리거·직원 명단·설정은 코드 기본값이 정본이고, `voice_store.py`가 관리하는
-`voice_data.db` 행이 있으면 그쪽이 우선한다. **DB가 없어도 모든 기능이 코드 기본값으로 동작**한다 —
-DB는 배포 필수품이 아니라 운영 오버레이며, git에도 올라가지 않는다. DB 파일·테이블·SQL 오류는 전부
-조용히 기본값으로 돌아가서 저장소 장애가 음성 루프를 죽이지 않는다.
+음성 설정 8테이블은 유지하며, DB가 있으면 코드 기본값보다 우선한다.
+일반 설정은 DB 장애 시 기본값을 쓸 수 있지만 **사용 중인 신원 명단의 빈 결과·오류는
+승인 대상 0명**으로 처리한다. DB가 아예 없는 기존 데모만 파일 명단을 쓴다.
+비상정지 보호 구문과 로봇 실행 화이트리스트는 코드에 유지한다.
 
-보안 경계는 코드 쪽에 남는다: `비상정지` 계열은 DB가 지워도 복원되고(PROTECTED_ACTIONS),
-시나리오 트리거는 등록된 SCENARIOS로만 매핑되며, 로봇 명령 실행은 robotlink 화이트리스트와 런타임
-게이트가 계속 판정한다. 암구호류 settings 키는 `--set`/`--dump` 출력에서 `***`로 가린다.
-명단·트리거·문구·설정의 테이블 구조와 CLI는 `voice_store.py` docstring과
-[VOICE_ROUTING.md](VOICE_ROUTING.md) 9절에 정리돼 있다.
+`voice_store.py --seed`와 `factory_mes.py --seed`는 기존 데이터를 보존한다.
+의도적 초기화는 `--seed --reset`으로 하며 자동 백업한다.
+Supabase 스키마 SQL도 기존 MES를 지우거나 자동 재시드하지 않는다.
 
-**Supabase 백엔드.** `SUPABASE_URL`+`SUPABASE_ANON_KEY`가 있으면 voice_store 읽기는
-PostgREST가 우선하고(60s TTL 캐시), 실패·빈 테이블이면 로컬 sqlite → 코드 기본값으로 내려간다.
-가상 MES도 `MES_BACKEND=supabase`로 띄우면 같은 프로젝트의 테이블을 읽는다 — `/api/*` 계약과
-stale/unknown_line 판정은 백엔드 무관하게 동일하다. 스키마·RLS·데모 시드는
-`supabase_setup.sql`, 원격 쓰기는 `voice_store.py --remote`(service 키 필요)로 한다.
+[DB_GUIDE.md](DB_GUIDE.md)에 메인 안전 이력 DB와의 관계, 전체 테이블의 역할,
+**로컬 합성 자료 → 검증 JSON → SQLite/Supabase SQL 가져오기** 절차를 정리했다.
+`db_transfer.py`는 기존 키와 원본 시각을 보존하고 반복 가져오기 중복을 막는다.
+규정·매뉴얼 RAG와 사건 JSONL은 기존 저장 경로를 유지한다.
 
 ```
 [음성 모듈]                                   [PC]

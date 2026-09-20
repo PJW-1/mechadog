@@ -100,7 +100,7 @@ class OverlayTest(unittest.TestCase):
         self.assertEqual(acts["스톱"], robotlink.ACTIONS["스톱"])
         # 비보호 구문은 DB 오버레이가 가능
         self.assertEqual(acts["순찰시작"], ("manual_on", "바뀐멘트"))
-        vs.seed(self.db)  # 복원
+        vs.seed(self.db, reset=True)  # 복원
 
     def test_scenario_trigger_override(self):
         self._sql("INSERT OR REPLACE INTO scenario_triggers VALUES ('불났어','fire_evac')")
@@ -112,7 +112,7 @@ class OverlayTest(unittest.TestCase):
         self.assertEqual(vs.setting("follow_s", 0.0, float), 45.0)
         self._sql("INSERT OR REPLACE INTO settings VALUES ('follow_s','abc', 'x')")
         self.assertEqual(vs.setting("follow_s", 7.0, float), 7.0)  # 잘못된 값 → 기본값
-        vs.seed(self.db)
+        vs.seed(self.db, reset=True)
 
     def test_endings_sorted_longest_first(self):
         endings = vs.command_endings(())

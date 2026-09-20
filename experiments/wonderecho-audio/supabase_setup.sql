@@ -1,9 +1,15 @@
 -- MechDog 음성 설정 + 가상 MES 스키마 for Supabase
--- Supabase 프로젝트 생성 후 SQL 에디터에 이 파일을 그대로 실행한다.
+-- 합성 데모 프로젝트용. 스키마만 생성/보완한다. 기존 행은 삭제/갱신하지 않는다.
+-- 메인 안전 이력 robots/mission_runs/incidents/zones에는 접근하지 않는다.
+-- 로컬 자료는 db_transfer.py export → sql로 별도 가져온다.
 --
 -- 읽기: anon 키에 select 정책만 연다 (음성 PC에는 anon 키만 둔다).
 -- 쓰기: 정책을 만들지 않으므로 service_role 키로만 가능 — 관리 도구에만 둔다.
--- 시드: `python voice_store.py --seed --remote` 가 코드 기본값을 업서트한다.
+-- 시드: db_transfer.py의 SQL 또는 --seed --remote(기존 키 보존).
+-- anon 읽기는 합성 데모 전용이다. 실제 직원/생산 자료는 별도 인증/RLS 설계 후 사용.
+
+BEGIN;
+SET LOCAL search_path = public;
 
 -- ═══ voice_store 테이블 ═══════════════════════════════════════════════
 
@@ -94,6 +100,38 @@ create table if not exists equipment_check (
     updated_at timestamptz not null default now()
 );
 
+-- 로컬 AUTOINCREMENT id를 원격 identity id로 복사하지 않는다.
+-- 행 내용 해시를 가져오기 키로 사용해 재실행 시 이력을 중복 생성하지 않는다.
+alter table inspection_log add column if not exists import_key text;
+alter table equipment_check add column if not exists import_key text;
+create unique index if not exists inspection_log_import_key on inspection_log(import_key);
+create unique index if not exists equipment_check_import_key on equipment_check(import_key);
+create index if not exists inspection_log_line_updated on inspection_log(line_id, updated_at desc);
+create index if not exists equipment_check_equipment_checked on equipment_check(equipment, checked_at desc);
+
+-- 기존 행은 보존하되 이후 입력에는 자료형/상태 제약을 적용한다.
+-- NOT VALID: 기존 자료를 자동 정정/삭제하지 않는다. 검토 후 VALIDATE CONSTRAINT 가능.
+do $checks$
+declare item record;
+begin
+    for item in select * from (values
+        ('keywords', 'voice_keyword_kind', $$kind in ('wake','sleep','resume','emergency','status','machine') and btrim(word) <> ''$$),
+        ('action_commands', 'voice_action_allowed', $$action in ('estop','manual_on','manual_off','patrol_start','patrol_stop') and (phrase not in ('비상정지','긴급정지','스톱') or action='estop')$$),
+        ('factory_rules', 'voice_factory_rule', $$endpoint in ('production','shipments','schedule','inspections','equipment') and priority >= 0$$),
+        ('production_status', 'demo_production_values', $$target_quantity >= 0 and completed_quantity >= 0 and state in ('running','stopped','idle')$$),
+        ('shipment_schedule', 'demo_shipment_quantity', $$quantity >= 0$$),
+        ('work_schedule', 'demo_work_values', $$priority >= 0 and status in ('pending','in_progress','done')$$),
+        ('inspection_log', 'demo_inspection_values', $$inspected >= 0 and defects between 0 and inspected and result in ('pass','fail','hold')$$),
+        ('equipment_check', 'demo_equipment_result', $$result in ('ok','warn','fail')$$)
+    ) as checks(table_name, constraint_name, expression) loop
+        if not exists (select 1 from pg_constraint where conname=item.constraint_name
+                       and conrelid=format('public.%I', item.table_name)::regclass) then
+            execute format('alter table public.%I add constraint %I check (%s) not valid',
+                           item.table_name, item.constraint_name, item.expression);
+        end if;
+    end loop;
+end $checks$;
+
 -- ═══ RLS — anon 읽기만 허용 ═════════════════════════════════════════════
 
 do $$
@@ -113,34 +151,10 @@ begin
     end loop;
 end $$;
 
--- ═══ 데모 MES 데이터 (로컬 seed()와 같은 스토리) ════════════════════════
--- ID는 데이터 날짜에서 유도 — 어느 날 실행해도 ID↔날짜가 어긋나지 않는다.
-
-truncate production_status, shipment_schedule, work_schedule,
-         inspection_log, equipment_check;
-
-insert into production_status values
-    ('A', 'MD-100 구동모듈', 1200, 780, 'running', now()),
-    ('B', 'MD-200 센서모듈', 800, 800, 'idle', now()),
-    ('C', 'MD-100 구동모듈', 600, 210, 'stopped', now());
-
-insert into shipment_schedule
-    (shipment_id, customer, product, quantity, deadline, dock, updated_at) values
-    ('SH-' || to_char(current_date + 1, 'MMDD') || '-01', '한국정밀', 'MD-100 구동모듈', 400, current_date + 1, '2번 도크', now()),
-    ('SH-' || to_char(current_date + 3, 'MMDD') || '-02', '대성산업', 'MD-200 센서모듈', 300, current_date + 3, '1번 도크', now()),
-    ('SH-' || to_char(current_date + 5, 'MMDD') || '-03', '한국정밀', 'MD-100 구동모듈', 600, current_date + 5, '미정', now());
-
-insert into work_schedule values
-    ('WO-1001', 'A', 'MD-100 구동모듈 잔량 생산', 1, now(), current_date + 1, 'in_progress', now()),
-    ('WO-1002', 'C', 'C라인 정지 원인 점검 후 재가동', 2, now(), current_date + 2, 'pending', now()),
-    ('WO-1003', 'B', 'MD-200 후속 물량 준비', 3, now(), current_date + 4, 'pending', now());
-
-insert into inspection_log (line_id, lot, inspected, defects, result, updated_at) values
-    ('A', 'LOT-A' || to_char(current_date, 'MMDD'), 200, 3, 'pass', now()),
-    ('B', 'LOT-B' || to_char(current_date - 1, 'MMDD'), 300, 0, 'pass', now()),
-    ('C', 'LOT-C' || to_char(current_date, 'MMDD'), 80, 12, 'hold', now());
-
-insert into equipment_check (equipment, line_id, check_item, result, checked_at, updated_at) values
-    ('프레스-01', 'A', '유압·안전센서', 'ok', now(), now()),
-    ('컨베이어-03', 'C', '벨트 장력', 'warn', now(), now()),
-    ('로딩로봇-01', 'B', '그리퍼 캘리브레이션', 'ok', now(), now());
+-- settings를 비밀 저장소로 사용하지 않는다. 기존 포괄 정책을 알려진 공개 설정으로 제한.
+drop policy if exists "anon read" on settings;
+create policy "anon read" on settings for select to anon using (
+    key in ('follow_s', 'follow_min_chars', 'stt_prompt', 'machine_notice',
+            'robot_api_base', 'mes_api_base')
+);
+COMMIT;

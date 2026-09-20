@@ -3,7 +3,7 @@
 `voice_data.db`(SQLite)가 있으면 테이블 내용이 코드 기본값보다 우선한다.
 없으면 코드 기본값 그대로 — **DB는 필수가 아니라 오버레이**다.
 
-    python voice_store.py --seed          # 코드 기본값으로 로컬 DB 생성/재생성
+    python voice_store.py --seed          # 코드 기본값으로 빈 로컬 DB 초기화
     python voice_store.py --dump          # 현재 테이블 내용 출력
     python voice_store.py --set KEY VALUE # settings 값 변경
     python voice_store.py --add KIND WORD # keywords 행 추가 (wake/sleep/...)
@@ -14,8 +14,8 @@
 원격 백엔드(Supabase):
 - SUPABASE_URL + SUPABASE_ANON_KEY가 있으면 읽기는 PostgREST가 우선이고
   TTL 캐시(기본 60s, VOICE_STORE_TTL로 변경)로 매 턴 왕복을 막는다.
-- 읽기 사슬: Supabase → 로컬 voice_data.db → 코드 기본값. 앞 단계가
-  "비어 있거나 실패"하면 다음으로 내려간다 — 네트워크 장애에도 루프가 산다.
+- 읽기 사슬: Supabase → 로컬 voice_data.db → 코드 기본값. 일반 설정은 앞 단계가
+  비거나 실패하면 다음으로 내려간다. roster는 빈 결과·오류 시 승인 대상 0명이다.
 - 쓰기(--remote)는 SUPABASE_WRITE_KEY(service role)가 필요하다.
   음성 PC에는 anon 키만 두고 쓰기 키는 관리 도구에만 둘 것.
 
@@ -43,6 +43,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import suparest
+from sqlite_admin import backup_database, has_rows, open_readonly
 
 KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path(__file__).with_name("voice_data.db")
@@ -130,14 +131,16 @@ def _code_defaults():
     }
 
 
-def seed(db_path=DEFAULT_DB):
-    """코드 기본값으로 DB를 만든다 — 기존 테이블은 비우고 다시 채운다."""
+def seed(db_path=DEFAULT_DB, *, reset=False):
+    """빈 DB만 초기화한다. 명시적인 reset은 먼저 SQLite 백업을 남긴다."""
     d = _code_defaults()
     now = datetime.now(KST).isoformat(timespec="seconds")
+    if reset:
+        backup_database(db_path)
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA)
-        for t in (
+        tables = (
             "keywords",
             "command_endings",
             "action_commands",
@@ -146,7 +149,11 @@ def seed(db_path=DEFAULT_DB):
             "settings",
             "roster",
             "phrases",
-        ):
+        )
+        conn.execute("BEGIN IMMEDIATE")
+        if not reset and has_rows(conn, tables):
+            return False
+        for t in tables:
             conn.execute(f"DELETE FROM {t}")
         conn.executemany(
             "INSERT INTO keywords VALUES (?,?)",
@@ -177,19 +184,23 @@ def seed(db_path=DEFAULT_DB):
         )
         # phrases 테이블은 '추가 문구' 전용 — 시드는 비워 두고 기본 문구는 코드에 둔다.
         conn.commit()
+        return True
     finally:
         conn.close()
 
 
 def _connect(db_path):
     p = Path(db_path or DEFAULT_DB)
-    return sqlite3.connect(p) if p.is_file() else None
+    try:
+        return open_readonly(p) if p.is_file() else None
+    except (OSError, sqlite3.Error):
+        return None
 
 
 # ── Supabase 원격 백엔드 ────────────────────────────────────────────────
 # 읽기 사슬: Supabase → 로컬 voice_data.db → 코드 기본값.
 # 원격이 "실패(None)"하거나 "비어 있으면" 다음 단계로 내려간다 — 테이블을
-# 통째로 비운 실수가 명단·트리거를 몽땅 즉발 삭제하지 않도록 하는 의도다.
+# 비운 경우 일반 설정은 기본값으로 복원한다. roster는 별도로 fail-closed 처리한다.
 _REMOTE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 _REMOTE_KEY = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_KEY", "")
 _REMOTE_TTL = float(os.environ.get("VOICE_STORE_TTL", "60"))
@@ -200,7 +211,7 @@ def remote_enabled():
     return bool(_REMOTE_URL and _REMOTE_KEY)
 
 
-def _remote_rows(table, params=None):
+def _remote_rows(table, params=None, *, allow_stale=True):
     """Supabase 행 목록 → list | None(실패·미설정). TTL 캐시 + 장애 시 오래된 캐시."""
     if not remote_enabled():
         return None
@@ -213,7 +224,7 @@ def _remote_rows(table, params=None):
     if rows is not None:
         _remote_cache[ck] = (now, rows)
         return rows
-    return hit[1] if hit else None
+    return hit[1] if hit and allow_stale else None
 
 
 def _col_or_default(sql, params, default, db_path):
@@ -348,11 +359,27 @@ def setting(key, default, cast=str, db_path=None):
 
 
 def roster(default, db_path=None):
-    """신원 확인 명단 — 행이 있으면 DB가 정본(퇴사자 삭제 가능), 없으면 파일 명단."""
-    rows = _remote_rows("roster", {"select": "name", "order": "name"})
-    if rows:
+    """설정된 명단이 비거나 실패하면 승인 대상 0명. DB 미사용 때만 파일 명단."""
+    if remote_enabled():
+        rows = _remote_rows("roster", {"select": "name", "order": "name"}, allow_stale=False)
+        if rows is None or any(
+            not isinstance(r, dict) or not isinstance(r.get("name"), str) or not r["name"].strip()
+            for r in rows
+        ):
+            return ()
         return tuple(r["name"] for r in rows)
-    return _col_or_default("SELECT name FROM roster ORDER BY rowid", (), default, db_path)
+    p = Path(db_path or DEFAULT_DB)
+    if not p.exists():
+        return tuple(default)
+    conn = _connect(p)
+    if conn is None:
+        return ()
+    try:
+        return tuple(r[0] for r in conn.execute("SELECT name FROM roster ORDER BY rowid"))
+    except sqlite3.Error:
+        return ()
+    finally:
+        conn.close()
 
 
 def all_phrases(db_path=None):
@@ -379,7 +406,7 @@ def _masked(key, value):
 
 
 def dump(db_path=DEFAULT_DB):
-    conn = sqlite3.connect(db_path)
+    conn = open_readonly(db_path)
     try:
         tables = [
             r[0]
@@ -387,8 +414,11 @@ def dump(db_path=DEFAULT_DB):
         ]
         out = {}
         for t in tables:
-            cols = [d[0] for d in conn.execute(f'SELECT * FROM "{t}"').description]
-            rows = [dict(zip(cols, r, strict=False)) for r in conn.execute(f'SELECT * FROM "{t}"')]
+            quoted = t.replace('"', '""')
+            cols = [d[0] for d in conn.execute(f'SELECT * FROM "{quoted}"').description]
+            rows = [
+                dict(zip(cols, r, strict=False)) for r in conn.execute(f'SELECT * FROM "{quoted}"')
+            ]
             if t == "settings":
                 for r in rows:
                     r["value"] = _masked(r["key"], r["value"])
@@ -400,12 +430,27 @@ def dump(db_path=DEFAULT_DB):
 
 def _remote_main(args, ap):
     """--remote 경로: 같은 작업을 Supabase에 적용한다 (쓰기 키 필요)."""
-    wkey = os.environ.get("SUPABASE_WRITE_KEY") or _REMOTE_KEY
+    wkey = os.environ.get("SUPABASE_WRITE_KEY")
+    if args.dump and not any(
+        (
+            args.seed,
+            args.set,
+            args.add,
+            args.remove,
+            args.add_roster,
+            args.del_roster,
+            args.add_phrase,
+            args.del_phrase,
+        )
+    ):
+        wkey = wkey or _REMOTE_KEY
     if not (_REMOTE_URL and wkey):
-        ap.error("--remote에는 SUPABASE_URL과 SUPABASE_WRITE_KEY(또는 ANON_KEY)가 필요합니다")
+        ap.error("원격 쓰기에는 SUPABASE_URL과 SUPABASE_WRITE_KEY가 필요합니다")
 
     def _ok(ok, what):
         print(f"[remote] {what}: {'ok' if ok else 'FAILED'}")
+        if not ok:
+            raise SystemExit(1)
         return ok
 
     if args.seed:
@@ -438,7 +483,10 @@ def _remote_main(args, ap):
             # phrases는 '추가 문구' 전용 — 시드는 비워 둔다 (기본 문구는 코드 정본)
         }
         for t, rows in tables.items():
-            _ok(suparest.upsert_rows(_REMOTE_URL, wkey, t, rows), f"seed {t} ({len(rows)}건)")
+            _ok(
+                suparest.upsert_rows(_REMOTE_URL, wkey, t, rows, ignore_duplicates=True),
+                f"seed {t} ({len(rows)}건, 기존 키 보존)",
+            )
     if args.set:
         _ok(
             suparest.upsert_rows(
@@ -525,7 +573,8 @@ def _remote_main(args, ap):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
-    ap.add_argument("--seed", action="store_true", help="코드 기본값으로 재생성")
+    ap.add_argument("--seed", action="store_true", help="빈 DB를 코드 기본값으로 초기화")
+    ap.add_argument("--reset", action="store_true", help="--seed와 함께: 백업 후 로컬 DB 초기화")
     ap.add_argument("--dump", action="store_true", help="테이블 전체 JSON 출력")
     ap.add_argument("--set", nargs=2, metavar=("KEY", "VALUE"), help="settings 변경")
     ap.add_argument(
@@ -545,12 +594,14 @@ def main():
         help="위 작업을 로컬 DB가 아니라 Supabase에 적용 (SUPABASE_URL + WRITE_KEY 필요)",
     )
     args = ap.parse_args()
+    if args.reset and (not args.seed or args.remote):
+        ap.error("--reset은 로컬 --seed와 함께만 사용합니다")
     if args.remote:
         _remote_main(args, ap)
         return
     if args.seed:
-        seed(args.db)
-        print(f"[store] seeded {args.db}")
+        changed = seed(args.db, reset=args.reset)
+        print(f"[store] {'seeded' if changed else 'kept existing data'} {args.db}")
     if args.set:
         conn = sqlite3.connect(args.db)
         try:
