@@ -19,6 +19,21 @@ owner_id: unassigned    # 실제 담당자 계정/식별자. A/B/C 작업 성격
 #   상세: CONTRIBUTING.md 1절
 reference_role: phase1   # phase1 | phase2 | none
 
+# ⚠️ **검출이 전부 0건이면 DirectML 을 의심한다 — 에러가 나지 않는다.**
+#
+# 2026-09-18 개발 PC 에서 DirectML 이 **예외 없이 빈 검출**을 내보냈다. 같은 사진에서
+# CPU 는 person 을 0.93 으로 정상 검출했다. 모델·전처리가 멀쩡한데도 «아무것도 못 찾는»
+# 것처럼 보이므로 원인을 찾는 데 오래 걸린다.
+#
+# 판별 — 아래를 켜고 한 번 돌려 검출이 살아나면 DirectML 이 원인이다.
+# 되돌릴 때는 줄을 지운다. 기본값은 `config/config.yaml` 의
+# `vision.providers: [DmlExecutionProvider, CPUExecutionProvider]` 다.
+#
+# ⚠️ CPU 는 느리다 — 기준 PC 에서 8.2ms 가 61.9ms 가 된다(WBS 3.3.1). 진단용이다.
+#
+# vision:
+#   providers: [CPUExecutionProvider]
+
 network:
   mechdog_ip: "192.168.0.101"
   xiao_ip: "192.168.0.102"
