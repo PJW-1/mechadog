@@ -62,11 +62,10 @@ def init(text):
     text=replace_one(text,'    {\n        static TimerHandle_t prompt_asr_watchdog;',
                      '    /* Do not run the unverified IDLE-based queue reset in this candidate. */\n'
                      '    #if WE_PROMPT_RECOVERY_EXPERIMENT\n    {\n        static TimerHandle_t prompt_asr_watchdog;')
-    text=replace_one(text,'    ///tag-gpio-init',
+    return replace_one(text,'    ///tag-gpio-init',
                      '    #endif\n    int bridge_result = we_bridge_init();\n'
                      '    mprintf("[WE-BRIDGE] init_result=%d (build 3401)\\n", bridge_result);\n'
                      '    ///tag-gpio-init')
-    return text
 modify('projects/offline_asr_sample/src/user_msg_deal.c',init)
 
 def limit_gain(text):

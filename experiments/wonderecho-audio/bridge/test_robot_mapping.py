@@ -71,7 +71,8 @@ int main() {
     puts("PASS: actual robot dispatcher directions, labels, stop, safety/OTA gates, unknown IDs");
 }
 '''
-test=ROOT/'test_robot_mapping.cpp'; test.write_text(prefix+source+suffix,encoding='utf-8')
+test = ROOT / 'test_robot_mapping.cpp'
+test.write_text(prefix + source + suffix, encoding='utf-8')
 env=os.environ.copy()
 env['ZIG_LOCAL_CACHE_DIR']=str(ROOT/'zig-local-cache')
 env['ZIG_GLOBAL_CACHE_DIR']=str(ROOT/'zig-global-cache')

@@ -12,8 +12,9 @@ SDK=ROOT/'offline-speaker-1.12.16'
 BASE=Path('<SDK_ORIG_TREE>')
 REPO=Path('<REPO_WORKTREE>')
 sys.path.insert(0,str(REPO/'experiments/wonderecho-audio'))
-from inspect_factory import inspect
-from build_speaker_image import entries
+from build_speaker_image import entries  # noqa: E402
+from inspect_factory import inspect  # noqa: E402
+
 
 def sha(data): return hashlib.sha256(data).hexdigest()
 factory=BASE/'recovery/2.2 CI1302_English_SingleMic_V00729_UART1_115200_2M.bin'
@@ -22,7 +23,8 @@ assert sha(raw)=='c4328480d8f9cbe2e15dde41bb7d170d93c46c96c884742394322db87b5d2b
 elf=SDK/'projects/offline_asr_sample/project_file/build/offline-stream.elf'
 out=ROOT/('package-3601-'+sha(elf.read_bytes())[:12])
 out.mkdir(exist_ok=False)
-parts=out/'user_code'; parts.mkdir()
+parts = out / 'user_code'
+parts.mkdir()
 objcopy=BASE/'toolchain/gcc_fix_raissrc/bin/riscv-nuclei-elf-objcopy.exe'
 tool=SDK/'tools/ci-tool-kit.exe'
 subprocess.run([str(objcopy),'-O','binary',str(elf),str(parts/'[0]code.bin')],check=True,timeout=30)
@@ -36,11 +38,13 @@ assert original['fits_physical_code_space']
 table=raw[8192:8470]
 nv_off,nv_size=struct.unpack_from('<II',table,268)
 assert nv_off+nv_size==2097152
-resources=out/'factory-parts'; resources.mkdir()
+resources = out / 'factory-parts'
+resources.mkdir()
 (resources/'boot.bin').write_bytes(raw[:8192])
 for name,p in original['partitions'].items():
     (resources/(name+'.bin')).write_bytes(raw[p['offset']:p['offset']+p['size']])
-images=out/'image'; images.mkdir()
+images = out / 'image'
+images.mkdir()
 args=[str(tool),'mf','-f','v2','--chip-name','CI1302','--rom-size','2097152','--nvdata-size',str(nv_size),
       '--factory-id','100','--brand-id','100','--board-name','DEMO_Board','--hardware-version','2.0.0',
       '--firmware-name','WonderEcho_Bridge_Bench','--firmware-version','2.1.36','--boot-file',str(resources/'boot.bin'),
@@ -52,8 +56,10 @@ for name,option in (('asr','asr'),('dnn','nn'),('voice','voice'),('user','user-f
 args+=['--output-path',str(images)]
 packed=subprocess.run(args,capture_output=True,check=True,timeout=60)
 (out/'packer.log').write_bytes(packed.stdout+packed.stderr)
-files=list(images.glob('*.bin')); assert len(files)==1
-image=files[0]; image_raw=image.read_bytes()
+files = list(images.glob('*.bin'))
+assert len(files) == 1
+image = files[0]
+image_raw = image.read_bytes()
 verified=inspect(image,code)
 assert image_raw[:8192]==raw[:8192]
 assert image_raw[8460:8468]==raw[8460:8468]
@@ -61,8 +67,10 @@ for name in ('asr','dnn','voice','user'):
     assert verified['partitions'][name]==original['partitions'][name],name
 assert verified['partitions']['code1']['sha256']==sha(code.read_bytes())
 target=Path('<OUT_DIR>/36-mp3.bin')
-if target.exists(): assert sha(target.read_bytes())==sha(image_raw),'Refusing to overwrite an earlier candidate'
-else: target.write_bytes(image_raw)
+if target.exists():
+    assert sha(target.read_bytes()) == sha(image_raw), 'Refusing to overwrite an earlier candidate'
+else:
+    target.write_bytes(image_raw)
 verified.update(build=3601,version='2.1.36',image_path=str(target),image_sha256=sha(image_raw),
                 boot_resources_nv_layout_preserved=True,official_code_parts_verified=True,
                 uart0='SDK diagnostics at 921600; WEC1/PC audio disabled',

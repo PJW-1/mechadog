@@ -41,7 +41,10 @@ while depth:
 function = body[start:end]
 types = (PLAYER / "audio_play_decoder.h").read_text(encoding="utf-8")
 types = types[types.index("typedef enum"):types.index("} prompt_decoder_config;") + len("} prompt_decoder_config;")]
-fixture = "\n".join("{%d,%d,%d,{%s}}," % (ident, size, is_mp3, ",".join(str(b) for b in head)) for ident, size, is_mp3, head in rows)
+fixture = "\n".join(
+    f"{{{ident},{size},{is_mp3},{{{','.join(str(b) for b in head)}}}}},"
+    for ident, size, is_mp3, head in rows
+)
 harness = r'''
 #include <stdint.h>
 #include <stdio.h>
