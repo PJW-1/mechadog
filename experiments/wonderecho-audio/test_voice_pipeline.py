@@ -448,6 +448,100 @@ class HubScenarioQueueTests(unittest.TestCase):
         del FakeHandler
 
 
+class HallucinationFilterTests(unittest.TestCase):
+    """무음 환각 거름 — no_speech_prob 를 기록만 하면 소비처 없는 표식이다 (3.8.2)."""
+
+    @staticmethod
+    def _model(segments):
+        class FakeModel:
+            def transcribe(self, audio, **kwargs):
+                return segments, {}
+
+        return FakeModel()
+
+    def test_high_no_speech_prob_segment_is_dropped(self):
+        segs = [
+            types.SimpleNamespace(text=" 메카독 ", no_speech_prob=0.05),
+            types.SimpleNamespace(
+                text=" 오늘도 시청해 주셔서 감사합니다. ", no_speech_prob=0.753
+            ),
+        ]
+        text = vp.transcribe(self._model(segs), b"\x00\x00\xff\x7f")
+        self.assertEqual(text, "메카독")
+
+    def test_all_hallucinated_segments_return_empty(self):
+        segs = [types.SimpleNamespace(text=" 감사합니다 ", no_speech_prob=0.9)]
+        self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "")
+
+    def test_missing_no_speech_prob_attribute_is_kept(self):
+        segs = [types.SimpleNamespace(text=" 메카독 ")]
+        self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "메카독")
+
+
+class PassphraseTests(unittest.TestCase):
+    """암구호 대조 — 이름 대조가 아니라 등록 **문구** 대조다 (WBS 3.8.2)."""
+
+    def test_registered_phrase_inside_natural_speech_matches(self):
+        self.assertTrue(vp.match_passphrase("암구호는 메카독 출입 허가 입니다"))
+
+    def test_unregistered_speech_does_not_match(self):
+        self.assertFalse(vp.match_passphrase("사원 홍길동입니다"))
+        self.assertFalse(vp.match_passphrase("메카독 순찰 시작해"))
+
+    def test_name_alone_is_not_a_passphrase(self):
+        # 이름은 비밀이 아니다 — 명단 대조(4.7.7)와 다른 축이다.
+        self.assertFalse(vp.match_passphrase("홍길동"))
+
+    def test_configured_list_overrides_code_default(self):
+        import json
+
+        with mock.patch.object(
+            vp.voice_store, "setting", return_value=json.dumps(["새 암구호"])
+        ):
+            self.assertTrue(vp.match_passphrase("새 암구호입니다"))
+            self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
+
+    def test_broken_setting_falls_back_to_default(self):
+        with mock.patch.object(vp.voice_store, "setting", return_value="{깨짐"):
+            self.assertTrue(vp.match_passphrase("메카독 출입 허가"))
+
+
+class AuthLinkTests(unittest.TestCase):
+    """로봇 FSM 과의 연결 — 대조 결과만 보내고 인식 텍스트는 보내지 않는다."""
+
+    def test_robot_state_returns_fsm_state(self):
+        with mock.patch.object(
+            robotlink, "_get", return_value={"state": "AUTH_WAIT"}
+        ) as get:
+            self.assertEqual(robotlink.robot_state(), "AUTH_WAIT")
+            get.assert_called_once()
+
+    def test_robot_state_none_when_unreachable(self):
+        with mock.patch.object(robotlink, "_get", side_effect=OSError):
+            self.assertIsNone(robotlink.robot_state())
+
+    def test_post_auth_result_sends_only_the_verdict(self):
+        captured = {}
+
+        def fake_post(base, path, body, timeout=3.0):
+            captured["path"], captured["body"] = path, body
+            return {"accepted": True}
+
+        with mock.patch.object(robotlink, "_post", side_effect=fake_post):
+            ok, err = robotlink.post_auth_result(True)
+        self.assertTrue(ok)
+        self.assertEqual(captured["path"], "/api/command/auth")
+        self.assertEqual(captured["body"], {"result": "ok"})
+        self.assertNotIn("text", captured["body"])
+
+    def test_post_auth_result_refusal_is_reported(self):
+        refused = {"accepted": False, "detail": "IDLE 에서는 인증 결과를 받지 않는다"}
+        with mock.patch.object(robotlink, "_post", return_value=refused):
+            ok, err = robotlink.post_auth_result(False)
+        self.assertFalse(ok)
+        self.assertIn("받지 않는다", err)
+
+
 class TransportTests(unittest.TestCase):
     def test_open_transport_requires_port(self):
         with self.assertRaises(ValueError):

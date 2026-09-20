@@ -126,6 +126,9 @@ def _code_defaults():
             "machine_notice": vp._MACHINE_NOTICE,
             "robot_api_base": robotlink.DEFAULT_BASE,
             "mes_api_base": factorylink.DEFAULT_BASE,
+            # 암구호 목록(JSON). 키 이름이 _SENSITIVE_KEY_RE 에 걸려 --dump
+            # 출력에서 값이 가려진다 — 시드는 데모 문구이며 실운용은 교체한다.
+            "auth_passphrases": json.dumps(list(vp.DEFAULT_PASSPHRASES), ensure_ascii=False),
         },
     }
 

@@ -211,6 +211,31 @@ def run_action(action: str, base=DEFAULT_BASE):
     return True, ""
 
 
+def robot_state(base=DEFAULT_BASE):
+    """GET /api/telemetry → FSM 상태 문자열("AUTH_WAIT" 등), 또는 None (연결 실패)."""
+    try:
+        snap = _get(base, "/api/telemetry")
+    except OSError:
+        return None
+    state = snap.get("state")
+    return state if isinstance(state, str) else None
+
+
+def post_auth_result(ok, base=DEFAULT_BASE):
+    """POST /api/command/auth — 암구호 **대조 결과만** 보낸다 (WBS 3.8.2).
+
+    인식 텍스트 자체는 이 경로로 보내지 않는다. `AUTH_WAIT` 가 아니면 런타임이
+    거절하므로 `accepted=False` 를 그대로 돌려준다 — 그 거절이 상태 가드다.
+    """
+    try:
+        res = _post(base, "/api/command/auth", {"result": "ok" if ok else "fail"})
+    except OSError:
+        return False, "로봇 관제 서버에 연결할 수 없습니다"
+    if res.get("error") or res.get("accepted") is not True:
+        return False, res.get("detail") or "로봇이 인증 결과를 거부했습니다"
+    return True, ""
+
+
 _STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전")
 
 

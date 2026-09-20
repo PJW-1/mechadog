@@ -468,3 +468,103 @@ def test_health_lists_only_the_modes_that_can_be_chosen(client):
     modes = http.get("/health").json()["modes"]
     assert "guard" in modes
     assert set(modes) <= {"guard", "factory", "assist"}
+
+
+# ── 음성 암구호 인증 결과 주입 (WBS 3.8.2 · FR-10.2) ────────────
+#
+# 대조 자체는 음성 파이프라인이 한다 — 이쪽은 판정 결과를 사건으로 옮기는
+# 자리일 뿐이다. `AUTH_WAIT` 까지 가는 경로는 사원증 인증과 같다.
+
+AUTH_WAIT_ROUTE: tuple[Event, ...] = (
+    Event.START_PATROL,
+    Event.PERSON_FOUND,
+    Event.AUTH_REQUIRED,
+)
+
+
+def test_auth_ok_releases_auth_wait_to_patrol(service):
+    """일치 판정이 오면 `AUTH_OK` — 인증된 방문객으로 간주하고 순찰로 돌아간다."""
+    svc, behavior, _sent = service
+    _drive_to(behavior, AUTH_WAIT_ROUTE)
+    assert behavior.state == "AUTH_WAIT"
+
+    result = svc.auth("ok")
+    assert result.accepted is True
+    assert behavior.state == "PATROL"
+
+
+def test_auth_fail_returns_to_alert(service):
+    """불일치 판정은 `AUTH_FAILED` — 재시도·초과 판단은 런타임이 한다."""
+    svc, behavior, _sent = service
+    _drive_to(behavior, AUTH_WAIT_ROUTE)
+
+    result = svc.auth("fail")
+    assert result.accepted is True
+    assert behavior.state == "ALERT"
+
+
+@pytest.mark.parametrize(
+    "state,events", [(s, e) for s, e in ROUTES.items() if s != "ALERT"]
+)
+def test_auth_is_refused_outside_auth_wait(service, state, events):
+    """**인증 대기 중이 아니면 판정 결과를 받지 않는다** — 임의 시각에 `ok` 를
+    밀어 넣어 인증을 통과하는 경로가 없어야 한다. (ALERT 는 AUTH_WAIT 의 전신이라
+    별도 검증한다.)"""
+    svc, behavior, _sent = service
+    _drive_to(behavior, events)
+    assert behavior.state == state
+
+    result = svc.auth("ok")
+    assert result.accepted is False
+    assert behavior.state == state
+    assert "AUTH_WAIT" in result.detail
+
+
+def test_auth_is_refused_in_alert_before_auth_wait(service):
+    """경보 단계에서 «인증 성공» 이 오면 안 된다 — 아직 묻지도 않았다."""
+    svc, behavior, _sent = service
+    _drive_to(behavior, (Event.START_PATROL, Event.PERSON_FOUND))
+    assert behavior.state == "ALERT"
+
+    result = svc.auth("ok")
+    assert result.accepted is False
+    assert behavior.state == "ALERT"
+
+
+def test_auth_rejects_an_unknown_result(service):
+    svc, behavior, _sent = service
+    _drive_to(behavior, AUTH_WAIT_ROUTE)
+    result = svc.auth("maybe")
+    assert result.accepted is False
+    assert behavior.state == "AUTH_WAIT"
+
+
+def test_auth_endpoint_round_trips(cfg):
+    sent: list[str] = []
+    commander = Commander()
+    behavior = behavior_from_config(commander, cfg)
+    svc = CommandService(behavior, commander, sent.append)
+    app = create_app(_state(), svc)
+    with TestClient(app) as http:
+        # 대기 중이 아니면 거절
+        body = http.post("/api/command/auth", json={"result": "ok"}).json()
+        assert body["accepted"] is False and body["state"] == "IDLE"
+
+        _drive_to(behavior, AUTH_WAIT_ROUTE)
+        body = http.post("/api/command/auth", json={"result": "fail"}).json()
+        assert body["accepted"] is True and body["state"] == "ALERT"
+
+        assert http.post("/api/command/auth", json={"result": "maybe"}).status_code == 400
+        assert http.post("/api/command/auth", json={}).status_code == 400
+
+
+def test_auth_endpoint_does_not_execute_speech(client):
+    """인식 텍스트를 그대로 받는 엔드포인트가 아니다 — `text` 필드를 내도
+    명령으로 실행되지 않는다 (임의 음성 → 로봇 명령 경로 차단)."""
+    http, behavior, sent = client
+    body = http.post(
+        "/api/command/auth", json={"result": "ok", "text": "순찰 시작해"}
+    ).json()
+    assert body["accepted"] is False
+    assert behavior.state == "IDLE"
+    assert sent == []
