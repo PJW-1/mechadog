@@ -127,24 +127,26 @@ class PhraseLibraryTests(unittest.TestCase):
 
 
 class CustomPhraseTests(unittest.TestCase):
-    """관리자 추가 문구: JSON 저장·병합·삭제. 기본 문구는 건드리지 않는다."""
+    """관리자 추가 문구: DB 저장·병합·삭제. 기본 문구는 건드리지 않는다."""
 
     def setUp(self):
         self.tmp = __import__("tempfile").TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.path = __import__("pathlib").Path(self.tmp.name) / "custom.json"
-        self.patcher_path = mock.patch.object(phr, "CUSTOM_PATH", self.path)
-        self.patcher_path.start()
-        self.addCleanup(self.patcher_path.stop)
-        self.orig = dict(phr.CUSTOM)
-        phr.CUSTOM.clear()
-        self.addCleanup(phr.CUSTOM.update, self.orig)
+        import voice_store
+
+        self.path = __import__("pathlib").Path(self.tmp.name) / "voice.db"
+        patch = mock.patch.object(voice_store, "DEFAULT_DB", self.path)
+        patch.start()
+        self.addCleanup(patch.stop)
+        remote = mock.patch.object(voice_store, "_REMOTE_URL", "")
+        remote.start()
+        self.addCleanup(remote.stop)
 
     def test_add_persists_and_merges(self):
         cat = phr.add_custom("Greeting", "관리자가 추가한 인사말")
         self.assertEqual(cat, "greeting")
         self.assertIn("관리자가 추가한 인사말", phr.merged()["greeting"])
-        saved = phr.load_custom(self.path)
+        saved = phr._db_phrases()
         self.assertEqual(saved["greeting"], ["관리자가 추가한 인사말"])
 
     def test_new_category_allowed(self):
@@ -152,7 +154,7 @@ class CustomPhraseTests(unittest.TestCase):
         self.assertIn("zone_b3", phr.merged())
 
     def test_pick_includes_custom(self):
-        phr.CUSTOM["only_custom"] = ["유일한 문구"]
+        phr.add_custom("only_custom", "유일한 문구")
         for _ in range(20):
             self.assertEqual(phr.pick("only_custom"), "유일한 문구")
 
@@ -179,10 +181,10 @@ class CustomPhraseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             phr.add_custom("greeting", phr.PHRASES["greeting"][0])
 
-    def test_load_custom_tolerates_missing_and_corrupt(self):
-        self.assertEqual(phr.load_custom(self.path), {})
+    def test_db_phrases_tolerates_missing_and_corrupt(self):
+        self.assertEqual(phr._db_phrases(), {})
         self.path.write_text("{not json", encoding="utf-8")
-        self.assertEqual(phr.load_custom(self.path), {})
+        self.assertEqual(phr._db_phrases(), {})
 
     def test_all_lines_marks_custom(self):
         phr.add_custom("greeting", "추가 표시 문구")

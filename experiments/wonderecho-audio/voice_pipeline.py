@@ -32,6 +32,7 @@ import argparse
 import json
 import queue
 import re
+import sqlite3
 import tempfile
 import threading
 import time
@@ -266,7 +267,14 @@ def make_handler(hub):
                     return
                 _api(self, 200, {"category": cat, "added": True})
             elif self.path == "/phrases/delete":
-                if not phrases.remove_custom(req.get("category") or "", req.get("text") or ""):
+                try:
+                    removed = phrases.remove_custom(
+                        req.get("category") or "", req.get("text") or ""
+                    )
+                except ValueError as e:
+                    _api(self, 400, {"error": str(e)})
+                    return
+                if not removed:
                     _api(self, 404, {"error": "추가된 문구만 삭제할 수 있습니다"})
                     return
                 _api(self, 200, {"removed": True})
@@ -695,6 +703,10 @@ class ScenarioCtx:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    try:
+        voice_store.check_schema()
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        ap.exit(1, f"[voice-db] {exc}\n")
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
     ap.add_argument("--model", type=Path, help="GGUF chat model path")
     ap.add_argument("--say", help="synthesize this text and play it once, then exit")

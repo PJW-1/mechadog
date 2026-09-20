@@ -92,8 +92,17 @@ experiments/wonderecho-audio/phrases_custom.json
 experiments/wonderecho-audio/mes_demo.db
 # 음성 모듈 설정 오버레이 — voice_store.py --seed 로 재생성 (없으면 코드 기본값)
 experiments/wonderecho-audio/voice_data.db
+# Local DB imports, previews, WAL files and automatic backups are runtime data.
+experiments/wonderecho-audio/db_exports/
+experiments/wonderecho-audio/*.db
+experiments/wonderecho-audio/*.db-*
+experiments/wonderecho-audio/*.db.*.bak
 
 # 시뮬은 로컬 전용으로 둔다 (WBS 미등재 — 팀 합의 후 다시 올린다).
 # 되살리려면 `git show bb4d704` — 15개 파일 1,801줄이 거기 있다 (#153 로 들어와
 # #160 에서 되돌림). 브랜치가 아니라 커밋을 적는다: 브랜치는 사라질 수 있다.
 sim/
+
+# Local routing configuration migrated from the voice DB.
+experiments/wonderecho-audio/*.rules.json
+experiments/wonderecho-audio/*.json.migrated.bak

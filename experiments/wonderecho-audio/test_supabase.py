@@ -146,29 +146,27 @@ class RemoteBase(unittest.TestCase):
 
 
 class RemoteReadTest(RemoteBase):
-    def test_words_from_remote(self):
-        StubPostgREST.rows = {
-            "keywords": [{"kind": "wake", "word": "메카봇"}, {"kind": "wake", "word": "메카독2"}]
-        }
-        self.assertEqual(vs.words("wake", ()), ("메카독2", "메카봇"))  # order=word asc
+    def test_fixed_rules_never_read_remote(self):
+        StubPostgREST.rows = {"keywords": [{"kind": "wake", "word": "remote-only"}]}
+        self.assertEqual(vs.words("wake", ()), vp.WAKE_PREFIXES)
+        vs.factory_rules()
+        vs.command_endings(())
+        vs.scenario_triggers({})
+        self.assertEqual(StubPostgREST.calls, [])
 
-    def test_ttl_cache(self):
-        StubPostgREST.rows = {"keywords": [{"kind": "wake", "word": "x"}]}
-        vs.words("wake", ())
-        vs.words("wake", ())
-        n = sum(1 for c in StubPostgREST.calls if c[1] == "keywords")
-        self.assertEqual(n, 1)  # 두 번째 호출은 캐시
+    def test_ttl_cache_for_operational_data(self):
+        StubPostgREST.rows = {"settings": [{"key": "follow_s", "value": "45"}]}
+        vs.setting("follow_s", 20)
+        vs.setting("follow_s", 20)
+        self.assertEqual(len(StubPostgREST.calls), 1)
 
     def test_remote_empty_falls_to_local(self):
-        StubPostgREST.rows = {"keywords": []}
-        # 원격이 비면 로컬 sqlite(시드된 기본값)로 내려간다
-        self.assertEqual(vs.words("wake", ()), vp.WAKE_PREFIXES)
+        StubPostgREST.rows = {"settings": []}
+        self.assertEqual(vs.setting("follow_s", 0, float), vp.FOLLOW_S)
 
     def test_remote_down_falls_to_local(self):
-        # 원격이 죽으면 로컬 DB(→ 기본값)으로 내려간다 — 죽은 포트로 지정
-        vs._remote_cache.clear()
         with mock.patch.object(vs, "_REMOTE_URL", "http://127.0.0.1:9"):
-            self.assertEqual(vs.words("wake", ("폴백",)), vp.WAKE_PREFIXES)
+            self.assertEqual(vs.setting("follow_s", 0, float), vp.FOLLOW_S)
 
     def test_setting_remote_cast(self):
         StubPostgREST.rows = {"settings": [{"key": "follow_s", "value": "45"}]}
@@ -178,14 +176,15 @@ class RemoteReadTest(RemoteBase):
         StubPostgREST.rows = {"roster": [{"name": "홍길동"}, {"name": "김철수"}]}
         self.assertEqual(vs.roster(()), ("김철수", "홍길동"))  # order=name asc
 
-    def test_action_commands_remote_keeps_protected(self):
+    def test_actions_ignore_legacy_remote_table(self):
         StubPostgREST.rows = {
             "action_commands": [{"phrase": "순찰시작", "action": "manual_on", "ack": "x"}]
         }
         import robotlink
 
         acts = vs.action_commands(robotlink.ACTIONS)
-        self.assertEqual(acts["순찰시작"], ("manual_on", "x"))
+        self.assertEqual(acts["순찰시작"], robotlink.ACTIONS["순찰시작"])
+        self.assertEqual(StubPostgREST.calls, [])
         self.assertEqual(acts["비상정지"], robotlink.ACTIONS["비상정지"])
 
     def test_apikey_header_sent(self):

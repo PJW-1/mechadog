@@ -18,7 +18,7 @@
 서버가 한다 (updated_at 이 --stale-after 초보다 오래되면 true).
 
 사용:
-  python factory_mes.py --seed            # 데모 DB 생성/재생성
+  python factory_mes.py --seed            # 빈 DB에 합성 데이터 생성 (--reset은 백업 후 재생성)
   python factory_mes.py --serve --port 8095
 """
 
@@ -34,6 +34,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import suparest
+from sqlite_admin import backup_database, has_rows, open_readonly
 
 KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path(__file__).with_name("mes_demo.db")
@@ -58,9 +59,9 @@ class Backend:
         return bool(self.url and self.key)
 
     @classmethod
-    def from_env(cls, db_path=DEFAULT_DB):
+    def from_env(cls, db_path=DEFAULT_DB, *, backend=None):
         """MES_BACKEND=supabase이면 SUPABASE_URL/ANON_KEY로 원격을 연다."""
-        if os.environ.get("MES_BACKEND", "sqlite") != "supabase":
+        if (backend or os.environ.get("MES_BACKEND", "sqlite")) != "supabase":
             return cls(db_path=str(db_path))
         url = os.environ.get("MES_SUPABASE_URL") or os.environ.get("SUPABASE_URL", "")
         key = (
@@ -124,20 +125,26 @@ def _now():
     return datetime.now(KST).isoformat(timespec="seconds")
 
 
-def seed(db_path=DEFAULT_DB):
-    """데모 데이터를 심는다 — 기존 테이블은 비우고 다시 채운다."""
+def seed(db_path=DEFAULT_DB, *, reset=False):
+    """빈 DB만 합성 자료로 초기화. reset은 백업 후 명시적으로 재생성한다."""
     now = _now()
     today = datetime.now(KST).date()
+    if reset:
+        backup_database(db_path)
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA)
-        for t in (
+        tables = (
             "production_status",
             "shipment_schedule",
             "work_schedule",
             "inspection_log",
             "equipment_check",
-        ):
+        )
+        conn.execute("BEGIN IMMEDIATE")
+        if not reset and has_rows(conn, tables):
+            return False
+        for t in tables:
             conn.execute(f"DELETE FROM {t}")
         conn.executemany(
             "INSERT INTO production_status VALUES (?,?,?,?,?,?)",
@@ -218,6 +225,7 @@ def seed(db_path=DEFAULT_DB):
             ],
         )
         conn.commit()
+        return True
     finally:
         conn.close()
 
@@ -251,10 +259,11 @@ def _fetch(src, table, filters=(), order=None, desc=False, limit=None):
     if filters:
         sql += " WHERE " + " AND ".join(f"{c} {_OPS[o]} ?" for c, o, _ in filters)
     if order:
-        sql += f" ORDER BY {order} {'DESC' if desc else 'ASC'}"
+        sort_column = f"julianday({order})" if order in ("updated_at", "checked_at") else order
+        sql += f" ORDER BY {sort_column} {'DESC' if desc else 'ASC'}"
     if limit:
         sql += f" LIMIT {int(limit)}"
-    conn = sqlite3.connect(src.db_path)
+    conn = open_readonly(src.db_path)
     try:
         conn.row_factory = sqlite3.Row
         return [dict(r) for r in conn.execute(sql, args)]
@@ -268,9 +277,11 @@ def _mark_stale(rows, stale_after):
         r["source"] = SOURCE
         try:
             ts = datetime.fromisoformat(r["updated_at"])
-            r["stale"] = (now - ts).total_seconds() > stale_after
-        except (KeyError, ValueError):
+            age = (now - ts).total_seconds()
+            r["stale"] = not 0 <= age <= stale_after
+        except (KeyError, TypeError, ValueError):
             r["stale"] = True
+        r["fresh"] = not r["stale"]
     return rows
 
 
@@ -284,10 +295,18 @@ def _known_lines(src):
 
 def _latest_per_equipment(rows):
     """설비별 가장 최근 점검 행 — remote엔 GROUP BY가 없어서 코드에서 고른다."""
+
+    def checked(row):
+        try:
+            ts = datetime.fromisoformat(row["checked_at"])
+            return ts.timestamp() if ts.tzinfo is not None else float("-inf")
+        except (KeyError, TypeError, ValueError):
+            return float("-inf")
+
     latest = {}
     for r in rows:
         eq = r.get("equipment")
-        if eq and (eq not in latest or r.get("id", 0) > latest[eq].get("id", 0)):
+        if eq and (eq not in latest or checked(r) > checked(latest[eq])):
             latest[eq] = r
     return list(latest.values())
 
@@ -339,7 +358,7 @@ def query(src, endpoint, params, stale_after):
             src,
             "inspection_log",
             [("line_id", "eq", line)] if line else (),
-            order="id",
+            order="updated_at",
             desc=True,
             limit=10,
         )
@@ -403,7 +422,8 @@ def serve(port, src, stale_after):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
-    ap.add_argument("--seed", action="store_true", help="데모 데이터 재생성 (로컬 sqlite 전용)")
+    ap.add_argument("--seed", action="store_true", help="빈 로컬 DB에 합성 데이터 생성")
+    ap.add_argument("--reset", action="store_true", help="--seed와 함께: 백업 후 데모 재생성")
     ap.add_argument("--serve", action="store_true")
     ap.add_argument("--port", type=int, default=8095)
     ap.add_argument(
@@ -419,12 +439,14 @@ def main():
         help="이 초보다 오래된 updated_at은 stale:true",
     )
     args = ap.parse_args()
+    if args.reset and not args.seed:
+        ap.error("--reset은 --seed와 함께만 사용합니다")
     if args.seed:
-        seed(args.db)
-        print(f"[mes] seeded {args.db}")
+        changed = seed(args.db, reset=args.reset)
+        print(f"[mes] {'seeded' if changed else 'kept existing data'} {args.db}")
     if args.serve:
         if args.backend == "supabase":
-            src = Backend.from_env()
+            src = Backend.from_env(backend=args.backend)
             if not src.remote:
                 ap.error("supabase 백엔드에는 SUPABASE_URL과 SUPABASE_ANON_KEY가 필요합니다")
         else:

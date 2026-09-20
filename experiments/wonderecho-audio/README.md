@@ -1,5 +1,15 @@
 # WonderEcho 음성 — 안내 재생·녹음·PC 한국어 인식
 
+**팀원 시작점:** [공유 데이터·DB 만들기](demo/README.md) · [PC/GPU 설치](SETUP.md) ·
+[음성 DB 구조](DB_GUIDE.md) · [모듈 실물 시험](TESTING.md).
+`python prepare_demo.py --output-dir .` 한 번으로 음성3/MES5 테이블의 합성27행과
+규칙162개를 재현한다. 데이터/PC 시험과 모듈 청취 성공은 별도이며 로봇 탑재 오디오 중계는
+WBS 4.7.9 작업으로 남아 있다.
+
+**음성 DB 정본은 3테이블**(`settings`, `roster`, `phrases`) + 규칙 JSON이다.
+구형 음성8테이블은 `migrate_voice_db.py`로 백업·이전한 뒤 사용한다.
+`python voice_store.py --check-schema`로 검사한다. MES5테이블은 별도 DB다.
+
 > **현재 상태 (WBS 4.7.4~4.7.7 · 4.7.10·4.7.11 · 4.7.14)** — `voice_pipeline.py`가
 > 종단 대화 루프다: 모듈 마이크 → faster-whisper → 로컬 GGUF LLM → Piper TTS →
 > 모듈 스피커. `start_voice.ps1`로 기동(COM5 + 관제 API :8090). 웨이크워드
@@ -15,7 +25,7 @@
 >   신원·안전 판정은 LLM 없이 결정론적이고, 음성 트리거 또는 `POST /scenario`로
 >   실행한다 — **시나리오를 바꿔도 모듈을 다시 굽지 않는다** (대사·판정·음성
 >   데이터는 전부 PC 소유).
-> - **음성 응답 라이브러리** — `phrases.py`에 카테고리 25종·150여 문구. 실제
+> - **음성 응답 라이브러리** — `phrases.py`에 기본 응답 122개와 관리자 추가 문구. 실제
 >   산업 매뉴얼(산업안전보건법 근로자 의무, KOSHA 지게차 수칙, 화재 대피 매뉴얼,
 >   포스코·LS MnM 출입통제 규정)에서 차용한 표현 기반. `gen_voice_cache.py`로
 >   전 문구를 WAV로 미리 렌더링해 `voice_cache/`에 둘 수 있다(생성물, 커밋 제외).
@@ -69,22 +79,22 @@ LLM은 SQL, 숫자, 상태, 로봇 명령을 만들지 않는다. 오래된 값�
 
 ### 설정 데이터의 정본 — `voice_data.db` (선택적 오버레이)
 
-암구호형 트리거·직원 명단·설정은 코드 기본값이 정본이고, `voice_store.py`가 관리하는
-`voice_data.db` 행이 있으면 그쪽이 우선한다. **DB가 없어도 모든 기능이 코드 기본값으로 동작**한다 —
-DB는 배포 필수품이 아니라 운영 오버레이며, git에도 올라가지 않는다. DB 파일·테이블·SQL 오류는 전부
-조용히 기본값으로 돌아가서 저장소 장애가 음성 루프를 죽이지 않는다.
+음성 DB는 **3테이블(settings·roster·phrases)**로 정리했다. 고정 규칙 5종은
+`voice_data.rules.json` 한 파일로 관리하며, DB/원격 조회 없이 변경 시에만 다시 읽는다.
+기존 8테이블 사용자는 `migrate_voice_db.py --db voice_data.db`로 백업·이전한다.
+관리자 추가 문구도 JSON/DB 이중 저장을 없애 `phrases`로 통합했다.
+일반 설정은 DB 장애 시 기본값을 쓸 수 있지만 **사용 중인 신원 명단의 빈 결과·오류는
+승인 대상 0명**으로 처리한다. DB가 아예 없는 기존 데모만 파일 명단을 쓴다.
+비상정지 보호 구문과 로봇 실행 화이트리스트는 코드에 유지한다.
 
-보안 경계는 코드 쪽에 남는다: `비상정지` 계열은 DB가 지워도 복원되고(PROTECTED_ACTIONS),
-시나리오 트리거는 등록된 SCENARIOS로만 매핑되며, 로봇 명령 실행은 robotlink 화이트리스트와 런타임
-게이트가 계속 판정한다. 암구호류 settings 키는 `--set`/`--dump` 출력에서 `***`로 가린다.
-명단·트리거·문구·설정의 테이블 구조와 CLI는 `voice_store.py` docstring과
-[VOICE_ROUTING.md](VOICE_ROUTING.md) 9절에 정리돼 있다.
+`voice_store.py --seed`와 `factory_mes.py --seed`는 기존 데이터를 보존한다.
+의도적 초기화는 `--seed --reset`으로 하며 자동 백업한다.
+Supabase 스키마 SQL도 기존 MES를 지우거나 자동 재시드하지 않는다.
 
-**Supabase 백엔드.** `SUPABASE_URL`+`SUPABASE_ANON_KEY`가 있으면 voice_store 읽기는
-PostgREST가 우선하고(60s TTL 캐시), 실패·빈 테이블이면 로컬 sqlite → 코드 기본값으로 내려간다.
-가상 MES도 `MES_BACKEND=supabase`로 띄우면 같은 프로젝트의 테이블을 읽는다 — `/api/*` 계약과
-stale/unknown_line 판정은 백엔드 무관하게 동일하다. 스키마·RLS·데모 시드는
-`supabase_setup.sql`, 원격 쓰기는 `voice_store.py --remote`(service 키 필요)로 한다.
+[DB_GUIDE.md](DB_GUIDE.md)에 메인 안전 이력 DB와의 관계, 전체 테이블의 역할,
+**로컬 합성 자료 → 검증 JSON → SQLite/Supabase SQL 가져오기** 절차를 정리했다.
+`db_transfer.py`는 기존 키와 원본 시각을 보존하고 반복 가져오기 중복을 막는다.
+규정·매뉴얼 RAG와 사건 JSONL은 기존 저장 경로를 유지한다.
 
 ```
 [음성 모듈]                                   [PC]
