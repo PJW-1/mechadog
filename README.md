@@ -2,9 +2,6 @@
 
 ## 관제 화면
 
-음성모듈 팀 설치·합성 DB 자료는 **[음성·MES 데이터 안내](experiments/wonderecho-audio/demo/README.md)**에서
-확인할 수 있습니다. 음성 DB 3테이블, MES 5테이블과 발화 규칙을 한 명령으로 재현합니다.
-
 **[관제 대시보드](docs/DASHBOARD.md)** — 3D 현장 관제, 작업 페이지, 수동 제어 · 비상정지. 화면은
 `host/dashboard/static/` 에 있고 런타임의 관제 서버가 **설치 없이** 내보냅니다.
 
@@ -182,6 +179,23 @@ mechdog_physical_ai/
 ```
 
 ## 호스트 런타임 실행
+
+### 먼저 — 가중치를 받는다 (처음 한 번)
+
+⚠️ **ZIP·clone 에는 ONNX 가중치가 들어 있지 않다.** 용량(`coco.onnx` 34MiB) 때문에
+저장소에서 제외하며, 없으면 `Detector.open()` 이 `ModelMissingError` 로 즉시 멈춘다.
+
+```powershell
+pip install -r requirements.txt
+python tools/fetch_models.py
+```
+
+두 번째 명령이 `models/coco.onnx`(사람 검출)와 `models/ppe.onnx`(보호구 4클래스)를
+받고 크기·SHA-256을 검증한다. **검출은 2단이라 둘 다 있어야 한다** — `coco`가 찾은
+사람 영역 안에서만 `ppe`가 돈다. 받는 곳과 라이선스는 [`models/README.md`](models/README.md)와
+[`models/NOTICE`](models/NOTICE)에 있다.
+
+### 런타임
 
 비전 워커는 기본으로 함께 시작한다. DHCP로 받은 주소가 개체 프로파일에 아직 없으면
 실행할 때 덮어쓴다.
