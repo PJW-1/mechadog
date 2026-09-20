@@ -224,3 +224,41 @@ python -X utf8 build_prompt_audio.py <원본.wav> <출력.wav>
 | 통신 | 250프레임 / 5초, checksum·length·timeout 오류 0 |
 
 한국어 인식 정확도는 별도로 재지 않았다. 위 수치는 특정 발화 한 건의 결과이며 일반적인 정확도 지표가 아니다.
+
+---
+
+## 6. 로컬 전용 자원 — 다른 환경에서의 재현
+
+이 폴더의 실행 상태 일부는 **커밋되지 않는다** (`.gitignore`). 다른 PC·팀원·에이전트가 클론만으로는 같은 환경이 안 되며, 아래 절차로 재생해야 한다. 반대로 말하면 **이 자원 없이는 검증이 불가능한 항목이 있다** — 그 경우 테스트 결과를 "이 PC에서만 확인됨"으로 표시한다.
+
+| 자원 | Git | 재생 방법 |
+|---|---|---|
+| `voice_data.db` | 무시됨 | `python voice_store.py --seed` — 코드 기본값으로 재생. 없어도 코드 기본값으로 동작한다 |
+| `mes_demo.db` | 무시됨 | `python factory_mes.py --seed` — 합성 데모 데이터 |
+| `phrases_custom.json` | 무시됨 | 관리 API가 첫 추가 시 자동 생성 |
+| `voice_cache/` | 무시됨 | TTS 캐시 — 자동 생성 |
+| `emergency_log.txt` | 무시됨 | 비상 발화 시 자동 생성 |
+| Whisper 모델 폴더 | 미포함 | 1절 다운로드 절차 (모델 파일은 라이선스·용량으로 커밋하지 않는다) |
+| Piper/Orpheus 모델 | 미포함 | 2절 다운로드 절차 |
+| GGUF 대화 모델 | 미포함 | `--model` 인자로 지정하는 로컬 파일 |
+| `knowledge/*.txt` | **커밋됨** | 단, 내용은 전부 **합성 데모 문서** — 실사 자료 아님 |
+
+### 암구호(3.8.2)는 기본값이 코드에 있다
+
+데모 문구 `"메카독 출입 허가"` 가 `voice_pipeline.DEFAULT_PASSPHRASES` 에 있다 — **실제 암구호는 코드가 아니라 DB에 넣는다:**
+
+```bash
+python voice_store.py --set auth_passphrases '["실제 암구호", "예비 문구"]'
+```
+
+키 이름이 `pass` 를 포함해 `--dump`·`--set` 에코에서 값이 자동으로 가려진다. 빈 목록(`'[]'`)으로 두면 음성 인증 경로 자체가 닫힌다.
+
+### 다른 환경에서 검증 가능/불가능
+
+| 검증 | 새 환경에서 가능? |
+|---|---|
+| `python -m unittest discover -s experiments/wonderecho-audio` (전체 단위시험) | ✅ 가능 — 하드웨어·DB·모델 불요 (requirements-pc.txt 만 설치) |
+| `/api/command/auth` FSM 전이·거절 | ✅ 가능 — `pytest tests/test_command_api.py` |
+| STT 환각 거름·암구호 대조 로직 | ✅ 가능 — mock 기반 |
+| 실제 음성 왕복 (모듈 마이크→인증 해제) | ❌ **WonderEcho 모듈 + COM 포트 + 모델 파일 필요** — 다른 환경에서는 재현 불가. 실기 결과는 "측정한 기체·날짜 한정"으로 표시한다 |
+| MES 음성 답변 | ◐ `--seed` 후 가능하나 **합성 데이터 기준** — 실제 공장 데이터와 무관 |
