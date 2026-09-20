@@ -4,6 +4,10 @@
 고정 발화 규칙은 `voice_data.rules.json`으로 관리한다. PC에서 읽는 데이터이며
 WonderEcho 펌웨어에 DB나 AI 모델을 넣지 않는다. 기능이나 명령 종류를 줄인 것이 아니다.
 
+**팀원이 같은 데이터를 설치하려면:** [공유 데이터 안내](demo/README.md)를 따라
+`python prepare_demo.py --output-dir .`를 실행한다. 저장소의 합성 JSON에서
+음성 DB·규칙 JSON·MES DB를 만들며, 기존 파일과 삭제한 직원 명단을 그대로 보존한다.
+
 ## 메인 안전 이력 DB와의 관계
 
 사용자가 제공한 메인 ERD는 `robots → mission_runs → incidents`, `zones → incidents`로
