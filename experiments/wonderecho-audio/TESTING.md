@@ -12,20 +12,38 @@
 | 모듈↔로봇 I²C 통신 | 커스텀 v34+ 에서 복구됨 (0x34 ACK 실측) |
 | PC 파이프라인 (Whisper→EXAONE→Piper) | 부가기능 — 모듈↔로봇 동작과 무관 |
 
-## 1. 펌웨어 이미지 위치
+## 1. 펌웨어 이미지 입수
 
-빌드 산출물(`*.bin`)과 벤더 도구는 저장소에 올리지 않습니다(`.gitignore` + 벤더 재배포 금지).
-공유 위치: **`로봇독 프로젝트/03_산출물/wonderecho-음성모듈/`** (firmware/, flasher/ 포함)
+빌드 산출물(`*.bin`)과 벤더 도구는 **이 저장소(공개)에 올리지 않습니다** — `.gitignore` + 벤더 재배포 금지(ADR-20) 정책 때문입니다.
+
+| 무엇을 | 어디서 |
+|---|---|
+| 펌웨어 `.bin` 4종 + 플래시 도구 | 팀 공유 채널의 `wonderecho-음성모듈/` 패키지 (없으면 작업자에게 요청) |
+| **소스 코드** | 이 폴더: `bridge/` (v34~v38 패치·소스·검증 기록), 상위 `*.c/h` (스트림 계열 전체 소스) |
+| SDK·플래시 도구 원본 | Chipintelli `offline-speaker-1.12.16` SDK — 팀 공유본 또는 작업자 문의 |
 
 | 파일 | 내용 |
 |---|---|
 | `00-factory.bin` | 공장 원본 — 기준선/원복용 (SHA256 `c4328480…`) |
-| `38-pdm.bin` | **최신 커스텀** — v37 전체 + PDM 출력 전원 수정 (SHA256 `83dc8daf…`) |
+| `38-pdm.bin` | **최신 커스텀** — v37 전체 + PDM 출력 전원 수정 (SHA256 `83dc8daf…`, 로그 `build=3801`) |
 | `37-output-diag.bin` | 브리지+MP3+출력 계측 (PDM 누락으로 무음) |
 | `27.bin` | WEC1 스트림 성공본 (9/14 소리 확인 — 레이아웃 다름 주의) |
 
-플래시 도구 `PACK_UPDATE_TOOL.exe`도 같은 폴더의 `flasher/`에 있습니다.
-실행이 안 되면 SDK `tools/` 폴더 통째로 복사 (`C:\dev\mechadog-voice-20260913\offline-speaker-1.12.16	ools`).
+### 소스 코드 위치 (저장소에 있음)
+
+- `bridge/README.md` — v34 4핀 브리지 복구: 변경 내용·검증·한계
+- `bridge/sdk-integration.patch` — SDK에 적용하는 통합 패치
+- `bridge/diagnostics/` — v35 진단 계측 (`v35-from-v34.patch` + 스냅샷)
+- `bridge/mp3-fix/` — v36 MP3 디코더 복원 (`v36-from-v35.patch`)
+- `bridge/pdm-output/` — **v37/v38 최신**: 출력 계측 + PDM 전원 수정, `v38-src/`에 실제 빌드된 소스 스냅샷
+- `bridge/robot-mapping.patch` — 로봇 측 `voice_dispatch` 방향 ID 정정 (로봇에 미적용 — 적용 전까지 구동 차단 상태에서만 테스트)
+- 상위 `main.c`, `voice_stream.c`, `user_config.h` 등 — WEC1 스트림 계열(v27) 소스. 로그 빌드 계열(v34~38)과 다른 계열이니 `pdm-output/v38-src/`를 기준으로 볼 것
+
+### 직접 빌드하려면
+
+1. `offline-speaker-1.12.16` SDK + CI1302 GCC 툴체인 필요 (팀 공유본)
+2. `bridge/pdm-output/v38-src/` 5개 파일을 SDK `projects/offline_asr_sample/src/`에 덮어쓰기
+3. `bridge/`의 `build_*.py`, `package_*.py` 참조 — 경로는 `<…>` 플레이스홀더로 정리돼 있으니 본인 환경에 맞게 수정
 
 ## 2. 플래시 방법 (전 버전 공통)
 
