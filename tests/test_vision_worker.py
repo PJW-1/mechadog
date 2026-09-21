@@ -476,6 +476,38 @@ def test_result_carries_persistent_track_ids(cfg: dict, monkeypatch) -> None:
     assert result.tracks[0].score == pytest.approx(0.9)
 
 
+def test_ppe_runs_only_when_enabled_and_opens_on_mode_switch(cfg: dict, monkeypatch) -> None:
+    class FakePpe:
+        def __init__(self):
+            self.opened = 0
+            self.calls = 0
+            self.resets = 0
+
+        def open(self):
+            self.opened += 1
+
+        def observe(self, _image, _tracks, _now_ms):
+            self.calls += 1
+
+        def reset(self):
+            self.resets += 1
+
+    ppe = FakePpe()
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch, ppe=ppe)
+    worker._run_one(_frame(1), 1000)
+    assert ppe.calls == 0
+    with worker:
+        worker.set_ppe_enabled(True)
+        assert ppe.opened == 1
+        worker._run_one(_frame(2), 1000)
+        assert ppe.calls > 0
+        worker.set_ppe_enabled(False)
+        before = ppe.calls
+        worker._run_one(_frame(3), 1000)
+        assert ppe.calls == before
+        assert ppe.resets > 0
+
+
 @pytest.mark.parametrize(
     "stage,method", [("_gate", "observe"), ("_tracker", "update"), ("_badges", "read")]
 )

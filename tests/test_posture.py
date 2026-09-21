@@ -49,15 +49,21 @@ def _still(p: PostureEscalation, box, *, at_ms: int, frames: int, track_id: int 
 
 
 def test_clipping_walks_the_steps_in_order(cfg: dict) -> None:
-    """① pitch_up → ② sit → ③ back_off. **순서가 곧 비용 순서다.**"""
-    p = _posture(cfg)
+    """3단계 기전은 유지하되 출고 설정에서는 후진을 빼 둔다."""
+    config = dict(cfg)
+    config["posture"] = dict(cfg["posture"], escalation_steps=["pitch_up", "sit", "back_off"])
+    p = PostureEscalation(config)
     settle = _settle(cfg)
     assert _still(p, CLIPPED, at_ms=0, frames=_still_frames(cfg)).step == "pitch_up"
     assert p.update(box=CLIPPED, frame_height=FRAME_H, track_id=1, now_ms=settle + 10).step == "sit"
     assert (
-        p.update(box=CLIPPED, frame_height=FRAME_H, track_id=1, now_ms=settle * 2 + 20).step
+        p.update(box=CLIPPED, frame_height=FRAME_H, track_id=1, now_ms=settle + 1020).step
         == "back_off"
     )
+
+
+def test_default_posture_steps_do_not_move_the_robot(cfg: dict) -> None:
+    assert cfg["posture"]["escalation_steps"] == ["pitch_up", "sit"]
 
 
 def test_a_step_that_clears_the_view_stops_the_sequence(cfg: dict) -> None:

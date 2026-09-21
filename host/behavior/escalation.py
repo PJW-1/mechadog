@@ -257,6 +257,11 @@ class Escalation:
         if self._level in (Level.L1, Level.L2):
             self._release("standby", now_ms)
 
+    def settle_ppe(self, now_ms: int) -> None:
+        """공장 PPE 판정 종료 시 L1을 내린다. L3/F 래치는 유지한다."""
+        if self._level is Level.L1:
+            self._release("ppe_settled", now_ms)
+
     def note_authentication_lost(self) -> None:
         """인증이 더 이상 유효하지 않다 — 유효 시간 만료(FR-10.2.4)나 미인증자 합류.
 
