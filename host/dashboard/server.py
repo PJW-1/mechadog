@@ -500,6 +500,22 @@ def create_app(
                 return JSONResponse({"error": "mode"}, status_code=400)
             return commands.mission_mode(mode).as_dict()
 
+        @app.post("/api/command/auth")
+        async def auth(request: Request):
+            """`{"result": "ok"|"fail"}` — 음성 암구호 판정 결과 주입 (WBS 3.8.2).
+
+            대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
+            옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다.
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            result = body.get("result")
+            if result not in ("ok", "fail"):
+                return JSONResponse({"error": "result"}, status_code=400)
+            return commands.auth(result).as_dict()
+
         @app.post("/api/command/drive")
         async def drive(request: Request):
             """`MANUAL` 에서만 받는다. 다음 틱에 반영된다."""

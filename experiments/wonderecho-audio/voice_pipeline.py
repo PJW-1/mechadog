@@ -322,6 +322,50 @@ def _is_sleep_cmd(norm):
     return any(norm == w or norm.endswith(w) for w in voice_store.words("sleep", SLEEP_WORDS))
 
 
+# ── 음성 암구호 인증 (WBS 3.8.2 · FR-10.2) ─────────────────────────────────
+# 사원증(ArUco)을 보여줄 수 없는 방문객이 말로 인증하는 경로다. 이름은 비밀이
+# 아니므로 대조 대상이 아니다 — 등록된 **문구**를 대조한다. 문구는 코드에 두지
+# 않고 voice_data.db 설정으로 넣는다: `auth_passphrases` 키는 _SENSITIVE_KEY_RE
+# 의 "pass" 패턴에 걸려 --set 에코·--dump 에서 자동으로 가려진다.
+# 코드 기본값은 데모 문구 하나다 — 실제 암구호는 반드시 DB 설정으로 교체한다.
+DEFAULT_PASSPHRASES = ("메카독 출입 허가",)
+
+
+def passphrases():
+    """등록 암구호 목록 — JSON 리스트 설정.
+
+    ⚠️ **깨진 설정을 코드 기본값으로 되돌리지 않는다.** 되돌리면 관리자가
+    `--set auth_passphrases "우리 문구"`(JSON 이 아니다) 처럼 넣었을 때
+    **저장소에 공개된 데모 문구가 조용히 문을 연다** — 관리자는 바꿨다고
+    믿는다. 빈 목록을 돌려 인증 경로 자체를 닫는다: 열린 채 틀리느니
+    닫힌 채 막히는 편이 낫다(호출부가 `bool(passphrases())` 로 판단한다).
+
+    ⚠️ **빈 항목은 버린다** — `""` 가 하나 섞이면 포함 대조가 **항상 참**이라
+    모든 발화가 인증을 통과한다.
+    """
+    raw = voice_store.setting(
+        "auth_passphrases",
+        json.dumps(list(DEFAULT_PASSPHRASES), ensure_ascii=False),
+    )
+    try:
+        items = json.loads(raw)
+    except (TypeError, ValueError):
+        print("[auth] auth_passphrases 가 JSON 이 아니다 — 음성 인증을 닫는다")
+        return []
+    if not isinstance(items, list):
+        print("[auth] auth_passphrases 가 목록이 아니다 — 음성 인증을 닫는다")
+        return []
+    return [text for text in (str(p).strip() for p in items) if text]
+
+
+def match_passphrase(text):
+    """정규화한 발화가 등록 암구호를 **포함**하면 참 — 자연 발화는 문구를
+    "암구호는 …입니다" 처럼 감싸므로 부분 포함으로 본다. 포함이란 발화자가
+    문구를 그대로 말했다는 뜻이며, 이름 대조와 달리 비밀의 소지 증명이 된다."""
+    norm = _PUNCT.sub("", text)
+    return any(_PUNCT.sub("", p) in norm for p in passphrases())
+
+
 def route_query(query):
     """정규화된 질의의 처리 경로 — 구체적인 규칙이 넓은 단어 검사보다 먼저다.
 
@@ -496,6 +540,12 @@ STT_PROMPT = (
 )
 
 
+# 무음 환각 거름 — faster-whisper 가 무음을 그럴듯한 문장으로 채울 때
+# no_speech_prob 가 함께 올라간다 (실측: "오늘도 시청해 주셔서 감사합니다." 0.753).
+# 값을 기록만 하면 소비처가 없는 표식이라, 여기서 세그먼트를 실제로 버린다.
+NO_SPEECH_PROB_MAX = 0.6
+
+
 def transcribe(model, pcm_bytes):
     import numpy as np
 
@@ -507,7 +557,16 @@ def transcribe(model, pcm_bytes):
         vad_filter=True,
         initial_prompt=voice_store.setting("stt_prompt", STT_PROMPT),
     )
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    kept, dropped = [], []
+    for seg in segments:
+        prob = getattr(seg, "no_speech_prob", 0.0) or 0.0
+        (dropped if prob >= NO_SPEECH_PROB_MAX else kept).append(seg)
+    if dropped:
+        print(
+            f"[stt] 무음 환각 추정 세그먼트 {len(dropped)}개 버림: "
+            + repr(" ".join(s.text.strip() for s in dropped))
+        )
+    return " ".join(seg.text.strip() for seg in kept).strip()
 
 
 def reply(llm, history, user_text, context=""):
@@ -795,10 +854,26 @@ def main():
                 print(f"[vad] captured {len(pcm) / 32000:.1f}s")
                 hub.activity = "thinking"
                 text = transcribe(stt, pcm)
-                print(f"[stt] {text!r}")
-                hub.event("user", text)
                 if len(text) < 2:
                     continue
+                # 인증 대기(AUTH_WAIT) 중의 발화는 암구호 시도다 — 방문객은
+                # 웨이크워드를 모르므로 없이도 받는다. 등록 문구가 없으면 이
+                # 경로는 열리지 않는다 (빈 목록 대조는 매번 실패를 찍는다).
+                auth_wait = (
+                    hub.mode == "active"
+                    and bool(passphrases())
+                    and robotlink.robot_state(args.robot_api) == "AUTH_WAIT"
+                )
+                # ⚠️ **인증 대기 중에는 인식 원문을 남기지 않는다.** 그 발화가
+                # 곧 암구호이고, `/transcript` 는 `0.0.0.0` 에 열려 있어 같은
+                # 망의 누구나 `curl` 로 읽는다(CORS 는 브라우저만 막는다).
+                # `--dump` 마스킹과 `db_transfer` 반출 금지로 지킨 비밀이
+                # 여기로 새면 앞의 두 방어가 무의미해진다. 판정만 아래에 남긴다.
+                if auth_wait:
+                    print("[stt] <인증 대기 · 원문 가림>")
+                else:
+                    print(f"[stt] {text!r}")
+                    hub.event("user", text)
                 norm = _PUNCT.sub("", text)
                 if _is_sleep_cmd(norm):
                     if hub.mode == "active":
@@ -822,7 +897,16 @@ def main():
                     # 후속 대화 창: 직전 답변 직후엔 웨이크워드 없이 받는다.
                     # 짧은 잡음(follow_min 미만)은 대화로 보지 않는다.
                     follow = _PUNCT.sub("", text)
-                    if (
+                    # ⚠️ **짧은 잡음을 암구호 시도로 세지 않는다.** `AUTH_WAIT`
+                    # 에서 `AUTH_FAILED` 는 곧바로 `ALERT`(L3) 다(`fsm.py` 전이표).
+                    # 방문객이 "네?" 라고 되묻거나 옆 대화가 잡히기만 해도 첫
+                    # 시도에서 경보가 오른다. 실제 재시도 카운터는 없으므로
+                    # (`fsm.py` 주석은 «2회 실패» 라고 적지만 구현에 없다)
+                    # 여기서 거른다 — 아무 말도 인증이 못 되면 `AUTH_WAIT` 의
+                    # 30초 타이머가 맡는다.
+                    if auth_wait and len(follow) >= follow_min:
+                        query = follow
+                    elif (
                         hub.mode == "active"
                         and time.monotonic() < follow_until
                         and len(follow) >= follow_min
@@ -845,6 +929,39 @@ def main():
                         "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
                         args.speed,
                     )
+                    follow_until = time.monotonic() + follow_s
+                    continue
+                # ⚠️ **인증을 건너뛰는 예외는 «비상정지» 하나다.** 화이트리스트
+                # 전체를 빼면 인증 대기 중인 로봇 앞의 **미인증자**가 웨이크워드
+                # 없이 "순찰 정지" 라고 말하는 것만으로 `POST /api/command/patrol`
+                # 이 나간다 — `ACTIONS` 에는 `estop` 말고 `patrol_start`·
+                # `patrol_stop`·`manual_on`·`manual_off` 가 같이 들어 있다.
+                # 비상정지만 열어 두는 것이 원래 의도였다.
+                estop_now = route == "action" and robotlink.match_action(query)[0] == "estop"
+                if auth_wait and not estop_now:
+                    # 인증 대기 중의 발화는 암구호 시도다 — 시나리오·상태·LLM
+                    # 으로 보내지 않고 등록 문구와 대조해 결과만 돌려보낸다.
+                    # ⚠️ **대조는 `query` 가 아니라 원문 `text` 로 한다.**
+                    # `_strip_wake()` 는 «나에게 한 말인가» 를 가르는 라우팅
+                    # 함수라 웨이크워드를 떼어낸다. 그 값으로 대조하면 등록
+                    # 문구가 웨이크워드로 시작할 때(출고 기본값
+                    # "메카독 출입 허가" 가 그렇다) **문구를 정확히 말한 사람이
+                    # 떨어진다** — 감싸서 말한 사람만 통과하는 역전이 된다.
+                    # 판정은 사람이 실제로 낸 소리를 봐야 한다.
+                    ok = match_passphrase(text)
+                    sent_ok, err = robotlink.post_auth_result(ok, args.robot_api)
+                    print(f"[auth] passphrase {'match' if ok else 'mismatch'} → {sent_ok}")
+                    if not sent_ok:
+                        spoken = f"인증 결과를 전달하지 못했습니다. {err}"
+                    elif ok:
+                        spoken = "확인됐습니다. 통행을 허가합니다."
+                    else:
+                        spoken = "등록된 암구호와 일치하지 않습니다."
+                    # 암구호 문구 자체는 저널에 남기지 않는다 — 판정만 기록.
+                    hub.event("system", f"음성 인증 {'성공' if ok else '실패'}")
+                    hub.activity = "speaking"
+                    if not args.dry_llm_only:
+                        _say(device, piper, spoken, args.speed)
                     follow_until = time.monotonic() + follow_s
                     continue
                 if route == "scenario":

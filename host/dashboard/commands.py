@@ -302,3 +302,32 @@ class CommandService:
             state=self._behavior.state,
             detail=refused if refused is not None else f"운용 모드를 {target} 로 바꿨다",
         )
+
+    def auth(self, result: str) -> CommandResult:
+        """음성 암구호 인증의 **판정 결과**를 사건으로 넣는다 (WBS 3.8.2 · FR-10.2).
+
+        이 엔드포인트는 *인증을 수행하지 않는다* — 암구호 문구 대조는 음성
+        파이프라인(등록 목록과 일치 비교)이 끝내고, 여기서는 그 판정만
+        `AUTH_OK` / `AUTH_FAILED` 로 옮긴다. 전이표가 `AUTH_WAIT` 에서만 두
+        사건을 받으므로 다른 상태의 호출은 자동으로 거절된다 — `apply_event`
+        가 False 를 돌려주는 게 그 거절이다.
+        """
+        event = {"ok": Event.AUTH_OK, "fail": Event.AUTH_FAILED}.get(result)
+        if event is None:
+            return CommandResult(
+                command="auth",
+                accepted=False,
+                state=self._behavior.state,
+                detail=f"모르는 인증 결과: {result!r} (ok|fail)",
+            )
+        accepted = self._apply_event(event)
+        return CommandResult(
+            command="auth",
+            accepted=accepted,
+            state=self._behavior.state,
+            detail=(
+                "인증 결과를 반영했다"
+                if accepted
+                else f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)"
+            ),
+        )
