@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -564,3 +566,164 @@ def test_auth_endpoint_does_not_execute_speech(client):
     assert body["accepted"] is False
     assert behavior.state == "IDLE"
     assert sent == []
+
+
+# ── 음성 암구호 시도 횟수 (FR-10.3 · 2026-09-21 실기) ──────────────
+#
+# 실기 3라운드에서 **암구호를 한 번 틀리자 곧바로 L3 경보**가 됐다. 설정은
+# `auth.max_attempts: 2` 인데 그 값을 읽는 곳이 사원증 인증기뿐이어서, 음성
+# 경로는 첫 불일치가 그대로 `AUTH_FAILED` 로 나갔다. 말은 사원증과 달리 잘못
+# 들릴 수 있으므로 재시도 여유가 있어야 한다 — 그것이 이 값의 존재 이유다.
+
+
+def _voice_auth_service(cfg, clock):
+    """런타임이 붙은 서비스. **시도를 세는 쪽이 런타임이라** 이 조합이어야 한다."""
+    from host.runtime import Runtime
+
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    svc = CommandService(
+        runtime.behavior,
+        runtime.commander,
+        lambda _line: None,
+        apply_event=runtime.apply_external,
+        note_voice_auth=runtime.note_voice_auth,
+    )
+    for event in AUTH_WAIT_ROUTE:
+        runtime.apply_external(event)
+    assert runtime.behavior.state == "AUTH_WAIT"
+    return svc, runtime
+
+
+def test_voice_auth_first_mismatch_keeps_waiting(cfg, clock):
+    """**첫 불일치로 경보를 울리지 않는다.** 아직 한 번 남았다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+
+    result = svc.auth("fail")
+
+    assert runtime.behavior.state == "AUTH_WAIT", "재시도 여유가 남아 있으면 대기를 유지한다"
+    # 단계는 사건으로만 움직이므로 이 경로에서는 올라가지 않는다 — 중요한 것은
+    # **L3 로 뛰지 않았다**는 것이다.
+    assert runtime.escalation.level.value != "L3", "L3 경보는 소진 뒤에만 울린다"
+    # 전달은 성공했다 — 거짓으로 돌려주면 파이프라인이 "전달하지 못했습니다" 라고
+    # 말해, 사람이 다시 말할 이유를 잃는다.
+    assert result.accepted is True
+    assert "1회 남았다" in result.detail
+
+
+def test_voice_auth_exhausts_at_max_attempts(cfg, clock):
+    """`max_attempts` 를 채우면 그때 `AUTH_FAILED` — L3 경보다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+    assert cfg["auth"]["max_attempts"] == 2
+
+    svc.auth("fail")
+    result = svc.auth("fail")
+
+    assert runtime.behavior.state == "ALERT"
+    assert runtime.escalation.level.value == "L3"
+    assert result.accepted is True
+
+
+def test_voice_auth_retry_can_still_pass(cfg, clock):
+    """틀린 뒤 **다시 말해서 통과**할 수 있어야 한다 — 이것이 재시도의 목적이다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+
+    svc.auth("fail")
+    result = svc.auth("ok")
+
+    assert result.accepted is True
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level.value == "L0"
+
+
+def test_voice_auth_attempts_reset_on_each_auth_wait(cfg, clock):
+    """**다음 대기는 0 부터 센다.** 앞사람의 실패가 넘어오면 처음 말하는 사람이
+    한 마디에 소진된다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+
+    svc.auth("fail")  # 1회 소모하고
+    svc.auth("ok")  # 통과해서 AUTH_WAIT 를 떠난다
+    assert runtime.behavior.state == "PATROL"
+
+    runtime.apply_external(Event.PERSON_FOUND)
+    runtime.apply_external(Event.AUTH_REQUIRED)
+    assert runtime.behavior.state == "AUTH_WAIT"
+
+    result = svc.auth("fail")
+    assert runtime.behavior.state == "AUTH_WAIT", "새 대기의 첫 실패가 소진이 되면 안 된다"
+    assert "1회 남았다" in result.detail
+
+
+def test_voice_auth_outside_auth_wait_is_not_counted(cfg, clock):
+    """대기 중이 아닌 실패는 **세지도 않는다** — 세면 엉뚱한 대기에 쌓인다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+    svc.auth("ok")
+    assert runtime.behavior.state == "PATROL"
+
+    result = svc.auth("fail")
+    assert result.accepted is False
+    assert "AUTH_WAIT" in result.detail
+
+    runtime.apply_external(Event.PERSON_FOUND)
+    runtime.apply_external(Event.AUTH_REQUIRED)
+    svc.auth("fail")
+    assert runtime.behavior.state == "AUTH_WAIT", "밖에서 온 실패가 시도로 쌓이면 안 된다"
+
+
+# ── 음성 인증 유효 시간 (FR-10.2.4 · 2026-09-21 실기) ──────────────
+#
+# 실기에서 암구호로 통과한 직후 **다시 인증을 요구**했다. 음성은 `Authenticator`
+# 세션을 만들지 않는데 `_judge_auth` 는 세션이 붙은 트랙만 보고 인증 여부를
+# 판정해서, 통과한 다음 틱에 `note_authentication_lost()` 가 불렸다.
+# `session_valid_s` 가 음성 경로에 적용된 적이 한 번도 없었다.
+#
+# 허가를 트랙에 붙이지 않는 것은 타협이 아니라 판단이다 — 마이크는 로봇 몸통에
+# 하나뿐이라 **그 소리가 누구 목소리인지 모른다**. 없는 근거로 트랙을 고르면
+# 틀렸을 때 엉뚱한 사람이 허가를 받는다.
+
+
+def _frame(tracks: tuple = ()) -> SimpleNamespace:
+    """`_judge_auth` 가 만지는 두 칸만 있는 가짜 프레임."""
+    return SimpleNamespace(tracks=tuple(tracks), markers=())
+
+
+def test_voice_auth_holds_without_any_track(cfg, clock):
+    """통과 뒤에는 **보이는 사람이 없어도** 인증 상태다 — 허가는 현장에 붙는다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+    assert svc.auth("ok").accepted is True
+
+    clock.advance(1_000)
+    runtime._judge_auth(_frame(), clock.ms)
+    assert runtime.escalation.authenticated is True
+
+
+def test_voice_auth_expires_after_session_valid_s(cfg, clock):
+    """**만료되면 재인증을 요구한다** (FR-10.2.4). 유효 시간은 설정값이다."""
+    valid_ms = int(cfg["auth"]["session_valid_s"]) * 1000
+    svc, runtime = _voice_auth_service(cfg, clock)
+    svc.auth("ok")
+
+    clock.advance(valid_ms - 1)
+    runtime._judge_auth(_frame(), clock.ms)
+    assert runtime.escalation.authenticated is True, "만료 직전은 아직 유효하다"
+
+    clock.advance(2)
+    runtime._judge_auth(_frame(), clock.ms)
+    assert runtime.escalation.authenticated is False, "만료 뒤에는 재인증을 요구한다"
+
+
+def test_voice_auth_rejected_verdict_opens_no_window(cfg, clock):
+    """**받아들여지지 않은 판정은 허가가 아니다** — `AUTH_WAIT` 밖의 `ok`."""
+    from host.runtime import Runtime
+
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    svc = CommandService(
+        runtime.behavior,
+        runtime.commander,
+        lambda _line: None,
+        apply_event=runtime.apply_external,
+        note_voice_auth=runtime.note_voice_auth,
+    )
+    assert svc.auth("ok").accepted is False, "IDLE 에서는 인증 결과를 받지 않는다"
+
+    runtime._judge_auth(_frame(), clock.ms)
+    assert runtime.escalation.authenticated is False
