@@ -298,6 +298,8 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
             self.set_mode = lambda _mode: None
+            # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3).
+            self.note_voice_auth = lambda _ok: (True, "")
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -546,6 +548,8 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
             self.set_mode = lambda _mode: None
+            # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3).
+            self.note_voice_auth = lambda _ok: (True, "")
 
         def serve(self, _sock, **_kwargs):
             pass

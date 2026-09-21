@@ -72,6 +72,7 @@ class CommandService:
         apply_event: Callable[[Event], bool] | None = None,
         ask_patrol: Callable[[], None] | None = None,
         set_mode: Callable[[str], str | None] | None = None,
+        note_voice_auth: Callable[[bool], tuple[bool, str]] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -88,6 +89,10 @@ class CommandService:
         # 바뀌지 않았다**(FR-10.4). 같은 실기에서 `MANUAL` 26.7초의 전이도 로그에 한
         # 줄도 남지 않았다. 런타임이 없는 시험에서는 전이만 필요하므로 기본값을 둔다.
         self._apply_event = apply_event if apply_event is not None else behavior.event
+        # 음성 암구호는 **시도 횟수를 세야 해서** 사건 하나로 옮길 수 없다 (FR-10.3).
+        # 세는 곳은 런타임이다 — `AUTH_WAIT` 에 언제 들어왔는지를 아는 쪽이 거기뿐이다.
+        # 런타임이 없는 시험에서는 예전처럼 사건만 넣는다.
+        self._note_voice_auth = note_voice_auth
 
     @property
     def state(self) -> str:
@@ -311,15 +316,27 @@ class CommandService:
         `AUTH_OK` / `AUTH_FAILED` 로 옮긴다. 전이표가 `AUTH_WAIT` 에서만 두
         사건을 받으므로 다른 상태의 호출은 자동으로 거절된다 — `apply_event`
         가 False 를 돌려주는 게 그 거절이다.
+
+        ⚠️ **불일치는 사건이 아니라 시도다** (FR-10.3). `max_attempts` 를 세는
+        일은 런타임이 하므로(`note_voice_auth`) 여기서 `AUTH_FAILED` 를 바로
+        만들지 않는다. 그렇게 만들었더니 오인식 한 번이 곧 L3 경보였다.
         """
-        event = {"ok": Event.AUTH_OK, "fail": Event.AUTH_FAILED}.get(result)
-        if event is None:
+        if result not in ("ok", "fail"):
             return CommandResult(
                 command="auth",
                 accepted=False,
                 state=self._behavior.state,
                 detail=f"모르는 인증 결과: {result!r} (ok|fail)",
             )
+        if self._note_voice_auth is not None:
+            accepted, detail = self._note_voice_auth(result == "ok")
+            return CommandResult(
+                command="auth",
+                accepted=accepted,
+                state=self._behavior.state,
+                detail=detail,
+            )
+        event = Event.AUTH_OK if result == "ok" else Event.AUTH_FAILED
         accepted = self._apply_event(event)
         return CommandResult(
             command="auth",
