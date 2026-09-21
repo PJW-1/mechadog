@@ -230,3 +230,47 @@ python -X utf8 build_prompt_audio.py <원본.wav> <출력.wav>
 | 통신 | 250프레임 / 5초, checksum·length·timeout 오류 0 |
 
 한국어 인식 정확도는 별도로 재지 않았다. 위 수치는 특정 발화 한 건의 결과이며 일반적인 정확도 지표가 아니다.
+
+---
+
+## 6. 로컬 전용 자원 — 다른 환경에서의 재현
+
+이 폴더의 실행 상태 일부는 **커밋되지 않는다** (`.gitignore`). 다른 PC·팀원·에이전트가 클론만으로는 같은 환경이 안 되며, 아래 절차로 재생해야 한다. 반대로 말하면 **이 자원 없이는 검증이 불가능한 항목이 있다** — 그 경우 테스트 결과를 "이 PC에서만 확인됨"으로 표시한다.
+
+| 자원 | Git | 재생 방법 |
+|---|---|---|
+| `voice_data.db` | 무시됨 | `python prepare_demo.py --output-dir .` — 정본 음성3테이블 생성. 기존 DB는 보존 |
+| `voice_data.rules.json` | 무시됨 | 같은 명령으로 공유 JSON의 고정 발화 규칙 재현 |
+| `mes_demo.db` | 무시됨 | 같은 명령으로 별도 MES5테이블 합성 자료 재현 |
+| `phrases_custom.json` | 이전 입력만 | `python migrate_voice_db.py --db voice_data.db`로 `phrases`에 이전·백업. 새 관리 API는 DB만 사용 |
+| `voice_cache/` | 무시됨 | TTS 캐시 — 자동 생성 |
+| `emergency_log.txt` | 무시됨 | 비상 발화 시 자동 생성 |
+| Whisper 모델 폴더 | 미포함 | 1절 다운로드 절차 (모델 파일은 라이선스·용량으로 커밋하지 않는다) |
+| Piper/Orpheus 모델 | 미포함 | 2절 다운로드 절차 |
+| GGUF 대화 모델 | 미포함 | `--model` 인자로 지정하는 로컬 파일 |
+| `knowledge/*.txt` | **커밋됨** | 단, 내용은 전부 **합성 데모 문서** — 실사 자료 아님 |
+
+### 암구호(3.8.2)는 기본값이 코드에 있다
+
+데모 문구 `"메카독 출입 허가"` 가 `voice_pipeline.DEFAULT_PASSPHRASES` 에 있다 — **실제 암구호는 코드가 아니라 DB에 넣는다:**
+
+```bash
+python voice_store.py --set auth_passphrases '["실제 암구호", "예비 문구"]'
+```
+
+키 이름이 `pass` 를 포함해 `--dump`·`--set` 에코에서 값이 자동으로 가려진다. 빈 목록(`'[]'`)으로 두면 음성 인증 경로 자체가 닫힌다.
+
+공유용 `--seed`/`prepare_demo.py`는 공개 설정6개만 넣고 암구호를 자동 저장하지 않는다.
+설정이 없는 데모의 코드 기본값과 관리자가 명시적으로 저장한 인증 설정을 구분한다.
+암구호 설정이 들어 있는 DB는 `db_transfer.py export`가 거부하며 공유 자료로 반출하지 않는다.
+정본 스키마는 PR223과 같은 3테이블이며, 인증 기능 때문에 구형8테이블을 되살리지 않는다.
+
+### 다른 환경에서 검증 가능/불가능
+
+| 검증 | 새 환경에서 가능? |
+|---|---|
+| `python -m unittest discover -s experiments/wonderecho-audio` (전체 단위시험) | ✅ 가능 — 하드웨어·DB·모델 불요 (requirements-pc.txt 만 설치) |
+| `/api/command/auth` FSM 전이·거절 | ✅ 가능 — `pytest tests/test_command_api.py` |
+| STT 환각 거름·암구호 대조 로직 | ✅ 가능 — mock 기반 |
+| 실제 음성 왕복 (모듈 마이크→인증 해제) | ❌ **WonderEcho 모듈 + COM 포트 + 모델 파일 필요** — 다른 환경에서는 재현 불가. 실기 결과는 "측정한 기체·날짜 한정"으로 표시한다 |
+| MES 음성 답변 | ◐ `--seed` 후 가능하나 **합성 데이터 기준** — 실제 공장 데이터와 무관 |
