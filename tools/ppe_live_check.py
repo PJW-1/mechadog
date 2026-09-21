@@ -816,6 +816,15 @@ def main(argv: list[str] | None = None) -> int:
     # ⚠️ 배경 실행에서 표준출력이 버퍼에 갇혀 «아무 일도 안 하는 것» 처럼 보였다.
     sys.stdout.reconfigure(line_buffering=True)
 
+    # ⚠️ **한국어 Windows 콘솔은 cp949 라 «—» 에서 죽는다.** 실제로 2026-09-20 에
+    # 이 도구가 첫 줄을 찍다가 `UnicodeEncodeError` 로 멈췄다. **관찰 도구가 출력
+    # 때문에 죽으면 관찰을 못 한다** — 글자가 물음표로 나오는 것보다 나쁘다.
+    # `tools/fetch_models.py` 가 같은 이유로 둔 가드와 같다.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="replace")
+
     config = load_config(args.device)
     if args.xiao_ip:
         config["network"]["xiao_ip"] = args.xiao_ip
