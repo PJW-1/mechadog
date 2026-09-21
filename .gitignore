@@ -91,6 +91,8 @@ desktop.ini
 experiments/wonderecho-audio/voice_cache/
 experiments/wonderecho-audio/emergency_log.txt
 experiments/wonderecho-audio/phrases_custom.json
+# 현장지원 운영 데이터 DB — `python -m host.factory_ops.service --seed` 로 재생성 (ADR-34)
+data/factory_ops.db
 # 가상 MES 데모 DB — factory_mes.py --seed / --serve 시 자동 재생성
 experiments/wonderecho-audio/mes_demo.db
 # 음성 모듈 설정 오버레이 — voice_store.py --seed 로 재생성 (없으면 코드 기본값)

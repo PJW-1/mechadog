@@ -497,6 +497,19 @@ zones:
   arrival_radius_mm: 300       # FR-7.4 (Phase 2)
   random_after_first_cycle: true  # FR-7.3
 
+factory_ops:            # ADR-34 · WBS 4.7.15~4.7.17 — `assist` 모드 전용
+  # 런타임 DB 는 **생성물**이다 (.gitignore). 버전 관리하는 것은
+  # host/factory_ops/schema.sql 과 seed.json 뿐이고, 만들 때는
+  # `python -m host.factory_ops.service --seed` 를 쓴다.
+  db_path: data/factory_ops.db
+  # 항목별 최대 수명(초) — 넘긴 값은 추정하지 않고 실패로 답한다
+  # (ADR-34 운용규칙 4). 값이 바뀌는 속도가 다르므로 하나로 묶지 않는다.
+  ttl_s:
+    production: 3600          # 생산 실적은 시간 단위로 움직인다
+    shipments: 86400          # 출하 일정은 하루 단위
+    schedule: 21600           # 작업지시는 교대(6시간) 단위
+    equipment: 86400          # 설비 점검은 하루 단위
+
 logging:                # NFR-3④
   level: INFO                 # DEBUG | INFO | WARN | ERROR
   format: jsonl
