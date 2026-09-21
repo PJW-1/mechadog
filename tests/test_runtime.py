@@ -23,6 +23,7 @@ from host.runtime import Runtime, watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
+from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION, PpeVerdict
 from host.vision.tracker import Track
 from host.vision.vlm_reader import VlmReader
 from host.vision.worker import VisionResult
@@ -94,6 +95,10 @@ class FakeVision:
         self.result: VisionResult | None = None
         self.alive = True
         self.is_stalled = False
+        self.ppe_enabled = False
+
+    def set_ppe_enabled(self, enabled: bool) -> None:
+        self.ppe_enabled = enabled
 
     def start(self) -> None:
         self.starts += 1
@@ -1902,6 +1907,216 @@ def test_factory_mode_returns_to_patrol_once_ppe_is_settled(config: dict, clock:
 
     assert runtime.apply_external(Event.PPE_SETTLED) is True
     assert runtime.behavior.state == "PATROL"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_ppe_settles_once_for_the_primary_track(config: dict, clock: FakeClock) -> None:
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    assert vision.ppe_enabled
+    runtime.start_patrol(0)
+    first = vision_result(1, 100, present=True, hits=3, last_seen_ms=100)
+    vision.result = replace(first, ppe=PpeVerdict(1, OK))
+    runtime.tick(100)
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+    vision.result = replace(first, frame_seq=2, completed_ms=200)
+    runtime.tick(200)
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+    vision.result = vision_result(3, 300, present=False, hits=0, last_seen_ms=None)
+    runtime.tick(300)
+    vision.result = replace(first, frame_seq=4, completed_ms=400, ppe=PpeVerdict(1, OK))
+    runtime.tick(400)
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+    vision.result = vision_result(5, 1600, present=False, hits=0, last_seen_ms=None)
+    runtime.tick(1600)
+    assert 1 not in runtime._ppe_done
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_moving_clipped_person_is_undetermined_not_stuck(
+    config: dict, clock: FakeClock
+) -> None:
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+    for seq in range(1, 20):
+        at = seq * 100
+        result = vision_result(
+            seq,
+            at,
+            present=True,
+            hits=3,
+            last_seen_ms=at,
+            box=(100.0 + seq * 30, 0.0, 300.0 + seq * 30, 400.0),
+        )
+        vision.result = replace(
+            result, ppe=PpeVerdict(1, UNDETERMINED, "머리 클리핑", clipped=True)
+        )
+        runtime.tick(at)
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_confirmed_ppe_violation_raises_l3(config: dict, clock: FakeClock) -> None:
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+    first = vision_result(1, 100, present=True, hits=3, last_seen_ms=100)
+    vision.result = replace(first, ppe=PpeVerdict(1, VIOLATION, confirmed=True))
+    runtime.tick(100)
+    assert runtime.escalation.level is Level.L3
+    assert runtime.behavior.state == "ALERT"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_clipping_raises_posture_then_returns_before_patrol(
+    config: dict, clock: FakeClock
+) -> None:
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+    clipped = (300.0, 0.0, 340.0, 400.0)
+    lines = []
+    for seq in range(1, 8):
+        at = seq * 100
+        first = vision_result(seq, at, present=True, hits=3, last_seen_ms=at, box=clipped)
+        vision.result = replace(first, ppe=PpeVerdict(1, UNDETERMINED, "머리 클리핑", clipped=True))
+        lines.extend(runtime.tick(at))
+    assert sum('"type":"POSE"' in line for line in lines) == 1
+
+    clear = vision_result(8, 1300, present=True, hits=3, last_seen_ms=1300)
+    vision.result = replace(clear, ppe=PpeVerdict(1, OK))
+    lines = runtime.tick(1300)
+    assert any('"type":"ACTION"' in line for line in lines)
+    assert runtime.behavior.state == "ALERT"
+    runtime.tick(2300)
+    assert runtime.behavior.state == "PATROL"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_one_missing_frame_does_not_abort_posture(config: dict, clock: FakeClock) -> None:
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+    clipped = (300.0, 0.0, 340.0, 400.0)
+    for seq in range(1, 8):
+        at = seq * 100
+        result = vision_result(seq, at, present=True, hits=3, last_seen_ms=at, box=clipped)
+        vision.result = replace(
+            result, ppe=PpeVerdict(1, UNDETERMINED, "머리 클리핑", clipped=True)
+        )
+        runtime.tick(at)
+    assert runtime._ppe_pose_held
+    vision.result = vision_result(8, 800, present=False, hits=0, last_seen_ms=None)
+    lines = runtime.tick(800)
+    assert runtime._ppe_pose_held
+    assert not any('"type":"ACTION"' in line for line in lines)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_boundary_jitter_does_not_return_posture(config: dict, clock: FakeClock) -> None:
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+    for seq in range(1, 8):
+        at = seq * 100
+        result = vision_result(
+            seq, at, present=True, hits=3, last_seen_ms=at, box=(300.0, 0.0, 340.0, 400.0)
+        )
+        vision.result = replace(result, ppe=PpeVerdict(1, UNDETERMINED, clipped=True))
+        runtime.tick(at)
+    result = vision_result(
+        8, 800, present=True, hits=3, last_seen_ms=800, box=(300.0, 10.0, 340.0, 400.0)
+    )
+    vision.result = replace(result, ppe=PpeVerdict(1, OK))
+    runtime.tick(800)
+    assert runtime._ppe_pose_held
+    assert runtime.behavior.state == "ALERT"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_target_loss_returns_to_stand_before_patrol_moves(
+    config: dict, clock: FakeClock
+) -> None:
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+    for seq in range(1, 8):
+        at = seq * 100
+        result = vision_result(
+            seq, at, present=True, hits=3, last_seen_ms=at, box=(300.0, 0.0, 340.0, 400.0)
+        )
+        vision.result = replace(result, ppe=PpeVerdict(1, UNDETERMINED, clipped=True))
+        runtime.tick(at)
+    assert runtime._ppe_pose_held
+    vision.result = vision_result(8, 5800, present=False, hits=0, last_seen_ms=None)
+    lines = runtime.tick(5800)
+    assert runtime.behavior.state == "PATROL"
+    assert not any('"type":"MOVE"' in line and '"step":60' in line for line in lines)
+    lines = runtime.tick(6300)
+    assert not any('"type":"MOVE"' in line and '"step":60' in line for line in lines)
+    lines = runtime.tick(6800)
+    assert any('"type":"MOVE"' in line and '"step":60' in line for line in lines)
 
 
 def test_guard_mode_has_no_way_to_settle_ppe(config: dict, clock: FakeClock) -> None:
