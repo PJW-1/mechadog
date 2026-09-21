@@ -1042,9 +1042,8 @@ class Runtime:
         #
         # ⚠️ **대신 그 60초 동안 새로 들어온 사람도 함께 허가된다.** 암구호는 원래
         # *아는 사람은 통과*라 결론은 같지만, 사원증과 다른 성질이니 알고 쓸 것.
-        if now_ms < self._voice_auth_until_ms:
-            self._escalation.note_authenticated(now_ms)
-        elif self._auth.all_authenticated(result.tracks, now_ms):
+        voice_granted = now_ms < self._voice_auth_until_ms
+        if voice_granted or self._auth.all_authenticated(result.tracks, now_ms):
             self._escalation.note_authenticated(now_ms)
         else:
             self._escalation.note_authentication_lost()
