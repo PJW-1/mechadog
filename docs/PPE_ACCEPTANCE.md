@@ -6,7 +6,8 @@
 
 ## 준비
 
-- 시험 개체의 `--device`와 XIAO IP를 확인한다.
+- 시험 개체의 `--device`와 **현재** XIAO IP를 확인한다. 과거 DHCP 주소나 아래 예시 주소를
+  현재 주소로 간주하지 않는다.
 - `models/coco.onnx`와 `models/ppe.onnx`를 준비한다.
 - PPE 모델은 3,654,680바이트, SHA-256
   `ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`인지 확인한다.
@@ -16,15 +17,18 @@
 ## 실행
 
 ```powershell
+$xiaoIp = "현재 XIAO IP로 교체"
+$runDate = Get-Date -Format yyyyMMdd
 python tools/ppe_live_check.py `
   --device mechdog-01 `
-  --xiao-ip 192.168.0.42 `
+  --xiao-ip $xiaoIp `
   --seconds 900 `
   --segments `
   --scenario xiao `
   --web-port 8008 `
-  --report TEST_MECHDOG/results/20260920_ppe-xiao/summary.md `
-  --session TEST_MECHDOG/results/20260920_ppe-xiao/session.json
+  --save-dir "TEST_MECHDOG/results/${runDate}_ppe-xiao/frames" `
+  --report "TEST_MECHDOG/results/${runDate}_ppe-xiao/summary.md" `
+  --session "TEST_MECHDOG/results/${runDate}_ppe-xiao/session.json"
 ```
 
 실제 개체명·IP·날짜로 바꿔 실행한다. XIAO 검수에서는 `--window-ms`와 `--hits`를 주지
@@ -32,12 +36,15 @@ python tools/ppe_live_check.py `
 
 브라우저에서 구간을 선택한 뒤 네 방향을 차례로 관찰한다. 직립과 웅크림은 전신이 화면에
 들어온 상태에서 각각 네 가지 착용 조건을 수행한다. `clipped-base`는 머리가 잘렸을 때
-`확인불가`가 나오는지 확인한다. `pitch-up`·`sit`·`back-off`는 별도의 안전한 조작 경로로
+`확인불가`가 나오는지 확인한다. `pitch-up`·`sit`은 별도의 안전한 조작 경로로
 해당 단계에 도달한 다음 선택하며, 필요한 단계에서 전신 판정이 회복되면 이후 단계는
-불필요하게 실행하지 않는다.
+불필요하게 실행하지 않는다. 출고 설정에서 제외한 후진은 PPE 검수 중 실행하지 않는다.
+11개 구간 × 네 방향 × 방향당 15초 = **최소 660초**이므로, 900초 실행에 전환 여유가 있다.
 
-종료할 때 브라우저의 **시험 종료 및 결과 저장**을 누른다. 정상 종료되면 사람이 읽는
-`summary.md`와 재계산 가능한 `session.json`이 함께 남는다.
+시작 전 프레임 저장 공간을 확인한다. `--save-dir`은 **모든 프레임**을 저장하므로
+900초 검수는 파일이 수만 장이 될 수 있다. 종료할 때 브라우저의 **시험 종료 및 결과
+저장**을 누른다. 정상 종료되면 `summary.md`, 재계산 가능한 `session.json`,
+판정을 그린 `frames/`가 함께 남는다.
 
 ## 결과 읽기
 
@@ -48,6 +55,10 @@ python tools/ppe_live_check.py `
 조건부 정확도만으로 통과를 주장하지 않는다. 카메라가 낮을 때 확인불가가 많으면 정확도가
 높아도 실제 기능은 판정을 거의 내리지 못한다. 최종 결과에는 모델 해시, 개체 프로파일,
 운영 알람 창, 구간별 원자료가 모두 있어야 한다.
+
+웹 구간 버튼과 방향별 시간 구분은 사람이 누르는 시각에 따라 어긋날 수 있으므로
+`summary.md`의 구간별 비율은 **예비 수치**다. 최종 합격 판단은 저장 프레임에서
+착용 상태·자세·머리 포함 여부를 다시 확인해 라벨과 판정을 대조한 뒤 한다.
 
 ## 현재 상태와 다음 작업
 
