@@ -499,9 +499,33 @@ class PassphraseTests(unittest.TestCase):
             self.assertTrue(vp.match_passphrase("새 암구호입니다"))
             self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
 
-    def test_broken_setting_falls_back_to_default(self):
+    def test_default_passphrase_is_matched_on_raw_speech(self):
+        # ⚠️ 회귀 방지: 대조는 라우팅용으로 가공한 값이 아니라 **원문**으로
+        # 해야 한다. 출고 기본 문구가 웨이크워드로 시작하므로, `_strip_wake()`
+        # 값으로 대조하면 **문구를 정확히 말한 사람이 떨어지는** 역전이 난다.
+        spoken = "메카독 출입 허가"
+        self.assertTrue(vp.match_passphrase(spoken))
+        self.assertFalse(vp.match_passphrase(vp._strip_wake(spoken)))
+
+    def test_broken_setting_closes_auth_instead_of_falling_back(self):
+        # 되돌리면 관리자가 JSON 이 아닌 값을 넣은 순간 저장소에 공개된
+        # 데모 문구가 조용히 문을 열어 준다 — 바꿨다고 믿는 채로.
         with mock.patch.object(vp.voice_store, "setting", return_value="{깨짐"):
-            self.assertTrue(vp.match_passphrase("메카독 출입 허가"))
+            self.assertEqual(vp.passphrases(), [])
+            self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
+
+    def test_non_list_setting_closes_auth(self):
+        import json
+
+        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps("문구")):
+            self.assertEqual(vp.passphrases(), [])
+
+    def test_empty_entry_does_not_authenticate_everything(self):
+        import json
+
+        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps(["", "  "])):
+            self.assertEqual(vp.passphrases(), [])
+            self.assertFalse(vp.match_passphrase("아무 말이나"))
 
 
 class AuthLinkTests(unittest.TestCase):

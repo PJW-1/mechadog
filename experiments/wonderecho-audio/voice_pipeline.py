@@ -332,7 +332,17 @@ DEFAULT_PASSPHRASES = ("메카독 출입 허가",)
 
 
 def passphrases():
-    """등록 암구호 목록 — JSON 리스트 설정. 깨진 설정이면 코드 기본값."""
+    """등록 암구호 목록 — JSON 리스트 설정.
+
+    ⚠️ **깨진 설정을 코드 기본값으로 되돌리지 않는다.** 되돌리면 관리자가
+    `--set auth_passphrases "우리 문구"`(JSON 이 아니다) 처럼 넣었을 때
+    **저장소에 공개된 데모 문구가 조용히 문을 연다** — 관리자는 바꿨다고
+    믿는다. 빈 목록을 돌려 인증 경로 자체를 닫는다: 열린 채 틀리느니
+    닫힌 채 막히는 편이 낫다(호출부가 `bool(passphrases())` 로 판단한다).
+
+    ⚠️ **빈 항목은 버린다** — `""` 가 하나 섞이면 포함 대조가 **항상 참**이라
+    모든 발화가 인증을 통과한다.
+    """
     raw = voice_store.setting(
         "auth_passphrases",
         json.dumps(list(DEFAULT_PASSPHRASES), ensure_ascii=False),
@@ -340,10 +350,12 @@ def passphrases():
     try:
         items = json.loads(raw)
     except (TypeError, ValueError):
-        items = list(DEFAULT_PASSPHRASES)
+        print("[auth] auth_passphrases 가 JSON 이 아니다 — 음성 인증을 닫는다")
+        return []
     if not isinstance(items, list):
-        return list(DEFAULT_PASSPHRASES)
-    return [str(p) for p in items]
+        print("[auth] auth_passphrases 가 목록이 아니다 — 음성 인증을 닫는다")
+        return []
+    return [text for text in (str(p).strip() for p in items) if text]
 
 
 def match_passphrase(text):
@@ -842,10 +854,26 @@ def main():
                 print(f"[vad] captured {len(pcm) / 32000:.1f}s")
                 hub.activity = "thinking"
                 text = transcribe(stt, pcm)
-                print(f"[stt] {text!r}")
-                hub.event("user", text)
                 if len(text) < 2:
                     continue
+                # 인증 대기(AUTH_WAIT) 중의 발화는 암구호 시도다 — 방문객은
+                # 웨이크워드를 모르므로 없이도 받는다. 등록 문구가 없으면 이
+                # 경로는 열리지 않는다 (빈 목록 대조는 매번 실패를 찍는다).
+                auth_wait = (
+                    hub.mode == "active"
+                    and bool(passphrases())
+                    and robotlink.robot_state(args.robot_api) == "AUTH_WAIT"
+                )
+                # ⚠️ **인증 대기 중에는 인식 원문을 남기지 않는다.** 그 발화가
+                # 곧 암구호이고, `/transcript` 는 `0.0.0.0` 에 열려 있어 같은
+                # 망의 누구나 `curl` 로 읽는다(CORS 는 브라우저만 막는다).
+                # `--dump` 마스킹과 `db_transfer` 반출 금지로 지킨 비밀이
+                # 여기로 새면 앞의 두 방어가 무의미해진다. 판정만 아래에 남긴다.
+                if auth_wait:
+                    print("[stt] <인증 대기 · 원문 가림>")
+                else:
+                    print(f"[stt] {text!r}")
+                    hub.event("user", text)
                 norm = _PUNCT.sub("", text)
                 if _is_sleep_cmd(norm):
                     if hub.mode == "active":
@@ -865,19 +893,18 @@ def main():
                         _say(device, piper, "네, 대화를 다시 시작합니다.", args.speed)
                         follow_until = time.monotonic() + follow_s
                     continue
-                # 인증 대기(AUTH_WAIT) 중의 발화는 암구호 시도다 — 방문객은
-                # 웨이크워드를 모르므로 없이도 받는다. 등록 문구가 없으면 이
-                # 경로는 열리지 않는다 (빈 목록 대조는 매번 실패를 찍는다).
-                auth_wait = (
-                    hub.mode == "active"
-                    and bool(passphrases())
-                    and robotlink.robot_state(args.robot_api) == "AUTH_WAIT"
-                )
                 if query is None:
                     # 후속 대화 창: 직전 답변 직후엔 웨이크워드 없이 받는다.
                     # 짧은 잡음(follow_min 미만)은 대화로 보지 않는다.
                     follow = _PUNCT.sub("", text)
-                    if auth_wait:
+                    # ⚠️ **짧은 잡음을 암구호 시도로 세지 않는다.** `AUTH_WAIT`
+                    # 에서 `AUTH_FAILED` 는 곧바로 `ALERT`(L3) 다(`fsm.py` 전이표).
+                    # 방문객이 "네?" 라고 되묻거나 옆 대화가 잡히기만 해도 첫
+                    # 시도에서 경보가 오른다. 실제 재시도 카운터는 없으므로
+                    # (`fsm.py` 주석은 «2회 실패» 라고 적지만 구현에 없다)
+                    # 여기서 거른다 — 아무 말도 인증이 못 되면 `AUTH_WAIT` 의
+                    # 30초 타이머가 맡는다.
+                    if auth_wait and len(follow) >= follow_min:
                         query = follow
                     elif (
                         hub.mode == "active"
@@ -904,13 +931,24 @@ def main():
                     )
                     follow_until = time.monotonic() + follow_s
                     continue
-                if auth_wait and route != "action":
+                # ⚠️ **인증을 건너뛰는 예외는 «비상정지» 하나다.** 화이트리스트
+                # 전체를 빼면 인증 대기 중인 로봇 앞의 **미인증자**가 웨이크워드
+                # 없이 "순찰 정지" 라고 말하는 것만으로 `POST /api/command/patrol`
+                # 이 나간다 — `ACTIONS` 에는 `estop` 말고 `patrol_start`·
+                # `patrol_stop`·`manual_on`·`manual_off` 가 같이 들어 있다.
+                # 비상정지만 열어 두는 것이 원래 의도였다.
+                estop_now = route == "action" and robotlink.match_action(query)[0] == "estop"
+                if auth_wait and not estop_now:
                     # 인증 대기 중의 발화는 암구호 시도다 — 시나리오·상태·LLM
                     # 으로 보내지 않고 등록 문구와 대조해 결과만 돌려보낸다.
-                    # (화이트리스트 명령은 인증 없이도 런타임 게이트가 받기
-                    # 때문에 그대로 둔다 — 비상정지가 AUTH_WAIT 에 죽으면
-                    # 안 된다.)
-                    ok = match_passphrase(query)
+                    # ⚠️ **대조는 `query` 가 아니라 원문 `text` 로 한다.**
+                    # `_strip_wake()` 는 «나에게 한 말인가» 를 가르는 라우팅
+                    # 함수라 웨이크워드를 떼어낸다. 그 값으로 대조하면 등록
+                    # 문구가 웨이크워드로 시작할 때(출고 기본값
+                    # "메카독 출입 허가" 가 그렇다) **문구를 정확히 말한 사람이
+                    # 떨어진다** — 감싸서 말한 사람만 통과하는 역전이 된다.
+                    # 판정은 사람이 실제로 낸 소리를 봐야 한다.
+                    ok = match_passphrase(text)
                     sent_ok, err = robotlink.post_auth_result(ok, args.robot_api)
                     print(f"[auth] passphrase {'match' if ok else 'mismatch'} → {sent_ok}")
                     if not sent_ok:
