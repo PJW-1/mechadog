@@ -39,6 +39,7 @@ from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
+from host.behavior.posture import RETURN, PostureEscalation
 from host.behavior.tracker import LockOnTracker
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
@@ -53,6 +54,7 @@ from host.common.logging_setup import (
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.dashboard.state import DashboardState
 from host.telemetry.receiver import Ingested, TelemetryReceiver
+from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -170,6 +172,30 @@ class Runtime:
         # 상태별 모션을 붙인다 (3.5.1). 만들 수 없는 것은 등록하지 않고 이유를 남기며,
         # 등록되지 않은 상태는 `Behavior` 가 정지로 처리한다 — 안전측 기본값이다.
         self._actions = register_actions(self._behavior, config)
+        self._normal_patrol = self._behavior.sequence_for("PATROL")
+        self._behavior.register_sequence("PATROL", self._patrol_sequence)
+        self._normal_alert = self._behavior.sequence_for("ALERT")
+        self._behavior.register_sequence("ALERT", self._alert_sequence)
+        self._behavior.fsm.on_exit("ALERT", lambda _previous, _target: self._ppe_return())
+        self._ppe_posture = PostureEscalation(config)
+        self._ppe_done: dict[int, int] = {}
+        self._ppe_target: int | None = None
+        self._ppe_unknown_since: int | None = None
+        self._ppe_lost_since: int | None = None
+        self._ppe_settle_at: int | None = None
+        self._ppe_pose_held = False
+        self._ppe_move_after: int | None = None
+        self._ppe_tick_now_ms = 0
+        self._ppe_reverse_start: int | None = None
+        self._ppe_reverse_end: int | None = None
+        self._ppe_reverse_step = -float(config["gait"]["step_length_mm"])
+        self._ppe_settle_ms = int(config["posture"]["settle_ms"])
+        self._ppe_pitch = float(config["posture"]["pitch_up_deg"])
+        self._ppe_back_off_mm = float(config["posture"]["back_off_mm"])
+        self._ppe_reverse_speed = (config.get("gait_calibration") or {}).get("reverse_mm_per_sec")
+        self._ppe_unknown_ms = int(config["vision"]["ppe"]["violation_window_ms"])
+        self._ppe_lost_ms = int(config["vision"]["tracker"]["track_lost_ms"])
+        self._ppe_clear_margin = 2 * float(config["vision"]["ppe"]["head_margin_px"])
         # ⚠️ `network` 절 안에 있다. 최상위에서 찾으면 프로파일에 주소를 적어도
         # 못 읽고, 첫 텔레메트리가 올 때까지 아무것도 보내지 않는 상태가 된다.
         host = robot_ip or network.get("mechdog_ip")
@@ -200,6 +226,8 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
+        if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
+            self._vision.set_ppe_enabled(self._mission.enables("ppe"))
         # 추종(`3.5.4`)은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
         # 오고 명령은 10Hz 로 나가므로, 명령 쪽에서 계산하면 프레임을 버리게 된다.
         # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
@@ -322,8 +350,23 @@ class Runtime:
         ⚠️ **상태를 여기서 읽어 넘긴다.** `Mission` 이 `Behavior` 를 알면 모드 축을
         FSM 없이 단독으로 시험할 수 없다 — 두 축을 잇는 곳은 런타임 하나다.
         """
-        reason = self._mission.switch(target, state=self._behavior.state)
+        reason = self._mission.refuse_reason(target, state=self._behavior.state)
+        if reason is None and target == "factory" and self._vision is not None:
+            try:
+                self._vision.set_ppe_enabled(True)
+            except (OSError, RuntimeError, ValueError) as exc:
+                return f"PPE 판정기를 열 수 없다: {exc}"
         if reason is None:
+            reason = self._mission.switch(target, state=self._behavior.state)
+        if reason is None:
+            if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
+                self._vision.set_ppe_enabled(self._mission.enables("ppe"))
+            self._ppe_done.clear()
+            self._ppe_target = None
+            self._ppe_unknown_since = None
+            self._ppe_lost_since = None
+            self._ppe_settle_at = None
+            self._ppe_move_after = None
             # 모드가 곧 적재 프로파일이다 (ADR-35 결정 5). 거절된 전환에는 걸지 않는다.
             self._apply_load_profile(target)
         return reason
@@ -475,9 +518,20 @@ class Runtime:
         """
         if self._vision is None:
             return
+        if self._ppe_settle_at is not None and now_ms >= self._ppe_settle_at:
+            self._ppe_settle_at = None
+            if self._behavior.state == "ALERT" and self._apply(Event.PPE_SETTLED, now_ms):
+                self._escalation.settle_ppe(now_ms)
         result = self._vision.latest()
         fresh = result is not None and self._edge.changed("vision_seq", result.frame_seq)
         if fresh:
+            if self._mission.enables("ppe"):
+                active = {track.track_id for track in result.tracks}
+                for track_id, last_seen in tuple(self._ppe_done.items()):
+                    if track_id in active:
+                        self._ppe_done[track_id] = now_ms
+                    elif now_ms - last_seen > self._ppe_lost_ms:
+                        del self._ppe_done[track_id]
             self._summary.count("detections", len(result.detections))
             self._behavior.note_vision(result.completed_ms)
             # 확정 여부와 별개로 마지막 실제 person 히트를 기록한다. 게이트 해제는
@@ -490,7 +544,12 @@ class Runtime:
             #
             # ⚠️ (잠정) **임무 밖(대기·수동)에서는 올리지 않는다** (`fsm.STANDBY`). 인증도
             # 보지 않는다 — 대기 중 모르는 사원증 2장이 `AUTH_FAILED` 로 L3 를 만든다.
-            if not self._behavior.standby:
+            inspected = (
+                self._mission.enables("ppe")
+                and bool(result.tracks)
+                and max(result.tracks, key=lambda track: track.height).track_id in self._ppe_done
+            )
+            if not self._behavior.standby and not inspected:
                 self._escalation.note_person(
                     present=result.sighting.present, last_seen_ms=seen_ms, now_ms=now_ms
                 )
@@ -510,11 +569,12 @@ class Runtime:
             )
             # `present=False`는 게이트 확정이 풀렸다는 뜻일 뿐, 5초 대상 상실 사건이
             # 아니다. TARGET_LOST는 Behavior의 마지막 검출 타이머가 발생시킨다.
-            if result.sighting.present:
+            if result.sighting.present and not inspected:
                 self._apply(Event.PERSON_FOUND, now_ms)
                 self._record_person_event(result)
         if fresh:
             self._observe_fallen(result)
+            self._judge_ppe(result, now_ms)
             self._track(result, now_ms)
             self._inspect_zone(result, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
@@ -533,6 +593,137 @@ class Runtime:
                 age_ms=self._vision.age_ms(now_ms),
             )
 
+    def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
+        if self._ppe_move_after is not None and now_ms < self._ppe_move_after:
+            commander.halt()
+        elif self._normal_patrol is not None:
+            self._normal_patrol(commander, now_ms)
+
+    def _alert_sequence(self, commander: Commander, now_ms: int) -> None:
+        """Factory PPE owns ALERT posture; guard keeps the existing alert sequence."""
+        if not self._mission.enables("ppe"):
+            if self._normal_alert is not None:
+                self._normal_alert(commander, now_ms)
+            return
+        if self._ppe_reverse_start is not None and self._ppe_reverse_end is not None:
+            if self._ppe_reverse_start <= now_ms < self._ppe_reverse_end:
+                commander.drive(self._ppe_reverse_step, 0.0)
+                return
+            if now_ms >= self._ppe_reverse_end:
+                self._ppe_reverse_start = self._ppe_reverse_end = None
+        commander.drive(0.0, 0.0)
+
+    def _ppe_return(self) -> bool:
+        self._ppe_reverse_start = self._ppe_reverse_end = None
+        held = self._ppe_pose_held
+        if held:
+            self._commander.once("ACTION", id=0)
+            self._ppe_pose_held = False
+            self._ppe_move_after = self._ppe_tick_now_ms + max(self._ppe_settle_ms, 1000)
+        return held
+
+    def _ppe_step(self, step: str | None, now_ms: int) -> None:
+        if step == "pitch_up":
+            self._commander.once(
+                "POSE", pitch=self._ppe_pitch, roll=0.0, height=0.0, dur=self._ppe_settle_ms
+            )
+            self._ppe_pose_held = True
+        elif step == "sit":
+            self._commander.once("ACTION", id=1)
+            self._ppe_pose_held = True
+        elif step == "back_off":
+            self._ppe_return()
+            if self._ppe_reverse_speed:
+                # ACTION 0 은 온보드 loop 를 약 1초 막는다(PROTOCOL). 서기 전에 걷지 않는다.
+                self._ppe_reverse_start = now_ms + max(self._ppe_settle_ms, 1000)
+                self._ppe_reverse_end = self._ppe_reverse_start + int(
+                    self._ppe_back_off_mm / float(self._ppe_reverse_speed) * 1000
+                )
+        elif step == RETURN:
+            self._ppe_return()
+
+    def _ppe_finish(
+        self, state: str, result: Any, now_ms: int, reason: str, *, returned: bool = False
+    ) -> None:
+        track_id = self._ppe_target
+        if track_id is None or track_id in self._ppe_done:
+            return
+        self._ppe_done[track_id] = now_ms
+        self._ppe_unknown_since = None
+        returned = self._ppe_return() or returned
+        event = (
+            "PPE_VIOLATION"
+            if state == VIOLATION
+            else ("PPE_UNDETERMINED" if state == UNDETERMINED else "PPE_SETTLED")
+        )
+        LOG.info("ppe_judged", track_id=track_id, state=state, reason=reason)
+        if state == VIOLATION:
+            self._apply(Event.PPE_VIOLATION, now_ms)
+        elif returned:
+            self._ppe_settle_at = now_ms + max(self._ppe_settle_ms, 1000)
+        else:
+            if self._apply(Event.PPE_SETTLED, now_ms):
+                self._escalation.settle_ppe(now_ms)
+        self._record_scene(event, result, {"track_id": track_id, "state": state, "reason": reason})
+
+    def _judge_ppe(self, result: Any, now_ms: int) -> None:
+        if not self._mission.enables("ppe") or self._behavior.state != "ALERT":
+            return
+        if self._ppe_settle_at is not None:
+            return
+        verdict = getattr(result, "ppe", None)
+        if verdict is None:
+            if self._ppe_lost_since is None:
+                self._ppe_lost_since = now_ms
+            if now_ms - self._ppe_lost_since < self._ppe_lost_ms:
+                return
+            decision = self._ppe_posture.update(
+                box=None, frame_height=result.frame_height, track_id=self._ppe_target, now_ms=now_ms
+            )
+            self._ppe_step(decision.step, now_ms)
+            return
+        self._ppe_lost_since = None
+        if verdict.track_id in self._ppe_done:
+            return
+        if verdict.track_id != self._ppe_target:
+            self._ppe_return()
+            self._ppe_target = verdict.track_id
+            self._ppe_unknown_since = None
+        if self._ppe_reverse_start is not None:
+            return
+        track = next((t for t in result.tracks if t.track_id == verdict.track_id), None)
+        if track is None:
+            return
+        decision = self._ppe_posture.update(
+            box=track.box,
+            frame_height=result.frame_height,
+            track_id=verdict.track_id,
+            now_ms=now_ms,
+        )
+        returned = decision.step == RETURN and self._ppe_pose_held
+        self._ppe_step(decision.step, now_ms)
+        if decision.undetermined:
+            self._ppe_finish(UNDETERMINED, result, now_ms, decision.reason, returned=returned)
+        elif verdict.clipped or (self._ppe_pose_held and track.box[1] <= self._ppe_clear_margin):
+            if decision.step == "back_off" and not self._ppe_reverse_speed:
+                self._ppe_finish(UNDETERMINED, result, now_ms, "후진 속도 미실측")
+            elif decision.reason == "대상이 움직이는 중 — 개시하지 않음":
+                if self._ppe_unknown_since is None:
+                    self._ppe_unknown_since = now_ms
+                elif now_ms - self._ppe_unknown_since >= self._ppe_unknown_ms:
+                    self._ppe_finish(UNDETERMINED, result, now_ms, decision.reason)
+            else:
+                self._ppe_unknown_since = None
+        elif verdict.state == VIOLATION and verdict.confirmed:
+            self._ppe_finish(VIOLATION, result, now_ms, "1500ms 창 위반 확정")
+        elif verdict.state == OK:
+            self._ppe_finish(OK, result, now_ms, "", returned=returned)
+        elif verdict.state == UNDETERMINED:
+            if self._ppe_unknown_since is None:
+                self._ppe_unknown_since = now_ms
+            elif now_ms - self._ppe_unknown_since >= self._ppe_unknown_ms:
+                self._ppe_finish(UNDETERMINED, result, now_ms, verdict.reason, returned=returned)
+
     def _track(self, result: Any, now_ms: int) -> None:
         """대표 박스의 x편차를 추종 지시로 바꿔 사건과 시퀀스에 넘긴다 (`3.5.4` · FR-3.5).
 
@@ -549,7 +740,7 @@ class Runtime:
         막으면 조향각은 매 프레임 계산돼 `TRACK` 시퀀스에 그대로 실린다 — 전이는
         없는데 로봇이 사람을 따라 도는, 가장 설명하기 어려운 모양이 된다.
         """
-        if not self._mission.enables("track"):
+        if not self._mission.enables("track") or self._mission.enables("ppe"):
             return
         if not self._behavior.tracking:
             # ⚠️ **추종 구간을 벗어나면 엣지 기억을 지운다.** 남겨 두면 다시 `ALERT` 로
@@ -1061,6 +1252,7 @@ class Runtime:
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
+        self._ppe_tick_now_ms = now_ms
         self._drain_confirmations(now_ms)
         # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
         if self._behavior.standby:
@@ -1114,6 +1306,7 @@ class Runtime:
         **앞 6초의 모든 레코드가 `IDLE` 로 찍혔다** — 로봇은 순찰 중이었다.
         로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
         """
+        self._ppe_tick_now_ms = now_ms
         # ⚠️ **모드 게이트는 FSM 보다 앞이다** (FR-11.1 · `3.4.4`). 뒤에 두면 전이는
         # 막아도 에스컬레이션이 올라가, 경비 모드에서 PPE 위반이 L3 경보를 만든다.
         # 여기가 사건이 지나는 유일한 지점이라 **한 곳에서 한 번만** 거른다.
@@ -1554,6 +1747,8 @@ def main(argv: list[str] | None = None) -> int:
         # 만드는 이유는 **모르는 모드나 선행 기능 없는 모드로는 기동 자체를 거부**
         # 하기 때문이다 (FR-11.7) — `ModeError` 가 `ConfigError` 라서 이 절이 잡는다.
         mission = Mission(config, mode=args.mode)
+        if mission.enables("ppe") and args.no_vision:
+            raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
     except (ConfigError, OSError) as exc:
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)

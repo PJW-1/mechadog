@@ -161,7 +161,8 @@ class PostureEscalation:
             return self._abort("대상이 화각을 벗어남")
 
         centre = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
-        clipped = float(box[1]) <= self._head_margin_px
+        # 이미 자세를 올렸다면 경계 근처 한두 픽셀 회복으로 내려가지 않는다.
+        clipped = float(box[1]) <= self._head_margin_px * (2 if self._sent_index >= 0 else 1)
         still = self._observe_still(centre)
 
         if not clipped:
@@ -177,7 +178,8 @@ class PostureEscalation:
             # 내렸다 올렸다 하는 것이 루프의 시작이다.
             return PostureDecision(None, "대상이 움직이는 중 — 개시하지 않음")
 
-        if self._sent_at_ms is not None and now_ms - self._sent_at_ms < self._settle_ms:
+        wait_ms = max(self._settle_ms, 1000) if self.step == "sit" else self._settle_ms
+        if self._sent_at_ms is not None and now_ms - self._sent_at_ms < wait_ms:
             # 보간이 끝나기 전에 다시 보면 «아직 잘린다» 가 나와 단계를 헛되이 올린다.
             return PostureDecision(None, "자세가 도착하기를 기다리는 중")
 

@@ -265,6 +265,7 @@ vision:
     conf_threshold: 0.5
     classes: [helmet, no_helmet, vest, no_vest]
     violation_classes: [no_helmet, no_vest]
+    crop_pad: 0.08             # person bbox 크롭 여유 (XIAO 실측으로 조정)
     # ── 위반 확정 (FR-9.4) ──
     # ⚠️ **프레임 수가 아니라 시간 창이다** (ADR-25). 프레임으로 두면 의미가 추론률에
     # 종속되어 같은 3히트가 10fps 에서 0.3초, 25fps 에서 0.12초가 된다.
@@ -452,7 +453,8 @@ auth:
 
 # ── 자세 상승 (FR-9.2.2) ──────────────────────────────────────
 posture:
-  escalation_steps: [pitch_up, sit, back_off]
+  # 2026-09-20 실측: 후진 300mm 는 앉은 자세의 시야 이득을 되돌리고 이동 위험만 더한다.
+  escalation_steps: [pitch_up, sit]
   # ⚠️ 음수가 «고개를 드는» 쪽이다 (config `fsm` 절의 부호 각주 참고).
   # FR-9.2.2 는 카메라가 15cm 높이라 가까이서 머리가 잘리는 것을 자세로 푸는데,
   # 부호를 반대로 두면 **더 잘린다.**

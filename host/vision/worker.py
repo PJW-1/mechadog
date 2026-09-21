@@ -36,6 +36,7 @@ from host.common.protocol import system_clock_ms
 from host.vision.badge import BadgeReader, Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenGate, FallenVerdict, PersonGate, Sighting
+from host.vision.ppe_detector import PPE_CLASSES, PpeDetector, PpeVerdict
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
 from host.vision.tracker import PersonTracker, Track
 
@@ -94,6 +95,7 @@ class VisionResult:
     #: 애초에 귀속시킬 사람이 없으면 인증이 성립하지 않는다. 마커 없는 VGA 프레임에
     #: 0.75ms 가 들므로 빈 순찰 구간에서 그만큼을 아낀다.
     markers: tuple[Marker, ...]
+    ppe: PpeVerdict | None = None
 
 
 @dataclass
@@ -128,6 +130,7 @@ class VisionWorker:
         reader: Any,
         queue: FrameQueue | None = None,
         clock: Any = None,
+        ppe: PpeDetector | None = None,
     ) -> None:
         vision = config["vision"]
         self._detector = detector
@@ -136,6 +139,9 @@ class VisionWorker:
         self._fallen = FallenGate(config)
         self._tracker = PersonTracker(config)
         self._badges = BadgeReader(config)
+        self._ppe = ppe
+        self._ppe_enabled = False
+        self._ppe_opened = False
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
@@ -171,6 +177,9 @@ class VisionWorker:
             return
         opened = self._clock()
         self._detector.open()
+        if self._ppe_enabled and self._ppe is not None:
+            self._ppe.open()
+            self._ppe_opened = True
         LOG.info("vision_detector_opened", ms=self._clock() - opened)
         # 첫 프레임 전에도 단절 시간을 잴 기준이 필요하다. 세션 준비 시간은 기동 비용이고,
         # 실제 카메라 대기는 수신 스레드가 뜬 뒤부터이므로 여기서 시계를 시작한다.
@@ -254,6 +263,15 @@ class VisionWorker:
         """사람 판정 게이트. 스트림이 끊기면 호출부가 `reset()` 한다."""
         return self._gate
 
+    def set_ppe_enabled(self, enabled: bool) -> None:
+        """Only factory mode pays for PPE inference; the worker owns its state."""
+        if enabled and self._started_ms is not None and not self._ppe_opened:
+            if self._ppe is None:
+                raise RuntimeError("PPE 판정기가 없다")
+            self._ppe.open()
+            self._ppe_opened = True
+        self._ppe_enabled = enabled
+
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:
         frames = None
@@ -318,6 +336,13 @@ class VisionWorker:
             )
             # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
             markers = self._badges.read(image) if tracks else ()
+            ppe = (
+                self._ppe.observe(image, tracks, observed)
+                if self._ppe_enabled and self._ppe
+                else None
+            )
+            if not self._ppe_enabled and self._ppe is not None:
+                self._ppe.reset()
         except Exception as exc:  # noqa: BLE001
             self._note_error("vision_inference_failed", exc, seq=frame.seq)
             return
@@ -337,6 +362,7 @@ class VisionWorker:
             fallen=fallen,
             tracks=tracks,
             markers=markers,
+            ppe=ppe,
         )
         with self._slot_lock:
             # ⚠️ **덮어쓴다. 쌓지 않는다.** 낡은 검출로 판단하면 로봇이 과거를 보고
@@ -369,7 +395,11 @@ def build_worker(
 
     detector = Detector(config, section=section, labels=labels or COCO_CLASSES)
     reader = StreamReader(config, before_connect=push_profile)
-    return VisionWorker(config, detector=detector, reader=reader)
+    ppe = PpeDetector(
+        config,
+        Detector(config, section="ppe", labels=PPE_CLASSES),
+    )
+    return VisionWorker(config, detector=detector, reader=reader, ppe=ppe)
 
 
 @dataclass
