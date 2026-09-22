@@ -147,6 +147,12 @@ class Hub:
             state = e.get("state") or "?"
             esc = e.get("escalation") or "?"
             self.event("robot_evt", f"{kind} (state={state} 단계={esc})")
+            # 3.5.6 — 단계가 오른 그 순간에만 경고를 읽는다. 중복 억제는 호스트가
+            # 이미 했다(`_announce_escalation` 의 엣지). 여기서 다시 세지 않는다.
+            # 문장을 여기 적지 않는 것도 같은 이유다 — 단계를 고칠 때 문구가 남는다.
+            warning = e.get("warning")
+            if kind == "escalation_changed" and warning:
+                self.enqueue_say(str(warning), urgent=True)
         self.robot_cursor = latest
 
     def enqueue_say(self, text, urgent=False):
