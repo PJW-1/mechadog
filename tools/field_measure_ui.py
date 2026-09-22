@@ -177,9 +177,7 @@ class MeasurementWindow:
             )
             mark = len(self.payload["steps"])
             try:
-                factory(self.device, host, self.ask, self.notify, self.cancel).run(
-                    case, approved
-                )
+                factory(self.device, host, self.ask, self.notify, self.cancel).run(case, approved)
             except Exception as exc:
                 self.save_case(case, mark, str(exc))
                 self.payload["stopped_at"] = case["id"]
