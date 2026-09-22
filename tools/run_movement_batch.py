@@ -16,8 +16,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+# pytest 는 stdin/stdout 을 대체하므로 reconfigure 가 없을 수 있다.
+for _stream in (sys.stdout, sys.stdin):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from tools import field_measure as fm  # noqa: E402
 from tools import field_plan as plan  # noqa: E402
@@ -108,7 +110,15 @@ def wake_telemetry() -> None:
         sock.close()
 
 
-def main() -> int:
+def select_cases(all_cases: list[dict], only: set[str]) -> list[dict]:
+    # ID 를 주면 이동 항목이 아니어도(정지 수신·서비스 왕복 등) 실행한다 —
+    # 경로가 있는 항목만 sessions.run 이 받는다.
+    if only:
+        return [c for c in all_cases if c["id"] in only]
+    return sessions.movement_cases(all_cases)
+
+
+def main() -> int:  # pragma: no cover - 실기 측정용
     global payload, path, active_case
     import subprocess
 
@@ -123,13 +133,7 @@ def main() -> int:
     )
 
     all_cases = plan.catalog()["cases"]
-    only = set(sys.argv[1:])
-    if only:
-        # ID 를 주면 이동 항목이 아니어도(정지 수신·서비스 왕복 등) 실행한다 —
-        # 경로가 있는 항목만 sessions.run 이 받는다.
-        cases = [c for c in all_cases if c["id"] in only]
-    else:
-        cases = sessions.movement_cases(all_cases)
+    cases = select_cases(all_cases, set(sys.argv[1:]))
     print(f"일괄 실행 항목 {len(cases)}개: {' · '.join(c['id'] for c in cases)}", flush=True)
 
     payload = {
@@ -179,7 +183,7 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     try:
         sys.exit(main())
     except KeyboardInterrupt:

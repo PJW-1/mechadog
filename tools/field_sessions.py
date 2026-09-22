@@ -149,7 +149,9 @@ class MeasurementSession:
         self.check()
         return result
 
-    def capture(self, tap, seconds: float = 30) -> list[fm.Sample]:
+    def capture(
+        self, tap, seconds: float = 30
+    ) -> list[fm.Sample]:  # pragma: no cover - 실기 측정용
         start = time.perf_counter()
         end = start + seconds
         last_second = -1
@@ -162,7 +164,7 @@ class MeasurementSession:
             self.cancel.wait(min(0.1, max(0, end - time.perf_counter())))
         return [s for s in tap.window(seconds + 1) if s.at >= start]
 
-    def passive(self, action, ctx) -> fm.Result:
+    def passive(self, action, ctx) -> fm.Result:  # pragma: no cover - 실기 측정용
         samples = self.capture(ctx.tap, 3 if action == "identity" else 30)
         values = metrics(samples)
         if action == "identity":
@@ -182,7 +184,7 @@ class MeasurementSession:
             values,
         )
 
-    def timeout(self, ctx) -> fm.Result:
+    def timeout(self, ctx) -> fm.Result:  # pragma: no cover - 실기 측정용
         if (
             self.prompt(
                 "전진 2초 뒤 송신을 1.2초 끊고 ESTOP을 보냅니다. 바닥/중지 수단 준비 후 '준비완료' 입력: "
@@ -220,7 +222,7 @@ class MeasurementSession:
             },
         )
 
-    def posture(self, ctx) -> fm.Result:
+    def posture(self, ctx) -> fm.Result:  # pragma: no cover - 실기 측정용
         stages = []
         for angle in (0, -10, 0, 10, 0):
             if (
@@ -259,7 +261,9 @@ class MeasurementSession:
             {"stages": stages},
         )
 
-    def run(self, case: dict, approved: bool = False) -> list[fm.Result]:
+    def run(
+        self, case: dict, approved: bool = False
+    ) -> list[fm.Result]:  # pragma: no cover - 실기 측정용
         actions = route(case)
         if not actions or actions == ("guided",):
             raise ValueError("이 항목은 전용 자동 구동 경로가 없습니다.")

@@ -175,7 +175,7 @@ def export(out: Path, device: str) -> Path:
     return path
 
 
-def gui(out: Path, device: str) -> None:
+def gui(out: Path, device: str) -> None:  # pragma: no cover - GUI 실기 진입점
     import sys
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -518,7 +518,7 @@ def gui(out: Path, device: str) -> None:
     root.mainloop()
 
 
-def main() -> int:
+def main() -> int:  # pragma: no cover - 실기 측정용
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="mechdog-02", choices=list(identities()))
     parser.add_argument("--out", type=Path, default=Path.home() / "MechaDog-measurements")
