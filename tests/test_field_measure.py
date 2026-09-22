@@ -298,3 +298,30 @@ def test_no_trials_still_says_nothing_was_measured(monkeypatch: pytest.MonkeyPat
     assert result.verdict == "fail"
     assert result.data["mm_per_s"] is None
     assert result.summary == "유효 시행 없음"
+
+
+# ── 선회 명령 부호 (`TURN_COMMANDS`) ─────────────────────────
+
+
+def test_turn_commands_match_gait_calibrate_signs() -> None:
+    """⚠️ **같은 모드명은 같은 방향을 보내야 한다.**
+
+    2026-09-21 에 `field_measure` 의 `reverse_turn` 이 -20(후진+우선회)을 보내고
+    있었다 — `gait_calibrate` 와 회피 시퀀스는 +20(후진+좌선회)다. 두 도구가
+    갈라지면 회피가 쓰는 구동의 **반대 방향**을 재서 설정에 적게 된다.
+    """
+    from tools.field_measure import TURN_COMMANDS
+    from tools.gait_calibrate import command_for
+
+    gait = {"step_length_mm": 60.0, "turn_angle_deg": 20.0}
+    for mode in ("turn_left", "turn_right", "reverse_turn"):
+        assert TURN_COMMANDS[mode] == command_for(mode, gait), mode
+
+
+def test_reverse_turn_is_the_direction_the_avoid_sequence_sends() -> None:
+    """회피는 `Phase("reverse_turn", -step, +turn_deg)` — 후진+좌선회다 (ADR-29)."""
+    from tools.field_measure import TURN_COMMANDS
+
+    step, angle = TURN_COMMANDS["reverse_turn"]
+    assert step < 0, "후진이어야 한다"
+    assert angle > 0, "angle 양수 = 반시계 = 좌선회 (PROTOCOL 부호 규약)"
