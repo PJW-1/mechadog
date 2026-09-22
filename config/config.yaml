@@ -239,6 +239,9 @@ vision:
     #   출발점   yolox_nano.pth (릴리스 0.1.1rc0) 에서 fine-tune
     #   데이터   ppe_coco_v2 — 3원 병합 5,284장 / 박스 38,386개
     #            · sim_factory_t15 150장 — 자체 시뮬, XIAO 기하(높이 0.15m·+15°·FOV 74x59)
+    #              ⚠️ 실제 person_down 라벨은 0개 — 생성기가 자세를 작업자당
+    #              스폰 시 1번만 뽑아(5%) 이 세션에서 쓰러진 작업자가
+    #              한 명도 유출되지 않았다. v2는 person_down을 학습하지 못했다
     #            · Construction-PPE 1,416장 — 주황 헬멧·형광 조끼 실사
     #            · SHWD 7,581장 중 샘플링 — hat→helmet · person→no_helmet
     #            (학습 5,284 · 검증 460)
