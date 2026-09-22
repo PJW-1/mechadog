@@ -200,9 +200,9 @@ models/
 └── ppe.onnx        # VLM 은 여기 없다 — ③ 참조 (HF 캐시)
 ```
 
-`ppe.onnx`의 정본 식별값은 크기 **3,654,680바이트**, SHA-256
-`ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`이다. 자체 학습
-산출물이라 공개 URL이 없어 **팀 Release 자산**으로 배포하며, `coco.onnx`와 같이
+`ppe.onnx`의 정본 식별값은 크기 **3,677,797바이트**, SHA-256
+`ff78802506e07dfcf89961374900486d363e558fff4fe81ce6053c3330d4a1c4`이다. 자체 학습
+산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v2`)으로 배포하며, `coco.onnx`와 같이
 `tools/fetch_models.py`가 받고 두 값을 검증한다. 학습·export 재현 절차는
 `firmware_xiao_vision/PPE_Train.md`에 있다.
 
