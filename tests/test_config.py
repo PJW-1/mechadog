@@ -668,8 +668,16 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
 
     # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
     assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
-    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "straight_bias_deg"):
-        assert two["gait_calibration"][name] is None, f"{name} 은 이 기체로 다시 재야 한다"
+    # 2026-09-22: mechdog-02 도 실측했다 — null 검사는 *"01 과 다르다"* 검사로
+    # 바뀐다. 같은 값이면 개체 실측이 아니라 복사다.
+    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "reverse_mm_per_sec"):
+        assert two["gait_calibration"][name] != one["gait_calibration"][name], (
+            f"{name} — 01 의 값을 옮겨 적으면 안 된다"
+        )
+    # 직진 편향은 방향도 다르다 — 01 은 좌(+), 02 는 우(-).
+    assert two["gait_calibration"]["forward_yaw_drift_deg_per_sec"] < 0
+    # straight_bias_deg 는 bias 스윕 실측이 아직 없으므로 null 이어야 한다.
+    assert two["gait_calibration"]["straight_bias_deg"] is None
 
 
 def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
