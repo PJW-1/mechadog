@@ -1024,3 +1024,103 @@ def test_auth_endpoint_accepts_pending(cfg, clock):
         ).json()
         assert body["accepted"] is True and body["state"] == "AUTH_WAIT"
         assert runtime.behavior.timer_deferred_ms == _grace_ms(cfg)
+
+
+# ── 경보(L3) 확인 (FR-10.3.2 · 2026-09-22 실기) ──────────────────
+#
+# **헤드리스 런타임에는 L3 를 풀 방법이 없었다.** 콘솔 확인 키는 tty 를 요구하므로
+# (`runtime.watch_console`) 백그라운드로 띄운 런타임에서는 아무도 누를 수 없다.
+# 2026-09-22 실기에서 그것 때문에 **런타임을 세 번 재시작**했다 — 재시작은 확인이
+# 아니라 증거 인멸에 가깝고, 그 사이의 사건 기록도 함께 끊긴다.
+
+
+def _alarm_service(cfg, clock):
+    """런타임이 붙은 서비스. **단계를 쥐고 있는 쪽이 런타임이라** 이 조합이어야 한다."""
+    from host.runtime import Runtime
+
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    svc = CommandService(
+        runtime.behavior,
+        runtime.commander,
+        lambda _line: None,
+        request_reset=runtime.ask_reset,
+        apply_event=runtime.apply_external,
+        confirm_alarm=runtime.ask_alarm_confirm,
+    )
+    return svc, runtime
+
+
+def _raise_alarm(runtime, clock):
+    runtime.start_patrol(clock.ms)
+    runtime.escalation.note_event("PPE_VIOLATION", clock.ms)
+    assert runtime.escalation.level.value == "L3"
+
+
+def test_alarm_confirm_releases_the_alarm_on_the_next_tick(cfg, clock):
+    """**확인은 요청이고 해제는 틱이 한다.**
+
+    그 자리에서 풀면 운용 루프가 전문을 만드는 중간에 단계가 바뀌어, 그 틱의
+    명령이 어느 단계의 것인지 말할 수 없게 된다.
+    """
+    svc, runtime = _alarm_service(cfg, clock)
+    _raise_alarm(runtime, clock)
+
+    result = svc.alarm_confirm()
+
+    assert result.accepted is True
+    assert runtime.escalation.level.value == "L3", "요청만 세운다"
+    runtime.tick(clock.advance(100))
+    assert runtime.escalation.level.value == "L0"
+
+
+def test_alarm_confirm_does_not_clear_the_failsafe(cfg, clock):
+    """⚠️ **이것이 이 문을 따로 낸 이유다** — 경보 확인은 F 를 풀지 않는다.
+
+    하나로 묶으면 **비상정지를 눌렀다 푸는 것으로 경보가 지워지고**, 반대로
+    상황을 확인한 것이 물리 잠금까지 푼다 (ADR-26).
+    """
+    svc, runtime = _alarm_service(cfg, clock)
+    runtime.apply_external(Event.ONBOARD_FAILSAFE)
+    assert runtime.escalation.level.value == "F"
+
+    assert svc.alarm_confirm().accepted is True
+    runtime.tick(clock.advance(100))
+
+    assert runtime.escalation.level.value == "F", "경보 확인으로 안전 잠금이 풀리면 안 된다"
+    assert runtime.behavior.state == "FAILSAFE"
+
+
+def test_alarm_confirm_is_harmless_when_there_is_no_alarm(cfg, clock):
+    """경보가 없을 때 눌러도 **아무 일도 일어나지 않는다.** 단계를 내리지 않는다."""
+    svc, runtime = _alarm_service(cfg, clock)
+    runtime.start_patrol(clock.ms)
+    runtime.apply_external(Event.PERSON_FOUND)
+    before = runtime.escalation.level.value
+
+    assert svc.alarm_confirm().accepted is True
+    runtime.tick(clock.advance(100))
+
+    assert runtime.escalation.level.value == before, "L3 가 아니면 확인이 단계를 내리지 않는다"
+
+
+def test_alarm_confirm_is_refused_when_the_host_cannot_confirm(service):
+    """런타임이 붙지 않은 조합에서는 **조용히 성공한 척하지 않는다.**"""
+    svc, _behavior, _sent = service
+
+    result = svc.alarm_confirm()
+
+    assert result.accepted is False
+    assert "연결되지 않았다" in result.detail
+
+
+def test_alarm_endpoint_round_trips(cfg, clock):
+    """**HTTP 로 풀 수 있어야 한다** — 헤드리스 런타임에 남은 유일한 문이다."""
+    svc, runtime = _alarm_service(cfg, clock)
+    app = create_app(_state(), svc)
+    with TestClient(app) as http:
+        _raise_alarm(runtime, clock)
+        body = http.post("/api/command/alarm", json={}).json()
+        assert body["accepted"] is True and body["command"] == "alarm"
+
+        runtime.tick(clock.advance(100))
+        assert runtime.escalation.level.value == "L0"

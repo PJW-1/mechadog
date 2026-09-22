@@ -302,6 +302,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
+            self.ask_alarm_confirm = lambda: None
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -554,6 +555,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
+            self.ask_alarm_confirm = lambda: None
 
         def serve(self, _sock, **_kwargs):
             pass

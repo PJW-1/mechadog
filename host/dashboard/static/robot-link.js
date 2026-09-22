@@ -100,6 +100,16 @@ export class RobotLink {
     return this.post('/api/command/reset', {});
   }
 
+  /**
+   * 경보(L3) 확인 — 사람이 상황을 보고 누른다 (FR-10.3.2).
+   *
+   * ⚠️ **`resetSafe()` 와 다른 문이다.** 저쪽은 물리 상태(F), 이쪽은 상황 판단(L3)을
+   * 확인한다 (ADR-26). 하나로 묶으면 **비상정지를 눌렀다 푸는 것으로 경보가 지워진다.**
+   */
+  confirmAlarm() {
+    return this.post('/api/command/alarm', {});
+  }
+
   /** 실제 순찰 예약/정지 — action 은 'start'|'stop'. */
   patrol(action) {
     return this.post('/api/command/patrol', { action });

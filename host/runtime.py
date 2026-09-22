@@ -1984,6 +1984,7 @@ def main(argv: list[str] | None = None) -> int:
                     set_mode=runtime.set_mode,
                     note_voice_auth=runtime.note_voice_auth,
                     note_voice_listening=runtime.note_voice_listening,
+                    confirm_alarm=runtime.ask_alarm_confirm,
                 )
                 camera = _latest_jpeg(vision) if vision is not None else None
                 stack.enter_context(

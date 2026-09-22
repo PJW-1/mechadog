@@ -74,6 +74,7 @@ class CommandService:
         set_mode: Callable[[str], str | None] | None = None,
         note_voice_auth: Callable[[bool], tuple[bool, str]] | None = None,
         note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
+        confirm_alarm: Callable[[], None] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -98,6 +99,10 @@ class CommandService:
         # 건드리므로 `note_voice_auth` 와 다른 자리다 — 섞으면 «시도를 세는 것» 과
         # «기다려 주는 것» 이 한 함수에 들어간다.
         self._note_voice_listening = note_voice_listening
+        # 경보(L3) 확인. ⚠️ **`request_reset` 과 같은 자리에 두지 않는다** — 확인해야
+        # 하는 것이 물리 상태(F)와 상황 판단(L3)으로 다르다 (ADR-26). 하나로 묶으면
+        # **비상정지를 눌렀다 푸는 것으로 경보가 지워진다.**
+        self._confirm_alarm = confirm_alarm
 
     @property
     def state(self) -> str:
@@ -187,6 +192,36 @@ class CommandService:
             accepted=True,
             state=self._behavior.state,
             detail="안전 해제를 요청했다 — 로봇이 래치 해제를 보고할 때까지 기다린다",
+        )
+
+    def alarm_confirm(self) -> CommandResult:
+        """사람이 상황을 확인하고 누르는 **경보(L3) 해제** (FR-10.3.2).
+
+        `reset()` 과 나란히 있지만 **다른 것을 확인한다** — 저쪽은 물리 상태
+        (넘어졌나·배터리·링크)이고 이쪽은 상황 판단(침입자가 갔나·안전모·물건)이다.
+        하나로 묶으면 **비상정지를 눌렀다 푸는 것으로 경보가 지워진다** ([ADR-26]).
+
+        ⚠️ **이 경로가 없으면 헤드리스 런타임은 경보를 풀 방법이 없다.** 콘솔
+        확인 키는 tty 를 요구하므로(`runtime.watch_console`) 백그라운드로 띄운
+        런타임에서는 아무도 누를 수 없고, 실기에서 **런타임을 재시작해** L3 를
+        지워야 했다 — 재시작은 확인이 아니라 증거 인멸에 가깝다.
+
+        즉시 풀지 않고 **예약한다** — 운용 루프가 전문을 만드는 중간에 단계가
+        바뀌면 그 틱의 명령이 어느 단계의 것인지 말할 수 없다 (`reset` 과 같은 이유).
+        """
+        if self._confirm_alarm is None:
+            return CommandResult(
+                command="alarm",
+                accepted=False,
+                state=self._behavior.state,
+                detail="경보 확인 경로가 연결되지 않았다",
+            )
+        self._confirm_alarm()
+        return CommandResult(
+            command="alarm",
+            accepted=True,
+            state=self._behavior.state,
+            detail="경보 확인을 요청했다 — 다음 틱에 단계가 내려간다 (L3 가 아니면 무시된다)",
         )
 
     #: 자율 동작 상태 — "순찰 정지" 가 받을 수 있는 상태들이다.
