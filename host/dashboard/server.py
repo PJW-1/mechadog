@@ -467,6 +467,23 @@ def create_app(
                 return rejected
             return commands.reset().as_dict()
 
+        @app.post("/api/command/alarm")
+        async def alarm(request: Request):
+            """사람이 상황을 확인한 뒤 누르는 **경보(L3) 해제** (FR-10.3.2).
+
+            ⚠️ **`/api/command/reset` 과 다른 문이다.** 저쪽은 물리 상태(F)를
+            확인하고 로봇의 래치 보고를 기다리며, 이쪽은 상황 판단이라 로봇에
+            보낼 것이 없다. 하나로 묶으면 **비상정지를 눌렀다 푸는 것으로 경보가
+            지워진다** ([ADR-26]).
+
+            ⚠️ **이 문이 없으면 헤드리스 런타임은 경보를 풀 수 없다** — 콘솔
+            확인 키는 tty 를 요구한다(`runtime.watch_console`).
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            return commands.alarm_confirm().as_dict()
+
         @app.post("/api/command/service")
         async def service(request: Request):
             """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.
