@@ -17,7 +17,7 @@ import voice_pipeline as vp
 
 def _serve(db_path, stale_after=21600):
     factory_mes.Handler.src = factory_mes.Backend(db_path=db_path)
-    factory_mes.Handler.stale_after = stale_after
+    factory_mes.Handler.stale_ttl = dict.fromkeys(factory_mes.STALE_TTL, stale_after)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), factory_mes.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, f"http://127.0.0.1:{srv.server_address[1]}"
@@ -49,11 +49,26 @@ class MesApiTest(unittest.TestCase):
         )
         self.assertEqual(r["source"], "demo-mes")
         self.assertFalse(r["stale"])
+        self.assertTrue(r["fresh"])
 
     def test_unknown_line_lists_valid(self):
         r = self._get("/api/production?line=Z")
         self.assertEqual(r["error"], "unknown_line")
         self.assertEqual(r["valid_lines"], ["A", "B", "C"])
+
+    def test_per_endpoint_ttl(self):
+        # 항목별 TTL — production만 0초면 그것만 stale이고 나머지는 fresh
+        src = factory_mes.Backend(db_path=self.db)
+        rows = factory_mes.query(src, "production", {}, {"production": 0})
+        self.assertTrue(all(r["stale"] and not r["fresh"] for r in rows))
+        rows = factory_mes.query(src, "shipments", {}, {"production": 0})
+        self.assertTrue(all(r["fresh"] for r in rows))
+
+    def test_scalar_ttl_still_works(self):
+        # 정수를 넘기면 전역 TTL로 동작한다 (하위 호환)
+        src = factory_mes.Backend(db_path=self.db)
+        rows = factory_mes.query(src, "production", {}, 0)
+        self.assertTrue(all(r["stale"] for r in rows))
 
     def test_stale_flag_from_server(self):
         conn = sqlite3.connect(self.db)

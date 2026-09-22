@@ -39,7 +39,18 @@ from sqlite_admin import backup_database, has_rows, open_readonly
 KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path(__file__).with_name("mes_demo.db")
 SOURCE = "demo-mes"
-DEFAULT_STALE_AFTER = 6 * 3600  # 6시간 — 데모 데이터는 seed 시각 기준
+DEFAULT_STALE_AFTER = 6 * 3600  # 6시간 — STALE_TTL에 없는 항목의 기본 TTL
+
+# 항목별 TTL(초) — 데이터 갱신 주기가 다르므로 한 시계로 재지 않는다.
+# --stale-ttl '{"production": 3600}' 로 항목별로 덮어쓴다.
+STALE_TTL = {
+    "production": 2 * 3600,  # 생산 현황은 수시로 갱신돼야 의미가 있다
+    "schedule": 8 * 3600,  # 작업지시는 교대 단위로 바뀐다
+    "inspections": 12 * 3600,  # LOT 검사 기록은 반나절 이상 유효하다
+    "shipments": 24 * 3600,  # 출하 마감은 하루 단위로 본다
+    "equipment": 24 * 3600,  # 설비 점검은 일 점검 주기다
+}
+ENDPOINTS = tuple(STALE_TTL)
 
 
 class SourceError(Exception):
@@ -311,8 +322,12 @@ def _latest_per_equipment(rows):
     return list(latest.values())
 
 
-def query(src, endpoint, params, stale_after):
-    """엔드포인트 → (rows, error). error가 있으면 rows 대신 메시지 dict."""
+def query(src, endpoint, params, stale_ttl):
+    """엔드포인트 → (rows, error). error가 있으면 rows 대신 메시지 dict.
+
+    stale_ttl은 {엔드포인트: 초} dict 또는 전역 정수 — dict이면 항목별 TTL,
+    없는 항목은 DEFAULT_STALE_AFTER.
+    """
     line = (params.get("line") or [None])[0]
     if line:
         line = line.upper()
@@ -367,12 +382,13 @@ def query(src, endpoint, params, stale_after):
         rows = _latest_per_equipment(rows)
     else:
         return {"error": "unknown_endpoint"}
-    return _mark_stale(rows, stale_after)
+    ttl = stale_ttl.get(endpoint, DEFAULT_STALE_AFTER) if isinstance(stale_ttl, dict) else stale_ttl
+    return _mark_stale(rows, ttl)
 
 
 class Handler(BaseHTTPRequestHandler):
     src = Backend(db_path=DEFAULT_DB)
-    stale_after = DEFAULT_STALE_AFTER
+    stale_ttl = dict(STALE_TTL)
 
     def do_GET(self):  # noqa: N802
         u = urlparse(self.path)
@@ -382,13 +398,14 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "source": SOURCE,
                     "backend": "supabase" if self.src.remote else "sqlite",
+                    "stale_ttl": self.stale_ttl,
                 }
             )
         ep = u.path.removeprefix("/api/")
-        if ep not in ("production", "shipments", "schedule", "inspections", "equipment"):
+        if ep not in ENDPOINTS:
             return self._json({"error": "not found"}, 404)
         try:
-            res = query(self.src, ep, parse_qs(u.query), self.stale_after)
+            res = query(self.src, ep, parse_qs(u.query), self.stale_ttl)
         except SourceError:
             return self._json({"error": "source unreachable"}, 503)
         except sqlite3.Error as e:
@@ -410,12 +427,12 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def serve(port, src, stale_after):
+def serve(port, src, stale_ttl):
     Handler.src = src
-    Handler.stale_after = stale_after
+    Handler.stale_ttl = stale_ttl
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     kind = f"supabase {src.url}" if src.remote else f"sqlite {src.db_path}"
-    print(f"[mes] {SOURCE} on :{port} backend={kind} stale_after={stale_after}s")
+    print(f"[mes] {SOURCE} on :{port} backend={kind} stale_ttl={stale_ttl}")
     srv.serve_forever()
 
 
@@ -435,12 +452,35 @@ def main():
     ap.add_argument(
         "--stale-after",
         type=int,
-        default=DEFAULT_STALE_AFTER,
-        help="이 초보다 오래된 updated_at은 stale:true",
+        default=None,
+        help="모든 항목의 TTL을 이 초로 통일 (기본: 항목별 STALE_TTL)",
+    )
+    ap.add_argument(
+        "--stale-ttl",
+        default="{}",
+        help='항목별 TTL 덮어쓰기 JSON — 예: {"production": 3600}',
     )
     args = ap.parse_args()
     if args.reset and not args.seed:
         ap.error("--reset은 --seed와 함께만 사용합니다")
+    try:
+        override = json.loads(args.stale_ttl)
+    except ValueError:
+        ap.error("--stale-ttl은 JSON 객체여야 합니다")
+    if not isinstance(override, dict):
+        ap.error("--stale-ttl은 JSON 객체여야 합니다")
+    bad = set(override) - set(STALE_TTL)
+    if bad:
+        ap.error(f"--stale-ttl에 없는 항목: {sorted(bad)} — 허용: {sorted(STALE_TTL)}")
+    for k, v in override.items():
+        if not isinstance(v, (int, float)) or v <= 0:
+            ap.error(f"--stale-ttl {k}: 양의 초 단위여야 합니다")
+    stale_ttl = (
+        dict.fromkeys(STALE_TTL, args.stale_after)
+        if args.stale_after is not None
+        else dict(STALE_TTL)
+    )
+    stale_ttl.update(override)
     if args.seed:
         changed = seed(args.db, reset=args.reset)
         print(f"[mes] {'seeded' if changed else 'kept existing data'} {args.db}")
@@ -453,7 +493,7 @@ def main():
             if not args.db.exists():
                 seed(args.db)
             src = Backend(db_path=str(args.db))
-        serve(args.port, src, args.stale_after)
+        serve(args.port, src, stale_ttl)
 
 
 if __name__ == "__main__":

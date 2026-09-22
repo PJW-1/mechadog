@@ -57,6 +57,7 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 | `POST /api/command/drive` | `{"step", "angle"}` — `MANUAL` 에서만 받고 다음 틱에 반영 |
 | `POST /api/command/patrol` | `{"action": "start"\|"stop"}` — 시작은 예약, 정지는 수동 경유로 `IDLE` 정착 |
 | `POST /api/command/reset` | 사람이 원인 해소를 확인한 뒤의 `FAILSAFE` 해제 **요청**. 실제 해제는 로봇의 래치 보고로만 |
+| `POST /api/command/alarm` | 사람이 현장을 확인한 뒤의 **경보(L3) 해제**. ⚠️ `reset` 과 **다른 문이다** — 저쪽은 물리 상태(F), 이쪽은 상황 판단 ([ADR-26]) |
 | `POST /api/command/service` | `{"mode": "enter"\|"exit"}` — 온보드 **정비** 상태. OTA·진단 중 액추에이터를 막는다 |
 | `POST /api/command/mode` | `{"mode": "guard"\|"factory"\|"assist"}` — **운용 모드** 전환 (FR-4.7 · `3.4.4`). `IDLE`·`MANUAL` 에서만 받고, 선행 기능이 없는 모드는 거절한다. 거절에는 사유가 붙는다 |
 

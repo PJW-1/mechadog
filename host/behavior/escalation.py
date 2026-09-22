@@ -114,8 +114,13 @@ class Presentation:
     led: str
     #: 점멸 주기. **L3 에만 붙는다** — 켜져 있는 것과 경보를 구분하기 위해서다.
     blink_hz: float | None
-    #: WonderEcho 사전 등록 문구 ID. 플래싱 전이라 아직 `None` 이다 (OI-10/11).
-    sound_id: str | None
+    #: 그 단계에서 읽어 줄 경고 문장. L2·L3 에만 있고 나머지는 `None` 이다.
+    #:
+    #: ⚠️ **문구 ID(정수)가 아니라 문장이다 (WBS 3.5.6 · 2026-09-23 결정).**
+    #: 로봇에 `SOUND {phrase_id}` 를 보내는 설계는 버렸다 — 펌웨어가 그 명령을
+    #: 파싱만 하고 처리하지 않으며, [ADR-31](../../docs/DECISIONS.md) 이 모듈을
+    #: 마이크·스피커로만 쓰기로 했다. 읽는 것은 PC 의 음성 경로다.
+    warning: str | None
 
 
 class Escalation:
@@ -166,13 +171,13 @@ class Escalation:
             level=self._level,
             led=str(self._led[LED_KEYS[self._level]]),
             blink_hz=float(self._led["l3_blink_hz"]) if self._level is Level.L3 else None,
-            sound_id=self._sound_for(self._level),
+            warning=self._warning_for(self._level),
         )
 
-    def _sound_for(self, level: Level) -> str | None:
+    def _warning_for(self, level: Level) -> str | None:
         value = None
         if level is Level.L2:
-            value = self._sound.get("l2_beep")
+            value = self._sound.get("l2_warning")
         elif level is Level.L3:
             value = self._sound.get("l3_warning")
         return None if value is None else str(value)
@@ -256,6 +261,11 @@ class Escalation:
         """
         if self._level in (Level.L1, Level.L2):
             self._release("standby", now_ms)
+
+    def settle_ppe(self, now_ms: int) -> None:
+        """공장 PPE 판정 종료 시 L1을 내린다. L3/F 래치는 유지한다."""
+        if self._level is Level.L1:
+            self._release("ppe_settled", now_ms)
 
     def note_authentication_lost(self) -> None:
         """인증이 더 이상 유효하지 않다 — 유효 시간 만료(FR-10.2.4)나 미인증자 합류.

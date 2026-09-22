@@ -152,6 +152,7 @@ def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
         ("fsm", "target_lost_timeout_s"),
         ("fsm", "avoid_attempts"),
         ("auth", "timeout_s"),
+        ("auth", "verdict_grace_s"),
         ("escalation", "l1_to_l2_hold_s"),
     ],
 )
@@ -295,12 +296,10 @@ def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
     assert cfg["escalation"]["l3_requires_manual_reset"] is True
 
 
-def test_auth_bound_to_track_id(cfg: dict) -> None:
-    """인증은 추적 ID 에 귀속되어야 한다 (FR-3.6.2).
-
-    아니면 인원이 여러 명일 때 누가 인증되었는지 구분할 수 없다.
-    """
-    assert cfg["auth"]["bind_to_track_id"] is True
+def test_auth_uses_scene_session(cfg: dict) -> None:
+    assert cfg["auth"]["bind_to_track_id"] is False
+    assert cfg["auth"]["require_both"] is True
+    assert cfg["auth"]["resume_delay_ms"] > 0
 
 
 def test_auth_timeouts_are_ordered(cfg: dict) -> None:
@@ -308,6 +307,12 @@ def test_auth_timeouts_are_ordered(cfg: dict) -> None:
     auth = cfg["auth"]
     assert auth["session_valid_s"] > auth["timeout_s"]
     assert auth["max_attempts"] >= 1
+    # 판정 유예는 **창을 늘리는 것**이지 창을 대신하는 것이 아니다 (ADR-37).
+    # 유예가 창보다 길면 실질 마감이 두 배가 되어, 경보가 언제 오는지를
+    # 설정에서 읽을 수 없게 된다.
+    assert 0 < auth["verdict_grace_s"] < auth["timeout_s"]
+    # 유예까지 다 쓴 최악의 경우에도 허가 세션이 먼저 끝나면 안 된다.
+    assert auth["session_valid_s"] > auth["timeout_s"] + auth["verdict_grace_s"]
 
 
 def test_posture_returns_before_move(cfg: dict) -> None:
@@ -390,7 +395,7 @@ def test_ppe_requires_static_target(cfg: dict) -> None:
     """자세 상승은 대상이 정지 상태일 때만 개시한다 (FR-9.2.0).
 
     이동하는 대상은 추종이 불가능하다 — MechDog Trot 약 10~30cm/s 대
-    사람 보행 120~150cm/s 로 5~15배 차이이고, 제자리 회전도 불가하다(DR-11).
+    사람 보행 120~150cm/s 로 5~15배 차이이고, 제자리 회전도 전제하지 않는다(DR-11).
     게다가 상향 자세에서는 이동할 수 없으므로(FR-9.2.3) 대상이 움직이면
     `자세 상승 → 이탈 → 복귀 → 이동 → 재클리핑` 루프에 빠진다.
     """
@@ -663,8 +668,16 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
 
     # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
     assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
-    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "straight_bias_deg"):
-        assert two["gait_calibration"][name] is None, f"{name} 은 이 기체로 다시 재야 한다"
+    # 2026-09-22: mechdog-02 도 실측했다 — null 검사는 *"01 과 다르다"* 검사로
+    # 바뀐다. 같은 값이면 개체 실측이 아니라 복사다.
+    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "reverse_mm_per_sec"):
+        assert two["gait_calibration"][name] != one["gait_calibration"][name], (
+            f"{name} — 01 의 값을 옮겨 적으면 안 된다"
+        )
+    # 직진 편향은 방향도 다르다 — 01 은 좌(+), 02 는 우(-).
+    assert two["gait_calibration"]["forward_yaw_drift_deg_per_sec"] < 0
+    # straight_bias_deg 는 bias 스윕 실측이 아직 없으므로 null 이어야 한다.
+    assert two["gait_calibration"]["straight_bias_deg"] is None
 
 
 def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:

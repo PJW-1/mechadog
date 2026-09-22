@@ -1,5 +1,6 @@
 """Scenario/robotlink/transport/phrases unit tests — no serial, mic, or GPU required."""
 
+import sys
 import types
 import unittest
 from unittest import mock
@@ -80,6 +81,22 @@ class ScenarioTriggerTests(unittest.TestCase):
 
 
 class GuardScenarioTests(unittest.TestCase):
+    def test_guard_check_runs_without_llm_and_closes_com_port(self):
+        device = mock.Mock()
+        piper = types.SimpleNamespace(PiperVoice=types.SimpleNamespace(load=lambda _path: object()))
+        whisper = types.SimpleNamespace(WhisperModel=lambda *_a, **_kw: object())
+        with (
+            mock.patch.object(
+                sys, "argv", ["voice_pipeline.py", "--port", "COM9", "--guard-check"]
+            ),
+            mock.patch.dict(sys.modules, {"piper": piper, "faster_whisper": whisper}),
+            mock.patch.object(vp, "open_transport", return_value=device),
+            mock.patch.object(scenarios, "sc_guard") as guard,
+        ):
+            vp.main()
+        guard.assert_called_once()
+        device.close.assert_called_once()
+
     def test_known_name_is_verified(self):
         ctx = FakeCtx(answers=["김민수 입니다"])
         scenarios.sc_guard(ctx)
@@ -92,6 +109,12 @@ class GuardScenarioTests(unittest.TestCase):
         # 거부 문구는 identity_fail 라이브러리 중 하나가 나와야 한다
         self.assertTrue(any(line in phr.PHRASES["identity_fail"] for line in ctx.lines))
         self.assertFalse(any(line in phr.PHRASES["identity_ok"] for line in ctx.lines))
+
+    def test_negated_or_embedded_name_is_not_verified(self):
+        for answer in ("김민수 아닙니다", "김민수 친구입니다"):
+            ctx = FakeCtx(answers=[answer])
+            scenarios.sc_guard(ctx)
+            self.assertTrue(any(line in phr.PHRASES["identity_fail"] for line in ctx.lines))
 
     def test_silence_is_logged_not_verified(self):
         ctx = FakeCtx(answers=[])
@@ -416,6 +439,21 @@ class TranscribeTests(unittest.TestCase):
 
 
 class HubScenarioQueueTests(unittest.TestCase):
+    def test_auth_prompt_once_per_wait(self):
+        hub = vp.Hub("test")
+        self.assertIsNone(hub.auth_prompt("PATROL"))
+        self.assertEqual(
+            hub.auth_prompt("AUTH_WAIT"),
+            "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오.",
+        )
+        self.assertIsNone(hub.auth_prompt("AUTH_WAIT"))
+        self.assertIsNone(hub.auth_prompt(None))
+        self.assertIsNone(hub.auth_prompt("IDLE"))
+        self.assertEqual(
+            hub.auth_prompt("AUTH_WAIT"),
+            "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오.",
+        )
+
     def test_scenario_item_flows_through_say_queue(self):
         hub = vp.Hub("test")
         hub.enqueue_say("공지입니다")
@@ -448,6 +486,163 @@ class HubScenarioQueueTests(unittest.TestCase):
         self.assertEqual(req.sent[0], 404)
         self.assertEqual(hub.say_q.qsize(), 0)
         del FakeHandler
+
+
+class HallucinationFilterTests(unittest.TestCase):
+    """무음 환각 거름 — no_speech_prob 를 기록만 하면 소비처 없는 표식이다 (3.8.2)."""
+
+    @staticmethod
+    def _model(segments):
+        class FakeModel:
+            def transcribe(self, *_a, **_k):
+                return segments, {}
+
+        return FakeModel()
+
+    def test_high_no_speech_prob_segment_is_dropped(self):
+        segs = [
+            types.SimpleNamespace(text=" 메카독 ", no_speech_prob=0.05),
+            types.SimpleNamespace(text=" 오늘도 시청해 주셔서 감사합니다. ", no_speech_prob=0.753),
+        ]
+        text = vp.transcribe(self._model(segs), b"\x00\x00\xff\x7f")
+        self.assertEqual(text, "메카독")
+
+    def test_all_hallucinated_segments_return_empty(self):
+        segs = [types.SimpleNamespace(text=" 감사합니다 ", no_speech_prob=0.9)]
+        self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "")
+
+    def test_missing_no_speech_prob_attribute_is_kept(self):
+        segs = [types.SimpleNamespace(text=" 메카독 ")]
+        self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "메카독")
+
+
+class PassphraseTests(unittest.TestCase):
+    """암구호 대조 — 이름 대조가 아니라 등록 **문구** 대조다 (WBS 3.8.2)."""
+
+    def test_registered_phrase_inside_natural_speech_matches(self):
+        self.assertTrue(vp.match_passphrase("암구호는 메카독 출입 허가 입니다"))
+
+    def test_unregistered_speech_does_not_match(self):
+        self.assertFalse(vp.match_passphrase("사원 홍길동입니다"))
+        self.assertFalse(vp.match_passphrase("메카독 순찰 시작해"))
+
+    def test_name_alone_is_not_a_passphrase(self):
+        # 이름은 비밀이 아니다 — 명단 대조(4.7.7)와 다른 축이다.
+        self.assertFalse(vp.match_passphrase("홍길동"))
+
+    def test_configured_list_overrides_code_default(self):
+        import json
+
+        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps(["새 암구호"])):
+            self.assertTrue(vp.match_passphrase("새 암구호입니다"))
+            self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
+
+    def test_default_passphrase_is_matched_on_raw_speech(self):
+        # ⚠️ 회귀 방지: 대조는 라우팅용으로 가공한 값이 아니라 **원문**으로
+        # 해야 한다. 출고 기본 문구가 웨이크워드로 시작하므로, `_strip_wake()`
+        # 값으로 대조하면 **문구를 정확히 말한 사람이 떨어지는** 역전이 난다.
+        spoken = "메카독 출입 허가"
+        self.assertTrue(vp.match_passphrase(spoken))
+        self.assertFalse(vp.match_passphrase(vp._strip_wake(spoken)))
+
+    def test_broken_setting_closes_auth_instead_of_falling_back(self):
+        # 되돌리면 관리자가 JSON 이 아닌 값을 넣은 순간 저장소에 공개된
+        # 데모 문구가 조용히 문을 열어 준다 — 바꿨다고 믿는 채로.
+        with mock.patch.object(vp.voice_store, "setting", return_value="{깨짐"):
+            self.assertEqual(vp.passphrases(), [])
+            self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
+
+    def test_non_list_setting_closes_auth(self):
+        import json
+
+        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps("문구")):
+            self.assertEqual(vp.passphrases(), [])
+
+    def test_empty_entry_does_not_authenticate_everything(self):
+        import json
+
+        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps(["", "  "])):
+            self.assertEqual(vp.passphrases(), [])
+            self.assertFalse(vp.match_passphrase("아무 말이나"))
+
+
+class AuthLinkTests(unittest.TestCase):
+    """로봇 FSM 과의 연결 — 대조 결과만 보내고 인식 텍스트는 보내지 않는다."""
+
+    def test_robot_state_returns_fsm_state(self):
+        with mock.patch.object(robotlink, "_get", return_value={"state": "AUTH_WAIT"}) as get:
+            self.assertEqual(robotlink.robot_state(), "AUTH_WAIT")
+            get.assert_called_once()
+
+    def test_robot_state_none_when_unreachable(self):
+        with mock.patch.object(robotlink, "_get", side_effect=OSError):
+            self.assertIsNone(robotlink.robot_state())
+
+    def test_robot_state_level_returns_state_and_escalation(self):
+        snap = {"state": "ALERT", "escalation": "L3"}
+        with mock.patch.object(robotlink, "_get", return_value=snap):
+            self.assertEqual(robotlink.robot_state_level(), ("ALERT", "L3"))
+
+    def test_robot_state_level_none_pair_when_unreachable(self):
+        with mock.patch.object(robotlink, "_get", side_effect=OSError):
+            self.assertEqual(robotlink.robot_state_level(), (None, None))
+
+    def test_robot_state_level_ignores_non_string_fields(self):
+        with mock.patch.object(robotlink, "_get", return_value={"state": 3, "escalation": None}):
+            self.assertEqual(robotlink.robot_state_level(), (None, None))
+
+
+class BadgeVerdictTests(unittest.TestCase):
+    """사원증 확인 발화 조건 — `PATROL` 을 목격하던 레이스를 걸어낸 자리."""
+
+    def test_waits_while_still_in_auth_wait(self):
+        self.assertEqual(vp.badge_verdict("AUTH_WAIT", "L2"), "wait")
+
+    def test_waits_when_runtime_unreachable(self):
+        self.assertEqual(vp.badge_verdict(None, None), "wait")
+
+    def test_announces_on_patrol(self):
+        self.assertEqual(vp.badge_verdict("PATROL", "L0"), "announce")
+
+    def test_announces_even_if_alert_came_first(self):
+        """인증한 사람이 그대로 서 있으면 `PATROL` 은 1~2초만에 `ALERT` 가 된다."""
+        self.assertEqual(vp.badge_verdict("ALERT", "L1"), "announce")
+
+    def test_drops_on_auth_failed(self):
+        """`AUTH_FAILED` 도 `AUTH_WAIT` 를 나간다 — 실패에 확인 발화를 하면 안 된다."""
+        self.assertEqual(vp.badge_verdict("ALERT", "L3"), "drop")
+
+    def test_drops_on_failsafe(self):
+        self.assertEqual(vp.badge_verdict("FAILSAFE", "F"), "drop")
+
+    def test_post_auth_result_sends_only_the_verdict(self):
+        captured = {}
+
+        def fake_post(_base, path, body, **_k):
+            captured["path"], captured["body"] = path, body
+            return {"accepted": True}
+
+        with mock.patch.object(robotlink, "_post", side_effect=fake_post):
+            ok, err = robotlink.post_auth_result(True)
+        self.assertTrue(ok)
+        self.assertEqual(captured["path"], "/api/command/auth")
+        self.assertEqual(captured["body"], {"result": "ok"})
+        self.assertNotIn("text", captured["body"])
+
+    def test_post_auth_result_refusal_is_reported(self):
+        refused = {"accepted": False, "detail": "IDLE 에서는 인증 결과를 받지 않는다"}
+        with mock.patch.object(robotlink, "_post", return_value=refused):
+            ok, err = robotlink.post_auth_result(False)
+        self.assertFalse(ok)
+        self.assertIn("받지 않는다", err)
+
+    def test_post_auth_result_keeps_accepted_stale_detail(self):
+        with mock.patch.object(
+            robotlink, "_post", return_value={"accepted": True, "detail": "다시 말해 주세요"}
+        ):
+            ok, detail = robotlink.post_auth_result(True)
+        self.assertTrue(ok)
+        self.assertEqual(detail, "다시 말해 주세요")
 
 
 class TransportTests(unittest.TestCase):
@@ -507,3 +702,56 @@ class RouteQueryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RobotEscalationWarningTests(unittest.TestCase):
+    """단계가 오르면 경고를 읽는다 (WBS 3.5.6 · FR-3.4)."""
+
+    def _poll(self, hub, events):
+        original = vp.robotlink.fetch_events
+        vp.robotlink.fetch_events = lambda _base, since: (events, 0, since + len(events))
+        try:
+            hub._robot_next_poll = 0
+            hub.poll_robot_events("http://127.0.0.1:8000")
+        finally:
+            vp.robotlink.fetch_events = original
+
+    def test_level_change_is_spoken_urgently(self):
+        hub = vp.Hub("test")
+        hub.enqueue_say("나중에 읽을 공지")
+        self._poll(
+            hub,
+            [
+                {
+                    "event": "escalation_changed",
+                    "state": "AUTH_WAIT",
+                    "escalation": "L2",
+                    "warning": "사원증을 보여 주십시오.",
+                }
+            ],
+        )
+        items = [item for _, _, item in hub.drain_say()]
+        self.assertEqual(items[0], "사원증을 보여 주십시오.")  # 공지보다 앞이다
+
+    def test_other_events_are_journaled_but_not_spoken(self):
+        """⚠️ 사람 확정마다 말하면 순찰이 방송이 된다."""
+        hub = vp.Hub("test")
+        self._poll(hub, [{"event": "person_found", "state": "ALERT", "escalation": "L1"}])
+        self.assertEqual(hub.drain_say(), [])
+        self.assertTrue(any("person_found" in e["text"] for e in hub.events))
+
+    def test_a_level_without_a_warning_says_nothing(self):
+        """L0 복귀까지 읽으면 경보 해제가 새 방송이 된다."""
+        hub = vp.Hub("test")
+        self._poll(
+            hub,
+            [
+                {
+                    "event": "escalation_changed",
+                    "state": "PATROL",
+                    "escalation": "L0",
+                    "warning": None,
+                }
+            ],
+        )
+        self.assertEqual(hub.drain_say(), [])

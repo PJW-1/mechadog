@@ -96,6 +96,26 @@ class Hub:
         self._journal = journal  # EventJournal | None — 날짜별 JSONL 영속 기록
         self.robot_cursor = 0  # 관제 /api/events 폴링 커서
         self._robot_next_poll = 0.0
+        self.auth_prompted = False
+
+    def auth_prompt(self, state):
+        """새 인증 대기마다 한 번 안내하고, 상태 조회 실패에는 중복 안내하지 않는다.
+
+        ⚠️ **L2 경고 문장이 여기 있다** (WBS 3.5.6 · 2026-09-23 정정). 단계 쪽
+        `escalation.sound.l2_warning` 은 `null` 이다 — 이 안내가 곧 `auth_prompted`
+        를 세워 「안내 전 발화는 시도로 세지 않는다」 를 만들기 때문에, 문장만 단계
+        쪽으로 옮기면 사건 폴링(5초) 만큼 **묻기 전에 게이트만 열리는 창**이 생긴다.
+
+        ⚠️ **암구호를 먼저 묻는다.** `auth.require_both` 가 참이면 암구호가 통과하기
+        전의 사원증은 판정하지 않는다(`runtime._judge_auth`). 사원증을 먼저 요구하면
+        보여 줘도 아무 일이 일어나지 않는다.
+        """
+        if state == "AUTH_WAIT" and not self.auth_prompted:
+            self.auth_prompted = True
+            return "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오."
+        if state not in ("AUTH_WAIT", None):
+            self.auth_prompted = False
+        return None
 
     def event(self, role, text):
         self.events.append(
@@ -137,6 +157,12 @@ class Hub:
             state = e.get("state") or "?"
             esc = e.get("escalation") or "?"
             self.event("robot_evt", f"{kind} (state={state} 단계={esc})")
+            # 3.5.6 — 단계가 오른 그 순간에만 경고를 읽는다. 중복 억제는 호스트가
+            # 이미 했다(`_announce_escalation` 의 엣지). 여기서 다시 세지 않는다.
+            # 문장을 여기 적지 않는 것도 같은 이유다 — 단계를 고칠 때 문구가 남는다.
+            warning = e.get("warning")
+            if kind == "escalation_changed" and warning:
+                self.enqueue_say(str(warning), urgent=True)
         self.robot_cursor = latest
 
     def enqueue_say(self, text, urgent=False):
@@ -322,6 +348,70 @@ def _is_sleep_cmd(norm):
     return any(norm == w or norm.endswith(w) for w in voice_store.words("sleep", SLEEP_WORDS))
 
 
+# ── 음성 암구호 인증 (WBS 3.8.2 · FR-10.2) ─────────────────────────────────
+# 사원증(ArUco)을 보여줄 수 없는 방문객이 말로 인증하는 경로다. 이름은 비밀이
+# 아니므로 대조 대상이 아니다 — 등록된 **문구**를 대조한다. 문구는 코드에 두지
+# 않고 voice_data.db 설정으로 넣는다: `auth_passphrases` 키는 _SENSITIVE_KEY_RE
+# 의 "pass" 패턴에 걸려 --set 에코·--dump 에서 자동으로 가려진다.
+# 코드 기본값은 데모 문구 하나다 — 실제 암구호는 반드시 DB 설정으로 교체한다.
+DEFAULT_PASSPHRASES = ("메카독 출입 허가",)
+
+
+def passphrases():
+    """등록 암구호 목록 — JSON 리스트 설정.
+
+    ⚠️ **깨진 설정을 코드 기본값으로 되돌리지 않는다.** 되돌리면 관리자가
+    `--set auth_passphrases "우리 문구"`(JSON 이 아니다) 처럼 넣었을 때
+    **저장소에 공개된 데모 문구가 조용히 문을 연다** — 관리자는 바꿨다고
+    믿는다. 빈 목록을 돌려 인증 경로 자체를 닫는다: 열린 채 틀리느니
+    닫힌 채 막히는 편이 낫다(호출부가 `bool(passphrases())` 로 판단한다).
+
+    ⚠️ **빈 항목은 버린다** — `""` 가 하나 섞이면 포함 대조가 **항상 참**이라
+    모든 발화가 인증을 통과한다.
+    """
+    raw = voice_store.setting(
+        "auth_passphrases",
+        json.dumps(list(DEFAULT_PASSPHRASES), ensure_ascii=False),
+    )
+    try:
+        items = json.loads(raw)
+    except (TypeError, ValueError):
+        print("[auth] auth_passphrases 가 JSON 이 아니다 — 음성 인증을 닫는다")
+        return []
+    if not isinstance(items, list):
+        print("[auth] auth_passphrases 가 목록이 아니다 — 음성 인증을 닫는다")
+        return []
+    return [text for text in (str(p).strip() for p in items) if text]
+
+
+def match_passphrase(text):
+    """정규화한 발화가 등록 암구호를 **포함**하면 참 — 자연 발화는 문구를
+    "암구호는 …입니다" 처럼 감싸므로 부분 포함으로 본다. 포함이란 발화자가
+    문구를 그대로 말했다는 뜻이며, 이름 대조와 달리 비밀의 소지 증명이 된다."""
+    norm = _PUNCT.sub("", text)
+    return any(_PUNCT.sub("", p) in norm for p in passphrases())
+
+
+def badge_verdict(state, escalation):
+    """사원증 대기 중에 본 로봇 상태를 "wait" | "announce" | "drop" 으로 옮긴다.
+
+    ⚠️ **`PATROL` 을 목격하는 조건이었고, 그것이 레이스였다.** 인증이
+    끝나면 런타임은 `PATROL` 로 내려오지만 **눈앞에 사람이 남아 있으면
+    1~2초 만에 `ALERT` 로 다시 올라간다** — 2026-09-22 실기에서 `PATROL`
+    구간이 1.7초였고(20:19:32.558→20:19:34.264) 턴마다 한 번 도는 폴링이
+    그 창을 놓쳐 확인 발화가 통째로 사라졌다. 창 길이에 기대지 않는다.
+
+    ⚠️ **`AUTH_WAIT` 를 벗어난 것이 곧 성공은 아니다.** `AUTH_FAILED` 도
+    나가는 문이고(→ `ALERT` L3), 링크가 끊기면 `FAILSAFE` 로 빠진다.
+    실패한 사람에게 «인증되었습니다» 를 말하는 것은 침묵보다 나쁘다.
+    """
+    if state in ("AUTH_WAIT", None):
+        return "wait"
+    if escalation == "L3" or state == "FAILSAFE":
+        return "drop"
+    return "announce"
+
+
 def route_query(query):
     """정규화된 질의의 처리 경로 — 구체적인 규칙이 넓은 단어 검사보다 먼저다.
 
@@ -382,6 +472,7 @@ def retrieve(docs, query, max_chars=1200):
 def _say(device, piper, text, speed):
     """고정 안내 멘트 재생 — piper 없으면(--tts orpheus) 조용히 건너뜀."""
     if piper is not None:
+        print(f"[say] {text}")
         try:
             stream_play(device, synth_piper(piper, text, speed))
         except (OSError, TimeoutError) as e:
@@ -426,13 +517,35 @@ def _wait_phase(device, decoder, phase, timeout):
     raise TimeoutError(f"no status phase {phase} within {timeout}s")
 
 
-def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
-    """Microphone capture -> decoded 16 kHz PCM16 bytes.
+def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
+    """Microphone capture -> `(pcm, speech_seen, first_speech_ms)`.
 
     With `vad` (default), streaming frames are energy-scored as they arrive:
     once speech has been heard, ~1 s of trailing silence ends the capture early
     via the 0x106 stop command instead of waiting out the fixed 5 s window.
     The noise floor is measured from the first 500 ms (before speech starts).
+
+    `first_speech_ms` 는 **사람이 말을 시작한 epoch 밀리초**이며, 말이 없었거나
+    `vad=False` 면 `None` 이다.
+
+    ⚠️ **이 값이 왜 필요한가** — 이 함수는 최대 15초를 붙잡고, 돌아간 뒤 전사에
+    또 수 초가 든다. 그래서 «말한 시각» 과 «판정이 로봇에 도착한 시각» 이 크게
+    벌어진다. 인증 창(`AUTH_WAIT`)이 그 사이에 열리면 **창 밖에서 한 말이 암구호
+    시도로 세어져** `max_attempts` 를 혼자 소진하고 곧바로 L3 경보가 된다 —
+    2026-09-21 실기에서 인증도 하지 않았는데 눈이 빨개진 원인이다. 호스트가
+    이것을 걸러 낼 수 있게 시각을 함께 낸다 (`runtime.note_voice_auth`).
+
+    ⚠️ **`time.monotonic()` 이 아니라 `time.time()` 이다.** 런타임과 다른
+    프로세스라 단조 시계는 견줄 수 없다. 규약과 같은 epoch 밀리초를 쓴다.
+
+    `on_speech(first_speech_ms)` 를 주면 **말이 시작된 그 프레임에서 한 번** 부른다
+    (말이 없으면 부르지 않는다). 위의 지연을 호스트가 *미리* 알아야 하는 쪽에
+    쓴다 — 판정을 기다리는 동안 인증 창이 닫히지 않게 (ADR-37).
+
+    ⚠️ **콜백은 막지도 던지지도 말아야 한다.** 여기는 20ms 프레임 루프 안이다.
+    HTTP 왕복을 그 자리에서 하면 프레임을 놓쳐 **녹음 자체가 깨진다.** 호출자가
+    스레드로 빼고 예외를 삼키는 것이 규약이며, 여기서는 감싸지 않는다 — 감싸면
+    그 규약이 지켜지지 않아도 조용히 넘어가 원인을 못 찾는다.
     """
     import av
     import numpy as np
@@ -453,6 +566,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
     pcm = bytearray()
     rms_history = []  # per-20 ms-frame RMS
     speech_seen = False
+    first_speech_ms = None
     last_speech = 0.0
     deadline = time.monotonic() + timeout_s
     done = False
@@ -474,6 +588,12 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
                     # 소음 바닥: 발화 전 초기 25프레임(500ms)의 중앙값
                     floor = np.median(rms_history[:25]) if len(rms_history) >= 25 else 200.0
                     if rms > max(floor * 3.0, 300.0):
+                        if not speech_seen:
+                            # **첫 프레임만 찍는다.** 발화가 시작된 시각이 필요하고
+                            # 끝난 시각은 이미 호출자가 안다.
+                            first_speech_ms = int(time.time() * 1000)
+                            if on_speech is not None:
+                                on_speech(first_speech_ms)
                         speech_seen, last_speech = True, now
                     if speech_seen and now - last_speech > 1.0:
                         device.send_command(0x106)
@@ -485,7 +605,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
         raise TimeoutError("no audio frames received")
     if device.in_waiting:
         device.read(device.in_waiting)  # 잔여 프레임 폐기
-    return bytes(pcm), speech_seen
+    return bytes(pcm), speech_seen, first_speech_ms
 
 
 # Whisper 도메인 바이어스 — 웨이크워드/명령어 어휘를 알려 주면 "메카독"이
@@ -494,6 +614,12 @@ STT_PROMPT = (
     "메카독, 비상정지, 긴급정지, 스톱, 수동모드, 수동제어, 자동모드, 수동해제, "
     "순찰시작, 순찰정지, 순찰멈춰, 배터리 상태, 메카독 로봇 음성 명령."
 )
+
+
+# 무음 환각 거름 — faster-whisper 가 무음을 그럴듯한 문장으로 채울 때
+# no_speech_prob 가 함께 올라간다 (실측: "오늘도 시청해 주셔서 감사합니다." 0.753).
+# 값을 기록만 하면 소비처가 없는 표식이라, 여기서 세그먼트를 실제로 버린다.
+NO_SPEECH_PROB_MAX = 0.6
 
 
 def transcribe(model, pcm_bytes):
@@ -507,7 +633,16 @@ def transcribe(model, pcm_bytes):
         vad_filter=True,
         initial_prompt=voice_store.setting("stt_prompt", STT_PROMPT),
     )
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    kept, dropped = [], []
+    for seg in segments:
+        prob = getattr(seg, "no_speech_prob", 0.0) or 0.0
+        (dropped if prob >= NO_SPEECH_PROB_MAX else kept).append(seg)
+    if dropped:
+        print(
+            f"[stt] 무음 환각 추정 세그먼트 {len(dropped)}개 버림: "
+            + repr(" ".join(s.text.strip() for s in dropped))
+        )
+    return " ".join(seg.text.strip() for seg in kept).strip()
 
 
 def reply(llm, history, user_text, context=""):
@@ -628,7 +763,7 @@ class ScenarioCtx:
     def listen(self, timeout_s=12.0):
         self.hub.activity = "listening(scenario)"
         try:
-            pcm, heard = capture_pcm(self.device, self.decoder, timeout_s=timeout_s)
+            pcm, heard, _ = capture_pcm(self.device, self.decoder, timeout_s=timeout_s)
         except TimeoutError:
             return ""
         if not heard:
@@ -663,6 +798,11 @@ def main():
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
     ap.add_argument("--model", type=Path, help="GGUF chat model path")
     ap.add_argument("--say", help="synthesize this text and play it once, then exit")
+    ap.add_argument(
+        "--guard-check",
+        action="store_true",
+        help="신원 질의·청취·명단 대조·응답을 한 번 실행 (LLM 불필요)",
+    )
     ap.add_argument("--whisper", default="medium")
     ap.add_argument("--baud", type=int, default=0)
     ap.add_argument("--turns", type=int, default=0, help="0 = loop forever")
@@ -701,6 +841,27 @@ def main():
         help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
     )
     args = ap.parse_args()
+    from transcribe_local import gpu_dll_directories
+
+    _gpu_dll_handles = gpu_dll_directories()  # Keep Windows DLL directories alive until exit.
+
+    if args.guard_check:
+        if args.say or args.model or args.tts != "piper":
+            ap.error("--guard-check 는 --say/--model/--tts orpheus 와 함께 쓸 수 없음")
+        from faster_whisper import WhisperModel
+        from piper import PiperVoice
+
+        piper = PiperVoice.load(str(args.piper_model))
+        stt = WhisperModel(args.whisper, device="cuda", compute_type="float16")
+        device = open_transport(args)
+        try:
+            ctx = ScenarioCtx(
+                device, Decoder(max_payload=128), stt, piper, Hub(args.robot_id), [], args
+            )
+            scenarios.sc_guard(ctx)
+        finally:
+            device.close()
+        return
 
     if args.say:
         from piper import PiperVoice
@@ -747,11 +908,47 @@ def main():
         print(f"[link] {device.kind} {device.port} @ {device.baud}")
 
     ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args)
+
+    def tell_robot_listening(at_ms):
+        """«말을 받았다» 를 로봇에게 **즉시** 알린다 — 인증 창 마감 유예 (ADR-37).
+
+        녹음(최대 15초)·무음 1초·전사가 직렬로 들기 때문에, 방문객이 창 안에서
+        말해도 판정이 도착할 즈음엔 `auth.timeout_s` 30초가 지나 **빨간 경보**가
+        되어 있을 수 있다 — 2026-09-22 실기에서 통과 2건이 24초·18초를 썼다
+        (여유 6초). 그래서 말이 시작된 시각을 먼저 보낸다.
+
+        ⚠️ **오디오 루프를 막지 않는다.** 이 함수는 20ms 프레임 사이에서 불리므로
+        HTTP 왕복을 그 자리에서 하면 프레임을 놓쳐 녹음이 깨진다. 데몬 스레드로
+        던지고 잊는다 — 실패하면 유예를 못 받을 뿐 인증 경로는 그대로 돈다.
+
+        ⚠️ **여기서 상태를 묻지 않는다.** `AUTH_WAIT` 인지 아닌지는 **호스트가**
+        판정한다 (`runtime.note_voice_listening`). 파이프라인이 미리 걸러 두면
+        같은 규칙이 두 곳에 생기고, 창이 열리는 순간과 어긋난다.
+        """
+        threading.Thread(
+            target=robotlink.post_auth_pending,
+            args=(at_ms, args.robot_api),
+            daemon=True,
+        ).start()
+
     turn = 0
     follow_until = 0.0
+    badge_pending = False
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
+            state, escalation = robotlink.robot_state_level(args.robot_api)
+            if badge_pending:
+                verdict = badge_verdict(state, escalation)
+                if verdict != "wait":
+                    badge_pending = False
+                if verdict == "announce":
+                    hub.activity = "speaking"
+                    _say(device, piper, "인증되었습니다. 다시 순찰을 시작하겠습니다.", args.speed)
+            prompt = hub.auth_prompt(state)
+            if prompt and not args.dry_llm_only:
+                hub.activity = "speaking"
+                _say(device, piper, prompt, args.speed)
             # 턴마다 설정을 다시 읽는다 — 운영 중 voice_data.db 수정이 살아있는
             # 루프에 반영되게. DB가 없으면 코드 기본값이다.
             follow_s = float(voice_store.setting("follow_s", FOLLOW_S, float))
@@ -785,7 +982,12 @@ def main():
                 hub.activity = "listening"
                 print(f"[turn {turn}] listening (VAD) ...")
                 try:
-                    pcm, speech_seen = capture_pcm(device, decoder)
+                    pcm, speech_seen, spoke_at_ms = capture_pcm(
+                        device,
+                        decoder,
+                        timeout_s=1.5 if badge_pending else 15.0,
+                        on_speech=tell_robot_listening if not badge_pending else None,
+                    )
                 except TimeoutError as e:
                     print(f"[capture] {e} — skip")
                     continue
@@ -795,10 +997,29 @@ def main():
                 print(f"[vad] captured {len(pcm) / 32000:.1f}s")
                 hub.activity = "thinking"
                 text = transcribe(stt, pcm)
-                print(f"[stt] {text!r}")
-                hub.event("user", text)
                 if len(text) < 2:
                     continue
+                # 인증 대기(AUTH_WAIT) 중의 발화는 암구호 시도다 — 방문객은
+                # 웨이크워드를 모르므로 없이도 받는다. 등록 문구가 없으면 이
+                # 경로는 열리지 않는다 (빈 목록 대조는 매번 실패를 찍는다).
+                auth_wait = (
+                    hub.mode == "active"
+                    and bool(passphrases())
+                    and robotlink.robot_state(args.robot_api) == "AUTH_WAIT"
+                )
+                if auth_wait and not hub.auth_prompted:
+                    # 안내 전 시작된 녹음은 암구호 실패로 세지 않는다.
+                    continue
+                # ⚠️ **인증 대기 중에는 인식 원문을 남기지 않는다.** 그 발화가
+                # 곧 암구호이고, `/transcript` 는 `0.0.0.0` 에 열려 있어 같은
+                # 망의 누구나 `curl` 로 읽는다(CORS 는 브라우저만 막는다).
+                # `--dump` 마스킹과 `db_transfer` 반출 금지로 지킨 비밀이
+                # 여기로 새면 앞의 두 방어가 무의미해진다. 판정만 아래에 남긴다.
+                if auth_wait:
+                    print("[stt] <인증 대기 · 원문 가림>")
+                else:
+                    print(f"[stt] {text!r}")
+                    hub.event("user", text)
                 norm = _PUNCT.sub("", text)
                 if _is_sleep_cmd(norm):
                     if hub.mode == "active":
@@ -822,7 +1043,16 @@ def main():
                     # 후속 대화 창: 직전 답변 직후엔 웨이크워드 없이 받는다.
                     # 짧은 잡음(follow_min 미만)은 대화로 보지 않는다.
                     follow = _PUNCT.sub("", text)
-                    if (
+                    # ⚠️ **짧은 잡음을 암구호 시도로 세지 않는다.** `AUTH_WAIT`
+                    # 에서 `AUTH_FAILED` 는 곧바로 `ALERT`(L3) 다(`fsm.py` 전이표).
+                    # 방문객이 "네?" 라고 되묻거나 옆 대화가 잡히기만 해도 첫
+                    # 시도에서 경보가 오른다. 실제 재시도 카운터는 없으므로
+                    # (`fsm.py` 주석은 «2회 실패» 라고 적지만 구현에 없다)
+                    # 여기서 거른다 — 아무 말도 인증이 못 되면 `AUTH_WAIT` 의
+                    # 30초 타이머가 맡는다.
+                    if auth_wait and len(follow) >= follow_min:
+                        query = follow
+                    elif (
                         hub.mode == "active"
                         and time.monotonic() < follow_until
                         and len(follow) >= follow_min
@@ -845,6 +1075,54 @@ def main():
                         "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
                         args.speed,
                     )
+                    follow_until = time.monotonic() + follow_s
+                    continue
+                # ⚠️ **인증을 건너뛰는 예외는 «비상정지» 하나다.** 화이트리스트
+                # 전체를 빼면 인증 대기 중인 로봇 앞의 **미인증자**가 웨이크워드
+                # 없이 "순찰 정지" 라고 말하는 것만으로 `POST /api/command/patrol`
+                # 이 나간다 — `ACTIONS` 에는 `estop` 말고 `patrol_start`·
+                # `patrol_stop`·`manual_on`·`manual_off` 가 같이 들어 있다.
+                # 비상정지만 열어 두는 것이 원래 의도였다.
+                estop_now = route == "action" and robotlink.match_action(query)[0] == "estop"
+                if auth_wait and not estop_now:
+                    if badge_pending:
+                        hub.activity = "speaking"
+                        _say(device, piper, "사원증을 카메라에 보여 주세요.", args.speed)
+                        continue
+                    # 인증 대기 중의 발화는 암구호 시도다 — 시나리오·상태·LLM
+                    # 으로 보내지 않고 등록 문구와 대조해 결과만 돌려보낸다.
+                    # ⚠️ **대조는 `query` 가 아니라 원문 `text` 로 한다.**
+                    # `_strip_wake()` 는 «나에게 한 말인가» 를 가르는 라우팅
+                    # 함수라 웨이크워드를 떼어낸다. 그 값으로 대조하면 등록
+                    # 문구가 웨이크워드로 시작할 때(출고 기본값
+                    # "메카독 출입 허가" 가 그렇다) **문구를 정확히 말한 사람이
+                    # 떨어진다** — 감싸서 말한 사람만 통과하는 역전이 된다.
+                    # 판정은 사람이 실제로 낸 소리를 봐야 한다.
+                    ok = match_passphrase(text)
+                    # ⚠️ **발화 시각을 함께 보낸다.** 위 `auth_wait` 판정은 녹음·
+                    # 전사가 **끝난 뒤** 상태를 물은 것이라, 창이 열리기 전에 한 말도
+                    # 여기까지 온다. 그것을 시도로 세면 방문객이 말을 걸기도 전에
+                    # `max_attempts` 가 소진된다 — 걸러 내는 일은 창이 열린 시각을
+                    # 아는 런타임이 한다.
+                    sent_ok, err = robotlink.post_auth_result(
+                        ok, args.robot_api, captured_at_ms=spoke_at_ms
+                    )
+                    verified = sent_ok and ok and "다시 말해 주세요" not in err
+                    print(f"[auth] passphrase {'match' if ok else 'mismatch'} → {sent_ok}")
+                    if not sent_ok:
+                        spoken = f"인증 결과를 전달하지 못했습니다. {err}"
+                    elif ok and "다시 말해 주세요" in err:
+                        spoken = err
+                    elif verified:
+                        spoken = "암구호 확인됐습니다. 사원증을 카메라에 보여 주세요."
+                        badge_pending = True
+                    else:
+                        spoken = "등록된 암구호와 일치하지 않습니다."
+                    # 암구호 문구 자체는 저널에 남기지 않는다 — 판정만 기록.
+                    hub.event("system", f"음성 인증 {'성공' if verified else '실패'}")
+                    hub.activity = "speaking"
+                    if not args.dry_llm_only:
+                        _say(device, piper, spoken, args.speed)
                     follow_until = time.monotonic() + follow_s
                     continue
                 if route == "scenario":

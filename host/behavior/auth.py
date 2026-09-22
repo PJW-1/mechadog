@@ -108,7 +108,7 @@ class Authenticator:
     # ── 상태 ────────────────────────────────────────────────
     def holder(self, track_id: int, now_ms: int) -> str | None:
         """그 대상의 인증된 신분. 유효하지 않으면 `None`."""
-        session = self._sessions.get(track_id)
+        session = self._sessions.get(track_id if self._bind_to_track else 0)
         if session is None or session.granted_ms is None:
             return None
         if now_ms - session.granted_ms >= self._valid_ms:
@@ -116,8 +116,14 @@ class Authenticator:
         return session.holder
 
     def attempts(self, track_id: int) -> int:
-        session = self._sessions.get(track_id)
+        session = self._sessions.get(track_id if self._bind_to_track else 0)
         return 0 if session is None else session.attempts
+
+    def reset(self) -> None:
+        """새 인증 창에서는 이전 사람의 사원증을 다시 사용하지 않는다."""
+        self._sessions.clear()
+        self._pending = None
+        self._unproven.clear()
 
     def all_authenticated(self, tracks: Sequence[Track], now_ms: int) -> bool:
         """보이는 **전원**이 인증됐나 (FR-3.8.1).
@@ -125,6 +131,8 @@ class Authenticator:
         ⚠️ **한 명이라도 미인증이면 False 다.** 실제 출입 통제와 같고 안전측이다 —
         인증된 사람 뒤에 미인증자가 따라 들어오는 것이 막아야 하는 상황이다.
         """
+        if not self._bind_to_track:
+            return self.holder(0, now_ms) is not None  # 현장 인증은 보이는 ID 와 무관하다.
         if not tracks:
             return False
         return all(self.holder(track.track_id, now_ms) is not None for track in tracks)
@@ -136,6 +144,8 @@ class Authenticator:
         ⚠️ 세션을 남겨 두면 같은 번호를 다시 받은 사람이 물려받는다 — 추적기가
         ID 를 재사용하지 않는 것(`3.3.4`)과 같은 이유로 여기서도 지운다.
         """
+        if not self._bind_to_track:
+            return  # 추적 ID 변동으로 현장 인증을 취소하지 않는다.
         alive = {track.track_id for track in tracks}
         for track_id in list(self._sessions):
             if track_id not in alive:
@@ -172,6 +182,13 @@ class Authenticator:
         for marker in markers:
             if marker.marker_id in self._zone_ids:
                 continue  # 구역 마커 — 인증과 무관하다
+            if not self._bind_to_track:
+                result = self._judge(marker, None, now_ms)
+                if result is Outcome.GRANTED:
+                    return result
+                if result is not Outcome.NOTHING:
+                    outcome = result
+                continue
             track = self._owner(marker, tracks)
             if track is None and len(tracks) == 1:
                 track = tracks[0]  # 한 명뿐이면 박스 밖이라도 그 사람이다
@@ -189,9 +206,10 @@ class Authenticator:
             return Outcome.BADGE_SEEN
         return outcome
 
-    def _judge(self, marker: Marker, track: Track, now_ms: int) -> Outcome:
-        session = self._sessions.setdefault(track.track_id, Session())
-        if self.holder(track.track_id, now_ms) is not None:
+    def _judge(self, marker: Marker, track: Track | None, now_ms: int) -> Outcome:
+        track_id = track.track_id if track is not None else 0
+        session = self._sessions.setdefault(track_id, Session())
+        if self.holder(track_id, now_ms) is not None:
             return Outcome.NOTHING  # 이미 유효한 세션이 있다
         if marker.marker_id in session.seen:
             return Outcome.NOTHING  # 같은 사원증을 다시 본 것은 새 시도가 아니다
@@ -206,7 +224,7 @@ class Authenticator:
             session.seen.clear()  # 다음 만료 뒤에는 다시 시도할 수 있어야 한다
             LOG.info(
                 "auth_granted",
-                track_id=track.track_id,
+                track_id=track.track_id if track is not None else None,
                 marker_id=marker.marker_id,
                 holder=holder,
                 valid_s=self._valid_ms // 1000,
@@ -215,7 +233,7 @@ class Authenticator:
         exhausted = session.attempts >= self._max_attempts
         LOG.warning(
             "auth_rejected",
-            track_id=track.track_id,
+            track_id=track.track_id if track is not None else None,
             marker_id=marker.marker_id,
             attempts=session.attempts,
             max_attempts=self._max_attempts,

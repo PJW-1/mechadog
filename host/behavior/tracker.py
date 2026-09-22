@@ -4,7 +4,7 @@
 돌지**를 정한다. FSM 은 *언제* 도는지만 안다 — `TARGET_OFF_CENTER` 와
 `TARGET_CENTERED` 는 전이표에 있지만 그것을 **내는 쪽이 없었다.** 여기가 그 자리다.
 
-**제자리 회전이 불가하다** (DR-11). 그래서 조향은 곧 걷기다 — `MOVE` 의 `angle`
+**제자리 회전을 전제하지 않는다** (DR-11). 그래서 조향은 곧 걷기다 — `MOVE` 의 `angle`
 만 주고 `step` 을 0 으로 두면 로봇은 아무 데도 향하지 못한다. 편차가 남아 있는
 동안은 **걸으면서** 방향을 맞춘다.
 
@@ -146,12 +146,11 @@ __all__ = ["TrackCommand", "LockOnTracker"]
 class TrackCommand:
     """한 프레임의 추종 지시.
 
-    `centered` 가 FSM 사건을 가른다 — 참이면 `TARGET_CENTERED`(→ `ALERT`),
-    거짓이면 `TARGET_OFF_CENTER`(→ `TRACK`).
+    `centered` 는 조향 데드존 판정이다. FSM 정지는 거리(`step=0`)가 가른다.
     """
 
     step: float
-    """전진 보폭 (mm). 중앙에 들어오면 0 이다."""
+    """전진 보폭 (mm). 정지선에 닿으면 0 이다."""
 
     angle: float
     """arc 조향각 (deg). **양수가 좌회전** (PROTOCOL 부호 규약)."""
@@ -179,7 +178,7 @@ class LockOnTracker:
         if deadzone < 0:
             raise ValueError("track_deadzone_px 는 0 이상이어야 함")
         if step <= 0:
-            raise ValueError("step_length_mm 이 0 이면 선회할 수 없다 (제자리 회전 불가)")
+            raise ValueError("step_length_mm 이 0 이면 선회할 수 없다 (제자리 회전 미전제)")
         if turn <= 0:
             raise ValueError("turn_angle_deg 는 0 보다 커야 함")
         self._deadzone_px = deadzone
@@ -245,7 +244,16 @@ class LockOnTracker:
             raise ValueError("track_deadzone_px 가 화면 반폭 이상이라 추종할 수 없다")
 
         if abs(deviation) <= self._deadzone_px:
-            return TrackCommand(step=0.0, angle=0.0, centered=True, deviation_px=deviation)
+            return TrackCommand(
+                step=(
+                    self._step_for(box_height)
+                    if self._target_h_px is not None and box_height is not None
+                    else 0.0
+                ),
+                angle=0.0,
+                centered=True,
+                deviation_px=deviation,
+            )
 
         # 데드존을 뺀 나머지를 0~1 로 편다. 경계에서 0 이므로 각이 튀지 않는다.
         span = midpoint - self._deadzone_px

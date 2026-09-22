@@ -39,6 +39,7 @@ from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
+from host.behavior.posture import RETURN, PostureEscalation
 from host.behavior.tracker import LockOnTracker
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
@@ -53,6 +54,7 @@ from host.common.logging_setup import (
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.dashboard.state import DashboardState
 from host.telemetry.receiver import Ingested, TelemetryReceiver
+from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -170,6 +172,32 @@ class Runtime:
         # 상태별 모션을 붙인다 (3.5.1). 만들 수 없는 것은 등록하지 않고 이유를 남기며,
         # 등록되지 않은 상태는 `Behavior` 가 정지로 처리한다 — 안전측 기본값이다.
         self._actions = register_actions(self._behavior, config)
+        self._normal_patrol = self._behavior.sequence_for("PATROL")
+        self._behavior.register_sequence("PATROL", self._patrol_sequence)
+        self._auth_resume_delay_ms = int(config["auth"].get("resume_delay_ms", 3500))
+        self._auth_resume_after: int | None = None
+        self._normal_alert = self._behavior.sequence_for("ALERT")
+        self._behavior.register_sequence("ALERT", self._alert_sequence)
+        self._behavior.fsm.on_exit("ALERT", lambda _previous, _target: self._ppe_return())
+        self._ppe_posture = PostureEscalation(config)
+        self._ppe_done: dict[int, int] = {}
+        self._ppe_target: int | None = None
+        self._ppe_unknown_since: int | None = None
+        self._ppe_lost_since: int | None = None
+        self._ppe_settle_at: int | None = None
+        self._ppe_pose_held = False
+        self._ppe_move_after: int | None = None
+        self._ppe_tick_now_ms = 0
+        self._ppe_reverse_start: int | None = None
+        self._ppe_reverse_end: int | None = None
+        self._ppe_reverse_step = -float(config["gait"]["step_length_mm"])
+        self._ppe_settle_ms = int(config["posture"]["settle_ms"])
+        self._ppe_pitch = float(config["posture"]["pitch_up_deg"])
+        self._ppe_back_off_mm = float(config["posture"]["back_off_mm"])
+        self._ppe_reverse_speed = (config.get("gait_calibration") or {}).get("reverse_mm_per_sec")
+        self._ppe_unknown_ms = int(config["vision"]["ppe"]["violation_window_ms"])
+        self._ppe_lost_ms = int(config["vision"]["tracker"]["track_lost_ms"])
+        self._ppe_clear_margin = 2 * float(config["vision"]["ppe"]["head_margin_px"])
         # ⚠️ `network` 절 안에 있다. 최상위에서 찾으면 프로파일에 주소를 적어도
         # 못 읽고, 첫 텔레메트리가 올 때까지 아무것도 보내지 않는 상태가 된다.
         host = robot_ip or network.get("mechdog_ip")
@@ -200,6 +228,8 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
+        if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
+            self._vision.set_ppe_enabled(self._mission.enables("ppe"))
         # 추종(`3.5.4`)은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
         # 오고 명령은 10Hz 로 나가므로, 명령 쪽에서 계산하면 프레임을 버리게 된다.
         # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
@@ -270,13 +300,14 @@ class Runtime:
         # 임무 중의 복귀(`SCAN`·`AUTH_WAIT`)는 게이트가 이미 살아 있으므로 건드리지
         # 않는다. 낡은 것은 **순찰을 시작하는 순간의 게이트**뿐이다.
         self._behavior.fsm.on_enter("PATROL", self._rearm_person_gate)
-        # 추종 **진입** 임계. 이탈은 조향 데드존이 정한다 — 둘을 갈라 두는 이유는
-        # `_track` 주석과 `config.yaml` 의 `track_engage_px` 항목에 있다.
-        self._track_engage_px = float(config["fsm"]["track_engage_px"])
         # 직전 IMU 방위와 그 시각. 각속도는 차분이라 표본 하나를 들고 있어야 한다.
         self._last_yaw: tuple[float, int] | None = None
         # 직전 추종 지시 시각. 공백 길이를 재는 데 쓴다 (`track_gap_ms`).
         self._last_track_ms: int | None = None
+        self._track_stop_height_px = float(
+            config["fsm"].get("track_target_height_px") or 0
+        ) * float(config["fsm"]["track_stop_ratio"])
+        self._track_stop_reached = False
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
@@ -292,6 +323,41 @@ class Runtime:
         # 사원증 인증 (3.8.1). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
         # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 여기서 정한다.
         self._auth = Authenticator(config)
+        self._auth_require_both = bool(config["auth"].get("require_both", False))
+        self._auth_badge_wait_ms = int(config["auth"]["timeout_s"]) * 1000
+        self._auth_badge_ready = False
+        # 음성 암구호의 시도 횟수 (FR-10.3). **사원증과 같은 값을 쓰되 따로 센다** —
+        # `Authenticator` 의 세션은 마커를 본 사람에게 붙는데, 암구호는 마커가 없어
+        # 붙일 세션이 없다. 그래서 *지금 열려 있는 `AUTH_WAIT` 한 번*을 단위로 센다.
+        self._voice_auth_max = int(config["auth"]["max_attempts"])
+        self._voice_auth_attempts = 0
+        # 음성 암구호의 유효 시간 (FR-10.2.4). **사원증과 같은 값을 쓰되 트랙이 아니라
+        # 시각으로 센다** — 아래 `_judge_auth` 의 설명을 함께 읽을 것.
+        self._voice_auth_valid_ms = int(config["auth"]["session_valid_s"]) * 1000
+        self._voice_auth_until_ms = 0
+        # 판정이 오는 중일 때 `auth.timeout_s` 를 미뤄 주는 상한 (FR-10.3 · ADR-37).
+        #
+        # ⚠️ **창 안에서 말했는데도 30초를 넘겨 실패가 되는 것을 막는 값이다.**
+        # 파이프라인은 녹음(최대 15초)·무음 1초·전사를 직렬로 하므로 «말한 시각» 과
+        # «판정이 도착한 시각» 이 크게 벌어진다 — 2026-09-22 실기에서 통과 2건이
+        # 각각 24초·18초를 썼다(창은 30초, 여유 6초). ⑥ 이 «창 밖의 말을 세지
+        # 않는다» 를 고쳤다면 이것은 «창 안의 말이 늦게 도착하는 것» 을 고친다.
+        self._voice_auth_grace_ms = int(config["auth"]["verdict_grace_s"]) * 1000
+        # **이번 창에서 유예를 이미 썼는가.** 창마다 1회다 — 아래 `note_voice_listening`.
+        self._voice_auth_deferred = False
+        # **`AUTH_WAIT` 가 열린 시각** (epoch ms · 닫혀 있으면 `None`).
+        #
+        # ⚠️ **창이 열리기 전에 녹음된 발화를 시도로 세지 않기 위해 있다.** 음성
+        # 파이프라인은 `capture_pcm` 으로 최대 15초를 녹음하고 그 뒤에 전사까지
+        # 한 다음 상태를 묻는다 — 즉 «말한 시각» 과 «판정이 도착한 시각» 이 수 초
+        # 떨어진다. `ALERT` 에서 방문객이 아무 말이나 한 것이 전사되는 동안 창이
+        # 열리면, 그 말이 **암구호 시도로 세어져** `max_attempts` 2회를 혼자
+        # 소진하고 곧바로 L3 경보가 된다 — 2026-09-21 실기의 빨간 눈이 이것이다.
+        #
+        # 판정을 여기 두는 이유는 **창이 언제 열렸는지 아는 쪽이 런타임뿐**이라는
+        # 것이다 (`dashboard/commands.py` 의 같은 취지 주석). 파이프라인은 발화
+        # 시각만 실어 보내면 된다.
+        self._voice_auth_opened_ms: int | None = None
 
     @property
     def behavior(self) -> Behavior:
@@ -313,8 +379,23 @@ class Runtime:
         ⚠️ **상태를 여기서 읽어 넘긴다.** `Mission` 이 `Behavior` 를 알면 모드 축을
         FSM 없이 단독으로 시험할 수 없다 — 두 축을 잇는 곳은 런타임 하나다.
         """
-        reason = self._mission.switch(target, state=self._behavior.state)
+        reason = self._mission.refuse_reason(target, state=self._behavior.state)
+        if reason is None and target == "factory" and self._vision is not None:
+            try:
+                self._vision.set_ppe_enabled(True)
+            except (OSError, RuntimeError, ValueError) as exc:
+                return f"PPE 판정기를 열 수 없다: {exc}"
         if reason is None:
+            reason = self._mission.switch(target, state=self._behavior.state)
+        if reason is None:
+            if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
+                self._vision.set_ppe_enabled(self._mission.enables("ppe"))
+            self._ppe_done.clear()
+            self._ppe_target = None
+            self._ppe_unknown_since = None
+            self._ppe_lost_since = None
+            self._ppe_settle_at = None
+            self._ppe_move_after = None
             # 모드가 곧 적재 프로파일이다 (ADR-35 결정 5). 거절된 전환에는 걸지 않는다.
             self._apply_load_profile(target)
         return reason
@@ -466,9 +547,20 @@ class Runtime:
         """
         if self._vision is None:
             return
+        if self._ppe_settle_at is not None and now_ms >= self._ppe_settle_at:
+            self._ppe_settle_at = None
+            if self._behavior.state == "ALERT" and self._apply(Event.PPE_SETTLED, now_ms):
+                self._escalation.settle_ppe(now_ms)
         result = self._vision.latest()
         fresh = result is not None and self._edge.changed("vision_seq", result.frame_seq)
         if fresh:
+            if self._mission.enables("ppe"):
+                active = {track.track_id for track in result.tracks}
+                for track_id, last_seen in tuple(self._ppe_done.items()):
+                    if track_id in active:
+                        self._ppe_done[track_id] = now_ms
+                    elif now_ms - last_seen > self._ppe_lost_ms:
+                        del self._ppe_done[track_id]
             self._summary.count("detections", len(result.detections))
             self._behavior.note_vision(result.completed_ms)
             # 확정 여부와 별개로 마지막 실제 person 히트를 기록한다. 게이트 해제는
@@ -481,7 +573,12 @@ class Runtime:
             #
             # ⚠️ (잠정) **임무 밖(대기·수동)에서는 올리지 않는다** (`fsm.STANDBY`). 인증도
             # 보지 않는다 — 대기 중 모르는 사원증 2장이 `AUTH_FAILED` 로 L3 를 만든다.
-            if not self._behavior.standby:
+            inspected = (
+                self._mission.enables("ppe")
+                and bool(result.tracks)
+                and max(result.tracks, key=lambda track: track.height).track_id in self._ppe_done
+            )
+            if not self._behavior.standby and not inspected:
                 self._escalation.note_person(
                     present=result.sighting.present, last_seen_ms=seen_ms, now_ms=now_ms
                 )
@@ -501,11 +598,12 @@ class Runtime:
             )
             # `present=False`는 게이트 확정이 풀렸다는 뜻일 뿐, 5초 대상 상실 사건이
             # 아니다. TARGET_LOST는 Behavior의 마지막 검출 타이머가 발생시킨다.
-            if result.sighting.present:
+            if result.sighting.present and not inspected:
                 self._apply(Event.PERSON_FOUND, now_ms)
                 self._record_person_event(result)
         if fresh:
             self._observe_fallen(result)
+            self._judge_ppe(result, now_ms)
             self._track(result, now_ms)
             self._inspect_zone(result, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
@@ -524,6 +622,139 @@ class Runtime:
                 age_ms=self._vision.age_ms(now_ms),
             )
 
+    def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
+        if (self._ppe_move_after is not None and now_ms < self._ppe_move_after) or (
+            self._auth_resume_after is not None and now_ms < self._auth_resume_after
+        ):
+            commander.halt()
+        elif self._normal_patrol is not None:
+            self._normal_patrol(commander, now_ms)
+
+    def _alert_sequence(self, commander: Commander, now_ms: int) -> None:
+        """Factory PPE owns ALERT posture; guard keeps the existing alert sequence."""
+        if not self._mission.enables("ppe"):
+            if self._normal_alert is not None:
+                self._normal_alert(commander, now_ms)
+            return
+        if self._ppe_reverse_start is not None and self._ppe_reverse_end is not None:
+            if self._ppe_reverse_start <= now_ms < self._ppe_reverse_end:
+                commander.drive(self._ppe_reverse_step, 0.0)
+                return
+            if now_ms >= self._ppe_reverse_end:
+                self._ppe_reverse_start = self._ppe_reverse_end = None
+        commander.drive(0.0, 0.0)
+
+    def _ppe_return(self) -> bool:
+        self._ppe_reverse_start = self._ppe_reverse_end = None
+        held = self._ppe_pose_held
+        if held:
+            self._commander.once("ACTION", id=0)
+            self._ppe_pose_held = False
+            self._ppe_move_after = self._ppe_tick_now_ms + max(self._ppe_settle_ms, 1000)
+        return held
+
+    def _ppe_step(self, step: str | None, now_ms: int) -> None:
+        if step == "pitch_up":
+            self._commander.once(
+                "POSE", pitch=self._ppe_pitch, roll=0.0, height=0.0, dur=self._ppe_settle_ms
+            )
+            self._ppe_pose_held = True
+        elif step == "sit":
+            self._commander.once("ACTION", id=1)
+            self._ppe_pose_held = True
+        elif step == "back_off":
+            self._ppe_return()
+            if self._ppe_reverse_speed:
+                # ACTION 0 은 온보드 loop 를 약 1초 막는다(PROTOCOL). 서기 전에 걷지 않는다.
+                self._ppe_reverse_start = now_ms + max(self._ppe_settle_ms, 1000)
+                self._ppe_reverse_end = self._ppe_reverse_start + int(
+                    self._ppe_back_off_mm / float(self._ppe_reverse_speed) * 1000
+                )
+        elif step == RETURN:
+            self._ppe_return()
+
+    def _ppe_finish(
+        self, state: str, result: Any, now_ms: int, reason: str, *, returned: bool = False
+    ) -> None:
+        track_id = self._ppe_target
+        if track_id is None or track_id in self._ppe_done:
+            return
+        self._ppe_done[track_id] = now_ms
+        self._ppe_unknown_since = None
+        returned = self._ppe_return() or returned
+        event = (
+            "PPE_VIOLATION"
+            if state == VIOLATION
+            else ("PPE_UNDETERMINED" if state == UNDETERMINED else "PPE_SETTLED")
+        )
+        LOG.info("ppe_judged", track_id=track_id, state=state, reason=reason)
+        if state == VIOLATION:
+            self._apply(Event.PPE_VIOLATION, now_ms)
+        elif returned:
+            self._ppe_settle_at = now_ms + max(self._ppe_settle_ms, 1000)
+        else:
+            if self._apply(Event.PPE_SETTLED, now_ms):
+                self._escalation.settle_ppe(now_ms)
+        self._record_scene(event, result, {"track_id": track_id, "state": state, "reason": reason})
+
+    def _judge_ppe(self, result: Any, now_ms: int) -> None:
+        if not self._mission.enables("ppe") or self._behavior.state != "ALERT":
+            return
+        if self._ppe_settle_at is not None:
+            return
+        verdict = getattr(result, "ppe", None)
+        if verdict is None:
+            if self._ppe_lost_since is None:
+                self._ppe_lost_since = now_ms
+            if now_ms - self._ppe_lost_since < self._ppe_lost_ms:
+                return
+            decision = self._ppe_posture.update(
+                box=None, frame_height=result.frame_height, track_id=self._ppe_target, now_ms=now_ms
+            )
+            self._ppe_step(decision.step, now_ms)
+            return
+        self._ppe_lost_since = None
+        if verdict.track_id in self._ppe_done:
+            return
+        if verdict.track_id != self._ppe_target:
+            self._ppe_return()
+            self._ppe_target = verdict.track_id
+            self._ppe_unknown_since = None
+        if self._ppe_reverse_start is not None:
+            return
+        track = next((t for t in result.tracks if t.track_id == verdict.track_id), None)
+        if track is None:
+            return
+        decision = self._ppe_posture.update(
+            box=track.box,
+            frame_height=result.frame_height,
+            track_id=verdict.track_id,
+            now_ms=now_ms,
+        )
+        returned = decision.step == RETURN and self._ppe_pose_held
+        self._ppe_step(decision.step, now_ms)
+        if decision.undetermined:
+            self._ppe_finish(UNDETERMINED, result, now_ms, decision.reason, returned=returned)
+        elif verdict.clipped or (self._ppe_pose_held and track.box[1] <= self._ppe_clear_margin):
+            if decision.step == "back_off" and not self._ppe_reverse_speed:
+                self._ppe_finish(UNDETERMINED, result, now_ms, "후진 속도 미실측")
+            elif decision.reason == "대상이 움직이는 중 — 개시하지 않음":
+                if self._ppe_unknown_since is None:
+                    self._ppe_unknown_since = now_ms
+                elif now_ms - self._ppe_unknown_since >= self._ppe_unknown_ms:
+                    self._ppe_finish(UNDETERMINED, result, now_ms, decision.reason)
+            else:
+                self._ppe_unknown_since = None
+        elif verdict.state == VIOLATION and verdict.confirmed:
+            self._ppe_finish(VIOLATION, result, now_ms, "1500ms 창 위반 확정")
+        elif verdict.state == OK:
+            self._ppe_finish(OK, result, now_ms, "", returned=returned)
+        elif verdict.state == UNDETERMINED:
+            if self._ppe_unknown_since is None:
+                self._ppe_unknown_since = now_ms
+            elif now_ms - self._ppe_unknown_since >= self._ppe_unknown_ms:
+                self._ppe_finish(UNDETERMINED, result, now_ms, verdict.reason, returned=returned)
+
     def _track(self, result: Any, now_ms: int) -> None:
         """대표 박스의 x편차를 추종 지시로 바꿔 사건과 시퀀스에 넘긴다 (`3.5.4` · FR-3.5).
 
@@ -540,7 +771,7 @@ class Runtime:
         막으면 조향각은 매 프레임 계산돼 `TRACK` 시퀀스에 그대로 실린다 — 전이는
         없는데 로봇이 사람을 따라 도는, 가장 설명하기 어려운 모양이 된다.
         """
-        if not self._mission.enables("track"):
+        if not self._mission.enables("track") or self._mission.enables("ppe"):
             return
         if not self._behavior.tracking:
             # ⚠️ **추종 구간을 벗어나면 엣지 기억을 지운다.** 남겨 두면 다시 `ALERT` 로
@@ -594,17 +825,11 @@ class Runtime:
         # 같은 판정이 이어지는 동안은 사건을 내지 않는다 — 25fps 로 같은 전이를
         # 수백 번 넣으면 로그가 전이로 뒤덮이고 단계 축도 흔들린다.
         #
-        # ⚠️ **전이 임계는 조향 데드존보다 넓다 (히스테리시스).** `command.centered` 는
-        # *"명령을 낼 것인가"* 를 40px 로 정하고 그대로 쓰지만, **`TRACK` 으로 들어가는
-        # 판단만** `track_engage_px`(50px)로 늦춘다. 하나로 두면 경계에서 bbox 가
-        # ±5px 떨리는 것이 그대로 왕복 전이가 된다 — 2026-09-18 실기에서 한 초에
-        # 3왕복했다(`35.4 → 41.2 → 37.2 → 44.3px`). 나오는 쪽은 좁은 임계 그대로여야
-        # 중앙에 든 대상을 늦게 놓지 않는다.
-        centered = (
-            command.centered
-            if self._behavior.state == "TRACK"
-            else abs(command.deviation_px) <= self._track_engage_px
-        )
+        # 조향 정렬과 거리 정지는 다르다. 멀리 있는 중앙 대상에게도 직진하고,
+        # 정지선에서는 화면 가장자리여도 걸음을 멈춰 경계 자세를 유지한다.
+        if self._track_stop_height_px and box_height >= self._track_stop_height_px:
+            self._track_stop_reached = True
+        centered = self._track_stop_reached or command.step == 0.0
         if self._edge.changed("track_centered", centered):
             LOG.info(
                 "track_command",
@@ -615,7 +840,11 @@ class Runtime:
             )
             self._apply(Event.TARGET_CENTERED if centered else Event.TARGET_OFF_CENTER, now_ms)
         if self._track_sequence is not None:
-            self._track_sequence.note(command.step, command.angle, now_ms)
+            self._track_sequence.note(
+                0.0 if self._track_stop_reached else command.step,
+                0.0 if self._track_stop_reached else command.angle,
+                now_ms,
+            )
 
     def _zone_of(self, result: Any) -> str | None:
         """이번 프레임에 보이는 구역 마커. 없으면 `None`.
@@ -823,14 +1052,41 @@ class Runtime:
         """
         if not self._mission.enables("auth"):
             return
+        voice_granted = now_ms < self._voice_auth_until_ms
         self._auth.note_tracks(result.tracks)
-        outcome = self._auth.observe(result.markers, result.tracks, now_ms)
+        if self._auth_require_both and voice_granted and not result.markers:
+            self._auth_badge_ready = True
+        outcome = (
+            self._auth.observe(result.markers, result.tracks, now_ms)
+            if not self._auth_require_both or (voice_granted and self._auth_badge_ready)
+            else Outcome.NOTHING
+        )
         if outcome in (Outcome.GRANTED, Outcome.BADGE_SEEN):
-            self._apply(Event.AUTH_OK, now_ms)
+            if self._apply(Event.AUTH_OK, now_ms) and self._behavior.state == "PATROL":
+                self._auth_resume_after = now_ms + self._auth_resume_delay_ms
+                LOG.info("auth_resume_wait", delay_ms=self._auth_resume_delay_ms)
         elif outcome is Outcome.EXHAUSTED:
             # 2회 실패 — 30초 무응답과 같은 결론이다 (FR-10.3).
             self._apply(Event.AUTH_FAILED, now_ms)
-        if self._auth.all_authenticated(result.tracks, now_ms):
+        # ⚠️ **음성 허가는 사람이 아니라 현장에 붙는다** (FR-10.2.4 · `3.8.2`).
+        # 사원증은 화면 안 좌표에 보이니 그 좌표의 트랙에 붙일 근거가 있지만, 마이크는
+        # 로봇 몸통에 하나뿐이라 **그 소리가 누구 목소리인지 모른다**. 그러니 "제일
+        # 가까운 트랙에 붙인다"는 건 없는 근거를 지어내는 것이고, 틀리면 엉뚱한 사람이
+        # 허가를 받는다 — 안 붙이는 것보다 나쁘다. 그래서 암구호가 맞으면
+        # `session_valid_s` 동안 **이 자리**를 인증된 것으로 본다.
+        #
+        # ⚠️ **창이 열린 동안 트랙이 죽어도 허가는 유지된다.** 트랙에 기대면 검출이
+        # 잠깐 끊기는 것만으로 허가가 날아가 10초마다 재인증을 요구한다.
+        #
+        # ⚠️ **대신 그 60초 동안 새로 들어온 사람도 함께 허가된다.** 암구호는 원래
+        # *아는 사람은 통과*라 결론은 같지만, 사원증과 다른 성질이니 알고 쓸 것.
+        badge_granted = self._auth.all_authenticated(result.tracks, now_ms)
+        authenticated = (
+            voice_granted and badge_granted
+            if self._auth_require_both
+            else voice_granted or badge_granted
+        )
+        if authenticated:
             self._escalation.note_authenticated(now_ms)
         else:
             self._escalation.note_authentication_lost()
@@ -990,8 +1246,40 @@ class Runtime:
         self._commander.once("LED", color=seen.led, blink_hz=blink)
         self._last_eye_led_ms = now_ms
 
+    def _announce_escalation(self, now_ms: int) -> None:
+        """단계가 바뀐 **그 순간**을 사건으로 낸다 (WBS 3.5.6 · FR-3.4).
+
+        ⚠️ **상태가 아니라 단계에 건다.** `ALERT ⇄ TRACK` 왕복 체류가 0.2~0.6초로
+        실측됐다(2026-09-18). 상태 진입에 걸면 경고가 초당 몇 번씩 겹쳐 나간다.
+        단계는 그 왕복에 영향받지 않으므로 엣지가 그대로 중복 억제가 된다.
+
+        ⚠️ **블랙박스 사건에 얹지 않는다.** 그 사건은 사진을 저장할 때만 나가는데
+        (`_record_scene` 네 곳), 미인증 10초로 조용히 L2 가 되는 경우에는 그 넷 중
+        아무 일도 일어나지 않는다. 얹어 두면 **경고가 늦거나 아예 안 나간다** —
+        음성 쪽은 한참 뒤 엉뚱한 사건에 얹혀 온 값을 보고서야 알아챈다.
+
+        ⚠️ **읽을 문장을 여기서 실어 보낸다.** 단계와 문구가 한곳에 있어야 단계를
+        고칠 때 문구가 남지 않는다. 음성 쪽은 받은 문장을 읽기만 한다.
+        """
+        if self._dashboard is None:
+            return
+        level = self._escalation.level.value
+        if not self._edge.changed("escalation_level", level):
+            return
+        self._dashboard.record_event(
+            {
+                "event": "escalation_changed",
+                "ts_ms": now_ms,
+                "state": self._behavior.state,
+                "escalation": level,
+                "mode": self._mission.mode,
+                "warning": self._escalation.presentation().warning,
+            }
+        )
+
     def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
+        self._track_stop_reached = False
         if previous in STANDBY:
             self._edge.forget("person")
 
@@ -1038,11 +1326,18 @@ class Runtime:
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
+        # ⚠️ **이 함수의 소요가 명령 주기를 결정한다.** 운용 루프는 단일 스레드이고
+        # (`serve`) 송신이 이 뒤에 붙으므로, 여기서 쓴 시간이 그대로 로봇이 느끼는
+        # 명령 간격이 된다. 온보드 워치독은 300ms 라 여유가 세 주기뿐이다.
+        tick_started = time.perf_counter()
+        self._ppe_tick_now_ms = now_ms
         self._drain_confirmations(now_ms)
         # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
         if self._behavior.standby:
             self._escalation.stand_down(now_ms)
+        phase_started = time.perf_counter()
         self._poll_vision(now_ms)
+        vision_ms = (time.perf_counter() - phase_started) * 1000
         # 단계의 시간 조건 — L1 해제(5초)와 L2 승격(10초). **전이와 무관하게 돈다.**
         #
         # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
@@ -1052,7 +1347,9 @@ class Runtime:
         self._emit_eye_led(now_ms)
         self._request_auth(now_ms)
         before = self._behavior.state
+        phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
+        behavior_ms = (time.perf_counter() - phase_started) * 1000
         if self._behavior.state != before:
             self._stats.transitions += 1
             # 감시자·상태 타이머가 만든 사건은 `_apply` 를 지나지 않는다 — 30초
@@ -1068,11 +1365,22 @@ class Runtime:
             self._stats.note_state(self._behavior.state)
             self._summary.count("sent", len(lines))
             # 전문이 나온 회전만 센다 — 그것이 로봇이 체감하는 주기다.
-            self._intervals.note(now_ms)
+            #
+            # ⚠️ **초당 요약에도 싣는다.** `_intervals.digest()` 는 `runtime_stopped`
+            # 에서만 나가므로 운용 중에는 간격이 벌어지는 것을 볼 수 없었다. 그래서
+            # 2026-09-22 실기에서 로봇이 300ms 워치독으로 계속 래치하는데 호스트
+            # 로그로는 원인을 못 찾고 USB 시리얼을 물려야 했다.
+            gap_ms = self._intervals.note(now_ms)
+            if gap_ms is not None:
+                self._summary.maximum("cmd_gap_ms", gap_ms)
+                if gap_ms > self._cmd_timeout_ms:
+                    self._summary.count("cmd_gap_over_timeout")
         # 주기 요약 — fps·지연·카운터를 1초에 한 줄로 (1.3)
         digest = self._summary.drain(now_ms)
         if digest:
             LOG.info("telemetry_summary", **digest)
+        phase_started = time.perf_counter()
+        self._announce_escalation(now_ms)
         if self._dashboard is not None:
             self._dashboard.publish(
                 telemetry=self._last_telemetry if self._last_telemetry["available"] else None,
@@ -1081,6 +1389,15 @@ class Runtime:
                 mode=self._mission.mode,
                 received_at=self._telemetry_received_at,
             )
+        dashboard_ms = (time.perf_counter() - phase_started) * 1000
+        # ⚠️ **최댓값을 함께 낸다 — 평균은 꼬리를 숨긴다.** 위 `digest` 는 이 줄보다
+        # 앞에서 비워지므로 여기 적은 값은 다음 요약에 실린다(한 틱 지연).
+        total_ms = (time.perf_counter() - tick_started) * 1000
+        self._summary.observe("tick_ms", total_ms)
+        self._summary.maximum("tick_ms", total_ms)
+        self._summary.maximum("tick_vision_ms", vision_ms)
+        self._summary.maximum("tick_behavior_ms", behavior_ms)
+        self._summary.maximum("tick_dashboard_ms", dashboard_ms)
         return lines
 
     def _apply(self, event: Event, now_ms: int) -> bool:
@@ -1091,6 +1408,7 @@ class Runtime:
         **앞 6초의 모든 레코드가 `IDLE` 로 찍혔다** — 로봇은 순찰 중이었다.
         로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
         """
+        self._ppe_tick_now_ms = now_ms
         # ⚠️ **모드 게이트는 FSM 보다 앞이다** (FR-11.1 · `3.4.4`). 뒤에 두면 전이는
         # 막아도 에스컬레이션이 올라가, 경비 모드에서 PPE 위반이 L3 경보를 만든다.
         # 여기가 사건이 지나는 유일한 지점이라 **한 곳에서 한 번만** 거른다.
@@ -1109,6 +1427,23 @@ class Runtime:
         if not accepted:
             return False
         self._stats.transitions += 1
+        # ⚠️ **`AUTH_WAIT` 에 들어올 때마다 시도를 0 으로 되돌린다.** 이 자리가
+        # 사건이 지나는 유일한 지점이라 어느 경로로 들어왔든 한 번만 초기화된다.
+        # 초기화하지 않으면 앞선 대기에서 쌓인 실패가 다음 사람에게 넘어가,
+        # 처음 말하는 사람이 한 마디에 소진된다.
+        if before != "AUTH_WAIT" and self._behavior.state == "AUTH_WAIT":
+            self._voice_auth_attempts = 0
+            if self._auth_require_both:
+                self._voice_auth_until_ms = 0
+                self._auth_badge_ready = False
+                self._auth.reset()
+            # 창이 열린 시각. 이보다 앞서 녹음된 발화는 시도로 세지 않는다.
+            self._voice_auth_opened_ms = now_ms
+            # 유예도 창 단위다 — `Behavior` 쪽 누적은 상태가 바뀌며 이미 0 이 된다.
+            self._voice_auth_deferred = False
+        elif before == "AUTH_WAIT" and self._behavior.state != "AUTH_WAIT":
+            self._voice_auth_opened_ms = None
+            self._voice_auth_deferred = False
         self._log_transition(before)
         return True
 
@@ -1175,6 +1510,146 @@ class Runtime:
         """
         return self._apply(event, self._clock())
 
+    def _utterance_is_stale(self, captured_at_ms: int | None) -> bool:
+        """그 발화가 **지금 열려 있는 창보다 앞선 것**인가.
+
+        ⚠️ **`None` 은 오래된 것이 아니다.** 대시보드의 수동 주입처럼 «지금 누른
+        것» 이 분명한 호출자는 시각을 싣지 않는다 — 있으면 쓰고 없으면 예전대로
+        돈다. 시각을 강제하면 그 호출자들이 전부 막힌다.
+        """
+        return (
+            captured_at_ms is not None
+            and self._voice_auth_opened_ms is not None
+            and captured_at_ms < self._voice_auth_opened_ms
+        )
+
+    def note_voice_listening(self, captured_at_ms: int | None = None) -> tuple[bool, str]:
+        """«발화를 받았고 판정이 오는 중» 을 받아 **인증 창을 한 번 늘린다** (FR-10.3).
+
+        ⚠️ **이것은 판정이 아니다.** 시도를 세지도, 사건을 내지도 않는다. 오직
+        `auth.timeout_s` 마감을 `auth.verdict_grace_s` 만큼 미룬다.
+
+        왜 필요한가: 파이프라인은 녹음(최대 15초) → 무음 1초 → 전사를 **직렬로**
+        한다. 그래서 방문객이 창 안에서 말해도 판정이 30초 뒤에 도착할 수 있고,
+        그때는 이미 `AUTH_FAILED` 가 나가 눈이 빨갛다. 2026-09-22 실기에서 통과한
+        2건이 각각 24초·18초를 썼다 — 여유가 6초뿐이었다. **말이 조금 늦거나
+        전사가 조금 느리면 말하는 도중에 경보가 된다.**
+
+        ⚠️ **창마다 1회이고 상한이 있다.** 신호가 올 때마다 미뤄 주면 소리만 계속
+        내서 타이머를 영영 재울 수 있다 — 침입자가 경보를 막는 길이 된다.
+        **경보가 늦는 것보다 오지 않는 것이 나쁘다.**
+
+        ⚠️ **창 밖 발화는 유예를 사지 못한다.** 그것을 허용하면 ⑥ 에서 막은 길이
+        옆문으로 되살아난다 — 창이 열리기 전에 한 말이 창의 수명을 늘린다.
+        """
+        if self._behavior.state != "AUTH_WAIT":
+            return False, f"{self._behavior.state} 에서는 인증 대기가 없다 (AUTH_WAIT 만)"
+        if self._utterance_is_stale(captured_at_ms):
+            LOG.info(
+                "voice_listening_stale",
+                captured_at_ms=captured_at_ms,
+                opened_ms=self._voice_auth_opened_ms,
+            )
+            return True, "인증 창이 열리기 전에 시작된 발화다 — 유예하지 않는다"
+        if self._voice_auth_deferred:
+            return True, "이 대기에서는 이미 한 번 미뤘다"
+        granted = self._behavior.defer_timer(
+            by_ms=self._voice_auth_grace_ms, cap_ms=self._voice_auth_grace_ms
+        )
+        self._voice_auth_deferred = True
+        LOG.info("voice_auth_deferred", granted_ms=granted, cap_ms=self._voice_auth_grace_ms)
+        return True, f"판정을 기다린다 — {granted // 1000}초 미뤘다"
+
+    def note_voice_auth(self, ok: bool, captured_at_ms: int | None = None) -> tuple[bool, str]:
+        """음성 암구호 판정을 받아 **시도를 세고** 사건으로 옮긴다 (FR-10.3).
+
+        `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이고 판정이 도착한 시각이
+        아니다. 둘은 수 초 떨어진다 — 파이프라인이 최대 15초를 녹음하고 전사까지
+        마친 뒤에 이 경로를 탄다. 그 사이에 `AUTH_WAIT` 가 열렸다면 **창이 열리기
+        전의 말**이 시도로 세어진다. 그래서 창이 열린 시각과 견주어 **오래된 발화는
+        세지 않고 버린다** (`_voice_auth_opened_ms` 의 설명을 함께 읽을 것).
+
+        ⚠️ **`None` 은 검사를 건너뛴다.** 대시보드의 수동 주입처럼 «지금 누른 것»
+        이 분명한 호출자는 시각을 싣지 않는다. 있으면 쓰고 없으면 예전대로 돈다.
+
+        ⚠️ **불일치 한 번이 곧 `AUTH_FAILED` 가 아니다.** 사원증 쪽은 `Authenticator`
+        가 `REJECTED`(아직 남았다)와 `EXHAUSTED`(소진)를 갈라 후자만 사건으로 내는데
+        (`auth.py` `_judge`), 음성 쪽은 그 구분이 없어 첫 불일치가 곧바로 L3 경보가
+        됐다 — 2026-09-21 실기 3라운드가 그렇게 찍혔다. 말은 사원증과 달리 잘못
+        들릴 수 있으므로 `max_attempts` 가 있는 것이고, 그 값을 여기서 쓴다.
+
+        ⚠️ **소진 전 실패도 `accepted=True` 로 돌려준다.** 음성 파이프라인은
+        `accepted` 를 *전달됐나*로 읽어 거짓이면 "전달하지 못했습니다" 라고 말한다
+        (`robotlink.post_auth_result`). 판정을 제대로 받아 세어 둔 것을 전달 실패로
+        말하면 사람이 다시 말할 이유를 잃는다. 상태가 아니어서 받지 않은 것만 거짓이다.
+        """
+        now_ms = self._clock()
+        # ⚠️ **세기 전에, 그리고 허가하기 전에 «언제 말했는가» 를 먼저 본다.**
+        # 창이 열리기 전의 발화는 실패든 일치든 이 대기의 것이 아니다. 일치를
+        # 허가하지 않는 이유는 **묻기 전에 한 대답**이기 때문이다 — 방문객이
+        # 우연히 맞는 말을 한 것이 통행 허가가 되면 인증이 아니다.
+        if self._utterance_is_stale(captured_at_ms):
+            LOG.info(
+                "voice_auth_stale",
+                captured_at_ms=captured_at_ms,
+                opened_ms=self._voice_auth_opened_ms,
+                behind_ms=self._voice_auth_opened_ms - captured_at_ms,
+                matched=ok,
+            )
+            # `True` 로 돌려준다 — 파이프라인은 `accepted` 를 *전달됐나* 로 읽어
+            # 거짓이면 "전달하지 못했습니다" 라고 말한다. 제대로 받아 버린 것을
+            # 전달 실패로 말하면 사람이 무엇을 해야 하는지 알 수 없다.
+            return True, "인증 창이 열리기 전에 녹음된 발화다 — 다시 말해 주세요"
+        if ok:
+            if self._auth_require_both:
+                if self._behavior.state != "AUTH_WAIT" or not self._mission.enables("auth"):
+                    return (
+                        False,
+                        f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)",
+                    )
+                if now_ms >= self._voice_auth_until_ms:
+                    self._voice_auth_until_ms = now_ms + self._voice_auth_valid_ms
+                    self._auth_badge_ready = False
+                    self._behavior.defer_timer(
+                        by_ms=self._auth_badge_wait_ms,
+                        cap_ms=self._voice_auth_grace_ms + self._auth_badge_wait_ms,
+                    )
+                    LOG.info("voice_auth_granted", valid_ms=self._voice_auth_valid_ms, next="badge")
+                return True, "암구호 확인 — 사원증을 제시해 주세요"
+            accepted = self._apply(Event.AUTH_OK, now_ms)
+            if accepted:
+                # 여기서만 창을 연다 — 받아들여지지 않은 판정은 허가가 아니다.
+                self._voice_auth_until_ms = now_ms + self._voice_auth_valid_ms
+                LOG.info("voice_auth_granted", valid_ms=self._voice_auth_valid_ms)
+            return accepted, (
+                "인증 결과를 반영했다"
+                if accepted
+                else f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)"
+            )
+        # 실패다. **세기 전에 받을 수 있는 상태인지 먼저 묻는다** — 아니면 시도가
+        # 엉뚱한 대기에 쌓인다. 모드 게이트도 `_apply` 와 같은 이유로 여기서 본다.
+        if not self._mission.allows(Event.AUTH_FAILED.name) or not self._behavior.fsm.can(
+            Event.AUTH_FAILED
+        ):
+            return False, f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)"
+        self._voice_auth_attempts += 1
+        remaining = self._voice_auth_max - self._voice_auth_attempts
+        if remaining > 0:
+            LOG.info(
+                "voice_auth_rejected",
+                attempts=self._voice_auth_attempts,
+                max_attempts=self._voice_auth_max,
+                exhausted=False,
+            )
+            return True, f"암구호가 일치하지 않는다 — {remaining}회 남았다"
+        LOG.warning(
+            "voice_auth_exhausted",
+            attempts=self._voice_auth_attempts,
+            max_attempts=self._voice_auth_max,
+            exhausted=True,
+        )
+        return self._apply(Event.AUTH_FAILED, now_ms), "시도 횟수를 소진했다"
+
     def ask_patrol(self) -> None:
         """순찰을 예약한다. **리셋이 정착한 뒤 `IDLE` 에서 시작한다.**
 
@@ -1218,7 +1693,9 @@ class Runtime:
         if not self._reset_pending or latched is not False:
             return
         self._reset_pending = False
-        self._apply(Event.RESET_CONFIRMED, now_ms)
+        if self._apply(Event.RESET_CONFIRMED, now_ms):
+            # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
+            self._commander.once("POSE", pitch=0.0, roll=0.0, height=0.0, dur=self._ppe_settle_ms)
 
     def emergency_stop(self) -> str:
         """종료 전문. **틱을 기다리지 않는다.**
@@ -1475,6 +1952,8 @@ def main(argv: list[str] | None = None) -> int:
         # 만드는 이유는 **모르는 모드나 선행 기능 없는 모드로는 기동 자체를 거부**
         # 하기 때문이다 (FR-11.7) — `ModeError` 가 `ConfigError` 라서 이 절이 잡는다.
         mission = Mission(config, mode=args.mode)
+        if mission.enables("ppe") and args.no_vision:
+            raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
     except (ConfigError, OSError) as exc:
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
@@ -1535,6 +2014,9 @@ def main(argv: list[str] | None = None) -> int:
                     apply_event=runtime.apply_external,
                     ask_patrol=runtime.ask_patrol,
                     set_mode=runtime.set_mode,
+                    note_voice_auth=runtime.note_voice_auth,
+                    note_voice_listening=runtime.note_voice_listening,
+                    confirm_alarm=runtime.ask_alarm_confirm,
                 )
                 camera = _latest_jpeg(vision) if vision is not None else None
                 stack.enter_context(

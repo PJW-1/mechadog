@@ -71,7 +71,17 @@ def sc_guard(ctx):
         ctx.event("system", "경비모드: 무응답 → 미확인 기록")
         return
     roster = load_roster()
-    hit = next((name for name in roster if name in _norm(answer)), None)
+    claim = _norm(answer)
+    hit = next(
+        (
+            name
+            for name in roster
+            if re.fullmatch(
+                rf"(?:저는|제이름은|사원)?{re.escape(name)}(?:입니다|이에요|라고합니다)?", claim
+            )
+        ),
+        None,
+    )
     if hit:
         ctx.say(f"{hit} 님, {pick('identity_ok')}")
         ctx.event("system", f"경비모드: {hit} 확인됨")

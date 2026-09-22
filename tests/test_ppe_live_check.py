@@ -135,7 +135,8 @@ def test_window_reset_makes_acceptance_segments_independent() -> None:
 def test_xiao_acceptance_plan_covers_required_postures() -> None:
     specs, step_s, orientations = ppe.load_acceptance_plan(ppe.DEFAULT_ACCEPTANCE_PLAN, "xiao")
     keys = {spec["key"] for spec in specs}
-    assert {"standing-all", "crouching-all", "clipped-base", "pitch-up", "sit", "back-off"} <= keys
+    assert {"standing-all", "crouching-all", "clipped-base", "pitch-up", "sit"} <= keys
+    assert "back-off" not in keys, "출고 자세 단계에서 후진은 제외했다"
     assert step_s > 0
     assert orientations == ["정면", "우측", "후면", "좌측"]
 

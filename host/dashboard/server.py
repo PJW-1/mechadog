@@ -293,6 +293,29 @@ def _local_origins(port: int) -> set[str]:
     return allowed
 
 
+class _RevalidatedStatic(StaticFiles):
+    """정적 파일마다 `Cache-Control: no-cache` 를 붙인다.
+
+    ⚠️ **없으면 브라우저가 옛 화면을 계속 보여 준다.** `StaticFiles` 는 ETag 와
+    `Last-Modified` 만 주고 `Cache-Control` 을 주지 않는데, 그러면 브라우저가
+    스스로 신선도를 추정해서 재검증 없이 사본을 쓴다. 2026-09-22 실기에서
+    **새로 넣은 «경보 확인 (L3 해제)» 버튼이 화면에 나오지 않았다** — 서버는 새
+    파일을 내려주고 있었고 브라우저가 옛 사본을 쥐고 있었다.
+
+    ⚠️ **버튼이 없는 것보다 이 쪽이 위험하다.** 같은 화면이 `FSM IDLE`·
+    `래치 해제됨` 을 보여 주는 동안 실제 상태는 `TRACK`·**L3** 였다. 없는 버튼은
+    눈에 보이지만 틀린 단계는 눈에 보이지 않는다.
+
+    `no-cache` 는 *"저장하지 말라"* 가 아니라 *"쓰기 전에 물어보라"* 다. ETag 가
+    그대로면 304 만 오가므로 대역은 거의 늘지 않는다.
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(
     state: DashboardState,
     commands: CommandService | None = None,
@@ -467,6 +490,23 @@ def create_app(
                 return rejected
             return commands.reset().as_dict()
 
+        @app.post("/api/command/alarm")
+        async def alarm(request: Request):
+            """사람이 상황을 확인한 뒤 누르는 **경보(L3) 해제** (FR-10.3.2).
+
+            ⚠️ **`/api/command/reset` 과 다른 문이다.** 저쪽은 물리 상태(F)를
+            확인하고 로봇의 래치 보고를 기다리며, 이쪽은 상황 판단이라 로봇에
+            보낼 것이 없다. 하나로 묶으면 **비상정지를 눌렀다 푸는 것으로 경보가
+            지워진다** ([ADR-26]).
+
+            ⚠️ **이 문이 없으면 헤드리스 런타임은 경보를 풀 수 없다** — 콘솔
+            확인 키는 tty 를 요구한다(`runtime.watch_console`).
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            return commands.alarm_confirm().as_dict()
+
         @app.post("/api/command/service")
         async def service(request: Request):
             """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.
@@ -499,6 +539,40 @@ def create_app(
             if not isinstance(mode, str):
                 return JSONResponse({"error": "mode"}, status_code=400)
             return commands.mission_mode(mode).as_dict()
+
+        @app.post("/api/command/auth")
+        async def auth(request: Request):
+            """`{"result": "ok"|"fail"|"pending", "captured_at_ms"?: int}` — 음성 암구호 경로.
+
+            대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
+            옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다 (WBS 3.8.2).
+
+            `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이며 선택이다.
+            싣고 오면 런타임이 `AUTH_WAIT` 가 열린 시각과 견주어 **창이 열리기
+            전에 녹음된 발화를 시도로 세지 않는다.** 녹음·전사에 수 초가 걸려
+            «말한 시각» 과 «판정이 도착한 시각» 이 다르기 때문이다.
+
+            `"pending"` 은 **판정이 아니다** — 발화를 받아 두었고 전사가 도는
+            중이라는 통지이며, `auth.timeout_s` 마감을 `verdict_grace_s` 만큼
+            **창마다 한 번** 미룬다 (ADR-37). 상한이 없으면 소리만 계속 내서
+            경보를 영영 막을 수 있다.
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            result = body.get("result")
+            if result not in ("ok", "fail", "pending"):
+                return JSONResponse({"error": "result"}, status_code=400)
+            captured_at_ms = body.get("captured_at_ms")
+            # ⚠️ **`bool` 을 정수로 받지 않는다.** `isinstance(True, int)` 가 참이라
+            # `captured_at_ms: true` 가 시각 1 로 들어가 **모든 발화가 오래된 것**이
+            # 되어 인증이 통째로 막힌다.
+            if captured_at_ms is not None and (
+                isinstance(captured_at_ms, bool) or not isinstance(captured_at_ms, int)
+            ):
+                return JSONResponse({"error": "captured_at_ms"}, status_code=400)
+            return commands.auth(result, captured_at_ms).as_dict()
 
         @app.post("/api/command/drive")
         async def drive(request: Request):
@@ -533,7 +607,7 @@ def create_app(
     if static_dir is not None and static_dir.is_dir():
         # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
         # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
+        app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
 
     return app
 

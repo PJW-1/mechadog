@@ -298,6 +298,11 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
             self.set_mode = lambda _mode: None
+            # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3). 두 번째
+            # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
+            self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
+            self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
+            self.ask_alarm_confirm = lambda: None
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -546,6 +551,11 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
             self.set_mode = lambda _mode: None
+            # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3). 두 번째
+            # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
+            self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
+            self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
+            self.ask_alarm_confirm = lambda: None
 
         def serve(self, _sock, **_kwargs):
             pass
@@ -666,3 +676,16 @@ def test_events_http_reports_dropped(clock):
     with TestClient(create_app(state)) as client:
         body = client.get("/api/events?since=0").json()
         assert body["dropped"] == 5
+
+
+def test_static_files_must_be_revalidated(clock, tmp_path):
+    """⚠️ 새 화면을 내려줘도 브라우저가 옛 사본을 쓰면 **틀린 단계가 그대로 보인다.**
+
+    2026-09-22 실기에서 새 «경보 확인 (L3 해제)» 버튼이 나오지 않은 원인이다.
+    """
+    (tmp_path / "panels.js").write_text("export const x = 1", encoding="utf-8")
+    app = create_app(state_at(clock), static_dir=tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/panels.js")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-cache"

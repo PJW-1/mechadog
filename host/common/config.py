@@ -208,7 +208,12 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(auth, "session_valid_s")
     _require_positive(auth, "max_attempts")
     _require_positive(auth, "timeout_s")
+    _require_positive(auth, "verdict_grace_s")
     _require_positive(auth, "unknown_marker_min_frames")
+    if int(auth.get("resume_delay_ms", 3500)) < 0:
+        raise ConfigError("auth.resume_delay_ms 는 0 이상이어야 함")
+    if not isinstance(auth.get("require_both", False), bool):
+        raise ConfigError("auth.require_both 는 true 또는 false 여야 함")
     badges = auth.get("badge_marker_map")
     if badges is None or not isinstance(badges, dict):
         raise ConfigError("auth.badge_marker_map 은 사전(dict)이어야 함")
@@ -261,18 +266,10 @@ def validate_base_config(config: dict[str, Any]) -> None:
         for name in names:
             _require_positive(config[section], name)
 
-    # 추종 진입 임계는 조향 데드존보다 **넓어야** 한다. 같거나 좁으면 히스테리시스가
-    # 사라져 경계에서 `ALERT ⇄ TRACK` 이 왕복한다 (2026-09-18 실기 · 한 초에 3왕복).
     fsm = config["fsm"]
     deadzone = fsm.get("track_deadzone_px")
-    engage = fsm.get("track_engage_px")
     if not _finite_number(deadzone) or deadzone < 0:
         raise ConfigError("fsm.track_deadzone_px 는 0 이상의 유한한 수여야 함")
-    if not _finite_number(engage) or engage < deadzone:
-        raise ConfigError(
-            f"fsm.track_engage_px({engage}) 가 track_deadzone_px({deadzone}) 보다 좁다"
-            " — 진입·이탈 임계가 같으면 경계에서 왕복한다 (2026-09-18 실측 떨림 ±5px)"
-        )
 
     # 추종 지시를 이어 가는 상한은 **대상 상실 타이머보다 짧아야 한다.** 같거나 길면
     # 상한이 하는 일이 없어지고, 대상이 사라진 뒤에도 `TRACK` 이 끝날 때까지 낡은

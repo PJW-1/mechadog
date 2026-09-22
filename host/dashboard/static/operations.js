@@ -193,6 +193,8 @@ export class Operations {
  }
  requestService(on){return this.requestDevice('서비스 모드 '+(on?'진입':'해제'),()=>this.link.service(on?'enter':'exit'))}
  requestResetSafe(){return this.requestDevice('안전 해제',()=>this.link.resetSafe())}
+ // 경보(L3) 확인. ⚠️ **안전 해제와 합치지 않는다** — 확인하는 대상이 다르다 (ADR-26).
+ requestAlarmConfirm(){return this.requestDevice('경보 확인',()=>this.link.confirmAlarm())}
  requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
  // 전환은 IDLE·MANUAL 에서만 받는다 (FR-11.3). 거절 사유는 requestDevice 가 그대로 남긴다.
  requestMode(name){return this.requestDevice('운용 모드 '+name,()=>this.link.mode(name))}

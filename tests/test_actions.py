@@ -289,7 +289,7 @@ def _measured(cfg: dict, **override: float | None) -> dict:
 def test_reverse_turn_replaces_the_reverse_then_turn_pair(cfg) -> None:
     """⚠️ **전진하며 돌면 후진으로 번 여유를 되돌려 준다.**
 
-    제자리 회전이 불가하므로(ADR-11) 선회가 반드시 이동을 동반하는데, 실측
+    제자리 회전을 전제하지 않으므로(ADR-11) 선회가 반드시 이동을 동반하는데, 실측
     선회 속도가 6.8 도/s 라 30도에 4.4초가 걸리고 그 동안 84mm/s 로 **370mm 를
     전진했다** — 후진 200mm 를 다 먹고 **순 여유가 -170mm**, 즉 회피가 장애물에
     더 붙었다. 후진하며 돌면 한 구간으로 줄고 여유가 양수가 된다.

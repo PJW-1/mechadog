@@ -24,7 +24,17 @@ T0 = 2_000_000
 
 @pytest.fixture
 def auth(cfg: dict) -> Authenticator:
+    cfg["auth"]["bind_to_track_id"] = True  # 기존 개인별 정책 회귀 검사
     return Authenticator(cfg)
+
+
+def test_scene_badge_survives_track_churn(cfg: dict) -> None:
+    cfg["auth"]["bind_to_track_id"] = False
+    authenticator = Authenticator(cfg)
+    assert authenticator.observe([_marker(0)], [], T0) is Outcome.GRANTED
+    authenticator.note_tracks([])
+    assert authenticator.all_authenticated([_track(42)], T0 + 500)
+    assert not authenticator.all_authenticated([_track(43)], T0 + 60_000)
 
 
 def _track(track_id: int, *, x: float = 100.0, height: float = 300.0) -> Track:
