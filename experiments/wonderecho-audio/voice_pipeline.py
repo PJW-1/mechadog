@@ -99,10 +99,20 @@ class Hub:
         self.auth_prompted = False
 
     def auth_prompt(self, state):
-        """새 인증 대기마다 한 번 안내하고, 상태 조회 실패에는 중복 안내하지 않는다."""
+        """새 인증 대기마다 한 번 안내하고, 상태 조회 실패에는 중복 안내하지 않는다.
+
+        ⚠️ **L2 경고 문장이 여기 있다** (WBS 3.5.6 · 2026-09-23 정정). 단계 쪽
+        `escalation.sound.l2_warning` 은 `null` 이다 — 이 안내가 곧 `auth_prompted`
+        를 세워 「안내 전 발화는 시도로 세지 않는다」 를 만들기 때문에, 문장만 단계
+        쪽으로 옮기면 사건 폴링(5초) 만큼 **묻기 전에 게이트만 열리는 창**이 생긴다.
+
+        ⚠️ **암구호를 먼저 묻는다.** `auth.require_both` 가 참이면 암구호가 통과하기
+        전의 사원증은 판정하지 않는다(`runtime._judge_auth`). 사원증을 먼저 요구하면
+        보여 줘도 아무 일이 일어나지 않는다.
+        """
         if state == "AUTH_WAIT" and not self.auth_prompted:
             self.auth_prompted = True
-            return "멈췄습니다. 암구호를 말씀해 주세요."
+            return "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오."
         if state not in ("AUTH_WAIT", None):
             self.auth_prompted = False
         return None

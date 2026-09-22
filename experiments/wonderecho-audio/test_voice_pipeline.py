@@ -442,11 +442,17 @@ class HubScenarioQueueTests(unittest.TestCase):
     def test_auth_prompt_once_per_wait(self):
         hub = vp.Hub("test")
         self.assertIsNone(hub.auth_prompt("PATROL"))
-        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+        self.assertEqual(
+            hub.auth_prompt("AUTH_WAIT"),
+            "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오.",
+        )
         self.assertIsNone(hub.auth_prompt("AUTH_WAIT"))
         self.assertIsNone(hub.auth_prompt(None))
         self.assertIsNone(hub.auth_prompt("IDLE"))
-        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+        self.assertEqual(
+            hub.auth_prompt("AUTH_WAIT"),
+            "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오.",
+        )
 
     def test_scenario_item_flows_through_say_queue(self):
         hub = vp.Hub("test")

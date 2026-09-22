@@ -2266,7 +2266,10 @@ def test_the_level_edge_publishes_one_warning_not_one_per_tick(
         "단계마다 하나씩이다 — 10Hz 로 백 번 도는 동안 L1 이 여러 번 나오면 안 된다"
     )
     assert changes[0]["warning"] is None, "관찰 단계는 읽을 것이 없다"
-    assert changes[1]["warning"] == config["escalation"]["sound"]["l2_warning"]
+    # ⚠️ **L2 도 비어 있다** (2026-09-23 정정) — 인증 요구 안내는 음성 쪽
+    # `Hub.auth_prompt` 가 한다. 그 안내가 곧 시도 계수 게이트를 여는 행위라
+    # 둘을 갈라 놓을 수 없다. 사건은 그대로 나가고 실을 문장만 없다.
+    assert changes[1]["warning"] is None
 
 
 def test_a_quiet_promotion_still_reaches_the_event_feed(config: dict, clock: FakeClock) -> None:
@@ -2295,4 +2298,4 @@ def test_a_quiet_promotion_still_reaches_the_event_feed(config: dict, clock: Fak
     assert [e["event"] for e in later] == ["escalation_changed"], (
         "L1→L2 사이에 블랙박스 사건이 없다 — 단계 사건이 없으면 경고가 안 나간다"
     )
-    assert later[0]["warning"] == config["escalation"]["sound"]["l2_warning"]
+    assert later[0]["escalation"] == "L2", "조용한 승격이 사건으로 나와야 한다"
