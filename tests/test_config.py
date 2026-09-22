@@ -152,6 +152,7 @@ def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
         ("fsm", "target_lost_timeout_s"),
         ("fsm", "avoid_attempts"),
         ("auth", "timeout_s"),
+        ("auth", "verdict_grace_s"),
         ("escalation", "l1_to_l2_hold_s"),
     ],
 )
@@ -308,6 +309,12 @@ def test_auth_timeouts_are_ordered(cfg: dict) -> None:
     auth = cfg["auth"]
     assert auth["session_valid_s"] > auth["timeout_s"]
     assert auth["max_attempts"] >= 1
+    # 판정 유예는 **창을 늘리는 것**이지 창을 대신하는 것이 아니다 (ADR-37).
+    # 유예가 창보다 길면 실질 마감이 두 배가 되어, 경보가 언제 오는지를
+    # 설정에서 읽을 수 없게 된다.
+    assert 0 < auth["verdict_grace_s"] < auth["timeout_s"]
+    # 유예까지 다 쓴 최악의 경우에도 허가 세션이 먼저 끝나면 안 된다.
+    assert auth["session_valid_s"] > auth["timeout_s"] + auth["verdict_grace_s"]
 
 
 def test_posture_returns_before_move(cfg: dict) -> None:
@@ -390,7 +397,7 @@ def test_ppe_requires_static_target(cfg: dict) -> None:
     """자세 상승은 대상이 정지 상태일 때만 개시한다 (FR-9.2.0).
 
     이동하는 대상은 추종이 불가능하다 — MechDog Trot 약 10~30cm/s 대
-    사람 보행 120~150cm/s 로 5~15배 차이이고, 제자리 회전도 불가하다(DR-11).
+    사람 보행 120~150cm/s 로 5~15배 차이이고, 제자리 회전도 전제하지 않는다(DR-11).
     게다가 상향 자세에서는 이동할 수 없으므로(FR-9.2.3) 대상이 움직이면
     `자세 상승 → 이탈 → 복귀 → 이동 → 재클리핑` 루프에 빠진다.
     """

@@ -78,7 +78,7 @@ def test_no_command_leaves_inside_the_deadzone(cfg, offset):
 
 
 def test_steering_always_carries_a_stride(cfg):
-    """제자리 회전이 불가하므로(DR-11) 조향에는 반드시 보폭이 따라붙는다."""
+    """제자리 회전을 전제하지 않으므로(DR-11) 조향에는 반드시 보폭이 따라붙는다."""
     t = _tracker(cfg)
     out = t.update(MIDPOINT + 41, FRAME_WIDTH)
     assert out.centered is False

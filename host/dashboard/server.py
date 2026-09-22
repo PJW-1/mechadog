@@ -502,19 +502,37 @@ def create_app(
 
         @app.post("/api/command/auth")
         async def auth(request: Request):
-            """`{"result": "ok"|"fail"}` — 음성 암구호 판정 결과 주입 (WBS 3.8.2).
+            """`{"result": "ok"|"fail"|"pending", "captured_at_ms"?: int}` — 음성 암구호 경로.
 
             대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
-            옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다.
+            옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다 (WBS 3.8.2).
+
+            `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이며 선택이다.
+            싣고 오면 런타임이 `AUTH_WAIT` 가 열린 시각과 견주어 **창이 열리기
+            전에 녹음된 발화를 시도로 세지 않는다.** 녹음·전사에 수 초가 걸려
+            «말한 시각» 과 «판정이 도착한 시각» 이 다르기 때문이다.
+
+            `"pending"` 은 **판정이 아니다** — 발화를 받아 두었고 전사가 도는
+            중이라는 통지이며, `auth.timeout_s` 마감을 `verdict_grace_s` 만큼
+            **창마다 한 번** 미룬다 (ADR-37). 상한이 없으면 소리만 계속 내서
+            경보를 영영 막을 수 있다.
             """
             rejected = _rejected_origin(request)
             if rejected is not None:
                 return rejected
             body = await request.json()
             result = body.get("result")
-            if result not in ("ok", "fail"):
+            if result not in ("ok", "fail", "pending"):
                 return JSONResponse({"error": "result"}, status_code=400)
-            return commands.auth(result).as_dict()
+            captured_at_ms = body.get("captured_at_ms")
+            # ⚠️ **`bool` 을 정수로 받지 않는다.** `isinstance(True, int)` 가 참이라
+            # `captured_at_ms: true` 가 시각 1 로 들어가 **모든 발화가 오래된 것**이
+            # 되어 인증이 통째로 막힌다.
+            if captured_at_ms is not None and (
+                isinstance(captured_at_ms, bool) or not isinstance(captured_at_ms, int)
+            ):
+                return JSONResponse({"error": "captured_at_ms"}, status_code=400)
+            return commands.auth(result, captured_at_ms).as_dict()
 
         @app.post("/api/command/drive")
         async def drive(request: Request):

@@ -288,6 +288,19 @@ class PeriodicSummary:
         self.count(f"{name}_sum", value)
         self.count(f"{name}_n")
 
+    def maximum(self, name: str, value: float) -> None:
+        """구간 최댓값. **평균과 함께 봐야 한다 — 평균은 꼬리를 숨긴다.**
+
+        2026-09-22 실기에서 `last_cmd_age_ms_avg` 는 30~90ms 로 멀쩡했는데 틱의
+        3.1% 가 온보드 300ms 명령 워치독을 넘겨 로봇이 계속 래치했다. 평균만
+        내보내던 탓에 호스트 로그만 보고는 원인을 못 찾고 USB 시리얼을 물려야
+        했다. 주기를 지키는지는 평균이 아니라 최댓값이 말한다.
+        """
+        key = f"{name}_max"
+        previous = self._counters.get(key)
+        if previous is None or value > previous:
+            self._counters[key] = value
+
     def drain(self, now_ms: int) -> dict[str, float] | None:
         """주기가 됐으면 집계를 돌려주고 카운터를 비운다. 아니면 `None`.
 

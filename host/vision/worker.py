@@ -418,7 +418,13 @@ class TickIntervals:
     late: int = 0
     _last_ms: int | None = None
 
-    def note(self, now_ms: int) -> None:
+    def note(self, now_ms: int) -> int | None:
+        """간격을 기록하고 **그 간격을 돌려준다** (첫 호출은 `None`).
+
+        돌려주는 이유가 있다 — `digest()` 는 누적이라 운용 중 초당 요약에 실을 수
+        없다. 호출자가 이번 간격만 따로 집계할 수 있어야 한다.
+        """
+        gap: int | None = None
         if self._last_ms is not None:
             gap = now_ms - self._last_ms
             self.max_ms = max(self.max_ms, gap)
@@ -429,6 +435,7 @@ class TickIntervals:
                 # 무한히 쌓지 않는다. 최악값은 위에서 따로 보존한다.
                 del self.samples[: len(self.samples) - self.window]
         self._last_ms = now_ms
+        return gap
 
     def percentile(self, fraction: float) -> int | None:
         if not self.samples:
