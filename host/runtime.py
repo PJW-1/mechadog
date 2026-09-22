@@ -1251,12 +1251,18 @@ class Runtime:
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
+        # ⚠️ **이 함수의 소요가 명령 주기를 결정한다.** 운용 루프는 단일 스레드이고
+        # (`serve`) 송신이 이 뒤에 붙으므로, 여기서 쓴 시간이 그대로 로봇이 느끼는
+        # 명령 간격이 된다. 온보드 워치독은 300ms 라 여유가 세 주기뿐이다.
+        tick_started = time.perf_counter()
         self._ppe_tick_now_ms = now_ms
         self._drain_confirmations(now_ms)
         # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
         if self._behavior.standby:
             self._escalation.stand_down(now_ms)
+        phase_started = time.perf_counter()
         self._poll_vision(now_ms)
+        vision_ms = (time.perf_counter() - phase_started) * 1000
         # 단계의 시간 조건 — L1 해제(5초)와 L2 승격(10초). **전이와 무관하게 돈다.**
         #
         # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
@@ -1266,7 +1272,9 @@ class Runtime:
         self._emit_eye_led(now_ms)
         self._request_auth(now_ms)
         before = self._behavior.state
+        phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
+        behavior_ms = (time.perf_counter() - phase_started) * 1000
         if self._behavior.state != before:
             self._stats.transitions += 1
             # 감시자·상태 타이머가 만든 사건은 `_apply` 를 지나지 않는다 — 30초
@@ -1282,11 +1290,21 @@ class Runtime:
             self._stats.note_state(self._behavior.state)
             self._summary.count("sent", len(lines))
             # 전문이 나온 회전만 센다 — 그것이 로봇이 체감하는 주기다.
-            self._intervals.note(now_ms)
+            #
+            # ⚠️ **초당 요약에도 싣는다.** `_intervals.digest()` 는 `runtime_stopped`
+            # 에서만 나가므로 운용 중에는 간격이 벌어지는 것을 볼 수 없었다. 그래서
+            # 2026-09-22 실기에서 로봇이 300ms 워치독으로 계속 래치하는데 호스트
+            # 로그로는 원인을 못 찾고 USB 시리얼을 물려야 했다.
+            gap_ms = self._intervals.note(now_ms)
+            if gap_ms is not None:
+                self._summary.maximum("cmd_gap_ms", gap_ms)
+                if gap_ms > self._cmd_timeout_ms:
+                    self._summary.count("cmd_gap_over_timeout")
         # 주기 요약 — fps·지연·카운터를 1초에 한 줄로 (1.3)
         digest = self._summary.drain(now_ms)
         if digest:
             LOG.info("telemetry_summary", **digest)
+        phase_started = time.perf_counter()
         if self._dashboard is not None:
             self._dashboard.publish(
                 telemetry=self._last_telemetry if self._last_telemetry["available"] else None,
@@ -1295,6 +1313,15 @@ class Runtime:
                 mode=self._mission.mode,
                 received_at=self._telemetry_received_at,
             )
+        dashboard_ms = (time.perf_counter() - phase_started) * 1000
+        # ⚠️ **최댓값을 함께 낸다 — 평균은 꼬리를 숨긴다.** 위 `digest` 는 이 줄보다
+        # 앞에서 비워지므로 여기 적은 값은 다음 요약에 실린다(한 틱 지연).
+        total_ms = (time.perf_counter() - tick_started) * 1000
+        self._summary.observe("tick_ms", total_ms)
+        self._summary.maximum("tick_ms", total_ms)
+        self._summary.maximum("tick_vision_ms", vision_ms)
+        self._summary.maximum("tick_behavior_ms", behavior_ms)
+        self._summary.maximum("tick_dashboard_ms", dashboard_ms)
         return lines
 
     def _apply(self, event: Event, now_ms: int) -> bool:
