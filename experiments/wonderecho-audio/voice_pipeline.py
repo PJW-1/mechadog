@@ -645,6 +645,21 @@ def transcribe(model, pcm_bytes):
     return " ".join(seg.text.strip() for seg in kept).strip()
 
 
+_SPEECH_STRIP = re.compile(r"\*+|`+|^\s*#+\s*|^\s*\d+\.\s*|^\s*[-•]\s*", re.M)
+
+
+def for_speech(text):
+    """LLM 답변을 음성용 평문으로. SYSTEM 이 금지한 마크다운을 모델이 그래도
+    뱉는 경우가 있고(9/23 화재 절차 답변), max_tokens 에 걸려 문장이 끊기면
+    조각이 그대로 읽힌다. 둘 다 여기서 걷어낸다."""
+    t = _SPEECH_STRIP.sub("", text)
+    t = re.sub(r"\s+", " ", t).strip()
+    end = max(t.rfind(c) for c in ".!?…")
+    if 0 <= end < len(t) - 1:
+        t = t[: end + 1]
+    return t
+
+
 def reply(llm, history, user_text, context=""):
     if context:
         user_text = (
@@ -656,7 +671,7 @@ def reply(llm, history, user_text, context=""):
     out = llm.create_chat_completion(
         messages=[{"role": "system", "content": SYSTEM}] + history, max_tokens=96, temperature=0.6
     )
-    text = out["choices"][0]["message"]["content"].strip()
+    text = for_speech(out["choices"][0]["message"]["content"])
     history.append({"role": "assistant", "content": text})
     return text
 

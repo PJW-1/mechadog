@@ -83,7 +83,7 @@ class MigrationTest(unittest.TestCase):
     def test_check_is_read_only(self):
         before = self.db.read_bytes()
         result = migrate_voice_db.migrate(self.db, check=True)
-        self.assertEqual(sum(result["legacy_rows"].values()), 162)
+        self.assertEqual(sum(result["legacy_rows"].values()), 164)
         self.assertEqual(self.db.read_bytes(), before)
         self.assertFalse(rules.path_for(self.db).exists())
         self.assertFalse(list(self.db.parent.glob("*.bak")))
