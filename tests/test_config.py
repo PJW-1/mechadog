@@ -152,6 +152,7 @@ def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
         ("fsm", "target_lost_timeout_s"),
         ("fsm", "avoid_attempts"),
         ("auth", "timeout_s"),
+        ("auth", "verdict_grace_s"),
         ("escalation", "l1_to_l2_hold_s"),
     ],
 )
@@ -308,6 +309,12 @@ def test_auth_timeouts_are_ordered(cfg: dict) -> None:
     auth = cfg["auth"]
     assert auth["session_valid_s"] > auth["timeout_s"]
     assert auth["max_attempts"] >= 1
+    # 판정 유예는 **창을 늘리는 것**이지 창을 대신하는 것이 아니다 (ADR-37).
+    # 유예가 창보다 길면 실질 마감이 두 배가 되어, 경보가 언제 오는지를
+    # 설정에서 읽을 수 없게 된다.
+    assert 0 < auth["verdict_grace_s"] < auth["timeout_s"]
+    # 유예까지 다 쓴 최악의 경우에도 허가 세션이 먼저 끝나면 안 된다.
+    assert auth["session_valid_s"] > auth["timeout_s"] + auth["verdict_grace_s"]
 
 
 def test_posture_returns_before_move(cfg: dict) -> None:

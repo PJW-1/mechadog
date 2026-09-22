@@ -377,6 +377,10 @@ class Behavior:
         self._last_trigger: Event | None = None
         self._state_since_ms: int | None = None
         self._fired: set[str] = set()
+        # 이번 상태 체류에서 **타이머 마감을 미룬 총합**. 상태가 바뀌면 0 으로
+        # 돌아간다 (`_mark_state`) — 유예는 그 체류 한 번의 것이지 상태의 성질이
+        # 아니다. 누가·왜 미뤘는지는 여기서 모른다(`defer_timer` 주석 참고).
+        self._timer_deferred_ms = 0
 
     # ── 두 링크는 다르게 대응한다 (NFR-2.6) ────────────────────
     #
@@ -481,6 +485,34 @@ class Behavior:
             # 이미 반영했으므로 다음 검출까지 다시 재지 않는다.
             self._last_target_ms = None
 
+    def defer_timer(self, *, by_ms: int, cap_ms: int) -> int:
+        """이번 체류의 상태 타이머 마감을 **상한 안에서** 미룬다. 실제로 미룬 ms.
+
+        «아직 판정이 오는 중이니 조금만 기다려라» 를 표현하는 자리다. 음성 인증이
+        그렇다 — 방문객이 창 안에서 말해도 녹음·전사가 직렬이라 판정이 `timeout_s`
+        뒤에 도착할 수 있다 (2026-09-22 실기: 통과 2건이 24초·18초, 창은 30초).
+
+        ⚠️ **상한(`cap_ms`)이 이 함수의 존재 이유다.** 무한정 멈출 수 있으면 계속
+        신호만 보내 타이머를 영영 재우는 길이 생긴다 — 음성으로 치면 소리만 내서
+        경보를 막는 것이다. **경보가 늦는 것보다 오지 않는 것이 나쁘다.**
+
+        ⚠️ **어느 상태인지 묻지 않는다.** 여기서 `"AUTH_WAIT"` 를 보면 상태 이름이
+        엔진으로 되돌아온다 (`TIMERS` 표를 둔 이유와 같다). 무엇을 왜 미루는지는
+        부르는 쪽이 정하고, 여기는 **얼마나 미룰 수 있는가**만 안다.
+        """
+        if by_ms <= 0 or cap_ms <= 0:
+            return 0
+        granted = min(by_ms, cap_ms - self._timer_deferred_ms)
+        if granted <= 0:
+            return 0
+        self._timer_deferred_ms += granted
+        return granted
+
+    @property
+    def timer_deferred_ms(self) -> int:
+        """이번 체류에서 미룬 총합. 시험과 로그가 본다."""
+        return self._timer_deferred_ms
+
     def _watch_timers(self, now_ms: int) -> None:
         """상태에 머문 시간이 임계를 넘으면 사건을 낸다 (FR-2.4)."""
         entry = self._timers.get(self._fsm.state)
@@ -489,7 +521,7 @@ class Behavior:
         if self._fsm.state in self._fired:
             return
         event, after_ms = entry
-        if now_ms - self._state_since_ms < after_ms:
+        if now_ms - self._state_since_ms < after_ms + self._timer_deferred_ms:
             return
         # ⚠️ **한 번만 발화한다.** 전이가 막혀 있으면(가드·봉인) 매 틱마다 같은
         # 사건을 다시 내게 되고, 그러면 로그가 초당 10건씩 쌓인다.
@@ -503,6 +535,7 @@ class Behavior:
         self._known_state = self._fsm.state
         self._state_since_ms = now_ms  # None 이면 다음 틱이 채운다
         self._fired.clear()
+        self._timer_deferred_ms = 0
 
     def _handle(self, event: Event, now_ms: int | None) -> bool:
         changed = self._fsm.handle(event)

@@ -470,7 +470,7 @@ def _wait_phase(device, decoder, phase, timeout):
     raise TimeoutError(f"no status phase {phase} within {timeout}s")
 
 
-def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
+def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
     """Microphone capture -> `(pcm, speech_seen, first_speech_ms)`.
 
     With `vad` (default), streaming frames are energy-scored as they arrive:
@@ -490,6 +490,15 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
 
     ⚠️ **`time.monotonic()` 이 아니라 `time.time()` 이다.** 런타임과 다른
     프로세스라 단조 시계는 견줄 수 없다. 규약과 같은 epoch 밀리초를 쓴다.
+
+    `on_speech(first_speech_ms)` 를 주면 **말이 시작된 그 프레임에서 한 번** 부른다
+    (말이 없으면 부르지 않는다). 위의 지연을 호스트가 *미리* 알아야 하는 쪽에
+    쓴다 — 판정을 기다리는 동안 인증 창이 닫히지 않게 (ADR-37).
+
+    ⚠️ **콜백은 막지도 던지지도 말아야 한다.** 여기는 20ms 프레임 루프 안이다.
+    HTTP 왕복을 그 자리에서 하면 프레임을 놓쳐 **녹음 자체가 깨진다.** 호출자가
+    스레드로 빼고 예외를 삼키는 것이 규약이며, 여기서는 감싸지 않는다 — 감싸면
+    그 규약이 지켜지지 않아도 조용히 넘어가 원인을 못 찾는다.
     """
     import av
     import numpy as np
@@ -536,6 +545,8 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
                             # **첫 프레임만 찍는다.** 발화가 시작된 시각이 필요하고
                             # 끝난 시각은 이미 호출자가 안다.
                             first_speech_ms = int(time.time() * 1000)
+                            if on_speech is not None:
+                                on_speech(first_speech_ms)
                         speech_seen, last_speech = True, now
                     if speech_seen and now - last_speech > 1.0:
                         device.send_command(0x106)
@@ -824,6 +835,29 @@ def main():
         print(f"[link] {device.kind} {device.port} @ {device.baud}")
 
     ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args)
+
+    def tell_robot_listening(at_ms):
+        """«말을 받았다» 를 로봇에게 **즉시** 알린다 — 인증 창 마감 유예 (ADR-37).
+
+        녹음(최대 15초)·무음 1초·전사가 직렬로 들기 때문에, 방문객이 창 안에서
+        말해도 판정이 도착할 즈음엔 `auth.timeout_s` 30초가 지나 **빨간 경보**가
+        되어 있을 수 있다 — 2026-09-22 실기에서 통과 2건이 24초·18초를 썼다
+        (여유 6초). 그래서 말이 시작된 시각을 먼저 보낸다.
+
+        ⚠️ **오디오 루프를 막지 않는다.** 이 함수는 20ms 프레임 사이에서 불리므로
+        HTTP 왕복을 그 자리에서 하면 프레임을 놓쳐 녹음이 깨진다. 데몬 스레드로
+        던지고 잊는다 — 실패하면 유예를 못 받을 뿐 인증 경로는 그대로 돈다.
+
+        ⚠️ **여기서 상태를 묻지 않는다.** `AUTH_WAIT` 인지 아닌지는 **호스트가**
+        판정한다 (`runtime.note_voice_listening`). 파이프라인이 미리 걸러 두면
+        같은 규칙이 두 곳에 생기고, 창이 열리는 순간과 어긋난다.
+        """
+        threading.Thread(
+            target=robotlink.post_auth_pending,
+            args=(at_ms, args.robot_api),
+            daemon=True,
+        ).start()
+
     turn = 0
     follow_until = 0.0
     try:
@@ -862,7 +896,9 @@ def main():
                 hub.activity = "listening"
                 print(f"[turn {turn}] listening (VAD) ...")
                 try:
-                    pcm, speech_seen, spoke_at_ms = capture_pcm(device, decoder)
+                    pcm, speech_seen, spoke_at_ms = capture_pcm(
+                        device, decoder, on_speech=tell_robot_listening
+                    )
                 except TimeoutError as e:
                     print(f"[capture] {e} — skip")
                     continue

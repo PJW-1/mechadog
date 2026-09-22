@@ -329,6 +329,16 @@ class Runtime:
         # 시각으로 센다** — 아래 `_judge_auth` 의 설명을 함께 읽을 것.
         self._voice_auth_valid_ms = int(config["auth"]["session_valid_s"]) * 1000
         self._voice_auth_until_ms = 0
+        # 판정이 오는 중일 때 `auth.timeout_s` 를 미뤄 주는 상한 (FR-10.3 · ADR-37).
+        #
+        # ⚠️ **창 안에서 말했는데도 30초를 넘겨 실패가 되는 것을 막는 값이다.**
+        # 파이프라인은 녹음(최대 15초)·무음 1초·전사를 직렬로 하므로 «말한 시각» 과
+        # «판정이 도착한 시각» 이 크게 벌어진다 — 2026-09-22 실기에서 통과 2건이
+        # 각각 24초·18초를 썼다(창은 30초, 여유 6초). ⑥ 이 «창 밖의 말을 세지
+        # 않는다» 를 고쳤다면 이것은 «창 안의 말이 늦게 도착하는 것» 을 고친다.
+        self._voice_auth_grace_ms = int(config["auth"]["verdict_grace_s"]) * 1000
+        # **이번 창에서 유예를 이미 썼는가.** 창마다 1회다 — 아래 `note_voice_listening`.
+        self._voice_auth_deferred = False
         # **`AUTH_WAIT` 가 열린 시각** (epoch ms · 닫혀 있으면 `None`).
         #
         # ⚠️ **창이 열리기 전에 녹음된 발화를 시도로 세지 않기 위해 있다.** 음성
@@ -1372,8 +1382,11 @@ class Runtime:
             self._voice_auth_attempts = 0
             # 창이 열린 시각. 이보다 앞서 녹음된 발화는 시도로 세지 않는다.
             self._voice_auth_opened_ms = now_ms
+            # 유예도 창 단위다 — `Behavior` 쪽 누적은 상태가 바뀌며 이미 0 이 된다.
+            self._voice_auth_deferred = False
         elif before == "AUTH_WAIT" and self._behavior.state != "AUTH_WAIT":
             self._voice_auth_opened_ms = None
+            self._voice_auth_deferred = False
         self._log_transition(before)
         return True
 
@@ -1440,6 +1453,56 @@ class Runtime:
         """
         return self._apply(event, self._clock())
 
+    def _utterance_is_stale(self, captured_at_ms: int | None) -> bool:
+        """그 발화가 **지금 열려 있는 창보다 앞선 것**인가.
+
+        ⚠️ **`None` 은 오래된 것이 아니다.** 대시보드의 수동 주입처럼 «지금 누른
+        것» 이 분명한 호출자는 시각을 싣지 않는다 — 있으면 쓰고 없으면 예전대로
+        돈다. 시각을 강제하면 그 호출자들이 전부 막힌다.
+        """
+        return (
+            captured_at_ms is not None
+            and self._voice_auth_opened_ms is not None
+            and captured_at_ms < self._voice_auth_opened_ms
+        )
+
+    def note_voice_listening(self, captured_at_ms: int | None = None) -> tuple[bool, str]:
+        """«발화를 받았고 판정이 오는 중» 을 받아 **인증 창을 한 번 늘린다** (FR-10.3).
+
+        ⚠️ **이것은 판정이 아니다.** 시도를 세지도, 사건을 내지도 않는다. 오직
+        `auth.timeout_s` 마감을 `auth.verdict_grace_s` 만큼 미룬다.
+
+        왜 필요한가: 파이프라인은 녹음(최대 15초) → 무음 1초 → 전사를 **직렬로**
+        한다. 그래서 방문객이 창 안에서 말해도 판정이 30초 뒤에 도착할 수 있고,
+        그때는 이미 `AUTH_FAILED` 가 나가 눈이 빨갛다. 2026-09-22 실기에서 통과한
+        2건이 각각 24초·18초를 썼다 — 여유가 6초뿐이었다. **말이 조금 늦거나
+        전사가 조금 느리면 말하는 도중에 경보가 된다.**
+
+        ⚠️ **창마다 1회이고 상한이 있다.** 신호가 올 때마다 미뤄 주면 소리만 계속
+        내서 타이머를 영영 재울 수 있다 — 침입자가 경보를 막는 길이 된다.
+        **경보가 늦는 것보다 오지 않는 것이 나쁘다.**
+
+        ⚠️ **창 밖 발화는 유예를 사지 못한다.** 그것을 허용하면 ⑥ 에서 막은 길이
+        옆문으로 되살아난다 — 창이 열리기 전에 한 말이 창의 수명을 늘린다.
+        """
+        if self._behavior.state != "AUTH_WAIT":
+            return False, f"{self._behavior.state} 에서는 인증 대기가 없다 (AUTH_WAIT 만)"
+        if self._utterance_is_stale(captured_at_ms):
+            LOG.info(
+                "voice_listening_stale",
+                captured_at_ms=captured_at_ms,
+                opened_ms=self._voice_auth_opened_ms,
+            )
+            return True, "인증 창이 열리기 전에 시작된 발화다 — 유예하지 않는다"
+        if self._voice_auth_deferred:
+            return True, "이 대기에서는 이미 한 번 미뤘다"
+        granted = self._behavior.defer_timer(
+            by_ms=self._voice_auth_grace_ms, cap_ms=self._voice_auth_grace_ms
+        )
+        self._voice_auth_deferred = True
+        LOG.info("voice_auth_deferred", granted_ms=granted, cap_ms=self._voice_auth_grace_ms)
+        return True, f"판정을 기다린다 — {granted // 1000}초 미뤘다"
+
     def note_voice_auth(self, ok: bool, captured_at_ms: int | None = None) -> tuple[bool, str]:
         """음성 암구호 판정을 받아 **시도를 세고** 사건으로 옮긴다 (FR-10.3).
 
@@ -1468,11 +1531,7 @@ class Runtime:
         # 창이 열리기 전의 발화는 실패든 일치든 이 대기의 것이 아니다. 일치를
         # 허가하지 않는 이유는 **묻기 전에 한 대답**이기 때문이다 — 방문객이
         # 우연히 맞는 말을 한 것이 통행 허가가 되면 인증이 아니다.
-        if (
-            captured_at_ms is not None
-            and self._voice_auth_opened_ms is not None
-            and captured_at_ms < self._voice_auth_opened_ms
-        ):
+        if self._utterance_is_stale(captured_at_ms):
             LOG.info(
                 "voice_auth_stale",
                 captured_at_ms=captured_at_ms,
@@ -1882,6 +1941,7 @@ def main(argv: list[str] | None = None) -> int:
                     ask_patrol=runtime.ask_patrol,
                     set_mode=runtime.set_mode,
                     note_voice_auth=runtime.note_voice_auth,
+                    note_voice_listening=runtime.note_voice_listening,
                 )
                 camera = _latest_jpeg(vision) if vision is not None else None
                 stack.enter_context(

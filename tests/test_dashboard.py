@@ -301,6 +301,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3). 두 번째
             # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
+            self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -552,6 +553,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3). 두 번째
             # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
+            self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
 
         def serve(self, _sock, **_kwargs):
             pass
