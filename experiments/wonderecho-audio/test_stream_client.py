@@ -20,7 +20,9 @@ class StreamTests(unittest.TestCase):
     def test_v27_pdm_power_precedes_codec_and_stream_init(self):
         source = Path(__file__).with_name("main.c").read_text(encoding="utf-8")
         self.assertLess(source.index("cm_init();"), source.index("pdm_power_up("))
-        self.assertLess(source.index("pdm_power_up("), source.index("codec_manage_inner_port_init();"))
+        self.assertLess(
+            source.index("pdm_power_up("), source.index("codec_manage_inner_port_init();")
+        )
         self.assertLess(source.index("pdm_power_up("), source.index("we_stream_init();"))
 
     def test_prompt_command_matches_firmware_uart_frame(self):

@@ -1145,7 +1145,9 @@ def test_close_off_center_person_stops_and_holds_pitch(config: dict, clock: Fake
     assert runtime.behavior.state == "ALERT"
     _sighting(runtime, vision, seq=4, at_ms=400, box=(20.0, 30.0, 60.0, 460.0))
     assert runtime.behavior.state == "ALERT", "박스 높이 떨림으로 재출발하지 않는다"
-    commands = [json.loads(line) for line in runtime.tick(200 + config["posture"]["alert_hold_ms"] + 100)]
+    commands = [
+        json.loads(line) for line in runtime.tick(200 + config["posture"]["alert_hold_ms"] + 100)
+    ]
     assert all(cmd["step"] == 0 for cmd in commands if cmd["type"] == "MOVE")
     assert any(
         cmd["type"] == "POSE" and cmd["pitch"] == config["fsm"]["alert_pitch_deg"]

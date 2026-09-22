@@ -74,8 +74,11 @@ def sc_guard(ctx):
     claim = _norm(answer)
     hit = next(
         (
-            name for name in roster
-            if re.fullmatch(rf"(?:저는|제이름은|사원)?{re.escape(name)}(?:입니다|이에요|라고합니다)?", claim)
+            name
+            for name in roster
+            if re.fullmatch(
+                rf"(?:저는|제이름은|사원)?{re.escape(name)}(?:입니다|이에요|라고합니다)?", claim
+            )
         ),
         None,
     )

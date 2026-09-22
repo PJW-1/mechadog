@@ -304,9 +304,9 @@ class Runtime:
         self._last_yaw: tuple[float, int] | None = None
         # 직전 추종 지시 시각. 공백 길이를 재는 데 쓴다 (`track_gap_ms`).
         self._last_track_ms: int | None = None
-        self._track_stop_height_px = float(config["fsm"].get("track_target_height_px") or 0) * float(
-            config["fsm"]["track_stop_ratio"]
-        )
+        self._track_stop_height_px = float(
+            config["fsm"].get("track_target_height_px") or 0
+        ) * float(config["fsm"]["track_stop_ratio"])
         self._track_stop_reached = False
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
@@ -1571,7 +1571,10 @@ class Runtime:
         if ok:
             if self._auth_require_both:
                 if self._behavior.state != "AUTH_WAIT" or not self._mission.enables("auth"):
-                    return False, f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)"
+                    return (
+                        False,
+                        f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)",
+                    )
                 if now_ms >= self._voice_auth_until_ms:
                     self._voice_auth_until_ms = now_ms + self._voice_auth_valid_ms
                     self._auth_badge_ready = False
@@ -1660,9 +1663,7 @@ class Runtime:
         self._reset_pending = False
         if self._apply(Event.RESET_CONFIRMED, now_ms):
             # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
-            self._commander.once(
-                "POSE", pitch=0.0, roll=0.0, height=0.0, dur=self._ppe_settle_ms
-            )
+            self._commander.once("POSE", pitch=0.0, roll=0.0, height=0.0, dur=self._ppe_settle_ms)
 
     def emergency_stop(self) -> str:
         """종료 전문. **틱을 기다리지 않는다.**
