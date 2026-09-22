@@ -578,6 +578,43 @@ class AuthLinkTests(unittest.TestCase):
         with mock.patch.object(robotlink, "_get", side_effect=OSError):
             self.assertIsNone(robotlink.robot_state())
 
+    def test_robot_state_level_returns_state_and_escalation(self):
+        snap = {"state": "ALERT", "escalation": "L3"}
+        with mock.patch.object(robotlink, "_get", return_value=snap):
+            self.assertEqual(robotlink.robot_state_level(), ("ALERT", "L3"))
+
+    def test_robot_state_level_none_pair_when_unreachable(self):
+        with mock.patch.object(robotlink, "_get", side_effect=OSError):
+            self.assertEqual(robotlink.robot_state_level(), (None, None))
+
+    def test_robot_state_level_ignores_non_string_fields(self):
+        with mock.patch.object(robotlink, "_get", return_value={"state": 3, "escalation": None}):
+            self.assertEqual(robotlink.robot_state_level(), (None, None))
+
+
+class BadgeVerdictTests(unittest.TestCase):
+    """사원증 확인 발화 조건 — `PATROL` 을 목격하던 레이스를 걸어낸 자리."""
+
+    def test_waits_while_still_in_auth_wait(self):
+        self.assertEqual(vp.badge_verdict("AUTH_WAIT", "L2"), "wait")
+
+    def test_waits_when_runtime_unreachable(self):
+        self.assertEqual(vp.badge_verdict(None, None), "wait")
+
+    def test_announces_on_patrol(self):
+        self.assertEqual(vp.badge_verdict("PATROL", "L0"), "announce")
+
+    def test_announces_even_if_alert_came_first(self):
+        """인증한 사람이 그대로 서 있으면 `PATROL` 은 1~2초만에 `ALERT` 가 된다."""
+        self.assertEqual(vp.badge_verdict("ALERT", "L1"), "announce")
+
+    def test_drops_on_auth_failed(self):
+        """`AUTH_FAILED` 도 `AUTH_WAIT` 를 나간다 — 실패에 확인 발화를 하면 안 된다."""
+        self.assertEqual(vp.badge_verdict("ALERT", "L3"), "drop")
+
+    def test_drops_on_failsafe(self):
+        self.assertEqual(vp.badge_verdict("FAILSAFE", "F"), "drop")
+
     def test_post_auth_result_sends_only_the_verdict(self):
         captured = {}
 

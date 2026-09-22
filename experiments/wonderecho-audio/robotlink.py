@@ -211,14 +211,28 @@ def run_action(action: str, base=DEFAULT_BASE):
     return True, ""
 
 
-def robot_state(base=DEFAULT_BASE):
-    """GET /api/telemetry → FSM 상태 문자열("AUTH_WAIT" 등), 또는 None (연결 실패)."""
+def robot_state_level(base=DEFAULT_BASE):
+    """GET /api/telemetry → (FSM 상태, 대응 단계). 연결 실패면 (None, None).
+
+    ⚠️ **상태만으로는 인증 성공과 실패를 가를 수 없다.** `AUTH_WAIT` 를
+    나가는 문은 `AUTH_OK`(→ `PATROL`) 와 `AUTH_FAILED`(→ `ALERT`) 둘 다이고,
+    가르는 것은 단계다 — 실패는 L3 로 올라간다. 그래서 둘을 같이 읽는다.
+    """
     try:
         snap = _get(base, "/api/telemetry")
     except OSError:
-        return None
+        return None, None
     state = snap.get("state")
-    return state if isinstance(state, str) else None
+    esc = snap.get("escalation")
+    return (
+        state if isinstance(state, str) else None,
+        esc if isinstance(esc, str) else None,
+    )
+
+
+def robot_state(base=DEFAULT_BASE):
+    """GET /api/telemetry → FSM 상태 문자열("AUTH_WAIT" 등), 또는 None (연결 실패)."""
+    return robot_state_level(base)[0]
 
 
 def post_auth_pending(captured_at_ms, base=DEFAULT_BASE):
