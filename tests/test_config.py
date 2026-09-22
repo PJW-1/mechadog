@@ -671,9 +671,9 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     # 2026-09-22: mechdog-02 도 실측했다 — null 검사는 *"01 과 다르다"* 검사로
     # 바뀐다. 같은 값이면 개체 실측이 아니라 복사다.
     for name in ("forward_mm_per_sec", "turn_deg_per_sec", "reverse_mm_per_sec"):
-        assert (
-            two["gait_calibration"][name] != one["gait_calibration"][name]
-        ), f"{name} — 01 의 값을 옮겨 적으면 안 된다"
+        assert two["gait_calibration"][name] != one["gait_calibration"][name], (
+            f"{name} — 01 의 값을 옮겨 적으면 안 된다"
+        )
     # 직진 편향은 방향도 다르다 — 01 은 좌(+), 02 는 우(-).
     assert two["gait_calibration"]["forward_yaw_drift_deg_per_sec"] < 0
     # straight_bias_deg 는 bias 스윕 실측이 아직 없으므로 null 이어야 한다.
