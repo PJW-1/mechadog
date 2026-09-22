@@ -376,6 +376,26 @@ def match_passphrase(text):
     return any(_PUNCT.sub("", p) in norm for p in passphrases())
 
 
+def badge_verdict(state, escalation):
+    """사원증 대기 중에 본 로봇 상태를 "wait" | "announce" | "drop" 으로 옮긴다.
+
+    ⚠️ **`PATROL` 을 목격하는 조건이었고, 그것이 레이스였다.** 인증이
+    끝나면 런타임은 `PATROL` 로 내려오지만 **눈앞에 사람이 남아 있으면
+    1~2초 만에 `ALERT` 로 다시 올라간다** — 2026-09-22 실기에서 `PATROL`
+    구간이 1.7초였고(20:19:32.558→20:19:34.264) 턴마다 한 번 도는 폴링이
+    그 창을 놓쳐 확인 발화가 통째로 사라졌다. 창 길이에 기대지 않는다.
+
+    ⚠️ **`AUTH_WAIT` 를 벗어난 것이 곧 성공은 아니다.** `AUTH_FAILED` 도
+    나가는 문이고(→ `ALERT` L3), 링크가 끊기면 `FAILSAFE` 로 빠진다.
+    실패한 사람에게 «인증되었습니다» 를 말하는 것은 침묵보다 나쁘다.
+    """
+    if state in ("AUTH_WAIT", None):
+        return "wait"
+    if escalation == "L3" or state == "FAILSAFE":
+        return "drop"
+    return "announce"
+
+
 def route_query(query):
     """정규화된 질의의 처리 경로 — 구체적인 규칙이 넓은 단어 검사보다 먼저다.
 
@@ -436,6 +456,7 @@ def retrieve(docs, query, max_chars=1200):
 def _say(device, piper, text, speed):
     """고정 안내 멘트 재생 — piper 없으면(--tts orpheus) 조용히 건너뜀."""
     if piper is not None:
+        print(f"[say] {text}")
         try:
             stream_play(device, synth_piper(piper, text, speed))
         except (OSError, TimeoutError) as e:
@@ -900,14 +921,14 @@ def main():
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
-            state = robotlink.robot_state(args.robot_api)
+            state, escalation = robotlink.robot_state_level(args.robot_api)
             if badge_pending:
-                if state == "PATROL":
+                verdict = badge_verdict(state, escalation)
+                if verdict != "wait":
                     badge_pending = False
+                if verdict == "announce":
                     hub.activity = "speaking"
                     _say(device, piper, "인증되었습니다. 다시 순찰을 시작하겠습니다.", args.speed)
-                elif state not in ("AUTH_WAIT", None):
-                    badge_pending = False
             prompt = hub.auth_prompt(state)
             if prompt and not args.dry_llm_only:
                 hub.activity = "speaking"
