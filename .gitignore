@@ -53,6 +53,9 @@ snapshots/
 blackbox/
 maps/*
 !maps/README.md
+# 가상 MES 런타임 DB — 정본은 `host/factory_ops/schema.sql` 과 `seed.json` 이다 (WBS 4.7.15).
+# `python tools/factory_ops_seed.py` 로 다시 만든다.
+data/factory_ops.db
 
 # 검증용 실제 사진 — COCO 주석은 CC-BY-4.0 이지만 사진은 Flickr 개별 라이선스다.
 # `python tools/fetch_models.py --samples` 로 받는다.
