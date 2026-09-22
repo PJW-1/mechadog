@@ -264,7 +264,7 @@ class MesRemoteTest(unittest.TestCase):
     def test_remote_end_to_end_via_http(self):
         # MES API(:8095)까지 통째로 — 음성 응답이 실제로 나오는지
         factory_mes.Handler.src = self.src
-        factory_mes.Handler.stale_after = 21600
+        factory_mes.Handler.stale_ttl = {}  # 빈 dict = 모든 항목 기본 TTL
         mes_srv = ThreadingHTTPServer(("127.0.0.1", 0), factory_mes.Handler)
         threading.Thread(target=mes_srv.serve_forever, daemon=True).start()
         try:
