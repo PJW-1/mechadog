@@ -96,6 +96,16 @@ class Hub:
         self._journal = journal  # EventJournal | None — 날짜별 JSONL 영속 기록
         self.robot_cursor = 0  # 관제 /api/events 폴링 커서
         self._robot_next_poll = 0.0
+        self.auth_prompted = False
+
+    def auth_prompt(self, state):
+        """새 인증 대기마다 한 번 안내하고, 상태 조회 실패에는 중복 안내하지 않는다."""
+        if state == "AUTH_WAIT" and not self.auth_prompted:
+            self.auth_prompted = True
+            return "멈췄습니다. 암구호를 말씀해 주세요."
+        if state not in ("AUTH_WAIT", None):
+            self.auth_prompted = False
+        return None
 
     def event(self, role, text):
         self.events.append(
@@ -751,6 +761,11 @@ def main():
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
     ap.add_argument("--model", type=Path, help="GGUF chat model path")
     ap.add_argument("--say", help="synthesize this text and play it once, then exit")
+    ap.add_argument(
+        "--guard-check",
+        action="store_true",
+        help="신원 질의·청취·명단 대조·응답을 한 번 실행 (LLM 불필요)",
+    )
     ap.add_argument("--whisper", default="medium")
     ap.add_argument("--baud", type=int, default=0)
     ap.add_argument("--turns", type=int, default=0, help="0 = loop forever")
@@ -789,6 +804,27 @@ def main():
         help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
     )
     args = ap.parse_args()
+    from transcribe_local import gpu_dll_directories
+
+    _gpu_dll_handles = gpu_dll_directories()  # Keep Windows DLL directories alive until exit.
+
+    if args.guard_check:
+        if args.say or args.model or args.tts != "piper":
+            ap.error("--guard-check 는 --say/--model/--tts orpheus 와 함께 쓸 수 없음")
+        from faster_whisper import WhisperModel
+        from piper import PiperVoice
+
+        piper = PiperVoice.load(str(args.piper_model))
+        stt = WhisperModel(args.whisper, device="cuda", compute_type="float16")
+        device = open_transport(args)
+        try:
+            ctx = ScenarioCtx(
+                device, Decoder(max_payload=128), stt, piper, Hub(args.robot_id), [], args
+            )
+            scenarios.sc_guard(ctx)
+        finally:
+            device.close()
+        return
 
     if args.say:
         from piper import PiperVoice
@@ -860,9 +896,22 @@ def main():
 
     turn = 0
     follow_until = 0.0
+    badge_pending = False
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
+            state = robotlink.robot_state(args.robot_api)
+            if badge_pending:
+                if state == "PATROL":
+                    badge_pending = False
+                    hub.activity = "speaking"
+                    _say(device, piper, "인증되었습니다. 다시 순찰을 시작하겠습니다.", args.speed)
+                elif state not in ("AUTH_WAIT", None):
+                    badge_pending = False
+            prompt = hub.auth_prompt(state)
+            if prompt and not args.dry_llm_only:
+                hub.activity = "speaking"
+                _say(device, piper, prompt, args.speed)
             # 턴마다 설정을 다시 읽는다 — 운영 중 voice_data.db 수정이 살아있는
             # 루프에 반영되게. DB가 없으면 코드 기본값이다.
             follow_s = float(voice_store.setting("follow_s", FOLLOW_S, float))
@@ -897,7 +946,10 @@ def main():
                 print(f"[turn {turn}] listening (VAD) ...")
                 try:
                     pcm, speech_seen, spoke_at_ms = capture_pcm(
-                        device, decoder, on_speech=tell_robot_listening
+                        device,
+                        decoder,
+                        timeout_s=1.5 if badge_pending else 15.0,
+                        on_speech=tell_robot_listening if not badge_pending else None,
                     )
                 except TimeoutError as e:
                     print(f"[capture] {e} — skip")
@@ -918,6 +970,9 @@ def main():
                     and bool(passphrases())
                     and robotlink.robot_state(args.robot_api) == "AUTH_WAIT"
                 )
+                if auth_wait and not hub.auth_prompted:
+                    # 안내 전 시작된 녹음은 암구호 실패로 세지 않는다.
+                    continue
                 # ⚠️ **인증 대기 중에는 인식 원문을 남기지 않는다.** 그 발화가
                 # 곧 암구호이고, `/transcript` 는 `0.0.0.0` 에 열려 있어 같은
                 # 망의 누구나 `curl` 로 읽는다(CORS 는 브라우저만 막는다).
@@ -993,6 +1048,10 @@ def main():
                 # 비상정지만 열어 두는 것이 원래 의도였다.
                 estop_now = route == "action" and robotlink.match_action(query)[0] == "estop"
                 if auth_wait and not estop_now:
+                    if badge_pending:
+                        hub.activity = "speaking"
+                        _say(device, piper, "사원증을 카메라에 보여 주세요.", args.speed)
+                        continue
                     # 인증 대기 중의 발화는 암구호 시도다 — 시나리오·상태·LLM
                     # 으로 보내지 않고 등록 문구와 대조해 결과만 돌려보낸다.
                     # ⚠️ **대조는 `query` 가 아니라 원문 `text` 로 한다.**
@@ -1011,15 +1070,19 @@ def main():
                     sent_ok, err = robotlink.post_auth_result(
                         ok, args.robot_api, captured_at_ms=spoke_at_ms
                     )
+                    verified = sent_ok and ok and "다시 말해 주세요" not in err
                     print(f"[auth] passphrase {'match' if ok else 'mismatch'} → {sent_ok}")
                     if not sent_ok:
                         spoken = f"인증 결과를 전달하지 못했습니다. {err}"
-                    elif ok:
-                        spoken = "확인됐습니다. 통행을 허가합니다."
+                    elif ok and "다시 말해 주세요" in err:
+                        spoken = err
+                    elif verified:
+                        spoken = "암구호 확인됐습니다. 사원증을 카메라에 보여 주세요."
+                        badge_pending = True
                     else:
                         spoken = "등록된 암구호와 일치하지 않습니다."
                     # 암구호 문구 자체는 저널에 남기지 않는다 — 판정만 기록.
-                    hub.event("system", f"음성 인증 {'성공' if ok else '실패'}")
+                    hub.event("system", f"음성 인증 {'성공' if verified else '실패'}")
                     hub.activity = "speaking"
                     if not args.dry_llm_only:
                         _say(device, piper, spoken, args.speed)

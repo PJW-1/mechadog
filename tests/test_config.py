@@ -296,12 +296,10 @@ def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
     assert cfg["escalation"]["l3_requires_manual_reset"] is True
 
 
-def test_auth_bound_to_track_id(cfg: dict) -> None:
-    """인증은 추적 ID 에 귀속되어야 한다 (FR-3.6.2).
-
-    아니면 인원이 여러 명일 때 누가 인증되었는지 구분할 수 없다.
-    """
-    assert cfg["auth"]["bind_to_track_id"] is True
+def test_auth_uses_scene_session(cfg: dict) -> None:
+    assert cfg["auth"]["bind_to_track_id"] is False
+    assert cfg["auth"]["require_both"] is True
+    assert cfg["auth"]["resume_delay_ms"] > 0
 
 
 def test_auth_timeouts_are_ordered(cfg: dict) -> None:

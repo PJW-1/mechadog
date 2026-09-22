@@ -6,17 +6,24 @@
 규칙162개를 재현한다. 데이터/PC 시험과 모듈 청취 성공은 별도이며 로봇 탑재 오디오 중계는
 WBS 4.7.9 작업으로 남아 있다.
 
+4.7.7 음성 신원 확인만 실측할 때는 `powershell -File .\start_voice.ps1 -GuardCheck`를
+실행한다(현재 COM9, 변경 시 `-Port COMx`). 대화 LLM은 필요 없지만 Piper 모델과
+faster-whisper, WonderEcho 펌웨어는 필요하다. 모듈이 성명을 묻으면 명단의 이름과
+없는 이름을 각각 말해 확인·부정 멘트가 실제 스피커에서 나오는지 기록한다.
+`knowledge/직원명단.txt`는 합성 데모 명단이다. **이름 발화는 출입 인증이 아니며
+로봇의 `AUTH_OK`를 만들지 않는다.** 실제 출입 인증은 사원증/암구호 경로로 별도 검증한다.
+
 **음성 DB 정본은 3테이블**(`settings`, `roster`, `phrases`) + 규칙 JSON이다.
 구형 음성8테이블은 `migrate_voice_db.py`로 백업·이전한 뒤 사용한다.
 `python voice_store.py --check-schema`로 검사한다. MES5테이블은 별도 DB다.
 
 > **현재 상태 (WBS 4.7.4~4.7.7 · 4.7.10·4.7.11 · 4.7.14)** — `voice_pipeline.py`가
 > 종단 대화 루프다: 모듈 마이크 → faster-whisper → 로컬 GGUF LLM → Piper TTS →
-> 모듈 스피커. `start_voice.ps1`로 기동(COM5 + 관제 API :8090). 웨이크워드
+> 모듈 스피커. `start_voice.ps1`로 기동(기본 COM9 + 관제 API :8090). 웨이크워드
 > "메카독"에만 응답하고 "그만"은 종료가 아니라 대기 모드다.
 >
 > - **전송층 추상화 (4.7.9 선행)** — `transport.py`가 링크 경계다. 루프·지식·
->   시나리오·웹 API는 전부 전송 무관이고, COM5 시리얼은 `SerialTransport` 구현
+>   시나리오·웹 API는 전부 전송 무관이고, COM 시리얼은 `SerialTransport` 구현
 >   하나일 뿐이다. Wi-Fi 중계는 같은 표면의 새 구현으로 `open_transport()`에 꽂는다.
 > - **시나리오 테이블 (4.7.7)** — `scenarios.py`에 규칙 기반 시나리오 35종
 >   (신원확인·방문자확인, PPE 종류별·제한구역·고전압·화학물질·지게차·금연·촬영

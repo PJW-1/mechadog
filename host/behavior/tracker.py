@@ -146,12 +146,11 @@ __all__ = ["TrackCommand", "LockOnTracker"]
 class TrackCommand:
     """한 프레임의 추종 지시.
 
-    `centered` 가 FSM 사건을 가른다 — 참이면 `TARGET_CENTERED`(→ `ALERT`),
-    거짓이면 `TARGET_OFF_CENTER`(→ `TRACK`).
+    `centered` 는 조향 데드존 판정이다. FSM 정지는 거리(`step=0`)가 가른다.
     """
 
     step: float
-    """전진 보폭 (mm). 중앙에 들어오면 0 이다."""
+    """전진 보폭 (mm). 정지선에 닿으면 0 이다."""
 
     angle: float
     """arc 조향각 (deg). **양수가 좌회전** (PROTOCOL 부호 규약)."""
@@ -245,7 +244,16 @@ class LockOnTracker:
             raise ValueError("track_deadzone_px 가 화면 반폭 이상이라 추종할 수 없다")
 
         if abs(deviation) <= self._deadzone_px:
-            return TrackCommand(step=0.0, angle=0.0, centered=True, deviation_px=deviation)
+            return TrackCommand(
+                step=(
+                    self._step_for(box_height)
+                    if self._target_h_px is not None and box_height is not None
+                    else 0.0
+                ),
+                angle=0.0,
+                centered=True,
+                deviation_px=deviation,
+            )
 
         # 데드존을 뺀 나머지를 0~1 로 편다. 경계에서 0 이므로 각이 튀지 않는다.
         span = midpoint - self._deadzone_px

@@ -1,5 +1,6 @@
 """Scenario/robotlink/transport/phrases unit tests — no serial, mic, or GPU required."""
 
+import sys
 import types
 import unittest
 from unittest import mock
@@ -80,6 +81,22 @@ class ScenarioTriggerTests(unittest.TestCase):
 
 
 class GuardScenarioTests(unittest.TestCase):
+    def test_guard_check_runs_without_llm_and_closes_com_port(self):
+        device = mock.Mock()
+        piper = types.SimpleNamespace(PiperVoice=types.SimpleNamespace(load=lambda _path: object()))
+        whisper = types.SimpleNamespace(WhisperModel=lambda *_a, **_kw: object())
+        with (
+            mock.patch.object(
+                sys, "argv", ["voice_pipeline.py", "--port", "COM9", "--guard-check"]
+            ),
+            mock.patch.dict(sys.modules, {"piper": piper, "faster_whisper": whisper}),
+            mock.patch.object(vp, "open_transport", return_value=device),
+            mock.patch.object(scenarios, "sc_guard") as guard,
+        ):
+            vp.main()
+        guard.assert_called_once()
+        device.close.assert_called_once()
+
     def test_known_name_is_verified(self):
         ctx = FakeCtx(answers=["김민수 입니다"])
         scenarios.sc_guard(ctx)
@@ -92,6 +109,12 @@ class GuardScenarioTests(unittest.TestCase):
         # 거부 문구는 identity_fail 라이브러리 중 하나가 나와야 한다
         self.assertTrue(any(line in phr.PHRASES["identity_fail"] for line in ctx.lines))
         self.assertFalse(any(line in phr.PHRASES["identity_ok"] for line in ctx.lines))
+
+    def test_negated_or_embedded_name_is_not_verified(self):
+        for answer in ("김민수 아닙니다", "김민수 친구입니다"):
+            ctx = FakeCtx(answers=[answer])
+            scenarios.sc_guard(ctx)
+            self.assertTrue(any(line in phr.PHRASES["identity_fail"] for line in ctx.lines))
 
     def test_silence_is_logged_not_verified(self):
         ctx = FakeCtx(answers=[])
@@ -416,6 +439,15 @@ class TranscribeTests(unittest.TestCase):
 
 
 class HubScenarioQueueTests(unittest.TestCase):
+    def test_auth_prompt_once_per_wait(self):
+        hub = vp.Hub("test")
+        self.assertIsNone(hub.auth_prompt("PATROL"))
+        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+        self.assertIsNone(hub.auth_prompt("AUTH_WAIT"))
+        self.assertIsNone(hub.auth_prompt(None))
+        self.assertIsNone(hub.auth_prompt("IDLE"))
+        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+
     def test_scenario_item_flows_through_say_queue(self):
         hub = vp.Hub("test")
         hub.enqueue_say("공지입니다")
@@ -560,6 +592,14 @@ class AuthLinkTests(unittest.TestCase):
             ok, err = robotlink.post_auth_result(False)
         self.assertFalse(ok)
         self.assertIn("받지 않는다", err)
+
+    def test_post_auth_result_keeps_accepted_stale_detail(self):
+        with mock.patch.object(
+            robotlink, "_post", return_value={"accepted": True, "detail": "다시 말해 주세요"}
+        ):
+            ok, detail = robotlink.post_auth_result(True)
+        self.assertTrue(ok)
+        self.assertEqual(detail, "다시 말해 주세요")
 
 
 class TransportTests(unittest.TestCase):
