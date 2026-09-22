@@ -471,12 +471,25 @@ def _wait_phase(device, decoder, phase, timeout):
 
 
 def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
-    """Microphone capture -> decoded 16 kHz PCM16 bytes.
+    """Microphone capture -> `(pcm, speech_seen, first_speech_ms)`.
 
     With `vad` (default), streaming frames are energy-scored as they arrive:
     once speech has been heard, ~1 s of trailing silence ends the capture early
     via the 0x106 stop command instead of waiting out the fixed 5 s window.
     The noise floor is measured from the first 500 ms (before speech starts).
+
+    `first_speech_ms` 는 **사람이 말을 시작한 epoch 밀리초**이며, 말이 없었거나
+    `vad=False` 면 `None` 이다.
+
+    ⚠️ **이 값이 왜 필요한가** — 이 함수는 최대 15초를 붙잡고, 돌아간 뒤 전사에
+    또 수 초가 든다. 그래서 «말한 시각» 과 «판정이 로봇에 도착한 시각» 이 크게
+    벌어진다. 인증 창(`AUTH_WAIT`)이 그 사이에 열리면 **창 밖에서 한 말이 암구호
+    시도로 세어져** `max_attempts` 를 혼자 소진하고 곧바로 L3 경보가 된다 —
+    2026-09-21 실기에서 인증도 하지 않았는데 눈이 빨개진 원인이다. 호스트가
+    이것을 걸러 낼 수 있게 시각을 함께 낸다 (`runtime.note_voice_auth`).
+
+    ⚠️ **`time.monotonic()` 이 아니라 `time.time()` 이다.** 런타임과 다른
+    프로세스라 단조 시계는 견줄 수 없다. 규약과 같은 epoch 밀리초를 쓴다.
     """
     import av
     import numpy as np
@@ -497,6 +510,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
     pcm = bytearray()
     rms_history = []  # per-20 ms-frame RMS
     speech_seen = False
+    first_speech_ms = None
     last_speech = 0.0
     deadline = time.monotonic() + timeout_s
     done = False
@@ -518,6 +532,10 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
                     # 소음 바닥: 발화 전 초기 25프레임(500ms)의 중앙값
                     floor = np.median(rms_history[:25]) if len(rms_history) >= 25 else 200.0
                     if rms > max(floor * 3.0, 300.0):
+                        if not speech_seen:
+                            # **첫 프레임만 찍는다.** 발화가 시작된 시각이 필요하고
+                            # 끝난 시각은 이미 호출자가 안다.
+                            first_speech_ms = int(time.time() * 1000)
                         speech_seen, last_speech = True, now
                     if speech_seen and now - last_speech > 1.0:
                         device.send_command(0x106)
@@ -529,7 +547,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True):
         raise TimeoutError("no audio frames received")
     if device.in_waiting:
         device.read(device.in_waiting)  # 잔여 프레임 폐기
-    return bytes(pcm), speech_seen
+    return bytes(pcm), speech_seen, first_speech_ms
 
 
 # Whisper 도메인 바이어스 — 웨이크워드/명령어 어휘를 알려 주면 "메카독"이
@@ -687,7 +705,7 @@ class ScenarioCtx:
     def listen(self, timeout_s=12.0):
         self.hub.activity = "listening(scenario)"
         try:
-            pcm, heard = capture_pcm(self.device, self.decoder, timeout_s=timeout_s)
+            pcm, heard, _ = capture_pcm(self.device, self.decoder, timeout_s=timeout_s)
         except TimeoutError:
             return ""
         if not heard:
@@ -844,7 +862,7 @@ def main():
                 hub.activity = "listening"
                 print(f"[turn {turn}] listening (VAD) ...")
                 try:
-                    pcm, speech_seen = capture_pcm(device, decoder)
+                    pcm, speech_seen, spoke_at_ms = capture_pcm(device, decoder)
                 except TimeoutError as e:
                     print(f"[capture] {e} — skip")
                     continue
@@ -949,7 +967,14 @@ def main():
                     # 떨어진다** — 감싸서 말한 사람만 통과하는 역전이 된다.
                     # 판정은 사람이 실제로 낸 소리를 봐야 한다.
                     ok = match_passphrase(text)
-                    sent_ok, err = robotlink.post_auth_result(ok, args.robot_api)
+                    # ⚠️ **발화 시각을 함께 보낸다.** 위 `auth_wait` 판정은 녹음·
+                    # 전사가 **끝난 뒤** 상태를 물은 것이라, 창이 열리기 전에 한 말도
+                    # 여기까지 온다. 그것을 시도로 세면 방문객이 말을 걸기도 전에
+                    # `max_attempts` 가 소진된다 — 걸러 내는 일은 창이 열린 시각을
+                    # 아는 런타임이 한다.
+                    sent_ok, err = robotlink.post_auth_result(
+                        ok, args.robot_api, captured_at_ms=spoke_at_ms
+                    )
                     print(f"[auth] passphrase {'match' if ok else 'mismatch'} → {sent_ok}")
                     if not sent_ok:
                         spoken = f"인증 결과를 전달하지 못했습니다. {err}"

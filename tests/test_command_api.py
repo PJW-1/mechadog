@@ -557,6 +557,22 @@ def test_auth_endpoint_round_trips(cfg):
         assert http.post("/api/command/auth", json={"result": "maybe"}).status_code == 400
         assert http.post("/api/command/auth", json={}).status_code == 400
 
+        # `captured_at_ms` 는 선택이지만 **정수여야 한다.**
+        assert (
+            http.post(
+                "/api/command/auth", json={"result": "ok", "captured_at_ms": "지금"}
+            ).status_code
+            == 400
+        )
+        # ⚠️ **`True` 를 정수로 받으면 안 된다.** `isinstance(True, int)` 가 참이라
+        # 시각 1 로 들어가 **모든 발화가 창보다 오래된 것**이 되어 인증이 통째로 막힌다.
+        assert (
+            http.post(
+                "/api/command/auth", json={"result": "ok", "captured_at_ms": True}
+            ).status_code
+            == 400
+        )
+
 
 def test_auth_endpoint_does_not_execute_speech(client):
     """인식 텍스트를 그대로 받는 엔드포인트가 아니다 — `text` 필드를 내도
@@ -727,3 +743,98 @@ def test_voice_auth_rejected_verdict_opens_no_window(cfg, clock):
 
     runtime._judge_auth(_frame(), clock.ms)
     assert runtime.escalation.authenticated is False
+
+
+# ── 창이 열리기 전에 녹음된 발화 (2026-09-21 실기 · 빨간 눈의 원인) ──────
+#
+# 파이프라인은 `capture_pcm` 으로 최대 15초를 녹음하고 전사까지 마친 **뒤에**
+# 상태를 묻는다. 그래서 «말한 시각» 과 «판정이 도착한 시각» 이 수 초 벌어지고,
+# 그 사이에 `AUTH_WAIT` 가 열리면 **창 밖에서 한 말이 시도로 세어진다.** 실기에서
+# 방문객이 말을 걸기도 전에 `max_attempts` 2회가 소진돼 눈이 빨개졌다.
+
+
+def test_voice_auth_before_the_window_opened_is_not_counted(cfg, clock):
+    """**창이 열리기 전에 녹음된 발화는 시도가 아니다.** 몇 번 와도 소진되지 않는다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+    opened = runtime._voice_auth_opened_ms
+    assert opened == clock.ms, "창이 열린 시각이 기록되어야 한다"
+
+    result = svc.auth("fail", captured_at_ms=opened - 1)
+
+    assert result.accepted is True, "제대로 받아 버린 것을 전달 실패로 말하면 안 된다"
+    assert "다시 말해" in result.detail
+    assert runtime._voice_auth_attempts == 0, "창 밖의 말이 시도로 세어지면 안 된다"
+
+    svc.auth("fail", captured_at_ms=opened - 1)
+    svc.auth("fail", captured_at_ms=opened - 1)
+    assert runtime.behavior.state == "AUTH_WAIT", "창 밖의 말로는 소진되지 않는다"
+    assert runtime.escalation.level.value != "L3"
+
+
+def test_voice_auth_match_before_the_window_does_not_grant(cfg, clock):
+    """**묻기 전의 대답은 허가가 아니다.** 우연히 맞는 말을 한 것은 인증이 아니다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+    opened = runtime._voice_auth_opened_ms
+
+    result = svc.auth("ok", captured_at_ms=opened - 500)
+
+    assert result.accepted is True
+    assert runtime.behavior.state == "AUTH_WAIT", "허가하지 않고 다시 묻는다"
+    runtime._judge_auth(_frame(), clock.ms)
+    assert runtime.escalation.authenticated is False, "창이 열리지 않아야 한다"
+
+
+def test_voice_auth_after_the_window_opened_is_counted(cfg, clock):
+    """**창이 열린 뒤의 발화는 정상으로 센다** — 가드가 과하게 막으면 인증이 죽는다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+    clock.advance(1200)
+
+    result = svc.auth("fail", captured_at_ms=clock.ms)
+
+    assert "1회 남았다" in result.detail
+    assert runtime._voice_auth_attempts == 1
+
+
+def test_voice_auth_without_capture_time_is_counted(cfg, clock):
+    """발화 시각 없이 오는 호출(관제 화면의 수동 주입)은 **예전대로 센다.**"""
+    svc, runtime = _voice_auth_service(cfg, clock)
+
+    result = svc.auth("fail")
+
+    assert "1회 남았다" in result.detail
+    assert runtime._voice_auth_attempts == 1
+
+
+def test_voice_auth_utterance_from_the_previous_window_is_stale(cfg, clock):
+    """**앞 대기에서 한 말이 새 대기의 시도가 되면 안 된다.**
+
+    시도 횟수는 대기마다 0 으로 되돌아가는데(`..._attempts_reset_on_each_auth_wait`),
+    창이 열린 시각도 함께 갱신되어야 그 초기화가 의미를 갖는다.
+    """
+    svc, runtime = _voice_auth_service(cfg, clock)
+    spoke_in_first_window = clock.ms + 10
+    clock.advance(20)
+    svc.auth("ok", captured_at_ms=spoke_in_first_window)
+    assert runtime.behavior.state == "PATROL", "첫 대기에서는 창 안의 말이라 통과한다"
+
+    clock.advance(1000)
+    runtime.apply_external(Event.PERSON_FOUND)
+    runtime.apply_external(Event.AUTH_REQUIRED)
+    assert runtime.behavior.state == "AUTH_WAIT"
+
+    result = svc.auth("fail", captured_at_ms=spoke_in_first_window)
+
+    assert runtime._voice_auth_attempts == 0
+    assert "다시 말해" in result.detail
+
+
+def test_voice_auth_window_open_time_clears_on_leaving(cfg, clock):
+    """`AUTH_WAIT` 를 떠나면 **열린 시각을 지운다** — 남겨 두면 다음 판정이 옛
+    창을 기준으로 걸러진다."""
+    svc, runtime = _voice_auth_service(cfg, clock)
+    assert runtime._voice_auth_opened_ms is not None
+
+    svc.auth("ok", captured_at_ms=clock.ms)
+
+    assert runtime.behavior.state == "PATROL"
+    assert runtime._voice_auth_opened_ms is None

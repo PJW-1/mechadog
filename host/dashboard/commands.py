@@ -308,7 +308,7 @@ class CommandService:
             detail=refused if refused is not None else f"운용 모드를 {target} 로 바꿨다",
         )
 
-    def auth(self, result: str) -> CommandResult:
+    def auth(self, result: str, captured_at_ms: int | None = None) -> CommandResult:
         """음성 암구호 인증의 **판정 결과**를 사건으로 넣는다 (WBS 3.8.2 · FR-10.2).
 
         이 엔드포인트는 *인증을 수행하지 않는다* — 암구호 문구 대조는 음성
@@ -329,7 +329,10 @@ class CommandService:
                 detail=f"모르는 인증 결과: {result!r} (ok|fail)",
             )
         if self._note_voice_auth is not None:
-            accepted, detail = self._note_voice_auth(result == "ok")
+            # `captured_at_ms` 는 **사람이 말한 시각**이다. 창이 열리기 전의 발화를
+            # 시도로 세지 않기 위해 런타임까지 그대로 내려보낸다 — 창이 언제
+            # 열렸는지 아는 쪽이 거기뿐이다.
+            accepted, detail = self._note_voice_auth(result == "ok", captured_at_ms)
             return CommandResult(
                 command="auth",
                 accepted=accepted,

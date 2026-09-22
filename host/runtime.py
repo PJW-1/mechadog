@@ -329,6 +329,19 @@ class Runtime:
         # 시각으로 센다** — 아래 `_judge_auth` 의 설명을 함께 읽을 것.
         self._voice_auth_valid_ms = int(config["auth"]["session_valid_s"]) * 1000
         self._voice_auth_until_ms = 0
+        # **`AUTH_WAIT` 가 열린 시각** (epoch ms · 닫혀 있으면 `None`).
+        #
+        # ⚠️ **창이 열리기 전에 녹음된 발화를 시도로 세지 않기 위해 있다.** 음성
+        # 파이프라인은 `capture_pcm` 으로 최대 15초를 녹음하고 그 뒤에 전사까지
+        # 한 다음 상태를 묻는다 — 즉 «말한 시각» 과 «판정이 도착한 시각» 이 수 초
+        # 떨어진다. `ALERT` 에서 방문객이 아무 말이나 한 것이 전사되는 동안 창이
+        # 열리면, 그 말이 **암구호 시도로 세어져** `max_attempts` 2회를 혼자
+        # 소진하고 곧바로 L3 경보가 된다 — 2026-09-21 실기의 빨간 눈이 이것이다.
+        #
+        # 판정을 여기 두는 이유는 **창이 언제 열렸는지 아는 쪽이 런타임뿐**이라는
+        # 것이다 (`dashboard/commands.py` 의 같은 취지 주석). 파이프라인은 발화
+        # 시각만 실어 보내면 된다.
+        self._voice_auth_opened_ms: int | None = None
 
     @property
     def behavior(self) -> Behavior:
@@ -1357,6 +1370,10 @@ class Runtime:
         # 처음 말하는 사람이 한 마디에 소진된다.
         if before != "AUTH_WAIT" and self._behavior.state == "AUTH_WAIT":
             self._voice_auth_attempts = 0
+            # 창이 열린 시각. 이보다 앞서 녹음된 발화는 시도로 세지 않는다.
+            self._voice_auth_opened_ms = now_ms
+        elif before == "AUTH_WAIT" and self._behavior.state != "AUTH_WAIT":
+            self._voice_auth_opened_ms = None
         self._log_transition(before)
         return True
 
@@ -1423,8 +1440,17 @@ class Runtime:
         """
         return self._apply(event, self._clock())
 
-    def note_voice_auth(self, ok: bool) -> tuple[bool, str]:
+    def note_voice_auth(self, ok: bool, captured_at_ms: int | None = None) -> tuple[bool, str]:
         """음성 암구호 판정을 받아 **시도를 세고** 사건으로 옮긴다 (FR-10.3).
+
+        `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이고 판정이 도착한 시각이
+        아니다. 둘은 수 초 떨어진다 — 파이프라인이 최대 15초를 녹음하고 전사까지
+        마친 뒤에 이 경로를 탄다. 그 사이에 `AUTH_WAIT` 가 열렸다면 **창이 열리기
+        전의 말**이 시도로 세어진다. 그래서 창이 열린 시각과 견주어 **오래된 발화는
+        세지 않고 버린다** (`_voice_auth_opened_ms` 의 설명을 함께 읽을 것).
+
+        ⚠️ **`None` 은 검사를 건너뛴다.** 대시보드의 수동 주입처럼 «지금 누른 것»
+        이 분명한 호출자는 시각을 싣지 않는다. 있으면 쓰고 없으면 예전대로 돈다.
 
         ⚠️ **불일치 한 번이 곧 `AUTH_FAILED` 가 아니다.** 사원증 쪽은 `Authenticator`
         가 `REJECTED`(아직 남았다)와 `EXHAUSTED`(소진)를 갈라 후자만 사건으로 내는데
@@ -1438,6 +1464,26 @@ class Runtime:
         말하면 사람이 다시 말할 이유를 잃는다. 상태가 아니어서 받지 않은 것만 거짓이다.
         """
         now_ms = self._clock()
+        # ⚠️ **세기 전에, 그리고 허가하기 전에 «언제 말했는가» 를 먼저 본다.**
+        # 창이 열리기 전의 발화는 실패든 일치든 이 대기의 것이 아니다. 일치를
+        # 허가하지 않는 이유는 **묻기 전에 한 대답**이기 때문이다 — 방문객이
+        # 우연히 맞는 말을 한 것이 통행 허가가 되면 인증이 아니다.
+        if (
+            captured_at_ms is not None
+            and self._voice_auth_opened_ms is not None
+            and captured_at_ms < self._voice_auth_opened_ms
+        ):
+            LOG.info(
+                "voice_auth_stale",
+                captured_at_ms=captured_at_ms,
+                opened_ms=self._voice_auth_opened_ms,
+                behind_ms=self._voice_auth_opened_ms - captured_at_ms,
+                matched=ok,
+            )
+            # `True` 로 돌려준다 — 파이프라인은 `accepted` 를 *전달됐나* 로 읽어
+            # 거짓이면 "전달하지 못했습니다" 라고 말한다. 제대로 받아 버린 것을
+            # 전달 실패로 말하면 사람이 무엇을 해야 하는지 알 수 없다.
+            return True, "인증 창이 열리기 전에 녹음된 발화다 — 다시 말해 주세요"
         if ok:
             accepted = self._apply(Event.AUTH_OK, now_ms)
             if accepted:

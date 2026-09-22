@@ -221,14 +221,22 @@ def robot_state(base=DEFAULT_BASE):
     return state if isinstance(state, str) else None
 
 
-def post_auth_result(ok, base=DEFAULT_BASE):
+def post_auth_result(ok, base=DEFAULT_BASE, captured_at_ms=None):
     """POST /api/command/auth — 암구호 **대조 결과만** 보낸다 (WBS 3.8.2).
 
     인식 텍스트 자체는 이 경로로 보내지 않는다. `AUTH_WAIT` 가 아니면 런타임이
     거절하므로 `accepted=False` 를 그대로 돌려준다 — 그 거절이 상태 가드다.
+
+    `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이다. 녹음 15초 + 전사에
+    수 초가 걸리므로 «말한 시각» 과 «여기 도착한 시각» 이 다르고, 그 사이에
+    `AUTH_WAIT` 가 열렸으면 **창 밖의 말이 시도로 세어진다.** 실어 보내면
+    런타임이 걸러 준다.
     """
+    payload = {"result": "ok" if ok else "fail"}
+    if captured_at_ms is not None:
+        payload["captured_at_ms"] = int(captured_at_ms)
     try:
-        res = _post(base, "/api/command/auth", {"result": "ok" if ok else "fail"})
+        res = _post(base, "/api/command/auth", payload)
     except OSError:
         return False, "로봇 관제 서버에 연결할 수 없습니다"
     if res.get("error") or res.get("accepted") is not True:
