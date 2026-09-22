@@ -264,7 +264,7 @@ def post_auth_result(ok, base=DEFAULT_BASE, captured_at_ms=None):
         return False, "로봇 관제 서버에 연결할 수 없습니다"
     if res.get("error") or res.get("accepted") is not True:
         return False, res.get("detail") or "로봇이 인증 결과를 거부했습니다"
-    return True, ""
+    return True, res.get("detail") or ""
 
 
 _STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전")

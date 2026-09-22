@@ -174,6 +174,8 @@ class Runtime:
         self._actions = register_actions(self._behavior, config)
         self._normal_patrol = self._behavior.sequence_for("PATROL")
         self._behavior.register_sequence("PATROL", self._patrol_sequence)
+        self._auth_resume_delay_ms = int(config["auth"].get("resume_delay_ms", 3500))
+        self._auth_resume_after: int | None = None
         self._normal_alert = self._behavior.sequence_for("ALERT")
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         self._behavior.fsm.on_exit("ALERT", lambda _previous, _target: self._ppe_return())
@@ -298,13 +300,14 @@ class Runtime:
         # 임무 중의 복귀(`SCAN`·`AUTH_WAIT`)는 게이트가 이미 살아 있으므로 건드리지
         # 않는다. 낡은 것은 **순찰을 시작하는 순간의 게이트**뿐이다.
         self._behavior.fsm.on_enter("PATROL", self._rearm_person_gate)
-        # 추종 **진입** 임계. 이탈은 조향 데드존이 정한다 — 둘을 갈라 두는 이유는
-        # `_track` 주석과 `config.yaml` 의 `track_engage_px` 항목에 있다.
-        self._track_engage_px = float(config["fsm"]["track_engage_px"])
         # 직전 IMU 방위와 그 시각. 각속도는 차분이라 표본 하나를 들고 있어야 한다.
         self._last_yaw: tuple[float, int] | None = None
         # 직전 추종 지시 시각. 공백 길이를 재는 데 쓴다 (`track_gap_ms`).
         self._last_track_ms: int | None = None
+        self._track_stop_height_px = float(
+            config["fsm"].get("track_target_height_px") or 0
+        ) * float(config["fsm"]["track_stop_ratio"])
+        self._track_stop_reached = False
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
@@ -320,6 +323,9 @@ class Runtime:
         # 사원증 인증 (3.8.1). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
         # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 여기서 정한다.
         self._auth = Authenticator(config)
+        self._auth_require_both = bool(config["auth"].get("require_both", False))
+        self._auth_badge_wait_ms = int(config["auth"]["timeout_s"]) * 1000
+        self._auth_badge_ready = False
         # 음성 암구호의 시도 횟수 (FR-10.3). **사원증과 같은 값을 쓰되 따로 센다** —
         # `Authenticator` 의 세션은 마커를 본 사람에게 붙는데, 암구호는 마커가 없어
         # 붙일 세션이 없다. 그래서 *지금 열려 있는 `AUTH_WAIT` 한 번*을 단위로 센다.
@@ -617,7 +623,9 @@ class Runtime:
             )
 
     def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
-        if self._ppe_move_after is not None and now_ms < self._ppe_move_after:
+        if (self._ppe_move_after is not None and now_ms < self._ppe_move_after) or (
+            self._auth_resume_after is not None and now_ms < self._auth_resume_after
+        ):
             commander.halt()
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
@@ -817,17 +825,11 @@ class Runtime:
         # 같은 판정이 이어지는 동안은 사건을 내지 않는다 — 25fps 로 같은 전이를
         # 수백 번 넣으면 로그가 전이로 뒤덮이고 단계 축도 흔들린다.
         #
-        # ⚠️ **전이 임계는 조향 데드존보다 넓다 (히스테리시스).** `command.centered` 는
-        # *"명령을 낼 것인가"* 를 40px 로 정하고 그대로 쓰지만, **`TRACK` 으로 들어가는
-        # 판단만** `track_engage_px`(50px)로 늦춘다. 하나로 두면 경계에서 bbox 가
-        # ±5px 떨리는 것이 그대로 왕복 전이가 된다 — 2026-09-18 실기에서 한 초에
-        # 3왕복했다(`35.4 → 41.2 → 37.2 → 44.3px`). 나오는 쪽은 좁은 임계 그대로여야
-        # 중앙에 든 대상을 늦게 놓지 않는다.
-        centered = (
-            command.centered
-            if self._behavior.state == "TRACK"
-            else abs(command.deviation_px) <= self._track_engage_px
-        )
+        # 조향 정렬과 거리 정지는 다르다. 멀리 있는 중앙 대상에게도 직진하고,
+        # 정지선에서는 화면 가장자리여도 걸음을 멈춰 경계 자세를 유지한다.
+        if self._track_stop_height_px and box_height >= self._track_stop_height_px:
+            self._track_stop_reached = True
+        centered = self._track_stop_reached or command.step == 0.0
         if self._edge.changed("track_centered", centered):
             LOG.info(
                 "track_command",
@@ -838,7 +840,11 @@ class Runtime:
             )
             self._apply(Event.TARGET_CENTERED if centered else Event.TARGET_OFF_CENTER, now_ms)
         if self._track_sequence is not None:
-            self._track_sequence.note(command.step, command.angle, now_ms)
+            self._track_sequence.note(
+                0.0 if self._track_stop_reached else command.step,
+                0.0 if self._track_stop_reached else command.angle,
+                now_ms,
+            )
 
     def _zone_of(self, result: Any) -> str | None:
         """이번 프레임에 보이는 구역 마커. 없으면 `None`.
@@ -1046,10 +1052,19 @@ class Runtime:
         """
         if not self._mission.enables("auth"):
             return
+        voice_granted = now_ms < self._voice_auth_until_ms
         self._auth.note_tracks(result.tracks)
-        outcome = self._auth.observe(result.markers, result.tracks, now_ms)
+        if self._auth_require_both and voice_granted and not result.markers:
+            self._auth_badge_ready = True
+        outcome = (
+            self._auth.observe(result.markers, result.tracks, now_ms)
+            if not self._auth_require_both or (voice_granted and self._auth_badge_ready)
+            else Outcome.NOTHING
+        )
         if outcome in (Outcome.GRANTED, Outcome.BADGE_SEEN):
-            self._apply(Event.AUTH_OK, now_ms)
+            if self._apply(Event.AUTH_OK, now_ms) and self._behavior.state == "PATROL":
+                self._auth_resume_after = now_ms + self._auth_resume_delay_ms
+                LOG.info("auth_resume_wait", delay_ms=self._auth_resume_delay_ms)
         elif outcome is Outcome.EXHAUSTED:
             # 2회 실패 — 30초 무응답과 같은 결론이다 (FR-10.3).
             self._apply(Event.AUTH_FAILED, now_ms)
@@ -1065,8 +1080,13 @@ class Runtime:
         #
         # ⚠️ **대신 그 60초 동안 새로 들어온 사람도 함께 허가된다.** 암구호는 원래
         # *아는 사람은 통과*라 결론은 같지만, 사원증과 다른 성질이니 알고 쓸 것.
-        voice_granted = now_ms < self._voice_auth_until_ms
-        if voice_granted or self._auth.all_authenticated(result.tracks, now_ms):
+        badge_granted = self._auth.all_authenticated(result.tracks, now_ms)
+        authenticated = (
+            voice_granted and badge_granted
+            if self._auth_require_both
+            else voice_granted or badge_granted
+        )
+        if authenticated:
             self._escalation.note_authenticated(now_ms)
         else:
             self._escalation.note_authentication_lost()
@@ -1228,6 +1248,7 @@ class Runtime:
 
     def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
+        self._track_stop_reached = False
         if previous in STANDBY:
             self._edge.forget("person")
 
@@ -1380,6 +1401,10 @@ class Runtime:
         # 처음 말하는 사람이 한 마디에 소진된다.
         if before != "AUTH_WAIT" and self._behavior.state == "AUTH_WAIT":
             self._voice_auth_attempts = 0
+            if self._auth_require_both:
+                self._voice_auth_until_ms = 0
+                self._auth_badge_ready = False
+                self._auth.reset()
             # 창이 열린 시각. 이보다 앞서 녹음된 발화는 시도로 세지 않는다.
             self._voice_auth_opened_ms = now_ms
             # 유예도 창 단위다 — `Behavior` 쪽 누적은 상태가 바뀌며 이미 0 이 된다.
@@ -1544,6 +1569,21 @@ class Runtime:
             # 전달 실패로 말하면 사람이 무엇을 해야 하는지 알 수 없다.
             return True, "인증 창이 열리기 전에 녹음된 발화다 — 다시 말해 주세요"
         if ok:
+            if self._auth_require_both:
+                if self._behavior.state != "AUTH_WAIT" or not self._mission.enables("auth"):
+                    return (
+                        False,
+                        f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)",
+                    )
+                if now_ms >= self._voice_auth_until_ms:
+                    self._voice_auth_until_ms = now_ms + self._voice_auth_valid_ms
+                    self._auth_badge_ready = False
+                    self._behavior.defer_timer(
+                        by_ms=self._auth_badge_wait_ms,
+                        cap_ms=self._voice_auth_grace_ms + self._auth_badge_wait_ms,
+                    )
+                    LOG.info("voice_auth_granted", valid_ms=self._voice_auth_valid_ms, next="badge")
+                return True, "암구호 확인 — 사원증을 제시해 주세요"
             accepted = self._apply(Event.AUTH_OK, now_ms)
             if accepted:
                 # 여기서만 창을 연다 — 받아들여지지 않은 판정은 허가가 아니다.
@@ -1621,7 +1661,9 @@ class Runtime:
         if not self._reset_pending or latched is not False:
             return
         self._reset_pending = False
-        self._apply(Event.RESET_CONFIRMED, now_ms)
+        if self._apply(Event.RESET_CONFIRMED, now_ms):
+            # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
+            self._commander.once("POSE", pitch=0.0, roll=0.0, height=0.0, dur=self._ppe_settle_ms)
 
     def emergency_stop(self) -> str:
         """종료 전문. **틱을 기다리지 않는다.**
