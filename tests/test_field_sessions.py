@@ -179,8 +179,10 @@ def test_movement_cases_lists_auto_floor_drive_in_catalog_order():
         "TC-F-002",
         "TC-N-008",
     ]
-    assert all(sessions.route(c) not in ((), ("guided",)) for c in
-               sessions.movement_cases(plan.catalog()["cases"]))
+    assert all(
+        sessions.route(c) not in ((), ("guided",))
+        for c in sessions.movement_cases(plan.catalog()["cases"])
+    )
 
 
 def test_movement_batch_runs_each_case_and_saves(tmp_path, monkeypatch):

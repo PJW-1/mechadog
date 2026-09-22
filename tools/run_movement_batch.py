@@ -19,16 +19,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
-from tools import field_measure as fm
-from tools import field_plan as plan
-from tools import field_sessions as sessions
-from tools.field_sessions import write_session
+from tools import field_measure as fm  # noqa: E402
+from tools import field_plan as plan  # noqa: E402
+from tools import field_sessions as sessions  # noqa: E402
+from tools.field_sessions import write_session  # noqa: E402
 
 DEVICE = "mechdog-02"
 HOST = "192.168.0.18"
-OUT = Path(
-    "C:/Users/a9800/Desktop/공부/피지컬ai/로봇독 프로젝트/05_실물_측정결과/2026-09-21"
-)
+OUT = Path("C:/Users/a9800/Desktop/공부/피지컬ai/로봇독 프로젝트/05_실물_측정결과/2026-09-21")
 ENV = {
     "operator": "사용자(현장)",
     "firmware": "svc-20260915-b",
@@ -114,12 +112,15 @@ def main() -> int:
     global payload, path, active_case
     import subprocess
 
-    ENV["host_revision"] = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        cwd=Path(__file__).resolve().parents[1],
-    ).stdout.strip() or "unknown"
+    ENV["host_revision"] = (
+        subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).resolve().parents[1],
+        ).stdout.strip()
+        or "unknown"
+    )
 
     cases = sessions.movement_cases(plan.catalog()["cases"])
     only = set(sys.argv[1:])
