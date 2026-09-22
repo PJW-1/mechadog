@@ -10,7 +10,7 @@
 | 파일 | 용도 | 확보 방법 | 상태 |
 | :--- | :--- | :--- | :--- |
 | `coco.onnx` | ① 범용 검출기 — 사람 검출(FR-3) + 변화 감지 대상 객체(FR-8) | **YOLOX-S 공식 배포 ONNX 를 받아 이름만 바꾼다.** 학습·export 불요 | ✅ 계열 확정 (ADR-24) |
-| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ✅ 학습·ONNX export 완료, XIAO 실기 검수 대기 |
+| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` / `person_down` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v2`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ✅ 학습·ONNX export 완료, XIAO 실기 검수 대기 |
 
 ---
 
@@ -200,15 +200,15 @@ models/
 └── ppe.onnx        # VLM 은 여기 없다 — ③ 참조 (HF 캐시)
 ```
 
-`ppe.onnx`의 정본 식별값은 크기 **3,654,680바이트**, SHA-256
-`ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`이다. 자체 학습
-산출물이라 공개 URL이 없어 **팀 Release 자산**으로 배포하며, `coco.onnx`와 같이
+`ppe.onnx`의 정본 식별값은 크기 **3,677,797바이트**, SHA-256
+`ff78802506e07dfcf89961374900486d363e558fff4fe81ce6053c3330d4a1c4`이다. 자체 학습
+산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v2`)으로 배포하며, `coco.onnx`와 같이
 `tools/fetch_models.py`가 받고 두 값을 검증한다. 학습·export 재현 절차는
 `firmware_xiao_vision/PPE_Train.md`에 있다.
 
-**라이선스 — `models/NOTICE` 를 함께 배포한다.** 가중치는 CC BY 4.0 학습 데이터에서
-나온 파생물이라 같은 조건(**CC BY 4.0**)으로 내보내며, 베이스 모델 YOLOX는
-Apache-2.0이다. 저장소 코드 자체는 루트 `LICENSE`(Apache-2.0)를 따른다. **가중치만
+**라이선스 — `models/NOTICE` 를 함께 배포한다.** v2 가중치는 라이선스가 혼합된 데이터셋(NOTICE §3)에서
+나온 파생물이라 배포 조건이 **검토 중**이다 — 현재 릴리스는
+팀 내부 테스트용이고, 베이스 모델 YOLOX는 Apache-2.0이다. 저장소 코드 자체는 루트 `LICENSE`(Apache-2.0)를 따른다. **가중치만
 떼어 전달하면 출처 표시가 끊기므로 `NOTICE`를 같이 넣는다.**
 
 경로는 `config/config.yaml` 의 `vision.coco.model_path` / `vision.ppe.model_path` 에서 관리한다.

@@ -72,10 +72,12 @@
 
 ### 2.3 산출물
 
-1. models/ppe.onnx, 3,654,680 bytes
-2. sha256 ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13
-3. 입력 images [1, 3, 640, 640], 출력 output [1, 8400, 9]
-4. 9 는 중심 오프셋 2, 크기 2, objectness 1, 클래스 4 의 합이다
+1. models/ppe.onnx, 3,677,797 bytes (릴리스 태그 ppe-v2)
+2. sha256 ff78802506e07dfcf89961374900486d363e558fff4fe81ce6053c3330d4a1c4
+3. 입력 images [1, 3, 640, 640], 출력 output [1, 8400, 10]
+4. 10 은 중심 오프셋 2, 크기 2, objectness 1, 클래스 5 의 합이다
+   ⚠️ v2(2026-09-23)부터 5클래스(person_down 포함)다. 데이터셋 구성은
+   아래 §1과 다르다 — 자체 시뮬+Construction-PPE+SHWD (`models/NOTICE` §3)
 5. 디코드 전 원시 출력이다. 격자 디코드는 호스트 어댑터가 한다
 6. config.yaml 의 vision.ppe.model_family 를 yolox 로 채우고 학습 정보를 주석으로 남겼다
 
