@@ -361,6 +361,7 @@ export class OperationalPanels {
      this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live}),
      this.serviceButton,
      this.modeButton('guard','경비'),this.modeButton('factory','공장'),this.modeButton('assist','현장지원'),
+     this.button('경보 확인 (L3 해제)',()=>this.confirmDevice({icon:'stop',title:'경보를 확인했습니까?',body:'현장 상황을 직접 확인한 뒤에만 누르세요. 경보 단계(L3)가 내려가고 순찰이 이어집니다. 안전 래치(F)는 이 버튼으로 풀리지 않습니다 — 그쪽은 "안전 해제"가 따로 필요합니다.',confirm:'예, 확인했습니다',danger:true,action:()=>store.requestAlarmConfirm()}),{disabled:!store.live,'data-alarm-confirm':'confirm'}),
      this.button('안전 해제 (RESET_SAFE)',()=>this.confirmDevice({icon:'stop',title:'안전 래치를 해제하겠습니까?',body:'안전 정지 원인이 제거됐고 로봇 주변에 사람이 없는지 먼저 확인하세요. 래치가 풀리면 다음 이동 명령부터 로봇이 실제로 움직입니다 — 잠금만 해제되며 자동 보행은 시작하지 않습니다.',confirm:'예, 해제합니다',danger:true,action:()=>store.requestResetSafe()}),{disabled:!store.live,'data-reset-safe':'confirm'})),
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
     this.note('운용 모드는 로봇이 멈춰 있을 때(대기·수동)만 바꿀 수 있고, 바꿔도 경보(L3)와 안전 정지(F)는 풀리지 않습니다. 선행 기능이 없는 모드는 서버가 거절하며 사유를 알려 줍니다.'),
