@@ -4,7 +4,7 @@
 돌지**를 정한다. FSM 은 *언제* 도는지만 안다 — `TARGET_OFF_CENTER` 와
 `TARGET_CENTERED` 는 전이표에 있지만 그것을 **내는 쪽이 없었다.** 여기가 그 자리다.
 
-**제자리 회전이 불가하다** (DR-11). 그래서 조향은 곧 걷기다 — `MOVE` 의 `angle`
+**제자리 회전을 전제하지 않는다** (DR-11). 그래서 조향은 곧 걷기다 — `MOVE` 의 `angle`
 만 주고 `step` 을 0 으로 두면 로봇은 아무 데도 향하지 못한다. 편차가 남아 있는
 동안은 **걸으면서** 방향을 맞춘다.
 
@@ -179,7 +179,7 @@ class LockOnTracker:
         if deadzone < 0:
             raise ValueError("track_deadzone_px 는 0 이상이어야 함")
         if step <= 0:
-            raise ValueError("step_length_mm 이 0 이면 선회할 수 없다 (제자리 회전 불가)")
+            raise ValueError("step_length_mm 이 0 이면 선회할 수 없다 (제자리 회전 미전제)")
         if turn <= 0:
             raise ValueError("turn_angle_deg 는 0 보다 커야 함")
         self._deadzone_px = deadzone

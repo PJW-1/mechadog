@@ -195,7 +195,7 @@ DIRECTIVES: dict[str, Directive] = {
     # 그리고 그 30초가 **사원증을 읽어야 하는 시간**이라 고개를 든 자세가 기능이다.
     "AUTH_WAIT": Directive.SEQUENCE,  # 정지한 채 인증을 기다린다 + 경계 자세 (3.5.3)
     "PATROL": Directive.SEQUENCE,  # 3.5.1 순찰 행동
-    "AVOID": Directive.SEQUENCE,  # 후진 200mm + 선회 (DR-11 로 제자리 회전 불가)
+    "AVOID": Directive.SEQUENCE,  # 후진 200mm + 선회 (DR-11 로 제자리 회전 미전제)
     "SCAN": Directive.SEQUENCE,  # 3.5.2 상체 스캔
     "ALERT": Directive.SEQUENCE,  # 3.5.3 Pitch Up 경계 자세
     "TRACK": Directive.SEQUENCE,  # 3.5.4 선회 보행 추종

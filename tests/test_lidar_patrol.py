@@ -206,7 +206,7 @@ def test_straight_when_aligned() -> None:
 
 
 def test_arc_steering_keeps_walking() -> None:
-    """**제자리 회전이 없으므로 조향 중에도 걷는다** (DR-11).
+    """**제자리 회전을 쓰지 않으므로 조향 중에도 걷는다** (DR-11).
 
     `step == 0` 이면서 `angle != 0` 인 명령은 로봇이 할 수 없는 동작이다 —
     합치기 전의 `TURN_LEFT` 가 정확히 그것을 뜻했다.
