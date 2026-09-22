@@ -1,8 +1,8 @@
 """Scenario/robotlink/transport/phrases unit tests — no serial, mic, or GPU required."""
 
+import sys
 import types
 import unittest
-import sys
 from unittest import mock
 
 import phrases as phr
@@ -86,7 +86,9 @@ class GuardScenarioTests(unittest.TestCase):
         piper = types.SimpleNamespace(PiperVoice=types.SimpleNamespace(load=lambda _path: object()))
         whisper = types.SimpleNamespace(WhisperModel=lambda *_a, **_kw: object())
         with (
-            mock.patch.object(sys, "argv", ["voice_pipeline.py", "--port", "COM9", "--guard-check"]),
+            mock.patch.object(
+                sys, "argv", ["voice_pipeline.py", "--port", "COM9", "--guard-check"]
+            ),
             mock.patch.dict(sys.modules, {"piper": piper, "faster_whisper": whisper}),
             mock.patch.object(vp, "open_transport", return_value=device),
             mock.patch.object(scenarios, "sc_guard") as guard,
