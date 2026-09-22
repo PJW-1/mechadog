@@ -1,6 +1,7 @@
 """Offline evidence isolation and measurement collector safety regressions."""
 
 import json
+import os
 import socket
 import sys
 from pathlib import Path
@@ -9,6 +10,11 @@ import pytest
 
 from tools import field_measure as fm
 from tools import field_plan as plan
+
+requires_display = pytest.mark.skipif(
+    sys.platform != "win32" and not os.environ.get("DISPLAY"),
+    reason="tkinter GUI needs a display",
+)
 
 
 @pytest.fixture
@@ -153,6 +159,7 @@ def test_nonfinite_input_rejected_but_signed_angles_kept(monkeypatch):
     assert fm._ask_number("angle", signed=True) == -20
 
 
+@requires_display
 def test_gui_loads_without_network_or_measurement(monkeypatch, tmp_path):
     import tkinter as tk
 

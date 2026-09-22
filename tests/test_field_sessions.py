@@ -1,7 +1,9 @@
 """Selected-case execution, cancellation, and GUI automatic result wiring; no robot."""
 
 import json
+import os
 import socket
+import sys
 import threading
 import time
 from dataclasses import replace
@@ -12,6 +14,11 @@ from host.telemetry.receiver import Reading
 from tools import field_measure as fm
 from tools import field_plan as plan
 from tools import field_sessions as sessions
+
+requires_display = pytest.mark.skipif(
+    sys.platform != "win32" and not os.environ.get("DISPLAY"),
+    reason="tkinter GUI needs a display",
+)
 
 
 def case(case_id):
@@ -185,6 +192,7 @@ def test_movement_cases_lists_auto_floor_drive_in_catalog_order():
     )
 
 
+@requires_display
 def test_movement_batch_runs_each_case_and_saves(tmp_path, monkeypatch):
     import os
     import subprocess
@@ -265,6 +273,7 @@ def test_movement_batch_runs_each_case_and_saves(tmp_path, monkeypatch):
         root.destroy()
 
 
+@requires_display
 def test_measurement_window_prompt_completion_and_automatic_save(tmp_path, monkeypatch):
     # Tcl/Tk has process-global native state. Run this second GUI lifecycle in a
     # fresh interpreter, rather than sharing a destroyed Tk with the planner test.
