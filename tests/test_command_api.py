@@ -592,11 +592,12 @@ def test_auth_endpoint_does_not_execute_speech(client):
 # 들릴 수 있으므로 재시도 여유가 있어야 한다 — 그것이 이 값의 존재 이유다.
 
 
-def _voice_auth_service(cfg, clock):
+def _voice_auth_service(cfg, clock, *, require_both=False):
     """런타임이 붙은 서비스. **시도를 세는 쪽이 런타임이라** 이 조합이어야 한다."""
     from host.runtime import Runtime
 
-    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    config = dict(cfg, auth=dict(cfg["auth"], require_both=require_both))
+    runtime = Runtime(config, device_id="mechdog-01", clock=clock)
     svc = CommandService(
         runtime.behavior,
         runtime.commander,
@@ -698,9 +699,27 @@ def test_voice_auth_outside_auth_wait_is_not_counted(cfg, clock):
 # 틀렸을 때 엉뚱한 사람이 허가를 받는다.
 
 
-def _frame(tracks: tuple = ()) -> SimpleNamespace:
+def _frame(tracks: tuple = (), markers: tuple = ()) -> SimpleNamespace:
     """`_judge_auth` 가 만지는 두 칸만 있는 가짜 프레임."""
-    return SimpleNamespace(tracks=tuple(tracks), markers=())
+    return SimpleNamespace(tracks=tuple(tracks), markers=tuple(markers))
+
+
+def test_guard_requires_passphrase_then_new_badge(cfg, clock):
+    from host.vision.badge import Marker
+
+    svc, runtime = _voice_auth_service(cfg, clock, require_both=True)
+    badge_id = next(iter(cfg["auth"]["badge_marker_map"]))
+    badge = Marker(marker_id=int(badge_id), center=(320.0, 300.0))
+
+    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
+    assert runtime.behavior.state == "AUTH_WAIT", "암구호 전 사원증은 통과가 아니다"
+    assert svc.auth("ok").accepted
+    assert runtime.behavior.state == "AUTH_WAIT", "암구호만으로 출발하지 않는다"
+    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
+    assert runtime.behavior.state == "AUTH_WAIT", "먼저 든 사원증을 재사용하지 않는다"
+    runtime._judge_auth(_frame(), clock.ms)
+    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
+    assert runtime.behavior.state == "PATROL"
 
 
 def test_voice_auth_holds_without_any_track(cfg, clock):

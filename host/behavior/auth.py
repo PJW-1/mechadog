@@ -119,6 +119,12 @@ class Authenticator:
         session = self._sessions.get(track_id if self._bind_to_track else 0)
         return 0 if session is None else session.attempts
 
+    def reset(self) -> None:
+        """새 인증 창에서는 이전 사람의 사원증을 다시 사용하지 않는다."""
+        self._sessions.clear()
+        self._pending = None
+        self._unproven.clear()
+
     def all_authenticated(self, tracks: Sequence[Track], now_ms: int) -> bool:
         """보이는 **전원**이 인증됐나 (FR-3.8.1).
 

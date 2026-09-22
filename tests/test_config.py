@@ -298,6 +298,7 @@ def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
 
 def test_auth_uses_scene_session(cfg: dict) -> None:
     assert cfg["auth"]["bind_to_track_id"] is False
+    assert cfg["auth"]["require_both"] is True
     assert cfg["auth"]["resume_delay_ms"] > 0
 
 

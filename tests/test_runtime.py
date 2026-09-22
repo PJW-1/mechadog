@@ -127,9 +127,9 @@ def vision_result(
     hits: int,
     last_seen_ms: int | None,
     markers: tuple[Marker, ...] = (),
-    # 기본은 **화면 중앙**이다. 구석에 두면 추종(`3.5.4`)이 켜져 `ALERT` 가
-    # 아니라 `TRACK` 으로 가고, 사람 인지를 보려던 시험이 추종 시험이 된다.
-    box: tuple[float, float, float, float] = (300.0, 200.0, 340.0, 400.0),
+    # 기본은 정지선에 도달한 사람이다. 먼 사람은 중앙이어도 접근하므로 TRACK 시험은
+    # 명시적으로 먼 박스를 넘긴다.
+    box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 460.0),
     frame_width: int = 640,
 ) -> VisionResult:
     """런타임 통합 시험용 판정 결과."""
@@ -170,6 +170,7 @@ def config(cfg: dict) -> dict:
     """
     merged = dict(cfg)
     merged["network"] = dict(cfg["network"], mechdog_ip=PEER[0])
+    merged["auth"] = dict(cfg["auth"], require_both=False)
     return merged
 
 
@@ -644,6 +645,10 @@ def test_onboard_failsafe_raises_f_and_reset_returns(config: dict, clock: FakeCl
     runtime.ingest(telemetry(enc, state="IDLE", safety_latched=False), clock.advance(100))
     assert runtime.behavior.state == "IDLE"
     assert runtime.escalation.level is Level.L0
+    assert any(
+        json.loads(line).get("type") == "POSE" and json.loads(line).get("pitch") == 0
+        for line in runtime.tick(clock.ms)
+    ), "안전 잠금 중 실패한 중립 자세 복귀를 해제 직후 다시 보낸다"
 
 
 def test_estop_cannot_be_used_to_clear_an_alarm(config: dict, clock: FakeClock) -> None:
@@ -1113,7 +1118,7 @@ def test_off_center_person_moves_alert_into_track(config: dict, clock: FakeClock
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 200.0, 340.0, 400.0))
-    assert runtime.behavior.state == "ALERT", "중앙이면 경계 자세에 머문다"
+    assert runtime.behavior.state == "TRACK", "중앙이어도 정지선까지 접근한다"
     _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 200.0, 60.0, 400.0))
     assert runtime.behavior.state == "TRACK", "화면 왼쪽 끝이면 추종으로 간다"
 
@@ -1123,8 +1128,29 @@ def test_returning_to_center_leaves_track(config: dict, clock: FakeClock) -> Non
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
     assert runtime.behavior.state == "TRACK"
-    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 200.0, 340.0, 400.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
     assert runtime.behavior.state == "ALERT"
+
+
+def test_close_off_center_person_stops_and_holds_pitch(config: dict, clock: FakeClock) -> None:
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.state == "TRACK"
+
+    # 정지선 437px 초과. 화면 왼쪽에 있어도 더 접근하거나 조향하지 않는다.
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 20.0, 60.0, 460.0))
+    assert runtime.behavior.state == "ALERT"
+    _sighting(runtime, vision, seq=3, at_ms=300, box=(20.0, 20.0, 60.0, 460.0))
+    assert runtime.behavior.state == "ALERT"
+    _sighting(runtime, vision, seq=4, at_ms=400, box=(20.0, 30.0, 60.0, 460.0))
+    assert runtime.behavior.state == "ALERT", "박스 높이 떨림으로 재출발하지 않는다"
+    commands = [json.loads(line) for line in runtime.tick(200 + config["posture"]["alert_hold_ms"] + 100)]
+    assert all(cmd["step"] == 0 for cmd in commands if cmd["type"] == "MOVE")
+    assert any(
+        cmd["type"] == "POSE" and cmd["pitch"] == config["fsm"]["alert_pitch_deg"]
+        for cmd in commands
+    )
 
 
 def test_track_turns_toward_the_target(config: dict, clock: FakeClock) -> None:
@@ -1711,39 +1737,13 @@ def test_alert_reentry_can_still_start_tracking(config: dict, clock: FakeClock) 
     assert runtime.behavior.state == "TRACK", "재진입 첫 판정이 삼켜지면 ALERT 에 갇힌다"
 
 
-def test_engage_threshold_is_wider_than_the_steering_deadzone(
-    config: dict, clock: FakeClock
-) -> None:
-    """⚠️ **경계에서 `ALERT ⇄ TRACK` 이 왕복하던 것을 막는다 (2026-09-18 실기).**
-
-    bbox 중심이 데드존 경계를 ±5px 로 넘나들며 한 초에 3왕복했다. 진입 임계를
-    이탈 임계보다 넓게 두면 그 사이 구간에서 상태가 유지된다.
-    """
-    deadzone = config["fsm"]["track_deadzone_px"]
-    engage = config["fsm"]["track_engage_px"]
-    assert deadzone < engage, "이 시험의 전제 — 진입이 이탈보다 넓다"
-    between = (deadzone + engage) / 2  # 40 과 50 사이
-
-    def box_at(offset: float) -> tuple[float, float, float, float]:
-        centre = 320.0 + offset
-        return (centre - 20.0, 200.0, centre + 20.0, 400.0)
-
+def test_far_centered_person_keeps_approaching(config: dict, clock: FakeClock) -> None:
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
-    _sighting(runtime, vision, seq=1, at_ms=100, box=box_at(0))
-    assert runtime.behavior.state == "ALERT"
-
-    # 두 임계 사이 — 아직 들어가지 않는다.
-    _sighting(runtime, vision, seq=2, at_ms=200, box=box_at(between))
-    assert runtime.behavior.state == "ALERT", "진입 임계를 넘어야 추종을 연다"
-
-    # 진입 임계 밖 — 들어간다.
-    _sighting(runtime, vision, seq=3, at_ms=300, box=box_at(engage + 10))
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 200.0, 340.0, 400.0))
     assert runtime.behavior.state == "TRACK"
-
-    # 다시 두 임계 사이 — 나오지 않는다. **떨림이 왕복을 만들지 못한다.**
-    _sighting(runtime, vision, seq=4, at_ms=400, box=box_at(between))
-    assert runtime.behavior.state == "TRACK", "이탈은 좁은 데드존이 정한다"
+    move = _move(runtime.tick(200))
+    assert move is not None and move["step"] > 0 and move["angle"] == 0
 
 
 def test_yaw_rate_folds_the_compass_wrap(config: dict, clock: FakeClock, caplog) -> None:
@@ -1778,7 +1778,7 @@ def test_person_already_in_view_when_patrol_starts_still_reaches_alert(
     10~40건이었는데도 `ALERT` 로 한 번도 가지 않았다 — 로봇은 직진만 했다.
     """
     runtime, vision = _tracking_runtime(config, clock)
-    centre = (300.0, 200.0, 340.0, 400.0)
+    centre = (300.0, 20.0, 340.0, 460.0)
     # 순찰 **전에** 사람이 보인다. `IDLE` 에는 전이가 없으므로 상태는 그대로다.
     _sighting(runtime, vision, seq=1, at_ms=100, box=centre)
     assert runtime.behavior.state == "IDLE"

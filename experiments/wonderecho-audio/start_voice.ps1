@@ -5,9 +5,7 @@ param(
     [string]$PiperModel = 'C:\dev\mechadog-voice\models\piper\ko_KR-kss-medium.onnx',
     [string]$Model = 'C:\dev\mechadog-voice\models\gguf\EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf'
 )
-# MechaDog 음성 대화 시작 — llama.cpp CUDA DLL 경로 + 파이프라인 기동
-$site = & $Python -c 'import site; print(site.getsitepackages()[0])'
-$env:PATH = "$site\torch\lib;$site\nvidia\cublas\bin;$site\nvidia\cudnn\bin;$site\nvidia\cuda_nvrtc\bin;$env:PATH"
+# MechaDog 음성 대화 시작 — GPU DLL 경로는 파이프라인이 등록한다.
 Set-Location $PSScriptRoot
 
 if ($GuardCheck) {

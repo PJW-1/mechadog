@@ -77,6 +77,14 @@ def test_no_command_leaves_inside_the_deadzone(cfg, offset):
         assert out.angle == 0.0
 
 
+def test_centered_person_approaches_until_stop_line(cfg):
+    t = _tracker(cfg, target_h=300.0)
+    far = t.update(MIDPOINT, FRAME_WIDTH, box_height=200.0)
+    close = t.update(MIDPOINT, FRAME_WIDTH, box_height=450.0)
+    assert far.step > 0 and far.angle == 0
+    assert close.step == 0 and close.angle == 0
+
+
 def test_steering_always_carries_a_stride(cfg):
     """제자리 회전을 전제하지 않으므로(DR-11) 조향에는 반드시 보폭이 따라붙는다."""
     t = _tracker(cfg)

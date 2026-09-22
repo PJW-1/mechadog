@@ -437,6 +437,15 @@ class TranscribeTests(unittest.TestCase):
 
 
 class HubScenarioQueueTests(unittest.TestCase):
+    def test_auth_prompt_once_per_wait(self):
+        hub = vp.Hub("test")
+        self.assertIsNone(hub.auth_prompt("PATROL"))
+        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+        self.assertIsNone(hub.auth_prompt("AUTH_WAIT"))
+        self.assertIsNone(hub.auth_prompt(None))
+        self.assertIsNone(hub.auth_prompt("IDLE"))
+        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+
     def test_scenario_item_flows_through_say_queue(self):
         hub = vp.Hub("test")
         hub.enqueue_say("공지입니다")
@@ -581,6 +590,14 @@ class AuthLinkTests(unittest.TestCase):
             ok, err = robotlink.post_auth_result(False)
         self.assertFalse(ok)
         self.assertIn("받지 않는다", err)
+
+    def test_post_auth_result_keeps_accepted_stale_detail(self):
+        with mock.patch.object(
+            robotlink, "_post", return_value={"accepted": True, "detail": "다시 말해 주세요"}
+        ):
+            ok, detail = robotlink.post_auth_result(True)
+        self.assertTrue(ok)
+        self.assertEqual(detail, "다시 말해 주세요")
 
 
 class TransportTests(unittest.TestCase):
