@@ -4,6 +4,7 @@ Requires the local vendor SDK and CI1302 image; generated fixtures stay local.
 The ROM strncmp pointer is bound to host strncmp; playback hardware is not tested.
 """
 
+import argparse
 import hashlib
 import json
 import os
@@ -11,12 +12,21 @@ import struct
 import subprocess
 from pathlib import Path
 
-SDK = Path("<WE_SDK_TREE_DIAG>/offline-speaker-1.12.16")
-ROOT = Path("<WE_SDK_TREE_MP3>")
+parser = argparse.ArgumentParser(
+    description="Manually check factory MP3 headers with a local vendor SDK and image."
+)
+parser.add_argument("--sdk", type=Path, required=True, help="offline-speaker-1.12.16 directory")
+parser.add_argument("--image", type=Path, required=True, help="factory or candidate .bin image")
+parser.add_argument("--zig", type=Path, required=True, help="zig executable")
+parser.add_argument("--work-dir", type=Path, required=True, help="directory for generated files")
+args = parser.parse_args()
+
+SDK = args.sdk
+ROOT = args.work_dir
 OUT = ROOT / "header-regression"
 OUT.mkdir(parents=True, exist_ok=True)
 PLAYER = SDK / "components/player/audio_play"
-raw = Path("<OUT_DIR>/35-diag.bin").read_bytes()
+raw = args.image.read_bytes()
 voice_start, voice_size = struct.unpack_from("<II", raw, 8192 + 166 + 4 * 17 + 4)
 voice = raw[voice_start : voice_start + voice_size]
 count = struct.unpack_from("<H", voice)[0]
@@ -106,7 +116,7 @@ int main(int argc, char **argv) {
 """
 harness = harness.replace("assert(", "CHECK(")
 (OUT / "parser_regression.c").write_text(harness, encoding="utf-8")
-zig = Path("<ZIG_EXE>")
+zig = args.zig
 env = os.environ.copy()
 env["ZIG_LOCAL_CACHE_DIR"] = str(ROOT / "zig-local-cache")
 env["ZIG_GLOBAL_CACHE_DIR"] = str(ROOT / "zig-global-cache")

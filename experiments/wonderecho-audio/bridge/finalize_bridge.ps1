@@ -21,7 +21,7 @@ $voiceNotes=@{
 - PC C 프로토콜/100000 잡음·18매핑/두공장그룹·실제 로봇 dispatcher를 가짜 장치로 컴파일한 방향/안전/OTA 거부 시험 통과. CI1302 컴파일 및 code0+libfbin 공식 merge/공장부트·ASR·DNN·voice·user·NV배치 보존 통과. SDK기존경고 남음(새 브리지 C는 Werror).
 - 설치파일 <OUT_DIR>/34-bridge.bin, SHA09683d96d96127552bfea6c2fc68a329505346a2b6157cb1283c44ef29fe3eee, 버전2.1.34/로그3401, code150600B/이미지1969737B. candidate.json과 package-3401-e312fa103021/verification.json 근거. 설치/실물 검증은 아직 안 됨.
 - 장치: PnP COM5·COM8 확인. COM8 부팅 로그로 로봇 직접 식별, 4핀 분리 상태 IIC1=6A/77. COM5 WEC1 응답 없음(설치버전 미확인). DTR/RTS=false 수신과 COM5 QUERY만, 명시적 리셋/이동/재생/녹음/플래시 없음; 부팅 로그를 관측했으므로 포트 열기의 리셋 무발생을 보증하지 않음. 모든포트 종료. 원본7개 SHA보관: 로컬05_실물_측정결과/2026-09-19/01_음성브리지_USB식별.
-- 다음: 사용자가 PACK_UPDATE_TOOL로34설치·도구닫기 → UART0에서 [WE-BRIDGE] build=3401 ready/init_result=0 확인 → 모듈 USB제거·전원OFF에서4핀연결 → 구동차단으로 reg64 예상ID·reg6E 실제발화 시험. 로봇방향 수정은 robot-mapping.patch/voice_dispatch.corrected.cpp 후보만, 로봇 설치 안 함. 병행 USB오디오/4핀PCM/간헐무음 해결/WBS완료로 표시 금지.
+- 다음: 사용자가 PACK_UPDATE_TOOL로34설치·도구닫기 → UART0에서 [WE-BRIDGE] build=3401 ready/init_result=0 확인 → 모듈 USB제거·전원OFF에서4핀연결 → 구동차단으로 reg64 예상ID·reg6E 실제발화 시험. 당시 로컬 벤더 dispatcher 후보는 저장소 펌웨어가 아니며 로봇 설치 안 함. ESP32 소비 코드·병행 USB오디오·4핀PCM·간헐무음 해결/WBS완료로 표시 금지.
 - 작업일지06, dev/wonderecho-bridge-work/README.md 참조. 현재 실행/포트 작업 없음으로 위 Codex 구현잠금 해제; 후보는 보존. 소스는 미커밋, PR/게시 없음. 로컬 경로가 들어간 빌드 helper는 게시 전 인자화 필요.
 '@
 'REVIEW_LOG.md'=@'
