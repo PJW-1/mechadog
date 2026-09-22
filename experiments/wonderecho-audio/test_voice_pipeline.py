@@ -2,6 +2,7 @@
 
 import types
 import unittest
+import sys
 from unittest import mock
 
 import phrases as phr
@@ -80,6 +81,20 @@ class ScenarioTriggerTests(unittest.TestCase):
 
 
 class GuardScenarioTests(unittest.TestCase):
+    def test_guard_check_runs_without_llm_and_closes_com_port(self):
+        device = mock.Mock()
+        piper = types.SimpleNamespace(PiperVoice=types.SimpleNamespace(load=lambda _path: object()))
+        whisper = types.SimpleNamespace(WhisperModel=lambda *_a, **_kw: object())
+        with (
+            mock.patch.object(sys, "argv", ["voice_pipeline.py", "--port", "COM9", "--guard-check"]),
+            mock.patch.dict(sys.modules, {"piper": piper, "faster_whisper": whisper}),
+            mock.patch.object(vp, "open_transport", return_value=device),
+            mock.patch.object(scenarios, "sc_guard") as guard,
+        ):
+            vp.main()
+        guard.assert_called_once()
+        device.close.assert_called_once()
+
     def test_known_name_is_verified(self):
         ctx = FakeCtx(answers=["김민수 입니다"])
         scenarios.sc_guard(ctx)
@@ -92,6 +107,12 @@ class GuardScenarioTests(unittest.TestCase):
         # 거부 문구는 identity_fail 라이브러리 중 하나가 나와야 한다
         self.assertTrue(any(line in phr.PHRASES["identity_fail"] for line in ctx.lines))
         self.assertFalse(any(line in phr.PHRASES["identity_ok"] for line in ctx.lines))
+
+    def test_negated_or_embedded_name_is_not_verified(self):
+        for answer in ("김민수 아닙니다", "김민수 친구입니다"):
+            ctx = FakeCtx(answers=[answer])
+            scenarios.sc_guard(ctx)
+            self.assertTrue(any(line in phr.PHRASES["identity_fail"] for line in ctx.lines))
 
     def test_silence_is_logged_not_verified(self):
         ctx = FakeCtx(answers=[])

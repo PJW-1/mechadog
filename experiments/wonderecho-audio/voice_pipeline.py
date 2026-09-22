@@ -751,6 +751,7 @@ def main():
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
     ap.add_argument("--model", type=Path, help="GGUF chat model path")
     ap.add_argument("--say", help="synthesize this text and play it once, then exit")
+    ap.add_argument("--guard-check", action="store_true", help="신원 질의·청취·명단 대조·응답을 한 번 실행 (LLM 불필요)")
     ap.add_argument("--whisper", default="medium")
     ap.add_argument("--baud", type=int, default=0)
     ap.add_argument("--turns", type=int, default=0, help="0 = loop forever")
@@ -789,6 +790,22 @@ def main():
         help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
     )
     args = ap.parse_args()
+
+    if args.guard_check:
+        if args.say or args.model or args.tts != "piper":
+            ap.error("--guard-check 는 --say/--model/--tts orpheus 와 함께 쓸 수 없음")
+        from piper import PiperVoice
+        from faster_whisper import WhisperModel
+
+        piper = PiperVoice.load(str(args.piper_model))
+        stt = WhisperModel(args.whisper, device="cuda", compute_type="float16")
+        device = open_transport(args)
+        try:
+            ctx = ScenarioCtx(device, Decoder(max_payload=128), stt, piper, Hub(args.robot_id), [], args)
+            scenarios.sc_guard(ctx)
+        finally:
+            device.close()
+        return
 
     if args.say:
         from piper import PiperVoice

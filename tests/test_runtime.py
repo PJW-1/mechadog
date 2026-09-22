@@ -991,6 +991,10 @@ def test_full_walkthrough_person_to_authenticated(config: dict, clock: FakeClock
     assert runtime.escalation.level is Level.L0, "인증 성공은 L2 를 L0 으로 내린다"
     assert runtime.behavior.state == "PATROL"
     assert runtime.auth.holder(1, at) == config["auth"]["badge_marker_map"][marker_id]
+    stopped = runtime.tick(at + 100)
+    assert "MOVE" not in {json.loads(line)["type"] for line in stopped}
+    resumed = runtime.tick(at + config["auth"]["resume_delay_ms"])
+    assert "MOVE" in {json.loads(line)["type"] for line in resumed}
 
 
 def test_unknown_badges_exhaust_attempts_and_alarm(config: dict, clock: FakeClock) -> None:
@@ -1034,6 +1038,7 @@ def test_expired_session_asks_again(config: dict, clock: FakeClock) -> None:
 
 def test_session_dies_with_the_track(config: dict, clock: FakeClock) -> None:
     """FR-3.6.3 — 추적 ID 가 사라지면 세션도 만료된다."""
+    config["auth"]["bind_to_track_id"] = True
     vision = FakeVision()
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)

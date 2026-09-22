@@ -210,6 +210,8 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(auth, "timeout_s")
     _require_positive(auth, "verdict_grace_s")
     _require_positive(auth, "unknown_marker_min_frames")
+    if int(auth.get("resume_delay_ms", 3500)) < 0:
+        raise ConfigError("auth.resume_delay_ms 는 0 이상이어야 함")
     badges = auth.get("badge_marker_map")
     if badges is None or not isinstance(badges, dict):
         raise ConfigError("auth.badge_marker_map 은 사전(dict)이어야 함")

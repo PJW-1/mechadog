@@ -174,6 +174,8 @@ class Runtime:
         self._actions = register_actions(self._behavior, config)
         self._normal_patrol = self._behavior.sequence_for("PATROL")
         self._behavior.register_sequence("PATROL", self._patrol_sequence)
+        self._auth_resume_delay_ms = int(config["auth"].get("resume_delay_ms", 3500))
+        self._auth_resume_after: int | None = None
         self._normal_alert = self._behavior.sequence_for("ALERT")
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         self._behavior.fsm.on_exit("ALERT", lambda _previous, _target: self._ppe_return())
@@ -617,7 +619,9 @@ class Runtime:
             )
 
     def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
-        if self._ppe_move_after is not None and now_ms < self._ppe_move_after:
+        if (self._ppe_move_after is not None and now_ms < self._ppe_move_after) or (
+            self._auth_resume_after is not None and now_ms < self._auth_resume_after
+        ):
             commander.halt()
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
@@ -1049,7 +1053,9 @@ class Runtime:
         self._auth.note_tracks(result.tracks)
         outcome = self._auth.observe(result.markers, result.tracks, now_ms)
         if outcome in (Outcome.GRANTED, Outcome.BADGE_SEEN):
-            self._apply(Event.AUTH_OK, now_ms)
+            if self._apply(Event.AUTH_OK, now_ms) and self._behavior.state == "PATROL":
+                self._auth_resume_after = now_ms + self._auth_resume_delay_ms
+                LOG.info("auth_resume_wait", delay_ms=self._auth_resume_delay_ms)
         elif outcome is Outcome.EXHAUSTED:
             # 2회 실패 — 30초 무응답과 같은 결론이다 (FR-10.3).
             self._apply(Event.AUTH_FAILED, now_ms)
