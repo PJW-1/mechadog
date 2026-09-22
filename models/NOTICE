@@ -59,8 +59,10 @@ Copyright 2026 MechDog Physical AI Team
 
   변경 사항 — 세 출처를 하나로 병합하고 클래스 어휘를
   helmet / no_helmet / vest / no_vest / person_down 으로 통일했다
-  (`person` 은 1단 COCO 검출기가 담당하므로 제외, person_down 은 합성
-  세트에만 존재).
+  (`person` 은 1단 COCO 검출기가 담당하므로 제외).
+  ⚠️ 정정 — person_down 은 생성기 확률 설계(스폰 시 1회 5%)로
+  실제 학습 라벨이 0개었다. v2 가중치는 person_down 을
+  학습하지 못했으니 이 클래스의 검출을 기대하면 안 된다.
 
   ⚠️ 원본 이미지는 이 저장소로 재배포하지 않는다. 위 출처에서 각자 받는다.
 
