@@ -188,8 +188,8 @@ $s.Speak("Hello Hiwonder")   # 모듈 근처에서 재생
 ### 로봇 4핀 연동 (보수적 절차)
 
 1. 모듈 USB 완전 분리 → 4핀을 로봇에 연결 → 로봇만 USB 전원
-2. 로봇은 **SERVICE/parked 상태** — `robot-mapping.patch`(방향 ID 정정)가 로봇에 아직 미적용이므로 **구동 차단 상태에서 통신만** 확인
-3. 로봇 버스 `0x34` 응답 확인 → 음성 명령 시 reg0x6E 방송 관찰
+2. 로봇은 **SERVICE/parked 상태** — 저장소의 ESP32 펌웨어에는 WonderEcho 명령 소비 코드가 없으므로 **구동 차단 상태에서 버스 연결만** 확인
+3. OTA 진단 빌드와 비공개 인증 설정이 있을 때만 인가된 `/i2c/live` 요청으로 `0x34` 응답 확인. 기본 OTA-OFF 빌드에서는 되돌릴 이미지를 확보한 뒤 별도 `diagnostics/i2c_scan` 스케치를 사용
 
 ---
 
@@ -203,7 +203,7 @@ $s.Speak("Hello Hiwonder")   # 모듈 근처에서 재생
 | `wave fmt err` | MP3 디코더 꺼짐 or 파티션 밀림 | `user_config.h` MP3 플래그·오프셋 검증 |
 | 인식되는데 소리 없음 | PDM 전원 미인가(v37 이하 증상) | `main.c`에 `pdm_power_up` 있는지 확인 → v38인지 |
 | 소리 나다가 방치 후 무반응 | 공장 `pause_asr` 스턱 버그 | 전원 사이클, 재발 시 로그 공유 |
-| 로봇이 명령에 반대로 움직임 | `robot-mapping.patch` 미적용 | **즉시 중지** — 로봇 패치 후 재시도 |
+| 로봇이 음성 명령으로 움직이지 않음 | ESP32 WonderEcho 소비 코드 미구현 | 4.7.9 구현 전에는 버스 연결만 검증 |
 
 ---
 
@@ -212,6 +212,6 @@ $s.Speak("Hello Hiwonder")   # 모듈 근처에서 재생
 - `TESTING.md` — 팀원 테스트 절차·버전 설명·보고 양식
 - `bridge/README.md` — v34 브리지 상세
 - `bridge/pdm-output/README.md` — v37/v38 상세
-- `bridge/robot-mapping.patch` — 로봇 측 수정 패치
+- `bridge/check_robot_mapping.py` — 저장소 밖 벤더 dispatcher 스냅샷용 수동 검사
 
 *작성 2026-09-20*

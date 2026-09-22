@@ -152,29 +152,8 @@ modify(
 )
 (DEST / "sdk-integration.patch").write_text("".join(changes), encoding="utf-8")
 
-robot = (ROOT / "voice_dispatch.before.cpp").read_text(encoding="utf-8")
-fixed = robot.replace('case 2: return "TURN-LEFT";', 'case 3: return "TURN-LEFT";')
-fixed = fixed.replace('case 3: return "TURN-RIGHT";', 'case 4: return "TURN-RIGHT";')
-fixed = fixed.replace('case 4: return "GO-BACKWARD";', 'case 2: return "GO-BACKWARD";')
-fixed = fixed.replace("case 2:  // TURN-LEFT", "case 3:  // TURN-LEFT")
-fixed = fixed.replace("case 3:  // TURN-RIGHT", "case 4:  // TURN-RIGHT")
-fixed = fixed.replace("case 4:  // GO-BACKWARD", "case 2:  // GO-BACKWARD")
-fixed = fixed.replace('case 29: return "DIVE-FORWARD";', 'case 29: return "MARCH";')
-assert fixed != robot
-(ROOT / "voice_dispatch.corrected.cpp").write_text(fixed, encoding="utf-8")
-(DEST / "robot-mapping.patch").write_text(
-    "".join(
-        difflib.unified_diff(
-            robot.splitlines(True),
-            fixed.splitlines(True),
-            fromfile="a/firmware_mechdog_motion/src/voice_dispatch.cpp",
-            tofile="b/firmware_mechdog_motion/src/voice_dispatch.cpp",
-        )
-    ),
-    encoding="utf-8",
-)
 manifest = {
     f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in DEST.iterdir() if f.is_file()
 }
 (ROOT / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-print("Prepared isolated bridge build and source patches; no device writes.")
+print("Prepared isolated bridge build and SDK patch; no device writes.")

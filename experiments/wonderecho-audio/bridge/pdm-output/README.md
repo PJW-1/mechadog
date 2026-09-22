@@ -25,7 +25,7 @@
 - v34 브리지: PC 네이티브 테스트 + CI1302 컴파일 + 패키지 검증 완료, 로봇 버스 0x34 ACK 실측
 - v37 계측: ASR→UART TX, play 완주, IRQ/피크 증가 실측
 - v38 PDM 수정: **실물 미검증** — 소리 청취가 첫 번째 확인 항목
-- 로봇 `voice_dispatch` 방향 매핑 정정(`robot-mapping.patch`)은 로봇에 **미적용**
+- ESP32 WonderEcho 명령 소비 코드는 저장소에 **미구현**이며 WBS 4.7.9에서 새로 작성해야 함
 
 ## 설치 파일 위치
 

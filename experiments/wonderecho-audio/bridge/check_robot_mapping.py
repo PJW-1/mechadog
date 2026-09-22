@@ -1,13 +1,23 @@
-"""Compile the corrected robot dispatcher against bounded fake hardware."""
+"""Compile an external vendor dispatcher against bounded fake hardware."""
 
+import argparse
 import os
 import re
 import subprocess
 from pathlib import Path
 
-ROOT = Path("<WE_SDK_TREE>")
-ZIG = Path("<ZIG_EXE>")
-source = (ROOT / "voice_dispatch.corrected.cpp").read_text(encoding="utf-8")
+parser = argparse.ArgumentParser(
+    description="Manually check an external vendor voice dispatcher; not a repository test."
+)
+parser.add_argument("--source", type=Path, required=True, help="vendor voice_dispatch.cpp")
+parser.add_argument("--zig", type=Path, required=True, help="zig executable")
+parser.add_argument("--work-dir", type=Path, required=True, help="directory for generated files")
+args = parser.parse_args()
+
+ROOT = args.work_dir
+ROOT.mkdir(parents=True, exist_ok=True)
+ZIG = args.zig
+source = args.source.read_text(encoding="utf-8")
 source = re.sub(r"^#include[^\n]*\n", "", source, flags=re.MULTILINE)
 prefix = r"""
 #ifdef NDEBUG
