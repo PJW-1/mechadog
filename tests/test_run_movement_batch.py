@@ -1,7 +1,6 @@
 """run_movement_batch 의 케이스 선택과 기록 저장 경로를 검증한다."""
 
 import json
-from pathlib import Path
 
 from tools import field_plan as plan
 from tools import run_movement_batch as batch
