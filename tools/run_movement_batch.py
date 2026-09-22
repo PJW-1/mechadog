@@ -122,10 +122,14 @@ def main() -> int:
         or "unknown"
     )
 
-    cases = sessions.movement_cases(plan.catalog()["cases"])
+    all_cases = plan.catalog()["cases"]
     only = set(sys.argv[1:])
     if only:
-        cases = [c for c in cases if c["id"] in only]
+        # ID 를 주면 이동 항목이 아니어도(정지 수신·서비스 왕복 등) 실행한다 —
+        # 경로가 있는 항목만 sessions.run 이 받는다.
+        cases = [c for c in all_cases if c["id"] in only]
+    else:
+        cases = sessions.movement_cases(all_cases)
     print(f"일괄 실행 항목 {len(cases)}개: {' · '.join(c['id'] for c in cases)}", flush=True)
 
     payload = {
