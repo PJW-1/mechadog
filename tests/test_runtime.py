@@ -1135,7 +1135,7 @@ def test_track_turns_toward_the_target(config: dict, clock: FakeClock) -> None:
     left = _move(runtime.tick(200))
     assert left is not None, "추종 중에는 명령이 나가야 한다"
     assert left["angle"] > 0, "왼쪽에 있으면 좌회전(양수)이다"
-    assert left["step"] > 0, "제자리 회전이 불가하므로 조향에 보폭이 따라붙는다 (DR-11)"
+    assert left["step"] > 0, "제자리 회전을 전제하지 않으므로 조향에 보폭이 따라붙는다 (DR-11)"
 
     _sighting(runtime, vision, seq=2, at_ms=300, box=(580.0, 200.0, 620.0, 400.0))
     right = _move(runtime.tick(400))

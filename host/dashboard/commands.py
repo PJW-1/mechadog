@@ -72,6 +72,8 @@ class CommandService:
         apply_event: Callable[[Event], bool] | None = None,
         ask_patrol: Callable[[], None] | None = None,
         set_mode: Callable[[str], str | None] | None = None,
+        note_voice_auth: Callable[[bool], tuple[bool, str]] | None = None,
+        note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -88,6 +90,14 @@ class CommandService:
         # 바뀌지 않았다**(FR-10.4). 같은 실기에서 `MANUAL` 26.7초의 전이도 로그에 한
         # 줄도 남지 않았다. 런타임이 없는 시험에서는 전이만 필요하므로 기본값을 둔다.
         self._apply_event = apply_event if apply_event is not None else behavior.event
+        # 음성 암구호는 **시도 횟수를 세야 해서** 사건 하나로 옮길 수 없다 (FR-10.3).
+        # 세는 곳은 런타임이다 — `AUTH_WAIT` 에 언제 들어왔는지를 아는 쪽이 거기뿐이다.
+        # 런타임이 없는 시험에서는 예전처럼 사건만 넣는다.
+        self._note_voice_auth = note_voice_auth
+        # «판정이 오는 중» 신호 (FR-10.3 · ADR-37). 판정이 아니라 **창의 수명**만
+        # 건드리므로 `note_voice_auth` 와 다른 자리다 — 섞으면 «시도를 세는 것» 과
+        # «기다려 주는 것» 이 한 함수에 들어간다.
+        self._note_voice_listening = note_voice_listening
 
     @property
     def state(self) -> str:
@@ -303,7 +313,7 @@ class CommandService:
             detail=refused if refused is not None else f"운용 모드를 {target} 로 바꿨다",
         )
 
-    def auth(self, result: str) -> CommandResult:
+    def auth(self, result: str, captured_at_ms: int | None = None) -> CommandResult:
         """음성 암구호 인증의 **판정 결과**를 사건으로 넣는다 (WBS 3.8.2 · FR-10.2).
 
         이 엔드포인트는 *인증을 수행하지 않는다* — 암구호 문구 대조는 음성
@@ -311,15 +321,47 @@ class CommandService:
         `AUTH_OK` / `AUTH_FAILED` 로 옮긴다. 전이표가 `AUTH_WAIT` 에서만 두
         사건을 받으므로 다른 상태의 호출은 자동으로 거절된다 — `apply_event`
         가 False 를 돌려주는 게 그 거절이다.
+
+        ⚠️ **불일치는 사건이 아니라 시도다** (FR-10.3). `max_attempts` 를 세는
+        일은 런타임이 하므로(`note_voice_auth`) 여기서 `AUTH_FAILED` 를 바로
+        만들지 않는다. 그렇게 만들었더니 오인식 한 번이 곧 L3 경보였다.
         """
-        event = {"ok": Event.AUTH_OK, "fail": Event.AUTH_FAILED}.get(result)
-        if event is None:
+        if result not in ("ok", "fail", "pending"):
             return CommandResult(
                 command="auth",
                 accepted=False,
                 state=self._behavior.state,
-                detail=f"모르는 인증 결과: {result!r} (ok|fail)",
+                detail=f"모르는 인증 결과: {result!r} (ok|fail|pending)",
             )
+        if result == "pending":
+            # **판정이 아니다.** 발화를 받아 두었고 전사가 돌고 있다는 통지이며,
+            # 하는 일은 `AUTH_WAIT` 마감을 한 번 미루는 것뿐이다 (ADR-37).
+            if self._note_voice_listening is None:
+                return CommandResult(
+                    command="auth",
+                    accepted=False,
+                    state=self._behavior.state,
+                    detail="이 호스트는 인증 유예를 다루지 않는다",
+                )
+            accepted, detail = self._note_voice_listening(captured_at_ms)
+            return CommandResult(
+                command="auth",
+                accepted=accepted,
+                state=self._behavior.state,
+                detail=detail,
+            )
+        if self._note_voice_auth is not None:
+            # `captured_at_ms` 는 **사람이 말한 시각**이다. 창이 열리기 전의 발화를
+            # 시도로 세지 않기 위해 런타임까지 그대로 내려보낸다 — 창이 언제
+            # 열렸는지 아는 쪽이 거기뿐이다.
+            accepted, detail = self._note_voice_auth(result == "ok", captured_at_ms)
+            return CommandResult(
+                command="auth",
+                accepted=accepted,
+                state=self._behavior.state,
+                detail=detail,
+            )
+        event = Event.AUTH_OK if result == "ok" else Event.AUTH_FAILED
         accepted = self._apply_event(event)
         return CommandResult(
             command="auth",

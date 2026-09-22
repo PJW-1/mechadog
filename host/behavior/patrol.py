@@ -138,7 +138,7 @@ class Steering:
 def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
     """방위 오차를 호(arc) 조향으로 바꾼다.
 
-    **제자리 회전이 없다** (DR-11). 그래서 세 구간으로 나뉜다.
+    **제자리 회전을 쓰지 않는다** (DR-11). 그래서 세 구간으로 나뉜다.
 
     | 오차 | 보행 | 근거 |
     | :--- | :--- | :--- |

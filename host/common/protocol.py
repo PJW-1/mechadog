@@ -94,7 +94,9 @@ NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
 #: 않는다. 근거 없는 상한을 코드에 박으면 그것이 사실상의 규약이 되어버린다.
 CLAMP_RANGES: dict[str, tuple[float, float]] = {
     "step": (-100, 100),  # mm
-    "angle": (-30, 30),  # deg — arc 조향. 제자리 회전 불가 (DR-11)
+    # deg — arc 조향. `step=0` 이면 제자리에서 돌기는 하지만 산포가 82% 라
+    # 제어에 쓰지 않는다 (2026-09-22 실측 · DR-11).
+    "angle": (-30, 30),
     "id": (0, 15),  # 내장 액션 그룹
 }
 
