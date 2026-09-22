@@ -442,11 +442,17 @@ class HubScenarioQueueTests(unittest.TestCase):
     def test_auth_prompt_once_per_wait(self):
         hub = vp.Hub("test")
         self.assertIsNone(hub.auth_prompt("PATROL"))
-        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+        self.assertEqual(
+            hub.auth_prompt("AUTH_WAIT"),
+            "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오.",
+        )
         self.assertIsNone(hub.auth_prompt("AUTH_WAIT"))
         self.assertIsNone(hub.auth_prompt(None))
         self.assertIsNone(hub.auth_prompt("IDLE"))
-        self.assertEqual(hub.auth_prompt("AUTH_WAIT"), "멈췄습니다. 암구호를 말씀해 주세요.")
+        self.assertEqual(
+            hub.auth_prompt("AUTH_WAIT"),
+            "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오.",
+        )
 
     def test_scenario_item_flows_through_say_queue(self):
         hub = vp.Hub("test")
@@ -696,3 +702,56 @@ class RouteQueryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RobotEscalationWarningTests(unittest.TestCase):
+    """단계가 오르면 경고를 읽는다 (WBS 3.5.6 · FR-3.4)."""
+
+    def _poll(self, hub, events):
+        original = vp.robotlink.fetch_events
+        vp.robotlink.fetch_events = lambda _base, since: (events, 0, since + len(events))
+        try:
+            hub._robot_next_poll = 0
+            hub.poll_robot_events("http://127.0.0.1:8000")
+        finally:
+            vp.robotlink.fetch_events = original
+
+    def test_level_change_is_spoken_urgently(self):
+        hub = vp.Hub("test")
+        hub.enqueue_say("나중에 읽을 공지")
+        self._poll(
+            hub,
+            [
+                {
+                    "event": "escalation_changed",
+                    "state": "AUTH_WAIT",
+                    "escalation": "L2",
+                    "warning": "사원증을 보여 주십시오.",
+                }
+            ],
+        )
+        items = [item for _, _, item in hub.drain_say()]
+        self.assertEqual(items[0], "사원증을 보여 주십시오.")  # 공지보다 앞이다
+
+    def test_other_events_are_journaled_but_not_spoken(self):
+        """⚠️ 사람 확정마다 말하면 순찰이 방송이 된다."""
+        hub = vp.Hub("test")
+        self._poll(hub, [{"event": "person_found", "state": "ALERT", "escalation": "L1"}])
+        self.assertEqual(hub.drain_say(), [])
+        self.assertTrue(any("person_found" in e["text"] for e in hub.events))
+
+    def test_a_level_without_a_warning_says_nothing(self):
+        """L0 복귀까지 읽으면 경보 해제가 새 방송이 된다."""
+        hub = vp.Hub("test")
+        self._poll(
+            hub,
+            [
+                {
+                    "event": "escalation_changed",
+                    "state": "PATROL",
+                    "escalation": "L0",
+                    "warning": None,
+                }
+            ],
+        )
+        self.assertEqual(hub.drain_say(), [])

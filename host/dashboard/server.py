@@ -293,6 +293,29 @@ def _local_origins(port: int) -> set[str]:
     return allowed
 
 
+class _RevalidatedStatic(StaticFiles):
+    """정적 파일마다 `Cache-Control: no-cache` 를 붙인다.
+
+    ⚠️ **없으면 브라우저가 옛 화면을 계속 보여 준다.** `StaticFiles` 는 ETag 와
+    `Last-Modified` 만 주고 `Cache-Control` 을 주지 않는데, 그러면 브라우저가
+    스스로 신선도를 추정해서 재검증 없이 사본을 쓴다. 2026-09-22 실기에서
+    **새로 넣은 «경보 확인 (L3 해제)» 버튼이 화면에 나오지 않았다** — 서버는 새
+    파일을 내려주고 있었고 브라우저가 옛 사본을 쥐고 있었다.
+
+    ⚠️ **버튼이 없는 것보다 이 쪽이 위험하다.** 같은 화면이 `FSM IDLE`·
+    `래치 해제됨` 을 보여 주는 동안 실제 상태는 `TRACK`·**L3** 였다. 없는 버튼은
+    눈에 보이지만 틀린 단계는 눈에 보이지 않는다.
+
+    `no-cache` 는 *"저장하지 말라"* 가 아니라 *"쓰기 전에 물어보라"* 다. ETag 가
+    그대로면 304 만 오가므로 대역은 거의 늘지 않는다.
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(
     state: DashboardState,
     commands: CommandService | None = None,
@@ -584,7 +607,7 @@ def create_app(
     if static_dir is not None and static_dir.is_dir():
         # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
         # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
+        app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
 
     return app
 

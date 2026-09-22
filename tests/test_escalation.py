@@ -283,10 +283,47 @@ def test_failsafe_without_alarm_returns_to_patrol(esc: Escalation) -> None:
 
 
 # ── 표현 ───────────────────────────────────────────────────
-def test_sound_ids_are_absent_until_flashed(esc: Escalation) -> None:
-    """WonderEcho 문구 ID 는 플래싱 후에 채운다 (OI-10/11). **없는 것을 없다고 말한다.**"""
+def test_only_the_alarm_level_carries_a_warning(esc: Escalation, cfg: dict) -> None:
+    """경고 문장은 **L3 에만** 붙는다 (WBS 3.5.6 · 2026-09-23 정정).
+
+    ⚠️ 평상 단계에 문장이 붙으면 순찰 내내 말하게 된다. *"단계가 바뀌면 읽는다"*
+    가 성립하려면 읽을 것이 없는 단계가 실제로 없어야 한다.
+    """
+    assert esc.presentation().warning is None, "L0 은 읽을 것이 없다"
+    _see(esc, T0)
+    assert esc.presentation().warning is None, "L1 은 관찰일 뿐 경고가 아니다"
+
     esc.note_event("AUTH_FAILED", T0)
-    assert esc.presentation().sound_id is None
+    assert esc.level is Level.L3
+    assert esc.presentation().warning == cfg["escalation"]["sound"]["l3_warning"]
+
+
+def test_the_warning_is_a_sentence_not_a_number(cfg: dict) -> None:
+    """⚠️ **문구 ID 설계는 버렸다 (2026-09-23).**
+
+    로봇에 `SOUND {phrase_id}` 를 보내는 경로는 죽어 있었다 — 펌웨어가 파싱만
+    하고 처리하지 않는다. 설정에 정수가 남아 있으면 두 설계가 다시 갈라진다.
+    """
+    value = cfg["escalation"]["sound"]["l3_warning"]
+    assert isinstance(value, str) and value.strip(), "l3_warning 이 비어 있다"
+    assert not value.strip().isdigit(), "l3_warning 이 아직 문구 ID 다"
+
+
+def test_the_auth_request_sentence_does_not_live_here(esc: Escalation, cfg: dict) -> None:
+    """⚠️ **L2 문장을 단계 설정에 두지 않는다** (2026-09-23 정정).
+
+    처음에는 여기에 「사원증을 보여 주십시오」 를 적었고 두 가지가 틀렸다.
+    ① `auth.require_both` 가 참이라 **암구호가 먼저**이며 그 전의 사원증은 판정조차
+    되지 않는다 — 순서를 거꾸로 말했다. ② 음성 쪽 `Hub.auth_prompt` 가 같은 자리에서
+    이미 안내해 **두 문장이 겹쳐 나갔다.**
+
+    남은 한 문장을 음성 쪽에 두는 이유는 그 안내가 **시도 계수 게이트를 여는
+    행위이기 때문이다** — 문장만 이리로 옮기면 사건 폴링(5초) 만큼 묻기 전에
+    게이트만 열리는 창이 생긴다.
+    """
+    assert cfg["escalation"]["sound"]["l2_warning"] is None
+    esc.raise_to(Level.L2, reason="test", now_ms=T0)
+    assert esc.presentation().warning is None
 
 
 def test_unknown_event_is_ignored(esc: Escalation) -> None:
