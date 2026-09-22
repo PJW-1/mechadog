@@ -2235,3 +2235,64 @@ def test_a_fall_is_recorded_once_not_every_tick(
 
     falls = [entry for entry in blackbox.feed() if entry.event_type == "person_fallen"]
     assert len(falls) == 1, "엣지에서만 한 번이어야 한다"
+
+
+def test_the_level_edge_publishes_one_warning_not_one_per_tick(
+    config: dict, clock: FakeClock
+) -> None:
+    """⚠️ **경고는 단계 엣지에 건다. 상태에 걸면 겹쳐 나간다** (WBS 3.5.6).
+
+    `ALERT ⇄ TRACK` 왕복 체류가 0.2~0.6초로 실측됐다(2026-09-18). 상태 진입에
+    걸면 10Hz 루프에서 같은 경고가 초당 몇 번씩 나간다. 여기서는 L2 로 올라가는
+    동안 사건이 **단계마다 하나씩만** 나오는지 본다.
+    """
+    from host.dashboard.state import DashboardState
+
+    board = DashboardState("mechdog-02", stale_after_ms=3000)
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision, dashboard=board)
+    runtime.start_patrol(clock.ms)
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+    for i in range(hold_ms // 100 + 1):
+        _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+    assert runtime.escalation.level is Level.L2
+
+    events, dropped = board.events_since(0)
+    assert dropped == 0
+    changes = [e for e in events if e["event"] == "escalation_changed"]
+    # 첫 틱에서 이미 사람을 봐 L1 이 되므로 L0 은 사건으로 나오지 않는다 — 엣지는
+    # 틱 끝에서 한 번 보고, 그때 단계는 이미 L1 이다.
+    assert [e["escalation"] for e in changes] == ["L1", "L2"], (
+        "단계마다 하나씩이다 — 10Hz 로 백 번 도는 동안 L1 이 여러 번 나오면 안 된다"
+    )
+    assert changes[0]["warning"] is None, "관찰 단계는 읽을 것이 없다"
+    assert changes[1]["warning"] == config["escalation"]["sound"]["l2_warning"]
+
+
+def test_a_quiet_promotion_still_reaches_the_event_feed(config: dict, clock: FakeClock) -> None:
+    """⚠️ **블랙박스 사건에 얹으면 이 승격을 놓친다** (WBS 3.5.6).
+
+    사진을 남기는 자리는 네 곳뿐이고 그중 어느 것도 *"미인증 10초"* 에는 걸리지
+    않는다. 사람 확정은 L1 에서 이미 지나갔으므로, L1→L2 구간에는 블랙박스
+    사건이 **하나도 없다.** 그래도 경고는 나가야 한다.
+    """
+    from host.dashboard.state import DashboardState
+
+    board = DashboardState("mechdog-02", stale_after_ms=3000)
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision, dashboard=board)
+    runtime.start_patrol(clock.ms)
+    hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
+    _stand(runtime, vision, seq=1, at_ms=100)
+    assert runtime.escalation.level is Level.L1
+    seen_at_l1 = board.event_seq
+
+    for i in range(1, hold_ms // 100 + 1):
+        _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+    assert runtime.escalation.level is Level.L2
+
+    later, _ = board.events_since(seen_at_l1)
+    assert [e["event"] for e in later] == ["escalation_changed"], (
+        "L1→L2 사이에 블랙박스 사건이 없다 — 단계 사건이 없으면 경고가 안 나간다"
+    )
+    assert later[0]["warning"] == config["escalation"]["sound"]["l2_warning"]

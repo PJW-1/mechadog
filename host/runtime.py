@@ -1246,6 +1246,37 @@ class Runtime:
         self._commander.once("LED", color=seen.led, blink_hz=blink)
         self._last_eye_led_ms = now_ms
 
+    def _announce_escalation(self, now_ms: int) -> None:
+        """단계가 바뀐 **그 순간**을 사건으로 낸다 (WBS 3.5.6 · FR-3.4).
+
+        ⚠️ **상태가 아니라 단계에 건다.** `ALERT ⇄ TRACK` 왕복 체류가 0.2~0.6초로
+        실측됐다(2026-09-18). 상태 진입에 걸면 경고가 초당 몇 번씩 겹쳐 나간다.
+        단계는 그 왕복에 영향받지 않으므로 엣지가 그대로 중복 억제가 된다.
+
+        ⚠️ **블랙박스 사건에 얹지 않는다.** 그 사건은 사진을 저장할 때만 나가는데
+        (`_record_scene` 네 곳), 미인증 10초로 조용히 L2 가 되는 경우에는 그 넷 중
+        아무 일도 일어나지 않는다. 얹어 두면 **경고가 늦거나 아예 안 나간다** —
+        음성 쪽은 한참 뒤 엉뚱한 사건에 얹혀 온 값을 보고서야 알아챈다.
+
+        ⚠️ **읽을 문장을 여기서 실어 보낸다.** 단계와 문구가 한곳에 있어야 단계를
+        고칠 때 문구가 남지 않는다. 음성 쪽은 받은 문장을 읽기만 한다.
+        """
+        if self._dashboard is None:
+            return
+        level = self._escalation.level.value
+        if not self._edge.changed("escalation_level", level):
+            return
+        self._dashboard.record_event(
+            {
+                "event": "escalation_changed",
+                "ts_ms": now_ms,
+                "state": self._behavior.state,
+                "escalation": level,
+                "mode": self._mission.mode,
+                "warning": self._escalation.presentation().warning,
+            }
+        )
+
     def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
         self._track_stop_reached = False
@@ -1349,6 +1380,7 @@ class Runtime:
         if digest:
             LOG.info("telemetry_summary", **digest)
         phase_started = time.perf_counter()
+        self._announce_escalation(now_ms)
         if self._dashboard is not None:
             self._dashboard.publish(
                 telemetry=self._last_telemetry if self._last_telemetry["available"] else None,
