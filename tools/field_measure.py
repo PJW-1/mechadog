@@ -230,7 +230,7 @@ def _send(ctx: Ctx, packet: str) -> None:
     ctx.sock.sendto(packet.encode("utf-8"), ctx.peer)
 
 
-def m_link(ctx: Ctx) -> Result:
+def m_link(ctx: Ctx) -> Result:  # pragma: no cover - 실기 측정용
     """0. 텔레메트리 링크 기저선 — 이게 없으면 아래 자동 항목이 전부 무의미하다."""
     print("  3초 동안 수신률을 잰다…")
     t0 = time.perf_counter()
@@ -262,7 +262,7 @@ def m_link(ctx: Ctx) -> Result:
     )
 
 
-def m_cmd_timeout(_ctx: Ctx) -> Result:
+def m_cmd_timeout(_ctx: Ctx) -> Result:  # pragma: no cover - 실기 측정용
     """Invalid legacy measurement intentionally cannot actuate the robot."""
     return Result(
         "외부 계측 필요",
@@ -272,7 +272,7 @@ def m_cmd_timeout(_ctx: Ctx) -> Result:
     )
 
 
-def m_drive(ctx: Ctx, mode: str) -> Result:
+def m_drive(ctx: Ctx, mode: str) -> Result:  # pragma: no cover - 실기 측정용
     """2-2. 전진/후진 직선거리 — 줄자 입력. 구동 창의 IMU 도 같이 남긴다."""
     if ctx.tap is not None and not _require_telemetry(ctx):
         return Result("이동량", "2.2.3", "skipped", "새 텔레메트리 없음 — 구동 안 함")
@@ -363,7 +363,7 @@ TURN_LABELS: dict[str, str] = {
 }
 
 
-def m_turn(ctx: Ctx, mode: str) -> Result:
+def m_turn(ctx: Ctx, mode: str) -> Result:  # pragma: no cover - 실기 측정용
     """2-2. 선회율 — 외부 각도/시간으로 산출. IMU 차이는 참고값만 기록.
 
     ⚠️ angle 양수 = 반시계 = 좌회전(PROTOCOL). turn_right 는 음수를 보낸다.
@@ -430,7 +430,7 @@ def m_turn(ctx: Ctx, mode: str) -> Result:
     )
 
 
-def m_gait_imu(_ctx: Ctx) -> Result:
+def m_gait_imu(_ctx: Ctx) -> Result:  # pragma: no cover - 실기 측정용
     """Invalid legacy measurement intentionally cannot actuate the robot."""
     return Result(
         "외부 계측 필요",
@@ -440,7 +440,7 @@ def m_gait_imu(_ctx: Ctx) -> Result:
     )
 
 
-def m_teleop(ctx: Ctx) -> Result:
+def m_teleop(ctx: Ctx) -> Result:  # pragma: no cover - 실기 측정용
     """2-4. 방향 매핑 — 각 키를 한 번씩 보내고 사람이 방향을 확인한다."""
     keys = [
         ("W 전진", 60, 0),
@@ -478,7 +478,7 @@ def m_teleop(ctx: Ctx) -> Result:
     )
 
 
-def m_service(ctx: Ctx) -> Result:
+def m_service(ctx: Ctx) -> Result:  # pragma: no cover - 실기 측정용
     """1-1/1-3. SERVICE 명령 왕복 + GPIO5 버튼 — 플래그 반전을 텔레메트리로 본다."""
     if not _require_telemetry(ctx):
         return Result("서비스 왕복", "확장팩", "skipped", "텔레메트리 없음", {})
@@ -528,7 +528,7 @@ def m_service(ctx: Ctx) -> Result:
     )
 
 
-def m_e2e(_ctx: Ctx) -> Result:
+def m_e2e(_ctx: Ctx) -> Result:  # pragma: no cover - 실기 측정용
     """Invalid legacy measurement intentionally cannot actuate the robot."""
     return Result(
         "외부 계측 필요",
@@ -591,7 +591,7 @@ def save(results: list[Result], out_dir: Path, device: str) -> Path:
     return path
 
 
-def main() -> int:
+def main() -> int:  # pragma: no cover - 실기 측정용
     survive_encoding_errors()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--device", default="mechdog-02")
