@@ -352,6 +352,18 @@ class RobotlinkTests(unittest.TestCase):
         self.assertIn("IDLE", st)
         self.assertIn("L0", st)
 
+    def test_fetch_status_speaks_distance(self):
+        # 거리를 물어 status 로 왔는데 요약에 거리가 없으면 답이 안 된다.
+        payload = {
+            "state": "ALERT",
+            "escalation": "L3",
+            "telemetry": {"batt_v": 8.6, "dist_cm": 152},
+            "stale": False,
+        }
+        with mock.patch.object(robotlink, "_get", return_value=payload):
+            st = robotlink.fetch_status()
+        self.assertIn("152센티미터", st)
+
     def test_fetch_status_no_telemetry_yet(self):
         # 시뮬·링크 전 상태 — telemetry=None 이 와도 죽지 않는다.
         payload = {"state": "FAILSAFE", "escalation": "L3", "telemetry": None, "stale": True}
@@ -694,6 +706,12 @@ class RouteQueryTests(unittest.TestCase):
     def test_status_query(self):
         self.assertEqual(vp.route_query("배터리어때"), "status")
         self.assertEqual(vp.route_query("지금상태알려줘"), "status")
+
+    def test_distance_query_is_status_not_llm(self):
+        # dist_cm 은 실측으로 들어오는데 호출어에 없어서 LLM 으로 새고
+        # 지어낸 거리가 발화됐다 (9/23 실측 확인).
+        self.assertEqual(vp.route_query("거리얼마야"), "status")
+        self.assertEqual(vp.route_query("앞에장애물있어"), "status")
 
     def test_unrelated_goes_to_llm(self):
         self.assertEqual(vp.route_query("오늘점심뭐야"), "llm")

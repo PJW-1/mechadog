@@ -49,6 +49,8 @@ def fetch_status(base=DEFAULT_BASE):
         parts.append(f"배터리 {tele['batt_v']:.2f}볼트")
     if tele.get("temp_c") is not None:
         parts.append(f"내부 온도 {tele['temp_c']:.0f}도")
+    if tele.get("dist_cm") is not None:
+        parts.append(f"전방 거리 {tele['dist_cm']:.0f}센티미터")
     if snap.get("state"):
         parts.append(f"동작 상태 {snap['state']}")
     # /api/telemetry 의 escalation 은 'L0'~'L3' 문자열이다 (객체가 아니다).
@@ -281,7 +283,7 @@ def post_auth_result(ok, base=DEFAULT_BASE, captured_at_ms=None):
     return True, res.get("detail") or ""
 
 
-_STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전")
+_STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전", "거리", "장애물")
 
 
 def is_status_query(norm_query: str) -> bool:
