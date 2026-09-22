@@ -259,16 +259,32 @@ def test_the_seed_holds_no_contact_shaped_text(db: Path) -> None:
         assert not hits, f"{shape.pattern}: {hits[:3]}"
 
 
-# ── FR-11.7 — 아직 열리면 안 된다 ──────────────────────────
-def test_assist_mode_is_still_refused() -> None:
-    """**이 패키지만으로 현장지원 모드가 켜지면 안 된다.**
+# ── FR-11.7 — 네 모듈이 다 있어야 열린다 ────────────────────
+def test_assist_mode_opens_only_with_router_and_service() -> None:
+    """`4.7.16`·`4.7.17` 이 들어와 현장지원 모드가 열린다.
 
-    `4.7.16` 질의 라우터와 `4.7.17` 신선도 계약이 없는 채로 열리면, 로봇은 조회
-    분기도 신선도 판정도 없이 현장지원 순찰을 돈다. 여기서 빈 `service.py` 를
-    하나 만들어 두고 싶어지는 순간이 바로 FR-11.7 이 막으려던 자리다.
+    ⚠️ **모듈 이름을 손으로 적는다.** `REQUIRES` 에서 읽어 오면 그 표를 비웠을 때
+    시험도 같이 비어 통과한다. 모드를 여는 조건은 시험이 따로 알고 있어야 한다.
     """
-    assert missing_requirements("assist") == (
+    assert missing_requirements("assist") == ()
+    assert "assist" in available_modes()
+
+    import host.behavior.mission as mission_mod
+
+    assert mission_mod.REQUIRES["assist"] == (
         "host.factory_ops.service",
         "host.factory_ops.router",
     )
+
+
+def test_assist_closes_again_when_a_module_disappears(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**모듈이 사라지면 모드도 닫힌다.**
+
+    capability 검사가 설정 플래그가 아니라 모듈 존재를 묻는 이유가 이것이다
+    (FR-11.7). 기능을 지우고 표기만 남기는 길이 없어야 한다.
+    """
+    import host.behavior.mission as mission_mod
+
+    monkeypatch.setitem(mission_mod.REQUIRES, "assist", ("host.factory_ops.nope",))
+    assert missing_requirements("assist") == ("host.factory_ops.nope",)
     assert "assist" not in available_modes()
