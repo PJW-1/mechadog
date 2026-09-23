@@ -39,7 +39,7 @@
 - `bridge/diagnostics/` — v35 진단 계측 (`v35-from-v34.patch` + 스냅샷)
 - `bridge/mp3-fix/` — v36 MP3 디코더 복원 (`v36-from-v35.patch`)
 - `bridge/pdm-output/` — **v37/v38 최신**: 출력 계측 + PDM 전원 수정, `v38-src/`에 실제 빌드된 소스 스냅샷
-- `bridge/robot-mapping.patch` — 로봇 측 `voice_dispatch` 방향 ID 정정 (로봇에 미적용 — 적용 전까지 구동 차단 상태에서만 테스트)
+- `bridge/check_robot_mapping.py` — 저장소 밖 벤더 `voice_dispatch.cpp` 스냅샷용 수동 검사. 로봇 펌웨어 통합물이 아니다
 - 상위 `main.c`, `voice_stream.c`, `user_config.h` 등 — WEC1 스트림 계열(v27) 소스. 로그 빌드 계열(v34~38)과 다른 계열이니 `pdm-output/v38-src/`를 기준으로 볼 것
 
 ### 직접 빌드하려면
@@ -83,9 +83,16 @@ while time.monotonic()<e:
 1. 모듈 USB 분리 (전원 완전 차단)
 2. 모듈 4핀 → 로봇 연결
 3. 로봇만 USB로 PC 연결 → 로봇이 모듈에 전원 공급
-4. 로봇은 **SERVICE/parked 상태** 유지 — 로봇 측 `voice_dispatch` 방향 매핑(2/3/4) 수정이 아직 미적용이라 **구동 차단 상태에서 통신만 확인**
+4. 로봇은 **SERVICE/parked 상태** 유지 — 현재 저장소의 ESP32 펌웨어에는 WonderEcho 명령 소비 코드가 없으므로 **구동 차단 상태에서 버스 연결만 확인**
 
-로봇 버스에서 모듈 확인: 로봇 API `GET /i2c/live?bus=0&from=0x34&to=0x34` → `0x34` 응답이면 연결됨.
+로봇 버스에서 모듈 확인: 인가된 HTTPS 클라이언트로
+`GET https://<ROBOT_IP>:8443/i2c/live?bus=0&from=0x34&to=0x34`를 요청해
+`0x34` 응답을 확인한다. 이 엔드포인트는 `MECHADOG_ENABLE_OTA=1`로 빌드한
+진단 펌웨어에만 있으며 Bearer 토큰, 기체 MAC, 인증서와 SHA-256 pin이 든
+비공개 클라이언트 설정이 필요하다. 자격정보는 저장소에 없다. 기본
+`MECHADOG_ENABLE_OTA=0` 빌드에는 엔드포인트 자체가 없다. 비-OTA 기체에서는
+되돌릴 이미지를 확보한 뒤 `firmware_mechdog_motion/diagnostics/i2c_scan`을
+별도로 올려 확인한다(기존 펌웨어를 덮어쓰므로 운용 중에는 사용하지 않는다).
 
 ### 3-3. PC 음성 테스트 도구 (선택)
 

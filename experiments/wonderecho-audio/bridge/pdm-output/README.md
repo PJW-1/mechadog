@@ -25,6 +25,7 @@
 - v34 브리지: PC 네이티브 테스트 + CI1302 컴파일 + 패키지 검증 완료, 로봇 버스 0x34 ACK 실측
 - v37 계측: ASR→UART TX, play 완주, IRQ/피크 증가 실측
 - v38 PDM 수정: **실물 확인 (2026-09-23 · COM8)** — `"Hello Hiwonder"`→`"Hello"` 에서 웨이크·명령 응답을 스피커로 청취했고 브리지 `tx id=26` 송신도 로그로 확인. 무음 원인(PDM 미인가) 진단이 맞았다
+- ESP32 WonderEcho 명령 소비 코드는 저장소에 **미구현**이며 WBS 4.7.9에서 새로 작성해야 함
 - 로봇 `voice_dispatch` 방향 매핑 정정(`robot-mapping.patch`)은 로봇에 **미적용**
 
 ## 설치 파일 위치
