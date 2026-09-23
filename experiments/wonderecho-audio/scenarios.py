@@ -82,7 +82,8 @@ def sc_guard(ctx):
         None,
     )
     if hit:
-        ctx.say(f"{hit} 님, {pick('identity_ok')}")
+        # 이름은 되읽지 않는다 — MP3 모듈은 미리 합성한 문장만 튼다(4.7.21). 이름은 기록에 남긴다.
+        ctx.say(pick("identity_ok"))
         ctx.event("system", f"경비모드: {hit} 확인됨")
     else:
         ctx.say(pick("identity_fail"))
@@ -186,7 +187,8 @@ def sc_emergency_response(ctx):
     ctx.say(pick("emergency_where"))
     answer = ctx.listen(12)
     if answer:
-        ctx.say(f"{answer} 위치로 접수했습니다. 담당자가 출발합니다.")
+        # 위치는 되읽지 않는다(4.7.21 · 고정 문장만 재생). 위치는 기록에 남긴다.
+        ctx.say("말씀하신 위치로 접수했습니다. 담당자가 출발합니다.")
         ctx.event("system", f"비상 접수: 위치='{answer}'")
     else:
         ctx.say("위치를 확인하지 못했습니다. 관제 센터에서 현장을 확인 중입니다.")

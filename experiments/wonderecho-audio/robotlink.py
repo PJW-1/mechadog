@@ -10,12 +10,18 @@ Write path: a **whitelist** of Korean phrases -> existing command endpoints.
 Free text can never reach the robot; only exact phrase matches in ACTIONS
 trigger a POST, and every action is still subject to the runtime's own safety
 gates (estop latching, manual-mode preconditions, ...).
+
+Speaker path (WBS 4.7.21): `play_track` POSTs a TF card track number to
+/api/command/sound so the voice process's own lines play on the robot's MP3
+module. It is internal to the voice process and is not in ACTIONS — no user
+utterance maps to it.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import urllib.error
 import urllib.request
 
 import voice_rules
@@ -256,6 +262,31 @@ def post_auth_result(ok, base=DEFAULT_BASE, captured_at_ms=None):
         return False, "로봇 관제 서버에 연결할 수 없습니다"
     if res.get("error") or res.get("accepted") is not True:
         return False, res.get("detail") or "로봇이 인증 결과를 거부했습니다"
+    return True, res.get("detail") or ""
+
+
+def play_track(track, base=DEFAULT_BASE):
+    """POST /api/command/sound `{"track": N}` — 로봇 스피커로 TF 카드 트랙을 튼다 (WBS 4.7.21 ⑤).
+
+    음성 프로세스가 **자기 발화**를 로봇 MP3 모듈로 내보내는 내부 경로다. 사람의
+    발화가 여기 닿지 않는다 — `ACTIONS`·`match_action`·`run_action` 에 넣지 않았다.
+    0 은 정지. 범위(0~3000)·정수 검사는 런타임이 하고 거절 사유를 돌려준다.
+
+    ⚠️ **실패해도 예외를 올리지 않는다** (`post_auth_result` 와 같다) — 말하기가
+    실패했다고 음성 루프가 멈추면 안 된다. `(ok, detail)` 을 돌려준다.
+    ok=True 는 «런타임이 다음 틱에 싣기로 했다» 이지 «소리가 났다» 가 아니다.
+    """
+    try:
+        res = _post(base, "/api/command/sound", {"track": track})
+    except urllib.error.HTTPError as exc:
+        # OSError 의 하위다 — 400(정수 아님)·403(출처)을 연결 실패로 말하지 않는다.
+        return False, f"로봇 관제 서버가 트랙 재생 요청을 거부했습니다 (HTTP {exc.code})"
+    except OSError:
+        return False, "로봇 관제 서버에 연결할 수 없습니다"
+    except ValueError:  # JSON 이 아닌 응답
+        return False, "로봇 관제 서버의 응답을 읽을 수 없습니다"
+    if res.get("error") or res.get("accepted") is not True:
+        return False, res.get("detail") or "로봇이 트랙 재생을 거부했습니다"
     return True, res.get("detail") or ""
 
 

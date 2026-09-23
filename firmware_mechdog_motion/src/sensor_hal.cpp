@@ -105,6 +105,16 @@ constexpr uint8_t kLedChannelCount = 6;
 // 버스를 기다리는 한계. 센서 주기가 40ms 이므로 이보다 오래 잡히지 않는다.
 // 못 얻으면 실패로 돌려준다 — 제어 루프를 붙잡고 있는 것보다 낫다.
 constexpr uint32_t kLedBusWaitMs = 5;
+
+// MP3 모듈 (WBS 4.7.20 · OI-6). 레지스터 배치는 로컬 벤더 헤더(`Hiwonder.h`, 2024-08)의
+// 정의를 읽고 2026-09-23 실기 스캔과 맞춰 본 것이다. ⚠️ 트랙 번호는 **2바이트
+// 리틀엔디언**이다 — 1바이트만 쓰면 재생되지 않는다(9-23 프로브의 무음이 그것이다).
+// 0x78–0x7F 예약 구간 주소라 0x77 까지만 훑는 스캔에는 보이지 않는다.
+constexpr uint8_t kMp3Address = 0x7B;
+constexpr uint8_t kMp3PlayTrackRegister = 0x01;
+constexpr uint8_t kMp3PauseRegister = 0x06;
+constexpr uint8_t kMp3VolumeRegister = 0x0C;
+constexpr uint8_t kMp3VolumeMax = 30;
 constexpr uint32_t kSamplePeriodMs = 40;  // Official Madgwick filter.begin(25).
 constexpr uint32_t kMaxAgeMs = kSensorMaxAgeMs;
 constexpr uint32_t kCalibrationTimeoutMs = 2000;
@@ -203,15 +213,20 @@ bool read_bytes_after_stop(uint8_t address, uint8_t reg, uint8_t* out, size_t le
   return ok;
 }
 
-// 한 바이트 쓰기. 읽기 두 종류와 같은 잠금 규칙을 따른다 — write 는 쪼개지면
-// 안 되는 시퀀스이므로 재귀 뮤텍스를 잡은 채로 끝낸다.
-bool write_register(uint8_t address, uint8_t reg, uint8_t value) {
+// 레지스터 뒤에 0바이트 이상을 쓴다. 읽기 두 종류와 같은 잠금 규칙을 따른다 —
+// write 는 쪼개지면 안 되는 시퀀스이므로 재귀 뮤텍스를 잡은 채로 끝낸다.
+bool write_block(uint8_t address, uint8_t reg, const uint8_t* data, size_t length) {
   if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
   Wire.beginTransmission(address);
-  const bool queued = Wire.write(reg) == 1 && Wire.write(value) == 1;
+  bool queued = Wire.write(reg) == 1;
+  for (size_t index = 0; queued && index < length; ++index) queued = Wire.write(data[index]) == 1;
   const bool ok = queued && Wire.endTransmission(true) == 0;
   if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
   return ok;
+}
+
+bool write_register(uint8_t address, uint8_t reg, uint8_t value) {
+  return write_block(address, reg, &value, 1);
 }
 
 void publish(const AcquisitionRecord& record) {
@@ -670,6 +685,36 @@ bool writeEyeLed(uint8_t r, uint8_t g, uint8_t b) {
   (void)r;
   (void)g;
   (void)b;
+  return false;
+#endif
+}
+
+// MP3 모듈 (FR-3.4). 눈 LED 와 같은 이유로 버스를 오래 기다리지 않는다.
+bool writeMp3Volume(uint8_t volume) {
+#if MECHADOG_ENABLE_SENSORS
+  if (volume > kMp3VolumeMax) volume = kMp3VolumeMax;
+  if (!lockI2cBus(kLedBusWaitMs)) return false;
+  const bool ok = write_register(kMp3Address, kMp3VolumeRegister, volume);
+  unlockI2cBus();
+  return ok;
+#else
+  (void)volume;
+  return false;
+#endif
+}
+
+// 0 은 일시정지 레지스터(값 없음)로, 나머지는 트랙 번호 2바이트(하위 먼저)로 쓴다.
+// 트랙 쓰기 하나가 곧 재생 시작이다 — 벤더 play(num) 도 따로 재생 명령을 보내지 않는다.
+bool writeMp3Track(uint16_t track) {
+#if MECHADOG_ENABLE_SENSORS
+  if (!lockI2cBus(kLedBusWaitMs)) return false;
+  const uint8_t number[2] = {static_cast<uint8_t>(track & 0xFF), static_cast<uint8_t>(track >> 8)};
+  const bool ok = track == 0 ? write_block(kMp3Address, kMp3PauseRegister, nullptr, 0)
+                             : write_block(kMp3Address, kMp3PlayTrackRegister, number, 2);
+  unlockI2cBus();
+  return ok;
+#else
+  (void)track;
   return false;
 #endif
 }

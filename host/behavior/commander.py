@@ -15,6 +15,7 @@ pytest 로 검증할 수 있다.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -56,6 +57,8 @@ class Commander:
         self._period_ms = period_ms
         self._intent: Intent = HALT
         self._pending: list[Intent] = []
+        # `once` 는 대시보드 스레드에서도 온다. 확인하고 넣기를 한 덩어리로 묶는다.
+        self._pending_lock = threading.Lock()
         self._announced: str | None = None
         self._next_due: int | None = None
         self._ticks = 0
@@ -101,7 +104,23 @@ class Commander:
 
     def once(self, type_: str, **fields: Any) -> None:
         """다음 틱에 1회만 실어 보낸다 (`LED`·`SOUND`·`ACTION` 용)."""
-        self._pending.append(Intent(type_, dict(fields)))
+        with self._pending_lock:
+            self._pending.append(Intent(type_, dict(fields)))
+
+    def once_unless_pending(self, type_: str, **fields: Any) -> bool:
+        """같은 타입이 이미 실려 있지 않을 때만 `once`. 실었으면 참.
+
+        확인과 넣기 사이에 다른 스레드의 `once` 가 끼면 옛 것이 새 것 뒤에 붙는다.
+        """
+        with self._pending_lock:
+            if any(i.type_ == type_ for i in self._pending):
+                return False
+            self._pending.append(Intent(type_, dict(fields)))
+            return True
+
+    def has_pending(self, type_: str) -> bool:
+        """다음 틱에 실릴 `once` 중 이 타입이 있는가."""
+        return any(i.type_ == type_ for i in self._pending)
 
     def emergency_stop(self) -> str:
         """**즉시 보낼 `ESTOP` 전문을 돌려준다.** 반복 의도도 정지로 내린다.
@@ -170,8 +189,11 @@ class Commander:
             if self._next_due <= now_ms:
                 self._next_due = now_ms + self._period_ms
 
-        out = [self._encoder.encode(i.type_, **dict(i.fields)) for i in self._pending]
-        self._pending.clear()
+        # 비우기 전에 새 목록으로 바꿔 끼운다 — 대시보드 스레드의 `once` 가 인코딩과
+        # `clear()` 사이에 끼면 보내지도 않고 지워졌다. 끼어든 것은 다음 틱에 나간다.
+        with self._pending_lock:  # 옛 목록을 쥔 `once` 가 인코딩 뒤에 붙으면 사라진다
+            pending, self._pending = self._pending, []
+        out = [self._encoder.encode(i.type_, **dict(i.fields)) for i in pending]
         out.append(self._encoder.encode(self._intent.type_, **dict(self._intent.fields)))
         self._ticks += 1
         return out

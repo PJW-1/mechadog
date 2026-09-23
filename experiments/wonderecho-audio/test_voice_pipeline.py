@@ -7,6 +7,7 @@ import math
 import os
 import struct
 import sys
+import threading
 import time
 import types
 import unittest
@@ -118,8 +119,10 @@ class GuardScenarioTests(unittest.TestCase):
     def test_known_name_is_verified(self):
         ctx = FakeCtx(answers=["김민수 입니다"])
         scenarios.sc_guard(ctx)
-        self.assertTrue(any("확인되었습니다" in line for line in ctx.lines))
-        self.assertTrue(any("김민수" in line for line in ctx.lines))
+        self.assertTrue(any(line in phr.PHRASES["identity_ok"] for line in ctx.lines))
+        # 이름은 말하지 않고(고정 문장만 TF 카드에 있다 · 4.7.21) 기록에만 남긴다
+        self.assertFalse(any("김민수" in line for line in ctx.lines))
+        self.assertTrue(any("김민수" in text for _, text in ctx.events))
 
     def test_unknown_name_is_denied(self):
         ctx = FakeCtx(answers=["홍길동 입니다"])
@@ -182,7 +185,8 @@ class NewScenarioTests(unittest.TestCase):
         ctx = FakeCtx(answers=["3번 창고"])
         scenarios.sc_emergency_response(ctx)
         self.assertTrue(any("위치" in line for line in ctx.lines))
-        self.assertTrue(any("3번 창고" in line for line in ctx.lines))
+        self.assertFalse(any("3번 창고" in line for line in ctx.lines))
+        self.assertTrue(any("3번 창고" in text for _, text in ctx.events))
 
     def test_ppe_scenarios_use_phrase_library(self):
         for scn in (scenarios.sc_ppe_helmet, scenarios.sc_ppe_vest, scenarios.sc_ppe_warning):
@@ -718,6 +722,26 @@ class XiaoCaptureTests(unittest.TestCase):
         _, speech, _ = vp.capture_xiao(mic, timeout_s=5.0, guard_s=0)
         self.assertTrue(speech)
 
+    def test_wake_before_speech_ends_the_wait_without_link_error(self):
+        mic = FakeMic([_frame(0)] * 500)
+        t0 = time.monotonic()
+        pcm, speech, at_ms = vp.capture_xiao(
+            mic, timeout_s=10.0, guard_s=1.0, interrupt=lambda: True
+        )
+        self.assertLess(time.monotonic() - t0, 1.0)  # 경고가 기다리는데 10초를 다 쓰지 않는다
+        self.assertFalse(speech)
+        self.assertIsNone(at_ms)
+
+    def test_wake_cuts_even_after_speech_started(self):
+        # 실기에서 주변 소음이 매 턴 말소리로 잡혀(captured 14.7s) 「말 시작 전에만 끊기」 가 소용없었다.
+        mic = FakeMic([_frame(3000)] * 200)
+        t0 = time.monotonic()
+        _, speech, _ = vp.capture_xiao(
+            mic, timeout_s=10.0, guard_s=0, interrupt=lambda: len(mic.frames) < 150
+        )
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertFalse(speech)  # 받던 말은 버린다 — 곧 로봇이 말한다
+
     def test_dead_link_raises_timeout_like_serial_path(self):
         with self.assertRaises(TimeoutError):
             vp.capture_xiao(FakeMic([]), timeout_s=0.3)
@@ -744,6 +768,65 @@ class XiaoCaptureTests(unittest.TestCase):
         with mock.patch.object(vp, "stream_play") as play:
             vp._say(None, object(), "안내", 1.0)
         play.assert_not_called()
+
+
+class RobotSpeakerTests(unittest.TestCase):
+    """--robot-speaker — 문장을 TF 카드 트랙으로 바꿔 로봇 MP3 모듈로 튼다 (WBS 4.7.21)."""
+
+    def setUp(self):
+        patcher = mock.patch.object(vp, "ROBOT_SPEAKER", "http://api")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _say(self, text, track, played=(True, "")):
+        with (
+            mock.patch.object(vp.tf_tracks, "track_for", return_value=track),
+            mock.patch.object(vp.robotlink, "play_track", return_value=played) as play,
+            mock.patch.object(vp, "synth_piper", return_value=b"\0" * 32000) as synth,
+            mock.patch.object(vp, "stream_play") as serial_play,
+            mock.patch.object(vp.time, "sleep") as sleep,
+        ):
+            vp._say("dev", "piper", text, 1.2)
+        serial_play.assert_not_called()  # 로봇 스피커가 있으면 WonderEcho 로 말하지 않는다
+        return play, synth, sleep
+
+    def test_plays_the_table_track_and_waits_for_it_to_finish(self):
+        play, synth, sleep = self._say("안내", 7)
+        play.assert_called_once_with(7, "http://api")
+        synth.assert_called_once_with("piper", "안내", 1.2)  # 같은 모델·속도 = 카드 음원 길이
+        (waited,) = sleep.call_args.args
+        self.assertGreater(waited, 1.0)  # 1초 음원 + 여유 — 로봇 마이크가 제 말을 듣지 않게
+        self.assertLess(waited, 1.0 + vp.ROBOT_SPEAKER_TAIL_S + 0.01)
+
+    def test_sentence_missing_from_the_table_plays_the_fallback_line(self):
+        """서버가 돌려준 거부 사유처럼 미리 녹음할 수 없는 문장은 고정 대체 문장으로 튼다."""
+        fallback = vp.pick("unplayable")
+        tracks = {fallback: 184}
+        with (
+            mock.patch.object(vp.tf_tracks, "track_for", side_effect=tracks.get),
+            mock.patch.object(vp.robotlink, "play_track", return_value=(True, "")) as play,
+            mock.patch.object(vp, "synth_piper", return_value=b"") as synth,
+            mock.patch.object(vp.time, "sleep"),
+        ):
+            vp._say(None, "piper", "자율 동작 중이 아니다", 1.2)
+        play.assert_called_once_with(184, "http://api")
+        synth.assert_called_once_with("piper", fallback, 1.2)  # 기다리는 길이도 대체 문장 기준
+
+    def test_refused_track_does_not_wait(self):
+        _, _, sleep = self._say("안내", 7, played=(False, "연결 안 됨"))
+        sleep.assert_not_called()
+
+    def test_xiao_echo_guard_applies_to_the_robot_speaker(self):
+        with mock.patch.object(vp, "capture_xiao") as xiao:
+            vp.listen_pcm(None, None, "mic", 3.0)
+        self.assertEqual(xiao.call_args.kwargs["guard_s"], vp.ECHO_GUARD_S)
+
+    def test_scenario_speaks_without_a_serial_device(self):
+        args = types.SimpleNamespace(speed=1.2)
+        ctx = vp.ScenarioCtx(None, None, None, "piper", vp.Hub("r1"), [], args)
+        with mock.patch.object(vp, "_say") as say:
+            ctx.say("안내")
+        say.assert_called_once_with(None, "piper", "안내", 1.2)
 
 
 class XiaoStartupTests(unittest.TestCase):
@@ -776,6 +859,11 @@ class XiaoStartupTests(unittest.TestCase):
     def test_say_still_needs_the_speaker_port(self):
         with self.assertRaises(SystemExit):
             self._main(["--xiao", "10.0.0.9", "--say", "안내"])
+
+    def test_say_refuses_robot_speaker_instead_of_ignoring_it(self):
+        # --say 는 임의 문장을 WonderEcho 로 흘린다. 카드 트랙으로는 못 트니 조용히 무시하지 않고 거절한다.
+        with self.assertRaises(SystemExit):
+            self._main(["--port", "COM3", "--robot-speaker", "--say", "안내"])
 
 
 class RouteQueryTests(unittest.TestCase):
@@ -826,6 +914,7 @@ class RobotEscalationWarningTests(unittest.TestCase):
         vp.robotlink.fetch_events = lambda _base, since: (events, 0, since + len(events))
         try:
             hub._robot_next_poll = 0
+            hub._robot_synced = True
             hub.poll_robot_events("http://127.0.0.1:8000")
         finally:
             vp.robotlink.fetch_events = original
@@ -846,6 +935,77 @@ class RobotEscalationWarningTests(unittest.TestCase):
         )
         items = [item for _, _, item in hub.drain_say()]
         self.assertEqual(items[0], "사원증을 보여 주십시오.")  # 공지보다 앞이다
+
+    def test_wake_only_when_there_is_something_to_say(self):
+        # 2026-09-24 실기: 말소리 대기 15초가 끝나야 폴링해서 L2 안내·L3 경고가 11초 늦었다.
+        # 대기를 끊으면 받던 말을 버리므로, 곧 말할 것이 있을 때만 끊는다.
+        l3 = {
+            "event": "escalation_changed",
+            "escalation": "L3",
+            "warning": "경보가 발령되었습니다.",
+        }
+        cases = (
+            ("검출", {"event": "person_found"}, False, False),
+            ("문장 없는 단계", {"event": "escalation_changed", "escalation": "L1"}, False, False),
+            ("경고 문장", l3, False, True),
+            ("안내 전 인증 요구", {"event": "auth_required"}, False, True),
+            (
+                "안내 뒤 인증 요구",
+                {"event": "auth_required"},
+                True,
+                False,
+            ),  # 암구호를 말하는 중일 수 있다
+        )
+        for name, ev, prompted, wakes in cases:
+            with self.subTest(name):
+                hub = vp.Hub("test")
+                hub.auth_prompted = prompted
+                self._poll(hub, [ev])
+                self.assertEqual(hub.wake.is_set(), wakes)
+
+    def test_poller_survives_a_bad_response(self):
+        # 폴링이 스레드로 옮겨 가며 예외 하나에 조용히 죽으면 그 뒤 경고가 영영 안 나간다.
+        hub = vp.Hub("test")
+        hub._robot_synced = True
+        l3 = {
+            "event": "escalation_changed",
+            "escalation": "L3",
+            "warning": "경보가 발령되었습니다.",
+        }
+        # 끝의 SystemExit 는 `except Exception` 을 지나쳐 스레드를 끝낸다 — 안 끝내면
+        # 패치가 풀린 뒤 실제 fetch_events 로 남은 시험 내내 접속을 반복한다.
+        replies = [ValueError("깨진 JSON"), ([l3], 0, 1), SystemExit()]
+
+        def fetch(_base, _since):
+            r = replies.pop(0)
+            if isinstance(r, BaseException):
+                raise r
+            return r
+
+        with mock.patch.object(vp.robotlink, "fetch_events", fetch):
+            t = threading.Thread(
+                target=hub.poll_robot_events_forever, args=("http://x", 0.01), daemon=True
+            )
+            t.start()
+            self.assertTrue(hub.wake.wait(2.0))
+            t.join(2.0)
+        self.assertFalse(t.is_alive())
+
+    def test_first_poll_after_start_does_not_replay_old_warnings(self):
+        # 2026-09-24: 음성을 재시작하자 7분 전 L3 경고를 다시 읽었다 — 커서 0 이 버퍼 전체를 받는다.
+        hub = vp.Hub("test")
+        old = [
+            {"event": "escalation_changed", "escalation": "L3", "warning": "경보가 발령되었습니다."}
+        ]
+        original = vp.robotlink.fetch_events
+        vp.robotlink.fetch_events = lambda _base, since: (old if since == 0 else [], 0, 1)
+        try:
+            hub.poll_robot_events("http://127.0.0.1:8000")
+        finally:
+            vp.robotlink.fetch_events = original
+        self.assertEqual(hub.robot_cursor, 1)
+        self.assertEqual(hub.drain_say(), [])
+        self.assertFalse(hub.wake.is_set())
 
     def test_other_events_are_journaled_but_not_spoken(self):
         """⚠️ 사람 확정마다 말하면 순찰이 방송이 된다."""

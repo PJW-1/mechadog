@@ -126,6 +126,29 @@ DB 시드가 옛 STT 힌트를 굳혀 코드 수정이 반영되지 않는 문�
 
 PC 환경 구축은 **[SETUP.md](SETUP.md)** 를 따른다. 모델 파일은 이 저장소에 없다.
 
+## TF 카드 문장 표 (WBS 4.7.21)
+
+로봇 MP3 모듈은 `SOUND {track}` 으로 카드의 `/MP3/NNNN<이름>.mp3` 를 튼다(번호 = 파일 이름 앞 네 자리).
+문장이 정본이고, 재생 직전에 `tf_tracks.track_for(문장)` 으로 번호를 얻는다(표에 없으면 `None`).
+조회는 공백·줄바꿈 차이와 유니코드 조합형 차이만 무시하고 문장부호는 그대로 본다.
+
+- **표** `tf_tracks.tsv` — 한 줄 = `번호<TAB>문장`. 번호는 **바꾸거나 다시 쓰지 않는다**(구운 카드와 어긋난다).
+  새 문장은 가장 큰 번호 다음을 받는다. `*_warning` 경고 문장이 앞 번호다.
+- **모으는 곳** — `config.escalation.sound` 의 `*_warning`, `phrases.py`, `robotlink.ACTIONS`, `scenarios.py` ·
+  `voice_pipeline.py` · `robotlink.py` 의 말하는 자리(`say`/`_say` 인자 · `spoken =` · `auth_prompt`/`run_action`
+  반환), 지식 문서 본문을 붙이는 시나리오(돌려서 실제 문장을 얻는다 — 길안내는 문서마다 한 문장).
+  이름·위치 되읽기는 고정 문장으로 바꿨다(이름·위치는 기록에만 남는다).
+
+```bash
+python tf_tracks.py --check        # 표에 없는 문장이 있으면 실패 (CI 도 돈다)
+python tf_tracks.py --add          # 빠진 문장에 다음 번호를 준다 → diff 검토 후 커밋
+python tf_tracks.py --build OUT    # OUT/MP3/NNNN<이름>.mp3 (Piper → ffmpeg 44.1 kHz 모노)
+```
+
+카드 만들기(사람이 한다): ① 카드의 `/MP3/` 를 통째로 백업한다 ② 공장 곡 `0016`~`0024` 를 지운다
+③ `OUT/MP3/*.mp3` 를 카드 `/MP3/` 로 복사한다. `--build` 는 비어 있지 않은 폴더와 드라이브 루트에는 쓰지 않는다.
+지식 문서(`knowledge/*.txt`)나 문장을 고치면 `--check` 가 실패한다 — `--add` 하고 카드를 다시 만든다.
+
 ## 검증된 것
 
 2026-09-14 실물에서 **안내 재생 → 5초 녹음 → 한국어 인식 → 이름 추출** 전 과정이 통과했다.
@@ -320,6 +343,7 @@ OpenRAIL-M 은 사용 제한이 있지만 원문에 `"Licensor claims no rights 
 | `build_prompt_audio.py` | 합성 원본을 모듈이 받는 16 kHz 모노 16-bit 로 변환·정규화. 48~128,000 바이트 제한 검사 |
 | `synth_prompt_orpheus.py` | Orpheus 한국어 합성(권장). `--temperature 0.4` 를 쓸 것 — 0.6 에서는 "신원"을 오발음했다 |
 | `synth_scenario.py` | 출입 통제 4문구 일괄 생성. 현재 용량 초과라 그대로는 안 들어간다 |
+| `tf_tracks.py`, `tf_tracks.tsv` | TF 카드 문장 → 트랙 번호 표, 누락 검사, 카드 음원 제작 (WBS 4.7.21) |
 
 **장치 쪽 (SDK 에 적용하는 소스·패치)**
 

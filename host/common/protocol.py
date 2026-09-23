@@ -70,7 +70,7 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "RESET_SAFE": frozenset(),
     "ACTION": frozenset({"id"}),
     "LED": frozenset({"color", "blink_hz"}),
-    "SOUND": frozenset({"phrase_id"}),
+    "SOUND": frozenset({"track"}),
     "STATE": frozenset({"state"}),
     "SERVICE": frozenset({"mode"}),
 }
@@ -81,12 +81,12 @@ SERVICE_MODES: frozenset[str] = frozenset({"enter", "exit"})
 
 #: 문자열로 받는 필드. 나머지 필수 필드는 전부 수치다.
 STRING_FIELDS: frozenset[str] = frozenset({"color", "state", "mode"})
-INTEGER_FIELDS: frozenset[str] = frozenset({"dur", "lift_time", "ground_time", "id", "phrase_id"})
+INTEGER_FIELDS: frozenset[str] = frozenset({"dur", "lift_time", "ground_time", "id", "track"})
 NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
     "POSE": ("dur",),
     "GAIT": ("lift_time", "ground_time", "height"),
     "LED": ("blink_hz",),
-    "SOUND": ("phrase_id",),
+    "SOUND": ("track",),
 }
 
 #: 클램핑 대상 — PROTOCOL.md 가 범위를 명시한 필드만이다.
@@ -447,8 +447,8 @@ class CommandEncoder:
     def led(self, color: str, blink_hz: float) -> str:
         return self.encode("LED", color=color, blink_hz=blink_hz)
 
-    def sound(self, phrase_id: int) -> str:
-        return self.encode("SOUND", phrase_id=phrase_id)
+    def sound(self, track: int) -> str:
+        return self.encode("SOUND", track=track)
 
     def state(self, state: str) -> str:
         """호스트의 FSM 상태를 로봇에게 알려준다.

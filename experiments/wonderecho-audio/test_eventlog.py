@@ -82,6 +82,7 @@ class JournalTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             journal = eventlog.EventJournal(d)
             hub = voice_pipeline.Hub("mechadog-01", journal=journal)
+            hub._robot_synced = True  # 기동 첫 폴링은 커서만 맞춘다 — 여기서는 그 뒤를 본다
             payload = (
                 [{"event": "person_found", "state": "PATROL", "escalation": "L1", "seq": 7}],
                 0,
@@ -101,6 +102,7 @@ class JournalTest(unittest.TestCase):
         import voice_pipeline
 
         hub = voice_pipeline.Hub("mechadog-01")
+        hub._robot_synced = True
         with mock.patch.object(robotlink, "fetch_events", return_value=([], 3, 10)):
             hub.poll_robot_events("http://x", interval=0)
         self.assertEqual(hub.events[0]["text"], "event_gap (dropped=3)")

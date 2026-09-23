@@ -48,7 +48,7 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 채널이 있으면 판정에 사용한 JPEG와 그 프레임의 검출 박스를 함께 표시하고, 사건은 `/ws/events` 로 받아
 **그때 저장된 스냅샷과 함께** 목록에 쌓는다(`4.6.4` · 2026-09-15 실기).
 
-명령 API 는 다음 일곱이다 — 전부 같은 로컬 출처 검사를 건다.
+명령 API 는 다음과 같다 — 전부 같은 로컬 출처 검사를 건다.
 
 | 경로 | 무엇을 하나 |
 | --- | --- |
@@ -59,6 +59,7 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 | `POST /api/command/reset` | 사람이 원인 해소를 확인한 뒤의 `FAILSAFE` 해제 **요청**. 실제 해제는 로봇의 래치 보고로만 |
 | `POST /api/command/alarm` | 사람이 현장을 확인한 뒤의 **경보(L3) 해제**. ⚠️ `reset` 과 **다른 문이다** — 저쪽은 물리 상태(F), 이쪽은 상황 판단 ([ADR-26]) |
 | `POST /api/command/service` | `{"mode": "enter"\|"exit"}` — 온보드 **정비** 상태. OTA·진단 중 액추에이터를 막는다 |
+| `POST /api/command/sound` | `{"track": 0..3000}` — 로봇 MP3 모듈의 TF 카드 트랙 재생, 0 = 정지 (`4.7.21` ⑤). 음성 프로세스(`robotlink.play_track`)가 쓰며 화면 버튼은 없다. **래치 중에도 받는다.** 정수가 아니면 400, 범위 밖이면 거절 |
 | `POST /api/command/mode` | `{"mode": "guard"\|"factory"}` — **운용 모드** 전환 (FR-4.7 · `3.4.4`). 현장지원 `assist` 는 2026-09-23 폐기([ADR-38](DECISIONS.md#adr-38)). `IDLE`·`MANUAL` 에서만 받고, 선행 기능이 없는 모드는 거절한다. 거절에는 사유가 붙는다 |
 
 ⚠️ **`service` 와 `mode` 는 다른 축이다.** `service` 는 OTA·진단 중 액추에이터를 차단하는 **정비 상태**(펌웨어)이고,

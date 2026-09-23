@@ -3,6 +3,8 @@
 ⚠️ **명령 API 가 붙으면서 더 이상 읽기 전용이 아니다.** `commands` 를 넘기지
 않으면 예전처럼 읽기 전용으로 뜨고, 넘기면 `/api/command/*` 가 열린다. 이
 경로는 **로봇을 실제로 움직이므로** WebSocket 과 같은 로컬 출처 검사를 건다.
+`/api/command/sound` 는 움직이지 않고 로봇 스피커로 TF 카드 트랙을 튼다
+(WBS 4.7.21 ⑤ · 음성 프로세스의 말하기 경로). 같은 검사를 건다.
 
 카메라 영상은 XIAO 스트림이 **단일 클라이언트**라 비전 워커가 점유한 채널을
 뺏으면 추론이 끊긴다. 그래서 여기서는 XIAO 에 새로 붙지 않고 워커가 방금
@@ -533,6 +535,25 @@ def create_app(
             if not isinstance(mode, str):
                 return JSONResponse({"error": "mode"}, status_code=400)
             return commands.service(mode).as_dict()
+
+        @app.post("/api/command/sound")
+        async def sound(request: Request):
+            """`{"track": 0..3000}` — 로봇 MP3 모듈 트랙 재생, 0 = 정지 (WBS 4.7.21 ⑤).
+
+            음성 프로세스(`robotlink.play_track`)가 자기 발화를 로봇 스피커로 트는
+            문이다. **FAILSAFE 래치 중에도 받는다**(펌웨어와 같다). 범위 밖은
+            `accepted=false` 로 돌려주고 로봇에 보내지 않는다. `accepted` 는
+            «다음 틱에 싣는다» 이지 «소리가 났다» 가 아니다.
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            track = body.get("track")
+            # ⚠️ `bool` 을 정수로 받지 않는다 — `true` 가 트랙 1 이 된다.
+            if isinstance(track, bool) or not isinstance(track, int):
+                return JSONResponse({"error": "track"}, status_code=400)
+            return commands.sound(track).as_dict()
 
         @app.post("/api/command/mode")
         async def mission_mode(request: Request):

@@ -166,8 +166,8 @@ test('fullscreen includes external workspace panels as well as the factory app',
 test('served by the dashboard, robot state from /ws/telemetry fills the status card and the device gauges in place',async()=>{
  const state=await boot('devices',{health:{service:'telemetry',vision_clients:0}}),{dom,document,store,failures}=state,feed=state.telemetryFeed;
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/telemetry');assert.equal(feed.started,true);assert.deepEqual(failures,[]);
- // 펌웨어 지원 표는 `.ino` 의 applyCommand 와 맞아야 한다 — POSE·ACTION·LED 는 적용하고 GAIT·SOUND 는 적용하지 않는다.
- const page=document.querySelector('#panel-content').textContent;assert.match(page,/POSE·ACTION·LED·SERVICE 적용 경로 존재/);assert.match(page,/GAIT·SOUND는 펌웨어가 해석만 하고 적용하지 않습니다/);assert.doesNotMatch(page,/POSE·GAIT·ACTION·LED·SOUND·STATE는/);
+ // 펌웨어 지원 표는 `.ino` 의 applyCommand 와 맞아야 한다 — POSE·ACTION·LED·SOUND 는 적용하고 GAIT 는 적용하지 않는다.
+ const page=document.querySelector('#panel-content').textContent;assert.match(page,/POSE·ACTION·LED·SOUND·SERVICE 적용 경로 존재/);assert.match(page,/GAIT는 펌웨어가 해석만 하고 적용하지 않습니다/);assert.doesNotMatch(page,/GAIT·SOUND는/);assert.doesNotMatch(page,/POSE·GAIT·ACTION·LED·SOUND·STATE는/);
  const card=()=>document.querySelector('.actual-status').textContent,sheet=()=>document.querySelector('.robot-status-sheet').textContent;
  const snapshot=(extra={})=>({deviceId:'mechdog-01',state:'PATROL',escalation:'L1',mode:'guard',ageMs:40,stale:false,runtimeStale:false,telemetry:{deviceId:'mechdog-3c8a1f333208',bootId:'b',seq:9,state:'IDLE',battV:7.64,distCm:52,imu:{pitch:0.4,roll:-1.2,yaw:180},lastCmdAgeMs:70,safetyLatched:false,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true}},...extra});
  const history=[{t:0,battV:7.7,distCm:60},{t:1000,battV:7.66,distCm:55},{t:2000,battV:7.64,distCm:52}];

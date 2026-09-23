@@ -132,6 +132,12 @@ void unlockI2cBus();
 // false 다. 색은 바뀔 때만 쓰는 것이 부르는 쪽 책임이다.
 bool writeEyeLed(uint8_t r, uint8_t g, uint8_t b);
 
+// MP3 모듈(0x7B)에 한 명령을 쓴다 (FR-3.4 · WBS 4.7.20). 벤더 MP3Sensor 대신 이
+// HAL 의 버스를 거친다(머리말). 눈 LED 와 같이 버스를 5ms 만 기다리고, 센서를 끈
+// 빌드에서는 false 다. 명령 사이 간격은 부르는 쪽(mp3_player.h)이 지킨다.
+bool writeMp3Volume(uint8_t volume);  // 0~30
+bool writeMp3Track(uint16_t track);   // 1 이상은 그 트랙 재생, 0 은 정지
+
 // One physical sensor set; instantiate once. begin() only starts the dedicated
 // task: true means task creation succeeded, not that any sensor passed its test.
 // All Wire/ADC operations, including initialization, occur inside that task.

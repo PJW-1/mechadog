@@ -270,7 +270,7 @@ XIAO · 중계 MCU · LD19 를 **한 보조배터리에서 급전**한다. LiDAR
 > 인식도 PC 로 옮겼으므로(ADR-31) **펌웨어에 미리 확정해야 하는 암구호 문구가 없다.** 방송 문구는 개발 중에 늘리면 된다.
 > ~~MP3 모듈의 제어 인터페이스 확인(**OI-6**)이 선행 조건이며, 불가 판정 시 WonderEcho 내장 스피커로 되돌린다.~~
 > **개정 (2026-09-23)** — OI-6 은 해소 방향이다. MP3 모듈은 로봇 IIC1 에서 `0x7B` 로 응답하고 공장 기본 곡 재생까지 확인했다.
-> 어느 명령이 재생을 시작하는지·일시정지·`0x7E` 의 정체·TF 카드 곡 목록은 아직 모른다 — 드라이버(`4.7.20`)에서 확정한다.
+> 재생·정지·음량과 트랙 번호 규칙(파일 이름 앞 네 자리)은 드라이버(`4.7.20`)가 실측으로 확정했다(2026-09-24). `0x7E` 의 정체는 아직 모른다.
 > 원자료: [`TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md`](../TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md).
 >
 > **상태 표시등은 별도 부품이 필요하지 않다.** 초음파 센서에 RGB LED 가 내장되어 있음을 실물로 확인했다(OI-12 닫힘).
@@ -328,8 +328,9 @@ WonderEcho ─ USB COM ─→ PC faster-whisper → 규칙 → Piper 실시간 �
   ⚠️ 영상은 음성과 무관하게 약 2.5 Mbps 에서 막혀 복잡한 장면에서는 영상만으로도 9.4 fps 까지 내려갔다(`4.2.2` 재측정 필요).
 - **호스트 ↔ 음성 프로세스 계약은 문장 그대로다.** 단계 경고(`3.5.6`)는 호스트가 `escalation_changed` 사건에 `config.escalation.sound` 의
   한국어 문장을 싣고, 음성 프로세스가 사건을 폴링해 경고 큐(`Hub.enqueue_say(urgent=True)`)에 넣는다. MP3 는 트랙 번호로 재생하므로 재생 직전에 `4.7.21` 의 표로 바꾼다. 표에 없는 문장은 재생하지 못하므로 제작 도구가 누락을 검사한다.
-- ⚠️ **동적 문장 제약** — 명단 이름 되읽기(`scenarios.sc_guard`)와 비상 위치 되읽기(`scenarios.sc_emergency_response`)는
-  미리 녹음할 수 없다. 이번 재편에서는 고치지 않고 `4.7.21` 의 제약으로 남긴다.
+- **동적 문장은 고정 문장으로 바꿨다 (`4.7.21` · 2026-09-24)** — 명단 이름 되읽기(`scenarios.sc_guard`)와 비상 위치
+  되읽기(`scenarios.sc_emergency_response`)는 미리 녹음할 수 없어서, 이름·위치를 빼고 기록(`ctx.event`)에만 남긴다.
+  표는 `experiments/wonderecho-audio/tf_tracks.tsv`, 누락 검사는 `tf_tracks.py --check`(CI) 다.
 - 로봇 MP3 드라이버는 **자체 코드로, 센서 HAL 을 경유**한다. IIC1 은 IMU(`0x6A`)·초음파(`0x77`)와 공유하는 안전 버스이고,
   벤더 `MP3Sensor` 예제는 쓰지 않는다(ADR-20).
 

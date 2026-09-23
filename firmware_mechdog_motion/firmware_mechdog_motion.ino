@@ -7,6 +7,7 @@
 #include "src/command_parser.h"
 #include "src/motion_hal.h"
 #include "src/motion_safety_state.h"
+#include "src/mp3_player.h"
 #include "src/safety_monitor.h"
 #include "src/sensor_hal.h"
 #include "src/stationary_ota.h"
@@ -121,6 +122,9 @@ bool g_eye_blink_on = true;
 uint32_t g_eye_blink_toggled_ms = 0;
 bool g_eye_written = false;
 EyeColor g_eye_written_color = kEyeOff;
+
+// 스피커 (FR-3.4 · WBS 4.7.20). TF 카드의 트랙을 `SOUND` 로 재생한다.
+mechadog::Mp3Player g_mp3;
 
 mechadog::SafetyMonitor makeSafetyMonitor() {
   mechadog::SafetyThresholds thresholds;
@@ -398,6 +402,14 @@ void pollEyeLed() {
   }
 }
 
+// 명령 사이 간격(20ms)을 delay() 가 아니라 루프 회전으로 지킨다 — 눈 LED 점멸과 같은 이유다.
+void pollMp3() {
+  const mechadog::Mp3Step step = g_mp3.poll(
+      millis(), [] { return mechadog::writeMp3Volume(MECHADOG_MP3_VOLUME); },
+      [](int32_t track) { return mechadog::writeMp3Track(static_cast<uint16_t>(track)); });
+  if (step == mechadog::Mp3Step::Dropped) Serial.println("SOUND dropped: MP3 module not answering");
+}
+
 bool applyCommand(const mechadog::Command& command) {
   switch (command.type) {
     case mechadog::CmdType::Stop:
@@ -492,6 +504,18 @@ bool applyCommand(const mechadog::Command& command) {
       pollEyeLed();
       return true;
     }
+
+    case mechadog::CmdType::Sound:
+      // ⚠️ **래치 중에도 받는다.** 눈 LED 와 같이 스피커는 구동 장치가 아니라 출력이고,
+      // 쓰러짐 경보처럼 래치된 채로 나가야 하는 경고가 있다.
+      // 범위 밖 트랙은 «적용 안 됨» 이다 — 규약의 클램핑 규칙(②)을 따르면 다른 문장이 나간다.
+      // 센서를 끈 빌드는 버스가 없으므로 받지 않는다. 받은 뒤의 버스 실패는 로그로 남는다.
+      if (!mechadog::SensorHal::enabled() || !g_mp3.request(command.track)) {
+        Serial.printf("SOUND refused: track=%ld\n", static_cast<long>(command.track));
+        return false;
+      }
+      pollMp3();
+      return true;
 
     case mechadog::CmdType::State:
       // Host FSM state is stored and echoed, never used to clear a safety latch.
@@ -859,6 +883,7 @@ void loop() {
   // Safety decisions precede acquisition snapshot and telemetry publication.
   // 눈 LED 도 그 뒤다 — 래치가 걸린 뒤의 흰색이 같은 회전에서 나가야 한다.
   pollEyeLed();
+  pollMp3();
   pollTelemetry();
   pollWifiDiagnostics();
 #if MECHADOG_ENABLE_OTA

@@ -53,7 +53,7 @@ REQUIRED_FIELDS = {
     "RESET_SAFE": set(),
     "ACTION": {"id"},
     "LED": {"color", "blink_hz"},
-    "SOUND": {"phrase_id"},
+    "SOUND": {"track"},
     "STATE": {"state"},
     "SERVICE": {"mode"},
 }

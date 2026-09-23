@@ -131,6 +131,14 @@ def run_watchdog(client: Client, step: float, angle: float, duration: float) -> 
     return 0
 
 
+def run_sound(client: Client, track: int) -> int:
+    # RESET_SAFE 를 보내지 않는다 — 래치된 채 다리가 움직이지 않고, 래치 중 재생도 함께 본다.
+    # seq=1 STOP 이 새 세션을 연다. 없으면 두 번째 실행부터 seq 중복으로 버려진다.
+    client.send("STOP")
+    reply = client.send("SOUND", track=track)
+    return 0 if reply.get("applied") is True else 1
+
+
 def main() -> int:
     # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
     # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
@@ -148,6 +156,10 @@ def main() -> int:
         command.add_argument("--step", type=float, default=20.0)
         command.add_argument("--angle", type=float, default=0.0)
         command.add_argument("--duration", type=float, default=0.5)
+    sound = sub.add_parser(
+        "sound", help="play a TF card track (0 = stop) without clearing the latch"
+    )
+    sound.add_argument("track", type=int)
 
     args = parser.parse_args()
     client = Client(args.host, args.port, args.timeout)
@@ -155,6 +167,8 @@ def main() -> int:
         try:
             if args.action == "safety":
                 return run_safety(client)
+            if args.action == "sound":
+                return run_sound(client, args.track)
             if args.action == "move":
                 return run_move(client, args.step, args.angle, args.duration)
             return run_watchdog(client, args.step, args.angle, args.duration)

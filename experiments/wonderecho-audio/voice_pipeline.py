@@ -19,7 +19,8 @@ validation link to the WonderEcho module. Relaying audio through the robot's
 4-pin I2C bridge turned out to be impossible (2026-09-23, WBS 4.7.9 — the
 bridge carries command ids only). The target path is: listen through the
 XIAO ESP32S3 microphone (`http://<xiao>:82/audio`, 16 kHz PCM16 — `--xiao`,
-WBS 4.7.19) and speak through the robot's MP3 module (I2C 0x7B, not yet).
+WBS 4.7.19) and speak through the robot's MP3 module (`--robot-speaker`, WBS 4.7.21:
+each line is looked up in tf_tracks.tsv and played as a TF card track).
 With `--xiao` and no `--port`, replies are printed instead of spoken. Everything above the transport
 boundary — the rules, the knowledge retrieval and the --web API — does not
 change with it. The serial port is owned exclusively by the main loop: one
@@ -50,6 +51,7 @@ import phrases
 import robotlink
 import scenarios
 import serial  # noqa: F401  (type only; stream_client already imports it)
+import tf_tracks
 import voice_rules
 from phrases import pick
 from play_client import CHUNK, PREFILL, end_packet, play_packet
@@ -72,6 +74,10 @@ FOLLOW_S = 20.0  # 답변 후 이 시간 안의 발화는 웨이크워드 없이
 FOLLOW_MIN_CHARS = 3  # 후속 창에서 이 길이 미만의 발화는 잡음으로 본다
 _PUNCT = re.compile(r"[\s,.!?~…:'\"·]+")
 KNOW_DIR = Path(__file__).with_name("knowledge")
+# --robot-speaker 일 때 트랙 재생을 보낼 관제 API 베이스. None 이면 WonderEcho(--port)로 말한다.
+ROBOT_SPEAKER = None
+# 트랙 요청 → 틱 송신 → I2C 쓰기 지연과 MP3 앞뒤 무음. 로봇 마이크가 말끝을 듣으면 늘린다.
+ROBOT_SPEAKER_TAIL_S = 0.5
 
 
 class Hub:
@@ -94,6 +100,10 @@ class Hub:
         self._journal = journal  # EventJournal | None — 날짜별 JSONL 영속 기록
         self.robot_cursor = 0  # 관제 /api/events 폴링 커서
         self._robot_next_poll = 0.0
+        # 곧 말할 것(경고·인증 안내)이 생기면 선다 — 말소리 대기를 끊고 바로 말한다.
+        self.wake = threading.Event()
+        # 첫 폴링은 커서만 맞춘다. 커서 0 은 버퍼 전체라 재시작 때 지난 경고를 다시 읽었다.
+        self._robot_synced = False
         self.auth_prompted = False
         self.mic = None  # XiaoMic | None — /status 에 끊김 계수를 싣는다 (4.7.19)
 
@@ -103,7 +113,7 @@ class Hub:
         ⚠️ **L2 경고 문장이 여기 있다** (WBS 3.5.6 · 2026-09-23 정정). 단계 쪽
         `escalation.sound.l2_warning` 은 `null` 이다 — 이 안내가 곧 `auth_prompted`
         를 세워 「안내 전 발화는 시도로 세지 않는다」 를 만들기 때문에, 문장만 단계
-        쪽으로 옮기면 사건 폴링(5초) 만큼 **묻기 전에 게이트만 열리는 창**이 생긴다.
+        쪽으로 옮기면 사건 폴링 주기(1초) 만큼 **묻기 전에 게이트만 열리는 창**이 생긴다.
 
         ⚠️ **암구호를 먼저 묻는다.** `auth.require_both` 가 참이면 암구호가 통과하기
         전의 사원증은 판정하지 않는다(`runtime._judge_auth`). 사원증을 먼저 요구하면
@@ -148,6 +158,10 @@ class Hub:
         if res is None:
             return
         events, dropped, latest = res
+        if not self._robot_synced:
+            self._robot_synced = True
+            self.robot_cursor = latest
+            return
         if dropped:
             # /ws/events 의 event_gap 과 같은 의미 — 조용히 넘기면 기록에 빈틈이 생긴다
             self.event("robot_evt", f"event_gap (dropped={dropped})")
@@ -162,7 +176,22 @@ class Hub:
             warning = e.get("warning")
             if kind == "escalation_changed" and warning:
                 self.enqueue_say(str(warning), urgent=True)
+                self.wake.set()
+            # 안내 뒤의 인증 요구로는 끊지 않는다 — 방문객이 암구호를 말하는 중일 수 있다.
+            # 안내 전 발화는 어차피 시도로 세지 않는다(`auth_prompted`).
+            if kind == "auth_required" and not self.auth_prompted:
+                self.wake.set()
         self.robot_cursor = latest
+
+    def poll_robot_events_forever(self, base, interval=1.0):
+        """`poll_robot_events` 를 따로 돈다. 턴 사이에만 부르면 말소리 대기(최대 15초)만큼
+        경고가 늦었다 — 2026-09-24 실기에서 L2 안내·L3 경고가 각각 11초 늦었다."""
+        while True:
+            try:
+                self.poll_robot_events(base, interval)
+            except Exception as e:  # 스레드가 죽으면 그 뒤 경고가 영영 안 나간다
+                print(f"[events] poll failed: {e!r}")
+            time.sleep(interval)
 
     def enqueue_say(self, text, urgent=False):
         with self.lock:
@@ -440,13 +469,41 @@ def retrieve(docs, query, max_chars=1200):
 def _say(device, piper, text, speed):
     """고정 안내 멘트 재생. 음성 경로의 모든 발화가 여기를 지난다."""
     print(f"[say] {text}")
-    if device is None:  # XIAO 로 듣기만 할 때 — 말하기 경로(4.7.20)가 없으면 출력만
+    if ROBOT_SPEAKER is not None:
+        _say_on_robot(piper, text, speed)
+        return
+    if device is None:  # XIAO 로 듣기만 할 때 — 말하기 장치가 없으면 출력만
         return
     try:
         stream_play(device, synth_piper(piper, text, speed))
     except (OSError, TimeoutError) as e:
         # 모듈이 한 번 쓰기를 거부해도 대화 루프는 살아있어야 한다
         print(f"[audio] say failed: {e}")
+
+
+def _say_on_robot(piper, text, speed):
+    """문장을 TF 카드 트랙으로 바꿔 로봇 MP3 모듈로 튼다 (WBS 4.7.21).
+
+    표에 없는 문장(서버가 돌려준 거부 사유처럼 미리 녹음할 수 없는 것)은 고정 대체
+    문장(`unplayable`)으로 튼다 — 고정 문장의 누락은 `tf_tracks.py --check` 가 CI 에서 막는다. 모듈은 재생 끝을 알리지 않으므로, 카드 음원과 같은 모델·속도로
+    합성한 길이만큼 기다린다. 그러지 않으면 로봇 마이크(XIAO)가 제 말을 듣는다.
+    """
+    track = tf_tracks.track_for(text)
+    if track is None:
+        print(f"[tf] 표에 없는 문장이라 대체 문장으로 튼다: {text!r}")
+        text = pick("unplayable")
+        track = tf_tracks.track_for(text)
+        if track is None:  # 표를 새로 만들지 않은 카드 — 조용히 넘어가지 않는다
+            print(f"[tf] 대체 문장도 표에 없다: {text!r}")
+            return
+    ok, detail = robotlink.play_track(track, ROBOT_SPEAKER)
+    if not ok:
+        print(f"[tf] 트랙 {track} 재생 요청 실패: {detail}")
+        return
+    started = time.monotonic()
+    # ponytail: 재생 길이를 다시 합성해서 잰다(~0.2 s). 느리면 --build 가 길이를 표에 적게 바꾼다.
+    duration = len(synth_piper(piper, text, speed)) / 32000
+    time.sleep(max(0.0, started + duration + ROBOT_SPEAKER_TAIL_S - time.monotonic()))
 
 
 def _pump(device, decoder):
@@ -594,13 +651,15 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
 ECHO_GUARD_S = 0.3
 
 
-def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S):
+def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S, interrupt=None):
     """XIAO `:82/audio` capture -> `(pcm, speech_seen, first_speech_ms)` (WBS 4.7.19).
 
     Same contract as `capture_pcm` (VAD, `first_speech_ms`, `on_speech`).
     The stream is always on, so stale audio is flushed first. If the link
     stalls after speech started, trailing silence is judged by wall clock so
-    the turn still ends instead of waiting out `timeout_s`.
+    the turn still ends instead of waiting out `timeout_s`. `interrupt()` true
+    ends the turn at once and drops what was heard — the robot is about to speak.
+    Speech is not spared: on 2026-09-24 ambient noise read as speech every turn.
     """
     mic.flush()
     detector = _Vad(on_speech)
@@ -608,6 +667,8 @@ def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S):
     skip = int(guard_s * 1000) // 20
     deadline = time.monotonic() + timeout_s
     while True:
+        if interrupt is not None and interrupt():
+            return bytes(pcm), False, None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -635,11 +696,14 @@ def open_mic(args):
     return XiaoMic(args.xiao, gain=args.xiao_gain).start()
 
 
-def listen_pcm(device, decoder, mic, timeout_s, on_speech=None):
+def listen_pcm(device, decoder, mic, timeout_s, on_speech=None, interrupt=None):
     """Capture from the configured mic: XIAO when given (ADR-38), else WonderEcho."""
     if mic is not None:
-        guard_s = ECHO_GUARD_S if device is not None else 0.0
-        return capture_xiao(mic, timeout_s=timeout_s, on_speech=on_speech, guard_s=guard_s)
+        guard_s = ECHO_GUARD_S if device is not None or ROBOT_SPEAKER is not None else 0.0
+        return capture_xiao(
+            mic, timeout_s=timeout_s, on_speech=on_speech, guard_s=guard_s, interrupt=interrupt
+        )
+    # ponytail: WonderEcho 경로는 끊지 못한다 — 경고가 최대 15초 늦는다. 그 경로를 다시 쓰면 여기도.
     return capture_pcm(device, decoder, timeout_s=timeout_s, on_speech=on_speech)
 
 
@@ -760,7 +824,7 @@ class ScenarioCtx:
         self.hub.activity = "speaking(scenario)"
         self.hub.event("robot", text)
         print(f"[scenario] {text!r}")
-        if self.device is not None:  # 장치 없이 시나리오만 시험할 때는 출력만
+        if self.device is not None or ROBOT_SPEAKER is not None:  # 스피커 없으면 출력만
             _say(self.device, self.piper, text, self.args.speed)
 
     def listen(self, timeout_s=12.0):
@@ -836,13 +900,22 @@ def main():
         help="로봇 관제 API 베이스 (상태 조회·화이트리스트 명령용)",
     )
     ap.add_argument(
+        "--robot-speaker",
+        action="store_true",
+        help="로봇 MP3 모듈(TF 카드 트랙)로 말한다 — --port 스피커 대신 (WBS 4.7.21)",
+    )
+    ap.add_argument(
         "--log-dir",
         default=str(Path(__file__).with_name("logs")),
         help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
     )
     args = ap.parse_args()
+    global ROBOT_SPEAKER
+    ROBOT_SPEAKER = args.robot_api if args.robot_speaker else None
+    if args.say and args.robot_speaker:
+        ap.error("--say 는 임의 문장이라 카드 트랙으로 못 튼다 — --robot-speaker 없이 --port 로")
     if args.say and not args.port:
-        ap.error("--say 는 --port 가 필요함 (말하기는 아직 WonderEcho 스피커뿐)")
+        ap.error("--say 는 --port 가 필요함 (임의 문장은 WonderEcho 스피커로만)")
     if not (args.port or args.xiao):
         ap.error("--port(WonderEcho) 나 --xiao(XIAO 마이크) 중 하나는 필요함")
     from transcribe_local import gpu_dll_directories
@@ -906,7 +979,9 @@ def main():
     if device is not None:
         print(f"[link] {device.kind} {device.port} @ {device.baud}")
     if mic is not None:
-        print(f"[link] listen {mic.url}" + ("" if device else " · speak: 출력만 (4.7.20 전)"))
+        print(f"[link] listen {mic.url}" + ("" if device else " · speak: 출력만"))
+    if ROBOT_SPEAKER is not None:
+        print(f"[link] speak: 로봇 MP3 모듈 (TF 카드 트랙 {len(tf_tracks.load_table())}개)")
 
     ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args, mic)
 
@@ -932,12 +1007,17 @@ def main():
             daemon=True,
         ).start()
 
+    # 로봇 측 사건(검출 확정·단계 경고)을 저널에 합친다 — 턴과 따로 돈다.
+    threading.Thread(
+        target=hub.poll_robot_events_forever, args=(args.robot_api,), daemon=True
+    ).start()
     turn = 0
     follow_until = 0.0
     badge_pending = False
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
+            hub.wake.clear()  # 이 뒤에 온 사건만 다음 대기를 끊는다 — 앞의 것은 아래서 처리된다
             state, escalation = robotlink.robot_state_level(args.robot_api)
             if badge_pending:
                 verdict = badge_verdict(state, escalation)
@@ -950,8 +1030,6 @@ def main():
             if prompt:
                 hub.activity = "speaking"
                 _say(device, piper, prompt, args.speed)
-            # 로봇 측 사건(검출 확정 등)을 저널에 합친다 — 몇 초에 한 번씩만.
-            hub.poll_robot_events(args.robot_api)
             # 단계 경고·시나리오 큐 처리 — 대기 모드에서도 경고는 나간다
             for _, _, item in hub.drain_say():
                 if isinstance(item, tuple) and item[0] == "scenario":
@@ -977,6 +1055,7 @@ def main():
                     mic,
                     timeout_s=1.5 if badge_pending else 15.0,
                     on_speech=tell_robot_listening if not badge_pending else None,
+                    interrupt=hub.wake.is_set,
                 )
             except TimeoutError as e:
                 print(f"[capture] {e} — skip")
