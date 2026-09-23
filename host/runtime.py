@@ -272,6 +272,8 @@ class Runtime:
         #: 쓰러짐 확정 기준. 기록에 함께 실어 **그때 무슨 기준이었는지**를 남긴다 —
         #: 설정을 고친 뒤 옛 기록을 보면 기준을 알 수 없다.
         self._fallen_confirm_ms = int(config["vision"]["fallen"]["confirm_ms"])
+        # 시작값은 «쓰러짐 없음» 이다. 비우면 첫 프레임의 `False` 가 해제 로그로 남는다.
+        self._edge.changed("fallen", False)
         #: 이번 구역에서 판독을 이미 걸었나. **구역당 한 번만 건다** — 사이클마다
         #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다.
         self._zone_vlm_asked = False
@@ -1032,8 +1034,11 @@ class Runtime:
         두고 단계만 올린다. 모드 게이트가 공장 모드에서만 통과시키므로, 경비 모드에서는
         기록까지만 남는다.
         """
+        # ⚠️ **엣지는 워커의 `changed` 가 아니라 우리 기준으로 본다** — `person` 과 같은
+        # 이유다. 워커는 25fps 라 `changed` 가 실린 프레임이 이 틱(10Hz) 전에 덮어써진다.
+        # 2026-09-23 실기에서 워커 확정 6번 중 4번이 그렇게 사라졌다.
         verdict = getattr(result, "fallen", None)
-        if verdict is None or not verdict.changed:
+        if verdict is None or not self._edge.changed("fallen", verdict.fallen):
             return
         LOG.warning(
             "fallen_changed",

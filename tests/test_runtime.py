@@ -2439,6 +2439,21 @@ def test_a_fall_is_recorded_once_not_every_tick(
     assert len(falls) == 1, "엣지에서만 한 번이어야 한다"
 
 
+def test_a_fall_whose_edge_frame_was_skipped_is_still_recorded(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """워커는 25fps, 이 틱은 10Hz 다 — `changed` 가 실린 프레임은 덮어써질 수 있다.
+
+    2026-09-23 실기에서 워커의 확정 6번 중 4번이 이렇게 사라졌다. 엣지는 우리가 본다.
+    """
+    runtime, vision, blackbox = _fallen_runtime(config, clock, tmp_path)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=False)
+    _fell(runtime, vision, seq=2, at_ms=200, changed=False)
+
+    falls = [e for e in blackbox.feed() if e.event_type == "person_fallen"]
+    assert len(falls) == 1
+
+
 @pytest.mark.usefixtures("unlock_modes")
 def test_factory_fall_raises_l3_without_moving_the_state(
     config: dict, clock: FakeClock, tmp_path: Path
