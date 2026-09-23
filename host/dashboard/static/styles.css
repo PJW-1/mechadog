@@ -126,6 +126,8 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .operation-rail>section { min-width: 0; min-height: 88px; display: flex; align-items: center }
 .operation-rail>section+section { border-left: 1px solid var(--rule); padding-left: 36px }
 .mission-summary { flex-direction: column; align-items: flex-start!important; justify-content: center }
+.operation-rail:has(>.mission-summary[hidden]) { grid-template-columns: 50% 50% }
+.operation-rail>.mission-summary[hidden]+section { border-left: 0; padding-left: 0 }
 .mission-heading { display: flex; align-items: center; gap: 18px }
 .mission-heading>span svg { width: 28px; height: 34px }
 .mission-heading h2 { font-size: 20px; font-weight: 500; letter-spacing: 0 }
@@ -173,6 +175,16 @@ dialog button+button { margin-left: 8px }
 .dialog-symbol { color: #ef6c7b }
 .dialog-symbol svg { width: 30px; height: 30px }
 #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 100; background: #343243; border: 1px solid #716875; color: #f0e8d7; max-width: calc(100% - 30px); padding: 13px 22px; box-shadow: 0 8px 30px #09091566; font-size: 12px }
+/* 경보 띠 (B1). 색은 눈 LED 와 같은 뜻 — L2 주황 · L3 빨강 · F 흰색. L3 는 LED 처럼 깜박인다. */
+.alarm-banner { position: fixed; top: 62px; left: 50%; transform: translateX(-50%); z-index: 90; display: flex; align-items: center; gap: 14px; max-width: calc(100% - 30px); padding: 10px 18px; border: 2px solid; box-shadow: 0 8px 30px #09091588; font-size: 13px; color: #1a1a2a }
+.alarm-banner[data-level="L2"] { background: #f0a040; border-color: #ffc47a }
+.alarm-banner[data-level="L3"] { background: #d8413a; border-color: #ff8a80; color: #fff; animation: alarm-blink 1s steps(2,start) infinite }
+.alarm-banner[data-level="F"] { background: #f0e8d7; border-color: #fff }
+.alarm-banner.stale { opacity: .7; animation: none }
+.alarm-banner strong { white-space: nowrap; font-size: 14px }
+.alarm-banner button { margin-left: auto; white-space: nowrap; padding: 5px 12px; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; cursor: pointer }
+@keyframes alarm-blink { to { border-color: transparent } }
+@media (prefers-reduced-motion: reduce) { .alarm-banner[data-level="L3"] { animation: none } }
 
 @media(max-width:1450px) {
  .topbar { gap: 13px }

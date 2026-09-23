@@ -378,7 +378,7 @@ def _log(now_ms: int, message: str) -> None:
     print(f"[{now_ms % 1_000_000:6d}] {message}", flush=True)
 
 
-def run(robot: MockRobot, cfg: dict, peer_host: str | None = None) -> None:
+def run(robot: MockRobot, cfg: dict, peer_host: str | None = None, bind_host: str = "") -> None:
     """UDP 루프. 여기만 소켓과 실시간을 만진다."""
     net = cfg["network"]
     period_s = 1.0 / net["telemetry_rate_hz"]
@@ -386,7 +386,8 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # SO_REUSEADDR 를 쓰지 않는다 — Windows 에서 UDP 는 같은 포트에 조용히 이중
     # 바인드돼 명령을 하나도 못 받는다. 점유 중이면 bind 가 즉시 실패해야 한다.
-    sock.bind(("", net["cmd_port"]))
+    # 여러 대를 한 PC 에서 흉내 낼 때는 루프백 주소를 나눠 묶는다 (127.0.0.2 …).
+    sock.bind((bind_host, net["cmd_port"]))
     sock.setblocking(False)
 
     # ⚠️ Windows 전용 — 아직 아무도 듣지 않는 포트로 텔레메트리를 보내면 ICMP
@@ -453,6 +454,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", default="mechdog-mock", help="device_id (텔레메트리 필수 필드)")
     parser.add_argument("--host", default=None, help="텔레메트리 수신지. 기본은 첫 명령의 송신자")
+    parser.add_argument(
+        "--bind",
+        default="",
+        help="명령 포트를 묶을 주소. 여러 대면 127.0.0.2 처럼 나눈다 (기본 전체)",
+    )
 
     faults = parser.add_argument_group("장애 주입")
     faults.add_argument("--drop-rate", type=float, default=0.0, help="수신 명령 유실률 0.0~1.0")
@@ -488,7 +494,7 @@ def main(argv: list[str] | None = None) -> int:
         start_ms=system_clock_ms(),
     )
     with contextlib.suppress(KeyboardInterrupt):
-        run(robot, cfg, peer_host=args.host)
+        run(robot, cfg, peer_host=args.host, bind_host=args.bind)
     _log(system_clock_ms(), f"종료 · {robot.stats.summary()}")
     return 0
 

@@ -103,3 +103,16 @@ test('the entry name is escaped before it becomes an address', () => {
  assert.equal(liveSnapshotUrl('http://x',{entry:'a b/c',snapshot:'snapshot.jpg'}),
   'http://x/events/a%20b%2Fc/snapshot.jpg');
 });
+
+// ── 경보 띠 (B1) ─────────────────────────────────────────────
+test('the alarm only pairs a reason with the level it was given for', () => {
+ const store=new Operations({clock:()=>1});store.setDemo(false);store.link={};
+ const at=level=>store.setTelemetry({state:'live',snapshot:{deviceId:'mechdog-01',state:'ALERT',escalation:level,stale:false,runtimeStale:false},rateHz:10,lost:0,history:[]});
+ at('L1');assert.equal(store.alarm,null,'L1 은 띠를 띄우지 않는다');
+ store.ingestLiveEvent({seq:1,ts_ms:1,event:'escalation_changed',state:'AUTH_WAIT',escalation:'L2',tracks:[],detections:[],telemetry:null,reason:'unauthenticated_hold',warning:null});
+ at('L2');assert.deepEqual([store.alarm.level,store.alarm.reason,store.alarm.warning],['L2','미인증 상태 지속',null]);
+ // 상태 전문이 먼저 L3 가 됐고 사건은 아직 — 지난 L2 사유를 L3 에 붙이지 않는다.
+ at('L3');assert.equal(store.alarm.reason,null);
+ store.ingestLiveEvent({seq:2,ts_ms:2,event:'escalation_changed',state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:null,reason:'AUTH_FAILED',warning:'경보가 발령되었습니다.'});
+ assert.equal(store.alarm.warning,'경보가 발령되었습니다.');assert.match(store.alarm.reason,/인증 실패/);
+});

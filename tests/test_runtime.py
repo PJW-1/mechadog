@@ -2295,7 +2295,13 @@ def test_a_quiet_promotion_still_reaches_the_event_feed(config: dict, clock: Fak
     assert runtime.escalation.level is Level.L2
 
     later, _ = board.events_since(seen_at_l1)
-    assert [e["event"] for e in later] == ["escalation_changed"], (
+    # 블랙박스 사건(사진 기록)은 `entry` 를 싣는다 — 이 구간에는 하나도 없어야 한다.
+    assert not [e for e in later if "entry" in e]
+    changes = [e for e in later if e["event"] == "escalation_changed"]
+    assert len(changes) == 1, (
         "L1→L2 사이에 블랙박스 사건이 없다 — 단계 사건이 없으면 경고가 안 나간다"
     )
-    assert later[0]["escalation"] == "L2", "조용한 승격이 사건으로 나와야 한다"
+    assert changes[0]["escalation"] == "L2", "조용한 승격이 사건으로 나와야 한다"
+    assert changes[0]["reason"] == "unauthenticated_hold", "왜 올랐는지 화면이 말한다"
+    # 인증 대기 진입은 전이 로그에만 있었다 — 사건 목록에도 올라간다 (B4).
+    assert [e["event"] for e in later if e["event"] != "escalation_changed"] == ["auth_required"]
