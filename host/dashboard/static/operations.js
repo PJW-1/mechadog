@@ -281,6 +281,7 @@ export class Operations {
  reviewEvent(id,status,note){
   if(!Object.hasOwn(REVIEW_STATES,status))throw new Error('검토 상태를 선택해 주세요.');
   const event=this.events.find(e=>e.id===id);if(!event)throw new Error('사건을 찾을 수 없습니다.');
+  if(event.source==='LIVE_FEED')throw new Error('실시간 사건의 검토 결과는 서버 저장 기능이 없어 기록할 수 없습니다.');
   if(this.role==='technician')throw new Error('운영자 또는 검토자 시연 역할에서 검토하세요.');
   note=cleanText(note,2000);if(status==='false_positive'&&!note)throw new Error('오탐으로 판단한 근거를 입력해 주세요.');
   event.review=status;event.note=note;event.reviewedAt=this.clock();

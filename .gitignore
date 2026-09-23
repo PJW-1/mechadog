@@ -59,6 +59,7 @@ maps/*
 datasets/*
 !datasets/README.md
 recordings/
+/web_image/
 *.bag
 *.db3
 

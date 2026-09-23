@@ -148,7 +148,7 @@
 @media(max-width:1700px){.safety-note{display:none}.main-nav{gap:6px}.main-nav button{font-size:15px}}
 @media(max-width:1100px){.workspace-open #panel-content{padding:24px 28px 44px}.robot-detail-layout{gap:28px;grid-template-columns:1fr 1fr}.robot-model-stage{height:310px}.op-mission-columns{grid-template-columns:1fr}.workspace-open .op-filters{grid-template-columns:repeat(4,1fr)}.workspace-open .op-filters>.op-field:first-child{grid-column:1/-1}.workspace-open .op-evidence-workspace{gap:24px}.workspace-open [data-page=settings]{grid-template-columns:170px minmax(0,1fr);column-gap:28px}}
 @media(max-width:800px){
- .main-nav{justify-content:flex-start;gap:2px;overflow-x:auto;min-width:0}.main-nav button{flex:none;min-width:40px;min-height:42px;font-size:12px;padding:5px 6px}
+ .main-nav{justify-content:flex-start;gap:2px;min-width:0}.main-nav button{flex:none;min-width:40px;min-height:42px;font-size:12px;padding:5px 6px}
  #app.workspace-open{grid-template-rows:99px minmax(0,1fr)}
  .workspace-open .detail-panel>header{padding:18px 20px;min-height:80px;gap:12px}.workspace-open #panel-title{font-size:25px}.workspace-open #close-panel{font-size:11px;padding:8px;gap:5px}
  .workspace-open #panel-content{padding:22px 20px 40px}.workspace-open .op-intro{align-items:flex-start;gap:12px}.workspace-open .op-intro .op-note{font-size:13px}

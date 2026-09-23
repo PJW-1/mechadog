@@ -250,6 +250,8 @@ function openPage(page){
  $('detail-panel').hidden=isDashboard;
  document.querySelector('.skip-link').href=isDashboard?'#scene-title':'#panel-title';
  document.querySelectorAll('[data-view]').forEach(button=>{const active=button.dataset.view===page;button.classList.toggle('active',active);if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')});
+ document.querySelector('.nav-more').classList.toggle('active',!!document.querySelector('.nav-more [data-view].active'));
+ document.querySelector('.nav-more').open=false;
  document.querySelectorAll('[data-camera]').forEach(button=>{const active=button.dataset.camera===(page==='zones'?'top':page==='devices'?'robot':page==='dashboard'?'overview':'none');button.classList.toggle('selected',active);button.setAttribute('aria-pressed',String(active))});
  panels.render(page);
  if(page==='dashboard'){const fallback=document.querySelector('.robot-tab[data-robot="'+operations.selected+'"]');(lastOpener?.isConnected&&lastOpener.matches('button,a')&&!lastOpener.closest('[hidden]')?lastOpener:fallback||$('scene-title')).focus();lastOpener=null}

@@ -42,6 +42,14 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .main-nav button { position: relative; white-space: nowrap; color: #cecadf; font-size: 17px; padding: 8px 9px }
 .main-nav button.active { color: #f1edf9; font-weight: 600 }
 .main-nav button.active:after { content: ""; position: absolute; height: 2px; bottom: 0; left: 0; right: 0; background: var(--brass) }
+.nav-more { position: relative; align-self: center }
+.nav-more summary { cursor: pointer; white-space: nowrap; color: #cecadf; font-size: 15px; padding: 8px 9px; list-style: none }
+.nav-more summary::-webkit-details-marker { display: none }
+.nav-more summary:after { content: " ▾"; font-size: 11px }
+.nav-more.active summary { color: var(--brass) }
+.nav-more-menu { position: absolute; top: 100%; left: 0; min-width: 160px; padding: 6px; border: 1px solid var(--rule); background: var(--panel); box-shadow: 0 12px 30px #0008; z-index: 30 }
+.nav-more-menu button { display: flex; width: 100%; justify-content: flex-start; font-size: 14px; padding: 8px 12px }
+.nav-more-menu button.active:after { display: none }
 .source-status { margin-left: auto; display: flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--muted); font-size: 15px }
 .source-status>.status-dot { display: none }
 .source-status>.muted:before { content: "·"; margin-right: 8px }
@@ -250,6 +258,8 @@ dialog button+button { margin-left: 8px }
  .mobile-stop-note { display: block; margin-top: 2px; font-size: 9px; line-height: 1.35; font-weight: 400 }
  .main-nav { order: 5; width: 100%; height: 42px; justify-content: space-between; gap: 2px }
  .main-nav button { flex: 1; font-size: 13px; padding: 5px 7px }
+ .nav-more summary { font-size: 12px; padding: 10px 6px }
+ .nav-more-menu { left: auto; right: 0 }
  .fleet-band { padding: 0 8px }
  .fleet-list { width: 100% }
  .robot-tab { padding: 8px 4px!important; justify-content: center; gap: 5px }
