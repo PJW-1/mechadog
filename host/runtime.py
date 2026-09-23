@@ -68,6 +68,14 @@ WSAEMSGSIZE = 10040
 SHUTDOWN_ESTOP_REPEATS = 3
 SHUTDOWN_ESTOP_INTERVAL_S = 0.02
 EYE_LED_REFRESH_MS = 1000
+#: 관제 사건 목록에 올리는 FSM 전이 — 인증과 안전 래치 해제만. ⚠️ 순찰·추적 전이는
+#: 싣지 않는다. `ALERT ⇄ TRACK` 은 초당 몇 번씩 왕복해(2026-09-18) 목록을 덮는다.
+FEED_TRANSITIONS: dict[Event, str] = {
+    Event.AUTH_REQUIRED: "auth_required",
+    Event.AUTH_OK: "auth_granted",
+    Event.AUTH_FAILED: "auth_failed",
+    Event.RESET_CONFIRMED: "failsafe_cleared",
+}
 
 
 def _is_oversized_datagram(exc: OSError) -> bool:
@@ -1274,6 +1282,32 @@ class Runtime:
                 "escalation": level,
                 "mode": self._mission.mode,
                 "warning": self._escalation.presentation().warning,
+                "reason": self._escalation.reason,
+            }
+        )
+
+    def _announce_transition(self, event: Event, previous: str, now_ms: int) -> None:
+        """인증·안전 전이를 관제 사건으로 낸다. 전이 로그(jsonl)에만 있던 것들이다."""
+        if self._dashboard is None:
+            return
+        after = self._behavior.state
+        name = (
+            "failsafe_entered"
+            if after == "FAILSAFE" and previous != "FAILSAFE"
+            else FEED_TRANSITIONS.get(event)
+        )
+        if name is not None:
+            self._feed_event(name, now_ms, previous=previous, trigger=event.name)
+
+    def _feed_event(self, name: str, now_ms: int, **extra: Any) -> None:
+        self._dashboard.record_event(
+            {
+                "event": name,
+                "ts_ms": now_ms,
+                "state": self._behavior.state,
+                "escalation": self._escalation.level.value,
+                "mode": self._mission.mode,
+                **extra,
             }
         )
 
@@ -1445,6 +1479,7 @@ class Runtime:
             self._voice_auth_opened_ms = None
             self._voice_auth_deferred = False
         self._log_transition(before)
+        self._announce_transition(event, before, now_ms)
         return True
 
     def start_patrol(self, now_ms: int) -> bool:
@@ -1615,6 +1650,8 @@ class Runtime:
                         cap_ms=self._voice_auth_grace_ms + self._auth_badge_wait_ms,
                     )
                     LOG.info("voice_auth_granted", valid_ms=self._voice_auth_valid_ms, next="badge")
+                    if self._dashboard is not None:
+                        self._feed_event("voice_auth_granted", now_ms, next="badge")
                 return True, "암구호 확인 — 사원증을 제시해 주세요"
             accepted = self._apply(Event.AUTH_OK, now_ms)
             if accepted:
@@ -1719,27 +1756,13 @@ class Runtime:
         기다리는 시간을 송신기의 다음 마감에서 가져온다. 루프가 자기 마감을 따로
         세면 시계가 둘이 되고, 그때부터 어느 쪽이 진짜인지 알 수 없다.
         """
-        # 세션 생성·워밍업은 운용 루프 전에 끝낸다. 루프 안에서 처음 열면 DirectML
-        # 초기화가 300ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
-        if self._vision is not None:
-            self._vision.start()
-        self._sock = sock
+        self.begin(sock)
         started = clock()
         end_ms = started + int(duration_s * 1000) if duration_s is not None else None
-        # ⚠️ **루프보다 먼저 인코딩한다.** 이것이 프로세스의 seq=1 이어야 로봇이
-        # 세션 개시로 인정한다. 틱이 한 번이라도 앞서면 seq 1 을 다른 명령이 쓴다.
-        self._session_open = self._commander.open_session()
-        LOG.info(
-            "runtime_started",
-            listen_port=self._telemetry_port,
-            peer=_peer_text(self._peer),
-            period_ms=self._commander.period_ms,
-            actions=self._actions,
-        )
         try:
             while end_ms is None or clock() < end_ms:
                 now = clock()
-                due = self._commander.next_due_ms
+                due = self.next_due_ms
                 wait_ms = 0 if due is None else max(0, due - now)
                 if end_ms is not None:
                     wait_ms = min(wait_ms, max(0, end_ms - now))
@@ -1766,14 +1789,49 @@ class Runtime:
                         winerror=WSAEMSGSIZE,
                     )
                 else:
-                    out = self.ingest(data, clock())
-                    if self._peer is None and out.reading is not None:
-                        self._peer = (addr[0], self._cmd_port)
-                        LOG.info("peer_learned", peer=_peer_text(self._peer))
-                self._send(sock, self.tick(clock()))
+                    self.receive(data, addr, clock())
+                self.step(clock())
         finally:
             self._shutdown(sock)
         return self._stats
+
+    # ── 운용 루프의 단계 — `serve` 와 여러 대를 한 소켓으로 돌리는 `host.fleet` 이 같이 쓴다 ──
+    def begin(self, sock: socket.socket) -> None:
+        """루프 전 준비. 비전 워커를 켜고 세션 개시 전문을 만든다."""
+        # 세션 생성·워밍업은 운용 루프 전에 끝낸다. 루프 안에서 처음 열면 DirectML
+        # 초기화가 300ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
+        if self._vision is not None:
+            self._vision.start()
+        self._sock = sock
+        # ⚠️ **루프보다 먼저 인코딩한다.** 이것이 프로세스의 seq=1 이어야 로봇이
+        # 세션 개시로 인정한다. 틱이 한 번이라도 앞서면 seq 1 을 다른 명령이 쓴다.
+        self._session_open = self._commander.open_session()
+        LOG.info(
+            "runtime_started",
+            listen_port=self._telemetry_port,
+            peer=_peer_text(self._peer),
+            period_ms=self._commander.period_ms,
+            actions=self._actions,
+        )
+
+    @property
+    def next_due_ms(self) -> int | None:
+        return self._commander.next_due_ms
+
+    def owns(self, device_id: str) -> bool:
+        """이 텔레메트리 개체 ID 가 우리 로봇인가 (설정 이름 또는 `telemetry_device_id`)."""
+        return device_id in self._own_ids
+
+    def receive(self, data: bytes, addr: tuple[str, int], now_ms: int) -> None:
+        """받은 datagram 하나. 상대 주소를 모르면 첫 수락 텔레메트리에서 배운다."""
+        out = self.ingest(data, now_ms)
+        if self._peer is None and out.reading is not None:
+            self._peer = (addr[0], self._cmd_port)
+            LOG.info("peer_learned", peer=_peer_text(self._peer))
+
+    def step(self, now_ms: int) -> None:
+        """틱 하나 — 마감이 된 전문만 나간다 (마감은 송신기가 센다)."""
+        self._send(self._sock, self.tick(now_ms))
 
     def send_immediate(self, line: str) -> None:
         """다음 틱을 기다리지 않고 전문 한 줄을 즉시 보낸다.
@@ -1804,6 +1862,11 @@ class Runtime:
     def _shutdown(self, sock: socket.socket) -> None:
         # ⚠️ **`ESTOP` 을 먼저 보낸다.** 워커 정리를 기다리다 늦으면, 로봇을 멈추는
         # 신호가 스레드 조인 뒤로 밀린다. 순서가 안전을 결정한다.
+        self.stop_robot(sock)
+        self.release()
+
+    def stop_robot(self, sock: socket.socket) -> None:
+        """종료 ESTOP 을 여러 번 보낸다. 여러 대면 **전부 먼저 세운 뒤** `release` 한다."""
         line = self.emergency_stop()
         if self._peer is not None:
             payload = line.encode("utf-8")
@@ -1814,6 +1877,9 @@ class Runtime:
                     sock.sendto(payload, self._peer)
                 if attempt + 1 < SHUTDOWN_ESTOP_REPEATS:
                     time.sleep(SHUTDOWN_ESTOP_INTERVAL_S)
+
+    def release(self) -> None:
+        """비전 워커를 멈추고 종료 요약을 남긴다. ESTOP 은 `stop_robot` 이 이미 보냈다."""
         if self._vision is not None:
             self._vision.stop()
         LOG.info(
@@ -1909,6 +1975,44 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def dashboard_wiring(
+    runtime: Runtime,
+    config: Mapping[str, Any],
+    *,
+    vision: Any | None,
+    blackbox: EventBlackbox | None,
+) -> dict[str, Any]:
+    """관제 서버(`create_app`)에 넘길 명령·영상·사건 그림·정책 연결. 한 대·여러 대가 같이 쓴다."""
+    from host.dashboard.commands import CommandService
+
+    commands = CommandService(
+        runtime.behavior,
+        runtime.commander,
+        runtime.send_immediate,
+        request_reset=runtime.ask_reset,
+        apply_event=runtime.apply_external,
+        ask_patrol=runtime.ask_patrol,
+        set_mode=runtime.set_mode,
+        note_voice_auth=runtime.note_voice_auth,
+        note_voice_listening=runtime.note_voice_listening,
+        confirm_alarm=runtime.ask_alarm_confirm,
+        pose=(
+            float(config["posture"]["pitch_up_deg"]),
+            int(config["posture"]["settle_ms"]),
+        ),
+    )
+    return {
+        "commands": commands,
+        "camera": _latest_jpeg(vision) if vision is not None else None,
+        # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다 (WBS 4.5.2).
+        "vision": vision.latest if vision is not None else None,
+        # 사건 전문에는 디렉터리 이름만 실으므로(`4.4.3`) 그림은 여기서
+        # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
+        "event_snapshot": None if blackbox is None else blackbox.snapshot_bytes,
+        "policy": policy_view(config),
+    }
+
+
 def _publish_event(dashboard: DashboardState) -> Callable[[BlackboxEntry], None]:
     """블랙박스 기록 하나를 관제 화면이 읽을 형태로 바꿔 넘긴다.
 
@@ -1935,10 +2039,33 @@ def _publish_event(dashboard: DashboardState) -> Callable[[BlackboxEntry], None]
                 "telemetry": entry.telemetry,
                 "entry": entry.meta_path.parent.name,
                 "snapshot": entry.jpeg_path.name if entry.jpeg_path is not None else None,
+                # 그릴 수 없는 판단 근거 — PPE 판정·쓰러짐 수치·VLM 판독 (B2).
+                "judgement": entry.judgement,
             }
         )
 
     return publish
+
+
+def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
+    """설정 화면의 대응 단계 표가 읽는 값 (B7). **읽는 키는 판정 코드와 같다.**
+
+    화면에 숫자를 따로 적어 두면 config 를 고쳐도 화면이 옛 값을 말한다.
+    """
+    esc, auth, vision = config["escalation"], config["auth"], config["vision"]
+    return {
+        "detect_window_ms": int(vision["detect_window_ms"]),
+        "detect_hits_required": int(vision["detect_hits_required"]),
+        "l1_to_l2_hold_s": int(esc["l1_to_l2_hold_s"]),
+        "target_lost_timeout_s": int(config["fsm"]["target_lost_timeout_s"]),
+        "auth_timeout_s": int(auth["timeout_s"]),
+        "auth_max_attempts": int(auth["max_attempts"]),
+        "auth_session_valid_s": int(auth["session_valid_s"]),
+        "auth_verdict_grace_s": auth.get("verdict_grace_s"),
+        "auth_require_both": bool(auth.get("require_both", False)),
+        "l3_warning": (esc.get("sound") or {}).get("l3_warning"),
+        "led": {key: value for key, value in esc["led"].items() if key != "l3_blink_hz"},
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2003,33 +2130,13 @@ def main(argv: list[str] | None = None) -> int:
             runtime.ask_patrol()
         with contextlib.ExitStack() as stack:
             if dashboard is not None:
-                from host.dashboard.commands import CommandService
                 from host.dashboard.server import running_server
 
-                commands = CommandService(
-                    runtime.behavior,
-                    runtime.commander,
-                    runtime.send_immediate,
-                    request_reset=runtime.ask_reset,
-                    apply_event=runtime.apply_external,
-                    ask_patrol=runtime.ask_patrol,
-                    set_mode=runtime.set_mode,
-                    note_voice_auth=runtime.note_voice_auth,
-                    note_voice_listening=runtime.note_voice_listening,
-                    confirm_alarm=runtime.ask_alarm_confirm,
-                )
-                camera = _latest_jpeg(vision) if vision is not None else None
                 stack.enter_context(
                     running_server(
                         dashboard,
                         args.dashboard_port,
-                        commands=commands,
-                        camera=camera,
-                        # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다 (WBS 4.5.2).
-                        vision=vision.latest if vision is not None else None,
-                        # 사건 전문에는 디렉터리 이름만 실으므로(`4.4.3`) 그림은 여기서
-                        # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
-                        event_snapshot=(None if blackbox is None else blackbox.snapshot_bytes),
+                        **dashboard_wiring(runtime, config, vision=vision, blackbox=blackbox),
                     )
                 )
             runtime.serve(sock, duration_s=args.duration)

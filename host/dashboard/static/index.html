@@ -96,5 +96,6 @@
 <dialog id="stop-dialog" aria-labelledby="stop-title"><form method="dialog"><span class="dialog-symbol" data-icon="stop"></span><h2 id="stop-title">실제 장비가 연결되지 않았어요</h2><p>이 화면에서는 실물 로봇에 정지 명령을 보낼 수 없습니다. 실제 위험이 있으면 기체의 물리 정지 수단을 사용하세요.</p><p>아래 버튼은 웹 예시 재생만 중지합니다.</p><button id="stop-preview" value="stop" class="estop">웹 예시 중지</button><button value="cancel" class="outline-button">닫기</button></form></dialog>
 <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog"><span class="dialog-symbol" id="confirm-icon"></span><h2 id="confirm-title"></h2><p id="confirm-body"></p><button id="confirm-yes" value="yes">예</button><button id="confirm-no" value="no" class="outline-button">아니요</button></form></dialog>
 <div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="alarm-banner" class="alarm-banner" role="alert" hidden><strong id="alarm-level"></strong><span id="alarm-text"></span><button type="button" id="alarm-action">순찰 · 제어에서 처리</button></div>
 </body>
 </html>

@@ -153,6 +153,62 @@ def test_drive_sets_the_repeating_intent(service):
     assert sent == []
 
 
+# ── 수동 자세 (B6) ───────────────────────────────────────────────
+
+
+def _pose_service(cfg):
+    commander = Commander()
+    behavior = behavior_from_config(commander, cfg)
+    return CommandService(behavior, commander, lambda _line: None, pose=(-15.0, 500)), commander
+
+
+def _poses(commander) -> list[dict]:
+    return [i.fields for i in commander._pending if i.type_ == "POSE"]
+
+
+def test_pose_is_refused_outside_manual(cfg):
+    """자율 중에는 PPE 자세 상승이 같은 POSE 를 쓴다 — 섞지 않는다."""
+    svc, commander = _pose_service(cfg)
+    result = svc.pose("up")
+    assert result.accepted is False
+    assert "오버라이드를 먼저" in result.detail
+    assert _poses(commander) == []
+
+
+def test_pose_uses_only_the_verified_angles(cfg):
+    svc, commander = _pose_service(cfg)
+    svc.manual_on()
+    assert svc.pose("up").accepted is True
+    assert svc.pose("down").accepted is True
+    assert svc.pose("tilt45").accepted is False, "임의 자세는 받지 않는다"
+    assert [p["pitch"] for p in _poses(commander)] == [-15.0, 15.0]
+    assert _poses(commander)[0]["dur"] == 500
+
+
+def test_leaving_manual_levels_a_tilted_body(cfg):
+    """⚠️ 기울인 채로 자율에 넘기면 순찰이 기울어진 채 걷는다."""
+    svc, commander = _pose_service(cfg)
+    svc.manual_on()
+    svc.pose("up")
+    svc.manual_off()
+    assert [p["pitch"] for p in _poses(commander)] == [-15.0, 0.0]
+
+
+def test_pose_without_a_wired_path_is_refused(service):
+    svc, _behavior, _sent = service
+    svc.manual_on()
+    assert svc.pose("up").accepted is False
+
+
+def test_pose_endpoint_round_trips(cfg):
+    svc, _commander = _pose_service(cfg)
+    with TestClient(create_app(_state(), svc)) as http:
+        assert http.post("/api/command/pose", json={"preset": "up"}).json()["accepted"] is False
+        http.post("/api/command/manual", json={"on": True})
+        assert http.post("/api/command/pose", json={"preset": "up"}).json()["accepted"] is True
+        assert http.post("/api/command/pose", json={"preset": 3}).status_code == 400
+
+
 # ── 순찰 시작/정지 (WBS 4.7.11) ──────────────────────────────────
 
 
@@ -382,6 +438,35 @@ def test_runtime_wires_the_apply_hook_so_escalation_follows_estop(cfg, clock):
     service.estop()
     assert runtime.behavior.state == "FAILSAFE"
     assert runtime.escalation.level.value == "F", "E-Stop 이 단계를 올려야 눈 LED 가 흰색이 된다"
+
+
+def test_failsafe_entry_reaches_the_event_feed(cfg, clock):
+    """안전 잠금은 전이 로그에만 있었다 — 관제 사건 목록에도 올라간다 (B4)."""
+    from host.runtime import Runtime
+
+    board = _state()
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock, dashboard=board)
+    service = CommandService(
+        runtime.behavior, runtime.commander, lambda _line: None, apply_event=runtime.apply_external
+    )
+    service.estop()
+    events, _ = board.events_since(0)
+    assert [(e["event"], e["trigger"], e["previous"]) for e in events] == [
+        ("failsafe_entered", "ESTOP", "IDLE")
+    ]
+
+
+def test_policy_endpoint_serves_the_config_values(cfg):
+    """설정 화면이 숫자를 지어내지 않게 판정 코드와 같은 키를 내보낸다 (B7)."""
+    from host.runtime import policy_view
+
+    with TestClient(create_app(_state(), policy=policy_view(cfg))) as http:
+        body = http.get("/api/policy").json()
+    assert body["l1_to_l2_hold_s"] == cfg["escalation"]["l1_to_l2_hold_s"]
+    assert body["auth_timeout_s"] == cfg["auth"]["timeout_s"]
+    assert body["target_lost_timeout_s"] == cfg["fsm"]["target_lost_timeout_s"]
+    with TestClient(create_app(_state())) as http:
+        assert http.get("/api/policy").status_code == 404
 
 
 # ── 운용 모드 전환 (WBS 3.4.4 · FR-4.7 · FR-11.3) ────────────────

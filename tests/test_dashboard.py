@@ -588,11 +588,15 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             tracks=[{"track_id": 1}],
             detections=[],
             telemetry={},
+            judgement={"state": "위반", "reason": "1500ms 창 위반 확정"},
             meta_path=Path("bb/entry-1/meta.json"),
             jpeg_path=Path("bb/entry-1/frame.jpg"),
         )
     )
     assert board.event_seq == before + 1, "넘긴 어댑터가 이 대시보드로 들어가야 한다"
+    # 판단 근거가 화면까지 가야 사건 상세가 «미판정» 으로 고정되지 않는다 (B2).
+    sent, _ = board.events_since(before)
+    assert sent[0]["judgement"] == {"state": "위반", "reason": "1500ms 창 위반 확정"}
 
 
 def test_cli_omits_the_publisher_without_a_dashboard(cfg, monkeypatch):
