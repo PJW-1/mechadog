@@ -75,7 +75,7 @@ test('voice panel renders phrase manager with categories and custom delete',asyn
  const link={
   baseUrl:'http://127.0.0.1:8090',
   status:()=>Promise.resolve({robot:'mechadog-01',mode:'active',activity:'idle',say_queue:0,events:[]}),
-  say:()=>Promise.resolve({}),mode:()=>Promise.resolve({}),transcript:()=>Promise.resolve([]),
+  mode:()=>Promise.resolve({}),transcript:()=>Promise.resolve([]),
   phrases:()=>Promise.resolve([{category:'greeting',count:2,lines:[{text:'안녕하세요',custom:false},{text:'관리자가 넣은 말',custom:true}]}]),
   addPhrase:(cat,text)=>{added=[cat,text];return Promise.resolve({category:cat,added:true})},
   deletePhrase:(cat,text)=>{deleted=[cat,text];return Promise.resolve({removed:true})},
@@ -86,6 +86,11 @@ test('voice panel renders phrase manager with categories and custom delete',asyn
  await new Promise(resolve=>setTimeout(resolve,10));
  // 멘트 관리 섹션 + 카테고리 표시
  assert.ok([...document.querySelectorAll('h3')].some(h=>h.textContent==='멘트 관리'));
+ // 임의 문장 방송은 폐기했다(ADR-38) — 입력칸도 방송 버튼도 없다. 대기/깨우기는 남는다.
+ assert.equal(document.querySelector('[name="방송 문장"]'),null);
+ const labels=[...document.querySelectorAll('button')].map(b=>b.textContent);
+ assert.ok(!labels.includes('말하기')&&!labels.includes('긴급 방송'));
+ assert.ok(labels.includes('대기/깨우기'));
  const sel=document.querySelector('select[name="카테고리"]');
  assert.ok(sel);assert.match(sel.textContent,/greeting/);
  // 기본 문구는 삭제 버튼 없음, 추가 문구만 삭제 버튼

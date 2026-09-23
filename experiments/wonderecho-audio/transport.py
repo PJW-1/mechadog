@@ -1,12 +1,15 @@
-"""Audio transport boundary (WBS 4.7.9 선행).
+"""Audio transport boundary (WBS 4.7.19 · 4.7.20).
 
 The voice loop talks to the module through this interface only. Today the
 only implementation is :class:`SerialTransport` — the temporary UART
-validation link (--port, e.g. COM5). The target path
+validation link (--port, e.g. COM5). The robot 4-pin I2C relay was ruled
+out on 2026-09-23 (WBS 4.7.9: 0x34 carries command ids only · ADR-38).
+The target path splits listening and speaking
 
-    module <-> robot 4-pin I2C <-> ESP32 <-> Wi-Fi <-> PC
+    listen: XIAO PDM mic -> :82/audio (PCM16LE 16 kHz) -> PC
+    speak:  PC -> robot API -> MP3 module 0x7B (pre-recorded TF tracks)
 
-plugs in here as a network transport **without touching anything above**:
+and plugs in here as network transports **without touching anything above**:
 capture/stream logic, knowledge retrieval, scenarios, and the --web API are
 transport-agnostic by design.
 

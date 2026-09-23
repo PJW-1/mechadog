@@ -14,16 +14,23 @@ import warnings
 from functools import lru_cache
 from pathlib import Path
 
-from voice_schema import LEGACY
+from voice_schema import LEGACY  # noqa: F401  (migrate_voice_db·db_transfer 가 여기서 읽는다)
 
-KINDS = ("wake", "sleep", "resume", "emergency", "status", "machine")
+KINDS = ("wake", "sleep", "resume", "emergency")
+SECTIONS = ("keywords", "command_endings", "action_commands", "scenario_triggers")
+# 2026-09-23 폐기(ADR-38): 가상 MES 조회(factory_rules), 로봇 상태 음성 응답(status),
+# LLM 답변 고지(machine), 상태 브리핑 시나리오. 이전 규칙 파일에 남아 있어도 읽을 때
+# 걸러 낸다 — 섹션 하나 때문에 파일 전체가 무효가 되어 사용자 규칙이 조용히 기본값으로
+# 돌아가면 안 된다.
+RETIRED_SECTIONS = ("factory_rules",)
+RETIRED_KINDS = ("status", "machine")
+RETIRED_SCENARIOS = ("robot_briefing",)
 PROTECTED = ("비상정지", "긴급정지", "스톱")
 _cache = {}
 
 
 @lru_cache(maxsize=1)
 def _defaults():
-    import factorylink
     import robotlink
     import scenarios
     import voice_pipeline as vp
@@ -35,14 +42,25 @@ def _defaults():
             "sleep": list(vp.SLEEP_WORDS),
             "resume": list(vp.RESUME_WORDS),
             "emergency": list(vp.EMERGENCY_WORDS),
-            "status": list(robotlink._STATUS_WORDS),
-            "machine": list(vp._MACHINE_WORDS),
         },
         "command_endings": list(robotlink._COMMAND_ENDINGS),
         "action_commands": {p: list(v) for p, v in robotlink.ACTIONS.items()},
         "scenario_triggers": dict(scenarios.TRIGGERS),
-        "factory_rules": [list(r) for r in factorylink.DEFAULT_RULES],
     }
+
+
+def drop_retired(data):
+    """폐기된 섹션·호출어 종류·시나리오 트리거를 뺀 사본. 형식 검사는 하지 않는다."""
+    if not isinstance(data, dict):
+        return data
+    data = {k: v for k, v in data.items() if k not in RETIRED_SECTIONS}
+    if isinstance(data.get("keywords"), dict):
+        data["keywords"] = {k: v for k, v in data["keywords"].items() if k not in RETIRED_KINDS}
+    if isinstance(data.get("scenario_triggers"), dict):
+        data["scenario_triggers"] = {
+            p: s for p, s in data["scenario_triggers"].items() if s not in RETIRED_SCENARIOS
+        }
+    return data
 
 
 def defaults():
@@ -65,7 +83,7 @@ def validate(data):
 
     if not isinstance(data, dict) or data.get("format_version") != 1:
         raise ValueError("규칙 format_version은 1이어야 합니다")
-    if set(data) != {"format_version", *LEGACY}:
+    if set(data) != {"format_version", *SECTIONS}:
         raise ValueError("규칙 섹션이 누락되었거나 알 수 없는 섹션이 있습니다")
     if not isinstance(data["keywords"], dict) or set(data["keywords"]) != set(KINDS):
         raise ValueError("호출어 종류가 올바르지 않습니다")
@@ -97,29 +115,11 @@ def validate(data):
             raise ValueError("알 수 없는 scenario")
     if (set(data["action_commands"]) | set(PROTECTED)) & data["scenario_triggers"].keys():
         raise ValueError("명령과 시나리오의 동일 구문 충돌")
-    if not isinstance(data["factory_rules"], list):
-        raise ValueError("MES 규칙 목록이 필요합니다")
-    seen = set()
-    for row in data["factory_rules"]:
-        if not isinstance(row, list) or len(row) != 5:
-            raise ValueError("MES 규칙은 5개 항목이어야 합니다")
-        word, endpoint, needs, attach, priority = row
-        _text(word)
-        _text(endpoint)
-        if endpoint not in {"production", "shipments", "schedule", "inspections", "equipment"}:
-            raise ValueError("허용되지 않은 MES endpoint")
-        if any(type(v) not in (int, bool) or v not in (0, 1) for v in (needs, attach)):
-            raise ValueError("MES 조건은 boolean 또는 0/1이어야 합니다")
-        if type(priority) is not int or not 0 <= priority <= 2147483647:
-            raise ValueError("MES 우선순위는 0 이상의 32비트 정수여야 합니다")
-        if word in seen:
-            raise ValueError("중복 MES 규칙")
-        seen.add(word)
     return data
 
 
 def read(path):
-    return validate(json.loads(Path(path).read_text(encoding="utf-8-sig")))
+    return validate(drop_retired(json.loads(Path(path).read_text(encoding="utf-8-sig"))))
 
 
 def load(db_path):
@@ -164,13 +164,14 @@ def save(path, data):
 def from_legacy(tables):
     """Preserve the effective nonempty DB overlays, including original row order."""
     data = defaults()
-    if any(r.get("kind") not in KINDS for r in tables.get("keywords", [])):
+    if any(r.get("kind") not in (*KINDS, *RETIRED_KINDS) for r in tables.get("keywords", [])):
         raise ValueError("알 수 없는 keyword kind")
     for kind in KINDS:
         words = [r["word"] for r in tables.get("keywords", []) if r["kind"] == kind]
         if words:
             data["keywords"][kind] = words
-    for table in ("command_endings", "action_commands", "scenario_triggers", "factory_rules"):
+    # 구형 DB 의 factory_rules 표는 옮기지 않는다 — 가상 MES 조회는 폐기됐다(ADR-38).
+    for table in ("command_endings", "action_commands", "scenario_triggers"):
         rows = tables.get(table, [])
         if not rows:
             continue
@@ -178,11 +179,9 @@ def from_legacy(tables):
             data[table] = [r["ending"] for r in rows]
         elif table == "action_commands":
             data[table] = {r["phrase"]: [r["action"], r["ack"]] for r in rows}
-        elif table == "scenario_triggers":
-            data[table] = {r["phrase"]: r["scenario"] for r in rows}
         else:
-            data[table] = [[r[c] for c in LEGACY[table]] for r in rows]
+            data[table] = {r["phrase"]: r["scenario"] for r in rows}
     # Old runtime always restored these; migrate the effective behavior, not unsafe rows.
     for phrase in PROTECTED:
         data["action_commands"][phrase] = _defaults()["action_commands"][phrase][:]
-    return validate(data)
+    return validate(drop_retired(data))

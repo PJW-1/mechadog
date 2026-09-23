@@ -14,12 +14,11 @@ import voice_pipeline as vp
 class FakeCtx:
     """Records scenario side effects without hardware."""
 
-    def __init__(self, answers=(), roster_docs="", status="배터리 8.5볼트"):
+    def __init__(self, answers=(), roster_docs=""):
         self.lines = []
         self.events = []
         self.answers = list(answers)
         self.docs = roster_docs
-        self.status = status
         self.commands = []
 
     def say(self, text):
@@ -30,9 +29,6 @@ class FakeCtx:
 
     def retrieve(self, _query):
         return self.docs
-
-    def robot_status(self):
-        return self.status
 
     def command(self, action):
         self.commands.append(action)
@@ -77,11 +73,16 @@ class ScenarioTriggerTests(unittest.TestCase):
         # 기상·야간·훈련·정보
         self.assertIn("night_patrol", names)
         self.assertIn("drill_evac", names)
-        self.assertIn("robot_briefing", names)
+
+    def test_live_status_briefing_is_retired(self):
+        # 실측 수치를 읽어 주는 브리핑은 폐기했다(ADR-38) — MP3 모듈은 미리 녹음한
+        # 문장만 낸다. 트리거가 남으면 사라진 시나리오를 부르게 된다.
+        self.assertNotIn("robot_briefing", scenarios.SCENARIOS)
+        self.assertNotIn("robot_briefing", scenarios.TRIGGERS.values())
 
 
 class GuardScenarioTests(unittest.TestCase):
-    def test_guard_check_runs_without_llm_and_closes_com_port(self):
+    def test_guard_check_closes_com_port(self):
         device = mock.Mock()
         piper = types.SimpleNamespace(PiperVoice=types.SimpleNamespace(load=lambda _path: object()))
         whisper = types.SimpleNamespace(WhisperModel=lambda *_a, **_kw: object())
@@ -244,16 +245,6 @@ class NewScenarioTests(unittest.TestCase):
         scenarios.sc_visitor_check(ctx)
         self.assertTrue(any("방문증" in line or "안내 데스크" in line for line in ctx.lines))
 
-    def test_robot_briefing_reports_telemetry(self):
-        ctx = FakeCtx(status="배터리 8.5볼트, 동작 상태 IDLE")
-        scenarios.sc_robot_briefing(ctx)
-        self.assertTrue(any("8.5" in line for line in ctx.lines))
-
-    def test_robot_briefing_honest_when_unreachable(self):
-        ctx = FakeCtx(status=None)
-        scenarios.sc_robot_briefing(ctx)
-        self.assertTrue(any(line in phr.PHRASES["status_fail"] for line in ctx.lines))
-
 
 class RobotlinkTests(unittest.TestCase):
     def test_whitelist_exact_match_only(self):
@@ -275,23 +266,13 @@ class RobotlinkTests(unittest.TestCase):
         self.assertIn("비상 정지", spoken)
         run.assert_called_once_with("estop", robotlink.DEFAULT_BASE)
 
-    def test_answer_query_status_uses_real_telemetry(self):
-        with mock.patch.object(
-            robotlink, "fetch_status", return_value="배터리 8.54볼트, 동작 상태 IDLE"
-        ):
-            handled, spoken = robotlink.answer_query("배터리 어때")
-        self.assertTrue(handled)
-        self.assertIn("8.54", spoken)
-
-    def test_answer_query_unreachable_robot_is_honest(self):
-        with mock.patch.object(robotlink, "fetch_status", return_value=None):
-            handled, spoken = robotlink.answer_query("상태 알려줘")
-        self.assertTrue(handled)
-        self.assertIn("확인할 수 없습니다", spoken)
-
-    def test_answer_query_passes_llm_questions_through(self):
-        handled, _ = robotlink.answer_query("회사 복지 제도가 뭐야")
-        self.assertFalse(handled)
+    def test_answer_query_passes_non_commands_through(self):
+        # 상태 질의도 더는 여기서 답하지 않는다(ADR-38). 로봇 API 를 부르지 않는다.
+        with mock.patch.object(robotlink, "_get") as get:
+            for query in ("회사 복지 제도가 뭐야", "배터리 어때", "상태 알려줘"):
+                handled, _ = robotlink.answer_query(query)
+                self.assertFalse(handled, query)
+        get.assert_not_called()
 
     def test_run_action_maps_endpoints(self):
         calls = []
@@ -333,45 +314,6 @@ class RobotlinkTests(unittest.TestCase):
             ok, spoken = robotlink.run_action("patrol_stop")
         self.assertFalse(ok)
         self.assertEqual(spoken, "자율 동작 중이 아니다")
-
-    def test_fetch_status_parses_real_payload_shape(self):
-        # 실제 /api/telemetry 페이로드: escalation 은 'L0' 문자열, telemetry 는
-        # 중첩 객체이거나 아직 없으면 None. 이전엔 fetch_status 자체를 mock 해서
-        # escalation 문자열에 .get 을 부르는 크래시를 놓쳤다.
-        real_payload = {
-            "type": "telemetry",
-            "device_id": "mechdog-01",
-            "state": "IDLE",
-            "escalation": "L0",
-            "telemetry": {"batt_v": 8.54, "temp_c": 41.2},
-            "stale": False,
-        }
-        with mock.patch.object(robotlink, "_get", return_value=real_payload):
-            st = robotlink.fetch_status()
-        self.assertIn("8.54", st)
-        self.assertIn("IDLE", st)
-        self.assertIn("L0", st)
-
-    def test_fetch_status_speaks_distance(self):
-        # 거리를 물어 status 로 왔는데 요약에 거리가 없으면 답이 안 된다.
-        payload = {
-            "state": "ALERT",
-            "escalation": "L3",
-            "telemetry": {"batt_v": 8.6, "dist_cm": 152},
-            "stale": False,
-        }
-        with mock.patch.object(robotlink, "_get", return_value=payload):
-            st = robotlink.fetch_status()
-        self.assertIn("152센티미터", st)
-
-    def test_fetch_status_no_telemetry_yet(self):
-        # 시뮬·링크 전 상태 — telemetry=None 이 와도 죽지 않는다.
-        payload = {"state": "FAILSAFE", "escalation": "L3", "telemetry": None, "stale": True}
-        with mock.patch.object(robotlink, "_get", return_value=payload):
-            st = robotlink.fetch_status()
-        self.assertIn("FAILSAFE", st)
-        self.assertIn("L3", st)
-        self.assertIn("링크 지연", st)
 
     def test_command_endings_match(self):
         # 자연 발화 어미 변형은 명령으로 간다.
@@ -433,7 +375,9 @@ class TranscribeTests(unittest.TestCase):
                     types.SimpleNamespace(text="순찰 시작 "),
                 ], {}
 
-        text = vp.transcribe(FakeModel(), b"\x00\x00\xff\x7f")
+        # 개발자 PC 의 voice_data.db 에 남은 옛 stt_prompt 를 읽지 않게 코드 기본값으로 고정한다.
+        with mock.patch.object(vp.voice_store, "setting", side_effect=lambda _k, d, *_a: d):
+            text = vp.transcribe(FakeModel(), b"\x00\x00\xff\x7f")
 
         self.assertEqual(text, "메카독 순찰 시작")
         self.assertEqual(seen["samples"], 2)
@@ -498,6 +442,23 @@ class HubScenarioQueueTests(unittest.TestCase):
         self.assertEqual(req.sent[0], 404)
         self.assertEqual(hub.say_q.qsize(), 0)
         del FakeHandler
+
+    def test_typed_broadcast_endpoint_is_retired(self):
+        # 관제 화면의 임의 문장 방송(/say)은 폐기했다(ADR-38). 단계 경고는 같은
+        # 큐를 쓰지만 사건 폴링으로만 들어온다.
+        hub = vp.Hub("test")
+        h = vp.make_handler(hub).__new__(vp.make_handler(hub))
+        body = '{"text": "아무 문장"}'.encode()
+        sent = []
+        h.path, h.headers = "/say", {"Content-Length": str(len(body))}
+        h.rfile, h.wfile = __import__("io").BytesIO(body), __import__("io").BytesIO()
+        h.request_version = "HTTP/1.1"
+        h.send_response = sent.append
+        h.send_header = lambda *_a: None
+        h.end_headers = lambda: None
+        h.do_POST()
+        self.assertEqual(sent[0], 404)
+        self.assertEqual(hub.say_q.qsize(), 0)
 
 
 class HallucinationFilterTests(unittest.TestCase):
@@ -703,19 +664,20 @@ class RouteQueryTests(unittest.TestCase):
         self.assertEqual(vp.route_query("도와줘"), "emergency")
         self.assertEqual(vp.route_query("지금비상상황이야"), "emergency")
 
-    def test_status_query(self):
-        self.assertEqual(vp.route_query("배터리어때"), "status")
-        self.assertEqual(vp.route_query("지금상태알려줘"), "status")
+    def test_status_questions_are_not_answered(self):
+        # 실측 상태 음성 응답은 폐기했다(ADR-38). 고정 문구로 답하는 경로로 간다.
+        for query in ("배터리어때", "지금상태알려줘", "거리얼마야", "앞에장애물있어"):
+            self.assertEqual(vp.route_query(query), "unknown", query)
 
-    def test_distance_query_is_status_not_llm(self):
-        # dist_cm 은 실측으로 들어오는데 호출어에 없어서 LLM 으로 새고
-        # 지어낸 거리가 발화됐다 (9/23 실측 확인).
-        self.assertEqual(vp.route_query("거리얼마야"), "status")
-        self.assertEqual(vp.route_query("앞에장애물있어"), "status")
+    def test_unrelated_goes_to_fixed_reply(self):
+        # LLM 은 없다 — 규칙에 걸리지 않은 발화는 고정 문구 하나로 답한다.
+        self.assertEqual(vp.route_query("오늘점심뭐야"), "unknown")
+        self.assertEqual(vp.route_query(""), "unknown")
+        self.assertEqual(len(phr.PHRASES["not_understood"]), 1)
 
-    def test_unrelated_goes_to_llm(self):
-        self.assertEqual(vp.route_query("오늘점심뭐야"), "llm")
-        self.assertEqual(vp.route_query(""), "llm")
+    def test_llm_is_gone(self):
+        for name in ("SYSTEM", "reply", "for_speech", "machine_guard", "synth_orpheus"):
+            self.assertFalse(hasattr(vp, name), name)
 
 
 if __name__ == "__main__":

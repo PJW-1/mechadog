@@ -22,7 +22,6 @@ const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 export const MODE_NAMES = Object.freeze({
   guard: '경비 모드',
   factory: '공장 모드',
-  assist: '현장지원 모드',
 });
 
 /** 텍스트 메시지 하나 → 화면이 쓰는 스냅샷. 형식이 틀리면 던진다. */

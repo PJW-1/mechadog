@@ -1,17 +1,16 @@
-"""운용 모드 — 경비 · 공장 · 현장지원 (WBS 3.4.4 · FR-11 · ADR-33 · ADR-34).
+"""운용 모드 — 경비 · 공장 (WBS 3.4.4 · FR-11 · ADR-33).
 
 ⚠️ **전이표를 모드별로 복제하지 않는다.** 표는 하나이고 모드는 **어떤 사건이
 생길 수 있는지**만 정한다 (아키텍처 3절 설계 규칙 ⑥). 복제하면 상태 13개 ×
-모드 3개를 사람이 손으로 맞춰야 하고, 그 순간 `test_fsm.py` 의 문서 대조가
+모드 2개를 사람이 손으로 맞춰야 하고, 그 순간 `test_fsm.py` 의 문서 대조가
 지키던 불변식이 사라진다.
 
 그래서 이 축은 `escalation.py` 와 같은 모양이다 — FSM 과 **직교**하고, 표를
 데이터로 두며, 사건이 지나는 단일 지점(`runtime._apply`)에서 한 번 걸러진다.
 
-    모드      사람을 보면        인증   변화감지   PPE   정보안내
-    guard    침입자 후보         ○      ✕        ✕      ✕
-    factory  작업자              ✕      ○        ○      ✕
-    assist   질의 사용자         ✕      ✕        ✕      ○
+    모드      사람을 보면        인증   변화감지   PPE
+    guard    침입자 후보         ○      ✕        ✕
+    factory  작업자              ✕      ○        ○
 
 ⚠️ **모드는 Tier 2 판단만 고른다** (FR-11.8). 명령 타임아웃 300ms · 온보드
 근거리 정지 · 페일세이프는 모드와 무관하다 — 그것들은 애초에 호스트 사건이
@@ -49,7 +48,7 @@ __all__ = [
 #: ⚠️ `safety` 가 아니다. 처음 이름은 «안전점검»이었지만 보호구만 가리켜 범위를
 #: 좁게 만들었고, 2026-09-17 ADR-33 개정이 **쓰러진 사람·무너진 물건·없어진
 #: 물건까지 포함하는 «공장»** 으로 넓혔다.
-MODES: tuple[str, ...] = ("guard", "factory", "assist")
+MODES: tuple[str, ...] = ("guard", "factory")
 
 DEFAULT: str = "guard"
 
@@ -69,24 +68,17 @@ FEATURES: dict[str, frozenset[str]] = {
     # FR-9 보호구 판정. 위반과 **판정 종료** 둘 다 공장 모드의 사건이다 (FR-11.6).
     "ppe": frozenset({"PPE_VIOLATION", "PPE_SETTLED"}),
     # FR-3.5 선회 추종. ⚠️ **FR-11.1 표에 «추종» 행은 없다** — 표는 *"사람을 보면"*
-    # 셀에 적었고(`assist` 는 *"자동 인증·PPE 판정·추종 없음"*), ADR-34 규칙 2 가
-    # 같은 말을 반복한다. 게이트는 사건 단위라 여기서 한 줄로 세운다.
+    # 셀에 적었다. 게이트는 사건 단위라 여기서 한 줄로 세운다.
     #
-    # ⚠️ **`PERSON_FOUND` 는 여기 없다.** `assist` 에서도 사람을 보면 멈춰 서서
-    # 바라보는 것(`ALERT`)까지는 한다 — FR-11.1 이 끄기로 적은 것은 인증·PPE·추종
-    # 셋이고 관찰이 아니다. 질의 사용자를 등지고 순찰을 계속하는 쪽이 오히려 틀렸다.
+    # ⚠️ **`PERSON_FOUND` 는 여기 없다.** 사람을 보면 멈춰 서서 바라보는 것
+    # (`ALERT`)은 기능이 아니라 모든 모드에 공통인 관찰이다.
     "track": frozenset({"TARGET_OFF_CENTER"}),
 }
 
 #: 모드가 켜는 기능. **FR-11.1 표가 정본이다.**
-#:
-#: ⚠️ `assist` 가 비어 있는 것은 누락이 아니다. 현장지원은 **읽기 전용 정보
-#: 안내**이며 로봇이 스스로 대응을 시작하지 않는다 (ADR-34 규칙 1·2). 정보 안내
-#: 자체(FR-12)는 음성 경로가 맡고 FSM 사건을 만들지 않으므로 이 표에 행이 없다.
 ENABLED: dict[str, frozenset[str]] = {
     "guard": frozenset({"auth", "track"}),
     "factory": frozenset({"change_detect", "ppe", "track"}),
-    "assist": frozenset(),
 }
 
 #: 그 모드를 켜려면 있어야 하는 구현 (FR-11.7 · ADR-33 운용규칙 7).
@@ -98,8 +90,6 @@ REQUIRES: dict[str, tuple[str, ...]] = {
     "guard": (),
     # `3.7.3` 위반 판정 + 게이팅 + 클리핑 검사 · `4.8.0` 상황 판독
     "factory": ("host.vision.ppe_detector", "host.vision.vlm_reader"),
-    # `4.7.15` 운영 데이터 원본 · `4.7.16` 질의 라우터 · `4.7.17` 신선도 계약
-    "assist": ("host.factory_ops.service", "host.factory_ops.router"),
 }
 
 #: 전환을 받는 상태 (FR-11.3). **`fsm.STANDBY` 와 같은 집합이지만 뜻이 다르다** —
@@ -121,7 +111,7 @@ class ModeError(ConfigError):
 def _present(module: str) -> bool:
     """그 모듈이 import 가능한가. **부모 패키지가 없어도 예외를 내지 않는다.**
 
-    `find_spec` 은 부모를 먼저 import 하므로 `host.factory_ops` 가 아직 없으면
+    `find_spec` 은 부모를 먼저 import 하므로 부모 패키지가 아직 없으면
     `ModuleNotFoundError` 를 던진다. 없다는 것이 답이지 오류가 아니다.
     """
     try:
@@ -192,7 +182,7 @@ class Mission:
         """이 사건이 이 모드에서 생길 수 있나.
 
         ⚠️ **어느 기능에도 속하지 않는 사건은 언제나 통과한다.** 순찰·스캔·회피·
-        수동·안전은 세 모드에 공통이고(FR-11.1 *"세 모드에 공통"*), 표에 없는 것을
+        수동·안전은 모든 모드에 공통이고(FR-11.1), 표에 없는 것을
         막으면 모드를 늘릴 때마다 공통 사건을 하나씩 잃는다.
         """
         enabled = ENABLED[self._mode]

@@ -5,15 +5,14 @@ Each scenario is a function taking a `ctx` object:
     ctx.say(text)            synth + play a line through the module speaker
     ctx.listen(timeout)      capture + transcribe one turn -> str or "" if silent
     ctx.retrieve(query)      knowledge snippets for grounding announcements
-    ctx.robot_status()       latest telemetry dict, or None when unreachable
     ctx.command(name)        run a whitelisted robot action -> result dict
     ctx.event(role, text)    write to the transcript/hub
 
 Spoken lines come from phrases.py — the PC-side voice-response library built
 from real industrial manuals (산업안전보건법, KOSHA 지게차 수칙, 화재 대피
-매뉴얼, 사업장 출입통제 절차). Scenarios that touch identity or safety are
-deterministic rules — the LLM is never in the verdict path (ADR-31). Adding
-or editing a scenario never touches module firmware.
+매뉴얼, 사업장 출입통제 절차). Every scenario is a deterministic rule — the
+voice path has no LLM (ADR-31, ADR-38). Adding or editing a scenario never
+touches module firmware.
 """
 
 from __future__ import annotations
@@ -331,16 +330,6 @@ def sc_drill_evac(ctx):
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def sc_robot_briefing(ctx):
-    """로봇 자기 상태 브리핑 — 텔레메트리 실측 기반."""
-    st = ctx.robot_status()
-    if not st:
-        ctx.say(pick("status_fail"))
-        return
-    ctx.say(f"현재 상태 보고입니다. {st}")
-    ctx.event("system", "상태 브리핑")
-
-
 def sc_safety_check(ctx):
     """일일 안전점검 안내 — 체크리스트 문서 기반."""
     body = _retrieve_first(ctx, "점검", 180)
@@ -413,14 +402,13 @@ SCENARIOS = {
     "night_patrol": ("야간 순찰 안내", sc_night_patrol),
     "drill_evac": ("대피 훈련", sc_drill_evac),
     # 상태·정보
-    "robot_briefing": ("로봇 상태 브리핑", sc_robot_briefing),
     "safety_check": ("일일 안전점검 안내", sc_safety_check),
     "lost_found": ("분실물 안내", sc_lost_found),
     "who_are_you": ("자기소개", sc_who_are_you),
     "what_doing": ("현재 작업 안내", sc_what_doing),
 }
 
-# 음성 트리거: 정규화된 발화에 이 구문이 포함되면 시나리오 실행 (LLM 우회)
+# 음성 트리거: 정규화된 발화에 이 구문이 포함되면 시나리오 실행
 TRIGGERS = {
     # 신원·보안
     "경비모드": "guard",
@@ -470,7 +458,6 @@ TRIGGERS = {
     "대피훈련": "drill_evac",
     "훈련시작": "drill_evac",
     # 상태·정보
-    "상태보고": "robot_briefing",
     "안전점검": "safety_check",
     "분실물": "lost_found",
     "누구야": "who_are_you",

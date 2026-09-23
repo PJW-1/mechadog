@@ -115,13 +115,6 @@ class SchemaContractTest(unittest.TestCase):
                         operation(path)
                     self.assertEqual(path.read_bytes(), before)
 
-    def test_combined_preview_is_not_accepted_as_runtime_voice_db(self):
-        db_transfer.import_sqlite(self.bundle, self.db)
-        with self.assertRaises(ValueError):
-            voice_store.check_schema(self.db)
-        with self.assertRaises(ValueError):
-            prepare_demo.prepare(self.root)
-
     def test_legacy_custom_json_cannot_be_silently_ignored(self):
         voice_store.seed(self.db)
         custom = self.db.with_name("phrases_custom.json")

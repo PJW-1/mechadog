@@ -15,8 +15,15 @@
 | 제어 명령 | Host PC → MechDog ESP32 | UDP | **10 Hz 고정** |
 | 텔레메트리 | MechDog ESP32 → Host PC | UDP | 10 Hz |
 | 영상 | XIAO → Host PC | HTTP MJPEG | 25 fps 상한 (NFR-1.3 하한 15 fps) |
+| 음성 | XIAO → Host PC | HTTP chunked PCM16LE (포트 82 `/audio`) | 16 kHz 모노 연속 스트림 |
 | LiDAR 스캔 `[Phase 2]` | 중계 ESP32 → Host PC | UDP | 정지 중 5 Hz |
 
+> **음성 스트림 (2026-09-23 추가 · [ADR-38](DECISIONS.md#adr-38))** — XIAO 비전 펌웨어의 포트 82 `GET /audio` 는
+> `Content-Type: audio/L16;rate=16000;channels=1` 로 PCM16LE 모노를 끊지 않고 흘려보낸다. 인자 `?gain=0..4`(왼쪽 시프트, 기본 2).
+> 한 번에 한 클라이언트다. 마이크 초기화에 실패하면 `503` 과 `{"ok":false,"error":"mic unavailable"}` 로 답하고 영상은 계속 낸다.
+> 펌웨어는 스트림 중 5초마다 시리얼에 `AUDIO_STATS`(전송률·샘플률·DMA 넘침·최대 전송 시간·rms)를 남긴다.
+> 받는 쪽(`voice_pipeline` 입력)은 아직 없다 — `4.7.19` 미착수.
+>
 > 제어 명령은 **변화가 없어도 계속 보낸다.** 수신측 타임아웃(300ms)을 갱신하는 것이
 > 곧 "링크가 살아 있다"는 신호이기 때문이다. 별도 하트비트를 두지 않는다.
 
@@ -88,7 +95,7 @@
 | `RESET_SAFE` | — | — | 원인 해소 후 안전 래치 해제, 보행 0·IDLE 복귀 |
 | `ACTION` | `id` | 0~15 | 내장 액션 그룹 |
 | `LED` | `color`, `blink_hz` | `config.escalation.led` 색상명 / 0 = 상시점등 | 눈 LED |
-| `SOUND` | `phrase_id` | WonderEcho 사전 등록 문구 ID | 문구 재생 |
+| `SOUND` ⏸ | `phrase_id` | **MP3 트랙 번호** (`4.7.20` 에서 재정의 · 미착수). 개정 전: WonderEcho 사전 등록 문구 ID | **처리 경로 없음 — 수신·검증만 한다** (아래) |
 | `STATE` | `state` | FSM 상태 13종 (아래 목록) | — (저장만) |
 | `SERVICE` | `mode` | `enter` / `exit` | — (온보드 서비스 모드 전환) |
 
@@ -157,6 +164,14 @@
 > ⚠️ `step=0 angle=±30` 은 **실제로 제자리에서 돈다** (2026-09-22 실측 · 7.37 도/s).
 > 그러나 산포가 82% 라 **제어에 쓸 수 없다** — 근거와 수치는 [ADR-11](DECISIONS.md#adr-11).
 > `SOUND` 는 사전 등록된 문구만 재생한다. 실시간 TTS 가 아니다.
+
+> ⚠️ **`SOUND` 는 지금 아무 소리도 내지 않는다 (2026-09-23).** 펌웨어는 파싱·검증만 하고 명령 처리에
+> `case` 가 없으며, 호스트 운용 경로에서 `SOUND` 를 보내는 곳도 0건이다. 단계 경고(`3.5.6`)는 이 명령 대신
+> `config.escalation.sound` 의 한국어 문장을 PC 음성 경로가 읽는다.
+>
+> **재정의 예정 (`4.7.20` · [ADR-38](DECISIONS.md#adr-38))** — 로봇 말하기는 IIC1 의 MP3 모듈(`0x7B`)이 TF 카드 트랙을 재생하는
+> 것으로 옮긴다. 그때 인자는 **트랙 번호**가 되고 펌웨어가 센서 HAL 경유로 재생한다. 문장 → 트랙 번호 표는
+> TF 카드 문장 제작(`4.7.21`)이 만들며, 호스트 ↔ 음성 프로세스 사이의 계약은 계속 문장이다. 필드 이름과 범위는 `4.7.20` 에서 확정한다.
 
 ### `SERVICE` — 서비스 모드 (런타임 루프 워치독)
 

@@ -292,7 +292,7 @@ class Escalation:
         L2 를 L0 으로 내리면 **인증을 무시하고 지나가는 것이 가장 이득인** 정책이
         된다.
 
-        `require_auth=False` 인 공장·현장지원 모드는 L1 관찰까지만 쓰고 인증 단계는
+        `require_auth=False` 인 공장 모드는 L1 관찰까지만 쓰고 인증 단계는
         만들지 않는다. 사람 상실은 경비 모드와 달리 경보가 아니라 L0 복귀다.
         """
         if self._lost(now_ms):
