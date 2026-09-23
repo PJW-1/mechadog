@@ -19,7 +19,8 @@ validation link to the WonderEcho module. Relaying audio through the robot's
 4-pin I2C bridge turned out to be impossible (2026-09-23, WBS 4.7.9 — the
 bridge carries command ids only). The target path is: listen through the
 XIAO ESP32S3 microphone (`http://<xiao>:82/audio`, 16 kHz PCM16 — `--xiao`,
-WBS 4.7.19) and speak through the robot's MP3 module (I2C 0x7B, not yet).
+WBS 4.7.19) and speak through the robot's MP3 module (`--robot-speaker`, WBS 4.7.21:
+each line is looked up in tf_tracks.tsv and played as a TF card track).
 With `--xiao` and no `--port`, replies are printed instead of spoken. Everything above the transport
 boundary — the rules, the knowledge retrieval and the --web API — does not
 change with it. The serial port is owned exclusively by the main loop: one
@@ -50,6 +51,7 @@ import phrases
 import robotlink
 import scenarios
 import serial  # noqa: F401  (type only; stream_client already imports it)
+import tf_tracks
 import voice_rules
 from phrases import pick
 from play_client import CHUNK, PREFILL, end_packet, play_packet
@@ -72,6 +74,10 @@ FOLLOW_S = 20.0  # 답변 후 이 시간 안의 발화는 웨이크워드 없이
 FOLLOW_MIN_CHARS = 3  # 후속 창에서 이 길이 미만의 발화는 잡음으로 본다
 _PUNCT = re.compile(r"[\s,.!?~…:'\"·]+")
 KNOW_DIR = Path(__file__).with_name("knowledge")
+# --robot-speaker 일 때 트랙 재생을 보낼 관제 API 베이스. None 이면 WonderEcho(--port)로 말한다.
+ROBOT_SPEAKER = None
+# 트랙 요청 → 틱 송신 → I2C 쓰기 지연과 MP3 앞뒤 무음. 로봇 마이크가 말끝을 듣으면 늘린다.
+ROBOT_SPEAKER_TAIL_S = 0.5
 
 
 class Hub:
@@ -440,13 +446,37 @@ def retrieve(docs, query, max_chars=1200):
 def _say(device, piper, text, speed):
     """고정 안내 멘트 재생. 음성 경로의 모든 발화가 여기를 지난다."""
     print(f"[say] {text}")
-    if device is None:  # XIAO 로 듣기만 할 때 — 말하기 경로(4.7.20)가 없으면 출력만
+    if ROBOT_SPEAKER is not None:
+        _say_on_robot(piper, text, speed)
+        return
+    if device is None:  # XIAO 로 듣기만 할 때 — 말하기 장치가 없으면 출력만
         return
     try:
         stream_play(device, synth_piper(piper, text, speed))
     except (OSError, TimeoutError) as e:
         # 모듈이 한 번 쓰기를 거부해도 대화 루프는 살아있어야 한다
         print(f"[audio] say failed: {e}")
+
+
+def _say_on_robot(piper, text, speed):
+    """문장을 TF 카드 트랙으로 바꿔 로봇 MP3 모듈로 튼다 (WBS 4.7.21).
+
+    표에 없는 문장은 틀 수 없다 — 말하지 않고 로그만 남긴다(`tf_tracks.py --check`
+    가 CI 에서 막는다). 모듈은 재생 끝을 알리지 않으므로, 카드 음원과 같은 모델·속도로
+    합성한 길이만큼 기다린다. 그러지 않으면 로봇 마이크(XIAO)가 제 말을 듣는다.
+    """
+    track = tf_tracks.track_for(text)
+    if track is None:
+        print(f"[tf] 표에 없는 문장이라 로봇 스피커로 못 튼다: {text!r}")
+        return
+    ok, detail = robotlink.play_track(track, ROBOT_SPEAKER)
+    if not ok:
+        print(f"[tf] 트랙 {track} 재생 요청 실패: {detail}")
+        return
+    started = time.monotonic()
+    # ponytail: 재생 길이를 다시 합성해서 잰다(~0.2 s). 느리면 --build 가 길이를 표에 적게 바꾼다.
+    duration = len(synth_piper(piper, text, speed)) / 32000
+    time.sleep(max(0.0, started + duration + ROBOT_SPEAKER_TAIL_S - time.monotonic()))
 
 
 def _pump(device, decoder):
@@ -638,7 +668,7 @@ def open_mic(args):
 def listen_pcm(device, decoder, mic, timeout_s, on_speech=None):
     """Capture from the configured mic: XIAO when given (ADR-38), else WonderEcho."""
     if mic is not None:
-        guard_s = ECHO_GUARD_S if device is not None else 0.0
+        guard_s = ECHO_GUARD_S if device is not None or ROBOT_SPEAKER is not None else 0.0
         return capture_xiao(mic, timeout_s=timeout_s, on_speech=on_speech, guard_s=guard_s)
     return capture_pcm(device, decoder, timeout_s=timeout_s, on_speech=on_speech)
 
@@ -760,7 +790,7 @@ class ScenarioCtx:
         self.hub.activity = "speaking(scenario)"
         self.hub.event("robot", text)
         print(f"[scenario] {text!r}")
-        if self.device is not None:  # 장치 없이 시나리오만 시험할 때는 출력만
+        if self.device is not None or ROBOT_SPEAKER is not None:  # 스피커 없으면 출력만
             _say(self.device, self.piper, text, self.args.speed)
 
     def listen(self, timeout_s=12.0):
@@ -836,11 +866,18 @@ def main():
         help="로봇 관제 API 베이스 (상태 조회·화이트리스트 명령용)",
     )
     ap.add_argument(
+        "--robot-speaker",
+        action="store_true",
+        help="로봇 MP3 모듈(TF 카드 트랙)로 말한다 — --port 스피커 대신 (WBS 4.7.21)",
+    )
+    ap.add_argument(
         "--log-dir",
         default=str(Path(__file__).with_name("logs")),
         help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
     )
     args = ap.parse_args()
+    global ROBOT_SPEAKER
+    ROBOT_SPEAKER = args.robot_api if args.robot_speaker else None
     if args.say and not args.port:
         ap.error("--say 는 --port 가 필요함 (말하기는 아직 WonderEcho 스피커뿐)")
     if not (args.port or args.xiao):
@@ -906,7 +943,9 @@ def main():
     if device is not None:
         print(f"[link] {device.kind} {device.port} @ {device.baud}")
     if mic is not None:
-        print(f"[link] listen {mic.url}" + ("" if device else " · speak: 출력만 (4.7.20 전)"))
+        print(f"[link] listen {mic.url}" + ("" if device else " · speak: 출력만"))
+    if ROBOT_SPEAKER is not None:
+        print(f"[link] speak: 로봇 MP3 모듈 (TF 카드 트랙 {len(tf_tracks.load_table())}개)")
 
     ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args, mic)
 

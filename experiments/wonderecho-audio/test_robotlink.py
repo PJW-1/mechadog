@@ -37,6 +37,11 @@ class PlayTrackTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("연결할 수 없습니다", detail)
 
+    def test_non_json_reply_does_not_raise(self):
+        with mock.patch.object(robotlink, "_post", side_effect=ValueError("Expecting value")):
+            ok, _detail = robotlink.play_track(17)
+        self.assertFalse(ok)
+
     def test_is_not_reachable_from_user_speech(self):
         """사람의 발화로는 트랙을 틀 수 없다 — 화이트리스트 명령표에 없다."""
         names = {name for name, _ack in robotlink.ACTIONS.values()}

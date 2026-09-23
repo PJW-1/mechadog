@@ -170,8 +170,10 @@ class Commander:
             if self._next_due <= now_ms:
                 self._next_due = now_ms + self._period_ms
 
-        out = [self._encoder.encode(i.type_, **dict(i.fields)) for i in self._pending]
-        self._pending.clear()
+        # 비우기 전에 새 목록으로 바꿔 끼운다 — 대시보드 스레드의 `once` 가 인코딩과
+        # `clear()` 사이에 끼면 보내지도 않고 지워졌다. 끼어든 것은 다음 틱에 나간다.
+        pending, self._pending = self._pending, []
+        out = [self._encoder.encode(i.type_, **dict(i.fields)) for i in pending]
         out.append(self._encoder.encode(self._intent.type_, **dict(self._intent.fields)))
         self._ticks += 1
         return out

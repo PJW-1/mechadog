@@ -257,7 +257,7 @@ def ffmpeg_mp3(wav: bytes, out: Path) -> None:
 
 
 def build(out: Path, synth, table: dict[int, str], encode=ffmpeg_mp3) -> list[Path]:
-    """표의 문장마다 `out/MP3/NNNN<이름>.mp3` 를 쓴다. 비어 있지 않은 폴더에는 쓰지 않는다.
+    """표의 문장마다 `out/MP3/NNNN<이름>.mp3` 를 쓴다. `out/MP3` 가 비어 있지 않으면 쓰지 않는다.
 
     남아 있던 파일과 번호가 겹치면 카드에서 어느 것이 나올지 모르기 때문이다.
     """

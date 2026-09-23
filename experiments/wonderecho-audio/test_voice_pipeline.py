@@ -749,6 +749,56 @@ class XiaoCaptureTests(unittest.TestCase):
         play.assert_not_called()
 
 
+class RobotSpeakerTests(unittest.TestCase):
+    """--robot-speaker — 문장을 TF 카드 트랙으로 바꿔 로봇 MP3 모듈로 튼다 (WBS 4.7.21)."""
+
+    def setUp(self):
+        patcher = mock.patch.object(vp, "ROBOT_SPEAKER", "http://api")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _say(self, text, track, played=(True, "")):
+        with (
+            mock.patch.object(vp.tf_tracks, "track_for", return_value=track),
+            mock.patch.object(vp.robotlink, "play_track", return_value=played) as play,
+            mock.patch.object(vp, "synth_piper", return_value=b"\0" * 32000) as synth,
+            mock.patch.object(vp, "stream_play") as serial_play,
+            mock.patch.object(vp.time, "sleep") as sleep,
+        ):
+            vp._say("dev", "piper", text, 1.2)
+        serial_play.assert_not_called()  # 로봇 스피커가 있으면 WonderEcho 로 말하지 않는다
+        return play, synth, sleep
+
+    def test_plays_the_table_track_and_waits_for_it_to_finish(self):
+        play, synth, sleep = self._say("안내", 7)
+        play.assert_called_once_with(7, "http://api")
+        synth.assert_called_once_with("piper", "안내", 1.2)  # 같은 모델·속도 = 카드 음원 길이
+        (waited,) = sleep.call_args.args
+        self.assertGreater(waited, 1.0)  # 1초 음원 + 여유 — 로봇 마이크가 제 말을 듣지 않게
+        self.assertLess(waited, 1.0 + vp.ROBOT_SPEAKER_TAIL_S + 0.01)
+
+    def test_sentence_missing_from_the_table_is_not_played(self):
+        play, _, sleep = self._say("표에 없는 문장", None)
+        play.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_refused_track_does_not_wait(self):
+        _, _, sleep = self._say("안내", 7, played=(False, "연결 안 됨"))
+        sleep.assert_not_called()
+
+    def test_xiao_echo_guard_applies_to_the_robot_speaker(self):
+        with mock.patch.object(vp, "capture_xiao") as xiao:
+            vp.listen_pcm(None, None, "mic", 3.0)
+        self.assertEqual(xiao.call_args.kwargs["guard_s"], vp.ECHO_GUARD_S)
+
+    def test_scenario_speaks_without_a_serial_device(self):
+        args = types.SimpleNamespace(speed=1.2)
+        ctx = vp.ScenarioCtx(None, None, None, "piper", vp.Hub("r1"), [], args)
+        with mock.patch.object(vp, "_say") as say:
+            ctx.say("안내")
+        say.assert_called_once_with(None, "piper", "안내", 1.2)
+
+
 class XiaoStartupTests(unittest.TestCase):
     def _main(self, argv, mic=None):
         piper = types.SimpleNamespace(PiperVoice=types.SimpleNamespace(load=lambda _path: object()))

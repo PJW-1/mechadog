@@ -279,10 +279,12 @@ def play_track(track, base=DEFAULT_BASE):
     try:
         res = _post(base, "/api/command/sound", {"track": track})
     except urllib.error.HTTPError as exc:
-        # OSError 의 하위다 — 400(정수 아님)을 연결 실패로 말하지 않는다.
-        return False, f"로봇 관제 서버가 트랙 번호를 거부했습니다 (HTTP {exc.code})"
+        # OSError 의 하위다 — 400(정수 아님)·403(출처)을 연결 실패로 말하지 않는다.
+        return False, f"로봇 관제 서버가 트랙 재생 요청을 거부했습니다 (HTTP {exc.code})"
     except OSError:
         return False, "로봇 관제 서버에 연결할 수 없습니다"
+    except ValueError:  # JSON 이 아닌 응답
+        return False, "로봇 관제 서버의 응답을 읽을 수 없습니다"
     if res.get("error") or res.get("accepted") is not True:
         return False, res.get("detail") or "로봇이 트랙 재생을 거부했습니다"
     return True, res.get("detail") or ""

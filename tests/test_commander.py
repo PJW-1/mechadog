@@ -117,6 +117,24 @@ def test_one_shot_commands_are_sent_exactly_once(clock: FakeClock) -> None:
     assert types_of(c.tick(clock.ms)) == ["STOP"]
 
 
+def test_one_shot_queued_from_another_thread_mid_tick_is_not_lost(clock: FakeClock) -> None:
+    """대시보드 스레드의 `once`(SOUND·SERVICE·POSE)가 틱의 인코딩과 비우기 사이에 끼어도 다음 틱에 나간다.
+
+    끼어드는 순간을 결정적으로 만들려고, 틱이 대기열을 다 읽은 직후에 `once` 가 불리게 한다.
+    """
+    c = make(clock)
+
+    class RacingList(list):
+        def __iter__(self):
+            yield from list.__iter__(self)
+            c.once("SOUND", track=17)  # 읽기는 끝났고 아직 비우기 전이다
+
+    c._pending = RacingList([Intent("LED", {"color": "red", "blink_hz": 2})])
+    assert types_of(c.tick(clock.ms)) == ["LED", "STOP"]
+    clock.advance(100)
+    assert types_of(c.tick(clock.ms)) == ["SOUND", "STOP"]
+
+
 def test_emergency_stop_bypasses_the_tick_and_forces_halt(clock: FakeClock) -> None:
     """**비상정지만 틱을 기다리지 않는다.** 100ms 를 기다리게 하면 안 된다."""
     c = make(clock)
