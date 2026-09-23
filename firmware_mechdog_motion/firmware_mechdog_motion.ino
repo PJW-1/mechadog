@@ -67,7 +67,7 @@
 namespace {
 
 constexpr uint16_t kCommandPort = 5001;
-constexpr uint32_t kCommandTimeoutMs = 300;
+constexpr uint32_t kCommandTimeoutMs = 600;  // ADR-39 — 300 에서 올렸다 (무선 지연 스파이크)
 constexpr uint32_t kReconnectIntervalMs = 3000;
 constexpr uint32_t kSensorStatusLogIntervalMs = 1000;
 constexpr size_t kSerialTxBufferBytes = 1024;
@@ -376,7 +376,7 @@ void pollEyeLed() {
     blink = false;
   }
   if (blink) {
-    // ⚠️ delay() 로 만들지 않는다. 그렇게 하면 UDP 수신도 300ms 명령 타임아웃 검사도
+    // ⚠️ delay() 로 만들지 않는다. 그렇게 하면 UDP 수신도 600ms 명령 타임아웃 검사도
     // 함께 멈춘다 — `ACTION` 이 걷는 중에 거부되는 것과 같은 이유다.
     const uint32_t half_period_ms = static_cast<uint32_t>(500.0f / g_eye_blink_hz);
     if (now - g_eye_blink_toggled_ms >= half_period_ms) {
@@ -452,7 +452,7 @@ bool applyCommand(const mechadog::Command& command) {
 
     case mechadog::CmdType::Action:
       // ⚠️ **걷는 중에는 받지 않는다.** 벤더 `action_run` 은 구간마다 delay() 로
-      // 블로킹하므로 그동안 loop() 가 통째로 멈춘다 — UDP 수신도, 300ms 명령
+      // 블로킹하므로 그동안 loop() 가 통째로 멈춘다 — UDP 수신도, 600ms 명령
       // 타임아웃 검사도 함께 멈춘다. 걷다가 멈추면 **타임아웃이 자기 자신 때문에
       // 걸린다.** 정지 상태에서만 1초를 감수한다 (NFR-1 비목표: 온보드 블로킹 금지).
       //
@@ -547,14 +547,14 @@ void handlePacket(int packet_size) {
   const bool applied = applyCommand(decoded.command);
   // ⚠️ **온보드가 스스로 눈을 감은 시간은 호스트 침묵으로 세지 않는다.** 벤더
   // `action_run` 은 구간마다 delay() 로 블로킹한다(실측 1,062ms). 그동안 loop() 가
-  // 멈춰 UDP 수신도 타임아웃 검사도 함께 멈추므로, 깨어나면 «300ms 넘게 명령이
+  // 멈춰 UDP 수신도 타임아웃 검사도 함께 멈추므로, 깨어나면 «600ms 넘게 명령이
   // 없었다» 로 보여 **로봇이 제 낮잠 때문에 래치한다** — 2026-09-15 실기에서 ACTION 1
   // 직후 failsafe_count 9→10. 호스트는 10Hz 송신을 한 번도 끊지 않았고 밀렸던 전문은
   // 10ms 안에 몰려 처리됐다. 침묵한 것은 호스트가 아니라 우리였다.
   //
   // 대안이던 «그냥 래치한다» 는 더 나쁘다 — 액션마다 호스트가 RESET_SAFE 를 보내게
   // 되어 **안전 래치를 자동으로 푸는 습관**을 가르친다. 호스트가 정말 죽었다면 액션이
-  // 끝난 뒤 300ms 안에 그대로 래치된다(최악 약 1.3초). 그 사이 동작은 서기·앉기·
+  // 끝난 뒤 600ms 안에 그대로 래치된다(최악 약 1.6초). 그 사이 동작은 서기·앉기·
   // 엎드리기뿐이라 몸이 이동하지 않는다 — 위험이 유계다.
   g_last_valid_command_ms = uptimeMs();
   Serial.printf("CMD: seq=%lld type=%s applied=%d safe=%d\n",
@@ -570,7 +570,7 @@ void connectSavedWifi() {
   WiFi.onEvent(onWifiDiagnosticEvent);
   WiFi.mode(WIFI_STA);
   // Command latency matters more than power saving on the body MCU. Modem sleep
-  // can delay UDP bursts long enough to trip the 300 ms motion watchdog.
+  // can delay UDP bursts long enough to trip the 600 ms motion watchdog.
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
@@ -853,7 +853,7 @@ void loop() {
   const uint64_t watchdog_now = uptimeMs();
   if (g_have_valid_command && !g_motion_state.safe_latched &&
       watchdog_now - g_last_valid_command_ms >= kCommandTimeoutMs) {
-    latchFailsafe("command timeout >= 300 ms");
+    latchFailsafe("command timeout >= 600 ms");
   }
 
   // Safety decisions precede acquisition snapshot and telemetry publication.

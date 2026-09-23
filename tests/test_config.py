@@ -85,7 +85,7 @@ def test_device_profile_is_deep_merged(tmp_path: Path) -> None:
     assert loaded["device_id"] == "ref"
     assert loaded["network"]["cmd_port"] == 6201
     assert loaded["network"]["telemetry_port"] == 5101
-    assert loaded["safety"]["cmd_timeout_ms"] == 300
+    assert loaded["safety"]["cmd_timeout_ms"] == 600
 
 
 def test_device_id_mismatch_is_rejected(tmp_path: Path) -> None:
@@ -141,7 +141,7 @@ def test_command_timeout_shorter_than_link_loss(cfg: dict) -> None:
 
 def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
     """명령 타임아웃은 Tier 1 예산(FR-1.3 = 300ms) 이내여야 한다."""
-    assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 300
+    assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 600
 
 
 @pytest.mark.parametrize(

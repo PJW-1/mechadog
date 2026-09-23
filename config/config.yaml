@@ -20,7 +20,7 @@ network:
   telemetry_rate_hz: 10 # FR-1.4
 
 safety:                 # ⚠️ Tier 1 — 온보드에서만 판정 (아키텍처 1.2 불변 규칙)
-  cmd_timeout_ms: 300         # FR-1.3
+  cmd_timeout_ms: 600         # FR-1.3
   link_loss_failsafe_ms: 3000 # FR-1.5
   obstacle_stop_cm: 25        # FR-2.2
   battery_warn_v: 7.0         # NFR-2.3
