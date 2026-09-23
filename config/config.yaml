@@ -140,15 +140,18 @@ vision:
     # FR-8 변화 감지에서 추적할 클래스 (시연 환경에 놓일 소품)
     change_watch_classes: [chair, backpack, handbag, bottle, suitcase, laptop, book]
 
-  # ── ② PPE 전용 모델 (직접 학습, 4클래스) ──
+  # ── ② PPE 전용 모델 (직접 학습, 5클래스) ──
   # person 검출 프레임에서만 실행 (FR-3.1.1 게이팅)
   ppe:
     model_path: "models/ppe.onnx"
-    model_family: null         # ultralytics 버전 포함하여 학습 시 기록
+    # yolox-nano, COCO 가중치 파인튜닝 — datasets/ppe session sim_factory_t15
+    # (합성 128장 학습/22장 검증, 카메라 틸트 +15°±4°). 학습일 2026-09-22.
+    # mAP(0.5:0.95)=0.458, AP50=0.68 — 합성 검증 기준이며 실기 검증 전이다.
+    model_family: "yolox"
     input_size: 640
     conf_threshold: 0.5
-    classes: [helmet, no_helmet, vest, no_vest]
-    violation_classes: [no_helmet, no_vest]
+    classes: [helmet, no_helmet, vest, no_vest, person_down]
+    violation_classes: [no_helmet, no_vest]  # person_down 은 위반이 아니라 사고 이벤트
     # ── 판정 조건 (FR-9.2.1) ──
     # ⚠️ 미터 거리를 쓰지 않는다 (DR-15). 거리를 측정할 수단이 없다 —
     # 깊이 모델과 초음파를 모두 배제했고, 초음파는 정면 근거리만 본다.

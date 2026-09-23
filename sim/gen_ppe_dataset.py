@@ -763,6 +763,14 @@ def main(argv=None) -> int:
         "--pose-debug", action="store_true",
         help="진단용: 작업자 자세를 POSE_MIX 무작위 대신 6종 순환으로 강제",
     )
+    p.add_argument(
+        "--cam-tilt", type=float, default=None,
+        help="카메라 틸트(도, 음수=하향) SPEC.cam_tilt_deg 대신 사용",
+    )
+    p.add_argument(
+        "--cam-height", type=float, default=None,
+        help="카메라 높이(m) SPEC.cam_height_m 대신 사용",
+    )
     args = p.parse_args(argv)
 
     rng = random.Random(args.seed)
@@ -783,7 +791,8 @@ def main(argv=None) -> int:
     from pxr import Gf, UsdGeom, UsdShade  # noqa: N806
 
     from sim.factory_world import build_factory
-    from sim.mechdog_proxy import attach_camera, build_robot
+    from sim.mechdog_proxy import attach_camera, build_robot, np_tilt_quat
+    from sim.mechdog_spec import SPEC
     from sim.people_spawner import spawn_workers
 
     world = World(stage_units_in_meters=1.0)
@@ -794,7 +803,12 @@ def main(argv=None) -> int:
     workers = spawn_workers(
         stage, zones["person_zones"], count=args.workers, seed=args.seed, all_parts=True
     )
-    camera = attach_camera(robot_path)
+    camera = attach_camera(robot_path, tilt_deg=args.cam_tilt, height_m=args.cam_height)
+    _tilt_base = args.cam_tilt if args.cam_tilt is not None else SPEC.cam_tilt_deg
+    _cam_h = args.cam_height if args.cam_height is not None else SPEC.cam_height_m
+    _cam_off = SPEC.cam_forward_offset_m
+    import numpy as _np
+    _cam_xyz = _np.array([_cam_off, 0.0, _cam_h])
     world.reset()
     camera.initialize()
     # 가림 판정에 쓸 깊이 — 부착하지 않으면 get_depth() 가 None 을 돌려준다
@@ -932,6 +946,11 @@ def main(argv=None) -> int:
                     elif op.GetOpType() == UsdGeom.XformOp.TypeRotateZ:
                         op.Set(ryaw)
 
+            # 프레임별 틸트 지터 ±4° — 실기 장착 오차에 대한 강건성 확보
+            _tilt = _tilt_base + rng.uniform(-4.0, 4.0)
+            camera.set_local_pose(translation=_cam_xyz,
+                                  orientation=np_tilt_quat(_tilt),
+                                  camera_axes="world")
             for _ in range(args.settle):  # 이동 반영 + 렌더 안정화
                 world.step(render=True)
 

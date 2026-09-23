@@ -140,18 +140,33 @@ def build_robot(stage, prim_path: str = "/World/MechDog") -> str:
     return prim_path
 
 
-def attach_camera(robot_prim_path: str, cam_path: str | None = None):
-    """15cm·7° 하향·실측 화각의 FPV 카메라를 로봇에 단다."""
+def attach_camera(
+    robot_prim_path: str,
+    cam_path: str | None = None,
+    tilt_deg: float | None = None,
+    height_m: float | None = None,
+):
+    """실측 높이·틸트·화각의 FPV 카메라를 로봇에 단다.
+
+    tilt_deg / height_m 을 주면 SPEC 대신 그 값으로 단다 — 마운트 변경
+    실측 전에 후보 각도로 데이터셋을 미리 만들어 볼 때 쓴다.
+    """
+    import numpy as np
     from isaacsim.sensors.camera import Camera
 
     if cam_path is None:
         cam_path = f"{robot_prim_path}/cam"
 
+    tilt = SPEC.cam_tilt_deg if tilt_deg is None else tilt_deg
+    height = SPEC.cam_height_m if height_m is None else height_m
+
     cam = Camera(
         prim_path=cam_path,
         resolution=SPEC.cam_resolution,
-        translation=np_cam_offset(),
-        orientation=np_cam_quat(),
+        translation=np.array(
+            [SPEC.cam_forward_offset_m, 0.0, height]
+        ),
+        orientation=np_tilt_quat(tilt),
     )
     # 화각 → 초점거리/조리개. 수평 조리개 2*f*tan(fov/2) 관계를 이용한다.
     f_mm = 8.0
