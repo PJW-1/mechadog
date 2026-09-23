@@ -274,6 +274,10 @@ class Runtime:
         self._fallen_confirm_ms = int(config["vision"]["fallen"]["confirm_ms"])
         # 시작값은 «쓰러짐 없음» 이다. 비우면 첫 프레임의 `False` 가 해제 로그로 남는다.
         self._edge.changed("fallen", False)
+        self._edge.changed("ppe_held_for_fall", False)
+        #: 쓰러짐 후보를 마지막으로 본 시각. PPE 보류는 이 시각에서 `gap_ms` 까지 이어진다.
+        self._fallen_gap_ms = int(config["vision"]["fallen"]["gap_ms"])
+        self._fall_seen_ms: int | None = None
         #: 이번 구역에서 판독을 이미 걸었나. **구역당 한 번만 건다** — 사이클마다
         #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다.
         self._zone_vlm_asked = False
@@ -570,7 +574,11 @@ class Runtime:
         """
         if self._vision is None:
             return
-        if self._ppe_settle_at is not None and now_ms >= self._ppe_settle_at:
+        if (
+            self._ppe_settle_at is not None
+            and now_ms >= self._ppe_settle_at
+            and not self._fall_held(now_ms)
+        ):
             self._ppe_settle_at = None
             if self._behavior.state == "ALERT" and self._apply(Event.PPE_SETTLED, now_ms):
                 self._escalation.settle_ppe(now_ms)
@@ -735,12 +743,13 @@ class Runtime:
         # ⚠️ **쓰러졌는지 먼저 본다** (FR-11.1 표 · `4.8.3`). 병행하면 1500ms 위반이 3초
         # 쓰러짐보다 먼저 L3 를 잡아 전용 문장이 묻히고, 적합이면 `PPE_SETTLED` 로 누운
         # 사람을 두고 순찰에 돌아간다. 후보인 동안은 판정도 자세 상승도 하지 않고 선다.
-        fallen = getattr(result, "fallen", None)
-        held = fallen is not None and fallen.candidate
+        # 확정된 뒤에도 후보이므로 누운 사람 곁에 남는다 — `TARGET_LOST`·`MANUAL` 로만 떠난다.
+        held = self._fall_held(now_ms)
         if self._edge.changed("ppe_held_for_fall", held):
             LOG.info("ppe_held_for_fall", held=held)
         if held:
             self._ppe_unknown_since = None
+            self._ppe_lost_since = None
             return
         verdict = getattr(result, "ppe", None)
         if verdict is None:
@@ -1024,6 +1033,14 @@ class Runtime:
             LOG.info("zone_clear", zone=zone, cycles=self._zone_cycles)
             self._leave_zone(now_ms)
 
+    def _fall_held(self, now_ms: int) -> bool:
+        """쓰러짐 후보를 `gap_ms` 안에 봤나 — PPE 보류의 기준이다.
+
+        ⚠️ **틱 하나로 풀지 않는다.** 쓰러지는 도중 한 프레임이 모양·이동 조건을 놓치면
+        후보가 꺼지는데, 워커의 위반 창은 그동안에도 차 있어 그 틱에 L3 를 잡는다.
+        """
+        return self._fall_seen_ms is not None and now_ms - self._fall_seen_ms <= self._fallen_gap_ms
+
     def _observe_fallen(self, result: Any, now_ms: int) -> None:
         """쓰러짐 판정의 **엣지에서만** 남기고 `PERSON_DOWN` 을 낸다 (`4.8.3` · FR-9).
 
@@ -1038,6 +1055,8 @@ class Runtime:
         # 이유다. 워커는 25fps 라 `changed` 가 실린 프레임이 이 틱(10Hz) 전에 덮어써진다.
         # 2026-09-23 실기에서 워커 확정 6번 중 4번이 그렇게 사라졌다.
         verdict = getattr(result, "fallen", None)
+        if verdict is not None and verdict.candidate:
+            self._fall_seen_ms = now_ms
         if verdict is None or not self._edge.changed("fallen", verdict.fallen):
             return
         LOG.warning(
@@ -1393,6 +1412,9 @@ class Runtime:
         self._engaged = False
         if previous in STANDBY:
             self._edge.forget("person")
+            # 대기(래치 해제·모드 전환)를 건너 계속 누운 사람도 다시 사건이 되게 한다.
+            # FAILSAFE 중 확정은 L3 가 F 에 밀려 엣지만 소비된다.
+            self._edge.changed("fallen", False)
 
     def _watch_track_blocked(self, reading: Any, now_ms: int) -> None:
         """추종 중에 온보드가 전진을 거부한 구간을 기록한다 (설계 규칙 ④ · FR-2.2).
