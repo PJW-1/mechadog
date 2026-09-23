@@ -101,9 +101,9 @@ def route_query(query):          # voice_pipeline.py 요약
 - `knowledge/*.txt` 는 시나리오가 붙이는 **정적 본문**으로만 쓴다(2-gram 겹침 검색,
   WBS 4.7.6). LLM 프롬프트에 넣던 경량 RAG 는 폐기했다.
 - 폐기: `상태보고` → `robot_briefing`(텔레메트리 브리핑)은 2026-09-23 지웠다.
-- ⚠️ MP3 전환 시 제약(4.7.21): `guard` 의 이름 되읽기(`"{hit} 님, ..."`)와
-  `emergency_response` 의 위치 되읽기(`"{answer} 위치로 접수했습니다..."`)는 발화에 따라
-  바뀌는 동적 문장이라 미리 녹음할 수 없다. 지금은 Piper 실시간 합성이라 동작한다.
+- MP3 전환(4.7.21): `guard` 의 이름 되읽기와 `emergency_response` 의 위치 되읽기는 미리 녹음할 수
+  없어 **고정 문장으로 바꿨다**(`identity_ok` 문구 · 「말씀하신 위치로 접수했습니다. 담당자가 출발합니다.」).
+  이름과 위치는 기록(`ctx.event`)에만 남는다. 말하는 문장은 전부 `tf_tracks.tsv` 에 있어야 한다(README).
 
 ## 3. emergency — 비상 단어
 
