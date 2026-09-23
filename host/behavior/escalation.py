@@ -89,6 +89,7 @@ RAISED_BY: dict[str, Level] = {
     "AUTH_FAILED": Level.L3,  # 2회 실패 또는 30초 무응답 (FR-10.3)
     "PPE_VIOLATION": Level.L3,  # 보호구 미착용 확정 (FR-9.3)
     "ZONE_CHANGED": Level.L3,  # 물체 변화 확정 (FR-8.4)
+    "PERSON_DOWN": Level.L3,  # 쓰러짐 확정 (FR-9 · 4.8.3)
     # ── F 페일세이프. ⚠️ 어느 단계에서든 즉시 들어간다 ──
     "ONBOARD_FAILSAFE": Level.F,  # 링크두절·저전압을 로봇이 보고
     "LINK_LOST": Level.F,
@@ -186,7 +187,11 @@ class Escalation:
         if level is Level.L2:
             value = self._sound.get("l2_warning")
         elif level is Level.L3:
-            value = self._sound.get("l3_warning")
+            # 원인별 문장이 있으면 그것을 읽는다. TF 카드에서는 문장마다 트랙이 따로다
+            # (ADR-38 · `4.7.21`). 없으면 공통 문장으로 돌아간다.
+            value = self._sound.get(f"{self._reason.lower()}_warning") or self._sound.get(
+                "l3_warning"
+            )
         return None if value is None else str(value)
 
     # ── 올리기 ──────────────────────────────────────────────

@@ -583,5 +583,6 @@ def test_exhaustive_coverage_counts() -> None:
     # 준다")을 코드가 하지 않는다 — 전이를 추가·삭제해도 조용히 통과한다.
     # 값이 바뀌면 **의도한 변경인지 확인하고** 여기를 함께 고친다.
     # 2026-09-19 `3.4.4` — `PPE_SETTLED` 와 `ALERT → PATROL` 복귀 전이를 더했다 (FR-11.6).
-    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 28, 29)
-    assert (len(effective), len(blocked), len(undefined)) == (95, 6, 269)
+    # 2026-09-23 `4.8.3` — 전이 없는 `PERSON_DOWN` 을 더했다(13개 상태 모두 미정의 +13).
+    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 29, 29)
+    assert (len(effective), len(blocked), len(undefined)) == (95, 6, 282)

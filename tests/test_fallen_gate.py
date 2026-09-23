@@ -8,7 +8,7 @@
     ① 실측 박스(세로 88 · 가로 286)를 «누움» 으로 읽는다
     ② 종횡비만으로 확정하지 않는다 — 정지가 이어져야 한다
     ③ 프레임이 아니라 시간으로 센다
-    ④ 대상이 바뀌거나 사라지면 누적을 지운다
+    ④ 대상이 바뀌거나 사라지면 누적을 지운다 — 단, 검출이 잠깐 빠진 것은 봐준다
 """
 
 from __future__ import annotations
@@ -94,7 +94,16 @@ def test_confirmation_needs_the_full_window(gate: FallenGate) -> None:
 def test_the_window_is_time_not_frames(gate: FallenGate) -> None:
     """⚠️ 프레임으로 두면 같은 조건이 10fps 와 25fps 에서 다른 시간이 된다."""
     slow = FallenGate(
-        {"vision": {"fallen": {"aspect_ratio": 1.5, "still_threshold_px": 20, "confirm_ms": 3000}}}
+        {
+            "vision": {
+                "fallen": {
+                    "aspect_ratio": 1.5,
+                    "still_threshold_px": 20,
+                    "confirm_ms": 3000,
+                    "gap_ms": 1000,
+                }
+            }
+        }
     )
 
     fast = _hold(gate, FALLEN_BOX, start=0, ms=3000, step=40)  # 25fps · 76프레임
@@ -106,19 +115,61 @@ def test_the_window_is_time_not_frames(gate: FallenGate) -> None:
 # ── ④ 누적을 지운다 ────────────────────────────────────────
 
 
-def test_losing_the_box_clears_the_hold(gate: FallenGate) -> None:
+def test_losing_the_box_for_long_clears_the_hold(gate: FallenGate) -> None:
     """⚠️ 남기면 사람이 사라졌다 다시 나타날 때 한 번 보고 확정하는 꼴이 된다."""
-    _hold(gate, FALLEN_BOX, start=1000, ms=2960)
-    assert gate.observe(3000, None).fallen is False
-    assert gate.observe(3040, FALLEN_BOX, track_id=1).fallen is False
+    _hold(gate, FALLEN_BOX, start=1000, ms=2000)
+    assert gate.observe(3040, None).candidate is True, "잠깐은 봐준다"
+    assert gate.observe(4100, None).candidate is False, "유예(1초)를 넘기면 지운다"
+    verdict = gate.observe(4140, FALLEN_BOX, track_id=1)
+    assert (verdict.fallen, verdict.still_ms) == (False, 0)
+
+
+def test_a_stream_outage_clears_the_hold(gate: FallenGate) -> None:
+    """⚠️ 스트림이 끊기면 프레임 자체가 오지 않아 `None` 도 들어오지 않는다.
+
+    `reset()` 을 부르는 곳이 없으므로(사람 게이트도 같다), 다시 이어진 첫 박스가
+    끊기기 전 누적을 이어받아 곧바로 확정하면 안 된다.
+    """
+    _hold(gate, FALLEN_BOX, start=1000, ms=2000)
+    verdict = gate.observe(10_000, FALLEN_BOX, track_id=1)
+    assert (verdict.fallen, verdict.still_ms) == (False, 0)
+
+
+def test_a_short_detection_gap_keeps_the_hold(gate: FallenGate) -> None:
+    """누운 사람은 점수가 임계값 근처라 박스가 자주 빠진다 (2026-09-23 실기).
+
+    한 프레임에 누적을 지우면 3초를 끊김 없이 채운 적이 없어 한 번도 확정되지 않았다.
+    """
+    _hold(gate, FALLEN_BOX, start=1000, ms=2000)
+    for now in range(3040, 3960, 40):
+        gap = gate.observe(now, None)
+    assert (gap.fallen, gap.candidate) == (False, True), "빈 틈에도 후보로 남는다"
+    assert gate.observe(4000, FALLEN_BOX, track_id=1).fallen is True
+
+
+def test_a_confirmed_fall_does_not_flicker_on_a_missed_frame(gate: FallenGate) -> None:
+    """⚠️ 확정 0.1초 뒤 한 프레임이 빠져 해제됐다 (2026-09-23 실기 23:23:39)."""
+    _hold(gate, FALLEN_BOX, start=1000, ms=3000)
+    missed = gate.observe(4040, None)
+    assert (missed.fallen, missed.changed) == (True, False)
 
 
 def test_a_different_target_does_not_inherit_the_hold(gate: FallenGate) -> None:
     """⚠️ 다른 사람의 정지가 이번 사람 몫을 채우면 안 된다."""
     _hold(gate, FALLEN_BOX, start=1000, ms=2960, track=1)
-    verdict = gate.observe(4000, FALLEN_BOX, track_id=2)
+    elsewhere = (FALLEN_BOX[0] + 200, FALLEN_BOX[1], FALLEN_BOX[2] + 200, FALLEN_BOX[3])
+    verdict = gate.observe(4000, elsewhere, track_id=2)
     assert verdict.fallen is False
     assert verdict.still_ms == 0
+
+
+def test_a_new_track_id_in_the_same_place_keeps_the_hold(gate: FallenGate) -> None:
+    """추적기는 검출이 1초 빠지면 같은 사람에게 새 ID 를 준다 (2026-09-23 실기).
+
+    ID 만 보고 지우면 누운 사람의 누적이 1초마다 지워진다. 자리가 같으면 같은 사람이다.
+    """
+    _hold(gate, FALLEN_BOX, start=1000, ms=2960, track=1)
+    assert gate.observe(4000, FALLEN_BOX, track_id=2).fallen is True
 
 
 def test_reset_clears_everything(gate: FallenGate) -> None:
@@ -151,7 +202,7 @@ def test_recovery_is_also_a_change(gate: FallenGate) -> None:
 
 @pytest.mark.parametrize(
     ("key", "value"),
-    [("aspect_ratio", 1.0), ("aspect_ratio", 0.5), ("confirm_ms", 0)],
+    [("aspect_ratio", 1.0), ("aspect_ratio", 0.5), ("confirm_ms", 0), ("gap_ms", -1)],
 )
 def test_impossible_settings_are_refused(cfg: dict, key: str, value: float) -> None:
     from copy import deepcopy

@@ -67,6 +67,9 @@ FEATURES: dict[str, frozenset[str]] = {
     "change_detect": frozenset({"ZONE_ARRIVED", "ZONE_CLEAR", "ZONE_CHANGED"}),
     # FR-9 보호구 판정. 위반과 **판정 종료** 둘 다 공장 모드의 사건이다 (FR-11.6).
     "ppe": frozenset({"PPE_VIOLATION", "PPE_SETTLED"}),
+    # FR-9 쓰러짐. 판정·기록은 모든 모드에서 하고 **L3 로 올리는 것만** 공장 모드다
+    # (아키텍처 3.1 — 쓰러짐은 공장 모드의 L3 원인).
+    "fallen": frozenset({"PERSON_DOWN"}),
     # FR-3.5 선회 추종. ⚠️ **FR-11.1 표에 «추종» 행은 없다** — 표는 *"사람을 보면"*
     # 셀에 적었다. 게이트는 사건 단위라 여기서 한 줄로 세운다.
     #
@@ -78,7 +81,7 @@ FEATURES: dict[str, frozenset[str]] = {
 #: 모드가 켜는 기능. **FR-11.1 표가 정본이다.**
 ENABLED: dict[str, frozenset[str]] = {
     "guard": frozenset({"auth", "track"}),
-    "factory": frozenset({"change_detect", "ppe", "track"}),
+    "factory": frozenset({"change_detect", "ppe", "fallen", "track"}),
 }
 
 #: 그 모드를 켜려면 있어야 하는 구현 (FR-11.7 · ADR-33 운용규칙 7).

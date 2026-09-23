@@ -108,6 +108,9 @@ class FallenGate:
         self._confirm_ms = int(section["confirm_ms"])
         if self._confirm_ms <= 0:
             raise ValueError("vision.fallen.confirm_ms 는 0 보다 커야 함")
+        self._gap_ms = int(section["gap_ms"])
+        if self._gap_ms < 0:
+            raise ValueError("vision.fallen.gap_ms 는 0 이상이어야 함")
         self._since_ms: int | None = None
         self._last_ms: int | None = None
         self._last_centre: tuple[float, float] | None = None
@@ -127,21 +130,30 @@ class FallenGate:
     ) -> FallenVerdict:
         """박스 하나를 넣고 판정을 돌려준다.
 
-        ⚠️ **박스가 없으면 누적을 지운다.** 남기면 사람이 사라졌다 다시 나타났을 때
-        이전 관측이 이번 확정을 채워 준다 — 한 번 보고 확정하는 꼴이 된다.
+        ⚠️ **박스가 `gap_ms` 넘게 없으면 누적을 지운다.** 남기면 사람이 사라졌다 다시
+        나타났을 때 이전 관측이 이번 확정을 채워 준다 — 한 번 보고 확정하는 꼴이 된다.
+        그보다 짧은 빈 틈은 봐준다: 누운 사람은 점수가 임계값 근처라 박스가 자주 빠지고,
+        한 프레임에 지우면 3초를 끊김 없이 채우지 못한다 (2026-09-23 실기).
 
-        ⚠️ **대상이 바뀌면 지운다.** 다른 사람의 정지가 이번 사람 몫을 채우면 안 된다
-        (`ChangeConfirmer` 가 구역마다 따로 세는 것과 같은 이유다).
+        ⚠️ **다른 자리의 대상이면 지운다.** 다른 사람의 정지가 이번 사람 몫을 채우면
+        안 된다. 추적 ID 만 보지 않는 이유는 추적기가 검출이 1초 빠지면 **같은 사람에게
+        새 ID 를 주기** 때문이다 — 자리가 같으면(`still_threshold_px`) 같은 사람이다.
         """
         if box is None:
+            if self._since_ms is not None and now_ms - (self._last_ms or now_ms) <= self._gap_ms:
+                return FallenVerdict(
+                    fallen=self._fallen,
+                    changed=False,
+                    candidate=True,
+                    aspect=None,
+                    still_ms=max(0, now_ms - self._since_ms),
+                )
             self._track_id = None
             return self._clear()
-        # ⚠️ **첫 관측은 «바뀜» 이 아니다.** 시작값과 견주면 어떤 대상이 들어와도
-        # 한 번은 버려져, 추적 ID 가 붙어 있는 한 영원히 확정되지 않는다.
-        if self._track_id is not None and track_id != self._track_id:
-            self._track_id = track_id
-            return self._clear()
-        self._track_id = track_id
+        # 프레임 자체가 끊긴 공백(스트림 재연결)도 같은 규칙이다 — 그동안은 `None` 조차
+        # 들어오지 않는다.
+        if self._last_ms is not None and now_ms - self._last_ms > self._gap_ms:
+            self._clear()
 
         width = max(0.0, box[2] - box[0])
         height = max(0.0, box[3] - box[1])
@@ -151,12 +163,18 @@ class FallenGate:
         aspect = width / height
         centre = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
         previous, self._last_centre = self._last_centre, centre
+        # ⚠️ **첫 관측은 «바뀜» 이 아니다.** 시작값과 견주면 어떤 대상이 들어와도
+        # 한 번은 버려져, 추적 ID 가 붙어 있는 한 영원히 확정되지 않는다.
+        switched = self._track_id is not None and track_id != self._track_id
+        self._track_id = track_id
         moved = (
             0.0
             if previous is None
             else max(abs(centre[0] - previous[0]), abs(centre[1] - previous[1]))
         )
 
+        if switched and (previous is None or moved > self._still_px):
+            return self._clear(aspect=aspect)
         if aspect < self._ratio or moved > self._still_px:
             verdict = self._clear(aspect=aspect)
             self._last_centre = centre

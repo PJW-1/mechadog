@@ -298,6 +298,14 @@ def test_only_the_alarm_level_carries_a_warning(esc: Escalation, cfg: dict) -> N
     assert esc.presentation().warning == cfg["escalation"]["sound"]["l3_warning"]
 
 
+def test_a_fall_reads_its_own_sentence(esc: Escalation, cfg: dict) -> None:
+    """쓰러짐은 인증 실패와 같은 문장으로 알리지 않는다 — 들은 사람이 할 일이 다르다."""
+    esc.note_event("PERSON_DOWN", T0)
+    assert esc.level is Level.L3
+    assert esc.presentation().warning == cfg["escalation"]["sound"]["person_down_warning"]
+    assert esc.presentation().warning != cfg["escalation"]["sound"]["l3_warning"]
+
+
 def test_the_warning_is_a_sentence_not_a_number(cfg: dict) -> None:
     """⚠️ **문구 ID 설계는 버렸다 (2026-09-23).**
 

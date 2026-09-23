@@ -2439,6 +2439,159 @@ def test_a_fall_is_recorded_once_not_every_tick(
     assert len(falls) == 1, "엣지에서만 한 번이어야 한다"
 
 
+def test_a_fall_whose_edge_frame_was_skipped_is_still_recorded(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """워커는 25fps, 이 틱은 10Hz 다 — `changed` 가 실린 프레임은 덮어써질 수 있다.
+
+    2026-09-23 실기에서 워커의 확정 6번 중 4번이 이렇게 사라졌다. 엣지는 우리가 본다.
+    """
+    runtime, vision, blackbox = _fallen_runtime(config, clock, tmp_path)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=False)
+    _fell(runtime, vision, seq=2, at_ms=200, changed=False)
+
+    falls = [e for e in blackbox.feed() if e.event_type == "person_fallen"]
+    assert len(falls) == 1
+
+
+def test_a_fall_still_lying_when_patrol_resumes_is_raised_again(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """엣지를 소비한 쓰러짐이 대기(래치 해제·모드 전환)를 건너 **영원히 묻히면 안 된다**.
+
+    FAILSAFE 중 확정은 L3 가 F 에 밀리고, 경비에서 확정한 뒤 공장으로 바꾸면 경보가
+    없었다. 순찰을 다시 시작할 때 `person` 처럼 재장전한다.
+    """
+    runtime, vision, blackbox = _fallen_runtime(config, clock, tmp_path)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=True)
+    runtime.behavior.event(Event.MANUAL_ON, now_ms=200)
+    _fell(runtime, vision, seq=2, at_ms=300, changed=False)
+    runtime.behavior.event(Event.MANUAL_OFF, now_ms=400)
+    runtime.start_patrol(500)
+    _fell(runtime, vision, seq=3, at_ms=600, changed=False)
+
+    falls = [e for e in blackbox.feed() if e.event_type == "person_fallen"]
+    assert len(falls) == 2
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_fall_raises_l3_without_moving_the_state(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """공장 모드의 쓰러짐은 **경보**다 (FR-9 · 아키텍처 3.1) — 기록만 하면 아무도 모른다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=EventBlackbox(cfg),
+        mission=Mission(cfg, mode="factory"),
+    )
+    runtime.start_patrol(clock.ms)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=False)
+    state = runtime.behavior.state
+    _fell(runtime, vision, seq=2, at_ms=200, changed=True)
+
+    assert runtime.escalation.level is Level.L3
+    assert runtime.escalation.reason == "PERSON_DOWN"
+    assert runtime.behavior.state == state, "전이표에 없는 사건이다 — 상태는 그대로다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_holds_ppe_while_a_fall_is_a_candidate(config: dict, clock: FakeClock) -> None:
+    """공장 모드는 **쓰러졌는지 먼저 보고** 보호구를 판정한다 (FR-11.1 표).
+
+    병행하면 1500ms 위반이 3초 쓰러짐보다 먼저 L3 를 잡아 전용 문장이 묻히고,
+    적합 판정이면 `PPE_SETTLED` 로 순찰에 돌아가 누운 사람을 두고 떠난다.
+    """
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+
+    def lying(seq: int, ppe: PpeVerdict, *, fallen: bool = False, changed: bool = False) -> None:
+        at = seq * 100
+        vision.result = replace(
+            vision_result(seq, at, present=True, hits=3, last_seen_ms=at),
+            ppe=ppe,
+            fallen=FallenVerdict(
+                fallen=fallen, changed=changed, candidate=True, aspect=3.25, still_ms=at
+            ),
+        )
+        runtime.tick(at)
+
+    lying(1, PpeVerdict(1, OK))
+    lying(2, PpeVerdict(1, OK))
+    assert runtime.behavior.state == "ALERT", "적합 판정으로 누운 사람을 두고 떠나면 안 된다"
+    lying(3, PpeVerdict(1, VIOLATION, confirmed=True))
+    assert runtime.escalation.level is not Level.L3, "위반이 쓰러짐보다 먼저 L3 를 잡았다"
+    lying(4, PpeVerdict(1, VIOLATION, confirmed=True), fallen=True, changed=True)
+    assert runtime.escalation.level is Level.L3
+    assert runtime.escalation.reason == "PERSON_DOWN"
+
+
+def test_a_one_frame_flap_does_not_release_the_ppe_hold(config: dict, clock: FakeClock) -> None:
+    """쓰러지는 도중 한 프레임이 모양·이동 조건을 놓쳐도 **보류는 이어진다**.
+
+    워커의 위반 창은 보류와 상관없이 차오르므로, 한 틱만 풀려도 이미 확정된 위반이
+    곧바로 L3 를 잡고 뒤이은 `PERSON_DOWN` 은 사유를 바꾸지 못한다.
+    """
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+
+    def frame(seq: int, *, candidate: bool) -> None:
+        at = seq * 100
+        vision.result = replace(
+            vision_result(seq, at, present=True, hits=3, last_seen_ms=at),
+            ppe=PpeVerdict(1, VIOLATION, confirmed=True),
+            fallen=FallenVerdict(
+                fallen=False, changed=False, candidate=candidate, aspect=1.2, still_ms=0
+            ),
+        )
+        runtime.tick(at)
+
+    frame(1, candidate=True)
+    frame(2, candidate=False)
+    assert runtime.escalation.level is not Level.L3, "한 프레임 틈에 위반이 L3 를 잡았다"
+    gap_frames = int(config["vision"]["fallen"]["gap_ms"]) // 100 + 1
+    for seq in range(3, 3 + gap_frames):
+        frame(seq, candidate=False)
+    assert runtime.escalation.level is Level.L3, "후보가 사라졌는데 보류가 풀리지 않는다"
+    assert runtime.escalation.reason == "PPE_VIOLATION"
+
+
+def test_guard_fall_is_recorded_but_does_not_raise_the_alarm(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """경비 모드는 쓰러짐으로 단계를 올리지 않는다 (FR-11.1) — 기록은 남는다."""
+    runtime, vision, blackbox = _fallen_runtime(config, clock, tmp_path)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=True)
+
+    assert runtime.escalation.level is not Level.L3
+    assert [e for e in blackbox.feed() if e.event_type == "person_fallen"]
+
+
 def test_the_level_edge_publishes_one_warning_not_one_per_tick(
     config: dict, clock: FakeClock
 ) -> None:
