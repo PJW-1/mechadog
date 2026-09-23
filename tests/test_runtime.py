@@ -504,7 +504,7 @@ def test_confirmed_person_is_recorded_once_and_published(
     assert entries[0].jpeg_path is not None
     assert entries[0].jpeg_path.read_bytes() == b"test-jpeg"
     assert entries[0].state == "ALERT"
-    assert entries[0].escalation == "L1"
+    assert entries[0].escalation == "L0", "확정 순간에는 아직 고개를 들지 않았다 (ADR-39)"
     assert entries[0].telemetry["device_id"] == DEVICE
     assert entries[0].telemetry["available"] is True
     assert entries[0].telemetry["seq"] == 1
@@ -524,6 +524,19 @@ def _walk_in(runtime: Runtime, vision: FakeVision, *, seq: int, at_ms: int) -> N
     runtime.tick(at_ms)
 
 
+def _engage(runtime: Runtime, vision: FakeVision, config: dict, *, at_ms: int = 100) -> int:
+    """경비에서 사람 앞에 **고개를 들 때까지** 세워 둔다. L1 이 시작된 시각을 돌려준다.
+
+    L1 은 확정이 아니라 고개 들기 자세를 보낸 뒤에 시작한다 (ADR-39). 쓰는 seq 는 1·2 다.
+    """
+    hold = int(config["posture"]["alert_hold_ms"])
+    _walk_in(runtime, vision, seq=1, at_ms=at_ms)
+    runtime.tick(at_ms + hold)
+    _walk_in(runtime, vision, seq=2, at_ms=at_ms + hold + 100)
+    assert runtime.escalation.level is Level.L1
+    return at_ms + hold + 100
+
+
 def test_confirmed_person_raises_observe_level(config: dict, clock: FakeClock) -> None:
     vision = FakeVision()
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
@@ -531,7 +544,9 @@ def test_confirmed_person_raises_observe_level(config: dict, clock: FakeClock) -
     assert runtime.escalation.level is Level.L0
 
     _walk_in(runtime, vision, seq=1, at_ms=100)
-    assert runtime.escalation.level is Level.L1
+    assert runtime.behavior.state == "ALERT"
+    assert runtime.escalation.level is Level.L0, "고개를 들기 전이다 (ADR-39)"
+    _engage(runtime, vision, config)
     assert runtime.behavior.state == "ALERT", "두 축이 함께 움직인다"
 
 
@@ -543,7 +558,9 @@ def test_standing_unauthenticated_person_reaches_auth_request(
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)
     hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
-    for i in range(hold_ms // 100 + 1):
+    # L1 은 고개를 든 뒤(확정 + 자세 대기 + 한 틱)에 시작한다 (ADR-39).
+    engage_ms = int(config["posture"]["alert_hold_ms"]) + 100
+    for i in range((hold_ms + engage_ms) // 100 + 1):
         _walk_in(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
     assert runtime.escalation.level is Level.L2
 
@@ -595,14 +612,13 @@ def test_manual_takeover_stands_down_but_keeps_an_alarm(config: dict, clock: Fak
     vision = FakeVision()
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)
-    _walk_in(runtime, vision, seq=1, at_ms=100)
-    assert runtime.escalation.level is Level.L1
-    runtime.behavior.event(Event.MANUAL_ON, now_ms=200)
-    runtime.tick(200)
+    at = _engage(runtime, vision, config)
+    runtime.behavior.event(Event.MANUAL_ON, now_ms=at + 100)
+    runtime.tick(at + 100)
     assert runtime.escalation.level is Level.L0
 
-    runtime.escalation.note_event("PPE_VIOLATION", 300)
-    runtime.tick(400)
+    runtime.escalation.note_event("PPE_VIOLATION", at + 200)
+    runtime.tick(at + 300)
     assert runtime.escalation.level is Level.L3
 
 
@@ -970,7 +986,9 @@ def test_auth_request_is_issued_when_the_level_reaches_l2(config: dict, clock: F
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)
     hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
-    for i in range(hold_ms // 100 + 1):
+    # L1 은 고개를 든 뒤(확정 + 자세 대기 + 한 틱)에 시작한다 (ADR-39).
+    engage_ms = int(config["posture"]["alert_hold_ms"]) + 100
+    for i in range((hold_ms + engage_ms) // 100 + 1):
         _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
     assert runtime.escalation.level is Level.L2
     assert runtime.behavior.state == "AUTH_WAIT"
@@ -983,14 +1001,14 @@ def test_full_walkthrough_person_to_authenticated(config: dict, clock: FakeClock
     runtime.start_patrol(clock.ms)
     hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
 
-    _stand(runtime, vision, seq=1, at_ms=100)
-    assert (runtime.escalation.level, runtime.behavior.state) == (Level.L1, "ALERT")
+    start = _engage(runtime, vision, config)
+    assert runtime.behavior.state == "ALERT"
 
     for i in range(1, hold_ms // 100 + 1):
-        _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+        _stand(runtime, vision, seq=i + 2, at_ms=start + i * 100)
     assert (runtime.escalation.level, runtime.behavior.state) == (Level.L2, "AUTH_WAIT")
 
-    at = 100 + hold_ms + 100
+    at = start + hold_ms + 100
     marker_id = next(iter(config["auth"]["badge_marker_map"]))
     _stand(runtime, vision, seq=999, at_ms=at, markers=_badge(marker_id))
     assert runtime.escalation.level is Level.L0, "인증 성공은 L2 를 L0 으로 내린다"
@@ -1011,11 +1029,12 @@ def test_unknown_badges_exhaust_attempts_and_alarm(config: dict, clock: FakeCloc
     vision = FakeVision()
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)
+    at = _engage(runtime, vision, config)
     for i in range(3):
-        _stand(runtime, vision, seq=1 + i, at_ms=100 + i * 100, markers=_badge(41))
+        _stand(runtime, vision, seq=3 + i, at_ms=at + 100 + i * 100, markers=_badge(41))
     assert runtime.escalation.level is Level.L1, "한 번 실패로는 경보가 아니다"
     for i in range(3):
-        _stand(runtime, vision, seq=10 + i, at_ms=400 + i * 100, markers=_badge(42))
+        _stand(runtime, vision, seq=10 + i, at_ms=at + 400 + i * 100, markers=_badge(42))
     assert runtime.escalation.level is Level.L3
 
 
@@ -1132,27 +1151,140 @@ def test_returning_to_center_leaves_track(config: dict, clock: FakeClock) -> Non
     assert runtime.behavior.state == "ALERT"
 
 
-def test_close_off_center_person_stops_and_holds_pitch(config: dict, clock: FakeClock) -> None:
+def test_close_off_center_person_spins_to_center_before_pitch(
+    config: dict, clock: FakeClock
+) -> None:
+    """정지선에서는 걷지 않고 **제자리에서 돌아 중앙을 맞춘 뒤** 고개를 든다 (ADR-39)."""
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
     assert runtime.behavior.state == "TRACK"
 
-    # 정지선 437px 초과. 화면 왼쪽에 있어도 더 접근하거나 조향하지 않는다.
+    # 정지선 437px 초과인데 화면 왼쪽이다 — 경계 자세로 가지 않고 제자리에서 돈다.
     _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 20.0, 60.0, 460.0))
+    assert runtime.behavior.state == "TRACK"
+    spin = _move(runtime.tick(300))
+    assert spin is not None and spin["step"] == 0 and spin["angle"] > 0
+
+    _sighting(runtime, vision, seq=3, at_ms=400, box=(300.0, 30.0, 340.0, 460.0))
     assert runtime.behavior.state == "ALERT"
-    _sighting(runtime, vision, seq=3, at_ms=300, box=(20.0, 20.0, 60.0, 460.0))
-    assert runtime.behavior.state == "ALERT"
-    _sighting(runtime, vision, seq=4, at_ms=400, box=(20.0, 30.0, 60.0, 460.0))
-    assert runtime.behavior.state == "ALERT", "박스 높이 떨림으로 재출발하지 않는다"
+    _sighting(runtime, vision, seq=4, at_ms=500, box=(300.0, 200.0, 340.0, 400.0))
+    assert runtime.behavior.state == "ALERT", "정지선을 넘은 뒤에는 박스 떨림으로 재출발하지 않는다"
     commands = [
-        json.loads(line) for line in runtime.tick(200 + config["posture"]["alert_hold_ms"] + 100)
+        json.loads(line) for line in runtime.tick(400 + config["posture"]["alert_hold_ms"] + 100)
     ]
     assert all(cmd["step"] == 0 for cmd in commands if cmd["type"] == "MOVE")
     assert any(
         cmd["type"] == "POSE" and cmd["pitch"] == config["fsm"]["alert_pitch_deg"]
         for cmd in commands
     )
+
+
+@pytest.mark.parametrize(
+    ("x_center", "expected"),
+    [(420.0, "-small"), (220.0, "+small"), (560.0, "-large"), (80.0, "+large"), (330.0, "zero")],
+)
+def test_spin_at_stop_line_uses_two_steps(
+    config: dict, clock: FakeClock, x_center: float, expected: str
+) -> None:
+    """정지선 제자리 회전은 **두 단계뿐이다** (2026-09-23 실측 · 좌회전은 15° 이하 불가)."""
+    fsm = config["fsm"]
+    angles = {
+        "-small": -fsm["track_turn_small_deg"],
+        "+small": fsm["track_turn_small_deg"],
+        "-large": -fsm["track_turn_large_deg"],
+        "+large": fsm["track_turn_large_deg"],
+        "zero": 0,
+    }
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 20.0, 60.0, 460.0))
+    box = (x_center - 20.0, 20.0, x_center + 20.0, 460.0)
+    _sighting(runtime, vision, seq=3, at_ms=300, box=box)
+    if expected == "zero":
+        assert runtime.behavior.state == "ALERT"
+        return
+    move = _move(runtime.tick(400))
+    assert move is not None
+    assert (move["step"], move["angle"]) == (0, angles[expected])
+
+
+def test_far_person_beyond_split_spins_before_walking(config: dict, clock: FakeClock) -> None:
+    """정지선 전이라도 편차가 크면 **먼저 제자리에서 돈다** — 호로 돌면 다가가며 벌어진다."""
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    move = _move(runtime.tick(200))
+    assert move is not None
+    assert (move["step"], move["angle"]) == (0, config["fsm"]["track_turn_large_deg"])
+
+    # 분기점 안쪽이면 기존대로 호로 걸어간다.
+    _sighting(runtime, vision, seq=2, at_ms=300, box=(380.0, 200.0, 420.0, 400.0))
+    arc = _move(runtime.tick(400))
+    assert arc is not None and arc["step"] > 0 and arc["angle"] < 0
+
+
+def test_ultrasonic_stops_approach_below_box_line(config: dict, clock: FakeClock) -> None:
+    """웅크린 사람은 박스가 437px 에 닿지 않는다 — **초음파 40cm** 가 따로 세운다."""
+    runtime, vision = _tracking_runtime(config, clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 200.0, 340.0, 400.0))
+    assert runtime.behavior.state == "TRACK"
+    runtime.ingest(telemetry(enc, state="TRACK", dist_cm=config["fsm"]["track_stop_dist_cm"]), 150)
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 200.0, 340.0, 400.0))
+    assert runtime.behavior.state == "ALERT"
+
+
+def test_observe_level_starts_when_pitch_is_sent(config: dict, clock: FakeClock) -> None:
+    """L1(노란 눈)과 10초 승격 타이머는 **고개를 드는 순간** 시작한다 (ADR-39).
+
+    접근·정렬 중에 올리면 인증 요청까지의 10초를 걷는 데 다 써 버린다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.state == "TRACK"
+    assert runtime.escalation.level is Level.L0, "접근 중에는 올리지 않는다"
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
+    assert runtime.behavior.state == "ALERT"
+    assert runtime.escalation.level is Level.L0, "머무는 동안에도 아직이다"
+
+    hold = int(config["posture"]["alert_hold_ms"])
+    lines = runtime.tick(200 + hold)
+    assert any('"type":"POSE"' in line for line in lines)
+    _sighting(runtime, vision, seq=3, at_ms=300 + hold, box=(300.0, 20.0, 340.0, 460.0))
+    assert runtime.escalation.level is Level.L1
+
+
+def test_engaged_robot_does_not_track_again(config: dict, clock: FakeClock) -> None:
+    """고개를 든 뒤에는 **움직이지 않는다** — 대상이 옆으로 가도 다시 쫓지 않는다."""
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 20.0, 340.0, 460.0))
+    assert runtime.behavior.state == "ALERT"
+    hold = int(config["posture"]["alert_hold_ms"])
+    runtime.tick(100 + hold)
+    _sighting(runtime, vision, seq=2, at_ms=200 + hold, box=(20.0, 20.0, 60.0, 460.0))
+    assert runtime.behavior.state == "ALERT"
+    move = _move(runtime.tick(300 + hold))
+    assert move is not None and (move["step"], move["angle"]) == (0, 0)
+
+
+def test_factory_mode_keeps_immediate_observe_level(config: dict, clock: FakeClock) -> None:
+    """공장 모드는 추종하지 않으므로 확정 즉시 L1 이다 — 고개 들기 게이트는 경비 전용이다."""
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(clock.ms)
+    _walk_in(runtime, vision, seq=1, at_ms=100)
+    assert runtime.escalation.level is Level.L1
 
 
 def test_track_turns_toward_the_target(config: dict, clock: FakeClock) -> None:
@@ -1163,14 +1295,15 @@ def test_track_turns_toward_the_target(config: dict, clock: FakeClock) -> None:
     """
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
-    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    # 제자리 회전 분기점(`track_turn_split_px`) 안쪽이라 호로 걸어간다.
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(200.0, 200.0, 240.0, 400.0))
     assert runtime.behavior.sequence_for("TRACK") is not None, "등록 안 되면 명령이 안 나간다"
     left = _move(runtime.tick(200))
     assert left is not None, "추종 중에는 명령이 나가야 한다"
     assert left["angle"] > 0, "왼쪽에 있으면 좌회전(양수)이다"
-    assert left["step"] > 0, "제자리 회전을 전제하지 않으므로 조향에 보폭이 따라붙는다 (DR-11)"
+    assert left["step"] > 0, "분기점 안쪽은 호로 돌므로 조향에 보폭이 따라붙는다"
 
-    _sighting(runtime, vision, seq=2, at_ms=300, box=(580.0, 200.0, 620.0, 400.0))
+    _sighting(runtime, vision, seq=2, at_ms=300, box=(400.0, 200.0, 440.0, 400.0))
     right = _move(runtime.tick(400))
     assert right is not None
     assert right["angle"] < 0, "오른쪽이면 우회전(음수)"
@@ -1304,8 +1437,11 @@ def test_eye_led_follows_the_escalation_level(config: dict, clock: FakeClock) ->
     assert not _typed(runtime.tick(200), "LED"), "같은 단계를 10Hz 로 도배하지 않는다"
 
     vision.result = vision_result(1, 300, present=True, hits=3, last_seen_ms=300)
-    after = _typed(runtime.tick(300), "LED")
-    assert [m["color"] for m in after] == ["yellow"], "사람을 보면 L1 노랑으로 바뀐다"
+    assert not _typed(runtime.tick(300), "LED"), "고개를 들기 전에는 파랑이다 (ADR-39)"
+    runtime.tick(300 + int(config["posture"]["alert_hold_ms"]))
+    vision.result = vision_result(2, 1400, present=True, hits=3, last_seen_ms=1400)
+    after = _typed(runtime.tick(1400), "LED")
+    assert [m["color"] for m in after] == ["yellow"], "고개를 들면 L1 노랑으로 바뀐다"
 
 
 def test_eye_led_is_reannounced_after_peer_is_learned(cfg: dict, clock: FakeClock) -> None:
@@ -2253,18 +2389,20 @@ def test_the_level_edge_publishes_one_warning_not_one_per_tick(
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision, dashboard=board)
     runtime.start_patrol(clock.ms)
     hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
-    for i in range(hold_ms // 100 + 1):
+    # L1 은 고개를 든 뒤(확정 + 자세 대기 + 한 틱)에 시작한다 (ADR-39).
+    engage_ms = int(config["posture"]["alert_hold_ms"]) + 100
+    for i in range((hold_ms + engage_ms) // 100 + 1):
         _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
     assert runtime.escalation.level is Level.L2
 
     events, dropped = board.events_since(0)
     assert dropped == 0
     changes = [e for e in events if e["event"] == "escalation_changed"]
-    # 첫 틱에서 이미 사람을 봐 L1 이 되므로 L0 은 사건으로 나오지 않는다 — 엣지는
-    # 틱 끝에서 한 번 보고, 그때 단계는 이미 L1 이다.
-    assert [e["escalation"] for e in changes] == ["L1", "L2"], (
+    # 첫 틱의 L0 도 엣지로 한 번 나온다 — L1 은 고개를 든 뒤에야 오르기 때문이다 (ADR-39).
+    assert [e["escalation"] for e in changes] == ["L0", "L1", "L2"], (
         "단계마다 하나씩이다 — 10Hz 로 백 번 도는 동안 L1 이 여러 번 나오면 안 된다"
     )
+    changes = changes[1:]
     assert changes[0]["warning"] is None, "관찰 단계는 읽을 것이 없다"
     # ⚠️ **L2 도 비어 있다** (2026-09-23 정정) — 인증 요구 안내는 음성 쪽
     # `Hub.auth_prompt` 가 한다. 그 안내가 곧 시도 계수 게이트를 여는 행위라
@@ -2286,12 +2424,11 @@ def test_a_quiet_promotion_still_reaches_the_event_feed(config: dict, clock: Fak
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision, dashboard=board)
     runtime.start_patrol(clock.ms)
     hold_ms = int(config["escalation"]["l1_to_l2_hold_s"]) * 1000
-    _stand(runtime, vision, seq=1, at_ms=100)
-    assert runtime.escalation.level is Level.L1
+    start = _engage(runtime, vision, config)
     seen_at_l1 = board.event_seq
 
     for i in range(1, hold_ms // 100 + 1):
-        _stand(runtime, vision, seq=i + 1, at_ms=100 + i * 100)
+        _stand(runtime, vision, seq=i + 2, at_ms=start + i * 100)
     assert runtime.escalation.level is Level.L2
 
     later, _ = board.events_since(seen_at_l1)
