@@ -8,6 +8,11 @@
 
 WonderEcho 모듈이 마이크와 스피커를 맡고, **판단은 전부 이 PC가 한다.** 모듈에서는 한국어 인식을 하지 않는다 — 모듈 CPU로는 불가능하고, 인식은 PC의 GPU가 한다.
 
+> **개정 (2026-09-23 · [ADR-38](../../docs/DECISIONS.md#adr-38))** — 음성 경로는 규칙만 쓴다. 로컬 LLM(GGUF · llama-cpp)은 폐기했으므로
+> 대화 모델을 받을 필요가 없고, 가상 MES 서버(`:8095`)도 없어졌다. 파이프라인에 필요한 모델은 faster-whisper(1절)와
+> Piper 음성(`--piper-model`)뿐이다. WonderEcho COM 링크는 임시이며, 목표 구조는 XIAO 마이크(`:82/audio`) 듣기 ·
+> 로봇 MP3 모듈(I²C `0x7B`) 말하기다(4.7.19~4.7.21 미착수).
+
 ```
 [음성 모듈]                                   [PC]
  마이크 → 코덱 ADC → Speex 압축(3 KB/s) ──→ faster-whisper medium (CUDA)
@@ -241,13 +246,12 @@ python -X utf8 build_prompt_audio.py <원본.wav> <출력.wav>
 |---|---|---|
 | `voice_data.db` | 무시됨 | `python prepare_demo.py --output-dir .` — 정본 음성3테이블 생성. 기존 DB는 보존 |
 | `voice_data.rules.json` | 무시됨 | 같은 명령으로 공유 JSON의 고정 발화 규칙 재현 |
-| `mes_demo.db` | 무시됨 | 같은 명령으로 별도 MES5테이블 합성 자료 재현 |
 | `phrases_custom.json` | 이전 입력만 | `python migrate_voice_db.py --db voice_data.db`로 `phrases`에 이전·백업. 새 관리 API는 DB만 사용 |
 | `voice_cache/` | 무시됨 | TTS 캐시 — 자동 생성 |
 | `emergency_log.txt` | 무시됨 | 비상 발화 시 자동 생성 |
 | Whisper 모델 폴더 | 미포함 | 1절 다운로드 절차 (모델 파일은 라이선스·용량으로 커밋하지 않는다) |
-| Piper/Orpheus 모델 | 미포함 | 2절 다운로드 절차 |
-| GGUF 대화 모델 | 미포함 | `--model` 인자로 지정하는 로컬 파일 |
+| Piper 모델 | 미포함 | `--piper-model` 로 지정하는 로컬 `.onnx`(기본 `ko_KR-kss-medium.onnx`) — 이 문서에 내려받기 절차는 없다 |
+| Orpheus 모델 | 미포함 | 2절 다운로드 절차 (단독 안내음 제작용 — 파이프라인은 쓰지 않는다) |
 | `knowledge/*.txt` | **커밋됨** | 단, 내용은 전부 **합성 데모 문서** — 실사 자료 아님 |
 
 ### 암구호(3.8.2)는 기본값이 코드에 있다
@@ -260,7 +264,7 @@ python voice_store.py --set auth_passphrases '["실제 암구호", "예비 문�
 
 키 이름이 `pass` 를 포함해 `--dump`·`--set` 에코에서 값이 자동으로 가려진다. 빈 목록(`'[]'`)으로 두면 음성 인증 경로 자체가 닫힌다.
 
-공유용 `--seed`/`prepare_demo.py`는 공개 설정6개만 넣고 암구호를 자동 저장하지 않는다.
+공유용 `--seed`/`prepare_demo.py`는 공개 설정4개만 넣고 암구호를 자동 저장하지 않는다.
 설정이 없는 데모의 코드 기본값과 관리자가 명시적으로 저장한 인증 설정을 구분한다.
 암구호 설정이 들어 있는 DB는 `db_transfer.py export`가 거부하며 공유 자료로 반출하지 않는다.
 정본 스키마는 PR223과 같은 3테이블이며, 인증 기능 때문에 구형8테이블을 되살리지 않는다.
@@ -269,8 +273,7 @@ python voice_store.py --set auth_passphrases '["실제 암구호", "예비 문�
 
 | 검증 | 새 환경에서 가능? |
 |---|---|
-| `python -m unittest discover -s experiments/wonderecho-audio` (전체 단위시험) | ✅ 가능 — 하드웨어·DB·모델 불요 (requirements-pc.txt 만 설치) |
+| `python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'` (전체 단위시험, CI 와 같은 명령) | ✅ 가능 — 하드웨어·DB·모델 불요 (requirements-pc.txt 만 설치) |
 | `/api/command/auth` FSM 전이·거절 | ✅ 가능 — `pytest tests/test_command_api.py` |
 | STT 환각 거름·암구호 대조 로직 | ✅ 가능 — mock 기반 |
 | 실제 음성 왕복 (모듈 마이크→인증 해제) | ❌ **WonderEcho 모듈 + COM 포트 + 모델 파일 필요** — 다른 환경에서는 재현 불가. 실기 결과는 "측정한 기체·날짜 한정"으로 표시한다 |
-| MES 음성 답변 | ◐ `--seed` 후 가능하나 **합성 데이터 기준** — 실제 공장 데이터와 무관 |

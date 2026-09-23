@@ -12,8 +12,8 @@
 |---|---|
 | 공장 펌웨어: 음성 인식·응답·로봇 4핀 | ✅ 동작 (장시간 방치 시 간헐 무음/무반응 버그 있음) |
 | 커스텀 `38-pdm.bin` | ✅ **USB 청취 검증 (2026-09-23)** — 무음 원인(PDM 전원) 수정이 실물에서 소리를 되살렸다. 로봇 4핀 경로는 미검증 |
-| 모듈↔로봇 I²C 통신 | 커스텀 v34+ 에서 복구됨 (0x34 ACK 실측) |
-| PC 파이프라인 (Whisper→EXAONE→Piper) | 부가기능 — 모듈↔로봇 동작과 무관 |
+| 모듈↔로봇 I²C 통신 | 커스텀 v34+ 에서 복구됨 (0x34 ACK 실측). 2026-09-23 실측: **명령 id 만 오가고 PCM 중계는 불가**(WBS 4.7.9 불가 판정) |
+| PC 파이프라인 (Whisper→규칙→Piper) | 부가기능 — 모듈↔로봇 동작과 무관. 음성 LLM 은 폐기([ADR-38](../../docs/DECISIONS.md#adr-38)), 규칙 밖 발화는 고정 문구 |
 
 ## 1. 펌웨어 이미지 입수
 
@@ -96,10 +96,35 @@ while time.monotonic()<e:
 
 ### 3-3. PC 음성 테스트 도구 (선택)
 
-`dev/wonderecho-audio/voice_tool.py` (GUI):
-- 스피커 테스트: 펌웨어 자동 감지 (스트림=WEC1 톤 / 로그=음성 유도 테스트)
+`experiments/wonderecho-audio/voice_tool.py` (GUI):
+- 스피커 테스트: 펌웨어 자동 감지 (스트림=WEC1 톤 / 로그=음성 유도 테스트). 파이프라인이 COM5 를 잡고 있으면 끈 뒤 다시 누른다 — 파이프라인 경유 재생(`/say`)은 폐기했다
 - 모듈 로그 보기: COM5 로그 10초 수집
-- 파이프라인: Whisper STT + EXAONE LLM + Piper TTS 대화 (GPU 필요)
+- 파이프라인: Whisper STT + 규칙(명령·시나리오·비상·암구호) + Piper TTS (GPU 필요, LLM 없음)
+
+### 3-4. PC 단위 시험 (기기 불요)
+
+하드웨어·DB·모델 없이 도는 오프라인 시험이다. CI 와 같은 명령을 저장소 루트에서 실행한다.
+
+```bash
+python -m pip install -r experiments/wonderecho-audio/requirements-pc.txt
+python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'
+```
+
+| 파일 | 다루는 것 |
+|---|---|
+| `test_voice_pipeline.py` | 시나리오 트리거·명령 화이트리스트·`route_query` 순서(명령→시나리오→비상→고정 문구)·암구호·사원증 판정·단계 경고 큐·`/say` 폐기 |
+| `test_voice_store.py` | 운영 DB 기본값·시드·규칙 JSON 로더 |
+| `test_voice_schema.py` | 음성3테이블 정본과 구형 구조 거부 |
+| `test_voice_migration.py` | 8→3 이전, 폐기 규칙 항목 걸러 내기(`drop_retired`), 문구 이전 |
+| `test_db_transfer.py` | 합성 묶음 가져오기·백업·거부(가상 MES 테이블 포함)·명단 실패 시 승인 차단 |
+| `test_prepare_demo.py` | `demo/voice_demo.json` 재현과 게시 SQL 일치 |
+| `test_supabase.py` | 스텁 PostgREST 로 원격 읽기·쓰기 경로 |
+| `test_eventlog.py` | 일자별 저널과 일일 리포트 (4.7.12) |
+| `test_protocol.py`, `test_stream_client.py` | WEC1 프레임·캡처 합성 픽스처 |
+| `test_transcribe_local.py` | 캡처 검증·`사원 OOO 입니다` 이름 추출 |
+| `test_speaker_image.py` | `build_speaker_image.py` 의 PCM 안내음 헤더·항목 |
+
+2026-09-23 기준 192개 통과. `test_factorylink.py`(가상 MES)는 현장지원 폐기와 함께 지웠다.
 
 ## 4. 알려진 문제
 
