@@ -1,11 +1,15 @@
 """Fixed routing rules: code defaults plus one validated local JSON file, no DB/HTTP.
 
-The optional file next to voice_data.db is voice_data.rules.json. Each section
+The optional file is voice_data.rules.json next to this module. Each section
 replaces its default section. Missing files use the existing code constants.
+    python voice_rules.py --rules          # show effective rules
+    python voice_rules.py --add wake 메카봇 # edit the local rule file
+    python voice_rules.py --del wake 메카봇
 """
 
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 import os
@@ -13,8 +17,6 @@ import tempfile
 import warnings
 from functools import lru_cache
 from pathlib import Path
-
-from voice_schema import LEGACY  # noqa: F401  (migrate_voice_db·db_transfer 가 여기서 읽는다)
 
 KINDS = ("wake", "sleep", "resume", "emergency")
 SECTIONS = ("keywords", "command_endings", "action_commands", "scenario_triggers")
@@ -25,7 +27,11 @@ SECTIONS = ("keywords", "command_endings", "action_commands", "scenario_triggers
 RETIRED_SECTIONS = ("factory_rules",)
 RETIRED_KINDS = ("status", "machine")
 RETIRED_SCENARIOS = ("robot_briefing",)
+# 비상정지 구문 — 규칙 파일이 제거·재매핑할 수 없는 최소 안전 집합.
 PROTECTED = ("비상정지", "긴급정지", "스톱")
+# 음성 DB 를 없앤 뒤에도(2026-09-23) 이름을 그대로 둔다. 바꾸면 PC 에 이미 있는
+# 규칙 파일이 조용히 무시되어 사용자 호출어가 기본값으로 돌아간다.
+RULES_PATH = Path(__file__).with_name("voice_data.rules.json")
 _cache = {}
 
 
@@ -65,10 +71,6 @@ def drop_retired(data):
 
 def defaults():
     return copy.deepcopy(_defaults())
-
-
-def path_for(db_path):
-    return Path(db_path).with_suffix(".rules.json")
 
 
 def _text(value):
@@ -122,9 +124,9 @@ def read(path):
     return validate(drop_retired(json.loads(Path(path).read_text(encoding="utf-8-sig"))))
 
 
-def load(db_path):
+def load(path=None):
     """Cache by file identity; invalid edits use defaults and warn once per change."""
-    path = path_for(db_path).resolve()
+    path = Path(path or RULES_PATH).resolve()
     try:
         stat = path.stat()
         stamp = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
@@ -161,27 +163,54 @@ def save(path, data):
         Path(name).unlink(missing_ok=True)
 
 
-def from_legacy(tables):
-    """Preserve the effective nonempty DB overlays, including original row order."""
-    data = defaults()
-    if any(r.get("kind") not in (*KINDS, *RETIRED_KINDS) for r in tables.get("keywords", [])):
-        raise ValueError("알 수 없는 keyword kind")
-    for kind in KINDS:
-        words = [r["word"] for r in tables.get("keywords", []) if r["kind"] == kind]
-        if words:
-            data["keywords"][kind] = words
-    # 구형 DB 의 factory_rules 표는 옮기지 않는다 — 가상 MES 조회는 폐기됐다(ADR-38).
-    for table in ("command_endings", "action_commands", "scenario_triggers"):
-        rows = tables.get(table, [])
-        if not rows:
-            continue
-        if table == "command_endings":
-            data[table] = [r["ending"] for r in rows]
-        elif table == "action_commands":
-            data[table] = {r["phrase"]: [r["action"], r["ack"]] for r in rows}
-        else:
-            data[table] = {r["phrase"]: r["scenario"] for r in rows}
-    # Old runtime always restored these; migrate the effective behavior, not unsafe rows.
+def words(kind, default, path=None):
+    return tuple(load(path)["keywords"].get(kind, default))
+
+
+def command_endings(default, path=None):
+    return sorted(load(path).get("command_endings", default), key=len, reverse=True)
+
+
+def action_commands(default, path=None):
+    data = load(path).get("action_commands", default)
+    base = {p: tuple(v) for p, v in data.items()}
+    protected = defaults()["action_commands"]
     for phrase in PROTECTED:
-        data["action_commands"][phrase] = _defaults()["action_commands"][phrase][:]
-    return validate(drop_retired(data))
+        base[phrase] = tuple(protected[phrase])
+    return base
+
+
+def scenario_triggers(default, path=None):
+    return load(path).get("scenario_triggers", default)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--path", type=Path, default=RULES_PATH)
+    ap.add_argument(
+        "--add", nargs=2, metavar=("KIND", "WORD"), help=f"호출어 추가 ({'|'.join(KINDS)})"
+    )
+    ap.add_argument("--del", dest="remove", nargs=2, metavar=("KIND", "WORD"), help="호출어 삭제")
+    ap.add_argument("--rules", action="store_true", help="유효한 규칙 JSON 출력")
+    args = ap.parse_args()
+    if args.add or args.remove:
+        data = read(args.path) if args.path.exists() else defaults()
+        for operation, pair in (("add", args.add), ("remove", args.remove)):
+            if not pair:
+                continue
+            kind, word = pair
+            if kind not in KINDS:
+                ap.error(f"kind must be one of {KINDS}")
+            values = data["keywords"][kind]
+            if operation == "add" and word not in values:
+                values.append(word)
+            elif operation == "remove" and word in values:
+                values.remove(word)
+        save(args.path, data)
+        print(f"[rules] {args.path}")
+    if args.rules:
+        print(json.dumps(load(args.path), ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -2,7 +2,9 @@
 
 import contextlib
 import io
+import json
 import math
+import os
 import struct
 import sys
 import time
@@ -14,6 +16,16 @@ import phrases as phr
 import robotlink
 import scenarios
 import voice_pipeline as vp
+import voice_rules
+
+
+def setUpModule():
+    # 개발자 PC 의 로컬 규칙 파일(voice_data.rules.json)이 아니라 코드 기본 규칙으로 시험한다.
+    patch = mock.patch.object(
+        voice_rules, "RULES_PATH", voice_rules.RULES_PATH.with_name("_absent_for_tests.rules.json")
+    )
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
 
 
 class FakeCtx:
@@ -139,7 +151,7 @@ class PhraseLibraryTests(unittest.TestCase):
         self.assertGreaterEqual(total, 100)  # 실사 매뉴얼 기반 대량 문구
 
     def test_phrases_are_spoken_korean(self):
-        for cat, text, _custom in phr.all_lines():
+        for cat, text in phr.all_lines():
             self.assertIsInstance(text, str)
             self.assertTrue(text.strip(), cat)
             # TTS 읽기 적합 — 마크다운·이모지·영어 약어 없음
@@ -153,72 +165,6 @@ class PhraseLibraryTests(unittest.TestCase):
 
     def test_pick_unknown_category_is_empty(self):
         self.assertEqual(phr.pick("nonexistent"), "")
-
-
-class CustomPhraseTests(unittest.TestCase):
-    """관리자 추가 문구: DB 저장·병합·삭제. 기본 문구는 건드리지 않는다."""
-
-    def setUp(self):
-        self.tmp = __import__("tempfile").TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        import voice_store
-
-        self.path = __import__("pathlib").Path(self.tmp.name) / "voice.db"
-        patch = mock.patch.object(voice_store, "DEFAULT_DB", self.path)
-        patch.start()
-        self.addCleanup(patch.stop)
-        remote = mock.patch.object(voice_store, "_REMOTE_URL", "")
-        remote.start()
-        self.addCleanup(remote.stop)
-
-    def test_add_persists_and_merges(self):
-        cat = phr.add_custom("Greeting", "관리자가 추가한 인사말")
-        self.assertEqual(cat, "greeting")
-        self.assertIn("관리자가 추가한 인사말", phr.merged()["greeting"])
-        saved = phr._db_phrases()
-        self.assertEqual(saved["greeting"], ["관리자가 추가한 인사말"])
-
-    def test_new_category_allowed(self):
-        phr.add_custom("zone_b3", "B3 구역 안내 문구입니다")
-        self.assertIn("zone_b3", phr.merged())
-
-    def test_pick_includes_custom(self):
-        phr.add_custom("only_custom", "유일한 문구")
-        for _ in range(20):
-            self.assertEqual(phr.pick("only_custom"), "유일한 문구")
-
-    def test_remove_only_custom(self):
-        phr.add_custom("greeting", "삭제 대상 문구")
-        self.assertFalse(phr.remove_custom("greeting", "네, 메카독입니다. 무엇을 도와드릴까요?"))
-        self.assertTrue(phr.remove_custom("greeting", "삭제 대상 문구"))
-        self.assertNotIn("삭제 대상 문구", phr.merged()["greeting"])
-
-    def test_add_validates_input(self):
-        for cat, text in (
-            ("", "문구"),
-            ("greeting", ""),
-            ("카테고리!", "문구"),
-            ("greeting", "x" * 201),
-        ):
-            with self.assertRaises(ValueError):
-                phr.add_custom(cat, text)
-
-    def test_duplicate_rejected(self):
-        phr.add_custom("greeting", "중복 문구")
-        with self.assertRaises(ValueError):
-            phr.add_custom("greeting", "중복 문구")
-        with self.assertRaises(ValueError):
-            phr.add_custom("greeting", phr.PHRASES["greeting"][0])
-
-    def test_db_phrases_tolerates_missing_and_corrupt(self):
-        self.assertEqual(phr._db_phrases(), {})
-        self.path.write_text("{not json", encoding="utf-8")
-        self.assertEqual(phr._db_phrases(), {})
-
-    def test_all_lines_marks_custom(self):
-        phr.add_custom("greeting", "추가 표시 문구")
-        rows = [(c, t, cu) for c, t, cu in phr.all_lines() if t == "추가 표시 문구"]
-        self.assertEqual(rows, [("greeting", "추가 표시 문구", True)])
 
 
 class NewScenarioTests(unittest.TestCase):
@@ -380,9 +326,7 @@ class TranscribeTests(unittest.TestCase):
                     types.SimpleNamespace(text="순찰 시작 "),
                 ], {}
 
-        # 개발자 PC 의 voice_data.db 에 남은 옛 stt_prompt 를 읽지 않게 코드 기본값으로 고정한다.
-        with mock.patch.object(vp.voice_store, "setting", side_effect=lambda _k, d, *_a: d):
-            text = vp.transcribe(FakeModel(), b"\x00\x00\xff\x7f")
+        text = vp.transcribe(FakeModel(), b"\x00\x00\xff\x7f")
 
         self.assertEqual(text, "메카독 순찰 시작")
         self.assertEqual(seen["samples"], 2)
@@ -454,22 +398,31 @@ class HubScenarioQueueTests(unittest.TestCase):
         self.assertEqual(hub.say_q.qsize(), 0)
         del FakeHandler
 
-    def test_typed_broadcast_endpoint_is_retired(self):
-        # 관제 화면의 임의 문장 방송(/say)은 폐기했다(ADR-38). 단계 경고는 같은
-        # 큐를 쓰지만 사건 폴링으로만 들어온다.
-        hub = vp.Hub("test")
+    def _post(self, hub, path, body):
         h = vp.make_handler(hub).__new__(vp.make_handler(hub))
-        body = '{"text": "아무 문장"}'.encode()
         sent = []
-        h.path, h.headers = "/say", {"Content-Length": str(len(body))}
-        h.rfile, h.wfile = __import__("io").BytesIO(body), __import__("io").BytesIO()
+        h.path, h.headers = path, {"Content-Length": str(len(body))}
+        h.rfile, h.wfile = io.BytesIO(body), io.BytesIO()
         h.request_version = "HTTP/1.1"
         h.send_response = sent.append
         h.send_header = lambda *_a: None
         h.end_headers = lambda: None
         h.do_POST()
-        self.assertEqual(sent[0], 404)
+        return sent[0]
+
+    def test_typed_broadcast_endpoint_is_retired(self):
+        # 관제 화면의 임의 문장 방송(/say)은 폐기했다(ADR-38). 단계 경고는 같은
+        # 큐를 쓰지만 사건 폴링으로만 들어온다.
+        hub = vp.Hub("test")
+        self.assertEqual(self._post(hub, "/say", '{"text": "아무 문장"}'.encode()), 404)
         self.assertEqual(hub.say_q.qsize(), 0)
+
+    def test_phrase_editing_endpoints_are_retired(self):
+        # 출력은 TF 카드에 미리 녹음한 문장뿐이라 문구 추가·삭제는 없다(4.7.22).
+        body = '{"category": "greeting", "text": "새 문구"}'.encode()
+        for path in ("/phrases", "/phrases/delete"):
+            with self.subTest(path=path):
+                self.assertEqual(self._post(vp.Hub("test"), path, body), 404)
 
 
 class HallucinationFilterTests(unittest.TestCase):
@@ -530,6 +483,16 @@ class HallucinationFilterTests(unittest.TestCase):
 class PassphraseTests(unittest.TestCase):
     """암구호 대조 — 이름 대조가 아니라 등록 **문구** 대조다 (WBS 3.8.2)."""
 
+    def setUp(self):
+        # 개발자 PC 에 실제 암구호가 설정돼 있어도 코드 기본값으로 시험한다.
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop(vp.PASSPHRASES_ENV, None)
+
+    def _env(self, value):
+        return mock.patch.dict(os.environ, {vp.PASSPHRASES_ENV: value})
+
     def test_registered_phrase_inside_natural_speech_matches(self):
         self.assertTrue(vp.match_passphrase("암구호는 메카독 출입 허가 입니다"))
 
@@ -542,9 +505,7 @@ class PassphraseTests(unittest.TestCase):
         self.assertFalse(vp.match_passphrase("홍길동"))
 
     def test_configured_list_overrides_code_default(self):
-        import json
-
-        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps(["새 암구호"])):
+        with self._env(json.dumps(["새 암구호"])):
             self.assertTrue(vp.match_passphrase("새 암구호입니다"))
             self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
 
@@ -559,20 +520,19 @@ class PassphraseTests(unittest.TestCase):
     def test_broken_setting_closes_auth_instead_of_falling_back(self):
         # 되돌리면 관리자가 JSON 이 아닌 값을 넣은 순간 저장소에 공개된
         # 데모 문구가 조용히 문을 열어 준다 — 바꿨다고 믿는 채로.
-        with mock.patch.object(vp.voice_store, "setting", return_value="{깨짐"):
+        with self._env("{깨짐"):
             self.assertEqual(vp.passphrases(), [])
             self.assertFalse(vp.match_passphrase("메카독 출입 허가"))
 
     def test_non_list_setting_closes_auth(self):
-        import json
-
-        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps("문구")):
+        with self._env(json.dumps("문구")):
             self.assertEqual(vp.passphrases(), [])
 
-    def test_empty_entry_does_not_authenticate_everything(self):
-        import json
+    def test_unset_env_uses_public_demo_phrase(self):
+        self.assertEqual(vp.passphrases(), list(vp.DEFAULT_PASSPHRASES))
 
-        with mock.patch.object(vp.voice_store, "setting", return_value=json.dumps(["", "  "])):
+    def test_empty_entry_does_not_authenticate_everything(self):
+        with self._env(json.dumps(["", "  "])):
             self.assertEqual(vp.passphrases(), [])
             self.assertFalse(vp.match_passphrase("아무 말이나"))
 

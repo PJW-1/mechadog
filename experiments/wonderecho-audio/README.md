@@ -1,9 +1,7 @@
 # WonderEcho 음성 — 안내 재생·녹음·PC 한국어 인식
 
-**팀원 시작점:** [공유 데이터·DB 만들기](demo/README.md) · [PC/GPU 설치](SETUP.md) ·
-[음성 DB 구조](DB_GUIDE.md) · [모듈 실물 시험](TESTING.md).
-`python prepare_demo.py --output-dir .` 한 번으로 음성3테이블의 합성 10행과
-규칙 111개를 재현한다. 데이터/PC 시험과 모듈 청취 성공은 별도다. 로봇 4핀 경유 오디오
+**팀원 시작점:** [PC/GPU 설치](SETUP.md) · [모듈 실물 시험](TESTING.md).
+음성 DB는 없다(아래 「설정 데이터의 정본」). 데이터/PC 시험과 모듈 청취 성공은 별도다. 로봇 4핀 경유 오디오
 중계(WBS 4.7.9)는 2026-09-23 실측으로 **불가 판정**했다 — 듣기는 XIAO 마이크(4.7.19),
 말하기는 로봇 MP3 모듈(4.7.20·4.7.21)로 옮긴다([ADR-38](../../docs/DECISIONS.md#adr-38)).
 
@@ -14,10 +12,10 @@ faster-whisper, WonderEcho 펌웨어가 필요하다. 모듈이 성명을 묻으
 `knowledge/직원명단.txt`는 합성 데모 명단이다. **이름 발화는 출입 인증이 아니며
 로봇의 `AUTH_OK`를 만들지 않는다.** 실제 출입 인증은 사원증/암구호 경로로 별도 검증한다.
 
-**음성 DB 정본은 3테이블**(`settings`, `roster`, `phrases`) + 규칙 JSON이다.
-구형 음성8테이블은 `migrate_voice_db.py`로 백업·이전한 뒤 사용한다.
-`python voice_store.py --check-schema`로 검사한다. 별도 DB였던 가상 MES(`mes_demo.db`
-5테이블)는 현장지원 모드와 함께 2026-09-23 폐기했다(ADR-38).
+**음성 DB는 없다.** 설정·명단·문구는 코드와 파일에 있고, 바꿀 수 있는 것은 호출어·시나리오
+구문을 담은 규칙 JSON(`voice_data.rules.json`) 하나다. 음성 DB(`voice_data.db` · Supabase)는
+2026-09-23 폐기했다(WBS 4.7.22). 별도 DB였던 가상 MES(`mes_demo.db` 5테이블)도 현장지원
+모드와 함께 같은 날 폐기했다(ADR-38).
 
 > **현재 상태 (WBS 4.7.4~4.7.7 · 4.7.11 · 4.7.14)** — `voice_pipeline.py`가
 > 종단 음성 루프다: 마이크 → faster-whisper → 규칙(명령·시나리오·비상·암구호) →
@@ -44,7 +42,7 @@ faster-whisper, WonderEcho 펌웨어가 필요하다. 모듈이 성명을 묻으
 >   (`robot_briefing`)은 2026-09-23 폐기했다. 모든 판정은 LLM 없이 결정론적이고,
 >   음성 트리거 또는 `POST /scenario`로 실행한다 — **시나리오를 바꿔도 모듈을 다시
 >   굽지 않는다** (대사·판정·음성 데이터는 전부 PC 소유).
-> - **음성 응답 라이브러리** — `phrases.py`에 기본 응답 121개와 관리자 추가 문구. 실제
+> - **음성 응답 라이브러리** — `phrases.py`에 기본 응답 121개(관리자 추가 문구는 없다). 실제
 >   산업 매뉴얼(산업안전보건법 근로자 의무, KOSHA 지게차 수칙, 화재 대피 매뉴얼,
 >   포스코·LS MnM 출입통제 규정)에서 차용한 표현 기반. `gen_voice_cache.py`로
 >   전 문구를 WAV로 미리 렌더링해 `voice_cache/`에 둘 수 있다(생성물, 커밋 제외).
@@ -69,7 +67,7 @@ faster-whisper, WonderEcho 펌웨어가 필요하다. 모듈이 성명을 묻으
 >
 > 관제 API는 `GET /status`(파이프라인 상태), `/scenarios`(목록), `/phrases`(문구
 > 라이브러리), `/transcript`(발화 로그), `/report`(당일 요약)와 `POST /scenario`
-> (시나리오 실행), `/phrases`·`/phrases/delete`(추가 문구 관리), `/mode`(대기/깨우기)다
+> (시나리오 실행), `/mode`(대기/깨우기)다
 > — 링크는 메인 루프가 단독 소유하고 웹 요청은 큐로 직렬화한다. 타자로 친 임의 문장을
 > 방송하던 `POST /say`는 2026-09-23 폐기했다(4.7.14 축소, ADR-38). 3.5.6 단계 경고는
 > 같은 내부 큐(`Hub.enqueue_say(urgent=True)`)를 그대로 쓰고 외부 입구만 없어졌다.
@@ -102,24 +100,20 @@ faster-whisper, WonderEcho 펌웨어가 필요하다. 모듈이 성명을 묻으
 두 개다. `knowledge/`의 작업현황·출하스케줄 파일은 합성 시나리오 자료이며 최신 운영값의
 정본이 아니다.
 
-### 설정 데이터의 정본 — `voice_data.db` (선택적 오버레이)
+### 설정 데이터의 정본 — 코드 · 파일 (음성 DB 폐기 · WBS 4.7.22)
 
-음성 DB는 **3테이블(settings·roster·phrases)**로 정리했다. 고정 규칙 4종은
-`voice_data.rules.json` 한 파일로 관리하며, DB/원격 조회 없이 변경 시에만 다시 읽는다.
-기존 8테이블 사용자는 `migrate_voice_db.py --db voice_data.db`로 백업·이전한다.
-관리자 추가 문구도 JSON/DB 이중 저장을 없애 `phrases`로 통합했다.
-일반 설정은 DB 장애 시 기본값을 쓸 수 있지만 **사용 중인 신원 명단의 빈 결과·오류는
-승인 대상 0명**으로 처리한다. DB가 아예 없는 기존 데모만 파일 명단을 쓴다.
+| 무엇 | 정본 |
+|---|---|
+| 후속 발화 시간·STT 힌트·로봇 API 주소 | `voice_pipeline.py` 상수 · `--robot-api` 인자 |
+| 암구호 | 환경 변수 `MECHDOG_PASSPHRASES`(JSON 목록). 없으면 공개 데모 문구 하나 |
+| 신원 확인 명단 | `knowledge/직원명단.txt` |
+| 응답 문구 | `phrases.py` — 대시보드는 보기만 한다 |
+| 호출어·명령 어미·명령 구문·시나리오 구문 | `voice_data.rules.json`(선택, 로컬 전용). 없으면 코드 기본값 |
+
+음성 DB를 없앤 이유: 목표 스피커(MP3 모듈, 4.7.20–21)는 **TF 카드에 미리 녹음한 문장만**
+재생한다. 운영 중 문구를 추가해도 말할 수 없으므로, 문구·설정을 DB로 바꿀 이유가 없다.
+DB 시드가 옛 STT 힌트를 굳혀 코드 수정이 반영되지 않는 문제도 함께 사라진다.
 비상정지 보호 구문과 로봇 실행 화이트리스트는 코드에 유지한다.
-
-`voice_store.py --seed`는 기존 데이터를 보존한다.
-의도적 초기화는 `--seed --reset`으로 하며 자동 백업한다.
-Supabase 스키마 SQL도 기존 행을 지우거나 자동 재시드하지 않는다(이전 SQL이 만든 가상 MES
-테이블도 자동 삭제하지 않는다).
-
-[DB_GUIDE.md](DB_GUIDE.md)에 메인 안전 이력 DB와의 관계, 전체 테이블의 역할,
-**로컬 합성 자료 → 검증 JSON → SQLite/Supabase SQL 가져오기** 절차를 정리했다.
-`db_transfer.py`는 기존 키와 원본 시각을 보존하고 반복 가져오기 중복을 막는다.
 규정·매뉴얼 문서(`knowledge/`)와 사건 JSONL은 기존 저장 경로를 유지한다.
 
 ```

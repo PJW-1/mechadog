@@ -113,12 +113,7 @@ python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'
 | 파일 | 다루는 것 |
 |---|---|
 | `test_voice_pipeline.py` | 시나리오 트리거·명령 화이트리스트·`route_query` 순서(명령→시나리오→비상→고정 문구)·암구호·사원증 판정·단계 경고 큐·`/say` 폐기 |
-| `test_voice_store.py` | 운영 DB 기본값·시드·규칙 JSON 로더 |
-| `test_voice_schema.py` | 음성3테이블 정본과 구형 구조 거부 |
-| `test_voice_migration.py` | 8→3 이전, 폐기 규칙 항목 걸러 내기(`drop_retired`), 문구 이전 |
-| `test_db_transfer.py` | 합성 묶음 가져오기·백업·거부(가상 MES 테이블 포함)·명단 실패 시 승인 차단 |
-| `test_prepare_demo.py` | `demo/voice_demo.json` 재현과 게시 SQL 일치 |
-| `test_supabase.py` | 스텁 PostgREST 로 원격 읽기·쓰기 경로 |
+| `test_voice_rules.py` | 규칙 JSON 로더·기본값·비상정지 보호·검증, 폐기 항목 걸러 내기(`drop_retired`) |
 | `test_eventlog.py` | 일자별 저널과 일일 리포트 (4.7.12) |
 | `test_protocol.py`, `test_stream_client.py` | WEC1 프레임·캡처 합성 픽스처 |
 | `test_transcribe_local.py` | 캡처 검증·`사원 OOO 입니다` 이름 추출 |

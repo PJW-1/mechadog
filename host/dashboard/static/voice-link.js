@@ -84,14 +84,6 @@ export class VoiceLink {
   phrases() {
     return this.get('/phrases');
   }
-
-  addPhrase(category, text) {
-    return this.post('/phrases', { category, text });
-  }
-
-  deletePhrase(category, text) {
-    return this.post('/phrases/delete', { category, text });
-  }
 }
 
 /**
