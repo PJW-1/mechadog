@@ -124,13 +124,24 @@ def test_losing_the_box_for_long_clears_the_hold(gate: FallenGate) -> None:
     assert (verdict.fallen, verdict.still_ms) == (False, 0)
 
 
+def test_a_stream_outage_clears_the_hold(gate: FallenGate) -> None:
+    """⚠️ 스트림이 끊기면 프레임 자체가 오지 않아 `None` 도 들어오지 않는다.
+
+    `reset()` 을 부르는 곳이 없으므로(사람 게이트도 같다), 다시 이어진 첫 박스가
+    끊기기 전 누적을 이어받아 곧바로 확정하면 안 된다.
+    """
+    _hold(gate, FALLEN_BOX, start=1000, ms=2000)
+    verdict = gate.observe(10_000, FALLEN_BOX, track_id=1)
+    assert (verdict.fallen, verdict.still_ms) == (False, 0)
+
+
 def test_a_short_detection_gap_keeps_the_hold(gate: FallenGate) -> None:
     """누운 사람은 점수가 임계값 근처라 박스가 자주 빠진다 (2026-09-23 실기).
 
     한 프레임에 누적을 지우면 3초를 끊김 없이 채운 적이 없어 한 번도 확정되지 않았다.
     """
-    _hold(gate, FALLEN_BOX, start=1000, ms=1960)
-    for now in range(3000, 3900, 40):
+    _hold(gate, FALLEN_BOX, start=1000, ms=2000)
+    for now in range(3040, 3960, 40):
         gap = gate.observe(now, None)
     assert (gap.fallen, gap.candidate) == (False, True), "빈 틈에도 후보로 남는다"
     assert gate.observe(4000, FALLEN_BOX, track_id=1).fallen is True

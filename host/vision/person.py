@@ -150,6 +150,10 @@ class FallenGate:
                 )
             self._track_id = None
             return self._clear()
+        # 프레임 자체가 끊긴 공백(스트림 재연결)도 같은 규칙이다 — 그동안은 `None` 조차
+        # 들어오지 않는다.
+        if self._last_ms is not None and now_ms - self._last_ms > self._gap_ms:
+            self._clear()
 
         width = max(0.0, box[2] - box[0])
         height = max(0.0, box[3] - box[1])
