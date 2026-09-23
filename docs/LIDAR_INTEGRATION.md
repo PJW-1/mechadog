@@ -171,7 +171,7 @@
 | 조건 | 판정 주체 | 이 코드의 대응 |
 | :--- | :--- | :--- |
 | 초음파 25cm 반사 정지 | **온보드 (Tier 1)** | `flags.obstacle` 을 따라 의도를 정지로 |
-| 전도 · 저전압 · 링크두절 | **온보드 (Tier 1)** | `safety_latched` · `state=FAILSAFE` 를 따라 `HALTED` |
+| 저전압 · 링크두절 · E-Stop | **온보드 (Tier 1)** | `safety_latched` · `state=FAILSAFE` 를 따라 `HALTED`. 전도 자동 감지는 폐기(ADR-36) |
 | 사용자 E-STOP | 호스트 | `ESTOP` 즉시 |
 | **LiDAR 전방 위험거리** | **호스트** | `ESTOP` 즉시 — 아래 각주 |
 | 측위 실패 | 호스트 | `LOST` + 정지 (E-STOP 아님) |
