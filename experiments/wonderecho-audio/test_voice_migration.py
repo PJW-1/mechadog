@@ -21,13 +21,19 @@ import voice_pipeline
 import voice_rules as rules
 import voice_store as store
 
+# 2026-09-23 이전 DB 에만 있던 행 — 옮기지 않고 버려야 한다(ADR-38).
+RETIRED_KEYWORDS = [("status", "배터리"), ("status", "상태"), ("machine", "기계")]
+RETIRED_FACTORY_RULES = [
+    ("생산", "production", 0, 1, 10),
+    ("설비", "machines", 0, 1, 20),
+]
+
 
 def legacy_rows():
     data = rules.defaults()
     return {
-        "keywords": [
-            {"kind": k, "word": w} for k, words in data["keywords"].items() for w in words
-        ],
+        "keywords": [{"kind": k, "word": w} for k, words in data["keywords"].items() for w in words]
+        + [{"kind": k, "word": w} for k, w in RETIRED_KEYWORDS],
         "command_endings": [{"ending": e} for e in data["command_endings"]],
         "action_commands": [
             {"phrase": p, "action": a, "ack": ack}
@@ -35,10 +41,11 @@ def legacy_rows():
         ],
         "scenario_triggers": [
             {"phrase": p, "scenario": s} for p, s in data["scenario_triggers"].items()
-        ],
+        ]
+        + [{"phrase": "상태보고", "scenario": "robot_briefing"}],
         "factory_rules": [
             dict(zip(rules.LEGACY["factory_rules"], row, strict=True))
-            for row in data["factory_rules"]
+            for row in RETIRED_FACTORY_RULES
         ],
     }
 
@@ -83,7 +90,10 @@ class MigrationTest(unittest.TestCase):
     def test_check_is_read_only(self):
         before = self.db.read_bytes()
         result = migrate_voice_db.migrate(self.db, check=True)
-        self.assertEqual(sum(result["legacy_rows"].values()), 164)
+        self.assertEqual(
+            sum(result["legacy_rows"].values()),
+            sum(len(rows) for rows in legacy_rows().values()),
+        )
         self.assertEqual(self.db.read_bytes(), before)
         self.assertFalse(rules.path_for(self.db).exists())
         self.assertFalse(list(self.db.parent.glob("*.bak")))
@@ -156,13 +166,30 @@ class RuleValidationTest(unittest.TestCase):
             ("action_commands", {"수동": ["unknown", "확인"]}),
             ("scenario_triggers", {"시나리오": "unknown"}),
             ("scenario_triggers", {"순찰시작": "guard"}),
-            ("factory_rules", [["생산", "../../actuators", 0, 1, 1]]),
-            ("factory_rules", [["생산", "production", "false", 1, 1]]),
+            ("factory_rules", [["생산", "production", 0, 1, 1]]),
         ):
             data = rules.defaults()
             data[section] = value
             with self.subTest(section=section), self.assertRaises(ValueError):
                 rules.validate(data)
+
+    def test_retired_entries_in_old_file_are_dropped_not_fatal(self):
+        # 폐기 항목 하나 때문에 파일 전체가 무효가 되면 사용자 규칙이 조용히
+        # 기본값으로 돌아간다. 읽을 때 걸러 내고 나머지는 살린다(ADR-38).
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "voice.rules.json"
+            old = rules.defaults()
+            old["keywords"]["wake"].append("맞춤호출")
+            old["keywords"]["status"] = ["배터리"]
+            old["keywords"]["machine"] = ["기계"]
+            old["scenario_triggers"]["상태보고"] = "robot_briefing"
+            old["factory_rules"] = [["생산", "production", 0, 1, 10]]
+            path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+            data = rules.read(path)
+        self.assertEqual(set(data), {"format_version", *rules.SECTIONS})
+        self.assertEqual(set(data["keywords"]), set(rules.KINDS))
+        self.assertIn("맞춤호출", data["keywords"]["wake"])
+        self.assertNotIn("상태보고", data["scenario_triggers"])
 
     def test_cache_observes_atomic_edits_and_invalid_config_falls_back(self):
         with TemporaryDirectory() as temp:

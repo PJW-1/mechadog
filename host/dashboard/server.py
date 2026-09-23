@@ -536,7 +536,7 @@ def create_app(
 
         @app.post("/api/command/mode")
         async def mission_mode(request: Request):
-            """`{"mode": "guard"|"factory"|"assist"}` — 운용 모드 전환 (FR-4.7 · FR-11.3).
+            """`{"mode": "guard"|"factory"}` — 운용 모드 전환 (FR-4.7 · FR-11.3).
 
             ⚠️ **온보드 `SERVICE` 와 다른 축이다.** 저쪽은 OTA·진단 중 액추에이터를
             차단하는 정비 상태이고, 이쪽은 정상 운용 중 Tier 2 판단을 고르는 임무

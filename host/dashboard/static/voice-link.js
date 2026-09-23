@@ -1,5 +1,8 @@
 // 관제 웹 → 음성 중계 API 연결 (WBS 4.7.14).
 //
+// 타자로 친 임의 문장 방송(`/say`)은 폐기했다(ADR-38). 로봇 스피커(MP3 모듈)는
+// 미리 녹음한 문장만 내므로, 웹은 시나리오·모드·문구·기록만 다룬다.
+//
 // `voice_pipeline.py --web 8090` 이 여는 HTTP API 에 붙는다. 이 링크가 없으면
 // 음성 패널은 "연결 준비" 만 표시하고 아무 요청도 보내지 않는다 — 명령 링크와
 // 같은 규칙이다: **붙일 서버가 없는데 열어 두지 않는다.**
@@ -72,10 +75,6 @@ export class VoiceLink {
   /** 시연 시나리오를 대기열에 넣는다 — 로봇이 말하고, 일부는 현장 대답을 듣는다. */
   runScenario(name) {
     return this.post('/scenario', { name });
-  }
-
-  say(text, { urgent = false } = {}) {
-    return this.post('/say', { text, urgent });
   }
 
   mode(mode) {

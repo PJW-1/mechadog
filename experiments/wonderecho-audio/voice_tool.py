@@ -6,6 +6,7 @@
 
 버튼:
   스피커 테스트      — COM5에 440Hz 톤을 2초 보내고 진단값을 보여준다.
+                       파이프라인이 포트를 잡고 있으면 끈 뒤에 시험한다.
   파이프라인 시작/중지 — voice_pipeline.py를 기동/종료한다.
   상태 새로고침      — 아래 상태가 2초마다 자동 갱신되지만 수동으로도 읽는다.
 
@@ -30,7 +31,6 @@ HERE = Path(__file__).resolve().parent
 LOG_DIR = HERE / "logs"
 VOICE_API = "http://127.0.0.1:8090"
 ROBOT_API = "http://127.0.0.1:8000"
-MES_API = "http://127.0.0.1:8095"
 PORT = "COM5"
 
 SITE = r"C:\Users\a9800\AppData\Local\Programs\Python\Python312\Lib\site-packages"
@@ -46,8 +46,6 @@ PIPELINE_CMD = [
     "voice_pipeline.py",
     "--port",
     PORT,
-    "--model",
-    r"C:\dev\voice\models\EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf",
     "--whisper",
     "medium",
     "--web",
@@ -208,8 +206,7 @@ class App(tk.Tk):
         """백그라운드 스레드에서 호출 — 각 API를 읽어 상태 dict를 만든다."""
         v = get(VOICE_API + "/status")
         r = get(ROBOT_API + "/api/telemetry")
-        m = get(MES_API + "/api/health")
-        return {"voice": v, "robot": r, "mes": m}
+        return {"voice": v, "robot": r}
 
     def refresh(self):
         def work():
@@ -220,7 +217,7 @@ class App(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def apply_status(self, s, port, verbose=False):
-        v, r, m = s["voice"], s["robot"], s["mes"]
+        v, r = s["voice"], s["robot"]
         lines = []
         voice_up = "error" not in v
         if voice_up:
@@ -229,9 +226,8 @@ class App(tk.Tk):
             )
         else:
             lines.append("[음성 :8090] 꺼져 있음")
-        lines.append("[MES :8095] " + ("가상 MES 정상" if m.get("ok") else "꺼져 있음"))
         if "error" in r:
-            lines.append("[런타임 :8000] 꺼져 있음 (로봇 명령·상태 질의만 불가)")
+            lines.append("[런타임 :8000] 꺼져 있음 (로봇 명령만 불가)")
         else:
             t = r.get("telemetry") or {}
             lines.append(
@@ -281,27 +277,12 @@ class App(tk.Tk):
 
     # ── 버튼 ────────────────────────────────────────────────────────────
 
-    def _say_via_pipeline(self, text):
-        body = json.dumps({"text": text}).encode()
-        req = urllib.request.Request(
-            VOICE_API + "/say",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=3) as r:
-            return json.load(r)
-
     def on_tone(self):
         def work():
-            # 파이프라인이 COM5를 점유 중이면 /say로 전체 경로(TTS+스트림)를 시험
+            # 임의 문장 방송(/say)은 폐기했다(ADR-38) — 파이프라인이 COM5를 잡고
+            # 있으면 톤을 보낼 수 없으니 끄고 다시 시험하게 한다.
             if "error" not in get(VOICE_API + "/status", timeout=1):
-                self.log("... 파이프라인 경유 재생 — '스피커 테스트입니다' 송출")
-                try:
-                    self._say_via_pipeline("스피커 테스트입니다. 소리가 들리면 정상입니다.")
-                    self.log("  → 큐 등록됨. 모듈에서 음성이 나오는지 확인하세요.")
-                except Exception as e:
-                    self.log(f"  실패: {e}")
+                self.log("  파이프라인이 COM5를 사용 중입니다. 파이프라인을 끈 뒤 다시 누르세요.")
                 return
             self.log("... 스피커 테스트: COM5에 2초 톤 전송 중")
             try:
@@ -330,7 +311,7 @@ class App(tk.Tk):
             self.log("... 파이프라인 종료 요청")
             return
         self._stopped_by_user = False
-        self.log("... 파이프라인 기동 (모델 로딩 ~30초)")
+        self.log("... 파이프라인 기동 (Whisper·Piper 로딩 ~30초)")
         # 자식 프로세스 수명 동안 열어 두는 stdout 수신처 — 컨텍스트 매니저 불가
         self._log_fh = (LOG_DIR / "pipeline_stdout.log").open("ab")  # noqa: SIM115
         self.proc = subprocess.Popen(

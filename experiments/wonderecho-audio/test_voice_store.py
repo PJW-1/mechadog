@@ -12,7 +12,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-import factorylink as fl
 import robotlink
 import scenarios
 import voice_pipeline as vp
@@ -35,17 +34,8 @@ class FallbackTest(unittest.TestCase):
     def test_triggers_fallback(self):
         self.assertEqual(vs.scenario_triggers(scenarios.TRIGGERS, "없음.db"), scenarios.TRIGGERS)
 
-    def test_rules_fallback_sorted(self):
-        rules = vs.factory_rules("없음.db")
-        self.assertEqual(len(rules), len(fl.DEFAULT_RULES))
-        self.assertEqual([r[4] for r in rules], sorted(r[4] for r in rules))
-
     def test_setting_fallback(self):
         self.assertEqual(vs.setting("follow_s", vp.FOLLOW_S, float, "없음.db"), vp.FOLLOW_S)
-        self.assertEqual(
-            vs.setting("machine_notice", vp._MACHINE_NOTICE, str, "없음.db"),
-            vp._MACHINE_NOTICE,
-        )
 
 
 class OverlayTest(unittest.TestCase):
@@ -69,16 +59,16 @@ class OverlayTest(unittest.TestCase):
         self.assertEqual(vs.scenario_triggers({}), scenarios.TRIGGERS)
         self.assertEqual(vs.setting("follow_s", 0.0, float), vp.FOLLOW_S)
 
-    def test_config_override_reaches_classify_without_db_or_http(self):
+    def test_config_override_reaches_rules_without_db_or_http(self):
         self.data["keywords"]["wake"].append("메카독이")
-        self.data["factory_rules"].append(["생산뭐야", "production", 0, 1, 15])
+        self.data["scenario_triggers"]["불났어"] = "fire_evac"
         self.save()
         with (
             mock.patch.object(vs, "_connect", side_effect=AssertionError),
             mock.patch.object(vs, "_remote_rows", side_effect=AssertionError),
         ):
             self.assertIn("메카독이", vs.words("wake", ()))
-            self.assertEqual(fl.classify("생산뭐야알려줘"), ("production", {}))
+            self.assertEqual(vs.scenario_triggers({})["불났어"], "fire_evac")
 
     def test_protected_estop_cannot_be_removed_or_remapped(self):
         del self.data["action_commands"]["비상정지"]

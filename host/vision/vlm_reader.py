@@ -133,7 +133,7 @@ class VlmSession(Protocol):
         ...
 
     def close(self) -> None:
-        """VRAM 을 놓는다. **`assist` 로 넘어갈 때 이것이 안 불리면 겹쳐 올라간다.**"""
+        """VRAM 을 놓는다. **공장 모드를 벗어날 때 이것이 안 불리면 VRAM 에 남는다.**"""
         ...
 
 

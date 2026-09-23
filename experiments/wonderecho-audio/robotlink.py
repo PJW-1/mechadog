@@ -1,13 +1,15 @@
-"""Robot dashboard link for the voice loop (WBS 4.7.10, 4.7.11).
+"""Robot dashboard link for the voice loop (WBS 4.7.11, 3.8.2, 4.7.12).
 
-Read path: GET {base}/api/telemetry -> DashboardState.snapshot() — real
-telemetry (batt_v, state, escalation) feeds spoken status reports; the LLM
-never invents values.
+Read path: GET {base}/api/telemetry for the FSM state and escalation level the
+voice-auth flow needs, and GET {base}/api/events for the journal. Spoken
+status reports (battery, distance, ...) were retired on 2026-09-23 (ADR-38):
+the target speaker is the robot's MP3 module, which only plays pre-recorded
+lines and cannot read out live numbers.
 
 Write path: a **whitelist** of Korean phrases -> existing command endpoints.
-Free-form LLM text can never reach the robot; only exact phrase matches in
-ACTIONS trigger a POST, and every action is still subject to the runtime's
-own safety gates (estop latching, manual-mode preconditions, ...).
+Free text can never reach the robot; only exact phrase matches in ACTIONS
+trigger a POST, and every action is still subject to the runtime's own safety
+gates (estop latching, manual-mode preconditions, ...).
 """
 
 from __future__ import annotations
@@ -35,32 +37,6 @@ def _post(base, path, body, timeout=3.0):
 def _get(base, path, timeout=3.0):
     with urllib.request.urlopen(base + path, timeout=timeout) as res:
         return json.loads(res.read() or b"{}")
-
-
-def fetch_status(base=DEFAULT_BASE):
-    """GET /api/telemetry → 사람이 읽을 수 있는 실측 요약 문자열, 또는 None."""
-    try:
-        snap = _get(base, "/api/telemetry")
-    except OSError:
-        return None
-    tele = snap.get("telemetry") or {}
-    parts = []
-    if tele.get("batt_v") is not None:
-        parts.append(f"배터리 {tele['batt_v']:.2f}볼트")
-    if tele.get("temp_c") is not None:
-        parts.append(f"내부 온도 {tele['temp_c']:.0f}도")
-    if tele.get("dist_cm") is not None:
-        parts.append(f"전방 거리 {tele['dist_cm']:.0f}센티미터")
-    if snap.get("state"):
-        parts.append(f"동작 상태 {snap['state']}")
-    # /api/telemetry 의 escalation 은 'L0'~'L3' 문자열이다 (객체가 아니다).
-    esc = snap.get("escalation")
-    level = esc.get("level") if isinstance(esc, dict) else esc
-    if level:
-        parts.append(f"대응 단계 {level}")
-    if snap.get("stale"):
-        parts.append("링크 지연 상태")
-    return ", ".join(parts) if parts else "상태 데이터 없음"
 
 
 def fetch_events(base=DEFAULT_BASE, since=0):
@@ -283,31 +259,14 @@ def post_auth_result(ok, base=DEFAULT_BASE, captured_at_ms=None):
     return True, res.get("detail") or ""
 
 
-_STATUS_WORDS = ("배터리", "상태", "온도", "보고", "잔량", "충전", "거리", "장애물")
-
-
-def is_status_query(norm_query: str) -> bool:
-    """정규화된 질의가 로봇 상태 질의인지 — 라우팅 우선순위 판정용."""
-    return any(w in norm_query for w in voice_store.words("status", _STATUS_WORDS))
-
-
 def answer_query(query: str, base=DEFAULT_BASE):
-    """상태 질의면 실측 요약 문자열, 명령이면 실행 결과 문자열, 아니면 None.
+    """명령이면 실행 결과 문장을 돌려준다.
 
-    Returns (handled, spoken_text): handled=False -> fall through to the LLM.
+    Returns (handled, spoken_text): handled=False -> 명령이 아니다(호출자가 고정 문구로 답한다).
     """
-    norm = _norm(query)
-    action = match_action(norm)
+    action = match_action(_norm(query))
     if action:
         name, ack = action
         ok, err = run_action(name, base)
         return True, ack if ok else err
-    if is_status_query(norm):
-        st = fetch_status(base)
-        return (
-            True,
-            f"현재 상태입니다. {st}"
-            if st
-            else "로봇 관제에 연결되지 않아 상태를 확인할 수 없습니다",
-        )
     return False, ""

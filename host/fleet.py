@@ -252,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="진단용: 카메라·검출 워커 없이 모션 런타임만 실행한다",
     )
-    parser.add_argument("--mode", default=None, help="운용 모드 — guard | factory | assist")
+    parser.add_argument("--mode", default=None, help="운용 모드 — guard | factory")
     parser.add_argument("--duration", type=float, default=None, help="N초 후 종료 (기본 무한)")
     parser.add_argument("--log-level", default=None, help="config.logging.level 을 덮어쓴다")
     return parser

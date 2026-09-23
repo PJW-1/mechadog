@@ -1,4 +1,4 @@
-"""운용 모드 검증 (WBS 3.4.4 · FR-11 · ADR-33 · ADR-34).
+"""운용 모드 검증 (WBS 3.4.4 · FR-11 · ADR-33).
 
 **이 파일이 지키는 것은 «한 순찰 = 한 모드» 다.** 모드가 하는 일은 사건을 거르는
 것 하나뿐이라 구현은 짧지만, 틀리면 **같은 사람을 침입자와 작업자로 동시에 다루는**
@@ -45,11 +45,9 @@ EXPECTED: dict[str, set[str]] = {
         "PPE_SETTLED",
         "TARGET_OFF_CENTER",
     },
-    # 현장지원 — 자동 대응을 하나도 만들지 않는다 (ADR-34 규칙 2).
-    "assist": set(),
 }
 
-#: 어느 기능에도 걸리지 않는 사건. **세 모드에 공통이다** (FR-11.1 *"세 모드에 공통"*).
+#: 어느 기능에도 걸리지 않는 사건. **모든 모드에 공통이다** (FR-11.1).
 COMMON: set[str] = {event.name for event in Event} - {
     name for events in FEATURES.values() for name in events
 }
@@ -59,7 +57,7 @@ COMMON: set[str] = {event.name for event in Event} - {
 def any_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """선행 기능 검사를 끈다 — **게이트 표 자체**를 보는 시험용 (FR-11.1).
 
-    ⚠️ 실제 `REQUIRES` 를 그대로 쓰면 `3.7.3`·`4.7.15~17` 이 들어오는 날 표 시험의
+    ⚠️ 실제 `REQUIRES` 를 그대로 쓰면 `3.7.3` 이 들어오는 날 표 시험의
     통과 여부가 바뀐다. 선행 기능 규칙(FR-11.7)은 아래에서 따로 본다.
     """
     monkeypatch.setattr(mission_mod, "REQUIRES", dict.fromkeys(MODES, ()))
@@ -121,7 +119,7 @@ def test_blocked_set_is_the_complement_of_the_enabled_features(mode: str) -> Non
 
 @pytest.mark.usefixtures("any_mode")
 def test_common_events_are_never_gated() -> None:
-    """**순찰·스캔·회피·수동·안전은 세 모드 공통이다.**
+    """**순찰·스캔·회피·수동·안전은 모든 모드 공통이다.**
 
     이것이 비면 표를 잘못 쓴 것이다 — 게이트가 전부를 덮으면 모드가 아니라 스위치다.
     """
@@ -129,19 +127,6 @@ def test_common_events_are_never_gated() -> None:
     for mode in MODES:
         gate = Mission({"mission": {"mode": mode}})
         assert all(gate.allows(name) for name in COMMON)
-
-
-@pytest.mark.usefixtures("any_mode")
-def test_assist_still_observes_people_but_never_follows() -> None:
-    """⚠️ **`PERSON_FOUND` 는 막지 않고 `TARGET_OFF_CENTER` 만 막는다.**
-
-    FR-11.1 이 `assist` 에서 끄기로 적은 것은 **인증·PPE·추종** 셋이고 관찰이
-    아니다. 질의 사용자를 등지고 순찰을 계속하는 쪽이 오히려 틀렸다.
-    """
-    gate = Mission({"mission": {"mode": "assist"}})
-    assert gate.allows("PERSON_FOUND")
-    assert gate.allows("TARGET_LOST")
-    assert not gate.allows("TARGET_OFF_CENTER")
 
 
 # ── 기동 거부 (FR-11.2 · FR-11.7) ──────────────────────────
@@ -184,9 +169,7 @@ def test_mode_without_its_implementation_refuses_to_start(
 
 def test_available_modes_hides_what_cannot_be_chosen(monkeypatch: pytest.MonkeyPatch) -> None:
     """관제 화면이 **고를 수 없는 것을 버튼으로 내놓지 않게** 한다."""
-    monkeypatch.setattr(
-        mission_mod, "REQUIRES", {"guard": (), "factory": ("host.nope",), "assist": ("host.nope",)}
-    )
+    monkeypatch.setattr(mission_mod, "REQUIRES", {"guard": (), "factory": ("host.nope",)})
     assert available_modes() == ("guard",)
 
 
@@ -196,7 +179,7 @@ def test_requirement_probe_survives_a_missing_parent_package(
     """부모 패키지 자체가 없어도 **예외가 아니라 «없다»** 여야 한다.
 
     `find_spec` 은 부모를 먼저 import 하므로 그대로 두면 `ModuleNotFoundError` 가
-    기동 경로로 샌다 — `assist` 의 `host.factory_ops.*` 가 정확히 그 모양이다.
+    기동 경로로 샌다.
     """
     monkeypatch.setattr(mission_mod, "REQUIRES", {"guard": ("host.no_such_pkg.thing",)})
     assert mission_mod.missing_requirements("guard") == ("host.no_such_pkg.thing",)

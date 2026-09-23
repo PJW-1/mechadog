@@ -10,14 +10,11 @@ import json
 import threading
 import unittest
 import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-import factory_mes
-import factorylink as fl
 import suparest
 import voice_pipeline as vp
 import voice_store as vs
@@ -149,7 +146,6 @@ class RemoteReadTest(RemoteBase):
     def test_fixed_rules_never_read_remote(self):
         StubPostgREST.rows = {"keywords": [{"kind": "wake", "word": "remote-only"}]}
         self.assertEqual(vs.words("wake", ()), vp.WAKE_PREFIXES)
-        vs.factory_rules()
         vs.command_endings(())
         vs.scenario_triggers({})
         self.assertEqual(StubPostgREST.calls, [])
@@ -205,83 +201,6 @@ class RemoteWriteTest(RemoteBase):
         )
         self.assertTrue(ok)
         self.assertEqual(StubPostgREST.rows["keywords"], [])
-
-
-class MesRemoteTest(unittest.TestCase):
-    """factory_mes가 Supabase 백엔드로도 같은 API 계약을 지키는지."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), StubPostgREST)
-        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
-        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.srv.shutdown()
-
-    def setUp(self):
-        now = __import__("datetime").datetime.now(factory_mes.KST).isoformat(timespec="seconds")
-        StubPostgREST.rows = {
-            "production_status": [
-                {
-                    "line_id": "A",
-                    "product": "MD-100",
-                    "target_quantity": 100,
-                    "completed_quantity": 40,
-                    "state": "running",
-                    "updated_at": now,
-                },
-                {
-                    "line_id": "B",
-                    "product": "MD-200",
-                    "target_quantity": 50,
-                    "completed_quantity": 50,
-                    "state": "idle",
-                    "updated_at": now,
-                },
-            ],
-            "work_schedule": [],
-            "inspection_log": [],
-            "equipment_check": [],
-            "shipment_schedule": [],
-        }
-        self.src = factory_mes.Backend(url=self.base, key="k")
-
-    def test_remote_production(self):
-        rows = factory_mes.query(self.src, "production", {}, 21600)
-        self.assertEqual(len(rows), 2)
-        a = next(r for r in rows if r["line_id"] == "A")
-        self.assertEqual(a["remaining_quantity"], 60)  # 계산열은 코드에서
-        self.assertFalse(a["stale"])
-        self.assertEqual(a["source"], "demo-mes")
-
-    def test_remote_unknown_line(self):
-        res = factory_mes.query(self.src, "production", {"line": ["Z"]}, 21600)
-        self.assertEqual(res["error"], "unknown_line")
-        self.assertEqual(res["valid_lines"], ["A", "B"])
-
-    def test_remote_end_to_end_via_http(self):
-        # MES API(:8095)까지 통째로 — 음성 응답이 실제로 나오는지
-        factory_mes.Handler.src = self.src
-        factory_mes.Handler.stale_ttl = {}  # 빈 dict = 모든 항목 기본 TTL
-        mes_srv = ThreadingHTTPServer(("127.0.0.1", 0), factory_mes.Handler)
-        threading.Thread(target=mes_srv.serve_forever, daemon=True).start()
-        try:
-            base = f"http://127.0.0.1:{mes_srv.server_address[1]}"
-            ok, s = fl.answer_query("A라인 생산량 알려줘", base)
-            self.assertTrue(ok)
-            self.assertIn("A라인", s)
-            self.assertIn("60", s)
-            health = json.loads(urllib.request.urlopen(base + "/api/health").read())
-            self.assertEqual(health["backend"], "supabase")
-        finally:
-            mes_srv.shutdown()
-
-    def test_source_down_raises(self):
-        dead = factory_mes.Backend(url="http://127.0.0.1:9", key="k")
-        with self.assertRaises(factory_mes.SourceError):
-            factory_mes.query(dead, "production", {}, 21600)
 
 
 if __name__ == "__main__":

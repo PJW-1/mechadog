@@ -2,7 +2,7 @@ import {EVENT_CATEGORIES,REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
 import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
 
-const VOICE_ROLES={user:'현장 발화',robot:'로봇 응답',admin:'관제 방송',system:'시스템',robot_evt:'로봇 사건'};
+const VOICE_ROLES={user:'현장 발화',robot:'로봇 응답',admin:'경고 방송',system:'시스템',robot_evt:'로봇 사건'};
 const TITLES={missions:'순찰 · 제어',events:'사건 검토',records:'운영 기록',zones:'공간 · 구역',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
 const STATUS={idle:'시작 전',running:'예시 진행 중',paused:'일시정지',ended:'종료'};
 const MANUAL_KEYS={KeyW:'FORWARD',KeyA:'LEFT',KeyS:'BACKWARD',KeyD:'RIGHT'};
@@ -74,7 +74,7 @@ export class OperationalPanels {
   this.clearVoicePoll();
   this.activeHold=null;this.view=view;this.title.textContent=TITLES[view]||'';
   this.container.dataset.page=view;this.container.replaceChildren();if(!TITLES[view])return;
-  const intro=this.el('div',{class:'op-intro'},this.note({missions:'순찰 계획과 제어 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태를 보고, 타자로 방송을 보냅니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?'실제 연결':this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
+  const intro=this.el('div',{class:'op-intro'},this.note({missions:'순찰 계획과 제어 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태와 발화 기록을 보고, 시나리오와 멘트를 관리합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?'실제 연결':this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
   this.container.append(intro,this.el('div',{class:'op-feedback',role:'status','aria-live':'polite'}));
   this[view==='zones'?'zonePage':view]();
  }
@@ -188,27 +188,14 @@ export class OperationalPanels {
   }catch(error){if(url)this.document.defaultView.URL.revokeObjectURL(url);throw error}
  }
  // ── 음성 중계 (WBS 4.7.14) ───────────────────────────────────────
- // 음성 링크는 메인 루프가 단독 소유하고 웹은 큐로 요청한다 — 대기 중인
- // 로봇에도 공지는 나간다. 폴링은 이 화면을 보고 있을 때만 돈다.
+ // 음성 링크는 메인 루프가 단독 소유하고 웹은 큐로 요청한다. 타자로 친 임의
+ // 문장 방송은 폐기했다(ADR-38) — 로봇 스피커(MP3)는 미리 녹음한 문장만 낸다.
+ // 폴링은 이 화면을 보고 있을 때만 돈다.
  clearVoicePoll(){if(this.voiceTimer){clearInterval(this.voiceTimer);this.voiceTimer=null}}
  voice(){
   const link=this.voiceLink;
   this.voiceStatusEl=this.el('div',{class:'op-facts'});
   this.voiceEventsEl=this.el('div',{class:'op-voice-log','aria-live':'polite'});
-  const input=this.el('input',{type:'text',name:'방송 문장',maxlength:300,placeholder:'로봇에게 말시킬 문장을 입력하세요'});
-  const send=urgent=>this.run(async()=>{
-   if(!link)throw new Error('음성 서버에 연결되지 않았습니다. voice_pipeline 을 --web 으로 실행하세요.');
-   const text=input.value.trim();if(!text)throw new Error('방송할 문장을 입력하세요.');
-   await link.say(text,{urgent});input.value='';
-   this.onToast(urgent?'긴급 방송을 대기열 맨 앞에 넣었어요.':'방송을 대기열에 넣었어요.');this.pollVoice();
-  });
-  input.addEventListener('keydown',event=>{if(event.key==='Enter')send(false)});
-  const form=this.el('div',{class:'op-form-grid'},
-   this.field('방송 문장',input),
-   this.el('div',{class:'op-toolbar'},
-    this.button('말하기',()=>send(false),{disabled:!link}),
-    this.button('긴급 방송',()=>send(true),{disabled:!link,'data-tone':'warn'}),
-    this.button('대기/깨우기',()=>this.run(async()=>{await link.mode();this.pollVoice()}),{disabled:!link})));
   // ── 멘트 관리: 문구 라이브러리 열람 + 관리자 추가·삭제 ──
   this.phraseCatEl=this.el('div',{class:'op-facts'});
   this.phraseListEl=this.el('div',{class:'op-voice-log'});
@@ -242,9 +229,9 @@ export class OperationalPanels {
   this.container.append(
    this.section('로봇 음성 상태',
     link?this.note('음성 서버 연결됨 — '+link.baseUrl):this.note('음성 서버 미연결 — voice_pipeline 을 --web 으로 실행하면 자동으로 붙습니다.','warning'),
-    this.voiceStatusEl),
-   this.section('관제 방송',form,
-    this.note('대기 모드의 로봇에도 공지는 나갑니다. 긴급 방송은 대기열 맨 앞에 들어갑니다.')),
+    this.voiceStatusEl,
+    this.el('div',{class:'op-toolbar'},
+     this.button('대기/깨우기',()=>this.run(async()=>{await link.mode();this.pollVoice()}),{disabled:!link}))),
    this.section('멘트 관리',
     this.note('로봇이 말하는 문구 라이브러리입니다. 추가한 문구는 PC 데이터로 저장되어 즉시 반영되고, 기본 문구는 검증된 상수라 삭제할 수 없습니다.'),
     this.phraseCatEl,
@@ -270,7 +257,7 @@ export class OperationalPanels {
    let r;try{r=await link.report()}catch(error){if(/404/.test(error.message)){reportEl.replaceChildren(this.note('음성 저널이 꺼져 있어 리포트가 없습니다. voice_pipeline 을 저널과 함께 실행하세요.','warning'));return}throw error}
    const kinds=Object.entries(r.robot_events||{}).map(([kind,n])=>kind+' '+n+'건').join(' · ')||'없음';
    const runs=Object.entries(r.scenario_runs||{}).map(([name,n])=>name+' '+n+'회').join(' · ')||'없음';
-   reportEl.replaceChildren(this.facts([['날짜 · 구간',(r.date||'—')+' · '+(r.first_ts||'—')+' ~ '+(r.last_ts||'—')],['전체 기록',r.total+'건'],['현장 발화',(r.by_role?.user??0)+'건'],['로봇 응답 · 관제 방송',(r.by_role?.robot??0)+'건 · '+(r.by_role?.admin??0)+'건'],['로봇 사건',kinds],['시나리오 실행',runs],['경고 · 보안',(r.warnings||[]).length+'건'],['비상 접수',(r.emergencies||[]).length+'건'],['시나리오 실패',(r.scenario_failures||[]).length+'건']]));
+   reportEl.replaceChildren(this.facts([['날짜 · 구간',(r.date||'—')+' · '+(r.first_ts||'—')+' ~ '+(r.last_ts||'—')],['전체 기록',r.total+'건'],['현장 발화',(r.by_role?.user??0)+'건'],['로봇 응답 · 경고 방송',(r.by_role?.robot??0)+'건 · '+(r.by_role?.admin??0)+'건'],['로봇 사건',kinds],['시나리오 실행',runs],['경고 · 보안',(r.warnings||[]).length+'건'],['비상 접수',(r.emergencies||[]).length+'건'],['시나리오 실패',(r.scenario_failures||[]).length+'건']]));
   });
   const showTranscript=()=>this.run(async()=>{
    const rows=await link.transcript();
@@ -311,7 +298,7 @@ export class OperationalPanels {
    const s=await this.voiceLink.status();
    const mode={active:'대화 활성',standby:'대기 모드'}[s.mode]||s.mode;
    this.voiceStatusEl.replaceChildren(...[
-    ['로봇',s.robot],['모드',mode],['동작',s.activity],['방송 대기',s.say_queue+'건'],
+    ['로봇',s.robot],['모드',mode],['동작',s.activity],['경고 대기',s.say_queue+'건'],
    ].map(([k,v])=>this.el('div',{},this.el('dt',{},k),this.el('dd',{},v))));
    this.voiceEventsEl.replaceChildren(...s.events.slice().reverse().map(e=>
     this.el('div',{class:'op-voice-row '+e.role},
@@ -396,7 +383,7 @@ export class OperationalPanels {
      this.button('실제 순찰 시작',()=>this.confirmDevice({icon:'play',title:'실제 순찰을 시작하겠습니까?',body:'로봇이 자율 순찰을 시작합니다. 안전 래치가 해제된 상태여야 하며, 주행 경로에 사람·장애물이 없는지 먼저 확인하세요.',confirm:'예, 순찰을 시작합니다',action:()=>store.requestPatrol(true)}),{disabled:!store.live}),
      this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live}),
      this.serviceButton,
-     this.modeButton('guard','경비'),this.modeButton('factory','공장'),this.modeButton('assist','현장지원'),
+     this.modeButton('guard','경비'),this.modeButton('factory','공장'),
      this.button('경보 확인 (L3 해제)',()=>this.confirmDevice({icon:'stop',title:'경보를 확인했습니까?',body:'현장 상황을 직접 확인한 뒤에만 누르세요. 경보 단계(L3)가 내려가고 순찰이 이어집니다. 안전 래치(F)는 이 버튼으로 풀리지 않습니다 — 그쪽은 "안전 해제"가 따로 필요합니다.',confirm:'예, 확인했습니다',danger:true,action:()=>store.requestAlarmConfirm()}),{disabled:!store.live,'data-alarm-confirm':'confirm'}),
      this.button('안전 해제 (RESET_SAFE)',()=>this.confirmDevice({icon:'stop',title:'안전 래치를 해제하겠습니까?',body:'안전 정지 원인이 제거됐고 로봇 주변에 사람이 없는지 먼저 확인하세요. 래치가 풀리면 다음 이동 명령부터 로봇이 실제로 움직입니다 — 잠금만 해제되며 자동 보행은 시작하지 않습니다.',confirm:'예, 해제합니다',danger:true,action:()=>store.requestResetSafe()}),{disabled:!store.live,'data-reset-safe':'confirm'})),
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
@@ -574,7 +561,7 @@ export class OperationalPanels {
  // 같은 모드로 바꾸는 것은 거절이 아니지만, 누를 수 있으면 «바뀌었나» 를 되묻게 된다.
  modeButton(name,label){
   const store=this.store;
-  return this.button(label+' 모드',()=>this.confirmDevice({icon:'lock',title:label+' 모드로 바꾸겠습니까?',body:'순찰 하나는 모드 하나로 돕니다. 경비는 인증, 공장은 보호구·물체 변화, 현장지원은 정보 안내만 합니다. 로봇이 멈춰 있을 때만 바뀌며 경보와 안전 정지는 풀리지 않습니다.',confirm:'예, 바꿉니다',action:()=>store.requestMode(name)}),{disabled:!store.live||store.missionMode===name,'data-mode':name});
+  return this.button(label+' 모드',()=>this.confirmDevice({icon:'lock',title:label+' 모드로 바꾸겠습니까?',body:'순찰 하나는 모드 하나로 돕니다. 경비는 인증, 공장은 보호구·물체 변화만 합니다. 로봇이 멈춰 있을 때만 바뀌며 경보와 안전 정지는 풀리지 않습니다.',confirm:'예, 바꿉니다',action:()=>store.requestMode(name)}),{disabled:!store.live||store.missionMode===name,'data-mode':name});
  }
  fillDeviceCommands(){
   const store=this.store,t=store.live?store.deviceTelemetry:null,text=describeTelemetry(store.telemetry),svc=store.serviceMode;

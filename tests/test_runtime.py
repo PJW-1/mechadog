@@ -1868,7 +1868,7 @@ def test_factory_mode_does_not_ask_for_a_badge(config: dict, clock: FakeClock) -
 
 
 @pytest.mark.usefixtures("unlock_modes")
-@pytest.mark.parametrize("mode", ["factory", "assist"])
+@pytest.mark.parametrize("mode", ["factory"])
 def test_modes_without_auth_never_enter_auth_escalation(
     config: dict, clock: FakeClock, mode: str
 ) -> None:

@@ -32,12 +32,11 @@ CREATE TABLE IF NOT EXISTS phrases (
 """
 
 
-def validate(conn, *, allow_empty=False, allow_legacy=False, extra_tables=()):
+def validate(conn, *, allow_empty=False, allow_legacy=False):
     """Reject mixed, partial, foreign or future schemas without modifying them.
 
     Version 0 with the exact three-table layout is the first optimized release;
     it can be read, and explicit migration stamps it with VERSION after backup.
-    extra_tables is only for the offline voice+MES preview/import container.
     """
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version not in (0, VERSION):
@@ -49,10 +48,10 @@ def validate(conn, *, allow_empty=False, allow_legacy=False, extra_tables=()):
     }
     if names & LEGACY.keys() and not allow_legacy:
         raise ValueError("구형 음성 DB: python migrate_voice_db.py --db <DB경로>로 먼저 이전하세요")
-    allowed = set(COLUMNS) | set(extra_tables) | (set(LEGACY) if allow_legacy else set())
+    allowed = set(COLUMNS) | (set(LEGACY) if allow_legacy else set())
     if names - allowed:
         raise ValueError("음성 DB에 다른 영역의 테이블이 있습니다. DB 경로를 확인하세요")
-    if not (names & COLUMNS.keys()) and allow_empty and names <= set(extra_tables):
+    if not names and allow_empty:
         return version
     if not COLUMNS.keys() <= names:
         raise ValueError("음성 DB의 settings/roster/phrases 세 테이블이 모두 필요합니다")
@@ -68,9 +67,9 @@ def validate(conn, *, allow_empty=False, allow_legacy=False, extra_tables=()):
     return version
 
 
-def initialize(conn, *, extra_tables=()):
+def initialize(conn):
     """Create/stamp canonical tables inside the caller's transaction; never commit."""
-    validate(conn, allow_empty=True, extra_tables=extra_tables)
+    validate(conn, allow_empty=True)
     for statement in SCHEMA.split(";"):
         if statement.strip():
             conn.execute(statement)

@@ -775,7 +775,7 @@ class Runtime:
         **대상이 없어졌는데 중앙에 들어왔다고 보고하는 꼴**이 되어 `TRACK` 이
         `ALERT` 로 되돌아간다.
 
-        ⚠️ **현장지원 모드에서는 돌지 않는다** (FR-11.1 · ADR-34 규칙 2). 사건만
+        ⚠️ **추종을 끈 모드에서는 돌지 않는다** (FR-11.1). 사건만
         막으면 조향각은 매 프레임 계산돼 `TRACK` 시퀀스에 그대로 실린다 — 전이는
         없는데 로봇이 사람을 따라 도는, 가장 설명하기 어려운 모양이 된다.
         """
@@ -1056,7 +1056,7 @@ class Runtime:
 
         ⚠️ **경비 모드에서만 돈다** (FR-11.1). `_apply` 게이트만으로는 모자라다 —
         아래 `note_authenticated()` 는 사건이 아니라 **직접 호출**이라 그 게이트를
-        지나지 않고, 공장·현장지원 모드에서 사원증이 스쳐도 단계를 건드린다.
+        지나지 않고, 공장 모드에서 사원증이 스쳐도 단계를 건드린다.
         """
         if not self._mission.enables("auth"):
             return
@@ -1961,7 +1961,7 @@ def build_parser() -> argparse.ArgumentParser:
         # ⚠️ **`choices` 를 두지 않는다.** argparse 가 막으면 *"고를 수는 있지만 선행
         # 기능이 없다"* 와 *"그런 모드가 없다"* 가 같은 오류로 뭉개진다. 판정은
         # `Mission` 이 하고 사유를 문장으로 돌려준다 (FR-11.7).
-        help="운용 모드 — guard | factory | assist (config 의 mission.mode 를 덮어쓴다)",
+        help="운용 모드 — guard | factory (config 의 mission.mode 를 덮어쓴다)",
     )
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
     parser.add_argument(

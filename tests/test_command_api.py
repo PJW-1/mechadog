@@ -547,14 +547,14 @@ def test_mode_endpoint_round_trips(cfg):
 def test_health_lists_only_the_modes_that_can_be_chosen(client):
     """FR-11.7 — 서버가 **무엇을 고를 수 있는지** 스스로 말한다.
 
-    `factory`·`assist` 는 선행 구현(`3.7.3` · `4.7.15~17`)이 들어오면 자동으로
+    `factory` 는 선행 구현(`3.7.3`)이 들어오면 자동으로
     목록에 들어온다 — 그래서 여기서는 «경비는 언제나 있다» 만 못 박는다.
     ⚠️ 화면은 이 값을 읽지 않고 버튼을 늘 띄운다. 거절 사유로 알리는 쪽을 골랐다.
     """
     http, _behavior, _sent = client
     modes = http.get("/health").json()["modes"]
     assert "guard" in modes
-    assert set(modes) <= {"guard", "factory", "assist"}
+    assert set(modes) <= {"guard", "factory"}
 
 
 # ── 음성 암구호 인증 결과 주입 (WBS 3.8.2 · FR-10.2) ────────────

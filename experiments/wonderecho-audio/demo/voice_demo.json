@@ -1,0 +1,240 @@
+{
+  "format_version": 2,
+  "data_kind": "synthetic-demo",
+  "exported_at": "2026-09-20T03:42:38.067334+00:00",
+  "sources": [
+    {
+      "file": "voice_data.db",
+      "tables": [
+        "settings",
+        "roster",
+        "phrases"
+      ]
+    }
+  ],
+  "tables": {
+    "settings": [
+      {
+        "key": "follow_s",
+        "value": "20.0",
+        "updated_at": "2026-09-20T11:59:28+09:00"
+      },
+      {
+        "key": "follow_min_chars",
+        "value": "3",
+        "updated_at": "2026-09-20T11:59:28+09:00"
+      },
+      {
+        "key": "stt_prompt",
+        "value": "메카독, 비상정지, 긴급정지, 스톱, 수동모드, 수동제어, 자동모드, 수동해제, 순찰시작, 순찰정지, 순찰멈춰, 메카독 로봇 음성 명령.",
+        "updated_at": "2026-09-20T11:59:28+09:00"
+      },
+      {
+        "key": "robot_api_base",
+        "value": "http://127.0.0.1:8000",
+        "updated_at": "2026-09-20T11:59:28+09:00"
+      }
+    ],
+    "roster": [
+      {
+        "name": "김민수",
+        "note": "직원명단.txt"
+      },
+      {
+        "name": "이지영",
+        "note": "직원명단.txt"
+      },
+      {
+        "name": "박성훈",
+        "note": "직원명단.txt"
+      },
+      {
+        "name": "최다은",
+        "note": "직원명단.txt"
+      },
+      {
+        "name": "정우진",
+        "note": "직원명단.txt"
+      },
+      {
+        "name": "한소연",
+        "note": "직원명단.txt"
+      }
+    ],
+    "phrases": []
+  },
+  "rules": {
+    "format_version": 1,
+    "keywords": {
+      "wake": [
+        "메카독",
+        "메카도",
+        "메카닭",
+        "메카도기"
+      ],
+      "sleep": [
+        "그만",
+        "꺼져",
+        "대기해",
+        "잠자"
+      ],
+      "resume": [
+        "시작",
+        "깨워",
+        "일어나",
+        "켜져"
+      ],
+      "emergency": [
+        "도와줘",
+        "살려줘",
+        "비상",
+        "응급"
+      ]
+    },
+    "command_endings": [
+      "으로전환해주세요",
+      "로전환해주세요",
+      "으로바꿔주세요",
+      "으로전환해줘",
+      "로바꿔주세요",
+      "로전환해줘",
+      "으로바꿔줘",
+      "해주십시오",
+      "로바꿔줘",
+      "해주세요",
+      "하십시오",
+      "으로전환",
+      "로전환해",
+      "으로바꿔",
+      "로바꿔",
+      "로전환",
+      "해주길",
+      "하세요",
+      "해줘요",
+      "해주죠",
+      "주세요",
+      "했어요",
+      "해줘",
+      "해져",
+      "해죠",
+      "하죠",
+      "했죠",
+      "했어",
+      "시켜",
+      "해라",
+      "하기",
+      "해요",
+      "세요",
+      "해",
+      "줘",
+      "요"
+    ],
+    "action_commands": {
+      "비상정지": [
+        "estop",
+        "비상 정지를 실행합니다"
+      ],
+      "긴급정지": [
+        "estop",
+        "비상 정지를 실행합니다"
+      ],
+      "스톱": [
+        "estop",
+        "비상 정지를 실행합니다"
+      ],
+      "수동모드": [
+        "manual_on",
+        "수동 제어로 전환합니다"
+      ],
+      "수동제어": [
+        "manual_on",
+        "수동 제어로 전환합니다"
+      ],
+      "자동모드": [
+        "manual_off",
+        "수동 제어를 해제합니다"
+      ],
+      "수동해제": [
+        "manual_off",
+        "수동 제어를 해제합니다"
+      ],
+      "순찰시작": [
+        "patrol_start",
+        "순찰을 시작합니다"
+      ],
+      "순찰개시": [
+        "patrol_start",
+        "순찰을 시작합니다"
+      ],
+      "순찰해": [
+        "patrol_start",
+        "순찰을 시작합니다"
+      ],
+      "순찰정지": [
+        "patrol_stop",
+        "순찰을 정지합니다"
+      ],
+      "순찰중지": [
+        "patrol_stop",
+        "순찰을 정지합니다"
+      ],
+      "순찰멈춰": [
+        "patrol_stop",
+        "순찰을 정지합니다"
+      ]
+    },
+    "scenario_triggers": {
+      "경비모드": "guard",
+      "신원확인": "guard",
+      "방문자확인": "visitor_check",
+      "경고방송": "ppe_warning",
+      "안전장비경고": "ppe_warning",
+      "안전모경고": "ppe_helmet",
+      "안전조끼경고": "ppe_vest",
+      "보안경경고": "ppe_glasses",
+      "제한구역": "restricted_zone",
+      "전기위험": "high_voltage",
+      "화학물질": "chemical_area",
+      "지게차경고": "forklift_pass",
+      "하역경고": "forklift_load",
+      "금연": "smoking_warn",
+      "촬영금지": "photo_warn",
+      "화재대피": "fire_evac",
+      "대피방송": "fire_evac",
+      "비상접수": "emergency_response",
+      "순찰안내": "patrol_notice",
+      "길막": "patrol_block",
+      "비켜": "patrol_block",
+      "순찰보고": "patrol_report",
+      "방문자안내": "visitor_guide",
+      "교대안내": "shift_notice",
+      "식사안내": "meal_notice",
+      "점심안내": "meal_notice",
+      "점검안내": "inspection_notice",
+      "출하안내": "delivery_guide",
+      "안전수칙": "safety_reminder",
+      "공지사항": "general_notice",
+      "공지해": "general_notice",
+      "비온다": "weather_rain",
+      "우천": "weather_rain",
+      "춥다": "weather_cold",
+      "한파": "weather_cold",
+      "덥다": "weather_heat",
+      "폭염": "weather_heat",
+      "야간순찰": "night_patrol",
+      "대피훈련": "drill_evac",
+      "훈련시작": "drill_evac",
+      "안전점검": "safety_check",
+      "분실물": "lost_found",
+      "누구야": "who_are_you",
+      "넌누구": "who_are_you",
+      "뭐하고있": "what_doing",
+      "뭐하는중": "what_doing"
+    }
+  },
+  "description": "공유용 합성 데모 스냅샷. 직원 이름은 테스트용이며 실제 운영 자료가 아닙니다.",
+  "provenance": {
+    "roster": "knowledge/직원명단.txt (synthetic demo)",
+    "rules": "기존 PC 음성 규칙 111개; 설정값은 공개 기본값만 포함"
+  }
+}

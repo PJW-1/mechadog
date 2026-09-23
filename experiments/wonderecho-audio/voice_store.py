@@ -44,7 +44,6 @@ _SENSITIVE_KEY_RE = re.compile(r"pass|secret|token|code|key", re.I)
 
 def _code_defaults():
     """각 모듈 상수에서 기본값을 모은다 — 순환 임포트 방지로 지연 임포트."""
-    import factorylink
     import robotlink
     import scenarios
     import voice_pipeline as vp
@@ -55,9 +54,7 @@ def _code_defaults():
             "follow_s": str(vp.FOLLOW_S),
             "follow_min_chars": "3",
             "stt_prompt": vp.STT_PROMPT,
-            "machine_notice": vp._MACHINE_NOTICE,
             "robot_api_base": robotlink.DEFAULT_BASE,
-            "mes_api_base": factorylink.DEFAULT_BASE,
         },
     }
 
@@ -181,11 +178,6 @@ def action_commands(default, db_path=None):
 
 def scenario_triggers(default, db_path=None):
     return voice_rules.load(db_path or DEFAULT_DB).get("scenario_triggers", default)
-
-
-def factory_rules(db_path=None):
-    rows = voice_rules.load(db_path or DEFAULT_DB)["factory_rules"]
-    return sorted((tuple(r) for r in rows), key=lambda r: r[4])
 
 
 def setting(key, default, cast=str, db_path=None):
