@@ -628,7 +628,7 @@ class Runtime:
                 self._apply(Event.PERSON_FOUND, now_ms)
                 self._record_person_event(result)
         if fresh:
-            self._observe_fallen(result)
+            self._observe_fallen(result, now_ms)
             self._judge_ppe(result, now_ms)
             self._track(result, now_ms)
             self._inspect_zone(result, now_ms)
@@ -1012,15 +1012,15 @@ class Runtime:
             LOG.info("zone_clear", zone=zone, cycles=self._zone_cycles)
             self._leave_zone(now_ms)
 
-    def _observe_fallen(self, result: Any) -> None:
-        """쓰러짐 판정의 **엣지에서만** 남긴다 (`4.8.3` · FR-9).
+    def _observe_fallen(self, result: Any, now_ms: int) -> None:
+        """쓰러짐 판정의 **엣지에서만** 남기고 `PERSON_DOWN` 을 낸다 (`4.8.3` · FR-9).
 
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
         같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
 
-        ⚠️ **사건(FSM 전이)을 내지 않는다.** `PERSON_DOWN` 은 전이표에 없고, 새로
-        만들면 에스컬레이션·모드 게이트까지 번진다. 지금은 **기록까지**이며 사건으로
-        옮기는 것은 별도 작업이다 — ADR-35 가 *"판정은 FSM 이 한다"* 고 적은 그 자리다.
+        ⚠️ **사건은 전이가 아니라 L3 다.** `PERSON_DOWN` 은 전이표에 없어 상태는 그대로
+        두고 단계만 올린다. 모드 게이트가 공장 모드에서만 통과시키므로, 경비 모드에서는
+        기록까지만 남는다.
         """
         verdict = getattr(result, "fallen", None)
         if verdict is None or not verdict.changed:
@@ -1043,6 +1043,7 @@ class Runtime:
                 "confirm_ms": self._fallen_confirm_ms,
             },
         )
+        self._apply(Event.PERSON_DOWN, now_ms)
 
     def _read_zone_scene(self, zone: str, result: Any, now_ms: int) -> None:
         """구역에 선 동안 장면을 한 번 읽는다 (`4.8.0` · ADR-35 호출 시점 ②).

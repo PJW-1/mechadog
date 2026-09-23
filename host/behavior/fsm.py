@@ -67,6 +67,10 @@ class Event(StrEnum):
     # ⚠️ 이름이 `PPE_OK` 가 아닌 이유가 그것이다. 미판정으로 끝난 대상 앞에서도
     # 순찰로 돌아가야 하고, *"괜찮다"* 로 적으면 미판정을 적합으로 읽게 된다.
     PPE_SETTLED = "PPE_SETTLED"
+    # 누운 사람이 정지한 채로 확정됐다 (FR-9 · `4.8.3`). ⚠️ **전이표에 없다** — 상태는
+    # 그대로 두고 단계만 L3 로 올린다(`ALERT` 의 PPE 위반과 같다). 로봇을 어디로 보낼지는
+    # 이 사건이 정하지 않는다.
+    PERSON_DOWN = "PERSON_DOWN"
     # ── 인증 ──
     AUTH_REQUIRED = "AUTH_REQUIRED"  # 미인증 상태 지속 → L2
     AUTH_OK = "AUTH_OK"  # 사원증 또는 암구호 인증 성공

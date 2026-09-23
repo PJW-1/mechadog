@@ -2439,6 +2439,45 @@ def test_a_fall_is_recorded_once_not_every_tick(
     assert len(falls) == 1, "엣지에서만 한 번이어야 한다"
 
 
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_fall_raises_l3_without_moving_the_state(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """공장 모드의 쓰러짐은 **경보**다 (FR-9 · 아키텍처 3.1) — 기록만 하면 아무도 모른다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=EventBlackbox(cfg),
+        mission=Mission(cfg, mode="factory"),
+    )
+    runtime.start_patrol(clock.ms)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=False)
+    state = runtime.behavior.state
+    _fell(runtime, vision, seq=2, at_ms=200, changed=True)
+
+    assert runtime.escalation.level is Level.L3
+    assert runtime.escalation.reason == "PERSON_DOWN"
+    assert runtime.behavior.state == state, "전이표에 없는 사건이다 — 상태는 그대로다"
+
+
+def test_guard_fall_is_recorded_but_does_not_raise_the_alarm(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """경비 모드는 쓰러짐으로 단계를 올리지 않는다 (FR-11.1) — 기록은 남는다."""
+    runtime, vision, blackbox = _fallen_runtime(config, clock, tmp_path)
+    _fell(runtime, vision, seq=1, at_ms=100, changed=True)
+
+    assert runtime.escalation.level is not Level.L3
+    assert [e for e in blackbox.feed() if e.event_type == "person_fallen"]
+
+
 def test_the_level_edge_publishes_one_warning_not_one_per_tick(
     config: dict, clock: FakeClock
 ) -> None:

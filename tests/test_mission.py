@@ -43,6 +43,7 @@ EXPECTED: dict[str, set[str]] = {
         "ZONE_CHANGED",
         "PPE_VIOLATION",
         "PPE_SETTLED",
+        "PERSON_DOWN",
         "TARGET_OFF_CENTER",
     },
 }
