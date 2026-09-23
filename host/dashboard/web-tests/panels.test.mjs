@@ -133,6 +133,8 @@ test('live PPE, fall and escalation events are classified and show their evidenc
  const type=document.querySelector('[aria-label="사건 유형"]');change(dom,type,'PPE');
  assert.equal(document.querySelectorAll('.op-event-row').length,1,'PPE 필터가 PPE 사건만 걸러낸다');
  const detail=document.querySelector('.op-event-detail').textContent;assert.match(detail,/보호구 미착용 확정/);assert.match(detail,/위반 · 안전모 미착용 1500ms/);assert.match(detail,/판정 근거/);assert.match(detail,/#4/);
+ assert.match(detail,/조회만 가능/);assert.equal(document.querySelector('.op-review-form'),null);
+ assert.throws(()=>store.reviewEvent('LIVE-1','confirmed','검토'),/서버 저장 기능/);
  change(dom,type,'SAFETY');assert.equal(document.querySelectorAll('.op-event-row').length,3);
  const titles=[...document.querySelectorAll('.op-event-row')].map(row=>row.textContent).join('|');assert.match(titles,/대응 단계 → L3/);assert.match(titles,/안전 잠금/);assert.match(titles,/쓰러짐 감지/);
 });

@@ -162,9 +162,31 @@ def download(weight: Weight, path: Path) -> None:
         partial.unlink(missing_ok=True)
 
 
-def run(*, check_only: bool, force: bool, samples: bool = False) -> int:
+V12_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v12-candidate-20260924"
+PPE_V12_CANDIDATE: tuple[Weight, ...] = (
+    Weight(
+        dest="models/candidates/ppe-v12/ppe_v12_joint5_context_candidate.onnx",
+        url=f"{V12_RELEASE}/ppe_v12_joint5_context_candidate.onnx",
+        size=35_781_202,
+        sha256="181ee940a5b8fd568fb6a231344eaf26484c0bf167cc869350eb8ccaf98caad4",
+        note="YOLOX-S 5종 개발 후보 · 실기 미승인 · models/ppe-v12-candidate.md",
+    ),
+    Weight(
+        dest="models/candidates/ppe-v12/NOTICE.txt",
+        url=f"{V12_RELEASE}/NOTICE.txt",
+        size=712,
+        sha256="465466fc21005e5734618644fd81d67d259b0ae3e9e0bc640f0e53b11a4e0901",
+        note="v12 학습 출처·이용 조건 고지",
+    ),
+)
+
+
+def run(
+    *, check_only: bool, force: bool, samples: bool = False, ppe_candidate: bool = False
+) -> int:
     failures = 0
-    for weight in WEIGHTS + (SAMPLES if samples else ()):
+    weights = PPE_V12_CANDIDATE if ppe_candidate else WEIGHTS
+    for weight in weights + (SAMPLES if samples else ()):
         path = ROOT / weight.dest
         print(f"\n{weight.dest}  —  {weight.note}")
 
@@ -207,12 +229,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="받지 않고 검증만 한다")
     parser.add_argument("--force", action="store_true", help="있어도 다시 받는다")
     parser.add_argument(
+        "--ppe-candidate",
+        action="store_true",
+        help="기본 가중치 대신 v12 개발 후보와 고지를 별도 경로에 받는다 (실기 미승인)",
+    )
+    parser.add_argument(
         "--samples",
         action="store_true",
         help="검출 정확도 확인용 실제 사진까지 받는다 (CI 에는 불필요)",
     )
     args = parser.parse_args(argv)
-    return run(check_only=args.check, force=args.force, samples=args.samples)
+    return run(
+        check_only=args.check,
+        force=args.force,
+        samples=args.samples,
+        ppe_candidate=args.ppe_candidate,
+    )
 
 
 if __name__ == "__main__":

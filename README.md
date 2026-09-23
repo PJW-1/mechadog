@@ -9,7 +9,7 @@
 python -m host.runtime --device mechdog-01 --robot-ip <로봇 IP> --no-vision --dashboard-port 8000
 ```
 
-http://127.0.0.1:8000/#dashboard 를 엽니다(실제 장비 명령은 `순찰 · 제어` 화면). 로봇 없이 보려면 가상 로봇
+http://127.0.0.1:8000/#dashboard 를 엽니다(실제 장비 명령은 `제어 · 장치` 화면). 로봇 없이 보려면 가상 로봇
 `python tools/mock_mechdog.py --device mechdog-01` 을 먼저 띄우고 `--robot-ip 127.0.0.1` 로 실행합니다.
 ⚠️ 서버가 내보낸 화면의 수동 조작은 **실제 로봇을 움직입니다.**
 

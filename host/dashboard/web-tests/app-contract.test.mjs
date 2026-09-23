@@ -50,6 +50,28 @@ test('application opens direct hash, aligns 3D and camera selection, routes name
  document.querySelector('[data-camera="robot"]').click();assert.equal(document.querySelector('#panel-title').textContent,'장치 상태');
  document.querySelector('[data-robot="MD-02"]').click();assert.equal(store.selected,'MD-02');assert.equal(view.selected,'MD-02');assert.match(document.querySelector('#camera-title').textContent,/MD-02/);assert.deepEqual(failures,[]);dom.window.close();
 });
+test('primary navigation keeps operations visible and moves preview tools to a secondary menu',async()=>{
+ const {dom,document}=await boot('missions');
+ assert.deepEqual([...document.querySelectorAll('.main-nav > [data-view]')].map(button=>button.dataset.view),['dashboard','events','missions']);
+ assert.equal(document.querySelector('.nav-more').open,false);
+ assert.match(document.querySelector('.robot-status-sheet').textContent,/로봇 상태/);
+ document.querySelector('.nav-more [data-view="devices"]').click();
+ assert.equal(document.querySelector('#panel-content').dataset.page,'devices');
+ assert.equal(document.querySelector('.nav-more').classList.contains('active'),true);
+ assert.equal(document.querySelector('.nav-more').open,false);
+ dom.window.close();
+});
+test('secondary menu marks the current page, closes on Escape and never takes focus back while closed',async()=>{
+ const {dom,window,document}=await boot('dashboard'),more=document.querySelector('.nav-more'),summary=more.querySelector('summary');
+ more.open=true;document.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape'}));
+ assert.equal(more.open,false);
+ const records=more.querySelector('[data-view="records"]');records.focus();records.click();
+ assert.equal(summary.getAttribute('aria-current'),'true');
+ document.querySelector('.main-nav > [data-view="dashboard"]').click();
+ assert.equal(summary.hasAttribute('aria-current'),false);
+ assert.equal(more.contains(document.activeElement),false);
+ dom.window.close();
+});
 test('navigation releases manual control, real-data mode hides preview without claiming connection',async()=>{
  const {dom,document,store,view}=await boot('missions');store.claim();store.move('FORWARD');document.querySelector('[data-view="events"]').click();assert.equal(store.command,'STOP');assert.equal(store.control,null);
  store.setDemo(false);assert.match(document.querySelector('.actual-status').textContent,/장비 미연결/);document.querySelector('[data-view="settings"]').click();assert.match(document.querySelector('#panel-content').textContent,/실제 로봇연결 안 됨/);document.querySelector('[data-view="events"]').click();assert.equal(document.querySelector('#app').classList.contains('data-waiting'),true);assert.equal(view.cameraVisible,false);assert.equal(view.playing,false);assert.match(document.querySelector('#frame-source').textContent,/미수신/);dom.window.close();
@@ -162,7 +184,7 @@ test('served by the dashboard, robot state from /ws/telemetry fills the status c
  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
  dom.window.close();
 });
-test('device commands on 순찰·제어 follow the telemetry feed without rebuilding their buttons',async()=>{
+test('device commands on 제어 · 장치 follow the telemetry feed without rebuilding their buttons',async()=>{
  const state=await boot('missions',{health:{service:'telemetry',vision_clients:0}}),{dom,document,failures,linkCalls}=state,feed=state.telemetryFeed;
  const section=()=>[...document.querySelectorAll('.op-section')].find(s=>s.querySelector('h3')?.textContent==='실제 장비 명령');
  const toggle=()=>section().querySelector('[data-service="toggle"]');
@@ -204,7 +226,7 @@ test('served by the dashboard, the robot view draws /ws/vision and says what it 
  // 지도가 없으니 예시 공장 3D 를 그리지 않고 "지도 없음" 을 말한다 (#159 가 되살렸던 예시 로봇·경고 표시 포함).
  assert.equal(state.view.active,false);assert.equal(document.querySelector('#map-placeholder').hidden,false);assert.match(document.querySelector('#scene-subtitle').textContent,/지도 없음/);
  // 설정 화면의 "실제 로봇" 칸도 연결을 사실대로 말한다 (고정 "연결 안 됨" 이 아니다).
- document.querySelector('[data-view="settings"]').click();assert.match(document.querySelector('#panel-content').textContent,/실제 로봇관제 서버 연결됨 · 로봇 상태는 장치 화면에서/);document.querySelector('#close-panel').click();
+ document.querySelector('[data-view="settings"]').click();assert.match(document.querySelector('#panel-content').textContent,/실제 로봇관제 서버 연결됨 · 로봇 상태는 제어 · 장치 화면에서/);document.querySelector('#close-panel').click();
  // 연결만 됐다고 "실시간" 이라 하지 않는다.
  assert.equal(text('frame-source'),'영상 연결 중');assert.doesNotMatch(text('camera-status'),/실시간/);
  feed.options.onStatus({state:'live',lastFrameAt:Date.UTC(2026,8,14,10,0,0),frameSeq:12,width:640,height:480,detections:3,persons:2});
@@ -390,9 +412,9 @@ test('fleet alarm banner watches every robot and the vision feed follows the sel
  state.eventFeeds[1].options.onEvent({seq:1,ts_ms:1,event:'escalation_changed',state:'ALERT',escalation:'L3',reason:'AUTH_FAILED',warning:'경보가 발령되었습니다.',tracks:[],detections:[],telemetry:null});
  assert.equal(banner.hidden,false);assert.equal(banner.dataset.level,'L3');
  assert.match(document.querySelector('#alarm-level').textContent,/mechdog-02 · L3/);assert.match(document.querySelector('#alarm-text').textContent,/인증 실패/);
- // 띠의 처리 버튼이 그 로봇을 골라 주고 순찰·제어로 간다.
+ // 띠의 처리 버튼이 그 로봇을 골라 주고 제어 · 장치로 간다.
  const first=state.visionFeed;
- document.querySelector('#alarm-action').click();assert.equal(store.selected,'MD-02');assert.equal(document.querySelector('#panel-title').textContent,'순찰 · 제어');
+ document.querySelector('#alarm-action').click();assert.equal(store.selected,'MD-02');assert.equal(document.querySelector('#panel-title').textContent,'제어 · 장치');
  // 영상 채널도 고른 로봇을 따라간다 — 이전 연결은 닫힌다.
  assert.equal(first.stopped,true);assert.notEqual(state.visionFeed,first);
  assert.equal(state.visionFeed.options.url,'ws://127.0.0.1:4175/robots/mechdog-02/ws/vision');
