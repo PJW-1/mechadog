@@ -18,14 +18,16 @@ Transport note: the serial port (--port, e.g. COM5) is a **temporary**
 validation link to the WonderEcho module. Relaying audio through the robot's
 4-pin I2C bridge turned out to be impossible (2026-09-23, WBS 4.7.9 — the
 bridge carries command ids only). The target path is: listen through the
-XIAO ESP32S3 microphone (`http://<xiao>:82/audio`, 16 kHz PCM16) and speak
-through the robot's MP3 module (I2C 0x7B). Everything above the transport
+XIAO ESP32S3 microphone (`http://<xiao>:82/audio`, 16 kHz PCM16 — `--xiao`,
+WBS 4.7.19) and speak through the robot's MP3 module (I2C 0x7B, not yet).
+With `--xiao` and no `--port`, replies are printed instead of spoken. Everything above the transport
 boundary — the rules, the knowledge retrieval and the --web API — does not
 change with it. The serial port is owned exclusively by the main loop: one
 owner serializes audio frames so they never interleave.
 
 Usage:
     python voice_pipeline.py --port COM8 --web 8090
+    python voice_pipeline.py --xiao 192.168.1.102 --port COM8 --web 8090  # XIAO 로 듣기
     python voice_pipeline.py --port COM8 --say "안내 문장"     # play once, exit
 """
 
@@ -53,6 +55,7 @@ from phrases import pick
 from play_client import CHUNK, PREFILL, end_packet, play_packet
 from stream_client import STATUS, Decoder, make_decoder
 from transport import open_transport
+from xiao_mic import XiaoMic
 
 READY, STARTED, FINISHED = 1, 2, 3
 
@@ -92,6 +95,7 @@ class Hub:
         self.robot_cursor = 0  # 관제 /api/events 폴링 커서
         self._robot_next_poll = 0.0
         self.auth_prompted = False
+        self.mic = None  # XiaoMic | None — /status 에 끊김 계수를 싣는다 (4.7.19)
 
     def auth_prompt(self, state):
         """새 인증 대기마다 한 번 안내하고, 상태 조회 실패에는 중복 안내하지 않는다.
@@ -188,6 +192,7 @@ class Hub:
             "say_queue": self.say_q.qsize(),
             "scenarios": list(scenarios.SCENARIOS),
             "events": list(self.events)[-30:],
+            "mic": self.mic.stats() if self.mic is not None else None,
         }
 
 
@@ -456,6 +461,8 @@ def retrieve(docs, query, max_chars=1200):
 def _say(device, piper, text, speed):
     """고정 안내 멘트 재생. 음성 경로의 모든 발화가 여기를 지난다."""
     print(f"[say] {text}")
+    if device is None:  # XIAO 로 듣기만 할 때 — 말하기 경로(4.7.20)가 없으면 출력만
+        return
     try:
         stream_play(device, synth_piper(piper, text, speed))
     except (OSError, TimeoutError) as e:
@@ -480,6 +487,43 @@ def _wait_phase(device, decoder, phase, timeout):
             ):
                 return True
     raise TimeoutError(f"no status phase {phase} within {timeout}s")
+
+
+class _Vad:
+    """20ms 프레임 에너지 VAD — WonderEcho·XIAO 두 마이크가 같은 판정을 쓴다.
+
+    마이크마다 규칙이 따로 있으면 암구호·웨이크워드가 한쪽에서만 깨진다.
+    `first_speech_ms`·`on_speech` 의 계약은 `capture_pcm` docstring 을 따른다.
+    """
+
+    def __init__(self, on_speech=None):
+        self.on_speech = on_speech
+        self.rms_history = []  # per-20 ms-frame RMS
+        self.speech_seen = False
+        self.first_speech_ms = None
+        self.last_speech = 0.0
+
+    def feed(self, frame, now):
+        """Score one frame; True once speech was heard and ~1 s of silence followed."""
+        import numpy as np
+
+        samples = np.frombuffer(frame, dtype=np.int16)
+        rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+        self.rms_history.append(rms)
+        # 소음 바닥: 발화 전 초기 25프레임(500ms)의 중앙값
+        floor = np.median(self.rms_history[:25]) if len(self.rms_history) >= 25 else 200.0
+        if rms > max(floor * 3.0, 300.0):
+            if not self.speech_seen:
+                # **첫 프레임만 찍는다.** 발화가 시작된 시각이 필요하고
+                # 끝난 시각은 이미 호출자가 안다.
+                self.first_speech_ms = int(time.time() * 1000)
+                if self.on_speech is not None:
+                    self.on_speech(self.first_speech_ms)
+            self.speech_seen, self.last_speech = True, now
+        return self.ended(now)
+
+    def ended(self, now):
+        return self.speech_seen and now - self.last_speech > 1.0
 
 
 def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
@@ -513,7 +557,6 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
     그 규약이 지켜지지 않아도 조용히 넘어가 원인을 못 찾는다.
     """
     import av
-    import numpy as np
 
     for attempt in range(3):
         device.send_command(0x102)
@@ -529,10 +572,7 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
     pcm_decoder = make_decoder()
     resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
     pcm = bytearray()
-    rms_history = []  # per-20 ms-frame RMS
-    speech_seen = False
-    first_speech_ms = None
-    last_speech = 0.0
+    detector = _Vad(on_speech)
     deadline = time.monotonic() + timeout_s
     done = False
     while not done and time.monotonic() < deadline:
@@ -545,24 +585,9 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
                 for frame in pcm_decoder.decode(av.Packet(packet.payload[1:])):
                     for out in resampler.resample(frame):
                         pcm.extend(bytes(out.planes[0])[: out.samples * 2])
-                samples = np.frombuffer(bytes(pcm[-640:]), dtype=np.int16)
-                rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
-                rms_history.append(rms)
-                if vad:
-                    now = time.monotonic()
-                    # 소음 바닥: 발화 전 초기 25프레임(500ms)의 중앙값
-                    floor = np.median(rms_history[:25]) if len(rms_history) >= 25 else 200.0
-                    if rms > max(floor * 3.0, 300.0):
-                        if not speech_seen:
-                            # **첫 프레임만 찍는다.** 발화가 시작된 시각이 필요하고
-                            # 끝난 시각은 이미 호출자가 안다.
-                            first_speech_ms = int(time.time() * 1000)
-                            if on_speech is not None:
-                                on_speech(first_speech_ms)
-                        speech_seen, last_speech = True, now
-                    if speech_seen and now - last_speech > 1.0:
-                        device.send_command(0x106)
-                        done = True
+                if vad and detector.feed(bytes(pcm[-640:]), time.monotonic()):
+                    device.send_command(0x106)
+                    done = True
             elif packet.message_type == 0x102 and len(packet.payload) == STATUS.size:
                 if STATUS.unpack(packet.payload)[1] == FINISHED:
                     done = True
@@ -570,7 +595,64 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
         raise TimeoutError("no audio frames received")
     if device.in_waiting:
         device.read(device.in_waiting)  # 잔여 프레임 폐기
-    return bytes(pcm), speech_seen, first_speech_ms
+    return bytes(pcm), detector.speech_seen, detector.first_speech_ms
+
+
+# XIAO 마이크는 쉬지 않고 듣는다. 녹음 시작 때 버퍼를 비워도 방금 낸 안내 멘트의
+# 꼬리(스피커 재생 여유 + XIAO 전송 지연)가 첫 프레임들에 섞여 들어온다. 그것이
+# 소음 바닥(첫 25프레임)을 끌어올리거나 발화로 잡히지 않게 앞부분을 버린다.
+# 스피커(--port)가 없으면 되돌아올 멘트도 없으므로 버리지 않는다 — 발화 첫머리를
+# 잃을 이유가 없다.
+ECHO_GUARD_S = 0.3
+
+
+def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S):
+    """XIAO `:82/audio` capture -> `(pcm, speech_seen, first_speech_ms)` (WBS 4.7.19).
+
+    Same contract as `capture_pcm` (VAD, `first_speech_ms`, `on_speech`).
+    The stream is always on, so stale audio is flushed first. If the link
+    stalls after speech started, trailing silence is judged by wall clock so
+    the turn still ends instead of waiting out `timeout_s`.
+    """
+    mic.flush()
+    detector = _Vad(on_speech)
+    pcm = bytearray()
+    skip = int(guard_s * 1000) // 20
+    deadline = time.monotonic() + timeout_s
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        frame = mic.read_frame(timeout=min(0.2, remaining))
+        now = time.monotonic()
+        if frame is None:
+            if detector.ended(now):
+                break
+            continue
+        if skip:
+            skip -= 1
+            continue
+        pcm.extend(frame)
+        if detector.feed(frame, now):
+            break
+    if not pcm:
+        raise TimeoutError("no audio from XIAO mic — link down?")
+    return bytes(pcm), detector.speech_seen, detector.first_speech_ms
+
+
+def open_mic(args):
+    """Start the XIAO mic reader when `--xiao` is given; None otherwise."""
+    if not args.xiao:
+        return None
+    return XiaoMic(args.xiao, gain=args.xiao_gain).start()
+
+
+def listen_pcm(device, decoder, mic, timeout_s, on_speech=None):
+    """Capture from the configured mic: XIAO when given (ADR-38), else WonderEcho."""
+    if mic is not None:
+        guard_s = ECHO_GUARD_S if device is not None else 0.0
+        return capture_xiao(mic, timeout_s=timeout_s, on_speech=on_speech, guard_s=guard_s)
+    return capture_pcm(device, decoder, timeout_s=timeout_s, on_speech=on_speech)
 
 
 # Whisper 도메인 바이어스 — 웨이크워드/명령어 어휘를 알려 주면 "메카독"이
@@ -658,9 +740,9 @@ class ScenarioCtx:
     never touch UART framing directly.
     """
 
-    def __init__(self, device, decoder, stt, piper, hub, knowledge, args):
+    def __init__(self, device, decoder, stt, piper, hub, knowledge, args, mic=None):
         self.device, self.decoder, self.stt, self.piper = device, decoder, stt, piper
-        self.hub, self.knowledge, self.args = hub, knowledge, args
+        self.hub, self.knowledge, self.args, self.mic = hub, knowledge, args, mic
 
     def say(self, text):
         self.hub.activity = "speaking(scenario)"
@@ -672,7 +754,7 @@ class ScenarioCtx:
     def listen(self, timeout_s=12.0):
         self.hub.activity = "listening(scenario)"
         try:
-            pcm, heard, _ = capture_pcm(self.device, self.decoder, timeout_s=timeout_s)
+            pcm, heard, _ = listen_pcm(self.device, self.decoder, self.mic, timeout_s)
         except TimeoutError:
             return ""
         if not heard:
@@ -702,6 +784,17 @@ def main():
     except (OSError, ValueError, sqlite3.Error) as exc:
         ap.exit(1, f"[voice-db] {exc}\n")
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
+    ap.add_argument(
+        "--xiao",
+        help="XIAO 마이크로 듣는다 — 보드 IP (예: 192.168.1.102). :82/audio 를 받는다 (4.7.19)",
+    )
+    ap.add_argument(
+        "--xiao-gain",
+        type=int,
+        default=2,
+        choices=range(5),
+        help="XIAO 마이크 이득 0..4 (기본 2, 펌웨어 ?gain=)",
+    )
     ap.add_argument("--say", help="synthesize this text and play it once, then exit")
     ap.add_argument(
         "--guard-check",
@@ -735,6 +828,10 @@ def main():
         help="일자별 이벤트 저널 디렉터리 — 빈 문자열이면 기록 안 함 (WBS 4.7.12)",
     )
     args = ap.parse_args()
+    if args.say and not args.port:
+        ap.error("--say 는 --port 가 필요함 (말하기는 아직 WonderEcho 스피커뿐)")
+    if not (args.port or args.xiao):
+        ap.error("--port(WonderEcho) 나 --xiao(XIAO 마이크) 중 하나는 필요함")
     from transcribe_local import gpu_dll_directories
 
     _gpu_dll_handles = gpu_dll_directories()  # Keep Windows DLL directories alive until exit.
@@ -747,14 +844,18 @@ def main():
 
         piper = PiperVoice.load(str(args.piper_model))
         stt = WhisperModel(args.whisper, device="cuda", compute_type="float16")
-        device = open_transport(args)
+        device = open_transport(args) if args.port else None
+        mic = open_mic(args)
         try:
             ctx = ScenarioCtx(
-                device, Decoder(max_payload=128), stt, piper, Hub(args.robot_id), [], args
+                device, Decoder(max_payload=128), stt, piper, Hub(args.robot_id), [], args, mic
             )
             scenarios.sc_guard(ctx)
         finally:
-            device.close()
+            if device is not None:
+                device.close()
+            if mic is not None:
+                mic.stop()
         return
 
     if args.say:
@@ -786,11 +887,15 @@ def main():
 
     piper = PiperVoice.load(str(args.piper_model))
     stt = WhisperModel(args.whisper, device="cuda", compute_type="float16")
-    device = open_transport(args)
+    device = open_transport(args) if args.port else None
     decoder = Decoder(max_payload=128)
-    print(f"[link] {device.kind} {device.port} @ {device.baud}")
+    mic = hub.mic = open_mic(args)
+    if device is not None:
+        print(f"[link] {device.kind} {device.port} @ {device.baud}")
+    if mic is not None:
+        print(f"[link] listen {mic.url}" + ("" if device else " · speak: 출력만 (4.7.20 전)"))
 
-    ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args)
+    ctx = ScenarioCtx(device, decoder, stt, piper, hub, knowledge, args, mic)
 
     def tell_robot_listening(at_ms):
         """«말을 받았다» 를 로봇에게 **즉시** 알린다 — 인증 창 마감 유예 (ADR-37).
@@ -857,9 +962,10 @@ def main():
             hub.activity = "listening"
             print(f"[turn {turn}] listening (VAD) ...")
             try:
-                pcm, speech_seen, spoke_at_ms = capture_pcm(
+                pcm, speech_seen, spoke_at_ms = listen_pcm(
                     device,
                     decoder,
+                    mic,
                     timeout_s=1.5 if badge_pending else 15.0,
                     on_speech=tell_robot_listening if not badge_pending else None,
                 )
@@ -1035,8 +1141,10 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        if device.is_open:
+        if device is not None and device.is_open:
             device.close()
+        if mic is not None:
+            mic.stop()
 
 
 if __name__ == "__main__":
