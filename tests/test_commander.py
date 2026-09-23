@@ -117,6 +117,17 @@ def test_one_shot_commands_are_sent_exactly_once(clock: FakeClock) -> None:
     assert types_of(c.tick(clock.ms)) == ["STOP"]
 
 
+def test_once_unless_pending_skips_when_that_type_is_already_queued(clock: FakeClock) -> None:
+    """SOUND 재전송이 이미 실린 더 새 문장 뒤에 붙지 않게 하는 확인·넣기 한 덩어리."""
+    c = make(clock)
+    c.once("SOUND", track=3)
+    assert c.once_unless_pending("SOUND", track=184) is False
+    assert c.once_unless_pending("LED", color="red", blink_hz=2) is True
+    assert [
+        json.loads(x).get("track") for x in c.tick(clock.ms) if json.loads(x)["type"] == "SOUND"
+    ] == [3]
+
+
 def test_one_shot_queued_from_another_thread_mid_tick_is_not_lost(clock: FakeClock) -> None:
     """대시보드 스레드의 `once`(SOUND·SERVICE·POSE)가 틱의 인코딩과 비우기 사이에 끼어도 다음 틱에 나간다.
 

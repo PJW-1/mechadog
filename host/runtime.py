@@ -1492,14 +1492,13 @@ class Runtime:
         _seq, track, _due, left = self._sound_wait
         self._sound_wait = None
         # 더 새 문장이 이미 실려 있으면 옛 것은 버린다 — 뒤에 붙이면 새 문장을 덮는다.
-        # 확인 뒤 대시보드 스레드가 새 문장을 넣어도 옛 것 뒤라 순서는 맞다.
-        if self._commander.has_pending("SOUND"):
-            return
+        # 확인과 넣기는 한 덩어리다: 대시보드 스레드가 그 사이에 끼면 옛 것이 뒤에 붙었다.
         if left <= 0:
-            LOG.warning("sound_unacked", track=track, retries=SOUND_RETRIES)
+            if not self._commander.has_pending("SOUND"):
+                LOG.warning("sound_unacked", track=track, retries=SOUND_RETRIES)
             return
-        self._sound_retries_left = left - 1
-        self._commander.once("SOUND", track=track)
+        if self._commander.once_unless_pending("SOUND", track=track):
+            self._sound_retries_left = left - 1
 
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
