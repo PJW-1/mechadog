@@ -151,3 +151,12 @@ test('the live buffer drops the oldest live event, never demo or imported rows',
   assert.equal(store.events.some((e) => e.id === 'LIVE-101'), true);
   assert.equal(store.events.filter((e) => e.source === 'DEMO').length, 3);
 });
+
+test('mode, judgement, warning and reason reach the page instead of being dropped', () => {
+  const parsed = decodeEventMessage(event(11, {mode: 'guard', judgement: {state: '위반'}, warning: '경보', reason: 'AUTH_FAILED', trigger: 'ESTOP', previous: 'PATROL'}));
+  assert.equal(parsed.mode, 'guard');
+  assert.deepEqual(parsed.judgement, {state: '위반'});
+  assert.deepEqual([parsed.warning, parsed.reason, parsed.trigger, parsed.previous], ['경보', 'AUTH_FAILED', 'ESTOP', 'PATROL']);
+  // 형식이 다르면 지어내지 않고 비운다.
+  assert.equal(decodeEventMessage(event(12, {judgement: [1, 2]})).judgement, null);
+});

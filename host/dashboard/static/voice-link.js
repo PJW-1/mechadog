@@ -60,6 +60,20 @@ export class VoiceLink {
     return this.get('/transcript');
   }
 
+  /** 오늘 음성 저널 요약 (4.7.12). 저널이 꺼져 있으면 404 로 던진다. */
+  report() {
+    return this.get('/report');
+  }
+
+  scenarios() {
+    return this.get('/scenarios');
+  }
+
+  /** 시연 시나리오를 대기열에 넣는다 — 로봇이 말하고, 일부는 현장 대답을 듣는다. */
+  runScenario(name) {
+    return this.post('/scenario', { name });
+  }
+
   say(text, { urgent = false } = {}) {
     return this.post('/say', { text, urgent });
   }
