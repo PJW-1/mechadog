@@ -972,19 +972,24 @@ class RobotEscalationWarningTests(unittest.TestCase):
             "escalation": "L3",
             "warning": "경보가 발령되었습니다.",
         }
-        replies = [ValueError("깨진 JSON"), ([l3], 0, 1)]
+        # 끝의 SystemExit 는 `except Exception` 을 지나쳐 스레드를 끝낸다 — 안 끝내면
+        # 패치가 풀린 뒤 실제 fetch_events 로 남은 시험 내내 접속을 반복한다.
+        replies = [ValueError("깨진 JSON"), ([l3], 0, 1), SystemExit()]
 
         def fetch(_base, _since):
-            r = replies.pop(0) if replies else ([], 0, 1)
-            if isinstance(r, Exception):
+            r = replies.pop(0)
+            if isinstance(r, BaseException):
                 raise r
             return r
 
         with mock.patch.object(vp.robotlink, "fetch_events", fetch):
-            threading.Thread(
+            t = threading.Thread(
                 target=hub.poll_robot_events_forever, args=("http://x", 0.01), daemon=True
-            ).start()
+            )
+            t.start()
             self.assertTrue(hub.wake.wait(2.0))
+            t.join(2.0)
+        self.assertFalse(t.is_alive())
 
     def test_first_poll_after_start_does_not_replay_old_warnings(self):
         # 2026-09-24: 음성을 재시작하자 7분 전 L3 경고를 다시 읽었다 — 커서 0 이 버퍼 전체를 받는다.
