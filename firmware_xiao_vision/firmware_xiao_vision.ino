@@ -717,9 +717,10 @@ bool startServers() {
     return false;
   }
 
-  Serial.printf("HTTP_READY status=http://%s/ stream=http://%s:%u/stream audio=http://%s:%u/audio\n",
-                WiFi.localIP().toString().c_str(), WiFi.localIP().toString().c_str(), kStreamPort,
-                WiFi.localIP().toString().c_str(), kAudioPort);
+  Serial.printf(
+      "HTTP_READY status=http://%s/ stream=http://%s:%u/stream audio=http://%s:%u/audio\n",
+      WiFi.localIP().toString().c_str(), WiFi.localIP().toString().c_str(), kStreamPort,
+      WiFi.localIP().toString().c_str(), kAudioPort);
   return true;
 }
 

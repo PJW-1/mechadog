@@ -25,11 +25,15 @@ constexpr int kSda1 = 22;
 constexpr int kScl1 = 23;
 constexpr int kSda2 = 19;
 constexpr int kScl2 = 13;
-bool writable(uint8_t addr) { return addr == 0x34 || addr == 0x7B; }
+bool writable(uint8_t addr) {
+  return addr == 0x34 || addr == 0x7B;
+}
 
 String line;
 
-void stamp() { Serial.printf("%lu ", static_cast<unsigned long>(millis())); }
+void stamp() {
+  Serial.printf("%lu ", static_cast<unsigned long>(millis()));
+}
 
 String token(String& rest) {
   rest.trim();
@@ -197,7 +201,8 @@ void cmdWrite(String rest) {
 void cmdMap(String rest) {
   uint8_t addr;
   bool stop = false;
-  if (!parseAddr(token(rest), addr) || !parseStop(rest, stop)) return err("usage: map <addr> [stop 0|1]");
+  if (!parseAddr(token(rest), addr) || !parseStop(rest, stop))
+    return err("usage: map <addr> [stop 0|1]");
   int answered = 0;
   for (int reg = 0; reg <= 0xFF; ++reg) {
     if (cancelled()) break;
@@ -216,7 +221,8 @@ void cmdMap(String rest) {
 void cmdBurst(String rest) {
   uint8_t addr, data[32];
   size_t n = 0;
-  if (!parseWriteArgs(rest, addr, data, n)) return err("usage: burst <addr> <hex> <interval_ms> <seconds>");
+  if (!parseWriteArgs(rest, addr, data, n))
+    return err("usage: burst <addr> <hex> <interval_ms> <seconds>");
   if (!writable(addr)) return err("writes allowed to 0x34/0x7B only");
   const String iv = token(rest), sv = token(rest);
   if (rest.length() || !isDec(iv) || !isDec(sv)) return err("interval/seconds must be decimal");

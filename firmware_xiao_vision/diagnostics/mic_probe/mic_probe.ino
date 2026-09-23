@@ -37,12 +37,13 @@ void record(uint32_t ms) {
   // The first ~100 ms after start carry the PDM filter settling; discard them.
   size_t got = 0;
   int16_t scratch[256];
-  for (int i = 0; i < 6; ++i) esp_i2s::i2s_read(esp_i2s::I2S_NUM_0, scratch, sizeof(scratch), &got, portMAX_DELAY);
+  for (int i = 0; i < 6; ++i)
+    esp_i2s::i2s_read(esp_i2s::I2S_NUM_0, scratch, sizeof(scratch), &got, portMAX_DELAY);
 
   size_t filled = 0;
   while (filled < bytes) {
-    esp_i2s::i2s_read(esp_i2s::I2S_NUM_0, reinterpret_cast<uint8_t*>(buf) + filled, bytes - filled, &got,
-                      portMAX_DELAY);
+    esp_i2s::i2s_read(esp_i2s::I2S_NUM_0, reinterpret_cast<uint8_t*>(buf) + filled, bytes - filled,
+                      &got, portMAX_DELAY);
     filled += got;
   }
 
@@ -69,7 +70,8 @@ void record(uint32_t ms) {
 void handle(const String& cmd) {
   if (cmd.startsWith("rec ")) {
     const long ms = cmd.substring(4).toInt();
-    if (ms < 100 || ms > static_cast<long>(kMaxMs)) return (void)Serial.println("ERR rec 100..10000");
+    if (ms < 100 || ms > static_cast<long>(kMaxMs))
+      return (void)Serial.println("ERR rec 100..10000");
     record(static_cast<uint32_t>(ms));
   } else if (cmd.startsWith("gain ")) {
     const long g = cmd.substring(5).toInt();
@@ -91,7 +93,8 @@ void setup() {
     Serial.println("ERR i2s_begin");
     return;
   }
-  Serial.printf("MIC_READY rate=%d psram_free=%u\n", kSampleRate, static_cast<unsigned>(ESP.getFreePsram()));
+  Serial.printf("MIC_READY rate=%d psram_free=%u\n", kSampleRate,
+                static_cast<unsigned>(ESP.getFreePsram()));
 }
 
 void loop() {
