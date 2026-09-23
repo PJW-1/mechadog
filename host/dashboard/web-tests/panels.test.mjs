@@ -104,6 +104,70 @@ test('voice panel renders phrase manager with categories and custom delete',asyn
  assert.deepEqual(deleted,['greeting','관리자가 넣은 말']);
  p.clearVoicePoll();
 });
+test('voice panel reaches scenarios, the daily report and the full transcript (B5)',async t=>{
+ const {dom,document,store}=setup();const ran=[];
+ const link={status:()=>Promise.resolve({robot:'r',mode:'active',activity:'idle',say_queue:0,events:[]}),phrases:()=>Promise.resolve([]),
+  scenarios:()=>Promise.resolve([{name:'greet',desc:'인사'}]),runScenario:name=>{ran.push(name);return Promise.resolve({queued:name})},
+  report:()=>Promise.resolve({date:'2026-09-23',total:7,by_role:{user:2,robot:3,admin:1},robot_events:{escalation_changed:1},scenario_runs:{greet:1},warnings:[],emergencies:[],scenario_failures:[],first_ts:'10:00',last_ts:'10:05'}),
+  transcript:()=>Promise.resolve([{ts:'10:00:00',role:'robot_evt',text:'escalation_changed L3'},{ts:'10:00:01',role:'admin',text:'경보가 발령되었습니다.'}])};
+ const p=new OperationalPanels({store,container:document.querySelector('#content'),title:document.querySelector('#title'),onNavigate:()=>{},onFocusZone:()=>{},onFocusRobot:()=>{},onToast:()=>{},voiceLink:link,document});
+ t.after(()=>p.clearVoicePoll());
+ p.render('voice');await new Promise(resolve=>setTimeout(resolve,10));
+ const scenario=document.querySelector('select[name="시나리오"]');assert.match(scenario.textContent,/인사 \(greet\)/);
+ change(dom,scenario,'greet');dom.window.confirm=()=>true;button(document,'시나리오 실행').click();await new Promise(resolve=>setTimeout(resolve,10));
+ assert.deepEqual(ran,['greet'],'확인 뒤에만 실행한다');
+ button(document,'리포트 불러오기').click();await new Promise(resolve=>setTimeout(resolve,10));
+ const report=document.querySelector('.op-voice-report').textContent;assert.match(report,/7건/);assert.match(report,/escalation_changed 1건/);assert.match(report,/greet 1회/);
+ button(document,'전체 기록 불러오기').click();await new Promise(resolve=>setTimeout(resolve,10));
+ const log=document.querySelector('.op-voice-transcript').textContent;assert.match(log,/로봇 사건/);assert.match(log,/경보가 발령되었습니다/);
+});
+test('a report from a pipeline without a journal says so instead of failing silently',async()=>{
+ const {document,store}=setup();
+ const link={status:()=>new Promise(()=>{}),phrases:()=>Promise.resolve([]),scenarios:()=>Promise.resolve([]),report:()=>Promise.reject(new Error('음성 서버 응답 오류 (HTTP 404)'))};
+ const p=new OperationalPanels({store,container:document.querySelector('#content'),title:document.querySelector('#title'),onNavigate:()=>{},onFocusZone:()=>{},onFocusRobot:()=>{},onToast:()=>{},voiceLink:link,document});
+ p.render('voice');button(document,'리포트 불러오기').click();await new Promise(resolve=>setTimeout(resolve,10));
+ assert.match(document.querySelector('.op-voice-report').textContent,/음성 저널이 꺼져/);p.clearVoicePoll();
+});
+test('live PPE, fall and escalation events are classified and show their evidence (B2·B3)',()=>{
+ const {dom,document,panels,store}=setup();store.setDemo(false);
+ const base={state:'ALERT',escalation:'L1',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
+ store.ingestLiveEvent({...base,seq:1,ts_ms:1,event:'PPE_VIOLATION',judgement:{track_id:4,state:'위반',reason:'안전모 미착용 1500ms'}});
+ store.ingestLiveEvent({...base,seq:2,ts_ms:2,event:'person_fallen',judgement:{fallen:true,aspect:0.62,still_ms:3200,confirm_ms:3000}});
+ store.ingestLiveEvent({...base,seq:3,ts_ms:3,event:'escalation_changed',escalation:'L3',entry:null,reason:'PPE_VIOLATION',warning:'경보가 발령되었습니다.'});
+ store.ingestLiveEvent({...base,seq:4,ts_ms:4,event:'failsafe_entered',escalation:'F',entry:null,trigger:'ESTOP',previous:'PATROL'});
+ panels.render('events');
+ const type=document.querySelector('[aria-label="사건 유형"]');change(dom,type,'PPE');
+ assert.equal(document.querySelectorAll('.op-event-row').length,1,'PPE 필터가 PPE 사건만 걸러낸다');
+ const detail=document.querySelector('.op-event-detail').textContent;assert.match(detail,/보호구 미착용 확정/);assert.match(detail,/위반 · 안전모 미착용 1500ms/);assert.match(detail,/판정 근거/);assert.match(detail,/#4/);
+ change(dom,type,'SAFETY');assert.equal(document.querySelectorAll('.op-event-row').length,3);
+ const titles=[...document.querySelectorAll('.op-event-row')].map(row=>row.textContent).join('|');assert.match(titles,/대응 단계 → L3/);assert.match(titles,/안전 잠금/);assert.match(titles,/쓰러짐 감지/);
+});
+test('an old record without judgement says the field is missing, not a verdict',()=>{
+ const {store}=setup();
+ const event=store.ingestLiveEvent({seq:9,ts_ms:1,event:'PPE_UNDETERMINED',state:'ALERT',escalation:'L1',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null});
+ assert.equal(event.ppe,'판정 근거 미수신');assert.equal(event.category,'PPE');
+});
+test('pose buttons are live only under manual control and send the chosen preset (B6)',async()=>{
+ const calls=[];const link={manual:async()=>({accepted:true}),drive:async()=>({accepted:true}),pose:async preset=>{calls.push(preset);return {accepted:true}}};
+ const {document,panels,store}=setup();store.link=link;store.setDemo(false);panels.render('missions');
+ const up=()=>document.querySelector('[data-pose="up"]');
+ assert.equal(up().disabled,true,'제어권 없이는 누를 수 없다');assert.throws(()=>store.requestPose('up'),/수동 제어권/);
+ button(document,'수동 제어권 요청').click();assert.equal(up().disabled,false);
+ up().click();await new Promise(resolve=>setTimeout(resolve,0));assert.deepEqual(calls,['up']);
+ assert.throws(()=>store.requestPose('tilt'),/허용되지 않은/);
+});
+test('pose buttons stay preview-only without a link',()=>{
+ const {document,panels}=setup();panels.render('missions');
+ assert.equal(document.querySelector('[data-pose]'),null);assert.equal(button(document,'앞쪽 들기').disabled,true);
+});
+test('the escalation table reads server values and says when it could not (B7)',()=>{
+ const {document,panels,store}=setup();panels.render('settings');
+ const table=()=>[...document.querySelectorAll('.op-section')].find(s=>s.querySelector('h3')?.textContent==='대응 단계 · 안전 해제 구분').textContent;
+ assert.match(table(),/서버 설정값 미수신/);
+ store.setPolicy({l1_to_l2_hold_s:12,target_lost_timeout_s:7,auth_timeout_s:40,auth_max_attempts:3,auth_session_valid_s:60,detect_window_ms:300,detect_hits_required:3,l3_warning:'경보입니다.',led:{l3_alarm:'red'}});
+ assert.match(table(),/미인증 12초면 L2/);assert.match(table(),/미검출 7초/);assert.match(table(),/인증 40초 초과 \/ 3회 실패/);assert.match(table(),/「경보입니다.」/);assert.match(table(),/눈 red/);assert.match(table(),/config\.yaml/);
+ store.setPolicy({type:'FeatureCollection'});assert.equal(store.policy,null,'형식이 다른 응답은 받지 않는다');
+});
 test('voice panel phrase section is disabled without a link',()=>{
  const {document,panels}=setup();panels.render('voice');
  assert.ok([...document.querySelectorAll('h3')].some(h=>h.textContent==='멘트 관리'));

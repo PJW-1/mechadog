@@ -48,6 +48,14 @@ export function decodeEventMessage(data) {
     telemetry: message.telemetry && typeof message.telemetry === 'object' ? message.telemetry : null,
     entry: typeof message.entry === 'string' ? message.entry : null,
     snapshot: typeof message.snapshot === 'string' ? message.snapshot : null,
+    // ⚠️ 아래는 예전에 여기서 버려졌다 — 서버가 실어도 화면은 운용 모드·판단 근거·
+    // 경고 문장을 몰랐다. 모르는 형식은 null 로 둔다.
+    mode: typeof message.mode === 'string' ? message.mode : null,
+    judgement: message.judgement && typeof message.judgement === 'object' && !Array.isArray(message.judgement) ? message.judgement : null,
+    warning: typeof message.warning === 'string' ? message.warning : null,
+    reason: typeof message.reason === 'string' ? message.reason : null,
+    trigger: typeof message.trigger === 'string' ? message.trigger : null,
+    previous: typeof message.previous === 'string' ? message.previous : null,
   };
 }
 

@@ -90,6 +90,11 @@ export class RobotLink {
     return this.post('/api/command/drive', motionFor(command, this.motion));
   }
 
+  /** 본체 자세 — 'up'|'level'|'down'. 각도는 서버가 config 에서 정한다 (임의 각도 없음). */
+  pose(preset) {
+    return this.post('/api/command/pose', { preset });
+  }
+
   /** 서비스 모드 전환 — 'enter'|'exit'. 해제 후 보행 복귀에는 resetSafe() 가 필요하다. */
   service(mode) {
     return this.post('/api/command/service', { mode });

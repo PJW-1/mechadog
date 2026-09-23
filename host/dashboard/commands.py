@@ -75,6 +75,7 @@ class CommandService:
         note_voice_auth: Callable[[bool], tuple[bool, str]] | None = None,
         note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
         confirm_alarm: Callable[[], None] | None = None,
+        pose: tuple[float, int] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -103,6 +104,14 @@ class CommandService:
         # 하는 것이 물리 상태(F)와 상황 판단(L3)으로 다르다 (ADR-26). 하나로 묶으면
         # **비상정지를 눌렀다 푸는 것으로 경보가 지워진다.**
         self._confirm_alarm = confirm_alarm
+        # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과
+        # **같은 각도**만 쓴다. ±15° 는 2026-09-15 실물로 부호·크기를 확인한 값이다.
+        # 임의 각도를 받지 않는 이유: 검증하지 않은 자세로 보행하면 넘어진다.
+        self._pose_pitch: dict[str, float] = (
+            {} if pose is None else {"up": pose[0], "level": 0.0, "down": -pose[0]}
+        )
+        self._pose_dur_ms = 0 if pose is None else int(pose[1])
+        self._pose_tilted = False
 
     @property
     def state(self) -> str:
@@ -152,7 +161,50 @@ class CommandService:
                 detail=f"{before} 는 수동 조종 중이 아니다",
             )
         self._commander.halt()
+        # ⚠️ **기울인 채로 자율에 넘기지 않는다.** 순찰은 기준 자세를 전제로 걷는다.
+        if self._pose_tilted:
+            self._send_pose(0.0)
         return CommandResult(command="manual_off", accepted=True, state=self._behavior.state)
+
+    def _send_pose(self, pitch: float) -> None:
+        self._commander.once("POSE", pitch=pitch, roll=0.0, height=0.0, dur=self._pose_dur_ms)
+        self._pose_tilted = pitch != 0.0
+
+    def pose(self, preset: str) -> CommandResult:
+        """본체 자세 — `up`·`level`·`down`. **`MANUAL` 에서만 받는다** (B6).
+
+        자율 상태에서는 PPE 자세 상승(`runtime._ppe_*`)이 같은 `POSE` 를 쓴다. 섞으면
+        조작자가 올린 자세를 시퀀스가 되돌리거나 그 반대가 된다. 다음 틱에 보낸다.
+        """
+        if not self._pose_pitch:
+            return CommandResult(
+                command="pose",
+                accepted=False,
+                state=self._behavior.state,
+                detail="자세 경로가 연결되지 않았다",
+            )
+        if preset not in self._pose_pitch:
+            return CommandResult(
+                command="pose",
+                accepted=False,
+                state=self._behavior.state,
+                detail=f"모르는 자세: {preset!r} (up|level|down)",
+            )
+        if self._behavior.state != "MANUAL":
+            return CommandResult(
+                command="pose",
+                accepted=False,
+                state=self._behavior.state,
+                detail="수동 오버라이드를 먼저 잡아야 한다",
+            )
+        pitch = self._pose_pitch[preset]
+        self._send_pose(pitch)
+        return CommandResult(
+            command="pose",
+            accepted=True,
+            state=self._behavior.state,
+            detail=f"POSE pitch={pitch:+.0f}° 를 다음 틱에 보낸다 — 반영은 IMU pitch 로 확인",
+        )
 
     def drive(self, step: float, angle: float) -> CommandResult:
         """수동 조종 입력. **`MANUAL` 에서만 받는다.**

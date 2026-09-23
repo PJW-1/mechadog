@@ -145,11 +145,17 @@ class Escalation:
         self._authenticated = False
         #: F 로 올라갈 때 경보가 걸려 있었나. **비상정지로 경보를 끄지 못하게 한다.**
         self._alarm_pending = False
+        #: 마지막으로 단계가 바뀐 사유. 관제 사건에 실어 «왜 L3 인가» 를 보인다.
+        self._reason = ""
 
     # ── 상태 ────────────────────────────────────────────────
     @property
     def level(self) -> Level:
         return self._level
+
+    @property
+    def reason(self) -> str:
+        return self._reason
 
     @property
     def latched(self) -> bool:
@@ -347,6 +353,7 @@ class Escalation:
 
     def _enter(self, level: Level, *, reason: str, now_ms: int) -> bool:
         previous, self._level = self._level, level
+        self._reason = reason
         self._l1_since_ms = now_ms if level is Level.L1 else None
         if level is Level.L3:
             self._alarm_pending = True

@@ -22,6 +22,35 @@ export function liveSnapshotUrl(baseUrl,payload){
 }
 
 function cleanText(value,max=1000){return typeof value==='string'?value.trim().slice(0,max):''}
+
+// ── 사건 분류·제목·판단 근거 (B2·B3·B4) ─────────────────────────
+// 예전에는 person_found 만 AUTH 였고 나머지는 전부 SYSTEM 이라 PPE 필터가 아무것도 걸러내지 못했다.
+// 이름은 런타임(`runtime.py` 의 `_record_scene`·`FEED_TRANSITIONS`·`_announce_escalation`)이 정한다.
+export const EVENT_CATEGORIES=Object.freeze({PPE:'PPE',AUTH:'출입 인증',SAFETY:'안전 · 경보',OBJECT:'구역 · 물품',SYSTEM:'시스템'});
+const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT'};
+export function eventCategory(name){return CATEGORY_OF[name]??'SYSTEM'}
+export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
+// 단계가 바뀐 사유 (`escalation.py` 의 reason). 모르는 값은 원문 그대로 보인다.
+export const REASON_NAMES=Object.freeze({person_present:'사람 확인',unauthenticated_hold:'미인증 상태 지속',unauthenticated_left:'인증 요구 뒤 대상 이탈',AUTH_FAILED:'인증 실패 (시간 초과·시도 소진)',PPE_VIOLATION:'보호구 미착용 확정',ZONE_CHANGED:'구역 물체 변화 확정',ONBOARD_FAILSAFE:'로봇 자체 안전 잠금',LINK_LOST:'링크 끊김',ESTOP:'비상정지',alarm_confirmed:'관리자 경보 확인',failsafe_confirmed:'안전 잠금 해제',failsafe_confirmed_alarm_kept:'안전 잠금 해제 — 경보 유지',authenticated:'인증 통과',target_lost:'대상 이탈',standby:'대기 전환',ppe_settled:'PPE 판정 종료'});
+export const reasonName=reason=>REASON_NAMES[reason]??(cleanText(reason,80)||'사유 미수신');
+const AUTH_TEXT={person_found:'검출 시점 · 인증 전',auth_required:'인증 요구됨',auth_granted:'통과',auth_failed:'실패 → 경보',voice_auth_granted:'암구호 확인 · 사원증 대기'};
+const shown=value=>typeof value==='number'?String(Math.round(value*100)/100):typeof value==='boolean'?(value?'예':'아니요'):cleanText(String(value??''),300)||'—';
+/** 사건 이름과 서버가 실어 준 근거 → 인증·PPE 칸과 근거 표. 근거가 없으면 지어내지 않는다. */
+export function describeEvidence(name,payload){
+ const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
+ const rows=[];
+ let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
+ if(name.startsWith('PPE_')&&j.state){ppe=cleanText(j.state,40)+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
+ if(name==='person_fallen')rows.push(['세로/가로 비',shown(j.aspect)],['정지 시간',shown(j.still_ms)+' ms'],['확정 기준',shown(j.confirm_ms)+' ms']);
+ if(name==='zone_reading'){
+  rows.push(['구역',shown(j.zone)],['판독 저하',j.degraded?('예 · '+shown(j.reason)):'아니요']);
+  if(j.answers&&typeof j.answers==='object')for(const [key,value] of Object.entries(j.answers).slice(0,12))rows.push(['판독 · '+cleanText(key,60),shown(value)]);
+ }
+ if(name==='escalation_changed')rows.push(['사유',reasonName(payload?.reason)],['경고 문장',cleanText(payload?.warning,300)||'읽을 문장 없음 (이 단계는 음성 경고 없음)']);
+ if(payload?.trigger)rows.push(['원인 사건',cleanText(payload.trigger,40)]);
+ if(payload?.previous)rows.push(['이전 상태',cleanText(payload.previous,40)]);
+ return {auth:AUTH_TEXT[name]??'해당 없음',ppe,rows};
+}
 export function parseBlackbox(value) {
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('meta.json 객체를 선택해 주세요.');
  if(!Number.isSafeInteger(value.ts_ms)||value.ts_ms<0||value.ts_ms>8640000000000000)throw new Error('유효한 ts_ms가 없습니다.');
@@ -49,13 +78,19 @@ export function toCsv(rows,headers){return '\ufeff'+[headers,...rows].map(row=>r
 export class Operations {
  // `link` 를 주면 수동 명령이 실제로 대시보드로 나간다 (WBS 4.6.3). 주지 않으면
  // 지금까지와 똑같이 웹 상태와 이력만 바뀐다 — **예시 모드가 기본이다.**
- constructor({storage=null,clock=nowDefault,link=null}={}) {
-  this.link=link;this.linkError=null;
+ // `fleet` 은 여러 대(`host.fleet`) — `[{device,link,registered}]` 를 서버가 알려 준 순서대로 MD-01~03 자리에 붙인다.
+ constructor({storage=null,clock=nowDefault,link=null,fleet=null}={}) {
+  // 로봇 자리마다 따로 갖는 것 — 링크·상태 전문·마지막 단계 사건·설정값·사건 피드·정지 잠금.
+  // ⚠️ **한 로봇의 값을 다른 로봇 화면에 보이면 안 된다.** MD-02 의 L3 를 MD-01 사유로 설명하는 식이 된다.
+  this.slots=Object.fromEntries(ROBOTS.map(id=>[id,{link:null,device:null,registered:true,telemetry:{state:'off'},lastEscalation:null,policy:null,liveFeed:{state:'off',received:0,dropped:0},estop:false}]));
+  if(fleet)fleet.slice(0,ROBOTS.length).forEach((unit,index)=>Object.assign(this.slots[ROBOTS[index]],{link:unit.link??null,device:cleanText(unit.device,80)||null,registered:unit.registered!==false}));
+  else this.link=link;
+  this.linkError=null;this.demoEstop=false;
   this.storage=storage;this.clock=clock;this.listeners=new Set();
-  this.demo=true;this.stale=false;this.estop=false;this.role='operator';this.selected='MD-01';
+  this.demo=true;this.stale=false;this.role='operator';this.selected='MD-01';
   this.control=null;this.command='STOP';this.mission={status:'idle',robot:'MD-01',zone:'생산 구역',id:null};
   this.records=[];this.sessions=[];this.events=demoEvents();this.policies={};this.storageAvailable=!!storage;
-  this.liveFeed={state:'off',received:0,dropped:0};this.telemetry={state:'off'};this.serial=0;this.load();
+  this.serial=0;this.load();
  }
  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn)}
  emit(reason){for(const fn of this.listeners)fn(reason)}
@@ -93,7 +128,26 @@ export class Operations {
  }
  // 실제 연결(link)이 있으면 예시 모드가 아니어도 조작이 열린다. 링크가 없을
  // 때의 차단 사유는 그대로다 — **붙일 서버가 없는데 열어 두지 않는다.**
- get live(){return !this.demo&&!!this.link}
+ get live(){return !this.demo&&this.connected}
+ get connected(){return ROBOTS.some(id=>this.slots[id].link)}
+ slot(id=this.selected){return this.slots[id]??null}
+ // 명령은 **지금 고른 로봇**의 링크로만 나간다 — 비상정지도 마찬가지다 (선택 로봇 정지).
+ get link(){return this.slot()?.link??null}
+ set link(value){this.slots[ROBOTS[0]].link=value??null}
+ // ⚠️ **실제 연결에서는 링크가 붙은 자리만 고를 수 있다.** 관제 서버 한 대짜리면 MD-01 하나다 —
+ // 예시 로봇 MD-02·03 을 고를 수 있게 두면 "MD-02 제어권" 으로 잡은 조작이 실제로는 그 한 대를 움직인다.
+ get robots(){return this.live?ROBOTS.filter(id=>this.slots[id].link):ROBOTS}
+ // 화면에 쓰는 이름. 실제 연결이면 서버가 알려 준 개체 프로파일 이름을 쓴다 — 받기 전에는 내부 id.
+ robotName(id){const slot=this.slots[id];return this.live&&slot?.link?(slot.device||cleanText(slot.telemetry?.snapshot?.deviceId,80)||id):id}
+ // 텔레메트리 개체 ID(MAC)가 설정에 없는 자리 — 실물이 아직 없다 (config/devices/<id>.yaml).
+ isRegistered(id){return this.slots[id]?.registered!==false}
+ get estop(){return this.live?!!this.slot()?.estop:this.demoEstop}
+ set estop(value){if(!this.live){this.demoEstop=!!value;return}const slot=this.slot();if(slot)slot.estop=!!value}
+ get telemetry(){return this.slot()?.telemetry??{state:'off'}}
+ telemetryOf(id){return this.slots[id]?.telemetry??{state:'off'}}
+ get lastEscalation(){return this.slot()?.lastEscalation??null}
+ get liveFeed(){return (this.slot()??this.slots[ROBOTS[0]]).liveFeed}
+ get policy(){return this.slot()?.policy??this.slots[ROBOTS[0]].policy}
  get blocked(){return (!this.demo&&!this.link)||this.stale||this.estop||this.role!=='operator'}
  requireControlContext(){if(this.blocked)throw new Error(!this.demo&&!this.link?'실제 제어는 연결되지 않았습니다.':this.stale?'예시 수신 만료 상태입니다.':this.estop?'예시 정지 잠금을 먼저 해제하세요.':'시연 역할을 운영자로 선택하세요.')}
  // 전송 실패를 삼키지 않는다. 화면이 "보냈다" 고 말하면 안 되는 경우다.
@@ -117,10 +171,10 @@ export class Operations {
   if(this.mission.status==='running'){this.setMissionStatus('paused');this.log('임무 일시정지',reason);this.emit('mission')}
  }
  setMissionStatus(status){this.mission.status=status;const session=this.sessions.find(s=>s.id===this.mission.id);if(session)session.status=status}
- setDemo(value){this.suspend('예시 모드 변경');this.demo=!!value;this.log('모드 변경',this.demo?'예시':'실제 데이터 대기');this.emit('mode')}
+ setDemo(value){this.suspend('예시 모드 변경');this.demo=!!value;if(!this.robots.includes(this.selected))this.selected=this.robots[0];this.log('모드 변경',this.demo?'예시':'실제 데이터 대기');this.emit('mode')}
  setStale(value){this.stale=!!value;if(value)this.suspend('예시 수신 만료');this.log('예시 연결 상태',value?'만료':'복구 · 자동 재개 안 함');this.emit('mode')}
  setRole(role){if(!['operator','reviewer','technician'].includes(role))throw new Error('알 수 없는 시연 역할입니다.');this.suspend('시연 역할 변경');this.role=role;this.log('시연 역할',role+' · 실제 인증 아님');this.emit('mode')}
- selectRobot(id){if(!ROBOTS.includes(id))throw new Error('알 수 없는 로봇입니다.');if(this.selected!==id)this.release('관측 장치 전환');this.selected=id;this.log('로봇 시점 선택',id);this.emit('robot')}
+ selectRobot(id){if(!this.robots.includes(id))throw new Error('알 수 없는 로봇입니다.');if(this.selected!==id)this.release('관측 장치 전환');this.selected=id;this.log('로봇 시점 선택',id);this.emit('robot')}
  claim(){
   this.requireControlContext();this.suspend('수동 조작 전환');this.control=this.selected;
   if(this.live){
@@ -134,7 +188,7 @@ export class Operations {
  }
  move(command){
   if(command==='STOP'){this.stop();return}
-  this.requireControlContext();if(this.control!==this.selected)throw new Error('먼저 예시 제어권을 요청하세요.');
+  this.requireControlContext();if(this.control!==this.selected)throw new Error(this.live?'먼저 수동 제어권을 요청하세요.':'먼저 예시 제어권을 요청하세요.');
   if(!ALLOWED_COMMANDS.includes(command))throw new Error('허용되지 않은 방향입니다.');
   this.command=command;
   if(this.live){
@@ -164,7 +218,7 @@ export class Operations {
   const live=this.live;
   if(live)this.link.estop().catch(error=>this.noteLinkError('비상정지',error));
   this.suspend('긴급 정지');this.estop=true;
-  this.log(live?'긴급 정지':'예시 정지 잠금',live?'서버 ESTOP 전송':'실물 명령 전송 없음 / ACK 없음',live?'LIVE_LINK':undefined);
+  this.log(live?'긴급 정지':'예시 정지 잠금',live?'서버 ESTOP 전송 · '+this.robotName(this.selected):'실물 명령 전송 없음 / ACK 없음',live?'LIVE_LINK':undefined);
   this.emit('mode');
  }
  clearPreviewStop(){this.estop=false;this.log('예시 잠금 초기화','실물 안전 잠금 해제 아님 · 자동 재개 안 함');this.emit('mode')}
@@ -196,6 +250,28 @@ export class Operations {
  // 경보(L3) 확인. ⚠️ **안전 해제와 합치지 않는다** — 확인하는 대상이 다르다 (ADR-26).
  requestAlarmConfirm(){return this.requestDevice('경보 확인',()=>this.link.confirmAlarm())}
  requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
+ // 본체 자세 (B6). 서버가 MANUAL 에서만 받는다 — 여기서는 제어권과 정지 상태를 먼저 본다.
+ requestPose(preset){
+  if(!['up','level','down'].includes(preset))throw new Error('허용되지 않은 자세입니다.');
+  if(!this.control)throw new Error('먼저 수동 제어권을 요청해 주세요.');
+  if(this.command!=='STOP')throw new Error('이동을 멈춘 뒤 자세를 바꿔 주세요.');
+  return this.requestDevice('자세 '+{up:'앞쪽 들기',level:'기준 자세',down:'앞쪽 낮추기'}[preset],()=>this.link.pose(preset));
+ }
+ // 경보 띠 (B1). 단계는 10Hz 상태 전문에서, 사유·경고 문장은 같은 단계의 마지막 단계 사건에서 읽는다.
+ // ⚠️ 단계가 다르면 사유를 붙이지 않는다 — 지난 L2 의 사유를 지금 L3 에 붙이면 거짓이다.
+ alarmOf(id){
+  const slot=this.slots[id];
+  if(!this.live||!slot?.link)return null;
+  const snapshot=slot.telemetry?.snapshot,level=snapshot?.escalation;
+  if(!['L2','L3','F'].includes(level))return null;
+  const last=slot.lastEscalation?.escalation===level?slot.lastEscalation:null;
+  return {robot:id,name:this.robotName(id),level,state:snapshot.state??'',stale:!!(snapshot.stale||snapshot.runtimeStale),reason:last?reasonName(last.reason):null,warning:last?.warning||null};
+ }
+ get alarm(){return this.alarmOf(this.selected)}
+ // 경보 띠는 **모든 로봇**을 본다 — MD-01 을 보고 있는 동안 MD-02 가 L3 가 돼도 띠가 떠야 한다. 심한 것부터.
+ get alarms(){const rank={F:3,L3:2,L2:1};return this.robots.map(id=>this.alarmOf(id)).filter(Boolean).sort((a,b)=>rank[b.level]-rank[a.level])}
+ // 형식이 다르면 받지 않는다 — 엉뚱한 응답을 «서버 설정값» 이라고 적으면 안 된다.
+ setPolicy(policy,robot=ROBOTS[0]){this.slots[robot].policy=['l1_to_l2_hold_s','auth_timeout_s','auth_max_attempts','target_lost_timeout_s'].every(key=>Number.isInteger(policy?.[key]))?policy:null;this.emit('policy')}
  // 전환은 IDLE·MANUAL 에서만 받는다 (FR-11.3). 거절 사유는 requestDevice 가 그대로 남긴다.
  requestMode(name){return this.requestDevice('운용 모드 '+name,()=>this.link.mode(name))}
  queryEvents({type='all',status='all',robot='all',query=''}={}){
@@ -215,7 +291,8 @@ export class Operations {
   const existing=this.events.find(e=>e.importKey===key);
   if(existing){if(snapshot&&!existing.snapshot)existing.snapshot=snapshot;this.emit('import');return existing}
   if(this.events.filter(e=>e.source==='IMPORTED_BLACKBOX').length>=50)throw new Error('이번 세션에는 최대 50건까지 가져올 수 있습니다.');
-  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:meta.event,category:'SYSTEM',robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,mode:cleanText(meta.mode,40)||null,auth:'필드 미제공',ppe:'필드 미제공',detail:'Git 블랙박스 형식의 저장 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
+  const evidence=describeEvidence(meta.event,meta);
+  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:meta.event,category:eventCategory(meta.event),robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,mode:cleanText(meta.mode,40)||null,auth:meta.judgement?evidence.auth:'필드 미제공',ppe:meta.judgement?evidence.ppe:'필드 미제공',evidence:evidence.rows,detail:'Git 블랙박스 형식의 저장 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
   this.events.unshift(event);this.log('블랙박스 파일 가져오기',event.id,'LOCAL_IMPORTED_REVIEW');this.emit('import');return event;
  }
  // ── 실시간 사건 피드 (WBS 4.6.4) ────────────────────────────────
@@ -223,23 +300,30 @@ export class Operations {
  // ⚠️ **사건 전문에는 파일명만 온다** — JPEG 를 실으면 사건 하나가 텔레메트리를
  // 밀어낸다(4.4.3). 그림은 서버의 `/events/<기록>/snapshot.jpg` 에서 받는다.
  // `snapshotBase` 가 없으면(서버 없이 연 화면) 예전처럼 그림 없이 목록만 남는다.
- ingestLiveEvent(payload,snapshotBase=null){
-  const seq=payload.seq,id='LIVE-'+seq;
+ // `robot` 은 사건을 보낸 서버의 자리다. 여러 대면 순번이 서버마다 따로라 id 에 자리를 넣는다.
+ ingestLiveEvent(payload,snapshotBase=null,robot=ROBOTS[0]){
+  const slot=this.slots[robot]??this.slots[ROBOTS[0]];
+  const seq=payload.seq,id='LIVE-'+(slot.device?robot+'-':'')+seq;
   if(this.events.some(e=>e.id===id))return this.events.find(e=>e.id===id);
   // 실시간 사건은 세션 메모리에만 둔다 — 원본은 블랙박스가 디스크에 갖고 있다.
   if(this.events.filter(e=>e.source==='LIVE_FEED').length>=100)this.events.splice(this.events.findLastIndex(e=>e.source==='LIVE_FEED'),1);
-  const device=cleanText(payload.telemetry?.device_id,80)||'장치 미상';
-  const person=(payload.tracks||[]).length;
-  const event={id,seq,source:'LIVE_FEED',title:cleanText(payload.event,160),category:payload.event==='person_found'?'AUTH':'SYSTEM',robot:device,zone:'구역 미수신',event:cleanText(payload.event,160),state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:'미판정',ppe:'별도 판정',detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':'')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':'스냅샷 파일이 없는 사건입니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
+  // 단계·인증 사건은 사진이 없어 텔레메트리를 싣지 않는다 — 이 서버가 알려 준 개체 이름을 쓴다.
+  const name=cleanText(payload.event,160),device=slot.device||cleanText(payload.telemetry?.device_id,80)||cleanText(slot.telemetry?.snapshot?.deviceId,80)||'장치 미상';
+  const person=(payload.tracks||[]).length,evidence=describeEvidence(name,payload);
+  const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):EVENT_TITLES[name];
+  const photo=payload.entry!=null||payload.snapshot!=null;
+  const event={id,seq,source:'LIVE_FEED',title:label?label+' · '+name:name,category:eventCategory(name),robot:device,zone:'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
+  // 최근 단계 사건 — 경보 띠가 «왜 이 단계인가» 와 경고 문장을 보인다 (B1). 백로그는 순번이 낮은 것부터 온다.
+  if(name==='escalation_changed'&&(!slot.lastEscalation||seq>slot.lastEscalation.seq))slot.lastEscalation={seq,escalation:event.escalation,reason:cleanText(payload.reason,80),warning:cleanText(payload.warning,300),ts_ms:payload.ts_ms};
   this.events.unshift(event);this.log('실시간 사건 수신',id+' · '+event.title,'LIVE_EVENT_FEED');this.emit('import');return event;
  }
  noteEventGap(dropped){
   this.log('사건 수신 공백',dropped+'건을 버퍼에서 놓쳤습니다 · 서버가 조용히 넘기지 않고 알려준 것','LIVE_EVENT_FEED');this.emit('import');
  }
- setEventFeed(status){const prev=this.liveFeed;this.liveFeed=status;if(prev.state!==status.state)this.emit('mode')}
+ setEventFeed(status,robot=ROBOTS[0]){const slot=this.slots[robot],prev=slot.liveFeed;slot.liveFeed=status;if(prev.state!==status.state)this.emit('mode')}
  // 로봇 상태 게이지 (WBS 4.6.2). 초당 10번 오므로 전체 화면을 다시 그리는 'mode' 가 아니라 'telemetry' 로 알린다.
- setTelemetry(view){this.telemetry=view;this.emit('telemetry')}
+ setTelemetry(view,robot=ROBOTS[0]){this.slots[robot].telemetry=view;this.emit('telemetry')}
  savePolicy(id,{helmet,vest,note}){
   if(!/^[a-z0-9-]{1,80}$/.test(id)||typeof helmet!=='boolean'||typeof vest!=='boolean')throw new Error('정책 입력을 확인해 주세요.');
   this.policies[id]={helmet,vest,note:cleanText(note,500)};this.save();

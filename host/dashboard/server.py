@@ -323,6 +323,7 @@ def create_app(
     static_dir: Path | None = None,
     vision: Callable[[], Any] | None = None,
     event_snapshot: Callable[[str], bytes | None] | None = None,
+    policy: dict[str, Any] | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -373,6 +374,16 @@ def create_app(
     @app.get("/api/telemetry")
     async def telemetry():
         return state.snapshot()
+
+    @app.get("/api/policy")
+    async def policy_values():
+        """설정 화면이 보여 줄 대응 단계·인증 값 (B7). 기동 시 읽은 config 그대로다.
+
+        없으면 404 — 화면은 값을 지어내지 않고 «설정값 미수신» 으로 적는다.
+        """
+        if policy is None:
+            return JSONResponse({"error": "no_policy"}, status_code=404)
+        return policy
 
     @app.get("/api/events")
     async def events(since: int = 0):
@@ -588,6 +599,18 @@ def create_app(
                 return JSONResponse({"error": "fields"}, status_code=400)
             return commands.drive(step, angle).as_dict()
 
+        @app.post("/api/command/pose")
+        async def pose(request: Request):
+            """`{"preset": "up"|"level"|"down"}` — `MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            preset = body.get("preset")
+            if not isinstance(preset, str):
+                return JSONResponse({"error": "preset"}, status_code=400)
+            return commands.pose(preset).as_dict()
+
     @app.websocket("/ws/telemetry")
     async def websocket_telemetry(websocket: WebSocket):
         await _serve_subscriber(websocket, hub, _send_updates, "Telemetry channel is read-only")
@@ -612,6 +635,68 @@ def create_app(
     return app
 
 
+#: 플릿 화면에서 로봇 하나의 API 가 붙는 경로. `/robots/<id>/api/...` · `/robots/<id>/ws/...`
+FLEET_PREFIX = "/robots"
+
+
+def create_fleet_app(
+    robots: dict[str, FastAPI],
+    *,
+    registered: dict[str, bool] | None = None,
+    static_dir: Path | None = DEFAULT_STATIC_DIR,
+) -> FastAPI:
+    """여러 대를 한 서버·한 출처로 (`host.fleet`).
+
+    로봇마다 `create_app` 로 만든 앱을 `/robots/<id>` 에 붙인다. 명령·WS·출처 검사는
+    한 대짜리와 **같은 코드**다 — 여러 대를 위해 명령 경로를 새로 쓰지 않는다.
+
+    ⚠️ **붙인 앱의 lifespan 은 Starlette 가 돌려 주지 않는다.** 방송 루프가 거기서
+    시작하므로, 그대로 두면 WS 가 연결은 되고 아무것도 오지 않는다. 여기서 직접 연다.
+    """
+    marks = registered or {}
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        async with contextlib.AsyncExitStack() as stack:
+            for sub in robots.values():
+                await stack.enter_async_context(sub.router.lifespan_context(sub))
+            yield
+
+    app = FastAPI(title="MechDog fleet", lifespan=lifespan)
+
+    @app.get("/health")
+    async def health():
+        # `service` 가 같아야 화면이 이 출처를 API 로 인정한다 (`app.js` resolveApiBase).
+        return {"service": "telemetry", "fleet": list(robots), "modes": list(available_modes())}
+
+    @app.get("/api/fleet")
+    async def fleet():
+        return {
+            "robots": [
+                {
+                    "id": robot_id,
+                    "base": f"{FLEET_PREFIX}/{robot_id}",
+                    "registered": marks.get(robot_id, True),
+                }
+                for robot_id in robots
+            ]
+        }
+
+    for robot_id, sub in robots.items():
+        app.mount(f"{FLEET_PREFIX}/{robot_id}", sub, name=f"robot-{robot_id}")
+
+    @app.websocket("/{path:path}")
+    async def unknown_ws(websocket: WebSocket):
+        # ⚠️ `/` 의 정적 마운트는 http 범위만 받는다 — 매칭되지 않은 WS(예: 예전
+        # 한 대짜리 화면의 /ws/telemetry 재연결)가 거기로 새면 assertion 으로 터진다.
+        # 정적 마운트보다 **먼저** 등록해야 라우터가 WS 를 여기서 잡는다.
+        await websocket.close(code=1008)
+
+    if static_dir is not None and static_dir.is_dir():
+        app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
+    return app
+
+
 @contextmanager
 def running_server(
     state: DashboardState,
@@ -621,8 +706,25 @@ def running_server(
     static_dir: Path | None = DEFAULT_STATIC_DIR,
     vision: Callable[[], Any] | None = None,
     event_snapshot: Callable[[str], bytes | None] | None = None,
+    policy: dict[str, Any] | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
+    app = create_app(
+        state,
+        commands=commands,
+        camera=camera,
+        static_dir=static_dir,
+        vision=vision,
+        event_snapshot=event_snapshot,
+        policy=policy,
+    )
+    with serving(app, port) as server:
+        yield server
+
+
+@contextmanager
+def serving(app: FastAPI, port: int) -> Iterator[uvicorn.Server]:
+    """앱 하나를 별도 스레드에서 띄운다. 로컬 인터페이스만 사용한다."""
     ready = threading.Event()
     failures: list[BaseException] = []
 
@@ -633,14 +735,7 @@ def running_server(
 
     server = LocalServer(
         uvicorn.Config(
-            create_app(
-                state,
-                commands=commands,
-                camera=camera,
-                static_dir=static_dir,
-                vision=vision,
-                event_snapshot=event_snapshot,
-            ),
+            app,
             host="127.0.0.1",
             port=port,
             log_level="warning",
@@ -666,7 +761,8 @@ def running_server(
         thread = threading.Thread(target=run, name="dashboard", daemon=True)
         thread.start()
         try:
-            if not ready.wait(5) or not server.started:
+            # 첫 기동은 import·모델 준비로 5초를 넘긴 적이 있다 (2026-09-23 확인 서버).
+            if not ready.wait(15) or not server.started:
                 raise RuntimeError("Dashboard startup failed") from (
                     failures[0] if failures else None
                 )
