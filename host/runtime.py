@@ -323,6 +323,7 @@ class Runtime:
         self._track_turn_small_deg = float(fsm["track_turn_small_deg"])
         self._track_turn_large_deg = float(fsm["track_turn_large_deg"])
         self._dist_cm: float | None = None
+        self._track_centered = False
         # 경비에서 고개를 들었는가 (ADR-39). 든 뒤로는 움직이지 않고, L1 은 여기서 시작한다.
         self._engaged = False
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
@@ -805,6 +806,7 @@ class Runtime:
             # 정지한 채 갇힌다 — 2026-09-18 실기에서 편차 84px 대상을 앞에 두고
             # 33초를 서 있었다.
             self._edge.forget("track_centered")
+            self._track_centered = False
             self._last_track_ms = None
             return
         if self._engaged:
@@ -866,7 +868,12 @@ class Runtime:
             step, angle = 0.0, self._spin_angle(deviation)
         else:
             step, angle = command.step, command.angle
-        centered = self._track_stop_reached and abs(deviation) <= self._track_deadzone_px
+        # ⚠️ **한 번 중앙에 들면 분기점(120px)까지는 붙든다** — 히스테리시스. 웅크린 사람은
+        # 박스 중심이 프레임마다 ±30px 떨려 데드존(40px) 경계를 넘나든다. 2026-09-23 실기에서
+        # 2.3초 동안 `ALERT ⇄ TRACK` 14회를 오가며 자세 대기(1초)가 매번 처음부터 다시 돌았다.
+        limit = self._track_turn_split_px if self._track_centered else self._track_deadzone_px
+        centered = self._track_stop_reached and abs(deviation) <= limit
+        self._track_centered = centered
         self._summary.observe("track_angle_deg", abs(angle))
         self._summary.observe("track_step_mm", step)
         if self._edge.changed("track_centered", centered):

@@ -1210,6 +1210,25 @@ def test_spin_at_stop_line_uses_two_steps(
     assert (move["step"], move["angle"]) == (0, angles[expected])
 
 
+def test_centered_target_is_held_through_detection_jitter(config: dict, clock: FakeClock) -> None:
+    """정지선에서 중앙에 든 뒤에는 **분기점까지** 붙든다 (히스테리시스 · 2026-09-23 실기).
+
+    웅크린 사람은 박스 중심이 ±30px 떨려 데드존 경계를 넘나들었고, `ALERT ⇄ TRACK` 이
+    2.3초에 14회 오가며 고개 들기가 계속 미뤄졌다.
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
+    assert runtime.behavior.state == "ALERT"
+    _sighting(runtime, vision, seq=3, at_ms=300, box=(360.0, 20.0, 400.0, 460.0))  # +60px
+    assert runtime.behavior.state == "ALERT", "데드존 밖이어도 분기점 안이면 떨림으로 본다"
+    _sighting(runtime, vision, seq=4, at_ms=400, box=(440.0, 20.0, 480.0, 460.0))  # +140px
+    assert runtime.behavior.state == "TRACK", "분기점을 넘으면 다시 돈다"
+    _sighting(runtime, vision, seq=5, at_ms=500, box=(360.0, 20.0, 400.0, 460.0))  # +60px
+    assert runtime.behavior.state == "TRACK", "다시 데드존에 들어야 중앙이다"
+
+
 def test_far_person_beyond_split_spins_before_walking(config: dict, clock: FakeClock) -> None:
     """정지선 전이라도 편차가 크면 **먼저 제자리에서 돈다** — 호로 돌면 다가가며 벌어진다."""
     runtime, vision = _tracking_runtime(config, clock)
