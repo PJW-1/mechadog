@@ -731,13 +731,15 @@ class XiaoCaptureTests(unittest.TestCase):
         self.assertFalse(speech)
         self.assertIsNone(at_ms)
 
-    def test_wake_does_not_cut_speech_already_started(self):
-        mic = FakeMic([_frame(3000)] * 10 + [_frame(0)] * 60)
-        pcm, speech, _ = vp.capture_xiao(
-            mic, timeout_s=5.0, guard_s=0, interrupt=lambda: len(mic.frames) < 60
+    def test_wake_cuts_even_after_speech_started(self):
+        # 실기에서 주변 소음이 매 턴 말소리로 잡혀(captured 14.7s) 「말 시작 전에만 끊기」 가 소용없었다.
+        mic = FakeMic([_frame(3000)] * 200)
+        t0 = time.monotonic()
+        _, speech, _ = vp.capture_xiao(
+            mic, timeout_s=10.0, guard_s=0, interrupt=lambda: len(mic.frames) < 150
         )
-        self.assertTrue(speech)
-        self.assertEqual(len(pcm), 70 * 640)  # 말끝 무음까지 다 받는다
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertFalse(speech)  # 받던 말은 버린다 — 곧 로봇이 말한다
 
     def test_dead_link_raises_timeout_like_serial_path(self):
         with self.assertRaises(TimeoutError):
@@ -911,6 +913,7 @@ class RobotEscalationWarningTests(unittest.TestCase):
         vp.robotlink.fetch_events = lambda _base, since: (events, 0, since + len(events))
         try:
             hub._robot_next_poll = 0
+            hub._robot_synced = True
             hub.poll_robot_events("http://127.0.0.1:8000")
         finally:
             vp.robotlink.fetch_events = original
@@ -932,15 +935,48 @@ class RobotEscalationWarningTests(unittest.TestCase):
         items = [item for _, _, item in hub.drain_say()]
         self.assertEqual(items[0], "사원증을 보여 주십시오.")  # 공지보다 앞이다
 
-    def test_level_change_and_auth_request_wake_the_listening_turn(self):
+    def test_wake_only_when_there_is_something_to_say(self):
         # 2026-09-24 실기: 말소리 대기 15초가 끝나야 폴링해서 L2 안내·L3 경고가 11초 늦었다.
-        for kind in ("escalation_changed", "auth_required"):
-            with self.subTest(kind=kind):
+        # 대기를 끊으면 받던 말을 버리므로, 곧 말할 것이 있을 때만 끊는다.
+        l3 = {
+            "event": "escalation_changed",
+            "escalation": "L3",
+            "warning": "경보가 발령되었습니다.",
+        }
+        cases = (
+            ("검출", {"event": "person_found"}, False, False),
+            ("문장 없는 단계", {"event": "escalation_changed", "escalation": "L1"}, False, False),
+            ("경고 문장", l3, False, True),
+            ("안내 전 인증 요구", {"event": "auth_required"}, False, True),
+            (
+                "안내 뒤 인증 요구",
+                {"event": "auth_required"},
+                True,
+                False,
+            ),  # 암구호를 말하는 중일 수 있다
+        )
+        for name, ev, prompted, wakes in cases:
+            with self.subTest(name):
                 hub = vp.Hub("test")
-                self._poll(hub, [{"event": "person_found"}])
-                self.assertFalse(hub.wake.is_set())  # 검출마다 턴을 끊으면 말을 못 받는다
-                self._poll(hub, [{"event": kind, "state": "AUTH_WAIT", "escalation": "L2"}])
-                self.assertTrue(hub.wake.is_set())
+                hub.auth_prompted = prompted
+                self._poll(hub, [ev])
+                self.assertEqual(hub.wake.is_set(), wakes)
+
+    def test_first_poll_after_start_does_not_replay_old_warnings(self):
+        # 2026-09-24: 음성을 재시작하자 7분 전 L3 경고를 다시 읽었다 — 커서 0 이 버퍼 전체를 받는다.
+        hub = vp.Hub("test")
+        old = [
+            {"event": "escalation_changed", "escalation": "L3", "warning": "경보가 발령되었습니다."}
+        ]
+        original = vp.robotlink.fetch_events
+        vp.robotlink.fetch_events = lambda _base, since: (old if since == 0 else [], 0, 1)
+        try:
+            hub.poll_robot_events("http://127.0.0.1:8000")
+        finally:
+            vp.robotlink.fetch_events = original
+        self.assertEqual(hub.robot_cursor, 1)
+        self.assertEqual(hub.drain_say(), [])
+        self.assertFalse(hub.wake.is_set())
 
     def test_other_events_are_journaled_but_not_spoken(self):
         """⚠️ 사람 확정마다 말하면 순찰이 방송이 된다."""

@@ -100,8 +100,10 @@ class Hub:
         self._journal = journal  # EventJournal | None — 날짜별 JSONL 영속 기록
         self.robot_cursor = 0  # 관제 /api/events 폴링 커서
         self._robot_next_poll = 0.0
-        # 단계가 오르거나 인증을 요구하면 선다 — 말소리 대기를 끊고 바로 안내·경고한다.
+        # 곧 말할 것(경고·인증 안내)이 생기면 선다 — 말소리 대기를 끊고 바로 말한다.
         self.wake = threading.Event()
+        # 첫 폴링은 커서만 맞춘다. 커서 0 은 버퍼 전체라 재시작 때 지난 경고를 다시 읽었다.
+        self._robot_synced = False
         self.auth_prompted = False
         self.mic = None  # XiaoMic | None — /status 에 끊김 계수를 싣는다 (4.7.19)
 
@@ -156,6 +158,10 @@ class Hub:
         if res is None:
             return
         events, dropped, latest = res
+        if not self._robot_synced:
+            self._robot_synced = True
+            self.robot_cursor = latest
+            return
         if dropped:
             # /ws/events 의 event_gap 과 같은 의미 — 조용히 넘기면 기록에 빈틈이 생긴다
             self.event("robot_evt", f"event_gap (dropped={dropped})")
@@ -170,7 +176,10 @@ class Hub:
             warning = e.get("warning")
             if kind == "escalation_changed" and warning:
                 self.enqueue_say(str(warning), urgent=True)
-            if kind in ("escalation_changed", "auth_required"):
+                self.wake.set()
+            # 안내 뒤의 인증 요구로는 끊지 않는다 — 방문객이 암구호를 말하는 중일 수 있다.
+            # 안내 전 발화는 어차피 시도로 세지 않는다(`auth_prompted`).
+            if kind == "auth_required" and not self.auth_prompted:
                 self.wake.set()
         self.robot_cursor = latest
 
@@ -646,8 +655,8 @@ def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S, inte
     The stream is always on, so stale audio is flushed first. If the link
     stalls after speech started, trailing silence is judged by wall clock so
     the turn still ends instead of waiting out `timeout_s`. `interrupt()` true
-    before speech starts ends the wait early (a warning is queued); once speech
-    has started the turn runs to its end.
+    ends the turn at once and drops what was heard — the robot is about to speak.
+    Speech is not spared: on 2026-09-24 ambient noise read as speech every turn.
     """
     mic.flush()
     detector = _Vad(on_speech)
@@ -655,7 +664,7 @@ def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S, inte
     skip = int(guard_s * 1000) // 20
     deadline = time.monotonic() + timeout_s
     while True:
-        if interrupt is not None and not detector.speech_seen and interrupt():
+        if interrupt is not None and interrupt():
             return bytes(pcm), False, None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
