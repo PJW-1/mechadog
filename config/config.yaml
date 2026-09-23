@@ -454,6 +454,9 @@ escalation:
     # **묻기 전에 게이트만 먼저 열리는 창**이 생긴다.
     l2_warning: null            # 음성 `Hub.auth_prompt` 가 말한다
     l3_warning: "경보가 발령되었습니다. 관리자에게 통보되었습니다."
+    # L3 원인별 문장 — 키는 `{원인 사건 이름 소문자}_warning`. 없으면 `l3_warning` 을 읽는다.
+    # ⚠️ TF 카드에 트랙이 하나 더 필요하다 (`4.7.21` 문장 표 · ADR-38).
+    person_down_warning: "작업자가 쓰러졌습니다. 관리자에게 통보되었습니다."
     auth_granted: null
     ppe_violation: null
 

@@ -187,7 +187,11 @@ class Escalation:
         if level is Level.L2:
             value = self._sound.get("l2_warning")
         elif level is Level.L3:
-            value = self._sound.get("l3_warning")
+            # 원인별 문장이 있으면 그것을 읽는다. TF 카드에서는 문장마다 트랙이 따로다
+            # (ADR-38 · `4.7.21`). 없으면 공통 문장으로 돌아간다.
+            value = self._sound.get(f"{self._reason.lower()}_warning") or self._sound.get(
+                "l3_warning"
+            )
         return None if value is None else str(value)
 
     # ── 올리기 ──────────────────────────────────────────────
