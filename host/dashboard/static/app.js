@@ -156,7 +156,7 @@ function syncMain(){
  // ⚠️ **머리글의 제어 문구도 사실대로 말한다.** 연결돼 있는데 "정지 명령 전달 불가" 라고 적혀 있으면
  // 운용자가 비상정지를 누르지 않거나, 반대로 화면 문구를 믿고 물리 정지 수단을 찾는다.
  {const note=document.querySelector('.safety-note>span:last-child');note.firstChild.nodeValue=operations.live?'실시간 제어 연결 ':'실시간 제어 잠김 ';note.querySelector('small').textContent=operations.live?'비상정지 즉시 전송':'미연결 · 정지 명령 전달 불가';}
- // 웹 시연 임무 칸은 실제 연결에서 숨긴다 — 실제 순찰과 헷갈린다. 실제 순찰은 순찰·제어 화면에 있다.
+ // 웹 시연 임무 칸은 실제 연결에서 숨긴다 — 실제 순찰과 헷갈린다. 실제 순찰은 제어 · 장치 화면에 있다.
  document.querySelector('.mission-summary').hidden=operations.live;
  syncTelemetry();
  $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'지도 없음 · 예시 공장 숨김';
@@ -250,11 +250,13 @@ function openPage(page){
  $('detail-panel').hidden=isDashboard;
  document.querySelector('.skip-link').href=isDashboard?'#scene-title':'#panel-title';
  document.querySelectorAll('[data-view]').forEach(button=>{const active=button.dataset.view===page;button.classList.toggle('active',active);if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')});
- document.querySelector('.nav-more').classList.toggle('active',!!document.querySelector('.nav-more [data-view].active'));
- document.querySelector('.nav-more').open=false;
+ const more=document.querySelector('.nav-more'),inMore=!!more.querySelector('[data-view].active');
+ // 닫힌 메뉴 안의 aria-current 는 보조기기에 보이지 않으므로 메뉴 제목에도 현재 위치를 싣는다.
+ more.classList.toggle('active',inMore);if(inMore)more.querySelector('summary').setAttribute('aria-current','true');else more.querySelector('summary').removeAttribute('aria-current');
+ more.open=false;
  document.querySelectorAll('[data-camera]').forEach(button=>{const active=button.dataset.camera===(page==='zones'?'top':page==='devices'?'robot':page==='dashboard'?'overview':'none');button.classList.toggle('selected',active);button.setAttribute('aria-pressed',String(active))});
  panels.render(page);
- if(page==='dashboard'){const fallback=document.querySelector('.robot-tab[data-robot="'+operations.selected+'"]');(lastOpener?.isConnected&&lastOpener.matches('button,a')&&!lastOpener.closest('[hidden]')?lastOpener:fallback||$('scene-title')).focus();lastOpener=null}
+ if(page==='dashboard'){const fallback=document.querySelector('.robot-tab[data-robot="'+operations.selected+'"]');(lastOpener?.isConnected&&lastOpener.matches('button,a')&&!lastOpener.closest('[hidden],details:not([open])')?lastOpener:fallback||$('scene-title')).focus();lastOpener=null}
  else{$('panel-title').focus();$('panel-content').scrollTop=0}
  syncMain();
  operations.log('화면 열기',page);
@@ -290,7 +292,7 @@ function setCameraDockState({expanded=false,collapsed=false}){
 $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$('camera-dock').classList.contains('expanded')}));
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
 // 카메라 창 자유 배치 — 헤더를 끌어 옮기고, 변·모서리를 끌어 크기를 바꾼다.
-// 통합 관제에서만 동작한다 — 순찰·제어에서는 칸이 문서 흐름(position:static)이라
+// 통합 관제에서만 동작한다 — 제어 · 장치에서는 칸이 문서 흐름(position:static)이라
 // 끌면 레이아웃이 깨진다. 크기는 너비만 바꾸고 높이는 --vision-aspect 가 맞춘다.
 {
  const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header');
@@ -352,7 +354,7 @@ function onEstopPressed(){
 $('estop').addEventListener('click',onEstopPressed);
 $('stop-preview').addEventListener('click',()=>operations.requestEstop());
 document.addEventListener('keydown',event=>{
- if(event.key==='Escape'){operations.stop('Escape');if(!$('stop-dialog').open)navigate('dashboard')}
+ if(event.key==='Escape'){operations.stop('Escape');document.querySelector('.nav-more').open=false;if(!$('stop-dialog').open)navigate('dashboard')}
  // 단축키도 버튼과 **같은 경로**를 탄다 (FR-4.4). 예전에는 여기서 모달만 열어
  // 연결돼 있어도 한 번 더 눌러야 나갔다 — 버튼 쪽 주석이 "모달을 한 단계 끼우면
  // 급할 때 그만큼 늦다" 고 적어 둔 바로 그 문제를 단축키만 안고 있었다.
