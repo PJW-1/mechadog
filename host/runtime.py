@@ -318,6 +318,8 @@ class Runtime:
         self._track_stop_reached = False
         fsm = config["fsm"]
         self._track_stop_dist_cm = float(fsm["track_stop_dist_cm"])
+        self._track_aim_timeout_ms = int(fsm["track_aim_timeout_ms"])
+        self._track_stop_ms = 0
         self._track_deadzone_px = float(fsm["track_deadzone_px"])
         self._track_turn_split_px = float(fsm["track_turn_split_px"])
         self._track_turn_small_deg = float(fsm["track_turn_small_deg"])
@@ -862,6 +864,7 @@ class Runtime:
             or (self._dist_cm is not None and 0 < self._dist_cm <= self._track_stop_dist_cm)
         ):
             self._track_stop_reached = True
+            self._track_stop_ms = now_ms
             # 박스와 초음파 중 무엇이 세웠는지 남긴다 — 1초 평균으로는 순간값이 가려진다.
             LOG.info("track_stop_reached", box_h_px=round(box_height, 1), dist_cm=self._dist_cm)
         deviation = command.deviation_px
@@ -874,7 +877,11 @@ class Runtime:
         # 박스 중심이 프레임마다 ±30px 떨려 데드존(40px) 경계를 넘나든다. 2026-09-23 실기에서
         # 2.3초 동안 `ALERT ⇄ TRACK` 14회를 오가며 자세 대기(1초)가 매번 처음부터 다시 돌았다.
         limit = self._track_turn_split_px if self._track_centered else self._track_deadzone_px
-        centered = self._track_stop_reached and abs(deviation) <= limit
+        centered = self._track_stop_reached and (
+            abs(deviation) <= limit
+            # 상한이 지나면 조준을 끝낸 것으로 본다 — 피하는 대상이 L1 을 영영 막지 못하게.
+            or now_ms - self._track_stop_ms >= self._track_aim_timeout_ms
+        )
         self._track_centered = centered
         self._summary.observe("track_angle_deg", abs(angle))
         self._summary.observe("track_step_mm", step)

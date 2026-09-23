@@ -1229,6 +1229,36 @@ def test_centered_target_is_held_through_detection_jitter(config: dict, clock: F
     assert runtime.behavior.state == "TRACK", "다시 데드존에 들어야 중앙이다"
 
 
+def test_aim_timeout_raises_the_head_for_a_dodging_target(config: dict, clock: FakeClock) -> None:
+    """정지선에서 대상이 분기점을 1초보다 짧게 계속 넘나들어도 **상한이 지나면 고개를 든다**.
+
+    `ALERT` 에 들 때마다 자세 대기가 다시 시작되므로, 상한이 없으면 L1 에 영영 닿지
+    않는다 — 경비 로봇 앞에서 계속 피하는 사람이 L0 에 머문다 (Devin 검수 F1).
+    """
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
+    assert runtime.behavior.state == "ALERT"
+    timeout_ms = config["fsm"]["track_aim_timeout_ms"]
+    seq, at_ms = 3, 200
+    while at_ms < 200 + timeout_ms - 200:
+        at_ms += 200
+        right = (at_ms // 400) % 2 == 1  # 400ms 마다 +140px ↔ 중앙
+        box = (440.0, 20.0, 480.0, 460.0) if right else (300.0, 20.0, 340.0, 460.0)
+        _sighting(runtime, vision, seq=seq, at_ms=at_ms, box=box)
+        seq += 1
+    assert runtime.escalation.level is Level.L0, "상한 전에는 피하는 동안 올리지 않는다"
+    hold_ms = config["posture"]["alert_hold_ms"]
+    while at_ms < 200 + timeout_ms + hold_ms + 400:
+        at_ms += 200
+        right = (at_ms // 400) % 2 == 1
+        box = (440.0, 20.0, 480.0, 460.0) if right else (300.0, 20.0, 340.0, 460.0)
+        _sighting(runtime, vision, seq=seq, at_ms=at_ms, box=box)
+        seq += 1
+    assert runtime.escalation.level is Level.L1
+
+
 def test_far_person_beyond_split_spins_before_walking(config: dict, clock: FakeClock) -> None:
     """정지선 전이라도 편차가 크면 **먼저 제자리에서 돈다** — 호로 돌면 다가가며 벌어진다."""
     runtime, vision = _tracking_runtime(config, clock)
