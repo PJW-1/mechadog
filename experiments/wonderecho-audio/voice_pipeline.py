@@ -507,12 +507,21 @@ class _Vad:
         """Score one frame; True once speech was heard and ~1 s of silence followed."""
         import numpy as np
 
-        samples = np.frombuffer(frame, dtype=np.int16)
-        rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+        samples = np.frombuffer(frame, dtype=np.int16).astype(np.float32)
+        if samples.size == 0:
+            return self.ended(now)
+        # 말소리 대역(100–4000 Hz) 에너지만 본다. 로봇에 올린 XIAO 의 소음은 대부분
+        # 이 대역 밖이다 — 100 Hz 아래 저주파 흔들림(서 있기 76 %)과 4–8 kHz 서보음
+        # (보행 47 %). 전 대역으로 재면 이것이 문턱을 끌어올려 1 m 발화를 놓쳤다
+        # (4.7.19 ⑤: 서 있기 문턱 411 vs 발화 최댓값 350–650). 파스발 정리로 rms 환산.
+        spec = np.fft.rfft(samples)
+        freqs = np.fft.rfftfreq(samples.size, 1.0 / 16000)
+        band = (freqs >= 100.0) & (freqs <= 4000.0)
+        rms = float(np.sqrt(2.0 * np.sum(np.abs(spec[band]) ** 2)) / samples.size)
         self.rms_history.append(rms)
         # 소음 바닥: 발화 전 초기 25프레임(500ms)의 중앙값
-        floor = np.median(self.rms_history[:25]) if len(self.rms_history) >= 25 else 200.0
-        if rms > max(floor * 3.0, 300.0):
+        floor = np.median(self.rms_history[:25]) if len(self.rms_history) >= 25 else 80.0
+        if rms > max(floor * 3.0, 120.0):
             if not self.speech_seen:
                 # **첫 프레임만 찍는다.** 발화가 시작된 시각이 필요하고
                 # 끝난 시각은 이미 호출자가 안다.
@@ -657,9 +666,12 @@ def listen_pcm(device, decoder, mic, timeout_s, on_speech=None):
 
 # Whisper 도메인 바이어스 — 웨이크워드/명령어 어휘를 알려 주면 "메카독"이
 # "내카도"·"레카독"으로 깨지는 오청을 크게 줄인다 (합성 음성 종단간 검증에서 확인).
+# 어휘 목록만 둔다. 소리가 흐리면 Whisper 가 힌트 문장을 그대로 내놓는데, 끝에
+# 문장("메카독 로봇 음성 명령.")을 두었을 때 1 m 녹음이 그 문장이나 "메카독,
+# 비상정지." 로 지어내졌다 (4.7.19 ⑤). 문장을 빼자 같은 녹음이 빈 결과가 됐다.
 STT_PROMPT = (
     "메카독, 비상정지, 긴급정지, 스톱, 수동모드, 수동제어, 자동모드, 수동해제, "
-    "순찰시작, 순찰정지, 순찰멈춰, 메카독 로봇 음성 명령."
+    "순찰시작, 순찰정지, 순찰멈춰."
 )
 
 
@@ -667,6 +679,12 @@ STT_PROMPT = (
 # no_speech_prob 가 함께 올라간다 (실측: "오늘도 시청해 주셔서 감사합니다." 0.753).
 # 값을 기록만 하면 소비처가 없는 표식이라, 여기서 세그먼트를 실제로 버린다.
 NO_SPEECH_PROB_MAX = 0.6
+
+# 힌트 지어내기 거름 — 지어낸 세그먼트는 no_speech_prob 가 낮아도(0.47–0.50)
+# 평균 로그 확률이 낮다. XIAO 실측: 지어낸 것 -0.79 ~ -0.91, 실제 명령 -0.11 ~ -0.48
+# (가장 낮은 것이 "멈춰."), 30 cm 자유 문장 -0.30 ~ -0.36. 명령을 놓치지 않는 쪽에
+# 여유를 둔다. DB 의 stt_prompt 가 옛 문구여도 이 거름은 그대로 걸린다.
+AVG_LOGPROB_MIN = -0.7
 
 
 def transcribe(model, pcm_bytes):
@@ -680,14 +698,29 @@ def transcribe(model, pcm_bytes):
         vad_filter=True,
         initial_prompt=voice_store.setting("stt_prompt", STT_PROMPT),
     )
-    kept, dropped = [], []
+    kept, dropped, guessed = [], [], []
     for seg in segments:
         prob = getattr(seg, "no_speech_prob", 0.0) or 0.0
-        (dropped if prob >= NO_SPEECH_PROB_MAX else kept).append(seg)
+        logprob = getattr(seg, "avg_logprob", 0.0) or 0.0
+        if prob >= NO_SPEECH_PROB_MAX:
+            dropped.append(seg)
+        elif logprob < AVG_LOGPROB_MIN:
+            guessed.append(seg)
+        else:
+            kept.append(seg)
+    # 버린 원문은 찍지 않는다 — 인증 대기 중에는 그 발화가 곧 암구호라서
+    # 호출부가 원문을 가린다. 여기서 찍으면 그 가림을 우회한다. 수치만 남긴다.
     if dropped:
         print(
-            f"[stt] 무음 환각 추정 세그먼트 {len(dropped)}개 버림: "
-            + repr(" ".join(s.text.strip() for s in dropped))
+            f"[stt] 무음 환각 추정 세그먼트 {len(dropped)}개 버림 (no_speech "
+            + ", ".join(f"{getattr(s, 'no_speech_prob', 0.0):.2f}" for s in dropped)
+            + ")"
+        )
+    if guessed:
+        print(
+            f"[stt] 낮은 확신 세그먼트 {len(guessed)}개 버림 (avg_logprob "
+            + ", ".join(f"{s.avg_logprob:.2f}" for s in guessed)
+            + ")"
         )
     return " ".join(seg.text.strip() for seg in kept).strip()
 

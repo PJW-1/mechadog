@@ -1,5 +1,8 @@
 """Scenario/robotlink/transport/phrases unit tests — no serial, mic, or GPU required."""
 
+import contextlib
+import io
+import math
 import struct
 import sys
 import time
@@ -395,6 +398,12 @@ class TranscribeTests(unittest.TestCase):
         self.assertIn("메카독", vp.STT_PROMPT)
         self.assertIn("비상정지", vp.STT_PROMPT)
 
+    def test_prompt_is_vocabulary_only(self):
+        # 흐린 소리를 Whisper 가 힌트 문장으로 채운다 — 명령어 아닌 문장을 두지 않는다.
+        self.assertNotIn("음성 명령", vp.STT_PROMPT)
+        for word in vp.STT_PROMPT.rstrip(".").split(","):
+            self.assertNotIn(" ", word.strip(), word)
+
 
 class HubScenarioQueueTests(unittest.TestCase):
     def test_auth_prompt_once_per_wait(self):
@@ -489,6 +498,33 @@ class HallucinationFilterTests(unittest.TestCase):
     def test_missing_no_speech_prob_attribute_is_kept(self):
         segs = [types.SimpleNamespace(text=" 메카독 ")]
         self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "메카독")
+
+    def test_low_confidence_prompt_echo_is_dropped(self):
+        # 4.7.19 ⑤ 실측: 흐린 1 m 녹음이 힌트 어휘로 지어내졌다 (no_speech 0.47, logprob -0.91).
+        segs = [
+            types.SimpleNamespace(
+                text=" 메카독, 비상정지. ", no_speech_prob=0.47, avg_logprob=-0.91
+            )
+        ]
+        self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "")
+
+    def test_dropped_text_is_not_printed(self):
+        # 인증 대기 중에는 발화가 곧 암구호다 — 버린 세그먼트도 원문을 찍지 않는다.
+        segs = [
+            types.SimpleNamespace(text=" 비밀문구가 ", no_speech_prob=0.9, avg_logprob=-0.2),
+            types.SimpleNamespace(text=" 새면 안 된다 ", no_speech_prob=0.1, avg_logprob=-0.9),
+        ]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "")
+        self.assertIn("버림", out.getvalue())
+        self.assertNotIn("비밀", out.getvalue())
+        self.assertNotIn("새면", out.getvalue())
+
+    def test_real_short_command_is_kept(self):
+        # 실제 명령 중 가장 낮았던 값 ("멈춰." -0.48)
+        segs = [types.SimpleNamespace(text=" 멈춰. ", no_speech_prob=0.02, avg_logprob=-0.48)]
+        self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "멈춰.")
 
 
 class PassphraseTests(unittest.TestCase):
@@ -663,8 +699,17 @@ class FakeMic:
         return None
 
 
-def _frame(level):
-    return struct.pack("<320h", *([level] * 320))
+def _frame(level, hz=1000):
+    """20 ms 사인파 — VAD 는 말소리 대역만 보므로 직류로는 말소리를 흉내 낼 수 없다."""
+    return struct.pack(
+        "<320h", *(round(level * math.sin(2 * math.pi * hz * i / 16000)) for i in range(320))
+    )
+
+
+def _mix(*frames):
+    return struct.pack(
+        "<320h", *(sum(xs) for xs in zip(*(struct.unpack("<320h", f) for f in frames), strict=True))
+    )
 
 
 class XiaoCaptureTests(unittest.TestCase):
@@ -695,6 +740,23 @@ class XiaoCaptureTests(unittest.TestCase):
         self.assertFalse(speech)
         self.assertIsNone(at_ms)
         self.assertEqual(len(pcm), 50 * 640)
+
+    def test_out_of_band_noise_is_not_speech(self):
+        # 로봇에 올린 XIAO 의 소음: 100 Hz 아래 흔들림과 4–8 kHz 서보음 (4.7.19 ⑤).
+        # 전 대역 rms 로는 문턱을 크게 넘는 세기다.
+        dc = struct.pack("<320h", *([3000] * 320))  # 직류 치우침 — 사인파로는 0 Hz 를 못 만든다
+        for name, loud in (("dc", dc), ("50Hz", _frame(3000, 50)), ("6kHz", _frame(3000, 6000))):
+            with self.subTest(noise=name):
+                frames = [_frame(0)] * 30 + [loud] * 20
+                _, speech, _ = vp.capture_xiao(FakeMic(frames), timeout_s=0.5, guard_s=0)
+                self.assertFalse(speech)
+
+    def test_quiet_speech_over_out_of_band_noise_is_heard(self):
+        # 1 m 발화처럼 약한 말소리도 대역 밖 소음 위에서 잡힌다.
+        noise = _mix(_frame(1500, 50), _frame(1500, 6000))
+        mic = FakeMic([noise] * 30 + [_mix(noise, _frame(400))] * 10 + [noise] * 60)
+        _, speech, _ = vp.capture_xiao(mic, timeout_s=5.0, guard_s=0)
+        self.assertTrue(speech)
 
     def test_dead_link_raises_timeout_like_serial_path(self):
         with self.assertRaises(TimeoutError):
