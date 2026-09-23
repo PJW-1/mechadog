@@ -16,6 +16,16 @@ import phrases as phr
 import robotlink
 import scenarios
 import voice_pipeline as vp
+import voice_rules
+
+
+def setUpModule():
+    # 개발자 PC 의 로컬 규칙 파일(voice_data.rules.json)이 아니라 코드 기본 규칙으로 시험한다.
+    patch = mock.patch.object(
+        voice_rules, "RULES_PATH", voice_rules.RULES_PATH.with_name("_absent_for_tests.rules.json")
+    )
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
 
 
 class FakeCtx:
@@ -388,22 +398,31 @@ class HubScenarioQueueTests(unittest.TestCase):
         self.assertEqual(hub.say_q.qsize(), 0)
         del FakeHandler
 
-    def test_typed_broadcast_endpoint_is_retired(self):
-        # 관제 화면의 임의 문장 방송(/say)은 폐기했다(ADR-38). 단계 경고는 같은
-        # 큐를 쓰지만 사건 폴링으로만 들어온다.
-        hub = vp.Hub("test")
+    def _post(self, hub, path, body):
         h = vp.make_handler(hub).__new__(vp.make_handler(hub))
-        body = '{"text": "아무 문장"}'.encode()
         sent = []
-        h.path, h.headers = "/say", {"Content-Length": str(len(body))}
-        h.rfile, h.wfile = __import__("io").BytesIO(body), __import__("io").BytesIO()
+        h.path, h.headers = path, {"Content-Length": str(len(body))}
+        h.rfile, h.wfile = io.BytesIO(body), io.BytesIO()
         h.request_version = "HTTP/1.1"
         h.send_response = sent.append
         h.send_header = lambda *_a: None
         h.end_headers = lambda: None
         h.do_POST()
-        self.assertEqual(sent[0], 404)
+        return sent[0]
+
+    def test_typed_broadcast_endpoint_is_retired(self):
+        # 관제 화면의 임의 문장 방송(/say)은 폐기했다(ADR-38). 단계 경고는 같은
+        # 큐를 쓰지만 사건 폴링으로만 들어온다.
+        hub = vp.Hub("test")
+        self.assertEqual(self._post(hub, "/say", '{"text": "아무 문장"}'.encode()), 404)
         self.assertEqual(hub.say_q.qsize(), 0)
+
+    def test_phrase_editing_endpoints_are_retired(self):
+        # 출력은 TF 카드에 미리 녹음한 문장뿐이라 문구 추가·삭제는 없다(4.7.22).
+        body = '{"category": "greeting", "text": "새 문구"}'.encode()
+        for path in ("/phrases", "/phrases/delete"):
+            with self.subTest(path=path):
+                self.assertEqual(self._post(vp.Hub("test"), path, body), 404)
 
 
 class HallucinationFilterTests(unittest.TestCase):
