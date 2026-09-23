@@ -8,7 +8,7 @@
 
 // 0~30. 현장 보정 손잡이다 — 빌드 플래그로 바꾼다.
 #ifndef MECHADOG_MP3_VOLUME
-#define MECHADOG_MP3_VOLUME 15
+#define MECHADOG_MP3_VOLUME 20
 #endif
 
 namespace mechadog {

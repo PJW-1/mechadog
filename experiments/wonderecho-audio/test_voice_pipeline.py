@@ -839,6 +839,11 @@ class XiaoStartupTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._main(["--xiao", "10.0.0.9", "--say", "안내"])
 
+    def test_say_refuses_robot_speaker_instead_of_ignoring_it(self):
+        # --say 는 임의 문장을 WonderEcho 로 흘린다. 카드 트랙으로는 못 트니 조용히 무시하지 않고 거절한다.
+        with self.assertRaises(SystemExit):
+            self._main(["--port", "COM3", "--robot-speaker", "--say", "안내"])
+
 
 class RouteQueryTests(unittest.TestCase):
     """우선순위 라우팅 — 구체 규칙이 넓은 단어 검사보다 먼저다."""

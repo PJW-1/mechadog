@@ -882,8 +882,10 @@ def main():
     args = ap.parse_args()
     global ROBOT_SPEAKER
     ROBOT_SPEAKER = args.robot_api if args.robot_speaker else None
+    if args.say and args.robot_speaker:
+        ap.error("--say 는 임의 문장이라 카드 트랙으로 못 튼다 — --robot-speaker 없이 --port 로")
     if args.say and not args.port:
-        ap.error("--say 는 --port 가 필요함 (말하기는 아직 WonderEcho 스피커뿐)")
+        ap.error("--say 는 --port 가 필요함 (임의 문장은 WonderEcho 스피커로만)")
     if not (args.port or args.xiao):
         ap.error("--port(WonderEcho) 나 --xiao(XIAO 마이크) 중 하나는 필요함")
     from transcribe_local import gpu_dll_directories

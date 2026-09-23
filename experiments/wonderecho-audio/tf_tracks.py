@@ -40,8 +40,11 @@ SPEAKERS = ("scenarios.py", "voice_pipeline.py", "robotlink.py")
 SAY_TEXT_ARG = {"say": 0, "_say": 2}  # ctx.say(text) · _say(device, piper, text, speed)
 SPOKEN_RETURNS = {"auth_prompt", "run_action"}  # 돌려준 문장을 호출자가 그대로 말한다
 
-# 44.1 kHz 모노 128k — 모듈이 못 틀면 여기부터 바꾼다(공장 곡 형식은 재지 않았다).
-FFMPEG_ARGS = ("-ar", "44100", "-ac", "1", "-b:a", "128k")
+# 44.1 kHz 모노 128k — 모듈이 그대로 튼다(2026-09-24 실기).
+# 음량 15 에서 원음(말소리 구간 -16.8 dB)이 작았다. 저음을 자르고 +9 dB 올려 리미터로 피크를 막으면
+# 공장 곡(-11 dB 안팎)과 비슷해진다. 여전히 작으면 여기 이득부터 조정한다.
+LOUDNESS_FILTER = "highpass=f=150,volume=9dB,alimiter=limit=0.9:attack=1:release=30:level=false"
+FFMPEG_ARGS = ("-af", LOUDNESS_FILTER, "-ar", "44100", "-ac", "1", "-b:a", "128k")
 
 
 def norm(text: str) -> str:
