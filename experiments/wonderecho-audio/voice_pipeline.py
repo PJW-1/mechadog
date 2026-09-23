@@ -708,15 +708,19 @@ def transcribe(model, pcm_bytes):
             guessed.append(seg)
         else:
             kept.append(seg)
+    # 버린 원문은 찍지 않는다 — 인증 대기 중에는 그 발화가 곧 암구호라서
+    # 호출부가 원문을 가린다. 여기서 찍으면 그 가림을 우회한다. 수치만 남긴다.
     if dropped:
         print(
-            f"[stt] 무음 환각 추정 세그먼트 {len(dropped)}개 버림: "
-            + repr(" ".join(s.text.strip() for s in dropped))
+            f"[stt] 무음 환각 추정 세그먼트 {len(dropped)}개 버림 (no_speech "
+            + ", ".join(f"{getattr(s, 'no_speech_prob', 0.0):.2f}" for s in dropped)
+            + ")"
         )
     if guessed:
         print(
-            f"[stt] 낮은 확신 세그먼트 {len(guessed)}개 버림: "
-            + repr(" ".join(s.text.strip() for s in guessed))
+            f"[stt] 낮은 확신 세그먼트 {len(guessed)}개 버림 (avg_logprob "
+            + ", ".join(f"{s.avg_logprob:.2f}" for s in guessed)
+            + ")"
         )
     return " ".join(seg.text.strip() for seg in kept).strip()
 

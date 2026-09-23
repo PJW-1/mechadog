@@ -1,5 +1,7 @@
 """Scenario/robotlink/transport/phrases unit tests — no serial, mic, or GPU required."""
 
+import contextlib
+import io
 import math
 import struct
 import sys
@@ -506,6 +508,19 @@ class HallucinationFilterTests(unittest.TestCase):
         ]
         self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "")
 
+    def test_dropped_text_is_not_printed(self):
+        # 인증 대기 중에는 발화가 곧 암구호다 — 버린 세그먼트도 원문을 찍지 않는다.
+        segs = [
+            types.SimpleNamespace(text=" 비밀문구가 ", no_speech_prob=0.9, avg_logprob=-0.2),
+            types.SimpleNamespace(text=" 새면 안 된다 ", no_speech_prob=0.1, avg_logprob=-0.9),
+        ]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(vp.transcribe(self._model(segs), b"\x00" * 4), "")
+        self.assertIn("버림", out.getvalue())
+        self.assertNotIn("비밀", out.getvalue())
+        self.assertNotIn("새면", out.getvalue())
+
     def test_real_short_command_is_kept(self):
         # 실제 명령 중 가장 낮았던 값 ("멈춰." -0.48)
         segs = [types.SimpleNamespace(text=" 멈춰. ", no_speech_prob=0.02, avg_logprob=-0.48)]
@@ -729,9 +744,10 @@ class XiaoCaptureTests(unittest.TestCase):
     def test_out_of_band_noise_is_not_speech(self):
         # 로봇에 올린 XIAO 의 소음: 100 Hz 아래 흔들림과 4–8 kHz 서보음 (4.7.19 ⑤).
         # 전 대역 rms 로는 문턱을 크게 넘는 세기다.
-        for hz in (0, 50, 6000):
-            with self.subTest(hz=hz):
-                frames = [_frame(0)] * 30 + [_frame(3000, hz)] * 20
+        dc = struct.pack("<320h", *([3000] * 320))  # 직류 치우침 — 사인파로는 0 Hz 를 못 만든다
+        for name, loud in (("dc", dc), ("50Hz", _frame(3000, 50)), ("6kHz", _frame(3000, 6000))):
+            with self.subTest(noise=name):
+                frames = [_frame(0)] * 30 + [loud] * 20
                 _, speech, _ = vp.capture_xiao(FakeMic(frames), timeout_s=0.5, guard_s=0)
                 self.assertFalse(speech)
 
