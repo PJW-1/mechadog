@@ -189,6 +189,15 @@ jobs:
               -o build/test_motion_safety_state
           ./build/test_motion_safety_state
 
+      - name: Host unit test (MP3 player sequencing)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_mp3_player.cpp \
+              -o build/test_mp3_player
+          ./build/test_mp3_player
+
       - name: Host unit test (onboard safety monitor)
         run: |
           mkdir -p build

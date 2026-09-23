@@ -144,7 +144,7 @@ struct Command {
   char color[kMaxColorLen] = {0};  // LED
   float blink_hz = 0.0F;           // LED
 
-  int32_t phrase_id = 0;  // SOUND
+  int32_t track = 0;  // SOUND: TF 카드 트랙 번호, 0 은 정지 (WBS 4.7.20)
 
   FsmState state = FsmState::Unknown;  // STATE
 

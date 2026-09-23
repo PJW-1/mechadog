@@ -3,7 +3,7 @@
 {"seq":101,"ts":1000,"type":"MOVE","step":60,"angle":0,"_expect":"discard"}
 {"seq":2,"ts":1002,"type":"MOVE","step":60,"angle":0,"_expect":"accept"}
 {"seq":3,"ts":1003,"type":"POSE","pitch":0,"roll":0,"height":0,"dur":-1,"_expect":"discard"}
-{"seq":4,"ts":1004,"type":"SOUND","phrase_id":1.5,"_expect":"discard"}
+{"seq":4,"ts":1004,"type":"SOUND","track":1.5,"_expect":"discard"}
 {"seq":5,"ts":1005,"type":"GAIT","lift_time":10.5,"ground_time":20,"height":20,"_expect":"discard"}
 {"seq":6,"ts":1006,"type":"LED","color":"red","blink_hz":-1,"_expect":"discard"}
 {"seq":7,"ts":1007,"type":"ESTOP","_expect":"accept"}

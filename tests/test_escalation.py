@@ -309,8 +309,8 @@ def test_a_fall_reads_its_own_sentence(esc: Escalation, cfg: dict) -> None:
 def test_the_warning_is_a_sentence_not_a_number(cfg: dict) -> None:
     """⚠️ **문구 ID 설계는 버렸다 (2026-09-23).**
 
-    로봇에 `SOUND {phrase_id}` 를 보내는 경로는 죽어 있었다 — 펌웨어가 파싱만
-    하고 처리하지 않는다. 설정에 정수가 남아 있으면 두 설계가 다시 갈라진다.
+    로봇에 `SOUND {phrase_id}` 를 보내는 경로는 죽어 있었다 — 그때 펌웨어는 파싱만
+    하고 처리하지 않았다. 설정에 정수가 남아 있으면 두 설계가 다시 갈라진다.
     """
     value = cfg["escalation"]["sound"]["l3_warning"]
     assert isinstance(value, str) and value.strip(), "l3_warning 이 비어 있다"
