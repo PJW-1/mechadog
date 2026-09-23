@@ -1256,6 +1256,23 @@ def test_ultrasonic_stops_approach_below_box_line(config: dict, clock: FakeClock
     assert runtime.behavior.state == "ALERT"
 
 
+def test_without_height_target_centered_person_is_the_stop_line(
+    config: dict, clock: FakeClock
+) -> None:
+    """높이 목표가 없으면(`null` · 거리 제어 끔) 추종기는 중앙 대상 앞에서 `step=0` 이다.
+
+    그 자리를 정지선으로 보지 않으면 `TRACK` 에서 (0, 0) 만 보내며 영영 고개를 들지 않는다
+    — ADR-39 이전에는 `step == 0` 이 `ALERT` 로 보냈다 (Devin 검수 F3).
+    """
+    config = dict(config, fsm=dict(config["fsm"], track_target_height_px=None))
+    runtime, vision = _tracking_runtime(config, clock)
+    runtime.start_patrol(0)
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
+    assert runtime.behavior.state == "TRACK"
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 200.0, 340.0, 400.0))
+    assert runtime.behavior.state == "ALERT"
+
+
 def test_observe_level_starts_when_pitch_is_sent(config: dict, clock: FakeClock) -> None:
     """L1(노란 눈)과 10초 승격 타이머는 **고개를 드는 순간** 시작한다 (ADR-39).
 

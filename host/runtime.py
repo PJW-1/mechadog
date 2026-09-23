@@ -857,6 +857,8 @@ class Runtime:
         # 정지선에서는 걸음을 멈춘 채 제자리에서 돌아 중앙을 맞춘 뒤 고개를 든다 (ADR-39).
         if not self._track_stop_reached and (
             (self._track_stop_height_px and box_height >= self._track_stop_height_px)
+            # 높이 목표가 없으면 추종기는 중앙 대상 앞에서 걷지 않는다 — 거기가 정지선이다.
+            or (command.centered and command.step == 0.0)
             or (self._dist_cm is not None and 0 < self._dist_cm <= self._track_stop_dist_cm)
         ):
             self._track_stop_reached = True
