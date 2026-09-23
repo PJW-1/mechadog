@@ -2467,6 +2467,46 @@ def test_factory_fall_raises_l3_without_moving_the_state(
     assert runtime.behavior.state == state, "전이표에 없는 사건이다 — 상태는 그대로다"
 
 
+@pytest.mark.usefixtures("unlock_modes")
+def test_factory_holds_ppe_while_a_fall_is_a_candidate(config: dict, clock: FakeClock) -> None:
+    """공장 모드는 **쓰러졌는지 먼저 보고** 보호구를 판정한다 (FR-11.1 표).
+
+    병행하면 1500ms 위반이 3초 쓰러짐보다 먼저 L3 를 잡아 전용 문장이 묻히고,
+    적합 판정이면 `PPE_SETTLED` 로 순찰에 돌아가 누운 사람을 두고 떠난다.
+    """
+    from dataclasses import replace
+
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    runtime.start_patrol(0)
+
+    def lying(seq: int, ppe: PpeVerdict, *, fallen: bool = False, changed: bool = False) -> None:
+        at = seq * 100
+        vision.result = replace(
+            vision_result(seq, at, present=True, hits=3, last_seen_ms=at),
+            ppe=ppe,
+            fallen=FallenVerdict(
+                fallen=fallen, changed=changed, candidate=True, aspect=3.25, still_ms=at
+            ),
+        )
+        runtime.tick(at)
+
+    lying(1, PpeVerdict(1, OK))
+    lying(2, PpeVerdict(1, OK))
+    assert runtime.behavior.state == "ALERT", "적합 판정으로 누운 사람을 두고 떠나면 안 된다"
+    lying(3, PpeVerdict(1, VIOLATION, confirmed=True))
+    assert runtime.escalation.level is not Level.L3, "위반이 쓰러짐보다 먼저 L3 를 잡았다"
+    lying(4, PpeVerdict(1, VIOLATION, confirmed=True), fallen=True, changed=True)
+    assert runtime.escalation.level is Level.L3
+    assert runtime.escalation.reason == "PERSON_DOWN"
+
+
 def test_guard_fall_is_recorded_but_does_not_raise_the_alarm(
     config: dict, clock: FakeClock, tmp_path: Path
 ) -> None:

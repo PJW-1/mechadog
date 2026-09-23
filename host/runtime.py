@@ -730,6 +730,16 @@ class Runtime:
             return
         if self._ppe_settle_at is not None:
             return
+        # ⚠️ **쓰러졌는지 먼저 본다** (FR-11.1 표 · `4.8.3`). 병행하면 1500ms 위반이 3초
+        # 쓰러짐보다 먼저 L3 를 잡아 전용 문장이 묻히고, 적합이면 `PPE_SETTLED` 로 누운
+        # 사람을 두고 순찰에 돌아간다. 후보인 동안은 판정도 자세 상승도 하지 않고 선다.
+        fallen = getattr(result, "fallen", None)
+        held = fallen is not None and fallen.candidate
+        if self._edge.changed("ppe_held_for_fall", held):
+            LOG.info("ppe_held_for_fall", held=held)
+        if held:
+            self._ppe_unknown_since = None
+            return
         verdict = getattr(result, "ppe", None)
         if verdict is None:
             if self._ppe_lost_since is None:
