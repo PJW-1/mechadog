@@ -181,7 +181,7 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 | seq 역전·중복 폐기 | ✅ | 시퀀스 주입 |
 | 미지 타입 폐기 | ✅ | `protocol_invalid.jsonl` |
 | FSM 전이 | ✅ | **테이블 주도 · 전수** |
-| 안전 판정 (타임아웃·저전압·전도) | ✅ | **fake clock** |
+| 안전 판정 (타임아웃·저전압) | ✅ | **fake clock** · 전도 자동 판정은 폐기(ADR-36) |
 | 에스컬레이션 L0~L3 | ✅ | 조건 조합 |
 | bbox 클리핑 판정 | ✅ | 좌표만 필요 |
 | 추적 ID 연속성 | ✅ | 합성 박스 시퀀스 |
@@ -189,7 +189,7 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 | config 스키마 | ✅ | 이미 구현 |
 | 카메라 스트림 | △ | 목업 HTTP 서버 |
 | **검출 정확도** | ❌ | 실제 모델·이미지 → **성능 시험(WBS 6.3)** |
-| **실제 보행·전도** | ❌ | **실기 검수(WBS 6.4)** |
+| **실제 보행** | ❌ | **실기 검수(WBS 6.4)** · 전도 자동 판정은 검수 대상에서 제외(ADR-36) |
 
 ## 2.3 목표 디렉터리 구조
 
@@ -214,7 +214,7 @@ tests/
 ├── test_actions.py              PATROL·AVOID 시퀀스       ✅
 ├── test_stream_client.py        MJPEG 파서·큐·재연결      ✅
 ├── test_latency_probe.py        지연 하네스 (wrap·통계)   ✅
-├── test_safety.py               타임아웃·저전압·전도·조합
+├── test_safety.py               타임아웃·저전압·레거시 전도 픽스처·조합
 ├── test_fsm.py                  전이표 전수               ✅
 ├── test_escalation.py           L0~L3 진입·해제
 ├── test_tracker.py              ID 연속성
