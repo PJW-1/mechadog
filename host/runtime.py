@@ -1491,6 +1491,10 @@ class Runtime:
             return
         _seq, track, _due, left = self._sound_wait
         self._sound_wait = None
+        # 더 새 문장이 이미 실려 있으면 옛 것은 버린다 — 뒤에 붙이면 새 문장을 덮는다.
+        # 확인 뒤 대시보드 스레드가 새 문장을 넣어도 옛 것 뒤라 순서는 맞다.
+        if self._commander.has_pending("SOUND"):
+            return
         if left <= 0:
             LOG.warning("sound_unacked", track=track, retries=SOUND_RETRIES)
             return

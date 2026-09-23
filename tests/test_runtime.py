@@ -345,6 +345,33 @@ def test_newer_sound_replaces_the_one_awaiting_ack(config: dict, clock: FakeCloc
     assert _run_ticks(r, clock, 1000) == []
 
 
+def test_resend_never_follows_a_newer_queued_sound(config: dict, clock: FakeClock) -> None:
+    """마감 틱에 새 문장이 이미 대기열에 있으면 옛 문장을 다시 싣지 않는다 (Devin 검수).
+
+    다시 실으면 `[새, 옛]` 순서로 나가 옛 문장이 새 문장을 덮고, ACK 대기도 옛 문장이
+    차지해 새 문장은 유실돼도 다시 안 나간다.
+    """
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    r.commander.once("SOUND", track=3)
+    assert [m["track"] for m in _run_ticks(r, clock, 300)] == [3]
+    r.commander.once("SOUND", track=184)  # 옛 문장의 마감(300ms) 틱 직전에 들어온다
+    assert [m["track"] for m in _run_ticks(r, clock, 1000)] == [184, 184, 184]
+
+
+def test_late_ack_for_an_old_seq_does_not_clear_the_newer_wait(
+    config: dict, clock: FakeClock
+) -> None:
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    r.commander.once("SOUND", track=3)
+    old = _sounds(r.tick(clock.ms))
+    clock.advance(100)
+    r.commander.once("SOUND", track=184)
+    r.tick(clock.ms)
+    r.ingest(_ack(old[0]["seq"]), clock.ms)  # 새 문장의 ACK 가 아니다
+    clock.advance(100)
+    assert [m["track"] for m in _run_ticks(r, clock, 1000)] == [184, 184]
+
+
 # ── 사건 적용 ────────────────────────────────────────────────
 def test_robot_failsafe_report_drives_the_host(config: dict, clock: FakeClock) -> None:
     r = Runtime(config, device_id=DEVICE, clock=clock)

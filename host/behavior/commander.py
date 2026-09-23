@@ -103,6 +103,10 @@ class Commander:
         """다음 틱에 1회만 실어 보낸다 (`LED`·`SOUND`·`ACTION` 용)."""
         self._pending.append(Intent(type_, dict(fields)))
 
+    def has_pending(self, type_: str) -> bool:
+        """다음 틱에 실릴 `once` 중 이 타입이 있는가."""
+        return any(i.type_ == type_ for i in self._pending)
+
     def emergency_stop(self) -> str:
         """**즉시 보낼 `ESTOP` 전문을 돌려준다.** 반복 의도도 정지로 내린다.
 
