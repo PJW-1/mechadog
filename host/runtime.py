@@ -853,10 +853,13 @@ class Runtime:
         #
         # 조향 정렬과 거리 정지는 다르다. 멀리 있는 중앙 대상에게도 직진하고,
         # 정지선에서는 걸음을 멈춘 채 제자리에서 돌아 중앙을 맞춘 뒤 고개를 든다 (ADR-39).
-        if (self._track_stop_height_px and box_height >= self._track_stop_height_px) or (
-            self._dist_cm is not None and 0 < self._dist_cm <= self._track_stop_dist_cm
+        if not self._track_stop_reached and (
+            (self._track_stop_height_px and box_height >= self._track_stop_height_px)
+            or (self._dist_cm is not None and 0 < self._dist_cm <= self._track_stop_dist_cm)
         ):
             self._track_stop_reached = True
+            # 박스와 초음파 중 무엇이 세웠는지 남긴다 — 1초 평균으로는 순간값이 가려진다.
+            LOG.info("track_stop_reached", box_h_px=round(box_height, 1), dist_cm=self._dist_cm)
         deviation = command.deviation_px
         # 정지선에서는, 또는 편차가 크면 걷지 않고 제자리에서 돈다 (ADR-39).
         if self._track_stop_reached or abs(deviation) > self._track_turn_split_px:
