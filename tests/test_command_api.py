@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -1209,3 +1210,113 @@ def test_alarm_endpoint_round_trips(cfg, clock):
 
         runtime.tick(clock.advance(100))
         assert runtime.escalation.level.value == "L0"
+
+
+# ── 트랙 재생 (SOUND 전문 · WBS 4.7.21 ⑤) ───────────────────────
+
+
+def _sounds(telegrams: list[str]) -> list[int]:
+    return [m["track"] for m in map(json.loads, telegrams) if m["type"] == "SOUND"]
+
+
+def test_sound_queues_a_one_shot_telegram(service):
+    """급하지 않다 — `service` 처럼 다음 틱에 한 번만 싣는다."""
+    svc, _behavior, sent = service
+    result = svc.sound(17)
+    assert result.accepted is True and result.command == "sound"
+    assert sent == [], "즉시 송신은 ESTOP 만이다"
+    assert _sounds(svc._commander.tick(10_000)) == [17]
+    assert _sounds(svc._commander.tick(10_100)) == [], "한 번만 나간다"
+
+
+@pytest.mark.parametrize("track", [-1, 3001, 10**6])
+def test_sound_refuses_out_of_range_tracks(service, track):
+    """잘라 받으면 다른 문장이 나간다 — 보내지 않고 사유를 돌려준다."""
+    svc, _behavior, _sent = service
+    result = svc.sound(track)
+    assert result.accepted is False
+    assert "범위" in result.detail
+    assert _sounds(svc._commander.tick(10_000)) == []
+
+
+@pytest.mark.parametrize("track", [True, False, 17.0, "17", None])
+def test_sound_refuses_non_integers(service, track):
+    """`isinstance(True, int)` 가 참이라 `True` 가 트랙 1 로 들어가면 안 된다."""
+    svc, _behavior, _sent = service
+    assert svc.sound(track).accepted is False
+    assert _sounds(svc._commander.tick(10_000)) == []
+
+
+@pytest.mark.parametrize("track", [0, 1, 3000])
+def test_sound_endpoint_accepts_the_range_edges(client, track):
+    """0 은 정지, 3000 은 상한 — 둘 다 받는다."""
+    http, _behavior, _sent = client
+    body = http.post("/api/command/sound", json={"track": track}).json()
+    assert body["accepted"] is True and body["command"] == "sound"
+
+
+@pytest.mark.parametrize("body", [{"track": True}, {"track": "17"}, {"track": 1.5}, {}])
+def test_sound_endpoint_rejects_non_integer_tracks(client, body):
+    http, _behavior, _sent = client
+    response = http.post("/api/command/sound", json=body)
+    assert response.status_code == 400
+    assert response.json() == {"error": "track"}
+
+
+@pytest.mark.parametrize("track", [-1, 3001])
+def test_sound_endpoint_refuses_out_of_range_tracks(client, track):
+    http, _behavior, _sent = client
+    body = http.post("/api/command/sound", json={"track": track}).json()
+    assert body["accepted"] is False
+
+
+def test_sound_endpoint_keeps_the_origin_check(client):
+    http, _behavior, _sent = client
+    response = http.post(
+        "/api/command/sound", json={"track": 17}, headers={"origin": "http://evil.example"}
+    )
+    assert response.status_code == 403
+
+
+def test_sound_plays_under_the_safety_latch_without_touching_it(cfg, clock):
+    """**래치 중에도 나가고, 래치를 풀지 않는다** (PROTOCOL `SOUND` 절).
+
+    가상 로봇까지 이어 본다 — 목업은 ACK 를 보내지 않으므로(`runtime._is_command_ack`)
+    적용 여부 대신 **디코더 수락 · 래치 유지 · RESET_SAFE 부재** 를 본다.
+    """
+    from host.runtime import Runtime
+    from tools.mock_mechdog import MockRobot
+
+    robot = MockRobot("mechdog-01", cfg, start_ms=clock.ms)
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    svc = CommandService(
+        runtime.behavior,
+        runtime.commander,
+        lambda line: robot.receive(line, clock.ms),
+        request_reset=runtime.ask_reset,
+        apply_event=runtime.apply_external,
+    )
+    svc.estop()
+    assert runtime.behavior.state == "FAILSAFE"
+    assert robot.state(clock.ms) == "FAILSAFE"
+
+    assert svc.sound(17).accepted is True
+    lines = runtime.tick(clock.advance(100))
+
+    assert _sounds(lines) == [17]
+    assert not any(json.loads(line)["type"] == "RESET_SAFE" for line in lines)
+    for line in lines:
+        assert robot.receive(line, clock.ms).accepted, line
+    assert robot.state(clock.ms) == "FAILSAFE", "SOUND 가 래치를 풀면 안 된다"
+    assert runtime.behavior.state == "FAILSAFE"
+
+
+def test_sound_endpoint_reaches_the_runtime_through_the_real_wiring(cfg, clock):
+    """`dashboard_wiring` 이 만든 서비스로 HTTP → 런타임 틱 전문까지 간다."""
+    from host.runtime import Runtime, dashboard_wiring
+
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    app = create_app(_state(), **dashboard_wiring(runtime, cfg, vision=None, blackbox=None))
+    with TestClient(app) as http:
+        assert http.post("/api/command/sound", json={"track": 0}).json()["accepted"] is True
+    assert _sounds(runtime.tick(clock.advance(100))) == [0]

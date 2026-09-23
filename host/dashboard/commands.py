@@ -35,7 +35,10 @@ from dataclasses import dataclass
 from host.behavior.commander import Commander
 from host.behavior.fsm import Behavior, Event
 
-__all__ = ["CommandResult", "CommandService"]
+__all__ = ["SOUND_TRACK_MAX", "CommandResult", "CommandService"]
+
+#: `SOUND.track` 의 재생 범위 상한 (PROTOCOL `SOUND` 절 · 펌웨어와 같은 값). 0 은 정지다.
+SOUND_TRACK_MAX = 3000
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +314,51 @@ class CommandService:
             accepted=True,
             state=self._behavior.state,
             detail=f"서비스 모드 {mode} 를 다음 틱에 보낸다 — ACK 의 service_mode·wdt_armed 로 확인",
+        )
+
+    def sound(self, track: int) -> CommandResult:
+        """로봇 MP3 모듈의 TF 카드 트랙 재생 (`SOUND` 전문 · WBS 4.7.21 ⑤). 0 은 정지.
+
+        음성 프로세스가 자기 발화를 로봇 스피커로 트는 경로다 — 로봇 링크는 런타임
+        혼자 쥐므로 음성 쪽은 여기를 거친다. 급하지 않으므로 다음 틱에 싣는다
+        (`once` — `service` 와 같다). seq·세션 개시는 다른 전문과 같이 송신기와
+        런타임이 맡는다.
+
+        ⚠️ **상태를 보지 않는다.** 펌웨어는 FAILSAFE 래치 중에도 `SOUND` 를 받는다
+        (스피커는 구동 장치가 아니라 출력이다). 그래서 여기서도 거절하지 않고,
+        ⚠️ **래치를 건드리지 않는다** — `RESET_SAFE` 를 보내거나 의도를 바꾸지 않는다.
+
+        ⚠️ **범위 밖은 보내지 않는다.** 펌웨어도 `applied=false` 로 거부하지만 잘라
+        받으면 다른 문장이 나가므로 호스트가 먼저 막는다. `bool` 은 정수로 받지 않는다.
+
+        ACK 를 기다리지 않는다(다른 일회성 명령과 같다). 로봇 ACK 의 `applied=true`
+        는 «받았다» 이지 «소리가 났다» 가 아니다 — 모듈 무응답은 펌웨어 시리얼의
+        `SOUND dropped` 로만 남는다(PROTOCOL `SOUND` 절).
+        """
+        if isinstance(track, bool) or not isinstance(track, int):
+            return CommandResult(
+                command="sound",
+                accepted=False,
+                state=self._behavior.state,
+                detail=f"트랙 번호는 정수여야 한다: {track!r}",
+            )
+        if not 0 <= track <= SOUND_TRACK_MAX:
+            return CommandResult(
+                command="sound",
+                accepted=False,
+                state=self._behavior.state,
+                detail=f"트랙 번호 범위 밖: {track} (0~{SOUND_TRACK_MAX})",
+            )
+        self._commander.once("SOUND", track=track)
+        return CommandResult(
+            command="sound",
+            accepted=True,
+            state=self._behavior.state,
+            detail=(
+                "재생 정지를 다음 틱에 보낸다"
+                if track == 0
+                else f"트랙 {track} 재생을 다음 틱에 보낸다 — 소리가 났는지는 확인하지 않는다"
+            ),
         )
 
     def patrol(self) -> CommandResult:
