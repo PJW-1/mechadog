@@ -115,7 +115,7 @@ scenario가 먼저 잡는다 — 순서가 의도된 것이다.
 ## 4. 인증 대기(`AUTH_WAIT`) — 암구호 분기 (WBS 3.8.2)
 
 로봇 FSM 이 `AUTH_WAIT` 이고, 파이프라인이 active 이고, 등록 암구호가 하나라도 있을 때만
-열린다(`auth_passphrases` 설정이 JSON 목록이 아니거나 비면 이 경로가 닫힌다).
+열린다(환경 변수 `MECHDOG_PASSPHRASES` 가 JSON 목록이 아니거나 비면 이 경로가 닫힌다).
 
 1. 새 인증 대기마다 한 번 "인증되지 않은 사람이 확인되었습니다. 암구호를 말씀해 주십시오." 를
    말한다(`Hub.auth_prompt`). 이 안내 전에 시작된 녹음은 시도로 세지 않는다.
@@ -160,46 +160,37 @@ scenario가 먼저 잡는다 — 순서가 의도된 것이다.
 - **호출어·시나리오 구문**: `voice_data.rules.json` 을 고친다(8절). STT 오청 변형도 여기서 흡수한다.
 - **새 명령**: 코드(`robotlink.ACTIONS` · `_ENDPOINTS`)에 추가해야 한다 — 화이트리스트는 코드가 정본이다.
 
-## 8. 운영 데이터 3테이블 + 고정 규칙 JSON
+## 8. 운영 데이터 — 코드 · 파일 · 규칙 JSON (음성 DB 폐기 · WBS 4.7.22)
 
 | 저장 위치 | 내용 | 소비자 |
 | --- | --- | --- |
-| DB settings | 후속 발화 시간·STT 힌트·API 주소·암구호 | voice_pipeline 등 |
-| DB roster | 신원 확인 명단; 사용 중 빈 결과·오류는 승인 0명 | scenarios.sc_guard |
-| DB phrases | 관리자가 추가한 응답; 기본 문구는 코드 | phrases, 관리자 화면, 캐시 생성 |
+| `voice_pipeline.py` 상수 | 후속 발화 시간·STT 힌트 (API 주소는 `--robot-api`) | voice_pipeline |
+| 환경 변수 `MECHDOG_PASSPHRASES` | 암구호 JSON 목록; 없으면 공개 데모 문구 | voice_pipeline |
+| `knowledge/직원명단.txt` | 신원 확인 명단 | scenarios.sc_guard |
+| `phrases.py` | 응답 문구 (관리자 화면은 보기만) | phrases, 관리자 화면, 캐시 생성 |
 | voice_data.rules.json | keywords·command_endings·action_commands·scenario_triggers (4섹션) | 발화 라우팅 |
 
-JSON이 없으면 기존 코드 규칙을 사용한다. 파일이 바뀔 때만 검증/파싱하며 고정 규칙에
-DB/HTTP 요청을 보내지 않는다. 명령·시나리오 동일 구문 충돌, 미등록 명령/시나리오/API를
-거부한다. 비상정지 3개 보호 구문과 실제 실행 화이트리스트는 코드에 유지한다.
-기존 8테이블의 사용자 수정값은 명시적 이전으로 보존한다. 자동 삭제/초기화는 하지 않는다.
+음성 DB(`voice_data.db` · Supabase)는 2026-09-23 폐기했다. 목표 스피커는 TF 카드에 미리
+녹음한 문장만 재생하므로 운영 중 문구·설정을 바꿀 이유가 없다.
+
+JSON이 없으면 기존 코드 규칙을 사용한다. 파일이 바뀔 때만 검증/파싱한다.
+명령·시나리오 동일 구문 충돌, 미등록 명령/시나리오/API를 거부한다.
+비상정지 3개 보호 구문과 실제 실행 화이트리스트는 코드에 유지한다.
 이전 규칙 파일에 남은 폐기 항목(`factory_rules` 섹션, `status`·`machine` 호출어 종류,
 `robot_briefing` 시나리오 트리거)은 읽을 때 걸러 낸다(`voice_rules.drop_retired`) — 섹션 하나
 때문에 파일 전체가 무효가 되어 사용자 규칙이 기본값으로 돌아가지 않게 하려는 것이다.
 
 ```powershell
-# 기존 설치를 업그레이드할 때 먼저 실행. 신규 설치는 --seed.
-python migrate_voice_db.py --db voice_data.db --check
-python migrate_voice_db.py --db voice_data.db
-python voice_store.py --dump
-python voice_store.py --rules
-python voice_store.py --set follow_s 30
-python voice_store.py --add wake 메카독이  # 로컬 규칙 JSON
-python voice_store.py --add-roster 홍길동
-python voice_store.py --add-phrase greeting "안녕하세요, 메카독입니다."
+python voice_rules.py --rules              # 지금 적용되는 규칙 보기
+python voice_rules.py --add wake 메카독이  # 로컬 규칙 JSON 에 추가
+python voice_rules.py --del wake 메카독이
 ```
-
-Supabase는 settings·roster·phrases만 원격 조회한다. 일반 설정은 원격→로컬→기본값,
-명단은 원격 오류/빈 결과 시 승인 0명이다. 만료된 명단 캐시를 재사용하지 않는다.
-기본 TTL은 60초(`VOICE_STORE_TTL`). `--remote` 쓰기는 관리용 `SUPABASE_WRITE_KEY`가
-필요하고 로컬 규칙 명령 `--add/--del/--rules`와 함께 쓸 수 없다.
-전체 컬럼·이전/백업·v1 묶음 호환과 Supabase 설치 절차는 [DB_GUIDE.md](DB_GUIDE.md)에 있다.
 
 ## 9. 운영 메모
 
 - 기동: `start_voice.ps1` (기본 COM9 + 관제 API `:8090`). 가상 MES `:8095` 자동 기동은 없어졌다.
 - 관제 API: `GET /status` `/scenarios` `/phrases` `/transcript` `/report`,
-  `POST /scenario` `/phrases` `/phrases/delete` `/mode` — 링크는 메인 루프 단독 소유,
+  `POST /scenario` `/mode` — 링크는 메인 루프 단독 소유,
   웹 요청은 큐 직렬화. 임의 문장 방송 `POST /say` 는 폐기했다(4.7.14 축소).
 - 이력: `logs/voice-YYYY-MM-DD.jsonl` 일자별 저널 → `/report` 당일 요약.
   비상 발화는 `emergency_log.txt`에도 별도 적립.

@@ -70,17 +70,14 @@ test('STOP preempts a held direction on pointerdown, not only click',()=>{
 test('mission draft survives delayed layout arrival',()=>{
  const {dom,document,panels}=setup();panels.render('missions');change(dom,document.querySelector('[name="임무 로봇"]'),'MD-02');const check=document.querySelector('[name="예시 임무 확인"]');check.checked=true;check.dispatchEvent(new dom.window.Event('change'));panels.setZones(zones);assert.equal(document.querySelector('[name="임무 로봇"]').value,'MD-02');assert.equal(document.querySelector('[name="예시 임무 확인"]').checked,true);
 });
-test('voice panel renders phrase manager with categories and custom delete',async()=>{
+test('voice panel renders a read-only phrase library',async()=>{
  const {dom,document,panels,store}=setup();
  const link={
   baseUrl:'http://127.0.0.1:8090',
   status:()=>Promise.resolve({robot:'mechadog-01',mode:'active',activity:'idle',say_queue:0,events:[]}),
   mode:()=>Promise.resolve({}),transcript:()=>Promise.resolve([]),
-  phrases:()=>Promise.resolve([{category:'greeting',count:2,lines:[{text:'안녕하세요',custom:false},{text:'관리자가 넣은 말',custom:true}]}]),
-  addPhrase:(cat,text)=>{added=[cat,text];return Promise.resolve({category:cat,added:true})},
-  deletePhrase:(cat,text)=>{deleted=[cat,text];return Promise.resolve({removed:true})},
+  phrases:()=>Promise.resolve([{category:'greeting',count:2,lines:[{text:'안녕하세요'},{text:'반갑습니다'}]}]),
  };
- let added=null,deleted=null;
  const p=new OperationalPanels({store,container:document.querySelector('#content'),title:document.querySelector('#title'),onNavigate:()=>{},onFocusZone:()=>{},onFocusRobot:()=>{},onToast:()=>{},voiceLink:link,document});
  p.render('voice');
  await new Promise(resolve=>setTimeout(resolve,10));
@@ -93,20 +90,12 @@ test('voice panel renders phrase manager with categories and custom delete',asyn
  assert.ok(labels.includes('대기/깨우기'));
  const sel=document.querySelector('select[name="카테고리"]');
  assert.ok(sel);assert.match(sel.textContent,/greeting/);
- // 기본 문구는 삭제 버튼 없음, 추가 문구만 삭제 버튼
+ // 출력은 TF 카드 녹음뿐이라 문구는 보기만 한다 — 추가 입력칸도 삭제 버튼도 없다.
  const rows=[...document.querySelectorAll('.op-voice-row')];
  assert.equal(rows.length,2);
- assert.equal(rows[0].querySelector('button'),null);
- assert.ok(rows[1].querySelector('button'));
- // 추가 폼 동작
- document.querySelector('[name="문구"]').value='테스트 문구입니다';
- button(document,'문구 추가').click();
- await new Promise(resolve=>setTimeout(resolve,10));
- assert.deepEqual(added,['greeting','테스트 문구입니다']);
- // 삭제 버튼은 custom 문구만 호출
- rows[1].querySelector('button').click();
- await new Promise(resolve=>setTimeout(resolve,10));
- assert.deepEqual(deleted,['greeting','관리자가 넣은 말']);
+ assert.ok(rows.every(row=>row.querySelector('button')===null));
+ assert.equal(document.querySelector('[name="문구"]'),null);
+ assert.ok(!labels.includes('문구 추가'));
  p.clearVoicePoll();
 });
 test('voice panel reaches scenarios, the daily report and the full transcript (B5)',async t=>{
@@ -177,7 +166,6 @@ test('voice panel phrase section is disabled without a link',()=>{
  const {document,panels}=setup();panels.render('voice');
  assert.ok([...document.querySelectorAll('h3')].some(h=>h.textContent==='멘트 관리'));
  assert.equal(button(document,'문구 보기').disabled,true);
- assert.equal(button(document,'문구 추가').disabled,true);
 });
 test('device commands still ask before sending when the dialog is unavailable',()=>{
  const calls=[],prompts=[];

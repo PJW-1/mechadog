@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import voice_store
+import voice_rules
 from phrases import pick
 
 KNOW_DIR = Path(__file__).with_name("knowledge")
@@ -39,8 +39,8 @@ def _file_roster():
 
 
 def load_roster():
-    """voice_data.db의 roster가 있으면 그쪽이 정본, 없으면 파일 명단."""
-    return list(voice_store.roster(_file_roster()))
+    """등록 명단 — 정본은 knowledge/직원명단.txt 하나다."""
+    return _file_roster()
 
 
 def _norm(s):
@@ -470,10 +470,10 @@ TRIGGERS = {
 def match_trigger(norm_query: str):
     """정규화된 질의에서 시나리오 이름 반환, 없으면 None.
 
-    트리거 표는 voice_data.db의 scenario_triggers가 우선하고, 없으면
-    위의 TRIGGERS 코드 기본값이 쓰인다 (voice_store 참조).
+    트리거 표는 규칙 파일의 scenario_triggers가 우선하고, 없으면
+    위의 TRIGGERS 코드 기본값이 쓰인다 (voice_rules 참조).
     """
-    for phrase, name in voice_store.scenario_triggers(TRIGGERS).items():
+    for phrase, name in voice_rules.scenario_triggers(TRIGGERS).items():
         if phrase in norm_query:
             return name
     return None

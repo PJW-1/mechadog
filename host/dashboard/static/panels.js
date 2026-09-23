@@ -196,12 +196,10 @@ export class OperationalPanels {
   const link=this.voiceLink;
   this.voiceStatusEl=this.el('div',{class:'op-facts'});
   this.voiceEventsEl=this.el('div',{class:'op-voice-log','aria-live':'polite'});
-  // ── 멘트 관리: 문구 라이브러리 열람 + 관리자 추가·삭제 ──
+  // ── 멘트 관리: 문구 라이브러리 열람 (출력은 TF 카드에 미리 녹음한 문장뿐이라 여기서 추가하지 않는다) ──
   this.phraseCatEl=this.el('div',{class:'op-facts'});
   this.phraseListEl=this.el('div',{class:'op-voice-log'});
   const catSel=this.el('select',{name:'카테고리','aria-label':'멘트 카테고리'});
-  const catInput=this.el('input',{type:'text',name:'새 카테고리',maxlength:40,placeholder:'새 카테고리 (영문 소문자)'});
-  const phraseInput=this.el('input',{type:'text',name:'문구',maxlength:200,placeholder:'로봇이 말할 문구 — 200자 이내'});
   const refreshPhrases=()=>this.run(async()=>{
    if(!link)return;
    const cats=await link.phrases();
@@ -213,19 +211,7 @@ export class OperationalPanels {
    if(keep&&cats.some(c=>c.category===keep))catSel.value=keep;
    this.renderPhraseLines(cats);
   });
-  const addPhrase=()=>this.run(async()=>{
-   if(!link)throw new Error('음성 서버에 연결되지 않았습니다.');
-   const cat=(catInput.value.trim()||catSel.value).trim();
-   const text=phraseInput.value.trim();
-   if(!cat)throw new Error('카테고리를 고르거나 새로 입력하세요.');
-   if(!text)throw new Error('문구를 입력하세요.');
-   await link.addPhrase(cat,text);
-   phraseInput.value='';catInput.value='';
-   this.onToast('문구를 추가했어요. 로봇이 다음 턴부터 씁니다.');
-   refreshPhrases();
-  });
   catSel.addEventListener('change',()=>refreshPhrases());
-  phraseInput.addEventListener('keydown',event=>{if(event.key==='Enter')addPhrase()});
   this.container.append(
    this.section('로봇 음성 상태',
     link?this.note('음성 서버 연결됨 — '+link.baseUrl):this.note('음성 서버 미연결 — voice_pipeline 을 --web 으로 실행하면 자동으로 붙습니다.','warning'),
@@ -233,17 +219,12 @@ export class OperationalPanels {
     this.el('div',{class:'op-toolbar'},
      this.button('대기/깨우기',()=>this.run(async()=>{await link.mode();this.pollVoice()}),{disabled:!link}))),
    this.section('멘트 관리',
-    this.note('로봇이 말하는 문구 라이브러리입니다. 추가한 문구는 PC 데이터로 저장되어 즉시 반영되고, 기본 문구는 검증된 상수라 삭제할 수 없습니다.'),
+    this.note('로봇이 말하는 문구 라이브러리입니다. 문구는 코드(phrases.py)에 있고 여기서는 보기만 합니다.'),
     this.phraseCatEl,
     this.el('div',{class:'op-toolbar'},
      catSel,
      this.button('문구 보기',()=>refreshPhrases(),{disabled:!link})),
-    this.phraseListEl,
-    this.el('div',{class:'op-form-grid'},
-     this.field('새 카테고리 (선택)',catInput),
-     this.field('문구 내용',phraseInput)),
-    this.el('div',{class:'op-toolbar'},
-     this.button('문구 추가',()=>addPhrase(),{disabled:!link}))),
+    this.phraseListEl),
    this.section('최근 발화',this.voiceEventsEl));
   // ── 시연 시나리오 · 당일 리포트 · 전체 기록 (B5) — 음성 서버에 있었는데 화면이 부르지 않던 API ──
   const scenarioSel=this.el('select',{name:'시나리오','aria-label':'시연 시나리오',disabled:!link},this.el('option',{value:''},link?'불러오는 중…':'음성 서버 미연결'));
@@ -282,15 +263,7 @@ export class OperationalPanels {
   ].map(([k,v])=>this.el('div',{},this.el('dt',{},k),this.el('dd',{},v))));
   if(!cat){this.phraseListEl.replaceChildren(this.note('문구가 없습니다.'));return}
   this.phraseListEl.replaceChildren(...cat.lines.map(line=>
-   this.el('div',{class:'op-voice-row robot'},
-    this.el('span',{class:'op-row-meta'},line.custom?this.badge('추가됨','accent'):this.badge('기본')),
-    this.el('span',{},line.text),
-    line.custom?this.button('삭제',()=>this.run(async()=>{
-     await this.voiceLink.deletePhrase(cat.category,line.text);
-     this.onToast('문구를 삭제했어요.');
-     const cats2=await this.voiceLink.phrases();
-     this.renderPhraseLines(cats2);
-    })):null)));
+   this.el('div',{class:'op-voice-row robot'},this.el('span',{},line.text))));
  }
  async pollVoice(){
   if(this.view!=='voice'||!this.voiceLink){this.clearVoicePoll();return}

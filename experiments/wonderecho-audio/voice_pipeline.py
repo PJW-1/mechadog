@@ -35,9 +35,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import re
-import sqlite3
 import threading
 import time
 from collections import deque
@@ -50,7 +50,7 @@ import phrases
 import robotlink
 import scenarios
 import serial  # noqa: F401  (type only; stream_client already imports it)
-import voice_store
+import voice_rules
 from phrases import pick
 from play_client import CHUNK, PREFILL, end_packet, play_packet
 from stream_client import STATUS, Decoder, make_decoder
@@ -62,8 +62,8 @@ READY, STARTED, FINISHED = 1, 2, 3
 # 음성 명령: "메카독 ..."으로 시작해야만 대답한다.
 # "그만/대기"는 대기 모드 전환(프로그램 종료는 Ctrl+C만 — 시연 중 오작동 방지),
 # 대기 중에는 "메카독 시작/깨워/일어나"로만 복귀한다.
-# 아래 상수들은 기본값(정본)이다 — voice_data.db가 있으면 같은 이름의
-# 테이블/키가 우선한다 (voice_store 참조).
+# 아래 호출어 상수들은 기본값(정본)이다 — 규칙 파일(voice_data.rules.json)이
+# 있으면 같은 이름의 목록이 우선한다 (voice_rules 참조).
 WAKE_PREFIXES = ("메카독", "메카도", "메카닭", "메카도기")  # STT 변형 흡수
 SLEEP_WORDS = ("그만", "꺼져", "대기해", "잠자")
 RESUME_WORDS = ("시작", "깨워", "일어나", "켜져")
@@ -233,8 +233,8 @@ def make_handler(hub):
                 )
             elif self.path == "/phrases":
                 cats = {}
-                for cat, text, custom in phrases.all_lines():
-                    cats.setdefault(cat, []).append({"text": text, "custom": custom})
+                for cat, text in phrases.all_lines():
+                    cats.setdefault(cat, []).append({"text": text})
                 _api(
                     self,
                     200,
@@ -278,25 +278,6 @@ def make_handler(hub):
                     return
                 hub.enqueue_scenario(name, req.get("urgent"))
                 _api(self, 200, {"queued": hub.say_q.qsize()})
-            elif self.path == "/phrases":
-                try:
-                    cat = phrases.add_custom(req.get("category") or "", req.get("text") or "")
-                except ValueError as e:
-                    _api(self, 400, {"error": str(e)})
-                    return
-                _api(self, 200, {"category": cat, "added": True})
-            elif self.path == "/phrases/delete":
-                try:
-                    removed = phrases.remove_custom(
-                        req.get("category") or "", req.get("text") or ""
-                    )
-                except ValueError as e:
-                    _api(self, 400, {"error": str(e)})
-                    return
-                if not removed:
-                    _api(self, 404, {"error": "추가된 문구만 삭제할 수 있습니다"})
-                    return
-                _api(self, 200, {"removed": True})
             elif self.path == "/mode":
                 mode = req.get("mode")
                 if mode in ("active", "standby"):
@@ -331,30 +312,31 @@ def start_web(hub, port):
 def _strip_wake(text):
     """Normalize STT text; return the query after a wake word, or None."""
     norm = _PUNCT.sub("", text)
-    for w in voice_store.words("wake", WAKE_PREFIXES):
+    for w in voice_rules.words("wake", WAKE_PREFIXES):
         if norm.startswith(w):
             return norm[len(w) :]
     return None
 
 
 def _is_sleep_cmd(norm):
-    return any(norm == w or norm.endswith(w) for w in voice_store.words("sleep", SLEEP_WORDS))
+    return any(norm == w or norm.endswith(w) for w in voice_rules.words("sleep", SLEEP_WORDS))
 
 
 # ── 음성 암구호 인증 (WBS 3.8.2 · FR-10.2) ─────────────────────────────────
 # 사원증(ArUco)을 보여줄 수 없는 방문객이 말로 인증하는 경로다. 이름은 비밀이
-# 아니므로 대조 대상이 아니다 — 등록된 **문구**를 대조한다. 문구는 코드에 두지
-# 않고 voice_data.db 설정으로 넣는다: `auth_passphrases` 키는 _SENSITIVE_KEY_RE
-# 의 "pass" 패턴에 걸려 --set 에코·--dump 에서 자동으로 가려진다.
-# 코드 기본값은 데모 문구 하나다 — 실제 암구호는 반드시 DB 설정으로 교체한다.
+# 아니므로 대조 대상이 아니다 — 등록된 **문구**를 대조한다. 문구는 저장소에
+# 두지 않고 환경 변수 `MECHDOG_PASSPHRASES`(JSON 리스트)로 넣는다. 예:
+#     $env:MECHDOG_PASSPHRASES = '["우리 문구"]'
+# 코드 기본값은 공개된 데모 문구 하나다 — 실제 암구호는 반드시 환경 변수로 교체한다.
+PASSPHRASES_ENV = "MECHDOG_PASSPHRASES"
 DEFAULT_PASSPHRASES = ("메카독 출입 허가",)
 
 
 def passphrases():
-    """등록 암구호 목록 — JSON 리스트 설정.
+    """등록 암구호 목록 — 환경 변수 `MECHDOG_PASSPHRASES` 의 JSON 리스트.
 
     ⚠️ **깨진 설정을 코드 기본값으로 되돌리지 않는다.** 되돌리면 관리자가
-    `--set auth_passphrases "우리 문구"`(JSON 이 아니다) 처럼 넣었을 때
+    `MECHDOG_PASSPHRASES=우리 문구`(JSON 이 아니다) 처럼 넣었을 때
     **저장소에 공개된 데모 문구가 조용히 문을 연다** — 관리자는 바꿨다고
     믿는다. 빈 목록을 돌려 인증 경로 자체를 닫는다: 열린 채 틀리느니
     닫힌 채 막히는 편이 낫다(호출부가 `bool(passphrases())` 로 판단한다).
@@ -362,17 +344,14 @@ def passphrases():
     ⚠️ **빈 항목은 버린다** — `""` 가 하나 섞이면 포함 대조가 **항상 참**이라
     모든 발화가 인증을 통과한다.
     """
-    raw = voice_store.setting(
-        "auth_passphrases",
-        json.dumps(list(DEFAULT_PASSPHRASES), ensure_ascii=False),
-    )
+    raw = os.environ.get(PASSPHRASES_ENV, json.dumps(list(DEFAULT_PASSPHRASES), ensure_ascii=False))
     try:
         items = json.loads(raw)
     except (TypeError, ValueError):
-        print("[auth] auth_passphrases 가 JSON 이 아니다 — 음성 인증을 닫는다")
+        print(f"[auth] {PASSPHRASES_ENV} 가 JSON 이 아니다 — 음성 인증을 닫는다")
         return []
     if not isinstance(items, list):
-        print("[auth] auth_passphrases 가 목록이 아니다 — 음성 인증을 닫는다")
+        print(f"[auth] {PASSPHRASES_ENV} 가 목록이 아니다 — 음성 인증을 닫는다")
         return []
     return [text for text in (str(p).strip() for p in items) if text]
 
@@ -416,7 +395,7 @@ def route_query(query):
         return "action"
     if scenarios.match_trigger(norm) is not None:
         return "scenario"
-    if any(w in norm for w in voice_store.words("emergency", EMERGENCY_WORDS)):
+    if any(w in norm for w in voice_rules.words("emergency", EMERGENCY_WORDS)):
         return "emergency"
     return "unknown"
 
@@ -683,7 +662,7 @@ NO_SPEECH_PROB_MAX = 0.6
 # 힌트 지어내기 거름 — 지어낸 세그먼트는 no_speech_prob 가 낮아도(0.47–0.50)
 # 평균 로그 확률이 낮다. XIAO 실측: 지어낸 것 -0.79 ~ -0.91, 실제 명령 -0.11 ~ -0.48
 # (가장 낮은 것이 "멈춰."), 30 cm 자유 문장 -0.30 ~ -0.36. 명령을 놓치지 않는 쪽에
-# 여유를 둔다. DB 의 stt_prompt 가 옛 문구여도 이 거름은 그대로 걸린다.
+# 여유를 둔다.
 AVG_LOGPROB_MIN = -0.7
 
 
@@ -696,7 +675,7 @@ def transcribe(model, pcm_bytes):
         language="ko",
         beam_size=5,
         vad_filter=True,
-        initial_prompt=voice_store.setting("stt_prompt", STT_PROMPT),
+        initial_prompt=STT_PROMPT,
     )
     kept, dropped, guessed = [], [], []
     for seg in segments:
@@ -812,10 +791,11 @@ class ScenarioCtx:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    try:
-        voice_store.check_schema()
-    except (OSError, ValueError, sqlite3.Error) as exc:
-        ap.exit(1, f"[voice-db] {exc}\n")
+    if voice_rules.RULES_PATH.exists():
+        try:
+            voice_rules.read(voice_rules.RULES_PATH)
+        except (OSError, ValueError) as exc:
+            ap.exit(1, f"[voice-rules] {exc}\n")
     ap.add_argument("--port", help="voice module COM port (never the robot's)")
     ap.add_argument(
         "--xiao",
@@ -852,7 +832,7 @@ def main():
     ap.add_argument("--robot-id", default="mechadog-01", help="관제웹에 표시할 로봇 식별자")
     ap.add_argument(
         "--robot-api",
-        default=voice_store.setting("robot_api_base", robotlink.DEFAULT_BASE),
+        default=robotlink.DEFAULT_BASE,
         help="로봇 관제 API 베이스 (상태 조회·화이트리스트 명령용)",
     )
     ap.add_argument(
@@ -970,10 +950,6 @@ def main():
             if prompt:
                 hub.activity = "speaking"
                 _say(device, piper, prompt, args.speed)
-            # 턴마다 설정을 다시 읽는다 — 운영 중 voice_data.db 수정이 살아있는
-            # 루프에 반영되게. DB가 없으면 코드 기본값이다.
-            follow_s = float(voice_store.setting("follow_s", FOLLOW_S, float))
-            follow_min = int(voice_store.setting("follow_min_chars", FOLLOW_MIN_CHARS, int))
             # 로봇 측 사건(검출 확정 등)을 저널에 합친다 — 몇 초에 한 번씩만.
             hub.poll_robot_events(args.robot_api)
             # 단계 경고·시나리오 큐 처리 — 대기 모드에서도 경고는 나간다
@@ -1027,8 +1003,8 @@ def main():
             # ⚠️ **인증 대기 중에는 인식 원문을 남기지 않는다.** 그 발화가
             # 곧 암구호이고, `/transcript` 는 `0.0.0.0` 에 열려 있어 같은
             # 망의 누구나 `curl` 로 읽는다(CORS 는 브라우저만 막는다).
-            # `--dump` 마스킹과 `db_transfer` 반출 금지로 지킨 비밀이
-            # 여기로 새면 앞의 두 방어가 무의미해진다. 판정만 아래에 남긴다.
+            # 저장소에 두지 않고 환경 변수로만 넣는 비밀이
+            # 여기로 새면 그 방어가 무의미해진다. 판정만 아래에 남긴다.
             if auth_wait:
                 print("[stt] <인증 대기 · 원문 가림>")
             else:
@@ -1045,17 +1021,17 @@ def main():
                 continue
             query = _strip_wake(text)
             if hub.mode == "standby":
-                if query in voice_store.words("resume", RESUME_WORDS):
+                if query in voice_rules.words("resume", RESUME_WORDS):
                     hub.mode = "active"
                     print("[cmd] resume")
                     hub.event("system", "대화 재개")
                     hub.activity = "speaking"
                     _say(device, piper, "네, 대화를 다시 시작합니다.", args.speed)
-                    follow_until = time.monotonic() + follow_s
+                    follow_until = time.monotonic() + FOLLOW_S
                 continue
             if query is None:
                 # 후속 대화 창: 직전 답변 직후엔 웨이크워드 없이 받는다.
-                # 짧은 잡음(follow_min 미만)은 대화로 보지 않는다.
+                # 짧은 잡음(FOLLOW_MIN_CHARS 미만)은 대화로 보지 않는다.
                 follow = _PUNCT.sub("", text)
                 # ⚠️ **짧은 잡음을 암구호 시도로 세지 않는다.** `AUTH_WAIT`
                 # 에서 `AUTH_FAILED` 는 곧바로 `ALERT`(L3) 다(`fsm.py` 전이표).
@@ -1064,12 +1040,12 @@ def main():
                 # (`fsm.py` 주석은 «2회 실패» 라고 적지만 구현에 없다)
                 # 여기서 거른다 — 아무 말도 인증이 못 되면 `AUTH_WAIT` 의
                 # 30초 타이머가 맡는다.
-                if auth_wait and len(follow) >= follow_min:
+                if auth_wait and len(follow) >= FOLLOW_MIN_CHARS:
                     query = follow
                 elif (
                     hub.mode == "active"
                     and time.monotonic() < follow_until
-                    and len(follow) >= follow_min
+                    and len(follow) >= FOLLOW_MIN_CHARS
                 ):
                     query = follow
                     print(f"[follow] 웨이크워드 생략 허용: {query!r}")
@@ -1089,7 +1065,7 @@ def main():
                     "알겠습니다. 비상 상황을 관제 센터에 전파했습니다. 곧 담당자가 확인할 것입니다.",
                     args.speed,
                 )
-                follow_until = time.monotonic() + follow_s
+                follow_until = time.monotonic() + FOLLOW_S
                 continue
             # ⚠️ **인증을 건너뛰는 예외는 «비상정지» 하나다.** 화이트리스트
             # 전체를 빼면 인증 대기 중인 로봇 앞의 **미인증자**가 웨이크워드
@@ -1136,7 +1112,7 @@ def main():
                 hub.event("system", f"음성 인증 {'성공' if verified else '실패'}")
                 hub.activity = "speaking"
                 _say(device, piper, spoken, args.speed)
-                follow_until = time.monotonic() + follow_s
+                follow_until = time.monotonic() + FOLLOW_S
                 continue
             if route == "scenario":
                 # 규칙 기반 시나리오 트리거 (판정은 결정론적)
@@ -1149,7 +1125,7 @@ def main():
                 except Exception as e:
                     print(f"[scenario] {scn_name} failed: {e}")
                     hub.event("system", f"시나리오 실패: {scn_name}: {e}")
-                follow_until = time.monotonic() + follow_s
+                follow_until = time.monotonic() + FOLLOW_S
                 continue
             if route == "action":
                 # 화이트리스트 명령 — 실행 결과를 그대로 말한다
@@ -1158,7 +1134,7 @@ def main():
                 hub.event("robot", spoken)
                 hub.activity = "speaking"
                 _say(device, piper, spoken, args.speed)
-                follow_until = time.monotonic() + follow_s
+                follow_until = time.monotonic() + FOLLOW_S
                 continue
             # 규칙에 걸리지 않은 발화 — 고정 문구 하나로 답한다(ADR-38).
             # 웨이크워드만 부르면 인사하고 후속 창을 연다.
@@ -1170,7 +1146,7 @@ def main():
             hub.event("robot", spoken)
             hub.activity = "speaking"
             _say(device, piper, spoken, args.speed)
-            follow_until = time.monotonic() + follow_s
+            follow_until = time.monotonic() + FOLLOW_S
     except KeyboardInterrupt:
         pass
     finally:

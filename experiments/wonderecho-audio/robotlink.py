@@ -18,7 +18,7 @@ import json
 import re
 import urllib.request
 
-import voice_store
+import voice_rules
 
 DEFAULT_BASE = "http://127.0.0.1:8000"
 
@@ -142,10 +142,10 @@ def match_action(query: str):
 
     "비상정지해"·"비상정지해줘" 같은 자연 발화를 받되, 어미 목록에 없는 꼬리
     ("비상정지하지마", "비상정지할까")는 절대 명령이 되지 않는다.
-    명령표·어미는 voice_data.db 오버레이가 우선하되, estop 구문은
-    voice_store.PROTECTED_ACTIONS가 항상 코드 기본값을 되돌린다.
+    명령표·어미는 규칙 파일(voice_rules)이 우선하되, estop 구문은
+    voice_rules.PROTECTED가 항상 코드 기본값을 되돌린다.
     """
-    actions = voice_store.action_commands(ACTIONS)
+    actions = voice_rules.action_commands(ACTIONS)
     norm = _norm(query)
     if norm in actions:
         return actions[norm]
@@ -154,7 +154,7 @@ def match_action(query: str):
     if norm == "비상정지에":
         return actions["비상정지"]
     stripped = norm
-    endings = voice_store.command_endings(_COMMAND_ENDINGS)
+    endings = voice_rules.command_endings(_COMMAND_ENDINGS)
     for _ in range(3):  # "해주세요"처럼 중첩 어미 대비
         for ending in endings:
             if stripped.endswith(ending) and len(stripped) > len(ending):

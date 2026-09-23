@@ -55,7 +55,7 @@ def main():
 
     index = {}
     count = 0
-    for category, text, _custom in all_lines():
+    for category, text in all_lines():
         cat_dir = args.out / category
         cat_dir.mkdir(exist_ok=True)
         path = cat_dir / f"{key(text)}.wav"

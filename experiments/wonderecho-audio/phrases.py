@@ -13,9 +13,6 @@
 from __future__ import annotations
 
 import random
-import re
-
-import voice_store
 
 PHRASES: dict[str, list[str]] = {
     # ── 호출 응답·인사 ────────────────────────────────────────────────────
@@ -257,64 +254,16 @@ PHRASES: dict[str, list[str]] = {
 }
 
 
-# 추가 문구의 정본은 phrases 테이블 하나다. 구 JSON은 이전 도구로 가져온다.
-
-
-def _db_phrases() -> dict[str, list[str]]:
-    """voice_data.db의 추가 문구 — 기본 문구는 코드가 유지하고 DB는 얹기만 한다."""
-    out: dict[str, list[str]] = {}
-    for cat, text in voice_store.all_phrases():
-        out.setdefault(cat, []).append(text)
-    return out
-
-
-def merged() -> dict[str, list[str]]:
-    """기본 + DB 추가 문구의 합본. 카테고리 순서는 기본 → 신규."""
-    out = {cat: list(lines) for cat, lines in PHRASES.items()}
-    for cat, lines in _db_phrases().items():
-        dest = out.setdefault(cat, [])
-        dest.extend(text for text in lines if text not in dest)
-    return out
-
-
-def add_custom(category: str, text: str) -> str:
-    """관리자 문구 추가. 정규화된 카테고리명을 반환한다."""
-    cat = re.sub(r"[^a-z0-9_]", "", category.strip().lower())
-    if not cat:
-        raise ValueError("카테고리는 영문 소문자·숫자·밑줄만 가능합니다")
-    text = text.strip()
-    if not text:
-        raise ValueError("문구가 비어 있습니다")
-    if len(text) > 200:
-        raise ValueError("문구는 200자 이내로 입력하세요")
-    if text in PHRASES.get(cat, []) or text in _db_phrases().get(cat, []):
-        raise ValueError("이미 있는 문구입니다")
-    if not voice_store.edit_phrase(cat, text):
-        raise ValueError("이미 있는 문구입니다")
-    return cat
-
-
-def remove_custom(category: str, text: str) -> bool:
-    """관리자가 추가한 문구만 삭제 가능 — 기본 문구는 건드리지 않는다."""
-    if text in PHRASES.get(category, []) or text not in _db_phrases().get(category, []):
-        return False
-    return voice_store.edit_phrase(category, text, remove=True)
-
-
 def pick(category: str, rng: random.Random | None = None) -> str:
     """카테고리에서 문구 하나를 고른다. 없으면 빈 문자열."""
-    lines = merged().get(category, [])
+    lines = PHRASES.get(category, [])
     if not lines:
         return ""
     return (rng or random).choice(lines)
 
 
 def all_lines():
-    """모든 문구를 (category, text, custom)로 내보낸다 — 캐시 생성·검수용."""
+    """모든 문구를 (category, text)로 내보낸다 — 캐시 생성·검수용."""
     for cat, lines in PHRASES.items():
         for text in lines:
-            yield cat, text, False
-    for cat, lines in _db_phrases().items():
-        for text in lines:
-            if text not in PHRASES.get(cat, []):
-                yield cat, text, True
+            yield cat, text

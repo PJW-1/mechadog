@@ -1,10 +1,8 @@
 # PC 환경 구축 — 음성 인식·합성
 
-**DB 설치 정본:** [DB_GUIDE.md](DB_GUIDE.md)의 음성3테이블 + 규칙 JSON 구성이다.
-팀 합성 자료는 `python prepare_demo.py --output-dir .`로 만들고
-`python voice_store.py --check-schema`로 확인한다. 기존 음성8테이블 DB는 먼저
-`python migrate_voice_db.py --db voice_data.db`로 백업·이전한다.
-추가 응답은 `phrases` 테이블에만 저장하며 `phrases_custom.json`은 구버전 이전 입력이다.
+**음성 DB는 설치하지 않는다** (2026-09-23 폐기 · WBS 4.7.22). 남아 있는 `voice_data.db` 는
+읽지 않으므로 지워도 된다. 바꿀 수 있는 것은 규칙 JSON(`voice_data.rules.json`)과 암구호 환경
+변수(6절)뿐이다.
 
 WonderEcho 모듈이 마이크와 스피커를 맡고, **판단은 전부 이 PC가 한다.** 모듈에서는 한국어 인식을 하지 않는다 — 모듈 CPU로는 불가능하고, 인식은 PC의 GPU가 한다.
 
@@ -244,9 +242,7 @@ python -X utf8 build_prompt_audio.py <원본.wav> <출력.wav>
 
 | 자원 | Git | 재생 방법 |
 |---|---|---|
-| `voice_data.db` | 무시됨 | `python prepare_demo.py --output-dir .` — 정본 음성3테이블 생성. 기존 DB는 보존 |
-| `voice_data.rules.json` | 무시됨 | 같은 명령으로 공유 JSON의 고정 발화 규칙 재현 |
-| `phrases_custom.json` | 이전 입력만 | `python migrate_voice_db.py --db voice_data.db`로 `phrases`에 이전·백업. 새 관리 API는 DB만 사용 |
+| `voice_data.rules.json` | 무시됨 | 선택. 없으면 코드 기본 규칙. `python voice_rules.py --add wake 메카독이` 로 만든다 |
 | `voice_cache/` | 무시됨 | TTS 캐시 — 자동 생성 |
 | `emergency_log.txt` | 무시됨 | 비상 발화 시 자동 생성 |
 | Whisper 모델 폴더 | 미포함 | 1절 다운로드 절차 (모델 파일은 라이선스·용량으로 커밋하지 않는다) |
@@ -256,18 +252,13 @@ python -X utf8 build_prompt_audio.py <원본.wav> <출력.wav>
 
 ### 암구호(3.8.2)는 기본값이 코드에 있다
 
-데모 문구 `"메카독 출입 허가"` 가 `voice_pipeline.DEFAULT_PASSPHRASES` 에 있다 — **실제 암구호는 코드가 아니라 DB에 넣는다:**
+데모 문구 `"메카독 출입 허가"` 가 `voice_pipeline.DEFAULT_PASSPHRASES` 에 있다. **실제 암구호는 코드가 아니라 환경 변수에 넣는다:**
 
-```bash
-python voice_store.py --set auth_passphrases '["실제 암구호", "예비 문구"]'
+```powershell
+$env:MECHDOG_PASSPHRASES = '["실제 암구호", "예비 문구"]'
 ```
 
-키 이름이 `pass` 를 포함해 `--dump`·`--set` 에코에서 값이 자동으로 가려진다. 빈 목록(`'[]'`)으로 두면 음성 인증 경로 자체가 닫힌다.
-
-공유용 `--seed`/`prepare_demo.py`는 공개 설정4개만 넣고 암구호를 자동 저장하지 않는다.
-설정이 없는 데모의 코드 기본값과 관리자가 명시적으로 저장한 인증 설정을 구분한다.
-암구호 설정이 들어 있는 DB는 `db_transfer.py export`가 거부하며 공유 자료로 반출하지 않는다.
-정본 스키마는 PR223과 같은 3테이블이며, 인증 기능 때문에 구형8테이블을 되살리지 않는다.
+값은 저장소와 로그에 남지 않는다. JSON 목록이 아니거나 빈 목록(`'[]'`)이면 음성 인증 경로 자체가 닫힌다. 데모 문구로 되돌아가지 않는다.
 
 ### 다른 환경에서 검증 가능/불가능
 
