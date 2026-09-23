@@ -156,7 +156,9 @@ def main() -> int:
         command.add_argument("--step", type=float, default=20.0)
         command.add_argument("--angle", type=float, default=0.0)
         command.add_argument("--duration", type=float, default=0.5)
-    sound = sub.add_parser("sound", help="play a TF card track (0 = stop) without clearing the latch")
+    sound = sub.add_parser(
+        "sound", help="play a TF card track (0 = stop) without clearing the latch"
+    )
     sound.add_argument("track", type=int)
 
     args = parser.parse_args()
