@@ -721,6 +721,24 @@ class XiaoCaptureTests(unittest.TestCase):
         _, speech, _ = vp.capture_xiao(mic, timeout_s=5.0, guard_s=0)
         self.assertTrue(speech)
 
+    def test_wake_before_speech_ends_the_wait_without_link_error(self):
+        mic = FakeMic([_frame(0)] * 500)
+        t0 = time.monotonic()
+        pcm, speech, at_ms = vp.capture_xiao(
+            mic, timeout_s=10.0, guard_s=1.0, interrupt=lambda: True
+        )
+        self.assertLess(time.monotonic() - t0, 1.0)  # 경고가 기다리는데 10초를 다 쓰지 않는다
+        self.assertFalse(speech)
+        self.assertIsNone(at_ms)
+
+    def test_wake_does_not_cut_speech_already_started(self):
+        mic = FakeMic([_frame(3000)] * 10 + [_frame(0)] * 60)
+        pcm, speech, _ = vp.capture_xiao(
+            mic, timeout_s=5.0, guard_s=0, interrupt=lambda: len(mic.frames) < 60
+        )
+        self.assertTrue(speech)
+        self.assertEqual(len(pcm), 70 * 640)  # 말끝 무음까지 다 받는다
+
     def test_dead_link_raises_timeout_like_serial_path(self):
         with self.assertRaises(TimeoutError):
             vp.capture_xiao(FakeMic([]), timeout_s=0.3)
@@ -913,6 +931,16 @@ class RobotEscalationWarningTests(unittest.TestCase):
         )
         items = [item for _, _, item in hub.drain_say()]
         self.assertEqual(items[0], "사원증을 보여 주십시오.")  # 공지보다 앞이다
+
+    def test_level_change_and_auth_request_wake_the_listening_turn(self):
+        # 2026-09-24 실기: 말소리 대기 15초가 끝나야 폴링해서 L2 안내·L3 경고가 11초 늦었다.
+        for kind in ("escalation_changed", "auth_required"):
+            with self.subTest(kind=kind):
+                hub = vp.Hub("test")
+                self._poll(hub, [{"event": "person_found"}])
+                self.assertFalse(hub.wake.is_set())  # 검출마다 턴을 끊으면 말을 못 받는다
+                self._poll(hub, [{"event": kind, "state": "AUTH_WAIT", "escalation": "L2"}])
+                self.assertTrue(hub.wake.is_set())
 
     def test_other_events_are_journaled_but_not_spoken(self):
         """⚠️ 사람 확정마다 말하면 순찰이 방송이 된다."""

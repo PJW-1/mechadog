@@ -100,6 +100,8 @@ class Hub:
         self._journal = journal  # EventJournal | None — 날짜별 JSONL 영속 기록
         self.robot_cursor = 0  # 관제 /api/events 폴링 커서
         self._robot_next_poll = 0.0
+        # 단계가 오르거나 인증을 요구하면 선다 — 말소리 대기를 끊고 바로 안내·경고한다.
+        self.wake = threading.Event()
         self.auth_prompted = False
         self.mic = None  # XiaoMic | None — /status 에 끊김 계수를 싣는다 (4.7.19)
 
@@ -168,7 +170,16 @@ class Hub:
             warning = e.get("warning")
             if kind == "escalation_changed" and warning:
                 self.enqueue_say(str(warning), urgent=True)
+            if kind in ("escalation_changed", "auth_required"):
+                self.wake.set()
         self.robot_cursor = latest
+
+    def poll_robot_events_forever(self, base, interval=1.0):
+        """`poll_robot_events` 를 따로 돈다. 턴 사이에만 부르면 말소리 대기(최대 15초)만큼
+        경고가 늦었다 — 2026-09-24 실기에서 L2 안내·L3 경고가 각각 11초 늦었다."""
+        while True:
+            self.poll_robot_events(base, interval)
+            time.sleep(interval)
 
     def enqueue_say(self, text, urgent=False):
         with self.lock:
@@ -628,13 +639,15 @@ def capture_pcm(device, decoder, timeout_s=15.0, vad=True, on_speech=None):
 ECHO_GUARD_S = 0.3
 
 
-def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S):
+def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S, interrupt=None):
     """XIAO `:82/audio` capture -> `(pcm, speech_seen, first_speech_ms)` (WBS 4.7.19).
 
     Same contract as `capture_pcm` (VAD, `first_speech_ms`, `on_speech`).
     The stream is always on, so stale audio is flushed first. If the link
     stalls after speech started, trailing silence is judged by wall clock so
-    the turn still ends instead of waiting out `timeout_s`.
+    the turn still ends instead of waiting out `timeout_s`. `interrupt()` true
+    before speech starts ends the wait early (a warning is queued); once speech
+    has started the turn runs to its end.
     """
     mic.flush()
     detector = _Vad(on_speech)
@@ -642,6 +655,8 @@ def capture_xiao(mic, timeout_s=15.0, on_speech=None, guard_s=ECHO_GUARD_S):
     skip = int(guard_s * 1000) // 20
     deadline = time.monotonic() + timeout_s
     while True:
+        if interrupt is not None and not detector.speech_seen and interrupt():
+            return bytes(pcm), False, None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -669,11 +684,14 @@ def open_mic(args):
     return XiaoMic(args.xiao, gain=args.xiao_gain).start()
 
 
-def listen_pcm(device, decoder, mic, timeout_s, on_speech=None):
+def listen_pcm(device, decoder, mic, timeout_s, on_speech=None, interrupt=None):
     """Capture from the configured mic: XIAO when given (ADR-38), else WonderEcho."""
     if mic is not None:
         guard_s = ECHO_GUARD_S if device is not None or ROBOT_SPEAKER is not None else 0.0
-        return capture_xiao(mic, timeout_s=timeout_s, on_speech=on_speech, guard_s=guard_s)
+        return capture_xiao(
+            mic, timeout_s=timeout_s, on_speech=on_speech, guard_s=guard_s, interrupt=interrupt
+        )
+    # ponytail: WonderEcho 경로는 끊지 못한다 — 경고가 최대 15초 늦는다. 그 경로를 다시 쓰면 여기도.
     return capture_pcm(device, decoder, timeout_s=timeout_s, on_speech=on_speech)
 
 
@@ -977,12 +995,17 @@ def main():
             daemon=True,
         ).start()
 
+    # 로봇 측 사건(검출 확정·단계 경고)을 저널에 합친다 — 턴과 따로 돈다.
+    threading.Thread(
+        target=hub.poll_robot_events_forever, args=(args.robot_api,), daemon=True
+    ).start()
     turn = 0
     follow_until = 0.0
     badge_pending = False
     try:
         while args.turns == 0 or turn < args.turns:
             turn += 1
+            hub.wake.clear()  # 이 뒤에 온 사건만 다음 대기를 끊는다 — 앞의 것은 아래서 처리된다
             state, escalation = robotlink.robot_state_level(args.robot_api)
             if badge_pending:
                 verdict = badge_verdict(state, escalation)
@@ -995,8 +1018,6 @@ def main():
             if prompt:
                 hub.activity = "speaking"
                 _say(device, piper, prompt, args.speed)
-            # 로봇 측 사건(검출 확정 등)을 저널에 합친다 — 몇 초에 한 번씩만.
-            hub.poll_robot_events(args.robot_api)
             # 단계 경고·시나리오 큐 처리 — 대기 모드에서도 경고는 나간다
             for _, _, item in hub.drain_say():
                 if isinstance(item, tuple) and item[0] == "scenario":
@@ -1022,6 +1043,7 @@ def main():
                     mic,
                     timeout_s=1.5 if badge_pending else 15.0,
                     on_speech=tell_robot_listening if not badge_pending else None,
+                    interrupt=hub.wake.is_set,
                 )
             except TimeoutError as e:
                 print(f"[capture] {e} — skip")
