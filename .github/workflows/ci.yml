@@ -75,6 +75,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # PR diff 를 보려면 베이스 브랜치와의 공통 조상이 필요하다.
+          fetch-depth: 0
+
+      # 카메라(DR-3: 촬영·송출 전용)와 로봇 펌웨어 코드가 한 PR에 섞이면 실패한다.
+      # 2026-09-22~23 사고: 로봇 기능 PR에 카메라 코드가 끼어 같이 플래시됐다.
+      - name: Firmware scope guard (camera/robot separation)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}"
+          python3 tools/check_firmware_scope.py --base "origin/${{ github.base_ref }}"
 
       - name: Detect firmware sources
         id: detect
