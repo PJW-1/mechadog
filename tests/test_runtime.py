@@ -291,6 +291,60 @@ def test_command_ack_is_not_counted_as_discarded_telemetry(config: dict, clock: 
     assert r.stats.discarded == 1
 
 
+def _sounds(lines: list[str]) -> list[dict]:
+    return [m for m in map(json.loads, lines) if m["type"] == "SOUND"]
+
+
+def _ack(seq: int) -> bytes:
+    return json.dumps(
+        {"ok": True, "verdict": "ACCEPT", "seq": seq, "type": "SOUND", "applied": True}
+    ).encode()
+
+
+def _run_ticks(r: Runtime, clock: FakeClock, ms: int) -> list[dict]:
+    sent = []
+    for _ in range(ms // 100):
+        sent += _sounds(r.tick(clock.ms))
+        clock.advance(100)
+    return sent
+
+
+def test_unacked_sound_is_resent_with_a_new_seq(config: dict, clock: FakeClock) -> None:
+    """⚠️ **`SOUND` 는 한 번만 나가서 UDP 한 개가 빠지면 문장이 소리 없이 사라진다.**
+
+    2026-09-24 실기에서 대체 문장 하나가 그렇게 빠졌다(초당 sent 12 · acks 11). 옛 seq
+    는 펌웨어 순서 게이트가 거부하므로 새 seq 로 다시 싣는다. 재전송은 두 번까지다.
+    """
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    r.commander.once("SOUND", track=184)
+    sent = _run_ticks(r, clock, 2000)
+    assert [m["track"] for m in sent] == [184, 184, 184], "원래 1번 + 재전송 2번"
+    assert len({m["seq"] for m in sent}) == 3, "재전송마다 새 seq"
+
+
+def test_acked_sound_is_not_resent(config: dict, clock: FakeClock) -> None:
+    """ACK 가 오면 다시 보내지 않는다 — 다시 보내면 문장이 처음부터 다시 나온다."""
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    r.commander.once("SOUND", track=3)
+    first = _sounds(r.tick(clock.ms))
+    r.ingest(_ack(first[0]["seq"]), clock.ms)
+    clock.advance(100)
+    assert _run_ticks(r, clock, 1000) == []
+
+
+def test_newer_sound_replaces_the_one_awaiting_ack(config: dict, clock: FakeClock) -> None:
+    """ACK 를 기다리던 문장보다 새 문장이 먼저다 — 옛 문장을 나중에 다시 틀면 순서가 뒤집힌다."""
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    r.commander.once("SOUND", track=3)
+    r.tick(clock.ms)
+    clock.advance(100)
+    r.commander.once("SOUND", track=184)
+    newer = _sounds(r.tick(clock.ms))
+    r.ingest(_ack(newer[0]["seq"]), clock.ms)
+    clock.advance(100)
+    assert _run_ticks(r, clock, 1000) == []
+
+
 # ── 사건 적용 ────────────────────────────────────────────────
 def test_robot_failsafe_report_drives_the_host(config: dict, clock: FakeClock) -> None:
     r = Runtime(config, device_id=DEVICE, clock=clock)

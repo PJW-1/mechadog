@@ -83,6 +83,11 @@ def _is_oversized_datagram(exc: OSError) -> bool:
     return getattr(exc, "winerror", None) == WSAEMSGSIZE or exc.errno == WSAEMSGSIZE
 
 
+# `SOUND` ACK 대기 — 실측 왕복은 30ms 안팎(`last_cmd_age_ms`)이라 세 주기면 넉넉하다.
+SOUND_ACK_TIMEOUT_MS = 300
+SOUND_RETRIES = 2
+
+
 def _is_command_ack(raw: str | bytes) -> bool:
     """로봇이 명령마다 돌려주는 응답(펌웨어 `sendAck`)인가. **텔레메트리가 아니다.**
 
@@ -177,6 +182,9 @@ class Runtime:
             clock=clock,
         )
         self._behavior = behavior_from_config(self._commander, config)
+        # ACK 를 기다리는 `SOUND` 하나 — (seq, track, 다시 보낼 시각, 남은 재전송) (`_resend_sound`).
+        self._sound_wait: tuple[int, int, int, int] | None = None
+        self._sound_retries_left = SOUND_RETRIES
         # 상태별 모션을 붙인다 (3.5.1). 만들 수 없는 것은 등록하지 않고 이유를 남기며,
         # 등록되지 않은 상태는 `Behavior` 가 정지로 처리한다 — 안전측 기본값이다.
         self._actions = register_actions(self._behavior, config)
@@ -479,6 +487,11 @@ class Runtime:
         if out.reading is None:
             if _is_command_ack(raw):
                 self._summary.count("acks")
+                if (
+                    self._sound_wait is not None
+                    and json.loads(raw).get("seq") == self._sound_wait[0]
+                ):
+                    self._sound_wait = None
                 return Ingested(discarded="명령 응답")
             self._stats.discarded += 1
             self._summary.count("discarded")
@@ -1457,6 +1470,33 @@ class Runtime:
             blocked_ms=None if since is None else now_ms - since,
         )
 
+    def _watch_sound(self, lines: list[str], now_ms: int) -> None:
+        """이번 틱에 나간 `SOUND` 를 ACK 대기에 올린다. 새 것이 옛 것을 밀어낸다."""
+        for line in lines:
+            msg = json.loads(line)
+            if msg["type"] == "SOUND":
+                due = now_ms + SOUND_ACK_TIMEOUT_MS
+                self._sound_wait = (msg["seq"], msg["track"], due, self._sound_retries_left)
+                self._sound_retries_left = SOUND_RETRIES
+
+    def _resend_sound(self, now_ms: int) -> None:
+        """ACK 없이 마감이 지난 `SOUND` 를 **새 seq 로** 다시 싣는다 (WBS 4.7.21).
+
+        `SOUND` 는 한 번만 나가서 UDP 한 개가 빠지면 문장이 소리 없이 사라진다 —
+        2026-09-24 실기에서 명령의 약 1.2% 가 빠졌고 대체 문장 하나가 그렇게 나오지
+        않았다. 같은 seq 는 펌웨어 순서 게이트가 거부하므로 `once` 로 다시 만든다.
+        ⚠️ ACK 만 빠진 경우엔 같은 문장이 처음부터 다시 나온다 — 무음보다 낫다.
+        """
+        if self._sound_wait is None or now_ms < self._sound_wait[2]:
+            return
+        _seq, track, _due, left = self._sound_wait
+        self._sound_wait = None
+        if left <= 0:
+            LOG.warning("sound_unacked", track=track, retries=SOUND_RETRIES)
+            return
+        self._sound_retries_left = left - 1
+        self._commander.once("SOUND", track=track)
+
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
         # ⚠️ **이 함수의 소요가 명령 주기를 결정한다.** 운용 루프는 단일 스레드이고
@@ -1479,9 +1519,11 @@ class Runtime:
         # 단계 색을 로봇에 내려보낸다 — 위 호출 바로 뒤가 제자리다 (`4.7.3`).
         self._emit_eye_led(now_ms)
         self._request_auth(now_ms)
+        self._resend_sound(now_ms)
         before = self._behavior.state
         phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
+        self._watch_sound(lines, now_ms)
         behavior_ms = (time.perf_counter() - phase_started) * 1000
         if self._behavior.state != before:
             self._stats.transitions += 1
