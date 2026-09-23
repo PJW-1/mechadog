@@ -238,8 +238,8 @@ def validate_base_config(config: dict[str, Any]) -> None:
         raise ConfigError(f"필수 안전 설정 누락: {missing_safety}")
     for name in REQUIRED_SAFETY_KEYS:
         _require_positive(safety, name)
-    if safety["cmd_timeout_ms"] > 300:
-        raise ConfigError("safety.cmd_timeout_ms 는 300ms 이하여야 함")
+    if safety["cmd_timeout_ms"] > 600:
+        raise ConfigError("safety.cmd_timeout_ms 는 600ms 이하여야 함 (ADR-39)")
     if safety["cmd_timeout_ms"] >= safety["link_loss_failsafe_ms"]:
         raise ConfigError("명령 정지가 링크 페일세이프보다 먼저 동작해야 함")
     if safety["battery_shutdown_v"] >= safety["battery_warn_v"]:
