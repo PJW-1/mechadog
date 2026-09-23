@@ -461,14 +461,18 @@ def _say(device, piper, text, speed):
 def _say_on_robot(piper, text, speed):
     """문장을 TF 카드 트랙으로 바꿔 로봇 MP3 모듈로 튼다 (WBS 4.7.21).
 
-    표에 없는 문장은 틀 수 없다 — 말하지 않고 로그만 남긴다(`tf_tracks.py --check`
-    가 CI 에서 막는다). 모듈은 재생 끝을 알리지 않으므로, 카드 음원과 같은 모델·속도로
+    표에 없는 문장(서버가 돌려준 거부 사유처럼 미리 녹음할 수 없는 것)은 고정 대체
+    문장(`unplayable`)으로 튼다 — 고정 문장의 누락은 `tf_tracks.py --check` 가 CI 에서 막는다. 모듈은 재생 끝을 알리지 않으므로, 카드 음원과 같은 모델·속도로
     합성한 길이만큼 기다린다. 그러지 않으면 로봇 마이크(XIAO)가 제 말을 듣는다.
     """
     track = tf_tracks.track_for(text)
     if track is None:
-        print(f"[tf] 표에 없는 문장이라 로봇 스피커로 못 튼다: {text!r}")
-        return
+        print(f"[tf] 표에 없는 문장이라 대체 문장으로 튼다: {text!r}")
+        text = pick("unplayable")
+        track = tf_tracks.track_for(text)
+        if track is None:  # 표를 새로 만들지 않은 카드 — 조용히 넘어가지 않는다
+            print(f"[tf] 대체 문장도 표에 없다: {text!r}")
+            return
     ok, detail = robotlink.play_track(track, ROBOT_SPEAKER)
     if not ok:
         print(f"[tf] 트랙 {track} 재생 요청 실패: {detail}")

@@ -777,10 +777,19 @@ class RobotSpeakerTests(unittest.TestCase):
         self.assertGreater(waited, 1.0)  # 1초 음원 + 여유 — 로봇 마이크가 제 말을 듣지 않게
         self.assertLess(waited, 1.0 + vp.ROBOT_SPEAKER_TAIL_S + 0.01)
 
-    def test_sentence_missing_from_the_table_is_not_played(self):
-        play, _, sleep = self._say("표에 없는 문장", None)
-        play.assert_not_called()
-        sleep.assert_not_called()
+    def test_sentence_missing_from_the_table_plays_the_fallback_line(self):
+        """서버가 돌려준 거부 사유처럼 미리 녹음할 수 없는 문장은 고정 대체 문장으로 튼다."""
+        fallback = vp.pick("unplayable")
+        tracks = {fallback: 184}
+        with (
+            mock.patch.object(vp.tf_tracks, "track_for", side_effect=tracks.get),
+            mock.patch.object(vp.robotlink, "play_track", return_value=(True, "")) as play,
+            mock.patch.object(vp, "synth_piper", return_value=b"") as synth,
+            mock.patch.object(vp.time, "sleep"),
+        ):
+            vp._say(None, "piper", "자율 동작 중이 아니다", 1.2)
+        play.assert_called_once_with(184, "http://api")
+        synth.assert_called_once_with("piper", fallback, 1.2)  # 기다리는 길이도 대체 문장 기준
 
     def test_refused_track_does_not_wait(self):
         _, _, sleep = self._say("안내", 7, played=(False, "연결 안 됨"))
