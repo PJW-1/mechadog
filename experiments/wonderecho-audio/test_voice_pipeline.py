@@ -118,8 +118,10 @@ class GuardScenarioTests(unittest.TestCase):
     def test_known_name_is_verified(self):
         ctx = FakeCtx(answers=["김민수 입니다"])
         scenarios.sc_guard(ctx)
-        self.assertTrue(any("확인되었습니다" in line for line in ctx.lines))
-        self.assertTrue(any("김민수" in line for line in ctx.lines))
+        self.assertTrue(any(line in phr.PHRASES["identity_ok"] for line in ctx.lines))
+        # 이름은 말하지 않고(고정 문장만 TF 카드에 있다 · 4.7.21) 기록에만 남긴다
+        self.assertFalse(any("김민수" in line for line in ctx.lines))
+        self.assertTrue(any("김민수" in text for _, text in ctx.events))
 
     def test_unknown_name_is_denied(self):
         ctx = FakeCtx(answers=["홍길동 입니다"])
@@ -182,7 +184,8 @@ class NewScenarioTests(unittest.TestCase):
         ctx = FakeCtx(answers=["3번 창고"])
         scenarios.sc_emergency_response(ctx)
         self.assertTrue(any("위치" in line for line in ctx.lines))
-        self.assertTrue(any("3번 창고" in line for line in ctx.lines))
+        self.assertFalse(any("3번 창고" in line for line in ctx.lines))
+        self.assertTrue(any("3번 창고" in text for _, text in ctx.events))
 
     def test_ppe_scenarios_use_phrase_library(self):
         for scn in (scenarios.sc_ppe_helmet, scenarios.sc_ppe_vest, scenarios.sc_ppe_warning):
