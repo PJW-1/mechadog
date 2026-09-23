@@ -2,7 +2,8 @@
 
 The voice loop talks to the module through this interface only. Today the
 only implementation is :class:`SerialTransport` — the temporary UART
-validation link (--port, e.g. COM5). The robot 4-pin I2C relay was ruled
+validation link (--port, e.g. COM5). Listening can already bypass it:
+`--xiao` reads the XIAO microphone through `xiao_mic.XiaoMic` (4.7.19). The robot 4-pin I2C relay was ruled
 out on 2026-09-23 (WBS 4.7.9: 0x34 carries command ids only · ADR-38).
 The target path splits listening and speaking
 

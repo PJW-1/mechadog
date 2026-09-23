@@ -1,6 +1,8 @@
 """Scenario/robotlink/transport/phrases unit tests — no serial, mic, or GPU required."""
 
+import struct
 import sys
+import time
 import types
 import unittest
 from unittest import mock
@@ -642,6 +644,116 @@ class TransportTests(unittest.TestCase):
         dev.write.assert_called()  # command packet framed by stream_client
         link.close()
         dev.close.assert_called_once()
+
+
+class FakeMic:
+    """XiaoMic stand-in: hands out scripted 20 ms frames, then silence of the link."""
+
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.flushed = 0
+
+    def flush(self):
+        self.flushed += 1
+
+    def read_frame(self, timeout):
+        if self.frames:
+            return self.frames.pop(0)
+        time.sleep(timeout)  # 링크가 멈춘 것처럼 — 프레임이 오지 않는다
+        return None
+
+
+def _frame(level):
+    return struct.pack("<320h", *([level] * 320))
+
+
+class XiaoCaptureTests(unittest.TestCase):
+    """WBS 4.7.19 — XIAO 마이크도 WonderEcho 와 같은 VAD 계약을 지킨다."""
+
+    def test_echo_guard_skips_prompt_tail_then_vad_ends_turn(self):
+        guard = int(vp.ECHO_GUARD_S * 1000) // 20
+        echo, quiet, loud = [_frame(3000)] * guard, [_frame(0)] * 30, [_frame(3000)] * 10
+        mic = FakeMic(echo + quiet + loud + [_frame(0)] * 60)
+        heard = []
+        pcm, speech, at_ms = vp.capture_xiao(mic, timeout_s=5.0, on_speech=heard.append)
+        self.assertEqual(mic.flushed, 1)  # 쉬지 않는 마이크 — 지난 소리를 버리고 시작
+        self.assertTrue(speech)
+        self.assertEqual(heard, [at_ms])  # 말이 시작된 프레임에서 한 번만
+        self.assertEqual(pcm[:640], _frame(0))  # 안내 멘트 꼬리는 녹음에 없다
+        self.assertEqual(len(pcm), (30 + 10 + 60) * 640)
+
+    def test_link_stall_after_speech_still_ends_the_turn(self):
+        mic = FakeMic([_frame(0)] * 40 + [_frame(3000)] * 10)
+        t0 = time.monotonic()
+        pcm, speech, _ = vp.capture_xiao(mic, timeout_s=10.0, guard_s=0)
+        self.assertTrue(speech)
+        self.assertLess(time.monotonic() - t0, 3.0)  # 10초를 다 기다리지 않는다
+        self.assertEqual(len(pcm), 50 * 640)
+
+    def test_silence_is_not_speech(self):
+        pcm, speech, at_ms = vp.capture_xiao(FakeMic([_frame(0)] * 50), timeout_s=0.5, guard_s=0)
+        self.assertFalse(speech)
+        self.assertIsNone(at_ms)
+        self.assertEqual(len(pcm), 50 * 640)
+
+    def test_dead_link_raises_timeout_like_serial_path(self):
+        with self.assertRaises(TimeoutError):
+            vp.capture_xiao(FakeMic([]), timeout_s=0.3)
+
+    def test_listen_pcm_prefers_xiao(self):
+        with (
+            mock.patch.object(vp, "capture_xiao", return_value="xiao") as xiao,
+            mock.patch.object(vp, "capture_pcm", return_value="serial") as serial_cap,
+        ):
+            self.assertEqual(vp.listen_pcm("dev", "dec", "mic", 3.0), "xiao")
+            self.assertEqual(vp.listen_pcm("dev", "dec", None, 3.0), "serial")
+            vp.listen_pcm(None, None, "mic", 3.0)
+        # 에코 가드는 멘트를 내보내는 스피커(--port)가 있을 때만 건다
+        self.assertEqual([c.kwargs["guard_s"] for c in xiao.call_args_list], [vp.ECHO_GUARD_S, 0.0])
+        serial_cap.assert_called_once_with("dev", "dec", timeout_s=3.0, on_speech=None)
+
+    def test_status_carries_drop_counters(self):
+        hub = vp.Hub("r1")
+        self.assertIsNone(hub.snapshot()["mic"])
+        hub.mic = mock.Mock(stats=lambda: {"drops": 2, "connects": 3})
+        self.assertEqual(hub.snapshot()["mic"]["drops"], 2)
+
+    def test_say_without_speaker_only_prints(self):
+        with mock.patch.object(vp, "stream_play") as play:
+            vp._say(None, object(), "안내", 1.0)
+        play.assert_not_called()
+
+
+class XiaoStartupTests(unittest.TestCase):
+    def _main(self, argv, mic=None):
+        piper = types.SimpleNamespace(PiperVoice=types.SimpleNamespace(load=lambda _path: object()))
+        whisper = types.SimpleNamespace(WhisperModel=lambda *_a, **_kw: object())
+        with (
+            mock.patch.object(sys, "argv", ["voice_pipeline.py", *argv]),
+            mock.patch.dict(sys.modules, {"piper": piper, "faster_whisper": whisper}),
+            mock.patch.object(vp, "open_transport") as transport,
+            mock.patch.object(vp, "open_mic", return_value=mic),
+            mock.patch.object(scenarios, "sc_guard") as guard,
+        ):
+            vp.main()
+        return transport, guard
+
+    def test_guard_check_listens_through_xiao_without_com_port(self):
+        mic = mock.Mock()
+        transport, guard = self._main(["--xiao", "10.0.0.9", "--guard-check"], mic=mic)
+        transport.assert_not_called()  # 말하기 장치 없이도 기동한다
+        ctx = guard.call_args.args[0]
+        self.assertIs(ctx.mic, mic)
+        self.assertIsNone(ctx.device)
+        mic.stop.assert_called_once()
+
+    def test_needs_some_microphone(self):
+        with self.assertRaises(SystemExit):
+            self._main(["--guard-check"])
+
+    def test_say_still_needs_the_speaker_port(self):
+        with self.assertRaises(SystemExit):
+            self._main(["--xiao", "10.0.0.9", "--say", "안내"])
 
 
 class RouteQueryTests(unittest.TestCase):

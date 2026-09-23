@@ -26,7 +26,7 @@ faster-whisper, WonderEcho 펌웨어가 필요하다. 모듈이 성명을 묻으
 > (EXAONE GGUF · llama.cpp) 자유 대화와 `--model`·`--tts orpheus`·`--dry-llm-only`
 > 인자는 2026-09-23 폐기했다(ADR-38). `start_voice.ps1`로 기동(기본 COM9 + 관제
 > API :8090). 웨이크워드 "메카독"에만 응답하고 "그만"은 종료가 아니라 대기 모드다.
-> 지금 인자는 `--port` `--web` `--robot-id` `--robot-api` `--whisper` `--piper-model`
+> 지금 인자는 `--port` `--xiao <IP>` `--xiao-gain 0..4` `--web` `--robot-id` `--robot-api` `--whisper` `--piper-model`
 > `--speed` `--turns` `--log-dir` `--guard-check` `--say "문장"`(한 번 재생하고 종료하는
 > 시험용 CLI 인자 — 폐기한 관제 API `POST /say`와 별개)이다.
 >
@@ -34,7 +34,7 @@ faster-whisper, WonderEcho 펌웨어가 필요하다. 모듈이 성명을 묻으
 >   전부 전송 무관이고, WonderEcho COM 시리얼은 `SerialTransport` 구현 하나일 뿐이다.
 >   **COM은 임시 전송층이다.** 목표 구조는 듣기 = XIAO ESP32S3 Sense 마이크
 >   (`http://<xiao>:82/audio`, 16 kHz PCM16 모노 — 펌웨어는 완료, 파이프라인 입력은
->   4.7.19 미착수), 말하기 = 로봇 I²C MP3 모듈(`0x7B`)이 TF 카드의 미리 합성한 문장
+>   4.7.19 완료, `--xiao`), 말하기 = 로봇 I²C MP3 모듈(`0x7B`)이 TF 카드의 미리 합성한 문장
 >   트랙을 재생(4.7.20·4.7.21 미착수)이다. 로봇 4핀 I²C 로 PCM 을 왕복시키던 원안
 >   (4.7.9)은 0x34 브리지가 명령 id 만 나르므로 불가로 닫았다.
 > - **시나리오 테이블 (4.7.7)** — `scenarios.py`에 규칙 기반 시나리오 34종
