@@ -58,10 +58,10 @@ class Weight:
     note: str
 
 
-#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v2` 의 자산으로 올린다.
+#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v3` 의 자산으로 올린다.
 #: ⚠️ **모델을 다시 학습하면 새 태그를 쓴다** — 같은 태그의 자산을 갈아끼우면
 #: 아래 SHA-256 과 어긋나 받은 사람이 검증 실패로 멈춘다.
-PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v2/ppe.onnx"
+PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v3/ppe.onnx"
 
 #: ⚠️ **여기가 정본이다.** `models/README.md` 의 표는 이 값을 사람이 읽게 옮긴 것이다.
 WEIGHTS: tuple[Weight, ...] = (
@@ -83,7 +83,7 @@ WEIGHTS: tuple[Weight, ...] = (
         dest="models/ppe.onnx",
         url=PPE_RELEASE,
         size=3_677_797,
-        sha256="ff78802506e07dfcf89961374900486d363e558fff4fe81ce6053c3330d4a1c4",
+        sha256="a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4",
         note="PPE 5클래스(+person_down) · 라이선스 검토 중 (models/NOTICE) · MechDog Physical AI Team",
     ),
 )

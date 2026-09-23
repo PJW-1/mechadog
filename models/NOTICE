@@ -11,10 +11,10 @@ Copyright 2026 MechDog Physical AI Team
 
   파일      models/ppe.onnx
   크기      3,677,797 바이트
-  SHA-256   ff78802506e07dfcf89961374900486d363e558fff4fe81ce6053c3330d4a1c4
+  SHA-256   a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4
   구조      YOLOX-Nano · 입력 640x640 · 5클래스
             (helmet / no_helmet / vest / no_vest / person_down)
-  학습일    2026-09-23 · 병합셋 ppe_coco_v2
+  학습일    2026-09-23 · 병합셋 ppe_coco_v3
   라이선스  ⚠️ **검토 필요** — 학습 데이터의 라이선스가 혼합(아래 §3)이라
             가중치의 배포 조건을 아직 단정하지 않는다. 현재 배포는
             **팀 내부 테스트용**이다. v1(ppe-v1 태그)은 CC BY 4.0 데이터만으로
@@ -38,14 +38,15 @@ Copyright 2026 MechDog Physical AI Team
   공식 릴리스 자산을 그대로 쓴다. 이 저장소는 그 파일을 재배포하지 않는다.
 
 ═══════════════════════════════════════════════════════════════
-3. 학습 데이터셋 — 자체 합성 + 공개 데이터 2종 (ppe_coco_v2)
+3. 학습 데이터셋 — 자체 합성 + 공개 데이터 3종 (ppe_coco_v3)
 ═══════════════════════════════════════════════════════════════
 
-  병합 후 이미지 5,284장(학습)·460장(검증) · 박스 38,386개.
+  병합 후 이미지 5,914장(학습)·514장(검증) · 박스 40,591개.
 
-  (1) sim_factory_t15 — 자체 생성 합성 데이터 150장
+  (1) 시뮬레이터 세션 3종 — 자체 생성 합성 데이터 570장
       이 프로젝트의 시뮬레이터가 XIAO 카메라 실측 기하(높이 0.15m,
       틸트 +15°±4°, FOV 74°x59°, 640x480)로 렌더링한 장면.
+      sim_factory_t15 150장 + 쓰러짐 세션 sim_fallen_t15/t15b 420장.
       외부 라이선스 없음 (프로젝트 산출물).
 
   (2) Construction-PPE — Ultralytics 공개 자산 1,416장
@@ -57,12 +58,17 @@ Copyright 2026 MechDog Physical AI Team
       hat→helmet · person→no_helmet 으로 클래스 변환.
       연구용 라이선스 — 상업적 이용 조건 확인 필요.
 
-  변경 사항 — 세 출처를 하나로 병합하고 클래스 어휘를
+  (4) Simuletic CCTV_Incident (Hugging Face) — 112장
+      laying→person_down 으로 클래스 변환 (standing 은 미사용).
+      CC BY 4.0.
+      https://huggingface.co/datasets/simuletic/CCTV_Incident
+
+  변경 사항 — 출처를 하나로 병합하고 클래스 어휘를
   helmet / no_helmet / vest / no_vest / person_down 으로 통일했다
   (`person` 은 1단 COCO 검출기가 담당하므로 제외).
-  ⚠️ 정정 — person_down 은 생성기 확률 설계(스폰 시 1회 5%)로
-  실제 학습 라벨이 0개었다. v2 가중치는 person_down 을
-  학습하지 못했으니 이 클래스의 검출을 기대하면 안 된다.
+  v2(태그 ppe-v2)는 생성기 확률 설계로 person_down 라벨이 0개였다.
+  v3는 자세 순환 강제 세션과 (4)로 211(학습)·17(검증)개를 확보해
+  실제로 학습했다 — 검증 AP 0.439.
 
   ⚠️ 원본 이미지는 이 저장소로 재배포하지 않는다. 위 출처에서 각자 받는다.
 
@@ -81,9 +87,10 @@ Copyright 2026 MechDog Physical AI Team
   이 저장소 코드              Apache-2.0      없음    LICENSE·NOTICE 유지
   models/ppe.onnx (가중치)    ⚠️ 검토 중      없음    NOTICE 유지 · 팀 내부용
   YOLOX 베이스 모델           Apache-2.0      없음    저작권 고지 유지
-  sim_factory_t15             자체 산출물     없음    없음
+  시뮬레이터 세션             자체 산출물     없음    없음
   Construction-PPE            AGPL 표기       없음    원본 재배포 금지
   SHWD                        연구용          없음    상업 이용 조건 확인
+  Simuletic CCTV_Incident     CC BY 4.0       없음    저작자 표시
 
-  v1 의 "가중치 CC BY 4.0" 판정은 v2 데이터셋 구성에서 성립하지 않는다.
+  v1 의 "가중치 CC BY 4.0" 판정은 v3 데이터셋 구성에서 성립하지 않는다.
   외부 배포·상업 이용 전에 (2)(3)의 라이선스 조항을 다시 확인한다.

@@ -64,6 +64,7 @@ COLORS = {
     "no_helmet": (0, 0, 255),
     "vest": (200, 200, 0),
     "no_vest": (255, 0, 255),
+    "person_down": (255, 128, 0),
     "person": (200, 200, 200),
 }
 STATE_COLOR = {STATE_OK: (0, 200, 0), STATE_VIOLATION: (0, 0, 255), STATE_UNKNOWN: (0, 200, 255)}
