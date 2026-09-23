@@ -7,6 +7,7 @@ import math
 import os
 import struct
 import sys
+import threading
 import time
 import types
 import unittest
@@ -961,6 +962,29 @@ class RobotEscalationWarningTests(unittest.TestCase):
                 hub.auth_prompted = prompted
                 self._poll(hub, [ev])
                 self.assertEqual(hub.wake.is_set(), wakes)
+
+    def test_poller_survives_a_bad_response(self):
+        # 폴링이 스레드로 옮겨 가며 예외 하나에 조용히 죽으면 그 뒤 경고가 영영 안 나간다.
+        hub = vp.Hub("test")
+        hub._robot_synced = True
+        l3 = {
+            "event": "escalation_changed",
+            "escalation": "L3",
+            "warning": "경보가 발령되었습니다.",
+        }
+        replies = [ValueError("깨진 JSON"), ([l3], 0, 1)]
+
+        def fetch(_base, _since):
+            r = replies.pop(0) if replies else ([], 0, 1)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        with mock.patch.object(vp.robotlink, "fetch_events", fetch):
+            threading.Thread(
+                target=hub.poll_robot_events_forever, args=("http://x", 0.01), daemon=True
+            ).start()
+            self.assertTrue(hub.wake.wait(2.0))
 
     def test_first_poll_after_start_does_not_replay_old_warnings(self):
         # 2026-09-24: 음성을 재시작하자 7분 전 L3 경고를 다시 읽었다 — 커서 0 이 버퍼 전체를 받는다.

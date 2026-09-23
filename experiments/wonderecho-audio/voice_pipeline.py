@@ -187,7 +187,10 @@ class Hub:
         """`poll_robot_events` 를 따로 돈다. 턴 사이에만 부르면 말소리 대기(최대 15초)만큼
         경고가 늦었다 — 2026-09-24 실기에서 L2 안내·L3 경고가 각각 11초 늦었다."""
         while True:
-            self.poll_robot_events(base, interval)
+            try:
+                self.poll_robot_events(base, interval)
+            except Exception as e:  # 스레드가 죽으면 그 뒤 경고가 영영 안 나간다
+                print(f"[events] poll failed: {e!r}")
             time.sleep(interval)
 
     def enqueue_say(self, text, urgent=False):
