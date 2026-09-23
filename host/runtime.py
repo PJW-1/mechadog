@@ -324,7 +324,7 @@ class Runtime:
         self._track_turn_large_deg = float(fsm["track_turn_large_deg"])
         self._dist_cm: float | None = None
         self._track_centered = False
-        # 경비에서 고개를 들었는가 (ADR-39). 든 뒤로는 움직이지 않고, L1 은 여기서 시작한다.
+        # 경비에서 고개를 들었는가 (ADR-40). 든 뒤로는 움직이지 않고, L1 은 여기서 시작한다.
         self._engaged = False
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
@@ -597,7 +597,7 @@ class Runtime:
                 and bool(result.tracks)
                 and max(result.tracks, key=lambda track: track.height).track_id in self._ppe_done
             )
-            # ⚠️ **경비 추종에서는 고개를 든 뒤에만 L1 이다** (ADR-39). 접근·정렬 중에
+            # ⚠️ **경비 추종에서는 고개를 든 뒤에만 L1 이다** (ADR-40). 접근·정렬 중에
             # 올리면 인증 요청까지의 10초를 걷는 데 다 쓴다. 마지막 검출 시각은 그대로 넣는다.
             gated = self._tracks_person() and not self._engaged
             if not self._behavior.standby and not inspected:
@@ -810,7 +810,7 @@ class Runtime:
             self._last_track_ms = None
             return
         if self._engaged:
-            # 고개를 든 뒤에는 다시 쫓지 않는다 (ADR-39). 대상이 떠나면 5초 상실이 순찰로 돌린다.
+            # 고개를 든 뒤에는 다시 쫓지 않는다 (ADR-40). 대상이 떠나면 5초 상실이 순찰로 돌린다.
             return
         box = result.sighting.box
         if box is None:
@@ -854,7 +854,7 @@ class Runtime:
         # 수백 번 넣으면 로그가 전이로 뒤덮이고 단계 축도 흔들린다.
         #
         # 조향 정렬과 거리 정지는 다르다. 멀리 있는 중앙 대상에게도 직진하고,
-        # 정지선에서는 걸음을 멈춘 채 제자리에서 돌아 중앙을 맞춘 뒤 고개를 든다 (ADR-39).
+        # 정지선에서는 걸음을 멈춘 채 제자리에서 돌아 중앙을 맞춘 뒤 고개를 든다 (ADR-40).
         if not self._track_stop_reached and (
             (self._track_stop_height_px and box_height >= self._track_stop_height_px)
             # 높이 목표가 없으면 추종기는 중앙 대상 앞에서 걷지 않는다 — 거기가 정지선이다.
@@ -865,7 +865,7 @@ class Runtime:
             # 박스와 초음파 중 무엇이 세웠는지 남긴다 — 1초 평균으로는 순간값이 가려진다.
             LOG.info("track_stop_reached", box_h_px=round(box_height, 1), dist_cm=self._dist_cm)
         deviation = command.deviation_px
-        # 정지선에서는, 또는 편차가 크면 걷지 않고 제자리에서 돈다 (ADR-39).
+        # 정지선에서는, 또는 편차가 크면 걷지 않고 제자리에서 돈다 (ADR-40).
         if self._track_stop_reached or abs(deviation) > self._track_turn_split_px:
             step, angle = 0.0, self._spin_angle(deviation)
         else:
