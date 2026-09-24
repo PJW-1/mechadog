@@ -41,6 +41,7 @@ from host.behavior.change_detect import (
     BaselineStore,
     Change,
     ChangeConfirmer,
+    ChangeKind,
     ZoneBaseline,
     classify_changes,
 )
@@ -1347,16 +1348,23 @@ class Runtime:
             self._zone_vlm_alarm = True
 
     def _leave_zone(self, result: Any, now_ms: int) -> None:
-        """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3).
+        """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3 · 2026-09-25 결정).
 
-        물건 변화(`_inspect_zone`)와 판독 확정(`_take_zone_reading`)을 합쳐 무엇이든 있으면
-        `zone_changed` 로 남기고 `ZONE_CHANGED` 를 낸다. 없으면 `ZONE_CLEAR` 다.
+        반출·반입(`_inspect_zone`)과 판독 확정(`_take_zone_reading`)을 모아 **종류별로
+        다르게** 맺는다(Z2·Z3·Z4).
 
-        ⚠️ **판독·경보가 남았으면 `ZONE_CLEAR` 를 미룬다** (2026-09-24 결정). 기다리지 않으면
+        ⚠️ **넘어짐·통로 막힘만 `zone_changed` → `ZONE_CHANGED`(L3) 다.** 반출은 관제에
+        가벼운 경고(`zone_notice`)만 남기고 순찰을 잇는다 — 로봇 혼자서는 사람이 잠깐
+        치운 것인지 정말 없어진 것인지 가를 수 없어, 눈·경보까지 올리면 오탐이 사람을
+        부른다. 반입은 그보다 가벼워 로그 기록만 한다(Z3) — 작업 중인 현장에 새 물건이
+        놓이는 일은 흔하다. **반출·반입이 넘어짐과 같은 방문에서 함께 확정돼도 결론은
+        여전히 `ZONE_CHANGED` 다** — Z2 가 Z4 를 가리면 안 된다.
+
+        ⚠️ **판독·경보가 남았으면 결론을 미룬다** (2026-09-24 결정). 기다리지 않으면
         판독이 *"쓰러진 사람이 있다"* 고 답해도 로봇은 경보를 울리며 지나간다. 미루는 것은
         이 사건 하나라 수동·비상정지 같은 ANY 전이는 그대로 먹는다. 상한은 판독마다
         `budget_ms` 다. **물건 변화를 확정했으면 기다리지 않는다** — 기다리는 사이 사람이
-        나타나 `ALERT` 로 가면 확정한 반출이 경보 없이 사라진다(확정기는 다시 올리지 않는다).
+        나타나 `ALERT` 로 가면 확정한 변화가 경고 없이 사라진다(확정기는 다시 올리지 않는다).
         늦게 온 판독은 건 구역 이름으로 남으므로 버리지 않는다(`_take_zone_reading`).
         """
         self._zone_done = True
@@ -1366,10 +1374,11 @@ class Runtime:
             # 상한 초과는 기능 저하다. 결과가 늦게 오면 그때 건 구역 이름으로 남는다.
             LOG.warning("zone_reading_timeout", zone=self._zone, wait_ms=self._zone_vlm_wait_ms)
             self._zone_vlm_wait_until = None
-        changes = [change.as_dict() for change in self._visit_found] + [
-            {"kind": kind, "source": "vlm"} for kind in self._zone_hazards
-        ]
-        if changes:
+        removed = [c.as_dict() for c in self._visit_found if c.kind is ChangeKind.REMOVED]
+        added = [c.as_dict() for c in self._visit_found if c.kind is not ChangeKind.REMOVED]
+        hazards = [{"kind": kind, "source": "vlm"} for kind in self._zone_hazards]
+        if hazards:
+            changes = removed + added + hazards
             LOG.warning("zone_changed", zone=self._zone, changes=changes)
             baseline = self._visit_baseline
             # ⚠️ **전이보다 먼저 남긴다** — `_observe_fallen` 과 같다. 대시보드 사건
@@ -1390,6 +1399,19 @@ class Runtime:
             # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
             self._zone_alarm_alert = self._apply(Event.ZONE_CHANGED, now_ms)
             return
+        if added:
+            # Z3 — 반입은 기록만 한다. 관제 화면에 올리면 작업 중 흔한 물건 배치까지
+            # 알림이 되어 «가벼운 경고» 의 뜻이 없어진다.
+            LOG.info("zone_change_recorded", zone=self._zone, changes=added)
+        if removed:
+            # Z2 — 반출은 눈·문구·L3 없이 관제에 가벼운 경고만 남기고 순찰을 잇는다.
+            LOG.warning("zone_notice", zone=self._zone, changes=removed)
+            self._record_scene(
+                "zone_notice",
+                self._visit_seen[-1] if self._visit_seen else result,
+                {"zone": self._zone, "changes": removed},
+            )
+        self._visit_found = ()
         # 사람이 경보를 확인할 때까지 머문다 — L3 를 내리는 길은 `confirm_alarm` 하나다.
         if self._zone_vlm_alarm and self._escalation.level is Level.L3:
             return
