@@ -57,6 +57,13 @@ test('blackbox importer matches current raw fields and copies input',()=>{
  const input=raw(),parsed=parseBlackbox(input);assert.notEqual(parsed,input);input.tracks[0].score=0;assert.equal(parsed.tracks[0].score,.85);
  const op=new Operations(),event=op.importBlackbox(parsed);assert.equal(event.escalation,'L1');assert.equal(event.mode,'guard');assert.equal(event.auth,'필드 미제공');assert.equal(event.ppe,'필드 미제공');assert.equal(event.snapshot,null);
 });
+test('an imported zone record lists the zone from its judgement',()=>{
+ const op=new Operations(),zone=(ts,judgement)=>op.importBlackbox({...raw(),ts_ms:ts,event:'zone_changed',judgement});
+ assert.equal(zone(1,{zone:'A',changes:[]}).zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
+ assert.equal(op.importBlackbox(raw()).zone,'파일에 구역 정보 없음','판정이 없으면 구역 정보가 없다고 한다');
+ assert.equal(zone(2,{changes:[]}).zone,'파일에 구역 정보 없음','판정에 구역이 없으면 지어내지 않는다');
+ assert.equal(zone(3,{zone:7}).zone,'파일에 구역 정보 없음','문자열이 아닌 구역은 쓰지 않는다');
+});
 test('bad blackbox fields are rejected',()=>{
  for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.mode={}},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}
 });
