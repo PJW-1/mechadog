@@ -1618,11 +1618,15 @@ def _zone_config(config: dict, tmp_path: Path) -> dict:
 
     ⚠️ **저장소에 쓰지 않는다.** 기준은 디스크에 남으므로, 기본 경로를 그대로
     두면 시험이 저장소를 더럽히고 다음 시험이 남의 기준과 견주게 된다.
+
+    도착은 한 프레임으로 인정한다 — 점검 시험들이 보려는 것은 도착 뒤의 비교다.
+    연속 프레임 게이트는 따로 시험한다.
     """
     from copy import deepcopy
 
     changed = deepcopy(config)
     changed["zones"]["marker_map"] = {ZONE_MARKER: "A"}
+    changed["zones"]["marker_min_frames"] = 1
     changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
     return changed
 
@@ -1719,6 +1723,38 @@ def test_zone_marker_moves_patrol_into_inspect(config: dict, clock: FakeClock, t
     runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
     assert runtime.behavior.state == "PATROL"
     _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    assert runtime.behavior.state == "ZONE_INSPECT"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_zone_marker_must_hold_for_consecutive_frames(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """⚠️ **한 프레임짜리 오검출로 도착하지 않는다.** 도착하면 그 프레임이 구역의
+    기준으로 디스크에 남는다 — ArUco 가 없는 ID 를 한 프레임 읽는 것을 실기에서
+    이미 봤다(`auth.py` · ID 17)."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    runtime._zone_min_frames = config["zones"]["marker_min_frames"]
+    assert runtime._zone_min_frames == 3
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL", "두 프레임으로는 도착이 아니다"
+    _see(runtime, vision, seq=3, at_ms=300, detections=[_thing("chair")])
+    assert runtime.behavior.state == "ZONE_INSPECT"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_zone_marker_gap_restarts_the_count(config: dict, clock: FakeClock, tmp_path: Path):
+    """끊겼다 다시 보이면 처음부터 센다 — 연속이 아니면 오검출과 구별되지 않는다."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    runtime._zone_min_frames = 3
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    _see(runtime, vision, seq=3, at_ms=300, detections=[_thing("chair")], marker=False)
+    _see(runtime, vision, seq=4, at_ms=400, detections=[_thing("chair")])
+    _see(runtime, vision, seq=5, at_ms=500, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL"
+    _see(runtime, vision, seq=6, at_ms=600, detections=[_thing("chair")])
     assert runtime.behavior.state == "ZONE_INSPECT"
 
 
@@ -2660,6 +2696,19 @@ def test_zone_marker_switch_follows_the_mode(config: dict, clock: FakeClock) -> 
     guard = FakeVision()
     Runtime(config, device_id=DEVICE, clock=clock, vision=guard)
     assert guard.zone_markers is False
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_refused_mode_switch_leaves_the_zone_marker_switch(
+    config: dict, clock: FakeClock
+) -> None:
+    """거절된 전환은 마커 스위치를 건드리지 않는다 — 경비 순찰 중에 켜지면 사람
+    없는 프레임까지 마커를 읽는다."""
+    vision = FakeVision()
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
+    runtime.start_patrol(0)
+    assert runtime.set_mode("factory") is not None
+    assert vision.zone_markers is False
 
 
 def test_registered_zone_markers_map_to_zones(config: dict, clock: FakeClock) -> None:

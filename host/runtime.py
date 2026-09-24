@@ -258,8 +258,14 @@ class Runtime:
         # 에서도 쓸 수 있다.
         self._baselines = BaselineStore(config)
         self._confirmer = ChangeConfirmer(config)
-        zone_markers = (config.get("zones") or {}).get("marker_map") or {}
+        zones = config.get("zones") or {}
+        zone_markers = zones.get("marker_map") or {}
         self._zone_markers = {int(key): str(value) for key, value in zone_markers.items()}
+        # ⚠️ **한 프레임짜리 오검출로 도착하지 않는다.** 도착하면 그 프레임이 구역의
+        # 기준으로 디스크에 남는다. 같은 구역이 연속으로 이만큼 보여야 도착이다.
+        self._zone_min_frames = int(zones.get("marker_min_frames", 3))
+        self._zone_seen: str | None = None
+        self._zone_seen_frames = 0
         self._watch_classes = tuple(config["vision"]["coco"]["change_watch_classes"])
         self._zone: str | None = None
         #: 이번 점검에서 관찰한 프레임 수. **시간이 아니라 사이클을 센다** —
@@ -1004,6 +1010,13 @@ class Runtime:
                 # 순회에 같은 구역을 다시 점검하지 못한다 — 순찰은 도는 것이므로
                 # 같은 마커를 몇 번이고 다시 만난다.
                 self._zone = None
+                self._zone_seen = None
+                return
+            if zone != self._zone_seen:
+                self._zone_seen = zone
+                self._zone_seen_frames = 0
+            self._zone_seen_frames += 1
+            if self._zone_seen_frames < self._zone_min_frames:
                 return
             if zone != self._zone and self._apply(Event.ZONE_ARRIVED, now_ms):
                 self._zone = zone

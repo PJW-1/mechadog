@@ -560,6 +560,10 @@ zones:
     10: A
     11: B
     12: C
+  # 같은 구역 마커가 연속 이 프레임 수만큼 보여야 도착이다. ArUco 는 없는 ID 를
+  # 한 프레임 읽기도 하고(`auth.unknown_marker_min_frames` 와 같은 이유), 도착하면
+  # 그 프레임이 기준으로 디스크에 남는다. 3 프레임 = 약 0.3초.
+  marker_min_frames: 3
   arrival_radius_mm: 300       # FR-7.4 (Phase 2)
   random_after_first_cycle: true  # FR-7.3
 
