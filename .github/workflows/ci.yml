@@ -286,7 +286,15 @@ jobs:
             name: 'MechDog-Motion'
           - dir: firmware_xiao_vision
             fqbn: 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi'
-            core: 'esp32:esp32'
+            # ⚠️ 2.0.12 로 고정한다 — 풀어 두면 CI 가 통과시키는 빌드에서 마이크가 죽는다.
+            # 이 펌웨어의 `/audio` 는 구형 `driver/i2s.h` 의 `i2s_read` 를 쓰는데,
+            # arduino-esp32 3.x(ESP-IDF 5.x)에서는 그것이 호환 껍데기라 PDM 수신이 돌지
+            # 않는다. 컴파일은 경고 없이 통과하므로 CI 로는 드러나지 않는다.
+            # 실측 (2026-09-25 · XIAO `68:ee:8f:4f:54:b0`) — 같은 소스·같은 기체에서
+            # 3.3.11 빌드는 `/audio` 가 `AUDIO_OPEN` 뒤 `i2s_read` 에서 막혀 **0 바이트**,
+            # 2.0.12 빌드는 5.86초에 **187,392 바이트**(피크 3840 · RMS 244)를 냈다.
+            # 카메라도 2.0.12 가 나았다(31.3 fps 대 24.7 fps).
+            core: 'esp32:esp32@2.0.12'
             name: 'XIAO-Vision'
           - dir: firmware_lidar_relay
             fqbn: 'esp32:esp32:esp32:FlashMode=dio,FlashFreq=40'
