@@ -392,6 +392,19 @@ def test_place_snaps_off_a_wall(capsys: pytest.CaptureFixture[str]) -> None:
     assert "옮겼다" in capsys.readouterr().out
 
 
+def test_the_second_click_sets_the_heading() -> None:
+    """둘째 클릭은 구역 자리에서 그 지점을 바라보는 방향이다 (지도 좌표 · rad)."""
+    import math
+
+    from host.behavior.zones import ZoneStore
+
+    store = ZoneStore(("A",))
+    zone = zone_select.place(store, room(40, 40), 1.0, 1.0, -1.0)
+    assert zone is not None and zone.yaw is None
+    zone_select.aim(store, "A", zone.x, zone.y + 1.0)
+    assert store.get("A").yaw == pytest.approx(math.pi / 2)
+
+
 def test_place_refuses_outside_the_map(capsys: pytest.CaptureFixture[str]) -> None:
     from host.behavior.zones import ZoneStore
 

@@ -508,36 +508,18 @@ def test_ppe_runs_only_when_enabled_and_opens_on_mode_switch(cfg: dict, monkeypa
         assert ppe.resets > 0
 
 
-def _markers_without_person(cfg, monkeypatch, *, zone_markers: bool):
-    """사람 검출이 없는 프레임에서 마커 판독이 불리는지 본다 (WBS 4.8.0)."""
-    from host.vision.badge import Marker
-
+def test_badges_are_not_read_without_a_person(cfg, monkeypatch):
+    """사원증 판독은 사람이 있을 때만 돈다 — 귀속시킬 사람이 없으면 인증이 성립하지 않는다."""
     detector = _FakeDetector()
     detector.detect = lambda _image: []
     worker = _worker(cfg, _FakeReader(), detector, monkeypatch)
-    seen = (Marker(marker_id=10, center=(32.0, 24.0)),)
     calls = []
-    monkeypatch.setattr(worker._badges, "read", lambda _image: calls.append(1) or seen)
-    worker.set_zone_markers(zone_markers)
+    monkeypatch.setattr(worker._badges, "read", lambda _image: calls.append(1) or ())
     worker._run_one(_frame(1), 1000)
     result = worker.latest()
     assert result is not None and result.tracks == ()
-    return result.markers, len(calls), seen
-
-
-def test_zone_markers_are_read_without_a_person_in_factory_mode(cfg, monkeypatch):
-    """⚠️ 사람 없는 구역이 구역 점검의 목적이다 — 사람이 있어야 마커를 읽으면
-    `ZONE_ARRIVED` 가 나지 않아 무너짐 판독(ADR-35 결정 4 ②)이 불리지 않는다."""
-    markers, calls, seen = _markers_without_person(cfg, monkeypatch, zone_markers=True)
-    assert calls == 1
-    assert markers == seen
-
-
-def test_badges_are_not_read_without_a_person_in_guard_mode(cfg, monkeypatch):
-    """경비 모드의 사원증 판독은 지금처럼 사람이 있을 때만 돈다."""
-    markers, calls, _seen = _markers_without_person(cfg, monkeypatch, zone_markers=False)
-    assert calls == 0
-    assert markers == ()
+    assert calls == []
+    assert result.markers == ()
 
 
 @pytest.mark.parametrize(

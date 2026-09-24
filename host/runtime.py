@@ -24,6 +24,7 @@ import argparse
 import contextlib
 import json
 import logging
+import math
 import socket
 import sys
 import threading
@@ -49,6 +50,7 @@ from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.behavior.posture import RETURN, PostureEscalation
 from host.behavior.tracker import LockOnTracker
+from host.behavior.zones import Zone, ZoneStore
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
 from host.common.logging_setup import (
@@ -60,7 +62,9 @@ from host.common.logging_setup import (
     setup_logging,
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
+from host.common.units import rad_to_deg, wrap_pi
 from host.dashboard.state import DashboardState
+from host.slam.settings import maps_dir
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
 from host.vision.vlm_reader import VlmReader
@@ -260,26 +264,37 @@ class Runtime:
         self._vision = vision
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
-        if self._vision is not None and hasattr(self._vision, "set_zone_markers"):
-            self._vision.set_zone_markers(self._mission.enables("change_detect"))
         # 추종(`3.5.4`)은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
         # 오고 명령은 10Hz 로 나가므로, 명령 쪽에서 계산하면 프레임을 버리게 된다.
         # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
         self._tracker = LockOnTracker(config)
         self._track_sequence = self._behavior.sequence_for("TRACK")
-        # 구역 변화 감지 (FR-8 · `3.6.x`). 구역 "식별" 은 ArUco 마커로 하며 측위와
-        # 무관하다 — 바코드를 읽는 것과 같다(config `zones` 주석). 그래서 Phase 1
-        # 에서도 쓸 수 있다.
+        # 구역 변화 감지 (FR-8 · `3.6.x`). 구역 도착은 **지도 좌표 앵커**(`maps/zones.json`)와
+        # 측위 위치로 판정한다 (FR-7.4 · 2026-09-25 ArUco 구역 마커 폐기).
         self._baselines = BaselineStore(config)
         self._confirmer = ChangeConfirmer(config)
-        zones = config.get("zones") or {}
-        zone_markers = zones.get("marker_map") or {}
-        self._zone_markers = {int(key): str(value) for key, value in zone_markers.items()}
-        # ⚠️ **한 프레임짜리 오검출로 도착하지 않는다.** 도착하면 그 프레임이 구역의
-        # 기준으로 디스크에 남는다. 같은 구역이 연속으로 이만큼 보여야 도착이다.
-        self._zone_min_frames = int(zones.get("marker_min_frames", 3))
-        self._zone_seen: str | None = None
-        self._zone_seen_frames = 0
+        zones = config["zones"]
+        self._zone_ids = tuple(str(label) for label in zones["ids"])
+        # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
+        try:
+            self._anchors: tuple[Zone, ...] = ZoneStore.load(
+                maps_dir(config), self._zone_ids
+            ).as_tuple()
+        except (OSError, ValueError) as exc:
+            LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
+            self._anchors = ()
+        self._arrive_m = float(zones["arrival_radius_mm"]) / 1000.0
+        self._align_tolerance_deg = float(zones["align_tolerance_deg"])
+        self._align_turn_deg = float(zones["align_turn_deg"])
+        self._align_timeout_ms = int(zones["align_timeout_ms"])
+        self._pose_timeout_ms = int(config["localization"]["pose_timeout_ms"])
+        #: 측위의 최신 위치 `((x m, y m, yaw rad), 받은 시각)`. `note_pose` 가 채운다.
+        self._pose: tuple[tuple[float, float, float], int] | None = None
+        #: 이번 방문 구역이 바라볼 방향(rad). `None` 이면 선 방향 그대로 본다.
+        self._zone_yaw: float | None = None
+        #: 이번 방문에서 방향을 맞췄나. 맞추기 전에는 장면을 모으지 않는다.
+        self._zone_aligned = False
+        self._zone_turn = self._behavior.sequence_for("ZONE_INSPECT")
         self._watch_classes = tuple(config["vision"]["coco"]["change_watch_classes"])
         self._zone: str | None = None
         # **방문 하나가 확정기의 사이클 하나다** (FR-8.4 · config `change_detect`). 한 방문에서
@@ -476,8 +491,6 @@ class Runtime:
         if reason is None:
             if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
                 self._vision.set_ppe_enabled(self._mission.enables("ppe"))
-            if self._vision is not None and hasattr(self._vision, "set_zone_markers"):
-                self._vision.set_zone_markers(self._mission.enables("change_detect"))
             self._ppe_done.clear()
             self._ppe_target = None
             self._ppe_unknown_since = None
@@ -1000,22 +1013,42 @@ class Runtime:
         # 편차 부호와 조향 부호는 반대다 — 오른쪽(양수)이면 우회전(음수).
         return -angle if deviation_px > 0 else angle
 
-    def _zone_of(self, result: Any) -> str | None:
-        """이번 프레임에 보이는 구역 마커. 없으면 `None`.
+    def note_pose(self, pose: tuple[float, float, float], now_ms: int) -> None:
+        """측위의 최신 위치 `(x m, y m, yaw rad)` 를 받는다 (지도 좌표).
 
-        ⚠️ **둘 이상 보이면 아무것도 고르지 않는다.** 구역 경계에 서면 두 장이
-        같이 잡히는데, 아무 쪽이나 고르면 **엉뚱한 구역의 기준과 견주어** 물건이
-        통째로 사라졌다고 보고한다. 한 장만 보일 때까지 기다린다.
+        ⚠️ **아직 아무도 부르지 않는다** — LiDAR 측위(WBS 5.4.3·5.4.4)가 여기에 잇는다.
+        그 전에는 구역 도착이 일어나지 않는다.
         """
-        seen = {
-            self._zone_markers[marker.marker_id]
-            for marker in result.markers
-            if marker.marker_id in self._zone_markers
-        }
-        return next(iter(seen)) if len(seen) == 1 else None
+        self._pose = (pose, int(now_ms))
+
+    def _fresh_pose(self, now_ms: int) -> tuple[float, float, float] | None:
+        """`localization.pose_timeout_ms` 안의 위치. 낡았으면 모르는 위치다 (FR-6.6)."""
+        if self._pose is None or now_ms - self._pose[1] > self._pose_timeout_ms:
+            return None
+        return self._pose[0]
+
+    def _aligned(self, now_ms: int) -> bool:
+        """앵커의 방향을 보고 있나. 아니면 제자리 회전을 지시한다 (ADR-40 과 같은 예외).
+
+        지시는 `ZONE_INSPECT` 시퀀스가 명령 주기로 옮긴다 — `TRACK` 과 같은 구조다.
+        ⚠️ **위치를 모르면 돌지 않는다** — 멈춰 서서 위치를 기다린다.
+        """
+        if self._zone_yaw is None:
+            return True
+        pose = self._fresh_pose(now_ms)
+        if pose is None:
+            self._zone_turn.note(0.0, 0.0, now_ms)
+            return False
+        error_deg = rad_to_deg(wrap_pi(self._zone_yaw - pose[2]))
+        if abs(error_deg) <= self._align_tolerance_deg:
+            self._zone_turn.note(0.0, 0.0, now_ms)
+            return True
+        # 요는 반시계가 양수이고 `MOVE angle` 도 양수가 좌회전이다(`_spin_angle`).
+        self._zone_turn.note(0.0, math.copysign(self._align_turn_deg, error_deg), now_ms)
+        return False
 
     def _inspect_zone(self, result: Any, now_ms: int) -> None:
-        """구역 마커를 보고 기준과 견준다 (WBS 3.6.x · FR-8).
+        """구역 앵커에 닿으면 기준과 견준다 (WBS 3.6.x · FR-8).
 
         ⚠️ **픽셀을 보지 않는다** (FR-8.2 필수 제약). 비교는 `classify_changes` 가
         객체 목록으로만 하고 이미지는 기준 스냅샷 보관용으로만 쓴다.
@@ -1035,22 +1068,27 @@ class Runtime:
             return
         state = self._behavior.state
         if state == "PATROL":
-            zone = self._zone_of(result)
-            if zone is None:
-                # ⚠️ **마커가 안 보이면 그 구역을 떠난 것이다.** 비우지 않으면 다음
-                # 순회에 같은 구역을 다시 점검하지 못한다 — 순찰은 도는 것이므로
-                # 같은 마커를 몇 번이고 다시 만난다.
+            pose = self._fresh_pose(now_ms)
+            if pose is None:
+                return  # 위치를 모르면 도착도 떠남도 판정하지 않는다
+            anchor, distance = min(
+                ((a, math.hypot(a.x - pose[0], a.y - pose[1])) for a in self._anchors),
+                key=lambda pair: pair[1],
+                default=(None, math.inf),
+            )
+            if distance > 2 * self._arrive_m:
+                # ⚠️ **반경의 두 배를 벗어나야 떠난 것이다.** 비우지 않으면 다음 순회에 같은
+                # 구역을 다시 점검하지 못하고, 반경에서 바로 비우면 가장자리에서 떨 때마다
+                # 같은 구역을 거듭 점검한다.
                 self._zone = None
-                self._zone_seen = None
                 return
-            if zone != self._zone_seen:
-                self._zone_seen = zone
-                self._zone_seen_frames = 0
-            self._zone_seen_frames += 1
-            if self._zone_seen_frames < self._zone_min_frames:
+            if anchor is None or distance >= self._arrive_m or anchor.label == self._zone:
                 return
-            if zone != self._zone and self._apply(Event.ZONE_ARRIVED, now_ms):
+            zone = anchor.label
+            if self._apply(Event.ZONE_ARRIVED, now_ms):
                 self._zone = zone
+                self._zone_yaw = anchor.yaw
+                self._zone_aligned = anchor.yaw is None  # 방향이 없으면 선 채로 본다
                 self._zone_vlm_asked = False
                 self._zone_vlm_wait_until = None
                 self._zone_vlm_alarm = False
@@ -1071,6 +1109,17 @@ class Runtime:
         if self._zone_done:
             self._leave_zone(result, now_ms)  # 점검은 끝났고 판독·경보를 기다리는 중이다
             return
+        if not self._zone_aligned:
+            if not self._aligned(now_ms):
+                # ⚠️ **영원히 돌지 않는다.** 못 맞춘 방문은 못 본 방문이다 — 기준도 뜨지 않는다.
+                if now_ms - self._visit_since_ms >= self._align_timeout_ms:
+                    LOG.warning("zone_align_timeout", zone=self._zone)
+                    self._zone_done = True
+                    self._visit_outcome = "zone_unverified"
+                    self._leave_zone(result, now_ms)
+                return
+            self._zone_aligned = True
+            self._visit_since_ms = now_ms  # 방문 한도(`visit_max_ms`)는 방향을 맞춘 뒤부터 센다
 
         zone = self._zone
         width = int(getattr(result, "frame_width", 0) or 0)
@@ -1874,10 +1923,10 @@ class Runtime:
 
         ⚠️ **경보(L3)를 풀지 않는다** — 그것은 `ask_alarm_confirm` 의 몫이다. 묶으면
         «기준을 다시 뜨는 것» 이 확인 없는 경보 해제 요령이 된다 (ADR-26 과 같은 이유).
-        ⚠️ **`zones.marker_map` 에 있는 구역만 받는다.** 파일 이름이 되는 값이라, 설정에
+        ⚠️ **`zones.ids` 에 있는 구역만 받는다.** 파일 이름이 되는 값이라, 설정에
         없는 문자열(`../A` 따위)이 지우기까지 가지 않게 한다.
         """
-        if zone not in self._zone_markers.values():
+        if zone not in self._zone_ids:
             return False, f"설정에 없는 구역이다: {zone!r}"
         self._zone_baseline_resets.add(zone)
         return (

@@ -3,8 +3,6 @@
     python tools/make_badges.py                 # datasets/badges/ 에 A4 300dpi
     python tools/make_badges.py --side-cm 20    # 더 멀리서 읽어야 할 때
 
-구역 마커(`zones.marker_map`, WBS 3.6.x)도 같은 사전이라 함께 `zone_<ID>.png` 로 만든다.
-
 ⚠️ **이미지를 저장소에 넣지 않는다.** `config.yaml` 의 `badge_marker_map` 이
 정본이고 여기서 그때그때 만든다 — 가중치를 `fetch_models.py` 로 받는 것과 같은
 이유다. 발급 대장을 고치고 이미지를 다시 만들지 않으면 **인쇄물과 설정이 어긋난
@@ -80,8 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--side-cm", type=float, default=14.0, help="마커 변 길이 (기본 14cm)")
     args = parser.parse_args(argv)
 
-    config = load_base_config()
-    auth = config["auth"]
+    auth = load_base_config()["auth"]
     name = str(auth["badge_dictionary"])
     code = getattr(cv2.aruco, name, None)
     if code is None:
@@ -90,13 +87,11 @@ def main(argv: list[str] | None = None) -> int:
     dictionary = cv2.aruco.getPredefinedDictionary(code)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    pages = [(int(k), str(v), "badge") for k, v in (auth["badge_marker_map"] or {}).items()]
-    pages.append((UNREGISTERED_ID, "UNREGISTERED (rejection test)", "badge"))
-    zones = (config.get("zones") or {}).get("marker_map") or {}
-    pages += [(int(k), f"ZONE {v}", "zone") for k, v in zones.items()]
-    for marker_id, holder, kind in pages:
+    pages = [(int(k), str(v)) for k, v in (auth["badge_marker_map"] or {}).items()]
+    pages.append((UNREGISTERED_ID, "UNREGISTERED (rejection test)"))
+    for marker_id, holder in pages:
         label = f"{holder}   /   {name}   ID {marker_id}   /   {args.side_cm:.0f}cm"
-        path = args.out / f"{kind}_{marker_id}.png"
+        path = args.out / f"badge_{marker_id}.png"
         Image.fromarray(sheet(dictionary, marker_id, label, args.side_cm)).save(
             path, dpi=(DPI, DPI)
         )

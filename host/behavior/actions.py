@@ -72,18 +72,6 @@ class PatrolSequence:
         commander.drive(self._step_mm, self._bias_deg)
 
 
-class HoldSequence:
-    """제자리에 선다 (`ZONE_INSPECT` · FR-8).
-
-    ⚠️ **아무것도 보내지 않는 것과 다르다.** 안 보내면 로봇은 `cmd_timeout_ms`
-    까지 직전 명령을 유지하므로, 순찰에서 막 들어왔으면 **걸어 들어가면서**
-    구역을 본다. 기준 스냅샷은 같은 자리에서 찍혀야 비교가 성립한다.
-    """
-
-    def __call__(self, commander: Commander, now_ms: int) -> None:  # noqa: ARG002
-        commander.drive(0.0, 0.0)
-
-
 class PostureSequence:
     """상태에 **머문 뒤** 자세를 잡고, **잡았을 때만** 되돌린다 (WBS 3.5.2 · 3.5.3 · FR-3.3).
 
@@ -407,7 +395,13 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
             remedy="tools/gait_calibrate.py --mode forward --bias-deg <각도> (WBS 2.2.3)",
         )
 
-    behavior.register_sequence("ZONE_INSPECT", HoldSequence())
+    # 구역 점검은 제자리에서 앵커의 방향으로 돈 뒤 선다 (FR-8 · ADR-40 과 같은 예외).
+    # 회전 지시는 `runtime._aligned` 가 검출이 들어올 때 만들고, 이 시퀀스가 명령 주기로
+    # 옮긴다 — `TRACK` 과 같은 구조다. ⚠️ **지시가 없거나 낡으면 정지를 보낸다** —
+    # 아무것도 안 보내면 로봇은 직전 순찰 명령대로 **걸어 들어가면서** 구역을 본다.
+    inspect = TrackSequence(int(config["fsm"]["track_coast_ms"]))
+    behavior.register_sequence("ZONE_INSPECT", inspect)
+    behavior.fsm.on_enter("ZONE_INSPECT", inspect.forget)
     result["ZONE_INSPECT"] = "등록"
 
     # ── 자세 상태 둘 (WBS 3.5.2 SCAN · 3.5.3 ALERT) ────────────────────────

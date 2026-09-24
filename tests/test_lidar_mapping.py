@@ -493,6 +493,19 @@ def test_zones_survive_a_save_and_load(tmp_path: Path) -> None:
     assert loaded.labels == ("A", "B")
 
 
+def test_a_zone_heading_survives_and_is_optional(tmp_path: Path) -> None:
+    """바라볼 방향(yaw)은 있으면 남고, 방향이 없는 옛 `zones.json` 도 그대로 읽힌다."""
+    store = ZoneStore(("A", "B"))
+    store.place(1.0, 1.0)
+    store.place(2.0, 2.0)
+    store.aim("A", -1.571)
+    store.save(tmp_path)
+    assert "yaw" not in json.loads((tmp_path / "zones.json").read_text(encoding="utf-8"))["B"]
+    loaded = ZoneStore.load(tmp_path, ("A", "B"))
+    assert loaded.get("A").yaw == pytest.approx(-1.571)
+    assert loaded.get("B").yaw is None
+
+
 def test_undo_removes_the_last_placed_zone() -> None:
     store = ZoneStore(("A", "B", "C"))
     store.place(1.0, 1.0)
