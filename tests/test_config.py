@@ -168,6 +168,19 @@ def test_runtime_timer_keys_are_validated_before_startup(cfg: dict, section: str
         validate_base_config(broken)
 
 
+@pytest.mark.parametrize("value", [0, -1])
+def test_zone_marker_min_frames_must_be_positive(cfg: dict, value: int) -> None:
+    """0 이하면 첫 관측이 곧 도착이다 — 한 프레임 오검출을 막던 게이트가 조용히 꺼진다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["zones"]["marker_min_frames"] = value
+    with pytest.raises(ConfigError, match="marker_min_frames"):
+        validate_base_config(broken)
+
+
 def test_gait_params_within_api_range(cfg: dict) -> None:
     """HW_MechDog API 허용 범위 (DR-1).
 

@@ -268,6 +268,7 @@ class Runtime:
         self._zone_markers = {int(key): str(value) for key, value in zone_markers.items()}
         # ⚠️ **한 프레임짜리 오검출로 도착하지 않는다.** 도착하면 그 프레임이 구역의
         # 기준으로 디스크에 남는다. 같은 구역이 연속으로 이만큼 보여야 도착이다.
+        # 틱(10Hz)마다 읽은 최신 결과를 센다 — 틱 사이에 버려진 추론 결과는 세지 않는다.
         self._zone_min_frames = int(zones.get("marker_min_frames", 3))
         self._zone_seen: str | None = None
         self._zone_seen_frames = 0
@@ -1547,6 +1548,8 @@ class Runtime:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
         self._track_stop_reached = False
         self._engaged = False
+        # 구역 마커 연속 관측도 처음부터 센다 — 중단을 낀 관측은 연속이 아니다.
+        self._zone_seen = None
         if previous in STANDBY:
             self._edge.forget("person")
             # 대기(래치 해제·모드 전환)를 건너 계속 누운 사람도 다시 사건이 되게 한다.

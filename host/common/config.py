@@ -210,6 +210,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(auth, "timeout_s")
     _require_positive(auth, "verdict_grace_s")
     _require_positive(auth, "unknown_marker_min_frames")
+    _require_positive(config["zones"], "marker_min_frames")
     if int(auth.get("resume_delay_ms", 3500)) < 0:
         raise ConfigError("auth.resume_delay_ms 는 0 이상이어야 함")
     if not isinstance(auth.get("require_both", False), bool):

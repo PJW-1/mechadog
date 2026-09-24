@@ -1762,6 +1762,44 @@ def test_a_zone_marker_gap_restarts_the_count(config: dict, clock: FakeClock, tm
 
 
 @pytest.mark.usefixtures("unlock_modes")
+def test_another_zone_marker_restarts_the_count(config: dict, clock: FakeClock, tmp_path: Path):
+    """다른 구역이 보이면 처음부터 센다 — A 두 장 뒤의 B 한 장은 도착이 아니다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(_zone_config(config, tmp_path))
+    cfg["zones"]["marker_map"] = {ZONE_MARKER: "A", ZONE_MARKER + 1: "B"}
+    cfg["zones"]["marker_min_frames"] = 3
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg, device_id=DEVICE, clock=clock, vision=vision, mission=Mission(cfg, mode="factory")
+    )
+    runtime.start_patrol(0)
+    for seq, marker_id in enumerate((ZONE_MARKER, ZONE_MARKER, ZONE_MARKER + 1), start=1):
+        vision.result = _zone_frame(
+            seq,
+            seq * 100,
+            detections=[_thing("chair")],
+            markers=(Marker(marker_id=marker_id, center=(320.0, 240.0)),),
+        )
+        runtime.tick(seq * 100)
+    assert runtime.behavior.state == "PATROL"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_leaving_patrol_restarts_the_count(config: dict, clock: FakeClock, tmp_path: Path):
+    """순찰을 벗어났다 돌아오면 처음부터 센다 — 중단을 낀 2+1 은 연속이 아니다."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    runtime._zone_min_frames = 3
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    assert runtime._apply(Event.MANUAL_ON, 250)
+    assert runtime._apply(Event.MANUAL_OFF, 260)
+    assert runtime.start_patrol(270)
+    _see(runtime, vision, seq=3, at_ms=300, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL"
+
+
+@pytest.mark.usefixtures("unlock_modes")
 def test_first_visit_registers_a_baseline_and_returns_to_patrol(
     config: dict, clock: FakeClock, tmp_path: Path
 ):
