@@ -86,7 +86,7 @@ FR-8 변화 감지는 **개방 어휘를 쓰지 않는다.** 시연에 놓을 �
 | 출처 | Hugging Face `Qwen/Qwen2-VL-2B-Instruct` |
 | 정밀도 | **bf16** — 2단 샤드 `model-0000{1,2}-of-00002.safetensors` (3,988,609,112 + 429,441,656 바이트) |
 | 실측 | VRAM **4.11 GB** · 적재 **14.5초** · 질문당 **0.2초** 안팎 — RTX 3080 · 2026-09-20 ([ADR-35](../docs/DECISIONS.md#adr-35) 는 적재를 5.5초로 적었으나 재측정 3회가 모두 14.5초였다) |
-| 적재 시점 | **`factory` 모드에서만** ([ADR-35](../docs/DECISIONS.md#adr-35)). 개정 전에는 *"`assist` 의 음성 LLM 4.9GB 와 동시에 못 올린다"* 를 이유로 적었으나, 음성 LLM 과 `assist` 모드는 2026-09-23 폐기했다([ADR-38](../docs/DECISIONS.md#adr-38)) |
+| 적재 시점 | ~~**`factory` 모드에서만**~~ → **기동할 때 한 번 올리고 종료할 때만 내린다** *(2026-09-24 재개정 — 상시 적재 · 판독은 여전히 `factory` 에서만 · [ADR-35](../docs/DECISIONS.md#adr-35))*. 개정 전에는 *"`assist` 의 음성 LLM 4.9GB 와 동시에 못 올린다"* 를 이유로 적었으나, 음성 LLM 과 `assist` 모드는 2026-09-23 폐기했다([ADR-38](../docs/DECISIONS.md#adr-38)) |
 
 ### ⚠️ 이 모델만 규칙이 셋 다르다
 
