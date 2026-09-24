@@ -1787,7 +1787,7 @@ class Runtime:
         if not released:
             LOG.info("alarm_confirm_ignored", level=self._escalation.level.value)
         elif self._zone_alarm_alert:
-            # 구역 변화의 `ALERT` 는 사람이 없어 스스로 나갈 길이 없다 (FR-8.4).
+            # 구역 변화의 `ALERT` 는 사람이 보이지 않으면 스스로 나갈 길이 없다 (FR-8.4).
             self._apply(Event.ZONE_ALARM_CONFIRMED, now_ms)
         return released
 

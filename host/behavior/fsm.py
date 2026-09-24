@@ -154,8 +154,9 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("PATROL", Event.ZONE_ARRIVED, "ZONE_INSPECT"),
     Transition("ZONE_INSPECT", Event.ZONE_CLEAR, "PATROL"),
     Transition("ZONE_INSPECT", Event.ZONE_CHANGED, "ALERT"),
-    # ⚠️ **구역 변화의 `ALERT` 에는 사람이 없다** — 대상 상실·보호구 판정 종료가 걸리지
-    # 않아 이 줄이 없으면 경보를 확인해도 경계 자세로 서 있는다 (FR-8.4 · 2026-09-25).
+    # ⚠️ **구역 변화의 `ALERT` 는 사람이 보이지 않으면 나갈 길이 없다** — 대상 상실·
+    # 보호구 판정 종료가 걸리지 않아 이 줄이 없으면 경보를 확인해도 경계 자세로 서 있는다.
+    # 지나가는 사람이 있으면 그 사건들로 먼저 순찰에 돌아가고 L3 는 남는다 (FR-8.4 · 2026-09-25).
     Transition("ALERT", Event.ZONE_ALARM_CONFIRMED, "PATROL"),
     # ⚠️ **구역 앞의 사람은 물체 변화가 아니다** (FR-8.3 → FR-3 · FR-11.1). 이 줄이 없으면
     # 게이트가 확정한 사람을 이 상태가 버리고, 사람 한 프레임이 `ZONE_CHANGED` 로 새어
