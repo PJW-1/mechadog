@@ -133,7 +133,7 @@ class VlmSession(Protocol):
         ...
 
     def close(self) -> None:
-        """VRAM 을 놓는다. **공장 모드를 벗어날 때 이것이 안 불리면 VRAM 에 남는다.**"""
+        """VRAM 을 놓는다. **종료할 때 이것이 안 불리면 프로세스가 끝날 때까지 VRAM 에 남는다.**"""
         ...
 
 
@@ -220,8 +220,8 @@ class VlmReader:
     def unload(self) -> None:
         """모델을 내린다. **멱등이며 실패해도 조용히 지나간다.**
 
-        ⚠️ 여기서 예외가 새면 모드 전환이 막힌다. 내리는 데 실패한 VRAM 은 다음
-        적재가 실패하는 것으로 드러나지, 전환을 세워서 드러낼 일이 아니다.
+        ⚠️ 여기서 예외가 새면 종료(`Runtime.release`)가 뒤따르는 정리를 건너뛴다. 내리는 데
+        실패한 VRAM 은 프로세스가 끝나면 풀린다 — 종료를 세워서 드러낼 일이 아니다.
         """
         session, self._session = self._session, None
         if session is None:
