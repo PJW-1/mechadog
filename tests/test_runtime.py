@@ -1807,7 +1807,7 @@ def test_inspection_holds_still(config: dict, clock: FakeClock, tmp_path: Path):
     assert (move["step"], move["angle"]) == (0.0, 0.0)
 
 
-def _see_person(runtime, vision, *, seq, at_ms, detections, present, ppe=None) -> None:
+def _see_person(runtime, vision, *, seq, at_ms, detections, present) -> None:
     """구역 마커 앞에 사람이 물건과 함께 보인다. `present` 는 사람 게이트 확정이다."""
     from dataclasses import replace
 
@@ -1819,7 +1819,7 @@ def _see_person(runtime, vision, *, seq, at_ms, detections, present, ppe=None) -
         last_seen_ms=at_ms,
         markers=(Marker(marker_id=ZONE_MARKER, center=(320.0, 240.0)),),
     )
-    vision.result = replace(frame, detections=frame.detections + tuple(detections), ppe=ppe)
+    vision.result = replace(frame, detections=frame.detections + tuple(detections))
     runtime.tick(at_ms)
 
 
