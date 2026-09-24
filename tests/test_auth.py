@@ -221,7 +221,7 @@ def test_a_badge_seen_without_any_track_is_deferred(auth: Authenticator) -> None
 
 
 def test_an_unregistered_marker_without_any_track_is_ignored(auth: Authenticator) -> None:
-    """추적이 없을 때 미등록 마커는 시도로 세지 않는다 — 구역 마커 간섭 방지."""
+    """추적이 없을 때 미등록 마커는 시도로 세지 않는다 — 주변 인쇄물·오판독 간섭 방지."""
     assert auth.observe([_marker(7)], [], T0) is Outcome.NOTHING
 
 
