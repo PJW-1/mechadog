@@ -198,6 +198,10 @@ class Escalation:
     def raise_to(self, level: Level, *, reason: str, now_ms: int) -> bool:
         """단계를 올린다. **내리지는 않는다** — 그래서 사건 순서가 뒤바뀌어도 안전하다."""
         if level.rank <= self._level.rank:
+            # ⚠️ **F 중에 온 경보는 깔아 둔다.** 버리면 `confirm_failsafe` 가 L0 으로
+            # 내려, 비상정지 중에 도착한 쓰러짐 판독이 경보 없이 사라진다.
+            if self._level is Level.F and level is Level.L3:
+                self._alarm_pending = True
             return False
         return self._enter(level, reason=reason, now_ms=now_ms)
 

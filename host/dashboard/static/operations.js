@@ -41,7 +41,8 @@ export function describeEvidence(name,payload){
  const rows=[];
  let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
  if(name.startsWith('PPE_')&&j.state){ppe=cleanText(j.state,40)+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
- if(name==='person_fallen')rows.push(['세로/가로 비',shown(j.aspect)],['정지 시간',shown(j.still_ms)+' ms'],['확정 기준',shown(j.confirm_ms)+' ms']);
+ // VLM 이 판독한 쓰러짐(source:'vlm')에는 규칙 값이 없다 — 빈 행을 그리지 않는다.
+ if(name==='person_fallen')for(const [label,key,unit] of [['세로/가로 비','aspect',''],['정지 시간','still_ms',' ms'],['확정 기준','confirm_ms',' ms']])if(j[key]!=null)rows.push([label,shown(j[key])+unit]);
  if(name==='zone_reading'){
   rows.push(['구역',shown(j.zone)],['판독 저하',j.degraded?('예 · '+shown(j.reason)):'아니요']);
   if(j.answers&&typeof j.answers==='object')for(const [key,value] of Object.entries(j.answers).slice(0,12))rows.push(['판독 · '+cleanText(key,60),shown(value)]);
