@@ -63,7 +63,7 @@ FEATURES: dict[str, frozenset[str]] = {
     # 잠그는 것과 방을 비우는 것은 다른 일이고, 판정기가 사건을 직접 낼 수도 있다.
     "auth": frozenset({"AUTH_REQUIRED", "AUTH_OK", "AUTH_FAILED"}),
     # FR-8 구역 변화 감지. ⚠️ **도착·해제까지 막는다** — `ZONE_CHANGED` 만 막으면
-    # 로봇이 구역 마커 앞에서 `ZONE_INSPECT` 로 들어가 놓고 나올 사건이 없어진다.
+    # 로봇이 구역 앵커에서 `ZONE_INSPECT` 로 들어가 놓고 나올 사건이 없어진다.
     "change_detect": frozenset(
         {"ZONE_ARRIVED", "ZONE_CLEAR", "ZONE_CHANGED", "ZONE_ALARM_CONFIRMED"}
     ),

@@ -1292,7 +1292,7 @@ class Runtime:
         """
         if self._zone_vlm_pending is None or self._vlm.busy:
             return
-        (zone, result), self._zone_vlm_pending = self._zone_vlm_pending, None
+        (zone, asked), self._zone_vlm_pending = self._zone_vlm_pending, None
         # 이번 방문에서 건 판독이면 기다림도 여기서 끝난다.
         mine, self._zone_vlm_wait_until = self._zone_vlm_wait_until is not None, None
         reading = self._vlm.take()
@@ -1321,7 +1321,7 @@ class Runtime:
                     LOG.info("zone_reading_skipped", zone=zone, reason=reason, again=list(said))
         self._record_scene(
             "zone_reading",
-            result,
+            asked,
             {
                 "zone": zone,
                 "degraded": reading.degraded,
@@ -1337,7 +1337,7 @@ class Runtime:
             return
         self._record_scene(
             "person_fallen",
-            result,
+            asked,
             {"fallen": True, "source": "vlm", "zone": zone, "raw": raw["person_down"]},
         )
         self._apply(Event.PERSON_DOWN, now_ms)

@@ -1643,7 +1643,7 @@ def _zone_frame(seq: int, at_ms: int, *, detections, markers=()) -> VisionResult
     """사람은 없고 물건만 있는 프레임."""
     return VisionResult(
         detections=tuple(detections),
-        jpeg=b"zone-jpeg",
+        jpeg=b"zone-jpeg-%d" % seq,
         frame_seq=seq,
         frame_width=640,
         frame_height=480,
@@ -1694,7 +1694,7 @@ class FakeVlmSession:
         self.closed = 0
 
     def ask(self, image: object, prompt: str) -> str:
-        assert image == b"zone-jpeg", "구역 프레임의 JPEG 이 그대로 넘어와야 한다"
+        assert image.startswith(b"zone-jpeg"), "구역 프레임의 JPEG 이 그대로 넘어와야 한다"
         self.asked.append(prompt)
         return self._answer
 
@@ -2622,12 +2622,14 @@ class ScriptedVlm:
         self.busy = False
         self.slot: Reading | None = None
         self.submitted = 0
+        self.images: list[bytes] = []
         self._script = list(script)
 
-    def submit(self, _image, **_when) -> bool:
+    def submit(self, image, **_when) -> bool:
         if self.busy:
             return False
         self.submitted += 1
+        self.images.append(image)
         entry = self._script.pop(0) if self._script else {}
         if entry is None:
             self.busy = True
@@ -2696,6 +2698,7 @@ def test_a_single_fallen_reading_is_not_confirmed(config: dict, clock: FakeClock
     fake = _scripted(runtime, FALLEN, UPRIGHT)
     _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     assert fake.submitted == 2, "«예» 가 나왔으면 다른 프레임으로 한 번 더 읽는다"
+    assert fake.images[0] != fake.images[1], "재판독은 건 프레임이 아니라 지금 프레임을 읽는다"
     assert runtime.behavior.state == "PATROL"
     assert runtime.escalation.level is Level.L0
 
