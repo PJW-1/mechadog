@@ -47,7 +47,8 @@ class BadgeReader:
         """마커를 찾는다. 없으면 빈 튜플.
 
         ⚠️ **호출부가 게이팅한다** — 추적 대상이 없는 프레임에서는 부르지 않는다
-        (FR-3.1.1 과 같은 원칙). 마커 없는 VGA 프레임에 0.75ms 가 든다.
+        (FR-3.1.1 과 같은 원칙). 마커 없는 VGA 프레임에 0.75ms 가 든다. 구역 점검이
+        도는 모드에서는 예외로 사람 없는 프레임에도 부른다(`set_zone_markers`).
         """
         corners, ids, _rejected = self._detector.detectMarkers(image)
         if ids is None or len(ids) == 0:
