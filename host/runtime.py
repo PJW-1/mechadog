@@ -28,6 +28,7 @@ import socket
 import sys
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,7 +38,9 @@ from host.behavior.auth import Authenticator, Outcome
 from host.behavior.change_detect import (
     PERSON_LABEL,
     BaselineStore,
+    Change,
     ChangeConfirmer,
+    ZoneBaseline,
     classify_changes,
 )
 from host.behavior.commander import Commander
@@ -66,6 +69,10 @@ from host.vision.vlm_worker import VlmWorker
 from host.vision.worker import TickIntervals, VisionWorker, build_worker
 
 LOG = event_logger("mechadog.runtime")
+
+#: 같은 방문에서 두 번 읽어 확정하는 판독 항목 (WBS 3.6.3). `person_down` 은 여기 없다 —
+#: 그것은 한 번으로 `PERSON_DOWN` 을 올리는 별개 경로다(`_take_zone_reading`).
+ZONE_HAZARDS = ("fallen_object", "blocked_path")
 
 #: 한 번에 받아들이는 최대 바이트. 텔레메트리 한 줄은 300 바이트를 넘지 않는다.
 RECV_BYTES = 2048
@@ -236,6 +243,8 @@ class Runtime:
         self._reset_asked = False
         #: 순찰을 예약했다. ⚠️ **리셋이 정착한 뒤에 시작해야 한다** — 아래 참고.
         self._patrol_asked = False
+        #: 기준을 지우기로 한 구역 (`ask_zone_baseline_reset`). 틱이 비운다.
+        self._zone_baseline_resets: set[str] = set()
         self._session_open: str | None = None
         self._ignored_since_ms: int | None = None
         self._cmd_timeout_ms = int(config["safety"]["cmd_timeout_ms"])
@@ -273,12 +282,25 @@ class Runtime:
         self._zone_seen_frames = 0
         self._watch_classes = tuple(config["vision"]["coco"]["change_watch_classes"])
         self._zone: str | None = None
-        #: 이번 점검에서 관찰한 프레임 수. **시간이 아니라 사이클을 센다** —
-        #: `ChangeConfirmer` 가 사이클 단위이므로 같은 축으로 세야 어긋나지 않는다.
-        self._zone_cycles = 0
-        #: 이번 점검에서 사람 때문에 견주지 못한 사이클이 있었나. 떠날 때 `zone_clear`
-        #: 와 `zone_unverified` 를 가른다.
-        self._zone_person_seen = False
+        # **방문 하나가 확정기의 사이클 하나다** (FR-8.4 · config `change_detect`). 한 방문에서
+        # 사람 없는 프레임을 `visit_frames` 장 모아 과반에서 보인 변화만 관찰로 넣는다.
+        change = config["change_detect"]
+        self._visit_frames = int(change["visit_frames"])
+        self._visit_max_ms = int(change["visit_max_ms"])
+        #: VLM 판독으로 경보를 확정하나. 벤치 관문(WBS 3.6.4) 전에는 끈다.
+        self._vlm_hazards = bool(change["vlm_hazards"])
+        self._visit_since_ms = 0
+        #: 이번 방문에서 모은 사람 없는 프레임
+        self._visit_seen: list[Any] = []
+        #: 이번 방문에서 확정한 물건 변화와 그때의 기준. 떠날 때(`_leave_zone`) 판독과 합친다.
+        self._visit_found: tuple[Change, ...] = ()
+        self._visit_baseline: ZoneBaseline | None = None
+        #: 떠날 때 남길 결론 — `zone_clear`·`zone_unverified`, 이미 남겼으면 `None`
+        self._visit_outcome: str | None = None
+        #: 첫 판독이 «예» 라 한 항목. 두 번째 판독을 기다린다.
+        self._zone_suspects: tuple[str, ...] = ()
+        #: 두 판독이 모두 «예» 라 한 항목 — 이번 방문에서 확정했다.
+        self._zone_hazards: tuple[str, ...] = ()
         # 상황 판독 (FR-8 · `4.8.0` · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
@@ -1010,7 +1032,7 @@ class Runtime:
         """
         # ⚠️ **판독은 상태·모드와 무관하게 줍는다.** 변화 확정으로 `ALERT` 에 갔거나
         # 상한을 넘겨 떠난 뒤에 온 결과도 건 구역의 것으로 남아야 한다.
-        self._take_zone_reading(now_ms)
+        self._take_zone_reading(result, now_ms)
         if not self._mission.enables("change_detect"):
             return
         state = self._behavior.state
@@ -1031,21 +1053,25 @@ class Runtime:
                 return
             if zone != self._zone and self._apply(Event.ZONE_ARRIVED, now_ms):
                 self._zone = zone
-                self._zone_cycles = 0
-                self._zone_person_seen = False
                 self._zone_vlm_asked = False
                 self._zone_vlm_wait_until = None
                 self._zone_vlm_alarm = False
                 self._zone_done = False
-                # 지난 점검의 누적을 끌고 들어가지 않는다 — 다른 시점의 관찰이
-                # 이번 사이클 수를 채우면 한 번 보고 확정하는 꼴이 된다.
-                self._confirmer.forget(zone)
+                self._visit_since_ms = now_ms
+                self._visit_seen = []
+                self._visit_found = ()
+                self._visit_baseline = None
+                self._visit_outcome = None
+                self._zone_suspects = ()
+                self._zone_hazards = ()
+                # ⚠️ **확정기의 누적은 지우지 않는다.** 방문 하나가 사이클 하나라, 도착할 때
+                # 지우면 연속 2방문을 셀 수 없고 이미 확정한 반출이 바퀴마다 다시 울린다.
                 LOG.info("zone_arrived", zone=zone)
             return
         if state != "ZONE_INSPECT" or self._zone is None:
             return
         if self._zone_done:
-            self._leave_zone(now_ms)  # 점검은 끝났고 판독·경보를 기다리는 중이다
+            self._leave_zone(result, now_ms)  # 점검은 끝났고 판독·경보를 기다리는 중이다
             return
 
         zone = self._zone
@@ -1053,9 +1079,28 @@ class Runtime:
         height = int(getattr(result, "frame_height", 0) or 0)
         if width <= 0 or height <= 0:
             return
-        self._zone_cycles += 1
         self._read_zone_scene(zone, result, now_ms)
-
+        # ⚠️ **사람이 보이는 프레임은 기준에도 비교에도 쓰지 않는다** (FR-8.3 → FR-3 ·
+        # FR-11.1). 사람은 물체 변화가 아니라 게이트(`PERSON_FOUND`)가 맡는다. 그리고 **사람이
+        # 물건을 가리면 그 물건이 빠진다.** 견주면 반출로 세어지고, 기준으로 뜨면 그 뒤
+        # 순찰마다 «반입» 이 된다(기준은 없을 때만 뜨므로 누가 지우기 전까지 풀리지 않는다).
+        if not any(detection.label == PERSON_LABEL for detection in result.detections):
+            self._visit_seen.append(result)
+        # ⚠️ **영원히 서 있지 않는다.** 사람이 비키기를 기다리는 것도 `visit_max_ms` 까지다.
+        if (
+            len(self._visit_seen) < self._visit_frames
+            and now_ms - self._visit_since_ms < self._visit_max_ms
+        ):
+            return
+        self._zone_done = True
+        frames = self._visit_seen
+        if len(frames) < self._visit_frames:
+            # 못 본 방문은 관찰이 아니다 — **세면** 한 번 보고 확정하는 꼴이 되고, **끊으면**
+            # 사람이 오가는 구역의 반출은 영영 확정되지 않는다. 확정기에 넣지 않는다.
+            # `zone_clear` 로 적지도 않는다 — 로그만 보고 그 구역이 확인된 줄 안다.
+            self._visit_outcome = "zone_unverified"
+            self._leave_zone(result, now_ms)
+            return
         # ⚠️ **기준 파일이 10Hz 제어를 죽이면 안 된다** — `_record_scene` 과 같다.
         # `serve` 는 수신만 감싸므로 여기서 던지면 프로세스가 끝나고, 재기동해도 이
         # 구역에 닿을 때마다 반복된다. 읽지 못한 기준을 지금 장면으로 덮어쓰지도
@@ -1064,75 +1109,50 @@ class Runtime:
             baseline = self._baselines.load(zone)
         except Exception as exc:  # noqa: BLE001 — 잘린 JSON 은 AttributeError 까지 낸다
             LOG.error("zone_baseline_unreadable", zone=zone, error=f"{type(exc).__name__}: {exc}")
-            self._leave_zone(now_ms)
+            self._leave_zone(result, now_ms)
             return
-        # ⚠️ **사람이 보이는 프레임은 기준에도 비교에도 쓰지 않는다** (FR-8.3 → FR-3 ·
-        # FR-11.1). 사람은 물체 변화가 아니라 게이트(`PERSON_FOUND`)가 맡는다 — 여기서
-        # 확정하면 한 프레임이 게이트를 건너뛰어 L3 «물체 변화» 가 된다. 그리고 **사람이
-        # 물건을 가리면 그 물건이 빠진다.** 견주면 반출로 세어지고, 기준으로 뜨면 그 뒤
-        # 순찰마다 «반입» 이 된다(기준은 없을 때만 뜨므로 누가 지우기 전까지 풀리지 않는다).
-        # 확정기에 넣지도 않으므로 연속 횟수도 건드리지 않는다.
-        if any(detection.label == PERSON_LABEL for detection in result.detections):
-            self._zone_person_seen = True
-        elif baseline is None:
-            # FR-8.1 — 기준이 없으면 **이번 것이 기준이다.** 기준 없이 견주면
-            # 처음 보는 물건이 전부 반입으로 잡혀 첫 순찰이 경보로 뒤덮인다.
+        if baseline is None:
+            # FR-8.1 — 기준이 없으면 **이번 방문이 기준이다.** 기준 없이 견주면 처음 보는
+            # 물건이 전부 반입으로 잡혀 첫 순찰이 경보로 뒤덮인다. 가장 많이 본 프레임을
+            # 뜬다 — 깜빡여 물건을 놓친 프레임이 기준이 되면 그 물건이 바퀴마다 «반입» 이다.
+            best = max(frames, key=lambda frame: len(frame.detections))
             try:
-                self._baselines.register(
+                self._visit_baseline = self._baselines.register(
                     zone,
-                    result.detections,
+                    best.detections,
                     frame_size=(width, height),
                     now_ms=now_ms,
-                    jpeg=result.jpeg,
+                    jpeg=best.jpeg,
                 )
             except Exception as exc:  # noqa: BLE001 — 위 `load` 와 같은 이유다
                 LOG.error(
                     "zone_baseline_unwritable", zone=zone, error=f"{type(exc).__name__}: {exc}"
                 )
             else:
-                LOG.info("zone_baseline_registered", zone=zone, objects=len(result.detections))
-            self._leave_zone(now_ms)
+                LOG.info("zone_baseline_registered", zone=zone, objects=len(best.detections))
+                # 옛 기준으로 센 횟수가 새 기준의 확정을 앞당기면 안 된다.
+                self._confirmer.forget(zone)
+            self._leave_zone(result, now_ms)
             return
-        else:
-            changes = classify_changes(
+        # ⚠️ **검출기는 깜빡인다.** 프레임 과반에서 보인 변화만 이번 방문의 관찰이다.
+        seen: Counter[Change] = Counter(
+            change
+            for frame in frames
+            for change in classify_changes(
                 baseline,
-                result.detections,
+                frame.detections,
                 frame_size=(width, height),
                 watch_classes=self._watch_classes,
             )
-            confirmed = self._confirmer.observe(zone, changes)
-            if confirmed:
-                found = [change.as_dict() for change in confirmed]
-                LOG.warning("zone_changed", zone=zone, changes=found)
-                # ⚠️ **전이보다 먼저 남긴다** — `_observe_fallen` 과 같다. 대시보드 사건
-                # 피드는 이 기록을 받으므로, 없으면 화면에는 단계 변경만 보인다 (FR-8.3).
-                self._record_scene(
-                    "zone_changed",
-                    result,
-                    {
-                        "zone": zone,
-                        "grid": list(baseline.grid),
-                        "changes": found,
-                        "baseline_ms": baseline.captured_ms,
-                        "baseline_snapshot": baseline.snapshot,
-                    },
-                )
-                # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
-                self._zone_alarm_alert = self._apply(Event.ZONE_CHANGED, now_ms)
-                self._zone_cycles = 0
-                return
-        # ⚠️ **영원히 서 있지 않는다.** 확정에 필요한 사이클을 다 보고도 아무것도
-        # 안 나오면 순찰로 돌아간다. 여기서 나가지 않으면 카메라가 흔들리는 동안
-        # 로봇이 구역 앞에 멈춘 채로 남는다. 사람이 비키기를 기다리지도 않는다 —
-        # 대신 **`zone_clear` 로 적지 않는다.** 보지 못한 구역을 «변화 없음» 으로 남기면
-        # 로그만 보고 그 구역이 확인된 줄 안다.
-        if self._zone_cycles >= self._confirmer.confirm_cycles:
-            LOG.info(
-                "zone_unverified" if self._zone_person_seen else "zone_clear",
-                zone=zone,
-                cycles=self._zone_cycles,
-            )
-            self._leave_zone(now_ms)
+        )
+        observed = [change for change, count in seen.items() if count * 2 > len(frames)]
+        if observed:
+            # 확정 전의 관찰이다 — 경보가 아니지만 연속이 어디까지 왔는지는 로그로 남긴다.
+            LOG.info("zone_change_seen", zone=zone, changes=[c.as_dict() for c in observed])
+        self._visit_found = self._confirmer.observe(zone, observed)
+        self._visit_baseline = baseline
+        self._visit_outcome = "zone_clear"
+        self._leave_zone(result, now_ms)
 
     def _fall_held(self, now_ms: int) -> bool:
         """쓰러짐 후보를 `gap_ms` 안에 봤나 — PPE 보류의 기준이다.
@@ -1207,7 +1227,7 @@ class Runtime:
             reason="busy" if self._vlm.available else "not_loaded",
         )
 
-    def _take_zone_reading(self, now_ms: int) -> None:
+    def _take_zone_reading(self, result: Any, now_ms: int) -> None:
         """끝난 판독을 줍고 **건 구역 이름과 건 프레임으로** 남긴다 (`4.8.0`).
 
         ⚠️ **스레드가 끝난 뒤에만 줍는다.** 돌고 있을 때 슬롯을 비우면 결과가 나중에
@@ -1216,6 +1236,10 @@ class Runtime:
         ⚠️ **쓰러진 사람을 봤다는 답은 `PERSON_DOWN` 이다.** 판정은 여전히 FSM 과 단계
         표가 한다(ADR-35 결정 2) — 규칙 판정(`_observe_fallen`)과 같은 사건·같은 모드
         게이트를 탄다. 구역을 떠난 뒤에 온 답이어도 올린다.
+
+        ⚠️ **넘어짐·통로 막힘은 두 번 읽어 확정한다** (WBS 3.6.3 · `vlm_hazards`). 첫 판독이
+        «예» 면 **지금 프레임으로** 한 번 더 걸고, 둘 다 «예» 인 항목만 이번 방문에서 확정한다.
+        이번 방문에서 건 판독(`mine`)만 센다 — 지난 방문의 늦은 답이 이번 방문을 채우면 안 된다.
         """
         if self._zone_vlm_pending is None or self._vlm.busy:
             return
@@ -1230,6 +1254,22 @@ class Runtime:
         LOG.info(
             "zone_reading", zone=zone, degraded=reading.degraded, reason=reading.reason, **answers
         )
+        if mine and self._vlm_hazards:
+            # 저하된 판독은 «빈 채널» 이다 — 위 `zone_reading` 이 사유를 남겼다.
+            said = () if reading.degraded else tuple(k for k in ZONE_HAZARDS if reading.get(k))
+            if self._zone_suspects:
+                self._zone_hazards = tuple(k for k in self._zone_suspects if k in said)
+                self._zone_suspects = ()
+            elif said and self._behavior.state == "ZONE_INSPECT":
+                # `_poll_vision` 은 새 프레임에서만 부르므로 `result` 는 건 프레임보다 뒤다.
+                if self._vlm.submit(result.jpeg, now_ms=now_ms):
+                    self._zone_suspects = said
+                    self._zone_vlm_pending = (zone, result)
+                    self._zone_vlm_wait_until = now_ms + self._zone_vlm_wait_ms
+                    LOG.info("zone_reading_requested", zone=zone, again=list(said))
+                else:
+                    reason = "busy" if self._vlm.available else "not_loaded"
+                    LOG.info("zone_reading_skipped", zone=zone, reason=reason, again=list(said))
         self._record_scene(
             "zone_reading",
             result,
@@ -1257,26 +1297,55 @@ class Runtime:
         if mine and self._behavior.state == "ZONE_INSPECT":
             self._zone_vlm_alarm = True
 
-    def _leave_zone(self, now_ms: int) -> None:
-        """점검을 끝낸다. ⚠️ **판독·경보가 남았으면 `ZONE_CLEAR` 를 미룬다** (2026-09-24 결정).
+    def _leave_zone(self, result: Any, now_ms: int) -> None:
+        """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3).
 
-        기다리지 않으면 판독이 *"쓰러진 사람이 있다"* 고 답해도 로봇은 경보를 울리며
-        지나간다. 미루는 것은 이 사건 하나라 수동·비상정지 같은 ANY 전이는 그대로 먹는다.
-        변화 확정(`ZONE_CHANGED`)은 이 길을 지나지 않아 기다리지 않는다 — 그 판독은
-        떠난 뒤에 와도 건 구역 이름으로 남으므로 버리지 않는다(`_take_zone_reading`).
+        물건 변화(`_inspect_zone`)와 판독 확정(`_take_zone_reading`)을 합쳐 무엇이든 있으면
+        `zone_changed` 로 남기고 `ZONE_CHANGED` 를 낸다. 없으면 `ZONE_CLEAR` 다.
+
+        ⚠️ **판독·경보가 남았으면 `ZONE_CLEAR` 를 미룬다** (2026-09-24 결정). 기다리지 않으면
+        판독이 *"쓰러진 사람이 있다"* 고 답해도 로봇은 경보를 울리며 지나간다. 미루는 것은
+        이 사건 하나라 수동·비상정지 같은 ANY 전이는 그대로 먹는다. 상한은 판독마다
+        `budget_ms` 다. **물건 변화를 확정했으면 기다리지 않는다** — 기다리는 사이 사람이
+        나타나 `ALERT` 로 가면 확정한 반출이 경보 없이 사라진다(확정기는 다시 올리지 않는다).
+        늦게 온 판독은 건 구역 이름으로 남으므로 버리지 않는다(`_take_zone_reading`).
         """
         self._zone_done = True
-        if self._zone_vlm_wait_until is not None:
+        if self._zone_vlm_wait_until is not None and not self._visit_found:
             if now_ms < self._zone_vlm_wait_until:
                 return
             # 상한 초과는 기능 저하다. 결과가 늦게 오면 그때 건 구역 이름으로 남는다.
             LOG.warning("zone_reading_timeout", zone=self._zone, wait_ms=self._zone_vlm_wait_ms)
             self._zone_vlm_wait_until = None
+        changes = [change.as_dict() for change in self._visit_found] + [
+            {"kind": kind, "source": "vlm"} for kind in self._zone_hazards
+        ]
+        if changes:
+            LOG.warning("zone_changed", zone=self._zone, changes=changes)
+            baseline = self._visit_baseline
+            # ⚠️ **전이보다 먼저 남긴다** — `_observe_fallen` 과 같다. 대시보드 사건
+            # 피드는 이 기록을 받으므로, 없으면 화면에는 단계 변경만 보인다 (FR-8.3).
+            self._record_scene(
+                "zone_changed",
+                self._visit_seen[-1] if self._visit_seen else result,
+                {
+                    "zone": self._zone,
+                    "grid": None if baseline is None else list(baseline.grid),
+                    "changes": changes,
+                    "baseline_ms": None if baseline is None else baseline.captured_ms,
+                    "baseline_snapshot": None if baseline is None else baseline.snapshot,
+                },
+            )
+            # 한 번만 남긴다 — 전이가 거절돼도 다음 틱에 같은 기록을 되풀이하지 않는다.
+            self._visit_found = self._zone_hazards = ()
+            # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
+            self._zone_alarm_alert = self._apply(Event.ZONE_CHANGED, now_ms)
+            return
         # 사람이 경보를 확인할 때까지 머문다 — L3 를 내리는 길은 `confirm_alarm` 하나다.
         if self._zone_vlm_alarm and self._escalation.level is Level.L3:
             return
-        self._zone_cycles = 0
-        self._zone_person_seen = False
+        if self._visit_outcome is not None:
+            LOG.info(self._visit_outcome, zone=self._zone, frames=len(self._visit_seen))
         self._zone_vlm_asked = False
         self._apply(Event.ZONE_CLEAR, now_ms)
 
@@ -1803,6 +1872,26 @@ class Runtime:
         """페일세이프(F) 해제 요청을 예약한다. **다른 스레드에서 부른다.**"""
         self._reset_asked = True
 
+    def ask_zone_baseline_reset(self, zone: str) -> tuple[bool, str]:
+        """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준 재등록을 예약한다 (WBS 3.6.5).
+
+        **다른 스레드에서 부른다.** 지우는 것은 다음 틱이다(`_drain_confirmations`) —
+        틱이 그 구역의 기준을 읽고 견주는 도중에 지우면 옛 기준으로 센 횟수가 새
+        기준에 섞인다. 기준이 없으면 그 구역을 다음에 볼 때 새로 뜬다(`_inspect_zone`) — 지금 점검 중이면 이번 장면이다.
+
+        ⚠️ **경보(L3)를 풀지 않는다** — 그것은 `ask_alarm_confirm` 의 몫이다. 묶으면
+        «기준을 다시 뜨는 것» 이 확인 없는 경보 해제 요령이 된다 (ADR-26 과 같은 이유).
+        ⚠️ **`zones.marker_map` 에 있는 구역만 받는다.** 파일 이름이 되는 값이라, 설정에
+        없는 문자열(`../A` 따위)이 지우기까지 가지 않게 한다.
+        """
+        if zone not in self._zone_markers.values():
+            return False, f"설정에 없는 구역이다: {zone!r}"
+        self._zone_baseline_resets.add(zone)
+        return (
+            True,
+            f"구역 {zone} 의 기준을 다음 틱에 지운다 — 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다",
+        )
+
     def apply_external(self, event: Event) -> bool:
         """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**
 
@@ -1990,6 +2079,20 @@ class Runtime:
         if self._reset_asked:
             self._reset_asked = False
             self.request_reset()
+        # 서버 스레드가 `add` 하고 여기서만 `pop` 한다 — 둘 다 원자적이고 소비자는 하나다.
+        while self._zone_baseline_resets:
+            zone = self._zone_baseline_resets.pop()
+            # ⚠️ **기준 파일이 10Hz 제어를 죽이면 안 된다** — `_inspect_zone` 과 같다.
+            try:
+                existed = self._baselines.clear(zone)
+            except Exception as exc:  # noqa: BLE001 — Windows 는 쥔 파일을 지우지 못한다
+                LOG.error(
+                    "zone_baseline_reset_failed", zone=zone, error=f"{type(exc).__name__}: {exc}"
+                )
+                continue
+            # 옛 기준으로 센 횟수가 새 기준의 확정을 앞당기면 안 된다.
+            self._confirmer.forget(zone)
+            LOG.info("zone_baseline_reset", zone=zone, existed=existed)
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
         if (
@@ -2282,6 +2385,7 @@ def dashboard_wiring(
         note_voice_auth=runtime.note_voice_auth,
         note_voice_listening=runtime.note_voice_listening,
         confirm_alarm=runtime.ask_alarm_confirm,
+        reset_zone_baseline=runtime.ask_zone_baseline_reset,
         pose=(
             float(config["posture"]["pitch_up_deg"]),
             int(config["posture"]["settle_ms"]),

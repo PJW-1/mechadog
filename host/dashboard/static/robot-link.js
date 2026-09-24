@@ -120,6 +120,11 @@ export class RobotLink {
     return this.post('/api/command/patrol', { action });
   }
 
+  /** 구역 기준 재등록 (WBS 3.6.5) — 서버가 기준을 지우고 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다. 경보는 풀지 않는다. */
+  zoneBaseline(zone) {
+    return this.post('/api/command/zone-baseline', { zone });
+  }
+
   // 운용 모드 전환 (FR-4.7 · FR-11.3). ⚠️ **온보드 `SERVICE` 와 다른 축이다** —
   // 저쪽은 정비 상태이고 이쪽은 임무 모드다. 거절이 흔하므로 사유를 그대로 돌려준다.
   mode(name) {

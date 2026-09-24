@@ -142,7 +142,7 @@ test('a confirmed zone change is filed under zones and names grid cells without 
  const {dom,document,panels,store}=setup();store.setDemo(false);
  const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
  const zone=(seq,judgement)=>store.ingestLiveEvent({...base,seq,ts_ms:seq,event:'zone_changed',judgement});
- const event=zone(1,{zone:'A',grid:[3,3],changes:[{kind:'removed',label:'bottle',count:1,cell:[2,0]},{kind:'added',label:'box',count:2,cell:[1,1]},{kind:'added',label:'cup',count:1,cell:[0,2]},{kind:'person',label:'person',count:1,cell:null}],baseline_ms:1700000000000,baseline_snapshot:'A.jpg'});
+ const event=zone(1,{zone:'A',grid:[3,3],changes:[{kind:'removed',label:'bottle',count:1,cell:[2,0]},{kind:'added',label:'box',count:2,cell:[1,1]},{kind:'added',label:'cup',count:1,cell:[0,2]},{kind:'person',label:'person',count:1,cell:null}],baseline_ms:1700000000000,baseline_snapshot:'A_1700000000000.jpg'});
  assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 물체 변화 확정 · zone_changed$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
  assert.deepEqual(event.evidence.slice(0,5),[['구역','A'],['반출','bottle ×1 · 오른쪽 위'],['반입','box ×2 · 가운데'],['반입','cup ×1 · 왼쪽 아래'],['인원 출현','person ×1']]);
  assert.equal(event.evidence[5][0],'기준 시각');assert.equal(event.evidence.length,6);
@@ -155,6 +155,47 @@ test('a confirmed zone change is filed under zones and names grid cells without 
  assert.deepEqual(zone(3,{zone:'C',changes:[{kind:'removed',label:'bottle',count:1,cell:[0,0]}],baseline_ms:'어제'}).evidence,[['구역','C'],['반출','bottle ×1']],'격자가 없으면 3×3 으로 가정하지 않는다');
  assert.deepEqual(zone(4,{zone:'D',changes:'bottle'}).evidence,[['구역','D'],['변화 내역','미수신']]);
  assert.equal(zone(5,{zone:'E',grid:[3,3],changes:Array.from({length:20},()=>({kind:'added',label:'box',count:1,cell:[0,0]}))}).evidence.length,13,'변화 행은 12건까지');
+});
+test('VLM-read zone changes are named without inventing a label, count or place',()=>{
+ const {store}=setup();store.setDemo(false);
+ const event=store.ingestLiveEvent({state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null,seq:1,ts_ms:1,event:'zone_changed',
+  judgement:{zone:'A',grid:[3,3],changes:[{kind:'fallen_object',source:'vlm'},{kind:'blocked_path',source:'vlm',cell:[0,0]},{kind:'removed',label:'bottle',count:1,cell:[2,0]}]}});
+ assert.deepEqual(event.evidence,[['구역','A'],['넘어짐·무너짐','VLM 판독 · 위치 없음'],['통로 막힘','VLM 판독 · 위치 없음'],['반출','bottle ×1 · 오른쪽 위']]);
+});
+test('a live zone change offers to take the scene as the new baseline, asking first (WBS 3.6.5)',async()=>{
+ const calls=[],prompts=[];
+ const link={zoneBaseline:async zone=>{calls.push(zone);return zone==='A'?{accepted:true,detail:'구역 A 의 기준을 다음 틱에 지운다'}:{accepted:false,detail:'설정에 없는 구역이다'}}};
+ const {dom,document,panels,store,messages}=setup();store.link=link;store.setDemo(false);
+ const label='이 상태를 새 기준으로 등록',base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null};
+ const show=event=>{panels.eventId=event.id;panels.render('events');return button(document,label)};
+ const changed=store.ingestLiveEvent({...base,seq:1,ts_ms:1,event:'zone_changed',judgement:{zone:'A',changes:[{kind:'removed',label:'bottle',count:1}]}});
+ assert.equal(show(changed),undefined,'명령 API 가 열렸는지 모르면 보이지 않는다');
+ store.setCommandsOpen(true);
+ dom.window.confirm=message=>{prompts.push(message);return false};
+ show(changed).click();assert.deepEqual(calls,[],'확인하지 않으면 보내지 않는다');assert.match(prompts[0],/구역 A/);
+ dom.window.confirm=message=>{prompts.push(message);return true};
+ show(changed).click();await new Promise(resolve=>setTimeout(resolve,10));
+ assert.deepEqual(calls,['A']);assert.match(messages.at(-1),/구역 A 의 기준을 다음 틱에 지운다/);
+ // 거절은 삼키지 않는다.
+ const other=store.ingestLiveEvent({...base,seq:2,ts_ms:2,event:'zone_changed',judgement:{zone:'Q',changes:[]}});
+ show(other).click();await new Promise(resolve=>setTimeout(resolve,10));assert.match(messages.at(-1),/거절됨 — 설정에 없는 구역이다/);
+ // 구역이 없는 판정, 다른 사건, 가져온 기록, 예시 모드에는 보이지 않는다.
+ assert.equal(show(store.ingestLiveEvent({...base,seq:3,ts_ms:3,event:'zone_changed',judgement:{changes:[]}})),undefined);
+ assert.equal(show(store.ingestLiveEvent({...base,seq:4,ts_ms:4,event:'person_fallen',judgement:{fallen:true,source:'vlm',zone:'B'}})),undefined);
+ assert.equal(show(store.importBlackbox({...base,ts_ms:5,event:'zone_changed',judgement:{zone:'A',changes:[]}})),undefined);
+ store.setCommandsOpen(false);assert.equal(show(changed),undefined,'읽기 전용 서버에는 보이지 않는다');
+ store.setCommandsOpen(true);store.setDemo(true);assert.equal(show(changed),undefined);
+ assert.deepEqual(calls,['A','Q']);
+});
+test('a baseline reset goes to the robot that sent the event, not the selected one',async()=>{
+ const calls=[],unit=name=>({device:name,link:{zoneBaseline:async zone=>{calls.push(name+':'+zone);return{accepted:true}}}});
+ const store=new Operations({fleet:[unit('mechdog-01'),unit('mechdog-02')]});store.setDemo(false);
+ store.setCommandsOpen(true,'MD-02');
+ const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null,event:'zone_changed',judgement:{zone:'B',changes:[]}};
+ const first=store.ingestLiveEvent({...base,seq:1,ts_ms:1},null,'MD-01'),second=store.ingestLiveEvent({...base,seq:1,ts_ms:1},null,'MD-02');
+ assert.equal(store.canResetZoneBaseline(first),false,'MD-01 의 명령 API 는 열린 줄 모른다');
+ assert.equal(store.selected,'MD-01');await store.requestZoneBaseline(second.id);
+ assert.deepEqual(calls,['mechdog-02:B']);
 });
 test('an old record without judgement says the field is missing, not a verdict',()=>{
  const {store}=setup();
