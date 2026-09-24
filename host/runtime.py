@@ -1041,7 +1041,16 @@ class Runtime:
         self._zone_cycles += 1
         self._read_zone_scene(zone, result, now_ms)
 
-        baseline = self._baselines.load(zone)
+        # ⚠️ **기준 파일이 10Hz 제어를 죽이면 안 된다** — `_record_scene` 과 같다.
+        # `serve` 는 수신만 감싸므로 여기서 던지면 프로세스가 끝나고, 재기동해도 이
+        # 구역에 닿을 때마다 반복된다. 읽지 못한 기준을 지금 장면으로 덮어쓰지도
+        # 않는다 — 그 사이의 변화가 조용히 기준이 된다. 사람이 보고 지우게 둔다.
+        try:
+            baseline = self._baselines.load(zone)
+        except Exception as exc:  # noqa: BLE001 — 잘린 JSON 은 AttributeError 까지 낸다
+            LOG.error("zone_baseline_unreadable", zone=zone, error=f"{type(exc).__name__}: {exc}")
+            self._leave_zone(now_ms)
+            return
         # ⚠️ **사람이 보이는 프레임은 기준에도 비교에도 쓰지 않는다** (FR-8.3 → FR-3 ·
         # FR-11.1). 사람은 물체 변화가 아니라 게이트(`PERSON_FOUND`)가 맡는다 — 여기서
         # 확정하면 한 프레임이 게이트를 건너뛰어 L3 «물체 변화» 가 된다. 그리고 **사람이
@@ -1053,14 +1062,20 @@ class Runtime:
         elif baseline is None:
             # FR-8.1 — 기준이 없으면 **이번 것이 기준이다.** 기준 없이 견주면
             # 처음 보는 물건이 전부 반입으로 잡혀 첫 순찰이 경보로 뒤덮인다.
-            self._baselines.register(
-                zone,
-                result.detections,
-                frame_size=(width, height),
-                now_ms=now_ms,
-                jpeg=result.jpeg,
-            )
-            LOG.info("zone_baseline_registered", zone=zone, objects=len(result.detections))
+            try:
+                self._baselines.register(
+                    zone,
+                    result.detections,
+                    frame_size=(width, height),
+                    now_ms=now_ms,
+                    jpeg=result.jpeg,
+                )
+            except Exception as exc:  # noqa: BLE001 — 위 `load` 와 같은 이유다
+                LOG.error(
+                    "zone_baseline_unwritable", zone=zone, error=f"{type(exc).__name__}: {exc}"
+                )
+            else:
+                LOG.info("zone_baseline_registered", zone=zone, objects=len(result.detections))
             self._leave_zone(now_ms)
             return
         else:

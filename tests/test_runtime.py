@@ -1739,6 +1739,50 @@ def test_first_visit_registers_a_baseline_and_returns_to_patrol(
 
 
 @pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize(
+    "broken",
+    ['{"schema": ', '{"schema": 999, "objects": []}', "[]"],
+    ids=["truncated", "schema", "not-a-mapping"],
+)
+def test_a_broken_baseline_file_does_not_stop_the_runtime(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog, broken: str
+):
+    """⚠️ **기준 파일 하나가 운용 루프를 죽였다.** `serve` 는 `recvfrom` 만 감싸므로
+    `load` 가 던지면 프로세스가 끝나고 로봇은 명령 타임아웃으로 선다 — 재기동해도
+    그 구역에 닿을 때마다 반복된다. 전원이 쓰기 도중에 끊기면 잘린 파일이 남는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
+    saved.write_text(broken, encoding="utf-8")
+    with caplog.at_level(logging.INFO):
+        _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+        _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL", "읽지 못한 구역 앞에 서 있지 않는다"
+    assert "zone_baseline_unreadable" in _zone_events(caplog)
+    assert saved.read_text(encoding="utf-8") == broken, (
+        "지금 장면으로 덮어쓰면 그 사이의 변화가 조용히 기준이 된다"
+    )
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_baseline_that_cannot_be_written_does_not_stop_the_runtime(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog, monkeypatch
+):
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+
+    def full_disk(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(runtime._baselines, "register", full_disk)
+    with caplog.at_level(logging.INFO):
+        _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+        _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL"
+    events = _zone_events(caplog)
+    assert "zone_baseline_unwritable" in events
+    assert "zone_baseline_registered" not in events, "남지 않은 기준을 남았다고 적지 않는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
 def test_a_new_object_is_confirmed_and_raises_an_alarm(
     config: dict, clock: FakeClock, tmp_path: Path
 ):
