@@ -332,13 +332,12 @@ def test_posture_steps_are_known(cfg: dict) -> None:
 
 
 def test_change_detect_confirms_over_cycles(cfg: dict) -> None:
-    """물체 변화는 연속 사이클 확인 후 확정한다 (FR-8.4).
+    """물체 변화는 연속 방문 확인 후 확정한다 (FR-8.4).
 
-    단 person 출현은 즉시 처리한다.
+    사람 출현은 여기서 다루지 않는다 — 사람 게이트(FR-3)가 맡는다.
     """
     cd = cfg["change_detect"]
     assert cd["confirm_cycles"] >= 2
-    assert cd["person_immediate"] is True
 
 
 def test_zones_are_declared(cfg: dict) -> None:
