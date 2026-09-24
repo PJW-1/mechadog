@@ -286,9 +286,22 @@ class Runtime:
         #: 쓰러짐 후보를 마지막으로 본 시각. PPE 보류는 이 시각에서 `gap_ms` 까지 이어진다.
         self._fallen_gap_ms = int(config["vision"]["fallen"]["gap_ms"])
         self._fall_seen_ms: int | None = None
-        #: 이번 구역에서 판독을 이미 걸었나. **구역당 한 번만 건다** — 사이클마다
-        #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다.
+        #: 이번 방문에서 판독을 이미 시도했나. **방문당 한 번만 건다** — 사이클마다
+        #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다. 거절당해도
+        #: 다시 걸지 않는다 — 걸지 못한 방문은 기다릴 것이 없어 곧바로 끝난다.
         self._zone_vlm_asked = False
+        #: 돌고 있는 판독을 건 `(구역, 프레임)`. ⚠️ **판독 결과에는 어느 구역의 것인지가
+        #: 없다.** 결과는 구역을 떠난 뒤에 오기도 하므로 건 자리에서 붙들어 두고 그
+        #: 이름·그 사진으로 남긴다 — 주운 자리의 이름과 사진으로 남기면 기록이 거짓이다.
+        self._zone_vlm_pending: tuple[str, Any] | None = None
+        #: 이번 방문에서 건 판독을 언제까지 기다리나. `None` 이면 기다릴 것이 없다.
+        #: 상한은 판독 예산 그대로다 — 판독기도 예산을 넘기면 남은 질문을 버린다.
+        self._zone_vlm_wait_until: int | None = None
+        self._zone_vlm_wait_ms = int(config["vision"]["vlm"]["budget_ms"])
+        #: 이번 방문의 판독이 L3 를 올렸나. 올렸으면 경보가 풀릴 때까지 구역에 머문다.
+        self._zone_vlm_alarm = False
+        #: 이번 방문의 점검이 끝났나. 끝났으면 판독·경보만 기다리고 다시 견주지 않는다.
+        self._zone_done = False
         # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
         # FastAPI/WebSocket 서버(4.5.1)가 생기면 같은 항목을 publisher로 받는다.
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
@@ -976,6 +989,9 @@ class Runtime:
         그것은 사건이 아니라 디스크에 남는 상태다. 경비 순찰이 지나가며 남긴 기준을
         다음 공장 순찰이 정본으로 쓰게 된다.
         """
+        # ⚠️ **판독은 상태·모드와 무관하게 줍는다.** 변화 확정으로 `ALERT` 에 갔거나
+        # 상한을 넘겨 떠난 뒤에 온 결과도 건 구역의 것으로 남아야 한다.
+        self._take_zone_reading(now_ms)
         if not self._mission.enables("change_detect"):
             return
         state = self._behavior.state
@@ -991,12 +1007,18 @@ class Runtime:
                 self._zone = zone
                 self._zone_cycles = 0
                 self._zone_vlm_asked = False
+                self._zone_vlm_wait_until = None
+                self._zone_vlm_alarm = False
+                self._zone_done = False
                 # 지난 점검의 누적을 끌고 들어가지 않는다 — 다른 시점의 관찰이
                 # 이번 사이클 수를 채우면 한 번 보고 확정하는 꼴이 된다.
                 self._confirmer.forget(zone)
                 LOG.info("zone_arrived", zone=zone)
             return
         if state != "ZONE_INSPECT" or self._zone is None:
+            return
+        if self._zone_done:
+            self._leave_zone(now_ms)  # 점검은 끝났고 판독·경보를 기다리는 중이다
             return
 
         zone = self._zone
@@ -1097,18 +1119,48 @@ class Runtime:
 
         ⚠️ **막지 않는다.** 판독은 0.65초라 여기서 기다리면 메인 틱이 밀리고 로봇이
         `cmd_timeout_ms`(300ms)로 선다. 걸어 두고 결과는 다음 틱에 줍는다 —
-        `_poll_vision` 이 검출 결과를 읽는 방식과 같다.
+        `_poll_vision` 이 검출 결과를 읽는 방식과 같다. 틱은 돌리되 **구역을 끝내는
+        것만** 결과가 올 때까지 미룬다(`_leave_zone`).
 
-        ⚠️ **사건을 만들지 않는다.** 판독은 관찰이며 판정은 FSM 이 한다
-        (ADR-35 결정 2). 지금은 기록까지이고, 문장으로 옮기는 것은 `4.8.1` 이다.
+        ⚠️ **걸지 못했으면 사유를 남긴다** — «실패·타임아웃은 기능 저하로 기록».
+        흔적이 없으면 판독기가 없는 것과 판독 경로가 끊긴 것을 가를 수 없다.
         """
-        if not self._zone_vlm_asked and self._vlm.submit(result.jpeg, now_ms=now_ms):
-            self._zone_vlm_asked = True
+        if self._zone_vlm_asked:
+            return
+        self._zone_vlm_asked = True
+        # ⚠️ **앞 판독을 줍기 전에는 걸지 않는다.** 걸면 슬롯에 남은 앞 결과가 새로 건
+        # 구역의 것으로 읽힌다 — 스레드가 끝나는 순간과 거는 순간이 겹치면 그렇게 된다.
+        if self._zone_vlm_pending is None and self._vlm.submit(result.jpeg, now_ms=now_ms):
+            self._zone_vlm_pending = (zone, result)
+            self._zone_vlm_wait_until = now_ms + self._zone_vlm_wait_ms
             LOG.info("zone_reading_requested", zone=zone)
+            return
+        LOG.info(
+            "zone_reading_skipped",
+            zone=zone,
+            reason="busy" if self._vlm.available else "not_loaded",
+        )
+
+    def _take_zone_reading(self, now_ms: int) -> None:
+        """끝난 판독을 줍고 **건 구역 이름과 건 프레임으로** 남긴다 (`4.8.0`).
+
+        ⚠️ **스레드가 끝난 뒤에만 줍는다.** 돌고 있을 때 슬롯을 비우면 결과가 나중에
+        들어와 다음 구역에서 그 구역의 이름과 사진으로 읽힌다 — 예전 코드가 그랬다.
+
+        ⚠️ **쓰러진 사람을 봤다는 답은 `PERSON_DOWN` 이다.** 판정은 여전히 FSM 과 단계
+        표가 한다(ADR-35 결정 2) — 규칙 판정(`_observe_fallen`)과 같은 사건·같은 모드
+        게이트를 탄다. 구역을 떠난 뒤에 온 답이어도 올린다.
+        """
+        if self._zone_vlm_pending is None or self._vlm.busy:
+            return
+        (zone, result), self._zone_vlm_pending = self._zone_vlm_pending, None
+        # 이번 방문에서 건 판독이면 기다림도 여기서 끝난다.
+        mine, self._zone_vlm_wait_until = self._zone_vlm_wait_until is not None, None
         reading = self._vlm.take()
         if reading is None:
-            return
+            return  # 스레드가 죽었다 — 사유는 `vlm_worker_failed` 가 남겼다
         answers = {answer.key: answer.value for answer in reading.answers}
+        raw = {answer.key: answer.raw for answer in reading.answers}
         LOG.info(
             "zone_reading", zone=zone, degraded=reading.degraded, reason=reading.reason, **answers
         )
@@ -1122,10 +1174,22 @@ class Runtime:
                 "answers": answers,
                 # ⚠️ **원문을 함께 남긴다.** 판독이 이상할 때 사람이 볼 것은 참/거짓이
                 # 아니라 모델이 실제로 뱉은 글이다.
-                "raw": {answer.key: answer.raw for answer in reading.answers},
+                "raw": raw,
                 "latency_ms": {answer.key: answer.latency_ms for answer in reading.answers},
             },
         )
+        if not reading.get("person_down"):
+            return
+        self._record_scene(
+            "person_fallen",
+            result,
+            {"fallen": True, "source": "vlm", "zone": zone, "raw": raw["person_down"]},
+        )
+        self._apply(Event.PERSON_DOWN, now_ms)
+        # ⚠️ **경보를 두고 떠나지 않는다** — `_leave_zone` 이 확인될 때까지 붙든다.
+        # 이미 떠난 로봇(변화 확정·상한 초과)을 되돌리지는 않는다.
+        if mine and self._behavior.state == "ZONE_INSPECT":
+            self._zone_vlm_alarm = True
 
     def _apply_load_profile(self, mode: str) -> None:
         """모드가 곧 적재 프로파일이다 (ADR-35 결정 5).
@@ -1147,11 +1211,25 @@ class Runtime:
         ).start()
 
     def _leave_zone(self, now_ms: int) -> None:
+        """점검을 끝낸다. ⚠️ **판독·경보가 남았으면 `ZONE_CLEAR` 를 미룬다** (2026-09-24 결정).
+
+        기다리지 않으면 판독이 *"쓰러진 사람이 있다"* 고 답해도 로봇은 경보를 울리며
+        지나간다. 미루는 것은 이 사건 하나라 수동·비상정지 같은 ANY 전이는 그대로 먹는다.
+        변화 확정(`ZONE_CHANGED`)은 이 길을 지나지 않아 기다리지 않는다 — 그 판독은
+        떠난 뒤에 와도 건 구역 이름으로 남으므로 버리지 않는다(`_take_zone_reading`).
+        """
+        self._zone_done = True
+        if self._zone_vlm_wait_until is not None:
+            if now_ms < self._zone_vlm_wait_until:
+                return
+            # 상한 초과는 기능 저하다. 결과가 늦게 오면 그때 건 구역 이름으로 남는다.
+            LOG.warning("zone_reading_timeout", zone=self._zone, wait_ms=self._zone_vlm_wait_ms)
+            self._zone_vlm_wait_until = None
+        # 사람이 경보를 확인할 때까지 머문다 — L3 를 내리는 길은 `confirm_alarm` 하나다.
+        if self._zone_vlm_alarm and self._escalation.level is Level.L3:
+            return
         self._zone_cycles = 0
-        # ⚠️ **구역을 떠나면 그 구역의 판독도 버린다.** 남겨 두면 다음 구역에서 지난
-        # 구역의 답을 자기 것으로 읽는다 — `ChangeConfirmer.forget` 과 같은 이유다.
         self._zone_vlm_asked = False
-        self._vlm.take()
         self._apply(Event.ZONE_CLEAR, now_ms)
 
     def _judge_auth(self, result: Any, now_ms: int) -> None:

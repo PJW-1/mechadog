@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -1867,17 +1868,242 @@ def test_change_detection_runs_without_any_vlm(config: dict, clock: FakeClock, t
     assert runtime.behavior.state in {"ZONE_INSPECT", "PATROL"}
 
 
+class _GatedVlmSession(FakeVlmSession):
+    """`gate` 가 열릴 때까지 답하지 않는다 — 판독이 도는 동안을 시험이 붙잡아 둔다.
+
+    ⚠️ **고정 sleep 으로 흉내 내지 않는다.** 시간으로 버티면 느린 기계에서 시험이
+    뜻을 잃는다. 열어 주지 않으면 5초 뒤 스스로 실패한다.
+    """
+
+    def __init__(self, answer: str = "no") -> None:
+        super().__init__(answer)
+        self.gate = threading.Event()
+
+    def ask(self, image: object, prompt: str) -> str:
+        assert self.gate.wait(timeout=5.0), "시험이 판독을 풀어 주지 않았다"
+        return super().ask(image, prompt)
+
+
+def _two_zone_runtime(config: dict, clock: FakeClock, tmp_path: Path, reader: VlmReader):
+    """A·B 두 구역과 기록 대역을 붙인다. 판독이 **어느 구역·어느 프레임**으로 남는지 본다."""
+    cfg = _zone_config(config, tmp_path)
+    cfg["zones"]["marker_map"] = {ZONE_MARKER: "A", ZONE_MARKER + 1: "B"}
+    vision = FakeVision()
+    recorded: list[tuple[str, dict]] = []
+
+    class Recorder:
+        def record(self, event_type: str, **entry):
+            recorded.append((event_type, entry))
+
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(cfg, mode="factory"),
+        vlm_reader=reader,
+        blackbox=Recorder(),
+    )
+    runtime.start_patrol(0)
+
+    def see(seq: int, at_ms: int, marker: int | None) -> None:
+        markers = () if marker is None else (Marker(marker, (320.0, 240.0)),)
+        vision.result = _zone_frame(seq, at_ms, detections=[_thing("chair")], markers=markers)
+        runtime.tick(at_ms)
+
+    return runtime, see, recorded
+
+
+def _logged(caplog, event: str) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if getattr(record, "event", "") == event]
+
+
+A, B = ZONE_MARKER, ZONE_MARKER + 1
+
+
 @pytest.mark.usefixtures("unlock_modes")
-def test_leaving_a_zone_drops_its_pending_reading(config: dict, clock: FakeClock, tmp_path: Path):
-    """⚠️ 남겨 두면 다음 구역에서 지난 구역의 답을 자기 것으로 읽는다."""
-    session = FakeVlmSession()
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path, vlm_reader=_loaded_reader(session))
-    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+def test_the_robot_waits_for_its_reading_before_leaving_a_zone(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """⚠️ 점검은 0.1~0.2초, 판독은 0.65초다. 기다리지 않으면 **경보를 울리며 그냥
+    지나간다** (2026-09-24 결정). 기준 등록·변화 없음 두 출구가 모두 기다린다."""
+    session = _GatedVlmSession()
+    runtime, see, _ = _two_zone_runtime(config, clock, tmp_path, _loaded_reader(session))
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        see(1, 100, A)
+        see(2, 200, A)  # 첫 방문 — 판독을 걸고 기준을 뜬다
+        see(3, 300, A)
+        assert runtime.behavior.state == "ZONE_INSPECT", "기준 등록 출구가 판독을 기다리지 않았다"
+        session.gate.set()
+        _settle(runtime)
+        see(4, 400, A)
+        assert runtime.behavior.state == "PATROL", "결과를 주웠으면 떠난다"
+
+        session.gate.clear()
+        see(5, 500, None)
+        for seq, at_ms in ((6, 600), (7, 700), (8, 800), (9, 900)):  # 두 번째 방문
+            see(seq, at_ms, A)
+        assert runtime.behavior.state == "ZONE_INSPECT", "변화 없음 출구가 판독을 기다리지 않았다"
+        session.gate.set()
+        _settle(runtime)
+        see(10, 1000, A)
+        assert runtime.behavior.state == "PATROL"
+    assert len(_logged(caplog, "zone_clear")) == 1, "기다리는 동안 다시 견주지 않는다"
+    assert [record.zone for record in _logged(caplog, "zone_reading")] == ["A", "A"]
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("picked_up_at", [None, B], ids=["on_patrol", "at_zone_b"])
+def test_a_reading_past_its_budget_lets_go_and_keeps_its_zone_and_frame(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog, picked_up_at
+):
+    """⚠️ **기다림에는 상한이 있다** — 판독 예산(`vision.vlm.budget_ms`). 넘기면 기능
+    저하로 남기고 떠난다. 늦게 온 결과는 **건 구역 이름과 건 프레임**으로 남는다 —
+    예전 코드는 다음 구역에서 주워 그 구역 이름과 그때의 사진으로 남겼다."""
+    budget = int(config["vision"]["vlm"]["budget_ms"])
+    session = _GatedVlmSession()
+    runtime, see, recorded = _two_zone_runtime(config, clock, tmp_path, _loaded_reader(session))
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        see(1, 100, A)
+        see(2, 200, A)  # 판독을 건다
+        see(3, 200 + budget - 100, A)
+        assert runtime.behavior.state == "ZONE_INSPECT"
+        see(4, 200 + budget, A)
+        assert runtime.behavior.state == "PATROL", "상한을 넘겼는데 떠나지 않았다"
+        assert runtime.vlm.busy, "판독이 아직 돌고 있어야 이 시험이 뜻이 있다"
+        see(5, 3300, None)
+        if picked_up_at is not None:
+            see(6, 3400, picked_up_at)  # B 도착
+        session.gate.set()
+        _settle(runtime)
+        see(7, 3500, picked_up_at)  # 순찰 중이거나 B 점검 중에 A 의 결과를 줍는다
+        _settle(runtime)
+        see(8, 3600, picked_up_at)
+    timeouts = _logged(caplog, "zone_reading_timeout")
+    assert [record.zone for record in timeouts] == ["A"], "상한 초과는 한 번 남긴다"
+    readings = [record.zone for record in _logged(caplog, "zone_reading")]
+    scenes = [entry for kind, entry in recorded if kind == "zone_reading"]
+    frames = [(entry["judgement"]["zone"], entry["now_ms"]) for entry in scenes]
+    if picked_up_at is None:
+        assert readings == ["A"]
+        assert frames == [("A", 200)], "기록 사진은 판독을 건 A 의 프레임이어야 한다"
+    else:
+        assert readings == ["A", "B"]
+        assert frames == [("A", 200), ("B", 3500)], "A 의 결과를 B 의 이름·사진으로 남겼다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_person_down_reading_raises_l3_and_holds_the_zone(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """쓰러진 사람을 봤다는 판독은 `PERSON_DOWN` 이다 — 규칙 판정과 같은 길(L3 · 공장
+    모드 게이트)을 탄다. ⚠️ **경보를 올린 채 떠나면 안 된다.** 사람이 경보를 확인할
+    때까지 구역에 머물고, 확인하면 순찰로 돌아간다."""
+    session = _GatedVlmSession(answer="yes")
+    runtime, see, recorded = _two_zone_runtime(config, clock, tmp_path, _loaded_reader(session))
+    see(1, 100, A)
+    see(2, 200, A)  # 판독을 건다
+    session.gate.set()
     _settle(runtime)
-    # 마커가 사라지면 구역을 떠난 것이다.
-    _see(runtime, vision, seq=3, at_ms=300, detections=[_thing("chair")], marker=False)
-    assert runtime.vlm.take() is None, "떠난 구역의 판독이 남아 있다"
+    see(3, 300, A)
+    assert runtime.escalation.level is Level.L3, "쓰러짐 판독이 L3 를 올리지 않았다"
+    assert runtime.escalation.reason == "PERSON_DOWN"
+    falls = [entry for kind, entry in recorded if kind == "person_fallen"]
+    assert len(falls) == 1 and falls[0]["now_ms"] == 200, "판독한 프레임으로 남긴다"
+    assert falls[0]["judgement"]["source"] == "vlm"
+    assert falls[0]["judgement"]["zone"] == "A"
+    assert falls[0]["judgement"]["raw"] == "yes", "모델 원문을 함께 남긴다"
+
+    for seq, at_ms in ((4, 400), (5, 5000), (6, 60_000)):
+        see(seq, at_ms, A)
+        assert runtime.behavior.state == "ZONE_INSPECT", "경보를 두고 구역을 떠났다"
+
+    runtime.ask_alarm_confirm()
+    see(7, 60_100, A)
+    assert runtime.escalation.level is Level.L0
+    assert runtime.behavior.state == "PATROL", "경보를 확인했는데 순찰로 돌아가지 않았다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_held_zone_still_yields_to_manual(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ 머무는 것은 `ZONE_CLEAR` 를 늦출 뿐이다 — 수동·비상정지 같은 ANY 전이는 막지 않는다."""
+    session = _GatedVlmSession(answer="yes")
+    runtime, see, _ = _two_zone_runtime(config, clock, tmp_path, _loaded_reader(session))
+    see(1, 100, A)
+    see(2, 200, A)
+    session.gate.set()
+    _settle(runtime)
+    see(3, 300, A)
+    assert runtime.behavior.state == "ZONE_INSPECT"
+    assert runtime.apply_external(Event.MANUAL_ON)
+    assert runtime.behavior.state == "MANUAL"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_person_down_reading_that_lands_after_leaving_still_raises_l3(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """구역을 떠난 뒤에 온 판독도 사건은 올린다. 다만 **이미 떠난 로봇을 되돌리지는 않는다.**"""
+    budget = int(config["vision"]["vlm"]["budget_ms"])
+    session = _GatedVlmSession(answer="yes")
+    runtime, see, recorded = _two_zone_runtime(config, clock, tmp_path, _loaded_reader(session))
+    see(1, 100, A)
+    see(2, 200, A)
+    see(3, 200 + budget, A)  # 상한 초과로 떠난다
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+    session.gate.set()
+    _settle(runtime)
+    see(4, 200 + budget + 100, None)
+    assert runtime.escalation.level is Level.L3
+    assert runtime.behavior.state == "PATROL"
+    falls = [entry for kind, entry in recorded if kind == "person_fallen"]
+    assert [(entry["judgement"]["zone"], entry["now_ms"]) for entry in falls] == [("A", 200)]
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_visit_without_a_loaded_reader_passes_and_says_why_once(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """판독기가 없으면 **기다리지 않고** 지금처럼 지나간다 (Tier 3 · ADR-35 결정 6).
+
+    ⚠️ 다만 흔적은 남긴다 — «실패·타임아웃은 기능 저하로 기록» (`4.8.0`). 걸지 못한
+    방문이 아무 기록도 없으면 판독기가 없는 것과 판독 경로가 끊긴 것을 가를 수 없다.
+    """
+    runtime, see, _ = _two_zone_runtime(config, clock, tmp_path, VlmReader(None, budget_ms=10_000))
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        see(1, 100, A)
+        see(2, 200, A)  # 첫 방문 — 기준을 뜨고 그 자리에서 떠난다
+        assert runtime.behavior.state == "PATROL", "판독기가 없는데 기다렸다"
+        see(3, 300, None)
+        for seq, at_ms in ((4, 400), (5, 500), (6, 600)):  # 두 번째 방문 — 두 사이클 점검
+            see(seq, at_ms, A)
+        assert runtime.behavior.state == "PATROL"
+    skipped = [(r.zone, r.detail["reason"]) for r in _logged(caplog, "zone_reading_skipped")]
+    assert skipped == [("A", "not_loaded"), ("A", "not_loaded")], "방문마다 한 번이다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_zone_reached_while_the_last_reading_runs_says_busy_and_passes(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """일감은 한 번에 하나다(`VlmWorker`). 거절당한 구역은 기다릴 판독이 없으니 지나가고,
+    거절당했다는 사실은 남긴다."""
+    budget = int(config["vision"]["vlm"]["budget_ms"])
+    session = _GatedVlmSession()
+    runtime, see, _ = _two_zone_runtime(config, clock, tmp_path, _loaded_reader(session))
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        see(1, 100, A)
+        see(2, 200, A)
+        see(3, 200 + budget, A)  # A 의 판독이 돌고 있는 채로 떠난다
+        see(4, 3300, None)
+        see(5, 3400, B)
+        see(6, 3500, B)
+        assert runtime.behavior.state == "PATROL", "걸지 못한 판독을 기다렸다"
+    session.gate.set()
+    _settle(runtime)
+    skipped = [(r.zone, r.detail["reason"]) for r in _logged(caplog, "zone_reading_skipped")]
+    assert skipped == [("B", "busy")]
 
 
 @pytest.mark.usefixtures("unlock_modes")
