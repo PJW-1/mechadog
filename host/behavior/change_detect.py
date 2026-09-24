@@ -34,6 +34,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -338,11 +339,26 @@ class BaselineStore:
     def grid(self) -> tuple[int, int]:
         return self._grid
 
-    def _paths(self, zone_id: str) -> tuple[Path, Path]:
+    def _meta_path(self, zone_id: str) -> Path:
         safe = zone_id.strip()
         if not safe or any(character in safe for character in '/\\:*?"<>|' + "\0"):
             raise ValueError(f"구역 ID 로 쓸 수 없는 값: {zone_id!r}")
-        return self._dir / f"{safe}.json", self._dir / f"{safe}.jpg"
+        return self._dir / f"{safe}.json"
+
+    def _snapshot_of(self, meta_path: Path) -> Path | None:
+        """지금 JSON 이 가리키는 그림. 없거나 읽지 못하면 `None`.
+
+        옛 형식(`A.jpg`)도 JSON 이 가리키는 대로 따라가므로 따로 다루지 않는다.
+        ⚠️ **이름만 받는다** — JSON 이 `../` 를 품고 있어도 폴더 밖을 지우지 않는다.
+        """
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        name = data.get("snapshot") if isinstance(data, dict) else None
+        if not isinstance(name, str) or Path(name).name != name or not name.endswith(".jpg"):
+            return None
+        return self._dir / name
 
     def register(
         self,
@@ -353,20 +369,24 @@ class BaselineStore:
         now_ms: int,
         jpeg: bytes | None = None,
     ) -> ZoneBaseline:
-        """구역 도착 시 기준을 남긴다. **JPEG 는 재인코딩하지 않는다.**"""
+        """구역 도착 시 기준을 남긴다. **JPEG 는 재인코딩하지 않는다.**
+
+        ⚠️ **새 그림 → JSON 교체 → 옛 그림 삭제 순서다.** 그림을 제자리에 쓰고 JSON 을
+        바꾸면, 그 사이에 전원이 끊겼을 때 옛 목록과 새 그림이 한 벌로 남는다(쓰는
+        도중이면 잘린 그림이). 그래서 그림 이름에 등록 시각을 붙여 옛 JSON 이 가리키는
+        그림을 건드리지 않는다. 끊기면 새 그림은 가리키는 JSON 이 없는 고아로 남을 뿐이다.
+        """
         if not isinstance(now_ms, int) or isinstance(now_ms, bool) or now_ms < 0:
             raise ValueError("now_ms 는 0 이상의 정수여야 함")
-        meta_path, image_path = self._paths(zone_id)
+        meta_path = self._meta_path(zone_id)
         objects = summarize_detections(detections, frame_size=frame_size, grid=self._grid)
+        previous = self._snapshot_of(meta_path)
 
         snapshot = None
         if jpeg:
+            image_path = meta_path.with_name(f"{meta_path.stem}_{now_ms}.jpg")
             image_path.write_bytes(jpeg)
             snapshot = image_path.name
-        elif image_path.exists():
-            # 새 기준에 그림이 없는데 옛 그림을 남겨두면 서로 다른 시점이 한 벌로
-            # 보인다. 사람이 그것을 근거로 판단하게 두지 않는다.
-            image_path.unlink()
 
         baseline = ZoneBaseline(
             zone_id=zone_id,
@@ -381,13 +401,34 @@ class BaselineStore:
         partial = meta_path.with_name(meta_path.name + ".tmp")
         partial.write_text(payload + "\n", encoding="utf-8")
         partial.replace(meta_path)
+        # 새 기준에 그림이 없어도 옛 그림은 지운다 — 다른 시점의 그림과 목록이 한 벌로
+        # 보이면 사람이 그것을 근거로 판단한다. 기준은 이미 바뀌었으므로 못 지우면
+        # 고아로 둔다(실패로 알리면 남은 기준을 남지 않았다고 적게 된다).
+        if previous is not None and previous.name != snapshot:
+            with contextlib.suppress(OSError):
+                previous.unlink(missing_ok=True)
         return baseline
+
+    def clear(self, zone_id: str) -> bool:
+        """구역의 기준을 지운다 — 다음 방문에서 새로 뜬다 (WBS 3.6.5 · 관리자 재등록).
+
+        기준이 있었으면 `True`. **JSON 을 먼저 지운다** — 그 사이에 끊기면 그림만 고아로
+        남고 기준은 «없음» 이다. 반대 순서면 없는 그림을 가리키는 기준이 남는다.
+        """
+        meta_path = self._meta_path(zone_id)
+        snapshot = self._snapshot_of(meta_path)
+        existed = meta_path.exists()
+        meta_path.unlink(missing_ok=True)
+        if snapshot is not None:
+            with contextlib.suppress(OSError):
+                snapshot.unlink(missing_ok=True)
+        return existed
 
     def load(self, zone_id: str) -> ZoneBaseline | None:
         """기준이 없으면 `None`. **없는 것과 비어 있는 것은 다르다** — 물건이
         하나도 없는 구역의 기준은 `objects` 가 빈 튜플이지 `None` 이 아니다.
         """
-        meta_path, _ = self._paths(zone_id)
+        meta_path = self._meta_path(zone_id)
         if not meta_path.exists():
             return None
         data = json.loads(meta_path.read_text(encoding="utf-8"))

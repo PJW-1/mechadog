@@ -13,6 +13,7 @@ FR-8.2 의 필수 제약(픽셀 차분 금지)은 저장 형식에서 이미 갈
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -164,8 +165,11 @@ def test_re_registering_replaces_the_previous_baseline(tmp_path):
 
 @pytest.mark.parametrize("zone_id", ["", "   ", "../escape", "a/b", "a\\b", "a:b"])
 def test_unusable_zone_ids_are_rejected(tmp_path, zone_id):
+    store = _store(tmp_path)
     with pytest.raises(ValueError):
-        _store(tmp_path).register(zone_id, [], frame_size=FRAME, now_ms=NOW)
+        store.register(zone_id, [], frame_size=FRAME, now_ms=NOW)
+    with pytest.raises(ValueError):
+        store.clear(zone_id)
 
 
 def test_negative_timestamp_is_rejected(tmp_path):
@@ -193,8 +197,8 @@ def test_baseline_without_a_snapshot_is_valid(tmp_path):
 def test_stale_snapshot_is_removed_when_the_new_baseline_has_none(tmp_path):
     """다른 시점의 그림과 목록이 한 벌로 보이면 사람이 잘못 판단한다."""
     store = _store(tmp_path)
-    store.register("A", [], frame_size=FRAME, now_ms=NOW, jpeg=b"old")
-    image = tmp_path / "snapshots" / "A.jpg"
+    old = store.register("A", [], frame_size=FRAME, now_ms=NOW, jpeg=b"old")
+    image = tmp_path / "snapshots" / old.snapshot
     assert image.exists()
     store.register("A", [], frame_size=FRAME, now_ms=NOW + 1)
     assert not image.exists()
@@ -207,8 +211,107 @@ def test_stored_form_is_an_object_list_not_an_image(tmp_path):
     store.register("A", [_det("chair", 320, 240)], frame_size=FRAME, now_ms=NOW, jpeg=b"x")
     data = json.loads((tmp_path / "snapshots" / "A.json").read_text(encoding="utf-8"))
     assert data["objects"] == [{"label": "chair", "count": 1, "cell": [1, 1]}]
-    # 그림은 파일 이름으로만 참조된다 — 목록 안에 픽셀이 들어가지 않는다.
-    assert data["snapshot"] == "A.jpg"
+    # 그림은 파일 이름으로만 참조된다 — 목록 안에 픽셀이 들어가지 않는다. 이름에
+    # 등록 시각이 붙는 이유는 아래 «쓰기 순서» 절이다.
+    assert data["snapshot"] == f"A_{NOW}.jpg"
+
+
+# ── 쓰기 순서 — 옛 JSON 이 새 그림을 가리키는 일이 없다 ──────────
+#
+# 그림을 제자리(`A.jpg`)에 쓰고 JSON 을 바꾸면, 그 사이에 전원이 끊겼을 때 **옛 목록과
+# 새 그림이 한 벌로 남는다.** 그림 쓰기 도중이면 잘린 그림이 옛 기준의 근거가 된다.
+# 그래서 새 그림은 새 이름으로 쓰고 → JSON 을 바꾸고 → 옛 그림을 지운다.
+
+
+def _power_loss(*_args, **_kwargs):
+    raise OSError("전원 끊김")
+
+
+def test_power_loss_before_the_json_swap_keeps_the_old_pair(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    old = store.register("A", [_det("chair", 100, 100)], frame_size=FRAME, now_ms=NOW, jpeg=b"old")
+    monkeypatch.setattr(Path, "replace", _power_loss)
+    with pytest.raises(OSError):
+        store.register("A", [], frame_size=FRAME, now_ms=NOW + 1000, jpeg=b"new")
+    monkeypatch.undo()
+
+    loaded = store.load("A")
+    assert loaded == old
+    assert (tmp_path / "snapshots" / loaded.snapshot).read_bytes() == b"old"
+
+
+def test_power_loss_while_writing_the_picture_keeps_the_old_pair(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    old = store.register("A", [], frame_size=FRAME, now_ms=NOW, jpeg=b"old-picture")
+    write = Path.write_bytes
+
+    def torn(self, data):
+        write(self, data[:3])
+        _power_loss()
+
+    monkeypatch.setattr(Path, "write_bytes", torn)
+    with pytest.raises(OSError):
+        store.register("A", [], frame_size=FRAME, now_ms=NOW + 1000, jpeg=b"new-picture")
+    monkeypatch.undo()
+
+    loaded = store.load("A")
+    assert loaded == old
+    assert (tmp_path / "snapshots" / loaded.snapshot).read_bytes() == b"old-picture"
+
+
+def test_re_registering_removes_the_old_picture(tmp_path):
+    store = _store(tmp_path)
+    old = store.register("A", [], frame_size=FRAME, now_ms=NOW, jpeg=b"old")
+    new = store.register("A", [], frame_size=FRAME, now_ms=NOW + 1000, jpeg=b"new")
+    folder = tmp_path / "snapshots"
+    assert not (folder / old.snapshot).exists()
+    assert (folder / new.snapshot).read_bytes() == b"new"
+
+
+def test_leftovers_of_an_interrupted_write_are_not_baselines(tmp_path):
+    """끊긴 쓰기가 남긴 `.tmp` 와 고아 그림은 기준이 아니다."""
+    store = _store(tmp_path)
+    saved = store.register("A", [_det("chair", 100, 100)], frame_size=FRAME, now_ms=NOW, jpeg=b"a")
+    folder = tmp_path / "snapshots"
+    (folder / "A.json.tmp").write_text('{"schema": ', encoding="utf-8")
+    (folder / f"A_{NOW + 1000}.jpg").write_bytes(b"torn")
+    (folder / "B.json.tmp").write_text("{}", encoding="utf-8")
+    (folder / f"C_{NOW}.jpg").write_bytes(b"orphan")
+    assert store.zone_ids() == ("A",)
+    assert store.load("A") == saved
+    assert store.load("B") is None
+    assert store.load("C") is None
+
+
+# ── 기준 지우기 — 관리자가 «이 상태가 정상» 이라고 인정했다 (3.6.5) ──
+
+
+def test_clear_removes_the_baseline_and_its_picture(tmp_path):
+    store = _store(tmp_path)
+    saved = store.register("A", [_det("chair", 100, 100)], frame_size=FRAME, now_ms=NOW, jpeg=b"a")
+    store.register("B", [], frame_size=FRAME, now_ms=NOW)
+    assert store.clear("A") is True
+    assert store.load("A") is None
+    assert not (tmp_path / "snapshots" / saved.snapshot).exists()
+    assert store.zone_ids() == ("B",), "다른 구역은 건드리지 않는다"
+
+
+def test_clearing_a_zone_without_a_baseline_is_harmless(tmp_path):
+    assert _store(tmp_path).clear("A") is False
+
+
+def test_clear_never_deletes_outside_the_snapshot_folder(tmp_path):
+    """JSON 이 폴더 밖 이름을 품고 있어도 그 파일을 지우지 않는다."""
+    store = _store(tmp_path)
+    store.register("A", [], frame_size=FRAME, now_ms=NOW)
+    meta = tmp_path / "snapshots" / "A.json"
+    data = json.loads(meta.read_text(encoding="utf-8"))
+    data["snapshot"] = "../victim.jpg"
+    meta.write_text(json.dumps(data), encoding="utf-8")
+    victim = tmp_path / "victim.jpg"
+    victim.write_bytes(b"keep")
+    assert store.clear("A") is True
+    assert victim.read_bytes() == b"keep"
 
 
 # ── 설정 ─────────────────────────────────────────────────────────

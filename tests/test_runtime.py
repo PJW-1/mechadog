@@ -2073,7 +2073,7 @@ def test_a_confirmed_change_is_recorded_for_the_dashboard(
         "grid": [3, 3],
         "changes": [{"kind": "added", "label": "bottle", "count": 1, "cell": [1, 0]}],
         "baseline_ms": 200,
-        "baseline_snapshot": "A.jpg",
+        "baseline_snapshot": "A_200.jpg",
     }
     assert entries[0].state == "ZONE_INSPECT", (
         "경보 전이보다 먼저 남긴다 (`_observe_fallen` 과 같다)"
