@@ -1651,7 +1651,9 @@ def _thing(label: str, x: float = 100.0) -> Detection:
     return Detection(label, 0.9, (x, 100.0, x + 40.0, 200.0))
 
 
-def _zone_runtime(config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None):
+def _zone_runtime(
+    config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None, blackbox=None
+):
     """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33 개정). 변화 감지는 경비 모드에서
     아예 돌지 않으므로 기본 모드로 세우면 구역 사건이 하나도 나오지 않는다 —
     호출부는 `unlock_modes` 로 선행 기능 검사를 먼저 열어야 한다."""
@@ -1664,6 +1666,7 @@ def _zone_runtime(config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=
         vision=vision,
         mission=Mission(cfg, mode="factory"),
         vlm_reader=vlm_reader,
+        blackbox=blackbox,
     )
     runtime.start_patrol(0)
     return runtime, vision, cfg
@@ -1807,6 +1810,194 @@ def test_inspection_holds_still(config: dict, clock: FakeClock, tmp_path: Path):
     move = _move(lines)
     assert move is not None, "보내지 않으면 로봇이 직전 순찰 명령을 유지한다"
     assert (move["step"], move["angle"]) == (0.0, 0.0)
+
+
+def _see_person(runtime, vision, *, seq, at_ms, detections, present) -> None:
+    """구역 마커 앞에 사람이 물건과 함께 보인다. `present` 는 사람 게이트 확정이다."""
+    from dataclasses import replace
+
+    frame = vision_result(
+        seq,
+        at_ms,
+        present=present,
+        hits=3 if present else 1,
+        last_seen_ms=at_ms,
+        markers=(Marker(marker_id=ZONE_MARKER, center=(320.0, 240.0)),),
+    )
+    vision.result = replace(frame, detections=frame.detections + tuple(detections))
+    runtime.tick(at_ms)
+
+
+def _inspect_again(runtime, vision, detections) -> None:
+    """기준을 뜨고 구역을 떠났다가 다시 들어와 `ZONE_INSPECT` 에 선다 (seq 1~4)."""
+    _see(runtime, vision, seq=1, at_ms=100, detections=detections)
+    _see(runtime, vision, seq=2, at_ms=200, detections=detections)  # 기준 등록
+    _see(runtime, vision, seq=3, at_ms=1000, detections=detections, marker=False)
+    _see(runtime, vision, seq=4, at_ms=1100, detections=detections)
+    assert runtime.behavior.state == "ZONE_INSPECT"
+
+
+def _zone_events(caplog) -> list[str]:
+    return [getattr(r, "event", "") for r in caplog.records]
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_person_during_inspection_goes_through_the_person_gate(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """⚠️ **사람은 물체 변화가 아니다** (FR-8.3 → FR-3 · FR-11.1).
+
+    처음에는 사람 한 프레임이 `person_immediate` 로 곧장 `ZONE_CHANGED` 가 되어 게이트
+    (300ms 3회)를 건너뛰고 **L3 «물체 변화»** 를 만들었다. 공장 모드의 사람은 작업자라
+    L1 이다. 반대로 게이트가 내는 `PERSON_FOUND` 는 `ZONE_INSPECT` 에서 버려졌다.
+    """
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    _inspect_again(runtime, vision, [_thing("chair")])
+    with caplog.at_level(logging.INFO):
+        _see_person(runtime, vision, seq=5, at_ms=1200, detections=[_thing("chair")], present=False)
+        assert runtime.behavior.state == "ZONE_INSPECT", "게이트 확정 전의 사람은 경보가 아니다"
+        assert runtime.escalation.level is Level.L0
+        _see_person(runtime, vision, seq=6, at_ms=1300, detections=[_thing("chair")], present=True)
+    assert runtime.behavior.state == "ALERT", "사람 대응은 게이트 경로 하나로 들어간다"
+    assert runtime.escalation.level is Level.L1, "공장 모드의 사람은 작업자다 — L3 가 아니다"
+    assert "zone_changed" not in _zone_events(caplog)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("immediate", [True, False])
+def test_a_person_hiding_an_object_is_not_a_removal(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog, immediate: bool
+):
+    """⚠️ 사람이 물건을 가리면 그 물건이 안 보인다 — 견주면 **거짓 반출**이 된다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["change_detect"]["person_immediate"] = immediate
+    runtime, vision, _ = _zone_runtime(cfg, clock, tmp_path)
+    _inspect_again(runtime, vision, [_thing("chair"), _thing("bottle", 400.0)])
+    with caplog.at_level(logging.INFO):
+        for seq in range(5, 9):
+            _see_person(
+                runtime,
+                vision,
+                seq=seq,
+                at_ms=seq * 100 + 700,
+                detections=[_thing("chair")],
+                present=False,
+            )
+    assert "zone_changed" not in _zone_events(caplog), "가려진 물건을 반출로 확정했다"
+    assert runtime.escalation.level is Level.L0
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_person_in_front_of_the_zone_does_not_hold_the_robot(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """⚠️ 견주지 못해도 한도는 그대로다 — 사람이 비킬 때까지 구역 앞에 서 있지 않는다.
+
+    다만 **`zone_clear` 로 적지 않는다.** 보지 못한 구역을 «변화 없음» 으로 남기면
+    나중에 로그만 보고 그 구역이 확인된 줄 안다.
+    """
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    _inspect_again(runtime, vision, [_thing("chair")])
+    with caplog.at_level(logging.INFO):
+        _see_person(runtime, vision, seq=5, at_ms=1200, detections=[_thing("chair")], present=False)
+        _see_person(runtime, vision, seq=6, at_ms=1300, detections=[_thing("chair")], present=False)
+    assert runtime.behavior.state == "PATROL"
+    events = _zone_events(caplog)
+    assert "zone_unverified" in events and "zone_clear" not in events
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_an_inspected_worker_in_front_of_the_zone_does_not_hold_the_robot(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """보호구 판정을 마친 작업자는 `PERSON_FOUND` 가 억제된다(`inspected`) — 게이트로도
+    나가지 못하니 **구역의 한도가 유일한 출구**다."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])  # 기준 등록
+    # 마커 밖에서 작업자를 만나 보호구 판정을 마친다.
+    from dataclasses import replace
+
+    first = vision_result(3, 1000, present=True, hits=3, last_seen_ms=1000)
+    vision.result = replace(first, ppe=PpeVerdict(1, OK))
+    runtime.tick(1000)
+    assert runtime.behavior.state == "PATROL" and runtime.escalation.level is Level.L0
+    with caplog.at_level(logging.INFO):
+        for seq in range(4, 8):
+            _see_person(
+                runtime,
+                vision,
+                seq=seq,
+                at_ms=seq * 100 + 700,
+                detections=[_thing("chair")],
+                present=True,
+            )
+    assert runtime.behavior.state == "PATROL", "판정을 마친 작업자 앞에서 구역에 멈춰 있다"
+    assert runtime.escalation.level is Level.L0
+    events = _zone_events(caplog)
+    assert "zone_arrived" in events and "zone_unverified" in events
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_person_in_front_of_the_zone_is_never_part_of_its_baseline(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """⚠️ 사람이 가린 물건은 **빠진 채로 기준이 된다.** 기준은 없을 때만 뜨므로 그 뒤
+    순찰마다 그 물건이 «반입» 으로 잡히고, 누가 파일을 지우기 전까지 풀리지 않는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
+    with caplog.at_level(logging.INFO):
+        for seq in (1, 2, 3):  # 도착 + 두 사이클
+            _see_person(
+                runtime,
+                vision,
+                seq=seq,
+                at_ms=seq * 100,
+                detections=[_thing("chair")],
+                present=False,
+            )
+    assert not saved.exists(), "사람이 서 있는 프레임으로 기준을 떴다"
+    assert runtime.behavior.state == "PATROL", "기준을 못 떠도 구역 앞에 서 있지 않는다"
+    assert "zone_unverified" in _zone_events(caplog)
+
+    _see(runtime, vision, seq=4, at_ms=1000, detections=[_thing("chair")], marker=False)
+    _see(runtime, vision, seq=5, at_ms=1100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=6, at_ms=1200, detections=[_thing("chair")])
+    assert saved.exists(), "사람이 비킨 다음 순회에서는 기준을 뜬다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_confirmed_change_is_recorded_for_the_dashboard(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """FR-8.3 — **무엇이 어디서** 바뀌었는지가 사건 피드에 남아야 한다. 로그만 남기면
+    화면에는 단계 변경만 보인다. 형식은 대시보드와 합의한 계약이다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    runtime, vision, _ = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox)
+    _inspect_again(runtime, vision, [_thing("chair")])
+    changed = [_thing("chair"), _thing("bottle", 400.0)]
+    _see(runtime, vision, seq=5, at_ms=1200, detections=changed)
+    _see(runtime, vision, seq=6, at_ms=1300, detections=changed)
+    assert runtime.behavior.state == "ALERT"
+
+    entries = [e for e in blackbox.feed() if e.event_type == "zone_changed"]
+    assert len(entries) == 1
+    assert entries[0].judgement == {
+        "zone": "A",
+        "grid": [3, 3],
+        "changes": [{"kind": "added", "label": "bottle", "count": 1, "cell": [1, 0]}],
+        "baseline_ms": 200,
+        "baseline_snapshot": "A.jpg",
+    }
+    assert entries[0].state == "ZONE_INSPECT", (
+        "경보 전이보다 먼저 남긴다 (`_observe_fallen` 과 같다)"
+    )
 
 
 # ── 구역에서 장면을 읽는가 (WBS 4.8.0 · ADR-35) ──────────────────
