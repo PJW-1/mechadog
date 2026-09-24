@@ -1870,7 +1870,7 @@ class Runtime:
 
         **다른 스레드에서 부른다.** 지우는 것은 다음 틱이다(`_drain_confirmations`) —
         틱이 그 구역의 기준을 읽고 견주는 도중에 지우면 옛 기준으로 센 횟수가 새
-        기준에 섞인다. 기준이 없으면 다음 방문에서 새로 뜬다(`_inspect_zone`).
+        기준에 섞인다. 기준이 없으면 그 구역을 다음에 볼 때 새로 뜬다(`_inspect_zone`) — 지금 점검 중이면 이번 장면이다.
 
         ⚠️ **경보(L3)를 풀지 않는다** — 그것은 `ask_alarm_confirm` 의 몫이다. 묶으면
         «기준을 다시 뜨는 것» 이 확인 없는 경보 해제 요령이 된다 (ADR-26 과 같은 이유).
@@ -1880,7 +1880,10 @@ class Runtime:
         if zone not in self._zone_markers.values():
             return False, f"설정에 없는 구역이다: {zone!r}"
         self._zone_baseline_resets.add(zone)
-        return True, f"구역 {zone} 의 기준을 다음 틱에 지운다 — 다음 방문에서 새로 뜬다"
+        return (
+            True,
+            f"구역 {zone} 의 기준을 다음 틱에 지운다 — 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다",
+        )
 
     def apply_external(self, event: Event) -> bool:
         """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**

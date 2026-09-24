@@ -148,7 +148,7 @@ export class OperationalPanels {
   }
   if(event.source==='LIVE_FEED'){
    // 구역 기준 재등록 (WBS 3.6.5) — 물건을 영구히 옮겼으면 순찰마다 «반출» 이 난다. 명령 API 가 열린 실시간 사건에만 보인다.
-   if(this.store.canResetZoneBaseline(event))this.eventDetail.append(this.section('구역 기준',this.note('지금 모습이 정상이면 기준을 다시 뜹니다. 기준은 다음 방문에서 새로 찍힙니다.'),this.button('이 상태를 새 기준으로 등록',()=>this.confirmDevice({icon:'lock',title:'구역 '+event.zoneId+' 의 기준을 다시 등록하겠습니까?',body:'이 구역의 기준 사진과 물품 목록을 지우고, 로봇이 다음에 들렀을 때의 모습을 새 기준으로 씁니다. 지금 보이는 변화가 정상인지 현장에서 확인한 뒤에만 누르세요. 경보(L3)는 이 버튼으로 풀리지 않습니다.',confirm:'예, 새 기준으로 등록합니다',action:async()=>{const result=await this.store.requestZoneBaseline(event.id);this.onToast(result?.detail||'기준 재등록을 요청했어요.')}}))));
+   if(this.store.canResetZoneBaseline(event))this.eventDetail.append(this.section('구역 기준',this.note('지금 모습이 정상이면 기준을 다시 뜹니다. 기준은 로봇이 그 구역을 다음에 볼 때 새로 찍힙니다. 지금 그 구역을 점검하고 있다면 이번 장면이 기준이 됩니다.'),this.button('이 상태를 새 기준으로 등록',()=>this.confirmDevice({icon:'lock',title:'구역 '+event.zoneId+' 의 기준을 다시 등록하겠습니까?',body:'이 구역의 기준 사진과 물품 목록을 지우고, 로봇이 그 구역을 다음에 볼 때의 모습을 새 기준으로 씁니다(지금 점검 중이면 이번 장면). 지금 보이는 변화가 정상인지 현장에서 확인한 뒤에만 누르세요. 경보(L3)는 이 버튼으로 풀리지 않습니다.',confirm:'예, 새 기준으로 등록합니다',action:async()=>{const result=await this.store.requestZoneBaseline(event.id);this.onToast(result?.detail||'기준 재등록을 요청했어요.')}}))));
    this.eventDetail.append(this.section('검토 기록',this.note('실시간 사건 검토는 서버에 저장되지 않습니다. 이 화면에서는 조회만 가능합니다.','warning')));
    return;
   }

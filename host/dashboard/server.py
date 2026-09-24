@@ -522,7 +522,7 @@ def create_app(
 
         @app.post("/api/command/zone-baseline")
         async def zone_baseline(request: Request):
-            """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 다음 방문에서 새로 뜨게 한다.
+            """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
 
             물건을 영구히 옮긴 경우의 문이다 (WBS 3.6.5). 런타임이 **다음 틱에** 지운다 —
             `/api/command/alarm` 과 같은 예약이다. `zones.marker_map` 에 없는 구역은

@@ -120,7 +120,7 @@ export class RobotLink {
     return this.post('/api/command/patrol', { action });
   }
 
-  /** 구역 기준 재등록 (WBS 3.6.5) — 서버가 기준을 지우고 다음 방문에서 새로 뜬다. 경보는 풀지 않는다. */
+  /** 구역 기준 재등록 (WBS 3.6.5) — 서버가 기준을 지우고 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다. 경보는 풀지 않는다. */
   zoneBaseline(zone) {
     return this.post('/api/command/zone-baseline', { zone });
   }
