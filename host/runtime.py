@@ -246,6 +246,8 @@ class Runtime:
         self._vision = vision
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
+        if self._vision is not None and hasattr(self._vision, "set_zone_markers"):
+            self._vision.set_zone_markers(self._mission.enables("change_detect"))
         # 추종(`3.5.4`)은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
         # 오고 명령은 10Hz 로 나가므로, 명령 쪽에서 계산하면 프레임을 버리게 된다.
         # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
@@ -437,6 +439,8 @@ class Runtime:
         if reason is None:
             if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
                 self._vision.set_ppe_enabled(self._mission.enables("ppe"))
+            if self._vision is not None and hasattr(self._vision, "set_zone_markers"):
+                self._vision.set_zone_markers(self._mission.enables("change_detect"))
             self._ppe_done.clear()
             self._ppe_target = None
             self._ppe_unknown_since = None

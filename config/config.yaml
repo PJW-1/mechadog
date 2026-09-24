@@ -554,7 +554,12 @@ zones:
   # FR-7.1 — 시연 규모에 맞춘다. 방 하나에서 하는 온라인 시연에는 2~3개가 적정하고
   # 5개는 화면상 구분이 어렵다. 구역이 늘면 마커도 그만큼 출력해야 한다.
   ids: [A, B, C]
-  marker_map: {}               # FR-8 — ArUco ID -> 구역 라벨
+  # FR-8 — ArUco ID -> 구역 라벨. 사원증과 같은 사전(`auth.badge_dictionary`)을 쓴다.
+  # ⚠️ 사원증 ID(0·1)와 겹치면 사원증을 구역으로 읽으므로 10번대에 둔다.
+  marker_map:
+    10: A
+    11: B
+    12: C
   arrival_radius_mm: 300       # FR-7.4 (Phase 2)
   random_after_first_cycle: true  # FR-7.3
 

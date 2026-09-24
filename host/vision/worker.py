@@ -142,6 +142,7 @@ class VisionWorker:
         self._ppe = ppe
         self._ppe_enabled = False
         self._ppe_opened = False
+        self._zone_markers = False
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
@@ -272,6 +273,10 @@ class VisionWorker:
             self._ppe_opened = True
         self._ppe_enabled = enabled
 
+    def set_zone_markers(self, enabled: bool) -> None:
+        """켜면 사람이 없어도 마커를 읽는다 — 구역 점검(공장 모드)이 쓴다."""
+        self._zone_markers = enabled
+
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:
         frames = None
@@ -335,7 +340,10 @@ class VisionWorker:
                 observed, sighting.box, track_id=tracks[0].track_id if tracks else None
             )
             # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
-            markers = self._badges.read(image) if tracks else ()
+            # ⚠️ **구역 마커는 사람 없이도 읽는다** (WBS 4.8.0). 사람 없는 구역의 무너짐을
+            # 보는 것이 구역 점검인데, 사람이 있어야 읽으면 `ZONE_ARRIVED` 가 나지 않는다.
+            # 경비 모드(스위치 꺼짐)의 사원증 판독은 그대로 사람이 있을 때만 돈다.
+            markers = self._badges.read(image) if tracks or self._zone_markers else ()
             ppe = (
                 self._ppe.observe(image, tracks, observed)
                 if self._ppe_enabled and self._ppe
