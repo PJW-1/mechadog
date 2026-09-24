@@ -26,7 +26,7 @@ from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
 from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION, PpeVerdict
 from host.vision.tracker import Track
-from host.vision.vlm_reader import VlmReader
+from host.vision.vlm_reader import Answer, Reading, VlmReader
 from host.vision.worker import VisionResult
 
 DEVICE = "mechdog-01"
@@ -1656,12 +1656,13 @@ def _thing(label: str, x: float = 100.0) -> Detection:
 
 
 def _zone_runtime(
-    config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None, blackbox=None
+    config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None, blackbox=None, hazards=False
 ):
     """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33 개정). 변화 감지는 경비 모드에서
     아예 돌지 않으므로 기본 모드로 세우면 구역 사건이 하나도 나오지 않는다 —
     호출부는 `unlock_modes` 로 선행 기능 검사를 먼저 열어야 한다."""
     cfg = _zone_config(config, tmp_path)
+    cfg["change_detect"]["vlm_hazards"] = hazards  # VLM 경보 스위치 (WBS 3.6.4 벤치 관문)
     vision = FakeVision()
     runtime = Runtime(
         cfg,
@@ -1718,6 +1719,36 @@ def _see(runtime, vision, *, seq, at_ms, detections, marker=True) -> None:
     runtime.tick(at_ms)
 
 
+def _same(cfg: dict, detections) -> list:
+    """한 방문의 프레임 — 모두 같은 장면이다. 장수는 `visit_frames` 를 따른다."""
+    return [list(detections)] * cfg["change_detect"]["visit_frames"]
+
+
+def _visit(runtime, vision, *, at_ms: int, frames) -> int:
+    """구역을 떠났다가 다시 와서 **한 방문**을 본다. 다음 방문을 시작할 시각을 돌려준다.
+
+    방문 1회가 사이클 1회다 (FR-8.4). ⚠️ **도착 프레임은 전이만 한다** — 관찰은 그다음
+    프레임부터라 `frames[0]` 을 도착 프레임으로 한 번 더 보낸다. `seq` 는 시각으로 만든다.
+    """
+    _see(runtime, vision, seq=at_ms, at_ms=at_ms, detections=frames[0], marker=False)
+    for detections in (frames[0], *frames):
+        at_ms += 100
+        _see(runtime, vision, seq=at_ms, at_ms=at_ms, detections=detections)
+    return at_ms + 1000
+
+
+def _linger(runtime, vision, cfg: dict, *, at_ms: int, detections, present=False) -> int:
+    """구역 앞에 사람이 선 채로 방문 한도(`visit_max_ms`)를 넘긴다. 첫 장이 도착 프레임이다.
+
+    ⚠️ **떠나는 프레임을 보내지 않는다** — 호출부가 이미 구역 밖에 있어야 도착한다.
+    """
+    limit = at_ms + cfg["change_detect"]["visit_max_ms"]
+    while at_ms <= limit:
+        _see_person(runtime, vision, seq=at_ms, at_ms=at_ms, detections=detections, present=present)
+        at_ms += 500
+    return at_ms + 1000
+
+
 @pytest.mark.usefixtures("unlock_modes")
 def test_zone_marker_moves_patrol_into_inspect(config: dict, clock: FakeClock, tmp_path: Path):
     """⚠️ **이 사건을 내는 곳이 없었다.** `ZONE_ARRIVED`·`ZONE_CLEAR`·`ZONE_CHANGED`
@@ -1767,11 +1798,26 @@ def test_first_visit_registers_a_baseline_and_returns_to_patrol(
 ):
     """FR-8.1 — 기준 없이 견주면 처음 보는 물건이 전부 반입으로 잡힌다."""
     runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     assert runtime.behavior.state == "PATROL", "기준을 뜬 뒤에는 순찰로 돌아간다"
     saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
     assert saved.exists(), "기준이 디스크에 남아야 다음 순회에서 견줄 수 있다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_the_baseline_is_the_frame_that_saw_the_most(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """⚠️ 깜빡인 프레임이 기준이 되면 그 뒤 순찰마다 빠진 물건이 «반입» 으로 잡힌다.
+    기준은 없을 때만 뜨므로 누가 파일을 지우기 전까지 풀리지 않는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    both = [_thing("chair"), _thing("bottle", 400.0)]
+    frames = _same(cfg, both)
+    frames[0] = [_thing("chair")]  # 첫 프레임에서 병을 놓쳤다
+    _visit(runtime, vision, at_ms=100, frames=frames)
+    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
+    labels = sorted(entry["label"] for entry in json.loads(saved.read_text("utf-8"))["objects"])
+    assert labels == ["bottle", "chair"]
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -1790,8 +1836,7 @@ def test_a_broken_baseline_file_does_not_stop_the_runtime(
     saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
     saved.write_text(broken, encoding="utf-8")
     with caplog.at_level(logging.INFO):
-        _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-        _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+        _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     assert runtime.behavior.state == "PATROL", "읽지 못한 구역 앞에 서 있지 않는다"
     assert "zone_baseline_unreadable" in _zone_events(caplog)
     assert saved.read_text(encoding="utf-8") == broken, (
@@ -1803,15 +1848,14 @@ def test_a_broken_baseline_file_does_not_stop_the_runtime(
 def test_a_baseline_that_cannot_be_written_does_not_stop_the_runtime(
     config: dict, clock: FakeClock, tmp_path: Path, caplog, monkeypatch
 ):
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
 
     def full_disk(*_args, **_kwargs):
         raise OSError(28, "No space left on device")
 
     monkeypatch.setattr(runtime._baselines, "register", full_disk)
     with caplog.at_level(logging.INFO):
-        _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-        _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+        _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     assert runtime.behavior.state == "PATROL"
     events = _zone_events(caplog)
     assert "zone_baseline_unwritable" in events
@@ -1819,37 +1863,94 @@ def test_a_baseline_that_cannot_be_written_does_not_stop_the_runtime(
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_a_new_object_is_confirmed_and_raises_an_alarm(
-    config: dict, clock: FakeClock, tmp_path: Path
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ([_thing("chair"), _thing("bottle", 400.0)], [_thing("chair")]),
+        ([_thing("chair")], [_thing("chair"), _thing("bottle", 400.0)]),
+    ],
+    ids=["removed", "added"],
+)
+def test_a_change_is_confirmed_on_the_second_visit_not_the_first(
+    config: dict, clock: FakeClock, tmp_path: Path, before, after
 ):
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
-    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])  # 기준 등록
-    assert runtime.behavior.state == "PATROL"
-
-    _see(runtime, vision, seq=3, at_ms=1000, detections=[_thing("chair")], marker=False)
-    changed = [_thing("chair"), _thing("bottle", 400.0)]
-    # 도착 프레임은 전이만 한다 — 비교는 다음 프레임부터다.
-    _see(runtime, vision, seq=4, at_ms=1100, detections=changed)
-    assert runtime.behavior.state == "ZONE_INSPECT"
-    _see(runtime, vision, seq=5, at_ms=1200, detections=changed)
-    assert runtime.behavior.state == "ZONE_INSPECT", "한 사이클로는 확정하지 않는다 (FR-8.4)"
+    """FR-8.4 — **사이클은 방문이다.** 한 방문 안의 프레임 둘은 같은 자리에서 0.2초
+    간격으로 본 것이라, 방문마다 수 cm 달리 서서 생기는 오검출을 거르지 못한다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, before))  # 기준 등록
+    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, after))
+    assert runtime.behavior.state == "PATROL", "한 방문으로는 확정하지 않는다 (FR-8.4)"
     assert runtime.escalation.level is Level.L0, "확정 전에는 경보로 올리지 않는다"
-    _see(runtime, vision, seq=6, at_ms=1300, detections=changed)
-    assert runtime.behavior.state == "ALERT", "연속 2사이클이면 확정이다"
+    _visit(runtime, vision, at_ms=at, frames=_same(cfg, after))
+    assert runtime.behavior.state == "ALERT", "연속 2방문이면 확정이다"
     assert runtime.escalation.level is Level.L3, "물체 변화 확정은 L3 다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_an_unchanged_zone_returns_to_patrol(config: dict, clock: FakeClock, tmp_path: Path):
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
-    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
-    _see(runtime, vision, seq=3, at_ms=1000, detections=[_thing("chair")], marker=False)
-    for seq, at in ((4, 1100), (5, 1200), (6, 1300), (7, 1400)):
-        _see(runtime, vision, seq=seq, at_ms=at, detections=[_thing("chair")])
+def test_a_change_that_recovers_on_the_next_visit_raises_nothing(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    both = [_thing("chair"), _thing("bottle", 400.0)]
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))
+    with caplog.at_level(logging.INFO):
+        at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
+        _visit(runtime, vision, at_ms=at, frames=_same(cfg, both))  # 병이 돌아왔다
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+    assert "zone_changed" not in _zone_events(caplog)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize(("missing", "alarm"), [("half", False), ("majority", True)])
+def test_only_a_majority_of_frames_makes_a_visit_change(
+    config: dict, clock: FakeClock, tmp_path: Path, missing: str, alarm: bool
+):
+    """⚠️ **검출기는 깜빡인다.** 한 방문의 프레임 가운데 과반에서 보인 변화만 그 방문의
+    관찰이다 — 과반에 못 미치면 두 방문 연속으로 깜빡여도 반출이 아니다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    both = [_thing("chair"), _thing("bottle", 400.0)]
+    total = cfg["change_detect"]["visit_frames"]
+    gone = total // 2 + (1 if missing == "majority" else 0)
+    flicker = [[_thing("chair")]] * gone + [both] * (total - gone)
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))
+    at = _visit(runtime, vision, at_ms=at, frames=flicker)
+    _visit(runtime, vision, at_ms=at, frames=flicker)
+    assert (runtime.escalation.level is Level.L3) is alarm
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_confirmed_removal_is_not_raised_again_while_it_lasts(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """물건이 없어진 자리는 다음 바퀴에도 비어 있다. 바퀴마다 경보하면 못 쓴다 —
+    확정기의 누적은 **방문 사이에 유지된다.** 도착할 때 지우면 이것이 깨진다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _visit(
+        runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair"), _thing("bottle", 400.0)])
+    )
+    with caplog.at_level(logging.INFO):
+        at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
+        at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
+        assert runtime.behavior.state == "ALERT"
+        runtime.behavior.event(Event.TARGET_LOST, at)  # 경보를 마치고 순찰로 돌아간다
+        assert runtime.behavior.state == "PATROL"
+        _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
+    assert runtime.behavior.state == "PATROL", "이미 확정한 반출로 다시 멈춰 섰다"
+    assert _zone_events(caplog).count("zone_changed") == 1
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_an_unchanged_zone_returns_to_patrol(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    with caplog.at_level(logging.INFO):
+        _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
     assert runtime.behavior.state == "PATROL", "변화가 없으면 구역 앞에 서 있지 않는다"
     assert runtime.escalation.level is Level.L0
+    assert "zone_clear" in _zone_events(caplog)
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -1908,13 +2009,13 @@ def _see_person(runtime, vision, *, seq, at_ms, detections, present) -> None:
     runtime.tick(at_ms)
 
 
-def _inspect_again(runtime, vision, detections) -> None:
-    """기준을 뜨고 구역을 떠났다가 다시 들어와 `ZONE_INSPECT` 에 선다 (seq 1~4)."""
-    _see(runtime, vision, seq=1, at_ms=100, detections=detections)
-    _see(runtime, vision, seq=2, at_ms=200, detections=detections)  # 기준 등록
-    _see(runtime, vision, seq=3, at_ms=1000, detections=detections, marker=False)
-    _see(runtime, vision, seq=4, at_ms=1100, detections=detections)
+def _inspect_again(runtime, vision, cfg, detections) -> int:
+    """기준을 뜨고 구역을 떠났다가 다시 들어와 `ZONE_INSPECT` 에 선다. 다음 시각을 돌려준다."""
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, detections))  # 기준 등록
+    _see(runtime, vision, seq=at, at_ms=at, detections=detections, marker=False)
+    _see(runtime, vision, seq=at + 100, at_ms=at + 100, detections=detections)
     assert runtime.behavior.state == "ZONE_INSPECT"
+    return at + 200
 
 
 def _zone_events(caplog) -> list[str]:
@@ -1931,42 +2032,57 @@ def test_a_person_during_inspection_goes_through_the_person_gate(
     (300ms 3회)를 건너뛰고 **L3 «물체 변화»** 를 만들었다. 공장 모드의 사람은 작업자라
     L1 이다. 반대로 게이트가 내는 `PERSON_FOUND` 는 `ZONE_INSPECT` 에서 버려졌다.
     """
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
-    _inspect_again(runtime, vision, [_thing("chair")])
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _inspect_again(runtime, vision, cfg, [_thing("chair")])
     with caplog.at_level(logging.INFO):
-        _see_person(runtime, vision, seq=5, at_ms=1200, detections=[_thing("chair")], present=False)
+        _see_person(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], present=False)
         assert runtime.behavior.state == "ZONE_INSPECT", "게이트 확정 전의 사람은 경보가 아니다"
         assert runtime.escalation.level is Level.L0
-        _see_person(runtime, vision, seq=6, at_ms=1300, detections=[_thing("chair")], present=True)
+        at += 100
+        _see_person(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], present=True)
     assert runtime.behavior.state == "ALERT", "사람 대응은 게이트 경로 하나로 들어간다"
     assert runtime.escalation.level is Level.L1, "공장 모드의 사람은 작업자다 — L3 가 아니다"
     assert "zone_changed" not in _zone_events(caplog)
 
 
 @pytest.mark.usefixtures("unlock_modes")
-@pytest.mark.parametrize("immediate", [True, False])
 def test_a_person_hiding_an_object_is_not_a_removal(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog, immediate: bool
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
 ):
-    """⚠️ 사람이 물건을 가리면 그 물건이 안 보인다 — 견주면 **거짓 반출**이 된다."""
-    from copy import deepcopy
-
-    cfg = deepcopy(config)
-    cfg["change_detect"]["person_immediate"] = immediate
-    runtime, vision, _ = _zone_runtime(cfg, clock, tmp_path)
-    _inspect_again(runtime, vision, [_thing("chair"), _thing("bottle", 400.0)])
+    """⚠️ 사람이 물건을 가리면 그 물건이 안 보인다 — 견주면 **거짓 반출**이 된다.
+    두 방문 연속으로 가려도 마찬가지다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _visit(
+        runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair"), _thing("bottle", 400.0)])
+    )
     with caplog.at_level(logging.INFO):
-        for seq in range(5, 9):
-            _see_person(
-                runtime,
-                vision,
-                seq=seq,
-                at_ms=seq * 100 + 700,
-                detections=[_thing("chair")],
-                present=False,
-            )
+        for _ in range(2):
+            _see(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], marker=False)
+            at = _linger(runtime, vision, cfg, at_ms=at + 100, detections=[_thing("chair")])
     assert "zone_changed" not in _zone_events(caplog), "가려진 물건을 반출로 확정했다"
     assert runtime.escalation.level is Level.L0
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_visit_blocked_by_a_person_neither_breaks_nor_fills_the_streak(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """못 본 방문은 관찰이 아니다. **세면** 반출을 한 번 보고 확정하는 꼴이 되고,
+    **끊으면** 사람이 오가는 구역의 반출은 영영 확정되지 않는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _visit(
+        runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair"), _thing("bottle", 400.0)])
+    )
+    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))  # 반출 1방문
+    with caplog.at_level(logging.INFO):
+        _see(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], marker=False)
+        at = _linger(runtime, vision, cfg, at_ms=at + 100, detections=[_thing("chair")])
+    assert "zone_unverified" in _zone_events(caplog)
+    assert runtime.behavior.state == "PATROL" and runtime.escalation.level is Level.L0, (
+        "사람 때문에 못 본 방문이 연속을 채웠다"
+    )
+    _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))  # 반출 2방문
+    assert runtime.escalation.level is Level.L3, "사람 때문에 못 본 방문이 연속을 끊었다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -1978,11 +2094,11 @@ def test_a_person_in_front_of_the_zone_does_not_hold_the_robot(
     다만 **`zone_clear` 로 적지 않는다.** 보지 못한 구역을 «변화 없음» 으로 남기면
     나중에 로그만 보고 그 구역이 확인된 줄 안다.
     """
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
-    _inspect_again(runtime, vision, [_thing("chair")])
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    _see(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], marker=False)
     with caplog.at_level(logging.INFO):
-        _see_person(runtime, vision, seq=5, at_ms=1200, detections=[_thing("chair")], present=False)
-        _see_person(runtime, vision, seq=6, at_ms=1300, detections=[_thing("chair")], present=False)
+        _linger(runtime, vision, cfg, at_ms=at + 100, detections=[_thing("chair")])
     assert runtime.behavior.state == "PATROL"
     events = _zone_events(caplog)
     assert "zone_unverified" in events and "zone_clear" not in events
@@ -1994,26 +2110,17 @@ def test_an_inspected_worker_in_front_of_the_zone_does_not_hold_the_robot(
 ):
     """보호구 판정을 마친 작업자는 `PERSON_FOUND` 가 억제된다(`inspected`) — 게이트로도
     나가지 못하니 **구역의 한도가 유일한 출구**다."""
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
-    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])  # 기준 등록
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))  # 기준 등록
     # 마커 밖에서 작업자를 만나 보호구 판정을 마친다.
     from dataclasses import replace
 
-    first = vision_result(3, 1000, present=True, hits=3, last_seen_ms=1000)
+    first = vision_result(at, at, present=True, hits=3, last_seen_ms=at)
     vision.result = replace(first, ppe=PpeVerdict(1, OK))
-    runtime.tick(1000)
+    runtime.tick(at)
     assert runtime.behavior.state == "PATROL" and runtime.escalation.level is Level.L0
     with caplog.at_level(logging.INFO):
-        for seq in range(4, 8):
-            _see_person(
-                runtime,
-                vision,
-                seq=seq,
-                at_ms=seq * 100 + 700,
-                detections=[_thing("chair")],
-                present=True,
-            )
+        _linger(runtime, vision, cfg, at_ms=at + 100, detections=[_thing("chair")], present=True)
     assert runtime.behavior.state == "PATROL", "판정을 마친 작업자 앞에서 구역에 멈춰 있다"
     assert runtime.escalation.level is Level.L0
     events = _zone_events(caplog)
@@ -2029,22 +2136,12 @@ def test_a_person_in_front_of_the_zone_is_never_part_of_its_baseline(
     runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
     saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
     with caplog.at_level(logging.INFO):
-        for seq in (1, 2, 3):  # 도착 + 두 사이클
-            _see_person(
-                runtime,
-                vision,
-                seq=seq,
-                at_ms=seq * 100,
-                detections=[_thing("chair")],
-                present=False,
-            )
+        at = _linger(runtime, vision, cfg, at_ms=100, detections=[_thing("chair")])
     assert not saved.exists(), "사람이 서 있는 프레임으로 기준을 떴다"
     assert runtime.behavior.state == "PATROL", "기준을 못 떠도 구역 앞에 서 있지 않는다"
     assert "zone_unverified" in _zone_events(caplog)
 
-    _see(runtime, vision, seq=4, at_ms=1000, detections=[_thing("chair")], marker=False)
-    _see(runtime, vision, seq=5, at_ms=1100, detections=[_thing("chair")])
-    _see(runtime, vision, seq=6, at_ms=1200, detections=[_thing("chair")])
+    _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
     assert saved.exists(), "사람이 비킨 다음 순회에서는 기준을 뜬다"
 
 
@@ -2059,21 +2156,23 @@ def test_a_confirmed_change_is_recorded_for_the_dashboard(
     cfg = deepcopy(config)
     cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
     blackbox = EventBlackbox(cfg)
-    runtime, vision, _ = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox)
-    _inspect_again(runtime, vision, [_thing("chair")])
+    runtime, vision, cfg = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox)
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     changed = [_thing("chair"), _thing("bottle", 400.0)]
-    _see(runtime, vision, seq=5, at_ms=1200, detections=changed)
-    _see(runtime, vision, seq=6, at_ms=1300, detections=changed)
+    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, changed))
+    _visit(runtime, vision, at_ms=at, frames=_same(cfg, changed))
     assert runtime.behavior.state == "ALERT"
 
+    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
+    captured = json.loads(saved.read_text("utf-8"))["captured_ms"]
     entries = [e for e in blackbox.feed() if e.event_type == "zone_changed"]
     assert len(entries) == 1
     assert entries[0].judgement == {
         "zone": "A",
         "grid": [3, 3],
         "changes": [{"kind": "added", "label": "bottle", "count": 1, "cell": [1, 0]}],
-        "baseline_ms": 200,
-        "baseline_snapshot": "A.jpg",
+        "baseline_ms": captured,
+        "baseline_snapshot": f"A_{captured}.jpg",
     }
     assert entries[0].state == "ZONE_INSPECT", (
         "경보 전이보다 먼저 남긴다 (`_observe_fallen` 과 같다)"
@@ -2134,13 +2233,17 @@ def test_zone_inspection_never_blocks_on_the_vlm(config: dict, clock: FakeClock,
 
 @pytest.mark.usefixtures("unlock_modes")
 def test_change_detection_runs_without_any_vlm(config: dict, clock: FakeClock, tmp_path: Path):
-    """⚠️ Tier 3 이다 — 판독기가 없어도 변화 감지는 그대로 확정까지 간다."""
-    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)  # 판독기 주입 없음
+    """⚠️ Tier 3 이다 — 판독기가 없어도 변화 감지는 그대로 확정까지 간다. 경보 스위치가
+    켜져 있어도 판독을 기다리며 구역 앞에 서 있지 않는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)  # 판독기 없음
     assert runtime.vlm.available is False
-    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
-    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    both = [_thing("chair"), _thing("bottle", 400.0)]
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))
+    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
+    assert runtime.behavior.state == "PATROL", "판독기가 없는데 판독을 기다린다"
+    _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
     assert runtime.vlm.submitted == 0
-    assert runtime.behavior.state in {"ZONE_INSPECT", "PATROL"}
+    assert runtime.escalation.level is Level.L3
 
 
 class _GatedVlmSession(FakeVlmSession):
@@ -2163,6 +2266,8 @@ def _two_zone_runtime(config: dict, clock: FakeClock, tmp_path: Path, reader: Vl
     """A·B 두 구역과 기록 대역을 붙인다. 판독이 **어느 구역·어느 프레임**으로 남는지 본다."""
     cfg = _zone_config(config, tmp_path)
     cfg["zones"]["marker_map"] = {ZONE_MARKER: "A", ZONE_MARKER + 1: "B"}
+    # 방문은 한 프레임으로 끝낸다 — 이 시험들이 보려는 것은 물건 비교가 아니라 판독 대기다.
+    cfg["change_detect"]["visit_frames"] = 1
     vision = FakeVision()
     recorded: list[tuple[str, dict]] = []
 
@@ -2379,6 +2484,181 @@ def test_a_zone_reached_while_the_last_reading_runs_says_busy_and_passes(
     _settle(runtime)
     skipped = [(r.zone, r.detail["reason"]) for r in _logged(caplog, "zone_reading_skipped")]
     assert skipped == [("B", "busy")]
+
+
+# ── 넘어짐·통로 막힘은 같은 방문에서 두 번 읽어 확정한다 (WBS 3.6.3 · FR-8.3) ──
+#
+# 판독은 비동기라 **다음 틱에** 돌아온다. 스레드 대신 `ScriptedVlm` 으로 순서를 고정한다.
+
+
+def _reading(values: dict, *, degraded: bool = False) -> Reading:
+    return Reading(
+        answers=tuple(Answer(k, v, "yes" if v else "no", 1) for k, v in values.items()),
+        degraded=degraded,
+        reason="budget_exhausted" if degraded else None,
+        taken_at_ms=0,
+    )
+
+
+class ScriptedVlm:
+    """`VlmWorker` 대역. 건 판독은 **다음 틱의 `take()` 에** 나온다 — 실제 판독(0.65초)이
+    비동기인 것을 스레드 없이 흉내 낸다. `script` 는 판독마다 `질문 키 → 참/거짓` 이거나
+    `Reading` 이다. `None` 이면 그 판독은 돌아오지 않는다 — `busy` 가 풀리지 않는다."""
+
+    def __init__(self, *script) -> None:
+        self.available = True
+        self.busy = False
+        self.slot: Reading | None = None
+        self.submitted = 0
+        self._script = list(script)
+
+    def submit(self, _image, **_when) -> bool:
+        if self.busy:
+            return False
+        self.submitted += 1
+        entry = self._script.pop(0) if self._script else {}
+        if entry is None:
+            self.busy = True
+        else:
+            self.slot = entry if isinstance(entry, Reading) else _reading(entry)
+        return True
+
+    def take(self) -> Reading | None:
+        reading, self.slot = self.slot, None
+        return reading
+
+    def land(self, values: dict) -> None:
+        """돌아오지 않던 판독이 이제 돌아온다."""
+        self.busy = False
+        self.slot = _reading(values)
+
+
+def _scripted(runtime, *script) -> ScriptedVlm:
+    fake = ScriptedVlm(*script)
+    runtime._vlm = fake
+    return fake
+
+
+def _until_left(runtime, vision, *, at_ms: int, detections) -> int:
+    """구역을 떠날 때까지 0.5초마다 한 프레임씩 본다. 다음 방문을 시작할 시각을 돌려준다."""
+    for _ in range(40):
+        if runtime.behavior.state != "ZONE_INSPECT":
+            break
+        _see(runtime, vision, seq=at_ms, at_ms=at_ms, detections=detections)
+        at_ms += 500
+    return at_ms + 1000
+
+
+FALLEN = {"fallen_object": True}
+UPRIGHT = {"fallen_object": False}
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("kind", ["fallen_object", "blocked_path"])
+def test_a_hazard_read_twice_is_confirmed_on_the_first_visit(
+    config: dict, clock: FakeClock, tmp_path: Path, kind: str
+):
+    """넘어진 소화기는 다음 바퀴를 기다리지 않는다 — **다른 프레임으로 한 번 더 읽어**
+    둘 다 «예» 면 그 방문에서 확정한다. 기준을 뜨는 첫 방문이어도 그렇다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    runtime, vision, cfg = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox, hazards=True)
+    fake = _scripted(runtime, {kind: True}, {kind: True})
+    _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    assert fake.submitted == 2
+    assert runtime.behavior.state == "ALERT"
+    assert runtime.escalation.level is Level.L3
+    (entry,) = [e for e in blackbox.feed() if e.event_type == "zone_changed"]
+    assert set(entry.judgement) == {"zone", "grid", "changes", "baseline_ms", "baseline_snapshot"}
+    assert entry.judgement["zone"] == "A"
+    assert entry.judgement["grid"] == [3, 3], "이번 방문에 뜬 기준을 싣는다"
+    assert entry.judgement["changes"] == [{"kind": kind, "source": "vlm"}]
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_single_fallen_reading_is_not_confirmed(config: dict, clock: FakeClock, tmp_path: Path):
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)
+    fake = _scripted(runtime, FALLEN, UPRIGHT)
+    _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    assert fake.submitted == 2, "«예» 가 나왔으면 다른 프레임으로 한 번 더 읽는다"
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_nothing_suspicious_needs_no_second_reading(config: dict, clock: FakeClock, tmp_path: Path):
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)
+    fake = _scripted(runtime, UPRIGHT)
+    _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    assert fake.submitted == 1
+    assert runtime.behavior.state == "PATROL"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_vlm_hazards_switched_off_never_confirm(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """⚠️ **벤치 측정 전에는 VLM 경보를 믿지 않는다** (WBS 3.6.4). 꺼 두면 두 번 다 «예» 여도
+    확정하지 않는다. 도착 판독의 로그는 그대로 남는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    assert cfg["change_detect"]["vlm_hazards"] is False, "기본은 꺼짐이다"
+    fake = _scripted(runtime, FALLEN, FALLEN)
+    with caplog.at_level(logging.INFO):
+        _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+    assert fake.submitted == 1, "확정에 쓰지 않으면 두 번째 판독도 걸지 않는다"
+    assert "zone_reading" in _zone_events(caplog)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_late_reading_from_the_last_visit_does_not_count(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """⚠️ 판독은 방문이 끝난 뒤에 올 수 있다. **이번 방문에서 건 판독만 센다** — 지난 방문의
+    «예» 가 이번 방문의 첫 판독 노릇을 하면 두 번째 «예» 하나로 확정된다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)
+    fake = _scripted(runtime, None, FALLEN)  # 첫 방문의 판독은 제때 돌아오지 않는다
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    at = _until_left(runtime, vision, at_ms=at, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL", "상한을 넘겼으면 떠난다"
+    with caplog.at_level(logging.INFO):
+        _see(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], marker=False)
+        _see(runtime, vision, seq=at + 100, at_ms=at + 100, detections=[_thing("chair")])
+        _see(runtime, vision, seq=at + 200, at_ms=at + 200, detections=[_thing("chair")])
+        fake.land(FALLEN)  # 지난 방문의 «넘어짐» 이 이번 방문 도중에 돌아온다
+        _until_left(runtime, vision, at_ms=at + 300, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL", "지난 방문의 «예» 로 이번 방문을 확정했다"
+    assert runtime.escalation.level is Level.L0
+    assert fake.submitted == 1, "남의 판독을 보고 두 번째 판독을 걸었다"
+    assert "zone_reading" in _zone_events(caplog), "늦은 판독도 기록은 남는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("trouble", ["degraded", "silent"])
+def test_an_unusable_second_reading_confirms_nothing_and_lets_go(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog, trouble: str
+):
+    """두 번째 판독이 저하됐거나 상한(`budget_ms`) 안에 오지 않으면 그 방문의 VLM 채널은
+    빈 것이다 — 확정하지 않고, 기다리며 구역 앞에 서 있지도 않는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)
+    second = _reading(FALLEN, degraded=True) if trouble == "degraded" else None
+    _scripted(runtime, UPRIGHT, FALLEN, second)
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))  # 기준 등록
+    with caplog.at_level(logging.INFO):
+        at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
+        _until_left(runtime, vision, at_ms=at, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+    events = _zone_events(caplog)
+    assert "zone_clear" in events
+    if trouble == "silent":
+        assert "zone_reading_timeout" in events
+    else:
+        assert [r.detail["degraded"] for r in _logged(caplog, "zone_reading")] == [False, True]
 
 
 # ── 사건이 관제 화면까지 닿는가 (WBS 4.4.3) ──────────────────────

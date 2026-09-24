@@ -1320,3 +1320,112 @@ def test_sound_endpoint_reaches_the_runtime_through_the_real_wiring(cfg, clock):
     with TestClient(app) as http:
         assert http.post("/api/command/sound", json={"track": 0}).json()["accepted"] is True
     assert _sounds(runtime.tick(clock.advance(100))) == [0]
+
+
+# ── 구역 기준 재등록 (FR-8 · WBS 3.6.5) ──────────────────────────
+#
+# 물건을 영구히 옮기면 그 구역은 순찰마다 «반출» 을 낸다. 관리자가 «이 상태가
+# 정상» 이라고 인정하면 기준을 지우고 **그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다.** 지우는 것은
+# 틱이다 — 틱이 그 구역의 기준을 읽고 견주는 도중에 서버 스레드가 지우면 옛 기준의
+# 누적이 새 기준에 섞인다 (`ask_alarm_confirm` 과 같은 예약 방식).
+
+
+def _zone_wired(cfg, clock, tmp_path):
+    """설정의 구역(marker_map 값 A·B·C)과 임시 기준 폴더를 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
+    from copy import deepcopy
+
+    from host.runtime import Runtime, dashboard_wiring
+
+    changed = deepcopy(cfg)
+    assert set(changed["zones"]["marker_map"].values()) == {"A", "B", "C"}
+    changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
+    runtime = Runtime(changed, device_id="mechdog-01", clock=clock)
+    runtime._baselines.register("A", [], frame_size=(640, 480), now_ms=1, jpeg=b"a")
+    return runtime, dashboard_wiring(runtime, changed, vision=None, blackbox=None)
+
+
+def _removed():
+    from host.behavior.change_detect import Change, ChangeKind
+
+    return Change(kind=ChangeKind.REMOVED, label="bottle", count=1, cell=(0, 0))
+
+
+def test_zone_baseline_reset_clears_on_the_next_tick(cfg, clock, tmp_path, caplog):
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    runtime._confirmer.observe("A", [_removed()])  # 옛 기준으로 센 1회
+
+    result = wiring["commands"].zone_baseline("A")
+
+    assert result.accepted is True and result.command == "zone_baseline"
+    assert wiring["commands"].zone_baseline("C").accepted is True
+    assert runtime._baselines.load("A") is not None, "요청만 세운다"
+    with caplog.at_level("INFO"):
+        runtime.tick(clock.advance(100))
+    assert runtime._baselines.load("A") is None
+    assert list((tmp_path / "snapshots").glob("*.jpg")) == []
+    assert "zone_baseline_reset" in [getattr(r, "event", "") for r in caplog.records]
+    assert runtime._confirmer.observe("A", [_removed()]) == (), (
+        "옛 기준으로 센 횟수가 새 기준의 확정을 앞당기면 안 된다"
+    )
+
+
+@pytest.mark.parametrize("zone", ["Z", "a", "10", "../A", "A/..", "", " A"])
+def test_zone_baseline_reset_refuses_zones_outside_the_marker_map(cfg, clock, tmp_path, zone):
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+
+    result = wiring["commands"].zone_baseline(zone)
+
+    assert result.accepted is False
+    runtime.tick(clock.advance(100))
+    assert runtime._baselines.load("A") is not None
+
+
+def test_a_zone_baseline_that_cannot_be_cleared_does_not_stop_the_runtime(
+    cfg, clock, tmp_path, caplog, monkeypatch
+):
+    """기준 파일이 10Hz 제어를 죽이면 안 된다 — `_inspect_zone` 의 load·register 와 같다."""
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+
+    def locked(_zone):
+        raise PermissionError("다른 프로그램이 파일을 쥐고 있다")
+
+    monkeypatch.setattr(runtime._baselines, "clear", locked)
+    assert wiring["commands"].zone_baseline("A").accepted is True
+    with caplog.at_level("INFO"):
+        runtime.tick(clock.advance(100))
+    events = [getattr(r, "event", "") for r in caplog.records]
+    assert "zone_baseline_reset_failed" in events
+    assert "zone_baseline_reset" not in events, "지우지 못한 기준을 지웠다고 적지 않는다"
+
+
+def test_zone_baseline_reset_is_refused_when_the_host_cannot_reset(service):
+    svc, _behavior, _sent = service
+    result = svc.zone_baseline("A")
+    assert result.accepted is False
+    assert "연결되지 않았다" in result.detail
+
+
+def test_zone_baseline_endpoint_round_trips(cfg, clock, tmp_path):
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    with TestClient(create_app(_state(), **wiring)) as http:
+        body = http.post("/api/command/zone-baseline", json={"zone": "A"}).json()
+        assert body["accepted"] is True and body["command"] == "zone_baseline"
+        refused = http.post("/api/command/zone-baseline", json={"zone": "Z"}).json()
+        assert refused["accepted"] is False
+        for bad in ({"zone": 7}, {"zone": None}, {}):
+            response = http.post("/api/command/zone-baseline", json=bad)
+            assert response.status_code == 400 and response.json() == {"error": "zone"}
+        foreign = http.post(
+            "/api/command/zone-baseline",
+            json={"zone": "A"},
+            headers={"origin": "http://evil.example"},
+        )
+        assert foreign.status_code == 403
+    runtime.tick(clock.advance(100))
+    assert runtime._baselines.load("A") is None
+
+
+def test_zone_baseline_endpoint_is_absent_on_a_read_only_server():
+    with TestClient(create_app(_state())) as http:
+        response = http.post("/api/command/zone-baseline", json={"zone": "A"})
+        assert response.status_code in (404, 405)

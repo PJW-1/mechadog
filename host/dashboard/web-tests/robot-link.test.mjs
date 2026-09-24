@@ -224,6 +224,14 @@ test('resetSafe and patrol hit their own endpoints', async () => {
   assert.deepEqual(fetchImpl.calls[2].body, { action: 'stop' });
 });
 
+test('zoneBaseline sends the zone to its own endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.zoneBaseline('A');
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/zone-baseline');
+  assert.deepEqual(fetchImpl.calls[0].body, { zone: 'A' });
+});
+
 test('device commands never leave when there is no link', () => {
   const ops = new Operations({ link: null });
   ops.setDemo(false);

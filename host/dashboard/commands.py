@@ -78,6 +78,7 @@ class CommandService:
         note_voice_auth: Callable[[bool], tuple[bool, str]] | None = None,
         note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
         confirm_alarm: Callable[[], None] | None = None,
+        reset_zone_baseline: Callable[[str], tuple[bool, str]] | None = None,
         pose: tuple[float, int] | None = None,
     ) -> None:
         self._behavior = behavior
@@ -107,6 +108,8 @@ class CommandService:
         # 하는 것이 물리 상태(F)와 상황 판단(L3)으로 다르다 (ADR-26). 하나로 묶으면
         # **비상정지를 눌렀다 푸는 것으로 경보가 지워진다.**
         self._confirm_alarm = confirm_alarm
+        # 구역 기준 재등록 (3.6.5). 어느 구역이 있는지 아는 쪽이 런타임이라 판정도 거기서 한다.
+        self._reset_zone_baseline = reset_zone_baseline
         # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과
         # **같은 각도**만 쓴다. ±15° 는 2026-09-15 실물로 부호·크기를 확인한 값이다.
         # 임의 각도를 받지 않는 이유: 검증하지 않은 자세로 보행하면 넘어진다.
@@ -277,6 +280,28 @@ class CommandService:
             accepted=True,
             state=self._behavior.state,
             detail="경보 확인을 요청했다 — 다음 틱에 단계가 내려간다 (L3 가 아니면 무시된다)",
+        )
+
+    def zone_baseline(self, zone: str) -> CommandResult:
+        """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준을 지운다 (FR-8 · WBS 3.6.5).
+
+        물건을 영구히 옮기면 그 구역은 순찰마다 «반출» 을 낸다. 기준을 지우면 다음
+        방문에서 새로 뜬다. `alarm_confirm` 처럼 **예약한다** — 지우는 것은 다음 틱이다.
+        ⚠️ 경보(L3)를 풀지 않는다 — 경보 확인은 따로 누른다.
+        """
+        if self._reset_zone_baseline is None:
+            return CommandResult(
+                command="zone_baseline",
+                accepted=False,
+                state=self._behavior.state,
+                detail="기준 재등록 경로가 연결되지 않았다",
+            )
+        accepted, detail = self._reset_zone_baseline(zone)
+        return CommandResult(
+            command="zone_baseline",
+            accepted=accepted,
+            state=self._behavior.state,
+            detail=detail,
         )
 
     #: 자율 동작 상태 — "순찰 정지" 가 받을 수 있는 상태들이다.

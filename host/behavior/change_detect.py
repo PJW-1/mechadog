@@ -25,7 +25,8 @@
 
 ⚠️ **`person` 은 기준에 넣지 않는다.** 사람은 지나다니는 것이지 구역에 놓인
 물건이 아니다. 기준에 사람이 섞이면 그 사람이 자리를 뜬 것만으로 *"반출"* 이
-된다. 사람 출현은 FR-8.4 에서 **즉시** 다루는 별개 경로다.
+된다. 사람은 여기가 아니라 사람 게이트(FR-3)가 맡는다 — 런타임은 사람이 보이는
+프레임을 비교에 넣지 않는다.
 
 저장 형식은 JSON 한 벌 + 스냅샷 한 장이며 구역 ID 로 찾는다. 비교는
 `classify_changes()`, 확정은 `ChangeConfirmer` 다 — **한 사이클의 관찰과 확정된
@@ -34,6 +35,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -225,13 +227,15 @@ def classify_changes(
 class ChangeConfirmer:
     """연속 같은 변화가 이어질 때만 확정한다 (WBS 3.6.3 · FR-8.4).
 
-    한 사이클의 관찰은 흔들린다 — 조명이 바뀌거나 로봇이 조금 달리 서기만 해도
-    검출기가 물건 하나를 놓친다. 그것을 그대로 경보로 올리면 **시연 내내 거짓
-    반출이 뜬다.** 그래서 `confirm_cycles` 번 연속 같은 변화가 보일 때만 확정한다.
+    **사이클 하나는 구역 방문 하나다.** 한 방문의 관찰은 흔들린다 — 조명이 바뀌거나
+    로봇이 조금 달리 서기만 해도 검출기가 물건 하나를 놓친다. 그것을 그대로 경보로
+    올리면 **시연 내내 거짓 반출이 뜬다.** 그래서 `confirm_cycles` 번 연속 같은 변화가
+    보일 때만 확정한다. 한 방문 안의 프레임은 같은 자리에서 본 것이라 이 흔들림을
+    거르지 못한다 — 런타임이 방문마다 한 번만 `observe` 한다.
 
-    ⚠️ **`person` 출현은 즉시 확정한다** (FR-8.4 단서 · `person_immediate`).
-    사람은 기다리는 대상이 아니다. 다음 사이클을 기다리는 동안 이미 지나가 버리고,
-    경비 로봇이 사람을 한 사이클 늦게 아는 것은 기능이 없는 것과 같다.
+    ⚠️ **지름길이 없다.** 예전에는 `person` 을 즉시 확정했는데(`person_immediate`),
+    사람 한 프레임이 게이트(300ms 3회)를 건너뛰어 L3 «물체 변화» 가 되었다. 사람은
+    사람 게이트(FR-3)가 맡는다 — 여기 들어오면 다른 변화와 똑같이 센다.
 
     ⚠️ **구역마다 따로 센다.** A 구역에서 본 변화가 B 구역의 횟수를 채우면 안 된다.
 
@@ -251,11 +255,7 @@ class ChangeConfirmer:
         cycles = section.get("confirm_cycles", 2)
         if not isinstance(cycles, int) or isinstance(cycles, bool) or cycles < 1:
             raise ValueError("change_detect.confirm_cycles 는 1 이상 정수여야 함")
-        immediate = section.get("person_immediate", True)
-        if not isinstance(immediate, bool):
-            raise ValueError("change_detect.person_immediate 는 참·거짓이어야 함")
         self._cycles = cycles
-        self._person_immediate = immediate
         #: 구역 → (변화 키 → 연속 관찰 횟수)
         self._streaks: dict[str, dict[tuple[Any, ...], int]] = {}
         #: 구역 → 이미 확정해서 다시 올리지 않는 변화 키
@@ -270,7 +270,7 @@ class ChangeConfirmer:
         return (change.kind, change.label, change.count, change.cell)
 
     def observe(self, zone_id: str, changes: Iterable[Change]) -> tuple[Change, ...]:
-        """한 사이클의 관찰을 넣고 **이번에 확정된 것만** 돌려준다.
+        """한 사이클(방문)의 관찰을 넣고 **이번에 확정된 것만** 돌려준다.
 
         같은 변화를 계속 보더라도 확정은 한 번뿐이다. 변화가 사라지면 횟수도
         확정 기록도 지워져, 다시 나타나면 처음부터 센다.
@@ -289,11 +289,6 @@ class ChangeConfirmer:
 
         newly: list[Change] = []
         for key, change in seen.items():
-            if change.kind is ChangeKind.PERSON and self._person_immediate:
-                if key not in confirmed:
-                    confirmed.add(key)
-                    newly.append(change)
-                continue
             streaks[key] = streaks.get(key, 0) + 1
             if streaks[key] >= self._cycles and key not in confirmed:
                 confirmed.add(key)
@@ -338,11 +333,26 @@ class BaselineStore:
     def grid(self) -> tuple[int, int]:
         return self._grid
 
-    def _paths(self, zone_id: str) -> tuple[Path, Path]:
+    def _meta_path(self, zone_id: str) -> Path:
         safe = zone_id.strip()
         if not safe or any(character in safe for character in '/\\:*?"<>|' + "\0"):
             raise ValueError(f"구역 ID 로 쓸 수 없는 값: {zone_id!r}")
-        return self._dir / f"{safe}.json", self._dir / f"{safe}.jpg"
+        return self._dir / f"{safe}.json"
+
+    def _snapshot_of(self, meta_path: Path) -> Path | None:
+        """지금 JSON 이 가리키는 그림. 없거나 읽지 못하면 `None`.
+
+        옛 형식(`A.jpg`)도 JSON 이 가리키는 대로 따라가므로 따로 다루지 않는다.
+        ⚠️ **이름만 받는다** — JSON 이 `../` 를 품고 있어도 폴더 밖을 지우지 않는다.
+        """
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        name = data.get("snapshot") if isinstance(data, dict) else None
+        if not isinstance(name, str) or Path(name).name != name or not name.endswith(".jpg"):
+            return None
+        return self._dir / name
 
     def register(
         self,
@@ -353,20 +363,24 @@ class BaselineStore:
         now_ms: int,
         jpeg: bytes | None = None,
     ) -> ZoneBaseline:
-        """구역 도착 시 기준을 남긴다. **JPEG 는 재인코딩하지 않는다.**"""
+        """구역 도착 시 기준을 남긴다. **JPEG 는 재인코딩하지 않는다.**
+
+        ⚠️ **새 그림 → JSON 교체 → 옛 그림 삭제 순서다.** 그림을 제자리에 쓰고 JSON 을
+        바꾸면, 그 사이에 전원이 끊겼을 때 옛 목록과 새 그림이 한 벌로 남는다(쓰는
+        도중이면 잘린 그림이). 그래서 그림 이름에 등록 시각을 붙여 옛 JSON 이 가리키는
+        그림을 건드리지 않는다. 끊기면 새 그림은 가리키는 JSON 이 없는 고아로 남을 뿐이다.
+        """
         if not isinstance(now_ms, int) or isinstance(now_ms, bool) or now_ms < 0:
             raise ValueError("now_ms 는 0 이상의 정수여야 함")
-        meta_path, image_path = self._paths(zone_id)
+        meta_path = self._meta_path(zone_id)
         objects = summarize_detections(detections, frame_size=frame_size, grid=self._grid)
+        previous = self._snapshot_of(meta_path)
 
         snapshot = None
         if jpeg:
+            image_path = meta_path.with_name(f"{meta_path.stem}_{now_ms}.jpg")
             image_path.write_bytes(jpeg)
             snapshot = image_path.name
-        elif image_path.exists():
-            # 새 기준에 그림이 없는데 옛 그림을 남겨두면 서로 다른 시점이 한 벌로
-            # 보인다. 사람이 그것을 근거로 판단하게 두지 않는다.
-            image_path.unlink()
 
         baseline = ZoneBaseline(
             zone_id=zone_id,
@@ -381,13 +395,34 @@ class BaselineStore:
         partial = meta_path.with_name(meta_path.name + ".tmp")
         partial.write_text(payload + "\n", encoding="utf-8")
         partial.replace(meta_path)
+        # 새 기준에 그림이 없어도 옛 그림은 지운다 — 다른 시점의 그림과 목록이 한 벌로
+        # 보이면 사람이 그것을 근거로 판단한다. 기준은 이미 바뀌었으므로 못 지우면
+        # 고아로 둔다(실패로 알리면 남은 기준을 남지 않았다고 적게 된다).
+        if previous is not None and previous.name != snapshot:
+            with contextlib.suppress(OSError):
+                previous.unlink(missing_ok=True)
         return baseline
+
+    def clear(self, zone_id: str) -> bool:
+        """구역의 기준을 지운다 — 그 구역을 다음에 볼 때 새로 뜬다 (WBS 3.6.5 · 관리자 재등록).
+
+        기준이 있었으면 `True`. **JSON 을 먼저 지운다** — 그 사이에 끊기면 그림만 고아로
+        남고 기준은 «없음» 이다. 반대 순서면 없는 그림을 가리키는 기준이 남는다.
+        """
+        meta_path = self._meta_path(zone_id)
+        snapshot = self._snapshot_of(meta_path)
+        existed = meta_path.exists()
+        meta_path.unlink(missing_ok=True)
+        if snapshot is not None:
+            with contextlib.suppress(OSError):
+                snapshot.unlink(missing_ok=True)
+        return existed
 
     def load(self, zone_id: str) -> ZoneBaseline | None:
         """기준이 없으면 `None`. **없는 것과 비어 있는 것은 다르다** — 물건이
         하나도 없는 구역의 기준은 `objects` 가 빈 튜플이지 `None` 이 아니다.
         """
-        meta_path, _ = self._paths(zone_id)
+        meta_path = self._meta_path(zone_id)
         if not meta_path.exists():
             return None
         data = json.loads(meta_path.read_text(encoding="utf-8"))

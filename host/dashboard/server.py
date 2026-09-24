@@ -520,6 +520,23 @@ def create_app(
                 return rejected
             return commands.alarm_confirm().as_dict()
 
+        @app.post("/api/command/zone-baseline")
+        async def zone_baseline(request: Request):
+            """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
+
+            물건을 영구히 옮긴 경우의 문이다 (WBS 3.6.5). 런타임이 **다음 틱에** 지운다 —
+            `/api/command/alarm` 과 같은 예약이다. `zones.marker_map` 에 없는 구역은
+            `accepted=false` 로 돌려준다. ⚠️ **경보(L3)는 풀지 않는다** — 그쪽 문이 따로 있다.
+            """
+            rejected = _rejected_origin(request)
+            if rejected is not None:
+                return rejected
+            body = await request.json()
+            zone = body.get("zone")
+            if not isinstance(zone, str):
+                return JSONResponse({"error": "zone"}, status_code=400)
+            return commands.zone_baseline(zone).as_dict()
+
         @app.post("/api/command/service")
         async def service(request: Request):
             """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.
