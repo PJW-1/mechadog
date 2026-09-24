@@ -377,7 +377,10 @@ class BaselineStore:
             snapshot=snapshot,
         )
         payload = json.dumps(baseline.as_dict(), ensure_ascii=False, indent=2)
-        meta_path.write_text(payload + "\n", encoding="utf-8")
+        # ⚠️ 쓰는 도중 전원이 끊기면 **잘린 기준이 남는다.** 다 쓴 뒤 한 번에 바꿔 끼운다.
+        partial = meta_path.with_name(meta_path.name + ".tmp")
+        partial.write_text(payload + "\n", encoding="utf-8")
+        partial.replace(meta_path)
         return baseline
 
     def load(self, zone_id: str) -> ZoneBaseline | None:
