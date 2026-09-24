@@ -36,7 +36,7 @@ export const reasonName=reason=>REASON_NAMES[reason]??(cleanText(reason,80)||'�
 const AUTH_TEXT={person_found:'검출 시점 · 인증 전',auth_required:'인증 요구됨',auth_granted:'통과',auth_failed:'실패 → 경보',voice_auth_granted:'암구호 확인 · 사원증 대기'};
 const shown=value=>typeof value==='number'?String(Math.round(value*100)/100):typeof value==='boolean'?(value?'예':'아니요'):cleanText(String(value??''),300)||'—';
 // 구역 물체 변화 (FR-8.3). 종류 이름은 `change_detect.py` 의 `ChangeKind` 와 1:1 이다.
-const CHANGE_KINDS={removed:'반출',added:'반입',person:'인원 출현'};
+const CHANGE_KINDS={removed:'반출',added:'반입',person:'인원 출현',fallen_object:'넘어짐·무너짐',blocked_path:'통로 막힘'};
 // 격자 칸 `(열, 행)` → 위치 이름. 왼쪽 위가 (0, 0) 이고 픽셀이 아니라 칸이다. 3×3 이면 왼쪽/가운데/오른쪽 × 위/가운데/아래.
 // ⚠️ 칸이나 격자 형식이 틀리면 null — 위치를 지어내지 않는다 (격자가 없으면 3×3 이라고 가정하지도 않는다).
 function cellName(cell,grid){
@@ -60,7 +60,8 @@ export function describeEvidence(name,payload){
  if(name==='zone_changed'){
   const changes=Array.isArray(j.changes)?j.changes.filter(c=>c&&typeof c==='object').slice(0,12):[];
   rows.push(['구역',shown(j.zone)]);
-  for(const c of changes){const where=cellName(c.cell,j.grid);rows.push([CHANGE_KINDS[c.kind]??(cleanText(c.kind,40)||'종류 미수신'),(cleanText(c.label,60)||'라벨 미수신')+(Number.isSafeInteger(c.count)&&c.count>0?' ×'+c.count:'')+(where?' · '+where:'')])}
+  // VLM 판독(source:'vlm')에는 라벨·개수·칸이 없다 — 규칙 값처럼 빈 칸을 채우지 않고 위치도 지어내지 않는다.
+  for(const c of changes){if(c.source==='vlm'){rows.push([CHANGE_KINDS[c.kind]??(cleanText(c.kind,40)||'종류 미수신'),'VLM 판독 · 위치 없음']);continue}const where=cellName(c.cell,j.grid);rows.push([CHANGE_KINDS[c.kind]??(cleanText(c.kind,40)||'종류 미수신'),(cleanText(c.label,60)||'라벨 미수신')+(Number.isSafeInteger(c.count)&&c.count>0?' ×'+c.count:'')+(where?' · '+where:'')])}
   if(!changes.length)rows.push(['변화 내역','미수신']);
   if(Number.isSafeInteger(j.baseline_ms)&&j.baseline_ms>=0&&j.baseline_ms<=8640000000000000)rows.push(['기준 시각',new Date(j.baseline_ms).toLocaleString('ko-KR',{hour12:false})]);
  }

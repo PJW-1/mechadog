@@ -142,7 +142,7 @@ test('a confirmed zone change is filed under zones and names grid cells without 
  const {dom,document,panels,store}=setup();store.setDemo(false);
  const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
  const zone=(seq,judgement)=>store.ingestLiveEvent({...base,seq,ts_ms:seq,event:'zone_changed',judgement});
- const event=zone(1,{zone:'A',grid:[3,3],changes:[{kind:'removed',label:'bottle',count:1,cell:[2,0]},{kind:'added',label:'box',count:2,cell:[1,1]},{kind:'added',label:'cup',count:1,cell:[0,2]},{kind:'person',label:'person',count:1,cell:null}],baseline_ms:1700000000000,baseline_snapshot:'A.jpg'});
+ const event=zone(1,{zone:'A',grid:[3,3],changes:[{kind:'removed',label:'bottle',count:1,cell:[2,0]},{kind:'added',label:'box',count:2,cell:[1,1]},{kind:'added',label:'cup',count:1,cell:[0,2]},{kind:'person',label:'person',count:1,cell:null}],baseline_ms:1700000000000,baseline_snapshot:'A_1700000000000.jpg'});
  assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 물체 변화 확정 · zone_changed$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
  assert.deepEqual(event.evidence.slice(0,5),[['구역','A'],['반출','bottle ×1 · 오른쪽 위'],['반입','box ×2 · 가운데'],['반입','cup ×1 · 왼쪽 아래'],['인원 출현','person ×1']]);
  assert.equal(event.evidence[5][0],'기준 시각');assert.equal(event.evidence.length,6);
@@ -155,6 +155,12 @@ test('a confirmed zone change is filed under zones and names grid cells without 
  assert.deepEqual(zone(3,{zone:'C',changes:[{kind:'removed',label:'bottle',count:1,cell:[0,0]}],baseline_ms:'어제'}).evidence,[['구역','C'],['반출','bottle ×1']],'격자가 없으면 3×3 으로 가정하지 않는다');
  assert.deepEqual(zone(4,{zone:'D',changes:'bottle'}).evidence,[['구역','D'],['변화 내역','미수신']]);
  assert.equal(zone(5,{zone:'E',grid:[3,3],changes:Array.from({length:20},()=>({kind:'added',label:'box',count:1,cell:[0,0]}))}).evidence.length,13,'변화 행은 12건까지');
+});
+test('VLM-read zone changes are named without inventing a label, count or place',()=>{
+ const {store}=setup();store.setDemo(false);
+ const event=store.ingestLiveEvent({state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null,seq:1,ts_ms:1,event:'zone_changed',
+  judgement:{zone:'A',grid:[3,3],changes:[{kind:'fallen_object',source:'vlm'},{kind:'blocked_path',source:'vlm',cell:[0,0]},{kind:'removed',label:'bottle',count:1,cell:[2,0]}]}});
+ assert.deepEqual(event.evidence,[['구역','A'],['넘어짐·무너짐','VLM 판독 · 위치 없음'],['통로 막힘','VLM 판독 · 위치 없음'],['반출','bottle ×1 · 오른쪽 위']]);
 });
 test('an old record without judgement says the field is missing, not a verdict',()=>{
  const {store}=setup();
