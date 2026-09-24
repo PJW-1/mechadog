@@ -129,7 +129,7 @@ def vision_result(
     markers: tuple[Marker, ...] = (),
     # 기본은 정지선에 도달한 사람이다. 먼 사람은 중앙이어도 접근하므로 TRACK 시험은
     # 명시적으로 먼 박스를 넘긴다.
-    box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 460.0),
+    box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 480.0),
     frame_width: int = 640,
 ) -> VisionResult:
     """런타임 통합 시험용 판정 결과."""
@@ -1228,7 +1228,7 @@ def test_returning_to_center_leaves_track(config: dict, clock: FakeClock) -> Non
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
     assert runtime.behavior.state == "TRACK"
-    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 480.0))
     assert runtime.behavior.state == "ALERT"
 
 
@@ -1241,8 +1241,8 @@ def test_close_off_center_person_spins_to_center_before_pitch(
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
     assert runtime.behavior.state == "TRACK"
 
-    # 정지선 437px 초과인데 화면 왼쪽이다 — 경계 자세로 가지 않고 제자리에서 돈다.
-    _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 20.0, 60.0, 460.0))
+    # 정지선 459px 초과인데 화면 왼쪽이다 — 경계 자세로 가지 않고 제자리에서 돈다.
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 20.0, 60.0, 480.0))
     assert runtime.behavior.state == "TRACK"
     spin = _move(runtime.tick(300))
     assert spin is not None and spin["step"] == 0 and spin["angle"] > 0
@@ -1280,8 +1280,8 @@ def test_spin_at_stop_line_uses_two_steps(
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
-    _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 20.0, 60.0, 460.0))
-    box = (x_center - 20.0, 20.0, x_center + 20.0, 460.0)
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(20.0, 20.0, 60.0, 480.0))
+    box = (x_center - 20.0, 20.0, x_center + 20.0, 480.0)
     _sighting(runtime, vision, seq=3, at_ms=300, box=box)
     if expected == "zero":
         assert runtime.behavior.state == "ALERT"
@@ -1300,13 +1300,13 @@ def test_centered_target_is_held_through_detection_jitter(config: dict, clock: F
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
-    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 480.0))
     assert runtime.behavior.state == "ALERT"
-    _sighting(runtime, vision, seq=3, at_ms=300, box=(360.0, 20.0, 400.0, 460.0))  # +60px
+    _sighting(runtime, vision, seq=3, at_ms=300, box=(360.0, 20.0, 400.0, 480.0))  # +60px
     assert runtime.behavior.state == "ALERT", "데드존 밖이어도 분기점 안이면 떨림으로 본다"
-    _sighting(runtime, vision, seq=4, at_ms=400, box=(440.0, 20.0, 480.0, 460.0))  # +140px
+    _sighting(runtime, vision, seq=4, at_ms=400, box=(440.0, 20.0, 480.0, 480.0))  # +140px
     assert runtime.behavior.state == "TRACK", "분기점을 넘으면 다시 돈다"
-    _sighting(runtime, vision, seq=5, at_ms=500, box=(360.0, 20.0, 400.0, 460.0))  # +60px
+    _sighting(runtime, vision, seq=5, at_ms=500, box=(360.0, 20.0, 400.0, 480.0))  # +60px
     assert runtime.behavior.state == "TRACK", "다시 데드존에 들어야 중앙이다"
 
 
@@ -1319,14 +1319,14 @@ def test_aim_timeout_raises_the_head_for_a_dodging_target(config: dict, clock: F
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
-    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 480.0))
     assert runtime.behavior.state == "ALERT"
     timeout_ms = config["fsm"]["track_aim_timeout_ms"]
     seq, at_ms = 3, 200
     while at_ms < 200 + timeout_ms - 200:
         at_ms += 200
         right = (at_ms // 400) % 2 == 1  # 400ms 마다 +140px ↔ 중앙
-        box = (440.0, 20.0, 480.0, 460.0) if right else (300.0, 20.0, 340.0, 460.0)
+        box = (440.0, 20.0, 480.0, 480.0) if right else (300.0, 20.0, 340.0, 480.0)
         _sighting(runtime, vision, seq=seq, at_ms=at_ms, box=box)
         seq += 1
     assert runtime.escalation.level is Level.L0, "상한 전에는 피하는 동안 올리지 않는다"
@@ -1334,7 +1334,7 @@ def test_aim_timeout_raises_the_head_for_a_dodging_target(config: dict, clock: F
     while at_ms < 200 + timeout_ms + hold_ms + 400:
         at_ms += 200
         right = (at_ms // 400) % 2 == 1
-        box = (440.0, 20.0, 480.0, 460.0) if right else (300.0, 20.0, 340.0, 460.0)
+        box = (440.0, 20.0, 480.0, 480.0) if right else (300.0, 20.0, 340.0, 480.0)
         _sighting(runtime, vision, seq=seq, at_ms=at_ms, box=box)
         seq += 1
     assert runtime.escalation.level is Level.L1
@@ -1356,7 +1356,7 @@ def test_far_person_beyond_split_spins_before_walking(config: dict, clock: FakeC
 
 
 def test_ultrasonic_stops_approach_below_box_line(config: dict, clock: FakeClock) -> None:
-    """웅크린 사람은 박스가 437px 에 닿지 않는다 — **초음파 40cm** 가 따로 세운다."""
+    """웅크린 사람은 박스가 459px 에 닿지 않는다 — **초음파 40cm** 가 따로 세운다."""
     runtime, vision = _tracking_runtime(config, clock)
     enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
     runtime.start_patrol(0)
@@ -1394,14 +1394,14 @@ def test_observe_level_starts_when_pitch_is_sent(config: dict, clock: FakeClock)
     _sighting(runtime, vision, seq=1, at_ms=100, box=(20.0, 200.0, 60.0, 400.0))
     assert runtime.behavior.state == "TRACK"
     assert runtime.escalation.level is Level.L0, "접근 중에는 올리지 않는다"
-    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 460.0))
+    _sighting(runtime, vision, seq=2, at_ms=200, box=(300.0, 20.0, 340.0, 480.0))
     assert runtime.behavior.state == "ALERT"
     assert runtime.escalation.level is Level.L0, "머무는 동안에도 아직이다"
 
     hold = int(config["posture"]["alert_hold_ms"])
     lines = runtime.tick(200 + hold)
     assert any('"type":"POSE"' in line for line in lines)
-    _sighting(runtime, vision, seq=3, at_ms=300 + hold, box=(300.0, 20.0, 340.0, 460.0))
+    _sighting(runtime, vision, seq=3, at_ms=300 + hold, box=(300.0, 20.0, 340.0, 480.0))
     assert runtime.escalation.level is Level.L1
 
 
@@ -1409,11 +1409,11 @@ def test_engaged_robot_does_not_track_again(config: dict, clock: FakeClock) -> N
     """고개를 든 뒤에는 **움직이지 않는다** — 대상이 옆으로 가도 다시 쫓지 않는다."""
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
-    _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 20.0, 340.0, 460.0))
+    _sighting(runtime, vision, seq=1, at_ms=100, box=(300.0, 20.0, 340.0, 480.0))
     assert runtime.behavior.state == "ALERT"
     hold = int(config["posture"]["alert_hold_ms"])
     runtime.tick(100 + hold)
-    _sighting(runtime, vision, seq=2, at_ms=200 + hold, box=(20.0, 20.0, 60.0, 460.0))
+    _sighting(runtime, vision, seq=2, at_ms=200 + hold, box=(20.0, 20.0, 60.0, 480.0))
     assert runtime.behavior.state == "ALERT"
     move = _move(runtime.tick(300 + hold))
     assert move is not None and (move["step"], move["angle"]) == (0, 0)
@@ -2063,7 +2063,7 @@ def test_person_already_in_view_when_patrol_starts_still_reaches_alert(
     10~40건이었는데도 `ALERT` 로 한 번도 가지 않았다 — 로봇은 직진만 했다.
     """
     runtime, vision = _tracking_runtime(config, clock)
-    centre = (300.0, 20.0, 340.0, 460.0)
+    centre = (300.0, 20.0, 340.0, 480.0)
     # 순찰 **전에** 사람이 보인다. `IDLE` 에는 전이가 없으므로 상태는 그대로다.
     _sighting(runtime, vision, seq=1, at_ms=100, box=centre)
     assert runtime.behavior.state == "IDLE"
