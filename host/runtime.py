@@ -57,6 +57,7 @@ from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
+from host.vision.vlm_worker import JOIN_TIMEOUT_S as VLM_JOIN_TIMEOUT_S
 from host.vision.vlm_worker import VlmWorker
 from host.vision.worker import TickIntervals, VisionWorker, build_worker
 
@@ -1197,18 +1198,15 @@ class Runtime:
         VLM(4.1GB)과 음성 LLM(4.9GB)은 10GB 카드에 같이 올라가지 못한다. 그래서
         `factory` 에서만 판독기를 올리고 떠날 때 내린다.
 
-        ⚠️ **스레드로 뺀다 — 적재가 14.5초다.** 전환은 `IDLE`·`MANUAL` 에서만 받지만
+        ⚠️ **기다리지 않는다 — 적재가 14.5초다.** 전환은 `IDLE`·`MANUAL` 에서만 받지만
         (`mission.SWITCHABLE`) 그동안도 명령은 10Hz 로 나가야 한다. 올라오는 중에는
         `submit()` 이 거짓을 돌려주고 판독을 그냥 건너뛴다.
+
+        ⚠️ **지금 적재 상태와 견주지 않는다.** 적재 중에는 `available` 이 거짓이라
+        그 사이에 떠나면 «이미 내려가 있다» 로 읽고, 적재가 끝난 경비 모드에 VRAM 이
+        남았다. 원하는 상태만 넘기고 맞추는 것은 `VlmWorker.want()` 가 한다.
         """
-        want = mode == "factory"
-        if want == self._vlm.available:
-            return
-        threading.Thread(
-            target=self._vlm.load if want else self._vlm.unload,
-            name="vlm-profile",
-            daemon=True,
-        ).start()
+        self._vlm.want(mode == "factory")
 
     def _leave_zone(self, now_ms: int) -> None:
         """점검을 끝낸다. ⚠️ **판독·경보가 남았으면 `ZONE_CLEAR` 를 미룬다** (2026-09-24 결정).
@@ -2024,6 +2022,10 @@ class Runtime:
         # 초기화가 300ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
         if self._vision is not None:
             self._vision.start()
+        # `--mode factory` 로 기동하면 `set_mode` 를 거치지 않는다 — 여기서 프로파일을
+        # 건다. ⚠️ **생성자가 아니라 여기다.** 시험은 `Runtime` 을 수백 번 만들고,
+        # 거기서 걸면 만들 때마다 적재가 돈다. `release()` 가 짝으로 내린다.
+        self._apply_load_profile(self._mission.mode)
         self._sock = sock
         # ⚠️ **루프보다 먼저 인코딩한다.** 이것이 프로세스의 seq=1 이어야 로봇이
         # 세션 개시로 인정한다. 틱이 한 번이라도 앞서면 seq 1 을 다른 명령이 쓴다.
@@ -2104,6 +2106,9 @@ class Runtime:
         """비전 워커를 멈추고 종료 요약을 남긴다. ESTOP 은 `stop_robot` 이 이미 보냈다."""
         if self._vision is not None:
             self._vision.stop()
+        # VLM 판독을 멈추고 모델을 내린다. ⚠️ **상한까지만 기다린다** — 적재(14.5초)
+        # 도중이면 그것을 기다리지 않고 나간다. 스레드는 데몬이라 프로세스와 함께 끝난다.
+        self._vlm.want(False).join(timeout=VLM_JOIN_TIMEOUT_S)
         LOG.info(
             "runtime_stopped",
             ticks=self._stats.ticks,

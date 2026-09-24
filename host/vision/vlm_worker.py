@@ -50,6 +50,9 @@ class VlmWorker:
         self._lock = threading.Lock()
         self._slot: Reading | None = None
         self._thread: threading.Thread | None = None
+        #: 원하는 적재 상태와, 적재·해제를 한 줄로 세우는 락 (`want`).
+        self._want = False
+        self._profile_lock = threading.Lock()
         self.submitted = 0
         self.refused = 0
         self.errors = 0
@@ -65,18 +68,33 @@ class VlmWorker:
         """판독기를 쓸 수 있나. 가중치가 없으면 거짓이다."""
         return self._reader.loaded
 
-    def load(self) -> bool:
-        """모델을 올린다. **부르는 스레드가 14.5초 막힌다** — 메인에서 부르지 마라.
+    def want(self, loaded: bool) -> threading.Thread:
+        """적재 상태를 `loaded` 로 맞추는 스레드를 띄우고 **즉시 돌아온다** (적재 14.5초).
 
-        `VisionWorker.start()` 가 세션 생성을 메인 밖으로 못 빼고 기동 비용으로 낸 것과
-        달리, 이쪽은 운용 중에 모드가 바뀔 때마다 일어나므로 **호출부가 스레드로 뺀다**
-        (`runtime._apply_load_profile`).
+        `VisionWorker.start()` 가 세션 생성을 기동 비용으로 낸 것과 달리, 이쪽은 운용
+        중에 모드가 바뀔 때마다 일어나므로 메인 밖으로 뺀다. 기다려야 하는 쪽(종료)은
+        돌려준 스레드를 제한 시간으로 join 한다.
+
+        ⚠️ **전환이 몇 번 겹쳐도 마지막 요청으로 수렴한다.** 스레드는 락을 잡은 **뒤에**
+        `_want` 를 읽는다 — 띄울 때 읽어 두면 락을 먼저 잡은 쪽이 옛 요청을 실행한다.
+        적재 중에 떠나면 적재가 끝난 뒤 다음 스레드가 내리고, `factory` 연타는 먼저
+        올린 세션을 보고 지나간다. **적재가 동시에 두 번 돌지 않는다** — 4.1GB 두 벌이면
+        10GB 를 넘긴다.
         """
-        return self._reader.load()
+        self._want = loaded
+        thread = threading.Thread(target=self._apply_want, name="vlm-profile", daemon=True)
+        thread.start()
+        return thread
 
-    def unload(self) -> None:
-        """모델을 내린다. 멱등이며 실패해도 조용하다."""
-        self._reader.unload()
+    def _apply_want(self) -> None:
+        with self._profile_lock:
+            if self._want:
+                self._reader.load()
+                return
+            # ⚠️ **돌고 있는 판독을 먼저 기다린다.** 추론 중인 세션을 닫으면 판독 스레드가
+            # 닫힌 모델을 만진다. 상한은 `stop()` 의 것이다 — 넘기면 그래도 내린다.
+            self.stop()
+            self._reader.unload()
 
     def submit(self, image: Any, *, now_ms: int) -> bool:
         """판독을 걸고 **즉시 돌아온다.** 받았으면 참, 거절했으면 거짓.
