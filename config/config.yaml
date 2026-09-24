@@ -560,23 +560,22 @@ change_detect:
   baseline_grid: [3, 3]
 
 # ── 구역 (FR-7 / FR-8) ───────────────────────────────────────
-# ⚠️ 구역 "식별"은 ArUco 마커로 하며 측위와 무관하다 (바코드 읽기).
-#    구역 "이동"은 측위가 필요하므로 Phase 2 이며 localization.track 에 종속된다.
+# 구역은 지도 좌표 앵커(`maps/zones.json` · `tools/zone_select.py`)이고, 도착은 측위 위치가
+# 앵커 반경 안에 드는 것이다. 측위가 필요하므로 Phase 2 이며 localization.track 에 종속된다.
+# ⚠️ 인쇄한 ArUco 구역 마커는 2026-09-25 에 없앴다 — 멀리서 보여도 도착으로 쳤다.
 zones:
   # FR-7.1 — 시연 규모에 맞춘다. 방 하나에서 하는 온라인 시연에는 2~3개가 적정하고
-  # 5개는 화면상 구분이 어렵다. 구역이 늘면 마커도 그만큼 출력해야 한다.
+  # 5개는 화면상 구분이 어렵다.
   ids: [A, B, C]
-  # FR-8 — ArUco ID -> 구역 라벨. 사원증과 같은 사전(`auth.badge_dictionary`)을 쓴다.
-  # ⚠️ 사원증 ID(0·1)와 겹치면 사원증을 구역으로 읽으므로 10번대에 둔다.
-  marker_map:
-    10: A
-    11: B
-    12: C
-  # 같은 구역 마커가 연속 이 프레임 수만큼 보여야 도착이다. ArUco 는 없는 ID 를
-  # 한 프레임 읽기도 하고(`auth.unknown_marker_min_frames` 와 같은 이유), 도착하면
-  # 그 프레임이 기준으로 디스크에 남는다. 3 프레임 = 약 0.3초.
-  marker_min_frames: 3
-  arrival_radius_mm: 300       # FR-7.4 (Phase 2)
+  # FR-7.4 — 도착 허용오차(구역의 크기가 아니다). 반경의 두 배를 벗어나야 떠난 것으로 본다.
+  arrival_radius_mm: 300
+  # 앵커에 바라볼 방향(yaw)이 있으면 `ZONE_INSPECT` 가 제자리에서 돌아 맞춘 뒤 본다 —
+  # 기준과 같은 장면이어야 견줄 수 있다 (ADR-40 과 같은 제자리 회전 예외 · ADR-11).
+  align_tolerance_deg: 10      # 이 안이면 맞춘 것이다
+  align_turn_deg: 20           # 회전 지시 한 번의 각도 (`MOVE angle` · 상한 30). ADR-40 의 작은 회전과 같다
+  # 이 안에 못 맞추면 못 본 방문(`zone_unverified`)으로 순찰에 돌아간다. 실측 6.6~6.8°/s 로
+  # 180° 가 약 27초다.
+  align_timeout_ms: 30000
   random_after_first_cycle: true  # FR-7.3
 
 logging:                # NFR-3④

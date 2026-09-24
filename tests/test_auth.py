@@ -225,15 +225,6 @@ def test_an_unregistered_marker_without_any_track_is_ignored(auth: Authenticator
     assert auth.observe([_marker(7)], [], T0) is Outcome.NOTHING
 
 
-def test_a_zone_marker_never_burns_an_attempt(cfg: dict) -> None:
-    """⚠️ 구역 마커(FR-8)는 같은 사전이라 박스 안에 들어와도 인증 시도가 아니다."""
-    zone_cfg = dict(cfg)
-    zone_cfg["zones"] = dict(cfg.get("zones") or {}, marker_map={10: "A"})
-    zoned = Authenticator(zone_cfg)
-    assert zoned.observe([_marker(10, at=(160.0, 250.0))], [_track(1)], T0) is Outcome.NOTHING
-    assert zoned.attempts(1) == 0
-
-
 def test_overlapping_boxes_bind_to_the_nearest(auth: Authenticator) -> None:
     """둘 다 포함하면 박스가 큰(가까운) 쪽 — FR-3.8.2 와 같은 단일 기준이다."""
     far = _track(1, x=100.0, height=200.0)
