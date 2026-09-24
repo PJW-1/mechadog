@@ -101,7 +101,7 @@ export class Operations {
  constructor({storage=null,clock=nowDefault,link=null,fleet=null}={}) {
   // 로봇 자리마다 따로 갖는 것 — 링크·상태 전문·마지막 단계 사건·설정값·사건 피드·정지 잠금.
   // ⚠️ **한 로봇의 값을 다른 로봇 화면에 보이면 안 된다.** MD-02 의 L3 를 MD-01 사유로 설명하는 식이 된다.
-  this.slots=Object.fromEntries(ROBOTS.map(id=>[id,{link:null,device:null,registered:true,telemetry:{state:'off'},lastEscalation:null,policy:null,liveFeed:{state:'off',received:0,dropped:0},estop:false}]));
+  this.slots=Object.fromEntries(ROBOTS.map(id=>[id,{link:null,device:null,registered:true,telemetry:{state:'off'},lastEscalation:null,policy:null,liveFeed:{state:'off',received:0,dropped:0},estop:false,commandsOpen:false}]));
   if(fleet)fleet.slice(0,ROBOTS.length).forEach((unit,index)=>Object.assign(this.slots[ROBOTS[index]],{link:unit.link??null,device:cleanText(unit.device,80)||null,registered:unit.registered!==false}));
   else this.link=link;
   this.linkError=null;this.demoEstop=false;
@@ -252,9 +252,9 @@ export class Operations {
  // 추측하면 공장 순찰을 경비로 착각한다.
  get missionMode(){return this.telemetry?.snapshot?.mode??null}
  // 실제 명령의 공통 경로 — 링크가 없으면 절대 나가지 않고, 거절도 숨기지 않는다.
- requestDevice(label,send){
+ requestDevice(label,send,robot=this.selected){
   if(!this.live)throw new Error('실제 제어는 연결되지 않았습니다.');
-  this.log('실제 '+label+' 요청',this.selected,'LIVE_LINK');
+  this.log('실제 '+label+' 요청',robot,'LIVE_LINK');
   return send().then(result=>{
    const rejected=result&&result.accepted===false;
    this.log('실제 '+label+' 응답',(rejected?'거절 · ':'')+(result?.detail||JSON.stringify(result)),'LIVE_LINK');
@@ -268,6 +268,16 @@ export class Operations {
  requestResetSafe(){return this.requestDevice('안전 해제',()=>this.link.resetSafe())}
  // 경보(L3) 확인. ⚠️ **안전 해제와 합치지 않는다** — 확인하는 대상이 다르다 (ADR-26).
  requestAlarmConfirm(){return this.requestDevice('경보 확인',()=>this.link.confirmAlarm())}
+ // 구역 기준 재등록 (WBS 3.6.5). ⚠️ **사건을 보낸 로봇의 서버로만** 보낸다 — 고른 로봇이 아니다.
+ // 명령 API 가 열렸다고 /health 가 말한 자리(read_only:false)의 실시간 zone_changed 만 받는다.
+ setCommandsOpen(open,robot=ROBOTS[0]){this.slots[robot].commandsOpen=open===true;this.emit('mode')}
+ canResetZoneBaseline(event){const slot=this.slots[event?.slot];return this.live&&event.source==='LIVE_FEED'&&event.event==='zone_changed'&&!!event.zoneId&&!!slot?.link&&slot.commandsOpen===true}
+ requestZoneBaseline(id){
+  const event=this.events.find(e=>e.id===id);
+  if(!this.canResetZoneBaseline(event))throw new Error('이 사건으로는 구역 기준을 다시 등록할 수 없습니다.');
+  const link=this.slots[event.slot].link;
+  return this.requestDevice('구역 '+event.zoneId+' 기준 재등록',()=>link.zoneBaseline(event.zoneId),event.slot);
+ }
  requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
  // 본체 자세 (B6). 서버가 MANUAL 에서만 받는다 — 여기서는 제어권과 정지 상태를 먼저 본다.
  requestPose(preset){
@@ -322,7 +332,7 @@ export class Operations {
  // `snapshotBase` 가 없으면(서버 없이 연 화면) 예전처럼 그림 없이 목록만 남는다.
  // `robot` 은 사건을 보낸 서버의 자리다. 여러 대면 순번이 서버마다 따로라 id 에 자리를 넣는다.
  ingestLiveEvent(payload,snapshotBase=null,robot=ROBOTS[0]){
-  const slot=this.slots[robot]??this.slots[ROBOTS[0]];
+  const slotId=this.slots[robot]?robot:ROBOTS[0],slot=this.slots[slotId];
   const seq=payload.seq,id='LIVE-'+(slot.device?robot+'-':'')+seq;
   if(this.events.some(e=>e.id===id))return this.events.find(e=>e.id===id);
   // 실시간 사건은 세션 메모리에만 둔다 — 원본은 블랙박스가 디스크에 갖고 있다.
@@ -332,7 +342,7 @@ export class Operations {
   const person=(payload.tracks||[]).length,evidence=describeEvidence(name,payload);
   const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):EVENT_TITLES[name];
   const photo=payload.entry!=null||payload.snapshot!=null;
-  const event={id,seq,source:'LIVE_FEED',title:label?label+' · '+name:name,category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
+  const event={id,seq,slot:slotId,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',title:label?label+' · '+name:name,category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
   // 최근 단계 사건 — 경보 띠가 «왜 이 단계인가» 와 경고 문장을 보인다 (B1). 백로그는 순번이 낮은 것부터 온다.
   if(name==='escalation_changed'&&(!slot.lastEscalation||seq>slot.lastEscalation.seq))slot.lastEscalation={seq,escalation:event.escalation,reason:cleanText(payload.reason,80),warning:cleanText(payload.warning,300),ts_ms:payload.ts_ms};
