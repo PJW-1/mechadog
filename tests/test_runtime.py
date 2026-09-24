@@ -2179,6 +2179,51 @@ def test_a_confirmed_change_is_recorded_for_the_dashboard(
     )
 
 
+def _zone_alarm(runtime, vision, cfg: dict) -> int:
+    """기준을 뜬 구역에 물건이 생겨 연속 2방문으로 변화가 확정된다 — `ALERT` · L3
+    (ADR-41 — 반출·반입은 연속 2방문). 다음 시각을 돌려준다."""
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    changed = [_thing("chair"), _thing("bottle", 400.0)]
+    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, changed))
+    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, changed))
+    assert runtime.behavior.state == "ALERT"
+    assert runtime.escalation.level is Level.L3
+    return at
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_confirming_a_zone_change_returns_to_patrol(config: dict, clock: FakeClock, tmp_path: Path):
+    """⚠️ **확인하고도 경계 자세로 서 있었다.** 구역 변화의 `ALERT` 에는 사람이 없어
+    나가는 길(대상 상실·보호구 판정 종료)이 하나도 걸리지 않는다. 경보를 확인하면
+    순찰로 돌아간다 (FR-8.4 · 운용자 결정 2026-09-25)."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _zone_alarm(runtime, vision, cfg)
+    assert runtime.confirm_alarm(at) is True
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is Level.L0
+
+    changed = [_thing("chair"), _thing("bottle", 400.0)]
+    _see(runtime, vision, seq=at + 100, at_ms=at + 100, detections=changed)
+    assert runtime.behavior.state == "PATROL", "마커가 보이는 채로 같은 구역을 다시 점검했다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_zone_alarm_left_unconfirmed_does_not_release_a_later_alert(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """사람 때문에 선 `ALERT` 는 확인해도 그대로다 — 순찰로 보내는 것은 구역 변화의
+    경보뿐이다. 확인하지 않은 구역 경보를 들고 순찰에 다시 나가도 마찬가지다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    at = _zone_alarm(runtime, vision, cfg)
+    runtime.behavior.event(Event.MANUAL_ON, now_ms=at)
+    runtime.behavior.event(Event.MANUAL_OFF, now_ms=at + 100)
+    runtime.start_patrol(at + 200)
+    runtime.behavior.event(Event.PERSON_FOUND, now_ms=at + 300)
+    assert runtime.escalation.level is Level.L3, "확인하지 않은 경보는 수동을 지나도 남는다"
+    assert runtime.confirm_alarm(at + 400) is True
+    assert runtime.behavior.state == "ALERT"
+
+
 # ── 구역에서 장면을 읽는가 (WBS 4.8.0 · ADR-35) ──────────────────
 #
 # ⚠️ **이 절이 있는 이유** — `3.5.4` 가 «모듈만 있고 부르는 곳이 없어» 병합 뒤에도
