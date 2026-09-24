@@ -158,7 +158,7 @@ def test_unload_failure_does_not_block_the_switch() -> None:
 
     reader = VlmReader(Stubborn)
     reader.load()
-    reader.unload()  # 예외가 새면 모드 전환이 막힌다
+    reader.unload()  # 예외가 새면 종료 정리가 막힌다
     assert reader.loaded is False
 
 
