@@ -153,6 +153,10 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("PATROL", Event.ZONE_ARRIVED, "ZONE_INSPECT"),
     Transition("ZONE_INSPECT", Event.ZONE_CLEAR, "PATROL"),
     Transition("ZONE_INSPECT", Event.ZONE_CHANGED, "ALERT"),
+    # ⚠️ **구역 앞의 사람은 물체 변화가 아니다** (FR-8.3 → FR-3 · FR-11.1). 이 줄이 없으면
+    # 게이트가 확정한 사람을 이 상태가 버리고, 사람 한 프레임이 `ZONE_CHANGED` 로 새어
+    # L3 «물체 변화» 가 된다 — 사람 대응은 게이트가 내는 이 사건 하나로만 들어간다.
+    Transition("ZONE_INSPECT", Event.PERSON_FOUND, "ALERT"),
 )
 
 #: **이 상태에서는 나열된 사건만 받는다.** 다른 사건은 무시된다.

@@ -34,7 +34,7 @@ from typing import Any
 
 from host.behavior.actions import register_actions
 from host.behavior.auth import Authenticator, Outcome
-from host.behavior.change_detect import BaselineStore, ChangeConfirmer, classify_changes
+from host.behavior.change_detect import BaselineStore, ChangeConfirmer, ChangeKind, classify_changes
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
@@ -263,6 +263,9 @@ class Runtime:
         #: 이번 점검에서 관찰한 프레임 수. **시간이 아니라 사이클을 센다** —
         #: `ChangeConfirmer` 가 사이클 단위이므로 같은 축으로 세야 어긋나지 않는다.
         self._zone_cycles = 0
+        #: 이번 점검에서 사람 때문에 견주지 못한 사이클이 있었나. 떠날 때 `zone_clear`
+        #: 와 `zone_unverified` 를 가른다.
+        self._zone_person_seen = False
         # 상황 판독 (FR-8 · `4.8.0` · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
@@ -314,7 +317,8 @@ class Runtime:
         # `ALERT` 로 한 번도 가지 않았다. 사람은 내내 보고 있었고 *"새로 나타났다"* 로
         # 쳐지지 않았을 뿐이다 (FR-3.2).
         #
-        # `PERSON_FOUND` 를 받는 상태는 `PATROL` 하나뿐이라 여기만 재장전하면 된다.
+        # `PERSON_FOUND` 를 받는 상태는 `PATROL`·`ZONE_INSPECT` 인데 `ZONE_INSPECT` 는
+        # `PATROL` 에서만 들어가므로 여기만 재장전하면 된다.
         #
         # ⚠️ **임무 밖에서 들어올 때만이다** (`STANDBY` = 대기·수동). 모든 `PATROL`
         # 진입에서 재장전하면 **인증을 통과한 사람이 곧바로 다시 경보를 올린다** —
@@ -990,6 +994,7 @@ class Runtime:
             if zone != self._zone and self._apply(Event.ZONE_ARRIVED, now_ms):
                 self._zone = zone
                 self._zone_cycles = 0
+                self._zone_person_seen = False
                 self._zone_vlm_asked = False
                 # 지난 점검의 누적을 끌고 들어가지 않는다 — 다른 시점의 관찰이
                 # 이번 사이클 수를 채우면 한 번 보고 확정하는 꼴이 된다.
@@ -1028,22 +1033,45 @@ class Runtime:
             frame_size=(width, height),
             watch_classes=self._watch_classes,
         )
-        confirmed = self._confirmer.observe(zone, changes)
-        if confirmed:
-            LOG.warning(
-                "zone_changed",
-                zone=zone,
-                changes=[change.as_dict() for change in confirmed],
-            )
-            # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
-            self._apply(Event.ZONE_CHANGED, now_ms)
-            self._zone_cycles = 0
-            return
+        # ⚠️ **사람이 보이는 프레임은 견주지 않는다** (FR-8.3 → FR-3 · FR-11.1). 사람은
+        # 물체 변화가 아니라 게이트(`PERSON_FOUND`)가 맡는다 — 여기서 확정하면 한 프레임이
+        # 게이트를 건너뛰어 L3 «물체 변화» 가 된다. 그리고 **사람이 물건을 가리면 그
+        # 물건이 반출로 세어진다.** 확정기에 넣지도 않으므로 연속 횟수도 건드리지 않는다.
+        if any(change.kind is ChangeKind.PERSON for change in changes):
+            self._zone_person_seen = True
+        else:
+            confirmed = self._confirmer.observe(zone, changes)
+            if confirmed:
+                found = [change.as_dict() for change in confirmed]
+                LOG.warning("zone_changed", zone=zone, changes=found)
+                # ⚠️ **전이보다 먼저 남긴다** — `_observe_fallen` 과 같다. 대시보드 사건
+                # 피드는 이 기록을 받으므로, 없으면 화면에는 단계 변경만 보인다 (FR-8.3).
+                self._record_scene(
+                    "zone_changed",
+                    result,
+                    {
+                        "zone": zone,
+                        "grid": list(baseline.grid),
+                        "changes": found,
+                        "baseline_ms": baseline.captured_ms,
+                        "baseline_snapshot": baseline.snapshot,
+                    },
+                )
+                # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
+                self._apply(Event.ZONE_CHANGED, now_ms)
+                self._zone_cycles = 0
+                return
         # ⚠️ **영원히 서 있지 않는다.** 확정에 필요한 사이클을 다 보고도 아무것도
         # 안 나오면 순찰로 돌아간다. 여기서 나가지 않으면 카메라가 흔들리는 동안
-        # 로봇이 구역 앞에 멈춘 채로 남는다.
+        # 로봇이 구역 앞에 멈춘 채로 남는다. 사람이 비키기를 기다리지도 않는다 —
+        # 대신 **`zone_clear` 로 적지 않는다.** 보지 못한 구역을 «변화 없음» 으로 남기면
+        # 로그만 보고 그 구역이 확인된 줄 안다.
         if self._zone_cycles >= self._confirmer.confirm_cycles:
-            LOG.info("zone_clear", zone=zone, cycles=self._zone_cycles)
+            LOG.info(
+                "zone_unverified" if self._zone_person_seen else "zone_clear",
+                zone=zone,
+                cycles=self._zone_cycles,
+            )
             self._leave_zone(now_ms)
 
     def _fall_held(self, now_ms: int) -> bool:
@@ -1148,6 +1176,7 @@ class Runtime:
 
     def _leave_zone(self, now_ms: int) -> None:
         self._zone_cycles = 0
+        self._zone_person_seen = False
         # ⚠️ **구역을 떠나면 그 구역의 판독도 버린다.** 남겨 두면 다음 구역에서 지난
         # 구역의 답을 자기 것으로 읽는다 — `ChangeConfirmer.forget` 과 같은 이유다.
         self._zone_vlm_asked = False
