@@ -143,7 +143,7 @@ test('a confirmed zone change is filed under zones and names grid cells without 
  const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
  const zone=(seq,judgement)=>store.ingestLiveEvent({...base,seq,ts_ms:seq,event:'zone_changed',judgement});
  const event=zone(1,{zone:'A',grid:[3,3],changes:[{kind:'removed',label:'bottle',count:1,cell:[2,0]},{kind:'added',label:'box',count:2,cell:[1,1]},{kind:'added',label:'cup',count:1,cell:[0,2]},{kind:'person',label:'person',count:1,cell:null}],baseline_ms:1700000000000,baseline_snapshot:'A.jpg'});
- assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 물체 변화 확정 · zone_changed$/);
+ assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 물체 변화 확정 · zone_changed$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
  assert.deepEqual(event.evidence.slice(0,5),[['구역','A'],['반출','bottle ×1 · 오른쪽 위'],['반입','box ×2 · 가운데'],['반입','cup ×1 · 왼쪽 아래'],['인원 출현','person ×1']]);
  assert.equal(event.evidence[5][0],'기준 시각');assert.equal(event.evidence.length,6);
  panels.render('events');change(dom,document.querySelector('[aria-label="사건 유형"]'),'OBJECT');
