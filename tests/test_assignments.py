@@ -91,11 +91,17 @@ def test_dot_separated_predecessors_unlock_together(packages: list[WorkPackage])
     assert is_ready(blocker, packages) == all(part.done for part in parts)
 
 
-def _section(text: str, heading: str) -> str:
-    """`heading` 으로 시작하는 절부터 다음 `###`·`<details>` 전까지를 돌려준다."""
-    start = text.index(heading)
-    ends = [i for i in (text.find("\n### ", start + 1), text.find("<details>", start)) if i != -1]
-    return text[start : min(ends)]
+def _sections(text: str, heading: str) -> str:
+    """담당자마다 `heading` 으로 시작하는 절을 다음 `###`·`<details>` 전까지 모아 돌려준다."""
+    parts = []
+    start = text.find(heading)
+    while start != -1:
+        ends = [
+            i for i in (text.find("\n### ", start + 1), text.find("<details>", start)) if i != -1
+        ]
+        parts.append(text[start : min(ends)])
+        start = text.find(heading, start + 1)
+    return "".join(parts)
 
 
 def test_phase2_packages_are_listed_apart_from_phase1_work(
@@ -107,9 +113,9 @@ def test_phase2_packages_are_listed_apart_from_phase1_work(
     6.5 M/D 가 조건부 예약인 Phase 2 몫이었다.
     """
     text = render(packages)
-    phase1 = _section(text, "### 🟢") + _section(text, "### ⏳")
-    phase2 = _section(text, "### ⏸")
-    for wid in ("2.2.1", "3.9.1", "3.9.2", "5.4.1", "5.4.5"):
+    phase1 = _sections(text, "### 🟢") + _sections(text, "### ⏳")
+    phase2 = _sections(text, "### ⏸")
+    for wid in ("2.2.1", "2.5", "3.6.1", "3.6.5", "3.9.1", "3.9.2", "5.4.1", "5.4.5"):
         assert next(p for p in packages if p.wid == wid).phase2, f"{wid}: [P2] 표기 누락"
         assert f"`{wid}`" in phase2, f"{wid}: Phase 2 절에 없다"
         assert f"`{wid}`" not in phase1, f"{wid}: Phase 1 할 일에 섞였다"
