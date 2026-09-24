@@ -393,10 +393,8 @@ ADDED = Change(ChangeKind.ADDED, "laptop", 1, (1, 1))
 PERSON = Change(ChangeKind.PERSON, "person", 1, None)
 
 
-def _confirmer(cycles: int = 2, *, immediate: bool = True) -> ChangeConfirmer:
-    return ChangeConfirmer(
-        {"change_detect": {"confirm_cycles": cycles, "person_immediate": immediate}}
-    )
+def _confirmer(cycles: int = 2) -> ChangeConfirmer:
+    return ChangeConfirmer({"change_detect": {"confirm_cycles": cycles}})
 
 
 def test_a_single_cycle_never_confirms():
@@ -437,21 +435,13 @@ def test_a_change_that_returns_can_be_confirmed_again():
     assert conf.observe("A", [REMOVED]) == (REMOVED,)
 
 
-def test_person_is_confirmed_immediately():
-    """FR-8.4 단서 — 다음 사이클을 기다리면 이미 지나가 버린다."""
-    assert _confirmer().observe("A", [PERSON]) == (PERSON,)
-
-
-def test_person_immediate_can_be_turned_off():
-    conf = _confirmer(immediate=False)
+def test_person_has_no_shortcut():
+    """⚠️ **사람을 즉시 확정하는 길이 없다.** 사람 한 프레임이 이 길로 사람 게이트(FR-3)를
+    건너뛰어 L3 «물체 변화» 가 됐다(#265). 사람은 게이트가 맡고, 여기 들어와도 다른
+    변화처럼 연속 방문을 센다."""
+    conf = _confirmer()
     assert conf.observe("A", [PERSON]) == ()
     assert conf.observe("A", [PERSON]) == (PERSON,)
-
-
-def test_person_does_not_shortcut_object_changes():
-    """같은 사이클에 둘이 와도 물체는 여전히 두 번 봐야 한다."""
-    conf = _confirmer()
-    assert conf.observe("A", [REMOVED, PERSON]) == (PERSON,)
 
 
 def test_zones_are_counted_separately():
@@ -506,7 +496,6 @@ def test_real_config_drives_the_confirmer(cfg):
         {"confirm_cycles": 0},
         {"confirm_cycles": "2"},
         {"confirm_cycles": True},
-        {"person_immediate": "yes"},
     ],
 )
 def test_bad_confirmer_config_is_rejected(section):
