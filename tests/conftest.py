@@ -58,6 +58,17 @@ def _isolate_logging():
     logger.handlers, logger.filters, logger.level, logger.propagate = saved
 
 
+@pytest.fixture(autouse=True)
+def _no_real_vlm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`Runtime` 이 실제 VLM 세션 팩토리를 만들지 않게 한다.
+
+    ⚠️ **`begin()` 은 모드와 상관없이 VLM 을 올린다** (ADR-35 결정 5 · 2026-09-24 개정).
+    의존성이 깔린 환경(`~/.venv-mechdog-vlm`)에서 돌리면 `serve` 를 부르는 시험마다
+    4.1GB 적재가 백그라운드에서 돈다. 판독을 보는 시험은 `vlm_reader` 를 주입한다.
+    """
+    monkeypatch.setattr("host.runtime.build_session_factory", lambda _config: None)
+
+
 @pytest.fixture(scope="session")
 def cfg() -> dict:
     return yaml.safe_load(CONFIG.read_text(encoding="utf-8"))

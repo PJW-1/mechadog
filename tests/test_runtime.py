@@ -2106,43 +2106,6 @@ def test_a_zone_reached_while_the_last_reading_runs_says_busy_and_passes(
     assert skipped == [("B", "busy")]
 
 
-@pytest.mark.usefixtures("unlock_modes")
-def test_switching_modes_loads_and_releases_the_reader(
-    config: dict, clock: FakeClock, tmp_path: Path
-):
-    """모드가 곧 적재 프로파일이다 (ADR-35 결정 5).
-
-    ⚠️ VLM(4.1GB)과 음성 LLM(4.9GB)은 10GB 카드에 같이 올라가지 못한다.
-    """
-    import time as _time
-
-    session = FakeVlmSession()
-    cfg = _zone_config(config, tmp_path)
-    reader = VlmReader(lambda: session, budget_ms=10_000)
-    runtime = Runtime(
-        cfg,
-        device_id=DEVICE,
-        clock=clock,
-        vision=FakeVision(),
-        mission=Mission(cfg, mode="guard"),
-        vlm_reader=reader,
-    )
-    assert runtime.vlm.available is False, "경비 모드에서는 올리지 않는다"
-
-    assert runtime.set_mode("factory") is None
-    deadline = _time.monotonic() + 5.0
-    while not runtime.vlm.available and _time.monotonic() < deadline:
-        _time.sleep(0.005)
-    assert runtime.vlm.available is True, "공장 모드 진입에 판독기가 올라오지 않았다"
-
-    assert runtime.set_mode("guard") is None
-    deadline = _time.monotonic() + 5.0
-    while runtime.vlm.available and _time.monotonic() < deadline:
-        _time.sleep(0.005)
-    assert runtime.vlm.available is False, "모드를 떠났는데 VRAM 을 놓지 않았다"
-    assert session.closed == 1
-
-
 # ── 사건이 관제 화면까지 닿는가 (WBS 4.4.3) ──────────────────────
 
 
