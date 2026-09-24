@@ -15,11 +15,12 @@
 쌓으면 구역을 떠난 뒤에 그 구역의 판독이 도착하고, 그것은 *"다른 시점의 관찰이 이번
 사이클을 채우는"* 것과 같은 고장이다(`ChangeConfirmer` 주석 참조).
 
-⚠️ **결과는 한 번만 소비된다.** `take()` 가 슬롯을 비운다 — 남겨 두면 다음 구역에서
-지난 구역의 판독을 자기 것으로 읽는다.
+⚠️ **결과는 한 번만 소비된다.** `take()` 가 슬롯을 비운다. 결과에는 어느 구역의
+것인지가 없으므로, 건 구역은 호출부가 붙들어 둔다(`runtime._take_zone_reading`).
 
 ⚠️ **스레드가 죽어도 로봇은 걷는다.** 예외는 삼키지 않고 세며, 판독이 없으면 그냥
-없는 채로 간다. VLM 은 Tier 3 이고 주행에 영향을 주지 않는다(ADR-35 결정 6).
+없는 채로 간다. 실패·타임아웃은 주행에 영향을 주지 않는다(ADR-35 결정 6). 구역에서
+결과를 기다리는 것은 호출부의 일이며 상한이 있다(2026-09-24 개정).
 """
 
 from __future__ import annotations
@@ -50,6 +51,8 @@ class VlmWorker:
         self._lock = threading.Lock()
         self._slot: Reading | None = None
         self._thread: threading.Thread | None = None
+        #: 적재 스레드 (`start`). 종료가 적재 도중인지 여기서 본다.
+        self._loader: threading.Thread | None = None
         self.submitted = 0
         self.refused = 0
         self.errors = 0
@@ -65,18 +68,18 @@ class VlmWorker:
         """판독기를 쓸 수 있나. 가중치가 없으면 거짓이다."""
         return self._reader.loaded
 
-    def load(self) -> bool:
-        """모델을 올린다. **부르는 스레드가 14.5초 막힌다** — 메인에서 부르지 마라.
+    def start(self) -> None:
+        """모델을 올리는 스레드를 띄우고 **즉시 돌아온다** (적재 14.5초).
 
-        `VisionWorker.start()` 가 세션 생성을 메인 밖으로 못 빼고 기동 비용으로 낸 것과
-        달리, 이쪽은 운용 중에 모드가 바뀔 때마다 일어나므로 **호출부가 스레드로 뺀다**
-        (`runtime._apply_load_profile`).
+        기동할 때 모드와 상관없이 **한 번만** 부른다 — ADR-35 결정 5 (2026-09-24 개정:
+        상시 적재). `VisionWorker.start()` 처럼 기동 비용으로 내면 운용 루프가 14.5초
+        늦게 서므로 메인 밖으로 뺀다. 올라오는 동안 `submit()` 은 거짓을 돌려준다.
+
+        ⚠️ **두 번 부르지 마라.** `VlmReader.load()` 는 스레드 안전하지 않아 적재가
+        겹치면 4.1GB 가 두 벌 올라간다.
         """
-        return self._reader.load()
-
-    def unload(self) -> None:
-        """모델을 내린다. 멱등이며 실패해도 조용하다."""
-        self._reader.unload()
+        self._loader = threading.Thread(target=self._reader.load, name="vlm-load", daemon=True)
+        self._loader.start()
 
     def submit(self, image: Any, *, now_ms: int) -> bool:
         """판독을 걸고 **즉시 돌아온다.** 받았으면 참, 거절했으면 거짓.
@@ -109,15 +112,30 @@ class VlmWorker:
             return self._slot
 
     def stop(self, timeout_s: float = JOIN_TIMEOUT_S) -> None:
-        """돌고 있는 판독 하나를 기다려 준다. **강제로 끊지 않는다.**
+        """돌고 있는 판독 하나를 기다린 뒤 모델을 내린다. **강제로 끊지 않는다.**
 
         네이티브 추론 중간에 끊을 방법이 없고, 종료 경로에는 `ESTOP` 송신이 있어
-        오래 기다릴 수도 없다. `VisionWorker.stop()` 과 같은 타협이다.
+        오래 기다릴 수도 없다. `VisionWorker.stop()` 과 같은 타협이다 — 상한을 넘기면
+        그래도 내린다.
+
+        ⚠️ **적재 중이면 내리지 않고 나간다.** 적재(14.5초)를 끝까지 기다리면 종료가
+        막히고, 기다리지 않고 내리면 적재가 끝난 뒤에 세션이 생겨 남는다. 스레드는
+        데몬이라 프로세스가 끝나면 VRAM 도 풀린다.
+
+        ⚠️ **`submit()` 과 같은 스레드(운용 루프)에서 부른다.** 락 없이 `_thread` 를
+        읽으므로 다른 스레드에서 부르면 시작 전 스레드를 join 할 수 있다.
         """
+        loader = self._loader
+        if loader is not None:
+            loader.join(timeout=max(0.0, timeout_s))
+            if loader.is_alive():
+                LOG.warning("vlm_unload_skipped", reason="loading")
+                return
         thread = self._thread
         if thread is not None:
             thread.join(timeout=max(0.0, timeout_s))
         self._thread = None
+        self._reader.unload()
 
     def _run(self, image: Any, now_ms: int) -> None:
         started = time.monotonic()

@@ -273,6 +273,17 @@ def test_estop_cannot_be_used_to_clear_an_alarm(esc: Escalation) -> None:
     assert esc.level is Level.L0
 
 
+def test_alarm_confirmed_during_failsafe_returns_after_the_reset(esc: Escalation) -> None:
+    """**잠금 중에 확정된 경보도 F 를 풀면 L3 로 돌아온다.** 버리면 비상정지 중에 도착한
+    쓰러짐 판독이 경보 없이 사라진다 (2026-09-24 결정)."""
+    esc.note_event("ESTOP", T0)
+    esc.note_event("PERSON_DOWN", T0 + 100)
+    assert esc.level is Level.F
+    assert esc.alarm_pending is True
+    esc.note_event("RESET_CONFIRMED", T0 + 5000)
+    assert esc.level is Level.L3
+
+
 def test_failsafe_without_alarm_returns_to_patrol(esc: Escalation) -> None:
     """경보가 없었으면 L3 로 되돌리지 않는다 — 없던 경보를 만들어내면 안 된다."""
     _see(esc, T0)

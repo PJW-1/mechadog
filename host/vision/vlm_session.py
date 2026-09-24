@@ -116,8 +116,8 @@ class QwenVlSession:
 def build_session_factory(config: Mapping[str, Any]) -> Callable[[], QwenVlSession] | None:
     """설정에서 세션 팩토리를 만든다. **못 만들면 `None`** — 예외가 아니다.
 
-    ⚠️ **여기서 모델을 올리지 않는다.** 팩토리를 돌려줄 뿐이고, 적재는 `factory` 모드에
-    들어갈 때 워커 스레드가 한다(14.5초).
+    ⚠️ **여기서 모델을 올리지 않는다.** 팩토리를 돌려줄 뿐이고, 적재는 기동할 때
+    워커 스레드가 한다(14.5초 · ADR-35 결정 5 개정: 상시 적재).
     """
     section = (config.get("vision") or {}).get("vlm")
     if not isinstance(section, Mapping):

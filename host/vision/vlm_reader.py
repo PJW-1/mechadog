@@ -133,7 +133,7 @@ class VlmSession(Protocol):
         ...
 
     def close(self) -> None:
-        """VRAM 을 놓는다. **공장 모드를 벗어날 때 이것이 안 불리면 VRAM 에 남는다.**"""
+        """VRAM 을 놓는다. **종료할 때 이것이 안 불리면 프로세스가 끝날 때까지 VRAM 에 남는다.**"""
         ...
 
 
@@ -164,10 +164,12 @@ def parse_answer(text: str) -> bool | None:
 
 
 class VlmReader:
-    """판독기 수명주기. **모드가 곧 적재 프로파일이다** (ADR-35 결정 5).
+    """판독기 수명주기. 기동할 때 한 번 올리고 종료할 때 내린다 (ADR-35 결정 5 ·
+    2026-09-24 개정: 상시 적재).
 
-    ⚠️ **두 번 적재하지 않는다.** `factory` 진입이 두 번 오면(대시보드 연타) 4.1GB 가
-    두 벌 올라가 10GB 를 넘긴다. `load()` 는 멱등이다.
+    ⚠️ **두 번 적재하지 않는다.** 4.1GB 가 두 벌 올라가면 10GB 를 넘긴다. `load()` 는
+    멱등이다 — **단, 스레드 안전하지는 않다.** 적재 중에 또 부르면 `_session` 이 아직
+    비어 있어 두 벌을 올린다. 그래서 `VlmWorker.start()` 가 기동 때 한 번만 부른다.
     """
 
     def __init__(
@@ -218,8 +220,8 @@ class VlmReader:
     def unload(self) -> None:
         """모델을 내린다. **멱등이며 실패해도 조용히 지나간다.**
 
-        ⚠️ 여기서 예외가 새면 모드 전환이 막힌다. 내리는 데 실패한 VRAM 은 다음
-        적재가 실패하는 것으로 드러나지, 전환을 세워서 드러낼 일이 아니다.
+        ⚠️ 여기서 예외가 새면 종료(`Runtime.release`)가 뒤따르는 정리를 건너뛴다. 내리는 데
+        실패한 VRAM 은 프로세스가 끝나면 풀린다 — 종료를 세워서 드러낼 일이 아니다.
         """
         session, self._session = self._session, None
         if session is None:
