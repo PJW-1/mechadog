@@ -28,7 +28,7 @@
 > **주기가 고정이 아니다.** 제어 명령이 10Hz 고정인 것은 그 송신이 곧 링크
 > 신호이기 때문인데(PROTOCOL 1절), 스캔은 그렇지 않다 — 로봇이 걷는 동안에는
 > 쓸 수 없는 데이터라(ADR-7) 보내도 버린다. 그래서 **스캔 두절은 안전 문제가
-> 아니라 측위 능력의 상실**이며, `lidar.scan_stall_timeout_ms` 를 넘기면
+> 아니라 측위 능력의 상실**이다. `lidar.scan_stall_timeout_ms` 는 **정지 후 스캔을 기대하는 구간에서만** 적용한다. 걷는 동안 스캔이 없는 것은 정상이다. 기대한 스캔이 이 시간을 넘겨 없으면
 > `FAILSAFE` 가 아니라 `LOST` 로 간다. 비전의 `stall_timeout_ms` 가
 > `safety` 절 밖에 있는 것과 같은 판단이다 (`config.yaml` vision 절 각주).
 
@@ -40,7 +40,7 @@
 명령과 같다.
 
 ```json
-{"seq": 12, "ts": 1756800000123, "type": "SCAN", "device_id": "lidar-01", "boot_id": "7f3a91c2e8b40d65", "points": [[0.0, 1250], [1.0, 1249, 200]]}
+{"seq": 12, "ts": 1200123, "type": "SCAN", "device_id": "lidar-01", "boot_id": "7f3a91c2e8b40d65", "points": [[0.0, 1250], [1.0, 1249, 200]]}
 ```
 
 ### 공통 필드
@@ -48,7 +48,7 @@
 | 필드 | 타입 | 의미 |
 | :--- | :--- | :--- |
 | `seq` | **int** | 부팅 안에서 단조 증가. `seq >= 1`. **이것이 곧 Scan ID 다** |
-| `ts` | **int** | 중계 노드 기준 epoch **밀리초** (초 아님) |
+| `ts` | **int** | 중계 노드 부팅 후 경과 **밀리초** (초·epoch 아님). 스캔 신선도는 호스트 수신 시각으로 판단 |
 | `type` | **str** | 대문자 고정. 현재 `SCAN` 하나 |
 | `device_id` | **str** | 물리 중계 노드. 비어 있으면 안 된다 |
 | `boot_id` | **str** | 그 노드의 한 번의 부팅. 권장: 난수 64비트의 16자리 hex |
@@ -190,12 +190,12 @@
 
 | `LaserScan` 필드 | 이 링크에서 | 비고 |
 | :--- | :--- | :--- |
-| `header.stamp` | `ts` (epoch **ms**) | ROS2 는 sec+nanosec 다. `ts` 를 나눠 넣는다 |
+| `header.stamp` | 한 회전 첫 조각의 ROS2 수신 시각 | 중계 노드 `ts`는 uptime이므로 ROS epoch에 직접 대입하지 않는다. 실물 지연은 별도 계측 |
 | `header.frame_id` | — | 브리지가 정한다 (`laser` 권장). **`base_link` 로 두지 말 것** — 마스트 오프셋이 tf 로 표현되어야 한다 |
-| `angle_min` · `angle_max` | `0` · `2π` | 데이터그램은 부채꼴 조각이다 (2절) — 브리지가 각도 빈으로 한 바퀴분을 모은 뒤 발행한다 |
+| `angle_min` · `angle_max` | `0` · `2π - angle_increment` | 데이터그램은 부채꼴 조각이다 (2절) — 브리지가 각도 빈으로 한 바퀴분을 모은 뒤 발행한다 |
 | `angle_increment` | `2π / len(ranges)` | 아래 각주 참조 |
 | `time_increment` | `0` | 정지 중에만 스캔하므로(ADR-7) 빔별 시각차를 쓰지 않는다 |
-| `scan_time` | 스캔 주기 (5Hz → `0.2`) | |
+| `scan_time` | 브리지의 직전 발행 간격 (첫 회전은 `0.1`) | 실물 회전 속도에 맞춰 확인 |
 | `range_min` · `range_max` | `lidar.range_min_mm` · `range_max_mm` / 1000 | **m 로 바꾼다** |
 | `ranges[i]` | `dist_mm` / 1000 | **m 로 바꾼다** |
 | `intensities` | `quality` 또는 빈 배열 | 우리는 쓰지 않는다 (2절) |

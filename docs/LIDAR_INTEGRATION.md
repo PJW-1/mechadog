@@ -50,13 +50,13 @@
 > 지도는 그럴듯해 보이므로 눈으로 잡히지 않는다
 > (`test_slam_toolbox_unknown_value_does_not_become_free`).
 
-### 아직 만들지 않은 것 — 제 몫이 아니거나 선행이 안 끝났다
+### Phase 2 연결 상태 (2026-09-24)
 
-| 항목 | 왜 |
+| 항목 | 현재 상태 |
 | :--- | :--- |
-| `docker/ros2/` | **WBS 5.4.1 · 담당 C · P2 승인 선행.** 제가 만들 것이 아니다 |
-| `SCAN` → `LaserScan` 브리지 | 구현은 위 작업의 몫. **필드 매핑은 [PROTOCOL_LIDAR 6절](PROTOCOL_LIDAR.md)에 사양으로 못박아 두었다** — 각도 부호·빈 칸 `inf` 처리 하나가 어긋나면 지도가 조용히 뒤집힌다 |
-| tf `odom` → `base_link` | ⚠️ **오도메트리가 없다.** `gait_calibration` 은 `mechdog-01` 에 채워졌지만(전진 104.0 mm/s · 좌선회 6.8 도/s · 2026-09-11) **개루프 추측항법이라 tf 로 낼 수 있는 값이 아니다** — 바닥·배터리가 바뀌면 틀리고 누적 오차를 되돌릴 수단이 없다. ADR-9 가 경계한 실패 양상 네 가지 중 하나가 정확히 `odom` 드리프트인데, 우리는 드리프트가 아니라 **odom 자체가 없다.** `2.2.3` 은 **LiDAR·마스트 없이 지금 할 수 있다** |
+| `docker/ros2/` | `ros:jazzy` 이미지와 `slam_toolbox`·`rviz2` 설치, 모의 UDP의 `/scan` 도달까지 확인했다. 실물 UDP·RViz 화면 검수는 남았다 ([기동 가이드](../docker/ros2/README.md)) |
+| `SCAN` → `LaserScan` 브리지 | 모의 부채꼴 데이터그램 조립·발행을 구현했다. 각도 방향·회전 속도·유효 범위는 실제 LD19로 재검증한다 ([PROTOCOL_LIDAR 6절](PROTOCOL_LIDAR.md)) |
+| tf `odom` → `base_link` 및 Python 순찰기 연결 | **미구현.** `mechdog-01`·`02` 보행 실측값은 있지만 명령 적분은 이동 중 예측값일 뿐이다. 10Hz 오도메트리로 이동 중 위치를 갱신하고 정지 스캔으로 드리프트를 보정해야 한다. 스캔 전용 위치 갱신으로는 500ms `LOST` 기준을 만족하지 못한다 (WBS 5.4.3~5.4.4) |
 
 ---
 
