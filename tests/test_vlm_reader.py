@@ -151,7 +151,7 @@ def test_unload_releases_the_session() -> None:
     assert session.closed == 1
 
 
-def test_unload_failure_does_not_block_the_switch() -> None:
+def test_unload_failure_does_not_block_the_shutdown() -> None:
     class Stubborn(FakeSession):
         def close(self) -> None:
             raise RuntimeError("해제 실패")
