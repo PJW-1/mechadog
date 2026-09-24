@@ -89,3 +89,44 @@ def test_dot_separated_predecessors_unlock_together(packages: list[WorkPackage])
     assert "·" in blocker.predecessor
     parts = [by_id[wid] for wid in ("3.2.1", "3.2.2", "3.2.4", "3.2.6")]
     assert is_ready(blocker, packages) == all(part.done for part in parts)
+
+
+def _sections(text: str, heading: str) -> str:
+    """담당자마다 `heading` 으로 시작하는 절을 다음 `###`·`<details>` 전까지 모아 돌려준다."""
+    parts = []
+    start = text.find(heading)
+    while start != -1:
+        ends = [
+            i for i in (text.find("\n### ", start + 1), text.find("<details>", start)) if i != -1
+        ]
+        parts.append(text[start : min(ends)])
+        start = text.find(heading, start + 1)
+    return "".join(parts)
+
+
+def test_phase2_packages_are_listed_apart_from_phase1_work(
+    packages: list[WorkPackage],
+) -> None:
+    """Phase 2(`[P2]`) 항목이 Phase 1 할 일과 섞이면 남은 일이 부풀어 보인다.
+
+    2026-09-25 까지 `3.9`·`5.4` 가 `⏳ 대기` 에 섞여 L1·L2 의 남은 공수 10.0 M/D 중
+    6.5 M/D 가 조건부 예약인 Phase 2 몫이었다.
+    """
+    text = render(packages)
+    phase1 = _sections(text, "### 🟢") + _sections(text, "### ⏳")
+    phase2 = _sections(text, "### ⏸")
+    for wid in ("2.2.1", "2.5", "3.6.1", "3.6.5", "3.9.1", "3.9.2", "5.4.1", "5.4.5"):
+        assert next(p for p in packages if p.wid == wid).phase2, f"{wid}: [P2] 표기 누락"
+        assert f"`{wid}`" in phase2, f"{wid}: Phase 2 절에 없다"
+        assert f"`{wid}`" not in phase1, f"{wid}: Phase 1 할 일에 섞였다"
+
+
+def test_packages_without_effort_still_appear(packages: list[WorkPackage]) -> None:
+    """공수가 `—` 로 비어 있어도 할 일은 목록에 보여야 한다.
+
+    `3.6.4`·`3.6.5`·`4.8.4` 는 공수 산정 전에 추가돼 파서가 건너뛰었고,
+    진행 중인 일이 담당 목록에서 통째로 사라져 있었다.
+    """
+    text = render(packages)
+    for wid in ("3.6.4", "3.6.5", "4.8.4"):
+        assert f"`{wid}`" in text, f"{wid}: 담당 목록에 없다"

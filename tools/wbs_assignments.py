@@ -34,6 +34,10 @@ _ID, _NAME, _DELIV, _DOD, _R, _PRED, _MD = 0, 1, 2, 3, 4, 5, 6
 #: 완료 표기 — `[완료]`와 `[완료 · PR #18]`처럼 근거가 붙은 형식을 모두 인식한다.
 DONE_MARK = "[완료"
 
+#: Phase 2 표기 — 워크패키지 이름 칸에 붙인다. DoD 안의 `[P2]` 는 항목 일부만 가리키므로 보지 않는다.
+#: Phase 2 는 조건부 착수(PRD 3절)라 Phase 1 할 일·남은 공수와 섞지 않고 따로 보인다.
+PHASE2_MARK = "[P2]"
+
 #: 담당자 배정 규칙 — 역할 범위는 CONTRIBUTING 1절에 기록한다.
 #: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4`(ROS2 항법)가 이관된다.
 #: 나머지 `B`·`C` 가 팀장 몫이다.
@@ -72,8 +76,9 @@ class WorkPackage:
     deliverable: str  # 무엇을 만들면 되는가 — 초보가 가장 먼저 찾는 정보
     role: str  # A · B · C (작업 성격)
     predecessor: str
-    effort: float
+    effort: float  # 0.0 = 공수 미산정(`—`)
     done: bool
+    phase2: bool
 
     @property
     def group(self) -> str:
@@ -111,7 +116,7 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
         if not re.fullmatch(r"\d+(\.\d+)*", wid):
             continue
         effort = _clean(cells[_MD])
-        if not re.fullmatch(r"[\d.]+", effort):
+        if effort != "—" and not re.fullmatch(r"[\d.]+", effort):
             continue
         packages.append(
             WorkPackage(
@@ -120,8 +125,9 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
                 deliverable=_clean(cells[_DELIV]) or "—",
                 role=_clean(cells[_R]),
                 predecessor=_clean(cells[_PRED]) or "—",
-                effort=float(effort),
+                effort=0.0 if effort == "—" else float(effort),
                 done=DONE_MARK in cells[_DOD],
+                phase2=PHASE2_MARK in cells[_NAME],
             )
         )
     return sorted(packages, key=WorkPackage.sort_key)
@@ -197,7 +203,7 @@ def _table(packages: list[WorkPackage], *, with_predecessor: bool) -> list[str]:
         cells = [f"`{p.wid}`", p.name, p.deliverable]
         if with_predecessor:
             cells.append(p.predecessor)
-        cells.append(f"{p.effort:.1f}")
+        cells.append(f"{p.effort:.1f}" if p.effort else "—")
         rows.append("| " + " | ".join(cells) + " |")
     return [head, rule, *rows]
 
@@ -225,23 +231,29 @@ def render(packages: list[WorkPackage]) -> str:
         "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행 작업이 없거나 모두 끝난 것들이다.",
         "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 작업 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
-        "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 전체 |",
-        "| :--- | ---: | ---: | ---: | ---: | ---: |",
+        "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | ⏸ Phase 2 | 전체 |",
+        "| :--- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    left = 0.0
+    left = later = 0.0
     for owner in OWNERS:
         mine = [p for p in packages if p.owner == owner]
-        todo = [p for p in mine if not p.done]
+        done = [p for p in mine if p.done]
+        todo = [p for p in mine if not p.done and not p.phase2]
+        deferred = [p for p in mine if not p.done and p.phase2]
         ready = [p for p in todo if is_ready(p, packages)]
         remaining = sum(p.effort for p in todo)
         left += remaining
+        later += sum(p.effort for p in deferred)
         lines.append(
-            f"| **{owner}** | {len(mine) - len(todo)}건 | 🟢 {len(ready)}건 | "
+            f"| **{owner}** | {len(done)}건 | 🟢 {len(ready)}건 | "
             f"⏳ {len(todo) - len(ready)}건 | **{remaining:.1f}** M/D | "
+            f"⏸ {len(deferred)}건 · {sum(p.effort for p in deferred):.1f} M/D | "
             f"{sum(p.effort for p in mine):.1f} M/D |"
         )
     lines += [
-        f"| | | | | **{left:.1f}** M/D | **{total:.1f}** M/D |",
+        f"| | | | | **{left:.1f}** M/D | {later:.1f} M/D | **{total:.1f}** M/D |",
+        "",
+        "> **남은 공수는 Phase 1 몫이다.** `[P2]` 항목은 조건부 착수(PRD 3절)라 ⏸ 열에 따로 센다.",
         "",
         f"> **{', '.join('`' + w + '`' for w in DONE_BY_S)} 는 성격상 임베디드(`R=A`)지만 "
         "팀장이 직접 수행했다.** 그래서 완료 실적을 팀장 쪽에 잡는다 — 성격 분류는 "
@@ -254,7 +266,8 @@ def render(packages: list[WorkPackage]) -> str:
     for owner, scope in OWNERS.items():
         mine = [p for p in packages if p.owner == owner]
         done = [p for p in mine if p.done]
-        todo = [p for p in mine if not p.done]
+        todo = [p for p in mine if not p.done and not p.phase2]
+        deferred = [p for p in mine if not p.done and p.phase2]
         ready = [p for p in todo if is_ready(p, packages)]
         waiting = [p for p in todo if not is_ready(p, packages)]
         lines += [
@@ -263,6 +276,7 @@ def render(packages: list[WorkPackage]) -> str:
             f"**담당 영역** — {scope}",
             "",
             f"**남은 공수 {sum(p.effort for p in todo):.1f} M/D · {len(todo)}건** "
+            f"· Phase 2 {sum(p.effort for p in deferred):.1f} M/D · {len(deferred)}건 "
             f"(전체 {sum(p.effort for p in mine):.1f} M/D · {len(mine)}건)",
             "",
             f"### 🟢 지금 시작할 수 있다 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",
@@ -277,6 +291,13 @@ def render(packages: list[WorkPackage]) -> str:
             "**기다리는 것** 열의 번호가 끝나면 시작할 수 있다.",
             "",
             *_table(waiting, with_predecessor=True),
+            "",
+            f"### ⏸ Phase 2 로 넘겼다 — {len(deferred)}건 · "
+            f"{sum(p.effort for p in deferred):.1f} M/D",
+            "",
+            "Phase 2 착수 조건(H3 통과·P2 승인)이 서야 잡는다. Phase 1 남은 공수에 넣지 않는다.",
+            "",
+            *_table(deferred, with_predecessor=True),
             "",
             f"<details><summary>✅ 완료 — {len(done)}건 · "
             f"{sum(p.effort for p in done):.1f} M/D</summary>",
