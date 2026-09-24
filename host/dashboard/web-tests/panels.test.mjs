@@ -161,6 +161,11 @@ test('an old record without judgement says the field is missing, not a verdict',
  const event=store.ingestLiveEvent({seq:9,ts_ms:1,event:'PPE_UNDETERMINED',state:'ALERT',escalation:'L1',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null});
  assert.equal(event.ppe,'판정 근거 미수신');assert.equal(event.category,'PPE');
 });
+test('a fall read by the VLM leaves out the rule rows it has no values for',()=>{
+ const {store}=setup();
+ const event=store.ingestLiveEvent({seq:9,ts_ms:1,event:'person_fallen',state:'ZONE_INSPECT',escalation:'L3',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null,judgement:{fallen:true,source:'vlm',zone:'B'}});
+ assert.deepEqual(event.evidence.filter(([,value])=>/—/.test(value)),[]);
+});
 test('pose buttons are live only under manual control and send the chosen preset (B6)',async()=>{
  const calls=[];const link={manual:async()=>({accepted:true}),drive:async()=>({accepted:true}),pose:async preset=>{calls.push(preset);return {accepted:true}}};
  const {document,panels,store}=setup();store.link=link;store.setDemo(false);panels.render('missions');
