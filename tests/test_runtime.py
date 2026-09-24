@@ -1800,6 +1800,19 @@ def test_leaving_patrol_restarts_the_count(config: dict, clock: FakeClock, tmp_p
 
 
 @pytest.mark.usefixtures("unlock_modes")
+def test_returning_from_avoid_restarts_the_count(config: dict, clock: FakeClock, tmp_path: Path):
+    """대기를 거치지 않는 복귀(`AVOID → PATROL`)에서도 처음부터 센다."""
+    runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
+    runtime._zone_min_frames = 3
+    _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=2, at_ms=200, detections=[_thing("chair")])
+    assert runtime._apply(Event.ONBOARD_AVOID, 250)
+    assert runtime._apply(Event.AVOID_CLEARED, 260)
+    _see(runtime, vision, seq=3, at_ms=300, detections=[_thing("chair")])
+    assert runtime.behavior.state == "PATROL"
+
+
+@pytest.mark.usefixtures("unlock_modes")
 def test_first_visit_registers_a_baseline_and_returns_to_patrol(
     config: dict, clock: FakeClock, tmp_path: Path
 ):
