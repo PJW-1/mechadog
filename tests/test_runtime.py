@@ -1936,6 +1936,34 @@ def test_an_inspected_worker_in_front_of_the_zone_does_not_hold_the_robot(
 
 
 @pytest.mark.usefixtures("unlock_modes")
+def test_a_person_in_front_of_the_zone_is_never_part_of_its_baseline(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog
+):
+    """⚠️ 사람이 가린 물건은 **빠진 채로 기준이 된다.** 기준은 없을 때만 뜨므로 그 뒤
+    순찰마다 그 물건이 «반입» 으로 잡히고, 누가 파일을 지우기 전까지 풀리지 않는다."""
+    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
+    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
+    with caplog.at_level(logging.INFO):
+        for seq in (1, 2, 3):  # 도착 + 두 사이클
+            _see_person(
+                runtime,
+                vision,
+                seq=seq,
+                at_ms=seq * 100,
+                detections=[_thing("chair")],
+                present=False,
+            )
+    assert not saved.exists(), "사람이 서 있는 프레임으로 기준을 떴다"
+    assert runtime.behavior.state == "PATROL", "기준을 못 떠도 구역 앞에 서 있지 않는다"
+    assert "zone_unverified" in _zone_events(caplog)
+
+    _see(runtime, vision, seq=4, at_ms=1000, detections=[_thing("chair")], marker=False)
+    _see(runtime, vision, seq=5, at_ms=1100, detections=[_thing("chair")])
+    _see(runtime, vision, seq=6, at_ms=1200, detections=[_thing("chair")])
+    assert saved.exists(), "사람이 비킨 다음 순회에서는 기준을 뜬다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
 def test_a_confirmed_change_is_recorded_for_the_dashboard(
     config: dict, clock: FakeClock, tmp_path: Path
 ):

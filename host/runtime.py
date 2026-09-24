@@ -34,7 +34,12 @@ from typing import Any
 
 from host.behavior.actions import register_actions
 from host.behavior.auth import Authenticator, Outcome
-from host.behavior.change_detect import BaselineStore, ChangeConfirmer, ChangeKind, classify_changes
+from host.behavior.change_detect import (
+    PERSON_LABEL,
+    BaselineStore,
+    ChangeConfirmer,
+    classify_changes,
+)
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation, Level
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
@@ -1013,7 +1018,15 @@ class Runtime:
         self._read_zone_scene(zone, result, now_ms)
 
         baseline = self._baselines.load(zone)
-        if baseline is None:
+        # ⚠️ **사람이 보이는 프레임은 기준에도 비교에도 쓰지 않는다** (FR-8.3 → FR-3 ·
+        # FR-11.1). 사람은 물체 변화가 아니라 게이트(`PERSON_FOUND`)가 맡는다 — 여기서
+        # 확정하면 한 프레임이 게이트를 건너뛰어 L3 «물체 변화» 가 된다. 그리고 **사람이
+        # 물건을 가리면 그 물건이 빠진다.** 견주면 반출로 세어지고, 기준으로 뜨면 그 뒤
+        # 순찰마다 «반입» 이 된다(기준은 없을 때만 뜨므로 누가 지우기 전까지 풀리지 않는다).
+        # 확정기에 넣지도 않으므로 연속 횟수도 건드리지 않는다.
+        if any(detection.label == PERSON_LABEL for detection in result.detections):
+            self._zone_person_seen = True
+        elif baseline is None:
             # FR-8.1 — 기준이 없으면 **이번 것이 기준이다.** 기준 없이 견주면
             # 처음 보는 물건이 전부 반입으로 잡혀 첫 순찰이 경보로 뒤덮인다.
             self._baselines.register(
@@ -1026,20 +1039,13 @@ class Runtime:
             LOG.info("zone_baseline_registered", zone=zone, objects=len(result.detections))
             self._leave_zone(now_ms)
             return
-
-        changes = classify_changes(
-            baseline,
-            result.detections,
-            frame_size=(width, height),
-            watch_classes=self._watch_classes,
-        )
-        # ⚠️ **사람이 보이는 프레임은 견주지 않는다** (FR-8.3 → FR-3 · FR-11.1). 사람은
-        # 물체 변화가 아니라 게이트(`PERSON_FOUND`)가 맡는다 — 여기서 확정하면 한 프레임이
-        # 게이트를 건너뛰어 L3 «물체 변화» 가 된다. 그리고 **사람이 물건을 가리면 그
-        # 물건이 반출로 세어진다.** 확정기에 넣지도 않으므로 연속 횟수도 건드리지 않는다.
-        if any(change.kind is ChangeKind.PERSON for change in changes):
-            self._zone_person_seen = True
         else:
+            changes = classify_changes(
+                baseline,
+                result.detections,
+                frame_size=(width, height),
+                watch_classes=self._watch_classes,
+            )
             confirmed = self._confirmer.observe(zone, changes)
             if confirmed:
                 found = [change.as_dict() for change in confirmed]
