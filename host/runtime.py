@@ -236,6 +236,8 @@ class Runtime:
         self._reset_asked = False
         #: 순찰을 예약했다. ⚠️ **리셋이 정착한 뒤에 시작해야 한다** — 아래 참고.
         self._patrol_asked = False
+        #: 기준을 지우기로 한 구역 (`ask_zone_baseline_reset`). 틱이 비운다.
+        self._zone_baseline_resets: set[str] = set()
         self._session_open: str | None = None
         self._ignored_since_ms: int | None = None
         self._cmd_timeout_ms = int(config["safety"]["cmd_timeout_ms"])
@@ -1796,6 +1798,23 @@ class Runtime:
         """페일세이프(F) 해제 요청을 예약한다. **다른 스레드에서 부른다.**"""
         self._reset_asked = True
 
+    def ask_zone_baseline_reset(self, zone: str) -> tuple[bool, str]:
+        """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준 재등록을 예약한다 (WBS 3.6.5).
+
+        **다른 스레드에서 부른다.** 지우는 것은 다음 틱이다(`_drain_confirmations`) —
+        틱이 그 구역의 기준을 읽고 견주는 도중에 지우면 옛 기준으로 센 횟수가 새
+        기준에 섞인다. 기준이 없으면 다음 방문에서 새로 뜬다(`_inspect_zone`).
+
+        ⚠️ **경보(L3)를 풀지 않는다** — 그것은 `ask_alarm_confirm` 의 몫이다. 묶으면
+        «기준을 다시 뜨는 것» 이 확인 없는 경보 해제 요령이 된다 (ADR-26 과 같은 이유).
+        ⚠️ **`zones.marker_map` 에 있는 구역만 받는다.** 파일 이름이 되는 값이라, 설정에
+        없는 문자열(`../A` 따위)이 지우기까지 가지 않게 한다.
+        """
+        if zone not in self._zone_markers.values():
+            return False, f"설정에 없는 구역이다: {zone!r}"
+        self._zone_baseline_resets.add(zone)
+        return True, f"구역 {zone} 의 기준을 다음 틱에 지운다 — 다음 방문에서 새로 뜬다"
+
     def apply_external(self, event: Event) -> bool:
         """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**
 
@@ -1983,6 +2002,20 @@ class Runtime:
         if self._reset_asked:
             self._reset_asked = False
             self.request_reset()
+        # 서버 스레드가 `add` 하고 여기서만 `pop` 한다 — 둘 다 원자적이고 소비자는 하나다.
+        while self._zone_baseline_resets:
+            zone = self._zone_baseline_resets.pop()
+            # ⚠️ **기준 파일이 10Hz 제어를 죽이면 안 된다** — `_inspect_zone` 과 같다.
+            try:
+                existed = self._baselines.clear(zone)
+            except Exception as exc:  # noqa: BLE001 — Windows 는 쥔 파일을 지우지 못한다
+                LOG.error(
+                    "zone_baseline_reset_failed", zone=zone, error=f"{type(exc).__name__}: {exc}"
+                )
+                continue
+            # 옛 기준으로 센 횟수가 새 기준의 확정을 앞당기면 안 된다.
+            self._confirmer.forget(zone)
+            LOG.info("zone_baseline_reset", zone=zone, existed=existed)
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
         if (
@@ -2275,6 +2308,7 @@ def dashboard_wiring(
         note_voice_auth=runtime.note_voice_auth,
         note_voice_listening=runtime.note_voice_listening,
         confirm_alarm=runtime.ask_alarm_confirm,
+        reset_zone_baseline=runtime.ask_zone_baseline_reset,
         pose=(
             float(config["posture"]["pitch_up_deg"]),
             int(config["posture"]["settle_ms"]),
