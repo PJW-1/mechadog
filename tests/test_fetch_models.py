@@ -46,7 +46,7 @@ def test_candidate_download_preserves_default_model(tmp_path, monkeypatch):
     monkeypatch.setattr(fetch_models, "download", download_candidate)
     monkeypatch.setattr(fetch_models, "verify", lambda _w, p: None if p.exists() else "missing")
     assert fetch_models.main(["--ppe-candidate", "--force"]) == 0
-    assert requested == list(fetch_models.PPE_V12_CANDIDATE)
+    assert requested == list(fetch_models.PPE_V23B_CANDIDATE)
     assert default.read_bytes() == b"existing production model"
 
 

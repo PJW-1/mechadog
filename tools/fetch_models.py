@@ -162,21 +162,21 @@ def download(weight: Weight, path: Path) -> None:
         partial.unlink(missing_ok=True)
 
 
-V12_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v12-candidate-20260924"
-PPE_V12_CANDIDATE: tuple[Weight, ...] = (
+V23B_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v23b-candidate-20260924"
+PPE_V23B_CANDIDATE: tuple[Weight, ...] = (
     Weight(
-        dest="models/candidates/ppe-v12/ppe_v12_joint5_context_candidate.onnx",
-        url=f"{V12_RELEASE}/ppe_v12_joint5_context_candidate.onnx",
-        size=35_781_202,
-        sha256="181ee940a5b8fd568fb6a231344eaf26484c0bf167cc869350eb8ccaf98caad4",
-        note="YOLOX-S 5종 개발 후보 · 실기 미승인 · models/ppe-v12-candidate.md",
+        dest="models/candidates/ppe-v23b/ppe_v23b_scratch_candidate.onnx",
+        url=f"{V23B_RELEASE}/ppe_v23b_scratch_candidate.onnx",
+        size=35_795_331,
+        sha256="5b35eb4f909dfdd995b3c7f805467a44319d96a89af740f96f7b375d8d836089",
+        note="YOLOX-S 5종 개발 후보 · 실기 미승인 · 가중치 CC BY-NC-SA 4.0 · models/ppe-v23b-candidate.md",
     ),
     Weight(
-        dest="models/candidates/ppe-v12/NOTICE.txt",
-        url=f"{V12_RELEASE}/NOTICE.txt",
-        size=712,
-        sha256="465466fc21005e5734618644fd81d67d259b0ae3e9e0bc640f0e53b11a4e0901",
-        note="v12 학습 출처·이용 조건 고지",
+        dest="models/candidates/ppe-v23b/NOTICE.txt",
+        url=f"{V23B_RELEASE}/NOTICE.txt",
+        size=2_202,
+        sha256="314638266d89a9151e7b0f14014a7227d7596a2e7a43cf22f5ac6df530a39610",
+        note="v23b 학습 출처·이용 조건 고지 (비상업 한정 — 받기 전에 읽는다)",
     ),
 )
 
@@ -185,7 +185,7 @@ def run(
     *, check_only: bool, force: bool, samples: bool = False, ppe_candidate: bool = False
 ) -> int:
     failures = 0
-    weights = PPE_V12_CANDIDATE if ppe_candidate else WEIGHTS
+    weights = PPE_V23B_CANDIDATE if ppe_candidate else WEIGHTS
     for weight in weights + (SAMPLES if samples else ()):
         path = ROOT / weight.dest
         print(f"\n{weight.dest}  —  {weight.note}")

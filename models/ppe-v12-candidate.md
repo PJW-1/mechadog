@@ -1,5 +1,11 @@
 # PPE v12: 5종 공동학습 개발 후보
 
+> ⚠️ **이 후보는 `ppe-v23b` 로 대체됐다.** `tools/fetch_models.py --ppe-candidate` 는
+> 이제 v23b 를 받는다. v23b 는 네 클래스 재현율이 모두 v12 보다 높다
+> (안전모 61.0 → 81.4 · 조끼 미착용 46.6 → 86.5). 비교용으로만 이 문서를 남긴다.
+> v23b 가중치는 **`CC BY-NC-SA 4.0`(비상업 한정)** 이므로 조건이 다르다 —
+> `models/ppe-v23b-candidate.md` 를 보라.
+
 [모델·평가·출처 릴리스](https://github.com/PJW-1/mechadog/releases/tag/ppe-v12-candidate-20260924)
 
 안전모/미착용, 조끼/미착용, person_down을 함께 학습한 YOLOX-S 후보다.
