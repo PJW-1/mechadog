@@ -97,9 +97,13 @@ class FakeVision:
         self.alive = True
         self.is_stalled = False
         self.ppe_enabled = False
+        self.zone_markers = False
 
     def set_ppe_enabled(self, enabled: bool) -> None:
         self.ppe_enabled = enabled
+
+    def set_zone_markers(self, enabled: bool) -> None:
+        self.zone_markers = enabled
 
     def start(self) -> None:
         self.starts += 1
@@ -2631,6 +2635,49 @@ def test_mode_switch_is_refused_while_patrolling(config: dict, clock: FakeClock)
     runtime.start_patrol(0)
     assert "PATROL" in (runtime.set_mode("factory") or "")
     assert runtime.mission.mode == "guard"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_zone_marker_switch_follows_the_mode(config: dict, clock: FakeClock) -> None:
+    """구역 점검이 도는 모드에서만 사람 없이도 마커를 읽힌다 (WBS 4.8.0).
+
+    ⚠️ 경비 모드는 끈다 — 사원증 판독은 사람이 있을 때만 돌아야 한다.
+    """
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+    )
+    assert vision.zone_markers is True
+    assert runtime.set_mode("guard") is None
+    assert vision.zone_markers is False
+    assert runtime.set_mode("factory") is None
+    assert vision.zone_markers is True
+
+    guard = FakeVision()
+    Runtime(config, device_id=DEVICE, clock=clock, vision=guard)
+    assert guard.zone_markers is False
+
+
+def test_registered_zone_markers_map_to_zones(config: dict, clock: FakeClock) -> None:
+    """저장소 설정의 구역 마커 10·11·12 가 A·B·C 로 읽힌다.
+
+    ⚠️ 사원증과 같은 사전(`DICT_4X4_50`)을 쓰므로 ID 가 겹치면 안 된다. YAML 키가
+    문자열로 읽혀도 `_zone_of` 의 `marker_id`(int) 비교와 맞아야 한다.
+    """
+    from dataclasses import replace
+
+    zones = config["zones"]
+    assert not set(zones["marker_map"]) & set(config["auth"]["badge_marker_map"])
+    assert sorted(zones["marker_map"].values()) == sorted(zones["ids"])
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    frame = vision_result(1, 100, present=False, hits=0, last_seen_ms=None)
+    for marker_id, zone in ((10, "A"), (11, "B"), (12, "C")):
+        seen = replace(frame, markers=(Marker(marker_id=marker_id, center=(1.0, 1.0)),))
+        assert runtime._zone_of(seen) == zone
 
 
 def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None:
