@@ -64,7 +64,9 @@ FEATURES: dict[str, frozenset[str]] = {
     "auth": frozenset({"AUTH_REQUIRED", "AUTH_OK", "AUTH_FAILED"}),
     # FR-8 구역 변화 감지. ⚠️ **도착·해제까지 막는다** — `ZONE_CHANGED` 만 막으면
     # 로봇이 구역 마커 앞에서 `ZONE_INSPECT` 로 들어가 놓고 나올 사건이 없어진다.
-    "change_detect": frozenset({"ZONE_ARRIVED", "ZONE_CLEAR", "ZONE_CHANGED"}),
+    "change_detect": frozenset(
+        {"ZONE_ARRIVED", "ZONE_CLEAR", "ZONE_CHANGED", "ZONE_ALARM_CONFIRMED"}
+    ),
     # FR-9 보호구 판정. 위반과 **판정 종료** 둘 다 공장 모드의 사건이다 (FR-11.6).
     "ppe": frozenset({"PPE_VIOLATION", "PPE_SETTLED"}),
     # FR-9 쓰러짐. 판정·기록은 모든 모드에서 하고 **L3 로 올리는 것만** 공장 모드다

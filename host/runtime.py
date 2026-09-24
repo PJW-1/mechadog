@@ -318,6 +318,8 @@ class Runtime:
         self._zone_vlm_alarm = False
         #: 이번 방문의 점검이 끝났나. 끝났으면 판독·경보만 기다리고 다시 견주지 않는다.
         self._zone_done = False
+        #: 지금의 `ALERT` 가 구역 변화 확정으로 섰나. 섰으면 경보 확인이 순찰로 돌려보낸다.
+        self._zone_alarm_alert = False
         # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
         # FastAPI/WebSocket 서버(4.5.1)가 생기면 같은 항목을 publisher로 받는다.
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
@@ -1116,7 +1118,7 @@ class Runtime:
                     },
                 )
                 # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
-                self._apply(Event.ZONE_CHANGED, now_ms)
+                self._zone_alarm_alert = self._apply(Event.ZONE_CHANGED, now_ms)
                 self._zone_cycles = 0
                 return
         # ⚠️ **영원히 서 있지 않는다.** 확정에 필요한 사이클을 다 보고도 아무것도
@@ -1547,6 +1549,8 @@ class Runtime:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
         self._track_stop_reached = False
         self._engaged = False
+        # 확인하지 않은 구역 경보를 들고 나온 순찰이다 — 다음 `ALERT` 는 사람 때문일 수 있다.
+        self._zone_alarm_alert = False
         if previous in STANDBY:
             self._edge.forget("person")
             # 대기(래치 해제·모드 전환)를 건너 계속 누운 사람도 다시 사건이 되게 한다.
@@ -1782,6 +1786,9 @@ class Runtime:
         released = self._escalation.confirm_alarm(now_ms)
         if not released:
             LOG.info("alarm_confirm_ignored", level=self._escalation.level.value)
+        elif self._zone_alarm_alert:
+            # 구역 변화의 `ALERT` 는 사람이 없어 스스로 나갈 길이 없다 (FR-8.4).
+            self._apply(Event.ZONE_ALARM_CONFIRMED, now_ms)
         return released
 
     def ask_alarm_confirm(self) -> None:
