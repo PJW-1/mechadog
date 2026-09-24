@@ -27,7 +27,7 @@
 ⚠️ **개정 (2026-09-23 · [ADR-38](DECISIONS.md#adr-38)) — 음성 LLM 과 현장지원 모드(`assist`)를 폐기했다.**
 개정 전에는 *"VLM 과 음성 LLM 은 같이 올릴 수 없다 — 둘만 더해도 9.0 GB 라 검출·STT 를 얹으면 10 GB 를
 넘는다. 모드를 셋으로 나눈 이유가 이것이다"* 라고 적었다. 이제 VLM 과 VRAM 을 나눌 상대가 없고, 가장 큰
-프로파일은 `factory` 의 ~7.1 GB 다. VLM 을 `factory` 에서만 올리는 규칙은 [ADR-35](DECISIONS.md#adr-35) 그대로다. *(2026-09-24 재개정 — **상시 적재** · 판독은 여전히 `factory` 에서만 · [ADR-35](DECISIONS.md#adr-35))*
+프로파일은 `factory` 의 ~7.1 GB 다. ~~VLM 을 `factory` 에서만 올리는 규칙은 [ADR-35](DECISIONS.md#adr-35) 그대로다.~~ *(2026-09-24 재개정 — **상시 적재** · 판독은 여전히 `factory` 에서만 · [ADR-35](DECISIONS.md#adr-35))*
 
 ⚠️ **개정 (2026-09-24 · [ADR-35](DECISIONS.md#adr-35) 개정) — VLM 은 상시 적재다.** 기동할 때 한 번 올리고 종료할 때만
 내린다. 경비 모드도 검출 + STT + VLM 으로 **~6.6 GB**, 공장 모드는 그대로 ~7.1 GB 다. 판독은 여전히 공장 모드에서만 건다.
