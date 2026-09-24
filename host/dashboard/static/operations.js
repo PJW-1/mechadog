@@ -27,14 +27,24 @@ function cleanText(value,max=1000){return typeof value==='string'?value.trim().s
 // 예전에는 person_found 만 AUTH 였고 나머지는 전부 SYSTEM 이라 PPE 필터가 아무것도 걸러내지 못했다.
 // 이름은 런타임(`runtime.py` 의 `_record_scene`·`FEED_TRANSITIONS`·`_announce_escalation`)이 정한다.
 export const EVENT_CATEGORIES=Object.freeze({PPE:'PPE',AUTH:'출입 인증',SAFETY:'안전 · 경보',OBJECT:'구역 · 물품',SYSTEM:'시스템'});
-const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT'};
+const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT'};
 export function eventCategory(name){return CATEGORY_OF[name]??'SYSTEM'}
-export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
+export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',zone_changed:'구역 물체 변화 확정',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
 // 단계가 바뀐 사유 (`escalation.py` 의 reason). 모르는 값은 원문 그대로 보인다.
 export const REASON_NAMES=Object.freeze({person_present:'사람 확인',unauthenticated_hold:'미인증 상태 지속',unauthenticated_left:'인증 요구 뒤 대상 이탈',AUTH_FAILED:'인증 실패 (시간 초과·시도 소진)',PPE_VIOLATION:'보호구 미착용 확정',ZONE_CHANGED:'구역 물체 변화 확정',PERSON_DOWN:'쓰러짐 확정',ONBOARD_FAILSAFE:'로봇 자체 안전 잠금',LINK_LOST:'링크 끊김',ESTOP:'비상정지',alarm_confirmed:'관리자 경보 확인',failsafe_confirmed:'안전 잠금 해제',failsafe_confirmed_alarm_kept:'안전 잠금 해제 — 경보 유지',authenticated:'인증 통과',target_lost:'대상 이탈',standby:'대기 전환',ppe_settled:'PPE 판정 종료'});
 export const reasonName=reason=>REASON_NAMES[reason]??(cleanText(reason,80)||'사유 미수신');
 const AUTH_TEXT={person_found:'검출 시점 · 인증 전',auth_required:'인증 요구됨',auth_granted:'통과',auth_failed:'실패 → 경보',voice_auth_granted:'암구호 확인 · 사원증 대기'};
 const shown=value=>typeof value==='number'?String(Math.round(value*100)/100):typeof value==='boolean'?(value?'예':'아니요'):cleanText(String(value??''),300)||'—';
+// 구역 물체 변화 (FR-8.3). 종류 이름은 `change_detect.py` 의 `ChangeKind` 와 1:1 이다.
+const CHANGE_KINDS={removed:'반출',added:'반입',person:'인원 출현'};
+// 격자 칸 `(열, 행)` → 위치 이름. 왼쪽 위가 (0, 0) 이고 픽셀이 아니라 칸이다. 3×3 이면 왼쪽/가운데/오른쪽 × 위/가운데/아래.
+// ⚠️ 칸이나 격자 형식이 틀리면 null — 위치를 지어내지 않는다 (격자가 없으면 3×3 이라고 가정하지도 않는다).
+function cellName(cell,grid){
+ if(!Array.isArray(cell)||!Array.isArray(grid)||cell.length!==2||grid.length!==2||![...cell,...grid].every(n=>Number.isSafeInteger(n)&&n>=0)||cell[0]>=grid[0]||cell[1]>=grid[1])return null;
+ const [c,r]=cell,[cols,rows]=grid;
+ if(cols===3&&rows===3)return c===1&&r===1?'가운데':['왼쪽','가운데','오른쪽'][c]+' '+['위','가운데','아래'][r];
+ return '열 '+(c+1)+'/'+cols+' · 행 '+(r+1)+'/'+rows;
+}
 /** 사건 이름과 서버가 실어 준 근거 → 인증·PPE 칸과 근거 표. 근거가 없으면 지어내지 않는다. */
 export function describeEvidence(name,payload){
  const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
@@ -45,6 +55,13 @@ export function describeEvidence(name,payload){
  if(name==='zone_reading'){
   rows.push(['구역',shown(j.zone)],['판독 저하',j.degraded?('예 · '+shown(j.reason)):'아니요']);
   if(j.answers&&typeof j.answers==='object')for(const [key,value] of Object.entries(j.answers).slice(0,12))rows.push(['판독 · '+cleanText(key,60),shown(value)]);
+ }
+ if(name==='zone_changed'){
+  const changes=Array.isArray(j.changes)?j.changes.filter(c=>c&&typeof c==='object').slice(0,12):[];
+  rows.push(['구역',shown(j.zone)]);
+  for(const c of changes){const where=cellName(c.cell,j.grid);rows.push([CHANGE_KINDS[c.kind]??(cleanText(c.kind,40)||'종류 미수신'),(cleanText(c.label,60)||'라벨 미수신')+(Number.isSafeInteger(c.count)&&c.count>0?' ×'+c.count:'')+(where?' · '+where:'')])}
+  if(!changes.length)rows.push(['변화 내역','미수신']);
+  if(Number.isSafeInteger(j.baseline_ms)&&j.baseline_ms>=0&&j.baseline_ms<=8640000000000000)rows.push(['기준 시각',new Date(j.baseline_ms).toLocaleString('ko-KR',{hour12:false})]);
  }
  if(name==='escalation_changed')rows.push(['사유',reasonName(payload?.reason)],['경고 문장',cleanText(payload?.warning,300)||'읽을 문장 없음 (이 단계는 음성 경고 없음)']);
  if(payload?.trigger)rows.push(['원인 사건',cleanText(payload.trigger,40)]);

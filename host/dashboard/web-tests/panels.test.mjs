@@ -138,6 +138,24 @@ test('live PPE, fall and escalation events are classified and show their evidenc
  change(dom,type,'SAFETY');assert.equal(document.querySelectorAll('.op-event-row').length,3);
  const titles=[...document.querySelectorAll('.op-event-row')].map(row=>row.textContent).join('|');assert.match(titles,/대응 단계 → L3/);assert.match(titles,/안전 잠금/);assert.match(titles,/쓰러짐 감지/);
 });
+test('a confirmed zone change is filed under zones and names grid cells without inventing them (FR-8.3)',()=>{
+ const {dom,document,panels,store}=setup();store.setDemo(false);
+ const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
+ const zone=(seq,judgement)=>store.ingestLiveEvent({...base,seq,ts_ms:seq,event:'zone_changed',judgement});
+ const event=zone(1,{zone:'A',grid:[3,3],changes:[{kind:'removed',label:'bottle',count:1,cell:[2,0]},{kind:'added',label:'box',count:2,cell:[1,1]},{kind:'added',label:'cup',count:1,cell:[0,2]},{kind:'person',label:'person',count:1,cell:null}],baseline_ms:1700000000000,baseline_snapshot:'A.jpg'});
+ assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 물체 변화 확정 · zone_changed$/);
+ assert.deepEqual(event.evidence.slice(0,5),[['구역','A'],['반출','bottle ×1 · 오른쪽 위'],['반입','box ×2 · 가운데'],['반입','cup ×1 · 왼쪽 아래'],['인원 출현','person ×1']]);
+ assert.equal(event.evidence[5][0],'기준 시각');assert.equal(event.evidence.length,6);
+ panels.render('events');change(dom,document.querySelector('[aria-label="사건 유형"]'),'OBJECT');
+ assert.equal(document.querySelectorAll('.op-event-row').length,1,'구역 · 물품 필터에 걸린다');
+ assert.match(document.querySelector('.op-event-detail').textContent,/판정 근거.*반출bottle ×1 · 오른쪽 위/);
+ // 형식이 틀린 칸은 위치를 빼고, 3×3 이 아닌 격자는 칸 번호로 부른다.
+ assert.deepEqual(zone(2,{zone:'B',grid:[4,2],changes:[{kind:'removed',label:'cup',count:1,cell:[3,1]},{kind:'added',label:'bag',count:1,cell:[3,3]},{kind:'added',label:'pen',count:1,cell:'2,0'},{kind:'added',label:'<b>',count:-1,cell:[0.5,0]},null]}).evidence,
+  [['구역','B'],['반출','cup ×1 · 열 4/4 · 행 2/2'],['반입','bag ×1'],['반입','pen ×1'],['반입','<b>']]);
+ assert.deepEqual(zone(3,{zone:'C',changes:[{kind:'removed',label:'bottle',count:1,cell:[0,0]}],baseline_ms:'어제'}).evidence,[['구역','C'],['반출','bottle ×1']],'격자가 없으면 3×3 으로 가정하지 않는다');
+ assert.deepEqual(zone(4,{zone:'D',changes:'bottle'}).evidence,[['구역','D'],['변화 내역','미수신']]);
+ assert.equal(zone(5,{zone:'E',grid:[3,3],changes:Array.from({length:20},()=>({kind:'added',label:'box',count:1,cell:[0,0]}))}).evidence.length,13,'변화 행은 12건까지');
+});
 test('an old record without judgement says the field is missing, not a verdict',()=>{
  const {store}=setup();
  const event=store.ingestLiveEvent({seq:9,ts_ms:1,event:'PPE_UNDETERMINED',state:'ALERT',escalation:'L1',tracks:[],detections:[],telemetry:{},entry:'e',snapshot:null});
