@@ -3826,10 +3826,14 @@ def test_a_patrol_reading_asks_only_person_down_every_interval(
 @pytest.mark.usefixtures("unlock_modes")
 def test_a_reading_alone_suspects_but_never_alarms(config: dict, clock: FakeClock) -> None:
     """판독 «예» 는 의심 신호다 (S3·S7). 박스가 없으면 제자리에 서고, 누움이 없으면 L3 가
-    아니다. 의심에서는 판독이 끝날 때마다 다시 묻는다(S6). 대상을 5초 못 보면 순찰로 돌아간다(S5)."""
+    아니다. 의심에서는 판독이 끝날 때마다 다시 묻는다(S6).
+
+    ⚠️ **판독이 계속 «예» 면 대상을 보고 있는 것이다** — 박스가 없다고 5초 상실로 풀면
+    «검출될 때까지 쳐다본다» 가 깨진다. 이때는 제한 시간(S5)으로만 순찰에 돌아간다."""
     every = int(config["vision"]["vlm"]["patrol_interval_ms"])
     lost = int(config["fsm"]["target_lost_timeout_s"]) * 1000
-    runtime, vision, fake, _ = _factory_runtime(config, clock, *[DOWN] * 100)
+    limit = int(config["fsm"]["fall_suspect_timeout_ms"])
+    runtime, vision, fake, _ = _factory_runtime(config, clock, *[DOWN] * 400)
     at = 100
     while runtime.behavior.state == "PATROL" and at < 3 * every:
         _floor(runtime, vision, at, person=False)
@@ -3841,11 +3845,13 @@ def test_a_reading_alone_suspects_but_never_alarms(config: dict, clock: FakeCloc
         _floor(runtime, vision, at + tick * 100, person=False)
     assert fake.submitted >= 4, "의심 중에는 판독이 끝날 때마다 다시 묻는다"
     assert runtime.escalation.level is Level.L1, "누움 없이 판독만으로 확정했다"
-    at = entered + lost
-    _floor(runtime, vision, at, person=False)
-    runtime.tick(at + 100)
-    runtime.tick(at + 200)
-    assert runtime.behavior.state == "PATROL"
+    for now in range(at + 500, entered + lost + 1000, 100):
+        _floor(runtime, vision, now, person=False)
+    assert runtime.behavior.state == "ALERT", "판독이 계속 «예» 인데 5초 상실로 풀었다"
+    assert runtime.escalation.level is Level.L1
+    for now in range(entered + lost + 1000, entered + limit + 300, 100):
+        _floor(runtime, vision, now, person=False)
+    assert runtime.behavior.state == "PATROL", "제한 시간이 지났는데 의심에 머문다"
     assert runtime.escalation.level is Level.L0
 
 

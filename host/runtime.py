@@ -369,8 +369,6 @@ class Runtime:
         #: 상한은 판독 예산 그대로다 — 판독기도 예산을 넘기면 남은 질문을 버린다.
         self._zone_vlm_wait_until: int | None = None
         self._zone_vlm_wait_ms = int(config["vision"]["vlm"]["budget_ms"])
-        #: 이번 방문의 판독이 L3 를 올렸나. 올렸으면 경보가 풀릴 때까지 구역에 머문다.
-        self._zone_vlm_alarm = False
         #: 이번 방문의 점검이 끝났나. 끝났으면 판독·경보만 기다리고 다시 견주지 않는다.
         self._zone_done = False
         #: 지금의 `ALERT` 가 구역 변화 확정으로 섰나. 섰으면 경보 확인이 순찰로 돌려보낸다.
@@ -1123,7 +1121,6 @@ class Runtime:
                 self._zone_aligned = anchor.yaw is None  # 방향이 없으면 선 채로 본다
                 self._zone_vlm_asked = False
                 self._zone_vlm_wait_until = None
-                self._zone_vlm_alarm = False
                 self._zone_done = False
                 self._visit_since_ms = now_ms
                 self._visit_seen = []
@@ -1366,6 +1363,8 @@ class Runtime:
             if not during:
                 self._suspect_fall("vlm", now_ms)
         elif asked_ms >= self._fall_since:
+            # «예» 는 대상을 본 것이다 — 박스 없이 판독으로만 보는 동안 5초 상실로 풀지 않는다.
+            self._behavior.note_target(now_ms)
             self._fall_vlm_yes = next(a.raw for a in reading.answers if a.key == "person_down")
             self._confirm_fall(asked, now_ms)
 
@@ -1550,9 +1549,6 @@ class Runtime:
                 {"zone": self._zone, "changes": removed},
             )
         self._visit_found = ()
-        # 사람이 경보를 확인할 때까지 머문다 — L3 를 내리는 길은 `confirm_alarm` 하나다.
-        if self._zone_vlm_alarm and self._escalation.level is Level.L3:
-            return
         if self._visit_outcome is not None:
             LOG.info(self._visit_outcome, zone=self._zone, frames=len(self._visit_seen))
         self._zone_vlm_asked = False
