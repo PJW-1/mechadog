@@ -233,11 +233,14 @@ class VlmReader:
             return
         LOG.info("vlm_unloaded")
 
-    def read(self, image: Any, *, now_ms: int) -> Reading:
+    def read(self, image: Any, *, now_ms: int, keys: Sequence[str] | None = None) -> Reading:
         """한 장을 읽는다. **절대 예외를 올리지 않는다.**
 
         예산(`budget_ms`)을 넘기면 남은 항목은 묻지 않고 거기까지 담아 돌려준다 —
         부분 판독이 빈 판독보다 낫다 (`Reading` 주석 참조).
+
+        `keys` 를 주면 그 항목만 묻는다 — 공장 순찰 판독은 `person_down` 하나다 (S6).
+        저하 여부도 물은 항목 수로 잰다.
         """
         if self._session is None:
             return Reading(answers=(), degraded=True, reason="not_loaded", taken_at_ms=now_ms)
@@ -245,7 +248,8 @@ class VlmReader:
         answers: list[Answer] = []
         spent_ms = 0
         reason: str | None = None
-        for question in self._questions:
+        questions = [q for q in self._questions if keys is None or q.key in keys]
+        for question in questions:
             if spent_ms >= self._budget_ms:
                 reason = "budget_exhausted"
                 LOG.warning(
@@ -267,7 +271,7 @@ class VlmReader:
                 LOG.warning("vlm_unparsed", key=question.key, raw=raw[:120])
             answers.append(Answer(key=question.key, value=value, raw=raw, latency_ms=elapsed_ms))
 
-        degraded = reason is not None or len(answers) < len(self._questions)
+        degraded = reason is not None or len(answers) < len(questions)
         return Reading(
             answers=tuple(answers),
             degraded=degraded,

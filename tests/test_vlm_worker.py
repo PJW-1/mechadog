@@ -195,3 +195,16 @@ def test_worker_thread_is_a_daemon() -> None:
     alive = [t for t in threading.enumerate() if t.name == "vlm-read"]
     assert alive and all(t.daemon for t in alive)
     _wait_idle(worker)
+
+
+def test_submit_passes_the_question_keys_to_the_reader() -> None:
+    """물을 항목을 넘기면 그것만 묻는다 — 순찰 판독이 0.65초를 다 쓰지 않게 (S6)."""
+    session = SlowSession(0.01)
+    worker = _loaded_worker(session)
+    worker.submit(object(), now_ms=1, keys=("person_down",))
+    _wait_idle(worker)
+
+    reading = worker.take()
+    assert reading is not None
+    assert [answer.key for answer in reading.answers] == ["person_down"]
+    assert session.asked == 1

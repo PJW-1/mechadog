@@ -425,3 +425,46 @@ def test_authentication_still_releases_auth_request(esc: Escalation, cfg: dict) 
     assert esc.level is Level.L2
     esc.note_authenticated(at)
     assert esc.level is Level.L0
+
+
+# ── 공장 모드 시나리오 (2026-09-25 · S2·S3) ──────────────────
+def test_ppe_violation_warns_then_releases_without_confirm(esc: Escalation, cfg: dict) -> None:
+    """보호구 미착용은 **경고**다 (S2) — 빨간 눈과 문장을 함께 내고 관제 확인 없이 내려온다.
+
+    ⚠️ 래치가 아니다. 경고 시간(`escalation.ppe_warning_hold_ms`)이 지나면 L0 이다.
+    """
+    hold = int(cfg["escalation"]["ppe_warning_hold_ms"])
+    esc.note_event("PPE_VIOLATION", T0)
+    assert esc.level is Level.L3
+    assert esc.latched is False
+    assert esc.alarm_pending is False
+    assert esc.presentation().warning == cfg["escalation"]["sound"]["ppe_violation_warning"]
+    esc.tick(T0 + hold - 1)
+    assert esc.level is Level.L3
+    esc.tick(T0 + hold)
+    assert esc.level is Level.L0
+
+
+def test_an_alarm_during_the_ppe_warning_latches(esc: Escalation, cfg: dict) -> None:
+    """경고 중에 온 진짜 경보는 경고 시간이 지나도 남는다 — 같은 L3 라고 삼키면 안 된다."""
+    hold = int(cfg["escalation"]["ppe_warning_hold_ms"])
+    esc.note_event("PPE_VIOLATION", T0)
+    esc.note_event("PERSON_DOWN", T0 + 100)
+    assert esc.reason == "PERSON_DOWN"
+    assert esc.latched is True
+    esc.tick(T0 + hold * 2)
+    assert esc.level is Level.L3
+
+
+def test_a_fall_suspect_holds_observe_until_released(esc: Escalation, cfg: dict) -> None:
+    """쓰러짐 의심은 L1 이다 (S3). **대상 상실 5초로 스스로 내리지 않는다** — 박스 없이
+    판독으로만 든 의심도 있어서, 언제 끝낼지는 런타임이 정한다(S5)."""
+    lost_ms = cfg["fsm"]["target_lost_timeout_s"] * 1000
+    esc.note_person(present=False, last_seen_ms=T0, now_ms=T0)
+    esc.note_fall_suspect(True, T0)
+    assert esc.level is Level.L1
+    assert esc.reason == "fall_suspected"
+    esc.tick(T0 + lost_ms * 3)
+    assert esc.level is Level.L1
+    esc.note_fall_suspect(False, T0 + lost_ms * 3)
+    assert esc.level is Level.L0
