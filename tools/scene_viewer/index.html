@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MechaDog 공간 지도</title>
+  <link rel="stylesheet" href="/viewer/style.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three.module.js","three/addons/":"/vendor/addons/"}}</script>
+  <script type="module" src="/viewer/main.js"></script>
+</head>
+<body>
+  <main>
+    <section class="stage" aria-label="라이다 공간 지도">
+      <header class="stage-head">
+        <div><span class="eyebrow">MECHADOG · MAP LAB</span><h1>공간 지도</h1></div>
+        <span id="source" class="source">불러오는 중</span>
+      </header>
+      <canvas id="scene" aria-label="상호작용 가능한 라이다 지도"></canvas>
+      <div class="stage-footer">
+        <span>마우스: 회전 · 휠: 확대 · 오른쪽 클릭: 이동</span>
+        <div><button id="top-view" type="button">위에서 보기</button><button id="angle-view" type="button">입체로 보기</button></div>
+      </div>
+    </section>
+    <aside class="panel">
+      <div class="panel-head"><span class="eyebrow">측정 상태</span><strong id="status">지도 확인 중</strong></div>
+      <p id="scope" class="scope">라이다가 실제로 관측한 평면만 표시합니다.</p>
+      <div class="legend"><span><i class="free"></i> 관측된 빈 공간</span><span><i class="hit"></i> 장애물 단면</span><span><i class="unknown"></i> 미관측</span><span><i class="camera"></i> 카메라 위치</span></div>
+      <dl id="facts"></dl>
+      <section class="photo-panel"><h2>카메라 관측</h2><p id="photo-note">지도에서 카메라 지점을 선택하세요. 사진은 위치의 기록이며 벽의 질감이나 물체의 좌표가 아닙니다.</p><img id="photo" alt="선택한 촬영 지점의 원본 사진" hidden></section>
+      <p class="warning">표시된 장애물의 높이는 보기 위한 기호입니다. 실측 높이·가구 형태·주행 가능 여부를 뜻하지 않습니다.</p>
+    </aside>
+  </main>
+</body>
+</html>

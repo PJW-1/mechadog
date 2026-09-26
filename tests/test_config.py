@@ -759,3 +759,20 @@ def test_lidar_mount_yaw_accepts_the_mounted_value(cfg: dict) -> None:
         ok = deepcopy(cfg)
         ok.setdefault("lidar", {})["mount_yaw_deg"] = good
         validate_base_config(ok)
+
+
+def test_lidar_angle_direction_requires_signed_unit(cfg: dict) -> None:
+    """좌우가 조용히 뒤집히지 않도록 방향은 정확히 -1 또는 1이다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (0, 2, True, -1.0, "-1", None):
+        broken = deepcopy(cfg)
+        broken.setdefault("lidar", {})["angle_direction"] = bad
+        with pytest.raises(ConfigError, match="angle_direction"):
+            validate_base_config(broken)
+    for good in (-1, 1):
+        ok = deepcopy(cfg)
+        ok.setdefault("lidar", {})["angle_direction"] = good
+        validate_base_config(ok)
