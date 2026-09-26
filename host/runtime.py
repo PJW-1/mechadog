@@ -1245,7 +1245,9 @@ class Runtime:
         if self._mission.enables("fallen") and verdict.candidate:
             if self._fall_since is None:
                 self._suspect_fall("yolox", now_ms)  # 진입 프레임은 누적에 세지 않는다
-            else:
+            elif verdict.aspect is not None:
+                # 박스가 있는 누움만 센다 — 게이트는 박스가 사라진 뒤 `gap_ms` 동안에도
+                # 후보를 참으로 두는데, 그것까지 세면 검출 한 번 뒤의 빈 1초가 누적을 채운다.
                 self._fall_hits += 1
                 self._confirm_fall(result, now_ms)
         # ⚠️ **엣지는 워커의 `changed` 가 아니라 우리 기준으로 본다** — `person` 과 같은
@@ -1780,7 +1782,9 @@ class Runtime:
         if self._dashboard is None:
             return
         level = self._escalation.level.value
-        if not self._edge.changed("escalation_level", level):
+        # ⚠️ **래치 여부도 엣지다.** 보호구 경고(L3·래치 아님) 중에 쓰러짐이 확정되면 단계는
+        # L3 그대로라, 단계만 보면 경보 문장이 나가지 않는다 — 음성은 이 사건의 문장만 읽는다.
+        if not self._edge.changed("escalation_level", (level, self._escalation.latched)):
             return
         self._dashboard.record_event(
             {

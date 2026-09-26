@@ -3882,3 +3882,60 @@ def test_confirming_a_fall_alarm_returns_to_patrol(config: dict, clock: FakeCloc
     assert runtime.confirm_alarm(1000) is True
     assert runtime.escalation.level is Level.L0
     assert runtime.behavior.state == "PATROL", "경보를 확인했는데 순찰로 돌아가지 않았다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_gap_frames_without_a_box_do_not_count_as_lying_hits(
+    config: dict, clock: FakeClock
+) -> None:
+    """확정의 YOLOX 누적은 **박스가 있는 누움**만 센다 (S4 «YOLOX 3회 검출»).
+
+    `FallenGate` 는 박스가 사라진 뒤 `gap_ms` 동안에도 `candidate` 를 참으로 둔다(aspect 는
+    `None`). 이것까지 세면 검출 한 번 뒤의 빈 1초가 10Hz 로 3회를 채워, VLM «예» 하나와
+    함께 곧바로 L3 가 된다."""
+    from dataclasses import replace
+
+    need = int(config["fsm"]["fall_suspect_hits"])
+    runtime, vision, _, _ = _factory_runtime(config, clock, *[DOWN] * 50)
+    _floor(runtime, vision, 100, lying=True)  # 의심 진입
+    for at in range(200, 200 + (need + 3) * 100, 100):
+        vision.result = replace(
+            vision_result(at, at, present=False, hits=0, last_seen_ms=None),
+            fallen=FallenVerdict(
+                fallen=False, changed=False, candidate=True, aspect=None, still_ms=at
+            ),
+        )
+        runtime.tick(at)
+    assert runtime.escalation.level is Level.L1, "박스 없는 빈 프레임으로 누움 누적을 채웠다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_fall_confirmed_during_a_ppe_warning_announces_its_own_sentence(
+    config: dict, clock: FakeClock
+) -> None:
+    """보호구 경고(L3·래치 아님) 중에 쓰러짐이 확정되면 단계는 L3 그대로지만 **경보로 바뀐
+    것을 알린다** — 음성은 `escalation_changed` 에 실린 문장만 읽으므로, 단계만 보고
+    엣지를 걸면 «작업자가 쓰러졌습니다» 가 나가지 않는다."""
+    from host.dashboard.state import DashboardState
+
+    need = int(config["fsm"]["fall_suspect_hits"])
+    board = DashboardState("mechdog-02", stale_after_ms=3000)
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(config, mode="factory"),
+        dashboard=board,
+    )
+    _scripted(runtime, *[DOWN] * 20)
+    runtime.start_patrol(0)
+    _floor(runtime, vision, 100, ppe=PpeVerdict(1, VIOLATION, confirmed=True))
+    assert runtime.escalation.level is Level.L3 and not runtime.escalation.latched
+    for step in range(need + 1):
+        _floor(runtime, vision, 200 + step * 100, lying=True)
+    assert runtime.escalation.latched, "경고 중 쓰러짐 확정이 래치되지 않았다"
+    events, _ = board.events_since(0)
+    warnings = [e["warning"] for e in events if e["event"] == "escalation_changed"]
+    assert warnings[-1] == config["escalation"]["sound"]["person_down_warning"]
