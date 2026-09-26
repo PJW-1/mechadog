@@ -354,6 +354,9 @@ class Runtime:
         self._fall_vlm_due: int | None = None
         self._fall_need = int(config["fsm"]["fall_suspect_hits"])
         self._fall_timeout_ms = int(config["fsm"]["fall_suspect_timeout_ms"])
+        #: 제한 시간 초과·경보 확인으로 순찰에 돌아간 뒤 다시 의심하지 않는 시간과 끝 시각.
+        self._fall_cooldown_ms = int(config["fsm"]["fall_resuspect_cooldown_ms"])
+        self._fall_cooldown_until: int | None = None
         self._patrol_vlm_ms = int(config["vision"]["vlm"]["patrol_interval_ms"])
         #: 보호구 미착용 경고를 내고 순찰로 돌아가기까지 (S2) — 단계 축의 경고 시간과 같다.
         self._ppe_warning_ms = int(config["escalation"]["ppe_warning_hold_ms"])
@@ -1283,6 +1286,10 @@ class Runtime:
         """
         if self._fall_since is not None or not self._mission.enables("fallen"):
             return
+        # 순찰로 돌려보낸 직후에는 다시 의심하지 않는다 — 누운 가방 같은 헛검출 앞에서
+        # 노랑·파랑을 되풀이하며 순찰을 잇지 못한다 (2026-09-26 사용자 결정).
+        if self._fall_cooldown_until is not None and now_ms < self._fall_cooldown_until:
+            return
         if not (self._behavior.tracking or self._apply(Event.FALL_SUSPECTED, now_ms)):
             return
         self._fall_since = now_ms
@@ -1335,8 +1342,17 @@ class Runtime:
             LOG.info(
                 "fall_suspect_timeout", hits=self._fall_hits, vlm=self._fall_vlm_yes is not None
             )
-            self._apply(Event.FALL_RESOLVED, now_ms)
-            self._end_fall(now_ms)
+            self._resolve_fall(now_ms)
+
+    def _resolve_fall(self, now_ms: int) -> None:
+        """순찰로 돌려보내고 쿨다운을 건다 — 제한 시간 초과와 경보 확인 (S4·S5).
+
+        5초 상실로 끝난 의심(`_end_fall` 만)에는 걸지 않는다. 대상이 떠났으니 새로
+        쓰러진 사람을 놓치면 안 된다.
+        """
+        self._apply(Event.FALL_RESOLVED, now_ms)
+        self._end_fall(now_ms)
+        self._fall_cooldown_until = now_ms + self._fall_cooldown_ms
 
     def _end_fall(self, now_ms: int) -> None:
         self._fall_since = None
@@ -2069,8 +2085,7 @@ class Runtime:
             self._apply(Event.ZONE_ALARM_CONFIRMED, now_ms)
         elif self._fall_confirmed:
             # 확정한 쓰러짐도 확인하면 순찰로 돌아간다 (S4) — 누운 사람은 스스로 떠나지 않는다.
-            self._apply(Event.FALL_RESOLVED, now_ms)
-            self._end_fall(now_ms)
+            self._resolve_fall(now_ms)
         return released
 
     def ask_alarm_confirm(self) -> None:
