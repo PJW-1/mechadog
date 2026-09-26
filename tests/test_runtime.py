@@ -3939,3 +3939,46 @@ def test_a_fall_confirmed_during_a_ppe_warning_announces_its_own_sentence(
     events, _ = board.events_since(0)
     warnings = [e["warning"] for e in events if e["event"] == "escalation_changed"]
     assert warnings[-1] == config["escalation"]["sound"]["person_down_warning"]
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_timed_out_suspect_is_not_suspected_again_during_the_cooldown(
+    config: dict, clock: FakeClock
+) -> None:
+    """제한 시간으로 순찰에 돌아간 뒤 `fsm.fall_resuspect_cooldown_ms` 동안은 다시 의심하지
+    않는다 (2026-09-26 사용자 결정 · S5). 누운 가방 같은 헛검출 앞에서 노랑·파랑을 되풀이하며
+    순찰을 잇지 못하게 된다. 쿨다운이 지나면 다시 의심한다."""
+    limit = int(config["fsm"]["fall_suspect_timeout_ms"])
+    cooldown = int(config["fsm"]["fall_resuspect_cooldown_ms"])
+    runtime, vision, _, _ = _factory_runtime(config, clock, *[UP] * 1000)
+    _floor(runtime, vision, 100, lying=True)
+    at = 100
+    while runtime.behavior.state != "PATROL" and at < 2 * limit:
+        at += 100
+        _floor(runtime, vision, at, lying=True)
+    assert runtime.behavior.state == "PATROL", "제한 시간이 지났는데 의심에 머문다"
+    back = at
+    for now in range(back + 100, back + cooldown, 100):
+        _floor(runtime, vision, now, lying=True)
+        assert runtime.escalation.level is Level.L0, f"복귀 {now - back}ms 만에 다시 의심했다"
+    _floor(runtime, vision, back + cooldown + 100, lying=True)
+    assert runtime.escalation.level is Level.L1, "쿨다운이 지났는데 다시 의심하지 않는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm(
+    config: dict, clock: FakeClock
+) -> None:
+    """관제가 쓰러짐 경보를 확인하고 순찰로 돌려보낸 뒤에도 쿨다운 동안은 같은 사람을 다시
+    의심하지 않는다 — 확인하자마자 같은 경보가 다시 울리면 확인할 수가 없다."""
+    need = int(config["fsm"]["fall_suspect_hits"])
+    cooldown = int(config["fsm"]["fall_resuspect_cooldown_ms"])
+    runtime, vision, _, _ = _factory_runtime(config, clock, *[DOWN] * 1000)
+    for step in range(need + 1):
+        _floor(runtime, vision, 100 + step * 100, lying=True)
+    assert runtime.escalation.level is Level.L3
+    assert runtime.confirm_alarm(1000) is True
+    for now in range(1100, 1000 + cooldown, 100):
+        _floor(runtime, vision, now, lying=True)
+        assert runtime.escalation.level is Level.L0, f"확인 {now - 1000}ms 만에 다시 의심했다"
+    assert runtime.behavior.state == "PATROL"
