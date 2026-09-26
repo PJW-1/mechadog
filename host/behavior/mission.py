@@ -70,8 +70,8 @@ FEATURES: dict[str, frozenset[str]] = {
     # FR-9 보호구 판정. 위반과 **판정 종료** 둘 다 공장 모드의 사건이다 (FR-11.6).
     "ppe": frozenset({"PPE_VIOLATION", "PPE_SETTLED"}),
     # FR-9 쓰러짐. 판정·기록은 모든 모드에서 하고 **L3 로 올리는 것만** 공장 모드다
-    # (아키텍처 3.1 — 쓰러짐은 공장 모드의 L3 원인).
-    "fallen": frozenset({"PERSON_DOWN"}),
+    # (아키텍처 3.1 — 쓰러짐은 공장 모드의 L3 원인). 의심·해제(2026-09-25 S3~S5)도 공장이다.
+    "fallen": frozenset({"PERSON_DOWN", "FALL_SUSPECTED", "FALL_RESOLVED"}),
     # FR-3.5 선회 추종. ⚠️ **FR-11.1 표에 «추종» 행은 없다** — 표는 *"사람을 보면"*
     # 셀에 적었다. 게이트는 사건 단위라 여기서 한 줄로 세운다.
     #

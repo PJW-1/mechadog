@@ -41,6 +41,7 @@ from host.behavior.change_detect import (
     BaselineStore,
     Change,
     ChangeConfirmer,
+    ChangeKind,
     ZoneBaseline,
     classify_changes,
 )
@@ -336,9 +337,26 @@ class Runtime:
         # 시작값은 «쓰러짐 없음» 이다. 비우면 첫 프레임의 `False` 가 해제 로그로 남는다.
         self._edge.changed("fallen", False)
         self._edge.changed("ppe_held_for_fall", False)
-        #: 쓰러짐 후보를 마지막으로 본 시각. PPE 보류는 이 시각에서 `gap_ms` 까지 이어진다.
-        self._fallen_gap_ms = int(config["vision"]["fallen"]["gap_ms"])
-        self._fall_seen_ms: int | None = None
+        # 쓰러짐은 **두 단계다** — 의심(L1)에서 확정(L3)으로 (2026-09-25 확정 S3~S5).
+        # ⚠️ 규칙(YOLOX 누움)도 판독(VLM)도 **혼자서는 L3 를 내지 못한다**(S7). 확정은
+        # 의심 뒤 누움 누적 `fsm.fall_suspect_hits` 회와 의심 뒤에 건 판독의 «예» 둘 다다.
+        #: 의심에 든 시각. `None` 이면 의심이 아니다. PPE 판정은 이 동안 보류한다(S8).
+        self._fall_since: int | None = None
+        #: 의심 뒤 누움 후보를 본 횟수. 끊겨도 누적한다.
+        self._fall_hits = 0
+        #: 의심 뒤에 건 판독이 «예» 라 한 원문. 확정 기록에 싣는다.
+        self._fall_vlm_yes: str | None = None
+        #: 이번 의심을 확정했나. 확정했으면 관제 확인(`confirm_alarm`)이 순찰로 돌려보낸다.
+        self._fall_confirmed = False
+        #: 돌고 있는 쓰러짐 판독 `(건 시각, 건 프레임, 의심 중에 걸었나)`.
+        self._fall_vlm_pending: tuple[int, Any, bool] | None = None
+        #: 다음 순찰 판독 시각 (S6). 순찰이 아니면 `None` 이다.
+        self._fall_vlm_due: int | None = None
+        self._fall_need = int(config["fsm"]["fall_suspect_hits"])
+        self._fall_timeout_ms = int(config["fsm"]["fall_suspect_timeout_ms"])
+        self._patrol_vlm_ms = int(config["vision"]["vlm"]["patrol_interval_ms"])
+        #: 보호구 미착용 경고를 내고 순찰로 돌아가기까지 (S2) — 단계 축의 경고 시간과 같다.
+        self._ppe_warning_ms = int(config["escalation"]["ppe_warning_hold_ms"])
         #: 이번 방문에서 판독을 이미 시도했나. **방문당 한 번만 건다** — 사이클마다
         #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다. 거절당해도
         #: 다시 걸지 않는다 — 걸지 못한 방문은 기다릴 것이 없어 곧바로 끝난다.
@@ -351,8 +369,6 @@ class Runtime:
         #: 상한은 판독 예산 그대로다 — 판독기도 예산을 넘기면 남은 질문을 버린다.
         self._zone_vlm_wait_until: int | None = None
         self._zone_vlm_wait_ms = int(config["vision"]["vlm"]["budget_ms"])
-        #: 이번 방문의 판독이 L3 를 올렸나. 올렸으면 경보가 풀릴 때까지 구역에 머문다.
-        self._zone_vlm_alarm = False
         #: 이번 방문의 점검이 끝났나. 끝났으면 판독·경보만 기다리고 다시 견주지 않는다.
         self._zone_done = False
         #: 지금의 `ALERT` 가 구역 변화 확정으로 섰나. 섰으면 경보 확인이 순찰로 돌려보낸다.
@@ -654,10 +670,11 @@ class Runtime:
         """
         if self._vision is None:
             return
+        self._watch_fall(now_ms)
         if (
             self._ppe_settle_at is not None
             and now_ms >= self._ppe_settle_at
-            and not self._fall_held(now_ms)
+            and self._fall_since is None
         ):
             self._ppe_settle_at = None
             if self._behavior.state == "ALERT" and self._apply(Event.PPE_SETTLED, now_ms):
@@ -691,7 +708,10 @@ class Runtime:
             )
             # ⚠️ **경비 추종에서는 고개를 든 뒤에만 L1 이다** (ADR-40). 접근·정렬 중에
             # 올리면 인증 요청까지의 10초를 걷는 데 다 쓴다. 마지막 검출 시각은 그대로 넣는다.
-            gated = self._tracks_person() and not self._engaged
+            #
+            # ⚠️ **공장 모드는 사람으로 L1 을 올리지 않는다** (2026-09-25 확정 S1). 멈춰서
+            # 보호구를 볼 뿐이다 — 노란 눈은 쓰러짐 의심 전용이다.
+            gated = (self._tracks_person() and not self._engaged) or self._mission.enables("ppe")
             if not self._behavior.standby and not inspected:
                 self._escalation.note_person(
                     present=result.sighting.present and not gated,
@@ -718,10 +738,12 @@ class Runtime:
                 self._apply(Event.PERSON_FOUND, now_ms)
                 self._record_person_event(result)
         if fresh:
+            self._take_fall_reading(now_ms)
             self._observe_fallen(result, now_ms)
             self._judge_ppe(result, now_ms)
             self._track(result, now_ms)
             self._inspect_zone(result, now_ms)
+            self._ask_fall(result, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
         # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
         healthy = self._vision.healthy()
@@ -807,7 +829,10 @@ class Runtime:
         )
         LOG.info("ppe_judged", track_id=track_id, state=state, reason=reason)
         if state == VIOLATION:
+            # 위반은 **경고**다 (S2) — 빨간 눈과 문장을 함께 내고 경고 시간 뒤에 관제 확인
+            # 없이 순찰로 돌아간다. 돌아가는 길은 적합 판정과 같은 `PPE_SETTLED` 다.
             self._apply(Event.PPE_VIOLATION, now_ms)
+            self._ppe_settle_at = now_ms + self._ppe_warning_ms
         elif returned:
             self._ppe_settle_at = now_ms + max(self._ppe_settle_ms, 1000)
         else:
@@ -820,11 +845,12 @@ class Runtime:
             return
         if self._ppe_settle_at is not None:
             return
-        # ⚠️ **쓰러졌는지 먼저 본다** (FR-11.1 표 · `4.8.3`). 병행하면 1500ms 위반이 3초
-        # 쓰러짐보다 먼저 L3 를 잡아 전용 문장이 묻히고, 적합이면 `PPE_SETTLED` 로 누운
-        # 사람을 두고 순찰에 돌아간다. 후보인 동안은 판정도 자세 상승도 하지 않고 선다.
-        # 확정된 뒤에도 후보이므로 누운 사람 곁에 남는다 — `TARGET_LOST`·`MANUAL` 로만 떠난다.
-        held = self._fall_held(now_ms)
+        # ⚠️ **쓰러졌는지 먼저 본다** (FR-11.1 표 · `4.8.3` · S8). 병행하면 위반 경고가
+        # 쓰러짐보다 먼저 빨간 눈을 잡아 전용 문장이 묻히고, 적합이면 `PPE_SETTLED` 로 누운
+        # 사람을 두고 순찰에 돌아간다. 의심인 동안은 판정도 자세 상승도 하지 않는다.
+        # ⚠️ 보류는 후보 한 프레임이 아니라 **의심**에 건다 — 한 프레임 틈에 풀리면 이미 찬
+        # 워커의 위반 창이 곧바로 경고를 낸다. 의심이 끝나면(확정 확인·상실·제한 시간) 풀린다.
+        held = self._fall_since is not None
         if self._edge.changed("ppe_held_for_fall", held):
             LOG.info("ppe_held_for_fall", held=held)
         if held:
@@ -899,10 +925,12 @@ class Runtime:
         ⚠️ **추종을 끈 모드에서는 돌지 않는다** (FR-11.1). 사건만
         막으면 조향각은 매 프레임 계산돼 `TRACK` 시퀀스에 그대로 실린다 — 전이는
         없는데 로봇이 사람을 따라 도는, 가장 설명하기 어려운 모양이 된다.
+        예외는 공장의 **쓰러짐 의심**이다 (S3) — 박스가 있으면 경비의 조준·접근을 그대로
+        쓰고, 없으면 아무 사건도 나지 않아 제자리에 선다.
         """
-        if not self._tracks_person():
-            return
-        if not self._behavior.tracking:
+        if not self._behavior.tracking or not (
+            self._tracks_person() or self._fall_since is not None
+        ):
             # ⚠️ **추종 구간을 벗어나면 엣지 기억을 지운다.** 남겨 두면 다시 `ALERT` 로
             # 들어왔을 때 첫 판정이 *"변화 없음"* 으로 삼켜져 `TARGET_OFF_CENTER` 가
             # 나가지 않는다. 그러면 `3.5.3` 이 미착수라 시퀀스가 없는 `ALERT` 에
@@ -1093,7 +1121,6 @@ class Runtime:
                 self._zone_aligned = anchor.yaw is None  # 방향이 없으면 선 채로 본다
                 self._zone_vlm_asked = False
                 self._zone_vlm_wait_until = None
-                self._zone_vlm_alarm = False
                 self._zone_done = False
                 self._visit_since_ms = now_ms
                 self._visit_seen = []
@@ -1203,31 +1230,28 @@ class Runtime:
         self._visit_outcome = "zone_clear"
         self._leave_zone(result, now_ms)
 
-    def _fall_held(self, now_ms: int) -> bool:
-        """쓰러짐 후보를 `gap_ms` 안에 봤나 — PPE 보류의 기준이다.
-
-        ⚠️ **틱 하나로 풀지 않는다.** 쓰러지는 도중 한 프레임이 모양·이동 조건을 놓치면
-        후보가 꺼지는데, 워커의 위반 창은 그동안에도 차 있어 그 틱에 L3 를 잡는다.
-        """
-        return self._fall_seen_ms is not None and now_ms - self._fall_seen_ms <= self._fallen_gap_ms
-
     def _observe_fallen(self, result: Any, now_ms: int) -> None:
-        """쓰러짐 판정의 **엣지에서만** 남기고 `PERSON_DOWN` 을 낸다 (`4.8.3` · FR-9).
+        """누움 후보로 쓰러짐 의심에 들고, 의심 뒤의 후보를 센다 (`4.8.3` · S3·S4).
 
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
         같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
 
-        ⚠️ **사건은 전이가 아니라 L3 다.** `PERSON_DOWN` 은 전이표에 없어 상태는 그대로
-        두고 단계만 올린다. 모드 게이트가 공장 모드에서만 통과시키므로, 경비 모드에서는
-        기록까지만 남는다.
+        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다** (S7). 워커의 3초 정지 확정(`fallen`)은
+        엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
         """
+        verdict = getattr(result, "fallen", None)
+        if verdict is None:
+            return
+        if self._mission.enables("fallen") and verdict.candidate:
+            if self._fall_since is None:
+                self._suspect_fall("yolox", now_ms)  # 진입 프레임은 누적에 세지 않는다
+            else:
+                self._fall_hits += 1
+                self._confirm_fall(result, now_ms)
         # ⚠️ **엣지는 워커의 `changed` 가 아니라 우리 기준으로 본다** — `person` 과 같은
         # 이유다. 워커는 25fps 라 `changed` 가 실린 프레임이 이 틱(10Hz) 전에 덮어써진다.
         # 2026-09-23 실기에서 워커 확정 6번 중 4번이 그렇게 사라졌다.
-        verdict = getattr(result, "fallen", None)
-        if verdict is not None and verdict.candidate:
-            self._fall_seen_ms = now_ms
-        if verdict is None or not self._edge.changed("fallen", verdict.fallen):
+        if not self._edge.changed("fallen", verdict.fallen):
             return
         LOG.warning(
             "fallen_changed",
@@ -1235,7 +1259,8 @@ class Runtime:
             aspect=verdict.aspect,
             still_ms=verdict.still_ms,
         )
-        if not verdict.fallen:
+        # 공장 모드의 기록은 확정(`_confirm_fall`) 때 한 번 남긴다.
+        if not verdict.fallen or self._mission.enables("fallen"):
             return
         self._record_scene(
             "person_fallen",
@@ -1247,7 +1272,128 @@ class Runtime:
                 "confirm_ms": self._fallen_confirm_ms,
             },
         )
+
+    def _suspect_fall(self, source: str, now_ms: int) -> None:
+        """쓰러짐 의심에 든다 (S3) — 노란 눈(L1)을 켜고 선다. 박스가 있으면 `_track` 이 다가간다.
+
+        순찰·구역 점검 중이면 `FALL_SUSPECTED` 로 `ALERT` 에 들고, 이미 `ALERT`·`TRACK`
+        (보호구를 보던 중)이면 그 자리에서 의심만 켠다.
+        """
+        if self._fall_since is not None or not self._mission.enables("fallen"):
+            return
+        if not (self._behavior.tracking or self._apply(Event.FALL_SUSPECTED, now_ms)):
+            return
+        self._fall_since = now_ms
+        self._fall_hits = 0
+        self._fall_vlm_yes = None
+        self._fall_confirmed = False
+        # 5초 상실(S5)은 의심에 든 때부터 센다 — 판독으로만 든 의심에는 검출 시각이 없다.
+        self._behavior.note_target(now_ms)
+        self._escalation.note_fall_suspect(True, now_ms)
+        LOG.warning("fall_suspected", source=source)
+
+    def _confirm_fall(self, frame: Any, now_ms: int) -> None:
+        """누움 누적과 의심 뒤 판독 «예» 가 **둘 다** 모이면 확정한다 (S4) — `PERSON_DOWN` → L3.
+
+        ⚠️ **사건은 전이가 아니라 L3 다.** `PERSON_DOWN` 은 전이표에 없어 상태는 그대로
+        두고 단계만 올린다. 관제가 확인하면(`confirm_alarm`) 순찰로 돌아간다.
+        """
+        if (
+            self._fall_confirmed
+            or self._fall_since is None
+            or self._fall_hits < self._fall_need
+            or self._fall_vlm_yes is None
+        ):
+            return
+        self._fall_confirmed = True
+        # ⚠️ **전이보다 먼저 남긴다** — 대시보드 사건이 기록을 가리키게.
+        self._record_scene(
+            "person_fallen",
+            frame,
+            {
+                "fallen": True,
+                "hits": self._fall_hits,
+                "suspect_ms": now_ms - self._fall_since,
+                "raw": self._fall_vlm_yes,
+            },
+        )
         self._apply(Event.PERSON_DOWN, now_ms)
+
+    def _watch_fall(self, now_ms: int) -> None:
+        """의심을 끝낼 때를 본다 (S5). 틱마다 — 새 프레임이 없어도 — 돈다.
+
+        `ALERT`·`TRACK` 을 떠났으면(5초 상실 `TARGET_LOST`·수동·비상정지) 의심도 끝난다.
+        확정하지 못한 채 `fsm.fall_suspect_timeout_ms` 가 지나면 순찰로 돌아간다.
+        """
+        if self._fall_since is None:
+            return
+        if not self._behavior.tracking:
+            self._end_fall(now_ms)
+        elif not self._fall_confirmed and now_ms - self._fall_since >= self._fall_timeout_ms:
+            LOG.info(
+                "fall_suspect_timeout", hits=self._fall_hits, vlm=self._fall_vlm_yes is not None
+            )
+            self._apply(Event.FALL_RESOLVED, now_ms)
+            self._end_fall(now_ms)
+
+    def _end_fall(self, now_ms: int) -> None:
+        self._fall_since = None
+        self._fall_hits = 0
+        self._fall_vlm_yes = None
+        self._fall_confirmed = False
+        self._escalation.note_fall_suspect(False, now_ms)
+
+    def _take_fall_reading(self, now_ms: int) -> None:
+        """끝난 쓰러짐 판독을 줍는다 (S6). «예» 면 의심에 들거나, 의심 뒤에 건 것이면 확정을 채운다.
+
+        ⚠️ **의심 중에 건 판독이 의심이 끝난 뒤에 오면 버린다** — 돌려보낸 사람을 늦은 답
+        하나로 곧바로 다시 의심하게 된다.
+        """
+        if self._fall_vlm_pending is None or self._vlm.busy:
+            return
+        (asked_ms, asked, during), self._fall_vlm_pending = self._fall_vlm_pending, None
+        reading = self._vlm.take()
+        if reading is None:
+            return  # 스레드가 죽었다 — 사유는 `vlm_worker_failed` 가 남겼다
+        down = reading.get("person_down")
+        LOG.info("fall_reading", degraded=reading.degraded, reason=reading.reason, person_down=down)
+        if not down:
+            return
+        if self._fall_since is None:
+            if not during:
+                self._suspect_fall("vlm", now_ms)
+        elif asked_ms >= self._fall_since:
+            # «예» 는 대상을 본 것이다 — 박스 없이 판독으로만 보는 동안 5초 상실로 풀지 않는다.
+            self._behavior.note_target(now_ms)
+            self._fall_vlm_yes = next(a.raw for a in reading.answers if a.key == "person_down")
+            self._confirm_fall(asked, now_ms)
+
+    def _ask_fall(self, result: Any, now_ms: int) -> None:
+        """쓰러짐 판독을 건다 (S6) — 순찰 중에는 `patrol_interval_ms` 마다, 의심 중에는
+        판독이 끝날 때마다 지금 프레임으로. `person_down` 하나만 묻는다.
+
+        ⚠️ **구역 판독과 겹치지 않는다.** 워커는 결과를 하나만 들고 있어 서로의 답을 제
+        것으로 읽는다 — 어느 쪽이든 돌고 있으면 걸지 않는다(`_read_zone_scene` 도 같다).
+        """
+        if not self._mission.enables("fallen"):
+            return
+        if self._fall_since is not None:
+            self._fall_vlm_due = None
+            if self._fall_confirmed:
+                return  # 확정했으면 더 물을 것이 없다
+        elif self._behavior.state == "PATROL":
+            if self._fall_vlm_due is None:
+                self._fall_vlm_due = now_ms + self._patrol_vlm_ms
+            if now_ms < self._fall_vlm_due:
+                return
+            self._fall_vlm_due = now_ms + self._patrol_vlm_ms
+        else:
+            self._fall_vlm_due = None
+            return
+        if self._fall_vlm_pending is not None or self._zone_vlm_pending is not None:
+            return
+        if self._vlm.submit(result.jpeg, now_ms=now_ms, keys=("person_down",)):
+            self._fall_vlm_pending = (now_ms, result, self._fall_since is not None)
 
     def _read_zone_scene(self, zone: str, result: Any, now_ms: int) -> None:
         """구역에 선 동안 장면을 한 번 읽는다 (`4.8.0` · ADR-35 호출 시점 ②).
@@ -1262,6 +1408,8 @@ class Runtime:
         """
         if self._zone_vlm_asked:
             return
+        if self._fall_vlm_pending is not None:
+            return  # 쓰러짐 판독이 끝나면 다음 틱에 건다 — 워커는 하나다(`_ask_fall`)
         self._zone_vlm_asked = True
         # ⚠️ **앞 판독을 줍기 전에는 걸지 않는다.** 걸면 슬롯에 남은 앞 결과가 새로 건
         # 구역의 것으로 읽힌다 — 스레드가 끝나는 순간과 거는 순간이 겹치면 그렇게 된다.
@@ -1282,9 +1430,9 @@ class Runtime:
         ⚠️ **스레드가 끝난 뒤에만 줍는다.** 돌고 있을 때 슬롯을 비우면 결과가 나중에
         들어와 다음 구역에서 그 구역의 이름과 사진으로 읽힌다 — 예전 코드가 그랬다.
 
-        ⚠️ **쓰러진 사람을 봤다는 답은 `PERSON_DOWN` 이다.** 판정은 여전히 FSM 과 단계
-        표가 한다(ADR-35 결정 2) — 규칙 판정(`_observe_fallen`)과 같은 사건·같은 모드
-        게이트를 탄다. 구역을 떠난 뒤에 온 답이어도 올린다.
+        ⚠️ **쓰러진 사람을 봤다는 답은 의심 진입 신호다** (2026-09-25 확정 S3·S7) — 단독으로
+        L3 를 내지 않는다. 확정은 누움 누적과 의심 뒤 판독이 함께 한다(`_confirm_fall`).
+        구역을 떠난 뒤에 온 답이어도 의심에 든다.
 
         ⚠️ **넘어짐·통로 막힘은 두 번 읽어 확정한다** (WBS 3.6.3 · `vlm_hazards`). 첫 판독이
         «예» 면 **지금 프레임으로** 한 번 더 걸고, 둘 다 «예» 인 항목만 이번 방문에서 확정한다.
@@ -1333,30 +1481,27 @@ class Runtime:
                 "latency_ms": {answer.key: answer.latency_ms for answer in reading.answers},
             },
         )
-        if not reading.get("person_down"):
-            return
-        self._record_scene(
-            "person_fallen",
-            asked,
-            {"fallen": True, "source": "vlm", "zone": zone, "raw": raw["person_down"]},
-        )
-        self._apply(Event.PERSON_DOWN, now_ms)
-        # ⚠️ **경보를 두고 떠나지 않는다** — `_leave_zone` 이 확인될 때까지 붙든다.
-        # 이미 떠난 로봇(변화 확정·상한 초과)을 되돌리지는 않는다.
-        if mine and self._behavior.state == "ZONE_INSPECT":
-            self._zone_vlm_alarm = True
+        if reading.get("person_down"):
+            self._suspect_fall("zone_vlm", now_ms)
 
     def _leave_zone(self, result: Any, now_ms: int) -> None:
-        """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3).
+        """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3 · 2026-09-25 결정).
 
-        물건 변화(`_inspect_zone`)와 판독 확정(`_take_zone_reading`)을 합쳐 무엇이든 있으면
-        `zone_changed` 로 남기고 `ZONE_CHANGED` 를 낸다. 없으면 `ZONE_CLEAR` 다.
+        반출·반입(`_inspect_zone`)과 판독 확정(`_take_zone_reading`)을 모아 **종류별로
+        다르게** 맺는다(Z2·Z3·Z4).
 
-        ⚠️ **판독·경보가 남았으면 `ZONE_CLEAR` 를 미룬다** (2026-09-24 결정). 기다리지 않으면
+        ⚠️ **넘어짐·통로 막힘만 `zone_changed` → `ZONE_CHANGED`(L3) 다.** 반출은 관제에
+        가벼운 경고(`zone_notice`)만 남기고 순찰을 잇는다 — 로봇 혼자서는 사람이 잠깐
+        치운 것인지 정말 없어진 것인지 가를 수 없어, 눈·경보까지 올리면 오탐이 사람을
+        부른다. 반입은 그보다 가벼워 로그 기록만 한다(Z3) — 작업 중인 현장에 새 물건이
+        놓이는 일은 흔하다. **반출·반입이 넘어짐과 같은 방문에서 함께 확정돼도 결론은
+        여전히 `ZONE_CHANGED` 다** — Z2 가 Z4 를 가리면 안 된다.
+
+        ⚠️ **판독·경보가 남았으면 결론을 미룬다** (2026-09-24 결정). 기다리지 않으면
         판독이 *"쓰러진 사람이 있다"* 고 답해도 로봇은 경보를 울리며 지나간다. 미루는 것은
         이 사건 하나라 수동·비상정지 같은 ANY 전이는 그대로 먹는다. 상한은 판독마다
         `budget_ms` 다. **물건 변화를 확정했으면 기다리지 않는다** — 기다리는 사이 사람이
-        나타나 `ALERT` 로 가면 확정한 반출이 경보 없이 사라진다(확정기는 다시 올리지 않는다).
+        나타나 `ALERT` 로 가면 확정한 변화가 경고 없이 사라진다(확정기는 다시 올리지 않는다).
         늦게 온 판독은 건 구역 이름으로 남으므로 버리지 않는다(`_take_zone_reading`).
         """
         self._zone_done = True
@@ -1366,10 +1511,11 @@ class Runtime:
             # 상한 초과는 기능 저하다. 결과가 늦게 오면 그때 건 구역 이름으로 남는다.
             LOG.warning("zone_reading_timeout", zone=self._zone, wait_ms=self._zone_vlm_wait_ms)
             self._zone_vlm_wait_until = None
-        changes = [change.as_dict() for change in self._visit_found] + [
-            {"kind": kind, "source": "vlm"} for kind in self._zone_hazards
-        ]
-        if changes:
+        removed = [c.as_dict() for c in self._visit_found if c.kind is ChangeKind.REMOVED]
+        added = [c.as_dict() for c in self._visit_found if c.kind is not ChangeKind.REMOVED]
+        hazards = [{"kind": kind, "source": "vlm"} for kind in self._zone_hazards]
+        if hazards:
+            changes = removed + added + hazards
             LOG.warning("zone_changed", zone=self._zone, changes=changes)
             baseline = self._visit_baseline
             # ⚠️ **전이보다 먼저 남긴다** — `_observe_fallen` 과 같다. 대시보드 사건
@@ -1390,9 +1536,19 @@ class Runtime:
             # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
             self._zone_alarm_alert = self._apply(Event.ZONE_CHANGED, now_ms)
             return
-        # 사람이 경보를 확인할 때까지 머문다 — L3 를 내리는 길은 `confirm_alarm` 하나다.
-        if self._zone_vlm_alarm and self._escalation.level is Level.L3:
-            return
+        if added:
+            # Z3 — 반입은 기록만 한다. 관제 화면에 올리면 작업 중 흔한 물건 배치까지
+            # 알림이 되어 «가벼운 경고» 의 뜻이 없어진다.
+            LOG.info("zone_change_recorded", zone=self._zone, changes=added)
+        if removed:
+            # Z2 — 반출은 눈·문구·L3 없이 관제에 가벼운 경고만 남기고 순찰을 잇는다.
+            LOG.warning("zone_notice", zone=self._zone, changes=removed)
+            self._record_scene(
+                "zone_notice",
+                self._visit_seen[-1] if self._visit_seen else result,
+                {"zone": self._zone, "changes": removed},
+            )
+        self._visit_found = ()
         if self._visit_outcome is not None:
             LOG.info(self._visit_outcome, zone=self._zone, frames=len(self._visit_seen))
         self._zone_vlm_asked = False
@@ -1907,6 +2063,10 @@ class Runtime:
         elif self._zone_alarm_alert:
             # 구역 변화의 `ALERT` 는 사람이 보이지 않으면 스스로 나갈 길이 없다 (FR-8.4).
             self._apply(Event.ZONE_ALARM_CONFIRMED, now_ms)
+        elif self._fall_confirmed:
+            # 확정한 쓰러짐도 확인하면 순찰로 돌아간다 (S4) — 누운 사람은 스스로 떠나지 않는다.
+            self._apply(Event.FALL_RESOLVED, now_ms)
+            self._end_fall(now_ms)
         return released
 
     def ask_alarm_confirm(self) -> None:

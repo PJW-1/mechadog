@@ -71,6 +71,12 @@ class Event(StrEnum):
     # 그대로 두고 단계만 L3 로 올린다(`ALERT` 의 PPE 위반과 같다). 로봇을 어디로 보낼지는
     # 이 사건이 정하지 않는다.
     PERSON_DOWN = "PERSON_DOWN"
+    # 공장 쓰러짐 의심 — 누움 후보나 VLM `person_down` «예» 한 번 (2026-09-25 확정 S3).
+    # 순찰·구역 점검을 멈추고 사람 대응(`ALERT`)으로 든다. 이미 `ALERT`·`TRACK` 이면 사건이 없다.
+    FALL_SUSPECTED = "FALL_SUSPECTED"
+    # 의심 제한 시간 초과 · 쓰러짐 경보(L3) 확인 → 순찰 복귀 (S4·S5). 누운 사람은 스스로
+    # 떠나지 않아 대상 상실이 걸리지 않는다 — `ZONE_ALARM_CONFIRMED` 와 같은 이유다.
+    FALL_RESOLVED = "FALL_RESOLVED"
     # ── 인증 ──
     AUTH_REQUIRED = "AUTH_REQUIRED"  # 미인증 상태 지속 → L2
     AUTH_OK = "AUTH_OK"  # 사원증 또는 암구호 인증 성공
@@ -133,6 +139,11 @@ TRANSITIONS: tuple[Transition, ...] = (
     # 떠나지 못한다.** 사건을 내는 것은 판정기(`3.7.3`)이고 모드 게이트는
     # `mission.py` 가 건다 — 경비 모드에서는 이 사건이 만들어지지 않는다.
     Transition("ALERT", Event.PPE_SETTLED, "PATROL"),
+    # 공장 쓰러짐 의심·해제 (2026-09-25 확정 S3~S5). 모드 게이트는 `mission.py` 의 `fallen` 이다.
+    Transition("PATROL", Event.FALL_SUSPECTED, "ALERT"),
+    Transition("ZONE_INSPECT", Event.FALL_SUSPECTED, "ALERT"),
+    Transition("ALERT", Event.FALL_RESOLVED, "PATROL"),
+    Transition("TRACK", Event.FALL_RESOLVED, "PATROL"),
     # ── 인증 ──
     Transition("ALERT", Event.AUTH_REQUIRED, "AUTH_WAIT"),
     Transition("AUTH_WAIT", Event.AUTH_OK, "PATROL"),
