@@ -88,7 +88,14 @@ class PhotoRecorder:
         if self._thread is not None:
             self._thread.join(timeout=3.0)
 
-    def save(self, directory: Path, extent: list[float], *, has_png: bool) -> None:
+    def save(
+        self,
+        directory: Path,
+        extent: list[float],
+        *,
+        has_png: bool,
+        image_name: str = "slam_map.png",
+    ) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "photo_poses.json").write_text(
             json.dumps(
@@ -124,7 +131,7 @@ class PhotoRecorder:
             "border-radius:50%;padding:.5rem;text-decoration:none}</style>"
             "<h1>LiDAR 지도와 촬영 위치</h1><p>번호를 누르면 해당 위치에서 받은 사진이 열립니다. "
             "사진 속 물체의 지도 좌표를 뜻하지 않습니다. 회색은 미관측 영역입니다.</p>"
-            '<div class="map"><img src="slam_map.png" alt="LiDAR 점유격자 지도">'
+            f'<div class="map"><img src="{html.escape(image_name, quote=True)}" alt="LiDAR 점유격자 지도">'
             + "".join(pins)
             + "</div></html>"
         )
