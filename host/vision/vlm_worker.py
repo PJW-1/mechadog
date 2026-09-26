@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from host.common.logging_setup import event_logger
@@ -81,7 +82,7 @@ class VlmWorker:
         self._loader = threading.Thread(target=self._reader.load, name="vlm-load", daemon=True)
         self._loader.start()
 
-    def submit(self, image: Any, *, now_ms: int) -> bool:
+    def submit(self, image: Any, *, now_ms: int, keys: Sequence[str] | None = None) -> bool:
         """판독을 걸고 **즉시 돌아온다.** 받았으면 참, 거절했으면 거짓.
 
         ⚠️ **거절이 정상이다.** 이미 돌고 있거나 판독기가 없으면 거짓을 돌려주고,
@@ -93,7 +94,7 @@ class VlmWorker:
             self.refused += 1
             return False
         thread = threading.Thread(
-            target=self._run, args=(image, now_ms), name="vlm-read", daemon=True
+            target=self._run, args=(image, now_ms, keys), name="vlm-read", daemon=True
         )
         self._thread = thread
         self.submitted += 1
@@ -137,10 +138,10 @@ class VlmWorker:
         self._thread = None
         self._reader.unload()
 
-    def _run(self, image: Any, now_ms: int) -> None:
+    def _run(self, image: Any, now_ms: int, keys: Sequence[str] | None) -> None:
         started = time.monotonic()
         try:
-            reading = self._reader.read(image, now_ms=now_ms)
+            reading = self._reader.read(image, now_ms=now_ms, keys=keys)
         except Exception as exc:  # noqa: BLE001 — 스레드에서 새면 조용히 사라진다
             self.errors += 1
             LOG.warning("vlm_worker_failed", error=type(exc).__name__, detail=str(exc))

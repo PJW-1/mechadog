@@ -222,3 +222,16 @@ def test_budget_stops_further_questions() -> None:
 def test_budget_must_be_positive() -> None:
     with pytest.raises(ValueError, match="budget_ms"):
         VlmReader(None, budget_ms=0)
+
+
+def test_reading_can_ask_only_some_questions() -> None:
+    """순찰 판독은 `person_down` 하나만 묻는다 (S6). 안 물은 항목 때문에 저하가 되지 않는다."""
+    session = FakeSession(["yes"])
+    reader = VlmReader(lambda: session)
+    reader.load()
+    reading = reader.read(object(), now_ms=3, keys=("person_down",))
+
+    assert session.asked == [q.prompt for q in QUESTIONS if q.key == "person_down"]
+    assert reading.degraded is False
+    assert reading.get("person_down") is True
+    assert reading.get("fallen_object") is None

@@ -586,5 +586,6 @@ def test_exhaustive_coverage_counts() -> None:
     # 2026-09-23 `4.8.3` — 전이 없는 `PERSON_DOWN` 을 더했다(13개 상태 모두 미정의 +13).
     # 2026-09-24 `3.6.x` — `ZONE_INSPECT → ALERT` 사람 게이트 전이를 더했다 (FR-8.3 → FR-3).
     # 2026-09-25 `3.6.x` — `ZONE_ALARM_CONFIRMED` 와 `ALERT → PATROL` 복귀 전이를 더했다 (FR-8.4).
-    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 30, 31)
-    assert (len(effective), len(blocked), len(undefined)) == (97, 6, 293)
+    # 2026-09-25 `4.8.3` — `FALL_SUSPECTED`·`FALL_RESOLVED` 와 쓰러짐 의심 진입·복귀 전이 4줄을 더했다 (S3~S5).
+    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 32, 35)
+    assert (len(effective), len(blocked), len(undefined)) == (101, 6, 315)
