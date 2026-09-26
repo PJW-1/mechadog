@@ -171,7 +171,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     peer_ip = args.robot or network.get("mechdog_ip")
     peer = (peer_ip, int(network["cmd_port"])) if peer_ip else None
 
-    scan_decoder = ScanDecoder()
+    scan_decoder = ScanDecoder(float(lidar.get("mount_yaw_deg", 0.0)))
     telemetry = TelemetryReceiver()
     # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
     own_ids = telemetry_ids(config, args.device)

@@ -282,7 +282,7 @@ def run(args: argparse.Namespace) -> int:
 
     encoder = CommandEncoder()
     tele_decoder = TelemetryDecoder()
-    scan_decoder = ScanDecoder()
+    scan_decoder = ScanDecoder(args.lidar_mount_yaw)
     peer = (args.robot, args.cmd_port)
     obs = Observers()
 
@@ -479,6 +479,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--settle", type=float, default=3.0, help="구간 뒤 정지 관측 시간 s")
     p.add_argument("--reps", type=int, default=2, help="4구간 세트 반복 수")
     p.add_argument("--out", required=True, help="출력 디렉터리")
+    # 이 도구는 설정 파일을 읽지 않고 인자만 받는다. 라이다를 돌려 달았다면
+    # `config.yaml` 의 `lidar.mount_yaw_deg` 와 **같은 값**을 넘겨야 다른 도구와
+    # 같은 좌표로 기록된다. 넘기지 않으면 라이다 원래 각도 그대로 남는다.
+    p.add_argument(
+        "--lidar-mount-yaw",
+        type=float,
+        default=0.0,
+        help="라이다 설치각 deg — config 의 lidar.mount_yaw_deg 와 맞춘다",
+    )
     return p
 
 

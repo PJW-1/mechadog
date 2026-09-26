@@ -734,3 +734,28 @@ def test_positive_head_up_angle_is_refused(cfg: dict, section: str, name: str) -
         broken[section][name] = bad
         with pytest.raises(ConfigError, match=name):
             validate_base_config(broken)
+
+
+def test_lidar_mount_yaw_must_be_within_one_turn(cfg: dict) -> None:
+    """범위 밖 설치각은 지도를 통째로 돌려 놓고도 조용히 지나간다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (-1, 360, 720, "270", float("nan")):
+        broken = deepcopy(cfg)
+        broken.setdefault("lidar", {})["mount_yaw_deg"] = bad
+        with pytest.raises(ConfigError, match="mount_yaw_deg"):
+            validate_base_config(broken)
+
+
+def test_lidar_mount_yaw_accepts_the_mounted_value(cfg: dict) -> None:
+    """커넥터를 뒤로 단 조립의 값(270)과 경계값이 통과해야 한다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for good in (0, 90, 270, 359.9):
+        ok = deepcopy(cfg)
+        ok.setdefault("lidar", {})["mount_yaw_deg"] = good
+        validate_base_config(ok)

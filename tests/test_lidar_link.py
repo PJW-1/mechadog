@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -276,3 +277,53 @@ def test_encode_round_trips_through_the_decoder() -> None:
     assert scan.scan_id == 7, "seq 가 곧 Scan ID 다"
     assert len(scan.points) == 2
     assert scan.dropped == 0
+
+
+# ══════════════════════════════════════════════════════════════
+#  설치각 보정 (lidar.mount_yaw_deg)
+# ══════════════════════════════════════════════════════════════
+
+
+def test_mount_yaw_defaults_to_no_rotation() -> None:
+    """기본값은 0 이다 — 설정을 안 넣은 기존 사용처가 조용히 돌아가면 안 된다."""
+    assert points_from_wire([[0.0, 1000]]) == points_from_wire([[0.0, 1000]], 0.0)
+    ((angle, _dist),) = points_from_wire([[0.0, 1000]])
+    assert angle == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    ("wire_deg", "mount_deg", "expect_deg"),
+    [
+        (270.0, 90.0, 0.0),  # 커넥터를 뒤로 단 조립 — 라이다 270° 가 로봇 정면
+        (90.0, 90.0, 180.0),  # 커넥터 면은 정확히 로봇 뒤로 떨어진다
+        (0.0, 90.0, 90.0),
+        (180.0, 90.0, 270.0),
+        (350.0, 90.0, 80.0),  # 360 을 넘으면 되돌아온다
+        (10.0, 355.0, 5.0),  # 설치각 쪽이 커도 되돌아온다
+    ],
+)
+def test_mount_yaw_rotates_and_wraps(wire_deg: float, mount_deg: float, expect_deg: float) -> None:
+    """수신 각도에 설치각을 더해 로봇 기준으로 바꾼다. 0~360 으로 되돌린다."""
+    ((angle_rad, _dist),) = points_from_wire([[wire_deg, 1000]], mount_deg)
+    assert math.degrees(angle_rad) == pytest.approx(expect_deg, abs=1e-9)
+
+
+def test_decoder_applies_mount_yaw() -> None:
+    """디코더도 같은 보정을 받는다 — 실기 경로가 목업과 어긋나면 안 된다."""
+    row = {
+        "type": "SCAN",
+        "device_id": "lidar-a",
+        "boot_id": "7f3a91c2e8b40d65",
+        "seq": 1,
+        "ts": 1756800000000,
+        "points": [[270.0, 1000]],
+    }
+    scan = scan_of(ScanDecoder(90.0).validate(row))
+    assert scan is not None
+    assert math.degrees(scan.points[0][0]) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_mount_yaw_does_not_touch_distance() -> None:
+    """돌리는 것은 각도뿐이다. 거리까지 건드리면 지도가 부풀거나 줄어든다."""
+    ((_angle, dist),) = points_from_wire([[123.0, 2500]], 270.0)
+    assert dist == pytest.approx(2.5)
