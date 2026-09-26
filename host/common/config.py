@@ -310,6 +310,13 @@ def validate_base_config(config: dict[str, Any]) -> None:
     track = config["localization"].get("track")
     if not isinstance(track, str) or track not in {"none", "lidar", "aruco"}:
         raise ConfigError("localization.track 은 none, lidar, aruco 중 하나여야 함")
+    # `lidar` 절은 Phase 2 이므로 없을 수 있다. 있으면 설치각만 본다 —
+    # 범위를 벗어난 값은 지도를 통째로 돌려 놓고도 조용히 지나간다.
+    lidar = config.get("lidar")
+    if isinstance(lidar, dict) and "mount_yaw_deg" in lidar:
+        yaw = lidar["mount_yaw_deg"]
+        if not _finite_number(yaw) or not 0 <= float(yaw) < 360:
+            raise ConfigError("lidar.mount_yaw_deg 는 0 이상 360 미만이어야 함")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")
