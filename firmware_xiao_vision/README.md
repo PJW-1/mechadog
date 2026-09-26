@@ -6,6 +6,16 @@ Host PC가 맡는다([음성 스트림](#음성-스트림)).
 
 ## 업로드
 
+⚠️ **보드 패키지는 `esp32:esp32@2.0.12` 를 쓴다 — 최신 코어를 쓰면 마이크가 죽는다.**
+`/audio` 는 구형 `driver/i2s.h` 의 `i2s_read` 를 쓰는데 arduino-esp32 3.x(ESP-IDF 5.x)에서는
+그것이 호환 껍데기라 PDM 수신이 서지 않는다. **컴파일은 경고 없이 통과하고 `MIC_READY` 도
+정상으로 찍히지만** `/audio` 가 0 바이트다(2026-09-25 실측 · 3.3.11 대 2.0.12). 카메라도
+2.0.12 가 빨랐다(31.3 fps 대 24.7 fps). CI 도 이 버전으로 고정했다.
+
+⚠️ **`MIC_READY` 로 마이크를 판정하지 않는다.** 그 로그는 `i2s_set_clk` 성공까지만 뜻한다.
+확인은 `curl "http://<xiao>:82/audio?gain=2"` 로 **실제 바이트가 오는지** 본다.
+
+
 1. `wifi_secrets.example.h`를 같은 폴더의 `wifi_secrets.h`로 복사한다.
 2. `MECHDOG_WIFI_SSID`와 `MECHDOG_WIFI_PASSWORD`를 실제 2.4GHz 공유기 값으로 바꾼다.
 3. Arduino IDE에서 `firmware_xiao_vision.ino`를 연다.
