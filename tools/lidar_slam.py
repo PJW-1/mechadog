@@ -138,7 +138,9 @@ def run(args: argparse.Namespace, config: dict) -> int:
 
     rng = random.Random(args.seed)
     sim_params = simulation.sim_params_from_config(config, range_m[1])
-    decoder = ScanDecoder(float(lidar.get("mount_yaw_deg", 0.0)))
+    decoder = ScanDecoder(
+        float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
+    )
     sock: socket.socket | None = None
     if not args.simulate:
         sock = open_scan_socket(int(lidar["scan_port"]), ms_to_s(lidar["scan_stall_timeout_ms"]))
