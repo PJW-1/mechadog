@@ -11,6 +11,10 @@
 ⚠️ **`say()` 는 절대 던지지 않고 즉시 돌아온다.** 10Hz 제어 루프(`runtime.py`)
 에서 부르므로, 합성·재생이 아무리 느려지거나 실패해도 그 실패가 주행을
 막으면 안 된다. 작은 큐 + 데몬 워커 스레드 하나가 실제 작업을 순서대로 한다.
+
+관제 화면의 음량·무음 조절(`4.8.2`)은 `volume`(0~100)·`muted` 로 들어온다.
+대시보드 스레드가 바꾸고 워커 스레드가 읽으므로 락으로 묶는다 — 자막은
+`judgement.sentence` 경로 그대로라 무음이어도 계속 나온다.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ import queue
 import threading
 from collections.abc import Callable, Mapping
 from typing import Any
+
+import numpy as np
 
 from host.common.logging_setup import event_logger
 
@@ -62,6 +68,18 @@ def _default_synth(model_path: str, length_scale: float) -> SynthFn:
     return synth
 
 
+def _scale_volume(pcm: bytes, volume: int) -> bytes:
+    """PCM16LE 진폭에 음량(0~100)을 곱한다. 100 이면 원본을 그대로 돌려준다.
+
+    ⚠️ **클리핑한다.** 곱한 값이 int16 범위를 벗어나면 줄바꿈되어 잡음이 난다
+    (100 을 넘는 값은 여기서 만들지 않지만, 방어로 clip 해 둔다).
+    """
+    if volume >= 100:
+        return pcm
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) * (volume / 100.0)
+    return np.clip(samples, -32768, 32767).astype("<i2").tobytes()
+
+
 def _default_play(pcm: bytes, sample_rate: int) -> None:
     """`sounddevice` 로 재생한다. 오디오 출력 장치가 없으면 여기서 던진다."""
     import numpy as np
@@ -85,6 +103,7 @@ class Broadcaster:
         *,
         model_path: str = DEFAULT_MODEL_PATH,
         length_scale: float = 1.2,
+        volume: int = 100,
         synth: SynthFn | None = None,
         play: PlayFn = _default_play,
         preload: bool = True,
@@ -95,6 +114,11 @@ class Broadcaster:
         self._synth_fn = synth
         self._disabled = False
         self._load_lock = threading.Lock()
+        # 관제 화면의 음량·무음 조절 (`4.8.2`). 대시보드 스레드가 쓰고 워커
+        # 스레드가 읽으므로 락 하나로 묶는다.
+        self._volume_lock = threading.Lock()
+        self._volume = max(0, min(100, int(volume)))
+        self._muted = False
         self._queue: queue.Queue[str] = queue.Queue(maxsize=_QUEUE_MAXSIZE)
         self._stop = threading.Event()
         self._worker = threading.Thread(target=self._run, name="broadcast-tts", daemon=True)
@@ -103,6 +127,25 @@ class Broadcaster:
             threading.Thread(
                 target=self._ensure_synth, name="broadcast-tts-preload", daemon=True
             ).start()
+
+    @property
+    def volume(self) -> int:
+        with self._volume_lock:
+            return self._volume
+
+    @property
+    def muted(self) -> bool:
+        with self._volume_lock:
+            return self._muted
+
+    def set_volume(self, volume: int) -> None:
+        """0~100 밖의 값은 잘라 받는다 — 화면이 범위를 어겨도 재생기가 죽지 않는다."""
+        with self._volume_lock:
+            self._volume = max(0, min(100, int(volume)))
+
+    def set_muted(self, muted: bool) -> None:
+        with self._volume_lock:
+            self._muted = bool(muted)
 
     def say(self, text: str) -> None:
         """문장을 재생 큐에 넣는다. **절대 던지지 않고 즉시 돌아온다.**
@@ -132,6 +175,8 @@ class Broadcaster:
                 continue
             if self._disabled:  # 방송이 꺼진 뒤 큐에 남아 있던 문장은 조용히 버린다
                 continue
+            if self.muted:  # 무음이면 합성·재생을 건너뛴다 — 자막은 별개 경로라 그대로 나온다
+                continue
             self._speak(text)
 
     def _speak(self, text: str) -> None:
@@ -143,6 +188,7 @@ class Broadcaster:
         except Exception as exc:  # noqa: BLE001 — 문장 하나 실패로 워커를 죽이지 않는다
             LOG.error("broadcast_synth_failed", error=f"{type(exc).__name__}: {exc}")
             return
+        pcm = _scale_volume(pcm, self.volume)
         try:
             self._play(pcm, sample_rate)
         except Exception as exc:  # noqa: BLE001 — 재생 실패도 다음 문장을 막으면 안 된다
@@ -185,4 +231,5 @@ def from_config(cfg: Mapping[str, Any]) -> Broadcaster | None:
     return Broadcaster(
         model_path=str(section.get("piper_model", DEFAULT_MODEL_PATH)),
         length_scale=float(section.get("length_scale", 1.2)),
+        volume=int(section.get("volume", 100)),
     )
