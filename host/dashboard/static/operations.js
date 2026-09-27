@@ -68,6 +68,9 @@ export function describeEvidence(name,payload){
  if(name==='escalation_changed')rows.push(['사유',reasonName(payload?.reason)],['경고 문장',cleanText(payload?.warning,300)||'읽을 문장 없음 (이 단계는 음성 경고 없음)']);
  if(payload?.trigger)rows.push(['원인 사건',cleanText(payload.trigger,40)]);
  if(payload?.previous)rows.push(['이전 상태',cleanText(payload.previous,40)]);
+ // 관제 방송 TTS 문장 (4.8.2) — 사건 종류와 무관하게 실려 오면 그대로 보인다.
+ // `BlackboxEntry` 가 frozen 이라 `4.8.1` 이 최상위가 아니라 judgement 안에 병합했다.
+ if(j.sentence)rows.push(['방송 문장',cleanText(j.sentence,300)]);
  return {auth:AUTH_TEXT[name]??'해당 없음',ppe,rows};
 }
 export function parseBlackbox(value) {

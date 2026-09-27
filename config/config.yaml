@@ -733,3 +733,22 @@ lidar:
     scan_noise_mm: 10
     dropout_rate: 0.02            # 빔 유실률
     beams: 360
+
+# ══════════════════════════════════════════════════════════════
+#  관제 방송 TTS (WBS 4.8.2 · ADR-38)
+#
+#  `4.8.1` 이 사건마다 만드는 한국어 한 문장을 Host PC 스피커로 읽고 대시보드
+#  자막으로도 낸다. ⚠️ **로봇 스피커(MP3 모듈, escalation.sound)와는 다른
+#  경로다** — 그쪽은 TF 카드에 미리 넣은 고정 문장만 재생한다(ADR-38).
+#
+#  ⚠️ Piper 는 일반 `pip install` 로 넣지 않는다 — `requirements.txt` 주석대로
+#  `pip install --no-deps piper-tts==1.8.0 pathvalidate` 로 따로 깐다
+#  (그냥 넣으면 onnxruntime 을 끌어와 DirectML 을 가리는 CONTRIBUTING 8절의
+#  사고가 재현된다).
+# ══════════════════════════════════════════════════════════════
+broadcast:
+  # 기본 꺼짐 — Piper·모델·오디오 장치가 없는 PC(CI 포함)에서도 기동해야 한다.
+  enabled: false
+  piper_model: "C:/dev/mechadog-voice/models/piper/ko_KR-kss-medium.onnx"
+  # 1.0 이 모델 기본 속도다. 1.2 가 듣기 좋았다는 실측 기록 — docs/MODEL_PLAN.md 198행.
+  length_scale: 1.2

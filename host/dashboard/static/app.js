@@ -105,7 +105,9 @@ if(operations.connected){
   // 무관하게 항상 있다. 백로그를 먼저 넘겨주므로 늦게 열어도 최근 사건을 본다.
   const ws=base.replace(/^http/,'ws');
   feeds.push(new EventFeed({url:ws+'/ws/events',
-   onEvent:event=>operations.ingestLiveEvent(event,base,robot),
+   // 관제 방송 TTS 문장(4.8.2)이 실려 오면 화면 자막으로도 잠깐 띄운다 — 소리는
+   // Host PC 스피커(`host/cloud/broadcast.py`)가 이미 낸다.
+   onEvent:event=>{operations.ingestLiveEvent(event,base,robot);if(event.sentence)toast(event.sentence)},
    onGap:dropped=>operations.noteEventGap(dropped),
    onStatus:status=>operations.setEventFeed(status,robot)}));
   // 로봇 상태 게이지 (WBS 4.6.2) — /ws/telemetry 는 표시용 10Hz 다. 수신률은 새 seq 로만 센다.
