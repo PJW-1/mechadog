@@ -34,6 +34,7 @@ from host.runtime import (
     RECV_BYTES,
     WSAEMSGSIZE,
     Runtime,
+    _announcer,
     _is_oversized_datagram,
     _publish_event,
     dashboard_wiring,
@@ -283,6 +284,8 @@ def main(argv: list[str] | None = None) -> int:
 
     runtimes: list[Runtime] = []
     apps = {}
+    # PC 스피커는 하나다 — 방송기도 하나를 모든 로봇이 나눠 쓴다 (`4.8.2`).
+    announcer = _announcer(members[0].config)
     for member in members:
         config = member.config
         # ⚠️ 카메라 주소가 없는 로봇은 비전 없이 돈다. 없는 주소로 워커를 켜면
@@ -304,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
             dashboard=dashboard,
             mission=member.mission,
             event_publisher=_publish_event(dashboard),
+            announcer=announcer,
         )
         runtimes.append(runtime)
         apps[member.device_id] = create_app(

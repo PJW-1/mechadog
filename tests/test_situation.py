@@ -158,3 +158,12 @@ def test_non_target_events_return_none() -> None:
 
 def test_unknown_event_type_returns_none() -> None:
     assert describe("no_such_event", None) is None
+
+
+def test_every_runtime_hazard_has_a_phrase() -> None:
+    """런타임 위험 종류가 바뀌면(예: `collapsed_load`) 문구 표도 같이 바뀌어야 한다 —
+    놓치면 문장이 조용히 일반 문구로 떨어진다."""
+    from host.report.situation import _HAZARD_PHRASES
+    from host.runtime import ZONE_HAZARDS
+
+    assert set(ZONE_HAZARDS) <= set(_HAZARD_PHRASES)

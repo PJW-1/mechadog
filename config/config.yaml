@@ -747,8 +747,9 @@ lidar:
 #  사고가 재현된다).
 # ══════════════════════════════════════════════════════════════
 broadcast:
-  # 기본 꺼짐 — Piper·모델·오디오 장치가 없는 PC(CI 포함)에서도 기동해야 한다.
-  enabled: false
+  # 켜 둔다 — Piper·모델이 없는 PC 에서는 `broadcast_disabled` 경고 한 번을 남기고
+  # 방송만 꺼지며 런타임은 그대로 기동한다(`host/cloud/broadcast.py`).
+  enabled: true
   piper_model: "C:/dev/mechadog-voice/models/piper/ko_KR-kss-medium.onnx"
   # 1.0 이 모델 기본 속도다. 1.2 가 듣기 좋았다는 실측 기록 — docs/MODEL_PLAN.md 198행.
   length_scale: 1.2

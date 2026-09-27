@@ -52,6 +52,7 @@ from host.behavior.mission import Mission
 from host.behavior.posture import RETURN, PostureEscalation
 from host.behavior.tracker import LockOnTracker
 from host.behavior.zones import Zone, ZoneStore
+from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
 from host.common.logging_setup import (
@@ -2709,6 +2710,12 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _announcer(config: dict[str, Any]) -> Callable[[str], None] | None:
+    """`config.broadcast` 가 켜져 있으면 관제 방송기의 `say` 를 돌려준다 (`4.8.2`)."""
+    broadcaster = broadcast.from_config(config)
+    return None if broadcaster is None else broadcaster.say
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
@@ -2755,6 +2762,9 @@ def main(argv: list[str] | None = None) -> int:
         # 아니다** — 블랙박스는 디스크에 남기고 사람은 화면을 본다. 이 연결이
         # 없으면 기록은 쌓이는데 아무도 모른다. 실제로 그 상태였다.
         event_publisher=(None if dashboard is None else _publish_event(dashboard)),
+        # 사건 문장(`4.8.1`)을 Host PC 스피커로 읽는다 (`4.8.2`). 워커가 데몬 스레드라
+        # 따로 닫지 않는다.
+        announcer=_announcer(config),
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가

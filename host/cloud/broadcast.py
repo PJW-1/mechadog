@@ -1,7 +1,7 @@
 """관제 방송 TTS (WBS 4.8.2 · ADR-38).
 
 `4.8.1` 이 사건마다 만드는 한국어 한 문장을 Host PC 스피커로 읽는다. 대시보드
-자막은 같은 문장을 사건 dict 의 `sentence` 키로 받아 화면에 낸다
+자막은 같은 문장을 사건의 `judgement.sentence` 로 받아 화면에 낸다
 (`host/dashboard/static/`) — 이 모듈은 **소리**만 맡는다.
 
 ⚠️ **로봇 스피커(MP3 모듈, `escalation.sound`, `4.7.20`~`4.7.21`)와는 다른
@@ -146,13 +146,9 @@ class Broadcaster:
         try:
             self._play(pcm, sample_rate)
         except Exception as exc:  # noqa: BLE001 — 재생 실패도 다음 문장을 막으면 안 된다
+            # 끄지 않는다 — 사건은 드물어 문장마다 로그 한 줄이면 되고, 장치(USB 스피커)가
+            # 돌아오면 재시작 없이 다음 문장부터 다시 나온다.
             LOG.error("broadcast_play_failed", error=f"{type(exc).__name__}: {exc}")
-            if self._play is _default_play:
-                # ponytail: 실제 오디오 장치가 없거나 사라진 경우 — 문장마다 다시
-                # 던지기만 하므로 여기서 끈다(스펙의 "오디오 장치 없음" 조건).
-                # 장치가 나중에 복구돼도 재개하려면 재시작이 필요하다 — 필요해지면
-                # 주기적 재검사로 승격한다. 주입한 가짜 재생 함수는 대상이 아니다.
-                self._disabled = True
 
     def _ensure_synth(self) -> SynthFn | None:
         """합성 함수를 돌려준다. 없으면 (처음 한 번만) 적재를 시도한다.
