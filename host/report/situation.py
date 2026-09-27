@@ -59,7 +59,8 @@ def _describe_zone_changed(judgement: dict[str, Any]) -> str:
                 if isinstance(kind, str):
                     kinds.append(kind)
     phrases = dict.fromkeys(_HAZARD_PHRASES.get(kind, _UNKNOWN_HAZARD_PHRASE) for kind in kinds)
-    phrase = " · ".join(phrases) if phrases else _UNKNOWN_HAZARD_PHRASE
+    # 기호로 잇지 않고 문장을 나눈다 — 스피커로 읽히면 «·» 는 소리가 되지 않거나 엉뚱하게 읽힌다.
+    phrase = ". ".join(phrases) if phrases else _UNKNOWN_HAZARD_PHRASE
     return f"{_zone_prefix(judgement.get('zone'))}{phrase}. 확인이 필요합니다."
 
 

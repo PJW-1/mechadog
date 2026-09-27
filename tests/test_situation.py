@@ -77,6 +77,21 @@ def test_zone_changed_blocked_path() -> None:
     assert sentence == "C 구역에서 통로가 막혔습니다. 확인이 필요합니다."
 
 
+def test_zone_changed_two_hazards_are_separate_sentences() -> None:
+    """위험이 둘이면 기호로 잇지 않고 문장을 나눈다 — 스피커로 읽힌다."""
+    sentence = describe(
+        "zone_changed",
+        {
+            "zone": "A",
+            "changes": [
+                {"kind": "collapsed_load", "source": "vlm"},
+                {"kind": "blocked_path", "source": "vlm"},
+            ],
+        },
+    )
+    assert sentence == "A 구역에서 적재물이 무너졌습니다. 통로가 막혔습니다. 확인이 필요합니다."
+
+
 def test_zone_changed_mixed_with_removed_added() -> None:
     """반출·반입이 같은 방문에서 함께 확정돼도 위험 문구만 말한다 (`_leave_zone` 주석)."""
     sentence = describe(
