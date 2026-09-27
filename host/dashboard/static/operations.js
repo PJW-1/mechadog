@@ -112,6 +112,8 @@ export class Operations {
   this.demo=true;this.stale=false;this.role='operator';this.selected='MD-01';
   this.control=null;this.command='STOP';this.mission={status:'idle',robot:'MD-01',zone:'생산 구역',id:null};
   this.records=[];this.sessions=[];this.events=demoEvents();this.policies={};this.storageAvailable=!!storage;
+  // 관제 PC 스피커 방송 음량·무음 (`4.8.2`). 로봇마다 갖는 slots 와 달리 플릿 전체가 하나를 나눠 쓴다.
+  this.broadcast={available:false,volume:100,muted:false};
   this.serial=0;this.load();
  }
  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn)}
@@ -306,6 +308,15 @@ export class Operations {
  setPolicy(policy,robot=ROBOTS[0]){this.slots[robot].policy=['l1_to_l2_hold_s','auth_timeout_s','auth_max_attempts','target_lost_timeout_s'].every(key=>Number.isInteger(policy?.[key]))?policy:null;this.emit('policy')}
  // 전환은 IDLE·MANUAL 에서만 받는다 (FR-11.3). 거절 사유는 requestDevice 가 그대로 남긴다.
  requestMode(name){return this.requestDevice('운용 모드 '+name,()=>this.link.mode(name))}
+ // ── 관제 PC 방송 음량 · 무음 (`4.8.2`) ──────────────────────────
+ // 로봇 스피커(/api/command/sound, MP3)와는 별개다. 방송기는 플릿 전체가 하나를
+ // 나눠 쓰므로 어느 로봇 화면에서 바꿔도 같은 방송기가 바뀐다.
+ setBroadcast(state){
+  this.broadcast=state&&state.available?{available:true,volume:state.volume,muted:!!state.muted}:{available:false,volume:100,muted:false};
+  this.emit('broadcast');
+ }
+ requestBroadcastVolume(volume){return this.requestDevice('방송 음량',()=>this.link.setBroadcast({volume})).then(state=>this.setBroadcast(state))}
+ requestBroadcastMuted(muted){return this.requestDevice('방송 무음',()=>this.link.setBroadcast({muted})).then(state=>this.setBroadcast(state))}
  queryEvents({type='all',status='all',robot='all',query=''}={}){
   const q=query.trim().toLocaleLowerCase();
   return this.events.filter(e=>(this.demo||e.source!=='DEMO')&&(type==='all'||e.category===type)&&(status==='all'||e.review===status)&&(robot==='all'||e.robot===robot)&&(!q||[e.id,e.title,e.robot,e.zone,e.event,e.note].join(' ').toLocaleLowerCase().includes(q)));

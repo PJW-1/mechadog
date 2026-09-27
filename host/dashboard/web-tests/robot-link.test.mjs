@@ -247,6 +247,50 @@ test('a refused service request is surfaced, not swallowed', async () => {
   assert.equal(ops.records[0].action, '실제 서비스 모드 진입 응답');
 });
 
+// ── 관제 PC 방송 음량 · 무음 (`4.8.2`) ────────────────────────────
+
+test('broadcastStatus is a GET, setBroadcast is a POST to the same path', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, method: init?.method, body: init?.body ? JSON.parse(init.body) : undefined });
+    return { ok: true, status: 200, json: async () => ({ available: true, volume: 40, muted: false }) };
+  };
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.broadcastStatus();
+  assert.equal(calls[0].url, 'http://host:8000/api/broadcast');
+  assert.equal(calls[0].method, undefined); // GET 은 init.method 를 주지 않는다
+  await link.setBroadcast({ volume: 40 });
+  assert.equal(calls[1].url, 'http://host:8000/api/broadcast');
+  assert.equal(calls[1].method, 'POST');
+  assert.deepEqual(calls[1].body, { volume: 40 });
+});
+
+test('setBroadcast requests never leave without a link', () => {
+  const ops = new Operations({ link: null });
+  ops.setDemo(false);
+  assert.throws(() => ops.requestBroadcastVolume(50), /실제 제어는 연결되지 않았습니다/);
+  assert.throws(() => ops.requestBroadcastMuted(true), /실제 제어는 연결되지 않았습니다/);
+});
+
+test('a successful volume request updates the store from the server response', async () => {
+  const impl = async () => ({ ok: true, status: 200, json: async () => ({ available: true, volume: 40, muted: false }) });
+  const ops = liveOps(impl);
+  await ops.requestBroadcastVolume(40);
+  assert.deepEqual(ops.broadcast, { available: true, volume: 40, muted: false });
+});
+
+test('a rejected volume request is surfaced, not swallowed', async () => {
+  const ops = liveOps(fakeFetch({ status: 400 }));
+  await assert.rejects(() => ops.requestBroadcastVolume(500));
+  assert.match(ops.linkError, /방송 음량/);
+});
+
+test('setBroadcast(state) reports unavailable when the broadcaster is absent', () => {
+  const ops = new Operations({});
+  ops.setBroadcast({ available: false });
+  assert.deepEqual(ops.broadcast, { available: false, volume: 100, muted: false });
+});
+
 test('device state is read from the telemetry feed, and a missing service flag is unknown, not off', () => {
   const snapshot = (flags) =>
     decodeTelemetryMessage(JSON.stringify({

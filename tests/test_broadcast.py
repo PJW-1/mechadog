@@ -3,6 +3,8 @@
 import threading
 import time
 
+import numpy as np
+
 from host.cloud import broadcast
 from host.cloud.broadcast import Broadcaster, from_config
 
@@ -121,6 +123,80 @@ def test_missing_piper_or_model_disables_broadcast_without_raising(monkeypatch) 
 def test_from_config_returns_none_when_disabled_or_absent() -> None:
     assert from_config({}) is None
     assert from_config({"broadcast": {"enabled": False}}) is None
+
+
+# ── 관제 음량·무음 조절 (`4.8.2`) ────────────────────────────────
+
+
+def _tone_synth(_text: str) -> tuple[bytes, int]:
+    """진폭 20000 짜리 int16 PCM 10개 표본 — 음량을 곱했을 때 크기로 확인한다."""
+    return np.full(10, 20000, dtype="<i2").tobytes(), 16000
+
+
+def test_default_volume_is_full_and_leaves_pcm_untouched() -> None:
+    played: list[bytes] = []
+    broadcaster = Broadcaster(
+        synth=_tone_synth, play=lambda pcm, _rate: played.append(pcm), preload=False
+    )
+    broadcaster.say("문장")
+    _wait_until(lambda: played)
+    broadcaster.close()
+    assert np.frombuffer(played[0], dtype="<i2")[0] == 20000
+
+
+def test_set_volume_scales_the_pcm_amplitude() -> None:
+    played: list[bytes] = []
+    broadcaster = Broadcaster(
+        synth=_tone_synth, play=lambda pcm, _rate: played.append(pcm), preload=False
+    )
+    broadcaster.set_volume(50)
+    broadcaster.say("문장")
+    _wait_until(lambda: played)
+    broadcaster.close()
+    assert np.frombuffer(played[0], dtype="<i2")[0] == 10000
+
+
+def test_set_volume_clamps_out_of_range_values() -> None:
+    broadcaster = Broadcaster(synth=_tone_synth, play=lambda _p, _r: None, preload=False)
+    broadcaster.set_volume(150)
+    assert broadcaster.volume == 100
+    broadcaster.set_volume(-10)
+    assert broadcaster.volume == 0
+    broadcaster.close()
+
+
+def test_muted_skips_synthesis_and_playback() -> None:
+    synthesized: list[str] = []
+    played: list[bytes] = []
+
+    def counting_synth(text: str) -> tuple[bytes, int]:
+        synthesized.append(text)
+        return _tone_synth(text)
+
+    broadcaster = Broadcaster(
+        synth=counting_synth, play=lambda pcm, _rate: played.append(pcm), preload=False
+    )
+    broadcaster.set_muted(True)
+    broadcaster.say("아무 말")
+    # 워커가 큐를 비울 때까지 기다린다 — 그래야 "무음일 때 건너뛰었다" 를 unmute 와의
+    # 경합 없이 확인할 수 있다 (음소거는 문장별 스냅샷이 아니라 처리 시점의 상태다).
+    _wait_until(lambda: broadcaster._queue.empty())
+    broadcaster.set_muted(False)
+    broadcaster.say("확인용")
+    _wait_until(lambda: played)
+    broadcaster.close()
+    assert synthesized == ["확인용"], "무음일 때 넣은 문장은 합성조차 되지 않아야 한다"
+
+
+def test_from_config_reads_the_initial_volume(monkeypatch) -> None:
+    monkeypatch.setattr(
+        broadcast, "_default_synth", lambda *_a, **_k: (_ for _ in ()).throw(ImportError())
+    )
+    broadcaster = from_config(
+        {"broadcast": {"enabled": True, "piper_model": "x.onnx", "volume": 40}}
+    )
+    assert broadcaster.volume == 40
+    broadcaster.close()
 
 
 def test_from_config_builds_a_broadcaster_when_enabled(monkeypatch) -> None:

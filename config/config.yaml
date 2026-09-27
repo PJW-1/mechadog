@@ -753,3 +753,5 @@ broadcast:
   piper_model: "C:/dev/mechadog-voice/models/piper/ko_KR-kss-medium.onnx"
   # 1.0 이 모델 기본 속도다. 1.2 가 듣기 좋았다는 실측 기록 — docs/MODEL_PLAN.md 198행.
   length_scale: 1.2
+  # 초기 음량(0~100) — 관제 화면 슬라이더가 기동 이후 값을 바꾼다.
+  volume: 100

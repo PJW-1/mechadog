@@ -2622,6 +2622,7 @@ def dashboard_wiring(
     *,
     vision: Any | None,
     blackbox: EventBlackbox | None,
+    broadcaster: broadcast.Broadcaster | None = None,
 ) -> dict[str, Any]:
     """관제 서버(`create_app`)에 넘길 명령·영상·사건 그림·정책 연결. 한 대·여러 대가 같이 쓴다."""
     from host.dashboard.commands import CommandService
@@ -2652,6 +2653,9 @@ def dashboard_wiring(
         # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
         "event_snapshot": None if blackbox is None else blackbox.snapshot_bytes,
         "policy": policy_view(config),
+        # PC 스피커 방송 음량·무음 조절 (WBS 4.8.2). 없으면(piper 없음 등) None —
+        # 화면은 "방송 없음" 을 보여 준다.
+        "broadcast": broadcaster,
     }
 
 
@@ -2710,10 +2714,13 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _announcer(config: dict[str, Any]) -> Callable[[str], None] | None:
-    """`config.broadcast` 가 켜져 있으면 관제 방송기의 `say` 를 돌려준다 (`4.8.2`)."""
-    broadcaster = broadcast.from_config(config)
-    return None if broadcaster is None else broadcaster.say
+def _announcer(config: dict[str, Any]) -> broadcast.Broadcaster | None:
+    """`config.broadcast` 가 켜져 있으면 관제 방송기를 돌려준다 (`4.8.2`).
+
+    방송기 자체를 돌려준다 — 호출부가 `Runtime` 에는 `.say` 를 넘기고, 대시보드에는
+    방송기 자체를 넘겨 음량·무음 조절 API 가 붙게 한다.
+    """
+    return broadcast.from_config(config)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2749,6 +2756,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.dashboard_port is not None
         else None
     )
+    # 방송기 자체를 쥔다 — Runtime 에는 `.say` 만 넘기고, 대시보드에는 방송기 자체를
+    # 넘겨 음량·무음 조절 API 가 붙게 한다 (`4.8.2`).
+    broadcaster = _announcer(config)
     runtime = Runtime(
         config,
         device_id=args.device,
@@ -2764,7 +2774,7 @@ def main(argv: list[str] | None = None) -> int:
         event_publisher=(None if dashboard is None else _publish_event(dashboard)),
         # 사건 문장(`4.8.1`)을 Host PC 스피커로 읽는다 (`4.8.2`). 워커가 데몬 스레드라
         # 따로 닫지 않는다.
-        announcer=_announcer(config),
+        announcer=(None if broadcaster is None else broadcaster.say),
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
@@ -2787,7 +2797,13 @@ def main(argv: list[str] | None = None) -> int:
                     running_server(
                         dashboard,
                         args.dashboard_port,
-                        **dashboard_wiring(runtime, config, vision=vision, blackbox=blackbox),
+                        **dashboard_wiring(
+                            runtime,
+                            config,
+                            vision=vision,
+                            blackbox=blackbox,
+                            broadcaster=broadcaster,
+                        ),
                     )
                 )
             runtime.serve(sock, duration_s=args.duration)

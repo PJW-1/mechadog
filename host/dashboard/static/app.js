@@ -94,6 +94,8 @@ if(operations.connected){
  const frame=$('vision-frame'),fpv=$('fpv');
  frame.hidden=false;
  if(fpv)fpv.hidden=true;
+ // 관제 PC 방송 음량 · 무음 초기값 (4.8.2) — 방송기는 플릿 전체가 하나라 아무 로봇의 서버에서나 받는다.
+ fetch(bases[ROBOTS[0]]+'/api/broadcast').then(response=>response.ok?response.json():null).then(state=>{if(state)operations.setBroadcast(state)}).catch(()=>{});
  await Promise.all(Object.entries(bases).map(async([robot,base])=>{
   const health=await fetch(base+'/health').then(response=>response.json()).catch(()=>null);
   visionAvailable[robot]=health?.vision_clients!==null;
