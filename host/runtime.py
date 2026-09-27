@@ -1672,7 +1672,10 @@ class Runtime:
         """
         sentence: str | None = None
         try:
-            sentence = describe(event_type, judgement)
+            # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
+            # 방송·자막 문장을 붙이지 않는다 (2026-09-27 사용자 결정).
+            if event_type != "person_fallen" or self._mission.enables("fallen"):
+                sentence = describe(event_type, judgement)
         except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
             LOG.error("situation_failed", error=f"{type(exc).__name__}: {exc}")
         if sentence is not None and self._announcer is not None:

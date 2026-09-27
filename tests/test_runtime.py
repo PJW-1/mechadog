@@ -618,6 +618,7 @@ def test_situation_describe_failure_does_not_block_recording(
         clock=clock,
         blackbox=blackbox,
         event_publisher=published.append,
+        mission=Mission(local, mode="factory"),
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
@@ -651,6 +652,7 @@ def test_situation_announcer_failure_does_not_block_recording(
         blackbox=blackbox,
         event_publisher=published.append,
         announcer=broken_announcer,
+        mission=Mission(local, mode="factory"),
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
@@ -673,12 +675,38 @@ def test_situation_announcer_fires_without_blackbox(config: dict, clock: FakeClo
     할 경고이지 블랙박스 파일이 아니다.
     """
     announced: list[str] = []
-    runtime = Runtime(config, device_id=DEVICE, clock=clock, announcer=announced.append)
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        announcer=announced.append,
+        mission=Mission(config, mode="factory"),
+    )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
     runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     assert announced == ["사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."]
+
+
+def test_guard_mode_does_not_announce_a_fall(config: dict, clock: FakeClock, tmp_path) -> None:
+    """경비 모드의 쓰러짐은 기록만 남긴다 — 방송·자막 문장을 붙이지 않는다 (2026-09-27 사용자 결정)."""
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    announced: list[str] = []
+    runtime = Runtime(
+        local, device_id=DEVICE, clock=clock, blackbox=blackbox, announcer=announced.append
+    )
+    assert runtime.mission.mode == "guard"
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    assert announced == []
+    entries = blackbox.feed()
+    assert len(entries) == 1, "기록은 그대로 남는다"
+    assert "sentence" not in entries[0].judgement
 
 
 # ── 대응 에스컬레이션 배선 (3.8.3) ──────────────────────────
