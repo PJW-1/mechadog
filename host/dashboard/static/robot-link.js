@@ -77,6 +77,19 @@ export class RobotLink {
     }
   }
 
+  /** 상태만 물어보는 GET — 명령이 아니므로 origin 검사 대상이 아니다. */
+  async get(path, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await this.fetch(this.baseUrl + path, { signal: controller?.signal });
+      if (!response.ok) throw new Error('조회가 거절되었습니다. (HTTP ' + response.status + ')');
+      return await response.json();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   /** **실패를 삼키지 않는다.** 비상정지가 안 갔다면 화면이 그것을 말해야 한다. */
   estop() {
     return this.post('/api/command/estop', {}, ESTOP_TIMEOUT_MS);
@@ -129,5 +142,18 @@ export class RobotLink {
   // 저쪽은 정비 상태이고 이쪽은 임무 모드다. 거절이 흔하므로 사유를 그대로 돌려준다.
   mode(name) {
     return this.post('/api/command/mode', { mode: name });
+  }
+
+  /**
+   * 관제 PC 스피커 방송 음량 · 무음 상태 (`4.8.2`). 로봇 스피커(`/api/command/sound`)와는
+   * 별개다. 방송기는 플릿 전체가 하나를 나눠 쓰므로 아무 로봇의 서버에서 물어봐도 같다.
+   */
+  broadcastStatus() {
+    return this.get('/api/broadcast');
+  }
+
+  /** `{volume}` 또는 `{muted}` 중 온 필드만 바꾼다. */
+  setBroadcast(patch) {
+    return this.post('/api/broadcast', patch);
   }
 }

@@ -371,6 +371,19 @@ export class OperationalPanels {
     this.note('운용 모드는 로봇이 멈춰 있을 때(대기·수동)만 바꿀 수 있고, 바꿔도 경보(L3)와 안전 정지(F)는 풀리지 않습니다. 선행 기능이 없는 모드는 서버가 거절하며 사유를 알려 줍니다.'),
     this.note('모드 변경 버튼은 누르면 확인 창이 뜹니다. 순찰 정지·비상 정지처럼 안전으로 가는 명령은 확인 없이 즉시 보냅니다. 서비스 모드 해제 후에도 안전 래치는 남습니다.')));
   }
+  // 관제 PC 스피커 방송 음량 · 무음 (`4.8.2`) — 로봇 스피커(SOUND)와 별개, 방송기는 플릿 전체가 하나를 나눠 쓴다.
+  {
+   const b=store.broadcast;
+   const label=this.el('span',{},'방송 음량 ('+b.volume+')');
+   const volume=this.el('input',{type:'range',name:'방송 음량',min:0,max:100,step:1,value:b.volume,disabled:!store.live||!b.available,oninput:event=>label.textContent='방송 음량 ('+event.target.value+')'});
+   volume.addEventListener('change',()=>this.run(()=>store.requestBroadcastVolume(Number(volume.value))));
+   const muted=this.el('input',{type:'checkbox',name:'방송 무음',checked:b.muted,disabled:!store.live||!b.available,onchange:event=>this.run(()=>store.requestBroadcastMuted(event.target.checked))});
+   this.container.append(this.section('관제 PC 방송',
+    b.available?null:this.note('방송 없음 — 방송기가 연결되지 않았습니다 (piper 미설치 등).','warning'),
+    this.el('label',{class:'op-field'},label,volume),
+    this.el('label',{class:'op-check'},muted,'무음'),
+    this.note(store.live?'관제 PC 스피커로 나가는 경고 방송 음량입니다. 로봇 스피커(SOUND)와는 별개이며, 어느 로봇 화면에서 바꿔도 같은 방송기가 바뀝니다.':'실제 장비 미연결 — 이 조절은 서버로 전송되지 않습니다.')));
+  }
   if(store.blocked)this.container.append(this.note(store.estop?'예시 정지 잠금 상태입니다. 설정에서 웹 예시 잠금만 초기화할 수 있습니다.':'예시 모드·수신 상태·운영자 시연 역할을 설정에서 확인하세요.','warning'),this.button('운영 설정',()=>this.openDisplaySettings()));
   this.refreshControl();
  }

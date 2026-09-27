@@ -26,3 +26,15 @@ fastapi>=0.115
 anyio>=4.0
 uvicorn[standard]>=0.32
 websockets>=13.0
+
+# ── 관제 방송 TTS (WBS 4.8.2, ADR-38) ─────────────────────────
+sounddevice>=0.5
+
+# `piper-tts` 는 여기 목록에 넣지 않는다. 일반 `pip install piper-tts` 는
+# `onnxruntime`(CPU 빌드)을 끌어와 위 `onnxruntime-directml` 과 이름을 다투고
+# DirectML 을 가린다 — 위와 같은 사고가 재현된다. 대신 아래처럼 따로 깐다.
+#
+#   pip install --no-deps piper-tts==1.8.0 pathvalidate
+#
+# Piper 모델 파일은 사원증 마커와 같은 규칙(ADR-20)으로 저장소에 없다 —
+# `config.yaml` 의 `broadcast.piper_model` 로 실제 경로를 가리킨다.

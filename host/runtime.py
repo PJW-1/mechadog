@@ -52,6 +52,7 @@ from host.behavior.mission import Mission
 from host.behavior.posture import RETURN, PostureEscalation
 from host.behavior.tracker import LockOnTracker
 from host.behavior.zones import Zone, ZoneStore
+from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
 from host.common.logging_setup import (
@@ -65,6 +66,7 @@ from host.common.logging_setup import (
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import rad_to_deg, wrap_pi
 from host.dashboard.state import DashboardState
+from host.report.situation import describe
 from host.slam.settings import maps_dir
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
@@ -175,6 +177,7 @@ class Runtime:
         dashboard: DashboardState | None = None,
         mission: Mission | None = None,
         vlm_reader: VlmReader | None = None,
+        announcer: Callable[[str], None] | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -381,6 +384,10 @@ class Runtime:
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
         self._blackbox = blackbox
         self._event_publisher = event_publisher
+        #: 상황 서술 문장을 관제로 내보내는 방송기 (`4.8.2`). 비동기·예외를 던지지
+        #: 않는 계약이지만 `_record_scene` 에서 다시 한 번 감싼다 — 아직 없는 계약을
+        #: 믿고 안 감싸면 방송기가 하나라도 어기는 순간 제어 틱이 죽는다.
+        self._announcer = announcer
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -1658,13 +1665,33 @@ class Runtime:
         ⚠️ **검출 박스와 달리 이것들은 그림이 없다.** 쓰러짐 판정(`4.8.3`)은 숫자이고
         VLM 판독(`4.8.0`)은 문장이라, 사진 옆에 적어 두지 않으면 나중에 *"왜 그렇게
         판정했나"* 를 되짚을 방법이 없다.
+
+        ⚠️ **문장 생성·방송은 기록이 없어도 나간다** (`4.8.1`). 관제가 그 순간 들어야
+        할 경고이지 블랙박스 파일이 아니므로, 블랙박스가 없는 구성(`blackbox=None`)
+        에서도 방송만은 막지 않는다.
         """
+        sentence: str | None = None
+        try:
+            # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
+            # 방송·자막 문장을 붙이지 않는다 (2026-09-27 사용자 결정).
+            if event_type != "person_fallen" or self._mission.enables("fallen"):
+                sentence = describe(event_type, judgement)
+        except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
+            LOG.error("situation_failed", error=f"{type(exc).__name__}: {exc}")
+        if sentence is not None and self._announcer is not None:
+            try:
+                self._announcer(sentence)
+            except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
+                LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
         if self._blackbox is None:
             return
+        recorded_judgement = judgement
+        if sentence is not None:
+            recorded_judgement = {**(judgement or {}), "sentence": sentence}
         try:
             entry = self._blackbox.record(
                 event_type,
-                judgement=judgement,
+                judgement=recorded_judgement,
                 jpeg=result.jpeg,
                 tracks=result.tracks,
                 detections=result.detections,
@@ -2598,6 +2625,7 @@ def dashboard_wiring(
     *,
     vision: Any | None,
     blackbox: EventBlackbox | None,
+    broadcaster: broadcast.Broadcaster | None = None,
 ) -> dict[str, Any]:
     """관제 서버(`create_app`)에 넘길 명령·영상·사건 그림·정책 연결. 한 대·여러 대가 같이 쓴다."""
     from host.dashboard.commands import CommandService
@@ -2628,6 +2656,9 @@ def dashboard_wiring(
         # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
         "event_snapshot": None if blackbox is None else blackbox.snapshot_bytes,
         "policy": policy_view(config),
+        # PC 스피커 방송 음량·무음 조절 (WBS 4.8.2). 없으면(piper 없음 등) None —
+        # 화면은 "방송 없음" 을 보여 준다.
+        "broadcast": broadcaster,
     }
 
 
@@ -2686,6 +2717,22 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
+    """`config.broadcast` 가 켜져 있으면 관제 방송기를 돌려준다 (`4.8.2`).
+
+    방송기 자체를 돌려준다 — 호출부가 `Runtime` 에는 `.say` 를 넘기고, 대시보드에는
+    방송기 자체를 넘겨 음량·무음 조절 API 가 붙게 한다.
+
+    ⚠️ 설정 오기(`length_scale: "빠르게"`)는 방송만 끈다 — 방송은 런타임 기동을
+    막지 않는다는 원칙이 설정 읽기에도 걸린다.
+    """
+    try:
+        return broadcast.from_config(config)
+    except (TypeError, ValueError) as exc:
+        LOG.warning("broadcast_config_invalid", error=f"{type(exc).__name__}: {exc}")
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
@@ -2719,6 +2766,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.dashboard_port is not None
         else None
     )
+    # 방송기 자체를 쥔다 — Runtime 에는 `.say` 만 넘기고, 대시보드에는 방송기 자체를
+    # 넘겨 음량·무음 조절 API 가 붙게 한다 (`4.8.2`).
+    broadcaster = _broadcaster(config)
     runtime = Runtime(
         config,
         device_id=args.device,
@@ -2732,6 +2782,9 @@ def main(argv: list[str] | None = None) -> int:
         # 아니다** — 블랙박스는 디스크에 남기고 사람은 화면을 본다. 이 연결이
         # 없으면 기록은 쌓이는데 아무도 모른다. 실제로 그 상태였다.
         event_publisher=(None if dashboard is None else _publish_event(dashboard)),
+        # 사건 문장(`4.8.1`)을 Host PC 스피커로 읽는다 (`4.8.2`). 워커가 데몬 스레드라
+        # 따로 닫지 않는다.
+        announcer=(None if broadcaster is None else broadcaster.say),
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
@@ -2754,7 +2807,13 @@ def main(argv: list[str] | None = None) -> int:
                     running_server(
                         dashboard,
                         args.dashboard_port,
-                        **dashboard_wiring(runtime, config, vision=vision, blackbox=blackbox),
+                        **dashboard_wiring(
+                            runtime,
+                            config,
+                            vision=vision,
+                            blackbox=blackbox,
+                            broadcaster=broadcaster,
+                        ),
                     )
                 )
             runtime.serve(sock, duration_s=args.duration)
