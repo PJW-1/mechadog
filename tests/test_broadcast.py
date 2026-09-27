@@ -209,3 +209,23 @@ def test_from_config_builds_a_broadcaster_when_enabled(monkeypatch) -> None:
     )
     assert isinstance(broadcaster, Broadcaster)
     broadcaster.close()
+
+
+def test_a_mistyped_broadcast_config_does_not_stop_the_runtime() -> None:
+    """설정 오기(`length_scale: "빠르게"`)는 방송만 끄고 기동은 막지 않는다 (Devin 지적)."""
+    from host.runtime import _broadcaster
+
+    assert _broadcaster({"broadcast": {"enabled": True, "length_scale": "빠르게"}}) is None
+
+
+def test_from_config_passes_the_settings_through() -> None:
+    broadcaster = broadcast.from_config(
+        {"broadcast": {"enabled": True, "piper_model": "x.onnx", "length_scale": 1.5, "volume": 40}}
+    )
+    assert broadcaster is not None
+    assert (broadcaster._model_path, broadcaster._length_scale, broadcaster.volume) == (
+        "x.onnx",
+        1.5,
+        40,
+    )
+    broadcaster.close()

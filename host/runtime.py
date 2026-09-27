@@ -2717,13 +2717,20 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _announcer(config: dict[str, Any]) -> broadcast.Broadcaster | None:
+def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
     """`config.broadcast` 가 켜져 있으면 관제 방송기를 돌려준다 (`4.8.2`).
 
     방송기 자체를 돌려준다 — 호출부가 `Runtime` 에는 `.say` 를 넘기고, 대시보드에는
     방송기 자체를 넘겨 음량·무음 조절 API 가 붙게 한다.
+
+    ⚠️ 설정 오기(`length_scale: "빠르게"`)는 방송만 끈다 — 방송은 런타임 기동을
+    막지 않는다는 원칙이 설정 읽기에도 걸린다.
     """
-    return broadcast.from_config(config)
+    try:
+        return broadcast.from_config(config)
+    except (TypeError, ValueError) as exc:
+        LOG.warning("broadcast_config_invalid", error=f"{type(exc).__name__}: {exc}")
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2761,7 +2768,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     # 방송기 자체를 쥔다 — Runtime 에는 `.say` 만 넘기고, 대시보드에는 방송기 자체를
     # 넘겨 음량·무음 조절 API 가 붙게 한다 (`4.8.2`).
-    broadcaster = _announcer(config)
+    broadcaster = _broadcaster(config)
     runtime = Runtime(
         config,
         device_id=args.device,
