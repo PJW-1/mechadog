@@ -153,7 +153,8 @@ class Broadcaster:
         큐가 차 있으면(재생이 밀리는 중) 새 문장을 버리고 로그만 남긴다 — 밀린
         문장을 전부 재생하면 방송이 실제 상황보다 계속 뒤처진다.
         """
-        if self._disabled or not text:
+        # 무음이면 큐에도 넣지 않는다. 무음 전에 이미 들어간 문장은 워커가 건너뛴다.
+        if self._disabled or self.muted or not text:
             return
         try:
             self._queue.put_nowait(text)
@@ -185,10 +186,12 @@ class Broadcaster:
             return
         try:
             pcm, sample_rate = synth_fn(text)
+            # 음량 곱하기도 감싼다 — 여기서 던지면(홀수 길이 PCM) 워커 스레드가 죽어
+            # 그 뒤 방송이 조용히 끊긴다.
+            pcm = _scale_volume(pcm, self.volume)
         except Exception as exc:  # noqa: BLE001 — 문장 하나 실패로 워커를 죽이지 않는다
             LOG.error("broadcast_synth_failed", error=f"{type(exc).__name__}: {exc}")
             return
-        pcm = _scale_volume(pcm, self.volume)
         try:
             self._play(pcm, sample_rate)
         except Exception as exc:  # noqa: BLE001 — 재생 실패도 다음 문장을 막으면 안 된다

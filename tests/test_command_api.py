@@ -533,6 +533,28 @@ def test_broadcast_update_rejects_a_non_boolean_muted():
         broadcaster.close()
 
 
+def test_broadcast_update_changes_nothing_when_any_field_is_bad():
+    """검증을 모두 마친 뒤 적용한다 — 음량만 바뀌고 400 이 나가면 화면과 실제가 어긋난다."""
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            response = http.post("/api/broadcast", json={"volume": 30, "muted": "yes"})
+            assert response.status_code == 400
+            assert broadcaster.volume == 100
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_rejects_a_non_object_body():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            assert http.post("/api/broadcast", json=["volume"]).status_code == 400
+            assert http.post("/api/broadcast", json="volume").status_code == 400
+    finally:
+        broadcaster.close()
+
+
 def test_broadcast_update_is_refused_from_a_foreign_origin():
     broadcaster = _fake_broadcaster()
     try:

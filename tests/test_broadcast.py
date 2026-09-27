@@ -178,9 +178,8 @@ def test_muted_skips_synthesis_and_playback() -> None:
     )
     broadcaster.set_muted(True)
     broadcaster.say("아무 말")
-    # 워커가 큐를 비울 때까지 기다린다 — 그래야 "무음일 때 건너뛰었다" 를 unmute 와의
-    # 경합 없이 확인할 수 있다 (음소거는 문장별 스냅샷이 아니라 처리 시점의 상태다).
-    _wait_until(lambda: broadcaster._queue.empty())
+    # 무음이면 큐에도 넣지 않는다 — 그래서 unmute 와 경합 없이 바로 확인된다.
+    assert broadcaster._queue.empty()
     broadcaster.set_muted(False)
     broadcaster.say("확인용")
     _wait_until(lambda: played)
@@ -229,3 +228,21 @@ def test_from_config_passes_the_settings_through() -> None:
         40,
     )
     broadcaster.close()
+
+
+def test_a_bad_pcm_does_not_kill_the_worker() -> None:
+    """음량을 곱하다 실패해도(홀수 길이 PCM) 워커는 살아 다음 문장을 낸다 (Devin 지적)."""
+    played: list[bytes] = []
+
+    def synth(text: str) -> tuple[bytes, int]:
+        return (b"", 16000) if text == "깨진" else _tone_synth(text)
+
+    broadcaster = Broadcaster(
+        synth=synth, play=lambda pcm, _rate: played.append(pcm), preload=False
+    )
+    broadcaster.set_volume(50)
+    broadcaster.say("깨진")
+    broadcaster.say("정상")
+    _wait_until(lambda: played)
+    broadcaster.close()
+    assert len(played) == 1
