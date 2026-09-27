@@ -484,15 +484,19 @@ def create_app(
         if broadcast is None:
             return JSONResponse({"error": "unavailable"}, status_code=404)
         body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body"}, status_code=400)
+        # 두 필드를 모두 검증한 뒤 적용한다 — 음량만 바꾸고 400 을 내면 화면과 실제가 어긋난다.
+        volume, muted = body.get("volume"), body.get("muted")
+        if "volume" in body and (
+            isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100
+        ):
+            return JSONResponse({"error": "volume"}, status_code=400)
+        if "muted" in body and not isinstance(muted, bool):
+            return JSONResponse({"error": "muted"}, status_code=400)
         if "volume" in body:
-            volume = body["volume"]
-            if isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100:
-                return JSONResponse({"error": "volume"}, status_code=400)
             broadcast.set_volume(volume)
         if "muted" in body:
-            muted = body["muted"]
-            if not isinstance(muted, bool):
-                return JSONResponse({"error": "muted"}, status_code=400)
             broadcast.set_muted(muted)
         return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
 
