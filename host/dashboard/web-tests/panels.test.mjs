@@ -67,6 +67,26 @@ test('STOP preempts a held direction on pointerdown, not only click',()=>{
  const down=(element,id)=>{const event=new dom.window.Event('pointerdown',{bubbles:true,cancelable:true});Object.assign(event,{pointerId:id,button:0});element.dispatchEvent(event)};
  down(forward,1);assert.equal(store.command,'FORWARD');down(document.querySelector('[data-drive="STOP"]'),2);assert.equal(store.command,'STOP');
 });
+test('broadcast controls are disabled and say «방송 없음» without a live broadcaster',()=>{
+ const {document,panels}=setup();panels.render('missions');
+ assert.equal(document.querySelector('[name="방송 음량"]').disabled,true);
+ assert.equal(document.querySelector('[name="방송 무음"]').disabled,true);
+ assert.match(document.querySelector('.op-section:last-of-type').textContent,/방송 없음/);
+});
+test('broadcast controls enable once live and available, and send volume/mute requests',async()=>{
+ const {dom,document,panels,store}=setup();
+ const calls=[];
+ store.slots['MD-01'].link={setBroadcast:patch=>{calls.push(patch);return Promise.resolve({available:true,volume:patch.volume??70,muted:patch.muted??false})}};
+ store.setDemo(false);store.setBroadcast({available:true,volume:70,muted:false});
+ panels.render('missions');
+ const volume=document.querySelector('[name="방송 음량"]'),muted=document.querySelector('[name="방송 무음"]');
+ assert.equal(volume.disabled,false);assert.equal(muted.disabled,false);
+ assert.equal(volume.value,'70');
+ change(dom,volume,'30');await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(calls[0],{volume:30});assert.equal(store.broadcast.volume,30);
+ muted.checked=true;muted.dispatchEvent(new dom.window.Event('change',{bubbles:true}));await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(calls[1],{muted:true});assert.equal(store.broadcast.muted,true);
+});
 test('mission draft survives delayed layout arrival',()=>{
  const {dom,document,panels}=setup();panels.render('missions');change(dom,document.querySelector('[name="임무 로봇"]'),'MD-02');const check=document.querySelector('[name="예시 임무 확인"]');check.checked=true;check.dispatchEvent(new dom.window.Event('change'));panels.setZones(zones);assert.equal(document.querySelector('[name="임무 로봇"]').value,'MD-02');assert.equal(document.querySelector('[name="예시 임무 확인"]').checked,true);
 });

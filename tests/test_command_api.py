@@ -470,6 +470,104 @@ def test_policy_endpoint_serves_the_config_values(cfg):
         assert http.get("/api/policy").status_code == 404
 
 
+# ── PC 스피커 방송 음량·무음 (WBS 4.8.2) ─────────────────────────
+#
+# 로봇 스피커(`/api/command/sound`)와는 별개 경로다 — 이쪽은 관제 TTS
+# (`host/cloud/broadcast.py`)가 Host PC 로 내는 소리만 다룬다.
+
+
+def _fake_broadcaster():
+    from host.cloud.broadcast import Broadcaster
+
+    return Broadcaster(
+        synth=lambda _t: (b"\x00\x00", 16000), play=lambda _p, _r: None, preload=False
+    )
+
+
+def test_broadcast_status_reports_unavailable_without_a_broadcaster():
+    """piper 없음 등으로 방송기가 없으면 서버는 그래도 뜨고 «방송 없음» 을 말한다."""
+    with TestClient(create_app(_state())) as http:
+        assert http.get("/api/broadcast").json() == {"available": False}
+        assert http.post("/api/broadcast", json={"volume": 50}).status_code == 404
+
+
+def test_broadcast_status_and_update_round_trip():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            body = http.get("/api/broadcast").json()
+            assert body == {"available": True, "volume": 100, "muted": False}
+
+            body = http.post("/api/broadcast", json={"volume": 30}).json()
+            assert body == {"available": True, "volume": 30, "muted": False}
+            assert broadcaster.volume == 30
+
+            body = http.post("/api/broadcast", json={"muted": True}).json()
+            assert body["muted"] is True
+            assert broadcaster.muted is True
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_rejects_a_bad_volume():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            assert http.post("/api/broadcast", json={"volume": 101}).status_code == 400
+            assert http.post("/api/broadcast", json={"volume": -1}).status_code == 400
+            assert http.post("/api/broadcast", json={"volume": "50"}).status_code == 400
+            # bool 을 정수로 받지 않는다 — 다른 명령 경로와 같은 규약.
+            assert http.post("/api/broadcast", json={"volume": True}).status_code == 400
+            assert broadcaster.volume == 100
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_rejects_a_non_boolean_muted():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            assert http.post("/api/broadcast", json={"muted": "yes"}).status_code == 400
+            assert broadcaster.muted is False
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_changes_nothing_when_any_field_is_bad():
+    """검증을 모두 마친 뒤 적용한다 — 음량만 바뀌고 400 이 나가면 화면과 실제가 어긋난다."""
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            response = http.post("/api/broadcast", json={"volume": 30, "muted": "yes"})
+            assert response.status_code == 400
+            assert broadcaster.volume == 100
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_rejects_a_non_object_body():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            assert http.post("/api/broadcast", json=["volume"]).status_code == 400
+            assert http.post("/api/broadcast", json="volume").status_code == 400
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_is_refused_from_a_foreign_origin():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            response = http.post(
+                "/api/broadcast", json={"volume": 10}, headers={"origin": "http://evil.example"}
+            )
+            assert response.status_code == 403
+            assert broadcaster.volume == 100
+    finally:
+        broadcaster.close()
+
+
 # ── 운용 모드 전환 (WBS 3.4.4 · FR-4.7 · FR-11.3) ────────────────
 
 
