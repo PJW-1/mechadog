@@ -65,6 +65,7 @@ from host.common.logging_setup import (
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import rad_to_deg, wrap_pi
 from host.dashboard.state import DashboardState
+from host.report.situation import describe
 from host.slam.settings import maps_dir
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
@@ -175,6 +176,7 @@ class Runtime:
         dashboard: DashboardState | None = None,
         mission: Mission | None = None,
         vlm_reader: VlmReader | None = None,
+        announcer: Callable[[str], None] | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -381,6 +383,10 @@ class Runtime:
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
         self._blackbox = blackbox
         self._event_publisher = event_publisher
+        #: 상황 서술 문장을 관제로 내보내는 방송기 (`4.8.2`). 비동기·예외를 던지지
+        #: 않는 계약이지만 `_record_scene` 에서 다시 한 번 감싼다 — 아직 없는 계약을
+        #: 믿고 안 감싸면 방송기가 하나라도 어기는 순간 제어 틱이 죽는다.
+        self._announcer = announcer
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -1658,13 +1664,30 @@ class Runtime:
         ⚠️ **검출 박스와 달리 이것들은 그림이 없다.** 쓰러짐 판정(`4.8.3`)은 숫자이고
         VLM 판독(`4.8.0`)은 문장이라, 사진 옆에 적어 두지 않으면 나중에 *"왜 그렇게
         판정했나"* 를 되짚을 방법이 없다.
+
+        ⚠️ **문장 생성·방송은 기록이 없어도 나간다** (`4.8.1`). 관제가 그 순간 들어야
+        할 경고이지 블랙박스 파일이 아니므로, 블랙박스가 없는 구성(`blackbox=None`)
+        에서도 방송만은 막지 않는다.
         """
+        sentence: str | None = None
+        try:
+            sentence = describe(event_type, judgement)
+        except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
+            LOG.error("situation_failed", error=f"{type(exc).__name__}: {exc}")
+        if sentence is not None and self._announcer is not None:
+            try:
+                self._announcer(sentence)
+            except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
+                LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
         if self._blackbox is None:
             return
+        recorded_judgement = judgement
+        if sentence is not None:
+            recorded_judgement = {**(judgement or {}), "sentence": sentence}
         try:
             entry = self._blackbox.record(
                 event_type,
-                judgement=judgement,
+                judgement=recorded_judgement,
                 jpeg=result.jpeg,
                 tracks=result.tracks,
                 detections=result.detections,

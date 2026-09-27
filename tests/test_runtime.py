@@ -594,6 +594,93 @@ def test_confirmed_person_is_recorded_once_and_published(
     assert entries[0].detections[0]["label"] == "person"
 
 
+# ── 상황 서술 문장 (4.8.1) — 강제 차단 시험 ──────────────────────────────────
+#
+# `describe`·`announcer` 는 관제용 부가 기능이다. 둘 중 무엇이 죽어도 사건은
+# 기록·발행되고 10Hz 제어 틱은 계속 돌아야 한다 (WBS 4.8.1 DoD).
+
+
+def test_situation_describe_failure_does_not_block_recording(
+    config: dict, clock: FakeClock, tmp_path, monkeypatch
+) -> None:
+    """`describe` 가 예외를 던져도 사건은 그대로 기록·발행되고 틱은 계속 돈다."""
+    monkeypatch.setattr(
+        "host.runtime.describe",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    published = []
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        blackbox=blackbox,
+        event_publisher=published.append,
+    )
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    entries = blackbox.feed()
+    assert len(entries) == 1, "문장 생성이 죽어도 기록은 남는다"
+    assert published == entries
+    assert "sentence" not in entries[0].judgement
+
+    # 제어 틱이 죽지 않았는지 — 그 다음 틱도 예외 없이 돈다.
+    runtime.tick(200)
+
+
+def test_situation_announcer_failure_does_not_block_recording(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    """방송기가 예외를 던져도 사건은 그대로 기록·발행되고 틱은 계속 돈다."""
+
+    def broken_announcer(_sentence: str) -> None:
+        raise RuntimeError("speaker offline")
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    published = []
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        blackbox=blackbox,
+        event_publisher=published.append,
+        announcer=broken_announcer,
+    )
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    entries = blackbox.feed()
+    assert len(entries) == 1, "방송이 죽어도 기록은 남는다"
+    assert published == entries
+    assert (
+        entries[0].judgement["sentence"]
+        == "사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."
+    )
+
+    # 제어 틱이 죽지 않았는지 — 그 다음 틱도 예외 없이 돈다.
+    runtime.tick(200)
+
+
+def test_situation_announcer_fires_without_blackbox(config: dict, clock: FakeClock) -> None:
+    """블랙박스가 없어도(`blackbox=None`) 방송은 나간다 — 관제가 그 순간 들어야
+    할 경고이지 블랙박스 파일이 아니다.
+    """
+    announced: list[str] = []
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, announcer=announced.append)
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    assert announced == ["사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."]
+
+
 # ── 대응 에스컬레이션 배선 (3.8.3) ──────────────────────────
 #
 # 단계기 자체는 `test_escalation.py` 가 전수로 본다. 여기서 보는 것은 **연결**이다 —
@@ -2252,6 +2339,8 @@ def test_a_confirmed_removal_is_recorded_for_the_dashboard(
     assert entries[0].judgement == {
         "zone": "A",
         "changes": [{"kind": "removed", "label": "bottle", "count": 1, "cell": [1, 0]}],
+        # `4.8.1` — 관제 스피커로 읽힐 한국어 한 문장이 기록에도 함께 실린다.
+        "sentence": "A 구역에서 물건이 반출된 것으로 보입니다.",
     }
     assert entries[0].state == "ZONE_INSPECT", "전이보다 먼저 남긴다 (`_observe_fallen` 과 같다)"
 
@@ -2710,7 +2799,15 @@ def test_a_hazard_read_twice_is_confirmed_on_the_first_visit(
     assert runtime.behavior.state == "ALERT"
     assert runtime.escalation.level is Level.L3
     (entry,) = [e for e in blackbox.feed() if e.event_type == "zone_changed"]
-    assert set(entry.judgement) == {"zone", "grid", "changes", "baseline_ms", "baseline_snapshot"}
+    # `4.8.1` — `sentence` 는 상황 서술 문장이다.
+    assert set(entry.judgement) == {
+        "zone",
+        "grid",
+        "changes",
+        "baseline_ms",
+        "baseline_snapshot",
+        "sentence",
+    }
     assert entry.judgement["zone"] == "A"
     assert entry.judgement["grid"] == [3, 3], "이번 방문에 뜬 기준을 싣는다"
     assert entry.judgement["changes"] == [{"kind": kind, "source": "vlm"}]
