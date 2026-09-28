@@ -75,6 +75,28 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
 커밋되지 않아 경로만 인용한다. 다음 모델은 `person_down`을 빼고 **4클래스**로 다시 학습한다
 (데이터는 Roboflow Universe construction-safety CC BY 4.0 + XIAO 실측 어려운 사례, 아직 학습 전).
 
+**2026-09-29 — 4클래스 후보 둘을 학습했다(XIAO 미실측).** 둘 다 YOLOX-S · COCO 사전학습에서
+출발했고 사람 크롭 입력이다. 파일은 깃이 무시하는 `models/candidates/` 에 있다.
+
+- `ppe4-cs-v1` — Roboflow construction-safety 만. 학습 no_helmet 박스가 80개뿐이었다.
+- `ppe4-cs-md-v2` — 위 + Mendeley PPE2286(Huang·Cheng, DOI 10.17632/zkzghjvpn2.6, CC BY 4.0).
+  사람 라벨이 없어 런타임 COCO 검출기로 사람 박스를 만들었고, Roboflow 와 같은 사진(좌우 반전
+  포함)은 dHash 로 뺐다(`tools/ppe/mendeley_prepare.py`). 학습 no_helmet 박스 346개.
+  ⚠️ 머리 박스 규약이 두 세트에서 다르다(Mendeley 얼굴 포함 세로형, Roboflow 가로형). 몸통은 같다.
+
+| 같은 잣대 비교 | v2 | v1 | v23b |
+| --- | --- | --- | --- |
+| Roboflow test AP50 (AP) | 85.8 (41.6) | 87.4 (43.6) | 68.2 (27.9) |
+| Mendeley test AP50 (AP) | 96.6 (64.3) | 77.6 (37.1) | 96.0 (68.3) — 주 |
+| Roboflow no_helmet 재현율 @0.5 | 85.7% | 71.4% | 64.3% |
+| 운용 경로 목업 — 정상 착용자 → 위반 (Roboflow 173명) | **2** | 4 | 7 |
+| 운용 경로 목업 — 실효 정확도 (Roboflow / Mendeley) | 78.0% / 78.5% | 78.6% / 81.5% | 72.8% / 78.5% |
+
+주: v23b 는 Mendeley 로 학습했으므로 이 test 와 겹쳤을 수 있다. 목업(`tools/ppe/pipeline_mock.py`)은
+정답 사진에 `ppe_live_check.process` 를 그대로 돌린 정지 사진 기준이라 시간 창이 없고, 표본이 작아
+두세 명 차이는 잡음 범위다. **XIAO 후보는 v2 로 정했다** — v23b 기각 사유(정상 착용자 오경고)가
+가장 적고, no_helmet 재현율이 올랐고, 두 세트에서 고르게 동작한다. 채택은 XIAO 로만 판단한다.
+
 아직 WBS 3.7.3과 PPE 기능 전체 완료는 아니며, 다음 작업을 이어서 수행한다.
 
 1. **다음 모델(4클래스) 학습 후 XIAO 재실측**: v23b는 기각됐다(위 단락). 다음 모델이 나오면
@@ -127,7 +149,7 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
 
 1. **측면 조끼** — `*-all`·`*-nohelmet`의 우측·좌측 15초 (조끼를 `no_vest`로 봤다)
 2. **정면 주황 안전모** — `*-all`·`*-novest`의 정면 15초 (주황 안전모를 `no_helmet`으로 봤다)
-3. **맨머리** — `*-nohelmet`·`*-none` (공개 데이터 train의 `no_helmet` 박스가 80개뿐이다)
+3. **맨머리** — `*-nohelmet`·`*-none` (공개 데이터를 합쳐 학습 `no_helmet` 박스는 346개가 됐지만 XIAO 시점 맨머리는 0장이다)
 
 조건별 표본 수는 세션마다 남긴다. 방향별 프레임 수는 `summary.md`의 구간별 방향 줄에서,
 구간별 채택 수는 세션 카드(`xiao_<세션>_card.json`)의 `segments.used.<구간>.selected`에서
@@ -176,6 +198,7 @@ python -c "from host.common.config import load_config; from host.vision.stream_c
 python tools/ppe_live_check.py `
   --device $dev `
   --xiao-ip $xiaoIp `
+  --ppe-model models/candidates/ppe4-cs-md-v2/ppe.onnx `
   --seconds 900 `
   --segments `
   --scenario xiao `
@@ -192,6 +215,7 @@ python tools/ppe_live_check.py `
   mechdog-01의 `vision.mount_rotation`은 180이다. 판정 화면에서 사람이 똑바로 서 있는지도 확인한다.
 - 세션 중 카메라 전원이 흔들려 재부팅되면 방향이 다시 풀린다(콘솔에 재접속이 찍히면 의심한다).
   화면이 뒤집혔으면 종료하고 1)부터 새 폴더로 다시 시작한다.
+- `--ppe-model` 은 후보를 이 실행에서만 쓴다. 런타임 `models/ppe.onnx` 는 바꾸지 않는다.
 - 판정 화면 `http://127.0.0.1:8008/`에서 구간 버튼을 누른다. 폰에서 누르려면 `--web-host 0.0.0.0`을 더한다.
 
 버튼 규칙:
@@ -214,26 +238,26 @@ python tools/ppe_live_check.py `
    ```powershell
    python tools/ppe/xiao_hardcases.py --device mechdog-01 `
      --session $run `
-     --ppe-model models/ppe_v23b.onnx `
-     --build datasets/ppe/build/ppe4_cs_v1 --merge
+     --ppe-model models/candidates/ppe4-cs-md-v2/ppe.onnx `
+     --build datasets/ppe/build/ppe4_cs_md_v2 --merge
    ```
 
    `--ppe-model`은 박스 **위치**를 낼 모델이다. 박스 이름은 모델이 아니라 구간의 착용 정답으로
    정한다 — 머리 박스는 안전모 착용 여부, 몸통 박스는 조끼 착용 여부를 따른다.
-2. **접촉 시트 사람 검토** — `datasets/ppe/build/ppe4_cs_v1/review/xiao_<세션>/sheet_NN.jpg`를
+2. **접촉 시트 사람 검토** — `datasets/ppe/build/ppe4_cs_md_v2/review/xiao_<세션>/sheet_NN.jpg`를
    본다. 칸 아래에 구간 이름이 적혀 있다. 구간과 보이는 착용이 맞는지, 머리·몸통 박스가 제자리인지
    확인하고, 특히 구간 첫머리 칸(버튼 직후)을 본다. 틀린 칸이 있으면 그 세션의
    `annotations/xiao_<세션>_{train,val}.json`을 지우고 합본을 다시 만든다. 칸 하나만 빼는
    옵션은 아직 없다.
 
    ```powershell
-   python -c "from pathlib import Path; from tools.ppe.xiao_hardcases import merge_build; print(merge_build(Path('datasets/ppe/build/ppe4_cs_v1')))"
+   python -c "from pathlib import Path; from tools.ppe.xiao_hardcases import merge_build; print(merge_build(Path('datasets/ppe/build/ppe4_cs_md_v2')))"
    ```
 3. **재학습** — 합본 주석으로 학습한다 (학습 환경 `C:\dev\ppe-train`, 자세한 명령은
    `tools/ppe/yolox_exp_ppe_s.py` 머리말).
 
    ```powershell
-   $env:PPE_DATA_DIR = "<저장소>\datasets\ppe\build\ppe4_cs_v1"
+   $env:PPE_DATA_DIR = "<저장소>\datasets\ppe\build\ppe4_cs_md_v2"
    $env:PPE_TRAIN_ANN = "instances_train_mix.json"
    $env:PPE_VAL_ANN = "instances_val_mix.json"
    ```
