@@ -16,7 +16,7 @@
 | **개정 (2026-09-25)** | 공장 모드 시나리오 정본 확정 — FR-11 안에 **«공장 모드 시나리오 (정본 · 2026-09-25)»** 소절을 신설. 사람만으로는 L1 을 올리지 않음 · PPE 위반은 경고 뒤 자동 복귀(L3 래치 아님) · 쓰러짐은 «의심(L1) → 확정(L3)» 2단(YOLOX 누적 3회 + VLM) · 구역 반출은 가벼운 경고 · 반입은 기록만(넘어짐·통로 막힘 L3 는 유지) · 순찰 중 VLM 주기 판독(2초) 신설. FR-9.3 · WBS `4.8.3` 단독 확정 · [ADR-41](DECISIONS.md#adr-41)의 반출·반입 L3 를 대체한다 ([ADR-42](DECISIONS.md#adr-42)) |
 | **개정 (2026-09-28)** | 쓰러짐 확정 조건 재개정 — 4.8.0 카메라 벤치에서 YOLOX 가 누운 사람 10장 중 1장만 후보로 잡아 YOLOX 누적 조건이 사실상 확정을 막는 것으로 드러남. **확정은 VLM `person_down`「예» 가 서로 다른 프레임에서 `fsm.fall_confirm_vlm_yes`(2)회, 각 간격 `fsm.fall_confirm_gap_ms`(1000ms) 이상 모여야 한다** — YOLOX 는 폐기하지 않고 의심 진입·TRACK 접근에만 쓴다. `fsm.fall_suspect_hits` 는 삭제. 의심(L1) 조건과 해제 조건은 그대로다 ([ADR-42](DECISIONS.md#adr-42) 재개정) |
 | **대상 플랫폼** | Hiwonder MechDog (ESP32, Advanced Kit) + Seeed XIAO ESP32S3 Sense + Host PC |
-| **저장소** | `C:\Users\pjw\Desktop\mechdog_physical_ai` |
+| **저장소** | [`PJW-1/mechadog`](https://github.com/PJW-1/mechadog) |
 
 ### 1.1 프로젝트 비전
 

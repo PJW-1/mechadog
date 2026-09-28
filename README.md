@@ -22,7 +22,7 @@ MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)
 📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
 📋 **[WBS — 작업 ID·선행·DoD 정본](docs/WBS.md)**<br>
 🙋 **[담당자별 작업 목록 — 지금 할 일](docs/ASSIGNMENTS.md)** ← 매일 보는 문서<br>
-🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 38건<br>
+🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)**<br>
 🔌 **[하드웨어 — 착수 확인 · LiDAR 배선 · 발주](docs/HARDWARE.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 📡 **[통신 프로토콜 정본 — 명령 10종·검증 규칙](docs/PROTOCOL.md)**
@@ -82,7 +82,7 @@ MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)
 
 | | 기능 | 내용 |
 | :--- | :--- | :--- |
-| FR-1 | 제어 링크 · 페일세이프 | 300ms 명령 타임아웃, 링크 두절 · 저전압 시 자동 안전 정지. 전도 자동 감지는 폐기(ADR-36); 상시 인적 감시와 E-Stop 적용 |
+| FR-1 | 제어 링크 · 페일세이프 | 600ms 명령 타임아웃([ADR-39](docs/DECISIONS.md#adr-39)), 링크 두절 · 저전압 시 자동 안전 정지. 전도 자동 감지는 폐기(ADR-36); 상시 인적 감시와 E-Stop 적용 |
 | FR-2 | 자율 순찰 · 장애물 회피 | Trot 보행, 초음파 25cm 온보드 반사 정지, 정지 후 주변 스캔 |
 | FR-3 | 사람 인지 · 추적 | 객체 검출 → 추적 ID 부여 → 경계 자세 → 타겟 락온 추종 |
 | FR-4 | 웹 미션 대시보드 | FPV 스트리밍, 텔레메트리 차트, 수동 오버라이드, E-Stop, 이벤트 피드 |
@@ -152,7 +152,7 @@ mechdog_physical_ai/
 ├── docs/
 │   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 (FR · 마일스톤 · 리스크 · OI)
 │   ├── ARCHITECTURE.md                  # 구조 · FSM · 품질 기준 · 용어
-│   ├── DECISIONS.md                     # 설계 결정 기록 (ADR 35건)
+│   ├── DECISIONS.md                     # 설계 결정 기록 (ADR)
 │   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 10종)
 │   ├── WBS.md                           # 작업 ID · 선행 · DoD 정본
 │   ├── ASSIGNMENTS.md                   # 진행 현황 · 담당 목록 (WBS에서 생성)
