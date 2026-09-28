@@ -1,4 +1,4 @@
-"""통신 규약 구현 — 직렬화 · 파싱 · 검증 (FR-5.1/5.2).
+"""통신 규약 구현 — 직렬화 · 파싱 · 검증 (WBS 3.1.1 · FR-5.1/5.2).
 
 **정본은 이 파일이 아니라 docs/PROTOCOL.md 다.**
 이 파일은 그 문서의 Python 구현이고, C++ 펌웨어(`command_parser`)는 같은 문서의
@@ -95,7 +95,7 @@ NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
 CLAMP_RANGES: dict[str, tuple[float, float]] = {
     "step": (-100, 100),  # mm
     # deg — arc 조향. `step=0` 이면 제자리에서 돌기는 하지만 산포가 82% 라
-    # 제어에 쓰지 않는다 (DR-11).
+    # 제어에 쓰지 않는다 (2026-09-22 실측 · DR-11).
     "angle": (-30, 30),
     "id": (0, 15),  # 내장 액션 그룹
 }
@@ -473,7 +473,7 @@ class CommandEncoder:
 class CommandDecoder:
     """제어 명령 수신 검증. C++ 파서와 규칙·순서가 같아야 한다.
 
-    이 클래스가 Python 쪽에 있는 이유는 가상 MechDog이 실물 없이
+    이 클래스가 Python 쪽에 있는 이유는 가상 MechDog(WBS 6.1.1)이 실물 없이
     같은 규칙으로 수신해야 하기 때문이다. 펌웨어의 참조 구현이기도 하다.
 
     규칙 적용 순서 — PROTOCOL.md 3절의 ①~④ 를 실행 가능한 순서로 편 것이다.

@@ -2,6 +2,8 @@
 
 NFR-3① (파라미터화)의 최소 안전망이다. 코드가 참조하는 키가 설정에서
 사라지면 런타임이 아니라 CI에서 잡히게 한다.
+
+WBS 4.4.1 의 config 로더가 구현되면 이 테스트를 로더 기반으로 확장한다.
 """
 
 from pathlib import Path
@@ -138,7 +140,7 @@ def test_command_timeout_shorter_than_link_loss(cfg: dict) -> None:
 
 
 def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
-    """명령 타임아웃은 Tier 1 예산(FR-1.3 = 600ms) 이내여야 한다."""
+    """명령 타임아웃은 Tier 1 예산(FR-1.3 = 300ms) 이내여야 한다."""
     assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 600
 
 
@@ -180,7 +182,7 @@ def test_gait_params_within_api_range(cfg: dict) -> None:
 def test_localization_track_is_known(cfg: dict) -> None:
     """측위 트랙은 docs/DECISIONS.md ADR-18 이 인정하는 값이어야 한다.
 
-    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다**.
+    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다** (OI-9 닫힘, 2026-09-05).
     탈락한 선택지를 설정에 남겨 두면 근거를 모르는 사람이 다시 넣는다.
     """
     assert cfg["localization"]["track"] in {"none", "lidar", "aruco"}
@@ -777,7 +779,7 @@ def test_lidar_angle_direction_requires_signed_unit(cfg: dict) -> None:
 
 
 def test_lidar_scan_forward_port_rejects_the_receive_port_and_bad_values(cfg: dict) -> None:
-    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다."""
+    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다 (WBS 5.4.4)."""
     from copy import deepcopy
 
     from host.common.config import validate_base_config

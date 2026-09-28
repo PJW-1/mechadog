@@ -1,9 +1,9 @@
-"""호스트 운용 런타임.
+"""호스트 운용 런타임 (WBS 4.3.7).
 
 지금까지 만든 네 조각을 **한 프로세스로 잇는다.**
 
     소켓 ─▶ 수신기 ─▶ 사건 ─▶ FSM ─▶ 지시 ─▶ 송신기 ─▶ 소켓
-          (telemetry/receiver.py) (behavior/fsm.py) (common/protocol.py)
+            (4.3.6)          (3.4)          (4.3.2)
 
 **실시간과 소켓을 만지는 곳은 `serve()` 하나다.** 그 위의 `ingest()`·`tick()` 은
 바이트와 시각만 받으므로 로봇도 소켓도 없이 시험된다 — 조각들을 그렇게 만들어
@@ -77,7 +77,7 @@ from host.vision.worker import TickIntervals, VisionWorker, build_worker
 
 LOG = event_logger("mechadog.runtime")
 
-#: 같은 방문에서 두 번 읽어 확정하는 판독 항목. `person_down` 은 여기 없다 —
+#: 같은 방문에서 두 번 읽어 확정하는 판독 항목 (WBS 3.6.3). `person_down` 은 여기 없다 —
 #: 그것은 한 번으로 `PERSON_DOWN` 을 올리는 별개 경로다(`_take_zone_reading`).
 ZONE_HAZARDS = ("fallen_object", "blocked_path")
 
@@ -88,7 +88,7 @@ SHUTDOWN_ESTOP_REPEATS = 3
 SHUTDOWN_ESTOP_INTERVAL_S = 0.02
 EYE_LED_REFRESH_MS = 1000
 #: 관제 사건 목록에 올리는 FSM 전이 — 인증과 안전 래치 해제만. ⚠️ 순찰·추적 전이는
-#: 싣지 않는다. `ALERT ⇄ TRACK` 은 초당 몇 번씩 왕복해 목록을 덮는다.
+#: 싣지 않는다. `ALERT ⇄ TRACK` 은 초당 몇 번씩 왕복해(2026-09-18) 목록을 덮는다.
 FEED_TRANSITIONS: dict[Event, str] = {
     Event.AUTH_REQUIRED: "auth_required",
     Event.AUTH_OK: "auth_granted",
@@ -186,7 +186,7 @@ class Runtime:
         self._device_id = device_id
         self._dashboard = dashboard
         self._clock = clock
-        # 운용 모드. **FSM·에스컬레이션과 직교하는 세 번째 축**이며 표는
+        # 운용 모드 (3.4.4). **FSM·에스컬레이션과 직교하는 세 번째 축**이며 표는
         # 하나다 — 모드는 *어떤 사건이 생길 수 있는지*만 고른다 (FR-11 · ADR-33).
         # `main()` 이 `--mode` 를 반영해 만들어 넘기고, 없으면 설정에서 만든다.
         self._mission = mission if mission is not None else Mission(config)
@@ -205,7 +205,7 @@ class Runtime:
         # ACK 를 기다리는 `SOUND` 하나 — (seq, track, 다시 보낼 시각, 남은 재전송) (`_resend_sound`).
         self._sound_wait: tuple[int, int, int, int] | None = None
         self._sound_retries_left = SOUND_RETRIES
-        # 상태별 모션을 붙인다. 만들 수 없는 것은 등록하지 않고 이유를 남기며,
+        # 상태별 모션을 붙인다 (3.5.1). 만들 수 없는 것은 등록하지 않고 이유를 남기며,
         # 등록되지 않은 상태는 `Behavior` 가 정지로 처리한다 — 안전측 기본값이다.
         self._actions = register_actions(self._behavior, config)
         self._normal_patrol = self._behavior.sequence_for("PATROL")
@@ -268,13 +268,13 @@ class Runtime:
         self._vision = vision
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
-        # 추종은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
+        # 추종(`3.5.4`)은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
         # 오고 명령은 10Hz 로 나가므로, 명령 쪽에서 계산하면 프레임을 버리게 된다.
         # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
         self._tracker = LockOnTracker(config)
         self._track_sequence = self._behavior.sequence_for("TRACK")
-        # 구역 변화 감지 (FR-8). 구역 도착은 **지도 좌표 앵커**(`maps/zones.json`)와
-        # 측위 위치로 판정한다 (FR-7.4) — ArUco 구역 마커는 쓰지 않는다.
+        # 구역 변화 감지 (FR-8 · `3.6.x`). 구역 도착은 **지도 좌표 앵커**(`maps/zones.json`)와
+        # 측위 위치로 판정한다 (FR-7.4 · 2026-09-25 ArUco 구역 마커 폐기).
         self._baselines = BaselineStore(config)
         self._confirmer = ChangeConfirmer(config)
         zones = config["zones"]
@@ -306,7 +306,7 @@ class Runtime:
         change = config["change_detect"]
         self._visit_frames = int(change["visit_frames"])
         self._visit_max_ms = int(change["visit_max_ms"])
-        #: VLM 판독으로 경보를 확정하나. 벤치 관문 전에는 끈다.
+        #: VLM 판독으로 경보를 확정하나. 벤치 관문(WBS 3.6.4) 전에는 끈다.
         self._vlm_hazards = bool(change["vlm_hazards"])
         self._visit_since_ms = 0
         #: 이번 방문에서 모은 사람 없는 프레임
@@ -320,7 +320,7 @@ class Runtime:
         self._zone_suspects: tuple[str, ...] = ()
         #: 두 판독이 모두 «예» 라 한 항목 — 이번 방문에서 확정했다.
         self._zone_hazards: tuple[str, ...] = ()
-        # 상황 판독 (FR-8 · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
+        # 상황 판독 (FR-8 · `4.8.0` · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
         # ⚠️ **의존성이 없으면 팩토리가 `None` 이고 판독은 «없음» 으로 동작한다** —
@@ -340,10 +340,10 @@ class Runtime:
         # 시작값은 «쓰러짐 없음» 이다. 비우면 첫 프레임의 `False` 가 해제 로그로 남는다.
         self._edge.changed("fallen", False)
         self._edge.changed("ppe_held_for_fall", False)
-        # 쓰러짐은 **두 단계다** — 의심(L1)에서 확정(L3)으로.
-        # ⚠️ **규칙(YOLOX 누움)은 L3 를 내지 못한다** — 의심에 들고 다가가는 데만 쓴다.
-        # 확정은 의심 뒤에 건 판독의 «예» `fsm.fall_confirm_vlm_yes` 회다.
-        #: 의심에 든 시각. `None` 이면 의심이 아니다. PPE 판정은 이 동안 보류한다.
+        # 쓰러짐은 **두 단계다** — 의심(L1)에서 확정(L3)으로 (2026-09-25 확정 S3~S5).
+        # ⚠️ **규칙(YOLOX 누움)은 L3 를 내지 못한다**(S7) — 의심에 들고 다가가는 데만 쓴다.
+        # 확정은 의심 뒤에 건 판독의 «예» `fsm.fall_confirm_vlm_yes` 회다 (2026-09-28 개정).
+        #: 의심에 든 시각. `None` 이면 의심이 아니다. PPE 판정은 이 동안 보류한다(S8).
         self._fall_since: int | None = None
         #: 의심 뒤에 건 판독의 «예» 를 센 횟수. 끊겨도 누적한다.
         self._fall_yes = 0
@@ -356,7 +356,7 @@ class Runtime:
         self._fall_confirmed = False
         #: 돌고 있는 쓰러짐 판독 `(건 시각, 건 프레임, 의심 중에 걸었나)`.
         self._fall_vlm_pending: tuple[int, Any, bool] | None = None
-        #: 다음 순찰 판독 시각. 순찰이 아니면 `None` 이다.
+        #: 다음 순찰 판독 시각 (S6). 순찰이 아니면 `None` 이다.
         self._fall_vlm_due: int | None = None
         self._fall_need = int(config["fsm"]["fall_confirm_vlm_yes"])
         self._fall_gap_ms = int(config["fsm"]["fall_confirm_gap_ms"])
@@ -365,7 +365,7 @@ class Runtime:
         self._fall_cooldown_ms = int(config["fsm"]["fall_resuspect_cooldown_ms"])
         self._fall_cooldown_until: int | None = None
         self._patrol_vlm_ms = int(config["vision"]["vlm"]["patrol_interval_ms"])
-        #: 보호구 미착용 경고를 내고 순찰로 돌아가기까지 — 단계 축의 경고 시간과 같다.
+        #: 보호구 미착용 경고를 내고 순찰로 돌아가기까지 (S2) — 단계 축의 경고 시간과 같다.
         self._ppe_warning_ms = int(config["escalation"]["ppe_warning_hold_ms"])
         #: 이번 방문에서 판독을 이미 시도했나. **방문당 한 번만 건다** — 사이클마다
         #: 걸면 0.65초짜리 판독이 같은 장면을 거듭 보며 스레드를 붙잡는다. 거절당해도
@@ -384,11 +384,11 @@ class Runtime:
         #: 지금의 `ALERT` 가 구역 변화 확정으로 섰나. 섰으면 경보 확인이 순찰로 돌려보낸다.
         self._zone_alarm_alert = False
         # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
-        # FastAPI/WebSocket 서버가 생기면 같은 항목을 publisher로 받는다.
+        # FastAPI/WebSocket 서버(4.5.1)가 생기면 같은 항목을 publisher로 받는다.
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
         self._blackbox = blackbox
         self._event_publisher = event_publisher
-        #: 상황 서술 문장을 관제로 내보내는 방송기. 비동기·예외를 던지지
+        #: 상황 서술 문장을 관제로 내보내는 방송기 (`4.8.2`). 비동기·예외를 던지지
         #: 않는 계약이지만 `_record_scene` 에서 다시 한 번 감싼다 — 아직 없는 계약을
         #: 믿고 안 감싸면 방송기가 하나라도 어기는 순간 제어 틱이 죽는다.
         self._announcer = announcer
@@ -407,7 +407,7 @@ class Runtime:
         self._blocked_since_ms: int | None = None
         # ⚠️ **순찰에 들어갈 때 사람 게이트를 재장전한다.** `PERSON_FOUND` 는 상승
         # 엣지로만 나가므로, 순찰을 시작하는 순간 **이미 사람이 보이고 있으면 엣지가
-        # 없어 로봇이 그 사람을 그냥 지나친다** — 실기에서 그랬다. 게이트가
+        # 없어 로봇이 그 사람을 그냥 지나친다** — 2026-09-19 실기에서 그랬다. 게이트가
         # 02:07:16 에 켜진 뒤 02:07:18 에 순찰이 시작됐고, 검출이 초당 10~40건인데도
         # `ALERT` 로 한 번도 가지 않았다. 사람은 내내 보고 있었고 *"새로 나타났다"* 로
         # 쳐지지 않았을 뿐이다 (FR-3.2).
@@ -441,10 +441,10 @@ class Runtime:
         self._track_centered = False
         # 경비에서 고개를 들었는가 (ADR-40). 든 뒤로는 움직이지 않고, L1 은 여기서 시작한다.
         self._engaged = False
-        # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다.
+        # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다 (3.3.2 DoD).
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
-        # 대응 강도 축. FSM 상태와 **직교한다** — 같은 `ALERT` 에서도 단계가
+        # 대응 강도 축 (3.8.3). FSM 상태와 **직교한다** — 같은 `ALERT` 에서도 단계가
         # 다르면 눈 색깔과 음향이 다르다.
         self._escalation = Escalation(config)
         # ⚠️ **값을 넣지 않고 물어볼 대상을 넘긴다.** 단계는 사건·시간·확인 어느
@@ -453,7 +453,7 @@ class Runtime:
         # 같은 이유로 모드도 물어본다 (FR-11.5) — 관제 화면에서 바뀌므로 갱신 지점이
         # 하나가 아니다.
         self._log.bind_mode(lambda: self._mission.mode)
-        # 사원증 인증. **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
+        # 사원증 인증 (3.8.1). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
         # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 여기서 정한다.
         self._auth = Authenticator(config)
         self._auth_require_both = bool(config["auth"].get("require_both", False))
@@ -472,7 +472,7 @@ class Runtime:
         #
         # ⚠️ **창 안에서 말했는데도 30초를 넘겨 실패가 되는 것을 막는 값이다.**
         # 파이프라인은 녹음(최대 15초)·무음 1초·전사를 직렬로 하므로 «말한 시각» 과
-        # «판정이 도착한 시각» 이 크게 벌어진다 — 실기에서 통과 2건이
+        # «판정이 도착한 시각» 이 크게 벌어진다 — 2026-09-22 실기에서 통과 2건이
         # 각각 24초·18초를 썼다(창은 30초, 여유 6초). ⑥ 이 «창 밖의 말을 세지
         # 않는다» 를 고쳤다면 이것은 «창 안의 말이 늦게 도착하는 것» 을 고친다.
         self._voice_auth_grace_ms = int(config["auth"]["verdict_grace_s"]) * 1000
@@ -485,7 +485,7 @@ class Runtime:
         # 한 다음 상태를 묻는다 — 즉 «말한 시각» 과 «판정이 도착한 시각» 이 수 초
         # 떨어진다. `ALERT` 에서 방문객이 아무 말이나 한 것이 전사되는 동안 창이
         # 열리면, 그 말이 **암구호 시도로 세어져** `max_attempts` 2회를 혼자
-        # 소진하고 곧바로 L3 경보가 된다 — 실기의 빨간 눈이 이것이다.
+        # 소진하고 곧바로 L3 경보가 된다 — 2026-09-21 실기의 빨간 눈이 이것이다.
         #
         # 판정을 여기 두는 이유는 **창이 언제 열렸는지 아는 쪽이 런타임뿐**이라는
         # 것이다 (`dashboard/commands.py` 의 같은 취지 주석). 파이프라인은 발화
@@ -649,7 +649,7 @@ class Runtime:
         if out.reading.pitch is not None:
             # ⚠️ **«명령이 나갔다» 와 «자세가 도착했다» 는 다르다.** `POSE` 는 ACK 로
             # 확인되지만 그것은 로봇이 받았다는 뜻일 뿐이고, 벤더 `set_pose` 가 `dur`
-            # 동안 보간해 실제로 기울었는지는 IMU 로만 알 수 있다. 실기에서
+            # 동안 보간해 실제로 기울었는지는 IMU 로만 알 수 있다. 2026-09-18 실기에서
             # 자세가 올라가려다 멈추는 것을 **운용자 눈으로** 잡았는데, 그때 로그에는
             # 근거가 없었다 — `yaw_rate` 때와 같은 자리다.
             self._summary.observe("pitch_deg", float(out.reading.pitch))
@@ -678,7 +678,7 @@ class Runtime:
         주기를 흔들고, 그러면 로봇이 `cmd_timeout_ms` 를 넘겨 멈춘다.
 
         ⚠️ **판정은 여기서 하지 않는다.** `person` 필터와 시간 창 판정은 워커가
-        **추론마다** 끝내 놓는다(ADR-25) — 이 틱(10Hz)에서 관측하면 25fps
+        **추론마다** 끝내 놓는다(`3.3.3` · ADR-25) — 이 틱(10Hz)에서 관측하면 25fps
         결과 중 10개만 보게 되고, 그러면 추론률을 올린 이유가 사라진다. 여기서는
         **이미 나온 판정을 읽어 사건으로 옮길 뿐**이다.
         """
@@ -723,7 +723,7 @@ class Runtime:
             # ⚠️ **경비 추종에서는 고개를 든 뒤에만 L1 이다** (ADR-40). 접근·정렬 중에
             # 올리면 인증 요청까지의 10초를 걷는 데 다 쓴다. 마지막 검출 시각은 그대로 넣는다.
             #
-            # ⚠️ **공장 모드는 사람으로 L1 을 올리지 않는다.** 멈춰서
+            # ⚠️ **공장 모드는 사람으로 L1 을 올리지 않는다** (2026-09-25 확정 S1). 멈춰서
             # 보호구를 볼 뿐이다 — 노란 눈은 쓰러짐 의심 전용이다.
             gated = (self._tracks_person() and not self._engaged) or self._mission.enables("ppe")
             if not self._behavior.standby and not inspected:
@@ -859,7 +859,7 @@ class Runtime:
             return
         if self._ppe_settle_at is not None:
             return
-        # ⚠️ **쓰러졌는지 먼저 본다** (FR-11.1 표). 병행하면 위반 경고가
+        # ⚠️ **쓰러졌는지 먼저 본다** (FR-11.1 표 · `4.8.3` · S8). 병행하면 위반 경고가
         # 쓰러짐보다 먼저 빨간 눈을 잡아 전용 문장이 묻히고, 적합이면 `PPE_SETTLED` 로 누운
         # 사람을 두고 순찰에 돌아간다. 의심인 동안은 판정도 자세 상승도 하지 않는다.
         # ⚠️ 보류는 후보 한 프레임이 아니라 **의심**에 건다 — 한 프레임 틈에 풀리면 이미 찬
@@ -925,7 +925,7 @@ class Runtime:
                 self._ppe_finish(UNDETERMINED, result, now_ms, verdict.reason, returned=returned)
 
     def _track(self, result: Any, now_ms: int) -> None:
-        """대표 박스의 x편차를 추종 지시로 바꿔 사건과 시퀀스에 넘긴다 (FR-3.5).
+        """대표 박스의 x편차를 추종 지시로 바꿔 사건과 시퀀스에 넘긴다 (`3.5.4` · FR-3.5).
 
         ⚠️ **`ALERT`·`TRACK` 에서만 돈다.** 순찰 중에 사람이 스쳐도 여기서 각도를
         만들면 순찰 경로가 흔들린다 — 추종으로 들어갈지는 `PERSON_FOUND` 가 정하고
@@ -939,7 +939,7 @@ class Runtime:
         ⚠️ **추종을 끈 모드에서는 돌지 않는다** (FR-11.1). 사건만
         막으면 조향각은 매 프레임 계산돼 `TRACK` 시퀀스에 그대로 실린다 — 전이는
         없는데 로봇이 사람을 따라 도는, 가장 설명하기 어려운 모양이 된다.
-        예외는 공장의 **쓰러짐 의심**이다 — 박스가 있으면 경비의 조준·접근을 그대로
+        예외는 공장의 **쓰러짐 의심**이다 (S3) — 박스가 있으면 경비의 조준·접근을 그대로
         쓰고, 없으면 아무 사건도 나지 않아 제자리에 선다.
         """
         if not self._behavior.tracking or not (
@@ -947,8 +947,8 @@ class Runtime:
         ):
             # ⚠️ **추종 구간을 벗어나면 엣지 기억을 지운다.** 남겨 두면 다시 `ALERT` 로
             # 들어왔을 때 첫 판정이 *"변화 없음"* 으로 삼켜져 `TARGET_OFF_CENTER` 가
-            # 나가지 않는다. 그러면 시퀀스가 없는 `ALERT` 에
-            # 정지한 채 갇힌다 — 실기에서 편차 84px 대상을 앞에 두고
+            # 나가지 않는다. 그러면 `3.5.3` 이 미착수라 시퀀스가 없는 `ALERT` 에
+            # 정지한 채 갇힌다 — 2026-09-18 실기에서 편차 84px 대상을 앞에 두고
             # 33초를 서 있었다.
             self._edge.forget("track_centered")
             self._track_centered = False
@@ -976,7 +976,7 @@ class Runtime:
         self._edge.changed("track_config_bad", False)
         # 실기 검증 근거 — 1초 요약(`telemetry_summary`)에 추종 지표를 같이 싣는다.
         # ⚠️ **절대값을 넣는다.** 부호를 그대로 평균 내면 좌우로 떠는 것이 0 으로
-        # 상쇄돼 미세진동이 감춰진다 — DoD 가 확인하라는 바로 그것이다.
+        # 상쇄돼 미세진동이 감춰진다 — DoD 가 확인하라는 바로 그것이다 (`3.5.4`).
         self._summary.observe("track_dev_px", abs(command.deviation_px))
         # ⚠️ **거리 유지(`FR-3.5.2`)의 목표값을 정하려면 이 숫자부터 있어야 한다.**
         # `fsm.track_target_height_px` 는 화각·장착 높이·사람 키가 섞여 계산으로
@@ -1017,7 +1017,7 @@ class Runtime:
         else:
             step, angle = command.step, command.angle
         # ⚠️ **한 번 중앙에 들면 분기점(120px)까지는 붙든다** — 히스테리시스. 웅크린 사람은
-        # 박스 중심이 프레임마다 ±30px 떨려 데드존(40px) 경계를 넘나든다. 실기에서
+        # 박스 중심이 프레임마다 ±30px 떨려 데드존(40px) 경계를 넘나든다. 2026-09-23 실기에서
         # 2.3초 동안 `ALERT ⇄ TRACK` 14회를 오가며 자세 대기(1초)가 매번 처음부터 다시 돌았다.
         limit = self._track_turn_split_px if self._track_centered else self._track_deadzone_px
         centered = self._track_stop_reached and (
@@ -1060,7 +1060,7 @@ class Runtime:
     def note_pose(self, pose: tuple[float, float, float], now_ms: int) -> None:
         """측위의 최신 위치 `(x m, y m, yaw rad)` 를 받는다 (지도 좌표).
 
-        ⚠️ **아직 아무도 부르지 않는다** — LiDAR 측위가 여기에 잇는다.
+        ⚠️ **아직 아무도 부르지 않는다** — LiDAR 측위(WBS 5.4.3·5.4.4)가 여기에 잇는다.
         그 전에는 구역 도착이 일어나지 않는다.
         """
         self._pose = (pose, int(now_ms))
@@ -1092,7 +1092,7 @@ class Runtime:
         return False
 
     def _inspect_zone(self, result: Any, now_ms: int) -> None:
-        """구역 앵커에 닿으면 기준과 견준다 (FR-8).
+        """구역 앵커에 닿으면 기준과 견준다 (WBS 3.6.x · FR-8).
 
         ⚠️ **픽셀을 보지 않는다** (FR-8.2 필수 제약). 비교는 `classify_changes` 가
         객체 목록으로만 하고 이미지는 기준 스냅샷 보관용으로만 쓴다.
@@ -1245,13 +1245,13 @@ class Runtime:
         self._leave_zone(result, now_ms)
 
     def _observe_fallen(self, result: Any, now_ms: int) -> None:
-        """누움 후보로 쓰러짐 의심에 든다.
+        """누움 후보로 쓰러짐 의심에 든다 (`4.8.3` · S3).
 
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
         같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
 
-        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다.** 누움은 의심 진입에만 쓰고 확정에는
-        세지 않는다 — 누운 사람을 거의 못 잡는다. 워커의 3초 정지
+        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다** (S7). 누움은 의심 진입에만 쓰고 확정에는
+        세지 않는다(2026-09-28 개정 — 누운 사람을 거의 못 잡는다). 워커의 3초 정지
         확정(`fallen`)은 엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
         """
         verdict = getattr(result, "fallen", None)
@@ -1261,7 +1261,7 @@ class Runtime:
             self._suspect_fall("yolox", now_ms)
         # ⚠️ **엣지는 워커의 `changed` 가 아니라 우리 기준으로 본다** — `person` 과 같은
         # 이유다. 워커는 25fps 라 `changed` 가 실린 프레임이 이 틱(10Hz) 전에 덮어써진다.
-        # 실기에서 워커 확정 6번 중 4번이 그렇게 사라졌다.
+        # 2026-09-23 실기에서 워커 확정 6번 중 4번이 그렇게 사라졌다.
         if not self._edge.changed("fallen", verdict.fallen):
             return
         LOG.warning(
@@ -1285,7 +1285,7 @@ class Runtime:
         )
 
     def _suspect_fall(self, source: str, now_ms: int, *, yes_asked: int | None = None) -> None:
-        """쓰러짐 의심에 든다 — 노란 눈(L1)을 켜고 선다. 박스가 있으면 `_track` 이 다가간다.
+        """쓰러짐 의심에 든다 (S3) — 노란 눈(L1)을 켜고 선다. 박스가 있으면 `_track` 이 다가간다.
 
         순찰·구역 점검 중이면 `FALL_SUSPECTED` 로 `ALERT` 에 들고, 이미 `ALERT`·`TRACK`
         (보호구를 보던 중)이면 그 자리에서 의심만 켠다. 판독 «예» 로 들면 `yes_asked` 가 그
@@ -1294,7 +1294,7 @@ class Runtime:
         if self._fall_since is not None or not self._mission.enables("fallen"):
             return
         # 순찰로 돌려보낸 직후에는 다시 의심하지 않는다 — 누운 가방 같은 헛검출 앞에서
-        # 노랑·파랑을 되풀이하며 순찰을 잇지 못한다.
+        # 노랑·파랑을 되풀이하며 순찰을 잇지 못한다 (2026-09-26 사용자 결정).
         if self._fall_cooldown_until is not None and now_ms < self._fall_cooldown_until:
             return
         if not (self._behavior.tracking or self._apply(Event.FALL_SUSPECTED, now_ms)):
@@ -1304,13 +1304,13 @@ class Runtime:
         self._fall_yes_asked = yes_asked
         self._fall_vlm_yes = None
         self._fall_confirmed = False
-        # 5초 상실은 의심에 든 때부터 센다 — 판독으로만 든 의심에는 검출 시각이 없다.
+        # 5초 상실(S5)은 의심에 든 때부터 센다 — 판독으로만 든 의심에는 검출 시각이 없다.
         self._behavior.note_target(now_ms)
         self._escalation.note_fall_suspect(True, now_ms)
         LOG.warning("fall_suspected", source=source)
 
     def _confirm_fall(self, frame: Any, now_ms: int) -> None:
-        """의심 뒤 판독 «예» 가 `fsm.fall_confirm_vlm_yes` 회 모이면 확정한다 — `PERSON_DOWN` → L3.
+        """의심 뒤 판독 «예» 가 `fsm.fall_confirm_vlm_yes` 회 모이면 확정한다 (S4) — `PERSON_DOWN` → L3.
 
         ⚠️ **사건은 전이가 아니라 L3 다.** `PERSON_DOWN` 은 전이표에 없어 상태는 그대로
         두고 단계만 올린다. 관제가 확인하면(`confirm_alarm`) 순찰로 돌아간다.
@@ -1332,7 +1332,7 @@ class Runtime:
         self._apply(Event.PERSON_DOWN, now_ms)
 
     def _watch_fall(self, now_ms: int) -> None:
-        """의심을 끝낼 때를 본다. 틱마다 — 새 프레임이 없어도 — 돈다.
+        """의심을 끝낼 때를 본다 (S5). 틱마다 — 새 프레임이 없어도 — 돈다.
 
         `ALERT`·`TRACK` 을 떠났으면(5초 상실 `TARGET_LOST`·수동·비상정지) 의심도 끝난다.
         확정하지 못한 채 `fsm.fall_suspect_timeout_ms` 가 지나면 순찰로 돌아간다.
@@ -1346,7 +1346,7 @@ class Runtime:
             self._resolve_fall(now_ms)
 
     def _resolve_fall(self, now_ms: int) -> None:
-        """순찰로 돌려보내고 쿨다운을 건다 — 제한 시간 초과와 경보 확인.
+        """순찰로 돌려보내고 쿨다운을 건다 — 제한 시간 초과와 경보 확인 (S4·S5).
 
         5초 상실로 끝난 의심(`_end_fall` 만)에는 걸지 않는다. 대상이 떠났으니 새로
         쓰러진 사람을 놓치면 안 된다.
@@ -1364,14 +1364,14 @@ class Runtime:
         self._escalation.note_fall_suspect(False, now_ms)
 
     def _take_fall_reading(self, now_ms: int) -> None:
-        """끝난 쓰러짐 판독을 줍는다. «예» 면 의심에 들거나, 의심 뒤에 건 것이면 확정을 채운다.
+        """끝난 쓰러짐 판독을 줍는다 (S6). «예» 면 의심에 들거나, 의심 뒤에 건 것이면 확정을 채운다.
 
         ⚠️ **의심 중에 건 판독이 의심이 끝난 뒤에 오면 버린다** — 돌려보낸 사람을 늦은 답
         하나로 곧바로 다시 의심하게 된다.
 
         ⚠️ **앞서 센 «예» 와 `fsm.fall_confirm_gap_ms` 안에 건 «예» 는 세지 않는다** — 의심
         중에는 판독이 끝나자마자 다시 물어 두 프레임이 거의 같은 사진이고, 같은 사진에는
-        같은 답이 나온다. 그대로 세면 두 번 묻는 뜻이 없다.
+        같은 답이 나온다. 그대로 세면 두 번 묻는 뜻이 없다 (2026-09-28 사용자 결정).
         """
         if self._fall_vlm_pending is None or self._vlm.busy:
             return
@@ -1425,10 +1425,10 @@ class Runtime:
             self._fall_vlm_pending = (now_ms, result, self._fall_since is not None)
 
     def _read_zone_scene(self, zone: str, result: Any, now_ms: int) -> None:
-        """구역에 선 동안 장면을 한 번 읽는다 (ADR-35 호출 시점 ②).
+        """구역에 선 동안 장면을 한 번 읽는다 (`4.8.0` · ADR-35 호출 시점 ②).
 
         ⚠️ **막지 않는다.** 판독은 0.65초라 여기서 기다리면 메인 틱이 밀리고 로봇이
-        `cmd_timeout_ms`(600ms)로 선다. 걸어 두고 결과는 다음 틱에 줍는다 —
+        `cmd_timeout_ms`(300ms)로 선다. 걸어 두고 결과는 다음 틱에 줍는다 —
         `_poll_vision` 이 검출 결과를 읽는 방식과 같다. 틱은 돌리되 **구역을 끝내는
         것만** 결과가 올 때까지 미룬다(`_leave_zone`).
 
@@ -1454,16 +1454,16 @@ class Runtime:
         )
 
     def _take_zone_reading(self, result: Any, now_ms: int) -> None:
-        """끝난 판독을 줍고 **건 구역 이름과 건 프레임으로** 남긴다.
+        """끝난 판독을 줍고 **건 구역 이름과 건 프레임으로** 남긴다 (`4.8.0`).
 
         ⚠️ **스레드가 끝난 뒤에만 줍는다.** 돌고 있을 때 슬롯을 비우면 결과가 나중에
-        들어와 다음 구역에서 그 구역의 이름과 사진으로 읽힌다.
+        들어와 다음 구역에서 그 구역의 이름과 사진으로 읽힌다 — 예전 코드가 그랬다.
 
-        ⚠️ **쓰러진 사람을 봤다는 답은 의심 진입 신호다** — 단독으로
+        ⚠️ **쓰러진 사람을 봤다는 답은 의심 진입 신호다** (2026-09-25 확정 S3·S7) — 단독으로
         L3 를 내지 않는다. 확정은 의심 뒤 판독의 «예» 가 모여야 한다(`_confirm_fall`).
         구역을 떠난 뒤에 온 답이어도 의심에 든다.
 
-        ⚠️ **넘어짐·통로 막힘은 두 번 읽어 확정한다** (`vlm_hazards`). 첫 판독이
+        ⚠️ **넘어짐·통로 막힘은 두 번 읽어 확정한다** (WBS 3.6.3 · `vlm_hazards`). 첫 판독이
         «예» 면 **지금 프레임으로** 한 번 더 걸고, 둘 다 «예» 인 항목만 이번 방문에서 확정한다.
         이번 방문에서 건 판독(`mine`)만 센다 — 지난 방문의 늦은 답이 이번 방문을 채우면 안 된다.
         """
@@ -1514,7 +1514,7 @@ class Runtime:
             self._suspect_fall("zone_vlm", now_ms, yes_asked=now_ms)
 
     def _leave_zone(self, result: Any, now_ms: int) -> None:
-        """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다.**
+        """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3 · 2026-09-25 결정).
 
         반출·반입(`_inspect_zone`)과 판독 확정(`_take_zone_reading`)을 모아 **종류별로
         다르게** 맺는다(Z2·Z3·Z4).
@@ -1526,7 +1526,7 @@ class Runtime:
         놓이는 일은 흔하다. **반출·반입이 넘어짐과 같은 방문에서 함께 확정돼도 결론은
         여전히 `ZONE_CHANGED` 다** — Z2 가 Z4 를 가리면 안 된다.
 
-        ⚠️ **판독·경보가 남았으면 결론을 미룬다.** 기다리지 않으면
+        ⚠️ **판독·경보가 남았으면 결론을 미룬다** (2026-09-24 결정). 기다리지 않으면
         판독이 *"쓰러진 사람이 있다"* 고 답해도 로봇은 경보를 울리며 지나간다. 미루는 것은
         이 사건 하나라 수동·비상정지 같은 ANY 전이는 그대로 먹는다. 상한은 판독마다
         `budget_ms` 다. **물건 변화를 확정했으면 기다리지 않는다** — 기다리는 사이 사람이
@@ -1584,7 +1584,7 @@ class Runtime:
         self._apply(Event.ZONE_CLEAR, now_ms)
 
     def _judge_auth(self, result: Any, now_ms: int) -> None:
-        """사원증을 판정하고 **사건으로 옮긴다** (FR-10.1).
+        """사원증을 판정하고 **사건으로 옮긴다** (FR-10.1 · `3.8.1`).
 
         ⚠️ **인증 표시는 사건이 아니라 상태에서 가져온다.** `AUTH_OK` 사건만 보면
         60초 유효 시간이 지난 것(FR-10.2.4)과 미인증자가 새로 합류한 것(FR-3.8.1)을
@@ -1613,7 +1613,7 @@ class Runtime:
         elif outcome is Outcome.EXHAUSTED:
             # 2회 실패 — 30초 무응답과 같은 결론이다 (FR-10.3).
             self._apply(Event.AUTH_FAILED, now_ms)
-        # ⚠️ **음성 허가는 사람이 아니라 현장에 붙는다** (FR-10.2.4).
+        # ⚠️ **음성 허가는 사람이 아니라 현장에 붙는다** (FR-10.2.4 · `3.8.2`).
         # 사원증은 화면 안 좌표에 보이니 그 좌표의 트랙에 붙일 근거가 있지만, 마이크는
         # 로봇 몸통에 하나뿐이라 **그 소리가 누구 목소리인지 모른다**. 그러니 "제일
         # 가까운 트랙에 붙인다"는 건 없는 근거를 지어내는 것이고, 틀리면 엉뚱한 사람이
@@ -1640,7 +1640,8 @@ class Runtime:
         """L2 에 올랐으면 인증을 요구한다 (FR-10 · 아키텍처 3.1).
 
         ⚠️ **이것이 없으면 `AUTH_WAIT` 에 들어가지 못해 30초 타이머가 돌지 않는다.**
-        그러면 `AUTH_FAILED` 를 낼 경로가 사라져 L2 가 출구 없이 남는다.
+        그러면 `AUTH_FAILED` 를 낼 경로가 사라져 L2 가 출구 없이 남는다 —
+        `3.8.3` 을 올릴 때 비워 둔 자리가 여기다.
 
         전이 가능 여부를 **표에 묻는다** — 그래야 상태 이름이 여기 들어오지 않고,
         이미 `AUTH_WAIT` 면 자동으로 한 번만 발행된다.
@@ -1665,18 +1666,18 @@ class Runtime:
     ) -> None:
         """사진과 **그릴 수 없는 판단 근거**를 한자리에 남긴다.
 
-        ⚠️ **검출 박스와 달리 이것들은 그림이 없다.** 쓰러짐 판정은 숫자이고
-        VLM 판독은 문장이라, 사진 옆에 적어 두지 않으면 나중에 *"왜 그렇게
+        ⚠️ **검출 박스와 달리 이것들은 그림이 없다.** 쓰러짐 판정(`4.8.3`)은 숫자이고
+        VLM 판독(`4.8.0`)은 문장이라, 사진 옆에 적어 두지 않으면 나중에 *"왜 그렇게
         판정했나"* 를 되짚을 방법이 없다.
 
-        ⚠️ **문장 생성·방송은 기록이 없어도 나간다.** 관제가 그 순간 들어야
+        ⚠️ **문장 생성·방송은 기록이 없어도 나간다** (`4.8.1`). 관제가 그 순간 들어야
         할 경고이지 블랙박스 파일이 아니므로, 블랙박스가 없는 구성(`blackbox=None`)
         에서도 방송만은 막지 않는다.
         """
         sentence: str | None = None
         try:
             # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
-            # 방송·자막 문장을 붙이지 않는다.
+            # 방송·자막 문장을 붙이지 않는다 (2026-09-27 사용자 결정).
             if event_type != "person_fallen" or self._mission.enables("fallen"):
                 sentence = describe(event_type, judgement)
         except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
@@ -1715,7 +1716,7 @@ class Runtime:
             LOG.error("dashboard_event_publish_failed", error=f"{type(exc).__name__}: {exc}")
 
     def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
-        """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (좌우 대칭 근거).
+        """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (`3.5.4` 좌우 대칭 근거).
 
         ⚠️ **yaw 를 그대로 평균 내면 안 된다.** 0~360 이라 경계에서 뒤집히고
         (359° 다음 1° 가 −358° 로 읽힌다), 좌우 대칭을 보려면 필요한 것은 방위가
@@ -1784,11 +1785,11 @@ class Runtime:
         )
 
     def _emit_eye_led(self, now_ms: int) -> None:
-        """단계 색을 눈 LED 로 내려보낸다 (FR-10.4).
+        """단계 색을 눈 LED 로 내려보낸다 (`4.7.3` · FR-10.4).
 
         ⚠️ **색은 이미 계산돼 있었고 «보내는 곳» 만 없었다.** `escalation.presentation()`
-        이 단계별 색과 점멸을 내는데, 그것이 **로그에만** 쓰이면 실기에서 눈이
-        펌웨어 기본값(파랑)에 머문다 — 눈 LED 를 내려보내는 경로가 이것이다.
+        이 단계별 색과 점멸을 내는데 그것이 **로그에만** 쓰이고 있어서, 실기에서 눈이
+        펌웨어 기본값(파랑)에 머물렀다. `4.7.3` 실기가 진단 스케치로만 통과했던 이유다.
 
         ⚠️ **바뀌면 즉시, 그대로면 1초마다 보낸다.** UDP 한 건이 유실되거나 첫 전문이
         peer 학습 전에 소진돼도 복구해야 한다. 펌웨어는 같은 색이면 I2C 에 다시 쓰지 않는다.
@@ -1811,10 +1812,10 @@ class Runtime:
         self._last_eye_led_ms = now_ms
 
     def _announce_escalation(self, now_ms: int) -> None:
-        """단계가 바뀐 **그 순간**을 사건으로 낸다 (FR-3.4).
+        """단계가 바뀐 **그 순간**을 사건으로 낸다 (WBS 3.5.6 · FR-3.4).
 
         ⚠️ **상태가 아니라 단계에 건다.** `ALERT ⇄ TRACK` 왕복 체류가 0.2~0.6초로
-        실측됐다. 상태 진입에 걸면 경고가 초당 몇 번씩 겹쳐 나간다.
+        실측됐다(2026-09-18). 상태 진입에 걸면 경고가 초당 몇 번씩 겹쳐 나간다.
         단계는 그 왕복에 영향받지 않으므로 엣지가 그대로 중복 억제가 된다.
 
         ⚠️ **블랙박스 사건에 얹지 않는다.** 그 사건은 사진을 저장할 때만 나가는데
@@ -1889,12 +1890,12 @@ class Runtime:
         회피가 임무를 취소한다), 그래서 추종 중 막힘에는 **대응할 상태가 없다.**
         문제는 대응이 없는 것이 아니라 **일어난 줄도 몰랐다**는 것이다.
 
-        실제로 일어나는 일 — 온보드가 **전진만** 거부하고 호 조향은 전진이
+        실제로 일어나는 일 — 온보드가 **전진만** 거부하고(`3.2.6`) 호 조향은 전진이
         있어야 돌므로 로봇은 **선 채로** 멈춘다. 호스트는 `TRACK` 을 유지하며 지시를
         계속 보내고, 대상이 계속 보이니 `TARGET_LOST` 도 돌지 않아 **그 자리에
-        머문다.** 안전한 정지이지만 «왜 멈췄는지» 가 로그에 없다.
+        머문다.** 안전한 정지이지만 «왜 멈췄는지» 가 로그에 없었다.
 
-        ⚠️ **실기에서 운용자가 이것을 눈으로 봤다** — 순찰 중 사람을 발견한
+        ⚠️ **2026-09-19 실기에서 운용자가 이것을 눈으로 봤다** — 순찰 중 사람을 발견한
         로봇이 **코앞(온보드 정지 거리)까지 와서** 섰다. 원인은 `FR-3.5.2`(거리 유지)가
         **미구현**이라 편차가 데드존 밖이면 거리와 무관하게 최대 보폭으로 전진하고,
         멈추는 것이 초음파 반사뿐이기 때문이다. **Tier 1 안전 반사가 거리 제어를
@@ -1932,10 +1933,10 @@ class Runtime:
                 self._sound_retries_left = SOUND_RETRIES
 
     def _resend_sound(self, now_ms: int) -> None:
-        """ACK 없이 마감이 지난 `SOUND` 를 **새 seq 로** 다시 싣는다.
+        """ACK 없이 마감이 지난 `SOUND` 를 **새 seq 로** 다시 싣는다 (WBS 4.7.21).
 
         `SOUND` 는 한 번만 나가서 UDP 한 개가 빠지면 문장이 소리 없이 사라진다 —
-        실기에서 명령의 약 1.2% 가 빠졌고 대체 문장 하나가 그렇게 나오지
+        2026-09-24 실기에서 명령의 약 1.2% 가 빠졌고 대체 문장 하나가 그렇게 나오지
         않았다. 같은 seq 는 펌웨어 순서 게이트가 거부하므로 `once` 로 다시 만든다.
         ⚠️ ACK 만 빠진 경우엔 같은 문장이 처음부터 다시 나온다 — 무음보다 낫다.
         """
@@ -1956,7 +1957,7 @@ class Runtime:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
         # ⚠️ **이 함수의 소요가 명령 주기를 결정한다.** 운용 루프는 단일 스레드이고
         # (`serve`) 송신이 이 뒤에 붙으므로, 여기서 쓴 시간이 그대로 로봇이 느끼는
-        # 명령 간격이 된다. 온보드 워치독은 600ms 라 여유가 여섯 주기다.
+        # 명령 간격이 된다. 온보드 워치독은 300ms 라 여유가 세 주기뿐이다.
         tick_started = time.perf_counter()
         self._ppe_tick_now_ms = now_ms
         self._drain_confirmations(now_ms)
@@ -1969,9 +1970,9 @@ class Runtime:
         # 단계의 시간 조건 — L1 해제(5초)와 L2 승격(10초). **전이와 무관하게 돈다.**
         #
         # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
-        # 눈 LED·음향이 한 주기씩 밀린다.
+        # 눈 LED·음향을 단계에서 내려보내기 시작하면(`4.7.3`) 한 주기씩 밀린다.
         self._escalation.tick(now_ms, require_auth=self._mission.enables("auth"))
-        # 단계 색을 로봇에 내려보낸다 — 위 호출 바로 뒤가 제자리다.
+        # 단계 색을 로봇에 내려보낸다 — 위 호출 바로 뒤가 제자리다 (`4.7.3`).
         self._emit_eye_led(now_ms)
         self._request_auth(now_ms)
         self._resend_sound(now_ms)
@@ -1997,8 +1998,8 @@ class Runtime:
             # 전문이 나온 회전만 센다 — 그것이 로봇이 체감하는 주기다.
             #
             # ⚠️ **초당 요약에도 싣는다.** `_intervals.digest()` 는 `runtime_stopped`
-            # 에서만 나가므로 운용 중에는 간격이 벌어지는 것을 볼 수 없다. 그래서
-            # 실기에서 로봇이 600ms 워치독으로 계속 래치하는데 호스트
+            # 에서만 나가므로 운용 중에는 간격이 벌어지는 것을 볼 수 없었다. 그래서
+            # 2026-09-22 실기에서 로봇이 300ms 워치독으로 계속 래치하는데 호스트
             # 로그로는 원인을 못 찾고 USB 시리얼을 물려야 했다.
             gap_ms = self._intervals.note(now_ms)
             if gap_ms is not None:
@@ -2039,7 +2040,7 @@ class Runtime:
         로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
         """
         self._ppe_tick_now_ms = now_ms
-        # ⚠️ **모드 게이트는 FSM 보다 앞이다** (FR-11.1). 뒤에 두면 전이는
+        # ⚠️ **모드 게이트는 FSM 보다 앞이다** (FR-11.1 · `3.4.4`). 뒤에 두면 전이는
         # 막아도 에스컬레이션이 올라가, 경비 모드에서 PPE 위반이 L3 경보를 만든다.
         # 여기가 사건이 지나는 유일한 지점이라 **한 곳에서 한 번만** 거른다.
         if not self._mission.allows(event.name):
@@ -2085,7 +2086,7 @@ class Runtime:
     _link_ignored_warn_ms = 1000
 
     def request_reset(self) -> None:
-        """사람이 원인 해소를 확인했다 — `RESET_SAFE` 를 예약한다 (대시보드 진입점).
+        """사람이 원인 해소를 확인했다 — `RESET_SAFE` 를 예약한다 (대시보드 4.5.3 진입점).
 
         **여기서 `RESET_CONFIRMED` 를 바로 넣지 않는다.** 패킷 수락과 실제 안전
         해제는 다르므로, 로봇이 `safety_latched=false` 를 보고할 때까지 기다린다
@@ -2131,7 +2132,7 @@ class Runtime:
         self._reset_asked = True
 
     def ask_zone_baseline_reset(self, zone: str) -> tuple[bool, str]:
-        """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준 재등록을 예약한다.
+        """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준 재등록을 예약한다 (WBS 3.6.5).
 
         **다른 스레드에서 부른다.** 지우는 것은 다음 틱이다(`_drain_confirmations`) —
         틱이 그 구역의 기준을 읽고 견주는 도중에 지우면 옛 기준으로 센 횟수가 새
@@ -2155,7 +2156,7 @@ class Runtime:
 
         ⚠️ **`behavior.event()` 를 직접 부르는 대신 이것을 쓴다.** 직접 부르면 전이는
         일어나지만 `_apply()` 가 묶어 둔 **대응 단계 갱신과 전이 로그가 함께 빠진다.**
-        실기에서 그렇게 드러났다 — E-Stop 이 로봇을 잠갔는데 단계가 `L0`
+        2026-09-14 실기에서 그렇게 드러났다 — E-Stop 이 로봇을 잠갔는데 단계가 `L0`
         (파랑) 에 머물러 **눈 LED 가 흰색으로 바뀌지 않았고**(FR-10.4), `MANUAL` 26.7초의
         전이도 로그에 한 줄도 남지 않았다. 같은 기록에서 온보드가 스스로 잠근 쪽은
         `F` 까지 정상으로 올라갔다 — **차이는 잠긴 이유가 아니라 어느 경로로 들어왔는가**였다.
@@ -2188,7 +2189,7 @@ class Runtime:
 
         왜 필요한가: 파이프라인은 녹음(최대 15초) → 무음 1초 → 전사를 **직렬로**
         한다. 그래서 방문객이 창 안에서 말해도 판정이 30초 뒤에 도착할 수 있고,
-        그때는 이미 `AUTH_FAILED` 가 나가 눈이 빨갛다. 실기에서 통과한
+        그때는 이미 `AUTH_FAILED` 가 나가 눈이 빨갛다. 2026-09-22 실기에서 통과한
         2건이 각각 24초·18초를 썼다 — 여유가 6초뿐이었다. **말이 조금 늦거나
         전사가 조금 느리면 말하는 도중에 경보가 된다.**
 
@@ -2232,7 +2233,7 @@ class Runtime:
         ⚠️ **불일치 한 번이 곧 `AUTH_FAILED` 가 아니다.** 사원증 쪽은 `Authenticator`
         가 `REJECTED`(아직 남았다)와 `EXHAUSTED`(소진)를 갈라 후자만 사건으로 내는데
         (`auth.py` `_judge`), 음성 쪽은 그 구분이 없어 첫 불일치가 곧바로 L3 경보가
-        됐다 — 실기에서 그렇게 찍혔다. 말은 사원증과 달리 잘못
+        됐다 — 2026-09-21 실기 3라운드가 그렇게 찍혔다. 말은 사원증과 달리 잘못
         들릴 수 있으므로 `max_attempts` 가 있는 것이고, 그 값을 여기서 쓴다.
 
         ⚠️ **소진 전 실패도 `accepted=True` 로 돌려준다.** 음성 파이프라인은
@@ -2374,7 +2375,7 @@ class Runtime:
         """종료 전문. **틱을 기다리지 않는다.**
 
         정상 종료에도 보내는 이유 — 호스트가 사라진 뒤 로봇이 마지막 이동 명령을
-        계속 실행하면 안 된다. 온보드 600ms 타임아웃이 어차피 잡지만 그것은
+        계속 실행하면 안 된다. 온보드 300ms 타임아웃이 어차피 잡지만 그것은
         *프로세스가 강제로 죽은 경우*를 위한 뒷받침이고, 스스로 끝낼 때는
         명시적으로 세우는 것이 맞다.
         """
@@ -2435,10 +2436,10 @@ class Runtime:
     def begin(self, sock: socket.socket) -> None:
         """루프 전 준비. 비전 워커를 켜고 세션 개시 전문을 만든다."""
         # 세션 생성·워밍업은 운용 루프 전에 끝낸다. 루프 안에서 처음 열면 DirectML
-        # 초기화가 600ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
+        # 초기화가 300ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
         if self._vision is not None:
             self._vision.start()
-        # VLM 을 모드와 상관없이 한 번 올린다 — ADR-35 결정 5 (상시 적재).
+        # VLM 을 모드와 상관없이 한 번 올린다 — ADR-35 결정 5 (2026-09-24 개정: 상시 적재).
         # 모드를 바꿀 때 올리고 내리면 판독 시작과 해제가 겹쳐 세션을 닫거나 VRAM 이
         # 남았다. 경비 모드에 올라가 있어도 구역 점검이 없으니 판독은 생기지 않는다.
         # ⚠️ **생성자가 아니라 여기다.** 시험은 `Runtime` 을 수백 번 만들고, 거기서
@@ -2512,7 +2513,7 @@ class Runtime:
         line = self.emergency_stop()
         if self._peer is not None:
             payload = line.encode("utf-8")
-            # UDP 한 건의 유실로 600ms 온보드 타임아웃까지 마지막 동작이 남는 것을
+            # UDP 한 건의 유실로 300ms 온보드 타임아웃까지 마지막 동작이 남는 것을
             # 줄인다. 같은 seq의 중복은 멱등이고, 첫 건이 도착하면 나머지는 무시된다.
             for attempt in range(SHUTDOWN_ESTOP_REPEATS):
                 with contextlib.suppress(OSError):
@@ -2585,7 +2586,7 @@ def _latest_jpeg(vision: VisionWorker) -> Callable[[], bytes | None]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m host.runtime",
-        description="MechDog 호스트 운용 런타임",
+        description="MechDog 호스트 운용 런타임 (WBS 4.3.7)",
     )
     parser.add_argument("--device", required=True, help="개체 id — config/devices/<id>.yaml")
     parser.add_argument("--robot-ip", default=None, help="설정의 mechdog_ip 를 덮어쓴다")
@@ -2653,13 +2654,13 @@ def dashboard_wiring(
     return {
         "commands": commands,
         "camera": _latest_jpeg(vision) if vision is not None else None,
-        # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다.
+        # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다 (WBS 4.5.2).
         "vision": vision.latest if vision is not None else None,
-        # 사건 전문에는 디렉터리 이름만 실으므로 그림은 여기서
+        # 사건 전문에는 디렉터리 이름만 실으므로(`4.4.3`) 그림은 여기서
         # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
         "event_snapshot": None if blackbox is None else blackbox.snapshot_bytes,
         "policy": policy_view(config),
-        # PC 스피커 방송 음량·무음 조절. 없으면(piper 없음 등) None —
+        # PC 스피커 방송 음량·무음 조절 (WBS 4.8.2). 없으면(piper 없음 등) None —
         # 화면은 "방송 없음" 을 보여 준다.
         "broadcast": broadcaster,
     }
@@ -2721,7 +2722,7 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
-    """`config.broadcast` 가 켜져 있으면 관제 방송기를 돌려준다.
+    """`config.broadcast` 가 켜져 있으면 관제 방송기를 돌려준다 (`4.8.2`).
 
     방송기 자체를 돌려준다 — 호출부가 `Runtime` 에는 `.say` 를 넘기고, 대시보드에는
     방송기 자체를 넘겨 음량·무음 조절 API 가 붙게 한다.
@@ -2743,7 +2744,7 @@ def main(argv: list[str] | None = None) -> int:
     # ⚠️ 설정을 읽기 전에는 우리 로거가 없다. 여기서만 표준 출력을 쓴다.
     try:
         config = load_config(args.device)
-        # ⚠️ **모드는 여기서 정해진다** (FR-11.2). 로거를 세우기 전에
+        # ⚠️ **모드는 여기서 정해진다** (FR-11.2 · `3.4.4`). 로거를 세우기 전에
         # 만드는 이유는 **모르는 모드나 선행 기능 없는 모드로는 기동 자체를 거부**
         # 하기 때문이다 (FR-11.7) — `ModeError` 가 `ConfigError` 라서 이 절이 잡는다.
         mission = Mission(config, mode=args.mode)
@@ -2770,7 +2771,7 @@ def main(argv: list[str] | None = None) -> int:
         else None
     )
     # 방송기 자체를 쥔다 — Runtime 에는 `.say` 만 넘기고, 대시보드에는 방송기 자체를
-    # 넘겨 음량·무음 조절 API 가 붙게 한다.
+    # 넘겨 음량·무음 조절 API 가 붙게 한다 (`4.8.2`).
     broadcaster = _broadcaster(config)
     runtime = Runtime(
         config,
@@ -2781,11 +2782,11 @@ def main(argv: list[str] | None = None) -> int:
         blackbox=blackbox,
         dashboard=dashboard,
         mission=mission,
-        # 사건을 관제 화면으로 밀어 준다. ⚠️ **저장만으로는 완료가
+        # 사건을 관제 화면으로 밀어 준다 (WBS 4.4.3). ⚠️ **저장만으로는 완료가
         # 아니다** — 블랙박스는 디스크에 남기고 사람은 화면을 본다. 이 연결이
-        # 없으면 기록은 쌓이는데 아무도 모른다.
+        # 없으면 기록은 쌓이는데 아무도 모른다. 실제로 그 상태였다.
         event_publisher=(None if dashboard is None else _publish_event(dashboard)),
-        # 사건 문장을 Host PC 스피커로 읽는다. 워커가 데몬 스레드라
+        # 사건 문장(`4.8.1`)을 Host PC 스피커로 읽는다 (`4.8.2`). 워커가 데몬 스레드라
         # 따로 닫지 않는다.
         announcer=(None if broadcaster is None else broadcaster.say),
     )

@@ -1,4 +1,4 @@
-"""안전 조건 조합 — 온보드(Tier 1) 판정의 우선순위.
+"""안전 조건 조합 — 온보드(Tier 1) 판정의 우선순위 (WBS 6.2.1 ③ · 3.2.5).
 
 **우선순위는 하나다.**
 
@@ -17,8 +17,8 @@ Tier 1 이 Tier 2 에 굴복하면 이 구조의 의미가 사라진다(아키�
 | 가상 로봇 | `tools/mock_mechdog.py` — 호스트 시험 전부가 이것을 상대로 돈다 |
 
 ⚠️ **가상 로봇이 펌웨어보다 엄격하면 호스트 시험은 통과하는데 실물은 다르게 동작한다.**
-예컨대 가상 로봇이 저전압 중 `RESET_SAFE` 를 거부하는데 펌웨어는 받아 준다면, 그 어긋남을
-이 파일이 놓치지 않고 잡는다. 양쪽이 같은 규칙을 따르는지 보는 자리다.
+실제로 2026-09-17 까지 `RESET_SAFE` 가 그랬다 — 가상 로봇은 저전압 중 거부했고 펌웨어는
+받아 줬다. 이 파일은 양쪽이 같은 규칙을 따르는지 보는 자리다.
 """
 
 import itertools
@@ -86,7 +86,7 @@ def test_estop_beats_every_other_condition(config: dict) -> None:
 
 
 def test_command_timeout_stops_the_legs_without_a_state_transition(config: dict) -> None:
-    """600ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다."""
+    """300ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다."""
     timeout = config["safety"]["cmd_timeout_ms"]
     robot = _robot(config)
     now = START_MS
@@ -169,7 +169,7 @@ def test_latch_wins_over_obstacle_in_the_reported_state(config: dict) -> None:
 def test_reset_safe_is_refused_while_the_cause_remains(config: dict) -> None:
     """⚠️ 풀어 주면 다음 `MOVE` 에서 또 걸린다 — 사람은 해제만 반복하게 된다.
 
-    원인이 남아 있는데 펌웨어가 `RESET_SAFE` 를 받아 주면 이 반복이 실물에서도 일어난다.
+    펌웨어는 2026-09-17 까지 이것을 받아 줬다(`3.2.5` 에서 맞췄다).
     """
     shutdown = config["safety"]["battery_shutdown_v"]
     robot = _robot(config, battery_start_v=shutdown - 0.1)
