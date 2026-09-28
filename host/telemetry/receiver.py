@@ -1,4 +1,4 @@
-"""텔레메트리 수신 및 사건 변환 (WBS 4.3.6 · FR-1.4).
+"""텔레메트리 수신 및 사건 변환 (FR-1.4).
 
 로봇이 10Hz 로 보내는 레코드를 받아 **FSM 사건으로 바꾼다.** 이것이 없으면
 전이표의 안전 전이(`ONBOARD_FAILSAFE`·`ONBOARD_AVOID`)를 아무도 발생시킬 수
@@ -18,7 +18,7 @@
    있으면 로그를 봐도 원인을 찾을 수 없다.
 
 전압·기울기는 `Reading` 으로 그대로 올려보내며, 그것을 경고로 표시하는 것은
-대시보드(`4.6.2`)의 일이다. **보여주는 것과 판정하는 것은 다르다.**
+대시보드의 일이다. **보여주는 것과 판정하는 것은 다르다.**
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ class Reading:
     obstacle: bool | None = None
     #: 온보드 서비스 모드가 켜져 있는가. 없으면 `None` (확장 이전 펌웨어).
     #: 대시보드의 서비스 토글 라벨이 이 값을 본다 — 여기서 빠지면 화면이
-    #: 영영 "꺼짐" 만 표시한다 (2026-09-15 실기에서 확인).
+    #: 영영 "꺼짐" 만 표시한다 (실기에서 확인).
     service: bool | None = None
     pitch: float | None = None
     roll: float | None = None
@@ -188,7 +188,7 @@ class TelemetryReceiver:
         #
         # ⚠️ **다만 지나갔다는 사실은 남긴다.** 이것을 빼면 `FAILSAFE → IDLE →
         # FAILSAFE` 가 "값이 같으니 변화 없음" 으로 접혀 **재진입 사건이 사라진다.**
-        # 2026-09-14 실기에서 그렇게 나타났다 — 로봇은 잠겨 있는데 호스트는 `IDLE`·
+        # 실기에서 그렇게 나타났다 — 로봇은 잠겨 있는데 호스트는 `IDLE`·
         # `L0`(파랑) 로 남아 관제 화면이 정상 순찰 가능 상태로 보였다.
         if reading.state not in ONBOARD_STATES:
             self._left_onboard.add(session)
