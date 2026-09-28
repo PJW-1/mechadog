@@ -331,3 +331,6 @@ dialog{border-color:#ffffff;border-radius:24px;background:#f7fcf9;color:#264247;
  .workspace-open .detail-panel{animation:none}
  .op-spark-empty{animation:none;opacity:.75}
 }
+
+/* 사건 시각 — 자릿수가 흔들리면 눈이 줄을 못 따라간다. */
+.op-row-time{font-variant-numeric:tabular-nums;letter-spacing:.01em;color:#8a9490}
