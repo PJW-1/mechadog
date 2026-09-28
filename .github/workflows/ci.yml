@@ -39,6 +39,10 @@ jobs:
       - name: Generated docs are up to date
         run: python tools/wbs_assignments.py --check
 
+      # 문서를 옮기거나 링크를 고칠 때 상대 경로가 실제 파일을 가리키는지 검사한다.
+      - name: Doc links are valid
+        run: python tools/check_doc_links.py
+
       - name: Lint (ruff)
         run: ruff check .
 
