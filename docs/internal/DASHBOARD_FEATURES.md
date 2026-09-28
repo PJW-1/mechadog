@@ -1,6 +1,6 @@
 # 요구사항 대조와 연결 범위
 
-이 문서는 관제 화면(`host/dashboard/static/`, 2026-09-14 까지 `web/design-prototype`)의 화면/로컬 기능 범위입니다. 실행 방법과 현재 검증 범위는 [DASHBOARD](DASHBOARD.md)를 따릅니다. 실물 통합이나 팀 WBS 완료 보고가 아닙니다.
+이 문서는 관제 화면(`host/dashboard/static/`, 2026-09-14 까지 `web/design-prototype`)의 화면/로컬 기능 범위입니다. 실행 방법과 현재 검증 범위는 [DASHBOARD](../DASHBOARD.md)를 따릅니다. 실물 통합이나 팀 WBS 완료 보고가 아닙니다.
 
 ## 대조 기준
 

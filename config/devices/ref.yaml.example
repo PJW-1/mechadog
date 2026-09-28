@@ -76,7 +76,7 @@ gait_calibration:
   reverse_turn_mm_per_sec: null
   measured_on: null           # 측정 바닥 (예: "장판", "카펫")
 
-measured:                     # 실측 근거는 docs/HARDWARE.md 1절과 PR 본문에 기록
+measured:                     # 실측 근거는 docs/internal/HARDWARE.md 1절과 PR 본문에 기록
   body_weight_g: null
   payload_pass_g: null        # 부하 테스트 통과 최대 하중
   runtime_min: null

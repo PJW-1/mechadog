@@ -19,11 +19,11 @@ Hiwonder MechDog(ESP32)과 Seeed XIAO ESP32S3 Sense, Host PC를 결합한 **자�
 
 MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)를 **HAL로 취급**하고, 그 위에 **인지 → 판단 → 항법** 자율 스택을 새로 얹는 것이 목표입니다. 이 라이브러리는 라이선스 표기가 없어 저장소에 넣지 않습니다([ADR-20](docs/DECISIONS.md)).
 
-📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/PRD_Physical_AI_Guard_Robot.md)**  
-📋 **[WBS — 작업 ID·선행·DoD 정본](docs/WBS.md)**<br>
-🙋 **[담당자별 작업 목록 — 지금 할 일](docs/ASSIGNMENTS.md)** ← 매일 보는 문서<br>
-🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)**<br>
-🔌 **[하드웨어 — 착수 확인 · LiDAR 배선 · 발주](docs/HARDWARE.md)**  
+📄 **[PRD v1.0 — 요구사항 및 설계 결정](docs/internal/PRD_Physical_AI_Guard_Robot.md)**  
+📋 **[WBS — 작업 ID·선행·DoD 정본](docs/internal/WBS.md)**<br>
+🙋 **[담당자별 작업 목록 — 지금 할 일](docs/internal/ASSIGNMENTS.md)** ← 매일 보는 문서<br>
+🧭 **[설계 결정 기록 — 무엇을 왜 안 했나](docs/DECISIONS.md)** ← ADR 38건<br>
+🔌 **[하드웨어 — 착수 확인 · LiDAR 배선 · 발주](docs/internal/HARDWARE.md)**  
 🛠️ **[엔지니어링 가이드 — 로깅·테스트·CI](docs/ENGINEERING_GUIDE.md)**  
 📡 **[통신 프로토콜 정본 — 명령 10종·검증 규칙](docs/PROTOCOL.md)**
 🏗 **[시스템 아키텍처 — 구조·상태·품질 기준](docs/ARCHITECTURE.md)** ← 용어 부록 포함  
@@ -110,7 +110,7 @@ MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)
 
 > ⚠️ **본선은 LiDAR 자율주행입니다.** 측위 트랙은 **Track A(2D LiDAR SLAM)로 확정**됐고(OI-9 닫힘 · [ADR-18](docs/DECISIONS.md)) 제품도 LD19 로 정해 중계 노드 펌웨어까지 들어와 있습니다. FR-6·FR-7 이 목표하는 것은 **지도를 만들고 그 위를 스스로 다니는 것**입니다.
 >
-> Phase 2 는 2026-09-28 착수를 승인했습니다. H3 탑재 검수(보조배터리·마스트·센서를 포함한 실제 최종 구성)는 착수 조건이 아니라 **본선 유지 확인**으로 합니다. LiDAR·마스트·중계 MCU 는 2026-09-28 도착했습니다. 과거 100g 기준 대신 [하드웨어 검수](docs/HARDWARE.md)를 따릅니다.
+> Phase 2 는 2026-09-28 착수를 승인했습니다. H3 탑재 검수(보조배터리·마스트·센서를 포함한 실제 최종 구성)는 착수 조건이 아니라 **본선 유지 확인**으로 합니다. LiDAR·마스트·중계 MCU 는 2026-09-28 도착했습니다. 과거 100g 기준 대신 [하드웨어 검수](docs/internal/HARDWARE.md)를 따릅니다.
 >
 > **ArUco 마커는 대안이 아니라 최후 예비(Track C)입니다.** H3 가 끝내 통과하지 못해 **LiDAR 를 실을 수 없다고 판정될 때에만** 구역 정의를 마커로 축소합니다. 마커로 가면 *"구역을 안다"* 는 남지만 **자율주행은 남지 않습니다** — 둘은 같은 것의 두 방식이 아닙니다.
 >
@@ -140,7 +140,7 @@ MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)
 | **M4** | LiDAR & 매핑 | ○ | ⬜ 착수 승인 (2026-09-28) |
 | **M5** | 웨이포인트 순찰 & 위험구역 출동 | ○ | ⬜ 착수 승인 (2026-09-28) |
 
-👉 **다음에 할 일은 [담당자별 작업 목록](docs/ASSIGNMENTS.md)의 🟢 항목이다.**
+👉 **다음에 할 일은 [담당자별 작업 목록](docs/internal/ASSIGNMENTS.md)의 🟢 항목이다.**
 > 선행이 끝나 지금 잡을 수 있는 것만 모아 두었고 WBS 에서 생성되므로 낡지 않는다.
 
 ---
@@ -150,14 +150,15 @@ MechDog 제조사(Hiwonder)가 제공하는 모션 라이브러리(`HW_MechDog`)
 ```
 mechdog_physical_ai/
 ├── docs/
-│   ├── PRD_Physical_AI_Guard_Robot.md   # 요구사항 (FR · 마일스톤 · 리스크 · OI)
 │   ├── ARCHITECTURE.md                  # 구조 · FSM · 품질 기준 · 용어
 │   ├── DECISIONS.md                     # 설계 결정 기록 (ADR)
 │   ├── PROTOCOL.md                      # 통신 메시지 정본 (명령 10종)
-│   ├── WBS.md                           # 작업 ID · 선행 · DoD 정본
-│   ├── ASSIGNMENTS.md                   # 진행 현황 · 담당 목록 (WBS에서 생성)
 │   ├── ENGINEERING_GUIDE.md             # 로깅 · 테스트 · CI 구현 기준
-│   └── HARDWARE.md                      # 착수 확인 · LiDAR 배선 · 발주
+│   └── internal/                        # 팀 운영 문서
+│       ├── PRD_Physical_AI_Guard_Robot.md  # 요구사항 (FR · 마일스톤 · 리스크 · OI)
+│       ├── WBS.md                       # 작업 ID · 선행 · DoD 정본
+│       ├── ASSIGNMENTS.md               # 진행 현황 · 담당 목록 (WBS에서 생성)
+│       └── HARDWARE.md                  # 착수 확인 · LiDAR 배선 · 발주
 ├── config/
 │   ├── config.yaml                      # 전역 파라미터 (매직 넘버 0개 목표)
 │   ├── devices/                         # 개체별 프로파일 (서보 오프셋 등)
@@ -215,17 +216,17 @@ python -m host.runtime --device mechdog-01 --robot-ip <로봇-IP> --xiao-ip <XIA
 
 | 상황 | 문서 |
 | :--- | :--- |
-| **내 할 일만 보고 싶다** | **[담당자별 작업 목록](docs/ASSIGNMENTS.md)** |
+| **내 할 일만 보고 싶다** | **[담당자별 작업 목록](docs/internal/ASSIGNMENTS.md)** |
 | **파서·직렬화를 구현한다** | [PROTOCOL.md](docs/PROTOCOL.md) ← **PRD 가 아니다** |
-| 무엇을 만드는가 (기능 요구사항) | [PRD](docs/PRD_Physical_AI_Guard_Robot.md) |
+| 무엇을 만드는가 (기능 요구사항) | [PRD](docs/internal/PRD_Physical_AI_Guard_Robot.md) |
 | 어떤 구조인가 · FSM · 품질 기준 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **왜 이렇게 정했나 · 무엇을 왜 안 했나** | [DECISIONS.md](docs/DECISIONS.md) |
 | **모르는 용어가 나왔다** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) 부록 |
 | 로깅 · 테스트 · CI 를 짠다 | [ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) |
 | 브랜치 · PR · 코드 규약 | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| 조립 · 배선 · 발주 · 착수 확인 | [HARDWARE.md](docs/HARDWARE.md) |
-| **오늘 시작할 작업과 대기 작업** | **[ASSIGNMENTS.md](docs/ASSIGNMENTS.md)** |
-| 작업의 상세 DoD·선행 관계 | [WBS.md](docs/WBS.md) |
+| 조립 · 배선 · 발주 · 착수 확인 | [HARDWARE.md](docs/internal/HARDWARE.md) |
+| **오늘 시작할 작업과 대기 작업** | **[ASSIGNMENTS.md](docs/internal/ASSIGNMENTS.md)** |
+| 작업의 상세 DoD·선행 관계 | [WBS.md](docs/internal/WBS.md) |
 
 ## 처음 보면 틀리기 쉬운 것
 
@@ -247,7 +248,7 @@ python -m host.runtime --device mechdog-01 --robot-ip <로봇-IP> --xiao-ip <XIA
 | **B · 인지·AI** | 비전 노드 · 객체 검출 · 대시보드 화면 | 로봇 3대 영상, Host PC 추론 |
 | **C · 시스템·통합** | 통신 규약 · FSM · 대시보드 서버 · CI/CD · 문서 | Host PC와 전체 Fleet |
 
-> A/B/C는 사람 이름이 아니라 작업 성격이다. 실제 인원 배정은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)를 따른다.
+> A/B/C는 사람 이름이 아니라 작업 성격이다. 실제 인원 배정은 [ASSIGNMENTS](docs/internal/ASSIGNMENTS.md)를 따른다.
 > 기준기는 Phase별로 나뉜다. `phase1_reference`는 LiDAR 미장착 P1 표준 구성,
 > `phase2_reference`는 LiDAR 장착 2대 중 측위 검수용 1대다. 상세는 [CONTRIBUTING.md](CONTRIBUTING.md).
 

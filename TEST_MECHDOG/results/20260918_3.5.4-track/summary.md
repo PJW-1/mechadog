@@ -1,7 +1,7 @@
 # WBS 3.5.4 실기 — TRACK 락온 (2026-09-18 · mechdog-01)
 
 > ⚠️ **이 기록은 `mechdog-01` 한 대의 것이다.** 아래의 선회 비대칭·데드밴드·드리프트는
-> 개체별 서보 오프셋에서 나오므로 **기체마다 방향도 크기도 다르다**([HARDWARE 3절](../../../docs/HARDWARE.md)).
+> 개체별 서보 오프셋에서 나오므로 **기체마다 방향도 크기도 다르다**([HARDWARE 3절](../../../docs/internal/HARDWARE.md)).
 > `mechdog-02` 이하는 각자 다시 재야 하며 이 값을 복사하면 안 된다.
 
 도구는 런타임 자체다 — `python -m host.runtime --device mechdog-01 --dashboard-port 8000`.

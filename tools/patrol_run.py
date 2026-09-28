@@ -84,7 +84,7 @@ MAX_AUTO_RESETS = 5
 #: 정하고 IMU 의 0 은 부팅한 자리가 정하므로 둘 사이에는 임의의 옵셋이 있다.
 #: 목업이 옵셋 0 을 보고하면 **IMU 를 절대값으로 잘못 쓰는 코드가 시뮬레이션에서
 #: 멀쩡해 보인다** — 실제로 그 상태로 측위가 좌표계에 갇혀 있었고, 목업이 0 을
-#: 보내서 그것이 드러나지 않았다 (docs/LIDAR_INTEGRATION.md 5절 ⑥).
+#: 보내서 그것이 드러나지 않았다 (docs/internal/LIDAR_INTEGRATION.md 5절 ⑥).
 SIM_IMU_OFFSET_DEG = 137.0
 
 #: IMU 표류 (deg/틱). 자력계가 없어 적분값이 서서히 어긋난다.

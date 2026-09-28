@@ -203,7 +203,7 @@
 | `4.8.1` | 상황 서술 문장 생성 | `host/report/situation.py` | 1.0 |
 | `4.8.2` | 관제 방송 TTS | `host/cloud/broadcast.py` | 0.5 |
 | `4.8.3` | 쓰러짐 규칙 판정 | `vision/person.py` | 0.5 |
-| `5.1.2` | HW_MechDog 라이선스 확인 및 결합 절차 문서화 | `firmware README` + [ADR-20](DECISIONS.md) | 0.5 |
+| `5.1.2` | HW_MechDog 라이선스 확인 및 결합 절차 문서화 | `firmware README` + [ADR-20](../DECISIONS.md) | 0.5 |
 | `5.2.1` | Git 저장소 초기화 및 브랜치 전략 | `.gitignore`, 브랜치 규칙 문서 | 0.5 |
 | `5.2.2` | 브랜치 보호 및 PR 템플릿 | 저장소 설정, `.github/` | 0.5 |
 | `5.3.1` | Python 품질 잡 | `.github/workflows/ci.yml` | 1.0 |

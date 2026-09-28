@@ -1,7 +1,7 @@
 """WBS 작업 사전에서 담당자별 작업 목록을 생성한다.
 
-`docs/WBS.md`의 작업 사전을 파싱해 **누가 무엇을 하는가**를
-`docs/ASSIGNMENTS.md`로 펼친다. 팀원은 생성된 파일에서 지금 시작할 수 있는 일만 본다.
+`docs/internal/WBS.md`의 작업 사전을 파싱해 **누가 무엇을 하는가**를
+`docs/internal/ASSIGNMENTS.md`로 펼친다. 팀원은 생성된 파일에서 지금 시작할 수 있는 일만 본다.
 
 **왜 손으로 쓰지 않는가** — 같은 숫자를 두 곳에 두면 반드시 어긋난다. 이 프로젝트에서
 이미 여러 번 일어났다(총 공수 69.0 vs 70.0, 절 제목 5.5 vs 하위 합 6.5, 명령 7종 vs 8종).
@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WBS = ROOT / "docs" / "WBS.md"
-OUT = ROOT / "docs" / "ASSIGNMENTS.md"
+WBS = ROOT / "docs" / "internal" / "WBS.md"
+OUT = ROOT / "docs" / "internal" / "ASSIGNMENTS.md"
 
 sys.path.insert(0, str(ROOT))
 

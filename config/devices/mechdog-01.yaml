@@ -5,7 +5,7 @@
 # 사라지기 때문이다** — 잃으면 로봇이 비뚤게 걷고 다시 재야 한다.
 #
 # ⚠️ `2.4.1` 은 3대 전부를 요구하므로 아직 완료가 아니다. 나머지 2대는 L1·L2 몫이다.
-# 확인 경위는 docs/HARDWARE.md 1절 참조.
+# 확인 경위는 docs/internal/HARDWARE.md 1절 참조.
 
 device_id: mechdog-01
 owner_id: unassigned # prod 프로파일로 올릴 때 실제 담당자로 채운다

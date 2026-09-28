@@ -5,7 +5,7 @@ Host PC 로 UDP 송신하는 **독립 중계 노드**다. MechDog 메인보드�
 (ADR-6 — 보행 제어 루프를 방해하지 않기 위해).
 
 - 정본 규약: `docs/PROTOCOL_LIDAR.md`
-- 배선: `docs/HARDWARE.md` — LD19 Tx → GPIO16 (UART2 RX, 230400 8N1),
+- 배선: `docs/internal/HARDWARE.md` — LD19 Tx → GPIO16 (UART2 RX, 230400 8N1),
   P5V → 5V, GND → GND, PWM 미연결(내부 제어 ~10Hz)
 - 대상 보드: ESP32-DevKitC (WROOM). FQBN `esp32:esp32:esp32`, core 2.0.12
 

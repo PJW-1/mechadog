@@ -4,7 +4,7 @@
 > 수신(C++ 펌웨어)은 두 문서만 보고 구현한다. 스키마는 팀장이 결정하여 전파한다.
 > 합의 대상이 아니다.
 >
-> 상세 배경과 설계 근거는 [PRD FR-5](PRD_Physical_AI_Guard_Robot.md) 참조.
+> 상세 배경과 설계 근거는 [PRD FR-5](internal/PRD_Physical_AI_Guard_Robot.md) 참조.
 
 ---
 

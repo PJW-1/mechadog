@@ -1,6 +1,6 @@
 # 협업 규칙 (Contributing)
 
-> 3인 팀 · 4주 · 매일 볼 작업 목록은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)
+> 3인 팀 · 4주 · 매일 볼 작업 목록은 [ASSIGNMENTS](docs/internal/ASSIGNMENTS.md)
 >
 > **처음이라면 [README](README.md)의 문서 지도를 먼저 보세요.**
 > **절차는 이 문서, 구현 기준은 [엔지니어링 가이드](docs/ENGINEERING_GUIDE.md)** (로깅·테스트·CI)
@@ -20,7 +20,7 @@
 | **C · 시스템·통합** | 1.0 문서, 3.1 통신규약, 3.4 FSM, 4.5 서버, 5.2·5.3.1, 6.2·6.4 | `host/behavior/`, `host/dashboard/`, `host/common/`, `tests/`, `docs/` |
 
 > **A · B · C 는 작업 성격 분류이지 사람 이름이 아니다.** 위 표는 "누가" 가 아니라 "어떤 성격의 작업이 어느
-> 디렉터리에 있는지" 를 나타낸다. **실제 인원 배정은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)** 에 생성되며, 한 사람이 두 영역을 겸할 수 있다.
+> 디렉터리에 있는지" 를 나타낸다. **실제 인원 배정은 [ASSIGNMENTS](docs/internal/ASSIGNMENTS.md)** 에 생성되며, 한 사람이 두 영역을 겸할 수 있다.
 
 ### 기준기(Reference Unit)
 
@@ -31,7 +31,7 @@
 | **`phase1_reference`** | **Phase 1 표준 구성**(LiDAR 미장착)의 지정 개체 | G1·G2·G3 검수, **Phase 1 NFR 성능 수치의 출처** |
 | **`phase2_reference`** | 측위 센서(LiDAR)를 장착한 지정 개체 | Phase 2 측위·매핑 검수 |
 
-- 두 기준기는 **[WBS 2.4.1](docs/WBS.md)에서 지정**하고 물리적으로 표시한다.
+- 두 기준기는 **[WBS 2.4.1](docs/internal/WBS.md)에서 지정**하고 물리적으로 표시한다.
 - LiDAR 는 2대에 장착하고, 그중 **1대를 `phase2_reference`** 로 지정한다. 나머지 LiDAR 장착기는 개발·재현용이다.
 - **게이트 검수는 반드시 해당 Phase 의 기준기에서** 수행한다. 개발기 통과는 검수로 인정하지 않는다.
 - 권장 배치: **LiDAR 미장착 개체를 `phase1_reference`** 로 둔다. Phase 1 표준 물리 구성이 유지되어 NFR 수치의 기준이 흔들리지 않는다.
@@ -137,14 +137,14 @@ Refs: WBS 3.2.1, FR-1.3, NFR-2.1
 | 크기 | 하나의 응집된 변경으로 묶는다. 관련된 워크패키지가 여러 개면 PR 본문에 ID를 모두 적는다 |
 | 리뷰어 | **`dev` 는 승인 없이 머지 가능** (CI 통과가 게이트). 리뷰는 권장이며 강제하지 않는다. **`main` 은 소유자 승인 필수** |
 | CI | 전 잡 통과 필수 |
-| DoD | [WBS 사전](docs/WBS.md)의 해당 워크패키지 완료 기준을 PR 본문에 인용하고 충족 근거를 적는다 |
+| DoD | [WBS 사전](docs/internal/WBS.md)의 해당 워크패키지 완료 기준을 PR 본문에 인용하고 충족 근거를 적는다 |
 
 ---
 
 ### 4.1 작업을 끝냈을 때
 
 **작업 완료 = 해당 WBS의 DoD 충족 + 검증 근거 + `dev` 병합.** PR은 변경·검증 근거를 보관한다.
-팀원은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)에서 🟢 작업을 고르고, 일반 코드 PR에서는 WBS를 수정하지 않는다.
+팀원은 [ASSIGNMENTS](docs/internal/ASSIGNMENTS.md)에서 🟢 작업을 고르고, 일반 코드 PR에서는 WBS를 수정하지 않는다.
 
 | 상황 | 처리 |
 | :--- | :--- |
@@ -155,7 +155,7 @@ Refs: WBS 3.2.1, FR-1.3, NFR-2.1
 | G1~G3 검수 통과 | 해당 마일스톤 완료. 별도 `dev` → `main` 승격·태그 절차를 진행한다 |
 
 팀장은 주간 리뷰나 마일스톤 종료 때 병합된 PR의 근거를 확인해 WBS의 `[완료]`를 일괄 반영한다.
-WBS를 고친 경우에만 다음 명령으로 담당자 목록을 재생성한다. `docs/ASSIGNMENTS.md`는 직접 수정하지 않는다.
+WBS를 고친 경우에만 다음 명령으로 담당자 목록을 재생성한다. `docs/internal/ASSIGNMENTS.md`는 직접 수정하지 않는다.
 
 ```bash
 python tools/wbs_assignments.py

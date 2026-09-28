@@ -1,6 +1,6 @@
 # FR-9 PPE 검출 모델 학습 기록
 
-작성 2026-09-18. 기획은 PPE_SYSTEM_PLAN.md, 요구사항은 docs/PRD_Physical_AI_Guard_Robot.md 를 따른다.
+작성 2026-09-18. 기획은 PPE_SYSTEM_PLAN.md, 요구사항은 docs/internal/PRD_Physical_AI_Guard_Robot.md 를 따른다.
 
 ⚠️ *(2026-09-28 현황)* 이 기록의 `ppe-v3` 이후로 이어진 후보 v12~v23b 도 XIAO 실측에서
 기각됐다. 다음 모델은 `person_down` 을 빼고 4클래스로 다시 학습한다 — 상세는

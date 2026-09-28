@@ -73,7 +73,7 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 
 **아직 예시 데이터인 것은 지도 · 위치 둘이다** — 화면이 "예시"로 표시하거나 숨긴다. Phase 2 소관이다.
 로봇 상태 게이지는 `/ws/telemetry` 로 채운다(`4.6.2` · 아래 절). 요구사항 대조와 남은 연결은
-[DASHBOARD_FEATURES](DASHBOARD_FEATURES.md).
+[DASHBOARD_FEATURES](internal/DASHBOARD_FEATURES.md).
 
 **연결 규칙 — 관제 포트는 `:8000` 하나다** (#163 · #165). 화면은 **런타임이 내보낸 주소**(`http://127.0.0.1:8000/`)로 연다. ⚠️ **다른 포트나 파일로 연 화면이 API 를 가리키는 길은 없다** — 서버 출처 검사가 그 화면의 명령(비상정지 포함)과 WS 를 전부 거절해, 연결된 척하고 아무것도 못 보내는 화면이 되기 때문이다(예전의 `?api=` 는 뺐다). 같은 텔레메트리 포트로 런타임을 둘 띄우면 두 번째는 `:5101` bind 에서 바로 실패한다(#162).
 
