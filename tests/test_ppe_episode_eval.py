@@ -100,16 +100,32 @@ def test_episodes_split_on_orientation_change_and_skip_unlabelled_frames():
     ]
 
 
-def test_short_episode_below_confirmation_window_is_excluded_but_frames_still_count():
-    # 1.2초짜리 에피소드는 1.5초 창을 채울 수 없다 — 평가 기회가 아니다.
-    events = run(0, 10, ori="정면") + run(10, 11.2, ori="우측") + run(11.2, 12, seg=None)
+def test_episode_with_fewer_frames_than_needed_to_confirm_is_excluded_but_frames_still_count():
+    # 확정에는 창 안 3프레임이 필요하다 — 2프레임짜리 에피소드는 구조적으로 확정이 날 수 없다.
+    events = run(0, 10, ori="정면") + run(10, 11, ori="우측") + run(11, 12, seg=None)
     summary = evaluate(events)
     total = summary["total"]
     assert total["episode"]["episodes"] == 1
     assert total["episode"]["excluded"] == 1
     # 프레임 기준은 구간 전체를 센다 (ppe_live_check 의 구간 집계와 같게).
     assert total["frame"]["count"] == len([e for e in events if e["segment"]])
-    assert [e["excluded"] for e in summary["episodes"]] == [None, "평가 창 1.5초 미만"]
+    assert [e["excluded"] for e in summary["episodes"]] == [None, "프레임 2장 < 확정 기준 3장"]
+
+
+def test_short_but_dense_episode_is_counted_and_its_alarm_is_not_dropped():
+    # Devin 검수(2026-09-28): 창(1.5초)보다 짧아도 프레임이 조밀하면 런타임은 확정한다.
+    # 길이로 빼면 실제 경보가 오경보율 분모·분자에서 사라진다.
+    events = run(0, 10, ori="정면") + confirm_at(run(10, 11.2, ori="우측", step=0.1), 10.5)
+    ep = evaluate(events)["total"]["episode"]
+    assert ep["excluded"] == 0
+    assert ep["false_alarm_rate"] == 0.5
+
+
+def test_min_episode_seconds_is_an_explicit_opt_in():
+    events = run(0, 10, ori="정면") + run(10, 11.2, ori="우측", step=0.1)
+    summary = evaluate(events, min_episode_s=1.5)
+    assert summary["total"]["episode"]["excluded"] == 1
+    assert summary["episodes"][1]["excluded"] == "최소 길이 1.5초 미만"
 
 
 # ── 위반 에피소드: 제한시간과 판정 시간 ───────────────────────
@@ -213,6 +229,24 @@ def test_alarm_latched_across_orientation_change_is_carried_not_a_new_alarm():
     assert [e["carried"] for e in episodes] == [False, True]
     assert summary["total"]["episode"]["false_alarm_rate"] == 0.5
     assert summary["total"]["episode"]["carried"] == 1
+
+
+def test_violation_alarm_still_latched_across_orientation_change_counts_as_detected():
+    # Devin 검수(2026-09-28): 같은 위반 구간에서 방향만 바뀌고 경보가 계속 켜져 있으면
+    # 새 상승 에지가 없어도 놓친 것이 아니다 — 검출로 세고 판정 시간은 «이월» 로 뺀다.
+    front = confirm_at(run(0, 10, exp=BAD, ori="정면", states=(BAD,)), 2.0)
+    for e in front:
+        if e["t"] > 2.0:
+            e["hits"] = 3
+    right = run(10, 20, exp=BAD, ori="우측", states=(BAD,), hits=3)
+    summary = evaluate(front + right)
+    episodes = summary["episodes"]
+    assert [e["carried"] for e in episodes] == [False, True]
+    assert [e["final"] for e in episodes] == [BAD, BAD]
+    ep = summary["total"]["episode"]
+    assert ep["recall"] == 1.0
+    assert ep["latency"]["n"] == 1
+    assert ep["latency"]["carried"] == 1
 
 
 def test_segment_change_resets_the_carry():
@@ -327,18 +361,18 @@ def test_default_timeout_comes_from_the_acceptance_plan():
 
 
 @pytest.mark.skipif(not REAL_SESSION.is_file(), reason="실측 세션 파일 없음")
-def test_real_session_20260928_has_four_false_alarms_in_four_normal_episodes():
+def test_real_session_20260928_has_four_false_alarms_in_five_normal_episodes():
     data = json.loads(REAL_SESSION.read_text(encoding="utf-8"))
     summary = ee.evaluate([(str(REAL_SESSION), data)], timeout_s=15.0)
     ep = summary["total"]["episode"]
     assert sum(e["alarms"] for e in summary["episodes"]) == 4
-    assert ep["normal_episodes"] == 4
+    assert ep["normal_episodes"] == 5
     assert ep["false_alarms"] == 4
-    assert ep["false_alarm_rate"] == 1.0
+    assert ep["false_alarm_rate"] == 0.8
     assert ep["violation_episodes"] == 0
     assert ep["recall"] is None
-    # 구간을 한 번 더 눌러 생긴 1.2초 조각은 평가 기회가 아니다
-    assert ep["excluded"] == 1
+    # 구간을 한 번 더 눌러 생긴 1.2초 조각도 프레임이 충분해 평가 기회다(경보 없음)
+    assert ep["excluded"] == 0
     # 프레임 기준은 세션에 저장된 구간 집계와 같아야 한다
     stored = data["segments"]["standing-all"]
     frame = summary["segments"][0]["frame"]

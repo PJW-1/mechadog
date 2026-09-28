@@ -12,16 +12,19 @@
     에피소드      같은 (구간, 방향) 이 이어지는 이벤트 묶음(연속 run). 구간이 없는(버튼을
                   누르지 않은) 프레임은 빠진다. 시작 = 그 run 의 첫 이벤트 t, 끝 = 다음
                   run 의 첫 이벤트 t(마지막이면 자기 마지막 t).
-    평가 기회     길이가 위반 확정 창(`settings.window_ms`, 기본 1.5초) 이상인 에피소드.
-                  그보다 짧으면 구조적으로 확정이 날 수 없으므로 에피소드 지표에서 빼고
-                  «제외» 로 따로 센다. 프레임 기준 집계에는 그대로 들어간다.
+    평가 기회     프레임이 확정 기준(`settings.hits_required`, 기본 3장) 이상인 에피소드.
+                  그보다 적으면 구조적으로 확정이 날 수 없으므로 에피소드 지표에서 빼고
+                  «제외» 로 따로 센다. 프레임 기준 집계에는 그대로 들어간다. 길이로는
+                  빼지 않는다 — 창보다 짧아도 프레임이 조밀하면 런타임은 확정한다
+                  (`--min-episode-s` 로 따로 켤 수 있다).
     경보(확정)    `confirmed: true` 이벤트 = 위반 확정의 **상승 에지**. 창은 구간을 바꿀
                   때만 비워지고 방향이 바뀔 때는 이어진다 — 앞 방향의 확정이 새 에피소드
                   초반까지 켜져 있으면 «이월» 로 표시하고 새 경보로 세지 않는다.
     제한시간      위반 에피소드에서 시작부터 이 시간 안(경계 포함)의 확정만 인정한다.
                   기본값은 검수 계획의 방향당 관측 시간 `orientation_step_s`(15초) — 코드에
                   PPE 판정 제한시간 설정이 따로 없고, 한 방향 에피소드가 그만큼 이어진다.
-    최종 판정     위반 에피소드: 제한시간 안 확정 → 위반, 없으면 그 안에 적합 프레임이
+    최종 판정     위반 에피소드: 제한시간 안 확정 또는 앞 방향에서 이월돼 켜져 있는 경보
+                  → 위반(이월은 판정 시간에서 뺀다), 없으면 그 안에 적합 프레임이
                   하나라도 → 적합, 아니면 확인불가(사람 미검출 포함).
                   그 밖의 에피소드: 에피소드 전체에서 같은 순서.
 
@@ -132,6 +135,16 @@ def _final(frames: Iterable[dict[str, Any]], alarmed: bool) -> str:
     return STATE_UNKNOWN
 
 
+def _excluded(
+    frames: int, hits_required: int, duration: float, min_episode_s: float | None
+) -> str | None:
+    if frames < hits_required:
+        return f"프레임 {frames}장 < 확정 기준 {hits_required}장"
+    if min_episode_s is not None and duration < min_episode_s - EPS:
+        return f"최소 길이 {min_episode_s:g}초 미만"
+    return None
+
+
 def evaluate_session(
     label: str,
     session: dict[str, Any],
@@ -141,8 +154,6 @@ def evaluate_session(
 ) -> list[Episode]:
     settings = session.get("settings", {})
     hits_required = int(settings.get("hits_required", DEFAULT_HITS_REQUIRED))
-    if min_episode_s is None:
-        min_episode_s = int(settings.get("window_ms", DEFAULT_WINDOW_MS)) / 1000
     events = session.get("events", [])
     latched = _latched(events, hits_required)
     position = {id(e): i for i, e in enumerate(events)}
@@ -170,7 +181,8 @@ def evaluate_session(
         if expected == STATE_VIOLATION:
             in_time = [t for t in alarm_times if t <= timeout_s + EPS]
             window = [e for e in run if float(e["t"]) - start <= timeout_s + EPS]
-            final = _final(window, bool(in_time))
+            # 앞 방향의 확정이 켜진 채 넘어왔으면 경보가 울리는 중이다 — 놓친 것이 아니다.
+            final = _final(window, bool(in_time) or carried)
             latency = in_time[0] if in_time and not carried else None
             late = not in_time and bool(alarm_times)
         else:
@@ -193,9 +205,7 @@ def evaluate_session(
                 final=final,
                 latency_s=latency,
                 late=late,
-                excluded=(
-                    f"평가 창 {min_episode_s:g}초 미만" if duration < min_episode_s - EPS else None
-                ),
+                excluded=_excluded(len(run), hits_required, duration, min_episode_s),
             )
         )
     return episodes
@@ -399,8 +409,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
     lines += [
         "",
         f"제한시간 {settings['timeout_s']:g}초 (위반 에피소드 시작부터, 경계 포함) · 평가 기회 = "
-        + ("세션의 위반 확정 창" if min_s is None else f"{min_s:g}초")
-        + " 이상 이어진 에피소드",
+        + "프레임이 확정 기준 이상인 에피소드"
+        + ("" if min_s is None else f" 중 {min_s:g}초 이상 이어진 것"),
         "",
     ]
     for warning in summary["warnings"]:
@@ -521,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--min-episode-s",
         type=float,
-        help="이보다 짧은 에피소드는 평가 기회에서 뺀다. 기본 = 세션의 위반 확정 창",
+        help="이보다 짧은 에피소드도 평가 기회에서 뺀다. 기본 = 길이로는 빼지 않는다",
     )
     parser.add_argument("--json", action="store_true", help="Markdown 대신 JSON 으로 낸다")
     parser.add_argument("--out", type=Path, help="결과를 쓸 파일. 없으면 표준출력")
