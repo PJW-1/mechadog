@@ -9,6 +9,7 @@
 """
 
 import re
+from dataclasses import replace
 
 import pytest
 from conftest import ROOT
@@ -75,8 +76,10 @@ def test_group_and_range_predecessors_stay_blocked(packages: list[WorkPackage]) 
     """묶음 선행은 그 안의 작업이 모두 끝나야 풀린다."""
     by_id = {p.wid: p for p in packages}
     assert not is_ready(by_id["2.5"], packages)
-    # WBS 밖 조건(장비 도착·승인)은 맞는 ID 가 없으므로 계속 대기다.
-    assert not is_ready(by_id["2.2.1"], packages)
+    # WBS 밖 조건(장비 도착·승인)은 맞는 ID 가 없으므로 계속 대기다. 실제 예였던
+    # `2.2.1` 의 «LiDAR·마스트 도착» 은 2026-09-28 장비가 와서 지웠으므로 꾸며 쓴다.
+    outside = replace(by_id["2.2.1"], predecessor="LiDAR·마스트 도착")
+    assert not is_ready(outside, packages)
 
 
 def test_dot_separated_predecessors_unlock_together(packages: list[WorkPackage]) -> None:
