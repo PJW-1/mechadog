@@ -101,19 +101,19 @@ if now - last_summary >= 1.0:
 
 ### Host PC (Python) — 실질적 로깅 주체
 
-| 지점 | WBS | 레벨 | 남길 것 |
-| :--- | :--- | :--- | :--- |
-| 스트림 수신 | 4.3.3~5 | WARN / 요약 | 연결·재연결, 백오프 단계, **드롭 누적** |
-| 추론 | 3.3.2 | DEBUG / 요약 | 추론 시간, 검출 수 |
-| 추적기 | 3.3.4 | INFO | **track_id 생성·소멸** |
-| **FSM 전이** | 3.4.2 | **INFO** | **전 전이 + 트리거** ← 최우선 |
-| **에스컬레이션** | 3.8.3 | **INFO** | 단계 전이 **+ 판단 근거** |
-| 명령 송신 | 4.3.2 | DEBUG | seq, 명령 |
-| 텔레메트리 수신 | 4.1.4 | 요약 | 배터리, 링크 지연, IMU |
-| 인증 | 3.8.1~2 | INFO | 시도·성공·실패 + `track_id` |
-| 변화 감지 | 3.6 | INFO | 기준 등록, 변화 확정 |
-| 이벤트 블랙박스 | 4.4.3 | — | 스냅샷 JPEG + 텔레메트리 스냅샷 (**로그와 별도 저장**) |
-| 클라우드 VLM | 4.8.1 | WARN | 요청·응답·**실패 시 주행 무영향 확인** |
+| 지점 | 레벨 | 남길 것 |
+| :--- | :--- | :--- |
+| 스트림 수신 | WARN / 요약 | 연결·재연결, 백오프 단계, **드롭 누적** |
+| 추론 | DEBUG / 요약 | 추론 시간, 검출 수 |
+| 추적기 | INFO | **track_id 생성·소멸** |
+| **FSM 전이** | **INFO** | **전 전이 + 트리거** ← 최우선 |
+| **에스컬레이션** | **INFO** | 단계 전이 **+ 판단 근거** |
+| 명령 송신 | DEBUG | seq, 명령 |
+| 텔레메트리 수신 | 요약 | 배터리, 링크 지연, IMU |
+| 인증 | INFO | 시도·성공·실패 + `track_id` |
+| 변화 감지 | INFO | 기준 등록, 변화 확정 |
+| 이벤트 블랙박스 | — | 스냅샷 JPEG + 텔레메트리 스냅샷 (**로그와 별도 저장**) |
+| 클라우드 VLM | WARN | 요청·응답·**실패 시 주행 무영향 확인** |
 
 ### MechDog ESP32 (C++) — 파일 로깅 안 함
 
@@ -151,9 +151,9 @@ if now - last_summary >= 1.0:
 ## 2.1 핵심 제약 — 시간과 하드웨어를 주입한다
 
 ```python
-# ❌ 테스트 불가 — 실제로 300ms 기다려야 하고 결과가 시계에 종속
+# ❌ 테스트 불가 — 실제로 600ms 기다려야 하고 결과가 시계에 종속
 def check_timeout(self):
-    if time.time() - self.last_cmd > 0.3:
+    if time.time() - self.last_cmd > 0.6:
         self.hal.move(0, 0)
 
 
@@ -170,7 +170,7 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 | HAL 직접 호출 금지 | 인터페이스를 통해 호출 → 목으로 대체 가능 |
 | **판정과 실행을 분리** | 판정(순수 함수) → 실행(HAL). 판정만 테스트한다 |
 
-> 이것이 WBS **3.0(판단 로직)과 4.0(소프트웨어)을 나눈 기준**이고, 아키텍처 4.1 원칙 5의 구현 방법이다.
+> 이것이 **판단 로직과 소프트웨어 구현을 나눈 기준**이고, 아키텍처 4.1 원칙 5의 구현 방법이다.
 
 ## 2.2 테스트 가능 범위
 
@@ -188,8 +188,8 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 | 변화 감지 비교 | ✅ | 객체 목록만 |
 | config 스키마 | ✅ | 이미 구현 |
 | 카메라 스트림 | △ | 목업 HTTP 서버 |
-| **검출 정확도** | ❌ | 실제 모델·이미지 → **성능 시험(WBS 6.3)** |
-| **실제 보행** | ❌ | **실기 검수(WBS 6.4)** · 전도 자동 판정은 검수 대상에서 제외(ADR-36) |
+| **검출 정확도** | ❌ | 실제 모델·이미지 → **성능 시험** |
+| **실제 보행** | ❌ | **실기 검수** · 전도 자동 판정은 검수 대상에서 제외(ADR-36) |
 
 ## 2.3 목표 디렉터리 구조
 
@@ -227,7 +227,7 @@ tests/
 ```python
 @pytest.fixture
 def clock():
-    """주입 가능한 가짜 시계. 300ms 타임아웃을 0초에 검증한다."""
+    """주입 가능한 가짜 시계. 600ms 타임아웃을 0초에 검증한다."""
 
     class Clock:
         def __init__(self):
@@ -239,17 +239,17 @@ def clock():
     return Clock()
 
 
-def test_command_timeout_at_300ms(clock):
+def test_command_timeout_at_600ms(clock):
     last = clock.ms
-    clock.advance(299)
-    assert not is_command_stale(clock.ms, last, 300)
+    clock.advance(599)
+    assert not is_command_stale(clock.ms, last, 600)
     clock.advance(2)
-    assert is_command_stale(clock.ms, last, 300)
+    assert is_command_stale(clock.ms, last, 600)
 ```
 
 ## 2.4 FSM은 테이블 주도로 전수 검증한다
 
-전이표를 **데이터로 표현**하면(WBS 3.4.1) 테스트가 표를 순회하는 것으로 끝난다.
+전이표를 **데이터로 표현**하면 테스트가 표를 순회하는 것으로 끝난다.
 
 ```python
 @pytest.mark.parametrize("state,trigger,expected", TRANSITION_TABLE)
@@ -298,10 +298,10 @@ run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under
 
 ### 앞으로 추가할 것
 
-| 시점 | 추가 | WBS |
-| :--- | :--- | :--- |
-| M1 | **C++ 파서 픽스처 대조 잡** (호스트 컴파일) | 6.2.1 |
-| M2 | 성능 회귀 감시 (선택) | 6.3.1 |
+| 시점 | 추가 |
+| :--- | :--- |
+| M1 | **C++ 파서 픽스처 대조 잡** (호스트 컴파일) |
+| M2 | 성능 회귀 감시 (선택) |
 
 ---
 
