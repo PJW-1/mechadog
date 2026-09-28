@@ -501,9 +501,9 @@ def test_mendeley_dhash_matches_recompressed_resize_but_not_other_image():
     assert ok
     recompressed = cv2.imdecode(buf, cv2.IMREAD_COLOR)
     other = cv2.GaussianBlur(rng.integers(0, 255, (480, 640, 3), dtype=np.uint8), (31, 31), 0)
-    h = mendeley_prepare.dhash(base)
-    assert mendeley_prepare.near(mendeley_prepare.dhash(recompressed), [h])
-    assert not mendeley_prepare.near(mendeley_prepare.dhash(other), [h])
+    pool = [mendeley_prepare.hashes_with_flip(base)]
+    assert mendeley_prepare.near_any(mendeley_prepare.dhash(recompressed), pool)
+    assert not mendeley_prepare.near_any(mendeley_prepare.dhash(other), pool)
 
 
 def test_mendeley_split_valid_is_seeded_and_halves():

@@ -141,10 +141,6 @@ def hamming(a: int, b: int) -> int:
     return (a ^ b).bit_count()
 
 
-def near(value: int, pool: Sequence[int], limit: int = DHASH_MAX) -> bool:
-    return any(hamming(value, other) <= limit for other in pool)
-
-
 def hashes_with_flip(image) -> tuple[int, int]:
     """원본과 좌우 반전의 dHash. 공개 세트는 반전 증강본을 원본처럼 싣기도 한다."""
     import cv2
