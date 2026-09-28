@@ -329,6 +329,28 @@ def test_moves_sent_across_a_reboot_are_dropped() -> None:
     assert odom.pose(3000).x_m == 0.0
 
 
+def test_reboot_locks_motion_until_reset_safe_even_without_hold_flags() -> None:
+    """재부팅 감지 자체가 잠금이다 — 구형 펌웨어(정지 플래그 없음)라도 `RESET_SAFE` 전 `MOVE` 는 0.
+
+    로봇은 부팅 직후 SAFE 잠금이라 `MOVE` 를 실행하지 않는다. 진행 중이던 구간도 그
+    시각에 끊겨 외삽되지 않는다 — `note_hold` 가 먼저 불리는 배선 순서에 기대지 않는다.
+    """
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "boot-a")
+    for t in range(0, 3000, 100):
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], t)
+    odom.note_imu(0.0, 3000, "boot-b")  # 정지 플래그 없이 IMU 만 돌아온다
+    assert odom.pose(3400).x_m == 0.0  # 열린 구간이 외삽되지 않는다
+    for t in range(3000, 4000, 100):
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], t)
+        odom.note_imu(0.0, t + 100, "boot-b")
+    assert odom.pose(4000).x_m == 0.0
+    odom.note_sent([encoder.reset_safe(), encoder.move(CALIBRATION_STEP_MM, 0.0)], 4000)
+    odom.note_imu(0.0, 4500, "boot-b")
+    assert odom.pose(4500).x_m == pytest.approx(0.052)
+
+
 def test_moves_across_an_imu_gap_without_a_reboot_still_count() -> None:
     """같은 `boot_id` 로 돌아온 공백은 재부팅이 아니다 — 그 사이 이동은 그대로 센다 (기존 동작)."""
     odom = Odometry(PARAMS)

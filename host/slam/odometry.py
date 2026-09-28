@@ -80,7 +80,8 @@
 한계: 보고가 **흐를 때만** 성립한다. 전이마다 텔레메트리 한 주기(~100ms · ≈1cm)의
 지연 오차가 있고, 텔레메트리 공백 동안 보낸 `MOVE` 는 다음 IMU 표본이 오면 적분된다.
 단 공백 뒤 `boot_id` 가 바뀌었으면 — 로봇이 재부팅해 SAFE 잠금으로 켜졌다 — 그 사이의
-`MOVE` 는 실행되지 않았으므로 버린다.
+`MOVE` 는 실행되지 않았으므로 버리고, `RESET_SAFE` 를 보낼 때까지 잠금으로 본다 (펌웨어의
+«부팅 직후 SAFE 잠금 · `RESET_SAFE` 뒤 새 `MOVE` 부터 실행» 과 같은 모형).
 """
 
 from __future__ import annotations
@@ -262,8 +263,8 @@ class Odometry:
         """로봇이 알려 온 «스스로 멈춰 있음» (`hold_of_reading`) 을 넣는다.
 
         참이면 진행 중인 이동을 그 시각에 끊고, 이후 `MOVE` 는 0 으로 센다. 거짓이면
-        다음 `MOVE` 부터 다시 센다 — 이 호출만으로 움직임을 만들지 않는다. `None` 은
-        구형 펌웨어라 아무것도 바꾸지 않는다.
+        (명령 추정도 풀려 있을 때) 다음 `MOVE` 부터 다시 센다 — 이 호출만으로 움직임을
+        만들지 않는다. `None` 은 구형 펌웨어라 아무것도 바꾸지 않는다.
         """
         if held is None:
             return
@@ -285,7 +286,12 @@ class Odometry:
             # 버린다 — 로봇은 SAFE 잠금으로 켜져 그것을 실행하지 않았다 (머리말 «로봇이
             # 스스로 멈춰 있다고 알려 오면»). 순찰기는 두절 뒤에도 최대
             # `link_loss_failsafe_ms` 동안 `MOVE` 를 계속 보내므로 적분하면 수십 cm 가 붙는다.
+            # 재부팅 감지 자체가 잠금이다: 진행 중 구간을 끊고 `RESET_SAFE` 를 보낼 때까지
+            # `MOVE` 를 0 으로 센다 — 정지 플래그가 없는 구형 펌웨어나 `note_hold` 가
+            # 먼저 불리지 않는 호출자에서도 성립하게.
             self._pending.clear()
+            self._speed_m_s = 0.0
+            self._latched = True
             delta = 0.0
         else:
             delta = deg_to_rad((yaw_deg - self._imu_deg + 180.0) % 360.0 - 180.0)
