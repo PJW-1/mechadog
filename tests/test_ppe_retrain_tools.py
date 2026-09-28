@@ -275,3 +275,17 @@ def test_load_frame_prefers_raw_over_drawn(tmp_path):
     assert xiao_hardcases.load_frame(tmp_path, "00001").min() > 200
     cv2.imwrite(str(tmp_path / "raw" / "00001.jpg"), np.zeros((8, 8, 3), np.uint8))
     assert xiao_hardcases.load_frame(tmp_path, "00001").max() < 30
+
+
+def test_exp_falls_back_to_standard_cocoeval():
+    """학습 중 평가가 C++ 즉석 빌드(`where cl`)에 막히지 않게 표준 COCOeval 을 쓴다."""
+    pytest.importorskip("yolox")  # 학습 환경(C:\dev\ppe-train\.venv)에서만 돈다
+    import importlib.util
+
+    import yolox.layers
+    from pycocotools.cocoeval import COCOeval
+
+    path = Path(__file__).resolve().parents[1] / "tools" / "ppe" / "yolox_exp_ppe_s.py"
+    spec = importlib.util.spec_from_file_location("yolox_exp_ppe_s", path)
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+    assert yolox.layers.COCOeval_opt is COCOeval

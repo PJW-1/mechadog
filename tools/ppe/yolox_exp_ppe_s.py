@@ -28,9 +28,16 @@ import random
 from pathlib import Path
 
 import numpy as np
+import yolox.layers
+from pycocotools.cocoeval import COCOeval
 from yolox.data import COCODataset
 from yolox.data.data_augment import augment_hsv
 from yolox.exp import Exp as BaseExp
+
+# ⚠️ 왜: YOLOX 평가기는 `COCOeval_opt`(C++ 즉석 빌드)를 먼저 쓰는데, 빌드가 MSVC `cl` 을
+# 찾다 `CalledProcessError` 로 죽는다 — 평가기의 `except ImportError` 폴백에 걸리지 않아
+# 2026-09-28 첫 학습이 5 에폭 뒤 첫 평가에서 멈췄다. 결과가 같은 표준 COCOeval 로 바꾼다.
+yolox.layers.COCOeval_opt = COCOeval
 
 #: 학습 길이와 재현 시드. ⚠️ 바꾸면 export_ppe.py 메타데이터에 그대로 남는다.
 MAX_EPOCH = 100
