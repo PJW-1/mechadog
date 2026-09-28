@@ -15,6 +15,8 @@ export class OperationalPanels {
   this.view='dashboard';this.zones=[];this.eventId=null;this.zoneId=null;
   this.filters={type:'all',status:'all',robot:'all',query:''};this.urls=new Set();
   this.reviewDrafts=new Map();this.policyDrafts=new Map();this.activeHold=null;
+  // 이미 목록에 있던 사건. **첫 그림에는 표시하지 않는다** — 열자마자 전부 깜빡이면 새것이 묻힌다.
+  this.seenEvents=null;
   this.missionDraft=null;this.settingsSection='display';
   this.manualPressedKeys=new Set();this.keyboardEnabled=true;
   this.manualKeyDown=event=>this.handleManualKeyDown(event);
@@ -172,11 +174,16 @@ export class OperationalPanels {
   const records=this.store.queryEvents(this.filters);
   if(!records.some(e=>e.id===this.eventId))this.eventId=records[0]?.id||null;
   this.eventCount.textContent=records.length+'건 · 현재 조건';
+  // 새로 들어온 사건만 한 번 짚어 준다 (WBS 4.6.4 실시간 피드) — 실시간 사건은 조용히 끼어든다.
+  const firstDraw=this.seenEvents===null;
+  if(firstDraw)this.seenEvents=new Set();
+  const fresh=new Set();
+  for(const event of records){if(!firstDraw&&!this.seenEvents.has(event.id))fresh.add(event.id);this.seenEvents.add(event.id);}
   this.eventList.replaceChildren(...records.map(event=>this.button([
    this.el('span',{class:'op-row-meta'},event.robot,this.badge(event.source==='DEMO'?'예시':event.source==='LIVE_FEED'?'실시간':'저장 파일',event.source==='LIVE_FEED'?'':'')),
    this.el('strong',{},event.title),this.el('span',{class:'op-row-meta'},event.zone),
    this.el('span',{class:'op-row-foot'},this.badge(REVIEW_STATES[event.review],event.review==='pending'?'amber':''),this.el('span',{},event.escalation))
-  ],()=>{this.eventId=event.id;this.renderEventList();this.eventList.querySelector('.op-event-row.selected')?.focus()},{class:'op-event-row'+(event.id===this.eventId?' selected':''),'aria-pressed':event.id===this.eventId})));
+  ],()=>{this.eventId=event.id;this.renderEventList();this.eventList.querySelector('.op-event-row.selected')?.focus()},{class:'op-event-row'+(event.id===this.eventId?' selected':'')+(fresh.has(event.id)?' just-arrived':''),'aria-pressed':event.id===this.eventId})));
   this.eventList.parentElement.classList.toggle('empty',!records.length);
   if(!records.length)this.eventList.append(this.note(this.store.queryEvents().length?'검색 결과가 없습니다. 검색어나 필터를 바꾸세요.':'검토할 사건이 없습니다. 블랙박스 파일을 가져오세요.'));
   this.renderEventDetail(this.store.events.find(e=>e.id===this.eventId));
