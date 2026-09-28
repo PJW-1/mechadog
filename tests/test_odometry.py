@@ -237,7 +237,7 @@ def config_with(calibration: object) -> dict:
 
 
 def test_missing_gait_calibration_refuses_to_build_odometry() -> None:
-    """`mechdog-03` 처럼 실측 전이면 만들지 않는다 — 다른 기체 값으로 채우지 않는다."""
+    """보행 실측 전인 기체는 만들지 않는다 — 다른 기체 값으로 채우지 않는다."""
     with pytest.raises(ConfigError, match="gait_calibration"):
         odom_params_from_config(config_with(None))
 
@@ -257,7 +257,7 @@ def test_params_come_from_the_unit_profile_and_config() -> None:
 
 
 def test_unit_without_calibration_runs_without_odometry() -> None:
-    odometry, encoder = patrol_run.open_odometry(config_with(None), "mechdog-03")
+    odometry, encoder = patrol_run.open_odometry(config_with(None), "mechdog-uncalibrated")
     assert odometry is None
     assert (
         json.loads(encoder.encode(ts_ms=1, x_m=0, y_m=0, yaw_rad=0, valid=False))["valid"] is False

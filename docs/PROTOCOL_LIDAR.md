@@ -299,7 +299,7 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 - IMU 표본이 `lidar.odom_imu_stale_ms`(500ms) 보다 오래됐다 — **명령값만으로 만든 위치를
   유효하다고 내보내지 않는다** (WBS 5.4.3 DoD).
 
-`gait_calibration` 이 없는 기체(`mechdog-03`)는 오도메트리를 만들지 않는다. 전문 자체가
+`gait_calibration` 이 없는 기체는 오도메트리를 만들지 않는다. 전문 자체가
 나가지 않고 순찰기가 `odometry_unavailable` 오류를 남긴다.
 
 ### 브리지 (`odom_bridge.py`)

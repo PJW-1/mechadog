@@ -69,7 +69,7 @@ docker exec mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && ros2 run tf2_r
 `scan_bridge`의 `LIDAR_MOUNT_YAW_DEG`·`LIDAR_ANGLE_DIRECTION`이 이미 `/scan`에 적용한다.
 
 호스트 쪽 송신은 `tools/patrol_run.py`(실기 모드)가 `lidar.odom_host`·`odom_port`로
-`lidar.odom_rate_hz`(10Hz)마다 보낸다. `gait_calibration`이 없는 기체(`mechdog-03`)는
+`lidar.odom_rate_hz`(10Hz)마다 보낸다. `gait_calibration`이 없는 기체는
 오도메트리를 만들지 않고 오류를 남긴다.
 
 끝나면 `docker rm -f mechdog-ros2`. `mock_lidar.py`는 UDP 규약 목업이다. 실물의
