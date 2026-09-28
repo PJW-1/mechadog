@@ -284,6 +284,62 @@ def test_old_firmware_without_the_flags_falls_back_to_the_command_estimate() -> 
     assert odom.pose(1000).x_m == pytest.approx(0.052)
 
 
+def test_stale_false_report_does_not_override_a_fresh_host_estop() -> None:
+    """`ESTOP` 직후 도착한 낡은 `safety_latched=false` 는 호스트의 래치 추정을 덮지 못한다.
+
+    보고는 정지를 **넓히기만** 한다 — 어느 쪽이든 정지라 하면 정지다.
+    """
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_hold(False, 0)
+    odom.note_sent([encoder.estop()], 0)
+    odom.note_hold(False, 50)  # ESTOP 이 닿기 전에 만들어진 보고
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 100)
+    odom.note_imu(0.0, 500, "b")
+    assert odom.pose(500).x_m == 0.0
+
+
+def test_hold_reported_after_the_move_expired_does_not_stretch_it() -> None:
+    """만료된 `MOVE` 뒤에 온 정지 보고는 이미 끝난 구간을 늘리지 않는다."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    odom.note_hold(True, 900)  # cmd_timeout 600ms 뒤
+    odom.note_imu(0.0, 1000, "b")
+    assert odom.pose(1000).x_m == pytest.approx(0.104 * 0.6)
+
+
+def test_moves_sent_across_a_reboot_are_dropped() -> None:
+    """텔레메트리 공백 뒤 `boot_id` 가 바뀌어 돌아오면 그 사이 보낸 `MOVE` 는 이동이 아니다.
+
+    순찰기는 두절 뒤에도 최대 `link_loss_failsafe_ms` 동안 `MOVE` 를 계속 보내지만
+    (patrol.py ②), 재부팅한 로봇은 SAFE 잠금으로 켜져 실행하지 않는다
+    (`firmware_mechdog_motion/README.md` 안전 동작). 적분하면 수십 cm 가 조용히 붙는다.
+    """
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "boot-a")
+    odom.note_hold(False, 0)
+    for t in range(0, 3000, 100):  # 3초 공백 동안 MOVE 만 나간다
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], t)
+    odom.note_hold(True, 3000)  # 재부팅한 로봇의 첫 보고: 래치 상태
+    odom.note_imu(0.0, 3000, "boot-b")
+    assert odom.pose(3000).x_m == 0.0
+
+
+def test_moves_across_an_imu_gap_without_a_reboot_still_count() -> None:
+    """같은 `boot_id` 로 돌아온 공백은 재부팅이 아니다 — 그 사이 이동은 그대로 센다 (기존 동작)."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "boot-a")
+    for t in range(0, 1000, 100):
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], t)
+    odom.note_imu(0.0, 1000, "boot-a")
+    assert odom.pose(1000).x_m == pytest.approx(0.104)
+
+
 @pytest.mark.parametrize(
     ("safety_latched", "obstacle", "expected"),
     [

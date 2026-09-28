@@ -71,9 +71,16 @@
 둘 다 명령만 보면 모른다. 그동안 보낸 `MOVE` 를 이동으로 적분하면 **위치가 조용히
 앞으로 밀린다.** 그래서 텔레메트리의 `safety_latched` 와 `flags.obstacle`(근거리
 정지 — 우선순위가 호스트 명령보다 높다, 같은 README `3.2.5`)을 `note_hold` 로 받아,
-로봇이 멈춰 있다고 하는 동안은 `MOVE` 를 0 으로 센다. 값이 오면 명령 추정보다
-우선하고, 구형 펌웨어라 둘 다 없으면(`None`) 명령 추정을 그대로 쓴다. 풀렸다는 보고
-뒤에도 로봇은 **다음에 받아들인 `MOVE` 부터** 걷는다 — 보고만으로 움직이지 않는다.
+로봇이 멈춰 있다고 하는 동안은 `MOVE` 를 0 으로 센다. **명령 추정과 보고 중 어느
+쪽이든 정지라 하면 정지다** — 보고는 정지를 넓히기만 하므로, `ESTOP` 직후 도착한
+낡은 `false` 가 추정을 덮지 못한다. 구형 펌웨어라 둘 다 없으면(`None`) 명령 추정만
+쓴다. 풀렸다는 보고 뒤에도 로봇은 **다음에 받아들인 `MOVE` 부터** 걷는다 — 보고만으로
+움직이지 않는다.
+
+한계: 보고가 **흐를 때만** 성립한다. 전이마다 텔레메트리 한 주기(~100ms · ≈1cm)의
+지연 오차가 있고, 텔레메트리 공백 동안 보낸 `MOVE` 는 다음 IMU 표본이 오면 적분된다.
+단 공백 뒤 `boot_id` 가 바뀌었으면 — 로봇이 재부팅해 SAFE 잠금으로 켜졌다 — 그 사이의
+`MOVE` 는 실행되지 않았으므로 버린다.
 """
 
 from __future__ import annotations
@@ -216,8 +223,12 @@ class Odometry:
             self._set_motion(0.0, sent_ms)
 
     def _holding(self) -> bool:
-        """지금 `MOVE` 가 차단되는가. 로봇의 보고가 있으면 그것, 없으면 명령 추정."""
-        return self._latched if self._reported_hold is None else self._reported_hold
+        """지금 `MOVE` 가 차단되는가 — 명령 추정과 로봇 보고 중 **어느 쪽이든** 정지라 하면 정지.
+
+        보고는 정지를 넓히기만 한다. `ESTOP` 을 보낸 직후 그 전에 만들어진
+        `safety_latched=false` 가 도착해도 호스트의 래치 추정을 덮지 못한다.
+        """
+        return self._latched or self._reported_hold is True
 
     def _speed_of(self, step: float) -> float:
         """step → 속도 (m/s, 부호 있음). 비례의 근거는 머리말."""
@@ -270,7 +281,12 @@ class Odometry:
             self._pending.clear()
             delta = 0.0
         elif boot_id != self._imu_boot:
-            delta = 0.0  # 재부팅한 IMU 는 0 에서 다시 시작한다 (머리말)
+            # 재부팅한 IMU 는 0 에서 다시 시작한다 (머리말). 공백 동안 보낸 `MOVE` 도
+            # 버린다 — 로봇은 SAFE 잠금으로 켜져 그것을 실행하지 않았다 (머리말 «로봇이
+            # 스스로 멈춰 있다고 알려 오면»). 순찰기는 두절 뒤에도 최대
+            # `link_loss_failsafe_ms` 동안 `MOVE` 를 계속 보내므로 적분하면 수십 cm 가 붙는다.
+            self._pending.clear()
+            delta = 0.0
         else:
             delta = deg_to_rad((yaw_deg - self._imu_deg + 180.0) % 360.0 - 180.0)
         start_ms = self._imu_ms if self._imu_ms is not None else received_ms
