@@ -210,18 +210,6 @@ def truth_events(
     return out
 
 
-def all_worn_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """정답이 전부 착용(기대=적합)이고 사람이 잡힌 프레임만.
-
-    ⚠️ 구간이 없는 프레임(`segment` None)은 정답을 모른다 — 쓰지 않는다.
-    """
-    return [
-        e
-        for e in events
-        if e.get("segment") and e.get("expected") == STATE_OK and int(e.get("people", 0)) > 0
-    ]
-
-
 def truth_names(helmet: bool, vest: bool) -> dict[str, str]:
     """모델이 낸 이름 → 구간 정답 이름. 머리 박스는 안전모, 몸통 박스는 조끼 정답을 따른다.
 
@@ -277,11 +265,6 @@ def relabel_by_truth(
     if crossed:
         drops[DROP_CROSS] += len(crossed)
     return [d for i, d in enumerate(out) if i not in crossed]
-
-
-def relabel_all_worn(detections: Sequence[Detection]) -> list[Detection]:
-    """전부 착용이 정답이므로 위반 이름을 착용 이름으로 바꾸고 겹침을 걷어 낸다."""
-    return relabel_by_truth(detections, helmet=True, vest=True)
 
 
 def is_hard(states: Sequence[str], raw: Sequence[Detection], truth: SegmentTruth) -> bool:

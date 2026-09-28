@@ -181,16 +181,6 @@ def test_prepare_refuses_non_commercial_license(tmp_path):
 
 
 # ── xiao_hardcases ──────────────────────────────────────────
-def test_all_worn_events_uses_labeled_ok_segments_only():
-    events = [
-        {"t": 1.0, "tag": "00001", "people": 1, "segment": None, "expected": None},
-        {"t": 2.0, "tag": "00002", "people": 1, "segment": "a", "expected": STATE_OK},
-        {"t": 3.0, "tag": "00003", "people": 0, "segment": "a", "expected": STATE_OK},
-        {"t": 4.0, "tag": "00004", "people": 1, "segment": "b", "expected": STATE_VIOLATION},
-    ]
-    assert [e["tag"] for e in xiao_hardcases.all_worn_events(events)] == ["00002"]
-
-
 def test_relabel_all_worn_turns_violations_into_worn_and_dedupes():
     found = [
         Detection("no_helmet", 0.8, (10, 10, 30, 30)),
@@ -198,7 +188,7 @@ def test_relabel_all_worn_turns_violations_into_worn_and_dedupes():
         Detection("no_vest", 0.7, (5, 40, 40, 90)),
         Detection("class_4", 0.9, (0, 0, 50, 100)),  # 5클래스 모델의 5번째
     ]
-    out = xiao_hardcases.relabel_all_worn(found)
+    out = xiao_hardcases.relabel_by_truth(found, helmet=True, vest=True)
     assert sorted((d.label, d.score) for d in out) == [
         ("helmet", pytest.approx(0.8)),
         ("vest", pytest.approx(0.7)),
@@ -278,10 +268,6 @@ def test_relabel_by_truth_names_boxes_from_segment_not_model():
     both_off = xiao_hardcases.relabel_by_truth(found, helmet=False, vest=False)
     assert sorted(d.label for d in both_off) == ["no_helmet", "no_vest"]
     assert xiao_hardcases.has_head_and_torso(both_off)
-    # 전부 착용은 예전 규칙과 같다
-    assert [(d.label, d.box) for d in xiao_hardcases.relabel_by_truth(found, True, True)] == [
-        (d.label, d.box) for d in xiao_hardcases.relabel_all_worn(found)
-    ]
 
 
 def test_is_hard_marks_session_or_model_disagreement_with_truth():
