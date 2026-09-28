@@ -10,10 +10,11 @@
 | **프로젝트명** | MechDog Physical AI Security & Industrial-Safety Inspection Quadruped Robot |
 | **문서 버전** | **v1.0.0** |
 | **상태** | Draft / In-Review |
-| **최종 수정** | 2026-09-25 |
+| **최종 수정** | 2026-09-28 |
 | **개정 (2026-09-23)** | 음성 재편 — 음성 LLM · 현장지원 모드(FR-12) · 로봇 상태 음성 응답 · 타자 입력 관제 방송 폐기, 운용 모드를 경비 · 공장 두 개로 축소, 듣기는 XIAO 마이크 · 말하기는 로봇 MP3 모듈(`0x7B`)로 이관, `0x64` 주소 표기 정정 ([ADR-38](DECISIONS.md#adr-38)) |
 | **개정 (2026-09-24)** | 구역 변화를 종류별로 확정 — 반출·반입은 연속 2방문(사이클 = 구역 방문 1회), 넘어짐·통로 막힘은 같은 방문 안 VLM 2회 연속 «예»(벤치 통과 전 경보 꺼짐), 사람은 변화가 아니라 사람 게이트로(FR-8.3 · FR-8.4), FR-8.5 두 장 비교 불가 명시, 기준 재등록(FR-8.6) 추가 ([ADR-41](DECISIONS.md#adr-41)) |
 | **개정 (2026-09-25)** | 공장 모드 시나리오 정본 확정 — FR-11 안에 **«공장 모드 시나리오 (정본 · 2026-09-25)»** 소절을 신설. 사람만으로는 L1 을 올리지 않음 · PPE 위반은 경고 뒤 자동 복귀(L3 래치 아님) · 쓰러짐은 «의심(L1) → 확정(L3)» 2단(YOLOX 누적 3회 + VLM) · 구역 반출은 가벼운 경고 · 반입은 기록만(넘어짐·통로 막힘 L3 는 유지) · 순찰 중 VLM 주기 판독(2초) 신설. FR-9.3 · WBS `4.8.3` 단독 확정 · [ADR-41](DECISIONS.md#adr-41)의 반출·반입 L3 를 대체한다 ([ADR-42](DECISIONS.md#adr-42)) |
+| **개정 (2026-09-28)** | 쓰러짐 확정 조건 재개정 — 4.8.0 카메라 벤치에서 YOLOX 가 누운 사람 10장 중 1장만 후보로 잡아 YOLOX 누적 조건이 사실상 확정을 막는 것으로 드러남. **확정은 VLM `person_down`「예» 가 서로 다른 프레임에서 `fsm.fall_confirm_vlm_yes`(2)회, 각 간격 `fsm.fall_confirm_gap_ms`(1000ms) 이상 모여야 한다** — YOLOX 는 폐기하지 않고 의심 진입·TRACK 접근에만 쓴다. `fsm.fall_suspect_hits` 는 삭제. 의심(L1) 조건과 해제 조건은 그대로다 ([ADR-42](DECISIONS.md#adr-42) 재개정) |
 | **대상 플랫폼** | Hiwonder MechDog (ESP32, Advanced Kit) + Seeed XIAO ESP32S3 Sense + Host PC |
 | **저장소** | `C:\Users\pjw\Desktop\mechdog_physical_ai` |
 
@@ -302,7 +303,7 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
   | 반출 | 물건 목록 (COCO 80 · FR-8.3) | **연속 2방문** — 사이클 = 구역 방문 1회 | ~~한 바퀴 뒤~~ *(2026-09-25 개정 — [ADR-42](DECISIONS.md#adr-42))* 한 바퀴 뒤 — **L3 아님**, 관제 가벼운 경고만(눈·문구 없음) |
   | 반입 | 물건 목록 (COCO 80 · FR-8.3) | **연속 2방문** — 사이클 = 구역 방문 1회 | *(2026-09-25 신설 — ADR-42)* **알리지 않고 기록만** — 경고도 L3 도 없음 |
   | 넘어짐·무너짐·통로 막힘 | VLM 고정 질문 `fallen_object` · `blocked_path` | **같은 방문 안에서 다른 프레임으로 2회 연속 «예»** | 첫 방문 · 약 1~1.5초 — **L3 유지** (ADR-41 그대로) |
-  | 사람 쓰러짐 | ~~쓰러짐 경로 (FR-9 · 종횡비 WBS `4.8.3` + VLM `person_down` → `PERSON_DOWN`)~~ *(2026-09-25 개정 — ADR-42)* **의심**(종횡비 WBS `4.8.3` 후보 **또는** VLM `person_down`「예» 한 번) → **확정**(의심 뒤 종횡비 후보 누적 3회 **그리고** VLM `person_down`「예») → `PERSON_DOWN` | 의심 = 즉시 L1, 확정 = 즉시 L3 (FR-11 「공장 모드 시나리오 (정본 · 2026-09-25)」 S3·S4) |
+  | 사람 쓰러짐 | ~~쓰러짐 경로 (FR-9 · 종횡비 WBS `4.8.3` + VLM `person_down` → `PERSON_DOWN`)~~ *(2026-09-25 개정 — ADR-42)* ~~**의심**(종횡비 WBS `4.8.3` 후보 **또는** VLM `person_down`「예» 한 번) → **확정**(의심 뒤 종횡비 후보 누적 3회 **그리고** VLM `person_down`「예»)~~ *(2026-09-28 재개정 — ADR-42)* **의심**(종횡비 WBS `4.8.3` 후보 **또는** VLM `person_down`「예» 한 번) → **확정**(의심 뒤 서로 다른 프레임의 VLM `person_down`「예» 가 `fsm.fall_confirm_vlm_yes`=2회, 각 간격 `fsm.fall_confirm_gap_ms`=1000ms 이상) → `PERSON_DOWN` | 의심 = 즉시 L1, 확정 = 즉시 L3 (FR-11 「공장 모드 시나리오 (정본 · 2026-09-25)」 S3·S4) |
   | 사람 출현 | 사람 게이트(300ms 3회) → ~~공장 모드 L1 작업자~~ *(2026-09-25 개정 — ADR-42)* **공장 모드 작업자, 눈은 L0 유지**(FR-8.3) | 게이트 확정 | 해당 없음 — 사람만으로는 경보하지 않는다 |
 
   - **FR-8.4.1 (방문 = 관찰 1회)** 한 방문에서 사람이 없는 프레임 5장을 모으고, 그중 **과반**에서 보인 변화만 그 방문의 변화로 인정한다. 한도 시간(5초) 안에 5장을 못 모으면 **«못 본 방문»** 이며 연속을 **세지도 끊지도 않는다.** 한 방문 안의 연속 프레임을 사이클로 세지 않는다 — 잠깐 옮겼다 돌려놓는 일상 작업이 첫 방문에 L3 가 된다.
@@ -431,7 +432,7 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
   | FR-10 인증 | 켠다 | 요구하지 않는다 |
   | FR-8 변화 감지 | 끈다 | ~~**켠다** — 확정 시 L3~~ *(2026-09-25 개정 — ADR-42)* **켠다** — **넘어짐·통로 막힘 확정만 L3**, 반출 확정은 관제 가벼운 경고, 반입 확정은 기록만 |
   | FR-9 PPE 판정 | 끈다 | ~~켠다 — 위반 확정 시 L3~~ *(2026-09-25 개정 — ADR-42)* 켠다 — 위반 확정 시 **경고(빨간 눈 + 방송) 뒤 자동으로 L0 복귀**, L3 래치 아님 |
-  | L3 원인 | 인증 실패 · 미인증 이탈 | ~~PPE 위반 · **물체 변화 확정** · 사람 쓰러짐~~ *(2026-09-25 개정 — ADR-42)* **사람 쓰러짐 확정**(의심 뒤 종횡비 누적 3회 + VLM) · **물건 무너짐·통로 막힘 확정** — PPE 위반·반출·반입은 L3 가 아니다 |
+  | L3 원인 | 인증 실패 · 미인증 이탈 | ~~PPE 위반 · **물체 변화 확정** · 사람 쓰러짐~~ *(2026-09-25 개정 — ADR-42)* **사람 쓰러짐 확정**(~~의심 뒤 종횡비 누적 3회 + VLM~~ *(2026-09-28 재개정 — ADR-42)* 의심 뒤 VLM «예» 2회, 간격 1초 이상) · **물건 무너짐·통로 막힘 확정** — PPE 위반·반출·반입은 L3 가 아니다 |
   | 방송 | 침입 경고 | 보호구 안내·위반 경고 |
 
   **두 모드에 공통** — FR-1 · FR-2 · FR-3.9 · FR-4 · 온보드 안전 반사 · 화이트리스트 음성 명령.
@@ -470,10 +471,10 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 | S1 | **사람을 봐도 눈을 바꾸지 않는다.** 순찰 중 사람(YOLOX `person` 게이트 확정)을 보면 멈추고 PPE 를 확인하지만(기존 TRACK → ALERT → `_judge_ppe` 흐름), `person_present` 로 L1(노란 눈)을 올리지 않는다 — 눈은 파란색(L0) 그대로다. 경비 모드는 지금처럼 L1 을 올린다 |
 | S2 | **PPE 미착용 확정 → 빨간 눈과 경고 문구를 동시에 → 문구가 끝나면 관제 확인 없이 파란 눈 순찰 복귀.** L3 래치가 아니다 — `confirm_alarm` 이 필요 없다. 경고 문구는 WBS `4.7.8` 이며 로봇 MP3 모듈이 TF 카드 트랙을 재생한다(`4.7.20`·`4.7.21` 경로, `escalation.sound.ppe_violation_warning` = 「안전모와 안전조끼를 착용해 주십시오.」 — 새 트랙이 필요하면 `4.7.21` 문장 표에 추가하고 TF 카드 재생성을 기록한다). 빨간 눈 유지 시간은 `escalation.ppe_warning_hold_ms`(기본 5000ms). 관제에는 사건 기록(블랙박스·로그)과 알림이 남는다. 같은 추적 ID 앞에서 다시 멈추지 않는 FR-11.6 규칙은 유지한다 |
 | S3 | **쓰러짐 의심 = 노란 눈.** 아래 둘 중 하나라도 한 번 잡히면 의심 상태에 들어간다 — YOLOX 누움 후보(`FallenVerdict.candidate` · WBS `4.8.3` 종횡비 규칙) 또는 VLM `person_down`「예». 들어가면 L1(노란 눈)로 올리고 화면 중앙을 사람에게 맞춘다. 사람 박스가 있으면 기존 TRACK 조준·접근(정지선 `fsm.track_stop_dist_cm` 까지 다가간 뒤 제자리 조준)을 쓰고, 박스가 없으면 제자리에 선다. 멀리 보여도 이렇게 다가간다(원거리 접근은 **사람만**이다 — 무너진 물건은 원거리 접근 대상이 아니다) |
-| S4 | **확정 = 의심 진입 뒤 YOLOX 누움 검출 누적 3회(`fsm.fall_suspect_hits`) AND VLM `person_down`「예».** YOLOX 3회는 연속이 아니어도 된다(끊겨도 누적). VLM「예」는 의심 진입 뒤에 건 판독이어야 한다. 확정하면 `PERSON_DOWN` → L3 — 빨간 눈 + 경보(`escalation.sound.person_down_warning`) + 관제 알림. 관제 확인(`confirm_alarm`) → L0 파란 눈 + 순찰 복귀 |
+| S4 | ~~**확정 = 의심 진입 뒤 YOLOX 누움 검출 누적 3회(`fsm.fall_suspect_hits`) AND VLM `person_down`「예».** YOLOX 3회는 연속이 아니어도 된다(끊겨도 누적). VLM「예」는 의심 진입 뒤에 건 판독이어야 한다.~~ *(2026-09-28 개정 — [ADR-42](DECISIONS.md#adr-42), 4.8.0 카메라 벤치)* **확정 = VLM 만으로 한다.** 의심 진입 뒤에 건 판독의 `person_down`「예」가 서로 다른 프레임에서 `fsm.fall_confirm_vlm_yes`(기본 **2**)회 모이면 확정한다(의심 진입에 쓴 «예»는 세지 않음). 세는 «예»끼리는 `fsm.fall_confirm_gap_ms`(기본 **1000ms**) 이상 떨어진 프레임이어야 한다 — 의심 중에는 0.2~0.3초 간격으로 다시 묻기 때문에 간격이 없으면 같은 사진을 두 번 묻는 꼴이 된다. 중간에 «아니오» 가 나와도 누적을 지우지 않는다(끊겨도 누적). YOLOX 는 확정 조건에서 빠지고 의심 진입·조준(TRACK 접근)에만 쓴다. 확정하면 `PERSON_DOWN` → L3 — 빨간 눈 + 경보(`escalation.sound.person_down_warning`) + 관제 알림. 관제 확인(`confirm_alarm`) → L0 파란 눈 + 순찰 복귀 |
 | S5 | **해제.** 의심 상태에서 대상이 5초 사라지거나(`TARGET_LOST` 와 같은 기준 — 의심 뒤에 건 VLM 판독의 «예» 도 대상을 본 것으로 친다. 그래서 박스 없이 판독으로만 보는 동안은 제한 시간으로만 풀린다) 설정 시간(`fsm.fall_suspect_timeout_ms` · 기본 20000ms) 안에 확정되지 않으면 L0 파란 눈으로 순찰에 돌아간다. 제한 시간 초과나 관제 확인으로 돌아간 뒤에는 `fsm.fall_resuspect_cooldown_ms`(기본 20000ms) 동안 다시 의심하지 않는다(2026-09-26 결정 — 누운 가방 같은 헛검출 앞에서 노랑·파랑을 되풀이하지 않게). 5초 상실로 끝난 의심에는 쿨다운을 걸지 않는다 |
 | S6 | **VLM 순찰 판독.** 공장 모드 순찰 중에는 `vision.vlm.patrol_interval_ms`(기본 2000ms)마다 현재 프레임으로 VLM 에 `person_down` 을 묻는다(YOLOX 가 누운 사람을 잘 못 잡기 때문이다). 의심 상태에서는 판독이 끝날 때마다 새 프레임으로 다시 묻는다. VLM 은 기동 때 한 번 올려 상시 적재돼 있다(`4.8.0` · #266). 순찰 중에는 무너진 물건을 묻지 않는다 |
-| S7 | **어느 한쪽 단독으로는 L3 를 내지 않는다.** 「4.8.3 규칙 단독 `PERSON_DOWN`」과 「구역 VLM `person_down` 단독 `PERSON_DOWN`」은 없앤다. 둘 다 S3 의 의심 진입 신호가 된다 |
+| S7 | ~~**어느 한쪽 단독으로는 L3 를 내지 않는다.**~~ *(2026-09-28 개정 — [ADR-42](DECISIONS.md#adr-42))* **YOLOX 규칙 단독으로는 L3 를 내지 못한다. 확정은 서로 다른 프레임으로 VLM 이 두 번 «예» 라고 답해야 한다.** 「4.8.3 규칙 단독 `PERSON_DOWN`」과 「구역 VLM `person_down` 단독 `PERSON_DOWN`」은 없앤다. 둘 다 S3 의 의심 진입 신호가 된다 |
 | S8 | PPE 판정보다 쓰러짐 확인이 먼저다(FR-11.1 「쓰러졌는지 먼저 보고」). 의심 상태에서는 PPE 판정을 보류한다(지금의 `_fall_held` 보류와 같은 취지) |
 
 **쓰러짐 판정 — 의심(노란 눈) → 확정(L3)**
@@ -481,7 +482,7 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 | 단계 | 조건 | 눈 | 행동 |
 | :--- | :--- | :---: | :--- |
 | 의심 | YOLOX 누움 후보 **또는** VLM `person_down`「예」(둘 중 하나, 한 번) | 🟡 L1 | 화면 중앙 조준·접근(사람만), PPE 판정 보류(S8) |
-| 확정 | 의심 진입 뒤 **YOLOX 누적 3회**(`fsm.fall_suspect_hits`) **그리고** **VLM `person_down`「예」** | 🔴 L3 | `PERSON_DOWN` — 경보(`person_down_warning`) + 관제 알림. L0 복귀는 관리자 확인(`confirm_alarm`)으로만 |
+| 확정 | ~~의심 진입 뒤 **YOLOX 누적 3회**(`fsm.fall_suspect_hits`) **그리고** **VLM `person_down`「예」**~~ *(2026-09-28 개정 — [ADR-42](DECISIONS.md#adr-42))* 의심 진입 뒤 서로 다른 프레임의 **VLM `person_down`「예」** 가 `fsm.fall_confirm_vlm_yes`(기본 **2**)회, 각 간격 `fsm.fall_confirm_gap_ms`(기본 **1000ms**) 이상 | 🔴 L3 | `PERSON_DOWN` — 경보(`person_down_warning`) + 관제 알림. L0 복귀는 관리자 확인(`confirm_alarm`)으로만 |
 | 해제 | 대상 5초 소실 또는 `fsm.fall_suspect_timeout_ms`(기본 20000ms) 안에 미확정 | 🔵 L0 | 순찰 복귀. 제한 시간·관제 확인 뒤에는 `fsm.fall_resuspect_cooldown_ms`(20000ms) 동안 재의심 안 함 |
 
 **Phase 2 (구역 스캔 — 결정만 반영, 위치 입력이 없어 코드는 휴면)**
@@ -494,7 +495,7 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 | Z4 | 물건 무너짐(`fallen_object`)·통로 막힘(`blocked_path`) VLM 확정([ADR-41](DECISIONS.md#adr-41)) → L3 빨간 눈 + 경보 + 관제. 기존 유지 |
 | Z5 | 구역 판독에서 나온 `person_down`「예」는 S3 의심 진입 신호다(S7) |
 
-> **설정값 기본 (모두 조정 가능)** — 의심 확정 YOLOX 누적 횟수 `fsm.fall_suspect_hits`(3) · 의심 제한 시간
+> **설정값 기본 (모두 조정 가능)** — ~~의심 확정 YOLOX 누적 횟수 `fsm.fall_suspect_hits`(3)~~ *(2026-09-28 개정 — [ADR-42](DECISIONS.md#adr-42))* 확정 VLM 「예」 횟수 `fsm.fall_confirm_vlm_yes`(2) · 확정 판독 최소 간격 `fsm.fall_confirm_gap_ms`(1000ms) · 의심 제한 시간
 > `fsm.fall_suspect_timeout_ms`(20000ms) · 재의심 쿨다운 `fsm.fall_resuspect_cooldown_ms`(20000ms) · 대상 상실 5000ms(기존 FR-3.7 기준) · 순찰 VLM 판독 간격
 > `vision.vlm.patrol_interval_ms`(2000ms) · PPE 경고 빨간 눈 유지 `escalation.ppe_warning_hold_ms`(5000ms) ·
 > PPE 경고 문구 `escalation.sound.ppe_violation_warning`(「안전모와 안전조끼를 착용해 주십시오.」). 구역 반출 경고의
