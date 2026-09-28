@@ -302,6 +302,14 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 `gait_calibration` 이 없는 기체는 오도메트리를 만들지 않는다. 전문 자체가
 나가지 않고 순찰기가 `odometry_unavailable` 오류를 남긴다.
 
+### 로봇의 정지 보고가 명령보다 우선한다
+
+거리는 «보낸 `MOVE`» 로 세지만, 로봇 텔레메트리가 `safety_latched=true` 또는
+`flags.obstacle=true` 를 알려 오는 동안은 **0 으로 센다** — 펌웨어가 그 `MOVE` 를
+차단하기 때문이다. 호스트가 `RESET_SAFE` 를 보냈어도 로봇이 거부(저전압)해 래치가
+남았거나, 재부팅해 래치 상태로 켜진 경우를 명령만으로는 알 수 없다. 두 필드가 모두
+없는 구형 펌웨어면 `ESTOP`/`RESET_SAFE` 송신으로 추정한다 (`host/slam/odometry.py` 머리말).
+
 ### 브리지 (`odom_bridge.py`)
 
 | 항목 | 값 |

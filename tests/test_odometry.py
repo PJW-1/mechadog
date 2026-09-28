@@ -21,6 +21,7 @@ from host.slam.odometry import (
     CALIBRATION_STEP_MM,
     Odometry,
     OdomParams,
+    hold_of_reading,
     odom_params_from_config,
 )
 
@@ -204,6 +205,103 @@ def test_move_after_estop_is_not_motion_until_reset_safe() -> None:
     odom.note_sent([encoder.reset_safe(), encoder.move(CALIBRATION_STEP_MM, 0.0)], 500)
     odom.note_imu(0.0, 1000, "b")
     assert odom.pose(1000).x_m == pytest.approx(0.052)
+
+
+def test_move_while_the_robot_reports_a_latch_is_not_motion() -> None:
+    """로봇이 `safety_latched=true` 라고 알려 오는 동안 보낸 `MOVE` 는 거리를 만들지 않는다."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_hold(True, 0)
+    for t in range(0, 1000, 100):
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], t)
+        odom.note_imu(0.0, t + 100, "b")
+    assert odom.pose(1000).x_m == 0.0
+    odom.note_hold(False, 1000)
+    for t in range(1000, 2000, 100):
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], t)
+        odom.note_imu(0.0, t + 100, "b")
+    assert odom.pose(2000).x_m == pytest.approx(0.104)
+
+
+def test_rejected_reset_safe_keeps_the_odometry_still() -> None:
+    """호스트가 `RESET_SAFE` 를 보냈어도 로봇이 거부해 래치가 남아 있으면(저전압) 움직임이 아니다.
+
+    명령만 보면 `RESET_SAFE` 뒤의 `MOVE` 는 이동이지만, 로봇이 계속 `safety_latched=true`
+    라고 알려 오므로 텔레메트리가 이긴다 — 위치가 조용히 부풀지 않는다.
+    """
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_hold(True, 0)
+    odom.note_sent([encoder.estop()], 0)
+    odom.note_sent([encoder.reset_safe(), encoder.move(CALIBRATION_STEP_MM, 0.0)], 100)
+    for t in range(200, 1100, 100):
+        odom.note_hold(True, t)
+        odom.note_imu(0.0, t, "b")
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], t)
+    assert odom.pose(1100).x_m == 0.0
+
+
+def test_reported_hold_stops_a_move_already_in_progress() -> None:
+    """이동 중 로봇이 스스로 멈췄다고 알려 오면 그 시각부터 거리를 세지 않는다."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    odom.note_hold(True, 300)
+    odom.note_imu(0.0, 500, "b")
+    assert odom.pose(500).x_m == pytest.approx(0.104 * 0.3)
+
+
+def test_release_reported_by_the_robot_needs_a_new_move_to_count() -> None:
+    """래치가 풀렸다는 보고만으로 움직이지 않는다 — 로봇은 다음에 받아들인 `MOVE` 부터 걷는다."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_hold(True, 0)
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    odom.note_hold(False, 200)
+    odom.note_imu(0.0, 500, "b")
+    assert odom.pose(500).x_m == 0.0
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 500)
+    odom.note_imu(0.0, 1000, "b")
+    assert odom.pose(1000).x_m == pytest.approx(0.052)
+
+
+def test_old_firmware_without_the_flags_falls_back_to_the_command_estimate() -> None:
+    """`None`(구형 펌웨어)은 아무것도 바꾸지 않는다 — `ESTOP`/`RESET_SAFE` 추정이 그대로 쓰인다."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_hold(None, 0)
+    odom.note_sent([encoder.estop(), encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    odom.note_imu(0.0, 500, "b")
+    assert odom.pose(500).x_m == 0.0
+    odom.note_hold(None, 500)
+    odom.note_sent([encoder.reset_safe(), encoder.move(CALIBRATION_STEP_MM, 0.0)], 500)
+    odom.note_imu(0.0, 1000, "b")
+    assert odom.pose(1000).x_m == pytest.approx(0.052)
+
+
+@pytest.mark.parametrize(
+    ("safety_latched", "obstacle", "expected"),
+    [
+        (None, None, None),
+        (False, None, False),
+        (None, False, False),
+        (True, None, True),
+        (None, True, True),
+        (False, True, True),
+        (True, False, True),
+        (False, False, False),
+    ],
+)
+def test_hold_of_reading_combines_the_two_onboard_stops(
+    safety_latched: bool | None, obstacle: bool | None, expected: bool | None
+) -> None:
+    """래치와 근거리 정지 둘 다 `MOVE` 를 막는다(펌웨어 `move_allowed()`). 둘 다 없으면 모른다."""
+    assert hold_of_reading(safety_latched, obstacle) is expected
 
 
 def test_non_motion_commands_do_not_change_motion() -> None:

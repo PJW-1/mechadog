@@ -63,6 +63,17 @@
     때까지 `MOVE` 를 움직임으로 세지 않는다** — 래치가 걸린 로봇은 `MOVE` 를
     차단한다 (PROTOCOL 2절 안전 정지와 해제).
   - 나머지(`STATE`·`LED`·`SOUND`·`POSE` 등)는 이동을 바꾸지 않는다.
+
+## 로봇이 스스로 멈춰 있다고 알려 오면 그 말이 이긴다
+
+보낸 명령으로 추정한 래치는 **호스트의 짐작**이다. 로봇은 저전압이면 `RESET_SAFE` 를
+거부하고(`firmware_mechdog_motion/README.md` 3.2.5), 재부팅하면 래치 상태로 켜진다 —
+둘 다 명령만 보면 모른다. 그동안 보낸 `MOVE` 를 이동으로 적분하면 **위치가 조용히
+앞으로 밀린다.** 그래서 텔레메트리의 `safety_latched` 와 `flags.obstacle`(근거리
+정지 — 우선순위가 호스트 명령보다 높다, 같은 README `3.2.5`)을 `note_hold` 로 받아,
+로봇이 멈춰 있다고 하는 동안은 `MOVE` 를 0 으로 센다. 값이 오면 명령 추정보다
+우선하고, 구형 펌웨어라 둘 다 없으면(`None`) 명령 추정을 그대로 쓴다. 풀렸다는 보고
+뒤에도 로봇은 **다음에 받아들인 `MOVE` 부터** 걷는다 — 보고만으로 움직이지 않는다.
 """
 
 from __future__ import annotations
@@ -137,6 +148,17 @@ def odom_params_from_config(config: Mapping[str, Any]) -> OdomParams:
     )
 
 
+def hold_of_reading(safety_latched: bool | None, obstacle: bool | None) -> bool | None:
+    """텔레메트리 한 건에서 «로봇이 스스로 멈춰 있는가» 를 뽑는다.
+
+    래치와 근거리 정지 둘 다 온보드에서 `MOVE` 를 막는다. 어느 하나라도 참이면 정지,
+    둘 다 없으면(구형 펌웨어) 모른다 — `None` 을 `note_hold` 에 주면 아무것도 바꾸지 않는다.
+    """
+    if safety_latched is None and obstacle is None:
+        return None
+    return bool(safety_latched) or bool(obstacle)
+
+
 def _arc(travel_m: float, heading_from: float, heading_to: float) -> tuple[float, float]:
     """방위가 `heading_from` → `heading_to` 로 고르게 바뀌며 `travel_m` 을 간 변위.
 
@@ -166,7 +188,10 @@ class Odometry:
         self._speed_m_s = 0.0
         self._segment_from_ms: int | None = None
         self._move_until_ms = 0
+        #: 보낸 명령으로 추정한 래치 (`ESTOP` 뒤 · `RESET_SAFE` 전).
         self._latched = False
+        #: 로봇이 텔레메트리로 알려 온 온보드 정지. 알면 `_latched` 보다 우선한다 (머리말).
+        self._reported_hold: bool | None = None
         #: 아직 방위를 모르는 이동 구간 `(시작 ms, 끝 ms, 속도 m/s)`. 다음 IMU 표본이
         #: 오면 두 표본의 yaw 를 보간해 적분한다.
         self._pending: list[tuple[int, int, float]] = []
@@ -184,11 +209,15 @@ class Odometry:
 
     def note_command(self, type_: str, fields: Mapping[str, Any], sent_ms: int) -> None:
         if type_ == "MOVE":
-            speed = 0.0 if self._latched else self._speed_of(float(fields["step"]))
+            speed = 0.0 if self._holding() else self._speed_of(float(fields["step"]))
             self._set_motion(speed, sent_ms)
         elif type_ in _STOPPING:
             self._latched = type_ == "ESTOP" or (self._latched and type_ != "RESET_SAFE")
             self._set_motion(0.0, sent_ms)
+
+    def _holding(self) -> bool:
+        """지금 `MOVE` 가 차단되는가. 로봇의 보고가 있으면 그것, 없으면 명령 추정."""
+        return self._latched if self._reported_hold is None else self._reported_hold
 
     def _speed_of(self, step: float) -> float:
         """step → 속도 (m/s, 부호 있음). 비례의 근거는 머리말."""
@@ -216,6 +245,20 @@ class Odometry:
             else:
                 self._pending.append((start, end, self._speed_m_s))
         self._segment_from_ms = max(start, at_ms)
+
+    # ── 입력: 온보드 정지 ──────────────────────────────────────
+    def note_hold(self, held: bool | None, received_ms: int) -> None:
+        """로봇이 알려 온 «스스로 멈춰 있음» (`hold_of_reading`) 을 넣는다.
+
+        참이면 진행 중인 이동을 그 시각에 끊고, 이후 `MOVE` 는 0 으로 센다. 거짓이면
+        다음 `MOVE` 부터 다시 센다 — 이 호출만으로 움직임을 만들지 않는다. `None` 은
+        구형 펌웨어라 아무것도 바꾸지 않는다.
+        """
+        if held is None:
+            return
+        self._reported_hold = held
+        if held and self._speed_m_s != 0.0:
+            self._set_motion(0.0, received_ms)
 
     # ── 입력: IMU ──────────────────────────────────────────────
     def note_imu(self, yaw_deg: float, received_ms: int, boot_id: str = "") -> None:

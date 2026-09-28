@@ -56,7 +56,7 @@ from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import deg_to_rad, ms_to_s
 from host.slam import settings, simulation
 from host.slam.occupancy import OccupancyGrid
-from host.slam.odometry import Odometry, odom_params_from_config
+from host.slam.odometry import Odometry, hold_of_reading, odom_params_from_config
 from host.slam.settings import (
     match_params_from_config,
     plan_params_from_config,
@@ -316,8 +316,15 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     peer = (sender[0], int(network["cmd_port"]))
                     LOG.info("peer_learned", peer=str(peer))
                     transmit([session_line])
-                if odometry is not None and ingested.reading.yaw is not None:
-                    odometry.note_imu(ingested.reading.yaw, now_ms, ingested.reading.boot_id)
+                if odometry is not None:
+                    # 로봇이 스스로 멈춰 있다는 보고가 명령 추정보다 먼저다 — 거부된
+                    # `RESET_SAFE`·재부팅 뒤의 `MOVE` 를 이동으로 세지 않는다 (odometry.py 머리말).
+                    odometry.note_hold(
+                        hold_of_reading(ingested.reading.safety_latched, ingested.reading.obstacle),
+                        now_ms,
+                    )
+                    if ingested.reading.yaw is not None:
+                        odometry.note_imu(ingested.reading.yaw, now_ms, ingested.reading.boot_id)
                 controller.observe_telemetry(ingested.reading, now_ms)
 
             # ── LiDAR 스캔 ──
