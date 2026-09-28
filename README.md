@@ -39,14 +39,7 @@ Hiwonder MechDog(ESP32) 위에 Seeed XIAO ESP32S3 Sense 카메라와 Host PC 를
 
 노드끼리는 선으로 잇지 않고 Host PC 를 허브로 두는 스타 구조입니다. 로봇 위의 노드는 각자 전원을 가지며 Host 와만 무선으로 통신합니다.
 
-```mermaid
-flowchart LR
-  XIAO["XIAO ESP32S3 Sense<br/>카메라 노드"] -->|"MJPEG"| HOST["Host PC 허브<br/>검출 · 판단 · 관제 서버"]
-  HOST -->|"UDP JSON 명령 10Hz"| DOG["MechDog ESP32<br/>구동 노드 · 온보드 안전"]
-  DOG -->|"UDP JSON 텔레메트리 10Hz"| HOST
-  LIDAR["LiDAR 중계 노드<br/>ESP32 DevKit"] -->|"UDP JSON 스캔"| HOST
-  HOST <-->|"WebSocket"| WEB["관제 브라우저"]
-```
+![Host PC를 중심으로 XIAO 카메라, MechDog, LiDAR 중계 노드와 관제 브라우저가 연결된 시스템 구성도](docs/img/system-architecture.svg)
 
 **온보드 안전(Tier 1)과 Host 판단(Tier 2)을 나눈 이유**
 
