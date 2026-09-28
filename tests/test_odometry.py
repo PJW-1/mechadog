@@ -271,6 +271,14 @@ def test_odom_port_must_differ_from_scan_port() -> None:
         settings.validate_section(section)
 
 
+def test_odom_port_must_differ_from_the_scan_forward_port() -> None:
+    """컨테이너가 실제로 스캔을 받는 곳은 `scan_forward_port` 다 (WBS 5.4.4)."""
+    section = dict(settings.read_lidar_section())
+    section["odom_port"] = section["scan_forward_port"]
+    with pytest.raises(ConfigError, match="odom_port"):
+        settings.validate_section(section)
+
+
 def test_odom_rate_and_imu_limit_must_be_positive() -> None:
     for key in ("odom_rate_hz", "odom_imu_stale_ms"):
         section = dict(settings.read_lidar_section())
