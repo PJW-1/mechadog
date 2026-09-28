@@ -25,5 +25,5 @@ labels: decision
 ## 반영할 문서
 
 - [ ] `docs/DECISIONS.md` (DR 항목 추가)
-- [ ] `docs/PRD_Physical_AI_Guard_Robot.md` (요구사항이 바뀌는 경우)
-- [ ] `docs/WBS.md` (작업 범위·선행·DoD가 바뀌는 경우)
+- [ ] `docs/internal/PRD_Physical_AI_Guard_Robot.md` (요구사항이 바뀌는 경우)
+- [ ] `docs/internal/WBS.md` (작업 범위·선행·DoD가 바뀌는 경우)

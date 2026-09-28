@@ -1,10 +1,10 @@
 // ══════════════════════════════════════════════════════════════
 //  firmware_lidar_relay — LD19 → UART2 → ESP32 → Wi-Fi UDP → Host PC
 //
-//  정본 : docs/PROTOCOL_LIDAR.md · docs/HARDWARE.md(LD19 배선)
+//  정본 : docs/PROTOCOL_LIDAR.md · docs/internal/HARDWARE.md(LD19 배선)
 //  링크 : LiDAR 중계 노드 → Host PC, UDP 5201 (lidar.scan_port)
 //
-//  배선 (HARDWARE.md):
+//  배선 (docs/internal/HARDWARE.md):
 //    LD19 Pin4 P5V → DevKit 5V   ·   Pin3 GND → GND
 //    LD19 Pin1 Tx  → GPIO16 (UART2 RX)   ·   Pin2 PWM → 미연결
 //
@@ -41,7 +41,7 @@
 #define LIDAR_HOST_PORT 5201
 #endif
 
-// HARDWARE.md 권장 배선 — LD19 Tx 는 GPIO16. PWM 선은 미연결(내부 10Hz).
+// docs/internal/HARDWARE.md 권장 배선 — LD19 Tx 는 GPIO16. PWM 선은 미연결(내부 10Hz).
 constexpr int kLidarRxPin = 16;
 constexpr int kLidarTxPin = -1;  // LD19 는 단방향 — TX 는 쓰지 않는다
 constexpr uint32_t kLidarBaud = 230400;

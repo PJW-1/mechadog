@@ -14,7 +14,7 @@
 
 ## 0. ROS2 와의 관계 — ADR-9 의 범위를 그대로 따랐다
 
-[ADR-9](DECISIONS.md) 가 이미 정해 둔 것을 그대로 지켰다.
+[ADR-9](../DECISIONS.md) 가 이미 정해 둔 것을 그대로 지켰다.
 
 > Phase 1 을 **순수 Python 단일 프로세스로 완결**. ROS2 는 Phase 2 에서
 > `slam_toolbox` 하나로 범위를 한정해 *"스캔을 넣으면 맵과 위치를 반환하는
@@ -54,8 +54,8 @@
 
 | 항목 | 현재 상태 |
 | :--- | :--- |
-| `docker/ros2/` | `ros:jazzy` 이미지와 `slam_toolbox`·`rviz2` 설치, 모의 UDP의 `/scan` 도달까지 확인했다. 실물 UDP·RViz 화면 검수는 남았다 ([기동 가이드](../docker/ros2/README.md)) |
-| `SCAN` → `LaserScan` 브리지 | 모의 부채꼴 데이터그램 조립·발행을 구현했다. 각도 방향·회전 속도·유효 범위는 실제 LD19로 재검증한다 ([PROTOCOL_LIDAR 6절](PROTOCOL_LIDAR.md)) |
+| `docker/ros2/` | `ros:jazzy` 이미지와 `slam_toolbox`·`rviz2` 설치, 모의 UDP의 `/scan` 도달까지 확인했다. 실물 UDP·RViz 화면 검수는 남았다 ([기동 가이드](../../docker/ros2/README.md)) |
+| `SCAN` → `LaserScan` 브리지 | 모의 부채꼴 데이터그램 조립·발행을 구현했다. 각도 방향·회전 속도·유효 범위는 실제 LD19로 재검증한다 ([PROTOCOL_LIDAR 6절](../PROTOCOL_LIDAR.md)) |
 | tf `odom` → `base_link` 및 Python 순찰기 연결 | **미구현.** `mechdog-01`·`02` 보행 실측값은 있지만 명령 적분은 이동 중 예측값일 뿐이다. 10Hz 오도메트리로 이동 중 위치를 갱신하고 정지 스캔으로 드리프트를 보정해야 한다. 스캔 전용 위치 갱신으로는 500ms `LOST` 기준을 만족하지 못한다 (WBS 5.4.3~5.4.4) |
 
 ---
@@ -119,7 +119,7 @@
 | `config/config.yaml` | **`lidar:` 절 추가** (기존 값은 건드리지 않았다) |
 | `requirements-dev.txt` | **matplotlib 추가** — 런타임이 아니라 개발·검증 의존성 |
 | `docs/PROTOCOL_LIDAR.md` | 스캔 링크 규약 **제안** + **`LaserScan` 매핑 사양**(6절) |
-| `docs/LIDAR_INTEGRATION.md` | 이 문서 |
+| `docs/internal/LIDAR_INTEGRATION.md` | 이 문서 |
 | `tests/test_lidar_*.py` · `tests/fixtures/lidar_*.jsonl` | 규약 시험 + 골든 픽스처 |
 
 **계층은 한 방향이다** — `common` ← `localization` ← `behavior` ← `tools`.

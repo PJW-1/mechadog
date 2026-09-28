@@ -1,6 +1,6 @@
 # 엔지니어링 가이드 — 로깅 · 테스트 · CI
 
-> 코드를 쓸 때 참조하는 실무 기준. 무엇을 만들지는 [PRD](PRD_Physical_AI_Guard_Robot.md)·[ASSIGNMENTS](ASSIGNMENTS.md)에, 상세 DoD는 [WBS](WBS.md)에 있다. **어떻게 만들지는 이 문서**에 있다.
+> 코드를 쓸 때 참조하는 실무 기준. 무엇을 만들지는 [PRD](internal/PRD_Physical_AI_Guard_Robot.md)·[ASSIGNMENTS](internal/ASSIGNMENTS.md)에, 상세 DoD는 [WBS](internal/WBS.md)에 있다. **어떻게 만들지는 이 문서**에 있다.
 > 협업 절차는 [CONTRIBUTING](../CONTRIBUTING.md) 참조.
 
 | 항목 | 내용 |

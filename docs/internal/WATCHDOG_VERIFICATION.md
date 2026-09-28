@@ -1,13 +1,13 @@
 # 루프 워치독 실물 검증 절차 (WBS 3.2.4)
 
 2026-09-13 에 실제로 수행해 통과한 절차를 다른 사람이 그대로 따라갈 수 있게 정리한 문서다.
-감시기의 **설계와 근거**는 [`firmware_mechdog_motion/README.md`](../firmware_mechdog_motion/README.md)
+감시기의 **설계와 근거**는 [`firmware_mechdog_motion/README.md`](../../firmware_mechdog_motion/README.md)
 의 "3.2.4 제어 루프 감시" 절에 있다. 이 문서는 **PC 쪽에서 무엇을 어떤 순서로 실행했는지**를 다룬다.
 
 > **09-15 전:** `MECHADOG_ENABLE_ACTUATORS=1` 과의 조합은 펌웨어가 `#error` 로 막았다.
 > **09-15 부:** 조합은 컴파일된다 — 대신 구동 빌드는 부팅 시 arm 하지 않고
 > SERVICE 모드(`SERVICE` 명령 또는 GPIO5 사용자 버튼)가 몸을 주차시킨 뒤에만
-> 런타임으로 arm 한다. 자세한 순서는 [`PROTOCOL.md`](PROTOCOL.md)의 `SERVICE` 항.
+> 런타임으로 arm 한다. 자세한 순서는 [`PROTOCOL.md`](../PROTOCOL.md)의 `SERVICE` 항.
 > 이 절차 자체는 여전히 다리를 받침에 올린 정지 상태를 전제로 한다.
 
 ---

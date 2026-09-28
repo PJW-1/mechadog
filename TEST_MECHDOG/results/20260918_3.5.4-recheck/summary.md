@@ -1,7 +1,7 @@
 # WBS 3.5.4 재검증 — 보정 뒤 좌우 대칭 (2026-09-18 02:02~02:30 · mechdog-01)
 
 > ⚠️ **이 기록은 `mechdog-01` 한 대의 것이다.** 보정값 `straight_bias_deg`(−8.0)는 개체별
-> 서보 오프셋에서 나오므로 다른 기체에 복사하지 않는다([HARDWARE 3절](../../../docs/HARDWARE.md)).
+> 서보 오프셋에서 나오므로 다른 기체에 복사하지 않는다([HARDWARE 3절](../../../docs/internal/HARDWARE.md)).
 
 [직전 런](../20260918_3.5.4-track/summary.md)이 *"보정 뒤의 좌우 대칭을 계산으로만 세웠다"* 며
 미확정으로 남긴 항목을 닫는다. 절차는 [`tests/ReadMe_260918.md`](../../../tests/ReadMe_260918.md).
