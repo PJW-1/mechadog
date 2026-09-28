@@ -121,12 +121,20 @@ def forward_peer_of(lidar: dict) -> tuple[str, int] | None:
     """
     if not lidar["scan_forward_enabled"]:
         return None
-    return (socket.gethostbyname(str(lidar["scan_forward_host"])), int(lidar["scan_forward_port"]))
+    return (_resolve(lidar, "scan_forward_host"), int(lidar["scan_forward_port"]))
 
 
 def odom_peer_of(lidar: dict) -> tuple[str, int]:
     """ODOM 목적지 (WBS 5.4.3). `forward_peer_of` 와 같은 이유로 이름을 기동 때 한 번만 푼다."""
-    return (socket.gethostbyname(str(lidar["odom_host"])), int(lidar["odom_port"]))
+    return (_resolve(lidar, "odom_host"), int(lidar["odom_port"]))
+
+
+def _resolve(lidar: dict, key: str) -> str:
+    """이름을 못 풀면 `ConfigError` 다 — `main()` 이 traceback 대신 «설정 오류» 로 알린다."""
+    try:
+        return socket.gethostbyname(str(lidar[key]))
+    except OSError as exc:
+        raise ConfigError(f"lidar.{key} 를 풀 수 없음: {lidar[key]!r} ({exc})") from exc
 
 
 def forward_scan(sock: socket.socket, raw: bytes, peer: tuple[str, int]) -> bool:
@@ -244,7 +252,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     peer = (peer_ip, int(network["cmd_port"])) if peer_ip else None
 
     odometry, odom_encoder = open_odometry(config, args.device)
-    odom_peer = odom_peer_of(lidar)
+    # 실측이 없는 기체는 ODOM 을 보내지 않으므로 목적지도 풀지 않는다.
+    odom_peer = odom_peer_of(lidar) if odometry is not None else None
     odom_period_ms = round(1000 / float(lidar["odom_rate_hz"]))
     # 명령 소켓과 **따로 연다.** 컨테이너가 없으면 ICMP 오류가 소켓에 남는데, 같은
     # 소켓이면 그 오류가 다음 로봇 명령 송신에서 터져 명령 하나를 잃을 수 있다.
@@ -589,7 +598,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.simulate:
         return serve_simulated(args, config, controller)
-    return serve_real(args, config, controller)
+    try:
+        return serve_real(args, config, controller)
+    except ConfigError as exc:  # 전달·ODOM 목적지 이름 해석 (`_resolve`)
+        print(f"[Patrol] 설정 오류: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

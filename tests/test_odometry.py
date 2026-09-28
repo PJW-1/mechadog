@@ -452,3 +452,26 @@ def test_laser_offset_needs_every_value_explicitly() -> None:
     )
     assert offset == (0.05, -0.01, 0.22)
     assert reason == ""
+
+
+def test_unresolvable_destination_is_a_config_error_not_a_traceback() -> None:
+    """이름을 못 풀면 `main()` 이 «설정 오류» 로 알리도록 `ConfigError` 로 올린다."""
+    with pytest.raises(ConfigError, match="odom_host"):
+        patrol_run.odom_peer_of({"odom_host": "mechdog.invalid", "odom_port": 5204})
+    with pytest.raises(ConfigError, match="scan_forward_host"):
+        patrol_run.forward_peer_of(
+            {
+                "scan_forward_enabled": True,
+                "scan_forward_host": "mechdog.invalid",
+                "scan_forward_port": 5203,
+            }
+        )
+
+
+def test_malformed_forward_port_is_reported_as_itself() -> None:
+    """`scan_forward_port: true` 가 `odom_port: 1` 과 «같다» 는 엉뚱한 메시지로 나오지 않는다."""
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_port"] = True
+    section["odom_port"] = 1
+    with pytest.raises(ConfigError, match=r"^lidar\.scan_forward_port 는 1~65535"):
+        settings.validate_section(section)
