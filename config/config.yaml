@@ -264,14 +264,25 @@ vision:
     # FR-8 변화 감지에서 추적할 클래스 (시연 환경에 놓일 소품)
     change_watch_classes: [chair, backpack, handbag, bottle, suitcase, laptop, book]
 
-  # ── ② PPE 전용 모델 (직접 학습, 5클래스) ──
+  # ── ② PPE 전용 모델 (직접 학습, 4클래스) ──
   # person 검출 프레임에서만 실행 (FR-3.1.1 게이팅)
   ppe:
     model_path: "models/ppe.onnx"
     # ⚠️ **`ultralytics` 가 아니다.** AGPL-3.0 이라 ADR-24 가 탈락시켰다.
     # WBS 3.7.2 의 "ultralytics 버전 기록" 문구는 그 결정 이전의 잔재다.
     #
-    # 학습 기록 (FR-9.1.2 재현성) — 2026-09-23 (v3)
+    # ⚠️ *(2026-09-28 정정)* 아래 «학습 기록 (v3)» 을 현행처럼 적어 두었으나, 실제로
+    # XIAO 실측까지 간 마지막 후보는 그 뒤로 이어진 v12~v23b 계열이다. v23b(YOLOX-S ·
+    # 5클래스, sha256 5b35eb4f…6089)는 mechdog-01 XIAO 실측(직립·전신·전부 착용 69.4초 ·
+    # `TEST_MECHDOG/results/20260928_ppe-xiao/`)에서 정상 착용자 오경고 4회(정면 주황
+    # 안전모→no_helmet · 측면 조끼→no_vest)로 승격 조건 ④(오경고 ≤1) 미달로 기각했다.
+    # 다음 모델은 YOLOX-S 를 **4클래스**(person_down 제외 — 쓰러짐은 FR-9 가 아니라
+    # `host/vision/person.py` 종횡비 의심 + VLM 확정이 맡는다, ADR-42)로 새로 학습한다.
+    # 데이터는 Roboflow Universe construction-safety(project id construction-safety-gsnvb ·
+    # CC BY 4.0 · 1,206장, person 라벨은 크롭·라벨 누락 검사에만 쓰고 출력 클래스에서는
+    # 뺀다)와 XIAO 실측에서 틀린 어려운 사례다. 아직 학습 전이다.
+    #
+    # 학습 기록 (FR-9.1.2 재현성) — 2026-09-23 (v3, 기각된 후속 계열의 출발점)
     #   계열     YOLOX-Nano (Apache-2.0 · Megvii) · depthwise · 640x640
     #   출발점   yolox_nano.pth (릴리스 0.1.1rc0) 에서 fine-tune
     #   데이터   ppe_coco_v3 — 4원 병합 5,914장 / 박스 40,591개
@@ -298,7 +309,7 @@ vision:
     model_family: yolox
     input_size: 640
     conf_threshold: 0.5
-    classes: [helmet, no_helmet, vest, no_vest, person_down]
+    classes: [helmet, no_helmet, vest, no_vest]
     violation_classes: [no_helmet, no_vest]
     crop_pad: 0.08             # person bbox 크롭 여유 (XIAO 실측으로 조정)
     # ── 위반 확정 (FR-9.4) ──
