@@ -192,7 +192,7 @@ $dev = "mechdog-01"
 $run = "TEST_MECHDOG/results/$(Get-Date -Format yyyyMMdd)_ppe-collect-bright-1m"
 
 # 1) 방향 보정 — ppe_live_check 는 /orient 를 보내지 않는다
-python -c "from host.common.config import load_config; from host.vision.stream_client import apply_profile; c = load_config('$dev'); c['network']['xiao_ip'] = '$xiaoIp'; print(apply_profile(c))"
+python -c "from host.common.config import load_config; from host.vision.stream_client import apply_profile, apply_orientation; c = load_config('$dev'); c['network']['xiao_ip'] = '$xiaoIp'; print(apply_profile(c)); print('rot', apply_orientation(c))"
 
 # 2) 수집
 python tools/ppe_live_check.py `
@@ -211,7 +211,10 @@ python tools/ppe_live_check.py `
 
 - **1)을 빼먹지 않는다.** `/orient`는 카메라 전원을 껐다 켜면 0으로 풀리는데, `ppe_live_check`는
   `apply_profile()`을 부르지 않는다. 2026-09-20에 이것을 빼먹어 거꾸로 선 사람이 찍혀 899프레임을
-  날렸다. 1)의 출력이 `'ok': True`이고 로그에 `orientation_applied rot=180`이 찍히는지 본다.
+  날렸다. 1)의 출력이 `'ok': True`이고 마지막 줄이 `rot 180`인지 본다. `rot None`이면 방향 보정이
+  실패한 것이다(경고 줄에 이유가 나온다). *(2026-09-29 정정)* 예전 문구는 로그의
+  `orientation_applied rot=180`을 보라고 했으나, 이 한 줄 명령은 로깅을 켜지 않아 INFO 줄이 찍히지
+  않는다. `apply_orientation`은 같은 `/orient` 요청을 한 번 더 보낼 뿐이라 두 번 불러도 된다.
   mechdog-01의 `vision.mount_rotation`은 180이다. 판정 화면에서 사람이 똑바로 서 있는지도 확인한다.
 - 세션 중 카메라 전원이 흔들려 재부팅되면 방향이 다시 풀린다(콘솔에 재접속이 찍히면 의심한다).
   화면이 뒤집혔으면 종료하고 1)부터 새 폴더로 다시 시작한다.
@@ -234,6 +237,8 @@ python tools/ppe_live_check.py `
 ### 촬영 뒤
 
 1. **의사 라벨** — (a) 세션마다 돌린다. (b) Test 세션은 돌리지 않는다.
+   `--build` 폴더에 `annotations/instances_train.json`이 있어야 한다 — 합본 빌드
+   `ppe4_cs_md_v2`를 먼저 만든다(`tools/ppe/rf100_prepare.py` 다음 `tools/ppe/mendeley_prepare.py`).
 
    ```powershell
    python tools/ppe/xiao_hardcases.py --device mechdog-01 `

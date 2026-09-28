@@ -6,8 +6,8 @@ PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe_live_check.py --segm
 
     python tools/ppe/xiao_hardcases.py --device mechdog-01 \\
         --session TEST_MECHDOG/results/20260928_ppe-xiao \\
-        --ppe-model models/ppe_v23b.onnx \\
-        --build datasets/ppe/build/ppe4_cs_v1 --merge
+        --ppe-model models/candidates/ppe4-cs-md-v2/ppe.onnx \\
+        --build datasets/ppe/build/ppe4_cs_md_v2 --merge
 
 출력 (모두 `--build` 아래 — `datasets/` 밖이면 멈춘다)
     train2017/ val2017/ xiao__<세션>__<프레임>.jpg     사람 크롭
