@@ -62,7 +62,7 @@ Host 는 100ms 마다 명령을 보냅니다. 기준이 300ms 이면 연속한 �
 
 단위 테스트는 다음을 확인합니다.
 
-- 기본 설정의 `cmd_timeout_ms` 가 600 이고, 0 초과 600 이하이며, 링크 두절 페일세이프보다 짧은지 확인합니다([`tests/test_config.py` L88](../../tests/test_config.py#L88), [L136](../../tests/test_config.py#L136), [L142](../../tests/test_config.py#L142)).
+- 기본 설정의 `cmd_timeout_ms` 가 600 이고, 0 초과 600 이하이며, 링크 두절 페일세이프보다 짧은지 확인합니다([`tests/test_config.py` L88](../../tests/test_config.py#L88), [L142](../../tests/test_config.py#L142), [L136](../../tests/test_config.py#L136)).
 - 목업 로봇이 이동 명령 뒤 601ms 에 LED 명령만 받으면 이전 이동을 재개하지 않고 정지 상태를 유지하는지 확인합니다([`tests/test_runtime_safeguards.py` L110](../../tests/test_runtime_safeguards.py#L110)).
 - 목업 로봇이 설정된 타임아웃이 지나면 다리를 세우는지 확인합니다([`tests/test_safety.py` L88](../../tests/test_safety.py#L88)).
 
