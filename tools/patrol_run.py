@@ -97,6 +97,49 @@ def open_socket(port: int) -> socket.socket:
     return sock
 
 
+def open_forward_socket() -> socket.socket:
+    """컨테이너 전달 전용 송신 소켓 (WBS 5.4.4).
+
+    ⚠️ **`scan_sock` 으로 보내지 않는다.** Windows 는 닫힌 포트로 보낸 UDP 의
+    ICMP 통보를 보낸 소켓의 다음 `recvfrom` 에 `ConnectionResetError` 로 돌려준다
+    (`SIO_UDP_CONNRESET` 은 CPython 에 없어 끌 수 없다 · `host/runtime.py` 머리말).
+    컨테이너가 꺼져 있으면 스캔 수신 루프가 스캔마다 끊겨 LiDAR 비상정지가 늦는다.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+    return sock
+
+
+def forward_peer_of(lidar: dict) -> tuple[str, int] | None:
+    """전달 목적지. 꺼 두면 None 이다 (WBS 5.4.4).
+
+    ⚠️ **호스트명은 기동 때 한 번만 푼다.** `sendto` 에 이름을 그대로 넘기면
+    스캔마다 동기 DNS 조회가 스캔 수신 루프 안에서 돌아 LiDAR 비상정지가 늦는다.
+    """
+    if not lidar["scan_forward_enabled"]:
+        return None
+    return (socket.gethostbyname(str(lidar["scan_forward_host"])), int(lidar["scan_forward_port"]))
+
+
+def forward_scan(sock: socket.socket, raw: bytes, peer: tuple[str, int]) -> bool:
+    """받은 LiDAR 데이터그램을 컨테이너 전달 목적지로 그대로 복사한다 (WBS 5.4.4).
+
+    **디코드 성패와 무관하게** 받은 바이트를 그대로 보낸다 — 검증은 받는 쪽
+    (`docker/ros2/scan_bridge.py` 의 `ScanDecoder`)이 다시 하므로 여기서 거르면
+    컨테이너가 우리가 이미 버린 패킷의 존재조차 모르게 된다. LiDAR 비상정지
+    (`guard_scan`)는 이 전달과 무관한 직접 경로라 실패해도 영향이 없다.
+
+    실패(목적지가 아직 없어 나는 `ConnectionResetError` · 그 외 `OSError`)는
+    예외를 올리지 않는다 — 순찰을 멈출 이유가 아니다. 반환값만 알리고 로그는
+    호출부가 상태 전이일 때만 남긴다 (ENGINEERING_GUIDE 1.3).
+    """
+    try:
+        sock.sendto(raw, peer)
+    except OSError:
+        return False
+    return True
+
+
 def build_controller(config: dict, maps: Path, seed: int | None) -> PatrolController:
     grid = OccupancyGrid.load(maps)
     labels = tuple(str(label) for label in config["zones"]["ids"])
@@ -174,6 +217,12 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     scan_decoder = ScanDecoder(
         float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
     )
+    # 컨테이너 전달 목적지 (WBS 5.4.4) — 이 프로세스가 scan_port 의 유일한
+    # 수신자로 남고, 받은 데이터그램을 바이트 그대로 여기로 복사해 넘긴다.
+    # 꺼 두면 None 이라 아래 루프가 전달을 건너뛴다.
+    forward_peer = forward_peer_of(lidar)
+    forward_sock = open_forward_socket()
+    forward_failing = False
     telemetry = TelemetryReceiver()
     # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
     own_ids = telemetry_ids(config, args.device)
@@ -223,6 +272,15 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     raw, _ = scan_sock.recvfrom(RECV_BYTES)
                 except (BlockingIOError, OSError):
                     break
+                # 디코드 성패와 무관하게 받은 즉시 그대로 전달한다 (WBS 5.4.4).
+                if forward_peer is not None:
+                    if forward_scan(forward_sock, raw, forward_peer):
+                        if forward_failing:
+                            LOG.info("scan_forward_recovered", peer=str(forward_peer))
+                            forward_failing = False
+                    elif not forward_failing:
+                        LOG.warning("scan_forward_failed", peer=str(forward_peer))
+                        forward_failing = True
                 result = scan_decoder.decode(raw)
                 if result.warns:
                     LOG.warning("scan_unknown_type", reason=result.reason)
@@ -260,6 +318,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     finally:
         stop_for_shutdown(controller, cmd_sock, peer)
         scan_sock.close()
+        forward_sock.close()
         tlm_sock.close()
         cmd_sock.close()
     return 0
