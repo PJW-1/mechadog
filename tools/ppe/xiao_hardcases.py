@@ -1,4 +1,4 @@
-"""`ppe_live_check` 세션에서 **전부 착용인데 틀린 프레임**을 뽑아 학습용 라벨을 만든다.
+"""`ppe_live_check` 세션에서 **착용 정답을 아는 구간의 틀린 프레임**을 뽑아 학습용 라벨을 만든다.
 
 PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe_live_check.py --segments --session ...
 --save-raw-dir <세션>/raw` 로 남긴 세션 폴더(`session.json` + `raw/NNNNN.jpg`)다. `raw/` 가
@@ -19,9 +19,16 @@ PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe_live_check.py --segm
 학습에 섞으려면 `PPE_TRAIN_ANN=instances_train_mix.json PPE_VAL_ANN=instances_val_mix.json`
 으로 exp 를 띄운다. ⚠️ **접촉 시트를 사람이 먼저 본다** — 라벨은 모델 출력이다.
 
-⚠️ **정답이 «전부 착용»(기대=적합) 인 구간만 쓴다.** 그래서 no_helmet→helmet,
-no_vest→vest 로 바꾸면 그대로 라벨이 된다. 머리나 몸통 박스가 없는 프레임은 버린다 —
-없는 쪽이 배경으로 학습되기 때문이다 (`rf100_prepare.py` 의 부분 라벨 규칙과 같다).
+⚠️ **착용 상태를 구간 정의(`config/ppe_acceptance.json` 의 `wear`·`expected`)에서 읽는다.**
+전부 착용 · 안전모만 · 조끼만 · 둘 다 없음 × 직립 · 웅크림 구간을 쓴다. 머리 박스
+(helmet·no_helmet)는 그 구간의 안전모 정답으로, 몸통 박스(vest·no_vest)는 조끼 정답으로
+이름을 정한다 — **모델이 낸 이름이 아니라 구간의 정답이 라벨이다.** 모델은 박스 위치만
+준다. 기대=확인불가 구간(머리 잘림)과 로봇 자세 구간(pitch_up·sit)은 쓰지 않는다 — 이유는
+`segment_truths` 가 카드에 남긴다. 머리나 몸통 박스가 없는 프레임은 버린다 — 없는 쪽이
+배경으로 학습되기 때문이다 (`rf100_prepare.py` 의 부분 라벨 규칙과 같다).
+
+⚠️ **구간 정답은 버튼 누른 시각에 묶인다.** 옷을 갈아입는 중에 버튼이 눌려 있으면 그 몇
+초는 정답이 틀린다. 접촉 시트에서 구간 첫머리 칸을 특히 본다.
 
 ⚠️ **이 세션은 학습·검증에만 쓴다. test 로 내보내지 않는다.** 같은 사람·같은 방이라
 test 에 넣으면 성능이 부풀려진다. 세션 하나 안에서 나눌 수밖에 없어 **시간 블록**(기본
@@ -69,12 +76,26 @@ from tools.ppe.rf100_prepare import (  # noqa: E402
     sha256_file,
     write_jpeg,
 )
-from tools.ppe_live_check import STATE_COLOR, STATE_OK, STATE_VIOLATION, crop_person  # noqa: E402
+from tools.ppe_live_check import (  # noqa: E402
+    DEFAULT_ACCEPTANCE_PLAN,
+    STATE_COLOR,
+    STATE_OK,
+    STATE_UNKNOWN,
+    STATE_VIOLATION,
+    crop_person,
+    load_acceptance_plan,
+)
 
-#: 전부 착용 구간의 정답 이름. 모델이 낸 이름 → 학습 라벨.
-#: ⚠️ 이 표에 없는 이름(5클래스 모델의 5번째 등)은 버린다.
-ALL_WORN = {"helmet": "helmet", "no_helmet": "helmet", "vest": "vest", "no_vest": "vest"}
-VIOLATION_LABELS = ("no_helmet", "no_vest")
+#: 구간 정의의 착용 문구 → (안전모, 조끼) 착용 여부.
+#: ⚠️ 이 표에 없는 문구의 구간은 쓰지 않는다 — 정답을 추측하지 않는다.
+WEAR_TRUTH = {
+    "전부 착용": (True, True),
+    "안전모 미착용": (False, True),
+    "조끼 미착용": (True, False),
+    "둘 다 미착용": (False, False),
+}
+#: 조건 문구에 이것이 있으면 로봇 자세 구간이다 (`pitch-up`·`sit`·`clipped-base`).
+ROBOT_POSE_MARKS = ("pitch_up", "sit", "기본 자세")
 
 #: 이름이 같아진 박스끼리 겹치면 하나만 남긴다 (한 머리에 helmet·no_helmet 이 함께 뜬 경우).
 DEDUPE_IOU = 0.45
@@ -92,7 +113,12 @@ OVERLAY_BAND = 3
 
 SHEET_COLS, SHEET_ROWS = 6, 5
 CELL_W, CELL_H = 200, 300
-DRAW_COLORS = {"helmet": (0, 200, 0), "vest": (200, 200, 0)}
+DRAW_COLORS = {
+    "helmet": (0, 200, 0),
+    "no_helmet": (0, 0, 255),
+    "vest": (200, 200, 0),
+    "no_vest": (255, 0, 255),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +130,70 @@ class Candidate:
     hard: bool
     person: tuple[float, float, float, float]
     boxes: tuple[tuple[str, tuple[float, float, float, float]], ...]
+    segment: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentTruth:
+    """구간 하나의 정답 — 안전모·조끼 착용 여부와 구간 정의의 기대 판정."""
+
+    helmet: bool
+    vest: bool
+    expected: str
+
+
+def segment_truths(
+    specs: Iterable[dict[str, str]],
+) -> tuple[dict[str, SegmentTruth], dict[str, str]]:
+    """구간 정의에서 착용 정답을 읽는다. (쓰는 구간 → 정답, 뺀 구간 → 이유)
+
+    ⚠️ **착용을 확실히 아는 구간만 쓴다.** 애매하면 빼고 이유를 카드에 남긴다.
+    """
+    used: dict[str, SegmentTruth] = {}
+    excluded: dict[str, str] = {}
+    for spec in specs:
+        key, wear, expected = spec["key"], spec.get("wear", ""), spec.get("expected")
+        worn = WEAR_TRUTH.get(wear)
+        if worn is None:
+            excluded[key] = f"착용 문구를 모른다 («{wear}») — 정답을 추측하지 않는다"
+        elif expected == STATE_UNKNOWN:
+            excluded[key] = (
+                "기대=확인불가 — 머리·몸통이 다 보인다는 보장이 없어(머리 잘림) "
+                "박스 정답을 세울 수 없다"
+            )
+        elif any(mark in spec.get("condition", "") for mark in ROBOT_POSE_MARKS):
+            excluded[key] = (
+                "로봇 자세 구간 — 자세 전환 중 흔들린 프레임이 섞이고 사람 자세 조건이 "
+                "정해져 있지 않다 (수집 세션은 로봇을 움직이지 않는다)"
+            )
+        elif expected != (STATE_OK if all(worn) else STATE_VIOLATION):
+            excluded[key] = f"기대 판정({expected})과 착용({wear})이 어긋난다"
+        else:
+            used[key] = SegmentTruth(worn[0], worn[1], expected)
+    return used, excluded
+
+
+def truth_events(
+    events: Iterable[dict[str, Any]], truths: dict[str, SegmentTruth]
+) -> list[dict[str, Any]]:
+    """정답을 아는 구간에서 사람이 잡힌 프레임만.
+
+    ⚠️ 세션이 기록한 기대 판정이 지금 구간 정의와 다르면 **정의가 세션 뒤에 바뀐 것**이다.
+    그 정의로 라벨을 붙이면 틀린다 — 멈춘다.
+    """
+    out = []
+    for e in events:
+        truth = truths.get(e.get("segment") or "")
+        if truth is None:
+            continue
+        if e.get("expected") != truth.expected:
+            raise SystemExit(
+                f"구간 {e['segment']}: 세션 기대 {e.get('expected')} ≠ 구간 정의 "
+                f"{truth.expected} — 구간 정의가 세션 뒤에 바뀌었다"
+            )
+        if int(e.get("people", 0)) > 0:
+            out.append(e)
+    return out
 
 
 def all_worn_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -118,11 +208,20 @@ def all_worn_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def relabel_all_worn(detections: Sequence[Detection]) -> list[Detection]:
-    """전부 착용이 정답이므로 위반 이름을 착용 이름으로 바꾸고 겹침을 걷어 낸다."""
-    renamed = [
-        Detection(ALL_WORN[d.label], d.score, d.box) for d in detections if d.label in ALL_WORN
-    ]
+def truth_names(helmet: bool, vest: bool) -> dict[str, str]:
+    """모델이 낸 이름 → 구간 정답 이름. 머리 박스는 안전모, 몸통 박스는 조끼 정답을 따른다.
+
+    ⚠️ 이 표에 없는 이름(5클래스 모델의 5번째 등)은 버린다.
+    """
+    head = "helmet" if helmet else "no_helmet"
+    torso = "vest" if vest else "no_vest"
+    return {**dict.fromkeys(HEAD_CLASSES, head), **dict.fromkeys(TORSO_CLASSES, torso)}
+
+
+def relabel_by_truth(detections: Sequence[Detection], helmet: bool, vest: bool) -> list[Detection]:
+    """박스 이름을 구간 정답으로 바꾸고 겹침을 걷어 낸다 (한 머리에 두 이름이 뜬 경우)."""
+    names = truth_names(helmet, vest)
+    renamed = [Detection(names[d.label], d.score, d.box) for d in detections if d.label in names]
     out: list[Detection] = []
     for name in dict.fromkeys(d.label for d in renamed):
         same = [d for d in renamed if d.label == name]
@@ -130,6 +229,48 @@ def relabel_all_worn(detections: Sequence[Detection]) -> list[Detection]:
         scores = np.array([d.score for d in same], dtype=np.float32)
         out.extend(same[i] for i in nms(boxes, scores, DEDUPE_IOU))
     return out
+
+
+def relabel_all_worn(detections: Sequence[Detection]) -> list[Detection]:
+    """전부 착용이 정답이므로 위반 이름을 착용 이름으로 바꾸고 겹침을 걷어 낸다."""
+    return relabel_by_truth(detections, helmet=True, vest=True)
+
+
+def is_hard(states: Sequence[str], raw: Sequence[Detection], truth: SegmentTruth) -> bool:
+    """세션 판정이 기대와 반대였거나, 다시 추론한 박스 이름이 구간 정답과 다르면 «틀림».
+
+    ⚠️ 확인불가는 틀림으로 세지 않는다 (예전 전부 착용 규칙과 같다).
+    """
+    opposite = STATE_VIOLATION if truth.expected == STATE_OK else STATE_OK
+    names = truth_names(truth.helmet, truth.vest)
+    return opposite in states or any(d.label in names and names[d.label] != d.label for d in raw)
+
+
+def segment_table(
+    truths: dict[str, SegmentTruth],
+    excluded: dict[str, str],
+    events: Sequence[dict[str, Any]],
+    candidates: Sequence[Candidate],
+    picked: Sequence[Candidate],
+    splits: Sequence[str],
+) -> dict[str, Any]:
+    """세션 카드용 구간별 채택 수 — 프레임 → 후보 → 선택(train/val)."""
+    frames = collections.Counter(e["segment"] for e in events)
+    cands = collections.Counter(c.segment for c in candidates)
+    hard = collections.Counter(c.segment for c in candidates if c.hard)
+    chosen = collections.Counter((c.segment, s) for c, s in zip(picked, splits, strict=True))
+    used = {
+        key: {
+            "wear": next(w for w, v in WEAR_TRUTH.items() if v == (truth.helmet, truth.vest)),
+            "expected": truth.expected,
+            "frames": frames[key],
+            "candidates": cands[key],
+            "candidates_hard": hard[key],
+            "selected": {s: chosen[(key, s)] for s in ("train", "val")},
+        }
+        for key, truth in truths.items()
+    }
+    return {"used": used, "excluded": dict(excluded)}
 
 
 def has_head_and_torso(detections: Sequence[Detection]) -> bool:
@@ -247,7 +388,7 @@ def draw_cell(crop: np.ndarray, cand: Candidate, split: str) -> np.ndarray:
     """접촉 시트 한 칸. 틀렸던 프레임은 빨간 테두리."""
     import cv2
 
-    scale = min(CELL_W / crop.shape[1], (CELL_H - 16) / crop.shape[0])
+    scale = min(CELL_W / crop.shape[1], (CELL_H - 30) / crop.shape[0])
     small = cv2.resize(
         crop, (max(1, int(crop.shape[1] * scale)), max(1, int(crop.shape[0] * scale)))
     )
@@ -259,6 +400,10 @@ def draw_cell(crop: np.ndarray, cand: Candidate, split: str) -> np.ndarray:
         cv2.rectangle(cell, p1, p2, DRAW_COLORS[name], 1)
     text = f"{cand.tag} {cand.t:.1f}s {split}" + (" HARD" if cand.hard else "")
     cv2.putText(cell, text, (2, CELL_H - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+    # 어느 구간(정답)의 라벨인지 — 맨머리 구간에 helmet 이 보이면 라벨이 틀린 것이다
+    cv2.putText(
+        cell, cand.segment, (2, CELL_H - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1
+    )
     if cand.hard:
         cv2.rectangle(cell, (0, 0), (CELL_W - 1, CELL_H - 1), (0, 0, 255), 2)
     return cell
@@ -294,15 +439,17 @@ def build_detectors(device: str, ppe_model: Path, coco_model: Path | None):
     if coco_model is not None:
         config["vision"]["coco"]["model_path"] = str(coco_model.resolve())
     coco = Detector(config, section="coco", labels=COCO_CLASSES)
-    # ⚠️ 이름은 4개만 준다. 5클래스 모델의 5번째는 `class_4` 로 나와 ALL_WORN 에서 버려진다.
+    # ⚠️ 이름은 4개만 준다. 5클래스 모델의 5번째는 `class_4` 로 나와 `truth_names` 에서 버려진다.
     ppe = Detector(config, section="ppe", labels=CLASSES)
     coco.open()
     ppe.open()
     return config, coco, ppe
 
 
-def collect(session: Path, events, config, coco, ppe) -> tuple[list[Candidate], dict[str, Any]]:
-    """전부 착용 프레임마다 다시 추론해 라벨 후보를 만든다."""
+def collect(
+    session: Path, events, truths: dict[str, SegmentTruth], config, coco, ppe
+) -> tuple[list[Candidate], dict[str, Any]]:
+    """정답을 아는 프레임마다 다시 추론해 라벨 후보를 만든다."""
     person_label = config["vision"]["coco"]["person_class"]
     pad = float(config["vision"]["ppe"]["crop_pad"])
     skipped: collections.Counter = collections.Counter()
@@ -324,21 +471,20 @@ def collect(session: Path, events, config, coco, ppe) -> tuple[list[Candidate], 
         if crop is None:
             skipped["크롭 실패"] += 1
             continue
+        truth = truths[event["segment"]]
         raw = ppe.detect(crop)
-        labels = relabel_all_worn(raw)
+        labels = relabel_by_truth(raw, truth.helmet, truth.vest)
         if not has_head_and_torso(labels):
             skipped["머리·몸통 박스 없음"] += 1
             continue
-        hard = STATE_VIOLATION in event.get("states", []) or any(
-            d.label in VIOLATION_LABELS for d in raw
-        )
         out.append(
             Candidate(
                 tag=event["tag"],
                 t=float(event["t"]),
-                hard=hard,
+                hard=is_hard(event.get("states", []), raw, truth),
                 person=person.box,
                 boxes=tuple((d.label, d.box) for d in labels),
+                segment=event["segment"],
             )
         )
     stats = {
@@ -355,6 +501,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ppe-model", type=Path, required=True, help="다시 추론할 PPE onnx")
     parser.add_argument("--coco-model", type=Path, help="기본은 설정의 models/coco.onnx")
     parser.add_argument("--build", type=Path, required=True, help="rf100_prepare 출력 폴더")
+    parser.add_argument(
+        "--plan", type=Path, default=DEFAULT_ACCEPTANCE_PLAN, help="구간 정의 (착용 정답)"
+    )
     parser.add_argument(
         "--keep-ratio", type=float, default=KEEP_RATIO, help="맞힌 프레임 표본 비율"
     )
@@ -373,14 +522,17 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"rf100_prepare 출력이 아니다: {build}")
     session_file = args.session / "session.json"
     data = json.loads(session_file.read_text(encoding="utf-8"))
-    events = all_worn_events(data.get("events", []))
+    scenario = data.get("scenario") or "xiao"
+    specs, _, _ = load_acceptance_plan(args.plan, scenario)
+    truths, excluded = segment_truths(specs)
+    events = truth_events(data.get("events", []), truths)
     if not events:
-        raise SystemExit("전부 착용(기대=적합) 구간 프레임이 없다")
+        raise SystemExit(f"착용 정답을 아는 구간 프레임이 없다 (뺀 구간 {excluded})")
     name = args.session.resolve().name
 
     config, coco, ppe = build_detectors(args.device, args.ppe_model, args.coco_model)
-    print(f"전부 착용 프레임 {len(events)}장 — 다시 추론")
-    candidates, stats = collect(args.session, events, config, coco, ppe)
+    print(f"착용 정답을 아는 프레임 {len(events)}장 — 다시 추론")
+    candidates, stats = collect(args.session, events, truths, config, coco, ppe)
     if stats["overlay_median"] >= OVERLAY_LIMIT and not args.allow_annotated:
         raise SystemExit(
             f"저장 프레임에 판정 박스가 그려져 있다 (테두리 판정색 중앙값 "
@@ -434,10 +586,16 @@ def main(argv: list[str] | None = None) -> int:
             "ppe": {"path": args.ppe_model.as_posix(), "sha256": sha256_file(args.ppe_model)},
             "coco": config["vision"]["coco"]["model_path"],
         },
+        "plan": {
+            "path": args.plan.as_posix(),
+            "sha256": sha256_file(args.plan),
+            "scenario": scenario,
+        },
         "rule": {
-            "frames": "기대=적합 구간 · 가장 큰 사람 · crop_pad 런타임값",
-            "relabel": ALL_WORN,
-            "hard": "세션 판정이 위반이었거나 다시 추론에서 no_helmet/no_vest",
+            "frames": "착용 정답을 아는 구간 · 가장 큰 사람 · crop_pad 런타임값",
+            "relabel": "머리 박스(helmet·no_helmet) → 구간 안전모 정답, "
+            "몸통 박스(vest·no_vest) → 구간 조끼 정답 (모델 이름 무시)",
+            "hard": "세션 판정이 기대와 반대였거나 다시 추론한 이름이 구간 정답과 다름",
             "keep_ratio": args.keep_ratio,
             "min_gap_s": args.min_gap_s,
             "block_s": args.block_s,
@@ -448,11 +606,12 @@ def main(argv: list[str] | None = None) -> int:
         },
         "annotated_frames": stats["overlay_median"] >= OVERLAY_LIMIT,
         "overlay_median": stats["overlay_median"],
-        "all_worn_frames": len(events),
+        "labelled_frames": len(events),
         "candidates": len(candidates),
         "candidates_hard": sum(1 for c in candidates if c.hard),
         "skipped": stats["skipped"],
         "splits": counts,
+        "segments": segment_table(truths, excluded, events, candidates, picked, splits),
         "annotations": files,
         "merged": merged,
         "review_sheets": sheets,

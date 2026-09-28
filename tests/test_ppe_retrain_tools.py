@@ -18,7 +18,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.vision.detector import Detection  # noqa: E402
 from tools.ppe import export_ppe, rf100_prepare, xiao_hardcases  # noqa: E402
-from tools.ppe_live_check import STATE_OK, STATE_VIOLATION, crop_person  # noqa: E402
+from tools.ppe_live_check import (  # noqa: E402
+    DEFAULT_ACCEPTANCE_PLAN,
+    STATE_OK,
+    STATE_VIOLATION,
+    crop_person,
+    load_acceptance_plan,
+)
 
 PERSON = (10.0, 20.0, 50.0, 120.0)  # 폭 40 · 높이 100
 HELMET = (22.0, 18.0, 38.0, 34.0)  # 머리 — 사람 박스 위로 조금 삐져나옴
@@ -199,6 +205,122 @@ def test_relabel_all_worn_turns_violations_into_worn_and_dedupes():
     ]
     assert xiao_hardcases.has_head_and_torso(out)
     assert not xiao_hardcases.has_head_and_torso(out[:1])
+
+
+def _xiao_truths():
+    specs, _, _ = load_acceptance_plan(DEFAULT_ACCEPTANCE_PLAN, "xiao")
+    return xiao_hardcases.segment_truths(specs)
+
+
+def test_segment_truths_reads_wear_from_acceptance_plan():
+    """착용 조합 8구간(직립·웅크림 × 4)을 쓰고, 확인불가·로봇 자세 구간은 이유와 함께 뺀다."""
+    used, excluded = _xiao_truths()
+    assert set(used) == {
+        f"{pose}-{wear}"
+        for pose in ("standing", "crouching")
+        for wear in ("all", "nohelmet", "novest", "none")
+    }
+    assert (used["standing-all"].helmet, used["standing-all"].vest) == (True, True)
+    assert (used["crouching-nohelmet"].helmet, used["crouching-nohelmet"].vest) == (False, True)
+    assert (used["standing-novest"].helmet, used["standing-novest"].vest) == (True, False)
+    assert (used["crouching-none"].helmet, used["crouching-none"].vest) == (False, False)
+    assert used["standing-none"].expected == STATE_VIOLATION
+    assert set(excluded) == {"clipped-base", "pitch-up", "sit"}
+    assert "확인불가" in excluded["clipped-base"]
+    assert "로봇 자세" in excluded["pitch-up"] and "로봇 자세" in excluded["sit"]
+
+
+def test_segment_truths_refuses_unknown_wear_and_inconsistent_expectation():
+    specs = [
+        {"key": "a", "condition": "직립·전신", "wear": "모자만", "expected": STATE_VIOLATION},
+        {"key": "b", "condition": "직립·전신", "wear": "안전모 미착용", "expected": STATE_OK},
+        {"key": "c", "condition": "직립·전신", "wear": "전부 착용", "expected": STATE_VIOLATION},
+    ]
+    used, excluded = xiao_hardcases.segment_truths(specs)
+    assert used == {}
+    assert "착용 문구" in excluded["a"]
+    assert "어긋" in excluded["b"] and "어긋" in excluded["c"]
+
+
+def test_truth_events_keeps_known_segments_with_people():
+    used, _ = _xiao_truths()
+    events = [
+        {"t": 1.0, "tag": "00001", "people": 1, "segment": None, "expected": None},
+        {"t": 2.0, "tag": "00002", "people": 1, "segment": "standing-all", "expected": STATE_OK},
+        {"t": 3.0, "tag": "00003", "people": 0, "segment": "standing-none", "expected": "위반"},
+        {"t": 4.0, "tag": "00004", "people": 1, "segment": "standing-none", "expected": "위반"},
+        {"t": 5.0, "tag": "00005", "people": 1, "segment": "pitch-up", "expected": STATE_OK},
+        {"t": 6.0, "tag": "00006", "people": 1, "segment": "clipped-base", "expected": "확인불가"},
+    ]
+    assert [e["tag"] for e in xiao_hardcases.truth_events(events, used)] == ["00002", "00004"]
+
+
+def test_truth_events_stops_when_plan_disagrees_with_session():
+    """세션이 기록한 기대 판정과 지금 구간 정의가 다르면 정의가 바뀐 것이다 — 멈춘다."""
+    used, _ = _xiao_truths()
+    events = [{"t": 1.0, "tag": "1", "people": 1, "segment": "standing-novest", "expected": "적합"}]
+    with pytest.raises(SystemExit):
+        xiao_hardcases.truth_events(events, used)
+
+
+def test_relabel_by_truth_names_boxes_from_segment_not_model():
+    found = [
+        Detection("helmet", 0.8, (10, 10, 30, 30)),  # 모델은 착용이라 했지만 맨머리 구간
+        Detection("no_helmet", 0.6, (11, 10, 31, 30)),  # 같은 머리
+        Detection("no_vest", 0.7, (5, 40, 40, 90)),  # 조끼는 입은 구간
+        Detection("class_4", 0.9, (0, 0, 50, 100)),
+    ]
+    out = xiao_hardcases.relabel_by_truth(found, helmet=False, vest=True)
+    assert sorted((d.label, d.score) for d in out) == [
+        ("no_helmet", pytest.approx(0.8)),
+        ("vest", pytest.approx(0.7)),
+    ]
+    both_off = xiao_hardcases.relabel_by_truth(found, helmet=False, vest=False)
+    assert sorted(d.label for d in both_off) == ["no_helmet", "no_vest"]
+    assert xiao_hardcases.has_head_and_torso(both_off)
+    # 전부 착용은 예전 규칙과 같다
+    assert [(d.label, d.box) for d in xiao_hardcases.relabel_by_truth(found, True, True)] == [
+        (d.label, d.box) for d in xiao_hardcases.relabel_all_worn(found)
+    ]
+
+
+def test_is_hard_marks_session_or_model_disagreement_with_truth():
+    helmet = Detection("helmet", 0.9, (0, 0, 1, 1))
+    no_helmet = Detection("no_helmet", 0.9, (0, 0, 1, 1))
+    vest = Detection("vest", 0.9, (0, 2, 1, 3))
+    truth_ok = xiao_hardcases.SegmentTruth(True, True, STATE_OK)
+    truth_bare = xiao_hardcases.SegmentTruth(False, True, STATE_VIOLATION)
+    # 전부 착용 — 예전 규칙: 세션 위반 또는 모델이 no_* 를 냈으면 틀림
+    assert not xiao_hardcases.is_hard([STATE_OK], [helmet, vest], truth_ok)
+    assert xiao_hardcases.is_hard([STATE_VIOLATION], [helmet, vest], truth_ok)
+    assert xiao_hardcases.is_hard([STATE_OK], [no_helmet, vest], truth_ok)
+    assert not xiao_hardcases.is_hard(["확인불가"], [helmet, vest], truth_ok)
+    # 맨머리 — 세션이 적합이라 했거나 모델이 helmet 을 냈으면 틀림
+    assert not xiao_hardcases.is_hard([STATE_VIOLATION], [no_helmet, vest], truth_bare)
+    assert xiao_hardcases.is_hard([STATE_OK], [no_helmet, vest], truth_bare)
+    assert xiao_hardcases.is_hard([STATE_VIOLATION], [helmet, vest], truth_bare)
+
+
+def test_segment_table_counts_per_segment():
+    used, excluded = _xiao_truths()
+    events = [
+        {"t": 1.0, "tag": "1", "segment": "standing-all"},
+        {"t": 2.0, "tag": "2", "segment": "standing-all"},
+        {"t": 3.0, "tag": "3", "segment": "standing-none"},
+    ]
+    cands = [
+        xiao_hardcases.Candidate("1", 1.0, False, (0, 0, 1, 1), (), "standing-all"),
+        xiao_hardcases.Candidate("3", 3.0, True, (0, 0, 1, 1), (), "standing-none"),
+    ]
+    table = xiao_hardcases.segment_table(used, excluded, events, cands, cands, ["train", "val"])
+    row = table["used"]["standing-none"]
+    assert row["frames"] == 1 and row["candidates"] == 1 and row["candidates_hard"] == 1
+    assert row["selected"] == {"train": 0, "val": 1}
+    assert row["wear"] == "둘 다 미착용"
+    assert table["used"]["standing-all"]["frames"] == 2
+    assert table["used"]["standing-all"]["selected"] == {"train": 1, "val": 0}
+    assert table["used"]["crouching-all"]["frames"] == 0
+    assert table["excluded"] == excluded
 
 
 def _cand(t: float, hard: bool) -> xiao_hardcases.Candidate:
