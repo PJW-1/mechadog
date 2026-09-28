@@ -24,10 +24,10 @@ def test_person_fallen_non_factory_shape() -> None:
 
 
 def test_person_fallen_factory_shape() -> None:
-    """공장 판(`_confirm_fall`) 형태 — `hits`·`suspect_ms`·`raw`. 문장은 같다."""
+    """공장 판(`_confirm_fall`) 형태 — `vlm_yes`·`suspect_ms`·`raw`. 문장은 같다."""
     sentence = describe(
         "person_fallen",
-        {"fallen": True, "hits": 3, "suspect_ms": 5000, "raw": "yes"},
+        {"fallen": True, "vlm_yes": 2, "suspect_ms": 5000, "raw": "yes"},
     )
     assert sentence is not None
     assert "쓰러" in sentence
