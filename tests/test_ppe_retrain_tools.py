@@ -181,7 +181,7 @@ def test_prepare_refuses_non_commercial_license(tmp_path):
 
 
 # ── xiao_hardcases ──────────────────────────────────────────
-def test_relabel_all_worn_turns_violations_into_worn_and_dedupes():
+def test_relabel_all_worn_truth_turns_violations_into_worn_and_dedupes():
     found = [
         Detection("no_helmet", 0.8, (10, 10, 30, 30)),
         Detection("helmet", 0.6, (11, 10, 31, 30)),  # 같은 머리
