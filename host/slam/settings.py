@@ -42,6 +42,9 @@ REQUIRED_TRACK = "lidar"
 REQUIRED_LIDAR_KEYS = (
     "scan_port",
     "scan_stall_timeout_ms",
+    "scan_forward_host",
+    "scan_forward_port",
+    "scan_forward_enabled",
     "range_min_mm",
     "range_max_mm",
     "scan_batch",
@@ -69,6 +72,10 @@ REQUIRED_LIDAR_KEYS = (
     "obstacle_mark_radius_mm",
     "estop_distance_mm",
     "forward_fan_deg",
+    "odom_host",
+    "odom_port",
+    "odom_rate_hz",
+    "odom_imu_stale_ms",
 )
 
 
@@ -111,6 +118,32 @@ def validate_section(section: dict[str, Any]) -> None:
         raise ConfigError("hit_logodds 는 양수, miss_logodds 는 음수여야 함")
     if section["resolution_mm"] <= 0 or section["initial_span_cells"] <= 0:
         raise ConfigError("resolution_mm · initial_span_cells 는 0보다 커야 함")
+    # ⚠️ **전달 목적지가 수신 포트와 같으면 안 된다** — 위 `scan_port` 와 같은
+    # 이유로 두 스키마가 한 소켓에 섞여 들어온다 (WBS 5.4.4).
+    port = section["scan_forward_port"]
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ConfigError("lidar.scan_forward_port 는 1~65535 정수여야 함")
+    if port == section["scan_port"]:
+        raise ConfigError(f"lidar.scan_forward_port 가 scan_port({section['scan_port']}) 와 같음")
+    host = section["scan_forward_host"]
+    if not isinstance(host, str) or not host.strip():
+        raise ConfigError("lidar.scan_forward_host 는 비어 있지 않은 문자열이어야 함")
+    if not isinstance(section["scan_forward_enabled"], bool):
+        raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
+
+    # ODOM 은 `scan_forward_port` 형식을 본 **뒤에** 검사한다 — 그래야 오류가 제 이름으로 나온다.
+    # 기동 뒤 `sendto` 에서 터지면 `send()` 가 삼켜 ODOM 이 조용히 안 나간다.
+    odom_port = section["odom_port"]
+    if not isinstance(odom_port, int) or isinstance(odom_port, bool) or not 1 <= odom_port <= 65535:
+        raise ConfigError("lidar.odom_port 는 1~65535 정수여야 함")
+    odom_host = section["odom_host"]
+    if not isinstance(odom_host, str) or not odom_host.strip():
+        raise ConfigError("lidar.odom_host 는 비어 있지 않은 문자열이어야 함")
+    # 같은 포트면 컨테이너가 스캔과 ODOM 을 한 소켓에서 받아 서로를 «모르는 타입» 으로 버린다.
+    if section["odom_port"] in (section["scan_port"], section["scan_forward_port"]):
+        raise ConfigError("odom_port 는 scan_port · scan_forward_port 와 달라야 함")
+    if section["odom_rate_hz"] <= 0 or section["odom_imu_stale_ms"] <= 0:
+        raise ConfigError("odom_rate_hz · odom_imu_stale_ms 는 0보다 커야 함")
 
     # ⚠️ **경로가 지나갈 자리가 E-STOP 거리 안이면 안 된다.**
     #
