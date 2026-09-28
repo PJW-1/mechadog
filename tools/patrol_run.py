@@ -457,7 +457,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
                 safety_latched=False,
                 obstacle=False,
                 dist_cm=100,
-                imu={"pitch": 0.0, "roll": 0.0, "yaw": imu_yaw},
+                yaw=imu_yaw,
                 last_cmd_age_ms=20,
             ),
             now_ms,
@@ -475,7 +475,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
                         safety_latched=False,
                         obstacle=False,
                         dist_cm=100,
-                        imu={"pitch": 0.0, "roll": 0.0, "yaw": imu_yaw},
+                        yaw=imu_yaw,
                         last_cmd_age_ms=20,
                     ),
                     now_ms,
@@ -523,11 +523,11 @@ class _FakeReading:
 
     __slots__ = (
         "dist_cm",
-        "imu",
         "last_cmd_age_ms",
         "obstacle",
         "safety_latched",
         "state",
+        "yaw",
     )
 
     def __init__(self, **fields: object) -> None:

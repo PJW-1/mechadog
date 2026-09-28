@@ -145,6 +145,19 @@ def validate_section(section: dict[str, Any]) -> None:
     if section["odom_rate_hz"] <= 0 or section["odom_imu_stale_ms"] <= 0:
         raise ConfigError("odom_rate_hz · odom_imu_stale_ms 는 0보다 커야 함")
 
+    # ⚠️ **전달 목적지가 수신 포트와 같으면 안 된다** — 위 `scan_port` 와 같은
+    # 이유로 두 스키마가 한 소켓에 섞여 들어온다 (WBS 5.4.4).
+    port = section["scan_forward_port"]
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ConfigError("lidar.scan_forward_port 는 1~65535 정수여야 함")
+    if port == section["scan_port"]:
+        raise ConfigError(f"lidar.scan_forward_port 가 scan_port({section['scan_port']}) 와 같음")
+    host = section["scan_forward_host"]
+    if not isinstance(host, str) or not host.strip():
+        raise ConfigError("lidar.scan_forward_host 는 비어 있지 않은 문자열이어야 함")
+    if not isinstance(section["scan_forward_enabled"], bool):
+        raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
+
     # ⚠️ **경로가 지나갈 자리가 E-STOP 거리 안이면 안 된다.**
     #
     # 팽창(반경 + 추종 여유)이 E-STOP 거리보다 크지 않으면, 계획된 경로를
