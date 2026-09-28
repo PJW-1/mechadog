@@ -56,7 +56,10 @@ def main() -> None:
     class Bridge(Node):
         def __init__(self) -> None:
             super().__init__("mechdog_scan_bridge")
-            self.port = int(os.getenv("LIDAR_SCAN_PORT", "5201"))
+            # 5201 은 중계 노드가 직접 보내는 포트다. Windows 순찰기가 그 포트의
+            # 유일한 수신자로 남고 여기로는 복사본을 전달하므로 기본값이 다르다
+            # (config.yaml lidar.scan_forward_port · WBS 5.4.4).
+            self.port = int(os.getenv("LIDAR_SCAN_PORT", "5203"))
             self.expected_device = os.getenv("LIDAR_DEVICE_ID", "")
             yaw = float(os.getenv("LIDAR_MOUNT_YAW_DEG", "0"))
             direction = int(os.getenv("LIDAR_ANGLE_DIRECTION", "1"))

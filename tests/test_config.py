@@ -776,3 +776,51 @@ def test_lidar_angle_direction_requires_signed_unit(cfg: dict) -> None:
         ok = deepcopy(cfg)
         ok.setdefault("lidar", {})["angle_direction"] = good
         validate_base_config(ok)
+
+
+def test_lidar_scan_forward_port_rejects_the_receive_port_and_bad_values(cfg: dict) -> None:
+    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다 (WBS 5.4.4)."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    same_as_scan_port = cfg["lidar"]["scan_port"]
+    for bad in (same_as_scan_port, 0, 70000, "5203", True, -1):
+        broken = deepcopy(cfg)
+        broken["lidar"]["scan_forward_port"] = bad
+        with pytest.raises(ConfigError, match="scan_forward_port"):
+            validate_base_config(broken)
+
+
+def test_lidar_scan_forward_port_accepts_a_different_port(cfg: dict) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    ok = deepcopy(cfg)
+    ok["lidar"]["scan_forward_port"] = cfg["lidar"]["scan_port"] + 1
+    validate_base_config(ok)
+
+
+def test_lidar_scan_forward_host_must_be_a_non_empty_string(cfg: dict) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in ("", "   ", None, 127):
+        broken = deepcopy(cfg)
+        broken["lidar"]["scan_forward_host"] = bad
+        with pytest.raises(ConfigError, match="scan_forward_host"):
+            validate_base_config(broken)
+
+
+def test_lidar_scan_forward_enabled_must_be_a_bool(cfg: dict) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (1, 0, "true", None):
+        broken = deepcopy(cfg)
+        broken["lidar"]["scan_forward_enabled"] = bad
+        with pytest.raises(ConfigError, match="scan_forward_enabled"):
+            validate_base_config(broken)

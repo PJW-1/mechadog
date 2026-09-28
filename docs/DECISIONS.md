@@ -466,6 +466,7 @@ GPU 를 안 쓰는 결정이 아니라 **아무 GPU 나 쓰겠다는 결정**이
 - [Espressif DevKitC V4 공식 가이드 — Micro USB 포트](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32/hw-reference/esp32/get-started-devkitc.html)
 
 로컬에 남아 있던 ADR 초안의 취지를 보존하되, 미확인 제품 수치와 칩/보드 혼동을 정정했다.
+
 <a id="adr-20"></a>
 ## ADR-20 · 벤더 라이브러리를 저장소에 넣지 않는다 (라이선스 표기 부재)
 
