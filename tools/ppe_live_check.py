@@ -525,6 +525,29 @@ def wait_for_camera(config, minutes: float) -> bool:
     return False
 
 
+def verdict_tally(expected: str, verdicts: dict[str, int]) -> dict[str, int]:
+    """판정 집계 한 칸 → 일치·불일치·확인불가·판정 가능 건수.
+
+    이 구간 집계와 `tools/ppe/episode_eval.py` 가 같은 식을 쓰도록 한 곳에 둔다.
+    `coverage_*` 는 판정 가능률·조건부 정확도의 분모용이며, 기대가 확인불가인 칸은
+    0 으로 둔다 — 거기서는 보류가 정답이라 «판정 가능» 을 따질 수 없다.
+    """
+    right = verdicts.get(expected, 0)
+    unknown = verdicts.get(STATE_UNKNOWN, 0)
+    count = sum(verdicts.values())
+    counted = expected != STATE_UNKNOWN
+    return {
+        "count": count,
+        "right": right,
+        "wrong": count - right - (unknown if counted else 0),
+        "unknown": unknown,
+        "determinate": count - unknown,
+        "coverage_count": count if counted else 0,
+        "coverage_determinate": count - unknown if counted else 0,
+        "coverage_right": right if counted else 0,
+    }
+
+
 def segment_section(add, segment_log: SegmentLog) -> None:
     """구간을 눌러 가며 봤을 때만 쓰는 절. **정답을 알 때만 오판정을 셀 수 있다.**
 
@@ -540,17 +563,13 @@ def segment_section(add, segment_log: SegmentLog) -> None:
         if not stats or not stats.get("frames"):
             rows.append(f"{number}. {title} — 관측 없음")
             continue
-        verdicts = stats["verdicts"]
-        right = verdicts.get(spec["expected"], 0)
-        unknown = verdicts.get(STATE_UNKNOWN, 0)
-        count = sum(verdicts.values())
-        wrong = count - right - (unknown if spec["expected"] != STATE_UNKNOWN else 0)
-        determinate = count - unknown
+        tally = verdict_tally(spec["expected"], stats["verdicts"])
+        right, unknown, count = tally["right"], tally["unknown"], tally["count"]
+        wrong, determinate = tally["wrong"], tally["determinate"]
         total_right += right
         total += count
-        if spec["expected"] != STATE_UNKNOWN:
-            coverage_determinate += determinate
-            coverage_total += count
+        coverage_determinate += tally["coverage_determinate"]
+        coverage_total += tally["coverage_count"]
 
         def pct(n: int, base: int = count) -> str:
             return f"{n / base:.0%}" if base else "-"
