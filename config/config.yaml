@@ -642,7 +642,7 @@ lidar:
   # (`docker/ros2/scan_bridge.py`)가 같은 포트를 또 바인드하면 동시에 켤 수
   # 없으므로, `tools/patrol_run.py` 의 `serve_real()` 이 `scan_port` 의 유일한
   # 수신자로 남고 받은 데이터그램을 바이트 그대로 여기로 복사해 넘긴다.
-  # LiDAR 비상정지(`guard_scan`)는 이 전달과 무관하게 직접 경로로 먼저 실행된다.
+  # LiDAR 비상정지(`guard_scan`)는 이 전달과 무관한 직접 경로로 남는다.
   # ⚠️ `tools/lidar_live_map.py` 의 `--pose-port` 기본값(5202)과 겹치지 않아야
   # 한다 — 그래서 5203 을 쓴다.
   scan_forward_host: 127.0.0.1

@@ -682,6 +682,16 @@ def test_forwarding_to_a_closed_port_never_breaks_the_scan_socket() -> None:
         feeder.close()
 
 
+def test_forward_peer_resolves_the_host_once_at_startup() -> None:
+    """⚠️ 호스트명을 그대로 `sendto` 에 넘기면 스캔마다 DNS 조회가 수신 루프를 막는다."""
+    section = {"scan_forward_host": "localhost", "scan_forward_port": 5203}
+    assert patrol_run.forward_peer_of({**section, "scan_forward_enabled": True}) == (
+        "127.0.0.1",
+        5203,
+    )
+    assert patrol_run.forward_peer_of({**section, "scan_forward_enabled": False}) is None
+
+
 def test_forward_scan_survives_a_socket_error() -> None:
     """`ConnectionResetError` 도 `OSError` 이므로 잡혀서 `False` 로만 돌아온다."""
 
