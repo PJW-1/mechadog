@@ -146,8 +146,8 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 
 ## 개발 방식
 
-- **테스트**: 하드웨어 없이 도는 pytest 3,056건(80개 파일)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. CI 는 `host`·`tools` 커버리지 80% 미만이면 실패합니다.
+- **테스트**: 하드웨어 없이 도는 pytest 3,074건(80개 파일, 2026-09-29 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. CI 는 `host`·`tools` 커버리지 80% 미만이면 실패합니다.
 - **CI 게이트**: [`ci.yml`](.github/workflows/ci.yml)이 ruff 린트·포맷, pytest, 펌웨어 3종 arduino-cli 빌드와 펌웨어 정적 분석을 PR 마다 돌립니다.
 - **문서·코드 일치 검사**: [ARCHITECTURE.md](docs/ARCHITECTURE.md)의 상태 전이표와 코드의 전이표가 같은지를 테스트가 대조하고([`tests/test_fsm.py`](tests/test_fsm.py)), 작업 목록 생성 결과가 원본과 같은지(`wbs_assignments.py --check`)와 문서 상대 링크가 실제 파일을 가리키는지(`check_doc_links.py`)를 CI 가 확인합니다.
-- **커밋과 리뷰**: 커밋은 Conventional Commits 규약을 따르고, 변경은 PR 로 검토해 병합합니다(병합된 PR 307건).
+- **커밋과 리뷰**: 커밋은 Conventional Commits 규약을 따르고, 변경은 PR 로 검토해 병합합니다(병합된 PR 321건, 2026-09-29 기준).
 - **라이선스**: 저장소 코드는 [Apache-2.0](LICENSE)입니다. 검출 모델 가중치는 저장소에 넣지 않고 `python tools/fetch_models.py` 로 받으며, 출처와 라이선스는 [models/README.md](models/README.md)에 있습니다. 제조사 모션 라이브러리는 라이선스 표기가 없어 저장소에 넣지 않습니다([ADR-20](docs/DECISIONS.md#adr-20)).
