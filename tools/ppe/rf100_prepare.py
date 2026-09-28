@@ -66,6 +66,7 @@ PERSON = "person"
 #: ⚠️ 대조는 `normalize_name` 을 거친 뒤에 한다 (`no-helmet`·`No Helmet` → `no_helmet`).
 MAPPING: dict[str, str | None] = {
     "workers": None,  # Roboflow 상위 범주 자리표시자 (id 0) — 이름은 내보내기마다 다르다
+    "construction_safety": None,  # 2026-09-28 실제 내보내기(j2-p/construction-safety-gsnvb-h1yhi)
     "helmet": "helmet",
     "no_helmet": "no_helmet",
     "vest": "vest",
@@ -381,7 +382,8 @@ def prepare(
                 add_image(coco, file_name, x2 - x1, y2 - y1, boxes)
         ann_out = out / "annotations" / f"instances_{split}.json"
         ann_out.parent.mkdir(parents=True, exist_ok=True)
-        ann_out.write_text(json.dumps(coco, ensure_ascii=False), encoding="utf-8")
+        # ⚠️ 왜 ASCII: pycocotools 가 인코딩 없이 open() 해서 Windows(cp949)에서 한글에 멈춘다
+        ann_out.write_text(json.dumps(coco), encoding="utf-8")
         counts["excluded"] = dict(counts["excluded"])
         counts["images"] = len(coco["images"])
         counts["boxes"] = dict(

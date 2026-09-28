@@ -141,7 +141,10 @@ def test_prepare_builds_yolox_layout_and_card(tmp_path):
     card = rf100_prepare.prepare(raw, out, "v0", seed=1)
 
     for split, folder in rf100_prepare.IMAGE_DIRS.items():
-        coco = json.loads((out / "annotations" / f"instances_{split}.json").read_text("utf-8"))
+        ann = out / "annotations" / f"instances_{split}.json"
+        # pycocotools 는 인코딩 없이 open() 한다 — Windows(cp949)에서 한글이 있으면 학습이 멈춘다
+        ann.read_bytes().decode("ascii")
+        coco = json.loads(ann.read_text("utf-8"))
         # 카테고리 id 순서 = 우리 4클래스 순서 (YOLOX 는 id 를 정렬해 클래스 번호로 쓴다)
         assert [c["name"] for c in sorted(coco["categories"], key=lambda c: c["id"])] == list(
             rf100_prepare.CLASSES

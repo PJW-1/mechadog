@@ -237,7 +237,8 @@ def merge_build(build: Path) -> dict[str, str]:
             for p in sorted(ann_dir.glob(f"xiao_*_{split}.json"))
         ]
         out = ann_dir / f"instances_{split}_mix.json"
-        out.write_text(json.dumps(merge_coco(base, extras), ensure_ascii=False), encoding="utf-8")
+        # ASCII 로 쓴다 — pycocotools 가 cp949 로 읽는다 (rf100_prepare 와 같다)
+        out.write_text(json.dumps(merge_coco(base, extras)), encoding="utf-8")
         written[split] = f"{out.name} · sha256 {sha256_file(out)}"
     return written
 
@@ -406,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     files: dict[str, str] = {}
     for split, coco_json in cocos.items():
         path = ann_dir / f"xiao_{name}_{split}.json"
-        path.write_text(json.dumps(coco_json, ensure_ascii=False), encoding="utf-8")
+        path.write_text(json.dumps(coco_json), encoding="utf-8")  # ASCII — 위 merge 와 같다
         files[split] = f"{path.name} · sha256 {sha256_file(path)}"
     sheets = write_sheets(cells, build / "review" / f"xiao_{name}")
     merged = merge_build(build) if args.merge else {}
