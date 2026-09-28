@@ -255,3 +255,57 @@ ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom`
 > **3번은 파괴적 변경이 될 수 있다.** 나중에 단위를 바꾸면
 > 중계 노드 펌웨어와 픽스처를 함께 고쳐야 한다 (PROTOCOL 4절). 그래서 실기
 > 결선 전에 정하는 것이 좋다.
+
+---
+
+## 8. 오도메트리 전달 — `ODOM` (Host PC → ROS2 컨테이너 · WBS 5.4.3)
+
+6절의 «우리에게 오도메트리가 없다» 를 메우는 링크다. 호스트(`tools/patrol_run.py`)가
+**실제로 보낸 명령의 시간 창 × 그 기체의 `gait_calibration` 속도**로 거리를, **IMU
+yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이너의
+`docker/ros2/odom_bridge.py` 로 보낸다. 브리지가 `odom → base_link` tf 를 낸다.
+로봇·중계 노드가 말하지 않는 **호스트 안의 링크**이므로 기존 규약에 대한 추가다.
+
+| 링크 | 방향 | 프로토콜 | 주기 | 포트 (`config.yaml`) |
+| :--- | :--- | :--- | :--- | :--- |
+| **오도메트리** | **Host PC → ROS2 컨테이너** | **UDP** | **10 Hz** (`lidar.odom_rate_hz`) | **5204** (`lidar.odom_host` · `lidar.odom_port`) |
+
+```json
+{"seq": 42, "ts": 1790000000123, "type": "ODOM", "device_id": "mechdog-01", "boot_id": "5c1e0a9b7d3f2468", "x_m": 1.204, "y_m": -0.117, "yaw_rad": 0.52, "valid": true}
+```
+
+| 필드 | 타입 | 의미 |
+| :--- | :--- | :--- |
+| `seq` | **int** | 송신 프로세스 안에서 1 부터 단조 증가 |
+| `ts` | **int** | 자세가 가리키는 **Host epoch 밀리초**. 컨테이너는 ROS 시각으로 쓰지 않는다 (아래) |
+| `type` | **str** | `ODOM` |
+| `device_id` | **str** | 로봇 개체 이름 (`--device`, 예: `mechdog-01`) |
+| `boot_id` | **str** | **순찰기 프로세스 한 번의 실행.** 다시 켜면 `seq` 가 1 로 돌아오므로 SCAN 과 같은 이유로 둔다 |
+| `x_m` · `y_m` | 실수 | `odom` 프레임 위치 (**m**) |
+| `yaw_rad` | 실수 | `odom` 프레임 방위 (**rad**, `[-π, π)`) |
+| `valid` | **bool** | 거짓이면 좌표를 쓰지 않는다. `0`/`1` 은 받지 않는다 |
+
+> **단위가 로봇 규약(mm·deg)과 다르다 — 그래서 이름에 싣는다.** 양 끝이 모두 호스트
+> 쪽 파이썬이고 ROS 가 m·rad 를 요구하므로 변환할 자리가 없다. `tools/lidar_live_map.py`
+> 의 자세 입력(5202)이 같은 `x_m`·`y_m`·`yaw_rad` 를 쓴다.
+
+**검증 규칙은 3절의 ①~⑤ 를 그대로 쓴다** (`host/common/odom_link.py` · `OdomDecoder`).
+점 배열이 없으므로 ⑥ 은 없다. `x_m`·`y_m`·`yaw_rad` 는 유한한 수여야 하고(NaN·bool
+폐기), `valid` 는 bool 이어야 한다.
+
+### `valid` 가 거짓인 경우
+
+- IMU 표본이 아직 없다 — `odom` 의 원점과 방위(첫 표본 = 0)가 정해지지 않았다.
+- IMU 표본이 `lidar.odom_imu_stale_ms`(500ms) 보다 오래됐다 — **명령값만으로 만든 위치를
+  유효하다고 내보내지 않는다** (WBS 5.4.3 DoD).
+
+`gait_calibration` 이 없는 기체는 오도메트리를 만들지 않는다. 전문 자체가
+나가지 않고 순찰기가 `odometry_unavailable` 오류를 남긴다.
+
+### 브리지 (`odom_bridge.py`)
+
+| 항목 | 값 |
+| :--- | :--- |
+| `header.stamp` | **수신 시각.** 전문 `ts` 는 호스트 시계라 컨테이너 시계와 같다는 보장이 없다 — 6절 `LaserScan.header.stamp` 와 같은 이유 |
+| `odom → base_link` | `valid=true` 전문을 받을 때마다 1회. **무효·폐기·두절이면 내지 않는다** — 직전 값 반복이나 항등 변환으로 채우지 않는다 |
+| `base_link → laser` | `LASER_OFFSET_X_M`·`_Y_M`·`_Z_M` 이 **모두** 있을 때만 고정 변환. 없으면 경고만 한다. **회전은 0** — 장착 방향은 `scan_bridge` 디코더가 이미 적용한다(한 곳에서만 보정) |
