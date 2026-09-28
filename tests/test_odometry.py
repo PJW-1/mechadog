@@ -295,7 +295,35 @@ def test_odom_port_is_5204_and_free_of_the_other_links() -> None:
         config["network"]["cmd_port"],
         config["network"]["telemetry_port"],
         section["scan_port"],
+        5202,  # `lidar_live_map --pose-port` — ODOM 의 x_m·y_m 을 자세로 삼킨다
     }
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("odom_port", 70000),
+        ("odom_port", 0),
+        ("odom_port", "5204"),
+        ("odom_port", True),
+        ("odom_host", ""),
+        ("odom_host", 127),
+    ],
+)
+def test_bad_odom_destination_is_refused_at_startup(key: str, value: object) -> None:
+    """⚠️ 기동 뒤 `sendto` 에서 터지면 `send()` 가 삼켜 ODOM 이 조용히 안 나간다."""
+    section = dict(settings.read_lidar_section())
+    section[key] = value
+    with pytest.raises(ConfigError, match=key):
+        settings.validate_section(section)
+
+
+def test_odom_peer_resolves_the_host_once_at_startup() -> None:
+    """⚠️ 호스트명을 그대로 `sendto` 에 넘기면 10Hz 마다 DNS 조회가 순찰 루프를 막는다."""
+    assert patrol_run.odom_peer_of({"odom_host": "localhost", "odom_port": 5204}) == (
+        "127.0.0.1",
+        5204,
+    )
 
 
 def test_send_reports_only_the_lines_that_left() -> None:

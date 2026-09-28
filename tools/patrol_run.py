@@ -124,6 +124,11 @@ def forward_peer_of(lidar: dict) -> tuple[str, int] | None:
     return (socket.gethostbyname(str(lidar["scan_forward_host"])), int(lidar["scan_forward_port"]))
 
 
+def odom_peer_of(lidar: dict) -> tuple[str, int]:
+    """ODOM 목적지 (WBS 5.4.3). `forward_peer_of` 와 같은 이유로 이름을 기동 때 한 번만 푼다."""
+    return (socket.gethostbyname(str(lidar["odom_host"])), int(lidar["odom_port"]))
+
+
 def forward_scan(sock: socket.socket, raw: bytes, peer: tuple[str, int]) -> bool:
     """받은 LiDAR 데이터그램을 컨테이너 전달 목적지로 그대로 복사한다 (WBS 5.4.4).
 
@@ -239,12 +244,13 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     peer = (peer_ip, int(network["cmd_port"])) if peer_ip else None
 
     odometry, odom_encoder = open_odometry(config, args.device)
-    odom_peer = (str(lidar["odom_host"]), int(lidar["odom_port"]))
+    odom_peer = odom_peer_of(lidar)
     odom_period_ms = round(1000 / float(lidar["odom_rate_hz"]))
     # 명령 소켓과 **따로 연다.** 컨테이너가 없으면 ICMP 오류가 소켓에 남는데, 같은
     # 소켓이면 그 오류가 다음 로봇 명령 송신에서 터져 명령 하나를 잃을 수 있다.
     odom_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     odom_due_ms = 0
+    odom_failing = False
 
     def transmit(lines: list[str] | tuple[str, ...]) -> None:
         sent = send(cmd_sock, peer, lines)
@@ -356,7 +362,13 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     yaw_rad=pose.yaw_rad,
                     valid=pose.valid,
                 )
-                send(odom_sock, odom_peer, [line])
+                if send(odom_sock, odom_peer, [line]):
+                    if odom_failing:
+                        LOG.info("odom_send_recovered", peer=str(odom_peer))
+                        odom_failing = False
+                elif not odom_failing:
+                    LOG.warning("odom_send_failed", peer=str(odom_peer))
+                    odom_failing = True
 
             if args.cycles > 0 and controller.stats.cycles >= args.cycles:
                 LOG.info("cycles_done", cycles=controller.stats.cycles)

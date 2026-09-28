@@ -118,6 +118,13 @@ def validate_section(section: dict[str, Any]) -> None:
         raise ConfigError("hit_logodds 는 양수, miss_logodds 는 음수여야 함")
     if section["resolution_mm"] <= 0 or section["initial_span_cells"] <= 0:
         raise ConfigError("resolution_mm · initial_span_cells 는 0보다 커야 함")
+    # 기동 뒤 `sendto` 에서 터지면 `send()` 가 삼켜 ODOM 이 조용히 안 나간다.
+    odom_port = section["odom_port"]
+    if not isinstance(odom_port, int) or isinstance(odom_port, bool) or not 1 <= odom_port <= 65535:
+        raise ConfigError("lidar.odom_port 는 1~65535 정수여야 함")
+    odom_host = section["odom_host"]
+    if not isinstance(odom_host, str) or not odom_host.strip():
+        raise ConfigError("lidar.odom_host 는 비어 있지 않은 문자열이어야 함")
     # 같은 포트면 컨테이너가 스캔과 ODOM 을 한 소켓에서 받아 서로를 «모르는 타입» 으로 버린다.
     if section["odom_port"] in (section["scan_port"], section["scan_forward_port"]):
         raise ConfigError("odom_port 는 scan_port · scan_forward_port 와 달라야 함")
