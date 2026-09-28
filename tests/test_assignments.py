@@ -8,6 +8,8 @@
 그래서 **사람의 규칙 준수에 의존하지 않는다** (CONTRIBUTING 5절).
 """
 
+import re
+
 import pytest
 from conftest import ROOT
 
@@ -116,11 +118,47 @@ def test_approved_phase2_packages_are_listed_as_work(
     text = render(packages)
     work = _sections(text, "### 🟢") + _sections(text, "### ⏳")
     assert "### ⏸" not in text
-    for wid in ("2.2.1", "2.5", "3.6.1", "3.6.5", "3.9.1", "3.9.2", "5.4.1", "5.4.5"):
-        package = next(p for p in packages if p.wid == wid)
-        assert package.phase2, f"{wid}: [P2] 표기 누락"
-        assert "P2 승인" not in package.predecessor, f"{wid}: 승인된 조건이 선행에 남았다"
-        assert f"`{wid}`" in work, f"{wid}: 할 일 목록에 없다"
+    by_id = {p.wid: p for p in packages}
+    # 승인 때 선행을 고친 세 행과 새로 등재한 `3.9.0` 은 표기가 빠져도 알아채도록 못 박는다.
+    for wid in (
+        "2.2.1",
+        "2.5",
+        "3.6.1",
+        "3.6.5",
+        "3.9.0",
+        "3.9.1",
+        "3.9.2",
+        "5.4.1",
+        "5.4.2",
+        "5.4.5",
+    ):
+        assert by_id[wid].phase2, f"{wid}: [P2] 표기 누락"
+    for package in packages:
+        if not package.phase2:
+            continue
+        assert "P2 승인" not in package.predecessor, f"{package.wid}: 승인된 조건이 선행에 남았다"
+        if not package.done:
+            assert f"`{package.wid}`" in work, f"{package.wid}: 할 일 목록에 없다"
+
+
+def test_section_headings_match_their_packages(packages: list[WorkPackage]) -> None:
+    """절 제목의 공수가 그 아래 워크패키지 합과 같아야 한다.
+
+    `3.9.0` 을 등재하며 `#### 3.9` 와 총 공수는 고쳤지만 `### 3.0` 제목은 26.0 으로
+    남았다(2026-09-28 · Devin 검수). 총 공수 시험은 행 합만 보므로 절 제목은 못 잡았다.
+    """
+    body = (ROOT / "docs" / "WBS.md").read_text(encoding="utf-8")
+    headings = re.findall(r"^#{3,4} (\d+\.\d+) .*? — ([\d.]+) M/D", body, re.M)
+    assert headings, "절 제목을 하나도 읽지 못했다"
+    for section, stated in headings:
+        major, minor = section.split(".")
+        if minor == "0":
+            actual = sum(p.effort for p in packages if p.group == major)
+        else:
+            actual = sum(p.effort for p in packages if f"{p.wid}.".startswith(f"{section}."))
+        assert actual == pytest.approx(float(stated)), (
+            f"{section}: 제목 {stated} ≠ 하위 합 {actual}"
+        )
 
 
 def test_packages_without_effort_still_appear(packages: list[WorkPackage]) -> None:
