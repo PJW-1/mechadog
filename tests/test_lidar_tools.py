@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import socket
 from pathlib import Path
@@ -32,6 +33,7 @@ from host.common.config import ConfigError
 from host.common.lidar_link import ScanDecoder, encode_scan
 from host.slam import settings, simulation, viz
 from host.slam.occupancy import MapMeta, OccupancyGrid
+from host.telemetry.receiver import Reading as TelemetryReading
 
 
 @pytest.fixture(scope="module")
@@ -611,11 +613,16 @@ def test_open_socket_is_non_blocking() -> None:
         sock.close()
 
 
-def test_fake_reading_exposes_the_protocol_field_names() -> None:
-    """규약의 이름을 그대로 쓴다 — `yaw` 가 아니라 `imu.yaw` 다."""
-    reading = patrol_run._FakeReading(state="PATROL", imu={"yaw": 12.0})
+def test_fake_reading_exposes_the_receiver_field_names() -> None:
+    """`host.telemetry.receiver.Reading` 과 같은 이름을 쓴다 — `imu.yaw` 가 아니라 `yaw` 다.
+
+    이름이 어긋나면 컨트롤러가 시뮬레이션에서만 IMU 보조를 조용히 잃는다.
+    """
+    receiver_fields = {field.name for field in dataclasses.fields(TelemetryReading)}
+    assert set(patrol_run._FakeReading.__slots__) <= receiver_fields
+    reading = patrol_run._FakeReading(state="PATROL", yaw=12.0)
     assert reading.state == "PATROL"
-    assert reading.imu["yaw"] == 12.0
+    assert reading.yaw == 12.0
     assert reading.safety_latched is None
 
 
