@@ -72,6 +72,10 @@ REQUIRED_LIDAR_KEYS = (
     "obstacle_mark_radius_mm",
     "estop_distance_mm",
     "forward_fan_deg",
+    "odom_host",
+    "odom_port",
+    "odom_rate_hz",
+    "odom_imu_stale_ms",
 )
 
 
@@ -114,6 +118,11 @@ def validate_section(section: dict[str, Any]) -> None:
         raise ConfigError("hit_logodds 는 양수, miss_logodds 는 음수여야 함")
     if section["resolution_mm"] <= 0 or section["initial_span_cells"] <= 0:
         raise ConfigError("resolution_mm · initial_span_cells 는 0보다 커야 함")
+    # 같은 포트면 컨테이너가 스캔과 ODOM 을 한 소켓에서 받아 서로를 «모르는 타입» 으로 버린다.
+    if section["odom_port"] == section["scan_port"]:
+        raise ConfigError("odom_port 는 scan_port 와 달라야 함")
+    if section["odom_rate_hz"] <= 0 or section["odom_imu_stale_ms"] <= 0:
+        raise ConfigError("odom_rate_hz · odom_imu_stale_ms 는 0보다 커야 함")
 
     # ⚠️ **전달 목적지가 수신 포트와 같으면 안 된다** — 위 `scan_port` 와 같은
     # 이유로 두 스키마가 한 소켓에 섞여 들어온다 (WBS 5.4.4).

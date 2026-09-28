@@ -1,0 +1,418 @@
+"""오도메트리 · ODOM 링크 · odom_bridge 순수부 (WBS 5.4.3).
+
+로봇·LiDAR·rclpy 없이 닫는다 — 보낸 전문과 IMU 표본, 시각만 넣는다.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import runpy
+from pathlib import Path
+
+import pytest
+
+import tools.patrol_run as patrol_run
+from host.common.config import ConfigError
+from host.common.odom_link import OdomDecoder, OdomEncoder, encode_odom, odom_of
+from host.common.protocol import CommandEncoder, Verdict
+from host.slam import settings
+from host.slam.odometry import (
+    CALIBRATION_STEP_MM,
+    Odometry,
+    OdomParams,
+    odom_params_from_config,
+)
+
+BRIDGE = runpy.run_path(str(Path(__file__).resolve().parents[1] / "docker/ros2/odom_bridge.py"))
+transform_of = BRIDGE["transform_of"]
+laser_offset_from_env = BRIDGE["laser_offset_from_env"]
+
+#: `mechdog-01` 실측값 (2026-09-11). 시험이 설정 파일을 바꿔도 흔들리지 않게 박는다.
+PARAMS = OdomParams(
+    forward_mm_per_sec=104.0,
+    reverse_mm_per_sec=78.0,
+    command_timeout_ms=600,
+    imu_stale_ms=500,
+)
+PERIOD_MS = 100
+
+
+class Rig:
+    """실제 인코더로 만든 전문을 10Hz 로 넣는다. 텔레메트리도 10Hz."""
+
+    def __init__(self, params: OdomParams = PARAMS) -> None:
+        self.odom = Odometry(params)
+        self.encoder = CommandEncoder(clock=lambda: 0)
+        self.now = 1_000_000
+
+    def run(
+        self,
+        seconds: float,
+        *,
+        move: tuple[float, float] | None,
+        yaw_rate_deg: float = 0.0,
+        yaw0: float = 10.0,
+        imu: bool = True,
+    ) -> None:
+        ticks = round(seconds * 1000 / PERIOD_MS)
+        for _ in range(ticks):
+            if imu:
+                self.odom.note_imu(yaw0 % 360.0, self.now, "boot-a")
+            line = self.encoder.move(*move) if move is not None else self.encoder.stop()
+            self.odom.note_sent([line], self.now)
+            self.now += PERIOD_MS
+            yaw0 += yaw_rate_deg * PERIOD_MS / 1000
+        if imu:
+            self.odom.note_imu(yaw0 % 360.0, self.now, "boot-a")
+        self.yaw_deg = yaw0
+
+
+def test_holding_stop_does_not_move() -> None:
+    rig = Rig()
+    rig.run(3.0, move=None)
+    pose = rig.odom.pose(rig.now)
+    assert pose.valid
+    assert (pose.x_m, pose.y_m, pose.yaw_rad) == (0.0, 0.0, 0.0)
+
+
+def test_straight_for_n_seconds_is_speed_times_time() -> None:
+    rig = Rig()
+    rig.run(0.1, move=None)  # 첫 IMU 표본 — 여기가 odom 원점이다
+    rig.run(5.0, move=(CALIBRATION_STEP_MM, 0.0))
+    pose = rig.odom.pose(rig.now)
+    assert pose.valid
+    assert pose.x_m == pytest.approx(0.104 * 5.0, abs=1e-9)
+    assert pose.y_m == pytest.approx(0.0, abs=1e-9)
+
+
+def test_step_scales_speed_from_the_calibration_step() -> None:
+    """비례 가정 (모듈 머리말). 실측 때 step 60 의 절반이면 절반 속도다."""
+    rig = Rig()
+    rig.run(0.1, move=None)
+    rig.run(2.0, move=(CALIBRATION_STEP_MM / 2, 0.0))
+    assert rig.odom.pose(rig.now).x_m == pytest.approx(0.052 * 2.0, abs=1e-9)
+
+
+def test_reverse_uses_the_reverse_speed() -> None:
+    rig = Rig()
+    rig.run(0.1, move=None)
+    rig.run(2.0, move=(-CALIBRATION_STEP_MM, 0.0))
+    assert rig.odom.pose(rig.now).x_m == pytest.approx(-0.078 * 2.0, abs=1e-9)
+
+
+def test_imu_yaw_across_the_zero_boundary_is_a_small_turn() -> None:
+    odom = Odometry(PARAMS)
+    odom.note_imu(359.0, 0, "b")
+    odom.note_imu(1.0, 100, "b")
+    assert odom.pose(100).yaw_rad == pytest.approx(math.radians(2.0))
+    odom.note_imu(358.0, 200, "b")
+    assert odom.pose(200).yaw_rad == pytest.approx(math.radians(-1.0))
+
+
+def test_absolute_imu_yaw_is_not_used() -> None:
+    """부팅 옵셋이 137° 여도 odom 의 방위는 첫 표본에서 0 이다 (scan_match 버그 ⑥)."""
+    odom = Odometry(PARAMS)
+    odom.note_imu(137.0, 0, "b")
+    assert odom.pose(0).yaw_rad == 0.0
+
+
+def test_forward_while_turning_integrates_along_imu_heading() -> None:
+    """좌선회 9 도/s 로 10초 = 90°. 원호 반경 r = v/ω 의 사분원 끝에 닿는다."""
+    rig = Rig()
+    rig.run(0.1, move=None)
+    rig.run(10.0, move=(CALIBRATION_STEP_MM, 20.0), yaw_rate_deg=9.0)
+    pose = rig.odom.pose(rig.now)
+    radius = 0.104 / math.radians(9.0)
+    assert pose.yaw_rad == pytest.approx(math.pi / 2, abs=1e-9)
+    assert pose.x_m == pytest.approx(radius, rel=0.01)
+    assert pose.y_m == pytest.approx(radius, rel=0.01)
+
+
+def test_stale_imu_makes_the_pose_invalid() -> None:
+    rig = Rig()
+    rig.run(0.1, move=None)
+    rig.run(2.0, move=(CALIBRATION_STEP_MM, 0.0), imu=False)
+    pose = rig.odom.pose(rig.now)
+    assert not pose.valid
+    assert "IMU" in pose.reason
+
+
+def test_no_imu_yet_is_invalid_and_commands_alone_do_not_move_it() -> None:
+    rig = Rig()
+    rig.run(2.0, move=(CALIBRATION_STEP_MM, 0.0), imu=False)
+    assert not rig.odom.pose(rig.now).valid
+    # 첫 표본이 오면 그 전 이동은 방위 기준이 없어 적분하지 않는다.
+    rig.odom.note_imu(42.0, rig.now, "boot-a")
+    pose = rig.odom.pose(rig.now)
+    assert pose.valid
+    assert (pose.x_m, pose.y_m) == (0.0, 0.0)
+
+
+def test_motion_during_an_imu_gap_uses_the_measured_turn_when_imu_returns() -> None:
+    """끊긴 동안의 이동은 방위를 알게 된 뒤 두 표본의 yaw 를 보간해 적분한다."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    for t in range(0, 2000, PERIOD_MS):
+        odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 20.0)], t)
+    assert not odom.pose(2000).valid
+    odom.note_imu(90.0, 2000, "b")
+    pose = odom.pose(2000)
+    assert pose.valid
+    # 2초 × 0.104 m/s 를 0→90° 로 고르게 돌며 갔다 — 사분원 끝.
+    radius = 0.208 / (math.pi / 2)
+    assert pose.x_m == pytest.approx(radius, rel=0.01)
+    assert pose.y_m == pytest.approx(radius, rel=0.01)
+
+
+def test_reboot_of_the_imu_is_not_read_as_a_turn() -> None:
+    odom = Odometry(PARAMS)
+    odom.note_imu(250.0, 0, "boot-a")
+    odom.note_imu(0.0, 100, "boot-b")
+    assert odom.pose(100).yaw_rad == 0.0
+
+
+def test_no_motion_after_stop() -> None:
+    rig = Rig()
+    rig.run(0.1, move=None)
+    rig.run(1.0, move=(CALIBRATION_STEP_MM, 0.0))
+    moved = rig.odom.pose(rig.now).x_m
+    rig.run(3.0, move=None)
+    assert rig.odom.pose(rig.now).x_m == pytest.approx(moved)
+    assert moved == pytest.approx(0.104)
+
+
+def test_move_expires_after_the_command_timeout() -> None:
+    """로봇은 `cmd_timeout_ms` 동안 명령이 없으면 스스로 멈춘다 (FR-1.3)."""
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    for t in range(100, 3001, 100):
+        odom.note_imu(0.0, t, "b")
+    assert odom.pose(3000).x_m == pytest.approx(0.104 * 0.6)
+
+
+def test_move_after_estop_is_not_motion_until_reset_safe() -> None:
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_sent([encoder.estop(), encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    odom.note_imu(0.0, 500, "b")
+    assert odom.pose(500).x_m == 0.0
+    odom.note_sent([encoder.reset_safe(), encoder.move(CALIBRATION_STEP_MM, 0.0)], 500)
+    odom.note_imu(0.0, 1000, "b")
+    assert odom.pose(1000).x_m == pytest.approx(0.052)
+
+
+def test_non_motion_commands_do_not_change_motion() -> None:
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    odom.note_sent([encoder.state("PATROL"), encoder.led("green", 0.0)], 200)
+    odom.note_imu(0.0, 500, "b")
+    assert odom.pose(500).x_m == pytest.approx(0.052)
+
+
+def test_pose_extrapolates_after_the_last_imu_within_the_limit() -> None:
+    odom = Odometry(PARAMS)
+    encoder = CommandEncoder(clock=lambda: 0)
+    odom.note_imu(0.0, 0, "b")
+    odom.note_sent([encoder.move(CALIBRATION_STEP_MM, 0.0)], 0)
+    pose = odom.pose(300)
+    assert pose.valid
+    assert pose.stamp_ms == 300
+    assert pose.x_m == pytest.approx(0.104 * 0.3)
+
+
+# ── 설정 ─────────────────────────────────────────────────────
+
+
+def config_with(calibration: object) -> dict:
+    config = settings.load(None)
+    config["gait_calibration"] = calibration
+    return config
+
+
+def test_missing_gait_calibration_refuses_to_build_odometry() -> None:
+    """`mechdog-03` 처럼 실측 전이면 만들지 않는다 — 다른 기체 값으로 채우지 않는다."""
+    with pytest.raises(ConfigError, match="gait_calibration"):
+        odom_params_from_config(config_with(None))
+
+
+def test_missing_reverse_speed_is_refused_not_borrowed_from_forward() -> None:
+    with pytest.raises(ConfigError, match="reverse_mm_per_sec"):
+        odom_params_from_config(config_with({"forward_mm_per_sec": 104.0}))
+
+
+def test_params_come_from_the_unit_profile_and_config() -> None:
+    config = settings.load("mechdog-01")
+    params = odom_params_from_config(config)
+    assert params.forward_mm_per_sec == config["gait_calibration"]["forward_mm_per_sec"]
+    assert params.reverse_mm_per_sec == config["gait_calibration"]["reverse_mm_per_sec"]
+    assert params.command_timeout_ms == config["safety"]["cmd_timeout_ms"]
+    assert params.imu_stale_ms == config["lidar"]["odom_imu_stale_ms"]
+
+
+def test_unit_without_calibration_runs_without_odometry() -> None:
+    odometry, encoder = patrol_run.open_odometry(config_with(None), "mechdog-03")
+    assert odometry is None
+    assert (
+        json.loads(encoder.encode(ts_ms=1, x_m=0, y_m=0, yaw_rad=0, valid=False))["valid"] is False
+    )
+
+
+def test_odom_port_must_differ_from_scan_port() -> None:
+    section = dict(settings.read_lidar_section())
+    section["odom_port"] = section["scan_port"]
+    with pytest.raises(ConfigError, match="odom_port"):
+        settings.validate_section(section)
+
+
+def test_odom_rate_and_imu_limit_must_be_positive() -> None:
+    for key in ("odom_rate_hz", "odom_imu_stale_ms"):
+        section = dict(settings.read_lidar_section())
+        section[key] = 0
+        with pytest.raises(ConfigError, match=key):
+            settings.validate_section(section)
+
+
+def test_odom_port_is_5204_and_free_of_the_other_links() -> None:
+    config = settings.load(None)
+    section = config["lidar"]
+    assert section["odom_port"] == 5204
+    assert section["odom_port"] not in {
+        config["network"]["cmd_port"],
+        config["network"]["telemetry_port"],
+        section["scan_port"],
+    }
+
+
+def test_send_reports_only_the_lines_that_left() -> None:
+    """오도메트리는 **실제로 나간** 명령만 적분한다."""
+
+    class FlakySocket:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def sendto(self, *_: object) -> None:
+            self.calls += 1
+            if self.calls == 2:
+                raise OSError("ICMP")
+
+    sent = patrol_run.send(FlakySocket(), ("127.0.0.1", 5001), ["a", "b", "c"])  # type: ignore[arg-type]
+    assert sent == ["a", "c"]
+    assert patrol_run.send(FlakySocket(), None, ["a"]) == []  # type: ignore[arg-type]
+
+
+# ── ODOM 전문 ────────────────────────────────────────────────
+
+
+def odom_line(**overrides: object) -> str:
+    fields = {
+        "seq": 1,
+        "ts_ms": 1000,
+        "device_id": "mechdog-01",
+        "boot_id": "a" * 16,
+        "x_m": 1.25,
+        "y_m": -0.5,
+        "yaw_rad": 0.75,
+        "valid": True,
+    }
+    fields.update(overrides)
+    return encode_odom(**fields)  # type: ignore[arg-type]
+
+
+def test_odom_round_trip() -> None:
+    encoder = OdomEncoder("mechdog-01", "a" * 16)
+    decoder = OdomDecoder()
+    first = odom_of(
+        decoder.decode(encoder.encode(ts_ms=5, x_m=1.0, y_m=2.0, yaw_rad=-0.5, valid=True))
+    )
+    second = odom_of(decoder.decode(encoder.encode(ts_ms=6, x_m=0, y_m=0, yaw_rad=0, valid=False)))
+    assert first is not None and second is not None
+    assert (first.seq, first.ts_ms, first.x_m, first.y_m, first.yaw_rad, first.valid) == (
+        1,
+        5,
+        1.0,
+        2.0,
+        -0.5,
+        True,
+    )
+    assert (second.seq, second.valid) == (2, False)
+    assert json.loads(odom_line())["type"] == "ODOM"
+
+
+@pytest.mark.parametrize(
+    ("raw", "verdict"),
+    [
+        ("{not json", Verdict.DISCARD),
+        ("[]", Verdict.DISCARD),
+        ('{"type": []}', Verdict.DISCARD),
+        ('{"type": "POSE2D", "seq": 1}', Verdict.DISCARD_WARN),
+        (
+            json.dumps({k: v for k, v in json.loads(odom_line()).items() if k != "valid"}),
+            Verdict.DISCARD,
+        ),
+        (odom_line(seq=0), Verdict.DISCARD),
+        (odom_line(seq=1.5), Verdict.DISCARD),
+        (odom_line(ts_ms=-1), Verdict.DISCARD),
+        (odom_line(device_id=""), Verdict.DISCARD),
+        (odom_line().replace('"valid":true', '"valid":1'), Verdict.DISCARD),
+        (odom_line().replace('"x_m":1.25', '"x_m":"1.25"'), Verdict.DISCARD),
+        (odom_line().replace('"yaw_rad":0.75', '"yaw_rad":NaN'), Verdict.DISCARD),
+        (odom_line().replace('"y_m":-0.5', '"y_m":true'), Verdict.DISCARD),
+    ],
+)
+def test_malformed_odom_is_discarded(raw: str, verdict: Verdict) -> None:
+    result = OdomDecoder().decode(raw)
+    assert result.verdict is verdict, result.reason
+    assert odom_of(result) is None
+
+
+def test_odom_seq_reversal_is_discarded_and_new_session_accepted() -> None:
+    decoder = OdomDecoder()
+    assert decoder.decode(odom_line(seq=5)).accepted
+    assert not decoder.decode(odom_line(seq=5)).accepted
+    assert not decoder.decode(odom_line(seq=4)).accepted
+    # 순찰기를 다시 켜면 새 boot_id 의 seq=1 이다.
+    assert decoder.decode(odom_line(seq=1, boot_id="b" * 16)).accepted
+
+
+# ── odom_bridge 순수부 ───────────────────────────────────────
+
+
+def test_bridge_turns_a_valid_odom_into_a_planar_transform() -> None:
+    odom = odom_of(OdomDecoder().decode(odom_line(yaw_rad=math.pi / 2)))
+    x, y, z, qx, qy, qz, qw = transform_of(odom)
+    assert (x, y, z, qx, qy) == (1.25, -0.5, 0.0, 0.0, 0.0)
+    assert (qz, qw) == (pytest.approx(math.sqrt(0.5)), pytest.approx(math.sqrt(0.5)))
+
+
+def test_bridge_publishes_nothing_for_invalid_or_discarded_odom() -> None:
+    """무효·폐기 전문은 tf 가 되지 않는다 — 항등이나 직전 값으로 채우지 않는다."""
+    decoder = OdomDecoder()
+    assert transform_of(odom_of(decoder.decode(odom_line(valid=False)))) is None
+    assert transform_of(odom_of(decoder.decode("{broken"))) is None
+
+
+def test_laser_offset_needs_every_value_explicitly() -> None:
+    assert laser_offset_from_env({})[0] is None
+    offset, reason = laser_offset_from_env({"LASER_OFFSET_X_M": "0.05", "LASER_OFFSET_Y_M": "0"})
+    assert offset is None
+    assert "LASER_OFFSET_Z_M" in reason
+    offset, _ = laser_offset_from_env(
+        {"LASER_OFFSET_X_M": "0.05", "LASER_OFFSET_Y_M": "0", "LASER_OFFSET_Z_M": "abc"}
+    )
+    assert offset is None
+    offset, _ = laser_offset_from_env(
+        {"LASER_OFFSET_X_M": "0.05", "LASER_OFFSET_Y_M": "0", "LASER_OFFSET_Z_M": "nan"}
+    )
+    assert offset is None
+    offset, reason = laser_offset_from_env(
+        {"LASER_OFFSET_X_M": "0.05", "LASER_OFFSET_Y_M": "-0.01", "LASER_OFFSET_Z_M": "0.22"}
+    )
+    assert offset == (0.05, -0.01, 0.22)
+    assert reason == ""

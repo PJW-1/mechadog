@@ -27,6 +27,7 @@ import argparse
 import contextlib
 import math
 import random
+import secrets
 import socket
 import sys
 import time
@@ -50,10 +51,12 @@ from host.common.lidar_link import (
     scan_of,
 )
 from host.common.logging_setup import event_logger, setup_logging
+from host.common.odom_link import OdomEncoder
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import deg_to_rad, ms_to_s
 from host.slam import settings, simulation
 from host.slam.occupancy import OccupancyGrid
+from host.slam.odometry import Odometry, odom_params_from_config
 from host.slam.settings import (
     match_params_from_config,
     plan_params_from_config,
@@ -177,14 +180,35 @@ def send(
     sock: socket.socket | None,
     peer: tuple[str, int] | None,
     lines: list[str] | tuple[str, ...],
-) -> None:
+) -> list[str]:
+    """보낸 전문을 돌려준다 — 오도메트리는 **실제로 나간 명령**만 적분한다."""
     if sock is None or peer is None:
-        return
+        return []
+    sent = []
     for line in lines:
-        with contextlib.suppress(OSError):
+        try:
+            sock.sendto(line.encode("utf-8"), peer)
+        except OSError:
             # Windows 는 상대가 없으면 ICMP 로 예외를 낸다. UDP 는 도달을 보장하지
             # 않으므로 여기서 재시도하지 않는다 — 다음 틱이 100ms 뒤에 온다.
-            sock.sendto(line.encode("utf-8"), peer)
+            continue
+        sent.append(line)
+    return sent
+
+
+def open_odometry(config: dict, device_id: str) -> tuple[Odometry | None, OdomEncoder]:
+    """오도메트리와 ODOM 인코더. **보행 실측이 없는 기체는 `None`** (WBS 5.4.3).
+
+    순찰은 멈추지 않는다 — 지금 순찰 측위는 `PatrolController` 의 스캔 정합이고,
+    오도메트리는 컨테이너의 `slam_toolbox` 에만 간다. 대신 크게 남긴다.
+    """
+    # `boot_id` 는 이 프로세스 한 번의 실행이다 — 다시 켜면 `seq` 가 1 로 돌아온다.
+    encoder = OdomEncoder(device_id, secrets.token_hex(8))
+    try:
+        return Odometry(odom_params_from_config(config)), encoder
+    except ConfigError as exc:
+        LOG.error("odometry_unavailable", reason=str(exc), effect="odom->base_link 없음")
+        return None, encoder
 
 
 def stop_for_shutdown(
@@ -214,6 +238,19 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     peer_ip = args.robot or network.get("mechdog_ip")
     peer = (peer_ip, int(network["cmd_port"])) if peer_ip else None
 
+    odometry, odom_encoder = open_odometry(config, args.device)
+    odom_peer = (str(lidar["odom_host"]), int(lidar["odom_port"]))
+    odom_period_ms = round(1000 / float(lidar["odom_rate_hz"]))
+    # 명령 소켓과 **따로 연다.** 컨테이너가 없으면 ICMP 오류가 소켓에 남는데, 같은
+    # 소켓이면 그 오류가 다음 로봇 명령 송신에서 터져 명령 하나를 잃을 수 있다.
+    odom_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    odom_due_ms = 0
+
+    def transmit(lines: list[str] | tuple[str, ...]) -> None:
+        sent = send(cmd_sock, peer, lines)
+        if odometry is not None:
+            odometry.note_sent(sent, system_clock_ms())
+
     scan_decoder = ScanDecoder(
         float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
     )
@@ -229,7 +266,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
 
     # ① 세션 개시 — **가장 먼저 인코딩해야 한다** (`Commander.open_session` 주석).
     session_line = controller.commander.open_session()
-    send(cmd_sock, peer, [session_line])
+    transmit([session_line])
     LOG.info("session_opened", peer=str(peer))
     controller.start()
 
@@ -263,7 +300,9 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     # 이것은 "어디로 답을 보낼까" 다 (runtime.py 머리말 · DR-17).
                     peer = (sender[0], int(network["cmd_port"]))
                     LOG.info("peer_learned", peer=str(peer))
-                    send(cmd_sock, peer, [session_line])
+                    transmit([session_line])
+                if odometry is not None and ingested.reading.yaw is not None:
+                    odometry.note_imu(ingested.reading.yaw, now_ms, ingested.reading.boot_id)
                 controller.observe_telemetry(ingested.reading, now_ms)
 
             # ── LiDAR 스캔 ──
@@ -298,13 +337,26 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                 # ③ 위험은 즉시 나간다.
                 urgent = controller.guard_scan(scan)
                 if urgent:
-                    send(cmd_sock, peer, [urgent])
+                    transmit([urgent])
                 controller.observe_scan(scan, now_ms)
 
             # ── 판단 ──
-            send(cmd_sock, peer, controller.step(now_ms))
+            transmit(controller.step(now_ms))
             # ② 변화가 없어도 10Hz 로 계속 보낸다.
-            send(cmd_sock, peer, controller.commander.tick(now_ms))
+            transmit(controller.commander.tick(now_ms))
+
+            # ── 오도메트리 (WBS 5.4.3) — 송신 실패는 순찰을 멈추지 않는다 (`send`) ──
+            if odometry is not None and now_ms >= odom_due_ms:
+                odom_due_ms = now_ms + odom_period_ms
+                pose = odometry.pose(now_ms)
+                line = odom_encoder.encode(
+                    ts_ms=pose.stamp_ms,
+                    x_m=pose.x_m,
+                    y_m=pose.y_m,
+                    yaw_rad=pose.yaw_rad,
+                    valid=pose.valid,
+                )
+                send(odom_sock, odom_peer, [line])
 
             if args.cycles > 0 and controller.stats.cycles >= args.cycles:
                 LOG.info("cycles_done", cycles=controller.stats.cycles)
@@ -321,6 +373,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
         forward_sock.close()
         tlm_sock.close()
         cmd_sock.close()
+        odom_sock.close()
     return 0
 
 
