@@ -23,7 +23,10 @@ PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe_live_check.py --segm
 전부 착용 · 안전모만 · 조끼만 · 둘 다 없음 × 직립 · 웅크림 구간을 쓴다. 머리 박스
 (helmet·no_helmet)는 그 구간의 안전모 정답으로, 몸통 박스(vest·no_vest)는 조끼 정답으로
 이름을 정한다 — **모델이 낸 이름이 아니라 구간의 정답이 라벨이다.** 모델은 박스 위치만
-준다. 기대=확인불가 구간(머리 잘림)과 로봇 자세 구간(pitch_up·sit)은 쓰지 않는다 — 이유는
+준다. 그래서 **위치를 검사한다** — 머리 박스는 사람 박스 머리 구간(위 0~30%), 몸통 박스는
+몸통 구간(25~80%)에 IoA 0.5 이상 들어야 하고(`rf100_prepare.in_body_part` 그대로), 이름을
+바꾼 뒤 머리·몸통 박스가 같은 자리에 겹치면 둘 다 버린다. 버린 박스는 카드에 사유별로
+센다. 기대=확인불가 구간(머리 잘림)과 로봇 자세 구간(pitch_up·sit)은 쓰지 않는다 — 이유는
 `segment_truths` 가 카드에 남긴다. 머리나 몸통 박스가 없는 프레임은 버린다 — 없는 쪽이
 배경으로 학습되기 때문이다 (`rf100_prepare.py` 의 부분 라벨 규칙과 같다).
 
@@ -70,9 +73,13 @@ from tools.ppe.rf100_prepare import (  # noqa: E402
     HEAD_CLASSES,
     IMAGE_DIRS,
     TORSO_CLASSES,
+    Box,
     add_image,
+    area,
     empty_coco,
     ensure_under_datasets,
+    in_body_part,
+    intersect,
     sha256_file,
     write_jpeg,
 )
@@ -99,6 +106,8 @@ ROBOT_POSE_MARKS = ("pitch_up", "sit", "기본 자세")
 
 #: 이름이 같아진 박스끼리 겹치면 하나만 남긴다 (한 머리에 helmet·no_helmet 이 함께 뜬 경우).
 DEDUPE_IOU = 0.45
+#: 이름을 바꾼 뒤 머리 박스와 몸통 박스가 이만큼 겹치면 «같은 자리의 두 계열» 로 보고 둘 다 버린다.
+CROSS_IOU = 0.45
 KEEP_RATIO = 0.2
 MIN_GAP_S = 0.5
 BLOCK_S = 10.0
@@ -110,6 +119,11 @@ OVERLAY_LIMIT = 0.5
 #: JPEG 압축 뒤 색 허용 오차(채널별)와 테두리 탐색 폭(px).
 OVERLAY_TOL = 60
 OVERLAY_BAND = 3
+
+#: 라벨에서 버린 박스의 사유 (카드 `dropped_boxes`).
+DROP_HEAD_PLACE = "머리 박스가 머리 구간 밖"
+DROP_TORSO_PLACE = "몸통 박스가 몸통 구간 밖"
+DROP_CROSS = "머리·몸통 박스가 같은 자리"
 
 SHEET_COLS, SHEET_ROWS = 6, 5
 CELL_W, CELL_H = 200, 300
@@ -218,17 +232,51 @@ def truth_names(helmet: bool, vest: bool) -> dict[str, str]:
     return {**dict.fromkeys(HEAD_CLASSES, head), **dict.fromkeys(TORSO_CLASSES, torso)}
 
 
-def relabel_by_truth(detections: Sequence[Detection], helmet: bool, vest: bool) -> list[Detection]:
-    """박스 이름을 구간 정답으로 바꾸고 겹침을 걷어 낸다 (한 머리에 두 이름이 뜬 경우)."""
+def iou(a: Box, b: Box) -> float:
+    inter = area(intersect(a, b))
+    union = area(a) + area(b) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def relabel_by_truth(
+    detections: Sequence[Detection],
+    helmet: bool,
+    vest: bool,
+    person: Box | None = None,
+    drops: collections.Counter | None = None,
+) -> list[Detection]:
+    """박스 이름을 구간 정답으로 바꾸고 겹침을 걷어 낸다 (한 머리에 두 이름이 뜬 경우).
+
+    `person` 을 주면 (PPE 박스와 같은 좌표계) 부위 밖 박스를 먼저 버린다 — 이름을 정답으로
+    바꾸므로 몸통·배경에 그어진 머리 박스도 그대로 라벨이 되기 때문이다. 이름 NMS 뒤에는
+    머리·몸통 두 계열이 같은 자리에 겹친 쌍을 버린다. 버린 수는 `drops` 에 사유별로 더한다.
+    """
+    drops = collections.Counter() if drops is None else drops
     names = truth_names(helmet, vest)
     renamed = [Detection(names[d.label], d.score, d.box) for d in detections if d.label in names]
+    if person is not None:
+        placed = []
+        for d in renamed:
+            if in_body_part(d.label, d.box, person):
+                placed.append(d)
+            else:
+                drops[DROP_HEAD_PLACE if d.label in HEAD_CLASSES else DROP_TORSO_PLACE] += 1
+        renamed = placed
     out: list[Detection] = []
     for name in dict.fromkeys(d.label for d in renamed):
         same = [d for d in renamed if d.label == name]
         boxes = np.array([d.box for d in same], dtype=np.float32)
         scores = np.array([d.score for d in same], dtype=np.float32)
         out.extend(same[i] for i in nms(boxes, scores, DEDUPE_IOU))
-    return out
+    crossed: set[int] = set()
+    for i, h in enumerate(out):
+        for j, t in enumerate(out):
+            head_torso = h.label in HEAD_CLASSES and t.label in TORSO_CLASSES
+            if head_torso and iou(h.box, t.box) >= CROSS_IOU:
+                crossed |= {i, j}
+    if crossed:
+        drops[DROP_CROSS] += len(crossed)
+    return [d for i, d in enumerate(out) if i not in crossed]
 
 
 def relabel_all_worn(detections: Sequence[Detection]) -> list[Detection]:
@@ -453,6 +501,7 @@ def collect(
     person_label = config["vision"]["coco"]["person_class"]
     pad = float(config["vision"]["ppe"]["crop_pad"])
     skipped: collections.Counter = collections.Counter()
+    dropped: collections.Counter = collections.Counter()
     overlays: list[float] = []
     out: list[Candidate] = []
     for event in events:
@@ -467,13 +516,16 @@ def collect(
         # ⚠️ 런타임(`PpeDetector.observe`)처럼 **가장 큰(높은) 사람 하나**만 본다.
         person = max(people, key=lambda d: d.box[3] - d.box[1])
         overlays.append(overlay_fraction(image, person.box))
-        crop, _ = crop_person(image, person.box, pad)
+        crop, (ox, oy) = crop_person(image, person.box, pad)
         if crop is None:
             skipped["크롭 실패"] += 1
             continue
         truth = truths[event["segment"]]
         raw = ppe.detect(crop)
-        labels = relabel_by_truth(raw, truth.helmet, truth.vest)
+        # ⚠️ PPE 박스는 크롭 좌표다. 사람 박스를 크롭 원점만큼 옮겨 같은 좌표계에서 본다.
+        x1, y1, x2, y2 = person.box
+        in_crop = (x1 - ox, y1 - oy, x2 - ox, y2 - oy)
+        labels = relabel_by_truth(raw, truth.helmet, truth.vest, person=in_crop, drops=dropped)
         if not has_head_and_torso(labels):
             skipped["머리·몸통 박스 없음"] += 1
             continue
@@ -489,6 +541,7 @@ def collect(
         )
     stats = {
         "skipped": dict(skipped),
+        "dropped_boxes": dict(dropped),
         "overlay_median": round(statistics.median(overlays), 3) if overlays else 0.0,
     }
     return out, stats
@@ -595,6 +648,8 @@ def main(argv: list[str] | None = None) -> int:
             "frames": "착용 정답을 아는 구간 · 가장 큰 사람 · crop_pad 런타임값",
             "relabel": "머리 박스(helmet·no_helmet) → 구간 안전모 정답, "
             "몸통 박스(vest·no_vest) → 구간 조끼 정답 (모델 이름 무시)",
+            "place": "머리 박스는 사람 박스 머리 구간(0~30%), 몸통 박스는 몸통 구간(25~80%)에 "
+            f"IoA≥0.5 (rf100_prepare.in_body_part) · 머리·몸통 박스 IoU≥{CROSS_IOU} 이면 둘 다 버림",
             "hard": "세션 판정이 기대와 반대였거나 다시 추론한 이름이 구간 정답과 다름",
             "keep_ratio": args.keep_ratio,
             "min_gap_s": args.min_gap_s,
@@ -610,6 +665,7 @@ def main(argv: list[str] | None = None) -> int:
         "candidates": len(candidates),
         "candidates_hard": sum(1 for c in candidates if c.hard),
         "skipped": stats["skipped"],
+        "dropped_boxes": stats["dropped_boxes"],
         "splits": counts,
         "segments": segment_table(truths, excluded, events, candidates, picked, splits),
         "annotations": files,

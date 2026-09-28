@@ -159,16 +159,24 @@ def band(person: Box, span: tuple[float, float]) -> Box:
     return (x1, y1 + h * span[0], x2, y1 + h * span[1])
 
 
-def person_label_problem(person: Box, ppe: Sequence[tuple[str, Box]]) -> str | None:
-    """사람의 머리·몸통 라벨이 다 있는지. 빠졌으면 사유, 다 있으면 `None`.
+def in_body_part(name: str, box: Box, person: Box) -> bool:
+    """PPE 박스가 이름 계열의 부위(머리 박스=머리 구간, 몸통 박스=몸통 구간) 안인지.
 
     ⚠️ 박스 중심이 아니라 IoA 로 본다 — 안전모 챙이 사람 박스 위로 삐져나와도
-    대부분이 머리 영역 안이면 그 사람의 머리 라벨이다.
+    대부분이 머리 영역 안이면 그 사람의 머리 라벨이다. `xiao_hardcases` 도 이 규칙을 쓴다.
     """
-    head, torso = band(person, HEAD_REGION), band(person, TORSO_REGION)
-    if not any(c in HEAD_CLASSES and ioa(b, head) >= MIN_IOA for c, b in ppe):
+    if name in HEAD_CLASSES:
+        return ioa(box, band(person, HEAD_REGION)) >= MIN_IOA
+    if name in TORSO_CLASSES:
+        return ioa(box, band(person, TORSO_REGION)) >= MIN_IOA
+    return False
+
+
+def person_label_problem(person: Box, ppe: Sequence[tuple[str, Box]]) -> str | None:
+    """사람의 머리·몸통 라벨이 다 있는지. 빠졌으면 사유, 다 있으면 `None`."""
+    if not any(c in HEAD_CLASSES and in_body_part(c, b, person) for c, b in ppe):
         return REASON_NO_HEAD
-    if not any(c in TORSO_CLASSES and ioa(b, torso) >= MIN_IOA for c, b in ppe):
+    if not any(c in TORSO_CLASSES and in_body_part(c, b, person) for c, b in ppe):
         return REASON_NO_TORSO
     return None
 

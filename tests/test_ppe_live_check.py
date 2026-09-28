@@ -509,3 +509,75 @@ def test_main_runs_offline_and_writes_a_report(
     assert drawn.any()
     assert np.array_equal(raw_frame, frame)
     assert "원본 프레임" in text
+
+
+# ── 저장 폴더 가드 (얼굴 프레임 커밋 방지 · 한글 경로) ─────────────────
+REPO = Path(__file__).resolve().parents[1]
+
+
+def test_frame_folder_outside_the_repo_is_allowed(tmp_path: Path) -> None:
+    folder = tmp_path / "raw"
+    assert ppe.ensure_untracked_frame_dir(folder) == folder.resolve()
+
+
+def test_frame_folder_on_a_tracked_repo_path_is_refused() -> None:
+    """얼굴이 담긴 프레임이 깃 추적 경로에 떨어지면 커밋될 수 있다 — 시작 전에 멈춘다."""
+    with pytest.raises(SystemExit):
+        ppe.ensure_untracked_frame_dir(REPO / "docs" / "ppe_frames_should_not_exist")
+    assert not (REPO / "docs" / "ppe_frames_should_not_exist").exists()
+
+
+def test_frame_folder_under_ignored_results_is_allowed() -> None:
+    folder = REPO / "TEST_MECHDOG" / "results" / "x" / "raw"
+    assert ppe.ensure_untracked_frame_dir(folder) == folder.resolve()
+
+
+def _offline_args(folder: Path, *extra: str) -> list[str]:
+    return ["--images", str(folder), "--device", "mechdog-01", "--web-port", "0", *extra]
+
+
+def test_main_refuses_a_tracked_save_dir_before_loading_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_detector(*_a: object, **_kw: object) -> None:
+        raise AssertionError("저장 폴더 가드보다 모델 적재가 먼저 돌았다")
+
+    monkeypatch.setattr(ppe, "Detector", no_detector)
+    tracked = REPO / "docs" / "ppe_frames_should_not_exist"
+    for flag in ("--save-dir", "--save-raw-dir"):
+        with pytest.raises(SystemExit):
+            ppe.main(_offline_args(tmp_path, flag, str(tracked)))
+    assert not tracked.exists()
+
+
+def test_main_saves_frames_under_a_korean_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cv2.imwrite` 는 한글 경로에서 조용히 실패한다 — 저장이 실제로 되는지 본다."""
+    import cv2
+
+    from tools.ppe.index_raw import imread_any
+
+    folder = tmp_path / "images"
+    folder.mkdir()
+    frame = np.full((200, 300, 3), 30, dtype=np.uint8)
+    ok, buf = cv2.imencode(".jpg", frame)
+    assert ok
+    buf.tofile(str(folder / "sample.jpg"))
+
+    def fake_detector(_config: object, *, section: str, **_kw: object) -> FakeDetector:
+        if section == "coco":
+            return FakeDetector([det("person", (100, 40, 180, 160))])
+        return FakeDetector([det("helmet", (5, 5, 20, 20)), det("vest", (5, 40, 30, 90))])
+
+    monkeypatch.setattr(ppe, "Detector", fake_detector)
+    drawn_dir = tmp_path / "실측 세션" / "판정 프레임"
+    raw_dir = tmp_path / "실측 세션" / "원본"
+    code = ppe.main(
+        _offline_args(folder, "--save-dir", str(drawn_dir), "--save-raw-dir", str(raw_dir))
+    )
+
+    assert code == 0
+    assert (drawn_dir / "sample.jpg").is_file()
+    assert (raw_dir / "sample.jpg").is_file()
+    assert imread_any(raw_dir / "sample.jpg", cv2.IMREAD_COLOR) is not None

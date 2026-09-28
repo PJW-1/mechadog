@@ -36,6 +36,7 @@ import argparse
 import collections
 import hashlib
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -73,6 +74,7 @@ STATE_COLOR = {STATE_OK: (0, 200, 0), STATE_VIOLATION: (0, 0, 255), STATE_UNKNOW
 #: 브라우저로 볼 때 쓰는 경계 문자열.
 WEB_BOUNDARY = "mechdog-ppe-frame"
 DEFAULT_ACCEPTANCE_PLAN = Path(__file__).resolve().parents[1] / "config" / "ppe_acceptance.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_acceptance_plan(path: Path, scenario: str) -> tuple[list[dict[str, str]], int, list[str]]:
@@ -774,6 +776,37 @@ def write_report(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def ensure_untracked_frame_dir(folder: Path) -> Path:
+    """얼굴이 담긴 프레임을 저장할 폴더가 **깃이 무시하는 곳**인지 본다. 아니면 멈춘다.
+
+    ⚠️ 왜: 저장소 안 추적 경로(예: `docs/`)에 떨어진 프레임은 `git add .` 한 번에 커밋된다.
+    저장소 밖은 허용한다. 저장소 안이면 `git check-ignore` 로 그 폴더에 쓸 파일 이름을
+    물어본다 — 아직 없는 폴더는 `raw/` 같은 폴더 규칙에 걸리지 않기 때문이다.
+    git 을 부르지 못하면 확인할 수 없으므로 멈춘다.
+    """
+    resolved = folder.resolve()
+    if not resolved.is_relative_to(REPO_ROOT):
+        return resolved
+    probe = (resolved / "00000.jpg").relative_to(REPO_ROOT).as_posix()
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "--", probe],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise SystemExit(
+            f"저장 폴더가 깃 무시 대상인지 확인하지 못했다 ({exc}): {resolved}"
+        ) from exc
+    if result.returncode != 0:
+        raise SystemExit(
+            f"저장 폴더가 저장소 안인데 깃 무시 대상이 아니다 — 얼굴 프레임이 커밋될 수 있다: "
+            f"{resolved}. `TEST_MECHDOG/results/<세션>/raw`·`frames` 나 저장소 밖을 쓴다"
+        )
+    return resolved
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="XIAO 스트림 PPE 판정 관찰 (읽기 전용)")
     source = parser.add_mutually_exclusive_group(required=True)
@@ -838,8 +871,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--segments 는 --web-port 0 과 함께 쓸 수 없다")
     if args.scenario is None:
         args.scenario = "webcam" if args.webcam is not None else "xiao"
+    # ⚠️ 모델을 올리기 전에 막는다 — 관찰을 다 하고 나서 저장 경로 때문에 버리지 않게.
+    save_dir = ensure_untracked_frame_dir(Path(args.save_dir)) if args.save_dir else None
+    raw_dir = ensure_untracked_frame_dir(Path(args.save_raw_dir)) if args.save_raw_dir else None
 
     import cv2
+
+    # ⚠️ `cv2.imwrite` 는 한글 경로(`바탕 화면`)에서 조용히 False 를 돌려준다. 학습 세트와
+    # 같은 저장 함수(imencode + tofile, 실패하면 예외)를 쓴다.
+    from tools.ppe.rf100_prepare import write_jpeg
 
     # ⚠️ 배경 실행에서 표준출력이 버퍼에 갇혀 «아무 일도 안 하는 것» 처럼 보였다.
     sys.stdout.reconfigure(line_buffering=True)
@@ -892,10 +932,8 @@ def main(argv: list[str] | None = None) -> int:
             window.reset if segment_log is not None else None,
         )
 
-    save_dir = Path(args.save_dir) if args.save_dir else None
     if save_dir:
         save_dir.mkdir(parents=True, exist_ok=True)
-    raw_dir = Path(args.save_raw_dir) if args.save_raw_dir else None
     if raw_dir:
         raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -911,7 +949,7 @@ def main(argv: list[str] | None = None) -> int:
         nonlocal frames
         frames += 1
         if raw_dir:
-            cv2.imwrite(str(raw_dir / f"{tag}.jpg"), image, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            write_jpeg(raw_dir / f"{tag}.jpg", image)
         results = process(
             image,
             coco,
@@ -965,7 +1003,7 @@ def main(argv: list[str] | None = None) -> int:
             if ok:
                 relay.publish(buf.tobytes())
         if save_dir:
-            cv2.imwrite(str(save_dir / f"{tag}.jpg"), image)
+            write_jpeg(save_dir / f"{tag}.jpg", image)
         if args.show:
             cv2.imshow("ppe_live_check", image)
             cv2.waitKey(1)

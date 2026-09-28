@@ -301,6 +301,75 @@ def test_is_hard_marks_session_or_model_disagreement_with_truth():
     assert xiao_hardcases.is_hard([STATE_VIOLATION], [helmet, vest], truth_bare)
 
 
+def test_relabel_by_truth_drops_boxes_outside_their_body_part():
+    """모델 이름 계열만 보면 몸통·배경에 그어진 머리 박스도 라벨이 된다 — 부위로 막는다."""
+    import collections
+
+    found = [
+        Detection("no_helmet", 0.7, HELMET),  # 제자리 머리
+        Detection("helmet", 0.9, (14.0, 60.0, 46.0, 90.0)),  # 몸통에 그어진 «머리»
+        Detection("vest", 0.8, VEST),  # 제자리 몸통
+        Detection("vest", 0.6, (60.0, 20.0, 90.0, 60.0)),  # 사람 밖 배경의 «몸통»
+    ]
+    drops: collections.Counter = collections.Counter()
+    out = xiao_hardcases.relabel_by_truth(found, True, True, person=PERSON, drops=drops)
+    assert sorted((d.label, d.box) for d in out) == [("helmet", HELMET), ("vest", VEST)]
+    assert drops == {xiao_hardcases.DROP_HEAD_PLACE: 1, xiao_hardcases.DROP_TORSO_PLACE: 1}
+
+
+def test_relabel_by_truth_drops_head_and_torso_on_the_same_spot():
+    """이름을 바꾼 뒤 같은 자리에 머리·몸통 두 계열이 있으면 어느 쪽인지 모른다 — 둘 다 버린다."""
+    import collections
+
+    spot = (12.0, 35.0, 48.0, 60.0)  # 머리·몸통 구간 경계 — 두 구간 IoA 모두 0.5 이상
+    found = [
+        Detection("helmet", 0.9, HELMET),
+        Detection("no_helmet", 0.8, spot),
+        Detection("vest", 0.7, (12.0, 36.0, 48.0, 61.0)),
+    ]
+    drops: collections.Counter = collections.Counter()
+    out = xiao_hardcases.relabel_by_truth(found, True, True, person=PERSON, drops=drops)
+    assert [(d.label, d.box) for d in out] == [("helmet", HELMET)]
+    assert drops == {xiao_hardcases.DROP_CROSS: 2}
+    assert not xiao_hardcases.has_head_and_torso(out)
+
+
+class _FixedDetector:
+    def __init__(self, results):
+        self.results = results
+        self.inputs = []
+
+    def detect(self, image):
+        self.inputs.append(image.shape[:2])
+        return list(self.results)
+
+
+def test_collect_checks_body_part_in_crop_coordinates(tmp_path):
+    """PPE 박스는 크롭 좌표다 — 사람 박스를 크롭 원점만큼 옮겨서 부위를 본다."""
+    frame = np.full((300, 400, 3), 90, dtype=np.uint8)
+    rf100_prepare.write_jpeg(tmp_path / "raw" / "00001.jpg", frame)
+    person = (100.0, 50.0, 200.0, 250.0)  # pad 0.08 → 크롭 원점 (92, 34), 크롭 안 (8,16,108,216)
+    coco = _FixedDetector([Detection("person", 0.9, person)])
+    ppe = _FixedDetector(
+        [
+            Detection("no_helmet", 0.9, (40.0, 10.0, 70.0, 40.0)),  # 크롭 안 머리
+            Detection("vest", 0.8, (20.0, 90.0, 90.0, 160.0)),  # 크롭 안 몸통
+            Detection("helmet", 0.7, (40.0, 100.0, 70.0, 130.0)),  # 몸통 위 «머리»
+        ]
+    )
+    config = {"vision": {"coco": {"person_class": "person"}, "ppe": {"crop_pad": 0.08}}}
+    used, _ = _xiao_truths()
+    events = [{"t": 1.0, "tag": "00001", "segment": "standing-novest", "states": ["위반"]}]
+    cands, stats = xiao_hardcases.collect(tmp_path, events, used, config, coco, ppe)
+    assert ppe.inputs == [(232, 116)]  # 크롭이 들어갔다
+    assert len(cands) == 1
+    assert sorted(cands[0].boxes) == [
+        ("helmet", (40.0, 10.0, 70.0, 40.0)),
+        ("no_vest", (20.0, 90.0, 90.0, 160.0)),
+    ]
+    assert stats["dropped_boxes"] == {xiao_hardcases.DROP_HEAD_PLACE: 1}
+
+
 def test_segment_table_counts_per_segment():
     used, excluded = _xiao_truths()
     events = [
