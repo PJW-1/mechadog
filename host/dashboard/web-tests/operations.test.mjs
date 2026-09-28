@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Operations,parseBlackbox,csvCell,REVIEW_STATES,liveSnapshotUrl} from '../static/operations.js';
 
-const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
+const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',mode:'guard',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
 const memory=()=>{const data=new Map();return {getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value)}};
 
 test('initial state is preview only, stopped, unowned, no real telemetry',()=>{
@@ -55,10 +55,23 @@ test('query combines filters and demo-off does not hide imported files',()=>{
 });
 test('blackbox importer matches current raw fields and copies input',()=>{
  const input=raw(),parsed=parseBlackbox(input);assert.notEqual(parsed,input);input.tracks[0].score=0;assert.equal(parsed.tracks[0].score,.85);
- const op=new Operations(),event=op.importBlackbox(parsed);assert.equal(event.escalation,'L1');assert.equal(event.auth,'필드 미제공');assert.equal(event.ppe,'필드 미제공');assert.equal(event.snapshot,null);
+ const op=new Operations(),event=op.importBlackbox(parsed);assert.equal(event.escalation,'L1');assert.equal(event.mode,'guard');assert.equal(event.auth,'필드 미제공');assert.equal(event.ppe,'필드 미제공');assert.equal(event.snapshot,null);
+});
+test('an imported zone record lists the zone from its judgement',()=>{
+ const op=new Operations(),zone=(ts,judgement)=>op.importBlackbox({...raw(),ts_ms:ts,event:'zone_changed',judgement});
+ assert.equal(zone(1,{zone:'A',changes:[]}).zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
+ assert.equal(op.importBlackbox(raw()).zone,'파일에 구역 정보 없음','판정이 없으면 구역 정보가 없다고 한다');
+ assert.equal(zone(2,{changes:[]}).zone,'파일에 구역 정보 없음','판정에 구역이 없으면 지어내지 않는다');
+ assert.equal(zone(3,{zone:7}).zone,'파일에 구역 정보 없음','문자열이 아닌 구역은 쓰지 않는다');
+});
+test('a broadcast TTS sentence (4.8.2) lands in the evidence rows, regardless of event kind',()=>{
+ // `BlackboxEntry` 가 frozen 이라 `4.8.1` 은 최상위가 아니라 judgement 안에 sentence 를 싣는다.
+ const op=new Operations(),event=op.importBlackbox({...raw(),judgement:{sentence:'2번 구역에서 사람을 확인했습니다.'}});
+ assert.deepEqual(event.evidence.find(([label])=>label==='방송 문장'),['방송 문장','2번 구역에서 사람을 확인했습니다.']);
+ assert.equal(op.importBlackbox(raw()).evidence.some(([label])=>label==='방송 문장'),false,'문장이 없으면 행을 지어내지 않는다');
 });
 test('bad blackbox fields are rejected',()=>{
- for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}
+ for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.mode={}},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}
 });
 test('only matching full metadata deduplicates; devices and evidence stay distinct',()=>{
  const op=new Operations(),a=op.importBlackbox(raw(),'blob:a');assert.equal(op.importBlackbox(raw(),'blob:duplicate'),a);assert.equal(a.snapshot,'blob:a');
@@ -79,11 +92,12 @@ test('review export discloses source and excludes blob URL and embedded images',
 // ── 사건 스냅샷 주소 (WBS 4.6.4) ─────────────────────────────
 test('a live event carries its snapshot address when the server can serve it', () => {
  const store=new Operations({clock:()=>1});
- const payload={seq:7,ts_ms:1789401235586,event:'person_found',state:'PATROL',escalation:'L1',
+ const payload={seq:7,ts_ms:1789401235586,event:'person_found',state:'PATROL',escalation:'L1',mode:'factory',
   tracks:[{track_id:1,box:[0,0,10,10],score:0.8}],detections:[],telemetry:{device_id:'mechdog-01'},
   entry:'1789401235586_person_found',snapshot:'snapshot.jpg'};
  const event=store.ingestLiveEvent(payload,'http://127.0.0.1:8000');
  assert.equal(event.snapshot,'http://127.0.0.1:8000/events/1789401235586_person_found/snapshot.jpg');
+ assert.equal(event.mode,'factory');
  assert.match(event.detail,/함께 보여/);
 });
 
@@ -101,4 +115,17 @@ test('the entry name is escaped before it becomes an address', () => {
  // 이름은 서버에서 오지만 주소 조각으로 쓰기 전에 감싼다.
  assert.equal(liveSnapshotUrl('http://x',{entry:'a b/c',snapshot:'snapshot.jpg'}),
   'http://x/events/a%20b%2Fc/snapshot.jpg');
+});
+
+// ── 경보 띠 (B1) ─────────────────────────────────────────────
+test('the alarm only pairs a reason with the level it was given for', () => {
+ const store=new Operations({clock:()=>1});store.setDemo(false);store.link={};
+ const at=level=>store.setTelemetry({state:'live',snapshot:{deviceId:'mechdog-01',state:'ALERT',escalation:level,stale:false,runtimeStale:false},rateHz:10,lost:0,history:[]});
+ at('L1');assert.equal(store.alarm,null,'L1 은 띠를 띄우지 않는다');
+ store.ingestLiveEvent({seq:1,ts_ms:1,event:'escalation_changed',state:'AUTH_WAIT',escalation:'L2',tracks:[],detections:[],telemetry:null,reason:'unauthenticated_hold',warning:null});
+ at('L2');assert.deepEqual([store.alarm.level,store.alarm.reason,store.alarm.warning],['L2','미인증 상태 지속',null]);
+ // 상태 전문이 먼저 L3 가 됐고 사건은 아직 — 지난 L2 사유를 L3 에 붙이지 않는다.
+ at('L3');assert.equal(store.alarm.reason,null);
+ store.ingestLiveEvent({seq:2,ts_ms:2,event:'escalation_changed',state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:null,reason:'AUTH_FAILED',warning:'경보가 발령되었습니다.'});
+ assert.equal(store.alarm.warning,'경보가 발령되었습니다.');assert.match(store.alarm.reason,/인증 실패/);
 });

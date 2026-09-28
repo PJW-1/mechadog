@@ -275,13 +275,14 @@ def run(args: argparse.Namespace) -> int:
     tele_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     scan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     for sock, port in ((tele_sock, args.telemetry_port), (scan_sock, args.scan_port)):
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # SO_REUSEADDR 를 쓰지 않는다 — Windows 에서 UDP 는 같은 포트에 조용히
+        # 이중 바인드돼 표본 0 개로 끝난다. 점유 중이면 bind 가 즉시 실패해야 한다.
         sock.bind(("", port))
         sock.setblocking(False)
 
     encoder = CommandEncoder()
     tele_decoder = TelemetryDecoder()
-    scan_decoder = ScanDecoder()
+    scan_decoder = ScanDecoder(args.lidar_mount_yaw, args.lidar_angle_direction)
     peer = (args.robot, args.cmd_port)
     obs = Observers()
 
@@ -478,6 +479,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--settle", type=float, default=3.0, help="구간 뒤 정지 관측 시간 s")
     p.add_argument("--reps", type=int, default=2, help="4구간 세트 반복 수")
     p.add_argument("--out", required=True, help="출력 디렉터리")
+    # 이 도구는 설정 파일을 읽지 않고 인자만 받는다. 라이다를 돌려 달았다면
+    # `config.yaml` 의 설치각·각도 방향과 **같은 값**을 넘겨야 다른 도구와
+    # 같은 좌표로 기록된다. 넘기지 않으면 라이다 원래 각도 그대로 남는다.
+    p.add_argument(
+        "--lidar-mount-yaw",
+        type=float,
+        default=0.0,
+        help="라이다 설치각 deg — config 의 lidar.mount_yaw_deg 와 맞춘다",
+    )
+    p.add_argument(
+        "--lidar-angle-direction",
+        type=int,
+        choices=(-1, 1),
+        default=1,
+        help="원시각 증가 방향 — config 의 lidar.angle_direction 와 맞춘다",
+    )
     return p
 
 

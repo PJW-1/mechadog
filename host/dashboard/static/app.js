@@ -8,11 +8,12 @@ import {RobotLink} from './robot-link.js';
 import {VoiceLink,resolveVoiceBase} from './voice-link.js';
 import {VisionFeed} from './vision-feed.js';
 import {EventFeed} from './event-feed.js';
+import {TelemetryFeed,describeTelemetry} from './telemetry-feed.js';
 
 renderIcons();
 const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
-let visionFeed=null,visionStatus={state:'connecting'},eventFeed=null;
+let visionFeed=null,visionStatus={state:'connecting'};
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -23,28 +24,24 @@ function syncVisionStatus(){
  $('frame-source').textContent=badge;
  $('camera-status').textContent=visionStatus.state==='live'?status+' · 검출 '+visionStatus.detections+'건 · 사람 '+visionStatus.persons+'명':status;
  $('camera-resolution').hidden=visionStatus.state!=='live';
- if(visionStatus.state==='live')$('camera-resolution').textContent=visionStatus.width+' × '+visionStatus.height;
+ if(visionStatus.state==='live'){
+  $('camera-resolution').textContent=visionStatus.width+' × '+visionStatus.height;
+  // 칸이 영상 비율을 따라가야 옆여백이 안 생긴다 — 프레임 크기가 곧 정답이다.
+  if(visionStatus.width>0&&visionStatus.height>0)document.documentElement.style.setProperty('--vision-aspect',visionStatus.width+' / '+visionStatus.height);
+ }
  const at=visionStatus.lastFrameAt?new Date(visionStatus.lastFrameAt).toLocaleTimeString('ko-KR',{hour12:false}):'—';
  $('frame-time').innerHTML='마지막 영상 수신　'+at+' <span class="muted">· 관측 전용</span>';
 }
 const cameraDock=$('camera-dock'),cameraHome=cameraDock.parentElement,cameraNext=cameraDock.nextElementSibling;
 let storage=null;try{storage=localStorage}catch{/* Restricted browsers can still use session-only drafts. */}
-// 실제 대시보드 연결은 **명시적으로 켤 때만** 붙는다 (WBS 4.6.3). 주소를 주지
-// 않으면 링크가 없고 웹은 예시 모드 그대로다 — 공개된 화면이 저 혼자 로봇을
-// 움직이게 두지 않는다. 켜는 법은 둘 중 하나다.
-//   1) 주소창에  ?api=http://127.0.0.1:8000
-//   2) index.html 에  <meta name="mechadog-api" content="http://127.0.0.1:8000">
-// 로컬 주소만 받는다. 원격 주소를 적어도 붙지 않는다.
+// 실제 대시보드 연결은 **대시보드 서버가 이 페이지를 직접 내보냈을 때만** 붙는다
+// (WBS 4.6.3). 그 밖에서 열면 링크가 없고 웹은 예시 모드 그대로다 — 공개된 화면이
+// 저 혼자 로봇을 움직이게 두지 않는다.
+// ⚠️ **다른 출처의 API 를 가리키는 길은 두지 않는다.** 예전의 `?api=`·`<meta>` 는
+// 다른 포트를 받았지만, 서버의 출처 검사가 그 페이지의 명령(비상정지 포함)과 WS 를
+// 전부 거절해 **연결된 척하고 아무것도 못 보내는 화면**이 됐다.
 async function resolveApiBase(){
  try{
-  const fromQuery=new URLSearchParams(location.search).get('api');
-  const fromMeta=document.querySelector('meta[name="mechadog-api"]')?.content;
-  const raw=(fromQuery||fromMeta||'').trim();
-  if(raw){
-    const url=new URL(raw,location.href);
-    if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return null;
-    return url.origin;
-  }
   // 대시보드 서버가 이 페이지를 직접 서빙하면 같은 출처가 곧 API 다.
   // 단, hostname 이 localhost 라는 것만으로는 붙지 않는다 — file:// 이나
   // 다른 로컬 개발 서버 위에서 열렸을 수 있으므로 /health 로 확인한다.
@@ -56,13 +53,39 @@ async function resolveApiBase(){
  }catch{return null}
 }
 const apiBase=await resolveApiBase();
-const link=apiBase?new RobotLink({baseUrl:apiBase}):null;
-const operations=new Operations({storage,link});
+// 여러 대(`host.fleet`)면 서버가 로봇 목록과 각자의 API 경로(`/robots/<id>`)를 알려 준다. 없으면 한 대짜리 서버다.
+// ⚠️ 경로는 **같은 출처 안에서만** 받는다 — 서버 출처 검사가 다른 출처의 명령을 거절한다 (위 설명).
+async function resolveFleet(base){
+ const body=await fetch(base+'/api/fleet').then(response=>response.ok?response.json():null).catch(()=>null);
+ const robots=Array.isArray(body?.robots)?body.robots.filter(r=>typeof r?.id==='string'&&typeof r?.base==='string'&&/^\/robots\/[A-Za-z0-9_-]{1,80}$/.test(r.base)):[];
+ return robots.length?robots.slice(0,ROBOTS.length):null;
+}
+const fleetInfo=apiBase?await resolveFleet(apiBase):null;
+// 자리(MD-01~03)마다 API 주소. 한 대짜리면 MD-01 하나가 이 출처 자체다.
+const bases=Object.fromEntries(fleetInfo?fleetInfo.map((robot,index)=>[ROBOTS[index],apiBase+robot.base]):apiBase?[[ROBOTS[0],apiBase]]:[]);
+const operations=fleetInfo
+ ?new Operations({storage,fleet:fleetInfo.map((robot,index)=>({device:robot.id,registered:robot.registered!==false,link:new RobotLink({baseUrl:bases[ROBOTS[index]]})}))})
+ :new Operations({storage,link:apiBase?new RobotLink({baseUrl:apiBase}):null});
 // 음성 중계는 대시보드 명령 링크와 별개다 — voice_pipeline --web 이 떠 있으면
 // 로컬 기본 주소(127.0.0.1:8090)로 자동으로 붙고, 없으면 패널이 준비만 표시한다.
 const voiceBase=await resolveVoiceBase();
 const voiceLink=voiceBase?new VoiceLink({baseUrl:voiceBase}):null;
-if(link){
+const visionAvailable={},feeds=[];
+let visionRobot=null;
+// 로봇 시점 창은 캔버스가 하나다 — **고른 로봇의** /ws/vision 만 붙인다. 로봇을 바꾸면 이전 연결을 닫는다
+// (XIAO 스트림은 워커가 점유하고 여기서는 재송출만 받으므로, 세 채널을 늘 열어 둘 이유가 없다).
+function syncVisionFeed(){
+ const robot=operations.live?operations.selected:null;
+ if(robot===visionRobot)return;
+ visionFeed?.stop();visionFeed=null;visionRobot=robot;
+ visionStatus={state:robot&&visionAvailable[robot]?'connecting':'off'};
+ if(robot&&visionAvailable[robot]){
+  visionFeed=new VisionFeed({url:bases[robot].replace(/^http/,'ws')+'/ws/vision',canvas:$('vision-frame'),onStatus:status=>{if(visionRobot===robot){visionStatus=status;syncVisionStatus()}}});
+  visionFeed.start();
+ }
+ syncVisionStatus();
+}
+if(operations.connected){
  operations.setDemo(false);
  // 로봇 시점 창은 /ws/vision 을 그린다 (WBS 4.6.1) — 검출 박스와 그 박스를
  // 계산한 JPEG 가 한 메시지로 온다. 카메라 스트림에 박스를 얹지 않는다.
@@ -71,19 +94,30 @@ if(link){
  const frame=$('vision-frame'),fpv=$('fpv');
  frame.hidden=false;
  if(fpv)fpv.hidden=true;
- const health=await fetch(apiBase+'/health').then(response=>response.json()).catch(()=>null);
- if(health?.vision_clients===null)visionStatus={state:'off'};
- else{
-  visionFeed=new VisionFeed({url:apiBase.replace(/^http/,'ws')+'/ws/vision',canvas:frame,onStatus:status=>{visionStatus=status;syncVisionStatus()}});
-  visionFeed.start();
- }
- // 실시간 사건도 같은 서버에서 온다 (WBS 4.6.4) — /ws/events 는 비전 채널과
- // 무관하게 항상 있다. 백로그를 먼저 넘겨주므로 늦게 열어도 최근 사건을 본다.
- eventFeed=new EventFeed({url:apiBase.replace(/^http/,'ws')+'/ws/events',
-  onEvent:event=>operations.ingestLiveEvent(event,apiBase),
-  onGap:dropped=>operations.noteEventGap(dropped),
-  onStatus:status=>operations.setEventFeed(status)});
- eventFeed.start();
+ // 관제 PC 방송 음량 · 무음 초기값 (4.8.2) — 방송기는 플릿 전체가 하나라 아무 로봇의 서버에서나 받는다.
+ fetch(bases[ROBOTS[0]]+'/api/broadcast').then(response=>response.ok?response.json():null).then(state=>{if(state)operations.setBroadcast(state)}).catch(()=>{});
+ await Promise.all(Object.entries(bases).map(async([robot,base])=>{
+  const health=await fetch(base+'/health').then(response=>response.json()).catch(()=>null);
+  visionAvailable[robot]=health?.vision_clients!==null;
+  // 명령 API 가 열렸는지 (WBS 3.6.5). 옛 서버처럼 read_only 가 없으면 닫힌 것으로 본다.
+  operations.setCommandsOpen(health?.read_only===false,robot);
+  // 설정 화면의 단계 표 값 (B7). 못 받으면 화면이 «미수신» 이라고 적는다.
+  fetch(base+'/api/policy').then(response=>response.ok?response.json():null).then(policy=>{if(policy)operations.setPolicy(policy,robot)}).catch(()=>{});
+  // 실시간 사건도 같은 서버에서 온다 (WBS 4.6.4) — /ws/events 는 비전 채널과
+  // 무관하게 항상 있다. 백로그를 먼저 넘겨주므로 늦게 열어도 최근 사건을 본다.
+  const ws=base.replace(/^http/,'ws');
+  feeds.push(new EventFeed({url:ws+'/ws/events',
+   // 관제 방송 TTS 문장(4.8.2)이 실려 오면 화면 자막으로도 잠깐 띄운다 — 소리는
+   // Host PC 스피커(`host/cloud/broadcast.py`)가 이미 낸다. 접속·재접속 때 서버가
+   // 먼저 넘겨주는 지난 사건(백로그)까지 띄우지 않도록 방금(15초 안) 난 사건만 띄운다.
+   onEvent:event=>{operations.ingestLiveEvent(event,base,robot);if(event.sentence&&Date.now()-event.ts_ms<15000)toast(event.sentence)},
+   onGap:dropped=>operations.noteEventGap(dropped),
+   onStatus:status=>operations.setEventFeed(status,robot)}));
+  // 로봇 상태 게이지 (WBS 4.6.2) — /ws/telemetry 는 표시용 10Hz 다. 수신률은 새 seq 로만 센다.
+  feeds.push(new TelemetryFeed({url:ws+'/ws/telemetry',onUpdate:view=>operations.setTelemetry(view,robot)}));
+ }));
+ for(const feed of feeds)feed.start();
+ syncVisionFeed();
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
@@ -106,7 +140,10 @@ function syncObservationView(){
  const manual=currentPage==='missions',dashboard=currentPage==='dashboard';
  $('app').classList.toggle('observation-waiting',!operations.demo||operations.stale);
  view?.setWorldVisible(dashboard);
- view?.setActive(!observationFailed&&(dashboard||(manual&&operations.demo&&!operations.stale)));
+ // ⚠️ **실제 데이터 모드에서는 예시 공장 3D 를 그리지 않는다.** 지도가 없는데(LiDAR 미연결) 가상 공장과
+ // 예시 로봇 3대·"확인 필요" 표시가 실제 화면에 섞이면 배치와 위치를 아는 것처럼 보인다. 숨긴 캔버스를
+ // 계속 그릴 이유도 없다. LiDAR 지도가 생기면 이 자리는 2D 지도로 채운다.
+ view?.setActive(!observationFailed&&operations.demo&&(dashboard||(manual&&!operations.stale)));
  view?.setCameraVisible(!observationFailed&&(dashboard||manual)&&operations.demo&&!operations.stale&&(manual||!cameraDock.classList.contains('collapsed')));
 }
 function reportObservationError(message){
@@ -118,10 +155,19 @@ function syncMain(){
  syncObservationView();
  robotView?.setActive(currentPage==='devices');
  document.querySelectorAll('[data-robot]').forEach(element=>{const active=element.dataset.robot===selected;element.classList.toggle('selected',active);element.setAttribute('aria-pressed',String(active))});
- $('camera-title').textContent=selected+' · 로봇 시점';$('camera-axis').textContent=selected+' / FRONT';
+ // 실제 연결에서는 서버에 붙은 로봇만 보인다 — 한 대짜리면 MD-01 하나, 플릿이면 서버가 알려 준 만큼 (operations.robots).
+ for(const element of document.querySelectorAll('.robot-tab,.camera-robot-switch [data-robot]'))element.hidden=!operations.robots.includes(element.dataset.robot);
+ syncVisionFeed();
  $('app').classList.toggle('data-waiting',!operations.demo);
- $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):'실제 데이터 대기';
- $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'실제 지도·위치 미수신 · 예시 숨김';
+ $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):operations.live?'실제 연결':'실제 데이터 대기';
+ // ⚠️ **머리글의 제어 문구도 사실대로 말한다.** 연결돼 있는데 "정지 명령 전달 불가" 라고 적혀 있으면
+ // 운용자가 비상정지를 누르지 않거나, 반대로 화면 문구를 믿고 물리 정지 수단을 찾는다.
+ {const note=document.querySelector('.safety-note>span:last-child');note.firstChild.nodeValue=operations.live?'실시간 제어 연결 ':'실시간 제어 잠김 ';note.querySelector('small').textContent=operations.live?'비상정지 즉시 전송':'미연결 · 정지 명령 전달 불가';}
+ // 웹 시연 임무 칸은 실제 연결에서 숨긴다 — 실제 순찰과 헷갈린다. 실제 순찰은 제어 · 장치 화면에 있다.
+ document.querySelector('.mission-summary').hidden=operations.live;
+ syncTelemetry();
+ $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'지도 없음 · 예시 공장 숨김';
+ $('map-placeholder').hidden=operations.demo;
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');
@@ -147,7 +193,50 @@ function syncMain(){
  document.querySelector('.event-summary p').textContent=liveCount?'실시간 '+liveCount+'건 포함 · 검토 메모와 판단 근거를 확인하세요.':events.length?'검토 메모와 판단 근거를 확인하세요.':'실시간 사건은 수신되지 않았습니다.';
  $('attention-marker').setAttribute('aria-label','예시 사건 검토 열기');
 }
-operations.subscribe(reason=>{syncMain();panels.refresh(reason)});
+// 하단 상태 칸 — 연결 여부와 로봇 상태를 **사실대로** 말한다 (4.6.2). 연결이 없으면 예시 문구다.
+// 연결됐어도 로봇에서 받은 값이 없거나 끊겼으면 그렇게 말한다 — 아는 척하지 않는다.
+function syncTelemetry(){
+ syncRobotLabels();
+ syncAlarm();
+ const card=document.querySelector('.actual-status');
+ if(!operations.live){card.dataset.tone='off';card.querySelector('strong').textContent='현장 상태 확인 불가 · 장비 미연결';card.querySelector('p').textContent='웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.';$('state-time').textContent='—';return}
+ const text=describeTelemetry(operations.telemetry);
+ card.dataset.tone=text.tone;card.querySelector('strong').textContent=text.headline;card.querySelector('p').textContent=text.summary;
+ $('state-time').textContent=text.age;
+}
+// 로봇 이름과 연결 칸. 실제 연결이면 서버가 알려 준 개체 이름과 **로봇 수신 상태**를 쓴다 —
+// 예전에는 연결돼 있어도 탭이 "MD-01 · 미연결" 이었다. 이름은 첫 상태 전문에 실려 오므로 10Hz 경로에서 맞춘다.
+function syncRobotLabels(){
+ const name=operations.robotName(operations.selected),text=operations.live?describeTelemetry(operations.telemetry):null;
+ $('camera-title').textContent=name+' · 로봇 시점';$('camera-axis').textContent=name+' / FRONT';
+ // 탭마다 **그 로봇의** 수신 상태다. 실물이 아직 없는 자리(텔레메트리 ID 미설정)는 받은 것이 없으면 «미등록».
+ for(const tab of document.querySelectorAll('.robot-tab')){
+  const id=tab.dataset.robot,strong=tab.querySelector('strong');
+  strong.firstChild.nodeValue=operations.robotName(id)+(strong.children.length?' ':'');
+  const telemetry=operations.telemetryOf(id),own=operations.live&&!tab.hidden?describeTelemetry(telemetry):null;
+  // ⚠️ «미등록» 은 텔레메트리가 와도 뗀다 — 검증할 MAC 이 없어 이름만으로 받은 것이다.
+  tab.querySelector('.robot-health').lastChild.nodeValue=!own?'미연결':(!operations.isRegistered(id)?'미등록 · ':'')+own.badge[0];
+ }
+ for(const button of document.querySelectorAll('.camera-robot-switch [data-robot]'))button.textContent=operations.robotName(button.dataset.robot);
+ document.querySelector('.source-status .muted').textContent=text?'로봇 '+text.badge[0]:'실제 장비 미연결';
+}
+// 경보 띠 (B1 · TC-F-013 «음성 미장착 시 시각 경보»). L2·L3·F 에서만 뜬다. 단계는 상태 전문, 사유·경고 문장은
+// 같은 단계의 마지막 단계 사건에서 온다. ⚠️ L3 확인과 F 해제는 다른 버튼이다 — 띠는 처리 화면으로 안내만 한다.
+const ALARM_TEXT={L2:'L2 · 인증 대응 — 미인증 대상에게 신원 확인을 요구하는 중',L3:'L3 · 경보 — 관리자 확인이 필요합니다 («경보 확인»)',F:'F · 안전 잠금 — 원인 확인 뒤 «안전 해제 (RESET_SAFE)»'};
+// 여러 대면 **가장 심한 로봇**을 띠에 싣고, 나머지는 이름·단계만 덧붙인다. 보고 있는 로봇이 아니어도 뜬다.
+let alarmRobot=null;
+function syncAlarm(){
+ const [alarm,...others]=operations.alarms,banner=$('alarm-banner'),many=operations.robots.length>1;
+ banner.hidden=!alarm;alarmRobot=alarm?.robot??null;if(!alarm)return;
+ banner.dataset.level=alarm.level;banner.classList.toggle('stale',alarm.stale);
+ const [head,...rest]=ALARM_TEXT[alarm.level].split(' — ');
+ $('alarm-level').textContent=(many?alarm.name+' · ':'')+head;
+ $('alarm-text').textContent=[rest.join(' — '),alarm.reason&&'사유 '+alarm.reason,alarm.warning&&'경고 「'+alarm.warning+'」',alarm.stale&&'수신 끊김 · 마지막 값',others.length&&'다른 로봇 '+others.map(other=>other.name+' '+other.level).join(', ')].filter(Boolean).join(' · ');
+ $('alarm-action').hidden=alarm.level==='L2'||(currentPage==='missions'&&operations.selected===alarm.robot);
+}
+$('alarm-action').addEventListener('click',()=>{if(alarmRobot&&alarmRobot!==operations.selected)attempt(()=>operations.selectRobot(alarmRobot));navigate('missions')});
+// 텔레메트리는 초당 10번 온다 — 화면 전체(syncMain)를 다시 맞추지 않고 상태 칸과 게이지만 고친다.
+operations.subscribe(reason=>{if(reason==='telemetry'){syncTelemetry();panels.refresh(reason);return}syncMain();panels.refresh(reason)});
 
 function navigate(page){
  const target=['dashboard','missions','events','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
@@ -168,9 +257,13 @@ function openPage(page){
  $('detail-panel').hidden=isDashboard;
  document.querySelector('.skip-link').href=isDashboard?'#scene-title':'#panel-title';
  document.querySelectorAll('[data-view]').forEach(button=>{const active=button.dataset.view===page;button.classList.toggle('active',active);if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')});
+ const more=document.querySelector('.nav-more'),inMore=!!more.querySelector('[data-view].active');
+ // 닫힌 메뉴 안의 aria-current 는 보조기기에 보이지 않으므로 메뉴 제목에도 현재 위치를 싣는다.
+ more.classList.toggle('active',inMore);if(inMore)more.querySelector('summary').setAttribute('aria-current','true');else more.querySelector('summary').removeAttribute('aria-current');
+ more.open=false;
  document.querySelectorAll('[data-camera]').forEach(button=>{const active=button.dataset.camera===(page==='zones'?'top':page==='devices'?'robot':page==='dashboard'?'overview':'none');button.classList.toggle('selected',active);button.setAttribute('aria-pressed',String(active))});
  panels.render(page);
- if(page==='dashboard'){const fallback=document.querySelector('.robot-tab[data-robot="'+operations.selected+'"]');(lastOpener?.isConnected&&lastOpener.matches('button,a')&&!lastOpener.closest('[hidden]')?lastOpener:fallback||$('scene-title')).focus();lastOpener=null}
+ if(page==='dashboard'){const fallback=document.querySelector('.robot-tab[data-robot="'+operations.selected+'"]');(lastOpener?.isConnected&&lastOpener.matches('button,a')&&!lastOpener.closest('[hidden],details:not([open])')?lastOpener:fallback||$('scene-title')).focus();lastOpener=null}
  else{$('panel-title').focus();$('panel-content').scrollTop=0}
  syncMain();
  operations.log('화면 열기',page);
@@ -190,6 +283,8 @@ $('reset-view').addEventListener('click',()=>{view?.setView('overview');toast('�
 $('fullscreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{toast('이 브라우저에서는 전체 화면을 사용할 수 없어요.')}});
 function setCameraDockState({expanded=false,collapsed=false}){
  const dock=$('camera-dock'),expand=$('expand-camera'),collapse=$('collapse-camera');
+ if(expanded){dock.saveDockGeom?.();dock.style.left='';dock.style.top='';dock.style.bottom='';dock.style.width=''}
+ else if(!expanded&&dock.classList.contains('expanded'))dock.restoreDockGeom?.();
  dock.classList.toggle('expanded',expanded);dock.classList.toggle('collapsed',collapsed);
  const expandLabel=expanded?'로봇 시점 원래 크기로':'로봇 시점 크게 보기';
  expand.setAttribute('aria-label',expandLabel);expand.title=expandLabel;
@@ -203,6 +298,57 @@ function setCameraDockState({expanded=false,collapsed=false}){
 }
 $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$('camera-dock').classList.contains('expanded')}));
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
+// 카메라 창 자유 배치 — 헤더를 끌어 옮기고, 변·모서리를 끌어 크기를 바꾼다.
+// 통합 관제에서만 동작한다 — 제어 · 장치에서는 칸이 문서 흐름(position:static)이라
+// 끌면 레이아웃이 깨진다. 크기는 너비만 바꾸고 높이는 --vision-aspect 가 맞춘다.
+{
+ const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header');
+ const clampTo=(v,min,max)=>Math.min(max,Math.max(min,v));
+ const dockInStage=()=>dock.parentElement===stage&&currentPage==='dashboard';
+ // 확대·접기 전의 자유 위치를 기억해 돌아올 때 복원한다.
+ let dockGeom=null;
+ const saveGeom=()=>{dockGeom={left:dock.style.left,top:dock.style.top,bottom:dock.style.bottom,width:dock.style.width}};
+ const restoreGeom=()=>{if(dockGeom)Object.assign(dock.style,dockGeom)};
+ dock.saveDockGeom=saveGeom;dock.restoreDockGeom=restoreGeom;
+ header.addEventListener('pointerdown',event=>{
+  if(!dockInStage()||event.target.closest('button'))return;
+  event.preventDefault();
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  // ⚠️ 순서가 중요하다 — expanded 를 지우면 기본 위치로 돌아가므로, 보이는
+  // 위치(rect)를 먼저 재고 나서 지운다. 그래야 끌기 시작해도 창이 안 뛴다.
+  dock.classList.remove('expanded');
+  dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';
+  const offX=event.clientX-d.left,offY=event.clientY-d.top;
+  const move=move=>{
+   dock.style.left=clampTo(move.clientX-s.left-offX,0,Math.max(0,s.width-dock.offsetWidth))+'px';
+   dock.style.top=clampTo(move.clientY-s.top-offY,0,Math.max(0,s.height-dock.offsetHeight))+'px';
+  };
+  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  header.setPointerCapture?.(event.pointerId);
+  header.addEventListener('pointermove',move);
+  header.addEventListener('pointerup',up);
+  header.addEventListener('pointercancel',up);
+ });
+ const aspect=()=>{const w=visionStatus.width,h=visionStatus.height;return w>0&&h>0?w/h:4/3};
+ for(const grip of dock.querySelectorAll('.camera-resize'))grip.addEventListener('pointerdown',event=>{
+  if(!dockInStage())return;
+  event.preventDefault();
+  const edge=grip.dataset.edge,s=stage.getBoundingClientRect(),startW=dock.getBoundingClientRect().width,startX=event.clientX,startY=event.clientY;
+  const move=move=>{
+   const dx=move.clientX-startX,dy=move.clientY-startY;
+   const grown=edge==='e'?dx:edge==='s'?dy*aspect():Math.max(dx,dy*aspect());
+   dock.style.width=clampTo(startW+grown,280,Math.min(s.width-20,1100))+'px';
+   // 너비가 커지면 오른쪽 경계를 넘을 수 있다 — 왼쪽을 당겨 안에 둔다.
+   const over=dock.getBoundingClientRect().right-s.right;
+   if(over>0)dock.style.left=clampTo((dock.offsetLeft||0)-over,0,s.width)+'px';
+  };
+  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  grip.setPointerCapture?.(event.pointerId);
+  grip.addEventListener('pointermove',move);
+  grip.addEventListener('pointerup',up);
+  grip.addEventListener('pointercancel',up);
+ });
+}
 $('demo-toggle').addEventListener('click',()=>attempt(()=>{if(operations.mission.status==='running')operations.pauseMission();else if(operations.mission.status==='paused')operations.resumeMission();else navigate('missions')}));
 function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!$('stop-dialog').open)$('stop-dialog').showModal()}
 // 연결돼 있으면 비상정지는 한 번 눌러 바로 나간다. 모달을 한 단계 끼우면 급할 때
@@ -215,7 +361,7 @@ function onEstopPressed(){
 $('estop').addEventListener('click',onEstopPressed);
 $('stop-preview').addEventListener('click',()=>operations.requestEstop());
 document.addEventListener('keydown',event=>{
- if(event.key==='Escape'){operations.stop('Escape');if(!$('stop-dialog').open)navigate('dashboard')}
+ if(event.key==='Escape'){operations.stop('Escape');document.querySelector('.nav-more').open=false;if(!$('stop-dialog').open)navigate('dashboard')}
  // 단축키도 버튼과 **같은 경로**를 탄다 (FR-4.4). 예전에는 여기서 모달만 열어
  // 연결돼 있어도 한 번 더 눌러야 나갔다 — 버튼 쪽 주석이 "모달을 한 단계 끼우면
  // 급할 때 그만큼 늦다" 고 적어 둔 바로 그 문제를 단축키만 안고 있었다.
@@ -223,7 +369,7 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));
-window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();eventFeed?.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
+window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();for(const feed of feeds)feed.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
 const unregisterTools=registerPageTools({document,store:operations,navigate,onError:()=>operations.log('페이지 도구 등록 실패','일반 화면 조작은 계속 사용 가능')});
 window.addEventListener('pagehide',event=>{if(!event.persisted)unregisterTools()});
 $('retry-render').addEventListener('click',()=>location.reload());

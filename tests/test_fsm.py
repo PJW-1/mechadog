@@ -582,5 +582,10 @@ def test_exhaustive_coverage_counts() -> None:
     # ⚠️ **숫자를 박아 둔다.** `> 0` 으로 두면 주석이 하는 말("숫자가 바뀌면 알려
     # 준다")을 코드가 하지 않는다 — 전이를 추가·삭제해도 조용히 통과한다.
     # 값이 바뀌면 **의도한 변경인지 확인하고** 여기를 함께 고친다.
-    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 27, 28)
-    assert (len(effective), len(blocked), len(undefined)) == (94, 6, 257)
+    # 2026-09-19 `3.4.4` — `PPE_SETTLED` 와 `ALERT → PATROL` 복귀 전이를 더했다 (FR-11.6).
+    # 2026-09-23 `4.8.3` — 전이 없는 `PERSON_DOWN` 을 더했다(13개 상태 모두 미정의 +13).
+    # 2026-09-24 `3.6.x` — `ZONE_INSPECT → ALERT` 사람 게이트 전이를 더했다 (FR-8.3 → FR-3).
+    # 2026-09-25 `3.6.x` — `ZONE_ALARM_CONFIRMED` 와 `ALERT → PATROL` 복귀 전이를 더했다 (FR-8.4).
+    # 2026-09-25 `4.8.3` — `FALL_SUSPECTED`·`FALL_RESOLVED` 와 쓰러짐 의심 진입·복귀 전이 4줄을 더했다 (S3~S5).
+    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 32, 35)
+    assert (len(effective), len(blocked), len(undefined)) == (101, 6, 315)

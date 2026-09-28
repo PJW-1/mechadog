@@ -1,7 +1,7 @@
 """구역 순찰 제어 — 계획을 규약 의도로 바꾼다 (FR-7 · Phase 2).
 
 **이 파일은 전문을 만들지 않는다.** `MOVE`·`STOP`·`ESTOP`·`RESET_SAFE`·`STATE` 는
-전부 `Commander`(WBS 4.3.2)가 만들고, 여기서는 *무엇을 할 의도인지*만 세운다.
+전부 `Commander` 가 만들고, 여기서는 *무엇을 할 의도인지*만 세운다.
 규약 구현을 둘로 갈라지게 하지 않는 것이 이 구조의 목적이다
 (ENGINEERING_GUIDE 2.1 · PROTOCOL.md 6절).
 
@@ -123,7 +123,7 @@ class DriveParams:
 #: ⚠️ 이 값은 `config` 로 빼지 않았다. **실측 없이 튜닝할 값이 아니기 때문이다** —
 #: 실제 호 반경은 보행 시퀀스가 정하고 `gait_calibration` 이 아직 비어 있다.
 #: 지금 설정 항목으로 만들면 근거 없는 숫자에 설정의 권위가 붙는다. 실측
-#: (`2.4.1` · `gait_calibration`) 후에 옮긴다.
+#: (`gait_calibration`) 후에 옮긴다.
 TURN_STEP_REDUCTION: float = 0.5
 
 
@@ -138,7 +138,7 @@ class Steering:
 def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
     """방위 오차를 호(arc) 조향으로 바꾼다.
 
-    **제자리 회전이 없다** (DR-11). 그래서 세 구간으로 나뉜다.
+    **제자리 회전을 쓰지 않는다** (DR-11). 그래서 세 구간으로 나뉜다.
 
     | 오차 | 보행 | 근거 |
     | :--- | :--- | :--- |
@@ -146,7 +146,7 @@ def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
     | 그 밖 ~ 후진 임계 | 전진 + 최대 조향 | 호를 그리며 방위를 줄인다 |
     | 후진 임계 초과 | **후진 + 같은 방향 조향** | 목표가 거의 뒤에 있으면 전진 호는 멀어진다 |
 
-    ⚠️ **조향 부호는 걸음의 방향과 무관하다 — 2026-09-11 실측이 이것을 바로잡았다.**
+    ⚠️ **조향 부호는 걸음의 방향과 무관하다 — 실측이 이것을 바로잡았다.**
 
     여기에는 *"후진에서는 조향 부호를 뒤집는다"* 고 적혀 있었고 근거는 요 변화가
     `step × angle` 에 비례한다는 추정이었다. **실기에서 반증됐다** — `move(-60,+20)`
@@ -340,17 +340,14 @@ class PatrolController:
 
     @staticmethod
     def _yaw_of(reading: Any) -> float | None:
-        """`imu.yaw` 를 꺼낸다. **`reading.yaw` 는 없다.**
+        """`reading.yaw` 를 꺼낸다. 단위는 deg.
 
-        합치기 전 코드가 `tlm.get("yaw")` 로 읽고 있었는데 규약에 그런 필드가
-        없다 — `imu` 안에 `pitch`·`roll`·`yaw` 가 들어 있고 단위는 deg 다.
-        조용히 `None` 이 되어 IMU 보조가 내내 꺼져 있었다.
+        `host.telemetry.receiver.Reading` 은 `imu` 속성이 없고 평탄한 `yaw`
+        필드를 쓴다 (`Reading.of` 가 전문의 `msg["imu"]["yaw"]` 를 여기 담는다).
+        `reading.imu` 를 읽으면 조용히 `None` 이 되어 IMU 보조가 내내 꺼진다.
         """
-        imu = getattr(reading, "imu", None)
-        if isinstance(imu, Mapping):
-            value = imu.get("yaw")
-            return float(value) if isinstance(value, int | float) else None
-        return None
+        value = getattr(reading, "yaw", None)
+        return float(value) if isinstance(value, int | float) else None
 
     # ── 입력: 스캔 ────────────────────────────────────────────
     def observe_scan(self, scan: Scan, now_ms: int) -> None:

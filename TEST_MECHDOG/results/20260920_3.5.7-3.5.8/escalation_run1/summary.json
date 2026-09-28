@@ -1,0 +1,14 @@
+{
+  "frames": 889,
+  "frames_with_person": 44,
+  "clipped_frames": 44,
+  "decisions": [
+    "pitch_up",
+    "return",
+    "pitch_up",
+    "return"
+  ],
+  "undetermined": false,
+  "final_retries": 2,
+  "error": null
+}

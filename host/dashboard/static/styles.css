@@ -42,6 +42,14 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .main-nav button { position: relative; white-space: nowrap; color: #cecadf; font-size: 17px; padding: 8px 9px }
 .main-nav button.active { color: #f1edf9; font-weight: 600 }
 .main-nav button.active:after { content: ""; position: absolute; height: 2px; bottom: 0; left: 0; right: 0; background: var(--brass) }
+.nav-more { position: relative; align-self: center }
+.nav-more summary { cursor: pointer; white-space: nowrap; color: #cecadf; font-size: 15px; padding: 8px 9px; list-style: none }
+.nav-more summary::-webkit-details-marker { display: none }
+.nav-more summary:after { content: " ▾"; font-size: 11px }
+.nav-more.active summary { color: var(--brass) }
+.nav-more-menu { position: absolute; top: 100%; left: 0; min-width: 160px; padding: 6px; border: 1px solid var(--rule); background: var(--panel); box-shadow: 0 12px 30px #0008; z-index: 30 }
+.nav-more-menu button { display: flex; width: 100%; justify-content: flex-start; font-size: 14px; padding: 8px 12px }
+.nav-more-menu button.active:after { display: none }
 .source-status { margin-left: auto; display: flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--muted); font-size: 15px }
 .source-status>.status-dot { display: none }
 .source-status>.muted:before { content: "·"; margin-right: 8px }
@@ -67,7 +75,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .last-received { font-size: 13px; color: var(--muted); align-self: center; margin-left: auto; white-space: nowrap }
 .last-received span { margin: 0 10px }
 
-.scene-stage { position: relative; min-height: 0; isolation: isolate; overflow: hidden; background: var(--bg) }
+.scene-stage { position: relative; min-height: 0; isolation: isolate; overflow: hidden; background: var(--bg); container-type: size }
 #world { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none }
 .scene-heading { position: absolute; top: 22px; left: var(--r-heading-x); z-index: 3; display: flex; gap: 29px; align-items: baseline; pointer-events: none }
 .scene-heading h1 { font-size: 36px; font-weight: 800; letter-spacing: -.035em; line-height: 1.35; white-space: nowrap }
@@ -89,7 +97,16 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .scene-controls button { height: 46px; width: 46px; background: #20212eea; border: 1px solid var(--rule); font-size: 14px; padding: 9px }
 #reset-view { order: -1; width: auto; min-width: 142px; padding-inline: 16px }
 .camera-dock { position: absolute; z-index: 6; left: var(--r-camera-shell-x); bottom: 16px; width: var(--r-camera-shell-w); background: var(--panel); border: 1px solid #5d5c70; box-shadow: 0 12px 32px #0c0c1c40; border-radius: 5px; overflow: hidden }
-.camera-header { display: flex; align-items: center; height: 49px; gap: 13px; padding: 0 13px 0 17px; border-bottom: 1px solid var(--rule) }
+.camera-header { display: flex; align-items: center; height: 49px; gap: 13px; padding: 0 13px 0 17px; border-bottom: 1px solid var(--rule); cursor: grab; touch-action: none }
+.camera-header:active { cursor: grabbing }
+.camera-resize { position: absolute; touch-action: none; z-index: 2 }
+.resize-e { top: 0; right: 0; width: 7px; height: 100%; cursor: ew-resize }
+.resize-s { left: 0; bottom: 0; height: 7px; width: 100%; cursor: ns-resize }
+.resize-se { right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize }
+.resize-se:before { content: ""; position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-right: 2px solid #8f8fa8; border-bottom: 2px solid #8f8fa8 }
+.camera-dock.expanded .camera-resize, .camera-dock.collapsed .camera-resize { display: none }
+.op-manual-camera .camera-resize { display: none }
+.op-manual-camera .camera-header { cursor: default }
 .camera-header h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 17px; font-weight: 500; letter-spacing: .005em; white-space: nowrap }
 .camera-header>div { display: flex; flex-shrink: 0; margin-left: auto; align-items: center }
 .camera-header button { flex-shrink: 0; white-space: nowrap; font-size: 12px; min-height: 31px; padding: 4px 10px; gap: 8px }
@@ -97,7 +114,8 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .camera-header button svg { width: 17px; height: 17px }
 .camera-status { display: flex; align-items: center; gap: 26px; height: 38px; padding: 0 12px; font-size: 13px; color: var(--muted) }
 .current-video { align-self: stretch; padding: 3px 10px 7px; color: var(--brass); font-weight: 600; border-bottom: 2px solid var(--brass) }
-.camera-viewport { position: relative; height: clamp(175px,21.7vh,290px); margin: 0 8px; background: #3c3f4a; overflow: hidden; border: 1px solid #656676; border-radius: 3px }
+/* 영상 비율을 따르되 현장 영역보다 커지지 않는다 — 넘치면 창 머리(제목·확대·접기·끌기)가 잘려 안 보인다 (1366×768) */
+.camera-viewport { position: relative; aspect-ratio: var(--vision-aspect,4/3); max-height: calc(100cqh - 180px); margin: 0 8px; background: #3c3f4a; overflow: hidden; border: 1px solid #656676; border-radius: 3px }
 .camera-viewport canvas { display: block; width: 100%; height: 100%; object-fit: contain }
 #vision-frame { position: absolute; inset: 0 }
 .camera-viewport canvas[hidden] { display: none }
@@ -108,7 +126,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .camera-robot-switch button { min-height: 32px; min-width: 79px; border: 1px solid var(--rule); padding: 4px 10px; font-size: 12px; color: #cecadf }
 .camera-robot-switch button.selected { border-color: var(--brass); color: var(--brass) }
 .camera-dock.expanded { left: 50%; bottom: 50%; width: min(920px,85%); transform: translate(-50%,50%); box-shadow: 0 20px 90px #080816bb }
-.camera-dock.expanded .camera-viewport { height: min(48vh,500px) }
+.camera-dock.expanded .camera-viewport { aspect-ratio: var(--vision-aspect,4/3); max-height: min(72vh, calc(100cqh - 160px)) }
 .camera-dock.collapsed { width: min(440px,calc(100% - 32px)) }
 .camera-dock.collapsed .camera-body { display: none }
 
@@ -116,6 +134,8 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .operation-rail>section { min-width: 0; min-height: 88px; display: flex; align-items: center }
 .operation-rail>section+section { border-left: 1px solid var(--rule); padding-left: 36px }
 .mission-summary { flex-direction: column; align-items: flex-start!important; justify-content: center }
+.operation-rail:has(>.mission-summary[hidden]) { grid-template-columns: 50% 50% }
+.operation-rail>.mission-summary[hidden]+section { border-left: 0; padding-left: 0 }
 .mission-heading { display: flex; align-items: center; gap: 18px }
 .mission-heading>span svg { width: 28px; height: 34px }
 .mission-heading h2 { font-size: 20px; font-weight: 500; letter-spacing: 0 }
@@ -132,6 +152,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .actual-status { gap: 24px }
 .actual-status>span svg { width: 52px; height: 52px; color: #77758e }
 .actual-status strong { font-size: 15px; font-weight: 500; white-space: nowrap }
+.actual-status[data-tone=stale] strong,.actual-status[data-tone=closed] strong { color: #e9c978 }
 .actual-status p,.event-summary p { font-size: 12px; line-height: 1.6; color: var(--muted); margin-top: 10px }
 .event-summary { gap: 17px }
 .event-summary>span { align-self: flex-start; margin-top: 17px }
@@ -140,6 +161,9 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .event-summary .outline-button { margin-left: auto; min-width: 150px; height: 53px; padding: 10px 18px }
 .outline-button { border: 1px solid var(--brass); color: var(--brass); font-size: 15px; min-height: 41px; padding: 9px 18px }
 
+.map-placeholder { position: absolute; z-index: 2; top: 45%; right: 3%; max-width: 44%; transform: translateY(-50%); text-align: right; color: var(--muted); pointer-events: none }
+.map-placeholder strong { font-size: 18px; font-weight: 500; color: var(--ink) }
+.map-placeholder p { font-size: 13px; margin-top: 8px }
 .scene-failure { position: absolute; z-index: 8; top: 30%; left: 25%; right: 25%; background: var(--bg); padding: 24px; border: 1px solid var(--rule) }
 .scene-failure h2 { font-size: 20px }
 .scene-failure p { color: var(--muted); margin: 14px 0; line-height: 1.8 }
@@ -159,6 +183,16 @@ dialog button+button { margin-left: 8px }
 .dialog-symbol { color: #ef6c7b }
 .dialog-symbol svg { width: 30px; height: 30px }
 #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 100; background: #343243; border: 1px solid #716875; color: #f0e8d7; max-width: calc(100% - 30px); padding: 13px 22px; box-shadow: 0 8px 30px #09091566; font-size: 12px }
+/* 경보 띠 (B1). 색은 눈 LED 와 같은 뜻 — L2 주황 · L3 빨강 · F 흰색. L3 는 LED 처럼 깜박인다. */
+.alarm-banner { position: fixed; top: 62px; left: 50%; transform: translateX(-50%); z-index: 90; display: flex; align-items: center; gap: 14px; max-width: calc(100% - 30px); padding: 10px 18px; border: 2px solid; box-shadow: 0 8px 30px #09091588; font-size: 13px; color: #1a1a2a }
+.alarm-banner[data-level="L2"] { background: #f0a040; border-color: #ffc47a }
+.alarm-banner[data-level="L3"] { background: #d8413a; border-color: #ff8a80; color: #fff; animation: alarm-blink 1s steps(2,start) infinite }
+.alarm-banner[data-level="F"] { background: #f0e8d7; border-color: #fff }
+.alarm-banner.stale { opacity: .7; animation: none }
+.alarm-banner strong { white-space: nowrap; font-size: 14px }
+.alarm-banner button { margin-left: auto; white-space: nowrap; padding: 5px 12px; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; cursor: pointer }
+@keyframes alarm-blink { to { border-color: transparent } }
+@media (prefers-reduced-motion: reduce) { .alarm-banner[data-level="L3"] { animation: none } }
 
 @media(max-width:1450px) {
  .topbar { gap: 13px }
@@ -224,6 +258,8 @@ dialog button+button { margin-left: 8px }
  .mobile-stop-note { display: block; margin-top: 2px; font-size: 9px; line-height: 1.35; font-weight: 400 }
  .main-nav { order: 5; width: 100%; height: 42px; justify-content: space-between; gap: 2px }
  .main-nav button { flex: 1; font-size: 13px; padding: 5px 7px }
+ .nav-more summary { font-size: 12px; padding: 10px 6px }
+ .nav-more-menu { left: auto; right: 0 }
  .fleet-band { padding: 0 8px }
  .fleet-list { width: 100% }
  .robot-tab { padding: 8px 4px!important; justify-content: center; gap: 5px }
@@ -247,7 +283,8 @@ dialog button+button { margin-left: 8px }
  #reset-view { min-width: 106px; font-size: 10px; padding-inline: 9px }
  .scene-controls svg { width: 17px }
  .camera-dock { left: 14px; right: 14px; bottom: 12px; width: auto!important }
- .camera-viewport { height: 178px }
+ .map-placeholder { top: 150px; left: 18px; right: 18px; max-width: none; transform: none; text-align: left }
+ .camera-viewport { max-height: 42vh }
  .camera-header { height: 42px; padding-left: 12px; gap: 8px }
  .camera-header h2 { font-size: 13px }
  .camera-header>span svg { width: 18px }
@@ -259,7 +296,7 @@ dialog button+button { margin-left: 8px }
  .camera-robot-switch button { min-width: 49px; font-size: 10px; padding: 3px 6px; min-height: 28px }
  .frame-badge { font-size: 10px }
  .camera-dock.expanded { left: 14px; right: 14px; bottom: 12px; transform: none }
- .camera-dock.expanded .camera-viewport { height: 360px }
+ .camera-dock.expanded .camera-viewport { max-height: 56vh }
  .camera-dock.collapsed { bottom: 250px }
  .operation-rail { display: block; padding: 22px 20px }
  .operation-rail>section { min-height: auto }

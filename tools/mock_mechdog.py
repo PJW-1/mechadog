@@ -20,6 +20,14 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
 이유도 그래서다 — 목업이 자체 숫자를 갖게 되면 호스트를 진짜와 다른 기준으로
 시험하게 된다.
 
+⚠️ **다만 타임아웃·래치 동작 자체는 펌웨어와 다르다.** 이 목업은 명령 타임아웃
+(`cmd_timeout_ms`)에는 래치 없이 정지만 하고, 링크 두절(`link_loss_failsafe_ms`,
+3000ms)에서만 래치한다. 실제 펌웨어(`firmware_mechdog_motion.ino`)는 명령
+타임아웃(`kCommandTimeoutMs`, 600ms)에서 곧바로 `latchFailsafe` 하며,
+3000ms(`kLinkHealthyAgeMs`)는 텔레메트리의 `link_ok` 표시에만 쓰고 래치와는
+무관하다. 목업을 펌웨어에 맞출지는 코디네이터 판단이 필요한 정책 질문으로 남겨
+둔다.
+
 사용:
 
     python tools/mock_mechdog.py --device mechdog-ref
@@ -378,24 +386,22 @@ def _log(now_ms: int, message: str) -> None:
     print(f"[{now_ms % 1_000_000:6d}] {message}", flush=True)
 
 
-def run(robot: MockRobot, cfg: dict, peer_host: str | None = None) -> None:
+def run(robot: MockRobot, cfg: dict, peer_host: str | None = None, bind_host: str = "") -> None:
     """UDP 루프. 여기만 소켓과 실시간을 만진다."""
     net = cfg["network"]
     period_s = 1.0 / net["telemetry_rate_hz"]
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("", net["cmd_port"]))
+    # SO_REUSEADDR 를 쓰지 않는다 — Windows 에서 UDP 는 같은 포트에 조용히 이중
+    # 바인드돼 명령을 하나도 못 받는다. 점유 중이면 bind 가 즉시 실패해야 한다.
+    # 여러 대를 한 PC 에서 흉내 낼 때는 루프백 주소를 나눠 묶는다 (127.0.0.2 …).
+    sock.bind((bind_host, net["cmd_port"]))
     sock.setblocking(False)
 
-    # ⚠️ Windows 전용 — 이게 없으면 목업이 호스트보다 먼저 떠 있을 때 죽는다.
-    # 아직 아무도 듣지 않는 포트로 텔레메트리를 보내면 ICMP Port Unreachable 이
-    # 돌아오고, Windows 는 그것을 **다음 recvfrom 의 ConnectionResetError 로**
-    # 돌려준다. UDP 에는 연결이 없으므로 의미 없는 오류이며, 실제로 목업을
-    # 먼저 띄우는 것이 정상 사용 순서다. 아래 ioctl 로 그 통보를 끈다.
-    if hasattr(socket, "SIO_UDP_CONNRESET"):
-        with contextlib.suppress(OSError):
-            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
+    # ⚠️ Windows 전용 — 아직 아무도 듣지 않는 포트로 텔레메트리를 보내면 ICMP
+    # Port Unreachable 이 돌아오고, Windows 는 그것을 **다음 recvfrom 의
+    # ConnectionResetError 로** 돌려준다. `SIO_UDP_CONNRESET` 은 CPython 에 없어
+    # ioctl 로 끌 수 없으므로 아래 수신 루프가 그 예외를 잡아 넘긴다.
 
     log = _LogState()
     peer: tuple[str, int] | None = (peer_host, net["telemetry_port"]) if peer_host else None
@@ -411,8 +417,8 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None) -> None:
             except BlockingIOError:
                 break
             except ConnectionResetError:
-                # 위 ioctl 이 없는 경로(구 Windows 등)를 위한 이중 방어.
-                # 로봇 대역이 호스트 사정 때문에 죽으면 안 된다.
+                # Windows 의 헛된 ICMP 통보 — 로봇 대역이 호스트 사정 때문에
+                # 죽으면 안 된다.
                 continue
             if peer is None:
                 peer = (addr[0], net["telemetry_port"])
@@ -456,6 +462,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", default="mechdog-mock", help="device_id (텔레메트리 필수 필드)")
     parser.add_argument("--host", default=None, help="텔레메트리 수신지. 기본은 첫 명령의 송신자")
+    parser.add_argument(
+        "--bind",
+        default="",
+        help="명령 포트를 묶을 주소. 여러 대면 127.0.0.2 처럼 나눈다 (기본 전체)",
+    )
 
     faults = parser.add_argument_group("장애 주입")
     faults.add_argument("--drop-rate", type=float, default=0.0, help="수신 명령 유실률 0.0~1.0")
@@ -491,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         start_ms=system_clock_ms(),
     )
     with contextlib.suppress(KeyboardInterrupt):
-        run(robot, cfg, peer_host=args.host)
+        run(robot, cfg, peer_host=args.host, bind_host=args.bind)
     _log(system_clock_ms(), f"종료 · {robot.stats.summary()}")
     return 0
 

@@ -1,0 +1,44 @@
+--- a/projects/offline_asr_sample/src/user_config.h
++++ b/projects/offline_asr_sample/src/user_config.h
+@@ -10,8 +10,8 @@
+ 
+ #if AUDIO_PLAYER_ENABLE
+ #define USE_PROMPT_DECODER 1          //播放器是否支持prompt解码器
+-#define USE_MP3_DECODER 0             //为1时加入mp3解码器
+-#define AUDIO_PLAY_SUPPT_MP3_PROMPT 0 //播放器默认开启mp3播报音
++#define USE_MP3_DECODER 1             //为1时加入mp3解码器
++#define AUDIO_PLAY_SUPPT_MP3_PROMPT 1 //播放器默认开启mp3播报音
+ 
+ #define AUDIO_PLAY_BLOCK_CONT 4 //播放器底层缓冲区个数
+ #endif
+--- a/projects/offline_asr_sample/src/we_bridge.c
++++ b/projects/offline_asr_sample/src/we_bridge.c
+@@ -132,7 +132,7 @@
+     ready = 1;
+     init_result = 0;
+     init_phase = 4;
+-    mprintf("[WE-BRIDGE] build=3501 ready UART1=115200 mappings=%u gain_limit=40\n",
++    mprintf("[WE-BRIDGE] build=3601 ready UART1=115200 mappings=%u gain_limit=40\n",
+             (unsigned)we_bridge_mapping_count);
+     return 0;
+ }
+@@ -153,7 +153,7 @@
+  * Callback counts still do not prove acoustic output. */
+ void we_bridge_log_status(void)
+ {
+-    mprintf("[WE-STAT] build=3501 tick=%lu phase=%u init=%d ready=%d\n",
++    mprintf("[WE-STAT] build=3601 tick=%lu phase=%u init=%d ready=%d\n",
+             (unsigned long)xTaskGetTickCount(), init_phase, init_result, ready);
+     mprintf("[WE-STAT] bytes=%lu frames=%lu uart_err=%lu tx=%lu\n",
+             (unsigned long)rx_bytes, (unsigned long)rx_frames,
+--- a/projects/offline_asr_sample/src/user_msg_deal.c
++++ b/projects/offline_asr_sample/src/user_msg_deal.c
+@@ -68,7 +68,7 @@
+ 
+     #endif
+     int bridge_result = we_bridge_init();
+-    mprintf("[WE-BRIDGE] init_result=%d (build 3501)\n", bridge_result);
++    mprintf("[WE-BRIDGE] init_result=%d (build 3601)\n", bridge_result);
+     ///tag-gpio-init
+ }
+ 

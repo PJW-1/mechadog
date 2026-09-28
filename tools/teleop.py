@@ -25,7 +25,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import socket
 import sys
 import threading
@@ -170,20 +169,18 @@ class Teleop:
 
 # ── 여기서부터 바깥세상 ────────────────────────────────────────
 def open_socket() -> socket.socket:
-    """송신용 UDP 소켓. **Windows 의 헛된 오류 통보를 끈다.**
+    """송신용 UDP 소켓.
 
     아직 아무도 듣지 않는 포트로 보내면 ICMP Port Unreachable 이 돌아오고,
     Windows 는 그것을 다음 소켓 조작의 `ConnectionResetError` 로 돌려준다. UDP 에는
     연결이 없으므로 의미 없는 오류이며, 로봇 전원이 늦게 들어오는 것은 정상이다.
 
-    ⚠️ `SIO_UDP_CONNRESET` 은 **파이썬 빌드에 따라 없다.** 실제로 이 개발 PC 에는
-    없어서 `hasattr` 없이 부르면 `AttributeError` 로 도구가 즉사한다.
+    ⚠️ `SIO_UDP_CONNRESET` 으로 그 통보를 끄는 방법은 없다 — 그 ioctl 은 CPython 이
+    지원하지 않는다 (`socket.ioctl` 이 `invalid ioctl command` 로 거부한다). 이
+    소켓은 보내기만 하므로 문제되지 않고, 받는 소켓은 각자의 수신 루프에서
+    `OSError` 를 잡아 넘겨야 한다.
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    if hasattr(socket, "SIO_UDP_CONNRESET"):
-        with contextlib.suppress(OSError):
-            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
-    return sock
+    return socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 
 def read_keys() -> Iterator[str]:

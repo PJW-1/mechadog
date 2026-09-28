@@ -46,7 +46,27 @@ void TelemetryPublisher::disconnected() {
 
 void TelemetryPublisher::poll(const TelemetrySample& sample) {
   const uint64_t now = uptime_ms();
-  if (!configured_ || !have_host_ || WiFi.status() != WL_CONNECTED || now < next_publish_ms_) {
+  // 주기가 아직 안 됐다. 정상이고 초당 아홉 번 지나가므로 기록하지 않는다.
+  if (now < next_publish_ms_) {
+    return;
+  }
+  // ⚠️ **나머지 세 관문은 조용히 빠져나가면 안 된다.** 명령 ACK 는 이 검사를 거치지
+  // 않고 수신 즉시 응답하므로, 여기서 막히면 **텔레메트리만 멈추고 로그는 한 줄도
+  // 남지 않는다.** 2026-09-18 실기에서 그 상태를 만났다 — «ACK 10/s · 텔레메트리
+  // 0~2/s · 로그 0건 · PING 20/20 · RTT 3.5ms» 였고, 센서는 UART 로 전부 정상
+  // (`imu_valid=1 dist_valid=1 batt_valid=1`)임을 확인했다. 즉 인코더도 송신도
+  // 아니었고 남은 곳이 여기뿐인데, **관측 수단이 없어서 그 이상 좁힐 수 없었다.**
+  const char* blocked = !configured_                    ? "not configured"
+                        : !have_host_                   ? "host unknown"
+                        : WiFi.status() != WL_CONNECTED ? "wifi not connected"
+                                                        : nullptr;
+  if (blocked != nullptr) {
+    ++skipped_;
+    if (now >= next_error_log_ms_) {
+      Serial.printf("Telemetry skipped: %s (total %lu)\n", blocked,
+                    static_cast<unsigned long>(skipped_));
+      next_error_log_ms_ = now + 1000;
+    }
     return;
   }
   // Overruns remain observable as missing receive intervals. Do not burst old

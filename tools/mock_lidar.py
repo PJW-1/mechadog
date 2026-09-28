@@ -3,7 +3,7 @@
 `tools/mock_mechdog.py` 와 같은 자리에 서는 도구다. 흉내내는 것은 *중계 노드가
 보내는 스캔 데이터그램*뿐이고, UART 타이밍도 모터 간섭도 재현하지 않는다.
 
-왜 필요한가 — **LiDAR 는 아직 제품이 확정되지 않았다** (ADR-18 · 재선정 중).
+LD19 가 확정됐지만 이 목업은 센서 물리 성능이 아니라 UDP 규약만 흉내낸다.
 호스트측 SLAM·측위·순찰을 실물 없이 검증할 방법이 없으면, 장비가 도착하는 날
 처음 통합을 시작하게 된다.
 
@@ -29,7 +29,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.common.console import survive_encoding_errors
 from host.common.lidar_link import encode_scan
-from host.common.protocol import system_clock_ms
 from host.common.units import ms_to_s
 from host.slam import settings, simulation
 
@@ -51,6 +50,7 @@ def run(args: argparse.Namespace) -> int:
     boot_id = new_boot_id(rng)
     seq = 0
     period_s = ms_to_s(args.period_ms)
+    boot_ns = time.monotonic_ns()
 
     # 목업이 지나갈 경로. 실기에서는 사람이 로봇을 옮긴다.
     route = [(1.0, 1.0), (4.5, 1.0), (4.5, 4.0), (1.0, 4.0)]
@@ -64,7 +64,7 @@ def run(args: argparse.Namespace) -> int:
             points = simulation.scan_world(pose, simulation.DEFAULT_ROOM, sim_params, rng)
             line = encode_scan(
                 seq=seq,
-                ts_ms=system_clock_ms(),
+                ts_ms=(time.monotonic_ns() - boot_ns) // 1_000_000,
                 device_id=args.device,
                 boot_id=boot_id,
                 points_wire=points,
@@ -85,6 +85,7 @@ def run(args: argparse.Namespace) -> int:
                 # 재부팅 — 새 `boot_id` 로 `seq` 가 1 로 돌아간다. 호스트가 이것을
                 # 폐기하지 않고 수락하는지가 규칙 ① 의 요점이다.
                 boot_id, seq = new_boot_id(rng), 0
+                boot_ns = time.monotonic_ns()
                 print(f"[mock-lidar] 재부팅 — boot={boot_id}")
             time.sleep(period_s)
     except KeyboardInterrupt:

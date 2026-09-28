@@ -252,7 +252,7 @@ def test_every_mode_defines_both_measurements() -> None:
 
 # ── 회피 여유 산수 (ADR-11 의 결과) ────────────────────────
 def test_avoid_clearance_warns_when_the_turn_eats_the_gap(cfg: dict, capsys) -> None:
-    """⚠️ **제자리 회전이 불가하므로 선회가 앞으로 간다.**
+    """⚠️ **제자리 회전을 전제하지 않으므로 선회가 앞으로 간다.**
 
     후진으로 확보한 여유를 선회가 되돌려 주며, 되돌려 주는 양이 더 크면 **같은
     장애물에 다시 붙는다.** `avoid_phases` 는 시간만 계산하므로 이 산수를 하지

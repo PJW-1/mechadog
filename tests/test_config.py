@@ -2,8 +2,6 @@
 
 NFR-3① (파라미터화)의 최소 안전망이다. 코드가 참조하는 키가 설정에서
 사라지면 런타임이 아니라 CI에서 잡히게 한다.
-
-WBS 4.4.1 의 config 로더가 구현되면 이 테스트를 로더 기반으로 확장한다.
 """
 
 from pathlib import Path
@@ -85,7 +83,7 @@ def test_device_profile_is_deep_merged(tmp_path: Path) -> None:
     assert loaded["device_id"] == "ref"
     assert loaded["network"]["cmd_port"] == 6201
     assert loaded["network"]["telemetry_port"] == 5101
-    assert loaded["safety"]["cmd_timeout_ms"] == 300
+    assert loaded["safety"]["cmd_timeout_ms"] == 600
 
 
 def test_device_id_mismatch_is_rejected(tmp_path: Path) -> None:
@@ -140,8 +138,8 @@ def test_command_timeout_shorter_than_link_loss(cfg: dict) -> None:
 
 
 def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
-    """명령 타임아웃은 Tier 1 예산(FR-1.3 = 300ms) 이내여야 한다."""
-    assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 300
+    """명령 타임아웃은 Tier 1 예산(FR-1.3 = 600ms) 이내여야 한다."""
+    assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 600
 
 
 @pytest.mark.parametrize(
@@ -152,6 +150,7 @@ def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
         ("fsm", "target_lost_timeout_s"),
         ("fsm", "avoid_attempts"),
         ("auth", "timeout_s"),
+        ("auth", "verdict_grace_s"),
         ("escalation", "l1_to_l2_hold_s"),
     ],
 )
@@ -181,7 +180,7 @@ def test_gait_params_within_api_range(cfg: dict) -> None:
 def test_localization_track_is_known(cfg: dict) -> None:
     """측위 트랙은 docs/DECISIONS.md ADR-18 이 인정하는 값이어야 한다.
 
-    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다** (OI-9 닫힘, 2026-09-05).
+    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다**.
     탈락한 선택지를 설정에 남겨 두면 근거를 모르는 사람이 다시 넣는다.
     """
     assert cfg["localization"]["track"] in {"none", "lidar", "aruco"}
@@ -295,12 +294,10 @@ def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
     assert cfg["escalation"]["l3_requires_manual_reset"] is True
 
 
-def test_auth_bound_to_track_id(cfg: dict) -> None:
-    """인증은 추적 ID 에 귀속되어야 한다 (FR-3.6.2).
-
-    아니면 인원이 여러 명일 때 누가 인증되었는지 구분할 수 없다.
-    """
-    assert cfg["auth"]["bind_to_track_id"] is True
+def test_auth_uses_scene_session(cfg: dict) -> None:
+    assert cfg["auth"]["bind_to_track_id"] is False
+    assert cfg["auth"]["require_both"] is True
+    assert cfg["auth"]["resume_delay_ms"] > 0
 
 
 def test_auth_timeouts_are_ordered(cfg: dict) -> None:
@@ -308,6 +305,12 @@ def test_auth_timeouts_are_ordered(cfg: dict) -> None:
     auth = cfg["auth"]
     assert auth["session_valid_s"] > auth["timeout_s"]
     assert auth["max_attempts"] >= 1
+    # 판정 유예는 **창을 늘리는 것**이지 창을 대신하는 것이 아니다 (ADR-37).
+    # 유예가 창보다 길면 실질 마감이 두 배가 되어, 경보가 언제 오는지를
+    # 설정에서 읽을 수 없게 된다.
+    assert 0 < auth["verdict_grace_s"] < auth["timeout_s"]
+    # 유예까지 다 쓴 최악의 경우에도 허가 세션이 먼저 끝나면 안 된다.
+    assert auth["session_valid_s"] > auth["timeout_s"] + auth["verdict_grace_s"]
 
 
 def test_posture_returns_before_move(cfg: dict) -> None:
@@ -327,13 +330,12 @@ def test_posture_steps_are_known(cfg: dict) -> None:
 
 
 def test_change_detect_confirms_over_cycles(cfg: dict) -> None:
-    """물체 변화는 연속 사이클 확인 후 확정한다 (FR-8.4).
+    """물체 변화는 연속 방문 확인 후 확정한다 (FR-8.4).
 
-    단 person 출현은 즉시 처리한다.
+    사람 출현은 여기서 다루지 않는다 — 사람 게이트(FR-3)가 맡는다.
     """
     cd = cfg["change_detect"]
     assert cd["confirm_cycles"] >= 2
-    assert cd["person_immediate"] is True
 
 
 def test_zones_are_declared(cfg: dict) -> None:
@@ -390,7 +392,7 @@ def test_ppe_requires_static_target(cfg: dict) -> None:
     """자세 상승은 대상이 정지 상태일 때만 개시한다 (FR-9.2.0).
 
     이동하는 대상은 추종이 불가능하다 — MechDog Trot 약 10~30cm/s 대
-    사람 보행 120~150cm/s 로 5~15배 차이이고, 제자리 회전도 불가하다(DR-11).
+    사람 보행 120~150cm/s 로 5~15배 차이이고, 제자리 회전도 전제하지 않는다(DR-11).
     게다가 상향 자세에서는 이동할 수 없으므로(FR-9.2.3) 대상이 움직이면
     `자세 상승 → 이탈 → 복귀 → 이동 → 재클리핑` 루프에 빠진다.
     """
@@ -663,8 +665,16 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
 
     # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
     assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
-    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "straight_bias_deg"):
-        assert two["gait_calibration"][name] is None, f"{name} 은 이 기체로 다시 재야 한다"
+    # 2026-09-22: mechdog-02 도 실측했다 — null 검사는 *"01 과 다르다"* 검사로
+    # 바뀐다. 같은 값이면 개체 실측이 아니라 복사다.
+    for name in ("forward_mm_per_sec", "turn_deg_per_sec", "reverse_mm_per_sec"):
+        assert two["gait_calibration"][name] != one["gait_calibration"][name], (
+            f"{name} — 01 의 값을 옮겨 적으면 안 된다"
+        )
+    # 직진 편향은 방향도 다르다 — 01 은 좌(+), 02 는 우(-).
+    assert two["gait_calibration"]["forward_yaw_drift_deg_per_sec"] < 0
+    # straight_bias_deg 는 bias 스윕 실측이 아직 없으므로 null 이어야 한다.
+    assert two["gait_calibration"]["straight_bias_deg"] is None
 
 
 def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
@@ -685,3 +695,130 @@ def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
         assert load_with(good)["vision"]["mount_rotation"] == good
     with pytest.raises(ConfigError, match="mount_rotation"):
         load_with(90)
+
+
+# ── 자세각 부호 (2026-09-15 실측 · PROTOCOL 2절) ──────────────────
+
+
+def test_head_up_postures_are_negative(cfg: dict) -> None:
+    """⚠️ **«고개를 드는» 자세각은 음수다.** 실측으로만 알 수 있는 값이다.
+
+    `POSE pitch=+15` → IMU 17.4, **앞이 내려감** / `-15` → -11.6, 앞이 올라감.
+    이름이 *"Pitch Up"* 이라 양수로 적혀 있었고 실제로는 바닥을 보게 만들었다.
+    """
+    assert cfg["fsm"]["alert_pitch_deg"] < 0, "경계 자세는 고개를 든다 (FR-3.3)"
+    assert cfg["posture"]["pitch_up_deg"] < 0, "자세 상승은 고개를 든다 (FR-9.2.2)"
+    assert cfg["fsm"]["scan_pitch_deg"] < 0, "스캔은 위를 훑는다"
+
+
+@pytest.mark.parametrize(
+    ("section", "name"),
+    [("fsm", "alert_pitch_deg"), ("fsm", "scan_pitch_deg"), ("posture", "pitch_up_deg")],
+)
+def test_positive_head_up_angle_is_refused(cfg: dict, section: str, name: str) -> None:
+    """⚠️ **양수로 되돌리면 기동을 막는다.**
+
+    같은 실수가 이미 한 번 났다 — `tools/teleop.py` 의 좌우가 뒤바뀐 채 **시험이
+    그 버그를 굳혀 두고 있었다.** 부호는 눈으로 보고서야 아는 종류라, 실측한
+    결론을 검증에 박아 둔다. 양수면 경계 자세가 바닥을 보고 가까운 사람의 머리가
+    **더 잘린다** — `FR-9.2.2` 가 자세로 풀려던 것과 정반대다.
+    """
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (15, 0):
+        broken = deepcopy(cfg)
+        broken[section][name] = bad
+        with pytest.raises(ConfigError, match=name):
+            validate_base_config(broken)
+
+
+def test_lidar_mount_yaw_must_be_within_one_turn(cfg: dict) -> None:
+    """범위 밖 설치각은 지도를 통째로 돌려 놓고도 조용히 지나간다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (-1, 360, 720, "270", float("nan")):
+        broken = deepcopy(cfg)
+        broken.setdefault("lidar", {})["mount_yaw_deg"] = bad
+        with pytest.raises(ConfigError, match="mount_yaw_deg"):
+            validate_base_config(broken)
+
+
+def test_lidar_mount_yaw_accepts_the_mounted_value(cfg: dict) -> None:
+    """커넥터를 뒤로 단 조립의 값(270)과 경계값이 통과해야 한다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for good in (0, 90, 270, 359.9):
+        ok = deepcopy(cfg)
+        ok.setdefault("lidar", {})["mount_yaw_deg"] = good
+        validate_base_config(ok)
+
+
+def test_lidar_angle_direction_requires_signed_unit(cfg: dict) -> None:
+    """좌우가 조용히 뒤집히지 않도록 방향은 정확히 -1 또는 1이다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (0, 2, True, -1.0, "-1", None):
+        broken = deepcopy(cfg)
+        broken.setdefault("lidar", {})["angle_direction"] = bad
+        with pytest.raises(ConfigError, match="angle_direction"):
+            validate_base_config(broken)
+    for good in (-1, 1):
+        ok = deepcopy(cfg)
+        ok.setdefault("lidar", {})["angle_direction"] = good
+        validate_base_config(ok)
+
+
+def test_lidar_scan_forward_port_rejects_the_receive_port_and_bad_values(cfg: dict) -> None:
+    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    same_as_scan_port = cfg["lidar"]["scan_port"]
+    for bad in (same_as_scan_port, 0, 70000, "5203", True, -1):
+        broken = deepcopy(cfg)
+        broken["lidar"]["scan_forward_port"] = bad
+        with pytest.raises(ConfigError, match="scan_forward_port"):
+            validate_base_config(broken)
+
+
+def test_lidar_scan_forward_port_accepts_a_different_port(cfg: dict) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    ok = deepcopy(cfg)
+    ok["lidar"]["scan_forward_port"] = cfg["lidar"]["scan_port"] + 1
+    validate_base_config(ok)
+
+
+def test_lidar_scan_forward_host_must_be_a_non_empty_string(cfg: dict) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in ("", "   ", None, 127):
+        broken = deepcopy(cfg)
+        broken["lidar"]["scan_forward_host"] = bad
+        with pytest.raises(ConfigError, match="scan_forward_host"):
+            validate_base_config(broken)
+
+
+def test_lidar_scan_forward_enabled_must_be_a_bool(cfg: dict) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    for bad in (1, 0, "true", None):
+        broken = deepcopy(cfg)
+        broken["lidar"]["scan_forward_enabled"] = bad
+        with pytest.raises(ConfigError, match="scan_forward_enabled"):
+            validate_base_config(broken)

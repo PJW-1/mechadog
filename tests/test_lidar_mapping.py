@@ -493,6 +493,19 @@ def test_zones_survive_a_save_and_load(tmp_path: Path) -> None:
     assert loaded.labels == ("A", "B")
 
 
+def test_a_zone_heading_survives_and_is_optional(tmp_path: Path) -> None:
+    """바라볼 방향(yaw)은 있으면 남고, 방향이 없는 옛 `zones.json` 도 그대로 읽힌다."""
+    store = ZoneStore(("A", "B"))
+    store.place(1.0, 1.0)
+    store.place(2.0, 2.0)
+    store.aim("A", -1.571)
+    store.save(tmp_path)
+    assert "yaw" not in json.loads((tmp_path / "zones.json").read_text(encoding="utf-8"))["B"]
+    loaded = ZoneStore.load(tmp_path, ("A", "B"))
+    assert loaded.get("A").yaw == pytest.approx(-1.571)
+    assert loaded.get("B").yaw is None
+
+
 def test_undo_removes_the_last_placed_zone() -> None:
     store = ZoneStore(("A", "B", "C"))
     store.place(1.0, 1.0)
@@ -537,6 +550,21 @@ def test_lidar_scan_port_differs_from_the_other_links() -> None:
     section = read_lidar_section()
     taken = {base["network"]["cmd_port"], base["network"]["telemetry_port"]}
     assert section["scan_port"] not in taken
+
+
+def test_scan_forward_port_differs_from_the_other_links() -> None:
+    """⚠️ 명령·텔레메트리·`lidar_live_map --pose-port`(5202) 에 SCAN 을 뿌리면 조용히 폐기된다."""
+    root = Path(__file__).resolve().parents[1]
+    base = yaml.safe_load((root / "config" / "config.yaml").read_text(encoding="utf-8"))
+    section = read_lidar_section()
+    taken = {base["network"]["cmd_port"], base["network"]["telemetry_port"], 5202}
+    assert section["scan_forward_port"] not in taken
+
+
+def test_scan_forward_port_differs_from_scan_port() -> None:
+    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다 (WBS 5.4.4)."""
+    section = read_lidar_section()
+    assert section["scan_forward_port"] != section["scan_port"]
 
 
 def test_path_clearance_exceeds_the_host_estop_distance() -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import socket
 import sys
@@ -20,9 +19,6 @@ class Client:
         self.target = (host, port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(timeout)
-        if hasattr(socket, "SIO_UDP_CONNRESET"):
-            with contextlib.suppress(OSError):
-                self.sock.ioctl(socket.SIO_UDP_CONNRESET, False)
         self.timeout = timeout
         self.seq = 0
 
@@ -51,7 +47,12 @@ class Client:
             if remaining <= 0:
                 raise TimeoutError("응답 대기 시간 초과")
             self.sock.settimeout(max(0.001, remaining))
-            reply, source = self.sock.recvfrom(2048)
+            try:
+                reply, source = self.sock.recvfrom(2048)
+            except OSError:
+                # Windows — 상대 포트가 없을 때 돌아오는 ICMP 가 recvfrom 의
+                # ConnectionResetError 로 나타난다. 데드라인까지 계속 기다린다.
+                continue
             decoded = json.loads(reply)
             if decoded.get("seq") != expected_seq:
                 continue
@@ -63,7 +64,10 @@ class Client:
 
     def send_raw(self, raw: bytes) -> dict[str, object]:
         self.sock.sendto(raw, self.target)
-        reply, source = self.sock.recvfrom(2048)
+        try:
+            reply, source = self.sock.recvfrom(2048)
+        except OSError as exc:
+            raise TimeoutError("응답 대기 중 소켓 오류") from exc
         decoded = json.loads(reply)
         print(f"{source[0]}:{source[1]} {decoded}")
         return decoded
@@ -127,6 +131,14 @@ def run_watchdog(client: Client, step: float, angle: float, duration: float) -> 
     return 0
 
 
+def run_sound(client: Client, track: int) -> int:
+    # RESET_SAFE 를 보내지 않는다 — 래치된 채 다리가 움직이지 않고, 래치 중 재생도 함께 본다.
+    # seq=1 STOP 이 새 세션을 연다. 없으면 두 번째 실행부터 seq 중복으로 버려진다.
+    client.send("STOP")
+    reply = client.send("SOUND", track=track)
+    return 0 if reply.get("applied") is True else 1
+
+
 def main() -> int:
     # ⚠️ **인자 처리보다 앞이다** — cp949 콘솔에서 `--help` 조차 죽었다
     # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
@@ -144,6 +156,10 @@ def main() -> int:
         command.add_argument("--step", type=float, default=20.0)
         command.add_argument("--angle", type=float, default=0.0)
         command.add_argument("--duration", type=float, default=0.5)
+    sound = sub.add_parser(
+        "sound", help="play a TF card track (0 = stop) without clearing the latch"
+    )
+    sound.add_argument("track", type=int)
 
     args = parser.parse_args()
     client = Client(args.host, args.port, args.timeout)
@@ -151,6 +167,8 @@ def main() -> int:
         try:
             if args.action == "safety":
                 return run_safety(client)
+            if args.action == "sound":
+                return run_sound(client, args.track)
             if args.action == "move":
                 return run_move(client, args.step, args.angle, args.duration)
             return run_watchdog(client, args.step, args.angle, args.duration)

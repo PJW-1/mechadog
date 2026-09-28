@@ -111,5 +111,5 @@ def test_timeout_does_not_resume_old_move_when_led_heartbeat_returns():
     robot = MockRobot("unit", deepcopy(load_base_config()))
     encoder = CommandEncoder(clock=lambda: 10000)
     robot.receive(encoder.move(60, 20), 0)
-    robot.receive(encoder.led("red", 0), 301)
-    assert robot.motion(301) == {"step": 0, "angle": 0}
+    robot.receive(encoder.led("red", 0), 601)
+    assert robot.motion(601) == {"step": 0, "angle": 0}

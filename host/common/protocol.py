@@ -1,4 +1,4 @@
-"""통신 규약 구현 — 직렬화 · 파싱 · 검증 (WBS 3.1.1 · FR-5.1/5.2).
+"""통신 규약 구현 — 직렬화 · 파싱 · 검증 (FR-5.1/5.2).
 
 **정본은 이 파일이 아니라 docs/PROTOCOL.md 다.**
 이 파일은 그 문서의 Python 구현이고, C++ 펌웨어(`command_parser`)는 같은 문서의
@@ -38,10 +38,22 @@ from typing import Any
 #  1. 규약 상수 — PROTOCOL.md 2절 · 5절
 # ══════════════════════════════════════════════════════════════
 
-#: 제어 명령 10종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
+#: 제어 명령 11종. 여기 없는 타입은 폐기 + WARN 이며, 그 덕분에 타입 추가는
 #: 항상 하위 호환이다 (PROTOCOL.md 4절). `STATE` 가 그 첫 사례다.
 COMMAND_TYPES: frozenset[str] = frozenset(
-    {"MOVE", "POSE", "GAIT", "STOP", "ACTION", "LED", "SOUND", "STATE", "ESTOP", "RESET_SAFE"}
+    {
+        "MOVE",
+        "POSE",
+        "GAIT",
+        "STOP",
+        "ACTION",
+        "LED",
+        "SOUND",
+        "STATE",
+        "ESTOP",
+        "RESET_SAFE",
+        "SERVICE",
+    }
 )
 
 #: 모든 명령의 공통 필수 필드. `seq`·`ts` 는 **정수**, `type` 은 문자열이다.
@@ -58,18 +70,23 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "RESET_SAFE": frozenset(),
     "ACTION": frozenset({"id"}),
     "LED": frozenset({"color", "blink_hz"}),
-    "SOUND": frozenset({"phrase_id"}),
+    "SOUND": frozenset({"track"}),
     "STATE": frozenset({"state"}),
+    "SERVICE": frozenset({"mode"}),
 }
 
+#: SERVICE 명령의 mode 값. 모르는 값은 폐기 + WARN — 상태와 같은 이유로
+#: 모드 추가를 하위 호환으로 만든다.
+SERVICE_MODES: frozenset[str] = frozenset({"enter", "exit"})
+
 #: 문자열로 받는 필드. 나머지 필수 필드는 전부 수치다.
-STRING_FIELDS: frozenset[str] = frozenset({"color", "state"})
-INTEGER_FIELDS: frozenset[str] = frozenset({"dur", "lift_time", "ground_time", "id", "phrase_id"})
+STRING_FIELDS: frozenset[str] = frozenset({"color", "state", "mode"})
+INTEGER_FIELDS: frozenset[str] = frozenset({"dur", "lift_time", "ground_time", "id", "track"})
 NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
     "POSE": ("dur",),
     "GAIT": ("lift_time", "ground_time", "height"),
     "LED": ("blink_hz",),
-    "SOUND": ("phrase_id",),
+    "SOUND": ("track",),
 }
 
 #: 클램핑 대상 — PROTOCOL.md 가 범위를 명시한 필드만이다.
@@ -77,7 +94,9 @@ NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
 #: 않는다. 근거 없는 상한을 코드에 박으면 그것이 사실상의 규약이 되어버린다.
 CLAMP_RANGES: dict[str, tuple[float, float]] = {
     "step": (-100, 100),  # mm
-    "angle": (-30, 30),  # deg — arc 조향. 제자리 회전 불가 (DR-11)
+    # deg — arc 조향. `step=0` 이면 제자리에서 돌기는 하지만 산포가 82% 라
+    # 제어에 쓰지 않는다 (DR-11).
+    "angle": (-30, 30),
     "id": (0, 15),  # 내장 액션 그룹
 }
 
@@ -143,7 +162,7 @@ FLAG_FIELDS: tuple[str, ...] = ("lowbatt", "tipped", "link_ok")
 #: `AVOID` 는 호스트가 `STATE` 로 내려보낸 값이 되돌아온 것일 수도 있어서,
 #: **해제됐는지를 그 값으로 알 수 없다.** `safety_latched` 가 `FAILSAFE` 에 대해
 #: 같은 문제를 푸는 방식과 동일하다.
-OPTIONAL_FLAG_FIELDS: tuple[str, ...] = ("obstacle",)
+OPTIONAL_FLAG_FIELDS: tuple[str, ...] = ("obstacle", "service")
 
 #: `TelemetryEncoder` 가 스스로 채우며 `extra` 로 덮을 수 없는 필드.
 #: 나머지 본문 필드(`state`·`dist_cm`·`imu`·`batt_v`·`last_cmd_age_ms`·`flags`)는
@@ -383,6 +402,8 @@ class CommandEncoder:
             raise ValueError(f"{type_} 필수 필드 누락: {sorted(missing)}")
         if type_ == "STATE" and not _known(fields["state"], FSM_STATES):
             raise ValueError(f"알 수 없는 상태: {fields['state']!r}")
+        if type_ == "SERVICE" and not _known(fields["mode"], SERVICE_MODES):
+            raise ValueError(f"알 수 없는 서비스 모드: {fields['mode']!r}")
         if error := _command_field_error(type_, fields):
             raise ValueError(error)
 
@@ -426,8 +447,8 @@ class CommandEncoder:
     def led(self, color: str, blink_hz: float) -> str:
         return self.encode("LED", color=color, blink_hz=blink_hz)
 
-    def sound(self, phrase_id: int) -> str:
-        return self.encode("SOUND", phrase_id=phrase_id)
+    def sound(self, track: int) -> str:
+        return self.encode("SOUND", track=track)
 
     def state(self, state: str) -> str:
         """호스트의 FSM 상태를 로봇에게 알려준다.
@@ -439,11 +460,20 @@ class CommandEncoder:
         """
         return self.encode("STATE", state=state)
 
+    def service(self, mode: str) -> str:
+        """SERVICE 모드 전환 — 루프 워치독을 단 런타임 진입/해제.
+
+        `enter` 는 몸을 주차(safe 래치 + 보행 차단)한 뒤 워치독을 걸고,
+        `exit` 는 워치독을 해제한다. 해제 후에도 safe 래치는 남으므로
+        보행 복귀에는 `RESET_SAFE` 가 필요하다.
+        """
+        return self.encode("SERVICE", mode=mode)
+
 
 class CommandDecoder:
     """제어 명령 수신 검증. C++ 파서와 규칙·순서가 같아야 한다.
 
-    이 클래스가 Python 쪽에 있는 이유는 가상 MechDog(WBS 6.1.1)이 실물 없이
+    이 클래스가 Python 쪽에 있는 이유는 가상 MechDog이 실물 없이
     같은 규칙으로 수신해야 하기 때문이다. 펌웨어의 참조 구현이기도 하다.
 
     규칙 적용 순서 — PROTOCOL.md 3절의 ①~④ 를 실행 가능한 순서로 편 것이다.
@@ -513,6 +543,8 @@ class CommandDecoder:
         # 이유로 상태 추가를 하위 호환으로 만든다.
         if type_ == "STATE" and not _known(msg["state"], FSM_STATES):
             return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {msg['state']!r}")
+        if type_ == "SERVICE" and not _known(msg["mode"], SERVICE_MODES):
+            return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 서비스 모드: {msg['mode']!r}")
 
         # ② 범위 초과는 폐기가 아니라 클램핑
         return _accept(*apply_clamps(msg))

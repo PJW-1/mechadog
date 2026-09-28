@@ -1,4 +1,4 @@
-"""추론 워커 스레드 (WBS 3.3.2 · NFR-1.2 · NFR-3③).
+"""추론 워커 스레드 (NFR-1.2 · NFR-3③).
 
 **비전 경로를 처음으로 실제로 연결하는 곳이다.** 지금까지 조각은 다 있었지만
 (`StreamReader` · `FrameQueue` · `Detector`) 아무것도 이어져 있지 않았다.
@@ -8,8 +8,8 @@
                             ↓ 최신 결과 하나만 담는 슬롯
     ③ 메인 루프     latest() 를 **무블로킹으로** 읽는다 (여기 없음 — `runtime.py`)
 
-⚠️ **메인 루프를 막으면 로봇이 멈춘다.** 로봇은 `safety.cmd_timeout_ms`(300ms) 동안
-명령을 못 받으면 스스로 정지한다. 우리가 100ms 마다 보내므로 여유는 3배뿐이고,
+⚠️ **메인 루프를 막으면 로봇이 멈춘다.** 로봇은 `safety.cmd_timeout_ms`(600ms) 동안
+명령을 못 받으면 스스로 정지한다. 우리가 100ms 마다 보내므로 여유는 6배뿐이고,
 추론이 메인 스레드에서 돌면 그 여유가 사라진다. **그것이 이 모듈의 존재 이유다.**
 
 ⚠️ **파이썬 스레드로 충분한 이유** — 추론 시간의 거의 전부가 C++ 안이다(onnxruntime ·
@@ -35,7 +35,8 @@ from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
 from host.vision.badge import BadgeReader, Marker
 from host.vision.detector import Detection
-from host.vision.person import PersonGate, Sighting
+from host.vision.person import FallenGate, FallenVerdict, PersonGate, Sighting
+from host.vision.ppe_detector import PPE_CLASSES, PpeDetector, PpeVerdict
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
 from host.vision.tracker import PersonTracker, Track
 
@@ -65,7 +66,7 @@ class VisionResult:
     frame_seq: int
     #: 디코드한 원본 프레임의 크기. ⚠️ **설정의 `vision.resolution` 을 믿지 않는다** —
     #: 검출 박스는 원본 픽셀 좌표이고, 카메라가 요청과 다른 크기를 보내면 추종이
-    #: 화면 중앙을 엉뚱한 곳으로 잡는다. 실제로 디코드한 것을 싣는다 (`3.5.4`).
+    #: 화면 중앙을 엉뚱한 곳으로 잡는다. 실제로 디코드한 것을 싣는다.
     frame_width: int
     frame_height: int
     frame_received_ms: int
@@ -74,7 +75,7 @@ class VisionResult:
     #: 사람 판정 (FR-3.2). ⚠️ **게이트는 추론마다 관측해야 한다** — 메인 루프(10Hz)에서
     #: 부르면 25fps 결과 중 10개만 보게 되고, 그러면 추론률을 올린 이유가 사라진다.
     sighting: Sighting
-    #: 지속 ID 가 붙은 사람들 (FR-3.6 · `3.3.4`). **이번 프레임에 보인 대상만**이며
+    #: 지속 ID 가 붙은 사람들 (FR-3.6). **이번 프레임에 보인 대상만**이며
     #: 소실 버퍼에 있는 대상은 들어 있지 않다.
     #:
     #: ⚠️ **게이트와 목적이 다르다.** 게이트는 *"사람이 있는가"*(로봇 단위)이고 이쪽은
@@ -82,12 +83,19 @@ class VisionResult:
     #: 추적도 게이트와 같은 이유로 **추론마다** 돌려야 한다 — 10Hz 로 관측하면
     #: 프레임 간 겹침이 그만큼 줄어 ID 가 끊긴다.
     tracks: tuple[Track, ...]
-    #: 이 프레임에서 읽은 사원증 마커 (FR-10.1 · `3.8.1`).
+    #: 쓰러짐 규칙 판정 (FR-9 · ADR-35 대안 ⓓ).
+    #:
+    #: ⚠️ **VLM 과 둘이다.** 저쪽은 구역당 한 번이고 이쪽은 추론마다 돈다 — 가장 급한
+    #: 사건을 0.4초짜리 모델 하나에만 맡기지 않는다. 게이트·추적과 같은 이유로 여기서
+    #: 재야 한다(메인 루프 10Hz 에서 보면 25fps 중 10개만 본다).
+    fallen: FallenVerdict
+    #: 이 프레임에서 읽은 사원증 마커 (FR-10.1).
     #:
     #: ⚠️ **추적 대상이 있을 때만 읽는다** — FR-3.1.1 의 PPE 게이팅과 같은 원칙이고,
     #: 애초에 귀속시킬 사람이 없으면 인증이 성립하지 않는다. 마커 없는 VGA 프레임에
     #: 0.75ms 가 들므로 빈 순찰 구간에서 그만큼을 아낀다.
     markers: tuple[Marker, ...]
+    ppe: PpeVerdict | None = None
 
 
 @dataclass
@@ -122,18 +130,24 @@ class VisionWorker:
         reader: Any,
         queue: FrameQueue | None = None,
         clock: Any = None,
+        ppe: PpeDetector | None = None,
     ) -> None:
         vision = config["vision"]
         self._detector = detector
         self._reader = reader
         self._gate = PersonGate(config)
+        self._fallen = FallenGate(config)
         self._tracker = PersonTracker(config)
         self._badges = BadgeReader(config)
+        self._ppe = ppe
+        self._ppe_enabled = False
+        self._ppe_opened = False
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
-        # ⚠️ **추론률 상한을 지킨다.** 큐에는 25fps 로 들어오지만 추론은 10fps 다
-        # (ADR-23). 상한 없이 돌리면 GPU 가 허용하는 만큼 돌아 전력과 GIL 을 낭비한다.
+        # ⚠️ **추론률 상한을 지킨다** — `vision.inference_fps`(지금 25 · 수신률과 같다). 10fps 로
+        # 두던 때가 있었으나 짧은 검출 구간을 놓쳐 25 로 올렸다(ADR-23).
+        # 상한 없이 돌리면 GPU 가 허용하는 만큼 돌아 전력과 GIL 을 낭비한다.
         self._period_ms = max(1, round(1000 / float(vision["inference_fps"])))
         self._next_due_ms: int | None = None
         self._started_ms: int | None = None
@@ -150,11 +164,11 @@ class VisionWorker:
 
         ⚠️ **세션 생성을 워커 스레드에 두면 메인 루프가 막힌다.** 실제로 그렇게 만들어
         재 봤더니 기동 +684ms 지점에서 **틱 간격이 582ms** 로 벌어졌다 — `cmd_timeout_ms`
-        (300ms)를 넘겨 **로봇이 멈추는 값**이다. 세션 생성 632ms + 워밍업이 C++ 안이지만
-        GIL 을 고르게 놓지 않는다(DirectML 장치 초기화 포함).
+        (600ms) 턱밑까지 다가가 **로봇이 멈추기 직전까지 가는 값**이다. 세션 생성
+        632ms + 워밍업이 C++ 안이지만 GIL 을 고르게 놓지 않는다(DirectML 장치 초기화 포함).
 
         그래서 비용을 **운용 루프가 시작되기 전**에 낸다. 첫 프레임 워밍업을 기동으로
-        옮긴 것(3.3.1)과 같은 판단이고, 이번에는 그 대상이 세션 자체다.
+        옮긴 것과 같은 판단이고, 이번에는 그 대상이 세션 자체다.
 
         **데몬으로 둔다** — 메인이 끝나면 프로세스가 죽어야 한다.
         """
@@ -163,6 +177,9 @@ class VisionWorker:
             return
         opened = self._clock()
         self._detector.open()
+        if self._ppe_enabled and self._ppe is not None:
+            self._ppe.open()
+            self._ppe_opened = True
         LOG.info("vision_detector_opened", ms=self._clock() - opened)
         # 첫 프레임 전에도 단절 시간을 잴 기준이 필요하다. 세션 준비 시간은 기동 비용이고,
         # 실제 카메라 대기는 수신 스레드가 뜬 뒤부터이므로 여기서 시계를 시작한다.
@@ -246,6 +263,15 @@ class VisionWorker:
         """사람 판정 게이트. 스트림이 끊기면 호출부가 `reset()` 한다."""
         return self._gate
 
+    def set_ppe_enabled(self, enabled: bool) -> None:
+        """Only factory mode pays for PPE inference; the worker owns its state."""
+        if enabled and self._started_ms is not None and not self._ppe_opened:
+            if self._ppe is None:
+                raise RuntimeError("PPE 판정기가 없다")
+            self._ppe.open()
+            self._ppe_opened = True
+        self._ppe_enabled = enabled
+
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:
         frames = None
@@ -302,8 +328,21 @@ class VisionWorker:
             observed = self._clock()
             sighting = self._gate.observe(observed, detections)
             tracks = self._tracker.update(detections, observed)
+            # ⚠️ **대표 박스로 본다** — 게이트가 고른 그 사람이다. 모든 사람을 재면
+            # 누가 쓰러졌는지 말할 수 없고, 추적 ID 를 함께 넘겨야 다른 사람의 정지가
+            # 이번 사람 몫을 채우지 않는다.
+            fallen = self._fallen.observe(
+                observed, sighting.box, track_id=tracks[0].track_id if tracks else None
+            )
             # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
             markers = self._badges.read(image) if tracks else ()
+            ppe = (
+                self._ppe.observe(image, tracks, observed)
+                if self._ppe_enabled and self._ppe
+                else None
+            )
+            if not self._ppe_enabled and self._ppe is not None:
+                self._ppe.reset()
         except Exception as exc:  # noqa: BLE001
             self._note_error("vision_inference_failed", exc, seq=frame.seq)
             return
@@ -320,8 +359,10 @@ class VisionWorker:
             completed_ms=completed,
             inference_ms=elapsed,
             sighting=sighting,
+            fallen=fallen,
             tracks=tracks,
             markers=markers,
+            ppe=ppe,
         )
         with self._slot_lock:
             # ⚠️ **덮어쓴다. 쌓지 않는다.** 낡은 검출로 판단하면 로봇이 과거를 보고
@@ -354,7 +395,11 @@ def build_worker(
 
     detector = Detector(config, section=section, labels=labels or COCO_CLASSES)
     reader = StreamReader(config, before_connect=push_profile)
-    return VisionWorker(config, detector=detector, reader=reader)
+    ppe = PpeDetector(
+        config,
+        Detector(config, section="ppe", labels=PPE_CLASSES),
+    )
+    return VisionWorker(config, detector=detector, reader=reader, ppe=ppe)
 
 
 @dataclass
@@ -373,7 +418,13 @@ class TickIntervals:
     late: int = 0
     _last_ms: int | None = None
 
-    def note(self, now_ms: int) -> None:
+    def note(self, now_ms: int) -> int | None:
+        """간격을 기록하고 **그 간격을 돌려준다** (첫 호출은 `None`).
+
+        돌려주는 이유가 있다 — `digest()` 는 누적이라 운용 중 초당 요약에 실을 수
+        없다. 호출자가 이번 간격만 따로 집계할 수 있어야 한다.
+        """
+        gap: int | None = None
         if self._last_ms is not None:
             gap = now_ms - self._last_ms
             self.max_ms = max(self.max_ms, gap)
@@ -384,6 +435,7 @@ class TickIntervals:
                 # 무한히 쌓지 않는다. 최악값은 위에서 따로 보존한다.
                 del self.samples[: len(self.samples) - self.window]
         self._last_ms = now_ms
+        return gap
 
     def percentile(self, fraction: float) -> int | None:
         if not self.samples:

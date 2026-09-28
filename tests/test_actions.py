@@ -289,7 +289,7 @@ def _measured(cfg: dict, **override: float | None) -> dict:
 def test_reverse_turn_replaces_the_reverse_then_turn_pair(cfg) -> None:
     """⚠️ **전진하며 돌면 후진으로 번 여유를 되돌려 준다.**
 
-    제자리 회전이 불가하므로(ADR-11) 선회가 반드시 이동을 동반하는데, 실측
+    제자리 회전을 전제하지 않으므로(ADR-11) 선회가 반드시 이동을 동반하는데, 실측
     선회 속도가 6.8 도/s 라 30도에 4.4초가 걸리고 그 동안 84mm/s 로 **370mm 를
     전진했다** — 후진 200mm 를 다 먹고 **순 여유가 -170mm**, 즉 회피가 장애물에
     더 붙었다. 후진하며 돌면 한 구간으로 줄고 여유가 양수가 된다.
@@ -346,19 +346,22 @@ def test_half_measured_reverse_turn_keeps_the_old_phases(cfg, override: dict) ->
     assert [ph.name for ph in phases] == ["settle", "reverse", "turn", "verify"]
 
 
-# ── 직진 보정 (2026-09-12 · 데드밴드 실측) ─────────────────
+# ── 직진 보정 (2026-09-12 확정 · 2026-09-18 곡선으로 근거 정정) ────
+# ⚠️ 2026-09-12 에는 «데드밴드 3.3°» 로 설명했고 값도 -8.0 이었다. 둘 다 틀렸다 — 응답에
+# 평평한 구간이 없고 순 회전 영점은 **-5.0°** 다 (직접 실측).
+# docs/measurements/2026-09-18-turn-rate-curve.md
 def test_patrol_carries_the_measured_straight_bias(clock, cfg) -> None:
     """⚠️ **각도 0 을 보내면 똑바로 가지 않는다.**
 
-    실측에서 직진 명령이 좌로 1.0 도/s 씩 돌았다 — 10초 구간마다 9cm 씩 밀리고
-    방향은 누적된다. 그래서 보정 각도를 직진 명령에 얹는다.
+    실측에서 직진 명령이 좌로 **1.87 도/s** 씩 돌았다(2026-09-18 · IMU). 5m 직선이면
+    90도이고 방향은 누적된다. 그래서 보정 각도를 직진 명령에 얹는다.
     """
     merged = _cfg(cfg)
-    merged["gait_calibration"] = dict(merged["gait_calibration"], straight_bias_deg=-8.0)
+    merged["gait_calibration"] = dict(merged["gait_calibration"], straight_bias_deg=-5.0)
     b = _behavior(clock, merged)
     register_actions(b, merged)
     b.event(Event.START_PATROL, now_ms=clock.ms)
-    assert moves(b, clock.ms)[0]["angle"] == -8.0
+    assert moves(b, clock.ms)[0]["angle"] == -5.0
 
 
 def test_patrol_without_a_measured_bias_sends_zero(clock, cfg) -> None:
@@ -380,8 +383,155 @@ def test_avoid_phases_do_not_take_the_straight_bias(cfg) -> None:
 
     보정은 *직진* 명령을 곧게 만드는 값이고, 회피는 이미 각도를 의도적으로 준다.
     """
-    merged = _measured(cfg, straight_bias_deg=-8.0)
+    merged = _measured(cfg, straight_bias_deg=-5.0)
     phases = avoid_phases(merged)
     assert phases is not None
     escape = next(ph for ph in phases if ph.name == "reverse_turn")
     assert escape.angle_deg == cfg["gait"]["turn_angle_deg"]
+
+
+# ── 자세 상태 (WBS 3.5.2 SCAN · 3.5.3 ALERT) ─────────────────
+#
+# ⚠️ **틱 시각을 반드시 진행시킨다.** 송신기는 10Hz 주기라 같은 ms 로 두 번 부르면
+# 두 번째가 빈 목록을 돌려주고 전문은 큐에 남는다 — 그것을 «안 보냈다» 로 읽으면
+# 시험이 거짓으로 통과하거나 거짓으로 실패한다.
+def poses(behavior: Behavior, now_ms: int) -> list[dict]:
+    return [m for m in sent(behavior, now_ms) if m["type"] == "POSE"]
+
+
+def test_scan_posture_is_immediate(clock, cfg) -> None:
+    """`SCAN` 은 기다리지 않는다 — 타이머가 3초만 주고 왕복하지도 않는다."""
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    assert poses(b, 0) == [], "순찰 진입에는 자세가 없다"
+
+    b.event(Event.SCAN_DUE, now_ms=100)
+    first = poses(b, 100)
+    assert len(first) == 1, "진입 틱에 바로 나간다"
+    assert first[0]["pitch"] == cfg["fsm"]["scan_pitch_deg"]
+    assert first[0]["pitch"] < 0, "음수가 «고개를 드는» 쪽이다 (2026-09-15 IMU 실측)"
+    assert poses(b, 200) == [], "다음 틱에는 다시 보내지 않는다 — 보간이 재시작한다"
+
+
+def test_alert_posture_waits_out_the_flapping(clock, cfg) -> None:
+    """⚠️ **`ALERT` 는 머문 뒤에 잡는다 — 2026-09-18 실기에서 고친 것이다.**
+
+    조준 중 `ALERT ⇄ TRACK` 왕복의 체류가 **0.2~0.6초**였고, 자세 보간(500ms)이
+    끝나기 전에 중립이 와서 **고개가 올라가려다 멈추는 것을 반복**했다.
+    """
+    hold = cfg["posture"]["alert_hold_ms"]
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.PERSON_FOUND, now_ms=0)
+
+    assert poses(b, 0) == [], "진입 즉시 보내지 않는다"
+    assert poses(b, hold - 100) == [], "체류가 모자라면 아직 아니다"
+
+    settled = poses(b, hold)
+    assert len(settled) == 1 and settled[0]["pitch"] == cfg["fsm"]["alert_pitch_deg"]
+    assert poses(b, hold + 100) == [], "잡은 뒤에는 다시 보내지 않는다"
+
+
+def test_alert_flapping_sends_no_pose_at_all(clock, cfg) -> None:
+    """**잡지 않았으면 되돌릴 것도 없다.**
+
+    왕복 구간에서 `POSE` 가 한 장도 나가지 않아야 한다 — 진입분도 중립분도.
+    되돌리기만 나가도 벤더 보간이 그때마다 재시작해 같은 증상이 남는다.
+    """
+    hold = cfg["posture"]["alert_hold_ms"]
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+
+    seen: list[dict] = []
+    for i in range(4):  # 0.4초짜리 왕복 네 번 — 실측 체류가 0.2~0.6초였다
+        base = i * 800
+        b.event(Event.PERSON_FOUND, now_ms=base)
+        seen += poses(b, base)
+        b.event(Event.TARGET_OFF_CENTER, now_ms=base + 400)
+        seen += poses(b, base + 400)
+        b.event(Event.TARGET_CENTERED, now_ms=base + 700)
+        seen += poses(b, base + 700)
+    assert seen == [], f"왕복 중에는 자세를 건드리지 않는다 (hold={hold}ms)"
+
+
+def test_settled_alert_restores_neutral_on_exit(clock, cfg) -> None:
+    """⚠️ **고개를 든 상태로는 이동할 수 없다** — 전방 지면이 안 보인다 (FR-9.2.3).
+
+    자리를 잡아 자세를 취한 뒤에는 떠날 때 반드시 중립으로 되돌린다. FSM 이 이탈
+    훅을 진입 훅보다 먼저 부르므로 복귀가 다음 상태의 준비보다 앞선다.
+    """
+    hold = cfg["posture"]["alert_hold_ms"]
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.PERSON_FOUND, now_ms=0)
+    assert poses(b, 0) == [], "체류 시각은 첫 틱에서 잡힌다 — 그 틱이 있어야 시계가 돈다"
+    assert poses(b, hold)[0]["pitch"] == cfg["fsm"]["alert_pitch_deg"]
+
+    b.event(Event.TARGET_OFF_CENTER, now_ms=hold + 100)
+    assert b.state == "TRACK"
+    assert [m["pitch"] for m in poses(b, hold + 100)] == [0], "추종으로 넘어가며 중립 복귀"
+
+
+def test_leaving_scan_restores_neutral(clock, cfg) -> None:
+    """`SCAN → PATROL` 도 같다 — 걸어 나가기 전에 고개를 내린다."""
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.SCAN_DUE, now_ms=0)
+    assert poses(b, 0)[0]["pitch"] == cfg["fsm"]["scan_pitch_deg"]
+
+    b.event(Event.SCAN_DONE, now_ms=100)
+    assert b.state == "PATROL"
+    assert [m["pitch"] for m in poses(b, 100)] == [0], "중립으로 되돌린다"
+
+
+def test_posture_states_stand_still(clock, cfg) -> None:
+    """자세를 잡는 동안에도 그 뒤에도 걷지 않는다 — 조준·경계는 정지의 행동이다."""
+    b = _behavior(clock, _cfg(cfg))
+    report = register_actions(b, _cfg(cfg))
+    assert "즉시" in report["SCAN"], "SCAN 은 기다리지 않는다는 것이 기동 로그에 남는다"
+    assert "머문 뒤" in report["ALERT"], "ALERT 는 머문다는 것이 남는다"
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.SCAN_DUE, now_ms=0)
+    move = moves(b, 0)[0]
+    assert (move["step"], move["angle"]) == (0, 0)
+
+
+def test_auth_wait_holds_the_alert_posture(clock, cfg) -> None:
+    """⚠️ **로봇이 실제로 서서 사람을 상대하는 곳은 `AUTH_WAIT` 다.**
+
+    2026-09-18 실기에서 `ALERT` 체류는 **0.0~0.2초**였다 — 조준이 끝나면 에스컬레이션이
+    이미 L2 라 **같은 틱에** `AUTH_REQUIRED` 로 빠진다. 30초를 머문 곳은 `AUTH_WAIT`
+    이고, 그 30초가 **사원증을 읽어야 하는 시간**이라 고개를 든 자세가 곧 기능이다.
+    기다리지 않는다 — `ALERT` 와 달리 왕복하지 않는다.
+    """
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.PERSON_FOUND, now_ms=0)
+    assert poses(b, 0) == [], "ALERT 는 머문 뒤에 잡는다"
+
+    b.event(Event.AUTH_REQUIRED, now_ms=100)
+    assert b.state == "AUTH_WAIT"
+    entered = poses(b, 100)
+    assert len(entered) == 1 and entered[0]["pitch"] == cfg["fsm"]["alert_pitch_deg"]
+    assert poses(b, 200) == [], "한 번만 보낸다"
+
+    b.event(Event.AUTH_OK, now_ms=300)
+    assert b.state == "PATROL"
+    assert [m["pitch"] for m in poses(b, 300)] == [0], "걸어 나가기 전에 중립 복귀"
+
+
+def test_auth_wait_still_stands_still(clock, cfg) -> None:
+    """자세만 붙었고 **정지는 그대로다** — 지시를 `HALT` 에서 시퀀스로 옮긴 것뿐이다."""
+    b = _behavior(clock, _cfg(cfg))
+    register_actions(b, _cfg(cfg))
+    b.event(Event.START_PATROL, now_ms=0)
+    b.event(Event.PERSON_FOUND, now_ms=0)
+    b.event(Event.AUTH_REQUIRED, now_ms=0)
+    move = moves(b, 0)[0]
+    assert (move["step"], move["angle"]) == (0, 0)

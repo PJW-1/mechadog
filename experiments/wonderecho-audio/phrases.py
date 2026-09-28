@@ -12,10 +12,7 @@
 
 from __future__ import annotations
 
-import json
 import random
-import re
-from pathlib import Path
 
 PHRASES: dict[str, list[str]] = {
     # ── 호출 응답·인사 ────────────────────────────────────────────────────
@@ -26,6 +23,11 @@ PHRASES: dict[str, list[str]] = {
         "안녕하세요, 메카독입니다. 무슨 일이신가요?",
         "네, 여기 있습니다. 말씀하세요.",
         "메카독입니다. 도움이 필요하신가요?",
+    ],
+    # 규칙(명령·시나리오·비상·암구호)에 걸리지 않은 발화 — 한 문장으로 고정한다.
+    # 자유 대화(LLM)는 폐기했다(ADR-38). 문장을 늘리면 MP3 트랙도 늘어난다.
+    "not_understood": [
+        "잘 못 들었습니다. 다시 말씀해 주세요.",
     ],
     # ── 신원 확인 ─────────────────────────────────────────────────────────
     "identity_ask": [
@@ -139,10 +141,6 @@ PHRASES: dict[str, list[str]] = {
         "상태 점검 결과 이상 없습니다.",
         "보고드립니다. 각종 센서와 구동계가 정상 범위 안에 있습니다.",
     ],
-    "status_fail": [
-        "로봇 관제 연결이 없어 현재 상태를 확인할 수 없습니다. 관제 센터에 문의해 주세요.",
-        "텔레메트리 수신이 지연되고 있습니다. 잠시 후 다시 확인해 주세요.",
-    ],
     # ── 교대·일정 안내 ────────────────────────────────────────────────────
     "shift_notice": [
         "교대 시간 안내입니다. 인수인계는 근무일지 서명과 함께 진행해 주세요.",
@@ -208,6 +206,10 @@ PHRASES: dict[str, list[str]] = {
         "질문을 이해하지 못했습니다. 다른 표현으로 말씀해 주시겠어요?",
         "메카독을 부른 뒤 한 문장으로 말씀해 주시면 더 잘 알아듣습니다.",
     ],
+    # 로봇 스피커(TF 카드)로 틀 수 없는 문장 — 서버 거부 사유 등 — 대신 튼다 (4.7.21)
+    "unplayable": [
+        "요청을 처리하지 못했습니다.",
+    ],
     "no_info": [
         "확인되지 않은 정보입니다. 정확한 내용은 관제 센터에서 확인해 주세요.",
         "제가 가진 자료에 없는 내용입니다. 담당자에게 문의해 주시겠어요?",
@@ -256,88 +258,16 @@ PHRASES: dict[str, list[str]] = {
 }
 
 
-# ── 관리자 추가 문구 (phrases_custom.json) ───────────────────────────────
-# 기본 문구(PHRASES)는 코드에 고정하고, 관제웹에서 관리자가 추가한 문구만
-# JSON 파일로 떨어뜨린다 — 기본 멘트는 검증된 상수라 삭제·수정 대상이 아니다.
-
-CUSTOM_PATH = Path(__file__).with_name("phrases_custom.json")
-
-
-def load_custom(path: Path | None = None) -> dict[str, list[str]]:
-    """phrases_custom.json → {category: [lines]}. 없거나 깨지면 빈 dict."""
-    p = path or CUSTOM_PATH
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return {
-        str(cat): [str(t) for t in lines if str(t).strip()]
-        for cat, lines in data.items()
-        if isinstance(lines, list)
-    }
-
-
-CUSTOM = load_custom()
-
-
-def _save_custom(path: Path | None = None):
-    p = path or CUSTOM_PATH
-    p.write_text(
-        json.dumps(CUSTOM, ensure_ascii=False, indent=1, sort_keys=True),
-        encoding="utf-8",
-    )
-
-
-def merged() -> dict[str, list[str]]:
-    """기본 + 관리자 추가 문구의 합본. 카테고리 순서는 기본 → 신규."""
-    out = {cat: list(lines) for cat, lines in PHRASES.items()}
-    for cat, lines in CUSTOM.items():
-        out.setdefault(cat, []).extend(lines)
-    return out
-
-
-def add_custom(category: str, text: str) -> str:
-    """관리자 문구 추가. 정규화된 카테고리명을 반환한다."""
-    cat = re.sub(r"[^a-z0-9_]", "", category.strip().lower())
-    if not cat:
-        raise ValueError("카테고리는 영문 소문자·숫자·밑줄만 가능합니다")
-    text = text.strip()
-    if not text:
-        raise ValueError("문구가 비어 있습니다")
-    if len(text) > 200:
-        raise ValueError("문구는 200자 이내로 입력하세요")
-    if text in PHRASES.get(cat, []) or text in CUSTOM.get(cat, []):
-        raise ValueError("이미 있는 문구입니다")
-    CUSTOM.setdefault(cat, []).append(text)
-    _save_custom()
-    return cat
-
-
-def remove_custom(category: str, text: str) -> bool:
-    """관리자가 추가한 문구만 삭제 가능 — 기본 문구는 건드리지 않는다."""
-    lines = CUSTOM.get(category, [])
-    if text not in lines:
-        return False
-    lines.remove(text)
-    if not lines:
-        CUSTOM.pop(category, None)
-    _save_custom()
-    return True
-
-
 def pick(category: str, rng: random.Random | None = None) -> str:
     """카테고리에서 문구 하나를 고른다. 없으면 빈 문자열."""
-    lines = merged().get(category, [])
+    lines = PHRASES.get(category, [])
     if not lines:
         return ""
     return (rng or random).choice(lines)
 
 
 def all_lines():
-    """모든 문구를 (category, text, custom)로 내보낸다 — 캐시 생성·검수용."""
+    """모든 문구를 (category, text)로 내보낸다 — 캐시 생성·검수용."""
     for cat, lines in PHRASES.items():
         for text in lines:
-            yield cat, text, False
-    for cat, lines in CUSTOM.items():
-        for text in lines:
-            yield cat, text, True
+            yield cat, text

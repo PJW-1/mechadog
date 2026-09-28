@@ -118,6 +118,26 @@ struct SensorSnapshot {
   bool all_valid() const { return imu_valid && dist_valid && batt_valid; }
 };
 
+// IIC1(Wire) 시퀀스 소유권을 센서 태스크와 공유하는 잠금. OTA 라이브 진단처럼
+// 센서 태스크 밖에서 같은 버스를 건드리는 코드는 잠긴 구간 안에서만 Wire 를
+// 쓴다. write+read 쌍이 다른 태스크에 의해 쪼개지지 않는다.
+// 뮤텍스가 없거나(센서 비활성 빌드, 태스크 미시작) 버스 경쟁자가 없으면
+// lock 은 곧바로 true 를 돌려준다.
+bool lockI2cBus(uint32_t wait_ms);
+void unlockI2cBus();
+
+// 눈 LED 색을 지금 쓴다 (FR-10.4 · WBS 4.7.3). 초음파 모듈에 내장된 RGB 두 개를
+// 같은 색으로 맞춘다. 버스를 5ms 만 기다리므로 제어 루프에서 불러도 된다.
+// false 는 «못 썼다» 이며, 조용히 성공한 척하지 않는다 — 센서를 끈 빌드에서도
+// false 다. 색은 바뀔 때만 쓰는 것이 부르는 쪽 책임이다.
+bool writeEyeLed(uint8_t r, uint8_t g, uint8_t b);
+
+// MP3 모듈(0x7B)에 한 명령을 쓴다 (FR-3.4 · WBS 4.7.20). 벤더 MP3Sensor 대신 이
+// HAL 의 버스를 거친다(머리말). 눈 LED 와 같이 버스를 5ms 만 기다리고, 센서를 끈
+// 빌드에서는 false 다. 명령 사이 간격은 부르는 쪽(mp3_player.h)이 지킨다.
+bool writeMp3Volume(uint8_t volume);  // 0~30
+bool writeMp3Track(uint16_t track);   // 1 이상은 그 트랙 재생, 0 은 정지
+
 // One physical sensor set; instantiate once. begin() only starts the dedicated
 // task: true means task creation succeeded, not that any sensor passed its test.
 // All Wire/ADC operations, including initialization, occur inside that task.

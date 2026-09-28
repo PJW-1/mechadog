@@ -5,15 +5,14 @@ Each scenario is a function taking a `ctx` object:
     ctx.say(text)            synth + play a line through the module speaker
     ctx.listen(timeout)      capture + transcribe one turn -> str or "" if silent
     ctx.retrieve(query)      knowledge snippets for grounding announcements
-    ctx.robot_status()       latest telemetry dict, or None when unreachable
     ctx.command(name)        run a whitelisted robot action -> result dict
     ctx.event(role, text)    write to the transcript/hub
 
 Spoken lines come from phrases.py — the PC-side voice-response library built
 from real industrial manuals (산업안전보건법, KOSHA 지게차 수칙, 화재 대피
-매뉴얼, 사업장 출입통제 절차). Scenarios that touch identity or safety are
-deterministic rules — the LLM is never in the verdict path (ADR-31). Adding
-or editing a scenario never touches module firmware.
+매뉴얼, 사업장 출입통제 절차). Every scenario is a deterministic rule — the
+voice path has no LLM (ADR-31, ADR-38). Adding or editing a scenario never
+touches module firmware.
 """
 
 from __future__ import annotations
@@ -21,13 +20,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import voice_rules
 from phrases import pick
 
 KNOW_DIR = Path(__file__).with_name("knowledge")
 ROSTER_PATH = KNOW_DIR / "직원명단.txt"
 
 
-def load_roster():
+def _file_roster():
     """직원명단.txt 한 줄 = 사원 한 명. '#''은 주석."""
     if not ROSTER_PATH.is_file():
         return []
@@ -36,6 +36,11 @@ def load_roster():
         for ln in ROSTER_PATH.read_text(encoding="utf-8").splitlines()
         if ln.strip() and not ln.startswith("#")
     ]
+
+
+def load_roster():
+    """등록 명단 — 정본은 knowledge/직원명단.txt 하나다."""
+    return _file_roster()
 
 
 def _norm(s):
@@ -65,9 +70,20 @@ def sc_guard(ctx):
         ctx.event("system", "경비모드: 무응답 → 미확인 기록")
         return
     roster = load_roster()
-    hit = next((name for name in roster if name in _norm(answer)), None)
+    claim = _norm(answer)
+    hit = next(
+        (
+            name
+            for name in roster
+            if re.fullmatch(
+                rf"(?:저는|제이름은|사원)?{re.escape(name)}(?:입니다|이에요|라고합니다)?", claim
+            )
+        ),
+        None,
+    )
     if hit:
-        ctx.say(f"{hit} 님, {pick('identity_ok')}")
+        # 이름은 되읽지 않는다 — MP3 모듈은 미리 합성한 문장만 튼다(4.7.21). 이름은 기록에 남긴다.
+        ctx.say(pick("identity_ok"))
         ctx.event("system", f"경비모드: {hit} 확인됨")
     else:
         ctx.say(pick("identity_fail"))
@@ -171,7 +187,8 @@ def sc_emergency_response(ctx):
     ctx.say(pick("emergency_where"))
     answer = ctx.listen(12)
     if answer:
-        ctx.say(f"{answer} 위치로 접수했습니다. 담당자가 출발합니다.")
+        # 위치는 되읽지 않는다(4.7.21 · 고정 문장만 재생). 위치는 기록에 남긴다.
+        ctx.say("말씀하신 위치로 접수했습니다. 담당자가 출발합니다.")
         ctx.event("system", f"비상 접수: 위치='{answer}'")
     else:
         ctx.say("위치를 확인하지 못했습니다. 관제 센터에서 현장을 확인 중입니다.")
@@ -315,16 +332,6 @@ def sc_drill_evac(ctx):
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def sc_robot_briefing(ctx):
-    """로봇 자기 상태 브리핑 — 텔레메트리 실측 기반."""
-    st = ctx.robot_status()
-    if not st:
-        ctx.say(pick("status_fail"))
-        return
-    ctx.say(f"현재 상태 보고입니다. {st}")
-    ctx.event("system", "상태 브리핑")
-
-
 def sc_safety_check(ctx):
     """일일 안전점검 안내 — 체크리스트 문서 기반."""
     body = _retrieve_first(ctx, "점검", 180)
@@ -397,14 +404,13 @@ SCENARIOS = {
     "night_patrol": ("야간 순찰 안내", sc_night_patrol),
     "drill_evac": ("대피 훈련", sc_drill_evac),
     # 상태·정보
-    "robot_briefing": ("로봇 상태 브리핑", sc_robot_briefing),
     "safety_check": ("일일 안전점검 안내", sc_safety_check),
     "lost_found": ("분실물 안내", sc_lost_found),
     "who_are_you": ("자기소개", sc_who_are_you),
     "what_doing": ("현재 작업 안내", sc_what_doing),
 }
 
-# 음성 트리거: 정규화된 발화에 이 구문이 포함되면 시나리오 실행 (LLM 우회)
+# 음성 트리거: 정규화된 발화에 이 구문이 포함되면 시나리오 실행
 TRIGGERS = {
     # 신원·보안
     "경비모드": "guard",
@@ -454,7 +460,6 @@ TRIGGERS = {
     "대피훈련": "drill_evac",
     "훈련시작": "drill_evac",
     # 상태·정보
-    "상태보고": "robot_briefing",
     "안전점검": "safety_check",
     "분실물": "lost_found",
     "누구야": "who_are_you",
@@ -465,8 +470,12 @@ TRIGGERS = {
 
 
 def match_trigger(norm_query: str):
-    """정규화된 질의에서 시나리오 이름 반환, 없으면 None."""
-    for phrase, name in TRIGGERS.items():
+    """정규화된 질의에서 시나리오 이름 반환, 없으면 None.
+
+    트리거 표는 규칙 파일의 scenario_triggers가 우선하고, 없으면
+    위의 TRIGGERS 코드 기본값이 쓰인다 (voice_rules 참조).
+    """
+    for phrase, name in voice_rules.scenario_triggers(TRIGGERS).items():
         if phrase in norm_query:
             return name
     return None

@@ -201,8 +201,9 @@ struct RawMsg {
   Field lift_time, ground_time;
   Field id;
   Field color, blink_hz;
-  Field phrase_id;
+  Field track;
   Field state;
+  Field mode;
 };
 
 // 최상위 객체를 훑는다. 모르는 키는 조용히 무시한다 — 픽스처의 `_case`·`_expect`
@@ -257,10 +258,12 @@ bool ScanObject(const char* p, const char* end, RawMsg* out) {
       slot = &out->color;
     } else if (KeyIs(key, "blink_hz")) {
       slot = &out->blink_hz;
-    } else if (KeyIs(key, "phrase_id")) {
-      slot = &out->phrase_id;
+    } else if (KeyIs(key, "track")) {
+      slot = &out->track;
     } else if (KeyIs(key, "state")) {
       slot = &out->state;
+    } else if (KeyIs(key, "mode")) {
+      slot = &out->mode;
     }
     if (slot != nullptr) {
       slot->present = true;
@@ -289,7 +292,14 @@ CmdType ParseType(const Value& v) {
   if (StrEq(v, "LED")) return CmdType::Led;
   if (StrEq(v, "SOUND")) return CmdType::Sound;
   if (StrEq(v, "STATE")) return CmdType::State;
+  if (StrEq(v, "SERVICE")) return CmdType::Service;
   return CmdType::Unknown;
+}
+
+ServiceMode ParseServiceMode(const Value& v) {
+  if (StrEq(v, "enter")) return ServiceMode::Enter;
+  if (StrEq(v, "exit")) return ServiceMode::Exit;
+  return ServiceMode::Unknown;
 }
 
 FsmState ParseState(const Value& v) {
@@ -361,10 +371,13 @@ const char* CheckRequired(CmdType type, const RawMsg& m) {
       reqs[n++] = {&m.blink_hz, false};
       break;
     case CmdType::Sound:
-      reqs[n++] = {&m.phrase_id, false};
+      reqs[n++] = {&m.track, false};
       break;
     case CmdType::State:
       reqs[n++] = {&m.state, true};
+      break;
+    case CmdType::Service:
+      reqs[n++] = {&m.mode, true};
       break;
     case CmdType::Stop:
     case CmdType::Estop:
@@ -386,10 +399,10 @@ const char* CheckRequired(CmdType type, const RawMsg& m) {
         fabs(field->value.num) > FLT_MAX)
       return "32비트 실수 범위 초과";
     const bool integer = field == &m.dur || field == &m.lift_time || field == &m.ground_time ||
-                         field == &m.id || field == &m.phrase_id;
+                         field == &m.id || field == &m.track;
     if (integer && !field->value.num_is_int) return "정수 필드에 비정수";
     const bool nonnegative = field == &m.dur || field == &m.lift_time || field == &m.ground_time ||
-                             field == &m.phrase_id || field == &m.blink_hz ||
+                             field == &m.track || field == &m.blink_hz ||
                              (type == CmdType::Gait && field == &m.height);
     if (nonnegative && field->value.num < 0) return "음수 필드";
     if (integer && field != &m.id && field->value.num > 2147483647.0)
@@ -467,6 +480,12 @@ DecodeResult CommandParser::decode(const char* raw, size_t len) {
     state = ParseState(m.state.value);
     if (state == FsmState::Unknown) return Reject(Verdict::DiscardWarn, "알 수 없는 상태");
   }
+  ServiceMode service_mode = ServiceMode::Unknown;
+  if (type == CmdType::Service) {
+    service_mode = ParseServiceMode(m.mode.value);
+    if (service_mode == ServiceMode::Unknown)
+      return Reject(Verdict::DiscardWarn, "알 수 없는 서비스 모드");
+  }
 
   DecodeResult r;
   r.verdict = Verdict::Accept;
@@ -476,6 +495,7 @@ DecodeResult CommandParser::decode(const char* raw, size_t len) {
   c.seq = seq;
   c.ts = static_cast<int64_t>(m.ts.value.num);
   c.state = state;
+  c.service_mode = service_mode;
 
   // 규칙 ② — 범위 초과는 폐기가 아니라 클램핑. 참조 구현과 같이 타입과 무관하게
   // 해당 키가 있으면 자른다.
@@ -498,7 +518,7 @@ DecodeResult CommandParser::decode(const char* raw, size_t len) {
   if (m.lift_time.present) c.lift_time = static_cast<float>(m.lift_time.value.num);
   if (m.ground_time.present) c.ground_time = static_cast<float>(m.ground_time.value.num);
   if (m.blink_hz.present) c.blink_hz = static_cast<float>(m.blink_hz.value.num);
-  if (m.phrase_id.present) c.phrase_id = static_cast<int32_t>(m.phrase_id.value.num);
+  if (m.track.present) c.track = static_cast<int32_t>(m.track.value.num);
 
   if (type == CmdType::Led) {
     // ⚠️ 참조 구현과 의도적으로 다른 유일한 지점이다. Python 은 `color` 의 길이를
@@ -562,6 +582,8 @@ const char* to_string(CmdType t) {
       return "SOUND";
     case CmdType::State:
       return "STATE";
+    case CmdType::Service:
+      return "SERVICE";
     case CmdType::Unknown:
     default:
       return "UNKNOWN";

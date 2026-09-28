@@ -37,9 +37,15 @@ class BlackboxEntry:
     event_type: str
     state: str
     escalation: str
+    #: 운용 모드 (FR-11.5). **같은 `person` 검출이 모드에 따라 다른 결과를
+    #: 낳으므로 모드 없이는 판단 근거를 되짚을 수 없다.**
+    mode: str
     tracks: list[dict[str, Any]]
     detections: list[dict[str, Any]]
     telemetry: dict[str, Any]
+    #: 그릴 수 없는 판단 근거 — 쓰러짐 판정(`4.8.3`)·VLM 판독(`4.8.0`).
+    #: 박스는 사진 위에 그리면 보이지만 이것들은 읽어야만 알 수 있다.
+    judgement: dict[str, Any]
     jpeg_path: Path | None
     meta_path: Path
 
@@ -89,6 +95,8 @@ class EventBlackbox:
         telemetry: Mapping[str, Any] | None = None,
         state: str = "",
         escalation: str = "",
+        mode: str = "",
+        judgement: Mapping[str, Any] | None = None,
         now_ms: int,
     ) -> BlackboxEntry:
         """JPEG를 재인코딩하지 않고 사건의 모든 관측값과 함께 기록한다."""
@@ -105,14 +113,20 @@ class EventBlackbox:
             {"label": item.label, "score": item.score, "box": list(item.box)} for item in detections
         ]
         telemetry_data = deepcopy(dict(telemetry or {}))
+        # ⚠️ **판단 근거를 사진과 같은 자리에 둔다.** 검출 박스는 그려 보면 알지만
+        # 쓰러짐 판정이나 VLM 답은 **그릴 것이 없어서** 숫자와 문장으로만 남는다.
+        # 사진 옆에 없으면 나중에 *"왜 그렇게 판정했나"* 를 되짚을 수 없다.
+        judgement_data = deepcopy(dict(judgement or {}))
         metadata: dict[str, Any] = {
             "ts_ms": now_ms,
             "event": event_type,
             "state": state,
             "escalation": escalation,
+            "mode": mode,
             "tracks": tracks_data,
             "detections": detections_data,
             "telemetry": telemetry_data,
+            "judgement": judgement_data,
         }
 
         entry_dir = self._new_entry_dir(now_ms, event_type)
@@ -135,9 +149,11 @@ class EventBlackbox:
             event_type=event_type,
             state=state,
             escalation=escalation,
+            mode=mode,
             tracks=tracks_data,
             detections=detections_data,
             telemetry=telemetry_data,
+            judgement=judgement_data,
             jpeg_path=jpeg_path,
             meta_path=meta_path,
         )
@@ -160,9 +176,15 @@ class EventBlackbox:
             event_type = metadata.get("event")
             state = metadata.get("state")
             escalation = metadata.get("escalation")
+            # ⚠️ **옛 기록에는 없다.** `3.4.4` 이전에 쌓인 것을 읽을 수 없게 만들면
+            # 모드를 넣은 대가로 과거 사건을 잃는다 — 빈 문자열로 두고 «모르는 모드»
+            # 로 읽히게 한다. 필수로 요구하는 쪽은 새로 쓰는 자리다.
+            mode = metadata.get("mode", "")
             tracks = metadata.get("tracks")
             detections = metadata.get("detections")
             telemetry = metadata.get("telemetry")
+            # ⚠️ **옛 기록에는 없다** — `mode` 와 같은 이유로 빈 것으로 읽는다.
+            judgement = metadata.get("judgement")
             if (
                 not isinstance(ts_ms, int)
                 or isinstance(ts_ms, bool)
@@ -170,6 +192,7 @@ class EventBlackbox:
                 or not isinstance(event_type, str)
                 or not isinstance(state, str)
                 or not isinstance(escalation, str)
+                or not isinstance(mode, str)
                 or not isinstance(tracks, list)
                 or not isinstance(detections, list)
                 or not isinstance(telemetry, dict)
@@ -183,9 +206,13 @@ class EventBlackbox:
                     event_type=event_type,
                     state=state,
                     escalation=escalation,
+                    mode=mode,
                     tracks=tracks,
                     detections=detections,
                     telemetry=telemetry,
+                    # ⚠️ **없으면 빈 것으로 읽는다.** `judgement` 가 생기기 전에 남은
+                    # 기록이 이미 디스크에 있고, 그것들을 버리면 과거가 사라진다.
+                    judgement=judgement if isinstance(judgement, dict) else {},
                     jpeg_path=jpeg_path if jpeg_path.is_file() else None,
                     meta_path=meta_path,
                 )

@@ -94,6 +94,27 @@ constexpr float kBatteryDividerRatio = 4.0f;
 constexpr uint8_t kBatterySamples = 9;  // Odd count: the median is a real sample.
 constexpr uint8_t kImuAddress = 0x6A;
 constexpr uint8_t kSonarAddress = 0x77;
+
+// 눈 LED 는 초음파 모듈 안에 있다 (아키텍처 3.1 · OI-12 닫힘). 레지스터 배치는
+// 2026-09-18 실기에서 확정했다 — 벤더 자료가 없어 `diagnostics/led_probe` 로 직접
+// 찾았고, 다섯 색이 지시대로 나오는 것을 눈으로 확인했다.
+constexpr uint8_t kLedModeRegister = 0x02;
+constexpr uint8_t kLedModeUserColor = 0x00;  // 1 은 호흡등이라 상태 표시로 쓸 수 없다.
+constexpr uint8_t kLedFirstRegister = 0x03;  // 0x03~0x05 가 LED1, 0x06~0x08 이 LED2.
+constexpr uint8_t kLedChannelCount = 6;
+// 버스를 기다리는 한계. 센서 주기가 40ms 이므로 이보다 오래 잡히지 않는다.
+// 못 얻으면 실패로 돌려준다 — 제어 루프를 붙잡고 있는 것보다 낫다.
+constexpr uint32_t kLedBusWaitMs = 5;
+
+// MP3 모듈 (WBS 4.7.20 · OI-6). 레지스터 배치는 로컬 벤더 헤더(`Hiwonder.h`, 2024-08)의
+// 정의를 읽고 2026-09-23 실기 스캔과 맞춰 본 것이다. ⚠️ 트랙 번호는 **2바이트
+// 리틀엔디언**이다 — 1바이트만 쓰면 재생되지 않는다(9-23 프로브의 무음이 그것이다).
+// 0x78–0x7F 예약 구간 주소라 0x77 까지만 훑는 스캔에는 보이지 않는다.
+constexpr uint8_t kMp3Address = 0x7B;
+constexpr uint8_t kMp3PlayTrackRegister = 0x01;
+constexpr uint8_t kMp3PauseRegister = 0x06;
+constexpr uint8_t kMp3VolumeRegister = 0x0C;
+constexpr uint8_t kMp3VolumeMax = 30;
 constexpr uint32_t kSamplePeriodMs = 40;  // Official Madgwick filter.begin(25).
 constexpr uint32_t kMaxAgeMs = kSensorMaxAgeMs;
 constexpr uint32_t kCalibrationTimeoutMs = 2000;
@@ -113,6 +134,10 @@ SensorQMI8658 g_qmi;
 Madgwick g_filter;
 esp_adc_cal_characteristics_t g_battery_adc_chars = {};
 SemaphoreHandle_t g_snapshot_mutex = nullptr;
+// Wire 시퀀스 소유권. 이 태스크 밖의 I2C 접근(OTA 라이브 진단)도 같은 뮤텍스를
+// 잡는다. 재귀 뮤텍스: read_imu 가 잡은 채로 안쪽 read_bytes 도 다시 잡는다.
+StaticSemaphore_t g_wire_mutex_storage;
+SemaphoreHandle_t g_wire_mutex = nullptr;
 TaskHandle_t g_sensor_task = nullptr;
 AcquisitionRecord g_published;
 SensorError g_start_error = SensorError::Starting;
@@ -139,23 +164,69 @@ void publish_performance(uint64_t now_us) {
   xSemaphoreGive(g_performance_mutex);
 }
 
-// This task exclusively owns Wire. The vendor's IMU task (homeostasis) and its
-// other IIC1 features are never started by our sources (sensor_hal.h).
+// This task owns Wire sequences through g_wire_mutex; the OTA live-diagnostics
+// handlers take the same recursive mutex so a write+read pair is never split
+// by another task. The vendor's IMU task (homeostasis) and its other IIC1
+// features are never started by our sources (sensor_hal.h).
 // No I2C operation occurs while the snapshot mutex is held.
 bool read_bytes(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
   Wire.beginTransmission(address);
   const bool register_written = Wire.write(reg) == 1;
   const uint8_t result = Wire.endTransmission(false);
   // ESP32 Wire defers a repeated START transaction and retains its mutex until
   // requestFrom. Complete that path even when preparing the register failed.
   const size_t received = Wire.requestFrom(address, length, true);
-  if (!register_written || result != 0 || received != length) return false;
-  for (size_t index = 0; index < length; ++index) {
+  bool ok = register_written && result == 0 && received == length;
+  for (size_t index = 0; ok && index < length; ++index) {
     const int byte = Wire.read();
-    if (byte < 0) return false;
+    if (byte < 0) {
+      ok = false;
+      break;
+    }
     out[index] = static_cast<uint8_t>(byte);
   }
-  return true;
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  return ok;
+}
+
+// Same read, but the register write ends with STOP before a fresh read request —
+// the sequence the vendor's UltrasoundSonar uses. The ultrasonic module runs its
+// own MCU; after a repeated START it returned only the low byte with the high
+// byte as 0, so distances wrapped every 25.6 cm (2026-09-15 target test: 30 cm
+// read 3.4-4.0 cm, 100 cm read 0-25.5 cm). The IMU keeps the repeated START.
+bool read_bytes_after_stop(uint8_t address, uint8_t reg, uint8_t* out, size_t length) {
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
+  Wire.beginTransmission(address);
+  const bool register_written = Wire.write(reg) == 1;
+  bool ok = register_written && Wire.endTransmission(true) == 0 &&
+            Wire.requestFrom(address, length, true) == length;
+  for (size_t index = 0; ok && index < length; ++index) {
+    const int byte = Wire.read();
+    if (byte < 0) {
+      ok = false;
+      break;
+    }
+    out[index] = static_cast<uint8_t>(byte);
+  }
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  return ok;
+}
+
+// 레지스터 뒤에 0바이트 이상을 쓴다. 읽기 두 종류와 같은 잠금 규칙을 따른다 —
+// write 는 쪼개지면 안 되는 시퀀스이므로 재귀 뮤텍스를 잡은 채로 끝낸다.
+bool write_block(uint8_t address, uint8_t reg, const uint8_t* data, size_t length) {
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
+  Wire.beginTransmission(address);
+  bool queued = Wire.write(reg) == 1;
+  for (size_t index = 0; queued && index < length; ++index) queued = Wire.write(data[index]) == 1;
+  const bool ok = queued && Wire.endTransmission(true) == 0;
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  return ok;
+}
+
+bool write_register(uint8_t address, uint8_t reg, uint8_t value) {
+  return write_block(address, reg, &value, 1);
 }
 
 void publish(const AcquisitionRecord& record) {
@@ -202,24 +273,27 @@ SensorError initialize_imu() {
 }
 
 bool read_imu(IMUdata& acc, IMUdata& gyr, SensorError& error) {
+  // g_qmi (SensorLib) does its own multi-op Wire sequences; hold the bus mutex
+  // across the whole status+accel+gyro read so OTA diagnostics cannot split it.
+  if (g_wire_mutex != nullptr) xSemaphoreTakeRecursive(g_wire_mutex, portMAX_DELAY);
   // v0.2.1 getDataReady() masks an error (-1) into true. Read and validate the
   // status byte directly instead, and require fresh data from both sensors.
   uint8_t status = 0;
-  if (!read_bytes(kImuAddress, 0x2E, &status, 1)) {
-    error = SensorError::ReadFailed;
-    return false;
+  bool ok = read_bytes(kImuAddress, 0x2E, &status, 1);
+  if (ok && (status & 0x03) != 0x03) ok = false;
+  if (ok &&
+      (!g_qmi.getAccelerometer(acc.x, acc.y, acc.z) || !g_qmi.getGyroscope(gyr.x, gyr.y, gyr.z))) {
+    ok = false;
   }
-  if ((status & 0x03) != 0x03) {
-    error = SensorError::ReadFailed;
-    return false;
-  }
-  if (!g_qmi.getAccelerometer(acc.x, acc.y, acc.z) || !g_qmi.getGyroscope(gyr.x, gyr.y, gyr.z)) {
-    error = SensorError::ReadFailed;
-    return false;
-  }
-  if (!isfinite(acc.x) || !isfinite(acc.y) || !isfinite(acc.z) || !isfinite(gyr.x) ||
-      !isfinite(gyr.y) || !isfinite(gyr.z) || (acc.x == 0.0f && acc.y == 0.0f && acc.z == 0.0f)) {
+  if (ok &&
+      (!isfinite(acc.x) || !isfinite(acc.y) || !isfinite(acc.z) || !isfinite(gyr.x) ||
+       !isfinite(gyr.y) || !isfinite(gyr.z) || (acc.x == 0.0f && acc.y == 0.0f && acc.z == 0.0f))) {
     error = SensorError::InvalidReading;
+    ok = false;
+  }
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+  if (!ok) {
+    if (error != SensorError::InvalidReading) error = SensorError::ReadFailed;
     return false;
   }
   error = SensorError::None;
@@ -229,7 +303,7 @@ bool read_imu(IMUdata& acc, IMUdata& gyr, SensorError& error) {
 void acquire_sonar(AcquisitionRecord& record) {
   uint8_t bytes[2] = {};
   record.value.dist_valid = false;
-  if (!read_bytes(kSonarAddress, 0x00, bytes, sizeof(bytes))) {
+  if (!read_bytes_after_stop(kSonarAddress, 0x00, bytes, sizeof(bytes))) {
     record.value.dist_error = SensorError::ReadFailed;
     return;
   }
@@ -504,6 +578,13 @@ bool SensorHal::begin() {
     g_start_error = SensorError::TaskCreationFailed;
     return false;
   }
+  if (g_wire_mutex == nullptr) {
+    g_wire_mutex = xSemaphoreCreateRecursiveMutexStatic(&g_wire_mutex_storage);
+  }
+  if (g_wire_mutex == nullptr) {
+    g_start_error = SensorError::TaskCreationFailed;
+    return false;
+  }
   if (xTaskCreatePinnedToCore(sensor_task, "MechDogSensors", 4096, nullptr, 3, &g_sensor_task,
                               MECHADOG_SENSOR_CORE) != pdPASS) {
     g_sensor_task = nullptr;
@@ -560,6 +641,81 @@ SensorSnapshot SensorHal::snapshot(uint32_t now_ms) const {
 #else
   (void)now_ms;
   return SensorSnapshot{};
+#endif
+}
+
+// OTA 라이브 진단 같은 비-센서 태스크 I2C 접근이 잡는 버스 뮤텍스.
+// nullptr 이면(센서 태스크 미시작/비활성 빌드) 버스를 쓰는 태스크가 없으므로
+// 그대로 진행해도 된다고 보고 true 를 돌려준다.
+bool lockI2cBus(uint32_t wait_ms) {
+#if MECHADOG_ENABLE_SENSORS
+  if (g_wire_mutex == nullptr) return true;
+  return xSemaphoreTakeRecursive(g_wire_mutex, pdMS_TO_TICKS(wait_ms)) == pdTRUE;
+#else
+  (void)wait_ms;
+  return true;
+#endif
+}
+
+void unlockI2cBus() {
+#if MECHADOG_ENABLE_SENSORS
+  if (g_wire_mutex != nullptr) xSemaphoreGiveRecursive(g_wire_mutex);
+#endif
+}
+
+// 눈 LED (FR-10.4). 초음파와 같은 모듈·같은 버스이므로 이 HAL 이 쓴다 — 헤더 머리말의
+// «새 I2C 장치는 이 HAL 의 버스를 공유한다» 가 이 경우다.
+//
+// ⚠️ **부르는 쪽을 오래 잡지 않는다.** 제어 루프에서 불리므로 버스를 5ms 만 기다리고
+// 실패를 돌려준다. 색을 못 바꾸는 것은 기능 저하이지만, 루프가 멈추는 것은 안전 문제다.
+// ⚠️ **모드 레지스터를 매번 함께 쓴다.** 모듈이 자체 전원 흔들림으로 초기화되면 호흡등으로
+// 돌아가 색 지시를 무시한다. 쓰기 한 번 더가 그 경우를 스스로 복구한다.
+bool writeEyeLed(uint8_t r, uint8_t g, uint8_t b) {
+#if MECHADOG_ENABLE_SENSORS
+  if (!lockI2cBus(kLedBusWaitMs)) return false;
+  const uint8_t channels[kLedChannelCount] = {r, g, b, r, g, b};
+  bool ok = write_register(kSonarAddress, kLedModeRegister, kLedModeUserColor);
+  for (uint8_t index = 0; ok && index < kLedChannelCount; ++index) {
+    ok = write_register(kSonarAddress, static_cast<uint8_t>(kLedFirstRegister + index),
+                        channels[index]);
+  }
+  unlockI2cBus();
+  return ok;
+#else
+  (void)r;
+  (void)g;
+  (void)b;
+  return false;
+#endif
+}
+
+// MP3 모듈 (FR-3.4). 눈 LED 와 같은 이유로 버스를 오래 기다리지 않는다.
+bool writeMp3Volume(uint8_t volume) {
+#if MECHADOG_ENABLE_SENSORS
+  if (volume > kMp3VolumeMax) volume = kMp3VolumeMax;
+  if (!lockI2cBus(kLedBusWaitMs)) return false;
+  const bool ok = write_register(kMp3Address, kMp3VolumeRegister, volume);
+  unlockI2cBus();
+  return ok;
+#else
+  (void)volume;
+  return false;
+#endif
+}
+
+// 0 은 일시정지 레지스터(값 없음)로, 나머지는 트랙 번호 2바이트(하위 먼저)로 쓴다.
+// 트랙 쓰기 하나가 곧 재생 시작이다 — 벤더 play(num) 도 따로 재생 명령을 보내지 않는다.
+bool writeMp3Track(uint16_t track) {
+#if MECHADOG_ENABLE_SENSORS
+  if (!lockI2cBus(kLedBusWaitMs)) return false;
+  const uint8_t number[2] = {static_cast<uint8_t>(track & 0xFF), static_cast<uint8_t>(track >> 8)};
+  const bool ok = track == 0 ? write_block(kMp3Address, kMp3PauseRegister, nullptr, 0)
+                             : write_block(kMp3Address, kMp3PlayTrackRegister, number, 2);
+  unlockI2cBus();
+  return ok;
+#else
+  (void)track;
+  return false;
 #endif
 }
 

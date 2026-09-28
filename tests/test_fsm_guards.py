@@ -202,6 +202,83 @@ def test_blocked_timer_fires_only_once(clock, cfg) -> None:
     assert seen.count(Event.AUTH_FAILED) == 1, "한 번만 발화한다"
 
 
+# ── 타이머 유예 (ADR-37 · FR-10.3) ────────────────────────────
+#
+# 음성 인증은 «말이 끝난 시각» 과 «판정이 도착한 시각» 이 다르다 — 녹음(최대
+# 15초)·무음 1초·전사가 직렬이라, 창 안에서 말해도 판정이 `timeout_s` 를 넘겨
+# 도착할 수 있다 (2026-09-22 실기: 통과 2건이 24초·18초를 썼고 창은 30초였다).
+# 그래서 «판정이 오는 중» 을 받아 마감을 **상한 안에서** 미룬다.
+#
+# ⚠️ 엔진은 **무엇을 왜 미루는지 모른다.** 그 정책은 런타임에 있다
+# (`test_command_api.py` 의 인증 유예 절).
+
+
+def _auth_wait(clock, cfg) -> Behavior:
+    b = _behavior(clock, cfg)
+    b.event(Event.START_PATROL, now_ms=clock.ms)
+    b.event(Event.PERSON_FOUND, now_ms=clock.ms)
+    b.event(Event.AUTH_REQUIRED, now_ms=clock.ms)
+    assert b.state == "AUTH_WAIT"
+    return b
+
+
+def test_deferring_pushes_the_deadline_back(clock, cfg) -> None:
+    """미룬 만큼 **늦게** 발화한다 — 마감을 없애는 것이 아니라 옮기는 것이다."""
+    b = _auth_wait(clock, cfg)
+    timeout = int(cfg["auth"]["timeout_s"]) * 1000
+
+    assert b.defer_timer(by_ms=5000, cap_ms=5000) == 5000
+
+    b.tick(clock.advance(timeout))
+    assert b.state == "AUTH_WAIT", "원래 마감에는 아직 울리지 않는다"
+    b.tick(clock.advance(5000))
+    assert b.state == "ALERT", "미룬 시간이 지나면 울린다"
+
+
+def test_deferring_is_capped(clock, cfg) -> None:
+    """**상한이 곧 안전장치다.** 계속 미루라고 해도 상한까지만 준다 —
+    아니면 신호만 보내 경보를 영영 재울 수 있다."""
+    b = _auth_wait(clock, cfg)
+
+    assert b.defer_timer(by_ms=4000, cap_ms=6000) == 4000
+    assert b.defer_timer(by_ms=4000, cap_ms=6000) == 2000, "남은 몫만 준다"
+    assert b.defer_timer(by_ms=4000, cap_ms=6000) == 0, "상한에 닿으면 더 없다"
+    assert b.timer_deferred_ms == 6000
+
+    timeout = int(cfg["auth"]["timeout_s"]) * 1000
+    b.tick(clock.advance(timeout + 6000))
+    assert b.state == "ALERT", "상한을 넘겨 미뤄지지 않는다"
+
+
+def test_deferring_resets_when_the_state_changes(clock, cfg) -> None:
+    """유예는 **그 체류 한 번의 것**이다 — 다시 들어오면 0 에서 시작한다.
+
+    남겨 두면 앞 대기에서 산 유예로 새 대기의 마감이 밀린다.
+    """
+    b = _auth_wait(clock, cfg)
+    b.defer_timer(by_ms=9000, cap_ms=9000)
+    assert b.timer_deferred_ms == 9000
+
+    b.event(Event.AUTH_OK, now_ms=clock.ms)
+    assert b.state == "PATROL"
+    assert b.timer_deferred_ms == 0
+
+    b.event(Event.PERSON_FOUND, now_ms=clock.ms)
+    b.event(Event.AUTH_REQUIRED, now_ms=clock.ms)
+    timeout = int(cfg["auth"]["timeout_s"]) * 1000
+    b.tick(clock.advance(timeout))
+    assert b.state == "ALERT", "새 대기는 제 시각에 울린다"
+
+
+def test_deferring_nothing_is_a_no_op(clock, cfg) -> None:
+    """0 이나 음수는 **조용히 아무 일도 하지 않는다** — 설정이 비어도 터지지 않게."""
+    b = _auth_wait(clock, cfg)
+    assert b.defer_timer(by_ms=0, cap_ms=5000) == 0
+    assert b.defer_timer(by_ms=5000, cap_ms=0) == 0
+    assert b.defer_timer(by_ms=-1000, cap_ms=5000) == 0
+    assert b.timer_deferred_ms == 0
+
+
 # ── 대상 상실 감시 ───────────────────────────────────────────
 def test_target_lost_after_the_configured_timeout(clock, cfg) -> None:
     """5초간 미검출이면 순찰로 복귀 (FR-3.7)."""

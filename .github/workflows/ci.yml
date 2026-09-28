@@ -34,10 +34,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      # docs/ASSIGNMENTS.md 는 WBS 에서 생성된다. WBS 만 고치고 재생성하지 않으면
+      # docs/internal/ASSIGNMENTS.md 는 WBS 에서 생성된다. WBS 만 고치고 재생성하지 않으면
       # 담당자별 부하가 실제와 다르게 표시되므로 여기서 막는다.
       - name: Generated docs are up to date
         run: python tools/wbs_assignments.py --check
+
+      # 문서를 옮기거나 링크를 고칠 때 상대 경로가 실제 파일을 가리키는지 검사한다.
+      - name: Doc links are valid
+        run: python tools/check_doc_links.py
 
       - name: Lint (ruff)
         run: ruff check .
@@ -54,6 +58,8 @@ jobs:
         run: |
           python -m pip install -r experiments/wonderecho-audio/requirements-pc.txt
           python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'
+          # WBS 4.7.21 — 말할 문장이 전부 TF 카드 문장 표에 있어야 한다
+          python experiments/wonderecho-audio/tf_tracks.py --check
 
       # 하드웨어 없이 검증 가능한 순수 로직만 대상 (WBS 6.2)
       #  · FSM 상태 전이 전수 검증
@@ -63,7 +69,11 @@ jobs:
       - name: Unit tests
         # 첫 Host 모듈(host/common/protocol.py · WBS 3.1.1)이 들어오면서 커버리지
         # 게이트를 켰다. 그 전에는 측정 대상이 없어 수치가 무의미했다.
-        run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=80
+        # GUI 시험(field_measure_ui·field_plan.gui)은 실제 tk 창을 띄우므로
+        # 헤드리스 러너에서는 가상 디스플레이(xvfb)가 필요하다.
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          xvfb-run -a pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under=80
 
   # ── WBS 5.3.2 · 펌웨어 정적 분석 ──────────────────────────
   firmware-quality:
@@ -71,6 +81,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # PR diff 를 보려면 베이스 브랜치와의 공통 조상이 필요하다.
+          fetch-depth: 0
+
+      # 카메라(DR-3: 촬영·송출 전용)와 로봇 펌웨어 코드가 한 PR에 섞이면 실패한다.
+      # 2026-09-22~23 사고: 로봇 기능 PR에 카메라 코드가 끼어 같이 플래시됐다.
+      # dev → main 승격 PR 은 건너뛴다. dev 에 들어온 PR 마다 이미 이 검사를 통과했고,
+      # 승격 PR 은 그 묶음이라 두 펌웨어가 함께 보이는 것이 정상이다.
+      - name: Firmware scope guard (camera/robot separation)
+        if: github.event_name == 'pull_request' && !(github.base_ref == 'main' && github.head_ref == 'dev')
+        run: |
+          git fetch origin "${{ github.base_ref }}"
+          python3 tools/check_firmware_scope.py --base "origin/${{ github.base_ref }}"
 
       - name: Detect firmware sources
         id: detect
@@ -165,6 +188,34 @@ jobs:
               -o build/test_task_watchdog
           ./build/test_task_watchdog
 
+      - name: Host unit test (motion safety state)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_motion_safety_state.cpp \
+              -o build/test_motion_safety_state
+          ./build/test_motion_safety_state
+
+      - name: Host unit test (MP3 player sequencing)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/test/test_mp3_player.cpp \
+              -o build/test_mp3_player
+          ./build/test_mp3_player
+
+      - name: Host unit test (onboard safety monitor)
+        run: |
+          mkdir -p build
+          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
+              -I firmware_mechdog_motion/src \
+              firmware_mechdog_motion/src/safety_monitor.cpp \
+              firmware_mechdog_motion/test/test_safety_monitor.cpp \
+              -o build/test_safety_monitor
+          ./build/test_safety_monitor
+
       - name: Host unit test (telemetry encoder)
         if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
         run: |
@@ -241,7 +292,15 @@ jobs:
             name: 'MechDog-Motion'
           - dir: firmware_xiao_vision
             fqbn: 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi'
-            core: 'esp32:esp32'
+            # ⚠️ 2.0.12 로 고정한다 — 풀어 두면 CI 가 통과시키는 빌드에서 마이크가 죽는다.
+            # 이 펌웨어의 `/audio` 는 구형 `driver/i2s.h` 의 `i2s_read` 를 쓰는데,
+            # arduino-esp32 3.x(ESP-IDF 5.x)에서는 그것이 호환 껍데기라 PDM 수신이 돌지
+            # 않는다. 컴파일은 경고 없이 통과하므로 CI 로는 드러나지 않는다.
+            # 실측 (2026-09-25 · XIAO `68:ee:8f:4f:54:b0`) — 같은 소스·같은 기체에서
+            # 3.3.11 빌드는 `/audio` 가 `AUDIO_OPEN` 뒤 `i2s_read` 에서 막혀 **0 바이트**,
+            # 2.0.12 빌드는 5.86초에 **187,392 바이트**(피크 3840 · RMS 244)를 냈다.
+            # 카메라도 2.0.12 가 나았다(31.3 fps 대 24.7 fps).
+            core: 'esp32:esp32@2.0.12'
             name: 'XIAO-Vision'
           - dir: firmware_lidar_relay
             fqbn: 'esp32:esp32:esp32:FlashMode=dio,FlashFreq=40'
@@ -318,17 +377,21 @@ jobs:
             --build-property "compiler.cpp.extra_flags=-include $GITHUB_WORKSPACE/firmware_mechdog_motion/test/ota_compile_settings.h" \
             --build-path "$RUNNER_TEMP/watchdog-ota" firmware_mechdog_motion
 
-      - name: Reject unqualified actuator watchdog combination
+      - name: Actuator watchdog only via runtime SERVICE mode
         if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
         run: |
-          if arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
-            --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=1' \
-            --build-path "$RUNNER_TEMP/watchdog-actuator-guard" firmware_mechdog_motion \
-            > "$RUNNER_TEMP/watchdog-actuator-guard.log" 2>&1; then
-            echo "::error::Unqualified watchdog/actuator combination compiled"
-            exit 1
-          fi
-          grep -F 'Task WDT candidate is restricted to actuator-OFF diagnostic builds' "$RUNNER_TEMP/watchdog-actuator-guard.log"
+          # WBS 3.2.4 service-mode expansion: TASK_WDT+ACTUATORS is now legal —
+          # the qualification moved from a compile-time ban to a runtime order
+          # (park body + latch + block motion, then arm). Actuator builds
+          # cannot compile in CI (vendor HW_MechDog library is local-only), so
+          # guard the contract at source level:
+          #  1) the sketch derives MECHADOG_SERVICE_MODE for TASK_WDT+ACTUATORS
+          #  2) boot arming stays restricted to actuator-OFF builds
+          #  3) the old hard compile ban is gone (service mode replaced it)
+          sketch=firmware_mechdog_motion/firmware_mechdog_motion.ino
+          grep -q 'define MECHADOG_SERVICE_MODE 1' "$sketch"
+          grep -q 'MECHADOG_ENABLE_TASK_WDT && !MECHADOG_ENABLE_ACTUATORS' "$sketch"
+          ! grep -q 'restricted to actuator-OFF diagnostic builds' "$sketch"
 
       - name: Upload artifacts
         if: steps.sketch.outputs.found == 'true'
@@ -363,6 +426,19 @@ jobs:
           echo "SemVer 태그 확인: $tag"
 
       - uses: actions/checkout@v7
+        with:
+          # Release tags must be verified against the release branch, including
+          # reruns after main has advanced beyond the tagged commit.
+          fetch-depth: 0
+
+      - name: Verify tag was promoted to main
+        shell: bash
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::release tag must point to a commit already promoted to main"
+            exit 1
+          fi
 
       - uses: actions/download-artifact@v8
         with:
@@ -381,6 +457,9 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
+          # The repository default is dev; releases belong to the promoted main
+          # line verified above.
+          target_commitish: main
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: artifacts/**/*

@@ -273,6 +273,17 @@ def test_estop_cannot_be_used_to_clear_an_alarm(esc: Escalation) -> None:
     assert esc.level is Level.L0
 
 
+def test_alarm_confirmed_during_failsafe_returns_after_the_reset(esc: Escalation) -> None:
+    """**잠금 중에 확정된 경보도 F 를 풀면 L3 로 돌아온다.** 버리면 비상정지 중에 도착한
+    쓰러짐 판독이 경보 없이 사라진다 (2026-09-24 결정)."""
+    esc.note_event("ESTOP", T0)
+    esc.note_event("PERSON_DOWN", T0 + 100)
+    assert esc.level is Level.F
+    assert esc.alarm_pending is True
+    esc.note_event("RESET_CONFIRMED", T0 + 5000)
+    assert esc.level is Level.L3
+
+
 def test_failsafe_without_alarm_returns_to_patrol(esc: Escalation) -> None:
     """경보가 없었으면 L3 로 되돌리지 않는다 — 없던 경보를 만들어내면 안 된다."""
     _see(esc, T0)
@@ -283,10 +294,55 @@ def test_failsafe_without_alarm_returns_to_patrol(esc: Escalation) -> None:
 
 
 # ── 표현 ───────────────────────────────────────────────────
-def test_sound_ids_are_absent_until_flashed(esc: Escalation) -> None:
-    """WonderEcho 문구 ID 는 플래싱 후에 채운다 (OI-10/11). **없는 것을 없다고 말한다.**"""
+def test_only_the_alarm_level_carries_a_warning(esc: Escalation, cfg: dict) -> None:
+    """경고 문장은 **L3 에만** 붙는다 (WBS 3.5.6 · 2026-09-23 정정).
+
+    ⚠️ 평상 단계에 문장이 붙으면 순찰 내내 말하게 된다. *"단계가 바뀌면 읽는다"*
+    가 성립하려면 읽을 것이 없는 단계가 실제로 없어야 한다.
+    """
+    assert esc.presentation().warning is None, "L0 은 읽을 것이 없다"
+    _see(esc, T0)
+    assert esc.presentation().warning is None, "L1 은 관찰일 뿐 경고가 아니다"
+
     esc.note_event("AUTH_FAILED", T0)
-    assert esc.presentation().sound_id is None
+    assert esc.level is Level.L3
+    assert esc.presentation().warning == cfg["escalation"]["sound"]["l3_warning"]
+
+
+def test_a_fall_reads_its_own_sentence(esc: Escalation, cfg: dict) -> None:
+    """쓰러짐은 인증 실패와 같은 문장으로 알리지 않는다 — 들은 사람이 할 일이 다르다."""
+    esc.note_event("PERSON_DOWN", T0)
+    assert esc.level is Level.L3
+    assert esc.presentation().warning == cfg["escalation"]["sound"]["person_down_warning"]
+    assert esc.presentation().warning != cfg["escalation"]["sound"]["l3_warning"]
+
+
+def test_the_warning_is_a_sentence_not_a_number(cfg: dict) -> None:
+    """⚠️ **문구 ID 설계는 버렸다 (2026-09-23).**
+
+    로봇에 `SOUND {phrase_id}` 를 보내는 경로는 죽어 있었다 — 그때 펌웨어는 파싱만
+    하고 처리하지 않았다. 설정에 정수가 남아 있으면 두 설계가 다시 갈라진다.
+    """
+    value = cfg["escalation"]["sound"]["l3_warning"]
+    assert isinstance(value, str) and value.strip(), "l3_warning 이 비어 있다"
+    assert not value.strip().isdigit(), "l3_warning 이 아직 문구 ID 다"
+
+
+def test_the_auth_request_sentence_does_not_live_here(esc: Escalation, cfg: dict) -> None:
+    """⚠️ **L2 문장을 단계 설정에 두지 않는다** (2026-09-23 정정).
+
+    처음에는 여기에 「사원증을 보여 주십시오」 를 적었고 두 가지가 틀렸다.
+    ① `auth.require_both` 가 참이라 **암구호가 먼저**이며 그 전의 사원증은 판정조차
+    되지 않는다 — 순서를 거꾸로 말했다. ② 음성 쪽 `Hub.auth_prompt` 가 같은 자리에서
+    이미 안내해 **두 문장이 겹쳐 나갔다.**
+
+    남은 한 문장을 음성 쪽에 두는 이유는 그 안내가 **시도 계수 게이트를 여는
+    행위이기 때문이다** — 문장만 이리로 옮기면 사건 폴링(5초) 만큼 묻기 전에
+    게이트만 열리는 창이 생긴다.
+    """
+    assert cfg["escalation"]["sound"]["l2_warning"] is None
+    esc.raise_to(Level.L2, reason="test", now_ms=T0)
+    assert esc.presentation().warning is None
 
 
 def test_unknown_event_is_ignored(esc: Escalation) -> None:
@@ -368,4 +424,47 @@ def test_authentication_still_releases_auth_request(esc: Escalation, cfg: dict) 
     at = _stand_still(esc, cfg)
     assert esc.level is Level.L2
     esc.note_authenticated(at)
+    assert esc.level is Level.L0
+
+
+# ── 공장 모드 시나리오 (2026-09-25 · S2·S3) ──────────────────
+def test_ppe_violation_warns_then_releases_without_confirm(esc: Escalation, cfg: dict) -> None:
+    """보호구 미착용은 **경고**다 (S2) — 빨간 눈과 문장을 함께 내고 관제 확인 없이 내려온다.
+
+    ⚠️ 래치가 아니다. 경고 시간(`escalation.ppe_warning_hold_ms`)이 지나면 L0 이다.
+    """
+    hold = int(cfg["escalation"]["ppe_warning_hold_ms"])
+    esc.note_event("PPE_VIOLATION", T0)
+    assert esc.level is Level.L3
+    assert esc.latched is False
+    assert esc.alarm_pending is False
+    assert esc.presentation().warning == cfg["escalation"]["sound"]["ppe_violation_warning"]
+    esc.tick(T0 + hold - 1)
+    assert esc.level is Level.L3
+    esc.tick(T0 + hold)
+    assert esc.level is Level.L0
+
+
+def test_an_alarm_during_the_ppe_warning_latches(esc: Escalation, cfg: dict) -> None:
+    """경고 중에 온 진짜 경보는 경고 시간이 지나도 남는다 — 같은 L3 라고 삼키면 안 된다."""
+    hold = int(cfg["escalation"]["ppe_warning_hold_ms"])
+    esc.note_event("PPE_VIOLATION", T0)
+    esc.note_event("PERSON_DOWN", T0 + 100)
+    assert esc.reason == "PERSON_DOWN"
+    assert esc.latched is True
+    esc.tick(T0 + hold * 2)
+    assert esc.level is Level.L3
+
+
+def test_a_fall_suspect_holds_observe_until_released(esc: Escalation, cfg: dict) -> None:
+    """쓰러짐 의심은 L1 이다 (S3). **대상 상실 5초로 스스로 내리지 않는다** — 박스 없이
+    판독으로만 든 의심도 있어서, 언제 끝낼지는 런타임이 정한다(S5)."""
+    lost_ms = cfg["fsm"]["target_lost_timeout_s"] * 1000
+    esc.note_person(present=False, last_seen_ms=T0, now_ms=T0)
+    esc.note_fall_suspect(True, T0)
+    assert esc.level is Level.L1
+    assert esc.reason == "fall_suspected"
+    esc.tick(T0 + lost_ms * 3)
+    assert esc.level is Level.L1
+    esc.note_fall_suspect(False, T0 + lost_ms * 3)
     assert esc.level is Level.L0

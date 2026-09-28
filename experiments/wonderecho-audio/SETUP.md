@@ -1,6 +1,15 @@
 # PC 환경 구축 — 음성 인식·합성
 
+**음성 DB는 설치하지 않는다** (2026-09-23 폐기 · WBS 4.7.22). 남아 있는 `voice_data.db` 는
+읽지 않으므로 지워도 된다. 바꿀 수 있는 것은 규칙 JSON(`voice_data.rules.json`)과 암구호 환경
+변수(6절)뿐이다.
+
 WonderEcho 모듈이 마이크와 스피커를 맡고, **판단은 전부 이 PC가 한다.** 모듈에서는 한국어 인식을 하지 않는다 — 모듈 CPU로는 불가능하고, 인식은 PC의 GPU가 한다.
+
+> **개정 (2026-09-23 · [ADR-38](../../docs/DECISIONS.md#adr-38))** — 음성 경로는 규칙만 쓴다. 로컬 LLM(GGUF · llama-cpp)은 폐기했으므로
+> 대화 모델을 받을 필요가 없고, 가상 MES 서버(`:8095`)도 없어졌다. 파이프라인에 필요한 모델은 faster-whisper(1절)와
+> Piper 음성(`--piper-model`)뿐이다. WonderEcho COM 링크는 임시이며, 목표 구조는 XIAO 마이크(`:82/audio`) 듣기 ·
+> 로봇 MP3 모듈(I²C `0x7B`) 말하기다(4.7.19 는 완료, 4.7.20~4.7.21 미착수).
 
 ```
 [음성 모듈]                                   [PC]
@@ -224,3 +233,38 @@ python -X utf8 build_prompt_audio.py <원본.wav> <출력.wav>
 | 통신 | 250프레임 / 5초, checksum·length·timeout 오류 0 |
 
 한국어 인식 정확도는 별도로 재지 않았다. 위 수치는 특정 발화 한 건의 결과이며 일반적인 정확도 지표가 아니다.
+
+---
+
+## 6. 로컬 전용 자원 — 다른 환경에서의 재현
+
+이 폴더의 실행 상태 일부는 **커밋되지 않는다** (`.gitignore`). 다른 PC·팀원·에이전트가 클론만으로는 같은 환경이 안 되며, 아래 절차로 재생해야 한다. 반대로 말하면 **이 자원 없이는 검증이 불가능한 항목이 있다** — 그 경우 테스트 결과를 "이 PC에서만 확인됨"으로 표시한다.
+
+| 자원 | Git | 재생 방법 |
+|---|---|---|
+| `voice_data.rules.json` | 무시됨 | 선택. 없으면 코드 기본 규칙. `python voice_rules.py --add wake 메카독이` 로 만든다 |
+| `voice_cache/` | 무시됨 | TTS 캐시 — 자동 생성 |
+| `emergency_log.txt` | 무시됨 | 비상 발화 시 자동 생성 |
+| Whisper 모델 폴더 | 미포함 | 1절 다운로드 절차 (모델 파일은 라이선스·용량으로 커밋하지 않는다) |
+| Piper 모델 | 미포함 | `--piper-model` 로 지정하는 로컬 `.onnx`(기본 `ko_KR-kss-medium.onnx`) — 이 문서에 내려받기 절차는 없다 |
+| Orpheus 모델 | 미포함 | 2절 다운로드 절차 (단독 안내음 제작용 — 파이프라인은 쓰지 않는다) |
+| `knowledge/*.txt` | **커밋됨** | 단, 내용은 전부 **합성 데모 문서** — 실사 자료 아님 |
+
+### 암구호(3.8.2)는 기본값이 코드에 있다
+
+데모 문구 `"메카독 출입 허가"` 가 `voice_pipeline.DEFAULT_PASSPHRASES` 에 있다. **실제 암구호는 코드가 아니라 환경 변수에 넣는다:**
+
+```powershell
+$env:MECHDOG_PASSPHRASES = '["실제 암구호", "예비 문구"]'
+```
+
+값은 저장소와 로그에 남지 않는다. JSON 목록이 아니거나 빈 목록(`'[]'`)이면 음성 인증 경로 자체가 닫힌다. 데모 문구로 되돌아가지 않는다.
+
+### 다른 환경에서 검증 가능/불가능
+
+| 검증 | 새 환경에서 가능? |
+|---|---|
+| `python -m unittest discover -s experiments/wonderecho-audio -p 'test_*.py'` (전체 단위시험, CI 와 같은 명령) | ✅ 가능 — 하드웨어·DB·모델 불요 (requirements-pc.txt 만 설치) |
+| `/api/command/auth` FSM 전이·거절 | ✅ 가능 — `pytest tests/test_command_api.py` |
+| STT 환각 거름·암구호 대조 로직 | ✅ 가능 — mock 기반 |
+| 실제 음성 왕복 (모듈 마이크→인증 해제) | ❌ **WonderEcho 모듈 + COM 포트 + 모델 파일 필요** — 다른 환경에서는 재현 불가. 실기 결과는 "측정한 기체·날짜 한정"으로 표시한다 |

@@ -1,7 +1,7 @@
 """WBS 작업 사전에서 담당자별 작업 목록을 생성한다.
 
-`docs/WBS.md`의 작업 사전을 파싱해 **누가 무엇을 하는가**를
-`docs/ASSIGNMENTS.md`로 펼친다. 팀원은 생성된 파일에서 지금 시작할 수 있는 일만 본다.
+`docs/internal/WBS.md`의 작업 사전을 파싱해 **누가 무엇을 하는가**를
+`docs/internal/ASSIGNMENTS.md`로 펼친다. 팀원은 생성된 파일에서 지금 시작할 수 있는 일만 본다.
 
 **왜 손으로 쓰지 않는가** — 같은 숫자를 두 곳에 두면 반드시 어긋난다. 이 프로젝트에서
 이미 여러 번 일어났다(총 공수 69.0 vs 70.0, 절 제목 5.5 vs 하위 합 6.5, 명령 7종 vs 8종).
@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WBS = ROOT / "docs" / "WBS.md"
-OUT = ROOT / "docs" / "ASSIGNMENTS.md"
+WBS = ROOT / "docs" / "internal" / "WBS.md"
+OUT = ROOT / "docs" / "internal" / "ASSIGNMENTS.md"
 
 sys.path.insert(0, str(ROOT))
 
@@ -34,10 +34,15 @@ _ID, _NAME, _DELIV, _DOD, _R, _PRED, _MD = 0, 1, 2, 3, 4, 5, 6
 #: 완료 표기 — `[완료]`와 `[완료 · PR #18]`처럼 근거가 붙은 형식을 모두 인식한다.
 DONE_MARK = "[완료"
 
+#: Phase 2 표기 — 워크패키지 이름 칸에 붙인다. DoD 안의 `[P2]` 는 항목 일부만 가리키므로 보지 않는다.
+#: 2026-09-28 Phase 2 착수를 승인해 `[P2]` 항목도 할 일·남은 공수에 함께 센다(WBS `1.4`).
+#: 표기는 남은 공수 중 Phase 2 몫을 따로 보이는 데만 쓴다.
+PHASE2_MARK = "[P2]"
+
 #: 담당자 배정 규칙 — 역할 범위는 CONTRIBUTING 1절에 기록한다.
-#: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4.1`(ROS2 컨테이너)이 이관된다.
+#: `R=A` 는 전부 L1·L2 이고, 여기에 `3.9`(구역 순찰)·`5.4`(ROS2 항법)가 이관된다.
 #: 나머지 `B`·`C` 가 팀장 몫이다.
-TRANSFERRED_TO_L: tuple[str, ...] = ("3.9", "5.4.1")
+TRANSFERRED_TO_L: tuple[str, ...] = ("3.9", "5.4")
 
 #: `R=A`(임베디드·하드웨어 성격)인데 **팀장이 직접 수행한** 워크패키지.
 #:
@@ -72,8 +77,9 @@ class WorkPackage:
     deliverable: str  # 무엇을 만들면 되는가 — 초보가 가장 먼저 찾는 정보
     role: str  # A · B · C (작업 성격)
     predecessor: str
-    effort: float
+    effort: float  # 0.0 = 공수 미산정(`—`)
     done: bool
+    phase2: bool
 
     @property
     def group(self) -> str:
@@ -111,7 +117,7 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
         if not re.fullmatch(r"\d+(\.\d+)*", wid):
             continue
         effort = _clean(cells[_MD])
-        if not re.fullmatch(r"[\d.]+", effort):
+        if effort != "—" and not re.fullmatch(r"[\d.]+", effort):
             continue
         packages.append(
             WorkPackage(
@@ -120,8 +126,9 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
                 deliverable=_clean(cells[_DELIV]) or "—",
                 role=_clean(cells[_R]),
                 predecessor=_clean(cells[_PRED]) or "—",
-                effort=float(effort),
+                effort=0.0 if effort == "—" else float(effort),
                 done=DONE_MARK in cells[_DOD],
+                phase2=PHASE2_MARK in cells[_NAME],
             )
         )
     return sorted(packages, key=WorkPackage.sort_key)
@@ -169,7 +176,12 @@ def is_ready(package: WorkPackage, packages: list[WorkPackage]) -> bool:
         return True
 
     by_id = {p.wid: p for p in packages}
-    for token in package.predecessor.split(","):
+    # ⚠️ 선행 표기는 쉼표와 가운뎃점을 섞어 쓴다 — `3.2.1·3.2.2·3.2.4, 3.2.6`.
+    # 쉼표로만 나누면 그 덩어리가 어떤 ID 와도 맞지 않아 **선행이 전부 끝나도
+    # 영원히 대기로 남는다**(2026-09-17 에 `3.2.5` 에서 드러났다). 가운뎃점을
+    # 쓰지 않는 조건 표기(`LiDAR·마스트 도착`)는 나눠도 여전히 ID 가 없으므로
+    # 대기로 남는다 — 의도한 동작이다.
+    for token in package.predecessor.replace("·", ",").split(","):
         dependencies = _dependency_ids(token, packages)
         if not dependencies or not all(by_id[wid].done for wid in dependencies):
             return False
@@ -192,7 +204,7 @@ def _table(packages: list[WorkPackage], *, with_predecessor: bool) -> list[str]:
         cells = [f"`{p.wid}`", p.name, p.deliverable]
         if with_predecessor:
             cells.append(p.predecessor)
-        cells.append(f"{p.effort:.1f}")
+        cells.append(f"{p.effort:.1f}" if p.effort else "—")
         rows.append("| " + " | ".join(cells) + " |")
     return [head, rule, *rows]
 
@@ -220,23 +232,30 @@ def render(packages: list[WorkPackage]) -> str:
         "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행 작업이 없거나 모두 끝난 것들이다.",
         "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 작업 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
-        "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 전체 |",
-        "| :--- | ---: | ---: | ---: | ---: | ---: |",
+        "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 그중 Phase 2 | 전체 |",
+        "| :--- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    left = 0.0
+    left = later = 0.0
     for owner in OWNERS:
         mine = [p for p in packages if p.owner == owner]
+        done = [p for p in mine if p.done]
         todo = [p for p in mine if not p.done]
+        phase2 = [p for p in todo if p.phase2]
         ready = [p for p in todo if is_ready(p, packages)]
         remaining = sum(p.effort for p in todo)
         left += remaining
+        later += sum(p.effort for p in phase2)
         lines.append(
-            f"| **{owner}** | {len(mine) - len(todo)}건 | 🟢 {len(ready)}건 | "
+            f"| **{owner}** | {len(done)}건 | 🟢 {len(ready)}건 | "
             f"⏳ {len(todo) - len(ready)}건 | **{remaining:.1f}** M/D | "
+            f"{len(phase2)}건 · {sum(p.effort for p in phase2):.1f} M/D | "
             f"{sum(p.effort for p in mine):.1f} M/D |"
         )
     lines += [
-        f"| | | | | **{left:.1f}** M/D | **{total:.1f}** M/D |",
+        f"| | | | | **{left:.1f}** M/D | {later:.1f} M/D | **{total:.1f}** M/D |",
+        "",
+        "> **남은 공수에는 Phase 2(`[P2]`) 몫이 들어 있다** — 2026-09-28 착수를 승인했다(WBS `1.4`). "
+        "«그중 Phase 2» 열이 그 몫이다.",
         "",
         f"> **{', '.join('`' + w + '`' for w in DONE_BY_S)} 는 성격상 임베디드(`R=A`)지만 "
         "팀장이 직접 수행했다.** 그래서 완료 실적을 팀장 쪽에 잡는다 — 성격 분류는 "
@@ -250,6 +269,7 @@ def render(packages: list[WorkPackage]) -> str:
         mine = [p for p in packages if p.owner == owner]
         done = [p for p in mine if p.done]
         todo = [p for p in mine if not p.done]
+        phase2 = [p for p in todo if p.phase2]
         ready = [p for p in todo if is_ready(p, packages)]
         waiting = [p for p in todo if not is_ready(p, packages)]
         lines += [
@@ -258,6 +278,7 @@ def render(packages: list[WorkPackage]) -> str:
             f"**담당 영역** — {scope}",
             "",
             f"**남은 공수 {sum(p.effort for p in todo):.1f} M/D · {len(todo)}건** "
+            f"· 그중 Phase 2 {sum(p.effort for p in phase2):.1f} M/D · {len(phase2)}건 "
             f"(전체 {sum(p.effort for p in mine):.1f} M/D · {len(mine)}건)",
             "",
             f"### 🟢 지금 시작할 수 있다 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",

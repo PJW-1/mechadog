@@ -1,0 +1,128 @@
+--- a/projects/offline_asr_sample/src/user_config.h
++++ b/projects/offline_asr_sample/src/user_config.h
+@@ -73,16 +73,10 @@
+ #endif /* _USER_CONFIG_H_ */
+ 
+ #define WE_HOST_PROMPT_ONLY 0
+-/* v24: enable the SDK I2C slave (address 0x64) so the robot can reach the
+-   module over its 4-pin header instead of USB.
+-   MSG_USE_I2C_EN alone is not enough: it compiles i2c_communicate_init() in,
+-   but that calls pad_config_for_i2c(), which this board only defines under
+-   USE_IIC_PAD. Without it the weak stub in board_default.c links instead and
+-   prints "no function", so IIC0 is initialised with no pins on it.
+-   On CI-D02GS01J the pads are PB7 (IIC0_SDA) and PC0 (IIC0_SCL). The power
+-   amplifier is on PC4, so this does not touch it. */
+-#define USE_IIC_PAD 1
+-#define MSG_USE_I2C_EN 1
++/* The external 0x34 bridge connects to UART1, not native IIC0. */
++#define USE_IIC_PAD 0
++#define MSG_USE_I2C_EN 0
++#define WE_PROMPT_RECOVERY_EXPERIMENT 0
+ /* v19: keep the host UART prompt feature, but let the SDK play its own
+    ASR responses again so the factory playback path can be compared. */
+ #define WE_SUPPRESS_SDK_PROMPT 0
+@@ -101,6 +95,5 @@
+ 
+ #define WE_PCM_PROMPT_INPUT_BYTES 1152U
+ 
+-/* v15 probe: play prompts through codec 0 = IIS0 on PA2..PA6 pads
+-   (the on-board speaker amp is a digital I2S part per Hiwonder docs). */
++/* Verified analog codec-1 speaker route. UART1 owns PA2/PA3. */
+ #define PLAY_CODEC_ID 1
+--- a/projects/offline_asr_sample/src/system_hook.c
++++ b/projects/offline_asr_sample/src/system_hook.c
+@@ -1,3 +1,4 @@
++#include "we_bridge.h"
+ #include <stdlib.h>
+ 
+ #include "command_info.h"
+@@ -69,6 +70,7 @@
+  */
+ __WEAK void sys_asr_result_hook(cmd_handle_t cmd_handle, uint8_t asr_score)
+ {
++    we_bridge_asr_result(cmd_info_get_command_id(cmd_handle));
+     #if MSG_COM_USE_UART_EN
+     #if UART_BAUDRATE_CALIBRATE
+     baudrate_calibrate_stop();
+--- a/projects/offline_asr_sample/src/user_msg_deal.c
++++ b/projects/offline_asr_sample/src/user_msg_deal.c
+@@ -1,3 +1,4 @@
++#include "we_bridge.h"
+ #include "FreeRTOS.h"
+ #include "task.h"
+ #include "timers.h"
+@@ -18,11 +19,13 @@
+  *        pause count stays >0 and the module can no longer hear. Runs in the
+  *        timer daemon so recovery does not depend on voice input working.
+  */
++#if WE_PROMPT_RECOVERY_EXPERIMENT
+ static void prompt_asr_watchdog_cb(TimerHandle_t xTimer)
+ {
+     (void)xTimer;
+     prompt_asr_release_stuck();
+ }
++#endif
+ 
+ /**
+  * @brief 用户初始化
+@@ -48,6 +51,8 @@
+     i2c_communicate_init();
+     #endif
+ 
++    /* Do not run the unverified IDLE-based queue reset in this candidate. */
++    #if WE_PROMPT_RECOVERY_EXPERIMENT
+     {
+         static TimerHandle_t prompt_asr_watchdog;
+         if (prompt_asr_watchdog == NULL)
+@@ -61,6 +66,9 @@
+         }
+     }
+ 
++    #endif
++    int bridge_result = we_bridge_init();
++    mprintf("[WE-BRIDGE] init_result=%d (build 3401)\n", bridge_result);
+     ///tag-gpio-init
+ }
+ 
+--- a/components/player/audio_play/audio_play_device.c
++++ b/components/player/audio_play/audio_play_device.c
+@@ -75,6 +75,9 @@
+  */
+ void audio_play_set_vol_gain(int32_t gain)
+ {
++    /* User-requested normal volume; do not rewrite persistent NV. */
++    if (gain > 40) gain = 40;
++    if (gain < 0) gain = 0;
+     g_audio_play_gain = gain;
+ 
+     cm_set_codec_dac_gain(sg_play_device_index, 0, gain);
+--- a/projects/offline_asr_sample/project_file/source_file.prj
++++ b/projects/offline_asr_sample/project_file/source_file.prj
+@@ -202,4 +202,7 @@
+ source-file: components/cias_speex/libspeex/nb_celp.c
+ 
+ source-file: components/cias_speex/libspeex/sb_celp.c
+-source-file: projects/offline_asr_sample/src/voice_prompt.c
++// UART0 diagnostic build: voice_stream supplies trace counters; no baked PCM prompt.
++
++source-file: projects/offline_asr_sample/src/we_bridge.c
++source-file: projects/offline_asr_sample/src/we_bridge_protocol.c
+--- a/projects/offline_asr_sample/project_file/strict_stream.mk
++++ b/projects/offline_asr_sample/project_file/strict_stream.mk
+@@ -1,2 +1,5 @@
+ build/objs/voice_stream.o: C_FLAGS += -Wall -Wextra -Werror
+ build/objs/voice_prompt.o: C_FLAGS += -Wall -Wextra -Werror
++
++build/objs/we_bridge.o: C_FLAGS += -Wall -Wextra -Werror
++build/objs/we_bridge_protocol.o: C_FLAGS += -Wall -Wextra -Werror
+--- a/projects/offline_asr_sample/project_file/Makefile
++++ b/projects/offline_asr_sample/project_file/Makefile
+@@ -139,7 +139,7 @@
+ 
+ 
+ # Retain inactive adapter to verify real codec linkage; no startup call.
+-LD_FLAGS += -Wl,-u,we_encoder_init,-u,we_encoder_close,-u,we_encode_frame
++# UART0 diagnostic build: do not force-retain the inactive Speex streaming encoder.
+ LIBS += -lspeex
+ LIB_FILES += $(ROOT_DIR)/libs/libspeex.a
+ include $(ROOT_DIR)/utils/common_tail.mk

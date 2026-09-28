@@ -1,4 +1,4 @@
-"""행동 상태 머신 — 전이표 13상태 (WBS 3.4.1 · 아키텍처 3절).
+"""행동 상태 머신 — 전이표 13상태 (아키텍처 3절).
 
 **전이는 테이블이고 분기문이 아니다.** 조건을 `if` 로 흩어놓으면 전이표(문서)와
 코드가 각각 진화해서 반드시 어긋난다. 여기서는 표를 데이터로 두고 엔진이 그 표만
@@ -21,11 +21,11 @@
 
 전이표에 없는 것 두 가지 — 둘 다 아키텍처 3절이 스스로 제외한 것이다.
 
-1. **명령 타임아웃 300ms** — 온보드 Tier 1 반사이며 표에도 *"FSM 무관"* 으로 적혀
+1. **명령 타임아웃 600ms** — 온보드 Tier 1 반사이며 표에도 *"FSM 무관"* 으로 적혀
    있다. 호스트가 흉내내면 안 되는 유일한 부류다.
 2. **`ALERT` 에서의 PPE 위반** — 상태가 그대로이고 바뀌는 것은 에스컬레이션 단계다.
-   그쪽은 별도 상태기(`3.8.3`)가 맡는다. 다만 `TRACK` 에서의 PPE 위반은 실제 전이라
-   표에 있다.
+   그쪽은 별도 상태기(`behavior/escalation.py`)가 맡는다. 다만 `TRACK` 에서의 PPE 위반은
+   실제 전이라 표에 있다.
 """
 
 from __future__ import annotations
@@ -63,6 +63,20 @@ class Event(StrEnum):
     TARGET_CENTERED = "TARGET_CENTERED"  # 중앙 정렬 유지
     TARGET_LOST = "TARGET_LOST"  # 미검출 5s 지속 (FR-3.7)
     PPE_VIOLATION = "PPE_VIOLATION"  # 보호구 미착용 확정 (FR-9.3)
+    # 보호구 판정이 끝났다 — **적합과 `PPE_UNDETERMINED` 둘 다**다 (FR-11.6).
+    # ⚠️ 이름이 `PPE_OK` 가 아닌 이유가 그것이다. 미판정으로 끝난 대상 앞에서도
+    # 순찰로 돌아가야 하고, *"괜찮다"* 로 적으면 미판정을 적합으로 읽게 된다.
+    PPE_SETTLED = "PPE_SETTLED"
+    # 누운 사람이 정지한 채로 확정됐다 (FR-9). ⚠️ **전이표에 없다** — 상태는
+    # 그대로 두고 단계만 L3 로 올린다(`ALERT` 의 PPE 위반과 같다). 로봇을 어디로 보낼지는
+    # 이 사건이 정하지 않는다.
+    PERSON_DOWN = "PERSON_DOWN"
+    # 공장 쓰러짐 의심 — 누움 후보나 VLM `person_down` «예» 한 번.
+    # 순찰·구역 점검을 멈추고 사람 대응(`ALERT`)으로 든다. 이미 `ALERT`·`TRACK` 이면 사건이 없다.
+    FALL_SUSPECTED = "FALL_SUSPECTED"
+    # 의심 제한 시간 초과 · 쓰러짐 경보(L3) 확인 → 순찰 복귀. 누운 사람은 스스로
+    # 떠나지 않아 대상 상실이 걸리지 않는다 — `ZONE_ALARM_CONFIRMED` 와 같은 이유다.
+    FALL_RESOLVED = "FALL_RESOLVED"
     # ── 인증 ──
     AUTH_REQUIRED = "AUTH_REQUIRED"  # 미인증 상태 지속 → L2
     AUTH_OK = "AUTH_OK"  # 사원증 또는 암구호 인증 성공
@@ -84,6 +98,7 @@ class Event(StrEnum):
     ZONE_ARRIVED = "ZONE_ARRIVED"  # 구역 도착
     ZONE_CLEAR = "ZONE_CLEAR"  # 검사 완료 & 변화 없음
     ZONE_CHANGED = "ZONE_CHANGED"  # 물체 변화 확정 (FR-8.4)
+    ZONE_ALARM_CONFIRMED = "ZONE_ALARM_CONFIRMED"  # 구역 변화 경보(L3)를 사람이 확인했다
 
 
 class Directive(StrEnum):
@@ -117,8 +132,18 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("TRACK", Event.TARGET_CENTERED, "ALERT"),
     Transition("ALERT", Event.TARGET_LOST, "PATROL"),
     Transition("TRACK", Event.TARGET_LOST, "PATROL"),
-    # `ALERT` 에서의 PPE 위반은 상태가 그대로이므로 표에 없다 — 에스컬레이션(3.8.3) 소관
+    # `ALERT` 에서의 PPE 위반은 상태가 그대로이므로 표에 없다 — 에스컬레이션(`behavior/escalation.py`) 소관
     Transition("TRACK", Event.PPE_VIOLATION, "ALERT"),
+    # ⚠️ **공장 모드의 순찰 복귀** (FR-11.6). 이 줄이 없으면 복귀 경로가
+    # *대상 미검출 5초* 하나뿐이라 **보호구를 제대로 쓴 작업자가 서 있는 동안 로봇이
+    # 떠나지 못한다.** 사건을 내는 것은 판정기이고 모드 게이트는
+    # `mission.py` 가 건다 — 경비 모드에서는 이 사건이 만들어지지 않는다.
+    Transition("ALERT", Event.PPE_SETTLED, "PATROL"),
+    # 공장 쓰러짐 의심·해제. 모드 게이트는 `mission.py` 의 `fallen` 이다.
+    Transition("PATROL", Event.FALL_SUSPECTED, "ALERT"),
+    Transition("ZONE_INSPECT", Event.FALL_SUSPECTED, "ALERT"),
+    Transition("ALERT", Event.FALL_RESOLVED, "PATROL"),
+    Transition("TRACK", Event.FALL_RESOLVED, "PATROL"),
     # ── 인증 ──
     Transition("ALERT", Event.AUTH_REQUIRED, "AUTH_WAIT"),
     Transition("AUTH_WAIT", Event.AUTH_OK, "PATROL"),
@@ -140,6 +165,14 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("PATROL", Event.ZONE_ARRIVED, "ZONE_INSPECT"),
     Transition("ZONE_INSPECT", Event.ZONE_CLEAR, "PATROL"),
     Transition("ZONE_INSPECT", Event.ZONE_CHANGED, "ALERT"),
+    # ⚠️ **구역 변화의 `ALERT` 는 사람이 보이지 않으면 나갈 길이 없다** — 대상 상실·
+    # 보호구 판정 종료가 걸리지 않아 이 줄이 없으면 경보를 확인해도 경계 자세로 서 있는다.
+    # 지나가는 사람이 있으면 그 사건들로 먼저 순찰에 돌아가고 L3 는 남는다 (FR-8.4).
+    Transition("ALERT", Event.ZONE_ALARM_CONFIRMED, "PATROL"),
+    # ⚠️ **구역 앞의 사람은 물체 변화가 아니다** (FR-8.3 → FR-3 · FR-11.1). 이 줄이 없으면
+    # 게이트가 확정한 사람을 이 상태가 버리고, 사람 한 프레임이 `ZONE_CHANGED` 로 새어
+    # L3 «물체 변화» 가 된다 — 사람 대응은 게이트가 내는 이 사건 하나로만 들어간다.
+    Transition("ZONE_INSPECT", Event.PERSON_FOUND, "ALERT"),
 )
 
 #: **이 상태에서는 나열된 사건만 받는다.** 다른 사건은 무시된다.
@@ -151,7 +184,7 @@ EXCLUSIVE: dict[str, frozenset[Event]] = {
     "FAILSAFE": frozenset({Event.RESET_CONFIRMED}),
 }
 
-#: **로봇의 안전 래치가 걸려 있는 동안 막는 사건** (WBS 3.4.3).
+#: **로봇의 안전 래치가 걸려 있는 동안 막는 사건.**
 #:
 #: `EXCLUSIVE` 는 상태로 막고 이쪽은 로봇의 보고로 막는다. 둘이 필요한 이유가 있다 —
 #: `EXCLUSIVE` 만으로는 *"호스트가 FAILSAFE 를 떠나도 되는가"* 를 판단할 수 없다.
@@ -179,22 +212,27 @@ DIRECTIVES: dict[str, Directive] = {
     "MANUAL": Directive.YIELD,
     "FAILSAFE": Directive.HALT,
     "LOST": Directive.HALT,  # 즉시 정지 후 재측위 대기
-    "AUTH_WAIT": Directive.HALT,  # 정지한 채 인증을 기다린다
-    "PATROL": Directive.SEQUENCE,  # 3.5.1 순찰 행동
-    "AVOID": Directive.SEQUENCE,  # 후진 200mm + 선회 (DR-11 로 제자리 회전 불가)
-    "SCAN": Directive.SEQUENCE,  # 3.5.2 상체 스캔
-    "ALERT": Directive.SEQUENCE,  # 3.5.3 Pitch Up 경계 자세
-    "TRACK": Directive.SEQUENCE,  # 3.5.4 선회 보행 추종
-    "HAZARD_DISPATCH": Directive.SEQUENCE,  # 3.9 웨이포인트 추종
+    # ⚠️ **정지는 그대로이고 자세만 붙었다.** 등록된 시퀀스가 `drive(0, 0)` 을 보내므로
+    # 로봇이 서 있는 것은 `HALT` 와 같다. 바꾼 이유는 **여기가 로봇이 실제로 서서 사람을
+    # 상대하는 구간**이기 때문이다 — 실기에서 `ALERT` 체류는 0.0~0.2초였고
+    # (조준이 끝나면 같은 틱에 `AUTH_REQUIRED` 로 빠진다) 30초를 머문 곳은 여기였다.
+    # 그리고 그 30초가 **사원증을 읽어야 하는 시간**이라 고개를 든 자세가 기능이다.
+    "AUTH_WAIT": Directive.SEQUENCE,  # 정지한 채 인증을 기다린다 + 경계 자세
+    "PATROL": Directive.SEQUENCE,  # 순찰 행동
+    "AVOID": Directive.SEQUENCE,  # 후진 200mm + 선회 (DR-11 로 제자리 회전 미전제)
+    "SCAN": Directive.SEQUENCE,  # 상체 스캔
+    "ALERT": Directive.SEQUENCE,  # Pitch Up 경계 자세
+    "TRACK": Directive.SEQUENCE,  # 선회 보행 추종
+    "HAZARD_DISPATCH": Directive.SEQUENCE,  # 웨이포인트 추종
     "HAZARD_SCAN": Directive.SEQUENCE,
     "ZONE_INSPECT": Directive.SEQUENCE,
 }
 
 INITIAL = "IDLE"
 
-#: **대응 단계(3.8.3)를 올리지 않는 상태** — 순찰 임무 밖이다.
+#: **대응 단계(`behavior/escalation.py`)를 올리지 않는 상태** — 순찰 임무 밖이다.
 #:
-#: ⚠️ **잠정이다 (2026-09-12 · 확정 전).** 단계 축은 FSM 과 직교하도록 설계됐지만
+#: ⚠️ **잠정이다 (확정 전).** 단계 축은 FSM 과 직교하도록 설계됐지만
 #: (아키텍처 3.1), 대기 중에는 `AUTH_WAIT` 로 갈 수 없어서 로봇 앞에 머물다 떠난
 #: 사람이 곧바로 L3 경보가 됐다 — 시연 준비 중 팀원 때문에 빨간 경보가 뜬다.
 #: 래치된 단계(L3·F)는 여기서도 그대로다. 확정되면 아키텍처 3.1 에 올린다.
@@ -218,9 +256,9 @@ class StateTimer:
 #: 상태 타이머. **표이며 분기문이 아니다** — `if state == "PATROL" and elapsed > 10`
 #: 을 엔진에 넣으면 상태 이름이 다시 코드로 들어온다.
 #:
-#: ⚠️ **전도 2초는 여기 없다.** 그것은 온보드 Tier 1 이며(`3.2.3`) 호스트가
+#: ⚠️ **전도 2초는 여기 없다.** 그것은 온보드 Tier 1 이며 호스트가
 #: 흉내내면 로봇이 이미 토크를 뗀 뒤에 호스트가 또 판정하는 이중 판정이 된다.
-#: 마찬가지로 명령 타임아웃 300ms 도 호스트의 일이 아니다 (아키텍처 1.2).
+#: 마찬가지로 명령 타임아웃 600ms 도 호스트의 일이 아니다 (아키텍처 1.2).
 #:
 #: ⚠️ **대상 상실 5초도 여기 없다.** 그것은 *상태에 머문 시간*이 아니라
 #: *마지막 검출 이후 시간*이다. 상태 타이머로 만들면 사람이 계속 서 있어도
@@ -363,6 +401,10 @@ class Behavior:
         self._last_trigger: Event | None = None
         self._state_since_ms: int | None = None
         self._fired: set[str] = set()
+        # 이번 상태 체류에서 **타이머 마감을 미룬 총합**. 상태가 바뀌면 0 으로
+        # 돌아간다 (`_mark_state`) — 유예는 그 체류 한 번의 것이지 상태의 성질이
+        # 아니다. 누가·왜 미뤘는지는 여기서 모른다(`defer_timer` 주석 참고).
+        self._timer_deferred_ms = 0
 
     # ── 두 링크는 다르게 대응한다 (NFR-2.6) ────────────────────
     #
@@ -430,7 +472,7 @@ class Behavior:
 
     @property
     def tracking(self) -> bool:
-        """추종 지시를 만들 자리인가 (`ALERT`·`TRACK` · `3.5.4`).
+        """추종 지시를 만들 자리인가 (`ALERT`·`TRACK`).
 
         ⚠️ **둘 다 포함한다.** `ALERT` 를 빼면 중앙에서 벗어나도 `TARGET_OFF_CENTER`
         를 낼 곳이 없어 `TRACK` 으로 들어가지 못한다 — 추종이 영영 시작되지 않는다.
@@ -467,6 +509,34 @@ class Behavior:
             # 이미 반영했으므로 다음 검출까지 다시 재지 않는다.
             self._last_target_ms = None
 
+    def defer_timer(self, *, by_ms: int, cap_ms: int) -> int:
+        """이번 체류의 상태 타이머 마감을 **상한 안에서** 미룬다. 실제로 미룬 ms.
+
+        «아직 판정이 오는 중이니 조금만 기다려라» 를 표현하는 자리다. 음성 인증이
+        그렇다 — 방문객이 창 안에서 말해도 녹음·전사가 직렬이라 판정이 `timeout_s`
+        뒤에 도착할 수 있다 (실기에서 통과 사례가 창 30초 안에서도 24초·18초까지 걸렸다).
+
+        ⚠️ **상한(`cap_ms`)이 이 함수의 존재 이유다.** 무한정 멈출 수 있으면 계속
+        신호만 보내 타이머를 영영 재우는 길이 생긴다 — 음성으로 치면 소리만 내서
+        경보를 막는 것이다. **경보가 늦는 것보다 오지 않는 것이 나쁘다.**
+
+        ⚠️ **어느 상태인지 묻지 않는다.** 여기서 `"AUTH_WAIT"` 를 보면 상태 이름이
+        엔진으로 되돌아온다 (`TIMERS` 표를 둔 이유와 같다). 무엇을 왜 미루는지는
+        부르는 쪽이 정하고, 여기는 **얼마나 미룰 수 있는가**만 안다.
+        """
+        if by_ms <= 0 or cap_ms <= 0:
+            return 0
+        granted = min(by_ms, cap_ms - self._timer_deferred_ms)
+        if granted <= 0:
+            return 0
+        self._timer_deferred_ms += granted
+        return granted
+
+    @property
+    def timer_deferred_ms(self) -> int:
+        """이번 체류에서 미룬 총합. 시험과 로그가 본다."""
+        return self._timer_deferred_ms
+
     def _watch_timers(self, now_ms: int) -> None:
         """상태에 머문 시간이 임계를 넘으면 사건을 낸다 (FR-2.4)."""
         entry = self._timers.get(self._fsm.state)
@@ -475,7 +545,7 @@ class Behavior:
         if self._fsm.state in self._fired:
             return
         event, after_ms = entry
-        if now_ms - self._state_since_ms < after_ms:
+        if now_ms - self._state_since_ms < after_ms + self._timer_deferred_ms:
             return
         # ⚠️ **한 번만 발화한다.** 전이가 막혀 있으면(가드·봉인) 매 틱마다 같은
         # 사건을 다시 내게 되고, 그러면 로그가 초당 10건씩 쌓인다.
@@ -489,6 +559,7 @@ class Behavior:
         self._known_state = self._fsm.state
         self._state_since_ms = now_ms  # None 이면 다음 틱이 채운다
         self._fired.clear()
+        self._timer_deferred_ms = 0
 
     def _handle(self, event: Event, now_ms: int | None) -> bool:
         changed = self._fsm.handle(event)
@@ -527,7 +598,7 @@ class Behavior:
     def sequence_for(self, state: str) -> Sequence | None:
         """등록된 시퀀스를 돌려준다. 없으면 `None`.
 
-        추종(`3.5.4`)처럼 **바깥에서 지시를 넣어 줘야 하는** 시퀀스가 있어서
+        추종처럼 **바깥에서 지시를 넣어 줘야 하는** 시퀀스가 있어서
         열어 둔다 — 검출은 비전 쪽에서 오고 명령은 여기서 나간다.
         """
         return self._sequences.get(state)

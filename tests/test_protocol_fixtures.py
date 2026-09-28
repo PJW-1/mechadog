@@ -40,6 +40,7 @@ KNOWN_TYPES = {
     "STATE",
     "ESTOP",
     "RESET_SAFE",
+    "SERVICE",
 }
 
 # 타입별 필수 필드 (seq / ts / type 은 공통 필수)
@@ -52,8 +53,9 @@ REQUIRED_FIELDS = {
     "RESET_SAFE": set(),
     "ACTION": {"id"},
     "LED": {"color", "blink_hz"},
-    "SOUND": {"phrase_id"},
+    "SOUND": {"track"},
     "STATE": {"state"},
+    "SERVICE": {"mode"},
 }
 
 # HW_MechDog API 허용 범위 (DR-1)

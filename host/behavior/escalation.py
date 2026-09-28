@@ -12,10 +12,16 @@
     단계  진입                                해제
     L0   정상                                —
     L1   person 300ms 안에 3회 (FR-3.2)       미검출 5초 → L0
+         경비 추종은 고개를 든 뒤부터 (ADR-40 · 게이트는 `runtime`)
     L2   L1 이 10초 지속 & 미인증              인증 성공 → L0
                                              미검출 5초 · 30초 무응답 → **L3**
-    L3   인증 실패 · PPE 위반 · 물체 변화       **관리자 확인만**
+    L3   인증 실패 · 사람 쓰러짐 · 물체 변화     **관리자 확인만**
     F    링크두절 · 저전압 · 전도 · E-Stop     **로봇 래치 해제 확인만**
+
+    (PPE 위반은 L3 래치가 아니라 `WARNED_BY` 의 경고다 — 아래 참고)
+
+⚠️ **공장 PPE 위반은 래치가 아니라 경고다** (2026-09-25 확정 S2). 빨간 눈과 문장은 L3
+표현을 그대로 빌리되 `escalation.ppe_warning_hold_ms` 가 지나면 스스로 내려온다(`warn`).
 
 ⚠️ **L3 와 F 는 자동으로 해제되지 않는다.** 사람이 확인해야 한다. 그래서 확인
 경로를 만드는 것이 이 작업의 절반이다 — **해제 수단 없는 래치는 시연을 끝내
@@ -86,13 +92,19 @@ LED_KEYS: dict[Level, str] = {
 RAISED_BY: dict[str, Level] = {
     # ── L3 경보 ──
     "AUTH_FAILED": Level.L3,  # 2회 실패 또는 30초 무응답 (FR-10.3)
-    "PPE_VIOLATION": Level.L3,  # 보호구 미착용 확정 (FR-9.3)
     "ZONE_CHANGED": Level.L3,  # 물체 변화 확정 (FR-8.4)
+    "PERSON_DOWN": Level.L3,  # 쓰러짐 확정 (FR-9 · 4.8.3)
     # ── F 페일세이프. ⚠️ 어느 단계에서든 즉시 들어간다 ──
     "ONBOARD_FAILSAFE": Level.F,  # 링크두절·저전압을 로봇이 보고
     "LINK_LOST": Level.F,
     "ESTOP": Level.F,
 }
+
+#: 래치 없이 **잠깐** 빨간 눈과 문장을 내는 사건 (`warn` · 2026-09-25 확정 S2).
+#:
+#: ⚠️ `RAISED_BY` 에 두지 않는다. 거기 있으면 관리자 확인을 기다리는 L3 래치가 되어
+#: 보호구를 안 쓴 작업자 한 명이 순찰을 세운다.
+WARNED_BY: frozenset[str] = frozenset({"PPE_VIOLATION"})
 
 #: 인증 성공으로 보는 사건. **L2 만** L0 으로 내린다 (FR-10) — `note_authenticated` 참고.
 AUTH_CLEARS: frozenset[str] = frozenset({"AUTH_OK"})
@@ -114,8 +126,13 @@ class Presentation:
     led: str
     #: 점멸 주기. **L3 에만 붙는다** — 켜져 있는 것과 경보를 구분하기 위해서다.
     blink_hz: float | None
-    #: WonderEcho 사전 등록 문구 ID. 플래싱 전이라 아직 `None` 이다 (OI-10/11).
-    sound_id: str | None
+    #: 그 단계에서 읽어 줄 경고 문장. L2·L3 에만 있고 나머지는 `None` 이다.
+    #:
+    #: ⚠️ **문구 ID(정수)가 아니라 문장이다 (WBS 3.5.6 · 2026-09-23 결정).**
+    #: 로봇에 `SOUND {phrase_id}` 를 보내는 설계는 버렸다 — 그때 펌웨어는 그 명령을
+    #: 파싱만 하고 처리하지 않았으며, [ADR-31](../../docs/DECISIONS.md) 이 모듈을
+    #: 마이크·스피커로만 쓰기로 했다. 읽는 것은 PC 의 음성 경로다.
+    warning: str | None
 
 
 class Escalation:
@@ -140,6 +157,13 @@ class Escalation:
         self._authenticated = False
         #: F 로 올라갈 때 경보가 걸려 있었나. **비상정지로 경보를 끄지 못하게 한다.**
         self._alarm_pending = False
+        #: 마지막으로 단계가 바뀐 사유. 관제 사건에 실어 «왜 L3 인가» 를 보인다.
+        self._reason = ""
+        #: 경고(`warn`)의 빨간 눈을 유지하는 시간과 끝나는 시각. `None` 이면 경고 중이 아니다.
+        self._warn_ms = int(esc["ppe_warning_hold_ms"])
+        self._warn_until_ms: int | None = None
+        #: 쓰러짐 의심 중인가 (S3). 의심의 L1 은 대상 상실로 내리지 않는다.
+        self._fall_suspected = False
 
     # ── 상태 ────────────────────────────────────────────────
     @property
@@ -147,9 +171,13 @@ class Escalation:
         return self._level
 
     @property
+    def reason(self) -> str:
+        return self._reason
+
+    @property
     def latched(self) -> bool:
-        """사람 확인 없이는 내려갈 수 없는 단계인가."""
-        return self._level in LATCHED
+        """사람 확인 없이는 내려갈 수 없는 단계인가. **경고의 L3 는 아니다.**"""
+        return self._level in LATCHED and self._warn_until_ms is None
 
     @property
     def authenticated(self) -> bool:
@@ -166,23 +194,48 @@ class Escalation:
             level=self._level,
             led=str(self._led[LED_KEYS[self._level]]),
             blink_hz=float(self._led["l3_blink_hz"]) if self._level is Level.L3 else None,
-            sound_id=self._sound_for(self._level),
+            warning=self._warning_for(self._level),
         )
 
-    def _sound_for(self, level: Level) -> str | None:
+    def _warning_for(self, level: Level) -> str | None:
         value = None
         if level is Level.L2:
-            value = self._sound.get("l2_beep")
+            value = self._sound.get("l2_warning")
         elif level is Level.L3:
-            value = self._sound.get("l3_warning")
+            # 원인별 문장이 있으면 그것을 읽는다. TF 카드에서는 문장마다 트랙이 따로다
+            # (ADR-38 · `4.7.21`). 없으면 공통 문장으로 돌아간다.
+            value = self._sound.get(f"{self._reason.lower()}_warning") or self._sound.get(
+                "l3_warning"
+            )
         return None if value is None else str(value)
 
     # ── 올리기 ──────────────────────────────────────────────
     def raise_to(self, level: Level, *, reason: str, now_ms: int) -> bool:
         """단계를 올린다. **내리지는 않는다** — 그래서 사건 순서가 뒤바뀌어도 안전하다."""
         if level.rank <= self._level.rank:
+            # ⚠️ **경고 중에 온 경보는 래치로 바꾼다.** 같은 L3 라고 삼키면 경고 시간이
+            # 끝날 때 쓰러짐 경보까지 함께 내려간다.
+            if level is Level.L3 and self._warn_until_ms is not None:
+                return self._enter(level, reason=reason, now_ms=now_ms)
+            # ⚠️ **F 중에 온 경보는 깔아 둔다.** 버리면 `confirm_failsafe` 가 L0 으로
+            # 내려, 비상정지 중에 도착한 쓰러짐 판독이 경보 없이 사라진다.
+            if self._level is Level.F and level is Level.L3:
+                self._alarm_pending = True
             return False
         return self._enter(level, reason=reason, now_ms=now_ms)
+
+    def warn(self, reason: str, now_ms: int) -> bool:
+        """빨간 눈과 경고 문장을 **잠깐** 낸다 — 래치가 아니다 (2026-09-25 확정 S2).
+
+        표현은 L3 그대로라 눈과 문장이 한 단계 엣지에서 같이 나간다(`_warning_for`).
+        이미 L3·F 면 아무것도 하지 않는다 — 경보를 경고로 낮추지 않는다.
+        """
+        if self._level.rank >= Level.L3.rank:
+            return False
+        self._enter(Level.L3, reason=reason, now_ms=now_ms)
+        self._alarm_pending = False
+        self._warn_until_ms = now_ms + self._warn_ms
+        return True
 
     def note_event(self, event: str, now_ms: int, *, accepted: bool = True) -> None:
         """FSM 사건 하나를 넣는다. **표에 있는 것만 반응한다.**
@@ -200,6 +253,8 @@ class Escalation:
         level = RAISED_BY.get(event)
         if level is not None:
             self.raise_to(level, reason=event, now_ms=now_ms)
+        if event in WARNED_BY:
+            self.warn(event, now_ms)
         if not accepted:
             return
         if event in AUTH_CLEARS:
@@ -257,6 +312,23 @@ class Escalation:
         if self._level in (Level.L1, Level.L2):
             self._release("standby", now_ms)
 
+    def note_fall_suspect(self, active: bool, now_ms: int) -> None:
+        """쓰러짐 의심에 들고 난다 (2026-09-25 확정 S3·S5). 의심 동안 L1 을 붙든다.
+
+        ⚠️ **언제 끝낼지는 런타임이 정한다.** 박스 없이 판독으로만 든 의심도 있어
+        `tick` 의 대상 상실로 내리면 들자마자 풀린다.
+        """
+        self._fall_suspected = active
+        if active:
+            self.raise_to(Level.L1, reason="fall_suspected", now_ms=now_ms)
+        elif self._level is Level.L1:
+            self._release("fall_cleared", now_ms)
+
+    def settle_ppe(self, now_ms: int) -> None:
+        """공장 PPE 판정 종료 시 L1을 내린다. L3/F 래치는 유지한다."""
+        if self._level is Level.L1:
+            self._release("ppe_settled", now_ms)
+
     def note_authentication_lost(self) -> None:
         """인증이 더 이상 유효하지 않다 — 유효 시간 만료(FR-10.2.4)나 미인증자 합류.
 
@@ -267,7 +339,7 @@ class Escalation:
         """
         self._authenticated = False
 
-    def tick(self, now_ms: int) -> None:
+    def tick(self, now_ms: int, *, require_auth: bool = True) -> None:
         """시간으로 정해지는 것들을 처리한다 — L1 해제 · **L2 승격** · L2 승급.
 
         ⚠️ **L1 과 L2 에서 대상 상실의 뜻이 다르다.** L1 은 그냥 지나간 사람이므로
@@ -275,15 +347,35 @@ class Escalation:
         경보로 올라간다 — 미인증 통과는 경비 대응 대상이다(FR-10.3 과 같은 결론).
         L2 를 L0 으로 내리면 **인증을 무시하고 지나가는 것이 가장 이득인** 정책이
         된다.
+
+        `require_auth=False` 인 공장 모드는 L1 관찰까지만 쓰고 인증 단계는
+        만들지 않는다. 사람 상실은 경비 모드와 달리 경보가 아니라 L0 복귀다.
+
+        경고(`warn`)도 여기서 끝낸다. 쓰러짐 의심 중이면 L1 로 돌아간다.
         """
-        if self._lost(now_ms):
+        if self._warn_until_ms is not None and now_ms >= self._warn_until_ms:
+            if self._fall_suspected:
+                self._enter(Level.L1, reason="fall_suspected", now_ms=now_ms)
+            else:
+                self._release("warning_done", now_ms)
+            return
+        if self._lost(now_ms) and not self._fall_suspected:
             if self._level is Level.L1:
                 self._release("target_lost", now_ms)
                 return
             if self._level is Level.L2:
-                self.raise_to(Level.L3, reason="unauthenticated_left", now_ms=now_ms)
+                if require_auth:
+                    self.raise_to(Level.L3, reason="unauthenticated_left", now_ms=now_ms)
+                else:
+                    self._release("target_lost", now_ms)
                 return
-        if self._level is Level.L1 and not self._authenticated:
+        # 쓰러짐 의심의 L1 은 인증을 기다리는 관찰이 아니다 — L2 로 올리지 않는다.
+        if (
+            require_auth
+            and self._level is Level.L1
+            and not self._authenticated
+            and not self._fall_suspected
+        ):
             since = self._l1_since_ms
             if since is not None and now_ms - since >= self._hold_ms:
                 self.raise_to(Level.L2, reason="unauthenticated_hold", now_ms=now_ms)
@@ -331,6 +423,8 @@ class Escalation:
 
     def _enter(self, level: Level, *, reason: str, now_ms: int) -> bool:
         previous, self._level = self._level, level
+        self._reason = reason
+        self._warn_until_ms = None
         self._l1_since_ms = now_ms if level is Level.L1 else None
         if level is Level.L3:
             self._alarm_pending = True

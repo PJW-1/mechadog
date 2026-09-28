@@ -99,5 +99,27 @@ inline bool taskWatchdogArmed() {
   portEXIT_CRITICAL(&state.lock);
   return armed;
 }
+// Runtime disarm for the service-mode toggle: disarming clears `armed` before
+// deleting the monitor so an in-flight poll sees the deadline as no longer
+// enforced and never restarts a board that already left service mode.
+// Boot-armed diagnostic builds can also be disarmed; arming again is only
+// possible from the owner task because startTaskWatchdog() re-binds the caller.
+inline esp_err_t disarmTaskWatchdog() {
+  watchdog_detail::Runtime& state = watchdog_detail::runtime();
+  TaskHandle_t monitor = nullptr;
+  portENTER_CRITICAL(&state.lock);
+  if (!state.progress.armed) {
+    portEXIT_CRITICAL(&state.lock);
+    return ESP_ERR_INVALID_STATE;
+  }
+  state.progress.armed = false;
+  state.progress.fault = false;
+  state.owner = nullptr;
+  monitor = state.monitor;
+  state.monitor = nullptr;
+  portEXIT_CRITICAL(&state.lock);
+  if (monitor != nullptr) vTaskDelete(monitor);
+  return ESP_OK;
+}
 }  // namespace mechadog
 #endif

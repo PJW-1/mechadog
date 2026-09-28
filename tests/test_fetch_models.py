@@ -31,6 +31,35 @@ def test_matching_file_passes(tmp_path: Path) -> None:
     assert verify(_weight(payload), path) is None
 
 
+def test_candidate_download_preserves_default_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch_models, "ROOT", tmp_path)
+    default = tmp_path / "models/ppe.onnx"
+    default.parent.mkdir()
+    default.write_bytes(b"existing production model")
+    requested = []
+
+    def download_candidate(weight, path):
+        requested.append(weight)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"candidate")
+
+    monkeypatch.setattr(fetch_models, "download", download_candidate)
+    monkeypatch.setattr(fetch_models, "verify", lambda _w, p: None if p.exists() else "missing")
+    assert fetch_models.main(["--ppe-candidate", "--force"]) == 0
+    assert requested == list(fetch_models.PPE_V12_CANDIDATE)
+    assert default.read_bytes() == b"existing production model"
+
+
+def test_candidate_check_does_not_download(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch_models, "ROOT", tmp_path)
+
+    def unexpected_download(*_args):
+        raise AssertionError("check must not download")
+
+    monkeypatch.setattr(fetch_models, "download", unexpected_download)
+    assert fetch_models.main(["--ppe-candidate", "--check"]) == 1
+
+
 def test_missing_file_is_reported(tmp_path: Path) -> None:
     assert verify(_weight(b"abc"), tmp_path / "없음.onnx") == "파일 없음"
 

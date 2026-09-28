@@ -164,3 +164,27 @@ def test_snapshot_bytes_returns_none_for_an_event_without_a_picture(tmp_path, mo
         jpeg=None,
     )
     assert box.snapshot_bytes(entry.meta_path.parent.name) is None
+
+
+# ── 그릴 수 없는 판단 근거 (WBS 4.8.3 · 4.8.0) ────────────────────
+
+
+def test_judgement_survives_the_round_trip(blackbox: EventBlackbox) -> None:
+    """⚠️ **사진에 그릴 수 없는 것들이다.** 쓰러짐은 숫자고 VLM 판독은 문장이라,
+    디스크를 거쳐 되돌아오지 않으면 *"왜 그렇게 판정했나"* 가 사라진다."""
+    reason = {"fallen": True, "aspect": 3.25, "still_ms": 3000}
+    entry = blackbox.record("person_fallen", now_ms=1000, judgement=reason)
+    reason["fallen"] = False  # 넘긴 사전을 고쳐도 기록은 흔들리지 않는다
+
+    assert entry.judgement == {"fallen": True, "aspect": 3.25, "still_ms": 3000}
+    assert blackbox.feed()[0].judgement == entry.judgement
+
+
+def test_records_written_before_judgement_existed_still_read(blackbox: EventBlackbox) -> None:
+    """⚠️ 필수로 요구하면 `4.8.3` 이전에 쌓인 기록이 통째로 사라진다."""
+    entry = blackbox.record("person_found", now_ms=1000)
+    metadata = json.loads(entry.meta_path.read_text(encoding="utf-8"))
+    del metadata["judgement"]
+    entry.meta_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    assert blackbox.feed()[0].judgement == {}

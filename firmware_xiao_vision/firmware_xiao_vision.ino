@@ -2,9 +2,12 @@
 //
 // 역할은 촬영과 MJPEG 송출뿐이다. 객체 검출은 Host PC가 맡는다(DR-3).
 // 포트 80은 상태/프로파일 제어, 포트 81은 장시간 점유되는 MJPEG 스트림으로 분리한다.
+// 포트 82는 확장보드 PDM 마이크의 16 kHz PCM16 스트림이다(음성 인식은 Host PC).
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <Wire.h>
+#include <driver/i2s.h>
 #include <esp_camera.h>
 #include <esp_http_server.h>
 #include <esp_timer.h>
@@ -44,6 +47,7 @@ constexpr int kPinPclk = 13;
 
 constexpr uint16_t kControlPort = 80;
 constexpr uint16_t kStreamPort = 81;
+constexpr uint16_t kAudioPort = 82;
 constexpr uint32_t kReconnectIntervalMs = 5000;
 constexpr uint32_t kFpsReportIntervalMs = 5000;
 
@@ -60,6 +64,7 @@ constexpr char kStreamBoundary[] = "\r\n--mechdog-frame-boundary\r\n";
 
 httpd_handle_t g_control_server = nullptr;
 httpd_handle_t g_stream_server = nullptr;
+httpd_handle_t g_audio_server = nullptr;
 framesize_t g_frame_size = FRAMESIZE_VGA;
 const char* g_profile_name = "VGA";
 bool g_camera_ready = false;
@@ -71,6 +76,21 @@ uint32_t g_fps_limit = kDefaultFpsLimit;
 // 경우)을 런타임에 바로잡는다. 물리 회전은 센서 레지스터의 vflip+hmirror
 // 합성과 같으므로 재플래시 없이 /orient?rot=180 한 번으로 교정된다.
 bool g_mount_rotated = false;
+
+// ── 마이크 ──
+// 확장보드 PDM 마이크: CLK=GPIO42, DATA=GPIO41. 카메라 핀과 겹치지 않고, S3 의 카메라는
+// I2S 가 아니라 LCD_CAM 주변장치를 쓰므로 I2S0 도 비어 있다.
+constexpr int kPinPdmClk = 42;
+constexpr int kPinPdmData = 41;
+constexpr int kAudioRate = 16000;
+constexpr size_t kAudioChunkSamples = 512;  // 32 ms
+// DMA 버퍼 8 x 512 샘플 = 256 ms. 전송이 이보다 오래 막히면 샘플이 버려지고
+// I2S_EVENT_RX_Q_OVF 로 센다 — 끊김을 숨기지 않고 AUDIO_STATS 에 남긴다.
+constexpr int kAudioDmaCount = 8;
+constexpr int kAudioDefaultGain = 2;  // 왼쪽 시프트. mic_probe 로 인식률을 확인한 값
+bool g_mic_ready = false;
+QueueHandle_t g_i2s_events = nullptr;
+int16_t g_audio_chunk[kAudioChunkSamples];
 
 bool hasCredentials() {
   return strcmp(MECHDOG_WIFI_SSID, "YOUR_WIFI_SSID") != 0 && strlen(MECHDOG_WIFI_SSID) > 0;
@@ -97,11 +117,72 @@ void applyOrientation(sensor_t* sensor) {
   sensor->set_hmirror(sensor, g_mount_rotated ? 1 : 0);
 }
 
+// OV3660 은 XCLK 가 돌기 시작한 뒤에야 SCCB 에 제대로 답한다. 그런데 드라이버는
+// 클럭을 켜자마자 ID 레지스터를 읽으므로, 차가운 상태에서는 쓰레기 값을 읽는다.
+//
+// ⚠️ **그 실패가 «카메라가 없다» 처럼 보인다.** 2026-09-18 실측에서 코어 2.0.17 은
+// `0x105 NOT_FOUND`, 3.3.11 은 `0x106 NOT_SUPPORTED` 로 끝났고, 둘 다 배선 불량과
+// 구분되지 않아 멀쩡한 하드웨어를 의심하게 만들었다. 같은 보드에서 XCLK 를 먼저
+// 200ms 돌린 뒤에는 `PID=0x3660` 으로 정상 초기화되고 VGA 프레임까지 나왔다.
+//
+// 그래서 **드라이버를 부르기 전에 클럭을 미리 돌려 센서를 깨운다.** 비용은 부팅
+// 250ms 뿐이고, 없으면 카메라가 아예 살아나지 않는다.
+void warmUpSensorClock() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  if (!ledcAttach(kPinXclk, 20000000, 1)) {
+    Serial.println("WARN camera_init: XCLK 워밍업 실패 - 그대로 진행한다");
+    return;
+  }
+  ledcWrite(kPinXclk, 1);  // 1비트 해상도에서 50% 듀티
+#else
+  ledcSetup(1, 20000000, 1);
+  ledcAttachPin(kPinXclk, 1);
+  ledcWrite(1, 1);
+#endif
+  delay(50);
+
+  // SCCB 를 한 번 열어 센서에게 말을 걸어 둔다.
+  //
+  // ⚠️ **클럭만 돌려서는 부족했다.** 2026-09-18 실측에서 클럭만 200ms 돌린 뒤의
+  // `esp_camera_init` 은 세 번 모두 `0x106 NOT_SUPPORTED` 였고, 같은 보드에서
+  // `Wire` 로 ID 레지스터를 한 번 읽어 본 뒤에는 통과했다. `Wire.begin` 이 SDA·SCL 에
+  // 내부 풀업을 걸어 주는데 새 `sccb-ng` 드라이버는 그것을 하지 않는 것으로 보인다.
+  //
+  // ⚠️ **읽은 값으로 분기하지 않는다.** 여기서 하는 일은 버스를 깨우는 것뿐이고,
+  // 센서 판정은 드라이버에 맡긴다 — 같은 일을 두 곳에서 하면 언젠가 어긋난다.
+  Wire.begin(kPinSiod, kPinSioc, 100000);
+  delay(50);
+  uint16_t chip_id = 0;
+  Wire.beginTransmission(0x3C);
+  Wire.write(0x30);
+  Wire.write(0x0A);
+  if (Wire.endTransmission(false) == 0 && Wire.requestFrom(0x3C, 1) == 1) {
+    chip_id = static_cast<uint16_t>(Wire.read()) << 8;
+    Wire.beginTransmission(0x3C);
+    Wire.write(0x30);
+    Wire.write(0x0B);
+    if (Wire.endTransmission(false) == 0 && Wire.requestFrom(0x3C, 1) == 1) {
+      chip_id |= Wire.read();
+    }
+  }
+  Serial.printf("SENSOR_PROBE chip_id=0x%04X\n", chip_id);
+  Wire.end();
+
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcDetach(kPinXclk);
+#else
+  ledcDetachPin(kPinXclk);
+#endif
+  delay(200);
+}
+
 bool initializeCamera() {
   if (!psramFound()) {
     Serial.println("ERROR camera_init: PSRAM을 찾지 못했습니다");
     return false;
   }
+
+  warmUpSensorClock();
 
   camera_config_t config{};
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -130,7 +211,27 @@ bool initializeCamera() {
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.grab_mode = CAMERA_GRAB_LATEST;
 
-  const esp_err_t error = esp_camera_init(&config);
+  // ⚠️ **초기화가 간헐적으로 실패한다.** 같은 보드·같은 전원에서 한 번은
+  // `CAMERA_READY` 가 나왔고, 다음 전원 인가에서는 `sccb-ng: W [6702]=fd fail` 로
+  // 죽었다. 센서가 깨어나는 시점이 매번 같지 않다는 뜻이다.
+  //
+  // 원인을 한 줄로 확정하지 못했으므로 **실패를 견디게 만든다** — 부분 자원을
+  // 되돌리고 클럭을 다시 깨운 뒤 다시 시도한다. 비용은 실패했을 때의 몇백 ms 뿐이고,
+  // 없으면 카메라가 죽은 채로 로봇이 순찰을 돈다.
+  esp_err_t error = ESP_FAIL;
+  for (int attempt = 1; attempt <= 3; ++attempt) {
+    error = esp_camera_init(&config);
+    if (error == ESP_OK) {
+      if (attempt > 1) {
+        Serial.printf("WARN camera_init: %d회째에 성공\n", attempt);
+      }
+      break;
+    }
+    Serial.printf("WARN camera_init attempt=%d error=0x%x\n", attempt, error);
+    esp_camera_deinit();
+    delay(300);
+    warmUpSensorClock();
+  }
   if (error != ESP_OK) {
     Serial.printf("ERROR camera_init: 0x%x\n", error);
     return false;
@@ -147,6 +248,35 @@ bool initializeCamera() {
 
   Serial.printf("CAMERA_READY sensor=%s psram_free=%u profile=%s\n", sensorName(sensor->id.PID),
                 static_cast<unsigned>(ESP.getFreePsram()), g_profile_name);
+  return true;
+}
+
+bool initializeMic() {
+  i2s_config_t config{};
+  config.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM);
+  config.sample_rate = kAudioRate;
+  config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  config.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL2;
+  config.dma_buf_count = kAudioDmaCount;
+  config.dma_buf_len = kAudioChunkSamples;
+  i2s_pin_config_t pins{};
+  pins.bck_io_num = I2S_PIN_NO_CHANGE;
+  pins.ws_io_num = kPinPdmClk;
+  pins.data_out_num = I2S_PIN_NO_CHANGE;
+  pins.data_in_num = kPinPdmData;
+  // 채널 설정은 mic_probe 가 검증한 Arduino I2S 라이브러리의 PDM_MONO_MODE 와 같게 맞춘다.
+  if (i2s_driver_install(I2S_NUM_0, &config, 8, &g_i2s_events) != ESP_OK ||
+      i2s_set_pin(I2S_NUM_0, &pins) != ESP_OK ||
+      i2s_set_clk(I2S_NUM_0, kAudioRate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO) != ESP_OK) {
+    Serial.println("ERROR mic_init: i2s driver");
+    return false;
+  }
+  // 받는 쪽이 없을 때는 멈춰 둔다. 계속 돌리면 DMA 가 넘치는 이벤트만 쌓인다.
+  i2s_stop(I2S_NUM_0);
+  Serial.printf("MIC_READY rate=%d dma_ms=%d\n", kAudioRate,
+                static_cast<int>(kAudioDmaCount * kAudioChunkSamples * 1000 / kAudioRate));
   return true;
 }
 
@@ -424,7 +554,100 @@ esp_err_t streamHandler(httpd_req_t* request) {
   return result;
 }
 
+// 클라이언트 하나에게 16 kHz 모노 PCM16LE 를 끊지 않고 흘려보낸다.
+// /audio?gain=0..4 (기본 2). DC 는 1차 고역 통과로 지운다 — 덩어리마다 평균을 빼면
+// 덩어리 경계마다 계단이 생긴다.
+esp_err_t audioHandler(httpd_req_t* request) {
+  if (!g_mic_ready) {
+    httpd_resp_set_status(request, "503 Service Unavailable");
+    return sendJson(request, "{\"ok\":false,\"error\":\"mic unavailable\"}");
+  }
+  int gain = kAudioDefaultGain;
+  char query[24] = {};
+  char gain_text[4] = {};
+  if (httpd_req_get_url_query_str(request, query, sizeof(query)) == ESP_OK &&
+      httpd_query_key_value(query, "gain", gain_text, sizeof(gain_text)) == ESP_OK) {
+    gain = constrain(static_cast<int>(strtol(gain_text, nullptr, 10)), 0, 4);
+  }
+  httpd_resp_set_type(request, "audio/L16;rate=16000;channels=1");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+
+  xQueueReset(g_i2s_events);
+  i2s_zero_dma_buffer(I2S_NUM_0);
+  i2s_start(I2S_NUM_0);
+  Serial.printf("AUDIO_OPEN gain=%d\n", gain);
+
+  size_t got = 0;
+  // 시작 직후 ~100 ms 는 PDM 필터가 안정되는 구간이다.
+  for (int i = 0; i < 3; ++i) {
+    i2s_read(I2S_NUM_0, g_audio_chunk, sizeof(g_audio_chunk), &got, portMAX_DELAY);
+  }
+
+  float x_prev = 0;
+  float y_prev = 0;
+  uint32_t sent_bytes = 0;
+  uint32_t overflows = 0;
+  int64_t send_max_us = 0;
+  double square_sum = 0;
+  uint32_t sample_count = 0;
+  int64_t report_started_us = esp_timer_get_time();
+  esp_err_t result = ESP_OK;
+  while (result == ESP_OK) {
+    if (i2s_read(I2S_NUM_0, g_audio_chunk, sizeof(g_audio_chunk), &got, portMAX_DELAY) != ESP_OK) {
+      result = ESP_FAIL;
+      break;
+    }
+    const size_t samples = got / sizeof(int16_t);
+    for (size_t i = 0; i < samples; ++i) {
+      const float x = g_audio_chunk[i];
+      const float y = x - x_prev + 0.995F * y_prev;
+      x_prev = x;
+      y_prev = y;
+      const int32_t v = constrain(static_cast<int32_t>(y) * (1 << gain), -32768, 32767);
+      g_audio_chunk[i] = static_cast<int16_t>(v);
+      square_sum += static_cast<double>(v) * v;
+    }
+    sample_count += samples;
+
+    const int64_t send_started_us = esp_timer_get_time();
+    result = httpd_resp_send_chunk(request, reinterpret_cast<const char*>(g_audio_chunk), got);
+    send_max_us = max(send_max_us, esp_timer_get_time() - send_started_us);
+    if (result == ESP_OK) {
+      sent_bytes += got;
+    }
+
+    i2s_event_t event;
+    while (xQueueReceive(g_i2s_events, &event, 0) == pdTRUE) {
+      if (event.type == I2S_EVENT_RX_Q_OVF) {
+        ++overflows;
+      }
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    if (now_us - report_started_us >= static_cast<int64_t>(kFpsReportIntervalMs) * 1000) {
+      const float elapsed_s = static_cast<float>(now_us - report_started_us) / 1000000.0F;
+      Serial.printf("AUDIO_STATS kbps=%.0f rate=%.0f overflows=%u send_max_us=%lld rms=%.0f\n",
+                    static_cast<double>(sent_bytes) * 8.0 / 1000.0 / elapsed_s,
+                    static_cast<double>(sent_bytes) / sizeof(int16_t) / elapsed_s,
+                    static_cast<unsigned>(overflows), send_max_us,
+                    sample_count == 0 ? 0.0 : sqrt(square_sum / sample_count));
+      sent_bytes = overflows = sample_count = 0;
+      send_max_us = 0;
+      square_sum = 0;
+      report_started_us = now_us;
+    }
+  }
+
+  i2s_stop(I2S_NUM_0);
+  Serial.printf("AUDIO_CLOSED result=0x%x\n", result);
+  return result;
+}
+
 void stopServers() {
+  if (g_audio_server != nullptr) {
+    httpd_stop(g_audio_server);
+    g_audio_server = nullptr;
+  }
   if (g_stream_server != nullptr) {
     httpd_stop(g_stream_server);
     g_stream_server = nullptr;
@@ -436,8 +659,8 @@ void stopServers() {
 }
 
 bool startServers() {
-  // 이전 시도가 한 서버만 열고 실패했을 수 있다. 남은 핸들을 정리한 뒤
-  // 두 서버를 한 세트로 다시 시작한다.
+  // 이전 시도가 일부 서버만 열고 실패했을 수 있다. 남은 핸들을 정리한 뒤
+  // 세 서버를 한 세트로 다시 시작한다.
   stopServers();
   httpd_config_t control_config = HTTPD_DEFAULT_CONFIG();
   control_config.server_port = kControlPort;
@@ -480,8 +703,24 @@ bool startServers() {
     return false;
   }
 
-  Serial.printf("HTTP_READY status=http://%s/ stream=http://%s:%u/stream\n",
-                WiFi.localIP().toString().c_str(), WiFi.localIP().toString().c_str(), kStreamPort);
+  httpd_config_t audio_config = HTTPD_DEFAULT_CONFIG();
+  audio_config.server_port = kAudioPort;
+  audio_config.ctrl_port = 32770;
+  httpd_uri_t audio_uri{};
+  audio_uri.uri = "/audio";
+  audio_uri.method = HTTP_GET;
+  audio_uri.handler = audioHandler;
+  if (httpd_start(&g_audio_server, &audio_config) != ESP_OK ||
+      httpd_register_uri_handler(g_audio_server, &audio_uri) != ESP_OK) {
+    Serial.println("ERROR http_server: audio server start failed");
+    stopServers();
+    return false;
+  }
+
+  Serial.printf(
+      "HTTP_READY status=http://%s/ stream=http://%s:%u/stream audio=http://%s:%u/audio\n",
+      WiFi.localIP().toString().c_str(), WiFi.localIP().toString().c_str(), kStreamPort,
+      WiFi.localIP().toString().c_str(), kAudioPort);
   return true;
 }
 
@@ -507,6 +746,8 @@ void setup() {
   if (!g_camera_ready) {
     return;
   }
+  // 마이크가 없어도 영상은 계속 낸다. /audio 만 503 으로 답한다.
+  g_mic_ready = initializeMic();
   if (connectWifi()) {
     startServers();
   }
@@ -541,7 +782,7 @@ void loop() {
     }
     // Wi-Fi는 살아 있는데 서버 시작만 실패한 경우도 다시 시도한다.
     if (WiFi.status() == WL_CONNECTED &&
-        (g_stream_server == nullptr || g_control_server == nullptr)) {
+        (g_stream_server == nullptr || g_control_server == nullptr || g_audio_server == nullptr)) {
       startServers();
     }
   }

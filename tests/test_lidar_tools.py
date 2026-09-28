@@ -17,8 +17,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import socket
+import time
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +34,7 @@ from host.common.config import ConfigError
 from host.common.lidar_link import ScanDecoder, encode_scan
 from host.slam import settings, simulation, viz
 from host.slam.occupancy import MapMeta, OccupancyGrid
+from host.telemetry.receiver import Reading as TelemetryReading
 
 
 @pytest.fixture(scope="module")
@@ -105,6 +108,35 @@ def test_nonpositive_resolution_is_refused() -> None:
     section = dict(settings.read_lidar_section())
     section["resolution_mm"] = 0
     with pytest.raises(ConfigError, match="resolution_mm"):
+        settings.validate_section(section)
+
+
+def test_scan_forward_port_same_as_scan_port_is_refused() -> None:
+    """⚠️ 컨테이너 전달 목적지가 수신 포트와 같으면 두 스키마가 섞인다 (WBS 5.4.4)."""
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_port"] = section["scan_port"]
+    with pytest.raises(ConfigError, match="scan_forward_port"):
+        settings.validate_section(section)
+
+
+def test_scan_forward_port_out_of_range_is_refused() -> None:
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_port"] = 70000
+    with pytest.raises(ConfigError, match="scan_forward_port"):
+        settings.validate_section(section)
+
+
+def test_scan_forward_host_must_be_a_non_empty_string() -> None:
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_host"] = "   "
+    with pytest.raises(ConfigError, match="scan_forward_host"):
+        settings.validate_section(section)
+
+
+def test_scan_forward_enabled_must_be_a_bool() -> None:
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_enabled"] = "true"
+    with pytest.raises(ConfigError, match="scan_forward_enabled"):
         settings.validate_section(section)
 
 
@@ -392,6 +424,19 @@ def test_place_snaps_off_a_wall(capsys: pytest.CaptureFixture[str]) -> None:
     assert "옮겼다" in capsys.readouterr().out
 
 
+def test_the_second_click_sets_the_heading() -> None:
+    """둘째 클릭은 구역 자리에서 그 지점을 바라보는 방향이다 (지도 좌표 · rad)."""
+    import math
+
+    from host.behavior.zones import ZoneStore
+
+    store = ZoneStore(("A",))
+    zone = zone_select.place(store, room(40, 40), 1.0, 1.0, -1.0)
+    assert zone is not None and zone.yaw is None
+    zone_select.aim(store, "A", zone.x, zone.y + 1.0)
+    assert store.get("A").yaw == pytest.approx(math.pi / 2)
+
+
 def test_place_refuses_outside_the_map(capsys: pytest.CaptureFixture[str]) -> None:
     from host.behavior.zones import ZoneStore
 
@@ -569,6 +614,96 @@ def test_send_delivers_to_a_loopback_listener() -> None:
         sender.close()
 
 
+def test_forward_scan_delivers_raw_bytes_unchanged() -> None:
+    """디코드 성패와 무관하게 받은 바이트 그대로 전달한다 (WBS 5.4.4).
+
+    기형 데이터그램(유효한 SCAN 전문이 아닌 임의 바이트)도 그대로 나가야
+    한다 — 검증은 받는 쪽(`ScanDecoder`)이 다시 한다.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.settimeout(1.0)
+        raw = b"\x00\x01not-a-valid-scan-packet\xff"
+        assert patrol_run.forward_scan(sender, raw, listener.getsockname()) is True
+        payload, _ = listener.recvfrom(4096)
+        assert payload == raw
+    finally:
+        listener.close()
+        sender.close()
+
+
+def test_forward_scan_does_not_raise_when_the_destination_is_closed() -> None:
+    """목적지가 닫혀 있어도 예외가 순찰 루프로 새면 안 된다."""
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed.bind(("127.0.0.1", 0))
+    peer = closed.getsockname()
+    closed.close()
+    try:
+        for _ in range(3):
+            assert isinstance(patrol_run.forward_scan(sender, b"\x00", peer), bool)
+    finally:
+        sender.close()
+
+
+def test_forwarding_to_a_closed_port_never_breaks_the_scan_socket() -> None:
+    """⚠️ **전달은 수신 소켓이 아닌 따로 연 소켓으로 한다.**
+
+    Windows 는 닫힌 포트로 보낸 UDP 의 ICMP 통보를 **보낸 소켓의 다음
+    `recvfrom` 에 `ConnectionResetError` 로** 돌려준다. `scan_sock` 으로 전달하면
+    컨테이너가 꺼져 있는 동안 수신 루프가 스캔마다 끊겨, 초당 100개 실측에서
+    3분의 1을 잃고 지연이 최대 856ms 까지 밀렸다 — LiDAR 비상정지가 그만큼 늦다.
+    """
+    scan_sock = patrol_run.open_socket(0)
+    forward_sock = patrol_run.open_forward_socket()
+    feeder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed.bind(("127.0.0.1", 0))
+    peer = closed.getsockname()
+    closed.close()
+    target = ("127.0.0.1", scan_sock.getsockname()[1])
+    try:
+        for index in range(20):
+            feeder.sendto(b"scan%d" % index, target)
+            deadline = time.monotonic() + 1.0
+            while True:
+                try:
+                    raw, _ = scan_sock.recvfrom(64)
+                    break
+                except BlockingIOError:
+                    assert time.monotonic() < deadline, "스캔이 도착하지 않았다"
+                    time.sleep(0.001)
+            assert raw == b"scan%d" % index
+            patrol_run.forward_scan(forward_sock, raw, peer)
+            time.sleep(0.005)
+    finally:
+        scan_sock.close()
+        forward_sock.close()
+        feeder.close()
+
+
+def test_forward_peer_resolves_the_host_once_at_startup() -> None:
+    """⚠️ 호스트명을 그대로 `sendto` 에 넘기면 스캔마다 DNS 조회가 수신 루프를 막는다."""
+    section = {"scan_forward_host": "localhost", "scan_forward_port": 5203}
+    assert patrol_run.forward_peer_of({**section, "scan_forward_enabled": True}) == (
+        "127.0.0.1",
+        5203,
+    )
+    assert patrol_run.forward_peer_of({**section, "scan_forward_enabled": False}) is None
+
+
+def test_forward_scan_survives_a_socket_error() -> None:
+    """`ConnectionResetError` 도 `OSError` 이므로 잡혀서 `False` 로만 돌아온다."""
+
+    class RefusingSocket:
+        def sendto(self, _payload: bytes, _peer: tuple[str, int]) -> int:
+            raise ConnectionResetError("상대가 없음")
+
+    assert patrol_run.forward_scan(RefusingSocket(), b"\x00", ("127.0.0.1", 1)) is False  # type: ignore[arg-type]
+
+
 def test_patrol_shutdown_repeats_the_same_estop(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lidar_config: dict
 ) -> None:
@@ -598,11 +733,16 @@ def test_open_socket_is_non_blocking() -> None:
         sock.close()
 
 
-def test_fake_reading_exposes_the_protocol_field_names() -> None:
-    """규약의 이름을 그대로 쓴다 — `yaw` 가 아니라 `imu.yaw` 다."""
-    reading = patrol_run._FakeReading(state="PATROL", imu={"yaw": 12.0})
+def test_fake_reading_exposes_the_receiver_field_names() -> None:
+    """`host.telemetry.receiver.Reading` 과 같은 이름을 쓴다 — `imu.yaw` 가 아니라 `yaw` 다.
+
+    이름이 어긋나면 컨트롤러가 시뮬레이션에서만 IMU 보조를 조용히 잃는다.
+    """
+    receiver_fields = {field.name for field in dataclasses.fields(TelemetryReading)}
+    assert set(patrol_run._FakeReading.__slots__) <= receiver_fields
+    reading = patrol_run._FakeReading(state="PATROL", yaw=12.0)
     assert reading.state == "PATROL"
-    assert reading.imu["yaw"] == 12.0
+    assert reading.yaw == 12.0
     assert reading.safety_latched is None
 
 

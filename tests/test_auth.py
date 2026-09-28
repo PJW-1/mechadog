@@ -24,7 +24,17 @@ T0 = 2_000_000
 
 @pytest.fixture
 def auth(cfg: dict) -> Authenticator:
+    cfg["auth"]["bind_to_track_id"] = True  # 기존 개인별 정책 회귀 검사
     return Authenticator(cfg)
+
+
+def test_scene_badge_survives_track_churn(cfg: dict) -> None:
+    cfg["auth"]["bind_to_track_id"] = False
+    authenticator = Authenticator(cfg)
+    assert authenticator.observe([_marker(0)], [], T0) is Outcome.GRANTED
+    authenticator.note_tracks([])
+    assert authenticator.all_authenticated([_track(42)], T0 + 500)
+    assert not authenticator.all_authenticated([_track(43)], T0 + 60_000)
 
 
 def _track(track_id: int, *, x: float = 100.0, height: float = 300.0) -> Track:
@@ -211,17 +221,8 @@ def test_a_badge_seen_without_any_track_is_deferred(auth: Authenticator) -> None
 
 
 def test_an_unregistered_marker_without_any_track_is_ignored(auth: Authenticator) -> None:
-    """추적이 없을 때 미등록 마커는 시도로 세지 않는다 — 구역 마커 간섭 방지."""
+    """추적이 없을 때 미등록 마커는 시도로 세지 않는다 — 주변 인쇄물·오판독 간섭 방지."""
     assert auth.observe([_marker(7)], [], T0) is Outcome.NOTHING
-
-
-def test_a_zone_marker_never_burns_an_attempt(cfg: dict) -> None:
-    """⚠️ 구역 마커(FR-8)는 같은 사전이라 박스 안에 들어와도 인증 시도가 아니다."""
-    zone_cfg = dict(cfg)
-    zone_cfg["zones"] = dict(cfg.get("zones") or {}, marker_map={10: "A"})
-    zoned = Authenticator(zone_cfg)
-    assert zoned.observe([_marker(10, at=(160.0, 250.0))], [_track(1)], T0) is Outcome.NOTHING
-    assert zoned.attempts(1) == 0
 
 
 def test_overlapping_boxes_bind_to_the_nearest(auth: Authenticator) -> None:

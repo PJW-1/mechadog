@@ -184,6 +184,70 @@ def test_already_installed_no_flash(tmp_path):
     client.request.assert_not_called()
 
 
+def test_service_mode_package_accepted(tmp_path):
+    """SERVICE-mode actuator packages need their own ELF review marker."""
+    manifest, app = write_package(
+        tmp_path,
+        actuators_enabled=True,
+        actuator_off_elf_reviewed=False,
+        service_mode_elf_reviewed=True,
+    )
+    assert load_package(manifest)[1] == app.read_bytes()
+
+
+def test_actuator_package_without_service_review_rejected(tmp_path):
+    manifest, _ = write_package(tmp_path, actuators_enabled=True, actuator_off_elf_reviewed=False)
+    with pytest.raises(ValueError):
+        load_package(manifest)
+
+
+def test_update_requires_service_mode_on_actuator_firmware(tmp_path):
+    """Actuator builds accept /firmware only while SERVICE mode parks the body."""
+    manifest, _ = write_package(
+        tmp_path,
+        actuators_enabled=True,
+        actuator_off_elf_reviewed=False,
+        service_mode_elf_reviewed=True,
+    )
+    client = RobotOta.__new__(RobotOta)
+    client.status = MagicMock(
+        return_value={
+            "healthy": True,
+            "confirmed": True,
+            "mac": "robot",
+            "actuators": True,
+            "service_mode": False,
+        }
+    )
+    client.request = MagicMock()
+    with pytest.raises(ValueError, match="SERVICE"):
+        client.update(manifest)
+    client.request.assert_not_called()
+
+
+def test_update_proceeds_when_service_mode_parked(tmp_path):
+    manifest, _ = write_package(
+        tmp_path,
+        actuators_enabled=True,
+        actuator_off_elf_reviewed=False,
+        service_mode_elf_reviewed=True,
+    )
+    package, _ = load_package(manifest)
+    client = RobotOta.__new__(RobotOta)
+    client.status = MagicMock(
+        return_value={
+            "healthy": True,
+            "confirmed": True,
+            "mac": "robot",
+            "actuators": True,
+            "service_mode": True,
+            "image_sha256": package["image_sha256"],
+        }
+    )
+    client.request = MagicMock()
+    assert client.update(manifest)["state"] == "ALREADY_INSTALLED"
+
+
 def test_partition_layout_preserves_data():
     root = Path(__file__).resolve().parents[1]
     rows = {}

@@ -18,12 +18,18 @@ SLOT_SIZE = 0xF0000
 
 def load_package(path):
     package = json.loads(Path(path).read_text(encoding="utf-8"))
-    if (
-        package.get("actuators_enabled") is not False
-        or package.get("actuator_off_elf_reviewed") is not True
-        or package.get("ota_protocol") != 1
-    ):
-        raise ValueError("Package must be a reviewed actuator-OFF OTA image")
+    # Reviewed images only: either the actuator-OFF diagnostic package or a
+    # SERVICE-mode actuator package whose ELF was reviewed to disarm the loop
+    # watchdog at boot (arm happens only after SERVICE mode parks the body).
+    reviewed = (
+        package.get("actuators_enabled") is False
+        and package.get("actuator_off_elf_reviewed") is True
+    ) or (
+        package.get("actuators_enabled") is True
+        and package.get("service_mode_elf_reviewed") is True
+    )
+    if not reviewed or package.get("ota_protocol") != 1:
+        raise ValueError("Package must be a reviewed actuator-OFF or SERVICE-mode OTA image")
     data = Path(package["application"]).read_bytes()
     if not 256 <= len(data) <= SLOT_SIZE:
         raise ValueError("Image does not fit the preserved-data OTA partition")
@@ -89,8 +95,8 @@ class RobotOta:
 
     def status(self):
         result = self.request("GET", "/status")
-        if result.get("mac") != self.config["mac"] or result.get("actuators") is not False:
-            raise ValueError("Wrong device or non-stationary firmware")
+        if result.get("mac") != self.config["mac"]:
+            raise ValueError("Wrong device")
         return result
 
     def wait_ready(self, expected=None, previous_boot=None, timeout=65, confirm=True):
@@ -133,6 +139,11 @@ class RobotOta:
         before = self.status()
         if not before.get("healthy") or not before.get("confirmed"):
             raise ValueError("Current app must first be healthy and confirmed")
+        # Actuator firmware accepts /firmware only in SERVICE mode: parked body
+        # + armed loop watchdog. Enter it via UDP command or the board button
+        # (GPIO5) before running this — the tool does not park the robot itself.
+        if before.get("actuators") is True and before.get("service_mode") is not True:
+            raise ValueError("Actuator firmware must be in SERVICE mode first")
         if package.get("mac") != before["mac"]:
             raise ValueError("Package belongs to another robot")
         if before["image_sha256"] == package["image_sha256"]:

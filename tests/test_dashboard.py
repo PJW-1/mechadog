@@ -63,7 +63,7 @@ def test_initial_state_never_invents_healthy_readings(clock):
 def test_snapshot_detaches_mutable_inputs_and_outputs(clock):
     state = state_at(clock)
     telemetry = {"imu": {"pitch": 5}}
-    state.publish(telemetry=telemetry, state="IDLE", escalation="L0", received_at=0)
+    state.publish(telemetry=telemetry, state="IDLE", escalation="L0", mode="guard", received_at=0)
     telemetry["imu"]["pitch"] = 99
     first = state.snapshot()
     assert first["telemetry"]["imu"]["pitch"] == 5
@@ -75,7 +75,7 @@ def test_snapshot_detaches_mutable_inputs_and_outputs(clock):
 def test_stale_boundary_uses_receive_time_not_broadcast(clock, elapsed, stale):
     state = state_at(clock)
     clock.ms = elapsed
-    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", received_at=0)
+    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", mode="guard", received_at=0)
     assert state.snapshot()["stale"] is stale
     assert state.snapshot()["telemetry_age_ms"] == elapsed
     assert state.snapshot()["runtime_stale"] is False
@@ -83,7 +83,7 @@ def test_stale_boundary_uses_receive_time_not_broadcast(clock, elapsed, stale):
 
 def test_runtime_stall_is_separate_from_telemetry(clock):
     state = state_at(clock)
-    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", received_at=0)
+    state.publish(telemetry={"seq": 1}, state="IDLE", escalation="L0", mode="guard", received_at=0)
     clock.ms = 3100
     assert state.snapshot()["runtime_stale"]
     assert state.snapshot()["runtime_age_ms"] == 3100
@@ -136,7 +136,9 @@ def test_slow_subscriber_is_bounded_and_cannot_hold_up_another(clock):
         hub = TelemetryHub(state)
         slow, fast = hub.subscribe(), hub.subscribe()
         for seq in range(100):
-            state.publish(telemetry={"seq": seq}, state="IDLE", escalation="L0", received_at=0)
+            state.publish(
+                telemetry={"seq": seq}, state="IDLE", escalation="L0", mode="guard", received_at=0
+            )
             hub.broadcast()
             assert fast.get_nowait()["telemetry"]["seq"] == seq
         assert slow.qsize() == 1
@@ -295,6 +297,13 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             # 거기 묶여 있다 (2026-09-14 실기).
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
+            self.set_mode = lambda _mode: None
+            # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3). 두 번째
+            # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
+            self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
+            self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
+            self.ask_alarm_confirm = lambda: None
+            self.ask_zone_baseline_reset = lambda _zone: (True, "")
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -350,7 +359,6 @@ def test_dashboard_ships_its_page_and_three_without_install(clock):
             "/vendor/addons/controls/OrbitControls.js",
         ):
             assert client.get(path).status_code == 200, path
-        assert client.get("/live").status_code == 200
         # 정적 마운트가 API 를 가리지 않는다.
         assert client.get("/api/telemetry").status_code == 200
 
@@ -543,6 +551,13 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.ask_reset = lambda: None
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
+            self.set_mode = lambda _mode: None
+            # 음성 암구호는 시도를 세는 경로로 들어간다 (FR-10.3). 두 번째
+            # 인자는 **발화 시각**이다 — 창이 열리기 전의 말을 걸러 내는 데 쓴다.
+            self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
+            self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
+            self.ask_alarm_confirm = lambda: None
+            self.ask_zone_baseline_reset = lambda _zone: (True, "")
 
         def serve(self, _sock, **_kwargs):
             pass
@@ -571,14 +586,19 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             ts_ms=1,
             state="ALERT",
             escalation="L1",
+            mode="guard",
             tracks=[{"track_id": 1}],
             detections=[],
             telemetry={},
+            judgement={"state": "위반", "reason": "1500ms 창 위반 확정"},
             meta_path=Path("bb/entry-1/meta.json"),
             jpeg_path=Path("bb/entry-1/frame.jpg"),
         )
     )
     assert board.event_seq == before + 1, "넘긴 어댑터가 이 대시보드로 들어가야 한다"
+    # 판단 근거가 화면까지 가야 사건 상세가 «미판정» 으로 고정되지 않는다 (B2).
+    sent, _ = board.events_since(before)
+    assert sent[0]["judgement"] == {"state": "위반", "reason": "1500ms 창 위반 확정"}
 
 
 def test_cli_omits_the_publisher_without_a_dashboard(cfg, monkeypatch):
@@ -662,3 +682,16 @@ def test_events_http_reports_dropped(clock):
     with TestClient(create_app(state)) as client:
         body = client.get("/api/events?since=0").json()
         assert body["dropped"] == 5
+
+
+def test_static_files_must_be_revalidated(clock, tmp_path):
+    """⚠️ 새 화면을 내려줘도 브라우저가 옛 사본을 쓰면 **틀린 단계가 그대로 보인다.**
+
+    2026-09-22 실기에서 새 «경보 확인 (L3 해제)» 버튼이 나오지 않은 원인이다.
+    """
+    (tmp_path / "panels.js").write_text("export const x = 1", encoding="utf-8")
+    app = create_app(state_at(clock), static_dir=tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/panels.js")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-cache"

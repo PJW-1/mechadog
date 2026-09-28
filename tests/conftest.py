@@ -58,9 +58,55 @@ def _isolate_logging():
     logger.handlers, logger.filters, logger.level, logger.propagate = saved
 
 
+@pytest.fixture(autouse=True)
+def _no_real_vlm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`Runtime` 이 실제 VLM 세션 팩토리를 만들지 않게 한다.
+
+    ⚠️ **`begin()` 은 모드와 상관없이 VLM 을 올린다** (ADR-35 결정 5 · 2026-09-24 개정).
+    의존성이 깔린 환경(`~/.venv-mechdog-vlm`)에서 돌리면 `serve` 를 부르는 시험마다
+    4.1GB 적재가 백그라운드에서 돈다. 판독을 보는 시험은 `vlm_reader` 를 주입한다.
+    """
+    monkeypatch.setattr("host.runtime.build_session_factory", lambda _config: None)
+
+
 @pytest.fixture(scope="session")
 def cfg() -> dict:
     return yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def unlock_modes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """운용 모드의 **선행 기능 검사를 끈다** (FR-11.7 · WBS 3.4.4).
+
+    `factory` 는 PPE 판정기(`3.7.3`)가
+    있어야 켜진다. 아직 없으므로 **그 모드에서만 도는 판정 경로는 이 문을 열어야
+    시험할 수 있다** — 변화 감지(`3.6`)가 대표적이다.
+
+    ⚠️ **규칙 자체를 시험하는 곳에서는 쓰지 않는다.** 거부가 실제로 되는지는
+    `test_mission.py` 가 진짜 표로 본다.
+    """
+    from host.behavior import mission as mission_mod
+
+    monkeypatch.setattr(mission_mod, "REQUIRES", dict.fromkeys(mission_mod.MODES, ()))
+
+
+@pytest.fixture
+def committed_devices_dir(tmp_path: Path) -> Path:
+    """커밋된 개체 프로파일만 담은 디렉터리. `load_config(devices_dir=...)` 에 준다.
+
+    `load_config` 는 `<device>.local.yaml` 이 있으면 겹쳐 읽는다(`config.py`).
+    저장소의 정본을 검사하는 시험이 실제 `config/devices/` 를 가리키면 **오버레이
+    값을 보고 판정한다.** 그 파일은 실기 주소를 적어 두는 곳이므로, 결과적으로
+    실기를 만지는 사람의 PC 에서만 시험이 깨진다 — CI 는 오버레이가 없어 영원히
+    초록이다. 빨간 화면이 일상이 되면 진짜 회귀도 같이 묻힌다.
+
+    커밋본만 복사해 그 경로를 끊는다.
+    """
+    source = ROOT / "config" / "devices"
+    for path in source.glob("*.yaml"):
+        if not path.name.endswith(".local.yaml"):
+            (tmp_path / path.name).write_bytes(path.read_bytes())
+    return tmp_path
 
 
 def load_jsonl(path: Path) -> list[dict]:

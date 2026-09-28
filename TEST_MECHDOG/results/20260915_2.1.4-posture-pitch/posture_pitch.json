@@ -1,0 +1,137 @@
+{
+  "stages": [
+    {
+      "label": "baseline-stand",
+      "pitch": {
+        "n": 13,
+        "median": 1.73,
+        "min": 1.42,
+        "max": 2.23
+      },
+      "roll": {
+        "n": 13,
+        "median": 2.31,
+        "min": 1.9,
+        "max": 2.62
+      },
+      "applied": true
+    },
+    {
+      "label": "baseline-neutral",
+      "pitch": {
+        "n": 16,
+        "median": 0.93,
+        "min": -0.31,
+        "max": 2.51
+      },
+      "roll": {
+        "n": 16,
+        "median": 2.75,
+        "min": 2.35,
+        "max": 3.63
+      },
+      "applied": true
+    },
+    {
+      "label": "nose-up-10",
+      "pitch": {
+        "n": 16,
+        "median": -6.38,
+        "min": -6.73,
+        "max": -6.17
+      },
+      "roll": {
+        "n": 16,
+        "median": 2.13,
+        "min": 1.76,
+        "max": 2.31
+      },
+      "applied": true
+    },
+    {
+      "label": "nose-up-20",
+      "pitch": {
+        "n": 8,
+        "median": -17.3,
+        "min": -17.72,
+        "max": -17.06
+      },
+      "roll": {
+        "n": 8,
+        "median": 2.42,
+        "min": 2.18,
+        "max": 2.65
+      },
+      "applied": true
+    },
+    {
+      "label": "nose-up-30",
+      "pitch": {
+        "n": 13,
+        "median": -26.5,
+        "min": -26.69,
+        "max": -26.29
+      },
+      "roll": {
+        "n": 13,
+        "median": 2.4,
+        "min": 2.04,
+        "max": 2.62
+      },
+      "applied": true
+    },
+    {
+      "label": "neutral",
+      "pitch": {
+        "n": 19,
+        "median": 0.64,
+        "min": -0.02,
+        "max": 1.66
+      },
+      "roll": {
+        "n": 19,
+        "median": 2.8,
+        "min": 2.47,
+        "max": 3.2
+      },
+      "applied": true
+    },
+    {
+      "label": "sit",
+      "pitch": {
+        "n": 6,
+        "median": -29.16,
+        "min": -29.7,
+        "max": -28.75
+      },
+      "roll": {
+        "n": 6,
+        "median": 3.04,
+        "min": 2.8,
+        "max": 3.52
+      },
+      "applied": true
+    },
+    {
+      "label": "restore-stand",
+      "pitch": {
+        "n": 15,
+        "median": 1.77,
+        "min": 1.35,
+        "max": 2.01
+      },
+      "roll": {
+        "n": 15,
+        "median": 2.16,
+        "min": 1.84,
+        "max": 2.63
+      },
+      "applied": true
+    }
+  ],
+  "not_applied": [],
+  "too_few_samples": [
+    "nose-up-20(8)",
+    "sit(6)"
+  ]
+}

@@ -1,0 +1,165 @@
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2534 adc_mv=2183 adc_source=efuse_vref pitch=1.623 roll=3.188 yaw=219.712 dist_cm=9.000 batt_v=8.732 loop_gap_max_us=3020 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=343015235 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=wake n=8500 sum_us=9000 max_us=1000 p95_ub_us=0 p99_ub_us=0 sat=0 h=8491,0,0,0,9,0,0,0,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2470 adc_mv=2132 adc_source=efuse_vref pitch=2.026 roll=3.101 yaw=216.681 dist_cm=9.000 batt_v=8.528 loop_gap_max_us=3011 heap_free=239504 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=344055059 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=imu n=8526 sum_us=22915343 max_us=7901 p95_ub_us=4000 p99_ub_us=4000 sat=0 h=0,0,0,1,0,0,8479,46,0,0,0,0,0,0,0,0,0
+CMD: seq=1 type=STOP applied=1 safe=1
+SAFE latch cleared; waiting for a new MOVE
+CMD: seq=2 type=RESET_SAFE applied=1 safe=0
+Telemetry unavailable: battery outside [6.0,8.6]
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+FAILSAFE: command timeout >= 300 ms
+DROP: DISCARD (seq 역전·중복)
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2467 adc_mv=2129 adc_source=efuse_vref pitch=1.470 roll=2.960 yaw=213.710 dist_cm=9.000 batt_v=8.516 loop_gap_max_us=4013 heap_free=239504 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=345055251 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=sonar n=8551 sum_us=4952201 max_us=2216 p95_ub_us=1000 p99_ub_us=1000 sat=0 h=0,0,0,0,8492,56,3,0,0,0,0,0,0,0,0,0,0
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+Telemetry unavailable: battery outside [6.0,8.6]
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2507 adc_mv=2162 adc_source=efuse_vref pitch=1.683 roll=3.261 yaw=210.726 dist_cm=9.000 batt_v=8.648 loop_gap_max_us=6022 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=346095184 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=adc n=8577 sum_us=9234995 max_us=4692 p95_ub_us=2000 p99_ub_us=2000 sat=0 h=0,0,0,0,3260,5234,82,1,0,0,0,0,0,0,0,0,0
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+CMD: seq=3 type=MOVE applied=0 safe=1
+CMD: seq=4 type=MOVE applied=0 safe=1
+Telemetry unavailable: battery outside [6.0,8.6]
+CMD: seq=5 type=MOVE applied=0 safe=1
+CMD: seq=6 type=MOVE applied=0 safe=1
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2511 adc_mv=2165 adc_source=efuse_vref pitch=2.108 roll=3.174 yaw=207.736 dist_cm=9.000 batt_v=8.660 loop_gap_max_us=4022 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=347099377 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=cycle n=8602 sum_us=37651205 max_us=10294 p95_ub_us=8000 p99_ub_us=8000 sat=0 h=0,0,0,0,0,0,1,8592,9,0,0,0,0,0,0,0,0
+CMD: seq=7 type=MOVE applied=0 safe=1
+CMD: seq=8 type=MOVE applied=0 safe=1
+CMD: seq=9 type=MOVE applied=0 safe=1
+CMD: seq=10 type=MOVE applied=0 safe=1
+CMD: seq=11 type=MOVE applied=0 safe=1
+CMD: seq=12 type=MOVE applied=0 safe=1
+CMD: seq=13 type=MOVE applied=0 safe=1
+CMD: seq=14 type=MOVE applied=0 safe=1
+CMD: seq=15 type=MOVE applied=0 safe=1
+Telemetry unavailable: battery outside [6.0,8.6]
+CMD: seq=16 type=MOVE applied=0 safe=1
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2480 adc_mv=2140 adc_source=efuse_vref pitch=1.916 roll=2.758 yaw=204.746 dist_cm=9.000 batt_v=8.560 loop_gap_max_us=3022 heap_free=239508 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=348135585 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=wake n=8628 sum_us=9000 max_us=1000 p95_ub_us=0 p99_ub_us=0 sat=0 h=8619,0,0,0,9,0,0,0,0,0,0,0,0,0,0,0,0
+CMD: seq=17 type=MOVE applied=0 safe=1
+CMD: seq=19 type=ACTION applied=1 safe=1
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2513 adc_mv=2167 adc_source=efuse_vref pitch=-30.465 roll=1.555 yaw=192.436 dist_cm=12.800 batt_v=8.668 loop_gap_max_us=4016 heap_free=237428 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=349175320 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=imu n=8654 sum_us=23275151 max_us=7901 p95_ub_us=4000 p99_ub_us=4000 sat=0 h=0,0,0,1,0,0,8603,50,0,0,0,0,0,0,0,0,0
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+CMD: seq=20 type=STOP applied=1 safe=1
+CMD: seq=22 type=ACTION applied=1 safe=1
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2509 adc_mv=2163 adc_source=efuse_vref pitch=-29.793 roll=3.351 yaw=181.766 dist_cm=11.500 batt_v=8.652 loop_gap_max_us=1004021 heap_free=237540 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=351215177 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=sonar n=8705 sum_us=5043523 max_us=2216 p95_ub_us=1000 p99_ub_us=1000 sat=0 h=0,0,0,0,8643,59,3,0,0,0,0,0,0,0,0,0,0
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2512 adc_mv=2166 adc_source=efuse_vref pitch=-29.500 roll=3.035 yaw=176.396 dist_cm=23.900 batt_v=8.664 loop_gap_max_us=1004024 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=352255210 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=adc n=8731 sum_us=9415894 max_us=4692 p95_ub_us=2000 p99_ub_us=4000 sat=0 h=0,0,0,0,3297,5345,88,1,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2512 adc_mv=2166 adc_source=efuse_vref pitch=-29.276 roll=3.072 yaw=170.925 dist_cm=11.800 batt_v=8.664 loop_gap_max_us=3395 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=353255250 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=cycle n=8756 sum_us=38357668 max_us=10294 p95_ub_us=8000 p99_ub_us=8000 sat=0 h=0,0,0,0,0,0,1,8746,9,0,0,0,0,0,0,0,0
+CMD: seq=24 type=ACTION applied=1 safe=1
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2515 adc_mv=2168 adc_source=efuse_vref pitch=-0.603 roll=1.879 yaw=170.886 dist_cm=8.800 batt_v=8.672 loop_gap_max_us=2011 heap_free=237548 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=354295182 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=wake n=8782 sum_us=9000 max_us=1000 p95_ub_us=0 p99_ub_us=0 sat=0 h=8773,0,0,0,9,0,0,0,0,0,0,0,0,0,0,0,0
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2528 adc_mv=2179 adc_source=efuse_vref pitch=1.584 roll=2.937 yaw=168.229 dist_cm=9.100 batt_v=8.716 loop_gap_max_us=1004021 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=355295458 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=imu n=8807 sum_us=23703388 max_us=7901 p95_ub_us=4000 p99_ub_us=4000 sat=0 h=0,0,0,1,0,0,8753,53,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+DROP: DISCARD (seq 역전·중복)
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2509 adc_mv=2163 adc_source=efuse_vref pitch=1.684 roll=2.881 yaw=165.227 dist_cm=9.100 batt_v=8.652 loop_gap_max_us=3023 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=356335493 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=sonar n=8833 sum_us=5117941 max_us=2216 p95_ub_us=1000 p99_ub_us=1000 sat=0 h=0,0,0,0,8771,59,3,0,0,0,0,0,0,0,0,0,0
+CMD: seq=25 type=ESTOP applied=1 safe=1
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2471 adc_mv=2133 adc_source=efuse_vref pitch=1.938 roll=3.078 yaw=162.262 dist_cm=9.100 batt_v=8.532 loop_gap_max_us=4020 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=357375048 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=adc n=8859 sum_us=9566350 max_us=4692 p95_ub_us=2000 p99_ub_us=4000 sat=0 h=0,0,0,0,3330,5435,92,2,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2511 adc_mv=2165 adc_source=efuse_vref pitch=2.024 roll=3.009 yaw=159.249 dist_cm=9.100 batt_v=8.660 loop_gap_max_us=3016 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=358375228 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=cycle n=8884 sum_us=38942172 max_us=10294 p95_ub_us=8000 p99_ub_us=8000 sat=0 h=0,0,0,0,0,0,1,8874,9,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2517 adc_mv=2170 adc_source=efuse_vref pitch=1.688 roll=2.753 yaw=156.247 dist_cm=9.100 batt_v=8.680 loop_gap_max_us=3018 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=359415155 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=wake n=8910 sum_us=9000 max_us=1000 p95_ub_us=0 p99_ub_us=0 sat=0 h=8901,0,0,0,9,0,0,0,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2518 adc_mv=2171 adc_source=efuse_vref pitch=1.899 roll=3.248 yaw=153.248 dist_cm=9.100 batt_v=8.684 loop_gap_max_us=3016 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=360415367 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=imu n=8935 sum_us=24052764 max_us=7901 p95_ub_us=4000 p99_ub_us=4000 sat=0 h=0,0,0,1,0,0,8879,55,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2503 adc_mv=2159 adc_source=efuse_vref pitch=1.543 roll=3.302 yaw=150.240 dist_cm=23.900 batt_v=8.636 loop_gap_max_us=3018 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=361455049 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=sonar n=8961 sum_us=5191032 max_us=2216 p95_ub_us=1000 p99_ub_us=1000 sat=0 h=0,0,0,0,8899,59,3,0,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2519 adc_mv=2171 adc_source=efuse_vref pitch=1.744 roll=3.056 yaw=147.262 dist_cm=23.900 batt_v=8.684 loop_gap_max_us=3019 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=362495146 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=adc n=8987 sum_us=9706115 max_us=4692 p95_ub_us=2000 p99_ub_us=4000 sat=0 h=0,0,0,0,3374,5517,94,2,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2512 adc_mv=2166 adc_source=efuse_vref pitch=1.774 roll=3.018 yaw=144.271 dist_cm=23.900 batt_v=8.664 loop_gap_max_us=3025 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=363495224 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=cycle n=9012 sum_us=39503605 max_us=10294 p95_ub_us=8000 p99_ub_us=8000 sat=0 h=0,0,0,0,0,0,1,9002,9,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2505 adc_mv=2160 adc_source=efuse_vref pitch=1.700 roll=3.178 yaw=141.287 dist_cm=23.900 batt_v=8.640 loop_gap_max_us=3009 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=364495345 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=wake n=9037 sum_us=9000 max_us=1000 p95_ub_us=0 p99_ub_us=0 sat=0 h=9028,0,0,0,9,0,0,0,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2512 adc_mv=2166 adc_source=efuse_vref pitch=1.941 roll=2.818 yaw=138.266 dist_cm=9.100 batt_v=8.664 loop_gap_max_us=3009 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=364495345 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=imu n=9037 sum_us=24327705 max_us=7901 p95_ub_us=4000 p99_ub_us=4000 sat=0 h=0,0,0,1,0,0,8981,55,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2464 adc_mv=2127 adc_source=efuse_vref pitch=1.637 roll=2.676 yaw=135.250 dist_cm=9.100 batt_v=8.508 loop_gap_max_us=3024 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=365535215 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=sonar n=9063 sum_us=5249612 max_us=2216 p95_ub_us=1000 p99_ub_us=1000 sat=0 h=0,0,0,0,9001,59,3,0,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]
+Sensor status: task_started=1 imu_valid=1 imu_error=none dist_valid=1 dist_error=none batt_valid=1 batt_error=none battery_raw=2480 adc_mv=2140 adc_source=efuse_vref pitch=1.648 roll=2.842 yaw=132.228 dist_cm=9.100 batt_v=8.560 loop_gap_max_us=4009 heap_free=240036 heap_min=233712 log_dropped=0 imu_timing=none imu_fault_ms=0 imu_wake_late_ms=0 imu_cycle_ms=0 imu_stage_mask=0 imu_filter_us=0 sonar_us=0 adc_us=0
+Perf: v=1 at_us=366575182 core=0 cfg=0 stack_b=1948 drop=1 pub_drop=0 metric=adc n=9089 sum_us=9816624 max_us=4692 p95_ub_us=2000 p99_ub_us=4000 sat=0 h=0,0,0,0,3412,5579,96,2,0,0,0,0,0,0,0,0,0
+Telemetry unavailable: battery outside [6.0,8.6]

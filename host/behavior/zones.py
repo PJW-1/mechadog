@@ -8,14 +8,14 @@
 구역의 **정본은 `config.yaml` 의 `zones.ids`** 다 (`[A, B, C]`). 여기서 만드는
 `zones.json` 은 그 라벨에 **좌표를 붙인 것**이며 라벨 목록을 새로 정하지 않는다.
 
-⚠️ 이 구분이 중요한 이유 — `zones.marker_map` 은 ArUco ID 를 같은 라벨에 묶고
-(FR-8 변화 감지), 대시보드도 같은 라벨로 구역을 표시한다. 좌표 파일이 제멋대로
-`D`·`E` 를 만들면 **한쪽에만 있는 구역**이 생겨서 마커로 식별한 구역과 좌표로
-이동한 구역이 다른 것을 가리킨다. 그래서 설정에 없는 라벨은 만들지 않고,
-이미 있는 파일에서 발견하면 경고와 함께 무시한다.
+⚠️ 이 구분이 중요한 이유 — 변화 감지의 기준 파일(FR-8)과 대시보드가 같은 라벨로
+구역을 가리킨다. 좌표 파일이 제멋대로 `D`·`E` 를 만들면 **한쪽에만 있는 구역**이
+생긴다. 그래서 설정에 없는 라벨은 만들지 않고, 이미 있는 파일에서 발견하면 경고와
+함께 무시한다.
 
-구역 "식별"(ArUco)과 구역 "이동"(측위)은 다른 일이다 — 설정 파일이 그렇게
-적어 두었고, 이 파일은 후자만 담당한다.
+구역 도착도 이 좌표로 판정한다(`runtime._inspect_zone` · FR-7.4 반경). 인쇄한 ArUco
+구역 마커는 2026-09-25 에 없앴다 — 멀리서 보여도 도착으로 쳤고, 변화 감지는 같은
+자리·같은 방향에서 봐야 성립한다.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import random
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -40,11 +40,16 @@ ZONES_FILENAME = "zones.json"
 
 @dataclass(frozen=True, slots=True)
 class Zone:
-    """구역 하나. 좌표는 실공간 m 다."""
+    """구역 하나. 좌표는 실공간 m 다.
+
+    `yaw` 는 점검할 때 바라볼 방향(rad, 지도 좌표 · 측위 `Pose` 와 같은 규약)이다. 없으면
+    도착한 방향 그대로 본다. 변화 감지는 기준과 같은 장면이어야 하므로 두는 값이다.
+    """
 
     label: str
     x: float
     y: float
+    yaw: float | None = None
 
     @property
     def xy(self) -> tuple[float, float]:
@@ -110,6 +115,12 @@ class ZoneStore:
         self._zones[label] = zone
         return zone
 
+    def aim(self, label: str, yaw: float) -> Zone:
+        """구역이 점검할 때 바라볼 방향(rad)을 정한다."""
+        zone = replace(self._zones[label], yaw=float(yaw))
+        self._zones[label] = zone
+        return zone
+
     def undo(self) -> Zone | None:
         """가장 마지막으로 붙인 좌표를 뗀다."""
         placed = self.labels
@@ -145,7 +156,10 @@ class ZoneStore:
             if not isinstance(value, Mapping) or "x" not in value or "y" not in value:
                 LOG.warning("zone_entry_malformed", label=label)
                 continue
-            store._zones[label] = Zone(label, float(value["x"]), float(value["y"]))
+            yaw = value.get("yaw")
+            store._zones[label] = Zone(
+                label, float(value["x"]), float(value["y"]), None if yaw is None else float(yaw)
+            )
         if unknown:
             LOG.warning(
                 "zone_labels_not_in_config",
@@ -157,9 +171,11 @@ class ZoneStore:
     def save(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / ZONES_FILENAME
-        payload: dict[str, Any] = {
-            zone.label: {"x": round(zone.x, 3), "y": round(zone.y, 3)} for zone in self.as_tuple()
-        }
+        payload: dict[str, Any] = {}
+        for zone in self.as_tuple():
+            payload[zone.label] = {"x": round(zone.x, 3), "y": round(zone.y, 3)}
+            if zone.yaw is not None:
+                payload[zone.label]["yaw"] = round(zone.yaw, 3)
         path.write_text(
             json.dumps(payload, indent=4, ensure_ascii=False) + "\n",
             encoding="utf-8",

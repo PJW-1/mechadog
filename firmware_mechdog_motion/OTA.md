@@ -1,7 +1,13 @@
 # 정지 진단용 Wi-Fi 업데이트
 
 2026-09-12 사용자 승인으로 추가한 선택 기능이다. 기본은
-`MECHADOG_ENABLE_OTA=0`이며 현재 **센서 ON / 구동 OFF** 전용이다.
+`MECHADOG_ENABLE_OTA=0`이며 **정지 상태 전용**이다 — 구동 OFF 빌드는 항상
+정지이고, 구동 빌드는 2026-09-15에 추가된 SERVICE 모드(README 참조)가
+로봇을 주차시킨 상태에서만 `/firmware`를 받는다. `/confirm`은 재부팅 후
+pending-verify 이미지의 safe 래치도 정지로 인정한다(이 창에서는
+`RESET_SAFE`가 거절되어 래치가 풀릴 수 없다). 정지가 아니면
+`{"error":"not_parked"}`(409)로 거절한다. `/status`는 `actuators`·
+`service_mode`·`parked`를 실제 빌드/모드대로 보고한다.
 보행 성능이나 AI 모델을 변경하는 기능은 아니다.
 
 ## 업데이트 흐름
@@ -31,7 +37,9 @@ VALID로 확정한다. 그 전 90초가 지나면 ESP-IDF bootloader가 이전 �
 
 정지용 검증 패키지는 `MECHADOG_ENABLE_TASK_WDT=1`로 독립 루프 감시를 켠다.
 SDK TWDT/IWDT는 변경하지 않는다. OTA 전송·확정 중에도 루프 진척750ms 제한을
-유지하며, 감시 중지/우회 feed/기한 연장을 하지 않는다. 서보 구동 ON은 허용하지 않는다.
+유지하며, 감시 중지/우회 feed/기한 연장을 하지 않는다. 구동 빌드에서는
+SERVICE 모드가 이 요건을 런타임으로 제공한다 — 서보 구동이 켜진 상태에서의
+전송/확정은 `not_parked`로 거절된다.
 최종본에는 `MECHADOG_WATCHDOG_FAULT_PROBE=0`으로 시험용 UART H 고장주입을 제외한다.
 
 인증된 `/status`는 `loop_watchdog_armed=true`, `loop_watchdog_deadline_ms=750`,

@@ -37,6 +37,9 @@ class DashboardState:
             "device_id": device_id,
             "state": None,
             "escalation": None,
+            # 첫 `publish` 전에는 모른다 — `state`·`escalation` 과 같은 규칙이다.
+            # 화면은 `null` 을 *"아직 수신 전"* 으로 그린다.
+            "mode": None,
             "telemetry": None,
         }
         self._received_at: int | None = None
@@ -55,6 +58,7 @@ class DashboardState:
         telemetry: dict[str, Any] | None,
         state: str,
         escalation: str,
+        mode: str,
         received_at: int | None,
     ) -> None:
         value = {
@@ -62,6 +66,9 @@ class DashboardState:
             "device_id": self._value["device_id"],
             "state": state,
             "escalation": escalation,
+            # ⚠️ **상시 실린다** (FR-4.7 · FR-11.5). 공장 모드인 줄 모르고 보면
+            # *"사람이 지나갔는데 인증을 요구하지 않는다"* 가 고장으로 읽힌다.
+            "mode": mode,
             "telemetry": copy.deepcopy(telemetry),
         }
         updated_at = self._clock()

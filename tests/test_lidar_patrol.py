@@ -36,6 +36,7 @@ from host.common.protocol import (
 )
 from host.slam.occupancy import MapMeta, OccupancyGrid
 from host.slam.scan_match import MatchParams
+from host.telemetry.receiver import Reading as TelemetryReading
 
 DRIVE = DriveParams(
     step_mm=60.0,
@@ -69,7 +70,9 @@ class Reading:
         self.safety_latched = fields.get("safety_latched", False)
         self.obstacle = fields.get("obstacle", False)
         self.dist_cm = fields.get("dist_cm", 100)
-        self.imu = fields.get("imu", {"pitch": 0.0, "roll": 0.0, "yaw": 0.0})
+        self.pitch = fields.get("pitch", 0.0)
+        self.roll = fields.get("roll", 0.0)
+        self.yaw = fields.get("yaw", 0.0)
         self.last_cmd_age_ms = fields.get("last_cmd_age_ms", 20)
 
 
@@ -206,7 +209,7 @@ def test_straight_when_aligned() -> None:
 
 
 def test_arc_steering_keeps_walking() -> None:
-    """**제자리 회전이 없으므로 조향 중에도 걷는다** (DR-11).
+    """**제자리 회전을 쓰지 않으므로 조향 중에도 걷는다** (DR-11).
 
     `step == 0` 이면서 `angle != 0` 인 명령은 로봇이 할 수 없는 동작이다 —
     합치기 전의 `TURN_LEFT` 가 정확히 그것을 뜻했다.
@@ -440,7 +443,7 @@ def test_yaw_comes_from_the_imu_object() -> None:
     rad 로 바꿔야 한다.
     """
     controller = build()
-    controller.observe_telemetry(Reading(imu={"pitch": 1.0, "roll": 0.0, "yaw": 90.0}), 1000)
+    controller.observe_telemetry(Reading(pitch=1.0, roll=0.0, yaw=90.0), 1000)
     assert controller.safety.yaw_deg == 90.0
     assert controller.safety.yaw_rad == pytest.approx(math.pi / 2)
 
@@ -448,8 +451,33 @@ def test_yaw_comes_from_the_imu_object() -> None:
 def test_missing_imu_yaw_is_none_not_zero() -> None:
     """0 으로 때우면 로봇이 정북을 보고 있다고 믿고 정합 중심을 잘못 잡는다."""
     controller = build()
-    controller.observe_telemetry(Reading(imu={"pitch": 1.0, "roll": 0.0}), 1000)
+    controller.observe_telemetry(Reading(pitch=1.0, roll=0.0, yaw=None), 1000)
     assert controller.safety.yaw_rad is None
+
+
+def test_yaw_of_reads_the_real_receiver_reading() -> None:
+    """이 파일의 목업이 아니라 **실제 리시버가 만드는 객체**를 넣는다.
+
+    `host.telemetry.receiver.Reading` 은 `imu` 속성이 없고 평탄한 `yaw` 필드를
+    쓴다 (`Reading.of` 가 전문의 `msg["imu"]["yaw"]` 를 여기 담는다). 목업만
+    맞고 실기 경로(`serve_real`)는 계속 깨져 있는 상태를 이 시험이 잡는다.
+    """
+    controller = build()
+    reading = TelemetryReading(
+        device_id="mechdog-a",
+        boot_id="boot-a-001",
+        seq=1,
+        state="PATROL",
+        batt_v=8.0,
+        dist_cm=100,
+        tipped=False,
+        lowbatt=False,
+        link_ok=True,
+        yaw=90.0,
+    )
+    controller.observe_telemetry(reading, 1000)
+    assert controller.safety.yaw_deg == 90.0
+    assert controller.safety.yaw_rad == pytest.approx(math.pi / 2)
 
 
 def test_old_firmware_without_safety_latched_still_works() -> None:

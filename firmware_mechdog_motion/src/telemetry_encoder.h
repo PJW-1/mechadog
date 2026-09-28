@@ -29,6 +29,11 @@ struct TelemetrySample {
   bool link_ok = false;
   bool obstacle = false;
   bool safety_latched = false;
+  // SERVICE mode (runtime-armed loop watchdog) — opt-in flag like obstacle:
+  // builds without the feature omit the field entirely rather than reporting
+  // a constant false that could be misread as "mode supported but off".
+  bool service_mode = false;
+  bool include_service_mode = false;
   // PROTOCOL section 5 permits omission when onboard obstacle-stop reporting
   // is unavailable. Existing callers include the field unless they opt out.
   bool include_obstacle = true;

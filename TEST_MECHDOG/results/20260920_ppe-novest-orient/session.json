@@ -1,0 +1,2222 @@
+{
+  "schema_version": 1,
+  "source": "PC 웹캠 0 (비승인 사전 관찰)",
+  "device": "mechdog-01",
+  "scenario": "novest-orient",
+  "duration_s": 215.06,
+  "frames": 119,
+  "counts": {
+    "확인불가": 19,
+    "위반": 98,
+    "사람없음": 2
+  },
+  "reasons": {
+    "몸통 미검출": 6,
+    "아무것도 미검출": 7,
+    "머리 클리핑": 3,
+    "머리 미검출": 3
+  },
+  "settings": {
+    "providers": [
+      "DmlExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "model_path": "models/ppe.onnx",
+    "model_sha256": "ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13",
+    "window_ms": 8000,
+    "hits_required": 3,
+    "overridden": true
+  },
+  "segments": {
+    "front-novest": {
+      "verdicts": {
+        "위반": 28,
+        "적합": 0,
+        "확인불가": 5
+      },
+      "orientations": {
+        "고정": {
+          "위반": 28,
+          "적합": 0,
+          "확인불가": 5
+        }
+      },
+      "frames": 33,
+      "seconds": 62.4
+    },
+    "side-novest": {
+      "verdicts": {
+        "위반": 34,
+        "적합": 0,
+        "확인불가": 2
+      },
+      "orientations": {
+        "고정": {
+          "위반": 34,
+          "적합": 0,
+          "확인불가": 2
+        }
+      },
+      "frames": 36,
+      "seconds": 61.9
+    },
+    "rear-novest": {
+      "verdicts": {
+        "위반": 34,
+        "적합": 0,
+        "확인불가": 2
+      },
+      "orientations": {
+        "고정": {
+          "위반": 34,
+          "적합": 0,
+          "확인불가": 2
+        }
+      },
+      "frames": 36,
+      "seconds": 62.4
+    }
+  },
+  "events": [
+    {
+      "t": 2.7,
+      "tag": "cam00001",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "몸통 미검출"
+      ],
+      "labels": [
+        "no_helmet"
+      ],
+      "confirmed": false,
+      "hits": 0,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 5.0,
+      "tag": "cam00002",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "몸통 미검출"
+      ],
+      "labels": [
+        "no_helmet"
+      ],
+      "confirmed": false,
+      "hits": 0,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 7.4,
+      "tag": "cam00003",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "몸통 미검출"
+      ],
+      "labels": [
+        "no_helmet"
+      ],
+      "confirmed": false,
+      "hits": 0,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 10.1,
+      "tag": "cam00004",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "no_helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 12.6,
+      "tag": "cam00005",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "아무것도 미검출"
+      ],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 14.6,
+      "tag": "cam00006",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "아무것도 미검출"
+      ],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 16.3,
+      "tag": "cam00007",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "아무것도 미검출"
+      ],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 18.0,
+      "tag": "cam00008",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "no_helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 2,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 20.2,
+      "tag": "cam00009",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "아무것도 미검출"
+      ],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 21.8,
+      "tag": "cam00010",
+      "people": 0,
+      "states": [],
+      "reasons": [],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 22.5,
+      "tag": "cam00011",
+      "people": 0,
+      "states": [],
+      "reasons": [],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 23.6,
+      "tag": "cam00012",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "아무것도 미검출"
+      ],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 25.6,
+      "tag": "cam00013",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "몸통 미검출"
+      ],
+      "labels": [
+        "helmet"
+      ],
+      "confirmed": false,
+      "hits": 1,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 27.4,
+      "tag": "cam00014",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "몸통 미검출"
+      ],
+      "labels": [
+        "helmet"
+      ],
+      "confirmed": false,
+      "hits": 0,
+      "segment": null,
+      "expected": null,
+      "orientation": null
+    },
+    {
+      "t": 29.2,
+      "tag": "cam00015",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "몸통 미검출"
+      ],
+      "labels": [
+        "helmet"
+      ],
+      "confirmed": false,
+      "hits": 0,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 31.2,
+      "tag": "cam00016",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "머리 클리핑"
+      ],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 0,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 33.3,
+      "tag": "cam00017",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "머리 클리핑"
+      ],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 0,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 35.1,
+      "tag": "cam00018",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 1,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 36.8,
+      "tag": "cam00019",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 2,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 39.6,
+      "tag": "cam00020",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": true,
+      "hits": 3,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 41.5,
+      "tag": "cam00021",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 44.1,
+      "tag": "cam00022",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 46.4,
+      "tag": "cam00023",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 48.2,
+      "tag": "cam00024",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 50.2,
+      "tag": "cam00025",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 52.0,
+      "tag": "cam00026",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "아무것도 미검출"
+      ],
+      "labels": [],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 53.7,
+      "tag": "cam00027",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "머리 미검출"
+      ],
+      "labels": [
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 3,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 55.6,
+      "tag": "cam00028",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 3,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 57.7,
+      "tag": "cam00029",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 3,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 59.4,
+      "tag": "cam00030",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 3,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 61.1,
+      "tag": "cam00031",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 62.7,
+      "tag": "cam00032",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 64.6,
+      "tag": "cam00033",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 66.5,
+      "tag": "cam00034",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 68.1,
+      "tag": "cam00035",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 70.0,
+      "tag": "cam00036",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 71.9,
+      "tag": "cam00037",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 74.0,
+      "tag": "cam00038",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 75.9,
+      "tag": "cam00039",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 77.8,
+      "tag": "cam00040",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 79.8,
+      "tag": "cam00041",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 81.5,
+      "tag": "cam00042",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 83.4,
+      "tag": "cam00043",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 85.2,
+      "tag": "cam00044",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 87.0,
+      "tag": "cam00045",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 88.6,
+      "tag": "cam00046",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 90.3,
+      "tag": "cam00047",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "front-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 92.0,
+      "tag": "cam00048",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 1,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 93.8,
+      "tag": "cam00049",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "아무것도 미검출"
+      ],
+      "labels": [],
+      "confirmed": false,
+      "hits": 1,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 95.7,
+      "tag": "cam00050",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "머리 클리핑"
+      ],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 1,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 97.5,
+      "tag": "cam00051",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 2,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 99.3,
+      "tag": "cam00052",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": true,
+      "hits": 3,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 100.8,
+      "tag": "cam00053",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 3,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 102.8,
+      "tag": "cam00054",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 104.4,
+      "tag": "cam00055",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 106.1,
+      "tag": "cam00056",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 107.7,
+      "tag": "cam00057",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 109.6,
+      "tag": "cam00058",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 111.1,
+      "tag": "cam00059",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 112.9,
+      "tag": "cam00060",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 114.5,
+      "tag": "cam00061",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 116.4,
+      "tag": "cam00062",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 118.2,
+      "tag": "cam00063",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 120.0,
+      "tag": "cam00064",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 121.6,
+      "tag": "cam00065",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 123.3,
+      "tag": "cam00066",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 125.0,
+      "tag": "cam00067",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 126.7,
+      "tag": "cam00068",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 128.4,
+      "tag": "cam00069",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 130.0,
+      "tag": "cam00070",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 131.9,
+      "tag": "cam00071",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 133.5,
+      "tag": "cam00072",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 135.3,
+      "tag": "cam00073",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 137.1,
+      "tag": "cam00074",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 138.8,
+      "tag": "cam00075",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 140.5,
+      "tag": "cam00076",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 142.1,
+      "tag": "cam00077",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 143.8,
+      "tag": "cam00078",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 145.6,
+      "tag": "cam00079",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 147.1,
+      "tag": "cam00080",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 149.0,
+      "tag": "cam00081",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 150.6,
+      "tag": "cam00082",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 152.3,
+      "tag": "cam00083",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "side-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 154.3,
+      "tag": "cam00084",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 1,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 156.0,
+      "tag": "cam00085",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "머리 미검출"
+      ],
+      "labels": [
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 1,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 157.6,
+      "tag": "cam00086",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 2,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 159.3,
+      "tag": "cam00087",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": true,
+      "hits": 3,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 160.9,
+      "tag": "cam00088",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 162.8,
+      "tag": "cam00089",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 164.4,
+      "tag": "cam00090",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 166.1,
+      "tag": "cam00091",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 167.9,
+      "tag": "cam00092",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 169.6,
+      "tag": "cam00093",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 171.4,
+      "tag": "cam00094",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 173.2,
+      "tag": "cam00095",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 175.1,
+      "tag": "cam00096",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 177.0,
+      "tag": "cam00097",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 178.5,
+      "tag": "cam00098",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 180.3,
+      "tag": "cam00099",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 181.9,
+      "tag": "cam00100",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 183.5,
+      "tag": "cam00101",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 185.1,
+      "tag": "cam00102",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 186.9,
+      "tag": "cam00103",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 188.7,
+      "tag": "cam00104",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 190.5,
+      "tag": "cam00105",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 192.4,
+      "tag": "cam00106",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 194.1,
+      "tag": "cam00107",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 195.7,
+      "tag": "cam00108",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 197.5,
+      "tag": "cam00109",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 199.5,
+      "tag": "cam00110",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 201.0,
+      "tag": "cam00111",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 202.7,
+      "tag": "cam00112",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 204.5,
+      "tag": "cam00113",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 206.1,
+      "tag": "cam00114",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 207.9,
+      "tag": "cam00115",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 209.6,
+      "tag": "cam00116",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 211.2,
+      "tag": "cam00117",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 213.0,
+      "tag": "cam00118",
+      "people": 1,
+      "states": [
+        "위반"
+      ],
+      "reasons": [],
+      "labels": [
+        "helmet",
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 5,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    },
+    {
+      "t": 214.6,
+      "tag": "cam00119",
+      "people": 1,
+      "states": [
+        "확인불가"
+      ],
+      "reasons": [
+        "머리 미검출"
+      ],
+      "labels": [
+        "no_vest"
+      ],
+      "confirmed": false,
+      "hits": 4,
+      "segment": "rear-novest",
+      "expected": "위반",
+      "orientation": "고정"
+    }
+  ]
+}

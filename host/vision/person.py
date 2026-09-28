@@ -1,4 +1,4 @@
-"""사람 판정 게이트 (WBS 3.3.3 · FR-3.2).
+"""사람 판정 게이트 (FR-3.2).
 
 검출 목록에서 `person` 만 걸러 **시간 창 안의 검출 횟수**로 사람 유무를 확정한다.
 확정되면 FSM 의 `PERSON_FOUND` 사건이 된다.
@@ -8,7 +8,7 @@
 확인 지연과 히트 기회는 여전히 추론률의 영향을 받는다. 그래서 25fps는 실측값으로 고정하고
 바꿀 때 검출률과 오검출률을 다시 잰다.
 
-실측이 그것을 드러냈다 (2026-09-10 · 실기 343프레임 · 사람이 걸어서 통과) —
+실측이 그것을 드러냈다 (실기 343프레임 · 사람이 걸어서 통과) —
 `inference_fps: 10` 에서 **진짜 검출 구간 10개 중 4개만** 조건을 채웠다. 25fps 에서는
 10개 전부 인정되고 단발 8개가 전부 막혔으며 **경계의 2연속이 0개**였다. 짧은 구간
 (120~240ms)이 건너뛰기에 사라지기 때문이다.
@@ -49,8 +49,164 @@ class Sighting:
     #: 대상 상실 5초를 분리할 때 사용한다.
     last_seen_ms: int | None
     #: 대표 박스 — 가장 점수 높은 사람. ⚠️ **주 대상 선정(FR-3.8.2, 최근접)은 여기가
-    #: 아니다** — 그것은 추적기(`3.3.4`) 위에서 정해진다.
+    #: 아니다** — 그것은 추적기 위에서 정해진다.
     box: tuple[float, float, float, float] | None
+
+
+@dataclass(frozen=True, slots=True)
+class FallenVerdict:
+    """쓰러짐 판정 하나 (FR-9 · ADR-35 대안 ⓓ).
+
+    `changed` 를 따로 두는 이유는 `Sighting` 과 같다 — 쓰러진 사람은 **계속** 쓰러져
+    있으므로, 매 프레임 참을 그대로 올리면 같은 사건이 25fps 로 쏟아진다.
+    """
+
+    #: 확정. 종횡비와 정지 지속을 **둘 다** 채웠다
+    fallen: bool
+    changed: bool
+    #: 종횡비 조건만 채운 상태. 대시보드가 «지켜보는 중» 을 보여줄 자리다
+    candidate: bool
+    #: 가로 ÷ 세로. 박스가 없으면 `None`
+    aspect: float | None
+    #: 종횡비 조건이 이어진 시간. 흔들리면 0 으로 돌아간다
+    still_ms: int
+
+
+class FallenGate:
+    """박스 모양과 정지 지속으로 «누워 있다» 를 판정한다 (FR-9).
+
+    **VLM 과 함께 둔다** (ADR-35 대안 ⓓ). 즉시·무료·설명 가능하며, 가장 급한 사건을
+    0.4초짜리 모델 하나에만 맡길 이유가 없다. VLM 은 구역당 한 번이지만 이쪽은
+    추론마다 돈다.
+
+    실측 근거 — 쓰러진 작업자를 YOLOX 가 `person` 0.89 로 잡았고 박스는 **세로 88 ·
+    가로 286**(종횡비 3.25)이었다. 서 있는 사람은 0.4 안팎, 앉은 사람도 1.0 을 크게
+    넘지 않는다.
+
+    ⚠️ **종횡비만으로 확정하지 않는다.** 카메라에 바싹 붙은 사람, 두 사람이 겹쳐
+    잡힌 박스, 팔을 벌린 순간도 가로로 넓다. 15cm 저각이라 더 그렇다. 그래서
+    **정지가 이어질 때만** 확정한다 — 넘어진 사람은 움직이지 않는다.
+
+    ⚠️ **프레임이 아니라 시간으로 센다** (ADR-25). 프레임 수로 두면 의미가 추론률에
+    종속되어 같은 조건이 10fps 와 25fps 에서 2.5배 다른 시간이 된다.
+
+    ⚠️ **`vision.ppe.static_*` 를 빌려 쓰지 않는다.** 저쪽은 *"자세를 올려도 되나"*
+    (FR-9.2.0)이고 이쪽은 *"위험한가"* 다. 저쪽은 곧 움직일 사람만 거르면 되어 0.2초면
+    충분하지만, 넘어진 직후 버둥거리는 것과 의식을 잃은 것을 가르려면 훨씬 길어야
+    한다. 우연히 같은 숫자를 공유하면 한쪽을 고칠 때 다른 쪽이 딸려 간다.
+
+    ⚠️ **카메라 쪽으로 누우면 못 잡는다.** 머리-발 축이 광축과 나란하면 박스가 오히려
+    좁아진다. 그래서 이것이 유일한 경로가 아니라 VLM 과 **둘** 인 것이다.
+    """
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        section = config["vision"]["fallen"]
+        self._ratio = float(section["aspect_ratio"])
+        if self._ratio <= 1.0:
+            raise ValueError("vision.fallen.aspect_ratio 는 1.0 보다 커야 함 (가로 > 세로)")
+        self._still_px = float(section["still_threshold_px"])
+        self._confirm_ms = int(section["confirm_ms"])
+        if self._confirm_ms <= 0:
+            raise ValueError("vision.fallen.confirm_ms 는 0 보다 커야 함")
+        self._gap_ms = int(section["gap_ms"])
+        if self._gap_ms < 0:
+            raise ValueError("vision.fallen.gap_ms 는 0 이상이어야 함")
+        self._since_ms: int | None = None
+        self._last_ms: int | None = None
+        self._last_centre: tuple[float, float] | None = None
+        self._track_id: int | None = None
+        self._fallen = False
+
+    @property
+    def confirm_ms(self) -> int:
+        return self._confirm_ms
+
+    def observe(
+        self,
+        now_ms: int,
+        box: tuple[float, float, float, float] | None,
+        *,
+        track_id: int | None = None,
+    ) -> FallenVerdict:
+        """박스 하나를 넣고 판정을 돌려준다.
+
+        ⚠️ **박스가 `gap_ms` 넘게 없으면 누적을 지운다.** 남기면 사람이 사라졌다 다시
+        나타났을 때 이전 관측이 이번 확정을 채워 준다 — 한 번 보고 확정하는 꼴이 된다.
+        그보다 짧은 빈 틈은 봐준다: 누운 사람은 점수가 임계값 근처라 박스가 자주 빠지고,
+        한 프레임에 지우면 3초를 끊김 없이 채우지 못한다 (실기로 확인했다).
+
+        ⚠️ **다른 자리의 대상이면 지운다.** 다른 사람의 정지가 이번 사람 몫을 채우면
+        안 된다. 추적 ID 만 보지 않는 이유는 추적기가 검출이 1초 빠지면 **같은 사람에게
+        새 ID 를 주기** 때문이다 — 자리가 같으면(`still_threshold_px`) 같은 사람이다.
+        """
+        if box is None:
+            if self._since_ms is not None and now_ms - (self._last_ms or now_ms) <= self._gap_ms:
+                return FallenVerdict(
+                    fallen=self._fallen,
+                    changed=False,
+                    candidate=True,
+                    aspect=None,
+                    still_ms=max(0, now_ms - self._since_ms),
+                )
+            self._track_id = None
+            return self._clear()
+        # 프레임 자체가 끊긴 공백(스트림 재연결)도 같은 규칙이다 — 그동안은 `None` 조차
+        # 들어오지 않는다.
+        if self._last_ms is not None and now_ms - self._last_ms > self._gap_ms:
+            self._clear()
+
+        width = max(0.0, box[2] - box[0])
+        height = max(0.0, box[3] - box[1])
+        if height <= 0.0 or width <= 0.0:
+            return self._clear()
+
+        aspect = width / height
+        centre = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+        previous, self._last_centre = self._last_centre, centre
+        # ⚠️ **첫 관측은 «바뀜» 이 아니다.** 시작값과 견주면 어떤 대상이 들어와도
+        # 한 번은 버려져, 추적 ID 가 붙어 있는 한 영원히 확정되지 않는다.
+        switched = self._track_id is not None and track_id != self._track_id
+        self._track_id = track_id
+        moved = (
+            0.0
+            if previous is None
+            else max(abs(centre[0] - previous[0]), abs(centre[1] - previous[1]))
+        )
+
+        if switched and (previous is None or moved > self._still_px):
+            return self._clear(aspect=aspect)
+        if aspect < self._ratio or moved > self._still_px:
+            verdict = self._clear(aspect=aspect)
+            self._last_centre = centre
+            return verdict
+
+        if self._since_ms is None:
+            self._since_ms = now_ms
+        self._last_ms = now_ms
+        still_ms = max(0, now_ms - self._since_ms)
+        fallen = still_ms >= self._confirm_ms
+        changed = fallen != self._fallen
+        self._fallen = fallen
+        if changed and fallen:
+            LOG.warning("person_fallen", aspect=round(aspect, 2), still_ms=still_ms, track=track_id)
+        return FallenVerdict(
+            fallen=fallen, changed=changed, candidate=True, aspect=aspect, still_ms=still_ms
+        )
+
+    def reset(self) -> None:
+        """스트림이 끊겼을 때 호출부가 지운다 (`PersonGate.reset` 과 같은 자리)."""
+        self._track_id = None
+        self._clear()
+
+    def _clear(self, *, aspect: float | None = None) -> FallenVerdict:
+        changed = self._fallen
+        self._fallen = False
+        self._since_ms = None
+        self._last_ms = None
+        self._last_centre = None
+        return FallenVerdict(
+            fallen=False, changed=changed, candidate=False, aspect=aspect, still_ms=0
+        )
 
 
 class PersonGate:

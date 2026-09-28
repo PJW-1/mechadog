@@ -58,6 +58,11 @@ class Weight:
     note: str
 
 
+#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v3` 의 자산으로 올린다.
+#: ⚠️ **모델을 다시 학습하면 새 태그를 쓴다** — 같은 태그의 자산을 갈아끼우면
+#: 아래 SHA-256 과 어긋나 받은 사람이 검증 실패로 멈춘다.
+PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v3/ppe.onnx"
+
 #: ⚠️ **여기가 정본이다.** `models/README.md` 의 표는 이 값을 사람이 읽게 옮긴 것이다.
 WEIGHTS: tuple[Weight, ...] = (
     Weight(
@@ -68,6 +73,18 @@ WEIGHTS: tuple[Weight, ...] = (
         size=35_858_002,
         sha256="c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
         note="YOLOX-S · Apache-2.0 · Megvii Inc. (ADR-24)",
+    ),
+    # ⚠️ **자체 학습 산출물이다.** 공개 URL 이 없어 팀 Release 자산으로 배포한다.
+    # 라이선스와 출처는 `models/NOTICE` 에 있으며 이 파일과 함께 배포한다.
+    #
+    # ⚠️ **업로드 전에 `PPE_RELEASE` 의 OWNER/REPO 를 채운다.** Release 를 먼저
+    # 만들어야 URL 이 정해지므로 값이 비어 있는 동안에는 이 항목만 받지 못한다.
+    Weight(
+        dest="models/ppe.onnx",
+        url=PPE_RELEASE,
+        size=3_677_797,
+        sha256="a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4",
+        note="PPE 5클래스(+person_down) · 라이선스 검토 중 (models/NOTICE) · MechDog Physical AI Team",
     ),
 )
 
@@ -145,9 +162,31 @@ def download(weight: Weight, path: Path) -> None:
         partial.unlink(missing_ok=True)
 
 
-def run(*, check_only: bool, force: bool, samples: bool = False) -> int:
+V12_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v12-candidate-20260924"
+PPE_V12_CANDIDATE: tuple[Weight, ...] = (
+    Weight(
+        dest="models/candidates/ppe-v12/ppe_v12_joint5_context_candidate.onnx",
+        url=f"{V12_RELEASE}/ppe_v12_joint5_context_candidate.onnx",
+        size=35_781_202,
+        sha256="181ee940a5b8fd568fb6a231344eaf26484c0bf167cc869350eb8ccaf98caad4",
+        note="YOLOX-S 5종 개발 후보 · 실기 미승인 · models/ppe-v12-candidate.md",
+    ),
+    Weight(
+        dest="models/candidates/ppe-v12/NOTICE.txt",
+        url=f"{V12_RELEASE}/NOTICE.txt",
+        size=712,
+        sha256="465466fc21005e5734618644fd81d67d259b0ae3e9e0bc640f0e53b11a4e0901",
+        note="v12 학습 출처·이용 조건 고지",
+    ),
+)
+
+
+def run(
+    *, check_only: bool, force: bool, samples: bool = False, ppe_candidate: bool = False
+) -> int:
     failures = 0
-    for weight in WEIGHTS + (SAMPLES if samples else ()):
+    weights = PPE_V12_CANDIDATE if ppe_candidate else WEIGHTS
+    for weight in weights + (SAMPLES if samples else ()):
         path = ROOT / weight.dest
         print(f"\n{weight.dest}  —  {weight.note}")
 
@@ -190,12 +229,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="받지 않고 검증만 한다")
     parser.add_argument("--force", action="store_true", help="있어도 다시 받는다")
     parser.add_argument(
+        "--ppe-candidate",
+        action="store_true",
+        help="기본 가중치 대신 v12 개발 후보와 고지를 별도 경로에 받는다 (실기 미승인)",
+    )
+    parser.add_argument(
         "--samples",
         action="store_true",
         help="검출 정확도 확인용 실제 사진까지 받는다 (CI 에는 불필요)",
     )
     args = parser.parse_args(argv)
-    return run(check_only=args.check, force=args.force, samples=args.samples)
+    return run(
+        check_only=args.check,
+        force=args.force,
+        samples=args.samples,
+        ppe_candidate=args.ppe_candidate,
+    )
 
 
 if __name__ == "__main__":

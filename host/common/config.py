@@ -17,6 +17,7 @@ REQUIRED_SECTIONS = (
     "network",
     "safety",
     "gait",
+    "mission",
     "fsm",
     "vision",
     "localization",
@@ -114,6 +115,14 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
         raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
 
+    # ⚠️ **이름 목록을 여기 적지 않는다** (FR-11.1). 고를 수 있는 모드와 그 선행
+    # 기능의 정본은 `behavior/mission.py` 하나이며, 목록을 두 곳에 두면 모드를
+    # 늘릴 때 한쪽만 고쳐진다 — `coco_labels` 를 `config.yaml` 에 두지 않은 것과
+    # 같은 이유다. 여기서는 **자리가 있고 값이 문자열인지**까지만 본다.
+    mode = config["mission"].get("mode")
+    if not isinstance(mode, str) or not mode.strip():
+        raise ConfigError("mission.mode 는 비어 있지 않은 문자열이어야 함")
+
     network = config["network"]
     for name in ("cmd_port", "telemetry_port", "vision_control_port", "vision_stream_port"):
         port = network.get(name)
@@ -199,7 +208,12 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(auth, "session_valid_s")
     _require_positive(auth, "max_attempts")
     _require_positive(auth, "timeout_s")
+    _require_positive(auth, "verdict_grace_s")
     _require_positive(auth, "unknown_marker_min_frames")
+    if int(auth.get("resume_delay_ms", 3500)) < 0:
+        raise ConfigError("auth.resume_delay_ms 는 0 이상이어야 함")
+    if not isinstance(auth.get("require_both", False), bool):
+        raise ConfigError("auth.require_both 는 true 또는 false 여야 함")
     badges = auth.get("badge_marker_map")
     if badges is None or not isinstance(badges, dict):
         raise ConfigError("auth.badge_marker_map 은 사전(dict)이어야 함")
@@ -224,8 +238,8 @@ def validate_base_config(config: dict[str, Any]) -> None:
         raise ConfigError(f"필수 안전 설정 누락: {missing_safety}")
     for name in REQUIRED_SAFETY_KEYS:
         _require_positive(safety, name)
-    if safety["cmd_timeout_ms"] > 300:
-        raise ConfigError("safety.cmd_timeout_ms 는 300ms 이하여야 함")
+    if safety["cmd_timeout_ms"] > 600:
+        raise ConfigError("safety.cmd_timeout_ms 는 600ms 이하여야 함 (ADR-39)")
     if safety["cmd_timeout_ms"] >= safety["link_loss_failsafe_ms"]:
         raise ConfigError("명령 정지가 링크 페일세이프보다 먼저 동작해야 함")
     if safety["battery_shutdown_v"] >= safety["battery_warn_v"]:
@@ -252,9 +266,83 @@ def validate_base_config(config: dict[str, Any]) -> None:
         for name in names:
             _require_positive(config[section], name)
 
+    fsm = config["fsm"]
+    deadzone = fsm.get("track_deadzone_px")
+    if not _finite_number(deadzone) or deadzone < 0:
+        raise ConfigError("fsm.track_deadzone_px 는 0 이상의 유한한 수여야 함")
+
+    # 추종 지시를 이어 가는 상한은 **대상 상실 타이머보다 짧아야 한다.** 같거나 길면
+    # 상한이 하는 일이 없어지고, 대상이 사라진 뒤에도 `TRACK` 이 끝날 때까지 낡은
+    # 각도로 계속 돈다 — 이 값을 둔 이유가 바로 그것을 막는 것이다.
+    lost_ms = float(config["fsm"]["target_lost_timeout_s"]) * 1000.0
+    coast = fsm.get("track_coast_ms")
+    if not _finite_number(coast) or coast <= 0:
+        raise ConfigError("fsm.track_coast_ms 는 0 보다 큰 유한한 수여야 함")
+    if coast >= lost_ms:
+        raise ConfigError(
+            f"fsm.track_coast_ms({coast}) 가 target_lost_timeout_s({lost_ms:.0f}ms) 이상이다"
+            " — 상한이 없으면 대상이 사라져도 낡은 각도로 계속 돈다"
+        )
+
+    # ⚠️ **«고개를 드는» 자세각은 음수다** — 2026-09-15 실기로 확정했다
+    # (`POSE pitch=+15` → IMU 17.4, 앞이 내려감 / `-15` → -11.6, 앞이 올라감).
+    # PROTOCOL 2절과 config 주석이 그것을 적어 두었지만 **지키는 코드가 없었다.**
+    #
+    # 여기서 막는 이유 — 같은 실수가 이미 한 번 났다. `tools/teleop.py` 의 좌우가
+    # 뒤바뀐 채 **시험이 그 버그를 굳혀 두고 있었다**(`2.2.3` 기록). 부호는 실측으로만
+    # 알 수 있고 한번 틀리면 눈으로 보고서야 아는 종류라, 실측한 결론을 설정 검증에
+    # 박아 둔다. 양수로 되돌리면 경계 자세가 **바닥을 보게 되고** 가까이 있는 사람의
+    # 머리가 더 잘린다(FR-9.2.2 가 자세로 풀려던 것과 정반대).
+    for section, name in (
+        ("fsm", "alert_pitch_deg"),
+        ("fsm", "scan_pitch_deg"),
+        ("posture", "pitch_up_deg"),
+    ):
+        value = config[section].get(name)
+        if not _finite_number(value):
+            raise ConfigError(f"{section}.{name} 는 유한한 수여야 함")
+        if value >= 0:
+            raise ConfigError(
+                f"{section}.{name}({value}) 가 0 이상이다 — 고개를 드는 자세는 음수다"
+                " (양수 pitch 는 앞이 내려간다 · PROTOCOL 2절, 2026-09-15 실측)"
+            )
+
     track = config["localization"].get("track")
     if not isinstance(track, str) or track not in {"none", "lidar", "aruco"}:
         raise ConfigError("localization.track 은 none, lidar, aruco 중 하나여야 함")
+    # `lidar` 절은 Phase 2 이므로 없을 수 있다. 있으면 설치각만 본다 —
+    # 범위를 벗어난 값은 지도를 통째로 돌려 놓고도 조용히 지나간다.
+    lidar = config.get("lidar")
+    if isinstance(lidar, dict) and "mount_yaw_deg" in lidar:
+        yaw = lidar["mount_yaw_deg"]
+        if not _finite_number(yaw) or not 0 <= float(yaw) < 360:
+            raise ConfigError("lidar.mount_yaw_deg 는 0 이상 360 미만이어야 함")
+    if isinstance(lidar, dict) and "angle_direction" in lidar:
+        direction = lidar["angle_direction"]
+        if type(direction) is not int or direction not in (-1, 1):
+            raise ConfigError("lidar.angle_direction 은 -1 또는 1 이어야 함")
+    # 컨테이너 전달 목적지 (WBS 5.4.4) — `scan_port` 와 같으면 두 스키마가
+    # 한 소켓에 섞여 들어온다.
+    if isinstance(lidar, dict) and "scan_forward_port" in lidar:
+        forward_port = lidar["scan_forward_port"]
+        if (
+            not isinstance(forward_port, int)
+            or isinstance(forward_port, bool)
+            or not 1 <= forward_port <= 65535
+        ):
+            raise ConfigError("lidar.scan_forward_port 는 1~65535 정수여야 함")
+        if "scan_port" in lidar and forward_port == lidar["scan_port"]:
+            raise ConfigError("lidar.scan_forward_port 가 lidar.scan_port 와 같으면 안 됨")
+    if isinstance(lidar, dict) and "scan_forward_host" in lidar:
+        forward_host = lidar["scan_forward_host"]
+        if not isinstance(forward_host, str) or not forward_host.strip():
+            raise ConfigError("lidar.scan_forward_host 는 비어 있지 않은 문자열이어야 함")
+    if (
+        isinstance(lidar, dict)
+        and "scan_forward_enabled" in lidar
+        and not isinstance(lidar["scan_forward_enabled"], bool)
+    ):
+        raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")

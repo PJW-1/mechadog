@@ -1,5 +1,14 @@
-# MechaDog 음성 대화 시작 — llama.cpp CUDA DLL 경로 + 파이프라인 기동
-$site = 'C:\Users\a9800\AppData\Local\Programs\Python\Python312\Lib\site-packages'
-$env:PATH = "$site\torch\lib;$site\nvidia\cublas\bin;$site\nvidia\cuda_nvrtc\bin;$env:PATH"
+param(
+    [string]$Port = 'COM9',
+    [switch]$GuardCheck,
+    [string]$Python = 'C:\dev\mechadog-voice\pipeline\Scripts\python.exe',
+    [string]$PiperModel = 'C:\dev\mechadog-voice\models\piper\ko_KR-kss-medium.onnx'
+)
+# MechaDog 음성 대화 시작 — GPU DLL 경로는 파이프라인이 등록한다.
 Set-Location $PSScriptRoot
-python -X utf8 voice_pipeline.py --port COM5 --model 'C:\dev\voice\models\EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf' --whisper medium --web 8090 --robot-id mechadog-01 $args
+
+if ($GuardCheck) {
+    & $Python -X utf8 voice_pipeline.py --port $Port --guard-check --whisper medium --piper-model $PiperModel $args
+} else {
+    & $Python -X utf8 voice_pipeline.py --port $Port --piper-model $PiperModel --whisper medium --web 8090 --robot-id mechadog-01 $args
+}

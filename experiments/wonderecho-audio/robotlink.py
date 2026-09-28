@@ -1,20 +1,30 @@
-"""Robot dashboard link for the voice loop (WBS 4.7.10, 4.7.11).
+"""Robot dashboard link for the voice loop (WBS 4.7.11, 3.8.2, 4.7.12).
 
-Read path: GET {base}/api/telemetry -> DashboardState.snapshot() — real
-telemetry (batt_v, state, escalation) feeds spoken status reports; the LLM
-never invents values.
+Read path: GET {base}/api/telemetry for the FSM state and escalation level the
+voice-auth flow needs, and GET {base}/api/events for the journal. Spoken
+status reports (battery, distance, ...) were retired on 2026-09-23 (ADR-38):
+the target speaker is the robot's MP3 module, which only plays pre-recorded
+lines and cannot read out live numbers.
 
 Write path: a **whitelist** of Korean phrases -> existing command endpoints.
-Free-form LLM text can never reach the robot; only exact phrase matches in
-ACTIONS trigger a POST, and every action is still subject to the runtime's
-own safety gates (estop latching, manual-mode preconditions, ...).
+Free text can never reach the robot; only exact phrase matches in ACTIONS
+trigger a POST, and every action is still subject to the runtime's own safety
+gates (estop latching, manual-mode preconditions, ...).
+
+Speaker path (WBS 4.7.21): `play_track` POSTs a TF card track number to
+/api/command/sound so the voice process's own lines play on the robot's MP3
+module. It is internal to the voice process and is not in ACTIONS — no user
+utterance maps to it.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import urllib.error
 import urllib.request
+
+import voice_rules
 
 DEFAULT_BASE = "http://127.0.0.1:8000"
 
@@ -33,28 +43,6 @@ def _post(base, path, body, timeout=3.0):
 def _get(base, path, timeout=3.0):
     with urllib.request.urlopen(base + path, timeout=timeout) as res:
         return json.loads(res.read() or b"{}")
-
-
-def fetch_status(base=DEFAULT_BASE):
-    """GET /api/telemetry → 사람이 읽을 수 있는 실측 요약 문자열, 또는 None."""
-    try:
-        snap = _get(base, "/api/telemetry")
-    except OSError:
-        return None
-    tele = snap.get("telemetry") or {}
-    esc = snap.get("escalation") or {}
-    parts = []
-    if tele.get("batt_v") is not None:
-        parts.append(f"배터리 {tele['batt_v']:.2f}볼트")
-    if tele.get("temp_c") is not None:
-        parts.append(f"내부 온도 {tele['temp_c']:.0f}도")
-    if snap.get("state"):
-        parts.append(f"동작 상태 {snap['state']}")
-    if esc.get("level") is not None:
-        parts.append(f"대응 단계 {esc['level']}")
-    if snap.get("stale"):
-        parts.append("링크 지연 상태")
-    return ", ".join(parts) if parts else "상태 데이터 없음"
 
 
 def fetch_events(base=DEFAULT_BASE, since=0):
@@ -107,10 +95,80 @@ def _norm(s):
     return re.sub(r"[\s,.!?~…:'\"·]+", "", s)
 
 
+# 명령 어미 — "비상정지해줘"처럼 끝에 붙는 서법·공손 어미만 벗긴다.
+# 부정어("하지마")·조건절은 여기 없어 절대 명령으로 번역되지 않는다.
+# 긴 어미부터 시도한다 ("로전환해줘"가 "해줘"보다 먼저 떨어져야 한다).
+_COMMAND_ENDINGS = sorted(
+    (
+        "으로전환해주세요",
+        "으로전환해줘",
+        "로전환해주세요",
+        "로전환해줘",
+        "으로바꿔주세요",
+        "으로바꿔줘",
+        "로바꿔주세요",
+        "로바꿔줘",
+        "해주십시오",
+        "해주세요",
+        "하십시오",
+        "으로전환",
+        "로전환해",
+        "로바꿔",
+        "으로바꿔",
+        "로전환",
+        "해주길",
+        "하세요",
+        "해줘요",
+        "해주죠",
+        "주세요",
+        # STT 가 "해줘"를 자주 이렇게 듣는다 — 해져/해죠/하죠/했죠 는 오청 변형.
+        "해줘",
+        "해져",
+        "해죠",
+        "하죠",
+        "했죠",
+        "했어요",
+        "했어",
+        "시켜",
+        "해라",
+        "하기",
+        "해요",
+        "세요",
+        "해",
+        "줘",
+        "요",
+    ),
+    key=len,
+    reverse=True,
+)
+
+
 def match_action(query: str):
-    """정규화된 질의와 정확히 일치하는 화이트리스트 액션, 없으면 None."""
+    """화이트리스트 액션 — 정규화 후 정확 일치, 또는 명령 어미를 벗긴 일치.
+
+    "비상정지해"·"비상정지해줘" 같은 자연 발화를 받되, 어미 목록에 없는 꼬리
+    ("비상정지하지마", "비상정지할까")는 절대 명령이 되지 않는다.
+    명령표·어미는 규칙 파일(voice_rules)이 우선하되, estop 구문은
+    voice_rules.PROTECTED가 항상 코드 기본값을 되돌린다.
+    """
+    actions = voice_rules.action_commands(ACTIONS)
     norm = _norm(query)
-    return ACTIONS.get(norm)
+    if norm in actions:
+        return actions[norm]
+    # 합성 음성에서 "비상정지해줘"가 "비상정지에"로 인식된 실측 사례만
+    # 좁게 허용한다. "에"를 공통 어미로 벗기면 "순찰시작에"도 보행 명령이 된다.
+    if norm == "비상정지에":
+        return actions["비상정지"]
+    stripped = norm
+    endings = voice_rules.command_endings(_COMMAND_ENDINGS)
+    for _ in range(3):  # "해주세요"처럼 중첩 어미 대비
+        for ending in endings:
+            if stripped.endswith(ending) and len(stripped) > len(ending):
+                stripped = stripped[: -len(ending)]
+                break
+        else:
+            break
+    return actions.get(stripped)
 
 
 def run_action(action: str, base=DEFAULT_BASE):
@@ -137,23 +195,109 @@ def run_action(action: str, base=DEFAULT_BASE):
     return True, ""
 
 
-def answer_query(query: str, base=DEFAULT_BASE):
-    """상태 질의면 실측 요약 문자열, 명령이면 실행 결과 문자열, 아니면 None.
+def robot_state_level(base=DEFAULT_BASE):
+    """GET /api/telemetry → (FSM 상태, 대응 단계). 연결 실패면 (None, None).
 
-    Returns (handled, spoken_text): handled=False -> fall through to the LLM.
+    ⚠️ **상태만으로는 인증 성공과 실패를 가를 수 없다.** `AUTH_WAIT` 를
+    나가는 문은 `AUTH_OK`(→ `PATROL`) 와 `AUTH_FAILED`(→ `ALERT`) 둘 다이고,
+    가르는 것은 단계다 — 실패는 L3 로 올라간다. 그래서 둘을 같이 읽는다.
     """
-    norm = _norm(query)
-    action = match_action(norm)
+    try:
+        snap = _get(base, "/api/telemetry")
+    except OSError:
+        return None, None
+    state = snap.get("state")
+    esc = snap.get("escalation")
+    return (
+        state if isinstance(state, str) else None,
+        esc if isinstance(esc, str) else None,
+    )
+
+
+def robot_state(base=DEFAULT_BASE):
+    """GET /api/telemetry → FSM 상태 문자열("AUTH_WAIT" 등), 또는 None (연결 실패)."""
+    return robot_state_level(base)[0]
+
+
+def post_auth_pending(captured_at_ms, base=DEFAULT_BASE):
+    """POST /api/command/auth `{"result": "pending"}` — **말을 받았다**고만 알린다.
+
+    판정이 아니다. 녹음(최대 15초)·무음 1초·전사를 직렬로 하는 동안 로봇의
+    `AUTH_WAIT` 30초가 그냥 흐르기 때문에, **말하는 도중에 경보가 되는 것**을
+    막으려고 «판정이 오는 중» 을 먼저 알린다 (ADR-37). 런타임이 창을 한 번
+    늘려 준다 — 창마다 1회이고 상한이 있다.
+
+    ⚠️ **실패해도 조용히 넘어간다.** 이건 편의이지 안전 장치가 아니다. 여기서
+    예외를 올리면 **녹음 루프가 멈춰** 정작 인증 자체가 죽는다.
+    """
+    payload = {"result": "pending"}
+    if captured_at_ms is not None:
+        payload["captured_at_ms"] = int(captured_at_ms)
+    try:
+        res = _post(base, "/api/command/auth", payload)
+    except OSError:
+        return False, "로봇 관제 서버에 연결할 수 없습니다"
+    if res.get("error") or res.get("accepted") is not True:
+        return False, res.get("detail") or "로봇이 유예를 받지 않았습니다"
+    return True, ""
+
+
+def post_auth_result(ok, base=DEFAULT_BASE, captured_at_ms=None):
+    """POST /api/command/auth — 암구호 **대조 결과만** 보낸다 (WBS 3.8.2).
+
+    인식 텍스트 자체는 이 경로로 보내지 않는다. `AUTH_WAIT` 가 아니면 런타임이
+    거절하므로 `accepted=False` 를 그대로 돌려준다 — 그 거절이 상태 가드다.
+
+    `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이다. 녹음 15초 + 전사에
+    수 초가 걸리므로 «말한 시각» 과 «여기 도착한 시각» 이 다르고, 그 사이에
+    `AUTH_WAIT` 가 열렸으면 **창 밖의 말이 시도로 세어진다.** 실어 보내면
+    런타임이 걸러 준다.
+    """
+    payload = {"result": "ok" if ok else "fail"}
+    if captured_at_ms is not None:
+        payload["captured_at_ms"] = int(captured_at_ms)
+    try:
+        res = _post(base, "/api/command/auth", payload)
+    except OSError:
+        return False, "로봇 관제 서버에 연결할 수 없습니다"
+    if res.get("error") or res.get("accepted") is not True:
+        return False, res.get("detail") or "로봇이 인증 결과를 거부했습니다"
+    return True, res.get("detail") or ""
+
+
+def play_track(track, base=DEFAULT_BASE):
+    """POST /api/command/sound `{"track": N}` — 로봇 스피커로 TF 카드 트랙을 튼다 (WBS 4.7.21 ⑤).
+
+    음성 프로세스가 **자기 발화**를 로봇 MP3 모듈로 내보내는 내부 경로다. 사람의
+    발화가 여기 닿지 않는다 — `ACTIONS`·`match_action`·`run_action` 에 넣지 않았다.
+    0 은 정지. 범위(0~3000)·정수 검사는 런타임이 하고 거절 사유를 돌려준다.
+
+    ⚠️ **실패해도 예외를 올리지 않는다** (`post_auth_result` 와 같다) — 말하기가
+    실패했다고 음성 루프가 멈추면 안 된다. `(ok, detail)` 을 돌려준다.
+    ok=True 는 «런타임이 다음 틱에 싣기로 했다» 이지 «소리가 났다» 가 아니다.
+    """
+    try:
+        res = _post(base, "/api/command/sound", {"track": track})
+    except urllib.error.HTTPError as exc:
+        # OSError 의 하위다 — 400(정수 아님)·403(출처)을 연결 실패로 말하지 않는다.
+        return False, f"로봇 관제 서버가 트랙 재생 요청을 거부했습니다 (HTTP {exc.code})"
+    except OSError:
+        return False, "로봇 관제 서버에 연결할 수 없습니다"
+    except ValueError:  # JSON 이 아닌 응답
+        return False, "로봇 관제 서버의 응답을 읽을 수 없습니다"
+    if res.get("error") or res.get("accepted") is not True:
+        return False, res.get("detail") or "로봇이 트랙 재생을 거부했습니다"
+    return True, res.get("detail") or ""
+
+
+def answer_query(query: str, base=DEFAULT_BASE):
+    """명령이면 실행 결과 문장을 돌려준다.
+
+    Returns (handled, spoken_text): handled=False -> 명령이 아니다(호출자가 고정 문구로 답한다).
+    """
+    action = match_action(_norm(query))
     if action:
         name, ack = action
         ok, err = run_action(name, base)
         return True, ack if ok else err
-    if any(w in norm for w in ("배터리", "상태", "온도", "보고", "잔량", "충전")):
-        st = fetch_status(base)
-        return (
-            True,
-            f"현재 상태입니다. {st}"
-            if st
-            else "로봇 관제에 연결되지 않아 상태를 확인할 수 없습니다",
-        )
     return False, ""

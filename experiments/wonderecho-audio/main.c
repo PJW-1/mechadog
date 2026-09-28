@@ -26,6 +26,7 @@
 #include "system_msg_deal.h"
 #include "ci130x_dpmu.h"
 #include "ci130x_scu.h"
+#include "ci130x_pdm.h"
 #include "ci130x_mailbox.h"
 #include "ci130x_nuclear_com.h"
 #include "flash_control_inner_port.h"
@@ -163,6 +164,13 @@ static void task_init(void *p_arg)
 
     /* 注册录音codec */
     audio_in_codec_registe();
+
+    /* Power HPOUT before codec/stream initialization, as in the v38 audio fix. */
+    scu_set_device_gate((uint32_t)PDM, ENABLE);
+    scu_set_device_reset((uint32_t)PDM);
+    scu_set_device_reset_release((uint32_t)PDM);
+    pdm_power_up(PDM_CURRENT_128I);
+    pdm_hpout_mute_disable();
 
     nuclear_com_init();
 

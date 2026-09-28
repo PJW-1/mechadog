@@ -255,6 +255,7 @@ def test_encoder_convenience_methods_cover_every_type() -> None:
         encoder.state("ALERT"),
         encoder.estop(),
         encoder.reset_safe(),
+        encoder.service("enter"),
     ]
     types = set()
     for raw in emitted:

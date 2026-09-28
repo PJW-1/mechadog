@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MechDog · V1 Glass Design Preview</title>
+<style>
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#dce9e7}
+iframe{display:block;width:100%;height:100%;border:0}
+.preview-label{position:fixed;top:30px;left:50%;transform:translateX(-50%);z-index:10;padding:9px 13px;border:1px solid #ffffffb8;border-radius:99px;background:#e8f6f0df;box-shadow:0 8px 28px #244b4730;color:#164f48;font:700 11px/1.4 system-ui,sans-serif;letter-spacing:.08em;pointer-events:none;backdrop-filter:blur(16px)}
+@media(max-width:700px){.preview-label{top:auto;left:auto;right:10px;bottom:10px;transform:none;font-size:9px}}
+</style>
+</head>
+<body>
+<iframe id="preview" title="MechDog 버전 1 구조의 글래스 디자인 미리보기"></iframe>
+<div class="preview-label">DESIGN PREVIEW · 실제 명령 미연결</div>
+<script>
+const frame=document.querySelector('#preview');
+frame.addEventListener('load',()=>{
+ const doc=frame.contentDocument;
+ if(!doc||doc.querySelector('#glass-theme'))return;
+ const theme=doc.createElement('link');theme.id='glass-theme';theme.rel='stylesheet';theme.href=new URL('./theme.css',location.href).href;doc.head.append(theme);
+ // Entrance motion is for opening a page; theme.css skips it once the page is .settled.
+ const panel=doc.querySelector('#panel-content');let settle;
+ const opened=()=>{panel.classList.remove('settled');clearTimeout(settle);settle=setTimeout(()=>panel.classList.add('settled'),700)};
+ if(panel){opened();new MutationObserver(list=>{if(list.some(m=>m.oldValue!==panel.dataset.page))opened()}).observe(panel,{attributes:true,attributeFilter:['data-page'],attributeOldValue:true})}
+ if(new URLSearchParams(location.search).get('rail')==='open')doc.documentElement.classList.add('rail-open');
+ doc.addEventListener('pointermove',event=>{
+  const stage=doc.querySelector('#stage');if(!stage||stage.hidden)return;
+  const box=stage.getBoundingClientRect();
+  stage.style.setProperty('--spot-x',((event.clientX-box.left)/box.width*100).toFixed(1)+'%');
+  stage.style.setProperty('--spot-y',((event.clientY-box.top)/box.height*100).toFixed(1)+'%');
+ },{passive:true});
+});
+const view=new URLSearchParams(location.search).get('view');
+frame.src='../static/index.html#'+(['dashboard','events','missions'].includes(view)?view:'dashboard');
+</script>
+</body>
+</html>
