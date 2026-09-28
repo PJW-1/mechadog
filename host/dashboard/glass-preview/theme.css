@@ -237,3 +237,63 @@ dialog{border-color:#ffffff;border-radius:24px;background:#f7fcf9;color:#264247;
 @keyframes marker-choice{from{outline:2px solid #b7955e;outline-offset:0}to{outline:2px solid #b7955e00;outline-offset:7px}}
 @media(prefers-reduced-motion:reduce){.camera-robot-switch button.selected,.map-marker.selected{animation:none}}
 @media(max-width:360px){#stage #reset-view{min-width:44px;width:44px;font-size:0;padding:0}}
+
+/* ── 대응 단계 띠 (B1) ─────────────────────────────────────────────────────
+   기본 테마의 띠는 어두운 화면에 맞춰 각진 빨강 블록이라 흰 화면에서 혼자 떠 있었다.
+   여기서 흰 테마의 말(둥근 모서리·부드러운 그림자·backdrop)로 옮긴다.
+   ⚠️ **단계 색의 뜻은 바꾸지 않는다** — 눈 LED 와 같은 순서다(L2 주황 · L3 빨강 · F 흰색).
+   ⚠️ **L3 깜빡임(`alarm-blink`)은 기본 스타일 그대로 둔다.** 경보를 실제보다 세게 보이게
+   만들지 않는다 — 여기서 하는 일은 «읽히게» 하는 것이지 «크게» 하는 것이 아니다. */
+.alarm-banner{
+ /* ⚠️ 기본 스타일의 `top:62px` 는 로봇 탭 줄을 덮어 MD-02·MD-03 의 수신 상태를 가렸다.
+    경보를 띄우려고 다른 기체의 상태를 지우는 것은 나쁜 교환이다 — 탭 줄 아래로 내린다.
+    자리는 실측으로 잡았다 — 1100px 에서 머리글 72px + 탭 줄 84px = 156px 이라 그 아래다. */
+ top:166px;gap:12px;padding:11px 14px 11px 18px;
+ border-width:1px;border-radius:16px;
+ box-shadow:0 14px 34px #2b332f26,0 0 0 1px #ffffffb3;
+ backdrop-filter:blur(18px);
+ /* 단계가 바뀌면 띠는 그대로 있고 색만 옮겨 간다 — 새로 뜬 것이 아니라 «바뀐 것»이다.
+    ⚠️ `border-color` 는 빼 둔다. L3 깜빡임이 그 속성을 쓰므로 섞으면 깜빡임이 뭉개진다. */
+ transition:background-color .3s ease,color .3s ease;
+ /* 도착은 한 번뿐이다. 가로 중앙 정렬이 `translateX(-50%)` 라 keyframes 가 그것을 들고 간다. */
+ animation:alarm-arrive .28s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes alarm-arrive{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}}
+.alarm-banner[data-level="L2"]{background:#fdf0dd;border-color:#e0b47a;color:#6f4a14}
+.alarm-banner[data-level="L3"]{background:#c4443e;border-color:#e8908a;color:#fff}
+.alarm-banner[data-level="F"]{background:#fffdf5;border-color:#d5c7a4;color:#453a20}
+/* 넓은 화면에서는 제목과 시야 전환 사이의 통로 안에 머문다 — 1100px 실측으로
+   제목이 286px 에서 끝나고 시야 전환이 757px 에서 시작한다. 띠가 조작 버튼을
+   반쯤 덮으면 고장처럼 보인다. 글이 길면 두 줄로 흐르게 두고 폭을 넘기지 않는다. */
+@media(min-width:900px){.alarm-banner{max-width:420px;flex-wrap:wrap;row-gap:7px}
+ .alarm-banner #alarm-text{flex:1 1 100%;order:3}
+ .alarm-banner button{margin-left:auto}}
+.alarm-banner strong{letter-spacing:-.01em}
+.alarm-banner button{border-radius:9px;padding:6px 13px;font-weight:600;transition:background .2s,border-color .2s}
+.alarm-banner[data-level="L3"] button:hover{background:#ffffff26}
+.alarm-banner:not([data-level="L3"]) button:hover{background:#00000010}
+/* 좁은 폭에서는 글이 버튼과 부딪혀 두 줄로 깨졌다 — 버튼을 아래로 내리고 글을 온전히 읽게 둔다. */
+/* 화면을 덮는 작업 화면(사건·제어)에서는 탭 줄이 없으므로 머리글 바로 아래로 올린다. */
+.workspace-open .alarm-banner{top:70px}
+@media(max-width:800px){.alarm-banner{top:196px}.workspace-open .alarm-banner{top:114px}}
+@media(max-width:900px){
+ /* 좁은 폭에서는 내용 폭에 맡기면 187px 까지 찌그러져 글이 토막 난다 — 폭을 채운다. */
+ .alarm-banner{flex-wrap:wrap;width:calc(100% - 22px);max-width:none;row-gap:8px}
+ .alarm-banner button{margin-left:0;width:100%;justify-content:center}
+}
+
+/* ── 눌림 확인 ─────────────────────────────────────────────────────────────
+   이 화면의 버튼 상당수가 실제 로봇에 명령을 보낸다. 눌렀다는 확인이 hover 뿐이었다.
+   내려앉는 정도로만 — 튕기거나 커지지 않는다. */
+.op-button:active:not(:disabled),
+.scene-controls button:active,
+.view-switch button:active,
+.alarm-banner button:active,
+.estop:active{transform:translateY(0) scale(.985);transition-duration:.08s}
+
+@media(prefers-reduced-motion:reduce){
+ /* 움직임만 걷어내고 색·불투명도는 남긴다 — 무엇이 바뀌었는지는 계속 보여야 한다. */
+ .alarm-banner{animation:none}
+ .op-button:active:not(:disabled),.scene-controls button:active,
+ .view-switch button:active,.alarm-banner button:active,.estop:active{transform:none}
+}
