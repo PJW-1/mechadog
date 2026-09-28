@@ -321,6 +321,28 @@ def validate_base_config(config: dict[str, Any]) -> None:
         direction = lidar["angle_direction"]
         if type(direction) is not int or direction not in (-1, 1):
             raise ConfigError("lidar.angle_direction 은 -1 또는 1 이어야 함")
+    # 컨테이너 전달 목적지 (WBS 5.4.4) — `scan_port` 와 같으면 두 스키마가
+    # 한 소켓에 섞여 들어온다.
+    if isinstance(lidar, dict) and "scan_forward_port" in lidar:
+        forward_port = lidar["scan_forward_port"]
+        if (
+            not isinstance(forward_port, int)
+            or isinstance(forward_port, bool)
+            or not 1 <= forward_port <= 65535
+        ):
+            raise ConfigError("lidar.scan_forward_port 는 1~65535 정수여야 함")
+        if "scan_port" in lidar and forward_port == lidar["scan_port"]:
+            raise ConfigError("lidar.scan_forward_port 가 lidar.scan_port 와 같으면 안 됨")
+    if isinstance(lidar, dict) and "scan_forward_host" in lidar:
+        forward_host = lidar["scan_forward_host"]
+        if not isinstance(forward_host, str) or not forward_host.strip():
+            raise ConfigError("lidar.scan_forward_host 는 비어 있지 않은 문자열이어야 함")
+    if (
+        isinstance(lidar, dict)
+        and "scan_forward_enabled" in lidar
+        and not isinstance(lidar["scan_forward_enabled"], bool)
+    ):
+        raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")

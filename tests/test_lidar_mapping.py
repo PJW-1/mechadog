@@ -552,6 +552,12 @@ def test_lidar_scan_port_differs_from_the_other_links() -> None:
     assert section["scan_port"] not in taken
 
 
+def test_scan_forward_port_differs_from_scan_port() -> None:
+    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다 (WBS 5.4.4)."""
+    section = read_lidar_section()
+    assert section["scan_forward_port"] != section["scan_port"]
+
+
 def test_path_clearance_exceeds_the_host_estop_distance() -> None:
     """⚠️ **계획된 경로가 E-STOP 거리를 지나가면 안 된다.**
 

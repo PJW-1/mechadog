@@ -172,10 +172,16 @@
 | 제어 명령 | 5001 | `network.cmd_port` |
 | 텔레메트리 | 5101 | `network.telemetry_port` |
 | **LiDAR 스캔** | **5201** | **`lidar.scan_port`** |
+| LiDAR 스캔 → ROS2 컨테이너 전달 | 5203 | `lidar.scan_forward_port` (WBS 5.4.4) |
 
 ⚠️ **반드시 달라야 한다.** 같은 포트를 쓰면 한 소켓에 두 스키마가 섞여 들어와
 서로를 규칙 ④(모르는 타입)로 폐기하고, 로그에는 WARN 만 쌓인다.
 `test_lidar_scan_port_differs_from_the_other_links` 가 대조한다.
+
+`lidar.scan_forward_port`(5201 의 유일한 수신자인 `tools/patrol_run.py` 가
+바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
+`host/slam/settings.py`·`host/common/config.py` 의 설정 검증이 이를 거부한다
+(`docker/ros2/README.md` 「남은 연결」 절).
 
 ---
 
@@ -244,6 +250,7 @@ ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom`
 | 6 | `quality` 필드 | 선택, 0~255 정수, 현재 판단에는 사용하지 않음 |
 | 7 | `config.yaml`의 `lidar:` 절 | Phase 2 실측 전 잠정값임을 유지 |
 | 8 | 데이터그램 단위 | 한 바퀴 전체가 아니라 **≤72점 부채꼴 조각** — ESP32 UDP MTU 실측에서 정해진 값 |
+| 9 | `scan_forward_port` | 5203 — `scan_port`(5201)의 유일한 수신자인 순찰기가 바이트 그대로 복사해 ROS2 컨테이너로 넘기는 경로 (WBS 5.4.4) |
 
 > **3번은 파괴적 변경이 될 수 있다.** 나중에 단위를 바꾸면
 > 중계 노드 펌웨어와 픽스처를 함께 고쳐야 한다 (PROTOCOL 4절). 그래서 실기

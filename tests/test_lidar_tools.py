@@ -108,6 +108,35 @@ def test_nonpositive_resolution_is_refused() -> None:
         settings.validate_section(section)
 
 
+def test_scan_forward_port_same_as_scan_port_is_refused() -> None:
+    """⚠️ 컨테이너 전달 목적지가 수신 포트와 같으면 두 스키마가 섞인다 (WBS 5.4.4)."""
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_port"] = section["scan_port"]
+    with pytest.raises(ConfigError, match="scan_forward_port"):
+        settings.validate_section(section)
+
+
+def test_scan_forward_port_out_of_range_is_refused() -> None:
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_port"] = 70000
+    with pytest.raises(ConfigError, match="scan_forward_port"):
+        settings.validate_section(section)
+
+
+def test_scan_forward_host_must_be_a_non_empty_string() -> None:
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_host"] = "   "
+    with pytest.raises(ConfigError, match="scan_forward_host"):
+        settings.validate_section(section)
+
+
+def test_scan_forward_enabled_must_be_a_bool() -> None:
+    section = dict(settings.read_lidar_section())
+    section["scan_forward_enabled"] = "true"
+    with pytest.raises(ConfigError, match="scan_forward_enabled"):
+        settings.validate_section(section)
+
+
 def test_simulation_runs_even_when_track_is_none(lidar_config: dict) -> None:
     """⚠️ Phase 1 표준 구성에는 LiDAR 가 없다 (CONTRIBUTING 1절).
 
@@ -580,6 +609,50 @@ def test_send_delivers_to_a_loopback_listener() -> None:
     finally:
         listener.close()
         sender.close()
+
+
+def test_forward_scan_delivers_raw_bytes_unchanged() -> None:
+    """디코드 성패와 무관하게 받은 바이트 그대로 전달한다 (WBS 5.4.4).
+
+    기형 데이터그램(유효한 SCAN 전문이 아닌 임의 바이트)도 그대로 나가야
+    한다 — 검증은 받는 쪽(`ScanDecoder`)이 다시 한다.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.settimeout(1.0)
+        raw = b"\x00\x01not-a-valid-scan-packet\xff"
+        assert patrol_run.forward_scan(sender, raw, listener.getsockname()) is True
+        payload, _ = listener.recvfrom(4096)
+        assert payload == raw
+    finally:
+        listener.close()
+        sender.close()
+
+
+def test_forward_scan_does_not_raise_when_the_destination_is_closed() -> None:
+    """목적지가 닫혀 있어도 예외가 순찰 루프로 새면 안 된다."""
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed.bind(("127.0.0.1", 0))
+    peer = closed.getsockname()
+    closed.close()
+    try:
+        for _ in range(3):
+            assert isinstance(patrol_run.forward_scan(sender, b"\x00", peer), bool)
+    finally:
+        sender.close()
+
+
+def test_forward_scan_survives_a_socket_error() -> None:
+    """`ConnectionResetError` 도 `OSError` 이므로 잡혀서 `False` 로만 돌아온다."""
+
+    class RefusingSocket:
+        def sendto(self, _payload: bytes, _peer: tuple[str, int]) -> int:
+            raise ConnectionResetError("상대가 없음")
+
+    assert patrol_run.forward_scan(RefusingSocket(), b"\x00", ("127.0.0.1", 1)) is False  # type: ignore[arg-type]
 
 
 def test_patrol_shutdown_repeats_the_same_estop(

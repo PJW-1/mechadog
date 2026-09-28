@@ -97,6 +97,25 @@ def open_socket(port: int) -> socket.socket:
     return sock
 
 
+def forward_scan(sock: socket.socket, raw: bytes, peer: tuple[str, int]) -> bool:
+    """받은 LiDAR 데이터그램을 컨테이너 전달 목적지로 그대로 복사한다 (WBS 5.4.4).
+
+    **디코드 성패와 무관하게** 받은 바이트를 그대로 보낸다 — 검증은 받는 쪽
+    (`docker/ros2/scan_bridge.py` 의 `ScanDecoder`)이 다시 하므로 여기서 거르면
+    컨테이너가 우리가 이미 버린 패킷의 존재조차 모르게 된다. LiDAR 비상정지
+    (`guard_scan`)는 이 전달과 무관하게 먼저 도는 직접 경로라 실패해도 영향이 없다.
+
+    실패(목적지가 아직 없어 나는 `ConnectionResetError` · 그 외 `OSError`)는
+    예외를 올리지 않는다 — 순찰을 멈출 이유가 아니다. 반환값만 알리고 로그는
+    호출부가 상태 전이일 때만 남긴다 (ENGINEERING_GUIDE 1.3).
+    """
+    try:
+        sock.sendto(raw, peer)
+    except OSError:
+        return False
+    return True
+
+
 def build_controller(config: dict, maps: Path, seed: int | None) -> PatrolController:
     grid = OccupancyGrid.load(maps)
     labels = tuple(str(label) for label in config["zones"]["ids"])
@@ -174,6 +193,15 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     scan_decoder = ScanDecoder(
         float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
     )
+    # 컨테이너 전달 목적지 (WBS 5.4.4) — 이 프로세스가 scan_port 의 유일한
+    # 수신자로 남고, 받은 데이터그램을 바이트 그대로 여기로 복사해 넘긴다.
+    # 꺼 두면 None 이라 아래 루프가 전달을 건너뛴다.
+    forward_peer: tuple[str, int] | None = (
+        (str(lidar["scan_forward_host"]), int(lidar["scan_forward_port"]))
+        if lidar["scan_forward_enabled"]
+        else None
+    )
+    forward_failing = False
     telemetry = TelemetryReceiver()
     # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
     own_ids = telemetry_ids(config, args.device)
@@ -223,6 +251,15 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     raw, _ = scan_sock.recvfrom(RECV_BYTES)
                 except (BlockingIOError, OSError):
                     break
+                # 디코드 성패와 무관하게 받은 즉시 그대로 전달한다 (WBS 5.4.4).
+                if forward_peer is not None:
+                    if forward_scan(scan_sock, raw, forward_peer):
+                        if forward_failing:
+                            LOG.info("scan_forward_recovered", peer=str(forward_peer))
+                            forward_failing = False
+                    elif not forward_failing:
+                        LOG.warning("scan_forward_failed", peer=str(forward_peer))
+                        forward_failing = True
                 result = scan_decoder.decode(raw)
                 if result.warns:
                     LOG.warning("scan_unknown_type", reason=result.reason)
