@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from pathlib import Path
 
 import numpy as np
@@ -643,6 +644,42 @@ def test_forward_scan_does_not_raise_when_the_destination_is_closed() -> None:
             assert isinstance(patrol_run.forward_scan(sender, b"\x00", peer), bool)
     finally:
         sender.close()
+
+
+def test_forwarding_to_a_closed_port_never_breaks_the_scan_socket() -> None:
+    """⚠️ **전달은 수신 소켓이 아닌 따로 연 소켓으로 한다.**
+
+    Windows 는 닫힌 포트로 보낸 UDP 의 ICMP 통보를 **보낸 소켓의 다음
+    `recvfrom` 에 `ConnectionResetError` 로** 돌려준다. `scan_sock` 으로 전달하면
+    컨테이너가 꺼져 있는 동안 수신 루프가 스캔마다 끊겨, 초당 100개 실측에서
+    3분의 1을 잃고 지연이 최대 856ms 까지 밀렸다 — LiDAR 비상정지가 그만큼 늦다.
+    """
+    scan_sock = patrol_run.open_socket(0)
+    forward_sock = patrol_run.open_forward_socket()
+    feeder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    closed.bind(("127.0.0.1", 0))
+    peer = closed.getsockname()
+    closed.close()
+    target = ("127.0.0.1", scan_sock.getsockname()[1])
+    try:
+        for index in range(20):
+            feeder.sendto(b"scan%d" % index, target)
+            deadline = time.monotonic() + 1.0
+            while True:
+                try:
+                    raw, _ = scan_sock.recvfrom(64)
+                    break
+                except BlockingIOError:
+                    assert time.monotonic() < deadline, "스캔이 도착하지 않았다"
+                    time.sleep(0.001)
+            assert raw == b"scan%d" % index
+            patrol_run.forward_scan(forward_sock, raw, peer)
+            time.sleep(0.005)
+    finally:
+        scan_sock.close()
+        forward_sock.close()
+        feeder.close()
 
 
 def test_forward_scan_survives_a_socket_error() -> None:

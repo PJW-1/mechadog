@@ -97,6 +97,19 @@ def open_socket(port: int) -> socket.socket:
     return sock
 
 
+def open_forward_socket() -> socket.socket:
+    """컨테이너 전달 전용 송신 소켓 (WBS 5.4.4).
+
+    ⚠️ **`scan_sock` 으로 보내지 않는다.** Windows 는 닫힌 포트로 보낸 UDP 의
+    ICMP 통보를 보낸 소켓의 다음 `recvfrom` 에 `ConnectionResetError` 로 돌려준다
+    (`SIO_UDP_CONNRESET` 은 CPython 에 없어 끌 수 없다 · `host/runtime.py` 머리말).
+    컨테이너가 꺼져 있으면 스캔 수신 루프가 스캔마다 끊겨 LiDAR 비상정지가 늦는다.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+    return sock
+
+
 def forward_scan(sock: socket.socket, raw: bytes, peer: tuple[str, int]) -> bool:
     """받은 LiDAR 데이터그램을 컨테이너 전달 목적지로 그대로 복사한다 (WBS 5.4.4).
 
@@ -201,6 +214,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
         if lidar["scan_forward_enabled"]
         else None
     )
+    forward_sock = open_forward_socket()
     forward_failing = False
     telemetry = TelemetryReceiver()
     # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
@@ -253,7 +267,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     break
                 # 디코드 성패와 무관하게 받은 즉시 그대로 전달한다 (WBS 5.4.4).
                 if forward_peer is not None:
-                    if forward_scan(scan_sock, raw, forward_peer):
+                    if forward_scan(forward_sock, raw, forward_peer):
                         if forward_failing:
                             LOG.info("scan_forward_recovered", peer=str(forward_peer))
                             forward_failing = False
@@ -297,6 +311,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     finally:
         stop_for_shutdown(controller, cmd_sock, peer)
         scan_sock.close()
+        forward_sock.close()
         tlm_sock.close()
         cmd_sock.close()
     return 0
