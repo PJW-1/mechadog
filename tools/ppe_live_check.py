@@ -807,6 +807,21 @@ def ensure_untracked_frame_dir(folder: Path) -> Path:
     return resolved
 
 
+def apply_ppe_model_override(config: dict, model: str | None) -> None:
+    """`--ppe-model` 이 있으면 설정의 PPE 모델 경로를 그 파일로 바꾼다.
+
+    ⚠️ 왜: 후보 모델을 XIAO 로 보려고 런타임 모델(`models/ppe.onnx`)을 바꿔치기하면
+    되돌리는 것을 잊기 쉽고, 그 사이 띄운 런타임이 후보로 돈다. 파일은 그대로 두고 이
+    실행에서만 바꾼다. 요약의 모델 sha256 도 이 경로에서 계산된다.
+    """
+    if not model:
+        return
+    path = Path(model).resolve()
+    if not path.is_file():
+        raise SystemExit(f"PPE 모델 파일이 없다: {path}")
+    config["vision"]["ppe"]["model_path"] = str(path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="XIAO 스트림 PPE 판정 관찰 (읽기 전용)")
     source = parser.add_mutually_exclusive_group(required=True)
@@ -821,6 +836,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", required=True, help="개체 프로파일 이름 (실기에서 생략 금지)")
     parser.add_argument("--seconds", type=float, default=30.0, help="스트림 관찰 시간")
     parser.add_argument("--crop-pad", type=float, default=0.08, help="person bbox 여유 비율")
+    parser.add_argument(
+        "--ppe-model",
+        help="후보 PPE onnx 로 이 실행만 돌린다 (런타임 models/ppe.onnx 는 그대로)",
+    )
     parser.add_argument("--no-clip-rule", action="store_true", help="머리 클리핑 조건을 끈다")
     parser.add_argument("--save-dir", help="판정을 그린 프레임을 저장할 폴더")
     # ⚠️ 왜: 그린 프레임은 박스·글자가 모델 입력을 오염시켜 학습에 못 쓴다
@@ -897,6 +916,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.xiao_ip:
         config["network"]["xiao_ip"] = args.xiao_ip
 
+    apply_ppe_model_override(config, args.ppe_model)
     ppe_cfg = config["vision"]["ppe"]
     head_margin = int(ppe_cfg["head_margin_px"])
     use_clip = bool(ppe_cfg["require_head_visible"]) and not args.no_clip_rule

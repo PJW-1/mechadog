@@ -581,3 +581,15 @@ def test_main_saves_frames_under_a_korean_path(
     assert (drawn_dir / "sample.jpg").is_file()
     assert (raw_dir / "sample.jpg").is_file()
     assert imread_any(raw_dir / "sample.jpg", cv2.IMREAD_COLOR) is not None
+
+
+def test_ppe_model_override_points_config_at_candidate_without_touching_runtime(tmp_path):
+    model = tmp_path / "candidate.onnx"
+    model.write_bytes(b"x")
+    config = {"vision": {"ppe": {"model_path": "models/ppe.onnx"}}}
+    ppe.apply_ppe_model_override(config, str(model))
+    assert config["vision"]["ppe"]["model_path"] == str(model.resolve())
+    ppe.apply_ppe_model_override(config, None)  # 옵션을 안 주면 그대로
+    assert config["vision"]["ppe"]["model_path"] == str(model.resolve())
+    with pytest.raises(SystemExit):
+        ppe.apply_ppe_model_override(config, str(tmp_path / "missing.onnx"))
