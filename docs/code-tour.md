@@ -4,7 +4,7 @@
 
 ## 디렉터리 역할
 
-파일 수는 이 문서를 작성한 시점(`docs/code-tour.md` 커밋)의 실제 개수다. `__init__.py`와 `__pycache__`는 세지 않았다.
+파일 수는 2026-09-29 기준 실제 개수다. Python 디렉터리는 `.py` 파일을 세고 `__init__.py`는 뺐다. 펌웨어 디렉터리는 소스 파일(`.ino`·`.cpp`·`.h`)을 세고, 호스트 시험(`test/`)과 진단 스케치(`diagnostics/`)는 뺐다.
 
 | 디렉터리 | 역할 | 파일 수 |
 |---|---|---|
@@ -17,10 +17,10 @@
 | `host/report/` | 실기 리포트 생성 | 1 |
 | `host/cloud/` | 외부 연동(원격 갱신 등) | 1 |
 | `host/runtime.py` | 위 모듈을 묶어 운용 루프를 도는 진입점 | 1 |
-| `firmware_mechdog_motion/` | 로봇 본체 펌웨어(모션·Tier 1 반사) | 1 |
-| `firmware_xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 1 |
-| `firmware_lidar_relay/` | LiDAR 중계 보드 펌웨어 | 1 |
-| `tools/` | 운영·측정·개발 보조 스크립트 | 44 |
+| `firmware_mechdog_motion/` | 로봇 본체 펌웨어(모션·Tier 1 반사) | 21 |
+| `firmware_xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 2 |
+| `firmware_lidar_relay/` | LiDAR 중계 보드 펌웨어 | 6 |
+| `tools/` | 운영·측정·개발 보조 스크립트 | 55 |
 | `tests/` | 단위·통합 테스트 | 81 |
 
 ## 읽는 순서
