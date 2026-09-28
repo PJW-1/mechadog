@@ -1,16 +1,16 @@
-"""PC 로컬 FastAPI/WS 서버 — 텔레메트리·검출 방송과 명령 API (WBS 4.5.1 · 4.5.2 · 4.5.3).
+"""PC 로컬 FastAPI/WS 서버 — 텔레메트리·검출 방송과 명령 API.
 
 ⚠️ **명령 API 가 붙으면서 더 이상 읽기 전용이 아니다.** `commands` 를 넘기지
 않으면 예전처럼 읽기 전용으로 뜨고, 넘기면 `/api/command/*` 가 열린다. 이
 경로는 **로봇을 실제로 움직이므로** WebSocket 과 같은 로컬 출처 검사를 건다.
 `/api/command/sound` 는 움직이지 않고 로봇 스피커로 TF 카드 트랙을 튼다
-(WBS 4.7.21 ⑤ · 음성 프로세스의 말하기 경로). 같은 검사를 건다.
+(음성 프로세스의 말하기 경로). 같은 검사를 건다.
 
 카메라 영상은 XIAO 스트림이 **단일 클라이언트**라 비전 워커가 점유한 채널을
 뺏으면 추론이 끊긴다. 그래서 여기서는 XIAO 에 새로 붙지 않고 워커가 방금
 추론에 쓴 JPEG 를 재송출한다 — 화면에 보이는 것이 곧 판정에 들어간 것이다.
 
-검출 오버레이(`/ws/vision` · WBS 4.5.2)는 **박스를 계산한 바로 그 JPEG 와 박스를
+검출 오버레이(`/ws/vision`)는 **박스를 계산한 바로 그 JPEG 와 박스를
 한 메시지로** 보낸다. 영상 스트림과 박스를 따로 보내면 추론 지연만큼 박스가
 다른 장면 위에 그려진다.
 """
@@ -47,7 +47,7 @@ EVENT_POLL_S = 0.2
 CAMERA_PERIOD_S = 0.1
 # 새 추론 결과가 나왔는지 보는 주기. ⚠️ **추론 주기(25fps = 40ms)보다 짧아야 한다.**
 # 0.1 이던 때는 확인 사이에 나온 결과가 버려져 화면이 초당 10장으로 묶였다 —
-# 4.5.2 실측 "초당 9.8" 이 추론률이 아니라 이 상한이었다. 한 번 보는 일은 최신
+# 실측 "초당 9.8" 이 추론률이 아니라 이 상한이었다. 한 번 보는 일은 최신
 # 참조를 꺼내 같은 객체인지 비교하는 것뿐이다. 기존 MJPEG 폴링 주기와 섞지 않는다.
 VISION_POLL_PERIOD_S = 0.01
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -126,7 +126,7 @@ def encode_vision_frame(result: Any) -> bytes:
 
 
 class EventHub:
-    """사건 방송 (WBS 4.4.3 · FR-3.9). **텔레메트리와 달리 합치지 않는다.**
+    """사건 방송 (FR-3.9). **텔레메트리와 달리 합치지 않는다.**
 
     ⚠️ **최신 한 건만 남기면 안 된다.** 텔레메트리는 상태라서 늦은 연결에 옛 값을
     버려도 손해가 없지만, 사건은 *"그때 사람이 있었다"* 는 기록이다. 합치면 그
@@ -301,7 +301,7 @@ class _RevalidatedStatic(StaticFiles):
 
     ⚠️ **없으면 브라우저가 옛 화면을 계속 보여 준다.** `StaticFiles` 는 ETag 와
     `Last-Modified` 만 주고 `Cache-Control` 을 주지 않는데, 그러면 브라우저가
-    스스로 신선도를 추정해서 재검증 없이 사본을 쓴다. 2026-09-22 실기에서
+    스스로 신선도를 추정해서 재검증 없이 사본을 쓴다. 실기에서
     **새로 넣은 «경보 확인 (L3 해제)» 버튼이 화면에 나오지 않았다** — 서버는 새
     파일을 내려주고 있었고 브라우저가 옛 사본을 쥐고 있었다.
 
@@ -365,7 +365,7 @@ def create_app(
             "events_overflowed": event_hub.overflowed,
             # 지금 이 저장소에서 **고를 수 있는** 운용 모드 (FR-11.7). 선행 기능이
             # 없는 모드는 빠진다.
-            # ⚠️ **화면은 아직 이 값을 읽지 않는다 (2026-09-19 · 의도된 선택).** 모드
+            # ⚠️ **화면은 아직 이 값을 읽지 않는다 (의도된 선택이다).** 모드
             # 버튼 셋을 늘 띄워 두고 **누르면 서버가 사유를 돌려준다** — FR-11.7 이
             # 요구하는 것은 «거부한다» 이지 «버튼을 숨겨라» 가 아니고, 못 고르는 이유가
             # 화면에 남는 편이 «버튼이 왜 없지» 보다 낫다. 여기 실어 두는 것은 운용자가
@@ -394,7 +394,7 @@ def create_app(
         """`since` 순번 뒤의 사건을 돌려준다 — WS 를 못 쓰는 쪽(음성 저널)을 위한 폴링 경로.
 
         `/ws/events` 와 같은 버퍼다. `dropped` 가 0 이 아니면 버퍼에서 밀려
-        못 주는 사건이 있었다는 뜻이니 조용히 넘기지 않는다 (4.4.3 규약).
+        못 주는 사건이 있었다는 뜻이니 조용히 넘기지 않는다.
         """
         found, dropped = state.events_since(since)
         return {
@@ -407,7 +407,7 @@ def create_app(
     async def event_snapshot_image(entry: str):
         """사건 하나의 저장된 그림. **지금 화면이 아니라 그때 장면이다.**
 
-        ⚠️ **사건 전문에 JPEG 를 싣지 않기 때문에 이 경로가 필요하다**(`4.4.3`) —
+        ⚠️ **사건 전문에 JPEG 를 싣지 않기 때문에 이 경로가 필요하다** —
         프레임 하나가 수십 KB 라 사건 소켓에 실으면 텔레메트리를 밀어낸다. 대신
         디렉터리 이름만 보내고 그림은 여기서 꺼낸다.
 
@@ -462,7 +462,7 @@ def create_app(
 
     @app.get("/api/broadcast")
     async def broadcast_status():
-        """PC 스피커 방송(관제 TTS, `4.8.2`)의 음량·무음 상태. 로봇 스피커(`/api/command/sound`)와는 별개다.
+        """PC 스피커 방송(관제 TTS)의 음량·무음 상태. 로봇 스피커(`/api/command/sound`)와는 별개다.
 
         방송기가 없으면(piper 미설치 등) `available: false` — 화면은 «방송 없음» 을 보여 준다.
         """
@@ -566,7 +566,7 @@ def create_app(
         async def zone_baseline(request: Request):
             """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
 
-            물건을 영구히 옮긴 경우의 문이다 (WBS 3.6.5). 런타임이 **다음 틱에** 지운다 —
+            물건을 영구히 옮긴 경우의 문이다. 런타임이 **다음 틱에** 지운다 —
             `/api/command/alarm` 과 같은 예약이다. `zones.ids` 에 없는 구역은
             `accepted=false` 로 돌려준다. ⚠️ **경보(L3)는 풀지 않는다** — 그쪽 문이 따로 있다.
             """
@@ -597,7 +597,7 @@ def create_app(
 
         @app.post("/api/command/sound")
         async def sound(request: Request):
-            """`{"track": 0..3000}` — 로봇 MP3 모듈 트랙 재생, 0 = 정지 (WBS 4.7.21 ⑤).
+            """`{"track": 0..3000}` — 로봇 MP3 모듈 트랙 재생, 0 = 정지.
 
             음성 프로세스(`robotlink.play_track`)가 자기 발화를 로봇 스피커로 트는
             문이다. **FAILSAFE 래치 중에도 받는다**(펌웨어와 같다). 범위 밖은
@@ -636,7 +636,7 @@ def create_app(
             """`{"result": "ok"|"fail"|"pending", "captured_at_ms"?: int}` — 음성 암구호 경로.
 
             대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
-            옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다 (WBS 3.8.2).
+            옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다.
 
             `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이며 선택이다.
             싣고 오면 런타임이 `AUTH_WAIT` 가 열린 시각과 견주어 **창이 열리기
@@ -843,7 +843,7 @@ def serving(app: FastAPI, port: int) -> Iterator[uvicorn.Server]:
         thread = threading.Thread(target=run, name="dashboard", daemon=True)
         thread.start()
         try:
-            # 첫 기동은 import·모델 준비로 5초를 넘긴 적이 있다 (2026-09-23 확인 서버).
+            # 첫 기동은 import·모델 준비로 5초를 넘긴 적이 있다 (확인 서버 실측).
             if not ready.wait(15) or not server.started:
                 raise RuntimeError("Dashboard startup failed") from (
                     failures[0] if failures else None
