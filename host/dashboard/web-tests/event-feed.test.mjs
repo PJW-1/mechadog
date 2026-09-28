@@ -160,3 +160,11 @@ test('mode, judgement, warning and reason reach the page instead of being droppe
   // 형식이 다르면 지어내지 않고 비운다.
   assert.equal(decodeEventMessage(event(12, {judgement: [1, 2]})).judgement, null);
 });
+
+test('a broadcast TTS sentence (4.8.2) reaches the page; missing or malformed becomes null', () => {
+  // `BlackboxEntry` 가 frozen 이라 `4.8.1` 은 최상위가 아니라 judgement 안에 sentence 를 싣는다.
+  const parsed = decodeEventMessage(event(13, {judgement: {sentence: '2번 구역에서 사람을 확인했습니다.'}}));
+  assert.equal(parsed.sentence, '2번 구역에서 사람을 확인했습니다.');
+  assert.equal(decodeEventMessage(event(14)).sentence, null);
+  assert.equal(decodeEventMessage(event(15, {judgement: {sentence: 7}})).sentence, null);
+});

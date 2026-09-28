@@ -317,6 +317,10 @@ def validate_base_config(config: dict[str, Any]) -> None:
         yaw = lidar["mount_yaw_deg"]
         if not _finite_number(yaw) or not 0 <= float(yaw) < 360:
             raise ConfigError("lidar.mount_yaw_deg 는 0 이상 360 미만이어야 함")
+    if isinstance(lidar, dict) and "angle_direction" in lidar:
+        direction = lidar["angle_direction"]
+        if type(direction) is not int or direction not in (-1, 1):
+            raise ConfigError("lidar.angle_direction 은 -1 또는 1 이어야 함")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")

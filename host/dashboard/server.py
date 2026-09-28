@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from host.behavior.mission import available_modes
+from host.cloud.broadcast import Broadcaster
 from host.dashboard.commands import CommandService
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
@@ -326,6 +327,7 @@ def create_app(
     vision: Callable[[], Any] | None = None,
     event_snapshot: Callable[[str], bytes | None] | None = None,
     policy: dict[str, Any] | None = None,
+    broadcast: Broadcaster | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -450,15 +452,55 @@ def create_app(
                 frames(), media_type="multipart/x-mixed-replace; boundary=frame"
             )
 
-    if commands is not None:
+    def _rejected_origin(request: Request) -> JSONResponse | None:
+        origin = request.headers.get("origin")
+        if origin is None:
+            return None  # 브라우저가 아닌 도구(curl·시험)는 출처를 붙이지 않는다
+        if origin in _local_origins(request.url.port or 80):
+            return None
+        return JSONResponse({"error": "origin"}, status_code=403)
 
-        def _rejected_origin(request: Request) -> JSONResponse | None:
-            origin = request.headers.get("origin")
-            if origin is None:
-                return None  # 브라우저가 아닌 도구(curl·시험)는 출처를 붙이지 않는다
-            if origin in _local_origins(request.url.port or 80):
-                return None
-            return JSONResponse({"error": "origin"}, status_code=403)
+    @app.get("/api/broadcast")
+    async def broadcast_status():
+        """PC 스피커 방송(관제 TTS, `4.8.2`)의 음량·무음 상태. 로봇 스피커(`/api/command/sound`)와는 별개다.
+
+        방송기가 없으면(piper 미설치 등) `available: false` — 화면은 «방송 없음» 을 보여 준다.
+        """
+        if broadcast is None:
+            return {"available": False}
+        return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
+
+    @app.post("/api/broadcast")
+    async def broadcast_update(request: Request):
+        """`{"volume"?: 0..100, "muted"?: bool}` — 온 필드만 바꾼다.
+
+        음량은 잘라 받지 않고 범위 밖이면 거절한다(화면이 슬라이더 범위를 지키므로
+        여기 오는 값은 사실상 실수·오작동이다). fleet 은 방송기가 하나라 이 경로로
+        바꾸면 모든 로봇 화면에 같은 상태가 보인다.
+        """
+        rejected = _rejected_origin(request)
+        if rejected is not None:
+            return rejected
+        if broadcast is None:
+            return JSONResponse({"error": "unavailable"}, status_code=404)
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body"}, status_code=400)
+        # 두 필드를 모두 검증한 뒤 적용한다 — 음량만 바꾸고 400 을 내면 화면과 실제가 어긋난다.
+        volume, muted = body.get("volume"), body.get("muted")
+        if "volume" in body and (
+            isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100
+        ):
+            return JSONResponse({"error": "volume"}, status_code=400)
+        if "muted" in body and not isinstance(muted, bool):
+            return JSONResponse({"error": "muted"}, status_code=400)
+        if "volume" in body:
+            broadcast.set_volume(volume)
+        if "muted" in body:
+            broadcast.set_muted(muted)
+        return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
+
+    if commands is not None:
 
         @app.post("/api/command/estop")
         async def estop(request: Request):
@@ -745,6 +787,7 @@ def running_server(
     vision: Callable[[], Any] | None = None,
     event_snapshot: Callable[[str], bytes | None] | None = None,
     policy: dict[str, Any] | None = None,
+    broadcast: Broadcaster | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     app = create_app(
@@ -755,6 +798,7 @@ def running_server(
         vision=vision,
         event_snapshot=event_snapshot,
         policy=policy,
+        broadcast=broadcast,
     )
     with serving(app, port) as server:
         yield server

@@ -13,10 +13,13 @@ from host.common.lidar_link import ScanDecoder, scan_of
 class Revolution:
     """Collect one rotation from independently valid UDP sectors."""
 
-    def __init__(self, bins: int, min_m: float, max_m: float) -> None:
+    def __init__(self, bins: int, min_m: float, max_m: float, angle_direction: int = 1) -> None:
+        if type(angle_direction) is not int or angle_direction not in (-1, 1):
+            raise ValueError("angle_direction must be -1 or 1")
         self.bins = bins
         self.min_m = min_m
         self.max_m = max_m
+        self.angle_direction = angle_direction
         self.ranges = [math.inf] * bins
         self.last_angle: float | None = None
         self.has_points = False
@@ -24,11 +27,11 @@ class Revolution:
     def add(self, points: tuple[tuple[float, float], ...]) -> list[list[float]]:
         completed = []
         for angle, distance in points:
-            if (
-                self.last_angle is not None
-                and angle < self.last_angle - math.pi
-                and self.has_points
-            ):
+            wrapped = self.last_angle is not None and (
+                (self.angle_direction == 1 and angle < self.last_angle - math.pi)
+                or (self.angle_direction == -1 and angle > self.last_angle + math.pi)
+            )
+            if wrapped and self.has_points:
                 completed.append(self.flush())
             self.last_angle = angle
             if self.min_m <= distance <= self.max_m:
@@ -55,12 +58,15 @@ def main() -> None:
             super().__init__("mechdog_scan_bridge")
             self.port = int(os.getenv("LIDAR_SCAN_PORT", "5201"))
             self.expected_device = os.getenv("LIDAR_DEVICE_ID", "")
+            yaw = float(os.getenv("LIDAR_MOUNT_YAW_DEG", "0"))
+            direction = int(os.getenv("LIDAR_ANGLE_DIRECTION", "1"))
             self.rotation = Revolution(
                 int(os.getenv("LIDAR_ANGLE_BINS", "450")),
                 float(os.getenv("LIDAR_RANGE_MIN_M", "0.12")),
                 float(os.getenv("LIDAR_RANGE_MAX_M", "8.0")),
+                direction,
             )
-            self.decoder = ScanDecoder()
+            self.decoder = ScanDecoder(yaw, direction)
             self.publisher = self.create_publisher(LaserScan, "/scan", 10)
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.bind(("0.0.0.0", self.port))

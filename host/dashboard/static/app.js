@@ -94,6 +94,8 @@ if(operations.connected){
  const frame=$('vision-frame'),fpv=$('fpv');
  frame.hidden=false;
  if(fpv)fpv.hidden=true;
+ // 관제 PC 방송 음량 · 무음 초기값 (4.8.2) — 방송기는 플릿 전체가 하나라 아무 로봇의 서버에서나 받는다.
+ fetch(bases[ROBOTS[0]]+'/api/broadcast').then(response=>response.ok?response.json():null).then(state=>{if(state)operations.setBroadcast(state)}).catch(()=>{});
  await Promise.all(Object.entries(bases).map(async([robot,base])=>{
   const health=await fetch(base+'/health').then(response=>response.json()).catch(()=>null);
   visionAvailable[robot]=health?.vision_clients!==null;
@@ -105,7 +107,10 @@ if(operations.connected){
   // 무관하게 항상 있다. 백로그를 먼저 넘겨주므로 늦게 열어도 최근 사건을 본다.
   const ws=base.replace(/^http/,'ws');
   feeds.push(new EventFeed({url:ws+'/ws/events',
-   onEvent:event=>operations.ingestLiveEvent(event,base,robot),
+   // 관제 방송 TTS 문장(4.8.2)이 실려 오면 화면 자막으로도 잠깐 띄운다 — 소리는
+   // Host PC 스피커(`host/cloud/broadcast.py`)가 이미 낸다. 접속·재접속 때 서버가
+   // 먼저 넘겨주는 지난 사건(백로그)까지 띄우지 않도록 방금(15초 안) 난 사건만 띄운다.
+   onEvent:event=>{operations.ingestLiveEvent(event,base,robot);if(event.sentence&&Date.now()-event.ts_ms<15000)toast(event.sentence)},
    onGap:dropped=>operations.noteEventGap(dropped),
    onStatus:status=>operations.setEventFeed(status,robot)}));
   // 로봇 상태 게이지 (WBS 4.6.2) — /ws/telemetry 는 표시용 10Hz 다. 수신률은 새 seq 로만 센다.

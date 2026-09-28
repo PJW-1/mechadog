@@ -118,7 +118,9 @@ def encode_scan(
     )
 
 
-def _valid_point(raw: Any, mount_yaw_rad: float = 0.0) -> tuple[float, float] | None:
+def _valid_point(
+    raw: Any, mount_yaw_rad: float = 0.0, angle_direction: int = 1
+) -> tuple[float, float] | None:
     """점 하나를 검사해 내부 단위로 바꾼다. 기형이면 `None` (규칙 ⑥).
 
     ⚠️ **길이를 먼저 본다.** `raw[0]` 을 먼저 만지면 `points: [3]` 같은 입력에서
@@ -139,12 +141,12 @@ def _valid_point(raw: Any, mount_yaw_rad: float = 0.0) -> tuple[float, float] | 
             return None
     # 설치각 보정은 **여기 한 곳에서만** 한다. 두 곳에서 돌리면 합쳐져서
     # 지도가 통째로 어긋나고, 그 원인을 찾는 데 오래 걸린다.
-    angle_rad = math.radians(float(angle_deg)) + mount_yaw_rad
+    angle_rad = angle_direction * math.radians(float(angle_deg)) + mount_yaw_rad
     return angle_rad % (2 * math.pi), float(dist_mm) / 1000.0
 
 
 def points_from_wire(
-    points_wire: list[list[float]], mount_yaw_deg: float = 0.0
+    points_wire: list[list[float]], mount_yaw_deg: float = 0.0, angle_direction: int = 1
 ) -> tuple[tuple[float, float], ...]:
     """전선 형식(`[angle_deg, dist_mm]`)을 내부 단위로 바꾼다.
 
@@ -156,8 +158,10 @@ def points_from_wire(
     돌아간 채로 붙었다*는 사실을 적는 것인데, 시뮬레이션은 로봇 기준 각도를 바로
     만들어 내므로 보정할 설치각이 없다. 여기에 실기 값을 넣으면 두 번 돌아간다.
     """
+    if type(angle_direction) is not int or angle_direction not in (-1, 1):
+        raise ValueError("angle_direction 은 -1 또는 1 이어야 함")
     mount_yaw_rad = math.radians(mount_yaw_deg)
-    converted = (_valid_point(point, mount_yaw_rad) for point in points_wire)
+    converted = (_valid_point(point, mount_yaw_rad, angle_direction) for point in points_wire)
     return tuple(point for point in converted if point is not None)
 
 
@@ -169,10 +173,13 @@ class ScanDecoder:
     재부팅하면 `seq` 가 1 로 돌아온다.
     """
 
-    def __init__(self, mount_yaw_deg: float = 0.0) -> None:
+    def __init__(self, mount_yaw_deg: float = 0.0, angle_direction: int = 1) -> None:
+        if type(angle_direction) is not int or angle_direction not in (-1, 1):
+            raise ValueError("angle_direction 은 -1 또는 1 이어야 함")
         self._gate = _SeqGate()
         #: 라이다가 로봇에 돌아간 채로 붙은 각도. `lidar.mount_yaw_deg` 가 정본이다.
         self._mount_yaw_rad = math.radians(mount_yaw_deg)
+        self._angle_direction = angle_direction
 
     def last_seq(self, device_id: str, boot_id: str) -> int | None:
         return self._gate.last_seq((device_id, boot_id))
@@ -226,7 +233,7 @@ class ScanDecoder:
         points: list[tuple[float, float]] = []
         dropped = 0
         for raw_point in msg["points"]:
-            point = _valid_point(raw_point, self._mount_yaw_rad)
+            point = _valid_point(raw_point, self._mount_yaw_rad, self._angle_direction)
             if point is None:
                 dropped += 1
             else:

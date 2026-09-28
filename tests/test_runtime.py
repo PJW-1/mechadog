@@ -594,6 +594,121 @@ def test_confirmed_person_is_recorded_once_and_published(
     assert entries[0].detections[0]["label"] == "person"
 
 
+# ── 상황 서술 문장 (4.8.1) — 강제 차단 시험 ──────────────────────────────────
+#
+# `describe`·`announcer` 는 관제용 부가 기능이다. 둘 중 무엇이 죽어도 사건은
+# 기록·발행되고 10Hz 제어 틱은 계속 돌아야 한다 (WBS 4.8.1 DoD).
+
+
+def test_situation_describe_failure_does_not_block_recording(
+    config: dict, clock: FakeClock, tmp_path, monkeypatch
+) -> None:
+    """`describe` 가 예외를 던져도 사건은 그대로 기록·발행되고 틱은 계속 돈다."""
+    monkeypatch.setattr(
+        "host.runtime.describe",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    published = []
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        blackbox=blackbox,
+        event_publisher=published.append,
+        mission=Mission(local, mode="factory"),
+    )
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    entries = blackbox.feed()
+    assert len(entries) == 1, "문장 생성이 죽어도 기록은 남는다"
+    assert published == entries
+    assert "sentence" not in entries[0].judgement
+
+    # 제어 틱이 죽지 않았는지 — 그 다음 틱도 예외 없이 돈다.
+    runtime.tick(200)
+
+
+def test_situation_announcer_failure_does_not_block_recording(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    """방송기가 예외를 던져도 사건은 그대로 기록·발행되고 틱은 계속 돈다."""
+
+    def broken_announcer(_sentence: str) -> None:
+        raise RuntimeError("speaker offline")
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    published = []
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        blackbox=blackbox,
+        event_publisher=published.append,
+        announcer=broken_announcer,
+        mission=Mission(local, mode="factory"),
+    )
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    entries = blackbox.feed()
+    assert len(entries) == 1, "방송이 죽어도 기록은 남는다"
+    assert published == entries
+    assert (
+        entries[0].judgement["sentence"]
+        == "사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."
+    )
+
+    # 제어 틱이 죽지 않았는지 — 그 다음 틱도 예외 없이 돈다.
+    runtime.tick(200)
+
+
+def test_situation_announcer_fires_without_blackbox(config: dict, clock: FakeClock) -> None:
+    """블랙박스가 없어도(`blackbox=None`) 방송은 나간다 — 관제가 그 순간 들어야
+    할 경고이지 블랙박스 파일이 아니다.
+    """
+    announced: list[str] = []
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        announcer=announced.append,
+        mission=Mission(config, mode="factory"),
+    )
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    assert announced == ["사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."]
+
+
+def test_guard_mode_does_not_announce_a_fall(config: dict, clock: FakeClock, tmp_path) -> None:
+    """경비 모드의 쓰러짐은 기록만 남긴다 — 방송·자막 문장을 붙이지 않는다 (2026-09-27 사용자 결정)."""
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    announced: list[str] = []
+    runtime = Runtime(
+        local, device_id=DEVICE, clock=clock, blackbox=blackbox, announcer=announced.append
+    )
+    assert runtime.mission.mode == "guard"
+    result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
+
+    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+
+    assert announced == []
+    entries = blackbox.feed()
+    assert len(entries) == 1, "기록은 그대로 남는다"
+    assert "sentence" not in entries[0].judgement
+
+
 # ── 대응 에스컬레이션 배선 (3.8.3) ──────────────────────────
 #
 # 단계기 자체는 `test_escalation.py` 가 전수로 본다. 여기서 보는 것은 **연결**이다 —
@@ -2252,6 +2367,8 @@ def test_a_confirmed_removal_is_recorded_for_the_dashboard(
     assert entries[0].judgement == {
         "zone": "A",
         "changes": [{"kind": "removed", "label": "bottle", "count": 1, "cell": [1, 0]}],
+        # `4.8.1` — 관제 스피커로 읽힐 한국어 한 문장이 기록에도 함께 실린다.
+        "sentence": "A 구역에서 물건이 반출된 것으로 보입니다.",
     }
     assert entries[0].state == "ZONE_INSPECT", "전이보다 먼저 남긴다 (`_observe_fallen` 과 같다)"
 
@@ -2710,7 +2827,15 @@ def test_a_hazard_read_twice_is_confirmed_on_the_first_visit(
     assert runtime.behavior.state == "ALERT"
     assert runtime.escalation.level is Level.L3
     (entry,) = [e for e in blackbox.feed() if e.event_type == "zone_changed"]
-    assert set(entry.judgement) == {"zone", "grid", "changes", "baseline_ms", "baseline_snapshot"}
+    # `4.8.1` — `sentence` 는 상황 서술 문장이다.
+    assert set(entry.judgement) == {
+        "zone",
+        "grid",
+        "changes",
+        "baseline_ms",
+        "baseline_snapshot",
+        "sentence",
+    }
     assert entry.judgement["zone"] == "A"
     assert entry.judgement["grid"] == [3, 3], "이번 방문에 뜬 기준을 싣는다"
     assert entry.judgement["changes"] == [{"kind": kind, "source": "vlm"}]
@@ -3463,7 +3588,7 @@ def test_factory_fall_raises_l3_without_moving_the_state(
 ) -> None:
     """공장 모드의 확정된 쓰러짐은 **경보**다 (FR-9 · 아키텍처 3.1) — 기록만 하면 아무도 모른다.
 
-    확정은 의심 뒤 누움 누적과 판독 «예» 둘 다다 (S4). `_fell` 이 매 프레임 후보를 싣는다.
+    확정은 의심 뒤에 건 판독의 «예» 두 번이다 (S4). `_fell` 이 매 프레임 후보를 싣는다.
     """
     from copy import deepcopy
 
@@ -3478,11 +3603,13 @@ def test_factory_fall_raises_l3_without_moving_the_state(
         blackbox=EventBlackbox(cfg),
         mission=Mission(cfg, mode="factory"),
     )
-    _scripted(runtime, {"person_down": True})
+    _scripted(runtime, *[{"person_down": True}] * 50)
     runtime.start_patrol(clock.ms)
     _fell(runtime, vision, seq=1, at_ms=100, changed=False)
-    state = runtime.behavior.state
-    for seq in range(2, 2 + int(cfg["fsm"]["fall_suspect_hits"])):
+    seq = 1
+    while runtime.escalation.level is not Level.L3 and seq < 40:
+        seq += 1
+        state = runtime.behavior.state
         _fell(runtime, vision, seq=seq, at_ms=seq * 100, changed=seq == 2)
 
     assert runtime.escalation.level is Level.L3
@@ -3507,7 +3634,7 @@ def test_factory_holds_ppe_while_a_fall_is_a_candidate(config: dict, clock: Fake
         vision=vision,
         mission=Mission(config, mode="factory"),
     )
-    _scripted(runtime, {"person_down": True})
+    _scripted(runtime, *[{"person_down": True}] * 50)
     runtime.start_patrol(0)
 
     def lying(seq: int, ppe: PpeVerdict, *, fallen: bool = False, changed: bool = False) -> None:
@@ -3527,6 +3654,10 @@ def test_factory_holds_ppe_while_a_fall_is_a_candidate(config: dict, clock: Fake
     lying(3, PpeVerdict(1, VIOLATION, confirmed=True))
     assert runtime.escalation.level is not Level.L3, "위반이 쓰러짐보다 먼저 L3 를 잡았다"
     lying(4, PpeVerdict(1, VIOLATION, confirmed=True), fallen=True, changed=True)
+    seq = 4
+    while runtime.escalation.level is not Level.L3 and seq < 40:
+        seq += 1
+        lying(seq, PpeVerdict(1, VIOLATION, confirmed=True), fallen=True)
     assert runtime.escalation.level is Level.L3
     assert runtime.escalation.reason == "PERSON_DOWN"
 
@@ -3719,6 +3850,15 @@ DOWN = {"person_down": True}
 UP = {"person_down": False}
 
 
+def _until_alarm(runtime: Runtime, vision: FakeVision, at_ms: int, **frame) -> int:
+    """쓰러짐을 확정할 때까지 0.1초마다 누운 사람 한 프레임씩 본다. 확정한 시각을 돌려준다."""
+    for at in range(at_ms, at_ms + 5000, 100):
+        _floor(runtime, vision, at, lying=True, **frame)
+        if runtime.escalation.reason == "PERSON_DOWN":
+            return at
+    raise AssertionError("쓰러짐을 확정하지 못했다")
+
+
 @pytest.mark.usefixtures("unlock_modes")
 def test_factory_ppe_violation_warns_then_returns_to_patrol_without_confirm(
     config: dict, clock: FakeClock
@@ -3764,29 +3904,31 @@ def test_a_lying_candidate_suspects_a_fall_and_approaches(config: dict, clock: F
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_a_fall_is_confirmed_only_by_hits_and_a_later_reading(
-    config: dict, clock: FakeClock
-) -> None:
-    """확정 = 의심 뒤 누움 누적 `fsm.fall_suspect_hits` 회 **그리고** 의심 뒤에 건 판독의
-    «예» (S4). 누움은 끊겨도 누적한다. 확정하면 `PERSON_DOWN` 이 L3 를 올리고 기록이 남는다."""
-    need = int(config["fsm"]["fall_suspect_hits"])
-    runtime, vision, fake, recorded = _factory_runtime(config, clock, DOWN)
+def test_a_fall_is_confirmed_by_readings_a_gap_apart(config: dict, clock: FakeClock) -> None:
+    """확정 = 의심 뒤에 건 판독의 «예» `fsm.fall_confirm_vlm_yes` 회, 센 «예» 끼리는
+    `fsm.fall_confirm_gap_ms` 이상 떨어진 프레임이다 (2026-09-28 사용자 결정 · S4).
+
+    의심 중에는 판독이 끝날 때마다 다시 묻지만, 1초 안의 «예» 는 거의 같은 사진이라 하나로
+    센다. 누움 누적은 확정에 쓰지 않는다 — YOLOX 는 누운 사람을 거의 못 잡는다(4.8.0 벤치
+    10장 중 1장). 확정하면 `PERSON_DOWN` 이 L3 를 올리고 기록이 남는다."""
+    need = int(config["fsm"]["fall_confirm_vlm_yes"])
+    gap = int(config["fsm"]["fall_confirm_gap_ms"])
+    runtime, vision, fake, recorded = _factory_runtime(config, clock, *[DOWN] * 100)
     _floor(runtime, vision, 100, lying=True)  # 의심 진입 — 판독을 곧바로 건다
     assert runtime.escalation.level is Level.L1
-    assert fake.keys == [("person_down",)], "의심 판독은 `person_down` 하나만 묻는다"
-    at = 100
-    for hit in range(1, need):
-        at += 100
-        _floor(runtime, vision, at, lying=True)
-        at += 100
-        _floor(runtime, vision, at, lying=False)  # 끊겨도 누적이다
-        assert runtime.escalation.level is Level.L1, f"누움 {hit}회로 확정했다"
-    at += 100
-    _floor(runtime, vision, at, lying=True)
+    assert fake.keys[0] == ("person_down",), "의심 판독은 `person_down` 하나만 묻는다"
+    # 센 «예» 는 100, 100 + gap, … 에 건 프레임이다. 마지막 것은 다음 틱에 줍는다.
+    last = 100 + (need - 1) * gap
+    for at in range(200, last + 100, 100):
+        _floor(runtime, vision, at)  # 누움 후보가 없어도 판독만으로 확정한다
+        assert runtime.escalation.level is Level.L1, f"{at}ms — 간격이 차기 전에 확정했다"
+    _floor(runtime, vision, last + 100)
     assert runtime.escalation.level is Level.L3
     assert runtime.escalation.reason == "PERSON_DOWN"
     falls = [entry for kind, entry in recorded if kind == "person_fallen"]
-    assert len(falls) == 1 and falls[0]["judgement"]["raw"] == "yes"
+    assert len(falls) == 1
+    assert falls[0]["judgement"]["raw"] == "yes"
+    assert falls[0]["judgement"]["vlm_yes"] == need
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3824,15 +3966,16 @@ def test_a_patrol_reading_asks_only_person_down_every_interval(
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_a_reading_alone_suspects_but_never_alarms(config: dict, clock: FakeClock) -> None:
-    """판독 «예» 는 의심 신호다 (S3·S7). 박스가 없으면 제자리에 서고, 누움이 없으면 L3 가
-    아니다. 의심에서는 판독이 끝날 때마다 다시 묻는다(S6).
-
-    ⚠️ **판독이 계속 «예» 면 대상을 보고 있는 것이다** — 박스가 없다고 5초 상실로 풀면
-    «검출될 때까지 쳐다본다» 가 깨진다. 이때는 제한 시간(S5)으로만 순찰에 돌아간다."""
+def test_a_reading_alone_suspects_and_its_entry_answer_does_not_count(
+    config: dict, clock: FakeClock
+) -> None:
+    """판독 «예» 는 의심 신호다 (S3). 박스가 없으면 제자리에 서서 판독이 끝날 때마다 다시
+    묻는다(S6). **의심에 들게 한 «예» 는 확정에 세지 않는다** — 그 뒤로
+    `fsm.fall_confirm_vlm_yes` 회를 더 받아야 한다 (2026-09-28 사용자 결정 «진입 뒤 2번 더»).
+    간격은 진입 판독의 프레임부터 잰다."""
     every = int(config["vision"]["vlm"]["patrol_interval_ms"])
-    lost = int(config["fsm"]["target_lost_timeout_s"]) * 1000
-    limit = int(config["fsm"]["fall_suspect_timeout_ms"])
+    need = int(config["fsm"]["fall_confirm_vlm_yes"])
+    gap = int(config["fsm"]["fall_confirm_gap_ms"])
     runtime, vision, fake, _ = _factory_runtime(config, clock, *[DOWN] * 400)
     at = 100
     while runtime.behavior.state == "PATROL" and at < 3 * every:
@@ -3840,19 +3983,14 @@ def test_a_reading_alone_suspects_but_never_alarms(config: dict, clock: FakeCloc
         at += 100
     assert runtime.behavior.state == "ALERT", "판독 «예» 로 의심에 들지 않았다"
     assert runtime.escalation.level is Level.L1
-    entered = at - 100
-    for tick in range(5):
-        _floor(runtime, vision, at + tick * 100, person=False)
-    assert fake.submitted >= 4, "의심 중에는 판독이 끝날 때마다 다시 묻는다"
-    assert runtime.escalation.level is Level.L1, "누움 없이 판독만으로 확정했다"
-    for now in range(at + 500, entered + lost + 1000, 100):
+    asked = at - 200  # 진입 판독은 의심에 든 틱의 앞 틱에 걸었다
+    last = asked + need * gap
+    for now in range(at, last + 100, 100):
         _floor(runtime, vision, now, person=False)
-    assert runtime.behavior.state == "ALERT", "판독이 계속 «예» 인데 5초 상실로 풀었다"
-    assert runtime.escalation.level is Level.L1
-    for now in range(entered + lost + 1000, entered + limit + 300, 100):
-        _floor(runtime, vision, now, person=False)
-    assert runtime.behavior.state == "PATROL", "제한 시간이 지났는데 의심에 머문다"
-    assert runtime.escalation.level is Level.L0
+        assert runtime.escalation.level is Level.L1, f"진입 뒤 {now - asked}ms 만에 확정했다"
+    assert fake.submitted >= need * gap // 100, "의심 중에는 판독이 끝날 때마다 다시 묻는다"
+    _floor(runtime, vision, last + 100, person=False)
+    assert runtime.escalation.reason == "PERSON_DOWN", "누움 없이 판독만으로 확정하지 못했다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3874,39 +4012,30 @@ def test_an_unconfirmed_suspect_times_out_back_to_patrol(config: dict, clock: Fa
 @pytest.mark.usefixtures("unlock_modes")
 def test_confirming_a_fall_alarm_returns_to_patrol(config: dict, clock: FakeClock) -> None:
     """관제 확인(`confirm_alarm`) → 파란 눈 + 순찰 복귀 (S4). 누운 사람은 스스로 떠나지 않는다."""
-    need = int(config["fsm"]["fall_suspect_hits"])
-    runtime, vision, _, _ = _factory_runtime(config, clock, DOWN)
-    for step in range(need + 1):
-        _floor(runtime, vision, 100 + step * 100, lying=True)
+    runtime, vision, _, _ = _factory_runtime(config, clock, *[DOWN] * 50)
+    done = _until_alarm(runtime, vision, 100)
     assert runtime.escalation.level is Level.L3
-    assert runtime.confirm_alarm(1000) is True
+    assert runtime.confirm_alarm(done + 100) is True
     assert runtime.escalation.level is Level.L0
     assert runtime.behavior.state == "PATROL", "경보를 확인했는데 순찰로 돌아가지 않았다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_gap_frames_without_a_box_do_not_count_as_lying_hits(
-    config: dict, clock: FakeClock
-) -> None:
-    """확정의 YOLOX 누적은 **박스가 있는 누움**만 센다 (S4 «YOLOX 3회 검출»).
-
-    `FallenGate` 는 박스가 사라진 뒤 `gap_ms` 동안에도 `candidate` 를 참으로 둔다(aspect 는
-    `None`). 이것까지 세면 검출 한 번 뒤의 빈 1초가 10Hz 로 3회를 채워, VLM «예» 하나와
-    함께 곧바로 L3 가 된다."""
-    from dataclasses import replace
-
-    need = int(config["fsm"]["fall_suspect_hits"])
-    runtime, vision, _, _ = _factory_runtime(config, clock, *[DOWN] * 50)
-    _floor(runtime, vision, 100, lying=True)  # 의심 진입
-    for at in range(200, 200 + (need + 3) * 100, 100):
-        vision.result = replace(
-            vision_result(at, at, present=False, hits=0, last_seen_ms=None),
-            fallen=FallenVerdict(
-                fallen=False, changed=False, candidate=True, aspect=None, still_ms=at
-            ),
-        )
-        runtime.tick(at)
-    assert runtime.escalation.level is Level.L1, "박스 없는 빈 프레임으로 누움 누적을 채웠다"
+def test_a_no_between_readings_does_not_reset_the_count(config: dict, clock: FakeClock) -> None:
+    """센 «예» 사이에 «아니오» 가 끼어도 센 것은 이어진다 — 누움 누적이 «끊겨도 누적» 이던
+    것과 같다 (S4). 판독은 0.1초마다 한 번 돈다(`ScriptedVlm`)."""
+    need = int(config["fsm"]["fall_confirm_vlm_yes"])
+    gap = int(config["fsm"]["fall_confirm_gap_ms"])
+    per_gap = gap // 100
+    script = [DOWN, *[UP] * (per_gap - 1)] * need
+    runtime, vision, _, _ = _factory_runtime(config, clock, *script)
+    _floor(runtime, vision, 100, lying=True)  # 의심 진입 — 여기서 건 판독이 첫 «예» 다
+    last = 100 + (need - 1) * gap
+    for at in range(200, last + 100, 100):
+        _floor(runtime, vision, at, lying=True)
+        assert runtime.escalation.level is Level.L1, f"{at}ms — 간격이 차기 전에 확정했다"
+    _floor(runtime, vision, last + 100, lying=True)
+    assert runtime.escalation.reason == "PERSON_DOWN", "«아니오» 가 센 «예» 를 지웠다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3918,7 +4047,6 @@ def test_a_fall_confirmed_during_a_ppe_warning_announces_its_own_sentence(
     엣지를 걸면 «작업자가 쓰러졌습니다» 가 나가지 않는다."""
     from host.dashboard.state import DashboardState
 
-    need = int(config["fsm"]["fall_suspect_hits"])
     board = DashboardState("mechdog-02", stale_after_ms=3000)
     vision = FakeVision()
     runtime = Runtime(
@@ -3929,12 +4057,11 @@ def test_a_fall_confirmed_during_a_ppe_warning_announces_its_own_sentence(
         mission=Mission(config, mode="factory"),
         dashboard=board,
     )
-    _scripted(runtime, *[DOWN] * 20)
+    _scripted(runtime, *[DOWN] * 50)
     runtime.start_patrol(0)
     _floor(runtime, vision, 100, ppe=PpeVerdict(1, VIOLATION, confirmed=True))
     assert runtime.escalation.level is Level.L3 and not runtime.escalation.latched
-    for step in range(need + 1):
-        _floor(runtime, vision, 200 + step * 100, lying=True)
+    _until_alarm(runtime, vision, 200)
     assert runtime.escalation.latched, "경고 중 쓰러짐 확정이 래치되지 않았다"
     events, _ = board.events_since(0)
     warnings = [e["warning"] for e in events if e["event"] == "escalation_changed"]
@@ -3971,14 +4098,13 @@ def test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm(
 ) -> None:
     """관제가 쓰러짐 경보를 확인하고 순찰로 돌려보낸 뒤에도 쿨다운 동안은 같은 사람을 다시
     의심하지 않는다 — 확인하자마자 같은 경보가 다시 울리면 확인할 수가 없다."""
-    need = int(config["fsm"]["fall_suspect_hits"])
     cooldown = int(config["fsm"]["fall_resuspect_cooldown_ms"])
     runtime, vision, _, _ = _factory_runtime(config, clock, *[DOWN] * 1000)
-    for step in range(need + 1):
-        _floor(runtime, vision, 100 + step * 100, lying=True)
+    done = _until_alarm(runtime, vision, 100)
     assert runtime.escalation.level is Level.L3
-    assert runtime.confirm_alarm(1000) is True
-    for now in range(1100, 1000 + cooldown, 100):
+    back = done + 100
+    assert runtime.confirm_alarm(back) is True
+    for now in range(back + 100, back + cooldown, 100):
         _floor(runtime, vision, now, lying=True)
-        assert runtime.escalation.level is Level.L0, f"확인 {now - 1000}ms 만에 다시 의심했다"
+        assert runtime.escalation.level is Level.L0, f"확인 {now - back}ms 만에 다시 의심했다"
     assert runtime.behavior.state == "PATROL"

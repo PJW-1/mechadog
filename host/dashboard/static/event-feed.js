@@ -56,6 +56,9 @@ export function decodeEventMessage(data) {
     reason: typeof message.reason === 'string' ? message.reason : null,
     trigger: typeof message.trigger === 'string' ? message.trigger : null,
     previous: typeof message.previous === 'string' ? message.previous : null,
+    // 관제 방송 TTS 문장 (4.8.2). `4.8.1` 이 `judgement.sentence` 에 싣는다
+    // (BlackboxEntry 가 frozen 이라 최상위가 아니라 judgement 안에 병합했다). 없으면 null.
+    sentence: message.judgement && typeof message.judgement.sentence === 'string' ? message.judgement.sentence : null,
   };
 }
 

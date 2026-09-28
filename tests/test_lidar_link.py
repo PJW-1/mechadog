@@ -327,3 +327,48 @@ def test_mount_yaw_does_not_touch_distance() -> None:
     """돌리는 것은 각도뿐이다. 거리까지 건드리면 지도가 부풀거나 줄어든다."""
     ((_angle, dist),) = points_from_wire([[123.0, 2500]], 270.0)
     assert dist == pytest.approx(2.5)
+
+
+@pytest.mark.parametrize(
+    ("raw_deg", "robot_deg"),
+    [(270, 0), (180, 90), (90, 180), (0, 270)],
+)
+def test_mounted_field_bearings(raw_deg: int, robot_deg: int) -> None:
+    """2026-09-26 물통 차분의 정면·왼쪽·뒤·오른쪽을 보존한다."""
+    ((angle, distance),) = points_from_wire([[raw_deg, 1000]], 270, -1)
+    assert math.degrees(angle) == pytest.approx(robot_deg, abs=1e-9)
+    assert distance == pytest.approx(1.0)
+
+
+def test_decoder_reverses_raw_direction_for_mounted_sensor() -> None:
+    row = {
+        "type": "SCAN",
+        "device_id": "lidar-a",
+        "boot_id": "7f3a91c2e8b40d65",
+        "seq": 1,
+        "ts": 1756800000000,
+        "points": [[270, 622], [180, 460], [90, 1696], [0, 1935]],
+    }
+    scan = scan_of(ScanDecoder(270, -1).validate(row))
+    assert scan is not None
+    assert [round(math.degrees(angle)) for angle, _ in scan.points] == [0, 90, 180, 270]
+
+
+def test_invalid_angle_direction_is_rejected() -> None:
+    with pytest.raises(ValueError, match="angle_direction"):
+        ScanDecoder(270, 0)
+    with pytest.raises(ValueError, match="angle_direction"):
+        points_from_wire([[270, 1000]], 270, 0)
+
+
+def test_repo_lidar_config_maps_measured_front_and_sides() -> None:
+    """운영 설정값이 실측 방위표와 같은 변환을 선택해야 한다."""
+    from host.common.config import load_base_config
+
+    lidar = load_base_config()["lidar"]
+    points = points_from_wire(
+        [[270, 622], [180, 460], [90, 1696], [0, 1935]],
+        lidar["mount_yaw_deg"],
+        lidar["angle_direction"],
+    )
+    assert [round(math.degrees(angle)) for angle, _ in points] == [0, 90, 180, 270]
