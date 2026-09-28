@@ -553,3 +553,34 @@ def test_pipeline_mock_summarize_counts_false_violation_and_unknown():
     assert s["undetermined_pct"] == pytest.approx(40.0)
     assert s["undetermined_reasons"] == {"머리 미검출": 2}
     assert s["effective_accuracy_pct"] == pytest.approx(40.0)
+
+
+def test_mendeley_near_catches_horizontally_flipped_copy():
+    import cv2
+
+    rng = np.random.default_rng(3)
+    base = cv2.GaussianBlur(rng.integers(0, 255, (480, 640, 3), dtype=np.uint8), (31, 31), 0)
+    pool = [mendeley_prepare.hashes_with_flip(base)]
+    flipped = cv2.flip(base, 1)
+    assert mendeley_prepare.near_any(mendeley_prepare.dhash(flipped), pool)
+
+
+def test_mendeley_read_names_refuses_empty_or_block_list(tmp_path):
+    yaml = tmp_path / "data.yaml"
+    yaml.write_text("nc: 2\nnames:\n  - Helmet\n  - Vest\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        mendeley_prepare.read_names(yaml)
+
+
+def test_mendeley_requires_contiguous_base_ids():
+    good = {"images": [{"id": 1}, {"id": 2}], "annotations": [{"id": 1}, {"id": 2}]}
+    mendeley_prepare.check_contiguous(good, "base")
+    bad = {"images": [{"id": 1}, {"id": 3}], "annotations": [{"id": 1}]}
+    with pytest.raises(SystemExit):
+        mendeley_prepare.check_contiguous(bad, "base")
+
+
+def test_mendeley_refuses_duplicate_basenames(tmp_path):
+    a, b = tmp_path / "train" / "x.jpg", tmp_path / "valid" / "x.jpg"
+    with pytest.raises(SystemExit):
+        mendeley_prepare.check_unique_names([a, b])

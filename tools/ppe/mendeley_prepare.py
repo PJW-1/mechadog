@@ -89,7 +89,12 @@ def read_names(data_yaml: Path) -> list[str]:
     for line in data_yaml.read_text(encoding="utf-8").splitlines():
         if line.strip().startswith("names:"):
             body = line.split(":", 1)[1].strip().strip("[]")
-            return [n.strip().strip("'\"") for n in body.split(",") if n.strip()]
+            names = [n.strip().strip("'\"") for n in body.split(",") if n.strip()]
+            # ⚠️ 블록 목록(`names:` 다음 줄에 `- A`)은 여기서 빈 목록이 된다. 빈 채로
+            # 넘기면 첫 라벨에서 IndexError 로 죽으므로 이유를 말하고 멈춘다.
+            if not names:
+                raise SystemExit(f"names 가 한 줄 목록이 아니다: {data_yaml}")
+            return names
     raise SystemExit(f"names 줄이 없다: {data_yaml}")
 
 
@@ -140,6 +145,35 @@ def near(value: int, pool: Sequence[int], limit: int = DHASH_MAX) -> bool:
     return any(hamming(value, other) <= limit for other in pool)
 
 
+def hashes_with_flip(image) -> tuple[int, int]:
+    """원본과 좌우 반전의 dHash. 공개 세트는 반전 증강본을 원본처럼 싣기도 한다."""
+    import cv2
+
+    return dhash(image), dhash(cv2.flip(image, 1))
+
+
+def near_any(value: int, pool: Sequence[tuple[int, int]], limit: int = DHASH_MAX) -> bool:
+    """`value` 가 풀의 원본이나 반전 중 하나와 닮았는지."""
+    return any(hamming(value, a) <= limit or hamming(value, b) <= limit for a, b in pool)
+
+
+def check_contiguous(coco: dict[str, Any], where: str) -> None:
+    """이어 붙일 COCO 의 id 가 1..N 인지. `add_image` 가 `len+1` 로 id 를 매기기 때문이다."""
+    for key in ("images", "annotations"):
+        ids = sorted(int(x["id"]) for x in coco[key])
+        if ids != list(range(1, len(ids) + 1)):
+            raise SystemExit(f"{where} 의 {key} id 가 1..N 이 아니다 — 이어 붙이면 id 가 겹친다")
+
+
+def check_unique_names(paths: Sequence[Path]) -> None:
+    """사람 박스 캐시는 파일 이름으로 찾는다. 분할이 달라도 이름이 겹치면 박스가 섞인다."""
+    seen: dict[str, Path] = {}
+    for path in paths:
+        if path.name in seen:
+            raise SystemExit(f"파일 이름이 겹친다: {seen[path.name]} · {path}")
+        seen[path.name] = path
+
+
 def split_valid(stems: Sequence[str], seed: int, share: float = MD_TEST_SHARE) -> dict[str, str]:
     """Mendeley valid 를 이미지 단위로 val/test 로 나눈다. 같은 시드면 같은 결과."""
     ordered = sorted(stems)
@@ -153,7 +187,7 @@ def list_images(folder: Path) -> list[Path]:
     return sorted(p for p in folder.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
 
 
-def rf_hashes(rf_raw: Path) -> list[int]:
+def rf_hashes(rf_raw: Path) -> list[tuple[int, int]]:
     import cv2
 
     out = []
@@ -161,7 +195,7 @@ def rf_hashes(rf_raw: Path) -> list[int]:
         for path in list_images(rf_raw / sub):
             image = imread_any(path, cv2.IMREAD_COLOR)
             if image is not None:
-                out.append(dhash(image))
+                out.append(hashes_with_flip(image))
     return out
 
 
@@ -233,6 +267,7 @@ def prepare(
     records += [("train", p) for p in train_imgs]
     order = {"test": 0, "val": 1, "train": 2}
     records.sort(key=lambda r: (order[r[0]], r[1].name))
+    check_unique_names([p for _, p in records])
 
     people = detect_people(
         [p for _, p in records], out.parent / f"{version}_people_cache.json", device, coco_model
@@ -243,6 +278,8 @@ def prepare(
         "train": load_coco(out / "annotations" / "instances_train.json"),
         "val": load_coco(out / "annotations" / "instances_val.json"),
     }
+    for name, coco in cocos.items():
+        check_contiguous(coco, f"{base.name} {name}")
     base_counts = {
         k: {"images": len(v["images"]), "boxes": box_counts(v)} for k, v in cocos.items()
     }
@@ -255,7 +292,7 @@ def prepare(
     cocos["test"] = test_md
 
     rng = random.Random(seed)
-    kept_hashes: list[int] = []
+    kept_hashes: list[tuple[int, int]] = []
     stats: dict[str, dict[str, Any]] = {
         s: {
             "source_images": 0,
@@ -273,14 +310,14 @@ def prepare(
         image = imread_any(path, cv2.IMREAD_COLOR)
         if image is None:
             raise SystemExit(f"이미지를 읽지 못했다: {path}")
-        digest = dhash(image)
-        if near(digest, rf_pool):
+        digest, flipped = hashes_with_flip(image)
+        if near_any(digest, rf_pool):
             st["excluded_images"][REASON_NEAR_DUP_RF] += 1
             continue
-        if near(digest, kept_hashes):
+        if near_any(digest, kept_hashes):
             st["excluded_images"][REASON_NEAR_DUP_MD] += 1
             continue
-        kept_hashes.append(digest)
+        kept_hashes.append((digest, flipped))
         h, w = image.shape[:2]
         label = path.parent.parent / "labels" / f"{path.stem}.txt"
         ppe = read_yolo(label.read_text(encoding="utf-8"), names, w, h)
@@ -345,7 +382,7 @@ def prepare(
         "crop_rule": base_card["crop_rule"],
         "exclusion_rule": base_card["exclusion_rule"],
         "dedupe": {
-            "method": f"dHash 64bit, 해밍 거리 ≤ {DHASH_MAX}",
+            "method": f"dHash 64bit (원본·좌우 반전), 해밍 거리 ≤ {DHASH_MAX}",
             "vs_roboflow": "Roboflow 원본(train·valid·test)과 닮은 Mendeley 이미지는 통째로 제외",
             "within_mendeley": "test→val→train 순서로 먼저 남은 쪽 유지",
         },
@@ -354,6 +391,8 @@ def prepare(
             "val": "Roboflow val + Mendeley valid 의 절반 (체크포인트 선택용)",
             "test": "instances_test.json = Roboflow test 그대로 (v1 과 같은 잣대)",
             "test_md": f"{MD_TEST_ANN} = Mendeley valid 의 나머지 절반",
+            "test2017_folder": "Roboflow test 크롭과 Mendeley test 크롭(md_ 접두사)이 함께 있다 — "
+            "폴더를 통째로 읽지 말고 주석 파일로 고른다",
         },
         "mendeley_stats": stats,
         "seed": seed,
