@@ -512,3 +512,44 @@ def test_mendeley_split_valid_is_seeded_and_halves():
     assert a == mendeley_prepare.split_valid(list(reversed(stems)), 7)
     assert sorted(a.values()).count("test") == 5
     assert set(a.values()) == {"test", "val"}
+
+
+# ── pipeline_mock ────────────────────────────────────────────────────
+from tools.ppe import pipeline_mock  # noqa: E402
+
+
+def test_pipeline_mock_expected_state_from_body_part_labels():
+    person = (0.0, 0.0, 100.0, 300.0)
+    worn = [("helmet", (30.0, 0.0, 70.0, 40.0)), ("vest", (10.0, 100.0, 90.0, 200.0))]
+    assert pipeline_mock.expected_state(person, worn) == pipeline_mock.STATE_OK
+    bare = [("no_helmet", (30.0, 0.0, 70.0, 40.0)), ("vest", (10.0, 100.0, 90.0, 200.0))]
+    assert pipeline_mock.expected_state(person, bare) == pipeline_mock.STATE_VIOLATION
+    # 몸통 라벨이 없으면 정답을 모른다
+    assert pipeline_mock.expected_state(person, worn[:1]) is None
+    # 다른 사람의 조끼(이 사람 몸통 구간 밖)는 이 사람의 정답이 아니다
+    other = [("helmet", (30.0, 0.0, 70.0, 40.0)), ("no_vest", (300.0, 100.0, 380.0, 200.0))]
+    assert pipeline_mock.expected_state(person, other) is None
+
+
+def test_pipeline_mock_summarize_counts_false_violation_and_unknown():
+    ok, bad, unk = (
+        pipeline_mock.STATE_OK,
+        pipeline_mock.STATE_VIOLATION,
+        pipeline_mock.STATE_UNKNOWN,
+    )
+    s = pipeline_mock.summarize(
+        [
+            (ok, ok, ""),
+            (ok, bad, ""),
+            (ok, unk, "머리 미검출"),
+            (bad, bad, ""),
+            (bad, unk, "머리 미검출"),
+        ]
+    )
+    assert s["persons"] == 5
+    assert s["compliant_false_violation"] == 1
+    assert s["compliant_false_violation_pct"] == pytest.approx(33.3)
+    assert s["violation_recall_pct"] == pytest.approx(50.0)
+    assert s["undetermined_pct"] == pytest.approx(40.0)
+    assert s["undetermined_reasons"] == {"머리 미검출": 2}
+    assert s["effective_accuracy_pct"] == pytest.approx(40.0)
