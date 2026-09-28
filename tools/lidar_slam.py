@@ -41,6 +41,7 @@ from host.common.protocol import system_clock_ms
 from host.common.units import ms_to_s
 from host.slam import settings, simulation, viz
 from host.slam.occupancy import OccupancyGrid
+from host.slam.photo_map import PhotoRecorder
 from host.slam.scan_match import (
     integrate_scan,
     match,
@@ -127,6 +128,10 @@ def run(args: argparse.Namespace, config: dict) -> int:
     range_m = range_from_config(config)
     match_params = match_params_from_config(config)
     maps = Path(args.out) if args.out else settings.maps_dir(config)
+    if args.camera_url and maps.exists() and any(maps.iterdir()):
+        raise ConfigError(
+            f"사진 지도 출력 폴더가 비어 있지 않다: {maps} — --out 으로 새 폴더를 지정한다"
+        )
 
     grid = OccupancyGrid.blank(
         resolution=lidar["resolution_mm"] / 1000.0,
@@ -138,11 +143,16 @@ def run(args: argparse.Namespace, config: dict) -> int:
 
     rng = random.Random(args.seed)
     sim_params = simulation.sim_params_from_config(config, range_m[1])
-    decoder = ScanDecoder()
+    decoder = ScanDecoder(
+        float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
+    )
+    photos = PhotoRecorder(config, args.camera_url) if args.camera_url else None
     sock: socket.socket | None = None
     if not args.simulate:
         sock = open_scan_socket(int(lidar["scan_port"]), ms_to_s(lidar["scan_stall_timeout_ms"]))
         LOG.info("scan_listen", port=int(lidar["scan_port"]))
+    if photos is not None:
+        photos.start()
 
     # 가상 매핑에서 로봇이 지나갈 경로. 실기에서는 사람이 옮긴다.
     sim_route = [(1.0, 1.0), (4.5, 1.0), (4.5, 4.0), (1.0, 4.0), (1.0, 1.0)]
@@ -182,6 +192,9 @@ def run(args: argparse.Namespace, config: dict) -> int:
                 if not batch:
                     continue
 
+            scan_received_ms = system_clock_ms()
+            camera_frame = photos.sample(scan_received_ms) if photos is not None else None
+
             merged = merge_batch([scan.points for scan in batch])
             points_robot = preprocess(merged, *range_m)
             if points_robot.size == 0:
@@ -204,6 +217,8 @@ def run(args: argparse.Namespace, config: dict) -> int:
                 miss=float(lidar["miss_logodds"]),
                 pad_cells=pad,
             )
+            if photos is not None and camera_frame is not None:
+                photos.capture(maps, step + 1, pose, scan_received_ms, camera_frame)
             trail.append((pose[0], pose[1]))
             live.update(pose, trail)
 
@@ -230,12 +245,17 @@ def run(args: argparse.Namespace, config: dict) -> int:
     except KeyboardInterrupt:
         LOG.info("interrupted", step=step)
     finally:
+        if photos is not None:
+            photos.close()
         live.close()
         if sock is not None:
             sock.close()
         written = grid.save(maps)
         with contextlib.suppress(ImportError):
             written["png"] = viz.save_png(grid, maps / "slam_map.png")
+        if photos is not None:
+            photos.save(maps, grid.extent, has_png="png" in written)
+            LOG.info("camera_photo_map_saved", directory=str(maps))
         LOG.info("map_saved", **{k: str(v) for k, v in written.items()})
         print(f"[SLAM] 지도 저장: {maps}")
     return 0
@@ -261,6 +281,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=None, help="시뮬레이션 재현용 시드")
     parser.add_argument("--out", default=None, help="지도 저장 경로. 기본은 maps/")
     parser.add_argument("--plot", action="store_true", help="진행 상황을 창으로 본다 (matplotlib)")
+    parser.add_argument(
+        "--camera-url",
+        default=None,
+        help="카메라 MJPEG URL (http://<카메라IP>:81/stream). 정지 스캔 위치에 사진 연결",
+    )
     return parser
 
 
@@ -269,6 +294,9 @@ def main(argv: list[str] | None = None) -> int:
     # (CONTRIBUTING 8절). 도움말은 `argparse` 가 stdout 에 쓴다.
     survive_encoding_errors()
     args = build_parser().parse_args(argv)
+    if args.simulate and args.camera_url:
+        print("[SLAM] --simulate 와 --camera-url 은 함께 사용할 수 없다", file=sys.stderr)
+        return 2
     if not args.simulate and (not args.device or not args.lidar_device):
         print(
             "[SLAM] 실기는 --device <unit-id>와 --lidar-device <relay-id>가 모두 필요하다; "

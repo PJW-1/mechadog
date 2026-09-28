@@ -107,17 +107,20 @@ def test_run_collects_segments(tmp_path: Path) -> None:
     captured: list[bytes] = []
     stop_flag = threading.Event()
 
+    # 수신 소켓은 run() 이 오프너를 쏘기 전에 여기서 바인드한다. 스레드 안에서
+    # 바인드하면 러너가 바쁠 때 오프너가 아직 없는 포트로 가서 버려진다.
+    cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    cmd_sock.bind(("127.0.0.1", cmd_port))
+    cmd_sock.settimeout(0.2)
+
     def cmd_listener() -> None:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(("127.0.0.1", cmd_port))
-        sock.settimeout(0.2)
         while not stop_flag.is_set():
             try:
-                data, _ = sock.recvfrom(2048)
+                data, _ = cmd_sock.recvfrom(2048)
                 captured.append(data)
             except TimeoutError:
                 continue
-        sock.close()
+        cmd_sock.close()
 
     def telemetry_feeder() -> None:
         enc = TelemetryEncoder("mechdog-test", "boot-test", clock=lambda: 1000)
@@ -202,15 +205,10 @@ def test_run_collects_segments(tmp_path: Path) -> None:
     # 명령 스트림 — 세션은 STOP·RESET_SAFE 로 열고, move 구간엔 MOVE,
     # settle·끝엔 STOP.
     #
-    # ⚠️ **오프너는 각각 한 발뿐이라 UDP 루프백에서도 유실될 수 있다.** 예전에는
-    # `decoded[:2]` 가 정확히 그 둘이라고 단언했고, 러너 부하로 STOP 이 떨어진 날
-    # dev CI 가 멈췄다(2026-09-15). 순서 뒤집힘은 집합 비교로 막혀 있었지만 유실은
-    # 아니었다 — 늦게 도착한 것이라면 seq 역전으로 폐기되어 위의 `r.accepted` 가
-    # 먼저 걸렸을 테니, 그날 STOP 은 아예 오지 않은 것이다.
-    #
-    # 여기서 지킬 규약은 **"MOVE 앞에는 오프너만 온다"** 이지 "두 발 다 도착한다"
-    # 가 아니다. 그건 UDP 가 보장하지 않는다. 도착한 것들 사이의 순서만 본다.
-    # 끝의 STOP 은 settle 이 10Hz 로 여러 발 쏘므로 한 발 유실에 흔들리지 않는다.
+    # 예전에는 오프너가 UDP 루프백에서 유실된다고 보고 "MOVE 앞에는 오프너만
+    # 온다" 로 느슨하게 봤다(2026-09-15). 실제 원인은 수신 스레드가 바인드하기 전에
+    # 오프너가 나간 경합이었다(2026-09-28). 바인드를 앞당겼으니 둘 다 도착해야 한다.
+    # 끝의 STOP 은 settle 이 10Hz 로 여러 발 쏜다.
     decoder = CommandDecoder()
     decoded = []
     for raw in captured:
@@ -219,8 +217,7 @@ def test_run_collects_segments(tmp_path: Path) -> None:
         decoded.append(r.message)
     first_move = next(i for i, m in enumerate(decoded) if m["type"] == "MOVE")
     opened_with = [m["type"] for m in decoded[:first_move]]
-    assert opened_with, "MOVE 가 세션 오프너보다 먼저 송신됨"
-    assert set(opened_with) <= {"STOP", "RESET_SAFE"}, f"오프너 구간에 다른 명령: {opened_with}"
+    assert sorted(opened_with) == ["RESET_SAFE", "STOP"], f"MOVE 앞 명령: {opened_with}"
     assert decoded[-1]["type"] == "STOP"
 
 

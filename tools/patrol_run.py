@@ -171,7 +171,9 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     peer_ip = args.robot or network.get("mechdog_ip")
     peer = (peer_ip, int(network["cmd_port"])) if peer_ip else None
 
-    scan_decoder = ScanDecoder()
+    scan_decoder = ScanDecoder(
+        float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
+    )
     telemetry = TelemetryReceiver()
     # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
     own_ids = telemetry_ids(config, args.device)
@@ -322,7 +324,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
                 safety_latched=False,
                 obstacle=False,
                 dist_cm=100,
-                imu={"pitch": 0.0, "roll": 0.0, "yaw": imu_yaw},
+                yaw=imu_yaw,
                 last_cmd_age_ms=20,
             ),
             now_ms,
@@ -340,7 +342,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
                         safety_latched=False,
                         obstacle=False,
                         dist_cm=100,
-                        imu={"pitch": 0.0, "roll": 0.0, "yaw": imu_yaw},
+                        yaw=imu_yaw,
                         last_cmd_age_ms=20,
                     ),
                     now_ms,
@@ -388,11 +390,11 @@ class _FakeReading:
 
     __slots__ = (
         "dist_cm",
-        "imu",
         "last_cmd_age_ms",
         "obstacle",
         "safety_latched",
         "state",
+        "yaw",
     )
 
     def __init__(self, **fields: object) -> None:

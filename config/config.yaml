@@ -204,9 +204,14 @@ fsm:
   # 갇힌 상황은 사람이 봐야 한다. 자동 복구를 만들지 않는 것과 같은 원칙이다.
   avoid_attempts: 3
   # ── 공장 쓰러짐 의심 → 확정 (2026-09-25 확정 S3~S5 · WBS 4.8.3) ──
-  # 누움 후보나 VLM `person_down` «예» 한 번이면 의심(L1 노랑)이다. 확정(L3)은 의심 뒤
-  # 누움 검출 누적 이 횟수 **그리고** 의심 뒤에 건 판독의 «예» 다. 연속이 아니어도 센다.
-  fall_suspect_hits: 3
+  # 누움 후보나 VLM `person_down` «예» 한 번이면 의심(L1 노랑)이다. 확정(L3)은 의심 뒤에
+  # 건 판독의 «예» 가 이 횟수만큼 모일 때다 (2026-09-28 사용자 결정 · ADR-42 개정). 의심에
+  # 들게 한 «예» 는 세지 않는다. 연속이 아니어도 센다 — 사이에 «아니오» 가 끼어도 된다.
+  # YOLOX 누움은 확정에 쓰지 않는다 — 4.8.0 벤치에서 누운 사람 10장 중 1장만 잡았다.
+  fall_confirm_vlm_yes: 2
+  # 센 «예» 끼리(의심에 들게 한 «예» 포함) 건 프레임이 이만큼 떨어져야 다음 «예» 로 센다.
+  # 의심 중에는 0.2~0.3초마다 다시 묻는데, 그 간격의 두 프레임은 거의 같은 사진이다.
+  fall_confirm_gap_ms: 1000
   # 이 시간 안에 확정하지 못하면 파란 눈으로 순찰에 돌아간다. 대상 상실(5초)은
   # `target_lost_timeout_s` 가 그대로 정한다.
   fall_suspect_timeout_ms: 20000
@@ -259,14 +264,25 @@ vision:
     # FR-8 변화 감지에서 추적할 클래스 (시연 환경에 놓일 소품)
     change_watch_classes: [chair, backpack, handbag, bottle, suitcase, laptop, book]
 
-  # ── ② PPE 전용 모델 (직접 학습, 5클래스) ──
+  # ── ② PPE 전용 모델 (직접 학습, 4클래스) ──
   # person 검출 프레임에서만 실행 (FR-3.1.1 게이팅)
   ppe:
     model_path: "models/ppe.onnx"
     # ⚠️ **`ultralytics` 가 아니다.** AGPL-3.0 이라 ADR-24 가 탈락시켰다.
     # WBS 3.7.2 의 "ultralytics 버전 기록" 문구는 그 결정 이전의 잔재다.
     #
-    # 학습 기록 (FR-9.1.2 재현성) — 2026-09-23 (v3)
+    # ⚠️ *(2026-09-28 정정)* 아래 «학습 기록 (v3)» 을 현행처럼 적어 두었으나, 실제로
+    # XIAO 실측까지 간 마지막 후보는 그 뒤로 이어진 v12~v23b 계열이다. v23b(YOLOX-S ·
+    # 5클래스, sha256 5b35eb4f…6089)는 mechdog-01 XIAO 실측(직립·전신·전부 착용 69.4초 ·
+    # `TEST_MECHDOG/results/20260928_ppe-xiao/`)에서 정상 착용자 오경고 4회(정면 주황
+    # 안전모→no_helmet · 측면 조끼→no_vest)로 승격 조건 ④(오경고 ≤1) 미달로 기각했다.
+    # 다음 모델은 YOLOX-S 를 **4클래스**(person_down 제외 — 쓰러짐은 FR-9 가 아니라
+    # `host/vision/person.py` 종횡비 의심 + VLM 확정이 맡는다, ADR-42)로 새로 학습한다.
+    # 데이터는 Roboflow Universe construction-safety(project id construction-safety-gsnvb ·
+    # CC BY 4.0 · 1,206장, person 라벨은 크롭·라벨 누락 검사에만 쓰고 출력 클래스에서는
+    # 뺀다)와 XIAO 실측에서 틀린 어려운 사례다. 아직 학습 전이다.
+    #
+    # 학습 기록 (FR-9.1.2 재현성) — 2026-09-23 (v3, 기각된 후속 계열의 출발점)
     #   계열     YOLOX-Nano (Apache-2.0 · Megvii) · depthwise · 640x640
     #   출발점   yolox_nano.pth (릴리스 0.1.1rc0) 에서 fine-tune
     #   데이터   ppe_coco_v3 — 4원 병합 5,914장 / 박스 40,591개
@@ -293,7 +309,7 @@ vision:
     model_family: yolox
     input_size: 640
     conf_threshold: 0.5
-    classes: [helmet, no_helmet, vest, no_vest, person_down]
+    classes: [helmet, no_helmet, vest, no_vest]
     violation_classes: [no_helmet, no_vest]
     crop_pad: 0.08             # person bbox 크롭 여유 (XIAO 실측으로 조정)
     # ── 위반 확정 (FR-9.4) ──
@@ -632,6 +648,27 @@ lidar:
   # 비전의 `stall_timeout_ms` 가 같은 이유로 안전 절 밖에 있다.
   scan_stall_timeout_ms: 1500
 
+  # ── 설치각 ────────────────────────────────────────────────────
+  # 로봇 기준 각도 = (수신 원시각 × angle_direction + mount_yaw_deg) mod 360.
+  # 로봇 좌표는 정면0°·왼쪽+90°(반시계 증가). 원시각의 증가 방향은
+  # 장착 방향과 별개이므로 부호를 따로 적는다.
+  #
+  # 2026-09-26 실측으로 LD19 하우징의 네 면이 다음과 같이 확인됐다 —
+  # 커넥터 면 90°, 그 반대 270°, 옆면 0°/180° (손을 대고 최근접 각도를 읽었고,
+  # 네 면이 90° 간격으로 떨어져 서로 검증됐다).
+  #
+  # **커넥터를 로봇 뒤로 두는 조립**을 택했다. 배선이 뒤로 빠져 다리 움직임에
+  # 걸리지 않는다. 그러면 로봇 정면은 라이다 270° 이고 커넥터는 정확히 뒤(180°)로
+  # 떨어진다.
+  #
+  # 로봇 장착 2026-09-26 물통 차분: 원시270°=정면, 180°=왼쪽,
+  # 90°=뒤, 0°=오른쪽. 따라서 이 기체에서는 270 - 원시각이다.
+  # ⚠️ 책상 단품 시험에서는 해당 배치에 맞는 설치각·방향을 따로 설정한다.
+  # ⚠️ 보정은 `lidar_link._valid_point` **한 곳**에서만 적용한다. 시뮬레이션은
+  # 로봇 기준 각도를 바로 만들므로 이 값을 받지 않는다.
+  mount_yaw_deg: 270
+  angle_direction: -1
+
   # ── 센서 유효 범위 ────────────────────────────────────────────
   # 하한은 로봇 몸통 반사를 걸러내고, 상한은 정합이 성립하는 거리다 —
   # 넓은 공터에서는 벽이 안 잡혀 스캔 정합이 무의미해진다 (ADR-18 각주).
@@ -712,3 +749,25 @@ lidar:
     scan_noise_mm: 10
     dropout_rate: 0.02            # 빔 유실률
     beams: 360
+
+# ══════════════════════════════════════════════════════════════
+#  관제 방송 TTS (WBS 4.8.2 · ADR-38)
+#
+#  `4.8.1` 이 사건마다 만드는 한국어 한 문장을 Host PC 스피커로 읽고 대시보드
+#  자막으로도 낸다. ⚠️ **로봇 스피커(MP3 모듈, escalation.sound)와는 다른
+#  경로다** — 그쪽은 TF 카드에 미리 넣은 고정 문장만 재생한다(ADR-38).
+#
+#  ⚠️ Piper 는 일반 `pip install` 로 넣지 않는다 — `requirements.txt` 주석대로
+#  `pip install --no-deps piper-tts==1.8.0 pathvalidate` 로 따로 깐다
+#  (그냥 넣으면 onnxruntime 을 끌어와 DirectML 을 가리는 CONTRIBUTING 8절의
+#  사고가 재현된다).
+# ══════════════════════════════════════════════════════════════
+broadcast:
+  # 켜 둔다 — Piper·모델이 없는 PC 에서는 `broadcast_disabled` 경고 한 번을 남기고
+  # 방송만 꺼지며 런타임은 그대로 기동한다(`host/cloud/broadcast.py`).
+  enabled: true
+  piper_model: "C:/dev/mechadog-voice/models/piper/ko_KR-kss-medium.onnx"
+  # 1.0 이 모델 기본 속도다. 1.2 가 듣기 좋았다는 실측 기록 — docs/MODEL_PLAN.md 198행.
+  length_scale: 1.2
+  # 초기 음량(0~100) — 관제 화면 슬라이더가 기동 이후 값을 바꾼다.
+  volume: 100

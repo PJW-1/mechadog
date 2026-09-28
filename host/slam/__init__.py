@@ -4,7 +4,7 @@
                                               │
                      behavior/planner · zones · patrol 가 그것을 소비한다
 
-`WBS 3.9.1` 이 구역 앵커의 선행으로 적어 둔 **"SLAM 코어"** 가 이 패키지다.
+`WBS 3.9.0` **"SLAM 코어"**(구역 앵커 `3.9.1` 의 선행)가 이 패키지다.
 
 ---
 
@@ -40,11 +40,11 @@
 않으면 **한 번도 관측하지 않은 공간이 통행 가능으로 새어나간다**
 (`occupancy.load_ros2` 주석 · `test_slam_toolbox_unknown_value_does_not_become_free`).
 
-## 아직 없는 것 — P2 승인 후
+## 아직 없는 것 — Phase 2 (2026-09-28 착수 승인)
 
 | 필요한 것 | 담당 · 선행 |
 | :--- | :--- |
-| `docker/ros2/` (`ros:jazzy` + `slam_toolbox` + `rviz2`) | **WBS 5.4.1 · C · P2 승인** |
+| `docker/ros2/` (`ros:jazzy` + `slam_toolbox` + `rviz2`) | **WBS 5.4.1 · C** |
 | `SCAN` → `sensor_msgs/LaserScan` 브리지 | 필드 매핑은 [PROTOCOL_LIDAR 6절](../../docs/PROTOCOL_LIDAR.md) |
 | tf `odom` → `base_link` | ⚠️ **오도메트리가 없다** — `gait_calibration` 미실측 (WBS 2.2.3) |
 

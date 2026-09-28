@@ -64,6 +64,12 @@ test('an imported zone record lists the zone from its judgement',()=>{
  assert.equal(zone(2,{changes:[]}).zone,'파일에 구역 정보 없음','판정에 구역이 없으면 지어내지 않는다');
  assert.equal(zone(3,{zone:7}).zone,'파일에 구역 정보 없음','문자열이 아닌 구역은 쓰지 않는다');
 });
+test('a broadcast TTS sentence (4.8.2) lands in the evidence rows, regardless of event kind',()=>{
+ // `BlackboxEntry` 가 frozen 이라 `4.8.1` 은 최상위가 아니라 judgement 안에 sentence 를 싣는다.
+ const op=new Operations(),event=op.importBlackbox({...raw(),judgement:{sentence:'2번 구역에서 사람을 확인했습니다.'}});
+ assert.deepEqual(event.evidence.find(([label])=>label==='방송 문장'),['방송 문장','2번 구역에서 사람을 확인했습니다.']);
+ assert.equal(op.importBlackbox(raw()).evidence.some(([label])=>label==='방송 문장'),false,'문장이 없으면 행을 지어내지 않는다');
+});
 test('bad blackbox fields are rejected',()=>{
  for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.mode={}},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}
 });

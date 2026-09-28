@@ -8,6 +8,9 @@
 그래서 **사람의 규칙 준수에 의존하지 않는다** (CONTRIBUTING 5절).
 """
 
+import re
+from dataclasses import replace
+
 import pytest
 from conftest import ROOT
 
@@ -73,8 +76,10 @@ def test_group_and_range_predecessors_stay_blocked(packages: list[WorkPackage]) 
     """묶음 선행은 그 안의 작업이 모두 끝나야 풀린다."""
     by_id = {p.wid: p for p in packages}
     assert not is_ready(by_id["2.5"], packages)
-    # WBS 밖 조건(장비 도착·승인)은 맞는 ID 가 없으므로 계속 대기다.
-    assert not is_ready(by_id["2.2.1"], packages)
+    # WBS 밖 조건(장비 도착·승인)은 맞는 ID 가 없으므로 계속 대기다. 실제 예였던
+    # `2.2.1` 의 «LiDAR·마스트 도착» 은 2026-09-28 장비가 와서 지웠으므로 꾸며 쓴다.
+    outside = replace(by_id["2.2.1"], predecessor="LiDAR·마스트 도착")
+    assert not is_ready(outside, packages)
 
 
 def test_dot_separated_predecessors_unlock_together(packages: list[WorkPackage]) -> None:
@@ -104,21 +109,59 @@ def _sections(text: str, heading: str) -> str:
     return "".join(parts)
 
 
-def test_phase2_packages_are_listed_apart_from_phase1_work(
+def test_approved_phase2_packages_are_listed_as_work(
     packages: list[WorkPackage],
 ) -> None:
-    """Phase 2(`[P2]`) 항목이 Phase 1 할 일과 섞이면 남은 일이 부풀어 보인다.
+    """Phase 2 착수를 승인했으므로(2026-09-28 · WBS `1.4`) `[P2]` 항목도 할 일이다.
 
-    2026-09-25 까지 `3.9`·`5.4` 가 `⏳ 대기` 에 섞여 L1·L2 의 남은 공수 10.0 M/D 중
-    6.5 M/D 가 조건부 예약인 Phase 2 몫이었다.
+    승인 전에는 `⏸` 절에 따로 뒀다. 승인 뒤에도 그대로 두면 담당자가 잡을 수 있는
+    일이 목록에서 빠지고, 선행에 «P2 승인» 이 남으면 WBS 번호가 아니라서
+    **영원히 대기로 남는다** — `5.4.1` 이 그랬다.
     """
     text = render(packages)
-    phase1 = _sections(text, "### 🟢") + _sections(text, "### ⏳")
-    phase2 = _sections(text, "### ⏸")
-    for wid in ("2.2.1", "2.5", "3.6.1", "3.6.5", "3.9.1", "3.9.2", "5.4.1", "5.4.5"):
-        assert next(p for p in packages if p.wid == wid).phase2, f"{wid}: [P2] 표기 누락"
-        assert f"`{wid}`" in phase2, f"{wid}: Phase 2 절에 없다"
-        assert f"`{wid}`" not in phase1, f"{wid}: Phase 1 할 일에 섞였다"
+    work = _sections(text, "### 🟢") + _sections(text, "### ⏳")
+    assert "### ⏸" not in text
+    by_id = {p.wid: p for p in packages}
+    # 승인 때 선행을 고친 세 행과 새로 등재한 `3.9.0` 은 표기가 빠져도 알아채도록 못 박는다.
+    for wid in (
+        "2.2.1",
+        "2.5",
+        "3.6.1",
+        "3.6.5",
+        "3.9.0",
+        "3.9.1",
+        "3.9.2",
+        "5.4.1",
+        "5.4.2",
+        "5.4.5",
+    ):
+        assert by_id[wid].phase2, f"{wid}: [P2] 표기 누락"
+    for package in packages:
+        if not package.phase2:
+            continue
+        assert "P2 승인" not in package.predecessor, f"{package.wid}: 승인된 조건이 선행에 남았다"
+        if not package.done:
+            assert f"`{package.wid}`" in work, f"{package.wid}: 할 일 목록에 없다"
+
+
+def test_section_headings_match_their_packages(packages: list[WorkPackage]) -> None:
+    """절 제목의 공수가 그 아래 워크패키지 합과 같아야 한다.
+
+    `3.9.0` 을 등재하며 `#### 3.9` 와 총 공수는 고쳤지만 `### 3.0` 제목은 26.0 으로
+    남았다(2026-09-28 · Devin 검수). 총 공수 시험은 행 합만 보므로 절 제목은 못 잡았다.
+    """
+    body = (ROOT / "docs" / "WBS.md").read_text(encoding="utf-8")
+    headings = re.findall(r"^#{3,4} (\d+\.\d+) .*? — ([\d.]+) M/D", body, re.M)
+    assert headings, "절 제목을 하나도 읽지 못했다"
+    for section, stated in headings:
+        major, minor = section.split(".")
+        if minor == "0":
+            actual = sum(p.effort for p in packages if p.group == major)
+        else:
+            actual = sum(p.effort for p in packages if f"{p.wid}.".startswith(f"{section}."))
+        assert actual == pytest.approx(float(stated)), (
+            f"{section}: 제목 {stated} ≠ 하위 합 {actual}"
+        )
 
 
 def test_packages_without_effort_still_appear(packages: list[WorkPackage]) -> None:

@@ -33,3 +33,30 @@ def test_sectors_become_fixed_bins_with_missing_beams() -> None:
         completed.extend(rotation.add(scan.points))
     assert completed == [[1.0, 2.0, math.inf, 3.0]]
     assert rotation.flush() == [4.0, math.inf, math.inf, math.inf]
+
+
+def test_reversed_sensor_bearings_complete_revolution_in_robot_frame() -> None:
+    """실측 장착의 감소각에서도 한 바퀴 경계를 찾아 4방위로 발행한다."""
+    decoder = ScanDecoder(270, -1)
+    rotation = Revolution(4, 0.12, 8.0, -1)
+    raw = encode_scan(
+        seq=1,
+        ts_ms=100,
+        device_id="lidar-test",
+        boot_id="a" * 16,
+        points_wire=[
+            [260, 1000],
+            [270, 2000],
+            [271, 3000],
+            [350, 4000],
+            [0, 5000],
+            [90, 6000],
+            [180, 7000],
+            [270, 8000],
+            [271, 1500],
+        ],
+    )
+    scan = scan_of(decoder.decode(raw))
+    assert scan is not None
+    completed = rotation.add(scan.points)
+    assert completed[-1] == [8.0, 7.0, 6.0, 3.0]

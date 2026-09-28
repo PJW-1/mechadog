@@ -52,6 +52,7 @@ from host.behavior.mission import Mission
 from host.behavior.posture import RETURN, PostureEscalation
 from host.behavior.tracker import LockOnTracker
 from host.behavior.zones import Zone, ZoneStore
+from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
 from host.common.logging_setup import (
@@ -65,6 +66,7 @@ from host.common.logging_setup import (
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import rad_to_deg, wrap_pi
 from host.dashboard.state import DashboardState
+from host.report.situation import describe
 from host.slam.settings import maps_dir
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
@@ -175,6 +177,7 @@ class Runtime:
         dashboard: DashboardState | None = None,
         mission: Mission | None = None,
         vlm_reader: VlmReader | None = None,
+        announcer: Callable[[str], None] | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -338,12 +341,15 @@ class Runtime:
         self._edge.changed("fallen", False)
         self._edge.changed("ppe_held_for_fall", False)
         # 쓰러짐은 **두 단계다** — 의심(L1)에서 확정(L3)으로 (2026-09-25 확정 S3~S5).
-        # ⚠️ 규칙(YOLOX 누움)도 판독(VLM)도 **혼자서는 L3 를 내지 못한다**(S7). 확정은
-        # 의심 뒤 누움 누적 `fsm.fall_suspect_hits` 회와 의심 뒤에 건 판독의 «예» 둘 다다.
+        # ⚠️ **규칙(YOLOX 누움)은 L3 를 내지 못한다**(S7) — 의심에 들고 다가가는 데만 쓴다.
+        # 확정은 의심 뒤에 건 판독의 «예» `fsm.fall_confirm_vlm_yes` 회다 (2026-09-28 개정).
         #: 의심에 든 시각. `None` 이면 의심이 아니다. PPE 판정은 이 동안 보류한다(S8).
         self._fall_since: int | None = None
-        #: 의심 뒤 누움 후보를 본 횟수. 끊겨도 누적한다.
-        self._fall_hits = 0
+        #: 의심 뒤에 건 판독의 «예» 를 센 횟수. 끊겨도 누적한다.
+        self._fall_yes = 0
+        #: 마지막으로 센 «예» — 판독으로 의심에 들었으면 그 판독 — 를 건 시각. 다음 «예» 는
+        #: 이것과 `fsm.fall_confirm_gap_ms` 이상 떨어진 프레임이어야 센다.
+        self._fall_yes_asked: int | None = None
         #: 의심 뒤에 건 판독이 «예» 라 한 원문. 확정 기록에 싣는다.
         self._fall_vlm_yes: str | None = None
         #: 이번 의심을 확정했나. 확정했으면 관제 확인(`confirm_alarm`)이 순찰로 돌려보낸다.
@@ -352,7 +358,8 @@ class Runtime:
         self._fall_vlm_pending: tuple[int, Any, bool] | None = None
         #: 다음 순찰 판독 시각 (S6). 순찰이 아니면 `None` 이다.
         self._fall_vlm_due: int | None = None
-        self._fall_need = int(config["fsm"]["fall_suspect_hits"])
+        self._fall_need = int(config["fsm"]["fall_confirm_vlm_yes"])
+        self._fall_gap_ms = int(config["fsm"]["fall_confirm_gap_ms"])
         self._fall_timeout_ms = int(config["fsm"]["fall_suspect_timeout_ms"])
         #: 제한 시간 초과·경보 확인으로 순찰에 돌아간 뒤 다시 의심하지 않는 시간과 끝 시각.
         self._fall_cooldown_ms = int(config["fsm"]["fall_resuspect_cooldown_ms"])
@@ -381,6 +388,10 @@ class Runtime:
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
         self._blackbox = blackbox
         self._event_publisher = event_publisher
+        #: 상황 서술 문장을 관제로 내보내는 방송기 (`4.8.2`). 비동기·예외를 던지지
+        #: 않는 계약이지만 `_record_scene` 에서 다시 한 번 감싼다 — 아직 없는 계약을
+        #: 믿고 안 감싸면 방송기가 하나라도 어기는 순간 제어 틱이 죽는다.
+        self._announcer = announcer
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -1234,25 +1245,20 @@ class Runtime:
         self._leave_zone(result, now_ms)
 
     def _observe_fallen(self, result: Any, now_ms: int) -> None:
-        """누움 후보로 쓰러짐 의심에 들고, 의심 뒤의 후보를 센다 (`4.8.3` · S3·S4).
+        """누움 후보로 쓰러짐 의심에 든다 (`4.8.3` · S3).
 
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
         같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
 
-        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다** (S7). 워커의 3초 정지 확정(`fallen`)은
-        엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
+        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다** (S7). 누움은 의심 진입에만 쓰고 확정에는
+        세지 않는다(2026-09-28 개정 — 누운 사람을 거의 못 잡는다). 워커의 3초 정지
+        확정(`fallen`)은 엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
         """
         verdict = getattr(result, "fallen", None)
         if verdict is None:
             return
         if self._mission.enables("fallen") and verdict.candidate:
-            if self._fall_since is None:
-                self._suspect_fall("yolox", now_ms)  # 진입 프레임은 누적에 세지 않는다
-            elif verdict.aspect is not None:
-                # 박스가 있는 누움만 센다 — 게이트는 박스가 사라진 뒤 `gap_ms` 동안에도
-                # 후보를 참으로 두는데, 그것까지 세면 검출 한 번 뒤의 빈 1초가 누적을 채운다.
-                self._fall_hits += 1
-                self._confirm_fall(result, now_ms)
+            self._suspect_fall("yolox", now_ms)
         # ⚠️ **엣지는 워커의 `changed` 가 아니라 우리 기준으로 본다** — `person` 과 같은
         # 이유다. 워커는 25fps 라 `changed` 가 실린 프레임이 이 틱(10Hz) 전에 덮어써진다.
         # 2026-09-23 실기에서 워커 확정 6번 중 4번이 그렇게 사라졌다.
@@ -1278,11 +1284,12 @@ class Runtime:
             },
         )
 
-    def _suspect_fall(self, source: str, now_ms: int) -> None:
+    def _suspect_fall(self, source: str, now_ms: int, *, yes_asked: int | None = None) -> None:
         """쓰러짐 의심에 든다 (S3) — 노란 눈(L1)을 켜고 선다. 박스가 있으면 `_track` 이 다가간다.
 
         순찰·구역 점검 중이면 `FALL_SUSPECTED` 로 `ALERT` 에 들고, 이미 `ALERT`·`TRACK`
-        (보호구를 보던 중)이면 그 자리에서 의심만 켠다.
+        (보호구를 보던 중)이면 그 자리에서 의심만 켠다. 판독 «예» 로 들면 `yes_asked` 가 그
+        판독을 건 시각이다 — 확정에 세지는 않고 다음 «예» 의 간격만 여기서 잰다.
         """
         if self._fall_since is not None or not self._mission.enables("fallen"):
             return
@@ -1293,7 +1300,8 @@ class Runtime:
         if not (self._behavior.tracking or self._apply(Event.FALL_SUSPECTED, now_ms)):
             return
         self._fall_since = now_ms
-        self._fall_hits = 0
+        self._fall_yes = 0
+        self._fall_yes_asked = yes_asked
         self._fall_vlm_yes = None
         self._fall_confirmed = False
         # 5초 상실(S5)은 의심에 든 때부터 센다 — 판독으로만 든 의심에는 검출 시각이 없다.
@@ -1302,17 +1310,12 @@ class Runtime:
         LOG.warning("fall_suspected", source=source)
 
     def _confirm_fall(self, frame: Any, now_ms: int) -> None:
-        """누움 누적과 의심 뒤 판독 «예» 가 **둘 다** 모이면 확정한다 (S4) — `PERSON_DOWN` → L3.
+        """의심 뒤 판독 «예» 가 `fsm.fall_confirm_vlm_yes` 회 모이면 확정한다 (S4) — `PERSON_DOWN` → L3.
 
         ⚠️ **사건은 전이가 아니라 L3 다.** `PERSON_DOWN` 은 전이표에 없어 상태는 그대로
         두고 단계만 올린다. 관제가 확인하면(`confirm_alarm`) 순찰로 돌아간다.
         """
-        if (
-            self._fall_confirmed
-            or self._fall_since is None
-            or self._fall_hits < self._fall_need
-            or self._fall_vlm_yes is None
-        ):
+        if self._fall_confirmed or self._fall_since is None or self._fall_yes < self._fall_need:
             return
         self._fall_confirmed = True
         # ⚠️ **전이보다 먼저 남긴다** — 대시보드 사건이 기록을 가리키게.
@@ -1321,7 +1324,7 @@ class Runtime:
             frame,
             {
                 "fallen": True,
-                "hits": self._fall_hits,
+                "vlm_yes": self._fall_yes,
                 "suspect_ms": now_ms - self._fall_since,
                 "raw": self._fall_vlm_yes,
             },
@@ -1339,9 +1342,7 @@ class Runtime:
         if not self._behavior.tracking:
             self._end_fall(now_ms)
         elif not self._fall_confirmed and now_ms - self._fall_since >= self._fall_timeout_ms:
-            LOG.info(
-                "fall_suspect_timeout", hits=self._fall_hits, vlm=self._fall_vlm_yes is not None
-            )
+            LOG.info("fall_suspect_timeout", vlm_yes=self._fall_yes)
             self._resolve_fall(now_ms)
 
     def _resolve_fall(self, now_ms: int) -> None:
@@ -1356,7 +1357,8 @@ class Runtime:
 
     def _end_fall(self, now_ms: int) -> None:
         self._fall_since = None
-        self._fall_hits = 0
+        self._fall_yes = 0
+        self._fall_yes_asked = None
         self._fall_vlm_yes = None
         self._fall_confirmed = False
         self._escalation.note_fall_suspect(False, now_ms)
@@ -1366,6 +1368,10 @@ class Runtime:
 
         ⚠️ **의심 중에 건 판독이 의심이 끝난 뒤에 오면 버린다** — 돌려보낸 사람을 늦은 답
         하나로 곧바로 다시 의심하게 된다.
+
+        ⚠️ **앞서 센 «예» 와 `fsm.fall_confirm_gap_ms` 안에 건 «예» 는 세지 않는다** — 의심
+        중에는 판독이 끝나자마자 다시 물어 두 프레임이 거의 같은 사진이고, 같은 사진에는
+        같은 답이 나온다. 그대로 세면 두 번 묻는 뜻이 없다 (2026-09-28 사용자 결정).
         """
         if self._fall_vlm_pending is None or self._vlm.busy:
             return
@@ -1379,10 +1385,15 @@ class Runtime:
             return
         if self._fall_since is None:
             if not during:
-                self._suspect_fall("vlm", now_ms)
+                self._suspect_fall("vlm", now_ms, yes_asked=asked_ms)
         elif asked_ms >= self._fall_since:
             # «예» 는 대상을 본 것이다 — 박스 없이 판독으로만 보는 동안 5초 상실로 풀지 않는다.
             self._behavior.note_target(now_ms)
+            last = self._fall_yes_asked
+            if last is not None and asked_ms - last < self._fall_gap_ms:
+                return
+            self._fall_yes += 1
+            self._fall_yes_asked = asked_ms
             self._fall_vlm_yes = next(a.raw for a in reading.answers if a.key == "person_down")
             self._confirm_fall(asked, now_ms)
 
@@ -1449,7 +1460,7 @@ class Runtime:
         들어와 다음 구역에서 그 구역의 이름과 사진으로 읽힌다 — 예전 코드가 그랬다.
 
         ⚠️ **쓰러진 사람을 봤다는 답은 의심 진입 신호다** (2026-09-25 확정 S3·S7) — 단독으로
-        L3 를 내지 않는다. 확정은 누움 누적과 의심 뒤 판독이 함께 한다(`_confirm_fall`).
+        L3 를 내지 않는다. 확정은 의심 뒤 판독의 «예» 가 모여야 한다(`_confirm_fall`).
         구역을 떠난 뒤에 온 답이어도 의심에 든다.
 
         ⚠️ **넘어짐·통로 막힘은 두 번 읽어 확정한다** (WBS 3.6.3 · `vlm_hazards`). 첫 판독이
@@ -1500,7 +1511,7 @@ class Runtime:
             },
         )
         if reading.get("person_down"):
-            self._suspect_fall("zone_vlm", now_ms)
+            self._suspect_fall("zone_vlm", now_ms, yes_asked=now_ms)
 
     def _leave_zone(self, result: Any, now_ms: int) -> None:
         """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3 · 2026-09-25 결정).
@@ -1658,13 +1669,33 @@ class Runtime:
         ⚠️ **검출 박스와 달리 이것들은 그림이 없다.** 쓰러짐 판정(`4.8.3`)은 숫자이고
         VLM 판독(`4.8.0`)은 문장이라, 사진 옆에 적어 두지 않으면 나중에 *"왜 그렇게
         판정했나"* 를 되짚을 방법이 없다.
+
+        ⚠️ **문장 생성·방송은 기록이 없어도 나간다** (`4.8.1`). 관제가 그 순간 들어야
+        할 경고이지 블랙박스 파일이 아니므로, 블랙박스가 없는 구성(`blackbox=None`)
+        에서도 방송만은 막지 않는다.
         """
+        sentence: str | None = None
+        try:
+            # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
+            # 방송·자막 문장을 붙이지 않는다 (2026-09-27 사용자 결정).
+            if event_type != "person_fallen" or self._mission.enables("fallen"):
+                sentence = describe(event_type, judgement)
+        except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
+            LOG.error("situation_failed", error=f"{type(exc).__name__}: {exc}")
+        if sentence is not None and self._announcer is not None:
+            try:
+                self._announcer(sentence)
+            except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
+                LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
         if self._blackbox is None:
             return
+        recorded_judgement = judgement
+        if sentence is not None:
+            recorded_judgement = {**(judgement or {}), "sentence": sentence}
         try:
             entry = self._blackbox.record(
                 event_type,
-                judgement=judgement,
+                judgement=recorded_judgement,
                 jpeg=result.jpeg,
                 tracks=result.tracks,
                 detections=result.detections,
@@ -2598,6 +2629,7 @@ def dashboard_wiring(
     *,
     vision: Any | None,
     blackbox: EventBlackbox | None,
+    broadcaster: broadcast.Broadcaster | None = None,
 ) -> dict[str, Any]:
     """관제 서버(`create_app`)에 넘길 명령·영상·사건 그림·정책 연결. 한 대·여러 대가 같이 쓴다."""
     from host.dashboard.commands import CommandService
@@ -2628,6 +2660,9 @@ def dashboard_wiring(
         # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
         "event_snapshot": None if blackbox is None else blackbox.snapshot_bytes,
         "policy": policy_view(config),
+        # PC 스피커 방송 음량·무음 조절 (WBS 4.8.2). 없으면(piper 없음 등) None —
+        # 화면은 "방송 없음" 을 보여 준다.
+        "broadcast": broadcaster,
     }
 
 
@@ -2686,6 +2721,22 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
+    """`config.broadcast` 가 켜져 있으면 관제 방송기를 돌려준다 (`4.8.2`).
+
+    방송기 자체를 돌려준다 — 호출부가 `Runtime` 에는 `.say` 를 넘기고, 대시보드에는
+    방송기 자체를 넘겨 음량·무음 조절 API 가 붙게 한다.
+
+    ⚠️ 설정 오기(`length_scale: "빠르게"`)는 방송만 끈다 — 방송은 런타임 기동을
+    막지 않는다는 원칙이 설정 읽기에도 걸린다.
+    """
+    try:
+        return broadcast.from_config(config)
+    except (TypeError, ValueError) as exc:
+        LOG.warning("broadcast_config_invalid", error=f"{type(exc).__name__}: {exc}")
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
@@ -2719,6 +2770,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.dashboard_port is not None
         else None
     )
+    # 방송기 자체를 쥔다 — Runtime 에는 `.say` 만 넘기고, 대시보드에는 방송기 자체를
+    # 넘겨 음량·무음 조절 API 가 붙게 한다 (`4.8.2`).
+    broadcaster = _broadcaster(config)
     runtime = Runtime(
         config,
         device_id=args.device,
@@ -2732,6 +2786,9 @@ def main(argv: list[str] | None = None) -> int:
         # 아니다** — 블랙박스는 디스크에 남기고 사람은 화면을 본다. 이 연결이
         # 없으면 기록은 쌓이는데 아무도 모른다. 실제로 그 상태였다.
         event_publisher=(None if dashboard is None else _publish_event(dashboard)),
+        # 사건 문장(`4.8.1`)을 Host PC 스피커로 읽는다 (`4.8.2`). 워커가 데몬 스레드라
+        # 따로 닫지 않는다.
+        announcer=(None if broadcaster is None else broadcaster.say),
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
@@ -2754,7 +2811,13 @@ def main(argv: list[str] | None = None) -> int:
                     running_server(
                         dashboard,
                         args.dashboard_port,
-                        **dashboard_wiring(runtime, config, vision=vision, blackbox=blackbox),
+                        **dashboard_wiring(
+                            runtime,
+                            config,
+                            vision=vision,
+                            blackbox=blackbox,
+                            broadcaster=broadcaster,
+                        ),
                     )
                 )
             runtime.serve(sock, duration_s=args.duration)
