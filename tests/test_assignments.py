@@ -104,21 +104,23 @@ def _sections(text: str, heading: str) -> str:
     return "".join(parts)
 
 
-def test_phase2_packages_are_listed_apart_from_phase1_work(
+def test_approved_phase2_packages_are_listed_as_work(
     packages: list[WorkPackage],
 ) -> None:
-    """Phase 2(`[P2]`) 항목이 Phase 1 할 일과 섞이면 남은 일이 부풀어 보인다.
+    """Phase 2 착수를 승인했으므로(2026-09-28 · WBS `1.4`) `[P2]` 항목도 할 일이다.
 
-    2026-09-25 까지 `3.9`·`5.4` 가 `⏳ 대기` 에 섞여 L1·L2 의 남은 공수 10.0 M/D 중
-    6.5 M/D 가 조건부 예약인 Phase 2 몫이었다.
+    승인 전에는 `⏸` 절에 따로 뒀다. 승인 뒤에도 그대로 두면 담당자가 잡을 수 있는
+    일이 목록에서 빠지고, 선행에 «P2 승인» 이 남으면 WBS 번호가 아니라서
+    **영원히 대기로 남는다** — `5.4.1` 이 그랬다.
     """
     text = render(packages)
-    phase1 = _sections(text, "### 🟢") + _sections(text, "### ⏳")
-    phase2 = _sections(text, "### ⏸")
+    work = _sections(text, "### 🟢") + _sections(text, "### ⏳")
+    assert "### ⏸" not in text
     for wid in ("2.2.1", "2.5", "3.6.1", "3.6.5", "3.9.1", "3.9.2", "5.4.1", "5.4.5"):
-        assert next(p for p in packages if p.wid == wid).phase2, f"{wid}: [P2] 표기 누락"
-        assert f"`{wid}`" in phase2, f"{wid}: Phase 2 절에 없다"
-        assert f"`{wid}`" not in phase1, f"{wid}: Phase 1 할 일에 섞였다"
+        package = next(p for p in packages if p.wid == wid)
+        assert package.phase2, f"{wid}: [P2] 표기 누락"
+        assert "P2 승인" not in package.predecessor, f"{wid}: 승인된 조건이 선행에 남았다"
+        assert f"`{wid}`" in work, f"{wid}: 할 일 목록에 없다"
 
 
 def test_packages_without_effort_still_appear(packages: list[WorkPackage]) -> None:
