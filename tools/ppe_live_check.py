@@ -747,6 +747,8 @@ def write_report(
     add("  기준 PC(RTX 3080)에서 다시 잰다")
     if args.save_dir:
         add(f"- 판정을 그린 프레임: `{args.save_dir}`")
+    if getattr(args, "save_raw_dir", None):
+        add(f"- 원본 프레임(학습용): `{args.save_raw_dir}`")
     add("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -769,6 +771,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--crop-pad", type=float, default=0.08, help="person bbox 여유 비율")
     parser.add_argument("--no-clip-rule", action="store_true", help="머리 클리핑 조건을 끈다")
     parser.add_argument("--save-dir", help="판정을 그린 프레임을 저장할 폴더")
+    # ⚠️ 왜: 그린 프레임은 박스·글자가 모델 입력을 오염시켜 학습에 못 쓴다
+    # (2026-09-28 세션). 난사례 추출(`tools/ppe/xiao_hardcases.py`)은 이 폴더를 읽는다.
+    parser.add_argument(
+        "--save-raw-dir",
+        help="판정을 그리기 전 원본 프레임을 저장할 폴더 (학습용 · 얼굴 포함, 커밋 금지)",
+    )
     # ⚠️ **설정이 정본이다.** 이 둘은 느린 시험 PC 에서 창을 억지로 맞추기 위한
     # 관찰용 덮어쓰기이며, 실기 판정 값은 `config.vision.ppe` 를 따른다.
     # 추론이 1.5초/프레임인 기계에서 «1.5초 안 3히트» 는 물리적으로 불가능하다.
@@ -868,6 +876,9 @@ def main(argv: list[str] | None = None) -> int:
     save_dir = Path(args.save_dir) if args.save_dir else None
     if save_dir:
         save_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = Path(args.save_raw_dir) if args.save_raw_dir else None
+    if raw_dir:
+        raw_dir.mkdir(parents=True, exist_ok=True)
 
     counts: collections.Counter = collections.Counter()
     reasons: collections.Counter = collections.Counter()
@@ -880,6 +891,8 @@ def main(argv: list[str] | None = None) -> int:
     def handle(image: np.ndarray, tag: str) -> None:
         nonlocal frames
         frames += 1
+        if raw_dir:
+            cv2.imwrite(str(raw_dir / f"{tag}.jpg"), image, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
         results = process(
             image,
             coco,

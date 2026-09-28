@@ -483,6 +483,8 @@ def test_main_runs_offline_and_writes_a_report(
             "1",
             "--save-dir",
             str(tmp_path / "frames"),
+            "--save-raw-dir",
+            str(tmp_path / "raw"),
             "--report",
             str(report),
             "--session",
@@ -500,3 +502,10 @@ def test_main_runs_offline_and_writes_a_report(
     text = report.read_text(encoding="utf-8")
     assert ppe.STATE_VIOLATION in text
     assert (tmp_path / "frames" / "sample.jpg").is_file()
+    # 학습용 원본은 판정을 그리기 전 그대로여야 한다. 2026-09-28 세션은 그린 프레임만
+    # 남아 난사례 학습에 쓸 수 없었다.
+    drawn = cv2.imread(str(tmp_path / "frames" / "sample.jpg"))
+    raw_frame = cv2.imread(str(tmp_path / "raw" / "sample.jpg"))
+    assert drawn.any()
+    assert np.array_equal(raw_frame, frame)
+    assert "원본 프레임" in text

@@ -260,3 +260,15 @@ def test_merge_coco_renumbers_and_checks_categories():
 # ── export_ppe ──────────────────────────────────────────────
 def test_expected_output_shape_is_raw_4class_yolox():
     assert export_ppe.expected_output_shape(4) == [1, 8400, 9]
+
+
+def test_load_frame_prefers_raw_over_drawn(tmp_path):
+    """`--save-raw-dir <세션>/raw` 원본이 있으면 판정을 그린 `frames/` 대신 그것을 읽는다."""
+    import cv2
+
+    (tmp_path / "frames").mkdir()
+    (tmp_path / "raw").mkdir()
+    cv2.imwrite(str(tmp_path / "frames" / "00001.jpg"), np.full((8, 8, 3), 255, np.uint8))
+    assert xiao_hardcases.load_frame(tmp_path, "00001").min() > 200
+    cv2.imwrite(str(tmp_path / "raw" / "00001.jpg"), np.zeros((8, 8, 3), np.uint8))
+    assert xiao_hardcases.load_frame(tmp_path, "00001").max() < 30

@@ -1,7 +1,8 @@
 """`ppe_live_check` 세션에서 **전부 착용인데 틀린 프레임**을 뽑아 학습용 라벨을 만든다.
 
 PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe_live_check.py --segments --session ...
---save-dir <세션>/frames` 로 남긴 세션 폴더(`session.json` + `frames/NNNNN.jpg`)다.
+--save-raw-dir <세션>/raw` 로 남긴 세션 폴더(`session.json` + `raw/NNNNN.jpg`)다. `raw/` 가
+없으면 `--save-dir` 의 `frames/` 를 읽지만, 판정을 그린 프레임이면 멈춘다.
 
     python tools/ppe/xiao_hardcases.py --device mechdog-01 \\
         --session TEST_MECHDOG/results/20260928_ppe-xiao \\
@@ -275,7 +276,10 @@ def write_sheets(cells: Sequence[np.ndarray], folder: Path) -> int:
 def load_frame(session: Path, tag: str) -> np.ndarray | None:
     import cv2
 
-    return imread_any(session / "frames" / f"{tag}.jpg", cv2.IMREAD_COLOR)
+    # ⚠️ 왜: `frames/` 는 판정을 그린 프레임이다. `--save-raw-dir <세션>/raw` 원본이 있으면
+    # 그것을 쓴다 — 없을 때만 `frames/` 로 돌아가고, 그림 여부는 `collect` 가 따로 막는다.
+    raw = session / "raw" / f"{tag}.jpg"
+    return imread_any(raw if raw.is_file() else session / "frames" / f"{tag}.jpg", cv2.IMREAD_COLOR)
 
 
 def build_detectors(device: str, ppe_model: Path, coco_model: Path | None):
