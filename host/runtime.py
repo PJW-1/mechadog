@@ -341,12 +341,15 @@ class Runtime:
         self._edge.changed("fallen", False)
         self._edge.changed("ppe_held_for_fall", False)
         # 쓰러짐은 **두 단계다** — 의심(L1)에서 확정(L3)으로 (2026-09-25 확정 S3~S5).
-        # ⚠️ 규칙(YOLOX 누움)도 판독(VLM)도 **혼자서는 L3 를 내지 못한다**(S7). 확정은
-        # 의심 뒤 누움 누적 `fsm.fall_suspect_hits` 회와 의심 뒤에 건 판독의 «예» 둘 다다.
+        # ⚠️ **규칙(YOLOX 누움)은 L3 를 내지 못한다**(S7) — 의심에 들고 다가가는 데만 쓴다.
+        # 확정은 의심 뒤에 건 판독의 «예» `fsm.fall_confirm_vlm_yes` 회다 (2026-09-28 개정).
         #: 의심에 든 시각. `None` 이면 의심이 아니다. PPE 판정은 이 동안 보류한다(S8).
         self._fall_since: int | None = None
-        #: 의심 뒤 누움 후보를 본 횟수. 끊겨도 누적한다.
-        self._fall_hits = 0
+        #: 의심 뒤에 건 판독의 «예» 를 센 횟수. 끊겨도 누적한다.
+        self._fall_yes = 0
+        #: 마지막으로 센 «예» — 판독으로 의심에 들었으면 그 판독 — 를 건 시각. 다음 «예» 는
+        #: 이것과 `fsm.fall_confirm_gap_ms` 이상 떨어진 프레임이어야 센다.
+        self._fall_yes_asked: int | None = None
         #: 의심 뒤에 건 판독이 «예» 라 한 원문. 확정 기록에 싣는다.
         self._fall_vlm_yes: str | None = None
         #: 이번 의심을 확정했나. 확정했으면 관제 확인(`confirm_alarm`)이 순찰로 돌려보낸다.
@@ -355,7 +358,8 @@ class Runtime:
         self._fall_vlm_pending: tuple[int, Any, bool] | None = None
         #: 다음 순찰 판독 시각 (S6). 순찰이 아니면 `None` 이다.
         self._fall_vlm_due: int | None = None
-        self._fall_need = int(config["fsm"]["fall_suspect_hits"])
+        self._fall_need = int(config["fsm"]["fall_confirm_vlm_yes"])
+        self._fall_gap_ms = int(config["fsm"]["fall_confirm_gap_ms"])
         self._fall_timeout_ms = int(config["fsm"]["fall_suspect_timeout_ms"])
         #: 제한 시간 초과·경보 확인으로 순찰에 돌아간 뒤 다시 의심하지 않는 시간과 끝 시각.
         self._fall_cooldown_ms = int(config["fsm"]["fall_resuspect_cooldown_ms"])
@@ -1241,25 +1245,20 @@ class Runtime:
         self._leave_zone(result, now_ms)
 
     def _observe_fallen(self, result: Any, now_ms: int) -> None:
-        """누움 후보로 쓰러짐 의심에 들고, 의심 뒤의 후보를 센다 (`4.8.3` · S3·S4).
+        """누움 후보로 쓰러짐 의심에 든다 (`4.8.3` · S3).
 
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
         같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
 
-        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다** (S7). 워커의 3초 정지 확정(`fallen`)은
-        엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
+        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다** (S7). 누움은 의심 진입에만 쓰고 확정에는
+        세지 않는다(2026-09-28 개정 — 누운 사람을 거의 못 잡는다). 워커의 3초 정지
+        확정(`fallen`)은 엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
         """
         verdict = getattr(result, "fallen", None)
         if verdict is None:
             return
         if self._mission.enables("fallen") and verdict.candidate:
-            if self._fall_since is None:
-                self._suspect_fall("yolox", now_ms)  # 진입 프레임은 누적에 세지 않는다
-            elif verdict.aspect is not None:
-                # 박스가 있는 누움만 센다 — 게이트는 박스가 사라진 뒤 `gap_ms` 동안에도
-                # 후보를 참으로 두는데, 그것까지 세면 검출 한 번 뒤의 빈 1초가 누적을 채운다.
-                self._fall_hits += 1
-                self._confirm_fall(result, now_ms)
+            self._suspect_fall("yolox", now_ms)
         # ⚠️ **엣지는 워커의 `changed` 가 아니라 우리 기준으로 본다** — `person` 과 같은
         # 이유다. 워커는 25fps 라 `changed` 가 실린 프레임이 이 틱(10Hz) 전에 덮어써진다.
         # 2026-09-23 실기에서 워커 확정 6번 중 4번이 그렇게 사라졌다.
@@ -1285,11 +1284,12 @@ class Runtime:
             },
         )
 
-    def _suspect_fall(self, source: str, now_ms: int) -> None:
+    def _suspect_fall(self, source: str, now_ms: int, *, yes_asked: int | None = None) -> None:
         """쓰러짐 의심에 든다 (S3) — 노란 눈(L1)을 켜고 선다. 박스가 있으면 `_track` 이 다가간다.
 
         순찰·구역 점검 중이면 `FALL_SUSPECTED` 로 `ALERT` 에 들고, 이미 `ALERT`·`TRACK`
-        (보호구를 보던 중)이면 그 자리에서 의심만 켠다.
+        (보호구를 보던 중)이면 그 자리에서 의심만 켠다. 판독 «예» 로 들면 `yes_asked` 가 그
+        판독을 건 시각이다 — 확정에 세지는 않고 다음 «예» 의 간격만 여기서 잰다.
         """
         if self._fall_since is not None or not self._mission.enables("fallen"):
             return
@@ -1300,7 +1300,8 @@ class Runtime:
         if not (self._behavior.tracking or self._apply(Event.FALL_SUSPECTED, now_ms)):
             return
         self._fall_since = now_ms
-        self._fall_hits = 0
+        self._fall_yes = 0
+        self._fall_yes_asked = yes_asked
         self._fall_vlm_yes = None
         self._fall_confirmed = False
         # 5초 상실(S5)은 의심에 든 때부터 센다 — 판독으로만 든 의심에는 검출 시각이 없다.
@@ -1309,17 +1310,12 @@ class Runtime:
         LOG.warning("fall_suspected", source=source)
 
     def _confirm_fall(self, frame: Any, now_ms: int) -> None:
-        """누움 누적과 의심 뒤 판독 «예» 가 **둘 다** 모이면 확정한다 (S4) — `PERSON_DOWN` → L3.
+        """의심 뒤 판독 «예» 가 `fsm.fall_confirm_vlm_yes` 회 모이면 확정한다 (S4) — `PERSON_DOWN` → L3.
 
         ⚠️ **사건은 전이가 아니라 L3 다.** `PERSON_DOWN` 은 전이표에 없어 상태는 그대로
         두고 단계만 올린다. 관제가 확인하면(`confirm_alarm`) 순찰로 돌아간다.
         """
-        if (
-            self._fall_confirmed
-            or self._fall_since is None
-            or self._fall_hits < self._fall_need
-            or self._fall_vlm_yes is None
-        ):
+        if self._fall_confirmed or self._fall_since is None or self._fall_yes < self._fall_need:
             return
         self._fall_confirmed = True
         # ⚠️ **전이보다 먼저 남긴다** — 대시보드 사건이 기록을 가리키게.
@@ -1328,7 +1324,7 @@ class Runtime:
             frame,
             {
                 "fallen": True,
-                "hits": self._fall_hits,
+                "vlm_yes": self._fall_yes,
                 "suspect_ms": now_ms - self._fall_since,
                 "raw": self._fall_vlm_yes,
             },
@@ -1346,9 +1342,7 @@ class Runtime:
         if not self._behavior.tracking:
             self._end_fall(now_ms)
         elif not self._fall_confirmed and now_ms - self._fall_since >= self._fall_timeout_ms:
-            LOG.info(
-                "fall_suspect_timeout", hits=self._fall_hits, vlm=self._fall_vlm_yes is not None
-            )
+            LOG.info("fall_suspect_timeout", vlm_yes=self._fall_yes)
             self._resolve_fall(now_ms)
 
     def _resolve_fall(self, now_ms: int) -> None:
@@ -1363,7 +1357,8 @@ class Runtime:
 
     def _end_fall(self, now_ms: int) -> None:
         self._fall_since = None
-        self._fall_hits = 0
+        self._fall_yes = 0
+        self._fall_yes_asked = None
         self._fall_vlm_yes = None
         self._fall_confirmed = False
         self._escalation.note_fall_suspect(False, now_ms)
@@ -1373,6 +1368,10 @@ class Runtime:
 
         ⚠️ **의심 중에 건 판독이 의심이 끝난 뒤에 오면 버린다** — 돌려보낸 사람을 늦은 답
         하나로 곧바로 다시 의심하게 된다.
+
+        ⚠️ **앞서 센 «예» 와 `fsm.fall_confirm_gap_ms` 안에 건 «예» 는 세지 않는다** — 의심
+        중에는 판독이 끝나자마자 다시 물어 두 프레임이 거의 같은 사진이고, 같은 사진에는
+        같은 답이 나온다. 그대로 세면 두 번 묻는 뜻이 없다 (2026-09-28 사용자 결정).
         """
         if self._fall_vlm_pending is None or self._vlm.busy:
             return
@@ -1386,10 +1385,15 @@ class Runtime:
             return
         if self._fall_since is None:
             if not during:
-                self._suspect_fall("vlm", now_ms)
+                self._suspect_fall("vlm", now_ms, yes_asked=asked_ms)
         elif asked_ms >= self._fall_since:
             # «예» 는 대상을 본 것이다 — 박스 없이 판독으로만 보는 동안 5초 상실로 풀지 않는다.
             self._behavior.note_target(now_ms)
+            last = self._fall_yes_asked
+            if last is not None and asked_ms - last < self._fall_gap_ms:
+                return
+            self._fall_yes += 1
+            self._fall_yes_asked = asked_ms
             self._fall_vlm_yes = next(a.raw for a in reading.answers if a.key == "person_down")
             self._confirm_fall(asked, now_ms)
 
@@ -1456,7 +1460,7 @@ class Runtime:
         들어와 다음 구역에서 그 구역의 이름과 사진으로 읽힌다 — 예전 코드가 그랬다.
 
         ⚠️ **쓰러진 사람을 봤다는 답은 의심 진입 신호다** (2026-09-25 확정 S3·S7) — 단독으로
-        L3 를 내지 않는다. 확정은 누움 누적과 의심 뒤 판독이 함께 한다(`_confirm_fall`).
+        L3 를 내지 않는다. 확정은 의심 뒤 판독의 «예» 가 모여야 한다(`_confirm_fall`).
         구역을 떠난 뒤에 온 답이어도 의심에 든다.
 
         ⚠️ **넘어짐·통로 막힘은 두 번 읽어 확정한다** (WBS 3.6.3 · `vlm_hazards`). 첫 판독이
@@ -1507,7 +1511,7 @@ class Runtime:
             },
         )
         if reading.get("person_down"):
-            self._suspect_fall("zone_vlm", now_ms)
+            self._suspect_fall("zone_vlm", now_ms, yes_asked=now_ms)
 
     def _leave_zone(self, result: Any, now_ms: int) -> None:
         """방문을 끝낸다 — **결론은 여기 한 곳에서 낸다** (WBS 3.6.3 · 2026-09-25 결정).
