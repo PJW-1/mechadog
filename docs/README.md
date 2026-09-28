@@ -7,6 +7,7 @@
 무엇을 만들었고 왜 이렇게 만들었는지 알고 싶다면 여기부터 본다.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 시스템 구조·상태 머신·품질 기준과 용어를 정리한다.
+- [design-decisions.md](design-decisions.md) — 시스템의 모양을 정한 대표 설계 결정을 골라 요약한다.
 - [DECISIONS.md](DECISIONS.md) — 검토했으나 채택하지 않은 대안과 그 근거를 남긴다.
 - [PROTOCOL.md](PROTOCOL.md) — Host와 로봇 펌웨어가 주고받는 통신 메시지의 정본이다.
 - [PROTOCOL_LIDAR.md](PROTOCOL_LIDAR.md) — LiDAR 중계 노드 링크를 위한 PROTOCOL 의 확장 규약이다.
