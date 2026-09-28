@@ -33,7 +33,7 @@
 </nav>
 <div class="source-status"><span class="status-dot"></span><span id="source-status">시뮬레이션</span><span class="muted">실제 장비 미연결</span></div>
 <div class="safety-note"><span data-icon="lock"></span><span>실시간 제어 잠김 <small>미연결 · 정지 명령 전달 불가</small></span></div>
-<button class="estop" id="estop"><span data-icon="stop"></span><span>긴급 정지<small class="mobile-stop-note">장비 미연결 · 정지 전송 불가</small></span></button>
+<button class="estop" id="estop"><span data-icon="stop"></span><span id="stop-label">정지 안내<small class="mobile-stop-note">실제 정지 불가</small></span></button>
 </header>
 
 <section class="fleet-band" aria-label="로봇 선택">
@@ -59,10 +59,10 @@
 
 <main class="scene-stage" id="stage">
 <div class="scene-heading"><h1 id="scene-title" tabindex="-1">현장 전체 보기</h1><p id="scene-subtitle">예시 공간 · 실제 위치 미수신</p></div>
-<div class="segmented view-switch" aria-label="3D 시야 선택">
+<div class="segmented view-switch" aria-label="현장 화면과 상세 정보">
 <button class="selected" data-camera="overview" aria-pressed="true"><span data-icon="cube"></span>전체</button>
-<button data-camera="top" aria-pressed="false"><span data-icon="zones"></span>구역</button>
-<button data-camera="robot" aria-pressed="false"><span data-icon="device"></span>장치</button>
+<button data-camera="top" aria-pressed="false" aria-label="구역 정보 화면 열기"><span data-icon="zones"></span>구역 정보</button>
+<button data-camera="robot" aria-pressed="false" aria-label="장치 정보 화면 열기"><span data-icon="device"></span>장치 정보</button>
 </div>
 <canvas id="world" aria-label="3D 공장. 드래그로 회전, 휠로 확대. 키보드는 아래 시야 조작 버튼을 사용하세요."></canvas>
 <div id="scene-failure" class="scene-failure" hidden><h2>3D 화면을 열지 못했어요</h2><p>브라우저의 하드웨어 가속 설정을 확인한 뒤 다시 열어 주세요. 장비 상태는 아래에서 확인할 수 있습니다.</p><button id="retry-render">다시 열기</button></div>
@@ -93,8 +93,8 @@
 
 <footer class="operation-rail">
 <section class="mission-summary"><div class="mission-heading"><span data-icon="document"></span><h2>예시 임무 · 생산 구역 점검 <span>(시뮬레이션)</span></h2></div><div class="mission-progress"><button id="demo-toggle" aria-label="웹 예시 순찰 재생"><span data-icon="play"></span></button><span class="step done">대기</span><span class="step current">점검</span><span class="step">복귀</span><span id="demo-status">예시 정지</span></div></section>
-<section class="actual-status"><span data-icon="offline"></span><div><strong>현장 상태 확인 불가 · 장비 미연결</strong><p>웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.</p></div></section>
-<section class="event-summary"><span data-icon="document"></span><div><strong>예시 사건 · 검토 대기</strong><p>화면에 확인이 필요한 사례가 있습니다.</p></div><button id="open-events" class="outline-button">사건 열기 <span data-icon="arrow"></span></button></section>
+<section class="actual-status"><span data-icon="offline"></span><div><strong>현장 상태 확인 불가 · 장비 미연결</strong><p></p></div></section>
+<section class="event-summary"><span data-icon="document"></span><div><strong>예시 사건 · 검토 대기</strong><p></p></div><button id="open-events" class="outline-button">사건 열기 <span data-icon="arrow"></span></button></section>
 </footer>
 <main id="detail-panel" class="detail-panel" aria-labelledby="panel-title" hidden><header><h1 id="panel-title" tabindex="-1"></h1><button id="close-panel" aria-label="관제로 돌아가기"><span data-icon="home"></span>관제로 돌아가기</button></header><div id="panel-content"></div></main>
 </div>

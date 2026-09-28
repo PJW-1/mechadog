@@ -116,6 +116,15 @@ dialog{border-color:#ffffff;border-radius:24px;background:#f7fcf9;color:#264247;
 .op-button{border-color:#d9ddd3;background:#fffefa;color:#4c625b}.op-button:hover:not(:disabled){border-color:#c6ae83;background:#faf6ed}.op-button.primary,.op-button.selected,.op-button[aria-pressed=true]{border-color:#c8ad79;background:#faf2e3;color:#765929}
 #panel-content input:not([type=checkbox]):not([type=file]),#panel-content select,#panel-content textarea{border-color:#d9ded5;background:#fffefa;color:#334541}.op-facts>div,.op-event-row,.op-session-list article,.op-record,.op-escalation li{border-color:#e0e4db}.op-facts dt,.workspace-open .op-facts dt{color:#87948a}.op-facts dd,.workspace-open .op-facts dd{color:#344942}
 .op-event-list,.op-event-detail{border-color:#d2c4a6}.op-event-row{color:#445c52}.op-event-row:hover,.op-event-row.selected{background:#f8f4e9}.op-event-row.selected{border-left-color:#b7955e}.op-row-meta,.op-row-foot{color:#819087}.op-row-foot>span:last-child{color:#8a6a39}.op-evidence-empty{border-color:#d9d6c8;background:#faf9f2}.op-note.warning{border-color:#c9a66d;background:#fff7e9;color:#826235}.op-drive{border-color:#d6ddd1;background:#f2f4ec;color:#60746b}.op-drive.pressed{background:#b18e58;color:#fff}
+.op-choice-field{position:relative;z-index:3}.op-choice-field:has(.op-choice.open){z-index:8}.op-choice{position:relative;width:100%}
+#panel-content .op-choice-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:44px;padding:10px 13px;border:1px solid #d1dfd7;border-radius:12px;background:#fffefa;color:#334f49;box-shadow:0 2px 6px #315b4b0b;font:inherit;font-size:13px;font-weight:600;text-align:left;cursor:pointer;transition:border-color .18s,background .18s,box-shadow .18s}
+#panel-content .op-choice-trigger:hover,#panel-content .op-choice.open .op-choice-trigger{border-color:#8bbbab;background:#f7fbf7;box-shadow:0 5px 14px #315b4b13}
+.op-choice-trigger:focus-visible,.op-choice-option:focus-visible{outline:2px solid #238f7a;outline-offset:2px}.op-choice-chevron{width:8px;height:8px;flex:none;margin:-4px 2px 0 0;border-right:2px solid #738b80;border-bottom:2px solid #738b80;transform:rotate(45deg);transition:transform .18s}.op-choice.open .op-choice-chevron{margin:4px 2px 0 0;transform:rotate(225deg)}
+.op-choice-list{position:absolute;top:calc(100% + 7px);left:0;right:0;max-height:min(340px,45vh);overflow:auto;padding:6px;border:1px solid #d4e3d9;border-radius:14px;background:#fffefa;box-shadow:0 16px 34px #294e3c27,0 2px 8px #294e3c12;scrollbar-color:#b6cfc1 #fffefa}.op-choice-list[hidden]{display:none}
+.op-choice.open-up .op-choice-list{top:auto;bottom:calc(100% + 7px)}
+#panel-content .op-choice-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:40px;padding:8px 11px;border:0;border-radius:9px;background:transparent;color:#49615a;font:inherit;font-size:13px;text-align:left;cursor:pointer}
+#panel-content .op-choice-option:hover,#panel-content .op-choice-option:focus-visible{background:#eef7f1;color:#245b4d}#panel-content .op-choice-option[aria-selected=true]{background:#e6f3eb;color:#1d6958;font-weight:700}.op-choice-check{width:7px;height:11px;flex:none;margin-right:4px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);opacity:0}.op-choice-option[aria-selected=true] .op-choice-check{opacity:1}
+@media(prefers-reduced-motion:reduce){.op-choice-trigger,.op-choice-chevron{transition:none}}
 @keyframes camera-glow-premium{to{box-shadow:0 24px 58px #3d41365c,0 0 0 1px #fff}}
 
 /* Chrome-like vertical tabs: labels slide out on hover; the V1 nav elements stay intact. */
@@ -171,7 +180,6 @@ dialog{border-color:#ffffff;border-radius:24px;background:#f7fcf9;color:#264247;
  /* Wider canvas instead of translateX: same rightward shift, no bare strip on the left edge. */
  #world,.markers{transform:none;width:calc(var(--stage-w0)*1.14)}
  .camera-dock{--r-camera-shell-w:min(calc(var(--stage-w0)*.31),calc((100cqh - 250px)*4/3 + 18px))}
- .camera-dock.expanded{width:min(920px,calc(var(--stage-w0)*.85))}
 }
 
 /* Polish pass 2: the events page had no entrance while missions' cards rise in. Same motion, staggered by block.
@@ -204,3 +212,28 @@ dialog{border-color:#ffffff;border-radius:24px;background:#f7fcf9;color:#264247;
  #app.workspace-open{grid-template-columns:64px minmax(0,1fr)}
  #app.workspace-open:has(.main-nav:hover),#app.workspace-open:has(.main-nav:focus-within),.rail-open #app.workspace-open{grid-template-columns:205px minmax(0,1fr)}
 }
+
+/* The disconnected preview opens an explanation; only a live link exposes a red stop action. */
+.estop:not(.is-live){border:1px solid #b9c9c3;background:#edf2ee;color:#314640;box-shadow:none}
+.estop:not(.is-live):hover{background:#e4ede7;color:#263a34}
+.actual-status p:empty,.event-summary p:empty{display:none}
+@media(max-width:800px){
+ .estop{min-height:44px;font-size:13px}
+ .mobile-stop-note{font-size:11px}
+ .view-switch button{min-width:89px;padding-inline:8px;font-size:11px}
+ #app:not(.workspace-open){height:auto;min-height:100dvh;grid-template-rows:106px 82px max-content auto;overflow:visible}
+ #stage{display:flex;flex-direction:column;gap:12px;height:max-content;padding:490px 0 12px;min-height:0;container-type:inline-size}
+ #stage .scene-controls{position:relative;order:1;top:auto;right:auto;bottom:auto;align-self:stretch;justify-content:space-between;margin:0 12px;gap:4px;z-index:7}
+ #stage .scene-controls button{width:44px;height:44px;min-height:44px}
+ #stage #reset-view{min-width:92px;padding-inline:6px}
+ #stage .camera-dock{position:relative;order:2;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;width:calc(100% - 24px);margin:0 12px;transform:none}
+ #stage .camera-dock.collapsed{bottom:auto}
+ .scene-stage:has(.camera-dock.expanded) .scene-controls{display:flex}
+}
+/* Selection feedback identifies the chosen robot; it never animates telemetry or camera frames. */
+.camera-robot-switch button.selected{animation:robot-choice .24s ease-out}
+.map-marker.selected{animation:marker-choice .28s ease-out}
+@keyframes robot-choice{from{box-shadow:0 0 0 0 #b7955e55}to{box-shadow:0 0 0 7px #b7955e00}}
+@keyframes marker-choice{from{outline:2px solid #b7955e;outline-offset:0}to{outline:2px solid #b7955e00;outline-offset:7px}}
+@media(prefers-reduced-motion:reduce){.camera-robot-switch button.selected,.map-marker.selected{animation:none}}
+@media(max-width:360px){#stage #reset-view{min-width:44px;width:44px;font-size:0;padding:0}}

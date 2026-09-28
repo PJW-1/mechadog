@@ -29,6 +29,8 @@
 .op-filters>.op-field:first-child{grid-column:1/-1}.op-filters>.op-button{margin-bottom:12px}
 .op-result-count{font-size:11px;color:#b1aec4;margin:8px 0 13px}
 .op-evidence-workspace{display:grid;grid-template-columns:minmax(190px,.76fr) minmax(0,1.3fr);gap:22px;align-items:start}
+.op-evidence-workspace.empty{grid-template-columns:1fr}
+.op-event-detail[hidden]{display:none}
 .op-event-list{border-top:1px solid #55566a}
 .op-event-row{display:flex;width:100%;flex-direction:column;align-items:stretch;text-align:left;padding:15px 12px;background:transparent;color:inherit;border:0;border-bottom:1px solid #454659;border-left:1px solid transparent;gap:9px;cursor:pointer;font:inherit}
 .op-event-row strong{font-size:14px;font-weight:550;line-height:1.5}

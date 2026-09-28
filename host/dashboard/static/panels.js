@@ -10,8 +10,8 @@ const time=value=>value==null?'—':new Date(value).toLocaleString('ko-KR',{hour
 
 // All record content is text, never HTML. Files stay in this browser session.
 export class OperationalPanels {
- constructor({store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,voiceLink=null,document=globalThis.document}){
-  Object.assign(this,{store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,voiceLink,document});
+ constructor({store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotViewAction,onRobotPreview,onManualObservation,onToast,voiceLink=null,getVisionStatus=()=>({state:'off'}),document=globalThis.document}){
+  Object.assign(this,{store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,voiceLink,getVisionStatus,document});
   this.view='dashboard';this.zones=[];this.eventId=null;this.zoneId=null;
   this.filters={type:'all',status:'all',robot:'all',query:''};this.urls=new Set();
   this.reviewDrafts=new Map();this.policyDrafts=new Map();this.activeHold=null;
@@ -24,6 +24,7 @@ export class OperationalPanels {
   this.document.addEventListener('keydown',this.manualKeyDown,true);
   this.document.addEventListener('keyup',this.manualKeyUp,true);
   this.document.addEventListener('focusin',this.manualFocus);
+  this.document.addEventListener('click',event=>{for(const choice of this.container.querySelectorAll('.op-choice.open'))if(!choice.contains(event.target))this.closeFilterChoice(choice)});
   this.document.defaultView.addEventListener('blur',this.manualBlur);
  }
  el(tag,attrs={},...children){
@@ -74,7 +75,7 @@ export class OperationalPanels {
   this.clearVoicePoll();
   this.activeHold=null;this.view=view;this.title.textContent=TITLES[view]||'';
   this.container.dataset.page=view;this.container.replaceChildren();if(!TITLES[view])return;
-  const intro=this.el('div',{class:'op-intro'},this.note({missions:'로봇 관측·제어와 현재 장치 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태와 발화 기록을 보고, 시나리오와 멘트를 관리합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?'실제 연결':this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
+  const intro=this.el('div',{class:'op-intro'},this.note({missions:'로봇 관측·제어와 현재 장치 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태와 발화 기록을 보고, 시나리오와 멘트를 관리합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?'관제 서버 연결':this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
   this.container.append(intro,this.el('div',{class:'op-feedback',role:'status','aria-live':'polite'}));
   this[view==='zones'?'zonePage':view]();
  }
@@ -88,6 +89,51 @@ export class OperationalPanels {
   const top=this.container.scrollTop;
   this.render(this.view);
   this.container.scrollTop=top;
+  if(reason==='review'&&this.view==='events')this.eventList.querySelector('.op-event-row.selected')?.focus();
+ }
+ closeFilterChoice(choice){
+  choice.classList.remove('open','open-up');choice.querySelector('.op-choice-trigger').setAttribute('aria-expanded','false');choice.querySelector('.op-choice-list').hidden=true;
+ }
+ filterChoice(label,name,options,value,onchange){
+  const selected=options.find(([key])=>key===value)||options[0];
+  const trigger=this.el('button',{type:'button',class:'op-choice-trigger','data-filter':name,'aria-label':name+' · '+selected[1],'aria-haspopup':'listbox','aria-expanded':'false'},this.el('span',{class:'op-choice-value'},selected[1]),this.el('span',{class:'op-choice-chevron','aria-hidden':'true'}));
+  const list=this.el('div',{class:'op-choice-list',role:'listbox','aria-label':name,hidden:true});
+  const choice=this.el('div',{class:'op-choice'},trigger,list);
+  const items=options.map(([key,text])=>{
+   const item=this.el('button',{type:'button',class:'op-choice-option',role:'option','aria-selected':key===value},this.el('span',{},text),this.el('span',{class:'op-choice-check','aria-hidden':'true'}));
+   item.addEventListener('click',()=>{
+    trigger.querySelector('.op-choice-value').textContent=text;
+    trigger.setAttribute('aria-label',name+' · '+text);
+    for(const option of items)option.setAttribute('aria-selected',String(option===item));
+    this.closeFilterChoice(choice);trigger.focus();onchange(key);
+   });
+   item.addEventListener('keydown',event=>{
+    if(event.key==='Escape'){event.preventDefault();this.closeFilterChoice(choice);trigger.focus()}
+    else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+     event.preventDefault();const index=items.indexOf(item);
+     items[event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();
+    }
+   });
+   return item;
+  });
+  list.append(...items);
+  trigger.addEventListener('click',()=>{
+   const opening=!choice.classList.contains('open');
+   for(const other of this.container.querySelectorAll('.op-choice.open'))this.closeFilterChoice(other);
+   choice.classList.toggle('open',opening);trigger.setAttribute('aria-expanded',String(opening));list.hidden=!opening;
+   if(opening){
+    const bounds=trigger.getBoundingClientRect(),panel=this.container.getBoundingClientRect();
+    const below=Math.min(this.document.defaultView.innerHeight,panel.bottom)-bounds.bottom;
+    const above=bounds.top-Math.max(0,panel.top);
+    choice.classList.toggle('open-up',below<Math.min(list.scrollHeight,340)&&above>below);
+    items.find(item=>item.getAttribute('aria-selected')==='true')?.focus();
+   }
+  });
+  trigger.addEventListener('keydown',event=>{
+   if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();if(!choice.classList.contains('open'))trigger.click();else items[event.key==='ArrowDown'?0:items.length-1].focus()}
+   if(event.key==='Escape'&&choice.classList.contains('open')){event.preventDefault();this.closeFilterChoice(choice)}
+  });
+  return this.el('div',{class:'op-field op-choice-field'},this.el('span',{},label),choice);
  }
  // 중요한 모드 변경(서비스·안전 해제·순찰 시작)은 확인 대화상자를 거친다.
  // 대화상자를 쓸 수 없으면 브라우저 기본 확인 창으로 묻는다 — 확인 없이 보내는 길을 두지 않는다(#172).
@@ -116,7 +162,7 @@ export class OperationalPanels {
   this.container.append(toolbar,this.note('같은 사건 폴더의 meta.json + snapshot.jpg를 함께 선택하세요. 서버 업로드 없이 열며, 가져온 파일·메모는 새로고침하면 사라집니다.'));
   const search=this.el('input',{type:'search',name:'사건 검색',placeholder:'사건명 · 장치 · 구역 · 메모',value:this.filters.query,oninput:event=>{this.filters.query=event.target.value;this.renderEventList()}});
   const robotOptions=[...new Set(this.store.events.map(e=>e.robot))].map(id=>[id,id]);
-  const filters=this.el('div',{class:'op-filters'},this.field('검색',search),this.field('유형',this.select('사건 유형',[['all','전체 유형'],...Object.entries(EVENT_CATEGORIES)],this.filters.type,value=>{this.filters.type=value;this.renderEventList()})),this.field('검토 상태',this.select('검토 상태 필터',[['all','전체 상태'],...Object.entries(REVIEW_STATES)],this.filters.status,value=>{this.filters.status=value;this.renderEventList()})),this.field('장치',this.select('사건 장치',[['all','전체 장치'],...robotOptions],this.filters.robot,value=>{this.filters.robot=value;this.renderEventList()})),this.button('초기화',()=>{this.filters={type:'all',status:'all',robot:'all',query:''};this.render('events')}));
+  const filters=this.el('div',{class:'op-filters'},this.field('검색',search),this.filterChoice('유형','사건 유형',[['all','전체 유형'],...Object.entries(EVENT_CATEGORIES)],this.filters.type,value=>{this.filters.type=value;this.renderEventList()}),this.filterChoice('검토 상태','검토 상태 필터',[['all','전체 상태'],...Object.entries(REVIEW_STATES)],this.filters.status,value=>{this.filters.status=value;this.renderEventList()}),this.filterChoice('장치','사건 장치',[['all','전체 장치'],...robotOptions],this.filters.robot,value=>{this.filters.robot=value;this.renderEventList()}),this.button('초기화',()=>{this.filters={type:'all',status:'all',robot:'all',query:''};this.render('events')}));
   this.eventCount=this.el('p',{class:'op-result-count',role:'status'});
   this.eventList=this.el('div',{class:'op-event-list','aria-label':'사건 목록'});
   this.eventDetail=this.el('section',{class:'op-event-detail','aria-label':'선택한 사건'});
@@ -130,12 +176,13 @@ export class OperationalPanels {
    this.el('span',{class:'op-row-meta'},event.robot,this.badge(event.source==='DEMO'?'예시':event.source==='LIVE_FEED'?'실시간':'저장 파일',event.source==='LIVE_FEED'?'':'')),
    this.el('strong',{},event.title),this.el('span',{class:'op-row-meta'},event.zone),
    this.el('span',{class:'op-row-foot'},this.badge(REVIEW_STATES[event.review],event.review==='pending'?'amber':''),this.el('span',{},event.escalation))
-  ],()=>{this.eventId=event.id;this.renderEventList()},{class:'op-event-row'+(event.id===this.eventId?' selected':''),'aria-pressed':event.id===this.eventId})));
-  if(!records.length)this.eventList.append(this.note(this.store.queryEvents().length?'조건에 맞는 사건이 없습니다. 필터를 변경해 보세요.':'가져온 기록이 없습니다. 실시간 사건이 없다는 의미는 아닙니다.'));
+  ],()=>{this.eventId=event.id;this.renderEventList();this.eventList.querySelector('.op-event-row.selected')?.focus()},{class:'op-event-row'+(event.id===this.eventId?' selected':''),'aria-pressed':event.id===this.eventId})));
+  this.eventList.parentElement.classList.toggle('empty',!records.length);
+  if(!records.length)this.eventList.append(this.note(this.store.queryEvents().length?'검색 결과가 없습니다. 검색어나 필터를 바꾸세요.':'검토할 사건이 없습니다. 블랙박스 파일을 가져오세요.'));
   this.renderEventDetail(this.store.events.find(e=>e.id===this.eventId));
  }
  renderEventDetail(event){
-  this.eventDetail.replaceChildren();if(!event){this.eventDetail.append(this.el('h3',{},'검토할 사건을 선택하세요'),this.note('예시 모드를 켜거나 저장된 블랙박스 파일을 가져올 수 있습니다.'));return}
+  this.eventDetail.replaceChildren();this.eventDetail.hidden=!event;if(!event)return;
   this.eventDetail.append(this.el('div',{class:'op-row-meta'},event.id,this.badge(event.source==='DEMO'?'실제 사건 아님':event.source==='LIVE_FEED'?'실시간 수신 사건':'과거 저장 기록')),this.el('h3',{class:'op-detail-title'},event.title),this.note(event.detail),this.facts([['FSM',event.state],['대응 단계',event.escalation],['운용 모드',MODE_NAMES[event.mode]??event.mode??'기록 없음'],['출입 인증',event.auth],['PPE',event.ppe]]));
   if(event.evidence?.length)this.eventDetail.append(this.section('판정 근거',this.facts(event.evidence)));
   if(event.snapshot)this.eventDetail.append(this.evidenceImage(event));
@@ -349,6 +396,9 @@ export class OperationalPanels {
   this.updateRobotObservation(this.robotObservation);
   this.statusLive=this.el('div',{class:'robot-status-live','aria-live':'off'});this.fillRobotStatus();
   this.container.append(this.el('section',{class:'robot-status-sheet','aria-label':name+' 상태'},this.statusLive));
+  this.guardReadiness=this.el('div',{class:'op-device-facts','data-guard-readiness':'','aria-live':'off'});
+  this.container.append(this.section('경비 실측 연결 점검',this.guardReadiness,this.note('서버 연결이나 영상 수신만으로 경비 기능 성공을 판정하지 않습니다. 사람 감지·인증·경보는 실물 시험에서 따로 확인하세요. 이 점검 칸은 로봇을 움직이지 않습니다.')));
+  this.refreshGuardReadiness();
   // 실제 장비 명령 — 폐기된 /live 최소 화면에만 있던 기능을 관제로 옮긴 것.
   // 상태 칸은 /ws/telemetry 피드로 초당 10번 고친다(refreshTelemetry). ⚠️ **버튼은 교체하지 않고 글자만 바꾼다** —
   // 누르는 순간 버튼이 새로 만들어지면 클릭이 사라진다. 서비스 토글은 누를 때의 실측값으로 방향을 정한다.
@@ -544,6 +594,18 @@ export class OperationalPanels {
  refreshTelemetry(){
   if(['devices','missions'].includes(this.view)&&this.statusLive?.isConnected)this.fillRobotStatus();
   if(this.view==='missions'&&this.deviceFacts?.isConnected)this.fillDeviceCommands();
+  this.refreshGuardReadiness();
+ }
+ refreshGuardReadiness(){
+  if(this.view!=='missions'||!this.guardReadiness?.isConnected)return;
+  const store=this.store,tone=store.live?describeTelemetry(store.telemetry).tone:'waiting';
+  const fresh=tone==='live'&&!!store.deviceTelemetry;
+  const vision=store.live?this.getVisionStatus()?.state:'off';
+  const body=!store.live?'실물 상태 수신 안 함':fresh?'새 상태 수신 중':tone==='stale'?'수신 중단 · 마지막 값만 있음':tone==='closed'?'상태 채널 끊김':'상태 수신 대기';
+  const camera=!store.live?'실제 영상 미연결':({live:'새 검출 프레임 수신 중',waiting:'영상 채널 연결 · 프레임 대기',stale:'새 프레임 없음 · 마지막 영상',closed:'영상 채널 끊김',off:'비전 채널 없음',connecting:'영상 연결 중'})[vision]??'영상 연결 중';
+  const mode=fresh?(MODE_NAMES[store.missionMode]??store.missionMode??'미수신'):'현재 모드 확인 불가';
+  const safety=fresh?(store.safetyLatched?'안전 잠금 · 이동 금지':'잠금 해제 상태 수신 · 이동 허가 아님'):'현재 안전 상태 확인 불가';
+  this.guardReadiness.replaceChildren(this.facts([['관제 서버',store.live?'연결됨 · 로봇 연결과 별개':'미연결 · 웹 미리보기'],['본체 상태',body],['카메라 검출 영상',camera],['현재 운용 모드',mode],['안전 래치',safety]]));
  }
  // 운용 모드 전환 버튼 (FR-4.7 · FR-11.3). ⚠️ **지금 모드는 누를 수 없게 둔다** —
  // 같은 모드로 바꾸는 것은 거절이 아니지만, 누를 수 있으면 «바뀌었나» 를 되묻게 된다.
