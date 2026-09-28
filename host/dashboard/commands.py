@@ -71,6 +71,7 @@ class CommandService:
         behavior: Behavior,
         commander: Commander,
         send: Callable[[str], None],
+        emergency_stop: Callable[[], str] | None = None,
         request_reset: Callable[[], None] | None = None,
         apply_event: Callable[[Event], bool] | None = None,
         ask_patrol: Callable[[], None] | None = None,
@@ -84,6 +85,9 @@ class CommandService:
         self._behavior = behavior
         self._commander = commander
         self._send = send
+        # 런타임이 주면 ESTOP 의 인코딩과 송신을 틱과 같은 락 안에서 한 번에 한다
+        # (`Runtime.send_emergency_stop`). 따로 하면 틱과 송신 순서가 뒤바뀐다.
+        self._emergency_stop = emergency_stop
         self._request_reset = request_reset
         self._ask_patrol = ask_patrol
         # 운용 모드 전환 (`3.4.4`). ⚠️ **`Mission` 을 직접 쥐지 않는다** — 전환 가부는
@@ -129,8 +133,10 @@ class CommandService:
         전문을 먼저 보내고 FSM 을 따라가게 한다. 순서를 뒤집으면 상태만 바뀌고
         로봇이 계속 걷는 창이 생긴다.
         """
-        telegram = self._commander.emergency_stop()
-        self._send(telegram)
+        if self._emergency_stop is not None:
+            self._emergency_stop()
+        else:
+            self._send(self._commander.emergency_stop())
         self._apply_event(Event.ESTOP)
         return CommandResult(
             command="estop",

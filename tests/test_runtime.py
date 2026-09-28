@@ -20,7 +20,7 @@ from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
-from host.runtime import Runtime, watch_console
+from host.runtime import Runtime, dashboard_wiring, watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
@@ -448,6 +448,71 @@ def test_loop_receives_and_reacts(config: dict, clock: FakeClock) -> None:
     assert stats.accepted == 2
     assert r.behavior.state == "FAILSAFE"
     assert stats.states.get("FAILSAFE"), "전이 뒤의 틱들은 FAILSAFE 상태로 나갔다"
+
+
+class _GatedSocket(FakeSocket):
+    """틱 전문을 인코딩한 뒤 첫 `sendto` 에서 멈춘다 — 인코딩과 송신 사이의 창을 연다."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock)
+        self.armed = False
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def sendto(self, data: bytes, peer: tuple[str, int]) -> None:
+        if self.armed and threading.current_thread() is not threading.main_thread():
+            self.armed = False
+            self.entered.set()
+            assert self.release.wait(5.0)
+        super().sendto(data, peer)
+
+
+def test_dashboard_estop_is_never_sent_behind_a_tick_it_outnumbers(
+    config: dict, clock: FakeClock
+) -> None:
+    """관제 ESTOP 이 틱의 인코딩과 송신 사이에 끼어도 **송신 순서가 seq 순서다.**
+
+    로봇은 seq 가 뒤로 간 전문을 ESTOP 까지 버린다. 락이 없던 때는 이 시험에서
+    `[1, 2, 3, 4, 6, 5]` 로 나갔다 — 겹치는 순서에 따라 버려지는 쪽이 ESTOP 일 수도 있다.
+    """
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = _GatedSocket(clock)
+    r.begin(sock)
+    r.step(clock.ms)  # 세션 개시 전문과 첫 틱
+    commands = dashboard_wiring(r, config, vision=None, blackbox=None)["commands"]
+
+    clock.ms = r.next_due_ms
+    sock.armed = True
+    tick = threading.Thread(target=r.step, args=(clock.ms,))
+    tick.start()
+    assert sock.entered.wait(5.0)  # 틱이 seq 를 받고 송신 직전에 멈췄다
+
+    estop = threading.Thread(target=commands.estop)
+    estop.start()
+    estop.join(0.2)  # 락이 있으면 여기서 기다린다
+    sock.release.set()
+    tick.join(5.0)
+    estop.join(5.0)
+
+    seqs = [json.loads(line)["seq"] for _at, line in sock.sent]
+    assert seqs == sorted(seqs), f"송신 순서가 seq 순서와 다르다: {seqs}"
+    assert sock.types()[-1] == "ESTOP"
+
+
+def test_dashboard_estop_before_the_first_tick_still_opens_the_session_first(
+    config: dict, clock: FakeClock
+) -> None:
+    """첫 틱보다 관제 ESTOP 이 먼저여도 **세션 개시 `STOP` seq=1 이 첫 datagram 이다.**"""
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = FakeSocket(clock)
+    r.begin(sock)
+    dashboard_wiring(r, config, vision=None, blackbox=None)["commands"].estop()
+    r.step(clock.ms)
+
+    sent = [json.loads(line) for _at, line in sock.sent]
+    assert [(m["type"], m["seq"]) for m in sent[:2]] == [("STOP", 1), ("ESTOP", 2)]
+    assert [m["seq"] for m in sent] == sorted(m["seq"] for m in sent)
+    assert sum(m["type"] == "STOP" and m["seq"] == 1 for m in sent) == 1
 
 
 def test_peer_is_learned_from_the_first_telemetry(cfg: dict, clock: FakeClock) -> None:

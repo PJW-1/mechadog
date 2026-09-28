@@ -241,6 +241,10 @@ class Runtime:
         # 운용 루프의 송신 소켓 — 대시보드 명령(ESTOP 등)이 다음 틱을 기다리지
         # 않게 즉시 보내는 경로가 쓴다. `serve` 가 시작할 때 채워진다.
         self._sock: socket.socket | None = None
+        # 전문의 seq 를 받는 인코딩과 그 전문의 송신을 한 덩어리로 묶는다. 틱(운용 루프)과
+        # 관제 ESTOP(대시보드 스레드)이 같은 인코더를 쓰므로, 묶지 않으면 송신 순서가 seq
+        # 순서와 뒤바뀌고 로봇은 뒤로 간 쪽을 ESTOP 까지 버린다.
+        self._send_lock = threading.Lock()
         self._reset_pending = False
         # ⚠️ **`_reset_pending` 과 다른 것이다.** 저것은 *로봇이 래치를 풀었다고
         # 보고할 때까지 기다리는 중*이고, 이 둘은 *사람이 눌렀고 아직 틱이 처리하지
@@ -2473,7 +2477,24 @@ class Runtime:
 
     def step(self, now_ms: int) -> None:
         """틱 하나 — 마감이 된 전문만 나간다 (마감은 송신기가 센다)."""
-        self._send(self._sock, self.tick(now_ms))
+        with self._send_lock:
+            self._send(self._sock, self.tick(now_ms))
+
+    def send_emergency_stop(self) -> str:
+        """관제 ESTOP — 인코딩과 즉시 송신을 틱과 같은 락 안에서 한다.
+
+        상대를 아직 모르면 보내지 않고 FSM 만 `halt` 로 내려간다(`send_immediate` 와 같다).
+        세션 개시 전문이 아직 안 나갔으면 그것을 먼저 보낸다 — 첫 datagram 이어야 한다.
+        """
+        with self._send_lock:
+            line = self._commander.emergency_stop()
+            lines = [line] if self._session_open is None else [self._session_open, line]
+            if self._sock is not None and self._peer is not None:
+                self._session_open = None
+                for item in lines:
+                    with contextlib.suppress(OSError):
+                        self._sock.sendto(item.encode("utf-8"), self._peer)
+        return line
 
     def send_immediate(self, line: str) -> None:
         """다음 틱을 기다리지 않고 전문 한 줄을 즉시 보낸다.
@@ -2509,6 +2530,10 @@ class Runtime:
 
     def stop_robot(self, sock: socket.socket) -> None:
         """종료 ESTOP 을 여러 번 보낸다. 여러 대면 **전부 먼저 세운 뒤** `release` 한다."""
+        with self._send_lock:
+            self._stop_robot_locked(sock)
+
+    def _stop_robot_locked(self, sock: socket.socket) -> None:
         line = self.emergency_stop()
         if self._peer is not None:
             payload = line.encode("utf-8")
@@ -2637,6 +2662,7 @@ def dashboard_wiring(
         runtime.behavior,
         runtime.commander,
         runtime.send_immediate,
+        emergency_stop=runtime.send_emergency_stop,
         request_reset=runtime.ask_reset,
         apply_event=runtime.apply_external,
         ask_patrol=runtime.ask_patrol,
