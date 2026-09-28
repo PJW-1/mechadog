@@ -20,7 +20,7 @@
 
 - 안전 래치가 걸려 있으면 `FAILSAFE` 를 보고합니다.
 - 그렇지 않고 근거리 반사 정지가 걸려 있으면 `AVOID` 를 보고합니다.
-- 둘 다 아니면 Host 가 `STATE` 명령으로 마지막에 알려 준 값을 그대로 되돌려 보냅니다([L520-L522](../../firmware_mechdog_motion/firmware_mechdog_motion.ino#L520-L522)).
+- 둘 다 아니면 Host 가 `STATE` 명령으로 마지막에 알려 준 값을 그대로 되돌려 보냅니다([L688-L690](../../firmware_mechdog_motion/firmware_mechdog_motion.ino#L688-L690)).
 
 Host 는 FSM 상태가 바뀔 때마다 `STATE` 명령으로 그 값을 로봇에 알립니다([`host/behavior/commander.py` L93-L103](../../host/behavior/commander.py#L93-L103)). `FAILSAFE` 와 `AVOID` 는 로봇이 스스로 판정하는 상태이면서 Host 가 `STATE` 로 내려보내는 상태이기도 합니다. 따라서 되돌아온 `state="FAILSAFE"` 나 `state="AVOID"` 만으로는 로봇의 판정인지 Host 가 보낸 값의 반향인지 구분할 수 없습니다.
 

@@ -47,7 +47,7 @@
 - 추론률을 수신률과 같은 25fps 로 올려 프레임을 버리지 않습니다.
 - 확정 조건을 «300ms 창 안에서 3회 검출» 로 바꿉니다. 연속을 요구하지 않고, 창이 완전히 비었을 때만 확정을 해제합니다.
 
-게이트의 판단 흐름은 [`PersonGate.observe`](../../host/vision/person.py#L235-L280) 와 같습니다.
+게이트의 판단 흐름은 [`PersonGate.observe`](../../host/vision/person.py#L235-L281) 와 같습니다.
 
 ```mermaid
 flowchart TD
