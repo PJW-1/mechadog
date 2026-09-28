@@ -20,6 +20,14 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
 이유도 그래서다 — 목업이 자체 숫자를 갖게 되면 호스트를 진짜와 다른 기준으로
 시험하게 된다.
 
+⚠️ **다만 타임아웃·래치 동작 자체는 펌웨어와 다르다.** 이 목업은 명령 타임아웃
+(`cmd_timeout_ms`)에는 래치 없이 정지만 하고, 링크 두절(`link_loss_failsafe_ms`,
+3000ms)에서만 래치한다. 실제 펌웨어(`firmware_mechdog_motion.ino`)는 명령
+타임아웃(`kCommandTimeoutMs`, 600ms)에서 곧바로 `latchFailsafe` 하며,
+3000ms(`kLinkHealthyAgeMs`)는 텔레메트리의 `link_ok` 표시에만 쓰고 래치와는
+무관하다. 목업을 펌웨어에 맞출지는 코디네이터 판단이 필요한 정책 질문으로 남겨
+둔다.
+
 사용:
 
     python tools/mock_mechdog.py --device mechdog-ref

@@ -1,4 +1,4 @@
-"""가상 MechDog 검증 (WBS 6.1.1).
+"""가상 MechDog 검증.
 
 목업의 값어치는 **호스트를 진짜와 같은 기준으로 시험한다**는 데 있다. 그래서
 가장 중요한 검사는 기능 목록이 아니라 아래 둘이다.
@@ -107,7 +107,7 @@ def test_starts_in_failsafe_until_first_command(config: dict) -> None:
 
 
 def test_command_timeout_stops_but_does_not_change_state(config: dict) -> None:
-    """300ms 무명령은 Tier 1 반사(`move(0,0)`)이지 상태 전이가 아니다 (아키텍처 3절)."""
+    """600ms 무명령은 Tier 1 반사(`move(0,0)`)이지 상태 전이가 아니다 (아키텍처 3절)."""
     robot = _robot(config)
     _feed(robot, START_MS)
     timeout_ms = config["safety"]["cmd_timeout_ms"]
