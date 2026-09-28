@@ -14,7 +14,7 @@
 | 파일 | 용도 | 확보 방법 | 상태 |
 | :--- | :--- | :--- | :--- |
 | `coco.onnx` | ① 범용 검출기 — 사람 검출(FR-3) + 변화 감지 대상 객체(FR-8) | **YOLOX-S 공식 배포 ONNX 를 받아 이름만 바꾼다.** 학습·export 불요 | ✅ 계열 확정 (ADR-24) |
-| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` / `person_down` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v3`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ✅ 학습·ONNX export 완료, XIAO 실기 검수 대기 |
+| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v3`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ *(2026-09-28)* `ppe-v3`(5클래스, `person_down` 포함) 이후 후보 v23b 가 XIAO 실기에서 기각됨 — 다음 모델(4클래스)은 재학습 대기 |
 
 ---
 

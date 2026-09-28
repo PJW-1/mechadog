@@ -340,17 +340,14 @@ class PatrolController:
 
     @staticmethod
     def _yaw_of(reading: Any) -> float | None:
-        """`imu.yaw` 를 꺼낸다. **`reading.yaw` 는 없다.**
+        """`reading.yaw` 를 꺼낸다. 단위는 deg.
 
-        합치기 전 코드가 `tlm.get("yaw")` 로 읽고 있었는데 규약에 그런 필드가
-        없다 — `imu` 안에 `pitch`·`roll`·`yaw` 가 들어 있고 단위는 deg 다.
-        조용히 `None` 이 되어 IMU 보조가 내내 꺼져 있었다.
+        `host.telemetry.receiver.Reading` 은 `imu` 속성이 없고 평탄한 `yaw`
+        필드를 쓴다 (`Reading.of` 가 전문의 `msg["imu"]["yaw"]` 를 여기 담는다).
+        `reading.imu` 를 읽으면 조용히 `None` 이 되어 IMU 보조가 내내 꺼진다.
         """
-        imu = getattr(reading, "imu", None)
-        if isinstance(imu, Mapping):
-            value = imu.get("yaw")
-            return float(value) if isinstance(value, int | float) else None
-        return None
+        value = getattr(reading, "yaw", None)
+        return float(value) if isinstance(value, int | float) else None
 
     # ── 입력: 스캔 ────────────────────────────────────────────
     def observe_scan(self, scan: Scan, now_ms: int) -> None:

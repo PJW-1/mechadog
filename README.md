@@ -193,7 +193,9 @@ pip install -r requirements.txt
 python tools/fetch_models.py
 ```
 
-두 번째 명령이 `models/coco.onnx`(사람 검출)와 `models/ppe.onnx`(현행 ppe-v3 보호구 5클래스)를
+두 번째 명령이 `models/coco.onnx`(사람 검출)와 `models/ppe.onnx`(보호구 검출 — 배포 릴리스
+`ppe-v3`, XIAO 실기 미승인. 다음 모델은 4클래스로 재학습 예정이며 상세는
+[`docs/PPE_ACCEPTANCE.md`](docs/PPE_ACCEPTANCE.md)에 있다)를
 받고 크기·SHA-256을 검증한다. **검출은 2단이라 둘 다 있어야 한다** — `coco`가 찾은
 사람 영역 안에서만 `ppe`가 돈다. 받는 곳과 라이선스는 [`models/README.md`](models/README.md)와
 [`models/NOTICE`](models/NOTICE)에 있다.
