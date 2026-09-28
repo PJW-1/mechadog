@@ -466,3 +466,49 @@ def test_exp_falls_back_to_standard_cocoeval():
     spec = importlib.util.spec_from_file_location("yolox_exp_ppe_s", path)
     spec.loader.exec_module(importlib.util.module_from_spec(spec))
     assert yolox.layers.COCOeval_opt is COCOeval
+
+
+# ── mendeley_prepare ─────────────────────────────────────────────────
+from tools.ppe import mendeley_prepare  # noqa: E402
+
+
+def test_mendeley_names_map_and_stop_on_unknown(tmp_path):
+    yaml = tmp_path / "data.yaml"
+    yaml.write_text("nc: 4\nnames: ['Helmet', 'NoHelmet', 'NoVest', 'Vest']\n", encoding="utf-8")
+    names = mendeley_prepare.read_names(yaml)
+    assert mendeley_prepare.map_names(names) == ["helmet", "no_helmet", "no_vest", "vest"]
+    with pytest.raises(SystemExit):
+        mendeley_prepare.map_names(["Helmet", "Gloves"])
+
+
+def test_mendeley_read_yolo_converts_normalized_center_boxes():
+    names = ["helmet", "no_helmet", "no_vest", "vest"]
+    out = mendeley_prepare.read_yolo("1 0.5 0.25 0.2 0.1\n\n3 0.5 0.5 0.4 0.4\n", names, 640, 640)
+    assert out[0][0] == "no_helmet"
+    assert out[0][1] == pytest.approx((256.0, 128.0, 384.0, 192.0))
+    assert out[1][0] == "vest"
+    with pytest.raises(SystemExit):
+        mendeley_prepare.read_yolo("0 0.1 0.1 0.2 0.2 0.3 0.3\n", names, 640, 640)
+
+
+def test_mendeley_dhash_matches_recompressed_resize_but_not_other_image():
+    import cv2
+
+    rng = np.random.default_rng(0)
+    base = cv2.GaussianBlur(rng.integers(0, 255, (480, 640, 3), dtype=np.uint8), (31, 31), 0)
+    resized = cv2.resize(base, (640, 640))
+    ok, buf = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    assert ok
+    recompressed = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    other = cv2.GaussianBlur(rng.integers(0, 255, (480, 640, 3), dtype=np.uint8), (31, 31), 0)
+    h = mendeley_prepare.dhash(base)
+    assert mendeley_prepare.near(mendeley_prepare.dhash(recompressed), [h])
+    assert not mendeley_prepare.near(mendeley_prepare.dhash(other), [h])
+
+
+def test_mendeley_split_valid_is_seeded_and_halves():
+    stems = [f"img{i:03d}" for i in range(10)]
+    a = mendeley_prepare.split_valid(stems, 7)
+    assert a == mendeley_prepare.split_valid(list(reversed(stems)), 7)
+    assert sorted(a.values()).count("test") == 5
+    assert set(a.values()) == {"test", "val"}
