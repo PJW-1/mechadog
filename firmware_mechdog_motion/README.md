@@ -742,6 +742,14 @@ MP3 드라이버는 **자체 코드로 센서 HAL 의 버스를 거쳐** 만들�
 
 명시된 라이선스가 없으면 기본값은 저작권자 전권이다. 상세는 [ADR-20](../docs/DECISIONS.md).
 
+## 로컬에서 호스트 시험 돌리기
+
+g++ 와 make 가 있으면 저장소 루트에서 한 줄이다. CI(firmware-quality)가 부르는 명령과 같다.
+
+```bash
+make -C firmware_mechdog_motion/test test
+```
+
 ## PC 시험 명령
 
 아래는 시험 도구의 사용법이다. 실제 전원 조건과 설치된 앱을 확인해 적용한다.
