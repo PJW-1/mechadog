@@ -33,9 +33,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from host.behavior.actions import register_actions
-from host.behavior.auth import Authenticator, Outcome
+from host.behavior.auth import Authenticator
+from host.behavior.auth_judge import AuthJudge
 from host.behavior.commander import Commander
-from host.behavior.escalation import Escalation, Level
+from host.behavior.escalation import Escalation
 from host.behavior.fall_monitor import FallMonitor
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
@@ -196,8 +197,6 @@ class Runtime:
         self._actions = register_actions(self._behavior, config)
         self._normal_patrol = self._behavior.sequence_for("PATROL")
         self._behavior.register_sequence("PATROL", self._patrol_sequence)
-        self._auth_resume_delay_ms = int(config["auth"].get("resume_delay_ms", 3500))
-        self._auth_resume_after: int | None = None
         self._normal_alert = self._behavior.sequence_for("ALERT")
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
@@ -330,9 +329,6 @@ class Runtime:
         # 같은 이유로 모드도 물어본다 (FR-11.5) — 관제 화면에서 바뀌므로 갱신 지점이
         # 하나가 아니다.
         self._log.bind_mode(lambda: self._mission.mode)
-        # 사원증 인증. **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
-        # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 여기서 정한다.
-        self._auth = Authenticator(config)
         # 음성 암구호의 인증 창 (FR-10.3 · ADR-37). 창을 열고 닫는 것은 `_apply` 다.
         self._voice_auth = VoiceAuthWindow(
             config,
@@ -341,6 +337,16 @@ class Runtime:
             apply=self._apply,
             clock=clock,
             feed=self._feed_event if dashboard is not None else None,
+        )
+        # 사원증 인증 (FR-10 · ADR-28). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
+        # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 판정기가 정한다.
+        self._auth_judge = AuthJudge(
+            config,
+            behavior=self._behavior,
+            mission=self._mission,
+            escalation=self._escalation,
+            voice=self._voice_auth,
+            apply=self._apply,
         )
         # 쓰러짐 의심(L1)→확정(L3) (ADR-42). 판독 워커를 구역 판독과 나눠 쓰므로 구역
         # 판독이 기다리는 중인지를 물어본다. 점검기가 감시를 쥐므로 감시를 먼저 만들고
@@ -385,7 +391,7 @@ class Runtime:
     @property
     def auth(self) -> Authenticator:
         """인증 세션. 대시보드가 *"누가 인증됐나"* 를 보이는 데 쓴다 (FR-3.6.2)."""
-        return self._auth
+        return self._auth_judge.authenticator
 
     @property
     def voice_auth(self) -> VoiceAuthWindow:
@@ -609,7 +615,7 @@ class Runtime:
                     last_seen_ms=seen_ms,
                     now_ms=now_ms,
                 )
-                self._judge_auth(result, now_ms)
+                self._auth_judge.judge(result, now_ms)
         # ⚠️ **판정은 워커가 추론마다 했고, 여기서는 결과만 읽는다.** 게이트를 이 틱
         # (10Hz)에서 돌리면 25fps 결과 중 10개만 보게 되고 추론률을 올린 이유가 사라진다.
         #
@@ -652,9 +658,7 @@ class Runtime:
             )
 
     def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
-        if self._ppe_judge.halts_patrol(now_ms) or (
-            self._auth_resume_after is not None and now_ms < self._auth_resume_after
-        ):
+        if self._ppe_judge.halts_patrol(now_ms) or self._auth_judge.holds_patrol(now_ms):
             commander.halt()
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
@@ -716,75 +720,6 @@ class Runtime:
                 "confirm_ms": self._fallen_confirm_ms,
             },
         )
-
-    def _judge_auth(self, result: VisionResult, now_ms: int) -> None:
-        """사원증을 판정하고 **사건으로 옮긴다** (FR-10.1).
-
-        ⚠️ **인증 표시는 사건이 아니라 상태에서 가져온다.** `AUTH_OK` 사건만 보면
-        60초 유효 시간이 지난 것(FR-10.2.4)과 미인증자가 새로 합류한 것(FR-3.8.1)을
-        놓친다 — 둘 다 사건이 없는 변화다. 그래서 매번 *"보이는 전원이 인증됐나"*
-        를 물어 에스컬레이션에 반영한다.
-
-        ⚠️ **경비 모드에서만 돈다** (FR-11.1). `_apply` 게이트만으로는 모자라다 —
-        아래 `note_authenticated()` 는 사건이 아니라 **직접 호출**이라 그 게이트를
-        지나지 않고, 공장 모드에서 사원증이 스쳐도 단계를 건드린다.
-        """
-        if not self._mission.enables("auth"):
-            return
-        voice = self._voice_auth
-        voice_granted = voice.granted(now_ms)
-        self._auth.note_tracks(result.tracks)
-        if voice.require_both and voice_granted and not result.markers:
-            voice.badge_ready = True
-        outcome = (
-            self._auth.observe(result.markers, result.tracks, now_ms)
-            if not voice.require_both or (voice_granted and voice.badge_ready)
-            else Outcome.NOTHING
-        )
-        if outcome in (Outcome.GRANTED, Outcome.BADGE_SEEN):
-            if self._apply(Event.AUTH_OK, now_ms) and self._behavior.state == "PATROL":
-                self._auth_resume_after = now_ms + self._auth_resume_delay_ms
-                LOG.info("auth_resume_wait", delay_ms=self._auth_resume_delay_ms)
-        elif outcome is Outcome.EXHAUSTED:
-            # 2회 실패 — 30초 무응답과 같은 결론이다 (FR-10.3).
-            self._apply(Event.AUTH_FAILED, now_ms)
-        # ⚠️ **음성 허가는 사람이 아니라 현장에 붙는다** (FR-10.2.4).
-        # 사원증은 화면 안 좌표에 보이니 그 좌표의 트랙에 붙일 근거가 있지만, 마이크는
-        # 로봇 몸통에 하나뿐이라 **그 소리가 누구 목소리인지 모른다**. 그러니 "제일
-        # 가까운 트랙에 붙인다"는 건 없는 근거를 지어내는 것이고, 틀리면 엉뚱한 사람이
-        # 허가를 받는다 — 안 붙이는 것보다 나쁘다. 그래서 암구호가 맞으면
-        # `session_valid_s` 동안 **이 자리**를 인증된 것으로 본다.
-        #
-        # ⚠️ **창이 열린 동안 트랙이 죽어도 허가는 유지된다.** 트랙에 기대면 검출이
-        # 잠깐 끊기는 것만으로 허가가 날아가 10초마다 재인증을 요구한다.
-        #
-        # ⚠️ **대신 그 60초 동안 새로 들어온 사람도 함께 허가된다.** 암구호는 원래
-        # *아는 사람은 통과*라 결론은 같지만, 사원증과 다른 성질이니 알고 쓸 것.
-        badge_granted = self._auth.all_authenticated(result.tracks, now_ms)
-        authenticated = (
-            voice_granted and badge_granted
-            if voice.require_both
-            else voice_granted or badge_granted
-        )
-        if authenticated:
-            self._escalation.note_authenticated(now_ms)
-        else:
-            self._escalation.note_authentication_lost()
-
-    def _request_auth(self, now_ms: int) -> None:
-        """L2 에 올랐으면 인증을 요구한다 (FR-10 · 아키텍처 3.1).
-
-        ⚠️ **이것이 없으면 `AUTH_WAIT` 에 들어가지 못해 30초 타이머가 돌지 않는다.**
-        그러면 `AUTH_FAILED` 를 낼 경로가 사라져 L2 가 출구 없이 남는다.
-
-        전이 가능 여부를 **표에 묻는다** — 그래야 상태 이름이 여기 들어오지 않고,
-        이미 `AUTH_WAIT` 면 자동으로 한 번만 발행된다.
-        """
-        if self._escalation.level is not Level.L2:
-            return
-        if not self._behavior.fsm.can(Event.AUTH_REQUIRED):
-            return
-        self._apply(Event.AUTH_REQUIRED, now_ms)
 
     def _record_person_event(self, result: VisionResult) -> None:
         """확정 검출의 원본과 판단 근거를 한 번 저장하고 이벤트 채널에 넘긴다.
@@ -1107,7 +1042,7 @@ class Runtime:
         self._escalation.tick(now_ms, require_auth=self._mission.enables("auth"))
         # 단계 색을 로봇에 내려보낸다 — 위 호출 바로 뒤가 제자리다.
         self._emit_eye_led(now_ms)
-        self._request_auth(now_ms)
+        self._auth_judge.request(now_ms)
         self._resend_sound(now_ms)
         before = self._behavior.state
         phase_started = time.perf_counter()
@@ -1198,7 +1133,7 @@ class Runtime:
         if before != "AUTH_WAIT" and self._behavior.state == "AUTH_WAIT":
             self._voice_auth.open(now_ms)
             if self._voice_auth.require_both:
-                self._auth.reset()
+                self._auth_judge.reset()
         elif before == "AUTH_WAIT" and self._behavior.state != "AUTH_WAIT":
             self._voice_auth.close()
         self._log_transition(before)

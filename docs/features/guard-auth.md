@@ -68,22 +68,22 @@ L3 를 내리는 방법은 [대응 에스컬레이션](escalation.md)에 있다.
 | 분기 | 코드 위치 | 확인하는 테스트 |
 | :--- | :--- | :--- |
 | L1 10초 미인증 → L2 | `host/behavior/escalation.py` 의 `Escalation.tick` | `test_unauthenticated_hold_escalates_to_auth_request` · `test_standing_unauthenticated_person_reaches_auth_request` |
-| L2 → `AUTH_REQUIRED` → `AUTH_WAIT` | `host/runtime.py` 의 `Runtime._request_auth` | `test_auth_request_is_issued_when_the_level_reaches_l2` |
+| L2 → `AUTH_REQUIRED` → `AUTH_WAIT` | `host/behavior/auth_judge.py` 의 `AuthJudge.request` | `test_auth_request_is_issued_when_the_level_reaches_l2` |
 | 창 30초 초과 → `AUTH_FAILED` → L3 | `host/behavior/fsm.py` 의 `Behavior._watch_timers` · `host/runtime.py` 의 `Runtime.tick` | `test_auth_timeout_raises_alarm_without_passing_through_apply` · `test_auth_timeout_becomes_alarm` |
 | 판정 전달 (`ok` · `fail` · `pending`) | `host/dashboard/commands.py` 의 `CommandService.auth` | `test_auth_endpoint_accepts_pending` · `test_auth_rejects_an_unknown_result` |
 | 창 이전 발화 버림 | `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.note_verdict` | `test_voice_auth_before_the_window_opened_is_not_counted` · `test_voice_auth_match_before_the_window_does_not_grant` |
 | `pending` 10초 연장, 창마다 1회 | `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.note_listening` · `host/behavior/fsm.py` 의 `Behavior.defer_timer` | `test_voice_listening_holds_the_window_open` · `test_voice_listening_buys_grace_only_once_per_window` · `test_voice_listening_before_the_window_buys_nothing` |
 | 암구호 불일치 2회 → `AUTH_FAILED` | `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.note_verdict` | `test_voice_auth_first_mismatch_keeps_waiting` · `test_voice_auth_exhausts_at_max_attempts` · `test_voice_auth_retry_can_still_pass` |
 | 창마다 시도 수 초기화 | `host/runtime.py` 의 `Runtime._apply` · `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.open` | `test_voice_auth_attempts_reset_on_each_auth_wait` |
-| 암구호 뒤 새로 든 사원증만 통과 | `host/runtime.py` 의 `Runtime._judge_auth` | `test_guard_requires_passphrase_then_new_badge` |
+| 암구호 뒤 새로 든 사원증만 통과 | `host/behavior/auth_judge.py` 의 `AuthJudge.judge` | `test_guard_requires_passphrase_then_new_badge` |
 | 미등록 마커 안정 검출·시도 수 | `host/behavior/auth.py` 의 `Authenticator._judge` · `Authenticator._proven` | `test_a_single_frame_unknown_marker_is_not_an_attempt` · `test_an_unknown_marker_stable_for_three_frames_is_an_attempt` · `test_the_same_badge_seen_again_is_not_a_new_attempt` · `test_a_second_different_badge_exhausts_the_attempts` |
-| 미등록 사원증 2장 → L3 (`require_both` 거짓 설정으로 시험) | `host/runtime.py` 의 `Runtime._judge_auth` | `test_unknown_badges_exhaust_attempts_and_alarm` |
+| 미등록 사원증 2장 → L3 (`require_both` 거짓 설정으로 시험) | `host/behavior/auth_judge.py` 의 `AuthJudge.judge` | `test_unknown_badges_exhaust_attempts_and_alarm` |
 | 현장 단위 인증 | `host/behavior/auth.py` 의 `Authenticator.observe` · `Authenticator.all_authenticated` | `test_scene_badge_survives_track_churn` |
-| 통과 → L0, 6초 정지 뒤 순찰 | `host/behavior/escalation.py` 의 `Escalation.note_authenticated` · `host/runtime.py` 의 `Runtime._patrol_sequence` | `test_authentication_releases_auth_request` · `test_full_walkthrough_person_to_authenticated` |
+| 통과 → L0, 6초 정지 뒤 순찰 | `host/behavior/escalation.py` 의 `Escalation.note_authenticated` · `host/runtime.py` 의 `Runtime._patrol_sequence` · `host/behavior/auth_judge.py` 의 `AuthJudge.holds_patrol` | `test_authentication_releases_auth_request` · `test_full_walkthrough_person_to_authenticated` |
 | 인증 중 대상 5초 상실 → L3 | `host/behavior/escalation.py` 의 `Escalation.tick` | `test_walking_away_unauthenticated_becomes_alarm` |
-| 인증 60초 만료 | `host/behavior/auth.py` 의 `Authenticator.holder` · `host/runtime.py` 의 `Runtime._judge_auth` | `test_voice_auth_expires_after_session_valid_s` · `test_expired_authentication_allows_escalation_again` |
+| 인증 60초 만료 | `host/behavior/auth.py` 의 `Authenticator.holder` · `host/behavior/auth_judge.py` 의 `AuthJudge.judge` | `test_voice_auth_expires_after_session_valid_s` · `test_expired_authentication_allows_escalation_again` |
 | 인증은 L3 를 내리지 않음 | `host/behavior/escalation.py` 의 `Escalation.note_authenticated` | `test_alarm_does_not_release_by_authentication` |
-| 공장 모드는 인증 없음 | `host/behavior/mission.py` 의 `Mission.enables` · `host/runtime.py` 의 `Runtime._judge_auth` | `test_factory_mode_does_not_ask_for_a_badge` · `test_modes_without_auth_never_enter_auth_escalation` |
+| 공장 모드는 인증 없음 | `host/behavior/mission.py` 의 `Mission.enables` · `host/behavior/auth_judge.py` 의 `AuthJudge.judge` | `test_factory_mode_does_not_ask_for_a_badge` · `test_modes_without_auth_never_enter_auth_escalation` |
 | 눈 LED 가 단계를 따름 | `host/runtime.py` 의 `Runtime._emit_eye_led` | `test_eye_led_follows_the_escalation_level` |
 
 실측 기록

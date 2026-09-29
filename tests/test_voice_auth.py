@@ -209,7 +209,7 @@ def test_voice_auth_outside_auth_wait_is_not_counted(cfg, clock):
 # ── 음성 인증 유효 시간 (FR-10.2.4 · 2026-09-21 실기) ──────────────
 #
 # 실기에서 암구호로 통과한 직후 **다시 인증을 요구**했다. 음성은 `Authenticator`
-# 세션을 만들지 않는데 `_judge_auth` 는 세션이 붙은 트랙만 보고 인증 여부를
+# 세션을 만들지 않는데 `AuthJudge.judge` 는 세션이 붙은 트랙만 보고 인증 여부를
 # 판정해서, 통과한 다음 틱에 `note_authentication_lost()` 가 불렸다.
 # `session_valid_s` 가 음성 경로에 적용된 적이 한 번도 없었다.
 #
@@ -219,7 +219,7 @@ def test_voice_auth_outside_auth_wait_is_not_counted(cfg, clock):
 
 
 def _frame(tracks: tuple = (), markers: tuple = ()) -> SimpleNamespace:
-    """`_judge_auth` 가 만지는 두 칸만 있는 가짜 프레임."""
+    """`AuthJudge.judge` 가 만지는 두 칸만 있는 가짜 프레임."""
     return SimpleNamespace(tracks=tuple(tracks), markers=tuple(markers))
 
 
@@ -228,14 +228,14 @@ def test_guard_requires_passphrase_then_new_badge(cfg, clock):
     badge_id = next(iter(cfg["auth"]["badge_marker_map"]))
     badge = Marker(marker_id=int(badge_id), center=(320.0, 300.0))
 
-    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
+    runtime._auth_judge.judge(_frame(markers=(badge,)), clock.ms)
     assert runtime.behavior.state == "AUTH_WAIT", "암구호 전 사원증은 통과가 아니다"
     assert svc.auth("ok").accepted
     assert runtime.behavior.state == "AUTH_WAIT", "암구호만으로 출발하지 않는다"
-    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
+    runtime._auth_judge.judge(_frame(markers=(badge,)), clock.ms)
     assert runtime.behavior.state == "AUTH_WAIT", "먼저 든 사원증을 재사용하지 않는다"
-    runtime._judge_auth(_frame(), clock.ms)
-    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
+    runtime._auth_judge.judge(_frame(), clock.ms)
+    runtime._auth_judge.judge(_frame(markers=(badge,)), clock.ms)
     assert runtime.behavior.state == "PATROL"
 
 
@@ -245,7 +245,7 @@ def test_voice_auth_holds_without_any_track(cfg, clock):
     assert svc.auth("ok").accepted is True
 
     clock.advance(1_000)
-    runtime._judge_auth(_frame(), clock.ms)
+    runtime._auth_judge.judge(_frame(), clock.ms)
     assert runtime.escalation.authenticated is True
 
 
@@ -256,11 +256,11 @@ def test_voice_auth_expires_after_session_valid_s(cfg, clock):
     svc.auth("ok")
 
     clock.advance(valid_ms - 1)
-    runtime._judge_auth(_frame(), clock.ms)
+    runtime._auth_judge.judge(_frame(), clock.ms)
     assert runtime.escalation.authenticated is True, "만료 직전은 아직 유효하다"
 
     clock.advance(2)
-    runtime._judge_auth(_frame(), clock.ms)
+    runtime._auth_judge.judge(_frame(), clock.ms)
     assert runtime.escalation.authenticated is False, "만료 뒤에는 재인증을 요구한다"
 
 
@@ -276,7 +276,7 @@ def test_voice_auth_rejected_verdict_opens_no_window(cfg, clock):
     )
     assert svc.auth("ok").accepted is False, "IDLE 에서는 인증 결과를 받지 않는다"
 
-    runtime._judge_auth(_frame(), clock.ms)
+    runtime._auth_judge.judge(_frame(), clock.ms)
     assert runtime.escalation.authenticated is False
 
 
@@ -315,7 +315,7 @@ def test_voice_auth_match_before_the_window_does_not_grant(cfg, clock):
 
     assert result.accepted is True
     assert runtime.behavior.state == "AUTH_WAIT", "허가하지 않고 다시 묻는다"
-    runtime._judge_auth(_frame(), clock.ms)
+    runtime._auth_judge.judge(_frame(), clock.ms)
     assert runtime.escalation.authenticated is False, "창이 열리지 않아야 한다"
 
 
@@ -415,7 +415,7 @@ def test_voice_listening_is_not_a_verdict(cfg, clock):
 
     assert runtime.behavior.state == "AUTH_WAIT"
     assert runtime.voice_auth.attempts == 0
-    runtime._judge_auth(_frame(), clock.ms)
+    runtime._auth_judge.judge(_frame(), clock.ms)
     assert runtime.escalation.authenticated is False
 
 
