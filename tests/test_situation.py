@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from host.report.situation import describe
 
-# ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `_confirm_fall`) ──
+# ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `FallMonitor._confirm`) ──
 
 
 def test_person_fallen_non_factory_shape() -> None:
@@ -24,7 +24,7 @@ def test_person_fallen_non_factory_shape() -> None:
 
 
 def test_person_fallen_factory_shape() -> None:
-    """공장 판(`_confirm_fall`) 형태 — `vlm_yes`·`suspect_ms`·`raw`. 문장은 같다."""
+    """공장 판(`FallMonitor._confirm`) 형태 — `vlm_yes`·`suspect_ms`·`raw`. 문장은 같다."""
     sentence = describe(
         "person_fallen",
         {"fallen": True, "vlm_yes": 2, "suspect_ms": 5000, "raw": "yes"},
