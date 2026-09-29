@@ -295,7 +295,7 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
         )
 
     # 구역 점검은 제자리에서 앵커 방향으로 돈 뒤 선다 (FR-8 · ADR-40 과 같은 예외).
-    # 회전 지시는 `runtime._aligned` 가 넣고, 낡으면 `TrackSequence` 가 정지를 보낸다.
+    # 회전 지시는 `ZoneInspector._align` 이 넣고, 낡으면 `TrackSequence` 가 정지를 보낸다.
     inspect = TrackSequence(int(config["fsm"]["track_coast_ms"]))
     behavior.register_sequence("ZONE_INSPECT", inspect)
     behavior.fsm.on_enter("ZONE_INSPECT", inspect.forget)
