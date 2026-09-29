@@ -41,7 +41,7 @@
 | :--- | :--- |
 | `ts` | 여러 노드의 로그를 **시간축에 정렬**하기 위함 |
 | `level` | 레벨링 |
-| **`device_id`** | **3대 운용이므로 어느 개체의 로그인지 구분 필수** ([CONTRIBUTING 1절](../CONTRIBUTING.md)) |
+| **`device_id`** | **2대 운용이므로 어느 개체의 로그인지 구분 필수** ([CONTRIBUTING 1절](../CONTRIBUTING.md)) |
 | `seq` | 명령·텔레메트리와 **상호 참조** |
 | `state` | 당시 FSM 상태 |
 | `escalation` | 당시 에스컬레이션 단계 |
