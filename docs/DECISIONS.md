@@ -1933,7 +1933,7 @@ Z1~Z5)의 세부 서술은 PRD 쪽이 정본이다.
 2. **쓰러짐 — «의심(L1) → 확정(L3)» 2단.** 아래 둘 중 **하나만** 있으면 **의심**(눈 L1 노란색)이다 —
    ⓐ YOLOX 누움 후보 1회 — `FallenGate.observe`(`host/vision/person.py`)가 종횡비(가로/세로≥1.5)와
    이동량(≤`still_threshold_px`) 두 조건이 맞는 프레임에서 곧바로 돌려주는 `candidate=True` 다.
-   `Runtime._observe_fallen`(`host/runtime.py`)은 `verdict.candidate` 하나만 보고 `_suspect_fall` 로 넘어가므로
+   `Runtime._observe_fallen`(`host/runtime.py`)은 `verdict.candidate` 하나만 보고 `FallMonitor.suspect` 로 넘어가므로
    «정지 3초»(`still_ms >= confirm_ms`, 내부 필드 `fallen` 에만 걸린다)를 기다리지 않는다. 또는 ⓑ VLM 정기
    판독에서 `person_down`=«예» 1회.
 
