@@ -22,6 +22,7 @@ import random
 import socket
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 # `python tools/lidar/lidar_slam.py` 로 직접 실행해도 host/ 를 찾게 한다.
@@ -38,11 +39,12 @@ from host.common.lidar_link import (
 )
 from host.common.logging_setup import event_logger, setup_logging
 from host.common.protocol import system_clock_ms
-from host.common.units import ms_to_s
+from host.common.units import deg_to_rad, ms_to_s, rad_to_deg
 from host.slam import settings, simulation, viz
 from host.slam.occupancy import OccupancyGrid
 from host.slam.photo_map import PhotoRecorder
 from host.slam.scan_match import (
+    MatchParams,
     integrate_scan,
     match,
     merge_batch,
@@ -122,11 +124,42 @@ def collect_real(
     return batch
 
 
+def _widen_search(params: MatchParams, args: argparse.Namespace) -> MatchParams:
+    """탐색 범위를 인자로 넓힌다. **넓힌 사실을 로그에 남긴다.**
+
+    설정값과 다른 범위로 만든 지도는 재현하려면 같은 인자가 필요하다. 조용히
+    넓히면 나중에 "왜 이 지도는 다시 안 나오지" 가 된다.
+    """
+    span_m = params.search_lin_m if args.search_span_mm is None else args.search_span_mm / 1000.0
+    angle_rad = (
+        params.search_ang_rad
+        if args.search_angle_deg is None
+        else deg_to_rad(float(args.search_angle_deg))
+    )
+    if span_m == params.search_lin_m and angle_rad == params.search_ang_rad:
+        return params
+    widened = replace(params, search_lin_m=span_m, search_ang_rad=angle_rad)
+    positions = (int(span_m / widened.search_lin_step_m) * 2 + 1) ** 2
+    angles = int(angle_rad / widened.search_ang_step_rad) * 2 + 1
+    LOG.info(
+        "search_window_widened",
+        span_mm=round(span_m * 1000, 1),
+        angle_deg=round(rad_to_deg(angle_rad), 1),
+        candidate_poses=positions * angles,
+    )
+    print(
+        f"[SLAM] 탐색 범위 확대: ±{span_m * 1000:.0f}mm · "
+        f"±{rad_to_deg(angle_rad):.0f}° ({positions * angles:,} 후보/스캔)"
+    )
+    return widened
+
+
 def run(args: argparse.Namespace, config: dict) -> int:
     settings.require_lidar_track(config, simulation=args.simulate)
     lidar = config["lidar"]
     range_m = range_from_config(config)
     match_params = match_params_from_config(config)
+    match_params = _widen_search(match_params, args)
     maps = Path(args.out) if args.out else settings.maps_dir(config)
     if args.camera_url and maps.exists() and any(maps.iterdir()):
         raise ConfigError(
@@ -278,6 +311,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="가상 LiDAR 로 알고리즘만 확인 (하드웨어 불요)",
     )
     parser.add_argument("--steps", type=int, default=160, help="매핑 사이클 수. 0 이면 Ctrl+C 까지")
+    # ⚠️ 기본 탐색 범위는 **로봇이 스스로 한 걸음 옮기는 폭**(`move_increment_mm`
+    # 250mm × `search_span_ratio` 0.6 = 150mm)에 맞춰져 있다. 사람이 손으로 더
+    # 크게 옮기면 정답이 탐색 격자 밖이라 `scan_match_failed` 가 나거나, 더
+    # 나쁘게는 **가장자리의 엉뚱한 자세가 채택된다.** 그때 이 인자로 넓힌다.
+    parser.add_argument(
+        "--search-span-mm",
+        type=float,
+        default=None,
+        help="정합 탐색 반경 mm. 사람이 한 번에 옮기는 거리보다 커야 한다 (기본: 설정값)",
+    )
+    parser.add_argument(
+        "--search-angle-deg",
+        type=float,
+        default=None,
+        help="정합 탐색 각도 ±deg. 옮기며 로봇을 돌린다면 넓혀야 한다 (기본: 설정값)",
+    )
     parser.add_argument("--seed", type=int, default=None, help="시뮬레이션 재현용 시드")
     parser.add_argument("--out", default=None, help="지도 저장 경로. 기본은 maps/")
     parser.add_argument("--plot", action="store_true", help="진행 상황을 창으로 본다 (matplotlib)")
