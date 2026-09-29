@@ -9,8 +9,9 @@
 - 시험 개체의 `--device`와 **현재** XIAO IP를 확인한다. 과거 DHCP 주소나 아래 예시 주소를
   현재 주소로 간주하지 않는다.
 - `models/coco.onnx`와 `models/ppe.onnx`를 준비한다.
-- PPE 모델은 3,677,797바이트, SHA-256
-  `a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4`인지 확인한다. (ppe-v3)
+- PPE 모델은 35,779,653바이트, SHA-256
+  `e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5`인지 확인한다. (ppe-v4 ·
+  `python tools/fetch_models.py --check`)
 - XIAO가 실제 기체의 15cm 장착 위치에 있고 다른 스트림 클라이언트가 붙어 있지 않은지
   확인한다.
 
