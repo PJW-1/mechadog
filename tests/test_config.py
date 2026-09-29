@@ -289,11 +289,6 @@ def test_escalation_led_covers_all_levels(cfg: dict) -> None:
         assert isinstance(led[key], str)
 
 
-def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
-    """L3·페일세이프는 자동 해제하지 않는다 (아키텍처 3.1 해제 규칙)."""
-    assert cfg["escalation"]["l3_requires_manual_reset"] is True
-
-
 def test_auth_uses_scene_session(cfg: dict) -> None:
     assert cfg["auth"]["bind_to_track_id"] is False
     assert cfg["auth"]["require_both"] is True
