@@ -236,6 +236,15 @@ ruff check . && ruff format --check .
 python -m pytest -q --cov=host --cov=tools --cov-fail-under=80
 ```
 
+`requirements.txt`·`requirements-dev.txt` 를 고쳤으면 CI 용 잠금 파일을 다시 만든다 (Linux·CPython 3.12 기준, 해시 포함). Windows 개발 PC 는 예전처럼 `requirements*.txt` 로 설치한다.
+
+```bash
+pip install uv
+for f in requirements requirements-dev; do
+  uv pip compile $f.txt --python-platform x86_64-manylinux_2_28 --python-version 3.12 --generate-hashes -o $f.lock
+done
+```
+
 CI 의 커버리지 게이트는 80% 다. 대시보드 웹 시험은 `host/dashboard` 에서 `npm test`(`node --test web-tests/*.test.mjs`)로 돈다.
 
 **검출을 실제로 돌려 볼 때만** 가중치가 추가로 필요하다 (시험은 없이도 전부 돈다).
