@@ -16,7 +16,13 @@
 | 텔레메트리 | MechDog ESP32 → Host PC | UDP | 10 Hz |
 | 영상 | XIAO → Host PC | HTTP MJPEG | 25 fps 상한 (NFR-1.3 하한 15 fps) |
 | 음성 | XIAO → Host PC | HTTP chunked PCM16LE (포트 82 `/audio`) | 16 kHz 모노 연속 스트림 |
-| LiDAR 스캔 `[Phase 2]` | 중계 ESP32 → Host PC | UDP | 정지 중 5 Hz |
+| LiDAR 스캔 `[Phase 2]` | 중계 ESP32 → Host PC | UDP | **회전 9.9 Hz** (실측 · 아래) |
+
+> **LiDAR 회전 속도는 실측이 정본이다** (2026-09-30 · 사용자 확정). 한때 이 표는 «정지 중 5 Hz» 였는데
+> 실측과 두 배 어긋났다. 2026-09-29 에 기체02(`lidar-b03fd35ee950`)에서 저장소 조립기로 잰 회전은
+> **9.90 Hz**, ROS2 `/scan` 토픽은 **9.919 Hz** 였다. LD19 의 공칭 10 Hz 와도 맞는다.
+> 중계 노드는 한 회전을 여러 섹터로 쪼개 보내므로 **패킷 도착은 초당 약 70개**(간격 14.4 ms)로 더 잦다 —
+> 그 둘을 섞지 않는다.
 
 > **음성 스트림** ([ADR-38](DECISIONS.md#adr-38)) — XIAO 비전 펌웨어의 포트 82 `GET /audio` 는
 > `Content-Type: audio/L16;rate=16000;channels=1` 로 PCM16LE 모노를 끊지 않고 흘려보낸다. 인자 `?gain=0..4`(왼쪽 시프트, 기본 2).
