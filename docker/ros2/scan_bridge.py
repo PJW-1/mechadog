@@ -69,8 +69,11 @@ def main() -> None:
             dir_raw = os.getenv("LIDAR_ANGLE_DIRECTION")
             yaw = float(yaw_raw if yaw_raw is not None else "0")
             direction = int(dir_raw if dir_raw is not None else "1")
-            missing = [n for n, v in (("LIDAR_MOUNT_YAW_DEG", yaw_raw),
-                                      ("LIDAR_ANGLE_DIRECTION", dir_raw)) if v is None]
+            missing = [
+                n
+                for n, v in (("LIDAR_MOUNT_YAW_DEG", yaw_raw), ("LIDAR_ANGLE_DIRECTION", dir_raw))
+                if v is None
+            ]
             self.rotation = Revolution(
                 int(os.getenv("LIDAR_ANGLE_BINS", "450")),
                 float(os.getenv("LIDAR_RANGE_MIN_M", "0.12")),
