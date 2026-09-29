@@ -43,7 +43,7 @@ from host.slam.scan_match import (
 )
 from host.slam.settings import REQUIRED_LIDAR_KEYS, read_lidar_section
 from host.slam.simulation import DEFAULT_ROOM, SimParams, scan_world
-from tools.lidar_slam import _warn_if_at_search_edge
+from tools.lidar.lidar_slam import _warn_if_at_search_edge
 
 PLAN = PlanParams(occ_thresh=1.0, free_thresh=-1.0, clearance_m=0.25, simplify_eps_m=0.08)
 

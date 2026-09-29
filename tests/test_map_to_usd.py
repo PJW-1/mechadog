@@ -1,4 +1,4 @@
-"""`tools/map_to_usd.py` — 점유격자에서 세운 USD 가 지도와 같은 자리인지 본다.
+"""`tools/lidar/map_to_usd.py` — 점유격자에서 세운 USD 가 지도와 같은 자리인지 본다.
 
 이 도구의 존재 이유가 **시뮬과 실기가 같은 좌표계를 쓰게 하는 것**이므로,
 시험도 거기에 맞춘다: 프림이 몇 개 나왔는지보다 **어디에 섰는지**가 중요하다.
@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from host.slam.occupancy import LOGODDS_MAX, LOGODDS_MIN, MapMeta, OccupancyGrid
-from tools.map_to_usd import boxes_from_grid, build_usda, main, merge_rectangles
+from tools.lidar.map_to_usd import boxes_from_grid, build_usda, main, merge_rectangles
 
 
 def _grid(cells: np.ndarray, *, resolution: float = 0.05) -> OccupancyGrid:
