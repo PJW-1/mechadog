@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.ota_update import SLOT_SIZE, RobotOta, load_package
+from tools.ops.ota_update import SLOT_SIZE, RobotOta, load_package
 
 
 def write_package(tmp_path, **changes):

@@ -22,7 +22,7 @@ This follows `docs/ARCHITECTURE.md`, rather than moving models onto an ESP.
 - Worker shutdown signals the stream reader, interrupts reconnect backoff and
   releases the response in its owning receive thread. Pending operations still
   obey their existing timeouts; shutdown is not instantaneous.
-- `tools/camera_link_check.py` records raw serial output, JPEG samples, every
+- `tools/probe/camera_link_check.py` records raw serial output, JPEG samples, every
   decoded frame's timing and dimensions, and a summary even when a run fails.
 
 VGA, JPEG quality 12, two PSRAM frame buffers and the existing 25fps cap are
@@ -53,7 +53,7 @@ Build with the separately installed Arduino ESP32 core **3.3.11** and
 images private. The full original flash backup is held locally, outside Git.
 
 ```sh
-python tools/camera_link_check.py --url http://<camera-ip>:81/stream \
+python tools/probe/camera_link_check.py --url http://<camera-ip>:81/stream \
   --seconds 30 --read-timeout 4 --output-dir <new-output-directory> \
   --serial-port <camera-COM-port>
 ```
@@ -199,7 +199,7 @@ it cannot forcibly cancel a native inference or a blocking injected reader.
 Use the short, camera-only diagnostic from the repository root:
 
 ```powershell
-python tools/vision_link_check.py --camera-ip 192.168.0.42 --seconds 15 --output-dir logs/vision-new-run
+python tools/probe/vision_link_check.py --camera-ip 192.168.0.42 --seconds 15 --output-dir logs/vision-new-run
 ```
 
 Use the camera's current IP and a new output directory. The tool accepts at most

@@ -1022,7 +1022,7 @@ def test_sound_plays_under_the_safety_latch_without_touching_it(cfg, clock):
     적용 여부 대신 **디코더 수락 · 래치 유지 · RESET_SAFE 부재** 를 본다.
     """
     from host.runtime import Runtime
-    from tools.mock_mechdog import MockRobot
+    from tools.mock.mock_mechdog import MockRobot
 
     robot = MockRobot("mechdog-01", cfg, start_ms=clock.ms)
     runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)

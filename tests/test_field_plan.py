@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from tools import field_measure as fm
-from tools import field_plan as plan
+from tools.field import field_measure as fm
+from tools.field import field_plan as plan
 
 requires_display = pytest.mark.skipif(
     sys.platform != "win32" and not os.environ.get("DISPLAY"),

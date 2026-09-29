@@ -4,7 +4,7 @@
 명령 형식의 정본은 [`docs/PROTOCOL.md`](../../docs/PROTOCOL.md)다.
 
 > **구동·센서 빌드를 하려면 먼저 아래 *"구동·센서 통합 빌드 준비"* 절을 본다.** 벤더 파일은
-> 저장소에 없어 각자 받아야 하며(ADR-20), 준비 상태는 `python tools/firmware_env.py` 로 점검한다.
+> 저장소에 없어 각자 받아야 하며(ADR-20), 준비 상태는 `python tools/dev/firmware_env.py` 로 점검한다.
 
 선택 기능인 [정지 진단용 Wi-Fi 업데이트](OTA.md)는 **정지 상태 전용**이다.
 구동 OFF 빌드에서는 항상 사용할 수 있고, 구동 빌드에서는 아래 SERVICE 모드
@@ -314,7 +314,7 @@ Cppcheck 2.21.0도 확인했다. Cppcheck는 기존 `motion_hal.cpp`의 `functio
 - `src/telemetry_encoder.*`: 규약 검사, JSON 직렬화, 개체·부팅별 송신 순번.
 - `src/telemetry_publisher.*`: 별도 UDP 소켓으로 PC의 5101 포트에 보내는 주기 송신 구성 요소.
 - `src/sensor_hal.*`: 본체 센서 취득, 유효성·신선도와 오류 상태를 제공하는 진단용 HAL.
-- [`tools/telemetry_probe.py`](../../tools/telemetry_probe.py): PC에서 수신 기록과 주기를 확인하는 도구.
+- [`tools/probe/telemetry_probe.py`](../../tools/probe/telemetry_probe.py): PC에서 수신 기록과 주기를 확인하는 도구.
 
 **센서 취득과 주기 송신 호출을 `mechdog_motion.ino`에 연결했다.**
 유효 명령 수신 시 PC 주소·epoch 시각을 설정하고 watchdog 처리 뒤 센서 스냅샷을
@@ -529,7 +529,7 @@ Wi-Fi는 위에서 선택한 설정으로 접속하고 재접속은 루프에서
 ### 0단계 — 점검부터 한다
 
 ```powershell
-python tools/firmware_env.py
+python tools/dev/firmware_env.py
 ```
 
 벤더 파일 11개(크기·SHA-256) · 벤더 파일이 git 에서 무시되는가 · 라이브러리 4개의 버전 ·
@@ -603,7 +603,7 @@ libraries/
 > `git status` 에 하나라도 보이면 **그 자리에서 멈춘다** — 공개 저장소에 올라가면 라이선스
 > 위반이다. 점검 도구의 `git 무시` 항목이 같은 것을 본다.
 >
-> 해시의 기준은 `tools/firmware_env.py` 의 `VENDOR_FILES` 다(2026-09-12 통합 빌드를 통과한
+> 해시의 기준은 `tools/dev/firmware_env.py` 의 `VENDOR_FILES` 다(2026-09-12 통합 빌드를 통과한
 > 조합). 다른 배포본이면 해시가 다르게 나오는데, **틀렸다는 뜻이 아니라 검증하지 않은 조합**이라는
 > 뜻이다 — 통합 빌드와 실기 확인을 다시 거친 뒤 표를 갱신한다.
 
@@ -698,7 +698,7 @@ MP3 드라이버는 **자체 코드로 센서 HAL 의 버스를 거쳐** 만들�
 업로드는 NVS 의 보정값을 덮을 수 있다. ⚠️ **업로드하면 `MechDog_init()` 이 서보를 초기화한다.**
 처음에는 몸통을 받쳐 **네 발을 띄운 상태**로 시험한다. 확인할 것:
 
-- 걷는 중에도 텔레메트리가 10Hz 로 오는가 (`tools/telemetry_probe.py`)
+- 걷는 중에도 텔레메트리가 10Hz 로 오는가 (`tools/probe/telemetry_probe.py`)
 - UART 에 `imu_timing` 오류가 없는가 — 센서 태스크는 40ms 늦으면 **재부팅까지 IMU 를 끄고**,
   그러면 텔레메트리 전체가 멈춘다. 보행 계산과 같은 코어에서 돈다
 - 배터리 값이 벤더 부저 경고와 어긋나지 않는가
@@ -759,8 +759,8 @@ retry1의 제한 시험에서 재발하지 않았다(맨 위 4.1.4 절).
 ### 텔레메트리 수신 전용
 
 ```powershell
-python tools/telemetry_probe.py --bind 0.0.0.0 --port 5101 --duration 30
-python tools/telemetry_probe.py --device "DEVICE_ID" --duration 30 --output "new_capture.jsonl"
+python tools/probe/telemetry_probe.py --bind 0.0.0.0 --port 5101 --duration 30
+python tools/probe/telemetry_probe.py --device "DEVICE_ID" --duration 30 --output "new_capture.jsonl"
 ```
 
 저장소 루트에서 실행하며, `DEVICE_ID`는 송신 대상의 실제 설정값으로 바꾼다.
@@ -805,10 +805,10 @@ Arduino 기본 업로드 배치가 겹칠 수 있어 백업이 있다고 기본 
 아래 명령은 실제 구동을 포함한다. 센서 진단 준비나 수신 도구 실행의 필수 절차가 아니다.
 
 ```powershell
-python tools/udp_probe.py 192.168.1.100 --count 100 --interval 0.05
-python tools/mechdog_command.py 192.168.1.100 safety
-python tools/mechdog_command.py 192.168.1.100 move --step 10 --duration 0.5
-python tools/mechdog_command.py 192.168.1.100 watchdog --step 10 --duration 0.4
+python tools/probe/udp_probe.py 192.168.1.100 --count 100 --interval 0.05
+python tools/ops/mechdog_command.py 192.168.1.100 safety
+python tools/ops/mechdog_command.py 192.168.1.100 move --step 10 --duration 0.5
+python tools/ops/mechdog_command.py 192.168.1.100 watchdog --step 10 --duration 0.4
 ```
 
 `move`는 10Hz로 명령을 보내고 마지막에 `STOP`을 보낸다. `watchdog`은 마지막
@@ -822,7 +822,7 @@ python tools/mechdog_command.py 192.168.1.100 watchdog --step 10 --duration 0.4
 실시간 모델 추론이나 ESP32 제어 주기의 성능 개선을 의미하지 않는다.
 
 ```bash
-python tools/sensor_log_check.py sensor-observe.log --output sensor-analysis.json
+python tools/probe/sensor_log_check.py sensor-observe.log --output sensor-analysis.json
 ```
 
 - 부팅 시작/identity 로그를 기준으로 구간을 분리한다. 중간부터 수신한 구간의

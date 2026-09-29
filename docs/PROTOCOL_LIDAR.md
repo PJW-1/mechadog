@@ -177,7 +177,7 @@
 서로를 규칙 ④(모르는 타입)로 폐기하고, 로그에는 WARN 만 쌓인다.
 `test_lidar_scan_port_differs_from_the_other_links` 가 대조한다.
 
-`lidar.scan_forward_port`(5201 의 유일한 수신자인 `tools/patrol_run.py` 가
+`lidar.scan_forward_port`(5201 의 유일한 수신자인 `tools/ops/patrol_run.py` 가
 바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
 `host/slam/settings.py`·`host/common/config.py` 의 설정 검증이 이를 거부한다
 (`docker/ros2/README.md` 「남은 연결」 절).
@@ -259,7 +259,7 @@ ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom`
 
 ## 8. 오도메트리 전달 — `ODOM` (Host PC → ROS2 컨테이너)
 
-6절의 «우리에게 오도메트리가 없다» 를 메우는 링크다. 호스트(`tools/patrol_run.py`)가
+6절의 «우리에게 오도메트리가 없다» 를 메우는 링크다. 호스트(`tools/ops/patrol_run.py`)가
 **실제로 보낸 명령의 시간 창 × 그 기체의 `gait_calibration` 속도**로 거리를, **IMU
 yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이너의
 `docker/ros2/odom_bridge.py` 로 보낸다. 브리지가 `odom → base_link` tf 를 낸다.
@@ -285,7 +285,7 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 | `valid` | **bool** | 거짓이면 좌표를 쓰지 않는다. `0`/`1` 은 받지 않는다 |
 
 > **단위가 로봇 규약(mm·deg)과 다르다 — 그래서 이름에 싣는다.** 양 끝이 모두 호스트
-> 쪽 파이썬이고 ROS 가 m·rad 를 요구하므로 변환할 자리가 없다. `tools/lidar_live_map.py`
+> 쪽 파이썬이고 ROS 가 m·rad 를 요구하므로 변환할 자리가 없다. `tools/lidar/lidar_live_map.py`
 > 의 자세 입력(5202)이 같은 `x_m`·`y_m`·`yaw_rad` 를 쓴다.
 
 **검증 규칙은 3절의 ①~⑤ 를 그대로 쓴다** (`host/common/odom_link.py` · `OdomDecoder`).

@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from host.common.lidar_link import ScanDecoder, scan_of
-from tools.ld19_serial_relay import (
+from tools.lidar.ld19_serial_relay import (
     CDEG_PER_REV,
     CHUNK_POINTS,
     FRAME_BYTES,
@@ -165,7 +165,7 @@ def install_fakes(monkeypatch: pytest.MonkeyPatch, chunks: list[bytes]) -> FakeU
 
     monkeypatch.setitem(sys.modules, "serial", SimpleNamespace(Serial=open_serial))
     monkeypatch.setattr(
-        "tools.ld19_serial_relay.socket",
+        "tools.lidar.ld19_serial_relay.socket",
         SimpleNamespace(socket=open_socket, AF_INET=2, SOCK_DGRAM=2),
     )
     return sock

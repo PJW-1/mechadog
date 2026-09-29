@@ -38,8 +38,8 @@
 WBS를 고친 경우에만 다음 명령으로 담당자 목록을 재생성한다. `docs/internal/ASSIGNMENTS.md`는 직접 수정하지 않는다.
 
 ```bash
-python tools/wbs_assignments.py
-python tools/wbs_assignments.py --check
+python tools/dev/wbs_assignments.py
+python tools/dev/wbs_assignments.py --check
 ```
 
 완료 표시는 병합된 PR 전체를 자동 완료 처리하지 않고 DoD 근거가 확인된 작업만 반영한다.

@@ -3,7 +3,7 @@
 로봇이 정면 장애물 앞에서 스스로 멈춘 뒤, 호스트가 물러나며 방향을 틀어 순찰을 잇게 한다. 멈춤 판정은 로봇 펌웨어가 하고([제어 링크와 페일세이프](failsafe.md) 3절), 호스트는 그 보고를 따라 회피 동작만 정한다.
 빠져나오지 못하면 정해진 횟수 뒤에 멈춘 채 사람을 기다린다. 같은 장애물 앞에서 계속 흔들어 기어를 상하게 하지 않는다.
 
-순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`tools/patrol_run.py` 가 돌리는 `PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
+순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`tools/ops/patrol_run.py` 가 돌리는 `PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
 
 ## 판단 흐름
 

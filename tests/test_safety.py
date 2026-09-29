@@ -14,7 +14,7 @@ Tier 1 이 Tier 2 에 굴복하면 이 구조의 의미가 사라진다(아키�
 | :--- | :--- |
 | 펌웨어 | `firmware/mechdog_motion/src/safety_monitor.h` 의 `move_allowed()`·`reset_safe_allowed()` |
 | 그 시험 | `firmware/mechdog_motion/test/test_safety_monitor.cpp` (PC 에서 전수) |
-| 가상 로봇 | `tools/mock_mechdog.py` — 호스트 시험 전부가 이것을 상대로 돈다 |
+| 가상 로봇 | `tools/mock/mock_mechdog.py` — 호스트 시험 전부가 이것을 상대로 돈다 |
 
 ⚠️ **가상 로봇이 펌웨어보다 엄격하면 호스트 시험은 통과하는데 실물은 다르게 동작한다.**
 예컨대 가상 로봇이 저전압 중 `RESET_SAFE` 를 거부하는데 펌웨어는 받아 준다면, 그 어긋남을
@@ -27,7 +27,7 @@ import json
 import pytest
 
 from host.common import protocol as p
-from tools.mock_mechdog import Faults, MockRobot, load_config
+from tools.mock.mock_mechdog import Faults, MockRobot, load_config
 
 START_MS = 1_756_800_000_000
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-import tools.patrol_run as patrol_run
+import tools.ops.patrol_run as patrol_run
 from host.common.config import ConfigError
 from host.common.odom_link import OdomDecoder, OdomEncoder, encode_odom, odom_of
 from host.common.protocol import CommandEncoder, Verdict

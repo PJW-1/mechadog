@@ -23,7 +23,7 @@
 - **이번 PR로 완료되는 WBS ID**: <!-- 없으면 "부분 구현 / 검증 대기" -->
 - **남은 구현·실기 검증**: <!-- 없으면 "없음" -->
 - **연결 Issue (있는 경우)**: <!-- DoD까지 충족하면 Closes #번호, 일부 작업이면 Refs #번호 -->
-- [ ] `python tools/wbs_assignments.py`로 담당자 목록을 재생성했다 (WBS 변경 시)
+- [ ] `python tools/dev/wbs_assignments.py`로 담당자 목록을 재생성했다 (WBS 변경 시)
 
 <!-- 일반 코드 PR에서는 WBS를 수정하지 않는다. 팀장이 주간 리뷰나 마일스톤 종료 때 완료 상태를 일괄 반영한다. -->
 
@@ -52,7 +52,7 @@
 <!-- 파괴적 변경인 경우에만 체크 -->
 - [ ] `host/common/protocol.py`
 - [ ] `firmware/mechdog_motion/src/command_parser.*`
-- [ ] `tools/mock_mechdog.py`
+- [ ] `tools/mock/mock_mechdog.py`
 - [ ] `tests/fixtures/protocol_samples.jsonl` (정본 픽스처)
 
 변경 내용:

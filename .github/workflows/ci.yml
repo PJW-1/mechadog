@@ -42,11 +42,11 @@ jobs:
       # docs/internal/ASSIGNMENTS.md 는 WBS 에서 생성된다. WBS 만 고치고 재생성하지 않으면
       # 담당자별 부하가 실제와 다르게 표시되므로 여기서 막는다.
       - name: Generated docs are up to date
-        run: python tools/wbs_assignments.py --check
+        run: python tools/dev/wbs_assignments.py --check
 
       # 문서를 옮기거나 링크를 고칠 때 상대 경로가 실제 파일을 가리키는지 검사한다.
       - name: Doc links are valid
-        run: python tools/check_doc_links.py
+        run: python tools/dev/check_doc_links.py
 
       - name: Lint (ruff)
         run: ruff check .
@@ -102,7 +102,7 @@ jobs:
         if: github.event_name == 'pull_request' && !(github.base_ref == 'main' && github.head_ref == 'dev')
         run: |
           git fetch origin "${{ github.base_ref }}"
-          python3 tools/check_firmware_scope.py --base "origin/${{ github.base_ref }}"
+          python3 tools/dev/check_firmware_scope.py --base "origin/${{ github.base_ref }}"
 
       - name: Detect firmware sources
         id: detect

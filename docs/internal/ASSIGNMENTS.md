@@ -4,7 +4,7 @@
 > 정본은 [WBS 작업 사전](WBS.md)이며, 여기는 그것을 담당자 기준으로 펼친 것이다.
 >
 > ```
-> python tools/wbs_assignments.py
+> python tools/dev/wbs_assignments.py
 > ```
 >
 > 작업 범위·선행·DoD·상태를 바꿨을 때만 WBS를 고치고 이 파일을 재생성한다.
@@ -125,7 +125,7 @@
 | `1.4` | 리스크 관리 및 주간 리뷰 | 리스크 레지스터 갱신 이력 | 1.0 |
 | `2.4.2` | 네트워크 환경 구성 | IP/포트 할당표 | 0.5 |
 | `3.7.3` | 위반 판정 + 게이팅 + 클리핑 검사 | `vision/ppe_detector.py` | 0.5 |
-| `4.8.4` | VLM 판독 벤치 (우리 카메라) `[P2]` | `tools/vlm_bench.py` + 결과 기록 | — |
+| `4.8.4` | VLM 판독 벤치 (우리 카메라) `[P2]` | `tools/probe/vlm_bench.py` + 결과 기록 | — |
 | `6.4.3` | G3 통합 검수 | 검수 기록 + 데모 영상 | 1.0 |
 
 ### ⏳ 선행이 끝나야 시작한다 — 9건 · 6.0 M/D
@@ -168,7 +168,7 @@
 | `3.5.8` | 거리 유지 (비주얼 서보잉) | `behavior/tracker.py` + `config` | 1.0 |
 | `3.7.1` | PPE 데이터셋 확보 및 라벨링 | `datasets/ppe/` + 데이터 카드 | 1.5 |
 | `3.7.2` | PPE 모델 학습 및 ONNX export | `models/ppe.onnx` + 학습 리포트 | 1.5 |
-| `3.8.1` | 사원증 ArUco 인증 | `behavior/auth.py`, `vision/badge.py`, `tools/make_badges.py` | 0.5 |
+| `3.8.1` | 사원증 ArUco 인증 | `behavior/auth.py`, `vision/badge.py`, `tools/ops/make_badges.py` | 0.5 |
 | `3.8.2` | 암구호 인증 | 동일 | 0.5 |
 | `3.8.3` | 에스컬레이션 L0~L3 상태기 | `behavior/escalation.py` | 1.0 |
 | `4.1.1` | Wi-Fi STA 접속 및 UDP 수신 | `mechdog_motion.ino` | 1.0 |
@@ -192,7 +192,7 @@
 | `4.6.2` | 텔레메트리 차트·게이지 | 동일 | 1.5 |
 | `4.6.3` | 가상 조이스틱 및 E-Stop | 동일 | 0.5 |
 | `4.6.4` | 이벤트 피드 | 동일 | 0.5 |
-| `4.6.5` | 키보드 텔레오퍼레이션 | `tools/teleop.py` | 0.5 |
+| `4.6.5` | 키보드 텔레오퍼레이션 | `tools/ops/teleop.py` | 0.5 |
 | `4.7.6` | 지식 문서 안내 시나리오 | `experiments/wonderecho-audio/knowledge/*.txt` | 1.0 |
 | `4.7.7` | 경비모드 신원 확인 | 시나리오 스크립트 | 1.0 |
 | `4.7.12` | 대화·경고 이력/순찰 리포트 | 이벤트 로그 + 리포트 | 1.0 |
@@ -208,8 +208,8 @@
 | `5.2.2` | 브랜치 보호 및 PR 템플릿 | 저장소 설정, `.github/` | 0.5 |
 | `5.3.1` | Python 품질 잡 | `.github/workflows/ci.yml` | 1.0 |
 | `5.3.4` | 릴리스 잡 | 동일 | 0.5 |
-| `6.1.1` | 가상 MechDog (Mock Responder) | `tools/mock_mechdog.py` | 0.5 |
-| `6.1.2` | E2E 지연 측정 하네스 | `tools/latency_probe.py` | 1.0 |
+| `6.1.1` | 가상 MechDog (Mock Responder) | `tools/mock/mock_mechdog.py` | 0.5 |
+| `6.1.2` | E2E 지연 측정 하네스 | `tools/probe/latency_probe.py` | 1.0 |
 | `6.2.1` | 통신 규약·안전 로직 pytest | `tests/test_protocol*.py`, `test_safety.py` | 1.0 |
 | `6.2.2` | FSM 전이 pytest 전수 검증 | `tests/test_fsm.py` | 1.0 |
 | `6.3.1` | 성능 프로파일링 및 튜닝 | 성능 리포트 | 1.5 |

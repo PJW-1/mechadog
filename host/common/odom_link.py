@@ -10,7 +10,7 @@
 다시 켜면 `seq` 가 1 로 돌아오는 것도 같다 — 그래서 `boot_id` 는 **호스트 프로세스
 한 번의 실행**이다. 점 배열이 없으므로 ⑥ 은 없다.
 
-**이 모듈은 소켓을 만지지 않는다.** 실제 송신은 `tools/patrol_run.py`, 수신은
+**이 모듈은 소켓을 만지지 않는다.** 실제 송신은 `tools/ops/patrol_run.py`, 수신은
 `docker/ros2/odom_bridge.py` 가 한다.
 """
 
@@ -47,7 +47,7 @@ ODOM_REQUIRED: tuple[str, ...] = (
 
 #: 좌표 필드. **단위를 이름에 싣는다** — 이 링크는 m·rad 로 보낸다. 로봇 규약의
 #: mm·deg 와 다르므로 이름 없이 `x` 로 두면 어느 쪽인지 코드를 읽어야 안다.
-#: `tools/lidar_live_map.py` 의 자세 입력(5202)이 이미 같은 이름을 쓴다.
+#: `tools/lidar/lidar_live_map.py` 의 자세 입력(5202)이 이미 같은 이름을 쓴다.
 POSE_FIELDS: tuple[str, ...] = ("x_m", "y_m", "yaw_rad")
 
 

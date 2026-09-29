@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from host.vision.stream_client import DEFAULT_BOUNDARY
-from tools.camera_link_check import SerialCapture, capture, error_text, metrics, validate_url
+from tools.probe.camera_link_check import SerialCapture, capture, error_text, metrics, validate_url
 
 URL = "http://192.168.0.42:81/stream"
 JPEG = b"\xff\xd8test\xff\xd9"

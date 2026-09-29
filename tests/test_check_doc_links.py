@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools.check_doc_links import find_broken_links, main, tracked_markdown_files
+from tools.dev.check_doc_links import find_broken_links, main, tracked_markdown_files
 
 
 def _write(path: Path, text: str) -> Path:
@@ -89,8 +89,8 @@ def test_main_returns_zero_when_repo_docs_have_no_broken_links() -> None:
 
 def test_main_reports_failures_and_returns_one(tmp_path: Path, monkeypatch, capsys) -> None:
     doc = _write(tmp_path / "doc.md", "[없음](missing.md)")
-    monkeypatch.setattr("tools.check_doc_links.tracked_markdown_files", lambda: [doc])
-    monkeypatch.setattr("tools.check_doc_links.ROOT", tmp_path)
+    monkeypatch.setattr("tools.dev.check_doc_links.tracked_markdown_files", lambda: [doc])
+    monkeypatch.setattr("tools.dev.check_doc_links.ROOT", tmp_path)
 
     assert main([]) == 1
     out = capsys.readouterr().out

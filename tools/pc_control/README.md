@@ -16,7 +16,7 @@ python tools/pc_control/robot_ota.pyw
 python tools/pc_control/robot_modes.pyw
 ```
 
-Wi-Fi 화면: 연결 확인 → 검토된 package.json 선택 → 업데이트. 인증서 pin·기체 MAC·이미지 SHA 확인과 재부팅 후 확정은 기존 `tools/ota_update.py`가 담당한다. 자동 탐색이나 자동 업데이트는 하지 않는다. GUI 작업은 별도 프로세스에서 실행한다.
+Wi-Fi 화면: 연결 확인 → 검토된 package.json 선택 → 업데이트. 인증서 pin·기체 MAC·이미지 SHA 확인과 재부팅 후 확정은 기존 `tools/ops/ota_update.py`가 담당한다. 자동 탐색이나 자동 업데이트는 하지 않는다. GUI 작업은 별도 프로세스에서 실행한다.
 
 USB 화면은 상태 확인과 명시적인 다운로드/일반부팅 전환만 지원한다. flash를 쓰지 않는다. 기체·앱·파티션 검증에 실패하면 리셋을 거부한다. 자동 BOOT 진입이 모든 보드에서 가능하다는 뜻이 아니다.
 

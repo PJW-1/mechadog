@@ -68,7 +68,7 @@ sequenceDiagram
 
 ```bash
 # 1. 가상 로봇을 띄운다
-python tools/mock_mechdog.py --device mechdog-01
+python tools/mock/mock_mechdog.py --device mechdog-01
 
 # 2. 가상 로봇을 상대로 호스트 런타임과 관제 대시보드(8000번 포트)를 띄운다
 #    가상 로봇도 실물처럼 안전 래치가 걸린 채 켜진다 — 관제 화면의 «안전 해제 (RESET_SAFE)» 를 누른 뒤에 움직인다
@@ -78,4 +78,4 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --dashboard-port
 pytest -q
 ```
 
-CI(`ci.yml`)는 여기에 더해 `ruff check`/`ruff format --check`, `tools/check_doc_links.py`(문서 링크 검증), 커버리지 게이트(`--cov-fail-under=80`)를 검사한다.
+CI(`ci.yml`)는 여기에 더해 `ruff check`/`ruff format --check`, `tools/dev/check_doc_links.py`(문서 링크 검증), 커버리지 게이트(`--cov-fail-under=80`)를 검사한다.

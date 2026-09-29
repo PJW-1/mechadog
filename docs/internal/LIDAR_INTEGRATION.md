@@ -282,7 +282,7 @@
   라이다는 몇 도였나"를 되짚을 수 없고, 라이다를 다시 달 때 펌웨어를 고쳐야 한다.
 - ⚠️ **책상 단품 시험에서는 그 배치의 방향·설치각을 따로 설정한다.** 로봇 장착값을
   그대로 쓰면 책상 배치의 지도가 틀릴 수 있다.
-- `tools/motion_probe.py` 는 설정을 읽지 않으므로 `--lidar-mount-yaw 270
+- `tools/probe/motion_probe.py` 는 설정을 읽지 않으므로 `--lidar-mount-yaw 270
   --lidar-angle-direction -1` 을 함께 넘겨야 이 기체의 다른 도구와 좌표가 맞는다.
 
 장착 후 네 방위와 정면 거리 한 지점을 확인했다. 저장된 30초 실물 스캔을
@@ -310,7 +310,7 @@ ROS 회전 조립 재생은 298회전(중앙 유효 빔 450개)이었지만 실�
 대시보드 프로세스까지** 깔아야 한다. 지도를 그리는 것은 사람이 보기 위한
 일이고 순찰 자체와 무관하다.
 
-`tools/zone_select.py` 는 클릭으로 구역을 찍는 도구라 실제로 matplotlib 가
+`tools/ops/zone_select.py` 는 클릭으로 구역을 찍는 도구라 실제로 matplotlib 가
 필요하다. 없으면 `ImportError` 가 나므로 `requirements-dev.txt`에 추가했다.
 관제 화면의 정본은 대시보드(`4.5`·`4.6`)이며 `viz.py` 는 그것이 붙기
 전까지의 개발 수단이다.
@@ -486,15 +486,15 @@ pytest -q
 ruff check . && ruff format --check .
 
 # ③ 알고리즘 — 하드웨어 없이 세 단계를 순서대로
-python tools/lidar_slam.py  --simulate --steps 200 --seed 1   # 지도 → maps/
-python tools/zone_select.py                                   # 클릭으로 구역 지정
-python tools/zone_select.py --list                            # 창 없이 확인만
-python tools/patrol_run.py  --simulate --cycles 2 --seed 5    # 순찰
+python tools/lidar/lidar_slam.py  --simulate --steps 200 --seed 1   # 지도 → maps/
+python tools/ops/zone_select.py                                   # 클릭으로 구역 지정
+python tools/ops/zone_select.py --list                            # 창 없이 확인만
+python tools/ops/patrol_run.py  --simulate --cycles 2 --seed 5    # 순찰
 
 # ④ 목업으로 링크까지 (터미널 3개)
-python tools/mock_lidar.py --walk --host 127.0.0.1
-python tools/mock_mechdog.py --device mechdog-01
-python tools/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot 127.0.0.1
+python tools/mock/mock_lidar.py --walk --host 127.0.0.1
+python tools/mock/mock_mechdog.py --device mechdog-01
+python tools/ops/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot 127.0.0.1
 ```
 
 `--simulate` 는 `localization.track` 이 `none` 이어도 돌아간다. 실기 모드는

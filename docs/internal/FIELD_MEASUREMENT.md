@@ -5,7 +5,7 @@
 
 ## 실행
 
-저장소 루트에서 `python tools/field_plan.py --device mechdog-02 --out <결과폴더>`.
+저장소 루트에서 `python tools/field/field_plan.py --device mechdog-02 --out <결과폴더>`.
 Python 3.11 이상, tkinter 및 저장소 의존성 PyYAML이 필요하다. 이 PC는 Python 3.12에서 시험했다.
 GUI를 열거나 체크리스트를 내보내는 동작은 네트워크·로봇·OTA에 접근하지 않는다.
 GUI 없이 출력하려면 같은 명령에 `--export`를 추가한다.

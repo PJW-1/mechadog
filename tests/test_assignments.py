@@ -14,7 +14,7 @@ from dataclasses import replace
 import pytest
 from conftest import ROOT
 
-from tools.wbs_assignments import OUT, WorkPackage, is_ready, main, parse_wbs, render
+from tools.dev.wbs_assignments import OUT, WorkPackage, is_ready, main, parse_wbs, render
 
 
 @pytest.fixture(scope="module")
@@ -25,7 +25,7 @@ def packages() -> list[WorkPackage]:
 def test_generated_file_matches_wbs() -> None:
     """**WBS 를 고치고 재생성하지 않으면 여기서 실패한다.**
 
-    실패했다면 `python tools/wbs_assignments.py` 를 실행하고 결과를 커밋한다.
+    실패했다면 `python tools/dev/wbs_assignments.py` 를 실행하고 결과를 커밋한다.
     """
     assert main(["--check"]) == 0, "docs/internal/ASSIGNMENTS.md 를 재생성하고 커밋하라"
 
@@ -55,7 +55,7 @@ def test_generated_file_warns_against_hand_editing() -> None:
     """생성 파일임을 읽는 사람이 알아야 한다. 없으면 누가 직접 고친다."""
     text = OUT.read_text(encoding="utf-8")
     assert "이 파일은 생성된다" in text
-    assert "tools/wbs_assignments.py" in text
+    assert "tools/dev/wbs_assignments.py" in text
 
 
 def test_render_is_deterministic(packages: list[WorkPackage]) -> None:

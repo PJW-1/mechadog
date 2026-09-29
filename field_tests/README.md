@@ -13,7 +13,7 @@
 - [docs/measurements/](../docs/measurements/) — 위 원자료를 사람이 읽게 정리한 글이다. 해석·절차·
   정정 경위가 들어간다.
 - [docs/field_measure_catalog.json](../docs/field_measure_catalog.json) — 기계가 읽는 실측 카탈로그다.
-  `tools/field_plan.py`(측정 GUI/체크리스트 내보내기)가 이 파일을 읽어 항목별 절차·판정 기준·기존
+  `tools/field/field_plan.py`(측정 GUI/체크리스트 내보내기)가 이 파일을 읽어 항목별 절차·판정 기준·기존
   근거 URL을 보여준다. 카탈로그는 사람이 직접 채우며, 이 폴더나 `docs/measurements/`를 자동으로
   긁어 만들지 않는다.
 

@@ -1,4 +1,4 @@
-"""펌웨어 구동 빌드 환경 점검 도구 (`tools/firmware_env.py`).
+"""펌웨어 구동 빌드 환경 점검 도구 (`tools/dev/firmware_env.py`).
 
 벤더 파일은 저장소에도 시험에도 넣을 수 없다(ADR-20). 그래서 **가짜 파일과 그 해시로
 만든 표**를 넣어 판정만 본다 — 실제 표가 맞는지는 개발 PC 의 점검이 본다.
@@ -9,8 +9,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from tools import firmware_env
-from tools.firmware_env import (
+from tools.dev import firmware_env
+from tools.dev.firmware_env import (
     SKETCH,
     check_core,
     check_ignored,

@@ -177,7 +177,7 @@ class PatrolStats:
 class PatrolController:
     """계획 → 의도. 소켓도 실시각도 만지지 않는다.
 
-    운용 루프(`tools/patrol_run.py`)가 한 스레드에서 ① `observe_scan`·`observe_telemetry`
+    운용 루프(`tools/ops/patrol_run.py`)가 한 스레드에서 ① `observe_scan`·`observe_telemetry`
     로 입력을 넣고 ② `step(now_ms)` 가 돌려준 즉시 전문(`ESTOP`)을 바로 보내고
     ③ `commander.tick(now_ms)` 의 주기 전문을 10Hz 로 보낸다.
     """
@@ -485,7 +485,7 @@ class PatrolController:
         if not len(self.zones):
             self.commander.halt()
             if self._edge.changed("no_zones", True):
-                LOG.error("no_zones", hint="tools/zone_select.py 를 먼저 실행한다")
+                LOG.error("no_zones", hint="tools/ops/zone_select.py 를 먼저 실행한다")
             return
 
         if self.phase is Phase.INSPECT:

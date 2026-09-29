@@ -1,6 +1,6 @@
 """`ppe_live_check` 세션에서 **착용 정답을 아는 구간의 틀린 프레임**을 뽑아 학습용 라벨을 만든다.
 
-PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe_live_check.py --segments --session ...
+PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe/ppe_live_check.py --segments --session ...
 --save-raw-dir <세션>/raw` 로 남긴 세션 폴더(`session.json` + `raw/NNNNN.jpg`)다. `raw/` 가
 없으면 `--save-dir` 의 `frames/` 를 읽지만, 판정을 그린 프레임이면 멈춘다.
 
@@ -67,6 +67,15 @@ sys.path.insert(0, str(ROOT))
 
 from host.vision.detector import Detection, nms  # noqa: E402
 from tools.ppe.index_raw import imread_any  # noqa: E402
+from tools.ppe.ppe_live_check import (  # noqa: E402
+    DEFAULT_ACCEPTANCE_PLAN,
+    STATE_COLOR,
+    STATE_OK,
+    STATE_UNKNOWN,
+    STATE_VIOLATION,
+    crop_person,
+    load_acceptance_plan,
+)
 from tools.ppe.rf100_prepare import (  # noqa: E402
     CLASSES,
     DATASETS,
@@ -82,15 +91,6 @@ from tools.ppe.rf100_prepare import (  # noqa: E402
     intersect,
     sha256_file,
     write_jpeg,
-)
-from tools.ppe_live_check import (  # noqa: E402
-    DEFAULT_ACCEPTANCE_PLAN,
-    STATE_COLOR,
-    STATE_OK,
-    STATE_UNKNOWN,
-    STATE_VIOLATION,
-    crop_person,
-    load_acceptance_plan,
 )
 
 #: 구간 정의의 착용 문구 → (안전모, 조끼) 착용 여부.

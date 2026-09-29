@@ -19,7 +19,7 @@ import pytest
 from conftest import FakeClock
 
 from host.common import protocol as p
-from tools.mock_mechdog import Faults, MockRobot, _describe, build_parser, load_config
+from tools.mock.mock_mechdog import Faults, MockRobot, _describe, build_parser, load_config
 
 START_MS = 1_756_800_000_000
 

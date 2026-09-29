@@ -11,9 +11,9 @@ from dataclasses import replace
 import pytest
 
 from host.telemetry.receiver import Reading
-from tools import field_measure as fm
-from tools import field_plan as plan
-from tools import field_sessions as sessions
+from tools.field import field_measure as fm
+from tools.field import field_plan as plan
+from tools.field import field_sessions as sessions
 
 requires_display = pytest.mark.skipif(
     sys.platform != "win32" and not os.environ.get("DISPLAY"),
@@ -217,7 +217,7 @@ def test_movement_batch_runs_each_case_and_saves(tmp_path, monkeypatch):
         return
     import tkinter as tk
 
-    from tools.field_measure_ui import MeasurementWindow
+    from tools.field.field_measure_ui import MeasurementWindow
 
     monkeypatch.setattr(socket, "socket", lambda *_a, **_k: pytest.fail("hardware in GUI test"))
 
@@ -300,7 +300,7 @@ def test_measurement_window_prompt_completion_and_automatic_save(tmp_path, monke
         return
     import tkinter as tk
 
-    from tools.field_measure_ui import MeasurementWindow
+    from tools.field.field_measure_ui import MeasurementWindow
 
     monkeypatch.setattr(socket, "socket", lambda *_a, **_k: pytest.fail("hardware in GUI test"))
 

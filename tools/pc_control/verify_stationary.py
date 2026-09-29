@@ -11,7 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ops"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probe"))
 from mode_control import exclusive_operation
 from ota_update import RobotOta
 from settings import SETTINGS, require_settings
