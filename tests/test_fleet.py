@@ -12,7 +12,7 @@ from conftest import FakeClock
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from host.common.config import ConfigError
+from host.common.config import ConfigError, load_config
 from host.common.logging_setup import LogContext
 from host.common.protocol import TelemetryEncoder
 from host.dashboard.server import create_app, create_fleet_app
@@ -154,18 +154,43 @@ def test_log_records_carry_the_robot_being_handled(cfg: dict, clock: FakeClock) 
     assert fleet_ctx.as_dict()["device_id"] == "fleet"
 
 
-def test_members_get_their_own_blackbox_and_registration() -> None:
+def test_members_get_their_own_blackbox_and_registration(monkeypatch, tmp_path) -> None:
+    # 실물이 없어 텔레메트리 개체 ID 가 null 인 자리 — 임시 프로파일로 만든다.
+    (tmp_path / "mechdog-99.yaml").write_text(
+        """device_id: mechdog-99
+owner_id: unassigned
+telemetry_device_id: null
+reference_role: none
+network:
+  mechdog_ip: null
+  xiao_ip: null
+  cmd_port: 5001
+  telemetry_port: 5101
+servo_offset: null
+gait_calibration: null
+""",
+        encoding="utf-8",
+    )
+    real_load_config = load_config
+    monkeypatch.setattr(
+        "host.fleet.load_config",
+        lambda device: (
+            real_load_config(device, devices_dir=tmp_path)
+            if device == "mechdog-99"
+            else real_load_config(device)
+        ),
+    )
     members = load_members(
-        [A, "mechdog-03"], mode=None, robot_ips={A: A_IP}, xiao_ips={}, log_level=None
+        [A, "mechdog-99"], mode=None, robot_ips={A: A_IP}, xiao_ips={}, log_level=None
     )
     by_id = {m.device_id: m for m in members}
 
     assert by_id[A].config["network"]["mechdog_ip"] == A_IP
     assert by_id[A].config["logging"]["blackbox_dir"].endswith(f"/{A}")
-    assert by_id["mechdog-03"].config["logging"]["blackbox_dir"].endswith("/mechdog-03")
+    assert by_id["mechdog-99"].config["logging"]["blackbox_dir"].endswith("/mechdog-99")
     # 실물이 없는 자리는 텔레메트리 개체 ID(MAC)가 없다 — 화면에 «미등록».
     assert by_id[A].registered is True
-    assert by_id["mechdog-03"].registered is False
+    assert by_id["mechdog-99"].registered is False
 
 
 @pytest.mark.parametrize(
@@ -187,16 +212,16 @@ def test_fleet_app_mounts_each_robot_and_runs_their_broadcast_loops(monkeypatch)
     monkeypatch.setattr("host.dashboard.server.TelemetryHub.run", fake_run)
     apps = {
         device: create_app(DashboardState(device, stale_after_ms=3000))
-        for device in (A, B, "mechdog-03")
+        for device in (A, B, "mechdog-99")
     }
-    fleet_app = create_fleet_app(apps, registered={A: True, B: True, "mechdog-03": False})
+    fleet_app = create_fleet_app(apps, registered={A: True, B: True, "mechdog-99": False})
 
     with TestClient(fleet_app) as client:
-        assert sorted(started) == sorted([A, B, "mechdog-03"])
+        assert sorted(started) == sorted([A, B, "mechdog-99"])
         assert client.get("/health").json()["service"] == "telemetry"
         robots = client.get("/api/fleet").json()["robots"]
-        assert [r["id"] for r in robots] == [A, B, "mechdog-03"]
-        assert robots[2] == {"id": "mechdog-03", "base": "/robots/mechdog-03", "registered": False}
+        assert [r["id"] for r in robots] == [A, B, "mechdog-99"]
+        assert robots[2] == {"id": "mechdog-99", "base": "/robots/mechdog-99", "registered": False}
         assert client.get(f"/robots/{B}/health").json()["device_id"] == B
         assert client.get(f"/robots/{A}/api/telemetry").json()["device_id"] == A
 
