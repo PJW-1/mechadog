@@ -63,8 +63,8 @@ python tools/ppe_live_check.py `
 
 ## 현재 상태와 다음 작업
 
-현재 상태는 **운용 판정기와 런타임 연결 구현 · 자동 회귀 통과, PPE 후보 모델 v23b XIAO 실기 기각**이다.
-2026-09-22 XIAO 부분 실측은 이전 모델(SHA-256 `ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`)로 수행했다. 11개 구간 중 4개만 관측했고 판정 가능률 14%·실효 성공률 7%였다. 이는 현행 ppe-v3의 합격 근거가 아니며, 당시 모델의 성능도 부족했다(`TEST_MECHDOG/results/20260922_ppe-xiao-run2/summary.md`).
+현재 상태는 **운용 판정기와 런타임 연결 구현 · 자동 회귀 통과, 배포 모델 ppe-v4(YOLOX-S 4클래스) XIAO 실측 전**이다. 이전 후보 v23b 는 XIAO 실기에서 기각됐다.
+2026-09-22 XIAO 부분 실측은 이전 모델(SHA-256 `ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`)로 수행했다. 11개 구간 중 4개만 관측했고 판정 가능률 14%·실효 성공률 7%였다. 이는 이후 모델(ppe-v3·v4)의 합격 근거가 아니며, 당시 모델의 성능도 부족했다(`TEST_MECHDOG/results/20260922_ppe-xiao-run2/summary.md`).
 
 **2026-09-28 XIAO 실측 — v23b 기각.** PPE 후보 모델 v23b(YOLOX-S, 5클래스
 helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01 에서
