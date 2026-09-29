@@ -47,6 +47,13 @@ def _encoder(now_ms: int) -> p.CommandEncoder:
     return p.CommandEncoder(clock=lambda: now_ms, start_seq=next(_SEQ))
 
 
+def _armed(config: dict, **faults: object) -> MockRobot:
+    """래치를 푼 로봇. 펌웨어처럼 래치된 채 부팅하므로 사람이 `RESET_SAFE` 를 보낸 뒤다."""
+    robot = _robot(config, **faults)
+    robot.receive(_encoder(START_MS).reset_safe(), START_MS)
+    return robot
+
+
 def _feed(robot: MockRobot, now_ms: int) -> None:
     """유효 명령 한 건을 먹인다. 링크를 살려 두는 것이 목적이다."""
     result = robot.receive(_encoder(now_ms).move(60, 0), now_ms)
@@ -89,9 +96,9 @@ def test_thresholds_come_from_config(config: dict) -> None:
     _feed(robot, START_MS)
     assert robot.state(START_MS) == "FAILSAFE"
 
-    above = _robot(config, battery_start_v=shutdown + 0.1)
+    above = _armed(config, battery_start_v=shutdown + 0.1)
     _feed(above, START_MS)
-    assert above.state(START_MS) == "PATROL"
+    assert above.state(START_MS) == "IDLE"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -106,13 +113,36 @@ def test_starts_in_failsafe_until_first_command(config: dict) -> None:
     assert not robot.link_ok(START_MS)
 
 
+def test_boots_latched_until_reset_safe(config: dict) -> None:
+    """펌웨어는 래치된 채 부팅한다 (`motion_safety_state.h` `safe_latched = true`).
+
+    명령이 와서 링크가 살아나도 `RESET_SAFE` 전에는 `MOVE`·`POSE` 를 적용하지 않는다.
+    """
+    robot = _robot(config)
+    assert json.loads(robot.telemetry(START_MS))["safety_latched"] is True
+    _feed(robot, START_MS)
+    robot.receive(_encoder(START_MS).pose(15, 0, 0, 300), START_MS)
+    record = json.loads(robot.telemetry(START_MS))
+    assert record["state"] == "FAILSAFE"
+    assert record["safety_latched"] is True
+    assert record["flags"]["link_ok"] is True
+    assert record["motion"] == {"step": 0.0, "angle": 0.0}
+    assert record["imu"]["pitch"] != 15
+
+    robot.receive(_encoder(START_MS + 100).reset_safe(), START_MS + 100)
+    _feed(robot, START_MS + 200)
+    record = json.loads(robot.telemetry(START_MS + 200))
+    assert record["safety_latched"] is False
+    assert record["motion"]["step"] > 0
+
+
 def test_command_timeout_latches_failsafe(config: dict) -> None:
     """600ms 무명령이면 펌웨어처럼 곧바로 래치한다 (ADR-39, `latchFailsafe`)."""
-    robot = _robot(config)
+    robot = _armed(config)
     _feed(robot, START_MS)
     timeout_ms = config["safety"]["cmd_timeout_ms"]
 
-    assert robot.state(START_MS + timeout_ms - 1) == "PATROL"
+    assert robot.state(START_MS + timeout_ms - 1) == "IDLE"
     assert robot.state(START_MS + timeout_ms) == "FAILSAFE"
 
     record = json.loads(robot.telemetry(START_MS + timeout_ms))
@@ -214,8 +244,9 @@ def test_obstacle_triggers_avoid_below_config_threshold(config: dict) -> None:
     robot = _robot(config, obstacle_at_s=10)
     # 두 명령 간격을 `cmd_timeout_ms` 안에 둔다 — 넘기면 타임아웃 래치가 먼저 걸린다.
     before, after = START_MS + 9_900, START_MS + 10_000
+    robot.receive(_encoder(before).reset_safe(), before)
     _feed(robot, before)
-    assert robot.state(before) == "PATROL"
+    assert robot.state(before) == "IDLE"
 
     _feed(robot, after)
     assert robot.state(after) == "AVOID"
@@ -249,12 +280,12 @@ def test_reports_only_states_the_robot_can_know(config: dict) -> None:
 
     나머지 5종을 실으려면 호스트가 상태를 내려보내야 한다 — 규약의 열린 구멍.
     """
-    onboard = {"PATROL", "AVOID", "FAILSAFE"}
+    onboard = {"IDLE", "AVOID", "FAILSAFE"}
     assert onboard < set(p.FSM_STATES)
 
     seen = set()
     for faults in ({}, {"obstacle_at_s": 0}, {"tip_at_s": 0}):
-        robot = _robot(config, **faults)
+        robot = _armed(config, **faults)
         _feed(robot, START_MS)
         seen.add(robot.state(START_MS))
     assert seen == onboard
@@ -262,9 +293,8 @@ def test_reports_only_states_the_robot_can_know(config: dict) -> None:
 
 def test_pose_command_is_reflected_in_imu_pitch(config: dict) -> None:
     """자세 명령이 IMU 에 나타나야 자세 상승 시퀀스(FR-9.2.2)를 시험할 수 있다."""
-    robot = _robot(config)
-    encoder = p.CommandEncoder(clock=lambda: START_MS)
-    robot.receive(encoder.pose(15, 0, 0, 300), START_MS)
+    robot = _armed(config)
+    robot.receive(_encoder(START_MS).pose(15, 0, 0, 300), START_MS)
     assert json.loads(robot.telemetry(START_MS))["imu"]["pitch"] == 15
 
 
@@ -373,7 +403,7 @@ def _send_state(robot: MockRobot, state: str, now_ms: int) -> None:
 
 def test_host_state_is_echoed_back(config: dict) -> None:
     """호스트가 알려준 상태가 텔레메트리에 그대로 실려야 한다."""
-    robot = _robot(config)
+    robot = _armed(config)
     _feed(robot, START_MS)
     _send_state(robot, "ALERT", START_MS)
     assert json.loads(robot.telemetry(START_MS))["state"] == "ALERT"
@@ -384,7 +414,7 @@ def test_host_state_survives_subsequent_commands(config: dict) -> None:
 
     MOVE 하나에 상태가 지워지면 로봇 보고가 0.1초마다 PATROL 로 되돌아간다.
     """
-    robot = _robot(config)
+    robot = _armed(config)
     _send_state(robot, "TRACK", START_MS)
     for tick in range(1, 20):
         _feed(robot, START_MS + tick * 100)
@@ -401,7 +431,7 @@ def test_tier1_overrides_host_state(config: dict) -> None:
     _send_state(tipped, "PATROL", START_MS)
     assert tipped.state(START_MS) == "FAILSAFE", "전도 중에는 호스트 말을 따르지 않는다"
 
-    obstacle = _robot(config, obstacle_at_s=0)
+    obstacle = _armed(config, obstacle_at_s=0)
     _feed(obstacle, START_MS)
     _send_state(obstacle, "TRACK", START_MS)
     assert obstacle.state(START_MS) == "AVOID", "반사 정지 중에는 호스트 말을 따르지 않는다"
@@ -409,7 +439,7 @@ def test_tier1_overrides_host_state(config: dict) -> None:
 
 def test_unknown_host_state_is_ignored_and_previous_one_kept(config: dict) -> None:
     """미지 상태는 폐기하되, 직전에 알던 상태를 잃어버리면 안 된다."""
-    robot = _robot(config)
+    robot = _armed(config)
     _send_state(robot, "ALERT", START_MS)
     bogus = p.serialize({"seq": next(_SEQ), "ts": START_MS, "type": "STATE", "state": "DANCING"})
     result = robot.receive(bogus, START_MS)
@@ -419,11 +449,11 @@ def test_unknown_host_state_is_ignored_and_previous_one_kept(config: dict) -> No
     assert json.loads(robot.telemetry(START_MS))["state"] == "ALERT"
 
 
-def test_defaults_to_patrol_before_any_state_command(config: dict) -> None:
-    """STATE 를 못 받았어도 센서와 모순되지 않는 값을 내야 한다."""
-    robot = _robot(config)
+def test_reports_idle_after_reset_before_any_state_command(config: dict) -> None:
+    """STATE 를 못 받았으면 해제가 적어 둔 `IDLE` 을 낸다 — 펌웨어 `g_reported_state = Idle`."""
+    robot = _armed(config)
     _feed(robot, START_MS)
-    assert robot.state(START_MS) == "PATROL"
+    assert robot.state(START_MS) == "IDLE"
 
 
 @pytest.mark.parametrize("state", sorted(p.FSM_STATES))
@@ -447,7 +477,7 @@ def test_posture_survives_following_commands(config: dict) -> None:
     하나가 피치를 0 으로 되돌리면 뒤따르는 `MOVE` 한 건에 자세가 사라져,
     자세 상승 시퀀스(FR-9.2.2)가 먹혔는지 호스트가 확인할 방법이 없다.
     """
-    robot = _robot(config)
+    robot = _armed(config)
     encoder = p.CommandEncoder(clock=lambda: START_MS, start_seq=next(_SEQ) * 1000)
     robot.receive(encoder.pose(15, 0, 0, 300), START_MS)
     assert json.loads(robot.telemetry(START_MS))["imu"]["pitch"] == 15
@@ -465,7 +495,7 @@ def test_posture_survives_following_commands(config: dict) -> None:
 
 def test_new_pose_replaces_the_previous_one(config: dict) -> None:
     """유지는 하되 새 `POSE` 는 반영해야 한다 — 복귀(FR-9.2.3)가 이 경로다."""
-    robot = _robot(config)
+    robot = _armed(config)
     encoder = p.CommandEncoder(clock=lambda: START_MS, start_seq=next(_SEQ) * 1000)
     robot.receive(encoder.pose(15, 0, 0, 300), START_MS)
     robot.receive(encoder.pose(0, 0, 0, 300), START_MS)

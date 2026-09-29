@@ -7,11 +7,11 @@
 
 이 문서는 정본이 아니다. 여러 문서에 흩어져 있는 FR-9 관련 내용을 개발 순서대로 한 번에 읽을 수 있게 묶은 것이며, 내용이 어긋나면 아래 원본 문서를 따른다.
 
-- 요구사항: [PRD FR-9](../docs/internal/PRD_Physical_AI_Guard_Robot.md)
-- 시스템 구조: [아키텍처](../docs/ARCHITECTURE.md)
-- 결정 근거: [설계 결정](../docs/DECISIONS.md)
-- 통신 규약: [PROTOCOL](../docs/PROTOCOL.md)
-- 작업 단위와 완료 기준: [WBS](../docs/internal/WBS.md) 3.7.1~3.7.3, 3.5.7
+- 요구사항: [PRD FR-9](PRD_Physical_AI_Guard_Robot.md)
+- 시스템 구조: [아키텍처](../ARCHITECTURE.md)
+- 결정 근거: [설계 결정](../DECISIONS.md)
+- 통신 규약: [PROTOCOL](../PROTOCOL.md)
+- 작업 단위와 완료 기준: [WBS](WBS.md) 3.7.1~3.7.3, 3.5.7
 - 설정값: `config/config.yaml`
 
 모델도 판정기도 아직 없다. 이것이 만들어지기 전까지 공장 모드는 고를 수 없다(FR-11.7).
@@ -44,7 +44,7 @@ XIAO는 PPE를 판정하지 않는다. 비전 노드가 하는 일은 OV3660 영
 
 - 센서는 OV3660, PSRAM 8MB, VGA MJPEG 송출 전용이다.
 - 장착 높이 15cm, 하향 틸트 약 7도.
-- 수평 화각 약 74도, 수직 화각 약 59도, f는 약 424px이다([실측 기록](../docs/measurements/2026-09-13-camera-fov.md)).
+- 수평 화각 약 74도, 수직 화각 약 59도, f는 약 424px이다([실측 기록](../measurements/2026-09-13-camera-fov.md)).
 
 ### 모션 노드 — MechDog
 
@@ -69,7 +69,7 @@ XIAO는 PPE를 판정하지 않는다. 비전 노드가 하는 일은 OV3660 영
 
 ### 주의할 점 두 가지
 
-학습 PC와 추론 기준 PC는 다르다. [MODEL_PLAN 0절](../docs/internal/MODEL_PLAN.md)의 VRAM 예산표는 작성자 PC인 RTX 5070 12GB 기준이고, 성능 판정에 쓰는 기준 PC는 RTX 3080 10GB다. 학습은 오프라인 작업이라 예산 밖이지만, 추론 시간은 반드시 기준 PC에서 잰다.
+학습 PC와 추론 기준 PC는 다르다. [MODEL_PLAN 0절](MODEL_PLAN.md)의 VRAM 예산표는 작성자 PC인 RTX 5070 12GB 기준이고, 성능 판정에 쓰는 기준 PC는 RTX 3080 10GB다. 학습은 오프라인 작업이라 예산 밖이지만, 추론 시간은 반드시 기준 PC에서 잰다.
 
 카메라 장착을 바꾸면 화각을 다시 재야 한다. f값이 장착 높이에 민감해서 몇 cm만 달라져도 화각이 수 도씩 흔들리고, 그 값이 그대로 자세 상승 단계별 최소 판정거리를 바꾼다.
 
@@ -116,7 +116,7 @@ XIAO는 PPE를 판정하지 않는다. 비전 노드가 하는 일은 OV3660 영
 
 ## 3. 학습 데이터셋
 
-확보 방식은 OI-13에서 이미 닫혔다(2026-09-15). 정본은 [`datasets/README.md`](../datasets/README.md) 다.
+확보 방식은 OI-13에서 이미 닫혔다(2026-09-15). 정본은 [`datasets/README.md`](../../datasets/README.md) 다.
 
 ### 무엇을 어디서 구하나
 
@@ -318,7 +318,7 @@ FR-9가 쓰는 명령은 `POSE`, `ACTION`, `MOVE`, `LED`, `SOUND`, `STATE` 여�
 
 ## 8. 테스트 방법
 
-완료 기준은 여기 적지 않는다. 정본은 [WBS](../docs/internal/WBS.md) 의 같은 번호다.
+완료 기준은 여기 적지 않는다. 정본은 [WBS](WBS.md) 의 같은 번호다.
 
 결과는 `python TEST_MECHDOG/run_tests.py` 를 돌려 `TEST_MECHDOG/results/<날짜>_<번호>/` 에 남긴다. 그다음 엑셀 `일정과 업무` 시트에 상태, 실제완료일, 결과 요약, 근거 링크, 확인자 다섯 칸을 채운다. 결과 요약은 합격·불합격이 아니라 숫자로 적는다.
 
