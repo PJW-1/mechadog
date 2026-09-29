@@ -45,6 +45,7 @@ from host.slam.occupancy import OccupancyGrid
 from host.slam.photo_map import PhotoRecorder
 from host.slam.scan_match import (
     MatchParams,
+    Pose,
     integrate_scan,
     match,
     merge_batch,
@@ -154,6 +155,42 @@ def _widen_search(params: MatchParams, args: argparse.Namespace) -> MatchParams:
     return widened
 
 
+#: 탐색 반경의 이 비율을 넘으면 «가장자리에 붙었다» 로 본다.
+EDGE_FRACTION: float = 0.8
+
+
+def _warn_if_at_search_edge(pose: Pose, center: Pose, params: MatchParams, step: int) -> bool:
+    """정합 결과가 탐색 범위 끝에 붙었으면 알린다.
+
+    ⚠️ **이게 조용히 틀리는 유일한 경로다.** 실제 이동이 탐색 반경보다 크면
+    정답이 격자 밖이라 `match` 는 *가장자리의 가장 나은 후보*를 고른다. 점수가
+    0 이 아니므로 `scan_match_failed` 에도 안 걸리고, 그 자세로 지도에 누적되어
+    **가짜 벽이 영구히 박힌다.** 사람이 손으로 옮기는 동안은 이동량을 아무도
+    모르므로, 가장자리에 붙는 것 자체를 신호로 쓴다.
+
+    막지는 않는다 — 벽을 따라 곧게 걸으면 정답이 정말로 한쪽에 몰릴 수 있다.
+    판단은 사람이 한다.
+    """
+    moved_x = abs(pose[0] - center[0])
+    moved_y = abs(pose[1] - center[1])
+    limit = params.search_lin_m * EDGE_FRACTION
+    if max(moved_x, moved_y) < limit:
+        return False
+    LOG.warning(
+        "scan_match_at_search_edge",
+        step=step,
+        dx_mm=round(moved_x * 1000),
+        dy_mm=round(moved_y * 1000),
+        span_mm=round(params.search_lin_m * 1000),
+    )
+    print(
+        f"[SLAM] ⚠️ 이동이 탐색 범위 끝에 닿았다 "
+        f"({max(moved_x, moved_y) * 1000:.0f}mm / ±{params.search_lin_m * 1000:.0f}mm) — "
+        "다음엔 더 조금씩 옮기거나 --search-span-mm 을 키운다"
+    )
+    return True
+
+
 def run(args: argparse.Namespace, config: dict) -> int:
     settings.require_lidar_track(config, simulation=args.simulate)
     lidar = config["lidar"]
@@ -240,6 +277,8 @@ def run(args: argparse.Namespace, config: dict) -> int:
                 # 정합 실패 자세로 누적하면 한 번의 실패가 영구적인 가짜 벽이 된다.
                 LOG.warning("scan_match_failed", step=step)
                 continue
+            if not result.skipped:
+                _warn_if_at_search_edge(result.pose, center, match_params, step)
             previous_pose = pose
             pose = result.pose if not result.skipped else center
             integrate_scan(

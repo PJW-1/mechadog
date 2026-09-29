@@ -43,6 +43,7 @@ from host.slam.scan_match import (
 )
 from host.slam.settings import REQUIRED_LIDAR_KEYS, read_lidar_section
 from host.slam.simulation import DEFAULT_ROOM, SimParams, scan_world
+from tools.lidar_slam import _warn_if_at_search_edge
 
 PLAN = PlanParams(occ_thresh=1.0, free_thresh=-1.0, clearance_m=0.25, simplify_eps_m=0.08)
 
@@ -739,3 +740,44 @@ def test_load_prefers_the_richer_working_format(tmp_path: Path) -> None:
 def test_missing_map_says_both_sources(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="slam_toolbox"):
         OccupancyGrid.load(tmp_path)
+
+
+# ── 손 매핑: 탐색 범위 가장자리 경고 ────────────────────────────
+
+
+def _edge_params(span_m: float) -> MatchParams:
+    return MatchParams(
+        search_lin_m=span_m,
+        search_lin_step_m=0.04,
+        search_ang_rad=0.1,
+        search_ang_step_rad=0.02,
+        occ_thresh=1.0,
+        min_known_cells=50,
+    )
+
+
+def test_no_warning_when_move_is_comfortably_inside() -> None:
+    """평범한 이동은 조용해야 한다 — 매번 경고하면 아무도 안 읽는다."""
+    params = _edge_params(0.70)
+    assert not _warn_if_at_search_edge((0.30, 0.10, 0.0), (0.0, 0.0, 0.0), params, 3)
+
+
+def test_warns_when_match_lands_on_the_search_edge() -> None:
+    """가장자리에 붙으면 알린다 — 실제 이동이 범위 밖이었을 수 있다.
+
+    ⚠️ 이 경로가 조용히 틀리는 유일한 곳이다. 정답이 격자 밖이면 `match` 는
+    가장자리의 최선 후보를 고르고, 점수가 0 이 아니라 `scan_match_failed` 에도
+    안 걸린 채 가짜 벽으로 누적된다.
+    """
+    params = _edge_params(0.70)
+    assert _warn_if_at_search_edge((0.60, 0.0, 0.0), (0.0, 0.0, 0.0), params, 7)
+
+
+def test_edge_is_judged_per_axis_not_by_distance() -> None:
+    """탐색 격자가 정사각형이라 판정도 축마다 해야 한다.
+
+    거리로 재면 대각선 구석(0.5, 0.5)이 반경 0.7 안이라 통과하는데, 실제로는
+    두 축 모두 격자 끝 가까이다.
+    """
+    params = _edge_params(0.60)
+    assert _warn_if_at_search_edge((0.0, 0.50, 0.0), (0.0, 0.0, 0.0), params, 1)
