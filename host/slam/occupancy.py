@@ -9,8 +9,7 @@
 격자 경계에 닿으면 그 방향으로 늘린다(`expand`). 시연 공간의 치수를 모르는
 상태에서 매핑을 시작해야 하기 때문이다.
 
-⚠️ **저장 산출물은 `maps/` 로 간다** (아키텍처 5절 · `.gitignore` 49행). 지도는
-빌드 산출물이라 커밋하지 않는다 — 같은 이유로 `models/` 도 제외되어 있다.
+저장 산출물은 `maps/` 로 간다(빌드 산출물이라 커밋하지 않는다 · 아키텍처 5절).
 """
 
 from __future__ import annotations
@@ -24,8 +23,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-#: 로그오즈 상·하한. 없으면 오래 본 셀의 확신이 무한정 커져서 **새 관측이
-#: 지도를 못 고친다** — 치웠는데 벽으로 남아 A* 가 영원히 우회하게 된다.
+#: 로그오즈 상·하한 — 오래 본 셀도 새 관측이 고칠 수 있게 한다.
 LOGODDS_MIN: float = -5.0
 LOGODDS_MAX: float = 5.0
 
@@ -35,11 +33,7 @@ NEWLINE: bytes = bytes([10])
 
 @dataclass
 class MapMeta:
-    """격자와 실공간을 잇는 값. **지도 파일과 함께 저장되어야 한다.**
-
-    이것 없이 `.npy` 만 남기면 격자는 그냥 숫자 배열이다 — 어느 셀이 실공간의
-    어디인지 복원할 방법이 없어서 구역 좌표도 경로도 의미를 잃는다.
-    """
+    """격자와 실공간을 잇는 값. 지도 파일과 함께 저장한다."""
 
     resolution: float  # m / cell
     origin_x: float  # 격자 (0,0) 셀의 실공간 좌표 (m)
@@ -70,11 +64,8 @@ class MapMeta:
 class OccupancyGrid:
     """로그오즈 점유격자. 셀 좌표는 `(row, col)` = `(y, x)` 다.
 
-    ⚠️ **행이 y 이고 열이 x 다.** numpy 의 `[row, col]` 관례를 따르는데 실공간은
-    `(x, y)` 로 말하므로 두 순서가 뒤집혀 있다. 변환은 `to_cell`·`to_world` 두
-    함수만 하며, 나머지 코드는 절대 인덱스를 직접 계산하지 않는다 — 합치기 전
-    코드에서 이 계산이 세 파일에 복사되어 있었고, 그중 하나만 고치면 조용히
-    어긋난다.
+    행이 y, 열이 x 다(실공간 `(x, y)` 와 순서가 반대). 변환은 `to_cell`·`to_world` 만 하고
+    다른 코드는 인덱스를 직접 계산하지 않는다.
     """
 
     def __init__(self, meta: MapMeta, cells: np.ndarray | None = None) -> None:
@@ -134,8 +125,7 @@ class OccupancyGrid:
     def expand_for(self, xs: np.ndarray, ys: np.ndarray, pad_cells: int) -> None:
         """관측이 격자 밖으로 나가면 그 방향으로 늘린다.
 
-        `pad_cells` 만큼 여유를 함께 붙이는 이유는, 딱 맞게 늘리면 다음 스캔에서
-        또 늘려야 해서 매 사이클 배열 복사가 일어나기 때문이다.
+        `pad_cells` 만큼 여유를 붙여 매 사이클 배열 복사를 피한다.
         """
         if xs.size == 0:
             return
@@ -174,9 +164,7 @@ class OccupancyGrid:
     ) -> None:
         """광선을 따라 통과 셀을 내리고 끝점을 올린다.
 
-        ⚠️ **끝점을 먼저 올리고 나중에 통과를 내리면 안 된다.** 이웃한 두 광선의
-        끝점이 서로의 경로에 걸리면, 한쪽이 올린 셀을 다른 쪽이 곧바로 내려서
-        벽이 얇아진다. 그래서 `bresenham` 의 마지막 셀은 통과에서 제외한다.
+        `bresenham` 의 마지막 셀(끝점)은 통과에서 제외한다 — 이웃 광선이 벽을 얇게 깎지 않게.
         """
         if endpoints.size == 0:
             return
@@ -224,15 +212,8 @@ class OccupancyGrid:
         | `<stem>.pgm` | 8비트 점유 이미지 | **`maps/README.md` 가 지정한 형식** |
         | `<stem>.yaml` | ROS2 맵 서버 메타 | 위와 한 쌍 |
 
-        ⚠️ **둘 다 쓰는 이유가 있다.** `maps/README.md` 는 이 디렉터리에 ROS2
-        occupancy grid(`*.pgm` + `*.yaml`)를 두라고 정해 두었다(ADR-18). 그런데
-        **`.pgm` 은 8비트라 로그오즈의 누적 확신을 잃는다** — 그것으로는 다음
-        세션에 이어서 매핑할 수 없고, 미관측(0)과 반쯤 관측된 셀을 구분하지
-        못해 `planner.inflate` 의 판단(*모르는 곳은 빈 곳이 아니다*)도 못
-        내린다. 그래서 작업 형식을 따로 두고, 지정된 형식도 함께 낸다.
-
-        PNG 는 여기서 만들지 않는다 (`viz.py` 소관) — 핵심 경로가 matplotlib 를
-        import 하면 그것이 런타임 의존성이 된다.
+        8비트 `.pgm` 은 로그오즈의 누적 확신을 잃으므로 작업 형식을 따로 둔다. PNG 는 `viz.py`
+        소관이다.
         """
         directory.mkdir(parents=True, exist_ok=True)
         npy_path = directory / f"{stem}.npy"
@@ -253,16 +234,8 @@ class OccupancyGrid:
     def save_ros2(self, directory: Path, *, stem: str = "slam_map") -> tuple[Path, Path]:
         """ROS2 맵 서버 형식으로 쓴다 — `maps/README.md` 가 지정한 형식.
 
-        **의존성을 늘리지 않는다.** PGM(P5)은 헤더 세 줄 + 원시 바이트라
-        numpy 로 직접 쓴다. 이미지 라이브러리를 끌어오면 그것이 지도를 저장하는
-        모든 경로의 요구사항이 된다.
-
-        규약이 두 가지다 (map_server 기준, `negate: 0`).
-
-        * **픽셀 255 가 자유, 0 이 점유다.** `p = (255 - pixel) / 255`.
-        * **첫 행이 가장 위(y 최대)다.** 우리 격자는 행 0 이 y 최소이므로
-          **위아래를 뒤집어야 한다.** 뒤집지 않으면 지도가 상하 반전되어
-          로드되고, 벽은 그럴듯한데 경로가 전부 틀린다 — 조용한 종류의 오류다.
+        PGM(P5)은 numpy 로 직접 쓴다. map_server 규약(`negate: 0`)을 따른다 — 픽셀 255 가
+        자유·0 이 점유(`p = (255 - pixel) / 255`)이고, 첫 행이 y 최대라 위아래를 뒤집는다.
         """
         pgm_path = directory / f"{stem}.pgm"
         yaml_path = directory / f"{stem}.yaml"
@@ -279,9 +252,7 @@ class OccupancyGrid:
             handle.write(f"{width} {height}\n255\n".encode("ascii"))
             handle.write(pixels.tobytes())
 
-        # 임계는 map_server 기본값이다. `occupied_logodds`/`free_logodds` 를
-        # 여기 옮기지 않는 이유 — 이 파일은 **다른 도구가 읽는 형식**이고, 우리
-        # 계획은 `.npy` 를 쓴다. 두 임계를 묶으면 남의 형식이 우리 계획을 정한다.
+        # 임계는 map_server 기본값이다 — 우리 계획 임계(`occupied_logodds` 등)와 묶지 않는다.
         yaml_path.write_text(
             "\n".join(
                 (
@@ -307,14 +278,8 @@ class OccupancyGrid:
         | ① | `<stem>.npy` + `map_meta.json` | 우리 스캔 정합 (P2 전 잠정) |
         | ② | `<stem>.yaml` + `<stem>.pgm` | **ROS2 `slam_toolbox`** |
 
-        ⚠️ **② 를 읽을 수 있어야 교체가 성립한다.** ADR-9 가 `slam_toolbox` 를
-        *"스캔을 넣으면 맵과 위치를 반환하는 블랙박스"* 로 한정했으므로, 그
-        블랙박스가 낸 맵을 구역 지정(`3.9.1`)과 경로계획이 **그대로 소비**할 수
-        있어야 한다. 그렇지 않으면 P2 에서 이쪽 코드를 다시 손대야 한다.
-
-        ① 을 먼저 보는 이유는 로그오즈를 온전히 갖고 있기 때문이다. 8비트
-        이미지로는 누적 확신을 복원할 수 없어 이어서 매핑할 수 없다.
-        `slam_toolbox` 만 돌린 경우에는 `.npy` 가 없으므로 자연히 ② 로 간다.
+        ② 를 그대로 소비할 수 있어야 `slam_toolbox` 교체가 성립한다 (ADR-9). ① 은 로그오즈를
+        온전히 가지므로 먼저 본다.
         """
         npy_path = directory / f"{stem}.npy"
         meta_path = directory / "map_meta.json"
@@ -322,8 +287,7 @@ class OccupancyGrid:
             cells = np.load(npy_path)
             meta = MapMeta.of(json.loads(meta_path.read_text(encoding="utf-8")))
             grid = cls(meta, cells)
-            # 저장 당시의 width·height 와 배열이 어긋나면 **배열을 믿는다.**
-            # 메타는 사람이 편집할 수 있는 텍스트이고 배열은 아니다.
+            # 저장 당시의 width·height 와 배열이 어긋나면 배열을 믿는다.
             grid._sync_meta()
             return grid
 
@@ -340,19 +304,9 @@ class OccupancyGrid:
     def load_ros2(cls, yaml_path: Path) -> OccupancyGrid:
         """ROS2 맵 서버 형식을 읽는다 — `slam_toolbox` 산출물의 입구.
 
-        ⚠️ **`free_thresh`·`occupied_thresh` 를 반드시 써야 한다.** 픽셀값을
-        확률로 바꿔 그대로 로그오즈에 넣으면 **미지 영역이 자유로 둔갑한다.**
-
-        `slam_toolbox`(map_server)의 기본 미지값은 **205** 이고 `negate: 0`
-        에서 확률로는 `(255-205)/255 = 0.196` 이다. 그런데 그 값이 하필
-        `free_thresh` 기본값 `0.196` 과 같아서, 임계를 쓰지 않으면 미지가
-        **자유쪽으로 떨어진다.** 그러면 `planner.inflate` 가 지키는 불변식
-        (*"모르는 곳은 빈 곳이 아니다"*)이 깨지고, A* 가 한 번도 관측하지 않은
-        공간을 최단 경로로 골라 로봇을 내보낸다.
-
-        그래서 세 갈래로 **분류**한 뒤 로그오즈로 옮긴다. 8비트에서 누적 확신을
-        복원할 방법은 없으므로 이 변환은 의도적으로 거칠다 — 확신의 정도가
-        아니라 **자유·점유·미지의 구분**만 보존한다.
+        ⚠️ `free_thresh`·`occupied_thresh` 로 자유·점유·미지를 분류한 뒤 옮긴다 — map_server 기본
+        미지값 205 의 확률(0.196)이 `free_thresh` 기본값과 같아, 확률을 그대로 넣으면 관측하지
+        않은 공간이 통행 가능으로 새어 A* 가 로봇을 그리로 보낸다.
 
         | 확률 | 뜻 | 로그오즈 |
         | :--- | :--- | ---: |
@@ -388,8 +342,7 @@ class OccupancyGrid:
         if not isinstance(origin, list | tuple) or len(origin) < 2:
             raise ValueError(f"origin 은 [x, y, yaw] 여야 함: {yaml_path}")
         if len(origin) >= 3 and abs(float(origin[2])) > 1e-6:
-            # 회전된 원점은 지원하지 않는다. 조용히 무시하면 지도 전체가
-            # 어긋난 채로 순찰이 돌아간다 — 그것보다 기동을 막는 것이 낫다.
+            # 회전된 원점은 지원하지 않는다 — 무시하지 않고 거부한다.
             raise ValueError(
                 f"origin yaw 가 0 이 아님({origin[2]}) — 회전된 맵 원점은 지원하지 않는다"
             )
@@ -429,13 +382,7 @@ def bresenham(row0: int, col0: int, row1: int, col1: int) -> list[tuple[int, int
 def read_pgm(path: Path) -> np.ndarray:
     """PGM(P5) 을 읽어 `uint8` 배열로 돌려준다. **첫 행이 파일의 첫 행이다.**
 
-    이미지 라이브러리를 쓰지 않는 이유는 저장할 때와 같다 — 지도를 읽는 모든
-    경로에 의존성이 하나 붙는다. PGM 은 헤더 네 토큰 + 원시 바이트라 직접
-    읽는 것이 어렵지 않다.
-
-    ⚠️ **주석은 헤더 어디에나 올 수 있다.** `slam_toolbox` 는 넣지 않지만
-    다른 도구가 넣으므로, 토큰을 세면서 `#` 부터 줄 끝까지 건너뛴다. 고정
-    오프셋으로 읽으면 그런 파일에서 조용히 어긋난 배열이 나온다.
+    헤더 주석(`#` 부터 줄 끝)은 헤더 어디에 와도 건너뛴다.
     """
     raw = path.read_bytes()
     if not raw.startswith(b"P5"):

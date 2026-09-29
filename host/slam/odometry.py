@@ -14,10 +14,8 @@
 시각만 받는다 (ENGINEERING_GUIDE 2.1 · `lidar_link.py` 와 같은 구조). 실제 배선은
 `tools/patrol_run.py` 가 한다.
 
-⚠️ **이것은 «정확한 위치» 가 아니다.** 명령값을 적분한 추정이며, 보정은
-`slam_toolbox` 가 정지 스캔으로 한다. WBS 5.4.3 DoD 가 *«명령값만으로 정확한 위치라고
-간주하지 않는다»* 고 못박은 이유다. 그래서 **IMU 가 없거나 오래되면 자세를 무효로
-낸다** — 방향 없이 명령만으로 만든 위치를 유효하다고 내보내지 않는다.
+명령값을 적분한 추정이며 보정은 `slam_toolbox` 가 정지 스캔으로 한다 (WBS 5.4.3 DoD). IMU 가
+없거나 오래되면 자세를 무효로 낸다.
 
 ## step 과 속도 — 비례로 본다 (실측 확인 전 가정)
 
@@ -131,9 +129,7 @@ class OdomPose:
 def odom_params_from_config(config: Mapping[str, Any]) -> OdomParams:
     """설정에서 오도메트리 파라미터를 만든다. **실측이 없으면 `ConfigError`.**
 
-    ⚠️ **다른 기체의 값으로 채우지 않는다.** 서보 비대칭이 개체마다 달라 속도부터
-    다르다 (`mechdog-02.yaml` 머리말). 없는 값을 추정으로 채우면 그 기체의 `odom` 이
-    조용히 늘어나거나 줄어든다.
+    다른 기체의 값이나 추정으로 채우지 않는다 — 속도는 개체마다 다르다.
     """
     calibration = config.get("gait_calibration")
     if not isinstance(calibration, Mapping):

@@ -1,30 +1,16 @@
 """로컬 VLM 상황 판독 (FR-8 · ADR-35).
 
-**객체 목록으로는 «쓰러져 있다» 를 말할 수 없다.** COCO 80 에 소화기·사다리·공구함이
-없으므로 넘어졌는지 이전에 물건 자체가 보이지 않는다. 그래서 사진을 그대로 읽는
-모델을 하나 두되, **판단은 주지 않는다.**
+COCO 목록으로는 «쓰러져 있다» 를 말할 수 없어 사진을 읽는 모델을 두되, 판정은 맡기지 않는다.
 
-    ① QUESTIONS      고정 **영어** 질문 항목 — 데이터일 뿐이다
-    ② parse_answer   모델이 뱉은 글 → 판독 하나. **모델도 GPU 도 없이 전수 검증된다**
+    ① QUESTIONS      고정 영어 닫힌 질문 항목 — 데이터일 뿐이다
+    ② parse_answer   모델이 뱉은 글 → 참/거짓/모름. 모델·GPU 없이 시험된다
     ③ VlmReader      적재·해제·질의. 세션은 주입받는다
 
-`detector.py` 의 세 겹과 같은 모양이다. 다른 점은 아래 둘이고, 둘 다 의도한 것이다.
-
-⚠️ **가중치가 없어도 멈추지 않는다.** 검출기는 `ModelMissingError` 로 즉시 서지만
-이쪽은 Tier 3 이라 **기능 저하로 기록하고 지나간다**(ADR-35 결정 6). 사람 인지와
-주행은 VLM 없이 그대로 돌아야 한다 — 판독기가 로봇을 세우면 Tier 구분이 무의미해진다.
-
-⚠️ **판정하지 않는다.** 이 모듈은 사건 이름을 만들지 않고 관찰만 돌려준다. 실측에서
-열린 질문(*"위험한가?"*)에는 쓰러진 작업자를 앞에 두고도 `NORMAL` 이라 답했다
-(ADR-35 결정 2). 항목을 쪼개 닫힌 질문으로 묻고, 사건은 FSM 이 만든다.
-
-⚠️ **영어로 묻는다.** 같은 사진에 한국어로 물으면 *"정상입니다"*, 영어로 물으면
-*"person lying on the floor"* 가 나왔다. 2B 모델의 한계이며 한국어 문장은 이미 도는
-LLM 이 쓴다.
-
-⚠️ **메인 루프에서 적재하지 마라.** 적재가 14.5초다. 로봇은 `safety.cmd_timeout_ms`
-(600ms) 동안 명령을 못 받으면 스스로 선다. `worker.py` 가 추론을 스레드로 뺀 것과
-같은 이유로, `load()` 는 메인 루프 밖에서 불러야 한다.
+- 관찰만 돌려주고 사건 이름을 만들지 않는다 — 사건은 FSM 이 만든다 (ADR-35 결정 2).
+- 영어로 묻는다 — 한국어 질문에는 2B 모델이 틀렸다 (ADR-35 결정 3).
+- 가중치가 없거나 실패해도 예외 없이 기능 저하로 기록한다 (Tier 3 · ADR-35 결정 6).
+- ⚠️ `load()`(약 14.5초)는 운용 루프 스레드에서 부르지 않는다 — 로봇은 `safety.cmd_timeout_ms`
+  동안 명령을 못 받으면 선다.
 """
 
 from __future__ import annotations
@@ -41,24 +27,18 @@ LOG = event_logger("mechadog.vision")
 
 @dataclass(frozen=True, slots=True)
 class Question:
-    """물어볼 항목 하나.
-
-    ⚠️ **`prompt` 는 영어이고 «yes or no» 로 닫아 둔다.** 열어 두면 모델이 서술로
-    답하고, 서술은 파싱이 추측이 된다. 닫힌 질문은 실측에서 정확히 맞혔다.
-    """
+    """물어볼 항목 하나. `prompt` 는 «yes or no» 로 닫은 영어 문장이다."""
 
     #: 결과를 찾아 쓰는 키. 로그와 사건 쪽에서 쓰는 이름이다.
     key: str
-    #: 모델에게 그대로 가는 문장. **번역하지 마라** (위 경고).
+    #: 모델에게 그대로 가는 문장(번역하지 않는다).
     prompt: str
     #: 이 항목이 무엇을 보려는 것인지. 사람이 읽는 자리다.
     intent: str
 
 
-#: 고정 질문 셋 (ADR-35 결정 2). **늘릴 때는 질문당 0.2~0.9초가 붙는다.**
-#:
-#: ⚠️ **«위험한가» 류를 넣지 마라.** 그것이 실측에서 틀린 바로 그 질문이며, 그 답을
-#: 받는 순간 판정이 모델로 넘어간다. 여기 있는 셋은 모두 **본 것**을 묻는다.
+#: 고정 질문 셋 — 모두 «본 것» 을 묻는다. «위험한가» 류 열린 질문은 넣지 않는다 (ADR-35 결정 2).
+#: 질문 하나마다 판독 시간이 붙는다.
 QUESTIONS: tuple[Question, ...] = (
     Question(
         key="person_down",
@@ -77,34 +57,26 @@ QUESTIONS: tuple[Question, ...] = (
     ),
 )
 
-#: 답 앞머리에서 찾는 토큰. **뒤쪽은 보지 않는다** — `parse_answer` 주석 참조.
+#: 답 앞머리에서 찾는 토큰 (`parse_answer`).
 _YES = frozenset({"yes", "yeah", "yep"})
 _NO = frozenset({"no", "nope", "none"})
 
 
 @dataclass(frozen=True, slots=True)
 class Answer:
-    """항목 하나의 판독.
-
-    ⚠️ **`value` 는 3값이다 — 참·거짓·모름(`None`).** 모름을 거짓으로 접으면
-    *"안 보였다"* 와 *"없다"* 가 같은 말이 되는데, 그 둘은 전혀 다르다.
-    """
+    """항목 하나의 판독. `value` 는 참·거짓·모름(`None`)의 3값이다 — 모름을 거짓으로 접지 않는다."""
 
     key: str
     #: 참/거짓, 또는 읽어 내지 못했으면 `None`
     value: bool | None
-    #: 모델이 실제로 뱉은 글. **판독이 이상할 때 이것부터 본다**
+    #: 모델이 실제로 뱉은 글
     raw: str
     latency_ms: int
 
 
 @dataclass(frozen=True, slots=True)
 class Reading:
-    """한 프레임의 판독 묶음.
-
-    ⚠️ **부분 실패가 정상이다.** 예산을 넘겨 뒤쪽 항목을 못 물었으면 그만큼만 담고
-    `degraded` 를 세운다 — 통째로 버리면 급한 항목(`person_down`)까지 같이 잃는다.
-    """
+    """한 프레임의 판독 묶음. 예산을 넘겨 못 물은 항목은 빼고 `degraded` 를 세운다(부분 판독)."""
 
     answers: tuple[Answer, ...]
     #: 기능 저하 여부. 미적재·타임아웃·예외가 모두 여기로 모인다 (ADR-35 결정 6)
@@ -122,30 +94,22 @@ class Reading:
 
 
 class VlmSession(Protocol):
-    """적재된 모델 한 벌. **이 모듈은 이것을 만들지 않는다.**
-
-    파일도 GPU 도 만지지 않는 이유는 `detector.py` 와 같다 — 가중치 없이 전수
-    검증하기 위해서다. 실제 적재는 주입되는 쪽에 둔다.
-    """
+    """적재된 모델 한 벌 — 주입받는다(이 모듈은 파일도 GPU 도 만지지 않는다)."""
 
     def ask(self, image: Any, prompt: str) -> str:
         """이미지 한 장에 질문 하나. 답을 글로 돌려준다."""
         ...
 
     def close(self) -> None:
-        """VRAM 을 놓는다. **종료할 때 이것이 안 불리면 프로세스가 끝날 때까지 VRAM 에 남는다.**"""
+        """VRAM 을 놓는다."""
         ...
 
 
 def parse_answer(text: str) -> bool | None:
     """모델의 글에서 참/거짓을 읽는다. 못 읽으면 `None`.
 
-    ⚠️ **앞머리만 본다.** 글 전체에서 부정어를 찾으면
-    *"Yes, a person is lying down, no helmet is visible"* 이 거짓으로 뒤집힌다.
-    닫힌 질문을 던졌으므로 답은 앞에 온다.
-
-    ⚠️ **부분일치가 아니라 토큰으로 본다.** `no` 는 `not`·`nothing`·`nobody` 의
-    앞부분이기도 해서, 앞에서부터 글자만 모아 **한 단어를 만든 뒤** 견준다.
+    닫힌 질문의 답은 앞에 오므로 첫 단어 하나만 토큰으로 견준다 — 뒤쪽의 부정어나
+    `not`·`nothing` 같은 접두 일치에 뒤집히지 않는다.
     """
     head = text.strip().lower()
     if not head:
@@ -164,12 +128,10 @@ def parse_answer(text: str) -> bool | None:
 
 
 class VlmReader:
-    """판독기 수명주기. 기동할 때 한 번 올려 상시 적재하고 종료할 때 내린다
-    (ADR-35 결정 5).
+    """판독기 수명주기 — 기동 때 한 번 올려 상시 적재하고 종료 때 내린다 (ADR-35 결정 5).
 
-    ⚠️ **두 번 적재하지 않는다.** 4.1GB 가 두 벌 올라가면 10GB 를 넘긴다. `load()` 는
-    멱등이다 — **단, 스레드 안전하지는 않다.** 적재 중에 또 부르면 `_session` 이 아직
-    비어 있어 두 벌을 올린다. 그래서 `VlmWorker.start()` 가 기동 때 한 번만 부른다.
+    ⚠️ `load()` 는 멱등이지만 스레드 안전하지 않다 — 적재 중에 또 부르면 두 벌(VRAM 초과)을
+    올린다. `VlmWorker.start()` 한 곳에서만 부른다.
     """
 
     def __init__(
@@ -181,7 +143,7 @@ class VlmReader:
     ) -> None:
         if budget_ms <= 0:
             raise ValueError(f"budget_ms 는 0 보다 커야 함: {budget_ms}")
-        #: `None` 이면 «판독기 없음» 이다. 예외가 아니라 기능 저하다 (모듈 주석 참조).
+        #: `None` 이면 «판독기 없음» 이다 — 예외가 아니라 기능 저하다.
         self._factory = session_factory
         self._questions = tuple(questions)
         self._budget_ms = int(budget_ms)
@@ -197,11 +159,7 @@ class VlmReader:
         return self._factory is not None
 
     def load(self) -> bool:
-        """모델을 올린다. 성공이면 참. **메인 루프에서 부르지 마라** (14.5초).
-
-        ⚠️ **실패해도 예외를 올리지 않는다.** 가중치가 없는 것은 흔한 일이고
-        (저장소에 넣지 않으므로) 그때 로봇이 서면 안 된다.
-        """
+        """모델을 올린다. 성공이면 참, 실패는 예외 없이 거짓이다. 운용 루프에서 부르지 않는다."""
         if self._session is not None:
             return True
         if self._factory is None:
@@ -218,11 +176,7 @@ class VlmReader:
         return True
 
     def unload(self) -> None:
-        """모델을 내린다. **멱등이며 실패해도 조용히 지나간다.**
-
-        ⚠️ 여기서 예외가 새면 종료(`Runtime.release`)가 뒤따르는 정리를 건너뛴다. 내리는 데
-        실패한 VRAM 은 프로세스가 끝나면 풀린다 — 종료를 세워서 드러낼 일이 아니다.
-        """
+        """모델을 내린다. 멱등이며 실패해도 예외를 올리지 않는다 — 종료 정리를 끊지 않는다."""
         session, self._session = self._session, None
         if session is None:
             return
@@ -234,13 +188,10 @@ class VlmReader:
         LOG.info("vlm_unloaded")
 
     def read(self, image: Any, *, now_ms: int, keys: Sequence[str] | None = None) -> Reading:
-        """한 장을 읽는다. **절대 예외를 올리지 않는다.**
+        """한 장을 읽는다. 예외를 올리지 않는다.
 
-        예산(`budget_ms`)을 넘기면 남은 항목은 묻지 않고 거기까지 담아 돌려준다 —
-        부분 판독이 빈 판독보다 낫다 (`Reading` 주석 참조).
-
-        `keys` 를 주면 그 항목만 묻는다 — 공장 순찰 판독은 `person_down` 하나다 (S6).
-        저하 여부도 물은 항목 수로 잰다.
+        예산(`budget_ms`)을 넘기면 남은 항목은 묻지 않고 거기까지 돌려준다. `keys` 를 주면
+        그 항목만 묻는다(공장 순찰은 `person_down` 하나 · ADR-42 결정 5).
         """
         if self._session is None:
             return Reading(answers=(), degraded=True, reason="not_loaded", taken_at_ms=now_ms)
@@ -267,7 +218,7 @@ class VlmReader:
             spent_ms += elapsed_ms
             value = parse_answer(raw)
             if value is None:
-                # 답은 왔는데 읽지 못했다 — 모델이 서술로 답한 경우다. 원문을 남긴다.
+                # 답은 왔는데 읽지 못했다 — 원문을 남긴다.
                 LOG.warning("vlm_unparsed", key=question.key, raw=raw[:120])
             answers.append(Answer(key=question.key, value=value, raw=raw, latency_ms=elapsed_ms))
 

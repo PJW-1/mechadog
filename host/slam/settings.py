@@ -1,18 +1,8 @@
 """LiDAR 설정 적재와 파라미터 조립 (NFR-3① · Phase 2).
 
-**값의 정본은 `config/config.yaml` 의 `lidar:` 절이다.** 별 파일을 두지 않는다 —
-*"전 상수를 `config.yaml` 로 분리"* 가 이 저장소의 원칙이고(README 엔지니어링
-원칙), 설정이 두 파일로 갈리면 **어느 쪽이 실제로 쓰이는지 코드를 읽어야
-알게 된다.**
-
-⚠️ **기존 로더를 우회하지 않는다.** `host.common.config.load_config` 를 그대로
-부르므로 개체 프로파일 병합과 스키마 검증이 전부 그대로 걸린다. 여기서 직접
-YAML 을 읽어 쓰면 검증을 지나치는 두 번째 경로가 생긴다.
-
-⚠️ **`lidar` 절은 `common/config.py` 의 `REQUIRED_SECTIONS` 에 없다.** 그래서
-그 검증은 이 절의 누락을 잡지 못하고, 아래 `_validate` 가 대신 본다. 절을
-`REQUIRED_SECTIONS` 에 넣으면 LiDAR 를 쓰지 않는 Phase 1 운용까지 기동을
-막으므로 그렇게 하지 않았다 (`localization.track: none` 이 정상 상태다).
+값의 정본은 `config/config.yaml` 의 `lidar:` 절이다. 적재는 `host.common.config.load_config`
+를 거쳐 개체 병합과 스키마 검증을 그대로 받는다. `lidar` 절은 Phase 1 에서 없을 수 있어
+`REQUIRED_SECTIONS` 에 넣지 않고, 절의 검증은 `_validate` 가 한다.
 """
 
 from __future__ import annotations
@@ -33,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 #: 값의 정본. 시험이 파일을 직접 읽어 교차 검증할 때도 이 경로를 쓴다.
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
-#: 지도·구역 산출물이 사는 곳. **커밋하지 않는다** (`.gitignore` 49행).
+#: 지도·구역 산출물이 사는 곳 (커밋하지 않는다).
 DEFAULT_MAPS_DIR = ROOT / "maps"
 
 #: `localization.track` 이 이 값일 때만 실기 모드로 기동한다 (ADR-18).
@@ -82,9 +72,7 @@ REQUIRED_LIDAR_KEYS = (
 def load(device_id: str | None = None) -> dict[str, Any]:
     """전역 설정을 읽고 `lidar` 절을 검증해 돌려준다.
 
-    `device_id` 를 주면 개체 프로파일까지 병합한다 (실기 운용). 없으면
-    시뮬레이션·시험용 기본 설정만 읽는다 — `load_base_config` 가 그 용도로
-    이미 있다.
+    `device_id` 를 주면 개체 프로파일까지 병합한다(실기). 없으면 기본 설정만 읽는다.
     """
     config = load_base_config() if device_id is None else load_config(device_id)
     section = config.get("lidar")
@@ -95,11 +83,7 @@ def load(device_id: str | None = None) -> dict[str, Any]:
 
 
 def read_lidar_section(path: Path = CONFIG_PATH) -> dict[str, Any]:
-    """설정 파일에서 `lidar` 절만 읽는다. **시험의 교차 검증용이다.**
-
-    운용 경로는 `load()` 를 쓴다 — 그쪽은 개체 프로파일 병합과 기존 스키마
-    검증을 함께 거친다.
-    """
+    """설정 파일에서 `lidar` 절만 읽는다 — 시험의 교차 검증용이다(운용은 `load()`)."""
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict) or not isinstance(loaded.get("lidar"), dict):
         raise ConfigError(f"최상위에 lidar 매핑이 있어야 함: {path}")
@@ -118,8 +102,7 @@ def validate_section(section: dict[str, Any]) -> None:
         raise ConfigError("hit_logodds 는 양수, miss_logodds 는 음수여야 함")
     if section["resolution_mm"] <= 0 or section["initial_span_cells"] <= 0:
         raise ConfigError("resolution_mm · initial_span_cells 는 0보다 커야 함")
-    # ⚠️ **전달 목적지가 수신 포트와 같으면 안 된다** — 위 `scan_port` 와 같은
-    # 이유로 두 스키마가 한 소켓에 섞여 들어온다 (WBS 5.4.4).
+    # 전달 목적지가 수신 포트와 같으면 두 스키마가 한 소켓에 섞인다 (WBS 5.4.4).
     port = section["scan_forward_port"]
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         raise ConfigError("lidar.scan_forward_port 는 1~65535 정수여야 함")
@@ -131,8 +114,7 @@ def validate_section(section: dict[str, Any]) -> None:
     if not isinstance(section["scan_forward_enabled"], bool):
         raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
 
-    # ODOM 은 `scan_forward_port` 형식을 본 **뒤에** 검사한다 — 그래야 오류가 제 이름으로 나온다.
-    # 기동 뒤 `sendto` 에서 터지면 `send()` 가 삼켜 ODOM 이 조용히 안 나간다.
+    # ODOM 은 `scan_forward_port` 형식을 본 뒤에 검사한다 — 오류가 제 이름으로 나오게.
     odom_port = section["odom_port"]
     if not isinstance(odom_port, int) or isinstance(odom_port, bool) or not 1 <= odom_port <= 65535:
         raise ConfigError("lidar.odom_port 는 1~65535 정수여야 함")
@@ -145,12 +127,7 @@ def validate_section(section: dict[str, Any]) -> None:
     if section["odom_rate_hz"] <= 0 or section["odom_imu_stale_ms"] <= 0:
         raise ConfigError("odom_rate_hz · odom_imu_stale_ms 는 0보다 커야 함")
 
-    # ⚠️ **경로가 지나갈 자리가 E-STOP 거리 안이면 안 된다.**
-    #
-    # 팽창(반경 + 추종 여유)이 E-STOP 거리보다 크지 않으면, 계획된 경로를
-    # 완벽히 따라 걷는 것만으로 LiDAR 가 E-STOP 거리를 읽어 **정상 순찰이
-    # 비상정지로 끝난다.** 값 하나하나는 그럴듯해 보이므로 사람이 검토로
-    # 잡기 어렵다 — 그래서 기동 시에 관계를 확인한다.
+    # 팽창(반경 + 추종 여유)이 E-STOP 거리보다 커야 한다 — 아니면 정상 추종이 비상정지로 끝난다.
     clearance = section["robot_radius_mm"] + section["tracking_margin_mm"]
     if clearance <= section["estop_distance_mm"]:
         raise ConfigError(
@@ -163,12 +140,7 @@ def validate_section(section: dict[str, Any]) -> None:
 def require_lidar_track(config: dict[str, Any], *, simulation: bool) -> None:
     """실기 모드에서 `localization.track` 이 `lidar` 인지 확인한다 (ADR-18).
 
-    **Phase 1 표준 구성에는 LiDAR 가 달려 있지 않다** (CONTRIBUTING 1절). 설정이
-    `none` 인 채로 실기 순찰을 돌리면 LiDAR 없는 기체에서 스캔을 기다리다
-    측위 상실로 정지한다 — 그때 원인을 찾기 어려우므로 기동 시점에 막는다.
-
-    시뮬레이션은 막지 않는다. 알고리즘 검증은 하드웨어 구성과 무관하고,
-    막으면 Phase 1 기간 내내 개발을 못 한다.
+    아니면 기동 시점에 막는다(Phase 1 표준 구성에는 LiDAR 가 없다). 시뮬레이션은 막지 않는다.
     """
     track = config.get("localization", {}).get("track")
     if simulation or track == REQUIRED_TRACK:
@@ -189,9 +161,7 @@ def maps_dir(config: dict[str, Any]) -> Path:
 # ══════════════════════════════════════════════════════════════
 #  파라미터 조립 — 숫자는 코드에 박지 않는다 (NFR-3①)
 #
-#  ⚠️ **없는 키를 기본값으로 때우지 않는다.** `fsm.py._lookup` 이 같은 이유로
-#     `KeyError` 를 그대로 올린다 — 기본값을 두면 설정에서 항목을 지워도 동작이
-#     그대로라 설정이 정본이 아니게 된다.
+#  없는 키는 기본값으로 때우지 않고 `KeyError` 로 올린다.
 # ══════════════════════════════════════════════════════════════
 
 
@@ -209,8 +179,7 @@ def plan_params_from_config(config: Mapping[str, Any]) -> PlanParams:
 def match_params_from_config(config: Mapping[str, Any]) -> MatchParams:
     lidar = config["lidar"]
     localization = config["localization"]
-    # 탐색 범위의 근거는 **한 사이클의 이동량**이다 (`move_increment_mm`).
-    # 그보다 좁으면 정상 이동을 따라잡지 못하고, 넓으면 탐색이 제곱으로 커진다.
+    # 탐색 범위는 한 사이클의 이동량(`move_increment_mm`)에 비례한다.
     span_m = float(localization["move_increment_mm"]) / 1000.0 * float(lidar["search_span_ratio"])
     return MatchParams(
         search_lin_m=span_m,
