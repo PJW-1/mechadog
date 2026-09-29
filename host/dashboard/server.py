@@ -1,7 +1,7 @@
 """PC 로컬 FastAPI/WS 서버 — 텔레메트리·검출·사건 방송과 명령 API.
 
 ⚠️ `commands` 를 넘기면 `/api/command/*` 가 열리고, 그 경로는 로봇을 실제로 움직이므로
-WebSocket 과 같은 로컬 출처 검사(`_rejected_origin`)를 건다. 넘기지 않으면 읽기 전용이다.
+WebSocket 과 같은 로컬 출처 검사(`_require_local_origin`)를 건다. 넘기지 않으면 읽기 전용이다.
 
 카메라 영상은 XIAO 에 새로 붙지 않고(단일 클라이언트) 워커가 추론에 쓴 JPEG 를 재송출한다.
 `/ws/vision` 은 그 JPEG 와 박스를 한 메시지로 보낸다 (ADR-32).
@@ -20,13 +20,22 @@ import threading
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import uvicorn
 from anyio import CancelScope
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
 from host.behavior.mission import available_modes
 from host.cloud.broadcast import Broadcaster
@@ -284,6 +293,241 @@ class _RevalidatedStatic(StaticFiles):
         return response
 
 
+class _RefusedError(Exception):
+    """요청 거절 — `create_app` 이 `{"error": <사유>}` 와 상태 코드로 응답한다."""
+
+    def __init__(self, error: str, status_code: int) -> None:
+        super().__init__(error)
+        self.error = error
+        self.status_code = status_code
+
+
+async def _refused_response(_request: Request, exc: _RefusedError) -> JSONResponse:
+    return JSONResponse({"error": exc.error}, status_code=exc.status_code)
+
+
+async def _require_local_origin(request: Request) -> None:
+    """상태를 바꾸는 경로의 출처 검사. 다른 출처면 403 `{"error": "origin"}`."""
+    origin = request.headers.get("origin")
+    # 브라우저가 아닌 도구(curl·시험)는 출처를 붙이지 않는다
+    if origin is not None and origin not in _local_origins(request.url.port or 80):
+        raise _RefusedError("origin", 403)
+
+
+_LOCAL_ORIGIN = [Depends(_require_local_origin)]
+
+
+def _as_float(value: Any) -> float:
+    """`float()` 그대로 바꾼다(문자열 숫자·bool 도 받는다). 못 바꾸면 검증 오류다."""
+    try:
+        return float(value)
+    except (TypeError, OverflowError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
+class _ManualBody(BaseModel):
+    on: StrictBool
+
+
+class _PatrolBody(BaseModel):
+    action: Literal["start", "stop"]
+
+
+class _ZoneBody(BaseModel):
+    zone: StrictStr
+
+
+class _ModeBody(BaseModel):
+    mode: StrictStr
+
+
+class _SoundBody(BaseModel):
+    # `bool` 을 정수로 받지 않는다 — `true` 가 트랙 1 이 된다.
+    track: StrictInt
+
+
+class _AuthBody(BaseModel):
+    result: Literal["ok", "fail", "pending"]
+    # `bool` 을 정수로 받지 않는다 — `true` 가 시각 1 이 되면 모든 발화가 오래된 것이 된다.
+    captured_at_ms: StrictInt | None = None
+
+
+class _DriveBody(BaseModel):
+    step: Annotated[float, BeforeValidator(_as_float)]
+    angle: Annotated[float, BeforeValidator(_as_float)]
+
+
+class _PoseBody(BaseModel):
+    preset: StrictStr
+
+
+class _BroadcastPatch(BaseModel):
+    # 기본값 None 은 «필드 없음» 표시일 뿐이다 — 명시한 null 은 거절한다. 있는지는 `model_fields_set`.
+    volume: Annotated[StrictInt, Field(ge=0, le=100)] = None
+    muted: StrictBool = None
+
+
+async def _read_body[B: BaseModel](
+    request: Request, model: type[B], invalid: str | None = None
+) -> B:
+    """본문 JSON 객체를 `model` 로 읽는다. 틀리면 400 으로 거절한다.
+
+    사유는 처음 틀린 필드 이름이고, 본문이 JSON 객체가 아니면(깨진 JSON 포함) `"body"` 다.
+    `invalid` 를 주면 어떤 잘못이든 그 사유 하나로 낸다.
+    """
+    try:
+        body = await request.json()
+    except ValueError:  # 깨진 JSON·잘못된 인코딩
+        body = None
+    if not isinstance(body, dict):
+        raise _RefusedError(invalid or "body", 400)
+    try:
+        return model.model_validate(body)
+    except ValidationError as exc:
+        raise _RefusedError(invalid or str(exc.errors()[0]["loc"][0]), 400) from exc
+
+
+def _broadcast_routes(broadcast: Broadcaster | None) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/api/broadcast")
+    async def broadcast_status():
+        """PC 스피커 방송(관제 TTS)의 음량·무음 상태. 로봇 스피커(`/api/command/sound`)와는 별개다.
+
+        방송기가 없으면(piper 미설치 등) `available: false` — 화면은 «방송 없음» 을 보여 준다.
+        """
+        if broadcast is None:
+            return {"available": False}
+        return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
+
+    @router.post("/api/broadcast", dependencies=_LOCAL_ORIGIN)
+    async def broadcast_update(request: Request):
+        """`{"volume"?: 0..100, "muted"?: bool}` — 온 필드만 바꾼다.
+
+        음량은 범위 밖이면 거절한다(자르지 않는다). fleet 은 방송기가 하나라 모든 로봇 화면에
+        같은 상태가 보인다.
+        """
+        if broadcast is None:
+            return JSONResponse({"error": "unavailable"}, status_code=404)
+        # 두 필드를 모두 검증한 뒤 적용한다 — 음량만 바꾸고 400 을 내면 화면과 실제가 어긋난다.
+        patch = await _read_body(request, _BroadcastPatch)
+        if "volume" in patch.model_fields_set:
+            broadcast.set_volume(patch.volume)
+        if "muted" in patch.model_fields_set:
+            broadcast.set_muted(patch.muted)
+        return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
+
+    return router
+
+
+def _command_routes(commands: CommandService) -> APIRouter:
+    """`/api/command/*` — 로봇을 실제로 움직이므로 모든 경로에 출처 검사를 건다."""
+    router = APIRouter(prefix="/api/command", dependencies=_LOCAL_ORIGIN)
+
+    @router.post("/estop")
+    async def estop():
+        """어떤 상태에서도 통한다 — 조건을 검사하지 않는다 (FR-4.4)."""
+        return commands.estop().as_dict()
+
+    @router.post("/manual")
+    async def manual(request: Request):
+        """`{"on": true|false}` 로 수동 오버라이드를 잡거나 놓는다."""
+        body = await _read_body(request, _ManualBody)
+        result = commands.manual_on() if body.on else commands.manual_off()
+        return result.as_dict()
+
+    @router.post("/patrol")
+    async def patrol(request: Request):
+        """`{"action": "start"|"stop"}` — 시작은 예약, 정지는 수동 경유로 `IDLE` 에 정착."""
+        body = await _read_body(request, _PatrolBody)
+        if body.action == "start":
+            return commands.patrol().as_dict()
+        return commands.patrol_stop().as_dict()
+
+    @router.post("/reset")
+    async def reset():
+        """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""
+        return commands.reset().as_dict()
+
+    @router.post("/alarm")
+    async def alarm():
+        """사람이 상황을 확인한 뒤 누르는 경보(L3) 해제 (FR-10.3.2).
+
+        `/api/command/reset`(F 해제)과 다른 문이다 (ADR-26 ①). 헤드리스 런타임의 유일한
+        L3 해제 경로이기도 하다(콘솔 키는 tty 를 요구한다).
+        """
+        return commands.alarm_confirm().as_dict()
+
+    @router.post("/zone-baseline")
+    async def zone_baseline(request: Request):
+        """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
+
+        물건을 영구히 옮긴 경우의 문이다 (ADR-41 결정 6). 런타임이 다음 틱에 지운다.
+        `zones.ids` 에 없는 구역은 `accepted=false` 다. 경보(L3)는 풀지 않는다.
+        """
+        body = await _read_body(request, _ZoneBody)
+        return commands.zone_baseline(body.zone).as_dict()
+
+    @router.post("/service")
+    async def service(request: Request):
+        """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.
+
+        진입은 로봇을 주차시키고 루프 워치독을 건다(패치·진단용). 해제 후에도
+        safe 래치는 남으므로 보행 복귀에는 `/api/command/reset` 이 필요하다.
+        """
+        body = await _read_body(request, _ModeBody)
+        return commands.service(body.mode).as_dict()
+
+    @router.post("/sound")
+    async def sound(request: Request):
+        """`{"track": 0..3000}` — 로봇 MP3 모듈 트랙 재생, 0 = 정지.
+
+        음성 프로세스(`robotlink.play_track`)가 자기 발화를 로봇 스피커로 트는
+        문이다. FAILSAFE 래치 중에도 받는다(펌웨어와 같다). 범위 밖은
+        `accepted=false` 로 돌려주고 로봇에 보내지 않는다. `accepted` 는
+        «다음 틱에 싣는다» 이지 «소리가 났다» 가 아니다.
+        """
+        body = await _read_body(request, _SoundBody)
+        return commands.sound(body.track).as_dict()
+
+    @router.post("/mode")
+    async def mission_mode(request: Request):
+        """`{"mode": "guard"|"factory"}` — 운용 모드 전환 (FR-4.7 · FR-11.3).
+
+        온보드 `SERVICE`(정비 상태)와 다른 축이다 — 이쪽은 Tier 2 판단을 고르는 임무 모드다.
+        """
+        body = await _read_body(request, _ModeBody)
+        return commands.mission_mode(body.mode).as_dict()
+
+    @router.post("/auth")
+    async def auth(request: Request):
+        """`{"result": "ok"|"fail"|"pending", "captured_at_ms"?: int}` — 음성 암구호 경로.
+
+        대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
+        옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다.
+
+        `captured_at_ms` 는 사람이 말한 시각(epoch ms, 선택)이다 — 창이 열리기 전 발화는
+        시도로 세지 않는다. `"pending"` 은 판정이 아니라 전사 중 통지이며 `auth.timeout_s`
+        마감을 `verdict_grace_s` 만큼 한 번 미룬다 (ADR-37).
+        """
+        body = await _read_body(request, _AuthBody)
+        return commands.auth(body.result, body.captured_at_ms).as_dict()
+
+    @router.post("/drive")
+    async def drive(request: Request):
+        """`MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
+        body = await _read_body(request, _DriveBody, invalid="fields")
+        return commands.drive(body.step, body.angle).as_dict()
+
+    @router.post("/pose")
+    async def pose(request: Request):
+        """`{"preset": "up"|"level"|"down"}` — `MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
+        body = await _read_body(request, _PoseBody)
+        return commands.pose(body.preset).as_dict()
+
+    return router
+
+
 def create_app(
     state: DashboardState,
     commands: CommandService | None = None,
@@ -313,6 +557,7 @@ def create_app(
     app = FastAPI(title="MechDog telemetry", lifespan=lifespan)
     app.state.hub = hub
     app.state.event_hub = event_hub
+    app.add_exception_handler(_RefusedError, _refused_response)
 
     @app.get("/health")
     async def health():
@@ -405,227 +650,9 @@ def create_app(
                 frames(), media_type="multipart/x-mixed-replace; boundary=frame"
             )
 
-    def _rejected_origin(request: Request) -> JSONResponse | None:
-        origin = request.headers.get("origin")
-        if origin is None:
-            return None  # 브라우저가 아닌 도구(curl·시험)는 출처를 붙이지 않는다
-        if origin in _local_origins(request.url.port or 80):
-            return None
-        return JSONResponse({"error": "origin"}, status_code=403)
-
-    @app.get("/api/broadcast")
-    async def broadcast_status():
-        """PC 스피커 방송(관제 TTS)의 음량·무음 상태. 로봇 스피커(`/api/command/sound`)와는 별개다.
-
-        방송기가 없으면(piper 미설치 등) `available: false` — 화면은 «방송 없음» 을 보여 준다.
-        """
-        if broadcast is None:
-            return {"available": False}
-        return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
-
-    @app.post("/api/broadcast")
-    async def broadcast_update(request: Request):
-        """`{"volume"?: 0..100, "muted"?: bool}` — 온 필드만 바꾼다.
-
-        음량은 범위 밖이면 거절한다(자르지 않는다). fleet 은 방송기가 하나라 모든 로봇 화면에
-        같은 상태가 보인다.
-        """
-        rejected = _rejected_origin(request)
-        if rejected is not None:
-            return rejected
-        if broadcast is None:
-            return JSONResponse({"error": "unavailable"}, status_code=404)
-        body = await request.json()
-        if not isinstance(body, dict):
-            return JSONResponse({"error": "body"}, status_code=400)
-        # 두 필드를 모두 검증한 뒤 적용한다 — 음량만 바꾸고 400 을 내면 화면과 실제가 어긋난다.
-        volume, muted = body.get("volume"), body.get("muted")
-        if "volume" in body and (
-            isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100
-        ):
-            return JSONResponse({"error": "volume"}, status_code=400)
-        if "muted" in body and not isinstance(muted, bool):
-            return JSONResponse({"error": "muted"}, status_code=400)
-        if "volume" in body:
-            broadcast.set_volume(volume)
-        if "muted" in body:
-            broadcast.set_muted(muted)
-        return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
-
+    app.include_router(_broadcast_routes(broadcast))
     if commands is not None:
-
-        @app.post("/api/command/estop")
-        async def estop(request: Request):
-            """어떤 상태에서도 통한다 — 조건을 검사하지 않는다 (FR-4.4)."""
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            return commands.estop().as_dict()
-
-        @app.post("/api/command/manual")
-        async def manual(request: Request):
-            """`{"on": true|false}` 로 수동 오버라이드를 잡거나 놓는다."""
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            on = body.get("on")
-            if not isinstance(on, bool):
-                return JSONResponse({"error": "on"}, status_code=400)
-            result = commands.manual_on() if on else commands.manual_off()
-            return result.as_dict()
-
-        @app.post("/api/command/patrol")
-        async def patrol(request: Request):
-            """`{"action": "start"|"stop"}` — 시작은 예약, 정지는 수동 경유로 `IDLE` 에 정착."""
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            action = body.get("action")
-            if action == "start":
-                return commands.patrol().as_dict()
-            if action == "stop":
-                return commands.patrol_stop().as_dict()
-            return JSONResponse({"error": "action"}, status_code=400)
-
-        @app.post("/api/command/reset")
-        async def reset(request: Request):
-            """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            return commands.reset().as_dict()
-
-        @app.post("/api/command/alarm")
-        async def alarm(request: Request):
-            """사람이 상황을 확인한 뒤 누르는 경보(L3) 해제 (FR-10.3.2).
-
-            `/api/command/reset`(F 해제)과 다른 문이다 (ADR-26 ①). 헤드리스 런타임의 유일한
-            L3 해제 경로이기도 하다(콘솔 키는 tty 를 요구한다).
-            """
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            return commands.alarm_confirm().as_dict()
-
-        @app.post("/api/command/zone-baseline")
-        async def zone_baseline(request: Request):
-            """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
-
-            물건을 영구히 옮긴 경우의 문이다 (ADR-41 결정 6). 런타임이 다음 틱에 지운다.
-            `zones.ids` 에 없는 구역은 `accepted=false` 다. 경보(L3)는 풀지 않는다.
-            """
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            zone = body.get("zone")
-            if not isinstance(zone, str):
-                return JSONResponse({"error": "zone"}, status_code=400)
-            return commands.zone_baseline(zone).as_dict()
-
-        @app.post("/api/command/service")
-        async def service(request: Request):
-            """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.
-
-            진입은 로봇을 주차시키고 루프 워치독을 건다(패치·진단용). 해제 후에도
-            safe 래치는 남으므로 보행 복귀에는 `/api/command/reset` 이 필요하다.
-            """
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            mode = body.get("mode")
-            if not isinstance(mode, str):
-                return JSONResponse({"error": "mode"}, status_code=400)
-            return commands.service(mode).as_dict()
-
-        @app.post("/api/command/sound")
-        async def sound(request: Request):
-            """`{"track": 0..3000}` — 로봇 MP3 모듈 트랙 재생, 0 = 정지.
-
-            음성 프로세스(`robotlink.play_track`)가 자기 발화를 로봇 스피커로 트는
-            문이다. FAILSAFE 래치 중에도 받는다(펌웨어와 같다). 범위 밖은
-            `accepted=false` 로 돌려주고 로봇에 보내지 않는다. `accepted` 는
-            «다음 틱에 싣는다» 이지 «소리가 났다» 가 아니다.
-            """
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            track = body.get("track")
-            # `bool` 을 정수로 받지 않는다 — `true` 가 트랙 1 이 된다.
-            if isinstance(track, bool) or not isinstance(track, int):
-                return JSONResponse({"error": "track"}, status_code=400)
-            return commands.sound(track).as_dict()
-
-        @app.post("/api/command/mode")
-        async def mission_mode(request: Request):
-            """`{"mode": "guard"|"factory"}` — 운용 모드 전환 (FR-4.7 · FR-11.3).
-
-            온보드 `SERVICE`(정비 상태)와 다른 축이다 — 이쪽은 Tier 2 판단을 고르는 임무 모드다.
-            """
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            mode = body.get("mode")
-            if not isinstance(mode, str):
-                return JSONResponse({"error": "mode"}, status_code=400)
-            return commands.mission_mode(mode).as_dict()
-
-        @app.post("/api/command/auth")
-        async def auth(request: Request):
-            """`{"result": "ok"|"fail"|"pending", "captured_at_ms"?: int}` — 음성 암구호 경로.
-
-            대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
-            옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다.
-
-            `captured_at_ms` 는 사람이 말한 시각(epoch ms, 선택)이다 — 창이 열리기 전 발화는
-            시도로 세지 않는다. `"pending"` 은 판정이 아니라 전사 중 통지이며 `auth.timeout_s`
-            마감을 `verdict_grace_s` 만큼 한 번 미룬다 (ADR-37).
-            """
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            result = body.get("result")
-            if result not in ("ok", "fail", "pending"):
-                return JSONResponse({"error": "result"}, status_code=400)
-            captured_at_ms = body.get("captured_at_ms")
-            # `bool` 을 정수로 받지 않는다 — `true` 가 시각 1 이 되면 모든 발화가 오래된 것이 된다.
-            if captured_at_ms is not None and (
-                isinstance(captured_at_ms, bool) or not isinstance(captured_at_ms, int)
-            ):
-                return JSONResponse({"error": "captured_at_ms"}, status_code=400)
-            return commands.auth(result, captured_at_ms).as_dict()
-
-        @app.post("/api/command/drive")
-        async def drive(request: Request):
-            """`MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            try:
-                step = float(body["step"])
-                angle = float(body["angle"])
-            except (KeyError, TypeError, ValueError):
-                return JSONResponse({"error": "fields"}, status_code=400)
-            return commands.drive(step, angle).as_dict()
-
-        @app.post("/api/command/pose")
-        async def pose(request: Request):
-            """`{"preset": "up"|"level"|"down"}` — `MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
-            rejected = _rejected_origin(request)
-            if rejected is not None:
-                return rejected
-            body = await request.json()
-            preset = body.get("preset")
-            if not isinstance(preset, str):
-                return JSONResponse({"error": "preset"}, status_code=400)
-            return commands.pose(preset).as_dict()
+        app.include_router(_command_routes(commands))
 
     @app.websocket("/ws/telemetry")
     async def websocket_telemetry(websocket: WebSocket):
