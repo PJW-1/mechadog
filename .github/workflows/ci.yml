@@ -9,6 +9,9 @@ on:
   pull_request:
     branches: [main, dev]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -143,94 +146,11 @@ jobs:
       #
       #  실물 없이 도는 것이 요점이다 — 펌웨어 로직을 로봇 3대에 의존하지 않고
       #  매 PR 마다 검증한다 (HAL 분리 원칙).
-      - name: Host unit test (command parser)
-        if: hashFiles('firmware_mechdog_motion/test/*.cpp') != ''
-        run: |
-          mkdir -p build
-          g++ -std=c++17 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/src/command_parser.cpp \
-              firmware_mechdog_motion/test/test_command_parser.cpp \
-              -o build/test_command_parser
-          ./build/test_command_parser tests/fixtures
+      - name: Host unit tests (MechDog motion, make)
+        run: make -C firmware_mechdog_motion/test test
 
-      - name: Host unit test (OTA health window)
+      - name: Telemetry encoder vs Python decoder (golden cross-check)
         run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_ota_health.cpp \
-              -o build/test_ota_health
-          ./build/test_ota_health
-
-      - name: Host unit test (OTA reboot deadline)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_reboot_deadline.cpp \
-              -o build/test_reboot_deadline
-          ./build/test_reboot_deadline
-
-      - name: Host unit test (sensor timing statistics)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_sensor_timing_stats.cpp \
-              -o build/test_sensor_timing_stats
-          ./build/test_sensor_timing_stats
-      - name: Host unit test (independent loop watchdog, simulated time)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/test/watchdog_stubs \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_task_watchdog.cpp \
-              -o build/test_task_watchdog
-          ./build/test_task_watchdog
-
-      - name: Host unit test (motion safety state)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_motion_safety_state.cpp \
-              -o build/test_motion_safety_state
-          ./build/test_motion_safety_state
-
-      - name: Host unit test (MP3 player sequencing)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_mp3_player.cpp \
-              -o build/test_mp3_player
-          ./build/test_mp3_player
-
-      - name: Host unit test (onboard safety monitor)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/src/safety_monitor.cpp \
-              firmware_mechdog_motion/test/test_safety_monitor.cpp \
-              -o build/test_safety_monitor
-          ./build/test_safety_monitor
-
-      - name: Host unit test (telemetry encoder)
-        if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/src/command_parser.cpp \
-              firmware_mechdog_motion/src/telemetry_encoder.cpp \
-              firmware_mechdog_motion/test/test_telemetry_encoder.cpp \
-              -o build/test_telemetry_encoder
-          ./build/test_telemetry_encoder
-          ./build/test_telemetry_encoder --emit-fixtures > build/telemetry-emitted.jsonl
-          ./build/test_telemetry_encoder --emit-optional-fixtures > build/telemetry-optional.jsonl
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -254,18 +174,11 @@ jobs:
 
       # ── LiDAR 중계 노드 — LD19 파서/스캔 조립/SCAN 인코더 ──────
       #  파이썬 수신측(lidar_link.ScanDecoder)의 규약 구현과 교차 검증한다.
-      - name: Host unit test (LiDAR relay)
-        if: hashFiles('firmware_lidar_relay/test/*.cpp') != ''
+      - name: Host unit tests (LiDAR relay, make)
+        run: make -C firmware_lidar_relay/test test
+
+      - name: LiDAR encoder vs Python decoder (golden cross-check)
         run: |
-          mkdir -p build
-          g++ -std=c++17 -Wall -Wextra -Werror -O1 \
-              -I firmware_lidar_relay/src \
-              firmware_lidar_relay/src/ld19.cpp \
-              firmware_lidar_relay/src/scan_encoder.cpp \
-              firmware_lidar_relay/test/test_lidar_relay.cpp \
-              -o build/test_lidar_relay
-          ./build/test_lidar_relay
-          ./build/test_lidar_relay --emit-fixtures > build/lidar-emitted.jsonl
           python3 - <<'PY'
           from pathlib import Path
           from host.common.lidar_link import ScanDecoder
@@ -324,6 +237,19 @@ jobs:
       - name: Setup arduino-cli
         if: steps.sketch.outputs.found == 'true'
         uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.3.1
+
+      # 코어(esp32 는 수백 MB)와 라이브러리를 캐시한다. 키는 CLI·코어 버전과
+      # Compile 단계에서 고정한 라이브러리 버전에 묶는다.
+      - name: Cache Arduino toolchain
+        if: steps.sketch.outputs.found == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-${{ runner.os }}-cli1.3.1-${{ matrix.target.core }}-SensorLib0.2.1-Madgwick1.2.0
 
       - name: Install ESP32 core
         if: steps.sketch.outputs.found == 'true'

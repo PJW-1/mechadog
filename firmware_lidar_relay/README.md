@@ -57,7 +57,13 @@ arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware_lidar_relay
 ## 호스트 독립 단위시험
 
 `src/` 의 파서·조립기·인코더는 Arduino.h 없이 컴파일된다
-(HAL 분리 원칙). 호스트에 g++ 가 있으면:
+(HAL 분리 원칙). 호스트에 g++ 와 make 가 있으면 저장소 루트에서 한 줄이다(CI 와 같은 명령):
+
+```bash
+make -C firmware_lidar_relay/test test
+```
+
+직접 컴파일하려면:
 
 ```bash
 g++ -std=c++17 -Wall -Wextra -O1 -I firmware_lidar_relay/src \
