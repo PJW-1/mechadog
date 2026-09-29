@@ -584,3 +584,203 @@ def test_mendeley_refuses_duplicate_basenames(tmp_path):
     a, b = tmp_path / "train" / "x.jpg", tmp_path / "valid" / "x.jpg"
     with pytest.raises(SystemExit):
         mendeley_prepare.check_unique_names([a, b])
+
+
+# ── mendeley_prepare.prepare · pipeline_mock.main 끝까지 ─────────────
+def _yolo_line(cls: int, box: tuple[float, float, float, float], w: int = 100, h: int = 200) -> str:
+    x1, y1, x2, y2 = box
+    return f"{cls} {(x1 + x2) / 2 / w} {(y1 + y2) / 2 / h} {(x2 - x1) / w} {(y2 - y1) / h}"
+
+
+def _fake_mendeley(root: Path, rf_raw: Path) -> Path:
+    import shutil
+
+    md_root = root / "md"
+    md_root.mkdir()
+    (md_root / "data.yaml").write_text(
+        "nc: 4\nnames: ['Helmet', 'NoHelmet', 'NoVest', 'Vest']\n", encoding="utf-8"
+    )
+    worn = "\n".join([_yolo_line(0, HELMET), _yolo_line(3, VEST)])
+    bare = "\n".join([_yolo_line(1, HELMET), _yolo_line(3, VEST)])
+    for split, name, seed, text in [
+        ("train", "m1", 10, worn),
+        ("train", "m2", None, worn),  # Roboflow test 사진과 같은 사진 → 빠진다
+        ("valid", "va", 11, bare),
+        ("valid", "vb", 12, worn),
+    ]:
+        image = md_root / split / "images" / f"{name}.jpg"
+        if seed is None:
+            image.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(rf_raw / "test" / "t1.jpg", image)
+        else:
+            _write_image(image, seed)
+        label = md_root / split / "labels" / f"{name}.txt"
+        label.parent.mkdir(parents=True, exist_ok=True)
+        label.write_text(text + "\n", encoding="utf-8")
+    return md_root
+
+
+def _fake_people(paths, *_args):
+    return {"key": {"model_sha256": "fake"}, "boxes": {p.name: [list(PERSON)] for p in paths}}
+
+
+def test_mendeley_prepare_merges_dedupes_and_keeps_roboflow_test(tmp_path, monkeypatch):
+    rf_raw = _fake_raw(tmp_path)
+    base = tmp_path / "build" / "v0"
+    rf100_prepare.prepare(rf_raw, base, "v0", seed=1)
+    md_raw = _fake_mendeley(tmp_path, rf_raw)
+    monkeypatch.setattr(mendeley_prepare, "detect_people", _fake_people)
+    out = tmp_path / "build" / "v1"
+
+    card = mendeley_prepare.prepare(
+        md_raw, rf_raw, base, out, "v1", device="x", coco_model=tmp_path / "coco.onnx", seed=1
+    )
+
+    stats = card["mendeley_stats"]
+    assert stats["train"]["excluded_images"] == {mendeley_prepare.REASON_NEAR_DUP_RF: 1}
+    assert stats["train"]["merged_images"] == 2  # Roboflow 1 + Mendeley 1
+    assert stats["val"]["merged_images"] + stats["test"]["merged_images"] == 1 + 2
+    # Roboflow test 주석은 바이트 그대로다 — v1 과 같은 잣대
+    same = "instances_test.json"
+    assert (out / "annotations" / same).read_bytes() == (base / "annotations" / same).read_bytes()
+    md_test = json.loads((out / "annotations" / mendeley_prepare.MD_TEST_ANN).read_text("utf-8"))
+    assert all(im["file_name"].startswith("md_") for im in md_test["images"])
+    for split, folder in (("train", "train2017"), ("val", "val2017")):
+        coco = json.loads((out / "annotations" / f"instances_{split}.json").read_text("utf-8"))
+        mendeley_prepare.check_contiguous(coco, split)
+        for im in coco["images"]:
+            assert (out / folder / im["file_name"]).is_file()
+    assert json.loads((out / "data_card.json").read_text("utf-8"))["dataset_version"] == "v1"
+    with pytest.raises(SystemExit):  # 같은 출력에 다시 쓰지 않는다
+        mendeley_prepare.prepare(
+            md_raw, rf_raw, base, out, "v1", device="x", coco_model=tmp_path / "c", seed=1
+        )
+
+    # 이어서 목업 평가기를 끝까지 — 검출기만 가짜로 바꾼다
+    from tools import ppe_live_check
+
+    class FakeDetector:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    def fake_process(*_args, **_kwargs):
+        person = Detection("person", 0.9, PERSON)
+        return [(person, ppe_live_check.Judgement(pipeline_mock.STATE_OK, "", ()), (0, 0))]
+
+    import host.vision.detector as detector_module
+
+    monkeypatch.setattr(detector_module, "Detector", FakeDetector)
+    monkeypatch.setattr(pipeline_mock, "process", fake_process)
+    result_path = tmp_path / "mock.json"
+    assert (
+        pipeline_mock.main(
+            [
+                "--rf-raw", str(rf_raw),
+                "--md-raw", str(md_raw),
+                "--build", str(out),
+                "--coco-model", str(tmp_path / "coco.onnx"),
+                "--model", f"m={tmp_path / 'm.onnx'}",
+                "--out", str(result_path),
+            ]
+        )
+        == 0
+    )  # fmt: skip
+    result = json.loads(result_path.read_text("utf-8"))
+    rf = result["models"]["m"]["roboflow_test"]
+    assert rf["persons"] == 1 and rf["confusion"]["적합"] == {"적합": 1}
+    assert result["images"]["mendeley_test"] == stats["test"]["merged_images"]
+
+
+def test_mendeley_detect_people_keeps_person_boxes_and_reuses_cache(tmp_path, monkeypatch):
+    import host.vision.detector as detector_module
+
+    calls = []
+
+    class FakeDetector:
+        def __init__(self, config, **_kwargs):
+            calls.append(config["vision"]["coco"]["model_path"])
+
+        def detect(self, _image):
+            return [Detection("person", 0.9, PERSON), Detection("chair", 0.8, VEST)]
+
+    monkeypatch.setattr(detector_module, "Detector", FakeDetector)
+    model = tmp_path / "coco.onnx"
+    model.write_bytes(b"weights")
+    image = tmp_path / "a.jpg"
+    _write_image(image, 5)
+    cache = tmp_path / "cache.json"
+
+    first = mendeley_prepare.detect_people([image], cache, "mechdog-01", model)
+    assert first["boxes"] == {"a.jpg": [list(PERSON)]}
+    assert first["key"]["model_sha256"] == mendeley_prepare.sha256_file(model)
+    assert calls == [str(model)]
+    again = mendeley_prepare.detect_people([image], cache, "mechdog-01", model)
+    assert again == first and len(calls) == 1  # 같은 검출기면 캐시를 쓴다
+    model.write_bytes(b"other weights")
+    mendeley_prepare.detect_people([image], cache, "mechdog-01", model)
+    assert len(calls) == 2  # 가중치가 바뀌면 다시 돌린다
+
+
+def test_mendeley_main_refuses_output_outside_datasets_and_passes_arguments(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_prepare(_md_raw, _rf_raw, _base, out, version, **kwargs):
+        seen.update(out=out, version=version, **kwargs)
+        return {"mendeley_stats": {}}
+
+    monkeypatch.setattr(mendeley_prepare, "prepare", fake_prepare)
+    common = ["--md-raw", "m", "--rf-raw", "r", "--base", "b", "--coco-model", "c.onnx"]
+    with pytest.raises(SystemExit):
+        mendeley_prepare.main([*common, "--out", str(tmp_path / "x"), "--version", "v"])
+    inside = mendeley_prepare.ROOT / "datasets" / "ppe" / "build" / "never_written"
+    assert mendeley_prepare.main([*common, "--out", str(inside), "--version", "v9"]) == 0
+    assert seen["version"] == "v9" and seen["device"] == "mechdog-01" and seen["seed"] == 20260928
+    assert not inside.exists()
+
+
+def test_export_ppe_verify_records_host_check_and_refuses_hash_mismatch(tmp_path, monkeypatch):
+    import host.vision.detector as detector_module
+
+    class FakeDetector:
+        def __init__(self, config, **_kwargs):
+            self.path = config["vision"]["ppe"]["model_path"]
+
+        def detect(self, _image):
+            return [Detection("helmet", 0.9, HELMET)]
+
+    monkeypatch.setattr(detector_module, "Detector", FakeDetector)
+    onnx = tmp_path / "ppe.onnx"
+    onnx.write_bytes(b"onnx bytes")
+    meta = {"sha256": export_ppe.sha256_file(onnx), "classes": list(rf100_prepare.CLASSES)}
+    export_ppe.metadata_path(onnx).write_text(json.dumps(meta), encoding="utf-8")
+    images = tmp_path / "val2017"
+    for i in range(5):
+        _write_image(images / f"{i}.jpg", i)
+    (images / "notes.txt").write_text("not an image", encoding="utf-8")
+
+    args = ["verify", "--device", "mechdog-01", "--onnx", str(onnx), "--images", str(images)]
+    assert export_ppe.main([*args, "--count", "3"]) == 0
+    check = json.loads(export_ppe.metadata_path(onnx).read_text("utf-8"))["host_check"]
+    assert check["images"] == 3 and check["with_boxes"] == 3
+    assert check["results"][0]["labels"] == ["helmet"]
+
+    onnx.write_bytes(b"changed")
+    with pytest.raises(SystemExit):
+        export_ppe.main(args)
+
+
+def test_export_ppe_small_helpers(tmp_path):
+    assert export_ppe.expected_output_shape(4) == [1, 8400, 9]
+    assert export_ppe.pick_evenly([Path(str(i)) for i in range(10)], 3) == [
+        Path("0"),
+        Path("3"),
+        Path("6"),
+    ]
+    assert export_ppe.pick_evenly([Path("a")], 3) == [Path("a")]
+    missing = tmp_path / "none.pth"
+    assert export_ppe.file_ref(None) is None
+    assert export_ppe.file_ref(missing)["missing"] is True
+    present = tmp_path / "w.pth"
+    present.write_bytes(b"w")
+    assert export_ppe.file_ref(present)["sha256"] == export_ppe.sha256_file(present)
+    assert export_ppe.iso_mtime(present)[:4].isdigit()
