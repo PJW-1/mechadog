@@ -40,7 +40,7 @@ from host.behavior.fall_monitor import FallMonitor
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.behavior.ppe_judge import PpeJudge
-from host.behavior.tracker import LockOnTracker
+from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zone_inspector import ZoneInspector
 from host.behavior.zones import Zone, ZoneStore
@@ -240,11 +240,15 @@ class Runtime:
         self._vision = vision
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
-        # 추종은 **검출이 들어오는 자리에서** 계산한다 — 비전은 25fps 로
-        # 오고 명령은 10Hz 로 나가므로, 명령 쪽에서 계산하면 프레임을 버리게 된다.
-        # 계산 결과는 `TRACK` 시퀀스에 넘기고 그쪽이 명령 주기로 옮긴다.
-        self._tracker = LockOnTracker(config)
-        self._track_sequence = self._behavior.sequence_for("TRACK")
+        # 경비 추종 (FR-3.5 · ADR-40). 쓰러짐 감시는 아래에서 만들므로 의심 여부는 호출 때 묻는다.
+        self._track_controller = TrackController(
+            config,
+            behavior=self._behavior,
+            mission=self._mission,
+            summary=self._summary,
+            apply=self._apply,
+            fall_suspected=lambda: self._fall.suspected,
+        )
         # 구역 변화 감지 (FR-8). 구역 도착은 **지도 좌표 앵커**(`maps/zones.json`)와
         # 측위 위치로 판정한다 (FR-7.4) — ArUco 구역 마커는 쓰지 않는다. 점검은
         # `ZoneInspector` 가 맡고(아래), 앵커는 기동 로그 순서를 지키려고 여기서 읽는다.
@@ -314,24 +318,6 @@ class Runtime:
         self._behavior.fsm.on_enter("PATROL", self._rearm_person_gate)
         # 직전 IMU 방위와 그 시각. 각속도는 차분이라 표본 하나를 들고 있어야 한다.
         self._last_yaw: tuple[float, int] | None = None
-        # 직전 추종 지시 시각. 공백 길이를 재는 데 쓴다 (`track_gap_ms`).
-        self._last_track_ms: int | None = None
-        self._track_stop_height_px = float(
-            config["fsm"].get("track_target_height_px") or 0
-        ) * float(config["fsm"]["track_stop_ratio"])
-        self._track_stop_reached = False
-        fsm = config["fsm"]
-        self._track_stop_dist_cm = float(fsm["track_stop_dist_cm"])
-        self._track_aim_timeout_ms = int(fsm["track_aim_timeout_ms"])
-        self._track_stop_ms = 0
-        self._track_deadzone_px = float(fsm["track_deadzone_px"])
-        self._track_turn_split_px = float(fsm["track_turn_split_px"])
-        self._track_turn_small_deg = float(fsm["track_turn_small_deg"])
-        self._track_turn_large_deg = float(fsm["track_turn_large_deg"])
-        self._dist_cm: float | None = None
-        self._track_centered = False
-        # 경비에서 고개를 들었는가 (ADR-40). 든 뒤로는 움직이지 않고, L1 은 여기서 시작한다.
-        self._engaged = False
         # 틱 **간격**을 기록한다 — 개수만 세면 최악을 놓친다.
         # 상한을 `cmd_timeout_ms` 로 잡는 이유: 그것을 넘으면 로봇이 스스로 멈춘다.
         self._intervals = TickIntervals(limit_ms=self._cmd_timeout_ms)
@@ -538,7 +524,7 @@ class Runtime:
                 "service": out.reading.service,
             },
         }
-        self._dist_cm = out.reading.dist_cm
+        self._track_controller.note_distance(out.reading.dist_cm)
         self._log.observe(seq=out.reading.seq)
         self._summary.count("accepted")
         if out.reading.batt_v is not None:
@@ -614,7 +600,9 @@ class Runtime:
             #
             # ⚠️ **공장 모드는 사람으로 L1 을 올리지 않는다.** 멈춰서
             # 보호구를 볼 뿐이다 — 노란 눈은 쓰러짐 의심 전용이다.
-            gated = (self._tracks_person() and not self._engaged) or self._mission.enables("ppe")
+            gated = (
+                self._track_controller.tracks_person() and not self._track_controller.engaged
+            ) or self._mission.enables("ppe")
             if not self._behavior.standby and not inspected:
                 self._escalation.note_person(
                     present=result.sighting.present and not gated,
@@ -644,7 +632,7 @@ class Runtime:
             self._fall.take_reading(now_ms)
             self._observe_fallen(result, now_ms)
             self._ppe_judge.judge(result, now_ms)
-            self._track(result, now_ms)
+            self._track_controller.track(result, now_ms)
             self._zone_inspector.inspect(result, now_ms)
             self._fall.ask(result, now_ms)
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
@@ -677,140 +665,9 @@ class Runtime:
             if self._normal_alert is not None:
                 self._normal_alert(commander, now_ms)
             if self._normal_alert is None or self._normal_alert.sent:
-                self._engaged = True
+                self._track_controller.engage()
             return
         self._ppe_judge.alert_sequence(commander, now_ms)
-
-    def _track(self, result: VisionResult, now_ms: int) -> None:
-        """대표 박스의 x편차를 추종 지시로 바꿔 사건과 시퀀스에 넘긴다 (FR-3.5).
-
-        ⚠️ **`ALERT`·`TRACK` 에서만 돈다.** 순찰 중에 사람이 스쳐도 여기서 각도를
-        만들면 순찰 경로가 흔들린다 — 추종으로 들어갈지는 `PERSON_FOUND` 가 정하고
-        전이표가 지킨다. 여기는 *"얼마나 돌지"* 만 맡는다.
-
-        ⚠️ **박스가 없으면 아무 사건도 내지 않는다.** 대상이 사라진 판단은
-        `FR-3.7` 의 5초 타이머 소관이고, 여기서 `TARGET_CENTERED` 를 내면
-        **대상이 없어졌는데 중앙에 들어왔다고 보고하는 꼴**이 되어 `TRACK` 이
-        `ALERT` 로 되돌아간다.
-
-        ⚠️ **추종을 끈 모드에서는 돌지 않는다** (FR-11.1). 사건만
-        막으면 조향각은 매 프레임 계산돼 `TRACK` 시퀀스에 그대로 실린다 — 전이는
-        없는데 로봇이 사람을 따라 도는, 가장 설명하기 어려운 모양이 된다.
-        예외는 공장의 **쓰러짐 의심**이다 — 박스가 있으면 경비의 조준·접근을 그대로
-        쓰고, 없으면 아무 사건도 나지 않아 제자리에 선다.
-        """
-        if not self._behavior.tracking or not (self._tracks_person() or self._fall.suspected):
-            # ⚠️ **추종 구간을 벗어나면 엣지 기억을 지운다.** 남겨 두면 다시 `ALERT` 로
-            # 들어왔을 때 첫 판정이 *"변화 없음"* 으로 삼켜져 `TARGET_OFF_CENTER` 가
-            # 나가지 않는다. 그러면 시퀀스가 없는 `ALERT` 에
-            # 정지한 채 갇힌다 — 실기에서 편차 84px 대상을 앞에 두고
-            # 33초를 서 있었다.
-            self._edge.forget("track_centered")
-            self._track_centered = False
-            self._last_track_ms = None
-            return
-        if self._engaged:
-            # 고개를 든 뒤에는 다시 쫓지 않는다 (ADR-40). 대상이 떠나면 5초 상실이 순찰로 돌린다.
-            return
-        box = result.sighting.box
-        if box is None:
-            return
-        width = int(getattr(result, "frame_width", 0) or 0)
-        if width <= 0:
-            return
-        center_x = (float(box[0]) + float(box[2])) / 2.0
-        box_height = float(box[3]) - float(box[1])
-        try:
-            command = self._tracker.update(center_x, width, box_height)
-        except ValueError as exc:
-            # 데드존이 화면 반폭 이상이면 추종이 성립하지 않는다. 설정 오류이며
-            # 이 프레임을 버리고 다음으로 간다 — 여기서 죽으면 순찰까지 멈춘다.
-            if self._edge.changed("track_config_bad", True):
-                LOG.error("track_unusable", reason=str(exc))
-            return
-        self._edge.changed("track_config_bad", False)
-        # 실기 검증 근거 — 1초 요약(`telemetry_summary`)에 추종 지표를 같이 싣는다.
-        # ⚠️ **절대값을 넣는다.** 부호를 그대로 평균 내면 좌우로 떠는 것이 0 으로
-        # 상쇄돼 미세진동이 감춰진다 — DoD 가 확인하라는 바로 그것이다.
-        self._summary.observe("track_dev_px", abs(command.deviation_px))
-        # ⚠️ **거리 유지(`FR-3.5.2`)의 목표값을 정하려면 이 숫자부터 있어야 한다.**
-        # `fsm.track_target_height_px` 는 화각·장착 높이·사람 키가 섞여 계산으로
-        # 세울 수 없다 — 목표 거리(약 1.0m)에 서서 여기 찍히는 값을 읽어 채운다.
-        self._summary.observe("track_box_h_px", box_height)
-        # ⚠️ **공백의 «길이» 를 남긴다.** 요약은 개수만 세므로 지시가 몇 번 나갔는지는
-        # 알아도 **얼마나 오래 비었는지**를 알 수 없었고, 그래서 `track_coast_ms` 를
-        # 한 번의 관측(중앙값 956ms)으로 어림해야 했다. 이 값이 쌓이면 상한이 맞는지
-        # 숫자로 판정된다 — 보행 흔들림이 만드는 공백은 기체·바닥마다 다르다.
-        if self._last_track_ms is not None:
-            self._summary.observe("track_gap_ms", float(now_ms - self._last_track_ms))
-        self._last_track_ms = now_ms
-        if not command.centered:
-            self._summary.count("track_off_center")
-        # ⚠️ **전이를 먼저, 지시는 그다음이다.** `TRACK` 진입 훅이 지난 추종의
-        # 잔상을 지우므로(`TrackSequence.forget`), 순서를 뒤집으면 방금 넣은 지시가
-        # 함께 지워져 **추종 첫 주기가 통째로 정지로 나간다.**
-        #
-        # 같은 판정이 이어지는 동안은 사건을 내지 않는다 — 25fps 로 같은 전이를
-        # 수백 번 넣으면 로그가 전이로 뒤덮이고 단계 축도 흔들린다.
-        #
-        # 조향 정렬과 거리 정지는 다르다. 멀리 있는 중앙 대상에게도 직진하고,
-        # 정지선에서는 걸음을 멈춘 채 제자리에서 돌아 중앙을 맞춘 뒤 고개를 든다 (ADR-40).
-        if not self._track_stop_reached and (
-            (self._track_stop_height_px and box_height >= self._track_stop_height_px)
-            # 높이 목표가 없으면 추종기는 중앙 대상 앞에서 걷지 않는다 — 거기가 정지선이다.
-            or (command.centered and command.step == 0.0)
-            or (self._dist_cm is not None and 0 < self._dist_cm <= self._track_stop_dist_cm)
-        ):
-            self._track_stop_reached = True
-            self._track_stop_ms = now_ms
-            # 박스와 초음파 중 무엇이 세웠는지 남긴다 — 1초 평균으로는 순간값이 가려진다.
-            LOG.info("track_stop_reached", box_h_px=round(box_height, 1), dist_cm=self._dist_cm)
-        deviation = command.deviation_px
-        # 정지선에서는, 또는 편차가 크면 걷지 않고 제자리에서 돈다 (ADR-40).
-        if self._track_stop_reached or abs(deviation) > self._track_turn_split_px:
-            step, angle = 0.0, self._spin_angle(deviation)
-        else:
-            step, angle = command.step, command.angle
-        # ⚠️ **한 번 중앙에 들면 분기점(120px)까지는 붙든다** — 히스테리시스. 웅크린 사람은
-        # 박스 중심이 프레임마다 ±30px 떨려 데드존(40px) 경계를 넘나든다. 실기에서
-        # 2.3초 동안 `ALERT ⇄ TRACK` 14회를 오가며 자세 대기(1초)가 매번 처음부터 다시 돌았다.
-        limit = self._track_turn_split_px if self._track_centered else self._track_deadzone_px
-        centered = self._track_stop_reached and (
-            abs(deviation) <= limit
-            # 상한이 지나면 조준을 끝낸 것으로 본다 — 피하는 대상이 L1 을 영영 막지 못하게.
-            or now_ms - self._track_stop_ms >= self._track_aim_timeout_ms
-        )
-        self._track_centered = centered
-        self._summary.observe("track_angle_deg", abs(angle))
-        self._summary.observe("track_step_mm", step)
-        if self._edge.changed("track_centered", centered):
-            LOG.info(
-                "track_command",
-                centered=centered,
-                deviation_px=round(deviation, 1),
-                angle=round(angle, 2),
-                step=round(step, 1),
-            )
-            self._apply(Event.TARGET_CENTERED if centered else Event.TARGET_OFF_CENTER, now_ms)
-        if self._track_sequence is not None:
-            self._track_sequence.note(step, angle, now_ms)
-
-    def _tracks_person(self) -> bool:
-        """경비 추종 모드인가. 공장(PPE)·현장지원은 추종하지 않는다 (FR-11.1)."""
-        return self._mission.enables("track") and not self._mission.enables("ppe")
-
-    def _spin_angle(self, deviation_px: float) -> float:
-        """제자리 회전각. 데드존 안은 0, 그 밖은 두 단계다 — 좌회전 15° 이하가 안 돈다."""
-        size = abs(deviation_px)
-        if size <= self._track_deadzone_px:
-            return 0.0
-        angle = (
-            self._track_turn_small_deg
-            if size <= self._track_turn_split_px
-            else self._track_turn_large_deg
-        )
-        # 편차 부호와 조향 부호는 반대다 — 오른쪽(양수)이면 우회전(음수).
-        return -angle if deviation_px > 0 else angle
 
     def note_pose(self, pose: tuple[float, float, float], now_ms: int) -> None:
         """측위의 최신 위치 `(x m, y m, yaw rad)` 를 받는다 (`ZoneInspector.note_pose`).
@@ -1149,8 +1006,7 @@ class Runtime:
 
     def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
-        self._track_stop_reached = False
-        self._engaged = False
+        self._track_controller.rearm()
         # 확인하지 않은 구역 경보를 들고 나온 순찰이다 — 다음 `ALERT` 는 사람 때문일 수 있다.
         self._zone_inspector.forget_alarm()
         if previous in STANDBY:

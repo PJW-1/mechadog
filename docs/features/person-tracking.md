@@ -86,13 +86,13 @@ flowchart TD
 | 긴 관측 공백 뒤 새 창 | `host/vision/person.py` 의 `PersonGate.observe` | `test_long_observation_gap_starts_a_new_confirmation` |
 | 확정 → `PERSON_FOUND` → `ALERT` | `host/runtime.py` 의 `Runtime._poll_vision` | `test_confirmed_person_raises_observe_level` · `test_person_already_in_view_when_patrol_starts_still_reaches_alert` |
 | 5초 대상 상실 → `PATROL` | `host/behavior/fsm.py` 의 `Behavior._watch_target` | `test_gate_release_waits_for_target_lost_timeout` · `test_target_lost_after_the_configured_timeout` |
-| 정지선 전 편차 → `TRACK`, 120px 초과 제자리 회전 | `host/runtime.py` 의 `Runtime._track` · `Runtime._spin_angle` | `test_off_center_person_moves_alert_into_track` · `test_far_person_beyond_split_spins_before_walking` |
-| 정지선: 박스 높이 | `host/runtime.py` 의 `Runtime._track` | `test_close_off_center_person_spins_to_center_before_pitch` · `test_without_height_target_centered_person_is_the_stop_line` |
-| 정지선: 초음파 40cm | `host/runtime.py` 의 `Runtime._track` | `test_ultrasonic_stops_approach_below_box_line` |
-| 중앙 유지 히스테리시스 | `host/runtime.py` 의 `Runtime._track` | `test_centered_target_is_held_through_detection_jitter` |
-| 조준 8초 상한 | `host/runtime.py` 의 `Runtime._track` | `test_aim_timeout_raises_the_head_for_a_dodging_target` |
+| 정지선 전 편차 → `TRACK`, 120px 초과 제자리 회전 | `host/behavior/track_controller.py` 의 `TrackController.track` · `TrackController._spin_angle` | `test_off_center_person_moves_alert_into_track` · `test_far_person_beyond_split_spins_before_walking` |
+| 정지선: 박스 높이 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_close_off_center_person_spins_to_center_before_pitch` · `test_without_height_target_centered_person_is_the_stop_line` |
+| 정지선: 초음파 40cm | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_ultrasonic_stops_approach_below_box_line` |
+| 중앙 유지 히스테리시스 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_centered_target_is_held_through_detection_jitter` |
+| 조준 8초 상한 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_aim_timeout_raises_the_head_for_a_dodging_target` |
 | ALERT 1초 체류 뒤 고개 들기 | `host/behavior/actions.py` 의 `PostureSequence` · `host/runtime.py` 의 `Runtime._alert_sequence` | `test_alert_posture_waits_out_the_flapping` · `test_alert_flapping_sends_no_pose_at_all` |
-| 고개 든 뒤 추종 없음 | `host/runtime.py` 의 `Runtime._track` | `test_engaged_robot_does_not_track_again` |
+| 고개 든 뒤 추종 없음 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_engaged_robot_does_not_track_again` |
 | 호 추종 조향 계산 | `host/behavior/tracker.py` 의 `LockOnTracker` | `test_target_on_the_right_turns_right_with_a_negative_angle` · `test_target_on_the_left_turns_left_with_a_positive_angle` |
 | IoU 결합·ID 유지 | `host/vision/tracker.py` 의 `PersonTracker._associate` | `test_same_person_keeps_the_id_across_frames` · `test_best_overlap_wins_not_the_first_acceptable_one` |
 | 소실 버퍼 만료·ID 재사용 금지 | `host/vision/tracker.py` 의 `PersonTracker._expire` · `PersonTracker._open` | `test_short_gap_keeps_the_id` · `test_long_gap_yields_a_new_id` · `test_ids_are_never_reused` |

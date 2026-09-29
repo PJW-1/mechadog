@@ -946,7 +946,7 @@ ByteTrack 을 그대로 옮기려면 두 가지를 함께 들여와야 하고, �
 사원증 인증은 특정 ID 가 아니라 현장 전체에 `session_valid_s`(60초) 동안 붙고, 그 60초 안에
 새로 나타난 사람도 함께 인증된 것으로 본다(`host/behavior/auth.py` 의 `Authenticator.holder`·
 `all_authenticated`). 추종(`TRACK`)도 추적 ID 가 아니라 사람 게이트의 **대표 박스**를 따라간다
-(`host/runtime.py` 의 `Runtime._track` · `result.sighting.box`). ID 별 귀속은 `bind_to_track_id`
+(`host/behavior/track_controller.py` 의 `TrackController.track` · `result.sighting.box`). ID 별 귀속은 `bind_to_track_id`
 를 켜면 살아나는 설계이며 기본값에서는 쓰이지 않는다.
 
 > ⚠️ **최대 공백 969ms 는 소실 버퍼 1초와 여유가 31ms 다.** 그 구간은 검출률이
