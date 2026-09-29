@@ -96,7 +96,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .scene-controls { position: absolute; z-index: 5; right: 1.8%; bottom: 25px; display: flex; gap: 12px }
 .scene-controls button { height: 46px; width: 46px; background: #20212eea; border: 1px solid var(--rule); font-size: 14px; padding: 9px }
 #reset-view { order: -1; width: auto; min-width: 142px; padding-inline: 16px }
-.camera-dock { position: absolute; z-index: 6; left: var(--r-camera-shell-x); bottom: 16px; width: var(--r-camera-shell-w); background: var(--panel); border: 1px solid #5d5c70; box-shadow: 0 12px 32px #0c0c1c40; border-radius: 5px; overflow: hidden }
+.camera-dock { position: absolute; z-index: 6; left: var(--r-camera-shell-x); bottom: 16px; width: var(--r-camera-shell-w); max-width: calc(100% - 20px); background: var(--panel); border: 1px solid #5d5c70; box-shadow: 0 12px 32px #0c0c1c40; border-radius: 5px; overflow: hidden }
 .camera-header { display: flex; align-items: center; height: 49px; gap: 13px; padding: 0 13px 0 17px; border-bottom: 1px solid var(--rule); cursor: grab; touch-action: none }
 .camera-header:active { cursor: grabbing }
 .camera-resize { position: absolute; touch-action: none; z-index: 2 }
@@ -104,7 +104,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .resize-s { left: 0; bottom: 0; height: 7px; width: 100%; cursor: ns-resize }
 .resize-se { right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize }
 .resize-se:before { content: ""; position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-right: 2px solid #8f8fa8; border-bottom: 2px solid #8f8fa8 }
-.camera-dock.expanded .camera-resize, .camera-dock.collapsed .camera-resize { display: none }
+.camera-dock.collapsed .camera-resize { display: none }
 .op-manual-camera .camera-resize { display: none }
 .op-manual-camera .camera-header { cursor: default }
 .camera-header h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 17px; font-weight: 500; letter-spacing: .005em; white-space: nowrap }
@@ -125,7 +125,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .camera-robot-switch { display: flex; gap: 5px }
 .camera-robot-switch button { min-height: 32px; min-width: 79px; border: 1px solid var(--rule); padding: 4px 10px; font-size: 12px; color: #cecadf }
 .camera-robot-switch button.selected { border-color: var(--brass); color: var(--brass) }
-.camera-dock.expanded { left: 50%; bottom: 50%; width: min(920px,85%); transform: translate(-50%,50%); box-shadow: 0 20px 90px #080816bb }
+.camera-dock.expanded { transform: none; box-shadow: 0 20px 90px #080816bb }
 .camera-dock.expanded .camera-viewport { aspect-ratio: var(--vision-aspect,4/3); max-height: min(72vh, calc(100cqh - 160px)) }
 .camera-dock.collapsed { width: min(440px,calc(100% - 32px)) }
 .camera-dock.collapsed .camera-body { display: none }
@@ -282,7 +282,7 @@ dialog button+button { margin-left: 8px }
  .scene-controls button { width: 34px; height: 35px; min-height: 35px }
  #reset-view { min-width: 106px; font-size: 10px; padding-inline: 9px }
  .scene-controls svg { width: 17px }
- .camera-dock { left: 14px; right: 14px; bottom: 12px; width: auto!important }
+ .camera-dock { left: 14px; right: auto; bottom: 12px; width: calc(100% - 28px) }
  .map-placeholder { top: 150px; left: 18px; right: 18px; max-width: none; transform: none; text-align: left }
  .camera-viewport { max-height: 42vh }
  .camera-header { height: 42px; padding-left: 12px; gap: 8px }
@@ -295,7 +295,7 @@ dialog button+button { margin-left: 8px }
  .camera-robot-switch { gap: 3px }
  .camera-robot-switch button { min-width: 49px; font-size: 10px; padding: 3px 6px; min-height: 28px }
  .frame-badge { font-size: 10px }
- .camera-dock.expanded { left: 14px; right: 14px; bottom: 12px; transform: none }
+ .camera-dock.expanded { transform: none }
  .camera-dock.expanded .camera-viewport { max-height: 56vh }
  .camera-dock.collapsed { bottom: 250px }
  .operation-rail { display: block; padding: 22px 20px }

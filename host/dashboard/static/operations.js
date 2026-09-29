@@ -240,10 +240,18 @@ export class Operations {
  // 무엇이어도, 이미 잠겨 있어도 누르면 나간다. 서버 쪽 `estop()` 도 같은 규칙이다.
  requestEstop(){
   const live=this.live;
-  if(live)this.link.estop().catch(error=>this.noteLinkError('비상정지',error));
+  const delivery=live?this.link.estop().then(result=>{
+   if(result?.accepted===true)return {serverAccepted:true};
+   this.noteLinkError('비상정지',new Error(result?.detail||'서버가 명령을 거절했습니다.'));
+   return {serverAccepted:false};
+  },error=>{
+   this.noteLinkError('비상정지',error);
+   return {serverAccepted:false};
+  }):Promise.resolve({serverAccepted:false});
   this.suspend('긴급 정지');this.estop=true;
-  this.log(live?'긴급 정지':'예시 정지 잠금',live?'서버 ESTOP 전송 · '+this.robotName(this.selected):'실물 명령 전송 없음 / ACK 없음',live?'LIVE_LINK':undefined);
+  this.log(live?'긴급 정지 요청':'예시 정지 잠금',live?'서버 응답 대기 · '+this.robotName(this.selected):'실물 명령 전송 없음 / ACK 없음',live?'LIVE_LINK':undefined);
   this.emit('mode');
+  return delivery;
  }
  clearPreviewStop(){this.estop=false;this.log('예시 잠금 초기화','실물 안전 잠금 해제 아님 · 자동 재개 안 함');this.emit('mode')}
  // ── 실제 장비 명령 (폐기된 /live 최소 화면의 기능을 관제로 옮긴 것) ──────

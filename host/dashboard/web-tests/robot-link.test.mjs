@@ -123,8 +123,7 @@ test('estop goes out without control authority', async () => {
   const fetchImpl = fakeFetch();
   const ops = liveOps(fetchImpl);
   assert.equal(ops.control, null); // 제어권을 잡지 않았다
-  ops.requestEstop();
-  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(await ops.requestEstop(), { serverAccepted: true });
   assert.ok(fetchImpl.calls.some((c) => c.url.endsWith('/estop')));
 });
 
@@ -150,8 +149,7 @@ test('estop goes out again even when already latched', async () => {
 
 test('a failed estop is recorded, not swallowed', async () => {
   const ops = liveOps(fakeFetch({ fail: '/estop' }));
-  ops.requestEstop();
-  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(await ops.requestEstop(), { serverAccepted: false });
   assert.match(ops.linkError, /비상정지/);
   assert.ok(ops.records.some((r) => r.action === '전송 실패'));
 });

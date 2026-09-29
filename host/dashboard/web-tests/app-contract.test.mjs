@@ -32,7 +32,7 @@ async function boot(hash='dashboard',{health=null,fleet=null,policy=null,search=
  }
  let visionFeed=null,eventFeed=null,telemetryFeed=null;const links=[],telemetryFeeds=[],eventFeeds=[];
  const linkCalls=[];
- class Link{constructor(options){this.baseUrl=options?.baseUrl??'';links.push(this)}manual(){return Promise.resolve({})}drive(command){linkCalls.push(this.baseUrl+':drive:'+command);return Promise.resolve({})}estop(){linkCalls.push(this.baseUrl?this.baseUrl+':estop':'estop');return Promise.resolve({})}service(mode){linkCalls.push('service:'+mode);return Promise.resolve({accepted:true})}patrol(action){linkCalls.push('patrol:'+action);return Promise.resolve({accepted:true})}resetSafe(){linkCalls.push('reset');return Promise.resolve({accepted:true})}mode(name){linkCalls.push('mode:'+name);return Promise.resolve({accepted:true})}}
+ class Link{constructor(options){this.baseUrl=options?.baseUrl??'';links.push(this)}manual(){return Promise.resolve({})}drive(command){linkCalls.push(this.baseUrl+':drive:'+command);return Promise.resolve({})}estop(){linkCalls.push(this.baseUrl?this.baseUrl+':estop':'estop');return Promise.resolve({accepted:true})}service(mode){linkCalls.push('service:'+mode);return Promise.resolve({accepted:true})}patrol(action){linkCalls.push('patrol:'+action);return Promise.resolve({accepted:true})}resetSafe(){linkCalls.push('reset');return Promise.resolve({accepted:true})}mode(name){linkCalls.push('mode:'+name);return Promise.resolve({accepted:true})}}
  class Feed{constructor(options){visionFeed=this;this.options=options}start(){this.started=true}stop(){this.stopped=true}}
  class TelemetryStub{constructor(options){telemetryFeed=this;this.options=options;telemetryFeeds.push(this)}start(){this.started=true}stop(){this.stopped=true}}
  class EventStub{constructor(options){eventFeed=this;this.options=options;eventFeeds.push(this)}start(){this.started=true}stop(){this.stopped=true}}
@@ -266,7 +266,7 @@ test('connected, the header, robot tabs and manual controls say the robot is rea
  assert.equal(store.live,true);
  const note=document.querySelector('.safety-note').textContent;
  assert.match(note,/실시간 제어 연결/);assert.match(note,/비상정지 즉시 전송/);assert.doesNotMatch(note,/전달 불가|잠김/);
- assert.equal(document.querySelector('#source-status').textContent,'실제 연결');assert.match(document.querySelector('.op-intro').textContent,/실제 연결/);
+ assert.equal(document.querySelector('#source-status').textContent,'관제 서버 연결');assert.match(document.querySelector('.op-intro').textContent,/관제 서버 연결/);
  // 관제 서버 하나가 기체 하나를 몬다 — 예시 로봇은 숨기고 고를 수도 없다.
  for(const selector of ['.robot-tab[data-robot="MD-02"]','.camera-robot-switch [data-robot="MD-02"]'])assert.equal(document.querySelector(selector).hidden,true,selector);
  assert.equal(document.querySelector('.robot-tab[data-robot="MD-01"]').hidden,false);
@@ -345,6 +345,8 @@ test('connected, the E-Stop shortcut sends straight away instead of opening the 
  document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'E',shiftKey:true}));
  assert.deepEqual(state.linkCalls,['http://127.0.0.1:4175:estop']);
  assert.equal(document.querySelector('#stop-dialog').open,false,'연결돼 있으면 안내를 끼우지 않는다');
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.match(document.querySelector('#toast').textContent,/실제 정지는 본체 상태로 확인/);
  dom.window.close();
 });
 test('connected, L2·L3·F raise a visible alarm banner with the reason and warning text (B1)',async()=>{

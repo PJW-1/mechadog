@@ -14,12 +14,43 @@ function setup(){
 }
 const button=(document,label)=>[...document.querySelectorAll('button')].find(element=>element.textContent===label);
 const change=(dom,element,value,type='change')=>{element.value=value;element.dispatchEvent(new dom.window.Event(type,{bubbles:true}))};
+const chooseFilter=(document,name,value)=>{const trigger=document.querySelector(`[data-filter="${name}"]`);trigger.click();trigger.parentElement.querySelectorAll('.op-choice-option')[value].click()};
 
 for(const page of ['missions','events','records','zones','devices','settings'])test(page+' panel renders labeled actionable content without a browser',()=>{
  const {document,panels}=setup();panels.render(page);assert.ok(document.querySelector('#title').textContent);assert.ok(document.querySelector('.op-intro'));assert.ok(document.querySelector('.op-section'));assert.ok(document.querySelector('button'));assert.equal(document.querySelectorAll('script').length,0);
 });
 test('event filtering updates list and keeps the search input focused',()=>{
  const {dom,document,panels}=setup();panels.render('events');const search=document.querySelector('[name="사건 검색"]');search.focus();change(dom,search,'안전모','input');assert.equal(document.activeElement,search);assert.equal(document.querySelectorAll('.op-event-row').length,1);assert.match(document.querySelector('.op-detail-title').textContent,/안전모/);
+});
+test('guard check separates server, fresh robot state, and fresh vision frames without sending commands',()=>{
+ const {document,panels,store}=setup();
+ const check=()=>document.querySelector('[data-guard-readiness]').textContent;
+ panels.render('missions');assert.match(check(),/웹 미리보기/);assert.match(check(),/실물 상태 수신 안 함/);
+ store.link={};store.setDemo(false);panels.render('missions');
+ assert.match(check(),/관제 서버.*연결됨/);assert.match(check(),/상태 수신 대기/);assert.match(check(),/현재 안전 상태 확인 불가/);
+ const snapshot={deviceId:'mechdog-02',mode:'guard',stale:false,telemetry:{bootId:'boot',seq:1,battV:7.4,distCm:90,imu:{pitch:0,roll:0,yaw:0},flags:{},safetyLatched:true}};
+ store.setTelemetry({state:'live',snapshot});
+ assert.match(check(),/새 상태 수신 중/);assert.match(check(),/경비 모드/);assert.match(check(),/안전 잠금 · 이동 금지/);
+ panels.getVisionStatus=()=>({state:'live'});panels.refreshGuardReadiness();assert.match(check(),/새 검출 프레임 수신 중/);
+ store.setTelemetry({state:'live',snapshot:{...snapshot,stale:true}});
+ assert.match(check(),/수신 중단/);assert.match(check(),/현재 모드 확인 불가/);assert.match(check(),/현재 안전 상태 확인 불가/);
+});
+test('event filter menu exposes selection and supports arrow, Escape and outside click',()=>{
+ const {dom,document,panels}=setup();panels.render('events');
+ const trigger=document.querySelector('[data-filter="사건 유형"]');trigger.focus();
+ trigger.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
+ assert.equal(trigger.getAttribute('aria-expanded'),'true');
+ const choices=[...trigger.parentElement.querySelectorAll('.op-choice-option')];
+ assert.equal(document.activeElement,choices[0]);
+ choices[0].dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
+ assert.equal(document.activeElement,choices[1]);
+ choices[1].dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+ assert.equal(trigger.getAttribute('aria-expanded'),'false');assert.equal(document.activeElement,trigger);
+ trigger.click();document.querySelector('[data-filter="사건 장치"]').click();
+ assert.equal(trigger.getAttribute('aria-expanded'),'false','opening another filter closes the first');
+ document.body.click();assert.equal(document.querySelector('[data-filter="사건 장치"]').getAttribute('aria-expanded'),'false');
+ chooseFilter(document,'사건 유형',1);
+ assert.match(trigger.getAttribute('aria-label'),/PPE/);assert.equal(document.querySelectorAll('.op-event-row').length,1);
 });
 test('review form validates false positive, stores evidence note and keeps drafts between selections',()=>{
  const {dom,document,panels,store,messages}=setup();panels.render('events');
@@ -150,12 +181,12 @@ test('live PPE, fall and escalation events are classified and show their evidenc
  store.ingestLiveEvent({...base,seq:3,ts_ms:3,event:'escalation_changed',escalation:'L3',entry:null,reason:'PPE_VIOLATION',warning:'경보가 발령되었습니다.'});
  store.ingestLiveEvent({...base,seq:4,ts_ms:4,event:'failsafe_entered',escalation:'F',entry:null,trigger:'ESTOP',previous:'PATROL'});
  panels.render('events');
- const type=document.querySelector('[aria-label="사건 유형"]');change(dom,type,'PPE');
+ chooseFilter(document,'사건 유형',1);
  assert.equal(document.querySelectorAll('.op-event-row').length,1,'PPE 필터가 PPE 사건만 걸러낸다');
  const detail=document.querySelector('.op-event-detail').textContent;assert.match(detail,/보호구 미착용 확정/);assert.match(detail,/위반 · 안전모 미착용 1500ms/);assert.match(detail,/판정 근거/);assert.match(detail,/#4/);
  assert.match(detail,/조회만 가능/);assert.equal(document.querySelector('.op-review-form'),null);
  assert.throws(()=>store.reviewEvent('LIVE-1','confirmed','검토'),/서버 저장 기능/);
- change(dom,type,'SAFETY');assert.equal(document.querySelectorAll('.op-event-row').length,3);
+ chooseFilter(document,'사건 유형',3);assert.equal(document.querySelectorAll('.op-event-row').length,3);
  const titles=[...document.querySelectorAll('.op-event-row')].map(row=>row.textContent).join('|');assert.match(titles,/대응 단계 → L3/);assert.match(titles,/안전 잠금/);assert.match(titles,/쓰러짐 감지/);
 });
 test('a confirmed zone change is filed under zones and names grid cells without inventing them (FR-8.3)',()=>{
@@ -166,7 +197,7 @@ test('a confirmed zone change is filed under zones and names grid cells without 
  assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 물체 변화 확정 · zone_changed$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
  assert.deepEqual(event.evidence.slice(0,5),[['구역','A'],['반출','bottle ×1 · 오른쪽 위'],['반입','box ×2 · 가운데'],['반입','cup ×1 · 왼쪽 아래'],['인원 출현','person ×1']]);
  assert.equal(event.evidence[5][0],'기준 시각');assert.equal(event.evidence.length,6);
- panels.render('events');change(dom,document.querySelector('[aria-label="사건 유형"]'),'OBJECT');
+ panels.render('events');chooseFilter(document,'사건 유형',4);
  assert.equal(document.querySelectorAll('.op-event-row').length,1,'구역 · 물품 필터에 걸린다');
  assert.match(document.querySelector('.op-event-detail').textContent,/판정 근거.*반출bottle ×1 · 오른쪽 위/);
  // 형식이 틀린 칸은 위치를 빼고, 3×3 이 아닌 격자는 칸 번호로 부른다.
