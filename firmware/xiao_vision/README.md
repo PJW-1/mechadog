@@ -18,7 +18,7 @@ Host PC가 맡는다([음성 스트림](#음성-스트림)).
 
 1. `wifi_secrets.example.h`를 같은 폴더의 `wifi_secrets.h`로 복사한다.
 2. `MECHDOG_WIFI_SSID`와 `MECHDOG_WIFI_PASSWORD`를 실제 2.4GHz 공유기 값으로 바꾼다.
-3. Arduino IDE에서 `firmware_xiao_vision.ino`를 연다.
+3. Arduino IDE에서 `xiao_vision.ino`를 연다.
 4. 보드는 **XIAO ESP32S3**, 포트는 연결된 XIAO의 COM 포트를 선택한다.
 5. **Tools > PSRAM > OPI PSRAM**을 선택한다. 비활성화하면 카메라 프레임버퍼를 만들 수 없다.
 6. 업로드 후 시리얼 모니터를 **115200 baud**로 연다.
@@ -81,7 +81,7 @@ WBS 4.2.2 완료에는 **VGA에서 15fps 이상**이 두 번 연속 확인되어
 >
 > 클라이언트 입장에서 이 "대기"는 **죽은 스트림과 구분되지 않는다** — 한 장도 못 받고
 > 타임아웃으로 끝난다. 2026-09-14 실측에서 나중에 붙은 쪽은 2회 모두 `0 프레임 · TimeoutError`
-> 였고 먼저 붙은 쪽은 fps 가 그대로였다([측정](../docs/measurements/2026-09-14-camera-frame.md)).
+> 였고 먼저 붙은 쪽은 fps 가 그대로였다([측정](../../docs/measurements/2026-09-14-camera-frame.md)).
 > 화면이 검을 때 카메라 고장이나 네트워크부터 의심하지 말고 **다른 수신자가 붙어 있는지 먼저 본다.**
 
 2026-09-08 실물 검수에서는 OV3660과 8MB PSRAM을 인식했고, 최종 펌웨어의 VGA 스트림을
@@ -96,7 +96,7 @@ WAV 헤더가 없는 PCM16LE 샘플이다. DC는 1차 고역 통과 필터로 �
 `?gain=0..4`(기본 2, ×4)로 준다. 범위를 넘는 값은 0~4로 잘린다.
 
 이 포트는 음성 경로의 **듣기** 입구다. PC가 받아 Whisper로 인식하고 규칙으로 판단한다
-([ADR-38](../docs/DECISIONS.md#adr-38)). ⚠️ **호스트 음성 파이프라인은 `voice_pipeline.py --xiao <IP>`
+([ADR-38](../../docs/DECISIONS.md#adr-38)). ⚠️ **호스트 음성 파이프라인은 `voice_pipeline.py --xiao <IP>`
 로 이 스트림을 받는다**(WBS 4.7.19 완료 · 로봇 탑재 실기에서 서 있는 상태 명령어 1 m 통과, 보행 중에는 서보 소음으로 어렵다). `--xiao` 를 주지 않으면
 WonderEcho USB 임시 링크로 듣는다.
 
@@ -129,7 +129,7 @@ with urllib.request.urlopen("http://<XIAO-IP>:82/audio", timeout=5) as r, wave.o
 > 서로 막지 않는다. 마이크 초기화가 실패했으면 `/audio`는 `503`과
 > `{"ok":false,"error":"mic unavailable"}`로 답한다.
 
-2026-09-23 실측 요약([측정](../docs/measurements/2026-09-23-xiao-mic.md)):
+2026-09-23 실측 요약([측정](../../docs/measurements/2026-09-23-xiao-mic.md)):
 
 - **마이크 단독(USB, `mic_probe`)**: PC faster-whisper `medium`으로 **6/6** 인식했다. 30 cm와 1 m에서
   이름 「김민수」까지 정확했고 무음에서 문장을 지어내지 않았다.

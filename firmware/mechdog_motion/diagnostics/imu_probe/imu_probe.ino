@@ -11,8 +11,8 @@
 // 확정 다음으로 **실제 가속도가 읽히는지**까지 본다. 그래야 `NFR-2.4` 전도 감지가
 // 이 경로로 성립한다고 말할 수 있다 — 칩이 있다는 것과 읽을 수 있다는 것은 다르다.
 //
-//   arduino-cli compile --fqbn esp32:esp32:esp32 firmware_mechdog_motion/diagnostics/imu_probe
-//   arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware_mechdog_motion/diagnostics/imu_probe
+//   arduino-cli compile --fqbn esp32:esp32:esp32 firmware/mechdog_motion/diagnostics/imu_probe
+//   arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware/mechdog_motion/diagnostics/imu_probe
 //
 // ⚠️ 업로드하면 기존 펌웨어가 덮어써진다. 되돌릴 이미지를 먼저 확보할 것.
 

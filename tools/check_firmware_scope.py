@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """펌웨어 범위 가드 — 카메라 펌웨어와 로봇 펌웨어를 한 PR에서 같이 바꾸지 못하게 한다.
 
-배경: firmware_xiao_vision 은 "촬영과 MJPEG 송출"만 담당하는 부품(DR-3)이다.
+배경: firmware/xiao_vision 은 "촬영과 MJPEG 송출"만 담당하는 부품(DR-3)이다.
 로봇 기능 PR에 카메라 코드가 끼어 들어가면(음성 마이크·LED 진단 등)
 플래시할 때 로봇 기능까지 함께 올라가 실기가 죽는 사고가 났다 (2026-09-22~23).
 
 규칙: 하나의 변경이 코드 파일(*.ino/*.cpp/*.h/*.c)을
-  카메라(firmware_xiao_vision/) 와 로봇 펌웨어(firmware_mechdog_motion/,
-  firmware_lidar_relay/) 양쪽에서 바꾸면 실패한다.
+  카메라(firmware/xiao_vision/) 와 로봇 펌웨어(firmware/mechdog_motion/,
+  firmware/lidar_relay/) 양쪽에서 바꾸면 실패한다.
 문서(.md)·설정 동반 변경은 허용 — 위험한 것은 코드 결합이다.
+내용이 한 글자도 바뀌지 않은 이동(폴더 이름 바꾸기)은 플래시되는 것이 같으므로
+변경으로 치지 않는다 (--base·--commit 만. --stdin 은 받은 목록 그대로 본다).
 
 사용:
   python tools/check_firmware_scope.py --base origin/dev        # PR diff 검사
@@ -23,8 +25,8 @@ import subprocess
 import sys
 from pathlib import PurePosixPath
 
-CAMERA_DIR = "firmware_xiao_vision/"
-ROBOT_DIRS = ("firmware_mechdog_motion/", "firmware_lidar_relay/")
+CAMERA_DIR = "firmware/xiao_vision/"
+ROBOT_DIRS = ("firmware/mechdog_motion/", "firmware/lidar_relay/")
 CODE_SUFFIXES = {".ino", ".cpp", ".c", ".h", ".hpp", ".cc"}
 
 
@@ -51,7 +53,9 @@ def changed_files(base: str | None, commit: str | None, use_stdin: bool) -> list
         return [ln.strip() for ln in sys.stdin if ln.strip()]
     rng = f"{commit}^!" if commit else f"{base}...HEAD"
     out = subprocess.run(
-        ["git", "diff", "--name-only", rng],
+        # -M100% --diff-filter=r : 내용이 같은 이동만 목록에서 뺀다. 조금이라도 고친 파일은
+        # 이동으로 짝지어지지 않아 새 경로가 그대로 남는다.
+        ["git", "diff", "--name-only", "-M100%", "--diff-filter=r", rng],
         capture_output=True,
         text=True,
         check=True,
@@ -73,7 +77,7 @@ def main() -> int:
         print("  camera:", *("    " + f for f in camera), sep="\n", file=sys.stderr)
         print("  robot:", *("    " + f for f in robot), sep="\n", file=sys.stderr)
         print(
-            "  firmware_xiao_vision 은 DR-3 상 촬영·송출 전용이다. "
+            "  firmware/xiao_vision 은 DR-3 상 촬영·송출 전용이다. "
             "로봇 기능과 같은 PR로 넣지 말고 단독 PR로 분리한다.",
             file=sys.stderr,
         )

@@ -316,7 +316,7 @@ def test_moves_sent_across_a_reboot_are_dropped() -> None:
 
     순찰기는 두절 뒤에도 최대 `link_loss_failsafe_ms` 동안 `MOVE` 를 계속 보내지만
     (patrol.py ②), 재부팅한 로봇은 SAFE 잠금으로 켜져 실행하지 않는다
-    (`firmware_mechdog_motion/README.md` 안전 동작). 적분하면 수십 cm 가 조용히 붙는다.
+    (`firmware/mechdog_motion/README.md` 안전 동작). 적분하면 수십 cm 가 조용히 붙는다.
     """
     odom = Odometry(PARAMS)
     encoder = CommandEncoder(clock=lambda: 0)

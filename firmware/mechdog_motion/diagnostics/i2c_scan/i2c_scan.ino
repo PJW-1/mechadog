@@ -10,8 +10,8 @@
 //
 // 벤더 라이브러리를 쓰지 않으므로 이 스케치는 저장소만으로 빌드된다.
 //
-//   arduino-cli compile --fqbn esp32:esp32:esp32 firmware_mechdog_motion/diagnostics/i2c_scan
-//   arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware_mechdog_motion/diagnostics/i2c_scan
+//   arduino-cli compile --fqbn esp32:esp32:esp32 firmware/mechdog_motion/diagnostics/i2c_scan
+//   arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware/mechdog_motion/diagnostics/i2c_scan
 //
 // ⚠️ 업로드하면 기존 펌웨어가 덮어써진다. 되돌릴 이미지를 먼저 확보할 것.
 

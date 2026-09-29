@@ -51,8 +51,8 @@ def test_vendor_names_are_ignored_by_git() -> None:
 
 
 def test_an_exposed_file_is_reported() -> None:
-    check = check_ignored(SKETCH, ["firmware_mechdog_motion.ino"])[0]
-    assert not check.ok and "firmware_mechdog_motion.ino" in check.problem
+    check = check_ignored(SKETCH, ["mechdog_motion.ino"])[0]
+    assert not check.ok and "mechdog_motion.ino" in check.problem
 
 
 def _library(root: Path, folder: str, name: str, version: str) -> None:

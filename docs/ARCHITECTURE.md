@@ -661,8 +661,8 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
       │
       ├─▶ Job 3: Firmware Build (matrix)
       │     · arduino-cli 또는 PlatformIO
-      │     · [firmware_mechdog_motion] esp32:esp32:esp32
-      │     · [firmware_xiao_vision]    esp32:esp32:XIAO_ESP32S3
+      │     · [firmware/mechdog_motion] esp32:esp32:esp32
+      │     · [firmware/xiao_vision]    esp32:esp32:XIAO_ESP32S3
       │     · 빌드 산출물(.bin/.elf) 아티팩트 업로드
       │
       └─▶ Job 4: Release (tag push 시)
@@ -670,7 +670,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
             · 펌웨어 바이너리 첨부 릴리스 생성
 ```
 
-> ⚠️ **`HW_MechDog` 라이브러리는 CI 러너에 없고 넣을 수도 없다** — 라이선스 표기가 없어 재배포 불가로 확정됐다 (OI-5 · ADR-20). 그래서 CI 는 `MECHADOG_ENABLE_ACTUATORS=0` **dry-run 빌드**로 네트워크·파서·안전 로직만 검증한다. **명령 파서는 호스트에서 `g++` 로 컴파일해 골든 픽스처를 물리므로** 규약 이중 구현의 어긋남은 그대로 잡힌다. 실제 구동 빌드 절차는 `firmware_mechdog_motion/README.md` 참조. (RISK-07)
+> ⚠️ **`HW_MechDog` 라이브러리는 CI 러너에 없고 넣을 수도 없다** — 라이선스 표기가 없어 재배포 불가로 확정됐다 (OI-5 · ADR-20). 그래서 CI 는 `MECHADOG_ENABLE_ACTUATORS=0` **dry-run 빌드**로 네트워크·파서·안전 로직만 검증한다. **명령 파서는 호스트에서 `g++` 로 컴파일해 골든 픽스처를 물리므로** 규약 이중 구현의 어긋남은 그대로 잡힌다. 실제 구동 빌드 절차는 `firmware/mechdog_motion/README.md` 참조. (RISK-07)
 
 ---
 
@@ -686,15 +686,16 @@ mechdog_physical_ai/
 │   ├── config.yaml                    ✅ 전 파라미터 (Dev/Prod 프로파일)
 │   ├── devices/mechdog-01.yaml        ✅ 개체별 실측값 (서보 오프셋 등)
 │   └── .env.example                   ✅ 시크릿 템플릿
-├── firmware_mechdog_motion/              MechDog ESP32 (Arduino)
-│   ├── firmware_mechdog_motion.ino    ✅ Wi-Fi STA · UDP 수신 · SAFE 래치
-│   ├── src/command_parser.*           ✅ HAL 비의존 → 호스트에서 g++ 로 시험
-│   ├── src/motion_hal.*               🔶 MOVE·STOP 구현, 나머지 HAL 매핑 대기 (4.1.2)
-│   ├── src/safety_monitor.*           ⬜ 온보드 안전 감시기 (3.2.x)
-│   ├── test/test_command_parser.cpp   ✅ CI 가 컴파일·실행하고 골든 픽스처를 물린다
-│   └── diagnostics/                   ✅ wifi_scan · wifi_sta_probe (H2 확인용)
-├── firmware_xiao_vision/              ✅ 카메라 + MJPEG 서버 (4.2)
-├── firmware_lidar_relay/              🔶 LD19 UART → Wi-Fi UDP 중계 — 구현됨
+├── firmware/                             온보드 펌웨어 (Arduino 스케치)
+│   ├── mechdog_motion/                MechDog ESP32 (Arduino)
+│   │   ├── mechdog_motion.ino         ✅ Wi-Fi STA · UDP 수신 · SAFE 래치
+│   │   ├── src/command_parser.*       ✅ HAL 비의존 → 호스트에서 g++ 로 시험
+│   │   ├── src/motion_hal.*           🔶 MOVE·STOP 구현, 나머지 HAL 매핑 대기 (4.1.2)
+│   │   ├── src/safety_monitor.*       ⬜ 온보드 안전 감시기 (3.2.x)
+│   │   ├── test/test_command_parser.cpp ✅ CI 가 컴파일·실행하고 골든 픽스처를 물린다
+│   │   └── diagnostics/               ✅ wifi_scan · wifi_sta_probe (H2 확인용)
+│   ├── xiao_vision/                   ✅ 카메라 + MJPEG 서버 (4.2)
+│   └── lidar_relay/                   🔶 LD19 UART → Wi-Fi UDP 중계 — 구현됨
 ├── host/                                 Host PC (Python)
 │   ├── behavior/
 │   │   ├── actions.py                 ✅ 상태별 모션 — PATROL·AVOID (3.5.1)
@@ -725,7 +726,7 @@ mechdog_physical_ai/
 
 > **`third_party/` 는 의도적으로 비어 있다.** 벤더 라이브러리를 넣을 수 없다는 것이 확인됐고
 > (ADR-20), 실제 구동 빌드는 각자 로컬에서 결합한다. 절차는
-> `firmware_mechdog_motion/README.md` 에 있다.
+> `firmware/mechdog_motion/README.md` 에 있다.
 
 ---
 

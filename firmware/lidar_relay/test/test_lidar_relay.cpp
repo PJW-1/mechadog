@@ -4,10 +4,10 @@
 // 프레임워크를 쓰지 않는 이유는 test_command_parser.cpp 와 같다.
 //
 // 빌드·실행 (아래 인자를 한 줄로 이어서 준다):
-//   g++ -std=c++17 -Wall -Wextra -O1 -I firmware_lidar_relay/src
-//       firmware_lidar_relay/src/ld19.cpp
-//       firmware_lidar_relay/src/scan_encoder.cpp
-//       firmware_lidar_relay/test/test_lidar_relay.cpp
+//   g++ -std=c++17 -Wall -Wextra -O1 -I firmware/lidar_relay/src
+//       firmware/lidar_relay/src/ld19.cpp
+//       firmware/lidar_relay/src/scan_encoder.cpp
+//       firmware/lidar_relay/test/test_lidar_relay.cpp
 //       -o build/test_lidar_relay
 //   ./build/test_lidar_relay
 //   ./build/test_lidar_relay --emit-fixtures > build/lidar-emitted.jsonl

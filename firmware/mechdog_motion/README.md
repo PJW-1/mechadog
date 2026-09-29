@@ -1,7 +1,7 @@
 # MechDog motion firmware
 
 몸체 ESP32가 UDP 5001번 포트로 JSON 명령을 받고 Hiwonder 보행 API를 호출한다.
-명령 형식의 정본은 [`docs/PROTOCOL.md`](../docs/PROTOCOL.md)다.
+명령 형식의 정본은 [`docs/PROTOCOL.md`](../../docs/PROTOCOL.md)다.
 
 > **구동·센서 빌드를 하려면 먼저 아래 *"구동·센서 통합 빌드 준비"* 절을 본다.** 벤더 파일은
 > 저장소에 없어 각자 받아야 하며(ADR-20), 준비 상태는 `python tools/firmware_env.py` 로 점검한다.
@@ -14,7 +14,7 @@
 ## 3.2.4 제어 루프 감시 — 정지 OTA 통합 (2026-09-13)
 
 PC 쪽에서 실제로 어떤 순서로 검증했는지는
-[루프 워치독 실물 검증 절차](../docs/internal/WATCHDOG_VERIFICATION.md)에 정리돼 있다.
+[루프 워치독 실물 검증 절차](../../docs/internal/WATCHDOG_VERIFICATION.md)에 정리돼 있다.
 기체·빌드 고정값, 단계별 통과 기준, 안전 규칙, 사고 시 복구 절차를 포함한다.
 
 **옵션 기본값은 OFF지만 검증된 정지 OTA 패키지는 명시적으로 ON이다.**
@@ -124,7 +124,7 @@ Task Watchdog에 등록한다. 센서·통신·안전 처리가 끝난 루프 �
 **09-15 SERVICE 모드로 바뀌었다** — 구동 빌드에서도 조합은 컴파일되되
 부팅 시에는 절대 arm 하지 않고, SERVICE 모드 진입(몸 주차 → 보행 차단)이
 선행된 뒤에만 런타임으로 arm 한다. 자세한 순서는 아래 절과
-[PROTOCOL.md](../docs/PROTOCOL.md)의 `SERVICE` 항을 본다.
+[PROTOCOL.md](../../docs/PROTOCOL.md)의 `SERVICE` 항을 본다.
 기존 설치 앱·서보·보정 데이터는 이번 코드 추가로 바뀌지 않는다.
 
 ## SERVICE 모드 — 구동 빌드 런타임 워치독 (2026-09-15)
@@ -150,7 +150,7 @@ Task Watchdog에 등록한다. 센서·통신·안전 처리가 끝난 루프 �
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 \
   --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_ENABLE_ACTUATORS=1 -DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_OTA=1 -DMECHADOG_OTA_VERSION=\"svc-dev\" -include /path/to/private_ota.h' \
-  --build-path build/svc-motion firmware_mechdog_motion
+  --build-path build/svc-motion firmware/mechdog_motion
 ```
 
 실기 검증(버튼 토글·보행 차단·정지 상태 재부팅·서비스 OTA)은
@@ -174,7 +174,7 @@ yield하면서 데이터만 갱신하지 않는 경우는 이번 loopTask 감시
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 \
   --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0' \
-  --build-path build/wdt-motion firmware_mechdog_motion
+  --build-path build/wdt-motion firmware/mechdog_motion
 ```
 
 독립 시험 스케치 `diagnostics/watchdog_probe`에는 모터·I2C·Wi-Fi·벤더 라이브러리가 없다.
@@ -184,8 +184,8 @@ arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 \
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 \
-  --build-property 'compiler.cpp.extra_flags=-I/absolute/path/to/mechadog/firmware_mechdog_motion/src' \
-  --build-path build/wdt-probe firmware_mechdog_motion/diagnostics/watchdog_probe
+  --build-property 'compiler.cpp.extra_flags=-I/absolute/path/to/mechadog/firmware/mechdog_motion/src' \
+  --build-path build/wdt-probe firmware/mechdog_motion/diagnostics/watchdog_probe
 ```
 
 시험 스케치를 본체에 설치하면 기존 텔레메트리 앱을 대체한다. 설치 전 앱/복원 파일을
@@ -314,9 +314,9 @@ Cppcheck 2.21.0도 확인했다. Cppcheck는 기존 `motion_hal.cpp`의 `functio
 - `src/telemetry_encoder.*`: 규약 검사, JSON 직렬화, 개체·부팅별 송신 순번.
 - `src/telemetry_publisher.*`: 별도 UDP 소켓으로 PC의 5101 포트에 보내는 주기 송신 구성 요소.
 - `src/sensor_hal.*`: 본체 센서 취득, 유효성·신선도와 오류 상태를 제공하는 진단용 HAL.
-- [`tools/telemetry_probe.py`](../tools/telemetry_probe.py): PC에서 수신 기록과 주기를 확인하는 도구.
+- [`tools/telemetry_probe.py`](../../tools/telemetry_probe.py): PC에서 수신 기록과 주기를 확인하는 도구.
 
-**센서 취득과 주기 송신 호출을 `firmware_mechdog_motion.ino`에 연결했다.**
+**센서 취득과 주기 송신 호출을 `mechdog_motion.ino`에 연결했다.**
 유효 명령 수신 시 PC 주소·epoch 시각을 설정하고 watchdog 처리 뒤 센서 스냅샷을
 송신한다. `PING`·폐기 패킷은 시각/목적지/명령 나이를 갱신하지 않는다.
 
@@ -464,7 +464,7 @@ ESP32 보드 매니저 인덱스를 등록한 환경에서 같은 버전을 설�
 
 ```powershell
 arduino-cli core install esp32:esp32@2.0.12
-arduino-cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmware_mechdog_motion
+arduino-cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmware/mechdog_motion
 ```
 
 위 `compile` 명령은 DIO·40MHz로 컴파일만 하며 업로드를 수행하지 않는다.
@@ -510,7 +510,7 @@ CI 단계는 아직 없다. 따라서 CI 성공은 센서 ON 코드의 컴파일
 라이브러리 탐색과 빌드 구성을 먼저 확인한 뒤, 센서 진단 설정으로 컴파일한다.
 
 ```powershell
-arduino-cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" --build-property "compiler.cpp.extra_flags=-DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_ENABLE_ACTUATORS=0" firmware_mechdog_motion
+arduino-cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" --build-property "compiler.cpp.extra_flags=-DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_ENABLE_ACTUATORS=0" firmware/mechdog_motion
 ```
 
 센서 ON 설정은 연결된 초기화·취득 경로를 켠다. 부팅 후 정지 상태의 오프셋 취득과
@@ -520,7 +520,7 @@ Wi-Fi는 위에서 선택한 설정으로 접속하고 재접속은 루프에서
 ## 구동·센서 통합 빌드 준비 — 벤더 파일·라이브러리·보드 패키지
 
 **저장소에 없는 파일이 필요하다.** Hiwonder 예제 소스에 라이선스 표기가 없어 재배포할 수
-없기 때문이다 ([ADR-20](../docs/DECISIONS.md)). 각자 받아 두고, **빌드 전에 점검 도구로 확인한다.**
+없기 때문이다 ([ADR-20](../../docs/DECISIONS.md)). 각자 받아 두고, **빌드 전에 점검 도구로 확인한다.**
 
 > **2026-09-12 · 이 절차 그대로 센서+구동 통합 빌드가 컴파일됐다** (core 2.0.12 ·
 > flash 800,921 B (61%) · 정적 RAM 49,092 B). **공중 보행 중 텔레메트리 10Hz 를 실기로
@@ -574,8 +574,8 @@ $env:ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS = "https://raw.githubusercontent.com/
 **① 벤더 소스 11개 → 스케치 루트** (`src/` 가 아니다)
 
 ```
-firmware_mechdog_motion/
-├── firmware_mechdog_motion.ino
+firmware/mechdog_motion/
+├── mechdog_motion.ino
 ├── HW_MechDog.cpp   HW_MechDog.h      ← 벤더 (git 무시)
 ├── Hiwonder.cpp     Hiwonder.h
 ├── Servo.cpp        Servo.h
@@ -611,7 +611,7 @@ libraries/
 
 ```powershell
 # 센서 + 구동 (통합). 구동만이면 SENSORS=0, 센서만이면 ACTUATORS=0
-& $cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" --build-property "compiler.cpp.extra_flags=-DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_ENABLE_ACTUATORS=1" firmware_mechdog_motion
+& $cli compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" --build-property "compiler.cpp.extra_flags=-DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_ENABLE_ACTUATORS=1" firmware/mechdog_motion
 ```
 
 ⚠️ **벤더 파일이 스케치 폴더에 있으면 `--warnings all` 을 쓰지 않는다.** 벤더 코드의 경고
@@ -620,7 +620,7 @@ libraries/
 코드만** 확인하려면 벤더 파일이 없는 사본에서 컴파일한다.
 
 ```bash
-git ls-files -z firmware_mechdog_motion | xargs -0 cp --parents -t <빈 폴더>
+git ls-files -z firmware/mechdog_motion | xargs -0 cp --parents -t <빈 폴더>
 ```
 
 ### 5단계 — I²C 규칙: 벤더의 I²C 기능은 부르지 않는다
@@ -647,13 +647,13 @@ git ls-files -z firmware_mechdog_motion | xargs -0 cp --parents -t <빈 폴더>
 ⚠️ **`0x7B` 는 I²C 예약 구간(`0x78`–`0x7F`)에 있다.** 스캔을 `0x77` 까지만 하면 보이지 않는다.
 
 그래서 로봇 경유 음성 중계(WBS 4.7.9 원안)는 불가로 판정했고, 말하기는 MP3 모듈이 TF 카드에
-미리 넣어 둔 문장 트랙을 재생하는 쪽으로 옮긴다([ADR-38](../docs/DECISIONS.md#adr-38),
-[측정](../docs/measurements/2026-09-23-bridge-transparency.md)). 벤더 SDK 의 `MP3Sensor` 는
-쓰지 않는다 — 위 규칙대로 부르지 않고, 예제 코드도 저장소에 넣지 않는다([ADR-20](../docs/DECISIONS.md)).
+미리 넣어 둔 문장 트랙을 재생하는 쪽으로 옮긴다([ADR-38](../../docs/DECISIONS.md#adr-38),
+[측정](../../docs/measurements/2026-09-23-bridge-transparency.md)). 벤더 SDK 의 `MP3Sensor` 는
+쓰지 않는다 — 위 규칙대로 부르지 않고, 예제 코드도 저장소에 넣지 않는다([ADR-20](../../docs/DECISIONS.md)).
 MP3 드라이버는 **자체 코드로 센서 HAL 의 버스를 거쳐** 만들었다(WBS 4.7.20 · 2026-09-24, **실기 확인**).
 센서 HAL 의 `writeMp3Volume`·`writeMp3Track` 이 I²C 버스 잠금을 지켜 쓰고, `src/mp3_player.h` 가 «언제
 무엇을 쓰는가» 를 정한다. `SOUND` 의 인자는 `phrase_id` 에서 **`track`**(0~3000, 0 = 정지)으로 바뀌었다 —
-동작 규칙은 [PROTOCOL](../docs/PROTOCOL.md) 의 `SOUND` 절이 정본이다.
+동작 규칙은 [PROTOCOL](../../docs/PROTOCOL.md) 의 `SOUND` 절이 정본이다.
 
 - 재생 때마다 트랙 번호를 레지스터 `0x01` 에 2바이트(하위 먼저)로 쓰고, 20ms 뒤 음량 레지스터(`0x0C`)에
   `MECHADOG_MP3_VOLUME`(기본 20, 0~30, 빌드 플래그. 4.7.21 문장 카드 실청 후 15→20)을 쓴다. 트랙 쓰기 하나가 곧 재생 시작이다.
@@ -722,7 +722,7 @@ MP3 드라이버는 **자체 코드로 센서 HAL 의 버스를 거쳐** 만들�
 있다.**
 
 **대응 (2026-09-13)** — 펌웨어가 ADC 를 9회 읽어 **중앙값**을 싣고, 폐기 상한을 **8.6V** 로
-올렸다 (만충 8.4V + 측정 여유 0.2V · [ADR-30](../docs/DECISIONS.md)). 경고 7.0V·셧다운 6.6V 는
+올렸다 (만충 8.4V + 측정 여유 0.2V · [ADR-30](../../docs/DECISIONS.md)). 경고 7.0V·셧다운 6.6V 는
 그대로다.
 
 **확인 (2026-09-13 · mechdog-01 · 만충 직후)** — 폐기 0, 텔레메트리 **180/180 수락 · 10Hz · 최대 간격 0.11초**(`telemetry_probe` `rate_check: pass`). 측정 폭이 0.74 → 0.22V 로 줄었고 값은 8.256~8.472V(중앙 8.396)다. ⚠️ **만충에서도 15건 중 5건이 8.4V 를 넘는다** — 옛 상한이었다면 그 3분의 1이 버려졌다.
@@ -740,14 +740,14 @@ MP3 드라이버는 **자체 코드로 센서 HAL 의 버스를 거쳐** 만들�
 | `MPU6050` | MIT — 명확하다 |
 | 외부 센서 라이브러리 | SensorLib v0.2.1은 MIT. 자세 필터는 Arduino 라이브러리 관리자의 Madgwick 1.2.0을 쓴다(벤더 사본에는 GPL 헤더가 있음). 어느 쪽도 저장소에 포함하지 않음 |
 
-명시된 라이선스가 없으면 기본값은 저작권자 전권이다. 상세는 [ADR-20](../docs/DECISIONS.md).
+명시된 라이선스가 없으면 기본값은 저작권자 전권이다. 상세는 [ADR-20](../../docs/DECISIONS.md).
 
 ## 로컬에서 호스트 시험 돌리기
 
 g++ 와 make 가 있으면 저장소 루트에서 한 줄이다. CI(firmware-quality)가 부르는 명령과 같다.
 
 ```bash
-make -C firmware_mechdog_motion/test test
+make -C firmware/mechdog_motion/test test
 ```
 
 ## PC 시험 명령

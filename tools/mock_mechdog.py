@@ -23,7 +23,7 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
 펌웨어처럼 래치된 채 부팅하고, 명령 타임아웃(`safety.cmd_timeout_ms`)이 지나면
 곧바로 래치한다. 어느 쪽이든 `RESET_SAFE` 로만 푼다 (ADR-39).
 
-`RESET_SAFE` 수락 규칙은 펌웨어를 따른다 (`firmware_mechdog_motion/src/safety_monitor.h`
+`RESET_SAFE` 수락 규칙은 펌웨어를 따른다 (`firmware/mechdog_motion/src/safety_monitor.h`
 `reset_safe_allowed` = `!battery_critical()`):
 
   · 전압이 `safety.battery_shutdown_v` 이하로 내려가면 **저전압 원인**이 걸리고 래치한다.
@@ -32,7 +32,7 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
   · 펌웨어는 셧다운을 연속 3표본(`shutdown_samples`)으로 판정하고 전압은 9표본 중앙값이다.
     목업의 전압은 잡음 없는 곡선이라 둘 다 결과를 바꾸지 않으므로 흉내 내지 않는다.
   · 펌웨어는 Wi-Fi 미연결·OTA 검증 대기 중에도 `RESET_SAFE` 를 거부한다
-    (`firmware_mechdog_motion.ino` `CmdType::ResetSafe`). 목업에는 둘 다 없는 개념이다.
+    (`mechdog_motion.ino` `CmdType::ResetSafe`). 목업에는 둘 다 없는 개념이다.
   · 전도(`--tip-at`)는 펌웨어에 아직 없다 (감지가 Phase 2 로 이연, `NFR-2.4`). 목업은
     `safety_monitor.h` 가 예고한 대로 «전도 중에는 해제 거부» 를 미리 흉내 낸다 — 풀어 주면
     `tipped:true` 인 채 `FAILSAFE` 가 아닌 상태를 보고해 호스트 규칙 ⑤에 폐기된다.

@@ -19,7 +19,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "config.yaml"
-HAL = ROOT / "firmware_mechdog_motion" / "src" / "motion_hal.cpp"
+HAL = ROOT / "firmware" / "mechdog_motion" / "src" / "motion_hal.cpp"
 
 #: 벤더가 구간마다 `delay()` 로 블로킹하므로 여러 구간짜리는 싣지 않는다.
 #: 1,000ms 단일 구간이라도 그동안 `loop()` 가 멈춘다 — 정지 상태에서만 받는다.

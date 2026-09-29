@@ -2,7 +2,7 @@
 
 - 관련 결정: [ADR-38](../DECISIONS.md#adr-38), [ADR-31](../DECISIONS.md#adr-31)
 - 측정 기록: [0x34 브리지 투명성과 MP3 모듈 0x7B](../measurements/2026-09-23-bridge-transparency.md), [실기 요약](../../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md)
-- 시험 도구: [`i2c_bridge_probe.ino`](../../firmware_mechdog_motion/diagnostics/i2c_bridge_probe/i2c_bridge_probe.ino)
+- 시험 도구: [`i2c_bridge_probe.ino`](../../firmware/mechdog_motion/diagnostics/i2c_bridge_probe/i2c_bridge_probe.ino)
 
 ## 증상
 

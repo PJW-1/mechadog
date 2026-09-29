@@ -19,8 +19,8 @@
 //
 // 이 스케치는 서보도 Wi-Fi 도 건드리지 않는다. 저장소만으로 빌드된다.
 //
-//   & "C:\Program Files\Arduino CLI\arduino-cli.exe" compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmware_mechdog_motion/diagnostics/led_probe
-//   & "C:\Program Files\Arduino CLI\arduino-cli.exe" upload -p COM8 --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmware_mechdog_motion/diagnostics/led_probe
+//   & "C:\Program Files\Arduino CLI\arduino-cli.exe" compile --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmware/mechdog_motion/diagnostics/led_probe
+//   & "C:\Program Files\Arduino CLI\arduino-cli.exe" upload -p COM8 --fqbn "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40" firmware/mechdog_motion/diagnostics/led_probe
 //
 // ⚠️ 업로드하면 운용 펌웨어가 덮어써진다. 되돌릴 이미지를 먼저 확보할 것.
 

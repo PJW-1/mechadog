@@ -1,9 +1,9 @@
 # 호스트 단위시험 — CI(firmware-quality)와 로컬이 같은 명령을 쓴다.
-#   저장소 루트에서:  make -C firmware_mechdog_motion/test test
+#   저장소 루트에서:  make -C firmware/mechdog_motion/test test
 # 산출물은 저장소 루트의 build/ 에 둔다(.gitignore 대상).
-ROOT  := $(abspath ../..)
-SRC   := $(ROOT)/firmware_mechdog_motion/src
-TEST  := $(ROOT)/firmware_mechdog_motion/test
+ROOT  := $(abspath ../../..)
+SRC   := $(ROOT)/firmware/mechdog_motion/src
+TEST  := $(ROOT)/firmware/mechdog_motion/test
 BUILD := $(ROOT)/build
 CXX   ?= g++
 CXX11 := $(CXX) -std=c++11 -Wall -Wextra -Werror -O1 -I $(SRC)

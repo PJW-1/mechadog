@@ -1,4 +1,4 @@
-# firmware_lidar_relay — LD19 → ESP32 → UDP LiDAR 중계 노드
+# firmware/lidar_relay — LD19 → ESP32 → UDP LiDAR 중계 노드
 
 LD19 의 UART 스트림을 받아 한 바퀴 스캔을 조립하고, `SCAN` JSON 데이터그램을
 Host PC 로 UDP 송신하는 **독립 중계 노드**다. MechDog 메인보드를 거치지 않는다
@@ -43,8 +43,8 @@ ROS2 브리지 작업 시 회전 단위 재조립은 브리지 몫이다 (정본
 ## 빌드·플래시
 
 ```powershell
-arduino-cli compile --fqbn esp32:esp32:esp32 --warnings all firmware_lidar_relay
-arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware_lidar_relay
+arduino-cli compile --fqbn esp32:esp32:esp32 --warnings all firmware/lidar_relay
+arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware/lidar_relay
 ```
 
 시리얼(115200) 진단 로그 5초 주기:
@@ -60,16 +60,16 @@ arduino-cli upload -p COM9 --fqbn esp32:esp32:esp32 firmware_lidar_relay
 (HAL 분리 원칙). 호스트에 g++ 와 make 가 있으면 저장소 루트에서 한 줄이다(CI 와 같은 명령):
 
 ```bash
-make -C firmware_lidar_relay/test test
+make -C firmware/lidar_relay/test test
 ```
 
 직접 컴파일하려면:
 
 ```bash
-g++ -std=c++17 -Wall -Wextra -O1 -I firmware_lidar_relay/src \
-    firmware_lidar_relay/src/ld19.cpp \
-    firmware_lidar_relay/src/scan_encoder.cpp \
-    firmware_lidar_relay/test/test_lidar_relay.cpp -o build/test_lidar_relay
+g++ -std=c++17 -Wall -Wextra -O1 -I firmware/lidar_relay/src \
+    firmware/lidar_relay/src/ld19.cpp \
+    firmware/lidar_relay/src/scan_encoder.cpp \
+    firmware/lidar_relay/test/test_lidar_relay.cpp -o build/test_lidar_relay
 ./build/test_lidar_relay                                   # 단위시험
 ./build/test_lidar_relay --emit-fixtures | python - <<'PY' # ScanDecoder 교차검증
 import json, sys
@@ -87,6 +87,6 @@ SCAN 데이터그램을 UDP 로 보낸다. 컴파일 시 상위 `src/` 를 `-I` 
 
 ```powershell
 arduino-cli compile --fqbn esp32:esp32:esp32 `
-  --build-property "compiler.cpp.extra_flags=-I<repo>/firmware_lidar_relay/src" `
-  firmware_lidar_relay/diagnostics/lidar_self_test
+  --build-property "compiler.cpp.extra_flags=-I<repo>/firmware/lidar_relay/src" `
+  firmware/lidar_relay/diagnostics/lidar_self_test
 ```

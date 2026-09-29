@@ -65,7 +65,7 @@
 ## 로봇이 스스로 멈춰 있다고 알려 오면 그 말이 이긴다
 
 보낸 명령으로 추정한 래치는 **호스트의 짐작**이다. 로봇은 저전압이면 `RESET_SAFE` 를
-거부하고(`firmware_mechdog_motion/README.md` 3.2.5), 재부팅하면 래치 상태로 켜진다 —
+거부하고(`firmware/mechdog_motion/README.md` 3.2.5), 재부팅하면 래치 상태로 켜진다 —
 둘 다 명령만 보면 모른다. 그동안 보낸 `MOVE` 를 이동으로 적분하면 **위치가 조용히
 앞으로 밀린다.** 그래서 텔레메트리의 `safety_latched` 와 `flags.obstacle`(근거리
 정지 — 우선순위가 호스트 명령보다 높다, 같은 README `3.2.5`)을 `note_hold` 로 받아,

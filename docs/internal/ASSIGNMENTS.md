@@ -70,7 +70,7 @@
 | `3.1.2` | seq 검증 및 범위 클램핑 규칙 | 규칙 명세 + 구현 | 0.5 |
 | `3.2.1` | 명령 타임아웃 감시기 | 현재 `.ino` 인라인 구현, `3.2.5`에서 `safety_monitor.*`로 통합 | 0.5 |
 | `3.2.2` | 저전압 감시기 | `safety_monitor.*` | 0.5 |
-| `3.2.4` | 워치독 설정 | `firmware_mechdog_motion.ino` | 0.5 |
+| `3.2.4` | 워치독 설정 | `mechdog_motion.ino` | 0.5 |
 | `3.2.5` | 안전 상태 통합 관리자 | `safety_monitor.*` | 0.5 |
 | `3.2.6` | 근거리 반사 정지 | `safety_monitor.*` | 1.0 |
 | `3.5.2` | SCAN 모션 | 펌웨어 + `actions.py` | 0.5 |
@@ -79,7 +79,7 @@
 | `3.5.6` | 경고 트리거 연동 | ~~펌웨어~~ → 호스트 (ADR-31) | 0.5 |
 | `3.5.7` | 단계적 자세 상승 시퀀스 | `behavior/posture.py` + 펌웨어 | 0.5 |
 | `4.1.2` | HAL 래퍼 (hal_mechdog) | `motion_hal.*` | 1.0 |
-| `4.1.4` | 텔레메트리 송신 | `firmware_mechdog_motion.ino` | 0.5 |
+| `4.1.4` | 텔레메트리 송신 | `mechdog_motion.ino` | 0.5 |
 | `4.7.1` | WonderEcho 커스텀 펌웨어 빌드·플래싱 | `.bin` + 안내 음원 목록 | 1.0 |
 | `4.7.2` | WonderEcho 통신 연동 | 펌웨어 | 0.5 |
 | `4.7.3` | 눈 LED 상태 표시 | 펌웨어 | 0.5 |
@@ -171,9 +171,9 @@
 | `3.8.1` | 사원증 ArUco 인증 | `behavior/auth.py`, `vision/badge.py`, `tools/make_badges.py` | 0.5 |
 | `3.8.2` | 암구호 인증 | 동일 | 0.5 |
 | `3.8.3` | 에스컬레이션 L0~L3 상태기 | `behavior/escalation.py` | 1.0 |
-| `4.1.1` | Wi-Fi STA 접속 및 UDP 수신 | `firmware_mechdog_motion.ino` | 1.0 |
+| `4.1.1` | Wi-Fi STA 접속 및 UDP 수신 | `mechdog_motion.ino` | 1.0 |
 | `4.1.3` | C++ 명령 파서 | `command_parser.*` | 1.0 |
-| `4.2.1` | 카메라 초기화 및 해상도 프로파일 | `firmware_xiao_vision/firmware_xiao_vision.ino` | 0.5 |
+| `4.2.1` | 카메라 초기화 및 해상도 프로파일 | `firmware/xiao_vision/xiao_vision.ino` | 0.5 |
 | `4.2.2` | MJPEG HTTP 스트리밍 서버 | 동일 | 1.0 |
 | `4.3.1` | Python 직렬화·역직렬화 | `common/protocol.py` | 0.5 |
 | `4.3.2` | UDP 커맨더 | `behavior/commander.py` | 0.5 |

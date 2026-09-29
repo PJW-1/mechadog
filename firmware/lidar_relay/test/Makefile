@@ -1,8 +1,8 @@
 # 호스트 단위시험 — CI 와 로컬이 같은 명령을 쓴다.
-#   저장소 루트에서:  make -C firmware_lidar_relay/test test
-ROOT  := $(abspath ../..)
-SRC   := $(ROOT)/firmware_lidar_relay/src
-TEST  := $(ROOT)/firmware_lidar_relay/test
+#   저장소 루트에서:  make -C firmware/lidar_relay/test test
+ROOT  := $(abspath ../../..)
+SRC   := $(ROOT)/firmware/lidar_relay/src
+TEST  := $(ROOT)/firmware/lidar_relay/test
 BUILD := $(ROOT)/build
 CXX   ?= g++
 
