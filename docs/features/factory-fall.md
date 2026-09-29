@@ -62,16 +62,16 @@ flowchart TD
 | 분기 | 코드 위치 | 확인하는 테스트 |
 | :--- | :--- | :--- |
 | 누움 후보 판정 (종횡비·정지·공백) | `host/vision/person.py` 의 `FallenGate.observe` | `test_the_measured_fallen_box_is_confirmed` · `test_a_standing_person_is_never_confirmed` · `test_a_sitting_person_is_never_confirmed` · `test_movement_resets_the_hold` · `test_a_short_detection_gap_keeps_the_hold` |
-| 누움 후보 → 의심, 접근 | `host/runtime.py` 의 `Runtime._observe_fallen` · `Runtime._suspect_fall` · `Runtime._track` | `test_a_lying_candidate_suspects_a_fall_and_approaches` |
-| 순찰 판독 «예» → 의심, 진입 «예» 는 세지 않음 | `host/runtime.py` 의 `Runtime._ask_fall` · `Runtime._take_fall_reading` | `test_a_patrol_reading_asks_only_person_down_every_interval` · `test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` |
+| 누움 후보 → 의심, 접근 | `host/runtime.py` 의 `Runtime._observe_fallen` · `Runtime._track` · `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `test_a_lying_candidate_suspects_a_fall_and_approaches` |
+| 순찰 판독 «예» → 의심, 진입 «예» 는 세지 않음 | `host/behavior/fall_monitor.py` 의 `FallMonitor.ask` · `FallMonitor.take_reading` | `test_a_patrol_reading_asks_only_person_down_every_interval` · `test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` |
 | 구역 판독 «예» → 의심 | `host/runtime.py` 의 `Runtime._take_zone_reading` | `test_a_person_down_reading_at_a_zone_suspects_a_fall_not_an_alarm` · `test_a_person_down_reading_that_lands_after_leaving_still_suspects` |
-| «예» 2회, 1초 간격 → `PERSON_DOWN` | `host/runtime.py` 의 `Runtime._take_fall_reading` · `Runtime._confirm_fall` | `test_a_fall_is_confirmed_by_readings_a_gap_apart` · `test_a_no_between_readings_does_not_reset_the_count` |
+| «예» 2회, 1초 간격 → `PERSON_DOWN` | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` · `FallMonitor._confirm` | `test_a_fall_is_confirmed_by_readings_a_gap_apart` · `test_a_no_between_readings_does_not_reset_the_count` |
 | YOLOX 단독 확정 없음 | `host/runtime.py` 의 `Runtime._observe_fallen` | `test_lying_alone_never_raises_the_alarm` |
-| `PERSON_DOWN` → L3, 상태는 그대로 | `host/behavior/escalation.py` 의 `RAISED_BY` · `host/runtime.py` 의 `Runtime._confirm_fall` | `test_factory_fall_raises_l3_without_moving_the_state` · `test_a_confirmed_fall_is_recorded_with_its_reason` |
+| `PERSON_DOWN` → L3, 상태는 그대로 | `host/behavior/escalation.py` 의 `RAISED_BY` · `host/behavior/fall_monitor.py` 의 `FallMonitor._confirm` | `test_factory_fall_raises_l3_without_moving_the_state` · `test_a_confirmed_fall_is_recorded_with_its_reason` |
 | 의심 동안 L1 유지 | `host/behavior/escalation.py` 의 `Escalation.note_fall_suspect` · `Escalation.tick` | `test_a_fall_suspect_holds_observe_until_released` |
-| 20초 제한 시간 → 순찰 | `host/runtime.py` 의 `Runtime._watch_fall` · `Runtime._resolve_fall` | `test_an_unconfirmed_suspect_times_out_back_to_patrol` |
-| 재의심 쿨다운 | `host/runtime.py` 의 `Runtime._suspect_fall` | `test_a_timed_out_suspect_is_not_suspected_again_during_the_cooldown` · `test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm` |
-| 5초 상실로 의심 종료 (쿨다운 없음) | `host/runtime.py` 의 `Runtime._watch_fall` · `Runtime._end_fall` | 전용 런타임 시험 없음 |
+| 20초 제한 시간 → 순찰 | `host/behavior/fall_monitor.py` 의 `FallMonitor.watch` · `FallMonitor.resolve` | `test_an_unconfirmed_suspect_times_out_back_to_patrol` |
+| 재의심 쿨다운 | `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `test_a_timed_out_suspect_is_not_suspected_again_during_the_cooldown` · `test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm` |
+| 5초 상실로 의심 종료 (쿨다운 없음) | `host/behavior/fall_monitor.py` 의 `FallMonitor.watch` · `FallMonitor._end` | `tests/test_fall_monitor.py::test_losing_the_target_ends_the_suspicion_without_a_cooldown` |
 | 경보 확인 → 순찰 | `host/runtime.py` 의 `Runtime.confirm_alarm` | `test_confirming_a_fall_alarm_returns_to_patrol` |
 | PPE 경고 중 확정 | `host/behavior/escalation.py` 의 `Escalation.raise_to` | `test_a_fall_confirmed_during_a_ppe_warning_announces_its_own_sentence` · `test_an_alarm_during_the_ppe_warning_latches` |
 | 의심 중 PPE 보류 | `host/runtime.py` 의 `Runtime._judge_ppe` | `test_factory_holds_ppe_while_a_fall_is_a_candidate` |

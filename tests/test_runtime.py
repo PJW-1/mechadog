@@ -2855,7 +2855,8 @@ class ScriptedVlm:
 
 def _scripted(runtime, *script) -> ScriptedVlm:
     fake = ScriptedVlm(*script)
-    runtime._vlm = fake
+    # 워커는 런타임과 쓰러짐 감시가 함께 쥔다 — 둘 다 바꾼다.
+    runtime._vlm = runtime._fall._vlm = fake
     return fake
 
 
