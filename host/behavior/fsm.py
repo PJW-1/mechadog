@@ -13,8 +13,8 @@
                    ── MANUAL_ON ──▶ MANUAL
                    ── POSE_STALE `[P2]` ──▶ LOST
 
-⚠️ FAILSAFE 는 `RESET_CONFIRMED` 외의 사건을 받지 않고, 그것도 로봇 래치가 풀렸을 때만
-받는다 — 자동 복귀는 없다 (ADR-21).
+⚠️ FAILSAFE 는 `RESET_CONFIRMED` 외의 사건을 받지 않고, 로봇이 래치를 보고하는 동안에는 그것도
+막는다(`LATCH_GUARDED`) — 자동 복귀는 없다 (ADR-21).
 
 전이표에 없는 것 — 명령 타임아웃 600ms(온보드 Tier 1)와 `ALERT` 에서의 PPE 위반(단계
 축 `behavior/escalation.py` 소관)이다 (아키텍처 3절).
@@ -284,7 +284,8 @@ class Fsm:
 class Behavior:
     """FSM 상태를 송신기의 의도로 옮기는 유일한 지점. 링크·대상·상태 타이머를 감시한다.
 
-    운용 루프 스레드에서만 부른다. 시퀀스가 등록되지 않은 `SEQUENCE` 상태는 정지로 처리한다.
+    시퀀스가 등록되지 않은 `SEQUENCE` 상태는 정지로 처리한다. 내부 잠금이 없다 — 운용 루프와
+    대시보드 스레드(`Runtime.apply_external`) 양쪽에서 사건이 들어온다.
     """
 
     def __init__(

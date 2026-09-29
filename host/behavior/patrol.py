@@ -5,7 +5,7 @@
 
 - 방향 전환은 호(arc) 조향 `MOVE{step, angle}` 뿐이다 (ADR-11).
 - 초음파 근거리 정지는 로봇의 `flags.obstacle` 을 따라가고 판정하지 않는다 (아키텍처 1.2 · ADR-22).
-- 위험 시 `ESTOP`(래치)을 보내고, 해제는 사람 확인 + 텔레메트리 `safety_latched=false` 로만 한다 (ADR-21).
+- 위험 시 `ESTOP`(래치)을 보내고, 해제는 사람 확인 뒤 텔레메트리 `safety_latched=false` 로 확인한다 (ADR-21).
 - 내부 단계는 FSM 13상태로 사상해 `STATE` 로 내려보낸다 (`FSM_STATE_FOR`).
 - 측위 실패는 `ESTOP` 이 아니라 `LOST` 정지다 — 다음 스캔에서 재측위될 수 있다 (FR-6.6).
 """

@@ -112,7 +112,7 @@ class PostureSequence:
 class TrackSequence:
     """가장 최근 추종 지시를 명령 주기(10Hz)로 `MOVE` 로 옮긴다 (FR-3.5).
 
-    지시는 비전 쪽(`LockOnTracker`)이 검출마다 `note` 로 넣는다. ⚠️ 지시가 없거나
+    지시는 운용 루프가 새 검출마다(`LockOnTracker` 계산) `note` 로 넣는다. ⚠️ 지시가 없거나
     `max_age_ms`(`fsm.track_coast_ms`)보다 낡으면 정지를 보낸다 — 아무것도 안 보내면 로봇이
     직전 명령대로 계속 돈다. 이 나이는 «관측이 신선한가» 이며 `safety.cmd_timeout_ms`(링크
     생존)와 별개다 — 짧은 검출 공백은 이어 가고 긴 공백만 정지로 떨어뜨린다.

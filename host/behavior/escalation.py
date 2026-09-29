@@ -105,7 +105,7 @@ class Escalation:
     """단계를 올리고 내린다. 시각은 `now_ms` 로 받는다.
 
     올리는 것은 사건(`raise_to`)이, 내리는 것은 조건과 확인(`tick`·`confirm_*`)이 한다.
-    운용 루프 스레드에서만 부른다.
+    내부 잠금이 없다 — 운용 루프와 대시보드 스레드(`Runtime.apply_external`) 양쪽에서 사건이 들어온다.
     """
 
     def __init__(self, config: Mapping[str, Any]) -> None:
