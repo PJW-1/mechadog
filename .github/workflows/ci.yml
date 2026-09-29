@@ -25,14 +25,16 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: requirements-dev.lock
 
       # requirements.txt 는 환경 마커로 플랫폼을 분기한다.
       # onnxruntime-directml 은 Windows 전용이므로 리눅스 러너에서는
-      # onnxruntime(CPU)이 설치된다.
+      # onnxruntime(CPU)이 설치된다. 설치는 그 결과를 고정한 requirements-dev.lock 으로 한다
+      # (Linux·CPython 3.12 전용, 재생성 명령은 CONTRIBUTING 8절).
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
 
       # docs/internal/ASSIGNMENTS.md 는 WBS 에서 생성된다. WBS 만 고치고 재생성하지 않으면
       # 담당자별 부하가 실제와 다르게 표시되므로 여기서 막는다.
