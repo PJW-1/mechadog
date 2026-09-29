@@ -18,7 +18,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import yaml
@@ -107,7 +107,7 @@ class OccupancyGrid:
 
     def inside(self, row: int, col: int) -> bool:
         height, width = self.cells.shape
-        return 0 <= row < height and 0 <= col < width
+        return cast(bool, 0 <= row < height and 0 <= col < width)
 
     @property
     def extent(self) -> list[float]:
