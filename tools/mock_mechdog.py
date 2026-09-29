@@ -23,6 +23,20 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
 펌웨어처럼 래치된 채 부팅하고, 명령 타임아웃(`safety.cmd_timeout_ms`)이 지나면
 곧바로 래치한다. 어느 쪽이든 `RESET_SAFE` 로만 푼다 (ADR-39).
 
+`RESET_SAFE` 수락 규칙은 펌웨어를 따른다 (`firmware_mechdog_motion/src/safety_monitor.h`
+`reset_safe_allowed` = `!battery_critical()`):
+
+  · 전압이 `safety.battery_shutdown_v` 이하로 내려가면 **저전압 원인**이 걸리고 래치한다.
+  · 원인은 전압이 `safety.battery_warn_v` **위로** 회복될 때까지 남는다
+    (`safety_monitor.cpp` 의 히스테리시스). 그 사이(6.6~7.0V)의 `RESET_SAFE` 는 거부한다.
+  · 펌웨어는 셧다운을 연속 3표본(`shutdown_samples`)으로 판정하고 전압은 9표본 중앙값이다.
+    목업의 전압은 잡음 없는 곡선이라 둘 다 결과를 바꾸지 않으므로 흉내 내지 않는다.
+  · 펌웨어는 Wi-Fi 미연결·OTA 검증 대기 중에도 `RESET_SAFE` 를 거부한다
+    (`firmware_mechdog_motion.ino` `CmdType::ResetSafe`). 목업에는 둘 다 없는 개념이다.
+  · 전도(`--tip-at`)는 펌웨어에 아직 없다 (감지가 Phase 2 로 이연, `NFR-2.4`). 목업은
+    `safety_monitor.h` 가 예고한 대로 «전도 중에는 해제 거부» 를 미리 흉내 낸다 — 풀어 주면
+    `tipped:true` 인 채 `FAILSAFE` 가 아닌 상태를 보고해 호스트 규칙 ⑤에 폐기된다.
+
 사용:
 
     python tools/mock_mechdog.py --device mechdog-ref
@@ -149,6 +163,8 @@ class MockRobot:
         # 받아들인 `RESET_SAFE` 전까지 MOVE·POSE 는 적용되지 않는다 — 가짜가 실물보다
         # 친절하면 호스트가 실기에서만 막히는 길을 목업에서 놓친다.
         self._failsafe_latched = True
+        # 펌웨어 `SafetyMonitor::battery_critical()` — 셧다운선에서 걸고 경고선 위에서 푼다.
+        self._battery_critical = False
         # 후진하면 장애물이 멀어진다. ⚠️ **거친 모형이다** — 목적은 정확한 거리가
         # 아니라 *"물러나면 언젠가 풀린다"* 는 단조 관계뿐이다. 그것이 없으면 호스트의
         # 회피 시퀀스가 끝까지 도는지 확인할 수 없다. 실제 해제 판정은 로봇의 센서가
@@ -255,8 +271,21 @@ class MockRobot:
         """마지막 유효 명령 뒤 `cmd_timeout_ms` 이상 조용했다 — 펌웨어는 여기서 래치한다."""
         return self._link_seen and self.last_cmd_age_ms(now_ms) >= self._safety["cmd_timeout_ms"]
 
+    def _update_battery(self, now_ms: int) -> None:
+        """펌웨어 `safety_monitor.cpp` 의 저전압 히스테리시스.
+
+        ⚠️ **경고선 위로 올라와야 풀린다.** 셧다운선 바로 위에서 떠는 배터리로 풀면
+        다음 보행 부하에 다시 걸려 사람이 해제와 재래치를 반복하게 된다.
+        """
+        volts = self.battery_v(now_ms)
+        if volts <= self._safety["battery_shutdown_v"]:
+            self._battery_critical = True
+        elif volts > self._safety["battery_warn_v"]:
+            self._battery_critical = False
+
     def _physical_fault(self, now_ms: int) -> bool:
-        return self.tipped(now_ms) or self.battery_v(now_ms) <= self._safety["battery_shutdown_v"]
+        """래치를 걸고 `RESET_SAFE` 를 거부하는 원인. 호출 전에 `_update_battery` 가 돈다."""
+        return self.tipped(now_ms) or self._battery_critical
 
     def _integrate_retreat(self, now_ms: int) -> None:
         """후진 중이면 물러난 거리를 누적한다. 전진은 되돌리지 않는다 —
@@ -268,6 +297,7 @@ class MockRobot:
 
     def _update_safety(self, now_ms: int) -> None:
         self._integrate_retreat(now_ms)
+        self._update_battery(now_ms)
         if self._physical_fault(now_ms) or self.command_timed_out(now_ms):
             self._failsafe_latched = True
         if self._failsafe_latched or not self._link_seen:
@@ -299,7 +329,9 @@ class MockRobot:
         """
         # ── Tier 1 — 온보드 센서 판정. 호스트의 말보다 우선한다 ──
         self._update_safety(now_ms)
-        if self._failsafe_latched or not self.link_ok(now_ms):
+        # 링크 두절(`link_loss_failsafe_ms`)은 따로 볼 필요가 없다 — 설정 검증이
+        # `cmd_timeout_ms < link_loss_failsafe_ms` 를 강제하므로 래치가 언제나 먼저 걸린다.
+        if self._failsafe_latched:
             return "FAILSAFE"
         if self.distance_cm(now_ms) < self._safety["obstacle_stop_cm"]:
             return "AVOID"

@@ -257,3 +257,78 @@ def test_obstacle_does_not_block_the_reset(config: dict) -> None:
     _send(robot, now, _encoder(now).move(-60, 0))
     assert robot.state(now) == "AVOID", "래치는 풀리고 장애물 보고만 남는다"
     assert robot.motion(now)["step"] < 0
+
+
+def _charging(config: dict) -> MockRobot:
+    """셧다운선 아래에서 시작해 분당 1V 로 충전되는 로봇 (음의 방전 속도)."""
+    return _robot(
+        config,
+        battery_start_v=config["safety"]["battery_shutdown_v"] - 0.1,
+        battery_drain_v_per_min=-1.0,
+    )
+
+
+def _at_volts(robot: MockRobot, config: dict, volts: float) -> int:
+    start = config["safety"]["battery_shutdown_v"] - 0.1
+    now = START_MS + round((volts - start) * 60_000)
+    assert robot.battery_v(now) == pytest.approx(volts)
+    return now
+
+
+@pytest.mark.parametrize("above_shutdown", [0.1, 0.2, 0.3, 0.4])
+def test_reset_safe_is_refused_until_battery_recovers_above_warn(
+    config: dict, above_shutdown: float
+) -> None:
+    """펌웨어 `battery_critical()` 은 셧다운 뒤 **경고선 위**로 올라와야 풀린다.
+
+    셧다운선(6.6V) 바로 위(6.7~7.0V)에서 풀면 다음 보행 부하에 다시 걸린다
+    (`safety_monitor.cpp` 히스테리시스). 경고선과 같은 값도 아직 «위» 가 아니다.
+    """
+    robot = _charging(config)
+    now = START_MS
+    _send(robot, now, _encoder(now).move(60, 0))
+    assert robot.state(now) == "FAILSAFE"
+
+    now = _at_volts(robot, config, config["safety"]["battery_shutdown_v"] + above_shutdown)
+    _send(robot, now, _encoder(now).reset_safe())
+    assert robot.state(now) == "FAILSAFE", "경고선 아래인데 래치가 풀렸다"
+
+
+def test_reset_safe_is_accepted_once_battery_is_above_warn(config: dict) -> None:
+    robot = _charging(config)
+    now = START_MS
+    _send(robot, now, _encoder(now).move(60, 0))
+    assert robot.state(now) == "FAILSAFE"
+
+    now = _at_volts(robot, config, config["safety"]["battery_warn_v"] + 0.1)
+    _send(robot, now, _encoder(now).reset_safe())
+    _send(robot, now, _encoder(now).move(60, 0))
+    assert robot.state(now) != "FAILSAFE"
+    assert robot.motion(now)["step"] > 0
+
+
+def test_battery_between_the_lines_without_a_shutdown_does_not_block_reset(
+    config: dict,
+) -> None:
+    """셧다운을 한 번도 넘지 않았으면 6.6~7.0V 에서도 풀린다 — 경고는 동작을 막지 않는다."""
+    robot = _robot(config, battery_start_v=config["safety"]["battery_shutdown_v"] + 0.2)
+    now = START_MS
+    _send(robot, now, _encoder(now).reset_safe())
+    _send(robot, now, _encoder(now).move(60, 0))
+    assert robot.state(now) != "FAILSAFE"
+
+
+def test_tip_blocks_reset_until_firmware_gains_fall_detection(config: dict) -> None:
+    """펌웨어는 전도 감지가 Phase 2 로 이연돼 `tipped` 를 보고하지 않는다.
+
+    가상 로봇의 `--tip-at` 은 `safety_monitor.h` 가 예고한 규칙(전도 중 해제 거부)을
+    미리 흉내 낸다. 풀어 주면 `tipped:true` 인 채 `FAILSAFE` 가 아닌 레코드가 나가
+    호스트 규칙 ⑤에 폐기된다.
+    """
+    robot = _robot(config, tip_at_s=0)
+    now = START_MS
+    _send(robot, now, _encoder(now).reset_safe())
+    record = _flags(robot, now)
+    assert record["state"] == "FAILSAFE"
+    assert record["flags"]["tipped"] is True
+    assert p.TelemetryDecoder().decode(robot.telemetry(now)).accepted
