@@ -84,13 +84,15 @@ class VoiceAuthWindow:
         """암구호 허가가 아직 유효한가. 허가는 사람이 아니라 현장에 붙는다 (FR-10.2.4)."""
         return now_ms < self._until_ms
 
-    def _is_stale(self, captured_at_ms: int | None) -> bool:
-        """그 발화가 지금 열려 있는 창보다 앞선 것인가. `None`(수동 주입)은 오래된 것이 아니다."""
-        return (
-            captured_at_ms is not None
-            and self.opened_ms is not None
-            and captured_at_ms < self.opened_ms
-        )
+    def _stale_against(self, captured_at_ms: int | None) -> int | None:
+        """발화가 열린 창보다 앞서면 그 창의 열린 시각, 아니면 `None`. `None` 발화(수동 주입)는 앞서지 않는다.
+
+        열린 시각은 한 번만 읽는다 — 대시보드 스레드가 판정 도중 창을 닫아도 같은 값으로 판정하고 기록한다.
+        """
+        opened_ms = self.opened_ms
+        if captured_at_ms is None or opened_ms is None or captured_at_ms >= opened_ms:
+            return None
+        return opened_ms
 
     def note_listening(self, captured_at_ms: int | None = None) -> tuple[bool, str]:
         """«발화를 받았고 판정이 오는 중» — 인증 창 마감을 창마다 한 번, 상한 안에서 미룬다.
@@ -99,11 +101,11 @@ class VoiceAuthWindow:
         """
         if self._behavior.state != "AUTH_WAIT":
             return False, f"{self._behavior.state} 에서는 인증 대기가 없다 (AUTH_WAIT 만)"
-        if self._is_stale(captured_at_ms):
+        if (opened_ms := self._stale_against(captured_at_ms)) is not None:
             LOG.info(
                 "voice_listening_stale",
                 captured_at_ms=captured_at_ms,
-                opened_ms=self.opened_ms,
+                opened_ms=opened_ms,
             )
             return True, "인증 창이 열리기 전에 시작된 발화다 — 유예하지 않는다"
         if self._deferred:
@@ -122,12 +124,12 @@ class VoiceAuthWindow:
         now_ms = self._clock()
         # 세기 전에, 허가하기 전에 발화 시각을 본다 — 창보다 앞선 발화는 일치여도
         # 묻기 전에 한 대답이라 이 대기의 것이 아니다 (ADR-37 결정 3).
-        if self._is_stale(captured_at_ms):
+        if (opened_ms := self._stale_against(captured_at_ms)) is not None:
             LOG.info(
                 "voice_auth_stale",
                 captured_at_ms=captured_at_ms,
-                opened_ms=self.opened_ms,
-                behind_ms=self.opened_ms - captured_at_ms,
+                opened_ms=opened_ms,
+                behind_ms=opened_ms - captured_at_ms,
                 matched=ok,
             )
             # `True` 로 돌려준다 — 파이프라인은 `accepted` 를 *전달됐나* 로 읽어
