@@ -1665,7 +1665,7 @@ LLM 과 함께 없어졌다. 경비 모드도 VLM 을 올리면 ~6.6 GB 로, 공
    `captured_at_ms` 는 거절한다. 그렇지 않으면 앞서 막은 길이 옆문으로 되살아난다.
 4. **엔진은 이유를 모른다** — `Behavior.defer_timer(by_ms, cap_ms)` 는 «얼마나 미룰 수
    있는가» 만 알고 어느 상태인지 묻지 않는다. 상태 이름이 엔진으로 돌아오면 `TIMERS`
-   표를 둔 이유가 사라진다. 정책은 `Runtime.note_voice_listening` 에 있다.
+   표를 둔 이유가 사라진다. 정책은 `VoiceAuthWindow.note_listening`(`host/behavior/voice_auth.py`) 에 있다.
 
 **대안**
 
@@ -1694,9 +1694,9 @@ LLM 과 함께 없어졌다. 경비 모드도 VLM 을 올리면 ~6.6 GB 로, 공
 달라진다. 결정 자체는 유지하고, 창의 여유는 `4.7.19` 에서 다시 잰다.
 
 **정정 (2026-09-28)** — 위 결정은 «판정 대기 중 10초 한 번» 만 적었지만, `auth.require_both: true`
-에서는 창이 한 번 더 늘어난다. 암구호가 일치하면 `Runtime.note_voice_auth` 가 사원증 대기를
+에서는 창이 한 번 더 늘어난다. 암구호가 일치하면 `VoiceAuthWindow.note_verdict` 가 사원증 대기를
 `auth.timeout_s` 만큼(상한은 `verdict_grace_s + timeout_s`) 다시 미룬다 — 암구호를 맞힌 사람에게
-사원증을 꺼낼 시간을 새로 주기 위해서다(`host/runtime.py` 의 `_judge_auth`·`note_voice_auth`).
+사원증을 꺼낼 시간을 새로 주기 위해서다(`host/runtime.py` 의 `_judge_auth` · `host/behavior/voice_auth.py` 의 `note_verdict`).
 그래서 창은 최초 `timeout_s`(30초)에 판정 대기 유예(10초)와 사원증 대기 유예(30초)가 더해져
 **최대 70초**까지 늘어날 수 있다. 위 결정·표의 «한 번» 은 «판정 대기 신호당 한 번» 이라는 뜻이며,
 창 전체에서 한 번만 늘어난다는 뜻이 아니다.
