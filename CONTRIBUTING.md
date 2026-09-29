@@ -13,7 +13,7 @@
 
 ## 1. 기준기(Reference Unit)
 
-게이트 검수를 수행하는 지정 개체다. **LiDAR 를 3대 전부에 달지 못하므로 Phase 별로 나눈다.**
+게이트 검수를 수행하는 지정 개체다. **LiDAR 가 1대뿐이라 Phase 별로 나눈다.**
 
 | 구분 | 정의 | 검수 범위 |
 | :--- | :--- | :--- |
@@ -21,7 +21,7 @@
 | **`phase2_reference`** | 측위 센서(LiDAR)를 장착한 지정 개체 | Phase 2 측위·매핑 검수 |
 
 - 두 기준기는 지정해 물리적으로 표시한다.
-- LiDAR 는 2대에 장착하고, 그중 **1대를 `phase2_reference`** 로 지정한다. 나머지 LiDAR 장착기는 개발·재현용이다.
+- LiDAR 는 1대뿐이며 **`mechdog-02` 에 장착해 `phase2_reference`** 로 지정한다. `mechdog-02` 는 시연 기체이기도 하다.
 - **게이트 검수는 반드시 해당 Phase 의 기준기에서** 수행한다. 개발기 통과는 검수로 인정하지 않는다.
 - 권장 배치: **LiDAR 미장착 개체를 `phase1_reference`** 로 둔다. Phase 1 표준 물리 구성이 유지되어 NFR 수치의 기준이 흔들리지 않는다.
 
@@ -198,7 +198,7 @@ Issue 를 닫으려면 PR 본문에 `Closes #이슈번호`를, 일부만 다루�
 | 규칙 | 내용 |
 | :--- | :--- |
 | **개체 프로파일 필수** | 모든 실기 실행은 `--device <unit-id>` 로 자신의 프로파일을 지정한다. 기본값 사용 금지 |
-| **보정값은 기체별로 잰다 — 복사 금지** | `servo_offset` 과 `gait_calibration` 은 **그 기체에서 직접 재서** 그 기체의 프로파일에만 적는다. 다른 기체의 값을 복사하거나 3대 공용으로 쓰는 PR 은 반려한다. 재는 절차는 [docs/measurements/2026-09-18-turn-rate-curve.md](docs/measurements/2026-09-18-turn-rate-curve.md) 1절에 있고, 실측 사례는 [TEAM_PROCESS 4절](docs/internal/TEAM_PROCESS.md)에 있다 |
+| **보정값은 기체별로 잰다 — 복사 금지** | `servo_offset` 과 `gait_calibration` 은 **그 기체에서 직접 재서** 그 기체의 프로파일에만 적는다. 다른 기체의 값을 복사하거나 2대 공용으로 쓰는 PR 은 반려한다. 재는 절차는 [docs/measurements/2026-09-18-turn-rate-curve.md](docs/measurements/2026-09-18-turn-rate-curve.md) 1절에 있고, 실측 사례는 [TEAM_PROCESS 4절](docs/internal/TEAM_PROCESS.md)에 있다 |
 | **확인 결과는 PR 본문에** | 전압·fps·지연 확인 결과는 PR 본문에 남긴다. 채팅이나 메모에만 남기지 않는다. **`config` 로 들어갈 값은 `config/` 가 정본**이고 별도 리포트 문서는 두지 않는다. 원자료(csv·json·콘솔 로그)까지 남길 때만 `TEST_MECHDOG/results/<날짜-시각>/` 에 둔다 |
 | **성능 수치의 출처 명시** | Phase 1 NFR 측정치는 **`phase1_reference` 실측값**으로 문서화하고, 개체별 편차는 참고치로 병기한다 |
 | **안전 로직은 온보드에서 이동 금지** | 초음파 반사 정지·명령 타임아웃·저전압·전도 감지는 Tier 1이다. Host PC로 올리는 PR은 반려한다 ([아키텍처 1.2 불변 규칙](docs/ARCHITECTURE.md)) |

@@ -629,7 +629,7 @@ def test_too_few_cycles_is_refused() -> None:
 def test_missing_amplitude_still_passes() -> None:
     """⚠️ **없는 것과 0 인 것은 다르다.**
 
-    3대 중 2대는 아직 재지 않았다. 없으면 `FR-6.2.2` 판단을 미루면 되지만
+    2대 중 1대는 아직 재지 않았다. 없으면 `FR-6.2.2` 판단을 미루면 되지만
     0 이면 흔들리지 않는다고 잘못 읽는다 — 그래서 없는 쪽만 통과시킨다.
     """
     from copy import deepcopy

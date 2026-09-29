@@ -1,4 +1,4 @@
-"""여러 대를 한 프로세스로 — 다중 개체 관제 (MD-01 ~ MD-03).
+"""여러 대를 한 프로세스로 — 다중 개체 관제 (MD-01, MD-02).
 
 왜 한 프로세스인가: 펌웨어는 텔레메트리를 **호스트의 고정 포트(5101)** 로 보낸다
 (`telemetry_publisher.cpp` 의 `kTelemetryPort`). 런타임을 로봇마다 따로 띄우면 둘째부터
@@ -10,7 +10,7 @@
 
 사용:
 
-    python -m host.fleet --devices mechdog-01 mechdog-02 mechdog-03 --dashboard-port 8000
+    python -m host.fleet --devices mechdog-01 mechdog-02 --dashboard-port 8000
 """
 
 from __future__ import annotations

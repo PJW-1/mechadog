@@ -2,7 +2,7 @@
 
 `ALERT`·`TRACK` 에서 «얼마나 돌지» 를 정하고 `TARGET_OFF_CENTER`·`TARGET_CENTERED` 판정
 근거를 준다. 조향은 호(arc)로 한다 — 전진이 있어야 돈다 (ADR-11). 정지선에 닿았거나 편차가
-크면 `runtime._track` 이 이 지시를 제자리 회전(20°/30°)으로 덮어쓴다 (ADR-40).
+크면 `TrackController.track` 이 이 지시를 제자리 회전(20°/30°)으로 덮어쓴다 (ADR-40).
 
     화면                     보내는 것
     ├─────┼──╳──┤            타겟이 오른쪽  → angle < 0 (우선회) · step 전진
