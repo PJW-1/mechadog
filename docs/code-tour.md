@@ -8,7 +8,7 @@
 
 | 디렉터리 | 역할 | 파일 수 |
 |---|---|---|
-| `host/behavior/` | FSM·시퀀스·미션 등 판단 로직 | 12 |
+| `host/behavior/` | FSM·시퀀스·미션 등 판단 로직 | 16 |
 | `host/vision/` | 카메라 스트림 수신·추론 워커·VLM 판독 | 12 |
 | `host/common/` | 통신 규약 인코더/디코더 (Host ↔ 로봇) | 8 |
 | `host/telemetry/` | 로봇 텔레메트리를 FSM 사건으로 변환 | 1 |
@@ -20,8 +20,8 @@
 | `firmware_mechdog_motion/` | 로봇 본체 펌웨어(모션·Tier 1 반사) | 21 |
 | `firmware_xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 2 |
 | `firmware_lidar_relay/` | LiDAR 중계 보드 펌웨어 | 6 |
-| `tools/` | 운영·측정·개발 보조 스크립트 | 55 |
-| `tests/` | 단위·통합 테스트 | 81 |
+| `tools/` | 운영·측정·개발 보조 스크립트 | 62 |
+| `tests/` | 단위·통합 테스트 | 87 |
 
 ## 읽는 순서
 
