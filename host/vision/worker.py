@@ -1,25 +1,15 @@
 """추론 워커 스레드 (NFR-1.2 · NFR-3③).
 
-**비전 경로를 처음으로 실제로 연결하는 곳이다.** 지금까지 조각은 다 있었지만
-(`StreamReader` · `FrameQueue` · `Detector`) 아무것도 이어져 있지 않았다.
-
     ① 수신 스레드   StreamReader.frames() → FrameQueue.put()
-    ② 추론 스레드   FrameQueue.latest() → decode_jpeg → Detector.detect()
-                            ↓ 최신 결과 하나만 담는 슬롯
-    ③ 메인 루프     latest() 를 **무블로킹으로** 읽는다 (여기 없음 — `runtime.py`)
+    ② 추론 스레드   FrameQueue.latest() → decode_jpeg → Detector.detect() → 게이트·추적·판정
+                            ↓ 최신 결과 하나만 담는 슬롯 (`_slot_lock`)
+    ③ 운용 루프     latest() 를 막지 않고 읽는다 (`runtime.py`)
 
-⚠️ **메인 루프를 막으면 로봇이 멈춘다.** 로봇은 `safety.cmd_timeout_ms`(600ms) 동안
-명령을 못 받으면 스스로 정지한다. 우리가 100ms 마다 보내므로 여유는 6배뿐이고,
-추론이 메인 스레드에서 돌면 그 여유가 사라진다. **그것이 이 모듈의 존재 이유다.**
+⚠️ 운용 루프 스레드를 막지 않는 것이 이 모듈의 계약이다 — 로봇은 `safety.cmd_timeout_ms`
+(600ms) 동안 명령을 못 받으면 스스로 정지한다. 추론은 대부분 GIL 을 놓는 C++ 안에서 돈다.
 
-⚠️ **파이썬 스레드로 충분한 이유** — 추론 시간의 거의 전부가 C++ 안이다(onnxruntime ·
-OpenCV · numpy). 그 구간에서는 GIL 을 놓으므로 메인 스레드가 자유롭다. 반대로 순수
-파이썬 계산을 스레드에 넣으면 GIL 때문에 **메인을 실제로 밀어낸다.**
-
-⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서 예외가
-나면 스레드만 사라지고 메인은 아무것도 모른다. 그래서 ① 예외를 삼키지 않고 세며
-② 스레드를 죽이지 않고 살려 두고 ③ **마지막 결과의 나이를 메인이 감시한다.**
-로봇이 우리 명령을 폐기하는 조용한 고장을 `last_cmd_age_ms` 로 잡은 것과 같은 형태다.
+⚠️ 워커 스레드의 예외는 삼키지 않고 세며(`stats.errors`) 스레드는 계속 돈다. 워커가 조용히
+멈춘 것은 운용 루프가 `stalled()`·`healthy()` 로 감시한다.
 """
 
 from __future__ import annotations
@@ -42,65 +32,42 @@ from host.vision.tracker import PersonTracker, Track
 
 LOG = event_logger("mechadog.vision")
 
-#: 큐가 비었을 때 다시 볼 때까지의 간격. **바쁜 대기를 하지 않는다** — 그러면 GIL 을
-#: 계속 잡아 메인 루프를 밀어낸다. 정지 신호로 즉시 깨어날 수 있게 `Event.wait` 를 쓴다.
+#: 큐가 비었을 때 다시 볼 때까지의 간격 — 바쁜 대기로 GIL 을 잡지 않는다.
 IDLE_WAIT_S = 0.005
 
-#: 스레드를 정리하며 기다리는 최대 시간. **무한히 기다리지 않는다** — 종료 경로에는
-#: `ESTOP` 송신이 있고, 그것이 워커를 기다리다 늦어지면 안 된다.
+#: 스레드 정리 대기 상한 — 종료 경로의 `ESTOP` 송신을 늦추지 않는다.
 JOIN_TIMEOUT_S = 2.0
 
 
 @dataclass(frozen=True, slots=True)
 class VisionResult:
-    """한 프레임의 검출 결과. **프레임의 도착 시각을 함께 들고 다닌다.**
-
-    ⚠️ 결과만 넘기면 **그것이 언제 찍힌 것인지 알 수 없다.** 추론이 밀리면 결과가
-    낡는데, 나이를 모르면 낡은 판단을 최신처럼 쓴다.
-    """
+    """한 프레임의 검출·판정 결과. 결과의 나이를 알 수 있게 수신·완료 시각을 함께 싣는다."""
 
     detections: tuple[Detection, ...]
-    #: 블랙박스에 보관할 **수신 JPEG 원본**. 다시 인코딩하면 시간과 화질이 달라져
-    #: 사건 당시 실제 입력을 보존했다는 의미가 사라진다 (FR-3.9).
+    #: 블랙박스에 보관할 수신 JPEG 원본(재인코딩하지 않는다 · FR-3.9).
     jpeg: bytes
     frame_seq: int
-    #: 디코드한 원본 프레임의 크기. ⚠️ **설정의 `vision.resolution` 을 믿지 않는다** —
-    #: 검출 박스는 원본 픽셀 좌표이고, 카메라가 요청과 다른 크기를 보내면 추종이
-    #: 화면 중앙을 엉뚱한 곳으로 잡는다. 실제로 디코드한 것을 싣는다.
+    #: 실제로 디코드한 프레임 크기 — 박스 좌표의 기준이다(설정 `vision.resolution` 이 아니다).
     frame_width: int
     frame_height: int
     frame_received_ms: int
     completed_ms: int
     inference_ms: float
-    #: 사람 판정 (FR-3.2). ⚠️ **게이트는 추론마다 관측해야 한다** — 메인 루프(10Hz)에서
-    #: 부르면 25fps 결과 중 10개만 보게 되고, 그러면 추론률을 올린 이유가 사라진다.
+    #: 사람 판정 (FR-3.2). 게이트·추적·쓰러짐은 운용 루프(10Hz)가 아니라 추론마다 관측한다.
     sighting: Sighting
-    #: 지속 ID 가 붙은 사람들 (FR-3.6). **이번 프레임에 보인 대상만**이며
-    #: 소실 버퍼에 있는 대상은 들어 있지 않다.
-    #:
-    #: ⚠️ **게이트와 목적이 다르다.** 게이트는 *"사람이 있는가"*(로봇 단위)이고 이쪽은
-    #: *"누구인가"*(개인별)다. 인증이 ID 에 귀속되므로 둘을 합칠 수 없다 (FR-3.6.2).
-    #: 추적도 게이트와 같은 이유로 **추론마다** 돌려야 한다 — 10Hz 로 관측하면
-    #: 프레임 간 겹침이 그만큼 줄어 ID 가 끊긴다.
+    #: 지속 ID 가 붙은 사람들 (FR-3.6) — 이번 프레임에 보인 대상만이다. 게이트(«있는가»)와
+    #: 달리 «누구인가» 다.
     tracks: tuple[Track, ...]
-    #: 쓰러짐 규칙 판정 (FR-9 · ADR-35 대안 ⓓ).
-    #:
-    #: ⚠️ **VLM 과 둘이다.** 저쪽은 구역당 한 번이고 이쪽은 추론마다 돈다 — 가장 급한
-    #: 사건을 0.4초짜리 모델 하나에만 맡기지 않는다. 게이트·추적과 같은 이유로 여기서
-    #: 재야 한다(메인 루프 10Hz 에서 보면 25fps 중 10개만 본다).
+    #: 쓰러짐 규칙 판정 (FR-9 · ADR-35 대안 ⓓ · ADR-42 결정 2) — VLM 과 별개로 추론마다 돈다.
     fallen: FallenVerdict
-    #: 이 프레임에서 읽은 사원증 마커 (FR-10.1).
-    #:
-    #: ⚠️ **추적 대상이 있을 때만 읽는다** — FR-3.1.1 의 PPE 게이팅과 같은 원칙이고,
-    #: 애초에 귀속시킬 사람이 없으면 인증이 성립하지 않는다. 마커 없는 VGA 프레임에
-    #: 0.75ms 가 들므로 빈 순찰 구간에서 그만큼을 아낀다.
+    #: 이 프레임에서 읽은 사원증 마커 (FR-10.1). 추적 대상이 있을 때만 읽는다.
     markers: tuple[Marker, ...]
     ppe: PpeVerdict | None = None
 
 
 @dataclass
 class WorkerStats:
-    """워커가 실제로 무엇을 했는지. **성공만 세지 않는다.**"""
+    """워커가 실제로 한 일 — 실패와 유휴도 센다."""
 
     frames_in: int = 0
     inferences: int = 0
@@ -115,11 +82,10 @@ class WorkerStats:
 
 
 class VisionWorker:
-    """수신·추론을 두 스레드로 돌리고 **최신 결과 하나**를 내놓는다.
+    """수신·추론을 두 스레드로 돌리고 최신 결과 하나를 내놓는다.
 
-    `reader`·`detector` 를 주입받는 이유 — 카메라도 GPU 도 없이 시험돼야 한다.
-    특히 **추론을 일부러 느리게 만들어** 메인이 밀리지 않는지 봐야 하는데, 실제
-    8ms 추론으로는 그것을 증명할 수 없다(동기로 짜도 통과한다).
+    `latest`·`age_ms`·`stalled`·`healthy` 는 어느 스레드에서 불러도 막지 않는다.
+    `reader`·`detector` 는 시험을 위해 주입받는다.
     """
 
     def __init__(
@@ -145,9 +111,7 @@ class VisionWorker:
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
-        # ⚠️ **추론률 상한을 지킨다** — `vision.inference_fps`(지금 25 · 수신률과 같다). 10fps 로
-        # 두던 때가 있었으나 짧은 검출 구간을 놓쳐 25 로 올렸다(ADR-23).
-        # 상한 없이 돌리면 GPU 가 허용하는 만큼 돌아 전력과 GIL 을 낭비한다.
+        # 추론률 상한 `vision.inference_fps` 를 지킨다 (ADR-23).
         self._period_ms = max(1, round(1000 / float(vision["inference_fps"])))
         self._next_due_ms: int | None = None
         self._started_ms: int | None = None
@@ -160,17 +124,10 @@ class VisionWorker:
 
     # ── 수명 ────────────────────────────────────────────────
     def start(self) -> None:
-        """세션을 **부르는 스레드에서 먼저 연 뒤** 두 스레드를 띄운다.
+        """추론 세션을 부르는 스레드에서 먼저 연 뒤 두 데몬 스레드를 띄운다.
 
-        ⚠️ **세션 생성을 워커 스레드에 두면 메인 루프가 막힌다.** 실제로 그렇게 만들어
-        재 봤더니 기동 +684ms 지점에서 **틱 간격이 582ms** 로 벌어졌다 — `cmd_timeout_ms`
-        (600ms) 턱밑까지 다가가 **로봇이 멈추기 직전까지 가는 값**이다. 세션 생성
-        632ms + 워밍업이 C++ 안이지만 GIL 을 고르게 놓지 않는다(DirectML 장치 초기화 포함).
-
-        그래서 비용을 **운용 루프가 시작되기 전**에 낸다. 첫 프레임 워밍업을 기동으로
-        옮긴 것과 같은 판단이고, 이번에는 그 대상이 세션 자체다.
-
-        **데몬으로 둔다** — 메인이 끝나면 프로세스가 죽어야 한다.
+        ⚠️ 운용 루프가 돌기 전에 부른다 — 세션 생성·워밍업은 GIL 을 고르게 놓지 않아 워커
+        스레드에서 열면 운용 루프의 틱이 `cmd_timeout_ms` 가까이 벌어진다.
         """
         self._threads = [thread for thread in self._threads if thread.is_alive()]
         if self._threads or self._stop.is_set():
@@ -181,8 +138,7 @@ class VisionWorker:
             self._ppe.open()
             self._ppe_opened = True
         LOG.info("vision_detector_opened", ms=self._clock() - opened)
-        # 첫 프레임 전에도 단절 시간을 잴 기준이 필요하다. 세션 준비 시간은 기동 비용이고,
-        # 실제 카메라 대기는 수신 스레드가 뜬 뒤부터이므로 여기서 시계를 시작한다.
+        # 첫 결과 전 단절 판정의 기준 시각 — 세션 준비 뒤부터 잰다.
         self._started_ms = self._clock()
         for name, target in (("vision-recv", self._recv_loop), ("vision-infer", self._infer_loop)):
             thread = threading.Thread(target=target, name=name, daemon=True)
@@ -225,7 +181,7 @@ class VisionWorker:
 
     # ── 메인 루프가 쓰는 표면 ───────────────────────────────
     def latest(self) -> VisionResult | None:
-        """**막지 않는다.** 아직 결과가 없으면 `None`."""
+        """최신 결과. 막지 않는다. 아직 없으면 `None`."""
         with self._slot_lock:
             return self._slot
 
@@ -235,19 +191,15 @@ class VisionWorker:
         return None if result is None else max(0, now_ms - result.completed_ms)
 
     def stalled(self, now_ms: int) -> bool:
-        """비전 단절 판정 (NFR-2.6).
-
-        ⚠️ **기동 직후 유예와 영구 미연결을 구분한다.** 첫 결과 전에는 워커 기동
-        시각을 기준으로 재고, 한 번 결과가 나온 뒤에는 마지막 완료 시각을 기준으로 잰다.
-        그러지 않으면 카메라가 처음부터 꺼져 있을 때 영원히 정상으로 남는다.
-        """
+        """비전 단절 판정 (NFR-2.6). 첫 결과 전에는 워커 기동 시각, 뒤에는 마지막 완료
+        시각을 기준으로 잰다 — 처음부터 꺼진 카메라도 단절로 잡힌다."""
         age = self.age_ms(now_ms)
         if age is not None:
             return age > self._stall_ms
         return self._started_ms is not None and now_ms - self._started_ms > self._stall_ms
 
     def healthy(self) -> bool:
-        """두 스레드가 아직 살아 있나. **죽은 워커는 조용하다.**"""
+        """두 스레드가 아직 살아 있나."""
         return (
             not self._stop.is_set()
             and bool(self._threads)
@@ -312,15 +264,14 @@ class VisionWorker:
                 self._stop.wait(IDLE_WAIT_S)
                 continue
 
-            # ⚠️ **절대 마감으로 누적한다.** `now + period` 로 잡으면 추론이 느릴 때마다
-            # 주기가 뒤로 밀려 실제 추론률이 설정값보다 낮아진다.
+            # 절대 마감으로 누적한다 — 느린 추론이 주기를 뒤로 밀지 않게.
             self._next_due_ms += self._period_ms
             if self._next_due_ms < now:  # 크게 밀렸으면 따라잡기를 포기하고 재동기
                 self._next_due_ms = now + self._period_ms
             self._run_one(frame, now)
 
     def _run_one(self, frame: Frame, started_ms: int) -> None:
-        """한 프레임을 검출한다. **예외가 스레드를 죽이지 못하게 한다.**"""
+        """한 프레임을 검출·판정해 슬롯에 넣는다. 예외는 세고 스레드는 살린다."""
         try:
             image = decode_jpeg(frame.payload)
             height, width = int(image.shape[0]), int(image.shape[1])
@@ -328,9 +279,7 @@ class VisionWorker:
             observed = self._clock()
             sighting = self._gate.observe(observed, detections)
             tracks = self._tracker.update(detections, observed)
-            # ⚠️ **대표 박스로 본다** — 게이트가 고른 그 사람이다. 모든 사람을 재면
-            # 누가 쓰러졌는지 말할 수 없고, 추적 ID 를 함께 넘겨야 다른 사람의 정지가
-            # 이번 사람 몫을 채우지 않는다.
+            # 게이트의 대표 박스를 추적 ID 와 함께 본다 — 다른 사람의 정지가 섞이지 않게.
             fallen = self._fallen.observe(
                 observed, sighting.box, track_id=tracks[0].track_id if tracks else None
             )
@@ -365,8 +314,7 @@ class VisionWorker:
             ppe=ppe,
         )
         with self._slot_lock:
-            # ⚠️ **덮어쓴다. 쌓지 않는다.** 낡은 검출로 판단하면 로봇이 과거를 보고
-            # 움직인다 — 프레임 큐에 적용한 것과 같은 논리다 (ADR/결정 24번).
+            # 덮어쓴다 — 낡은 결과를 쌓지 않는다 (ADR-23 최신 프레임 우선).
             self._slot = result
 
     def _note_error(self, event: str, exc: BaseException, **detail: Any) -> None:
@@ -381,15 +329,14 @@ def build_worker(
     labels: Sequence[str] | None = None,
     section: str = "coco",
 ) -> VisionWorker:
-    """설정만으로 실제 워커를 만든다. **여기서만 카메라와 GPU 를 만진다.**"""
+    """설정만으로 실제 워커를 만든다. 여기서만 카메라와 GPU 를 만진다."""
     from host.vision.coco_labels import COCO_CLASSES
     from host.vision.detector import Detector
     from host.vision.stream_client import StreamReader, apply_profile
 
     def push_profile() -> None:
-        # ⚠️ **연결할 때마다 내려보낸다.** 이 호출이 어디에도 없어서 `vision.resolution`·
-        # `stream_fps_limit` 을 고쳐도 카메라가 그대로였다. 실패해도 스트림은 카메라
-        # 기본값으로 받는다 — 사유는 `apply_profile` 이 이미 남긴다.
+        # 연결할 때마다 카메라 프로파일을 내려보낸다. 실패해도 카메라 기본값으로 받는다
+        # (사유는 `apply_profile` 이 남긴다).
         with contextlib.suppress(OSError, ValueError):
             apply_profile(config)
 
@@ -404,12 +351,7 @@ def build_worker(
 
 @dataclass
 class TickIntervals:
-    """틱 간격 기록. **개수만 세면 최악을 놓친다.**
-
-    ⚠️ 601회/60초는 "평균 10Hz" 만 증명한다. 중간에 500ms 벌어져도 뒤에서 몰아 치면
-    개수는 같다 — 그 사이 로봇은 `cmd_timeout_ms` 를 넘겨 멈췄을 것이다. **그래서
-    분포를 본다.**
-    """
+    """틱 간격의 분포(p95·최대·`limit_ms` 초과 수)를 기록한다 — 평균은 한 번의 긴 공백을 숨긴다."""
 
     limit_ms: int
     window: int = 2048
@@ -419,11 +361,7 @@ class TickIntervals:
     _last_ms: int | None = None
 
     def note(self, now_ms: int) -> int | None:
-        """간격을 기록하고 **그 간격을 돌려준다** (첫 호출은 `None`).
-
-        돌려주는 이유가 있다 — `digest()` 는 누적이라 운용 중 초당 요약에 실을 수
-        없다. 호출자가 이번 간격만 따로 집계할 수 있어야 한다.
-        """
+        """간격을 기록하고 그 간격을 돌려준다(첫 호출은 `None`) — 호출자의 구간 집계용."""
         gap: int | None = None
         if self._last_ms is not None:
             gap = now_ms - self._last_ms
