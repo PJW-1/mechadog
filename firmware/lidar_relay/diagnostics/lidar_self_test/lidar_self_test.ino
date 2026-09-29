@@ -198,7 +198,7 @@ void sendRealScans() {
     const bool ok = udp.endPacket() == 1;
     Serial.printf("[e2e] seq=%lld %u bytes -> %s:%d %s\n", enc.next_seq() - 1, r.length,
                   LIDAR_HOST_IP, LIDAR_HOST_PORT, ok ? "sent" : "FAILED");
-    delay(200);  // 5Hz
+    delay(200);  // 이 자가시험의 송신 속도(5Hz)일 뿐 센서 회전 속도가 아니다 — 실측 9.9Hz
   }
   Serial.printf("[e2e] done — device_id=%s boot_id=%s\n", dev, boot);
 }
