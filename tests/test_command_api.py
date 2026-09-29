@@ -1033,7 +1033,7 @@ def _zone_wired(cfg, clock, tmp_path):
     assert set(changed["zones"]["ids"]) == {"A", "B", "C"}
     changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
     runtime = Runtime(changed, device_id="mechdog-01", clock=clock)
-    runtime._baselines.register("A", [], frame_size=(640, 480), now_ms=1, jpeg=b"a")
+    runtime._zone_inspector._baselines.register("A", [], frame_size=(640, 480), now_ms=1, jpeg=b"a")
     return runtime, dashboard_wiring(runtime, changed, vision=None, blackbox=None)
 
 
@@ -1045,19 +1045,19 @@ def _removed():
 
 def test_zone_baseline_reset_clears_on_the_next_tick(cfg, clock, tmp_path, caplog):
     runtime, wiring = _zone_wired(cfg, clock, tmp_path)
-    runtime._confirmer.observe("A", [_removed()])  # 옛 기준으로 센 1회
+    runtime._zone_inspector._confirmer.observe("A", [_removed()])  # 옛 기준으로 센 1회
 
     result = wiring["commands"].zone_baseline("A")
 
     assert result.accepted is True and result.command == "zone_baseline"
     assert wiring["commands"].zone_baseline("C").accepted is True
-    assert runtime._baselines.load("A") is not None, "요청만 세운다"
+    assert runtime._zone_inspector._baselines.load("A") is not None, "요청만 세운다"
     with caplog.at_level("INFO"):
         runtime.tick(clock.advance(100))
-    assert runtime._baselines.load("A") is None
+    assert runtime._zone_inspector._baselines.load("A") is None
     assert list((tmp_path / "snapshots").glob("*.jpg")) == []
     assert "zone_baseline_reset" in [getattr(r, "event", "") for r in caplog.records]
-    assert runtime._confirmer.observe("A", [_removed()]) == (), (
+    assert runtime._zone_inspector._confirmer.observe("A", [_removed()]) == (), (
         "옛 기준으로 센 횟수가 새 기준의 확정을 앞당기면 안 된다"
     )
 
@@ -1070,19 +1070,19 @@ def test_zone_baseline_reset_refuses_zones_outside_the_config(cfg, clock, tmp_pa
 
     assert result.accepted is False
     runtime.tick(clock.advance(100))
-    assert runtime._baselines.load("A") is not None
+    assert runtime._zone_inspector._baselines.load("A") is not None
 
 
 def test_a_zone_baseline_that_cannot_be_cleared_does_not_stop_the_runtime(
     cfg, clock, tmp_path, caplog, monkeypatch
 ):
-    """기준 파일이 10Hz 제어를 죽이면 안 된다 — `_inspect_zone` 의 load·register 와 같다."""
+    """기준 파일이 10Hz 제어를 죽이면 안 된다 — `ZoneInspector.inspect` 의 load·register 와 같다."""
     runtime, wiring = _zone_wired(cfg, clock, tmp_path)
 
     def locked(_zone):
         raise PermissionError("다른 프로그램이 파일을 쥐고 있다")
 
-    monkeypatch.setattr(runtime._baselines, "clear", locked)
+    monkeypatch.setattr(runtime._zone_inspector._baselines, "clear", locked)
     assert wiring["commands"].zone_baseline("A").accepted is True
     with caplog.at_level("INFO"):
         runtime.tick(clock.advance(100))
@@ -1115,7 +1115,7 @@ def test_zone_baseline_endpoint_round_trips(cfg, clock, tmp_path):
         )
         assert foreign.status_code == 403
     runtime.tick(clock.advance(100))
-    assert runtime._baselines.load("A") is None
+    assert runtime._zone_inspector._baselines.load("A") is None
 
 
 def test_zone_baseline_endpoint_is_absent_on_a_read_only_server():
