@@ -28,8 +28,8 @@ addopts = "-q"
 pythonpath = ["."]
 
 [tool.mypy]
-# 좁은 범위(host/common · host/behavior)부터 strict 로 켠다 — CI 는 `mypy host/common host/behavior`.
-# 범위를 넓힐 때는 CI 명령에 패키지를 더하고 아래 follow_imports 예외에서 뺀다.
+# strict 범위 — CI 는 `mypy host/common host/behavior host/slam host/vision`.
+# 범위를 넓힐 때는 CI 명령에 패키지를 더한다.
 python_version = "3.12"
 strict = true
 warn_unused_ignores = true
@@ -37,7 +37,12 @@ warn_redundant_casts = true
 no_implicit_optional = true
 check_untyped_defs = true
 
-# 범위 밖 패키지는 타입 정보만 읽고 오류는 보고하지 않는다(아직 strict 를 통과하지 않는다).
+# 스텁이 없는 서드파티 — 명시한 모듈만 import 오류를 넘긴다.
 [[tool.mypy.overrides]]
-module = ["host.vision.*", "host.slam.*"]
+module = ["onnxruntime", "onnxruntime.*", "torch", "torch.*", "transformers", "transformers.*"]
+ignore_missing_imports = true
+
+# 검사 범위 밖(tools)은 host 가 import 할 때 타입 정보만 읽고 오류는 보고하지 않는다.
+[[tool.mypy.overrides]]
+module = ["tools.*"]
 follow_imports = "silent"

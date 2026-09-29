@@ -7,7 +7,7 @@ matplotlib 는 선택 의존성이라 함수 안에서 import 한다. 운용 UI 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -57,7 +57,7 @@ class LiveMap:
             vmin=0,
             vmax=1,
             origin="lower",
-            extent=grid.extent,
+            extent=cast("tuple[float, float, float, float]", grid.extent),
         )
         (self._path_line,) = self._ax.plot([], [], "b-", linewidth=1)
         (self._robot,) = self._ax.plot([], [], "ro", markersize=7)
@@ -75,7 +75,7 @@ class LiveMap:
         import math
 
         self._image.set_data(to_image(self._grid))
-        self._image.set_extent(self._grid.extent)
+        self._image.set_extent(cast("tuple[float, float, float, float]", self._grid.extent))
         left, right, bottom, top = self._grid.extent
         self._ax.set_xlim(left, right)
         self._ax.set_ylim(bottom, top)
@@ -112,7 +112,7 @@ class PatrolView:
             vmin=0,
             vmax=1,
             origin="lower",
-            extent=grid.extent,
+            extent=cast("tuple[float, float, float, float]", grid.extent),
         )
         for (x, y), label in zip(zone_points, labels, strict=True):
             self._ax.plot(x, y, "gs", markersize=8)

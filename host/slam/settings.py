@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -87,7 +87,7 @@ def read_lidar_section(path: Path = CONFIG_PATH) -> dict[str, Any]:
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict) or not isinstance(loaded.get("lidar"), dict):
         raise ConfigError(f"최상위에 lidar 매핑이 있어야 함: {path}")
-    return loaded["lidar"]
+    return cast(dict[str, Any], loaded["lidar"])
 
 
 def validate_section(section: dict[str, Any]) -> None:
