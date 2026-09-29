@@ -4,7 +4,7 @@
 `-f` 로 읽는다.
 
     cd C:\\dev\\ppe-train\\YOLOX
-    $env:PPE_DATA_DIR = "<저장소>\\datasets\\ppe\\build\\ppe4_cs_v1"
+    $env:PPE_DATA_DIR = "<저장소>\\datasets\\ppe\\build\\ppe4_cs_md_v2"
     ..\\.venv\\Scripts\\python tools\\train.py -f <저장소>\\tools\\ppe\\yolox_exp_ppe_s.py `
         -d 1 -b 16 --fp16 -c ..\\weights\\yolox_s.pth
     # 평가 (공개 test) — 표를 파일로 남겨 export_ppe.py --eval-result 로 넘긴다

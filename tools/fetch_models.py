@@ -58,10 +58,10 @@ class Weight:
     note: str
 
 
-#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v3` 의 자산으로 올린다.
+#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v4` 의 자산이다 (`ppe.json`·`NOTICE.txt` 도 같은 태그에 있다).
 #: ⚠️ **모델을 다시 학습하면 새 태그를 쓴다** — 같은 태그의 자산을 갈아끼우면
 #: 아래 SHA-256 과 어긋나 받은 사람이 검증 실패로 멈춘다.
-PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v3/ppe.onnx"
+PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v4/ppe.onnx"
 
 #: ⚠️ **여기가 정본이다.** `models/README.md` 의 표는 이 값을 사람이 읽게 옮긴 것이다.
 WEIGHTS: tuple[Weight, ...] = (
@@ -76,15 +76,12 @@ WEIGHTS: tuple[Weight, ...] = (
     ),
     # ⚠️ **자체 학습 산출물이다.** 공개 URL 이 없어 팀 Release 자산으로 배포한다.
     # 라이선스와 출처는 `models/NOTICE` 에 있으며 이 파일과 함께 배포한다.
-    #
-    # ⚠️ **업로드 전에 `PPE_RELEASE` 의 OWNER/REPO 를 채운다.** Release 를 먼저
-    # 만들어야 URL 이 정해지므로 값이 비어 있는 동안에는 이 항목만 받지 못한다.
     Weight(
         dest="models/ppe.onnx",
         url=PPE_RELEASE,
-        size=3_677_797,
-        sha256="a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4",
-        note="PPE 5클래스(+person_down) · 라이선스 검토 중 (models/NOTICE) · MechDog Physical AI Team",
+        size=35_779_653,
+        sha256="e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5",
+        note="PPE 4클래스 YOLOX-S · CC BY 4.0 (models/NOTICE) · XIAO 실측 전 후보",
     ),
 )
 
