@@ -3325,7 +3325,7 @@ def test_factory_ppe_settles_once_for_the_primary_track(config: dict, clock: Fak
     assert runtime.escalation.level is Level.L0
     vision.result = vision_result(5, 1600, present=False, hits=0, last_seen_ms=None)
     runtime.tick(1600)
-    assert 1 not in runtime._ppe_done
+    assert not runtime._ppe_judge.is_done(1)
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3435,10 +3435,10 @@ def test_factory_one_missing_frame_does_not_abort_posture(config: dict, clock: F
             result, ppe=PpeVerdict(1, UNDETERMINED, "머리 클리핑", clipped=True)
         )
         runtime.tick(at)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     vision.result = vision_result(8, 800, present=False, hits=0, last_seen_ms=None)
     lines = runtime.tick(800)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     assert not any('"type":"ACTION"' in line for line in lines)
 
 
@@ -3467,7 +3467,7 @@ def test_factory_boundary_jitter_does_not_return_posture(config: dict, clock: Fa
     )
     vision.result = replace(result, ppe=PpeVerdict(1, OK))
     runtime.tick(800)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     assert runtime.behavior.state == "ALERT"
 
 
@@ -3493,7 +3493,7 @@ def test_factory_target_loss_returns_to_stand_before_patrol_moves(
         )
         vision.result = replace(result, ppe=PpeVerdict(1, UNDETERMINED, clipped=True))
         runtime.tick(at)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     vision.result = vision_result(8, 5800, present=False, hits=0, last_seen_ms=None)
     lines = runtime.tick(5800)
     assert runtime.behavior.state == "PATROL"
