@@ -14,7 +14,7 @@ python tools/mock_mechdog.py --device mechdog-01
 python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --dashboard-port 8000
 ```
 
-첫 줄이 가상 로봇을 띄우고, 둘째 줄이 그 가상 로봇을 상대로 호스트 런타임과 관제 대시보드(8000번 포트)를 띄운다. `--no-vision`은 카메라·검출 워커 없이 모션 런타임만 돌린다.
+첫 줄이 가상 로봇을 띄우고, 둘째 줄이 그 가상 로봇을 상대로 호스트 런타임과 관제 대시보드(8000번 포트)를 띄운다. `--no-vision`은 카메라·검출 워커 없이 모션 런타임만 돌린다. 가상 로봇은 실물 펌웨어처럼 안전 래치가 걸린 채 켜지므로, 관제 화면의 «안전 해제 (RESET_SAFE)» 를 누르기 전에는 이동 명령을 적용하지 않는다.
 
 ## 운영 도구
 
