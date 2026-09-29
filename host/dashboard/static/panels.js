@@ -104,7 +104,7 @@ export class OperationalPanels {
   const list=this.el('div',{class:'op-choice-list',role:'listbox','aria-label':name,hidden:true});
   const choice=this.el('div',{class:'op-choice'},trigger,list);
   const items=options.map(([key,text])=>{
-   const item=this.el('button',{type:'button',class:'op-choice-option',role:'option','aria-selected':key===value},this.el('span',{},text),this.el('span',{class:'op-choice-check','aria-hidden':'true'}));
+   const item=this.el('button',{type:'button',class:'op-choice-option',role:'option',tabindex:'-1','aria-selected':key===value},this.el('span',{},text),this.el('span',{class:'op-choice-check','aria-hidden':'true'}));
    item.addEventListener('click',()=>{
     trigger.querySelector('.op-choice-value').textContent=text;
     trigger.setAttribute('aria-label',name+' · '+text);
@@ -121,6 +121,7 @@ export class OperationalPanels {
    return item;
   });
   list.append(...items);
+  choice.addEventListener('focusout',event=>{if(!choice.contains(event.relatedTarget))this.closeFilterChoice(choice)});
   trigger.addEventListener('click',()=>{
    const opening=!choice.classList.contains('open');
    for(const other of this.container.querySelectorAll('.op-choice.open'))this.closeFilterChoice(other);
@@ -257,9 +258,14 @@ export class OperationalPanels {
  // 음성 링크는 메인 루프가 단독 소유하고 웹은 큐로 요청한다. 타자로 친 임의
  // 문장 방송은 폐기했다(ADR-38) — 로봇 스피커(MP3)는 미리 녹음한 문장만 낸다.
  // 폴링은 이 화면을 보고 있을 때만 돈다.
- clearVoicePoll(){if(this.voiceTimer){clearInterval(this.voiceTimer);this.voiceTimer=null}}
+ clearVoicePoll(){
+  clearTimeout(this.voiceTimer);this.voiceTimer=null;
+  // Invalidate responses from a panel that was closed or replaced.
+  this.voiceGeneration=(this.voiceGeneration||0)+1;this.voicePending=null;
+ }
  voice(){
   const link=this.voiceLink;
+  const generation=this.voiceGeneration;
   this.voiceStatusEl=this.el('div',{class:'op-facts'});
   this.voiceEventsEl=this.el('div',{class:'op-voice-log','aria-live':'polite'});
   // ── 멘트 관리: 문구 라이브러리 열람 (출력은 TF 카드에 미리 녹음한 문장뿐이라 여기서 추가하지 않는다) ──
@@ -269,6 +275,7 @@ export class OperationalPanels {
   const refreshPhrases=()=>this.run(async()=>{
    if(!link)return;
    const cats=await link.phrases();
+   if(this.view!=='voice'||generation!==this.voiceGeneration)return;
    const keep=catSel.value;
    catSel.replaceChildren(...cats.map(c=>{
     const opt=this.el('option',{value:c.category},`${c.category} (${c.count})`);
@@ -316,7 +323,7 @@ export class OperationalPanels {
    this.section('오늘 음성·순찰 리포트',this.el('div',{class:'op-toolbar'},this.button('리포트 불러오기',()=>showReport(),{disabled:!link})),reportEl),
    this.section('이번 실행 전체 기록',this.el('div',{class:'op-toolbar'},this.button('전체 기록 불러오기',()=>showTranscript(),{disabled:!link})),this.note('인증 대기 중의 현장 발화 원문은 음성 쪽이 남기지 않습니다(암구호 보호).'),transcriptEl));
   if(link){
-   this.pollVoice();this.voiceTimer=setInterval(()=>this.pollVoice(),2000);refreshPhrases();
+   this.pollVoice();refreshPhrases();
    this.run(async()=>{const list=await link.scenarios();scenarioSel.replaceChildren(this.el('option',{value:''},'시나리오 선택'),...list.map(s=>this.el('option',{value:s.name},s.desc+' ('+s.name+')')))});
   }
  }
@@ -332,9 +339,14 @@ export class OperationalPanels {
    this.el('div',{class:'op-voice-row robot'},this.el('span',{},line.text))));
  }
  async pollVoice(){
-  if(this.view!=='voice'||!this.voiceLink){this.clearVoicePoll();return}
+  if(this.view!=='voice'||!this.voiceLink)return;
+  const generation=this.voiceGeneration;
+  if(this.voicePending===generation)return;
+  clearTimeout(this.voiceTimer);this.voiceTimer=null;this.voicePending=generation;
+  const current=()=>this.view==='voice'&&generation===this.voiceGeneration;
   try{
    const s=await this.voiceLink.status();
+   if(!current())return;
    const mode={active:'대화 활성',standby:'대기 모드'}[s.mode]||s.mode;
    this.voiceStatusEl.replaceChildren(...[
     ['로봇',s.robot],['모드',mode],['동작',s.activity],['경고 대기',s.say_queue+'건'],
@@ -345,8 +357,13 @@ export class OperationalPanels {
      this.el('span',{},e.text))));
    if(!s.events.length)this.voiceEventsEl.append(this.note('아직 기록된 발화가 없습니다.'));
   }catch(error){
-   this.voiceStatusEl.replaceChildren(this.note('음성 서버 응답 없음 — '+error.message,'warning'));
-   this.clearVoicePoll();
+   if(current())this.voiceStatusEl.replaceChildren(this.note('음성 서버 응답 없음 — '+error.message+' · 자동 재연결 중','warning'));
+  }finally{
+   if(current()){
+    this.voicePending=null;
+    // One request at a time; a temporary failure must not stop status updates forever.
+    this.voiceTimer=setTimeout(()=>this.pollVoice(),2000);
+   }
   }
  }
  missions(){
@@ -714,5 +731,5 @@ export class OperationalPanels {
   const link=this.el('a',{href:url,download:name});this.document.body.append(link);link.click();link.remove();
   window.setTimeout(()=>window.URL.revokeObjectURL(url),1000);
  }
- dispose(){this.store.release('패널 종료');this.document.removeEventListener('keydown',this.manualKeyDown,true);this.document.removeEventListener('keyup',this.manualKeyUp,true);this.document.removeEventListener('focusin',this.manualFocus);this.document.defaultView.removeEventListener('blur',this.manualBlur);this.manualPressedKeys.clear();for(const url of this.urls)this.document.defaultView.URL.revokeObjectURL(url);this.urls.clear()}
+ dispose(){this.clearVoicePoll();this.store.release('패널 종료');this.document.removeEventListener('keydown',this.manualKeyDown,true);this.document.removeEventListener('keyup',this.manualKeyUp,true);this.document.removeEventListener('focusin',this.manualFocus);this.document.defaultView.removeEventListener('blur',this.manualBlur);this.manualPressedKeys.clear();for(const url of this.urls)this.document.defaultView.URL.revokeObjectURL(url);this.urls.clear()}
 }

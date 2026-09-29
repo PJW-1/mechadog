@@ -6,6 +6,7 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {GTAOPass} from 'three/addons/postprocessing/GTAOPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {buildFactoryMeshes,makeRobot,disposeFactoryResources} from './scene-materials.js';
+import {createCameraFlight} from './camera-flight.js';
 
 const OVERVIEW = new THREE.Vector3(46,43,55);
 const LOOK_AT = new THREE.Vector3(0,.3,-.7);
@@ -26,11 +27,11 @@ export function getOverviewFrustum(bounds,aspect){
 
 export class FactoryView {
   constructor({worldCanvas,fpvCanvas,layout,onRobot,onError,onProject,onObservation}) {
-    Object.assign(this,{layout,onRobot,onError,onProject,onObservation,selected:'MD-01',playing:false,elapsed:0,frame:0,last:performance.now(),disposed:false,visible:true,active:true,flight:null,worldVisible:true,cameraVisible:true,viewMode:'overview'});
+    Object.assign(this,{layout,onRobot,onError,onProject,onObservation,selected:'MD-01',playing:false,elapsed:0,frame:0,last:performance.now(),disposed:false,visible:true,active:true,worldVisible:true,cameraVisible:true,viewMode:'overview'});
     this.reduced=matchMedia('(prefers-reduced-motion: reduce)');
     this.scene=new THREE.Scene();
     // ACES at exposure 1.12 maps this input to the approved scene ground (#1e1f2c).
-    this.scene.background=new THREE.Color(0x2c2d38);
+    this.scene.background=new THREE.Color(document.querySelector('#glass-theme')?0xdde3d8:0x2c2d38);
     this.renderer=this.createRenderer(worldCanvas,true);
     this.fpvRenderer=this.createRenderer(fpvCanvas,true);
     this.camera=new THREE.OrthographicCamera(-32,32,14.4,-14.4,.1,200);
@@ -46,8 +47,12 @@ export class FactoryView {
     this.controls.minPolarAngle=.05;
     this.controls.screenSpacePanning=false;
     this.controls.addEventListener('change',()=>this.invalidate());
-    // 사람이 끌기 시작하면 진행 중인 시점 이동을 즉시 놓는다 — 손이 이긴다.
-    this.controls.addEventListener('start',()=>{this.flight=null});
+    this.controls.addEventListener('start',()=>this.cancelCameraFlight());
+    this.motionPreferenceHandler=()=>{
+      if(this.reduced.matches&&this.cameraFlight)this.updateCameraFlight(Infinity);
+      this.controls.enableDamping=!this.reduced.matches;this.invalidate();
+    };
+    this.reduced.addEventListener('change',this.motionPreferenceHandler);
     this.scene.add(new THREE.HemisphereLight(0xbfc9ed,0x696878,1.05));
     const key=new THREE.DirectionalLight(0xfff4e7,3.1);
     key.position.set(-12,38,23);
@@ -141,51 +146,25 @@ export class FactoryView {
 
   resize(){
     if(this.disposed)return;
-    const a=this.renderer.domElement.getBoundingClientRect(),b=this.fpvRenderer.domElement.getBoundingClientRect();
-    if(a.width>0&&a.height>0){
-      const aspect=a.width/a.height;
+    // FLIP transforms change visual bounds, not the canvas's layout or video ratio.
+    // ResizeObserver follows layout; sampling transformed bounds could leave a
+    // stretched frame behind after the animation ends without another resize.
+    const a=this.renderer.domElement,b=this.fpvRenderer.domElement;
+    const worldSize={width:a.clientWidth,height:a.clientHeight},videoSize={width:b.clientWidth,height:b.clientHeight};
+    if(worldSize.width>0&&worldSize.height>0){
+      const aspect=worldSize.width/worldSize.height;
       Object.assign(this.camera,getOverviewFrustum(this.factoryBounds,aspect));
       this.camera.updateProjectionMatrix();
-      this.renderer.setSize(a.width,a.height,false);
-      this.composer?.setSize(a.width,a.height);
+      this.renderer.setSize(worldSize.width,worldSize.height,false);
+      this.composer?.setSize(worldSize.width,worldSize.height);
       // Reduced-resolution AO is a spatial quality setting, not simulation frame skipping.
-      this.ao?.setSize(Math.ceil(a.width*.8),Math.ceil(a.height*.8));
+      this.ao?.setSize(Math.ceil(worldSize.width*.8),Math.ceil(worldSize.height*.8));
     }
-    if(b.width>0&&b.height>0){
-      this.fpvRenderer.setSize(b.width,b.height,false);
-      this.fpvCamera.aspect=b.width/b.height;this.fpvCamera.updateProjectionMatrix();
+    if(videoSize.width>0&&videoSize.height>0){
+      this.fpvRenderer.setSize(videoSize.width,videoSize.height,false);
+      this.fpvCamera.aspect=videoSize.width/videoSize.height;this.fpvCamera.updateProjectionMatrix();
     }
     this.invalidate();
-  }
-
-  /** 시점을 옮긴다. **순간이동하면 어디로 갔는지 읽히지 않는다** — 공간 관계를 보이려고 건너간다.
-      ⚠️ `prefers-reduced-motion` 이면 곧바로 옮긴다. 움직임을 줄이는 것이지 기능을 끄는 것이 아니다. */
-  flyTo(position,target,zoom,ms=460){
-    if(this.reduced.matches||ms<=0){
-      this.camera.position.copy(position);this.controls.target.copy(target);this.camera.zoom=zoom;
-      this.flight=null;this.camera.updateProjectionMatrix();this.controls.update();this.invalidate();return;
-    }
-    this.flight={
-      start:performance.now(),ms,
-      fromPosition:this.camera.position.clone(),toPosition:position.clone(),
-      fromTarget:this.controls.target.clone(),toTarget:target.clone(),
-      fromZoom:this.camera.zoom,toZoom:zoom,
-    };
-    this.invalidate();
-  }
-  /** 한 프레임만큼 나아간다. 아직 가는 중이면 참이다. */
-  stepFlight(now){
-    const flight=this.flight;
-    if(!flight)return false;
-    const linear=Math.min(1,(now-flight.start)/flight.ms);
-    // 감속 곡선 — 도착이 확신 있게 멈춘다.
-    const eased=1-Math.pow(1-linear,3);
-    this.camera.position.lerpVectors(flight.fromPosition,flight.toPosition,eased);
-    this.controls.target.lerpVectors(flight.fromTarget,flight.toTarget,eased);
-    this.camera.zoom=flight.fromZoom+(flight.toZoom-flight.fromZoom)*eased;
-    this.camera.updateProjectionMatrix();
-    if(linear>=1)this.flight=null;
-    return true;
   }
 
   selectRobot(id){if(this.robots.some(r=>r.id===id)){this.selected=id;this.invalidate()}}
@@ -196,27 +175,49 @@ export class FactoryView {
   setActive(value){
     if(this.active===!!value)return;
     this.active=!!value;this.controls.enabled=this.active&&this.worldVisible;this.last=performance.now();
-    if(this.active)this.resize();else{cancelAnimationFrame(this.frame);this.frame=0}
+    if(this.active)this.resize();else{this.cancelCameraFlight();cancelAnimationFrame(this.frame);this.frame=0}
+  }
+  cancelCameraFlight(){this.cameraFlight=null;this.controls.enableDamping=!this.reduced.matches}
+  flyTo(position,target,zoom=1,duration=380){
+    // Flush residual orbit damping before taking the new flight's start pose.
+    this.controls.enableDamping=false;this.controls.update();
+    this.cameraFlight=createCameraFlight(
+      {position:this.camera.position.toArray(),target:this.controls.target.toArray(),zoom:this.camera.zoom},
+      {position:position.toArray(),target:target.toArray(),zoom},
+      performance.now(),this.reduced.matches?0:duration
+    );
+    this.updateCameraFlight(performance.now());this.invalidate();
+  }
+  updateCameraFlight(now){
+    if(!this.cameraFlight)return;
+    const pose=this.cameraFlight.sample(now);
+    this.camera.position.fromArray(pose.position);this.controls.target.fromArray(pose.target);this.camera.zoom=pose.zoom;
+    this.camera.updateProjectionMatrix();this.controls.update();
+    if(pose.done)this.cancelCameraFlight();
   }
   setView(mode){
     this.viewMode=mode;
     const robot=this.robots.find(r=>r.id===this.selected);
-    let position,target,zoom=1;
-    if(mode==='top'){position=new THREE.Vector3(.01,75,.01);target=new THREE.Vector3(0,0,0)}
-    else if(mode==='robot'){const pos=robot.model.position;position=new THREE.Vector3(pos.x+12,10,pos.z+13);target=pos.clone();zoom=2.5}
-    else{position=OVERVIEW.clone();target=LOOK_AT.clone()}
-    this.flyTo(position,target,zoom);
+    if(mode==='top')this.flyTo(new THREE.Vector3(.01,75,.01),new THREE.Vector3());
+    else if(mode==='robot'){const pos=robot.model.position;this.flyTo(new THREE.Vector3(pos.x+12,10,pos.z+13),pos,2.5)}
+    else this.flyTo(OVERVIEW,LOOK_AT);
   }
-  /** 버튼 확대·축소. 한 번 누름은 작은 걸음이라 짧게 — 길면 반응이 굼떠 보인다. */
-  zoom(factor){this.flyTo(this.camera.position,this.controls.target,THREE.MathUtils.clamp(this.camera.zoom/factor,.5,6),200)}
+  zoom(factor){
+    const destination=this.cameraFlight?.destination;
+    this.flyTo(destination?new THREE.Vector3().fromArray(destination.position):this.camera.position,
+      destination?new THREE.Vector3().fromArray(destination.target):this.controls.target,
+      THREE.MathUtils.clamp((destination?.zoom??this.camera.zoom)/factor,.5,6),220);
+  }
   focusZone(zone){
-    this.viewMode='zone';
-    const target=new THREE.Vector3(zone.center[0],0,-zone.center[1]);
+    this.viewMode='zone';const target=new THREE.Vector3(zone.center[0],0,-zone.center[1]);
     this.flyTo(target.clone().add(new THREE.Vector3(24,35,30)),target,1.7);
   }
   orbit(angle){
-    const offset=this.camera.position.clone().sub(this.controls.target).applyAxisAngle(new THREE.Vector3(0,1,0),angle);
-    this.flyTo(this.controls.target.clone().add(offset),this.controls.target,this.camera.zoom,260);
+    const destination=this.cameraFlight?.destination;
+    const target=destination?new THREE.Vector3().fromArray(destination.target):this.controls.target.clone();
+    const position=destination?new THREE.Vector3().fromArray(destination.position):this.camera.position.clone();
+    position.sub(target).applyAxisAngle(new THREE.Vector3(0,1,0),angle).add(target);
+    this.flyTo(position,target,destination?.zoom??this.camera.zoom,280);
   }
 
   updateRobot(dt){
@@ -240,8 +241,7 @@ export class FactoryView {
   render(now){
     this.frame=0;if(this.disposed||this.lost||!this.visible||!this.active)return;
     const dt=Math.min((now-this.last)/1000,.1);this.last=now;
-    const flying=this.stepFlight(now);
-    this.updateRobot(dt);if(this.worldVisible)this.controls.update();
+    this.updateRobot(dt);this.updateCameraFlight(now);if(this.worldVisible)this.controls.update();
     for(const mesh of this.factory.interior)mesh.visible=false;
     if(this.worldVisible)this.composer.render();
     const selected=this.robots.find(r=>r.id===this.selected);
@@ -262,11 +262,12 @@ export class FactoryView {
     const size=this.renderer.getSize(new THREE.Vector2());
     const project=(id,position)=>{const p=position.clone().project(this.camera);return{id,x:(p.x+1)*size.x/2,y:(1-p.y)*size.y/2,visible:p.z>-1&&p.z<1}};
     if(this.worldVisible)this.onProject([...this.robots.map(r=>project(r.id,r.model.position.clone().add(new THREE.Vector3(0,1.25,0)))),project('attention',this.attentionPosition.clone().add(new THREE.Vector3(0,1.8,0)))]);
-    if(this.playing||flying)this.invalidate();
+    if(this.playing||this.cameraFlight)this.invalidate();
   }
   dispose(){
     this.disposed=true;cancelAnimationFrame(this.frame);this.resizeObserver.disconnect();
     document.removeEventListener('visibilitychange',this.visibilityHandler);
+    this.reduced.removeEventListener('change',this.motionPreferenceHandler);
     this.controls.dispose();this.composer.passes.forEach(p=>p.dispose?.());this.composer.dispose();
     this.renderer.dispose();this.fpvRenderer.dispose();this.environment.dispose();this.fpvEnvironment.dispose();disposeFactoryResources();
   }

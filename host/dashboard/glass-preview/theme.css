@@ -1,121 +1,288 @@
-/* Design-only skin for the existing V1 DOM. No control or data logic lives here. */
-:root{
- --bg:#eaf3f0;--panel:#f8fcfa;--ink:#1b3033;--muted:#6f898b;
- --rule:#c7dad6;--brass:#178f80;--danger:#cb4b58;
- --r-heading-x:2.4%;--r-camera-shell-x:2.2%;--r-camera-shell-w:39%;
- color-scheme:light;color:var(--ink);
- background:radial-gradient(circle at 14% 12%,#fff 0,transparent 38%),radial-gradient(circle at 89% 80%,#aad6cd 0,transparent 42%),#dce9e7;
- background-size:125% 125%;animation:ambient-shift 20s ease-in-out infinite alternate;
+/* MechaDog white workspace. Layout, surfaces and interaction feedback only. */
+:root {
+  color-scheme:light;
+  --bg:#f4f5f2; --panel:#fff; --ink:#25352e; --muted:#596b61;
+  --rule:#dce2dc; --brass:#8a6935; --danger:#b33949;
+  --nav-width:176px; --r-heading-x:24px; --r-camera-shell-x:22px;
+  --r-camera-shell-w:min(32%,calc((100cqh - 232px)*4/3 + 18px));
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  background:var(--bg); color:var(--ink);
 }
-body{max-width:100%;overflow-x:hidden;background:transparent;color:var(--ink)}
-#app{position:relative;width:calc(100% - 24px);height:calc(100dvh - 24px);min-height:740px;margin:12px;grid-template-rows:72px 84px minmax(470px,1fr) 169px;border:1px solid #ffffffd9;border-radius:28px;background:#f1f8f3a8;box-shadow:0 24px 80px #294e4d27,inset 0 1px #fff;backdrop-filter:blur(24px)}
-#app:before{content:'';position:absolute;inset:-25%;z-index:-1;pointer-events:none;background:radial-gradient(circle at 10% 15%,#b6f1df87,transparent 25%),radial-gradient(circle at 90% 70%,#c9e8fc84,transparent 27%);animation:ambient-float 15s ease-in-out infinite alternate}
-.topbar{padding-inline:2%;gap:16px;border-bottom:1px solid #ffffffce;background:#ffffffa8;backdrop-filter:blur(28px);animation:slide-down .65s both}
-.brand{border-color:#bdd5d0;color:#182e33;font-size:25px;font-weight:800;letter-spacing:-1.1px}
-.main-nav{align-items:center;gap:3px}
-.main-nav>button{align-self:center;min-height:39px;padding:8px 15px;border-radius:99px;color:#597277;font-size:14px;transition:background .25s,color .25s,transform .25s,box-shadow .25s}
-.main-nav>button:hover{transform:translateY(-2px);background:#ffffffd9;color:#1d4745}
-.main-nav>button.active{background:#233a3e;color:#f5fffb;font-weight:700;box-shadow:0 8px 20px #1d484438}
-.main-nav>button.active:after{display:none}
-.nav-more summary{padding:10px 13px;border-radius:99px;color:#668085;font-size:13px;transition:background .25s,color .25s}
-.nav-more summary:hover,.nav-more[open] summary{background:#ffffffc8;color:#1d534e}
-.nav-more.active summary{color:#158a7a}
-.nav-more-menu{top:calc(100% + 13px);border:1px solid #ffffffed;border-radius:18px;background:#f7fffcf2;box-shadow:0 18px 50px #356e6930;backdrop-filter:blur(25px)}
-.nav-more-menu button{border-radius:11px;color:#3f5b5e;font-size:12px}.nav-more-menu button.active{background:#e1f5ee;color:#177a6d}
-.source-status{gap:7px;padding:8px 12px;border:1px solid #cfdfdb;border-radius:99px;background:#f7fcf9;color:#3a7771;font-size:11px;font-weight:700}
-.source-status>.muted{color:#8da3a4}.safety-note{color:#5f777a;margin-left:3px}.safety-note>span,.safety-note>span:last-child{color:#6e898a}.safety-note small{color:#91a4a3}
-.estop{border-radius:13px;background:#c9505d;box-shadow:0 9px 20px #bd4e5a31;font-size:14px;font-weight:700}.estop:hover{background:#b94452;color:#fff}
-.fleet-band{align-items:center;gap:12px;padding:9px 2%;border:0;background:transparent;z-index:15}
-.fleet-list{width:76%;gap:11px}
-.robot-tab,.robot-tab:not(:first-child){justify-content:flex-start;gap:11px;min-height:63px;padding:6px 13px;border:1px solid #ffffffeb;border-radius:17px;background:#ffffffbf;box-shadow:0 7px 20px #3e746e13;transition:transform .25s,background .25s,box-shadow .25s;animation:card-rise .7s both;animation-delay:calc(var(--slot,0)*.1s + .14s)}
-.robot-tab:nth-child(2){--slot:1}.robot-tab:nth-child(3){--slot:2}
-.robot-tab:hover{transform:translateY(-4px);box-shadow:0 14px 25px #3e746e23}
-.robot-tab.selected{background:#25393d;color:#fff;border-color:#2d494b;box-shadow:0 12px 25px #1d474633}
-.robot-tab:before,.robot-tab.selected:after{display:none}
-.robot-preview{width:61px;height:50px}.robot-tab strong{font-weight:700;font-size:14px;gap:5px}.robot-tab strong svg{width:16px;color:#77d7bc}
-.robot-health{padding-left:8px;border-color:#cadbd7;color:#829898;font-size:10px;gap:5px}.robot-tab.selected .robot-health{color:#cfdfda;border-color:#ffffff44}
-.status-dot{width:8px;height:8px;border:0;background:#b1c8c4;box-shadow:0 0 0 4px #dcece7}.robot-tab.selected .status-dot{box-shadow:0 0 0 4px #ffffff23}
-.last-received{font-size:11px;color:#789091}
-.scene-stage{margin:0 1.2%;border:1px solid #ffffffd9;border-radius:23px;background:#d7e4dd;box-shadow:0 10px 34px #31574b1e;animation:card-rise .75s .23s both}
-.scene-stage:before{content:'';position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(110deg,#f5fff7a8 0%,#f5fff744 48%,#e3f3ee20 100%)}
-.scene-stage:after{content:'';position:absolute;inset:0;z-index:2;pointer-events:none;background:radial-gradient(circle at var(--spot-x,72%) var(--spot-y,35%),#f7ffed50,transparent 38%);transition:background-position .2s}
-#world{filter:brightness(1.23) saturate(.78)}
-.scene-heading{top:22px;left:2.4%;gap:18px;color:#152c31;text-shadow:0 1px 12px #f4fff9}.scene-heading h1{font-size:33px;font-weight:800;letter-spacing:-.06em}.scene-heading p{color:#3c6060;font-size:13px;font-weight:600}
-.view-switch{top:20px;right:2.2%;gap:5px;padding:4px;border:1px solid #ffffffcb;border-radius:99px;background:#f7fffae5;box-shadow:0 8px 22px #24574e1a;backdrop-filter:blur(20px)}
-.view-switch button{min-width:85px;height:38px;padding:6px 13px;border:0;border-radius:99px;background:transparent;color:#5c7878;font-size:12px;transition:background .25s,transform .25s,color .25s}
-.view-switch button:hover{transform:translateY(-2px);background:#e9f7f0}.view-switch button.selected{border:0;background:#263d3f;color:#dffaf0}.view-switch button svg{width:17px;height:17px}
-.map-marker,.attention-marker,.scene-legend{border-color:#ffffffc9;border-radius:99px;background:#f8fffae8;color:#226b61;box-shadow:0 9px 25px #205f5131;backdrop-filter:blur(20px)}
-.map-marker.selected{color:#16594f;border-color:#41aa90}.attention-marker>span:first-child{background:#f4cb77;color:#6b4d1c}.attention-marker:after{background:#61b39b}
-.scene-legend{font-size:11px;padding:6px 12px}
-.scene-controls{right:2.2%;bottom:20px;gap:6px;padding:5px;border:1px solid #ffffffdd;border-radius:18px;background:#f8fffce8;box-shadow:0 12px 24px #2a5d5023;backdrop-filter:blur(18px)}
-.scene-controls button{width:37px;height:37px;padding:7px;border:0;border-radius:12px;background:transparent;color:#3c6865;transition:background .25s,transform .25s}.scene-controls button:hover{background:#dff3eb;transform:translateY(-2px)}#reset-view{min-width:116px;width:auto}
-.camera-dock{border:1px solid #ffffffeb;border-radius:20px;background:#f9fffcf2;box-shadow:0 23px 55px #18403f43,0 0 0 1px #ffffff8c;animation:camera-glow 8s ease-in-out infinite alternate}
-.camera-header{height:48px;border-bottom:1px solid #d6e8e2;color:#18363a}.camera-header h2{font-size:14px;font-weight:700}.camera-header button{color:#577574}.camera-header button+button{border-color:#d8e7e2}
-.camera-status{height:34px;color:#78918d;font-size:11px}.current-video{color:#168e7d;border-color:#2eb198}
-.camera-viewport{margin:0 8px;border:0;border-radius:13px;background:#26343a}.frame-badge{border-radius:99px;background:#1d353ad9;color:#f1fcf7;font-size:10px}
-.camera-footer{color:#708b89}.camera-robot-switch button{min-width:65px;border:1px solid #d6e5df;border-radius:8px;color:#5c7b79;font-size:10px}.camera-robot-switch button.selected{border-color:#30a994;background:#e2f8ef;color:#167d6e}
-.operation-rail{grid-template-columns:33% 34.5% 32.5%;gap:12px;padding:12px 2%;border:0;background:transparent}
-.operation-rail>section,.operation-rail>section+section{min-height:0;padding:16px 18px;border:1px solid #ffffffeb;border-radius:18px;background:#ffffffb8;box-shadow:0 8px 23px #3e746e10;transition:transform .3s,box-shadow .3s;animation:card-rise .7s both;animation-delay:calc(var(--slot,0)*.1s + .32s)}
-.operation-rail>section:nth-child(2){--slot:1}.operation-rail>section:nth-child(3){--slot:2}
-.operation-rail>section:hover{transform:translateY(-4px);box-shadow:0 13px 27px #3e746e20}
-.mission-heading{gap:8px}.mission-heading>span svg{width:21px;color:#269985}.mission-heading h2{font-size:15px;font-weight:700;letter-spacing:-.025em}.mission-heading h2 span{font-size:10px;color:#8ca2a0}
-.mission-progress{margin-top:11px;padding:0;font-size:12px}.step{color:#6e8a89}.step:before{width:14px;height:14px;margin-right:5px;border-color:#aacbc3}.step+.step:after{width:25px;margin:0 5px;background:#abc9c1}.step.current{color:#168c79}.step.current:before{border-color:#27aa90;background:#27aa90;box-shadow:inset 0 0 0 3px #effaf5}
-.mission-progress #demo-toggle{border-color:#a4d8c6;color:#208f7d;background:#ebf9f2}
-.actual-status{gap:13px}.actual-status>span svg{width:34px;height:34px;color:#66a9a0}.actual-status strong{font-size:12px;font-weight:700;color:#25454a}.actual-status p,.event-summary p{margin-top:5px;color:#7e9695;font-size:10px}.actual-status[data-tone=stale] strong,.actual-status[data-tone=closed] strong{color:#ad7541}
-.event-summary{gap:10px}.event-summary>span{margin-top:5px;color:#57a998}.event-summary>span svg{width:22px;height:24px}.event-summary strong{font-size:13px;font-weight:700;color:#25454a}.event-summary .outline-button{min-width:95px;height:39px;margin-left:auto;padding:7px 10px}
-.outline-button{border-color:#a6d7cb;border-radius:11px;background:#ecfaf3;color:#188b78;font-size:11px;font-weight:700}
-#app.workspace-open{height:calc(100dvh - 24px);grid-template-rows:72px minmax(0,1fr)}
-.workspace-open .detail-panel{background:#eef6f2}.workspace-open .detail-panel>header{min-height:88px;border-color:#d9e8e1;background:#ffffffba}.workspace-open #panel-title{color:#20383b}.workspace-open #close-panel{border-color:#c9ded7;border-radius:99px;background:#ffffffcc;color:#33635f}
-.workspace-open #panel-content{background:radial-gradient(circle at 90% 5%,#d7f3e7,transparent 34%),#edf5f1;color:#294145;scrollbar-color:#9fc5bb #eff8f4}
-.workspace-open .op-intro .op-note,.op-note,.op-field,.op-check{color:#6e8788}.op-eyebrow{color:#5c8882}.op-badge{border-color:#bad8cc;border-radius:99px;background:#f2fbf5;color:#3d756c}.op-badge.amber{border-color:#e6c783;background:#fff7e7;color:#9c6b2d}
-.workspace-open .op-section,.workspace-open .op-manual-workspace,.workspace-open .robot-status-sheet{padding:22px;border:1px solid #ffffffed;border-radius:20px;background:#ffffffbf;box-shadow:0 9px 28px #32675c13;animation:card-rise .45s both}
-.workspace-open .op-section{margin-top:18px}.workspace-open .op-section h3,.workspace-open .op-status-heading h2{color:#1d3a3d}
-.op-button{border-color:#c9ded6;border-radius:11px;background:#ffffffc9;color:#38615e;transition:transform .2s,background .2s,border-color .2s}.op-button:hover:not(:disabled){transform:translateY(-2px);border-color:#8bc9b6;background:#edfaf3}.op-button.primary,.op-button.selected,.op-button[aria-pressed=true]{border-color:#7fc8b4;background:#e4f8ec;color:#0e826f}
-#panel-content input:not([type=checkbox]):not([type=file]),#panel-content select,#panel-content textarea{border-color:#c9ded7;border-radius:10px;background:#f9fdfb;color:#213e40}#panel-content input::placeholder,#panel-content textarea::placeholder{color:#92aaa5}#panel-content select{color-scheme:light}
-.op-facts>div,.op-event-row,.op-session-list article,.op-record,.op-escalation li{border-color:#d5e5de}.op-facts dt,.workspace-open .op-facts dt{color:#74908b}.op-facts dd,.workspace-open .op-facts dd{color:#244649}
-.op-event-list,.op-event-detail{border-color:#b8d8cc}.op-event-row{color:#325653}.op-event-row:hover,.op-event-row.selected{background:#e9f7ef}.op-event-row.selected{border-left-color:#2dae91}.op-row-meta,.op-row-foot{color:#738d89}.op-row-foot>span:last-child{color:#188c78}
-.op-evidence-empty{border-color:#b9d6ca;border-radius:15px;background:#f4fbf6}.op-evidence-empty strong{color:#466b66}.op-evidence-empty span{color:#78918c}.op-raw pre{background:#e7f1ec;color:#335550}.op-note.warning{border-color:#dcaa63;background:#fff6e8;color:#906833}
-.op-drive{border-color:#c1d9d1;border-radius:11px;background:#e8f4ee;color:#436e69}.op-drive.stop{border-color:#d9909b;color:#b64d5c;background:#fff3f3}.op-drive.pressed{background:#49b99b;color:#fff}
-.op-device-switch .op-button,.op-subnav .op-button{border-radius:13px}.robot-inspection,.op-manual-controls{border-color:#d3e4dc}
-dialog{border-color:#ffffff;border-radius:24px;background:#f7fcf9;color:#264247;box-shadow:0 25px 70px #173e403f}dialog p{color:#5d7877}dialog::backdrop{background:#122e3180;backdrop-filter:blur(10px)}
-#toast{border-color:#b5d6c9;border-radius:13px;background:#f2fff8;color:#245e53;box-shadow:0 12px 34px #1b4e4938}
-@keyframes ambient-shift{to{background-position:8% 16%}}
-@keyframes ambient-float{to{transform:translate3d(4%,3%,0) scale(1.08)}}
-@keyframes slide-down{from{opacity:0;transform:translateY(-18px)}to{opacity:1;transform:translateY(0)}}
-@keyframes card-rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
-@keyframes camera-glow{to{box-shadow:0 24px 60px #17645a61,0 0 0 1px #ffffffcf}}
-@media(max-width:1450px){.topbar{gap:10px}.brand{font-size:21px;padding-right:12px}.main-nav>button{padding:7px 10px;font-size:12px}.source-status{font-size:10px}.safety-note{display:none}.robot-health{display:none}.operation-rail{gap:8px}.operation-rail>section,.operation-rail>section+section{padding:12px}.mission-heading h2{font-size:13px}.event-summary .outline-button{min-width:90px}}
-@media(max-width:800px){#app{width:100%;height:auto;min-height:100dvh;margin:0;border-radius:0;grid-template-rows:106px 82px 720px auto}.topbar{padding:8px 12px}.brand{font-size:20px}.main-nav{height:41px}.main-nav>button{font-size:11px;padding:6px 9px}.nav-more summary{font-size:11px;padding:8px}.source-status{font-size:9px}.fleet-band{padding:7px 8px}.fleet-list{width:100%;gap:5px}.robot-tab,.robot-tab:not(:first-child){padding:5px;gap:3px;justify-content:center;flex-direction:column}.robot-preview{width:42px;height:36px}.robot-tab strong{font-size:11px}.last-received{display:none}.scene-stage{margin:0 7px}.scene-heading{top:16px}.scene-heading h1{font-size:25px}.scene-heading p{font-size:10px}.view-switch{top:88px;right:10px}.view-switch button{min-width:65px;font-size:10px;padding:5px}.operation-rail{gap:7px;padding:9px}.operation-rail>section,.operation-rail>section+section{padding:12px}#app.workspace-open{height:100dvh;grid-template-rows:106px minmax(0,1fr)}.workspace-open .detail-panel>header{min-height:75px}}
-@media(prefers-reduced-motion:reduce){:root,#app:before,.topbar,.robot-tab,.scene-stage,.camera-dock,.operation-rail>section,.workspace-open .op-section,.workspace-open .op-manual-workspace,.workspace-open .robot-status-sheet{animation:none!important}*{transition-duration:.01ms!important}}
+* {scrollbar-color:#b7c2b9 var(--bg)}
+body {background:var(--bg);color:var(--ink);overflow-x:hidden}
+button {transition:background-color 160ms,color 160ms,border-color 160ms,box-shadow 160ms}
+button:hover {color:var(--ink);background:#edf1eb}
+button:active:not(:disabled) {background:#e3eae2}
+:focus-visible {outline:2px solid #477962;outline-offset:3px}
+::selection {color:#173f2d;background:#d4e5d7}
+#panel-title:focus,#scene-title:focus {outline:none}
+#app,#app.workspace-open {position:relative;width:100%;height:100dvh;min-height:700px;margin:0;border:0;border-radius:0;box-shadow:none;background:var(--bg)}
+#app {grid-template-rows:64px 88px minmax(360px,1fr) 124px}
+.topbar {gap:16px;padding:0 24px;background:#fff;border-color:var(--rule);backdrop-filter:none}
+.brand {padding:0;border:0;color:#233c30;font-size:23px;font-weight:800;letter-spacing:-.035em}
+.source-status {gap:7px;font-size:12px;color:#596b61}
+.source-status>.muted {color:#667368}
+.safety-note,.safety-note>span,.safety-note>span:last-child {color:var(--muted)}
+.estop {min-height:40px;border-radius:8px;box-shadow:none;font-size:13px;font-weight:700}
+.estop:hover {background:#9f2f3e;color:#fff}
+.estop:not(.is-live) {border:1px solid #cfd9cf;background:#f0f4ed;color:#34503d}
+.estop:not(.is-live):hover {background:#e5ece1;color:#263f2e}
+.main-nav {gap:4px}
+.main-nav button,.nav-more summary {font-size:13px;color:#5c6b61}
+.main-nav button.active {color:#fff;background:#2c4839;font-weight:600}
+.main-nav button.active:after {display:none}
+.nav-icon {display:inline-flex;flex:none}
+.nav-icon svg {width:19px;height:19px;stroke-width:1.7}
+.nav-more summary {display:flex;align-items:center;gap:10px;border-radius:8px}
+.nav-more.active summary {background:#e7eee4;color:#294d37}
+.nav-more summary:hover {background:#eef2eb;color:#294d37}
+.nav-more-menu {padding:6px;background:#fff;border:1px solid var(--rule);border-radius:12px;box-shadow:0 12px 32px #243b2b21}
+.nav-more-menu button {min-height:42px;border-radius:7px;color:#455a49}
+.nav-more-menu button.active {color:#254a33;background:#e9f0e6}
+.fleet-band {align-items:center;gap:20px;padding:12px 24px;background:var(--bg);border:0}
+.fleet-list {width:min(76%,800px);gap:10px}
+.robot-tab,.robot-tab:not(:first-child) {min-height:64px;gap:12px;padding:4px 16px;border:1px solid var(--rule);border-radius:10px;background:#fff;color:#3d5143}
+.robot-tab:before,.robot-tab.selected:after {display:none}
+.robot-tab:hover {background:#edf2e9;border-color:#a5b5a4}
+.robot-tab.selected {background:#e7eee0;border-color:#b5c6a7;color:#2c482e}
+.robot-preview {width:58px;height:46px}
+.robot-tab strong {gap:8px;font-size:14px;font-weight:700}
+.robot-tab strong svg {width:16px;color:#62744e}
+.robot-health {padding-left:10px;gap:6px;border-color:var(--rule);color:#61705e;font-size:11px}
+.status-dot {width:7px;height:7px;border:0;background:#9da99d}
+.last-received {font-size:11px;color:#60705f}
+.scene-stage {margin:0 24px;border:1px solid #d7dfd5;border-radius:16px;background:#e6ebe2}
+#world,.markers {width:116%;transform:none}
+.scene-heading {top:24px;left:24px;display:block;color:var(--ink);text-shadow:none}
+.scene-heading h1 {font-size:28px;letter-spacing:-.035em;line-height:1.4}
+.scene-heading p {margin-top:5px;color:#576750;font-size:12px;font-weight:500}
+.view-switch {top:24px;right:22px;gap:3px;padding:4px;border:1px solid #d1dbcd;border-radius:9px;background:#fdfefbf0}
+.view-switch button {min-width:78px;height:36px;min-height:36px;padding:7px 10px;border:0;border-radius:6px;background:transparent;color:#586e57;font-size:12px}
+.view-switch button.selected {background:#2f4938;color:#fff;border:0}
+.view-switch button:hover:not(.selected) {background:#e8eee2}
+.view-switch button svg {width:17px;height:17px}
+.map-marker,.attention-marker,.scene-legend {border:1px solid #c5cdbb;border-radius:7px;background:#fffffff2;color:#4e643e;box-shadow:0 4px 12px #30402712}
+.map-marker {min-height:32px;padding:5px 9px;font-size:12px}
+.map-marker.selected {border-color:#7b905f;background:#eef3e5;color:#354e26}
+.attention-marker {font-size:12px;min-height:40px}
+.attention-marker>span:first-child {width:22px;height:22px;font-size:15px;line-height:22px;background:#eddfba;color:#73582d}
+.attention-marker:after {background:#a69568}
+.scene-legend {left:55%;bottom:21%;font-size:11px;padding:5px 9px}
+.scene-controls {right:22px;bottom:20px;gap:2px;padding:4px;border:1px solid #d3ddce;border-radius:10px;background:#fffffff0;box-shadow:0 6px 20px #35492c10}
+.scene-controls button {width:38px;height:38px;min-height:38px;padding:8px;border:0;border-radius:6px;background:transparent;color:#48603e}
+.scene-controls button:hover {background:#e4ecdd}
+#reset-view {min-width:108px;padding-inline:10px;font-size:12px}
+.camera-dock {bottom:20px;width:var(--r-camera-shell-w);border:1px solid #d1dbcc;border-radius:12px;background:#fff;box-shadow:0 12px 32px #32472b21;transform-origin:top left}
+.camera-header {height:48px;gap:8px;padding:0 8px 0 14px;border-color:#e1e7dc;color:#2b4230}
+.camera-header h2 {font-size:13px;font-weight:700;letter-spacing:0}
+.camera-header button {min-width:32px;min-height:32px;padding:4px;color:#586e50}
+.camera-header button+button {margin-left:3px;padding-left:7px;border-color:var(--rule)}
+.camera-status {height:34px;gap:12px;color:#63715c;font-size:11px}
+.current-video {border-color:#81946b;color:#53643e}
+.camera-viewport {border:0;border-radius:7px;max-height:calc(100cqh - 224px);background:#374235}
+#stage .camera-dock:not([style*=width],.expanded) .camera-viewport {max-height:calc(100cqh - 232px)}
+.frame-badge {background:#29372cdd;border-radius:4px;color:#fff;font-size:10px}
+.camera-footer {height:46px;padding:0 28px 0 12px;color:#596b53;font-size:10px}
+#frame-time {min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.camera-robot-switch {gap:3px}
+.camera-robot-switch button {min-width:49px;min-height:28px;padding:4px;border:1px solid #d4decd;border-radius:5px;color:#5e7053;font-size:10px}
+.camera-robot-switch button.selected {background:#e9f0df;border-color:#acbe93;color:#3b592d}
+.camera-dock .resize-se {width:26px;height:26px}
+.camera-dock .resize-se:before {right:7px;bottom:7px;border-color:#94a087}
+.camera-resize:hover {background:#dbe5d340}
+.op-manual-camera .camera-dock .camera-viewport {margin-inline:auto;border-radius:8px}
+.operation-rail {grid-template-columns:1.2fr 1fr 1.05fr;gap:0;margin:16px 24px 20px;padding:0;border:1px solid var(--rule);border-radius:10px;background:#fff}
+.operation-rail>section,.operation-rail>section+section {min-height:0;padding:12px 18px;border:0;border-radius:0;box-shadow:none;background:transparent}
+.operation-rail>section+section {border-left:1px solid var(--rule)}
+.mission-heading {gap:9px}
+.mission-heading>span svg,.event-summary>span svg {width:19px;height:21px;color:#8a7041}
+.mission-heading h2 {font-size:14px;font-weight:700}
+.mission-heading h2 span {font-size:10px;color:#64735d}
+.mission-progress {margin-top:10px;padding:0;font-size:11px}
+.step {color:#61705b}
+.step:before {width:12px;height:12px;margin-right:5px;border-color:#b2bea7}
+.step+.step:after {width:15px;margin:0 5px;background:#ced7c5}
+.step.current {color:#6d592f}
+.step.current:before {border-color:#9c8451;background:#9c8451;box-shadow:inset 0 0 0 2px #fff}
+.mission-progress #demo-toggle {background:#f4f6ee;border-color:#d2ddc6;color:#476237}
+.actual-status {gap:12px}
+.actual-status>span svg {width:28px;height:28px;color:#748a66}
+.actual-status strong,.event-summary strong {color:#354b36;font-size:12px;font-weight:600}
+.actual-status p,.event-summary p {color:#64745c;font-size:11px;margin-top:4px}
+.actual-status p:empty,.event-summary p:empty {display:none}
+.actual-status[data-tone=stale] strong,.actual-status[data-tone=closed] strong {color:#886135}
+.event-summary {gap:10px}
+.event-summary .outline-button {min-width:84px;height:36px;margin-left:auto;padding:7px 9px}
+.outline-button {border:1px solid #c5d2ba;border-radius:7px;background:#f3f6ed;color:#466236;font-size:11px;font-weight:600}
+#app.workspace-open {grid-template-rows:64px minmax(0,1fr)}
+.workspace-open .detail-panel {background:var(--bg)}
+.workspace-open .detail-panel>header {min-height:98px;padding:24px 36px;gap:20px;background:#fff;border-color:var(--rule)}
+.workspace-open #panel-title {color:#263c2e;font-size:28px;font-weight:700;letter-spacing:-.035em}
+.workspace-open #close-panel {min-height:38px;padding:8px 12px;border-color:#d8e0d4;border-radius:7px;background:#fff;color:#526749;font-size:12px}
+.workspace-open #panel-content {max-width:1440px;padding:28px 36px 56px;background:var(--bg);color:var(--ink);font-size:14px}
+.workspace-open .op-intro {margin-bottom:24px;gap:16px}
+.op-note,.workspace-open .op-intro .op-note,.op-field,.op-check,.op-row-meta,.op-row-foot {color:#586a50}
+.workspace-open .op-intro .op-note {max-width:70ch;line-height:1.8}
+.op-eyebrow {color:#586a50}
+.op-badge {padding:4px 9px;border-color:#d0ddc5;border-radius:5px;background:#eef4e7;color:#416132}
+.op-badge.amber {border-color:#dfcfaa;background:#fbf5e7;color:#826333}
+.workspace-open .op-section,.workspace-open .robot-status-sheet {margin-top:24px;padding:24px;border:1px solid #dce3d5;border-radius:10px;background:#fff;box-shadow:none}
+.workspace-open .op-section .op-section {padding:18px 0 0;border:0;border-top:1px solid var(--rule);border-radius:0}
+.workspace-open .op-section h3,.workspace-open .op-status-heading h2 {color:#2d442f}
+.workspace-open .op-section h3 {font-size:16px;margin-bottom:16px}
+.op-button {border-color:#cdd8c5;border-radius:7px;background:#fff;color:#48613b}
+.op-button:hover:not(:disabled) {background:#edf3e6;border-color:#9eb58c;color:#345327}
+.op-button.primary {border-color:#31513b;background:#31513b;color:#fff}
+.op-button.primary:hover:not(:disabled) {background:#243e2b;color:#fff}
+.op-button.selected,.op-button[aria-pressed=true] {background:#e7efdd;border-color:#b0c499;color:#3c582c}
+.op-button:disabled,.op-drive:disabled {opacity:.6}
+#panel-content input:not([type=checkbox]):not([type=file]),#panel-content select,#panel-content textarea {border-color:#cbd7c4;border-radius:7px;background:#fff;color:#304b30}
+#panel-content input::placeholder,#panel-content textarea::placeholder {color:#64745c;opacity:1}
+#panel-content select {color-scheme:light}
+.op-facts>div,.op-event-row,.op-session-list article,.op-record,.op-escalation li {border-color:#e1e7dc}
+.op-facts dt,.workspace-open .op-facts dt {color:#5e7054}
+.op-facts dd,.workspace-open .op-facts dd {color:#324c31;font-variant-numeric:tabular-nums}
+.workspace-open .op-evidence-workspace {gap:24px;grid-template-columns:minmax(270px,.85fr) minmax(0,1.45fr)}
+.op-event-list {border:1px solid var(--rule);border-radius:10px;background:#fff;overflow:hidden}
+.op-event-row {color:#374f33;border-left-width:1px}
+.op-event-row:hover {background:#f1f5ea;color:#314f27}
+.op-event-row.selected {background:#eaf1e1;border-left-color:#829a69;color:#314f27}
+.op-row-foot>span:last-child {color:#6d592f}
+.op-event-detail {border:0}
+.op-evidence-empty {border-color:#d6dfcc;border-radius:8px;background:#f2f5ed}
+.op-evidence-empty strong {color:#4d643e}
+.workspace-open .op-evidence-empty span {color:#596c4c}
+.op-raw pre {background:#eef2e8;color:#3d5533;border-radius:6px}
+.op-note.warning {border-color:#d5bf8f;background:#fcf7e9;color:#7a6034}
+.workspace-open .op-manual-workspace {padding:24px;border:1px solid var(--rule);border-radius:12px;background:#fff;box-shadow:none}
+.op-manual-controls {border-color:#d7e1d0}
+.op-drive {border-color:#cbd8c0;border-radius:7px;background:#f1f5ea;color:#4f663f}
+.op-drive.stop {border-color:#d5a6a7;background:#fff4f1;color:#9b3e44}
+.op-drive.pressed,.op-drive.pressed:hover {background:#426335;color:#fff}
+.workspace-open [data-page=settings] {grid-template-columns:180px minmax(0,1fr);column-gap:32px}
+.workspace-open [data-page=settings]>.op-subnav {gap:4px}
+.workspace-open [data-page=settings]>.op-subnav .op-button {padding:12px;border-radius:7px;color:#546c45}
+.workspace-open [data-page=settings]>.op-subnav .op-button.selected {border-color:#c4d4b7;background:#e8f0de;color:#345328}
+.workspace-open [data-page=settings]>.op-section {margin-bottom:24px}
+.workspace-open .op-device-switch {margin-bottom:24px}
+.workspace-open .op-device-switch .op-button {border-radius:0}
+.workspace-open .op-device-switch .op-button[aria-pressed=true] {border-bottom-color:#69834e;background:#eaf1e2}
+.op-device-switch .op-button>span {color:#5d7150}
+.robot-detail-layout {gap:24px}
+.robot-inspection {border-color:#d1ddc7;border-radius:12px;background:#e9eee3}
+.robot-preview-error {background:#eff3e9;color:#536b43!important}
+.robot-view-controls {border-color:#d2ddc8}
+.robot-status-sheet {margin-top:0!important}
+.op-spark {border-color:#d5dfcc;border-radius:6px}
+.op-spark figcaption,.op-spark-range,.op-spark-empty {color:#5f7352}
+.op-spark polyline {stroke:#758c55}
+dialog {border:1px solid #d3dfca;border-radius:14px;background:#fff;color:#2c452d;box-shadow:0 24px 72px #15290d38}
+dialog p {color:#5a6d4f}
+dialog::backdrop {background:#20311873}
+dialog[open] {animation:dialog-enter 220ms var(--ease-out)}
+#toast {border-color:#c7d7bd;border-radius:9px;background:#fff;color:#36532a;box-shadow:0 8px 24px #2a451923}
+#toast:not([hidden]) {animation:toast-enter 200ms var(--ease-out)}
+@keyframes dialog-enter {from {opacity:.6;transform:translateY(8px) scale(.985)}to {opacity:1;transform:none}}
+@keyframes toast-enter {from {opacity:.6;transform:translate(-50%,6px)}to {opacity:1;transform:translate(-50%,0)}}
+@media(min-width:900px) {
+  html,body {height:100%;overflow:hidden}
+  .main-nav {position:absolute;top:64px;bottom:0;left:0;z-index:60;width:var(--nav-width);height:auto;padding:24px 12px 20px;display:flex;flex-direction:column;align-items:stretch;gap:6px;border-right:1px solid var(--rule);background:#fff}
+  .main-nav>button {flex:none;justify-content:flex-start;gap:11px;width:100%;min-height:44px;padding:10px 12px;border-radius:8px;font-size:13px}
+  .nav-more {margin-top:auto;align-self:stretch}
+  .nav-more summary {min-height:44px;padding:10px 12px;font-size:12px}
+  .nav-more summary:after {margin-left:auto}
+  .nav-more-menu {top:auto;bottom:0;left:calc(100% + 10px);min-width:176px}
+  .fleet-band {padding-left:calc(var(--nav-width) + 24px)}
+  .scene-stage {margin-left:calc(var(--nav-width) + 24px)}
+  .operation-rail {margin-left:calc(var(--nav-width) + 24px)}
+  #app.workspace-open {grid-template-columns:var(--nav-width) minmax(0,1fr)}
+  .workspace-open .topbar {grid-column:1/-1}
+  .workspace-open .detail-panel {grid-column:2;grid-row:2;min-width:0}
+}
+@media(max-width:1250px) and (min-width:900px) {
+  :root {--nav-width:156px}
+  .robot-health,.last-received {display:none}
+  .fleet-list {width:100%}
+  .camera-header button span:last-child {display:none}
+  .scene-heading h1 {font-size:25px}
+  .view-switch button {min-width:60px;padding-inline:8px;gap:5px}
+  .operation-rail>section,.operation-rail>section+section {padding:10px 12px}
+  .mission-progress {flex-wrap:wrap}
+  .mission-heading h2 span {display:none}
+  .workspace-open #panel-content {padding:24px}
+}
+@media(max-width:899px) {
+  :root {--r-camera-shell-w:calc(100% - 24px)}
+  #app:not(.workspace-open) {height:auto;min-height:100dvh;grid-template-rows:110px 86px max-content auto;overflow:visible}
+  #app.workspace-open {min-height:0;grid-template-rows:110px minmax(0,1fr)}
+  .topbar {display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-rows:44px 42px;gap:8px;padding:8px 16px}
+  .brand {font-size:20px;grid-column:1;grid-row:1}
+  .source-status {grid-column:2;grid-row:1;font-size:10px}
+  .source-status>.muted,.safety-note {display:none}
+  .topbar>.estop {grid-column:3;grid-row:1;min-height:44px;padding:6px 10px;font-size:12px}
+  .mobile-stop-note {font-size:10px}
+  .main-nav {grid-column:1/-1;grid-row:2;justify-content:flex-start;align-items:center;gap:3px;min-width:0;height:42px}
+  .main-nav>button {flex:none;min-height:40px;padding:7px 10px;border-radius:7px;font-size:12px;gap:6px}
+  .main-nav .nav-icon {display:none}
+  .nav-more summary {padding:8px;font-size:12px}
+  .nav-more-menu {left:auto;right:0;top:calc(100% + 10px)}
+  .fleet-band {padding:10px 12px}
+  .fleet-list {width:100%;gap:6px}
+  .robot-tab,.robot-tab:not(:first-child) {min-height:64px;padding:4px 8px;gap:7px;justify-content:center;flex-direction:row}
+  .robot-preview {width:46px;height:40px}
+  .robot-tab strong {font-size:12px;gap:4px}
+  .robot-tab strong svg {width:13px}
+  .robot-health,.last-received {display:none}
+  #stage {display:flex;flex-direction:column;gap:12px;height:max-content;min-height:0;margin:0 12px;padding:460px 0 12px;container-type:inline-size;border-radius:12px}
+  #world,.markers {width:100%;height:460px}
+  .scene-heading {top:18px;left:18px}
+  .scene-heading h1 {font-size:24px}
+  .scene-heading p {font-size:11px}
+  .view-switch {top:94px;right:16px;left:16px;justify-content:space-between}
+  .view-switch button {flex:1;min-width:0;font-size:11px}
+  .attention-marker {left:63%}
+  .scene-legend {bottom:auto;top:395px;left:24px;font-size:10px}
+  #stage .scene-controls {position:relative;order:1;inset:auto;align-self:stretch;justify-content:space-between;margin:0 12px;z-index:7;gap:2px}
+  #stage .scene-controls button {width:44px;height:44px;min-height:44px}
+  #stage #reset-view {min-width:112px;font-size:11px;padding-inline:6px;white-space:nowrap}
+  #stage .camera-dock {position:relative;order:2;inset:auto!important;width:calc(100% - 24px);max-width:none;margin:0 12px;transform:none}
+  #stage .camera-dock .camera-viewport {max-height:none}
+  .scene-stage:has(.camera-dock.expanded) .scene-controls {display:flex}
+  .camera-header button {min-height:40px;min-width:40px}
+  .camera-footer {font-size:10px}
+  .camera-robot-switch button {min-height:36px}
+  .camera-dock .resize-se {display:none}
+  .operation-rail {grid-template-columns:1fr;margin:12px 12px 40px}
+  .operation-rail>section,.operation-rail>section+section {padding:18px;border-left:0}
+  .operation-rail>section+section {border-top:1px solid var(--rule)}
+  .mission-heading h2 {font-size:14px}
+  .actual-status strong,.event-summary strong {font-size:13px}
+  .workspace-open .detail-panel>header {min-height:82px;padding:20px;gap:12px}
+  .workspace-open #panel-title {font-size:25px}
+  .workspace-open #close-panel {font-size:11px;padding:7px;gap:4px}
+  .workspace-open #panel-content {padding:20px 16px 40px}
+  .workspace-open .op-section,.workspace-open .op-manual-workspace,.workspace-open .robot-status-sheet {padding:18px;border-radius:9px}
+  .workspace-open .op-evidence-workspace,.workspace-open [data-page=settings] {display:block}
+  .workspace-open [data-page=settings]>.op-subnav {display:grid;grid-template-columns:1fr 1fr;position:static;margin-bottom:24px}
+  .workspace-open .op-event-list {max-height:320px;overflow:auto;margin-bottom:24px}
+  .workspace-open .op-filters {grid-template-columns:1fr 1fr}
+  .workspace-open .op-filters>.op-field:first-child {grid-column:1/-1}
+  .robot-detail-layout {grid-template-columns:1fr}
+}
+@media(max-width:550px) {
+  .robot-tab,.robot-tab:not(:first-child) {flex-direction:column;gap:0}
+  .robot-preview {width:40px;height:32px}
+  .topbar {padding-inline:12px}
+  .main-nav>button {padding-inline:8px;font-size:11px}
+  .nav-more summary {font-size:11px;padding-inline:6px}
+}
+@media(prefers-reduced-motion:reduce) {
+  dialog[open],#toast:not([hidden]) {animation:none}
+  button {transition:background-color 100ms,color 100ms,border-color 100ms!important}
+}
+@media(max-width:380px) {#stage #reset-view {min-width:44px;width:44px;font-size:0;padding:0}}
 
-/* Warm stone / charcoal / bronze replaces the first mint concept. */
-:root{--bg:#f1f0ec;--panel:#faf9f6;--ink:#242c2d;--muted:#737f7d;--rule:#d7dcd7;--brass:#9b7843;--danger:#b54955;--r-camera-shell-w:36.5%;background:radial-gradient(circle at 9% 12%,#fffdfa 0,transparent 38%),radial-gradient(circle at 88% 85%,#d6d7d0 0,transparent 43%),#e7e9e5}
-#app{background:#f8f8f4b9;box-shadow:0 24px 80px #333c3926,inset 0 1px #fff}
-#app:before{background:radial-gradient(circle at 10% 15%,#f9eed8a3,transparent 24%),radial-gradient(circle at 92% 76%,#dbe4e18c,transparent 28%)}
-.topbar{animation:none;background:#fffefbc7;border-color:#ffffff}.brand{color:#252d2d;border-color:#d5dbd7}
-.main-nav>button.active{background:#303a3a;color:#fffdfa;box-shadow:0 8px 20px #2834312f}
-.nav-more-menu{background:#fffefaef;box-shadow:0 18px 50px #3b453e2b}.nav-more-menu button.active{background:#f5efe3;color:#6d532e}
-.source-status{background:#fffefa;border-color:#e0e1da;color:#665e51}.source-status>.muted{color:#999b94}.safety-note,.safety-note>span,.safety-note>span:last-child{color:#777f7b}
-.estop{background:#b64955;box-shadow:0 9px 20px #a9434e27}.estop:hover{background:#a43d49}
-.robot-tab,.robot-tab:not(:first-child){background:#fffefbe0;box-shadow:0 7px 20px #3e49400f}.robot-tab:hover{box-shadow:0 14px 25px #39443b20}.robot-tab.selected{background:#303a3a;border-color:#3a4443;box-shadow:0 12px 25px #313d3833}.robot-tab strong svg{color:#d6b882}.robot-health{border-color:#e1e2db;color:#858f8b}.status-dot{background:#b8bebb;box-shadow:0 0 0 4px #edf0e9}.last-received{color:#858e89}
-.scene-stage{background:#d9ded9;box-shadow:0 10px 34px #3540391b}.scene-stage:before{background:linear-gradient(110deg,#fffcf2ae 0%,#faf8f18a 40%,#e8eeea16 100%)}.scene-stage:after{background:radial-gradient(circle at var(--spot-x,74%) var(--spot-y,38%),#fff1cf56,transparent 37%)}
-.scene-heading{color:#242e2e;text-shadow:0 1px 12px #fffef6}.scene-heading p{color:#566c68}
-.view-switch,.scene-controls{background:#fffefaed;box-shadow:0 9px 23px #35433a1b}.view-switch button{color:#6f7c77}.view-switch button:hover,.scene-controls button:hover{background:#f0eee8}.view-switch button.selected{background:#303b3a;color:#fffdf6}.scene-controls button{color:#596d67}
-.map-marker,.attention-marker,.scene-legend{background:#fffdf6eb;color:#685333;box-shadow:0 9px 25px #4a473725}.map-marker.selected{color:#67502a;border-color:#b99b62}.attention-marker:after{background:#c3a66f}
-.camera-dock{background:#fffefbef;box-shadow:0 23px 55px #2a332f40,0 0 0 1px #fff;animation:camera-glow-premium 9s ease-in-out infinite alternate}.camera-header{border-color:#e0e2db;color:#2a3736}.camera-header button{color:#6d7c76}.camera-header button+button{border-color:#e0e1dc}.camera-status{color:#818e88}.current-video{color:#886936;border-color:#ac8850}.camera-footer{padding-right:42px;color:#82908a}.camera-robot-switch button{border-color:#e0e3dc;color:#687b73}.camera-robot-switch button.selected{border-color:#c4a66e;background:#f8f1e1;color:#6d552b}
-.camera-dock .resize-e:hover{background:#bda16d55}.camera-dock .resize-s:hover{background:#bda16d55}
-.camera-dock .resize-se{width:34px;height:34px;right:3px;bottom:3px;border-radius:10px;background:#f3eee3d9;box-shadow:inset 0 0 0 1px #d9c8a7;cursor:nwse-resize}
-.camera-dock .resize-se:before{right:9px;bottom:9px;width:12px;height:12px;border-color:#886a3a}
-.camera-dock .resize-se:after{content:'드래그해 크기 조절';position:absolute;right:0;bottom:calc(100% + 9px);width:max-content;padding:7px 10px;border-radius:8px;background:#313a39;color:#fff;font-size:10px;opacity:0;pointer-events:none;transition:opacity .2s}
-.camera-dock .resize-se:hover:after{opacity:1}
-.operation-rail>section,.operation-rail>section+section{background:#fffefbc9;box-shadow:0 8px 23px #3b463d12}.operation-rail>section:hover{box-shadow:0 13px 27px #3a443d24}
-.mission-heading>span svg,.event-summary>span{color:#a5844f}.mission-heading h2,.actual-status strong,.event-summary strong{color:#303b39}.mission-heading h2 span,.actual-status p,.event-summary p{color:#89928b}.step{color:#7c8982}.step:before{border-color:#cbd2c9}.step+.step:after{background:#d0d4ca}.step.current{color:#8e6b36}.step.current:before{border-color:#ae8950;background:#ae8950;box-shadow:inset 0 0 0 3px #faf8f0}.mission-progress #demo-toggle{border-color:#d9c7a7;color:#916e39;background:#faf5e9}
-.outline-button{border-color:#d8c7a9;background:#fbf5e9;color:#755d36}
-.workspace-open .detail-panel{background:#f3f2ee}.workspace-open .detail-panel>header{background:#fffefbc6;border-color:#e0e2da}.workspace-open #panel-content{background:radial-gradient(circle at 90% 4%,#f5ebd9,transparent 35%),#f1f2ed;color:#303c39}.workspace-open #close-panel{border-color:#dddcd2;background:#fffefa;color:#566660}
-.workspace-open .op-section,.workspace-open .op-manual-workspace,.workspace-open .robot-status-sheet{background:#fffefbda;box-shadow:0 9px 28px #36423812}.op-note,.workspace-open .op-intro .op-note,.op-field,.op-check{color:#75827b}.op-badge{border-color:#dbdfd5;background:#fbfbf7;color:#64766b}.op-badge.amber{border-color:#e2c693;background:#fcf4e5;color:#89672f}
-.op-button{border-color:#d9ddd3;background:#fffefa;color:#4c625b}.op-button:hover:not(:disabled){border-color:#c6ae83;background:#faf6ed}.op-button.primary,.op-button.selected,.op-button[aria-pressed=true]{border-color:#c8ad79;background:#faf2e3;color:#765929}
-#panel-content input:not([type=checkbox]):not([type=file]),#panel-content select,#panel-content textarea{border-color:#d9ded5;background:#fffefa;color:#334541}.op-facts>div,.op-event-row,.op-session-list article,.op-record,.op-escalation li{border-color:#e0e4db}.op-facts dt,.workspace-open .op-facts dt{color:#87948a}.op-facts dd,.workspace-open .op-facts dd{color:#344942}
-.op-event-list,.op-event-detail{border-color:#d2c4a6}.op-event-row{color:#445c52}.op-event-row:hover,.op-event-row.selected{background:#f8f4e9}.op-event-row.selected{border-left-color:#b7955e}.op-row-meta,.op-row-foot{color:#819087}.op-row-foot>span:last-child{color:#8a6a39}.op-evidence-empty{border-color:#d9d6c8;background:#faf9f2}.op-note.warning{border-color:#c9a66d;background:#fff7e9;color:#826235}.op-drive{border-color:#d6ddd1;background:#f2f4ec;color:#60746b}.op-drive.pressed{background:#b18e58;color:#fff}
+/* Accessible filter choices. */
 .op-choice-field{position:relative;z-index:3}.op-choice-field:has(.op-choice.open){z-index:8}.op-choice{position:relative;width:100%}
 #panel-content .op-choice-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:44px;padding:10px 13px;border:1px solid #d1dfd7;border-radius:12px;background:#fffefa;color:#334f49;box-shadow:0 2px 6px #315b4b0b;font:inherit;font-size:13px;font-weight:600;text-align:left;cursor:pointer;transition:border-color .18s,background .18s,box-shadow .18s}
 #panel-content .op-choice-trigger:hover,#panel-content .op-choice.open .op-choice-trigger{border-color:#8bbbab;background:#f7fbf7;box-shadow:0 5px 14px #315b4b13}
@@ -125,212 +292,50 @@ dialog{border-color:#ffffff;border-radius:24px;background:#f7fcf9;color:#264247;
 #panel-content .op-choice-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:40px;padding:8px 11px;border:0;border-radius:9px;background:transparent;color:#49615a;font:inherit;font-size:13px;text-align:left;cursor:pointer}
 #panel-content .op-choice-option:hover,#panel-content .op-choice-option:focus-visible{background:#eef7f1;color:#245b4d}#panel-content .op-choice-option[aria-selected=true]{background:#e6f3eb;color:#1d6958;font-weight:700}.op-choice-check{width:7px;height:11px;flex:none;margin-right:4px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);opacity:0}.op-choice-option[aria-selected=true] .op-choice-check{opacity:1}
 @media(prefers-reduced-motion:reduce){.op-choice-trigger,.op-choice-chevron{transition:none}}
-@keyframes camera-glow-premium{to{box-shadow:0 24px 58px #3d41365c,0 0 0 1px #fff}}
 
-/* Chrome-like vertical tabs: labels slide out on hover; the V1 nav elements stay intact. */
-@media(min-width:900px){
- html,body{height:100%;overflow:hidden}
- .main-nav{position:absolute;top:88px;bottom:18px;left:17px;z-index:60;display:flex;flex-direction:column;align-items:stretch;align-self:auto;width:64px;height:auto;gap:6px;padding:9px 7px;border:1px solid #ffffffeb;border-radius:21px;background:#fffefbef;box-shadow:0 16px 40px #2f39322b;backdrop-filter:blur(24px);transition:width .36s cubic-bezier(.2,.8,.2,1),box-shadow .36s}
- .main-nav:hover,.main-nav:focus-within,.main-nav:has(.nav-more[open]),.rail-open .main-nav{width:205px;box-shadow:0 20px 48px #30393036}
- .rail-open .main-nav{transition:none}
- .main-nav:before{content:'WORKSPACE';display:block;height:23px;padding:7px 12px 0;color:transparent;font-size:9px;font-weight:800;letter-spacing:.18em;white-space:nowrap;transition:color .25s}
- .main-nav:hover:before,.main-nav:focus-within:before,.rail-open .main-nav:before{color:#a69b87}
- .main-nav>button{flex:none;display:flex;justify-content:flex-start;align-items:center;width:100%;min-height:46px;padding:8px 9px;gap:11px;border-radius:13px;color:transparent;font-size:12px;overflow:hidden;white-space:nowrap;transition:background .25s,color .25s,transform .25s}
- .main-nav:hover>button,.main-nav:focus-within>button,.rail-open .main-nav>button{color:#4e5d58}
- .main-nav>button:before{flex:none;display:grid;place-items:center;width:27px;height:27px;border-radius:9px;color:#67746e;font-size:18px;line-height:1}
- .main-nav>button[data-view=dashboard]:before{content:'⌂'}.main-nav>button[data-view=events]:before{content:'◎'}.main-nav>button[data-view=missions]:before{content:'▤'}
- .main-nav>button.active,.main-nav:hover>button.active,.main-nav:focus-within>button.active,.rail-open .main-nav>button.active{background:#303a3a;color:#fffefa}.main-nav>button.active:before{color:#d8bd88}
- .nav-more{align-self:stretch;width:100%;margin-top:auto}.nav-more summary{display:flex;align-items:center;gap:11px;width:100%;min-height:45px;padding:8px 9px;color:transparent;font-size:12px;overflow:hidden;white-space:nowrap;transition:color .25s,background .25s}
- .nav-more summary:before{content:'⋯';flex:none;display:grid;place-items:center;width:27px;height:27px;color:#67746e;font-size:22px;line-height:1}
- .nav-more summary:after{display:none}.main-nav:hover .nav-more summary,.main-nav:focus-within .nav-more summary,.rail-open .main-nav .nav-more summary{color:#4e5d58}
- .nav-more-menu{top:auto;bottom:0;left:100%;right:auto;min-width:175px;padding:7px}.nav-more-menu button{color:#465b54}
- .fleet-band{padding-left:93px}.scene-stage{margin-left:92px;margin-right:14px}.operation-rail{padding-left:92px}
- .fleet-band,.operation-rail{transition:padding-left .36s cubic-bezier(.2,.8,.2,1)}.scene-stage{transition:margin-left .36s cubic-bezier(.2,.8,.2,1)}
- #app:has(.main-nav:hover) .fleet-band,#app:has(.main-nav:focus-within) .fleet-band,.rail-open #app .fleet-band,#app:has(.main-nav:hover) .operation-rail,#app:has(.main-nav:focus-within) .operation-rail,.rail-open #app .operation-rail{padding-left:233px}
- #app:has(.main-nav:hover) .scene-stage,#app:has(.main-nav:focus-within) .scene-stage,.rail-open #app .scene-stage{margin-left:232px}
- /* The stage shrinks while the rail pushes it; canvases sized from it were resized (and blanked) every frame.
-    Size them from the closed stage width (100vw - 24px margin - 2px border - 106px stage margins) so they just slide and clip. */
- #app{--stage-w0:calc(100vw - 132px)}
- .attention-marker{left:69%}.scene-legend{left:51%}
- #app.workspace-open{grid-template-columns:82px minmax(0,1fr);transition:grid-template-columns .36s cubic-bezier(.2,.8,.2,1)}.workspace-open .topbar{grid-column:1/-1}.workspace-open .detail-panel{grid-column:2;grid-row:2;min-width:0}
- #app.workspace-open:has(.main-nav:hover),#app.workspace-open:has(.main-nav:focus-within),.rail-open #app.workspace-open{grid-template-columns:220px minmax(0,1fr)}
+/* On phones, put ownership actions above the pad instead of squeezing their text. */
+@media(max-width:550px){
+ .op-manual-controls{grid-template-columns:minmax(0,1fr);gap:10px}
+ .op-manual-controls .op-toolbar{grid-column:1;margin:0;flex-wrap:wrap}
+ .op-manual-controls .op-toolbar .op-button{flex:1 1 100px;min-height:44px;font-size:13px;white-space:nowrap}
+ .op-manual-controls .op-drive-pad{grid-column:1;grid-row:auto;justify-self:center;width:min(220px,100%);grid-template-rows:repeat(3,52px);margin:0}
+ .op-manual-controls .op-command-state{grid-column:1}
+ .op-manual-controls h4{font-size:15px}
+ .workspace-open .op-button,.workspace-open [data-page=settings]>.op-subnav .op-button{min-height:44px}
+ .op-toolbar>.op-button{flex:1 1 150px}
+ .op-choice-trigger{min-height:44px}
+ #panel-content input:not([type=checkbox]):not([type=file]),#panel-content select,#panel-content textarea{font-size:16px}
 }
-@media(max-width:900px){.camera-dock .resize-se{width:27px;height:27px}.camera-dock .resize-se:after{display:none}}
-@media(prefers-reduced-motion:reduce){.camera-dock{animation:none!important}.main-nav,.main-nav>button,.nav-more summary{transition:none!important}}
-
-/* Polish pass 1 (2026-09-24). */
-/* backdrop-filter made .topbar the containing block of the absolute rail, collapsing it to a 20px pill. */
-.topbar{backdrop-filter:none;background:#fffefbe6}
-/* Programmatic focus on page headings is for screen readers; the ring read as a stray box. */
-#panel-title:focus,#scene-title:focus{outline:none}
-@media(min-width:801px){
- #app{grid-template-rows:72px 84px minmax(400px,1fr) 124px}
- .operation-rail{align-items:stretch;padding-block:10px 14px}
- .operation-rail>section,.operation-rail>section+section{padding:14px 20px;justify-content:center}
- .mission-progress{margin-top:12px}
- /* Keep the camera window below the scene heading: the viewport height caps its width through aspect-ratio.
-    Once the user resizes it (inline width), the original cap applies so the video grows with the window. */
- .camera-dock{--r-camera-shell-w:min(31%,calc((100cqh - 250px)*4/3 + 18px))}
- #stage .camera-dock:not([style*=width],.expanded) .camera-viewport{max-height:calc(100cqh - 250px)}
-}
-.op-manual-camera .camera-dock .camera-viewport{margin-inline:auto;border-radius:12px}
-#frame-time{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.op-button:disabled,.op-drive:disabled{opacity:.62}
-@media(min-width:900px){
- /* Wider canvas instead of translateX: same rightward shift, no bare strip on the left edge. */
- #world,.markers{transform:none;width:calc(var(--stage-w0)*1.14)}
- .camera-dock{--r-camera-shell-w:min(calc(var(--stage-w0)*.31),calc((100cqh - 250px)*4/3 + 18px))}
+@media(max-width:360px){
+ .topbar{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:24px 18px 40px;gap:2px 8px;padding:8px 12px}
+ .brand{grid-column:1;grid-row:1;font-size:18px}
+ .source-status{grid-column:1;grid-row:2;justify-self:start;margin:0;padding:0;border:0;background:transparent;min-width:0}
+ .topbar>.estop{grid-column:2;grid-row:1/span 2;min-height:46px}
+ .main-nav{grid-column:1/-1;grid-row:3}
 }
 
-/* Polish pass 2: the events page had no entrance while missions' cards rise in. Same motion, staggered by block.
-   index.html marks #panel-content .settled shortly after a page opens, so an action that rebuilds the same page
-   (review save, import) does not replay the entrance. */
-.workspace-open [data-page=events]:not(.settled)>:nth-child(n+3){animation:card-rise .45s calc(var(--i,5)*.04s) both}
-.workspace-open [data-page=events]>:nth-child(3){--i:1}.workspace-open [data-page=events]>:nth-child(4){--i:2}
-.workspace-open [data-page=events]>:nth-child(5){--i:3}.workspace-open [data-page=events]>:nth-child(6){--i:4}.workspace-open [data-page=events]>:nth-child(n+8){--i:6}
-/* Row clicks and search typing rebuild the detail column; its cards should not rise on every keystroke. */
-.workspace-open [data-page=events].settled .op-section{animation:none}
-@media(prefers-reduced-motion:reduce){.workspace-open [data-page=events]>*{animation:none!important}}
-
-/* Polish pass 3: no outer window card, and the rail docks to the left edge like Chrome's vertical tabs
-   (full height under the top bar, square, one hairline) instead of floating as an island. */
-#app,#app.workspace-open{width:100%;height:100dvh;margin:0;border:0;border-radius:0;box-shadow:none}
-@media(min-width:900px){
- .main-nav{top:72px;bottom:0;left:0;width:64px;padding:10px 8px;border:0;border-right:1px solid #e4e5df;border-radius:0;background:#fbfbf8;box-shadow:none}
- .main-nav:hover,.main-nav:focus-within,.main-nav:has(.nav-more[open]),.rail-open .main-nav{width:205px;box-shadow:none}
- /* The active label was left white while collapsed; hover/focus/rail-open rules above still show it. */
- .main-nav>button.active,.nav-more.active summary{color:transparent}
- /* An open "시연 · 진단" menu keeps the rail wide, so it must keep the labels visible too. */
- .main-nav:has(.nav-more[open]):before{color:#a69b87}
- .main-nav:has(.nav-more[open])>button,.main-nav:has(.nav-more[open]) .nav-more summary{color:#4e5d58}
- .main-nav:has(.nav-more[open])>button.active{color:#fffefa}
- .fleet-band{padding-left:76px}.scene-stage{margin-left:76px}.operation-rail{padding-left:76px}
- #app:has(.main-nav:hover) .fleet-band,#app:has(.main-nav:focus-within) .fleet-band,.rail-open #app .fleet-band,#app:has(.main-nav:hover) .operation-rail,#app:has(.main-nav:focus-within) .operation-rail,.rail-open #app .operation-rail{padding-left:217px}
- #app:has(.main-nav:hover) .scene-stage,#app:has(.main-nav:focus-within) .scene-stage,.rail-open #app .scene-stage{margin-left:217px}
- /* Closed stage width: 100vw - 76px left - 14px right margins (#app has no border since this pass). */
- #app{--stage-w0:calc(100vw - 90px)}
- #app.workspace-open{grid-template-columns:64px minmax(0,1fr)}
- #app.workspace-open:has(.main-nav:hover),#app.workspace-open:has(.main-nav:focus-within),.rail-open #app.workspace-open{grid-template-columns:205px minmax(0,1fr)}
-}
-
-/* The disconnected preview opens an explanation; only a live link exposes a red stop action. */
-.estop:not(.is-live){border:1px solid #b9c9c3;background:#edf2ee;color:#314640;box-shadow:none}
-.estop:not(.is-live):hover{background:#e4ede7;color:#263a34}
-.actual-status p:empty,.event-summary p:empty{display:none}
-@media(max-width:800px){
- .estop{min-height:44px;font-size:13px}
- .mobile-stop-note{font-size:11px}
- .view-switch button{min-width:89px;padding-inline:8px;font-size:11px}
- #app:not(.workspace-open){height:auto;min-height:100dvh;grid-template-rows:106px 82px max-content auto;overflow:visible}
- #stage{display:flex;flex-direction:column;gap:12px;height:max-content;padding:490px 0 12px;min-height:0;container-type:inline-size}
- #stage .scene-controls{position:relative;order:1;top:auto;right:auto;bottom:auto;align-self:stretch;justify-content:space-between;margin:0 12px;gap:4px;z-index:7}
- #stage .scene-controls button{width:44px;height:44px;min-height:44px}
- #stage #reset-view{min-width:92px;padding-inline:6px}
- #stage .camera-dock{position:relative;order:2;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;width:calc(100% - 24px);margin:0 12px;transform:none}
- #stage .camera-dock.collapsed{bottom:auto}
- .scene-stage:has(.camera-dock.expanded) .scene-controls{display:flex}
-}
-/* Selection feedback identifies the chosen robot; it never animates telemetry or camera frames. */
-.camera-robot-switch button.selected{animation:robot-choice .24s ease-out}
-.map-marker.selected{animation:marker-choice .28s ease-out}
-@keyframes robot-choice{from{box-shadow:0 0 0 0 #b7955e55}to{box-shadow:0 0 0 7px #b7955e00}}
-@keyframes marker-choice{from{outline:2px solid #b7955e;outline-offset:0}to{outline:2px solid #b7955e00;outline-offset:7px}}
-@media(prefers-reduced-motion:reduce){.camera-robot-switch button.selected,.map-marker.selected{animation:none}}
-@media(max-width:360px){#stage #reset-view{min-width:44px;width:44px;font-size:0;padding:0}}
-
-/* ── 대응 단계 띠 (B1) ─────────────────────────────────────────────────────
-   기본 테마의 띠는 어두운 화면에 맞춰 각진 빨강 블록이라 흰 화면에서 혼자 떠 있었다.
-   여기서 흰 테마의 말(둥근 모서리·부드러운 그림자·backdrop)로 옮긴다.
-   ⚠️ **단계 색의 뜻은 바꾸지 않는다** — 눈 LED 와 같은 순서다(L2 주황 · L3 빨강 · F 흰색).
-   ⚠️ **L3 깜빡임(`alarm-blink`)은 기본 스타일 그대로 둔다.** 경보를 실제보다 세게 보이게
-   만들지 않는다 — 여기서 하는 일은 «읽히게» 하는 것이지 «크게» 하는 것이 아니다. */
-.alarm-banner{
- /* ⚠️ 기본 스타일의 `top:62px` 는 로봇 탭 줄을 덮어 MD-02·MD-03 의 수신 상태를 가렸다.
-    경보를 띄우려고 다른 기체의 상태를 지우는 것은 나쁜 교환이다 — 탭 줄 아래로 내린다.
-    자리는 실측으로 잡았다 — 1100px 에서 머리글 72px + 탭 줄 84px = 156px 이라 그 아래다. */
- top:166px;gap:12px;padding:11px 14px 11px 18px;
- border-width:1px;border-radius:16px;
- box-shadow:0 14px 34px #2b332f26,0 0 0 1px #ffffffb3;
- backdrop-filter:blur(18px);
- /* 단계가 바뀌면 띠는 그대로 있고 색만 옮겨 간다 — 새로 뜬 것이 아니라 «바뀐 것»이다.
-    ⚠️ `border-color` 는 빼 둔다. L3 깜빡임이 그 속성을 쓰므로 섞으면 깜빡임이 뭉개진다. */
- transition:background-color .3s ease,color .3s ease;
- /* 도착은 한 번뿐이다. 가로 중앙 정렬이 `translateX(-50%)` 라 keyframes 가 그것을 들고 간다. */
- animation:alarm-arrive .28s cubic-bezier(.16,1,.3,1) both;
-}
-@keyframes alarm-arrive{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}}
-.alarm-banner[data-level="L2"]{background:#fdf0dd;border-color:#e0b47a;color:#6f4a14}
-.alarm-banner[data-level="L3"]{background:#c4443e;border-color:#e8908a;color:#fff}
-.alarm-banner[data-level="F"]{background:#fffdf5;border-color:#d5c7a4;color:#453a20}
-/* 넓은 화면에서는 제목과 시야 전환 사이의 통로 안에 머문다 — 1100px 실측으로
-   제목이 286px 에서 끝나고 시야 전환이 757px 에서 시작한다. 띠가 조작 버튼을
-   반쯤 덮으면 고장처럼 보인다. 글이 길면 두 줄로 흐르게 두고 폭을 넘기지 않는다. */
-@media(min-width:900px){.alarm-banner{max-width:420px;flex-wrap:wrap;row-gap:7px}
- .alarm-banner #alarm-text{flex:1 1 100%;order:3}
- .alarm-banner button{margin-left:auto}}
-.alarm-banner strong{letter-spacing:-.01em}
-.alarm-banner button{border-radius:9px;padding:6px 13px;font-weight:600;transition:background .2s,border-color .2s}
-.alarm-banner[data-level="L3"] button:hover{background:#ffffff26}
-.alarm-banner:not([data-level="L3"]) button:hover{background:#00000010}
-/* 좁은 폭에서는 글이 버튼과 부딪혀 두 줄로 깨졌다 — 버튼을 아래로 내리고 글을 온전히 읽게 둔다. */
-/* 화면을 덮는 작업 화면(사건·제어)에서는 탭 줄이 없으므로 머리글 바로 아래로 올린다. */
+/* Live alarm stays below the header and fleet row. */
+.alarm-banner{top:160px;max-width:min(620px,calc(100% - 32px));padding:12px 16px;border:1px solid;border-radius:10px;box-shadow:0 12px 32px #182b2430;gap:12px;line-height:1.45}
+.alarm-banner[data-level="L2"]{background:#fff1dc;border-color:#cb9851;color:#604013}
+.alarm-banner[data-level="L3"]{background:#b33949;border-color:#de7580;color:#fff}
+.alarm-banner[data-level="F"]{background:#fffdf5;border-color:#c4ad76;color:#43381c}
+.alarm-banner button{min-height:40px;border-radius:7px;padding:6px 12px;font-weight:700}
+.alarm-banner[data-level="L3"] button:hover{background:#ffffff25;color:#fff}
 .workspace-open .alarm-banner{top:70px}
-@media(max-width:800px){.alarm-banner{top:196px}.workspace-open .alarm-banner{top:114px}}
-@media(max-width:900px){
- /* 좁은 폭에서는 내용 폭에 맡기면 187px 까지 찌그러져 글이 토막 난다 — 폭을 채운다. */
- .alarm-banner{flex-wrap:wrap;width:calc(100% - 22px);max-width:none;row-gap:8px}
- .alarm-banner button{margin-left:0;width:100%;justify-content:center}
-}
+@media(max-width:899px){.alarm-banner{top:204px}.workspace-open .alarm-banner{top:118px}}
+@media(max-width:550px){.alarm-banner{flex-wrap:wrap;width:calc(100% - 24px);max-width:none}.alarm-banner button{width:100%;margin-left:0}}
 
-/* ── 눌림 확인 ─────────────────────────────────────────────────────────────
-   이 화면의 버튼 상당수가 실제 로봇에 명령을 보낸다. 눌렀다는 확인이 hover 뿐이었다.
-   내려앉는 정도로만 — 튕기거나 커지지 않는다. */
-.op-button:active:not(:disabled),
-.scene-controls button:active,
-.view-switch button:active,
-.alarm-banner button:active,
-.estop:active{transform:translateY(0) scale(.985);transition-duration:.08s}
-
-@media(prefers-reduced-motion:reduce){
- /* 움직임만 걷어내고 색·불투명도는 남긴다 — 무엇이 바뀌었는지는 계속 보여야 한다. */
- .alarm-banner{animation:none}
- .op-button:active:not(:disabled),.scene-controls button:active,
- .view-switch button:active,.alarm-banner button:active,.estop:active{transform:none}
-}
-
-/* ── 새로 들어온 사건 (4.6.4) ──────────────────────────────────────────────
-   실시간 사건은 목록에 조용히 끼어든다. 한 번만 짚어 주고 사라진다 — 계속 깜빡이면
-   읽는 것을 방해하고, 남아 있으면 «읽지 않음» 으로 오해된다.
-   ⚠️ **화면을 처음 열 때는 표시하지 않는다** (`panels.js` 의 `seenEvents`).
-   전부 깜빡이면 진짜 새 것이 묻힌다. */
-.op-event-row.just-arrived{animation:event-arrive 1.1s cubic-bezier(.16,1,.3,1) both}
-/* ⚠️ 막대(굵은 왼쪽 테두리)를 쓰지 않는다 — 선택 표시가 이미 1px 왼쪽 테두리라 둘이 경쟁한다.
-   «방금 왔다» 는 바탕이 식어 가는 것으로 충분히 읽힌다. */
-@keyframes event-arrive{
- 0%{background:#f4ecd9}
- 70%{background:#f8f2e4}
- 100%{background:transparent}
-}
-
-/* ── 작업 화면 진입 ────────────────────────────────────────────────────────
-   화면을 덮는 작업 화면(사건·제어)은 그냥 나타났다. 옆에서 오는 것이 아니라
-   «앞으로 온다» — 관제는 뒤에 그대로 있다는 뜻이다. 빠르게, 한 번만. */
-.workspace-open .detail-panel{animation:workspace-forward .26s cubic-bezier(.16,1,.3,1) both}
-@keyframes workspace-forward{from{opacity:0;transform:scale(.988)}to{opacity:1;transform:none}}
-
-/* ── 기다리는 자리 ─────────────────────────────────────────────────────────
-   «추이 수집 중» 은 값이 아직 없다는 뜻이지 고장이 아니다. 숨 쉬듯 옅어졌다 돌아온다.
-   ⚠️ 값이 들어오면 이 자리는 사라지므로 루프가 남지 않는다. */
+/* One-shot acknowledgement for button presses and incoming events. */
+.op-button:active:not(:disabled),.scene-controls button:active,.view-switch button:active,.alarm-banner button:active,.estop:active{transform:translateY(0) scale(.985);transition-duration:.08s}
+.op-event-row.just-arrived{animation:event-arrive 1.1s var(--ease-out) both}
+@keyframes event-arrive{0%{background:#f4ecd9}70%{background:#f8f2e4}100%{background:transparent}}
 .op-spark-empty{animation:awaiting 2.4s ease-in-out infinite}
 @keyframes awaiting{0%,100%{opacity:.55}50%{opacity:1}}
-
+.op-row-time{font-variant-numeric:tabular-nums;letter-spacing:.01em;color:var(--muted)}
 @media(prefers-reduced-motion:reduce){
- /* 도착은 색으로만 알린다 — 움직임과 반복만 걷어낸다. */
+ .alarm-banner{animation:none}
+ .op-button:active:not(:disabled),.scene-controls button:active,.view-switch button:active,.alarm-banner button:active,.estop:active{transform:none}
  .op-event-row.just-arrived{animation:event-arrive-still 1.1s steps(1,end) both}
  @keyframes event-arrive-still{0%,70%{background:#f6efdf}100%{background:transparent}}
- .workspace-open .detail-panel{animation:none}
  .op-spark-empty{animation:none;opacity:.75}
 }
-
-/* 사건 시각 — 자릿수가 흔들리면 눈이 줄을 못 따라간다. */
-.op-row-time{font-variant-numeric:tabular-nums;letter-spacing:.01em;color:#8a9490}
