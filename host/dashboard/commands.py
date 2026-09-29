@@ -58,7 +58,7 @@ class CommandService:
         apply_event: Callable[[Event], bool] | None = None,
         ask_patrol: Callable[[], None] | None = None,
         set_mode: Callable[[str], str | None] | None = None,
-        note_voice_auth: Callable[[bool], tuple[bool, str]] | None = None,
+        note_voice_auth: Callable[[bool, int | None], tuple[bool, str]] | None = None,
         note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
         confirm_alarm: Callable[[], None] | None = None,
         reset_zone_baseline: Callable[[str], tuple[bool, str]] | None = None,
