@@ -91,7 +91,7 @@ while time.monotonic()<e:
 진단 펌웨어에만 있으며 Bearer 토큰, 기체 MAC, 인증서와 SHA-256 pin이 든
 비공개 클라이언트 설정이 필요하다. 자격정보는 저장소에 없다. 기본
 `MECHADOG_ENABLE_OTA=0` 빌드에는 엔드포인트 자체가 없다. 비-OTA 기체에서는
-되돌릴 이미지를 확보한 뒤 `firmware_mechdog_motion/diagnostics/i2c_scan`을
+되돌릴 이미지를 확보한 뒤 `firmware/mechdog_motion/diagnostics/i2c_scan`을
 별도로 올려 확인한다(기존 펌웨어를 덮어쓰므로 운용 중에는 사용하지 않는다).
 
 ### 3-3. PC 음성 테스트 도구 (선택)

@@ -17,7 +17,8 @@ owner_id: unassigned # `2.4.1` 에서 실제 담당자로 채운다
 # 같은 값이 찍혀 있다. 보드(ESP32)를 바꾸면 이 값도 바뀐다.
 telemetry_device_id: mechdog-3c8a1f1d80cc
 
-reference_role: none
+# LiDAR(1대뿐)를 이 기체에 단다 — Phase 2 기준기이자 시연 기체다 (2026-09-29 · CONTRIBUTING 1절).
+reference_role: phase2
 
 network:
   # 실측 전이다. **틀린 주소가 적혀 있는 것이 비어 있는 것보다 나쁘다** —
@@ -126,3 +127,11 @@ measured:
   payload_pass_g: null
   runtime_min: null
   wifi_rssi_dbm: null
+
+# ── 측위 (Phase 2) ────────────────────────────────────────────
+# ⚠️ **이 기체만 `lidar` 다.** 전역 `config.yaml` 은 Phase 1 표준 구성이라
+# `track: none` 으로 남긴다 — LiDAR 가 없는 기체에서 측위를 요구하면 기동이
+# 막힌다. LD19 는 이 기체 한 대에만 달려 있고(`reference_role: phase2`),
+# `settings.require_lidar_track` 이 실기 매핑·순찰에서 이 값을 본다.
+localization:
+  track: lidar

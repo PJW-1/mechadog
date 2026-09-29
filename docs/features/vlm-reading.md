@@ -59,7 +59,7 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | 모델 | `Qwen/Qwen2-VL-2B-Instruct` · bf16 · 기동 때 한 번 적재 | `vision.vlm.model_id` | [ADR-35](../DECISIONS.md#adr-35) |
 | 답 길이 상한 | 32 토큰 | `vision.vlm.max_new_tokens` | [ADR-35](../DECISIONS.md#adr-35) |
-| 판독 한 번의 예산 | 3000ms (질문 전마다 누적 시간으로 확인) | `vision.vlm.budget_ms` | [VLM 비교 실측](../../TEST_MECHDOG/results/20260920_4.8.0-vlm-compare/summary.md) |
+| 판독 한 번의 예산 | 3000ms (질문 전마다 누적 시간으로 확인) | `vision.vlm.budget_ms` | [VLM 비교 실측](../../field_tests/results/20260920_4.8.0-vlm-compare/summary.md) |
 | 구역 종료 대기 상한 | 3000ms | `vision.vlm.budget_ms` | [ADR-35](../DECISIONS.md#adr-35) |
 | 동시 판독 | 1건 · 겹치면 거절 (쌓지 않음) | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
 | 구역 판독 | 방문당 한 번 · 세 항목 | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
@@ -96,15 +96,15 @@ flowchart TD
 | 의존성 없으면 팩토리 없음 | `host/vision/vlm_session.py` 의 `build_session_factory` | `tests/test_vlm_session.py::test_factory_is_none_when_a_dependency_is_missing` · `tests/test_vlm_session.py::test_factory_is_none_without_a_vlm_section` |
 | 예산 초과 · 질문 실패 · 부분 판독 | `host/vision/vlm_reader.py` 의 `VlmReader.read` | `tests/test_vlm_reader.py::test_budget_stops_further_questions` · `tests/test_vlm_reader.py::test_partial_reading_is_kept_on_failure` |
 | 첫 단어로 답 해석 · 모름 유지 | `host/vision/vlm_reader.py` 의 `parse_answer` | `tests/test_vlm_reader.py::test_parses_only_the_leading_token` · `tests/test_vlm_reader.py::test_unknown_is_not_false` · `tests/test_vlm_reader.py::test_unparsed_answer_keeps_the_raw_text` |
-| 구역 판독은 방문당 한 번 · 비차단 | `host/runtime.py` 의 `Runtime._read_zone_scene` | `tests/test_runtime.py::test_the_vlm_is_asked_once_per_visit_not_once_per_cycle` · `tests/test_runtime.py::test_zone_inspection_never_blocks_on_the_vlm` |
-| 판독을 기다렸다 구역 종료 · 상한 초과 | `host/runtime.py` 의 `Runtime._leave_zone` · `Runtime._take_zone_reading` | `tests/test_runtime.py::test_the_robot_waits_for_its_reading_before_leaving_a_zone` · `tests/test_runtime.py::test_a_reading_past_its_budget_lets_go_and_keeps_its_zone_and_frame` |
-| `person_down` → 의심 (구역 · 늦은 결과) | `host/runtime.py` 의 `Runtime._take_zone_reading` · `Runtime._suspect_fall` | `tests/test_runtime.py::test_a_person_down_reading_at_a_zone_suspects_a_fall_not_an_alarm` · `tests/test_runtime.py::test_a_person_down_reading_that_lands_after_leaving_still_suspects` |
-| 넘어짐 · 통로 막힘 두 번 판독 확정 | `host/runtime.py` 의 `Runtime._take_zone_reading` · `Runtime._leave_zone` | `tests/test_runtime.py::test_a_hazard_read_twice_is_confirmed_on_the_first_visit` · `tests/test_runtime.py::test_a_single_fallen_reading_is_not_confirmed` · `tests/test_runtime.py::test_vlm_hazards_switched_off_never_confirm` · `tests/test_runtime.py::test_an_unusable_second_reading_confirms_nothing_and_lets_go` · `tests/test_runtime.py::test_a_late_reading_from_the_last_visit_does_not_count` |
-| 순찰 중 쓰러짐 판독 주기 | `host/runtime.py` 의 `Runtime._ask_fall` | `tests/test_runtime.py::test_a_patrol_reading_asks_only_person_down_every_interval` |
-| 쓰러짐 판독 결과 → 의심 · 확정 | `host/runtime.py` 의 `Runtime._take_fall_reading` · `Runtime._confirm_fall` | `tests/test_runtime.py::test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` · `tests/test_runtime.py::test_a_fall_is_confirmed_by_readings_a_gap_apart` · `tests/test_runtime.py::test_a_no_between_readings_does_not_reset_the_count` |
-| VLM 없이도 변화 감지 동작 | `host/runtime.py` 의 `Runtime._inspect_zone` | `tests/test_runtime.py::test_change_detection_runs_without_any_vlm` |
+| 구역 판독은 방문당 한 번 · 비차단 | `host/behavior/zone_inspector.py` 의 `ZoneInspector._read_scene` | `tests/test_runtime.py::test_the_vlm_is_asked_once_per_visit_not_once_per_cycle` · `tests/test_runtime.py::test_zone_inspection_never_blocks_on_the_vlm` |
+| 판독을 기다렸다 구역 종료 · 상한 초과 | `host/behavior/zone_inspector.py` 의 `ZoneInspector._leave` · `ZoneInspector._take_reading` | `tests/test_runtime.py::test_the_robot_waits_for_its_reading_before_leaving_a_zone` · `tests/test_runtime.py::test_a_reading_past_its_budget_lets_go_and_keeps_its_zone_and_frame` |
+| `person_down` → 의심 (구역 · 늦은 결과) | `host/behavior/zone_inspector.py` 의 `ZoneInspector._take_reading` · `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `tests/test_runtime.py::test_a_person_down_reading_at_a_zone_suspects_a_fall_not_an_alarm` · `tests/test_runtime.py::test_a_person_down_reading_that_lands_after_leaving_still_suspects` |
+| 넘어짐 · 통로 막힘 두 번 판독 확정 | `host/behavior/zone_inspector.py` 의 `ZoneInspector._take_reading` · `ZoneInspector._leave` | `tests/test_runtime.py::test_a_hazard_read_twice_is_confirmed_on_the_first_visit` · `tests/test_runtime.py::test_a_single_fallen_reading_is_not_confirmed` · `tests/test_runtime.py::test_vlm_hazards_switched_off_never_confirm` · `tests/test_runtime.py::test_an_unusable_second_reading_confirms_nothing_and_lets_go` · `tests/test_runtime.py::test_a_late_reading_from_the_last_visit_does_not_count` |
+| 순찰 중 쓰러짐 판독 주기 | `host/behavior/fall_monitor.py` 의 `FallMonitor.ask` | `tests/test_runtime.py::test_a_patrol_reading_asks_only_person_down_every_interval` |
+| 쓰러짐 판독 결과 → 의심 · 확정 | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` · `FallMonitor._confirm` | `tests/test_runtime.py::test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` · `tests/test_runtime.py::test_a_fall_is_confirmed_by_readings_a_gap_apart` · `tests/test_runtime.py::test_a_no_between_readings_does_not_reset_the_count` |
+| VLM 없이도 변화 감지 동작 | `host/behavior/zone_inspector.py` 의 `ZoneInspector.inspect` | `tests/test_runtime.py::test_change_detection_runs_without_any_vlm` |
 
 실측 기록
 
-- [VLM 판독 카메라 벤치](../../TEST_MECHDOG/results/20260928_4.8.0-vlm-bench/summary.md)
-- [두 장 비교 가능성 · 질문당 지연](../../TEST_MECHDOG/results/20260920_4.8.0-vlm-compare/summary.md)
+- [VLM 판독 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md)
+- [두 장 비교 가능성 · 질문당 지연](../../field_tests/results/20260920_4.8.0-vlm-compare/summary.md)

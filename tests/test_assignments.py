@@ -1,6 +1,6 @@
 """담당자별 작업 목록과 WBS 작업 사전의 일치 검증.
 
-`docs/ASSIGNMENTS.md`는 `docs/WBS.md` 작업 사전에서 **생성된 파일**이다. 같은 숫자를
+`docs/internal/ASSIGNMENTS.md`는 `docs/internal/WBS.md` 작업 사전에서 **생성된 파일**이다. 같은 숫자를
 두 곳에 두면 반드시 어긋나므로, 손으로 고치는 것을 막고 재생성 결과와 대조한다.
 
 이 프로젝트에서 실제로 여러 번 어긋났다 — 총 공수 69.0 vs 70.0, WBS `5.0` 절 제목
@@ -14,7 +14,7 @@ from dataclasses import replace
 import pytest
 from conftest import ROOT
 
-from tools.wbs_assignments import OUT, WorkPackage, is_ready, main, parse_wbs, render
+from tools.dev.wbs_assignments import OUT, WorkPackage, is_ready, main, parse_wbs, render
 
 
 @pytest.fixture(scope="module")
@@ -25,14 +25,14 @@ def packages() -> list[WorkPackage]:
 def test_generated_file_matches_wbs() -> None:
     """**WBS 를 고치고 재생성하지 않으면 여기서 실패한다.**
 
-    실패했다면 `python tools/wbs_assignments.py` 를 실행하고 결과를 커밋한다.
+    실패했다면 `python tools/dev/wbs_assignments.py` 를 실행하고 결과를 커밋한다.
     """
-    assert main(["--check"]) == 0, "docs/ASSIGNMENTS.md 를 재생성하고 커밋하라"
+    assert main(["--check"]) == 0, "docs/internal/ASSIGNMENTS.md 를 재생성하고 커밋하라"
 
 
 def test_total_effort_matches_the_wbs_header(packages: list[WorkPackage]) -> None:
     """워크패키지 합이 WBS 헤더의 총 계획 공수와 같아야 한다."""
-    body = (ROOT / "docs" / "WBS.md").read_text(encoding="utf-8")
+    body = (ROOT / "docs" / "internal" / "WBS.md").read_text(encoding="utf-8")
     line = next(x for x in body.splitlines() if "총 계획 공수" in x)
     stated = float(line.split("**")[3].split()[0])
     assert sum(p.effort for p in packages) == pytest.approx(stated)
@@ -55,7 +55,7 @@ def test_generated_file_warns_against_hand_editing() -> None:
     """생성 파일임을 읽는 사람이 알아야 한다. 없으면 누가 직접 고친다."""
     text = OUT.read_text(encoding="utf-8")
     assert "이 파일은 생성된다" in text
-    assert "tools/wbs_assignments.py" in text
+    assert "tools/dev/wbs_assignments.py" in text
 
 
 def test_render_is_deterministic(packages: list[WorkPackage]) -> None:
@@ -150,7 +150,7 @@ def test_section_headings_match_their_packages(packages: list[WorkPackage]) -> N
     `3.9.0` 을 등재하며 `#### 3.9` 와 총 공수는 고쳤지만 `### 3.0` 제목은 26.0 으로
     남았다(2026-09-28 · Devin 검수). 총 공수 시험은 행 합만 보므로 절 제목은 못 잡았다.
     """
-    body = (ROOT / "docs" / "WBS.md").read_text(encoding="utf-8")
+    body = (ROOT / "docs" / "internal" / "WBS.md").read_text(encoding="utf-8")
     headings = re.findall(r"^#{3,4} (\d+\.\d+) .*? — ([\d.]+) M/D", body, re.M)
     assert headings, "절 제목을 하나도 읽지 못했다"
     for section, stated in headings:

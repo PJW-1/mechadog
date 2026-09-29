@@ -1,18 +1,13 @@
 """지도·순찰 시각화 (개발 도구).
 
-⚠️ **matplotlib 는 선택 의존성이다.** `requirements.txt` 에 없으므로 import 를
-함수 안에서 한다. 모듈 최상단에서 import 하면 `host.slam` 을 쓰는 모든
-코드가 matplotlib 를 요구하게 되고, **CI 러너와 대시보드 프로세스까지** 그것을
-깔아야 한다. 지도를 그리는 것은 사람이 보기 위한 일이고 순찰 자체와 무관하다.
-
-관제 화면의 정본은 대시보드(`4.5`·`4.6`)다. 여기 있는 것은 그것이 붙기 전까지
-알고리즘을 눈으로 확인하는 수단이며, **운용 UI 가 아니다.**
+matplotlib 는 선택 의존성이라 함수 안에서 import 한다. 운용 UI 가 아니라 알고리즘을 눈으로
+확인하는 개발 도구다(관제 화면은 대시보드).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -62,7 +57,7 @@ class LiveMap:
             vmin=0,
             vmax=1,
             origin="lower",
-            extent=grid.extent,
+            extent=cast("tuple[float, float, float, float]", grid.extent),
         )
         (self._path_line,) = self._ax.plot([], [], "b-", linewidth=1)
         (self._robot,) = self._ax.plot([], [], "ro", markersize=7)
@@ -80,7 +75,7 @@ class LiveMap:
         import math
 
         self._image.set_data(to_image(self._grid))
-        self._image.set_extent(self._grid.extent)
+        self._image.set_extent(cast("tuple[float, float, float, float]", self._grid.extent))
         left, right, bottom, top = self._grid.extent
         self._ax.set_xlim(left, right)
         self._ax.set_ylim(bottom, top)
@@ -117,7 +112,7 @@ class PatrolView:
             vmin=0,
             vmax=1,
             origin="lower",
-            extent=grid.extent,
+            extent=cast("tuple[float, float, float, float]", grid.extent),
         )
         for (x, y), label in zip(zone_points, labels, strict=True):
             self._ax.plot(x, y, "gs", markersize=8)

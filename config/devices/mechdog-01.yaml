@@ -4,8 +4,8 @@
 # 있다. **보정값을 여기 옮긴 이유는 한 대의 텍스트 파일에만 두면 그 PC 와 함께
 # 사라지기 때문이다** — 잃으면 로봇이 비뚤게 걷고 다시 재야 한다.
 #
-# ⚠️ `2.4.1` 은 3대 전부를 요구하므로 아직 완료가 아니다. 나머지 2대는 L1·L2 몫이다.
-# 확인 경위는 docs/HARDWARE.md 1절 참조.
+# ⚠️ `2.4.1` 은 2대 전부를 요구하므로 아직 완료가 아니다. 나머지 1대(mechdog-02)는 L1·L2 몫이다.
+# 확인 경위는 docs/internal/HARDWARE.md 1절 참조.
 
 device_id: mechdog-01
 owner_id: unassigned # prod 프로파일로 올릴 때 실제 담당자로 채운다
@@ -16,7 +16,7 @@ owner_id: unassigned # prod 프로파일로 올릴 때 실제 담당자로 채�
 # 이 값도 바뀐다. 부팅 UART 의 `Telemetry identity:` 줄에서 읽는다.
 telemetry_device_id: mechdog-3c8a1f333208
 
-# `2.4.1` 에서 3대의 역할을 함께 정한다. 그 전에는 어느 쪽도 아니다.
+# `2.4.1` 에서 2대의 역할을 함께 정한다. 그 전에는 어느 쪽도 아니다.
 reference_role: phase1   # G1 검수 기준기로 지정 (2026-09-17 · 팀장). LiDAR 미장착 Phase 1 표준 구성
 
 network:

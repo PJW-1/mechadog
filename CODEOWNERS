@@ -21,11 +21,11 @@
 # ──────────────────────────────────────────────────────────────
 #
 # A · 임베디드
-# /firmware_mechdog_motion/         @MEMBER_A
+# /firmware/mechdog_motion/         @MEMBER_A
 # /third_party/                     @MEMBER_A
 #
 # B · 인지·AI
-# /firmware_xiao_vision/            @MEMBER_B
+# /firmware/xiao_vision/            @MEMBER_B
 # /host/vision/                     @MEMBER_B
 # /host/dashboard/static/           @MEMBER_B
 #
@@ -39,5 +39,5 @@
 #
 # ⚠️ 통신 규약 — 3인 전원 리뷰 (CONTRIBUTING.md 5절)
 # /host/common/protocol.py                        @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C
-# /firmware_mechdog_motion/src/command_parser.h   @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C
-# /firmware_mechdog_motion/src/command_parser.cpp @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C
+# /firmware/mechdog_motion/src/command_parser.h   @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C
+# /firmware/mechdog_motion/src/command_parser.cpp @PJW-1 @MEMBER_A @MEMBER_B @MEMBER_C

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from host.report.situation import describe
 
-# ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `_confirm_fall`) ──
+# ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `FallMonitor._confirm`) ──
 
 
 def test_person_fallen_non_factory_shape() -> None:
@@ -24,7 +24,7 @@ def test_person_fallen_non_factory_shape() -> None:
 
 
 def test_person_fallen_factory_shape() -> None:
-    """공장 판(`_confirm_fall`) 형태 — `vlm_yes`·`suspect_ms`·`raw`. 문장은 같다."""
+    """공장 판(`FallMonitor._confirm`) 형태 — `vlm_yes`·`suspect_ms`·`raw`. 문장은 같다."""
     sentence = describe(
         "person_fallen",
         {"fallen": True, "vlm_yes": 2, "suspect_ms": 5000, "raw": "yes"},
@@ -43,7 +43,7 @@ def test_person_fallen_none_judgement() -> None:
     assert describe("person_fallen", None) is not None
 
 
-# ── zone_changed — 넘어짐·통로 막힘 확정 (`_leave_zone` hazards) ──────────────
+# ── zone_changed — 넘어짐·통로 막힘 확정 (`ZoneInspector._leave` hazards) ──────────────
 
 
 def test_zone_changed_fallen_object() -> None:
@@ -93,7 +93,7 @@ def test_zone_changed_two_hazards_are_separate_sentences() -> None:
 
 
 def test_zone_changed_mixed_with_removed_added() -> None:
-    """반출·반입이 같은 방문에서 함께 확정돼도 위험 문구만 말한다 (`_leave_zone` 주석)."""
+    """반출·반입이 같은 방문에서 함께 확정돼도 위험 문구만 말한다 (`ZoneInspector._leave` 주석)."""
     sentence = describe(
         "zone_changed",
         {
@@ -126,7 +126,7 @@ def test_zone_changed_none_judgement() -> None:
     assert describe("zone_changed", None) is not None
 
 
-# ── zone_notice — 반출 가벼운 경고 (`_leave_zone` Z2) ────────────────────────
+# ── zone_notice — 반출 가벼운 경고 (`ZoneInspector._leave` Z2) ────────────────────────
 
 
 def test_zone_notice_with_zone() -> None:
@@ -163,7 +163,7 @@ def test_unknown_event_type_returns_none() -> None:
 def test_every_runtime_hazard_has_a_phrase() -> None:
     """런타임 위험 종류가 바뀌면(예: `collapsed_load`) 문구 표도 같이 바뀌어야 한다 —
     놓치면 문장이 조용히 일반 문구로 떨어진다."""
+    from host.behavior.zone_inspector import ZONE_HAZARDS
     from host.report.situation import _HAZARD_PHRASES
-    from host.runtime import ZONE_HAZARDS
 
     assert set(ZONE_HAZARDS) <= set(_HAZARD_PHRASES)

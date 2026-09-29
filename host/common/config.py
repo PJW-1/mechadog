@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -44,22 +44,16 @@ class ConfigError(ValueError):
 
 
 def repo_path(value: str | Path) -> Path:
-    """설정의 상대 경로를 **저장소 루트 기준**으로 푼다. 절대 경로는 그대로 둔다.
-
-    실행 위치(CWD) 기준으로 두면 저장소 밖에서 띄웠을 때 모델을 못 찾고, 로그와
-    블랙박스가 띄운 자리마다 흩어진다.
-    """
+    """설정의 상대 경로를 CWD 가 아니라 저장소 루트 기준으로 푼다. 절대 경로는 그대로 둔다."""
     path = Path(value)
     return path if path.is_absolute() else ROOT / path
 
 
 def telemetry_ids(config: dict[str, Any], device_id: str) -> frozenset[str]:
-    """이 개체의 텔레메트리로 받아들이는 `device_id` 들.
+    """이 개체의 텔레메트리로 받아들이는 `device_id` 들 — 설정 이름과 `telemetry_device_id`.
 
-    ⚠️ **펌웨어는 설정 이름이 아니라 보드 MAC 으로 만든 이름을 보낸다**
-    (`mechdog-<MAC 12자리>` · `telemetry_publisher.cpp`). 그래서 설정 이름(`mechdog-01`)으로만
-    대조하면 우리 로봇의 텔레메트리를 전부 남의 것으로 버린다 — 2026-09-12 실기에서 그랬다.
-    개체 프로파일의 `telemetry_device_id` 로 잇고, 목업은 설정 이름을 그대로 보내므로 둘 다 받는다.
+    펌웨어는 보드 MAC 으로 만든 이름(`mechdog-<MAC 12자리>`)을 보내고 목업은 설정 이름을
+    보내므로 둘 다 받는다.
     """
     named = config.get("telemetry_device_id")
     return frozenset({device_id, named}) if named else frozenset({device_id})
@@ -87,7 +81,7 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _finite_number(value: Any) -> bool:
+def _finite_number(value: Any) -> TypeGuard[int | float]:
     if not isinstance(value, int | float) or isinstance(value, bool):
         return False
     try:
@@ -115,10 +109,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
         raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
 
-    # ⚠️ **이름 목록을 여기 적지 않는다** (FR-11.1). 고를 수 있는 모드와 그 선행
-    # 기능의 정본은 `behavior/mission.py` 하나이며, 목록을 두 곳에 두면 모드를
-    # 늘릴 때 한쪽만 고쳐진다 — `coco_labels` 를 `config.yaml` 에 두지 않은 것과
-    # 같은 이유다. 여기서는 **자리가 있고 값이 문자열인지**까지만 본다.
+    # 모드 이름 목록의 정본은 `behavior/mission.py` 하나다 — 여기서는 문자열인지만 본다.
     mode = config["mission"].get("mode")
     if not isinstance(mode, str) or not mode.strip():
         raise ConfigError("mission.mode 는 비어 있지 않은 문자열이어야 함")
@@ -136,15 +127,10 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(vision, "stall_timeout_ms")
     _require_positive(vision, "target_fps")
     _require_positive(vision, "inference_fps")
-    # 장착 방향 보정은 0 또는 180 뿐이다 — 펌웨어가 vflip+hmirror 합성으로 구현하므로
-    # 90·270 은 만들 수 없다. 여기서 막지 않으면 카메라가 400 을 돌려주고 그것을
-    # 기동 경고로만 보게 된다.
+    # 펌웨어가 vflip+hmirror 합성으로 돌리므로 장착 보정은 0 또는 180 뿐이다.
     if vision.get("mount_rotation", 0) not in (0, 180):
         raise ConfigError("vision.mount_rotation 은 0 또는 180 이어야 함")
-    # ⚠️ **추론률의 상한은 `target_fps` 가 아니라 `stream_fps_limit` 이다.**
-    # `target_fps` 는 NFR-1.3 이 요구하는 *하한*(≥15fps)이고 실제 수신률은 상한값이다.
-    # 하한을 상한으로 쓰면 25fps 를 받는데도 추론률을 15 위로 못 올린다 — 지키려던
-    # 불변식("낡은 프레임으로 판단하지 않는다")과 무관한 제약이 된다.
+    # 추론률의 상한은 수신 상한 `stream_fps_limit` 이다. `target_fps` 는 NFR-1.3 의 하한이다.
     if vision["inference_fps"] > vision["stream_fps_limit"]:
         raise ConfigError("vision.inference_fps 는 vision.stream_fps_limit 을 넘을 수 없음")
     if vision["stream_fps_limit"] < vision["target_fps"]:
@@ -161,14 +147,14 @@ def validate_base_config(config: dict[str, Any]) -> None:
         if family is not None and (not isinstance(family, str) or not family.strip()):
             raise ConfigError(f"vision.{section}.model_family 는 null 이거나 비어 있지 않은 문자열")
 
-    # 사람 판정 (FR-3.2) — **시간 기반이다.** 프레임 수로 두면 추론률에 종속된다.
+    # 사람 판정 (FR-3.2) — 프레임 수가 아니라 시간 창이다 (ADR-25).
     _require_positive(vision, "detect_window_ms")
     _require_positive(vision, "detect_hits_required")
     for name in ("detect_window_ms", "detect_hits_required"):
         if not isinstance(vision[name], int) or isinstance(vision[name], bool):
             raise ConfigError(f"vision.{name} 는 양의 정수여야 함")
-    # ⚠️ 창 안에 그만큼의 관측이 들어갈 수 없으면 **영원히 확정되지 않는다.**
-    # 게이트가 양 끝을 포함하므로 최대 개수는 `floor(window / period) + 1` 이다.
+    # 창 안 최대 관측 수(양 끝 포함 `floor(window / period) + 1`)보다 많이 요구하면
+    # 영원히 확정되지 않는다 (ADR-25).
     period_ms = max(1, round(1000 / vision["inference_fps"]))
     capacity = vision["detect_window_ms"] // period_ms + 1
     if vision["detect_hits_required"] > capacity:
@@ -178,8 +164,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
             f"{period_ms}ms) + 1) 를 넘어 영원히 확정되지 않음"
         )
 
-    # 다중 인원 추적 (FR-3.6) — 소실 버퍼도 **시간이다.** 프레임 수로 두면
-    # 같은 30프레임이 10fps 3초 · 25fps 1.2초가 된다 (결정 22·25번과 같은 형태).
+    # 다중 인원 추적 (FR-3.6) — 소실 버퍼도 시간이다 (ADR-27 ③).
     tracker = vision.get("tracker")
     if not isinstance(tracker, dict):
         raise ConfigError("vision.tracker 절이 없음")
@@ -189,20 +174,17 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if tracker["iou_match_threshold"] >= 1:
         # 1.0 은 완전히 같은 박스만 잇는다는 뜻이라 어떤 대상도 이어지지 않는다.
         raise ConfigError("vision.tracker.iou_match_threshold 는 1 미만이어야 함")
-    # ⚠️ 소실 버퍼가 추론 주기보다 짧으면 **한 번만 놓쳐도 ID 가 바뀐다.** 실기
-    # 통과율이 52% 였으므로(ADR-25) 한 프레임 공백은 예외가 아니라 일상이다.
+    # 소실 버퍼가 추론 주기보다 짧으면 한 번만 놓쳐도 ID 가 바뀐다 (ADR-27 ③).
     if tracker["track_lost_ms"] < period_ms:
         raise ConfigError(
             f"vision.tracker.track_lost_ms({tracker['track_lost_ms']}ms) 가 추론 주기"
             f"({period_ms}ms) 보다 짧아 한 번만 놓쳐도 ID 가 바뀜"
         )
 
-    # 인증 (FR-10) — 사원증 사전과 발급 대장.
-    # 절의 존재는 `REQUIRED_SECTIONS` 가 이미 본다 — 여기서 또 보면 죽은 코드가 된다.
+    # 인증 (FR-10) — 사원증 사전과 발급 대장. 절의 존재는 `REQUIRED_SECTIONS` 가 본다.
     auth = config["auth"]
     dictionary = auth.get("badge_dictionary")
-    # 이름이 `cv2.aruco` 에 있는지는 `BadgeReader` 가 기동 때 확인한다 — 여기서
-    # `cv2` 를 import 하면 설정 검증이 OpenCV 를 요구하게 된다.
+    # 사전 이름이 `cv2.aruco` 에 있는지는 `BadgeReader` 가 기동 때 본다(여기서는 cv2 를 쓰지 않는다).
     if not isinstance(dictionary, str) or not dictionary.strip():
         raise ConfigError("auth.badge_dictionary 는 비어 있지 않은 문자열이어야 함")
     _require_positive(auth, "session_valid_s")
@@ -271,9 +253,8 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if not _finite_number(deadzone) or deadzone < 0:
         raise ConfigError("fsm.track_deadzone_px 는 0 이상의 유한한 수여야 함")
 
-    # 추종 지시를 이어 가는 상한은 **대상 상실 타이머보다 짧아야 한다.** 같거나 길면
-    # 상한이 하는 일이 없어지고, 대상이 사라진 뒤에도 `TRACK` 이 끝날 때까지 낡은
-    # 각도로 계속 돈다 — 이 값을 둔 이유가 바로 그것을 막는 것이다.
+    # 추종 지시를 이어 가는 상한은 대상 상실 타이머보다 짧아야 한다 — 아니면 대상이
+    # 사라진 뒤에도 `TRACK` 이 끝날 때까지 낡은 각도로 계속 돈다.
     lost_ms = float(config["fsm"]["target_lost_timeout_s"]) * 1000.0
     coast = fsm.get("track_coast_ms")
     if not _finite_number(coast) or coast <= 0:
@@ -284,15 +265,8 @@ def validate_base_config(config: dict[str, Any]) -> None:
             " — 상한이 없으면 대상이 사라져도 낡은 각도로 계속 돈다"
         )
 
-    # ⚠️ **«고개를 드는» 자세각은 음수다** — 2026-09-15 실기로 확정했다
-    # (`POSE pitch=+15` → IMU 17.4, 앞이 내려감 / `-15` → -11.6, 앞이 올라감).
-    # PROTOCOL 2절과 config 주석이 그것을 적어 두었지만 **지키는 코드가 없었다.**
-    #
-    # 여기서 막는 이유 — 같은 실수가 이미 한 번 났다. `tools/teleop.py` 의 좌우가
-    # 뒤바뀐 채 **시험이 그 버그를 굳혀 두고 있었다**(`2.2.3` 기록). 부호는 실측으로만
-    # 알 수 있고 한번 틀리면 눈으로 보고서야 아는 종류라, 실측한 결론을 설정 검증에
-    # 박아 둔다. 양수로 되돌리면 경계 자세가 **바닥을 보게 되고** 가까이 있는 사람의
-    # 머리가 더 잘린다(FR-9.2.2 가 자세로 풀려던 것과 정반대).
+    # 고개를 드는 자세각은 음수다 (양수 pitch 는 앞이 내려간다 · PROTOCOL 2절). 양수면
+    # 경계 자세가 바닥을 보고 사람 머리가 더 잘린다(FR-9.2.2).
     for section, name in (
         ("fsm", "alert_pitch_deg"),
         ("fsm", "scan_pitch_deg"),
@@ -310,8 +284,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
     track = config["localization"].get("track")
     if not isinstance(track, str) or track not in {"none", "lidar", "aruco"}:
         raise ConfigError("localization.track 은 none, lidar, aruco 중 하나여야 함")
-    # `lidar` 절은 Phase 2 이므로 없을 수 있다. 있으면 설치각만 본다 —
-    # 범위를 벗어난 값은 지도를 통째로 돌려 놓고도 조용히 지나간다.
+    # `lidar` 절은 없을 수 있다(Phase 2). 있으면 설치각·방향·전달 포트를 본다.
     lidar = config.get("lidar")
     if isinstance(lidar, dict) and "mount_yaw_deg" in lidar:
         yaw = lidar["mount_yaw_deg"]
@@ -388,10 +361,7 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
     }:
         raise ConfigError("reference_role 은 phase1, phase2, none 중 하나여야 함")
 
-    # ⚠️ **`null` 은 "아직 안 쟀다" 이며 0 아홉 개와 다르다.** 0 은 *"보정이
-    # 필요 없다"* 는 뜻이 되고, 이 값은 유실 대비 보관본이라(호스트는 읽기만
-    # 하고 로봇에 보내지 않는다) 틀린 기록이 그대로 남는다. 3대 중 아직
-    # 안 잰 기체가 있으므로 비워 두는 길을 남긴다.
+    # `null` 은 «아직 안 쟀다» 이고 0 아홉 개(«보정 불필요»)와 다르다. 보관본이며 로봇에 보내지 않는다.
     offsets = config.get("servo_offset")
     if offsets is not None and (
         not isinstance(offsets, list)
@@ -427,15 +397,9 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
 
 
 def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
-    """트롯 보행 중 자세 진폭 (WBS 2.2.3 ②).
+    """트롯 보행 중 자세 진폭(WBS 2.2.3 ②)을 검증한다. 없으면 통과, 0 은 거부한다.
 
-    ⚠️ **0 을 거부하는 것이 이 함수의 존재 이유다.** WBS 가 그 함정을 이미
-    적어 두었다 — 자리만 만들어 두면 누군가 0 을 채우고 *"쟀다"* 로 보인다.
-    진폭 0 은 로봇이 걷지 않았다는 뜻이므로 측정값일 수 없다.
-
-    없으면 통과한다. 아직 재지 않은 기체가 있고(3대 중 1대만 끝났다) 없는 것과
-    0 인 것은 다르다 — 없으면 `FR-6.2.2` 판단을 미루면 되지만 0 이면 **흔들리지
-    않는다고 잘못 읽는다.**
+    진폭 0 은 걷지 않았다는 뜻이라 측정값일 수 없다. «없음» 은 아직 안 쟀다는 뜻이다.
     """
     amplitude = calibration.get("posture_amplitude")
     if amplitude is None:

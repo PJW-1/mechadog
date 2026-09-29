@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from host.common.config import repo_path
@@ -37,14 +37,12 @@ class BlackboxEntry:
     event_type: str
     state: str
     escalation: str
-    #: 운용 모드 (FR-11.5). **같은 `person` 검출이 모드에 따라 다른 결과를
-    #: 낳으므로 모드 없이는 판단 근거를 되짚을 수 없다.**
+    #: 운용 모드 (FR-11.5) — 같은 검출도 모드에 따라 결과가 다르다 (ADR-33 규칙 5).
     mode: str
     tracks: list[dict[str, Any]]
     detections: list[dict[str, Any]]
     telemetry: dict[str, Any]
-    #: 그릴 수 없는 판단 근거 — 쓰러짐 판정(`4.8.3`)·VLM 판독(`4.8.0`).
-    #: 박스는 사진 위에 그리면 보이지만 이것들은 읽어야만 알 수 있다.
+    #: 사진에 그릴 수 없는 판단 근거 — 쓰러짐 판정(`4.8.3`)·VLM 판독(`4.8.0`).
     judgement: dict[str, Any]
     jpeg_path: Path | None
     meta_path: Path
@@ -113,9 +111,6 @@ class EventBlackbox:
             {"label": item.label, "score": item.score, "box": list(item.box)} for item in detections
         ]
         telemetry_data = deepcopy(dict(telemetry or {}))
-        # ⚠️ **판단 근거를 사진과 같은 자리에 둔다.** 검출 박스는 그려 보면 알지만
-        # 쓰러짐 판정이나 VLM 답은 **그릴 것이 없어서** 숫자와 문장으로만 남는다.
-        # 사진 옆에 없으면 나중에 *"왜 그렇게 판정했나"* 를 되짚을 수 없다.
         judgement_data = deepcopy(dict(judgement or {}))
         metadata: dict[str, Any] = {
             "ts_ms": now_ms,
@@ -133,7 +128,7 @@ class EventBlackbox:
         jpeg_path = entry_dir / "snapshot.jpg" if jpeg is not None else None
         meta_path = entry_dir / "meta.json"
         if jpeg_path is not None:
-            _atomic_write(jpeg_path, jpeg)
+            _atomic_write(jpeg_path, cast(bytes, jpeg))
         # meta.json을 마지막에 게시한다. 조회자는 이 파일이 없는 부분 기록을 무시한다.
         encoded = (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         _atomic_write(meta_path, encoded)
@@ -176,14 +171,11 @@ class EventBlackbox:
             event_type = metadata.get("event")
             state = metadata.get("state")
             escalation = metadata.get("escalation")
-            # ⚠️ **옛 기록에는 없다.** `3.4.4` 이전에 쌓인 것을 읽을 수 없게 만들면
-            # 모드를 넣은 대가로 과거 사건을 잃는다 — 빈 문자열로 두고 «모르는 모드»
-            # 로 읽히게 한다. 필수로 요구하는 쪽은 새로 쓰는 자리다.
+            # `mode`·`judgement` 가 없는 옛 기록도 읽는다 — 빈 값(«모름»)으로 둔다.
             mode = metadata.get("mode", "")
             tracks = metadata.get("tracks")
             detections = metadata.get("detections")
             telemetry = metadata.get("telemetry")
-            # ⚠️ **옛 기록에는 없다** — `mode` 와 같은 이유로 빈 것으로 읽는다.
             judgement = metadata.get("judgement")
             if (
                 not isinstance(ts_ms, int)
@@ -210,8 +202,6 @@ class EventBlackbox:
                     tracks=tracks,
                     detections=detections,
                     telemetry=telemetry,
-                    # ⚠️ **없으면 빈 것으로 읽는다.** `judgement` 가 생기기 전에 남은
-                    # 기록이 이미 디스크에 있고, 그것들을 버리면 과거가 사라진다.
                     judgement=judgement if isinstance(judgement, dict) else {},
                     jpeg_path=jpeg_path if jpeg_path.is_file() else None,
                     meta_path=meta_path,
@@ -229,16 +219,9 @@ class EventBlackbox:
     def snapshot_bytes(self, entry: str) -> bytes | None:
         """기록 디렉터리 이름 하나로 그 사건의 JPEG 를 읽는다. 없으면 ``None``.
 
-        ⚠️ **이름은 브라우저에서 온다.** 사건 전문에는 절대 경로 대신 디렉터리 이름만
-        싣는데(`4.4.3`), 화면이 그림을 보려면 그 이름으로 되돌아 찾아야 한다. 즉 이
-        함수의 입력은 **바깥에서 오는 문자열**이므로 경로로 쓰기 전에 잘라야 한다.
-
-        ⚠️ **검증을 부르는 쪽에 두지 않는다.** 저장 구조를 아는 것은 이 클래스뿐이고,
-        서버가 경로를 조립하게 하면 규칙이 두 곳에 생긴다 — 한쪽만 고쳐지는 순간
-        디렉터리 밖 파일이 열린다.
-
-        막는 것 셋 — ① 경로 구분자와 `..` 가 든 이름 ② 빈 이름·숨김 이름
-        ③ 심볼릭 링크 등으로 기록 폴더 **밖을 가리키게 된 결과 경로**.
+        ⚠️ `entry` 는 브라우저에서 온 신뢰할 수 없는 문자열이다. 경로 구분자·`..`·빈 이름·
+        숨김 이름과, 심볼릭 링크 등으로 기록 폴더 밖을 가리키는 결과 경로를 여기서 거부한다
+        (저장 구조를 아는 이 클래스 한 곳에만 둔다).
         """
         if not entry or entry.startswith(".") or entry != Path(entry).name:
             return None

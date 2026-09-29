@@ -143,7 +143,7 @@ function syncObservationView(){
  $('app').classList.toggle('observation-waiting',!operations.demo||operations.stale);
  view?.setWorldVisible(dashboard);
  // ⚠️ **실제 데이터 모드에서는 예시 공장 3D 를 그리지 않는다.** 지도가 없는데(LiDAR 미연결) 가상 공장과
- // 예시 로봇 3대·"확인 필요" 표시가 실제 화면에 섞이면 배치와 위치를 아는 것처럼 보인다. 숨긴 캔버스를
+ // 예시 로봇 2대·"확인 필요" 표시가 실제 화면에 섞이면 배치와 위치를 아는 것처럼 보인다. 숨긴 캔버스를
  // 계속 그릴 이유도 없다. LiDAR 지도가 생기면 이 자리는 2D 지도로 채운다.
  view?.setActive(!observationFailed&&operations.demo&&(dashboard||(manual&&!operations.stale)));
  view?.setCameraVisible(!observationFailed&&(dashboard||manual)&&operations.demo&&!operations.stale&&(manual||!cameraDock.classList.contains('collapsed')));

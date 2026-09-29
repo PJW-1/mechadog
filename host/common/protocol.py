@@ -1,4 +1,4 @@
-"""통신 규약 구현 — 직렬화 · 파싱 · 검증 (WBS 3.1.1 · FR-5.1/5.2).
+"""통신 규약 구현 — 직렬화 · 파싱 · 검증 (FR-5.1/5.2).
 
 **정본은 이 파일이 아니라 docs/PROTOCOL.md 다.**
 이 파일은 그 문서의 Python 구현이고, C++ 펌웨어(`command_parser`)는 같은 문서의
@@ -16,14 +16,11 @@ C++ 구현이다. 둘이 어긋나면 같은 골든 픽스처를 보는 CI 가 �
 2. **시각은 주입받는다.** `time.time()` 을 직접 부르는 곳은 `system_clock_ms()`
    하나뿐이며, 인코더는 이것을 인자로 받는다. 테스트는 가짜 시계를 넣는다.
 
-3. **seq 는 유효성과 무관하게 진행한다.** 내용 검증에서 폐기된 패킷이라도 그
-   seq 는 "이미 지나간 순번"이다. 순서 게이트는 데이터그램의 순서에 대한 것이지
-   내용의 옳고 그름에 대한 것이 아니다. 이렇게 해야 재전송된 옛 패킷이 뒤늦게
-   받아들여지는 구멍이 생기지 않는다.
+3. **seq 는 유효성과 무관하게 진행한다.** 내용 검증에서 폐기된 패킷의 seq 도
+   «지나간 순번» 이라, 옛 패킷이 뒤늦게 받아들여지지 않는다.
 
-여기 있는 숫자들은 튜닝 파라미터가 아니라 **규약 상수**다 (DR-1, HW_MechDog API
-허용 범위). 그래서 config.yaml 이 아니라 코드에 있다. 바꾸려면 파괴적 변경
-절차를 따른다 (PROTOCOL.md 4절).
+여기 있는 숫자는 튜닝 파라미터가 아니라 **규약 상수**다 (HW_MechDog API 허용 범위 ·
+ADR-1). 바꾸려면 파괴적 변경 절차를 따른다 (PROTOCOL.md 4절).
 """
 
 import json
@@ -32,7 +29,7 @@ import time
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeGuard
 
 # ══════════════════════════════════════════════════════════════
 #  1. 규약 상수 — PROTOCOL.md 2절 · 5절
@@ -89,31 +86,18 @@ NONNEGATIVE_FIELDS: dict[str, tuple[str, ...]] = {
     "SOUND": ("track",),
 }
 
-#: 클램핑 대상 — PROTOCOL.md 가 범위를 명시한 필드만이다.
-#: POSE·GAIT 는 "라이브러리 허용 범위"로만 규정되어 실측 전까지 클램핑하지
-#: 않는다. 근거 없는 상한을 코드에 박으면 그것이 사실상의 규약이 되어버린다.
+#: 클램핑 대상 — PROTOCOL.md 가 범위를 명시한 필드만이다 (POSE·GAIT 는 자르지 않는다).
 CLAMP_RANGES: dict[str, tuple[float, float]] = {
     "step": (-100, 100),  # mm
-    # deg — arc 조향. `step=0` 이면 제자리에서 돌기는 하지만 산포가 82% 라
-    # 제어에 쓰지 않는다 (2026-09-22 실측 · DR-11).
+    # deg — arc 조향. `step=0` 제자리 회전은 경로 제어에 쓰지 않는다 (ADR-11).
     "angle": (-30, 30),
     "id": (0, 15),  # 내장 액션 그룹
 }
 
-#: FSM 상태. 모르는 상태는 폐기 + WARN 이며, 명령 타입과 같은 이유로 상태
-#: 추가를 하위 호환으로 만든다.
+#: FSM 상태 — 명령(`STATE`)과 텔레메트리(`state`) 양쪽에서 쓴다. 모르는 상태는 폐기 + WARN.
 #:
-#: **FSM 은 Host PC 에서 돈다.** 로봇은 자기가 `ALERT` 인지 `TRACK` 인지 알 수 없고
-#: (그 판단의 근거인 카메라 영상을 호스트가 본다), 온보드가 스스로 아는 것은
-#: `FAILSAFE`·`AVOID`·`PATROL` 셋뿐이다. 나머지는 `STATE` 명령으로 호스트가
-#: 내려보내고 로봇은 받아적어 텔레메트리에 되돌려준다.
-#:
-#: 그래서 이 집합은 **명령(`STATE`)과 텔레메트리(`state`) 양쪽에서 쓰인다.**
-#:
-#: ⚠️ **정본은 아키텍처 문서의 전이표이며, 이 집합은 그것과 정확히 일치해야 한다.**
-#: FR-4.2 가 대시보드에 "현재 FSM 상태"를 스트리밍하도록 요구하므로, 전이표에
-#: 있고 여기 없는 상태는 **화면에 표시할 수 없는 상태**가 된다. 임의로 골라
-#: 담으면 그 기준이 문서 어디에도 없어 반드시 다시 어긋난다 —
+#: FSM 은 Host PC 에서 돈다. 온보드가 스스로 아는 것은 `ONBOARD_STATES` 셋뿐이고, 나머지는
+#: 호스트가 `STATE` 로 내려보낸 것을 로봇이 되돌려준다. 정본은 아키텍처 문서의 전이표이며
 #: `test_fsm_states_match_the_transition_table` 이 대조한다.
 FSM_STATES: frozenset[str] = frozenset(
     {
@@ -155,27 +139,17 @@ TELEMETRY_REQUIRED: tuple[str, ...] = (
 IMU_FIELDS: tuple[str, ...] = ("pitch", "roll", "yaw")
 FLAG_FIELDS: tuple[str, ...] = ("lowbatt", "tipped", "link_ok")
 
-#: 있으면 검사하고 없으면 넘어가는 플래그. **하위 호환으로 추가된 것들이다.**
-#:
-#: `obstacle` 은 **온보드 근거리 반사 정지가 지금 걸려 있는가** 다. 왜 `state` 로
-#: 부족한지는 [ADR-22](../../docs/DECISIONS.md) 에 적었다 — 요약하면 `state` 의
-#: `AVOID` 는 호스트가 `STATE` 로 내려보낸 값이 되돌아온 것일 수도 있어서,
-#: **해제됐는지를 그 값으로 알 수 없다.** `safety_latched` 가 `FAILSAFE` 에 대해
-#: 같은 문제를 푸는 방식과 동일하다.
+#: 있으면 검사하고 없으면 넘어가는 하위 호환 플래그. `obstacle` 은 «온보드 근거리 반사
+#: 정지가 지금 걸려 있는가» 다 — 반향될 수 있는 `state` 로는 해제를 알 수 없다 (ADR-22).
 OPTIONAL_FLAG_FIELDS: tuple[str, ...] = ("obstacle", "service")
 
-#: `TelemetryEncoder` 가 스스로 채우며 `extra` 로 덮을 수 없는 필드.
-#: 나머지 본문 필드(`state`·`dist_cm`·`imu`·`batt_v`·`last_cmd_age_ms`·`flags`)는
-#: `build()` 의 **명명 인자**이므로 애초에 `extra` 에 닿지 않는다 — 파이썬이 막는다.
+#: `TelemetryEncoder` 가 스스로 채우며 `extra` 로 덮을 수 없는 필드 (본문 필드는 명명 인자다).
 TELEMETRY_MANAGED: frozenset[str] = frozenset({"seq", "ts", "device_id", "boot_id"})
 
-#: 2S 리튬 물리 범위 (셀당 3.0~4.2V). 이 밖의 값은 측정 오류이므로 폐기한다.
-#: 저전압 **판정** 임계(config.safety.battery_*)와는 다른 것이다 — 이것은
-#: "물리적으로 가능한가"이고 그것은 "안전한가"이다.
+#: 2S 리튬 물리 범위. 이 밖의 값은 측정 오류로 폐기한다 — 저전압 판정 임계
+#: (`config.safety.battery_*`)와는 별개다 (ADR-30).
 BATT_MIN_V: float = 6.0
-#: 상한은 만충 8.4V 에 **측정 여유 0.2V** 를 더한 값이다 — ADC 보정·분압 저항
-#: 오차 합 ±2~3% 와 실측 최댓값 8.46V 가 근거다 (ADR-30). 여유가 없으면 **충전을
-#: 마친 로봇의 정상 레코드가 통째로 폐기된다.**
+#: 만충 8.4V 에 측정 여유 0.2V 를 더한 상한 (ADR-30).
 BATT_MAX_V: float = 8.6
 
 #: 메타 필드 — 픽스처의 주석용이며 전송 대상이 아니다.
@@ -215,11 +189,7 @@ class DecodeResult:
 
     @property
     def refreshes_link(self) -> bool:
-        """규칙 ③ — 받아들인 패킷만 링크 타임아웃 카운터를 갱신한다.
-
-        깨진 패킷을 "살아 있음"으로 세면 페일세이프가 걸리지 않는다.
-        수신 루프는 반드시 이 값을 보고 카운터를 갱신해야 한다.
-        """
+        """규칙 ③ — 받아들인 패킷만 링크 타임아웃을 갱신한다. 수신 루프는 이 값만 본다."""
         return self.accepted
 
 
@@ -234,15 +204,11 @@ def _accept(msg: dict[str, Any], clamped: tuple[str, ...]) -> DecodeResult:
 
 
 def system_clock_ms() -> int:
-    """Host PC 기준 epoch 밀리초 (초 아님).
-
-    이 파일에서 실제 시각을 읽는 유일한 지점이다. 테스트는 인코더에 가짜
-    시계를 주입하므로 이 함수를 거치지 않는다.
-    """
+    """Host PC 기준 epoch 밀리초. 이 파일에서 실제 시각을 읽는 유일한 지점이다."""
     return int(time.time() * 1000)
 
 
-def _is_number(value: Any) -> bool:
+def _is_number(value: Any) -> TypeGuard[int | float]:
     """bool·NaN·무한대는 수치로 보지 않는다."""
     if not isinstance(value, int | float) or isinstance(value, bool):
         return False
@@ -253,12 +219,7 @@ def _is_number(value: Any) -> bool:
 
 
 def _is_int(value: Any) -> bool:
-    """`seq`·`ts` 전용. 실수를 허용하면 조용히 잘려 나간다.
-
-    `seq: 1.5` 를 받아들이면 순서 게이트는 `int()` 로 잘라 `1` 로 기억하고
-    메시지에는 `1.5` 가 남아 **둘이 어긋난다.** 그리고 뒤이어 오는 정상적인
-    `seq: 1` 이 "중복"으로 폐기된다. 규약이 정수라고 못박은 이유가 이것이다.
-    """
+    """정수 필드 검사. 실수를 받으면 순서 게이트와 메시지의 seq 가 어긋나므로 거부한다."""
     # C++ 파서가 double로 읽어도 정확히 표현할 수 있는 정수만 전송한다.
     return isinstance(value, int) and not isinstance(value, bool) and abs(value) < 1 << 53
 
@@ -266,9 +227,7 @@ def _is_int(value: Any) -> bool:
 def _known(value: Any, allowed: frozenset[str]) -> bool:
     """문자열인지 먼저 확인한 뒤 목록과 대조한다.
 
-    ⚠️ **이 순서가 안전 장치다.** UDP 로는 무엇이든 들어온다. `{"type": []}` 를
-    받으면 `[] in frozenset(...)` 이 `TypeError: unhashable type` 을 던지고
-    수신 루프가 죽는다 — 관제가 멈추는 것이므로 폐기보다 나쁘다.
+    ⚠️ 순서를 바꾸지 않는다 — `{"type": []}` 같은 해시 불가 값이 `TypeError` 로 수신 루프를 죽인다.
     """
     return isinstance(value, str) and value in allowed
 
@@ -299,11 +258,7 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def apply_clamps(msg: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """범위를 벗어난 필드를 자른다 (규칙 ②).
-
-    폐기하지 않는 이유는 PROTOCOL.md 3절에 있다 — 명령이 조용히 사라지는
-    것보다 잘린 명령이 낫다. 원본을 바꾸지 않고 새 dict 를 돌려준다.
-    """
+    """범위를 벗어난 필드를 잘라 새 dict 로 돌려준다 (규칙 ② · PROTOCOL.md 3절)."""
     out = dict(msg)
     clamped: list[str] = []
     for name, (low, high) in CLAMP_RANGES.items():
@@ -339,11 +294,7 @@ def _parse(raw: str | bytes) -> dict[str, Any] | DecodeResult:
 
 
 class _SeqGate:
-    """seq 역전·중복 폐기 (규칙 ①).
-
-    송신자별로 따로 센다. 3대를 동시에 운용하므로 한 카운터로 묶으면 개체끼리
-    서로의 패킷을 폐기한다 (CONTRIBUTING 1절).
-    """
+    """seq 역전·중복 폐기 (규칙 ①). 여러 개체를 동시에 운용하므로 송신자별로 센다."""
 
     def __init__(self) -> None:
         self._last: dict[Hashable, int] = {}
@@ -370,8 +321,7 @@ class _SeqGate:
 class CommandEncoder:
     """제어 명령 직렬화. `seq` 는 단조 증가하고 `ts` 는 주입된 시계에서 온다.
 
-    송신은 10Hz 고정이며 변화가 없어도 계속 보낸다. 수신측 타임아웃을 갱신하는
-    것이 곧 하트비트이기 때문이다 (PROTOCOL.md 1절).
+    송신은 10Hz 고정이며 변화가 없어도 보낸다 — 그것이 하트비트다 (PROTOCOL.md 1절).
     """
 
     def __init__(self, clock: Callable[[], int] = system_clock_ms, start_seq: int = 1) -> None:
@@ -385,15 +335,11 @@ class CommandEncoder:
         return self._seq
 
     def build(self, type_: str, **fields: Any) -> dict[str, Any]:
-        """명령 dict 를 만든다. 범위를 벗어난 값은 보내기 전에 자른다.
-
-        모르는 타입·필수 필드 누락은 **송신측 버그**이므로 조용히 넘기지 않고
-        예외를 낸다. 수신측의 관용(폐기·클램핑)과 대칭이 아닌 것은 의도적이다.
-        """
+        """명령 dict 를 만든다. 범위를 벗어난 값은 자르고, 모르는 타입·필드 누락은
+        송신측 버그이므로 `ValueError` 를 낸다."""
         if type_ not in COMMAND_TYPES:
             raise ValueError(f"알 수 없는 명령 타입: {type_!r}")
-        # 예약 키를 넘기면 자동 생성값이 덮여 **단조 증가 seq 보장이 깨진다.**
-        # 인코더가 지키는 유일한 계약이므로 우회를 허용하지 않는다.
+        # 예약 키로 자동 생성값을 덮으면 단조 증가 seq 보장이 깨진다.
         reserved = COMMON_REQUIRED_SET & fields.keys()
         if reserved:
             raise ValueError(f"인코더가 관리하는 필드는 넘길 수 없다: {sorted(reserved)}")
@@ -451,13 +397,8 @@ class CommandEncoder:
         return self.encode("SOUND", track=track)
 
     def state(self, state: str) -> str:
-        """호스트의 FSM 상태를 로봇에게 알려준다.
-
-        로봇은 이것을 판단 근거로 쓰지 않는다 — **받아적어 텔레메트리에 되돌려줄
-        뿐이다.** Tier 1 안전 판정은 이 값과 무관하게 온보드가 우선한다
-        (아키텍처 1.2 불변 규칙). 즉 호스트가 `PATROL` 이라고 해도 로봇이 전도를
-        감지했다면 로봇은 `FAILSAFE` 를 보고한다.
-        """
+        """호스트의 FSM 상태를 로봇에게 알려준다. 로봇은 되돌려줄 뿐 판단에 쓰지 않으며,
+        Tier 1 온보드 안전 판정이 이 값보다 우선한다 (아키텍처 1.2)."""
         return self.encode("STATE", state=state)
 
     def service(self, mode: str) -> str:
@@ -471,13 +412,9 @@ class CommandEncoder:
 
 
 class CommandDecoder:
-    """제어 명령 수신 검증. C++ 파서와 규칙·순서가 같아야 한다.
+    """제어 명령 수신 검증 — 가상 MechDog 가 쓰는 펌웨어 참조 구현.
 
-    이 클래스가 Python 쪽에 있는 이유는 가상 MechDog(WBS 6.1.1)이 실물 없이
-    같은 규칙으로 수신해야 하기 때문이다. 펌웨어의 참조 구현이기도 하다.
-
-    규칙 적용 순서 — PROTOCOL.md 3절의 ①~④ 를 실행 가능한 순서로 편 것이다.
-    seq 를 읽으려면 먼저 파싱과 공통 필드 확인이 끝나야 하므로 앞에 온다.
+    C++ 파서와 규칙·순서가 같아야 한다. 순서는 PROTOCOL.md 3절 ①~④ 를 실행 가능하게 편 것이다.
     """
 
     def __init__(self) -> None:
@@ -539,8 +476,7 @@ class CommandDecoder:
         if error := _command_field_error(type_, msg):
             return DecodeResult(Verdict.DISCARD, error)
 
-        # 모르는 상태값 — 폐기 + WARN. 텔레메트리 규칙 ③과 대칭이며, 같은
-        # 이유로 상태 추가를 하위 호환으로 만든다.
+        # 모르는 상태값 — 폐기 + WARN (텔레메트리 규칙 ③과 대칭).
         if type_ == "STATE" and not _known(msg["state"], FSM_STATES):
             return DecodeResult(Verdict.DISCARD_WARN, f"알 수 없는 상태: {msg['state']!r}")
         if type_ == "SERVICE" and not _known(msg["mode"], SERVICE_MODES):
@@ -556,10 +492,7 @@ class CommandDecoder:
 
 
 class TelemetryEncoder:
-    """텔레메트리 직렬화. 펌웨어(C++)의 대응물이며, 가상 MechDog 가 쓴다.
-
-    ESP32 는 파일 로깅을 하지 않는다. **텔레메트리가 곧 로그다.**
-    """
+    """텔레메트리 직렬화 — 펌웨어(C++)의 대응물이며 가상 MechDog 가 쓴다."""
 
     def __init__(
         self,
@@ -615,8 +548,7 @@ class TelemetryEncoder:
         for name in FLAG_FIELDS:
             if not isinstance(flags[name], bool):
                 raise ValueError(f"flags.{name} 가 불리언이 아님")
-        # `extra` 로 `device_id` 를 덮으면 **송신자를 위조할 수 있다.** 다중 개체
-        # 운용에서 그것이 유일한 구분 수단이므로(DR-17) 우회를 허용하지 않는다.
+        # `extra` 로 `device_id` 등을 덮으면 송신자를 위조할 수 있다.
         reserved = TELEMETRY_MANAGED & extra.keys()
         if reserved:
             raise ValueError(f"인코더가 관리하는 필드는 넘길 수 없다: {sorted(reserved)}")
@@ -647,11 +579,7 @@ class TelemetryEncoder:
 
 
 class TelemetryDecoder:
-    """텔레메트리 수신 검증 (PROTOCOL.md 5절).
-
-    제어 명령과 대칭이지만 방향이 반대다 — 송신이 펌웨어(L1·L2), 수신이
-    호스트(팀장)이므로 같은 인터페이스 위험을 갖는다. 그래서 규칙도 대칭으로 둔다.
-    """
+    """텔레메트리 수신 검증 (PROTOCOL.md 5절). 규칙은 제어 명령 쪽과 대칭이다."""
 
     def __init__(self) -> None:
         self._gate = _SeqGate()
@@ -713,11 +641,8 @@ class TelemetryDecoder:
         if not self._gate.admit(msg["seq"], session_key):
             return DecodeResult(Verdict.DISCARD, "seq 역전·중복")
 
-        # ③ 모르는 상태 — 폐기 + WARN
-        #
-        # ⚠️ **기형과 미지를 구분한다.** WARN 은 "상대가 새 상태를 쓰기
-        # 시작했다"는 신호 채널이므로(하위 호환 확장의 근거), 문자열이 아닌
-        # 기형 값을 여기 섞으면 그 신호가 묻힌다. 기형은 조용히 폐기한다.
+        # ③ 모르는 상태 — 폐기 + WARN. WARN 은 «새 상태가 생겼다» 는 신호이므로
+        # 문자열이 아닌 기형 값은 조용히 폐기한다.
         state = msg["state"]
         if not isinstance(state, str):
             return DecodeResult(Verdict.DISCARD, "state 가 문자열이 아님")
@@ -735,11 +660,8 @@ class TelemetryDecoder:
         if not _is_int(last_cmd_age_ms) or last_cmd_age_ms < 0:
             return DecodeResult(Verdict.DISCARD, "last_cmd_age_ms 가 0 이상의 정수가 아님")
 
-        # ⑤ 플래그와 상태의 모순 — 안전측으로 폐기 + WARN
-        # `tipped` 는 온보드 안전 로직이 이미 발동했다는 뜻이므로 상태는
-        # FAILSAFE 여야 한다. 순찰 중이라고 보고하는 것은 둘 중 하나가 틀린
-        # 것이고, 어느 쪽이든 그 레코드를 믿고 대시보드를 갱신하면 안 된다.
-        # (`lowbatt` 는 경고 수준이라 PATROL 과 공존할 수 있다 — 모순이 아니다.)
+        # ⑤ 플래그와 상태의 모순 — 안전측으로 폐기 + WARN. `tipped` 면 state 는 FAILSAFE
+        # 여야 한다 (`lowbatt` 는 경고 수준이라 PATROL 과 공존한다).
         if flags["tipped"] and state != "FAILSAFE":
             return DecodeResult(Verdict.DISCARD_WARN, f"tipped 인데 state={state}")
 

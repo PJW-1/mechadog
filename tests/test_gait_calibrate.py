@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.gait_calibrate import (
+from tools.probe.gait_calibrate import (
     Trial,
     build_parser,
     report_avoid_clearance,
@@ -176,7 +176,7 @@ def test_only_the_configured_directions_have_profile_keys() -> None:
     나머지 넷은 **실측이 키를 만들어서** 적을 곳이 생겼다 — 후진이 25% 느리고
     전진 선회가 회피 여유를 다 먹는 것이 드러났기 때문이다(ADR-29).
     """
-    from tools.gait_calibrate import PROFILE_KEYS
+    from tools.probe.gait_calibrate import PROFILE_KEYS
 
     assert set(PROFILE_KEYS) == {"forward", "turn_left", "reverse", "reverse_turn"}
     assert "turn_right" not in PROFILE_KEYS
@@ -235,7 +235,7 @@ def test_secondary_rate_uses_the_same_window() -> None:
 
 def test_every_mode_defines_both_measurements() -> None:
     """모드마다 주·부 측정이 정의돼 있어야 입력 안내가 틀리지 않는다."""
-    from tools.gait_calibrate import MEASURES, PROFILE_KEYS
+    from tools.probe.gait_calibrate import MEASURES, PROFILE_KEYS
 
     assert set(MEASURES) == {
         "forward",
@@ -281,7 +281,7 @@ def test_command_signs_follow_the_convention(cfg: dict) -> None:
     `teleop` 의 좌우가 실제로 뒤바뀐 상태였고 그 값을 근거로 삼았다. 그래서
     부호를 주석이 아니라 **시험**에 적는다.
     """
-    from tools.gait_calibrate import command_for
+    from tools.probe.gait_calibrate import command_for
 
     turn = float(cfg["gait"]["turn_angle_deg"])
     step = float(cfg["gait"]["step_length_mm"])
@@ -295,7 +295,7 @@ def test_command_signs_follow_the_convention(cfg: dict) -> None:
 
 def test_bias_is_added_to_every_mode(cfg: dict) -> None:
     """직진 보정 실측 — `forward` 에 반대 각도를 실어 편향이 0 이 되는 값을 찾는다."""
-    from tools.gait_calibrate import command_for
+    from tools.probe.gait_calibrate import command_for
 
     step = float(cfg["gait"]["step_length_mm"])
     assert command_for("forward", cfg["gait"], bias_deg=-3.0) == (step, -3.0)
@@ -317,14 +317,14 @@ def test_swapped_entry_is_caught() -> None:
     주긴 했지만 **세 시행을 다 같은 순서로 뒤바꾸면 퍼짐도 작아진다** — 그러면
     각도와 거리가 맞바뀐 값이 조용히 남는다.
     """
-    from tools.gait_calibrate import looks_swapped
+    from tools.probe.gait_calibrate import looks_swapped
 
     assert looks_swapped("turn_right", 1070.0, 43.0), "각도 자리에 mm 가 들어왔다"
     assert looks_swapped("forward", 1070.0, 1080.0), "부 측정(도) 자리에 mm 가 들어왔다"
 
 
 def test_plausible_measurements_pass() -> None:
-    from tools.gait_calibrate import looks_swapped
+    from tools.probe.gait_calibrate import looks_swapped
 
     assert not looks_swapped("turn_right", 43.0, 1080.0)
     assert not looks_swapped("forward", 1040.0, 10.0)

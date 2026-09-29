@@ -276,7 +276,7 @@ def test_known_types_match_golden_fixture() -> None:
 
 
 def test_telemetry_decoder_accepts_every_sample() -> None:
-    """3대분이 섞여 들어와도 전부 통과해야 한다 (개체별 seq 추적)."""
+    """2대분이 섞여 들어와도 전부 통과해야 한다 (개체별 seq 추적)."""
     decoder = p.TelemetryDecoder()
     for msg in TELEMETRY_SAMPLES:
         expected = p.strip_meta(msg)

@@ -3,7 +3,7 @@
 로봇이 정면 장애물 앞에서 스스로 멈춘 뒤, 호스트가 물러나며 방향을 틀어 순찰을 잇게 한다. 멈춤 판정은 로봇 펌웨어가 하고([제어 링크와 페일세이프](failsafe.md) 3절), 호스트는 그 보고를 따라 회피 동작만 정한다.
 빠져나오지 못하면 정해진 횟수 뒤에 멈춘 채 사람을 기다린다. 같은 장애물 앞에서 계속 흔들어 기어를 상하게 하지 않는다.
 
-순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`tools/patrol_run.py` 가 돌리는 `PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
+순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`tools/ops/patrol_run.py` 가 돌리는 `PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
 
 ## 판단 흐름
 
@@ -53,7 +53,7 @@ flowchart TD
 
 | 조건 | 값 | 설정 키 | 근거 |
 | :--- | :--- | :--- | :--- |
-| 반사 정지 · 해제 | 25cm 미만 연속 2표본 · 30cm 이상 연속 5표본 | `safety.obstacle_stop_cm` (해제는 펌웨어 상수) | [반사 정지 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 반사 정지 · 해제 | 25cm 미만 연속 2표본 · 30cm 이상 연속 5표본 | `safety.obstacle_stop_cm` (해제는 펌웨어 상수) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 해제 판단 근거 | `flags.obstacle` 의 참→거짓 변화 (플래그가 없는 펌웨어는 `AVOID`→`PATROL` 상태 변화) | 없음 | [ADR-22](../DECISIONS.md#adr-22) |
 | 회피 구간 등록 조건 | `forward_mm_per_sec` · `turn_deg_per_sec` 실측값이 있음 | `gait_calibration.*` (기체 프로파일) | [ADR-29](../DECISIONS.md#adr-29) |
 | settle · verify 정지 | 각 750ms | `localization.settle_delay_ms` | — |
@@ -90,7 +90,7 @@ flowchart TD
 | 구간 순서 · 후진 선회 | `host/behavior/actions.py` 의 `avoid_phases` · `AvoidSequence.phase_at` | `tests/test_actions.py::test_avoid_walks_the_phases_in_order` · `tests/test_actions.py::test_reverse_turn_replaces_the_reverse_then_turn_pair` · `tests/test_actions.py::test_reverse_turn_time_satisfies_the_slower_of_the_two_goals` |
 | 후진 선회 미실측 기체 | `host/behavior/actions.py` 의 `avoid_phases` | `tests/test_actions.py::test_half_measured_reverse_turn_keeps_the_old_phases` · `tests/test_actions.py::test_reverse_falls_back_to_forward_when_unmeasured` |
 | 시도 상한 3회 → 정지 | `host/behavior/actions.py` 의 `AvoidSequence.__call__` | `tests/test_actions.py::test_avoid_retries_the_configured_number_of_times` · `tests/test_actions.py::test_avoid_stops_after_exhausting_attempts` · `tests/test_actions.py::test_exhausted_is_reported` |
-| 전진만 거부 | `firmware_mechdog_motion/src/safety_monitor.h` 의 `move_allowed` | `tests/test_safety.py::test_obstacle_blocks_forward_only` |
+| 전진만 거부 | `firmware/mechdog_motion/src/safety_monitor.h` 의 `move_allowed` | `tests/test_safety.py::test_obstacle_blocks_forward_only` |
 | 순찰기 래치 보고 우선 | `host/behavior/patrol.py` 의 `PatrolController._guard` | `tests/test_lidar_patrol.py::test_onboard_latch_wins_over_host_plan` |
 | 순찰기 반사 정지 중 정지 | `host/behavior/patrol.py` 의 `PatrolController.step` · `SafetyView.obstacle_active` | `tests/test_lidar_patrol.py::test_reported_obstacle_holds_the_walk` · `tests/test_lidar_patrol.py::test_obstacle_release_is_read_from_the_flag` |
 | 순찰기 LiDAR 비상정지 | `host/behavior/patrol.py` 의 `PatrolController.guard_scan` | `tests/test_lidar_patrol.py::test_lidar_danger_sends_estop_not_stop` · `tests/test_lidar_patrol.py::test_estop_does_not_wait_for_the_tick` |
@@ -99,5 +99,5 @@ flowchart TD
 
 실측 기록
 
-- [온보드 근거리 반사 정지 — 전진 거부 · 후진 허용 · 해제](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md)
+- [온보드 근거리 반사 정지 — 전진 거부 · 후진 허용 · 해제](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md)
 - 회피 시퀀스 전체(후진 선회 → 해제 → 순찰 재개)를 실기에서 잰 기록은 아직 없다.

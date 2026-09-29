@@ -5,19 +5,17 @@
     텔레메트리 imu.yaw ───┘
 
 `slam_toolbox` 는 `odom → base_link` 를 요구하는데 로봇에는 **센서 오도메트리가 없다**
-— 다리에 엔코더가 없다(`tools/gait_calibrate.py` 머리말). 그래서 두 가지를 합친다.
+— 다리에 엔코더가 없다(`tools/probe/gait_calibrate.py` 머리말). 그래서 두 가지를 합친다.
 
   ① **거리는 명령의 시간 창 × 그 기체의 실측 속도** (`gait_calibration`)
   ② **방향은 IMU yaw 의 변화량**
 
 **이 모듈은 소켓도 실시각도 만지지 않는다.** 보낸 전문과 그 시각, IMU 값과 수신
 시각만 받는다 (ENGINEERING_GUIDE 2.1 · `lidar_link.py` 와 같은 구조). 실제 배선은
-`tools/patrol_run.py` 가 한다.
+`tools/ops/patrol_run.py` 가 한다.
 
-⚠️ **이것은 «정확한 위치» 가 아니다.** 명령값을 적분한 추정이며, 보정은
-`slam_toolbox` 가 정지 스캔으로 한다. WBS 5.4.3 DoD 가 *«명령값만으로 정확한 위치라고
-간주하지 않는다»* 고 못박은 이유다. 그래서 **IMU 가 없거나 오래되면 자세를 무효로
-낸다** — 방향 없이 명령만으로 만든 위치를 유효하다고 내보내지 않는다.
+명령값을 적분한 추정이며 보정은 `slam_toolbox` 가 정지 스캔으로 한다 (WBS 5.4.3 DoD). IMU 가
+없거나 오래되면 자세를 무효로 낸다.
 
 ## step 과 속도 — 비례로 본다 (실측 확인 전 가정)
 
@@ -63,6 +61,25 @@
     때까지 `MOVE` 를 움직임으로 세지 않는다** — 래치가 걸린 로봇은 `MOVE` 를
     차단한다 (PROTOCOL 2절 안전 정지와 해제).
   - 나머지(`STATE`·`LED`·`SOUND`·`POSE` 등)는 이동을 바꾸지 않는다.
+
+## 로봇이 스스로 멈춰 있다고 알려 오면 그 말이 이긴다
+
+보낸 명령으로 추정한 래치는 **호스트의 짐작**이다. 로봇은 저전압이면 `RESET_SAFE` 를
+거부하고(`firmware/mechdog_motion/README.md` 3.2.5), 재부팅하면 래치 상태로 켜진다 —
+둘 다 명령만 보면 모른다. 그동안 보낸 `MOVE` 를 이동으로 적분하면 **위치가 조용히
+앞으로 밀린다.** 그래서 텔레메트리의 `safety_latched` 와 `flags.obstacle`(근거리
+정지 — 우선순위가 호스트 명령보다 높다, 같은 README `3.2.5`)을 `note_hold` 로 받아,
+로봇이 멈춰 있다고 하는 동안은 `MOVE` 를 0 으로 센다. **명령 추정과 보고 중 어느
+쪽이든 정지라 하면 정지다** — 보고는 정지를 넓히기만 하므로, `ESTOP` 직후 도착한
+낡은 `false` 가 추정을 덮지 못한다. 구형 펌웨어라 둘 다 없으면(`None`) 명령 추정만
+쓴다. 풀렸다는 보고 뒤에도 로봇은 **다음에 받아들인 `MOVE` 부터** 걷는다 — 보고만으로
+움직이지 않는다.
+
+한계: 보고가 **흐를 때만** 성립한다. 전이마다 텔레메트리 한 주기(~100ms · ≈1cm)의
+지연 오차가 있고, 텔레메트리 공백 동안 보낸 `MOVE` 는 다음 IMU 표본이 오면 적분된다.
+단 공백 뒤 `boot_id` 가 바뀌었으면 — 로봇이 재부팅해 SAFE 잠금으로 켜졌다 — 그 사이의
+`MOVE` 는 실행되지 않았으므로 버리고, `RESET_SAFE` 를 보낼 때까지 잠금으로 본다 (펌웨어의
+«부팅 직후 SAFE 잠금 · `RESET_SAFE` 뒤 새 `MOVE` 부터 실행» 과 같은 모형).
 """
 
 from __future__ import annotations
@@ -112,9 +129,7 @@ class OdomPose:
 def odom_params_from_config(config: Mapping[str, Any]) -> OdomParams:
     """설정에서 오도메트리 파라미터를 만든다. **실측이 없으면 `ConfigError`.**
 
-    ⚠️ **다른 기체의 값으로 채우지 않는다.** 서보 비대칭이 개체마다 달라 속도부터
-    다르다 (`mechdog-02.yaml` 머리말). 없는 값을 추정으로 채우면 그 기체의 `odom` 이
-    조용히 늘어나거나 줄어든다.
+    다른 기체의 값이나 추정으로 채우지 않는다 — 속도는 개체마다 다르다.
     """
     calibration = config.get("gait_calibration")
     if not isinstance(calibration, Mapping):
@@ -135,6 +150,17 @@ def odom_params_from_config(config: Mapping[str, Any]) -> OdomParams:
         command_timeout_ms=int(config["safety"]["cmd_timeout_ms"]),
         imu_stale_ms=int(lidar["odom_imu_stale_ms"]),
     )
+
+
+def hold_of_reading(safety_latched: bool | None, obstacle: bool | None) -> bool | None:
+    """텔레메트리 한 건에서 «로봇이 스스로 멈춰 있는가» 를 뽑는다.
+
+    래치와 근거리 정지 둘 다 온보드에서 `MOVE` 를 막는다. 어느 하나라도 참이면 정지,
+    둘 다 없으면(구형 펌웨어) 모른다 — `None` 을 `note_hold` 에 주면 아무것도 바꾸지 않는다.
+    """
+    if safety_latched is None and obstacle is None:
+        return None
+    return bool(safety_latched) or bool(obstacle)
 
 
 def _arc(travel_m: float, heading_from: float, heading_to: float) -> tuple[float, float]:
@@ -166,7 +192,10 @@ class Odometry:
         self._speed_m_s = 0.0
         self._segment_from_ms: int | None = None
         self._move_until_ms = 0
+        #: 보낸 명령으로 추정한 래치 (`ESTOP` 뒤 · `RESET_SAFE` 전).
         self._latched = False
+        #: 로봇이 텔레메트리로 알려 온 온보드 정지. 알면 `_latched` 보다 우선한다 (머리말).
+        self._reported_hold: bool | None = None
         #: 아직 방위를 모르는 이동 구간 `(시작 ms, 끝 ms, 속도 m/s)`. 다음 IMU 표본이
         #: 오면 두 표본의 yaw 를 보간해 적분한다.
         self._pending: list[tuple[int, int, float]] = []
@@ -184,11 +213,19 @@ class Odometry:
 
     def note_command(self, type_: str, fields: Mapping[str, Any], sent_ms: int) -> None:
         if type_ == "MOVE":
-            speed = 0.0 if self._latched else self._speed_of(float(fields["step"]))
+            speed = 0.0 if self._holding() else self._speed_of(float(fields["step"]))
             self._set_motion(speed, sent_ms)
         elif type_ in _STOPPING:
             self._latched = type_ == "ESTOP" or (self._latched and type_ != "RESET_SAFE")
             self._set_motion(0.0, sent_ms)
+
+    def _holding(self) -> bool:
+        """지금 `MOVE` 가 차단되는가 — 명령 추정과 로봇 보고 중 **어느 쪽이든** 정지라 하면 정지.
+
+        보고는 정지를 넓히기만 한다. `ESTOP` 을 보낸 직후 그 전에 만들어진
+        `safety_latched=false` 가 도착해도 호스트의 래치 추정을 덮지 못한다.
+        """
+        return self._latched or self._reported_hold is True
 
     def _speed_of(self, step: float) -> float:
         """step → 속도 (m/s, 부호 있음). 비례의 근거는 머리말."""
@@ -217,6 +254,20 @@ class Odometry:
                 self._pending.append((start, end, self._speed_m_s))
         self._segment_from_ms = max(start, at_ms)
 
+    # ── 입력: 온보드 정지 ──────────────────────────────────────
+    def note_hold(self, held: bool | None, received_ms: int) -> None:
+        """로봇이 알려 온 «스스로 멈춰 있음» (`hold_of_reading`) 을 넣는다.
+
+        참이면 진행 중인 이동을 그 시각에 끊고, 이후 `MOVE` 는 0 으로 센다. 거짓이면
+        (명령 추정도 풀려 있을 때) 다음 `MOVE` 부터 다시 센다 — 이 호출만으로 움직임을
+        만들지 않는다. `None` 은 구형 펌웨어라 아무것도 바꾸지 않는다.
+        """
+        if held is None:
+            return
+        self._reported_hold = held
+        if held and self._speed_m_s != 0.0:
+            self._set_motion(0.0, received_ms)
+
     # ── 입력: IMU ──────────────────────────────────────────────
     def note_imu(self, yaw_deg: float, received_ms: int, boot_id: str = "") -> None:
         """텔레메트리 `imu.yaw`(0~360 deg)와 수신 시각을 넣는다."""
@@ -227,7 +278,17 @@ class Odometry:
             self._pending.clear()
             delta = 0.0
         elif boot_id != self._imu_boot:
-            delta = 0.0  # 재부팅한 IMU 는 0 에서 다시 시작한다 (머리말)
+            # 재부팅한 IMU 는 0 에서 다시 시작한다 (머리말). 공백 동안 보낸 `MOVE` 도
+            # 버린다 — 로봇은 SAFE 잠금으로 켜져 그것을 실행하지 않았다 (머리말 «로봇이
+            # 스스로 멈춰 있다고 알려 오면»). 순찰기는 두절 뒤에도 최대
+            # `link_loss_failsafe_ms` 동안 `MOVE` 를 계속 보내므로 적분하면 수십 cm 가 붙는다.
+            # 재부팅 감지 자체가 잠금이다: 진행 중 구간을 끊고 `RESET_SAFE` 를 보낼 때까지
+            # `MOVE` 를 0 으로 센다 — 정지 플래그가 없는 구형 펌웨어나 `note_hold` 가
+            # 먼저 불리지 않는 호출자에서도 성립하게.
+            self._pending.clear()
+            self._speed_m_s = 0.0
+            self._latched = True
+            delta = 0.0
         else:
             delta = deg_to_rad((yaw_deg - self._imu_deg + 180.0) % 360.0 - 180.0)
         start_ms = self._imu_ms if self._imu_ms is not None else received_ms

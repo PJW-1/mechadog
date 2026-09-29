@@ -1,4 +1,4 @@
-"""VLM 벤치 도구 검증 (WBS 3.6.4 · `tools/vlm_bench.py`).
+"""VLM 벤치 도구 검증 (WBS 3.6.4 · `tools/probe/vlm_bench.py`).
 
 **모델도 GPU 도 카메라도 없이 닫힌다.** 사진은 임시 폴더에 쓴 작은 가짜 JPEG 바이트이고,
 판독 세션은 그 바이트에 적어 둔 답을 돌려주는 대역이다 — 실제 사진은 쓰지 않는다.
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from host.vision.vlm_reader import QUESTIONS
-from tools import vlm_bench as bench
+from tools.probe import vlm_bench as bench
 
 JPEG_HEAD = b"\xff\xd8\xff\xe0"
 JPEG_TAIL = b"\xff\xd9"

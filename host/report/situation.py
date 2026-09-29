@@ -1,11 +1,8 @@
 """사건에 규칙 템플릿으로 한국어 한 문장을 붙인다 (WBS 4.8.1 · FR-8.5 · FR-6.7).
 
-클라우드도 로컬 LLM 도 부르지 않는다. *(2026-09-23 개정 — 원래 «이미 도는 로컬 LLM 에
-넘겨 만든다» 였다. 음성 LLM 이 폐기돼 도는 LLM 이 없다 · ADR-38)* VLM 판독 결과와
-변화 목록을 고정 틀에 채워 만드는 **규칙 템플릿**뿐이다.
-
-⚠️ **문장은 관제 스피커로 그대로 읽힌다** (`4.8.2` 의 방송기가 이 문장을 받는다).
-그래서 기호·영문 키를 그대로 넣지 않고, 짧고 소리 내어 읽기 쉬운 문장만 만든다.
+클라우드도 LLM 도 부르지 않는다 — VLM 판독 결과와 변화 목록을 고정 틀에 채우는 규칙
+템플릿뿐이다 (ADR-35 결정 3 · ADR-38). 문장은 관제 스피커로 그대로 읽히므로(`4.8.2`) 기호·영문
+키 없이 짧게 만든다.
 
 대상은 `runtime._record_scene` 이 기록하는 사건 중 **변화 확정과 쓰러짐**뿐이다 —
 `person_fallen`(쓰러짐 확정) · `zone_changed`(넘어짐·통로 막힘 확정) ·
@@ -15,12 +12,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-#: VLM 위험 종류 → 문구 (WBS 4.8.0 `ZONE_HAZARDS`). ⚠️ **`fallen_object` 는 곧
-#: `collapsed_load`(적재물 무너짐)로 이름이 바뀔 예정이다** — 이름이 바뀌는 순간
-#: 이 표 하나만 놓치면 문장이 조용히 일반 문구로 떨어지므로, 바뀌기 전부터 새
-#: 이름도 같이 넣어 둔다.
+#: VLM 위험 종류 → 문구 (WBS 4.8.0 `ZONE_HAZARDS`). `collapsed_load` 는 `fallen_object` 의
+#: 새 이름 후보라 미리 함께 둔다.
 _HAZARD_PHRASES: dict[str, str] = {
     "fallen_object": "적재물이 무너졌습니다",
     "collapsed_load": "적재물이 무너졌습니다",
@@ -47,8 +43,7 @@ def _describe_person_fallen(_judgement: dict[str, Any]) -> str:
 def _describe_zone_changed(judgement: dict[str, Any]) -> str:
     """넘어짐·통로 막힘 확정 (`zone_changed`). `changes` 안의 VLM 위험 항목만 본다.
 
-    ⚠️ **반출·반입이 같은 방문에서 섞여 와도** 결론은 `ZONE_CHANGED` 뿐이므로
-    (`_leave_zone` 주석) 여기서도 위험 문구만 말하고 반출·반입은 말하지 않는다.
+    반출·반입이 같은 방문에서 섞여 와도 위험 문구만 말한다.
     """
     changes = judgement.get("changes")
     kinds: list[str] = []
@@ -66,12 +61,12 @@ def _describe_zone_changed(judgement: dict[str, Any]) -> str:
 
 def _describe_zone_notice(judgement: dict[str, Any]) -> str:
     """반출 가벼운 경고 (`zone_notice`). L3·눈 변화 없이 관제에만 남기는 경고라
-    문장도 «확인이 필요합니다» 없이 사실만 짧게 말한다 (`_leave_zone` Z2).
+    문장도 «확인이 필요합니다» 없이 사실만 짧게 말한다 (`ZoneInspector._leave` Z2).
     """
     return f"{_zone_prefix(judgement.get('zone'))}물건이 반출된 것으로 보입니다."
 
 
-_TEMPLATES: dict[str, Any] = {
+_TEMPLATES: dict[str, Callable[[dict[str, Any]], str]] = {
     "person_fallen": _describe_person_fallen,
     "zone_changed": _describe_zone_changed,
     "zone_notice": _describe_zone_notice,

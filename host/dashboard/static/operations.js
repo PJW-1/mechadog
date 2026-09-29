@@ -1,6 +1,6 @@
 export const SOURCE_REVISION = 'b287eae4ca2b5751381e5ef4dfaf2d20b69886de';
 export const REVIEW_STATES = Object.freeze({pending:'검토 대기',confirmed:'위반 확인',false_positive:'오탐',unverifiable:'확인 불가',resolved:'조치 완료'});
-export const ROBOTS = ['MD-01','MD-02','MD-03'];
+export const ROBOTS = ['MD-01','MD-02'];
 const STORAGE_KEY='mechadog-next:local-drafts:v1';
 const ALLOWED_COMMANDS=['FORWARD','BACKWARD','LEFT','RIGHT'];
 const nowDefault=()=>Date.now();
@@ -10,7 +10,7 @@ export function demoEvents() {
  return [
   {id:'DEMO-PPE-01',source:'DEMO',title:'안전모 판정 보류',category:'PPE',robot:'MD-01',zone:'생산 구역',event:'ppe_review_example',state:'OBSERVE',escalation:'L1',auth:'미확인',ppe:'판정 보류',detail:'머리 영역이 설비에 가려진 예시입니다. 확인 불가는 위반이나 오탐과 다릅니다.',review:'pending',note:'',snapshot:null},
   {id:'DEMO-AUTH-02',source:'DEMO',title:'미인증 대상 재확인',category:'AUTH',robot:'MD-02',zone:'중앙 통로',event:'auth_review_example',state:'OBSERVE',escalation:'L2',auth:'미인증',ppe:'별도 판정',detail:'신원 확인과 PPE 판단은 독립적입니다. 이 예시는 실제 인증 또는 경보 발생 기록이 아닙니다.',review:'pending',note:'',snapshot:null},
-  {id:'DEMO-OBJECT-03',source:'DEMO',title:'기준 물품 비교 필요',category:'OBJECT',robot:'MD-03',zone:'후면 적재',event:'object_review_example',state:'OBSERVE',escalation:'L1',auth:'해당 없음',ppe:'해당 없음',detail:'적재물 가림과 실제 수량 변화는 구별해야 합니다. 기준 스냅샷·실제 검출 자료는 제공되지 않았습니다.',review:'unverifiable',note:'비교 근거 없는 예시',snapshot:null}
+  {id:'DEMO-OBJECT-03',source:'DEMO',title:'기준 물품 비교 필요',category:'OBJECT',robot:'MD-01',zone:'후면 적재',event:'object_review_example',state:'OBSERVE',escalation:'L1',auth:'해당 없음',ppe:'해당 없음',detail:'적재물 가림과 실제 수량 변화는 구별해야 합니다. 기준 스냅샷·실제 검출 자료는 제공되지 않았습니다.',review:'unverifiable',note:'비교 근거 없는 예시',snapshot:null}
  ];
 }
 
@@ -159,7 +159,7 @@ export class Operations {
  get link(){return this.slot()?.link??null}
  set link(value){this.slots[ROBOTS[0]].link=value??null}
  // ⚠️ **실제 연결에서는 링크가 붙은 자리만 고를 수 있다.** 관제 서버 한 대짜리면 MD-01 하나다 —
- // 예시 로봇 MD-02·03 을 고를 수 있게 두면 "MD-02 제어권" 으로 잡은 조작이 실제로는 그 한 대를 움직인다.
+ // 예시 로봇 MD-02 를 고를 수 있게 두면 "MD-02 제어권" 으로 잡은 조작이 실제로는 그 한 대를 움직인다.
  get robots(){return this.live?ROBOTS.filter(id=>this.slots[id].link):ROBOTS}
  // 화면에 쓰는 이름. 실제 연결이면 서버가 알려 준 개체 프로파일 이름을 쓴다 — 받기 전에는 내부 id.
  robotName(id){const slot=this.slots[id];return this.live&&slot?.link?(slot.device||cleanText(slot.telemetry?.snapshot?.deviceId,80)||id):id}

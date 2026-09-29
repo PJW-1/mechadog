@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -32,9 +33,9 @@ def build_scene_bundle(
     occupied_logodds: float,
     free_logodds: float,
     source: str,
-    photos: list[dict] | None = None,
+    photos: list[dict[str, Any]] | None = None,
     track: list[list[float]] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Preserve measured coordinates; attach photos only as camera observations."""
     if not (math.isfinite(free_logodds) and math.isfinite(occupied_logodds)):
         raise ValueError("점유 경계값은 유한해야 함")
@@ -91,8 +92,8 @@ def build_scene_bundle(
 
 
 def export_scene_bundle(
-    map_directory: Path, output: Path, config: dict, *, stem: str = "slam_map"
-) -> dict:
+    map_directory: Path, output: Path, config: dict[str, Any], *, stem: str = "slam_map"
+) -> dict[str, Any]:
     """Read an existing saved map; never opens a sensor or command socket."""
     if stem not in {"slam_map", "static_map"}:
         raise ValueError("지원하는 지도 이름은 slam_map 또는 static_map")

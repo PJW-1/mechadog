@@ -1,29 +1,12 @@
 """가상 LiDAR 공간과 보행 모델 (WBS 6.1 · 실기 연결 전 검증).
 
-**물리 시뮬레이터가 아니다.** `tools/mock_mechdog.py` 가 *프로토콜 참여자로서의
+**물리 시뮬레이터가 아니다.** `tools/mock/mock_mechdog.py` 가 *프로토콜 참여자로서의
 로봇*만 흉내내는 것과 같은 선을 여기서도 긋는다 — 이 모듈이 흉내내는 것은
 *측정 대상으로서의 공간*뿐이다. 서보도 접지력도 계산하지 않는다.
 
-⚠️ **여기 있는 보행 모델로 실기 성능을 말하지 않는다.** `forward_mm_per_sec` ·
-`turn_deg_per_sec` 는 `config.yaml` 의 `lidar.sim:` 절에 있는 **명목값**이며,
-실측은 개체 프로파일의 `gait_calibration` 소관이고 아직 비어 있다
-(`config/devices/mechdog-01.yaml`). 시연할 바닥에서 재야 하는 값이라
-카펫과 장판에서 달라진다.
-
-호 조향 모델도 근사다 — 요 변화를 **`angle` 에 비례**한다고 두었다. 실기의 호
-반경은 보행 시퀀스가 정하므로 이 비례는 **부호와 크기 순서만** 맞다. 알고리즘이
-방위 오차를 줄이는 방향으로 도는지 확인하기에는 충분하고, 경로 추종의 정밀도를
-논하기에는 부족하다.
-
-⚠️ **처음에는 `step x angle` 에 비례한다고 두었고 2026-09-11 실측이 반증했다.**
-후진에서도 `angle` 양수가 반시계이며, 벤더 API 원형이 `move(speed_x, angle_rate)`
-인 것과도 맞는다 — `angle` 은 **각속도 명령**이라 걸음의 부호가 곱해지지 않는다.
-뒤집힌 모델은 후진 구간에서 시뮬레이터를 **실기와 반대로** 돌게 만들었다.
-
-⚠️ **명목 모델이므로 실측에서 드러난 비대칭은 넣지 않았다** — 후진이 전진의
-75%(78.0 대 104.0 mm/s)이고 우선회가 좌선회의 절반(3.56 대 6.8 도/s)이며 직진이
-좌로 1.0 도/s 휜다. 넣으려면 명목값을 방향별로 늘려야 하고, 그것은 *"공간을
-재는 대상"* 을 넘어 **실기 성능 모형**이 되는 일이다 (위의 첫 경고).
+보행 모델은 `lidar.sim:` 절의 명목값이라 실기 성능을 말하지 않는다(실측은 개체의
+`gait_calibration` 소관). 요 변화는 `angle` 단독에 비례한다 — `angle` 은 각속도 명령이라
+후진에서도 양수가 반시계다 (PROTOCOL 부호 규약). 실기의 방향별 비대칭은 넣지 않는다.
 """
 
 from __future__ import annotations
@@ -32,14 +15,14 @@ import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from host.common.units import wrap_pi
 
 Segment = tuple[float, float, float, float]
 Pose = tuple[float, float, float]
 
-#: 가상 공간 — 6m x 5m 방 하나 + 내부 장애물. 시연 규모에 맞춘 크기다
-#: (`zones.ids` 가 3개인 것과 같은 근거: 방 하나에서 하는 온라인 시연).
+#: 가상 공간 — 6m x 5m 방 하나 + 내부 장애물 (시연 규모).
 DEFAULT_ROOM: tuple[Segment, ...] = (
     (0.0, 0.0, 6.0, 0.0),
     (6.0, 0.0, 6.0, 5.0),
@@ -90,13 +73,8 @@ def scan_world(
     params: SimParams,
     rng: random.Random,
 ) -> list[list[float]]:
-    """가상 스캔을 **전선 형식으로** 만든다 — `[angle_deg, dist_mm]`.
-
-    내부 단위(rad·m)로 돌려주지 않는 이유가 요점이다. 목업은 중계 노드의
-    자리에 서므로 실제 노드가 보내는 것과 같은 형식을 내야 한다. 내부 단위로
-    바로 넘기면 **`lidar_link` 의 검증과 단위 변환을 건너뛴 채** 알고리즘만
-    시험하게 되고, 실기에서 처음 그 경로를 지나게 된다.
-    """
+    """가상 스캔을 전선 형식(`[angle_deg, dist_mm]`)으로 만든다 — `lidar_link` 의 검증과 단위
+    변환을 실기와 같이 거치게."""
     x, y, yaw = pose
     points: list[list[float]] = []
     for index in range(params.beams):
@@ -121,21 +99,14 @@ def apply_move(
 ) -> Pose:
     """호 조향 `MOVE` 를 자세에 반영한다.
 
-    ⚠️ **`step` 은 한 걸음의 보폭이고 이동 거리가 아니다** (`actions.py` 머리말).
-    그래서 속도는 보폭 비율 x 명목 속도로 근사한다 — 보폭을 절반으로 줄이면
-    절반 속도로 걷는다고 본다.
+    속도는 보폭 비율 × 명목 속도로 근사한다.
     """
     x, y, yaw = pose
     if step_mm == 0.0:
         return pose
-    # 보폭 100mm 를 명목 속도의 기준으로 둔다 (규약 상한 100mm 의 절반이 아니라
-    # 상한 자체다 — 최대 보폭이 최대 속도라고 보는 것이 자연스럽다).
+    # 규약 상한 100mm 를 명목 속도의 기준 보폭으로 둔다.
     speed_m_s = params.forward_mm_per_sec / 1000.0 * (step_mm / 100.0)
-    # ⚠️ **요 변화는 `angle` 단독으로 결정된다 — `step` 의 부호를 곱하지 않는다.**
-    # 여기에는 `(1.0 if step_mm > 0 else -1.0)` 이 곱해져 있었고 근거는
-    # `patrol.steering_for` 의 추정 주석이었다. 2026-09-11 실기에서 후진에서도
-    # `angle` 양수가 반시계인 것이 확인돼 그 곱을 없앴다 (PROTOCOL 부호 규약).
-    # 30deg 는 규약의 조향 상한이므로 여기서 비율의 기준이 된다.
+    # 요 변화는 `angle` 단독으로 정해진다(`step` 부호를 곱하지 않는다). 30deg 는 조향 상한이다.
     yaw_rate = math.radians(params.turn_deg_per_sec) * (angle_deg / 30.0)
     new_yaw = wrap_pi(yaw + yaw_rate * dt_s)
     travel = speed_m_s * dt_s
@@ -147,9 +118,7 @@ def waypoint_walk(
 ) -> Pose:
     """매핑용 — 사용자가 로봇을 끌고 다니는 것을 대신한다.
 
-    **제자리에서 방향을 맞춘 뒤 직진한다.** 매핑은 사람이 로봇을 들거나 끌어
-    옮기는 작업이므로(ADR-7 · 시스템 문서 5절) 호 조향 제약이 걸리지 않는다.
-    순찰(`apply_move`)과 다른 모델인 것은 그래서 의도된 것이다.
+    제자리에서 방향을 맞춘 뒤 직진한다 — 매핑은 사람이 로봇을 옮기므로 호 조향 제약이 없다 (ADR-7).
     """
     x, y, yaw = pose
     tx, ty = target
@@ -168,7 +137,7 @@ def waypoint_walk(
     )
 
 
-def sim_params_from_config(config: dict, range_max_m: float) -> SimParams:
+def sim_params_from_config(config: dict[str, Any], range_max_m: float) -> SimParams:
     sim = config["lidar"]["sim"]
     return SimParams(
         forward_mm_per_sec=float(sim["forward_mm_per_sec"]),

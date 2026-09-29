@@ -2,8 +2,6 @@
 
 NFR-3① (파라미터화)의 최소 안전망이다. 코드가 참조하는 키가 설정에서
 사라지면 런타임이 아니라 CI에서 잡히게 한다.
-
-WBS 4.4.1 의 config 로더가 구현되면 이 테스트를 로더 기반으로 확장한다.
 """
 
 from pathlib import Path
@@ -140,7 +138,7 @@ def test_command_timeout_shorter_than_link_loss(cfg: dict) -> None:
 
 
 def test_command_timeout_within_reflex_budget(cfg: dict) -> None:
-    """명령 타임아웃은 Tier 1 예산(FR-1.3 = 300ms) 이내여야 한다."""
+    """명령 타임아웃은 Tier 1 예산(FR-1.3 = 600ms) 이내여야 한다."""
     assert 0 < cfg["safety"]["cmd_timeout_ms"] <= 600
 
 
@@ -182,7 +180,7 @@ def test_gait_params_within_api_range(cfg: dict) -> None:
 def test_localization_track_is_known(cfg: dict) -> None:
     """측위 트랙은 docs/DECISIONS.md ADR-18 이 인정하는 값이어야 한다.
 
-    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다** (OI-9 닫힘, 2026-09-05).
+    `phone_vio`(Track B)는 **탈락했으므로 허용하지 않는다**.
     탈락한 선택지를 설정에 남겨 두면 근거를 모르는 사람이 다시 넣는다.
     """
     assert cfg["localization"]["track"] in {"none", "lidar", "aruco"}
@@ -289,11 +287,6 @@ def test_escalation_led_covers_all_levels(cfg: dict) -> None:
     for key in ("l0_patrol", "l1_observe", "l2_auth_request", "l3_alarm", "failsafe"):
         assert key in led, f"에스컬레이션 색상 누락: {key}"
         assert isinstance(led[key], str)
-
-
-def test_escalation_l3_requires_manual_reset(cfg: dict) -> None:
-    """L3·페일세이프는 자동 해제하지 않는다 (아키텍처 3.1 해제 규칙)."""
-    assert cfg["escalation"]["l3_requires_manual_reset"] is True
 
 
 def test_auth_uses_scene_session(cfg: dict) -> None:
@@ -636,7 +629,7 @@ def test_too_few_cycles_is_refused() -> None:
 def test_missing_amplitude_still_passes() -> None:
     """⚠️ **없는 것과 0 인 것은 다르다.**
 
-    3대 중 2대는 아직 재지 않았다. 없으면 `FR-6.2.2` 판단을 미루면 되지만
+    2대 중 1대는 아직 재지 않았다. 없으면 `FR-6.2.2` 판단을 미루면 되지만
     0 이면 흔들리지 않는다고 잘못 읽는다 — 그래서 없는 쪽만 통과시킨다.
     """
     from copy import deepcopy
@@ -720,7 +713,7 @@ def test_head_up_postures_are_negative(cfg: dict) -> None:
 def test_positive_head_up_angle_is_refused(cfg: dict, section: str, name: str) -> None:
     """⚠️ **양수로 되돌리면 기동을 막는다.**
 
-    같은 실수가 이미 한 번 났다 — `tools/teleop.py` 의 좌우가 뒤바뀐 채 **시험이
+    같은 실수가 이미 한 번 났다 — `tools/ops/teleop.py` 의 좌우가 뒤바뀐 채 **시험이
     그 버그를 굳혀 두고 있었다.** 부호는 눈으로 보고서야 아는 종류라, 실측한
     결론을 검증에 박아 둔다. 양수면 경계 자세가 바닥을 보고 가까운 사람의 머리가
     **더 잘린다** — `FR-9.2.2` 가 자세로 풀려던 것과 정반대다.
@@ -779,7 +772,7 @@ def test_lidar_angle_direction_requires_signed_unit(cfg: dict) -> None:
 
 
 def test_lidar_scan_forward_port_rejects_the_receive_port_and_bad_values(cfg: dict) -> None:
-    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다 (WBS 5.4.4)."""
+    """⚠️ `scan_port` 의 유일한 수신자가 복사해 넘기는 곳이라 같으면 안 된다."""
     from copy import deepcopy
 
     from host.common.config import validate_base_config

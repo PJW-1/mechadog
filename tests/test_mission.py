@@ -139,8 +139,8 @@ def test_common_events_are_never_gated() -> None:
 def test_unknown_mode_refuses_to_start(value: str) -> None:
     """모르는 값이면 기본값으로 떨어지지 않고 **기동을 거부한다** (WBS 3.4.4 ①).
 
-    ⚠️ `safety` 가 여기 있는 것은 의도다 — ADR-33 개정 전의 옛 이름이라 문서를
-    옛 판으로 읽은 사람이 실제로 적을 수 있는 값이다.
+    ⚠️ `safety` 가 여기 있는 것은 의도다 — 공장 모드(`factory`)의 옛 이름이라 옛 문서를
+    읽은 사람이 실제로 적을 수 있는 값이다 (ADR-33 «공장 모드의 범위»).
     """
     with pytest.raises(ModeError):
         Mission({"mission": {"mode": value}})

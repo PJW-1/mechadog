@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
-from host.runtime import Runtime, watch_console
+from host.runtime import Runtime, dashboard_wiring, watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
@@ -448,6 +449,71 @@ def test_loop_receives_and_reacts(config: dict, clock: FakeClock) -> None:
     assert stats.accepted == 2
     assert r.behavior.state == "FAILSAFE"
     assert stats.states.get("FAILSAFE"), "전이 뒤의 틱들은 FAILSAFE 상태로 나갔다"
+
+
+class _GatedSocket(FakeSocket):
+    """틱 전문을 인코딩한 뒤 첫 `sendto` 에서 멈춘다 — 인코딩과 송신 사이의 창을 연다."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock)
+        self.armed = False
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def sendto(self, data: bytes, peer: tuple[str, int]) -> None:
+        if self.armed and threading.current_thread() is not threading.main_thread():
+            self.armed = False
+            self.entered.set()
+            assert self.release.wait(5.0)
+        super().sendto(data, peer)
+
+
+def test_dashboard_estop_is_never_sent_behind_a_tick_it_outnumbers(
+    config: dict, clock: FakeClock
+) -> None:
+    """관제 ESTOP 이 틱의 인코딩과 송신 사이에 끼어도 **송신 순서가 seq 순서다.**
+
+    로봇은 seq 가 뒤로 간 전문을 ESTOP 까지 버린다. 락이 없던 때는 이 시험에서
+    `[1, 2, 3, 4, 6, 5]` 로 나갔다 — 겹치는 순서에 따라 버려지는 쪽이 ESTOP 일 수도 있다.
+    """
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = _GatedSocket(clock)
+    r.begin(sock)
+    r.step(clock.ms)  # 세션 개시 전문과 첫 틱
+    commands = dashboard_wiring(r, config, vision=None, blackbox=None)["commands"]
+
+    clock.ms = r.next_due_ms
+    sock.armed = True
+    tick = threading.Thread(target=r.step, args=(clock.ms,))
+    tick.start()
+    assert sock.entered.wait(5.0)  # 틱이 seq 를 받고 송신 직전에 멈췄다
+
+    estop = threading.Thread(target=commands.estop)
+    estop.start()
+    estop.join(0.2)  # 락이 있으면 여기서 기다린다
+    sock.release.set()
+    tick.join(5.0)
+    estop.join(5.0)
+
+    seqs = [json.loads(line)["seq"] for _at, line in sock.sent]
+    assert seqs == sorted(seqs), f"송신 순서가 seq 순서와 다르다: {seqs}"
+    assert sock.types()[-1] == "ESTOP"
+
+
+def test_dashboard_estop_before_the_first_tick_still_opens_the_session_first(
+    config: dict, clock: FakeClock
+) -> None:
+    """첫 틱보다 관제 ESTOP 이 먼저여도 **세션 개시 `STOP` seq=1 이 첫 datagram 이다.**"""
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = FakeSocket(clock)
+    r.begin(sock)
+    dashboard_wiring(r, config, vision=None, blackbox=None)["commands"].estop()
+    r.step(clock.ms)
+
+    sent = [json.loads(line) for _at, line in sock.sent]
+    assert [(m["type"], m["seq"]) for m in sent[:2]] == [("STOP", 1), ("ESTOP", 2)]
+    assert [m["seq"] for m in sent] == sorted(m["seq"] for m in sent)
+    assert sum(m["type"] == "STOP" and m["seq"] == 1 for m in sent) == 1
 
 
 def test_peer_is_learned_from_the_first_telemetry(cfg: dict, clock: FakeClock) -> None:
@@ -1783,7 +1849,7 @@ def _thing(label: str, x: float = 100.0) -> Detection:
 def _zone_runtime(
     config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None, blackbox=None, hazards=False
 ):
-    """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33 개정). 변화 감지는 경비 모드에서
+    """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33). 변화 감지는 경비 모드에서
     아예 돌지 않으므로 기본 모드로 세우면 구역 사건이 하나도 나오지 않는다 —
     호출부는 `unlock_modes` 로 선행 기능 검사를 먼저 열어야 한다."""
     cfg = _zone_config(config, tmp_path)
@@ -1963,7 +2029,9 @@ def test_inspection_turns_in_place_toward_the_anchor_heading(
     assert move is not None
     assert move["step"] == 0.0
     assert move["angle"] == sign * cfg["zones"]["align_turn_deg"]
-    assert runtime._visit_seen == [], "돌면서 본 장면은 기준에도 비교에도 쓰지 않는다"
+    assert runtime._zone_inspector._visit_seen == [], (
+        "돌면서 본 장면은 기준에도 비교에도 쓰지 않는다"
+    )
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -2070,7 +2138,7 @@ def test_a_baseline_that_cannot_be_written_does_not_stop_the_runtime(
     def full_disk(*_args, **_kwargs):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(runtime._baselines, "register", full_disk)
+    monkeypatch.setattr(runtime._zone_inspector._baselines, "register", full_disk)
     with caplog.at_level(logging.INFO):
         _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     assert runtime.behavior.state == "PATROL"
@@ -2790,7 +2858,8 @@ class ScriptedVlm:
 
 def _scripted(runtime, *script) -> ScriptedVlm:
     fake = ScriptedVlm(*script)
-    runtime._vlm = fake
+    # 워커는 런타임·쓰러짐 감시·구역 점검이 함께 쥔다 — 셋 다 바꾼다.
+    runtime._vlm = runtime._fall._vlm = runtime._zone_inspector._vlm = fake
     return fake
 
 
@@ -3257,7 +3326,7 @@ def test_factory_ppe_settles_once_for_the_primary_track(config: dict, clock: Fak
     assert runtime.escalation.level is Level.L0
     vision.result = vision_result(5, 1600, present=False, hits=0, last_seen_ms=None)
     runtime.tick(1600)
-    assert 1 not in runtime._ppe_done
+    assert not runtime._ppe_judge.is_done(1)
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3367,10 +3436,10 @@ def test_factory_one_missing_frame_does_not_abort_posture(config: dict, clock: F
             result, ppe=PpeVerdict(1, UNDETERMINED, "머리 클리핑", clipped=True)
         )
         runtime.tick(at)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     vision.result = vision_result(8, 800, present=False, hits=0, last_seen_ms=None)
     lines = runtime.tick(800)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     assert not any('"type":"ACTION"' in line for line in lines)
 
 
@@ -3399,7 +3468,7 @@ def test_factory_boundary_jitter_does_not_return_posture(config: dict, clock: Fa
     )
     vision.result = replace(result, ppe=PpeVerdict(1, OK))
     runtime.tick(800)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     assert runtime.behavior.state == "ALERT"
 
 
@@ -3425,7 +3494,7 @@ def test_factory_target_loss_returns_to_stand_before_patrol_moves(
         )
         vision.result = replace(result, ppe=PpeVerdict(1, UNDETERMINED, clipped=True))
         runtime.tick(at)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     vision.result = vision_result(8, 5800, present=False, hits=0, last_seen_ms=None)
     lines = runtime.tick(5800)
     assert runtime.behavior.state == "PATROL"
@@ -4108,3 +4177,44 @@ def test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm(
         _floor(runtime, vision, now, lying=True)
         assert runtime.escalation.level is Level.L0, f"확인 {now - back}ms 만에 다시 의심했다"
     assert runtime.behavior.state == "PATROL"
+
+
+def test_main_finishes_the_broadcast_preload_before_the_loop(cfg, monkeypatch) -> None:
+    """방송 합성기(piper) 적재는 **운용 루프보다 먼저** 끝난다.
+
+    루프와 겹치면 적재가 GIL 을 1.3~1.7초 쥐어 명령 간격이 600ms 를 넘고, 로봇이
+    기동 직후 페일세이프에 다시 걸린다 (`--reset-on-start` 직후 재래치).
+    """
+    import host.runtime as module
+    from host.cloud import broadcast
+
+    events: list[str] = []
+
+    def slow_loader(_model_path: str, _length_scale: float):
+        time.sleep(0.3)
+        events.append("synth_loaded")
+        return lambda _text: (b"", 16000)
+
+    class FakeSocket:
+        def close(self) -> None:
+            pass
+
+    class FakeRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, _config, **_kwargs) -> None:
+            pass
+
+        def serve(self, _sock, **_kwargs) -> None:
+            events.append("serve")
+
+    cfg["broadcast"]["enabled"] = True
+    monkeypatch.setattr(broadcast, "_default_synth", slow_loader)
+    monkeypatch.setattr(module, "load_config", lambda _device: cfg)
+    monkeypatch.setattr(module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(module, "EventBlackbox", lambda _cfg: None)
+    monkeypatch.setattr(module, "Runtime", FakeRuntime)
+    monkeypatch.setattr(module, "open_socket", lambda _port: FakeSocket())
+    monkeypatch.setattr(module.sys, "stdin", None)
+    assert module.main(["--device", "test", "--no-vision"]) == 0
+    assert events == ["synth_loaded", "serve"]

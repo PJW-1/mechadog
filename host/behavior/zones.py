@@ -1,20 +1,10 @@
 """순찰 구역 앵커와 순찰 스케줄러 (WBS 3.9.1 · 3.9.2 · FR-7).
 
-**두 작업이 한 파일에 있는 것은 작업 사전이 그렇게 정했기 때문이다** —
-`3.9.1`(구역 앵커 정의·관리)과 `3.9.2`(순차·랜덤 순찰 스케줄러)의 산출물이
-둘 다 `behavior/zones.py` 다. 실제로 붙어 있는 것이 맞다: 다음 구역을 고르는
-일은 **구역 목록과 도착 판정 반경을 함께 봐야** 하고, 그 둘이 여기 있다.
+구역 라벨의 정본은 `config.yaml` 의 `zones.ids` 다. `zones.json` 은 그 라벨에 좌표를 붙인
+것이며, 설정에 없는 라벨은 만들지 않고 파일에서 발견하면 경고와 함께 무시한다 — 변화 감지
+기준(FR-8)과 대시보드가 같은 라벨을 쓴다.
 
-구역의 **정본은 `config.yaml` 의 `zones.ids`** 다 (`[A, B, C]`). 여기서 만드는
-`zones.json` 은 그 라벨에 **좌표를 붙인 것**이며 라벨 목록을 새로 정하지 않는다.
-
-⚠️ 이 구분이 중요한 이유 — 변화 감지의 기준 파일(FR-8)과 대시보드가 같은 라벨로
-구역을 가리킨다. 좌표 파일이 제멋대로 `D`·`E` 를 만들면 **한쪽에만 있는 구역**이
-생긴다. 그래서 설정에 없는 라벨은 만들지 않고, 이미 있는 파일에서 발견하면 경고와
-함께 무시한다.
-
-구역 도착도 이 좌표로 판정한다(`runtime._inspect_zone` · FR-7.4 반경). 인쇄한 ArUco
-구역 마커는 2026-09-25 에 없앴다 — 멀리서 보여도 도착으로 쳤고, 변화 감지는 같은
+구역 도착은 이 좌표와 FR-7.4 반경으로 판정한다(`ZoneInspector.inspect`) — 변화 감지는 같은
 자리·같은 방향에서 봐야 성립한다.
 """
 
@@ -134,12 +124,7 @@ class ZoneStore:
     # ── 파일 ──────────────────────────────────────────────────
     @classmethod
     def load(cls, directory: Path, allowed_labels: Sequence[str]) -> ZoneStore:
-        """`zones.json` 을 읽는다. 없으면 빈 저장소를 돌려준다.
-
-        설정에 없는 라벨은 **버리고 경고한다.** 조용히 받아들이면 대시보드와
-        마커 매핑에서 한쪽에만 있는 구역이 되어, 그 불일치가 실기 시험에서야
-        드러난다.
-        """
+        """`zones.json` 을 읽는다. 없으면 빈 저장소를 돌려준다. 설정에 없는 라벨은 버리고 경고한다."""
         store = cls(allowed_labels)
         path = directory / ZONES_FILENAME
         if not path.is_file():
@@ -253,9 +238,7 @@ def select_next(
     if not remaining:
         return Plan(None)
 
-    # ⚠️ **막힌 구역은 그 구역만 건너뛴다.** 첫 후보만 풀고 빈 계획을 돌려주면
-    # 호출부(`patrol._replan`)가 *방문한 구역이 있다* 는 이유로 사이클을 끝내서,
-    # 뒤에 남은 갈 수 있는 구역까지 그 사이클에서 빠진다.
+    # 막힌 구역은 그 구역만 건너뛰고 다음 후보를 푼다 — 빈 계획은 사이클을 끝낸다.
     sequential = cycle == 0 or not random_after_first_cycle
     if sequential:
         return _first_reachable(remaining, candidates, start, grid, blocked, params)

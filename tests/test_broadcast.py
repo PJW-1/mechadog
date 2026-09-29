@@ -246,3 +246,36 @@ def test_a_bad_pcm_does_not_kill_the_worker() -> None:
     _wait_until(lambda: played)
     broadcaster.close()
     assert len(played) == 1
+
+
+# ── 루프 전 적재 완료 (`wait_ready`) ─────────────────────────────
+
+
+def test_wait_ready_blocks_until_the_preload_finishes(monkeypatch) -> None:
+    """piper 적재가 GIL 을 쥐어 10Hz 루프를 1.5초 세운다 — 루프 전에 끝을 기다릴 수 있어야 한다."""
+    release = threading.Event()
+
+    def slow_loader(_model_path: str, _length_scale: float):
+        release.wait(5.0)
+        return _echo_synth
+
+    monkeypatch.setattr(broadcast, "_default_synth", slow_loader)
+    broadcaster = Broadcaster(play=lambda _pcm, _rate: None)
+    assert broadcaster.wait_ready(0.05) is False, "적재 중에는 제한 시간에 걸려야 한다"
+    release.set()
+    assert broadcaster.wait_ready(2.0) is True
+    assert broadcaster._synth_fn is _echo_synth
+    broadcaster.close()
+
+
+def test_wait_ready_returns_at_once_when_piper_is_missing(monkeypatch) -> None:
+    """적재 실패는 기동을 막지 않는다 — 방송만 꺼진 채 곧바로 돌아온다."""
+
+    def broken_loader(_model_path: str, _length_scale: float):
+        raise ImportError("piper 없음")
+
+    monkeypatch.setattr(broadcast, "_default_synth", broken_loader)
+    broadcaster = Broadcaster(play=lambda _pcm, _rate: None)
+    assert broadcaster.wait_ready(2.0) is True
+    assert broadcaster._disabled
+    broadcaster.close()

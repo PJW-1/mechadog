@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SKETCH = ROOT / "firmware_mechdog_motion"
+SKETCH = ROOT / "firmware" / "mechdog_motion"
 
 #: `.gitignore` 의 벤더 파일 목록과 같다 — 로컬에 복사해 둔 벤더 파일은 검사 대상이 아니다.
 VENDOR_STEMS = frozenset({"HW_MechDog", "Hiwonder", "Servo", "WMMatrixLed", "pwm_servo", "action"})
@@ -25,7 +25,7 @@ FORBIDDEN = ("homeostasis", "UltrasoundSonar", "MP3Sensor", "IIC1")
 
 
 def _our_sources() -> list[Path]:
-    sources = [SKETCH / "firmware_mechdog_motion.ino"]
+    sources = [SKETCH / "mechdog_motion.ino"]
     sources += sorted(
         path
         for path in (SKETCH / "src").rglob("*")

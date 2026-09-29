@@ -17,7 +17,7 @@ import pytest
 
 from host.common.lidar_link import encode_scan
 from host.common.protocol import CommandDecoder, TelemetryEncoder
-from tools.motion_probe import (
+from tools.probe.motion_probe import (
     Segment,
     SegmentRecord,
     build_schedule,
@@ -222,7 +222,7 @@ def test_run_collects_segments(tmp_path: Path) -> None:
 
 
 def build_ns(**kw: object):
-    from tools.motion_probe import build_parser
+    from tools.probe.motion_probe import build_parser
 
     argv = ["--robot", str(kw.pop("robot"))]
     for key, value in kw.items():

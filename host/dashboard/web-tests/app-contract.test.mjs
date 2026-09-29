@@ -139,9 +139,9 @@ test('manual graphics failure replaces stale observation with persistent recover
 test('workspace replaces the dashboard; camera switch stays in place while robot cards open reusable 3D detail',async()=>{
  const state=await boot(),{dom,document,store,view,panels}=state;
  document.querySelector('.camera-robot-switch [data-robot="MD-02"]').click();assert.equal(document.querySelector('#detail-panel').hidden,true);
- const opener=document.querySelector('.robot-tab[data-robot="MD-03"]');opener.focus();opener.click();
- assert.equal(store.selected,'MD-03');assert.equal(document.querySelector('#stage').hidden,true);assert.equal(document.querySelector('.fleet-band').hidden,true);assert.equal(document.querySelector('.operation-rail').hidden,true);assert.ok(document.querySelector('#app').classList.contains('workspace-open'));assert.equal(view.active,false);assert.equal(view.cameraVisible,false);assert.equal(document.querySelector('#estop').closest('[hidden]'),null);
- const canvas=document.querySelector('.robot-detail-canvas');assert.match(canvas.getAttribute('aria-label'),/MD-03/);assert.equal(state.robotView.active,true);store.selectRobot('MD-01');assert.equal(document.querySelector('.robot-detail-canvas'),canvas);assert.equal(state.robotViewCount,1);
+ const opener=document.querySelector('.robot-tab[data-robot="MD-02"]');opener.focus();opener.click();
+ assert.equal(store.selected,'MD-02');assert.equal(document.querySelector('#stage').hidden,true);assert.equal(document.querySelector('.fleet-band').hidden,true);assert.equal(document.querySelector('.operation-rail').hidden,true);assert.ok(document.querySelector('#app').classList.contains('workspace-open'));assert.equal(view.active,false);assert.equal(view.cameraVisible,false);assert.equal(document.querySelector('#estop').closest('[hidden]'),null);
+ const canvas=document.querySelector('.robot-detail-canvas');assert.match(canvas.getAttribute('aria-label'),/MD-02/);assert.equal(state.robotView.active,true);store.selectRobot('MD-01');assert.equal(document.querySelector('.robot-detail-canvas'),canvas);assert.equal(state.robotViewCount,1);
  document.querySelector('.skip-link').click();assert.equal(dom.window.location.hash,'#devices');assert.equal(document.activeElement,document.querySelector('#panel-title'));
  document.querySelector('[data-robot-action="left"]').click();assert.ok(state.robotView.angle<0);document.querySelector('[data-robot-action="reset"]').click();assert.equal(state.robotView.resetCalled,true);
  panels.setRobotPreviewError('3D 표시 실패');assert.equal(document.querySelector('.robot-preview-error').hidden,false);assert.match(document.querySelector('.robot-status-sheet').textContent,/미수신/);
@@ -153,7 +153,7 @@ test('3D picking and page navigation preserve mission state while rendering only
  document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape'}));assert.equal(document.querySelector('#detail-panel').hidden,true);assert.equal(view.active,true);assert.equal(store.mission.status,'running');assert.equal(state.robotView.active,false);dom.window.close();
 });
 test('stale and E-stop pause renderer and both mission records with no recovery auto-resume',async()=>{
- const {dom,document,store,view}=await boot();store.startMission({robot:'MD-03',acknowledged:true});assert.equal(view.playing,true);assert.equal(view.patrolRobot,'MD-03');store.setStale(true);assert.equal(view.playing,false);assert.equal(store.sessions[0].status,'paused');store.setStale(false);assert.equal(view.playing,false);
+ const {dom,document,store,view}=await boot();store.startMission({robot:'MD-02',acknowledged:true});assert.equal(view.playing,true);assert.equal(view.patrolRobot,'MD-02');store.setStale(true);assert.equal(view.playing,false);assert.equal(store.sessions[0].status,'paused');store.setStale(false);assert.equal(view.playing,false);
  store.resumeMission();document.querySelector('#estop').click();assert.equal(view.playing,false);assert.equal(document.querySelector('#stop-dialog').open,true);document.querySelector('#stop-preview').dispatchEvent(new dom.window.Event('click'));assert.equal(store.estop,true);assert.ok(document.querySelector('#estop').classList.contains('preview-latched'));dom.window.close();
 });
 test('BFCache pagehide preserves imported image URLs; final unload revokes them',async()=>{
@@ -268,7 +268,7 @@ test('connected, the header, robot tabs and manual controls say the robot is rea
  assert.match(note,/실시간 제어 연결/);assert.match(note,/비상정지 즉시 전송/);assert.doesNotMatch(note,/전달 불가|잠김/);
  assert.equal(document.querySelector('#source-status').textContent,'관제 서버 연결');assert.match(document.querySelector('.op-intro').textContent,/관제 서버 연결/);
  // 관제 서버 하나가 기체 하나를 몬다 — 예시 로봇은 숨기고 고를 수도 없다.
- for(const selector of ['.robot-tab[data-robot="MD-02"]','.robot-tab[data-robot="MD-03"]','.camera-robot-switch [data-robot="MD-02"]','.camera-robot-switch [data-robot="MD-03"]'])assert.equal(document.querySelector(selector).hidden,true,selector);
+ for(const selector of ['.robot-tab[data-robot="MD-02"]','.camera-robot-switch [data-robot="MD-02"]'])assert.equal(document.querySelector(selector).hidden,true,selector);
  assert.equal(document.querySelector('.robot-tab[data-robot="MD-01"]').hidden,false);
  assert.throws(()=>store.selectRobot('MD-02'),/알 수 없는 로봇/);
  assert.deepEqual([...document.querySelectorAll('[name="수동 제어 대상"] option')].map(option=>option.value),['MD-01']);
@@ -294,15 +294,15 @@ test('connected, the header, robot tabs and manual controls say the robot is rea
 test('without a link the header, tabs and manual controls keep saying nothing is sent',async()=>{
  const {dom,document,store}=await boot('missions');
  assert.equal(store.live,false);assert.match(document.querySelector('.safety-note').textContent,/정지 명령 전달 불가/);assert.equal(document.querySelector('.source-status .muted').textContent,'실제 장비 미연결');
- assert.equal(document.querySelectorAll('.robot-tab:not([hidden])').length,3);assert.match(document.querySelector('.robot-tab[data-robot="MD-01"] .robot-health').textContent,/미연결/);
+ assert.equal(document.querySelectorAll('.robot-tab:not([hidden])').length,2);assert.match(document.querySelector('.robot-tab[data-robot="MD-01"] .robot-health').textContent,/미연결/);
  const manual=document.querySelector('.op-manual-workspace').textContent;assert.match(manual,/예시 제어권 요청/);assert.match(manual,/명령 미전송/);assert.match(manual,/실제 장비 미연결/);
  assert.equal(document.querySelector('.mission-summary').hidden,false);assert.ok([...document.querySelectorAll('.op-section h3')].some(h=>h.textContent==='순찰 세션'));
  dom.window.close();
 });
 test('switching a connected page to preview and back returns to the one real robot',async()=>{
  const {dom,document,store}=await boot('dashboard',{health:{service:'telemetry',vision_clients:0}});
- store.setDemo(true);store.selectRobot('MD-03');assert.equal(document.querySelector('.robot-tab[data-robot="MD-03"]').hidden,false);
- store.setDemo(false);assert.equal(store.live,true);assert.equal(store.selected,'MD-01');assert.equal(document.querySelector('.robot-tab[data-robot="MD-03"]').hidden,true);
+ store.setDemo(true);store.selectRobot('MD-02');assert.equal(document.querySelector('.robot-tab[data-robot="MD-02"]').hidden,false);
+ store.setDemo(false);assert.equal(store.live,true);assert.equal(store.selected,'MD-01');assert.equal(document.querySelector('.robot-tab[data-robot="MD-02"]').hidden,true);
  dom.window.close();
 });
 test('without a vision channel the robot view does not try to connect',async()=>{
@@ -329,7 +329,7 @@ test('camera expand, collapse and reopen keep labels and rendering in sync',asyn
 });
 test('page-tool contracts use UI state and reject invalid actions (mock registry, not browser WebMCP verification)',async()=>{
  const {dom,document,store,registered}=await boot();assert.equal(registered.size,3);const read=registered.get('read_operations_summary'),open=registered.get('open_operations_panel'),select=registered.get('select_observation_robot');assert.equal(read.annotations.readOnlyHint,true);assert.equal(read.execute({}).liveConnected,false);
- open.execute({page:'events'});assert.equal(document.querySelector('#panel-title').textContent,'사건 검토');select.execute({robot:'MD-03'});assert.equal(store.selected,'MD-03');assert.throws(()=>select.execute({robot:'external-robot'}));assert.equal(store.selected,'MD-03');assert.throws(()=>open.execute({page:'delete'}));assert.throws(()=>read.execute({extra:true}));dom.window.close();
+ open.execute({page:'events'});assert.equal(document.querySelector('#panel-title').textContent,'사건 검토');select.execute({robot:'MD-02'});assert.equal(store.selected,'MD-02');assert.throws(()=>select.execute({robot:'external-robot'}));assert.equal(store.selected,'MD-02');assert.throws(()=>open.execute({page:'delete'}));assert.throws(()=>read.execute({extra:true}));dom.window.close();
 });
 test('unsupported and rejected WebMCP registration do not break normal use',async()=>{
  const dom=new JSDOM(''),store=new Operations(),errors=[];assert.doesNotThrow(()=>registerPageTools({document:dom.window.document,store,navigate:()=>{}})());
@@ -376,26 +376,33 @@ test('without a link the E-Stop shortcut still opens the notice',async()=>{
  dom.window.close();
 });
 // ── 여러 대 (host.fleet) — 한 화면이 로봇마다 따로 연결한다 ────────────────
-const fleetBody={robots:[{id:'mechdog-01',base:'/robots/mechdog-01',registered:true},{id:'mechdog-02',base:'/robots/mechdog-02',registered:true},{id:'mechdog-03',base:'/robots/mechdog-03',registered:false}]};
+const fleetBody={robots:[{id:'mechdog-01',base:'/robots/mechdog-01',registered:true},{id:'mechdog-02',base:'/robots/mechdog-02',registered:true}]};
 const fleetBoot=(hash='dashboard',extra={})=>boot(hash,{health:{service:'telemetry',vision_clients:0},fleet:fleetBody,...extra});
 const telem=(device,extra={})=>({deviceId:device,state:'PATROL',escalation:'L0',ageMs:30,stale:false,runtimeStale:false,telemetry:{deviceId:device+'-mac',bootId:'b',seq:1,state:'IDLE',battV:7.6,distCm:80,imu:{pitch:0,roll:0,yaw:0},lastCmdAgeMs:20,safetyLatched:false,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true}},...extra});
 
 test('fleet boot connects each robot to its own /robots/<id> endpoints',async()=>{
  const state=await fleetBoot(),{dom,document,store,links,telemetryFeeds,eventFeeds,failures}=state;
  assert.equal(store.live,true);assert.deepEqual(failures,[]);
- assert.deepEqual(links.map(l=>l.baseUrl),['http://127.0.0.1:4175/robots/mechdog-01','http://127.0.0.1:4175/robots/mechdog-02','http://127.0.0.1:4175/robots/mechdog-03']);
- assert.deepEqual(telemetryFeeds.map(f=>f.options.url),['ws://127.0.0.1:4175/robots/mechdog-01/ws/telemetry','ws://127.0.0.1:4175/robots/mechdog-02/ws/telemetry','ws://127.0.0.1:4175/robots/mechdog-03/ws/telemetry']);
- assert.deepEqual(eventFeeds.map(f=>f.options.url),['ws://127.0.0.1:4175/robots/mechdog-01/ws/events','ws://127.0.0.1:4175/robots/mechdog-02/ws/events','ws://127.0.0.1:4175/robots/mechdog-03/ws/events']);
+ assert.deepEqual(links.map(l=>l.baseUrl),['http://127.0.0.1:4175/robots/mechdog-01','http://127.0.0.1:4175/robots/mechdog-02']);
+ assert.deepEqual(telemetryFeeds.map(f=>f.options.url),['ws://127.0.0.1:4175/robots/mechdog-01/ws/telemetry','ws://127.0.0.1:4175/robots/mechdog-02/ws/telemetry']);
+ assert.deepEqual(eventFeeds.map(f=>f.options.url),['ws://127.0.0.1:4175/robots/mechdog-01/ws/events','ws://127.0.0.1:4175/robots/mechdog-02/ws/events']);
  assert.ok(telemetryFeeds.every(f=>f.started)&&eventFeeds.every(f=>f.started));
- // 세 탭이 서버 이름으로 보이고, 텔레메트리 ID 가 없는 MD-03 은 «미등록».
+ // 두 탭이 서버 이름으로 보인다.
  for(const[id,tab]of ROBOTS.map(id=>[id,document.querySelector('.robot-tab[data-robot="'+id+'"]')])){assert.equal(tab.hidden,false);assert.equal(tab.querySelector('strong').textContent.trim(),'mechdog-0'+id.slice(-1))}
- assert.match(document.querySelector('.robot-tab[data-robot="MD-03"] .robot-health').textContent,/미등록/);
  // 자리마다 텔레메트리가 따로 온다 — 다른 로봇의 값이 섞이면 안 된다.
  telemetryFeeds[1].options.onUpdate({state:'live',snapshot:telem('mechdog-02'),rateHz:10,lost:0,history:[]});
  assert.match(document.querySelector('.robot-tab[data-robot="MD-02"] .robot-health').textContent,/실시간/);
  assert.match(document.querySelector('.robot-tab[data-robot="MD-01"] .robot-health').textContent,/연결 대기/);
  assert.match(document.querySelector('.actual-status').textContent,/연결 대기|상태 채널 연결 중/,'고른 MD-01 은 아직 미수신');
  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.ok(telemetryFeeds.every(f=>f.stopped)&&eventFeeds.every(f=>f.stopped));
+ dom.window.close();
+});
+
+test('a fleet slot without a telemetry id is shown as unregistered',async()=>{
+ // 탭이 두 개뿐이라 셋째 자리를 둘 수 없다 — 둘째 자리를 텔레메트리 ID 없는 «미등록» 으로 알려 준다.
+ const {dom,document}=await fleetBoot('dashboard',{fleet:{robots:[fleetBody.robots[0],{...fleetBody.robots[1],registered:false}]}});
+ assert.match(document.querySelector('.robot-tab[data-robot="MD-02"] .robot-health').textContent,/미등록/);
+ assert.doesNotMatch(document.querySelector('.robot-tab[data-robot="MD-01"] .robot-health').textContent,/미등록/);
  dom.window.close();
 });
 

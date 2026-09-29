@@ -14,7 +14,7 @@
 | 파일 | 용도 | 확보 방법 | 상태 |
 | :--- | :--- | :--- | :--- |
 | `coco.onnx` | ① 범용 검출기 — 사람 검출(FR-3) + 변화 감지 대상 객체(FR-8) | **YOLOX-S 공식 배포 ONNX 를 받아 이름만 바꾼다.** 학습·export 불요 | ✅ 계열 확정 (ADR-24) |
-| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v3`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ *(2026-09-28)* `ppe-v3`(5클래스, `person_down` 포함) 이후 후보 v23b 가 XIAO 실기에서 기각됨 — 다음 모델(4클래스)은 재학습 대기 |
+| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v4`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ YOLOX-S 4클래스 · XIAO 실측 전 후보 (`docs/PPE_ACCEPTANCE.md`) |
 
 ---
 
@@ -182,7 +182,7 @@ CPU 빌드가 깔린 것이고, 그 상태로 돌리면 질문 하나에 수십 
 
 ```bash
 ~/.venv-mechdog-vlm/Scripts/python.exe \
-    TEST_MECHDOG/results/20260920_4.8.0-vlm-compare/vlm_compare_bench.py out.json
+    field_tests/results/20260920_4.8.0-vlm-compare/vlm_compare_bench.py out.json
 ```
 
 `blackbox/` 에 쌓인 실기 프레임을 재료로 쓴다. 정상이면 적재 후 VRAM **4.1GB**, 질문당
@@ -194,7 +194,7 @@ CPU 빌드가 깔린 것이고, 그 상태로 돌리면 질문 하나에 수십 
 VRAM 을 2.3GB 까지 줄일 수 있지만 실측에서 판독이 무너졌다(ADR-35 대안 ⓐ). 애초에
 양자화를 본 것은 모드가 둘이던 시절 한꺼번에 올리려다 10GB 를 넘긴 탓이고, 모드를
 나눠(지금은 `guard`·`factory` 둘 · ADR-38) `factory` 가 ~7.1GB 로 들어가는 지금은 정밀도를 깎을 이유가 없다
-([MODEL_PLAN 0절](../docs/MODEL_PLAN.md)).
+([MODEL_PLAN 0절](../docs/internal/MODEL_PLAN.md)).
 
 ## 배치
 
@@ -204,15 +204,15 @@ models/
 └── ppe.onnx        # VLM 은 여기 없다 — ③ 참조 (HF 캐시)
 ```
 
-`ppe.onnx`의 정본 식별값은 크기 **3,677,797바이트**, SHA-256
-`a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4`이다. 자체 학습
-산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v3`)으로 배포하며, `coco.onnx`와 같이
-`tools/fetch_models.py`가 받고 두 값을 검증한다. 학습·export 재현 절차는
-`firmware_xiao_vision/PPE_Train.md`에 있다.
+`ppe.onnx`의 정본 식별값은 크기 **35,779,653바이트**, SHA-256
+`e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5`이다. 자체 학습
+산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v4`)으로 배포하며, `coco.onnx`와 같이
+`tools/fetch_models.py`가 받고 두 값을 검증한다. 같은 Release 의 `ppe.json`에 학습 설정·데이터 카드
+해시·parity·평가가 있다. 학습·변환·내보내기 도구는 `tools/ppe/`(`yolox_exp_ppe_s.py` 머리말)에 있다.
 
-**라이선스 — `models/NOTICE` 를 함께 배포한다.** v3 가중치는 라이선스가 혼합된 데이터셋(NOTICE §3)에서
-나온 파생물이라 배포 조건이 **검토 중**이다 — 현재 릴리스는
-팀 내부 테스트용이고, 베이스 모델 YOLOX는 Apache-2.0이다. 저장소 코드 자체는 루트 `LICENSE`(Apache-2.0)를 따른다. **가중치만
+**라이선스 — `models/NOTICE` 를 함께 배포한다.** v4 가중치는 CC BY 4.0 데이터 두 개(NOTICE §3)로만
+학습했으므로 출처 표시와 함께 CC BY 4.0 으로 배포한다. 비상업(NC) 데이터는 쓰지 않았다.
+베이스 모델 YOLOX는 Apache-2.0이다. 저장소 코드 자체는 루트 `LICENSE`(Apache-2.0)를 따른다. **가중치만
 떼어 전달하면 출처 표시가 끊기므로 `NOTICE`를 같이 넣는다.**
 
 경로는 `config/config.yaml` 의 `vision.coco.model_path` / `vision.ppe.model_path` 에서 관리한다.

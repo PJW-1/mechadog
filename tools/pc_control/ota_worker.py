@@ -5,7 +5,7 @@ from pathlib import Path
 
 from mode_control import exclusive_operation
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ops"))
 from ota_update import main
 
 if __name__ == "__main__":

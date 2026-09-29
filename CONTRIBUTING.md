@@ -1,38 +1,27 @@
 # 협업 규칙 (Contributing)
 
-> 3인 팀 · 4주 · 매일 볼 작업 목록은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)
+> 팀 안의 작업 관리 절차(WBS·완료 판정·주간 리뷰)는 [TEAM_PROCESS](docs/internal/TEAM_PROCESS.md)
 >
 > **처음이라면 [README](README.md)의 문서 지도를 먼저 보세요.**
 > **절차는 이 문서, 구현 기준은 [엔지니어링 가이드](docs/ENGINEERING_GUIDE.md)** (로깅·테스트·CI)
 > **메시지 스키마 정본은 [통신 프로토콜](docs/PROTOCOL.md)** — 팀장이 결정하여 전파한다
 >
 > **환경 세팅**: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` — 기준값 약 40초.
-> 크게 초과하면 원인을 팀에 공유해 주세요 (DR-17 재검토 트리거).
+> 크게 초과하면 원인을 이슈로 알려 주세요.
 
 ---
 
-## 1. 역할 및 담당 영역
+## 1. 기준기(Reference Unit)
 
-| 역할 | 담당 WBS | 주 디렉터리 |
-| :--- | :--- | :--- |
-| **A · 임베디드** | 2.0 하드웨어, 3.2 안전로직, 4.1 모션펌웨어, 5.1·5.3.2~3 | `firmware_mechdog_motion/`, `third_party/` |
-| **B · 인지·AI** | 3.3 인지로직, 4.2 비전펌웨어, 4.3 스트림, 4.6 화면, 6.1.2·6.3 | `firmware_xiao_vision/`, `host/vision/`, `host/dashboard/static/` |
-| **C · 시스템·통합** | 1.0 문서, 3.1 통신규약, 3.4 FSM, 4.5 서버, 5.2·5.3.1, 6.2·6.4 | `host/behavior/`, `host/dashboard/`, `host/common/`, `tests/`, `docs/` |
-
-> **A · B · C 는 작업 성격 분류이지 사람 이름이 아니다.** 위 표는 "누가" 가 아니라 "어떤 성격의 작업이 어느
-> 디렉터리에 있는지" 를 나타낸다. **실제 인원 배정은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)** 에 생성되며, 한 사람이 두 영역을 겸할 수 있다.
-
-### 기준기(Reference Unit)
-
-게이트 검수를 수행하는 지정 개체다. **LiDAR 를 3대 전부에 달지 못하므로 Phase 별로 나눈다.**
+게이트 검수를 수행하는 지정 개체다. **LiDAR 가 1대뿐이라 Phase 별로 나눈다.**
 
 | 구분 | 정의 | 검수 범위 |
 | :--- | :--- | :--- |
 | **`phase1_reference`** | **Phase 1 표준 구성**(LiDAR 미장착)의 지정 개체 | G1·G2·G3 검수, **Phase 1 NFR 성능 수치의 출처** |
 | **`phase2_reference`** | 측위 센서(LiDAR)를 장착한 지정 개체 | Phase 2 측위·매핑 검수 |
 
-- 두 기준기는 **[WBS 2.4.1](docs/WBS.md)에서 지정**하고 물리적으로 표시한다.
-- LiDAR 는 2대에 장착하고, 그중 **1대를 `phase2_reference`** 로 지정한다. 나머지 LiDAR 장착기는 개발·재현용이다.
+- 두 기준기는 지정해 물리적으로 표시한다.
+- LiDAR 는 1대뿐이며 **`mechdog-02` 에 장착해 `phase2_reference`** 로 지정한다. `mechdog-02` 는 시연 기체이기도 하다.
 - **게이트 검수는 반드시 해당 Phase 의 기준기에서** 수행한다. 개발기 통과는 검수로 인정하지 않는다.
 - 권장 배치: **LiDAR 미장착 개체를 `phase1_reference`** 로 둔다. Phase 1 표준 물리 구성이 유지되어 NFR 수치의 기준이 흔들리지 않는다.
 
@@ -54,7 +43,7 @@ feature ●    ●         ●    ●    ●                   작업 브랜치
 | :--- | :--- | :--- |
 | **`main`** | 릴리스·시연에 쓰는 안정 버전 | PR 필수 · CI 통과 필수 · **Code Owner(@PJW-1) 승인 필수** · 강제푸시·삭제 금지 |
 | **`dev`** | 통합 브랜치. 모든 기능이 여기 모인다 | PR 필수 · CI 통과 필수 · 리뷰 권장(필수 아님) · 강제푸시·삭제 금지 |
-| `feature/<wbs-id>-<설명>` | 작업 브랜치 | 자유. `dev`로 PR |
+| `feature/<설명>` | 작업 브랜치 | 자유. `dev`로 PR |
 | `fix/<설명>` | 버그 수정 | `dev`로 PR |
 | `docs/<설명>` | 문서만 수정 | `dev`로 PR |
 
@@ -71,22 +60,28 @@ git switch dev && git pull
 ```
 
 ```bash
-git switch -c feature/3.2.1-command-timeout
+git switch -c feature/command-timeout
 ```
 
 작업 후 `dev`로 PR을 올린다. **`main`으로 직접 PR을 올리지 않는다.**
 
 ### `dev` → `main` 승격
 
-게이트 검수(G1~G3)를 통과한 시점에만 소유자가 `dev` → `main` PR을 만들어 머지한다.
+게이트 검수(G1~G3)를 통과한 시점, 또는 소유자가 기준선을 따로 정한 시점에만 소유자가 `dev` → `main` PR을 만들어 머지한다.
 
 | 시점 | 태그 |
 | :--- | :--- |
 | G1 통과 (M1 완료) | `v0.1.0` |
 | G2 통과 (M2 완료) | `v0.2.0` |
+| 문서 포트폴리오 정리 기준선 (게이트 아님) | `v0.3.0` |
 | G3 통과 (M3 완료) | `v1.0.0` |
 
-> 기능 작업은 가능하면 브랜치명에 관련 WBS ID를 넣는다. 긴급 수정과 문서 정리는 설명형 이름만으로도 충분하다.
+승격 PR 을 올릴 때 지키는 것:
+
+- `main` 은 «최신 상태 필수» 로 보호된다. 직전 승격의 병합 커밋이 `dev` 에 없으면 승격 PR 이 `BEHIND` 로 막히므로, 먼저 `main` → `dev` PR 로 그 커밋을 들인다. 파일 변화는 없다.
+- head 가 `main` 인 PR 에는 GitHub 의 «브랜치 최신화»(update-branch)를 부르지 않는다. `dev` 가 `main` 에 곧바로 합쳐져 승격 PR 과 리뷰를 건너뛴다.
+- 펌웨어 범위 검사는 `dev` → `main` PR 에서 건너뛴다. 각 PR 이 `dev` 에 들어올 때 이미 통과했기 때문이다.
+- 병합 뒤 `main` 머리에 SemVer 태그를 올리면 CI 의 릴리스 잡이 태그가 `main` 에 있는지 확인하고 펌웨어를 첨부한 릴리스를 만든다.
 
 ## 3. 커밋 메시지
 
@@ -95,7 +90,7 @@ git switch -c feature/3.2.1-command-timeout
 
 <본문 — 왜 이렇게 했는지. 무엇을 했는지는 diff에 있음>
 
-Refs: WBS 3.2.1, FR-1.3
+Refs: #12
 ```
 
 | type | 용도 |
@@ -124,7 +119,7 @@ feat(motion): 명령 타임아웃 감시기 추가
 300ms 무명령 시 move(0,0)으로 정지한다. 마지막 명령을 계속
 실행하면 Wi-Fi 단절 시 로봇이 벽에 충돌하므로 온보드에 둔다.
 
-Refs: WBS 3.2.1, FR-1.3, NFR-2.1
+Refs: #12
 ```
 
 ---
@@ -134,41 +129,15 @@ Refs: WBS 3.2.1, FR-1.3, NFR-2.1
 | 항목 | 규칙 |
 | :--- | :--- |
 | **대상 브랜치** | **`dev`.** `main` 반영은 소유자가 릴리스 시점에만 수행한다 |
-| 크기 | 하나의 응집된 변경으로 묶는다. 관련된 워크패키지가 여러 개면 PR 본문에 ID를 모두 적는다 |
+| 크기 | 하나의 응집된 변경으로 묶는다. 관련 이슈는 PR 본문에 모두 적는다 |
 | 리뷰어 | **`dev` 는 승인 없이 머지 가능** (CI 통과가 게이트). 리뷰는 권장이며 강제하지 않는다. **`main` 은 소유자 승인 필수** |
 | CI | 전 잡 통과 필수 |
-| DoD | [WBS 사전](docs/WBS.md)의 해당 워크패키지 완료 기준을 PR 본문에 인용하고 충족 근거를 적는다 |
+| 검증 | 변경을 어떻게 확인했는지(테스트 결과·실기 확인)를 PR 본문에 적는다 |
+| 비밀 | 비밀번호·토큰·Wi-Fi 정보(`wifi_secrets.h`, `config/secrets.yaml`)는 커밋하지 않는다 |
 
 ---
 
-### 4.1 작업을 끝냈을 때
-
-**작업 완료 = 해당 WBS의 DoD 충족 + 검증 근거 + `dev` 병합.** PR은 변경·검증 근거를 보관한다.
-팀원은 [ASSIGNMENTS](docs/ASSIGNMENTS.md)에서 🟢 작업을 고르고, 일반 코드 PR에서는 WBS를 수정하지 않는다.
-
-| 상황 | 처리 |
-| :--- | :--- |
-| 로컬 구현 / 열린 PR / 로컬 수정 패치 | 진행 중. `dev`의 WBS 완료로 집계하지 않는다 |
-| DoD 충족, 검증 완료 | PR 본문에 완료한 WBS ID와 근거를 기록한다. 일반 코드 PR에 WBS 수정은 넣지 않는다 |
-| 위 PR이 `dev`에 병합됨 | 작업 완료. 연결 Issue가 있으면 완료로 닫고, 추가 작업이 없는 병합 브랜치를 삭제한다. PR 기록은 남긴다 |
-| 코드만 병합했고 DoD에 필요한 실기 검증이 남음 | WBS는 미완료 유지. Issue도 열어 두고 남은 검증을 명시한다 |
-| G1~G3 검수 통과 | 해당 마일스톤 완료. 별도 `dev` → `main` 승격·태그 절차를 진행한다 |
-
-팀장은 주간 리뷰나 마일스톤 종료 때 병합된 PR의 근거를 확인해 WBS의 `[완료]`를 일괄 반영한다.
-WBS를 고친 경우에만 다음 명령으로 담당자 목록을 재생성한다. `docs/ASSIGNMENTS.md`는 직접 수정하지 않는다.
-
-```bash
-python tools/wbs_assignments.py
-python tools/wbs_assignments.py --check
-```
-
-완료 표시는 병합된 PR 전체를 자동 완료 처리하지 않고 DoD 근거가 확인된 작업만 반영한다.
-실기 검증이 남은 작업은 미완료로 둔다. 완료 이후 발견한 버그는 별도 수정 작업으로 추적한다.
-
-Issue는 필요할 때 해당 WBS 단위로 만든다. 과거 완료 작업 전부를 Issue로 다시 만들 필요는 없다.
-현재 기본 브랜치는 `dev`이므로, DoD까지 충족하는 PR 본문에 `Closes #이슈번호`를 넣으면 병합 시 자동 종료된다.
-검증이나 일부 구현이 남아 있으면 `Refs #이슈번호`로만 참조한다. 기본 브랜치를 바꾸면 자동 종료 조건도 다시 확인한다.
-[GitHub Issue 연결 규칙](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
+Issue 를 닫으려면 PR 본문에 `Closes #이슈번호`를, 일부만 다루면 `Refs #이슈번호`를 적는다.
 
 ## 5. 통신 규약 변경 규칙
 
@@ -206,8 +175,8 @@ Issue는 필요할 때 해당 WBS 단위로 만든다. 과거 완료 작업 전�
 ### 5.3 파괴적 변경 시 함께 수정할 곳
 
 - `host/common/protocol.py` — Python 직렬화
-- `firmware_mechdog_motion/src/command_parser.*` — C++ 파서
-- `tools/mock_mechdog.py` — 목업
+- `firmware/mechdog_motion/src/command_parser.*` — C++ 파서
+- `tools/mock/mock_mechdog.py` — 목업
 - `tests/fixtures/protocol_samples.jsonl` — 제어 명령 정본 픽스처
 - `tests/fixtures/telemetry_samples.jsonl` — **텔레메트리 정본 픽스처** (안전 임계 경계값 포함)
 
@@ -229,11 +198,11 @@ Issue는 필요할 때 해당 WBS 단위로 만든다. 과거 완료 작업 전�
 | 규칙 | 내용 |
 | :--- | :--- |
 | **개체 프로파일 필수** | 모든 실기 실행은 `--device <unit-id>` 로 자신의 프로파일을 지정한다. 기본값 사용 금지 |
-| **보정값은 기체별로 잰다 — 복사 금지** | `servo_offset` 과 `gait_calibration` 은 **그 기체에서 직접 재서** 그 기체의 프로파일에만 적는다. 다른 기체의 값을 복사하거나 한 대의 값을 3대 공용으로 쓰는 PR 은 반려한다. 근거는 실측이다 — `mechdog-01` 에서 좌선회가 우선회의 **1.91배**(6.8 대 3.56 도/s)이고 직진이 좌로 **1.0 도/s** 휘며 후진이 전진의 **75%** 다. 이런 비대칭의 출처가 개체별 서보 오프셋(`[0, -36, -82, -14, -97, 3, 100, 36, 62]`)이므로 **기체마다 방향도 크기도 다르게 나온다.** 복사한 값은 회피 구간의 시간을 틀리게 계산해 **그 기체를 장애물에 더 붙게** 만든다 (WBS `2.2.3`·`2.4.1`). **재는 절차는 [docs/measurements/2026-09-18-turn-rate-curve.md](docs/measurements/2026-09-18-turn-rate-curve.md) 1절에 있다** — 선회율 곡선·직진 드리프트·순 회전 영점을 줄자 없이 IMU 1초 평균으로 낸다. 기체를 바꿀 때마다 그대로 다시 돌린다 |
-| **확인 결과는 PR 본문에** | 전압·fps·지연 확인 결과는 PR 본문에 남긴다. 채팅이나 메모에만 남기지 않는다. **`config` 로 들어갈 값은 `config/` 가 정본**이고 별도 리포트 문서는 두지 않는다. 원자료(csv·json·콘솔 로그)까지 남길 때만 `TEST_MECHDOG/results/<날짜-시각>/` 에 둔다 |
+| **보정값은 기체별로 잰다 — 복사 금지** | `servo_offset` 과 `gait_calibration` 은 **그 기체에서 직접 재서** 그 기체의 프로파일에만 적는다. 다른 기체의 값을 복사하거나 2대 공용으로 쓰는 PR 은 반려한다. 재는 절차는 [docs/measurements/2026-09-18-turn-rate-curve.md](docs/measurements/2026-09-18-turn-rate-curve.md) 1절에 있고, 실측 사례는 [TEAM_PROCESS 4절](docs/internal/TEAM_PROCESS.md)에 있다 |
+| **확인 결과는 PR 본문에** | 전압·fps·지연 확인 결과는 PR 본문에 남긴다. 채팅이나 메모에만 남기지 않는다. **`config` 로 들어갈 값은 `config/` 가 정본**이고 별도 리포트 문서는 두지 않는다. 원자료(csv·json·콘솔 로그)까지 남길 때만 `field_tests/results/<날짜-시각>/` 에 둔다 |
 | **성능 수치의 출처 명시** | Phase 1 NFR 측정치는 **`phase1_reference` 실측값**으로 문서화하고, 개체별 편차는 참고치로 병기한다 |
 | **안전 로직은 온보드에서 이동 금지** | 초음파 반사 정지·명령 타임아웃·저전압·전도 감지는 Tier 1이다. Host PC로 올리는 PR은 반려한다 ([아키텍처 1.2 불변 규칙](docs/ARCHITECTURE.md)) |
-| **카메라·로봇 펌웨어 코드는 한 PR에 섞지 않는다** | `firmware_xiao_vision`은 DR-3 상 촬영·송출 전용이다. 한 PR이 카메라와 `firmware_mechdog_motion`/`firmware_lidar_relay` 의 **코드 파일**(`*.ino`·`*.cpp`·`*.h` 등)을 같이 바꾸면 반려한다 — 로봇 기능이 카메라에 딸려 플래시되는 사고가 있었다 (2026-09-23). 문서 동반 변경은 허용. CI 의 `Firmware scope guard` 가 자동으로 검사한다 (`tools/check_firmware_scope.py`). 카메라 펌웨어 PR 은 실기 플래시 후 부팅 로그와 스트림 1프레임을 본문에 남긴다 |
+| **카메라·로봇 펌웨어 코드는 한 PR에 섞지 않는다** | `firmware/xiao_vision`은 DR-3 상 촬영·송출 전용이다. 한 PR이 카메라와 `firmware/mechdog_motion`/`firmware/lidar_relay` 의 **코드 파일**(`*.ino`·`*.cpp`·`*.h` 등)을 같이 바꾸면 반려한다 — 로봇 기능이 카메라에 딸려 플래시되는 사고가 있었다 (2026-09-23). 문서 동반 변경은 허용. CI 의 `Firmware scope guard` 가 자동으로 검사한다 (`tools/dev/check_firmware_scope.py`). 카메라 펌웨어 PR 은 실기 플래시 후 부팅 로그와 스트림 1프레임을 본문에 남긴다 |
 
 ---
 
@@ -264,8 +233,19 @@ Issue는 필요할 때 해당 WBS 단위로 만든다. 과거 완료 작업 전�
 
 ```bash
 ruff check . && ruff format --check .
-pytest -q
+python -m pytest -q --cov=host --cov=tools --cov-fail-under=80
 ```
+
+`requirements.txt`·`requirements-dev.txt` 를 고쳤으면 CI 용 잠금 파일을 다시 만든다 (Linux·CPython 3.12 기준, 해시 포함). Windows 개발 PC 는 예전처럼 `requirements*.txt` 로 설치한다.
+
+```bash
+pip install uv
+for f in requirements requirements-dev; do
+  uv pip compile $f.txt --python-platform x86_64-manylinux_2_28 --python-version 3.12 --generate-hashes -o $f.lock
+done
+```
+
+CI 의 커버리지 게이트는 80% 다. 대시보드 웹 시험은 `host/dashboard` 에서 `npm test`(`node --test web-tests/*.test.mjs`)로 돈다.
 
 **검출을 실제로 돌려 볼 때만** 가중치가 추가로 필요하다 (시험은 없이도 전부 돈다).
 
@@ -300,26 +280,15 @@ python tools/fetch_models.py
 
 MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run 구성으로 컴파일한다.
 실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
-`firmware_mechdog_motion/README.md`의 *"구동·센서 통합 빌드 준비"* 절을 따르고,
-준비 상태는 `python tools/firmware_env.py`로 점검한다. **벤더 파일은 절대 커밋하지 않는다**(ADR-20).
+`firmware/mechdog_motion/README.md`의 *"구동·센서 통합 빌드 준비"* 절을 따르고,
+준비 상태는 `python tools/dev/firmware_env.py`로 점검한다. **벤더 파일은 절대 커밋하지 않는다**(ADR-20).
 
 펌웨어 포맷과 컴파일 확인:
 
 ```bash
-clang-format --dry-run --Werror firmware_mechdog_motion/src/*.cpp firmware_mechdog_motion/src/*.h
-arduino-cli compile --fqbn esp32:esp32:esp32 firmware_mechdog_motion
+clang-format --dry-run --Werror firmware/mechdog_motion/src/*.cpp firmware/mechdog_motion/src/*.h
+arduino-cli compile --fqbn esp32:esp32:esp32 firmware/mechdog_motion
 ```
 
 > `clang-format` 은 `requirements-dev.txt` 에 들어 있다. **없으면 포맷 위반을 CI 에서만 알게 되고
 > 그때는 이미 PR 이 빨간불이다** — 실제로 그렇게 한 번 겪었다.
-
----
-
-## 9. 주간 리뷰
-
-주 1회(WBS 1.4):
-
-- 워크패키지 진척 갱신 (완료 / 진행 / 미착수)
-- 리스크 레지스터 RISK-01~09 상태 갱신
-- 게이트 판정 (G0~G3)
-- 담당자별 부하 편차 확인 → 필요 시 재배분
