@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from host.vision.worker import VisionResult
 
 #: 런타임과 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
-LOG = event_logger("mechdog.runtime")
+LOG = event_logger("mechadog.runtime")
 
 
 class AuthJudge:
