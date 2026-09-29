@@ -2028,7 +2028,9 @@ def test_inspection_turns_in_place_toward_the_anchor_heading(
     assert move is not None
     assert move["step"] == 0.0
     assert move["angle"] == sign * cfg["zones"]["align_turn_deg"]
-    assert runtime._visit_seen == [], "돌면서 본 장면은 기준에도 비교에도 쓰지 않는다"
+    assert runtime._zone_inspector._visit_seen == [], (
+        "돌면서 본 장면은 기준에도 비교에도 쓰지 않는다"
+    )
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -2135,7 +2137,7 @@ def test_a_baseline_that_cannot_be_written_does_not_stop_the_runtime(
     def full_disk(*_args, **_kwargs):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(runtime._baselines, "register", full_disk)
+    monkeypatch.setattr(runtime._zone_inspector._baselines, "register", full_disk)
     with caplog.at_level(logging.INFO):
         _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     assert runtime.behavior.state == "PATROL"
@@ -2855,8 +2857,8 @@ class ScriptedVlm:
 
 def _scripted(runtime, *script) -> ScriptedVlm:
     fake = ScriptedVlm(*script)
-    # 워커는 런타임과 쓰러짐 감시가 함께 쥔다 — 둘 다 바꾼다.
-    runtime._vlm = runtime._fall._vlm = fake
+    # 워커는 런타임·쓰러짐 감시·구역 점검이 함께 쥔다 — 셋 다 바꾼다.
+    runtime._vlm = runtime._fall._vlm = runtime._zone_inspector._vlm = fake
     return fake
 
 
