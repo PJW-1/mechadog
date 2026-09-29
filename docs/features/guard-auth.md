@@ -43,10 +43,10 @@ L3 를 내리는 방법은 [대응 에스컬레이션](escalation.md)에 있다.
 | 미등록 마커를 시도로 세는 안정 검출 | 1초 안 3프레임 | `auth.unknown_marker_min_frames` | — |
 | 등록 사원증 | 마커 0 → `EMP-001`, 1 → `EMP-002` | `auth.badge_marker_map` | [ADR-28](../DECISIONS.md#adr-28) |
 | 인증 유효 시간 | 60초 | `auth.session_valid_s` | [ADR-28](../DECISIONS.md#adr-28) |
-| 인증을 추적 ID 에 묶을지 | 거짓 (현장 단위 인증) | `auth.bind_to_track_id` | [경비 인증 실기](../../TEST_MECHDOG/results/20260922_guard-auth/summary.md) |
+| 인증을 추적 ID 에 묶을지 | 거짓 (현장 단위 인증) | `auth.bind_to_track_id` | [경비 인증 실기](../../field_tests/results/20260922_guard-auth/summary.md) |
 | 통과 뒤 순찰 재개 전 정지 | 6000ms | `auth.resume_delay_ms` | — |
 | 인증 요구 중 대상 상실 | 5초 | `fsm.target_lost_timeout_s` | [ADR-26](../DECISIONS.md#adr-26) |
-| 눈 LED | L0 파랑 · L1 노랑 · L2 주황 · L3 빨강 2Hz 점멸 | `escalation.led` | [눈 LED 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md) |
+| 눈 LED | L0 파랑 · L1 노랑 · L2 주황 · L3 빨강 2Hz 점멸 | `escalation.led` | [눈 LED 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md) |
 
 ## 실패·예외 시 동작
 
@@ -88,6 +88,6 @@ L3 를 내리는 방법은 [대응 에스컬레이션](escalation.md)에 있다.
 
 실측 기록
 
-- [경비 모드 사원증 실기](../../TEST_MECHDOG/results/20260922_guard-auth/summary.md)
-- [판정 대기 연장과 헤드리스 경보 해제 실기](../../TEST_MECHDOG/results/20260922_alarm-web-release/summary.md)
-- [눈 LED 단계 표시 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md)
+- [경비 모드 사원증 실기](../../field_tests/results/20260922_guard-auth/summary.md)
+- [판정 대기 연장과 헤드리스 경보 해제 실기](../../field_tests/results/20260922_alarm-web-release/summary.md)
+- [눈 LED 단계 표시 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md)

@@ -802,7 +802,7 @@ def ensure_untracked_frame_dir(folder: Path) -> Path:
     if result.returncode != 0:
         raise SystemExit(
             f"저장 폴더가 저장소 안인데 깃 무시 대상이 아니다 — 얼굴 프레임이 커밋될 수 있다: "
-            f"{resolved}. `TEST_MECHDOG/results/<세션>/raw`·`frames` 나 저장소 밖을 쓴다"
+            f"{resolved}. `field_tests/results/<세션>/raw`·`frames` 나 저장소 밖을 쓴다"
         )
     return resolved
 

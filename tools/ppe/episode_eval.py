@@ -5,7 +5,7 @@
 경보를 한 번이라도 울렸나» 다. 그래서 같은 원자료(`session.json`)를 에피소드로 묶어
 다시 센다. 로봇·카메라·모델을 건드리지 않는 오프라인 계산이다.
 
-    python tools/ppe/episode_eval.py TEST_MECHDOG/results/20260928_ppe-xiao/session.json
+    python tools/ppe/episode_eval.py field_tests/results/20260928_ppe-xiao/session.json
     python tools/ppe/episode_eval.py a/session.json b/session.json --timeout-s 10 --json
 
 정의

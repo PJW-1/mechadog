@@ -1,4 +1,4 @@
-# TEST_MECHDOG 색인
+# field_tests 색인
 
 이 폴더는 실기 시험의 원자료다. `results/` 아래에 시험 한 번당 폴더 하나씩 쌓인다.
 
@@ -6,8 +6,16 @@
 이름은 하루에 한 번만 돈 시험이다. `<작업번호>` 는 WBS 항목이거나, WBS 번호가 없는 임시 조사일 때는
 주제 이름만 붙는다.
 
-정제된 측정 보고서(해석·절차·정정 경위)는 [docs/measurements/](../docs/measurements/)에 있다. 여기
-`results/`는 그 근거가 된 원자료(로그·JSON·이미지)를 그대로 둔다.
+## 실측 기록이 나뉘는 세 곳
+
+- `field_tests/results/<세션>/` (여기) — 시험 한 번의 원자료 그대로다. 로그·콘솔 출력·JSON·이미지를
+  가공하지 않고 남긴다.
+- [docs/measurements/](../docs/measurements/) — 위 원자료를 사람이 읽게 정리한 글이다. 해석·절차·
+  정정 경위가 들어간다.
+- [docs/field_measure_catalog.json](../docs/field_measure_catalog.json) — 기계가 읽는 실측 카탈로그다.
+  `tools/field_plan.py`(측정 GUI/체크리스트 내보내기)가 이 파일을 읽어 항목별 절차·판정 기준·기존
+  근거 URL을 보여준다. 카탈로그는 사람이 직접 채우며, 이 폴더나 `docs/measurements/`를 자동으로
+  긁어 만들지 않는다.
 
 `results/` 바로 아래의 루트 파일 둘도 원자료다.
 

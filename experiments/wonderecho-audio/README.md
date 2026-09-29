@@ -240,7 +240,7 @@ g_pa_pin_valid_level = (lvl == 0) ? 1 : 0;
 > 장치 주소가 아니다(v34 브리지는 이 IIC0 를 끈다). 로봇 IIC1 에서 모듈은 **`0x34`** 로 응답하고,
 > `0x64` 는 그 `0x34` 안의 **레지스터**다 — 모듈이 인식한 명령 id 를 담는, 읽으면 지워지는
 > 우편함("Sit down" 뒤 첫 읽기 `0C`, 이후 `00`). "로봇 I²C(`0x64`)" 처럼 주소로 적지 않는다.
-> 원자료: `TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md`.
+> 원자료: `field_tests/results/20260923_4.7.9-bridge-transparency/summary.md`.
 
 **로봇 버스 실측(2026-09-14)** — 로봇 ESP32 에 읽기 전용 스캔을 넣어 확인했다.
 

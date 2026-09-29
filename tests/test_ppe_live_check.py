@@ -528,7 +528,7 @@ def test_frame_folder_on_a_tracked_repo_path_is_refused() -> None:
 
 
 def test_frame_folder_under_ignored_results_is_allowed() -> None:
-    folder = REPO / "TEST_MECHDOG" / "results" / "x" / "raw"
+    folder = REPO / "field_tests" / "results" / "x" / "raw"
     assert ppe.ensure_untracked_frame_dir(folder) == folder.resolve()
 
 

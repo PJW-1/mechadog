@@ -27,9 +27,9 @@ python tools/ppe_live_check.py `
   --segments `
   --scenario xiao `
   --web-port 8008 `
-  --save-dir "TEST_MECHDOG/results/${runDate}_ppe-xiao/frames" `
-  --report "TEST_MECHDOG/results/${runDate}_ppe-xiao/summary.md" `
-  --session "TEST_MECHDOG/results/${runDate}_ppe-xiao/session.json"
+  --save-dir "field_tests/results/${runDate}_ppe-xiao/frames" `
+  --report "field_tests/results/${runDate}_ppe-xiao/summary.md" `
+  --session "field_tests/results/${runDate}_ppe-xiao/session.json"
 ```
 
 실제 개체명·IP·날짜로 바꿔 실행한다. XIAO 검수에서는 `--window-ms`와 `--hits`를 주지
@@ -64,14 +64,14 @@ python tools/ppe_live_check.py `
 ## 현재 상태와 다음 작업
 
 현재 상태는 **운용 판정기와 런타임 연결 구현 · 자동 회귀 통과, 배포 모델 ppe-v4(YOLOX-S 4클래스) XIAO 실측 전**이다. 이전 후보 v23b 는 XIAO 실기에서 기각됐다.
-2026-09-22 XIAO 부분 실측은 이전 모델(SHA-256 `ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`)로 수행했다. 11개 구간 중 4개만 관측했고 판정 가능률 14%·실효 성공률 7%였다. 이는 이후 모델(ppe-v3·v4)의 합격 근거가 아니며, 당시 모델의 성능도 부족했다(`TEST_MECHDOG/results/20260922_ppe-xiao-run2/summary.md`).
+2026-09-22 XIAO 부분 실측은 이전 모델(SHA-256 `ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`)로 수행했다. 11개 구간 중 4개만 관측했고 판정 가능률 14%·실효 성공률 7%였다. 이는 이후 모델(ppe-v3·v4)의 합격 근거가 아니며, 당시 모델의 성능도 부족했다(`field_tests/results/20260922_ppe-xiao-run2/summary.md`).
 
 **2026-09-28 XIAO 실측 — v23b 기각.** PPE 후보 모델 v23b(YOLOX-S, 5클래스
 helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01 에서
 직립·전신·전부 착용 구간(69.4초) 실측했다. 적합 668 · 위반 227(19%) · 확인불가 299였고,
 위반 확정이 4회(4방향 각 1회) 나왔다 — 정상 착용자 오경고로, 승격 조건 ④(정상 착용자
 오경고 ≤1)에 못 미친다. 오검출 유형은 둘이다 — 정면에서 주황 안전모를 `no_helmet`으로,
-측면에서 조끼를 `no_vest`로 봤다. 결과 폴더는 `TEST_MECHDOG/results/20260928_ppe-xiao/`이나
+측면에서 조끼를 `no_vest`로 봤다. 결과 폴더는 `field_tests/results/20260928_ppe-xiao/`이나
 커밋되지 않아 경로만 인용한다. 다음 모델은 `person_down`을 빼고 **4클래스**로 다시 학습한다
 (데이터는 Roboflow Universe construction-safety CC BY 4.0 + XIAO 실측 어려운 사례, 아직 학습 전).
 
@@ -189,7 +189,7 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
 ```powershell
 $xiaoIp = "현재 XIAO IP로 교체"
 $dev = "mechdog-01"
-$run = "TEST_MECHDOG/results/$(Get-Date -Format yyyyMMdd)_ppe-collect-bright-1m"
+$run = "field_tests/results/$(Get-Date -Format yyyyMMdd)_ppe-collect-bright-1m"
 
 # 1) 방향 보정 — ppe_live_check 는 /orient 를 보내지 않는다
 python -c "from host.common.config import load_config; from host.vision.stream_client import apply_profile, apply_orientation; c = load_config('$dev'); c['network']['xiao_ip'] = '$xiaoIp'; print(apply_profile(c)); print('rot', apply_orientation(c))"
@@ -231,7 +231,7 @@ python tools/ppe_live_check.py `
 - 끝나면 «시험 종료 및 결과 저장»을 누른다.
 
 ⚠️ **`frames/`·`raw/`에는 얼굴이 담긴다.** 커밋하지 않고(`.gitignore`의
-`TEST_MECHDOG/results/**/frames/`·`**/raw/`), 클라우드 라벨링 도구를 포함해 외부로 올리지 않는다.
+`field_tests/results/**/frames/`·`**/raw/`), 클라우드 라벨링 도구를 포함해 외부로 올리지 않는다.
 `xiao_hardcases.py`가 만드는 크롭·접촉 시트도 깃이 무시하는 `datasets/` 아래에만 쓴다.
 
 ### 촬영 뒤

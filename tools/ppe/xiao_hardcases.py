@@ -5,7 +5,7 @@ PPE 재학습의 데이터 2단계다. 입력은 `tools/ppe_live_check.py --segm
 없으면 `--save-dir` 의 `frames/` 를 읽지만, 판정을 그린 프레임이면 멈춘다.
 
     python tools/ppe/xiao_hardcases.py --device mechdog-01 \\
-        --session TEST_MECHDOG/results/20260928_ppe-xiao \\
+        --session field_tests/results/20260928_ppe-xiao \\
         --ppe-model models/candidates/ppe4-cs-md-v2/ppe.onnx \\
         --build datasets/ppe/build/ppe4_cs_md_v2 --merge
 
