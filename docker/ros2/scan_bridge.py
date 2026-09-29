@@ -61,8 +61,16 @@ def main() -> None:
             # (config.yaml lidar.scan_forward_port · WBS 5.4.4).
             self.port = int(os.getenv("LIDAR_SCAN_PORT", "5203"))
             self.expected_device = os.getenv("LIDAR_DEVICE_ID", "")
-            yaw = float(os.getenv("LIDAR_MOUNT_YAW_DEG", "0"))
-            direction = int(os.getenv("LIDAR_ANGLE_DIRECTION", "1"))
+            # ⚠️ 기본값은 «보정 없음» 이고 실물 정본이 아니다 — `config.yaml` 의
+            # `lidar.mount_yaw_deg`(270) · `lidar.angle_direction`(-1) 을 넘겨야 한다.
+            # 안 넘기면 조용히 돌아간 지도가 나온다(2026-09-29 실측: 같은 물체가
+            # 40° 대 229°). `odom_bridge` 가 `LASER_OFFSET_*` 에 하는 것과 같이 경고한다.
+            yaw_raw = os.getenv("LIDAR_MOUNT_YAW_DEG")
+            dir_raw = os.getenv("LIDAR_ANGLE_DIRECTION")
+            yaw = float(yaw_raw if yaw_raw is not None else "0")
+            direction = int(dir_raw if dir_raw is not None else "1")
+            missing = [n for n, v in (("LIDAR_MOUNT_YAW_DEG", yaw_raw),
+                                      ("LIDAR_ANGLE_DIRECTION", dir_raw)) if v is None]
             self.rotation = Revolution(
                 int(os.getenv("LIDAR_ANGLE_BINS", "450")),
                 float(os.getenv("LIDAR_RANGE_MIN_M", "0.12")),
@@ -78,6 +86,11 @@ def main() -> None:
             self.last_publish: float | None = None
             self.scan_started_stamp = None
             self.create_timer(0.01, self.poll)
+            if missing:
+                self.get_logger().warning(
+                    f"{missing} 미설정 — 장착 보정 없이 발행한다 "
+                    f"(config.yaml lidar.mount_yaw_deg · angle_direction 을 넘긴다)"
+                )
             self.get_logger().info(f"SCAN UDP :{self.port} -> /scan")
 
         def publish(self, ranges: list[float]) -> None:
