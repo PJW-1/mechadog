@@ -56,7 +56,7 @@ jobs:
 
       # 좁은 범위부터 strict 로 켠다 (pyproject.toml [tool.mypy]). 넓힐 때 패키지를 더한다.
       - name: Type check (mypy)
-        run: mypy host/common host/behavior
+        run: mypy host/common host/behavior host/slam host/vision
 
       - name: PC maintenance offline tests
         run: |

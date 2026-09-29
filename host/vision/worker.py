@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
@@ -260,7 +260,7 @@ class VisionWorker:
                     self._note_error("vision_recv_close_failed", exc)
 
     def _frames(self) -> Iterable[Frame]:
-        return self._reader.frames()
+        return cast("Iterable[Frame]", self._reader.frames())
 
     # ── ② 추론 스레드 ───────────────────────────────────────
     def _infer_loop(self) -> None:
