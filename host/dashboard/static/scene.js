@@ -115,7 +115,7 @@ export class FactoryView {
   }
 
   makeRobots(){
-    const data=[['MD-01',-17,3.5,0],['MD-02',-1,-8,Math.PI/2],['MD-03',20,11,Math.PI/2]];
+    const data=[['MD-01',-17,3.5,0],['MD-02',-1,-8,Math.PI/2]];
     this.robots=data.map(([id,x,z,angle])=>{
       const model=makeRobot();model.scale.setScalar(1.42);
       model.position.set(x,.04,z);model.rotation.y=angle;model.userData.robotId=id;

@@ -148,7 +148,7 @@ jobs:
       #  가 여기서 실제로 돈다. Python 쪽(test_protocol_fixtures.py)과 **같은
       #  파일**을 읽으므로, 스키마를 한쪽만 바꾸면 둘 중 하나가 반드시 깨진다.
       #
-      #  실물 없이 도는 것이 요점이다 — 펌웨어 로직을 로봇 3대에 의존하지 않고
+      #  실물 없이 도는 것이 요점이다 — 펌웨어 로직을 로봇 2대에 의존하지 않고
       #  매 PR 마다 검증한다 (HAL 분리 원칙).
       - name: Host unit tests (MechDog motion, make)
         run: make -C firmware_mechdog_motion/test test
