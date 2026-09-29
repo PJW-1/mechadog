@@ -26,7 +26,7 @@ export function getOverviewFrustum(bounds,aspect){
 
 export class FactoryView {
   constructor({worldCanvas,fpvCanvas,layout,onRobot,onError,onProject,onObservation}) {
-    Object.assign(this,{layout,onRobot,onError,onProject,onObservation,selected:'MD-01',playing:false,elapsed:0,frame:0,last:performance.now(),disposed:false,visible:true,active:true,worldVisible:true,cameraVisible:true,viewMode:'overview'});
+    Object.assign(this,{layout,onRobot,onError,onProject,onObservation,selected:'MD-01',playing:false,elapsed:0,frame:0,last:performance.now(),disposed:false,visible:true,active:true,flight:null,worldVisible:true,cameraVisible:true,viewMode:'overview'});
     this.reduced=matchMedia('(prefers-reduced-motion: reduce)');
     this.scene=new THREE.Scene();
     // ACES at exposure 1.12 maps this input to the approved scene ground (#1e1f2c).
@@ -46,6 +46,8 @@ export class FactoryView {
     this.controls.minPolarAngle=.05;
     this.controls.screenSpacePanning=false;
     this.controls.addEventListener('change',()=>this.invalidate());
+    // 사람이 끌기 시작하면 진행 중인 시점 이동을 즉시 놓는다 — 손이 이긴다.
+    this.controls.addEventListener('start',()=>{this.flight=null});
     this.scene.add(new THREE.HemisphereLight(0xbfc9ed,0x696878,1.05));
     const key=new THREE.DirectionalLight(0xfff4e7,3.1);
     key.position.set(-12,38,23);
@@ -156,6 +158,36 @@ export class FactoryView {
     this.invalidate();
   }
 
+  /** 시점을 옮긴다. **순간이동하면 어디로 갔는지 읽히지 않는다** — 공간 관계를 보이려고 건너간다.
+      ⚠️ `prefers-reduced-motion` 이면 곧바로 옮긴다. 움직임을 줄이는 것이지 기능을 끄는 것이 아니다. */
+  flyTo(position,target,zoom,ms=460){
+    if(this.reduced.matches||ms<=0){
+      this.camera.position.copy(position);this.controls.target.copy(target);this.camera.zoom=zoom;
+      this.flight=null;this.camera.updateProjectionMatrix();this.controls.update();this.invalidate();return;
+    }
+    this.flight={
+      start:performance.now(),ms,
+      fromPosition:this.camera.position.clone(),toPosition:position.clone(),
+      fromTarget:this.controls.target.clone(),toTarget:target.clone(),
+      fromZoom:this.camera.zoom,toZoom:zoom,
+    };
+    this.invalidate();
+  }
+  /** 한 프레임만큼 나아간다. 아직 가는 중이면 참이다. */
+  stepFlight(now){
+    const flight=this.flight;
+    if(!flight)return false;
+    const linear=Math.min(1,(now-flight.start)/flight.ms);
+    // 감속 곡선 — 도착이 확신 있게 멈춘다.
+    const eased=1-Math.pow(1-linear,3);
+    this.camera.position.lerpVectors(flight.fromPosition,flight.toPosition,eased);
+    this.controls.target.lerpVectors(flight.fromTarget,flight.toTarget,eased);
+    this.camera.zoom=flight.fromZoom+(flight.toZoom-flight.fromZoom)*eased;
+    this.camera.updateProjectionMatrix();
+    if(linear>=1)this.flight=null;
+    return true;
+  }
+
   selectRobot(id){if(this.robots.some(r=>r.id===id)){this.selected=id;this.invalidate()}}
   setPatrolRobot(id){if(this.robots.some(r=>r.id===id))this.patrolRobot=id}
   setPlaying(value){this.playing=!!value;this.last=performance.now();this.invalidate()}
@@ -167,20 +199,25 @@ export class FactoryView {
     if(this.active)this.resize();else{cancelAnimationFrame(this.frame);this.frame=0}
   }
   setView(mode){
-    this.viewMode=mode;this.camera.zoom=1;
+    this.viewMode=mode;
     const robot=this.robots.find(r=>r.id===this.selected);
-    if(mode==='top'){this.camera.position.set(.01,75,.01);this.controls.target.set(0,0,0)}
-    else if(mode==='robot'){const pos=robot.model.position;this.camera.position.set(pos.x+12,10,pos.z+13);this.controls.target.copy(pos);this.camera.zoom=2.5}
-    else{this.camera.position.copy(OVERVIEW);this.controls.target.copy(LOOK_AT)}
-    this.camera.updateProjectionMatrix();this.controls.update();this.invalidate();
+    let position,target,zoom=1;
+    if(mode==='top'){position=new THREE.Vector3(.01,75,.01);target=new THREE.Vector3(0,0,0)}
+    else if(mode==='robot'){const pos=robot.model.position;position=new THREE.Vector3(pos.x+12,10,pos.z+13);target=pos.clone();zoom=2.5}
+    else{position=OVERVIEW.clone();target=LOOK_AT.clone()}
+    this.flyTo(position,target,zoom);
   }
-  zoom(factor){this.camera.zoom=THREE.MathUtils.clamp(this.camera.zoom/factor,.5,6);this.camera.updateProjectionMatrix();this.invalidate()}
+  /** 버튼 확대·축소. 한 번 누름은 작은 걸음이라 짧게 — 길면 반응이 굼떠 보인다. */
+  zoom(factor){this.flyTo(this.camera.position,this.controls.target,THREE.MathUtils.clamp(this.camera.zoom/factor,.5,6),200)}
   focusZone(zone){
-    this.viewMode='zone';this.controls.target.set(zone.center[0],0,-zone.center[1]);
-    this.camera.position.copy(this.controls.target).add(new THREE.Vector3(24,35,30));
-    this.camera.zoom=1.7;this.camera.updateProjectionMatrix();this.controls.update();this.invalidate();
+    this.viewMode='zone';
+    const target=new THREE.Vector3(zone.center[0],0,-zone.center[1]);
+    this.flyTo(target.clone().add(new THREE.Vector3(24,35,30)),target,1.7);
   }
-  orbit(angle){const offset=this.camera.position.clone().sub(this.controls.target).applyAxisAngle(new THREE.Vector3(0,1,0),angle);this.camera.position.copy(this.controls.target).add(offset);this.controls.update();this.invalidate()}
+  orbit(angle){
+    const offset=this.camera.position.clone().sub(this.controls.target).applyAxisAngle(new THREE.Vector3(0,1,0),angle);
+    this.flyTo(this.controls.target.clone().add(offset),this.controls.target,this.camera.zoom,260);
+  }
 
   updateRobot(dt){
     if(!this.playing)return;
@@ -203,6 +240,7 @@ export class FactoryView {
   render(now){
     this.frame=0;if(this.disposed||this.lost||!this.visible||!this.active)return;
     const dt=Math.min((now-this.last)/1000,.1);this.last=now;
+    const flying=this.stepFlight(now);
     this.updateRobot(dt);if(this.worldVisible)this.controls.update();
     for(const mesh of this.factory.interior)mesh.visible=false;
     if(this.worldVisible)this.composer.render();
@@ -224,7 +262,7 @@ export class FactoryView {
     const size=this.renderer.getSize(new THREE.Vector2());
     const project=(id,position)=>{const p=position.clone().project(this.camera);return{id,x:(p.x+1)*size.x/2,y:(1-p.y)*size.y/2,visible:p.z>-1&&p.z<1}};
     if(this.worldVisible)this.onProject([...this.robots.map(r=>project(r.id,r.model.position.clone().add(new THREE.Vector3(0,1.25,0)))),project('attention',this.attentionPosition.clone().add(new THREE.Vector3(0,1.8,0)))]);
-    if(this.playing)this.invalidate();
+    if(this.playing||flying)this.invalidate();
   }
   dispose(){
     this.disposed=true;cancelAnimationFrame(this.frame);this.resizeObserver.disconnect();

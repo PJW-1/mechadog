@@ -7,6 +7,8 @@ const TITLES={missions:'제어 · 장치',events:'사건 검토',records:'운영
 const STATUS={idle:'시작 전',running:'예시 진행 중',paused:'일시정지',ended:'종료'};
 const MANUAL_KEYS={KeyW:'FORWARD',KeyA:'LEFT',KeyS:'BACKWARD',KeyD:'RIGHT'};
 const time=value=>value==null?'—':new Date(value).toLocaleString('ko-KR',{hour12:false});
+// 목록 행에 넣는 짧은 시각. 같은 사건이 여러 건일 때 이것 말고는 서로를 가를 것이 없다.
+const clock=value=>new Date(value).toLocaleTimeString('ko-KR',{hour12:false});
 
 // All record content is text, never HTML. Files stay in this browser session.
 export class OperationalPanels {
@@ -15,6 +17,8 @@ export class OperationalPanels {
   this.view='dashboard';this.zones=[];this.eventId=null;this.zoneId=null;
   this.filters={type:'all',status:'all',robot:'all',query:''};this.urls=new Set();
   this.reviewDrafts=new Map();this.policyDrafts=new Map();this.activeHold=null;
+  // 이미 목록에 있던 사건. **첫 그림에는 표시하지 않는다** — 열자마자 전부 깜빡이면 새것이 묻힌다.
+  this.seenEvents=null;
   this.missionDraft=null;this.settingsSection='display';
   this.manualPressedKeys=new Set();this.keyboardEnabled=true;
   this.manualKeyDown=event=>this.handleManualKeyDown(event);
@@ -172,11 +176,20 @@ export class OperationalPanels {
   const records=this.store.queryEvents(this.filters);
   if(!records.some(e=>e.id===this.eventId))this.eventId=records[0]?.id||null;
   this.eventCount.textContent=records.length+'건 · 현재 조건';
+  // 새로 들어온 사건만 한 번 짚어 준다 (WBS 4.6.4 실시간 피드) — 실시간 사건은 조용히 끼어든다.
+  const firstDraw=this.seenEvents===null;
+  if(firstDraw)this.seenEvents=new Set();
+  const fresh=new Set();
+  for(const event of records){if(!firstDraw&&!this.seenEvents.has(event.id))fresh.add(event.id);this.seenEvents.add(event.id);}
   this.eventList.replaceChildren(...records.map(event=>this.button([
    this.el('span',{class:'op-row-meta'},event.robot,this.badge(event.source==='DEMO'?'예시':event.source==='LIVE_FEED'?'실시간':'저장 파일',event.source==='LIVE_FEED'?'':'')),
-   this.el('strong',{},event.title),this.el('span',{class:'op-row-meta'},event.zone),
+   this.el('strong',{},event.title),
+   // ⚠️ **시각이 없으면 같은 이름의 사건을 고를 수 없다.** 09-27 실측에서 `person_found` 11건이
+   // 글자까지 똑같이 나열돼 화면으로는 구분이 되지 않았다. 시각이 없는 사건(예시)은 비워 둔다.
+   this.el('span',{class:'op-row-meta'},event.zone,
+    event.ts_ms?this.el('time',{class:'op-row-time',datetime:new Date(event.ts_ms).toISOString()},clock(event.ts_ms)):null),
    this.el('span',{class:'op-row-foot'},this.badge(REVIEW_STATES[event.review],event.review==='pending'?'amber':''),this.el('span',{},event.escalation))
-  ],()=>{this.eventId=event.id;this.renderEventList();this.eventList.querySelector('.op-event-row.selected')?.focus()},{class:'op-event-row'+(event.id===this.eventId?' selected':''),'aria-pressed':event.id===this.eventId})));
+  ],()=>{this.eventId=event.id;this.renderEventList();this.eventList.querySelector('.op-event-row.selected')?.focus()},{class:'op-event-row'+(event.id===this.eventId?' selected':'')+(fresh.has(event.id)?' just-arrived':''),'aria-pressed':event.id===this.eventId})));
   this.eventList.parentElement.classList.toggle('empty',!records.length);
   if(!records.length)this.eventList.append(this.note(this.store.queryEvents().length?'검색 결과가 없습니다. 검색어나 필터를 바꾸세요.':'검토할 사건이 없습니다. 블랙박스 파일을 가져오세요.'));
   this.renderEventDetail(this.store.events.find(e=>e.id===this.eventId));
@@ -630,11 +643,18 @@ export class OperationalPanels {
   const figure=this.el('figure',{class:'op-spark'},this.el('figcaption',{},label+' · 최근 60초'));
   if(points.length<2){figure.append(this.el('p',{class:'op-spark-empty'},'추이 수집 중'));return figure}
   const values=points.map(point=>point[key]),min=Math.min(...values),max=Math.max(...values);
-  const t0=points[0].t,dt=(points.at(-1).t-t0)||1,span=(max-min)||1,W=240,H=48;
+  // ⚠️ **변화가 없을 때 없던 진동을 그리던 자리다.** `(max-min)||1` 은 값이 모두 같으면
+  // 폭을 1 로 바꿔 버려서, 43·44 처럼 **한 눈금 차이가 그래프 높이 전체**로 튀었다.
+  // 캡션이 「최소 43 · 최대 43」이라고 적는 동안 선은 위아래를 오갔다 — 화면이 거짓을 말한 것이다.
+  // 표시 눈금(`digits`) 네 칸을 최소 폭으로 두고 가운데를 기준으로 그린다. 실제 변화가
+  // 그보다 크면 예전과 똑같이 그려지고, 작으면 가운데에 가깝게 눕는다.
+  const tick=Math.pow(10,-digits),floor=tick*4;
+  const span=Math.max(max-min,floor),base=(max+min)/2-span/2;
+  const t0=points[0].t,dt=(points.at(-1).t-t0)||1,W=240,H=48;
   const svg=this.document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');
   const line=this.document.createElementNS('http://www.w3.org/2000/svg','polyline');
-  line.setAttribute('points',points.map(point=>`${((point.t-t0)/dt*W).toFixed(1)},${(H-3-(point[key]-min)/span*(H-6)).toFixed(1)}`).join(' '));
+  line.setAttribute('points',points.map(point=>`${((point.t-t0)/dt*W).toFixed(1)},${(H-3-(point[key]-base)/span*(H-6)).toFixed(1)}`).join(' '));
   svg.append(line);
   const fmt=value=>value.toFixed(digits)+' '+unit;
   figure.append(svg,this.el('p',{class:'op-spark-range'},'최소 '+fmt(min)+' · 최대 '+fmt(max)+' · 지금 '+fmt(values.at(-1))));
