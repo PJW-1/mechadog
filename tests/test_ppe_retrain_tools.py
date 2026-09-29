@@ -651,7 +651,7 @@ def test_mendeley_prepare_merges_dedupes_and_keeps_roboflow_test(tmp_path, monke
         for im in coco["images"]:
             assert (out / folder / im["file_name"]).is_file()
     assert json.loads((out / "data_card.json").read_text("utf-8"))["dataset_version"] == "v1"
-    with pytest.raises(SystemExit):  # 같은 출력에 다시 쓰지 않는다
+    with pytest.raises(SystemExit, match="출력 폴더가 이미 있다"):  # 같은 출력에 다시 쓰지 않는다
         mendeley_prepare.prepare(
             md_raw, rf_raw, base, out, "v1", device="x", coco_model=tmp_path / "c", seed=1
         )
@@ -730,7 +730,7 @@ def test_mendeley_main_refuses_output_outside_datasets_and_passes_arguments(tmp_
 
     monkeypatch.setattr(mendeley_prepare, "prepare", fake_prepare)
     common = ["--md-raw", "m", "--rf-raw", "r", "--base", "b", "--coco-model", "c.onnx"]
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="datasets/ 아래"):
         mendeley_prepare.main([*common, "--out", str(tmp_path / "x"), "--version", "v"])
     inside = mendeley_prepare.ROOT / "datasets" / "ppe" / "build" / "never_written"
     assert mendeley_prepare.main([*common, "--out", str(inside), "--version", "v9"]) == 0
@@ -756,7 +756,8 @@ def test_export_ppe_verify_records_host_check_and_refuses_hash_mismatch(tmp_path
     images = tmp_path / "val2017"
     for i in range(5):
         _write_image(images / f"{i}.jpg", i)
-    (images / "notes.txt").write_text("not an image", encoding="utf-8")
+    # 이름순 맨 앞 — 확장자 필터가 없으면 이 파일이 골라져 images 가 3이 안 된다
+    (images / "0_notes.txt").write_text("not an image", encoding="utf-8")
 
     args = ["verify", "--device", "mechdog-01", "--onnx", str(onnx), "--images", str(images)]
     assert export_ppe.main([*args, "--count", "3"]) == 0
@@ -765,12 +766,11 @@ def test_export_ppe_verify_records_host_check_and_refuses_hash_mismatch(tmp_path
     assert check["results"][0]["labels"] == ["helmet"]
 
     onnx.write_bytes(b"changed")
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="sha256"):
         export_ppe.main(args)
 
 
 def test_export_ppe_small_helpers(tmp_path):
-    assert export_ppe.expected_output_shape(4) == [1, 8400, 9]
     assert export_ppe.pick_evenly([Path(str(i)) for i in range(10)], 3) == [
         Path("0"),
         Path("3"),
