@@ -53,6 +53,44 @@ def test_window_counts_attempts_and_raises_auth_failed_when_exhausted(cfg, clock
     assert behavior.state == "ALERT"
 
 
+class _ClosesAfterFirstRead(VoiceAuthWindow):
+    """`opened_ms` 를 처음 한 번 읽은 뒤 대시보드 스레드가 창을 닫은 것처럼 보인다."""
+
+    @property
+    def opened_ms(self) -> int | None:
+        value, self._next = self._next, None
+        return value
+
+    @opened_ms.setter
+    def opened_ms(self, value: int | None) -> None:
+        self._next = value
+
+
+def test_stale_utterance_survives_the_window_closing_mid_check(cfg, clock):
+    """창보다 앞선 발화를 판정한 직후 창이 닫혀도 **예외 없이** 버린다.
+
+    열린 시각을 판정과 로그에서 따로 읽으면, 그 사이에 닫힌 창의 `None` 에서
+    `behind_ms` 를 빼다 `TypeError` 가 난다. 한 번 읽은 값으로 판정하고 기록한다.
+    """
+    cfg = dict(cfg, auth=dict(cfg["auth"], require_both=False))
+    behavior = behavior_from_config(Commander(), cfg)
+    for event in AUTH_WAIT_ROUTE:
+        behavior.event(event, now_ms=clock.ms)
+    window = _ClosesAfterFirstRead(
+        cfg, behavior=behavior, mission=Mission(cfg), apply=behavior.event, clock=clock
+    )
+    window.open(clock.ms)
+
+    assert window.note_verdict(True, captured_at_ms=clock.ms - 1) == (
+        True,
+        "인증 창이 열리기 전에 녹음된 발화다 — 다시 말해 주세요",
+    )
+    window.opened_ms = clock.ms
+    assert window.note_listening(captured_at_ms=clock.ms - 1)[1] == (
+        "인증 창이 열리기 전에 시작된 발화다 — 유예하지 않는다"
+    )
+
+
 def test_window_grants_for_session_valid_s_and_close_clears_open_time(cfg, clock):
     """일치가 받아들여지면 `session_valid_s` 동안 허가다. 닫으면 열린 시각을 지운다."""
     valid_ms = int(cfg["auth"]["session_valid_s"]) * 1000

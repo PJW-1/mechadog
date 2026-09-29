@@ -60,7 +60,7 @@ def _describe_zone_changed(judgement: dict[str, Any]) -> str:
 
 def _describe_zone_notice(judgement: dict[str, Any]) -> str:
     """반출 가벼운 경고 (`zone_notice`). L3·눈 변화 없이 관제에만 남기는 경고라
-    문장도 «확인이 필요합니다» 없이 사실만 짧게 말한다 (`_leave_zone` Z2).
+    문장도 «확인이 필요합니다» 없이 사실만 짧게 말한다 (`ZoneInspector._leave` Z2).
     """
     return f"{_zone_prefix(judgement.get('zone'))}물건이 반출된 것으로 보입니다."
 
