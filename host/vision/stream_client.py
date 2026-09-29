@@ -2,17 +2,11 @@
 
 XIAO 가 `multipart/x-mixed-replace` 로 보내는 바이트를 프레임으로 자른다.
 
-**이 모듈은 소켓을 만지지 않는다.** 바이트를 먹여 주면 프레임을 돌려줄 뿐이고, 실제
-연결과 재연결은 `4.3.4` 가 맡는다. 수신기(`4.3.6`)를 그렇게 만들어 둔 것과 같은
-이유다 — 로봇도 카메라도 없이 시험된다.
+`MjpegParser`·`FrameQueue` 는 소켓을 만지지 않는다. 연결·재연결은 `StreamReader`, 카메라
+설정 전송은 `apply_profile()` 이 한다(`build_worker` 가 연결할 때마다 부른다).
 
-예외는 `apply_profile()` 하나다. 제어 포트로 설정을 내려보내는 요청이며, 실제 운용에서는
-`build_worker` 가 **연결할 때마다** 부른다 — 카메라가 재부팅하면 펌웨어 기본값으로 돌아간다.
-
-⚠️ **경계 desync 를 무해하게 넘긴다.** MJPEG 은 프레임마다 경계 문자열이 오는 구조라
-한 번 어긋나면 그 뒤가 전부 쓰레기가 된다. 그래서 ① JPEG 시작 표식(`FFD8`)이 없는
-조각은 버리고 ② 버퍼가 상한을 넘으면 비우고 다시 경계를 찾는다. 둘 다 없으면
-깨진 스트림 하나가 메모리를 끝없이 먹는다.
+경계가 어긋나도 무해하게 넘긴다 — JPEG 시작 표식(`FFD8`)이 없는 조각은 버리고, 버퍼가
+상한을 넘으면 비우고 다시 경계를 찾는다. 깨진 스트림이 메모리를 끝없이 먹지 않는다.
 """
 
 from __future__ import annotations
@@ -47,15 +41,10 @@ _LENGTH_RE = re.compile(rb"content-length:\s*(\d+)", re.IGNORECASE)
 
 @dataclass(frozen=True, slots=True)
 class Frame:
-    """완성된 프레임 하나. **디코드는 소비자가 한다.**
-
-    바이트를 그대로 들고 다니는 이유 — 큐에 쌓일 수 있는데, 디코드해서 넣으면
-    VGA 한 장이 수백 KB(RGB)로 부풀어 큐 깊이만큼 메모리를 먹는다. JPEG 로 두면
-    수십 KB 이고, 어차피 버려질 프레임을 디코드하는 낭비도 없다 (`4.3.5`).
-    """
+    """완성된 프레임 하나 — JPEG 바이트 그대로이며 디코드는 소비자가 한다 (`4.3.5`)."""
 
     payload: bytes
-    #: **도착 시각.** 신선도의 기준이며 추론 지연을 재는 출발점이다 (NFR-1.1).
+    #: 도착 시각 — 신선도와 추론 지연의 기준이다 (NFR-1.1).
     received_ms: int
     seq: int
 
@@ -70,7 +59,7 @@ class Frame:
 
 @dataclass(slots=True)
 class ParserStats:
-    """파서가 무엇을 버렸는지. **조용히 버리면 스트림 문제를 못 찾는다.**"""
+    """파서가 만든 것과 버린 것의 수."""
 
     frames: int = 0
     discarded: int = 0
@@ -79,11 +68,8 @@ class ParserStats:
 
 
 class MjpegParser:
-    """증분 파서. 조각이 어디서 끊겨 와도 상태를 이어서 맞춘다.
-
-    TCP 는 우리가 보낸 경계에 맞춰 조각을 나눠 주지 않는다 — 한 프레임이 여러 조각에
-    걸치거나 한 조각에 프레임 두 개가 들어온다. 그래서 상태를 들고 있어야 한다.
-    """
+    """증분 파서. TCP 조각이 어디서 끊겨 와도(한 프레임이 여러 조각, 한 조각에 여러 프레임)
+    상태를 이어서 맞춘다. 단일 스레드에서 쓴다."""
 
     def __init__(
         self,
@@ -106,13 +92,11 @@ class MjpegParser:
         return len(self._buffer)
 
     def feed(self, chunk: bytes, now_ms: int) -> list[Frame]:
-        """바이트를 넣고 **완성된 프레임만** 돌려준다. 없으면 빈 목록."""
+        """바이트를 넣고 완성된 프레임만 돌려준다. 없으면 빈 목록."""
         self._buffer += chunk
         self.stats.bytes_in += len(chunk)
         frames: list[Frame] = []
-        # ⚠️ **진행 여부와 프레임 획득을 구분한다.** 조각 하나를 폐기한 것도 진행이므로
-        # 거기서 멈추면 **같은 조각에 함께 온 정상 프레임이 파싱되지 않는다** — 다음
-        # 조각이 올 때까지 밀리고, 스트림이 끊기면 영원히 안 나온다. 시험이 잡았다.
+        # 진행 여부와 프레임 획득을 구분한다 — 폐기도 진행이므로, 같은 조각의 다음 프레임까지 푼다.
         while True:
             progressed, frame = self._step(now_ms)
             if frame is not None:
@@ -144,7 +128,7 @@ class MjpegParser:
             if len(self._buffer) < end:
                 return False, None  # 본문이 아직 다 안 왔다
         else:
-            # ⚠️ `Content-Length` 가 없는 서버도 있다. 다음 경계까지를 본문으로 본다.
+            # `Content-Length` 가 없으면 다음 경계까지를 본문으로 본다.
             nxt = self._buffer.find(self._marker, body_at)
             if nxt < 0:
                 return False, None
@@ -172,11 +156,7 @@ class MjpegParser:
         LOG.warning("stream_resync", reason="Content-Length 범위 이탈")
 
     def _guard_overflow(self) -> None:
-        """경계를 못 찾은 채 버퍼가 커지면 비운다.
-
-        **이게 없으면 깨진 스트림 하나가 메모리를 끝없이 먹는다.** 상한은 프레임
-        하나의 최대치를 넉넉히 넘는 값이므로, 정상 스트림에서는 걸리지 않는다.
-        """
+        """경계를 못 찾은 채 버퍼가 프레임 상한의 두 배를 넘으면 비운다."""
         if len(self._buffer) <= self._max * 2:
             return
         self._buffer.clear()
@@ -187,15 +167,10 @@ class MjpegParser:
 
 @dataclass(slots=True)
 class FrameQueue:
-    """최신 프레임을 우선하는 유한 큐.
+    """최신 프레임을 우선하는 유한 큐 — 가득 차면 가장 오래된 것을 버린다 (ADR-23).
 
-    ⚠️ **가득 차면 가장 오래된 것을 버린다.** 추론이 프레임 도착보다 느린 것이
-    정상이므로(추론이 수신을 따라가지 못하는 순간이 있다 — 부하·발열), 큐가 밀리면
-    **오래된 프레임을 처리하는 것이 아니라 버리는 것**이 맞다. 낡은 프레임으로
-    판단하면 로봇이 과거를 보고 움직인다.
-
-    수신과 추론은 서로 다른 스레드에서 이 객체를 함께 쓰므로 모든 복합 연산을 잠근다.
-    1초마다 수신·처리·드롭·최대 깊이를 한 줄로 남겨 실제 부하에서 정책을 검증한다.
+    ⚠️ 수신·추론 스레드가 함께 쓰므로 모든 복합 연산을 `_lock` 안에서 한다. 1초마다
+    수신·처리·드롭·최대 깊이를 한 줄로 남긴다.
     """
 
     capacity: int = 2
@@ -221,7 +196,7 @@ class FrameQueue:
             return len(self._items)
 
     def put(self, frame: Frame) -> bool:
-        """넣는다. **버린 것이 있으면 `True`.**"""
+        """넣는다. 버린 것이 있으면 `True`."""
         with self._lock:
             self.received += 1
             self._window_received += 1
@@ -249,7 +224,7 @@ class FrameQueue:
             return self._items.popleft()
 
     def latest(self, *, now_ms: int | None = None) -> Frame | None:
-        """**가장 새 것 하나만** 꺼내고 나머지를 버린다 — 추론이 쓰는 경로다."""
+        """가장 새 것 하나만 꺼내고 나머지를 버린다 — 추론이 쓰는 경로다."""
         with self._lock:
             while len(self._items) > 1:
                 self._items.popleft()
@@ -310,15 +285,8 @@ class StreamEndpoints:
 
 
 def stream_endpoints(config: Mapping[str, Any]) -> StreamEndpoints:
-    """개체 프로파일의 `xiao_ip` 에서 주소를 조립한다.
-
-    ⚠️ **전역 설정에 고정 URL 을 두지 않는다.** 실제 공유기에서 주소가 달라지고,
-    **틀린 주소가 적혀 있는 것이 비어 있는 것보다 나쁘다** — `mechdog_ip` 를
-    `null` 로 둔 것과 같은 이유다 (`config/devices/*.yaml`).
-    """
+    """개체 프로파일의 `network.xiao_ip` 에서 주소를 조립한다. 비어 있으면 `ValueError`."""
     network = config["network"]
-    # ⚠️ 주소는 `network` 절 안에 있다. 최상위에서 찾으면 값이 있어도 못 읽는다 —
-    # 실제로 그렇게 만들었고, 시험이 최상위에 값을 넣어 주고 있어서 통과했다.
     host = network.get("xiao_ip")
     if not isinstance(host, str) or not host.strip():
         raise ValueError(
@@ -337,14 +305,9 @@ def apply_profile(
     timeout_s: float = 3.0,
     opener: Any = None,
 ) -> dict[str, Any]:
-    """기동 시 **해상도와 프레임률 상한을 카메라에 내려보낸다.**
+    """설정의 해상도·프레임률 상한과 장착 방향을 카메라에 내려보낸다 (NFR-3①).
 
-    설정을 정본으로 만드는 지점이다. 이 호출이 없으면 `config.yaml` 의
-    `vision.resolution`·`vision.stream_fps_limit` 을 고쳐도 아무 일도 일어나지
-    않는다 (NFR-3①). 펌웨어에도 기본값이 있지만 그것은 폴백이다.
-
-    ⚠️ 타임아웃을 반드시 준다. 카메라가 안 켜져 있을 때 여기서 매달리면 호스트가
-    기동하지 못한다.
+    설정이 정본이고 펌웨어 기본값은 폴백이다. 요청은 `timeout_s` 로 끊는다.
     """
     target = endpoints if endpoints is not None else stream_endpoints(config)
     vision = config["vision"]
@@ -374,17 +337,10 @@ def apply_orientation(
     timeout_s: float = 3.0,
     opener: Any = None,
 ) -> int | None:
-    """장착 방향 보정을 카메라에 내려보낸다. 적용한 각도, 실패했으면 ``None``.
+    """장착 방향 보정(`vision.mount_rotation`)을 카메라에 내려보낸다. 적용한 각도, 실패면 `None`.
 
-    ⚠️ **펌웨어에만 두면 재부팅마다 풀린다.** `/orient` 가 바꾸는 것은 XIAO 의 평범한
-    전역 변수라 전원을 껐다 켜면 사라진다 — 뒤집어 단 카메라가 매 부팅마다 뒤집힌
-    영상을 보낸다. 그래서 `resolution`·`stream_fps_limit` 과 같은 규칙을 적용한다:
-    **설정이 정본이고 호스트가 기동 때 내려보낸다** (NFR-3①).
-
-    ⚠️ **실패해도 기동을 막지 않는다.** `/orient` 는 2026-09-15 에 생긴 경로라 그 전
-    펌웨어는 404 로 답한다. 보정이 안 되는 것과 카메라를 아예 못 쓰는 것은 다르므로,
-    여기서 예외를 올리면 **구형 펌웨어가 꽂힌 기체에서 호스트가 통째로 죽는다.**
-    경고만 남기고 넘어간다.
+    펌웨어는 재부팅마다 보정을 잊으므로 연결 때마다 보낸다 (NFR-3①). `/orient` 가 없는
+    구형 펌웨어도 있어 실패는 경고만 남기고 기동을 막지 않는다.
     """
     rotation = int(config["vision"].get("mount_rotation", 0))
     target = endpoints if endpoints is not None else stream_endpoints(config)
@@ -406,11 +362,7 @@ def apply_orientation(
 
 
 def decode_jpeg(payload: bytes) -> Any:
-    """JPEG 를 배열로 푼다. **필요한 곳에서만 부른다.**
-
-    `cv2` 를 모듈 최상단에서 가져오지 않는 이유 — 파서와 큐는 영상 라이브러리 없이
-    시험돼야 하고, 큐에 쌓인 프레임 중 실제로 디코드되는 것은 일부다 (`4.3.5`).
-    """
+    """JPEG 를 BGR 배열로 푼다. 깨졌으면 `ValueError`. `cv2` 는 여기서만 import 한다."""
     import cv2
     import numpy as np
 
@@ -424,11 +376,7 @@ def decode_jpeg(payload: bytes) -> Any:
 #  연결과 재연결 (WBS 4.3.4 · FR-5.3 · NFR-3②)
 # ══════════════════════════════════════════════════════════════
 def boundary_from(content_type: str) -> str:
-    """`Content-Type` 헤더에서 경계를 뽑는다. 없으면 기본값.
-
-    **응답이 알려주는 값을 쓴다.** 우리 펌웨어의 경계를 코드에 박아 두면 펌웨어가
-    이름을 바꾸는 순간 조용히 프레임이 하나도 안 나온다.
-    """
+    """`Content-Type` 헤더에서 경계를 뽑는다. 없으면 기본값."""
     for token in content_type.split(";"):
         key, _, value = token.partition("=")
         if key.strip().lower() == "boundary":
@@ -448,15 +396,11 @@ class StreamStats:
 
 
 class StreamReader:
-    """스트림에 붙어 프레임을 흘려주고, 끊기면 **지수 백오프로 되붙는다.**
+    """스트림에 붙어 프레임을 흘려주고, 끊기면 지수 백오프로 되붙는다.
 
-    ⚠️ **백오프를 되돌리는 시점이 "연결 성공" 이 아니라 "프레임 수신" 이다.** 붙자마자
-    끊기는 상태에서 연결만으로 초기화하면 **1초 간격으로 영원히 재시도**하게 되고,
-    그것은 백오프를 두지 않은 것과 같다.
-
-    ⚠️ **멈춘 스트림도 끊긴 것으로 본다.** TCP 는 상대가 조용해진 것과 살아 있는 것을
-    구분해 주지 않으므로, 프레임이 `vision.stall_timeout_ms` 동안 없으면 끊고 다시
-    붙는다 — 그것이 비전 단절의 정의다 (NFR-2.6).
+    백오프는 연결 성공이 아니라 프레임 수신 때 되돌린다. 프레임이 `vision.stall_timeout_ms`
+    동안 없으면 멈춘 스트림으로 보고 다시 붙는다 (NFR-2.6). `frames()` 는 수신 스레드 하나가
+    돌리고, `stop()` 은 다른 스레드에서 불러도 된다.
     """
 
     def __init__(
@@ -500,11 +444,7 @@ class StreamReader:
         self._stop.set()
 
     def frames(self, *, max_frames: int | None = None, max_failures: int | None = None):
-        """프레임을 흘려준다. **재연결은 안에서 알아서 한다.**
-
-        생성기로 둔 이유 — 호출부(지연 측정·추론 워커)가 `for frame in ...` 만 쓰면
-        되고 연결 상태를 신경 쓰지 않는다.
-        """
+        """프레임을 흘려주는 생성기. 재연결은 안에서 한다."""
         produced = 0
         attempt = 0
         while not self._stop.is_set() and (
@@ -529,8 +469,7 @@ class StreamReader:
             if self._stop.is_set():
                 return
             self.stats.failures += 1
-            # 지금 시도 회차로 대기 시간을 정하고 **그 다음에** 회차를 올린다.
-            # 먼저 올리면 첫 재시도가 `backoff[1]` 이 되어 1초 단계를 건너뛴다.
+            # 지금 회차로 대기 시간을 정한 뒤 회차를 올린다 — 첫 재시도는 `backoff[0]` 이다.
             delay = self._backoff[min(attempt, len(self._backoff) - 1)]
             LOG.warning("stream_reconnect", after_s=delay, attempt=attempt + 1)
             self.stats.backoff_slept_s += delay

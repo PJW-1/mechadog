@@ -4,13 +4,11 @@
 자막은 같은 문장을 사건의 `judgement.sentence` 로 받아 화면에 낸다
 (`host/dashboard/static/`) — 이 모듈은 **소리**만 맡는다.
 
-⚠️ **로봇 스피커(MP3 모듈, `escalation.sound`, `4.7.20`~`4.7.21`)와는 다른
-경로다.** 그쪽은 TF 카드에 미리 넣은 고정 문장만 재생하고, 이쪽은 Piper 로
-그 자리에서 합성한다 — 둘 다 동시에 존재하는 이유가 ADR-38 이다.
+로봇 스피커(MP3 모듈, `escalation.sound`)와는 다른 경로다 — 그쪽은 TF 카드의 고정 문장만
+재생하고, 이쪽은 Piper 로 그 자리에서 합성한다 (ADR-38).
 
-⚠️ **`say()` 는 절대 던지지 않고 즉시 돌아온다.** 10Hz 제어 루프(`runtime.py`)
-에서 부르므로, 합성·재생이 아무리 느려지거나 실패해도 그 실패가 주행을
-막으면 안 된다. 작은 큐 + 데몬 워커 스레드 하나가 실제 작업을 순서대로 한다.
+⚠️ `say()` 는 운용 루프 스레드에서 불리며 예외 없이 즉시 돌아온다 — 작은 큐 + 데몬 워커
+스레드 하나가 합성·재생을 순서대로 한다.
 
 관제 화면의 음량·무음 조절(`4.8.2`)은 `volume`(0~100)·`muted` 로 들어온다.
 대시보드 스레드가 바꾸고 워커 스레드가 읽으므로 락으로 묶는다 — 자막은
@@ -45,9 +43,7 @@ PlayFn = Callable[[bytes, int], None]
 def _default_synth(model_path: str, length_scale: float) -> SynthFn:
     """Piper 모델을 적재하고 문장 -> (PCM16LE bytes, 표본율) 함수를 돌려준다.
 
-    ⚠️ **여기서만 `piper` 를 임포트한다.** 모듈 맨 위에서 임포트하면 piper 가
-    없는 개발 PC·CI 에서 이 파일을 읽는 것만으로 죽는다 — 실제로 CI 에는 piper
-    도 모델도 없다.
+    `piper` 는 여기서만 임포트한다(없는 PC·CI 에서도 모듈을 읽을 수 있게).
 
     참고 구현 — `experiments/wonderecho-audio/voice_pipeline.py` 의
     `synth_piper`(재생 직전 16kHz 로 리샘플링하는 부분만 없다. 여기는 재생을
@@ -71,8 +67,7 @@ def _default_synth(model_path: str, length_scale: float) -> SynthFn:
 def _scale_volume(pcm: bytes, volume: int) -> bytes:
     """PCM16LE 진폭에 음량(0~100)을 곱한다. 100 이면 원본을 그대로 돌려준다.
 
-    ⚠️ **클리핑한다.** 곱한 값이 int16 범위를 벗어나면 줄바꿈되어 잡음이 난다
-    (100 을 넘는 값은 여기서 만들지 않지만, 방어로 clip 해 둔다).
+    int16 범위로 자른다.
     """
     if volume >= 100:
         return pcm
@@ -92,10 +87,7 @@ def _default_play(pcm: bytes, sample_rate: int) -> None:
 class Broadcaster:
     """문장을 큐에 넣고 데몬 워커가 순서대로 합성·재생한다.
 
-    ⚠️ **모델은 시작할 때 백그라운드로 적재한다.** 첫 문장까지 미루면(지연
-    적재) 순찰 시작 직후 첫 사건에서 Piper 적재 1.35초가 그대로 재생 지연이
-    된다 — `4.8.0` 의 VLM 이 기동 때 한 번 올려 두는 것과 같은 이유다. 워커가
-    큐를 기다리는 동안 적재하므로 `say()` 호출부는 지연을 느끼지 않는다.
+    모델은 시작할 때 워커 스레드가 백그라운드로 적재한다 — 첫 문장의 재생 지연을 없앤다.
     """
 
     def __init__(

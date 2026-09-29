@@ -93,9 +93,8 @@ class Fleet:
     def route(self, data: bytes, addr: tuple[str, int]) -> Runtime | None:
         """이 datagram 을 받을 로봇.
 
-        ⚠️ **텔레메트리는 IP 가 아니라 개체 ID 로 가른다** (DR-17). 명령 응답은 개체
-        ID 가 없는 문자열이라, 이미 그 주소로 명령을 보내고 있는 로봇에게만 넘긴다.
-        응답은 세기만 하고 판단에 쓰지 않는다.
+        텔레메트리는 IP 가 아니라 개체 ID 로 가른다. 개체 ID 가 없는 명령 응답은 그 주소로
+        명령을 보내고 있는 로봇에게만 넘기며, 세기만 하고 판단에 쓰지 않는다.
         """
         device = telemetry_device(data)
         if device is not None:
@@ -153,8 +152,7 @@ class Fleet:
                     with _acting(runtime):
                         runtime.step(clock())
         finally:
-            # ⚠️ **전부 먼저 세운다.** 한 대의 비전 워커 정리를 기다리는 동안 다른
-            # 로봇이 마지막 이동 명령을 계속 실행하면 안 된다.
+            # ⚠️ 전부 먼저 세운다 — 한 대의 정리를 기다리는 동안 다른 로봇이 계속 걷지 않게.
             for runtime in self._runtimes:
                 with _acting(runtime):
                     runtime.stop_robot(sock)
@@ -289,8 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     broadcaster = _broadcaster(members[0].config)
     for member in members:
         config = member.config
-        # ⚠️ 카메라 주소가 없는 로봇은 비전 없이 돈다. 없는 주소로 워커를 켜면
-        # 스트림 연결만 계속 실패한다.
+        # 카메라 주소가 없는 로봇은 비전 없이 돈다.
         vision = None
         if not args.no_vision and config["network"].get("xiao_ip"):
             vision = build_worker(config)
@@ -320,8 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     fleet_app = create_fleet_app(apps, registered={m.device_id: m.registered for m in members})
 
-    # ⚠️ 콘솔 확인 키를 붙이지 않는다 — 여러 대면 그 키가 어느 로봇의 확인인지
-    # 정할 수 없다. 경보 확인·안전 해제는 관제 화면의 로봇별 버튼으로 한다.
+    # 콘솔 확인 키는 붙이지 않는다(어느 로봇의 확인인지 정할 수 없다) — 관제 화면의 로봇별 버튼을 쓴다.
     sock = open_socket(runtimes[0].telemetry_port)
     try:
         with serving(fleet_app, args.dashboard_port):

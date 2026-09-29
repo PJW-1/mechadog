@@ -1848,7 +1848,7 @@ def _thing(label: str, x: float = 100.0) -> Detection:
 def _zone_runtime(
     config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None, blackbox=None, hazards=False
 ):
-    """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33 개정). 변화 감지는 경비 모드에서
+    """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33). 변화 감지는 경비 모드에서
     아예 돌지 않으므로 기본 모드로 세우면 구역 사건이 하나도 나오지 않는다 —
     호출부는 `unlock_modes` 로 선행 기능 검사를 먼저 열어야 한다."""
     cfg = _zone_config(config, tmp_path)

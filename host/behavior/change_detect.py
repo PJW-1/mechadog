@@ -1,36 +1,20 @@
 """구역 기준 저장과 변화 분류 (WBS 3.6.1 · 3.6.2 · FR-8.1/8.2/8.3).
 
-구역에 도착하면 그 자리의 **기준**을 남긴다 — 스냅샷 한 장과 *"무엇이 몇 개,
-대략 어디에 있었는가"*. 다음 사이클에 같은 구역을 다시 보고 이 기준과 견주는
-것이 변화 감지다(`3.6.2`).
+구역마다 기준을 남긴다 — 스냅샷 한 장과 «무엇이 몇 개, 대략 어디(격자 칸)» 목록. 다음
+방문의 검출 목록을 이 기준과 견주는 것이 변화 감지다.
 
-⚠️ **픽셀 차분을 쓰지 않는다** (FR-8.2 필수 제약). 그래서 여기서 남기는 것은
-이미지가 아니라 **객체 목록**이다 — 스냅샷은 사람이 나중에 눈으로 확인하려고
-같이 저장할 뿐, 비교의 입력이 아니다. 로봇이 매번 정확히 같은 자리에 서지
-못하므로 픽셀은 항상 다르다. 같은 이유로 **좌표를 그대로 저장하지 않는다.**
-
-    기준 등록                         다음 사이클
+    기준 등록                         다음 방문
     chair ×1  (가운데)      →        chair ×1  (가운데)   변화 없음
     bottle ×1 (오른쪽 위)            —                    반출
     —                                backpack ×1 (왼쪽)   반입
 
-⚠️ **위치는 칸으로 뭉갠다.** FR-8.1 이 요구하는 것은 *"대략 위치"* 다. 픽셀
-좌표를 그대로 두면 로봇이 몇 cm 만 달리 서도 전부 다른 값이 되어 비교가
-성립하지 않는다. 격자를 성기게 잡는 것이 목적이며 **정밀도가 아니라 재현성을
-사는 것**이다.
+- 픽셀 차분을 쓰지 않는다 (FR-8.2) — 비교 입력은 객체 목록뿐이고 스냅샷은 사람이 보는 용도다.
+- 위치는 성긴 격자(`baseline_grid`, 기본 3×3) 칸으로 뭉갠다 — 로봇이 방문마다 조금씩 다르게
+  서도 같은 칸에 잡히게. 격자를 잘게 나누면 같은 물건이 반출·반입으로 동시에 보고된다.
+- `person` 은 기준에 넣지 않는다 — 사람은 사람 게이트(FR-3)가 맡는다 (ADR-41 결정 5).
 
-⚠️ **격자를 잘게 나누면 안 된다.** 3×3 을 6×6 으로 바꾸면 칸이 작아져서 같은
-물건이 사이클마다 다른 칸에 잡힌다 — 반출과 반입이 동시에 보고된다. 칸 수는
-`config` 에 두되 기본을 성기게 잡는 이유가 이것이다.
-
-⚠️ **`person` 은 기준에 넣지 않는다.** 사람은 지나다니는 것이지 구역에 놓인
-물건이 아니다. 기준에 사람이 섞이면 그 사람이 자리를 뜬 것만으로 *"반출"* 이
-된다. 사람은 여기가 아니라 사람 게이트(FR-3)가 맡는다 — 런타임은 사람이 보이는
-프레임을 비교에 넣지 않는다.
-
-저장 형식은 JSON 한 벌 + 스냅샷 한 장이며 구역 ID 로 찾는다. 비교는
-`classify_changes()`, 확정은 `ChangeConfirmer` 다 — **한 사이클의 관찰과 확정된
-변화는 다른 것**이며 경보로 올라가는 것은 뒤엣것뿐이다 (FR-8.4).
+비교는 `classify_changes()`, 확정은 `ChangeConfirmer` 다. 경보로 가는 것은 확정된 변화뿐이다
+(FR-8.4 · ADR-41).
 """
 
 from __future__ import annotations
@@ -59,7 +43,7 @@ __all__ = [
     "BaselineStore",
 ]
 
-#: 기준 목록에서 제외하는 라벨. 위 docstring 참조.
+#: 기준 목록에서 제외하는 라벨.
 PERSON_LABEL = "person"
 
 _SCHEMA = 1
@@ -109,11 +93,7 @@ def summarize_detections(
     frame_size: tuple[int, int],
     grid: tuple[int, int],
 ) -> tuple[ObjectEntry, ...]:
-    """검출 목록을 *(라벨, 칸)* 별 개수로 뭉갠다.
-
-    같은 라벨이 같은 칸에 둘 있으면 한 줄에 `count=2` 로 모인다. 결과는 **정렬해
-    돌려준다** — 검출 순서가 바뀌었다고 기준이 달라 보이면 안 된다.
-    """
+    """검출 목록을 (라벨, 칸)별 개수로 뭉개 정렬해 돌려준다. `person` 은 뺀다."""
     width, height = frame_size
     columns, rows = grid
     if width <= 0 or height <= 0:
@@ -124,7 +104,7 @@ def summarize_detections(
     tally: Counter[tuple[str, int, int]] = Counter()
     for detection in detections:
         if detection.label == PERSON_LABEL:
-            continue  # 사람은 놓인 물건이 아니다 — 위 docstring 참조.
+            continue  # 사람은 놓인 물건이 아니다
         x1, y1, x2, y2 = detection.box
         centre_x = (x1 + x2) / 2.0
         centre_y = (y1 + y2) / 2.0
@@ -172,32 +152,16 @@ def classify_changes(
     frame_size: tuple[int, int],
     watch_classes: Iterable[str],
 ) -> tuple[Change, ...]:
-    """기준과 현재를 **목록으로** 견주어 FR-8.3 의 세 분류를 낸다.
+    """기준과 현재를 목록으로 견주어 FR-8.3 의 세 분류를 낸다 (이미지는 입력이 아니다).
 
-    ⚠️ **픽셀을 보지 않는다** (FR-8.2 필수 제약). 입력은 기준 목록과 현재 검출
-    목록뿐이고 이미지가 들어오지 않는다 — 시그니처 자체가 그 제약이다.
-
-    ⚠️ **현재 프레임은 기준이 떠진 격자로 뭉갠다** — 설정의 격자가 아니다.
-    설정을 3×3 에서 6×6 으로 바꾼 뒤 옛 기준과 견주면, 설정 격자를 쓸 경우 같은
-    물건이 다른 칸에 잡혀 반출과 반입이 동시에 나온다. 기준의 격자를 따라가면
-    **칸의 의미가 현재 설정과 다를 뿐 비교 자체는 성립한다.** 새 격자로 보고
-    싶으면 기준을 다시 떠야 한다.
-
-    ⚠️ **감시 목록 밖의 라벨은 무시한다** (`vision.coco.change_watch_classes`).
-    COCO 80 에 있어도 시연 소품이 아니면 변화로 보지 않는다 — 지나가는 사람의
-    휴대폰이 *"반입"* 으로 잡히면 경보가 쓸모없어진다. 어휘에 아예 없는 물건은
-    검출되지도 않으므로 애초에 조용히 빠진다(FR-8.3 주석).
-
-    ⚠️ **`person` 은 개수를 세지 않는다.** 기준에 사람이 없는 것은 당연하므로
-    (3.6.1) *"몇 명 늘었는가"* 가 아니라 *"있는가"* 만 묻는다. 몇 명인지는
-    `count` 에 담아 두되 분류는 한 건이다.
+    - 현재 프레임은 설정이 아니라 기준이 떠진 격자로 뭉갠다 — 양쪽이 같은 격자라야 비교가 된다.
+    - 감시 목록(`vision.coco.change_watch_classes`) 밖의 라벨은 무시한다.
+    - `person` 은 «있는가» 한 건으로만 낸다(`count` 는 인원 수).
     """
     watched = frozenset(watch_classes)
-    # ⚠️ 제너레이터가 들어올 수 있다. 두 번 훑으므로 먼저 굳힌다 — 안 그러면
-    # 두 번째 순회가 비어 사람이 영영 잡히지 않는다.
+    # 두 번 훑으므로 제너레이터를 먼저 굳힌다.
     frame = tuple(detections)
-    # 기준이 떠진 격자로 현재를 뭉갠다. 설정이 그 뒤 바뀌었어도 **양쪽이 같은
-    # 격자**라야 비교가 성립한다.
+    # 기준이 떠진 격자로 현재를 뭉갠다.
     current = summarize_detections(frame, frame_size=frame_size, grid=baseline.grid)
 
     before: Counter[tuple[str, int, int]] = Counter()
@@ -225,27 +189,11 @@ def classify_changes(
 
 
 class ChangeConfirmer:
-    """연속 같은 변화가 이어질 때만 확정한다 (WBS 3.6.3 · FR-8.4).
+    """같은 변화가 `confirm_cycles` 번 연속 방문에서 보일 때만 확정한다 (WBS 3.6.3 · ADR-41).
 
-    **사이클 하나는 구역 방문 하나다.** 한 방문의 관찰은 흔들린다 — 조명이 바뀌거나
-    로봇이 조금 달리 서기만 해도 검출기가 물건 하나를 놓친다. 그것을 그대로 경보로
-    올리면 **시연 내내 거짓 반출이 뜬다.** 그래서 `confirm_cycles` 번 연속 같은 변화가
-    보일 때만 확정한다. 한 방문 안의 프레임은 같은 자리에서 본 것이라 이 흔들림을
-    거르지 못한다 — 런타임이 방문마다 한 번만 `observe` 한다.
-
-    ⚠️ **지름길이 없다.** 예전에는 `person` 을 즉시 확정했는데(`person_immediate`),
-    사람 한 프레임이 게이트(300ms 3회)를 건너뛰어 L3 «물체 변화» 가 되었다. 사람은
-    사람 게이트(FR-3)가 맡는다 — 여기 들어오면 다른 변화와 똑같이 센다.
-
-    ⚠️ **구역마다 따로 센다.** A 구역에서 본 변화가 B 구역의 횟수를 채우면 안 된다.
-
-    ⚠️ **한 번 확정한 변화는 다시 확정하지 않는다.** 물건이 없어진 자리는 다음
-    사이클에도 계속 없으므로, 누적을 그냥 두면 **같은 반출이 사이클마다 경보로
-    올라간다.** 확정한 것은 사라질 때까지 조용히 유지한다.
-
-    시간을 재지 않는다 — 사이클을 센다. 스캔 주기가 바뀌어도 의미가 흔들리지
-    않게 하기 위해서다(`vision.tracker.track_lost_ms` 가 프레임 수 대신 시간을
-    쓰는 것과 같은 이유, 방향만 반대다).
+    사이클 하나는 구역 방문 하나다 — 런타임이 방문마다 한 번만 `observe` 한다. 구역마다
+    따로 세고, 방문 사이에 누적을 유지하며, 확정한 변화는 사라질 때까지 다시 확정하지
+    않는다. `person` 도 지름길 없이 똑같이 센다.
     """
 
     def __init__(self, config: Mapping[str, Any]) -> None:
@@ -270,18 +218,16 @@ class ChangeConfirmer:
         return (change.kind, change.label, change.count, change.cell)
 
     def observe(self, zone_id: str, changes: Iterable[Change]) -> tuple[Change, ...]:
-        """한 사이클(방문)의 관찰을 넣고 **이번에 확정된 것만** 돌려준다.
+        """한 방문의 관찰을 넣고 이번에 새로 확정된 것만 돌려준다.
 
-        같은 변화를 계속 보더라도 확정은 한 번뿐이다. 변화가 사라지면 횟수도
-        확정 기록도 지워져, 다시 나타나면 처음부터 센다.
+        이번에 안 보인 변화는 횟수와 확정 기록이 지워져, 다시 나타나면 처음부터 센다.
         """
         observed = tuple(changes)
         seen = {self._key(change): change for change in observed}
         streaks = self._streaks.setdefault(zone_id, {})
         confirmed = self._confirmed.setdefault(zone_id, set())
 
-        # 이번에 안 보인 것은 연속이 끊겼다. 확정 기록도 같이 지운다 — 물건이
-        # 돌아왔는데 기록이 남아 있으면 다시 나갔을 때 확정이 안 된다.
+        # 이번에 안 보인 것은 연속이 끊겼다 — 확정 기록도 같이 지운다.
         for key in list(streaks):
             if key not in seen:
                 del streaks[key]
@@ -296,19 +242,13 @@ class ChangeConfirmer:
         return tuple(newly)
 
     def forget(self, zone_id: str) -> None:
-        """구역의 누적을 버린다. **기준을 다시 뜨면 호출한다** — 옛 기준으로 센
-        횟수가 새 기준의 확정을 앞당기면 안 된다.
-        """
+        """구역의 누적을 버린다. 기준을 다시 뜰 때 부른다 (ADR-41 결정 2·6)."""
         self._streaks.pop(zone_id, None)
         self._confirmed.pop(zone_id, None)
 
 
 class BaselineStore:
-    """구역 기준을 디스크에 남기고 구역 ID 로 되찾는다.
-
-    한 구역에 기준은 하나다. 다시 등록하면 **덮어쓴다** — 기준이 여러 벌이면
-    어느 것과 비교해야 하는지 정할 수 없다.
-    """
+    """구역 기준을 디스크에 남기고 구역 ID 로 되찾는다. 구역당 기준은 하나이며 재등록은 덮어쓴다."""
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         section = config.get("change_detect")
@@ -342,8 +282,7 @@ class BaselineStore:
     def _snapshot_of(self, meta_path: Path) -> Path | None:
         """지금 JSON 이 가리키는 그림. 없거나 읽지 못하면 `None`.
 
-        옛 형식(`A.jpg`)도 JSON 이 가리키는 대로 따라가므로 따로 다루지 않는다.
-        ⚠️ **이름만 받는다** — JSON 이 `../` 를 품고 있어도 폴더 밖을 지우지 않는다.
+        ⚠️ 파일 이름만 받는다 — JSON 이 `../` 를 품고 있어도 폴더 밖을 지우지 않는다.
         """
         try:
             data = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -363,12 +302,10 @@ class BaselineStore:
         now_ms: int,
         jpeg: bytes | None = None,
     ) -> ZoneBaseline:
-        """구역 도착 시 기준을 남긴다. **JPEG 는 재인코딩하지 않는다.**
+        """기준을 남긴다. JPEG 는 재인코딩하지 않는다.
 
-        ⚠️ **새 그림 → JSON 교체 → 옛 그림 삭제 순서다.** 그림을 제자리에 쓰고 JSON 을
-        바꾸면, 그 사이에 전원이 끊겼을 때 옛 목록과 새 그림이 한 벌로 남는다(쓰는
-        도중이면 잘린 그림이). 그래서 그림 이름에 등록 시각을 붙여 옛 JSON 이 가리키는
-        그림을 건드리지 않는다. 끊기면 새 그림은 가리키는 JSON 이 없는 고아로 남을 뿐이다.
+        ⚠️ 새 그림(시각이 붙은 이름) → JSON 원자 교체 → 옛 그림 삭제 순서를 지킨다 — 중간에
+        끊겨도 목록과 그림이 다른 시점의 것으로 한 벌이 되지 않는다(새 그림이 고아로 남을 뿐).
         """
         if not isinstance(now_ms, int) or isinstance(now_ms, bool) or now_ms < 0:
             raise ValueError("now_ms 는 0 이상의 정수여야 함")
@@ -391,13 +328,11 @@ class BaselineStore:
             snapshot=snapshot,
         )
         payload = json.dumps(baseline.as_dict(), ensure_ascii=False, indent=2)
-        # ⚠️ 쓰는 도중 전원이 끊기면 **잘린 기준이 남는다.** 다 쓴 뒤 한 번에 바꿔 끼운다.
+        # 다 쓴 뒤 한 번에 바꿔 끼운다 — 잘린 기준이 남지 않게.
         partial = meta_path.with_name(meta_path.name + ".tmp")
         partial.write_text(payload + "\n", encoding="utf-8")
         partial.replace(meta_path)
-        # 새 기준에 그림이 없어도 옛 그림은 지운다 — 다른 시점의 그림과 목록이 한 벌로
-        # 보이면 사람이 그것을 근거로 판단한다. 기준은 이미 바뀌었으므로 못 지우면
-        # 고아로 둔다(실패로 알리면 남은 기준을 남지 않았다고 적게 된다).
+        # 새 기준에 그림이 없어도 옛 그림은 지운다. 못 지우면 고아로 둔다(기준은 이미 바뀌었다).
         if previous is not None and previous.name != snapshot:
             with contextlib.suppress(OSError):
                 previous.unlink(missing_ok=True)
@@ -406,8 +341,7 @@ class BaselineStore:
     def clear(self, zone_id: str) -> bool:
         """구역의 기준을 지운다 — 그 구역을 다음에 볼 때 새로 뜬다 (WBS 3.6.5 · 관리자 재등록).
 
-        기준이 있었으면 `True`. **JSON 을 먼저 지운다** — 그 사이에 끊기면 그림만 고아로
-        남고 기준은 «없음» 이다. 반대 순서면 없는 그림을 가리키는 기준이 남는다.
+        기준이 있었으면 `True`. JSON 을 먼저 지운다 — 끊겨도 없는 그림을 가리키는 기준이 남지 않는다.
         """
         meta_path = self._meta_path(zone_id)
         snapshot = self._snapshot_of(meta_path)
@@ -419,9 +353,7 @@ class BaselineStore:
         return existed
 
     def load(self, zone_id: str) -> ZoneBaseline | None:
-        """기준이 없으면 `None`. **없는 것과 비어 있는 것은 다르다** — 물건이
-        하나도 없는 구역의 기준은 `objects` 가 빈 튜플이지 `None` 이 아니다.
-        """
+        """기준이 없으면 `None`. 물건이 없는 구역의 기준은 `objects` 가 빈 튜플이다."""
         meta_path = self._meta_path(zone_id)
         if not meta_path.exists():
             return None

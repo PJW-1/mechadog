@@ -1,30 +1,13 @@
 """명령 API — 수동 오버라이드와 E-Stop (WBS 4.5.3 · FR-4.3/4.4).
 
-지금까지 대시보드는 **읽기 전용**이었다(`server.py` 첫 줄). 여기서 처음으로
-사람이 로봇을 건드린다. 그래서 두 가지를 분명히 한다 — **무엇이 즉시 나가고
-무엇이 다음 틱을 기다리는가**, 그리고 **무엇이 거절될 수 있는가**.
+관제 서버 스레드에서 불린다. 무엇이 즉시 나가고 무엇이 운용 루프의 다음 틱을 기다리는지,
+무엇이 거절될 수 있는지가 이 모듈의 계약이다.
 
-⚠️ **E-Stop 은 모든 상태에서 통해야 한다** (4.5.3 완료 기준). 순찰 중이든
-추종 중이든 이미 수동 조종 중이든 눌리면 즉시 멈춘다. 이 모듈에서 `estop()`
-만 유일하게 **어떤 조건도 검사하지 않는다** — 조건을 하나라도 달면 그 조건이
-틀렸을 때 비상정지가 안 듣는다.
-
-⚠️ **E-Stop 은 틱을 기다리지 않는다.** 주기 송신은 100ms 마다인데, 비상정지를
-큐에 넣으면 최악의 경우 100ms 늦게 나간다. `Commander.emergency_stop()` 이
-완성된 전문을 돌려주는 이유가 그것이고, 이 모듈은 그 전문을 **받은 자리에서**
-보낸다.
-
-⚠️ **FSM 에 사건을 넣는 것은 전문을 보낸 뒤다.** 순서를 뒤집으면 상태만 바뀌고
-로봇은 계속 걷는 창이 생긴다. 로봇이 먼저 멈추고 호스트가 따라간다.
-
-수동 오버라이드는 **거절될 수 있다.** `FAILSAFE` 에서는 받지 않는다 (전이표) —
-비상정지로 멈춘 로봇을 조이스틱으로 다시 움직이게 두면 멈춘 이유가 사라진다.
-거절을 조용히 삼키지 않고 `accepted=False` 로 돌려주어 화면이 그대로 표시한다.
-
-`RESET_SAFE` 는 `reset()` 이 **예약**한다(#100). 바로 보내지 않고 운용 루프의 다음
-틱이 보낸다 — 해제는 급하지 않고 비상정지만 틱을 앞지른다. ⚠️ **사람 확인은 지금
-버튼 한 번뿐이다.** DR-16 의 별도 확인 절차(원인 해소를 한 번 더 확인받기)를 붙일지는
-정해지지 않았고, 4.5.3 의 완료 기준(오버라이드 · E-Stop)에는 들어가지 않는다.
+- ⚠️ E-Stop 은 어떤 상태에서도 조건 없이 통하고, 틱을 기다리지 않고 받은 자리에서 전문을
+  보낸 뒤에 FSM 사건을 넣는다 — 로봇이 먼저 멈추고 호스트가 따라간다.
+- 수동 오버라이드는 `FAILSAFE` 에서 거절된다(전이표). 거절은 `accepted=False` 로 돌려준다.
+- `RESET_SAFE`·경보 확인·기준 재등록·모드 전환 등은 예약하고 운용 루프의 다음 틱이 처리한다.
+  사람 확인은 버튼 한 번이다.
 """
 
 from __future__ import annotations
@@ -43,7 +26,7 @@ SOUND_TRACK_MAX = 3000
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
-    """명령 하나의 결과. **거절도 결과다** — 화면이 그대로 보여 준다."""
+    """명령 하나의 결과. 거절도 결과이며 화면이 그대로 보여 준다."""
 
     command: str
     accepted: bool
@@ -62,8 +45,7 @@ class CommandResult:
 class CommandService:
     """화면의 조작을 FSM 사건과 전문으로 옮긴다.
 
-    전송 수단을 모른다 — `send` 로 받은 호출 가능 객체에 완성된 전문을 넘길
-    뿐이다. 그래서 소켓 없이 전수 시험된다.
+    전송 수단을 모른다 — `send` 로 받은 호출 가능 객체에 완성된 전문을 넘길 뿐이다.
     """
 
     def __init__(
@@ -90,33 +72,22 @@ class CommandService:
         self._emergency_stop = emergency_stop
         self._request_reset = request_reset
         self._ask_patrol = ask_patrol
-        # 운용 모드 전환 (`3.4.4`). ⚠️ **`Mission` 을 직접 쥐지 않는다** — 전환 가부는
-        # FSM 상태에 달렸고 그 둘을 잇는 곳은 런타임 하나다 (`runtime.set_mode`).
+        # 운용 모드 전환 (`3.4.4`) — 가부는 FSM 상태에 달려 런타임(`set_mode`)이 판정한다.
         self._set_mode = set_mode
-        # ⚠️ **사건은 `apply_event` 로 넣는다. `behavior.event()` 를 직접 부르지 않는다.**
-        # 직접 부르면 전이는 일어나지만 **대응 단계 갱신과 전이 로그가 함께 빠진다** —
-        # 런타임의 `_apply()` 가 그 둘을 묶어 두고 있기 때문이다. 2026-09-14 실기에서
-        # E-Stop 이 로봇을 잠갔는데 단계가 `L0`(파랑) 에 머물러 **눈 LED 가 흰색으로
-        # 바뀌지 않았다**(FR-10.4). 같은 실기에서 `MANUAL` 26.7초의 전이도 로그에 한
-        # 줄도 남지 않았다. 런타임이 없는 시험에서는 전이만 필요하므로 기본값을 둔다.
+        # ⚠️ 사건은 `apply_event`(런타임 `_apply`)로 넣는다 — `behavior.event()` 를 직접 부르면
+        # 대응 단계 갱신(F 의 흰 눈)과 전이 로그가 빠진다. 기본값은 런타임 없는 시험용이다.
         self._apply_event = apply_event if apply_event is not None else behavior.event
-        # 음성 암구호는 **시도 횟수를 세야 해서** 사건 하나로 옮길 수 없다 (FR-10.3).
-        # 세는 곳은 런타임이다 — `AUTH_WAIT` 에 언제 들어왔는지를 아는 쪽이 거기뿐이다.
-        # 런타임이 없는 시험에서는 예전처럼 사건만 넣는다.
+        # 음성 암구호 판정 — 시도 횟수는 `AUTH_WAIT` 진입 시각을 아는 런타임이 센다 (FR-10.3).
+        # 런타임이 없는 시험에서는 사건만 넣는다.
         self._note_voice_auth = note_voice_auth
-        # «판정이 오는 중» 신호 (FR-10.3 · ADR-37). 판정이 아니라 **창의 수명**만
-        # 건드리므로 `note_voice_auth` 와 다른 자리다 — 섞으면 «시도를 세는 것» 과
-        # «기다려 주는 것» 이 한 함수에 들어간다.
+        # «판정이 오는 중» 신호 (ADR-37) — 시도를 세지 않고 창의 수명만 건드린다.
         self._note_voice_listening = note_voice_listening
-        # 경보(L3) 확인. ⚠️ **`request_reset` 과 같은 자리에 두지 않는다** — 확인해야
-        # 하는 것이 물리 상태(F)와 상황 판단(L3)으로 다르다 (ADR-26). 하나로 묶으면
-        # **비상정지를 눌렀다 푸는 것으로 경보가 지워진다.**
+        # 경보(L3) 확인 — `request_reset`(F 해제)과 다른 경로다 (ADR-26 ①).
         self._confirm_alarm = confirm_alarm
         # 구역 기준 재등록 (3.6.5). 어느 구역이 있는지 아는 쪽이 런타임이라 판정도 거기서 한다.
         self._reset_zone_baseline = reset_zone_baseline
-        # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과
-        # **같은 각도**만 쓴다. ±15° 는 2026-09-15 실물로 부호·크기를 확인한 값이다.
-        # 임의 각도를 받지 않는 이유: 검증하지 않은 자세로 보행하면 넘어진다.
+        # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과 같은 검증된
+        # 각도만 쓰고 임의 각도는 받지 않는다(검증하지 않은 자세로 보행하면 넘어진다).
         self._pose_pitch: dict[str, float] = (
             {} if pose is None else {"up": pose[0], "level": 0.0, "down": -pose[0]}
         )
@@ -128,11 +99,7 @@ class CommandService:
         return self._behavior.state
 
     def estop(self) -> CommandResult:
-        """**어떤 상태에서도 통한다.** 조건을 검사하지 않는다.
-
-        전문을 먼저 보내고 FSM 을 따라가게 한다. 순서를 뒤집으면 상태만 바뀌고
-        로봇이 계속 걷는 창이 생긴다.
-        """
+        """⚠️ 어떤 상태에서도 조건 없이 통한다. 전문을 먼저 보내고 FSM 이 따라간다."""
         if self._emergency_stop is not None:
             self._emergency_stop()
         else:
@@ -156,8 +123,7 @@ class CommandService:
                 state=self._behavior.state,
                 detail=f"{before} 에서는 수동 오버라이드를 받지 않는다",
             )
-        # 진입 순간 로봇이 이전 지시를 이어서 수행하지 않게 한다. 조작자가
-        # 조이스틱을 잡기 전까지는 멈춰 있어야 한다.
+        # 조작자가 조이스틱을 잡기 전까지는 멈춰 있게 한다.
         self._commander.halt()
         return CommandResult(command="manual_on", accepted=True, state=self._behavior.state)
 
@@ -173,7 +139,7 @@ class CommandService:
                 detail=f"{before} 는 수동 조종 중이 아니다",
             )
         self._commander.halt()
-        # ⚠️ **기울인 채로 자율에 넘기지 않는다.** 순찰은 기준 자세를 전제로 걷는다.
+        # 기울인 채로 자율에 넘기지 않는다 — 순찰은 기준 자세를 전제로 걷는다.
         if self._pose_tilted:
             self._send_pose(0.0)
         return CommandResult(command="manual_off", accepted=True, state=self._behavior.state)
@@ -183,10 +149,9 @@ class CommandService:
         self._pose_tilted = pitch != 0.0
 
     def pose(self, preset: str) -> CommandResult:
-        """본체 자세 — `up`·`level`·`down`. **`MANUAL` 에서만 받는다** (B6).
+        """본체 자세 — `up`·`level`·`down`. `MANUAL` 에서만 받고 다음 틱에 보낸다 (B6).
 
-        자율 상태에서는 PPE 자세 상승(`runtime._ppe_*`)이 같은 `POSE` 를 쓴다. 섞으면
-        조작자가 올린 자세를 시퀀스가 되돌리거나 그 반대가 된다. 다음 틱에 보낸다.
+        자율 상태에서는 PPE 자세 상승이 같은 `POSE` 를 쓰므로 섞지 않는다.
         """
         if not self._pose_pitch:
             return CommandResult(
@@ -219,14 +184,7 @@ class CommandService:
         )
 
     def drive(self, step: float, angle: float) -> CommandResult:
-        """수동 조종 입력. **`MANUAL` 에서만 받는다.**
-
-        자율 주행 중에 조이스틱 입력을 섞으면 FSM 이 내린 지시와 사람이 민 값이
-        같은 주기를 다투게 된다. 조종하려면 먼저 오버라이드를 잡아야 한다.
-
-        ⚠️ 즉시 보내지 않는다 — 다음 틱에 반영된다. 조종 입력은 계속 들어오므로
-        한 번 늦는 것이 문제가 되지 않고, 틱마다 다시 보내는 것이 규약이다.
-        """
+        """수동 조종 입력. `MANUAL` 에서만 받고 다음 틱에 반영된다(틱마다 다시 보내는 것이 규약이다)."""
         if self._behavior.state != "MANUAL":
             return CommandResult(
                 command="drive",
@@ -240,8 +198,8 @@ class CommandService:
     def reset(self) -> CommandResult:
         """사람이 원인 해소를 확인하고 누르는 `FAILSAFE` 해제 요청.
 
-        즉시 보내지 않고 예약한다 — 실제 `RESET_SAFE` 전문은 운용 루프의 다음
-        틱이 만들어 보낸다 (해제는 급하지 않고, `ESTOP` 만이 틱을 앞지른다).
+        예약만 한다 — `RESET_SAFE` 전문은 운용 루프의 다음 틱이 보내고, 해제 확정은 로봇의 래치
+        보고를 기다린다 (ADR-21).
         """
         if self._request_reset is None:
             return CommandResult(
@@ -259,19 +217,10 @@ class CommandService:
         )
 
     def alarm_confirm(self) -> CommandResult:
-        """사람이 상황을 확인하고 누르는 **경보(L3) 해제** (FR-10.3.2).
+        """사람이 상황을 확인하고 누르는 경보(L3) 해제 (FR-10.3.2).
 
-        `reset()` 과 나란히 있지만 **다른 것을 확인한다** — 저쪽은 물리 상태
-        (넘어졌나·배터리·링크)이고 이쪽은 상황 판단(침입자가 갔나·안전모·물건)이다.
-        하나로 묶으면 **비상정지를 눌렀다 푸는 것으로 경보가 지워진다** ([ADR-26]).
-
-        ⚠️ **이 경로가 없으면 헤드리스 런타임은 경보를 풀 방법이 없다.** 콘솔
-        확인 키는 tty 를 요구하므로(`runtime.watch_console`) 백그라운드로 띄운
-        런타임에서는 아무도 누를 수 없고, 실기에서 **런타임을 재시작해** L3 를
-        지워야 했다 — 재시작은 확인이 아니라 증거 인멸에 가깝다.
-
-        즉시 풀지 않고 **예약한다** — 운용 루프가 전문을 만드는 중간에 단계가
-        바뀌면 그 틱의 명령이 어느 단계의 것인지 말할 수 없다 (`reset` 과 같은 이유).
+        `reset()`(F 해제)과 다른 것을 확인한다 (ADR-26 ①). 헤드리스 런타임의 L3 해제 경로다.
+        예약만 하고 운용 루프의 다음 틱이 푼다 — 틱 도중에 단계가 바뀌지 않게.
         """
         if self._confirm_alarm is None:
             return CommandResult(
@@ -291,9 +240,8 @@ class CommandService:
     def zone_baseline(self, zone: str) -> CommandResult:
         """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준을 지운다 (FR-8 · WBS 3.6.5).
 
-        물건을 영구히 옮기면 그 구역은 순찰마다 «반출» 을 낸다. 기준을 지우면 다음
-        방문에서 새로 뜬다. `alarm_confirm` 처럼 **예약한다** — 지우는 것은 다음 틱이다.
-        ⚠️ 경보(L3)를 풀지 않는다 — 경보 확인은 따로 누른다.
+        기준을 지우면 다음 방문에서 새로 뜬다 (ADR-41 결정 6). 예약만 하고 다음 틱이 지운다.
+        경보(L3)는 풀지 않는다.
         """
         if self._reset_zone_baseline is None:
             return CommandResult(
@@ -327,10 +275,8 @@ class CommandService:
     def service(self, mode: str) -> CommandResult:
         """온보드 서비스 모드 전환 (`SERVICE` 전문, WBS 3.2.4 확장).
 
-        `enter` 는 로봇을 주차시키고 루프 워치독을 건다 — OTA·진단 중 행거를
-        잡기 위한 것이다. `exit` 는 워치독을 해제한다; safe 래치는 남으므로
-        보행 복귀에는 별도 `RESET_SAFE` 가 필요하다. 급하지 않으므로 다음
-        틱에 실어 보낸다 (`once` — `reset` 과 같은 이유).
+        `enter` 는 로봇을 주차시키고 루프 워치독을 건다(OTA·진단용). `exit` 는 워치독을 해제하며
+        safe 래치는 남아 보행 복귀에는 `RESET_SAFE` 가 필요하다. 다음 틱에 싣는다.
         """
         if mode not in ("enter", "exit"):
             return CommandResult(
@@ -350,21 +296,9 @@ class CommandService:
     def sound(self, track: int) -> CommandResult:
         """로봇 MP3 모듈의 TF 카드 트랙 재생 (`SOUND` 전문 · WBS 4.7.21 ⑤). 0 은 정지.
 
-        음성 프로세스가 자기 발화를 로봇 스피커로 트는 경로다 — 로봇 링크는 런타임
-        혼자 쥐므로 음성 쪽은 여기를 거친다. 급하지 않으므로 다음 틱에 싣는다
-        (`once` — `service` 와 같다). seq·세션 개시는 다른 전문과 같이 송신기와
-        런타임이 맡는다.
-
-        ⚠️ **상태를 보지 않는다.** 펌웨어는 FAILSAFE 래치 중에도 `SOUND` 를 받는다
-        (스피커는 구동 장치가 아니라 출력이다). 그래서 여기서도 거절하지 않고,
-        ⚠️ **래치를 건드리지 않는다** — `RESET_SAFE` 를 보내거나 의도를 바꾸지 않는다.
-
-        ⚠️ **범위 밖은 보내지 않는다.** 펌웨어도 `applied=false` 로 거부하지만 잘라
-        받으면 다른 문장이 나가므로 호스트가 먼저 막는다. `bool` 은 정수로 받지 않는다.
-
-        ACK 를 기다리지 않는다(다른 일회성 명령과 같다). 로봇 ACK 의 `applied=true`
-        는 «받았다» 이지 «소리가 났다» 가 아니다 — 모듈 무응답은 펌웨어 시리얼의
-        `SOUND dropped` 로만 남는다(PROTOCOL `SOUND` 절).
+        음성 프로세스가 로봇 스피커로 트는 경로다(로봇 링크는 런타임 혼자 쥔다). 다음 틱에 싣고
+        ACK 를 기다리지 않는다. 상태를 보지 않고 래치도 건드리지 않는다 — 펌웨어도 FAILSAFE 중에
+        `SOUND` 를 받는다. 범위 밖이나 `bool` 은 보내지 않는다 (PROTOCOL `SOUND` 절).
         """
         if isinstance(track, bool) or not isinstance(track, int):
             return CommandResult(
@@ -395,9 +329,8 @@ class CommandService:
     def patrol(self) -> CommandResult:
         """순찰 시작을 **예약**한다 — 리셋 정착 후 `IDLE` 에서 발행된다 (WBS 4.7.11).
 
-        `runtime.ask_patrol()` 경로를 쓴다 — `START_PATROL` 을 바로 넣으면 기동
-        리셋과 순서가 어긋나 순찰이 조용히 취소되는 함정이 실기에서 드러났다.
-        예약이므로 반환값은 "의도를 받았다"이지 "순찰 중"이 아니다.
+        `runtime.ask_patrol()` 로 예약한다 — `START_PATROL` 을 바로 넣으면 기동 리셋과 순서가
+        어긋난다. 반환값은 «의도를 받았다» 이지 «순찰 중» 이 아니다.
         """
         if self._ask_patrol is None:
             return CommandResult(
@@ -448,14 +381,8 @@ class CommandService:
     def mission_mode(self, target: str) -> CommandResult:
         """운용 모드 전환 (FR-4.7 · FR-11.3 · WBS 3.4.4).
 
-        ⚠️ **거절이 흔한 명령이다.** `IDLE`·`MANUAL` 밖에서는 받지 않고(대응 중에
-        판정 규칙이 바뀌면 진행 중인 인증·자세 시퀀스가 의미를 잃는다), 선행 기능이
-        없는 모드도 받지 않는다(FR-11.7). 두 경우 모두 **사유를 문장으로 돌려주어**
-        화면이 그대로 보여 준다 — 조용히 무시하면 조작자는 버튼 고장으로 읽는다.
-
-        ⚠️ **전환은 L3·F 를 풀지 않는다** (FR-11.4). 풀리면 *"경보가 뜨면 모드를
-        바꾼다"* 가 확인 없는 해제 요령이 된다 — 비상정지로 경보를 지우지 못하게 한
-        것(ADR-26)과 같은 이유다.
+        `IDLE`·`MANUAL` 밖이거나 선행 기능이 없으면 거절하고 사유를 문장으로 돌려준다
+        (ADR-33 규칙 2·7). 전환은 L3·F 를 풀지 않는다 (ADR-33 규칙 3).
         """
         if not isinstance(target, str) or not target.strip():
             return CommandResult(
@@ -482,15 +409,8 @@ class CommandService:
     def auth(self, result: str, captured_at_ms: int | None = None) -> CommandResult:
         """음성 암구호 인증의 **판정 결과**를 사건으로 넣는다 (WBS 3.8.2 · FR-10.2).
 
-        이 엔드포인트는 *인증을 수행하지 않는다* — 암구호 문구 대조는 음성
-        파이프라인(등록 목록과 일치 비교)이 끝내고, 여기서는 그 판정만
-        `AUTH_OK` / `AUTH_FAILED` 로 옮긴다. 전이표가 `AUTH_WAIT` 에서만 두
-        사건을 받으므로 다른 상태의 호출은 자동으로 거절된다 — `apply_event`
-        가 False 를 돌려주는 게 그 거절이다.
-
-        ⚠️ **불일치는 사건이 아니라 시도다** (FR-10.3). `max_attempts` 를 세는
-        일은 런타임이 하므로(`note_voice_auth`) 여기서 `AUTH_FAILED` 를 바로
-        만들지 않는다. 그렇게 만들었더니 오인식 한 번이 곧 L3 경보였다.
+        대조는 음성 파이프라인이 끝냈고, 여기서는 판정을 옮긴다. `AUTH_WAIT` 가 아니면 거절된다.
+        불일치는 사건이 아니라 시도다 — `max_attempts` 는 런타임(`note_voice_auth`)이 센다 (FR-10.3).
         """
         if result not in ("ok", "fail", "pending"):
             return CommandResult(
@@ -500,8 +420,7 @@ class CommandService:
                 detail=f"모르는 인증 결과: {result!r} (ok|fail|pending)",
             )
         if result == "pending":
-            # **판정이 아니다.** 발화를 받아 두었고 전사가 돌고 있다는 통지이며,
-            # 하는 일은 `AUTH_WAIT` 마감을 한 번 미루는 것뿐이다 (ADR-37).
+            # 판정이 아니다 — `AUTH_WAIT` 마감을 한 번 미루는 통지다 (ADR-37).
             if self._note_voice_listening is None:
                 return CommandResult(
                     command="auth",
@@ -517,9 +436,7 @@ class CommandService:
                 detail=detail,
             )
         if self._note_voice_auth is not None:
-            # `captured_at_ms` 는 **사람이 말한 시각**이다. 창이 열리기 전의 발화를
-            # 시도로 세지 않기 위해 런타임까지 그대로 내려보낸다 — 창이 언제
-            # 열렸는지 아는 쪽이 거기뿐이다.
+            # `captured_at_ms`(사람이 말한 시각)는 창 열린 시각을 아는 런타임까지 그대로 보낸다.
             accepted, detail = self._note_voice_auth(result == "ok", captured_at_ms)
             return CommandResult(
                 command="auth",

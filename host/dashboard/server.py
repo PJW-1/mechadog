@@ -1,18 +1,13 @@
-"""PC 로컬 FastAPI/WS 서버 — 텔레메트리·검출 방송과 명령 API.
+"""PC 로컬 FastAPI/WS 서버 — 텔레메트리·검출·사건 방송과 명령 API.
 
-⚠️ **명령 API 가 붙으면서 더 이상 읽기 전용이 아니다.** `commands` 를 넘기지
-않으면 예전처럼 읽기 전용으로 뜨고, 넘기면 `/api/command/*` 가 열린다. 이
-경로는 **로봇을 실제로 움직이므로** WebSocket 과 같은 로컬 출처 검사를 건다.
-`/api/command/sound` 는 움직이지 않고 로봇 스피커로 TF 카드 트랙을 튼다
-(음성 프로세스의 말하기 경로). 같은 검사를 건다.
+⚠️ `commands` 를 넘기면 `/api/command/*` 가 열리고, 그 경로는 로봇을 실제로 움직이므로
+WebSocket 과 같은 로컬 출처 검사(`_rejected_origin`)를 건다. 넘기지 않으면 읽기 전용이다.
 
-카메라 영상은 XIAO 스트림이 **단일 클라이언트**라 비전 워커가 점유한 채널을
-뺏으면 추론이 끊긴다. 그래서 여기서는 XIAO 에 새로 붙지 않고 워커가 방금
-추론에 쓴 JPEG 를 재송출한다 — 화면에 보이는 것이 곧 판정에 들어간 것이다.
+카메라 영상은 XIAO 에 새로 붙지 않고(단일 클라이언트) 워커가 추론에 쓴 JPEG 를 재송출한다.
+`/ws/vision` 은 그 JPEG 와 박스를 한 메시지로 보낸다 (ADR-32).
 
-검출 오버레이(`/ws/vision`)는 **박스를 계산한 바로 그 JPEG 와 박스를
-한 메시지로** 보낸다. 영상 스트림과 박스를 따로 보내면 추론 지연만큼 박스가
-다른 장면 위에 그려진다.
+서버는 운용 루프와 다른 스레드(자체 이벤트 루프)에서 돈다. 명령은 `commands` 를 거친다 — E-Stop·
+수동 전환은 즉시 적용되고, 해제·확인·조종 입력은 운용 루프의 다음 틱에 반영된다.
 """
 
 from __future__ import annotations
@@ -41,19 +36,14 @@ from host.dashboard.state import EVENT_BUFFER, DashboardState
 PERIOD_S = 0.1
 SEND_TIMEOUT_S = 1.0
 MAX_CLIENTS = 16
-#: 사건 방송 주기. 사람 감지는 초당 여러 번 나오는 일이 아니므로 촘촘할 필요가
-#: 없고, 운용 스레드의 기록과 브라우저 사이를 잇기만 하면 된다.
+#: 사건 방송 주기.
 EVENT_POLL_S = 0.2
 CAMERA_PERIOD_S = 0.1
-# 새 추론 결과가 나왔는지 보는 주기. ⚠️ **추론 주기(25fps = 40ms)보다 짧아야 한다.**
-# 0.1 이던 때는 확인 사이에 나온 결과가 버려져 화면이 초당 10장으로 묶였다 —
-# 실측 "초당 9.8" 이 추론률이 아니라 이 상한이었다. 한 번 보는 일은 최신
-# 참조를 꺼내 같은 객체인지 비교하는 것뿐이다. 기존 MJPEG 폴링 주기와 섞지 않는다.
+# 새 추론 결과가 나왔는지 보는 주기 — 추론 주기(25fps = 40ms)보다 짧아야 화면이 추론률을 따라간다.
 VISION_POLL_PERIOD_S = 0.01
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
-# 관제 화면은 빌드 없이 이 폴더를 그대로 내보낸다. three.js 도 `static/vendor/` 에
-# 함께 싣는다 — 설치에 기대면 빠뜨렸을 때 app.js 가 첫 import 에서 실패해 화면의
-# 조작이 통째로 죽는다(3D 만 비는 것이 아니다). 검사는 `npm run check`.
+# 관제 화면은 빌드 없이 이 폴더를 그대로 내보낸다. three.js 도 `static/vendor/` 에 싣는다
+# (검사는 `npm run check`).
 
 
 class TelemetryHub:
@@ -97,10 +87,8 @@ def encode_vision_frame(result: Any) -> bytes:
 
     ``[헤더 길이 uint32 big-endian][UTF-8 JSON 헤더][JPEG]``
 
-    ⚠️ **텍스트 헤더와 JPEG 를 두 메시지로 나누지 않는다.** 송신 시간 초과로 둘째가
-    취소되면 다음 JPEG 가 앞 헤더와 짝지어져 박스가 엉뚱한 사진에 그려진다.
-    박스는 원본 픽셀 좌표 ``[x1, y1, x2, y2]`` 이고 ``width``·``height`` 로 화면에
-    맞춰 늘린다. 필드 이름은 블랙박스 기록과 같다.
+    헤더와 JPEG 를 한 메시지로 묶어 박스가 다른 사진과 짝지어지지 않게 한다 (ADR-32).
+    박스는 원본 픽셀 좌표 ``[x1, y1, x2, y2]`` 이고 필드 이름은 블랙박스 기록과 같다.
     """
     header = {
         "type": "vision",
@@ -126,15 +114,9 @@ def encode_vision_frame(result: Any) -> bytes:
 
 
 class EventHub:
-    """사건 방송 (FR-3.9). **텔레메트리와 달리 합치지 않는다.**
+    """사건 방송 (FR-3.9). 텔레메트리와 달리 최신 한 건으로 합치지 않는다 — 사건은 기록이다.
 
-    ⚠️ **최신 한 건만 남기면 안 된다.** 텔레메트리는 상태라서 늦은 연결에 옛 값을
-    버려도 손해가 없지만, 사건은 *"그때 사람이 있었다"* 는 기록이다. 합치면 그
-    기록이 사라지고 화면에는 아무 일도 없던 것처럼 보인다.
-
-    ⚠️ **늦게 붙어도 최근 사건을 본다.** 브라우저는 로봇보다 늦게 열리고 새로고침도
-    한다. 붙는 순간 버퍼에 있는 것을 먼저 넘기고, 버퍼에서 밀려 못 주는 것이 있으면
-    `event_gap` 으로 **말해 준다** — 조용히 넘기면 사람이 공백을 정상으로 읽는다.
+    붙는 순간 버퍼의 최근 사건을 먼저 넘기고, 버퍼에서 밀려 못 준 것은 `event_gap` 으로 알린다.
     """
 
     def __init__(self, state: DashboardState) -> None:
@@ -163,21 +145,20 @@ class EventHub:
         for queue in self.clients:
             for event in events:
                 if queue.full():
-                    # 이 연결은 사건을 따라오지 못한다. 오래된 것을 버리고 **버린
-                    # 사실을 남긴다** — 조용히 사라지는 것이 가장 나쁘다.
+                    # 이 연결은 사건을 따라오지 못한다 — 오래된 것을 버리고 버린 사실을 남긴다.
                     queue.get_nowait()
                     self.overflowed += 1
                 queue.put_nowait(event)
 
     async def run(self) -> None:
-        """사건은 드물다 — 상태를 짧게 들여다보고 새것만 흘린다."""
+        """상태를 짧게 들여다보고 새 사건만 흘린다."""
         while True:
             self.broadcast()
             await asyncio.sleep(EVENT_POLL_S)
 
 
 class VisionHub:
-    """검출 프레임 방송. **새 추론 결과가 나왔을 때만**, 연결마다 최신 한 장만 남긴다."""
+    """검출 프레임 방송. 새 추론 결과가 나왔을 때만, 연결마다 최신 한 장만 남긴다."""
 
     def __init__(self, source: Callable[[], Any]) -> None:
         self.source = source
@@ -190,8 +171,7 @@ class VisionHub:
         if len(self.clients) >= MAX_CLIENTS:
             return None
         queue: asyncio.Queue = asyncio.Queue(maxsize=1)
-        # 새 화면은 다음 추론을 기다리지 않고 마지막 프레임부터 받는다 — 카메라가
-        # 멈춰 있으면 영영 빈 화면이 된다. 낡았는지는 `completed_ms` 로 가린다.
+        # 새 화면은 마지막 프레임부터 받는다. 낡았는지는 `completed_ms` 로 가린다.
         if self._last_message is not None:
             queue.put_nowait(self._last_message)
         self.clients.add(queue)
@@ -199,8 +179,7 @@ class VisionHub:
 
     def broadcast(self) -> bool:
         result = self.source()
-        # 워커는 추론마다 결과 객체를 새로 만든다. 같은 객체면 같은 추론이다 — seq 는
-        # 카메라가 다시 붙으면 처음부터 다시 셀 수 있어 비교 기준으로 쓰지 않는다.
+        # 워커는 추론마다 결과 객체를 새로 만든다 — 같은 객체면 같은 추론이다(seq 는 재연결 때 다시 센다).
         if result is None or result is self._last or not result.jpeg:
             return False
         self._last = result
@@ -287,8 +266,7 @@ async def _serve_subscriber(
 def _local_origins(port: int) -> set[str]:
     """이 서버 자신을 가리키는 출처만 허용한다.
 
-    명령 경로가 붙었으므로 이 검사는 **로봇이 움직이는 것을 막는 문**이다.
-    브라우저의 다른 탭에서 들어온 요청이 순찰을 멈추게 두지 않는다.
+    ⚠️ 명령 경로의 출입문이다 — 다른 출처의 브라우저 탭이 로봇을 움직이지 못하게 한다.
     """
     allowed = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     if port == 80:
@@ -297,21 +275,8 @@ def _local_origins(port: int) -> set[str]:
 
 
 class _RevalidatedStatic(StaticFiles):
-    """정적 파일마다 `Cache-Control: no-cache` 를 붙인다.
-
-    ⚠️ **없으면 브라우저가 옛 화면을 계속 보여 준다.** `StaticFiles` 는 ETag 와
-    `Last-Modified` 만 주고 `Cache-Control` 을 주지 않는데, 그러면 브라우저가
-    스스로 신선도를 추정해서 재검증 없이 사본을 쓴다. 실기에서
-    **새로 넣은 «경보 확인 (L3 해제)» 버튼이 화면에 나오지 않았다** — 서버는 새
-    파일을 내려주고 있었고 브라우저가 옛 사본을 쥐고 있었다.
-
-    ⚠️ **버튼이 없는 것보다 이 쪽이 위험하다.** 같은 화면이 `FSM IDLE`·
-    `래치 해제됨` 을 보여 주는 동안 실제 상태는 `TRACK`·**L3** 였다. 없는 버튼은
-    눈에 보이지만 틀린 단계는 눈에 보이지 않는다.
-
-    `no-cache` 는 *"저장하지 말라"* 가 아니라 *"쓰기 전에 물어보라"* 다. ETag 가
-    그대로면 304 만 오가므로 대역은 거의 늘지 않는다.
-    """
+    """정적 파일마다 `Cache-Control: no-cache` 를 붙인다 — 브라우저가 옛 화면 사본을 재검증 없이
+    쓰지 않게(관제 화면이 실제 상태와 다른 것을 보여 주지 않게). ETag 가 같으면 304 만 오간다."""
 
     async def get_response(self, path: str, scope: Any) -> Response:
         response = await super().get_response(path, scope)
@@ -363,15 +328,9 @@ def create_app(
             "event_clients": len(event_hub.clients),
             # 사건을 따라오지 못해 버린 건수. 0 이 아니면 화면이 기록을 놓쳤다.
             "events_overflowed": event_hub.overflowed,
-            # 지금 이 저장소에서 **고를 수 있는** 운용 모드 (FR-11.7). 선행 기능이
-            # 없는 모드는 빠진다.
-            # ⚠️ **화면은 아직 이 값을 읽지 않는다 (의도된 선택이다).** 모드
-            # 버튼 셋을 늘 띄워 두고 **누르면 서버가 사유를 돌려준다** — FR-11.7 이
-            # 요구하는 것은 «거부한다» 이지 «버튼을 숨겨라» 가 아니고, 못 고르는 이유가
-            # 화면에 남는 편이 «버튼이 왜 없지» 보다 낫다. 여기 실어 두는 것은 운용자가
-            # 서버에 직접 물어볼 수 있게 하기 위해서다.
-            # ⚠️ 상태 전문에 싣지 않는다. 10Hz 로 흐르는 값이 아니라 기동 시점에
-            # 정해지는 사실이고, 매 주기 실으면 대역만 먹는다.
+            # 지금 이 저장소에서 고를 수 있는 운용 모드 (FR-11.7). 화면은 이 값으로 버튼을
+            # 숨기지 않고, 못 고르는 모드는 누르면 서버가 사유를 돌려준다. 기동 때 정해지는
+            # 값이라 10Hz 상태 전문에는 싣지 않는다.
             "modes": list(available_modes()),
         }
 
@@ -393,8 +352,7 @@ def create_app(
     async def events(since: int = 0):
         """`since` 순번 뒤의 사건을 돌려준다 — WS 를 못 쓰는 쪽(음성 저널)을 위한 폴링 경로.
 
-        `/ws/events` 와 같은 버퍼다. `dropped` 가 0 이 아니면 버퍼에서 밀려
-        못 주는 사건이 있었다는 뜻이니 조용히 넘기지 않는다.
+        `/ws/events` 와 같은 버퍼다. `dropped` 가 0 이 아니면 버퍼에서 밀려 못 준 사건이 있었다.
         """
         found, dropped = state.events_since(since)
         return {
@@ -405,14 +363,9 @@ def create_app(
 
     @app.get("/events/{entry}/snapshot.jpg")
     async def event_snapshot_image(entry: str):
-        """사건 하나의 저장된 그림. **지금 화면이 아니라 그때 장면이다.**
+        """사건 하나의 저장된 그림(그때 장면). 사건 전문은 JPEG 대신 디렉터리 이름만 싣는다.
 
-        ⚠️ **사건 전문에 JPEG 를 싣지 않기 때문에 이 경로가 필요하다** —
-        프레임 하나가 수십 KB 라 사건 소켓에 실으면 텔레메트리를 밀어낸다. 대신
-        디렉터리 이름만 보내고 그림은 여기서 꺼낸다.
-
-        ⚠️ **이름 검증은 블랙박스가 한다.** 저장 구조를 아는 것이 거기뿐이고,
-        여기서 경로를 조립하면 규칙이 두 곳에 생겨 한쪽만 고쳐질 수 있다.
+        ⚠️ 이름은 신뢰할 수 없는 입력이며 검증은 `EventBlackbox.snapshot_bytes` 한 곳이 한다.
         """
         jpeg = event_snapshot(entry) if event_snapshot is not None else None
         if jpeg is None:
@@ -474,9 +427,8 @@ def create_app(
     async def broadcast_update(request: Request):
         """`{"volume"?: 0..100, "muted"?: bool}` — 온 필드만 바꾼다.
 
-        음량은 잘라 받지 않고 범위 밖이면 거절한다(화면이 슬라이더 범위를 지키므로
-        여기 오는 값은 사실상 실수·오작동이다). fleet 은 방송기가 하나라 이 경로로
-        바꾸면 모든 로봇 화면에 같은 상태가 보인다.
+        음량은 범위 밖이면 거절한다(자르지 않는다). fleet 은 방송기가 하나라 모든 로봇 화면에
+        같은 상태가 보인다.
         """
         rejected = _rejected_origin(request)
         if rejected is not None:
@@ -504,7 +456,7 @@ def create_app(
 
         @app.post("/api/command/estop")
         async def estop(request: Request):
-            """**어떤 상태에서도 통한다.** 조건을 검사하지 않는다 (FR-4.4)."""
+            """어떤 상태에서도 통한다 — 조건을 검사하지 않는다 (FR-4.4)."""
             rejected = _rejected_origin(request)
             if rejected is not None:
                 return rejected
@@ -547,15 +499,10 @@ def create_app(
 
         @app.post("/api/command/alarm")
         async def alarm(request: Request):
-            """사람이 상황을 확인한 뒤 누르는 **경보(L3) 해제** (FR-10.3.2).
+            """사람이 상황을 확인한 뒤 누르는 경보(L3) 해제 (FR-10.3.2).
 
-            ⚠️ **`/api/command/reset` 과 다른 문이다.** 저쪽은 물리 상태(F)를
-            확인하고 로봇의 래치 보고를 기다리며, 이쪽은 상황 판단이라 로봇에
-            보낼 것이 없다. 하나로 묶으면 **비상정지를 눌렀다 푸는 것으로 경보가
-            지워진다** ([ADR-26]).
-
-            ⚠️ **이 문이 없으면 헤드리스 런타임은 경보를 풀 수 없다** — 콘솔
-            확인 키는 tty 를 요구한다(`runtime.watch_console`).
+            `/api/command/reset`(F 해제)과 다른 문이다 (ADR-26 ①). 헤드리스 런타임의 유일한
+            L3 해제 경로이기도 하다(콘솔 키는 tty 를 요구한다).
             """
             rejected = _rejected_origin(request)
             if rejected is not None:
@@ -566,9 +513,8 @@ def create_app(
         async def zone_baseline(request: Request):
             """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
 
-            물건을 영구히 옮긴 경우의 문이다. 런타임이 **다음 틱에** 지운다 —
-            `/api/command/alarm` 과 같은 예약이다. `zones.ids` 에 없는 구역은
-            `accepted=false` 로 돌려준다. ⚠️ **경보(L3)는 풀지 않는다** — 그쪽 문이 따로 있다.
+            물건을 영구히 옮긴 경우의 문이다 (ADR-41 결정 6). 런타임이 다음 틱에 지운다.
+            `zones.ids` 에 없는 구역은 `accepted=false` 다. 경보(L3)는 풀지 않는다.
             """
             rejected = _rejected_origin(request)
             if rejected is not None:
@@ -600,7 +546,7 @@ def create_app(
             """`{"track": 0..3000}` — 로봇 MP3 모듈 트랙 재생, 0 = 정지.
 
             음성 프로세스(`robotlink.play_track`)가 자기 발화를 로봇 스피커로 트는
-            문이다. **FAILSAFE 래치 중에도 받는다**(펌웨어와 같다). 범위 밖은
+            문이다. FAILSAFE 래치 중에도 받는다(펌웨어와 같다). 범위 밖은
             `accepted=false` 로 돌려주고 로봇에 보내지 않는다. `accepted` 는
             «다음 틱에 싣는다» 이지 «소리가 났다» 가 아니다.
             """
@@ -609,7 +555,7 @@ def create_app(
                 return rejected
             body = await request.json()
             track = body.get("track")
-            # ⚠️ `bool` 을 정수로 받지 않는다 — `true` 가 트랙 1 이 된다.
+            # `bool` 을 정수로 받지 않는다 — `true` 가 트랙 1 이 된다.
             if isinstance(track, bool) or not isinstance(track, int):
                 return JSONResponse({"error": "track"}, status_code=400)
             return commands.sound(track).as_dict()
@@ -618,9 +564,7 @@ def create_app(
         async def mission_mode(request: Request):
             """`{"mode": "guard"|"factory"}` — 운용 모드 전환 (FR-4.7 · FR-11.3).
 
-            ⚠️ **온보드 `SERVICE` 와 다른 축이다.** 저쪽은 OTA·진단 중 액추에이터를
-            차단하는 정비 상태이고, 이쪽은 정상 운용 중 Tier 2 판단을 고르는 임무
-            모드다. 경로를 나눠 둔 이유가 그것이다.
+            온보드 `SERVICE`(정비 상태)와 다른 축이다 — 이쪽은 Tier 2 판단을 고르는 임무 모드다.
             """
             rejected = _rejected_origin(request)
             if rejected is not None:
@@ -638,15 +582,9 @@ def create_app(
             대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
             옮기는 자리일 뿐이다. `AUTH_WAIT` 가 아니면 거절된다.
 
-            `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이며 선택이다.
-            싣고 오면 런타임이 `AUTH_WAIT` 가 열린 시각과 견주어 **창이 열리기
-            전에 녹음된 발화를 시도로 세지 않는다.** 녹음·전사에 수 초가 걸려
-            «말한 시각» 과 «판정이 도착한 시각» 이 다르기 때문이다.
-
-            `"pending"` 은 **판정이 아니다** — 발화를 받아 두었고 전사가 도는
-            중이라는 통지이며, `auth.timeout_s` 마감을 `verdict_grace_s` 만큼
-            **창마다 한 번** 미룬다 (ADR-37). 상한이 없으면 소리만 계속 내서
-            경보를 영영 막을 수 있다.
+            `captured_at_ms` 는 사람이 말한 시각(epoch ms, 선택)이다 — 창이 열리기 전 발화는
+            시도로 세지 않는다. `"pending"` 은 판정이 아니라 전사 중 통지이며 `auth.timeout_s`
+            마감을 `verdict_grace_s` 만큼 한 번 미룬다 (ADR-37).
             """
             rejected = _rejected_origin(request)
             if rejected is not None:
@@ -656,9 +594,7 @@ def create_app(
             if result not in ("ok", "fail", "pending"):
                 return JSONResponse({"error": "result"}, status_code=400)
             captured_at_ms = body.get("captured_at_ms")
-            # ⚠️ **`bool` 을 정수로 받지 않는다.** `isinstance(True, int)` 가 참이라
-            # `captured_at_ms: true` 가 시각 1 로 들어가 **모든 발화가 오래된 것**이
-            # 되어 인증이 통째로 막힌다.
+            # `bool` 을 정수로 받지 않는다 — `true` 가 시각 1 이 되면 모든 발화가 오래된 것이 된다.
             if captured_at_ms is not None and (
                 isinstance(captured_at_ms, bool) or not isinstance(captured_at_ms, int)
             ):
@@ -708,8 +644,7 @@ def create_app(
             )
 
     if static_dir is not None and static_dir.is_dir():
-        # API·WS 경로를 먼저 등록해 두고 마지막에 붙인다 — mount 는 등록 순서대로
-        # 탐색하므로 `/api/*`·`/camera/*`·`/ws/*` 는 위의 처리기가 받는다.
+        # mount 는 등록 순서대로 탐색하므로 API·WS 경로를 먼저 등록하고 마지막에 붙인다.
         app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
 
     return app
@@ -727,11 +662,8 @@ def create_fleet_app(
 ) -> FastAPI:
     """여러 대를 한 서버·한 출처로 (`host.fleet`).
 
-    로봇마다 `create_app` 로 만든 앱을 `/robots/<id>` 에 붙인다. 명령·WS·출처 검사는
-    한 대짜리와 **같은 코드**다 — 여러 대를 위해 명령 경로를 새로 쓰지 않는다.
-
-    ⚠️ **붙인 앱의 lifespan 은 Starlette 가 돌려 주지 않는다.** 방송 루프가 거기서
-    시작하므로, 그대로 두면 WS 가 연결은 되고 아무것도 오지 않는다. 여기서 직접 연다.
+    로봇마다 `create_app` 로 만든 앱을 `/robots/<id>` 에 붙인다(명령·WS·출처 검사는 같은 코드).
+    붙인 앱의 lifespan(방송 루프)은 Starlette 가 돌려 주지 않으므로 여기서 직접 연다.
     """
     marks = registered or {}
 
@@ -767,9 +699,7 @@ def create_fleet_app(
 
     @app.websocket("/{path:path}")
     async def unknown_ws(websocket: WebSocket):
-        # ⚠️ `/` 의 정적 마운트는 http 범위만 받는다 — 매칭되지 않은 WS(예: 예전
-        # 한 대짜리 화면의 /ws/telemetry 재연결)가 거기로 새면 assertion 으로 터진다.
-        # 정적 마운트보다 **먼저** 등록해야 라우터가 WS 를 여기서 잡는다.
+        # `/` 의 정적 마운트는 http 범위만 받으므로, 매칭되지 않은 WS 를 잡는 경로를 먼저 등록한다.
         await websocket.close(code=1008)
 
     if static_dir is not None and static_dir.is_dir():
@@ -843,7 +773,7 @@ def serving(app: FastAPI, port: int) -> Iterator[uvicorn.Server]:
         thread = threading.Thread(target=run, name="dashboard", daemon=True)
         thread.start()
         try:
-            # 첫 기동은 import·모델 준비로 5초를 넘긴 적이 있다 (확인 서버 실측).
+            # 첫 기동은 import·모델 준비로 5초를 넘길 수 있다.
             if not ready.wait(15) or not server.started:
                 raise RuntimeError("Dashboard startup failed") from (
                     failures[0] if failures else None
