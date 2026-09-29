@@ -108,3 +108,7 @@ sim/
 
 # 실측 원자료 중 음성 녹음은 올리지 않는다 (피험자 음성). summary.md 만 커밋한다.
 TEST_MECHDOG/results/**/*.wav
+
+# PPE 실측 프레임도 올리지 않는다 (얼굴 포함). `ppe_live_check --save-dir/--save-raw-dir` 산출물.
+TEST_MECHDOG/results/**/frames/
+TEST_MECHDOG/results/**/raw/
