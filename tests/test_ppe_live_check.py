@@ -23,7 +23,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.vision.detector import Detection  # noqa: E402
-from tools import ppe_live_check as ppe  # noqa: E402
+from tools.ppe import ppe_live_check as ppe  # noqa: E402
 
 
 def det(label: str, box: tuple[float, float, float, float], score: float = 0.9) -> Detection:

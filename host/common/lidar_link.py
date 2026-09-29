@@ -14,8 +14,8 @@ LiDAR 는 중계 MCU 가 UART 를 받아 UDP 로 올리는 세 번째 방향의 
     ⑤ 타입이 규약과 다르면 폐기 (목록과 대조하기 **전에** 문자열인지 확인한다)
     ⑥ 기형인 점은 그 점만 버리고 스캔은 살린다. 버린 수는 `Scan.dropped` 로 돌려준다
 
-이 모듈은 소켓을 만지지 않는다 (ENGINEERING_GUIDE 2.1). 수신은 `tools/lidar_slam.py` ·
-`tools/patrol_run.py` 가 한다.
+이 모듈은 소켓을 만지지 않는다 (ENGINEERING_GUIDE 2.1). 수신은 `tools/lidar/lidar_slam.py` ·
+`tools/ops/patrol_run.py` 가 한다.
 """
 
 from __future__ import annotations

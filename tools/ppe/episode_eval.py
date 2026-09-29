@@ -55,7 +55,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tools.ppe_live_check import (  # noqa: E402
+from tools.ppe.ppe_live_check import (  # noqa: E402
     DEFAULT_ACCEPTANCE_PLAN,
     STATE_OK,
     STATE_UNKNOWN,

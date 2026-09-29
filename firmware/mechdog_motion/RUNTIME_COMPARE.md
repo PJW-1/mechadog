@@ -26,8 +26,8 @@ ESP32의 센서 처리·통신 지연을 비교하며 PC 모델 추론 속도를
    실패한 실행도 원본과 결과를 남기고 정상 표본에서 임의로 제외하지 않는다.
 
 ```text
-python tools/runtime_compare.py capture --config PRIVATE_CLIENT.json --pc-ip PC_IPV4 --device DEVICE_ID --expected-image-sha256 IMAGE_SHA256 --expected-core 0 --duration 90 --warmup 10 --output NEW_CAPTURE.jsonl --uart-output NEW_UART.log
-python tools/runtime_compare.py summarize NEW_CAPTURE.jsonl
+python tools/probe/runtime_compare.py capture --config PRIVATE_CLIENT.json --pc-ip PC_IPV4 --device DEVICE_ID --expected-image-sha256 IMAGE_SHA256 --expected-core 0 --duration 90 --warmup 10 --output NEW_CAPTURE.jsonl --uart-output NEW_UART.log
+python tools/probe/runtime_compare.py summarize NEW_CAPTURE.jsonl
 ```
 
 캡처는 설치/리셋을 하지 않는다. 실제 PC 설치에서는 기존 USB/OTA 도구와

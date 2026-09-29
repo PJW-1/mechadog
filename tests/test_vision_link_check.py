@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tools import vision_link_check as check
+from tools.probe import vision_link_check as check
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "61", "nan", "inf"])

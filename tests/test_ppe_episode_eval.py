@@ -15,8 +15,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools import ppe_live_check as ppe  # noqa: E402
 from tools.ppe import episode_eval as ee  # noqa: E402
+from tools.ppe import ppe_live_check as ppe  # noqa: E402
 
 OK, BAD, UNK = ppe.STATE_OK, ppe.STATE_VIOLATION, ppe.STATE_UNKNOWN
 REAL_SESSION = (

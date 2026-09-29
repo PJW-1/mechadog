@@ -291,7 +291,7 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
         LOG.warning(
             "straight_bias_unmeasured",
             effect="직진 명령이 그대로 나가 순찰이 한쪽으로 휜다",
-            remedy="tools/gait_calibrate.py --mode forward --bias-deg <각도> (WBS 2.2.3)",
+            remedy="tools/probe/gait_calibrate.py --mode forward --bias-deg <각도> (WBS 2.2.3)",
         )
 
     # 구역 점검은 제자리에서 앵커 방향으로 돈 뒤 선다 (FR-8 · ADR-40 과 같은 예외).

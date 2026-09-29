@@ -1,6 +1,6 @@
 # PPE XIAO 검수 절차
 
-이 문서는 `tools/ppe_live_check.py`로 실제 기체의 XIAO 영상을 관찰하는 절차다. 도구는
+이 문서는 `tools/ppe/ppe_live_check.py`로 실제 기체의 XIAO 영상을 관찰하는 절차다. 도구는
 읽기 전용이며 로봇에 자세·이동·경고 명령을 보내지 않는다. 시험 구간의 정본은
 `config/ppe_acceptance.json`이다.
 
@@ -20,7 +20,7 @@
 ```powershell
 $xiaoIp = "현재 XIAO IP로 교체"
 $runDate = Get-Date -Format yyyyMMdd
-python tools/ppe_live_check.py `
+python tools/ppe/ppe_live_check.py `
   --device mechdog-01 `
   --xiao-ip $xiaoIp `
   --seconds 900 `
@@ -195,7 +195,7 @@ $run = "field_tests/results/$(Get-Date -Format yyyyMMdd)_ppe-collect-bright-1m"
 python -c "from host.common.config import load_config; from host.vision.stream_client import apply_profile, apply_orientation; c = load_config('$dev'); c['network']['xiao_ip'] = '$xiaoIp'; print(apply_profile(c)); print('rot', apply_orientation(c))"
 
 # 2) 수집
-python tools/ppe_live_check.py `
+python tools/ppe/ppe_live_check.py `
   --device $dev `
   --xiao-ip $xiaoIp `
   --ppe-model models/candidates/ppe4-cs-md-v2/ppe.onnx `

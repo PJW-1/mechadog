@@ -58,7 +58,7 @@ servo_offset: [0, 0, 0, 0, 0, 0, 0, 0, 0]
 # 구간의 시간이 틀리게 계산되어 **그 기체가 장애물에 더 붙는다.**
 #
 # ⚠️ 시연할 바닥에서 재야 한다 — 카펫과 장판에서 달라진다.
-# 측정: `python tools/gait_calibrate.py --device <unit-id> --host <ip> --mode <모드>`
+# 측정: `python tools/probe/gait_calibrate.py --device <unit-id> --host <ip> --mode <모드>`
 gait_calibration:
   forward_mm_per_sec: null    # move(60, 0) 1초당 실제 전진 거리
   # move(-60, 0) 1초당 실제 후진 거리. **비면 전진 값을 쓴다** — 그러면 회피

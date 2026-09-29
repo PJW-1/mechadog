@@ -20,7 +20,7 @@ APP_SHA = SETTINGS.values.get("legacy_application_sha256", "")
 
 
 def ota_client_module():
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ops"))
     import ota_update
 
     return ota_update

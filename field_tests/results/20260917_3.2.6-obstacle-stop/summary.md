@@ -1,6 +1,6 @@
 # WBS 3.2.6 실측 — 온보드 근거리 반사 정지 (2026-09-17 · mechdog-01)
 
-도구 `python tools/obstacle_stop_probe.py --host 192.168.1.101 --serial COM9 --phase <단계>`
+도구 `python tools/probe/obstacle_stop_probe.py --host 192.168.1.101 --serial COM9 --phase <단계>`
 기체는 **받침대 위**에 올려 다리를 공중에 띄웠다 — 이 시험은 전진·후진 명령을 실제로 보낸다.
 충전기는 분리했다(만충 전압에서는 텔레메트리 발행이 억제된다).
 

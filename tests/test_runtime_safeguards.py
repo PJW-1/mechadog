@@ -9,7 +9,7 @@ import yaml
 
 from host.common.config import ConfigError, load_base_config, load_config, validate_base_config
 from host.common.protocol import CommandDecoder, CommandEncoder, TelemetryDecoder, TelemetryEncoder
-from tools.mock_mechdog import Faults, MockRobot
+from tools.mock.mock_mechdog import Faults, MockRobot
 
 
 def test_huge_command_number_is_discarded_and_next_packet_survives():

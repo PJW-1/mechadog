@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from test_ld19_serial_relay import make_frame
 
-from tools import lidar_inspect
+from tools.lidar import lidar_inspect
 
 
 class FakePort:

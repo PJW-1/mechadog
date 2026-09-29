@@ -26,10 +26,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import tools.lidar_slam as lidar_slam
-import tools.mock_lidar as mock_lidar
-import tools.patrol_run as patrol_run
-import tools.zone_select as zone_select
+import tools.lidar.lidar_slam as lidar_slam
+import tools.mock.mock_lidar as mock_lidar
+import tools.ops.patrol_run as patrol_run
+import tools.ops.zone_select as zone_select
 from host.common.config import ConfigError
 from host.common.lidar_link import ScanDecoder, encode_scan
 from host.slam import settings, simulation, viz
@@ -286,7 +286,7 @@ def test_live_map_disabled_touches_no_backend() -> None:
 
 
 # ══════════════════════════════════════════════════════════════
-#  tools/lidar_slam.py — ① 매핑
+#  tools/lidar/lidar_slam.py — ① 매핑
 # ══════════════════════════════════════════════════════════════
 
 
@@ -406,7 +406,7 @@ def test_scan_socket_binds_and_closes(lidar_config: dict) -> None:
 
 
 # ══════════════════════════════════════════════════════════════
-#  tools/zone_select.py — ② 구역 지정
+#  tools/ops/zone_select.py — ② 구역 지정
 # ══════════════════════════════════════════════════════════════
 
 
@@ -493,7 +493,7 @@ def test_zone_main_reports_a_missing_map(
 
 
 # ══════════════════════════════════════════════════════════════
-#  tools/patrol_run.py — ③ 순찰
+#  tools/ops/patrol_run.py — ③ 순찰
 # ══════════════════════════════════════════════════════════════
 
 
@@ -747,7 +747,7 @@ def test_fake_reading_exposes_the_receiver_field_names() -> None:
 
 
 # ══════════════════════════════════════════════════════════════
-#  tools/mock_lidar.py — 가상 중계 노드
+#  tools/mock/mock_lidar.py — 가상 중계 노드
 # ══════════════════════════════════════════════════════════════
 
 

@@ -712,12 +712,12 @@ mechdog_physical_ai/
 │   ├── dashboard/                     ✅ FastAPI + WS + 검출 FPV · 명령 API · 사건 피드 (4.5 · 4.6.1/3/4)
 │   └── slam/                          🔶 점유격자·스캔정합·경로계획 (`3.9.0`) — **실기 미연결** · 오도메트리·tf(`5.4.3`) 대기
 ├── tools/
-│   ├── mock_mechdog.py                ✅ 가상 MechDog — 로봇 없이 호스트를 검증
-│   ├── teleop.py                      ✅ 키보드 수동 조작
-│   ├── mechdog_command.py             ✅ 실기 시험 송신기 (safety · move · watchdog)
-│   ├── udp_probe.py                   ✅ UDP 왕복 측정
-│   ├── latency_probe.py               ✅ E2E 지연 하네스 — 화면 카운터 촬영 (6.1.2)
-│   └── wbs_assignments.py             ✅ 담당자별 작업 목록 생성
+│   ├── mock/mock_mechdog.py           ✅ 가상 MechDog — 로봇 없이 호스트를 검증
+│   ├── ops/teleop.py                  ✅ 키보드 수동 조작
+│   ├── ops/mechdog_command.py         ✅ 실기 시험 송신기 (safety · move · watchdog)
+│   ├── probe/udp_probe.py             ✅ UDP 왕복 측정
+│   ├── probe/latency_probe.py         ✅ E2E 지연 하네스 — 화면 카운터 촬영 (6.1.2)
+│   └── dev/wbs_assignments.py         ✅ 담당자별 작업 목록 생성
 ├── tests/                             ✅ pytest — 하드웨어 불요
 ├── third_party/                       ❌ **비워 둔다** — 벤더 라이브러리는 라이선스 표기가 없어 재배포 불가 (ADR-20)
 ├── models/ · maps/                    ⬜ 가중치 · 지도 산출물 (git 제외)

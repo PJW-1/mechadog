@@ -89,7 +89,7 @@ private 헤더에 `MECHADOG_OTA_TOKEN`, `MECHADOG_OTA_CERT`, `MECHADOG_OTA_KEY`,
 표시로 대체하지 않는다. 키/토큰/네트워크 설정과 이를 포함한 BIN/ELF를 Git이나
 공개 CI 산출물에 올리지 않는다.
 
-`tools/ota_update.py`의 private config는 host, port, mac, certificate 경로,
+`tools/ops/ota_update.py`의 private config는 host, port, mac, certificate 경로,
 certificate_sha256, token을 가진다. package manifest는 application 경로,
 application_sha256, image_sha256, mac, ota_protocol=1,
 actuators_enabled=false, actuator_off_elf_reviewed=true를 가진다. manifest는
@@ -97,8 +97,8 @@ actuators_enabled=false, actuator_off_elf_reviewed=true를 가진다. manifest�
 경로를 검토한 패키지만 사용한다.
 
 ```text
-python tools/ota_update.py status --config PRIVATE_CLIENT.json --report NEW_STATUS.json
-python tools/ota_update.py update --config PRIVATE_CLIENT.json --package REVIEWED_PACKAGE.json --report NEW_RESULT.json
+python tools/ops/ota_update.py status --config PRIVATE_CLIENT.json --report NEW_STATUS.json
+python tools/ops/ota_update.py update --config PRIVATE_CLIENT.json --package REVIEWED_PACKAGE.json --report NEW_RESULT.json
 ```
 
 동일 이미지면 재기록하지 않는다. 중단된 전송을 성공으로 간주하지 말고

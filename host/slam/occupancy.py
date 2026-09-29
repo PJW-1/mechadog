@@ -297,7 +297,7 @@ class OccupancyGrid:
 
         raise FileNotFoundError(
             f"지도가 없다: {npy_path} · {yaml_path} — "
-            "tools/lidar_slam.py 를 먼저 실행하거나 slam_toolbox 산출물을 두어야 한다"
+            "tools/lidar/lidar_slam.py 를 먼저 실행하거나 slam_toolbox 산출물을 두어야 한다"
         )
 
     @classmethod

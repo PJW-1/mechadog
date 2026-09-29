@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.check_firmware_scope import changed_files, evaluate
+from tools.dev.check_firmware_scope import changed_files, evaluate
 
 
 def test_camera_and_robot_code_together_fails():

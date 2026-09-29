@@ -269,7 +269,7 @@
 1. models/ppe.onnx 와 models/coco.onnx 배치 완료, 해시 검증 완료
 2. .venv 에 Python 3.13 과 onnxruntime-directml 1.24.4 설치 완료
 3. .vscode/settings.json 과 launch.json 구성 완료
-4. tools/ppe_live_check.py 작성 완료. 스트림 수신, 2단 검출, 3분류 판정, 웹 중계, MD 보고서 생성을 한다
+4. tools/ppe/ppe_live_check.py 작성 완료. 스트림 수신, 2단 검출, 3분류 판정, 웹 중계, MD 보고서 생성을 한다
 5. 이 도구는 로봇에 명령을 보내지 않는다. 읽기 전용이다
 6. XIAO 펌웨어에 Wi-Fi 정보 적용 완료. 접속 확인 IP 192.168.0.22, RSSI -49
 7. config/devices/mechdog-01.local.yaml 에 IP 와 CPU 프로바이더 기록 완료
@@ -303,7 +303,7 @@ ESP32-S3 카메라 전원이 유지되는 것을 전제로 한다. 위에서부�
 ### 6.3 실기 판정 관찰
 
 1. 브라우저로 카메라 주소를 직접 열지 않는다. 스트림은 한 클라이언트만 받는다
-2. tools/ppe_live_check.py 를 실행한다. 이 도구는 로봇에 명령을 보내지 않는다
+2. tools/ppe/ppe_live_check.py 를 실행한다. 이 도구는 로봇에 명령을 보내지 않는다
 3. 브라우저로 http://127.0.0.1:8088/ 을 열어 판정이 그려진 화면을 본다
 4. 초록이 적합, 빨강이 위반, 주황이 확인불가다
 5. 이 개발 PC 는 0.5fps 라 위반 확정 창을 20초로 늘려서 관찰한다

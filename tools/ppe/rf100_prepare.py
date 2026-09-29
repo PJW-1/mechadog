@@ -15,7 +15,7 @@ PPE 재학습(YOLOX-S 4클래스)의 데이터 1단계다. 원본은 고치지 �
 
 ⚠️ **런타임과 같은 사람 크롭을 만든다.** PPE 모델은 풀프레임이 아니라 가장 큰 사람의
 크롭(`crop_pad` 0.08 여유, 경계 클램프)만 본다. 풀프레임으로 학습하면 모델이 본 적 없는
-배율·구도로 판정하게 된다. 그래서 자르는 식은 `tools/ppe_live_check.crop_person` 을
+배율·구도로 판정하게 된다. 그래서 자르는 식은 `tools/ppe/ppe_live_check.crop_person` 을
 그대로 부른다 — 식이 둘이면 언젠가 어긋난다.
 
 ⚠️ **학습 분할만 여유를 흔든다 (0.0~0.2).** 현장 박스는 사람 검출기의 흔들림만큼 매번
@@ -49,7 +49,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools.ppe.index_raw import imread_any  # noqa: E402
-from tools.ppe_live_check import crop_person  # noqa: E402
+from tools.ppe.ppe_live_check import crop_person  # noqa: E402
 
 DATASETS = ROOT / "datasets"
 RAW = DATASETS / "ppe" / "raw" / "construction-safety"
@@ -415,7 +415,7 @@ def prepare(
         "mapping": MAPPING,
         "crop_rule": {
             "target": "사람 박스마다 1장 (런타임은 가장 큰 사람 1명)",
-            "function": "tools/ppe_live_check.crop_person",
+            "function": "tools/ppe/ppe_live_check.crop_person",
             "pad_val_test": RUNTIME_PAD,
             "pad_train_uniform": list(TRAIN_PAD_RANGE),
             "min_keep_area": MIN_KEEP_AREA,

@@ -176,7 +176,7 @@ Issue 를 닫으려면 PR 본문에 `Closes #이슈번호`를, 일부만 다루�
 
 - `host/common/protocol.py` — Python 직렬화
 - `firmware/mechdog_motion/src/command_parser.*` — C++ 파서
-- `tools/mock_mechdog.py` — 목업
+- `tools/mock/mock_mechdog.py` — 목업
 - `tests/fixtures/protocol_samples.jsonl` — 제어 명령 정본 픽스처
 - `tests/fixtures/telemetry_samples.jsonl` — **텔레메트리 정본 픽스처** (안전 임계 경계값 포함)
 
@@ -202,7 +202,7 @@ Issue 를 닫으려면 PR 본문에 `Closes #이슈번호`를, 일부만 다루�
 | **확인 결과는 PR 본문에** | 전압·fps·지연 확인 결과는 PR 본문에 남긴다. 채팅이나 메모에만 남기지 않는다. **`config` 로 들어갈 값은 `config/` 가 정본**이고 별도 리포트 문서는 두지 않는다. 원자료(csv·json·콘솔 로그)까지 남길 때만 `field_tests/results/<날짜-시각>/` 에 둔다 |
 | **성능 수치의 출처 명시** | Phase 1 NFR 측정치는 **`phase1_reference` 실측값**으로 문서화하고, 개체별 편차는 참고치로 병기한다 |
 | **안전 로직은 온보드에서 이동 금지** | 초음파 반사 정지·명령 타임아웃·저전압·전도 감지는 Tier 1이다. Host PC로 올리는 PR은 반려한다 ([아키텍처 1.2 불변 규칙](docs/ARCHITECTURE.md)) |
-| **카메라·로봇 펌웨어 코드는 한 PR에 섞지 않는다** | `firmware/xiao_vision`은 DR-3 상 촬영·송출 전용이다. 한 PR이 카메라와 `firmware/mechdog_motion`/`firmware/lidar_relay` 의 **코드 파일**(`*.ino`·`*.cpp`·`*.h` 등)을 같이 바꾸면 반려한다 — 로봇 기능이 카메라에 딸려 플래시되는 사고가 있었다 (2026-09-23). 문서 동반 변경은 허용. CI 의 `Firmware scope guard` 가 자동으로 검사한다 (`tools/check_firmware_scope.py`). 카메라 펌웨어 PR 은 실기 플래시 후 부팅 로그와 스트림 1프레임을 본문에 남긴다 |
+| **카메라·로봇 펌웨어 코드는 한 PR에 섞지 않는다** | `firmware/xiao_vision`은 DR-3 상 촬영·송출 전용이다. 한 PR이 카메라와 `firmware/mechdog_motion`/`firmware/lidar_relay` 의 **코드 파일**(`*.ino`·`*.cpp`·`*.h` 등)을 같이 바꾸면 반려한다 — 로봇 기능이 카메라에 딸려 플래시되는 사고가 있었다 (2026-09-23). 문서 동반 변경은 허용. CI 의 `Firmware scope guard` 가 자동으로 검사한다 (`tools/dev/check_firmware_scope.py`). 카메라 펌웨어 PR 은 실기 플래시 후 부팅 로그와 스트림 1프레임을 본문에 남긴다 |
 
 ---
 
@@ -281,7 +281,7 @@ python tools/fetch_models.py
 MechDog 펌웨어는 기본적으로 서보를 초기화하지 않는 dry-run 구성으로 컴파일한다.
 실제 구동용 외부 라이브러리 결합과 안전 시험 절차는
 `firmware/mechdog_motion/README.md`의 *"구동·센서 통합 빌드 준비"* 절을 따르고,
-준비 상태는 `python tools/firmware_env.py`로 점검한다. **벤더 파일은 절대 커밋하지 않는다**(ADR-20).
+준비 상태는 `python tools/dev/firmware_env.py`로 점검한다. **벤더 파일은 절대 커밋하지 않는다**(ADR-20).
 
 펌웨어 포맷과 컴파일 확인:
 

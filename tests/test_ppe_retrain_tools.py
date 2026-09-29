@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.vision.detector import Detection  # noqa: E402
 from tools.ppe import export_ppe, rf100_prepare, xiao_hardcases  # noqa: E402
-from tools.ppe_live_check import (  # noqa: E402
+from tools.ppe.ppe_live_check import (  # noqa: E402
     DEFAULT_ACCEPTANCE_PLAN,
     STATE_OK,
     STATE_VIOLATION,
@@ -657,7 +657,7 @@ def test_mendeley_prepare_merges_dedupes_and_keeps_roboflow_test(tmp_path, monke
         )
 
     # 이어서 목업 평가기를 끝까지 — 검출기만 가짜로 바꾼다
-    from tools import ppe_live_check
+    from tools.ppe import ppe_live_check
 
     class FakeDetector:
         def __init__(self, *args, **kwargs):

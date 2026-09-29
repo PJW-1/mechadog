@@ -237,7 +237,7 @@
 ### 5.2 공간 재현 — 라이다 측정값이 씬의 뼈대
 
 ```
-실제 공간 ──LD19──▶ tools/lidar_slam.py ──▶ OccupancyGrid(2D 평면)
+실제 공간 ──LD19──▶ tools/lidar/lidar_slam.py ──▶ OccupancyGrid(2D 평면)
                                             │
                                             ▼
                                      벽을 수직 압출(extrude)

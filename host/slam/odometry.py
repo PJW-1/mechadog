@@ -5,14 +5,14 @@
     텔레메트리 imu.yaw ───┘
 
 `slam_toolbox` 는 `odom → base_link` 를 요구하는데 로봇에는 **센서 오도메트리가 없다**
-— 다리에 엔코더가 없다(`tools/gait_calibrate.py` 머리말). 그래서 두 가지를 합친다.
+— 다리에 엔코더가 없다(`tools/probe/gait_calibrate.py` 머리말). 그래서 두 가지를 합친다.
 
   ① **거리는 명령의 시간 창 × 그 기체의 실측 속도** (`gait_calibration`)
   ② **방향은 IMU yaw 의 변화량**
 
 **이 모듈은 소켓도 실시각도 만지지 않는다.** 보낸 전문과 그 시각, IMU 값과 수신
 시각만 받는다 (ENGINEERING_GUIDE 2.1 · `lidar_link.py` 와 같은 구조). 실제 배선은
-`tools/patrol_run.py` 가 한다.
+`tools/ops/patrol_run.py` 가 한다.
 
 명령값을 적분한 추정이며 보정은 `slam_toolbox` 가 정지 스캔으로 한다 (WBS 5.4.3 DoD). IMU 가
 없거나 오래되면 자세를 무효로 낸다.

@@ -35,7 +35,7 @@ class PhotoRecorder:
 
     def __init__(self, config: dict[str, Any], url: str, *, max_skew_ms: int = 500) -> None:
         # Reuse the camera check's URL/redirect policy; the stream is read-only.
-        from tools.camera_link_check import open_stream, validate_url
+        from tools.probe.camera_link_check import open_stream, validate_url
 
         url = validate_url(url)
         self._queue = FrameQueue(capacity=1)

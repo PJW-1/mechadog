@@ -713,7 +713,7 @@ def test_head_up_postures_are_negative(cfg: dict) -> None:
 def test_positive_head_up_angle_is_refused(cfg: dict, section: str, name: str) -> None:
     """⚠️ **양수로 되돌리면 기동을 막는다.**
 
-    같은 실수가 이미 한 번 났다 — `tools/teleop.py` 의 좌우가 뒤바뀐 채 **시험이
+    같은 실수가 이미 한 번 났다 — `tools/ops/teleop.py` 의 좌우가 뒤바뀐 채 **시험이
     그 버그를 굳혀 두고 있었다.** 부호는 눈으로 보고서야 아는 종류라, 실측한
     결론을 검증에 박아 둔다. 양수면 경계 자세가 바닥을 보고 가까운 사람의 머리가
     **더 잘린다** — `FR-9.2.2` 가 자세로 풀려던 것과 정반대다.

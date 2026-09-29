@@ -11,7 +11,8 @@ from types import TracebackType
 
 import pytest
 
-from tools import mechdog_command, udp_probe
+from tools.ops import mechdog_command
+from tools.probe import udp_probe
 
 
 class FakeEsp:

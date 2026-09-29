@@ -111,7 +111,7 @@
 **기체마다 방향도 크기도 다르게 나온다.** 한 대의 값을 다른 기체에 쓰면 회피 구간의
 시간이 틀리게 계산되어 **그 기체가 장애물에 더 붙는다** — 회피가 접근이 된다.
 
-측정은 `python tools/gait_calibrate.py --device <unit-id> --host <ip> --mode <모드>`
+측정은 `python tools/probe/gait_calibrate.py --device <unit-id> --host <ip> --mode <모드>`
 이며, 규칙은 [CONTRIBUTING 6절](../../CONTRIBUTING.md)에, 항목은 WBS `2.2.3`·`2.4.1` 에 있다.
 
 ### ⚠️ 이 개체는 **액추에이터 활성 빌드**로 재플래시되어 있다 (2026-09-11)

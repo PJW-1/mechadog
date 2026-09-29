@@ -96,7 +96,7 @@ flowchart TD
 - FastAPI 관제 서버가 WebSocket 으로 여러 화면에 10Hz 상태를 보내고, 수동 조작과 비상정지를 받습니다([DASHBOARD.md](docs/DASHBOARD.md)).
 - 사건 블랙박스는 사건 당시의 JPEG, 판단 근거, 텔레메트리를 로그와 따로 보관합니다. 완성된 메타데이터가 없는 기록은 피드에 보이지 않습니다([`host/common/blackbox.py`](host/common/blackbox.py)).
 - 로그는 JSON Lines 구조화 로그이며, 샘플 로그를 테스트가 대조합니다([ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)).
-- 가상 로봇(`tools/mock_mechdog.py`)은 명령을 받고 텔레메트리를 응답하며 장애를 주입할 수 있어, 하드웨어 없이 런타임과 관제 화면을 재현합니다([tools/README.md](tools/README.md)).
+- 가상 로봇(`tools/mock/mock_mechdog.py`)은 명령을 받고 텔레메트리를 응답하며 장애를 주입할 수 있어, 하드웨어 없이 런타임과 관제 화면을 재현합니다([tools/README.md](tools/README.md)).
 
 ## 성능 수치와 측정 조건
 
@@ -123,7 +123,7 @@ flowchart TD
 
 ```sh
 pip install -r requirements.txt
-python tools/mock_mechdog.py --device mechdog-01
+python tools/mock/mock_mechdog.py --device mechdog-01
 python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --dashboard-port 8000
 ```
 

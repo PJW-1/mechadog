@@ -37,7 +37,7 @@
 
 - Python 3.12, `pyserial`, `esptool`
 - Arduino CLI + esp32 코어 (`esp-2021r2-patch5-8.4.0` 툴체인의 `xtensa-esp32-elf-objdump`)
-- 저장소의 `tools/ota_update.py`, `tools/telemetry_probe.py`, `host/common/protocol.py`
+- 저장소의 `tools/ops/ota_update.py`, `tools/probe/telemetry_probe.py`, `host/common/protocol.py`
 - 배타 실행 잠금과 하드웨어 래퍼 — 두 작업이 동시에 같은 포트를 열지 못하게 한다
 
 ---
@@ -282,7 +282,7 @@ verified.`), NVS·otadata 보존. 기체는 바닥에 세운 상태.
 `can_action()` 이 `service_mode` 를 보지 않아 **1초 blocking 하는 ACTION 이
 그 모드에서 통과했다.** 7절의 고장 주입(약 813 ms 리셋)과 `motion_hal.cpp` 의
 `action_run` 실측(1,003~1,006 ms)을 합치면 그대로 재부팅이다. 가드를 넣고
-실기에서 확인했다 — `tools/service_action_probe.py --regression`.
+실기에서 확인했다 — `tools/probe/service_action_probe.py --regression`.
 
 | 확인 | 결과 |
 | --- | --- |

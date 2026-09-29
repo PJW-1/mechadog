@@ -124,7 +124,7 @@ flowchart TD
 | `FAILSAFE` 는 해제 외 사건 무시 | `host/behavior/fsm.py` 의 `EXCLUSIVE` · `Fsm._target_for` | `tests/test_fsm.py::test_failsafe_accepts_nothing_but_a_confirmed_reset` |
 | 래치 보고가 풀릴 때까지 해제 보류 | `host/runtime.py` 의 `Runtime.request_reset` · `Runtime._settle_reset` · `host/behavior/fsm.py` 의 `Behavior.event` | `tests/test_runtime.py::test_reset_waits_for_the_robot_latch_report` · `tests/test_fsm_guards.py::test_host_cannot_leave_failsafe_while_the_robot_reports_it` |
 
-펌웨어 C++ 시험(`test_safety_monitor.cpp`)은 함수 단위가 아니라 `main()` 하나에 구간 주석으로 나뉘어 있다. 파이썬 시험 중 `tests/test_safety.py` 는 가상 로봇(`tools/mock_mechdog.py`)을 상대로 돈다.
+펌웨어 C++ 시험(`test_safety_monitor.cpp`)은 함수 단위가 아니라 `main()` 하나에 구간 주석으로 나뉘어 있다. 파이썬 시험 중 `tests/test_safety.py` 는 가상 로봇(`tools/mock/mock_mechdog.py`)을 상대로 돈다.
 
 실측 기록
 

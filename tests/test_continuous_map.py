@@ -9,8 +9,8 @@ from host.common.lidar_link import encode_scan
 from host.slam import settings
 from host.slam.continuous_map import ContinuousMap, LidarPose
 from host.vision.stream_client import Frame
-from tools.lidar_live_map import pose_from_datagram
-from tools.lidar_map_replay import replay, simulation_events
+from tools.lidar.lidar_live_map import pose_from_datagram
+from tools.lidar.lidar_map_replay import replay, simulation_events
 
 
 def _config():

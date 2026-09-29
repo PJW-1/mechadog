@@ -87,10 +87,10 @@
 ## 다시 재는 법
 
 ```
-python tools/vlm_bench.py capture --camera-ip <ip> --root <저장소 밖 폴더> \
+python tools/probe/vlm_bench.py capture --camera-ip <ip> --root <저장소 밖 폴더> \
     --question person_down --label yes --scene 옆으로누움
-~/.venv-mechdog-vlm/Scripts/python.exe tools/vlm_bench.py measure <저장소 밖 폴더> \
+~/.venv-mechdog-vlm/Scripts/python.exe tools/probe/vlm_bench.py measure <저장소 밖 폴더> \
     --repeat 1 --out <저장소 밖 폴더>/<날짜>_r1.json
 ```
 
-폴더 구조는 `<root>/<질문키>/<yes|no>/<장면>_NN.jpg` 다. 런타임을 내린 상태에서 찍는다(`tools/vlm_bench.py` 머리말 참고).
+폴더 구조는 `<root>/<질문키>/<yes|no>/<장면>_NN.jpg` 다. 런타임을 내린 상태에서 찍는다(`tools/probe/vlm_bench.py` 머리말 참고).

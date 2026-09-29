@@ -5,7 +5,7 @@
 기체에서 나왔다.
 
 조건: 받침대 위 공중 보행 · 충전기 분리 · 관제 런타임 정지 · 펌웨어 `dev a18d413`
-(`SENSORS=1 ACTUATORS=1`, 808,129B) · 도구 `python tools/g1_acceptance.py`
+(`SENSORS=1 ACTUATORS=1`, 808,129B) · 도구 `python tools/probe/g1_acceptance.py`
 
 ## 판정 — 4항목 전부 통과
 

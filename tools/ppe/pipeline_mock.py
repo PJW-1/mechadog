@@ -1,6 +1,6 @@
 """운용 판정 경로 목업 — 정답이 있는 원본 사진에 런타임과 같은 경로를 돌려 모델을 비교한다.
 
-경로는 `tools/ppe_live_check.process` 그대로다: COCO 사람 검출 → 사람 크롭(여유 0.08) →
+경로는 `tools/ppe/ppe_live_check.process` 그대로다: COCO 사람 검출 → 사람 크롭(여유 0.08) →
 PPE 검출 → `judge()` 세 상태(적합·위반·확인불가). 모델 파일만 바꿔 끼운다 —
 `models/ppe.onnx`(런타임 모델)는 건드리지 않는다.
 
@@ -29,17 +29,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ppe import mendeley_prepare as md  # noqa: E402
 from tools.ppe.index_raw import imread_any  # noqa: E402
+from tools.ppe.ppe_live_check import (  # noqa: E402
+    STATE_OK,
+    STATE_UNKNOWN,
+    STATE_VIOLATION,
+    process,
+)
 from tools.ppe.rf100_prepare import (  # noqa: E402
     Box,
     in_body_part,
     load_split,
     person_label_problem,
-)
-from tools.ppe_live_check import (  # noqa: E402
-    STATE_OK,
-    STATE_UNKNOWN,
-    STATE_VIOLATION,
-    process,
 )
 
 STATES = (STATE_OK, STATE_VIOLATION, STATE_UNKNOWN)
