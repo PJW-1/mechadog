@@ -1647,6 +1647,10 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+#: 방송 합성기 적재를 기다리는 한도(초). 이 PC 실측 적재는 약 1.5초다.
+BROADCAST_READY_TIMEOUT_S = 10.0
+
+
 def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
     """`config.broadcast` 가 켜져 있으면 관제 방송기를 돌려준다.
 
@@ -1655,12 +1659,19 @@ def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
 
     ⚠️ 설정 오기(`length_scale: "빠르게"`)는 방송만 끈다 — 방송은 런타임 기동을
     막지 않는다는 원칙이 설정 읽기에도 걸린다.
+
+    ⚠️ **합성기 적재를 여기서 끝낸다** (비전 워밍업과 같은 이유, `Runtime.begin`).
+    적재가 운용 루프와 겹치면 GIL 을 1.3~1.7초 쥐어 명령 간격이 600ms 를 넘고, 로봇이
+    기동 직후 페일세이프에 다시 걸린다. 제한 시간을 넘기면 기다림만 그만두고 기동한다.
     """
     try:
-        return broadcast.from_config(config)
+        broadcaster = broadcast.from_config(config)
     except (TypeError, ValueError) as exc:
         LOG.warning("broadcast_config_invalid", error=f"{type(exc).__name__}: {exc}")
         return None
+    if broadcaster is not None:
+        broadcaster.wait_ready(BROADCAST_READY_TIMEOUT_S)
+    return broadcaster
 
 
 def main(argv: list[str] | None = None) -> int:

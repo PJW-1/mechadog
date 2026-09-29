@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -89,6 +90,8 @@ class Broadcaster:
     """문장을 큐에 넣고 데몬 워커가 순서대로 합성·재생한다.
 
     모델은 시작할 때 워커 스레드가 백그라운드로 적재한다 — 첫 문장의 재생 지연을 없앤다.
+    ⚠️ 적재(piper·onnxruntime)가 GIL 을 1.5초가량 쥔다 — 운용 루프 전에 `wait_ready()`
+    로 끝을 기다린다.
     """
 
     def __init__(
@@ -116,10 +119,12 @@ class Broadcaster:
         self._stop = threading.Event()
         self._worker = threading.Thread(target=self._run, name="broadcast-tts", daemon=True)
         self._worker.start()
+        self._preload: threading.Thread | None = None
         if preload and self._synth_fn is None:
-            threading.Thread(
+            self._preload = threading.Thread(
                 target=self._ensure_synth, name="broadcast-tts-preload", daemon=True
-            ).start()
+            )
+            self._preload.start()
 
     @property
     def volume(self) -> int:
@@ -155,6 +160,21 @@ class Broadcaster:
             LOG.warning("broadcast_queue_full", dropped=text[:80])
         except Exception as exc:  # noqa: BLE001 — 이 함수는 절대 던지면 안 된다
             LOG.error("broadcast_say_failed", error=f"{type(exc).__name__}: {exc}")
+
+    def wait_ready(self, timeout_s: float) -> bool:
+        """미리 적재가 끝날 때까지 최대 `timeout_s` 초 기다린다. 제한 시간에 걸리면 False.
+
+        적재 실패(piper 없음)도 끝난 것이다 — 방송만 꺼진 채 True 로 곧바로 돌아온다.
+        """
+        started = time.monotonic()
+        if self._preload is not None:
+            self._preload.join(timeout_s)
+        elapsed_ms = round((time.monotonic() - started) * 1000)
+        if self._preload is not None and self._preload.is_alive():
+            LOG.warning("broadcast_preload_timeout", elapsed_ms=elapsed_ms, timeout_s=timeout_s)
+            return False
+        LOG.info("broadcast_ready", elapsed_ms=elapsed_ms, enabled=not self._disabled)
+        return True
 
     def close(self) -> None:
         """워커 스레드를 정리한다."""
