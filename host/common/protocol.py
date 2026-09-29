@@ -29,7 +29,7 @@ import time
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeGuard
 
 # ══════════════════════════════════════════════════════════════
 #  1. 규약 상수 — PROTOCOL.md 2절 · 5절
@@ -208,7 +208,7 @@ def system_clock_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _is_number(value: Any) -> bool:
+def _is_number(value: Any) -> TypeGuard[int | float]:
     """bool·NaN·무한대는 수치로 보지 않는다."""
     if not isinstance(value, int | float) or isinstance(value, bool):
         return False

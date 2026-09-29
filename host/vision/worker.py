@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
@@ -79,6 +79,21 @@ class WorkerStats:
     def note(self, ms: float) -> None:
         self.inferences += 1
         self.inference_ms_max = max(self.inference_ms_max, ms)
+
+
+class VisionSource(Protocol):
+    """운용 루프(`runtime.py`)가 비전에 기대는 표면. `VisionWorker` 와 시험 대역이 채운다.
+
+    ⚠️ `set_ppe_enabled` 가 없는 대역도 있어 런타임은 켜기·끄기 전에 `hasattr` 로 확인한다.
+    """
+
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def latest(self) -> VisionResult | None: ...
+    def age_ms(self, now_ms: int) -> int | None: ...
+    def stalled(self, now_ms: int) -> bool: ...
+    def healthy(self) -> bool: ...
+    def set_ppe_enabled(self, enabled: bool) -> None: ...
 
 
 class VisionWorker:

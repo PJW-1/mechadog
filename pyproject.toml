@@ -26,3 +26,18 @@ addopts = "-q"
 # host/ 를 import 가능하게 한다. 저장소 루트를 sys.path 에 넣는 표준 방법이며,
 # 이것이 없으면 tests/ 에서 `from host.common import ...` 가 실패한다.
 pythonpath = ["."]
+
+[tool.mypy]
+# 좁은 범위(host/common · host/behavior)부터 strict 로 켠다 — CI 는 `mypy host/common host/behavior`.
+# 범위를 넓힐 때는 CI 명령에 패키지를 더하고 아래 follow_imports 예외에서 뺀다.
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+# 범위 밖 패키지는 타입 정보만 읽고 오류는 보고하지 않는다(아직 strict 를 통과하지 않는다).
+[[tool.mypy.overrides]]
+module = ["host.vision.*", "host.slam.*"]
+follow_imports = "silent"

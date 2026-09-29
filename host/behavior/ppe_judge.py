@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from host.behavior.commander import Commander
 from host.behavior.escalation import Escalation
@@ -17,6 +17,9 @@ from host.behavior.mission import Mission
 from host.behavior.posture import RETURN, PostureEscalation
 from host.common.logging_setup import EdgeTrigger, event_logger
 from host.vision.ppe_detector import OK, UNDETERMINED, VIOLATION
+
+if TYPE_CHECKING:
+    from host.vision.worker import VisionResult
 
 #: 런타임과 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
 LOG = event_logger("mechadog.runtime")
@@ -106,7 +109,7 @@ class PpeJudge:
             if self._behavior.state == "ALERT" and self._apply(Event.PPE_SETTLED, now_ms):
                 self._escalation.settle_ppe(now_ms)
 
-    def forget_lost(self, result: Any, now_ms: int) -> None:
+    def forget_lost(self, result: VisionResult, now_ms: int) -> None:
         """판정한 트랙 중 보이는 것은 시각을 갱신하고 `track_lost_ms` 넘게 안 보인 것은 잊는다."""
         if self._mission.enables("ppe"):
             active = {track.track_id for track in result.tracks}
@@ -161,7 +164,7 @@ class PpeJudge:
             self.return_pose()
 
     def _finish(
-        self, state: str, result: Any, now_ms: int, reason: str, *, returned: bool = False
+        self, state: str, result: VisionResult, now_ms: int, reason: str, *, returned: bool = False
     ) -> None:
         track_id = self._target
         if track_id is None or track_id in self._done:
@@ -187,7 +190,7 @@ class PpeJudge:
                 self._escalation.settle_ppe(now_ms)
         self._record(event, result, {"track_id": track_id, "state": state, "reason": reason})
 
-    def judge(self, result: Any, now_ms: int) -> None:
+    def judge(self, result: VisionResult, now_ms: int) -> None:
         """공장 모드 `ALERT` 에서 프레임 하나로 대상 트랙의 보호구를 판정한다 (ADR-42)."""
         if not self._mission.enables("ppe") or self._behavior.state != "ALERT":
             return
