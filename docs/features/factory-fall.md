@@ -62,7 +62,7 @@ flowchart TD
 | 분기 | 코드 위치 | 확인하는 테스트 |
 | :--- | :--- | :--- |
 | 누움 후보 판정 (종횡비·정지·공백) | `host/vision/person.py` 의 `FallenGate.observe` | `test_the_measured_fallen_box_is_confirmed` · `test_a_standing_person_is_never_confirmed` · `test_a_sitting_person_is_never_confirmed` · `test_movement_resets_the_hold` · `test_a_short_detection_gap_keeps_the_hold` |
-| 누움 후보 → 의심, 접근 | `host/runtime.py` 의 `Runtime._observe_fallen` · `Runtime._track` · `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `test_a_lying_candidate_suspects_a_fall_and_approaches` |
+| 누움 후보 → 의심, 접근 | `host/runtime.py` 의 `Runtime._observe_fallen` · `host/behavior/track_controller.py` 의 `TrackController.track` · `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `test_a_lying_candidate_suspects_a_fall_and_approaches` |
 | 순찰 판독 «예» → 의심, 진입 «예» 는 세지 않음 | `host/behavior/fall_monitor.py` 의 `FallMonitor.ask` · `FallMonitor.take_reading` | `test_a_patrol_reading_asks_only_person_down_every_interval` · `test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` |
 | 구역 판독 «예» → 의심 | `host/behavior/zone_inspector.py` 의 `ZoneInspector._take_reading` | `test_a_person_down_reading_at_a_zone_suspects_a_fall_not_an_alarm` · `test_a_person_down_reading_that_lands_after_leaving_still_suspects` |
 | «예» 2회, 1초 간격 → `PERSON_DOWN` | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` · `FallMonitor._confirm` | `test_a_fall_is_confirmed_by_readings_a_gap_apart` · `test_a_no_between_readings_does_not_reset_the_count` |
