@@ -74,7 +74,7 @@ flowchart TD
 | 5초 상실로 의심 종료 (쿨다운 없음) | `host/behavior/fall_monitor.py` 의 `FallMonitor.watch` · `FallMonitor._end` | `tests/test_fall_monitor.py::test_losing_the_target_ends_the_suspicion_without_a_cooldown` |
 | 경보 확인 → 순찰 | `host/runtime.py` 의 `Runtime.confirm_alarm` | `test_confirming_a_fall_alarm_returns_to_patrol` |
 | PPE 경고 중 확정 | `host/behavior/escalation.py` 의 `Escalation.raise_to` | `test_a_fall_confirmed_during_a_ppe_warning_announces_its_own_sentence` · `test_an_alarm_during_the_ppe_warning_latches` |
-| 의심 중 PPE 보류 | `host/runtime.py` 의 `Runtime._judge_ppe` | `test_factory_holds_ppe_while_a_fall_is_a_candidate` |
+| 의심 중 PPE 보류 | `host/behavior/ppe_judge.py` 의 `PpeJudge.judge` | `test_factory_holds_ppe_while_a_fall_is_a_candidate` |
 | 경비 모드는 기록만 | `host/behavior/mission.py` 의 `FEATURES` · `host/runtime.py` 의 `Runtime._observe_fallen` | `test_guard_fall_is_recorded_but_does_not_raise_the_alarm` · `test_guard_mode_does_not_announce_a_fall` |
 | 판독 워커 비동기 제출·수거 | `host/vision/vlm_worker.py` 의 `VlmWorker.submit` · `VlmWorker.take` | `test_second_submit_while_busy_is_refused` · `test_submit_is_refused_when_the_reader_is_not_loaded` · `test_submit_passes_the_question_keys_to_the_reader` |
 | 판독 한 번 (예산·실패·파싱) | `host/vision/vlm_reader.py` 의 `VlmReader.read` | `test_unknown_is_not_false` · `test_unparsed_answer_keeps_the_raw_text` · `test_partial_reading_is_kept_on_failure` · `test_reading_can_ask_only_some_questions` |
