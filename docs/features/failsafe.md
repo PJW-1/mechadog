@@ -83,11 +83,11 @@ flowchart TD
 | 온보드 링크 두절 → 래치 | Wi-Fi 연결 끊김, 즉시 | 없음 (`WiFi.status()`) | — |
 | 링크 정상 표시 `link_ok` | 마지막 유효 명령이 3000ms 이내 (표시만 하고 래치하지 않음) | 펌웨어 `kLinkHealthyAgeMs` (`safety.link_loss_failsafe_ms` 와 같은 값) | — |
 | 호스트 링크 두절 → `LINK_LOST` | 텔레메트리 3000ms 이상 없음 (첫 수신 전에는 보지 않음) | `safety.link_loss_failsafe_ms` | — |
-| 저전압 경고 `lowbatt` | 7.0V 이하 1표본 (동작을 막지 않음) | `safety.battery_warn_v` | [저전압 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md) |
-| 저전압 셧다운 → 래치 | 6.6V 이하 새 표본 연속 3개 | `safety.battery_shutdown_v` | [저전압 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md) |
-| 셧다운 재무장 · 해제 허용 | 7.0V 초과로 회복 | `safety.battery_warn_v` | [저전압 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md) |
-| 반사 정지 | 25cm 미만 연속 2표본 (센서 주기 40ms) | `safety.obstacle_stop_cm` | [반사 정지 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md) |
-| 반사 해제 | 30cm 이상 연속 5표본 | 펌웨어 `kObstacleClearCm` · `clear_samples` (설정 키 없음) | [반사 정지 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 저전압 경고 `lowbatt` | 7.0V 이하 1표본 (동작을 막지 않음) | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
+| 저전압 셧다운 → 래치 | 6.6V 이하 새 표본 연속 3개 | `safety.battery_shutdown_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
+| 셧다운 재무장 · 해제 허용 | 7.0V 초과로 회복 | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
+| 반사 정지 | 25cm 미만 연속 2표본 (센서 주기 40ms) | `safety.obstacle_stop_cm` | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 반사 해제 | 30cm 이상 연속 5표본 | 펌웨어 `kObstacleClearCm` · `clear_samples` (설정 키 없음) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 표본 신선도 | 측정 뒤 200ms 이내, 같은 표본은 한 번만 셈 | 펌웨어 `max_sample_age_ms` (설정 키 없음) | — |
 | 반사 정지 중 허용 명령 | 후진·제자리 조향(step 0)·정지 | 없음 | [ADR-22](../DECISIONS.md#adr-22) |
 | `RESET_SAFE` 거부 | Wi-Fi 끊김 · 저전압 원인 남음 · OTA 확인 대기 이미지 | 없음 | [ADR-21](../DECISIONS.md#adr-21) |
@@ -128,6 +128,6 @@ flowchart TD
 
 실측 기록
 
-- [온보드 근거리 반사 정지](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md)
-- [저전압 감시](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md)
-- [초음파 표적 시험](../../TEST_MECHDOG/results/20260916_2.1.3-sonar/summary.md)
+- [온보드 근거리 반사 정지](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md)
+- [저전압 감시](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md)
+- [초음파 표적 시험](../../field_tests/results/20260916_2.1.3-sonar/summary.md)

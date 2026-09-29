@@ -199,7 +199,7 @@ Issue 를 닫으려면 PR 본문에 `Closes #이슈번호`를, 일부만 다루�
 | :--- | :--- |
 | **개체 프로파일 필수** | 모든 실기 실행은 `--device <unit-id>` 로 자신의 프로파일을 지정한다. 기본값 사용 금지 |
 | **보정값은 기체별로 잰다 — 복사 금지** | `servo_offset` 과 `gait_calibration` 은 **그 기체에서 직접 재서** 그 기체의 프로파일에만 적는다. 다른 기체의 값을 복사하거나 2대 공용으로 쓰는 PR 은 반려한다. 재는 절차는 [docs/measurements/2026-09-18-turn-rate-curve.md](docs/measurements/2026-09-18-turn-rate-curve.md) 1절에 있고, 실측 사례는 [TEAM_PROCESS 4절](docs/internal/TEAM_PROCESS.md)에 있다 |
-| **확인 결과는 PR 본문에** | 전압·fps·지연 확인 결과는 PR 본문에 남긴다. 채팅이나 메모에만 남기지 않는다. **`config` 로 들어갈 값은 `config/` 가 정본**이고 별도 리포트 문서는 두지 않는다. 원자료(csv·json·콘솔 로그)까지 남길 때만 `TEST_MECHDOG/results/<날짜-시각>/` 에 둔다 |
+| **확인 결과는 PR 본문에** | 전압·fps·지연 확인 결과는 PR 본문에 남긴다. 채팅이나 메모에만 남기지 않는다. **`config` 로 들어갈 값은 `config/` 가 정본**이고 별도 리포트 문서는 두지 않는다. 원자료(csv·json·콘솔 로그)까지 남길 때만 `field_tests/results/<날짜-시각>/` 에 둔다 |
 | **성능 수치의 출처 명시** | Phase 1 NFR 측정치는 **`phase1_reference` 실측값**으로 문서화하고, 개체별 편차는 참고치로 병기한다 |
 | **안전 로직은 온보드에서 이동 금지** | 초음파 반사 정지·명령 타임아웃·저전압·전도 감지는 Tier 1이다. Host PC로 올리는 PR은 반려한다 ([아키텍처 1.2 불변 규칙](docs/ARCHITECTURE.md)) |
 | **카메라·로봇 펌웨어 코드는 한 PR에 섞지 않는다** | `firmware_xiao_vision`은 DR-3 상 촬영·송출 전용이다. 한 PR이 카메라와 `firmware_mechdog_motion`/`firmware_lidar_relay` 의 **코드 파일**(`*.ino`·`*.cpp`·`*.h` 등)을 같이 바꾸면 반려한다 — 로봇 기능이 카메라에 딸려 플래시되는 사고가 있었다 (2026-09-23). 문서 동반 변경은 허용. CI 의 `Firmware scope guard` 가 자동으로 검사한다 (`tools/check_firmware_scope.py`). 카메라 펌웨어 PR 은 실기 플래시 후 부팅 로그와 스트림 1프레임을 본문에 남긴다 |

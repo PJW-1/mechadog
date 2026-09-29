@@ -66,7 +66,7 @@ Host 는 100ms 마다 명령을 보냅니다. 기준이 300ms 이면 연속한 �
 - 목업 로봇이 이동 명령 뒤 601ms 에 LED 명령만 받으면 이전 이동을 재개하지 않고 정지 상태를 유지하는지 확인합니다([`tests/test_runtime_safeguards.py` L110](../../tests/test_runtime_safeguards.py#L110)).
 - 목업 로봇이 설정된 타임아웃이 지나면 펌웨어처럼 곧바로 래치하고, `RESET_SAFE` 전까지 `MOVE` 를 거부하는지 확인합니다([`tests/test_safety.py` L88](../../tests/test_safety.py#L88), [L103](../../tests/test_safety.py#L103)).
 
-실기에서는 600ms 펌웨어를 올린 `mechdog-01` 로 같은 날 21:21 부터 21:39 까지 경비 대응 시험 다섯 판을 진행했습니다([실기 기록](../../TEST_MECHDOG/results/20260923_patrol-engage/summary.md)).
+실기에서는 600ms 펌웨어를 올린 `mechdog-01` 로 같은 날 21:21 부터 21:39 까지 경비 대응 시험 다섯 판을 진행했습니다([실기 기록](../../field_tests/results/20260923_patrol-engage/summary.md)).
 
 ## 남은 한계
 

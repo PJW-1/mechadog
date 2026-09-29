@@ -31,11 +31,11 @@ flowchart TD
 
 | 조건 | 값 | 설정 키 | 근거 |
 | :--- | :--- | :--- | :--- |
-| 누움 후보: 박스 가로÷세로 | 1.5 이상 | `vision.fallen.aspect_ratio` | [ADR-42](../DECISIONS.md#adr-42) · [쓰러짐 규칙 실기](../../TEST_MECHDOG/results/20260923_person-down/summary.md) |
-| 누움 후보: 정지 판정 | 박스 중심 이동 20px 이하 | `vision.fallen.still_threshold_px` | [쓰러짐 규칙 실기](../../TEST_MECHDOG/results/20260923_person-down/summary.md) |
-| 누움 후보를 이어 주는 박스 공백 | 1000ms 이하 | `vision.fallen.gap_ms` | [쓰러짐 규칙 실기](../../TEST_MECHDOG/results/20260923_person-down/summary.md) |
+| 누움 후보: 박스 가로÷세로 | 1.5 이상 | `vision.fallen.aspect_ratio` | [ADR-42](../DECISIONS.md#adr-42) · [쓰러짐 규칙 실기](../../field_tests/results/20260923_person-down/summary.md) |
+| 누움 후보: 정지 판정 | 박스 중심 이동 20px 이하 | `vision.fallen.still_threshold_px` | [쓰러짐 규칙 실기](../../field_tests/results/20260923_person-down/summary.md) |
+| 누움 후보를 이어 주는 박스 공백 | 1000ms 이하 | `vision.fallen.gap_ms` | [쓰러짐 규칙 실기](../../field_tests/results/20260923_person-down/summary.md) |
 | 순찰 중 판독 주기 | 2000ms | `vision.vlm.patrol_interval_ms` | [ADR-42](../DECISIONS.md#adr-42) |
-| 확정에 필요한 판독 «예» | 2회 (의심에 들게 한 «예» 는 세지 않음) | `fsm.fall_confirm_vlm_yes` | [ADR-42](../DECISIONS.md#adr-42) · [VLM 카메라 벤치](../../TEST_MECHDOG/results/20260928_4.8.0-vlm-bench/summary.md) |
+| 확정에 필요한 판독 «예» | 2회 (의심에 들게 한 «예» 는 세지 않음) | `fsm.fall_confirm_vlm_yes` | [ADR-42](../DECISIONS.md#adr-42) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
 | 센 «예» 끼리의 프레임 간격 | 1000ms 이상 | `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | 의심 제한 시간 | 20000ms | `fsm.fall_suspect_timeout_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | 재의심 쿨다운 | 20000ms | `fsm.fall_resuspect_cooldown_ms` | [ADR-42](../DECISIONS.md#adr-42) |
@@ -81,5 +81,5 @@ flowchart TD
 
 실측 기록
 
-- [쓰러짐 규칙 실기 (누움 후보 판정)](../../TEST_MECHDOG/results/20260923_person-down/summary.md)
-- [VLM 판독 카메라 벤치 (person_down 적중·오경보·지연)](../../TEST_MECHDOG/results/20260928_4.8.0-vlm-bench/summary.md)
+- [쓰러짐 규칙 실기 (누움 후보 판정)](../../field_tests/results/20260923_person-down/summary.md)
+- [VLM 판독 카메라 벤치 (person_down 적중·오경보·지연)](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md)

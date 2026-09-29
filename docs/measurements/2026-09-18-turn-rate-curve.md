@@ -9,7 +9,7 @@
 | 기체 | **`mechdog-01`** · 카메라 탑재 상태 · 배터리 8.2 → 7.6V |
 | 바닥 | 실내 장판 (2026-09-11 측정과 같은 바닥) |
 | 도구 | 런타임 + `POST /api/command/drive` (`MANUAL`) · `yaw_rate_deg_s` (WBS 4.1.4) |
-| 원자료 | `TEST_MECHDOG/results/20260918_turn-curve/` |
+| 원자료 | `field_tests/results/20260918_turn-curve/` |
 
 > ⚠️ **아래 숫자는 전부 `mechdog-01` 한 대의 것이다.** 비대칭의 출처가 개체별 서보
 > 오프셋이라 **기체마다 방향도 크기도 다르다** — `mechdog-02` 는 직진 편향이 아예
@@ -243,7 +243,7 @@ dev  -68px   → raw +2.00° + (-8.0) = -6.00°  →  순 회전 -0.20 (우!  �
 (곡선 8.6→7.6V, 추종 7.56V 로 바닥) ⓑ 지속 조향 대 100ms 마다 바뀌는 과도응답. 미확인이며
 **같은 배터리에서 곡선을 다시 재면 갈린다.**
 
-원자료·절차는 `TEST_MECHDOG/results/20260919_bias-symmetry/summary.md`.
+원자료·절차는 `field_tests/results/20260919_bias-symmetry/summary.md`.
 
 ---
 

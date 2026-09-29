@@ -59,7 +59,7 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | 모델 | `Qwen/Qwen2-VL-2B-Instruct` · bf16 · 기동 때 한 번 적재 | `vision.vlm.model_id` | [ADR-35](../DECISIONS.md#adr-35) |
 | 답 길이 상한 | 32 토큰 | `vision.vlm.max_new_tokens` | [ADR-35](../DECISIONS.md#adr-35) |
-| 판독 한 번의 예산 | 3000ms (질문 전마다 누적 시간으로 확인) | `vision.vlm.budget_ms` | [VLM 비교 실측](../../TEST_MECHDOG/results/20260920_4.8.0-vlm-compare/summary.md) |
+| 판독 한 번의 예산 | 3000ms (질문 전마다 누적 시간으로 확인) | `vision.vlm.budget_ms` | [VLM 비교 실측](../../field_tests/results/20260920_4.8.0-vlm-compare/summary.md) |
 | 구역 종료 대기 상한 | 3000ms | `vision.vlm.budget_ms` | [ADR-35](../DECISIONS.md#adr-35) |
 | 동시 판독 | 1건 · 겹치면 거절 (쌓지 않음) | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
 | 구역 판독 | 방문당 한 번 · 세 항목 | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
@@ -106,5 +106,5 @@ flowchart TD
 
 실측 기록
 
-- [VLM 판독 카메라 벤치](../../TEST_MECHDOG/results/20260928_4.8.0-vlm-bench/summary.md)
-- [두 장 비교 가능성 · 질문당 지연](../../TEST_MECHDOG/results/20260920_4.8.0-vlm-compare/summary.md)
+- [VLM 판독 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md)
+- [두 장 비교 가능성 · 질문당 지연](../../field_tests/results/20260920_4.8.0-vlm-compare/summary.md)

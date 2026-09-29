@@ -105,13 +105,13 @@ flowchart TD
 | 항목 | 수치 | 조건 | 원문 |
 | :--- | :--- | :--- | :--- |
 | 검출기 처리 시간 | 평균 8.2ms, p95 8.6ms | 2026-09-10, 기준 PC·DirectML, 전처리부터 후처리까지, n=50, 잡음 프레임(속도만 측정) | [design-decisions §4](docs/design-decisions.md), [ADR-24](docs/DECISIONS.md#adr-24) |
-| 사람 검출 신뢰도 | 0.89~0.92 | 2026-09-10 실기, 정면·밝은 조건, 거리 2~3m | [design-decisions §4](docs/design-decisions.md), [기준선 인용](TEST_MECHDOG/results/20260915_4.4.3-event-feed/summary.md) |
+| 사람 검출 신뢰도 | 0.89~0.92 | 2026-09-10 실기, 정면·밝은 조건, 거리 2~3m | [design-decisions §4](docs/design-decisions.md), [기준선 인용](field_tests/results/20260915_4.4.3-event-feed/summary.md) |
 | 프레임 도착 → 검출 완료 | 평균 49.9ms → 24.4ms | 2026-09-10 실기, 같은 스트림에서 추론률 10fps 와 25fps 비교 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | PC ↔ 로봇 UDP 왕복 | 평균 3.2ms, 최대 15.4ms, 손실 0% | 2026-09-09 실기, XIAO VGA 25fps 200프레임을 수신하는 동안 | [ADR-23](docs/DECISIONS.md#adr-23) |
-| 텔레메트리 수신률 | 10.00Hz (30초에 새 `seq` 300건) | 2026-09-17, `mechdog-01`, 반복된 값이 아니라 새 `seq` 로 계수 | [G1 검수 기록](TEST_MECHDOG/results/20260917_6.4.1-g1/summary.md) |
+| 텔레메트리 수신률 | 10.00Hz (30초에 새 `seq` 300건) | 2026-09-17, `mechdog-01`, 반복된 값이 아니라 새 `seq` 로 계수 | [G1 검수 기록](field_tests/results/20260917_6.4.1-g1/summary.md) |
 | 카메라 → 판단 → 정지 명령 | 최소 81ms, 최대 121ms (예산 250ms) | 2026-09-15, `mechdog-01`, 사슬을 끝까지 확정한 프레임 4장 | [E2E 측정](docs/measurements/2026-09-15-e2e-chain.md) |
 | 관제 화면 FPV | 22.62fps (272장 / 11.982초) | 2026-09-15, 검출 박스 포함 브라우저 WebSocket, 순서 역전·JPEG 오류 0건 | [DECISIONS.md](docs/DECISIONS.md) |
-| 초음파 반사 정지 | 9/9 통과, 상태 떨림 29회 → 0회 | 2026-09-17, `mechdog-01` 받침대 시험, 21cm 장애물, 해제 조건 수정 전후 비교 | [반사 정지 실측](TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 초음파 반사 정지 | 9/9 통과, 상태 떨림 29회 → 0회 | 2026-09-17, `mechdog-01` 받침대 시험, 21cm 장애물, 해제 조건 수정 전후 비교 | [반사 정지 실측](field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 
 ## 실제 시연
 
@@ -143,7 +143,7 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 - [기능별 판단 흐름도 8건](docs/features/)
 - [대표 설계 결정](docs/design-decisions.md)
 - [설계 결정 기록(ADR 42건)](docs/DECISIONS.md)
-- [실기 시험 기록](TEST_MECHDOG/README.md)
+- [실기 시험 기록](field_tests/README.md)
 
 ## 개발 방식
 

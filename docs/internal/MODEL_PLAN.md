@@ -39,7 +39,7 @@
 
 ## 1. PPE 이미지 모델 (`3.7.x`) — v1 설계와 현행 v2
 
-~~현행 `ppe-v3`는 5클래스(`person_down` 포함), 출력 `[1, 8400, 10]`, 학습에 합성 이미지 570장을 사용한다(`models/NOTICE`). `person_down`은 쓰러짐 세션과 Simuletic 데이터로 211(학습)·17(검증)개 라벨을 확보해 실제로 학습했다(검증 AP 0.439). 아래의 4클래스·공개 데이터만 사용한다는 설명은 v1 설계 기록이다. v3의 합성 데이터 사용은 OI-13 결정과 달라 승인 또는 제외 결정이 필요하며, XIAO 실사 합격 검증은 아직 없다.~~ *(2026-09-28 개정)* `ppe-v3` 이후 후보는 v12~v23b 로 이어졌고, 마지막 후보 v23b(YOLOX-S · 5클래스)가 mechdog-01 XIAO 실측(직립·전신·전부 착용 69.4초, `TEST_MECHDOG/results/20260928_ppe-xiao/`)에서 정상 착용자 오경고 4회로 기각됐다. **PPE 모델은 이제 `person_down` 을 빼고 4클래스로 간다** — 쓰러짐은 FR-9 가 아니라 `host/vision/person.py` 종횡비 의심 + VLM 확정이 맡는다(ADR-42). 아래 4클래스·공개 데이터 설계가 다음 모델의 기준이며, 데이터는 Roboflow Universe construction-safety(CC BY 4.0, project id construction-safety-gsnvb)와 XIAO 실측에서 틀린 어려운 사례로 바꿨다. 아직 학습 전이다.
+~~현행 `ppe-v3`는 5클래스(`person_down` 포함), 출력 `[1, 8400, 10]`, 학습에 합성 이미지 570장을 사용한다(`models/NOTICE`). `person_down`은 쓰러짐 세션과 Simuletic 데이터로 211(학습)·17(검증)개 라벨을 확보해 실제로 학습했다(검증 AP 0.439). 아래의 4클래스·공개 데이터만 사용한다는 설명은 v1 설계 기록이다. v3의 합성 데이터 사용은 OI-13 결정과 달라 승인 또는 제외 결정이 필요하며, XIAO 실사 합격 검증은 아직 없다.~~ *(2026-09-28 개정)* `ppe-v3` 이후 후보는 v12~v23b 로 이어졌고, 마지막 후보 v23b(YOLOX-S · 5클래스)가 mechdog-01 XIAO 실측(직립·전신·전부 착용 69.4초, `field_tests/results/20260928_ppe-xiao/`)에서 정상 착용자 오경고 4회로 기각됐다. **PPE 모델은 이제 `person_down` 을 빼고 4클래스로 간다** — 쓰러짐은 FR-9 가 아니라 `host/vision/person.py` 종횡비 의심 + VLM 확정이 맡는다(ADR-42). 아래 4클래스·공개 데이터 설계가 다음 모델의 기준이며, 데이터는 Roboflow Universe construction-safety(CC BY 4.0, project id construction-safety-gsnvb)와 XIAO 실측에서 틀린 어려운 사례로 바꿨다. 아직 학습 전이다.
 
 ### 1.1 계열 결정: **YOLOX-Nano** (직접 학습)
 

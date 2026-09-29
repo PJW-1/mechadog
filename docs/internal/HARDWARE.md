@@ -131,8 +131,8 @@
 ### 음성 부품 실측 — 로봇 I²C 주소 · XIAO 마이크 (2026-09-23)
 
 `4.7.9` 실측에서 음성 모듈과 MP3 모듈을 로봇에 꽂아 주소를 읽었다. 원자료는
-[`TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md`](../../TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md)
-와 [`TEST_MECHDOG/results/20260923_xiao-mic/summary.md`](../../TEST_MECHDOG/results/20260923_xiao-mic/summary.md) 다.
+[`field_tests/results/20260923_4.7.9-bridge-transparency/summary.md`](../../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md)
+와 [`field_tests/results/20260923_xiao-mic/summary.md`](../../field_tests/results/20260923_xiao-mic/summary.md) 다.
 
 **로봇 `IIC1` (SDA22/SCL23, 100 kHz) 주소표** — `IIC2` 는 어느 구성에서도 무응답이다.
 

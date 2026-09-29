@@ -83,8 +83,8 @@ flowchart TD
 | L3 해제 | 관리자 경보 확인만 (코드에 고정, 설정으로 바꿀 수 없음) | — | [ADR-26](../DECISIONS.md#adr-26) |
 | F 해제 | 로봇이 래치 해제를 보고한 `RESET_CONFIRMED` 만 | — | [ADR-26](../DECISIONS.md#adr-26) |
 | 모드 전환 | `IDLE` · `MANUAL` 에서만 받고 단계는 건드리지 않음 | `mission.mode` | [ADR-33](../DECISIONS.md#adr-33) |
-| 눈 LED | L0 파랑 · L1 노랑 · L2 주황 · L3 빨강 · F 흰색 | `escalation.led` | [눈 LED 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md) |
-| L3 점멸 | 2Hz | `escalation.led.l3_blink_hz` | [눈 LED 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md) |
+| 눈 LED | L0 파랑 · L1 노랑 · L2 주황 · L3 빨강 · F 흰색 | `escalation.led` | [눈 LED 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md) |
+| L3 점멸 | 2Hz | `escalation.led.l3_blink_hz` | [눈 LED 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md) |
 | L3 문장 | 원인별 문장이 있으면 그것, 없으면 공통 문장 | `escalation.sound.l3_warning` · `escalation.sound.person_down_warning` | [ADR-38](../DECISIONS.md#adr-38) |
 
 ## 실패·예외 시 동작
@@ -125,6 +125,6 @@ flowchart TD
 
 실측 기록
 
-- [눈 LED 단계 표시 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md)
-- [헤드리스 경보 해제와 판정 대기 연장 실기](../../TEST_MECHDOG/results/20260922_alarm-web-release/summary.md)
-- [경비 대응 실기: L1 에서 L2 까지](../../TEST_MECHDOG/results/20260923_patrol-engage/summary.md)
+- [눈 LED 단계 표시 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md)
+- [헤드리스 경보 해제와 판정 대기 연장 실기](../../field_tests/results/20260922_alarm-web-release/summary.md)
+- [경비 대응 실기: L1 에서 L2 까지](../../field_tests/results/20260923_patrol-engage/summary.md)
