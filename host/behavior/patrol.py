@@ -1,25 +1,13 @@
 """구역 순찰 제어 — 계획을 규약 의도로 바꾼다 (FR-7 · Phase 2).
 
-**이 파일은 전문을 만들지 않는다.** `MOVE`·`STOP`·`ESTOP`·`RESET_SAFE`·`STATE` 는
-전부 `Commander` 가 만들고, 여기서는 *무엇을 할 의도인지*만 세운다.
-규약 구현을 둘로 갈라지게 하지 않는 것이 이 구조의 목적이다
-(ENGINEERING_GUIDE 2.1 · PROTOCOL.md 6절).
+이 파일은 전문을 만들지 않는다 — 전문은 전부 `Commander` 가 만들고 여기서는 의도만
+세운다 (ENGINEERING_GUIDE 2.1 · PROTOCOL.md 6절).
 
-합치기 전 코드에서 **고친 것들** — 전부 규약 위반이었다.
-
-| 합치기 전 | 왜 안 되는가 | 지금 |
-| :--- | :--- | :--- |
-| `{"cmd": "FORWARD", "ts": time.time()}` | 규약에 없는 스키마다. `type` 이 없고 `seq` 가 없고 `ts` 가 초 단위 실수라 규칙 ②·⑤ 로 폐기된다 | `Commander` 가 만드는 `MOVE` |
-| `TURN_LEFT` · `TURN_RIGHT` | **제자리 회전은 지원하지 않는다** (DR-11). 로봇이 할 수 없는 동작이다 | 호(arc) 조향 `MOVE{step, angle}` |
-| 위험 시 `STOP` | `STOP` 은 일반 보행 정지이고 FAILSAFE 를 걸지 않는다 | `ESTOP` (즉시 · 래치) |
-| 첫 전문이 아무거나 | 로봇이 seq 역전으로 **통째로 폐기한다** | `open_session()` = `STOP` seq=1 |
-| 초음파 25cm 를 호스트가 판정 | **Tier 1 을 호스트로 옮기는 것**이 된다 (아키텍처 1.2 불변 규칙) | `flags.obstacle` 을 따라간다 |
-| 상태 이름 `MOVING`·`ROTATING`·`ARRIVED` | FSM 13종에 없어 로봇이 폐기 + WARN 한다 | 13종으로 사상 (아래 표) |
-| RESET 을 스스로 | 사람 확인 없는 자동 해제 (DR-16) | 조작자 확인 + 텔레메트리로 해제 확인 |
-
-**측위 실패는 `ESTOP` 이 아니다.** 자기 위치를 모르는 것은 위험이 아니라 능력의
-상실이므로 `LOST` 로 가고 정지한다 (FR-6.6). `ESTOP` 을 걸면 사람이 와서 풀어야
-하는데, 다음 스캔에서 재측위될 수 있는 상황에 그것은 과하다.
+- 방향 전환은 호(arc) 조향 `MOVE{step, angle}` 뿐이다 (ADR-11).
+- 초음파 근거리 정지는 로봇의 `flags.obstacle` 을 따라가고 판정하지 않는다 (아키텍처 1.2 · ADR-22).
+- 위험 시 `ESTOP`(래치)을 보내고, 해제는 사람 확인 + 텔레메트리 `safety_latched=false` 로만 한다 (ADR-21).
+- 내부 단계는 FSM 13상태로 사상해 `STATE` 로 내려보낸다 (`FSM_STATE_FOR`).
+- 측위 실패는 `ESTOP` 이 아니라 `LOST` 정지다 — 다음 스캔에서 재측위될 수 있다 (FR-6.6).
 """
 
 from __future__ import annotations
@@ -55,7 +43,7 @@ LOG = event_logger("mechadog.behavior.patrol")
 
 
 class Phase(StrEnum):
-    """순찰 내부 단계. **규약의 상태가 아니다** — 아래 표로 사상해서 내려보낸다."""
+    """순찰 내부 단계. 규약의 상태가 아니며 `FSM_STATE_FOR` 로 사상해 내려보낸다."""
 
     IDLE = "IDLE"  # 기동 후 순찰 시작 전
     PLANNING = "PLANNING"  # 다음 구역 선정 · 경로 생성
@@ -65,14 +53,8 @@ class Phase(StrEnum):
     HALTED = "HALTED"  # 안전 래치 (사람이 풀어야 한다)
 
 
-#: 내부 단계 → **FSM 상태 13종** (PROTOCOL.md 2절 `STATE`).
-#:
-#: ⚠️ 여기 없는 이름을 내려보내면 로봇이 폐기 + WARN 하고, 텔레메트리의 `state`
-#: 는 이전 값에 머문다. 그러면 대시보드가 순찰 중인 로봇을 `IDLE` 로 표시한다.
-#:
-#: `PLANNING`·`MOVING` 을 둘 다 `PATROL` 로 보내는 것은 정보 손실이 아니다 —
-#: 로봇은 이 값을 판단에 쓰지 않고 받아적을 뿐이고, 계획과 이동의 구분은
-#: 호스트 로그에 남는다.
+#: 내부 단계 → FSM 상태 13종 (PROTOCOL.md 2절 `STATE`). 13종 밖의 이름은 로봇이 폐기한다.
+#: `AVOID` 는 내려보내지 않는다 — 반향되면 해제를 알 수 없다 (ADR-22).
 FSM_STATE_FOR: Mapping[Phase, str] = {
     Phase.IDLE: "IDLE",
     Phase.PLANNING: "PATROL",
@@ -82,19 +64,13 @@ FSM_STATE_FOR: Mapping[Phase, str] = {
     Phase.HALTED: "FAILSAFE",
 }
 
-# 사상표가 규약과 어긋나면 **기동을 막는다.** 오타 하나가 실기에서 폐기되는
-# `STATE` 로 나타나는 것보다, import 시점에 죽는 것이 낫다.
+# 사상표가 규약과 어긋나면 import 시점에 기동을 막는다.
 assert set(FSM_STATE_FOR.values()) <= FSM_STATES, "FSM 13종에 없는 상태를 사상하고 있다"
 
 
 @dataclass(frozen=True, slots=True)
 class DriveParams:
-    """보행·안전 파라미터. **`config.yaml` 에서 온다** (NFR-3①).
-
-    `step_mm`·`turn_deg` 는 `gait.step_length_mm`·`gait.turn_angle_deg` 이고
-    규약의 클램프 범위(±100mm · ±30deg) 안이다. 그 범위를 여기서 다시 적지
-    않는 이유는 `CommandEncoder` 가 이미 자르기 때문이다 (규칙 ②).
-    """
+    """보행·안전 파라미터 — `config.yaml` 에서 온다 (NFR-3①). 규약 범위는 인코더가 자른다."""
 
     step_mm: float
     turn_deg: float
@@ -104,7 +80,7 @@ class DriveParams:
     reverse_threshold_rad: float
     arrival_radius_m: float
     waypoint_radius_m: float
-    #: 호스트측 LiDAR 위험 거리. 온보드 초음파(`obstacle_stop_cm`)와 **다른 것**이다.
+    #: 호스트측 LiDAR 위험 거리. 온보드 초음파(`obstacle_stop_cm`)와 별개다.
     lidar_estop_m: float
     #: 텔레메트리가 이만큼 조용하면 링크 두절로 본다 (`safety.link_loss_failsafe_ms`).
     link_loss_ms: int
@@ -114,22 +90,15 @@ class DriveParams:
     pose_timeout_ms: int
 
 
-#: 최대 조향에서 보폭을 이만큼 줄인다 (0.5 = 절반).
-#:
-#: **호의 반경은 대략 `step / angle` 이므로 보폭을 줄이는 것이 더 급히 도는
-#: 것이다.** 조향은 규약 상한(±30deg)에 걸려 더 키울 수 없으니, 반경을 줄이는
-#: 손잡이는 보폭뿐이다.
-#:
-#: ⚠️ 이 값은 `config` 로 빼지 않았다. **실측 없이 튜닝할 값이 아니기 때문이다** —
-#: 실제 호 반경은 보행 시퀀스가 정하고 `gait_calibration` 이 아직 비어 있다.
-#: 지금 설정 항목으로 만들면 근거 없는 숫자에 설정의 권위가 붙는다. 실측
-#: (`gait_calibration`) 후에 옮긴다.
+#: 최대 조향에서 보폭을 이만큼 줄인다 (0.5 = 절반). 호 반경은 대략 `step / angle` 이고
+#: 조향은 규약 상한(±30deg)에 걸리므로, 더 급히 도는 손잡이는 보폭뿐이다. 호 반경
+#: 실측 전이라 설정으로 빼지 않았다.
 TURN_STEP_REDUCTION: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
 class Steering:
-    """한 틱의 보행 의도. mm · deg — **전선 단위다** (규약이 그렇게 받는다)."""
+    """한 틱의 보행 의도. mm · deg (전선 단위)."""
 
     step_mm: float
     angle_deg: float
@@ -138,7 +107,7 @@ class Steering:
 def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
     """방위 오차를 호(arc) 조향으로 바꾼다.
 
-    **제자리 회전을 쓰지 않는다** (DR-11). 그래서 세 구간으로 나뉜다.
+    제자리 회전을 쓰지 않는다 (ADR-11). 세 구간으로 나뉜다.
 
     | 오차 | 보행 | 근거 |
     | :--- | :--- | :--- |
@@ -146,25 +115,9 @@ def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
     | 그 밖 ~ 후진 임계 | 전진 + 최대 조향 | 호를 그리며 방위를 줄인다 |
     | 후진 임계 초과 | **후진 + 같은 방향 조향** | 목표가 거의 뒤에 있으면 전진 호는 멀어진다 |
 
-    ⚠️ **조향 부호는 걸음의 방향과 무관하다 — 실측이 이것을 바로잡았다.**
-
-    여기에는 *"후진에서는 조향 부호를 뒤집는다"* 고 적혀 있었고 근거는 요 변화가
-    `step × angle` 에 비례한다는 추정이었다. **실기에서 반증됐다** — `move(-60,+20)`
-    과 `move(-60,-20)` 을 몰아 보니 **후진에서도 `angle` 양수가 반시계**였다. 벤더
-    API 원형이 `move(float speed_x, float angle_rate)` 인 것과도 맞는다: `angle` 은
-    **각속도 명령**이라 걸음의 부호가 곱해지지 않는다 (`docs/PROTOCOL.md` 부호 규약).
-
-    그래서 방위 오차를 줄이는 조향은 **전진이든 후진이든 같은 부호**다. 뒤집으면
-    로봇이 목표에서 **더 멀어지는 쪽으로** 후진하며 영원히 못 도착한다 — 뒤집힌
-    코드가 정확히 그 상태였고, **시험도 그 부호를 굳혀 두고 있었다**(`teleop` 의
-    좌우가 뒤바뀐 채 시험에 박혀 있던 것과 같은 형태다).
-
-    ⚠️ **크게 틀어져 있으면 보폭을 줄인다.** 호의 반경은 대략 `step / angle` 이므로
-    보폭을 줄이는 것이 곧 **더 급히 도는 것**이다. 조향만 키우고 보폭을 그대로
-    두면 조향 상한(±30deg)에 걸려 반경이 더 줄지 않고, 로봇이 큰 호를 그리며
-    벽으로 밀려간다 — 실제로 그렇게 만들었더니 방 안쪽 장애물을 돌지 못해
-    E-STOP 이 났다. 회피 시퀀스가 후진 거리를 확보하는 것과 같은 이유의 제약이다
-    (DR-11 · `gait.reverse_distance_mm`).
+    조향 부호는 걸음 방향과 무관하다 — `angle` 은 각속도 명령이라 후진에서도 양수가
+    반시계다 (`docs/PROTOCOL.md` 부호 규약). 크게 틀어질수록 보폭을 줄여(`TURN_STEP_REDUCTION`)
+    호 반경을 줄인다.
     """
     error = wrap_pi(heading_error_rad)
     if abs(error) <= params.heading_tolerance_rad:
@@ -172,25 +125,19 @@ def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
 
     direction = 1.0 if error > 0 else -1.0
     if abs(error) <= params.reverse_threshold_rad:
-        # 오차에 비례해 조향을 키우고 **같은 비율로 보폭을 줄인다.**
-        # 조향만 키우면 상한에 걸려 반경이 더 줄지 않는다.
+        # 오차에 비례해 조향을 키우고 같은 비율로 보폭을 줄인다.
         scale = min(1.0, abs(error) / params.reverse_threshold_rad)
         return Steering(
             params.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
             direction * params.turn_deg * scale,
         )
-    # 조향 부호는 전진과 같다 — 요가 `angle` 단독으로 결정되기 때문이다(위 주석).
+    # 조향 부호는 전진과 같다 — 요는 `angle` 단독으로 정해진다.
     return Steering(-params.step_mm * (1.0 - TURN_STEP_REDUCTION), direction * params.turn_deg)
 
 
 @dataclass
 class SafetyView:
-    """로봇이 **보고한** 것. 호스트가 판정한 것이 아니다 (아키텍처 1.2).
-
-    ⚠️ 전압·기울기를 여기서 판정하지 않는다. `TelemetryReceiver` 가 같은 이유로
-    같은 선을 긋고 있다 — 호스트가 안전을 판정하면 호스트가 꺼졌을 때 판정이
-    사라진다.
-    """
+    """로봇이 보고한 안전 관측. 호스트는 전압·기울기를 판정하지 않는다 (아키텍처 1.2)."""
 
     latched: bool | None = None
     onboard_state: str = ""
@@ -208,10 +155,8 @@ class SafetyView:
     def obstacle_active(self) -> bool:
         """근거리 반사 정지가 걸려 있는가.
 
-        `obstacle` 이 없는 구형 펌웨어에서는 `state == AVOID` 로 폴백한다.
-        ⚠️ 그 폴백은 **해제를 알 수 없다** (ADR-22) — 호스트가 `AVOID` 를 `STATE`
-        로 내려보내면 그 값이 되돌아오기 때문이다. 그래서 우리는 `AVOID` 를
-        내려보내지 않는다 (`FSM_STATE_FOR` 에 없다).
+        `obstacle` 이 없는 구형 펌웨어에서는 `state == AVOID` 로 폴백한다 — 이 컨트롤러는
+        `AVOID` 를 내려보내지 않으므로 반향이 섞이지 않는다 (ADR-22).
         """
         if self.obstacle is not None:
             return self.obstacle
@@ -230,16 +175,11 @@ class PatrolStats:
 
 @dataclass
 class PatrolController:
-    """계획 → 의도. **소켓도 실시각도 만지지 않는다.**
+    """계획 → 의도. 소켓도 실시각도 만지지 않는다.
 
-    운용 루프(`tools/patrol_run.py`)가 하는 일은 셋뿐이다.
-
-        ① 소켓에서 받은 바이트를 `observe_scan` · `observe_telemetry` 로 넣는다
-        ② `step(now_ms)` 를 부르고 돌아온 **즉시 전문**을 그 자리에서 보낸다
-        ③ `commander.tick(now_ms)` 의 전문을 10Hz 로 보낸다
-
-    ②와 ③이 나뉘어 있는 이유 — `ESTOP` 은 다음 틱을 기다릴 수 없는 유일한
-    부류다 (`Commander.emergency_stop` 주석).
+    운용 루프(`tools/patrol_run.py`)가 한 스레드에서 ① `observe_scan`·`observe_telemetry`
+    로 입력을 넣고 ② `step(now_ms)` 가 돌려준 즉시 전문(`ESTOP`)을 바로 보내고
+    ③ `commander.tick(now_ms)` 의 주기 전문을 10Hz 로 보낸다.
     """
 
     commander: Commander
@@ -253,14 +193,11 @@ class PatrolController:
     new_obstacle_margin_m: float
     new_obstacle_confirmations: int
     obstacle_mark_radius_m: float
-    #: 이 거리 안의 빔만 신규 장애물 후보로 본다. 멀리 있는 것은 다음 사이클에
-    #: 다시 보게 되고, 측위 오차가 거리에 비례해 커지므로 멀리서 판정하면
-    #: 오탐이 는다.
+    #: 이 거리 안의 빔만 신규 장애물 후보로 본다 — 측위 오차는 거리에 비례해 커진다.
     new_obstacle_check_radius_m: float
     forward_fan_rad: float
-    #: 구역이 동적 장애물로 막혔을 때 **표시를 버리고 다시 확인할 최대 횟수**.
-    #: `config.fsm.avoid_attempts` 에서 온다 — 회피 시퀀스를 몇 번 되풀이할지와
-    #: 같은 값이고 같은 이유다: "다 쓰고도 못 빠져나오면 멈춘 채로 둔다."
+    #: 구역이 동적 장애물로 막혔을 때 표시를 버리고 다시 확인할 최대 횟수
+    #: (`config.fsm.avoid_attempts` 와 같은 값).
     max_reverify_attempts: int = 3
     random_after_first_cycle: bool = True
     rng: random.Random | None = None
@@ -318,11 +255,7 @@ class PatrolController:
 
     # ── 입력: 텔레메트리 ──────────────────────────────────────
     def observe_telemetry(self, reading: Any, now_ms: int) -> None:
-        """`host.telemetry.receiver.Reading` 을 받아 안전 관측을 갱신한다.
-
-        타입을 고정하지 않는 이유는 이 컨트롤러가 `Reading` 의 **필드만** 보기
-        때문이다. 목업·시뮬레이션이 같은 모양의 객체를 넣을 수 있어야 한다.
-        """
+        """`Reading` 모양의 객체(필드만 본다)를 받아 안전 관측을 갱신한다."""
         self.safety = SafetyView(
             latched=getattr(reading, "safety_latched", None),
             onboard_state=getattr(reading, "state", "") or "",
@@ -334,18 +267,12 @@ class PatrolController:
         )
         age = self.safety.last_cmd_age_ms
         if age is not None and age > self.drive.cmd_timeout_ms:
-            # ⚠️ 우리는 10Hz 로 보내는데 로봇이 받아들이지 않고 있다. 조용한
-            # 고장이라 큰 소리를 낸다 (`runtime._watch_command_uptake` 와 같은 판단).
+            # 보내는 명령을 로봇이 받아들이지 않고 있다 — 조용한 고장이라 경고한다.
             LOG.warning("command_not_taken", last_cmd_age_ms=age, hint="seq 세션 확인")
 
     @staticmethod
     def _yaw_of(reading: Any) -> float | None:
-        """`reading.yaw` 를 꺼낸다. 단위는 deg.
-
-        `host.telemetry.receiver.Reading` 은 `imu` 속성이 없고 평탄한 `yaw`
-        필드를 쓴다 (`Reading.of` 가 전문의 `msg["imu"]["yaw"]` 를 여기 담는다).
-        `reading.imu` 를 읽으면 조용히 `None` 이 되어 IMU 보조가 내내 꺼진다.
-        """
+        """`reading.yaw`(deg)를 꺼낸다 — `Reading` 은 `imu.yaw` 를 평탄한 `yaw` 로 담는다."""
         value = getattr(reading, "yaw", None)
         return float(value) if isinstance(value, int | float) else None
 
@@ -359,14 +286,11 @@ class PatrolController:
             points,
             self.pose,
             self.match_params,
-            # **변화량만 넘긴다.** 절대 yaw 는 지도 좌표계와 옵셋이 있어
-            # 탐색 중심으로 쓸 수 없다 (`slam.py` 머리말).
+            # 변화량만 넘긴다 — 절대 yaw 는 지도 좌표계와 옵셋이 있다.
             yaw_delta=self._consume_yaw_delta(),
         )
         if result.skipped or result.score == 0:
-            # 정합이 아는 벽 위에 한 점도 얹지 못했다 = 측위 상실 (FR-6.6).
-            # ⚠️ 자세를 갱신하지 않는다 — 점수 0 인 후보는 탐색 격자의 첫 칸일
-            # 뿐이고, 그것을 믿고 이동하면 지도와 무관한 방향으로 걸어간다.
+            # 정합 실패 = 측위 상실 (FR-6.6). 점수 0 인 후보로 자세를 갱신하지 않는다.
             return
         self.pose = result.pose
         self._last_pose_ms = now_ms
@@ -376,10 +300,7 @@ class PatrolController:
         self._check_new_obstacle(scan)
 
     def _consume_yaw_delta(self) -> float:
-        """직전 스캔 이후 IMU 가 본 회전량. 없으면 0.
-
-        **소비한다** — 같은 변화량을 두 번 더하면 회전이 두 배로 반영된다.
-        """
+        """직전 스캔 이후 IMU 가 본 회전량을 소비한다(두 번 반영하지 않는다). 없으면 0."""
         current = self.safety.yaw_rad
         if current is None:
             self._last_imu_yaw = None
@@ -430,7 +351,7 @@ class PatrolController:
             LOG.info("patrol_started", zones=list(self.zones.labels))
 
     def emergency_stop(self, reason: str) -> str:
-        """`ESTOP` 전문을 돌려준다. **호출자가 즉시 보낸다.**"""
+        """`ESTOP` 전문을 돌려준다. 호출자가 즉시 보낸다."""
         self.phase = Phase.HALTED
         self._halt_reason = reason
         self.stats.estops += 1
@@ -439,40 +360,25 @@ class PatrolController:
         return self.commander.emergency_stop()
 
     def request_reset(self) -> str:
-        """`RESET_SAFE` 전문을 돌려준다. **사람이 확인했을 때만 부른다** (DR-16).
+        """`RESET_SAFE` 전문을 돌려준다. 사람이 확인했을 때만 부른다 (ADR-21).
 
-        ⚠️ **패킷 수락과 실제 안전 해제는 다르다.** 규약이 못박은 대로, 보낸
-        뒤에는 텔레메트리의 `state == IDLE` 과 `safety_latched == false` 를
-        확인해야 한다. 그 확인을 `_settle_reset` 이 한다 — 보내자마자 순찰을
-        재개하면 래치가 걸린 로봇에게 `MOVE` 를 쏟아붓는다.
+        순찰 재개는 `_settle_reset` 이 로봇의 래치 해제를 확인한 뒤다.
         """
         self._reset_requested = True
         LOG.info("reset_requested", reason=self._halt_reason)
         return self.commander.clear_safe()
 
     def _settle_reset(self) -> None:
-        """해제가 **로봇 쪽에서** 확인됐을 때만 순찰로 돌아간다.
+        """로봇이 `safety_latched=false` 를 보고했을 때만 순찰로 돌아간다 (ADR-21).
 
-        ⚠️ **`state` 로는 확인할 수 없다.** 우리가 `FAILSAFE` 를 `STATE` 로
-        내려보내므로 로봇이 그 값을 되돌려주고, 그러면 **되돌아온 값이 로봇의
-        판정인지 우리 말의 반향인지 구분할 수 없다** — `AVOID` 와 정확히 같은
-        문제다 (ADR-22). 규약이 *"송신측은 `safety_latched=false` 를 확인해야
-        한다"* 고 못박은 이유가 이것이다.
+        반향될 수 있는 `state` 로는 확인하지 않는다.
         """
         if not self._reset_requested:
             return
         latched = self.safety.latched
         if latched is None:
-            # 구형 펌웨어 — `safety_latched` 가 없다. **확인할 방법이 없다.**
-            #
-            # 예전에는 `state != FAILSAFE` 로 대신했는데 그것은 틀렸다. 우리가
-            # `FAILSAFE` 를 내려보낸 뒤이므로 반향이 계속 `FAILSAFE` 로 돌아와
-            # **영원히 해제되지 않는다.** 반대로 반향을 신뢰하면 로봇이 실제로
-            # 풀리지 않았는데 순찰을 재개한다. 어느 쪽도 안전하지 않다.
-            #
-            # 그래서 **사람의 확인을 최종 근거로 삼는다** — 이미
-            # `request_reset()` 을 부른 것이 그 확인이다. 대신 검증이 불가능함을
-            # 크게 남긴다. 규약이 이 필드를 요구하는 것이 곧 그 뜻이다.
+            # ⚠️ 구형 펌웨어(`safety_latched` 없음) — 로봇 해제를 확인할 수 없어 사람의
+            # 확인(`request_reset`)을 근거로 재개하고, 검증 불가를 경고로 남긴다.
             if self._edge.changed("latch_unverifiable", True):
                 LOG.warning(
                     "safety_latch_unverifiable",
@@ -491,10 +397,9 @@ class PatrolController:
 
     # ── 한 틱 ─────────────────────────────────────────────────
     def step(self, now_ms: int) -> tuple[str, ...]:
-        """한 주기의 판단. **즉시 보낼 전문**만 돌려준다 (보통 비어 있다).
+        """한 주기의 판단. 즉시 보낼 전문만 돌려준다(보통 비어 있다).
 
-        주기 전문은 호출자가 `commander.tick(now_ms)` 로 따로 받는다. 둘을 합치면
-        `ESTOP` 도 주기에 실려 최대 100ms 늦어진다.
+        주기 전문은 호출자가 `commander.tick(now_ms)` 로 따로 받는다.
         """
         urgent = self._guard(now_ms)
         if urgent:
@@ -502,14 +407,12 @@ class PatrolController:
 
         self._settle_reset()
         if self.safety.last_seen_ms is None:
-            # 최초 텔레메트리 전에 움직이면 로봇이 아직 부팅 중인 정상 상황에도
-            # 경로 추종이 시작된다. 링크가 확인될 때까지 정지한다.
+            # 첫 텔레메트리로 링크가 확인될 때까지 정지한다.
             self.commander.halt()
         elif self.phase is Phase.HALTED or self.phase is Phase.IDLE or self.phase is Phase.LOST:
             self.commander.halt()
         elif self.safety.obstacle_active:
-            # **온보드가 이미 멈췄다.** 호스트는 그 판정을 흉내내지 않고 의도만
-            # 정지로 내린다 (아키텍처 1.2 · `actions.py` 머리말과 같은 판단).
+            # 온보드가 이미 멈췄다 — 판정을 흉내내지 않고 의도만 정지로 내린다 (아키텍처 1.2).
             self.commander.halt()
             if self._edge.changed("obstacle", True):
                 LOG.info("onboard_obstacle_hold", dist_cm=self.safety.dist_cm)
@@ -517,21 +420,15 @@ class PatrolController:
             self._edge.forget("obstacle")
             self._advance()
 
-        # **상태는 마지막에 알린다.** 이번 틱의 판단이 반영된 값이어야 한다.
+        # 상태는 이번 틱의 판단이 반영된 뒤 마지막에 알린다.
         self.commander.announce(self.fsm_state)
         return ()
 
     def _guard(self, now_ms: int) -> tuple[str, ...]:
         """안전 점검. 단계를 옮기고, 즉시 보낼 전문이 있으면 돌려준다.
 
-        순서가 규약의 우선순위다 — **로봇이 보고한 래치가 가장 먼저**다
-        (Tier 1 판정이 항상 우선 · 아키텍처 1.2 불변 규칙).
-
-        ⚠️ **여기서 `ESTOP` 을 보내지 않는다.** 온보드가 이미 래치를 걸었다고
-        보고한 상태에 `ESTOP` 을 더 보내는 것은 아무것도 바꾸지 않고, 링크
-        두절이면 애초에 닿지 않는다. 호스트가 `ESTOP` 을 만드는 곳은 사람이
-        누른 경우와 `guard_scan` 의 LiDAR 판정 둘뿐이다. 그래서 이 함수는
-        보통 빈 튜플을 돌려준다.
+        순서가 우선순위다 — 로봇이 보고한 래치가 가장 먼저다 (아키텍처 1.2). 여기서는
+        `ESTOP` 을 만들지 않는다(사람이 누른 경우와 `guard_scan` 만 만든다).
         """
         # ① 로봇이 래치를 걸었다고 보고했다 — 우리가 판정하지 않는다
         if self.safety.latched or self.safety.onboard_state == "FAILSAFE":
@@ -541,11 +438,8 @@ class PatrolController:
                 LOG.error("onboard_failsafe", state=self.safety.onboard_state)
             return ()
 
-        # ② 텔레메트리 침묵 — 링크가 끊겼다.
-        #    ⚠️ **명령 송신을 멈추지 않는다.** 10Hz 송신이 곧 링크 신호이므로
-        #    (PROTOCOL 1절), 멈추면 링크가 돌아왔을 때 로봇이 그것을 모른다.
-        # 기동 직후 아직 한 건도 받지 못한 상태는 두절과 다르다. 여기서
-        # HALTED로 보내면 첫 패킷이 수 ms 늦은 정상 상황도 수동 리셋이 필요하다.
+        # ② 텔레메트리 침묵 — 링크가 끊겼다. 명령 송신은 멈추지 않는다(10Hz 송신이 곧
+        #    하트비트다 · PROTOCOL 1절). 한 건도 받기 전은 두절로 보지 않는다.
         silent = self.safety.last_seen_ms is not None and (
             now_ms - self.safety.last_seen_ms > self.drive.link_loss_ms
         )
@@ -575,12 +469,9 @@ class PatrolController:
         return ()
 
     def guard_scan(self, scan: Scan) -> str | None:
-        """LiDAR 전방 위험거리 — **호스트측 판정이다.**
+        """LiDAR 전방 위험거리 판정 — 온보드 초음파 판정을 대체하지 않고 더하는 호스트측 판정이다.
 
-        초음파(`obstacle_stop_cm`)와 달리 LiDAR 는 호스트에 붙은 센서이므로
-        판정 주체가 호스트일 수밖에 없다. Tier 1 을 옮기는 것이 아니라, 온보드가
-        볼 수 없는 것을 보는 것이다 — 초음파는 정면 근거리만 본다(DR-15).
-        온보드 판정을 **대체하지 않고 더한다.**
+        위험하면 `ESTOP` 전문을 돌려주고 호출자가 즉시 보낸다.
         """
         if self.phase in (Phase.IDLE, Phase.HALTED):
             return None
@@ -598,9 +489,7 @@ class PatrolController:
             return
 
         if self.phase is Phase.INSPECT:
-            # 도착 훅이 끝나면 다음 구역으로. 지금은 즉시 넘어간다 —
-            # 카메라 판독(FR-8)은 `change_detect` 소관이며 여기서 기다리는
-            # 시간을 정하면 그 값이 두 곳에 생긴다.
+            # 도착하면 즉시 다음 구역으로 — 카메라 판독(FR-8)은 `change_detect` 소관이다.
             self.phase = Phase.PLANNING
 
         if self.phase is Phase.PLANNING or not self.plan.reachable:
@@ -631,24 +520,9 @@ class PatrolController:
                 self.waypoint_index = 0
                 return
 
-            # ⚠️ **동적 장애물 때문에 막힌 것인지 확인한다 — 단, 횟수를 센다.**
-            #
-            # 여기서 바로 포기하면 **누적된 오탐이 구역을 영구히 봉인한다.**
-            # 측위가 10~20cm 흔들리는 구간에서 오탐이 열 번 찍히자 통로가 막혀
-            # 구역 하나를 매 사이클 건너뛰었고, 로그에는 `zone_unreachable` 만
-            # 남아 지도가 잘못된 것처럼 보였다. 동적 장애물은 **이번 순찰의
-            # 사실이지 공간의 사실이 아니다** (`planner.mark_obstacle` 주석).
-            #
-            # ⚠️ **그런데 무한히 다시 확인해서도 안 된다.** 표시를 버리고 다시
-            # 계획하면 로봇이 그 장애물로 되돌아가고, 진짜 장애물이면 다시
-            # 찍히고 다시 버려져 **되돌아가기를 되풀이한다.** 실제로 그렇게
-            # 만들었더니 한 번의 순찰에서 E-STOP 이 2538회 났다 — 실기라면
-            # 서보 기어가 상하는 동작이다.
-            #
-            # 그래서 `config.fsm.avoid_attempts` 를 그대로 쓴다. 회피 시퀀스가
-            # 같은 문제를 이미 그 값으로 풀었고, 근거도 같다 —
-            # *"다 쓰고도 못 빠져나오면 멈춘 채로 둔다. 계속 흔들면 기어만
-            # 상하고, 갇힌 상황은 사람이 봐야 한다."*
+            # 동적 장애물 표시를 버리고 다시 계획해 본다 — 누적된 오탐이 구역을 영구히
+            # 봉인하지 않게. ⚠️ 횟수는 `max_reverify_attempts` 로 제한한다 — 진짜 장애물로
+            # 되돌아가기를 되풀이하면 E-STOP 이 반복되고 서보 기어가 상한다.
             label = self.plan.label
             attempts = self._reverify_attempts.get(label, 0)
             if attempts < self.max_reverify_attempts and self._clear_dynamic("zone_reverify"):
@@ -739,9 +613,7 @@ class PatrolController:
         self.cycle += 1
         self.visited = frozenset()
         self.stats.cycles += 1
-        # **새 사이클은 공간을 다시 확인한다.** 지난 사이클에 사람이 서 있던
-        # 자리를 이번 사이클에도 막힌 것으로 두면, 순찰이 돌 때마다 통행 가능한
-        # 영역이 단조 감소한다 — 오래 돌린 로봇이 점점 좁은 길만 다닌다.
+        # 새 사이클은 동적 장애물을 지우고 공간을 다시 확인한다 — 통행 영역이 단조 감소하지 않게.
         self._clear_dynamic("cycle_boundary")
         self._reverify_attempts.clear()
         LOG.info("cycle_completed", cycle=self.cycle)
@@ -767,12 +639,7 @@ class PatrolController:
 
 
 def drive_params_from_config(config: Mapping[str, Any]) -> DriveParams:
-    """`config.yaml` 에서 보행·안전 파라미터를 만든다.
-
-    ⚠️ **없는 키를 기본값으로 때우지 않는다.** `fsm.py._lookup` 이 같은 이유로
-    `KeyError` 를 그대로 올린다 — 기본값을 두면 설정에서 항목을 지워도 동작이
-    그대로라 설정이 정본이 아니게 된다.
-    """
+    """`config.yaml` 에서 보행·안전 파라미터를 만든다. 없는 키는 `KeyError` 다(기본값 없음)."""
     gait = config["gait"]
     safety = config["safety"]
     localization = config["localization"]
@@ -794,12 +661,7 @@ def drive_params_from_config(config: Mapping[str, Any]) -> DriveParams:
 
 
 def describe(controller: PatrolController) -> str:
-    """한 줄 상태 표기. 콘솔 관측용이며 로그의 정본은 JSONL 이다.
-
-    **내부 단계와 내려보내는 `STATE` 를 나란히 찍는다.** 둘이 다르다는 것이
-    사상표의 요점이고, 실기 시험에서 텔레메트리의 `state` 와 대조할 값은
-    오른쪽이다.
-    """
+    """한 줄 상태 표기(콘솔용). 내부 단계와 내려보내는 `STATE` 를 나란히 찍는다."""
     x, y, yaw = controller.pose
     intent = controller.commander.intent
     fields = " ".join(f"{k}={v:g}" for k, v in intent.fields.items())

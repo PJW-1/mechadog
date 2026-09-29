@@ -5,11 +5,7 @@
 `select_next` 가 후보마다 경로를 한 번씩 푼다 — 구역이 3개(`zones.ids`)이므로
 사이클당 최대 3번이고, 이 규모에서는 비용이 문제되지 않는다.
 
-⚠️ **scipy 를 쓰지 않는다.** 합치기 전 코드는 `scipy.ndimage.distance_transform_edt`
-로 팽창을 계산했는데, scipy 는 `requirements.txt` 에 없다. 팽창 반경이 `0.15 m /
-0.05 m = 3` 셀뿐이라 **원판 커널 하나로 끝나므로**, 의존성을 늘리기보다 numpy 로
-직접 부풀린다. 새 런타임 의존성은 팀 전원의 환경 문제가 되고(CONTRIBUTING 8절
-onnxruntime 사고가 그 예다), 얻는 것은 3셀짜리 거리변환 하나다.
+팽창은 원판 커널로 numpy 에서 직접 한다 — 반경이 몇 셀뿐이라 scipy 의존성을 들이지 않는다.
 """
 
 from __future__ import annotations
@@ -45,15 +41,8 @@ class PlanParams:
 
     occ_thresh: float
     free_thresh: float
-    #: 경로 중심선이 장애물에서 유지할 거리 = **로봇 반경 + 추종 여유**.
-    #:
-    #: ⚠️ **호스트 E-STOP 거리보다 커야 한다.** 같거나 작으면, 경로를 완벽히
-    #: 따라 걷는 것만으로 LiDAR 가 E-STOP 거리를 읽어 **정상 순찰이 비상정지로
-    #: 끝난다.** 실제로 그렇게 만들었더니 (반경 150mm = E-STOP 150mm) 한 사이클에
-    #: E-STOP 이 6회 나고 구역 하나를 못 갔다. 여유가 0 이면 추종 오차가
-    #: 0 이어야 하는데, 호 조향밖에 없는 로봇에 그것을 요구할 수 없다.
-    #:
-    #: `settings._validate` 가 이 관계를 기동 시에 확인한다.
+    #: 경로 중심선이 장애물에서 유지할 거리 = 로봇 반경 + 추종 여유. 호스트 LiDAR E-STOP
+    #: 거리보다 커야 정상 추종이 비상정지로 끝나지 않는다 (`settings._validate` 가 확인한다).
     clearance_m: float
     simplify_eps_m: float
 
@@ -99,10 +88,7 @@ def dilate(mask: np.ndarray, radius_cells: int) -> np.ndarray:
 def mark_obstacle(blocked: np.ndarray, grid: OccupancyGrid, hit: Point, radius_m: float) -> None:
     """지도에 없던 장애물을 **동적 마스크에만** 찍는다.
 
-    ⚠️ 지도(`grid.cells`)를 고치지 않는 것이 요점이다. 순찰 중 지나가는 사람을
-    지도에 벽으로 새기면 그 사람이 떠난 뒤에도 영원히 돌아가고, `slam_map.npy`
-    를 다시 만들어야 한다. 동적 장애물은 **이번 순찰의 사실**이지 공간의 사실이
-    아니다.
+    지도(`grid.cells`)는 고치지 않는다 — 동적 장애물은 이번 순찰의 사실이지 공간의 사실이 아니다.
     """
     row0, col0 = grid.to_cell(*hit)
     radius_cells = int(math.ceil(radius_m / grid.meta.resolution))
@@ -119,10 +105,8 @@ def mark_obstacle(blocked: np.ndarray, grid: OccupancyGrid, hit: Point, radius_m
 def astar(start: Cell, goal: Cell, blocked: np.ndarray) -> list[Cell] | None:
     """8방향 A*. 경로가 없으면 `None`.
 
-    ⚠️ **출발 셀이 막혀 있어도 탐색을 시작한다.** 측위 오차나 팽창 때문에 로봇이
-    자기 위치를 막힌 셀로 볼 때가 있는데, 거기서 거절하면 로봇이 스스로 갇혀서
-    영원히 못 움직인다. 목표 셀은 반대로 막혔으면 즉시 거절한다 — 갈 수 없는
-    곳이 목적지면 탐색이 격자 전체를 훑고 나서야 실패한다.
+    출발 셀이 막혀 있어도 탐색한다(측위 오차·팽창으로 자기 자리가 막혀 보일 수 있다).
+    목표 셀이 막혔으면 즉시 거절한다.
     """
     height, width = blocked.shape
     if not (0 <= goal[0] < height and 0 <= goal[1] < width) or blocked[goal]:
@@ -185,7 +169,7 @@ def to_waypoints(path: list[Cell], grid: OccupancyGrid, eps_m: float) -> list[Po
     """격자 경로를 실좌표 웨이포인트로 줄인다 (Douglas-Peucker).
 
     셀 단위 경로를 그대로 추종하면 5cm 마다 방위를 다시 맞추게 되고, 호(arc)
-    조향밖에 없는 로봇(DR-11)은 그 자리에서 진동한다.
+    조향밖에 없는 로봇(ADR-11)은 그 자리에서 진동한다.
     """
     points = [grid.to_world(row, col) for row, col in path]
     return simplify(points, eps_m)
