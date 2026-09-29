@@ -309,6 +309,37 @@ def test_manual_endpoint_rejects_a_non_boolean(client):
     assert http.post("/api/command/manual", json={"on": "yes"}).status_code == 400
 
 
+@pytest.mark.parametrize(
+    "path", ["/api/command/manual", "/api/command/patrol", "/api/command/sound"]
+)
+@pytest.mark.parametrize("content", [b"{not json", b"", b"\xff\xfe", b"[]", b"null"])
+def test_command_rejects_a_body_that_is_not_a_json_object(client, path, content):
+    """깨진 JSON·빈 본문·객체가 아닌 본문은 다른 잘못된 본문처럼 400 이다(500 이 아니다)."""
+    http, behavior, sent = client
+    response = http.post(path, content=content, headers={"content-type": "application/json"})
+    assert response.status_code == 400
+    assert response.json() == {"error": "body"}
+    assert behavior.state == "IDLE"
+    assert sent == []
+
+
+def test_drive_rejects_malformed_json_with_its_own_reason(client):
+    http, _behavior, _sent = client
+    http.post("/api/command/manual", json={"on": True})
+    response = http.post("/api/command/drive", content=b"{not json")
+    assert response.status_code == 400
+    assert response.json() == {"error": "fields"}
+
+
+def test_foreign_origin_is_refused_before_the_body_is_read(client):
+    http, _behavior, _sent = client
+    response = http.post(
+        "/api/command/manual", content=b"{not json", headers={"origin": "http://evil.example"}
+    )
+    assert response.status_code == 403
+    assert response.json() == {"error": "origin"}
+
+
 def test_drive_endpoint_requires_both_fields(client):
     http, _behavior, _sent = client
     http.post("/api/command/manual", json={"on": True})
@@ -528,6 +559,19 @@ def test_broadcast_update_rejects_a_non_boolean_muted():
         with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
             assert http.post("/api/broadcast", json={"muted": "yes"}).status_code == 400
             assert broadcaster.muted is False
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_rejects_malformed_json():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            response = http.post("/api/broadcast", content=b"{not json")
+            assert response.status_code == 400
+            assert response.json() == {"error": "body"}
+            assert http.post("/api/broadcast", json={"volume": None}).json() == {"error": "volume"}
+            assert broadcaster.volume == 100
     finally:
         broadcaster.close()
 
