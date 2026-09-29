@@ -39,7 +39,7 @@ check_untyped_defs = true
 # 스텁이 없는 서드파티 — 명시한 모듈만 import 오류를 넘긴다.
 [[tool.mypy.overrides]]
 module = [
-    "onnxruntime", "onnxruntime.*", "sounddevice", "torch", "torch.*",
+    "onnxruntime", "onnxruntime.*", "piper", "piper.*", "sounddevice", "torch", "torch.*",
     "transformers", "transformers.*",
 ]
 ignore_missing_imports = true
