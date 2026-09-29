@@ -17,7 +17,7 @@ import random
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -239,7 +239,7 @@ class PatrolController:
     def blocked(self) -> np.ndarray:
         """정적 팽창 + 이번 순찰에서 발견한 동적 장애물."""
         assert self._blocked is not None and self._dynamic is not None
-        return self._blocked | self._dynamic
+        return cast(np.ndarray, self._blocked | self._dynamic)
 
     @property
     def target(self) -> str | None:
@@ -523,7 +523,7 @@ class PatrolController:
             # 동적 장애물 표시를 버리고 다시 계획해 본다 — 누적된 오탐이 구역을 영구히
             # 봉인하지 않게. ⚠️ 횟수는 `max_reverify_attempts` 로 제한한다 — 진짜 장애물로
             # 되돌아가기를 되풀이하면 E-STOP 이 반복되고 서보 기어가 상한다.
-            label = self.plan.label
+            label = cast(str, self.plan.label)
             attempts = self._reverify_attempts.get(label, 0)
             if attempts < self.max_reverify_attempts and self._clear_dynamic("zone_reverify"):
                 self._reverify_attempts[label] = attempts + 1

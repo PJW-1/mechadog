@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from host.common.config import repo_path
@@ -128,7 +128,7 @@ class EventBlackbox:
         jpeg_path = entry_dir / "snapshot.jpg" if jpeg is not None else None
         meta_path = entry_dir / "meta.json"
         if jpeg_path is not None:
-            _atomic_write(jpeg_path, jpeg)
+            _atomic_write(jpeg_path, cast(bytes, jpeg))
         # meta.json을 마지막에 게시한다. 조회자는 이 파일이 없는 부분 기록을 무시한다.
         encoded = (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         _atomic_write(meta_path, encoded)

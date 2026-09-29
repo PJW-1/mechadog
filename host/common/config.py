@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -81,7 +81,7 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _finite_number(value: Any) -> bool:
+def _finite_number(value: Any) -> TypeGuard[int | float]:
     if not isinstance(value, int | float) or isinstance(value, bool):
         return False
     try:

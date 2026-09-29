@@ -162,7 +162,7 @@ class ConsoleFormatter(logging.Formatter):
         return super().format(record)
 
 
-class EventLogger(logging.LoggerAdapter):
+class EventLogger(logging.LoggerAdapter[logging.Logger]):
     """`log.info("fsm_transition", **detail)` 형태로 사건 이름과 근거만 싣는 어댑터."""
 
     def __init__(self, logger: logging.Logger) -> None:

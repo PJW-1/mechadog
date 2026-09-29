@@ -8,13 +8,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from host.behavior.escalation import Escalation
 from host.behavior.fsm import Behavior, Event
 from host.behavior.mission import Mission
 from host.common.logging_setup import event_logger
 from host.vision.vlm_worker import VlmWorker
+
+if TYPE_CHECKING:
+    from host.vision.worker import VisionResult
 
 #: 런타임과 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
 LOG = event_logger("mechadog.runtime")
@@ -185,7 +188,7 @@ class FallMonitor:
             self._vlm_yes = next(a.raw for a in reading.answers if a.key == "person_down")
             self._confirm(asked, now_ms)
 
-    def ask(self, result: Any, now_ms: int) -> None:
+    def ask(self, result: VisionResult, now_ms: int) -> None:
         """`person_down` 하나만 묻는 판독을 건다 (ADR-35) — 순찰 중에는
         `vision.vlm.patrol_interval_ms` 마다, 확정 전 의심 중에는 판독이 끝날 때마다.
 

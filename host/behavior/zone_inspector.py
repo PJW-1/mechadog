@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from host.behavior.change_detect import (
     PERSON_LABEL,
@@ -28,6 +28,10 @@ from host.behavior.zones import Zone
 from host.common.logging_setup import event_logger
 from host.common.units import rad_to_deg, wrap_pi
 from host.vision.vlm_worker import VlmWorker
+
+if TYPE_CHECKING:
+    from host.behavior.actions import TrackSequence
+    from host.vision.worker import VisionResult
 
 #: 런타임과 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
 LOG = event_logger("mechadog.runtime")
@@ -82,7 +86,7 @@ class ZoneInspector:
         self._yaw: float | None = None
         #: 이번 방문에서 방향을 맞췄나. 맞추기 전에는 장면을 모으지 않는다.
         self._aligned = False
-        self._turn = behavior.sequence_for("ZONE_INSPECT")
+        self._turn = cast("TrackSequence", behavior.sequence_for("ZONE_INSPECT"))
         self._watch_classes = tuple(config["vision"]["coco"]["change_watch_classes"])
         self._zone: str | None = None
         # **방문 하나가 확정기의 사이클 하나다** (FR-8.4 · config `change_detect`). 한 방문에서
@@ -162,7 +166,7 @@ class ZoneInspector:
         self._turn.note(0.0, math.copysign(self._align_turn_deg, error_deg), now_ms)
         return False
 
-    def inspect(self, result: Any, now_ms: int) -> None:
+    def inspect(self, result: VisionResult, now_ms: int) -> None:
         """구역 앵커에 닿으면 기준과 견준다 (FR-8). 새 프레임마다 부른다.
 
         객체 목록으로만 비교하고 픽셀은 보지 않는다(FR-8.2). 공장 모드의 `PATROL`·
@@ -307,7 +311,7 @@ class ZoneInspector:
         self._visit_outcome = "zone_clear"
         self._leave(result, now_ms)
 
-    def _read_scene(self, zone: str, result: Any, now_ms: int) -> None:
+    def _read_scene(self, zone: str, result: VisionResult, now_ms: int) -> None:
         """구역에 선 동안 장면 판독을 방문당 한 번 건다 (ADR-35 호출 시점 ②).
 
         막지 않는다 — 결과는 다음 틱에 줍고 구역 종료만 미룬다(`_leave`). 걸지 못했으면
@@ -331,7 +335,7 @@ class ZoneInspector:
             reason="busy" if self._vlm.available else "not_loaded",
         )
 
-    def _take_reading(self, result: Any, now_ms: int) -> None:
+    def _take_reading(self, result: VisionResult, now_ms: int) -> None:
         """끝난 판독을 줍고 건 구역 이름과 건 프레임으로 남긴다.
 
         `person_down` «예» 는 쓰러짐 의심 진입 신호다(ADR-42). 넘어짐·통로 막힘은 이번
@@ -383,7 +387,7 @@ class ZoneInspector:
         if reading.get("person_down"):
             self._fall.suspect("zone_vlm", now_ms, yes_asked=now_ms)
 
-    def _leave(self, result: Any, now_ms: int) -> None:
+    def _leave(self, result: VisionResult, now_ms: int) -> None:
         """방문을 끝낸다 — 결론은 여기 한 곳에서 종류별로 낸다 (ADR-41 · ADR-42).
 
         넘어짐·통로 막힘만 `zone_changed` → `ZONE_CHANGED`(L3), 반출은 `zone_notice`,

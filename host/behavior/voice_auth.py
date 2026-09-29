@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, cast
 
 from host.behavior.fsm import Behavior, Event
 from host.behavior.mission import Mission
@@ -129,7 +129,7 @@ class VoiceAuthWindow:
                 "voice_auth_stale",
                 captured_at_ms=captured_at_ms,
                 opened_ms=opened_ms,
-                behind_ms=opened_ms - captured_at_ms,
+                behind_ms=opened_ms - cast(int, captured_at_ms),
                 matched=ok,
             )
             # `True` 로 돌려준다 — 파이프라인은 `accepted` 를 *전달됐나* 로 읽어

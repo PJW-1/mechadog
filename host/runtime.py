@@ -63,7 +63,7 @@ from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
-from host.vision.worker import TickIntervals, VisionWorker, build_worker
+from host.vision.worker import TickIntervals, VisionResult, VisionSource, build_worker
 
 LOG = event_logger("mechadog.runtime")
 
@@ -157,7 +157,7 @@ class Runtime:
         robot_ip: str | None = None,
         clock: Callable[[], int] = system_clock_ms,
         context: LogContext | None = None,
-        vision: Any = None,
+        vision: VisionSource | None = None,
         blackbox: EventBlackbox | None = None,
         event_publisher: Callable[[BlackboxEntry], None] | None = None,
         dashboard: DashboardState | None = None,
@@ -450,7 +450,7 @@ class Runtime:
         return self._intervals
 
     @property
-    def vision(self) -> Any:
+    def vision(self) -> VisionSource | None:
         """붙어 있는 추론 워커. 없으면 `None` (비전 없이도 운용된다)."""
         return self._vision
 
@@ -681,7 +681,7 @@ class Runtime:
             return
         self._ppe_judge.alert_sequence(commander, now_ms)
 
-    def _track(self, result: Any, now_ms: int) -> None:
+    def _track(self, result: VisionResult, now_ms: int) -> None:
         """대표 박스의 x편차를 추종 지시로 바꿔 사건과 시퀀스에 넘긴다 (FR-3.5).
 
         ⚠️ **`ALERT`·`TRACK` 에서만 돈다.** 순찰 중에 사람이 스쳐도 여기서 각도를
@@ -820,7 +820,7 @@ class Runtime:
         """
         self._zone_inspector.note_pose(pose, now_ms)
 
-    def _observe_fallen(self, result: Any, now_ms: int) -> None:
+    def _observe_fallen(self, result: VisionResult, now_ms: int) -> None:
         """누움 후보로 쓰러짐 의심에 든다.
 
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
@@ -860,7 +860,7 @@ class Runtime:
             },
         )
 
-    def _judge_auth(self, result: Any, now_ms: int) -> None:
+    def _judge_auth(self, result: VisionResult, now_ms: int) -> None:
         """사원증을 판정하고 **사건으로 옮긴다** (FR-10.1).
 
         ⚠️ **인증 표시는 사건이 아니라 상태에서 가져온다.** `AUTH_OK` 사건만 보면
@@ -929,7 +929,7 @@ class Runtime:
             return
         self._apply(Event.AUTH_REQUIRED, now_ms)
 
-    def _record_person_event(self, result: Any) -> None:
+    def _record_person_event(self, result: VisionResult) -> None:
         """확정 검출의 원본과 판단 근거를 한 번 저장하고 이벤트 채널에 넘긴다.
 
         게이트의 거짓→참 엣지에서만 호출되므로 10Hz 반복 저장은 일어나지 않는다.
@@ -939,7 +939,7 @@ class Runtime:
         self._record_scene("person_found", result)
 
     def _record_scene(
-        self, event_type: str, result: Any, judgement: dict[str, Any] | None = None
+        self, event_type: str, result: VisionResult, judgement: dict[str, Any] | None = None
     ) -> None:
         """사진과 **그릴 수 없는 판단 근거**를 한자리에 남긴다.
 
@@ -1706,7 +1706,7 @@ def watch_console(runtime: Runtime, stream: Any = None) -> None:
             runtime.ask_reset()
 
 
-def _latest_jpeg(vision: VisionWorker) -> Callable[[], bytes | None]:
+def _latest_jpeg(vision: VisionSource) -> Callable[[], bytes | None]:
     """대시보드 카메라 경로가 매번 호출하는 최신 프레임 공급자."""
 
     def grab() -> bytes | None:
@@ -1760,7 +1760,7 @@ def dashboard_wiring(
     runtime: Runtime,
     config: Mapping[str, Any],
     *,
-    vision: Any | None,
+    vision: VisionSource | None,
     blackbox: EventBlackbox | None,
     broadcaster: broadcast.Broadcaster | None = None,
 ) -> dict[str, Any]:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 
@@ -58,7 +59,7 @@ def inflate(grid: OccupancyGrid, params: PlanParams) -> np.ndarray:
     occupied = grid.cells >= params.occ_thresh
     unknown = grid.cells > params.free_thresh
     radius_cells = int(math.ceil(params.clearance_m / grid.meta.resolution))
-    return unknown | dilate(occupied, radius_cells)
+    return cast(np.ndarray, unknown | dilate(occupied, radius_cells))
 
 
 def dilate(mask: np.ndarray, radius_cells: int) -> np.ndarray:

@@ -54,6 +54,10 @@ jobs:
       - name: Format check (ruff)
         run: ruff format --check .
 
+      # 좁은 범위부터 strict 로 켠다 (pyproject.toml [tool.mypy]). 넓힐 때 패키지를 더한다.
+      - name: Type check (mypy)
+        run: mypy host/common host/behavior
+
       - name: PC maintenance offline tests
         run: |
           python -m pip install -r tools/pc_control/requirements.txt
