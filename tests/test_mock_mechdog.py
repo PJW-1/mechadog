@@ -106,26 +106,28 @@ def test_starts_in_failsafe_until_first_command(config: dict) -> None:
     assert not robot.link_ok(START_MS)
 
 
-def test_command_timeout_stops_but_does_not_change_state(config: dict) -> None:
-    """600ms 무명령은 Tier 1 반사(`move(0,0)`)이지 상태 전이가 아니다 (아키텍처 3절)."""
+def test_command_timeout_latches_failsafe(config: dict) -> None:
+    """600ms 무명령이면 펌웨어처럼 곧바로 래치한다 (ADR-39, `latchFailsafe`)."""
     robot = _robot(config)
     _feed(robot, START_MS)
     timeout_ms = config["safety"]["cmd_timeout_ms"]
 
-    assert not robot.stopped_by_timeout(START_MS + timeout_ms - 1)
-    assert robot.stopped_by_timeout(START_MS + timeout_ms)
-    assert robot.state(START_MS + timeout_ms) == "PATROL"
+    assert robot.state(START_MS + timeout_ms - 1) == "PATROL"
+    assert robot.state(START_MS + timeout_ms) == "FAILSAFE"
+
+    record = json.loads(robot.telemetry(START_MS + timeout_ms))
+    assert record["safety_latched"] is True
+    # `link_ok` 는 래치와 별개로 `link_loss_failsafe_ms`(펌웨어 `kLinkHealthyAgeMs`)까지 참이다.
+    assert record["flags"]["link_ok"] is True
 
 
-def test_link_loss_enters_failsafe(config: dict) -> None:
+def test_link_ok_turns_false_after_link_loss_window(config: dict) -> None:
     robot = _robot(config)
     _feed(robot, START_MS)
     failsafe_ms = config["safety"]["link_loss_failsafe_ms"]
 
-    assert robot.state(START_MS + failsafe_ms) == "PATROL"
-    assert robot.state(START_MS + failsafe_ms + 1) == "FAILSAFE"
-
     record = json.loads(robot.telemetry(START_MS + failsafe_ms + 1))
+    assert record["state"] == "FAILSAFE"
     assert record["flags"]["link_ok"] is False
     assert record["last_cmd_age_ms"] == failsafe_ms + 1
 
@@ -134,7 +136,7 @@ def test_discarded_command_does_not_refresh_the_link(config: dict) -> None:
     """규칙 ③ — 깨진 패킷을 "살아 있음"으로 세면 페일세이프가 걸리지 않는다."""
     robot = _robot(config)
     _feed(robot, START_MS)
-    later = START_MS + config["safety"]["link_loss_failsafe_ms"] + 1
+    later = START_MS + config["safety"]["cmd_timeout_ms"]
 
     robot.receive("{망가진 패킷", later)
     assert robot.state(later) == "FAILSAFE"
@@ -210,11 +212,12 @@ def test_tip_sets_flag_and_failsafe_together(config: dict) -> None:
 
 def test_obstacle_triggers_avoid_below_config_threshold(config: dict) -> None:
     robot = _robot(config, obstacle_at_s=10)
-    before, after = START_MS + 9_000, START_MS + 10_000
+    # 두 명령 간격을 `cmd_timeout_ms` 안에 둔다 — 넘기면 타임아웃 래치가 먼저 걸린다.
+    before, after = START_MS + 9_900, START_MS + 10_000
     _feed(robot, before)
-    _feed(robot, after)
-
     assert robot.state(before) == "PATROL"
+
+    _feed(robot, after)
     assert robot.state(after) == "AVOID"
     assert robot.distance_cm(after) < config["safety"]["obstacle_stop_cm"]
 

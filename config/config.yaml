@@ -272,8 +272,7 @@ localization:           # Track A(LiDAR) 확정 — OI-9 닫힘 (docs/DECISIONS.
 # ══════════════════════════════════════════════════════════════
 escalation:
   l1_to_l2_hold_s: 10          # L1 관찰이 이만큼 지속되고 미인증이면 L2
-  l3_requires_manual_reset: true
-  multi_target_policy: max      # FR-3.8.1 — 전 대상 중 최고 단계를 로봇 단계로 채택  # L3·F 는 자동 해제하지 않는다
+  multi_target_policy: max      # FR-3.8.1 — 전 대상 중 최고 단계를 로봇 단계로 채택
   led:                          # FR-10.4 — 눈 색깔로 단계 표시
     l0_patrol: blue
     l1_observe: yellow
