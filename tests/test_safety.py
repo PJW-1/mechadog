@@ -52,6 +52,13 @@ def _robot(config: dict, **faults: object) -> MockRobot:
     )
 
 
+def _armed(config: dict, **faults: object) -> MockRobot:
+    """래치를 푼 로봇. 펌웨어처럼 래치된 채 부팅하므로 사람이 `RESET_SAFE` 를 보낸 뒤다."""
+    robot = _robot(config, **faults)
+    _send(robot, START_MS, _encoder(START_MS).reset_safe())
+    return robot
+
+
 def _encoder(now_ms: int) -> p.CommandEncoder:
     return p.CommandEncoder(clock=lambda: now_ms, start_seq=next(_SEQ))
 
@@ -88,7 +95,7 @@ def test_estop_beats_every_other_condition(config: dict) -> None:
 def test_command_timeout_latches_failsafe(config: dict) -> None:
     """600ms 무명령이면 곧바로 래치다 — 펌웨어 `latchFailsafe("command timeout")` (ADR-39)."""
     timeout = config["safety"]["cmd_timeout_ms"]
-    robot = _robot(config)
+    robot = _armed(config)
     now = START_MS
     _send(robot, now, _encoder(now).move(60, 0))
     assert robot.motion(now)["step"] > 0
@@ -98,6 +105,35 @@ def test_command_timeout_latches_failsafe(config: dict) -> None:
     assert robot.state(quiet) == "FAILSAFE"
     assert robot.motion(quiet) == {"step": 0.0, "angle": 0.0}
     assert _flags(robot, quiet)["safety_latched"] is True
+
+
+def test_boots_latched_and_refuses_move_until_reset_safe(config: dict) -> None:
+    """펌웨어는 래치된 채 부팅한다 (`motion_safety_state.h` `safe_latched = true`).
+
+    세션 개시 `STOP` 도, 링크가 살아났다는 사실도 래치를 풀지 않는다 — 받아들인
+    `RESET_SAFE` 만 푼다. 가짜가 실물보다 친절하면 호스트가 실기에서만 막힌다.
+    """
+    robot = _robot(config)
+    now = START_MS
+    assert _flags(robot, now)["safety_latched"] is True
+
+    _send(robot, now, _encoder(now).stop())
+    _send(robot, now, _encoder(now).move(60, 0))
+    record = _flags(robot, now)
+    assert record["state"] == "FAILSAFE"
+    assert record["safety_latched"] is True
+    assert record["flags"]["link_ok"] is True, "링크는 살아 있고 래치만 걸려 있다"
+    assert robot.motion(now) == {"step": 0.0, "angle": 0.0}, "해제 전 MOVE 는 거부된다"
+
+    now += 100
+    _send(robot, now, _encoder(now).reset_safe())
+    record = _flags(robot, now)
+    assert record["safety_latched"] is False
+    assert record["state"] == "IDLE", "해제는 보고 상태를 IDLE 로 되돌린다 (펌웨어와 같다)"
+
+    now += 100
+    _send(robot, now, _encoder(now).move(60, 0))
+    assert robot.motion(now)["step"] > 0
 
 
 def test_timeout_latch_refuses_move_until_reset_safe(config: dict) -> None:
@@ -140,7 +176,7 @@ def test_low_battery_latches_and_beats_the_host_view(config: dict) -> None:
 
 def test_obstacle_blocks_forward_only(config: dict) -> None:
     """⚠️ 전부 막으면 `FR-2.3` 의 «정지 후 후진» 이 실행 불가가 된다."""
-    robot = _robot(config, obstacle_at_s=0)
+    robot = _armed(config, obstacle_at_s=0)
     now = START_MS
     _send(robot, now, _encoder(now).move(60, 0))
     assert robot.motion(now) == {"step": 0.0, "angle": 0.0}, "전진은 막힌다"
@@ -152,7 +188,7 @@ def test_obstacle_blocks_forward_only(config: dict) -> None:
 
 def test_obstacle_is_reported_but_does_not_latch(config: dict) -> None:
     """반사 정지는 래치가 아니다 — 사람 확인 없이 스스로 풀려야 한다 (ADR-22)."""
-    robot = _robot(config, obstacle_at_s=0)
+    robot = _armed(config, obstacle_at_s=0)
     now = START_MS
     _send(robot, now, _encoder(now).move(60, 0))
     record = _flags(robot, now)

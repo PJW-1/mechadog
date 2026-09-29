@@ -20,8 +20,8 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
 이유도 그래서다 — 목업이 자체 숫자를 갖게 되면 호스트를 진짜와 다른 기준으로
 시험하게 된다.
 
-명령 타임아웃(`safety.cmd_timeout_ms`)이 지나면 펌웨어처럼 곧바로 래치하고
-`RESET_SAFE` 로만 푼다 (ADR-39).
+펌웨어처럼 래치된 채 부팅하고, 명령 타임아웃(`safety.cmd_timeout_ms`)이 지나면
+곧바로 래치한다. 어느 쪽이든 `RESET_SAFE` 로만 푼다 (ADR-39).
 
 사용:
 
@@ -145,7 +145,10 @@ class MockRobot:
         self._now_ms = start_ms
         self._last = _LastCommand(at_ms=start_ms)
         self._link_seen = False  # 한 번이라도 유효 명령을 받았는가
-        self._failsafe_latched = False
+        # 펌웨어처럼 **래치된 채 부팅한다** (`motion_safety_state.h` 의 `safe_latched = true`).
+        # 받아들인 `RESET_SAFE` 전까지 MOVE·POSE 는 적용되지 않는다 — 가짜가 실물보다
+        # 친절하면 호스트가 실기에서만 막히는 길을 목업에서 놓친다.
+        self._failsafe_latched = True
         # 후진하면 장애물이 멀어진다. ⚠️ **거친 모형이다** — 목적은 정확한 거리가
         # 아니라 *"물러나면 언젠가 풀린다"* 는 단조 관계뿐이다. 그것이 없으면 호스트의
         # 회피 시퀀스가 끝까지 도는지 확인할 수 없다. 실제 해제 판정은 로봇의 센서가
@@ -286,8 +289,8 @@ class MockRobot:
     def state(self, now_ms: int) -> str:
         """**Tier 1 판정이 먼저, 그 다음이 호스트가 알려준 상태다.**
 
-        FSM 은 Host PC 에서 돈다 (아키텍처 3절). 로봇이 센서만으로 아는 것은 셋뿐이고
-        (`FAILSAFE`·`AVOID`·`PATROL`), 나머지 5종은 호스트가 `STATE` 명령으로
+        FSM 은 Host PC 에서 돈다 (아키텍처 3절). 로봇이 스스로 내는 것은 셋뿐이고
+        (`FAILSAFE`·`AVOID`, 그리고 해제 뒤의 `IDLE`), 나머지는 호스트가 `STATE` 명령으로
         알려준 것을 받아적어 되돌려준다.
 
         **순서가 규약이다** (아키텍처 1.2 불변 규칙) — 호스트가 `PATROL` 이라고 해도
@@ -302,9 +305,9 @@ class MockRobot:
             return "AVOID"
 
         # ── Tier 2 — 호스트가 알려준 상태를 되돌려준다 ──
-        # 못 받았으면 PATROL 로 둔다. 로봇이 아는 한 링크는 살아 있고 위험도
-        # 없으므로, 걷는 중이라고 보는 것이 센서와 모순되지 않는 유일한 선택이다.
-        return self._last.host_state or "PATROL"
+        # 래치가 풀렸다면 `RESET_SAFE` 가 이미 `IDLE` 을 적어 두었다(펌웨어도 해제 때
+        # `g_reported_state = Idle`). 아래 기본값은 펌웨어의 초기값과 같게 둔 것뿐이다.
+        return self._last.host_state or "IDLE"
 
     # ── 송신 ────────────────────────────────────────────────
 

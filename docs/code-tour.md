@@ -71,6 +71,7 @@ sequenceDiagram
 python tools/mock_mechdog.py --device mechdog-01
 
 # 2. 가상 로봇을 상대로 호스트 런타임과 관제 대시보드(8000번 포트)를 띄운다
+#    가상 로봇도 실물처럼 안전 래치가 걸린 채 켜진다 — 관제 화면의 «안전 해제 (RESET_SAFE)» 를 누른 뒤에 움직인다
 python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --dashboard-port 8000
 
 # 3. 별도 터미널에서 단위 테스트를 돌린다
