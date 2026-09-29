@@ -83,7 +83,7 @@
 | Seeed XIAO ESP32S3 Sense | Xtensa 듀얼코어 240MHz, 8MB PSRAM, **OV3660(실물 확인)**, PDM 마이크, microSD | 배터리 패드(BAT+/BAT−) + 충전 IC 내장 |
 | Host PC | Windows 11 + WSL2 Ubuntu 24.04, **RTX 3080 10GB · i7-10700K · RAM 32GB** (데스크탑), ROS2 Jazzy | 추론·SLAM·대시보드 전담. **기준 PC 확정 (2026-09-09, OI-14 닫힘)**([CONTRIBUTING 1절](../CONTRIBUTING.md)). 팀원 PC 사양은 성능에 영향이 없다 — 추론이 이 한 대에 모여 있고, DirectML 은 어느 GPU 에서든 돈다 |
 | (미사용) ESP32-S3 비전 모듈 | Advanced Kit 포함품 | XIAO 사용으로 예비 부품 처리 |
-| (활용 검토) WonderEcho 음성 / MP3 모듈 | Advanced Kit 포함품 | **FR-3.4 경고 방송에 활용.** 말하기 목표는 로봇 I²C 의 MP3 모듈(`0x7B`, `4.7.20`)이고 WonderEcho 는 시제품·임시 링크로만 쓴다 ([ADR-38](DECISIONS.md#adr-38)). 듣기는 XIAO 의 PDM 마이크(`4.7.19`) |
+| (활용 검토) WonderEcho 음성 / MP3 모듈 | Advanced Kit 포함품 | **FR-3.4 경고 방송에 활용.** 말하기는 로봇 I²C 의 MP3 모듈(`0x7B`, `4.7.20`)이 맡고 WonderEcho 는 시제품·임시 링크로만 남는다 ([ADR-38](DECISIONS.md#adr-38)). 듣기는 XIAO 의 PDM 마이크(`4.7.19`) |
 
 **추가 구매 필요**
 
@@ -251,12 +251,12 @@ XIAO · 중계 MCU · LD19 를 **한 보조배터리에서 급전**한다. LiDAR
 
 | 용도 | 담당 | 방식 | 지연 | Tier |
 | :--- | :--- | :--- | :--- | :---: |
-| **암구호·음성 명령 인식** | **XIAO PDM 마이크**(목표 · `4.7.19`) + **Host PC 로컬 인식**. 현재는 WonderEcho 마이크(USB COM 임시 링크) | 음성을 PC 로 보내 faster-whisper 로 한국어 인식 후 규칙(명령·시나리오·비상·암구호)과 대조 ([ADR-31](DECISIONS.md), [ADR-38](DECISIONS.md#adr-38)) | 녹음 + 인식 (WonderEcho 기준 최대 15초, 무음 1초면 조기 종료) | 3 |
-| **즉각 경고 방송** | **로봇 MP3 모듈 `0x7B`**(목표 · `4.7.20`). 현재는 WonderEcho 스피커(USB COM 임시 링크) | TF 카드에 미리 넣은 문장 트랙 재생. 문장은 Piper 로 미리 합성한다(`4.7.21`). 현재 코드는 Piper 로 실시간 합성해 WonderEcho 로 재생 | **즉시** | 1 |
+| **암구호·음성 명령 인식** | **XIAO PDM 마이크**(`4.7.19`) + **Host PC 로컬 인식** | 음성을 PC 로 보내 faster-whisper 로 한국어 인식 후 규칙(명령·시나리오·비상·암구호)과 대조 ([ADR-31](DECISIONS.md), [ADR-38](DECISIONS.md#adr-38)) | 녹음 + 인식 (WonderEcho 기준 최대 15초, 무음 1초면 조기 종료) | 3 |
+| **즉각 경고 방송** | **로봇 MP3 모듈 `0x7B`**(`4.7.20`) | TF 카드에 미리 넣은 문장 트랙 재생. 문장은 Piper 로 미리 합성한다(`4.7.21`) | **즉시** | 1 |
 | **상황 판독** | Host PC 로컬 VLM | 사건 확정 후 `4.8.1` 템플릿 문장. 대시보드 자막과 관제 PC 스피커(`4.8.2`)로 낸다 | 비실시간 | 3 |
 | **상태 표시** | **초음파 센서 내장 RGB LED** | 에스컬레이션 단계를 색으로 표시 | 즉시 | 1 |
 
-> ⚠️ **상황 판독 문장은 로봇 스피커로 내지 않는다.** 목표 스피커인 MP3 모듈은 **미리 녹음한 문장만** 재생하므로
+> ⚠️ **상황 판독 문장은 로봇 스피커로 내지 않는다.** 로봇 스피커인 MP3 모듈은 **미리 녹음한 문장만** 재생하므로
 > 사건마다 값이 바뀌는 문장을 낼 수 없다. 관제 PC 스피커는 Piper 로 그 자리에서 합성하므로 이 제약이 없다
 > ([ADR-38](DECISIONS.md#adr-38)).
 

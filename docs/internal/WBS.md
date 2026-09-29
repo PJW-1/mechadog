@@ -13,7 +13,7 @@
 작업 범위·선행·DoD·상태가 바뀔 때만 이 사전을 수정하고 `python tools/wbs_assignments.py`를 실행한다.
 일상적인 코드 PR마다 WBS를 고칠 필요는 없다. 완료 상태는 팀장이 주간 리뷰나 마일스톤 종료 때 근거를 확인해 일괄 반영한다.
 워크패키지 이름에 `[P2]` 가 붙은 항목은 Phase 2([PRD 3절](PRD_Physical_AI_Guard_Robot.md)) 몫이다. **2026-09-28 Phase 2 착수를 승인했다** (`1.4`) — 그래서 `[P2]` 항목도 담당 목록의 할 일·남은 공수에 함께 센다. 표기는 어느 단계의 일인지 보이려고 남긴다.
-`R`은 A/B/C 작업 성격이며 실제 담당자는 [CONTRIBUTING.md 1절](../../CONTRIBUTING.md)과 생성 목록을 따른다.
+`R`은 A/B/C 작업 성격이며 실제 담당자는 [TEAM_PROCESS 1절](TEAM_PROCESS.md)과 생성 목록을 따른다.
 
 ---
 
