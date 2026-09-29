@@ -1,8 +1,11 @@
 [project]
 name = "mechdog-physical-ai"
-version = "0.1.0"
+version = "0.3.0"
 description = "MechDog Physical AI Security & Patrol Robot"
 requires-python = ">=3.12"
+
+[project.scripts]
+mechadog-runtime = "host.runtime:main"
 
 [tool.ruff]
 line-length = 100
