@@ -236,7 +236,7 @@ class Fsm:
             raise ValueError(f"지시가 정의되지 않은 초기 상태: {initial!r}")
         self._state = initial
         self._hooks: dict[str, list[Callable[[str, str], None]]] = {}
-        self._exit_hooks: dict[str, list[Callable[[str, str], None]]] = {}
+        self._exit_hooks: dict[str, list[Callable[[str, str], object]]] = {}
 
     @property
     def state(self) -> str:
@@ -250,7 +250,7 @@ class Fsm:
         """상태 진입 훅. 인자는 `(이전 상태, 새 상태)` 다."""
         self._hooks.setdefault(state, []).append(hook)
 
-    def on_exit(self, state: str, hook: Callable[[str, str], None]) -> None:
+    def on_exit(self, state: str, hook: Callable[[str, str], object]) -> None:
         """상태 이탈 훅. 인자는 `(떠나는 상태, 갈 상태)` 다. 진입 훅보다 먼저 불린다."""
         self._exit_hooks.setdefault(state, []).append(hook)
 

@@ -72,7 +72,8 @@ def _scale_volume(pcm: bytes, volume: int) -> bytes:
     if volume >= 100:
         return pcm
     samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) * (volume / 100.0)
-    return np.clip(samples, -32768, 32767).astype("<i2").tobytes()
+    scaled: bytes = np.clip(samples, -32768, 32767).astype("<i2").tobytes()
+    return scaled
 
 
 def _default_play(pcm: bytes, sample_rate: int) -> None:

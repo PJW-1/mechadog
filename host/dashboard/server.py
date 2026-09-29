@@ -17,10 +17,10 @@ import contextlib
 import json
 import socket
 import threading
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import uvicorn
 from anyio import CancelScope
@@ -42,6 +42,9 @@ from host.cloud.broadcast import Broadcaster
 from host.dashboard.commands import CommandService
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
+if TYPE_CHECKING:
+    from host.vision.worker import VisionResult
+
 PERIOD_S = 0.1
 SEND_TIMEOUT_S = 1.0
 MAX_CLIENTS = 16
@@ -60,13 +63,13 @@ class TelemetryHub:
 
     def __init__(self, state: DashboardState) -> None:
         self.state = state
-        self.clients: set[asyncio.Queue] = set()
+        self.clients: set[asyncio.Queue[Any]] = set()
         self.coalesced = 0
 
-    def subscribe(self) -> asyncio.Queue | None:
+    def subscribe(self) -> asyncio.Queue[Any] | None:
         if len(self.clients) >= MAX_CLIENTS:
             return None
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
         self.clients.add(queue)
         return queue
 
@@ -91,7 +94,7 @@ class TelemetryHub:
             await asyncio.sleep(max(0, deadline - loop.time()))
 
 
-def encode_vision_frame(result: Any) -> bytes:
+def encode_vision_frame(result: VisionResult) -> bytes:
     """검출 결과 하나를 WS 바이너리 메시지 하나로 만든다.
 
     ``[헤더 길이 uint32 big-endian][UTF-8 JSON 헤더][JPEG]``
@@ -130,14 +133,14 @@ class EventHub:
 
     def __init__(self, state: DashboardState) -> None:
         self.state = state
-        self.clients: set[asyncio.Queue] = set()
+        self.clients: set[asyncio.Queue[Any]] = set()
         self.cursor = state.event_seq
         self.overflowed = 0
 
-    def subscribe(self) -> asyncio.Queue | None:
+    def subscribe(self) -> asyncio.Queue[Any] | None:
         if len(self.clients) >= MAX_CLIENTS:
             return None
-        queue: asyncio.Queue = asyncio.Queue(maxsize=EVENT_BUFFER + 1)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=EVENT_BUFFER + 1)
         backlog, dropped = self.state.events_since(0)
         if dropped:
             queue.put_nowait({"type": "event_gap", "dropped": dropped})
@@ -171,15 +174,15 @@ class VisionHub:
 
     def __init__(self, source: Callable[[], Any]) -> None:
         self.source = source
-        self.clients: set[asyncio.Queue] = set()
+        self.clients: set[asyncio.Queue[Any]] = set()
         self.coalesced = 0
         self._last: Any = None
         self._last_message: bytes | None = None
 
-    def subscribe(self) -> asyncio.Queue | None:
+    def subscribe(self) -> asyncio.Queue[Any] | None:
         if len(self.clients) >= MAX_CLIENTS:
             return None
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
         # 새 화면은 마지막 프레임부터 받는다. 낡았는지는 `completed_ms` 로 가린다.
         if self._last_message is not None:
             queue.put_nowait(self._last_message)
@@ -206,14 +209,14 @@ class VisionHub:
             await asyncio.sleep(VISION_POLL_PERIOD_S)
 
 
-async def _send_updates(websocket: WebSocket, queue: asyncio.Queue) -> None:
+async def _send_updates(websocket: WebSocket, queue: asyncio.Queue[Any]) -> None:
     while True:
         message = await queue.get()
         async with asyncio.timeout(SEND_TIMEOUT_S):
             await websocket.send_json(message)
 
 
-async def _send_frames(websocket: WebSocket, queue: asyncio.Queue) -> None:
+async def _send_frames(websocket: WebSocket, queue: asyncio.Queue[Any]) -> None:
     while True:
         message = await queue.get()
         async with asyncio.timeout(SEND_TIMEOUT_S):
@@ -228,8 +231,8 @@ async def _receive_close(websocket: WebSocket) -> int | None:
 
 async def _serve_subscriber(
     websocket: WebSocket,
-    hub: TelemetryHub | VisionHub,
-    send: Callable[[WebSocket, asyncio.Queue], Awaitable[None]],
+    hub: TelemetryHub | VisionHub | EventHub,
+    send: Callable[[WebSocket, asyncio.Queue[Any]], Coroutine[Any, Any, None]],
     read_only_reason: str,
 ) -> None:
     """방송 채널 하나의 연결 수명 — 출처 검사, 연결 상한, 느린 연결 차단, 회수."""
@@ -242,7 +245,7 @@ async def _serve_subscriber(
     if queue is None:
         await websocket.close(code=1013)
         return
-    tasks: list[asyncio.Task] = []
+    tasks: list[asyncio.Task[Any]] = []
     try:
         await websocket.accept()
         tasks = [
@@ -363,8 +366,8 @@ class _PoseBody(BaseModel):
 
 class _BroadcastPatch(BaseModel):
     # 기본값 None 은 «필드 없음» 표시일 뿐이다 — 명시한 null 은 거절한다. 있는지는 `model_fields_set`.
-    volume: Annotated[StrictInt, Field(ge=0, le=100)] = None
-    muted: StrictBool = None
+    volume: Annotated[StrictInt, Field(ge=0, le=100)] = None  # type: ignore[assignment]
+    muted: StrictBool = None  # type: ignore[assignment]
 
 
 async def _read_body[B: BaseModel](
@@ -390,8 +393,8 @@ async def _read_body[B: BaseModel](
 def _broadcast_routes(broadcast: Broadcaster | None) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/api/broadcast")
-    async def broadcast_status():
+    @router.get("/api/broadcast", response_model=None)
+    async def broadcast_status() -> dict[str, Any]:
         """PC 스피커 방송(관제 TTS)의 음량·무음 상태. 로봇 스피커(`/api/command/sound`)와는 별개다.
 
         방송기가 없으면(piper 미설치 등) `available: false` — 화면은 «방송 없음» 을 보여 준다.
@@ -400,8 +403,8 @@ def _broadcast_routes(broadcast: Broadcaster | None) -> APIRouter:
             return {"available": False}
         return {"available": True, "volume": broadcast.volume, "muted": broadcast.muted}
 
-    @router.post("/api/broadcast", dependencies=_LOCAL_ORIGIN)
-    async def broadcast_update(request: Request):
+    @router.post("/api/broadcast", dependencies=_LOCAL_ORIGIN, response_model=None)
+    async def broadcast_update(request: Request) -> dict[str, Any] | JSONResponse:
         """`{"volume"?: 0..100, "muted"?: bool}` — 온 필드만 바꾼다.
 
         음량은 범위 밖이면 거절한다(자르지 않는다). fleet 은 방송기가 하나라 모든 로봇 화면에
@@ -424,33 +427,33 @@ def _command_routes(commands: CommandService) -> APIRouter:
     """`/api/command/*` — 로봇을 실제로 움직이므로 모든 경로에 출처 검사를 건다."""
     router = APIRouter(prefix="/api/command", dependencies=_LOCAL_ORIGIN)
 
-    @router.post("/estop")
-    async def estop():
+    @router.post("/estop", response_model=None)
+    async def estop() -> dict[str, object]:
         """어떤 상태에서도 통한다 — 조건을 검사하지 않는다 (FR-4.4)."""
         return commands.estop().as_dict()
 
-    @router.post("/manual")
-    async def manual(request: Request):
+    @router.post("/manual", response_model=None)
+    async def manual(request: Request) -> dict[str, object]:
         """`{"on": true|false}` 로 수동 오버라이드를 잡거나 놓는다."""
         body = await _read_body(request, _ManualBody)
         result = commands.manual_on() if body.on else commands.manual_off()
         return result.as_dict()
 
-    @router.post("/patrol")
-    async def patrol(request: Request):
+    @router.post("/patrol", response_model=None)
+    async def patrol(request: Request) -> dict[str, object]:
         """`{"action": "start"|"stop"}` — 시작은 예약, 정지는 수동 경유로 `IDLE` 에 정착."""
         body = await _read_body(request, _PatrolBody)
         if body.action == "start":
             return commands.patrol().as_dict()
         return commands.patrol_stop().as_dict()
 
-    @router.post("/reset")
-    async def reset():
+    @router.post("/reset", response_model=None)
+    async def reset() -> dict[str, object]:
         """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""
         return commands.reset().as_dict()
 
-    @router.post("/alarm")
-    async def alarm():
+    @router.post("/alarm", response_model=None)
+    async def alarm() -> dict[str, object]:
         """사람이 상황을 확인한 뒤 누르는 경보(L3) 해제 (FR-10.3.2).
 
         `/api/command/reset`(F 해제)과 다른 문이다 (ADR-26 ①). 헤드리스 런타임의 유일한
@@ -458,8 +461,8 @@ def _command_routes(commands: CommandService) -> APIRouter:
         """
         return commands.alarm_confirm().as_dict()
 
-    @router.post("/zone-baseline")
-    async def zone_baseline(request: Request):
+    @router.post("/zone-baseline", response_model=None)
+    async def zone_baseline(request: Request) -> dict[str, object]:
         """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
 
         물건을 영구히 옮긴 경우의 문이다 (ADR-41 결정 6). 런타임이 다음 틱에 지운다.
@@ -468,8 +471,8 @@ def _command_routes(commands: CommandService) -> APIRouter:
         body = await _read_body(request, _ZoneBody)
         return commands.zone_baseline(body.zone).as_dict()
 
-    @router.post("/service")
-    async def service(request: Request):
+    @router.post("/service", response_model=None)
+    async def service(request: Request) -> dict[str, object]:
         """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.
 
         진입은 로봇을 주차시키고 루프 워치독을 건다(패치·진단용). 해제 후에도
@@ -478,8 +481,8 @@ def _command_routes(commands: CommandService) -> APIRouter:
         body = await _read_body(request, _ModeBody)
         return commands.service(body.mode).as_dict()
 
-    @router.post("/sound")
-    async def sound(request: Request):
+    @router.post("/sound", response_model=None)
+    async def sound(request: Request) -> dict[str, object]:
         """`{"track": 0..3000}` — 로봇 MP3 모듈 트랙 재생, 0 = 정지.
 
         음성 프로세스(`robotlink.play_track`)가 자기 발화를 로봇 스피커로 트는
@@ -490,8 +493,8 @@ def _command_routes(commands: CommandService) -> APIRouter:
         body = await _read_body(request, _SoundBody)
         return commands.sound(body.track).as_dict()
 
-    @router.post("/mode")
-    async def mission_mode(request: Request):
+    @router.post("/mode", response_model=None)
+    async def mission_mode(request: Request) -> dict[str, object]:
         """`{"mode": "guard"|"factory"}` — 운용 모드 전환 (FR-4.7 · FR-11.3).
 
         온보드 `SERVICE`(정비 상태)와 다른 축이다 — 이쪽은 Tier 2 판단을 고르는 임무 모드다.
@@ -499,8 +502,8 @@ def _command_routes(commands: CommandService) -> APIRouter:
         body = await _read_body(request, _ModeBody)
         return commands.mission_mode(body.mode).as_dict()
 
-    @router.post("/auth")
-    async def auth(request: Request):
+    @router.post("/auth", response_model=None)
+    async def auth(request: Request) -> dict[str, object]:
         """`{"result": "ok"|"fail"|"pending", "captured_at_ms"?: int}` — 음성 암구호 경로.
 
         대조 자체는 음성 파이프라인이 한다 — 여기는 판정을 FSM 사건으로
@@ -513,14 +516,14 @@ def _command_routes(commands: CommandService) -> APIRouter:
         body = await _read_body(request, _AuthBody)
         return commands.auth(body.result, body.captured_at_ms).as_dict()
 
-    @router.post("/drive")
-    async def drive(request: Request):
+    @router.post("/drive", response_model=None)
+    async def drive(request: Request) -> dict[str, object]:
         """`MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
         body = await _read_body(request, _DriveBody, invalid="fields")
         return commands.drive(body.step, body.angle).as_dict()
 
-    @router.post("/pose")
-    async def pose(request: Request):
+    @router.post("/pose", response_model=None)
+    async def pose(request: Request) -> dict[str, object]:
         """`{"preset": "up"|"level"|"down"}` — `MANUAL` 에서만 받는다. 다음 틱에 반영된다."""
         body = await _read_body(request, _PoseBody)
         return commands.pose(body.preset).as_dict()
@@ -543,7 +546,7 @@ def create_app(
     event_hub = EventHub(state)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         tasks = [asyncio.create_task(hub.run()), asyncio.create_task(event_hub.run())]
         if vision_hub is not None:
             tasks.append(asyncio.create_task(vision_hub.run()))
@@ -557,10 +560,13 @@ def create_app(
     app = FastAPI(title="MechDog telemetry", lifespan=lifespan)
     app.state.hub = hub
     app.state.event_hub = event_hub
-    app.add_exception_handler(_RefusedError, _refused_response)
+    app.add_exception_handler(
+        _RefusedError,
+        cast("Callable[[Request, Exception], Awaitable[Response]]", _refused_response),
+    )
 
-    @app.get("/health")
-    async def health():
+    @app.get("/health", response_model=None)
+    async def health() -> dict[str, Any]:
         return {
             "service": "telemetry",
             # 이 서버가 어느 개체 프로파일로 떴는지 — 여러 런타임을 띄웠을 때 가려내는 데 쓴다.
@@ -579,12 +585,12 @@ def create_app(
             "modes": list(available_modes()),
         }
 
-    @app.get("/api/telemetry")
-    async def telemetry():
+    @app.get("/api/telemetry", response_model=None)
+    async def telemetry() -> dict[str, Any]:
         return state.snapshot()
 
-    @app.get("/api/policy")
-    async def policy_values():
+    @app.get("/api/policy", response_model=None)
+    async def policy_values() -> dict[str, Any] | JSONResponse:
         """설정 화면이 보여 줄 대응 단계·인증 값 (B7). 기동 시 읽은 config 그대로다.
 
         없으면 404 — 화면은 값을 지어내지 않고 «설정값 미수신» 으로 적는다.
@@ -593,8 +599,8 @@ def create_app(
             return JSONResponse({"error": "no_policy"}, status_code=404)
         return policy
 
-    @app.get("/api/events")
-    async def events(since: int = 0):
+    @app.get("/api/events", response_model=None)
+    async def events(since: int = 0) -> dict[str, Any]:
         """`since` 순번 뒤의 사건을 돌려준다 — WS 를 못 쓰는 쪽(음성 저널)을 위한 폴링 경로.
 
         `/ws/events` 와 같은 버퍼다. `dropped` 가 0 이 아니면 버퍼에서 밀려 못 준 사건이 있었다.
@@ -607,7 +613,7 @@ def create_app(
         }
 
     @app.get("/events/{entry}/snapshot.jpg")
-    async def event_snapshot_image(entry: str):
+    async def event_snapshot_image(entry: str) -> Response:
         """사건 하나의 저장된 그림(그때 장면). 사건 전문은 JPEG 대신 디렉터리 이름만 싣는다.
 
         ⚠️ 이름은 신뢰할 수 없는 입력이며 검증은 `EventBlackbox.snapshot_bytes` 한 곳이 한다.
@@ -625,7 +631,7 @@ def create_app(
     if camera is not None:
 
         @app.get("/camera/snapshot.jpg")
-        async def camera_snapshot():
+        async def camera_snapshot() -> Response:
             jpeg = camera()
             if jpeg is None:
                 return JSONResponse({"error": "no_frame"}, status_code=503)
@@ -636,8 +642,8 @@ def create_app(
             )
 
         @app.get("/camera/stream")
-        async def camera_stream():
-            async def frames() -> Iterator[bytes]:
+        async def camera_stream() -> StreamingResponse:
+            async def frames() -> AsyncIterator[bytes]:
                 last: bytes | None = None
                 while True:
                     jpeg = camera()
@@ -655,17 +661,17 @@ def create_app(
         app.include_router(_command_routes(commands))
 
     @app.websocket("/ws/telemetry")
-    async def websocket_telemetry(websocket: WebSocket):
+    async def websocket_telemetry(websocket: WebSocket) -> None:
         await _serve_subscriber(websocket, hub, _send_updates, "Telemetry channel is read-only")
 
     @app.websocket("/ws/events")
-    async def websocket_events(websocket: WebSocket):
+    async def websocket_events(websocket: WebSocket) -> None:
         await _serve_subscriber(websocket, event_hub, _send_updates, "Event channel is read-only")
 
     if vision_hub is not None:
 
         @app.websocket("/ws/vision")
-        async def websocket_vision(websocket: WebSocket):
+        async def websocket_vision(websocket: WebSocket) -> None:
             await _serve_subscriber(
                 websocket, vision_hub, _send_frames, "Vision channel is read-only"
             )
@@ -695,7 +701,7 @@ def create_fleet_app(
     marks = registered or {}
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         async with contextlib.AsyncExitStack() as stack:
             for sub in robots.values():
                 await stack.enter_async_context(sub.router.lifespan_context(sub))
@@ -703,13 +709,13 @@ def create_fleet_app(
 
     app = FastAPI(title="MechDog fleet", lifespan=lifespan)
 
-    @app.get("/health")
-    async def health():
+    @app.get("/health", response_model=None)
+    async def health() -> dict[str, Any]:
         # `service` 가 같아야 화면이 이 출처를 API 로 인정한다 (`app.js` resolveApiBase).
         return {"service": "telemetry", "fleet": list(robots), "modes": list(available_modes())}
 
-    @app.get("/api/fleet")
-    async def fleet():
+    @app.get("/api/fleet", response_model=None)
+    async def fleet() -> dict[str, Any]:
         return {
             "robots": [
                 {
@@ -725,7 +731,7 @@ def create_fleet_app(
         app.mount(f"{FLEET_PREFIX}/{robot_id}", sub, name=f"robot-{robot_id}")
 
     @app.websocket("/{path:path}")
-    async def unknown_ws(websocket: WebSocket):
+    async def unknown_ws(websocket: WebSocket) -> None:
         # `/` 의 정적 마운트는 http 범위만 받으므로, 매칭되지 않은 WS 를 잡는 경로를 먼저 등록한다.
         await websocket.close(code=1008)
 
@@ -768,7 +774,7 @@ def serving(app: FastAPI, port: int) -> Iterator[uvicorn.Server]:
     failures: list[BaseException] = []
 
     class LocalServer(uvicorn.Server):
-        async def startup(self, sockets=None):
+        async def startup(self, sockets: list[socket.socket] | None = None) -> None:
             await super().startup(sockets=sockets)
             ready.set()
 

@@ -152,7 +152,7 @@ def require_lidar_track(config: dict[str, Any], *, simulation: bool) -> None:
     )
 
 
-def maps_dir(config: dict[str, Any]) -> Path:
+def maps_dir(config: Mapping[str, Any]) -> Path:
     """지도 산출물 경로. 설정에 없으면 저장소의 `maps/` 다."""
     configured = config.get("lidar", {}).get("maps_dir")
     return Path(configured) if configured else DEFAULT_MAPS_DIR

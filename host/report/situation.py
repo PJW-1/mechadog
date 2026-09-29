@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 #: VLM 위험 종류 → 문구 (WBS 4.8.0 `ZONE_HAZARDS`). `collapsed_load` 는 `fallen_object` 의
@@ -65,7 +66,7 @@ def _describe_zone_notice(judgement: dict[str, Any]) -> str:
     return f"{_zone_prefix(judgement.get('zone'))}물건이 반출된 것으로 보입니다."
 
 
-_TEMPLATES: dict[str, Any] = {
+_TEMPLATES: dict[str, Callable[[dict[str, Any]], str]] = {
     "person_fallen": _describe_person_fallen,
     "zone_changed": _describe_zone_changed,
     "zone_notice": _describe_zone_notice,

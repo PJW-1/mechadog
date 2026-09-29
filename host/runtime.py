@@ -30,9 +30,9 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
-from host.behavior.actions import register_actions
+from host.behavior.actions import PostureSequence, register_actions
 from host.behavior.auth import Authenticator
 from host.behavior.auth_judge import AuthJudge
 from host.behavior.commander import Commander
@@ -197,7 +197,7 @@ class Runtime:
         self._actions = register_actions(self._behavior, config)
         self._normal_patrol = self._behavior.sequence_for("PATROL")
         self._behavior.register_sequence("PATROL", self._patrol_sequence)
-        self._normal_alert = self._behavior.sequence_for("ALERT")
+        self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
         self._behavior.fsm.on_exit(
@@ -579,8 +579,9 @@ class Runtime:
         self._fall.watch(now_ms)
         self._ppe_judge.settle(now_ms)
         result = self._vision.latest()
-        fresh = result is not None and self._edge.changed("vision_seq", result.frame_seq)
-        if fresh:
+        if result is not None and not self._edge.changed("vision_seq", result.frame_seq):
+            result = None
+        if result is not None:
             self._ppe_judge.forget_lost(result, now_ms)
             self._summary.count("detections", len(result.detections))
             self._behavior.note_vision(result.completed_ms)
@@ -622,7 +623,7 @@ class Runtime:
         # ⚠️ **변화 여부는 게이트의 `changed` 가 아니라 우리 기준으로 본다.** 게이트는
         # 25fps 로 도니까 한 틱 사이에 확정→해제가 다 지나갈 수 있고, 그러면 그 순간의
         # `changed` 는 우리가 못 본 전이를 가리킨다.
-        if fresh and self._edge.changed("person", result.sighting.present):
+        if result is not None and self._edge.changed("person", result.sighting.present):
             LOG.info(
                 "person_gate",
                 present=result.sighting.present,
@@ -634,7 +635,7 @@ class Runtime:
             if result.sighting.present and not inspected:
                 self._apply(Event.PERSON_FOUND, now_ms)
                 self._record_person_event(result)
-        if fresh:
+        if result is not None:
             self._fall.take_reading(now_ms)
             self._observe_fallen(result, now_ms)
             self._ppe_judge.judge(result, now_ms)
@@ -928,7 +929,7 @@ class Runtime:
             self._feed_event(name, now_ms, previous=previous, trigger=event.name)
 
     def _feed_event(self, name: str, now_ms: int, **extra: Any) -> None:
-        self._dashboard.record_event(
+        cast("DashboardState", self._dashboard).record_event(
             {
                 "event": name,
                 "ts_ms": now_ms,
@@ -1378,7 +1379,7 @@ class Runtime:
     def step(self, now_ms: int) -> None:
         """틱 하나 — 마감이 된 전문만 나간다 (마감은 송신기가 센다)."""
         with self._send_lock:
-            self._send(self._sock, self.tick(now_ms))
+            self._send(cast("socket.socket", self._sock), self.tick(now_ms))
 
     def send_emergency_stop(self) -> str:
         """관제 ESTOP — 인코딩과 즉시 송신을 틱과 같은 락 안에서 한다.
