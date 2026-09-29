@@ -1557,8 +1557,8 @@ FR-10 · 아키텍처 3 / 3.1 · WBS 3.4.4 / 3.7 / 3.8 / 6.4.3. 운용 모드는
 
 **`auth.require_both: true` 에서의 창** — 창은 한 번 더 늘어난다. 암구호가 일치하면
 `VoiceAuthWindow.note_verdict` 가 사원증 대기를 `auth.timeout_s` 만큼(상한은 `verdict_grace_s + timeout_s`)
-다시 미룬다 — 암구호를 맞힌 사람에게 사원증을 꺼낼 시간을 새로 주기 위해서다(`host/runtime.py` 의
-`_judge_auth` · `host/behavior/voice_auth.py` 의 `note_verdict`). 그래서 창은 최초 `timeout_s`(30초)에 판정 대기
+다시 미룬다 — 암구호를 맞힌 사람에게 사원증을 꺼낼 시간을 새로 주기 위해서다(`host/behavior/auth_judge.py` 의
+`AuthJudge.judge` · `host/behavior/voice_auth.py` 의 `note_verdict`). 그래서 창은 최초 `timeout_s`(30초)에 판정 대기
 유예(10초)와 사원증 대기 유예(30초)가 더해져 **최대 70초**까지 늘어날 수 있다. 위 결정·표의 «한 번» 은
 «판정 대기 신호당 한 번» 이라는 뜻이며, 창 전체에서 한 번만 늘어난다는 뜻이 아니다.
 
