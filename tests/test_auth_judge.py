@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 from host.behavior.auth_judge import AuthJudge
@@ -71,6 +72,15 @@ def test_badge_grants_and_holds_patrol_for_resume_delay(cfg, clock):
     assert judge.authenticator.holder(0, now) is not None
     assert judge.holds_patrol(now + delay_ms - 1)
     assert not judge.holds_patrol(now + delay_ms)
+
+
+def test_resume_wait_is_logged_on_the_runtime_logger(cfg, clock, caplog):
+    """순찰 재개 대기는 런타임 로거(`mechadog.runtime`)로 남는다 — 다른 이름이면 핸들러에 닿지 않는다."""
+    judge, _behavior, _applied = _judge(cfg, clock, route=AUTH_WAIT_ROUTE)
+    with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
+        judge.judge(_frame(_badge(cfg)), clock.ms)
+    records = [r for r in caplog.records if getattr(r, "event", None) == "auth_resume_wait"]
+    assert [r.name for r in records] == ["mechadog.runtime"]
 
 
 def test_no_resume_wait_before_any_grant(cfg, clock):
