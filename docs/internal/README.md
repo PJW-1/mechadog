@@ -10,6 +10,8 @@
 - [TEAM_PROCESS.md](TEAM_PROCESS.md) — 역할 분류·작업 완료 판정·주간 리뷰·팀 용어 등 팀 운영 절차를 담는다.
 - [HARDWARE.md](HARDWARE.md) — 조립·배선·발주·착수 확인 절차를 담는다.
 - [MODEL_PLAN.md](MODEL_PLAN.md) — 비전·STT·TTS·VLM 모델 스택 설계 초안이다.
+- [PPE_SYSTEM_PLAN.md](PPE_SYSTEM_PLAN.md) — PPE 미착용 감지(FR-9) 시스템 기획서다.
+- [PPE_TRAIN.md](PPE_TRAIN.md) — PPE 검출 모델 학습 기록이다.
 - [FIELD_MEASUREMENT.md](FIELD_MEASUREMENT.md) — 기체별 실측 프로그램과 절차를 담는다.
 - [WATCHDOG_VERIFICATION.md](WATCHDOG_VERIFICATION.md) — 루프 워치독 실물 검증 절차를 담는다.
 - [LIDAR_INTEGRATION.md](LIDAR_INTEGRATION.md) — LiDAR 측위·순찰 통합 작업의 결정 노트다.
