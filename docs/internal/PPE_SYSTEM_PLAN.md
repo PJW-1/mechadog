@@ -320,7 +320,7 @@ FR-9가 쓰는 명령은 `POSE`, `ACTION`, `MOVE`, `LED`, `SOUND`, `STATE` 여�
 
 완료 기준은 여기 적지 않는다. 정본은 [WBS](WBS.md) 의 같은 번호다.
 
-결과는 `python TEST_MECHDOG/run_tests.py` 를 돌려 `TEST_MECHDOG/results/<날짜>_<번호>/` 에 남긴다. 그다음 엑셀 `일정과 업무` 시트에 상태, 실제완료일, 결과 요약, 근거 링크, 확인자 다섯 칸을 채운다. 결과 요약은 합격·불합격이 아니라 숫자로 적는다.
+결과는 `python field_tests/run_tests.py` 를 돌려 `field_tests/results/<날짜>_<번호>/` 에 남긴다. 그다음 엑셀 `일정과 업무` 시트에 상태, 실제완료일, 결과 요약, 근거 링크, 확인자 다섯 칸을 채운다. 결과 요약은 합격·불합격이 아니라 숫자로 적는다.
 
 ### T1 · 데이터셋 (WBS 3.7.1, PC)
 

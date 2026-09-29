@@ -182,7 +182,7 @@ CPU 빌드가 깔린 것이고, 그 상태로 돌리면 질문 하나에 수십 
 
 ```bash
 ~/.venv-mechdog-vlm/Scripts/python.exe \
-    TEST_MECHDOG/results/20260920_4.8.0-vlm-compare/vlm_compare_bench.py out.json
+    field_tests/results/20260920_4.8.0-vlm-compare/vlm_compare_bench.py out.json
 ```
 
 `blackbox/` 에 쌓인 실기 프레임을 재료로 쓴다. 정상이면 적재 후 VRAM **4.1GB**, 질문당

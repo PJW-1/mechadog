@@ -101,6 +101,6 @@ flowchart TD
 
 실측 기록
 
-- [경비 대응 실기: 정지선·제자리 회전·고개 들기](../../TEST_MECHDOG/results/20260923_patrol-engage/summary.md)
-- [선회 추종 실기](../../TEST_MECHDOG/results/20260918_3.5.4-track/summary.md)
-- [선회 추종 재확인](../../TEST_MECHDOG/results/20260918_3.5.4-recheck/summary.md)
+- [경비 대응 실기: 정지선·제자리 회전·고개 들기](../../field_tests/results/20260923_patrol-engage/summary.md)
+- [선회 추종 실기](../../field_tests/results/20260918_3.5.4-track/summary.md)
+- [선회 추종 재확인](../../field_tests/results/20260918_3.5.4-recheck/summary.md)

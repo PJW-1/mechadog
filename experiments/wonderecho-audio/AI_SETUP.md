@@ -192,7 +192,7 @@ $s.Speak("Hello Hiwonder")   # 모듈 근처에서 재생
 3. OTA 진단 빌드와 비공개 인증 설정이 있을 때만 인가된 `/i2c/live` 요청으로 `0x34` 응답 확인. 기본 OTA-OFF 빌드에서는 되돌릴 이미지를 확보한 뒤 별도 `diagnostics/i2c_scan` 스케치를 사용
 
 > **개정 (2026-09-23 실측 · [ADR-38](../../docs/DECISIONS.md#adr-38))** — `0x34` 브리지로는 **명령 id 만** 오가고 PCM(음성 파형) 중계는 불가다
-> (WBS 4.7.9 불가 판정, `TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md`). `0x64` 는 장치 주소가 아니라
+> (WBS 4.7.9 불가 판정, `field_tests/results/20260923_4.7.9-bridge-transparency/summary.md`). `0x64` 는 장치 주소가 아니라
 > `0x34` 안의 인식 명령 id 우편함 **레지스터**다(읽으면 지워짐). 로봇 4핀 시험은 명령 id 수준 확인까지만 의미가 있다.
 > 운용 음성은 PC 가 판단하고(Whisper → 규칙 → Piper, LLM 없음), 듣기는 XIAO 마이크 · 말하기는 로봇 MP3 모듈(`0x7B`)로 옮긴다.
 

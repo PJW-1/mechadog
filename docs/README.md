@@ -44,7 +44,7 @@
 - [measurements/](measurements/) — 현장에서 재현한 개별 실측 기록 모음이다.
 - [archive/](archive/) — 더는 정본이 아닌 지난 문서를 보관한다.
 - [PPE_ACCEPTANCE.md](PPE_ACCEPTANCE.md) — PPE 검수 절차다. (개발 중)
-- [../TEST_MECHDOG/README.md](../TEST_MECHDOG/README.md) — 실기 시험 원자료 폴더의 색인과 대표 기록이다.
+- [../field_tests/README.md](../field_tests/README.md) — 실기 시험 원자료 폴더의 색인과 대표 기록이다.
 - [../tools/README.md](../tools/README.md) — 운영·측정·개발 보조 스크립트의 분류표다.
 
 ## 팀 운영 문서

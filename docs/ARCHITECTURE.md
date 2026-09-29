@@ -271,7 +271,7 @@ XIAO · 중계 MCU · LD19 를 **한 보조배터리에서 급전**한다. LiDAR
 > 인식도 PC 로 옮겼으므로(ADR-31) **펌웨어에 미리 확정해야 하는 암구호 문구가 없다.** 방송 문구는 개발 중에 늘리면 된다.
 > MP3 모듈은 로봇 IIC1 에서 `0x7B` 로 응답하고 공장 기본 곡 재생까지 확인됐다.
 > 재생·정지·음량과 트랙 번호 규칙(파일 이름 앞 네 자리)은 드라이버가 실측으로 확정했다. `0x7E` 의 정체는 아직 모른다.
-> 원자료: [`TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md`](../TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md).
+> 원자료: [`field_tests/results/20260923_4.7.9-bridge-transparency/summary.md`](../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md).
 >
 > **상태 표시등은 별도 부품이 필요하지 않다.** 초음파 센서에 RGB LED 가 내장되어 있음을 실물로 확인했다(OI-12 닫힘).
 
@@ -323,7 +323,7 @@ WonderEcho ─ USB COM ─→ PC faster-whisper → 규칙 → Piper 실시간 �
 | 문장 음원 | 없음 (실시간 합성) | Piper 로 미리 합성해 TF 카드에 넣고 문장→트랙 번호 표를 만든다 |
 
 - **XIAO `:82`** 는 마이크가 없으면 `503` 으로 답하고 영상(`:81`)은 계속 낸다. 영상과 동시 전송 실측에서 음성 누락 0,
-  16 kHz 유지, 가장 긴 전송 정지 218 ms(DMA 여유 256 ms 안)였다 — [`TEST_MECHDOG/results/20260923_xiao-mic/summary.md`](../TEST_MECHDOG/results/20260923_xiao-mic/summary.md).
+  16 kHz 유지, 가장 긴 전송 정지 218 ms(DMA 여유 256 ms 안)였다 — [`field_tests/results/20260923_xiao-mic/summary.md`](../field_tests/results/20260923_xiao-mic/summary.md).
   ⚠️ 영상은 음성과 무관하게 약 2.5 Mbps 에서 막혀 복잡한 장면에서는 영상만으로도 9.4 fps 까지 내려갔다(재측정 필요).
 - **호스트 ↔ 음성 프로세스 계약은 문장 그대로다.** 단계 경고는 호스트가 `escalation_changed` 사건에 `config.escalation.sound` 의
   한국어 문장을 싣고, 음성 프로세스가 사건을 폴링해 경고 큐(`Hub.enqueue_say(urgent=True)`)에 넣는다. MP3 는 트랙 번호로 재생하므로 재생 직전에 문장→트랙 번호 표로 바꾼다. 표에 없는 문장은 재생하지 못하므로 제작 도구가 누락을 검사한다.

@@ -21,7 +21,7 @@ from tools.ppe import episode_eval as ee  # noqa: E402
 OK, BAD, UNK = ppe.STATE_OK, ppe.STATE_VIOLATION, ppe.STATE_UNKNOWN
 REAL_SESSION = (
     Path(__file__).resolve().parents[1]
-    / "TEST_MECHDOG"
+    / "field_tests"
     / "results"
     / "20260928_ppe-xiao"
     / "session.json"
