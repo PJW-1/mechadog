@@ -2,6 +2,7 @@
 
 팀 안에서만 쓰는 작업 관리 규칙이다. 외부 기여자가 지킬 규칙은 [CONTRIBUTING](../../CONTRIBUTING.md) 에 있다.
 용어(WBS·DoD·M/D·마일스톤·DR·OI·RISK)는 아래 용어 절에 정리한다.
+환경 세팅(`scripts\setup.ps1`)이 기준값 약 40초를 크게 넘으면 DR-17 재검토 트리거로 보고 팀에 공유한다.
 
 ---
 
@@ -51,7 +52,7 @@ Issue는 필요할 때 해당 WBS 단위로 만든다. 과거 완료 작업 전�
 
 PR 을 올릴 때 [WBS 사전](WBS.md)의 해당 워크패키지 완료 기준(DoD)을 PR 본문에 인용하고 충족 근거를 적는다.
 관련 워크패키지가 여러 개면 PR 본문에 ID 를 모두 적는다. 기능 작업은 가능하면 브랜치명과 커밋 `Refs:` 에 WBS ID 를 넣는다
-(예: `feature/3.2.1-command-timeout`, `Refs: WBS 3.2.1, FR-1.3`).
+(예: `feature/3.2.1-command-timeout`, `Refs: WBS 3.2.1, FR-1.3`). 긴급 수정과 문서 정리는 설명형 이름만으로도 충분하다.
 
 ## 4. 개체별 보정값 실측 사례
 
