@@ -51,6 +51,7 @@ from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.behavior.posture import RETURN, PostureEscalation
 from host.behavior.tracker import LockOnTracker
+from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zones import Zone, ZoneStore
 from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
@@ -460,41 +461,15 @@ class Runtime:
         # 사원증 인증. **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
         # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 여기서 정한다.
         self._auth = Authenticator(config)
-        self._auth_require_both = bool(config["auth"].get("require_both", False))
-        self._auth_badge_wait_ms = int(config["auth"]["timeout_s"]) * 1000
-        self._auth_badge_ready = False
-        # 음성 암구호의 시도 횟수 (FR-10.3). **사원증과 같은 값을 쓰되 따로 센다** —
-        # `Authenticator` 의 세션은 마커를 본 사람에게 붙는데, 암구호는 마커가 없어
-        # 붙일 세션이 없다. 그래서 *지금 열려 있는 `AUTH_WAIT` 한 번*을 단위로 센다.
-        self._voice_auth_max = int(config["auth"]["max_attempts"])
-        self._voice_auth_attempts = 0
-        # 음성 암구호의 유효 시간 (FR-10.2.4). **사원증과 같은 값을 쓰되 트랙이 아니라
-        # 시각으로 센다** — 아래 `_judge_auth` 의 설명을 함께 읽을 것.
-        self._voice_auth_valid_ms = int(config["auth"]["session_valid_s"]) * 1000
-        self._voice_auth_until_ms = 0
-        # 판정이 오는 중일 때 `auth.timeout_s` 를 미뤄 주는 상한 (FR-10.3 · ADR-37).
-        #
-        # ⚠️ **창 안에서 말했는데도 30초를 넘겨 실패가 되는 것을 막는 값이다.**
-        # 파이프라인은 녹음(최대 15초)·무음 1초·전사를 직렬로 하므로 «말한 시각» 과
-        # «판정이 도착한 시각» 이 크게 벌어진다 — 실기에서 통과 2건이
-        # 각각 24초·18초를 썼다(창은 30초, 여유 6초). ⑥ 이 «창 밖의 말을 세지
-        # 않는다» 를 고쳤다면 이것은 «창 안의 말이 늦게 도착하는 것» 을 고친다.
-        self._voice_auth_grace_ms = int(config["auth"]["verdict_grace_s"]) * 1000
-        # **이번 창에서 유예를 이미 썼는가.** 창마다 1회다 — 아래 `note_voice_listening`.
-        self._voice_auth_deferred = False
-        # **`AUTH_WAIT` 가 열린 시각** (epoch ms · 닫혀 있으면 `None`).
-        #
-        # ⚠️ **창이 열리기 전에 녹음된 발화를 시도로 세지 않기 위해 있다.** 음성
-        # 파이프라인은 `capture_pcm` 으로 최대 15초를 녹음하고 그 뒤에 전사까지
-        # 한 다음 상태를 묻는다 — 즉 «말한 시각» 과 «판정이 도착한 시각» 이 수 초
-        # 떨어진다. `ALERT` 에서 방문객이 아무 말이나 한 것이 전사되는 동안 창이
-        # 열리면, 그 말이 **암구호 시도로 세어져** `max_attempts` 2회를 혼자
-        # 소진하고 곧바로 L3 경보가 된다 — 실기의 빨간 눈이 이것이다.
-        #
-        # 판정을 여기 두는 이유는 **창이 언제 열렸는지 아는 쪽이 런타임뿐**이라는
-        # 것이다 (`dashboard/commands.py` 의 같은 취지 주석). 파이프라인은 발화
-        # 시각만 실어 보내면 된다.
-        self._voice_auth_opened_ms: int | None = None
+        # 음성 암구호의 인증 창 (FR-10.3 · ADR-37). 창을 열고 닫는 것은 `_apply` 다.
+        self._voice_auth = VoiceAuthWindow(
+            config,
+            behavior=self._behavior,
+            mission=self._mission,
+            apply=self._apply,
+            clock=clock,
+            feed=self._feed_event if dashboard is not None else None,
+        )
 
     @property
     def behavior(self) -> Behavior:
@@ -504,6 +479,11 @@ class Runtime:
     def auth(self) -> Authenticator:
         """인증 세션. 대시보드가 *"누가 인증됐나"* 를 보이는 데 쓴다 (FR-3.6.2)."""
         return self._auth
+
+    @property
+    def voice_auth(self) -> VoiceAuthWindow:
+        """음성 암구호의 인증 창. 시험이 시도 횟수·창이 열린 시각을 본다."""
+        return self._voice_auth
 
     @property
     def mission(self) -> Mission:
@@ -1601,13 +1581,14 @@ class Runtime:
         """
         if not self._mission.enables("auth"):
             return
-        voice_granted = now_ms < self._voice_auth_until_ms
+        voice = self._voice_auth
+        voice_granted = voice.granted(now_ms)
         self._auth.note_tracks(result.tracks)
-        if self._auth_require_both and voice_granted and not result.markers:
-            self._auth_badge_ready = True
+        if voice.require_both and voice_granted and not result.markers:
+            voice.badge_ready = True
         outcome = (
             self._auth.observe(result.markers, result.tracks, now_ms)
-            if not self._auth_require_both or (voice_granted and self._auth_badge_ready)
+            if not voice.require_both or (voice_granted and voice.badge_ready)
             else Outcome.NOTHING
         )
         if outcome in (Outcome.GRANTED, Outcome.BADGE_SEEN):
@@ -1632,7 +1613,7 @@ class Runtime:
         badge_granted = self._auth.all_authenticated(result.tracks, now_ms)
         authenticated = (
             voice_granted and badge_granted
-            if self._auth_require_both
+            if voice.require_both
             else voice_granted or badge_granted
         )
         if authenticated:
@@ -2066,18 +2047,11 @@ class Runtime:
         # 초기화하지 않으면 앞선 대기에서 쌓인 실패가 다음 사람에게 넘어가,
         # 처음 말하는 사람이 한 마디에 소진된다.
         if before != "AUTH_WAIT" and self._behavior.state == "AUTH_WAIT":
-            self._voice_auth_attempts = 0
-            if self._auth_require_both:
-                self._voice_auth_until_ms = 0
-                self._auth_badge_ready = False
+            self._voice_auth.open(now_ms)
+            if self._voice_auth.require_both:
                 self._auth.reset()
-            # 창이 열린 시각. 이보다 앞서 녹음된 발화는 시도로 세지 않는다.
-            self._voice_auth_opened_ms = now_ms
-            # 유예도 창 단위다 — `Behavior` 쪽 누적은 상태가 바뀌며 이미 0 이 된다.
-            self._voice_auth_deferred = False
         elif before == "AUTH_WAIT" and self._behavior.state != "AUTH_WAIT":
-            self._voice_auth_opened_ms = None
-            self._voice_auth_deferred = False
+            self._voice_auth.close()
         self._log_transition(before)
         self._announce_transition(event, before, now_ms)
         return True
@@ -2171,147 +2145,13 @@ class Runtime:
         """
         return self._apply(event, self._clock())
 
-    def _utterance_is_stale(self, captured_at_ms: int | None) -> bool:
-        """그 발화가 **지금 열려 있는 창보다 앞선 것**인가.
-
-        ⚠️ **`None` 은 오래된 것이 아니다.** 대시보드의 수동 주입처럼 «지금 누른
-        것» 이 분명한 호출자는 시각을 싣지 않는다 — 있으면 쓰고 없으면 예전대로
-        돈다. 시각을 강제하면 그 호출자들이 전부 막힌다.
-        """
-        return (
-            captured_at_ms is not None
-            and self._voice_auth_opened_ms is not None
-            and captured_at_ms < self._voice_auth_opened_ms
-        )
-
     def note_voice_listening(self, captured_at_ms: int | None = None) -> tuple[bool, str]:
-        """«발화를 받았고 판정이 오는 중» 을 받아 **인증 창을 한 번 늘린다** (FR-10.3).
-
-        ⚠️ **이것은 판정이 아니다.** 시도를 세지도, 사건을 내지도 않는다. 오직
-        `auth.timeout_s` 마감을 `auth.verdict_grace_s` 만큼 미룬다.
-
-        왜 필요한가: 파이프라인은 녹음(최대 15초) → 무음 1초 → 전사를 **직렬로**
-        한다. 그래서 방문객이 창 안에서 말해도 판정이 30초 뒤에 도착할 수 있고,
-        그때는 이미 `AUTH_FAILED` 가 나가 눈이 빨갛다. 실기에서 통과한
-        2건이 각각 24초·18초를 썼다 — 여유가 6초뿐이었다. **말이 조금 늦거나
-        전사가 조금 느리면 말하는 도중에 경보가 된다.**
-
-        ⚠️ **창마다 1회이고 상한이 있다.** 신호가 올 때마다 미뤄 주면 소리만 계속
-        내서 타이머를 영영 재울 수 있다 — 침입자가 경보를 막는 길이 된다.
-        **경보가 늦는 것보다 오지 않는 것이 나쁘다.**
-
-        ⚠️ **창 밖 발화는 유예를 사지 못한다.** 그것을 허용하면 ⑥ 에서 막은 길이
-        옆문으로 되살아난다 — 창이 열리기 전에 한 말이 창의 수명을 늘린다.
-        """
-        if self._behavior.state != "AUTH_WAIT":
-            return False, f"{self._behavior.state} 에서는 인증 대기가 없다 (AUTH_WAIT 만)"
-        if self._utterance_is_stale(captured_at_ms):
-            LOG.info(
-                "voice_listening_stale",
-                captured_at_ms=captured_at_ms,
-                opened_ms=self._voice_auth_opened_ms,
-            )
-            return True, "인증 창이 열리기 전에 시작된 발화다 — 유예하지 않는다"
-        if self._voice_auth_deferred:
-            return True, "이 대기에서는 이미 한 번 미뤘다"
-        granted = self._behavior.defer_timer(
-            by_ms=self._voice_auth_grace_ms, cap_ms=self._voice_auth_grace_ms
-        )
-        self._voice_auth_deferred = True
-        LOG.info("voice_auth_deferred", granted_ms=granted, cap_ms=self._voice_auth_grace_ms)
-        return True, f"판정을 기다린다 — {granted // 1000}초 미뤘다"
+        """판정 대기 유예 (`VoiceAuthWindow.note_listening`). 대시보드 스레드가 부른다."""
+        return self._voice_auth.note_listening(captured_at_ms)
 
     def note_voice_auth(self, ok: bool, captured_at_ms: int | None = None) -> tuple[bool, str]:
-        """음성 암구호 판정을 받아 **시도를 세고** 사건으로 옮긴다 (FR-10.3).
-
-        `captured_at_ms` 는 **사람이 말한 시각**(epoch ms)이고 판정이 도착한 시각이
-        아니다. 둘은 수 초 떨어진다 — 파이프라인이 최대 15초를 녹음하고 전사까지
-        마친 뒤에 이 경로를 탄다. 그 사이에 `AUTH_WAIT` 가 열렸다면 **창이 열리기
-        전의 말**이 시도로 세어진다. 그래서 창이 열린 시각과 견주어 **오래된 발화는
-        세지 않고 버린다** (`_voice_auth_opened_ms` 의 설명을 함께 읽을 것).
-
-        ⚠️ **`None` 은 검사를 건너뛴다.** 대시보드의 수동 주입처럼 «지금 누른 것»
-        이 분명한 호출자는 시각을 싣지 않는다. 있으면 쓰고 없으면 예전대로 돈다.
-
-        ⚠️ **불일치 한 번이 곧 `AUTH_FAILED` 가 아니다.** 사원증 쪽은 `Authenticator`
-        가 `REJECTED`(아직 남았다)와 `EXHAUSTED`(소진)를 갈라 후자만 사건으로 내는데
-        (`auth.py` `_judge`), 음성 쪽은 그 구분이 없어 첫 불일치가 곧바로 L3 경보가
-        됐다 — 실기에서 그렇게 찍혔다. 말은 사원증과 달리 잘못
-        들릴 수 있으므로 `max_attempts` 가 있는 것이고, 그 값을 여기서 쓴다.
-
-        ⚠️ **소진 전 실패도 `accepted=True` 로 돌려준다.** 음성 파이프라인은
-        `accepted` 를 *전달됐나*로 읽어 거짓이면 "전달하지 못했습니다" 라고 말한다
-        (`robotlink.post_auth_result`). 판정을 제대로 받아 세어 둔 것을 전달 실패로
-        말하면 사람이 다시 말할 이유를 잃는다. 상태가 아니어서 받지 않은 것만 거짓이다.
-        """
-        now_ms = self._clock()
-        # ⚠️ **세기 전에, 그리고 허가하기 전에 «언제 말했는가» 를 먼저 본다.**
-        # 창이 열리기 전의 발화는 실패든 일치든 이 대기의 것이 아니다. 일치를
-        # 허가하지 않는 이유는 **묻기 전에 한 대답**이기 때문이다 — 방문객이
-        # 우연히 맞는 말을 한 것이 통행 허가가 되면 인증이 아니다.
-        if self._utterance_is_stale(captured_at_ms):
-            LOG.info(
-                "voice_auth_stale",
-                captured_at_ms=captured_at_ms,
-                opened_ms=self._voice_auth_opened_ms,
-                behind_ms=self._voice_auth_opened_ms - captured_at_ms,
-                matched=ok,
-            )
-            # `True` 로 돌려준다 — 파이프라인은 `accepted` 를 *전달됐나* 로 읽어
-            # 거짓이면 "전달하지 못했습니다" 라고 말한다. 제대로 받아 버린 것을
-            # 전달 실패로 말하면 사람이 무엇을 해야 하는지 알 수 없다.
-            return True, "인증 창이 열리기 전에 녹음된 발화다 — 다시 말해 주세요"
-        if ok:
-            if self._auth_require_both:
-                if self._behavior.state != "AUTH_WAIT" or not self._mission.enables("auth"):
-                    return (
-                        False,
-                        f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)",
-                    )
-                if now_ms >= self._voice_auth_until_ms:
-                    self._voice_auth_until_ms = now_ms + self._voice_auth_valid_ms
-                    self._auth_badge_ready = False
-                    self._behavior.defer_timer(
-                        by_ms=self._auth_badge_wait_ms,
-                        cap_ms=self._voice_auth_grace_ms + self._auth_badge_wait_ms,
-                    )
-                    LOG.info("voice_auth_granted", valid_ms=self._voice_auth_valid_ms, next="badge")
-                    if self._dashboard is not None:
-                        self._feed_event("voice_auth_granted", now_ms, next="badge")
-                return True, "암구호 확인 — 사원증을 제시해 주세요"
-            accepted = self._apply(Event.AUTH_OK, now_ms)
-            if accepted:
-                # 여기서만 창을 연다 — 받아들여지지 않은 판정은 허가가 아니다.
-                self._voice_auth_until_ms = now_ms + self._voice_auth_valid_ms
-                LOG.info("voice_auth_granted", valid_ms=self._voice_auth_valid_ms)
-            return accepted, (
-                "인증 결과를 반영했다"
-                if accepted
-                else f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)"
-            )
-        # 실패다. **세기 전에 받을 수 있는 상태인지 먼저 묻는다** — 아니면 시도가
-        # 엉뚱한 대기에 쌓인다. 모드 게이트도 `_apply` 와 같은 이유로 여기서 본다.
-        if not self._mission.allows(Event.AUTH_FAILED.name) or not self._behavior.fsm.can(
-            Event.AUTH_FAILED
-        ):
-            return False, f"{self._behavior.state} 에서는 인증 결과를 받지 않는다 (AUTH_WAIT 만)"
-        self._voice_auth_attempts += 1
-        remaining = self._voice_auth_max - self._voice_auth_attempts
-        if remaining > 0:
-            LOG.info(
-                "voice_auth_rejected",
-                attempts=self._voice_auth_attempts,
-                max_attempts=self._voice_auth_max,
-                exhausted=False,
-            )
-            return True, f"암구호가 일치하지 않는다 — {remaining}회 남았다"
-        LOG.warning(
-            "voice_auth_exhausted",
-            attempts=self._voice_auth_attempts,
-            max_attempts=self._voice_auth_max,
-            exhausted=True,
-        )
-        return self._apply(Event.AUTH_FAILED, now_ms), "시도 횟수를 소진했다"
+        """음성 암구호 판정 (`VoiceAuthWindow.note_verdict`). 대시보드 스레드가 부른다."""
+        return self._voice_auth.note_verdict(ok, captured_at_ms)
 
     def ask_patrol(self) -> None:
         """순찰을 예약한다. **리셋이 정착한 뒤 `IDLE` 에서 시작한다.**
