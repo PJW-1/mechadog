@@ -14,10 +14,10 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 
@@ -153,7 +153,7 @@ class YoloxAdapter:
 
 
 #: `vision.coco.model_family` 값 → 어댑터. 새 계열은 여기 한 줄만 늘린다.
-ADAPTERS: dict[str, type] = {"yolox": YoloxAdapter}
+ADAPTERS: dict[str, Callable[[int], DetectorAdapter]] = {"yolox": YoloxAdapter}
 
 
 def build_adapter(family: str, input_size: int) -> DetectorAdapter:
@@ -261,7 +261,7 @@ class Detector:
 
     def _input_name(self) -> str:
         assert self._session is not None
-        return self._session.get_inputs()[0].name
+        return cast(str, self._session.get_inputs()[0].name)
 
     def _finalize(
         self,

@@ -12,6 +12,7 @@ import json
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from host.common.protocol import system_clock_ms
 from host.vision.stream_client import Frame, FrameQueue, StreamEndpoints, StreamReader
@@ -32,7 +33,7 @@ class PhotoPose:
 class PhotoRecorder:
     """Receive only the newest JPEG in a bounded background thread."""
 
-    def __init__(self, config: dict, url: str, *, max_skew_ms: int = 500) -> None:
+    def __init__(self, config: dict[str, Any], url: str, *, max_skew_ms: int = 500) -> None:
         # Reuse the camera check's URL/redirect policy; the stream is read-only.
         from tools.camera_link_check import open_stream, validate_url
 

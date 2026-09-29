@@ -15,6 +15,7 @@ import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from host.common.units import wrap_pi
 
@@ -136,7 +137,7 @@ def waypoint_walk(
     )
 
 
-def sim_params_from_config(config: dict, range_max_m: float) -> SimParams:
+def sim_params_from_config(config: dict[str, Any], range_max_m: float) -> SimParams:
     sim = config["lidar"]["sim"]
     return SimParams(
         forward_mm_per_sec=float(sim["forward_mm_per_sec"]),

@@ -18,7 +18,7 @@ import threading
 import urllib.error
 import urllib.request
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -318,7 +318,7 @@ def apply_profile(
     fetch = opener if opener is not None else urllib.request.urlopen
     try:
         with fetch(url, timeout=timeout_s) as response:  # noqa: S310 — 설정에서 온 http URL
-            body = json.loads(response.read().decode("utf-8"))
+            body: dict[str, Any] = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         LOG.warning("profile_apply_failed", url=url, error=str(exc))
         raise
@@ -443,7 +443,9 @@ class StreamReader:
         """
         self._stop.set()
 
-    def frames(self, *, max_frames: int | None = None, max_failures: int | None = None):
+    def frames(
+        self, *, max_frames: int | None = None, max_failures: int | None = None
+    ) -> Generator[Frame, None, None]:
         """프레임을 흘려주는 생성기. 재연결은 안에서 한다."""
         produced = 0
         attempt = 0
@@ -477,7 +479,7 @@ class StreamReader:
             if not got_frame:
                 attempt += 1
 
-    def _read_once(self):
+    def _read_once(self) -> Generator[Frame, None, None]:
         """한 번 붙어서 끊길 때까지 프레임을 낸다."""
         if self._stop.is_set():
             return
