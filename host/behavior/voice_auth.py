@@ -52,7 +52,7 @@ class VoiceAuthWindow:
         self._max = int(auth["max_attempts"])
         self.attempts = 0
         # 음성 암구호의 유효 시간 (FR-10.2.4). **사원증과 같은 값을 쓰되 트랙이 아니라
-        # 시각으로 센다** — `Runtime._judge_auth` 의 설명을 함께 읽을 것.
+        # 시각으로 센다** — `AuthJudge.judge` 의 설명을 함께 읽을 것.
         self._valid_ms = int(auth["session_valid_s"]) * 1000
         self._until_ms = 0
         # 판정이 오는 중일 때 `auth.timeout_s` 를 미뤄 주는 상한 (ADR-37). 녹음·전사가
