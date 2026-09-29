@@ -85,32 +85,42 @@ def test_estop_beats_every_other_condition(config: dict) -> None:
     assert robot.motion(now) == {"step": 0.0, "angle": 0.0}
 
 
-def test_command_timeout_stops_the_legs_without_a_state_transition(config: dict) -> None:
-    """600ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다."""
+def test_command_timeout_latches_failsafe(config: dict) -> None:
+    """600ms 무명령이면 곧바로 래치다 — 펌웨어 `latchFailsafe("command timeout")` (ADR-39)."""
     timeout = config["safety"]["cmd_timeout_ms"]
     robot = _robot(config)
     now = START_MS
     _send(robot, now, _encoder(now).move(60, 0))
     assert robot.motion(now)["step"] > 0
 
+    assert robot.state(now + timeout - 1) != "FAILSAFE"
     quiet = now + timeout
-    assert robot.stopped_by_timeout(quiet)
+    assert robot.state(quiet) == "FAILSAFE"
     assert robot.motion(quiet) == {"step": 0.0, "angle": 0.0}
+    assert _flags(robot, quiet)["safety_latched"] is True
 
 
-def test_link_loss_latches_failsafe(config: dict) -> None:
-    """3초 두절이면 래치다 — 타임아웃 정지보다 한 단계 위다 (FR-1.5)."""
-    link_loss = config["safety"]["link_loss_failsafe_ms"]
+def test_timeout_latch_refuses_move_until_reset_safe(config: dict) -> None:
+    """명령이 다시 와도 래치는 `RESET_SAFE` 를 기다린다. 풀린 뒤에는 새 `MOVE` 부터 걷는다."""
+    timeout = config["safety"]["cmd_timeout_ms"]
     robot = _robot(config)
     now = START_MS
     _send(robot, now, _encoder(now).move(60, 0))
-    assert robot.state(now) != "FAILSAFE"
 
-    gone = now + link_loss + 1
-    assert robot.state(gone) == "FAILSAFE"
-    # 명령이 다시 와도 래치는 사람의 해제를 기다린다.
-    _send(robot, gone + 10, _encoder(gone + 10).move(60, 0))
-    assert robot.state(gone + 20) == "FAILSAFE"
+    now += timeout + 10
+    _send(robot, now, _encoder(now).move(60, 0))
+    assert robot.state(now) == "FAILSAFE"
+    assert robot.motion(now) == {"step": 0.0, "angle": 0.0}, "래치 중 MOVE 는 거부된다"
+
+    now += 100
+    _send(robot, now, _encoder(now).reset_safe())
+    assert _flags(robot, now)["safety_latched"] is False
+    assert robot.motion(now) == {"step": 0.0, "angle": 0.0}, "해제만으로 걷기를 재개하지 않는다"
+
+    now += 100
+    _send(robot, now, _encoder(now).move(60, 0))
+    assert robot.state(now) != "FAILSAFE"
+    assert robot.motion(now)["step"] > 0
 
 
 def test_low_battery_latches_and_beats_the_host_view(config: dict) -> None:

@@ -20,13 +20,8 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
 이유도 그래서다 — 목업이 자체 숫자를 갖게 되면 호스트를 진짜와 다른 기준으로
 시험하게 된다.
 
-⚠️ **다만 타임아웃·래치 동작 자체는 펌웨어와 다르다.** 이 목업은 명령 타임아웃
-(`cmd_timeout_ms`)에는 래치 없이 정지만 하고, 링크 두절(`link_loss_failsafe_ms`,
-3000ms)에서만 래치한다. 실제 펌웨어(`firmware_mechdog_motion.ino`)는 명령
-타임아웃(`kCommandTimeoutMs`, 600ms)에서 곧바로 `latchFailsafe` 하며,
-3000ms(`kLinkHealthyAgeMs`)는 텔레메트리의 `link_ok` 표시에만 쓰고 래치와는
-무관하다. 목업을 펌웨어에 맞출지는 코디네이터 판단이 필요한 정책 질문으로 남겨
-둔다.
+명령 타임아웃(`safety.cmd_timeout_ms`)이 지나면 펌웨어처럼 곧바로 래치하고
+`RESET_SAFE` 로만 푼다 (ADR-39).
 
 사용:
 
@@ -253,9 +248,9 @@ class MockRobot:
             return False
         return self.last_cmd_age_ms(now_ms) <= self._safety["link_loss_failsafe_ms"]
 
-    def stopped_by_timeout(self, now_ms: int) -> bool:
-        """300ms 무명령 → `move(0,0)`. 상태 전이가 아니라 Tier 1 반사다 (아키텍처 3절)."""
-        return not self._link_seen or self.last_cmd_age_ms(now_ms) >= self._safety["cmd_timeout_ms"]
+    def command_timed_out(self, now_ms: int) -> bool:
+        """마지막 유효 명령 뒤 `cmd_timeout_ms` 이상 조용했다 — 펌웨어는 여기서 래치한다."""
+        return self._link_seen and self.last_cmd_age_ms(now_ms) >= self._safety["cmd_timeout_ms"]
 
     def _physical_fault(self, now_ms: int) -> bool:
         return self.tipped(now_ms) or self.battery_v(now_ms) <= self._safety["battery_shutdown_v"]
@@ -270,9 +265,9 @@ class MockRobot:
 
     def _update_safety(self, now_ms: int) -> None:
         self._integrate_retreat(now_ms)
-        if self._physical_fault(now_ms) or (self._link_seen and not self.link_ok(now_ms)):
+        if self._physical_fault(now_ms) or self.command_timed_out(now_ms):
             self._failsafe_latched = True
-        if self._failsafe_latched or self.stopped_by_timeout(now_ms):
+        if self._failsafe_latched or not self._link_seen:
             self._last.step = self._last.angle = 0.0
             return
         # ⚠️ **근거리 반사 정지는 전진만 막는다** (FR-2.2 · FR-2.3).
