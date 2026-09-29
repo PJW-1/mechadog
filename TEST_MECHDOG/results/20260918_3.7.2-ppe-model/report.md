@@ -1,7 +1,7 @@
 # 3.7.2 PPE 모델 학습 및 검증 시험 — 2026-09-18
 
 FR-9 보호구 미착용 검출 모델을 학습하고 공개 데이터로 검증한 결과다.
-학습 과정과 데이터셋 구성은 firmware_xiao_vision/PPE_Train.md 에 있다.
+학습 과정과 데이터셋 구성은 docs/internal/PPE_TRAIN.md 에 있다.
 
 ---
 

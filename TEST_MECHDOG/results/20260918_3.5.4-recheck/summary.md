@@ -4,7 +4,7 @@
 > 서보 오프셋에서 나오므로 다른 기체에 복사하지 않는다([HARDWARE 3절](../../../docs/internal/HARDWARE.md)).
 
 [직전 런](../20260918_3.5.4-track/summary.md)이 *"보정 뒤의 좌우 대칭을 계산으로만 세웠다"* 며
-미확정으로 남긴 항목을 닫는다. 절차는 [`tests/ReadMe_260918.md`](../../../tests/ReadMe_260918.md).
+미확정으로 남긴 항목을 닫는다. 절차는 [`docs/archive/2026-09-18_3.5.4-recheck-procedure.md`](../../../docs/archive/2026-09-18_3.5.4-recheck-procedure.md).
 
 도구는 런타임 자체다 — `python -m host.runtime --device mechdog-01 --dashboard-port 8000`.
 관제 화면의 `안전 해제(RESET_SAFE)` · `실제 순찰 시작` 으로 넣었고 사람이 한 자리에 서 있었다.
