@@ -258,7 +258,7 @@ FR-9.2.2, WBS 3.5.7에 해당한다.
 FR-9.3에 해당하며 네 가지를 한다.
 
 - 경고 방송. L3 에 들어가면 호스트가 `escalation.sound.l3_warning` 의 한국어 문장을 PC 음성 경로로 읽는다(WBS 3.5.6). `escalation.sound.ppe_violation` 은 아직 `null` 이고 코드가 읽지 않는다.
-  *(2026-09-23 개정: 로봇에 `SOUND phrase_id` 를 보내고 WonderEcho 문구 ID 를 넣는다던 원래 계획은 버렸다. 목표 스피커인 로봇 MP3 모듈은 TF 카드에 미리 합성해 둔 문장만 내므로 문장→트랙 번호 표가 필요하다 — WBS 4.7.20·4.7.21, ADR-38.)*
+  로봇에 문구 ID(`SOUND phrase_id`)를 보내지 않는다. 스피커인 로봇 MP3 모듈은 TF 카드에 미리 합성해 둔 문장만 내므로 문장→트랙 번호 표로 재생한다 — WBS 4.7.20·4.7.21, ADR-38.
 - 눈 LED 적색 점멸. `LED color=red blink_hz=2` 이며 `escalation.led.l3_alarm` 과 `l3_blink_hz` 를 따른다.
 - 스냅샷과 이벤트 기록. 수신 JPEG 원본과 이벤트 로그를 대시보드로 보낸다.
 - 단계 상승. `PPE_VIOLATION` 이 `Level.L3` 로 매핑되어 있으며 `host/behavior/escalation.py` 에 이미 등재되어 있다.
