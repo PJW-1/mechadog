@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -4176,3 +4177,44 @@ def test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm(
         _floor(runtime, vision, now, lying=True)
         assert runtime.escalation.level is Level.L0, f"확인 {now - back}ms 만에 다시 의심했다"
     assert runtime.behavior.state == "PATROL"
+
+
+def test_main_finishes_the_broadcast_preload_before_the_loop(cfg, monkeypatch) -> None:
+    """방송 합성기(piper) 적재는 **운용 루프보다 먼저** 끝난다.
+
+    루프와 겹치면 적재가 GIL 을 1.3~1.7초 쥐어 명령 간격이 600ms 를 넘고, 로봇이
+    기동 직후 페일세이프에 다시 걸린다 (`--reset-on-start` 직후 재래치).
+    """
+    import host.runtime as module
+    from host.cloud import broadcast
+
+    events: list[str] = []
+
+    def slow_loader(_model_path: str, _length_scale: float):
+        time.sleep(0.3)
+        events.append("synth_loaded")
+        return lambda _text: (b"", 16000)
+
+    class FakeSocket:
+        def close(self) -> None:
+            pass
+
+    class FakeRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, _config, **_kwargs) -> None:
+            pass
+
+        def serve(self, _sock, **_kwargs) -> None:
+            events.append("serve")
+
+    cfg["broadcast"]["enabled"] = True
+    monkeypatch.setattr(broadcast, "_default_synth", slow_loader)
+    monkeypatch.setattr(module, "load_config", lambda _device: cfg)
+    monkeypatch.setattr(module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(module, "EventBlackbox", lambda _cfg: None)
+    monkeypatch.setattr(module, "Runtime", FakeRuntime)
+    monkeypatch.setattr(module, "open_socket", lambda _port: FakeSocket())
+    monkeypatch.setattr(module.sys, "stdin", None)
+    assert module.main(["--device", "test", "--no-vision"]) == 0
+    assert events == ["synth_loaded", "serve"]
