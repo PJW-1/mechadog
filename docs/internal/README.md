@@ -7,6 +7,7 @@
 - [PRD_Physical_AI_Guard_Robot.md](PRD_Physical_AI_Guard_Robot.md) — 요구사항·마일스톤·리스크의 정본이다.
 - [WBS.md](WBS.md) — 작업 ID·선행 관계·완료 기준(DoD)의 정본이다.
 - [ASSIGNMENTS.md](ASSIGNMENTS.md) — WBS 에서 생성되는 담당자별 작업 목록이다.
+- [TEAM_PROCESS.md](TEAM_PROCESS.md) — 역할 분류·작업 완료 판정·주간 리뷰·팀 용어 등 팀 운영 절차를 담는다.
 - [HARDWARE.md](HARDWARE.md) — 조립·배선·발주·착수 확인 절차를 담는다.
 - [MODEL_PLAN.md](MODEL_PLAN.md) — 비전·STT·TTS·VLM 모델 스택 설계 초안이다.
 - [FIELD_MEASUREMENT.md](FIELD_MEASUREMENT.md) — 기체별 실측 프로그램과 절차를 담는다.

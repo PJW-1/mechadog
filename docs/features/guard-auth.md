@@ -71,10 +71,10 @@ L3 를 내리는 방법은 [대응 에스컬레이션](escalation.md)에 있다.
 | L2 → `AUTH_REQUIRED` → `AUTH_WAIT` | `host/runtime.py` 의 `Runtime._request_auth` | `test_auth_request_is_issued_when_the_level_reaches_l2` |
 | 창 30초 초과 → `AUTH_FAILED` → L3 | `host/behavior/fsm.py` 의 `Behavior._watch_timers` · `host/runtime.py` 의 `Runtime.tick` | `test_auth_timeout_raises_alarm_without_passing_through_apply` · `test_auth_timeout_becomes_alarm` |
 | 판정 전달 (`ok` · `fail` · `pending`) | `host/dashboard/commands.py` 의 `CommandService.auth` | `test_auth_endpoint_accepts_pending` · `test_auth_rejects_an_unknown_result` |
-| 창 이전 발화 버림 | `host/runtime.py` 의 `Runtime._utterance_is_stale` · `Runtime.note_voice_auth` | `test_voice_auth_before_the_window_opened_is_not_counted` · `test_voice_auth_match_before_the_window_does_not_grant` |
-| `pending` 10초 연장, 창마다 1회 | `host/runtime.py` 의 `Runtime.note_voice_listening` · `host/behavior/fsm.py` 의 `Behavior.defer_timer` | `test_voice_listening_holds_the_window_open` · `test_voice_listening_buys_grace_only_once_per_window` · `test_voice_listening_before_the_window_buys_nothing` |
-| 암구호 불일치 2회 → `AUTH_FAILED` | `host/runtime.py` 의 `Runtime.note_voice_auth` | `test_voice_auth_first_mismatch_keeps_waiting` · `test_voice_auth_exhausts_at_max_attempts` · `test_voice_auth_retry_can_still_pass` |
-| 창마다 시도 수 초기화 | `host/runtime.py` 의 `Runtime._apply` | `test_voice_auth_attempts_reset_on_each_auth_wait` |
+| 창 이전 발화 버림 | `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.note_verdict` | `test_voice_auth_before_the_window_opened_is_not_counted` · `test_voice_auth_match_before_the_window_does_not_grant` |
+| `pending` 10초 연장, 창마다 1회 | `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.note_listening` · `host/behavior/fsm.py` 의 `Behavior.defer_timer` | `test_voice_listening_holds_the_window_open` · `test_voice_listening_buys_grace_only_once_per_window` · `test_voice_listening_before_the_window_buys_nothing` |
+| 암구호 불일치 2회 → `AUTH_FAILED` | `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.note_verdict` | `test_voice_auth_first_mismatch_keeps_waiting` · `test_voice_auth_exhausts_at_max_attempts` · `test_voice_auth_retry_can_still_pass` |
+| 창마다 시도 수 초기화 | `host/runtime.py` 의 `Runtime._apply` · `host/behavior/voice_auth.py` 의 `VoiceAuthWindow.open` | `test_voice_auth_attempts_reset_on_each_auth_wait` |
 | 암구호 뒤 새로 든 사원증만 통과 | `host/runtime.py` 의 `Runtime._judge_auth` | `test_guard_requires_passphrase_then_new_badge` |
 | 미등록 마커 안정 검출·시도 수 | `host/behavior/auth.py` 의 `Authenticator._judge` · `Authenticator._proven` | `test_a_single_frame_unknown_marker_is_not_an_attempt` · `test_an_unknown_marker_stable_for_three_frames_is_an_attempt` · `test_the_same_badge_seen_again_is_not_a_new_attempt` · `test_a_second_different_badge_exhausts_the_attempts` |
 | 미등록 사원증 2장 → L3 (`require_both` 거짓 설정으로 시험) | `host/runtime.py` 의 `Runtime._judge_auth` | `test_unknown_badges_exhaust_attempts_and_alarm` |
