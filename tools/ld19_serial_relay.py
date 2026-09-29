@@ -1,13 +1,13 @@
 """LD19 시리얼 → UDP 중계 — 중계 노드의 PC 판 대역 (WBS 6.1 · Phase 2).
 
-`firmware_lidar_relay` 와 같은 일을 한다. LD19 를 ESP32 에 물릴 배선이
+`firmware/lidar_relay` 와 같은 일을 한다. LD19 를 ESP32 에 물릴 배선이
 없을 때(또는 파서를 실물 스트림으로 교차검증할 때) USB-UART 어댑터로
 PC 에 직결해 쓴다.
 
     python tools/ld19_serial_relay.py --serial COM10
     python tools/ld19_serial_relay.py --serial COM10 --host 127.0.0.1
 
-파서·스캔 조립 로직은 `firmware_lidar_relay/src/ld19.cpp` 의 이식이다 —
+파서·스캔 조립 로직은 `firmware/lidar_relay/src/ld19.cpp` 의 이식이다 —
 같은 입력에 같은 결과를 내야 한다. 전선 형식은 `encode_scan` 을 쓰므로
 규약(`docs/PROTOCOL_LIDAR.md`)과의 정합은 그쪽이 보장한다.
 
@@ -31,7 +31,7 @@ from host.common.console import survive_encoding_errors
 from host.common.lidar_link import encode_scan
 from host.common.protocol import system_clock_ms
 
-# ── 프레임 상수 (firmware_lidar_relay/src/ld19.h 와 동일) ───────────
+# ── 프레임 상수 (firmware/lidar_relay/src/ld19.h 와 동일) ───────────
 FRAME_BYTES = 47
 HEADER = 0x54
 VERLEN = 0x2C  # 타입 1, 12개 측정점

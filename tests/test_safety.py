@@ -12,8 +12,8 @@ Tier 1 이 Tier 2 에 굴복하면 이 구조의 의미가 사라진다(아키�
 
 | 어디 | 무엇 |
 | :--- | :--- |
-| 펌웨어 | `firmware_mechdog_motion/src/safety_monitor.h` 의 `move_allowed()`·`reset_safe_allowed()` |
-| 그 시험 | `firmware_mechdog_motion/test/test_safety_monitor.cpp` (PC 에서 전수) |
+| 펌웨어 | `firmware/mechdog_motion/src/safety_monitor.h` 의 `move_allowed()`·`reset_safe_allowed()` |
+| 그 시험 | `firmware/mechdog_motion/test/test_safety_monitor.cpp` (PC 에서 전수) |
 | 가상 로봇 | `tools/mock_mechdog.py` — 호스트 시험 전부가 이것을 상대로 돈다 |
 
 ⚠️ **가상 로봇이 펌웨어보다 엄격하면 호스트 시험은 통과하는데 실물은 다르게 동작한다.**

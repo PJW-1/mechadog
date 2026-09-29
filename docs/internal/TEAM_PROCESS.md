@@ -10,8 +10,8 @@
 
 | 역할 | 담당 WBS | 주 디렉터리 |
 | :--- | :--- | :--- |
-| **A · 임베디드** | 2.0 하드웨어, 3.2 안전로직, 4.1 모션펌웨어, 5.1·5.3.2~3 | `firmware_mechdog_motion/`, `third_party/` |
-| **B · 인지·AI** | 3.3 인지로직, 4.2 비전펌웨어, 4.3 스트림, 4.6 화면, 6.1.2·6.3 | `firmware_xiao_vision/`, `host/vision/`, `host/dashboard/static/` |
+| **A · 임베디드** | 2.0 하드웨어, 3.2 안전로직, 4.1 모션펌웨어, 5.1·5.3.2~3 | `firmware/mechdog_motion/`, `third_party/` |
+| **B · 인지·AI** | 3.3 인지로직, 4.2 비전펌웨어, 4.3 스트림, 4.6 화면, 6.1.2·6.3 | `firmware/xiao_vision/`, `host/vision/`, `host/dashboard/static/` |
 | **C · 시스템·통합** | 1.0 문서, 3.1 통신규약, 3.4 FSM, 4.5 서버, 5.2·5.3.1, 6.2·6.4 | `host/behavior/`, `host/dashboard/`, `host/common/`, `tests/`, `docs/` |
 
 > **A · B · C 는 작업 성격 분류이지 사람 이름이 아니다.** 위 표는 "누가" 가 아니라 "어떤 성격의 작업이 어느

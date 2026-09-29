@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════
-//  firmware_lidar_relay — LD19 → UART2 → ESP32 → Wi-Fi UDP → Host PC
+//  firmware/lidar_relay — LD19 → UART2 → ESP32 → Wi-Fi UDP → Host PC
 //
 //  정본 : docs/PROTOCOL_LIDAR.md · docs/internal/HARDWARE.md(LD19 배선)
 //  링크 : LiDAR 중계 노드 → Host PC, UDP 5201 (lidar.scan_port)

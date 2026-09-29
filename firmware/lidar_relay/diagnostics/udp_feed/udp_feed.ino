@@ -13,7 +13,7 @@
 //  검증 불가: GPIO16 물리 UART 수신(전기적 경로) — 배선 후 별도 확인.
 //
 //  컴파일 시 상위 src 를 -I 로 넣는다 (lidar_self_test 와 같은 방식):
-//    --build-property "compiler.cpp.extra_flags=-I<repo>/firmware_lidar_relay/src"
+//    --build-property "compiler.cpp.extra_flags=-I<repo>/firmware/lidar_relay/src"
 // ══════════════════════════════════════════════════════════════
 
 #include <WiFi.h>

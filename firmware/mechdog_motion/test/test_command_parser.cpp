@@ -5,9 +5,9 @@
 // 의존성 도입은 WBS 5.1.2 의 결정 사항이다.
 //
 // 빌드·실행 (아래 인자를 한 줄로 이어서 준다):
-//   g++ -std=c++17 -Wall -Wextra -O1 -I firmware_mechdog_motion/src
-//       firmware_mechdog_motion/src/command_parser.cpp
-//       firmware_mechdog_motion/test/test_command_parser.cpp
+//   g++ -std=c++17 -Wall -Wextra -O1 -I firmware/mechdog_motion/src
+//       firmware/mechdog_motion/src/command_parser.cpp
+//       firmware/mechdog_motion/test/test_command_parser.cpp
 //       -o build/test_command_parser
 //   ./build/test_command_parser tests/fixtures
 //

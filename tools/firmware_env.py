@@ -8,7 +8,7 @@
 git 이 무시하고 있나.** 마지막이 빠지면 `git add .` 한 번에 공개 저장소로 올라간다.
 
 `fetch_models.py` 가 가중치에 하는 일을 벤더 파일에 한다 — 파일은 싣지 않고 **크기와
-SHA-256 만** 기록해 대조한다. 준비 절차는 `firmware_mechdog_motion/README.md` 의
+SHA-256 만** 기록해 대조한다. 준비 절차는 `firmware/mechdog_motion/README.md` 의
 *"구동·센서 통합 빌드 준비"* 절이다.
 
 ⚠️ **점검만 한다.** 받지도, 복사하지도, 설치하지도 않는다.
@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SKETCH = ROOT / "firmware_mechdog_motion"
+SKETCH = ROOT / "firmware" / "mechdog_motion"
 
 sys.path.insert(0, str(ROOT))
 
@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     failed = sum(not check.ok for check in checks)
     print(
-        f"\n{'모두 준비됨' if not failed else f'{failed}개 문제'} — 절차: firmware_mechdog_motion/README.md"
+        f"\n{'모두 준비됨' if not failed else f'{failed}개 문제'} — 절차: firmware/mechdog_motion/README.md"
     )
     return 1 if failed else 0
 

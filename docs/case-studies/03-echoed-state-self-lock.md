@@ -16,11 +16,11 @@
 
 ## 측정
 
-로봇 펌웨어가 텔레메트리의 `state` 를 채우는 규칙은 다음과 같습니다([`firmware_mechdog_motion.ino` L688-L690](../../firmware_mechdog_motion/firmware_mechdog_motion.ino#L688-L690)).
+로봇 펌웨어가 텔레메트리의 `state` 를 채우는 규칙은 다음과 같습니다([`mechdog_motion.ino` L688-L690](../../firmware/mechdog_motion/mechdog_motion.ino#L688-L690)).
 
 - 안전 래치가 걸려 있으면 `FAILSAFE` 를 보고합니다.
 - 그렇지 않고 근거리 반사 정지가 걸려 있으면 `AVOID` 를 보고합니다.
-- 둘 다 아니면 Host 가 `STATE` 명령으로 마지막에 알려 준 값을 그대로 되돌려 보냅니다([L688-L690](../../firmware_mechdog_motion/firmware_mechdog_motion.ino#L688-L690)).
+- 둘 다 아니면 Host 가 `STATE` 명령으로 마지막에 알려 준 값을 그대로 되돌려 보냅니다([L688-L690](../../firmware/mechdog_motion/mechdog_motion.ino#L688-L690)).
 
 Host 는 FSM 상태가 바뀔 때마다 `STATE` 명령으로 그 값을 로봇에 알립니다([`host/behavior/commander.py` L93-L103](../../host/behavior/commander.py#L93-L103)). `FAILSAFE` 와 `AVOID` 는 로봇이 스스로 판정하는 상태이면서 Host 가 `STATE` 로 내려보내는 상태이기도 합니다. 따라서 되돌아온 `state="FAILSAFE"` 나 `state="AVOID"` 만으로는 로봇의 판정인지 Host 가 보낸 값의 반향인지 구분할 수 없습니다.
 
@@ -34,9 +34,9 @@ Host 가 반향된 값을 판단 근거로 쓰면 자기 자신의 출력을 입
 
 판단에는 반향되지 않는 값만 씁니다.
 
-- **페일세이프 해제**: 로봇 펌웨어는 자체 래치를 `safety_latched` 로 따로 보고합니다([`firmware_mechdog_motion.ino` L706](../../firmware_mechdog_motion/firmware_mechdog_motion.ino#L706)). Host FSM 은 해제 사건 하나(`RESET_CONFIRMED`)만 가드하고, 가드는 이 값만 봅니다([`host/behavior/fsm.py` L206](../../host/behavior/fsm.py#L206), [L615-L616](../../host/behavior/fsm.py#L615-L616)). 안전 상태로 들어가는 사건(`ESTOP`, `ONBOARD_FAILSAFE`)은 막지 않습니다.
+- **페일세이프 해제**: 로봇 펌웨어는 자체 래치를 `safety_latched` 로 따로 보고합니다([`mechdog_motion.ino` L706](../../firmware/mechdog_motion/mechdog_motion.ino#L706)). Host FSM 은 해제 사건 하나(`RESET_CONFIRMED`)만 가드하고, 가드는 이 값만 봅니다([`host/behavior/fsm.py` L206](../../host/behavior/fsm.py#L206), [L615-L616](../../host/behavior/fsm.py#L615-L616)). 안전 상태로 들어가는 사건(`ESTOP`, `ONBOARD_FAILSAFE`)은 막지 않습니다.
 - **해제 절차**: 조작자가 리셋을 요청하면 Host 는 `RESET_SAFE` 를 보내고 기다립니다([`host/runtime.py` L2088-L2101](../../host/runtime.py#L2088-L2101)). 로봇이 `safety_latched=false` 를 보고한 뒤에야 `RESET_CONFIRMED` 를 적용합니다([L2365-L2372](../../host/runtime.py#L2365-L2372)).
-- **회피 종료**: 텔레메트리에 `obstacle` 플래그를 더했습니다([`firmware_mechdog_motion.ino` L704](../../firmware_mechdog_motion/firmware_mechdog_motion.ino#L704)). Host 수신기는 이 플래그가 참에서 거짓으로 바뀔 때 `AVOID_CLEARED` 를 만듭니다([`host/telemetry/receiver.py` L168-L180](../../host/telemetry/receiver.py#L168-L180)). Host 는 거리값으로 직접 판정하지 않고 로봇이 보고한 플래그의 변화만 옮깁니다.
+- **회피 종료**: 텔레메트리에 `obstacle` 플래그를 더했습니다([`mechdog_motion.ino` L704](../../firmware/mechdog_motion/mechdog_motion.ino#L704)). Host 수신기는 이 플래그가 참에서 거짓으로 바뀔 때 `AVOID_CLEARED` 를 만듭니다([`host/telemetry/receiver.py` L168-L180](../../host/telemetry/receiver.py#L168-L180)). Host 는 거리값으로 직접 판정하지 않고 로봇이 보고한 플래그의 변화만 옮깁니다.
 
 ```mermaid
 flowchart TD

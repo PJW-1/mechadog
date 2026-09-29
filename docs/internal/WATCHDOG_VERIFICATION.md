@@ -1,7 +1,7 @@
 # 루프 워치독 실물 검증 절차 (WBS 3.2.4)
 
 2026-09-13 에 실제로 수행해 통과한 절차를 다른 사람이 그대로 따라갈 수 있게 정리한 문서다.
-감시기의 **설계와 근거**는 [`firmware_mechdog_motion/README.md`](../../firmware_mechdog_motion/README.md)
+감시기의 **설계와 근거**는 [`firmware/mechdog_motion/README.md`](../../firmware/mechdog_motion/README.md)
 의 "3.2.4 제어 루프 감시" 절에 있다. 이 문서는 **PC 쪽에서 무엇을 어떤 순서로 실행했는지**를 다룬다.
 
 > **09-15 전:** `MECHADOG_ENABLE_ACTUATORS=1` 과의 조합은 펌웨어가 `#error` 로 막았다.

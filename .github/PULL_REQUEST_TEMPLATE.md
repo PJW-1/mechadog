@@ -51,7 +51,7 @@
 
 <!-- 파괴적 변경인 경우에만 체크 -->
 - [ ] `host/common/protocol.py`
-- [ ] `firmware_mechdog_motion/src/command_parser.*`
+- [ ] `firmware/mechdog_motion/src/command_parser.*`
 - [ ] `tools/mock_mechdog.py`
 - [ ] `tests/fixtures/protocol_samples.jsonl` (정본 픽스처)
 

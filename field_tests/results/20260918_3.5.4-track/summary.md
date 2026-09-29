@@ -107,7 +107,7 @@
 ⚠️ **위 문단은 틀렸다 — 정정 (2026-09-18, 같은 날 로그 재분석).** 링크는 나빠지지 않았다.
 
 `last_cmd_age_ms` 는 로봇이 **텔레메트리를 낼 때** 찍는 `now − g_last_valid_command_ms`
-([firmware_mechdog_motion.ino:559](../../../firmware_mechdog_motion/firmware_mechdog_motion.ino)).
+([firmware_mechdog_motion.ino:559](../../../firmware/mechdog_motion/mechdog_motion.ino)).
 호스트 송신 10Hz 와 로봇 텔레메트리 10Hz 는 서로 독립으로 도니까 이 값은 **두 루프의
 위상차**이고 0~100ms 안의 아무 값이며, **호스트를 재시작할 때마다 새로 뽑힌다.** 09-18 여섯
 세션의 중앙값이 12.9 / 73.0 / 81.8 / 53.9 / 67 / 29ms 였다 — 같은 장비, 같은 구성이다.

@@ -530,7 +530,7 @@ python tools/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot
 | 대시보드 연결 (FR-4.2) | ✅ **해소됨 (2026-09-15).** `host/dashboard/` 가 생겼고 `4.5.x`·`4.6.1`·`4.6.3`·`4.6.4` 가 실기로 닫혔다. ⚠️ **LiDAR 쪽 표시는 여전히 없다** — 지도·위치·스캔을 화면에 올리는 것은 Phase 2 몫이다 |
 | 구역 도착 시 카메라 판독 (FR-8) | `change_detect` 소관. 훅 자리만 비워 뒀다 — 기다릴 시간을 여기서 정하면 그 값이 두 곳에 생긴다 |
 | ~~ArUco 구역 식별 (FR-8 `marker_map`)~~ | **폐기 (2026-09-25)** — 구역 도착은 이제 `maps/zones.json` 앵커 반경으로 판정한다(FR-7.4 · `runtime._inspect_zone`). 이 표에 남기는 이유는 그 판정에 쓸 측위 입력(WBS 5.4.3·5.4.4)이 아직 없어서다 |
-| ~~중계 노드 펌웨어 (C++)~~ | ✅ **해소됨** — PR #99 로 `firmware_lidar_relay/` 가 들어왔다(UART → Wi-Fi UDP 5201). Phase 2 착수는 2026-09-28 에 승인됐다 |
+| ~~중계 노드 펌웨어 (C++)~~ | ✅ **해소됨** — PR #99 로 `firmware/lidar_relay/` 가 들어왔다(UART → Wi-Fi UDP 5201). Phase 2 착수는 2026-09-28 에 승인됐다 |
 | `gait_calibration` 기반 실이동량 | `mechdog-01.yaml` 의 실측값이 비어 있다. 시뮬레이션은 **명목값**을 쓰며 그 숫자로 실기 성능을 말하지 않는다 |
 | LiDAR 유효 사거리 확정 | 제품은 **LD19 (D500 키트)** 로 확정됐다 (ADR-18). `range_max_mm: 8000` 은 실물로 재기 전까지 잠정값이다 |
 | 루프 클로저 | 스캔 정합만 있다. 큰 공간에서 누적 오차가 남는다 — **넣지 않은 것이 의도적이다**: `scan_match.py` 는 P2 에서 `slam_toolbox` 로 교체될 자리이므로 여기에 성능을 더 들이면 버리는 일이 늘고 교체하지 않을 이유를 만든다 (ADR-9) |

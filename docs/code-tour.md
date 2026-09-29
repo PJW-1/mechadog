@@ -18,9 +18,9 @@
 | `host/cloud/` | 외부 연동(원격 갱신 등) | 1 |
 | `host/runtime.py` | 위 모듈을 묶어 운용 루프를 도는 진입점 | 1 |
 | `host/fleet.py` | 여러 대를 한 프로세스·한 소켓으로 함께 운용 | 1 |
-| `firmware_mechdog_motion/` | 로봇 본체 펌웨어(모션·Tier 1 반사) | 21 |
-| `firmware_xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 1 |
-| `firmware_lidar_relay/` | LiDAR 중계 보드 펌웨어 | 5 |
+| `firmware/mechdog_motion/` | 로봇 본체 펌웨어(모션·Tier 1 반사) | 21 |
+| `firmware/xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 1 |
+| `firmware/lidar_relay/` | LiDAR 중계 보드 펌웨어 | 5 |
 | `tools/` | 운영·측정·개발 보조 스크립트 | 59 |
 | `tests/` | 단위·통합 테스트 | 89 |
 
