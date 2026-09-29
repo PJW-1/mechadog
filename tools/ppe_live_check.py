@@ -36,6 +36,7 @@ import argparse
 import collections
 import hashlib
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -73,6 +74,7 @@ STATE_COLOR = {STATE_OK: (0, 200, 0), STATE_VIOLATION: (0, 0, 255), STATE_UNKNOW
 #: 브라우저로 볼 때 쓰는 경계 문자열.
 WEB_BOUNDARY = "mechdog-ppe-frame"
 DEFAULT_ACCEPTANCE_PLAN = Path(__file__).resolve().parents[1] / "config" / "ppe_acceptance.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_acceptance_plan(path: Path, scenario: str) -> tuple[list[dict[str, str]], int, list[str]]:
@@ -525,6 +527,29 @@ def wait_for_camera(config, minutes: float) -> bool:
     return False
 
 
+def verdict_tally(expected: str, verdicts: dict[str, int]) -> dict[str, int]:
+    """판정 집계 한 칸 → 일치·불일치·확인불가·판정 가능 건수.
+
+    이 구간 집계와 `tools/ppe/episode_eval.py` 가 같은 식을 쓰도록 한 곳에 둔다.
+    `coverage_*` 는 판정 가능률·조건부 정확도의 분모용이며, 기대가 확인불가인 칸은
+    0 으로 둔다 — 거기서는 보류가 정답이라 «판정 가능» 을 따질 수 없다.
+    """
+    right = verdicts.get(expected, 0)
+    unknown = verdicts.get(STATE_UNKNOWN, 0)
+    count = sum(verdicts.values())
+    counted = expected != STATE_UNKNOWN
+    return {
+        "count": count,
+        "right": right,
+        "wrong": count - right - (unknown if counted else 0),
+        "unknown": unknown,
+        "determinate": count - unknown,
+        "coverage_count": count if counted else 0,
+        "coverage_determinate": count - unknown if counted else 0,
+        "coverage_right": right if counted else 0,
+    }
+
+
 def segment_section(add, segment_log: SegmentLog) -> None:
     """구간을 눌러 가며 봤을 때만 쓰는 절. **정답을 알 때만 오판정을 셀 수 있다.**
 
@@ -540,17 +565,13 @@ def segment_section(add, segment_log: SegmentLog) -> None:
         if not stats or not stats.get("frames"):
             rows.append(f"{number}. {title} — 관측 없음")
             continue
-        verdicts = stats["verdicts"]
-        right = verdicts.get(spec["expected"], 0)
-        unknown = verdicts.get(STATE_UNKNOWN, 0)
-        count = sum(verdicts.values())
-        wrong = count - right - (unknown if spec["expected"] != STATE_UNKNOWN else 0)
-        determinate = count - unknown
+        tally = verdict_tally(spec["expected"], stats["verdicts"])
+        right, unknown, count = tally["right"], tally["unknown"], tally["count"]
+        wrong, determinate = tally["wrong"], tally["determinate"]
         total_right += right
         total += count
-        if spec["expected"] != STATE_UNKNOWN:
-            coverage_determinate += determinate
-            coverage_total += count
+        coverage_determinate += tally["coverage_determinate"]
+        coverage_total += tally["coverage_count"]
 
         def pct(n: int, base: int = count) -> str:
             return f"{n / base:.0%}" if base else "-"
@@ -747,10 +768,58 @@ def write_report(
     add("  기준 PC(RTX 3080)에서 다시 잰다")
     if args.save_dir:
         add(f"- 판정을 그린 프레임: `{args.save_dir}`")
+    if getattr(args, "save_raw_dir", None):
+        add(f"- 원본 프레임(학습용): `{args.save_raw_dir}`")
     add("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def ensure_untracked_frame_dir(folder: Path) -> Path:
+    """얼굴이 담긴 프레임을 저장할 폴더가 **깃이 무시하는 곳**인지 본다. 아니면 멈춘다.
+
+    ⚠️ 왜: 저장소 안 추적 경로(예: `docs/`)에 떨어진 프레임은 `git add .` 한 번에 커밋된다.
+    저장소 밖은 허용한다. 저장소 안이면 `git check-ignore` 로 그 폴더에 쓸 파일 이름을
+    물어본다 — 아직 없는 폴더는 `raw/` 같은 폴더 규칙에 걸리지 않기 때문이다.
+    git 을 부르지 못하면 확인할 수 없으므로 멈춘다.
+    """
+    resolved = folder.resolve()
+    if not resolved.is_relative_to(REPO_ROOT):
+        return resolved
+    probe = (resolved / "00000.jpg").relative_to(REPO_ROOT).as_posix()
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "--", probe],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise SystemExit(
+            f"저장 폴더가 깃 무시 대상인지 확인하지 못했다 ({exc}): {resolved}"
+        ) from exc
+    if result.returncode != 0:
+        raise SystemExit(
+            f"저장 폴더가 저장소 안인데 깃 무시 대상이 아니다 — 얼굴 프레임이 커밋될 수 있다: "
+            f"{resolved}. `TEST_MECHDOG/results/<세션>/raw`·`frames` 나 저장소 밖을 쓴다"
+        )
+    return resolved
+
+
+def apply_ppe_model_override(config: dict, model: str | None) -> None:
+    """`--ppe-model` 이 있으면 설정의 PPE 모델 경로를 그 파일로 바꾼다.
+
+    ⚠️ 왜: 후보 모델을 XIAO 로 보려고 런타임 모델(`models/ppe.onnx`)을 바꿔치기하면
+    되돌리는 것을 잊기 쉽고, 그 사이 띄운 런타임이 후보로 돈다. 파일은 그대로 두고 이
+    실행에서만 바꾼다. 요약의 모델 sha256 도 이 경로에서 계산된다.
+    """
+    if not model:
+        return
+    path = Path(model).resolve()
+    if not path.is_file():
+        raise SystemExit(f"PPE 모델 파일이 없다: {path}")
+    config["vision"]["ppe"]["model_path"] = str(path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -767,8 +836,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", required=True, help="개체 프로파일 이름 (실기에서 생략 금지)")
     parser.add_argument("--seconds", type=float, default=30.0, help="스트림 관찰 시간")
     parser.add_argument("--crop-pad", type=float, default=0.08, help="person bbox 여유 비율")
+    parser.add_argument(
+        "--ppe-model",
+        help="후보 PPE onnx 로 이 실행만 돌린다 (런타임 models/ppe.onnx 는 그대로)",
+    )
     parser.add_argument("--no-clip-rule", action="store_true", help="머리 클리핑 조건을 끈다")
     parser.add_argument("--save-dir", help="판정을 그린 프레임을 저장할 폴더")
+    # ⚠️ 왜: 그린 프레임은 박스·글자가 모델 입력을 오염시켜 학습에 못 쓴다
+    # (2026-09-28 세션). 난사례 추출(`tools/ppe/xiao_hardcases.py`)은 이 폴더를 읽는다.
+    parser.add_argument(
+        "--save-raw-dir",
+        help="판정을 그리기 전 원본 프레임을 저장할 폴더 (학습용 · 얼굴 포함, 커밋 금지)",
+    )
     # ⚠️ **설정이 정본이다.** 이 둘은 느린 시험 PC 에서 창을 억지로 맞추기 위한
     # 관찰용 덮어쓰기이며, 실기 판정 값은 `config.vision.ppe` 를 따른다.
     # 추론이 1.5초/프레임인 기계에서 «1.5초 안 3히트» 는 물리적으로 불가능하다.
@@ -811,8 +890,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--segments 는 --web-port 0 과 함께 쓸 수 없다")
     if args.scenario is None:
         args.scenario = "webcam" if args.webcam is not None else "xiao"
+    # ⚠️ 모델을 올리기 전에 막는다 — 관찰을 다 하고 나서 저장 경로 때문에 버리지 않게.
+    save_dir = ensure_untracked_frame_dir(Path(args.save_dir)) if args.save_dir else None
+    raw_dir = ensure_untracked_frame_dir(Path(args.save_raw_dir)) if args.save_raw_dir else None
 
     import cv2
+
+    # ⚠️ `cv2.imwrite` 는 한글 경로(`바탕 화면`)에서 조용히 False 를 돌려준다. 학습 세트와
+    # 같은 저장 함수(imencode + tofile, 실패하면 예외)를 쓴다.
+    from tools.ppe.rf100_prepare import write_jpeg
 
     # ⚠️ 배경 실행에서 표준출력이 버퍼에 갇혀 «아무 일도 안 하는 것» 처럼 보였다.
     sys.stdout.reconfigure(line_buffering=True)
@@ -830,6 +916,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.xiao_ip:
         config["network"]["xiao_ip"] = args.xiao_ip
 
+    apply_ppe_model_override(config, args.ppe_model)
     ppe_cfg = config["vision"]["ppe"]
     head_margin = int(ppe_cfg["head_margin_px"])
     use_clip = bool(ppe_cfg["require_head_visible"]) and not args.no_clip_rule
@@ -865,9 +952,10 @@ def main(argv: list[str] | None = None) -> int:
             window.reset if segment_log is not None else None,
         )
 
-    save_dir = Path(args.save_dir) if args.save_dir else None
     if save_dir:
         save_dir.mkdir(parents=True, exist_ok=True)
+    if raw_dir:
+        raw_dir.mkdir(parents=True, exist_ok=True)
 
     counts: collections.Counter = collections.Counter()
     reasons: collections.Counter = collections.Counter()
@@ -880,6 +968,8 @@ def main(argv: list[str] | None = None) -> int:
     def handle(image: np.ndarray, tag: str) -> None:
         nonlocal frames
         frames += 1
+        if raw_dir:
+            write_jpeg(raw_dir / f"{tag}.jpg", image)
         results = process(
             image,
             coco,
@@ -933,7 +1023,7 @@ def main(argv: list[str] | None = None) -> int:
             if ok:
                 relay.publish(buf.tobytes())
         if save_dir:
-            cv2.imwrite(str(save_dir / f"{tag}.jpg"), image)
+            write_jpeg(save_dir / f"{tag}.jpg", image)
         if args.show:
             cv2.imshow("ppe_live_check", image)
             cv2.waitKey(1)
