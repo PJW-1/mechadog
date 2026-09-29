@@ -127,3 +127,11 @@ measured:
   payload_pass_g: null
   runtime_min: null
   wifi_rssi_dbm: null
+
+# ── 측위 (Phase 2) ────────────────────────────────────────────
+# ⚠️ **이 기체만 `lidar` 다.** 전역 `config.yaml` 은 Phase 1 표준 구성이라
+# `track: none` 으로 남긴다 — LiDAR 가 없는 기체에서 측위를 요구하면 기동이
+# 막힌다. LD19 는 이 기체 한 대에만 달려 있고(`reference_role: phase2`),
+# `settings.require_lidar_track` 이 실기 매핑·순찰에서 이 값을 본다.
+localization:
+  track: lidar
