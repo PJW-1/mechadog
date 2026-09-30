@@ -378,6 +378,28 @@ def test_localization_failure_is_lost_not_estop() -> None:
     assert controller.commander.intent.type_ == "STOP"
 
 
+def test_external_map_pose_recovers_lost_and_normalizes_yaw() -> None:
+    controller = build()
+    controller.phase = Phase.LOST
+    controller.observe_map_pose((1.5, 2.5, 3 * math.pi), 2000)
+    assert controller.pose == pytest.approx((1.5, 2.5, -math.pi))
+    assert controller._last_pose_ms == 2000
+    assert controller.phase is Phase.PLANNING
+
+
+def test_external_obstacle_scan_does_not_refresh_pose_timeout() -> None:
+    from host.common.lidar_link import Scan
+
+    controller = build()
+    controller.observe_map_pose((2.0, 2.0, 0.0), 1000)
+    scan = Scan("lidar-a", "boot-a", 1, 1400, ((0.0, 1.0),))
+    controller.observe_obstacle_scan(scan, 1400)
+    assert controller._last_pose_ms == 1000
+    controller.observe_obstacle_scan(scan, 1600)
+    assert controller._last_pose_ms == 1000
+    assert controller.stats.scans == 2
+
+
 def test_telemetry_silence_halts_but_keeps_sending() -> None:
     """⚠️ **명령 송신을 멈추지 않는다.** 10Hz 송신이 곧 링크 신호다 (규약 1절)."""
     controller = build()

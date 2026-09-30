@@ -517,6 +517,11 @@ lidar:
   # 텔레메트리 10Hz 의 5주기이며 WBS 5.4.4 의 «위치 500ms 미갱신» 과 같은 값이다.
   odom_imu_stale_ms: 500
 
+  # ── ROS2 지도 측위 반환 (WBS 5.4.4 · 컨테이너 → Windows 순찰기) ──
+  # slam_toolbox 의 map->base_link 를 MAP_POSE 전문으로 받는다. 스캔·ODOM·기존
+  # lidar_live_map 입력과 겹치지 않는 포트여야 한다.
+  map_pose_port: 5205
+
   # ── 시뮬레이션 (실기 연결 전 검증 · WBS 12절) ─────────────────
   # 실측이 아닌 명목값이다 — `gait_calibration` 이 있으면 그것을 쓴다.
   sim:

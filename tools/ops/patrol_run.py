@@ -1,7 +1,8 @@
 """자율 순찰 운용 루프 (FR-7 · Phase 2 · 3단계).
 
-    LiDAR 소켓 ─▶ ScanDecoder ─▶ PatrolController ─▶ Commander ─▶ 명령 소켓
-    텔레메트리 소켓 ─▶ TelemetryReceiver ─┘
+    LiDAR 소켓 ─▶ ScanDecoder ─▶ 안전·장애물 ─┐
+    ROS2 자세 소켓 ─▶ MapPoseDecoder ─▶ 측위 ─┼▶ PatrolController ─▶ Commander ─▶ 명령
+    텔레메트리 소켓 ─▶ TelemetryReceiver ─────┘
 
 **소켓과 실시각을 만지는 곳은 이 파일 하나다.** 그 위의 컨트롤러는 바이트와
 시각만 받으므로 로봇도 LiDAR 도 없이 pytest 로 닫힌다 (ENGINEERING_GUIDE 2.1 ·
@@ -50,6 +51,7 @@ from host.common.lidar_link import (
     scan_of,
 )
 from host.common.logging_setup import event_logger, setup_logging
+from host.common.map_pose_link import MapPoseDecoder, map_pose_of
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import ms_to_s
 from host.slam import settings, simulation
@@ -131,10 +133,11 @@ def stop_for_shutdown(
 
 
 def serve_real(args: argparse.Namespace, config: dict, controller: PatrolController) -> int:
-    """실기 운용. 두 소켓을 논블로킹으로 훑고 마감에 맞춰 전문을 낸다."""
+    """실기 운용. 세 입력 소켓을 논블로킹으로 훑고 마감에 맞춰 전문을 낸다."""
     network = config["network"]
     lidar = config["lidar"]
     scan_sock = open_socket(int(lidar["scan_port"]))
+    map_pose_sock = open_socket(int(lidar["map_pose_port"]))
     tlm_sock = open_socket(int(network["telemetry_port"]))
     cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     peer_ip = args.robot or network.get("mechdog_ip")
@@ -158,6 +161,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     forward_sock = open_forward_socket()
     forward_failing = False
     telemetry = TelemetryReceiver()
+    map_pose_decoder = MapPoseDecoder()
+    map_pose_invalid = False
     # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
     own_ids = telemetry_ids(config, args.device)
 
@@ -235,7 +240,39 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                 urgent = controller.guard_scan(scan)
                 if urgent:
                     transmit([urgent])
-                controller.observe_scan(scan, now_ms)
+                # 실기 측위는 ROS2의 map->base_link가 정본이다. 여기서 다시 스캔
+                # 정합하면 서로 다른 두 자세가 같은 컨트롤러를 번갈아 덮어쓴다.
+                controller.observe_obstacle_scan(scan, now_ms)
+
+            # ── ROS2 지도 측위 (WBS 5.4.4) ──
+            while True:
+                try:
+                    raw, _ = map_pose_sock.recvfrom(RECV_BYTES)
+                except (BlockingIOError, OSError):
+                    break
+                result = map_pose_decoder.decode(raw)
+                if result.warns:
+                    LOG.warning("map_pose_unknown_type", reason=result.reason)
+                    continue
+                pose = map_pose_of(result)
+                if pose is None:
+                    continue
+                if pose.device_id != args.device:
+                    LOG.warning(
+                        "foreign_map_pose",
+                        expected=args.device,
+                        received=pose.device_id,
+                    )
+                    continue
+                if not pose.valid:
+                    if not map_pose_invalid:
+                        LOG.warning("map_pose_invalid", effect="500ms 뒤 LOST 정지")
+                    map_pose_invalid = True
+                    continue
+                if map_pose_invalid:
+                    LOG.info("map_pose_recovered")
+                map_pose_invalid = False
+                controller.observe_map_pose((pose.x_m, pose.y_m, pose.yaw_rad), now_ms)
 
             # ── 판단 ──
             transmit(controller.step(now_ms))
@@ -258,6 +295,7 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     finally:
         stop_for_shutdown(controller, cmd_sock, peer)
         scan_sock.close()
+        map_pose_sock.close()
         forward_sock.close()
         tlm_sock.close()
         cmd_sock.close()

@@ -178,6 +178,27 @@ def test_scan_forward_enabled_must_be_a_bool() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("value", [0, 70000, "5205", True])
+def test_map_pose_port_must_be_a_valid_integer(value: object) -> None:
+    section = dict(settings.read_lidar_section())
+    section["map_pose_port"] = value
+    with pytest.raises(ConfigError, match="map_pose_port"):
+        settings.validate_section(section)
+
+
+@pytest.mark.parametrize("other", ["scan_port", "scan_forward_port", "odom_port"])
+def test_map_pose_port_must_not_collide(other: str) -> None:
+    section = dict(settings.read_lidar_section())
+    section["map_pose_port"] = section[other]
+    with pytest.raises(ConfigError, match="map_pose_port"):
+        settings.validate_section(section)
+
+
+def test_map_pose_port_is_reserved_for_ros2_return() -> None:
+    section = settings.read_lidar_section()
+    assert section["map_pose_port"] == 5205
+
+
 def test_simulation_runs_even_when_track_is_none(lidar_config: dict) -> None:
     """⚠️ Phase 1 표준 구성에는 LiDAR 가 없다 (CONTRIBUTING 1절).
 

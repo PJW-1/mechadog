@@ -69,6 +69,7 @@ REQUIRED_LIDAR_KEYS = (
     "odom_port",
     "odom_rate_hz",
     "odom_imu_stale_ms",
+    "map_pose_port",
 )
 
 #: 숫자 검사에서 빼는 키 — 문자열·참거짓이거나, 포트처럼 아래에서 범위까지 따로 본다.
@@ -163,6 +164,15 @@ def validate_section(section: dict[str, Any]) -> None:
         raise ConfigError("heading_tolerance_deg < spin_threshold_deg <= 180 이어야 함")
     if not 0 < section["spin_turn_deg"] <= 30:
         raise ConfigError("spin_turn_deg 는 0 초과 30 이하여야 함 (MOVE angle 규약 상한)")
+    map_pose_port = section["map_pose_port"]
+    if (
+        not isinstance(map_pose_port, int)
+        or isinstance(map_pose_port, bool)
+        or not 1 <= map_pose_port <= 65535
+    ):
+        raise ConfigError("lidar.map_pose_port 는 1~65535 정수여야 함")
+    if map_pose_port in (section["scan_port"], section["scan_forward_port"], odom_port, 5202):
+        raise ConfigError("map_pose_port 는 scan · forward · odom · live-map 포트와 달라야 함")
 
     # 팽창(반경 + 추종 여유)이 E-STOP 거리보다 커야 한다 — 아니면 정상 추종이 비상정지로 끝난다.
     clearance = section["robot_radius_mm"] + section["tracking_margin_mm"]

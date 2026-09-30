@@ -198,9 +198,9 @@ class PatrolStats:
 class PatrolController:
     """계획 → 의도. 소켓도 실시각도 만지지 않는다.
 
-    운용 루프(`tools/ops/patrol_run.py`)가 한 스레드에서 ① `observe_scan`·`observe_telemetry`
-    로 입력을 넣고 ② `step(now_ms)` 가 돌려준 즉시 전문(`ESTOP`)을 바로 보내고
-    ③ `commander.tick(now_ms)` 의 주기 전문을 10Hz 로 보낸다.
+    운용 루프(`tools/ops/patrol_run.py`)가 한 스레드에서 ① 지도 자세·스캔·텔레메트리를
+    넣고 ② `step(now_ms)`가 돌려준 즉시 전문(`ESTOP`)을 바로 보내고
+    ③ `commander.tick(now_ms)`의 주기 전문을 10Hz로 보낸다.
     """
 
     commander: Commander
@@ -317,8 +317,29 @@ class PatrolController:
         return float(value) if isinstance(value, int | float) else None
 
     # ── 입력: 스캔 ────────────────────────────────────────────
+    def observe_map_pose(self, pose: Pose, now_ms: int) -> None:
+        """외부 측위가 낸 ``map -> base_link`` 자세를 반영한다 (WBS 5.4.4)."""
+        if not all(math.isfinite(value) for value in pose):
+            return
+        self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
+        self._last_pose_ms = now_ms
+        if self.phase is Phase.LOST:
+            LOG.info("pose_reacquired", source="ros2")
+            self.phase = Phase.PLANNING
+
+    def observe_obstacle_scan(self, scan: Scan, now_ms: int) -> None:
+        """외부 측위 모드에서 스캔을 신규 장애물 확인에만 쓴다.
+
+        오래된 자세에 빔을 투영하면 정상 벽을 새 장애물로 찍으므로 유효한 최근
+        자세가 있을 때만 지도에 반영한다. 즉시 위험 판정은 ``guard_scan`` 이 별도다.
+        """
+        self.stats.scans += 1
+        if self._last_pose_ms is None or now_ms - self._last_pose_ms > self.drive.pose_timeout_ms:
+            return
+        self._check_new_obstacle(scan)
+
     def observe_scan(self, scan: Scan, now_ms: int) -> None:
-        """스캔 하나로 측위하고 신규 장애물을 확인한다."""
+        """내장 스캔 정합(시뮬레이션용)으로 측위하고 신규 장애물을 확인한다."""
         self.stats.scans += 1
         points = preprocess(scan.points, *self.range_m)
         result = match(
@@ -332,11 +353,7 @@ class PatrolController:
         if result.skipped or result.score == 0:
             # 정합 실패 = 측위 상실 (FR-6.6). 점수 0 인 후보로 자세를 갱신하지 않는다.
             return
-        self.pose = result.pose
-        self._last_pose_ms = now_ms
-        if self.phase is Phase.LOST:
-            LOG.info("pose_reacquired", score=result.score)
-            self.phase = Phase.PLANNING
+        self.observe_map_pose(result.pose, now_ms)
         self._check_new_obstacle(scan)
 
     def _consume_yaw_delta(self) -> float:
