@@ -3,7 +3,9 @@
 로봇이 정면 장애물 앞에서 스스로 멈춘 뒤, 호스트가 물러나며 방향을 틀어 순찰을 잇게 한다. 멈춤 판정은 로봇 펌웨어가 하고([제어 링크와 페일세이프](failsafe.md) 3절), 호스트는 그 보고를 따라 회피 동작만 정한다.
 빠져나오지 못하면 정해진 횟수 뒤에 멈춘 채 사람을 기다린다. 같은 장애물 앞에서 계속 흔들어 기어를 상하게 하지 않는다.
 
-순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`tools/ops/patrol_run.py` 가 돌리는 `PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
+순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
+순찰기는 처음에는 `tools/ops/patrol_run.py` 단독 도구로만 돌았다. 지금은 런타임이 `--lidar-device <id>` 로 직접 돌릴 수도 있다([ADR-43](../DECISIONS.md#adr-43)): PATROL 이 LiDAR A* 경로를 따르고, 측위 자세는 구역 점검에 들어가며, LiDAR 전방 ESTOP 은 런타임 송신 락을 거친다. 플래그가 없으면 위의 `AVOID` 경로만 쓴다. `tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 스캔 전달과 ODOM 은 아직 런타임에 없다.
+이동 중 장애물이 길을 막으면 **가벼운 경고 `path_blocked`**(방송 + 대시보드, 출처 `lidar`, 판정 `x`·`y`·`target`)를 낸 뒤 LiDAR A* 가 빈 쪽 중 가장 짧은 쪽으로 다시 계획해 이어 간다. L3 가 아니다. VLM 은 길을 정하지 않는다.
 
 ## 판단 흐름
 
@@ -41,7 +43,8 @@ flowchart TD
   EST -->|예| ESTOP["ESTOP 즉시 송신 · HALTED"]
   EST -->|아니요| NEW{"새 장애물이 같은 자리에서 연속 2회 잡혔나?"}
   NEW -->|아니요| ADV
-  NEW -->|예| MARK["동적 장애물 표시 · 경로만 버림"]
+  NEW -->|예| WARN["가벼운 경고 path_blocked · L3 아님"]
+  WARN --> MARK["동적 장애물 표시 · 경로만 버림"]
   MARK --> RP{"같은 목표로 경로가 다시 풀리나?"}
   RP -->|예| ADV
   RP -->|아니요| RV{"이 구역 재확인이 3회 미만이고 표시를 지우면 풀리나?"}
@@ -64,6 +67,8 @@ flowchart TD
 | LiDAR 비상정지 거리 | 전방 ±20° 안 최소 거리 100mm 미만 | `lidar.estop_distance_mm` · `lidar.forward_fan_deg` | — |
 | 새 장애물 확정 | 1.5m 안의 빔이 지도가 예상한 거리보다 250mm 이상 가깝고, 0.3m 안 같은 자리에서 연속 2회 | `lidar.new_obstacle_check_radius_mm` · `new_obstacle_margin_mm` · `new_obstacle_confirmations` | — |
 | 구역 재확인 상한 | 구역당 사이클마다 3회 | `fsm.avoid_attempts` | — |
+| 이동 중 막힘의 처리 | 가벼운 경고 `path_blocked` + LiDAR 우회 + 순찰 계속 (L3 아님) | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
+| 런타임이 LiDAR 순찰을 돌림 | 선택. `--lidar-device <id>` 가 있을 때만 | CLI 인자 | [ADR-43](../DECISIONS.md#adr-43) |
 
 ## 실패·예외 시 동작
 
@@ -74,6 +79,7 @@ flowchart TD
 - 시도 3회를 다 쓰면 `avoid_exhausted` 를 한 번 남기고 정지를 계속 보낸다. 그 뒤에도 전방이 비면 `AVOID_CLEARED` 로 순찰에 돌아간다.
 - 반사 정지 중 로봇은 후진·선회 명령을 받고 전진 명령은 거부한다(`applied=false`). 그래서 후진 선회는 반사 정지가 걸린 채로도 나간다.
 - 순찰기에서 LiDAR 비상정지는 `ESTOP` 이라 로봇이 래치된다. 사람이 해제하고 로봇이 `safety_latched=false` 를 보고해야 경로 계획으로 돌아간다.
+- `path_blocked` 는 L3 를 올리지 않는다. 우회로가 없으면 위 «구역 재확인 상한» 대로 `zone_unreachable` 로 그 구역을 건너뛴다.
 - 순찰기에서 동적 장애물 표시는 지도에 쓰지 않는다. 사이클이 끝나면 표시와 재확인 횟수를 모두 지운다.
 - 순찰기에서 텔레메트리가 `safety.link_loss_failsafe_ms`(3000ms) 넘게 없으면 `HALTED`, 측위가 `localization.pose_timeout_ms` 넘게 갱신되지 않으면 `LOST` 로 멈춘다. 둘 다 명령 송신은 계속한다.
 
@@ -95,6 +101,7 @@ flowchart TD
 | 순찰기 반사 정지 중 정지 | `host/behavior/patrol.py` 의 `PatrolController.step` · `SafetyView.obstacle_active` | `tests/test_lidar_patrol.py::test_reported_obstacle_holds_the_walk` · `tests/test_lidar_patrol.py::test_obstacle_release_is_read_from_the_flag` |
 | 순찰기 LiDAR 비상정지 | `host/behavior/patrol.py` 의 `PatrolController.guard_scan` | `tests/test_lidar_patrol.py::test_lidar_danger_sends_estop_not_stop` · `tests/test_lidar_patrol.py::test_estop_does_not_wait_for_the_tick` |
 | 새 장애물 확정 · 재계획 · 재확인 상한 | `host/behavior/patrol.py` 의 `PatrolController._check_new_obstacle` · `PatrolController._replan` | 시험 없음. `tests/test_lidar_patrol.py::test_dynamic_obstacle_does_not_change_the_map` 는 표시가 지도에 쓰이지 않는 것만 본다 |
+| `path_blocked` 경고 · 런타임 LiDAR 순찰 (`--lidar-device`) | `host/behavior/patrol.py` 의 `PatrolController.steer` · `PatrolController.take_new_obstacles` · `host/runtime.py` 의 `Runtime._observe_scan` · `Runtime._record_path_blocked` · `host/telemetry/lidar_feed.py` 의 `LidarFeed.handle` | `tests/test_runtime_lidar.py::test_path_blocked_is_recorded_once_without_escalating` · `tests/test_runtime_lidar.py::test_path_blocked_without_a_frame_still_announces` · `tests/test_runtime_lidar.py::test_obstacle_outside_patrol_is_not_a_path_block` · `tests/test_runtime_lidar.py::test_reentering_patrol_replans_to_the_same_unvisited_zone` · `tests/test_runtime_lidar.py::test_close_scan_sends_estop_without_touching_the_navigator` · `tests/test_runtime_lidar.py::test_cli_lidar_device_without_zones_refuses_to_start` · `tests/test_lidar_patrol.py::test_steer_walks_without_announcing_state` · `tests/test_lidar_patrol.py::test_new_obstacles_are_taken_once` · `tests/test_situation.py::test_path_blocked_with_target` |
 | 막힌 구역이 사이클을 끝내지 않음 | `host/behavior/patrol.py` 의 `PatrolController._replan` | `tests/test_lidar_patrol.py::test_blocked_zone_does_not_end_the_cycle_early` |
 
 실측 기록

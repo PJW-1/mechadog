@@ -27,6 +27,7 @@
 - [features/guard-auth.md](features/guard-auth.md) — 경비 모드 인증. 암구호·사원증과 인증 창.
 - [features/escalation.md](features/escalation.md) — 대응 에스컬레이션 L0~L3·F 의 상승·하강 조건.
 - [features/factory-fall.md](features/factory-fall.md) — 공장 모드 쓰러짐 의심과 확정.
+- [features/factory-demo-scenario.md](features/factory-demo-scenario.md) — 공장 모드 시연 한 바퀴(A→B→C→D)의 사건·설정·코드 위치.
 
 ## 사례 연구
 
