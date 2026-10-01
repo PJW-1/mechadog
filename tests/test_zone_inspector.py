@@ -305,3 +305,82 @@ def test_a_confirmed_object_change_still_waits_for_the_hazard_reading(
     inspector.inspect(_frame(), now)
     assert "hazard_notice" in parts.records
     assert parts.behavior.state == "PATROL"
+
+
+# ── 판독을 기다리다 방문 밖으로 밀려나도 확정한 결론은 남는다 ─────────────────────────
+
+
+def _waiting_for_second_reading(parts, monkeypatch: pytest.MonkeyPatch, first: Reading) -> int:
+    """반출을 확정하고 두 번째 판독을 기다리는 중까지 간다. 그때의 시각을 돌려준다."""
+    inspector = parts.inspector
+    inspector._baselines.register("C", (), frame_size=(640, 480), now_ms=T0, jpeg=b"")
+    removed = Change(ChangeKind.REMOVED, "bottle", 1, None)
+    monkeypatch.setattr(inspector._confirmer, "observe", lambda _zone, _observed: (removed,))
+    _arrive(parts)
+    now = T0 + 100
+    inspector.inspect(_frame(), now)  # 첫 판독을 건다
+    now += 100
+    parts.vlm.slot = first
+    inspector.inspect(_frame(), now)  # «예» → 두 번째 판독을 건다
+    assert len(parts.vlm.submitted) == 2
+    parts.vlm.busy = True  # 두 번째 판독이 늦는다
+    for _ in range(parts.visit_frames):
+        now += 100
+        inspector.inspect(_frame(), now)
+    assert parts.behavior.state == "ZONE_INSPECT"
+    assert "zone_notice" not in parts.records
+    return now
+
+
+def test_a_removal_survives_a_fall_suspicion_read_while_waiting(
+    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
+    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
+    parts.fall.suspect = lambda *_a, **_kw: parts.behavior.event(Event.FALL_SUSPECTED, now_ms=now)
+    parts.vlm.busy = False
+    parts.vlm.slot = _reading({"person_down": True})
+    parts.inspector.inspect(_frame(), now + 100)
+    assert parts.behavior.state == "ALERT"
+    assert "zone_notice" in parts.records
+    assert not parts.inspector.alarm_alert, "떠난 뒤에는 ZONE_CHANGED 를 걸지 않는다"
+
+
+def test_a_removal_survives_an_external_transition_while_waiting(
+    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
+    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
+    parts.behavior.event(Event.MANUAL_ON, now_ms=now)
+    parts.inspector.inspect(_frame(), now + 100)
+    assert parts.behavior.state == "MANUAL"
+    assert parts.records.count("zone_notice") == 1
+    parts.inspector.inspect(_frame(), now + 200)
+    assert parts.records.count("zone_notice") == 1, "한 번만 남긴다"
+
+
+def test_a_hazard_item_survives_a_reading_that_also_says_person_down(
+    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
+    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
+    parts.fall.suspect = lambda *_a, **_kw: parts.behavior.event(Event.FALL_SUSPECTED, now_ms=now)
+    parts.vlm.busy = False
+    parts.vlm.slot = _reading({"hazard_item": True, "person_down": True})
+    parts.inspector.inspect(_frame(), now + 100)
+    assert parts.behavior.state == "ALERT"
+    assert "hazard_notice" in parts.records
+    assert "zone_notice" in parts.records
+
+
+def test_a_reading_that_arrives_after_leaving_confirms_nothing(
+    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
+    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
+    parts.behavior.event(Event.MANUAL_ON, now_ms=now)
+    parts.inspector.inspect(_frame(), now + 100)
+    parts.vlm.busy = False
+    parts.vlm.slot = _reading({"hazard_item": True})
+    parts.inspector.inspect(_frame(), now + 200)
+    assert "hazard_notice" not in parts.records
