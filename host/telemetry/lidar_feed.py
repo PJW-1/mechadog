@@ -12,8 +12,10 @@ LiDAR 비상정지를 늦춘다. 그래서 위험 판정은 받은 자리에서 
 바꾸면 루프가 그 틱의 계획을 세우는 중간에 바뀐다. 래치 이후는 로봇이 보고하는
 `safety_latched` 로 FSM 이 `FAILSAFE` 로 간다.
 
-(범위 밖) ROS2 컨테이너로의 스캔 전달(WBS 5.4.4)과 ODOM 송신(WBS 5.4.3)은 아직
-`tools/ops/patrol_run.py` 에만 있다 — 이 수신기가 `scan_port` 를 쥐는 동안 컨테이너는 스캔을 못 받는다.
+⚠️ **ROS2 컨테이너로의 스캔 전달(WBS 5.4.4)도 이 스레드가 한다.** 중계 노드는 `scan_port` 한
+곳으로만 보내므로, 받은 데이터그램을 개체 확인·디코드보다 먼저 바이트 그대로 `scan_forward_*` 로
+복사한다(`host/telemetry/ros2_relay.py`). 실패해도 위험 판정과 최신 스캔 저장은 그대로 간다.
+(ODOM 송신 — WBS 5.4.3 — 은 운용 루프의 몫이다: `Runtime.step`.)
 """
 
 from __future__ import annotations
@@ -24,9 +26,11 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from host.behavior.planner import min_forward_distance
+from host.common.config import ConfigError
 from host.common.lidar_link import Scan, ScanDecoder, scan_of
 from host.common.logging_setup import event_logger
 from host.common.units import deg_to_rad
+from host.telemetry.ros2_relay import forward_peer_of, forward_scan, open_forward_socket
 
 LOG = event_logger("mechadog.telemetry.lidar_feed")
 
@@ -49,6 +53,8 @@ class LidarFeed:
         armed: Callable[[], bool],
         on_danger: Callable[[], object],
         sock: socket.socket | None = None,
+        forward_sock: socket.socket | None = None,
+        forward_peer: tuple[str, int] | None = None,
     ) -> None:
         self._lidar_device = lidar_device
         self._decoder = decoder
@@ -57,13 +63,17 @@ class LidarFeed:
         self._armed = armed
         self._on_danger = on_danger
         self._sock = sock
+        self._forward_sock = forward_sock
+        self._forward_peer = forward_peer
+        self._forward_failing = False
         self._lock = threading.Lock()
         self._latest: Scan | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def handle(self, raw: bytes) -> None:
-        """데이터그램 하나 — 디코드 → 개체 확인 → 전방 위험거리 → 최신 칸."""
+        """데이터그램 하나 — 전달 → 디코드 → 개체 확인 → 전방 위험거리 → 최신 칸."""
+        self._forward(raw)
         result = self._decoder.decode(raw)
         if result.warns:
             LOG.warning("scan_unknown_type", reason=result.reason)
@@ -84,6 +94,18 @@ class LidarFeed:
         with self._lock:
             self._latest = scan
 
+    def _forward(self, raw: bytes) -> None:
+        """컨테이너로 원본을 복사한다 — 디코드 성패·개체와 무관하다. 실패는 전이 때만 로그."""
+        if self._forward_sock is None or self._forward_peer is None:
+            return
+        if forward_scan(self._forward_sock, raw, self._forward_peer):
+            if self._forward_failing:
+                LOG.info("scan_forward_recovered", peer=str(self._forward_peer))
+                self._forward_failing = False
+        elif not self._forward_failing:
+            LOG.warning("scan_forward_failed", peer=str(self._forward_peer))
+            self._forward_failing = True
+
     def take(self) -> Scan | None:
         """최신 스캔을 꺼낸다. 루프가 늦어 쌓인 옛 스캔은 버린다 — 측위는 최신 한 장이면 된다."""
         with self._lock:
@@ -101,6 +123,8 @@ class LidarFeed:
             self._thread.join(timeout=2 * POLL_S + 1.0)
         if self._sock is not None:
             self._sock.close()
+        if self._forward_sock is not None:
+            self._forward_sock.close()
 
     def _run(self) -> None:
         assert self._sock is not None
@@ -132,6 +156,12 @@ def open_lidar_feed(
     lidar = config["lidar"]
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("", int(lidar["scan_port"])))
+    # 이름 해석 실패(`ConfigError`)는 소켓을 더 열기 전에 난다. 꺼 두면 소켓도 열지 않는다.
+    try:
+        forward_peer = forward_peer_of(lidar)
+    except ConfigError:
+        sock.close()
+        raise
     return LidarFeed(
         lidar_device=lidar_device,
         decoder=ScanDecoder(
@@ -142,4 +172,6 @@ def open_lidar_feed(
         armed=armed,
         on_danger=on_danger,
         sock=sock,
+        forward_sock=None if forward_peer is None else open_forward_socket(),
+        forward_peer=forward_peer,
     )

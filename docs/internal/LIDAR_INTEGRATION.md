@@ -109,7 +109,7 @@
 | :--- | :--- |
 | `lidar_slam.py` | ① 매핑 실행기 |
 | `zone_select.py` | ② 구역 클릭 지정 |
-| `patrol_run.py` | ③ 순찰 운용 루프 — **소켓·실시각은 이 파일에만 있다** |
+| `patrol_run.py` | ③ 순찰 운용 루프 — **소켓·실시각은 이 파일에만 있다** (런타임 `--lidar-device` 는 `host/telemetry/lidar_feed.py` · `ros2_relay.py` 를 같이 쓴다) |
 | `mock_lidar.py` | 가상 중계 노드 (`mock_mechdog.py` 와 같은 자리) |
 
 ### 그 외

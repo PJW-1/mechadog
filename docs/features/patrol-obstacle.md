@@ -4,7 +4,7 @@
 빠져나오지 못하면 정해진 횟수 뒤에 멈춘 채 사람을 기다린다. 같은 장애물 앞에서 계속 흔들어 기어를 상하게 하지 않는다.
 
 순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
-순찰기는 처음에는 `tools/ops/patrol_run.py` 단독 도구로만 돌았다. 지금은 런타임이 `--lidar-device <id>` 로 직접 돌릴 수도 있다([ADR-43](../DECISIONS.md#adr-43)): PATROL 이 LiDAR A* 경로를 따르고, 측위 자세는 구역 점검에 들어가며, LiDAR 전방 ESTOP 은 런타임 송신 락을 거친다. 플래그가 없으면 위의 `AVOID` 경로만 쓴다. `tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 스캔 전달과 ODOM 은 아직 런타임에 없다.
+순찰기는 처음에는 `tools/ops/patrol_run.py` 단독 도구로만 돌았다. 지금은 런타임이 `--lidar-device <id>` 로 직접 돌릴 수도 있다([ADR-43](../DECISIONS.md#adr-43)): PATROL 이 LiDAR A* 경로를 따르고, 측위 자세는 구역 점검에 들어가며, LiDAR 전방 ESTOP 은 런타임 송신 락을 거친다. 플래그가 없으면 위의 `AVOID` 경로만 쓴다. `tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 컨테이너로의 스캔 전달(`lidar.scan_forward_*`)과 ODOM 송신도 같은 플래그가 켠다.
 이동 중 장애물이 길을 막으면 **가벼운 경고 `path_blocked`**(방송 + 대시보드, 출처 `lidar`, 판정 `x`·`y`·`target`)를 낸 뒤 LiDAR A* 가 빈 쪽 중 가장 짧은 쪽으로 다시 계획해 이어 간다. L3 가 아니다. VLM 은 길을 정하지 않는다.
 
 ## 판단 흐름

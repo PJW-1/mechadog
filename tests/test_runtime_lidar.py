@@ -21,9 +21,12 @@ from host.behavior.patrol import PatrolController, Phase
 from host.behavior.zones import ZoneStore
 from host.common.config import ConfigError
 from host.common.lidar_link import Scan, ScanDecoder
-from host.common.protocol import TelemetryEncoder
+from host.common.odom_link import OdomEncoder
+from host.common.protocol import CommandEncoder, TelemetryEncoder
 from host.runtime import Runtime
+from host.slam.odometry import Odometry, OdomParams
 from host.telemetry.lidar_feed import LidarFeed
+from host.telemetry.ros2_relay import OdomSender
 
 __all__ = ["config"]  # 픽스처를 다시 쓴다 (`test_runtime.config`)
 
@@ -283,7 +286,7 @@ def test_foreign_lidar_scan_is_dropped() -> None:
 def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict:
     import host.runtime as runtime_module
 
-    captured: dict = {"feeds": []}
+    captured: dict = {"feeds": [], "odom_opened": []}
 
     class CliRuntime:
         telemetry_port = 5101
@@ -329,6 +332,18 @@ def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict
     monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
     monkeypatch.setattr(runtime_module, "open_socket", lambda _port: CliSocket())
     monkeypatch.setattr(runtime_module, "open_lidar_feed", open_feed)
+
+    class CliOdom:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    def open_odom(_cfg, device_id):
+        captured["odom_opened"].append(device_id)
+        return CliOdom()
+
+    monkeypatch.setattr(runtime_module, "open_odom_sender", open_odom)
     monkeypatch.setattr(
         runtime_module, "load_patrol_map", lambda _cfg, _maps: (open_room(), ZoneStore(("A",)))
     )
@@ -344,6 +359,8 @@ def test_cli_without_lidar_device_keeps_the_fixed_patrol(
     assert captured["navigator_factory"] is None
     assert captured["feeds"] == []
     assert "take" not in captured
+    assert captured["odom"] is None
+    assert captured["odom_opened"] == [], "전달·ODOM 소켓을 열지 않는다"
 
 
 def test_cli_lidar_device_wires_navigator_and_feed(
@@ -356,6 +373,8 @@ def test_cli_lidar_device_wires_navigator_and_feed(
     assert lidar_device == "lidar-01"
     assert captured["take"] == feed.take
     assert feed.events == ["start", "stop"], "종료 때 닫는다"
+    assert captured["odom_opened"] == [DEVICE]
+    assert captured["odom"].closed
 
 
 def test_cli_lidar_device_without_zones_refuses_to_start(
@@ -383,3 +402,210 @@ def test_cli_lidar_device_with_a_broken_map_refuses_to_start(
     monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
     monkeypatch.setattr(runtime_module, "load_patrol_map", broken)
     assert runtime_module.main(["--device", DEVICE, "--lidar-device", "lidar-01"]) == 2
+
+
+# ── ROS2 컨테이너로의 스캔 전달 (WBS 5.4.4) ─────────────────
+class Recorder:
+    """`sendto` 만 있는 가짜 송신 소켓. `error` 가 있으면 보내지 못한다."""
+
+    def __init__(self, error: OSError | None = None) -> None:
+        self.error = error
+        self.sent: list[tuple[bytes, tuple[str, int]]] = []
+        self.closed = False
+
+    def sendto(self, payload: bytes, peer: tuple[str, int]) -> int:
+        if self.error is not None:
+            raise self.error
+        self.sent.append((payload, peer))
+        return len(payload)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+FORWARD_PEER = ("127.0.0.1", 5203)
+
+
+def _forwarding_feed(sock: Recorder | None, on_danger=lambda: None, peer=FORWARD_PEER) -> LidarFeed:
+    return LidarFeed(
+        lidar_device="lidar-01",
+        decoder=ScanDecoder(),
+        forward_fan_rad=0.35,
+        estop_m=0.1,
+        armed=lambda: True,
+        on_danger=on_danger,
+        forward_sock=sock,  # type: ignore[arg-type]
+        forward_peer=None if sock is None else peer,
+    )
+
+
+def test_feed_forwards_the_raw_datagram_unchanged() -> None:
+    sock = Recorder()
+    feed = _forwarding_feed(sock)
+    raw = _raw("lidar-01", 2000)
+    feed.handle(raw)
+    assert sock.sent == [(raw, FORWARD_PEER)]
+
+
+def test_feed_forwards_foreign_and_undecodable_datagrams_too() -> None:
+    """검증은 받는 쪽이 다시 한다 — 개체 필터·디코드 실패와 무관하게 복사한다 (patrol_run 과 같다)."""
+    sock = Recorder()
+    feed = _forwarding_feed(sock)
+    foreign, garbage = _raw("lidar-99", 2000), b"\x00not json"
+    feed.handle(foreign)
+    feed.handle(garbage)
+    assert [payload for payload, _ in sock.sent] == [foreign, garbage]
+    assert feed.take() is None
+
+
+def test_feed_without_a_forward_peer_copies_nothing() -> None:
+    feed = _forwarding_feed(None)
+    feed.handle(_raw("lidar-01", 2000))  # 전달 소켓이 없어도 예외 없이 최신 칸만 채운다
+    assert feed.take() is not None
+
+
+def test_forward_failure_does_not_stop_the_estop_or_the_latest_scan() -> None:
+    calls: list[int] = []
+    sock = Recorder(ConnectionResetError("컨테이너 없음"))
+    feed = _forwarding_feed(sock, on_danger=lambda: calls.append(1))
+    feed.handle(_raw("lidar-01", 50))
+    feed.handle(_raw("lidar-01", 50, seq=2))
+    assert calls == [1, 1], "전달이 실패해도 비상정지는 나간다"
+    assert feed.take() is not None
+
+
+def test_forward_failure_is_logged_once_per_transition(caplog: pytest.LogCaptureFixture) -> None:
+    sock = Recorder(OSError("down"))
+    feed = _forwarding_feed(sock)
+    with caplog.at_level("INFO"):
+        feed.handle(_raw("lidar-01", 2000))
+        feed.handle(_raw("lidar-01", 2000, seq=2))
+        sock.error = None
+        feed.handle(_raw("lidar-01", 2000, seq=3))
+    text = caplog.text
+    assert text.count("scan_forward_failed") == 1
+    assert text.count("scan_forward_recovered") == 1
+
+
+def test_stop_closes_the_forward_socket() -> None:
+    sock = Recorder()
+    _forwarding_feed(sock).stop()
+    assert sock.closed
+
+
+def test_open_lidar_feed_forwards_only_when_enabled(
+    config: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import host.telemetry.lidar_feed as feed_module
+
+    opened: list[str] = []
+
+    class Sock:
+        def __init__(self, *_a, **_k) -> None:
+            opened.append("sock")
+
+        def bind(self, _addr) -> None:
+            pass
+
+        def setblocking(self, _flag) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(feed_module.socket, "socket", Sock)
+    monkeypatch.setattr(feed_module, "forward_peer_of", lambda _lidar: None)
+    feed = feed_module.open_lidar_feed(config, "lidar-01", armed=lambda: False, on_danger=int)
+    assert opened == ["sock"], "꺼 두면 수신 소켓 하나뿐이다"
+    assert feed._forward_sock is None
+    opened.clear()
+    monkeypatch.setattr(feed_module, "forward_peer_of", lambda _lidar: FORWARD_PEER)
+    feed = feed_module.open_lidar_feed(config, "lidar-01", armed=lambda: False, on_danger=int)
+    assert opened == ["sock", "sock"]
+    assert feed._forward_peer == FORWARD_PEER
+
+
+# ── ODOM 송신 (WBS 5.4.3) ───────────────────────────────────
+ODOM_PEER = ("127.0.0.1", 5204)
+
+
+def _odom_sender(sock: Recorder, period_ms: int = 100) -> OdomSender:
+    params = OdomParams(
+        forward_mm_per_sec=100.0,
+        reverse_mm_per_sec=80.0,
+        command_timeout_ms=600,
+        imu_stale_ms=1000,
+    )
+    return OdomSender(
+        Odometry(params),
+        OdomEncoder(DEVICE, "boot-odom"),
+        sock,  # type: ignore[arg-type]
+        ODOM_PEER,
+        period_ms,
+    )
+
+
+def _odom_runtime(config: dict, clock: FakeClock, odom: OdomSender | None):
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, odom=odom)
+    runtime.begin(FakeSocket(clock))
+    return runtime
+
+
+def test_odom_goes_out_at_the_configured_period(config: dict, clock: FakeClock) -> None:
+    sock = Recorder()
+    runtime = _odom_runtime(config, clock, _odom_sender(sock, period_ms=100))
+    for _ in range(100):  # 10ms 간격으로 1초 — 루프가 더 자주 돌아도 100ms 마다 한 건
+        runtime.step(clock.ms)
+        clock.advance(10)
+    assert len(sock.sent) == 10
+    assert all(peer == ODOM_PEER for _, peer in sock.sent[:1])
+    assert json.loads(sock.sent[0][0])["type"] == "ODOM"
+
+
+def test_odom_send_failure_does_not_break_the_loop(config: dict, clock: FakeClock) -> None:
+    sock = Recorder(ConnectionResetError("컨테이너 없음"))
+    runtime = _odom_runtime(config, clock, _odom_sender(sock))
+    runtime.step(clock.ms)  # 예외 없이 지나간다
+    assert sock.sent == []
+
+
+def test_odom_integrates_the_commands_that_actually_went_out(
+    config: dict, clock: FakeClock
+) -> None:
+    sock = Recorder()
+    runtime = _odom_runtime(config, clock, _odom_sender(sock))
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(enc, imu={"pitch": 0.0, "roll": 0.0, "yaw": 10.0}), clock.ms)
+    move = CommandEncoder(clock=clock).move(step=60.0, angle=0.0)
+    runtime.send_immediate(move)  # 대시보드 경로도 오도메트리에 알린다
+    clock.advance(500)
+    runtime.ingest(telemetry(enc, imu={"pitch": 0.0, "roll": 0.0, "yaw": 10.0}), clock.ms)
+    runtime.step(clock.ms)
+    x_m = json.loads(sock.sent[-1][0])["x_m"]
+    assert x_m == pytest.approx(0.05, abs=0.005), "100mm/s × 0.5s"
+
+
+def test_odom_ignores_commands_that_did_not_go_out(config: dict, clock: FakeClock) -> None:
+    """상대를 모르면 보내지 않았으므로 이동으로 세지 않는다."""
+    sock = Recorder()
+    no_peer = dict(config, network=dict(config["network"], mechdog_ip=None))
+    runtime = _odom_runtime(no_peer, clock, _odom_sender(sock))
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(enc, imu={"pitch": 0.0, "roll": 0.0, "yaw": 10.0}), clock.ms)
+    runtime.send_immediate(CommandEncoder(clock=clock).move(step=60.0, angle=0.0))
+    clock.advance(500)
+    runtime.ingest(telemetry(enc, imu={"pitch": 0.0, "roll": 0.0, "yaw": 10.0}), clock.ms)
+    runtime.step(clock.ms)
+    assert json.loads(sock.sent[-1][0])["x_m"] == 0.0
+
+
+def test_runtime_without_odom_sends_nothing_extra(config: dict, clock: FakeClock) -> None:
+    runtime = _odom_runtime(config, clock, None)
+    runtime.step(clock.ms)  # 예외 없음
+
+
+def test_unmeasured_unit_gets_no_odom_sender(config: dict) -> None:
+    from host.telemetry.ros2_relay import open_odom_sender
+
+    unmeasured = {k: v for k, v in config.items() if k != "gait_calibration"}
+    assert open_odom_sender(unmeasured, DEVICE) is None

@@ -24,6 +24,7 @@ from host.slam.odometry import (
     hold_of_reading,
     odom_params_from_config,
 )
+from host.telemetry import ros2_relay
 
 BRIDGE = runpy.run_path(str(Path(__file__).resolve().parents[1] / "docker/ros2/odom_bridge.py"))
 transform_of = BRIDGE["transform_of"]
@@ -433,7 +434,7 @@ def test_params_come_from_the_unit_profile_and_config() -> None:
 
 
 def test_unit_without_calibration_runs_without_odometry() -> None:
-    odometry, encoder = patrol_run.open_odometry(config_with(None), "mechdog-uncalibrated")
+    odometry, encoder = ros2_relay.open_odometry(config_with(None), "mechdog-uncalibrated")
     assert odometry is None
     assert (
         json.loads(encoder.encode(ts_ms=1, x_m=0, y_m=0, yaw_rad=0, valid=False))["valid"] is False
@@ -496,7 +497,7 @@ def test_bad_odom_destination_is_refused_at_startup(key: str, value: object) -> 
 
 def test_odom_peer_resolves_the_host_once_at_startup() -> None:
     """⚠️ 호스트명을 그대로 `sendto` 에 넘기면 10Hz 마다 DNS 조회가 순찰 루프를 막는다."""
-    assert patrol_run.odom_peer_of({"odom_host": "localhost", "odom_port": 5204}) == (
+    assert ros2_relay.odom_peer_of({"odom_host": "localhost", "odom_port": 5204}) == (
         "127.0.0.1",
         5204,
     )
@@ -633,7 +634,7 @@ def test_laser_offset_needs_every_value_explicitly() -> None:
 def test_unresolvable_destination_is_a_config_error_not_a_traceback() -> None:
     """이름을 못 풀면 `main()` 이 «설정 오류» 로 알리도록 `ConfigError` 로 올린다."""
     with pytest.raises(ConfigError, match="odom_host"):
-        patrol_run.odom_peer_of({"odom_host": "mechdog.invalid", "odom_port": 5204})
+        ros2_relay.odom_peer_of({"odom_host": "mechdog.invalid", "odom_port": 5204})
     with pytest.raises(ConfigError, match="scan_forward_host"):
         patrol_run.forward_peer_of(
             {

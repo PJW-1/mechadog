@@ -65,6 +65,7 @@ from host.report.situation import describe
 from host.slam.settings import maps_dir
 from host.telemetry.lidar_feed import open_lidar_feed
 from host.telemetry.receiver import Ingested, TelemetryReceiver
+from host.telemetry.ros2_relay import OdomSender, open_odom_sender, send
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -170,6 +171,7 @@ class Runtime:
         vlm_reader: VlmReader | None = None,
         announcer: Callable[[str], None] | None = None,
         navigator_factory: Callable[[Commander], PatrolController] | None = None,
+        odom: OdomSender | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -207,6 +209,8 @@ class Runtime:
         # 뒤처진 쪽을 통째로 버린다 (`_send_lock` 설명과 같은 이유).
         navigator = navigator_factory(self._commander) if navigator_factory else None
         self._navigator = navigator
+        #: ROS2 컨테이너로 가는 ODOM (`--lidar-device`, 보행 실측이 있는 기체만). 없으면 보내지 않는다.
+        self._odom = odom
         #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
         self._take_scan: Callable[[], Scan | None] | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
@@ -553,6 +557,8 @@ class Runtime:
         if self._navigator is not None:
             # 온보드 장애물 플래그와 IMU yaw(측위의 회전 변화량)를 길 찾기에 넘긴다.
             self._navigator.observe_telemetry(out.reading, now_ms)
+        if self._odom is not None:
+            self._odom.note_telemetry(out.reading, now_ms)
         self._log.observe(seq=out.reading.seq)
         self._summary.count("accepted")
         if out.reading.batt_v is not None:
@@ -1466,6 +1472,8 @@ class Runtime:
         """틱 하나 — 마감이 된 전문만 나간다 (마감은 송신기가 센다)."""
         with self._send_lock:
             self._send(cast("socket.socket", self._sock), self.tick(now_ms))
+        if self._odom is not None:
+            self._odom.publish(now_ms)
 
     def send_emergency_stop(self) -> str:
         """관제 ESTOP — 인코딩과 즉시 송신을 틱과 같은 락 안에서 한다.
@@ -1478,9 +1486,7 @@ class Runtime:
             lines = [line] if self._session_open is None else [self._session_open, line]
             if self._sock is not None and self._peer is not None:
                 self._session_open = None
-                for item in lines:
-                    with contextlib.suppress(OSError):
-                        self._sock.sendto(item.encode("utf-8"), self._peer)
+                self._note_odom_sent(send(self._sock, self._peer, lines))
         return line
 
     def send_immediate(self, line: str) -> None:
@@ -1493,8 +1499,12 @@ class Runtime:
         sock, peer = self._sock, self._peer
         if sock is None or peer is None:
             return
-        with contextlib.suppress(OSError):
-            sock.sendto(line.encode("utf-8"), peer)
+        self._note_odom_sent(send(sock, peer, [line]))
+
+    def _note_odom_sent(self, sent: list[str]) -> None:
+        """**실제로 나간** 명령만 오도메트리에 알린다. 송신 경로(틱·관제·즉시)가 모두 부른다."""
+        if self._odom is not None:
+            self._odom.note_sent(sent, self._clock())
 
     def _send(self, sock: socket.socket, lines: list[str]) -> None:
         if self._peer is None:
@@ -1505,9 +1515,7 @@ class Runtime:
             self._session_open = None
         if not lines:
             return
-        for line in lines:
-            with contextlib.suppress(OSError):
-                sock.sendto(line.encode("utf-8"), self._peer)
+        self._note_odom_sent(send(sock, self._peer, lines))
 
     def _shutdown(self, sock: socket.socket) -> None:
         # ⚠️ **`ESTOP` 을 먼저 보낸다.** 워커 정리를 기다리다 늦으면, 로봇을 멈추는
@@ -1781,6 +1789,8 @@ def main(argv: list[str] | None = None) -> int:
         # 지도·구역이 없으면 기동을 거부한다 — 길 찾기를 달라고 했는데 고정 보행으로
         # 조용히 내려가면 운용자는 LiDAR 로 돈다고 믿는다.
         patrol_map = load_patrol_map(config, maps_dir(config)) if args.lidar_device else None
+        # ROS2 컨테이너로 ODOM 을 보낸다 — 실측이 없는 기체는 `None`. 목적지 이름을 못 풀면 기동을 거부한다.
+        odom = open_odom_sender(config, args.device) if args.lidar_device else None
     except (OSError, ValueError) as exc:  # `ConfigError` 와 깨진 지도·구역 파일(`json`·`np.load`)
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
@@ -1827,6 +1837,7 @@ def main(argv: list[str] | None = None) -> int:
                 config, commander, *patrol_map, random.Random()
             )
         ),
+        odom=odom,
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
@@ -1842,6 +1853,8 @@ def main(argv: list[str] | None = None) -> int:
             # 내려오므로, 먼저 시작한 순찰은 조용히 취소된다 (`ask_patrol` 참고).
             runtime.ask_patrol()
         with contextlib.ExitStack() as stack:
+            if odom is not None:
+                stack.callback(odom.close)
             if args.lidar_device:
                 feed = open_lidar_feed(
                     config,

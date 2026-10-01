@@ -474,7 +474,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 | `AUTH_WAIT` | 인증 실패 2회 / 30초 초과 | `ALERT` | 에스컬레이션 **L3** | 2 |
 
 > **운용 런타임의 LiDAR 순찰 (선택 · 2026-10-01 · [ADR-43](DECISIONS.md#adr-43))**: `python -m host.runtime ... --lidar-device <id>` 로 켜면 `PATROL` 이 LiDAR A* 경로(`host/behavior/patrol.py` 의 `PatrolController`)를 따른다. 측위 자세는 `ZoneInspector` 가 받고, LiDAR 전방 부채꼴 ESTOP 은 런타임 송신 락을 거친다.
-> 이동 중 길이 막히면 상태는 `PATROL` 그대로 두고 가벼운 경고 `path_blocked` 를 낸 뒤 A* 가 빈 쪽으로 다시 짠다. 위 `AVOID` 행(초음파 후진 + 좌선회)은 근거리 예비 수단으로 남는다. 플래그가 없으면 전과 같다. ROS2 스캔 전달·ODOM 은 아직 런타임에 없다.
+> 이동 중 길이 막히면 상태는 `PATROL` 그대로 두고 가벼운 경고 `path_blocked` 를 낸 뒤 A* 가 빈 쪽으로 다시 짠다. 위 `AVOID` 행(초음파 후진 + 좌선회)은 근거리 예비 수단으로 남는다. 플래그가 없으면 전과 같다. ROS2 스캔 전달·ODOM 도 같은 플래그가 켠다.
 >
 > **설계 규칙 ①** — `FAILSAFE` 에서 자동으로 빠져나오지 않는다. 원인 해소 후 사용자가 명시적으로
 > 리셋해야 한다. **어떤 사건도 `FAILSAFE` 를 풀지 못한다** — 수동 오버라이드·위험구역 알람·측위

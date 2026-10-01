@@ -418,8 +418,9 @@ lidar:
   # ── 컨테이너 전달 (WBS 5.4.4) ──────────────────────────────────
   # 중계 노드 펌웨어는 `scan_port` 한 곳으로만 보낸다. ROS2 컨테이너
   # (`docker/ros2/scan_bridge.py`)가 같은 포트를 또 바인드하면 동시에 켤 수
-  # 없으므로, `tools/ops/patrol_run.py` 의 `serve_real()` 이 `scan_port` 의 유일한
-  # 수신자로 남고 받은 데이터그램을 바이트 그대로 여기로 복사해 넘긴다.
+  # 없으므로, `scan_port` 의 유일한 수신자(런타임 `--lidar-device` 의 `LidarFeed`,
+  # 또는 단독 도구 `tools/ops/patrol_run.py`)가 받은 데이터그램을 바이트 그대로 여기로
+  # 복사해 넘긴다 (`host/telemetry/ros2_relay.py`).
   # LiDAR 비상정지(`guard_scan`)는 이 전달과 무관한 직접 경로로 남는다.
   # `tools/lidar/lidar_live_map.py` 의 `--pose-port` 기본값(5202)과 겹치지 않게 5203 이다.
   scan_forward_host: 127.0.0.1
@@ -501,7 +502,7 @@ lidar:
   forward_fan_deg: 20             # 전방으로 볼 부채꼴 반각
 
   # ── 오도메트리 전달 (WBS 5.4.3 · 호스트 → ROS2 컨테이너 `odom_bridge`) ──
-  # `tools/ops/patrol_run.py` 가 보낸 명령 × `gait_calibration` + IMU yaw 변화량으로 만든
+  # 런타임(`--lidar-device`)과 `tools/ops/patrol_run.py` 가 보낸 명령 × `gait_calibration` + IMU yaw 변화량으로 만든
   # `odom` 자세를 ODOM 전문(docs/PROTOCOL_LIDAR.md 8절)으로 보낸다. 5201(스캔)·
   # 5202(`lidar_live_map` 자세 입력)·5203(스캔 복사 전달)과 **다른 포트**여야 한다.
   odom_host: 127.0.0.1
