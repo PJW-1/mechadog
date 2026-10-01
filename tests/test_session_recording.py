@@ -129,3 +129,25 @@ def test_record_flags_parse() -> None:
 def test_motion_lock_type_set_has_no_motion() -> None:
     assert not {"MOVE", "POSE", "GAIT", "ACTION", "RESET_SAFE"} & MOTION_LOCK_TYPES
     assert Event.START_PATROL  # 순찰 사건 이름이 바뀌면 잠금 관문도 바꿔야 한다
+
+
+def test_session_summary_reads_a_recording() -> None:
+    """요약 도구가 흐름별 수·최대 공백·IMU·측위 이동을 낸다 (`tools/ops/session_summary.py`)."""
+    from tools.ops.session_summary import summarize
+
+    tlm = '{"state":"IDLE","imu":{"pitch":0,"roll":0,"yaw":%s}}'
+    events = [
+        {"t": 0, "kind": "telemetry", "raw": tlm % 10.0, "accepted": True},
+        {"t": 100, "kind": "telemetry", "raw": tlm % 12.5, "accepted": True},
+        {"t": 400, "kind": "telemetry", "raw": tlm % 15.0, "accepted": True},
+        {"t": 50, "kind": "localization", "updated": True, "points": 500, "pose": [0, 0, 0]},
+        {"t": 150, "kind": "localization", "updated": True, "points": 480, "pose": [0.3, 0.4, 0]},
+        {"t": 60, "kind": "command_sent", "lines": ['{"type":"STOP"}', '{"type":"MOVE"}']},
+        {"t": 70, "kind": "command_blocked", "lines": ['{"type":"MOVE"}']},
+    ]
+    report = summarize(events)
+    assert report["streams"]["telemetry"]["max_gap_ms"] == 300
+    assert report["imu_yaw"]["first_deg"] == 10.0 and report["imu_yaw"]["last_deg"] == 15.0
+    assert report["localization"]["travel_m"] == pytest.approx(0.5)
+    assert report["commands_sent"] == {"STOP": 1, "MOVE": 1}
+    assert report["commands_blocked"] == 1
