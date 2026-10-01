@@ -130,6 +130,8 @@ class ZoneInspector:
         self._wait_ms = int(config["vision"]["vlm"]["budget_ms"])
         #: 이번 방문의 점검이 끝났나. 끝났으면 판독·경보만 기다리고 다시 견주지 않는다.
         self._done = False
+        #: 이번 방문의 결론(기록·전이)을 냈나. `_done` 인데 아직이면 판독을 기다리는 중이다.
+        self._concluded = False
         #: 지금의 `ALERT` 가 구역 변화 확정으로 섰나. 섰으면 경보 확인이 순찰로 돌려보낸다.
         self._alarm_alert = False
 
@@ -185,6 +187,11 @@ class ZoneInspector:
         # ⚠️ **판독은 상태·모드와 무관하게 줍는다.** 변화 확정으로 `ALERT` 에 갔거나
         # 상한을 넘겨 떠난 뒤에 온 결과도 건 구역의 것으로 남아야 한다.
         self._take_reading(result, now_ms)
+        if self._done and not self._concluded and self._behavior.state != "ZONE_INSPECT":
+            # ⚠️ **판독을 기다리다 방문 밖으로 밀려났다** (쓰러짐 의심·사람 출현·수동·경로 이탈
+            # 등). `_leave` 는 이제 불리지 않으니 확정해 둔 결론을 여기서 기록만 남긴다 — 안 남기면
+            # 확정기가 이미 센 반출이 다시는 울리지 않는다. 전이는 하지 않는다(이미 떠났다).
+            self._leave(result, now_ms, departed=True)
         if not self._mission.enables("change_detect"):
             return
         state = self._behavior.state
@@ -213,6 +220,7 @@ class ZoneInspector:
                 self._asked = False
                 self._wait_until = None
                 self._done = False
+                self._concluded = False
                 self._visit_since_ms = now_ms
                 self._visit_seen = []
                 self._visit_found = ()
@@ -412,17 +420,20 @@ class ZoneInspector:
         if reading.get("person_down"):
             self._fall.suspect("zone_vlm", now_ms, yes_asked=now_ms)
 
-    def _leave(self, result: VisionResult, now_ms: int) -> None:
+    def _leave(self, result: VisionResult, now_ms: int, *, departed: bool = False) -> None:
         """방문을 끝낸다 — 결론은 여기 한 곳에서 종류별로 낸다 (ADR-41 · ADR-42).
 
-        넘어짐·통로 막힘만 `zone_changed` → `ZONE_CHANGED`(L3), 반출은 `zone_notice`,
-        화기 위험물은 `hazard_notice`, 반입은 로그만 남긴다. 판독이 남았으면 `budget_ms`
-        까지 결론을 미룬다.
+        넘어짐만 `zone_changed` → `ZONE_CHANGED`(L3), 반출은 `zone_notice`, 화기
+        위험물은 `hazard_notice`, 통로 막힘은 `path_blocked`, 반입은 로그만 남긴다.
+        판독이 남았으면 `budget_ms` 까지 결론을 미룬다. `departed` 는 그 사이 상태가 방문 밖으로
+        바뀐 경우다 — 기다리지 않고 기록만 남기며 `ZONE_CHANGED`·`ZONE_CLEAR` 는 걸지 않는다.
         """
         self._done = True
         # ⚠️ **물건 변화를 확정했어도 남은 판독을 기다린다.** 안 기다리면 같은 방문의
         # 위험물·넘어짐 두 번째 «예» 가 방문이 끝난 뒤에 와서 버려진다.
-        if self._wait_until is not None:
+        if departed:
+            self._wait_until = None  # 늦게 온 판독은 이 방문의 확정에 섞이지 않는다
+        elif self._wait_until is not None:
             if now_ms < self._wait_until:
                 return
             # 상한 초과는 기능 저하다. 결과가 늦게 오면 그때 건 구역 이름으로 남는다.
@@ -440,6 +451,16 @@ class ZoneInspector:
             )
             # 한 번만 남긴다 — 다음 틱에 같은 기록을 되풀이하지 않는다.
             self._hazards = tuple(kind for kind in self._hazards if kind != HAZARD_ITEM)
+        if "blocked_path" in self._hazards:
+            # 통로 막힘도 가벼운 경고다 (ADR-41 개정 2026-10-01) — 이동 중 LiDAR 막힘과 같은
+            # 사건 이름을 쓰고 L3 로 올리지 않는다. 같은 방문의 넘어짐 L3 와 겹쳐도 먼저 남긴다.
+            LOG.warning("path_blocked", zone=self._zone, source="vlm")
+            self._record(
+                "path_blocked",
+                self._visit_seen[-1] if self._visit_seen else result,
+                {"zone": self._zone, "source": "vlm"},
+            )
+            self._hazards = tuple(kind for kind in self._hazards if kind != "blocked_path")
         removed = [c.as_dict() for c in self._visit_found if c.kind is ChangeKind.REMOVED]
         added = [c.as_dict() for c in self._visit_found if c.kind is not ChangeKind.REMOVED]
         hazards = [{"kind": kind, "source": "vlm"} for kind in self._hazards]
@@ -462,8 +483,10 @@ class ZoneInspector:
             )
             # 한 번만 남긴다 — 전이가 거절돼도 다음 틱에 같은 기록을 되풀이하지 않는다.
             self._visit_found = self._hazards = ()
-            # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
-            self._alarm_alert = self._apply(Event.ZONE_CHANGED, now_ms)
+            self._concluded = True
+            if not departed:
+                # 전이가 에스컬레이션을 L3 로 올린다 (`escalation` 표 · FR-8.4).
+                self._alarm_alert = self._apply(Event.ZONE_CHANGED, now_ms)
             return
         if added:
             # Z3 — 반입은 기록만 한다. 관제 화면에 올리면 작업 중 흔한 물건 배치까지
@@ -481,7 +504,9 @@ class ZoneInspector:
         if self._visit_outcome is not None:
             LOG.info(self._visit_outcome, zone=self._zone, frames=len(self._visit_seen))
         self._asked = False
-        self._apply(Event.ZONE_CLEAR, now_ms)
+        self._concluded = True
+        if not departed:
+            self._apply(Event.ZONE_CLEAR, now_ms)
 
     def ask_baseline_reset(self, zone: str) -> tuple[bool, str]:
         """구역 기준 재등록을 예약한다. **다른 스레드에서 부른다** — 지우는 것은 다음 틱이다.

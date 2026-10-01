@@ -42,7 +42,7 @@ flowchart TD
 | 화기 위험구역 | C | `zones.hazard_ids: [C]` | [ADR-43](../DECISIONS.md#adr-43) |
 | 화기 위험물 확정 | 같은 방문 안 서로 다른 프레임의 «예» 2회 | `change_detect.vlm_hazard_items` (기본 켬) | [ADR-43](../DECISIONS.md#adr-43) · [ADR-41](../DECISIONS.md#adr-41) |
 | 이동 중 막힘 | 가벼운 경고 + LiDAR 우회, L3 아님 | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
-| 구역 방문 VLM `blocked_path` L3 | 꺼짐 (벤치 통과 전) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
+| 구역 방문 VLM `blocked_path` 가벼운 경고 `path_blocked` (L3 아님 · 2026-10-01 개정) | 꺼짐 (벤치 통과 전) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
 | 쓰러짐 확정 | 의심 뒤 판독 «예» 2회, 간격 1000ms 이상 | `fsm.fall_confirm_vlm_yes` · `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | PPE | 모든 구역에서 판정, 위반은 경고 뒤 자동 복귀 | `escalation.ppe_warning_hold_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | 런타임 LiDAR 순찰 | 선택. 켜는 인자 | `python -m host.runtime ... --lidar-device <id>` | [ADR-43](../DECISIONS.md#adr-43) |

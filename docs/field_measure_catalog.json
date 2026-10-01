@@ -578,6 +578,20 @@
       "source": "https://github.com/PJW-1/mechadog/blob/fbc5e5a0e175f1ed2461cfd057287643f1c5acf8/docs/DECISIONS.md#adr-35"
     },
     {
+      "id": "HW-021",
+      "title": "mechdog-02 공장 시연 한 사이클 (A→B→C→D)",
+      "requirement": "FR-11 시연 시나리오 / ADR-43",
+      "wbs": "5.4.5, 5.4.6, 3.9.3",
+      "phase": "5 · LiDAR 장착 후",
+      "scope": "기체별 실측",
+      "needs": "mechdog-02(LiDAR 장착)·구역 A~D 와 복도·C 구역의 라이터 또는 보조배터리·복도 한쪽을 막을 소품·쓰러진 사람 연출(동의한 사람)·보호구 없는 사람/제대로 쓴 사람; 런타임을 --lidar-device 로 기동; 사람이 중지 수단을 쥐고 따라간다",
+      "steps": "A→B→C→D 한 바퀴를 무개입으로 돈다. B→C 복도를 막아 우회, C 에서 화기 위험물, C→D 에서 쓰러진 사람 접근·확정·운용자 확인·D 로 복귀, D 에서 PPE 위반, A 에서 적합 통과를 차례로 연출한다. 사건마다 방송·대시보드 표시·단계(L0~L3)와 한 바퀴의 소요 시간을 적는다.",
+      "criteria": "사건별로 기대 대응이 일어났는지 기록: 막힘은 path_blocked 가벼운 경고 + 우회 + 계속(L3 아님), C 는 hazard_notice 가벼운 경고(L3 아님), 쓰러짐은 L3 확정 뒤 확인하면 원래 목표 D 로 재계획, D 는 PPE 위반 경고 뒤 자동 복귀, A 는 경보 없이 통과. 방문 순서가 매 바퀴 A→B→C→D 로 같은지 확인. 걷는 중 스캔 품질(ADR-7 범위)과 SCAN 뒤 재계획도 함께 기록. 통과 기준은 첫 측정 뒤에 정한다.",
+      "tool": "python -m host.runtime ... --lidar-device <id> · 대시보드 사건 피드 · 블랙박스 기록 · 영상",
+      "reference": "기체별 신규 측정. 다른 기체 값 복사 금지.",
+      "source": "https://github.com/PJW-1/mechadog/blob/a129cdc/docs/DECISIONS.md#adr-43"
+    },
+    {
       "id": "TC-F-011",
       "title": "사람 검출·시간 창 확정",
       "requirement": "FR-3.1~3.2",
