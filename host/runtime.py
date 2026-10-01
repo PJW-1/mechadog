@@ -209,9 +209,13 @@ class Runtime:
         self._navigator = navigator
         #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
         self._take_scan: Callable[[], Scan | None] | None = None
+        #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
+        self._navigator_resume = False
         if navigator is not None:
             # 추적·경보·구역 점검에서 돌아오면 지금 자리에서 같은 목표로 다시 푼다.
-            self._behavior.fsm.on_enter("PATROL", lambda _previous, _target: navigator.resume())
+            # ⚠️ **훅에서 바로 풀지 않는다.** 전이는 대시보드 스레드(`apply_external`)에서도
+            # 일어나고, 그때 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
+            self._behavior.fsm.on_enter("PATROL", self._mark_navigator_resume)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
@@ -680,10 +684,17 @@ class Runtime:
         if self._ppe_judge.halts_patrol(now_ms) or self._auth_judge.holds_patrol(now_ms):
             commander.halt()
         elif self._navigator is not None:
+            if self._navigator_resume:
+                self._navigator_resume = False
+                self._navigator.resume()
             # 상태 알림·래치·링크는 FSM 이 쥔다 — 길 찾기만 맡긴다 (`PatrolController.steer`).
             self._navigator.steer(now_ms)
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
+
+    def _mark_navigator_resume(self, _previous: str, _target: str) -> None:
+        """`PATROL` 진입 훅. 표시만 한다 — 길 찾기 상태는 루프 스레드만 바꾼다."""
+        self._navigator_resume = True
 
     def _alert_sequence(self, commander: Commander, now_ms: int) -> None:
         """Factory PPE owns ALERT posture; guard keeps the existing alert sequence."""
@@ -1770,7 +1781,7 @@ def main(argv: list[str] | None = None) -> int:
         # 지도·구역이 없으면 기동을 거부한다 — 길 찾기를 달라고 했는데 고정 보행으로
         # 조용히 내려가면 운용자는 LiDAR 로 돈다고 믿는다.
         patrol_map = load_patrol_map(config, maps_dir(config)) if args.lidar_device else None
-    except (ConfigError, OSError) as exc:
+    except (OSError, ValueError) as exc:  # `ConfigError` 와 깨진 지도·구역 파일(`json`·`np.load`)
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
         return 2

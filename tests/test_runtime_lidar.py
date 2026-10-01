@@ -142,13 +142,34 @@ def test_reentering_patrol_replans_to_the_same_unvisited_zone(
     assert runtime._apply(Event.SCAN_DUE, clock.ms)
     _fresh(navigator, clock.ms, (3.0, 3.0, 0.0))  # 떠나 있는 동안 자리가 바뀌었다
     assert runtime._apply(Event.SCAN_DONE, clock.ms)
-    assert navigator.phase is Phase.PLANNING
-    assert navigator.target == target
-    assert not navigator.plan.reachable, "옛 경로는 버린다"
     runtime.tick(clock.ms)
     assert navigator.target == target
     assert navigator.plan.reachable
     assert target not in navigator.visited
+
+
+def test_patrol_reentry_resumes_the_navigator_on_the_loop_tick(
+    config: dict, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대시보드 스레드의 전이(`apply_external`)는 길 찾기 상태를 만지지 않는다.
+
+    진입 훅은 표시만 하고, 다시 푸는 것은 다음 틱의 순찰 시퀀스(루프 스레드)다. 훅에서
+    바로 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
+    """
+    runtime, _navigator = _patrolling(config, clock)
+    resumed: list[int] = []
+    real = PatrolController.resume
+    monkeypatch.setattr(
+        PatrolController, "resume", lambda self: (resumed.append(clock.ms), real(self))[1]
+    )
+    assert runtime._apply(Event.SCAN_DUE, clock.ms)
+    assert runtime.apply_external(Event.SCAN_DONE)
+    assert runtime.behavior.state == "PATROL"
+    assert resumed == [], "전이한 스레드에서 풀지 않는다"
+    runtime.tick(clock.ms)
+    assert resumed == [clock.ms]
+    runtime.tick(clock.ms + 100)
+    assert resumed == [clock.ms], "한 번 진입에 한 번만 푼다"
 
 
 # ── 경로 막힘 = 가벼운 경고 하나 ───────────────────────────
@@ -347,4 +368,18 @@ def test_cli_lidar_device_without_zones_refuses_to_start(
 
     monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
     monkeypatch.setattr(runtime_module, "load_patrol_map", no_zones)
+    assert runtime_module.main(["--device", DEVICE, "--lidar-device", "lidar-01"]) == 2
+
+
+def test_cli_lidar_device_with_a_broken_map_refuses_to_start(
+    config: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """깨진 지도·구역 파일도 traceback 이 아니라 기동 거부(rc 2)다."""
+    import host.runtime as runtime_module
+
+    def broken(_cfg, _maps):
+        raise json.JSONDecodeError("Expecting value", "", 0)
+
+    monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
+    monkeypatch.setattr(runtime_module, "load_patrol_map", broken)
     assert runtime_module.main(["--device", DEVICE, "--lidar-device", "lidar-01"]) == 2
