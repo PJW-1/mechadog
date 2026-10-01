@@ -65,7 +65,13 @@ from host.report.situation import describe
 from host.slam.settings import maps_dir
 from host.telemetry.lidar_feed import open_lidar_feed
 from host.telemetry.receiver import Ingested, TelemetryReceiver
-from host.telemetry.ros2_relay import OdomSender, open_odom_sender, send
+from host.telemetry.ros2_relay import (
+    OdomSender,
+    forward_peer_of,
+    odom_peer_of,
+    open_odom_sender,
+    send,
+)
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -1789,8 +1795,10 @@ def main(argv: list[str] | None = None) -> int:
         # 지도·구역이 없으면 기동을 거부한다 — 길 찾기를 달라고 했는데 고정 보행으로
         # 조용히 내려가면 운용자는 LiDAR 로 돈다고 믿는다.
         patrol_map = load_patrol_map(config, maps_dir(config)) if args.lidar_device else None
-        # ROS2 컨테이너로 ODOM 을 보낸다 — 실측이 없는 기체는 `None`. 목적지 이름을 못 풀면 기동을 거부한다.
-        odom = open_odom_sender(config, args.device) if args.lidar_device else None
+        # ROS2 컨테이너(전달·ODOM) 목적지 이름을 여기서 확인한다 — 못 풀면 traceback 이 아니라 기동 거부다.
+        if args.lidar_device:
+            forward_peer_of(config["lidar"])
+            odom_peer_of(config["lidar"])
     except (OSError, ValueError) as exc:  # `ConfigError` 와 깨진 지도·구역 파일(`json`·`np.load`)
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
@@ -1803,6 +1811,8 @@ def main(argv: list[str] | None = None) -> int:
         config = dict(config)
         config["network"] = dict(config["network"], xiao_ip=args.xiao_ip)
     context = setup_logging(config, device_id=args.device)
+    # 로거를 세운 뒤에 연다 — 실측이 없는 기체의 `odometry_unavailable` 이 JSONL 에 남는다. 그런 기체는 `None`.
+    odom = open_odom_sender(config, args.device) if args.lidar_device else None
 
     vision = None if args.no_vision else build_worker(config)
     blackbox = EventBlackbox(config)
