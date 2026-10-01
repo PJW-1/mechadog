@@ -53,6 +53,53 @@ docker exec mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && ros2 topic ech
 docker exec mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && ros2 pkg executables slam_toolbox'
 ```
 
+## slam_toolbox 기동 — 라이프사이클 전이가 필수다
+
+Jazzy 의 `slam_toolbox` 는 라이프사이클(lifecycle) 노드다. 실행만으로는 `/map`이
+광고되지 않는다 — 노드는 `ros2 node list` 에 보이고 로그는 0바이트이며 파라미터는
+전부 `Parameter not set` 이라 **증상이 원인을 가린다.** 실행 후 `configure`+`activate`
+두 전이를 태워야 `/map`·`/map_metadata` 가 뜨고 `/scan` 구독이 생긴다:
+
+```powershell
+docker exec -d mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && ros2 run slam_toolbox async_slam_toolbox_node --ros-args --params-file /opt/mechdog/docker/ros2/slam.yaml'
+docker exec mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && ros2 lifecycle set /slam_toolbox configure && ros2 lifecycle set /slam_toolbox activate'
+docker exec mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && ros2 topic list | findstr map'
+```
+
+2026-10-02 실기 확인 — 전이 전에는 `/map` 부재, 두 전이 후 `/map`·`/map_metadata` 광고.
+
+## rviz2 를 WSLg 로 표시
+
+Docker Desktop 컨테이너는 WSLg 의 `/tmp/.X11-unix/X0` 에 닿지 않는다 — 소켓 파일이
+파일시스템 경계를 넘지 못하고 `--privileged --pid=host` 도 daemon VM 의 별도
+네임스페이스라 안 보인다. 확인된 경로는 **사용자 WSL 배포판의 socat 릴레이**다
+(2026-10-02 검증): WSLg 의 X 서버는 같은 VM 안 TCP 연결을 무인증으로 받는다.
+
+최초 1회:
+
+```powershell
+wsl --install -d Ubuntu-24.04 --no-launch
+wsl -d Ubuntu-24.04 -u root -- apt-get install -y socat
+```
+
+WSL 시작 때마다(릴레이는 영구 상주하지 않는다):
+
+```powershell
+wsl -d Ubuntu-24.04 -u root -- setsid nohup socat TCP-LISTEN:6000,fork,reuseaddr UNIX-CONNECT:/tmp/.X11-unix/X0 ">nul 2>&1 < /dev/null &"
+```
+
+컨테이너는 Ubuntu 배포판의 VM IP 로 X 를 낸다 (`host.docker.internal` 은 Windows
+호스트를 가리켜 Ubuntu 리스너에 닿지 않는다):
+
+```powershell
+$display_ip = (wsl -d Ubuntu-24.04 hostname -I).Split()[0]
+docker run -d --name mechdog-ros2 -p 5203:5203/udp -p 5204:5204/udp -e LIDAR_DEVICE_ID=lidar-mock -e DISPLAY=${display_ip}:0 -e QT_X11_NO_MITSHM=1 mechdog-ros2:prelidar
+docker exec mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && rviz2'
+```
+
+`QT_X11_NO_MITSHM=1` 은 필수다 — TCP 릴레이 위에서는 공유메모리 MIT-SHM 확장을
+못 쓴다. 재부팅으로 WSL VM 의 IP 가 바뀌면 `$display_ip` 를 다시 읽는다.
+
 ## 오도메트리 tf (`odom_bridge` · 5.4.3)
 
 컨테이너는 `scan_bridge`와 `odom_bridge`를 함께 띄운다(둘 중 하나가 죽으면 컨테이너가 끝난다).
@@ -103,5 +150,5 @@ UART 타이밍·모터 노이즈·차폐·전원 문제를 검증하지 않는�
 - `5.4.5`: 실제 LD19·마스트·보행으로 지도, 측위, LOST, 구역 도착을 검수한다.
 
 `slam.yaml`은 `map → odom → base_link → laser` 프레임 이름만 지정한다.
-`slam_toolbox`의 지도 검증은 tf가 완성된 뒤 수행한다. RViz2는 이미지에 설치되지만
-WSLg 창 표시는 기준 PC의 WSL·Docker GUI 전달 경로에서 별도로 확인해야 한다.
+`slam_toolbox`의 지도 검증은 tf가 완성된 뒤 수행한다. RViz2의 WSLg 표시 경로는
+위 「rviz2 를 WSLg 로 표시」 절을 따른다 — 2026-10-02 이 PC에서 창 표시를 확인했다.
