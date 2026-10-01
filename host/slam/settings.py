@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -70,7 +71,14 @@ REQUIRED_LIDAR_KEYS = (
 
 #: 숫자 검사에서 빼는 키 — 문자열·참거짓이거나, 포트처럼 아래에서 범위까지 따로 본다.
 _TYPED_SEPARATELY = frozenset(
-    {"scan_forward_host", "scan_forward_enabled", "scan_forward_port", "odom_host", "odom_port"}
+    {
+        "scan_port",
+        "scan_forward_host",
+        "scan_forward_enabled",
+        "scan_forward_port",
+        "odom_host",
+        "odom_port",
+    }
 )
 
 
@@ -99,13 +107,21 @@ def validate_section(section: dict[str, Any]) -> None:
     missing = [key for key in REQUIRED_LIDAR_KEYS if key not in section]
     if missing:
         raise ConfigError(f"lidar 설정 누락: {missing}")
-    # 아래 비교가 문자열·빈 값에서 `TypeError` 로 새지 않게 숫자부터 확인한다.
+    # 아래 비교가 문자열·빈 값에서 `TypeError` 로 새지 않게 숫자부터 확인한다. NaN 은 모든
+    # 대소 비교가 거짓이라 범위 검사를 조용히 통과하므로 유한한 수만 받는다.
     for key in REQUIRED_LIDAR_KEYS:
         if key in _TYPED_SEPARATELY:
             continue
         value = section[key]
-        if not isinstance(value, int | float) or isinstance(value, bool):
-            raise ConfigError(f"lidar.{key} 는 숫자여야 함: {value!r}")
+        if (
+            not isinstance(value, int | float)
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
+            raise ConfigError(f"lidar.{key} 는 유한한 숫자여야 함: {value!r}")
+    scan_port = section["scan_port"]
+    if not isinstance(scan_port, int) or isinstance(scan_port, bool) or not 1 <= scan_port <= 65535:
+        raise ConfigError("lidar.scan_port 는 1~65535 정수여야 함")
     if section["range_min_mm"] >= section["range_max_mm"]:
         raise ConfigError("range_min_mm 이 range_max_mm 보다 작아야 함")
     if section["free_logodds"] >= section["occupied_logodds"]:
