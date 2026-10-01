@@ -10,11 +10,12 @@
 | **프로젝트명** | MechDog Physical AI Security & Industrial-Safety Inspection Quadruped Robot |
 | **문서 버전** | **v1.0.0** |
 | **상태** | Draft / In-Review |
-| **최종 수정** | 2026-09-28 |
+| **최종 수정** | 2026-10-01 |
 | **개정 (2026-09-23)** | 음성 재편 — 음성 LLM · 현장지원 모드(FR-12) · 로봇 상태 음성 응답 · 타자 입력 관제 방송 폐기, 운용 모드를 경비 · 공장 두 개로 축소, 듣기는 XIAO 마이크 · 말하기는 로봇 MP3 모듈(`0x7B`)로 이관, `0x64` 주소 표기 정정 ([ADR-38](../DECISIONS.md#adr-38)) |
 | **개정 (2026-09-24)** | 구역 변화를 종류별로 확정 — 반출·반입은 연속 2방문(사이클 = 구역 방문 1회), 넘어짐·통로 막힘은 같은 방문 안 VLM 2회 연속 «예»(벤치 통과 전 경보 꺼짐), 사람은 변화가 아니라 사람 게이트로(FR-8.3 · FR-8.4), FR-8.5 두 장 비교 불가 명시, 기준 재등록(FR-8.6) 추가 ([ADR-41](../DECISIONS.md#adr-41)) |
 | **개정 (2026-09-25)** | 공장 모드 시나리오 정본 확정 — FR-11 안에 **«공장 모드 시나리오 (정본 · 2026-09-25)»** 소절을 신설. 사람만으로는 L1 을 올리지 않음 · PPE 위반은 경고 뒤 자동 복귀(L3 래치 아님) · 쓰러짐은 «의심(L1) → 확정(L3)» 2단(YOLOX 누적 3회 + VLM) · 구역 반출은 가벼운 경고 · 반입은 기록만(넘어짐·통로 막힘 L3 는 유지) · 순찰 중 VLM 주기 판독(2초) 신설. FR-9.3 · WBS `4.8.3` 단독 확정 · [ADR-41](../DECISIONS.md#adr-41)의 반출·반입 L3 를 대체한다 ([ADR-42](../DECISIONS.md#adr-42)) |
 | **개정 (2026-09-28)** | 쓰러짐 확정 조건 재개정 — 4.8.0 카메라 벤치에서 YOLOX 가 누운 사람 10장 중 1장만 후보로 잡아 YOLOX 누적 조건이 사실상 확정을 막는 것으로 드러남. **확정은 VLM `person_down`「예» 가 서로 다른 프레임에서 `fsm.fall_confirm_vlm_yes`(2)회, 각 간격 `fsm.fall_confirm_gap_ms`(1000ms) 이상 모여야 한다** — YOLOX 는 폐기하지 않고 의심 진입·TRACK 접근에만 쓴다. `fsm.fall_suspect_hits` 는 삭제. 의심(L1) 조건과 해제 조건은 그대로다 ([ADR-42](../DECISIONS.md#adr-42) 재개정) |
+| **개정 (2026-10-01)** | 공장 모드 시연 시나리오 4구역 정본, FR-11 안에 **«공장 모드 시연 시나리오 (정본 · 2026-10-01)»** 소절을 신설. 구역 A~D · 매 바퀴 고정 순서(FR-7.3 의 «첫 순회 뒤 무작위» 를 시연에서 끔) · C 는 화기 위험구역(`hazard_item` VLM «예» 2회 → 가벼운 경고 `hazard_notice`) · 이동 중 막힘은 가벼운 경고 `path_blocked` + LiDAR 우회(VLM 은 방향을 정하지 않음) · 운용 런타임이 LiDAR 순찰을 직접 돌림(`--lidar-device`). [ADR-43](../DECISIONS.md#adr-43) |
 | **대상 플랫폼** | Hiwonder MechDog (ESP32, Advanced Kit) + Seeed XIAO ESP32S3 Sense + Host PC |
 | **저장소** | [`PJW-1/mechadog`](https://github.com/PJW-1/mechadog) |
 
@@ -245,9 +246,10 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 
 > 측위 확보를 전제한다. 트랙 확정은 [측위 방식 비교 문서](../DECISIONS.md) 참조.
 
-- **FR-7.1 (구역 정의)** 순찰 대상 구역을 맵 프레임에 고정된 앵커/웨이포인트 객체로 정의한다. **구역 수는 `config.zones.ids` 로 관리하며 시연 규모에 맞춘다** — 방 하나에서 수행하는 온라인 시연에는 2~3개가 적정하고, 5개는 화면상 구분이 어렵다. **누적 오도메트리 좌표로 정의해서는 안 된다.**
+- **FR-7.1 (구역 정의)** 순찰 대상 구역을 맵 프레임에 고정된 앵커/웨이포인트 객체로 정의한다. **구역 수는 `config.zones.ids` 로 관리하며 시연 규모에 맞춘다** — 방 하나에서 수행하는 온라인 시연에는 2~3개가 적정하고, 5개는 화면상 구분이 어렵다. **누적 오도메트리 좌표로 정의해서는 안 된다.** *(2026-10-01 개정 — 공장 모드 시연은 구역 **A~D 넷**을 복도로 잇는다. C 는 화기 위험구역으로 `zones.hazard_ids: [C]` 에 둔다. [ADR-43](../DECISIONS.md#adr-43))*
 - **FR-7.2 (순차 순찰)** ~~`A → B → C → D → E`~~ `config.zones.ids` 순서(현재 `A → B → C`)로 순회하며 *(2026-09-27 개정 — 구역 수는 FR-7.1 대로 `zones.ids` 가 정한다)*, 각 구역에서 정지 후 FR-2.4 스캔과 FR-8 변화 감지를 수행한다.
 - **FR-7.3 (랜덤 순찰)** 순차 순회를 1회 이상 완료한 뒤에는 **방문 순서를 무작위화**한다. 순찰 패턴의 예측 불가성은 침입자의 회피를 어렵게 하므로 경비 로봇의 의도된 특성이다.
+  > **개정 (2026-10-01 · [ADR-43](../DECISIONS.md#adr-43))**: 공장 모드 시연은 재현성을 위해 **매 바퀴 A→B→C→D 고정 순서**로 돈다. `zones.random_after_first_cycle: false` 로 이 무작위 전환을 끈다(켜면 위 문장대로 돌아온다).
 - **FR-7.4 (도착 판정)** 목표 앵커로부터 설정 반경(기본 30cm) 이내 진입 시 도착으로 판정한다. 측위 정확도를 고려한 값이며 `config.yaml`에서 관리한다.
   > **추가 (2026-09-25).** 앵커에는 선택 항목으로 점검할 때 바라볼 방향(`yaw`)을 둘 수 있다 — 있으면
   > 도착 뒤 그 방향으로 제자리 회전해 맞춘 다음에야 FR-8 변화 감지용 장면을 모은다(변화 감지가
@@ -303,6 +305,7 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
   | 반출 | 물건 목록 (COCO 80 · FR-8.3) | **연속 2방문** — 사이클 = 구역 방문 1회 | ~~한 바퀴 뒤~~ *(2026-09-25 개정 — [ADR-42](../DECISIONS.md#adr-42))* 한 바퀴 뒤 — **L3 아님**, 관제 가벼운 경고만(눈·문구 없음) |
   | 반입 | 물건 목록 (COCO 80 · FR-8.3) | **연속 2방문** — 사이클 = 구역 방문 1회 | *(2026-09-25 신설 — ADR-42)* **알리지 않고 기록만** — 경고도 L3 도 없음 |
   | 넘어짐·무너짐·통로 막힘 | VLM 고정 질문 `fallen_object` · `blocked_path` | **같은 방문 안에서 다른 프레임으로 2회 연속 «예»** | 첫 방문 · 약 1~1.5초 — **L3 유지** (ADR-41 그대로) |
+  | 화기 위험물(라이터·보조배터리) | VLM 고정 질문 `hazard_item`, «Is there a lighter or a power bank in this image? Answer with yes or no only.» | **위험구역(`zones.hazard_ids`)에서만** 묻고, 같은 방문 안 서로 다른 프레임의 «예» 2회로 확정. 확정은 **가벼운 경고 `hazard_notice`**(방송 + 대시보드)이며 L3 가 아니다. 스위치 `change_detect.vlm_hazard_items` 기본 켬(가벼운 경고라 오경보 비용이 낮다 · 벤치는 WBS `4.8.4`). *(2026-10-01 · [ADR-43](../DECISIONS.md#adr-43))* | 즉시 |
   | 사람 쓰러짐 | ~~쓰러짐 경로 (FR-9 · 종횡비 WBS `4.8.3` + VLM `person_down` → `PERSON_DOWN`)~~ *(2026-09-25 개정 — ADR-42)* ~~**의심**(종횡비 WBS `4.8.3` 후보 **또는** VLM `person_down`「예» 한 번) → **확정**(의심 뒤 종횡비 후보 누적 3회 **그리고** VLM `person_down`「예»)~~ *(2026-09-28 재개정 — ADR-42)* **의심**(종횡비 WBS `4.8.3` 후보 **또는** VLM `person_down`「예» 한 번) → **확정**(의심 뒤 서로 다른 프레임의 VLM `person_down`「예» 가 `fsm.fall_confirm_vlm_yes`=2회, 각 간격 `fsm.fall_confirm_gap_ms`=1000ms 이상) → `PERSON_DOWN` | 의심 = 즉시 L1, 확정 = 즉시 L3 (FR-11 「공장 모드 시나리오 (정본 · 2026-09-25)」 S3·S4) |
   | 사람 출현 | 사람 게이트(300ms 3회) → ~~공장 모드 L1 작업자~~ *(2026-09-25 개정 — ADR-42)* **공장 모드 작업자, 눈은 L0 유지**(FR-8.3) | 게이트 확정 | 해당 없음 — 사람만으로는 경보하지 않는다 |
 
@@ -500,6 +503,31 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 > `vision.vlm.patrol_interval_ms`(2000ms) · PPE 경고 빨간 눈 유지 `escalation.ppe_warning_hold_ms`(5000ms) ·
 > PPE 경고 문구 `escalation.sound.ppe_violation_warning`(「안전모와 안전조끼를 착용해 주십시오.」). 구역 반출 경고의
 > 사건 이름은 아직 정해지지 않았으므로 이 문서에서는 «관제 가벼운 경고» 로만 부른다.
+
+#### 공장 모드 시연 시나리오 (정본 · 2026-10-01 · [ADR-43](../DECISIONS.md#adr-43))
+
+> **이 소절이 공장 모드 시연 한 바퀴의 정본이다.** 사람 대응(쓰러짐·PPE)은 위 「공장 모드 시나리오 (정본 · 2026-09-25)」와 [ADR-42](../DECISIONS.md#adr-42)를 그대로 따른다.
+> 구역은 A·B·C·D 넷이고 복도로 잇는다. **C 는 화기 위험구역**(`zones.hazard_ids: [C]`)이다. 순서는 매 바퀴 A→B→C→D 로 고정한다(`zones.random_after_first_cycle: false`).
+> 쉬운 설명과 흐름도는 [features/factory-demo-scenario.md](../features/factory-demo-scenario.md) 다.
+
+| 단계 | 구역·구간 | 로봇이 하는 일 | 사건·단계 | 관련 |
+| :-: | :--- | :--- | :--- | :--- |
+| 1 | A → B | 정상 순찰 | 없음 · L0 | FR-7 · FR-2 |
+| 2 | B → C 복도 | 복도 한쪽을 막은 장애물을 LiDAR 로 알아채고, 가벼운 경고(방송 + 대시보드)를 낸 뒤 A* 가 **빈 쪽**으로 우회해 C 로 간다 | `path_blocked`(출처 `lidar`, 판정 `x`·`y`·`target`) · 가벼운 경고, **L3 아님** · 순찰 계속 | FR-2 · ADR-43 |
+| 3 | C | 도착 뒤 VLM 에 `hazard_item` 을 묻고, 같은 방문 안 서로 다른 프레임의 «예» 2회면 확정한다 | `hazard_notice` · 가벼운 경고(방송 + 대시보드), **L3 아님** · 순찰 계속 | FR-8.3 · ADR-41 · ADR-43 |
+| 4 | C → D | 이동 중 B 구역에서 쓰러진 사람이 보이면 **먼저 접근**(TRACK)해 확인한다(의심 L1 → VLM `person_down` «예» 2회, 간격 1초 이상 → L3). 방송 + 관제(대시보드) 알림 → 운용자 확인 → 순찰로 돌아가 **현재 위치에서 원래 목표 D 로 경로를 다시 짠다** | `FALL_SUSPECTED` → `PERSON_DOWN` · L1 → L3 → 확인 뒤 L0 | FR-3.7 · FR-11 정본(S3~S5) · ADR-42 |
+| 5 | D | PPE(안전모·조끼)를 판정한다. 보호구 없는 사람이면 위반 경고 뒤 자동으로 순찰에 돌아온다 | PPE 위반 경고 · 래치 아님 | FR-9 · ADR-42 |
+| 6 | D → A | A 에서 안전모·조끼를 제대로 쓴 사람은 적합으로 판정하고 지나간다 | 적합 · 경보 없음 | FR-9 · FR-11.6 |
+
+한 바퀴가 끝나면 같은 순서(A→B→C→D)로 반복한다.
+
+**결정 요약**: 이동 중 막힘은 **L3 가 아니다**: VLM 은 위치 없이 예·아니요만 돌려주므로 방향을 정하지 않고(막힘 적중 1/3 · 오경보 3/6 · 2026-09-28 벤치), 경로는 LiDAR A* 가 최단 빈 쪽으로 정한다. 초음파 온보드 회피(FR-2.3)는 근거리 예비 수단이다.
+구역 방문 VLM `blocked_path` L3 경로(ADR-41)는 그대로이고 스위치 `change_detect.vlm_hazards` 는 꺼 둔다. 반출·반입 변화 감지는 그대로이며 시연 경로에는 넣지 않는다.
+
+**운용 런타임의 LiDAR 순찰 (선택)**: `python -m host.runtime ... --lidar-device <id>` 로 켠다. PATROL 이 LiDAR A* 경로(`host/behavior/patrol.py` 의 `PatrolController`)를 따르고, 측위 자세가 구역 점검(`ZoneInspector`)에 들어가며, LiDAR 전방 부채꼴 ESTOP 은 런타임 송신 락을 거친다.
+`tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 컨테이너로의 스캔 전달과 ODOM 은 아직 런타임에 없다(후속). 플래그가 없으면 런타임은 전과 같다.
+
+> **설정값**: `zones.ids` = A~D · `zones.hazard_ids` = [C] · `zones.random_after_first_cycle` = false · `change_detect.vlm_hazard_items` = 켬 · `change_detect.vlm_hazards` = 꺼짐(유지).
 
 ### ~~FR-12: 현장 정보 안내~~ [폐기 (2026-09-23 · ADR-38)]
 
