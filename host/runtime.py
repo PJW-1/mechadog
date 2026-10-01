@@ -31,6 +31,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, cast
 
 from host.behavior.actions import PostureSequence, register_actions
@@ -1771,6 +1772,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", default=None, help="config.logging.level 을 덮어쓴다 (DEBUG 실행용)"
     )
     parser.add_argument(
+        "--maps",
+        default=None,
+        help="지도·구역 폴더 — config 의 lidar.maps_dir 를 덮어쓴다 (patrol_run --maps 와 같다)",
+    )
+    parser.add_argument(
         "--record-dir",
         default=None,
         help="실기 동시 기록 폴더 — 원본 SCAN·TELEMETRY·송신 명령·측위·영상 인식을 한 시간축 JSONL 로",
@@ -1921,7 +1927,6 @@ def _open_recorder(
     """기록 폴더와 manifest. 비밀값을 넣지 않는다 — 설정은 해시만, 인자는 그대로."""
     import hashlib
     import subprocess
-    from pathlib import Path
 
     try:
         revision = subprocess.run(
@@ -1936,6 +1941,7 @@ def _open_recorder(
             "argv": sys.argv[1:] if argv is None else argv,
             "device": args.device,
             "lidar_device": args.lidar_device,
+            "maps": args.maps,
             "motion_lock": args.motion_lock,
             "git_revision": revision,
             "config_sha256": hashlib.sha256(config_text.encode("utf-8")).hexdigest(),
@@ -1975,7 +1981,8 @@ def main(argv: list[str] | None = None) -> int:
             odom_peer_of(lidar)
         # 지도·구역이 없으면 기동을 거부한다 — 길 찾기를 달라고 했는데 고정 보행으로
         # 조용히 내려가면 운용자는 LiDAR 로 돈다고 믿는다.
-        patrol_map = load_patrol_map(config, maps_dir(config)) if args.lidar_device else None
+        patrol_maps = Path(args.maps) if args.maps else maps_dir(config)
+        patrol_map = load_patrol_map(config, patrol_maps) if args.lidar_device else None
     except (OSError, ValueError) as exc:  # `ConfigError` 와 깨진 지도·구역 파일(`json`·`np.load`)
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)

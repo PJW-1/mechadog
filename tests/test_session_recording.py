@@ -121,9 +121,20 @@ def test_motion_lock_refuses_patrol_flags() -> None:
 
 def test_record_flags_parse() -> None:
     args = build_parser().parse_args(
-        ["--device", DEVICE, "--record-dir", "x", "--motion-lock", "--record-frame-ms", "500"]
+        [
+            "--device",
+            DEVICE,
+            "--record-dir",
+            "x",
+            "--motion-lock",
+            "--record-frame-ms",
+            "500",
+            "--maps",
+            "m",
+        ]
     )
     assert args.record_dir == "x" and args.motion_lock and args.record_frame_ms == 500
+    assert args.maps == "m"
 
 
 def test_motion_lock_type_set_has_no_motion() -> None:
