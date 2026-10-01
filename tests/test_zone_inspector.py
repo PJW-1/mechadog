@@ -401,6 +401,53 @@ def test_a_hazard_item_survives_a_reading_that_also_says_person_down(
     assert "zone_notice" in parts.records
 
 
+@pytest.mark.parametrize(
+    ("answer", "record"),
+    [("hazard_item", "hazard_notice"), ("blocked_path", "path_blocked")],
+)
+def test_a_visit_cut_off_mid_collection_keeps_what_it_already_confirmed(
+    cfg: dict, tmp_path: Path, answer: str, record: str
+) -> None:
+    """프레임을 다 모으기 전에 방문이 끊겨도 이미 «예» 2회로 확정한 VLM 항목은 남긴다.
+
+    2026-10-01 사용자 결정 — 확정분만 기록한다. 전이는 하지 않는다(이미 떠났다). 반출·반입은
+    프레임이 모자라 판정하지 않는다.
+    """
+    parts = _build(cfg, tmp_path, zone="C")
+    inspector = parts.inspector
+    _arrive(parts)
+    now = T0 + 100
+    inspector.inspect(_frame(), now)  # 첫 판독을 건다
+    for _ in range(2):  # «예» → 두 번째 판독 → «예» (확정)
+        now += 100
+        parts.vlm.slot = _reading({answer: True})
+        inspector.inspect(_frame(), now)
+    assert record not in parts.records, "아직 방문 중이라 결론을 미룬다"
+    assert parts.behavior.state == "ZONE_INSPECT"
+    parts.behavior.event(Event.MANUAL_ON, now_ms=now)
+    inspector.inspect(_frame(), now + 100)
+    assert parts.records.count(record) == 1
+    assert parts.payloads[parts.records.index(record)]["zone"] == "C"
+    assert parts.behavior.state == "MANUAL", "떠난 방문은 전이를 걸지 않는다"
+    inspector.inspect(_frame(), now + 200)
+    assert parts.records.count(record) == 1, "한 번만 남긴다"
+
+
+def test_a_visit_cut_off_before_any_confirmation_records_nothing(cfg: dict, tmp_path: Path) -> None:
+    parts = _build(cfg, tmp_path, zone="C")
+    _arrive(parts)
+    parts.inspector.inspect(_frame(), T0 + 100)  # 첫 판독을 건다
+    parts.vlm.slot = _reading({"hazard_item": True})
+    parts.inspector.inspect(_frame(), T0 + 200)  # «예» 한 번 — 아직 확정 아님
+    parts.vlm.busy = True  # 두 번째 판독이 늦는다
+    parts.behavior.event(Event.MANUAL_ON, now_ms=T0 + 200)
+    parts.inspector.inspect(_frame(), T0 + 300)  # 떠난 것을 본다 — 확정한 것이 없다
+    parts.vlm.busy = False
+    parts.vlm.slot = _reading({"hazard_item": True})
+    parts.inspector.inspect(_frame(), T0 + 400)  # 떠난 뒤 온 두 번째 «예»
+    assert "hazard_notice" not in parts.records
+
+
 def test_a_reading_that_arrives_after_leaving_confirms_nothing(
     cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

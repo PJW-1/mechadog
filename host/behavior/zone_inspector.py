@@ -187,10 +187,15 @@ class ZoneInspector:
         # ⚠️ **판독은 상태·모드와 무관하게 줍는다.** 변화 확정으로 `ALERT` 에 갔거나
         # 상한을 넘겨 떠난 뒤에 온 결과도 건 구역의 것으로 남아야 한다.
         self._take_reading(result, now_ms)
-        if self._done and not self._concluded and self._behavior.state != "ZONE_INSPECT":
-            # ⚠️ **판독을 기다리다 방문 밖으로 밀려났다** (쓰러짐 의심·사람 출현·수동·경로 이탈
-            # 등). `_leave` 는 이제 불리지 않으니 확정해 둔 결론을 여기서 기록만 남긴다 — 안 남기면
-            # 확정기가 이미 센 반출이 다시는 울리지 않는다. 전이는 하지 않는다(이미 떠났다).
+        if (
+            self._zone is not None
+            and not self._concluded
+            and self._behavior.state != "ZONE_INSPECT"
+        ):
+            # ⚠️ **방문 밖으로 밀려났다** (쓰러짐 의심·사람 출현·수동·경로 이탈 등). 판독을
+            # 기다리던 중이든 프레임을 모으던 중이든 `_leave` 는 이제 불리지 않으니, 그때까지
+            # 확정해 둔 결론만 여기서 기록한다 — 안 남기면 확정기가 이미 센 반출이나 «예» 2회로
+            # 확정한 위험물이 다시는 울리지 않는다. 전이는 하지 않는다(이미 떠났다).
             self._leave(result, now_ms, departed=True)
         if not self._mission.enables("change_detect"):
             return
