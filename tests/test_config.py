@@ -340,6 +340,22 @@ def test_zones_are_declared(cfg: dict) -> None:
     assert zones["arrival_radius_mm"] > 0
 
 
+def test_hazard_zones_must_be_patrol_zones(cfg: dict) -> None:
+    """화기 위험구역은 순찰 구역의 부분집합이어야 한다 — 없는 구역은 판독이 돌지 않는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    assert set(cfg["zones"]["hazard_ids"]) <= set(cfg["zones"]["ids"])
+    broken = deepcopy(cfg)
+    broken["zones"]["hazard_ids"] = ["C", "Z"]
+    with pytest.raises(ConfigError, match=r"부분집합.*'Z'"):
+        validate_base_config(broken)
+    broken["zones"]["hazard_ids"] = "C"
+    with pytest.raises(ConfigError, match="목록"):
+        validate_base_config(broken)
+
+
 def test_reconnect_backoff_is_increasing(cfg: dict) -> None:
     """지수 백오프는 단조 증가해야 한다 (FR-5.3)."""
     backoff = cfg["vision"]["reconnect_backoff_s"]

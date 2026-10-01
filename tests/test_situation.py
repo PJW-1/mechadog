@@ -148,6 +148,39 @@ def test_zone_notice_none_judgement() -> None:
     assert describe("zone_notice", None) is not None
 
 
+# ── hazard_notice — 화기 위험물 가벼운 경고 (`ZoneInspector._leave`) ──────────────────
+
+
+def test_hazard_notice_with_zone() -> None:
+    sentence = describe("hazard_notice", {"zone": "C", "items": ["hazard_item"], "source": "vlm"})
+    assert sentence == "C 구역에서 라이터나 보조배터리 같은 화기 위험물이 보입니다."
+
+
+def test_hazard_notice_empty_judgement() -> None:
+    assert describe("hazard_notice", {}) == "라이터나 보조배터리 같은 화기 위험물이 보입니다."
+
+
+def test_hazard_notice_none_judgement() -> None:
+    assert describe("hazard_notice", None) is not None
+
+
+# ── path_blocked — 이동 중 LiDAR 장애물 우회 가벼운 경고 ──────────────────────────────
+
+
+def test_path_blocked_with_target() -> None:
+    sentence = describe("path_blocked", {"x": 1.2, "y": 0.4, "target": "D", "source": "lidar"})
+    assert sentence == "D 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
+
+
+def test_path_blocked_without_target() -> None:
+    for judgement in ({"x": 1.2, "y": 0.4, "target": None, "source": "lidar"}, {"target": " "}):
+        assert describe("path_blocked", judgement) == "통로에 장애물이 있어 돌아서 갑니다."
+
+
+def test_path_blocked_none_judgement() -> None:
+    assert describe("path_blocked", None) == "통로에 장애물이 있어 돌아서 갑니다."
+
+
 # ── 대상이 아닌 사건 — None ──────────────────────────────────────────────────
 
 

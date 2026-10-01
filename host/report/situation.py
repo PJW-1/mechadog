@@ -4,9 +4,10 @@
 템플릿뿐이다 (ADR-35 결정 3 · ADR-38). 문장은 관제 스피커로 그대로 읽히므로(`4.8.2`) 기호·영문
 키 없이 짧게 만든다.
 
-대상은 `runtime._record_scene` 이 기록하는 사건 중 **변화 확정과 쓰러짐**뿐이다 —
+대상은 `runtime._record_scene` 이 기록하는 사건 중 **변화 확정과 쓰러짐, 가벼운 경고**뿐이다 —
 `person_fallen`(쓰러짐 확정) · `zone_changed`(넘어짐·통로 막힘 확정) ·
-`zone_notice`(반출 가벼운 경고). 그 밖의 사건(`PPE_*`·`person_found`·`zone_reading`
+`zone_notice`(반출 가벼운 경고) · `hazard_notice`(화기 위험구역의 위험물 가벼운 경고) ·
+`path_blocked`(이동 중 LiDAR 장애물 우회 가벼운 경고). 그 밖의 사건(`PPE_*`·`person_found`·`zone_reading`
 등)은 아직 확정된 상황 서술이 아니므로 `None` 을 돌려준다.
 """
 
@@ -66,10 +67,29 @@ def _describe_zone_notice(judgement: dict[str, Any]) -> str:
     return f"{_zone_prefix(judgement.get('zone'))}물건이 반출된 것으로 보입니다."
 
 
+def _describe_hazard_notice(judgement: dict[str, Any]) -> str:
+    """화기 위험구역의 위험물 가벼운 경고 (`hazard_notice`). `zone_notice` 와 같이 L3 없는
+    경고라 «확인이 필요합니다» 없이 사실만 말한다 (`ZoneInspector._leave`).
+    """
+    return f"{_zone_prefix(judgement.get('zone'))}라이터나 보조배터리 같은 화기 위험물이 보입니다."
+
+
+def _describe_path_blocked(judgement: dict[str, Any]) -> str:
+    """이동 중 LiDAR 장애물 우회 가벼운 경고 (`path_blocked`). 가던 구역(`target`)을 알면 함께
+    말한다 — 좌표(`x`·`y`)는 스피커로 읽어 봐야 뜻이 없어 넣지 않는다.
+    """
+    target = judgement.get("target")
+    if isinstance(target, str) and target.strip():
+        return f"{target} 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
+    return "통로에 장애물이 있어 돌아서 갑니다."
+
+
 _TEMPLATES: dict[str, Callable[[dict[str, Any]], str]] = {
     "person_fallen": _describe_person_fallen,
     "zone_changed": _describe_zone_changed,
     "zone_notice": _describe_zone_notice,
+    "hazard_notice": _describe_hazard_notice,
+    "path_blocked": _describe_path_blocked,
 }
 
 

@@ -316,6 +316,15 @@ def validate_base_config(config: dict[str, Any]) -> None:
         and not isinstance(lidar["scan_forward_enabled"], bool)
     ):
         raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
+    # 화기 위험구역은 순찰 구역 가운데서 고른다 — 없는 구역을 적으면 그 구역의 위험물
+    # 판독이 조용히 한 번도 돌지 않는다 (`ZoneInspector`).
+    zones = config["zones"]
+    hazard_ids = zones.get("hazard_ids")
+    if not isinstance(hazard_ids, list):
+        raise ConfigError("zones.hazard_ids 는 목록이어야 함")
+    unknown = [label for label in hazard_ids if label not in zones.get("ids", [])]
+    if unknown:
+        raise ConfigError(f"zones.hazard_ids 는 zones.ids 의 부분집합이어야 함: {unknown}")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")

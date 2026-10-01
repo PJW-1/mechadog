@@ -474,7 +474,8 @@ def test_zone_list_prints_saved_zones(
     args = zone_select.build_parser().parse_args(["--list", "--maps", str(tmp_path)])
     assert zone_select.run(args, lidar_config) == 0
     out = capsys.readouterr().out
-    assert "A = " in out and "3 / 3" in out
+    # 시드는 A·B·C 셋이고 설정은 그보다 많을 수 있다 — 좌표 없는 구역은 세지 않는다.
+    assert "A = " in out and f"3 / {len(lidar_config['zones']['ids'])}" in out
 
 
 def test_zone_list_says_when_empty(

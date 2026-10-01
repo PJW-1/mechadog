@@ -1,8 +1,8 @@
 """공장 모드의 구역 점검 — 앵커 도착·방향 맞추기·기준 비교·판독·종류별 결론 (FR-8 · ADR-41 · ADR-42).
 
-반출·반입은 연속 2방문(`ChangeConfirmer`)에서, 넘어짐·통로 막힘은 같은 방문 안 판독 2회
-«예» 에서 확정한다. 넘어짐·통로 막힘만 `ZONE_CHANGED`(L3) 이고 반출은 가벼운 경고,
-반입은 기록만 한다.
+반출·반입은 연속 2방문(`ChangeConfirmer`)에서, 넘어짐·통로 막힘·화기 위험물은 같은 방문 안
+판독 2회 «예» 에서 확정한다. 넘어짐·통로 막힘만 `ZONE_CHANGED`(L3) 이고 반출과 화기
+위험구역(`zones.hazard_ids`)의 위험물은 가벼운 경고, 반입은 기록만 한다.
 """
 
 from __future__ import annotations
@@ -41,6 +41,12 @@ LOG = event_logger("mechadog.runtime")
 #: 의심 뒤 판독 «예» `fsm.fall_confirm_vlm_yes`(2)회, 서로 `fsm.fall_confirm_gap_ms`(1000ms)
 #: 이상 떨어진 프레임이어야 한다(`FallMonitor` · ADR-42).
 ZONE_HAZARDS = ("fallen_object", "blocked_path")
+#: 화기 위험구역에서만 묻고 같은 방문 판독 2회 «예» 로 확정하는 항목. L3 가 아니라
+#: 가벼운 경고(`hazard_notice`)다 — 순찰은 이어 간다.
+HAZARD_ITEM = "hazard_item"
+#: 구역 판독이 늘 묻는 항목. ⚠️ **`keys` 를 비우지 않는다** — 비우면 질문 전부(`QUESTIONS`)를
+#: 물어 화기 위험구역이 아닌 곳에서도 `hazard_item` 판독 시간(0.2~0.9초)이 붙는다.
+ZONE_KEYS = ("person_down", *ZONE_HAZARDS)
 
 
 class ZoneInspector:
@@ -75,6 +81,8 @@ class ZoneInspector:
         self._confirmer = ChangeConfirmer(config)
         zones = config["zones"]
         self._ids = tuple(str(label) for label in zones["ids"])
+        #: 화기 위험구역 — 여기서만 `hazard_item` 을 묻는다.
+        self._hazard_ids = frozenset(str(label) for label in zones["hazard_ids"])
         self._arrive_m = float(zones["arrival_radius_mm"]) / 1000.0
         self._align_tolerance_deg = float(zones["align_tolerance_deg"])
         self._align_turn_deg = float(zones["align_turn_deg"])
@@ -96,6 +104,8 @@ class ZoneInspector:
         self._visit_max_ms = int(change["visit_max_ms"])
         #: VLM 판독으로 경보를 확정하나. 벤치 관문 전에는 끈다.
         self._vlm_hazards = bool(change["vlm_hazards"])
+        #: 화기 위험물 판독으로 가벼운 경고를 내나. `vlm_hazards` 와 따로 켜고 끈다.
+        self._vlm_hazard_items = bool(change["vlm_hazard_items"])
         self._visit_since_ms = 0
         #: 이번 방문에서 모은 사람 없는 프레임
         self._visit_seen: list[Any] = []
@@ -106,7 +116,7 @@ class ZoneInspector:
         self._visit_outcome: str | None = None
         #: 첫 판독이 «예» 라 한 항목. 두 번째 판독을 기다린다.
         self._suspects: tuple[str, ...] = ()
-        #: 두 판독이 모두 «예» 라 한 항목 — 이번 방문에서 확정했다.
+        #: 두 판독이 모두 «예» 라 한 항목 — 이번 방문에서 확정했다. `hazard_item` 도 여기 든다.
         self._hazards: tuple[str, ...] = ()
         #: 이번 방문에서 판독을 이미 시도했나. **방문당 한 번만 건다** — 거절당해도 다시
         #: 걸지 않는다. 걸지 못한 방문은 기다릴 것이 없어 곧바로 끝난다.
@@ -324,7 +334,9 @@ class ZoneInspector:
         self._asked = True
         # ⚠️ **앞 판독을 줍기 전에는 걸지 않는다.** 걸면 슬롯에 남은 앞 결과가 새로 건
         # 구역의 것으로 읽힌다 — 스레드가 끝나는 순간과 거는 순간이 겹치면 그렇게 된다.
-        if self._pending is None and self._vlm.submit(result.jpeg, now_ms=now_ms):
+        if self._pending is None and self._vlm.submit(
+            result.jpeg, now_ms=now_ms, keys=self._keys(zone)
+        ):
             self._pending = (zone, result)
             self._wait_until = now_ms + self._wait_ms
             LOG.info("zone_reading_requested", zone=zone)
@@ -335,11 +347,16 @@ class ZoneInspector:
             reason="busy" if self._vlm.available else "not_loaded",
         )
 
+    def _keys(self, zone: str) -> tuple[str, ...]:
+        """이 구역에서 묻는 판독 항목. `hazard_item` 은 화기 위험구역에서만 묻는다."""
+        return (*ZONE_KEYS, HAZARD_ITEM) if zone in self._hazard_ids else ZONE_KEYS
+
     def _take_reading(self, result: VisionResult, now_ms: int) -> None:
         """끝난 판독을 줍고 건 구역 이름과 건 프레임으로 남긴다.
 
         `person_down` «예» 는 쓰러짐 의심 진입 신호다(ADR-42). 넘어짐·통로 막힘은 이번
         방문에서 건 판독 두 번이 모두 «예» 인 항목만 확정한다(`vlm_hazards` · ADR-41).
+        화기 위험구역의 `hazard_item` 도 같은 규칙이되 스위치는 `vlm_hazard_items` 다.
         """
         if self._pending is None or self._vlm.busy:
             return
@@ -354,15 +371,23 @@ class ZoneInspector:
         LOG.info(
             "zone_reading", zone=zone, degraded=reading.degraded, reason=reading.reason, **answers
         )
-        if mine and self._vlm_hazards:
+        # 이 판독으로 확정할 수 있는 항목. 두 스위치는 따로다 — L3 인 넘어짐·통로 막힘은
+        # 벤치 관문 전까지 끄고, 가벼운 경고인 화기 위험물은 켜 둔다.
+        watched: tuple[str, ...] = ZONE_HAZARDS if self._vlm_hazards else ()
+        if self._vlm_hazard_items and zone in self._hazard_ids:
+            watched = (*watched, HAZARD_ITEM)
+        if mine and watched:
             # 저하된 판독은 «빈 채널» 이다 — 위 `zone_reading` 이 사유를 남겼다.
-            said = () if reading.degraded else tuple(k for k in ZONE_HAZARDS if reading.get(k))
+            said = () if reading.degraded else tuple(k for k in watched if reading.get(k))
             if self._suspects:
                 self._hazards = tuple(k for k in self._suspects if k in said)
                 self._suspects = ()
             elif said and self._behavior.state == "ZONE_INSPECT":
+                if HAZARD_ITEM in said:
+                    # 확정 전의 관찰이다 — 경고가 아니지만 첫 «예» 는 로그로 남긴다.
+                    LOG.info("hazard_item_seen", zone=zone)
                 # `inspect` 는 새 프레임에서만 부르므로 `result` 는 건 프레임보다 뒤다.
-                if self._vlm.submit(result.jpeg, now_ms=now_ms):
+                if self._vlm.submit(result.jpeg, now_ms=now_ms, keys=self._keys(zone)):
                     self._suspects = said
                     self._pending = (zone, result)
                     self._wait_until = now_ms + self._wait_ms
@@ -391,8 +416,8 @@ class ZoneInspector:
         """방문을 끝낸다 — 결론은 여기 한 곳에서 종류별로 낸다 (ADR-41 · ADR-42).
 
         넘어짐·통로 막힘만 `zone_changed` → `ZONE_CHANGED`(L3), 반출은 `zone_notice`,
-        반입은 로그만 남긴다. 물건 변화를 확정하지 않았고 판독이 남았으면 `budget_ms`
-        까지 결론을 미룬다.
+        화기 위험물은 `hazard_notice`, 반입은 로그만 남긴다. 물건 변화를 확정하지 않았고
+        판독이 남았으면 `budget_ms` 까지 결론을 미룬다.
         """
         self._done = True
         if self._wait_until is not None and not self._visit_found:
@@ -401,6 +426,18 @@ class ZoneInspector:
             # 상한 초과는 기능 저하다. 결과가 늦게 오면 그때 건 구역 이름으로 남는다.
             LOG.warning("zone_reading_timeout", zone=self._zone, wait_ms=self._wait_ms)
             self._wait_until = None
+        items = [kind for kind in self._hazards if kind == HAZARD_ITEM]
+        if items:
+            # 화기 위험물은 반출과 같은 가벼운 경고다 — `ZONE_CHANGED`·L3·눈 변화 없이 방송
+            # 문장과 관제에만 남기고 순찰을 잇는다. 같은 방문의 L3 확정과 겹쳐도 따로 남긴다.
+            LOG.warning("hazard_notice", zone=self._zone, items=items)
+            self._record(
+                "hazard_notice",
+                self._visit_seen[-1] if self._visit_seen else result,
+                {"zone": self._zone, "items": items, "source": "vlm"},
+            )
+            # 한 번만 남긴다 — 다음 틱에 같은 기록을 되풀이하지 않는다.
+            self._hazards = tuple(kind for kind in self._hazards if kind != HAZARD_ITEM)
         removed = [c.as_dict() for c in self._visit_found if c.kind is ChangeKind.REMOVED]
         added = [c.as_dict() for c in self._visit_found if c.kind is not ChangeKind.REMOVED]
         hazards = [{"kind": kind, "source": "vlm"} for kind in self._hazards]
