@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import socket
 import time
 from pathlib import Path
@@ -101,6 +102,21 @@ def test_scan_port_must_be_a_port_number(value: object) -> None:
     section = dict(settings.read_lidar_section())
     section["scan_port"] = value
     with pytest.raises(ConfigError, match=r"^lidar\.scan_port 는 1~65535"):
+        settings.validate_section(section)
+
+
+def test_spin_threshold_inside_heading_tolerance_is_refused() -> None:
+    """제자리 회전 임계가 직진 허용 오차 이하면 정렬 직후 다시 돈다 (ADR-11 개정)."""
+    section = dict(settings.read_lidar_section())
+    section["spin_threshold_deg"] = section["heading_tolerance_deg"]
+    with pytest.raises(ConfigError, match="spin_threshold_deg"):
+        settings.validate_section(section)
+
+
+def test_spin_turn_beyond_protocol_limit_is_refused() -> None:
+    section = dict(settings.read_lidar_section())
+    section["spin_turn_deg"] = 45
+    with pytest.raises(ConfigError, match="spin_turn_deg"):
         settings.validate_section(section)
 
 
@@ -209,9 +225,20 @@ def test_parameter_builders_read_from_the_config(lidar_config: dict) -> None:
 
 
 def test_move_with_zero_step_does_not_move() -> None:
+    """제자리 회전 모형이 꺼져 있으면(`spin_deg_per_sec=0`) `step=0` 은 아무것도 바꾸지 않는다."""
     params = simulation.SimParams(200.0, 25.0, 0.0, 0.0, 90, 8.0)
     pose = (1.0, 2.0, 0.5)
     assert simulation.apply_move(pose, 0.0, 20.0, 0.1, params) == pose
+
+
+def test_zero_step_spins_in_place() -> None:
+    """`step=0 angle=±30` 은 **자리에서** 실측 각속도로 돈다 (2026-09-22 · 7.37 도/s · ADR-11)."""
+    params = simulation.SimParams(200.0, 25.0, 0.0, 0.0, 90, 8.0, spin_deg_per_sec=7.37)
+    x, y, yaw = simulation.apply_move((1.0, 2.0, 0.0), 0.0, 30.0, 1.0, params)
+    assert (x, y) == (1.0, 2.0), "자리를 옮기지 않는다"
+    assert yaw == pytest.approx(math.radians(7.37))
+    _, _, cw = simulation.apply_move((1.0, 2.0, 0.0), 0.0, -30.0, 1.0, params)
+    assert cw == pytest.approx(-math.radians(7.37)), "angle 음수는 시계 방향"
 
 
 def test_forward_move_advances_along_the_heading() -> None:
@@ -272,6 +299,7 @@ def test_sim_params_come_from_the_config(lidar_config: dict) -> None:
     params = simulation.sim_params_from_config(lidar_config, 8.0)
     assert params.beams == lidar_config["lidar"]["sim"]["beams"]
     assert params.range_max_m == 8.0
+    assert params.spin_deg_per_sec == lidar_config["lidar"]["sim"]["spin_deg_per_sec"]
 
 
 # ══════════════════════════════════════════════════════════════
