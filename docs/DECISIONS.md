@@ -1825,6 +1825,7 @@ FR-10 · 아키텍처 3 / 3.1 · WBS 3.4.4 / 3.7 / 3.8 / 6.4.3. 운용 모드는
 
 **상태** — **확정** (2026-09-24 · 사용자 결정) · **구현 중** (WBS `3.6.3` · `3.6.4` · `3.6.5` · `4.8.4`).
 > **개정 (2026-10-01 · [ADR-43](#adr-43))**: 구역 방문 VLM 판독에 화기 위험물 질문 `hazard_item` 이 더해졌다(위험구역 `zones.hazard_ids` 에서만, 가벼운 경고). `blocked_path` L3 경로와 스위치 `change_detect.vlm_hazards`(꺼짐)는 그대로다.
+> **개정 (2026-10-01 · 사용자 결정)**: 구역 안 `blocked_path` 두 번 «예» 는 L3 가 아니라 가벼운 경고 `path_blocked`(source `vlm`, 판정 `{zone, source}`)다. 이동 중 LiDAR 막힘과 같은 사건 이름을 쓴다. `fallen_object` 는 그대로 `zone_changed` → L3 이고, 같은 방문에서 둘 다 확정되면 `path_blocked` 를 먼저 남기고 L3 로 간다. 스위치 `change_detect.vlm_hazards`(꺼짐)는 두 항목 모두에 그대로 걸린다. 아래 표·본문의 «넘어짐·통로 막힘 → L3» 는 이 개정 전의 서술이다.
 **관련:** FR-8.3 · FR-8.4 · FR-8.5 · FR-8.6 · FR-9 · FR-11.1 · [ADR-25](#adr-25) · [ADR-33](#adr-33) ·
 [ADR-35](#adr-35) · `change_detect.*` · 실측 `TC-F-035` · `TC-F-036` · `HW-020`.
 
@@ -2056,7 +2057,9 @@ A* 순찰(`PatrolController`)은 `tools/ops/patrol_run.py` 단독 도구로만 �
    초음파 온보드 회피(후진 + 좌선회, [ADR-29](#adr-29))는 근거리 예비 수단으로 그대로 둔다. **VLM 은 방향을 정하지
    않는다**: 질문 하나에 0.2초이고 예·아니요만 돌려주며 위치가 없다. 2026-09-28 카메라 벤치에서도 `blocked_path` 는
    적중 1/3·오경보 3/6 이었다([요약](../field_tests/results/20260928_4.8.0-vlm-bench/summary.md)).
-   [ADR-41](#adr-41) 의 구역 방문 VLM `blocked_path` L3 경로는 그대로 두고, 스위치 `change_detect.vlm_hazards` 도 **꺼 둔다.**
+   **개정 (2026-10-01):** [ADR-41](#adr-41) 의 구역 방문 VLM `blocked_path` 확정도 L3 가 아니라 가벼운 경고 `path_blocked`
+   (source `vlm`, 판정 `{zone, source}`)로 낮춰 이동 중 LiDAR 막힘과 같은 사건 이름을 쓴다. 방송 문장만 다르다(VLM 은 «OO 구역에서
+   통로가 막혀 있습니다», LiDAR 는 «돌아서 갑니다»). `fallen_object` 는 그대로 L3 다. 스위치 `change_detect.vlm_hazards` 는 **꺼 둔다.**
 4. **운용 런타임이 LiDAR 순찰을 직접 돌린다 (선택).** CLI `python -m host.runtime ... --lidar-device <id>` 로 켠다.
    PATROL 은 LiDAR A* 경로(`host/behavior/patrol.py` 의 `PatrolController`)를 따르고, 측위 자세는 구역 점검
    (`ZoneInspector`)에 들어가며, LiDAR 전방 부채꼴 ESTOP 은 런타임의 송신 락을 거친다. `tools/ops/patrol_run.py` 는
@@ -2077,7 +2080,8 @@ A* 순찰(`PatrolController`)은 `tools/ops/patrol_run.py` 단독 도구로만 �
 
 **치르는 대가**
 
-- **걸으면서 LiDAR 로 경로를 다시 짠다**: [ADR-7](#adr-7)(걷는 중 스캔은 흔들려 못 쓴다 · 멈춰서 잰다) 의 전제와 부딪친다. 이 ADR 은 ADR-7 을 뒤집지 않으며, 걷는 동안의 스캔 품질은 실기(WBS `5.4.5`)로 확인해야 한다.
+- **걸으면서 LiDAR 로 경로를 다시 짠다**: [ADR-7](#adr-7)(걷는 중 스캔은 흔들려 못 쓴다 · 멈춰서 잰다) 의 전제와 부딪친다. 다만 ADR-7 본문에 «범위는 매핑뿐이다» 가 이미 있고, 지도가 있는 상태의 걸으면서 하는 측위는 처음부터 허용 범위였다([ADR-7](#adr-7) · FR-6.2.2). 이 ADR 은 ADR-7 을 뒤집지 않으며 본문도 고치지 않는다. 걷는 동안의 스캔 품질은 실기(WBS `5.4.5`)로 확인해야 한다.
+- **FR-7.3 문구가 바뀐다**: PRD 는 «첫 순회 뒤 무작위» 에서 «고정 순서가 기본이고, `zones.random_after_first_cycle` 로 켜는 선택지» 로 고쳤다(결정 1).
 - **`hazard_item` 은 벤치 전에 켠다.** 오경보는 가벼운 경고에서 그치지만, 시연장에서 라이터가 없는데 알리는 일이 생길 수 있다.
 - **단일 LiDAR 기체(`mechdog-02`)만 전체 바퀴를 돈다.** 다른 기체는 `--lidar-device` 없이 이전 동작이다.
 
