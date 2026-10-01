@@ -527,7 +527,7 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 구역 방문 VLM `blocked_path` 확정은 *(2026-10-01 개정)* L3 가 아니라 가벼운 경고 `path_blocked`(source `vlm`)이며 `fallen_object` L3 는 그대로다. 스위치 `change_detect.vlm_hazards` 는 꺼 둔다. 반출·반입 변화 감지는 그대로이며 시연 경로에는 넣지 않는다.
 
 **운용 런타임의 LiDAR 순찰 (선택)**: `python -m host.runtime ... --lidar-device <id>` 로 켠다. PATROL 이 LiDAR A* 경로(`host/behavior/patrol.py` 의 `PatrolController`)를 따르고, 측위 자세가 구역 점검(`ZoneInspector`)에 들어가며, LiDAR 전방 부채꼴 ESTOP 은 런타임 송신 락을 거친다.
-`tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 컨테이너로의 스캔 전달과 ODOM 은 아직 런타임에 없다(후속). 플래그가 없으면 런타임은 전과 같다.
+`tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 컨테이너로의 스캔 전달과 ODOM 송신도 같은 플래그가 켠다(`host/telemetry/ros2_relay.py`, #376). 플래그가 없으면 런타임은 전과 같다.
 
 > **설정값**: `zones.ids` = A~D · `zones.hazard_ids` = [C] · `zones.random_after_first_cycle` = false · `change_detect.vlm_hazard_items` = 켬 · `change_detect.vlm_hazards` = 꺼짐(유지).
 

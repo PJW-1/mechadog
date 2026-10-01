@@ -1,19 +1,20 @@
 # Phase 2 ROS2 경계
 
 ```text
-LD19 → ESP32 중계 → UDP :5201 → Windows 순찰기(patrol_run) ─┬─▶ guard_scan → 명령 (직접 경로)
+LD19 → ESP32 중계 → UDP :5201 → Windows 런타임 또는 patrol_run ─┬─▶ guard_scan → 명령 (직접 경로)
                                                             └─▶ 바이트 그대로 복사 → UDP :5203
                                                                                        ↓
                                                                                  scan_bridge → /scan → slam_toolbox
                                                                                        ↑  odom → base_link (5.4.3)
                                                                                        ↑  base_link → laser (마스트 실측)
-patrol_run 오도메트리 → UDP :5204 → odom_bridge ─────────────────────────────────────────┘
+런타임·patrol_run 오도메트리 → UDP :5204 → odom_bridge ─────────────────────────────────────────┘
                               /map · /pose → Windows Python 순찰기 (5.4.4)
 ```
 
 ROS2는 지도와 위치만 계산한다. 경로계획·구역 선택·보행 명령·안전 래치는 기존
 Python 호스트와 MechDog 펌웨어가 맡는다. 컨테이너에는 스캔·오도메트리 링크 디코더만 복사한다.
-`odom → base_link`는 `tools/ops/patrol_run.py`가 보내는 ODOM 전문(`docs/PROTOCOL_LIDAR.md`
+`odom → base_link`는 본 런타임(`python -m host.runtime --lidar-device ...`) 또는
+`tools/ops/patrol_run.py`가 보내는 ODOM 전문(`docs/PROTOCOL_LIDAR.md`
 8절)으로 `odom_bridge`가 발행한다. 실측 오차(정지·직진·선회 3회)와 마스트 값은 아직
 없으므로, 아래 명령은 **토픽·tf 경로까지의 사전 검증**이다. 항등 오도메트리로 지도 합격을 꾸미지 않는다.
 
@@ -68,7 +69,7 @@ docker exec mechdog-ros2 bash -lc '. /opt/ros/jazzy/setup.bash && ros2 run tf2_r
 실측 전의 항등 변환으로 통과시키지 않기 위해서다. 회전은 넣지 않는다. 장착 방향은
 `scan_bridge`의 `LIDAR_MOUNT_YAW_DEG`·`LIDAR_ANGLE_DIRECTION`이 이미 `/scan`에 적용한다.
 
-호스트 쪽 송신은 `tools/ops/patrol_run.py`(실기 모드)가 `lidar.odom_host`·`odom_port`로
+호스트 쪽 송신은 본 런타임(`--lidar-device`) 또는 `tools/ops/patrol_run.py`(실기 모드)가 `lidar.odom_host`·`odom_port`로
 `lidar.odom_rate_hz`(10Hz)마다 보낸다. `gait_calibration`이 없는 기체는
 오도메트리를 만들지 않고 오류를 남긴다.
 
@@ -91,8 +92,8 @@ UART 타이밍·모터 노이즈·차폐·전원 문제를 검증하지 않는�
 - `5.4.3`: 코드(명령 시간 창 × 개체 보행 실측 + IMU yaw 변화량 → 10Hz ODOM →
   `odom_bridge`)는 들어갔다. 남은 것은 정지·직진·좌우 선회 3회 오차 기록, 마스트 실측값
   `LASER_OFFSET_*` 설정, `slam_toolbox`가 스캔 시각의 변환을 조회하는지 확인이다.
-- `5.4.4`: 순찰 중에는 Windows 순찰기(`tools/ops/patrol_run.py`)가 UDP `5201`의 **유일한
-  수신자**로 정리됐다(`lidar_live_map.py`·`lidar_slam.py` 는 순찰기 대신 따로 켜는 도구다) — 받은 데이터그램을 디코드 성패와 무관하게 바이트
+- `5.4.4`: 순찰 중에는 Windows 런타임(`--lidar-device`) 또는 순찰기(`tools/ops/patrol_run.py`)가 UDP `5201`의 **유일한
+  수신자**로 정리됐다(둘은 `lidar.scan_port` 를 동시에 쥘 수 없어 한 번에 하나만 띄운다. `lidar_live_map.py`·`lidar_slam.py` 는 순찰기 대신 따로 켜는 도구다) — 받은 데이터그램을 디코드 성패와 무관하게 바이트
   그대로 `lidar.scan_forward_host:scan_forward_port`(기본 `127.0.0.1:5203`)로
   복사해 컨테이너에 넘긴다. 두 프로세스가 `5201`을 동시에 바인드하려던
   충돌이 이렇게 풀렸다. LiDAR 비상정지(`guard_scan`)는 이 전달과 무관한 직접
