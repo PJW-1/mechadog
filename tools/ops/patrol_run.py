@@ -27,7 +27,6 @@ import argparse
 import contextlib
 import math
 import random
-import secrets
 import socket
 import sys
 import time
@@ -51,13 +50,18 @@ from host.common.lidar_link import (
     scan_of,
 )
 from host.common.logging_setup import event_logger, setup_logging
-from host.common.odom_link import OdomEncoder
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import ms_to_s
 from host.slam import settings, simulation
-from host.slam.odometry import Odometry, hold_of_reading, odom_params_from_config
 from host.slam.settings import range_from_config
 from host.telemetry.receiver import TelemetryReceiver
+from host.telemetry.ros2_relay import (
+    forward_peer_of,
+    forward_scan,
+    open_forward_socket,
+    open_odom_sender,
+    send,
+)
 
 LOG = event_logger("mechadog.tools.patrol_run")
 
@@ -95,62 +99,6 @@ def open_socket(port: int) -> socket.socket:
     return sock
 
 
-def open_forward_socket() -> socket.socket:
-    """컨테이너 전달 전용 송신 소켓 (WBS 5.4.4).
-
-    ⚠️ **`scan_sock` 으로 보내지 않는다.** Windows 는 닫힌 포트로 보낸 UDP 의
-    ICMP 통보를 보낸 소켓의 다음 `recvfrom` 에 `ConnectionResetError` 로 돌려준다
-    (`SIO_UDP_CONNRESET` 은 CPython 에 없어 끌 수 없다 · `host/runtime.py` 머리말).
-    컨테이너가 꺼져 있으면 스캔 수신 루프가 스캔마다 끊겨 LiDAR 비상정지가 늦는다.
-    """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setblocking(False)
-    return sock
-
-
-def forward_peer_of(lidar: dict) -> tuple[str, int] | None:
-    """전달 목적지. 꺼 두면 None 이다 (WBS 5.4.4).
-
-    ⚠️ **호스트명은 기동 때 한 번만 푼다.** `sendto` 에 이름을 그대로 넘기면
-    스캔마다 동기 DNS 조회가 스캔 수신 루프 안에서 돌아 LiDAR 비상정지가 늦는다.
-    """
-    if not lidar["scan_forward_enabled"]:
-        return None
-    return (_resolve(lidar, "scan_forward_host"), int(lidar["scan_forward_port"]))
-
-
-def odom_peer_of(lidar: dict) -> tuple[str, int]:
-    """ODOM 목적지 (WBS 5.4.3). `forward_peer_of` 와 같은 이유로 이름을 기동 때 한 번만 푼다."""
-    return (_resolve(lidar, "odom_host"), int(lidar["odom_port"]))
-
-
-def _resolve(lidar: dict, key: str) -> str:
-    """이름을 못 풀면 `ConfigError` 다 — `main()` 이 traceback 대신 «설정 오류» 로 알린다."""
-    try:
-        return socket.gethostbyname(str(lidar[key]))
-    except OSError as exc:
-        raise ConfigError(f"lidar.{key} 를 풀 수 없음: {lidar[key]!r} ({exc})") from exc
-
-
-def forward_scan(sock: socket.socket, raw: bytes, peer: tuple[str, int]) -> bool:
-    """받은 LiDAR 데이터그램을 컨테이너 전달 목적지로 그대로 복사한다 (WBS 5.4.4).
-
-    **디코드 성패와 무관하게** 받은 바이트를 그대로 보낸다 — 검증은 받는 쪽
-    (`docker/ros2/scan_bridge.py` 의 `ScanDecoder`)이 다시 하므로 여기서 거르면
-    컨테이너가 우리가 이미 버린 패킷의 존재조차 모르게 된다. LiDAR 비상정지
-    (`guard_scan`)는 이 전달과 무관한 직접 경로라 실패해도 영향이 없다.
-
-    실패(목적지가 아직 없어 나는 `ConnectionResetError` · 그 외 `OSError`)는
-    예외를 올리지 않는다 — 순찰을 멈출 이유가 아니다. 반환값만 알리고 로그는
-    호출부가 상태 전이일 때만 남긴다 (ENGINEERING_GUIDE 1.3).
-    """
-    try:
-        sock.sendto(raw, peer)
-    except OSError:
-        return False
-    return True
-
-
 def build_controller(config: dict, maps: Path, seed: int | None) -> PatrolController:
     grid, zones = load_patrol_map(config, maps)
     # 주기는 설정에서 온다 (`network.cmd_rate_hz: 10`). 코드에 100ms 를 박으면
@@ -163,41 +111,6 @@ def build_controller(config: dict, maps: Path, seed: int | None) -> PatrolContro
         zones,
         random.Random(seed),
     )
-
-
-def send(
-    sock: socket.socket | None,
-    peer: tuple[str, int] | None,
-    lines: list[str] | tuple[str, ...],
-) -> list[str]:
-    """보낸 전문을 돌려준다 — 오도메트리는 **실제로 나간 명령**만 적분한다."""
-    if sock is None or peer is None:
-        return []
-    sent = []
-    for line in lines:
-        try:
-            sock.sendto(line.encode("utf-8"), peer)
-        except OSError:
-            # Windows 는 상대가 없으면 ICMP 로 예외를 낸다. UDP 는 도달을 보장하지
-            # 않으므로 여기서 재시도하지 않는다 — 다음 틱이 100ms 뒤에 온다.
-            continue
-        sent.append(line)
-    return sent
-
-
-def open_odometry(config: dict, device_id: str) -> tuple[Odometry | None, OdomEncoder]:
-    """오도메트리와 ODOM 인코더. **보행 실측이 없는 기체는 `None`** (WBS 5.4.3).
-
-    순찰은 멈추지 않는다 — 지금 순찰 측위는 `PatrolController` 의 스캔 정합이고,
-    오도메트리는 컨테이너의 `slam_toolbox` 에만 간다. 대신 크게 남긴다.
-    """
-    # `boot_id` 는 이 프로세스 한 번의 실행이다 — 다시 켜면 `seq` 가 1 로 돌아온다.
-    encoder = OdomEncoder(device_id, secrets.token_hex(8))
-    try:
-        return Odometry(odom_params_from_config(config)), encoder
-    except ConfigError as exc:
-        LOG.error("odometry_unavailable", reason=str(exc), effect="odom->base_link 없음")
-        return None, encoder
 
 
 def stop_for_shutdown(
@@ -227,20 +140,13 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     peer_ip = args.robot or network.get("mechdog_ip")
     peer = (peer_ip, int(network["cmd_port"])) if peer_ip else None
 
-    odometry, odom_encoder = open_odometry(config, args.device)
-    # 실측이 없는 기체는 ODOM 을 보내지 않으므로 목적지도 풀지 않는다.
-    odom_peer = odom_peer_of(lidar) if odometry is not None else None
-    odom_period_ms = round(1000 / float(lidar["odom_rate_hz"]))
-    # 명령 소켓과 **따로 연다.** 컨테이너가 없으면 ICMP 오류가 소켓에 남는데, 같은
-    # 소켓이면 그 오류가 다음 로봇 명령 송신에서 터져 명령 하나를 잃을 수 있다.
-    odom_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    odom_due_ms = 0
-    odom_failing = False
+    # 실측이 없는 기체는 `None` — ODOM 을 보내지 않고 목적지도 풀지 않는다.
+    odom = open_odom_sender(config, args.device)
 
     def transmit(lines: list[str] | tuple[str, ...]) -> None:
         sent = send(cmd_sock, peer, lines)
-        if odometry is not None:
-            odometry.note_sent(sent, system_clock_ms())
+        if odom is not None:
+            odom.note_sent(sent, system_clock_ms())
 
     scan_decoder = ScanDecoder(
         float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
@@ -292,15 +198,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     peer = (sender[0], int(network["cmd_port"]))
                     LOG.info("peer_learned", peer=str(peer))
                     transmit([session_line])
-                if odometry is not None:
-                    # 로봇이 스스로 멈춰 있다는 보고가 명령 추정보다 먼저다 — 거부된
-                    # `RESET_SAFE`·재부팅 뒤의 `MOVE` 를 이동으로 세지 않는다 (odometry.py 머리말).
-                    odometry.note_hold(
-                        hold_of_reading(ingested.reading.safety_latched, ingested.reading.obstacle),
-                        now_ms,
-                    )
-                    if ingested.reading.yaw is not None:
-                        odometry.note_imu(ingested.reading.yaw, now_ms, ingested.reading.boot_id)
+                if odom is not None:
+                    odom.note_telemetry(ingested.reading, now_ms)
                 controller.observe_telemetry(ingested.reading, now_ms)
 
             # ── LiDAR 스캔 ──
@@ -344,23 +243,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
             transmit(controller.commander.tick(now_ms))
 
             # ── 오도메트리 (WBS 5.4.3) — 송신 실패는 순찰을 멈추지 않는다 (`send`) ──
-            if odometry is not None and now_ms >= odom_due_ms:
-                odom_due_ms = now_ms + odom_period_ms
-                pose = odometry.pose(now_ms)
-                line = odom_encoder.encode(
-                    ts_ms=pose.stamp_ms,
-                    x_m=pose.x_m,
-                    y_m=pose.y_m,
-                    yaw_rad=pose.yaw_rad,
-                    valid=pose.valid,
-                )
-                if send(odom_sock, odom_peer, [line]):
-                    if odom_failing:
-                        LOG.info("odom_send_recovered", peer=str(odom_peer))
-                        odom_failing = False
-                elif not odom_failing:
-                    LOG.warning("odom_send_failed", peer=str(odom_peer))
-                    odom_failing = True
+            if odom is not None:
+                odom.publish(now_ms)
 
             if args.cycles > 0 and controller.stats.cycles >= args.cycles:
                 LOG.info("cycles_done", cycles=controller.stats.cycles)
@@ -377,7 +261,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
         forward_sock.close()
         tlm_sock.close()
         cmd_sock.close()
-        odom_sock.close()
+        if odom is not None:
+            odom.close()
     return 0
 
 
