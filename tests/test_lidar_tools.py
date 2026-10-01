@@ -83,12 +83,24 @@ def test_missing_required_key_is_refused() -> None:
 
 
 @pytest.mark.parametrize("key", ["odom_rate_hz", "range_min_mm", "robot_radius_mm"])
-@pytest.mark.parametrize("value", ["10", None, True])
+@pytest.mark.parametrize("value", ["10", None, True, float("nan"), float("inf")])
 def test_non_numeric_value_is_refused_by_name(key: str, value: object) -> None:
-    """숫자 자리에 문자열·빈 값이 오면 비교에서 `TypeError` 가 아니라 제 이름의 `ConfigError` 다."""
+    """숫자 자리에 문자열·빈 값이 오면 비교에서 `TypeError` 가 아니라 제 이름의 `ConfigError` 다.
+
+    NaN 은 모든 대소 비교가 거짓이라 아래 범위 검사를 조용히 통과한다 — 유한한 수만 받는다.
+    """
     section = dict(settings.read_lidar_section())
     section[key] = value
     with pytest.raises(ConfigError, match=key):
+        settings.validate_section(section)
+
+
+@pytest.mark.parametrize("value", [70000, 0, 5201.5, "5201"])
+def test_scan_port_must_be_a_port_number(value: object) -> None:
+    """범위 밖 수신 포트는 검증을 지나 `bind` 의 `OverflowError` 로 새던 자리다."""
+    section = dict(settings.read_lidar_section())
+    section["scan_port"] = value
+    with pytest.raises(ConfigError, match=r"^lidar\.scan_port 는 1~65535"):
         settings.validate_section(section)
 
 
