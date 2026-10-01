@@ -68,6 +68,11 @@ REQUIRED_LIDAR_KEYS = (
     "odom_imu_stale_ms",
 )
 
+#: 숫자 검사에서 빼는 키 — 문자열·참거짓이거나, 포트처럼 아래에서 범위까지 따로 본다.
+_TYPED_SEPARATELY = frozenset(
+    {"scan_forward_host", "scan_forward_enabled", "scan_forward_port", "odom_host", "odom_port"}
+)
+
 
 def load(device_id: str | None = None) -> dict[str, Any]:
     """전역 설정을 읽고 `lidar` 절을 검증해 돌려준다.
@@ -94,6 +99,13 @@ def validate_section(section: dict[str, Any]) -> None:
     missing = [key for key in REQUIRED_LIDAR_KEYS if key not in section]
     if missing:
         raise ConfigError(f"lidar 설정 누락: {missing}")
+    # 아래 비교가 문자열·빈 값에서 `TypeError` 로 새지 않게 숫자부터 확인한다.
+    for key in REQUIRED_LIDAR_KEYS:
+        if key in _TYPED_SEPARATELY:
+            continue
+        value = section[key]
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            raise ConfigError(f"lidar.{key} 는 숫자여야 함: {value!r}")
     if section["range_min_mm"] >= section["range_max_mm"]:
         raise ConfigError("range_min_mm 이 range_max_mm 보다 작아야 함")
     if section["free_logodds"] >= section["occupied_logodds"]:

@@ -433,6 +433,7 @@ def test_cli_lidar_device_on_a_unit_without_the_lidar_track_refuses_to_start(
     [
         pytest.param({"odom_rate_hz": 0}, id="zero-odom-rate"),
         pytest.param({"scan_forward_port": "5203"}, id="non-int-forward-port"),
+        pytest.param({"odom_rate_hz": "10"}, id="non-numeric-odom-rate"),
         pytest.param(None, id="missing-key"),
     ],
 )

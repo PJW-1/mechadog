@@ -403,7 +403,11 @@ def test_a_hazard_item_survives_a_reading_that_also_says_person_down(
 
 @pytest.mark.parametrize(
     ("answer", "record"),
-    [("hazard_item", "hazard_notice"), ("blocked_path", "path_blocked")],
+    [
+        ("hazard_item", "hazard_notice"),
+        ("blocked_path", "path_blocked"),
+        ("fallen_object", "zone_changed"),
+    ],
 )
 def test_a_visit_cut_off_mid_collection_keeps_what_it_already_confirmed(
     cfg: dict, tmp_path: Path, answer: str, record: str

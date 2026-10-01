@@ -319,6 +319,9 @@ def validate_base_config(config: dict[str, Any]) -> None:
     # 화기 위험구역은 순찰 구역 가운데서 고른다 — 없는 구역을 적으면 그 구역의 위험물
     # 판독이 조용히 한 번도 돌지 않는다 (`ZoneInspector`).
     zones = config["zones"]
+    ids = zones.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise ConfigError("zones.ids 는 비어 있지 않은 목록이어야 함")
     hazard_ids = zones.get("hazard_ids")
     if not isinstance(hazard_ids, list):
         raise ConfigError("zones.hazard_ids 는 목록이어야 함")

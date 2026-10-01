@@ -82,6 +82,16 @@ def test_missing_required_key_is_refused() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("key", ["odom_rate_hz", "range_min_mm", "robot_radius_mm"])
+@pytest.mark.parametrize("value", ["10", None, True])
+def test_non_numeric_value_is_refused_by_name(key: str, value: object) -> None:
+    """숫자 자리에 문자열·빈 값이 오면 비교에서 `TypeError` 가 아니라 제 이름의 `ConfigError` 다."""
+    section = dict(settings.read_lidar_section())
+    section[key] = value
+    with pytest.raises(ConfigError, match=key):
+        settings.validate_section(section)
+
+
 def test_inverted_range_is_refused() -> None:
     section = dict(settings.read_lidar_section())
     section["range_min_mm"], section["range_max_mm"] = 8000, 120
