@@ -582,3 +582,82 @@ def test_dynamic_obstacle_does_not_change_the_map() -> None:
     mark_obstacle(controller._dynamic, controller.grid, (2.5, 2.5), 0.3)
     assert np.array_equal(controller.grid.cells, before), "지도는 그대로여야 한다"
     assert controller._dynamic.any(), "동적 마스크에만 찍혀야 한다"
+
+
+# ══════════════════════════════════════════════════════════════
+#  런타임 진입점 — `steer` · `resume` · `take_new_obstacles`
+# ══════════════════════════════════════════════════════════════
+
+
+def _steerable(now: int) -> PatrolController:
+    controller = build()
+    controller.resume()
+    controller.observe_telemetry(Reading(), now)
+    controller.pose = (2.0, 2.0, 0.0)
+    controller._last_pose_ms = now
+    return controller
+
+
+def test_steer_walks_without_announcing_state() -> None:
+    """런타임에서는 FSM 이 `STATE` 를 쥔다 — 길 찾기가 따로 알리면 둘이 서로 덮는다."""
+    controller = _steerable(1000)
+    controller.steer(1000)
+    assert controller.target is not None
+    assert controller.commander.intent.type_ == "MOVE"
+    assert "STATE" not in [m["type"] for m in decode_all(controller.commander.tick(1000))]
+
+
+def test_steer_leaves_the_latch_to_the_runtime() -> None:
+    """래치는 FSM 이 `FAILSAFE` 로 처리한다 — `steer` 는 단계를 `HALTED` 로 옮기지 않는다."""
+    controller = _steerable(1000)
+    controller.observe_telemetry(Reading(safety_latched=True, state="FAILSAFE"), 1000)
+    controller.steer(1000)
+    assert controller.phase is not Phase.HALTED
+
+
+def test_steer_halts_on_a_stale_pose() -> None:
+    controller = _steerable(1000)
+    controller.steer(1000 + DRIVE.pose_timeout_ms + 1)
+    assert controller.commander.intent.type_ == "STOP"
+    assert controller.stats.lost == 1
+
+
+def test_steer_holds_while_the_onboard_obstacle_flag_is_up() -> None:
+    controller = _steerable(1000)
+    controller.observe_telemetry(Reading(obstacle=True), 1000)
+    controller.steer(1000)
+    assert controller.commander.intent.type_ == "STOP"
+
+
+def test_resume_replans_from_here_to_the_same_unvisited_zone() -> None:
+    """경보·점검에서 돌아오면 옛 경로를 버리고 지금 자리에서 같은 목표로 다시 푼다."""
+    controller = _steerable(1000)
+    controller.steer(1000)
+    target = controller.target
+    assert target is not None
+    controller.pose = (3.0, 3.0, 0.0)
+    controller.resume()
+    assert controller.phase is Phase.PLANNING
+    assert controller.target == target
+    assert not controller.plan.reachable, "옛 경로는 버린다"
+    controller.steer(1000)
+    assert controller.target == target
+    assert controller.plan.reachable
+    assert target not in controller.visited
+
+
+def test_new_obstacles_are_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """확정된 장애물은 한 번만 꺼내진다 — 런타임이 경고를 두 번 내지 않게."""
+    import host.behavior.patrol as patrol
+
+    controller = _steerable(1000)
+    controller.steer(1000)
+    monkeypatch.setattr(patrol, "detect_new_obstacle", lambda *_args, **_kw: (2.5, 2.0))
+    from host.common.lidar_link import Scan
+
+    scan = Scan("lidar-01", "0" * 16, 1, 1000, ())
+    controller._check_new_obstacle(scan)
+    assert controller.take_new_obstacles() == ()  # 한 번으로는 확정하지 않는다
+    controller._check_new_obstacle(scan)
+    assert controller.take_new_obstacles() == ((2.5, 2.0),)
+    assert controller.take_new_obstacles() == ()
