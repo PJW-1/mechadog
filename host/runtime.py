@@ -24,6 +24,7 @@ import argparse
 import contextlib
 import json
 import logging
+import random
 import socket
 import sys
 import threading
@@ -40,6 +41,7 @@ from host.behavior.escalation import Escalation
 from host.behavior.fall_monitor import FallMonitor
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
+from host.behavior.patrol import PatrolController, controller_from_config, load_patrol_map
 from host.behavior.ppe_judge import PpeJudge
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
@@ -48,6 +50,7 @@ from host.behavior.zones import Zone, ZoneStore
 from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
+from host.common.lidar_link import Scan
 from host.common.logging_setup import (
     ERROR_ON_ENTER,
     EdgeTrigger,
@@ -60,6 +63,7 @@ from host.common.protocol import CommandEncoder, system_clock_ms
 from host.dashboard.state import DashboardState
 from host.report.situation import describe
 from host.slam.settings import maps_dir
+from host.telemetry.lidar_feed import open_lidar_feed
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
@@ -165,6 +169,7 @@ class Runtime:
         mission: Mission | None = None,
         vlm_reader: VlmReader | None = None,
         announcer: Callable[[str], None] | None = None,
+        navigator_factory: Callable[[Commander], PatrolController] | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -197,6 +202,16 @@ class Runtime:
         self._actions = register_actions(self._behavior, config)
         self._normal_patrol = self._behavior.sequence_for("PATROL")
         self._behavior.register_sequence("PATROL", self._patrol_sequence)
+        # LiDAR 길 찾기 (`--lidar-device`). 없으면 순찰은 고정 보행 시퀀스 그대로다.
+        # ⚠️ **같은 `Commander` 를 쓴다.** 송신기가 둘이면 seq 가 둘로 갈라져 로봇이
+        # 뒤처진 쪽을 통째로 버린다 (`_send_lock` 설명과 같은 이유).
+        navigator = navigator_factory(self._commander) if navigator_factory else None
+        self._navigator = navigator
+        #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
+        self._take_scan: Callable[[], Scan | None] | None = None
+        if navigator is not None:
+            # 추적·경보·구역 점검에서 돌아오면 지금 자리에서 같은 목표로 다시 푼다.
+            self._behavior.fsm.on_enter("PATROL", lambda _previous, _target: navigator.resume())
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
@@ -531,6 +546,9 @@ class Runtime:
             },
         }
         self._track_controller.note_distance(out.reading.dist_cm)
+        if self._navigator is not None:
+            # 온보드 장애물 플래그와 IMU yaw(측위의 회전 변화량)를 길 찾기에 넘긴다.
+            self._navigator.observe_telemetry(out.reading, now_ms)
         self._log.observe(seq=out.reading.seq)
         self._summary.count("accepted")
         if out.reading.batt_v is not None:
@@ -661,6 +679,9 @@ class Runtime:
     def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
         if self._ppe_judge.halts_patrol(now_ms) or self._auth_judge.holds_patrol(now_ms):
             commander.halt()
+        elif self._navigator is not None:
+            # 상태 알림·래치·링크는 FSM 이 쥔다 — 길 찾기만 맡긴다 (`PatrolController.steer`).
+            self._navigator.steer(now_ms)
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
 
@@ -677,10 +698,56 @@ class Runtime:
     def note_pose(self, pose: tuple[float, float, float], now_ms: int) -> None:
         """측위의 최신 위치 `(x m, y m, yaw rad)` 를 받는다 (`ZoneInspector.note_pose`).
 
-        ⚠️ **아직 아무도 부르지 않는다** — LiDAR 측위가 여기에 잇는다.
-        그 전에는 구역 도착이 일어나지 않는다.
+        LiDAR 길 찾기(`--lidar-device`)의 스캔 정합이 `_observe_scan` 에서 부른다.
+        그것이 없으면 아무도 부르지 않고 구역 도착이 일어나지 않는다.
         """
         self._zone_inspector.note_pose(pose, now_ms)
+
+    def attach_scans(self, take: Callable[[], Scan | None]) -> None:
+        """최신 스캔 공급자를 붙인다 (`LidarFeed.take`). 길 찾기가 없으면 쓰지 않는다."""
+        self._take_scan = take
+
+    def _observe_scan(self, now_ms: int) -> None:
+        """최신 스캔으로 측위하고, 자세가 갱신됐으면 구역 점검에 넘긴다.
+
+        ⚠️ **루프 스레드에서만 길 찾기 상태를 바꾼다.** 수신 스레드는 스캔을 칸에
+        넣고 전방 위험만 즉시 세운다 (`host/telemetry/lidar_feed.py`).
+        """
+        if self._navigator is None or self._take_scan is None:
+            return
+        scan = self._take_scan()
+        if scan is not None:
+            self._navigator.observe_scan(scan, now_ms)
+            if self._navigator.pose_ms == now_ms:
+                self.note_pose(self._navigator.pose, now_ms)
+        for hit in self._navigator.take_new_obstacles():
+            self._record_path_blocked(hit)
+
+    def _record_path_blocked(self, hit: tuple[float, float]) -> None:
+        """이동 경로가 새 장애물로 막혔다 — **가벼운 경고만** 남기고 순찰은 이어 간다.
+
+        단계·FSM 은 바꾸지 않는다. 재계획(A*)이 돌아갈 길을 찾고, 못 찾으면 컨트롤러가
+        재확인 뒤 그 구역을 이번 사이클에서 버린다 (`PatrolController._replan`).
+
+        ⚠️ **순찰 중일 때만 기록한다.** 추적·경보 중에는 앞에 선 사람이 신규 장애물로
+        확정되는데, 그것은 «경로가 막혔다» 가 아니다. 표시 자체는 남아 재계획이 피해 간다.
+        """
+        judgement: dict[str, Any] = {
+            "x": round(hit[0], 2),
+            "y": round(hit[1], 2),
+            "target": cast(PatrolController, self._navigator).target,
+            "source": "lidar",
+        }
+        if self._behavior.state != "PATROL":
+            LOG.info("path_obstacle_ignored", state=self._behavior.state, **judgement)
+            return
+        LOG.warning("path_blocked", **judgement)
+        result = self._vision.latest() if self._vision is not None else None
+        if result is not None:
+            self._record_scene("path_blocked", result, judgement)
+            return
+        # 프레임이 없으면 사진 기록은 못 남기지만 관제가 들어야 할 경고는 그대로 낸다.
+        self._announce_situation("path_blocked", judgement)
 
     def _observe_fallen(self, result: VisionResult, now_ms: int) -> None:
         """누움 후보로 쓰러짐 의심에 든다.
@@ -745,18 +812,10 @@ class Runtime:
         에서도 방송만은 막지 않는다.
         """
         sentence: str | None = None
-        try:
-            # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
-            # 방송·자막 문장을 붙이지 않는다.
-            if event_type != "person_fallen" or self._mission.enables("fallen"):
-                sentence = describe(event_type, judgement)
-        except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
-            LOG.error("situation_failed", error=f"{type(exc).__name__}: {exc}")
-        if sentence is not None and self._announcer is not None:
-            try:
-                self._announcer(sentence)
-            except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
-                LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
+        # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
+        # 방송·자막 문장을 붙이지 않는다.
+        if event_type != "person_fallen" or self._mission.enables("fallen"):
+            sentence = self._announce_situation(event_type, judgement)
         if self._blackbox is None:
             return
         recorded_judgement = judgement
@@ -784,6 +843,20 @@ class Runtime:
             self._event_publisher(entry)
         except Exception as exc:  # noqa: BLE001 — 브라우저 단절은 제어 실패가 아니다
             LOG.error("dashboard_event_publish_failed", error=f"{type(exc).__name__}: {exc}")
+
+    def _announce_situation(self, event_type: str, judgement: dict[str, Any] | None) -> str | None:
+        """상황 문장을 만들어 방송한다. 만든 문장(없으면 `None`)을 돌려준다."""
+        sentence: str | None = None
+        try:
+            sentence = describe(event_type, judgement)
+        except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
+            LOG.error("situation_failed", error=f"{type(exc).__name__}: {exc}")
+        if sentence is not None and self._announcer is not None:
+            try:
+                self._announcer(sentence)
+            except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
+                LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
+        return sentence
 
     def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
         """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (좌우 대칭 근거).
@@ -1030,6 +1103,8 @@ class Runtime:
         tick_started = time.perf_counter()
         self._ppe_judge.note_time(now_ms)
         self._drain_confirmations(now_ms)
+        # 측위를 비전보다 앞에 둔다 — 구역 점검(`_poll_vision`)이 이번 틱의 자세로 도착을 본다.
+        self._observe_scan(now_ms)
         # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
         if self._behavior.standby:
             self._escalation.stand_down(now_ms)
@@ -1538,6 +1613,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
     parser.add_argument(
+        "--lidar-device",
+        default=None,
+        help="LiDAR 중계 노드 device_id — 주면 순찰을 LiDAR 측위·A* 경로로 돈다 (기본 비활성)",
+    )
+    parser.add_argument(
         "--reset-on-start",
         action="store_true",
         help="기동 시 사람이 원인 해소를 확인한 것으로 보고 RESET_SAFE 를 보낸다",
@@ -1687,6 +1767,9 @@ def main(argv: list[str] | None = None) -> int:
         mission = Mission(config, mode=args.mode)
         if mission.enables("ppe") and args.no_vision:
             raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
+        # 지도·구역이 없으면 기동을 거부한다 — 길 찾기를 달라고 했는데 고정 보행으로
+        # 조용히 내려가면 운용자는 LiDAR 로 돈다고 믿는다.
+        patrol_map = load_patrol_map(config, maps_dir(config)) if args.lidar_device else None
     except (ConfigError, OSError) as exc:
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
@@ -1726,6 +1809,13 @@ def main(argv: list[str] | None = None) -> int:
         # 사건 문장을 Host PC 스피커로 읽는다. 워커가 데몬 스레드라
         # 따로 닫지 않는다.
         announcer=(None if broadcaster is None else broadcaster.say),
+        navigator_factory=(
+            None
+            if patrol_map is None
+            else lambda commander: controller_from_config(
+                config, commander, *patrol_map, random.Random()
+            )
+        ),
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
@@ -1741,6 +1831,18 @@ def main(argv: list[str] | None = None) -> int:
             # 내려오므로, 먼저 시작한 순찰은 조용히 취소된다 (`ask_patrol` 참고).
             runtime.ask_patrol()
         with contextlib.ExitStack() as stack:
+            if args.lidar_device:
+                feed = open_lidar_feed(
+                    config,
+                    args.lidar_device,
+                    # 순찰로 걷는 동안만 LiDAR 전방 거리로 세운다 (`LidarFeed.handle`).
+                    armed=lambda: runtime.behavior.state == "PATROL",
+                    on_danger=runtime.send_emergency_stop,
+                )
+                # 서비스 종료 ESTOP(`serve` 의 `finally`) 뒤에 닫힌다.
+                stack.callback(feed.stop)
+                runtime.attach_scans(feed.take)
+                feed.start()
             if dashboard is not None:
                 from host.dashboard.server import running_server
 

@@ -17,6 +17,7 @@ import random
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -32,12 +33,18 @@ from host.behavior.planner import (
     plan_to,
 )
 from host.behavior.zones import ZoneStore, select_next
+from host.common.config import ConfigError
 from host.common.lidar_link import Scan
 from host.common.logging_setup import EdgeTrigger, event_logger
 from host.common.protocol import FSM_STATES, clamp
 from host.common.units import deg_to_rad, rad_to_deg, wrap_pi
 from host.slam.occupancy import OccupancyGrid
 from host.slam.scan_match import MatchParams, Pose, match, preprocess
+from host.slam.settings import (
+    match_params_from_config,
+    plan_params_from_config,
+    range_from_config,
+)
 
 LOG = event_logger("mechadog.behavior.patrol")
 
@@ -224,6 +231,8 @@ class PatrolController:
     _halt_reason: str = ""
     _edge: EdgeTrigger = field(default_factory=EdgeTrigger)
     _obstacles: list[tuple[float, float]] = field(default_factory=list)
+    #: 아직 아무도 꺼내 가지 않은 신규 장애물 확정 (`take_new_obstacles`).
+    _new_obstacles: list[tuple[float, float]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         static = inflate(self.grid, self.plan_params)
@@ -252,6 +261,21 @@ class PatrolController:
     @property
     def halt_reason(self) -> str:
         return self._halt_reason
+
+    @property
+    def pose_ms(self) -> int | None:
+        """`pose` 를 마지막으로 갱신한 시각. 정합에 실패한 스캔은 바꾸지 않는다."""
+        return self._last_pose_ms
+
+    def take_new_obstacles(self) -> tuple[tuple[float, float], ...]:
+        """지난 호출 뒤 확정된 신규 장애물 `(x m, y m)` 을 꺼낸다 — 한 번 꺼내면 비워진다.
+
+        ⚠️ **런타임을 받지 않고 꺼내 가게 한다.** 컨트롤러가 기록·방송 경로를 알면
+        소켓 없이 닫히는 시험(이 클래스의 계약)이 깨진다.
+        """
+        taken = tuple(self._new_obstacles)
+        self._new_obstacles.clear()
+        return taken
 
     # ── 입력: 텔레메트리 ──────────────────────────────────────
     def observe_telemetry(self, reading: Any, now_ms: int) -> None:
@@ -337,6 +361,7 @@ class PatrolController:
         assert self._dynamic is not None
         mark_obstacle(self._dynamic, self.grid, hit, self.obstacle_mark_radius_m)
         self._obstacles.append(hit)
+        self._new_obstacles.append(hit)
         self._pending_hit, self._pending_count = None, 0
         self.stats.replans += 1
         LOG.info("obstacle_confirmed", x=round(hit[0], 2), y=round(hit[1], 2))
@@ -423,6 +448,45 @@ class PatrolController:
         # 상태는 이번 틱의 판단이 반영된 뒤 마지막에 알린다.
         self.commander.announce(self.fsm_state)
         return ()
+
+    def steer(self, now_ms: int) -> None:
+        """길 찾기만 하는 한 틱 — 호스트 런타임(`host/runtime.py`)의 `PATROL` 이 부른다.
+
+        `step()` 과 달리 **`STATE` 를 알리지 않고 래치·링크도 보지 않는다.** 런타임에서는
+        FSM 이 상태 알림과 래치·링크 감시를 쥐고, 이것은 FSM 이 `PATROL` 일 때만 불린다.
+        여기서 그것들을 다시 판정하면 상태 알림이 둘이 되어 서로 덮는다.
+        """
+        stale = self._last_pose_ms is None or (
+            now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
+        )
+        if stale:
+            # 측위가 낡으면 선다 — 다음 스캔 정합이 자세를 되찾으면 이어 간다 (FR-6.6).
+            self.commander.halt()
+            if self._edge.changed("steer_pose_stale", True):
+                self.stats.lost += 1
+                LOG.warning("pose_stale", limit_ms=self.drive.pose_timeout_ms)
+            return
+        self._edge.changed("steer_pose_stale", False)
+        if self.safety.obstacle_active:
+            # 온보드가 이미 멈췄다 — 판정을 흉내내지 않고 의도만 정지로 내린다 (아키텍처 1.2).
+            self.commander.halt()
+            if self._edge.changed("obstacle", True):
+                LOG.info("onboard_obstacle_hold", dist_cm=self.safety.dist_cm)
+            return
+        self._edge.forget("obstacle")
+        self._advance()
+
+    def resume(self) -> None:
+        """경로만 버리고 목표 구역은 둔 채 다시 계획하게 한다.
+
+        추적·경보·구역 점검을 마치고 순찰로 돌아오면 로봇은 떠날 때와 다른 자리에
+        있다 — 옛 경로의 웨이포인트를 따라가면 엉뚱한 곳으로 되돌아간다. 목표는
+        그대로라 **아직 가지 않은 구역으로 지금 자리에서** 다시 푼다 (`_replan`).
+        """
+        self.plan = Plan(self.plan.label)
+        self.waypoint_index = 0
+        self.phase = Phase.PLANNING
+        LOG.info("patrol_resumed", target=self.plan.label)
 
     def _guard(self, now_ms: int) -> tuple[str, ...]:
         """안전 점검. 단계를 옮기고, 즉시 보낼 전문이 있으면 돌려준다.
@@ -657,6 +721,48 @@ def drive_params_from_config(config: Mapping[str, Any]) -> DriveParams:
         link_loss_ms=int(safety["link_loss_failsafe_ms"]),
         cmd_timeout_ms=int(safety["cmd_timeout_ms"]),
         pose_timeout_ms=int(localization["pose_timeout_ms"]),
+    )
+
+
+def load_patrol_map(config: Mapping[str, Any], maps: Path) -> tuple[OccupancyGrid, ZoneStore]:
+    """순찰 지도와 구역 좌표. 구역이 하나도 없으면 `ConfigError` 다."""
+    grid = OccupancyGrid.load(maps)
+    labels = tuple(str(label) for label in config["zones"]["ids"])
+    zones = ZoneStore.load(maps, labels)
+    if not len(zones):
+        raise ConfigError(
+            f"구역 좌표가 없다: {maps / 'zones.json'} — tools/ops/zone_select.py 를 먼저 실행한다"
+        )
+    return grid, zones
+
+
+def controller_from_config(
+    config: Mapping[str, Any],
+    commander: Commander,
+    grid: OccupancyGrid,
+    zones: ZoneStore,
+    rng: random.Random | None,
+) -> PatrolController:
+    """설정으로 컨트롤러를 조립한다. 순찰 도구와 호스트 런타임이 같이 쓴다."""
+    lidar = config["lidar"]
+    return PatrolController(
+        commander=commander,
+        grid=grid,
+        zones=zones,
+        drive=drive_params_from_config(config),
+        plan_params=plan_params_from_config(config),
+        match_params=match_params_from_config(config),
+        range_m=range_from_config(config),
+        new_obstacle_margin_m=float(lidar["new_obstacle_margin_mm"]) / 1000.0,
+        new_obstacle_check_radius_m=float(lidar["new_obstacle_check_radius_mm"]) / 1000.0,
+        new_obstacle_confirmations=int(lidar["new_obstacle_confirmations"]),
+        obstacle_mark_radius_m=float(lidar["obstacle_mark_radius_mm"]) / 1000.0,
+        forward_fan_rad=deg_to_rad(float(lidar["forward_fan_deg"])),
+        # 회피 시퀀스와 **같은 값을 쓴다** — 갇힌 상황을 몇 번까지
+        # 스스로 풀어 보고 사람에게 넘길지의 값이다 (FR-2.3).
+        max_reverify_attempts=int(config["fsm"]["avoid_attempts"]),
+        random_after_first_cycle=bool(config["zones"]["random_after_first_cycle"]),
+        rng=rng,
     )
 
 

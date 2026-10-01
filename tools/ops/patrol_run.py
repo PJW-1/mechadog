@@ -38,10 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from host.behavior.commander import Commander
 from host.behavior.patrol import (
     PatrolController,
+    controller_from_config,
     describe,
-    drive_params_from_config,
+    load_patrol_map,
 )
-from host.behavior.zones import ZoneStore
 from host.common.config import ConfigError, telemetry_ids
 from host.common.console import survive_encoding_errors
 from host.common.lidar_link import (
@@ -53,15 +53,10 @@ from host.common.lidar_link import (
 from host.common.logging_setup import event_logger, setup_logging
 from host.common.odom_link import OdomEncoder
 from host.common.protocol import CommandEncoder, system_clock_ms
-from host.common.units import deg_to_rad, ms_to_s
+from host.common.units import ms_to_s
 from host.slam import settings, simulation
-from host.slam.occupancy import OccupancyGrid
 from host.slam.odometry import Odometry, hold_of_reading, odom_params_from_config
-from host.slam.settings import (
-    match_params_from_config,
-    plan_params_from_config,
-    range_from_config,
-)
+from host.slam.settings import range_from_config
 from host.telemetry.receiver import TelemetryReceiver
 
 LOG = event_logger("mechadog.tools.patrol_run")
@@ -157,35 +152,16 @@ def forward_scan(sock: socket.socket, raw: bytes, peer: tuple[str, int]) -> bool
 
 
 def build_controller(config: dict, maps: Path, seed: int | None) -> PatrolController:
-    grid = OccupancyGrid.load(maps)
-    labels = tuple(str(label) for label in config["zones"]["ids"])
-    zones = ZoneStore.load(maps, labels)
-    if not len(zones):
-        raise ConfigError(
-            f"구역 좌표가 없다: {maps / 'zones.json'} — tools/ops/zone_select.py 를 먼저 실행한다"
-        )
-    lidar = config["lidar"]
+    grid, zones = load_patrol_map(config, maps)
     # 주기는 설정에서 온다 (`network.cmd_rate_hz: 10`). 코드에 100ms 를 박으면
     # 설정을 고쳐도 안 바뀐다.
     period_ms = round(1000 / float(config["network"]["cmd_rate_hz"]))
-    return PatrolController(
-        commander=Commander(CommandEncoder(), period_ms=period_ms),
-        grid=grid,
-        zones=zones,
-        drive=drive_params_from_config(config),
-        plan_params=plan_params_from_config(config),
-        match_params=match_params_from_config(config),
-        range_m=range_from_config(config),
-        new_obstacle_margin_m=float(lidar["new_obstacle_margin_mm"]) / 1000.0,
-        new_obstacle_check_radius_m=float(lidar["new_obstacle_check_radius_mm"]) / 1000.0,
-        new_obstacle_confirmations=int(lidar["new_obstacle_confirmations"]),
-        obstacle_mark_radius_m=float(lidar["obstacle_mark_radius_mm"]) / 1000.0,
-        forward_fan_rad=deg_to_rad(float(lidar["forward_fan_deg"])),
-        # 회피 시퀀스와 **같은 값을 쓴다** — 갇힌 상황을 몇 번까지
-        # 스스로 풀어 보고 사람에게 넘길지의 값이다 (FR-2.3).
-        max_reverify_attempts=int(config["fsm"]["avoid_attempts"]),
-        random_after_first_cycle=bool(config["zones"]["random_after_first_cycle"]),
-        rng=random.Random(seed),
+    return controller_from_config(
+        config,
+        Commander(CommandEncoder(), period_ms=period_ms),
+        grid,
+        zones,
+        random.Random(seed),
     )
 
 
