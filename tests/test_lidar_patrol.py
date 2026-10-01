@@ -52,6 +52,8 @@ DRIVE = DriveParams(
     link_loss_ms=3000,
     cmd_timeout_ms=300,
     pose_timeout_ms=500,
+    scan_stall_timeout_ms=1500,
+    settle_delay_ms=750,
 )
 PLAN = PlanParams(occ_thresh=1.0, free_thresh=-1.0, clearance_m=0.25, simplify_eps_m=0.08)
 MATCH = MatchParams(
@@ -95,12 +97,13 @@ def open_room() -> OccupancyGrid:
 
 
 def build(**overrides: object) -> PatrolController:
+    ready = overrides.pop("ready", True)
     grid = overrides.pop("grid", None) or open_room()
     zones = ZoneStore(("A", "B", "C"))
     zones.place(1.0, 1.0)
     zones.place(4.0, 1.0)
     zones.place(4.0, 3.5)
-    return PatrolController(
+    controller = PatrolController(
         commander=Commander(CommandEncoder()),
         grid=grid,
         zones=zones,
@@ -116,6 +119,14 @@ def build(**overrides: object) -> PatrolController:
         rng=random.Random(7),
         **overrides,
     )
+    if ready:
+        # 순찰/안전의 다른 단위 시험은 정지 안정화와 유효 스캔이 끝난 상태에서 시작.
+        # 실제 수신 부재/재출발 경계는 ready=False로 아래에서 따로 검증한다.
+        from host.common.lidar_link import Scan
+
+        controller.note_sent([CommandEncoder().encode("STOP")], 0)
+        controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", 1, 1000, ((0.0, 3.0),)), 1000)
+    return controller
 
 
 def decode_all(lines: list[str]) -> list[dict]:
@@ -378,19 +389,22 @@ def test_localization_failure_is_lost_not_estop() -> None:
     assert controller.commander.intent.type_ == "STOP"
 
 
-def test_external_map_pose_recovers_lost_and_normalizes_yaw() -> None:
+def test_external_map_pose_recovers_only_after_all_guards_and_normalizes_yaw() -> None:
     controller = build()
     controller.phase = Phase.LOST
     controller.observe_map_pose((1.5, 2.5, 3 * math.pi), 2000)
     assert controller.pose == pytest.approx((1.5, 2.5, -math.pi))
     assert controller._last_pose_ms == 2000
-    assert controller.phase is Phase.PLANNING
+    assert controller.phase is Phase.LOST
+    controller.observe_telemetry(Reading(), 2000)
+    controller.step(2000)
+    assert controller.phase is Phase.MOVING
 
 
 def test_external_obstacle_scan_does_not_refresh_pose_timeout() -> None:
     from host.common.lidar_link import Scan
 
-    controller = build()
+    controller = build(ready=False)
     controller.observe_map_pose((2.0, 2.0, 0.0), 1000)
     scan = Scan("lidar-a", "boot-a", 1, 1400, ((0.0, 1.0),))
     controller.observe_obstacle_scan(scan, 1400)
@@ -398,6 +412,192 @@ def test_external_obstacle_scan_does_not_refresh_pose_timeout() -> None:
     controller.observe_obstacle_scan(scan, 1600)
     assert controller._last_pose_ms == 1000
     assert controller.stats.scans == 2
+
+
+def external_observation(controller: PatrolController, now_ms: int) -> None:
+    controller.observe_telemetry(Reading(), now_ms)
+    controller.observe_map_pose((2.0, 1.0, math.pi), now_ms)
+
+
+def stationary_scan(controller: PatrolController, now_ms: int) -> None:
+    from host.common.lidar_link import Scan
+
+    controller.observe_obstacle_scan(
+        Scan("lidar-a", "boot-a", now_ms + 1, now_ms, ((math.pi / 2, 3.0),)), now_ms
+    )
+
+
+def test_fresh_external_pose_without_any_scan_never_starts() -> None:
+    controller = build(ready=False)
+    controller.note_sent([controller.commander.open_session()], 0)
+    controller.start()
+    for now in (1000, 1600, 3000):
+        external_observation(controller, now)
+        controller.step(now)
+        assert controller.phase is Phase.LOST
+        assert controller.commander.intent.type_ == "STOP"
+    assert controller.stats.scans == 0
+    assert controller.stats.estops == 0
+    assert controller.stats.lost == 1, "새 pose마다 LOST를 풀었다 다시 세면 안 된다"
+
+
+def test_start_requires_a_scan_after_the_successful_stop_settles() -> None:
+    controller = build(ready=False)
+    controller.start()
+    # STOP 의도만 만들어 놓고 송신에 실패했으면 안정화 시계가 시작되지 않는다.
+    external_observation(controller, 1000)
+    stationary_scan(controller, 1000)
+    controller.note_sent([], 0)
+    controller.step(1000)
+    assert controller.commander.intent.type_ == "STOP"
+
+    controller.note_sent([controller.commander.open_session()], 1100)
+    stationary_scan(controller, 1849)
+    external_observation(controller, 1850)
+    controller.step(1850)
+    assert controller.phase is Phase.LOST
+
+    # 정확히 750ms 경계에 받은 스캔은 허용한다.
+    stationary_scan(controller, 1850)
+    controller.step(1850)
+    assert controller.phase is Phase.MOVING
+    assert controller.commander.intent.type_ == "MOVE"
+
+
+def test_scans_may_pause_while_moving_but_cannot_release_the_next_stop() -> None:
+    controller = build(ready=False)
+    controller.note_sent([controller.commander.open_session()], 0)
+    controller.start()
+    external_observation(controller, 1000)
+    stationary_scan(controller, 1000)
+    controller.step(1000)
+    controller.note_sent(controller.commander.tick(1000), 1000)
+
+    # 실제 MOVE가 송신된 동안에는 4초 스캔 공백도 두절로 오판하지 않는다.
+    external_observation(controller, 5000)
+    controller.step(5000)
+    assert controller.phase is Phase.MOVING
+    assert controller.commander.intent.type_ == "MOVE"
+
+    controller.commander.halt()
+    controller.note_sent(controller.commander.tick(5000), 5000)
+    external_observation(controller, 5100)
+    controller.step(5100)
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
+    controller.note_sent(controller.commander.tick(5100), 5100)
+    # 반복 STOP이 안정화 시계를 매번 초기화하면 영원히 재개할 수 없다.
+    stationary_scan(controller, 5749)
+    external_observation(controller, 5750)
+    controller.step(5750)
+    assert controller.phase is Phase.LOST
+    stationary_scan(controller, 5750)
+    controller.step(5750)
+    assert controller.phase is Phase.MOVING
+
+
+def test_old_stationary_scan_and_pose_only_recovery_remain_stopped() -> None:
+    controller = build()
+    controller.start()
+    external_observation(controller, 2500)
+    controller.step(2500)  # 마지막 스캔 1000 + 허용 1500ms의 경계
+    assert controller.commander.intent.type_ == "MOVE"
+    external_observation(controller, 2501)
+    controller.step(2501)
+    assert controller.phase is Phase.LOST
+    external_observation(controller, 2600)
+    controller.step(2600)
+    assert controller.commander.intent.type_ == "STOP"
+    stationary_scan(controller, 2600)
+    controller.step(2600)
+    assert controller.phase is Phase.MOVING
+
+
+@pytest.mark.parametrize("value", [0.0, 3.0])
+def test_current_unknown_or_occupied_cell_cannot_be_an_astar_escape(value: float) -> None:
+    grid = open_room()
+    grid.cells[grid.to_cell(2.0, 1.0)] = value
+    controller = build(grid=grid)
+    controller.start()
+    external_observation(controller, 1000)
+    controller.step(1000)
+    assert controller.blocked[grid.to_cell(2.0, 1.0)]
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
+    assert controller.target is None
+
+
+@pytest.mark.parametrize("xy", [(-0.1, 1.0), (6.1, 1.0), (2.0, -0.1), (2.0, 5.1)])
+def test_current_pose_outside_map_stops_without_index_wrapping(xy: tuple[float, float]) -> None:
+    controller = build()
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((*xy, 0.0), 1000)
+    controller.step(1000)
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
+
+
+@pytest.mark.parametrize("points", [(), ((0.0, 0.01),), ((0.0, 10.0),)])
+def test_empty_or_out_of_range_scans_do_not_release_start(
+    points: tuple[tuple[float, float], ...],
+) -> None:
+    from host.common.lidar_link import Scan
+
+    controller = build(ready=False)
+    controller.note_sent([controller.commander.open_session()], 0)
+    controller.start()
+    external_observation(controller, 1000)
+    controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", 1, 1000, points), 1000)
+    controller.step(1000)
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
+
+
+def test_a_fresh_scan_does_not_release_a_stale_pose() -> None:
+    controller = build()
+    controller.start()
+    external_observation(controller, 1000)
+    controller.observe_telemetry(Reading(), 1501)
+    stationary_scan(controller, 1501)
+    controller.step(1501)
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
+
+
+def test_reset_confirmation_does_not_bypass_the_stationary_scan_guard() -> None:
+    controller = build(ready=False)
+    controller.start()
+    controller.note_sent([controller.emergency_stop("test")], 1000)
+    controller.note_sent([controller.request_reset()], 1100)
+    external_observation(controller, 2000)
+    controller.step(2000)
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
+    stationary_scan(controller, 2000)
+    controller.step(2000)
+    assert controller.phase is Phase.MOVING
+
+
+def test_onboard_obstacle_hold_requires_a_new_settled_scan_before_release() -> None:
+    controller = build()
+    controller.start()
+    external_observation(controller, 1000)
+    controller.step(1000)
+    controller.note_sent(controller.commander.tick(1000), 1000)
+
+    # 온보드가 멈췄다는 보고도 정지 구간이다. 이전 MOVE 상태로 우회하면 안 된다.
+    controller.observe_telemetry(Reading(obstacle=True), 2000)
+    controller.observe_map_pose((2.0, 1.0, math.pi), 2000)
+    controller.step(2000)
+    assert controller.commander.intent.type_ == "STOP"
+    external_observation(controller, 2100)
+    controller.step(2100)
+    assert controller.phase is Phase.LOST
+    stationary_scan(controller, 2750)
+    external_observation(controller, 2750)
+    controller.step(2750)
+    assert controller.phase is Phase.MOVING
 
 
 def test_telemetry_silence_halts_but_keeps_sending() -> None:

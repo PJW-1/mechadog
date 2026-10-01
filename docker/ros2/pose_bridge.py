@@ -22,6 +22,17 @@ def transform_age_s(now_ns: int, sec: int, nanosec: int) -> float:
     return max(0.0, (now_ns - stamp_ns) / 1_000_000_000)
 
 
+def send_pose_packet(sock, packet: bytes, peer, observer_peer=None) -> str | None:
+    """The patrol consumer is primary; an optional observer cannot fail its send."""
+    sock.sendto(packet, peer)
+    if observer_peer is not None and observer_peer != peer:
+        try:
+            sock.sendto(packet, observer_peer)
+        except OSError as exc:
+            return str(exc)
+    return None
+
+
 def main() -> None:
     import rclpy
     from rclpy.duration import Duration
@@ -40,6 +51,10 @@ def main() -> None:
             self.stall_s = float(os.getenv("MAP_POSE_STALL_S", "0.5"))
             self.encoder = MapPoseEncoder(device_id, secrets.token_hex(8))
             self.peer = (socket.gethostbyname(self.host), self.port)
+            observer_port = int(os.getenv("MAP_POSE_OBSERVER_PORT", "5206"))
+            if not 0 <= observer_port <= 65535:
+                raise ValueError("MAP_POSE_OBSERVER_PORT must be 0..65535")
+            self.observer_peer = (self.peer[0], observer_port) if observer_port else None
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.buffer = Buffer()
             self.listener = TransformListener(self.buffer, self)
@@ -76,7 +91,9 @@ def main() -> None:
                 valid=valid,
             )
             try:
-                self.sock.sendto(line.encode("utf-8"), self.peer)
+                observer_error = send_pose_packet(
+                    self.sock, line.encode("utf-8"), self.peer, self.observer_peer
+                )
             except OSError as exc:
                 if not self.failed:
                     self.get_logger().warning(f"MAP_POSE 송신 실패: {exc}")
@@ -85,6 +102,8 @@ def main() -> None:
             if self.failed:
                 self.get_logger().info("MAP_POSE 송신 복구")
             self.failed = False
+            if observer_error:
+                self.get_logger().debug(f"관측 복사 송신 실패: {observer_error}")
             if reason:
                 self.get_logger().debug(reason)
 

@@ -604,6 +604,15 @@ def test_build_controller_uses_the_configured_command_rate(
     assert len(controller.zones) == 3
 
 
+def test_patrol_stationary_scan_limits_come_from_the_existing_config(
+    tmp_path: Path, lidar_config: dict
+) -> None:
+    seed_maps(tmp_path)
+    controller = patrol_run.build_controller(lidar_config, tmp_path, seed=1)
+    assert controller.drive.scan_stall_timeout_ms == lidar_config["lidar"]["scan_stall_timeout_ms"]
+    assert controller.drive.settle_delay_ms == lidar_config["localization"]["settle_delay_ms"]
+
+
 def test_simulated_patrol_emits_only_valid_protocol_lines(
     tmp_path: Path, lidar_config: dict
 ) -> None:

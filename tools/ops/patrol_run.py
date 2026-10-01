@@ -148,8 +148,10 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
 
     def transmit(lines: list[str] | tuple[str, ...]) -> None:
         sent = send(cmd_sock, peer, lines)
+        sent_ms = system_clock_ms()
+        controller.note_sent(sent, sent_ms)
         if odom is not None:
-            odom.note_sent(sent, system_clock_ms())
+            odom.note_sent(sent, sent_ms)
 
     scan_decoder = ScanDecoder(
         float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
@@ -326,6 +328,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
     controller.start()
 
     now_ms = system_clock_ms()
+    controller.note_sent(lines, now_ms)
     seq = 0
     tick = 0
     # ⚠️ **자동 리셋에 상한을 둔다.** 상한이 없으면 "장애물로 들어가 E-STOP,
@@ -371,10 +374,13 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
         urgent = controller.guard_scan(scan)
         if urgent:
             lines.append(urgent)
+            controller.note_sent([urgent], now_ms)
             LOG.info("sim_estop_sent")
             if args.reset_after_estop and auto_resets < MAX_AUTO_RESETS:
                 auto_resets += 1
-                lines.append(controller.request_reset())
+                reset = controller.request_reset()
+                lines.append(reset)
+                controller.note_sent([reset], now_ms)
                 controller.observe_telemetry(
                     _FakeReading(
                         state="IDLE",
@@ -391,6 +397,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
         lines.extend(controller.step(now_ms))
         emitted = controller.commander.tick(now_ms)
         lines.extend(emitted)
+        controller.note_sent(emitted, now_ms)
 
         # **실제 전문에서 보행을 읽어 자세에 반영한다.**
         for line in emitted:

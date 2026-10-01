@@ -13,9 +13,10 @@
 
 from __future__ import annotations
 
+import json
 import math
 import random
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -101,6 +102,10 @@ class DriveParams:
     cmd_timeout_ms: int
     #: 측위 자세가 이만큼 갱신되지 않으면 `LOST` (`localization.pose_timeout_ms`).
     pose_timeout_ms: int
+    #: 정지 후 기대한 스캔의 수신 한도. 이동 중 스캔 공백에는 적용하지 않는다.
+    scan_stall_timeout_ms: int
+    #: 실제 STOP 송신 후 이 시간이 지난 스캔으로만 재출발한다.
+    settle_delay_ms: int
 
 
 #: 최대 조향에서 보폭을 이만큼 줄인다 (0.5 = 절반). 호 반경은 대략 `step / angle` 이고
@@ -238,6 +243,9 @@ class PatrolController:
     _pending_hit: tuple[float, float] | None = None
     _pending_count: int = 0
     _last_pose_ms: int | None = None
+    _last_scan_ms: int | None = None
+    _stopped_since_ms: int | None = None
+    _last_sent_moving: bool = False
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
     _reverify_attempts: dict[str, int] = field(default_factory=dict)
@@ -305,6 +313,8 @@ class PatrolController:
             last_cmd_age_ms=getattr(reading, "last_cmd_age_ms", None),
             last_seen_ms=now_ms,
         )
+        if self.safety.obstacle_active or self.safety.latched:
+            self._note_stopped(now_ms)
         age = self.safety.last_cmd_age_ms
         if age is not None and age > self.drive.cmd_timeout_ms:
             # 보내는 명령을 로봇이 받아들이지 않고 있다 — 조용한 고장이라 경고한다.
@@ -323,9 +333,37 @@ class PatrolController:
             return
         self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
         self._last_pose_ms = now_ms
-        if self.phase is Phase.LOST:
-            LOG.info("pose_reacquired", source="ros2")
-            self.phase = Phase.PLANNING
+        # 재개는 step의 전체 관문에서 한다. 새 tf 하나가 스캔 두절이나
+        # 미관측 셀 정지를 해제해서는 안 된다.
+
+    def note_sent(self, lines: Iterable[str], sent_ms: int) -> None:
+        """성공적으로 보낸 명령의 시각을 받는다. 의도를 세운 시각과 구분한다.
+
+        송신 성공은 기기의 물리 정지를 증명하지 않는다. 기존 안정 대기와
+        온보드 정지 보고를 함께 쓰며, 실제 전달 지연은 실기 검증 대상이다.
+        """
+        for line in lines:
+            message = json.loads(line)
+            if message["type"] == "MOVE":
+                self._last_sent_moving = True
+                self._stopped_since_ms = None
+            elif message["type"] in ("STOP", "ESTOP", "RESET_SAFE"):
+                self._note_stopped(sent_ms)
+
+    def _note_stopped(self, now_ms: int) -> None:
+        self._last_sent_moving = False
+        if self._stopped_since_ms is None:
+            self._stopped_since_ms = now_ms
+
+    def _note_scan(self, scan: Scan, now_ms: int) -> None:
+        # 빈 전문/범위 밖 점만 있는 전문은 관측을 복구하지 않는다.
+        if any(
+            math.isfinite(angle)
+            and math.isfinite(distance)
+            and self.range_m[0] <= distance <= self.range_m[1]
+            for angle, distance in scan.points
+        ):
+            self._last_scan_ms = now_ms
 
     def observe_obstacle_scan(self, scan: Scan, now_ms: int) -> None:
         """외부 측위 모드에서 스캔을 신규 장애물 확인에만 쓴다.
@@ -334,6 +372,7 @@ class PatrolController:
         자세가 있을 때만 지도에 반영한다. 즉시 위험 판정은 ``guard_scan`` 이 별도다.
         """
         self.stats.scans += 1
+        self._note_scan(scan, now_ms)
         if self._last_pose_ms is None or now_ms - self._last_pose_ms > self.drive.pose_timeout_ms:
             return
         self._check_new_obstacle(scan)
@@ -341,6 +380,7 @@ class PatrolController:
     def observe_scan(self, scan: Scan, now_ms: int) -> None:
         """내장 스캔 정합(시뮬레이션용)으로 측위하고 신규 장애물을 확인한다."""
         self.stats.scans += 1
+        self._note_scan(scan, now_ms)
         points = preprocess(scan.points, *self.range_m)
         result = match(
             self.grid,
@@ -464,7 +504,12 @@ class PatrolController:
         if urgent:
             return urgent
 
+        was_halted = self.phase is Phase.HALTED
         self._settle_reset()
+        if was_halted and self.phase is not Phase.HALTED:
+            # 래치 해제와 측위 복구는 별개다. 위 _guard는 HALTED에서 조기에
+            # 돌아오므로 해제가 확인된 같은 틱에도 출발 관문을 적용한다.
+            self._guard_localization(now_ms)
         if self.safety.last_seen_ms is None:
             # 첫 텔레메트리로 링크가 확인될 때까지 정지한다.
             self.commander.halt()
@@ -553,18 +598,55 @@ class PatrolController:
         if self.phase in (Phase.IDLE, Phase.HALTED):
             return ()
 
+        return self._guard_localization(now_ms)
+
+    def _guard_localization(self, now_ms: int) -> tuple[str, ...]:
         # ③ 측위 상실 — `ESTOP` 이 아니라 `LOST` 다 (FR-6.6)
         stale = self._last_pose_ms is None or (
             now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
         )
         if stale:
-            if self.phase is not Phase.LOST:
-                self.stats.lost += 1
-                LOG.warning("pose_stale", limit_ms=self.drive.pose_timeout_ms)
-            self.phase = Phase.LOST
+            self._lose("pose_stale")
             return ()
 
+        # A*는 막힌 출발 셀에서 빠져나오는 경로도 허용한다. 측위가 미지/지도 밖인
+        # 경우까지 그 예외를 적용하면 안 되므로 컨트롤러에서 먼저 거절한다.
+        row, col = self.grid.to_cell(self.pose[0], self.pose[1])
+        height, width = self.grid.cells.shape
+        if not (0 <= row < height and 0 <= col < width) or (
+            self.grid.cells[row, col] > self.plan_params.free_thresh
+        ):
+            self._lose("pose_outside_observed_free_space")
+            return ()
+
+        # 이동 중에는 스캔이 게이팅되어 없어도 된다. 최초 출발/다시 멈춘 뒤에는
+        # 안정화 이후 관측을 요구한다. MOVE 중의 오래된 스캔으로는 재출발 못 한다.
+        if not self._last_sent_moving:
+            stopped = self._stopped_since_ms
+            scan_time = self._last_scan_ms
+            if (
+                stopped is None
+                or scan_time is None
+                or (
+                    scan_time < stopped + self.drive.settle_delay_ms
+                    or not 0 <= now_ms - scan_time <= self.drive.scan_stall_timeout_ms
+                )
+            ):
+                self._lose("stationary_scan_unavailable")
+                return ()
+
+        if self.phase is Phase.LOST:
+            LOG.info("localization_reacquired")
+            self.phase = Phase.PLANNING
+        self._edge.forget("localization_problem")
         return ()
+
+    def _lose(self, reason: str) -> None:
+        if self.phase is not Phase.LOST:
+            self.stats.lost += 1
+        if self._edge.changed("localization_problem", reason):
+            LOG.warning(reason)
+        self.phase = Phase.LOST
 
     def guard_scan(self, scan: Scan) -> str | None:
         """LiDAR 전방 위험거리 판정 — 온보드 초음파 판정을 대체하지 않고 더하는 호스트측 판정이다.
@@ -769,6 +851,8 @@ def drive_params_from_config(config: Mapping[str, Any]) -> DriveParams:
         link_loss_ms=int(safety["link_loss_failsafe_ms"]),
         cmd_timeout_ms=int(safety["cmd_timeout_ms"]),
         pose_timeout_ms=int(localization["pose_timeout_ms"]),
+        scan_stall_timeout_ms=int(lidar["scan_stall_timeout_ms"]),
+        settle_delay_ms=int(localization["settle_delay_ms"]),
     )
 
 
