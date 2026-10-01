@@ -3,7 +3,8 @@
 이 파일은 전문을 만들지 않는다 — 전문은 전부 `Commander` 가 만들고 여기서는 의도만
 세운다 (ENGINEERING_GUIDE 2.1 · PROTOCOL.md 6절).
 
-- 방향 전환은 호(arc) 조향 `MOVE{step, angle}` 뿐이다 (ADR-11).
+- 방향 전환은 호(arc) 조향 `MOVE{step, angle}` 이고, 크게 틀어졌을 때만 **제자리 회전**
+  `MOVE{0, angle}` 으로 측위 방위를 보며 맞춘다 (ADR-11 개정 2026-10-01).
 - 초음파 근거리 정지는 로봇의 `flags.obstacle` 을 따라가고 판정하지 않는다 (아키텍처 1.2 · ADR-22).
 - 위험 시 `ESTOP`(래치)을 보내고, 해제는 사람 확인 뒤 텔레메트리 `safety_latched=false` 로 확인한다 (ADR-21).
 - 내부 단계는 FSM 13상태로 사상해 `STATE` 로 내려보낸다 (`FSM_STATE_FOR`).
@@ -12,9 +13,10 @@
 
 from __future__ import annotations
 
+import json
 import math
 import random
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -83,8 +85,13 @@ class DriveParams:
     turn_deg: float
     reverse_mm: float
     heading_tolerance_rad: float
-    #: 이 이상 틀어져 있으면 전진 호로는 못 돌아선다 — 후진 호로 바꾼다.
+    #: 호 조향의 조향·보폭 비례 기준 (`scale = 오차 / 이 값`).
     reverse_threshold_rad: float
+    #: 이 이상 틀어져 있으면 걷지 않고 **제자리에서 돈다** (ADR-11 개정). `heading_tolerance` 안에
+    #: 들어올 때까지 계속 돈다 — 중간에 호로 바꾸면 다시 큰 호를 그린다.
+    spin_threshold_rad: float
+    #: 제자리 회전 지시의 `MOVE angle` (deg). 2026-09-22 실측은 ±30 에서 7.37 도/s.
+    spin_turn_deg: float
     arrival_radius_m: float
     waypoint_radius_m: float
     #: 호스트측 LiDAR 위험 거리. 온보드 초음파(`obstacle_stop_cm`)와 별개다.
@@ -95,6 +102,10 @@ class DriveParams:
     cmd_timeout_ms: int
     #: 측위 자세가 이만큼 갱신되지 않으면 `LOST` (`localization.pose_timeout_ms`).
     pose_timeout_ms: int
+    #: 정지 후 기대한 스캔의 수신 한도. 이동 중 스캔 공백에는 적용하지 않는다.
+    scan_stall_timeout_ms: int
+    #: 실제 STOP 송신 후 이 시간이 지난 스캔으로만 재출발한다.
+    settle_delay_ms: int
 
 
 #: 최대 조향에서 보폭을 이만큼 줄인다 (0.5 = 절반). 호 반경은 대략 `step / angle` 이고
@@ -111,35 +122,43 @@ class Steering:
     angle_deg: float
 
 
-def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
-    """방위 오차를 호(arc) 조향으로 바꾼다.
-
-    제자리 회전을 쓰지 않는다 (ADR-11). 세 구간으로 나뉜다.
+def steering_for(
+    heading_error_rad: float, params: DriveParams, *, spinning: bool = False
+) -> Steering:
+    """방위 오차를 보행 의도로 바꾼다. 세 구간으로 나뉜다.
 
     | 오차 | 보행 | 근거 |
     | :--- | :--- | :--- |
     | 허용 오차 이내 | 직진 | 조향을 넣으면 목표를 지나쳐 진동한다 |
-    | 그 밖 ~ 후진 임계 | 전진 + 최대 조향 | 호를 그리며 방위를 줄인다 |
-    | 후진 임계 초과 | **후진 + 같은 방향 조향** | 목표가 거의 뒤에 있으면 전진 호는 멀어진다 |
+    | 그 밖 ~ 회전 임계 | 전진 + 비례 조향(호) | 걸으면서 방위를 줄인다 |
+    | 회전 임계 초과 | **제자리 회전** `step=0` | 큰 호는 경로를 벗어나 가구 모서리로 밀려간다 |
 
-    조향 부호는 걸음 방향과 무관하다 — `angle` 은 각속도 명령이라 후진에서도 양수가
-    반시계다 (`docs/PROTOCOL.md` 부호 규약). 크게 틀어질수록 보폭을 줄여(`TURN_STEP_REDUCTION`)
-    호 반경을 줄인다.
+    `spinning` 이면(직전 틱이 제자리 회전) 허용 오차 안에 들 때까지 계속 돈다 — 임계 바로
+    아래에서 호로 바꾸면 그 호가 다시 경로를 벗어난다.
+
+    ⚠️ **제자리 회전은 폐루프로만 쓴다** (ADR-11 개정 2026-10-01). 각속도 산포가 82% 라
+    «몇 초 돌면 몇 도» 로 쓰면 틀리지만, 매 틱 측위 방위로 오차를 다시 재므로 산포가 결과를
+    바꾸지 않는다 — ADR-40 조준과 같은 근거다. 예전의 «후진 호» 구간은 회전 임계가 후진
+    임계보다 작아 닿지 않으므로 지웠다(2026-10-01 집 지도 시뮬: 후진·전진 호로 180° 를 도는
+    동안 20~60초 맴돌며 가구 10cm 안까지 가서 E-STOP).
+
+    조향 부호는 오차 부호를 따른다 — `angle` 은 각속도 명령이라 양수가 반시계다
+    (`docs/PROTOCOL.md` 부호 규약). 호 구간은 크게 틀어질수록 보폭을 줄여
+    (`TURN_STEP_REDUCTION`) 호 반경을 줄인다.
     """
     error = wrap_pi(heading_error_rad)
     if abs(error) <= params.heading_tolerance_rad:
         return Steering(params.step_mm, 0.0)
 
     direction = 1.0 if error > 0 else -1.0
-    if abs(error) <= params.reverse_threshold_rad:
-        # 오차에 비례해 조향을 키우고 같은 비율로 보폭을 줄인다.
-        scale = min(1.0, abs(error) / params.reverse_threshold_rad)
-        return Steering(
-            params.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
-            direction * params.turn_deg * scale,
-        )
-    # 조향 부호는 전진과 같다 — 요는 `angle` 단독으로 정해진다.
-    return Steering(-params.step_mm * (1.0 - TURN_STEP_REDUCTION), direction * params.turn_deg)
+    if spinning or abs(error) > params.spin_threshold_rad:
+        return Steering(0.0, direction * params.spin_turn_deg)
+    # 오차에 비례해 조향을 키우고 같은 비율로 보폭을 줄인다.
+    scale = min(1.0, abs(error) / params.reverse_threshold_rad)
+    return Steering(
+        params.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
+        direction * params.turn_deg * scale,
+    )
 
 
 @dataclass
@@ -184,9 +203,9 @@ class PatrolStats:
 class PatrolController:
     """계획 → 의도. 소켓도 실시각도 만지지 않는다.
 
-    운용 루프(`tools/ops/patrol_run.py`)가 한 스레드에서 ① `observe_scan`·`observe_telemetry`
-    로 입력을 넣고 ② `step(now_ms)` 가 돌려준 즉시 전문(`ESTOP`)을 바로 보내고
-    ③ `commander.tick(now_ms)` 의 주기 전문을 10Hz 로 보낸다.
+    운용 루프(`tools/ops/patrol_run.py`)가 한 스레드에서 ① 지도 자세·스캔·텔레메트리를
+    넣고 ② `step(now_ms)`가 돌려준 즉시 전문(`ESTOP`)을 바로 보내고
+    ③ `commander.tick(now_ms)`의 주기 전문을 10Hz로 보낸다.
     """
 
     commander: Commander
@@ -224,11 +243,16 @@ class PatrolController:
     _pending_hit: tuple[float, float] | None = None
     _pending_count: int = 0
     _last_pose_ms: int | None = None
+    _last_scan_ms: int | None = None
+    _stopped_since_ms: int | None = None
+    _last_sent_moving: bool = False
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
     _reverify_attempts: dict[str, int] = field(default_factory=dict)
     _reset_requested: bool = False
     _halt_reason: str = ""
+    #: 직전 추종 틱이 제자리 회전이었나 (`steering_for(spinning=)`).
+    _spinning: bool = False
     _edge: EdgeTrigger = field(default_factory=EdgeTrigger)
     _obstacles: list[tuple[float, float]] = field(default_factory=list)
     #: 아직 아무도 꺼내 가지 않은 신규 장애물 확정 (`take_new_obstacles`).
@@ -289,6 +313,8 @@ class PatrolController:
             last_cmd_age_ms=getattr(reading, "last_cmd_age_ms", None),
             last_seen_ms=now_ms,
         )
+        if self.safety.obstacle_active or self.safety.latched:
+            self._note_stopped(now_ms)
         age = self.safety.last_cmd_age_ms
         if age is not None and age > self.drive.cmd_timeout_ms:
             # 보내는 명령을 로봇이 받아들이지 않고 있다 — 조용한 고장이라 경고한다.
@@ -301,9 +327,60 @@ class PatrolController:
         return float(value) if isinstance(value, int | float) else None
 
     # ── 입력: 스캔 ────────────────────────────────────────────
-    def observe_scan(self, scan: Scan, now_ms: int) -> None:
-        """스캔 하나로 측위하고 신규 장애물을 확인한다."""
+    def observe_map_pose(self, pose: Pose, now_ms: int) -> None:
+        """외부 측위가 낸 ``map -> base_link`` 자세를 반영한다 (WBS 5.4.4)."""
+        if not all(math.isfinite(value) for value in pose):
+            return
+        self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
+        self._last_pose_ms = now_ms
+        # 재개는 step의 전체 관문에서 한다. 새 tf 하나가 스캔 두절이나
+        # 미관측 셀 정지를 해제해서는 안 된다.
+
+    def note_sent(self, lines: Iterable[str], sent_ms: int) -> None:
+        """성공적으로 보낸 명령의 시각을 받는다. 의도를 세운 시각과 구분한다.
+
+        송신 성공은 기기의 물리 정지를 증명하지 않는다. 기존 안정 대기와
+        온보드 정지 보고를 함께 쓰며, 실제 전달 지연은 실기 검증 대상이다.
+        """
+        for line in lines:
+            message = json.loads(line)
+            if message["type"] == "MOVE":
+                self._last_sent_moving = True
+                self._stopped_since_ms = None
+            elif message["type"] in ("STOP", "ESTOP", "RESET_SAFE"):
+                self._note_stopped(sent_ms)
+
+    def _note_stopped(self, now_ms: int) -> None:
+        self._last_sent_moving = False
+        if self._stopped_since_ms is None:
+            self._stopped_since_ms = now_ms
+
+    def _note_scan(self, scan: Scan, now_ms: int) -> None:
+        # 빈 전문/범위 밖 점만 있는 전문은 관측을 복구하지 않는다.
+        if any(
+            math.isfinite(angle)
+            and math.isfinite(distance)
+            and self.range_m[0] <= distance <= self.range_m[1]
+            for angle, distance in scan.points
+        ):
+            self._last_scan_ms = now_ms
+
+    def observe_obstacle_scan(self, scan: Scan, now_ms: int) -> None:
+        """외부 측위 모드에서 스캔을 신규 장애물 확인에만 쓴다.
+
+        오래된 자세에 빔을 투영하면 정상 벽을 새 장애물로 찍으므로 유효한 최근
+        자세가 있을 때만 지도에 반영한다. 즉시 위험 판정은 ``guard_scan`` 이 별도다.
+        """
         self.stats.scans += 1
+        self._note_scan(scan, now_ms)
+        if self._last_pose_ms is None or now_ms - self._last_pose_ms > self.drive.pose_timeout_ms:
+            return
+        self._check_new_obstacle(scan)
+
+    def observe_scan(self, scan: Scan, now_ms: int) -> None:
+        """내장 스캔 정합(시뮬레이션용)으로 측위하고 신규 장애물을 확인한다."""
+        self.stats.scans += 1
+        self._note_scan(scan, now_ms)
         points = preprocess(scan.points, *self.range_m)
         result = match(
             self.grid,
@@ -316,11 +393,7 @@ class PatrolController:
         if result.skipped or result.score == 0:
             # 정합 실패 = 측위 상실 (FR-6.6). 점수 0 인 후보로 자세를 갱신하지 않는다.
             return
-        self.pose = result.pose
-        self._last_pose_ms = now_ms
-        if self.phase is Phase.LOST:
-            LOG.info("pose_reacquired", score=result.score)
-            self.phase = Phase.PLANNING
+        self.observe_map_pose(result.pose, now_ms)
         self._check_new_obstacle(scan)
 
     def _consume_yaw_delta(self) -> float:
@@ -379,6 +452,7 @@ class PatrolController:
         """`ESTOP` 전문을 돌려준다. 호출자가 즉시 보낸다."""
         self.phase = Phase.HALTED
         self._halt_reason = reason
+        self._spinning = False
         self.stats.estops += 1
         self.plan = Plan(None)
         LOG.error("estop", reason=reason)
@@ -430,7 +504,12 @@ class PatrolController:
         if urgent:
             return urgent
 
+        was_halted = self.phase is Phase.HALTED
         self._settle_reset()
+        if was_halted and self.phase is not Phase.HALTED:
+            # 래치 해제와 측위 복구는 별개다. 위 _guard는 HALTED에서 조기에
+            # 돌아오므로 해제가 확인된 같은 틱에도 출발 관문을 적용한다.
+            self._guard_localization(now_ms)
         if self.safety.last_seen_ms is None:
             # 첫 텔레메트리로 링크가 확인될 때까지 정지한다.
             self.commander.halt()
@@ -519,18 +598,55 @@ class PatrolController:
         if self.phase in (Phase.IDLE, Phase.HALTED):
             return ()
 
+        return self._guard_localization(now_ms)
+
+    def _guard_localization(self, now_ms: int) -> tuple[str, ...]:
         # ③ 측위 상실 — `ESTOP` 이 아니라 `LOST` 다 (FR-6.6)
         stale = self._last_pose_ms is None or (
             now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
         )
         if stale:
-            if self.phase is not Phase.LOST:
-                self.stats.lost += 1
-                LOG.warning("pose_stale", limit_ms=self.drive.pose_timeout_ms)
-            self.phase = Phase.LOST
+            self._lose("pose_stale")
             return ()
 
+        # A*는 막힌 출발 셀에서 빠져나오는 경로도 허용한다. 측위가 미지/지도 밖인
+        # 경우까지 그 예외를 적용하면 안 되므로 컨트롤러에서 먼저 거절한다.
+        row, col = self.grid.to_cell(self.pose[0], self.pose[1])
+        height, width = self.grid.cells.shape
+        if not (0 <= row < height and 0 <= col < width) or (
+            self.grid.cells[row, col] > self.plan_params.free_thresh
+        ):
+            self._lose("pose_outside_observed_free_space")
+            return ()
+
+        # 이동 중에는 스캔이 게이팅되어 없어도 된다. 최초 출발/다시 멈춘 뒤에는
+        # 안정화 이후 관측을 요구한다. MOVE 중의 오래된 스캔으로는 재출발 못 한다.
+        if not self._last_sent_moving:
+            stopped = self._stopped_since_ms
+            scan_time = self._last_scan_ms
+            if (
+                stopped is None
+                or scan_time is None
+                or (
+                    scan_time < stopped + self.drive.settle_delay_ms
+                    or not 0 <= now_ms - scan_time <= self.drive.scan_stall_timeout_ms
+                )
+            ):
+                self._lose("stationary_scan_unavailable")
+                return ()
+
+        if self.phase is Phase.LOST:
+            LOG.info("localization_reacquired")
+            self.phase = Phase.PLANNING
+        self._edge.forget("localization_problem")
         return ()
+
+    def _lose(self, reason: str) -> None:
+        if self.phase is not Phase.LOST:
+            self.stats.lost += 1
+        if self._edge.changed("localization_problem", reason):
+            LOG.warning(reason)
+        self.phase = Phase.LOST
 
     def guard_scan(self, scan: Scan) -> str | None:
         """LiDAR 전방 위험거리 판정 — 온보드 초음파 판정을 대체하지 않고 더하는 호스트측 판정이다.
@@ -566,6 +682,8 @@ class PatrolController:
         self._follow()
 
     def _replan(self) -> None:
+        # 새 경로는 새 방위 오차에서 시작한다 — 지난 경로의 회전을 이어 가지 않는다.
+        self._spinning = False
         start = (self.pose[0], self.pose[1])
         candidates = {label: self.zones.xy(label) for label in self.zones.labels}
 
@@ -643,12 +761,21 @@ class PatrolController:
 
         waypoint = self._current_waypoint()
         heading = math.atan2(waypoint[1] - self.pose[1], waypoint[0] - self.pose[0])
-        steering = steering_for(heading - self.pose[2], self.drive)
+        steering = steering_for(heading - self.pose[2], self.drive, spinning=self._spinning)
+        spinning = steering.step_mm == 0.0 and steering.angle_deg != 0.0
+        if self._edge.changed("spin", spinning) and spinning:
+            LOG.info(
+                "spin_in_place",
+                error_deg=round(rad_to_deg(wrap_pi(heading - self.pose[2])), 1),
+                target=self.plan.label,
+            )
+        self._spinning = spinning
         # 규약 범위는 인코더가 자르지만(규칙 ②), 잘려서 나가는 것을 로그로
         # 보고 싶지는 않으므로 여기서 설정값 안에 둔다.
+        turn_limit = abs(self.drive.spin_turn_deg if spinning else self.drive.turn_deg)
         self.commander.drive(
             clamp(steering.step_mm, -abs(self.drive.step_mm), abs(self.drive.step_mm)),
-            clamp(steering.angle_deg, -abs(self.drive.turn_deg), abs(self.drive.turn_deg)),
+            clamp(steering.angle_deg, -turn_limit, turn_limit),
         )
 
     def _current_waypoint(self) -> tuple[float, float]:
@@ -665,6 +792,7 @@ class PatrolController:
 
     def _arrive(self, label: str) -> None:
         self.commander.halt()
+        self._spinning = False
         self.phase = Phase.INSPECT
         self.visited = self.visited | {label}
         self.stats.zones_visited += 1
@@ -715,12 +843,16 @@ def drive_params_from_config(config: Mapping[str, Any]) -> DriveParams:
         reverse_mm=float(gait["reverse_distance_mm"]),
         heading_tolerance_rad=deg_to_rad(float(lidar["heading_tolerance_deg"])),
         reverse_threshold_rad=deg_to_rad(float(lidar["reverse_threshold_deg"])),
+        spin_threshold_rad=deg_to_rad(float(lidar["spin_threshold_deg"])),
+        spin_turn_deg=float(lidar["spin_turn_deg"]),
         arrival_radius_m=float(zones["arrival_radius_mm"]) / 1000.0,
         waypoint_radius_m=float(lidar["waypoint_radius_mm"]) / 1000.0,
         lidar_estop_m=float(lidar["estop_distance_mm"]) / 1000.0,
         link_loss_ms=int(safety["link_loss_failsafe_ms"]),
         cmd_timeout_ms=int(safety["cmd_timeout_ms"]),
         pose_timeout_ms=int(localization["pose_timeout_ms"]),
+        scan_stall_timeout_ms=int(lidar["scan_stall_timeout_ms"]),
+        settle_delay_ms=int(localization["settle_delay_ms"]),
     )
 
 

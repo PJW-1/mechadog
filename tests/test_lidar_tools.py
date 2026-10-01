@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import socket
 import time
 from pathlib import Path
@@ -104,6 +105,21 @@ def test_scan_port_must_be_a_port_number(value: object) -> None:
         settings.validate_section(section)
 
 
+def test_spin_threshold_inside_heading_tolerance_is_refused() -> None:
+    """제자리 회전 임계가 직진 허용 오차 이하면 정렬 직후 다시 돈다 (ADR-11 개정)."""
+    section = dict(settings.read_lidar_section())
+    section["spin_threshold_deg"] = section["heading_tolerance_deg"]
+    with pytest.raises(ConfigError, match="spin_threshold_deg"):
+        settings.validate_section(section)
+
+
+def test_spin_turn_beyond_protocol_limit_is_refused() -> None:
+    section = dict(settings.read_lidar_section())
+    section["spin_turn_deg"] = 45
+    with pytest.raises(ConfigError, match="spin_turn_deg"):
+        settings.validate_section(section)
+
+
 def test_inverted_range_is_refused() -> None:
     section = dict(settings.read_lidar_section())
     section["range_min_mm"], section["range_max_mm"] = 8000, 120
@@ -162,6 +178,27 @@ def test_scan_forward_enabled_must_be_a_bool() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("value", [0, 70000, "5205", True])
+def test_map_pose_port_must_be_a_valid_integer(value: object) -> None:
+    section = dict(settings.read_lidar_section())
+    section["map_pose_port"] = value
+    with pytest.raises(ConfigError, match="map_pose_port"):
+        settings.validate_section(section)
+
+
+@pytest.mark.parametrize("other", ["scan_port", "scan_forward_port", "odom_port"])
+def test_map_pose_port_must_not_collide(other: str) -> None:
+    section = dict(settings.read_lidar_section())
+    section["map_pose_port"] = section[other]
+    with pytest.raises(ConfigError, match="map_pose_port"):
+        settings.validate_section(section)
+
+
+def test_map_pose_port_is_reserved_for_ros2_return() -> None:
+    section = settings.read_lidar_section()
+    assert section["map_pose_port"] == 5205
+
+
 def test_simulation_runs_even_when_track_is_none(lidar_config: dict) -> None:
     """⚠️ Phase 1 표준 구성에는 LiDAR 가 없다 (CONTRIBUTING 1절).
 
@@ -209,9 +246,20 @@ def test_parameter_builders_read_from_the_config(lidar_config: dict) -> None:
 
 
 def test_move_with_zero_step_does_not_move() -> None:
+    """제자리 회전 모형이 꺼져 있으면(`spin_deg_per_sec=0`) `step=0` 은 아무것도 바꾸지 않는다."""
     params = simulation.SimParams(200.0, 25.0, 0.0, 0.0, 90, 8.0)
     pose = (1.0, 2.0, 0.5)
     assert simulation.apply_move(pose, 0.0, 20.0, 0.1, params) == pose
+
+
+def test_zero_step_spins_in_place() -> None:
+    """`step=0 angle=±30` 은 **자리에서** 실측 각속도로 돈다 (2026-09-22 · 7.37 도/s · ADR-11)."""
+    params = simulation.SimParams(200.0, 25.0, 0.0, 0.0, 90, 8.0, spin_deg_per_sec=7.37)
+    x, y, yaw = simulation.apply_move((1.0, 2.0, 0.0), 0.0, 30.0, 1.0, params)
+    assert (x, y) == (1.0, 2.0), "자리를 옮기지 않는다"
+    assert yaw == pytest.approx(math.radians(7.37))
+    _, _, cw = simulation.apply_move((1.0, 2.0, 0.0), 0.0, -30.0, 1.0, params)
+    assert cw == pytest.approx(-math.radians(7.37)), "angle 음수는 시계 방향"
 
 
 def test_forward_move_advances_along_the_heading() -> None:
@@ -272,6 +320,7 @@ def test_sim_params_come_from_the_config(lidar_config: dict) -> None:
     params = simulation.sim_params_from_config(lidar_config, 8.0)
     assert params.beams == lidar_config["lidar"]["sim"]["beams"]
     assert params.range_max_m == 8.0
+    assert params.spin_deg_per_sec == lidar_config["lidar"]["sim"]["spin_deg_per_sec"]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -553,6 +602,15 @@ def test_build_controller_uses_the_configured_command_rate(
     expected = round(1000 / float(lidar_config["network"]["cmd_rate_hz"]))
     assert controller.commander.period_ms == expected
     assert len(controller.zones) == 3
+
+
+def test_patrol_stationary_scan_limits_come_from_the_existing_config(
+    tmp_path: Path, lidar_config: dict
+) -> None:
+    seed_maps(tmp_path)
+    controller = patrol_run.build_controller(lidar_config, tmp_path, seed=1)
+    assert controller.drive.scan_stall_timeout_ms == lidar_config["lidar"]["scan_stall_timeout_ms"]
+    assert controller.drive.settle_delay_ms == lidar_config["localization"]["settle_delay_ms"]
 
 
 def test_simulated_patrol_emits_only_valid_protocol_lines(

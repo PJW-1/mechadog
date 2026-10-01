@@ -46,6 +46,9 @@ class SimParams:
     dropout_rate: float
     beams: int
     range_max_m: float
+    #: `step=0` 제자리 회전의 각속도(`angle=±30` 기준, 도/s). 0 이면 제자리에서 돌지 않는다
+    #: (2026-10-01 전의 모형). 설정은 2026-09-22 실측 평균을 쓴다 (ADR-11).
+    spin_deg_per_sec: float = 0.0
 
 
 def ray_hit(
@@ -103,7 +106,11 @@ def apply_move(
     """
     x, y, yaw = pose
     if step_mm == 0.0:
-        return pose
+        # 제자리 회전 — 실측은 `angle=±30` 한 점뿐이라 각도에 비례한다고 둔다(가정).
+        if angle_deg == 0.0 or params.spin_deg_per_sec <= 0.0:
+            return pose
+        rate = math.radians(params.spin_deg_per_sec) * (angle_deg / 30.0)
+        return x, y, wrap_pi(yaw + rate * dt_s)
     # 규약 상한 100mm 를 명목 속도의 기준 보폭으로 둔다.
     speed_m_s = params.forward_mm_per_sec / 1000.0 * (step_mm / 100.0)
     # 요 변화는 `angle` 단독으로 정해진다(`step` 부호를 곱하지 않는다). 30deg 는 조향 상한이다.
@@ -146,4 +153,5 @@ def sim_params_from_config(config: dict[str, Any], range_max_m: float) -> SimPar
         dropout_rate=float(sim["dropout_rate"]),
         beams=int(sim["beams"]),
         range_max_m=range_max_m,
+        spin_deg_per_sec=float(sim["spin_deg_per_sec"]),
     )

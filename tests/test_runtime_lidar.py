@@ -234,7 +234,8 @@ def _raw(device_id: str, dist_mm: int, seq: int = 1) -> bytes:
             "type": "SCAN",
             "device_id": device_id,
             "boot_id": "b",
-            "points": [[0.0, dist_mm]],
+            # 한 바퀴(5° 간격)여야 측위 칸에 들어간다 — `RevolutionAssembler`. 0° 만 시험 거리다.
+            "points": [[0.0, dist_mm]] + [[float(d), 3000] for d in range(5, 360, 5)],
         }
     ).encode("utf-8")
 
@@ -683,3 +684,46 @@ def test_unmeasured_unit_gets_no_odom_sender(config: dict) -> None:
 
     unmeasured = {k: v for k, v in config.items() if k != "gait_calibration"}
     assert open_odom_sender(unmeasured, DEVICE) is None
+
+
+def test_partial_packets_are_assembled_into_one_revolution() -> None:
+    """실기 중계는 한 바퀴를 약 7조각으로 보낸다 — 조각 하나로는 측위 칸이 채워지지 않는다."""
+    feed = _feed(False, lambda: None)
+
+    def part(seq: int, start: int) -> bytes:
+        return json.dumps(
+            {
+                "seq": seq,
+                "ts": 1,
+                "type": "SCAN",
+                "device_id": "lidar-01",
+                "boot_id": "b",
+                "points": [[float(d), 2000] for d in range(start, start + 52)],
+            }
+        ).encode("utf-8")
+
+    for i in range(6):
+        feed.handle(part(i + 1, i * 52))
+        assert feed.take() is None, f"조각 {i + 1}개로는 한 바퀴가 아니다"
+    feed.handle(part(7, 6 * 52))
+    revolution = feed.take()
+    assert revolution is not None
+    assert len(revolution.points) == 7 * 52
+    assert feed.revolutions == (1, 0)
+
+
+def test_feed_hands_raw_datagrams_to_the_recorder() -> None:
+    seen: list[tuple[bytes, int]] = []
+    feed = LidarFeed(
+        lidar_device="lidar-01",
+        decoder=ScanDecoder(),
+        forward_fan_rad=0.35,
+        estop_m=0.1,
+        armed=lambda: False,
+        on_danger=lambda: None,
+        on_raw=lambda raw, at: seen.append((raw, at)),
+        clock=lambda: 1234,
+    )
+    raw = _raw("lidar-01", 2000)
+    feed.handle(raw)
+    assert seen == [(raw, 1234)], "디코드 전 원본 그대로, 받은 시각과 함께"

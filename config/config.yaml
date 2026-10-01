@@ -481,10 +481,15 @@ lidar:
   tracking_margin_mm: 100
   path_simplify_mm: 80         # 웨이포인트 단순화 허용 오차
   waypoint_radius_mm: 100      # 중간 웨이포인트 통과 판정 (도착은 zones.arrival_radius_mm)
-  # 방위 오차가 이 안이면 직진한다. 좁히면 호 조향밖에 없는 로봇이 진동한다.
+  # 방위 오차가 이 안이면 직진한다. 좁히면 진동한다.
   heading_tolerance_deg: 8
-  # 이 이상 틀어져 있으면 전진 호로 돌아설 수 없어 후진 호로 바꾼다 (ADR-11).
+  # 호 조향의 비례 기준 — 오차/이 값 만큼 조향을 키우고 보폭을 줄인다 (`patrol.steering_for`).
   reverse_threshold_deg: 90
+  # 방위 오차가 이보다 크면 걷지 않고 **제자리에서 돌아** 맞춘 뒤 걷는다 (ADR-11 개정 2026-10-01).
+  # 측위 방위를 매 틱 보는 폐루프라 각속도 산포(82%)가 결과를 바꾸지 않는다.
+  spin_threshold_deg: 45
+  # 제자리 회전 지시의 `MOVE angle`. 실측(2026-09-22)이 ±30 한 점뿐이라 그 값을 쓴다 — 약 7.4 도/s.
+  spin_turn_deg: 30
 
   # ── 신규 장애물 ──────────────────────────────────────────────
   # 이 거리 안의 빔만 후보로 본다. 측위 오차가 거리에 비례하므로 멀리서
@@ -512,11 +517,17 @@ lidar:
   # 텔레메트리 10Hz 의 5주기이며 WBS 5.4.4 의 «위치 500ms 미갱신» 과 같은 값이다.
   odom_imu_stale_ms: 500
 
+  # ── ROS2 지도 측위 반환 (WBS 5.4.4 · 컨테이너 → Windows 순찰기) ──
+  # slam_toolbox 의 map->base_link 를 MAP_POSE 전문으로 받는다. 스캔·ODOM·기존
+  # lidar_live_map 입력과 겹치지 않는 포트여야 한다.
+  map_pose_port: 5205
+
   # ── 시뮬레이션 (실기 연결 전 검증 · WBS 12절) ─────────────────
   # 실측이 아닌 명목값이다 — `gait_calibration` 이 있으면 그것을 쓴다.
   sim:
     forward_mm_per_sec: 200       # 명목. 실측은 gait_calibration 소관
     turn_deg_per_sec: 25          # 명목
+    spin_deg_per_sec: 7.37        # 제자리 회전 `angle=±30` 실측 평균 (2026-09-22 · ADR-11)
     scan_noise_mm: 10
     dropout_rate: 0.02            # 빔 유실률
     beams: 360
