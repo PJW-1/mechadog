@@ -356,6 +356,23 @@ def test_hazard_zones_must_be_patrol_zones(cfg: dict) -> None:
         validate_base_config(broken)
 
 
+@pytest.mark.parametrize("ids", ["missing", "A", []])
+def test_patrol_zone_ids_must_be_a_non_empty_list(cfg: dict, ids: object) -> None:
+    """`zones.ids` 가 없으면 구역 판독·지도 적재가 `KeyError` 로 기동 중에 죽는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["zones"]["hazard_ids"] = []
+    if ids == "missing":
+        del broken["zones"]["ids"]
+    else:
+        broken["zones"]["ids"] = ids
+    with pytest.raises(ConfigError, match="zones.ids"):
+        validate_base_config(broken)
+
+
 def test_reconnect_backoff_is_increasing(cfg: dict) -> None:
     """지수 백오프는 단조 증가해야 한다 (FR-5.3)."""
     backoff = cfg["vision"]["reconnect_backoff_s"]

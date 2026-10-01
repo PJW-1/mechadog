@@ -437,7 +437,9 @@ class ZoneInspector:
         # ⚠️ **물건 변화를 확정했어도 남은 판독을 기다린다.** 안 기다리면 같은 방문의
         # 위험물·넘어짐 두 번째 «예» 가 방문이 끝난 뒤에 와서 버려진다.
         if departed:
-            self._wait_until = None  # 늦게 온 판독은 이 방문의 확정에 섞이지 않는다
+            # 이탈을 본 틱 뒤에 온 판독은 이 방문의 확정에 섞이지 않는다. 이탈과 그 틱 사이에
+            # 끝난 판독은 방문 중에 건 것이라 같은 틱의 `_take_reading` 이 이미 셌다.
+            self._wait_until = None
         elif self._wait_until is not None:
             if now_ms < self._wait_until:
                 return
