@@ -283,6 +283,11 @@ def test_foreign_lidar_scan_is_dropped() -> None:
 
 
 # ── `--lidar-device` 가 없으면 아무것도 바뀌지 않는다 ─────────
+def _lidar_unit(config: dict) -> dict:
+    """`localization.track == lidar` 인 기체 — `--lidar-device` 의 기동 관문을 넘는다 (ADR-18)."""
+    return dict(config, localization=dict(config["localization"], track="lidar"))
+
+
 def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict:
     import host.runtime as runtime_module
 
@@ -369,7 +374,7 @@ def test_cli_without_lidar_device_keeps_the_fixed_patrol(
 def test_cli_lidar_device_wires_navigator_and_feed(
     config: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    captured = _cli(config, monkeypatch, ["--lidar-device", "lidar-01"])
+    captured = _cli(_lidar_unit(config), monkeypatch, ["--lidar-device", "lidar-01"])
     assert captured["code"] == 0
     assert captured["navigator_factory"] is not None
     [(lidar_device, feed)] = captured["feeds"]
@@ -384,7 +389,7 @@ def test_cli_opens_odom_after_logging_is_set_up(
     config: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """실측 없는 기체의 `odometry_unavailable` 이 JSONL 에 남으려면 로거가 먼저 서야 한다."""
-    captured = _cli(config, monkeypatch, ["--lidar-device", "lidar-01"])
+    captured = _cli(_lidar_unit(config), monkeypatch, ["--lidar-device", "lidar-01"])
     assert captured["order"] == ["logging", "odom"]
 
 
@@ -398,7 +403,7 @@ def test_cli_lidar_device_with_an_unresolvable_ros2_host_refuses_to_start(
     import host.telemetry.ros2_relay as relay
 
     bad = "no-such-host.invalid"
-    config = dict(config, lidar=dict(config["lidar"], **{key: bad}))
+    config = dict(_lidar_unit(config), lidar=dict(config["lidar"], **{key: bad}))
     real = socket.gethostbyname
 
     def resolve(name: str) -> str:
@@ -412,6 +417,39 @@ def test_cli_lidar_device_with_an_unresolvable_ros2_host_refuses_to_start(
     assert captured["feeds"] == [], "수신 소켓을 열기 전에 거부한다"
 
 
+def test_cli_lidar_device_on_a_unit_without_the_lidar_track_refuses_to_start(
+    config: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`patrol_run` 과 같은 관문 — 실기 LiDAR 순찰은 `localization.track == lidar` 기체만 (ADR-18)."""
+    assert config["localization"]["track"] != "lidar"
+    captured = _cli(config, monkeypatch, ["--lidar-device", "lidar-01"])
+    assert captured["code"] == 2
+    assert captured["feeds"] == []
+    assert captured["odom_opened"] == []
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        pytest.param({"odom_rate_hz": 0}, id="zero-odom-rate"),
+        pytest.param({"scan_forward_port": "5203"}, id="non-int-forward-port"),
+        pytest.param(None, id="missing-key"),
+    ],
+)
+def test_cli_lidar_device_with_a_bad_lidar_section_refuses_to_start(
+    config: dict, monkeypatch: pytest.MonkeyPatch, broken: dict | None
+) -> None:
+    """`lidar` 절을 `patrol_run` 처럼 전수 검사한다 — 키 누락·0 주기가 traceback 으로 새지 않는다."""
+    lidar = dict(config["lidar"])
+    if broken is None:
+        del lidar["odom_port"]
+    else:
+        lidar.update(broken)
+    captured = _cli(dict(_lidar_unit(config), lidar=lidar), monkeypatch, ["--lidar-device", "x"])
+    assert captured["code"] == 2
+    assert captured["feeds"] == []
+
+
 def test_cli_lidar_device_without_zones_refuses_to_start(
     config: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -420,7 +458,7 @@ def test_cli_lidar_device_without_zones_refuses_to_start(
     def no_zones(_cfg, _maps):
         raise ConfigError("구역 좌표가 없다")
 
-    monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
+    monkeypatch.setattr(runtime_module, "load_config", lambda _device: _lidar_unit(config))
     monkeypatch.setattr(runtime_module, "load_patrol_map", no_zones)
     assert runtime_module.main(["--device", DEVICE, "--lidar-device", "lidar-01"]) == 2
 
@@ -434,7 +472,7 @@ def test_cli_lidar_device_with_a_broken_map_refuses_to_start(
     def broken(_cfg, _maps):
         raise json.JSONDecodeError("Expecting value", "", 0)
 
-    monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
+    monkeypatch.setattr(runtime_module, "load_config", lambda _device: _lidar_unit(config))
     monkeypatch.setattr(runtime_module, "load_patrol_map", broken)
     assert runtime_module.main(["--device", DEVICE, "--lidar-device", "lidar-01"]) == 2
 
