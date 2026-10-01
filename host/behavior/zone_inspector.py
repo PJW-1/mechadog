@@ -416,11 +416,13 @@ class ZoneInspector:
         """방문을 끝낸다 — 결론은 여기 한 곳에서 종류별로 낸다 (ADR-41 · ADR-42).
 
         넘어짐·통로 막힘만 `zone_changed` → `ZONE_CHANGED`(L3), 반출은 `zone_notice`,
-        화기 위험물은 `hazard_notice`, 반입은 로그만 남긴다. 물건 변화를 확정하지 않았고
-        판독이 남았으면 `budget_ms` 까지 결론을 미룬다.
+        화기 위험물은 `hazard_notice`, 반입은 로그만 남긴다. 판독이 남았으면 `budget_ms`
+        까지 결론을 미룬다.
         """
         self._done = True
-        if self._wait_until is not None and not self._visit_found:
+        # ⚠️ **물건 변화를 확정했어도 남은 판독을 기다린다.** 안 기다리면 같은 방문의
+        # 위험물·넘어짐 두 번째 «예» 가 방문이 끝난 뒤에 와서 버려진다.
+        if self._wait_until is not None:
             if now_ms < self._wait_until:
                 return
             # 상한 초과는 기능 저하다. 결과가 늦게 오면 그때 건 구역 이름으로 남는다.
