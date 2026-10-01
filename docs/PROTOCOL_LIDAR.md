@@ -180,7 +180,7 @@
 `test_lidar_scan_port_differs_from_the_other_links` 가 대조한다.
 
 `lidar.scan_forward_port`(5201 의 유일한 수신자인 런타임 `LidarFeed` 또는
-`tools/ops/patrol_run.py` 가 바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
+런타임 `--lidar-device` 또는 `tools/ops/patrol_run.py` 가 바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
 `host/slam/settings.py`·`host/common/config.py` 의 설정 검증이 이를 거부한다
 (`docker/ros2/README.md` 「남은 연결」 절).
 
@@ -301,7 +301,7 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
   유효하다고 내보내지 않는다.**
 
 `gait_calibration` 이 없는 기체는 오도메트리를 만들지 않는다. 전문 자체가
-나가지 않고 순찰기가 `odometry_unavailable` 오류를 남긴다.
+나가지 않고 런타임과 `tools/ops/patrol_run.py` 가 `odometry_unavailable` 오류를 남긴다.
 
 ### 로봇의 정지 보고가 명령보다 우선한다
 

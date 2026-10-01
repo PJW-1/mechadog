@@ -10,7 +10,8 @@
 다시 켜면 `seq` 가 1 로 돌아오는 것도 같다 — 그래서 `boot_id` 는 **호스트 프로세스
 한 번의 실행**이다. 점 배열이 없으므로 ⑥ 은 없다.
 
-**이 모듈은 소켓을 만지지 않는다.** 실제 송신은 `tools/ops/patrol_run.py`, 수신은
+**이 모듈은 소켓을 만지지 않는다.** 실제 송신은 `host/telemetry/ros2_relay.py` 의 `OdomSender`
+(호출자는 런타임과 `tools/ops/patrol_run.py`), 수신은
 `docker/ros2/odom_bridge.py` 가 한다.
 """
 

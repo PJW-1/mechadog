@@ -286,7 +286,7 @@ def test_foreign_lidar_scan_is_dropped() -> None:
 def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict:
     import host.runtime as runtime_module
 
-    captured: dict = {"feeds": [], "odom_opened": []}
+    captured: dict = {"feeds": [], "odom_opened": [], "order": []}
 
     class CliRuntime:
         telemetry_port = 5101
@@ -326,7 +326,9 @@ def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict
         return feed
 
     monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
-    monkeypatch.setattr(runtime_module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(
+        runtime_module, "setup_logging", lambda *_args, **_kw: captured["order"].append("logging")
+    )
     monkeypatch.setattr(runtime_module, "build_worker", lambda _cfg: FakeVision())
     monkeypatch.setattr(runtime_module, "EventBlackbox", lambda _cfg: object())
     monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
@@ -341,6 +343,7 @@ def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict
 
     def open_odom(_cfg, device_id):
         captured["odom_opened"].append(device_id)
+        captured["order"].append("odom")
         return CliOdom()
 
     monkeypatch.setattr(runtime_module, "open_odom_sender", open_odom)
@@ -375,6 +378,38 @@ def test_cli_lidar_device_wires_navigator_and_feed(
     assert feed.events == ["start", "stop"], "종료 때 닫는다"
     assert captured["odom_opened"] == [DEVICE]
     assert captured["odom"].closed
+
+
+def test_cli_opens_odom_after_logging_is_set_up(
+    config: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실측 없는 기체의 `odometry_unavailable` 이 JSONL 에 남으려면 로거가 먼저 서야 한다."""
+    captured = _cli(config, monkeypatch, ["--lidar-device", "lidar-01"])
+    assert captured["order"] == ["logging", "odom"]
+
+
+@pytest.mark.parametrize("key", ["scan_forward_host", "odom_host"])
+def test_cli_lidar_device_with_an_unresolvable_ros2_host_refuses_to_start(
+    config: dict, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """전달·ODOM 목적지 이름을 못 풀면 traceback 이 아니라 기동 거부(rc 2)다."""
+    import socket
+
+    import host.telemetry.ros2_relay as relay
+
+    bad = "no-such-host.invalid"
+    config = dict(config, lidar=dict(config["lidar"], **{key: bad}))
+    real = socket.gethostbyname
+
+    def resolve(name: str) -> str:
+        if name == bad:
+            raise socket.gaierror(11001, "getaddrinfo failed")
+        return real(name)
+
+    monkeypatch.setattr(relay.socket, "gethostbyname", resolve)
+    captured = _cli(config, monkeypatch, ["--lidar-device", "lidar-01"])
+    assert captured["code"] == 2
+    assert captured["feeds"] == [], "수신 소켓을 열기 전에 거부한다"
 
 
 def test_cli_lidar_device_without_zones_refuses_to_start(

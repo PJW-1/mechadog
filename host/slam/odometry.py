@@ -11,8 +11,9 @@
   ② **방향은 IMU yaw 의 변화량**
 
 **이 모듈은 소켓도 실시각도 만지지 않는다.** 보낸 전문과 그 시각, IMU 값과 수신
-시각만 받는다 (ENGINEERING_GUIDE 2.1 · `lidar_link.py` 와 같은 구조). 실제 배선은
-`tools/ops/patrol_run.py` 가 한다.
+시각만 받는다 (ENGINEERING_GUIDE 2.1 · `lidar_link.py` 와 같은 구조). 실제 송신은
+`host/telemetry/ros2_relay.py` 의 `OdomSender` 가 하고, 호출자는 런타임과
+`tools/ops/patrol_run.py` 둘이다.
 
 명령값을 적분한 추정이며 보정은 `slam_toolbox` 가 정지 스캔으로 한다 (WBS 5.4.3 DoD). IMU 가
 없거나 오래되면 자세를 무효로 낸다.
