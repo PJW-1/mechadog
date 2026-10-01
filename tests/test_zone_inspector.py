@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from host.behavior.actions import register_actions
+from host.behavior.change_detect import Change, ChangeKind
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event, behavior_from_config
 from host.behavior.mission import Mission
@@ -271,3 +272,36 @@ def test_l3_and_hazard_item_in_one_visit_leave_both(cfg: dict, tmp_path: Path) -
     changes = parts.payloads[-1]["changes"]
     assert changes == [{"kind": "fallen_object", "source": "vlm"}], "L3 에 위험물을 섞지 않는다"
     assert parts.behavior.state == "ALERT"
+
+
+def test_a_confirmed_object_change_still_waits_for_the_hazard_reading(
+    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """물건 변화를 확정한 방문도 남은 판독을 기다린다 — 안 기다리면 위험물 경고가 사라진다.
+
+    시연 둘째 바퀴의 C 는 놓아 둔 라이터·보조배터리가 «반입» 으로도 확정될 수 있다.
+    그때 두 번째 «예» 가 늦게 오면 방문이 먼저 끝나 `hazard_notice` 를 잃었다.
+    """
+    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
+    inspector = parts.inspector
+    inspector._baselines.register("C", (), frame_size=(640, 480), now_ms=T0, jpeg=b"")
+    added = Change(ChangeKind.ADDED, "cell phone", 1, None)
+    monkeypatch.setattr(inspector._confirmer, "observe", lambda _zone, _observed: (added,))
+    _arrive(parts)
+    now = T0 + 100
+    inspector.inspect(_frame(), now)  # 첫 판독을 건다
+    now += 100
+    parts.vlm.slot = _reading({"hazard_item": True})
+    inspector.inspect(_frame(), now)  # «예» → 두 번째 판독을 건다
+    assert len(parts.vlm.submitted) == 2
+    parts.vlm.busy = True  # 두 번째 판독이 늦는다
+    for _ in range(parts.visit_frames):
+        now += 100
+        inspector.inspect(_frame(), now)
+    assert parts.behavior.state == "ZONE_INSPECT", "판독이 남았으면 방문을 끝내지 않는다"
+    parts.vlm.busy = False
+    parts.vlm.slot = _reading({"hazard_item": True})
+    now += 100
+    inspector.inspect(_frame(), now)
+    assert "hazard_notice" in parts.records
+    assert parts.behavior.state == "PATROL"
