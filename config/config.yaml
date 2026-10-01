@@ -353,6 +353,10 @@ change_detect:
   # 우리 카메라로 벤치 측정(적중률·오경보율, WBS 3.6.4 벤치 관문)을 통과하기 전에는 VLM 경보를
   # 믿지 않는다. 측정이 나쁘면 코드를 고치지 않고 이 값으로 막는다. 꺼도 도착 판독의 로그·기록은 남는다.
   vlm_hazards: false
+  # 화기 위험구역(`zones.hazard_ids`)의 위험물(라이터·보조배터리 `hazard_item`) 판독으로 가벼운
+  # 경고를 낼지. **기본은 켠다** — `vlm_hazards` 와 달리 L3·눈 변화 없이 방송 문장과 관제 화면에만
+  # 남는 가벼운 경고라 오경보의 값이 낮다. 확정은 같은 방문 판독 2회 «예» 다(ADR-41 과 같다).
+  vlm_hazard_items: true
   snapshot_dir: snapshots
   # FR-8.1 "대략 위치" 를 담는 격자 [열, 행]. **성기게 둔다.**
   # 잘게 나누면 로봇이 몇 cm 달리 선 것만으로 같은 물건이 다른 칸에 잡혀
@@ -363,9 +367,12 @@ change_detect:
 # 구역은 지도 좌표 앵커(`maps/zones.json` · `tools/ops/zone_select.py`)이고, 도착은 측위 위치가
 # 앵커 반경 안에 드는 것이다. 측위가 필요하므로 Phase 2 이며 localization.track 에 종속된다.
 zones:
-  # FR-7.1 — 시연 규모에 맞춘다. 방 하나에서 하는 온라인 시연에는 2~3개가 적정하고
+  # FR-7.1 — 시연 규모에 맞춘다. 공장 시연 시나리오는 4개(A→B→C→D)를 돈다 (ADR-43).
   # 5개는 화면상 구분이 어렵다.
-  ids: [A, B, C]
+  ids: [A, B, C, D]
+  # 화기 위험구역 — 방문 때 위험물(라이터·보조배터리)을 VLM 으로 판독하는 구역이다
+  # (`change_detect.vlm_hazard_items`). `ids` 의 부분집합이어야 한다.
+  hazard_ids: [C]
   # FR-7.4 — 도착 허용오차(구역의 크기가 아니다). 반경의 두 배를 벗어나야 떠난 것으로 본다.
   arrival_radius_mm: 300
   # 앵커에 바라볼 방향(yaw)이 있으면 `ZONE_INSPECT` 가 제자리에서 돌아 맞춘 뒤 본다 —
@@ -375,7 +382,7 @@ zones:
   # 이 안에 못 맞추면 못 본 방문(`zone_unverified`)으로 순찰에 돌아간다. 실측 6.6~6.8°/s 로
   # 180° 가 약 27초다.
   align_timeout_ms: 30000
-  random_after_first_cycle: true  # FR-7.3
+  random_after_first_cycle: false  # FR-7.3(개정) — 시연 재현성을 위해 매 사이클 설정 순서대로 돈다 (ADR-43)
 
 logging:                # NFR-3④
   level: INFO                 # DEBUG | INFO | WARN | ERROR

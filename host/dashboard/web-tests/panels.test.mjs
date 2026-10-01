@@ -189,6 +189,16 @@ test('live PPE, fall and escalation events are classified and show their evidenc
  chooseFilter(document,'사건 유형',3);assert.equal(document.querySelectorAll('.op-event-row').length,3);
  const titles=[...document.querySelectorAll('.op-event-row')].map(row=>row.textContent).join('|');assert.match(titles,/대응 단계 → L3/);assert.match(titles,/안전 잠금/);assert.match(titles,/쓰러짐 감지/);
 });
+test('light warnings get their own titles and categories (hazard item · path blocked · removal)',()=>{
+ const {store}=setup();store.setDemo(false);
+ const base={state:'PATROL',escalation:'L0',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
+ const hazard=store.ingestLiveEvent({...base,seq:1,ts_ms:1,event:'hazard_notice',judgement:{zone:'C',items:['hazard_item'],source:'vlm'}});
+ assert.equal(hazard.category,'OBJECT');assert.equal(hazard.title,'화기 위험물 경고 · hazard_notice');assert.equal(hazard.zone,'C');
+ const blocked=store.ingestLiveEvent({...base,seq:2,ts_ms:2,event:'path_blocked',judgement:{x:1.2,y:0.4,target:'D',source:'lidar'}});
+ assert.equal(blocked.category,'SAFETY');assert.equal(blocked.title,'통로 막힘 · 우회 · path_blocked');
+ const removed=store.ingestLiveEvent({...base,seq:3,ts_ms:3,event:'zone_notice',judgement:{zone:'B',changes:[]}});
+ assert.equal(removed.category,'OBJECT');assert.equal(removed.title,'물건 반출 경고 · zone_notice');
+});
 test('a confirmed zone change is filed under zones and names grid cells without inventing them (FR-8.3)',()=>{
  const {dom,document,panels,store}=setup();store.setDemo(false);
  const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};

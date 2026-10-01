@@ -1068,13 +1068,13 @@ def test_sound_endpoint_reaches_the_runtime_through_the_real_wiring(cfg, clock):
 
 
 def _zone_wired(cfg, clock, tmp_path):
-    """설정의 구역(`zones.ids` A·B·C)과 임시 기준 폴더를 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
+    """설정의 구역(`zones.ids` A·B·C·D)과 임시 기준 폴더를 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
     from copy import deepcopy
 
     from host.runtime import Runtime, dashboard_wiring
 
     changed = deepcopy(cfg)
-    assert set(changed["zones"]["ids"]) == {"A", "B", "C"}
+    assert set(changed["zones"]["ids"]) == {"A", "B", "C", "D"}
     changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
     runtime = Runtime(changed, device_id="mechdog-01", clock=clock)
     runtime._zone_inspector._baselines.register("A", [], frame_size=(640, 480), now_ms=1, jpeg=b"a")
