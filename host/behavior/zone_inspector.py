@@ -1,7 +1,7 @@
 """공장 모드의 구역 점검 — 앵커 도착·방향 맞추기·기준 비교·판독·종류별 결론 (FR-8 · ADR-41 · ADR-42).
 
 반출·반입은 연속 2방문(`ChangeConfirmer`)에서, 넘어짐·통로 막힘·화기 위험물은 같은 방문 안
-판독 2회 «예» 에서 확정한다. 넘어짐·통로 막힘만 `ZONE_CHANGED`(L3) 이고 반출과 화기
+판독 2회 «예» 에서 확정한다. 넘어짐만 `ZONE_CHANGED`(L3) 이고 통로 막힘·반출과 화기
 위험구역(`zones.hazard_ids`)의 위험물은 가벼운 경고, 반입은 기록만 한다.
 """
 
@@ -379,7 +379,7 @@ class ZoneInspector:
         LOG.info(
             "zone_reading", zone=zone, degraded=reading.degraded, reason=reading.reason, **answers
         )
-        # 이 판독으로 확정할 수 있는 항목. 두 스위치는 따로다 — L3 인 넘어짐·통로 막힘은
+        # 이 판독으로 확정할 수 있는 항목. 두 스위치는 따로다 — 넘어짐(L3)·통로 막힘(가벼운 경고)은
         # 벤치 관문 전까지 끄고, 가벼운 경고인 화기 위험물은 켜 둔다.
         watched: tuple[str, ...] = ZONE_HAZARDS if self._vlm_hazards else ()
         if self._vlm_hazard_items and zone in self._hazard_ids:
