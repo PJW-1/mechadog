@@ -307,6 +307,34 @@ def test_a_confirmed_object_change_still_waits_for_the_hazard_reading(
     assert parts.behavior.state == "PATROL"
 
 
+# ── 구역 안 통로 막힘 (`blocked_path`) — L3 가 아니라 가벼운 경고 `path_blocked` ──────
+
+
+def test_blocked_path_yes_twice_is_one_light_notice(cfg: dict, tmp_path: Path) -> None:
+    """ADR-41 개정(2026-10-01): 통로 막힘 확정은 L3 없이 `path_blocked`(source vlm) 이다."""
+    parts = _build(cfg, tmp_path)
+    _visit(parts, _reading({"blocked_path": True}), _reading({"blocked_path": True}))
+    assert parts.records == ["zone_reading", "zone_reading", "path_blocked"]
+    assert parts.payloads[-1] == {"zone": "A", "source": "vlm"}
+    assert parts.behavior.state == "PATROL"
+    assert not parts.inspector.alarm_alert
+
+
+def test_blocked_path_and_fallen_object_leave_the_notice_then_l3(cfg: dict, tmp_path: Path) -> None:
+    parts = _build(cfg, tmp_path)
+    both = {"fallen_object": True, "blocked_path": True}
+    _visit(parts, _reading(both), _reading(both))
+    assert parts.records == ["zone_reading", "zone_reading", "path_blocked", "zone_changed"]
+    assert parts.payloads[-1]["changes"] == [{"kind": "fallen_object", "source": "vlm"}]
+    assert parts.behavior.state == "ALERT"
+
+
+def test_blocked_path_switched_off_never_confirms(cfg: dict, tmp_path: Path) -> None:
+    parts = _build(cfg, tmp_path, vlm_hazards=False)
+    _visit(parts, _reading({"blocked_path": True}), _reading({"blocked_path": True}))
+    assert "path_blocked" not in parts.records
+
+
 # ── 판독을 기다리다 방문 밖으로 밀려나도 확정한 결론은 남는다 ─────────────────────────
 
 

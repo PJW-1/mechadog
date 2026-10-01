@@ -65,6 +65,8 @@ export function describeEvidence(name,payload){
   if(!changes.length)rows.push(['변화 내역','미수신']);
   if(Number.isSafeInteger(j.baseline_ms)&&j.baseline_ms>=0&&j.baseline_ms<=8640000000000000)rows.push(['기준 시각',new Date(j.baseline_ms).toLocaleString('ko-KR',{hour12:false})]);
  }
+ // 구역 안 VLM 가벼운 경고 — 구역만 싣는다 (LiDAR 막힘은 구역이 없다).
+ if((name==='hazard_notice'||name==='path_blocked')&&j.zone!=null)rows.push(['구역',shown(j.zone)]);
  if(name==='escalation_changed')rows.push(['사유',reasonName(payload?.reason)],['경고 문장',cleanText(payload?.warning,300)||'읽을 문장 없음 (이 단계는 음성 경고 없음)']);
  if(payload?.trigger)rows.push(['원인 사건',cleanText(payload.trigger,40)]);
  if(payload?.previous)rows.push(['이전 상태',cleanText(payload.previous,40)]);
@@ -362,7 +364,7 @@ export class Operations {
   // 단계·인증 사건은 사진이 없어 텔레메트리를 싣지 않는다 — 이 서버가 알려 준 개체 이름을 쓴다.
   const name=cleanText(payload.event,160),device=slot.device||cleanText(payload.telemetry?.device_id,80)||cleanText(slot.telemetry?.snapshot?.deviceId,80)||'장치 미상';
   const person=(payload.tracks||[]).length,evidence=describeEvidence(name,payload);
-  const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):EVENT_TITLES[name];
+  const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):name==='path_blocked'&&payload.judgement?.source==='vlm'?'통로 막힘 경고':EVENT_TITLES[name];
   const photo=payload.entry!=null||payload.snapshot!=null;
   const event={id,seq,slot:slotId,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',title:label?label+' · '+name:name,category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};

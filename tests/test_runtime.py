@@ -2878,7 +2878,31 @@ UPRIGHT = {"fallen_object": False}
 
 
 @pytest.mark.usefixtures("unlock_modes")
-@pytest.mark.parametrize("kind", ["fallen_object", "blocked_path"])
+def test_a_blocked_path_read_twice_is_a_light_notice_not_l3(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """ADR-41 개정(2026-10-01): 구역 안 통로 막힘은 L3 가 아니라 `path_blocked`(vlm) 이다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    runtime, vision, cfg = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox, hazards=True)
+    _scripted(runtime, {"blocked_path": True}, {"blocked_path": True})
+    _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is not Level.L3
+    kinds = [e.event_type for e in blackbox.feed()]
+    assert "path_blocked" in kinds
+    assert "zone_changed" not in kinds
+    (entry,) = [e for e in blackbox.feed() if e.event_type == "path_blocked"]
+    assert entry.judgement["zone"] == "A"
+    assert entry.judgement["source"] == "vlm"
+    assert entry.judgement["sentence"] == "A 구역에서 통로가 막혀 있습니다."
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("kind", ["fallen_object"])
 def test_a_hazard_read_twice_is_confirmed_on_the_first_visit(
     config: dict, clock: FakeClock, tmp_path: Path, kind: str
 ):

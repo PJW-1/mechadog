@@ -451,6 +451,16 @@ class ZoneInspector:
             )
             # 한 번만 남긴다 — 다음 틱에 같은 기록을 되풀이하지 않는다.
             self._hazards = tuple(kind for kind in self._hazards if kind != HAZARD_ITEM)
+        if "blocked_path" in self._hazards:
+            # 통로 막힘도 가벼운 경고다 (ADR-41 개정 2026-10-01) — 이동 중 LiDAR 막힘과 같은
+            # 사건 이름을 쓰고 L3 로 올리지 않는다. 같은 방문의 넘어짐 L3 와 겹쳐도 먼저 남긴다.
+            LOG.warning("path_blocked", zone=self._zone, source="vlm")
+            self._record(
+                "path_blocked",
+                self._visit_seen[-1] if self._visit_seen else result,
+                {"zone": self._zone, "source": "vlm"},
+            )
+            self._hazards = tuple(kind for kind in self._hazards if kind != "blocked_path")
         removed = [c.as_dict() for c in self._visit_found if c.kind is ChangeKind.REMOVED]
         added = [c.as_dict() for c in self._visit_found if c.kind is not ChangeKind.REMOVED]
         hazards = [{"kind": kind, "source": "vlm"} for kind in self._hazards]

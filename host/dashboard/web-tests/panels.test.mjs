@@ -196,6 +196,9 @@ test('light warnings get their own titles and categories (hazard item · path bl
  assert.equal(hazard.category,'OBJECT');assert.equal(hazard.title,'화기 위험물 경고 · hazard_notice');assert.equal(hazard.zone,'C');
  const blocked=store.ingestLiveEvent({...base,seq:2,ts_ms:2,event:'path_blocked',judgement:{x:1.2,y:0.4,target:'D',source:'lidar'}});
  assert.equal(blocked.category,'SAFETY');assert.equal(blocked.title,'통로 막힘 · 우회 · path_blocked');
+ assert.deepEqual(hazard.evidence,[['구역','C']],'구역 행이 근거 표에 든다');assert.deepEqual(blocked.evidence,[],'LiDAR 막힘은 구역이 없다');
+ const inZone=store.ingestLiveEvent({...base,seq:4,ts_ms:4,event:'path_blocked',judgement:{zone:'C',source:'vlm'}});
+ assert.equal(inZone.category,'SAFETY');assert.equal(inZone.title,'통로 막힘 경고 · path_blocked');assert.equal(inZone.zone,'C');assert.deepEqual(inZone.evidence,[['구역','C']]);
  const removed=store.ingestLiveEvent({...base,seq:3,ts_ms:3,event:'zone_notice',judgement:{zone:'B',changes:[]}});
  assert.equal(removed.category,'OBJECT');assert.equal(removed.title,'물건 반출 경고 · zone_notice');
 });

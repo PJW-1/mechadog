@@ -5,9 +5,9 @@
 키 없이 짧게 만든다.
 
 대상은 `runtime._record_scene` 이 기록하는 사건 중 **변화 확정과 쓰러짐, 가벼운 경고**뿐이다 —
-`person_fallen`(쓰러짐 확정) · `zone_changed`(넘어짐·통로 막힘 확정) ·
+`person_fallen`(쓰러짐 확정) · `zone_changed`(넘어짐 확정) ·
 `zone_notice`(반출 가벼운 경고) · `hazard_notice`(화기 위험구역의 위험물 가벼운 경고) ·
-`path_blocked`(이동 중 LiDAR 장애물 우회 가벼운 경고). 그 밖의 사건(`PPE_*`·`person_found`·`zone_reading`
+`path_blocked`(통로 막힘 가벼운 경고 — 이동 중 LiDAR 우회, 구역 안 VLM 확정). 그 밖의 사건(`PPE_*`·`person_found`·`zone_reading`
 등)은 아직 확정된 상황 서술이 아니므로 `None` 을 돌려준다.
 """
 
@@ -21,7 +21,6 @@ from typing import Any
 _HAZARD_PHRASES: dict[str, str] = {
     "fallen_object": "적재물이 무너졌습니다",
     "collapsed_load": "적재물이 무너졌습니다",
-    "blocked_path": "통로가 막혔습니다",
 }
 #: 모르는 위험 종류(표에 없는 `kind`)에 쓰는 일반 문구.
 _UNKNOWN_HAZARD_PHRASE = "위험이 감지되었습니다"
@@ -42,7 +41,7 @@ def _describe_person_fallen(_judgement: dict[str, Any]) -> str:
 
 
 def _describe_zone_changed(judgement: dict[str, Any]) -> str:
-    """넘어짐·통로 막힘 확정 (`zone_changed`). `changes` 안의 VLM 위험 항목만 본다.
+    """넘어짐 확정 (`zone_changed`). `changes` 안의 VLM 위험 항목만 본다.
 
     반출·반입이 같은 방문에서 섞여 와도 위험 문구만 말한다.
     """
@@ -77,7 +76,13 @@ def _describe_hazard_notice(judgement: dict[str, Any]) -> str:
 def _describe_path_blocked(judgement: dict[str, Any]) -> str:
     """이동 중 LiDAR 장애물 우회 가벼운 경고 (`path_blocked`). 가던 구역(`target`)을 알면 함께
     말한다 — 좌표(`x`·`y`)는 스피커로 읽어 봐야 뜻이 없어 넣지 않는다.
+
+    구역 안 VLM 확정(`source` 가 `vlm`, `zone` 있음)은 우회하지 않으니 «돌아서 갑니다» 없이
+    사실만 말한다.
     """
+    zone = judgement.get("zone")
+    if judgement.get("source") == "vlm" and isinstance(zone, str) and zone.strip():
+        return f"{zone} 구역에서 통로가 막혀 있습니다."
     target = judgement.get("target")
     if isinstance(target, str) and target.strip():
         return f"{target} 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
