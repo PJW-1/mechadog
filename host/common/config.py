@@ -350,6 +350,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
             raise ConfigError(f"vision.ppe.{name} 안전 판정 조건은 켜져 있어야 함")
     if ppe["static_frames"] < 2 or not 1 <= ppe["max_posture_retries"] <= 5:
         raise ConfigError("PPE 정지 판정은 2프레임 이상, 재시도는 1~5회여야 함")
+    _validate_hazard(config["vision"].get("hazard"))
 
     providers = config["vision"].get("providers")
     if not isinstance(providers, list) or not providers:
@@ -439,6 +440,35 @@ def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
         raise ConfigError("posture_amplitude.source 는 phone_imu 또는 onboard_imu 여야 함")
     if not isinstance(amplitude.get("measured_on"), str) or not amplitude["measured_on"]:
         raise ConfigError("posture_amplitude.measured_on 기록이 필요함")
+
+
+def _validate_hazard(hazard: Any) -> None:
+    """위험물 검출 절 (`vision.hazard`). 없으면 기능이 꺼진 것이다 — 있으면 값을 본다.
+
+    ⚠️ 금지 대상에 모델이 모르는 이름을 적으면 그 물건은 조용히 한 번도 경고되지 않는다.
+    """
+    if hazard is None:
+        return
+    if not isinstance(hazard, dict):
+        raise ConfigError("vision.hazard 는 매핑이어야 함")
+    if not isinstance(hazard.get("enabled"), bool):
+        raise ConfigError("vision.hazard.enabled 는 true 또는 false 여야 함")
+    classes = hazard.get("classes")
+    alarm = hazard.get("alarm_classes")
+    if not isinstance(classes, list) or not classes:
+        raise ConfigError("vision.hazard.classes 는 비어 있지 않은 목록이어야 함")
+    if not isinstance(alarm, list) or not alarm:
+        raise ConfigError("vision.hazard.alarm_classes 는 비어 있지 않은 목록이어야 함")
+    unknown = [label for label in alarm if label not in classes]
+    if unknown:
+        raise ConfigError(f"vision.hazard.alarm_classes 는 classes 의 부분집합이어야 함: {unknown}")
+    for name in ("confirm_window_ms", "hits_required"):
+        value = hazard.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"vision.hazard.{name} 는 양의 정수여야 함")
+    confidence = hazard.get("conf_threshold")
+    if not _finite_number(confidence) or not 0 < confidence <= 1:
+        raise ConfigError("vision.hazard.conf_threshold 는 0 초과 1 이하여야 함")
 
 
 def load_base_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:

@@ -2075,6 +2075,14 @@ A* 순찰(`PatrolController`)은 `tools/ops/patrol_run.py` 단독 도구로만 �
 **대안**
 
 - **ⓐ 라이터·보조배터리용 YOLOX 클래스를 지금 학습한다**: ❌ 학습 데이터부터 모아야 한다. 자료를 모은 뒤 나중에 다시 열 수 있다.
+  **개정 (2026-10-02 · 사용자 결정 · 대안 ⓐ 를 연다)**: 라이터·보조배터리 YOLOX-S 2클래스(`models/hazard.onnx` · Release `hazard-v1`)를
+  학습해 붙였다. **결정 2 는 그대로다** — 위험구역은 `zones.hazard_ids`, 결과는 가벼운 경고 `hazard_notice`(방송 + 관제 이력, L3 아님)다.
+  바뀐 것은 확정 근거가 하나 더 생긴 것이다. ① 검출기는 **위험구역 점검 중 방향을 맞춘 뒤에만** 켠다(`ZoneInspector.watching_hazards`
+  → 런타임이 워커 `set_hazard_enabled`). 다른 구역과 이동 중에는 추론하지 않으므로 위험물이 보여도 경고가 없다. ② 확정은 PPE 위반과 같은
+  창·횟수 규칙이다 — 금지 대상(`vision.hazard.alarm_classes`)이 `confirm_window_ms`(1500) 안에서 `hits_required`(3)번 이상. 위험구역
+  방문은 방향을 맞춘 뒤 이 창만큼은 머문다. ③ 기록은 `{zone, items, source: "detector", vlm}` 이고 박스가 근거로 남는다. 같은 방문에
+  VLM `hazard_item` 도 «예» 2회면 방송이 두 번 나가지 않게 하나로 합친다(`vlm: true`). ④ 모델 파일이 없으면 기록만 남기고 꺼진다
+  (`hazard_detector_unavailable`) — VLM 판독은 따로 돈다. 공개 사진 test AP50 0.97 이고 **XIAO 실측 전**이다(밝기 50% 에서 미검출이 늘었다).
 - **ⓑ 화기 위험물도 L3 로 올린다**: ❌ 시연 흐름이 끊기고 운용자 확인을 기다리게 된다.
 - **ⓒ VLM 으로 길을 터 주는 쪽을 정한다**: ❌ 위치가 없고 벤치 적중이 낮다(결정 3).
 - **ⓓ 이동 중 막힘도 L3 로 올린다**: ❌ 우회할 수 있는 막힘마다 로봇이 서서 관리자를 기다린다.

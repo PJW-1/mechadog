@@ -41,6 +41,7 @@ flowchart TD
 | 방문 순서 | 매 바퀴 A→B→C→D 고정 | `zones.random_after_first_cycle: false` | [ADR-43](../DECISIONS.md#adr-43) |
 | 화기 위험구역 | C | `zones.hazard_ids: [C]` | [ADR-43](../DECISIONS.md#adr-43) |
 | 화기 위험물 확정 | 같은 방문 안 서로 다른 프레임의 «예» 2회 | `change_detect.vlm_hazard_items` (기본 켬) | [ADR-43](../DECISIONS.md#adr-43) · [ADR-41](../DECISIONS.md#adr-41) |
+| 화기 위험물 확정 (검출기 · 2026-10-02 개정) | 금지 대상이 1500ms 안에 3번 이상 검출 (PPE 위반과 같은 규칙). 위험구역에서 방향을 맞춘 뒤에만 켠다 | `vision.hazard` (`enabled` · `alarm_classes` · `confirm_window_ms` · `hits_required`) | [ADR-43](../DECISIONS.md#adr-43) 대안 ⓐ 개정 |
 | 이동 중 막힘 | 가벼운 경고 + LiDAR 우회, L3 아님 | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
 | 구역 방문 VLM `blocked_path` 가벼운 경고 `path_blocked` (L3 아님 · 2026-10-01 개정) | 꺼짐 (벤치 통과 전) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
 | 쓰러짐 확정 | 의심 뒤 판독 «예» 2회, 간격 1000ms 이상 | `fsm.fall_confirm_vlm_yes` · `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) |
@@ -62,7 +63,7 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | 1 순찰 | L0 | `zones.*` · `--lidar-device` | `host/runtime.py` 의 순찰 틱 · `host/behavior/patrol.py` 의 `PatrolController` |
 | 2 막힘 우회 | `path_blocked` (출처 `lidar`, 판정 `x`·`y`·`target`) · 가벼운 경고 | `lidar.new_obstacle_*` | `host/behavior/patrol.py` 의 `PatrolController._check_new_obstacle` · `_replan` |
-| 3 위험물 | `hazard_notice` · 가벼운 경고 | `zones.hazard_ids` · `change_detect.vlm_hazard_items` | `host/behavior/zone_inspector.py` 의 `ZoneInspector` · `host/vision/vlm_reader.py` 의 질문 `hazard_item` |
+| 3 위험물 | `hazard_notice` · 가벼운 경고 | `zones.hazard_ids` · `change_detect.vlm_hazard_items` · `vision.hazard` | `host/behavior/zone_inspector.py` 의 `ZoneInspector` · `host/vision/vlm_reader.py` 의 질문 `hazard_item` · `host/vision/hazard_detector.py` 의 `HazardDetector` |
 | 4 쓰러짐 | `FALL_SUSPECTED` → `PERSON_DOWN` · L1 → L3 | `fsm.fall_*` | `host/behavior/fall_monitor.py` ([쓰러짐 확정](factory-fall.md)) |
 | 5 PPE | PPE 위반 경고 · 자동 복귀 | `escalation.ppe_warning_hold_ms` | `host/runtime.py` ([ADR-42](../DECISIONS.md#adr-42)) |
 | 6 적합 통과 | 경보 없음 | — | `host/runtime.py` |

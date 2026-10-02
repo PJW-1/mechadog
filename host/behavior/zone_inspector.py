@@ -3,6 +3,10 @@
 반출·반입은 연속 2방문(`ChangeConfirmer`)에서, 넘어짐·통로 막힘·화기 위험물은 같은 방문 안
 판독 2회 «예» 에서 확정한다. 넘어짐만 `ZONE_CHANGED`(L3) 이고 통로 막힘·반출과 화기
 위험구역(`zones.hazard_ids`)의 위험물은 가벼운 경고, 반입은 기록만 한다.
+
+화기 위험물은 위험물 검출기(`models/hazard.onnx` · `HazardDetector`)로도 확정한다 — PPE 위반과 같은
+창·횟수 규칙이고, **위험구역에서 방향을 맞춘 뒤에만** 켠다(`watching_hazards`). 다른 구역과 이동
+중에는 검출기를 돌리지 않으므로 위험물이 보여도 경고가 없다.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Callable, Mapping
+from dataclasses import is_dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from host.behavior.change_detect import (
@@ -106,6 +111,16 @@ class ZoneInspector:
         self._vlm_hazards = bool(change["vlm_hazards"])
         #: 화기 위험물 판독으로 가벼운 경고를 내나. `vlm_hazards` 와 따로 켜고 끈다.
         self._vlm_hazard_items = bool(change["vlm_hazard_items"])
+        # 위험물 검출기 (ADR-43 대안 ⓐ 개정). 절이 없거나 꺼져 있으면 VLM 판독만 남는다.
+        hazard = config["vision"].get("hazard") or {}
+        self._hazard_on = bool(hazard.get("enabled"))
+        #: 확정 창 — 위험구역 방문은 방향을 맞춘 뒤 적어도 이만큼 머문다.
+        self._hazard_window_ms = int(hazard.get("confirm_window_ms", 0))
+        #: 워커에 검출기가 실제로 있나 (모델이 없으면 거짓). 런타임이 틱마다 알려 준다.
+        self._hazard_available = False
+        #: 이번 방문에서 검출기가 확정한 물건 이름과 그때의 프레임 (기록용 · 박스 포함).
+        self._found_items: tuple[str, ...] = ()
+        self._found_frame: Any = None
         self._visit_since_ms = 0
         #: 이번 방문에서 모은 사람 없는 프레임
         self._visit_seen: list[Any] = []
@@ -144,6 +159,22 @@ class ZoneInspector:
     def alarm_alert(self) -> bool:
         """지금의 `ALERT` 가 구역 변화 확정으로 섰나."""
         return self._alarm_alert
+
+    @property
+    def watching_hazards(self) -> bool:
+        """위험물 검출기를 켤 때인가 — 공장 모드, 위험구역 점검 중, 방향을 맞춘 뒤, 점검이 끝나기 전."""
+        return (
+            self._hazard_on
+            and self._mission.enables("change_detect")
+            and self._behavior.state == "ZONE_INSPECT"
+            and self._zone in self._hazard_ids
+            and self._aligned
+            and not self._done
+        )
+
+    def note_hazard_detector(self, available: bool) -> None:
+        """워커에 위험물 검출기가 있는지 받는다. 없으면 위험구역에서 창만큼 더 머물지 않는다."""
+        self._hazard_available = available
 
     def forget_alarm(self) -> None:
         """확인하지 않은 구역 경보를 잊는다 — 순찰을 새로 시작할 때."""
@@ -233,6 +264,8 @@ class ZoneInspector:
                 self._visit_outcome = None
                 self._suspects = ()
                 self._hazards = ()
+                self._found_items = ()
+                self._found_frame = None
                 # ⚠️ **확정기의 누적은 지우지 않는다.** 방문 하나가 사이클 하나라, 도착할 때
                 # 지우면 연속 2방문을 셀 수 없고 이미 확정한 반출이 바퀴마다 다시 울린다.
                 LOG.info("zone_arrived", zone=zone)
@@ -260,6 +293,7 @@ class ZoneInspector:
         if width <= 0 or height <= 0:
             return
         self._read_scene(zone, result, now_ms)
+        self._watch_hazards(zone, result)
         # ⚠️ **사람이 보이는 프레임은 기준에도 비교에도 쓰지 않는다** (FR-8.3 → FR-3 ·
         # FR-11.1). 사람은 물체 변화가 아니라 게이트(`PERSON_FOUND`)가 맡는다. 그리고 **사람이
         # 물건을 가리면 그 물건이 빠진다.** 견주면 반출로 세어지고, 기준으로 뜨면 그 뒤
@@ -267,9 +301,11 @@ class ZoneInspector:
         if not any(detection.label == PERSON_LABEL for detection in result.detections):
             self._visit_seen.append(result)
         # ⚠️ **영원히 서 있지 않는다.** 사람이 비키기를 기다리는 것도 `visit_max_ms` 까지다.
-        if (
+        # 위험구역은 검출기의 확정 창(`confirm_window_ms`)만큼은 머문다 — 사람 없는 프레임
+        # `visit_frames` 장은 0.5초면 차서, 창이 차기 전에 떠나면 검출기가 확정할 틈이 없다.
+        if now_ms - self._visit_since_ms < self._visit_max_ms and (
             len(self._visit_seen) < self._visit_frames
-            and now_ms - self._visit_since_ms < self._visit_max_ms
+            or (self._hazard_wait() and now_ms - self._visit_since_ms < self._hazard_window_ms)
         ):
             return
         self._done = True
@@ -333,6 +369,34 @@ class ZoneInspector:
         self._visit_baseline = baseline
         self._visit_outcome = "zone_clear"
         self._leave(result, now_ms)
+
+    def _hazard_wait(self) -> bool:
+        """이 방문이 검출기의 확정을 기다려야 하나 — 위험구역이고 검출기가 있고 아직 확정 전."""
+        return (
+            self._hazard_on
+            and self._hazard_available
+            and self._zone in self._hazard_ids
+            and not self._found_items
+        )
+
+    def _watch_hazards(self, zone: str, result: VisionResult) -> None:
+        """워커의 위험물 판정을 줍는다. **위험구역이 아니면 확정이 있어도 버린다.**
+
+        켜고 끄는 것은 런타임이라 틱 하나 늦게 꺼질 수 있다 — 그 틈의 판정이 다른 구역의
+        경고가 되지 않게 여기서 한 번 더 거른다.
+        """
+        verdict = getattr(result, "hazard", None)
+        if verdict is None or zone not in self._hazard_ids or not self._hazard_on:
+            return
+        new = tuple(label for label in verdict.confirmed if label not in self._found_items)
+        if not new:
+            return
+        self._found_items = (*self._found_items, *new)
+        # 박스가 있는 프레임으로 남긴다 — 관제 화면 «당시 검출 근거» 에 위험물 박스가 보인다.
+        self._found_frame = (
+            replace(result, detections=verdict.detections) if is_dataclass(result) else result
+        )
+        LOG.info("hazard_item_seen", zone=zone, source="detector", items=list(new))
 
     def _read_scene(self, zone: str, result: VisionResult, now_ms: int) -> None:
         """구역에 선 동안 장면 판독을 방문당 한 번 건다 (ADR-35 호출 시점 ②).
@@ -447,7 +511,25 @@ class ZoneInspector:
             LOG.warning("zone_reading_timeout", zone=self._zone, wait_ms=self._wait_ms)
             self._wait_until = None
         items = [kind for kind in self._hazards if kind == HAZARD_ITEM]
-        if items:
+        if self._found_items:
+            # 검출기 확정 — VLM 과 같은 가벼운 경고 `hazard_notice` 다. 같은 방문에 VLM 도 «예» 2회면
+            # 방송이 두 번 나가지 않게 하나로 합치고 `vlm` 으로 표시한다.
+            LOG.warning("hazard_notice", zone=self._zone, items=list(self._found_items))
+            frame = self._found_frame
+            self._record(
+                "hazard_notice",
+                frame if frame is not None else result,
+                {
+                    "zone": self._zone,
+                    "items": list(self._found_items),
+                    "source": "detector",
+                    "vlm": bool(items),
+                },
+            )
+            self._found_items = ()
+            self._found_frame = None
+            self._hazards = tuple(kind for kind in self._hazards if kind != HAZARD_ITEM)
+        elif items:
             # 화기 위험물은 반출과 같은 가벼운 경고다 — `ZONE_CHANGED`·L3·눈 변화 없이 방송
             # 문장과 관제에만 남기고 순찰을 잇는다. 같은 방문의 L3 확정과 겹쳐도 따로 남긴다.
             LOG.warning("hazard_notice", zone=self._zone, items=items)

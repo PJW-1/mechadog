@@ -87,3 +87,39 @@ Copyright 2026 MechDog Physical AI Team
 
   이전 배포 모델(ppe-v1~v4)의 고지는 이 파일의 깃 이력에 있다. 개발 후보 v12·v23b 의
   고지는 각 Release 의 NOTICE.txt 에 있다.
+
+═══════════════════════════════════════════════════════════════
+5. 위험물 검출 모델 — models/hazard.onnx
+═══════════════════════════════════════════════════════════════
+
+  파일      models/hazard.onnx  (Release 태그 hazard-v1 · 영문판은 같은 Release 의 NOTICE.txt)
+  크기      35,776,558 바이트
+  SHA-256   7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746
+  구조      YOLOX-S · 입력 640x640 · 2클래스 (lighter / powerbank)
+            출력은 격자 디코드 전 원시 [1, 8400, 7]
+  학습일    2026-10-02 · 데이터 lighter_powerbank_coco_2class
+  상태      XIAO 실측 전 후보
+  라이선스  CC BY 4.0 — 학습 데이터 세 개가 모두 CC BY 4.0 이다. 비상업(NC) 데이터는 쓰지 않았다.
+
+  베이스 모델  YOLOX-S (Megvii Inc., Apache-2.0) — §2 와 같다. 80클래스 헤드를 2클래스로
+              교체하고 아래 데이터로 재학습했다.
+
+  학습 데이터 (Roboflow Universe · 전부 CC BY 4.0)
+  (1) vision-wajsm "lighter"  https://universe.roboflow.com/vision-wajsm/lighter-wvso3
+  (2) vision-wajsm "portable charger"  https://universe.roboflow.com/vision-wajsm/portable-charger
+  (3) ia-act "My First Project"  https://universe.roboflow.com/ia-act/my-first-project-3xogl
+  사진 2,226장 전부를 파일 내용 SHA-256 으로 위 셋 중 하나와 대조해 확인했다.
+
+  변경 사항 (CC BY 4.0 §3(a)(1)(B))
+  - lighter / powerbank 만 남겼다 (portable-charger 와 (3)의 powerbank 를 powerbank 로 통합).
+    나머지 클래스는 버렸다.
+  - 대상 박스가 남지 않은 사진은 박스 없는 배경(정상) 사진으로 썼다. normal 클래스는 없다.
+  - 내용이 같은 사진(SHA-256)을 지우고 train/valid/test 를 8:1:1 로 다시 나눴다.
+
+  ⚠️ 원본 이미지는 재배포하지 않는다. 세 데이터의 저작자는 이 작업을 보증하지 않는다.
+
+  대상                        라이선스        비용    의무
+  ─────────────────────────  ─────────────   ─────   ──────────────────────
+  models/hazard.onnx          CC BY 4.0       없음    NOTICE 유지 · 저작자 표시
+  Roboflow lighter·portable charger·My First Project
+                              CC BY 4.0       없음    저작자 표시 · 변경 표시

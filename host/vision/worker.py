@@ -24,7 +24,8 @@ from typing import Any, Protocol, cast
 from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
 from host.vision.badge import BadgeReader, Marker
-from host.vision.detector import Detection
+from host.vision.detector import Detection, ModelMissingError
+from host.vision.hazard_detector import HAZARD_CLASSES, HazardDetector, HazardVerdict
 from host.vision.person import FallenGate, FallenVerdict, PersonGate, Sighting
 from host.vision.ppe_detector import PPE_CLASSES, PpeDetector, PpeVerdict
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
@@ -63,6 +64,8 @@ class VisionResult:
     #: 이 프레임에서 읽은 사원증 마커 (FR-10.1). 추적 대상이 있을 때만 읽는다.
     markers: tuple[Marker, ...]
     ppe: PpeVerdict | None = None
+    #: 화기 위험물 판정 — 위험구역 방문 중 켜졌을 때만 있다. `None` 이면 이 프레임은 보지 않았다.
+    hazard: HazardVerdict | None = None
 
 
 @dataclass
@@ -84,7 +87,8 @@ class WorkerStats:
 class VisionSource(Protocol):
     """운용 루프(`runtime.py`)가 비전에 기대는 표면. `VisionWorker` 와 시험 대역이 채운다.
 
-    ⚠️ `set_ppe_enabled` 가 없는 대역도 있어 런타임은 켜기·끄기 전에 `hasattr` 로 확인한다.
+    ⚠️ `set_ppe_enabled`·`set_hazard_enabled` 가 없는 대역도 있어 런타임은 켜기·끄기 전에
+    `hasattr` 로 확인한다.
     """
 
     def start(self) -> None: ...
@@ -94,6 +98,9 @@ class VisionSource(Protocol):
     def stalled(self, now_ms: int) -> bool: ...
     def healthy(self) -> bool: ...
     def set_ppe_enabled(self, enabled: bool) -> None: ...
+    def set_hazard_enabled(self, enabled: bool) -> None: ...
+    @property
+    def hazard_available(self) -> bool: ...
 
 
 class VisionWorker:
@@ -112,6 +119,7 @@ class VisionWorker:
         queue: FrameQueue | None = None,
         clock: Any = None,
         ppe: PpeDetector | None = None,
+        hazard: HazardDetector | None = None,
     ) -> None:
         vision = config["vision"]
         self._detector = detector
@@ -123,6 +131,8 @@ class VisionWorker:
         self._ppe = ppe
         self._ppe_enabled = False
         self._ppe_opened = False
+        self._hazard = hazard
+        self._hazard_enabled = False
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
@@ -152,6 +162,7 @@ class VisionWorker:
         if self._ppe_enabled and self._ppe is not None:
             self._ppe.open()
             self._ppe_opened = True
+        self._open_hazard()
         LOG.info("vision_detector_opened", ms=self._clock() - opened)
         # 첫 결과 전 단절 판정의 기준 시각 — 세션 준비 뒤부터 잰다.
         self._started_ms = self._clock()
@@ -239,6 +250,29 @@ class VisionWorker:
             self._ppe_opened = True
         self._ppe_enabled = enabled
 
+    def _open_hazard(self) -> None:
+        """위험물 세션을 기동 때 한 번 연다 — 방문마다 켜고 끄므로 그때 열면 틱이 막힌다.
+
+        ⚠️ **없으면 멈추지 않는다.** 위험물 검출은 가벼운 경고라 모델이 없어도 순찰·사람 인지는
+        그대로 돌아야 한다. 기록만 남기고 꺼 둔다 — VLM `hazard_item` 판독은 따로 돈다.
+        """
+        if self._hazard is None:
+            return
+        try:
+            self._hazard.open()
+        except (ModelMissingError, OSError, RuntimeError) as exc:
+            LOG.warning("hazard_detector_unavailable", error=f"{type(exc).__name__}: {exc}")
+            self._hazard = None
+
+    @property
+    def hazard_available(self) -> bool:
+        """위험물 검출기가 있나 (모델이 없어 끈 경우 거짓)."""
+        return self._hazard is not None
+
+    def set_hazard_enabled(self, enabled: bool) -> None:
+        """위험물 추론을 켜고 끈다 — 위험구역 방문 중에만 켠다. 세션은 열지 않는다."""
+        self._hazard_enabled = enabled
+
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:
         frames = None
@@ -307,6 +341,10 @@ class VisionWorker:
             )
             if not self._ppe_enabled and self._ppe is not None:
                 self._ppe.reset()
+            hazard_on = self._hazard_enabled and self._hazard is not None
+            hazard = self._hazard.observe(image, observed) if hazard_on and self._hazard else None
+            if not hazard_on and self._hazard is not None:
+                self._hazard.reset()
         except Exception as exc:  # noqa: BLE001
             self._note_error("vision_inference_failed", exc, seq=frame.seq)
             return
@@ -327,6 +365,7 @@ class VisionWorker:
             tracks=tracks,
             markers=markers,
             ppe=ppe,
+            hazard=hazard,
         )
         with self._slot_lock:
             # 덮어쓴다 — 낡은 결과를 쌓지 않는다 (ADR-23 최신 프레임 우선).
@@ -361,7 +400,13 @@ def build_worker(
         config,
         Detector(config, section="ppe", labels=PPE_CLASSES),
     )
-    return VisionWorker(config, detector=detector, reader=reader, ppe=ppe)
+    hazard_spec = config["vision"].get("hazard") or {}
+    hazard = (
+        HazardDetector(config, Detector(config, section="hazard", labels=HAZARD_CLASSES))
+        if hazard_spec.get("enabled")
+        else None
+    )
+    return VisionWorker(config, detector=detector, reader=reader, ppe=ppe, hazard=hazard)
 
 
 @dataclass
