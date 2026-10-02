@@ -463,3 +463,124 @@ def test_a_reading_that_arrives_after_leaving_confirms_nothing(
     parts.vlm.slot = _reading({"hazard_item": True})
     parts.inspector.inspect(_frame(), now + 200)
     assert "hazard_notice" not in parts.records
+
+
+# ── 위험물 검출기 (`vision.hazard` · ADR-43 대안 ⓐ 개정) ────────────────────────────
+
+
+def _hazard_frame(*confirmed: str) -> SimpleNamespace:
+    """워커가 위험물 판정을 실은 프레임. `confirmed` 가 비면 아무것도 확정하지 않았다."""
+    from host.vision.detector import Detection
+    from host.vision.hazard_detector import HazardVerdict
+
+    boxes = tuple(Detection(label, 0.9, (10.0, 20.0, 60.0, 90.0)) for label in confirmed)
+    frame = _frame()
+    frame.hazard = HazardVerdict(detections=boxes, confirmed=confirmed)
+    return frame
+
+
+def _detector_visit(parts, frame, *readings: Reading, limit: int = 80) -> int:
+    """도착해 방문이 끝날 때까지 `frame()` 을 넣는다. 끝난 시각을 돌려준다."""
+    parts.inspector.note_hazard_detector(True)
+    _arrive(parts)
+    queue = list(readings)
+    now = T0
+    for _ in range(limit):
+        now += 100
+        if parts.inspector.waiting:
+            parts.vlm.slot = queue.pop(0) if queue else _reading({})
+        parts.inspector.inspect(frame(), now)
+        if parts.behavior.state != "ZONE_INSPECT":
+            return now
+    raise AssertionError("방문이 끝나지 않았다")
+
+
+def test_the_detector_confirms_a_hazard_in_the_hazard_zone(cfg: dict, tmp_path: Path) -> None:
+    """위험구역에서 검출기가 확정하면 가벼운 경고 `hazard_notice` 하나를 남긴다 (source `detector`)."""
+    parts = _build(cfg, tmp_path, zone="C")
+    _detector_visit(parts, lambda: _hazard_frame("lighter"))
+    assert parts.records.count("hazard_notice") == 1
+    notice = parts.payloads[parts.records.index("hazard_notice")]
+    assert notice == {"zone": "C", "items": ["lighter"], "source": "detector", "vlm": False}
+    assert parts.behavior.state == "PATROL", "가벼운 경고다 — 순찰을 잇는다"
+
+
+def test_a_hazard_outside_the_hazard_zone_raises_nothing(cfg: dict, tmp_path: Path) -> None:
+    """금지구역이 아닌 곳에서는 위험물이 확정돼 실려 와도 경고하지 않는다 — 검출기도 켜지 않는다."""
+    parts = _build(cfg, tmp_path, zone="A")
+    parts.inspector.note_hazard_detector(True)
+    _arrive(parts)
+    parts.inspector.inspect(_hazard_frame("lighter"), T0 + 100)
+    assert not parts.inspector.watching_hazards
+    _detector_visit(parts, lambda: _hazard_frame("lighter", "powerbank"))
+    assert "hazard_notice" not in parts.records
+
+
+def test_the_detector_is_watched_only_while_inspecting_the_hazard_zone(
+    cfg: dict, tmp_path: Path
+) -> None:
+    """켤 때는 위험구역 점검 중 방향을 맞춘 뒤뿐이다 — 순찰 중·점검이 끝난 뒤에는 끈다."""
+    parts = _build(cfg, tmp_path, zone="C")
+    assert not parts.inspector.watching_hazards, "순찰 중"
+    parts.inspector.note_hazard_detector(True)
+    _arrive(parts)
+    assert not parts.inspector.watching_hazards, "방향을 맞추기 전"
+    parts.inspector.inspect(_frame(), T0 + 100)
+    assert parts.inspector.watching_hazards
+    _detector_visit(parts, _frame)
+    assert not parts.inspector.watching_hazards, "방문이 끝났다"
+
+
+def test_the_hazard_zone_visit_lasts_one_confirm_window(cfg: dict, tmp_path: Path) -> None:
+    """사람 없는 프레임은 0.5초면 찬다 — 위험구역은 검출기의 확정 창만큼 머문다."""
+    window = int(cfg["vision"]["hazard"]["confirm_window_ms"])
+    plain = _build(cfg, tmp_path / "a", zone="C")
+    plain.inspector.note_hazard_detector(False)
+    _arrive(plain)
+    now = T0
+    while plain.behavior.state == "ZONE_INSPECT":
+        now += 100
+        if plain.inspector.waiting:
+            plain.vlm.slot = _reading({})
+        plain.inspector.inspect(_frame(), now)
+    without = now - T0
+    with_detector = _detector_visit(_build(cfg, tmp_path / "c", zone="C"), _frame) - T0
+    assert without < window <= with_detector
+
+
+def test_a_late_confirmation_inside_the_window_is_kept(cfg: dict, tmp_path: Path) -> None:
+    """창이 찰 무렵에야 확정돼도 방문 안이면 경고한다 — 떠난 뒤가 아니다."""
+    parts = _build(cfg, tmp_path, zone="C")
+    seen = {"n": 0}
+
+    def frame():
+        seen["n"] += 1
+        return _hazard_frame("powerbank") if seen["n"] >= 12 else _hazard_frame()
+
+    _detector_visit(parts, frame)
+    notice = parts.payloads[parts.records.index("hazard_notice")]
+    assert notice["items"] == ["powerbank"]
+
+
+def test_detector_and_vlm_in_one_visit_leave_one_notice(cfg: dict, tmp_path: Path) -> None:
+    """둘 다 확정하면 방송이 두 번 나가지 않게 기록 하나로 합친다."""
+    parts = _build(cfg, tmp_path, zone="C")
+    _detector_visit(
+        parts,
+        lambda: _hazard_frame("lighter"),
+        _reading({"hazard_item": True}),
+        _reading({"hazard_item": True}),
+    )
+    assert parts.records.count("hazard_notice") == 1
+    notice = parts.payloads[parts.records.index("hazard_notice")]
+    assert notice["source"] == "detector" and notice["vlm"] is True
+
+
+def test_a_switched_off_detector_is_ignored(cfg: dict, tmp_path: Path) -> None:
+    """`vision.hazard.enabled: false` 면 실려 온 판정도 버린다 — VLM 판독만 남는다."""
+    config = deepcopy(cfg)
+    config["vision"]["hazard"]["enabled"] = False
+    parts = _build(config, tmp_path, zone="C")
+    _detector_visit(parts, lambda: _hazard_frame("lighter"))
+    assert "hazard_notice" not in parts.records
+    assert not parts.inspector.watching_hazards

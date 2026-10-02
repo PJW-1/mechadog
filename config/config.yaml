@@ -206,8 +206,11 @@ vision:
     # 단계 정의는 posture.escalation_steps 를 따른다.
 
   # ── 위험물 검출 (lighter / powerbank · 직접 학습, 2클래스) ──
-  # ⚠️ 아직 읽는 코드가 없다 — 모델 배포만 먼저 한다. 연결은 `Detector(config, section="hazard",
-  # labels=classes)` 로 된다 (ppe 와 같은 YoloxAdapter). `normal` 클래스는 없다: 미검출 = 정상.
+  # 화기 위험구역(`zones.hazard_ids`)에서 방향을 맞춘 뒤에만 돈다 — 다른 구역·이동 중에는 추론하지
+  # 않으므로 위험물이 보여도 경고가 없다. 확정은 PPE 위반과 같은 창·횟수 규칙이고, 확정되면
+  # 가벼운 경고 `hazard_notice`(source `detector`, 방송 + 관제 이력)를 남긴다 (ADR-43 대안 ⓐ 개정).
+  # 모델 파일이 없으면 기록만 남기고 꺼진다 — VLM `hazard_item` 판독은 따로 돈다.
+  # `normal` 클래스는 없다: 미검출 = 정상. 어댑터는 ppe 와 같은 YoloxAdapter 다.
   #
   # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 hazard-v1 · XIAO 실측 전 후보
   #   계열     YOLOX-S (Apache-2.0 · Megvii) · 640x640 · 2클래스 · 출발점 COCO yolox_s.pth
@@ -230,7 +233,19 @@ vision:
     input_size: 640
     conf_threshold: 0.5
     iou_threshold: 0.45
+    # 모델 출력 순서 — 모델과의 계약이다. 바꾸지 않는다 (`host/vision/hazard_detector.py`).
     classes: [lighter, powerbank]
+    # ── 팀이 고르는 값 ──
+    # 위험물 검출기를 쓸지. 끄면 위험구역에서도 VLM 판독만 남는다.
+    enabled: true
+    # 금지 대상 — 위험구역에서 이 물건만 경고한다. `classes` 의 부분집합이어야 한다.
+    # 금지 구역은 여기가 아니라 `zones.hazard_ids` 에서 고른다.
+    alarm_classes: [lighter, powerbank]
+    # 확정 — 같은 물건이 이 시간 창 안에서 `hits_required` 번 이상 보여야 경고한다. PPE 위반
+    # (`vision.ppe.violation_window_ms`·`violation_hits_required`)과 같은 값에서 시작한다.
+    # 위험구역 방문은 방향을 맞춘 뒤 적어도 이 창만큼 머문다 (`change_detect.visit_max_ms` 안에서).
+    confirm_window_ms: 1500
+    hits_required: 3
 
   # ── 쓰러짐 규칙 판정 (FR-9 · 4.8.3 · ADR-35 대안 ⓓ) ──
   # 추론마다 돌며 쓰러짐 의심 진입에 쓴다. 확정은 VLM 이 한다 (ADR-42 결정 2).
@@ -403,8 +418,9 @@ zones:
   # FR-7.1 — 시연 규모에 맞춘다. 공장 시연 시나리오는 4개(A→B→C→D)를 돈다 (ADR-43).
   # 5개는 화면상 구분이 어렵다.
   ids: [A, B, C, D]
-  # 화기 위험구역 — 방문 때 위험물(라이터·보조배터리)을 VLM 으로 판독하는 구역이다
-  # (`change_detect.vlm_hazard_items`). `ids` 의 부분집합이어야 한다.
+  # 화기 위험구역(위험물 금지구역) — 방문 때 위험물(라이터·보조배터리)을 검출기(`vision.hazard`)와
+  # VLM(`change_detect.vlm_hazard_items`)으로 보는 구역이다. **여기 없는 구역에서는 위험물이 보여도
+  # 경고하지 않는다.** `ids` 의 부분집합이어야 한다. 비우면(`[]`) 위험물 경고가 없다.
   hazard_ids: [C]
   # FR-7.4 — 도착 허용오차(구역의 크기가 아니다). 반경의 두 배를 벗어나야 떠난 것으로 본다.
   arrival_radius_mm: 300

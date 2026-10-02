@@ -676,6 +676,7 @@ class Runtime:
             self._track_controller.track(result, now_ms)
             self._zone_inspector.inspect(result, now_ms)
             self._fall.ask(result, now_ms)
+        self._switch_hazard_detector()
         # ⚠️ **워커가 죽어도 로봇은 계속 걷는다 — 그것이 가장 위험하다.** 스레드에서
         # 예외가 새면 조용히 사라지므로, 살아 있는지와 결과가 낡지 않았는지를 본다.
         healthy = self._vision.healthy()
@@ -691,6 +692,21 @@ class Runtime:
                 "vision_stalled" if stalled else "vision_recovered",
                 age_ms=self._vision.age_ms(now_ms),
             )
+
+    def _switch_hazard_detector(self) -> None:
+        """위험물 추론은 위험구역 점검 중에만 켠다 (ADR-43 대안 ⓐ 개정).
+
+        ⚠️ **다른 구역·이동 중에는 끈다** — 거기서는 위험물이 보여도 경고하지 않는다는 결정이고,
+        끄면 프레임마다 전체 추론 하나(약 8ms)를 아낀다. 바뀔 때만 워커에 알린다.
+        """
+        vision = self._vision
+        if vision is None or not hasattr(vision, "set_hazard_enabled"):
+            return
+        self._zone_inspector.note_hazard_detector(bool(vision.hazard_available))
+        watching = self._zone_inspector.watching_hazards
+        if self._edge.changed("hazard_detector", watching):
+            vision.set_hazard_enabled(watching)
+            LOG.info("hazard_detector_switched", enabled=watching)
 
     def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
         if self._ppe_judge.halts_patrol(now_ms) or self._auth_judge.holds_patrol(now_ms):

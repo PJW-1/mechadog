@@ -67,6 +67,8 @@ export function describeEvidence(name,payload){
  }
  // 구역 안 VLM 가벼운 경고 — 구역만 싣는다 (LiDAR 막힘은 구역이 없다).
  if((name==='hazard_notice'||name==='path_blocked')&&j.zone!=null)rows.push(['구역',shown(j.zone)]);
+ // 위험물 검출기 확정은 무엇을 봤는지 싣는다 — VLM 판독(source:'vlm')은 예·아니요뿐이라 없다.
+ if(name==='hazard_notice'&&j.source==='detector'){const names={lighter:'라이터',powerbank:'보조배터리'};const items=Array.isArray(j.items)?j.items.filter(i=>typeof i==='string').slice(0,8):[];rows.push(['검출 대상',items.map(i=>names[i]??cleanText(i,40)).join(' · ')||'미수신'],['확정 근거','위험물 검출기'+(j.vlm===true?' + VLM 판독':'')]);}
  if(name==='escalation_changed')rows.push(['사유',reasonName(payload?.reason)],['경고 문장',cleanText(payload?.warning,300)||'읽을 문장 없음 (이 단계는 음성 경고 없음)']);
  if(payload?.trigger)rows.push(['원인 사건',cleanText(payload.trigger,40)]);
  if(payload?.previous)rows.push(['이전 상태',cleanText(payload.previous,40)]);
