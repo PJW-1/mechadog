@@ -4,21 +4,22 @@ Copyright 2026 MechDog Physical AI Team
 이 저장소의 코드는 Apache License 2.0 을 따른다 (루트 `LICENSE`).
 아래는 `models/ppe.onnx` 가 무엇에서 만들어졌는지와, 재배포할 때 함께
 가야 하는 고지다. **이 파일은 `ppe.onnx` 와 같이 배포한다** (Release 자산
-`ppe-v4` 의 `NOTICE.txt` 가 같은 내용의 영문판이다).
+`ppe-v5` 의 `NOTICE.txt` 가 같은 내용의 영문판이다).
 
 ═══════════════════════════════════════════════════════════════
 1. 배포되는 산출물
 ═══════════════════════════════════════════════════════════════
 
   파일      models/ppe.onnx
-  크기      35,779,653 바이트
-  SHA-256   e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5
+  크기      35,779,654 바이트
+  SHA-256   145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2
   구조      YOLOX-S · 입력 640x640 · 4클래스 (helmet / no_helmet / vest / no_vest)
             출력은 격자 디코드 전 원시 [1, 8400, 9]
-  학습일    2026-09-29 · 데이터 ppe4_cs_md_v2 · Release 태그 ppe-v4
+  학습일    2026-10-02 · ppe-v4 에서 미세 조정 · 데이터 ppe4_cs_md_v2 + 하단각도 자체 촬영
+            · Release 태그 ppe-v5
   상태      XIAO 실측 전 후보 (WBS 3.7.3 은 mechdog-01 실측으로만 판단한다)
-  라이선스  CC BY 4.0 — 학습 데이터 두 개가 모두 CC BY 4.0 이다(§3).
-            비상업(NC) 데이터는 쓰지 않았다.
+  라이선스  CC BY 4.0 — 공개 학습 데이터 두 개가 모두 CC BY 4.0 이고(§3),
+            나머지는 팀이 직접 촬영한 사진이다(§3 (3)). 비상업(NC) 데이터는 쓰지 않았다.
 
   학습 설정·데이터 카드 해시·parity·평가는 같은 Release 의 `ppe.json` 에 있다.
   학습·변환·내보내기 도구는 `tools/ppe/` 에 있다.
@@ -33,13 +34,14 @@ Copyright 2026 MechDog Physical AI Team
     https://github.com/Megvii-BaseDetection/YOLOX
 
     변경 사항 — 공식 COCO 사전학습 가중치에서 출발해 80클래스 헤드를 PPE 4클래스로
-    교체하고 아래 데이터로 재학습한 뒤 ONNX 로 내보냈다.
+    교체하고 아래 데이터로 재학습했다(ppe-v4). v5 는 그 가중치에서 §3 (3) 을 더해
+    30 epoch 미세 조정한 뒤 ONNX 로 내보냈다.
 
   같은 저장소의 `models/coco.onnx` (YOLOX-S) 도 동일한 저작권·라이선스이며,
   공식 릴리스 자산을 그대로 쓴다. 이 저장소는 그 파일을 재배포하지 않는다.
 
 ═══════════════════════════════════════════════════════════════
-3. 학습 데이터 — 공개 데이터 2종 (둘 다 CC BY 4.0)
+3. 학습 데이터 — 공개 데이터 2종 (둘 다 CC BY 4.0) + 자체 촬영 1종
 ═══════════════════════════════════════════════════════════════
 
   (1) Roboflow Universe "construction safety" (Roboflow 100) — CC BY 4.0
@@ -58,6 +60,14 @@ Copyright 2026 MechDog Physical AI Team
   - (2) 중 (1)과 같은 사진(좌우 반전 포함)은 지각 해시(dHash)로 뺐다.
   도구: `tools/ppe/rf100_prepare.py`, `tools/ppe/mendeley_prepare.py`.
 
+  (3) 하단각도 자체 촬영 — 팀 산출물, 외부 라이선스 없음 (ppe-v5 에서 추가)
+      안전모·조끼를 착용한 팀원 1명을 낮은 시점에서 360도 돌며 찍은 영상의 프레임 400장.
+      Grounding DINO (IDEA-Research, Apache-2.0) 로 helmet·vest 박스를 자동으로 만들고
+      둘 중 하나라도 없거나 잘린 사진 121장을 뺐다(279장 사용). 라벨러는 라벨 생성에만
+      썼고 배포하지 않는다. 폰 사진을 XIAO 해상도(긴 변 640)로 줄여 (1)·(2) 와 같은
+      규칙으로 사람마다 크롭했다. 도구: `tools/ppe/colab_ppe_v5_lowangle.ipynb`.
+      ⚠️ 사람 얼굴이 찍힌 사진이라 저장소·Release 어디에도 올리지 않는다.
+
   ⚠️ 원본 이미지는 이 저장소로 재배포하지 않는다. 위 출처에서 각자 받는다.
   두 데이터의 저작자는 이 작업을 보증하지 않는다.
 
@@ -72,6 +82,8 @@ Copyright 2026 MechDog Physical AI Team
   YOLOX 베이스 모델           Apache-2.0      없음    저작권 고지 유지
   Roboflow construction-safety CC BY 4.0      없음    저작자 표시 · 변경 표시
   Mendeley PPE2286            CC BY 4.0       없음    저작자 표시 · 변경 표시
+  하단각도 자체 촬영          팀 산출물       없음    배포하지 않음
+  Grounding DINO (라벨러)     Apache-2.0      없음    배포하지 않음 (라벨 생성에만 사용)
 
-  이전 배포 모델(ppe-v1~v3)의 고지는 이 파일의 깃 이력에 있다. 개발 후보 v12·v23b 의
+  이전 배포 모델(ppe-v1~v4)의 고지는 이 파일의 깃 이력에 있다. 개발 후보 v12·v23b 의
   고지는 각 Release 의 NOTICE.txt 에 있다.

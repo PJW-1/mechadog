@@ -58,10 +58,10 @@ class Weight:
     note: str
 
 
-#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v4` 의 자산이다 (`ppe.json`·`NOTICE.txt` 도 같은 태그에 있다).
+#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v5` 의 자산이다 (`ppe.json`·`NOTICE.txt` 도 같은 태그에 있다).
 #: ⚠️ **모델을 다시 학습하면 새 태그를 쓴다** — 같은 태그의 자산을 갈아끼우면
 #: 아래 SHA-256 과 어긋나 받은 사람이 검증 실패로 멈춘다.
-PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v4/ppe.onnx"
+PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v5/ppe.onnx"
 
 #: ⚠️ **여기가 정본이다.** `models/README.md` 의 표는 이 값을 사람이 읽게 옮긴 것이다.
 WEIGHTS: tuple[Weight, ...] = (
@@ -79,8 +79,8 @@ WEIGHTS: tuple[Weight, ...] = (
     Weight(
         dest="models/ppe.onnx",
         url=PPE_RELEASE,
-        size=35_779_653,
-        sha256="e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5",
+        size=35_779_654,
+        sha256="145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2",
         note="PPE 4클래스 YOLOX-S · CC BY 4.0 (models/NOTICE) · XIAO 실측 전 후보",
     ),
 )
