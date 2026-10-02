@@ -13,6 +13,12 @@ python -m pip install -r requirements-dev.txt
 python -m host.runtime --device mechdog-01 --dashboard-port 8000
 ```
 
+**관제 화면 주소는 `http://127.0.0.1:8000/` 이다 — 흰색 화면(`/glass-preview/`)으로 간다.**
+검정 화면(`/index.html` · 제목 «현장 관제»)은 **구버전**이므로 직접 열지 않는다(2026-10-02 운용자 결정).
+흰색 화면이 그것을 안쪽 iframe 으로 쓰기 때문에 주소만 남아 있다. 정본은 저장소의
+`host/dashboard/glass-preview/`(흰색 테마·모션) + `host/dashboard/static/`(화면 본체)이며, 저장소 밖
+로컬 사본을 기준으로 삼지 않는다.
+
 이 명령은 **기존 로봇 운용 런타임도 실행한다.** 서버만 시험하려면 아래 pytest를 쓴다.
 현재 작업에서는 런타임을 실물에 연결하지 않았다.
 

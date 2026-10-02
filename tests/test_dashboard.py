@@ -343,6 +343,35 @@ def test_cli_rejects_invalid_port_before_loading_config(port, monkeypatch):
         module.main(["--device", "test", "--dashboard-port", port])
 
 
+def test_root_opens_the_white_dashboard(clock):
+    """`/` 는 흰색 화면(`/glass-preview/`)으로 간다 — 검정 기본 화면은 구버전이다 (2026-10-02).
+
+    흰색 화면은 실서버(`/health` 의 service=telemetry)에서 `../index.html` 을 iframe 으로 띄우므로
+    `/index.html` 은 그대로 `static/` 이어야 한다. 그것까지 보내면 자기 자신을 다시 띄운다.
+    """
+    state = DashboardState("mechdog-01", stale_after_ms=1000, clock=clock)
+    with TestClient(create_app(state, static_dir=DEFAULT_STATIC_DIR)) as client:
+        root = client.get("/", follow_redirects=False)
+        assert root.status_code == 307
+        assert root.headers["location"] == "/glass-preview/"
+        white = client.get("/glass-preview/")
+        assert white.status_code == 200 and "glass-theme" in white.text
+        assert client.get("/glass-preview/theme.css").status_code == 200
+        assert client.get("/glass-preview/motion.js").status_code == 200
+        inner = client.get("/index.html")
+        assert inner.status_code == 200 and 'id="app"' in inner.text, "iframe 이 띄울 화면"
+        assert client.get("/health").json()["service"] == "telemetry", "흰색 화면의 실서버 판정"
+
+
+def test_static_dir_without_white_dashboard_serves_it_at_root(clock, tmp_path):
+    """흰색 폴더가 없는 정적 폴더(시험·임시)는 예전처럼 `/` 에서 바로 띄운다."""
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "index.html").write_text("<p>plain</p>", encoding="utf-8")
+    state = DashboardState("mechdog-01", stale_after_ms=1000, clock=clock)
+    with TestClient(create_app(state, static_dir=tmp_path / "web")) as client:
+        assert client.get("/", follow_redirects=False).status_code == 200
+
+
 def test_dashboard_ships_its_page_and_three_without_install(clock):
     """관제 화면과 three.js 가 저장소에 함께 실려 있다 — npm 설치 없이 떠야 한다.
 

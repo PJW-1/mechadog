@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 import uvicorn
 from anyio import CancelScope
 from fastapi import APIRouter, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import (
     BaseModel,
@@ -54,6 +54,11 @@ CAMERA_PERIOD_S = 0.1
 # 새 추론 결과가 나왔는지 보는 주기 — 추론 주기(25fps = 40ms)보다 짧아야 화면이 추론률을 따라간다.
 VISION_POLL_PERIOD_S = 0.01
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
+#: 흰색 관제 화면(#314) — `static/` 화면을 iframe 으로 띄우고 흰색 테마를 입힌다. 정적 폴더와 같은
+#: 부모 아래에 있으면 `/glass-preview/` 로 내보내고 `/` 를 그리로 보낸다. **검정(기본 `static/`)
+#: 화면은 구버전이다** — 2026-10-02 운용자 결정. `/index.html` 은 흰색 화면이 iframe 으로 쓰므로 남긴다.
+GLASS_DIR_NAME = "glass-preview"
+GLASS_PATH = "/glass-preview"
 # 관제 화면은 빌드 없이 이 폴더를 그대로 내보낸다. three.js 도 `static/vendor/` 에 싣는다
 # (검사는 `npm run check`).
 
@@ -677,6 +682,19 @@ def create_app(
             )
 
     if static_dir is not None and static_dir.is_dir():
+        glass_dir = static_dir.parent / GLASS_DIR_NAME
+        if glass_dir.is_dir():
+            # ⚠️ **`/` 만 보낸다.** 흰색 화면은 실서버에서 `../index.html`(= `static/`) 을 iframe 으로
+            # 띄우므로 `/index.html` 을 보내면 자기 자신을 끝없이 다시 띄운다.
+            @app.get("/", include_in_schema=False, response_model=None)
+            async def white_dashboard() -> RedirectResponse:
+                return RedirectResponse(f"{GLASS_PATH}/", status_code=307)
+
+            app.mount(
+                GLASS_PATH,
+                _RevalidatedStatic(directory=glass_dir, html=True),
+                name="glass",
+            )
         # mount 는 등록 순서대로 탐색하므로 API·WS 경로를 먼저 등록하고 마지막에 붙인다.
         app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
 
