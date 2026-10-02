@@ -157,6 +157,7 @@ export class Operations {
  // 실제 연결(link)이 있으면 예시 모드가 아니어도 조작이 열린다. 링크가 없을
  // 때의 차단 사유는 그대로다 — **붙일 서버가 없는데 열어 두지 않는다.**
  get live(){return !this.demo&&this.connected}
+ get readOnly(){return this.live&&this.slot()?.commandsKnown===true&&this.slot()?.commandsOpen===false}
  get connected(){return ROBOTS.some(id=>this.slots[id].link)}
  slot(id=this.selected){return this.slots[id]??null}
  // 명령은 **지금 고른 로봇**의 링크로만 나간다 — 비상정지도 마찬가지다 (선택 로봇 정지).
@@ -176,22 +177,22 @@ export class Operations {
  get lastEscalation(){return this.slot()?.lastEscalation??null}
  get liveFeed(){return (this.slot()??this.slots[ROBOTS[0]]).liveFeed}
  get policy(){return this.slot()?.policy??this.slots[ROBOTS[0]].policy}
- get blocked(){return (!this.demo&&!this.link)||this.stale||this.estop||this.role!=='operator'}
- requireControlContext(){if(this.blocked)throw new Error(!this.demo&&!this.link?'실제 제어는 연결되지 않았습니다.':this.stale?'예시 수신 만료 상태입니다.':this.estop?'예시 정지 잠금을 먼저 해제하세요.':'시연 역할을 운영자로 선택하세요.')}
+ get blocked(){return this.readOnly||(!this.demo&&!this.link)||this.stale||this.estop||this.role!=='operator'}
+ requireControlContext(){if(this.blocked)throw new Error(this.readOnly?'조회·계획 전용 서버입니다.':!this.demo&&!this.link?'실제 제어는 연결되지 않았습니다.':this.stale?'예시 수신 만료 상태입니다.':this.estop?'예시 정지 잠금을 먼저 해제하세요.':'시연 역할을 운영자로 선택하세요.')}
  // 전송 실패를 삼키지 않는다. 화면이 "보냈다" 고 말하면 안 되는 경우다.
  noteLinkError(action,error){this.linkError=action+': '+(error?.message||String(error));this.log('전송 실패',this.linkError,'LIVE_LINK');this.emit('mode')}
  stop(reason='조작 해제'){
   const moving=this.command!=='STOP';this.command='STOP';
   // 멈춤은 **움직이고 있었는지와 무관하게** 내보낸다. 웹이 STOP 이라고 믿는
   // 것과 로봇이 실제로 선 것은 다른 일이고, 어긋났을 때 손해가 큰 쪽이다.
-  if(this.live)this.link.drive('STOP').catch(error=>this.noteLinkError('정지',error));
+  if(this.live&&!this.readOnly)this.link.drive('STOP').catch(error=>this.noteLinkError('정지',error));
   if(moving){this.log('STOP',reason);this.emit('command')}
  }
  release(reason='제어권 반납'){
   const active=this.control||this.command!=='STOP';this.command='STOP';this.control=null;
   // 제어권을 놓으면 서버 쪽 MANUAL 도 함께 푼다. 웹만 놓고 로봇이 수동에
   // 남아 있으면 자율 주행이 돌아오지 않는다.
-  if(active&&this.live)this.link.manual(false).catch(error=>this.noteLinkError('수동 해제',error));
+  if(active&&this.live&&!this.readOnly)this.link.manual(false).catch(error=>this.noteLinkError('수동 해제',error));
   if(active){this.log('제어권 해제',reason);this.emit('command')}
  }
  suspend(reason){
@@ -243,6 +244,7 @@ export class Operations {
  // ⚠️ **비상정지는 조건을 검사하지 않는다** (FR-4.4). 제어권이 없어도, 역할이
  // 무엇이어도, 이미 잠겨 있어도 누르면 나간다. 서버 쪽 `estop()` 도 같은 규칙이다.
  requestEstop(){
+  if(this.readOnly)return Promise.resolve({serverAccepted:false});
   const live=this.live;
   const delivery=live?this.link.estop().then(result=>{
    if(result?.accepted===true)return {serverAccepted:true};
@@ -271,6 +273,7 @@ export class Operations {
  // 실제 명령의 공통 경로 — 링크가 없으면 절대 나가지 않고, 거절도 숨기지 않는다.
  requestDevice(label,send,robot=this.selected){
   if(!this.live)throw new Error('실제 제어는 연결되지 않았습니다.');
+  if(this.slots[robot]?.commandsKnown&&this.slots[robot]?.commandsOpen===false)throw new Error('조회·계획 전용 서버입니다.');
   this.log('실제 '+label+' 요청',robot,'LIVE_LINK');
   return send().then(result=>{
    const rejected=result&&result.accepted===false;
@@ -287,7 +290,7 @@ export class Operations {
  requestAlarmConfirm(){return this.requestDevice('경보 확인',()=>this.link.confirmAlarm())}
  // 구역 기준 재등록 (WBS 3.6.5). ⚠️ **사건을 보낸 로봇의 서버로만** 보낸다 — 고른 로봇이 아니다.
  // 명령 API 가 열렸다고 /health 가 말한 자리(read_only:false)의 실시간 zone_changed 만 받는다.
- setCommandsOpen(open,robot=ROBOTS[0]){this.slots[robot].commandsOpen=open===true;this.emit('mode')}
+ setCommandsOpen(open,robot=ROBOTS[0]){this.slots[robot].commandsKnown=true;this.slots[robot].commandsOpen=open===true;this.emit('mode')}
  canResetZoneBaseline(event){const slot=this.slots[event?.slot];return this.live&&event.source==='LIVE_FEED'&&event.event==='zone_changed'&&!!event.zoneId&&!!slot?.link&&slot.commandsOpen===true}
  requestZoneBaseline(id){
   const event=this.events.find(e=>e.id===id);

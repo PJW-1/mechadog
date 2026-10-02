@@ -74,6 +74,13 @@ class PpeJudge:
         self._edge = EdgeTrigger()
         # 시작값은 «보류 아님» 이다. 비우면 첫 판정의 `False` 가 해제 로그로 남는다.
         self._edge.changed("ppe_held_for_fall", False)
+        self._requirements: tuple[str, ...] = ("helmet", "vest")
+
+    def set_requirements(self, required: tuple[str, ...]) -> None:
+        if required != self._requirements:
+            self._requirements = required
+            self._done.clear()
+            self._unknown_since = None
 
     @property
     def pose_held(self) -> bool:
@@ -209,6 +216,8 @@ class PpeJudge:
             self._lost_since = None
             return
         verdict = getattr(result, "ppe", None)
+        if verdict is not None and verdict.required != self._requirements:
+            return  # 구역 변경 직전 워커 결과는 새 정책의 판정으로 쓰지 않는다.
         if verdict is None:
             if self._lost_since is None:
                 self._lost_since = now_ms
@@ -230,6 +239,20 @@ class PpeJudge:
             return
         track = next((t for t in result.tracks if t.track_id == verdict.track_id), None)
         if track is None:
+            return
+        if "helmet" not in verdict.required:
+            returned = self.return_pose()
+            if verdict.state == VIOLATION and verdict.confirmed:
+                self._finish(
+                    VIOLATION, result, now_ms, "구역 필수 보호구 미착용", returned=returned
+                )
+            elif verdict.state == OK:
+                self._finish(OK, result, now_ms, verdict.reason, returned=returned)
+            elif verdict.state == UNDETERMINED:
+                if self._unknown_since is None:
+                    self._unknown_since = now_ms
+                elif now_ms - self._unknown_since >= self._unknown_ms:
+                    self._finish(UNDETERMINED, result, now_ms, verdict.reason, returned=returned)
             return
         decision = self._posture.update(
             box=track.box,

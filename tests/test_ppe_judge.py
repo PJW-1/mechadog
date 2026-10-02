@@ -15,7 +15,7 @@ from host.behavior.commander import Commander
 from host.behavior.mission import Mission
 from host.behavior.posture import PostureDecision
 from host.behavior.ppe_judge import PpeJudge
-from host.vision.ppe_detector import UNDETERMINED
+from host.vision.ppe_detector import OK, UNDETERMINED
 
 T0 = 1_000_000
 #: 공장 모드의 선행 기능 검사를 연다 — 판정은 공장 모드에서만 돈다.
@@ -40,7 +40,12 @@ def _judge(cfg: dict, *, reverse_mm_per_sec: float | None = None) -> PpeJudge:
 def _frame() -> SimpleNamespace:
     """추적 1번이 판정 중(아직 모름)인 프레임."""
     verdict = SimpleNamespace(
-        track_id=1, clipped=False, state=UNDETERMINED, confirmed=False, reason="판정 중"
+        track_id=1,
+        clipped=False,
+        state=UNDETERMINED,
+        confirmed=False,
+        reason="판정 중",
+        required=("helmet", "vest"),
     )
     track = SimpleNamespace(track_id=1, box=(100, 200, 200, 400), height=200)
     return SimpleNamespace(ppe=verdict, tracks=(track,), frame_height=480)
@@ -48,6 +53,19 @@ def _frame() -> SimpleNamespace:
 
 def _decide(judge: PpeJudge, step: str) -> None:
     judge._posture.update = lambda **_kw: PostureDecision(step, "시험")
+
+
+def test_zone_change_ignores_old_result_and_vest_only_needs_no_head_pose(cfg):
+    judge = _judge(cfg)
+    judge.set_requirements(("vest",))
+    frame = _frame()
+    frame.ppe.state = OK
+    judge.judge(frame, T0)
+    assert not judge.is_done(1)
+    frame.ppe.required = ("vest",)
+    judge._posture.update = lambda **_kw: pytest.fail("vest-only must not request head posture")
+    judge.judge(frame, T0 + 1)
+    assert judge.is_done(1)
 
 
 def test_a_measured_reverse_backs_off_after_standing_up(cfg: dict) -> None:

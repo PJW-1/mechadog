@@ -289,6 +289,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
 
         def __init__(self, _config, **kwargs):
             self.dashboard = kwargs["dashboard"]
+            self.context = SimpleNamespace(device_id=kwargs["device_id"])
             self.behavior = None
             self.commander = None
             self.send_immediate = lambda _line: None
@@ -573,6 +574,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
         telemetry_port = 5101
 
         def __init__(self, _config, **kwargs):
+            self.context = SimpleNamespace(device_id=kwargs["device_id"])
             captured["publisher"] = kwargs.get("event_publisher")
             captured["dashboard"] = kwargs["dashboard"]
             self.behavior = None
@@ -646,6 +648,7 @@ def test_cli_omits_the_publisher_without_a_dashboard(cfg, monkeypatch):
         telemetry_port = 5101
 
         def __init__(self, _config, **kwargs):
+            self.context = SimpleNamespace(device_id=kwargs["device_id"])
             captured["publisher"] = kwargs.get("event_publisher")
 
         def serve(self, _sock, **_kwargs):

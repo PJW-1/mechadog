@@ -422,6 +422,10 @@ zones:
   # VLM(`change_detect.vlm_hazard_items`)으로 보는 구역이다. **여기 없는 구역에서는 위험물이 보여도
   # 경고하지 않는다.** `ids` 의 부분집합이어야 한다. 비우면(`[]`) 위험물 경고가 없다.
   hazard_ids: [C]
+  # 관제의 구역별 공장 모드 점검 설정. 미지정 구역은 안전모·조끼 모두 필수다.
+  # 개체 local.yaml 예: {A: {name: 출입구, helmet: true, vest: false, note: ""}}
+  # 신선한 지도 위치가 도착 반경 안에 있을 때만 사용. 위치 불명/구역 밖은 기본 두 항목.
+  policies: {}
   # FR-7.4 — 도착 허용오차(구역의 크기가 아니다). 반경의 두 배를 벗어나야 떠난 것으로 본다.
   arrival_radius_mm: 300
   # 앵커에 바라볼 방향(yaw)이 있으면 `ZONE_INSPECT` 가 제자리에서 돌아 맞춘 뒤 본다 —

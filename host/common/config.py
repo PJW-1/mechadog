@@ -74,7 +74,8 @@ def _read_mapping(path: Path) -> dict[str, Any]:
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
+        # 구역 정책은 ID 목록과 함께 교체한다. 삭제한 구역의 하위 정책을 되살리지 않는다.
+        if key != "policies" and isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _merge(out[key], value)
         else:
             out[key] = deepcopy(value)
@@ -328,6 +329,20 @@ def validate_base_config(config: dict[str, Any]) -> None:
     unknown = [label for label in hazard_ids if label not in zones.get("ids", [])]
     if unknown:
         raise ConfigError(f"zones.hazard_ids 는 zones.ids 의 부분집합이어야 함: {unknown}")
+    policies = zones.get("policies", {})
+    if not isinstance(policies, dict):
+        raise ConfigError("zones.policies 는 구역별 설정 객체여야 함")
+    for label, policy in policies.items():
+        if label not in ids or not isinstance(policy, dict):
+            raise ConfigError("zones.policies 에 정의되지 않은 구역 또는 잘못된 값이 있음")
+        if any(key not in {"name", "helmet", "vest", "note"} for key in policy):
+            raise ConfigError("zones.policies 에 지원하지 않는 항목이 있음")
+        for item in ("helmet", "vest"):
+            if item in policy and not isinstance(policy[item], bool):
+                raise ConfigError(f"zones.policies.{label}.{item} 은 true/false 여야 함")
+        for key, limit in (("name", 60), ("note", 300)):
+            if key in policy and (not isinstance(policy[key], str) or len(policy[key]) > limit):
+                raise ConfigError(f"zones.policies.{label}.{key} 값이 올바르지 않음")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")
