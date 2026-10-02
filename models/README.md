@@ -14,7 +14,7 @@
 | 파일 | 용도 | 확보 방법 | 상태 |
 | :--- | :--- | :--- | :--- |
 | `coco.onnx` | ① 범용 검출기 — 사람 검출(FR-3) + 변화 감지 대상 객체(FR-8) | **YOLOX-S 공식 배포 ONNX 를 받아 이름만 바꾼다.** 학습·export 불요 | ✅ 계열 확정 (ADR-24) |
-| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v4`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ YOLOX-S 4클래스 · XIAO 실측 전 후보 (`docs/PPE_ACCEPTANCE.md`) |
+| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v5`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ YOLOX-S 4클래스 · XIAO 실측 전 후보 (`docs/PPE_ACCEPTANCE.md`) |
 
 ---
 
@@ -204,13 +204,13 @@ models/
 └── ppe.onnx        # VLM 은 여기 없다 — ③ 참조 (HF 캐시)
 ```
 
-`ppe.onnx`의 정본 식별값은 크기 **35,779,653바이트**, SHA-256
-`e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5`이다. 자체 학습
-산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v4`)으로 배포하며, `coco.onnx`와 같이
+`ppe.onnx`의 정본 식별값은 크기 **35,779,654바이트**, SHA-256
+`145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2`이다. 자체 학습
+산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v5`)으로 배포하며, `coco.onnx`와 같이
 `tools/fetch_models.py`가 받고 두 값을 검증한다. 같은 Release 의 `ppe.json`에 학습 설정·데이터 카드
 해시·parity·평가가 있다. 학습·변환·내보내기 도구는 `tools/ppe/`(`yolox_exp_ppe_s.py` 머리말)에 있다.
 
-**라이선스 — `models/NOTICE` 를 함께 배포한다.** v4 가중치는 CC BY 4.0 데이터 두 개(NOTICE §3)로만
+**라이선스 — `models/NOTICE` 를 함께 배포한다.** v5 가중치는 CC BY 4.0 데이터 두 개와 팀 자체 촬영 사진(NOTICE §3)으로만
 학습했으므로 출처 표시와 함께 CC BY 4.0 으로 배포한다. 비상업(NC) 데이터는 쓰지 않았다.
 베이스 모델 YOLOX는 Apache-2.0이다. 저장소 코드 자체는 루트 `LICENSE`(Apache-2.0)를 따른다. **가중치만
 떼어 전달하면 출처 표시가 끊기므로 `NOTICE`를 같이 넣는다.**
