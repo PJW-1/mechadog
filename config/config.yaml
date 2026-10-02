@@ -205,6 +205,33 @@ vision:
     # 자세 상승은 판정의 전제가 아니라 클리핑 시의 대응 수단이다 (FR-9.2.2).
     # 단계 정의는 posture.escalation_steps 를 따른다.
 
+  # ── 위험물 검출 (lighter / powerbank · 직접 학습, 2클래스) ──
+  # ⚠️ 아직 읽는 코드가 없다 — 모델 배포만 먼저 한다. 연결은 `Detector(config, section="hazard",
+  # labels=classes)` 로 된다 (ppe 와 같은 YoloxAdapter). `normal` 클래스는 없다: 미검출 = 정상.
+  #
+  # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 hazard-v1 · XIAO 실측 전 후보
+  #   계열     YOLOX-S (Apache-2.0 · Megvii) · 640x640 · 2클래스 · 출발점 COCO yolox_s.pth
+  #   데이터   lighter_powerbank_coco_2class (zip sha256 a674957c…faae52) — 전부 CC BY 4.0
+  #            · Roboflow vision-wajsm/lighter-wvso3 · vision-wajsm/portable-charger
+  #            · ia-act/my-first-project-3xogl (정상 배경 사진 포함)
+  #            (train 1,781장 · lighter 박스 686 · powerbank 박스 743 · 배경 800)
+  #   설정     100 epoch (no-aug 15) · batch 16 · fp16 · seed 20261002 · mosaic 0.5 · mixup 없음
+  #            best = epoch 96 · valid AP50:95 0.736
+  #   산출물   models/hazard.onnx · 35,776,558 bytes
+  #            sha256 7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746
+  #   ⚠️ 출력은 디코드 전 원시 [1, 8400, 7] 이다 (ppe 와 같은 규칙).
+  #
+  # ⚠️ 아래 수치는 공개 사진 기준이며 확정값이 아니다. 실기는 XIAO 로 다시 잰다.
+  #      test AP50 0.970 (COCOeval) · conf 0.5 에서 정상 사진 오경보 3/100 · 위험물 미검출 4/123
+  #      (오경보 3장은 라벨이 빠진 라이터 사진이다 — 실제로는 맞춘 것)
+  hazard:
+    model_path: "models/hazard.onnx"
+    model_family: yolox
+    input_size: 640
+    conf_threshold: 0.5
+    iou_threshold: 0.45
+    classes: [lighter, powerbank]
+
   # ── 쓰러짐 규칙 판정 (FR-9 · 4.8.3 · ADR-35 대안 ⓓ) ──
   # 추론마다 돌며 쓰러짐 의심 진입에 쓴다. 확정은 VLM 이 한다 (ADR-42 결정 2).
   fallen:
