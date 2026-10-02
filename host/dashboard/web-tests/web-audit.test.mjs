@@ -86,3 +86,8 @@ test('inner navigation updates the wrapper URL without creating another history 
  assert.equal(new URL(dom.window.location).searchParams.get('view'),'settings');
  assert.equal(dom.window.history.length,length);
 });
+
+test('legacy root hash bookmarks survive the white wrapper redirect',async t=>{
+ const dom=new JSDOM(shell,{url:'http://localhost:8000/glass-preview/#zones',runScripts:'dangerously'});
+ t.after(()=>dom.window.close());await flush();assert.equal(new URL(dom.window.document.querySelector('#preview').src).hash,'#zones');
+});

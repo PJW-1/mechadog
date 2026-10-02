@@ -78,12 +78,14 @@ test('pointer hold ends on cancel; second pointer cannot hijack control',()=>{
 test('rerender while held stops command; technician cannot edit a review',()=>{
  const {dom,document,panels,store}=setup();panels.render('missions');store.claim();const forward=document.querySelector('[data-drive="FORWARD"]');forward.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Enter'}));panels.render('missions');assert.equal(store.command,'STOP');store.setRole('technician');panels.render('events');assert.equal(document.querySelector('.op-review-form button').disabled,true);
 });
-test('local policy form saves, zone selection opens real workspace callback',()=>{
- const {dom,document,panels,store,navigation}=setup();panels.render('settings');const helmet=[...document.querySelectorAll('input[type=checkbox]')][0];helmet.checked=true;helmet.dispatchEvent(new dom.window.Event('input'));document.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));assert.equal(store.policies['central-corridor'].helmet,true);
+test('settings sends PPE editing to the real zone planner, preserving management previews',()=>{
+ const {document,panels,navigation}=setup();panels.render('settings');
+ button(document,'구역 · 동선에서 설정').click();assert.deepEqual(navigation,['zones']);
  button(document,'사원증').click();assert.ok(document.querySelector('.op-preview'));assert.equal(document.querySelector('form'),null);
- panels.render('zones');button(document,'PPE 초안 작성').click();panels.render(navigation.pop());assert.ok(document.querySelector('[name="PPE 정책 구역"]'));assert.equal(document.querySelector('[data-settings="display"]').getAttribute('aria-pressed'),'true');
- panels.render('zones');button(document,'3D에서 위치 보기').click();assert.deepEqual(navigation,['central-corridor']);
+ panels.render('zones');assert.ok(document.querySelector('[name="helmet"]'));assert.ok(document.querySelector('[data-plan-add]'));
+ assert.match(document.querySelector('#content').textContent,/초안 작성/);
 });
+
 test('blackbox file validation rejects oversized JSON and spoofed JPEG',async()=>{
  const {panels}=setup();await assert.rejects(()=>panels.importFiles([{name:'meta.json',size:3*1024*1024}]),/2MB/);
  const raw={ts_ms:100,event:'person_found',state:'OBSERVE',escalation:'L1',tracks:[],detections:[],telemetry:{}};

@@ -3,13 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#1a1a2a">
+<meta name="theme-color" content="#f7f8f5">
 <title>MechaDog · 현장 관제</title>
 <meta name="description" content="현장을 입체적으로 살펴보고, 선택한 로봇의 시점을 바로 확인하는 MechaDog 관제실.">
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./panels.css">
+<link id="glass-theme" rel="stylesheet" href="../glass-preview/theme.css">
+<link rel="stylesheet" href="../glass-preview/planning.css">
 <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/"}}</script>
 <script type="module" src="./app.js"></script>
+<script type="module" src="../glass-preview/motion.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#scene-title">본문으로 이동</a>
@@ -20,11 +23,11 @@
 <button data-view="dashboard" class="active" aria-current="page"><span class="nav-icon" data-icon="home"></span><span>통합 관제</span></button>
 <button data-view="events"><span class="nav-icon" data-icon="document"></span><span>사건</span></button>
 <button data-view="missions"><span class="nav-icon" data-icon="device"></span><span>제어 · 장치</span></button>
+<button data-view="zones"><span class="nav-icon" data-icon="zones"></span><span>구역 · 동선</span></button>
 <details class="nav-more">
-<summary><span class="nav-icon" data-icon="zones"></span><span>시연 · 진단</span></summary>
+<summary><span class="nav-icon" data-icon="zones"></span><span>기록 · 설정</span></summary>
 <div class="nav-more-menu">
 <button data-view="records">로컬 기록</button>
-<button data-view="zones">예시 구역</button>
 <button data-view="devices">장치 상세</button>
 <button data-view="voice">음성 관리</button>
 <button data-view="settings">설정</button>

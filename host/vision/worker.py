@@ -130,6 +130,7 @@ class VisionWorker:
         self._badges = BadgeReader(config)
         self._ppe = ppe
         self._ppe_enabled = False
+        self._ppe_requirements: tuple[str, ...] = ("helmet", "vest")
         self._ppe_opened = False
         self._hazard = hazard
         self._hazard_enabled = False
@@ -241,6 +242,10 @@ class VisionWorker:
         """사람 판정 게이트. 스트림이 끊기면 호출부가 `reset()` 한다."""
         return self._gate
 
+    def set_ppe_requirements(self, required: tuple[str, ...]) -> None:
+        # 불변 튜플을 전달하고 검출기의 상태 변경은 아래 워커 스레드에서 수행한다.
+        self._ppe_requirements = required
+
     def set_ppe_enabled(self, enabled: bool) -> None:
         """Only factory mode pays for PPE inference; the worker owns its state."""
         if enabled and self._started_ms is not None and not self._ppe_opened:
@@ -334,6 +339,8 @@ class VisionWorker:
             )
             # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
             markers = self._badges.read(image) if tracks else ()
+            if self._ppe is not None and hasattr(self._ppe, "set_requirements"):
+                self._ppe.set_requirements(self._ppe_requirements)
             ppe = (
                 self._ppe.observe(image, tracks, observed)
                 if self._ppe_enabled and self._ppe

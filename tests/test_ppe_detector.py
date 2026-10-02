@@ -55,3 +55,29 @@ def test_ppe_needs_both_body_regions_and_accepts_complete_gear(cfg):
     assert detector.observe(image, track, 40).state == OK
     model.found[1] = Detection("no_vest", 0.9, (1, 60, 20, 100))
     assert detector.observe(image, track, 80).state == VIOLATION
+
+
+def test_vest_only_zone_accepts_vest_when_head_is_out_of_frame(cfg):
+    model = FakeModel([Detection("vest", 0.9, (1, 60, 20, 100))])
+    detector = PpeDetector(cfg, model)
+    detector.set_requirements(("vest",))
+    result = detector.observe(
+        np.zeros((480, 640, 3), np.uint8), (Track(1, (100, 0, 300, 470), 0.9, 0),), 0
+    )
+    assert result.state == OK and result.required == ("vest",)
+    assert model.calls == 1
+
+
+def test_policy_change_clears_previous_violation_window(cfg):
+    model = FakeModel(
+        [Detection("no_helmet", 0.9, (1, 20, 20, 40)), Detection("no_vest", 0.9, (1, 60, 20, 100))]
+    )
+    detector = PpeDetector(cfg, model)
+    image = np.zeros((480, 640, 3), np.uint8)
+    track = (Track(1, (100, 20, 300, 470), 0.9, 0),)
+    detector.observe(image, track, 0)
+    detector.observe(image, track, 100)
+    detector.set_requirements(("vest",))
+    assert not detector.observe(image, track, 200).confirmed
+    detector.set_requirements(())
+    assert detector.observe(image, track, 300).state == OK

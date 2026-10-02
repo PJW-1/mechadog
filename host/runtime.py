@@ -46,6 +46,7 @@ from host.behavior.ppe_judge import PpeJudge
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zone_inspector import ZoneInspector
+from host.behavior.zone_policy import ZonePpePolicy
 from host.behavior.zones import Zone, ZoneStore
 from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
@@ -287,6 +288,7 @@ class Runtime:
         except (OSError, ValueError) as exc:
             LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
             anchors = ()
+        self._zone_ppe = ZonePpePolicy(config, anchors)
         # 상황 판독 (FR-8 · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
@@ -610,6 +612,10 @@ class Runtime:
         """
         if self._vision is None:
             return
+        required = self._zone_ppe.required(now_ms)
+        self._ppe_judge.set_requirements(required)
+        if hasattr(self._vision, "set_ppe_requirements"):
+            self._vision.set_ppe_requirements(required)
         self._fall.watch(now_ms)
         self._ppe_judge.settle(now_ms)
         result = self._vision.latest()
@@ -741,6 +747,7 @@ class Runtime:
         그것이 없으면 아무도 부르지 않고 구역 도착이 일어나지 않는다.
         """
         self._zone_inspector.note_pose(pose, now_ms)
+        self._zone_ppe.note_pose(pose, now_ms)
 
     def attach_scans(self, take: Callable[[], Scan | None]) -> None:
         """최신 스캔 공급자를 붙인다 (`LidarFeed.take`). 길 찾기가 없으면 쓰지 않는다."""
@@ -1679,6 +1686,7 @@ def dashboard_wiring(
 ) -> dict[str, Any]:
     """관제 서버(`create_app`)에 넘길 명령·영상·사건 그림·정책 연결. 한 대·여러 대가 같이 쓴다."""
     from host.dashboard.commands import CommandService
+    from host.dashboard.planning import PlanningService
 
     commands = CommandService(
         runtime.behavior,
@@ -1710,6 +1718,7 @@ def dashboard_wiring(
         # PC 스피커 방송 음량·무음 조절. 없으면(piper 없음 등) None —
         # 화면은 "방송 없음" 을 보여 준다.
         "broadcast": broadcaster,
+        "planning": PlanningService(dict(config), runtime.context.device_id),
     }
 
 

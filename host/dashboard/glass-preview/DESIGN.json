@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-03T02:38:15.1126068+09:00",
+  "title": "Design System: MechaDog — 2026-10-03 incumbent extension",
+  "extensions": {
+    "motion": [
+      {
+        "name": "itinerary-feedback",
+        "value": "background-color .16s, border-color .16s",
+        "purpose": "Existing itinerary hover/selection feedback; inherited reduced-motion button rule uses 100ms color transitions."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "planning-stack-max",
+        "value": "899px"
+      },
+      {
+        "name": "planning-two-column-min",
+        "value": "900px"
+      },
+      {
+        "name": "planning-two-column-max",
+        "value": "1190px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Plan save",
+      "kind": "button",
+      "description": "Existing white-theme primary action; enabled state only. Runtime eligibility is documented in DESIGN.md.",
+      "html": "<button class=\"ds-save\">계획 저장</button>",
+      "css": ".ds-save{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;font-size:12px;min-height:38px;padding:7px 13px;border:1px solid #31513b;border-radius:7px;background:#31513b;color:#fff;cursor:pointer;transition:background-color 160ms,color 160ms,border-color 160ms}.ds-save:hover:not(:disabled){background:#243e2b}.ds-save:focus-visible{outline:2px solid #427b50;outline-offset:3px}.ds-save:active:not(:disabled){transform:scale(.985)}.ds-save:disabled{opacity:.48;cursor:not-allowed}@media(max-width:899px){.ds-save{min-height:40px}}@media(max-width:550px){.ds-save{min-height:44px}}@media(prefers-reduced-motion:reduce){.ds-save{transition:background-color 100ms,color 100ms,border-color 100ms}.ds-save:active:not(:disabled){transform:none}}"
+    },
+    {
+      "name": "Reload saved plan",
+      "kind": "button",
+      "description": "Inherited secondary button, not a second primary action.",
+      "html": "<button class=\"ds-reload\">저장본 다시 불러오기</button>",
+      "css": ".ds-reload{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;font-size:12px;min-height:38px;padding:7px 13px;border:1px solid #cdd8c5;border-radius:7px;background:#fff;color:#48613b;cursor:pointer;transition:background-color 160ms,border-color 160ms}.ds-reload:hover:not(:disabled){background:#edf3e6;border-color:#9eb58c;color:#345327}.ds-reload:focus-visible{outline:2px solid #427b50;outline-offset:3px}.ds-reload:active:not(:disabled){transform:scale(.985)}.ds-reload:disabled{opacity:.48;cursor:not-allowed}@media(max-width:899px){.ds-reload{min-height:40px}}@media(max-width:550px){.ds-reload{min-height:44px}}@media(prefers-reduced-motion:reduce){.ds-reload{transition:background-color 100ms,border-color 100ms}.ds-reload:active:not(:disabled){transform:none}}"
+    },
+    {
+      "name": "Itinerary selection",
+      "kind": "nav",
+      "description": "Selected stop; aria-pressed and text reinforce the selected fill.",
+      "html": "<button class=\"ds-stop\" aria-pressed=\"true\"><span class=\"ds-order\">01</span><span><strong>A</strong><small>A · 위치 미지정</small></span></button>",
+      "css": ".ds-stop{display:flex;align-items:center;gap:10px;width:100%;padding:13px 8px;border:1px solid transparent;border-radius:7px;background:transparent;color:#324b3e;text-align:left;cursor:pointer;font-family:'Noto Sans KR','Malgun Gothic',sans-serif;transition:background-color .16s,border-color .16s}.ds-stop:hover{background:#eaf0e8}.ds-stop[aria-pressed=true]{background:#e6eee4;border-color:#b9cdb7}.ds-stop strong{display:block;font-size:13px;overflow-wrap:anywhere}.ds-stop small{display:block;font-size:11px;color:#596b5d;line-height:1.6;margin-top:3px}.ds-order{font-size:12px;font-variant-numeric:tabular-nums;color:#526c52}.ds-stop:focus-visible{outline:2px solid #427b50;outline-offset:3px}@media(max-width:899px){.ds-stop{min-height:52px}}@media(prefers-reduced-motion:reduce){.ds-stop{transition:background-color 100ms,border-color 100ms}}"
+    },
+    {
+      "name": "Plan status",
+      "kind": "custom",
+      "description": "Text is authoritative; pending color is supplemental. This example carries no live runtime state.",
+      "html": "<span class=\"ds-state\" role=\"status\" aria-live=\"polite\" data-pending=\"true\">저장됨 · 재시작 후 적용</span>",
+      "css": ".ds-state{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;font-size:12px;color:#366b51}.ds-state[data-pending=true]{color:#7b570a}"
+    },
+    {
+      "name": "Workspace container",
+      "kind": "card",
+      "description": "Flat three-region planning surface; no new elevation token.",
+      "html": "<div class=\"ds-layout\"><aside class=\"ds-itinerary\">순찰 순서</aside><section class=\"ds-map-area\">지도에 구역 배치</section><aside class=\"ds-inspector\">구역 설정</aside></div>",
+      "css": ".ds-layout{display:grid;grid-template-columns:minmax(180px,.85fr) minmax(300px,2.4fr) minmax(235px,1fr);background:#fff;border:1px solid #dce3db;border-radius:10px;overflow:hidden;min-height:535px;color:var(--ink,#25352e);font-family:'Noto Sans KR','Malgun Gothic',sans-serif}.ds-itinerary,.ds-inspector{padding:20px 16px;min-width:0}.ds-itinerary{background:#f7f9f5;border-right:1px solid #dce3db}.ds-inspector{border-left:1px solid #dce3db}.ds-map-area{padding:20px;min-width:0}@media(min-width:900px) and (max-width:1190px){.ds-layout{grid-template-columns:190px minmax(260px,1fr)}.ds-inspector{grid-column:1/-1;border-left:0;border-top:1px solid #dce3db}}@media(max-width:899px){.ds-layout{grid-template-columns:minmax(0,1fr)}.ds-itinerary{border-right:0;border-bottom:1px solid #dce3db}.ds-inspector{border-left:0;border-top:1px solid #dce3db}.ds-map-area{padding:16px}}"
+    },
+    {
+      "name": "Coordinate input",
+      "kind": "input",
+      "description": "Existing numeric editor, 0.001m step. Legacy gold focus is reproduced as observed, not endorsed as the future palette.",
+      "html": "<label class=\"ds-field\">X (m)<input class=\"ds-coordinate\" type=\"number\" step=\"0.001\" min=\"-10000\" max=\"10000\" placeholder=\"미지정\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:6px;font-family:\"Noto Sans KR\",\"Malgun Gothic\",sans-serif;font-size:11px;color:#586a50}.ds-coordinate{width:100%;min-width:0;min-height:37px;box-sizing:border-box;border:1px solid #cbd7c4;border-radius:7px;background:#fff;color:#304b30;padding:9px 10px;font:inherit;font-size:13px;line-height:1.5;caret-color:#275239}.ds-coordinate::placeholder{color:#64745c;opacity:1}.ds-coordinate:focus-visible{outline:2px solid #edc657;outline-offset:3px}@media(max-width:899px){.ds-coordinate{min-height:44px}}@media(max-width:550px){.ds-coordinate{font-size:16px}}"
+    },
+    {
+      "name": "Zone identifier",
+      "kind": "chip",
+      "description": "Inherited static identifier badge, not an interactive chip.",
+      "html": "<span class=\"ds-badge\">A</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;padding:4px 9px;border:1px solid #d0ddc5;border-radius:5px;background:#eef4e7;color:#416132;font-family:\"Noto Sans KR\",\"Malgun Gothic\",sans-serif;font-size:11px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "기존 흰색 관제 작업면",
+    "overview": "완성된 좁은 확장의 소스 기록이다. 2026-09-29/30의 위 기록은 그대로 보존한다. 기존 흰색·중성색·녹색 관제 안에서 순찰 순서, 실제 지도, 구역별 점검 설정을 연결한다. 새로운 세계나 제품 방향을 정하지 않았다. New-world random FORM seed: **N/A — incumbent extension**. 무작위 시드·외부 승인 시안·선정 대회의 출처를 만들지 않는다.",
+    "keyCharacteristics": [
+      "흰색 작업면과 옅은 구분선, 녹색 선택·저장, 호박색 미적용/주의 상태.",
+      "순서 목록 → 지도 → 설정의 동일한 문서 순서, 화면 폭에 따른 재배치.",
+      "작성 중·저장됨·운용 적용을 문구로 구별하고 지도 부재를 명시한다."
+    ],
+    "rules": [
+      {
+        "name": "The Explicit State Rule",
+        "body": "녹색/호박색 보조 표현에는 작성·저장·적용 상태 문구를 함께 둔다. 위험물 점검 반경과 경로 없음의 호박색을 일반 선택색으로 사용하지 않는다.",
+        "section": "colors"
+      },
+      {
+        "name": "The Editable Precision Rule",
+        "body": "좌표 요약은 소수 두 자리지만 편집 값은 유효한 0.001m 단위를 유지한다. 요약 반올림을 저장 정밀도로 사용하지 않는다.",
+        "section": "typography"
+      },
+      {
+        "name": "The Ordered Workspace Rule",
+        "body": "DOM과 좁은 화면 흐름은 순서 목록 → 지도 → 구역 설정이다. 1190px 초과에서는 `minmax(180px,.85fr) minmax(300px,2.4fr) minmax(235px,1fr)`의 세 열이다. 900–1190px에서는 190px 목록과 `minmax(260px,1fr)` 지도 아래에 설정 영역이 전체 폭으로 내려가며 설정 내부는 두 열이다. 899px 이하에서는 세 영역이 한 열로 쌓인다. 두 열 중간 구간은 CSS 근거이며 제공 캡처에는 없다.",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "**Do** 기존 흰색·녹색 정체성과 순서/지도/설정의 흐름을 유지한다.",
+      "**Do** 초안·저장본·운용 적용 상태와 실제 지도 부재를 명시한다.",
+      "**Do** 편집 정밀도·키보드 초점 연속성·기존 reduced-motion 동작을 유지한다."
+    ],
+    "donts": [
+      "**Don't** 저장이나 지도 경로 계산을 실물 운용 적용·주행 검증으로 표시한다.",
+      "**Don't** 실제 지도 대신 예시 공장이나 장식 래스터를 넣는다. 새 shipping raster asset은 없으며 리뷰 캡처는 배포 자산이 아니다. 런타임 지도 PNG는 센서 지도 데이터다.",
+      "**Don't** 캡처되지 않은 상태, 인계받은 시험, 시드 프로토콜 충돌을 전체 UI 승인으로 바꿔 적는다."
+    ]
+  }
+}
