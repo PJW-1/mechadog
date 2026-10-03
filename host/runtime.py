@@ -241,6 +241,9 @@ class Runtime:
         # 뒤처진 쪽을 통째로 버린다 (`_send_lock` 설명과 같은 이유).
         navigator = navigator_factory(self._commander) if navigator_factory else None
         self._navigator = navigator
+        #: 대시보드가 알려준 «지금 이 구역» — 서버 스레드가 넣고 루프가 꺼낸다.
+        self._locate_lock = threading.Lock()
+        self._locate_asked: str | None = None
         #: ROS2 컨테이너로 가는 ODOM (`--lidar-device`, 보행 실측이 있는 기체만). 없으면 보내지 않는다.
         self._odom = odom
         #: 대시보드로 가는 측위 포즈 — 지도 폴더의 `pose_frame.json` 이 있을 때만
@@ -1443,6 +1446,24 @@ class Runtime:
         """
         return self._zone_inspector.ask_baseline_reset(zone)
 
+    def ask_locate_zone(self, zone: str) -> tuple[bool, str]:
+        """사람이 알려준 «지금 이 구역» 을 예약한다. **다른 스레드에서 부른다.**
+
+        길 찾기·측위 상태는 루프 스레드만 바꾼다 — 적용은 다음 틱(`_drain_confirmations`).
+        """
+        navigator = self._navigator
+        if navigator is None or not hasattr(navigator, "hint_zone"):
+            return False, "LiDAR 측위 순찰이 아니라 위치를 알려줄 대상이 없다"
+        known = navigator.locate_zone_ids()
+        if zone not in known:
+            return (
+                False,
+                f"구역 {zone!r} 이 없다 — 알려줄 수 있는 구역: {', '.join(known) or '없음'}",
+            )
+        with self._locate_lock:
+            self._locate_asked = zone
+        return True, f"구역 {zone} 안에서 위치를 다시 찾는다 — 찾을 때까지 로봇은 선다"
+
     def apply_external(self, event: Event) -> bool:
         """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**
 
@@ -1497,6 +1518,10 @@ class Runtime:
         if self._reset_asked:
             self._reset_asked = False
             self.request_reset()
+        with self._locate_lock:
+            zone, self._locate_asked = self._locate_asked, None
+        if zone is not None and self._navigator is not None:
+            self._navigator.hint_zone(zone, now_ms)
         self._zone_inspector.reset_baselines()
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
@@ -1920,6 +1945,7 @@ def dashboard_wiring(
         note_voice_listening=runtime.note_voice_listening,
         confirm_alarm=runtime.ask_alarm_confirm,
         reset_zone_baseline=runtime.ask_zone_baseline_reset,
+        locate_zone=runtime.ask_locate_zone,
         pose=(
             float(config["posture"]["pitch_up_deg"]),
             int(config["posture"]["settle_ms"]),
@@ -1993,6 +2019,8 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
         "auth_require_both": bool(auth.get("require_both", False)),
         "l3_warning": (esc.get("sound") or {}).get("l3_warning"),
         "led": {key: value for key, value in esc["led"].items() if key != "l3_blink_hz"},
+        # «위치 알려주기» 버튼 목록 — 순찰 구역 id (방 이름이 아니라 구역 기호).
+        "patrol_zones": [str(zone) for zone in config["zones"]["ids"]],
     }
 
 

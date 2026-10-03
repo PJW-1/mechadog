@@ -62,6 +62,7 @@ class CommandService:
         note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
         confirm_alarm: Callable[[], None] | None = None,
         reset_zone_baseline: Callable[[str], tuple[bool, str]] | None = None,
+        locate_zone: Callable[[str], tuple[bool, str]] | None = None,
         pose: tuple[float, int] | None = None,
     ) -> None:
         self._behavior = behavior
@@ -86,6 +87,7 @@ class CommandService:
         self._confirm_alarm = confirm_alarm
         # 구역 기준 재등록 (3.6.5). 어느 구역이 있는지 아는 쪽이 런타임이라 판정도 거기서 한다.
         self._reset_zone_baseline = reset_zone_baseline
+        self._locate_zone = locate_zone
         # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과 같은 검증된
         # 각도만 쓰고 임의 각도는 받지 않는다(검증하지 않은 자세로 보행하면 넘어진다).
         self._pose_pitch: dict[str, float] = (
@@ -256,6 +258,28 @@ class CommandService:
         accepted, detail = self._reset_zone_baseline(zone)
         return CommandResult(
             command="zone_baseline",
+            accepted=accepted,
+            state=self._behavior.state,
+            detail=detail,
+        )
+
+    def locate(self, zone: str) -> CommandResult:
+        """사람이 «로봇은 지금 이 구역 안에 있다» 고 알려준다 — 그 구역 안에서만 위치를 다시 찾는다.
+
+        집 지도는 스캔 하나로 구별이 안 되는 자리가 많아 들어 옮긴 뒤 전역 탐색이 확정을
+        못 한다. 구역으로 범위를 좁히면 구역 안에서 유일한 답만 받는다. 지금 믿던 자세는
+        버리므로 로봇은 다시 찾을 때까지 선다. 예약만 하고 다음 틱이 적용한다.
+        """
+        if self._locate_zone is None:
+            return CommandResult(
+                command="locate",
+                accepted=False,
+                state=self._behavior.state,
+                detail="위치 알려주기 경로가 연결되지 않았다 (LiDAR 측위 순찰이 아니다)",
+            )
+        accepted, detail = self._locate_zone(zone)
+        return CommandResult(
+            command="locate",
             accepted=accepted,
             state=self._behavior.state,
             detail=detail,

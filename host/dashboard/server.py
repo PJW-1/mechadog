@@ -471,6 +471,16 @@ def _command_routes(commands: CommandService) -> APIRouter:
         body = await _read_body(request, _ZoneBody)
         return commands.zone_baseline(body.zone).as_dict()
 
+    @router.post("/locate", response_model=None)
+    async def locate(request: Request) -> dict[str, object]:
+        """`{"zone": "C"}` — 사람이 로봇이 지금 있는 구역을 알려준다. 그 구역 안에서만 위치를 다시 찾는다.
+
+        들어 옮긴 뒤처럼 전역 탐색이 집 안 비슷한 자리를 구별 못 할 때 쓴다. 지금 자세의
+        신뢰는 버려지고 로봇은 다시 찾을 때까지 선다. 없는 구역은 `accepted=false` 다.
+        """
+        body = await _read_body(request, _ZoneBody)
+        return commands.locate(body.zone).as_dict()
+
     @router.post("/service", response_model=None)
     async def service(request: Request) -> dict[str, object]:
         """`{"mode": "enter"|"exit"}` 로 온보드 서비스 모드를 전환한다.

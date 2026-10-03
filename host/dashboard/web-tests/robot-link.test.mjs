@@ -306,3 +306,11 @@ test('device state is read from the telemetry feed, and a missing service flag i
   ops.setTelemetry({ state: 'live', snapshot: snapshot({ lowbatt: false, tipped: false, link_ok: true }) });
   assert.equal(ops.serviceMode, null);
 });
+
+test('locate sends the zone to its own endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.locate('C');
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/locate');
+  assert.deepEqual(fetchImpl.calls[0].body, { zone: 'C' });
+});

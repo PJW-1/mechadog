@@ -1166,3 +1166,76 @@ def test_zone_baseline_endpoint_is_absent_on_a_read_only_server():
     with TestClient(create_app(_state())) as http:
         response = http.post("/api/command/zone-baseline", json={"zone": "A"})
         assert response.status_code in (404, 405)
+
+
+# ── 위치 알려주기 (2026-10-04) ────────────────────────────────────
+# 들어 옮긴 뒤 집 안 비슷한 자리를 구별 못 할 때 사람이 «지금 이 구역» 을 알려준다.
+# 측위 상태는 루프 스레드만 바꾼다 — 서버 스레드는 예약만 한다.
+
+
+class _FakeNavigator:
+    def __init__(self):
+        self.hints = []
+
+    def locate_zone_ids(self):
+        return ("B", "C", "D", "A")
+
+    def hint_zone(self, zone, now_ms):
+        self.hints.append((zone, now_ms))
+        return True
+
+
+def test_locate_is_applied_on_the_next_tick(cfg, clock, tmp_path):
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    navigator = _FakeNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].locate("C")
+    assert result.accepted is True and result.command == "locate"
+    assert navigator.hints == [], "서버 스레드는 예약만 한다"
+    runtime._drain_confirmations(clock.advance(100))
+    assert [zone for zone, _ in navigator.hints] == ["C"]
+    runtime._drain_confirmations(clock.advance(100))
+    assert len(navigator.hints) == 1, "한 번 알려준 것은 한 번만 적용한다"
+
+
+@pytest.mark.parametrize("zone", ["Z", "a", "", " C", "../C"])
+def test_locate_refuses_unknown_zones(cfg, clock, tmp_path, zone):
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    navigator = _FakeNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].locate(zone)
+    assert result.accepted is False
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.hints == []
+
+
+def test_locate_refused_without_lidar_navigator(cfg, clock, tmp_path):
+    _runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    result = wiring["commands"].locate("A")
+    assert result.accepted is False
+    assert "LiDAR" in result.detail
+
+
+def test_locate_is_refused_when_unwired(service):
+    svc, _behavior, _sent = service
+    result = svc.locate("A")
+    assert result.accepted is False
+    assert "연결되지 않았다" in result.detail
+
+
+def test_locate_endpoint_round_trips(cfg, clock, tmp_path):
+    from host.dashboard.server import create_app
+
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    runtime._navigator = _FakeNavigator()
+    app = create_app(_state(), wiring["commands"])
+    with TestClient(app) as http:
+        assert http.post("/api/command/locate", json={"zone": "D"}).json()["accepted"] is True
+        assert http.post("/api/command/locate", json={"zone": 3}).status_code == 400
+        assert http.post("/api/command/locate", json={}).status_code == 400
+
+
+def test_policy_lists_patrol_zones(cfg):
+    from host.runtime import policy_view
+
+    assert policy_view(cfg)["patrol_zones"] == [str(z) for z in cfg["zones"]["ids"]]

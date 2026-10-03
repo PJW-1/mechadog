@@ -1892,3 +1892,67 @@ def test_restore_needs_tilt_at_pose_time() -> None:
     controller._pose_verified = True
     controller._expire_trust(7000)
     assert controller._restore_anchor is None
+
+
+def test_zone_hint_limits_global_search_to_that_zone() -> None:
+    """대칭 방 — 전역 탐색은 거울 자리와 구별 못 하지만, 사람이 구역을 알려주면 그 안에서 잡는다."""
+    import time as _time
+
+    from host.slam.scan_match import global_match, preprocess
+
+    home = (1.5, 1.2, 0.3)
+    controller = build(reloc_votes=3, min_match_frac=0.4, reloc_max_peers=0)
+    controller.observe_map_pose((4.0, 3.5, 0.0), 1000)  # 엉뚱한 자리를 믿고 있다
+    controller._pose_verified = True
+    scan = Scan("l", "b", 1, 1, _room_scan(home))
+    points = preprocess(scan.points, 0.12, 8.0)
+    free = global_match(
+        controller.match_grid,
+        points,
+        lin_step_m=0.1,
+        ang_step_rad=math.radians(15),
+        occ_thresh=1.0,
+        min_known_cells=50,
+    )
+    assert free is not None and free.peers > 0, "구역 없이는 거울 자리와 구별 못 한다"
+
+    assert controller.hint_zone("A", 2000) is True  # 구역 A 앵커 (1.0, 1.0), 반경 1.5m
+    assert controller._pose_verified is False and controller.pose_stale(2000)
+    assert controller.hint_zone("Z", 2000) is False
+    for round_ms in (2100, 3100, 4100):
+        controller._scan_now_ms = round_ms
+        assert controller._submit_global("reloc", points, scan)
+        deadline = _time.monotonic() + 20
+        while controller._global_result is None and _time.monotonic() < deadline:
+            _time.sleep(0.02)
+        controller._poll_global(round_ms)
+    assert controller._pose_verified is True
+    assert math.hypot(controller.pose[0] - home[0], controller.pose[1] - home[1]) <= 0.15
+    assert abs((controller.pose[2] - home[2] + math.pi) % (2 * math.pi) - math.pi) <= math.radians(
+        5
+    )
+    assert controller._zone_hint is None, "잡히면 구역 힌트는 끝난다"
+
+
+def test_zone_hint_expires() -> None:
+    controller = build(zone_hint_ms=60000)
+    controller.hint_zone("B", 1000)
+    assert controller._zone_filter(30000) is not None
+    assert controller._zone_filter(62000) is None
+    assert controller._zone_hint is None
+
+
+def test_zone_map_contains_matches_zone_at() -> None:
+    from host.behavior.zone_map import ZoneMap
+
+    labels = np.zeros((4, 4), dtype=np.int32)
+    labels[:2, :2] = 1
+    labels[2:, 2:] = 2
+    zone_map = ZoneMap(labels, 0.5, 0.0, 0.0, {1: "A", 2: "B"})
+    xs = np.array([0.25, 1.25, 1.75, 5.0])
+    ys = np.array([0.25, 1.25, 1.75, 5.0])
+    assert zone_map.contains("A", xs, ys).tolist() == [True, False, False, False]
+    assert zone_map.contains("B", xs, ys).tolist() == [False, True, True, False]
+    assert zone_map.contains("Z", xs, ys).tolist() == [False] * 4
+    for x, y, inside in zip(xs, ys, zone_map.contains("B", xs, ys), strict=True):
+        assert (zone_map.zone_at(x, y) == "B") == inside

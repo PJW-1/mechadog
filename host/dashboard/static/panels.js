@@ -450,6 +450,12 @@ export class OperationalPanels {
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
     this.note('운용 모드는 로봇이 멈춰 있을 때(대기·수동)만 바꿀 수 있고, 바꿔도 경보(L3)와 안전 정지(F)는 풀리지 않습니다. 선행 기능이 없는 모드는 서버가 거절하며 사유를 알려 줍니다.'),
     this.note('모드 변경 버튼은 누르면 확인 창이 뜹니다. 순찰 정지·비상 정지처럼 안전으로 가는 명령은 확인 없이 즉시 보냅니다. 서비스 모드 해제 후에도 안전 래치는 남습니다.')));
+   // 위치 알려주기 — 들어 옮긴 뒤 집 안 비슷한 자리를 구별 못 해 위치를 못 잡을 때, 사람이 구역을 알려준다.
+   const zones=store.patrolZones;
+   this.container.append(this.section('위치 알려주기',
+    zones.length?this.el('div',{class:'op-toolbar','data-locate':'zones'},...zones.map(zone=>this.button('구역 '+zone,()=>this.confirmDevice({icon:'target',title:'로봇이 지금 구역 '+zone+' 안에 있습니까?',body:'로봇이 지금 믿고 있는 위치를 버리고 구역 '+zone+' 안에서만 다시 찾습니다. 찾을 때까지 로봇은 멈춰 섭니다. 잘못 알려주면 엉뚱한 자리로 잡힐 수 있으니 실제로 있는 구역만 누르세요.',confirm:'예, 구역 '+zone+' 입니다',action:async()=>{const result=await store.requestLocate(zone);this.onToast(result?.detail||'위치 다시 찾기를 요청했어요.')}}),{disabled:!store.live,'data-locate-zone':zone}))):this.note('구역 목록을 받지 못했습니다 — 서버 연결을 확인하세요.','warning'),
+    store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
+    this.note('로봇을 들어 옮긴 뒤 위치를 못 잡을 때 씁니다. 로봇은 방향과 상관없이 그 구역 안에서 위치를 찾고, 구역 안에서도 비슷한 자리가 여럿이면 계속 멈춰 있습니다(1분 뒤 포기).')));
   }
   // 관제 PC 스피커 방송 음량 · 무음 (`4.8.2`) — 로봇 스피커(SOUND)와 별개, 방송기는 플릿 전체가 하나를 나눠 쓴다.
   {

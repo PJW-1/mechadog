@@ -318,3 +318,17 @@ test('device commands still ask before sending when the dialog is unavailable',(
  const asked=prompts.length;button(document,'실제 순찰 정지').click();
  assert.deepEqual(calls[2],['patrol','stop']);assert.equal(prompts.length,asked);
 });
+test('locate buttons list patrol zones from the server and ask before sending',async()=>{
+ const calls=[],prompts=[];
+ const link={locate:async zone=>{calls.push(zone);return{accepted:true,detail:'구역 '+zone+' 안에서 위치를 다시 찾는다'}}};
+ const {dom,document,panels,store,messages}=setup();
+ panels.render('missions');assert.match(document.querySelector('#content').textContent,/구역 목록을 받지 못했습니다/);
+ store.setPolicy({l1_to_l2_hold_s:12,target_lost_timeout_s:7,auth_timeout_s:40,auth_max_attempts:3,patrol_zones:['B','C','D','A','<x>']});
+ store.link=link;store.setDemo(false);panels.render('missions');
+ assert.deepEqual([...document.querySelectorAll('[data-locate-zone]')].map(b=>b.dataset.locateZone),['B','C','D','A'],'형식이 이상한 구역 id 는 버튼이 되지 않는다');
+ let answer=false;dom.window.confirm=message=>{prompts.push(message);return answer};
+ button(document,'구역 C').click();assert.deepEqual(calls,[]);assert.match(prompts[0],/구역 C 안에서만 다시 찾습니다/);
+ answer=true;button(document,'구역 C').click();
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(calls,['C']);assert.match(messages.at(-1),/구역 C 안에서 위치를 다시 찾는다/);
+});

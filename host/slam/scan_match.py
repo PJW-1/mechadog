@@ -18,6 +18,7 @@ IMU yaw 는 직전 스캔 이후의 변화량(`yaw_delta`)으로만 쓴다 — �
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -267,6 +268,7 @@ def global_match(
     sigma_m: float = 0.0,
     max_refine_candidates: int = 8,
     full_scan_ambiguity: bool = False,
+    allowed: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
 ) -> MatchResult | None:
     """지도 전체를 거친 격자로 훑어 최적 자세를 찾는다 — 잠김 복구·임의 배치 재측위용.
 
@@ -321,6 +323,9 @@ def global_match(
     inside = (cand_row >= 0) & (cand_row < rows) & (cand_col >= 0) & (cand_col < cols)
     standable = np.zeros(cand_x.shape, dtype=bool)
     standable[inside] = grid.cells[cand_row[inside], cand_col[inside]] <= free_thresh
+    if allowed is not None:
+        # 사람이 알려준 범위(구역) 안만 — 경쟁 후보(peers)도 그 안에서만 센다.
+        standable &= np.asarray(allowed(cand_x, cand_y), dtype=bool)
     cand_x, cand_y = cand_x[standable], cand_y[standable]
     yaws = np.arange(-math.pi, math.pi, ang_step_rad)
     if cand_x.size == 0:

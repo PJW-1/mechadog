@@ -312,6 +312,10 @@ class PatrolController:
     #: 같은 방위로 들어 옮기면 IMU yaw 로는 모르고, 대칭 구조에선 점수 비율도 통과한다
     #: (Codex 검토 E2 P1) — 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
     reloc_restore_tilt_rad: float = math.radians(8.0)
+    #: 사람이 알려준 구역(대시보드 «위치 알려주기») 은 이 시간 안에 잡히지 않으면 버린다.
+    zone_hint_ms: int = 60000
+    #: 구역 영역 지도가 없을 때 구역 앵커 둘레 이 반경을 그 구역으로 본다.
+    zone_hint_radius_m: float = 1.5
     #: 워커는 실시간으로 실행된다. 가속된 시뮬레이션의 루프 시계와 섞지 않는다.
     wall_clock_ms: Callable[[], int] = field(default=lambda: time.monotonic_ns() // 1_000_000)
     #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
@@ -423,6 +427,10 @@ class PatrolController:
     _restore_votes: list[Pose] = field(default_factory=list)
     #: 워커에 넘긴 복원 기준 자세와 워커가 낸 창 안 정합 결과 (`_global_cv` 로 보호).
     _global_req_prior: Pose | None = None
+    #: 워커에 넘긴 탐색 범위 거름 (사람이 알려준 구역) — `_global_cv` 로 보호.
+    _global_req_allowed: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
+    #: 사람이 알려준 구역과 그 시각 — 그 구역 안에서만 전역 재측위한다.
+    _zone_hint: tuple[str, int] | None = None
     _global_prior_result: MatchResult | None = None
     #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
     _result_imu: float | None = None
@@ -852,8 +860,10 @@ class PatrolController:
                     self._global_cv.wait()
                 kind, points, scan, asked_pose, match_grid = self._global_req
                 prior = self._global_req_prior
+                allowed = self._global_req_allowed
                 self._global_req = None
                 self._global_req_prior = None
+                self._global_req_allowed = None
             try:
                 result = global_match(
                     match_grid,
@@ -865,6 +875,7 @@ class PatrolController:
                     free_thresh=self.plan_params.free_thresh,
                     sigma_m=self.match_params.sigma_m,
                     full_scan_ambiguity=self.global_full_scan_ambiguity,
+                    allowed=allowed,
                 )
             except Exception as exc:  # noqa: BLE001 — 결과를 안 두면 inflight 가 영영 안 풀린다
                 LOG.error("global_match_failed", error=f"{type(exc).__name__}: {exc}")
@@ -895,11 +906,57 @@ class PatrolController:
             self.wall_clock_ms(),
         )
         prior = self._restore_prior(self._scan_now_ms) if kind == "reloc" else None
+        allowed = self._zone_filter(self._scan_now_ms) if kind == "reloc" else None
         with self._global_cv:
             self._global_req = (kind, points.copy(), scan, self.pose, match_grid)
             self._global_req_prior = prior
+            self._global_req_allowed = allowed
             self._global_cv.notify()
         return True
+
+    def locate_zone_ids(self) -> tuple[str, ...]:
+        """사람이 «여기» 라고 알려줄 수 있는 구역 — 좌표가 붙은 순찰 구역."""
+        return tuple(self.zones.labels)
+
+    def hint_zone(self, zone: str, now_ms: int) -> bool:
+        """사람이 «로봇은 지금 이 구역 안» 이라고 알려줬다. **루프 스레드에서만** 부른다.
+
+        지금 믿던 자세는 버린다 — 사람이 다른 곳이라고 했으니 국소 추적·복원 기준·표가 모두
+        근거를 잃는다. 다음 전역 재측위는 그 구역 안 후보만 보고(경쟁 후보도 그 안에서만 센다),
+        평소처럼 `reloc_votes` 표가 모여야 채택된다. 구역 안에서도 모호하면 계속 선다.
+        """
+        if zone not in self.zones.labels:
+            LOG.warning("zone_hint_unknown", zone=zone)
+            return False
+        self._zone_hint = (zone, now_ms)
+        self._loc_epoch += 1  # 이미 날아간 전역 탐색 결과는 낡았다
+        self._last_pose_ms = None
+        self._pose_verified = False
+        self.pose_seeded = False
+        self._global_votes.clear()
+        self._drop_restore_anchor("zone_hint")
+        self._reloc_next_ms = 0
+        x, y = self.zones.xy(zone)
+        self.pose = (x, y, self.pose[2])
+        self.commander.halt()
+        LOG.warning("zone_hint", zone=zone, hint="이 구역 안에서만 위치를 다시 찾는다")
+        return True
+
+    def _zone_filter(self, now_ms: int) -> Callable[[np.ndarray, np.ndarray], np.ndarray] | None:
+        hint = self._zone_hint
+        if hint is None:
+            return None
+        zone, since_ms = hint
+        if now_ms - since_ms > self.zone_hint_ms:
+            self._zone_hint = None
+            LOG.warning("zone_hint_expired", zone=zone, hint="구역 안에서도 위치를 못 찾았다")
+            return None
+        zone_map = self.zone_map
+        if zone_map is not None and zone in zone_map.names.values():
+            return lambda xs, ys: zone_map.contains(zone, xs, ys)
+        ax, ay = self.zones.xy(zone)
+        radius = self.zone_hint_radius_m
+        return lambda xs, ys: np.hypot(xs - ax, ys - ay) <= radius
 
     def _restore_params(self) -> MatchParams:
         return MatchParams(
@@ -1085,6 +1142,9 @@ class PatrolController:
             frac=round(self._match_frac, 3),
             votes=self.reloc_votes,
         )
+        if self._zone_hint is not None:
+            LOG.info("zone_hint_resolved", zone=self._zone_hint[0])
+            self._zone_hint = None
         self.observe_map_pose(result.pose, now_ms)
         # 이 자세는 요청 때 스캔의 것이다 — IMU 앵커·조향 오프셋도 그때 값으로 (이중 반영 방지).
         self._adopt_with_request_imu()

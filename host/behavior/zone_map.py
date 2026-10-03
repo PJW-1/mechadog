@@ -52,6 +52,18 @@ class ZoneMap:
             names={int(zone["index"]): str(zone["id"]) for zone in plan["zones"]},
         )
 
+    def contains(self, zone: str, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+        """실공간 좌표 배열 중 `zone` 에 속한 것 (격자 밖·미도달은 False)."""
+        index = next((k for k, name in self.names.items() if name == zone), None)
+        cols = np.floor((np.asarray(xs) - self.origin_x) / self.resolution).astype(np.int64)
+        rows = np.floor((np.asarray(ys) - self.origin_y) / self.resolution).astype(np.int64)
+        height, width = self.labels.shape
+        inside = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+        out = np.zeros(cols.shape, dtype=bool)
+        if index is not None:
+            out[inside] = self.labels[rows[inside], cols[inside]] == index
+        return out
+
     def zone_at(self, x: float, y: float) -> str | None:
         """실공간 `(x, y)` 가 속한 구역 id. 미도달 셀·격자 밖이면 `None`."""
         col = int(np.floor((x - self.origin_x) / self.resolution))
