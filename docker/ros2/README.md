@@ -30,6 +30,21 @@ docker build -f docker/ros2/Dockerfile -t mechdog-ros2:prelidar .
 docker run -d --name mechdog-ros2 -p 5203:5203/udp -p 5204:5204/udp -e LIDAR_DEVICE_ID=lidar-mock mechdog-ros2:prelidar
 ```
 
+> ⚠️ **실물에서는 장착 보정을 반드시 넘긴다.** 브리지 기본값은 `LIDAR_MOUNT_YAW_DEG=0` ·
+> `LIDAR_ANGLE_DIRECTION=1` 인데 `config.yaml` 의 정본은 **`270` · `-1`** 이다(2026-09-26
+> 실측 — 위 「하우징 네 면」). 안 넘기면 **지도가 270° 돌고 좌우가 뒤집힌 채로** `slam_toolbox`
+> 에 들어간다. 2026-09-29 실측에서 같은 물체가 `40°` 대 `229°` 로 **189° 어긋났다.**
+>
+> ```powershell
+> docker run -d --name mechdog-ros2 -p 5203:5203/udp -p 5204:5204/udp `
+>   -e LIDAR_DEVICE_ID=lidar-b03fd35ee950 `
+>   -e LIDAR_MOUNT_YAW_DEG=270 -e LIDAR_ANGLE_DIRECTION=-1 -e LIDAR_ANGLE_BINS=360 `
+>   mechdog-ros2:prelidar
+> ```
+>
+> 값은 `config.yaml` 의 `lidar.mount_yaw_deg` · `lidar.angle_direction` 을 그대로 옮긴다 —
+> 그쪽이 정본이고 여기는 사본이다.
+
 **컨테이너만 검증할 때**(순찰기 없이 브리지 디코더만 확인) — 목업을 `5203`으로 바로 보낸다:
 
 ```powershell
