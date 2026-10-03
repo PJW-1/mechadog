@@ -252,3 +252,70 @@ def test_global_refinement_never_reduces_the_full_scan_score(monkeypatch) -> Non
     actual = scorer(rotate(points, result.pose[2]) + result.pose[:2])
     assert actual >= max(visited)
     assert len(visited) <= 8
+
+
+@pytest.mark.parametrize(
+    ("rival_score", "budget", "unresolved"),
+    [(40.0, 8, False), (59.0, 8, True), (40.0, 1, True)],
+)
+def test_full_scan_ambiguity_keeps_rivals_and_budget_exhaustion(
+    monkeypatch, rival_score, budget, unresolved
+) -> None:
+    """A higher refined score can resolve scale bias, never symmetry or missing work."""
+    grid = OccupancyGrid(MapMeta(0.1, 0.0, 0.0, 50, 50), np.full((50, 50), -5.0))
+    points = np.tile([1.0, 0.0], (60, 1))
+    lengths = []
+
+    def coarse(_grid, _field, rotated, xs, ys):
+        lengths.append(len(rotated))
+        if abs(math.atan2(rotated[0, 1], rotated[0, 0])) > 1e-6:
+            return np.zeros(xs.shape)
+        return np.where(
+            np.isclose(xs, 1.0) & np.isclose(ys, 1.0),
+            50.0,
+            np.where(np.isclose(xs, 3.0) & np.isclose(ys, 3.0), 49.0, 0.0),
+        )
+
+    def full_score(world):
+        return rival_score if world[:, 0].mean() > 3.0 else 60.0
+
+    monkeypatch.setattr(scan_match, "_score_candidates", coarse)
+    monkeypatch.setattr(scan_match, "_scorer", lambda *_args: full_score)
+    monkeypatch.setattr(
+        scan_match, "match", lambda _grid, _points, pose, _params: MatchResult(pose, 60)
+    )
+    result = global_match(
+        grid,
+        points,
+        lin_step_m=0.2,
+        ang_step_rad=math.radians(15),
+        occ_thresh=1.0,
+        min_known_cells=10,
+        max_points=10,
+        max_refine_candidates=budget,
+        full_scan_ambiguity=True,
+    )
+    assert result is not None
+    assert set(lengths) == {60}, "the ambiguity audit must use every point"
+    assert result.pose[:2] == pytest.approx((1.0, 1.0))
+    assert result.unresolved is unresolved
+    assert result.search_complete is (budget > 1)
+    if budget > 1:
+        assert result.runner_up_ratio == pytest.approx(max(rival_score, 49.0) / 60)
+        assert result.competing_peaks == int(rival_score >= 54)
+
+
+def test_full_scan_audit_preserves_observed_floor_constraint() -> None:
+    grid = _room()
+    result = global_match(
+        grid,
+        _scan(grid, (3.3, 1.7, -2.0)),
+        lin_step_m=0.2,
+        ang_step_rad=math.radians(30),
+        occ_thresh=1.0,
+        min_known_cells=10,
+        full_scan_ambiguity=True,
+    )
+    assert result is not None
+    row, col = grid.to_cell(*result.pose[:2])
+    assert grid.inside(row, col) and grid.cells[row, col] <= -0.5

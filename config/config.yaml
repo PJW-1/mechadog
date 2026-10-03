@@ -490,6 +490,9 @@ lidar:
   reloc_interval_ms: 1000
   global_match_step_mm: 100
   global_match_angle_deg: 15
+  # 전체 스캔으로 거친 후보와 정밀 경쟁 봉우리를 같은 척도에서 비교한다.
+  # 정밀 탐색 예산 초과·경쟁 봉우리는 거절. 재생 오인식/지연 검증 전에는 끈다.
+  global_full_scan_ambiguity: false
   # 전역 재측위 채택 한도 — 최고점의 90% 이상인 후보가 이 수를 넘으면 이 스캔은
   # 지도를 구분 못 하는 것(벽 포켓·대칭 구간)이라 어떤 잠금도 근거가 없어 거절한다.
   reloc_max_peers: 60

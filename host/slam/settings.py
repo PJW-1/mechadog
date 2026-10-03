@@ -108,6 +108,8 @@ def read_lidar_section(path: Path = CONFIG_PATH) -> dict[str, Any]:
 
 
 def validate_section(section: dict[str, Any]) -> None:
+    if not isinstance(section.get("global_full_scan_ambiguity", False), bool):
+        raise ConfigError("lidar.global_full_scan_ambiguity must be true or false")
     missing = [key for key in REQUIRED_LIDAR_KEYS if key not in section]
     if missing:
         raise ConfigError(f"lidar 설정 누락: {missing}")

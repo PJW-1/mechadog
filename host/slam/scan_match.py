@@ -67,6 +67,16 @@ class MatchResult:
     #: 모호성 지표. 같은 봉우리의 이웃 칸(우도장은 넓은 봉우리를 만든다)은 세지 않고
     #: **경쟁하는 다른 자리**만 센다. 높으면 어디를 골라도 근거가 없다.
     peers: int = 0
+    #: Full-scan ambiguity audit diagnostics. None means the legacy path was used.
+    runner_up_ratio: float | None = None
+    #: Strong distinct hypotheses; duplicates are allowed (conservative count).
+    competing_peaks: int = 0
+    search_complete: bool = True
+
+    @property
+    def unresolved(self) -> bool:
+        """An unfinished search or a strong distinct peak must never become a vote."""
+        return not self.search_complete or self.competing_peaks > 0
 
 
 def preprocess(points: tuple[tuple[float, float], ...], min_m: float, max_m: float) -> np.ndarray:
@@ -256,6 +266,7 @@ def global_match(
     refine_ang_step_rad: float = math.radians(2.0),
     sigma_m: float = 0.0,
     max_refine_candidates: int = 8,
+    full_scan_ambiguity: bool = False,
 ) -> MatchResult | None:
     """지도 전체를 거친 격자로 훑어 최적 자세를 찾는다 — 잠김 복구·임의 배치 재측위용.
 
@@ -269,11 +280,19 @@ def global_match(
     점이 `min_points` 미만인 스캔(가구에 둘러싸인 시야 등)은 짧은 범위 덩어리라
     지도의 조밀한 벽 포켓 어디에나 얹힌다 — 그런 스캔으로 전역 정합하면 frac 은
     높게 나오는데 자리는 틀리므로 아예 시도하지 않는다.
+
+    `full_scan_ambiguity` is experimental and defaults off. It scores the entire
+    coarse lattice with the full scan and measures peers against the refined
+    full-scan winner. Strong refined alternatives outside 0.3m/10 degrees and
+    an exhausted refinement budget block acceptance through `unresolved`.
+    `search_complete` only means the coarse >=90% shortlist was covered; it is
+    not a proof of a global optimum between grid samples. Validate recorded
+    false fixes and worker latency before enabling it on a robot.
     """
     if points_robot.shape[0] < min_points or grid.known_cells() < min_known_cells:
         return None
     pts = points_robot
-    if pts.shape[0] > max_points:
+    if not full_scan_ambiguity and pts.shape[0] > max_points:
         pts = pts[np.linspace(0, pts.shape[0] - 1, max_points).astype(np.int64)]
     meta = grid.meta
     # 한 번이라도 관측된 셀의 경계상자만 훑는다 — 미지 영역은 점수가 없으니
@@ -308,7 +327,14 @@ def global_match(
         return None
     scores = np.zeros((yaws.size, cand_x.size))
     for index, yaw in enumerate(yaws):
-        scores[index] = _score_candidates(grid, field, rotate(pts, float(yaw)), cand_x, cand_y)
+        rotated = rotate(pts, float(yaw))
+        # Bound candidate-by-point temporary arrays when using the entire scan.
+        chunk = 128 if full_scan_ambiguity else cand_x.size
+        for start in range(0, cand_x.size, chunk):
+            stop = start + chunk
+            scores[index, start:stop] = _score_candidates(
+                grid, field, rotated, cand_x[start:stop], cand_y[start:stop]
+            )
     best_flat = int(np.argmax(scores))
     best_score = float(scores.flat[best_flat])
     if best_score <= 0.0:
@@ -328,6 +354,7 @@ def global_match(
     remaining = scores.copy()
     best_pose: Pose | None = None
     best_full_score = -1.0
+    peaks: list[tuple[Pose, float]] = []
     for _ in range(max(1, max_refine_candidates)):
         yaw_index, candidate = divmod(int(np.argmax(remaining)), cand_x.size)
         if remaining[yaw_index, candidate] < best_score * 0.9:
@@ -350,11 +377,22 @@ def global_match(
                 candidate_pose, full_score = refined.pose, refined_full_score
         if full_score > best_full_score:
             best_pose, best_full_score = candidate_pose, full_score
+        peaks.append((candidate_pose, full_score))
         near = np.hypot(cand_x - coarse_pose[0], cand_y - coarse_pose[1]) <= (
-            refine_params.search_lin_m * 2 + 1e-12
+            (
+                min(0.3, refine_params.search_lin_m * 2)
+                if full_scan_ambiguity
+                else refine_params.search_lin_m * 2
+            )
+            + 1e-12
         )
         similar_yaw = np.abs((yaws - coarse_pose[2] + math.pi) % (2 * math.pi) - math.pi) <= (
-            refine_params.search_ang_rad + 1e-12
+            (
+                min(math.radians(10), refine_params.search_ang_rad)
+                if full_scan_ambiguity
+                else refine_params.search_ang_rad
+            )
+            + 1e-12
         )
         remaining[np.ix_(similar_yaw, near)] = -np.inf
     assert best_pose is not None
@@ -362,7 +400,7 @@ def global_match(
     cand_yaws = np.repeat(yaws, cand_x.size)
     scores = scores.ravel()
     filled = scores.size
-    strong = scores[:filled] >= best_score * 0.9
+    strong = scores[:filled] >= (best_full_score if full_scan_ambiguity else best_score) * 0.9
     far = np.hypot(positions[:filled, 0] - best_pose[0], positions[:filled, 1] - best_pose[1]) > 0.5
     # 같은 자리라도 방위가 30° 넘게 다른 강한 후보는 **경쟁하는 답**이다 — 예전엔 거리만 봐서
     # 같은 자리의 반대 방향 후보가 빠졌다 (Codex 검토 P1).
@@ -370,6 +408,33 @@ def global_match(
         math.radians(30) + 1e-12
     )
     peers = int(np.count_nonzero(strong & (far | turned)))
+    if full_scan_ambiguity:
+        rivals = [
+            score
+            for pose, score in peaks
+            if math.hypot(pose[0] - best_pose[0], pose[1] - best_pose[1]) > 0.3
+            or abs(wrap_pi(pose[2] - best_pose[2])) > math.radians(10) + 1e-12
+        ]
+        # Suppression around a coarse seed must not erase a strong hypothesis
+        # outside the final winner's 0.3m/10-degree agreement window.
+        distinct = (
+            np.hypot(positions[:, 0] - best_pose[0], positions[:, 1] - best_pose[1]) > 0.3 + 1e-12
+        ) | (
+            np.abs((cand_yaws - best_pose[2] + math.pi) % (2 * math.pi) - math.pi)
+            > math.radians(10) + 1e-12
+        )
+        rivals.extend(scores[distinct].tolist())
+        # Reaching the refinement budget is not evidence that other peaks are weak.
+        # Keep the original coarse cutoff, even if refinement raised the winner.
+        complete = float(remaining.max()) < best_score * 0.9
+        return MatchResult(
+            best_pose,
+            _as_count(best_full_score),
+            peers=peers,
+            runner_up_ratio=max(rivals, default=0.0) / best_full_score,
+            competing_peaks=sum(score >= best_full_score * 0.9 for score in rivals),
+            search_complete=complete,
+        )
     return MatchResult(best_pose, _as_count(best_full_score), peers=peers)
 
 

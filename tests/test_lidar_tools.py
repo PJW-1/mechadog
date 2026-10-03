@@ -83,6 +83,14 @@ def test_missing_required_key_is_refused() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("value", ["false", 0, 1, None, float("nan")])
+def test_full_scan_ambiguity_requires_boolean(value) -> None:
+    section = dict(settings.read_lidar_section())
+    section["global_full_scan_ambiguity"] = value
+    with pytest.raises(ConfigError, match="global_full_scan_ambiguity"):
+        settings.validate_section(section)
+
+
 @pytest.mark.parametrize("key", ["odom_rate_hz", "range_min_mm", "robot_radius_mm"])
 @pytest.mark.parametrize("value", ["10", None, True, float("nan"), float("inf")])
 def test_non_numeric_value_is_refused_by_name(key: str, value: object) -> None:

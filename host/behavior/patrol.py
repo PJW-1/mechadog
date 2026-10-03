@@ -268,6 +268,8 @@ class PatrolController:
     reloc_interval_ms: int = 0
     global_match_lin_step_m: float = 0.10
     global_match_ang_step_rad: float = math.radians(15.0)
+    #: Opt-in until offline acceptance/false-fix validation has passed.
+    global_full_scan_ambiguity: bool = False
     #: 전역 재측위 채택 한도 — 최고점 90% 이상인 후보가 이 수를 넘으면 스캔이 지도를
     #: 구분하지 못하는 것(대칭·벽 포켓)이라 어떤 자세도 근거 없이 고르는 셈이라 거절한다.
     reloc_max_peers: int = 60
@@ -372,8 +374,8 @@ class PatrolController:
     # 루프 스레드에서만** 일어나는 규칙을 지키면서 명령은 계속 나간다.
     #: 제출됐지만 아직 루프가 소비하지 않은 전역 탐색이 있는가 (루프 스레드만 만진다).
     _global_inflight: bool = False
-    #: 워커 요청 사서함 — (종류, 점, 스캔). 루프는 넣기만 하고 워커가 꺼낸다.
-    _global_req: tuple[str, np.ndarray, Scan, Pose] | None = None
+    #: 요청 사서함 — 종류, 점, 스캔, 요청 자세, 독립된 읽기 전용 지도 사본.
+    _global_req: tuple[str, np.ndarray, Scan, Pose, OccupancyGrid] | None = None
     #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔, 요청 때 자세).
     _global_result: tuple[str, MatchResult | None, np.ndarray, Scan, Pose] | None = None
     #: 요청 때의 (신선한 IMU yaw | None, 이동 명령 수, 측위 세대, monotonic ms).
@@ -766,8 +768,7 @@ class PatrolController:
     # 동기로 돌리면 1~2초 동안 명령이 멈춰 온보드 워치독이 `ONBOARD_FAILSAFE` 를
     # 건다 — 탐색만 워커 스레드로 보내고, 결과 해석(투표·채택·지도 쓰기·장애물
     # 표시)은 루프 스레드가 `_poll_global` 에서 한다. 워커는 `match_grid` 를
-    # **읽기만** 한다 — `live_map_write` 가 켜져 있으면 적분과 읽기가 겹칠 수
-    # 있으나 거친 탐색에 한 셀의 찢긴 값은 최적 자세를 바꾸지 못한다.
+    # 요청 시점의 독립 사본만 읽는다. 적분·팽창·복원이 워커의 셀/메타를 바꿀 수 없다.
 
     def _ensure_global_worker(self) -> None:
         if self._global_thread is not None and self._global_thread.is_alive():
@@ -784,11 +785,11 @@ class PatrolController:
             with self._global_cv:
                 while self._global_req is None:
                     self._global_cv.wait()
-                kind, points, scan, asked_pose = self._global_req
+                kind, points, scan, asked_pose, match_grid = self._global_req
                 self._global_req = None
             try:
                 result = global_match(
-                    self.match_grid,
+                    match_grid,
                     points,
                     lin_step_m=self.global_match_lin_step_m,
                     ang_step_rad=self.global_match_ang_step_rad,
@@ -796,6 +797,7 @@ class PatrolController:
                     min_known_cells=self.match_params.min_known_cells,
                     free_thresh=self.plan_params.free_thresh,
                     sigma_m=self.match_params.sigma_m,
+                    full_scan_ambiguity=self.global_full_scan_ambiguity,
                 )
             except Exception as exc:  # noqa: BLE001 — 결과를 안 두면 inflight 가 영영 안 풀린다
                 LOG.error("global_match_failed", error=f"{type(exc).__name__}: {exc}")
@@ -807,6 +809,9 @@ class PatrolController:
         """전역 탐색을 워커에 맡긴다. 이미 한 건이 진행 중이면 놓친다(False)."""
         if self._global_inflight:
             return False
+        cells, meta = self.match_grid.snapshot()
+        cells.setflags(write=False)
+        match_grid = OccupancyGrid(meta, cells)
         self._ensure_global_worker()
         self._global_inflight = True
         self._global_req_context = (
@@ -816,7 +821,7 @@ class PatrolController:
             self.wall_clock_ms(),
         )
         with self._global_cv:
-            self._global_req = (kind, points.copy(), scan, self.pose)
+            self._global_req = (kind, points.copy(), scan, self.pose, match_grid)
             self._global_cv.notify()
         return True
 
@@ -868,7 +873,7 @@ class PatrolController:
             self._global_votes.clear()
             self._seed_fallback(points, scan, now_ms)
             return
-        if result.peers > self.reloc_max_peers:
+        if result.unresolved or result.peers > self.reloc_max_peers:
             self._global_votes.clear()
             # 스캔이 지도를 구분 못 한다 — 어느 자세든 우연이다 (벽 포켓·대칭).
             if self._edge.changed("relocalize_ambiguous", True):
@@ -876,6 +881,8 @@ class PatrolController:
                     "relocalize_ambiguous",
                     frac=round(self._match_frac, 3),
                     peers=result.peers,
+                    competing_peaks=result.competing_peaks,
+                    search_complete=result.search_complete,
                 )
             self._seed_fallback(points, scan, now_ms)
             return
@@ -1030,6 +1037,7 @@ class PatrolController:
         if (
             result is None
             or result.score < self._min_match_score(points)
+            or result.unresolved
             or result.peers > self.reloc_max_peers
         ):
             # 구분력 없는 스캔으로는 현재 자세를 의심도 확신도 못 한다 — 유지한다.
@@ -1795,6 +1803,7 @@ def controller_from_config(
         reloc_interval_ms=int(lidar.get("reloc_interval_ms", 1000)),
         global_match_lin_step_m=float(lidar.get("global_match_step_mm", 100)) / 1000.0,
         global_match_ang_step_rad=deg_to_rad(float(lidar.get("global_match_angle_deg", 15))),
+        global_full_scan_ambiguity=bool(lidar.get("global_full_scan_ambiguity", False)),
         reloc_max_peers=int(lidar.get("reloc_max_peers", 60)),
         verify_interval_ms=int(lidar.get("verify_interval_ms", 15000)),
         reloc_votes=int(lidar.get("reloc_votes", 3)),

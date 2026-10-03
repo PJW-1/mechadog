@@ -1361,6 +1361,48 @@ def test_fast_loop_does_not_expire_a_fresh_global_result(monkeypatch) -> None:
     assert controller._pose_verified
 
 
+def test_global_request_owns_readonly_map_and_metadata(monkeypatch) -> None:
+    from host.common.lidar_link import Scan
+
+    controller = build(loc_grid=open_room())
+    monkeypatch.setattr(controller, "_ensure_global_worker", lambda: None)
+    points = np.ones((60, 2))
+    scan = Scan("l", "b", 1, 1, ((0.0, 1.0),))
+    expected, meta = controller.match_grid.snapshot()
+    assert controller._submit_global("reloc", points, scan)
+    request = controller._global_req
+    snapshot = request[4]
+    controller.match_grid.cells[:] = 0.0
+    controller.match_grid.meta.origin_x += 2.0
+    controller.loc_grid = open_room()
+    points[:] = 0.0
+    assert np.array_equal(snapshot.cells, expected)
+    assert snapshot.meta == meta
+    assert np.all(request[1] == 1.0)
+    with pytest.raises(ValueError):
+        snapshot.cells[0, 0] = 5.0
+    assert not controller._submit_global("verify", points, scan)
+    assert controller._global_req is request
+
+
+@pytest.mark.parametrize("kind", ["reloc", "verify"])
+@pytest.mark.parametrize("diagnostics", [{"search_complete": False}, {"competing_peaks": 1}])
+def test_unresolved_full_scan_result_cannot_vote_or_verify(kind, diagnostics) -> None:
+    from host.common.lidar_link import Scan
+    from host.slam.scan_match import MatchResult
+
+    controller = build(reloc_votes=1, min_match_frac=0.0)
+    controller.pose = (1.0, 1.0, 0.0)
+    result = MatchResult(controller.pose, 60, peers=0, **diagnostics)
+    points = np.ones((60, 2))
+    if kind == "reloc":
+        controller._apply_reloc_result(result, points, Scan("l", "b", 1, 1, ()), 1000)
+    else:
+        controller._apply_verify_result(result, points, 1000, controller.pose)
+    assert not controller._global_votes
+    assert not controller._pose_verified
+
+
 def test_escape_skips_nearby_points_only_with_a_safe_body_connector() -> None:
     from host.behavior.planner import Plan
 
