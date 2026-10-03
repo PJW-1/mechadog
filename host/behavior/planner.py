@@ -403,7 +403,7 @@ class Plan:
     #: | start_outside_map
     #: | start_clearance_blocked | no_path
     fail_reason: str = ""
-    #: 이 인덱스까지는 몸체 반경으로 검사한 탈출 구간. 단순화/넓은 통과 반경을 쓰지 않는다.
+    #: 이 인덱스까지는 몸체 반경으로 검사한 탈출 구간. 점을 생략할 때도 연결을 재검사한다.
     escape_end_index: int = -1
 
     @property
@@ -561,6 +561,41 @@ def plan_to(
     )
 
 
+def _expected_obstacle_distance(
+    grid: OccupancyGrid,
+    blocked: np.ndarray,
+    start: Point,
+    direction: Point,
+    limit: float,
+    occ_thresh: float,
+) -> float:
+    """격자 경계로 빔을 나눠 얇게 스치는 셀도 검사한다 (거리 고정 샘플 금지)."""
+    res = grid.meta.resolution
+    origin = (grid.meta.origin_x, grid.meta.origin_y)
+    distances = {0.0, limit}
+    for value, delta, offset in zip(start, direction, origin, strict=True):
+        if abs(delta) < 1e-12:
+            continue
+        a, b = (value - offset) / res, (value + delta * limit - offset) / res
+        for boundary in range(math.ceil(min(a, b)), math.floor(max(a, b)) + 1):
+            distance = (boundary * res + offset - value) / delta
+            if 0 <= distance <= limit:
+                distances.add(distance)
+    ordered = sorted(distances)
+    for entry, end in zip(ordered, ordered[1:], strict=False):
+        # 경계 양쪽·코너 접촉 셀과 구간 내부 모두 확인한다.
+        for distance in (entry, (entry + end) / 2):
+            x = start[0] + direction[0] * distance
+            y = start[1] + direction[1] * distance
+            for dx, dy in ((-1e-9, -1e-9), (-1e-9, 1e-9), (1e-9, -1e-9), (1e-9, 1e-9)):
+                row, col = grid.to_cell(x + dx, y + dy)
+                if grid.inside(row, col) and (
+                    grid.cells[row, col] >= occ_thresh or blocked[row, col]
+                ):
+                    return entry
+    return limit
+
+
 def detect_new_obstacle(
     pose: tuple[float, float, float],
     scan_points: tuple[tuple[float, float], ...],
@@ -576,29 +611,49 @@ def detect_new_obstacle(
     `margin_m` 은 측위 오차를 감안한 여유다. 없으면 벽에서 몇 cm 어긋난 측위가
     벽 자체를 "새 장애물"로 보고 순찰 내내 재계획한다.
 
-    측위 지도만 아는 다리도 `inflate(..., obstacle_grid=...)`로 계획 충돌 영역에
-    넣어야 기존 장애물이다. 충돌 마스크 밖의 물체를 «아는 것»이라며 무시하면
-    항법·신규 탐지 양쪽에서 빠지므로 별도의 측위 지도로 탐지를 억제하지 않는다.
+    예상 반사는 nav 점유와 확인된 동적 표시(`blocked`)만 사용한다. 계획에서 제외한
+    loc-only 물체와 정적 추종 여유로 새 반사를 숨기지 않는다. 거리 고정 샘플은 빔이
+    모서리만 스치는 점유 셀을 건너뛰므로 실제 통과 셀의 경계를 검사한다.
     """
     x0, y0, yaw = pose
-    res = grid.meta.resolution
-    steps = max(1, int(check_radius_m / res))
     for angle, dist in scan_points:
-        if dist > check_radius_m:
+        if (
+            not math.isfinite(angle)
+            or not math.isfinite(dist)
+            or not 0 < dist < check_radius_m - margin_m
+        ):
             continue
         d_x, d_y = math.cos(angle + yaw), math.sin(angle + yaw)
-        expected = check_radius_m
-        for step in range(1, steps + 1):
-            wx, wy = x0 + d_x * step * res, y0 + d_y * step * res
-            row, col = grid.to_cell(wx, wy)
-            if not grid.inside(row, col):
-                break
-            if grid.cells[row, col] >= occ_thresh or blocked[row, col]:
-                expected = step * res
-                break
+        expected = _expected_obstacle_distance(
+            grid, blocked, (x0, y0), (d_x, d_y), check_radius_m, occ_thresh
+        )
         if dist < expected - margin_m:
-            return x0 + d_x * dist, y0 + d_y * dist
+            hit = (x0 + d_x * dist, y0 + d_y * dist)
+            # 이미 아는 점유 셀에서 `margin_m` 안의 반사는 «새 물체» 가 아니다 — 벽을 비스듬히
+            # 스치는 빔은 방위 1° 차이로도 예상 거리가 크게 달라져, 벽 옆을 지날 때마다 «새
+            # 장애물» 로 확정되고 정지·재계획했다(2026-10-03 집 지도 시뮬 8건, 모두 벽에서
+            # 5~7cm). 그 거리 안의 진짜 물체는 벽의 계획 여유 안이라 경로를 바꾸지 않는다.
+            if _near_known_obstacle(grid, blocked, hit, margin_m, occ_thresh):
+                continue
+            return hit
     return None
+
+
+def _near_known_obstacle(
+    grid: OccupancyGrid, blocked: np.ndarray, point: Point, radius_m: float, occ_thresh: float
+) -> bool:
+    """`point` 에서 `radius_m` 안에 nav 점유 또는 확인된 동적 표시 셀이 있는가."""
+    row, col = grid.to_cell(*point)
+    ring = int(math.ceil(radius_m / grid.meta.resolution))
+    height, width = grid.cells.shape
+    r0, r1 = max(0, row - ring), min(height, row + ring + 1)
+    c0, c1 = max(0, col - ring), min(width, col + ring + 1)
+    if r0 >= r1 or c0 >= c1:
+        return False
+    rows, cols = np.mgrid[r0:r1, c0:c1]
+    inside = (rows - row) ** 2 + (cols - col) ** 2 <= ring * ring
+    known = (grid.cells[r0:r1, c0:c1] >= occ_thresh) | blocked[r0:r1, c0:c1]
+    return bool((known & inside).any())
 
 
 def min_forward_distance(

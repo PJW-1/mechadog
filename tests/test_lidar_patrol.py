@@ -1204,7 +1204,7 @@ def test_imu_rotation_is_measured_from_the_pose_anchor() -> None:
 def test_global_result_is_dropped_if_the_robot_walked_since_the_request() -> None:
     from host.slam.scan_match import MatchResult
 
-    controller = build(reloc_votes=1, min_match_frac=0.0)
+    controller = build(reloc_votes=1, min_match_frac=0.0, wall_clock_ms=lambda: 1500)
     controller._global_inflight = True
     controller._global_req_context = (None, controller._move_seq, controller._loc_epoch, 1000)
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1500)
@@ -1269,11 +1269,13 @@ def test_verify_result_against_pose_at_request_time() -> None:
     assert controller.pose == (2.0, 2.0, 0.0), "낡은 감사로 자세를 옮기지 않는다"
 
 
-def _pending_reloc(controller, pose=(3.0, 3.0, 0.0), asked_ms=1000, imu=None):
+def _pending_reloc(controller, pose=(3.0, 3.0, 0.0), asked_ms=None, imu=None):
     from host.common.lidar_link import Scan
     from host.slam.scan_match import MatchResult
 
     controller._global_inflight = True
+    if asked_ms is None:
+        asked_ms = controller.wall_clock_ms()
     controller._global_req_context = (imu, controller._move_seq, controller._loc_epoch, asked_ms)
     controller._global_result = (
         "reloc",
@@ -1286,7 +1288,9 @@ def _pending_reloc(controller, pose=(3.0, 3.0, 0.0), asked_ms=1000, imu=None):
 
 def test_result_requested_before_trust_expiry_is_dropped() -> None:
     """만료 전에 요청한 결과가 만료 뒤 도착해도 신뢰를 되살리지 못한다 (Codex 검토 2 P1)."""
-    controller = build(reloc_votes=1, min_match_frac=0.0, trust_expiry_ms=5000)
+    controller = build(
+        reloc_votes=1, min_match_frac=0.0, trust_expiry_ms=5000, wall_clock_ms=lambda: 1600
+    )
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
     _pending_reloc(controller, asked_ms=1500)
     controller._expire_trust(7000)  # 세대가 올라간다
@@ -1295,10 +1299,15 @@ def test_result_requested_before_trust_expiry_is_dropped() -> None:
 
 
 def test_late_global_result_is_dropped() -> None:
-    controller = build(reloc_votes=1, min_match_frac=0.0, global_result_max_age_ms=3000)
+    controller = build(
+        reloc_votes=1,
+        min_match_frac=0.0,
+        global_result_max_age_ms=3000,
+        wall_clock_ms=lambda: 4500,
+    )
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
     _pending_reloc(controller, asked_ms=1000)
-    controller._poll_global(4500)
+    controller._poll_global(1001)  # 루프 시계가 멎어 있어도 실제로 묵은 결과는 버린다.
     assert controller.pose == (1.0, 1.0, 0.0), "3.5초 묵은 탐색 결과"
 
 
@@ -1317,9 +1326,7 @@ def test_stale_imu_is_not_used_as_anchor() -> None:
 def test_adopted_global_pose_aligns_steering_offset_to_request_imu() -> None:
     controller = build(reloc_votes=1, min_match_frac=0.0)
     controller.observe_telemetry(Reading(yaw=30.0), 1000)
-    _pending_reloc(
-        controller, pose=(3.0, 3.0, math.radians(10)), asked_ms=1000, imu=math.radians(10)
-    )
+    _pending_reloc(controller, pose=(3.0, 3.0, math.radians(10)), imu=math.radians(10))
     controller._poll_global(1500)
     assert controller.pose[:2] == (3.0, 3.0)
     assert controller._imu_anchor == pytest.approx(math.radians(10))
@@ -1334,3 +1341,192 @@ def test_move_zero_counts_as_stop() -> None:
     controller.note_sent([CommandEncoder().encode("MOVE", step=0, angle=0)], 2000)
     assert controller._move_seq == seq
     assert controller._stopped_since_ms == 2000 and controller._last_sent_moving is False
+
+
+def test_fast_loop_does_not_expire_a_fresh_global_result(monkeypatch) -> None:
+    from host.common.lidar_link import Scan
+
+    wall = [1000]
+    controller = build(reloc_votes=1, min_match_frac=0.0, wall_clock_ms=lambda: wall[0])
+    monkeypatch.setattr(controller, "_ensure_global_worker", lambda: None)
+    controller._scan_now_ms = 100_000
+    scan = Scan("l", "b", 1, 1, ((0.0, 1.0),))
+    assert controller._submit_global("reloc", np.zeros((100, 2)), scan)
+    assert controller._global_req_context[-1] == 1000
+    _pending_reloc(controller, asked_ms=controller._global_req_context[-1])
+    wall[0] += 300
+    controller._poll_global(120_000)
+    assert controller.pose == (3.0, 3.0, 0.0)
+    assert controller.pose_ms == 120_000  # 자세 신선도는 여전히 루프 시계를 쓴다.
+    assert controller._pose_verified
+
+
+def test_escape_skips_nearby_points_only_with_a_safe_body_connector() -> None:
+    from host.behavior.planner import Plan
+
+    grid = open_room()
+    grid.cells[:, 40] = 5.0
+    controller = build(grid=grid)
+    controller.plan = Plan(
+        "A",
+        ((2.225, 2.025), (2.275, 2.025), (2.325, 2.025), (4.0, 2.025)),
+        escape_end_index=2,
+    )
+    controller.waypoint_index = 1
+    controller.pose = (2.29, 2.06, 0.0)  # 2.5cm 반경은 놓쳤지만 정상 도달 반경 안.
+    assert controller._current_waypoint() == (4.0, 2.025)
+    assert controller.waypoint_index == 3
+    controller._follow()
+    assert controller.commander.intent.fields["step"] > 0
+    assert not controller._spinning
+
+
+@pytest.mark.parametrize("escape_end", [-1, 1])
+def test_waypoint_radius_cannot_cut_an_unsafe_corner(escape_end) -> None:
+    from host.behavior.planner import Plan
+
+    controller = build()
+    controller.pose = (1.94, 2.025, 0.0)
+    controller.plan = Plan("A", ((2.025, 2.025), (2.025, 2.225)), escape_end_index=escape_end)
+    controller._body_blocked[41, 39] = True  # 다음 점으로 자르는 대각선만 막는다.
+    assert controller._current_waypoint() == (2.025, 2.025)
+    assert controller.waypoint_index == 0
+
+
+def _margin_follower():
+    from host.behavior.planner import Plan
+
+    grid = open_room()
+    grid.cells[:, 40] = 5.0
+    controller = build(grid=grid)
+    controller.zones = ZoneStore(("A",))
+    controller.zones.place(2.375, 4.025)
+    controller.plan = Plan("A", ((2.375, 1.025), (2.375, 4.025)))
+    controller.phase = Phase.MOVING
+    controller.waypoint_index = 1
+    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1000)
+    return controller
+
+
+def test_repeated_tracking_margin_entries_keep_following_without_replans() -> None:
+    controller = _margin_follower()
+    plan = controller.plan
+    for tick in range(20):
+        now = 1100 + 100 * tick
+        x = 2.285 if tick % 2 == 0 else 2.375
+        controller.observe_map_pose((x, 1.5 + tick * 0.05, math.pi / 2), now)
+        controller.observe_telemetry(Reading(), now)
+        controller.steer(now)
+        assert controller.phase is Phase.MOVING
+        assert controller.commander.intent.type_ == "MOVE"
+        assert controller.commander.intent.fields["step"] > 0
+        assert controller.plan is plan
+    assert controller.stats.lost == controller.stats.replans == 0
+
+
+@pytest.mark.parametrize("hazard", ["body", "unknown", "dynamic", "off_path", "stale"])
+def test_margin_following_preserves_stop_boundaries(hazard) -> None:
+    controller = _margin_follower()
+    x = 2.285
+    if hazard == "body":
+        x = 2.175
+    elif hazard == "off_path":
+        x = 2.225  # 몸체는 안전하지만 기존 선분에서 도달 반경보다 멀다.
+    elif hazard == "unknown":
+        controller.grid.cells[controller.grid.to_cell(x, 2.025)] = 0.0
+        controller._rebuild_masks()
+    elif hazard == "dynamic":
+        controller._dynamic[controller.grid.to_cell(2.325, 3.025)] = True
+    controller.observe_map_pose((x, 2.025, math.pi / 2), 1000 if hazard == "stale" else 2000)
+    controller.observe_telemetry(Reading(), 2000)
+    controller.steer(2000)
+    assert controller.commander.intent.type_ == "STOP"
+    assert controller.phase in (Phase.LOST, Phase.PLANNING)
+
+
+def test_tracking_margin_does_not_disable_lidar_estop() -> None:
+    from host.common.lidar_link import Scan
+
+    controller = _margin_follower()
+    controller.observe_map_pose((2.285, 2.025, math.pi / 2), 2000)
+    assert controller.guard_scan(Scan("l", "b", 1, 2000, ((0.0, 0.10),))) is not None
+    assert controller.phase is Phase.HALTED
+    assert controller.stats.estops == 1
+
+
+def test_obstacle_in_front_of_known_wall_is_not_hidden_by_tracking_inflation() -> None:
+    from host.common.lidar_link import Scan
+
+    grid = open_room()
+    grid.cells[:, 60] = 5.0  # x=3.0 벽, 실제 반사보다 37.5cm 뒤.
+    controller = build(grid=grid)
+    controller.pose = (2.025, 2.025, 0.0)
+    scan = Scan("l", "b", 1, 1000, ((0.0, 0.6),))
+    controller._check_new_obstacle(scan)
+    controller._check_new_obstacle(scan)
+    assert controller.stats.replans == 1
+    assert controller.take_new_obstacles()[0] == pytest.approx((2.625, 2.025))
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_grazing_known_cell_is_not_a_new_obstacle(dynamic) -> None:
+    from host.behavior.planner import detect_new_obstacle
+    from host.common.lidar_link import Scan
+
+    grid = open_room()
+    pose = (2.025, 2.025, 0.0)
+    angle = math.atan2(0.035, 0.075)
+    # 빔은 이 셀의 모서리를 약 2cm만 통과한다. 5cm 샘플은 둘 다 놓친다.
+    cell = grid.to_cell(2.09, 2.06)
+    mask = np.zeros_like(grid.cells, dtype=bool)
+    if dynamic:
+        mask[cell] = True
+    else:
+        grid.cells[cell] = 5.0
+    distance = 0.075
+    for step in range(1, 31):
+        sample = grid.to_cell(
+            pose[0] + math.cos(angle) * step * 0.05, pose[1] + math.sin(angle) * step * 0.05
+        )
+        assert sample != cell  # 고정 간격 버그의 실제 반례.
+    assert (
+        grid.to_cell(pose[0] + math.cos(angle) * distance, pose[1] + math.sin(angle) * distance)
+        == cell
+    )
+    assert (
+        detect_new_obstacle(
+            pose,
+            ((angle, distance),),
+            grid,
+            mask,
+            check_radius_m=1.5,
+            margin_m=0.25,
+            occ_thresh=1.0,
+        )
+        is None
+    )
+    controller = build(grid=grid)
+    controller.pose = pose
+    controller._dynamic[:] = mask
+    for _ in range(3):
+        controller._check_new_obstacle(Scan("l", "b", 1, 1000, ((angle, distance),)))
+    assert controller.stats.replans == 0
+    assert controller.take_new_obstacles() == ()
+
+
+def test_hit_next_to_a_known_wall_is_not_a_new_obstacle() -> None:
+    """벽을 비스듬히 스친 빔 — 벽에서 margin 안의 반사는 새 물체가 아니다 (집 지도 시뮬 8건)."""
+    from host.behavior.planner import detect_new_obstacle
+
+    grid = open_room()
+    blocked = np.zeros(grid.cells.shape, dtype=bool)
+    # 벽(y≈0~0.05)과 거의 나란히: (1.0, 0.15) 에서 1m 가서 y=0.10 에 닿는 빔. 지도상 예상 반사는
+    # 그 빔이 벽에 닿는 x≈3m 라 «2m 짧다» 로 보이지만, 반사점은 벽에서 5cm 다.
+    angle = math.atan2(0.10 - 0.15, 1.0)
+    grazing = ((angle, math.hypot(1.0, 0.05)),)
+    kwargs = {"check_radius_m": 3.5, "margin_m": 0.25, "occ_thresh": 1.0}
+    assert detect_new_obstacle((1.0, 0.15, 0.0), grazing, grid, blocked, **kwargs) is None
+    # 방 한가운데의 짧은 반사는 그대로 새 물체다.
+    open_space = ((0.0, 0.6),)
+    hit = detect_new_obstacle((2.0, 2.5, 0.0), open_space, grid, blocked, **kwargs)
+    assert hit == pytest.approx((2.6, 2.5))

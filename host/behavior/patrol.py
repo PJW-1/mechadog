@@ -19,7 +19,7 @@ import random
 import shutil
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -227,7 +227,7 @@ class PatrolStats:
 
 @dataclass
 class PatrolController:
-    """계획 → 의도. 소켓도 실시각도 만지지 않는다.
+    """계획 → 의도. 소켓 없이 동작하며 워커 경과 시계는 주입할 수 있다.
 
     운용 루프(`tools/ops/patrol_run.py`)가 한 스레드에서 ① 지도 자세·스캔·텔레메트리를
     넣고 ② `step(now_ms)`가 돌려준 즉시 전문(`ESTOP`)을 바로 보내고
@@ -296,6 +296,8 @@ class PatrolController:
     #: 전역 탐색 결과가 이보다 늦게 도착하면 버린다 — 그 사이 손으로 옮겨졌거나 돌았을 수
     #: 있는데 MOVE 수만으로는 모른다.
     global_result_max_age_ms: int = 3000
+    #: 워커는 실시간으로 실행된다. 가속된 시뮬레이션의 루프 시계와 섞지 않는다.
+    wall_clock_ms: Callable[[], int] = field(default=lambda: time.monotonic_ns() // 1_000_000)
     #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
     maps_dir: Path | None = None
     #: 측위 전용 지도 (`slam_map_loc.npy`) — 세션 SLAM 병합으로 가구 다리까지 담은
@@ -374,7 +376,7 @@ class PatrolController:
     _global_req: tuple[str, np.ndarray, Scan, Pose] | None = None
     #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔, 요청 때 자세).
     _global_result: tuple[str, MatchResult | None, np.ndarray, Scan, Pose] | None = None
-    #: 요청 때의 (신선한 IMU yaw | None, 이동 명령 수, 측위 세대, 요청 시각) — 루프 스레드만.
+    #: 요청 때의 (신선한 IMU yaw | None, 이동 명령 수, 측위 세대, monotonic ms).
     _global_req_context: tuple[float | None, int, int, int] | None = None
     #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다 (Codex 검토 2 P1).
     _loc_epoch: int = 0
@@ -811,7 +813,7 @@ class PatrolController:
             self.safety.yaw_rad if self._imu_is_fresh(self._scan_now_ms) else None,
             self._move_seq,
             self._loc_epoch,
-            self._scan_now_ms,
+            self.wall_clock_ms(),
         )
         with self._global_cv:
             self._global_req = (kind, points.copy(), scan, self.pose)
@@ -827,16 +829,17 @@ class PatrolController:
             return
         self._global_inflight = False
         kind, result, points, scan, asked_pose = done
+        wall_now_ms = self.wall_clock_ms()
         asked_imu, asked_moves, asked_epoch, asked_ms = self._global_req_context or (
             None,
             self._move_seq,
             self._loc_epoch,
-            now_ms,
+            wall_now_ms,
         )
         if (
             asked_moves != self._move_seq
             or asked_epoch != self._loc_epoch
-            or now_ms - asked_ms > self.global_result_max_age_ms
+            or not 0 <= wall_now_ms - asked_ms <= self.global_result_max_age_ms
         ):
             # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다 (Codex 검토 P1).
             if self._edge.changed("global_result_stale", True):
@@ -1372,10 +1375,21 @@ class PatrolController:
             self._lose("pose_outside_observed_free_space")
             return ()
 
-        # nav 바닥은 free여도 loc 점유·몸체 여유 영역 안으로 자세가 옮겨질 수 있다.
-        # 기존 경로를 계속 따라가며 출발 스냅 거절을 우회하지 않게 매 틱 확인한다.
+        # 몸체 침범은 추종 여유와 별개다. 미관측 가장자리도 매 틱 막는다.
+        if self.body_blocked[row, col]:
+            self._lose("pose_inside_navigation_clearance")
+            return ()
+
+        # 추종 오차로 여유 띠에 들어와도 기존 경로로 안전하게 복귀할 수 있으면
+        # 계속 걷는다. 출발 탈출과 달리 매번 STOP/새 스캔/재계획을 요구하지 않는다.
         if self.blocked[row, col]:
-            if (
+            following = self._can_follow_from_margin()
+            if not following and self._last_sent_moving:
+                self.plan = Plan(self.plan.label)
+                self._replan_stop_required = True
+                self._lose("escape_replan_required")
+                return ()
+            if not following and (
                 escape_start(
                     self.grid,
                     self.blocked,
@@ -1386,16 +1400,6 @@ class PatrolController:
                 is None
             ):
                 self._lose("pose_inside_navigation_clearance")
-                return ()
-            on_escape = (
-                self.plan.escape_end_index >= 0
-                and self.waypoint_index <= self.plan.escape_end_index
-            )
-            if not on_escape and self._last_sent_moving:
-                # 운행 중 자세가 여유 안으로 옮겨지면 옛 경로로 탈출하지 않는다.
-                # 실제 STOP 송신과 안정화 후 새 스캔을 기다려 새 연결을 계획한다.
-                self.plan = Plan(self.plan.label)
-                self._lose("escape_replan_required")
                 return ()
 
         # 이동 중에는 스캔이 게이팅되어 없어도 된다. 최초 출발/다시 멈춘 뒤에는
@@ -1598,9 +1602,7 @@ class PatrolController:
             return
 
         waypoint = self._current_waypoint()
-        if self.waypoint_index <= self.plan.escape_end_index and not segment_clear(
-            self.grid, self.body_blocked, self.pose[:2], waypoint
-        ):
+        if not segment_clear(self.grid, self.body_blocked, self.pose[:2], waypoint):
             self.commander.halt()
             self._replan_stop_required = True
             self.plan = Plan(self.plan.label)
@@ -1629,12 +1631,40 @@ class PatrolController:
         while self.waypoint_index < len(waypoints) - 1:
             candidate = waypoints[self.waypoint_index]
             radius = self.drive.waypoint_radius_m
-            if self.waypoint_index <= self.plan.escape_end_index:
-                radius = min(radius, self.grid.meta.resolution / 2)
             if math.hypot(candidate[0] - self.pose[0], candidate[1] - self.pose[1]) >= radius:
+                break
+            # 정상 도달 반경을 쓰되 다음 점으로 자르는 구간 전체의 몸체 여유를
+            # 확인한다. 탈출 끝점을 건너뛰어도 벽/미관측 코너를 가로지를 수 없다.
+            if not segment_clear(
+                self.grid, self.body_blocked, self.pose[:2], waypoints[self.waypoint_index + 1]
+            ):
                 break
             self.waypoint_index += 1
         return waypoints[min(self.waypoint_index, len(waypoints) - 1)]
+
+    def _can_follow_from_margin(self) -> bool:
+        """계획 선분 가까이에서 몸체 충돌 없이 전방 웨이포인트로 복귀 가능한가."""
+        if not self.plan.reachable or self.phase is not Phase.MOVING:
+            return False
+        target = self._current_waypoint()
+        index = min(self.waypoint_index, len(self.plan.waypoints) - 1)
+        if index == 0:
+            return False
+        previous = self.plan.waypoints[index - 1]
+        dx, dy = target[0] - previous[0], target[1] - previous[1]
+        length_sq = dx * dx + dy * dy
+        if length_sq == 0:
+            return False
+        progress = (
+            (self.pose[0] - previous[0]) * dx + (self.pose[1] - previous[1]) * dy
+        ) / length_sq
+        # 목표를 이미 지나친 뒤 뒤로 되돌아가는 연결은 정상 추종으로 보지 않는다.
+        if progress > 1:
+            return False
+        nearest = (previous[0] + max(0.0, progress) * dx, previous[1] + max(0.0, progress) * dy)
+        if math.dist(self.pose[:2], nearest) > self.drive.waypoint_radius_m:
+            return False
+        return segment_clear(self.grid, self.body_blocked, self.pose[:2], target)
 
     def _arrive(self, label: str) -> None:
         self.commander.halt()
