@@ -605,6 +605,7 @@ def detect_new_obstacle(
     check_radius_m: float,
     margin_m: float,
     occ_thresh: float,
+    known_tolerance_m: float = 0.0,
 ) -> Point | None:
     """지도에 없던 장애물을 찾는다. 빔마다 **예상 거리와 실측을 비교한다.**
 
@@ -629,20 +630,25 @@ def detect_new_obstacle(
         )
         if dist < expected - margin_m:
             hit = (x0 + d_x * dist, y0 + d_y * dist)
-            # 이미 아는 점유 셀에서 `margin_m` 안의 반사는 «새 물체» 가 아니다 — 벽을 비스듬히
+            # nav 점유 셀에서 `known_tolerance_m` 안의 반사는 «새 물체» 가 아니다 — 벽을 비스듬히
             # 스치는 빔은 방위 1° 차이로도 예상 거리가 크게 달라져, 벽 옆을 지날 때마다 «새
             # 장애물» 로 확정되고 정지·재계획했다(2026-10-03 집 지도 시뮬 8건, 모두 벽에서
-            # 5~7cm). 그 거리 안의 진짜 물체는 벽의 계획 여유 안이라 경로를 바꾸지 않는다.
-            if _near_known_obstacle(grid, blocked, hit, margin_m, occ_thresh):
+            # 5~7cm). 허용치는 호출자가 `계획 여유 − 몸체 반경` 으로 준다 — 벽에서 그만큼 안의
+            # 물체는 벽에서 계획 여유만큼 떨어진 경로와 몸체 반경 이상 떨어진다.
+            # ⚠️ 확인된 동적 표시(`blocked`)는 «아는 것» 에 넣지 않는다 — 이미 반경으로 넓힌
+            # 표시에 허용치를 더하면 그 바깥의 새 물체까지 숨긴다 (Codex 교차 검토).
+            if known_tolerance_m > 0 and _near_known_obstacle(
+                grid, hit, known_tolerance_m, occ_thresh
+            ):
                 continue
             return hit
     return None
 
 
 def _near_known_obstacle(
-    grid: OccupancyGrid, blocked: np.ndarray, point: Point, radius_m: float, occ_thresh: float
+    grid: OccupancyGrid, point: Point, radius_m: float, occ_thresh: float
 ) -> bool:
-    """`point` 에서 `radius_m` 안에 nav 점유 또는 확인된 동적 표시 셀이 있는가."""
+    """`point` 에서 `radius_m` 안에 nav 점유 셀이 있는가."""
     row, col = grid.to_cell(*point)
     ring = int(math.ceil(radius_m / grid.meta.resolution))
     height, width = grid.cells.shape
@@ -652,7 +658,7 @@ def _near_known_obstacle(
         return False
     rows, cols = np.mgrid[r0:r1, c0:c1]
     inside = (rows - row) ** 2 + (cols - col) ** 2 <= ring * ring
-    known = (grid.cells[r0:r1, c0:c1] >= occ_thresh) | blocked[r0:r1, c0:c1]
+    known = grid.cells[r0:r1, c0:c1] >= occ_thresh
     return bool((known & inside).any())
 
 

@@ -1169,6 +1169,10 @@ class PatrolController:
             check_radius_m=self.new_obstacle_check_radius_m,
             margin_m=self.new_obstacle_margin_m,
             occ_thresh=self.plan_params.occ_thresh,
+            # 벽 스침 반사 허용치 = 계획 여유 − 몸체 반경 (planner.detect_new_obstacle 주석).
+            known_tolerance_m=max(
+                0.0, self.plan_params.clearance_m - self.plan_params.body_radius_m
+            ),
         )
         if hit is None:
             self._pending_hit, self._pending_count = None, 0

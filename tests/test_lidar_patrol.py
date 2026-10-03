@@ -1515,18 +1515,39 @@ def test_grazing_known_cell_is_not_a_new_obstacle(dynamic) -> None:
 
 
 def test_hit_next_to_a_known_wall_is_not_a_new_obstacle() -> None:
-    """벽을 비스듬히 스친 빔 — 벽에서 margin 안의 반사는 새 물체가 아니다 (집 지도 시뮬 8건)."""
+    """벽을 비스듬히 스친 빔 — 벽에서 허용치(계획 여유 − 몸체 반경) 안의 반사는 새 물체가 아니다."""
     from host.behavior.planner import detect_new_obstacle
 
     grid = open_room()
     blocked = np.zeros(grid.cells.shape, dtype=bool)
-    # 벽(y≈0~0.05)과 거의 나란히: (1.0, 0.15) 에서 1m 가서 y=0.10 에 닿는 빔. 지도상 예상 반사는
-    # 그 빔이 벽에 닿는 x≈3m 라 «2m 짧다» 로 보이지만, 반사점은 벽에서 5cm 다.
-    angle = math.atan2(0.10 - 0.15, 1.0)
-    grazing = ((angle, math.hypot(1.0, 0.05)),)
-    kwargs = {"check_radius_m": 3.5, "margin_m": 0.25, "occ_thresh": 1.0}
+    kwargs = {"check_radius_m": 3.5, "margin_m": 0.25, "occ_thresh": 1.0, "known_tolerance_m": 0.10}
+    # 벽(y≈0~0.05)과 거의 나란히: (1.0, 0.15) 에서 1m 가서 y=0.10 에 닿는 빔 — 벽에서 5cm.
+    grazing = ((math.atan2(0.10 - 0.15, 1.0), math.hypot(1.0, 0.05)),)
     assert detect_new_obstacle((1.0, 0.15, 0.0), grazing, grid, blocked, **kwargs) is None
+    # 허용치를 넘는 거리(벽에서 약 20cm)의 반사는 새 물체다 — 경로와 몸체 여유가 겹칠 수 있다.
+    beside = ((math.atan2(0.25 - 0.45, 1.0), math.hypot(1.0, 0.20)),)
+    assert detect_new_obstacle((1.0, 0.45, 0.0), beside, grid, blocked, **kwargs) is not None
     # 방 한가운데의 짧은 반사는 그대로 새 물체다.
-    open_space = ((0.0, 0.6),)
-    hit = detect_new_obstacle((2.0, 2.5, 0.0), open_space, grid, blocked, **kwargs)
+    hit = detect_new_obstacle((2.0, 2.5, 0.0), ((0.0, 0.6),), grid, blocked, **kwargs)
     assert hit == pytest.approx((2.6, 2.5))
+
+
+def test_dynamic_marks_do_not_hide_objects_just_outside_them() -> None:
+    """확인된 동적 표시 바로 바깥의 새 물체는 숨기지 않는다 (Codex 교차 검토)."""
+    from host.behavior.planner import detect_new_obstacle, mark_obstacle
+
+    grid = open_room()
+    blocked = np.zeros(grid.cells.shape, dtype=bool)
+    mark_obstacle(blocked, grid, (2.0, 2.0), 0.15)
+    # 표시 가장자리에서 약 12cm 밖(중심에서 0.27m)의 반사
+    hit = detect_new_obstacle(
+        (2.0, 1.0, 0.0),
+        ((math.atan2(1.0, 0.27), math.hypot(0.27, 1.0)),),
+        grid,
+        blocked,
+        check_radius_m=3.5,
+        margin_m=0.25,
+        occ_thresh=1.0,
+        known_tolerance_m=0.10,
+    )
+    assert hit is not None
