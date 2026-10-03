@@ -119,7 +119,15 @@ button:active:not(:disabled) {background:#e3eae2}
 .workspace-open .detail-panel>header {min-height:98px;padding:24px 36px;gap:20px;background:#fff;border-color:var(--rule)}
 .workspace-open #panel-title {color:#263c2e;font-size:28px;font-weight:700;letter-spacing:-.035em}
 .workspace-open #close-panel {min-height:38px;padding:8px 12px;border-color:#d8e0d4;border-radius:7px;background:#fff;color:#526749;font-size:12px}
-.workspace-open #panel-content {max-width:1440px;padding:28px 36px 56px;background:var(--bg);color:var(--ink);font-size:14px}
+/* Keep the shared scrollbar at the workspace edge, outside the reading column. */
+.workspace-open #panel-content {
+  max-width:none;
+  padding:28px max(36px,calc((100% - 1368px)/2)) 56px;
+  background:var(--bg);color:var(--ink);font-size:14px;
+  scrollbar-color:#b7c2b9 var(--bg);
+  scrollbar-width:thin;
+  scrollbar-gutter:stable;
+}
 .workspace-open .op-intro {margin-bottom:24px;gap:16px}
 .op-note,.workspace-open .op-intro .op-note,.op-field,.op-check,.op-row-meta,.op-row-foot {color:#586a50}
 .workspace-open .op-intro .op-note {max-width:70ch;line-height:1.8}
