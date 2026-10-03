@@ -1072,7 +1072,7 @@ def test_global_result_is_dropped_if_the_robot_walked_since_the_request() -> Non
 
     controller = build(reloc_votes=1, min_match_frac=0.0)
     controller._global_inflight = True
-    controller._global_req_context = (None, controller._move_seq)
+    controller._global_req_context = (None, controller._move_seq, controller._loc_epoch, 1000)
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1500)
     scan = __import__("host.common.lidar_link", fromlist=["Scan"]).Scan(
         "l", "b", 1, 1, ((0.0, 1.0),)
@@ -1133,3 +1133,70 @@ def test_verify_result_against_pose_at_request_time() -> None:
     points = np.zeros((100, 2))
     assert controller._apply_verify_result(far, points, 5000, asked) is False
     assert controller.pose == (2.0, 2.0, 0.0), "낡은 감사로 자세를 옮기지 않는다"
+
+
+def _pending_reloc(controller, pose=(3.0, 3.0, 0.0), asked_ms=1000, imu=None):
+    from host.common.lidar_link import Scan
+    from host.slam.scan_match import MatchResult
+
+    controller._global_inflight = True
+    controller._global_req_context = (imu, controller._move_seq, controller._loc_epoch, asked_ms)
+    controller._global_result = (
+        "reloc",
+        MatchResult(pose, 100, peers=0),
+        np.zeros((100, 2)),
+        Scan("l", "b", 1, 1, ((0.0, 1.0),)),
+        controller.pose,
+    )
+
+
+def test_result_requested_before_trust_expiry_is_dropped() -> None:
+    """만료 전에 요청한 결과가 만료 뒤 도착해도 신뢰를 되살리지 못한다 (Codex 검토 2 P1)."""
+    controller = build(reloc_votes=1, min_match_frac=0.0, trust_expiry_ms=5000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    _pending_reloc(controller, asked_ms=1500)
+    controller._expire_trust(7000)  # 세대가 올라간다
+    controller._poll_global(7000)
+    assert controller.pose == (1.0, 1.0, 0.0)
+
+
+def test_late_global_result_is_dropped() -> None:
+    controller = build(reloc_votes=1, min_match_frac=0.0, global_result_max_age_ms=3000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    _pending_reloc(controller, asked_ms=1000)
+    controller._poll_global(4500)
+    assert controller.pose == (1.0, 1.0, 0.0), "3.5초 묵은 탐색 결과"
+
+
+def test_stale_imu_is_not_used_as_anchor() -> None:
+    """IMU 가 끊긴 동안 잡은 자세에 옛 IMU 를 묶지 않는다 — 재개 때 회전을 두 번 더하지 않게."""
+    controller = build(imu_fresh_ms=300)
+    controller.observe_telemetry(Reading(yaw=0.0), 1000)
+    controller.observe_map_pose((1.0, 1.0, math.radians(20)), 3000)  # IMU 는 2초 묵음
+    assert controller._imu_anchor is None
+    controller.observe_telemetry(Reading(yaw=20.0), 3100)
+    assert controller._consume_yaw_delta(3150) == 0.0, "재개 시점에 다시 묶는다"
+    controller.observe_telemetry(Reading(yaw=25.0), 3200)
+    assert controller._consume_yaw_delta(3250) == pytest.approx(math.radians(5))
+
+
+def test_adopted_global_pose_aligns_steering_offset_to_request_imu() -> None:
+    controller = build(reloc_votes=1, min_match_frac=0.0)
+    controller.observe_telemetry(Reading(yaw=30.0), 1000)
+    _pending_reloc(
+        controller, pose=(3.0, 3.0, math.radians(10)), asked_ms=1000, imu=math.radians(10)
+    )
+    controller._poll_global(1500)
+    assert controller.pose[:2] == (3.0, 3.0)
+    assert controller._imu_anchor == pytest.approx(math.radians(10))
+    # 조향 방위 = 지금 IMU(30°) − 오프셋(10°−10°=0) = 30° — 요청 이후 20° 회전이 들어 있다.
+    assert controller._steering_yaw() == pytest.approx(math.radians(30))
+
+
+def test_move_zero_counts_as_stop() -> None:
+    controller = build()
+    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1000)
+    seq = controller._move_seq
+    controller.note_sent([CommandEncoder().encode("MOVE", step=0, angle=0)], 2000)
+    assert controller._move_seq == seq
+    assert controller._stopped_since_ms == 2000 and controller._last_sent_moving is False

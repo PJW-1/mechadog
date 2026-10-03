@@ -290,6 +290,9 @@ class PatrolController:
     #: 측위가 이만큼 끊기면 «검증됨»·사람 시드의 신뢰를 버린다 — 그 사이 로봇이 들려
     #: 옮겨졌을 수 있다. 0 이면 끈다 (Codex 검토 P1: 검증 상태에 유효기간이 없었다).
     trust_expiry_ms: int = 5000
+    #: 전역 탐색 결과가 이보다 늦게 도착하면 버린다 — 그 사이 손으로 옮겨졌거나 돌았을 수
+    #: 있는데 MOVE 수만으로는 모른다.
+    global_result_max_age_ms: int = 3000
     #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
     maps_dir: Path | None = None
     #: 측위 전용 지도 (`slam_map_loc.npy`) — 세션 SLAM 병합으로 가구 다리까지 담은
@@ -365,8 +368,12 @@ class PatrolController:
     _global_req: tuple[str, np.ndarray, Scan, Pose] | None = None
     #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔, 요청 때 자세).
     _global_result: tuple[str, MatchResult | None, np.ndarray, Scan, Pose] | None = None
-    #: 요청 때의 (IMU yaw, 이동 명령 수) — 루프 스레드만 만진다.
-    _global_req_context: tuple[float | None, int] | None = None
+    #: 요청 때의 (신선한 IMU yaw | None, 이동 명령 수, 측위 세대, 요청 시각) — 루프 스레드만.
+    _global_req_context: tuple[float | None, int, int, int] | None = None
+    #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다 (Codex 검토 2 P1).
+    _loc_epoch: int = 0
+    #: 지금 처리 중인 스캔의 Host 시각 (`observe_scan` 이 찍는다).
+    _scan_now_ms: int = 0
     #: 마지막 표 뒤에 로봇이 움직였는가 (MOVE 송신 또는 IMU 방위 변화) — 표의 독립성.
     _moved_since_vote: bool = True
     _imu_at_vote: float | None = None
@@ -521,7 +528,9 @@ class PatrolController:
             return
         self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
         self._last_pose_ms = now_ms
-        self._imu_anchor = self.safety.yaw_rad
+        # 앵커는 **신선한** IMU 일 때만 — 끊긴 IMU 의 옛 값을 묶어 두면 재개 때 그사이 회전
+        # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (Codex 검토 2 P1).
+        self._imu_anchor = self.safety.yaw_rad if self._imu_is_fresh(now_ms) else None
         self._trust_expired = False
         zone = self.current_zone
         if zone != self._last_zone:
@@ -543,12 +552,14 @@ class PatrolController:
         """
         for line in lines:
             message = json.loads(line)
-            if message["type"] == "MOVE":
+            if message["type"] == "MOVE" and not (message.get("step") or message.get("angle")):
+                # MOVE {0,0} 은 «서 있으라» 다 — 걷는 중으로 치면 정지 감사가 막힌다 (Codex 검토 2 P2).
+                self._note_stopped(sent_ms)
+            elif message["type"] == "MOVE":
                 self._last_sent_moving = True
                 self._stopped_since_ms = None
-                if message.get("step") or message.get("angle"):
-                    self._moved_since_vote = True
-                    self._move_seq += 1
+                self._moved_since_vote = True
+                self._move_seq += 1
             elif message["type"] in ("STOP", "ESTOP", "RESET_SAFE"):
                 self._note_stopped(sent_ms)
 
@@ -588,6 +599,7 @@ class PatrolController:
         points = preprocess(scan.points, *self.range_m)
         if not points.size:
             return
+        self._scan_now_ms = now_ms
         self._expire_trust(now_ms)
         # 워커가 끝낸 전역 탐색 결과를 먼저 가져온다 — 비어 있으면 즉시 돌아간다.
         _t0 = time.perf_counter()
@@ -669,6 +681,24 @@ class PatrolController:
                 obstacle_ms=round(_t_obs * 1000, 1),
             )
 
+    def _imu_is_fresh(self, now_ms: int) -> bool:
+        seen = self.safety.last_seen_ms
+        return (
+            self.safety.yaw_rad is not None
+            and seen is not None
+            and 0 <= now_ms - seen <= self.imu_fresh_ms
+        )
+
+    def _adopt_with_request_imu(self) -> None:
+        """전역 결과로 자세를 바꾼 직후 — IMU 앵커와 조향 오프셋을 **요청 시점** IMU 로 함께 맞춘다.
+
+        `observe_map_pose` 는 현재 IMU 로 오프셋을 만들지만, 자세는 요청 때 스캔의 것이다.
+        둘이 다르면 다음 정합 실패 동안 조향 방위가 요청 이후 회전을 빠뜨린다 (Codex 검토 2 P1).
+        """
+        self._imu_anchor = self._result_imu
+        if self._result_imu is not None:
+            self._imu_offset = wrap_pi(self._result_imu - self.pose[2])
+
     def _expire_trust(self, now_ms: int) -> None:
         """측위가 `trust_expiry_ms` 넘게 끊겼다 — «검증됨»·사람 시드의 신뢰를 버린다.
 
@@ -683,6 +713,7 @@ class PatrolController:
         ):
             return
         self._trust_expired = True
+        self._loc_epoch += 1
         if self._pose_verified or self.pose_seeded:
             LOG.warning(
                 "localization_trust_expired",
@@ -756,7 +787,12 @@ class PatrolController:
             return False
         self._ensure_global_worker()
         self._global_inflight = True
-        self._global_req_context = (self.safety.yaw_rad, self._move_seq)
+        self._global_req_context = (
+            self.safety.yaw_rad if self._imu_is_fresh(self._scan_now_ms) else None,
+            self._move_seq,
+            self._loc_epoch,
+            self._scan_now_ms,
+        )
         with self._global_cv:
             self._global_req = (kind, points.copy(), scan, self.pose)
             self._global_cv.notify()
@@ -771,8 +807,17 @@ class PatrolController:
             return
         self._global_inflight = False
         kind, result, points, scan, asked_pose = done
-        asked_imu, asked_moves = self._global_req_context or (None, self._move_seq)
-        if asked_moves != self._move_seq:
+        asked_imu, asked_moves, asked_epoch, asked_ms = self._global_req_context or (
+            None,
+            self._move_seq,
+            self._loc_epoch,
+            now_ms,
+        )
+        if (
+            asked_moves != self._move_seq
+            or asked_epoch != self._loc_epoch
+            or now_ms - asked_ms > self.global_result_max_age_ms
+        ):
             # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다 (Codex 검토 P1).
             if self._edge.changed("global_result_stale", True):
                 LOG.info("global_result_stale", kind=kind, moves=self._move_seq - asked_moves)
@@ -823,8 +868,8 @@ class PatrolController:
             votes=self.reloc_votes,
         )
         self.observe_map_pose(result.pose, now_ms)
-        # 이 자세는 요청 때 스캔의 것이다 — IMU 앵커도 그때 값으로 (이중 반영 방지).
-        self._imu_anchor = self._result_imu
+        # 이 자세는 요청 때 스캔의 것이다 — IMU 앵커·조향 오프셋도 그때 값으로 (이중 반영 방지).
+        self._adopt_with_request_imu()
         # 전역 탐색이 변별력 있게 잡은 자세다 — 여기부터의 적분은 믿을 수 있다.
         self._mark_verified()
         self._grow_map(points, result.score)
@@ -999,7 +1044,7 @@ class PatrolController:
             self._rebuild_masks()
             LOG.warning("map_rolled_back", to="last_verified_snapshot")
         self.observe_map_pose(result.pose, now_ms)
-        self._imu_anchor = self._result_imu
+        self._adopt_with_request_imu()
         self._mark_verified()
         return True
 
@@ -1633,6 +1678,7 @@ def controller_from_config(
         reloc_votes=int(lidar.get("reloc_votes", 3)),
         reloc_vote_yaw_rad=deg_to_rad(float(lidar.get("reloc_vote_yaw_deg", 10))),
         trust_expiry_ms=int(lidar.get("trust_expiry_ms", 5000)),
+        global_result_max_age_ms=int(lidar.get("global_result_max_age_ms", 3000)),
         reloc_stationary_max_peers=int(lidar.get("reloc_stationary_max_peers", 10)),
         imu_match_params=(
             None

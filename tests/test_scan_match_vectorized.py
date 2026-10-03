@@ -85,13 +85,25 @@ def _match_loop(grid, points, center, params, yaw_delta=0.0):
     return min(tied, key=lambda f: f[1])[2], _as_count(best)
 
 
-def test_flat_landscape_prefers_the_prediction() -> None:
-    """점수가 모두 같으면(빈 지도 근처) 예측 자리 그대로 — 예전엔 대칭 격자의 −끝으로 끌려갔다."""
-    grid = _room()
-    params = MatchParams(0.15, 0.04, math.radians(8), math.radians(2), 1.0, 10, sigma_m=0.0)
-    far_points = np.array([[50.0, 50.0]] * 10)  # 지도 밖 — 모든 후보 점수 0
-    center = (2.6, 2.4, 0.4)
-    assert match(grid, far_points, center, params).pose == center
+def test_positive_tie_prefers_the_prediction() -> None:
+    """긴 직선 벽 하나만 보이면 벽 방향으로 미끄러져도 점수가 같다 — 그때는 예측 자리를 지킨다.
+
+    예전 규칙(먼저 나온 최고점)은 대칭 격자의 −끝(−0.16m)을 골라 매 스캔 벽을 따라 끌려갔다.
+    """
+    res = 0.05
+    cells = np.full((100, 200), -5.0, dtype=np.float32)
+    cells[60, :] = 5.0  # y = 3.0m 의 긴 벽 (x 방향)
+    grid = OccupancyGrid(
+        MapMeta(resolution=res, origin_x=0.0, origin_y=0.0, width=200, height=100), cells
+    )
+    center = (5.0, 2.0, 0.0)
+    xs = np.arange(-1.0, 1.0, 0.05)
+    points = np.column_stack((xs, np.full(xs.shape, 1.02)))  # 로봇 기준 앞 1m 의 벽
+    params = MatchParams(0.15, 0.04, math.radians(4), math.radians(2), 1.0, 10, sigma_m=0.0)
+    result = match(grid, points, center, params)
+    assert result.score > 0
+    assert result.pose[0] == pytest.approx(center[0]), "벽을 따라 미끄러지지 않는다"
+    assert result.pose[2] == pytest.approx(0.0)
 
 
 @pytest.mark.parametrize("sigma", [0.0, 0.05, 0.1])
