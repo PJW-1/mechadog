@@ -770,7 +770,10 @@ def test_blocked_zone_does_not_end_the_cycle_early() -> None:
     이유로 사이클이 끝나 **갈 수 있는 C 를 한 번도 안 갔다.**
     """
     grid = open_room()
-    grid.cells[16:25, 76:85] = 3.0  # B(4.0, 1.0) 를 장애물로 덮는다
+    # B(4.0, 1.0) 를 스냅 반경(plan_to snap_m=0.6m)보다 넓은 장애물로 덮는다 —
+    # 주변에 자유 셀이 하나도 안 남아야 «도달 불가» 다. 좁으면 스냅이 옆 자리를
+    # 찾아 B 가 도달 가능으로 바뀐다(그 경우 B 에 가는 게 의도된 새 동작이다).
+    grid.cells[10:30, 65:95] = 3.0
     controller = build(grid=grid)
     controller.start()
     controller.visited = frozenset({"A"})
@@ -905,3 +908,84 @@ def test_new_obstacles_are_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
     controller._check_new_obstacle(scan)
     assert controller.take_new_obstacles() == ((2.5, 2.0),)
     assert controller.take_new_obstacles() == ()
+
+
+def _detect_room() -> tuple[OccupancyGrid, np.ndarray]:
+    """`detect_new_obstacle` 시험용 — 테두리만 벽인 6×5m 빈 방과 blocked 마스크."""
+    from host.behavior.planner import inflate
+
+    grid = open_room()
+    blocked = inflate(grid, PLAN)
+    return grid, blocked
+
+
+def test_loc_map_leg_is_not_a_new_obstacle() -> None:
+    """측위 지도엔 있고 항법 지도엔 없는 다리는 «새 장애물»이 아니다.
+
+    2026-10-03 실측에서 복도의 다리가 매번 `obstacle_confirmed` 로 찍혀
+    `_dynamic` 마킹이 통로를 봉쇄(`start_blocked`)했다 — 탐지 기준을 측위
+    지도까지 넓혀 막는다.
+    """
+    from host.behavior.planner import detect_new_obstacle
+
+    grid, blocked = _detect_room()
+    loc = OccupancyGrid(grid.meta)
+    loc.cells[:, :] = grid.cells
+    leg_row, leg_col = loc.to_cell(4.0, 2.5)
+    loc.cells[leg_row, leg_col] = 3.0  # 측위 지도만 아는 다리
+    # 로봇 (3.0,2.5) 동향 — 다리 방향 빔이 1.0m 에서 멈춘다.
+    scan = ((0.0, 1.0), (math.pi / 2, 4.0), (math.pi, 4.0), (-math.pi / 2, 4.0))
+    hit = detect_new_obstacle(
+        (3.0, 2.5, 0.0), scan, grid, blocked,
+        check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+    )
+    assert hit is not None, "항법 지도만 보면 다리는 «새 장애물»"
+    assert (
+        detect_new_obstacle(
+            (3.0, 2.5, 0.0), scan, grid, blocked,
+            check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+            known_grid=loc,
+        )
+        is None
+    ), "측위 지도가 아는 다리는 억제되어야 한다"
+
+
+def test_loc_map_margin_absorbs_alignment_error() -> None:
+    """다리의 지도 자리와 실제가 ~10cm 어긋나도 margin 이 흡수한다."""
+    from host.behavior.planner import detect_new_obstacle
+
+    grid, blocked = _detect_room()
+    loc = OccupancyGrid(grid.meta)
+    loc.cells[:, :] = grid.cells
+    leg_row, leg_col = loc.to_cell(4.0, 2.5)
+    loc.cells[leg_row, leg_col] = 3.0
+    # 실제 다리는 지도 자리보다 10cm 가깝다 (정렬 오차).
+    scan = ((0.0, 0.9),)
+    assert (
+        detect_new_obstacle(
+            (3.0, 2.5, 0.0), scan, grid, blocked,
+            check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+            known_grid=loc,
+        )
+        is None
+    )
+
+
+def test_genuinely_new_obstacle_still_detected_with_loc_map() -> None:
+    """어느 지도에도 없는 물체는 측위 지도를 써도 여전히 잡힌다."""
+    from host.behavior.planner import detect_new_obstacle
+
+    grid, blocked = _detect_room()
+    loc = OccupancyGrid(grid.meta)
+    loc.cells[:, :] = grid.cells
+    # 북쪽 1.0m 의 정말 새 물체 — 다리는 동쪽에만 둔다.
+    leg_row, leg_col = loc.to_cell(4.0, 2.5)
+    loc.cells[leg_row, leg_col] = 3.0
+    scan = ((0.0, 1.0), (math.pi / 2, 1.0))
+    hit = detect_new_obstacle(
+        (3.0, 2.5, 0.0), scan, grid, blocked,
+        check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+        known_grid=loc,
+    )
+    assert hit is not None
+    assert hit == pytest.approx((3.0, 3.5), abs=1e-6)

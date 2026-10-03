@@ -92,6 +92,7 @@ class CommandService:
             {} if pose is None else {"up": pose[0], "level": 0.0, "down": -pose[0]}
         )
         self._pose_dur_ms = 0 if pose is None else int(pose[1])
+        self._pose_roll = 0.0 if pose is None or len(pose) < 3 else float(pose[2])
         self._pose_tilted = False
 
     @property
@@ -145,7 +146,7 @@ class CommandService:
         return CommandResult(command="manual_off", accepted=True, state=self._behavior.state)
 
     def _send_pose(self, pitch: float) -> None:
-        self._commander.once("POSE", pitch=pitch, roll=0.0, height=0.0, dur=self._pose_dur_ms)
+        self._commander.once("POSE", pitch=pitch, roll=self._pose_roll, height=0.0, dur=self._pose_dur_ms)
         self._pose_tilted = pitch != 0.0
 
     def pose(self, preset: str) -> CommandResult:

@@ -42,6 +42,10 @@ class MatchParams:
     #: 전부 0 이라 **탐색 격자의 첫 후보가 그대로 채택된다** — 우연히 정해진
     #: 자세로 지도를 시작하는 셈이라, 차라리 예측값을 그대로 쓰는 것이 낫다.
     min_known_cells: int
+    #: 우도장 폭(m). 0 이면 옛 «적중 개수» 점수, 양수면 벽까지의 거리로 매긴 매끄러운
+    #: 점수(`OccupancyGrid.likelihood_field`)다 — 5cm 비껴간 점도 부분 점수를 받아
+    #: 봉우리가 하나로 모인다.
+    sigma_m: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +58,15 @@ class MatchResult:
     """
 
     pose: Pose
+    #: 설명된 점의 수 — 적중 개수 점수면 정수 그대로, 우도장 점수면 점당 0~1 합을 반올림한 값.
+    #: `score / len(points)` 가 두 방식 모두 «정합률» 이다.
     score: int
     #: 정합을 시도조차 못한 경우 (지도가 아직 비었다 · 점이 없다).
     skipped: bool = False
+    #: 최고점의 90% 이상을 받으면서 최고점에서 **0.5m 넘게 떨어진** 후보 수 — 전역 탐색의
+    #: 모호성 지표. 같은 봉우리의 이웃 칸(우도장은 넓은 봉우리를 만든다)은 세지 않고
+    #: **경쟁하는 다른 자리**만 센다. 높으면 어디를 골라도 근거가 없다.
+    peers: int = 0
 
 
 def preprocess(points: tuple[tuple[float, float], ...], min_m: float, max_m: float) -> np.ndarray:
@@ -139,8 +149,9 @@ def match(
     if points_robot.size == 0 or grid.known_cells() < params.min_known_cells:
         return MatchResult(center, 0, skipped=True)
 
+    scorer = _scorer(grid, params.occ_thresh, params.sigma_m)
     base_yaw = wrap_pi(center[2] + yaw_delta)
-    best_score = -1
+    best_score = -1.0
     best_pose = center
 
     angle_offsets = np.arange(
@@ -161,7 +172,7 @@ def match(
             for d_y in linear_offsets:
                 x = center[0] + float(d_x)
                 y = center[1] + float(d_y)
-                score = grid.score(rotated + np.array([x, y]), params.occ_thresh)
+                score = scorer(rotated + np.array([x, y]))
                 if score > best_score:
                     best_score = score
                     best_pose = (x, y, wrap_pi(yaw))
@@ -169,7 +180,121 @@ def match(
         # 겹친 점이 하나도 없으면 첫 탐색 후보가 우연히 best_pose가 된다.
         # 실패 결과에는 입력 중심을 보존해야 위치가 탐색 창 끝으로 튀지 않는다.
         return MatchResult(center, 0)
-    return MatchResult(best_pose, best_score)
+    return MatchResult(best_pose, _as_count(best_score))
+
+
+def _scorer(grid: OccupancyGrid, occ_thresh: float, sigma_m: float):
+    """점수 함수 하나를 고른다 — 우도장(σ>0) 또는 적중 개수. 우도장은 정합당 한 번만 꺼낸다."""
+    if sigma_m > 0:
+        field = grid.likelihood_field(occ_thresh, sigma_m)
+        return lambda points_world: grid.score_field(points_world, field)
+    return lambda points_world: float(grid.score(points_world, occ_thresh))
+
+
+def _as_count(score: float) -> int:
+    """실수 점수를 «설명된 점의 수» 정수로. 0 보다 큰 점수는 최소 1 — 성공을 0 과 구분한다."""
+    return max(1, int(round(score))) if score > 0 else 0
+
+
+def global_match(
+    grid: OccupancyGrid,
+    points_robot: np.ndarray,
+    *,
+    lin_step_m: float,
+    ang_step_rad: float,
+    occ_thresh: float,
+    min_known_cells: int,
+    max_points: int = 160,
+    #: LD19 는 한 패킷에 ~72점을 준다 — 그 이하(잘린 스캔·막힌 시야)면 전역 정합의
+    #: 변별력이 없다.
+    min_points: int = 48,
+    #: 로봇이 서 있을 셀의 로그오즈 상한 — **관측된 빈 바닥**만 후보다. 미관측 셀을
+    #: 허용하면 지도 밖 여백에서 벽 조각에 우연히 얹히는 가짜 최적이 나온다(실측 확인).
+    free_thresh: float = -0.5,
+    refine_ang_step_rad: float = math.radians(2.0),
+    sigma_m: float = 0.0,
+) -> MatchResult | None:
+    """지도 전체를 거친 격자로 훑어 최적 자세를 찾는다 — 잠김 복구·임의 배치 재측위용.
+
+    `match` 는 추정 위치 ±`search_lin_m` 창 안에서만 답을 찾으므로 처음 수렴한 자리가
+    틀리면(대칭 코너 오정합) 영원히 못 나온다. 이것은 알려진 셀이 있는 한 지도 전체를
+    `lin_step_m` × `ang_step_rad` 로 훑은 뒤 최고점 주변을 좁은 창으로 다시 다듬는다.
+
+    수 초 걸리는 복구용 일회성 탐색이다 — 매 스캔 부르는 용도가 아니다.
+    점수가 0 이거나 지도/스캔이 비어 있으면 `None` 을 돌려준다.
+
+    점이 `min_points` 미만인 스캔(가구에 둘러싸인 시야 등)은 짧은 범위 덩어리라
+    지도의 조밀한 벽 포켓 어디에나 얹힌다 — 그런 스캔으로 전역 정합하면 frac 은
+    높게 나오는데 자리는 틀리므로 아예 시도하지 않는다.
+    """
+    if points_robot.shape[0] < min_points or grid.known_cells() < min_known_cells:
+        return None
+    pts = points_robot
+    if pts.shape[0] > max_points:
+        pts = pts[
+            np.linspace(0, pts.shape[0] - 1, max_points).astype(np.int64)
+        ]
+    meta = grid.meta
+    # 한 번이라도 관측된 셀의 경계상자만 훑는다 — 미지 영역은 점수가 없으니
+    # 들를 이유가 없고, 격자가 자라도 탐색량이 팽창하지 않는다.
+    known_rows, known_cols = np.nonzero(np.abs(grid.cells) > 0.01)
+    if known_rows.size < min_known_cells:
+        return None
+    x_lo = meta.origin_x + known_cols.min() * meta.resolution - lin_step_m
+    x_hi = meta.origin_x + (known_cols.max() + 1) * meta.resolution + lin_step_m
+    y_lo = meta.origin_y + known_rows.min() * meta.resolution - lin_step_m
+    y_hi = meta.origin_y + (known_rows.max() + 1) * meta.resolution + lin_step_m
+    xs = np.arange(x_lo, x_hi, lin_step_m)
+    ys = np.arange(y_lo, y_hi, lin_step_m)
+    scorer = _scorer(grid, occ_thresh, sigma_m)
+    best_score = 0.0
+    best_pose: Pose | None = None
+    rows, cols = grid.cells.shape
+    n_candidates = xs.size * ys.size * int(np.ceil(2 * math.pi / ang_step_rad))
+    scores = np.empty(n_candidates)
+    positions = np.empty((n_candidates, 2))
+    filled = 0
+    for yaw in np.arange(-math.pi, math.pi, ang_step_rad):
+        rotated = rotate(pts, float(yaw))
+        for x in xs:
+            for y in ys:
+                # 로봇은 관측된 빈 바닥 위에만 설 수 있다 — 벽 안도, 미관측 셀도
+                # 스캔 점수를 볼 것 없이 제외한다.
+                row, col = grid.to_cell(float(x), float(y))
+                score = 0.0
+                if 0 <= row < rows and 0 <= col < cols and grid.cells[row, col] <= free_thresh:
+                    score = scorer(rotated + np.array([x, y]))
+                scores[filled] = score
+                positions[filled] = (x, y)
+                filled += 1
+                if score > best_score:
+                    best_score = score
+                    best_pose = (float(x), float(y), wrap_pi(float(yaw)))
+    if best_pose is None:
+        return None
+    strong = scores[:filled] >= best_score * 0.9
+    far = np.hypot(positions[:filled, 0] - best_pose[0], positions[:filled, 1] - best_pose[1]) > 0.5
+    peers = int(np.count_nonzero(strong & far))
+    # 거친 격자의 최고점 주변을 세밀히 다듬는다 — 다운샘플 점수가 아닌 전체 점으로.
+    refined = match(
+        grid,
+        points_robot,
+        best_pose,
+        MatchParams(
+            search_lin_m=lin_step_m * 2,
+            search_lin_step_m=meta.resolution,
+            search_ang_rad=ang_step_rad * 2,
+            search_ang_step_rad=refine_ang_step_rad,
+            occ_thresh=occ_thresh,
+            min_known_cells=min_known_cells,
+            sigma_m=sigma_m,
+        ),
+    )
+    # 거친 격자는 다운샘플 점으로 매겼으니 전체 점으로 다듬은 결과와 같은 자로 비교한다.
+    coarse_full = scorer(rotate(points_robot, best_pose[2]) + np.array(best_pose[:2]))
+    if refined.score > 0 and refined.score >= _as_count(coarse_full):
+        return MatchResult(refined.pose, refined.score, peers=peers)
+    return MatchResult(best_pose, _as_count(coarse_full), peers=peers)
 
 
 def integrate_scan(

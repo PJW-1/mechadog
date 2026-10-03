@@ -969,3 +969,78 @@ def test_plan_to_reports_an_unreachable_goal() -> None:
     )
     assert not plan.reachable
     assert plan.label is None
+    assert plan.fail_reason == "start_blocked"
+    assert plan.requested == (1.0, 1.0)
+
+
+def test_plan_to_accepts_an_exact_free_goal() -> None:
+    """빈 바닥에 찍은 목표는 그대로 받는다 — 스냅이 일어나지 않는다."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    blocked = inflate(grid, params)
+    plan = plan_to("A", (4.0, 3.0), (1.0, 1.0), grid, blocked, params)
+    assert plan.reachable
+    assert plan.goal_moved_m == 0.0
+    assert plan.start_moved_m == 0.0
+    assert plan.requested == (4.0, 3.0)
+    assert plan.effective == pytest.approx((4.0, 3.0), abs=0.05)
+
+
+def test_plan_to_snaps_a_blocked_goal_to_a_free_cell() -> None:
+    """가구 다리에 찍힌 목표는 가장 가까운 도달 가능 셀로 옮기고 거리를 보고한다."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    goal = (4.0, 3.0)
+    row, col = grid.to_cell(*goal)
+    grid.cells[row - 2 : row + 3, col - 2 : col + 3] = 3.0  # 25cm 덩어리로 덮는다
+    blocked = inflate(grid, params)
+    plan = plan_to("A", goal, (1.0, 1.0), grid, blocked, params)
+    assert plan.reachable, "목표는 막혀도 옆 바닥으로 스냅해 가야 한다"
+    assert plan.goal_moved_m > 0.0
+    assert plan.requested == pytest.approx(goal)
+    eff_row, eff_col = grid.to_cell(*plan.effective)
+    assert not blocked[eff_row, eff_col]
+    assert math.hypot(plan.effective[0] - goal[0], plan.effective[1] - goal[1]) == pytest.approx(
+        plan.goal_moved_m, abs=0.05
+    )
+
+
+def test_plan_to_refuses_a_goal_past_the_snap_radius() -> None:
+    """너무 깊이 막힌 목표는 억지로 옮기지 않고 실패한다 — 안전한 거절."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    goal = (4.0, 3.0)
+    row, col = grid.to_cell(*goal)
+    grid.cells[row - 16 : row + 17, col - 16 : col + 17] = 3.0  # 1.6m 넘는 덩어리
+    blocked = inflate(grid, params)
+    plan = plan_to("A", goal, (1.0, 1.0), grid, blocked, params, snap_m=0.6)
+    assert not plan.reachable
+    assert plan.fail_reason == "goal_unreachable"
+    assert plan.requested == pytest.approx(goal)
+
+
+def test_plan_to_snaps_goal_off_an_unreachable_island() -> None:
+    """벽으로 봉쇄된 방의 목표는 도달 가능한 쪽의 가장 가까운 셀로 옮긴다."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    # 방을 x=3.5m 에서 위아래로 가르는 벽 — 팽창까지 합치면 틈이 없다.
+    wall_col = int(3.5 / grid.meta.resolution)
+    grid.cells[:, wall_col - 3 : wall_col + 4] = 3.0
+    blocked = inflate(grid, params)
+    plan = plan_to("A", (4.5, 3.0), (1.0, 3.0), grid, blocked, params)
+    if plan.reachable:
+        # 스냅이 됐다면 유효 목표는 시작점이 도는 벽 «이쪽» 이어야 한다.
+        assert plan.effective[0] < 3.5
+        assert plan.goal_moved_m > 0.0
+    else:
+        # 스냅 반경 안에 도달 가능한 자유 셀이 하나도 없으면 정직하게 실패.
+        assert plan.fail_reason == "goal_unreachable"
+        assert plan.effective is None or plan.effective[0] < 3.5

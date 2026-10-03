@@ -16,6 +16,9 @@ from __future__ import annotations
 import json
 import math
 import random
+import shutil
+import threading
+import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -34,6 +37,7 @@ from host.behavior.planner import (
     min_forward_distance,
     plan_to,
 )
+from host.behavior.zone_map import ZoneMap
 from host.behavior.zones import ZoneStore, select_next
 from host.common.config import ConfigError
 from host.common.lidar_link import Scan
@@ -41,7 +45,15 @@ from host.common.logging_setup import EdgeTrigger, event_logger
 from host.common.protocol import FSM_STATES, clamp
 from host.common.units import deg_to_rad, rad_to_deg, wrap_pi
 from host.slam.occupancy import OccupancyGrid
-from host.slam.scan_match import MatchParams, Pose, match, preprocess
+from host.slam.scan_match import (
+    MatchParams,
+    MatchResult,
+    Pose,
+    global_match,
+    integrate_scan,
+    match,
+    preprocess,
+)
 from host.slam.settings import (
     match_params_from_config,
     plan_params_from_config,
@@ -112,6 +124,17 @@ class DriveParams:
 #: 조향은 규약 상한(±30deg)에 걸리므로, 더 급히 도는 손잡이는 보폭뿐이다. 호 반경
 #: 실측 전이라 설정으로 빼지 않았다.
 TURN_STEP_REDUCTION: float = 0.5
+
+#: 정합 점수가 전체 점수의 이 비율 이상일 때만 그 바퀴를 지도에 적분한다. 낮은 점수의
+#: 자세로 적분하면 틀린 위치에 벽을 찍어 지도가 스스로 오염된다 — 아래에서는
+#: «이 위치가 맞다» 는 정합만 공간 사실로 승격한다.
+MAP_WRITE_MIN_SCORE_FRAC: float = 0.6
+
+#: 지도가 자랐을 때 팽창 마스크를 다시 만드는 간격(적분한 바퀴 수). A* 는
+#: `_blocked` 를 보고 푸는데, 적분으로 새로 «확실히 빈» 셀이 생겨도 팽창이
+#: 옛 지도 그대로면 로봇이 선 자리가 계속 막혀 보인다 (2026-10-02 실기:
+#: 측위는 잠겼는데 시작 셀이 미관측이라 `no_reachable_zone`).
+MAP_INFLATE_EVERY: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +245,49 @@ class PatrolController:
     #: 이 거리 안의 빔만 신규 장애물 후보로 본다 — 측위 오차는 거리에 비례해 커진다.
     new_obstacle_check_radius_m: float
     forward_fan_rad: float
+    #: 걸으면서 자라는 지도 — 적분 가중치는 `lidar.hit_logodds / miss_logodds` 다.
+    #: ⚠️ 라이브 기록은 `live_map_write` 가 참일 때만이다. 틀린 자세로 쓰면 지도가 그 자리를
+    #: «맞는 것처럼» 굳혀 정합기가 스스로를 확신한다(실측 재현: 0.66→0.95). 지금 단계는
+    #: 세션을 기록만 하고 `tools/lidar/localization_bench.py` 로 검토한 뒤 반영한다.
+    live_map_write: bool = False
+    map_hit_logodds: float = 0.0
+    map_miss_logodds: float = 0.0
+    map_pad_cells: int = 0
+    #: 첫 정합 전용 넓은 탐색 창 — 한 번도 측위된 적이 없을 때만 쓴다. 배치 오차가
+    #: `match_params` 의 좁은 창(한 사이클 이동량)을 넘는 자리에 놓여도 잡히게 한다.
+    #: `reloc_interval_ms` 가 켜져 있으면 대신 지도 전역 정합(`global_match`)이 쓰인다.
+    first_match_params: MatchParams | None = None
+    #: 정합 채택 최소 적중 비율 — 스캔 끝점의 이 비율 미만만 벽에 오면 그 자세는 틀린
+    #: 잠금으로 버린다. 0 이면 «점수 0 만 거절»하는 옛 동작이다.
+    min_match_frac: float = 0.0
+    #: 측위가 낡았을 때(한 번도 못 잡았거나 추적이 끊겼을 때) 지도 전체를 거칠게
+    #: 훑어 다시 잠그는 재측위 주기 — 0 이면 끈다.
+    reloc_interval_ms: int = 0
+    global_match_lin_step_m: float = 0.10
+    global_match_ang_step_rad: float = math.radians(15.0)
+    #: 전역 재측위 채택 한도 — 최고점 90% 이상인 후보가 이 수를 넘으면 스캔이 지도를
+    #: 구분하지 못하는 것(대칭·벽 포켓)이라 어떤 자세도 근거 없이 고르는 셈이라 거절한다.
+    reloc_max_peers: int = 60
+    #: 정지 중 주기적 전역 감사 — 국소 창이 틀린 잠금을 유지하는지 확인한다.
+    #: 0 이면 끈다. 걷는 중에는 돌리지 않는다 (수 초짜리 탐색이 루프를 막는다).
+    verify_interval_ms: int = 0
+    #: 전역 탐색 결과를 **채택하기 전에 같은 답이 연속으로 나와야 하는 횟수.** 지도가 덜
+    #: 채워진 자리에서는 바퀴마다 전역 최적이 다른 벽에 얹혀 자리가 널뛴다(실측: 제자리
+    #: 로봇이 16초에 세 자리) — 한 번의 최고점은 증거가 아니고 반복돼야 증거다.
+    reloc_votes: int = 3
+    #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
+    maps_dir: Path | None = None
+    #: 측위 전용 지도 (`slam_map_loc.npy`) — 세션 SLAM 병합으로 가구 다리까지 담은
+    #: 지도. 정합(match·global_match)은 이것을 쓰고, 경로 계획·팽창·동적 장애물은
+    #: `grid`(항법용)를 쓴다. 병합 셀은 정렬 오차로 실제 통로에 몇 cm 튀어 있을 수
+    #: 있어 (실측: 궤적과 1~4cm 겹침) 항법 지도에 섞으면 복도가 봉쇄된다.
+    #: 같은 좌표계(같은 origin·해상도)라 자세는 그대로 통한다.
+    loc_grid: OccupancyGrid | None = None
+    #: 구역 영역 지도 — 있으면 `current_zone` 이 «지금 어느 방인가» 를 답한다.
+    zone_map: ZoneMap | None = None
+    #: 사람이 `--pose-seed` 로 시작 자세를 줬는가. 전역 재측위가 모호할 때(책상 밑 등)
+    #: 시드 주변 넓은 창으로 **추적은 시작하되** 전역 확인 전에는 지도에 쓰지 않는다.
+    pose_seeded: bool = False
     #: 구역이 동적 장애물로 막혔을 때 표시를 버리고 다시 확인할 최대 횟수
     #: (`config.fsm.avoid_attempts` 와 같은 값).
     max_reverify_attempts: int = 3
@@ -248,8 +314,50 @@ class PatrolController:
     _last_sent_moving: bool = False
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
+    #: 마지막 정합 자세와 그때의 IMU yaw 의 차이 — 스캔 사이에 IMU 로 방위를 전파할 때
+    #: 지도 좌표계로 되돌리는 옵셋이다. 정합될 때마다 다시 맞춘다.
+    _imu_offset: float | None = None
+    #: 지도에 적분한 뒤 팽창을 아직 안 다시 한 바퀴 수.
+    _updates_since_inflate: int = 0
     _reverify_attempts: dict[str, int] = field(default_factory=dict)
     _reset_requested: bool = False
+    #: 다음 지도 전역 재측위를 허용하는 시각 — 비싼 탐색이라 주기를 제한한다.
+    _reloc_next_ms: int = 0
+    #: 다음 정지 중 전역 감사 시각.
+    _verify_next_ms: int = 0
+    #: 마지막 정합 시도의 적중 비율 — 진단·불신 판정에 쓴다.
+    _match_frac: float = 0.0
+    #: 현재 자세가 지도 전역 탐색으로 확인됐는가 — 참일 때만 스캔을 지도에 적분한다.
+    #: 국소 추적만으로는 틀린 자리를 자신 있게 따라갈 수 있어, 그 동안의 적분은 지도를
+    #: 틀린 모양으로 굳힌다. 전역 확인 전에는 지도를 읽기만 한다.
+    _pose_verified: bool = False
+    #: 마지막 전역 확인 시점의 지도 — 그 뒤 적분이 틀린 것으로 드러나면 여기로 되돌린다.
+    _verified_snapshot: tuple[np.ndarray, Any] | None = None
+    #: 마지막으로 알린 구역 — 바뀔 때만 `zone_entered` 를 남긴다.
+    _last_zone: str | None = None
+    #: 연속된 전역 탐색 결과 — 서로 0.3m 안에서 `reloc_votes` 번 모이면 채택한다.
+    _global_votes: list[Pose] = field(default_factory=list)
+    # ── 전역 탐색 워커 ─────────────────────────────────────────
+    # `global_match` 는 지도 전체를 훑어 실기 PC 에서도 **1~2초**가 걸린다.
+    # `observe_scan` 이 명령 루프 스레드에서 도는데 여기서 동기로 기다리면 명령
+    # 간격이 온보드 워치독(600ms)을 넘어 `ONBOARD_FAILSAFE` 를 낸다(2026-10-04
+    # 실측: 틱 1.9s → 명령 거부 → 래치). 그래서 전역 탐색만 데몬 스레드로 보내고
+    # 결과는 루프 스레드가 `_poll_global` 로 가져와 적용한다 — **상태 변경은
+    # 루프 스레드에서만** 일어나는 규칙을 지키면서 명령은 계속 나간다.
+    #: 제출됐지만 아직 루프가 소비하지 않은 전역 탐색이 있는가 (루프 스레드만 만진다).
+    _global_inflight: bool = False
+    #: 워커 요청 사서함 — (종류, 점, 스캔). 루프는 넣기만 하고 워커가 꺼낸다.
+    _global_req: tuple[str, np.ndarray, Scan] | None = None
+    #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔). 루프가 꺼낸다.
+    _global_result: tuple[str, MatchResult | None, np.ndarray, Scan] | None = None
+    _global_cv: threading.Condition = field(
+        default_factory=lambda: threading.Condition(threading.Lock())
+    )
+    _global_thread: threading.Thread | None = None
+    #: 자세가 **내장 스캔 정합**(`observe_scan`)에서 나오는가. 외부 측위(ROS2 `MAP_POSE`·
+    #: 시뮬레이션)가 `observe_map_pose` 로 넣는 자세는 그쪽이 보증하므로 확인 보류를
+    #: 적용하지 않는다.
+    _own_localization: bool = False
     _halt_reason: str = ""
     #: 직전 추종 틱이 제자리 회전이었나 (`steering_for(spinning=)`).
     _spinning: bool = False
@@ -291,6 +399,34 @@ class PatrolController:
         """`pose` 를 마지막으로 갱신한 시각. 정합에 실패한 스캔은 바꾸지 않는다."""
         return self._last_pose_ms
 
+    @property
+    def match_frac(self) -> float:
+        """마지막 정합 시도의 적중 비율 (0~1) — 진단·포즈 불신 표시에 쓴다."""
+        return self._match_frac
+
+    @property
+    def pose_verified(self) -> bool:
+        """현재 자세가 지도 전역 탐색으로 한 번이라도 확인됐는가."""
+        return self._pose_verified
+
+    @property
+    def current_zone(self) -> str | None:
+        """지금 서 있는 구역 id — 구역 영역 지도가 없거나 미도달 셀이면 `None`."""
+        if self.zone_map is None:
+            return None
+        return self.zone_map.zone_at(self.pose[0], self.pose[1])
+
+    @property
+    def match_grid(self) -> OccupancyGrid:
+        """정합(match·global_match)에 쓰는 지도 — `loc_grid` 가 있으면 그쪽, 아니면 `grid`."""
+        return self.loc_grid if self.loc_grid is not None else self.grid
+
+    def pose_stale(self, now_ms: int) -> bool:
+        """측위가 신선하지 않은가 — 한 번도 못 잡았거나 `pose_timeout_ms` 를 넘겼다."""
+        return self._last_pose_ms is None or (
+            now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
+        )
+
     def take_new_obstacles(self) -> tuple[tuple[float, float], ...]:
         """지난 호출 뒤 확정된 신규 장애물 `(x m, y m)` 을 꺼낸다 — 한 번 꺼내면 비워진다.
 
@@ -300,6 +436,26 @@ class PatrolController:
         taken = tuple(self._new_obstacles)
         self._new_obstacles.clear()
         return taken
+
+    def save_map(self, directory: Path | None = None) -> dict[str, Path]:
+        """걸으며 자란 지도를 디스크에 쓴다 — 실측 스캔이 지도를 개선하게 하는 통로.
+
+        **전역 확인된 자세로 적분한 세션만 쓴다** (`pose_verified`). 확인이 한 번도 없었으면
+        이 세션의 적분은 전부 보류돼 있어 쓸 것도 없다. 처음 덮어쓰기 전에 원본을
+        `slam_map.orig.*` 로 옆에 둔다. `maps_dir` 도 인자도 없으면 아무것도 안 한다.
+        """
+        target = directory or self.maps_dir
+        if target is None or not self.live_map_write or not self._pose_verified:
+            return {}
+        target = Path(target)
+        # 적분은 정합 지도(match_grid)에 쌓인다 — loc_grid 가 따로 있으면
+        # 그쪽을 `slam_map_loc.*` 이름으로 저장해 항법 지도(slam_map.npy)는 건드리지 않는다.
+        stem = "slam_map_loc" if self.loc_grid is not None else "slam_map"
+        source_npy = target / f"{stem}.npy"
+        backup_npy = target / f"{stem}.orig.npy"
+        if source_npy.exists() and not backup_npy.exists():
+            shutil.copy2(source_npy, backup_npy)
+        return self.match_grid.save(target, stem=stem)
 
     # ── 입력: 텔레메트리 ──────────────────────────────────────
     def observe_telemetry(self, reading: Any, now_ms: int) -> None:
@@ -333,6 +489,15 @@ class PatrolController:
             return
         self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
         self._last_pose_ms = now_ms
+        zone = self.current_zone
+        if zone != self._last_zone:
+            self._last_zone = zone
+            LOG.info("zone_entered", zone=zone, x=round(self.pose[0], 2), y=round(self.pose[1], 2))
+        imu = self.safety.yaw_rad
+        if imu is not None:
+            # IMU 절대 yaw 는 지도 좌표계와 옵셋이 다르다 — 옵셋을 정합 시점에 맞춰 두면
+            # 다음 스캔 전까지 `imu - offset` 이 지도 방위의 연속 추정치가 된다.
+            self._imu_offset = wrap_pi(imu - self.pose[2])
         # 재개는 step의 전체 관문에서 한다. 새 tf 하나가 스캔 두절이나
         # 미관측 셀 정지를 해제해서는 안 된다.
 
@@ -373,7 +538,7 @@ class PatrolController:
         """
         self.stats.scans += 1
         self._note_scan(scan, now_ms)
-        if self._last_pose_ms is None or now_ms - self._last_pose_ms > self.drive.pose_timeout_ms:
+        if self.pose_stale(now_ms):
             return
         self._check_new_obstacle(scan)
 
@@ -381,20 +546,343 @@ class PatrolController:
         """내장 스캔 정합(시뮬레이션용)으로 측위하고 신규 장애물을 확인한다."""
         self.stats.scans += 1
         self._note_scan(scan, now_ms)
+        self._own_localization = True
+        _t_all = time.perf_counter()
         points = preprocess(scan.points, *self.range_m)
+        if not points.size:
+            return
+        # 워커가 끝낸 전역 탐색 결과를 먼저 가져온다 — 비어 있으면 즉시 돌아간다.
+        _t0 = time.perf_counter()
+        self._poll_global(now_ms)
+        _t_poll = time.perf_counter() - _t0
+        # 전역 탐색이 워커에서 도는 ~1.5초 동안 국소 정합은 쉰다 — CPython 에서
+        # 스레드가 GIL 을 나누면 24ms 정합이 1.7s 로 부풀어(실측 재현) 명령
+        # 주기를 해친다. 감사는 «서 있을 때»만, 재측위는 «이미 잃은 뒤»라
+        # 자세가 잠깐 낡아도 안전하다 — 명령은 그 사이에도 계속 나간다.
+        if self._global_inflight:
+            return
+        if self.pose_stale(now_ms) and self.reloc_interval_ms > 0:
+            # 한 번도 못 잡았거나 추적이 끊긴 상태 — 국소 창은 추정 위치가 틀리면
+            # 답을 못 찾으니 지도 전체를 거칠게 훑어 다시 잠근다 (FR-6.6).
+            # 비싼 탐색이라 주기를 제한한다.
+            _t1 = time.perf_counter()
+            submitted = False
+            if now_ms >= self._reloc_next_ms:
+                self._reloc_next_ms = now_ms + self.reloc_interval_ms
+                self._relocalize(points, scan, now_ms)
+                submitted = True
+            _t_stale = time.perf_counter() - _t1
+            if _t_stale > 0.2:
+                LOG.warning(
+                    "observe_scan_stale_slow",
+                    ms=round(_t_stale * 1000, 1),
+                    seeded=self.pose_seeded,
+                    last_pose=self._last_pose_ms is not None,
+                )
+            # 탐색을 던졌거나 잡힌 자세 자체가 없으면 여기서 끝. 자세가 있으면 계속
+            # 내려가 국소 창도 돌린다 — 재측위(~1.5초)가 `pose_timeout_ms`(0.5초)보다
+            # 길어 상실 표시가 붙는 사이에도, 시드·갱신된 자세라면 여기서 신선도가
+            # 회복되어 상실이 풀린다 (자세가 정말 틀렸으면 점수 0 이라 갱신이 없어
+            # 상실이 유지되고 다음 전역 탐색이 다시 찾는다). 이 fallthrough 가 없으면
+            # 전역 탐색이 국소 정합을 영원히 굶기는 기아 루프가 된다 (2026-10-03 실측).
+            if submitted or self._last_pose_ms is None:
+                return
+        # ── 정지 중 주기 감사 ── 국소 창만으론 «틀린 자리에 수렴한 잠금»을 스스로
+        # 못 푼다. 서 있는 동안 지도 전체를 훑어 현재 자세가 전역으로도 맞는지 본다.
+        if (
+            self.verify_interval_ms > 0
+            and now_ms >= self._verify_next_ms
+            and self._is_stationary()
+        ):
+            self._verify_next_ms = now_ms + self.verify_interval_ms
+            if self._verify_pose(points, scan, now_ms):
+                return
+        # 아직 한 번도 정합되지 않았으면 넓은 창으로 찾는다 — 시드 자세가 배치 오차만큼
+        # 어긋나 있어도 첫 고정은 잡히게. 잡힌 뒤에는 좁은 창으로 추적한다.
+        params = self.match_params
+        if self._last_pose_ms is None and self.first_match_params is not None:
+            params = self.first_match_params
+        _t2 = time.perf_counter()
         result = match(
-            self.grid,
+            self.match_grid,
             points,
             self.pose,
-            self.match_params,
+            params,
             # 변화량만 넘긴다 — 절대 yaw 는 지도 좌표계와 옵셋이 있다.
             yaw_delta=self._consume_yaw_delta(),
         )
+        _t_match = time.perf_counter() - _t2
+        if _t_match > 0.2:
+            LOG.warning(
+                "observe_scan_match_slow",
+                ms=round(_t_match * 1000, 1),
+                first=params is self.first_match_params,
+                window_m=params.search_lin_m,
+            )
+        self._match_frac = result.score / len(points)
         if result.skipped or result.score == 0:
             # 정합 실패 = 측위 상실 (FR-6.6). 점수 0 인 후보로 자세를 갱신하지 않는다.
             return
+        # ⚠️ 약한 정합(frac 낮음)으로 추적을 끊지 않는다 — 가구 다리가 덜 그려진 자리에서는
+        # **참 위치도 점수가 낮다.** 끊으면 재측위가 더 높은 점수의 엉뚱한 벽으로 로봇을
+        # 옮긴다(실측 재현). 자세의 신뢰는 frac 이 아니라 전역 감사의 반복 일치
+        # (`pose_verified`)로 판단하고, 지도 기록·자율 주행이 그 플래그를 본다.
+        self.observe_map_pose(result.pose, now_ms)
+        self._grow_map(points, result.score)
+        _t0 = time.perf_counter()
+        self._check_new_obstacle(scan)
+        _t_obs = time.perf_counter() - _t0
+        if _t_obs > 0.2 or _t_poll > 0.2:
+            LOG.warning(
+                "observe_scan_phase_slow",
+                poll_ms=round(_t_poll * 1000, 1),
+                obstacle_ms=round(_t_obs * 1000, 1),
+            )
+
+    def _min_match_score(self, points: np.ndarray) -> int:
+        """**새 고정**(전역 재측위·시드 시작)의 채택 하한 — 연속 추적에는 적용하지 않는다."""
+        return max(1, math.ceil(self.min_match_frac * len(points)))
+
+    def _relocalize(self, points: np.ndarray, scan: Scan, now_ms: int) -> None:
+        """지도 전역 재측위 — 국소 창이 풀 수 없는 잠김(오정합·임의 배치)을 연다.
+
+        신뢰 순서는 **사람이 준 시드 > 전역 탐색 > 국소 추적**이다. 지도가 아직 덜 채워진
+        자리(가구 다리·책상 밑)에서는 전역 최적이 엉뚱한 벽에 얹힐 수 있어, 첫 고정은
+        시드가 있으면 시드 주변에서 잡고 전역 탐색은 그 뒤 **감사**로만 쓴다.
+        """
+        if self._last_pose_ms is None and self._seed_fallback(points, scan, now_ms):
+            return
+        self._submit_global("reloc", points, scan)
+
+    # ── 전역 탐색 비동기 실행 ─────────────────────────────────
+    # 동기로 돌리면 1~2초 동안 명령이 멈춰 온보드 워치독이 `ONBOARD_FAILSAFE` 를
+    # 건다 — 탐색만 워커 스레드로 보내고, 결과 해석(투표·채택·지도 쓰기·장애물
+    # 표시)은 루프 스레드가 `_poll_global` 에서 한다. 워커는 `match_grid` 를
+    # **읽기만** 한다 — `live_map_write` 가 켜져 있으면 적분과 읽기가 겹칠 수
+    # 있으나 거친 탐색에 한 셀의 찢긴 값은 최적 자세를 바꾸지 못한다.
+
+    def _ensure_global_worker(self) -> None:
+        if self._global_thread is not None and self._global_thread.is_alive():
+            return
+        self._global_thread = threading.Thread(
+            target=self._global_worker_main,
+            name="patrol-global-match",
+            daemon=True,
+        )
+        self._global_thread.start()
+
+    def _global_worker_main(self) -> None:
+        while True:
+            with self._global_cv:
+                while self._global_req is None:
+                    self._global_cv.wait()
+                kind, points, scan = self._global_req
+                self._global_req = None
+            result = global_match(
+                self.match_grid,
+                points,
+                lin_step_m=self.global_match_lin_step_m,
+                ang_step_rad=self.global_match_ang_step_rad,
+                occ_thresh=self.match_params.occ_thresh,
+                min_known_cells=self.match_params.min_known_cells,
+                free_thresh=self.plan_params.free_thresh,
+                sigma_m=self.match_params.sigma_m,
+            )
+            with self._global_cv:
+                self._global_result = (kind, result, points, scan)
+
+    def _submit_global(self, kind: str, points: np.ndarray, scan: Scan) -> bool:
+        """전역 탐색을 워커에 맡긴다. 이미 한 건이 진행 중이면 놓친다(False)."""
+        if self._global_inflight:
+            return False
+        self._ensure_global_worker()
+        self._global_inflight = True
+        with self._global_cv:
+            self._global_req = (kind, points.copy(), scan)
+            self._global_cv.notify()
+        return True
+
+    def _poll_global(self, now_ms: int) -> None:
+        """워커가 끝낸 결과를 루프 스레드에서 해석·적용한다 — 상태 변경은 여기서만."""
+        with self._global_cv:
+            done = self._global_result
+            self._global_result = None
+        if done is None:
+            return
+        self._global_inflight = False
+        kind, result, points, scan = done
+        if kind == "verify":
+            self._apply_verify_result(result, points, now_ms)
+        else:
+            self._apply_reloc_result(result, points, scan, now_ms)
+
+    def _apply_reloc_result(
+        self, result: MatchResult | None, points: np.ndarray, scan: Scan, now_ms: int
+    ) -> None:
+        """전역 재측위 결과 해석 — 요청 때의 점·스캔 기준으로 판정한다."""
+        # 다음 시도 간격은 «결과가 나온 시점»부터 센다 — 탐색(~1.5초)이 간격(1초)보다
+        # 길면 도착 직후 곧바로 재제출돼 국소 정합이 한 스캔도 못 도는 기아 루프가 된다.
+        self._reloc_next_ms = max(self._reloc_next_ms, now_ms + self.reloc_interval_ms)
+        self._match_frac = result.score / len(points) if result is not None else 0.0
+        if result is None or result.score < self._min_match_score(points):
+            if self._edge.changed("relocalize_failed", True):
+                LOG.warning("relocalize_failed", frac=round(self._match_frac, 3))
+            self._seed_fallback(points, scan, now_ms)
+            return
+        if result.peers > self.reloc_max_peers:
+            # 스캔이 지도를 구분 못 한다 — 어느 자세든 우연이다 (벽 포켓·대칭).
+            if self._edge.changed("relocalize_ambiguous", True):
+                LOG.warning(
+                    "relocalize_ambiguous",
+                    frac=round(self._match_frac, 3),
+                    peers=result.peers,
+                )
+            self._seed_fallback(points, scan, now_ms)
+            return
+        if not self._vote_global(result.pose):
+            return
+        self._edge.changed("relocalize_failed", False)
+        LOG.info(
+            "relocalized",
+            x=round(result.pose[0], 2),
+            y=round(result.pose[1], 2),
+            yaw_deg=round(rad_to_deg(result.pose[2]), 1),
+            frac=round(self._match_frac, 3),
+            votes=self.reloc_votes,
+        )
+        self.observe_map_pose(result.pose, now_ms)
+        # 전역 탐색이 변별력 있게 잡은 자세다 — 여기부터의 적분은 믿을 수 있다.
+        self._mark_verified()
+        self._grow_map(points, result.score)
+        self._check_new_obstacle(scan)
+
+    def _seed_fallback(self, points: np.ndarray, scan: Scan, now_ms: int) -> bool:
+        """사람이 준 시드 주변 넓은 창으로 첫 추적을 시작한다. 잡았으면 True.
+
+        아직 한 번도 못 잡은 경우에만, 시드가 있을 때만이다. 이렇게 잡은 자세는
+        `pose_verified` 가 아니라 지도에 쓰지 않고, 서 있을 때 전역 감사가 확인한다.
+        """
+        if not self.pose_seeded or self._last_pose_ms is not None or self.first_match_params is None:
+            return False
+        result = match(self.match_grid, points, self.pose, self.first_match_params)
+        # 사람의 말이 근거라 정합 하한은 절반만 요구한다 — 지도에 가구 다리가 빠진 자리면
+        # 참 위치도 점수가 낮다. 어차피 미검증이라 지도에는 쓰지 않는다.
+        if result.skipped or result.score < max(1, self._min_match_score(points) // 2):
+            return False
+        self._match_frac = result.score / len(points)
+        LOG.info(
+            "seed_tracking_started",
+            x=round(result.pose[0], 2),
+            y=round(result.pose[1], 2),
+            frac=round(self._match_frac, 3),
+            hint="전역 확인 전 — 지도에 쓰지 않음",
+        )
         self.observe_map_pose(result.pose, now_ms)
         self._check_new_obstacle(scan)
+        return True
+
+    def _vote_global(self, pose: Pose) -> bool:
+        """전역 탐색 결과 한 표. 직전 표와 0.3m 넘게 다르면 처음부터 다시 센다.
+
+        `reloc_votes` 표가 모이면 True 를 돌리고 비운다 — 호출자가 그 자세를 채택한다.
+        """
+        votes = self._global_votes
+        if votes and math.hypot(pose[0] - votes[-1][0], pose[1] - votes[-1][1]) > 0.3:
+            votes.clear()
+        votes.append(pose)
+        if len(votes) < self.reloc_votes:
+            LOG.info("global_vote", n=len(votes), need=self.reloc_votes, x=round(pose[0], 2), y=round(pose[1], 2))
+            return False
+        votes.clear()
+        return True
+
+    def _mark_verified(self) -> None:
+        """자세가 전역 확인됐다 — 지도 적분을 허용하고 되돌릴 기준점을 새로 찍는다."""
+        self._pose_verified = True
+        self._global_votes.clear()
+        self._verified_snapshot = self.match_grid.snapshot()
+
+    def _rebuild_masks(self) -> None:
+        """격자 모양·내용이 바뀐 직후 팽창·동적 마스크를 새로 만든다."""
+        self._blocked = inflate(self.grid, self.plan_params)
+        dynamic = np.zeros_like(self._blocked, dtype=bool)
+        for hit in self._obstacles:
+            mark_obstacle(dynamic, self.grid, hit, self.obstacle_mark_radius_m)
+        self._dynamic = dynamic
+        self._updates_since_inflate = 0
+
+    def _is_stationary(self) -> bool:
+        """로봇이 서 있는가 — 감사 탐색(수 초)은 서 있을 때만 돌려도 안전하다."""
+        return self.phase is not Phase.MOVING or self._stopped_since_ms is not None
+
+    def _verify_pose(self, points: np.ndarray, scan: Scan, now_ms: int) -> bool:
+        """정지 중 자세 감사 요청 — 전역 탐색을 워커로 보낸다.
+
+        결과는 `_apply_verify_result` 가 뒤늦게 적용한다. 제출에 성공했으면 True 를
+        돌려 이번 스캔의 국소 정합도 건너뛴다 — 워커 기동 직후 같이 돌면 GIL 경합으로
+        국소 정합이 수십 배 느려져 명령 주기를 해친다.
+        """
+        return self._submit_global("verify", points, scan)
+
+    def _apply_verify_result(
+        self, result: MatchResult | None, points: np.ndarray, now_ms: int
+    ) -> bool:
+        """전역 감사 결과 해석 — 다른 자리를 가리키면 자세를 바로잡고 True 를 돌린다."""
+        self._match_frac = result.score / len(points) if result is not None else 0.0
+        if (
+            result is None
+            or result.score < self._min_match_score(points)
+            or result.peers > self.reloc_max_peers
+        ):
+            # 구분력 없는 스캔으로는 현재 자세를 의심도 확신도 못 한다 — 유지한다.
+            if self._edge.changed("pose_verify_ambiguous", True):
+                LOG.warning(
+                    "pose_verify_ambiguous",
+                    frac=round(self._match_frac, 3),
+                    peers=0 if result is None else result.peers,
+                )
+            return False
+        self._edge.changed("pose_verify_ambiguous", False)
+        moved = math.hypot(result.pose[0] - self.pose[0], result.pose[1] - self.pose[1])
+        if moved <= 0.4:
+            # 국소 창의 잠금이 전역에서도 맞다 — 여기까지의 적분을 확정한다.
+            # 탐색하는 동안 국소 정합이 쉬었으니 «지금 확인됨»으로 신선도도 새로 찍는다.
+            self._mark_verified()
+            self._last_pose_ms = now_ms
+            return False
+        if self.pose_seeded and not self._pose_verified:
+            # 사람이 준 자리를 아직 전역이 한 번도 확인하지 못했다 — 지도가 덜 채워진
+            # 자리(가구 다리 등)면 전역 최적 쪽이 틀릴 수 있어 **덮어쓰지 않는다.**
+            # 지도에도 쓰지 않은 채 추적만 이어 가고, 트인 곳에 나오면 감사가 맞춰 준다.
+            if self._edge.changed("pose_verify_disagree", True):
+                LOG.warning(
+                    "pose_verify_disagree",
+                    seeded=[round(self.pose[0], 2), round(self.pose[1], 2)],
+                    global_best=[round(result.pose[0], 2), round(result.pose[1], 2)],
+                    moved_m=round(moved, 2),
+                    peers=result.peers,
+                    hint="시드 자리 유지 — 지도 미기록",
+                )
+            return False
+        self._edge.changed("pose_verify_disagree", False)
+        if not self._vote_global(result.pose):
+            # 한 번 다른 답이 나온 것으로는 안 옮긴다 — 같은 답이 `reloc_votes` 번 반복돼야 한다.
+            return False
+        LOG.warning(
+            "pose_corrected",
+            old=[round(self.pose[0], 2), round(self.pose[1], 2)],
+            new=[round(result.pose[0], 2), round(result.pose[1], 2)],
+            moved_m=round(moved, 2),
+            peers=result.peers,
+        )
+        if self._verified_snapshot is not None:
+            # 마지막 확인 뒤의 적분은 틀린 자세로 한 것이다 — 지도를 그 시점으로 되돌린다.
+            self.match_grid.restore(self._verified_snapshot)
+            self._rebuild_masks()
+            LOG.warning("map_rolled_back", to="last_verified_snapshot")
+        self.observe_map_pose(result.pose, now_ms)
+        self._mark_verified()
+        return True
 
     def _consume_yaw_delta(self) -> float:
         """직전 스캔 이후 IMU 가 본 회전량을 소비한다(두 번 반영하지 않는다). 없으면 0."""
@@ -406,6 +894,47 @@ class PatrolController:
         self._last_imu_yaw = current
         return 0.0 if previous is None else wrap_pi(current - previous)
 
+    def _steering_yaw(self) -> float:
+        """조향에 쓸 방위 — 스캔 사이에는 IMU 전파값, 없으면 정합 방위 그대로.
+
+        정합 방위는 바퀴(수백 ms)마다만 갱신되므로 그 사이의 휨을 IMU 가 즉시 본다.
+        옵셋은 `observe_map_pose` 에서 정합될 때마다 다시 맞춘다.
+        """
+        imu = self.safety.yaw_rad
+        if imu is not None and self._imu_offset is not None:
+            return wrap_pi(imu - self._imu_offset)
+        return self.pose[2]
+
+    def _grow_map(self, points: np.ndarray, score: int) -> None:
+        """정합이 확실한 바퀴를 지도에 적분하고 주기적으로 팽창을 새로 만든다.
+
+        보행 속도에서 한 바퀴(~0.1초) 사이의 이동은 수 cm 이하라 이동 중 적분 오차는
+        셀 하나 이하다 — 지도는 로봇이 지나간 곳을 «확실히 빈» 셀로 채워 나간다.
+        """
+        if (
+            not self.live_map_write
+            or self.map_hit_logodds <= 0
+            or not self._pose_verified
+            or score < MAP_WRITE_MIN_SCORE_FRAC * len(points)
+        ):
+            return
+        integrate_scan(
+            self.match_grid,
+            self.pose,
+            points,
+            hit=self.map_hit_logodds,
+            miss=self.map_miss_logodds,
+            pad_cells=self.map_pad_cells,
+        )
+        self._updates_since_inflate += 1
+        # `integrate` 가 격자를 늘리면 원점이 옮겨져 두 마스크의 셀 좌표가 전부 어긋난다 —
+        # 주기와 무관하게 모양이 달라진 즉시 둘 다 새로 만든다. 장애물 표시는 월드 좌표라
+        # (`self._obstacles`) 새 격자에 다시 찍을 수 있다.
+        if self._updates_since_inflate >= MAP_INFLATE_EVERY or (
+            self._blocked is not None and self._blocked.shape != self.grid.cells.shape
+        ):
+            self._rebuild_masks()
+
     def _check_new_obstacle(self, scan: Scan) -> None:
         """연속 확인 후에만 재계획한다. 한 번의 반사로 경로를 버리지 않는다."""
         hit = detect_new_obstacle(
@@ -416,6 +945,7 @@ class PatrolController:
             check_radius_m=self.new_obstacle_check_radius_m,
             margin_m=self.new_obstacle_margin_m,
             occ_thresh=self.plan_params.occ_thresh,
+            known_grid=self.loc_grid,
         )
         if hit is None:
             self._pending_hit, self._pending_count = None, 0
@@ -535,9 +1065,7 @@ class PatrolController:
         FSM 이 상태 알림과 래치·링크 감시를 쥐고, 이것은 FSM 이 `PATROL` 일 때만 불린다.
         여기서 그것들을 다시 판정하면 상태 알림이 둘이 되어 서로 덮는다.
         """
-        stale = self._last_pose_ms is None or (
-            now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
-        )
+        stale = self.pose_stale(now_ms)
         if stale:
             # 측위가 낡으면 선다 — 다음 스캔 정합이 자세를 되찾으면 이어 간다 (FR-6.6).
             self.commander.halt()
@@ -602,9 +1130,7 @@ class PatrolController:
 
     def _guard_localization(self, now_ms: int) -> tuple[str, ...]:
         # ③ 측위 상실 — `ESTOP` 이 아니라 `LOST` 다 (FR-6.6)
-        stale = self._last_pose_ms is None or (
-            now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
-        )
+        stale = self.pose_stale(now_ms)
         if stale:
             self._lose("pose_stale")
             return ()
@@ -667,6 +1193,14 @@ class PatrolController:
             if self._edge.changed("no_zones", True):
                 LOG.error("no_zones", hint="tools/ops/zone_select.py 를 먼저 실행한다")
             return
+        if self._own_localization and not (self._pose_verified or self.pose_seeded):
+            # 사람도 지도도 이 자세를 보증한 적이 없다 — 걷지 않는다. 서 있으면 전역 감사가
+            # 돌아 확인되거나(재개) 다른 자리로 바로잡는다.
+            self.commander.halt()
+            if self._edge.changed("pose_unverified_hold", True):
+                LOG.warning("pose_unverified_hold", frac=round(self._match_frac, 3))
+            return
+        self._edge.changed("pose_unverified_hold", False)
 
         if self.phase is Phase.INSPECT:
             # 도착하면 즉시 다음 구역으로 — 카메라 판독(FR-8)은 `change_detect` 소관이다.
@@ -724,9 +1258,16 @@ class PatrolController:
 
             # 다 썼다 — 이 사이클에서는 이 구역을 버린다. 다음 사이클이
             # 경계에서 표시를 지우고 처음부터 다시 확인한다.
-            LOG.warning("zone_unreachable", label=label, reverify_attempts=attempts)
+            LOG.warning(
+                "zone_unreachable",
+                label=label,
+                reverify_attempts=attempts,
+                reason=retry.fail_reason,
+                goal_moved_m=round(retry.goal_moved_m, 2),
+            )
             self.visited = self.visited | {label}
 
+        skipped: list[tuple[str, str]] = []
         self.plan = select_next(
             cycle=self.cycle,
             visited=self.visited,
@@ -738,30 +1279,63 @@ class PatrolController:
             params=self.plan_params,
             random_after_first_cycle=self.random_after_first_cycle,
             rng=self.rng,
+            skipped_out=skipped,
         )
         self.waypoint_index = 0
+        # 도달 불가 구역은 같은 목록이 바뀔 때만 기록한다 — 매 틱 재시도하면
+        # 로그가 초당 10줄씩 쌓여 진짜 신호를 덮는다 (목업에서 실제로 확인).
+        skip_key = ",".join(f"{label}:{reason}" for label, reason in skipped)
+        if skipped and self._edge.changed("zones_unreachable", skip_key):
+            LOG.warning(
+                "zones_unreachable",
+                skipped=[label for label, _ in skipped],
+                reasons=[reason for _, reason in skipped],
+            )
+        if not skipped:
+            self._edge.changed("zones_unreachable", "")
         if self.plan.reachable:
+            self._edge.changed("no_reachable_zone", False)
             LOG.info(
                 "zone_selected",
                 label=self.plan.label,
                 cycle=self.cycle,
                 path_m=round(self.plan.length_m, 2),
+                goal_moved_m=round(self.plan.goal_moved_m, 2),
+                start_moved_m=round(self.plan.start_moved_m, 2),
+                # 찍은 앵커와 실제 향하는 셀이 다르면 둘 다 남긴다 — 목표가 조용히
+                # 옮겨지는 일은 없다 (가구 다리 병합으로 앵커가 팽창 안에 들어갈 수 있다).
+                requested=(
+                    [round(v, 2) for v in self.plan.requested]
+                    if self.plan.requested is not None else None
+                ),
+                effective=(
+                    [round(v, 2) for v in self.plan.effective]
+                    if self.plan.effective is not None else None
+                ),
             )
         elif self.visited:
             self._complete_cycle()
-        else:
+        elif self._edge.changed("no_reachable_zone", True):
             LOG.error("no_reachable_zone", visited=sorted(self.visited))
 
     def _follow(self) -> None:
         assert self.plan.label is not None
-        goal = self.zones.xy(self.plan.label)
-        if math.hypot(goal[0] - self.pose[0], goal[1] - self.pose[1]) < self.drive.arrival_radius_m:
+        anchor = self.zones.xy(self.plan.label)
+        # 스냅된 목표(plan.effective)에 도착해도 «구역에 갔다» 로 인정한다 — 앵커가
+        # 가구 다리·팽창 안에 묻혔으면 그 자리엔 영원히 못 선다. 둘 중 가까운 곳이
+        # 도착 반경 안이면 도착이다.
+        effective = self.plan.effective or anchor
+        arrived = min(
+            math.hypot(anchor[0] - self.pose[0], anchor[1] - self.pose[1]),
+            math.hypot(effective[0] - self.pose[0], effective[1] - self.pose[1]),
+        ) < self.drive.arrival_radius_m
+        if arrived:
             self._arrive(self.plan.label)
             return
 
         waypoint = self._current_waypoint()
         heading = math.atan2(waypoint[1] - self.pose[1], waypoint[0] - self.pose[0])
-        steering = steering_for(heading - self.pose[2], self.drive, spinning=self._spinning)
+        steering = steering_for(heading - self._steering_yaw(), self.drive, spinning=self._spinning)
         spinning = steering.step_mm == 0.0 and steering.angle_deg != 0.0
         if self._edge.changed("spin", spinning) and spinning:
             LOG.info(
@@ -877,13 +1451,25 @@ def controller_from_config(
 ) -> PatrolController:
     """설정으로 컨트롤러를 조립한다. 순찰 도구와 호스트 런타임이 같이 쓴다."""
     lidar = config["lidar"]
+    match_params = match_params_from_config(config)
     return PatrolController(
         commander=commander,
         grid=grid,
         zones=zones,
         drive=drive_params_from_config(config),
         plan_params=plan_params_from_config(config),
-        match_params=match_params_from_config(config),
+        match_params=match_params,
+        # 첫 정합은 로봇이 어디 놓였는지 몰라도 잡아야 한다 — 좁은 추적 창 대신
+        # ±0.8m · ±40° 로 한 번 넓게 찾는다. 잡힌 뒤에는 쓰지 않는다.
+        first_match_params=MatchParams(
+            search_lin_m=0.8,
+            search_lin_step_m=match_params.search_lin_step_m * 1.5,
+            search_ang_rad=deg_to_rad(40.0),
+            search_ang_step_rad=match_params.search_ang_step_rad * 2.0,
+            occ_thresh=match_params.occ_thresh,
+            min_known_cells=match_params.min_known_cells,
+            sigma_m=match_params.sigma_m,
+        ),
         range_m=range_from_config(config),
         new_obstacle_margin_m=float(lidar["new_obstacle_margin_mm"]) / 1000.0,
         new_obstacle_check_radius_m=float(lidar["new_obstacle_check_radius_mm"]) / 1000.0,
@@ -893,6 +1479,19 @@ def controller_from_config(
         # 회피 시퀀스와 **같은 값을 쓴다** — 갇힌 상황을 몇 번까지
         # 스스로 풀어 보고 사람에게 넘길지의 값이다 (FR-2.3).
         max_reverify_attempts=int(config["fsm"]["avoid_attempts"]),
+        live_map_write=bool(lidar.get("live_map_write", False)),
+        map_hit_logodds=float(lidar["hit_logodds"]),
+        map_miss_logodds=float(lidar["miss_logodds"]),
+        map_pad_cells=int(lidar["expand_pad_cells"]),
+        # 틀린 잠금 차단: 적중 비율이 `min_match_frac` 미만인 정합은 버리고,
+        # 추적이 끊기면 `reloc_interval_ms` 주기로 지도 전역 재측위를 돌린다.
+        min_match_frac=float(lidar.get("min_match_frac", 0.45)),
+        reloc_interval_ms=int(lidar.get("reloc_interval_ms", 1000)),
+        global_match_lin_step_m=float(lidar.get("global_match_step_mm", 100)) / 1000.0,
+        global_match_ang_step_rad=deg_to_rad(float(lidar.get("global_match_angle_deg", 15))),
+        reloc_max_peers=int(lidar.get("reloc_max_peers", 60)),
+        verify_interval_ms=int(lidar.get("verify_interval_ms", 15000)),
+        reloc_votes=int(lidar.get("reloc_votes", 3)),
         random_after_first_cycle=bool(config["zones"]["random_after_first_cycle"]),
         rng=rng,
     )

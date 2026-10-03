@@ -51,6 +51,17 @@ class VlmWorker:
         return thread is not None and thread.is_alive()
 
     @property
+    def loading(self) -> bool:
+        """모델 적재 스레드가 아직 살아 있나.
+
+        적재는 수초~수십 초 동안 CPU·GIL 을 잡아먹는다 — 이 동안 보행을 시작하면
+        명령 공백이 `safety.cmd_timeout_ms` 를 넘길 수 있다 (2026-10-02 실기:
+        `cmd_gap 585ms` → `ONBOARD_FAILSAFE`).
+        """
+        loader = self._loader
+        return loader is not None and loader.is_alive()
+
+    @property
     def available(self) -> bool:
         """판독기를 쓸 수 있나. 가중치가 없으면 거짓이다."""
         return self._reader.loaded

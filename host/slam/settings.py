@@ -220,6 +220,11 @@ def plan_params_from_config(config: Mapping[str, Any]) -> PlanParams:
         # 반경 + 추종 여유. 둘을 더해 두는 이유는 `PlanParams.clearance_m` 주석에.
         clearance_m=(float(lidar["robot_radius_mm"]) + float(lidar["tracking_margin_mm"])) / 1000.0,
         simplify_eps_m=float(lidar["path_simplify_mm"]) / 1000.0,
+        # 벽·충분히 확인된 장애물(logodds ≥ 이 값)만 전체 여유를 부풀린다.
+        hard_thresh=float(lidar["hard_occ_thresh"]),
+        # 그 미만의 셀(세션 지도 병합으로 들어온 가구 다리급)은 이 여유만 —
+        # 기본은 로봇 반경: 다리를 피해 갈 수는 있되 몸이 닿지는 않는다.
+        soft_clearance_m=float(lidar["furniture_clearance_mm"]) / 1000.0,
     )
 
 
@@ -235,6 +240,7 @@ def match_params_from_config(config: Mapping[str, Any]) -> MatchParams:
         search_ang_step_rad=deg_to_rad(float(lidar["search_angle_step_deg"])),
         occ_thresh=float(lidar["occupied_logodds"]),
         min_known_cells=int(lidar["min_known_cells"]),
+        sigma_m=float(lidar.get("match_sigma_mm", 0)) / 1000.0,
     )
 
 

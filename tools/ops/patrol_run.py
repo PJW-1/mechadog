@@ -55,6 +55,8 @@ from host.common.map_pose_link import MapPoseDecoder, map_pose_of
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import ms_to_s
 from host.slam import settings, simulation
+from host.slam.occupancy import OccupancyGrid
+from host.slam.pose_out import PoseOut
 from host.slam.settings import range_from_config
 from host.telemetry.receiver import TelemetryReceiver
 from host.telemetry.ros2_relay import (
@@ -106,13 +108,19 @@ def build_controller(config: dict, maps: Path, seed: int | None) -> PatrolContro
     # 주기는 설정에서 온다 (`network.cmd_rate_hz: 10`). 코드에 100ms 를 박으면
     # 설정을 고쳐도 안 바뀐다.
     period_ms = round(1000 / float(config["network"]["cmd_rate_hz"]))
-    return controller_from_config(
+    controller = controller_from_config(
         config,
         Commander(CommandEncoder(), period_ms=period_ms),
         grid,
         zones,
         random.Random(seed),
     )
+    # 측위 전용 지도 — 있으면 정합은 가구 다리까지 담은 그 지도로 하고,
+    # 경로 계획은 항법용 slam_map.npy 그대로다.
+    if (maps / "slam_map_loc.npy").is_file():
+        controller.loc_grid = OccupancyGrid.load(maps, stem="slam_map_loc")
+        LOG.info("loc_map_loaded", maps=str(maps))
+    return controller
 
 
 def stop_for_shutdown(
@@ -132,7 +140,12 @@ def stop_for_shutdown(
             time.sleep(SHUTDOWN_ESTOP_INTERVAL_S)
 
 
-def serve_real(args: argparse.Namespace, config: dict, controller: PatrolController) -> int:
+def serve_real(
+    args: argparse.Namespace,
+    config: dict,
+    controller: PatrolController,
+    pose_out: PoseOut | None,
+) -> int:
     """실기 운용. 세 입력 소켓을 논블로킹으로 훑고 마감에 맞춰 전문을 낸다."""
     network = config["network"]
     lidar = config["lidar"]
@@ -275,6 +288,9 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                     LOG.info("map_pose_recovered")
                 map_pose_invalid = False
                 controller.observe_map_pose((pose.x_m, pose.y_m, pose.yaw_rad), now_ms)
+                # 대시보드 실시간 위치 — pose_frame.json 이 있는 지도에서만 나간다.
+                if pose_out is not None:
+                    pose_out.send(controller.pose, moving=True)
 
             # ── 판단 ──
             transmit(controller.step(now_ms))
@@ -303,6 +319,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
         cmd_sock.close()
         if odom is not None:
             odom.close()
+        if pose_out is not None:
+            pose_out.close()
     return 0
 
 
@@ -502,6 +520,12 @@ def main(argv: list[str] | None = None) -> int:
         setup_logging(config, device_id=args.device or "patrol-sim", console=args.verbose)
         maps = Path(args.maps) if args.maps else settings.maps_dir(config)
         controller = build_controller(config, maps, args.seed)
+        lidar_cfg = config.get("lidar") or {}
+        pose_out = PoseOut.of(
+            maps,
+            host=str(lidar_cfg.get("pose_out_host", "127.0.0.1")),
+            port=int(lidar_cfg.get("pose_out_port", 5300)),
+        )
     except ConfigError as exc:
         print(f"[Patrol] 설정 오류: {exc}", file=sys.stderr)
         return 2
@@ -512,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.simulate:
         return serve_simulated(args, config, controller)
     try:
-        return serve_real(args, config, controller)
+        return serve_real(args, config, controller, pose_out)
     except ConfigError as exc:  # 전달·ODOM 목적지 이름 해석 (`_resolve`)
         print(f"[Patrol] 설정 오류: {exc}", file=sys.stderr)
         return 2

@@ -58,7 +58,8 @@ class PostureSequence:
     """
 
     def __init__(
-        self, commander: Commander, pitch_deg: float, dur_ms: int, hold_ms: int = 0
+        self, commander: Commander, pitch_deg: float, dur_ms: int, hold_ms: int = 0,
+        roll_deg: float = 0.0,
     ) -> None:
         if dur_ms <= 0:
             raise ValueError("dur_ms 는 0 보다 커야 함")
@@ -68,6 +69,9 @@ class PostureSequence:
         self._pitch_deg = float(pitch_deg)
         self._dur_ms = int(dur_ms)
         self._hold_ms = int(hold_ms)
+        # `posture.roll_offset_deg` — IMU 상시 roll 편향 상쇄. «중립 복귀» 시에도 0 이
+        # 아니라 이 오프셋으로 돌려야 보정이 보행 중에도 유지된다.
+        self._roll_deg = float(roll_deg)
         self._since_ms: int | None = None
         self._sent = False
 
@@ -97,7 +101,7 @@ class PostureSequence:
         self._sent = False
 
     def _send(self, pitch_deg: float) -> None:
-        self._commander.once("POSE", pitch=pitch_deg, roll=0.0, height=0.0, dur=self._dur_ms)
+        self._commander.once("POSE", pitch=pitch_deg, roll=self._roll_deg, height=0.0, dur=self._dur_ms)
 
     def __call__(self, commander: Commander, now_ms: int) -> None:  # noqa: ARG002
         if self._since_ms is None:
@@ -314,7 +318,10 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
         ("ALERT", "alert_pitch_deg"),
         ("AUTH_WAIT", "alert_pitch_deg"),
     ):
-        posture = PostureSequence(commander, float(config["fsm"][key]), settle_ms, holds[state])
+        posture = PostureSequence(
+            commander, float(config["fsm"][key]), settle_ms, holds[state],
+            roll_deg=float(config["posture"].get("roll_offset_deg", 0.0)),
+        )
         behavior.register_sequence(state, posture)
         behavior.fsm.on_enter(state, posture.restart)
         behavior.fsm.on_exit(state, posture.release)
