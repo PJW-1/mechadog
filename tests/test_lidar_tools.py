@@ -396,7 +396,8 @@ def test_collect_real_ignores_discarded_packets(lidar_config: dict) -> None:
                     ts_ms=1,
                     device_id="lidar-a",
                     boot_id="b",
-                    points_wire=[[0.0, 1000], [90.0, 1500]],
+                    # 한 바퀴(5° 간격) — 수집기는 이제 조각이 아니라 완성된 바퀴를 센다.
+                    points_wire=[[float(d), 1000] for d in range(0, 360, 5)],
                 ).encode("utf-8"),
             ]
 
@@ -408,7 +409,7 @@ def test_collect_real_ignores_discarded_packets(lidar_config: dict) -> None:
     del lidar_config
     batch = lidar_slam.collect_real(FakeSocket(), ScanDecoder(), 2)
     assert len(batch) == 1, "깨진 패킷은 세지 않았다"
-    assert len(batch[0].points) == 2
+    assert len(batch[0].points) == 72
 
 
 def test_collect_real_ignores_another_lidar_device() -> None:
@@ -420,14 +421,14 @@ def test_collect_real_ignores_another_lidar_device() -> None:
                     ts_ms=1,
                     device_id="lidar-other",
                     boot_id="a",
-                    points_wire=[[0.0, 1000]],
+                    points_wire=[[float(d), 1000] for d in range(0, 360, 5)],
                 ).encode(),
                 encode_scan(
                     seq=1,
                     ts_ms=2,
                     device_id="lidar-wanted",
                     boot_id="b",
-                    points_wire=[[0.0, 1200]],
+                    points_wire=[[float(d), 1200] for d in range(0, 360, 5)],
                 ).encode(),
             ]
 

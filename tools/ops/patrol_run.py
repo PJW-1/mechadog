@@ -58,6 +58,7 @@ from host.slam import settings, simulation
 from host.slam.occupancy import OccupancyGrid
 from host.slam.pose_out import PoseOut
 from host.slam.settings import range_from_config
+from host.telemetry.lidar_feed import RevolutionAssembler
 from host.telemetry.receiver import TelemetryReceiver
 from host.telemetry.ros2_relay import (
     forward_peer_of,
@@ -169,6 +170,7 @@ def serve_real(
     scan_decoder = ScanDecoder(
         float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
     )
+    assembler = RevolutionAssembler()
     # 컨테이너 전달 목적지 (WBS 5.4.4) — 이 프로세스가 scan_port 의 유일한
     # 수신자로 남고, 받은 데이터그램을 바이트 그대로 여기로 복사해 넘긴다.
     # 꺼 두면 None 이라 아래 루프가 전달을 건너뛴다.
@@ -255,9 +257,14 @@ def serve_real(
                 urgent = controller.guard_scan(scan)
                 if urgent:
                     transmit([urgent])
+                # 위험 판정은 패킷마다, 지도에 투영할 스캔은 한 바퀴씩 넘긴다.
+                scan_received_ms = system_clock_ms()
+                revolution = assembler.add(scan, scan_received_ms)
+                if revolution is None:
+                    continue
                 # 실기 측위는 ROS2의 map->base_link가 정본이다. 여기서 다시 스캔
                 # 정합하면 서로 다른 두 자세가 같은 컨트롤러를 번갈아 덮어쓴다.
-                controller.observe_obstacle_scan(scan, now_ms)
+                controller.observe_obstacle_scan(revolution, scan_received_ms)
 
             # ── ROS2 지도 측위 (WBS 5.4.4) ──
             while True:
