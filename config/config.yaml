@@ -521,8 +521,12 @@ lidar:
   tracking_margin_mm: 100
   # logodds 가 이 값 이상인 점유 셀만 «단단한» 장애물 — 벽·반복 확인된 물체는
   # `robot_radius_mm + tracking_margin_mm` 전부를 부풀린다. 그 미만(세션 지도
-  # 병합으로 들어온 가구 다리급, 1~4)은 `furniture_clearance_mm` 만 부풀려
-  # 로봇이 실제로 선 자리 옆 다리도 도달 불가로 만들지 않는다.
+  # 병합으로 들어온 가구 다리급, 1~4)은 `furniture_clearance_mm` 만큼 부풀린다.
+  # 2026-10-03 사용자 선택: nav free 위 loc-only 점유는 계획에서 제외한다.
+  # 원본은 보존하고 실제 물체는 LiDAR로 확인해 동적 장애물/정지/재계획으로 처리한다.
+  # nav 벽·미관측 및 지도 밖 점유는 이 예외로 열지 않는다.
+  # 추종 여유 안에서 출발하면 몸체 반경을 지키는 연결을 이 거리 안에서 찾는다.
+  start_escape_max_mm: 600
   hard_occ_thresh: 4.0
   furniture_clearance_mm: 150    # 가구급 셀 팽창 — 로봇 반경만(추종 여유 없음)
   path_simplify_mm: 80         # 웨이포인트 단순화 허용 오차

@@ -970,7 +970,7 @@ def test_plan_to_reports_an_unreachable_goal() -> None:
     )
     assert not plan.reachable
     assert plan.label is None
-    assert plan.fail_reason == "start_blocked"
+    assert plan.fail_reason == "start_unobserved"
     assert plan.requested == (1.0, 1.0)
 
 

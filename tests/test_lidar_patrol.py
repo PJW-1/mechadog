@@ -919,14 +919,9 @@ def _detect_room() -> tuple[OccupancyGrid, np.ndarray]:
     return grid, blocked
 
 
-def test_loc_map_leg_is_not_a_new_obstacle() -> None:
-    """측위 지도엔 있고 항법 지도엔 없는 다리는 «새 장애물»이 아니다.
-
-    2026-10-03 실측에서 복도의 다리가 매번 `obstacle_confirmed` 로 찍혀
-    `_dynamic` 마킹이 통로를 봉쇄(`start_blocked`)했다 — 탐지 기준을 측위
-    지도까지 넓혀 막는다.
-    """
-    from host.behavior.planner import detect_new_obstacle
+def test_excluded_loc_leg_remains_a_live_lidar_obstacle() -> None:
+    """계획에서 제외한 loc 셀에 실제 반사가 있으면 새 물체로 감지한다."""
+    from host.behavior.planner import detect_new_obstacle, inflate
 
     grid, blocked = _detect_room()
     loc = OccupancyGrid(grid.meta)
@@ -945,6 +940,8 @@ def test_loc_map_leg_is_not_a_new_obstacle() -> None:
         occ_thresh=1.0,
     )
     assert hit is not None, "항법 지도만 보면 다리는 «새 장애물»"
+    blocked = inflate(grid, PLAN, obstacle_grid=loc)
+    assert not blocked[leg_row, leg_col]
     assert (
         detect_new_obstacle(
             (3.0, 2.5, 0.0),
@@ -954,21 +951,22 @@ def test_loc_map_leg_is_not_a_new_obstacle() -> None:
             check_radius_m=1.5,
             margin_m=0.25,
             occ_thresh=1.0,
-            known_grid=loc,
         )
-        is None
-    ), "측위 지도가 아는 다리는 억제되어야 한다"
+        is not None
+    ), "loc가 아는 물체라도 계획에서 제외했으면 LiDAR 감지를 억제하지 않는다"
 
 
 def test_loc_map_margin_absorbs_alignment_error() -> None:
     """다리의 지도 자리와 실제가 ~10cm 어긋나도 margin 이 흡수한다."""
-    from host.behavior.planner import detect_new_obstacle
+    from host.behavior.planner import detect_new_obstacle, inflate
 
     grid, blocked = _detect_room()
     loc = OccupancyGrid(grid.meta)
     loc.cells[:, :] = grid.cells
     leg_row, leg_col = loc.to_cell(4.0, 2.5)
     loc.cells[leg_row, leg_col] = 3.0
+    grid.cells[leg_row, leg_col] = 3.0  # nav도 아는 물체에만 기존 정렬 여유가 적용된다.
+    blocked = inflate(grid, PLAN, obstacle_grid=loc)
     # 실제 다리는 지도 자리보다 10cm 가깝다 (정렬 오차).
     scan = ((0.0, 0.9),)
     assert (
@@ -980,7 +978,6 @@ def test_loc_map_margin_absorbs_alignment_error() -> None:
             check_radius_m=1.5,
             margin_m=0.25,
             occ_thresh=1.0,
-            known_grid=loc,
         )
         is None
     )
@@ -988,7 +985,7 @@ def test_loc_map_margin_absorbs_alignment_error() -> None:
 
 def test_genuinely_new_obstacle_still_detected_with_loc_map() -> None:
     """어느 지도에도 없는 물체는 측위 지도를 써도 여전히 잡힌다."""
-    from host.behavior.planner import detect_new_obstacle
+    from host.behavior.planner import detect_new_obstacle, inflate
 
     grid, blocked = _detect_room()
     loc = OccupancyGrid(grid.meta)
@@ -996,7 +993,8 @@ def test_genuinely_new_obstacle_still_detected_with_loc_map() -> None:
     # 북쪽 1.0m 의 정말 새 물체 — 다리는 동쪽에만 둔다.
     leg_row, leg_col = loc.to_cell(4.0, 2.5)
     loc.cells[leg_row, leg_col] = 3.0
-    scan = ((0.0, 1.0), (math.pi / 2, 1.0))
+    blocked = inflate(grid, PLAN, obstacle_grid=loc)
+    scan = ((math.pi / 2, 1.0), (0.0, 1.0))
     hit = detect_new_obstacle(
         (3.0, 2.5, 0.0),
         scan,
@@ -1005,10 +1003,146 @@ def test_genuinely_new_obstacle_still_detected_with_loc_map() -> None:
         check_radius_m=1.5,
         margin_m=0.25,
         occ_thresh=1.0,
-        known_grid=loc,
     )
     assert hit is not None
     assert hit == pytest.approx((3.0, 3.5), abs=1e-6)
+
+
+def test_controller_detects_excluded_legs_and_replans_without_erasing_originals() -> None:
+    """정적 계획 예외가 실제 물체 감지·동적 충돌 마스크를 억제하지 않는다."""
+    from host.behavior.planner import plan_to
+    from host.common.lidar_link import Scan
+
+    grid, loc = open_room(), open_room()
+    leg = loc.to_cell(4.0, 2.5)
+    loc.cells[leg] = 3.0
+    controller = build(grid=grid, loc_grid=loc)
+    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
+    assert grid.cells[leg] < PLAN.free_thresh
+    assert not controller.blocked[leg]
+    plan = plan_to("A", (4.5, 2.5), (3.0, 2.5), grid, controller.blocked, PLAN)
+    assert plan.reachable
+    assert plan.length_m == pytest.approx(1.5)
+    controller.plan = plan
+    controller.phase = Phase.MOVING
+    controller.commander.drive(40, 0)
+
+    scan = Scan("lidar-01", "boot", 1, 1000, ((0.0, 1.0),))
+    controller._check_new_obstacle(scan)
+    controller._check_new_obstacle(scan)
+    assert controller.take_new_obstacles() == ((4.0, 2.5),)
+    assert controller._dynamic[leg] and controller.blocked[leg]
+    assert controller.phase is Phase.PLANNING and controller.commander.intent.type_ == "STOP"
+    controller._obstacles.append((2.0, 2.0))
+    controller._rebuild_masks()
+    assert controller._clear_dynamic("test")
+    assert not controller.blocked[leg]
+    assert loc.cells[leg] == 3.0, "동적 복구도 원본 loc 증거를 지우지 않는다"
+
+
+def test_steer_escapes_tracking_margin_but_stops_on_body_overlap():
+    grid = open_room()
+    grid.cells[:, 40] = 5.0
+    controller = build(grid=grid)
+    controller.zones = ZoneStore(("A",))
+    controller.zones.place(4.0, 2.0)
+    start = grid.to_world(40, 44)
+    controller.resume()
+    controller.observe_map_pose((*start, 0.0), 1000)
+    controller.steer(1000)
+    assert controller.phase is Phase.MOVING
+    assert controller.plan.escape_end_index > 0
+    assert controller.plan.waypoints[0] == start
+    assert controller.commander.intent.type_ == "MOVE"
+    controller.observe_map_pose((*grid.to_world(40, 42), 0.0), 1100)
+    controller.steer(1100)
+    assert controller.phase is Phase.LOST and controller.commander.intent.type_ == "STOP"
+
+
+def test_confirmed_leg_waits_for_actual_stop_and_new_settled_scan_before_replan():
+    from host.common.lidar_link import Scan
+
+    controller = build()
+    controller.zones = ZoneStore(("A",))
+    controller.zones.place(4.5, 2.5)
+    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
+    controller.phase = Phase.MOVING
+    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 900)
+    scan = Scan("lidar-01", "boot", 1, 1000, ((0.0, 1.0),))
+    controller.observe_obstacle_scan(scan, 1000)
+    controller.observe_obstacle_scan(scan, 1010)
+    controller.steer(1010)
+    assert controller.phase is Phase.LOST and controller.commander.intent.type_ == "STOP"
+    controller.note_sent([CommandEncoder().encode("STOP")], 1020)
+    controller.observe_map_pose((3.0, 2.5, 0.0), 1200)
+    controller.steer(1200)
+    assert controller.phase is Phase.LOST and controller.commander.intent.type_ == "STOP"
+    controller.observe_map_pose((3.0, 2.5, 0.0), 1800)
+    controller.observe_obstacle_scan(Scan("lidar-01", "boot", 2, 1800, ((0.0, 1.0),)), 1800)
+    controller.steer(1800)
+    assert controller.phase is Phase.MOVING and controller.commander.intent.type_ == "MOVE"
+    assert not controller._replan_stop_required
+
+
+def test_new_loc_hit_before_mask_rebuild_is_still_detected() -> None:
+    """라이브 loc 적분과 주기적 팽창 사이에도 양쪽에서 다리가 빠지는 틈이 없다."""
+    from host.common.lidar_link import Scan
+
+    grid, loc = open_room(), open_room()
+    controller = build(grid=grid, loc_grid=loc)
+    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
+    leg = loc.to_cell(4.0, 2.5)
+    loc.cells[leg] = 3.0
+    assert not controller.blocked[leg]
+    scan = Scan("lidar-01", "boot", 1, 1000, ((0.0, 1.0),))
+    controller._check_new_obstacle(scan)
+    controller._check_new_obstacle(scan)
+    assert controller.take_new_obstacles() == ((4.0, 2.5),)
+    assert controller.blocked[leg]
+
+
+def test_new_static_loc_obstacle_invalidates_the_existing_route() -> None:
+    from host.behavior.planner import plan_to
+
+    grid, loc = open_room(), open_room()
+    grid.cells[grid.to_cell(4.0, 2.5)] = 0.0  # free 예외가 아닌 점유 추가는 기존 경로를 폐기한다.
+    controller = build(grid=grid, loc_grid=loc)
+    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
+    controller.zones = ZoneStore(("A",))
+    controller.zones.place(4.5, 2.5)
+    controller.plan = plan_to("A", (4.5, 2.5), (3.0, 2.5), grid, controller.blocked, PLAN)
+    original = controller.plan
+    controller.phase = Phase.MOVING
+    controller._rebuild_masks()
+    assert controller.plan is original, "변하지 않은 마스크로 매번 경로를 버리지는 않는다"
+
+    loc.cells[loc.to_cell(4.0, 2.5)] = 3.0
+    controller._rebuild_masks()
+
+    assert controller.phase is Phase.PLANNING
+    assert controller.target == "A" and not controller.plan.reachable
+    assert controller.commander.intent.type_ == "STOP"
+    controller.steer(1000)
+    assert controller.plan.reachable
+    assert controller.plan.length_m > original.length_m
+
+
+def test_tracking_cannot_follow_an_old_route_from_loc_clearance() -> None:
+    """계획 후 신선한 자세가 loc 충돌 영역에 들어가도 매 틱 관문에서 정지한다."""
+    grid, loc = open_room(), open_room()
+    loc.cells[loc.to_cell(3.0, 2.0)] = 3.0
+    grid.cells[grid.to_cell(3.0, 2.0)] = 3.0
+    controller = build(grid=grid, loc_grid=loc)
+    controller.resume()
+    controller.observe_map_pose((2.0, 2.0, 0.0), 1000)
+    controller.steer(1000)
+    assert controller.plan.reachable
+    controller.observe_map_pose((3.0, 2.0, 0.0), 1000)
+
+    controller.steer(1000)
+
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
 
 
 # ══════════════════════════════════════════════════════════════

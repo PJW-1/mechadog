@@ -31,11 +31,14 @@ from host.behavior.commander import Commander
 from host.behavior.planner import (
     Plan,
     PlanParams,
+    body_collision_mask,
     detect_new_obstacle,
+    escape_start,
     inflate,
     mark_obstacle,
     min_forward_distance,
     plan_to,
+    segment_clear,
 )
 from host.behavior.zone_map import ZoneMap
 from host.behavior.zones import ZoneStore, select_next
@@ -323,6 +326,8 @@ class PatrolController:
     stats: PatrolStats = field(default_factory=PatrolStats)
 
     _blocked: np.ndarray | None = None
+    _body_blocked: np.ndarray | None = None
+    _mask_frame: tuple[float, float, float] | None = None
     _dynamic: np.ndarray | None = None
     _pending_hit: tuple[float, float] | None = None
     _pending_count: int = 0
@@ -330,6 +335,7 @@ class PatrolController:
     _last_scan_ms: int | None = None
     _stopped_since_ms: int | None = None
     _last_sent_moving: bool = False
+    _replan_stop_required: bool = False
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
     #: 마지막 정합 자세와 그때의 IMU yaw 의 차이 — 스캔 사이에 IMU 로 방위를 전파할 때
@@ -406,9 +412,17 @@ class PatrolController:
     _new_obstacles: list[tuple[float, float]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        static = inflate(self.grid, self.plan_params)
+        static = inflate(self.grid, self.plan_params, obstacle_grid=self.loc_grid)
         self._blocked = static
+        self._body_blocked = body_collision_mask(
+            self.grid, self.plan_params, obstacle_grid=self.loc_grid
+        )
         self._dynamic = np.zeros_like(static, dtype=bool)
+        self._mask_frame = (
+            self.grid.meta.resolution,
+            self.grid.meta.origin_x,
+            self.grid.meta.origin_y,
+        )
 
     # ── 조회 ──────────────────────────────────────────────────
     @property
@@ -420,6 +434,12 @@ class PatrolController:
         """정적 팽창 + 이번 순찰에서 발견한 동적 장애물."""
         assert self._blocked is not None and self._dynamic is not None
         return cast(np.ndarray, self._blocked | self._dynamic)
+
+    @property
+    def body_blocked(self) -> np.ndarray:
+        """몸체 최소 여유 + 실시간 장애물. 동적 물체는 탈출 예외로 지우지 않는다."""
+        assert self._body_blocked is not None and self._dynamic is not None
+        return cast(np.ndarray, self._body_blocked | self._dynamic)
 
     @property
     def target(self) -> str | None:
@@ -956,12 +976,31 @@ class PatrolController:
 
     def _rebuild_masks(self) -> None:
         """격자 모양·내용이 바뀐 직후 팽창·동적 마스크를 새로 만든다."""
-        self._blocked = inflate(self.grid, self.plan_params)
+        static = inflate(self.grid, self.plan_params, obstacle_grid=self.loc_grid)
+        body = body_collision_mask(self.grid, self.plan_params, obstacle_grid=self.loc_grid)
+        frame = (self.grid.meta.resolution, self.grid.meta.origin_x, self.grid.meta.origin_y)
+        changed = (
+            self._mask_frame != frame
+            or not np.array_equal(self._blocked, static)
+            or not np.array_equal(self._body_blocked, body)
+        )
+        self._blocked, self._mask_frame = static, frame
+        self._body_blocked = body
         dynamic = np.zeros_like(self._blocked, dtype=bool)
         for hit in self._obstacles:
             mark_obstacle(dynamic, self.grid, hit, self.obstacle_mark_radius_m)
         self._dynamic = dynamic
         self._updates_since_inflate = 0
+        if changed and self.plan.reachable:
+            # 새 정적 장애물은 신규 탐지에서 이미 아는 것으로 빠진다. 옛 경로까지
+            # 유지하면 그 장애물을 그대로 통과하므로 목표만 보존해 다시 계획한다.
+            self.plan = Plan(self.plan.label)
+            self.waypoint_index = 0
+            if self.phase is Phase.MOVING:
+                self.phase = Phase.PLANNING
+                self._replan_stop_required = True
+                self.commander.halt()
+            LOG.info("navigation_mask_changed_replan", target=self.plan.label)
 
     def _is_stationary(self) -> bool:
         """로봇이 서 있는가 — 감사 탐색(수 초)은 서 있을 때만 돌려도 안전하다."""
@@ -1116,15 +1155,17 @@ class PatrolController:
 
     def _check_new_obstacle(self, scan: Scan) -> None:
         """연속 확인 후에만 재계획한다. 한 번의 반사로 경로를 버리지 않는다."""
+        # 계획에서 제외한 loc-only 셀도 실제 반사가 있으면 새 물체다.
+        # 정적 추종 여유가 예상 거리를 줄여 물체를 숨기지 않도록 nav 점유와
+        # 확인된 동적 표시로 비교한다. 측위 지도 자체로 탐지를 억제하지 않는다.
         hit = detect_new_obstacle(
             self.pose,
             scan.points,
             self.grid,
-            self.blocked,
+            self._dynamic,
             check_radius_m=self.new_obstacle_check_radius_m,
             margin_m=self.new_obstacle_margin_m,
             occ_thresh=self.plan_params.occ_thresh,
-            known_grid=self.loc_grid,
         )
         if hit is None:
             self._pending_hit, self._pending_count = None, 0
@@ -1149,6 +1190,8 @@ class PatrolController:
         LOG.info("obstacle_confirmed", x=round(hit[0], 2), y=round(hit[1], 2))
         self.plan = Plan(self.plan.label)  # 목표는 유지하고 경로만 버린다
         if self.phase is Phase.MOVING:
+            self.commander.halt()
+            self._replan_stop_required = True
             self.phase = Phase.PLANNING
 
     # ── 조작자 ────────────────────────────────────────────────
@@ -1244,15 +1287,15 @@ class PatrolController:
         FSM 이 상태 알림과 래치·링크 감시를 쥐고, 이것은 FSM 이 `PATROL` 일 때만 불린다.
         여기서 그것들을 다시 판정하면 상태 알림이 둘이 되어 서로 덮는다.
         """
-        stale = self.pose_stale(now_ms)
-        if stale:
-            # 측위가 낡으면 선다 — 다음 스캔 정합이 자세를 되찾으면 이어 간다 (FR-6.6).
+        if self.phase in (Phase.IDLE, Phase.HALTED):
             self.commander.halt()
-            if self._edge.changed("steer_pose_stale", True):
-                self.stats.lost += 1
-                LOG.warning("pose_stale", limit_ms=self.drive.pose_timeout_ms)
             return
-        self._edge.changed("steer_pose_stale", False)
+        # FSM/링크 판정은 런타임에 남기되, 출발 자격은 step()과 같은 관문을 거친다.
+        # 자세만 신선해도 미관측 공간·정지 후 스캔 부재라면 실제 주행을 허용할 수 없다.
+        self._guard_localization(now_ms)
+        if self.phase is Phase.LOST:
+            self.commander.halt()
+            return
         if self.safety.obstacle_active:
             # 온보드가 이미 멈췄다 — 판정을 흉내내지 않고 의도만 정지로 내린다 (아키텍처 1.2).
             self.commander.halt()
@@ -1313,9 +1356,14 @@ class PatrolController:
         if stale:
             self._lose("pose_stale")
             return ()
+        if self._replan_stop_required and self._last_sent_moving:
+            # halt 의도가 다음 steer()에서 MOVE로 덮이면 실제 STOP이 송신되지 않는다.
+            # 송신 기록이 STOP을 확인할 때까지 정지하며, 아래에서 새 스캔도 요구한다.
+            self._lose("replan_waiting_for_sent_stop")
+            return ()
 
-        # A*는 막힌 출발 셀에서 빠져나오는 경로도 허용한다. 측위가 미지/지도 밖인
-        # 경우까지 그 예외를 적용하면 안 되므로 컨트롤러에서 먼저 거절한다.
+        # 경로 재계획 전에도 검사한다. 이미 가진 경로를 추종하는 중에 자세가 미지/
+        # 지도 밖으로 옮겨지면 plan_to()를 다시 부르지 않아도 즉시 정지해야 한다.
         row, col = self.grid.to_cell(self.pose[0], self.pose[1])
         height, width = self.grid.cells.shape
         if not (0 <= row < height and 0 <= col < width) or (
@@ -1323,6 +1371,32 @@ class PatrolController:
         ):
             self._lose("pose_outside_observed_free_space")
             return ()
+
+        # nav 바닥은 free여도 loc 점유·몸체 여유 영역 안으로 자세가 옮겨질 수 있다.
+        # 기존 경로를 계속 따라가며 출발 스냅 거절을 우회하지 않게 매 틱 확인한다.
+        if self.blocked[row, col]:
+            if (
+                escape_start(
+                    self.grid,
+                    self.blocked,
+                    self.body_blocked,
+                    self.pose[:2],
+                    self.plan_params.start_escape_max_m,
+                )
+                is None
+            ):
+                self._lose("pose_inside_navigation_clearance")
+                return ()
+            on_escape = (
+                self.plan.escape_end_index >= 0
+                and self.waypoint_index <= self.plan.escape_end_index
+            )
+            if not on_escape and self._last_sent_moving:
+                # 운행 중 자세가 여유 안으로 옮겨지면 옛 경로로 탈출하지 않는다.
+                # 실제 STOP 송신과 안정화 후 새 스캔을 기다려 새 연결을 계획한다.
+                self.plan = Plan(self.plan.label)
+                self._lose("escape_replan_required")
+                return ()
 
         # 이동 중에는 스캔이 게이팅되어 없어도 된다. 최초 출발/다시 멈춘 뒤에는
         # 안정화 이후 관측을 요구한다. MOVE 중의 오래된 스캔으로는 재출발 못 한다.
@@ -1343,6 +1417,7 @@ class PatrolController:
         if self.phase is Phase.LOST:
             LOG.info("localization_reacquired")
             self.phase = Phase.PLANNING
+        self._replan_stop_required = False
         self._edge.forget("localization_problem")
         return ()
 
@@ -1409,6 +1484,7 @@ class PatrolController:
                 self.grid,
                 self.blocked,
                 self.plan_params,
+                body_blocked=self.body_blocked,
             )
             if retry.reachable:
                 self.plan = retry
@@ -1429,6 +1505,7 @@ class PatrolController:
                     self.grid,
                     self.blocked,
                     self.plan_params,
+                    body_blocked=self.body_blocked,
                 )
                 if retry.reachable:
                     self.plan = retry
@@ -1459,6 +1536,7 @@ class PatrolController:
             random_after_first_cycle=self.random_after_first_cycle,
             rng=self.rng,
             skipped_out=skipped,
+            body_blocked=self.body_blocked,
         )
         self.waypoint_index = 0
         # 도달 불가 구역은 같은 목록이 바뀔 때만 기록한다 — 매 틱 재시도하면
@@ -1513,11 +1591,21 @@ class PatrolController:
             )
             < self.drive.arrival_radius_m
         )
-        if arrived:
+        if arrived and (
+            self.plan.escape_end_index < 0 or self.waypoint_index > self.plan.escape_end_index
+        ):
             self._arrive(self.plan.label)
             return
 
         waypoint = self._current_waypoint()
+        if self.waypoint_index <= self.plan.escape_end_index and not segment_clear(
+            self.grid, self.body_blocked, self.pose[:2], waypoint
+        ):
+            self.commander.halt()
+            self._replan_stop_required = True
+            self.plan = Plan(self.plan.label)
+            self.phase = Phase.PLANNING
+            return
         heading = math.atan2(waypoint[1] - self.pose[1], waypoint[0] - self.pose[0])
         steering = steering_for(heading - self._steering_yaw(), self.drive, spinning=self._spinning)
         spinning = steering.step_mm == 0.0 and steering.angle_deg != 0.0
@@ -1540,10 +1628,10 @@ class PatrolController:
         waypoints = self.plan.waypoints
         while self.waypoint_index < len(waypoints) - 1:
             candidate = waypoints[self.waypoint_index]
-            if (
-                math.hypot(candidate[0] - self.pose[0], candidate[1] - self.pose[1])
-                >= self.drive.waypoint_radius_m
-            ):
+            radius = self.drive.waypoint_radius_m
+            if self.waypoint_index <= self.plan.escape_end_index:
+                radius = min(radius, self.grid.meta.resolution / 2)
+            if math.hypot(candidate[0] - self.pose[0], candidate[1] - self.pose[1]) >= radius:
                 break
             self.waypoint_index += 1
         return waypoints[min(self.waypoint_index, len(waypoints) - 1)]

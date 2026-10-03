@@ -222,6 +222,7 @@ def select_next(
     random_after_first_cycle: bool,
     rng: random.Random | None = None,
     skipped_out: list[tuple[str, str]] | None = None,
+    body_blocked: np.ndarray | None = None,
 ) -> Plan:
     """다음 순찰 구역을 고른다 (FR-7.3).
 
@@ -245,19 +246,23 @@ def select_next(
     # 막힌 구역은 그 구역만 건너뛰고 다음 후보를 푼다 — 빈 계획은 사이클을 끝낸다.
     sequential = cycle == 0 or not random_after_first_cycle
     if sequential:
-        return _first_reachable(remaining, candidates, start, grid, blocked, params, skipped_out)
+        return _first_reachable(
+            remaining, candidates, start, grid, blocked, params, skipped_out, body_blocked
+        )
 
     if not visited:
         chooser = rng if rng is not None else random
         label = chooser.choice(remaining)
         rest = [other for other in remaining if other != label]
         return _first_reachable(
-            [label, *rest], candidates, start, grid, blocked, params, skipped_out
+            [label, *rest], candidates, start, grid, blocked, params, skipped_out, body_blocked
         )
 
     best = Plan(None)
     for label in remaining:
-        plan = plan_to(label, candidates[label], start, grid, blocked, params)
+        plan = plan_to(
+            label, candidates[label], start, grid, blocked, params, body_blocked=body_blocked
+        )
         if plan.reachable and (not best.reachable or plan.length_m < best.length_m):
             best = plan
     return best
@@ -271,10 +276,13 @@ def _first_reachable(
     blocked: np.ndarray,
     params: PlanParams,
     skipped_out: list[tuple[str, str]] | None = None,
+    body_blocked: np.ndarray | None = None,
 ) -> Plan:
     """순서대로 풀어 **처음 도달 가능한** 구역의 계획. 막힌 구역은 남긴 채 넘어간다."""
     for label in labels:
-        plan = plan_to(label, candidates[label], start, grid, blocked, params)
+        plan = plan_to(
+            label, candidates[label], start, grid, blocked, params, body_blocked=body_blocked
+        )
         if plan.reachable:
             return plan
         if skipped_out is not None:

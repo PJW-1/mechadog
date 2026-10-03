@@ -53,9 +53,48 @@ class PlanParams:
     #: 올라 저절로 단단한 층이 된다.
     hard_thresh: float = 4.0
     soft_clearance_m: float = 0.15
+    #: 추종 여유 안에서 탈출할 때도 지켜야 하는 몸체 반경. config의 실측 반경을 사용한다.
+    body_radius_m: float = 0.15
+    start_escape_max_m: float = 0.6
 
 
-def inflate(grid: OccupancyGrid, params: PlanParams) -> np.ndarray:
+def _collision_cells(
+    grid: OccupancyGrid, obstacle_grid: OccupancyGrid, params: PlanParams, pad: int
+) -> np.ndarray:
+    """같은 격자 좌표계의 점유 증거만 합친 사본. 원본 자유/미관측 값은 덮지 않는다."""
+    res = grid.meta.resolution
+    offset_x = (obstacle_grid.meta.origin_x - grid.meta.origin_x) / res
+    offset_y = (obstacle_grid.meta.origin_y - grid.meta.origin_y) / res
+    # 확장된 loc 지도는 원점·크기가 달라도 같은 격자다. 좌표계를 모르는 두 지도를
+    # 최근접 셀로 억지로 맞추면 다리가 사라지거나 옮겨지므로 시작 단계에서 거절한다.
+    if not math.isclose(res, obstacle_grid.meta.resolution, rel_tol=0.0, abs_tol=1e-9) or any(
+        not math.isclose(offset, round(offset), rel_tol=0.0, abs_tol=1e-6)
+        for offset in (offset_x, offset_y)
+    ):
+        raise ValueError("navigation and obstacle grids must use the same aligned cell lattice")
+    # 지도 바깥에 있는 점유 셀의 팽창도 안쪽에 닿을 수 있어 여유 폭까지 합친다.
+    cells = np.pad(grid.cells, pad, constant_values=-np.inf)
+    row, col = round(offset_y) + pad, round(offset_x) + pad
+    height, width = cells.shape
+    extra_height, extra_width = obstacle_grid.cells.shape
+    r0, c0 = max(0, row), max(0, col)
+    r1, c1 = min(height, row + extra_height), min(width, col + extra_width)
+    if r0 < r1 and c0 < c1:
+        target = cells[r0:r1, c0:c1]
+        source = obstacle_grid.cells[r0 - row : r1 - row, c0 - col : c1 - col]
+        # 사용자 선택(2026-10-03): nav에서 확인된 free 위 loc-only 점유는
+        # 계획에서 제외한다. 원본 증거는 보존하고 실제 물체는 실시간 LiDAR로 잡는다.
+        # nav unknown/occupied와 지도 밖의 점유는 이 예외로 열지 않는다.
+        include = (source >= params.occ_thresh) & (
+            (target > params.free_thresh) | np.isneginf(target)
+        )
+        np.maximum(target, source, out=target, where=include)
+    return cells
+
+
+def inflate(
+    grid: OccupancyGrid, params: PlanParams, *, obstacle_grid: OccupancyGrid | None = None
+) -> np.ndarray:
     """이동 불가 마스크. **막힌 셀과 미관측 셀 둘 다 막는다.**
 
     미관측(값 0)을 통과 가능으로 두면 A* 가 지도 밖 여백을 최단 경로로 골라
@@ -67,18 +106,137 @@ def inflate(grid: OccupancyGrid, params: PlanParams) -> np.ndarray:
     `clearance_m` 전부, 그 미만(세션 지도 병합으로 들어온 가구 다리급)은
     `soft_clearance_m` 만 — 다리가 있는 곳까지 아예 못 서는 건 지도가 아니라 팽창 탓이다.
     """
-    occupied = grid.cells >= params.occ_thresh
+    # 원본 지도는 수정하지 않는다. nav free 위 loc-only 점유만 계획에서 제외하며,
+    # loc free로 nav 미관측을 열거나 nav 벽을 지우지 않는다.
+    pad = 0
+    cells = grid.cells
+    if obstacle_grid is not None:
+        pad = max(0, math.ceil(params.clearance_m / grid.meta.resolution))
+        cells = _collision_cells(grid, obstacle_grid, params, pad)
+    occupied = cells >= params.occ_thresh
     unknown = grid.cells > params.free_thresh
     radius_cells = int(math.ceil(params.clearance_m / grid.meta.resolution))
-    blocked = unknown | dilate(occupied, radius_cells)
-    if params.soft_clearance_m < params.clearance_m and (grid.cells >= params.occ_thresh).any():
-        hard = grid.cells >= params.hard_thresh
+    inflated = dilate(occupied, radius_cells)
+    if params.soft_clearance_m < params.clearance_m and occupied.any():
+        hard = cells >= params.hard_thresh
         soft = occupied & ~hard
         soft_cells = int(math.ceil(params.soft_clearance_m / grid.meta.resolution))
         # 단단한 층 주변은 clearance_m 전부가 이미 막는다 — soft 부풀림을 OR 하면
         # hard 셀 옆 soft 셀이 soft 반경만큼 더 막아 버리지 않게, 결과를 재구성한다.
-        blocked = unknown | dilate(hard, radius_cells) | dilate(soft, max(soft_cells, 0))
+        inflated = dilate(hard, radius_cells) | dilate(soft, max(soft_cells, 0))
+    height, width = grid.cells.shape
+    blocked = unknown | inflated[pad : pad + height, pad : pad + width]
     return cast(np.ndarray, blocked)
+
+
+def body_collision_mask(
+    grid: OccupancyGrid, params: PlanParams, *, obstacle_grid: OccupancyGrid | None = None
+) -> np.ndarray:
+    """탈출 구간의 몸체 충돌 마스크. 셀 사각형 사이 거리로 전체 몸체를 검사한다.
+
+    셀 중심만 15cm 떨어져 있어도 셀 가장자리에서는 몸이 닿을 수 있다.
+    후보 셀의 어느 위치에서도 장애물/미관측과 반경만큼 떨어지는 셀만 허용한다.
+    """
+    radius = params.body_radius_m
+    if not math.isfinite(radius) or radius <= 0 or radius > params.clearance_m:
+        raise ValueError("body radius must be positive and no larger than planning clearance")
+    res = grid.meta.resolution
+    pad = math.ceil(radius / res) + 1
+    cells = (
+        _collision_cells(grid, obstacle_grid, params, pad)
+        if obstacle_grid is not None
+        else np.pad(grid.cells, pad, constant_values=-np.inf)
+    )
+    unsafe = cells > params.free_thresh
+    unsafe[:pad, :] = unsafe[-pad:, :] = True
+    unsafe[:, :pad] = unsafe[:, -pad:] = True
+    out = unsafe.copy()
+    height, width = unsafe.shape
+    for dr in range(-pad, pad + 1):
+        for dc in range(-pad, pad + 1):
+            gap = math.hypot(max(abs(dr) - 1, 0), max(abs(dc) - 1, 0)) * res
+            if gap >= radius - 1e-9 and (dr or dc):
+                continue
+            src = (slice(max(0, -dr), height - max(0, dr)), slice(max(0, -dc), width - max(0, dc)))
+            dst = (slice(max(0, dr), height - max(0, -dr)), slice(max(0, dc), width - max(0, -dc)))
+            out[dst] |= unsafe[src]
+    h, w = grid.cells.shape
+    return cast(np.ndarray, out[pad : pad + h, pad : pad + w])
+
+
+def segment_clear(grid: OccupancyGrid, blocked: np.ndarray, start: Point, end: Point) -> bool:
+    """직선이 닿는 모든 셀 검사. 모서리/격자선 양쪽 셀을 포함해 코너 절단을 막는다."""
+    res = grid.meta.resolution
+    a = ((start[0] - grid.meta.origin_x) / res, (start[1] - grid.meta.origin_y) / res)
+    b = ((end[0] - grid.meta.origin_x) / res, (end[1] - grid.meta.origin_y) / res)
+    if not all(math.isfinite(v) for v in (*a, *b)):
+        return False
+    times = {0.0, 1.0}
+    for v0, v1 in zip(a, b, strict=True):
+        if v0 != v1:
+            for boundary in range(math.ceil(min(v0, v1)), math.floor(max(v0, v1)) + 1):
+                t = (boundary - v0) / (v1 - v0)
+                if 0 <= t <= 1:
+                    times.add(t)
+    ordered = sorted(times)
+    times.update((left + right) / 2 for left, right in zip(ordered, ordered[1:], strict=False))
+    for t in times:
+        x, y = (a[i] + t * (b[i] - a[i]) for i in range(2))
+        for dx in (-1e-9, 1e-9):
+            for dy in (-1e-9, 1e-9):
+                row, col = math.floor(y + dy), math.floor(x + dx)
+                if not grid.inside(row, col) or blocked[row, col]:
+                    return False
+    return True
+
+
+def escape_start(
+    grid: OccupancyGrid, blocked: np.ndarray, body_blocked: np.ndarray, start: Point, max_m: float
+) -> tuple[Point, ...] | None:
+    """몸체 여유를 유지하며 가까운 정상 자유 셀로 연결한다. 위치를 옮겨 가정하지 않는다."""
+    if not math.isfinite(max_m) or max_m <= 0:
+        return None
+    cell = grid.to_cell(*start)
+    if not grid.inside(*cell) or body_blocked[cell]:
+        return None
+    if not blocked[cell]:
+        return (start,)
+    center = grid.to_world(*cell)
+    if not segment_clear(grid, body_blocked, start, center):
+        return None
+    initial = math.dist(start, center)
+    queue = [(initial, cell)]
+    costs = {cell: initial}
+    parent: dict[Cell, Cell] = {}
+    while queue:
+        cost, current = heapq.heappop(queue)
+        if cost > costs[current] or cost > max_m:
+            continue
+        if not blocked[current]:
+            path = [current]
+            while current in parent:
+                current = parent[current]
+                path.append(current)
+            points = [start, *(grid.to_world(*p) for p in reversed(path))]
+            return tuple(p for i, p in enumerate(points) if i == 0 or p != points[i - 1])
+        for dr, dc, step in MOVES:
+            nxt = (current[0] + dr, current[1] + dc)
+            if not grid.inside(*nxt) or body_blocked[nxt]:
+                continue
+            if (
+                dr
+                and dc
+                and (
+                    body_blocked[current[0] + dr, current[1]]
+                    or body_blocked[current[0], current[1] + dc]
+                )
+            ):
+                continue
+            new_cost = cost + step * grid.meta.resolution
+            if new_cost <= max_m and new_cost < costs.get(nxt, math.inf):
+                costs[nxt], parent[nxt] = new_cost, current
+                heapq.heappush(queue, (new_cost, nxt))
+    return None
 
 
 def dilate(mask: np.ndarray, radius_cells: int) -> np.ndarray:
@@ -235,14 +393,18 @@ class Plan:
     length_m: float = 0.0
     #: 목표가 막힌 셀에 찍혀 가장 가까운 주행 가능 셀로 옮겨졌으면 그 거리(m).
     goal_moved_m: float = 0.0
-    #: 출발 자세가 팽창·미관측 셀에 걸려 옮겨졌으면 그 거리(m). 0 이면 출발 그대로.
+    #: 실제로 주행할 탈출 연결의 시작→끝 거리(m). 위치를 옮긴 것으로 가정하지 않는다.
     start_moved_m: float = 0.0
     #: 호출자가 요청한 목표 좌표 (스냅 전).
     requested: Point | None = None
     #: 실제로 향하는 목표 좌표 (스냅 후). 실패한 계획에도 남겨 «어디를 못 갔나» 를 보인다.
     effective: Point | None = None
-    #: 실패 이유 — «»(성공) | goal_unreachable | start_blocked | no_path
+    #: 실패 이유 — «»(성공) | goal_unreachable | start_occupied | start_unobserved
+    #: | start_outside_map
+    #: | start_clearance_blocked | no_path
     fail_reason: str = ""
+    #: 이 인덱스까지는 몸체 반경으로 검사한 탈출 구간. 단순화/넓은 통과 반경을 쓰지 않는다.
+    escape_end_index: int = -1
 
     @property
     def reachable(self) -> bool:
@@ -332,14 +494,33 @@ def plan_to(
     blocked: np.ndarray,
     params: PlanParams,
     snap_m: float = 0.6,
+    *,
+    body_blocked: np.ndarray | None = None,
 ) -> Plan:
-    """`start → goal` A* 계획. 막힌 목표·출발은 `snap_m` 안의 가장 가까운 **도달 가능한**
-    자유 셀로 옮긴다 — 옮겨진 목표는 `effective`·`goal_moved_m` 에 남는다."""
-    start_free, start_moved = snap_to_free(grid, blocked, start, snap_m)
-    if not math.isfinite(start_moved):
-        return Plan(None, requested=(float(goal[0]), float(goal[1])), fail_reason="start_blocked")
-    allowed = reachable_mask(grid, blocked, start_free)
+    """실제 출발점부터 계획한다. 여유 영역에서는 몸체 검사한 탈출 연결을 포함한다."""
     requested_xy = (float(goal[0]), float(goal[1]))
+    start_cell = grid.to_cell(*start)
+    if not grid.inside(*start_cell):
+        return Plan(None, requested=requested_xy, fail_reason="start_outside_map")
+    # 호출자가 잘못 만든 마스크도 미관측·점유 출발을 자유 공간으로 바꿀 수 없다.
+    if grid.cells[start_cell] >= params.occ_thresh:
+        return Plan(None, requested=requested_xy, fail_reason="start_occupied")
+    if not grid.cells[start_cell] <= params.free_thresh:
+        return Plan(None, requested=requested_xy, fail_reason="start_unobserved")
+    connector: tuple[Point, ...] = ()
+    start_free, start_moved = start, 0.0
+    if blocked[start_cell]:
+        if body_blocked is None:
+            # 출처가 불명확한 추가 차단(동적 표시 등)은 여유 완화로 버리지 않는다.
+            body_blocked = body_collision_mask(grid, params) | (blocked & ~inflate(grid, params))
+        connector = (
+            escape_start(grid, blocked, body_blocked, start, params.start_escape_max_m) or ()
+        )
+        if not connector:
+            return Plan(None, requested=requested_xy, fail_reason="start_clearance_blocked")
+        start_free = connector[-1]
+        start_moved = math.dist(start, start_free)
+    allowed = reachable_mask(grid, blocked, start_free)
     goal_free, goal_moved = snap_to_free(grid, blocked, goal, snap_m, allowed=allowed)
     if not math.isfinite(goal_moved):
         return Plan(
@@ -355,14 +536,28 @@ def plan_to(
             goal_moved_m=goal_moved,
             fail_reason="no_path",
         )
+    points = to_waypoints(path, grid, params.simplify_eps_m)
+    points = [start_free, *points[1:-1], goal_free] if len(points) > 1 else [start_free, goal_free]
+    if any(
+        not segment_clear(grid, blocked, a, b) for a, b in zip(points, points[1:], strict=False)
+    ):
+        points = [start_free, *(grid.to_world(*p) for p in path[1:-1]), goal_free]
+    if any(
+        not segment_clear(grid, blocked, a, b) for a, b in zip(points, points[1:], strict=False)
+    ):
+        return Plan(None, requested=requested_xy, fail_reason="no_path")
+    escape_end = len(connector) - 1 if connector else -1
+    if connector:
+        points = [*connector, *points[1:]]
     return Plan(
         label,
-        tuple(to_waypoints(path, grid, params.simplify_eps_m)),
-        path_length_m(path, grid.meta.resolution),
+        tuple(points),
+        sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False)),
         goal_moved_m=goal_moved,
         start_moved_m=start_moved,
         requested=requested_xy,
         effective=goal_free,
+        escape_end_index=escape_end,
     )
 
 
@@ -375,16 +570,15 @@ def detect_new_obstacle(
     check_radius_m: float,
     margin_m: float,
     occ_thresh: float,
-    known_grid: OccupancyGrid | None = None,
 ) -> Point | None:
     """지도에 없던 장애물을 찾는다. 빔마다 **예상 거리와 실측을 비교한다.**
 
     `margin_m` 은 측위 오차를 감안한 여유다. 없으면 벽에서 몇 cm 어긋난 측위가
     벽 자체를 "새 장애물"로 보고 순찰 내내 재계획한다.
 
-    `known_grid`(측위 지도)가 있으면 그쪽 점유 셀도 «아는 것»으로 친다 — 항법
-    지도엔 없지만 측위 지도엔 있는 가구 다리가 주행 때마다 «새 장애물»로
-    재확정되어 좁은 통로를 봉쇄하는 일을 막는다 (2026-10-03 실측 재현).
+    측위 지도만 아는 다리도 `inflate(..., obstacle_grid=...)`로 계획 충돌 영역에
+    넣어야 기존 장애물이다. 충돌 마스크 밖의 물체를 «아는 것»이라며 무시하면
+    항법·신규 탐지 양쪽에서 빠지므로 별도의 측위 지도로 탐지를 억제하지 않는다.
     """
     x0, y0, yaw = pose
     res = grid.meta.resolution
@@ -399,13 +593,7 @@ def detect_new_obstacle(
             row, col = grid.to_cell(wx, wy)
             if not grid.inside(row, col):
                 break
-            known_hit = False
-            if known_grid is not None:
-                k_row, k_col = known_grid.to_cell(wx, wy)
-                known_hit = known_grid.inside(k_row, k_col) and (
-                    known_grid.cells[k_row, k_col] >= occ_thresh
-                )
-            if grid.cells[row, col] >= occ_thresh or blocked[row, col] or known_hit:
+            if grid.cells[row, col] >= occ_thresh or blocked[row, col]:
                 expected = step * res
                 break
         if dist < expected - margin_m:

@@ -52,6 +52,7 @@ REQUIRED_LIDAR_KEYS = (
     "search_angle_step_deg",
     "min_known_cells",
     "robot_radius_mm",
+    "start_escape_max_mm",
     "tracking_margin_mm",
     "path_simplify_mm",
     "waypoint_radius_mm",
@@ -176,6 +177,8 @@ def validate_section(section: dict[str, Any]) -> None:
 
     # 팽창(반경 + 추종 여유)이 E-STOP 거리보다 커야 한다 — 아니면 정상 추종이 비상정지로 끝난다.
     clearance = section["robot_radius_mm"] + section["tracking_margin_mm"]
+    if section["robot_radius_mm"] <= 0 or section["start_escape_max_mm"] <= 0:
+        raise ConfigError("robot_radius_mm · start_escape_max_mm 는 양수여야 함")
     if clearance <= section["estop_distance_mm"]:
         raise ConfigError(
             f"robot_radius_mm + tracking_margin_mm ({clearance}) 이 "
@@ -225,6 +228,8 @@ def plan_params_from_config(config: Mapping[str, Any]) -> PlanParams:
         # 그 미만의 셀(세션 지도 병합으로 들어온 가구 다리급)은 이 여유만 —
         # 기본은 로봇 반경: 다리를 피해 갈 수는 있되 몸이 닿지는 않는다.
         soft_clearance_m=float(lidar["furniture_clearance_mm"]) / 1000.0,
+        body_radius_m=float(lidar["robot_radius_mm"]) / 1000.0,
+        start_escape_max_m=float(lidar["start_escape_max_mm"]) / 1000.0,
     )
 
 
