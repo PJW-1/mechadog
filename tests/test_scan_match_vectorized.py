@@ -13,9 +13,11 @@ import numpy as np
 import pytest
 
 from host.common.units import wrap_pi
+from host.slam import scan_match
 from host.slam.occupancy import MapMeta, OccupancyGrid
 from host.slam.scan_match import (
     MatchParams,
+    MatchResult,
     _as_count,
     _scorer,
     global_match,
@@ -178,3 +180,75 @@ def test_global_match_never_places_the_robot_on_unobserved_cells() -> None:
     assert result is not None
     row, _ = grid.to_cell(result.pose[0], result.pose[1])
     assert row >= 10, "미관측 띠(행 0~9)에 로봇을 세우면 안 된다"
+
+
+def test_global_compares_competing_peaks_using_the_full_scan(monkeypatch) -> None:
+    """거친 점수 A>B, 전체 점수 B>A인 경우 A만 정밀화해 답을 놓치지 않는다.
+
+    이 순위 역전은 작업방 실제 기록에서도 재현됐다. 점수는 통제하지만
+    후보 격자·빈 바닥·서로 다른 위치 탐색 및 모호성 판정은 실제 코드다.
+    """
+    grid = OccupancyGrid(MapMeta(0.1, 0.0, 0.0, 50, 50), np.full((50, 50), -5.0))
+    points = np.tile([1.0, 0.0], (60, 1))
+    calls = []
+
+    def coarse_scores(_grid, _field, rotated, xs, ys):
+        if abs(math.atan2(rotated[0, 1], rotated[0, 0])) > 1e-6:
+            return np.zeros(xs.shape)
+        return np.where(
+            np.isclose(xs, 1.0) & np.isclose(ys, 1.0),
+            50.0,
+            np.where(np.isclose(xs, 3.0) & np.isclose(ys, 3.0), 49.0, 0.0),
+        )
+
+    def full_score(world):
+        return 54.0 if world[:, 0].mean() > 3.0 else 48.0
+
+    def refine(_grid, points, center, _params):
+        calls.append(center)
+        return MatchResult(center, int(full_score(rotate(points, center[2]) + center[:2])))
+
+    monkeypatch.setattr(scan_match, "_score_candidates", coarse_scores)
+    monkeypatch.setattr(scan_match, "_scorer", lambda *_args: full_score)
+    monkeypatch.setattr(scan_match, "match", refine)
+    kwargs = {
+        "lin_step_m": 0.2,
+        "ang_step_rad": math.radians(15),
+        "occ_thresh": 1.0,
+        "min_known_cells": 10,
+    }
+    single = global_match(grid, points, max_refine_candidates=1, **kwargs)
+    competing = global_match(grid, points, max_refine_candidates=8, **kwargs)
+    assert single.pose[:2] == pytest.approx((1.0, 1.0))
+    assert competing.pose[:2] == pytest.approx((3.0, 3.0))
+    assert competing.score > single.score
+    assert competing.peers > 0, "경쟁 후보를 정밀 비교해도 모호성을 지우지 않는다"
+    assert len(calls) == 3, "강한 후보가 없으면 정밀 탐색을 더 하지 않는다"
+
+
+def test_global_refinement_never_reduces_the_full_scan_score(monkeypatch) -> None:
+    """정수 반올림 점수가 같아도 실수 점수가 낮은 정밀 후보를 채택하지 않는다."""
+    grid = _room()
+    points = _scan(grid, (3.3, 1.7, -2.0))
+    original_match = scan_match.match
+    scorer = scan_match._scorer(grid, 1.0, 0.05)
+    visited = []
+
+    def capture(*args, **kwargs):
+        center = args[2]
+        visited.append(scorer(rotate(points, center[2]) + center[:2]))
+        return original_match(*args, **kwargs)
+
+    monkeypatch.setattr(scan_match, "match", capture)
+    result = global_match(
+        grid,
+        points,
+        lin_step_m=0.1,
+        ang_step_rad=math.radians(15),
+        occ_thresh=1.0,
+        min_known_cells=10,
+        sigma_m=0.05,
+    )
+    actual = scorer(rotate(points, result.pose[2]) + result.pose[:2])
+    assert actual >= max(visited)
+    assert len(visited) <= 8

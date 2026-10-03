@@ -255,6 +255,7 @@ def global_match(
     free_thresh: float = -0.5,
     refine_ang_step_rad: float = math.radians(2.0),
     sigma_m: float = 0.0,
+    max_refine_candidates: int = 8,
 ) -> MatchResult | None:
     """지도 전체를 거친 격자로 훑어 최적 자세를 찾는다 — 잠김 복구·임의 배치 재측위용.
 
@@ -312,12 +313,51 @@ def global_match(
     best_score = float(scores.flat[best_flat])
     if best_score <= 0.0:
         return None
-    best_yaw_index, best_cand = divmod(best_flat, cand_x.size)
-    best_pose: Pose = (
-        float(cand_x[best_cand]),
-        float(cand_y[best_cand]),
-        wrap_pi(float(yaws[best_yaw_index])),
+    # 거친 최고점 하나만 정밀화하면 15도 격자 사이에 있는 더 좋은 봉우리를
+    # 놓친다. 서로 다른 봉우리도 같은 전체 스캔/점수로 비교한다. 작업량은
+    # 제한하며 후보 부족/모호성을 신뢰로 바꾸지는 않는다.
+    refine_params = MatchParams(
+        search_lin_m=lin_step_m * 2,
+        search_lin_step_m=meta.resolution,
+        search_ang_rad=ang_step_rad * 2,
+        search_ang_step_rad=refine_ang_step_rad,
+        occ_thresh=occ_thresh,
+        min_known_cells=min_known_cells,
+        sigma_m=sigma_m,
     )
+    remaining = scores.copy()
+    best_pose: Pose | None = None
+    best_full_score = -1.0
+    for _ in range(max(1, max_refine_candidates)):
+        yaw_index, candidate = divmod(int(np.argmax(remaining)), cand_x.size)
+        if remaining[yaw_index, candidate] < best_score * 0.9:
+            break
+        coarse_pose: Pose = (
+            float(cand_x[candidate]),
+            float(cand_y[candidate]),
+            wrap_pi(float(yaws[yaw_index])),
+        )
+        full_score = scorer(rotate(points_robot, coarse_pose[2]) + np.array(coarse_pose[:2]))
+        refined = match(grid, points_robot, coarse_pose, refine_params)
+        row, col = grid.to_cell(refined.pose[0], refined.pose[1])
+        standable_refined = grid.inside(row, col) and grid.cells[row, col] <= free_thresh
+        candidate_pose = coarse_pose
+        if standable_refined and refined.score > 0:
+            refined_full_score = scorer(
+                rotate(points_robot, refined.pose[2]) + np.array(refined.pose[:2])
+            )
+            if refined_full_score >= full_score:
+                candidate_pose, full_score = refined.pose, refined_full_score
+        if full_score > best_full_score:
+            best_pose, best_full_score = candidate_pose, full_score
+        near = np.hypot(cand_x - coarse_pose[0], cand_y - coarse_pose[1]) <= (
+            refine_params.search_lin_m * 2 + 1e-12
+        )
+        similar_yaw = np.abs((yaws - coarse_pose[2] + math.pi) % (2 * math.pi) - math.pi) <= (
+            refine_params.search_ang_rad + 1e-12
+        )
+        remaining[np.ix_(similar_yaw, near)] = -np.inf
+    assert best_pose is not None
     positions = np.column_stack((np.tile(cand_x, yaws.size), np.tile(cand_y, yaws.size)))
     cand_yaws = np.repeat(yaws, cand_x.size)
     scores = scores.ravel()
@@ -326,33 +366,11 @@ def global_match(
     far = np.hypot(positions[:filled, 0] - best_pose[0], positions[:filled, 1] - best_pose[1]) > 0.5
     # 같은 자리라도 방위가 30° 넘게 다른 강한 후보는 **경쟁하는 답**이다 — 예전엔 거리만 봐서
     # 같은 자리의 반대 방향 후보가 빠졌다 (Codex 검토 P1).
-    turned = np.abs((cand_yaws - best_pose[2] + math.pi) % (2 * math.pi) - math.pi) > math.radians(
-        30
+    turned = np.abs((cand_yaws - best_pose[2] + math.pi) % (2 * math.pi) - math.pi) > (
+        math.radians(30) + 1e-12
     )
     peers = int(np.count_nonzero(strong & (far | turned)))
-    # 거친 격자의 최고점 주변을 세밀히 다듬는다 — 다운샘플 점수가 아닌 전체 점으로.
-    refined = match(
-        grid,
-        points_robot,
-        best_pose,
-        MatchParams(
-            search_lin_m=lin_step_m * 2,
-            search_lin_step_m=meta.resolution,
-            search_ang_rad=ang_step_rad * 2,
-            search_ang_step_rad=refine_ang_step_rad,
-            occ_thresh=occ_thresh,
-            min_known_cells=min_known_cells,
-            sigma_m=sigma_m,
-        ),
-    )
-    # 거친 격자는 다운샘플 점으로 매겼으니 전체 점으로 다듬은 결과와 같은 자로 비교한다.
-    coarse_full = scorer(rotate(points_robot, best_pose[2]) + np.array(best_pose[:2]))
-    row, col = grid.to_cell(refined.pose[0], refined.pose[1])
-    # 다듬은 자리도 **관측된 빈 바닥**이어야 한다 — 일반 `match` 는 벽·미관측 셀로도 옮긴다.
-    standable_refined = grid.inside(row, col) and grid.cells[row, col] <= free_thresh
-    if standable_refined and refined.score > 0 and refined.score >= _as_count(coarse_full):
-        return MatchResult(refined.pose, refined.score, peers=peers)
-    return MatchResult(best_pose, _as_count(coarse_full), peers=peers)
+    return MatchResult(best_pose, _as_count(best_full_score), peers=peers)
 
 
 def integrate_scan(
