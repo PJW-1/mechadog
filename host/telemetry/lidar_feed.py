@@ -188,7 +188,11 @@ class LidarFeed:
         self._health_invalid_points += scan.dropped
         if revolution is not None:
             if self._input_incomplete:
-                LOG.info("lidar_scan_input_recovered", boot_id=scan.boot_id, points=len(revolution.points))
+                LOG.info(
+                    "lidar_scan_input_recovered",
+                    boot_id=scan.boot_id,
+                    points=len(revolution.points),
+                )
             self._last_complete_ms = now_ms
             self._input_incomplete = False
             self._last_health_warning_ms = None
@@ -198,7 +202,10 @@ class LidarFeed:
         if age_ms <= REV_MAX_AGE_MS:
             return
         self._input_incomplete = True
-        if self._last_health_warning_ms is not None and now_ms - self._last_health_warning_ms < 5000:
+        if (
+            self._last_health_warning_ms is not None
+            and now_ms - self._last_health_warning_ms < 5000
+        ):
             return
         self._last_health_warning_ms = now_ms
         LOG.warning(

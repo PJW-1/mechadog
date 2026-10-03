@@ -10,13 +10,28 @@ from host.telemetry.lidar_feed import LidarFeed
 def test_repeated_angles_warn_once_then_complete_scan_recovers(caplog):
     now = [0]
     feed = LidarFeed(
-        lidar_device="lidar-test", decoder=ScanDecoder(), forward_fan_rad=0.3,
-        estop_m=0.15, armed=lambda: False, on_danger=lambda: None, clock=lambda: now[0],
+        lidar_device="lidar-test",
+        decoder=ScanDecoder(),
+        forward_fan_rad=0.3,
+        estop_m=0.15,
+        armed=lambda: False,
+        on_danger=lambda: None,
+        clock=lambda: now[0],
     )
 
     def send(seq, points, boot="boot-one"):
-        feed.handle(json.dumps({"type": "SCAN", "device_id": "lidar-test", "boot_id": boot,
-                                "seq": seq, "ts": now[0], "points": points}).encode())
+        feed.handle(
+            json.dumps(
+                {
+                    "type": "SCAN",
+                    "device_id": "lidar-test",
+                    "boot_id": boot,
+                    "seq": seq,
+                    "ts": now[0],
+                    "points": points,
+                }
+            ).encode()
+        )
 
     with caplog.at_level(logging.INFO):
         for seq in range(1, 101):
@@ -36,15 +51,29 @@ def test_repeated_angles_warn_once_then_complete_scan_recovers(caplog):
 def test_healthy_revolutions_and_new_boot_do_not_warn(caplog):
     now = [0]
     feed = LidarFeed(
-        lidar_device="lidar-test", decoder=ScanDecoder(), forward_fan_rad=0.3,
-        estop_m=0.15, armed=lambda: False, on_danger=lambda: None, clock=lambda: now[0],
+        lidar_device="lidar-test",
+        decoder=ScanDecoder(),
+        forward_fan_rad=0.3,
+        estop_m=0.15,
+        armed=lambda: False,
+        on_danger=lambda: None,
+        clock=lambda: now[0],
     )
     with caplog.at_level(logging.INFO):
         for i in range(30):
             now[0] = i * 100
             boot = "boot-one" if i < 15 else "boot-two"
-            feed.handle(json.dumps({"type": "SCAN", "device_id": "lidar-test", "boot_id": boot,
-                                    "seq": i + 1 if i < 15 else i - 14, "ts": now[0],
-                                    "points": [[a * 5, 1000] for a in range(72)]}).encode())
+            feed.handle(
+                json.dumps(
+                    {
+                        "type": "SCAN",
+                        "device_id": "lidar-test",
+                        "boot_id": boot,
+                        "seq": i + 1 if i < 15 else i - 14,
+                        "ts": now[0],
+                        "points": [[a * 5, 1000] for a in range(72)],
+                    }
+                ).encode()
+            )
     assert feed.revolutions[0] == 30
     assert not any(x.msg == "lidar_scan_input_incomplete" for x in caplog.records)
