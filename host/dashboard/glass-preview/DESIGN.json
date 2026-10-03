@@ -3,6 +3,14 @@
   "generatedAt": "2026-10-03T02:38:15.1126068+09:00",
   "title": "Design System: MechaDog — 2026-10-03 incumbent extension",
   "extensions": {
+    "workspaceScroll": {
+      "element": "#panel-content",
+      "thumb": "#b7c2b9",
+      "track": "#f4f5f2",
+      "width": "thin",
+      "gutter": "stable",
+      "placement": "Workspace right edge; reading width remains bounded by panel-relative padding."
+    },
     "motion": [
       {
         "name": "itinerary-feedback",
