@@ -96,6 +96,11 @@ class RevolutionAssembler:
     def _reset(self) -> None:
         self._parts, self._bins, self._first_ms = [], set(), None
 
+    @property
+    def coverage_bins(self) -> int:
+        """현재 미완성 묶음의 각도 범위 — 패킷 수를 정상 회전으로 오인하지 않는다."""
+        return len(self._bins)
+
 
 class LidarFeed:
     """스캔을 받아 위험을 즉시 알리고 최신 한 장만 남긴다. 소켓 없이도 `handle` 로 시험된다."""
@@ -133,6 +138,12 @@ class LidarFeed:
         self._clock = clock
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._health_boot: tuple[str, str] | None = None
+        self._last_complete_ms: int | None = None
+        self._last_health_warning_ms: int | None = None
+        self._health_packets = 0
+        self._health_invalid_points = 0
+        self._input_incomplete = False
 
     def handle(self, raw: bytes) -> None:
         """데이터그램 하나 — 기록 → 전달 → 디코드 → 개체 확인 → 전방 위험거리 → 한 바퀴 조립."""
@@ -158,10 +169,48 @@ class LidarFeed:
                 LOG.error("lidar_estop", forward_m=round(forward, 3), limit_m=self._estop_m)
                 self._on_danger()
         revolution = self._assembler.add(scan, now_ms)
+        self._note_input_health(scan, revolution, now_ms)
         if revolution is None:
             return
         with self._lock:
             self._latest = revolution
+
+    def _note_input_health(self, scan: Scan, revolution: Scan | None, now_ms: int) -> None:
+        """수신이 계속돼도 완성 스캔이 없으면 경고한다. 원본/안전 판정은 그대로다."""
+        identity = (scan.device_id, scan.boot_id)
+        if identity != self._health_boot:
+            self._health_boot = identity
+            self._last_complete_ms = now_ms
+            self._last_health_warning_ms = None
+            self._health_packets = self._health_invalid_points = 0
+            self._input_incomplete = False
+        self._health_packets += 1
+        self._health_invalid_points += scan.dropped
+        if revolution is not None:
+            if self._input_incomplete:
+                LOG.info("lidar_scan_input_recovered", boot_id=scan.boot_id, points=len(revolution.points))
+            self._last_complete_ms = now_ms
+            self._input_incomplete = False
+            self._last_health_warning_ms = None
+            return
+        assert self._last_complete_ms is not None
+        age_ms = now_ms - self._last_complete_ms
+        if age_ms <= REV_MAX_AGE_MS:
+            return
+        self._input_incomplete = True
+        if self._last_health_warning_ms is not None and now_ms - self._last_health_warning_ms < 5000:
+            return
+        self._last_health_warning_ms = now_ms
+        LOG.warning(
+            "lidar_scan_input_incomplete",
+            boot_id=scan.boot_id,
+            complete_scan_age_ms=age_ms,
+            coverage_bins=self._assembler.coverage_bins,
+            required_bins=REV_MIN_BINS,
+            accepted_packets=self._health_packets,
+            invalid_points=self._health_invalid_points,
+            discarded_batches=self._assembler.discarded,
+        )
 
     @property
     def revolutions(self) -> tuple[int, int]:
