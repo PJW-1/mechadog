@@ -149,38 +149,73 @@ def match(
     if points_robot.size == 0 or grid.known_cells() < params.min_known_cells:
         return MatchResult(center, 0, skipped=True)
 
-    scorer = _scorer(grid, params.occ_thresh, params.sigma_m)
+    field = _score_grid(grid, params.occ_thresh, params.sigma_m)
     base_yaw = wrap_pi(center[2] + yaw_delta)
-    best_score = -1.0
-    best_pose = center
-
-    angle_offsets = np.arange(
-        -params.search_ang_rad,
-        params.search_ang_rad + 1e-9,
-        params.search_ang_step_rad,
+    angle_offsets = symmetric_offsets(params.search_ang_rad, params.search_ang_step_rad)
+    linear_offsets = symmetric_offsets(params.search_lin_m, params.search_lin_step_m)
+    # 후보 순서는 예전 루프와 같다 (방위 → x → y) — 동점이면 먼저 나온 후보가 이긴다.
+    offset_x, offset_y = np.meshgrid(linear_offsets, linear_offsets, indexing="ij")
+    cand_x = center[0] + offset_x.ravel()
+    cand_y = center[1] + offset_y.ravel()
+    scores = np.empty((angle_offsets.size, cand_x.size))
+    for index, d_yaw in enumerate(angle_offsets):
+        scores[index] = _score_candidates(
+            grid, field, rotate(points_robot, base_yaw + float(d_yaw)), cand_x, cand_y
+        )
+    best_score = float(scores.max())
+    # 동점(같은 점수)이면 **예측에 가장 가까운** 후보 — 대칭 격자의 첫 후보는 −끝이라
+    # 예전처럼 «먼저 나온 것» 을 고르면 평평한 지형에서 한쪽으로 끌려간다 (Codex 검토 P2).
+    tied = np.flatnonzero(scores.ravel() >= best_score - 1e-9)
+    yaw_index, cand_index_all = np.divmod(tied, cand_x.size)
+    distance = (
+        np.hypot(offset_x.ravel()[cand_index_all], offset_y.ravel()[cand_index_all])
+        + np.abs(angle_offsets[yaw_index]) * 0.1
     )
-    linear_offsets = np.arange(
-        -params.search_lin_m,
-        params.search_lin_m + 1e-9,
-        params.search_lin_step_m,
-    )
-
-    for d_yaw in angle_offsets:
-        yaw = base_yaw + float(d_yaw)
-        rotated = rotate(points_robot, yaw)
-        for d_x in linear_offsets:
-            for d_y in linear_offsets:
-                x = center[0] + float(d_x)
-                y = center[1] + float(d_y)
-                score = scorer(rotated + np.array([x, y]))
-                if score > best_score:
-                    best_score = score
-                    best_pose = (x, y, wrap_pi(yaw))
+    best_flat = int(tied[int(np.argmin(distance))])
     if best_score <= 0:
         # 겹친 점이 하나도 없으면 첫 탐색 후보가 우연히 best_pose가 된다.
         # 실패 결과에는 입력 중심을 보존해야 위치가 탐색 창 끝으로 튀지 않는다.
         return MatchResult(center, 0)
+    angle_index, cand_index = divmod(best_flat, cand_x.size)
+    best_pose = (
+        float(cand_x[cand_index]),
+        float(cand_y[cand_index]),
+        wrap_pi(base_yaw + float(angle_offsets[angle_index])),
+    )
     return MatchResult(best_pose, _as_count(best_score))
+
+
+def symmetric_offsets(span: float, step: float) -> np.ndarray:
+    """0 을 반드시 포함하는 대칭 격자 `-n·step … 0 … n·step` (n = round(span/step)).
+
+    `np.arange(-span, span, step)` 은 span/step 이 정수가 아니면 0 을 빼먹는다 — 탐색 범위
+    0.15m·간격 0.04m 면 −0.15, −0.11, …, 0.13 이라 **서 있는 로봇도 매 스캔 1cm 이상
+    옮겨진다**(2026-10-03 확인). 같은 결함이 10-01 실측 지도 수신기에도 있었다.
+    """
+    n = int(round(span / step)) if step > 0 else 0
+    return np.arange(-n, n + 1) * step
+
+
+def _score_candidates(
+    grid: OccupancyGrid,
+    field: np.ndarray,
+    rotated: np.ndarray,
+    cand_x: np.ndarray,
+    cand_y: np.ndarray,
+) -> np.ndarray:
+    """회전된 스캔을 후보 자리마다 옮겨 놓은 점수 — 후보 × 점을 한 번에 색인한다."""
+    meta = grid.meta
+    rows, cols = field.shape
+    point_cols = np.floor(
+        (cand_x[:, None] + rotated[None, :, 0] - meta.origin_x) / meta.resolution
+    ).astype(np.int64)
+    point_rows = np.floor(
+        (cand_y[:, None] + rotated[None, :, 1] - meta.origin_y) / meta.resolution
+    ).astype(np.int64)
+    valid = (point_rows >= 0) & (point_rows < rows) & (point_cols >= 0) & (point_cols < cols)
+    values = np.zeros(point_rows.shape, dtype=np.float64)
+    values[valid] = field[point_rows[valid], point_cols[valid]]
+    return values.sum(axis=1)
 
 
 def _scorer(grid: OccupancyGrid, occ_thresh: float, sigma_m: float):
@@ -189,6 +224,13 @@ def _scorer(grid: OccupancyGrid, occ_thresh: float, sigma_m: float):
         field = grid.likelihood_field(occ_thresh, sigma_m)
         return lambda points_world: grid.score_field(points_world, field)
     return lambda points_world: float(grid.score(points_world, occ_thresh))
+
+
+def _score_grid(grid: OccupancyGrid, occ_thresh: float, sigma_m: float) -> np.ndarray:
+    """점 하나가 받는 점수의 격자 — `_scorer` 와 같은 값(우도장, 또는 벽 셀 1·나머지 0)."""
+    if sigma_m > 0:
+        return grid.likelihood_field(occ_thresh, sigma_m).astype(np.float64)
+    return (grid.cells > occ_thresh).astype(np.float64)
 
 
 def _as_count(score: float) -> int:
@@ -244,35 +286,50 @@ def global_match(
     y_hi = meta.origin_y + (known_rows.max() + 1) * meta.resolution + lin_step_m
     xs = np.arange(x_lo, x_hi, lin_step_m)
     ys = np.arange(y_lo, y_hi, lin_step_m)
+    # ⚠️ **벡터화한다.** 예전엔 (방위 × x × y) 파이썬 삼중 루프라 1~2초가 걸렸고, 워커 스레드로
+    # 내려도 GIL 을 쥐고 놓지 않아 같은 시간 루프의 국소 정합이 17ms→1s 로 부풀었다(2026-10-03
+    # 실측) — 그래서 탐색 동안 국소 정합을 쉬게 했고, 그것이 15초마다 3초 LOST 를 만들었다.
+    # 방위마다 «후보 자리 × 점» 을 한 번에 색인하면 numpy 가 일하는 동안 GIL 을 덜 쥔다.
     scorer = _scorer(grid, occ_thresh, sigma_m)
-    best_score = 0.0
-    best_pose: Pose | None = None
+    field = _score_grid(grid, occ_thresh, sigma_m)
     rows, cols = grid.cells.shape
-    n_candidates = xs.size * ys.size * int(np.ceil(2 * math.pi / ang_step_rad))
-    scores = np.empty(n_candidates)
-    positions = np.empty((n_candidates, 2))
-    filled = 0
-    for yaw in np.arange(-math.pi, math.pi, ang_step_rad):
-        rotated = rotate(pts, float(yaw))
-        for x in xs:
-            for y in ys:
-                # 로봇은 관측된 빈 바닥 위에만 설 수 있다 — 벽 안도, 미관측 셀도
-                # 스캔 점수를 볼 것 없이 제외한다.
-                row, col = grid.to_cell(float(x), float(y))
-                score = 0.0
-                if 0 <= row < rows and 0 <= col < cols and grid.cells[row, col] <= free_thresh:
-                    score = scorer(rotated + np.array([x, y]))
-                scores[filled] = score
-                positions[filled] = (x, y)
-                filled += 1
-                if score > best_score:
-                    best_score = score
-                    best_pose = (float(x), float(y), wrap_pi(float(yaw)))
-    if best_pose is None:
+    # 후보 자리: 격자 점 중 **관측된 빈 바닥** 위만 (벽 안·미관측 셀 제외 — 루프 판정과 같다).
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
+    cand_x, cand_y = grid_x.ravel(), grid_y.ravel()
+    cand_col = np.floor((cand_x - meta.origin_x) / meta.resolution).astype(np.int64)
+    cand_row = np.floor((cand_y - meta.origin_y) / meta.resolution).astype(np.int64)
+    inside = (cand_row >= 0) & (cand_row < rows) & (cand_col >= 0) & (cand_col < cols)
+    standable = np.zeros(cand_x.shape, dtype=bool)
+    standable[inside] = grid.cells[cand_row[inside], cand_col[inside]] <= free_thresh
+    cand_x, cand_y = cand_x[standable], cand_y[standable]
+    yaws = np.arange(-math.pi, math.pi, ang_step_rad)
+    if cand_x.size == 0:
         return None
+    scores = np.zeros((yaws.size, cand_x.size))
+    for index, yaw in enumerate(yaws):
+        scores[index] = _score_candidates(grid, field, rotate(pts, float(yaw)), cand_x, cand_y)
+    best_flat = int(np.argmax(scores))
+    best_score = float(scores.flat[best_flat])
+    if best_score <= 0.0:
+        return None
+    best_yaw_index, best_cand = divmod(best_flat, cand_x.size)
+    best_pose: Pose = (
+        float(cand_x[best_cand]),
+        float(cand_y[best_cand]),
+        wrap_pi(float(yaws[best_yaw_index])),
+    )
+    positions = np.column_stack((np.tile(cand_x, yaws.size), np.tile(cand_y, yaws.size)))
+    cand_yaws = np.repeat(yaws, cand_x.size)
+    scores = scores.ravel()
+    filled = scores.size
     strong = scores[:filled] >= best_score * 0.9
     far = np.hypot(positions[:filled, 0] - best_pose[0], positions[:filled, 1] - best_pose[1]) > 0.5
-    peers = int(np.count_nonzero(strong & far))
+    # 같은 자리라도 방위가 30° 넘게 다른 강한 후보는 **경쟁하는 답**이다 — 예전엔 거리만 봐서
+    # 같은 자리의 반대 방향 후보가 빠졌다 (Codex 검토 P1).
+    turned = np.abs((cand_yaws - best_pose[2] + math.pi) % (2 * math.pi) - math.pi) > math.radians(
+        30
+    )
+    peers = int(np.count_nonzero(strong & (far | turned)))
     # 거친 격자의 최고점 주변을 세밀히 다듬는다 — 다운샘플 점수가 아닌 전체 점으로.
     refined = match(
         grid,
@@ -290,7 +347,10 @@ def global_match(
     )
     # 거친 격자는 다운샘플 점으로 매겼으니 전체 점으로 다듬은 결과와 같은 자로 비교한다.
     coarse_full = scorer(rotate(points_robot, best_pose[2]) + np.array(best_pose[:2]))
-    if refined.score > 0 and refined.score >= _as_count(coarse_full):
+    row, col = grid.to_cell(refined.pose[0], refined.pose[1])
+    # 다듬은 자리도 **관측된 빈 바닥**이어야 한다 — 일반 `match` 는 벽·미관측 셀로도 옮긴다.
+    standable_refined = grid.inside(row, col) and grid.cells[row, col] <= free_thresh
+    if standable_refined and refined.score > 0 and refined.score >= _as_count(coarse_full):
         return MatchResult(refined.pose, refined.score, peers=peers)
     return MatchResult(best_pose, _as_count(coarse_full), peers=peers)
 
