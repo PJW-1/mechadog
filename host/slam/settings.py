@@ -57,6 +57,8 @@ REQUIRED_LIDAR_KEYS = (
     "waypoint_radius_mm",
     "heading_tolerance_deg",
     "reverse_threshold_deg",
+    "spin_threshold_deg",
+    "spin_turn_deg",
     "new_obstacle_check_radius_mm",
     "new_obstacle_margin_mm",
     "new_obstacle_confirmations",
@@ -154,6 +156,13 @@ def validate_section(section: dict[str, Any]) -> None:
         raise ConfigError("odom_port 는 scan_port · scan_forward_port 와 달라야 함")
     if section["odom_rate_hz"] <= 0 or section["odom_imu_stale_ms"] <= 0:
         raise ConfigError("odom_rate_hz · odom_imu_stale_ms 는 0보다 커야 함")
+
+    # 제자리 회전 임계는 직진 허용 오차보다 커야 한다 — 아니면 허용 오차 밖이 전부 회전이라
+    # 호 조향 구간이 사라지고, 같거나 작으면 정렬을 마친 직후 다시 돈다 (ADR-11 개정).
+    if not section["heading_tolerance_deg"] < section["spin_threshold_deg"] <= 180:
+        raise ConfigError("heading_tolerance_deg < spin_threshold_deg <= 180 이어야 함")
+    if not 0 < section["spin_turn_deg"] <= 30:
+        raise ConfigError("spin_turn_deg 는 0 초과 30 이하여야 함 (MOVE angle 규약 상한)")
 
     # 팽창(반경 + 추종 여유)이 E-STOP 거리보다 커야 한다 — 아니면 정상 추종이 비상정지로 끝난다.
     clearance = section["robot_radius_mm"] + section["tracking_margin_mm"]

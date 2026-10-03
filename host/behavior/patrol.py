@@ -3,7 +3,8 @@
 이 파일은 전문을 만들지 않는다 — 전문은 전부 `Commander` 가 만들고 여기서는 의도만
 세운다 (ENGINEERING_GUIDE 2.1 · PROTOCOL.md 6절).
 
-- 방향 전환은 호(arc) 조향 `MOVE{step, angle}` 뿐이다 (ADR-11).
+- 방향 전환은 호(arc) 조향 `MOVE{step, angle}` 이고, 크게 틀어졌을 때만 **제자리 회전**
+  `MOVE{0, angle}` 으로 측위 방위를 보며 맞춘다 (ADR-11 개정 2026-10-01).
 - 초음파 근거리 정지는 로봇의 `flags.obstacle` 을 따라가고 판정하지 않는다 (아키텍처 1.2 · ADR-22).
 - 위험 시 `ESTOP`(래치)을 보내고, 해제는 사람 확인 뒤 텔레메트리 `safety_latched=false` 로 확인한다 (ADR-21).
 - 내부 단계는 FSM 13상태로 사상해 `STATE` 로 내려보낸다 (`FSM_STATE_FOR`).
@@ -83,8 +84,13 @@ class DriveParams:
     turn_deg: float
     reverse_mm: float
     heading_tolerance_rad: float
-    #: 이 이상 틀어져 있으면 전진 호로는 못 돌아선다 — 후진 호로 바꾼다.
+    #: 호 조향의 조향·보폭 비례 기준 (`scale = 오차 / 이 값`).
     reverse_threshold_rad: float
+    #: 이 이상 틀어져 있으면 걷지 않고 **제자리에서 돈다** (ADR-11 개정). `heading_tolerance` 안에
+    #: 들어올 때까지 계속 돈다 — 중간에 호로 바꾸면 다시 큰 호를 그린다.
+    spin_threshold_rad: float
+    #: 제자리 회전 지시의 `MOVE angle` (deg). 2026-09-22 실측은 ±30 에서 7.37 도/s.
+    spin_turn_deg: float
     arrival_radius_m: float
     waypoint_radius_m: float
     #: 호스트측 LiDAR 위험 거리. 온보드 초음파(`obstacle_stop_cm`)와 별개다.
@@ -111,35 +117,43 @@ class Steering:
     angle_deg: float
 
 
-def steering_for(heading_error_rad: float, params: DriveParams) -> Steering:
-    """방위 오차를 호(arc) 조향으로 바꾼다.
-
-    제자리 회전을 쓰지 않는다 (ADR-11). 세 구간으로 나뉜다.
+def steering_for(
+    heading_error_rad: float, params: DriveParams, *, spinning: bool = False
+) -> Steering:
+    """방위 오차를 보행 의도로 바꾼다. 세 구간으로 나뉜다.
 
     | 오차 | 보행 | 근거 |
     | :--- | :--- | :--- |
     | 허용 오차 이내 | 직진 | 조향을 넣으면 목표를 지나쳐 진동한다 |
-    | 그 밖 ~ 후진 임계 | 전진 + 최대 조향 | 호를 그리며 방위를 줄인다 |
-    | 후진 임계 초과 | **후진 + 같은 방향 조향** | 목표가 거의 뒤에 있으면 전진 호는 멀어진다 |
+    | 그 밖 ~ 회전 임계 | 전진 + 비례 조향(호) | 걸으면서 방위를 줄인다 |
+    | 회전 임계 초과 | **제자리 회전** `step=0` | 큰 호는 경로를 벗어나 가구 모서리로 밀려간다 |
 
-    조향 부호는 걸음 방향과 무관하다 — `angle` 은 각속도 명령이라 후진에서도 양수가
-    반시계다 (`docs/PROTOCOL.md` 부호 규약). 크게 틀어질수록 보폭을 줄여(`TURN_STEP_REDUCTION`)
-    호 반경을 줄인다.
+    `spinning` 이면(직전 틱이 제자리 회전) 허용 오차 안에 들 때까지 계속 돈다 — 임계 바로
+    아래에서 호로 바꾸면 그 호가 다시 경로를 벗어난다.
+
+    ⚠️ **제자리 회전은 폐루프로만 쓴다** (ADR-11 개정 2026-10-01). 각속도 산포가 82% 라
+    «몇 초 돌면 몇 도» 로 쓰면 틀리지만, 매 틱 측위 방위로 오차를 다시 재므로 산포가 결과를
+    바꾸지 않는다 — ADR-40 조준과 같은 근거다. 예전의 «후진 호» 구간은 회전 임계가 후진
+    임계보다 작아 닿지 않으므로 지웠다(2026-10-01 집 지도 시뮬: 후진·전진 호로 180° 를 도는
+    동안 20~60초 맴돌며 가구 10cm 안까지 가서 E-STOP).
+
+    조향 부호는 오차 부호를 따른다 — `angle` 은 각속도 명령이라 양수가 반시계다
+    (`docs/PROTOCOL.md` 부호 규약). 호 구간은 크게 틀어질수록 보폭을 줄여
+    (`TURN_STEP_REDUCTION`) 호 반경을 줄인다.
     """
     error = wrap_pi(heading_error_rad)
     if abs(error) <= params.heading_tolerance_rad:
         return Steering(params.step_mm, 0.0)
 
     direction = 1.0 if error > 0 else -1.0
-    if abs(error) <= params.reverse_threshold_rad:
-        # 오차에 비례해 조향을 키우고 같은 비율로 보폭을 줄인다.
-        scale = min(1.0, abs(error) / params.reverse_threshold_rad)
-        return Steering(
-            params.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
-            direction * params.turn_deg * scale,
-        )
-    # 조향 부호는 전진과 같다 — 요는 `angle` 단독으로 정해진다.
-    return Steering(-params.step_mm * (1.0 - TURN_STEP_REDUCTION), direction * params.turn_deg)
+    if spinning or abs(error) > params.spin_threshold_rad:
+        return Steering(0.0, direction * params.spin_turn_deg)
+    # 오차에 비례해 조향을 키우고 같은 비율로 보폭을 줄인다.
+    scale = min(1.0, abs(error) / params.reverse_threshold_rad)
+    return Steering(
+        params.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
+        direction * params.turn_deg * scale,
+    )
 
 
 @dataclass
@@ -229,6 +243,8 @@ class PatrolController:
     _reverify_attempts: dict[str, int] = field(default_factory=dict)
     _reset_requested: bool = False
     _halt_reason: str = ""
+    #: 직전 추종 틱이 제자리 회전이었나 (`steering_for(spinning=)`).
+    _spinning: bool = False
     _edge: EdgeTrigger = field(default_factory=EdgeTrigger)
     _obstacles: list[tuple[float, float]] = field(default_factory=list)
     #: 아직 아무도 꺼내 가지 않은 신규 장애물 확정 (`take_new_obstacles`).
@@ -379,6 +395,7 @@ class PatrolController:
         """`ESTOP` 전문을 돌려준다. 호출자가 즉시 보낸다."""
         self.phase = Phase.HALTED
         self._halt_reason = reason
+        self._spinning = False
         self.stats.estops += 1
         self.plan = Plan(None)
         LOG.error("estop", reason=reason)
@@ -566,6 +583,8 @@ class PatrolController:
         self._follow()
 
     def _replan(self) -> None:
+        # 새 경로는 새 방위 오차에서 시작한다 — 지난 경로의 회전을 이어 가지 않는다.
+        self._spinning = False
         start = (self.pose[0], self.pose[1])
         candidates = {label: self.zones.xy(label) for label in self.zones.labels}
 
@@ -643,12 +662,21 @@ class PatrolController:
 
         waypoint = self._current_waypoint()
         heading = math.atan2(waypoint[1] - self.pose[1], waypoint[0] - self.pose[0])
-        steering = steering_for(heading - self.pose[2], self.drive)
+        steering = steering_for(heading - self.pose[2], self.drive, spinning=self._spinning)
+        spinning = steering.step_mm == 0.0 and steering.angle_deg != 0.0
+        if self._edge.changed("spin", spinning) and spinning:
+            LOG.info(
+                "spin_in_place",
+                error_deg=round(rad_to_deg(wrap_pi(heading - self.pose[2])), 1),
+                target=self.plan.label,
+            )
+        self._spinning = spinning
         # 규약 범위는 인코더가 자르지만(규칙 ②), 잘려서 나가는 것을 로그로
         # 보고 싶지는 않으므로 여기서 설정값 안에 둔다.
+        turn_limit = abs(self.drive.spin_turn_deg if spinning else self.drive.turn_deg)
         self.commander.drive(
             clamp(steering.step_mm, -abs(self.drive.step_mm), abs(self.drive.step_mm)),
-            clamp(steering.angle_deg, -abs(self.drive.turn_deg), abs(self.drive.turn_deg)),
+            clamp(steering.angle_deg, -turn_limit, turn_limit),
         )
 
     def _current_waypoint(self) -> tuple[float, float]:
@@ -665,6 +693,7 @@ class PatrolController:
 
     def _arrive(self, label: str) -> None:
         self.commander.halt()
+        self._spinning = False
         self.phase = Phase.INSPECT
         self.visited = self.visited | {label}
         self.stats.zones_visited += 1
@@ -715,6 +744,8 @@ def drive_params_from_config(config: Mapping[str, Any]) -> DriveParams:
         reverse_mm=float(gait["reverse_distance_mm"]),
         heading_tolerance_rad=deg_to_rad(float(lidar["heading_tolerance_deg"])),
         reverse_threshold_rad=deg_to_rad(float(lidar["reverse_threshold_deg"])),
+        spin_threshold_rad=deg_to_rad(float(lidar["spin_threshold_deg"])),
+        spin_turn_deg=float(lidar["spin_turn_deg"]),
         arrival_radius_m=float(zones["arrival_radius_mm"]) / 1000.0,
         waypoint_radius_m=float(lidar["waypoint_radius_mm"]) / 1000.0,
         lidar_estop_m=float(lidar["estop_distance_mm"]) / 1000.0,
