@@ -90,3 +90,18 @@ def test_map_view_renders_once() -> None:
     view = MapView(renderer)
     assert view.get() == view.get()
     assert len(calls) == 1
+
+
+def test_runtime_server_serves_the_white_dashboard() -> None:
+    """흰 관제 화면(정본)이 운용 서버에서도 열린다 — 예전엔 /glass-preview/ 가 404 였다."""
+    from fastapi.testclient import TestClient
+
+    from host.dashboard.server import DEFAULT_STATIC_DIR, create_app
+    from host.dashboard.state import DashboardState
+
+    app = create_app(DashboardState("t", stale_after_ms=1000), static_dir=DEFAULT_STATIC_DIR)
+    with TestClient(app) as http:
+        page = http.get("/glass-preview/")
+        assert page.status_code == 200 and "iframe" in page.text
+        assert http.get("/glass-preview/theme.css").status_code == 200
+        assert http.get("/index.html").status_code == 200

@@ -55,6 +55,8 @@ CAMERA_PERIOD_S = 0.1
 # 새 추론 결과가 나왔는지 보는 주기 — 추론 주기(25fps = 40ms)보다 짧아야 화면이 추론률을 따라간다.
 VISION_POLL_PERIOD_S = 0.01
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
+#: 흰 관제 화면(정본) — 같은 앱을 감싸 테마만 입힌다. 운용 서버도 이 주소로 연다 (예전엔 404).
+GLASS_PREVIEW_DIR = Path(__file__).resolve().parent / "glass-preview"
 # 관제 화면은 빌드 없이 이 폴더를 그대로 내보낸다. three.js 도 `static/vendor/` 에 싣는다
 # (검사는 `npm run check`).
 
@@ -728,6 +730,12 @@ def create_app(
 
     if static_dir is not None and static_dir.is_dir():
         # mount 는 등록 순서대로 탐색하므로 API·WS 경로를 먼저 등록하고 마지막에 붙인다.
+        if GLASS_PREVIEW_DIR.is_dir():
+            app.mount(
+                "/glass-preview",
+                _RevalidatedStatic(directory=GLASS_PREVIEW_DIR, html=True),
+                name="glass-preview",
+            )
         app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
 
     return app
@@ -786,6 +794,12 @@ def create_fleet_app(
         await websocket.close(code=1008)
 
     if static_dir is not None and static_dir.is_dir():
+        if GLASS_PREVIEW_DIR.is_dir():
+            app.mount(
+                "/glass-preview",
+                _RevalidatedStatic(directory=GLASS_PREVIEW_DIR, html=True),
+                name="glass-preview",
+            )
         app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
     return app
 
