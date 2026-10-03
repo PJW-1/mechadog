@@ -185,7 +185,7 @@ def test_global_match_never_places_the_robot_on_unobserved_cells() -> None:
 def test_global_compares_competing_peaks_using_the_full_scan(monkeypatch) -> None:
     """거친 점수 A>B, 전체 점수 B>A인 경우 A만 정밀화해 답을 놓치지 않는다.
 
-    이 순위 역전은 작업방 실제 기록에서도 재현됐다. 점수는 통제하지만
+    이 순위 역전은 구역 A 실제 기록에서도 재현됐다. 점수는 통제하지만
     후보 격자·빈 바닥·서로 다른 위치 탐색 및 모호성 판정은 실제 코드다.
     """
     grid = OccupancyGrid(MapMeta(0.1, 0.0, 0.0, 50, 50), np.full((50, 50), -5.0))
