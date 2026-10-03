@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import socket
@@ -60,7 +61,7 @@ class PoseOut:
         *,
         host: str,
         port: int,
-    ) -> "PoseOut | None":
+    ) -> PoseOut | None:
         """지도 폴더의 `pose_frame.json` 으로 만든다. 파일이 없거나 포트가 잘못되면
         `None` — 송신 없음은 기능 저하이지 오류가 아니다."""
         path = maps_dir / POSE_FRAME_FILE
@@ -104,11 +105,9 @@ class PoseOut:
             packet["robot_zone"] = zone
         if verified is not None:
             packet["verified"] = verified
-        try:
+        # 수신자가 없어도 순찰을 늦추지 않는다 — 포즈 표시는 부가 기능이다.
+        with contextlib.suppress(OSError):
             self._sock.sendto(json.dumps(packet).encode("utf-8"), self._peer)
-        except OSError:
-            # 수신자가 없어도 순찰을 늦추지 않는다 — 포즈 표시는 부가 기능이다.
-            pass
 
     def close(self) -> None:
         self._sock.close()

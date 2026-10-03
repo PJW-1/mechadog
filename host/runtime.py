@@ -43,11 +43,11 @@ from host.behavior.fall_monitor import FallMonitor
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.behavior.patrol import PatrolController, controller_from_config, load_patrol_map
-from host.behavior.zone_map import ZoneMap
 from host.behavior.ppe_judge import PpeJudge
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zone_inspector import ZoneInspector
+from host.behavior.zone_map import ZoneMap
 from host.behavior.zones import Zone, ZoneStore
 from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
@@ -62,9 +62,9 @@ from host.common.logging_setup import (
     setup_logging,
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
+from host.common.units import deg_to_rad
 from host.dashboard.state import DashboardState
 from host.report.situation import describe
-from host.common.units import deg_to_rad
 from host.slam.occupancy import OccupancyGrid
 from host.slam.pose_out import PoseOut
 from host.slam.settings import maps_dir, require_lidar_track, validate_section
@@ -1509,17 +1509,13 @@ class Runtime:
             # 잡아먹는 동안 걸으면 명령 공백이 로봇의 통신 감시를 넘긴다
             # (2026-10-02 실기: `cmd_gap 585ms` → `ONBOARD_FAILSAFE`).
             # 상한을 둔다 — 적재가 붙잡혀 있으면 대기가 끝이 없다.
-            waited_ms = (
-                0 if self._patrol_asked_ms is None else now_ms - self._patrol_asked_ms
-            )
+            waited_ms = 0 if self._patrol_asked_ms is None else now_ms - self._patrol_asked_ms
             if self._vlm.loading and waited_ms < VLM_LOAD_WAIT_MS:
                 if self._edge.changed("vlm_load_wait", True):
                     LOG.info("patrol_deferred_vlm_loading")
             else:
                 if self._vlm.loading:
-                    LOG.warning(
-                        "patrol_starting_during_vlm_load", waited_ms=waited_ms
-                    )
+                    LOG.warning("patrol_starting_during_vlm_load", waited_ms=waited_ms)
                 self._patrol_asked = False
                 self.start_patrol(now_ms)
 
@@ -1531,7 +1527,11 @@ class Runtime:
         if self._apply(Event.RESET_CONFIRMED, now_ms):
             # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
             self._commander.once(
-                "POSE", pitch=0.0, roll=self._roll_offset_deg, height=0.0, dur=self._ppe_judge.settle_ms
+                "POSE",
+                pitch=0.0,
+                roll=self._roll_offset_deg,
+                height=0.0,
+                dur=self._ppe_judge.settle_ms,
             )
 
     def emergency_stop(self) -> str:
@@ -2081,7 +2081,9 @@ def _seeded_controller(
     if maps_dir is not None:
         # 구역 영역 지도 — 대시보드와 같은 파일이라 «지금 어느 방인가» 의 정의가 하나다.
         controller.zone_map = ZoneMap.load(maps_dir)
-        LOG.info("zone_map_loaded" if controller.zone_map else "zone_map_absent", maps=str(maps_dir))
+        LOG.info(
+            "zone_map_loaded" if controller.zone_map else "zone_map_absent", maps=str(maps_dir)
+        )
         # 측위 전용 지도 — 세션 SLAM 병합(가구 다리 랜드마크)을 담은 `slam_map_loc.npy` 가
         # 있으면 정합은 그것으로 하고, 경로 계획은 항법용 `slam_map.npy` 그대로다.
         if (maps_dir / "slam_map_loc.npy").is_file():

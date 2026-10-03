@@ -58,7 +58,11 @@ class PostureSequence:
     """
 
     def __init__(
-        self, commander: Commander, pitch_deg: float, dur_ms: int, hold_ms: int = 0,
+        self,
+        commander: Commander,
+        pitch_deg: float,
+        dur_ms: int,
+        hold_ms: int = 0,
         roll_deg: float = 0.0,
     ) -> None:
         if dur_ms <= 0:
@@ -101,7 +105,9 @@ class PostureSequence:
         self._sent = False
 
     def _send(self, pitch_deg: float) -> None:
-        self._commander.once("POSE", pitch=pitch_deg, roll=self._roll_deg, height=0.0, dur=self._dur_ms)
+        self._commander.once(
+            "POSE", pitch=pitch_deg, roll=self._roll_deg, height=0.0, dur=self._dur_ms
+        )
 
     def __call__(self, commander: Commander, now_ms: int) -> None:  # noqa: ARG002
         if self._since_ms is None:
@@ -319,7 +325,10 @@ def register_actions(behavior: Behavior, config: Mapping[str, Any]) -> dict[str,
         ("AUTH_WAIT", "alert_pitch_deg"),
     ):
         posture = PostureSequence(
-            commander, float(config["fsm"][key]), settle_ms, holds[state],
+            commander,
+            float(config["fsm"][key]),
+            settle_ms,
+            holds[state],
             roll_deg=float(config["posture"].get("roll_offset_deg", 0.0)),
         )
         behavior.register_sequence(state, posture)

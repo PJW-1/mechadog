@@ -251,7 +251,9 @@ def select_next(
         chooser = rng if rng is not None else random
         label = chooser.choice(remaining)
         rest = [other for other in remaining if other != label]
-        return _first_reachable([label, *rest], candidates, start, grid, blocked, params, skipped_out)
+        return _first_reachable(
+            [label, *rest], candidates, start, grid, blocked, params, skipped_out
+        )
 
     best = Plan(None)
     for label in remaining:

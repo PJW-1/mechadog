@@ -231,9 +231,7 @@ def global_match(
         return None
     pts = points_robot
     if pts.shape[0] > max_points:
-        pts = pts[
-            np.linspace(0, pts.shape[0] - 1, max_points).astype(np.int64)
-        ]
+        pts = pts[np.linspace(0, pts.shape[0] - 1, max_points).astype(np.int64)]
     meta = grid.meta
     # 한 번이라도 관측된 셀의 경계상자만 훑는다 — 미지 영역은 점수가 없으니
     # 들를 이유가 없고, 격자가 자라도 탐색량이 팽창하지 않는다.

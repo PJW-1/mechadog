@@ -12,10 +12,9 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import sys
 import time
 from pathlib import Path
-
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -80,9 +79,7 @@ def main() -> int:
         elif kind == "telemetry":
             tel = json.loads(event["raw"])
             flags = tel.get("flags") or {}
-            odometry.note_hold(
-                hold_of_reading(tel.get("safety_latched"), flags.get("obstacle")), t
-            )
+            odometry.note_hold(hold_of_reading(tel.get("safety_latched"), flags.get("obstacle")), t)
             imu = tel.get("imu") or {}
             if isinstance(imu.get("yaw"), int | float):
                 odometry.note_imu(float(imu["yaw"]), t, tel.get("boot_id", ""))
@@ -92,8 +89,11 @@ def main() -> int:
             pose = odometry.pose(t)
             sock.sendto(
                 encoder.encode(
-                    ts_ms=t, x_m=pose.x_m, y_m=pose.y_m,
-                    yaw_rad=pose.yaw_rad, valid=pose.valid,
+                    ts_ms=t,
+                    x_m=pose.x_m,
+                    y_m=pose.y_m,
+                    yaw_rad=pose.yaw_rad,
+                    valid=pose.valid,
                 ).encode(),
                 odom_target,
             )

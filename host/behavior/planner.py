@@ -77,11 +77,7 @@ def inflate(grid: OccupancyGrid, params: PlanParams) -> np.ndarray:
         soft_cells = int(math.ceil(params.soft_clearance_m / grid.meta.resolution))
         # 단단한 층 주변은 clearance_m 전부가 이미 막는다 — soft 부풀림을 OR 하면
         # hard 셀 옆 soft 셀이 soft 반경만큼 더 막아 버리지 않게, 결과를 재구성한다.
-        blocked = (
-            unknown
-            | dilate(hard, radius_cells)
-            | dilate(soft, max(soft_cells, 0))
-        )
+        blocked = unknown | dilate(hard, radius_cells) | dilate(soft, max(soft_cells, 0))
     return cast(np.ndarray, blocked)
 
 
@@ -270,17 +266,19 @@ def reachable_mask(grid: OccupancyGrid, blocked: np.ndarray, start: Point) -> np
             r2, c2 = r + d_row, c + d_col
             if not (0 <= r2 < rows and 0 <= c2 < cols) or seen[r2, c2] or blocked[r2, c2]:
                 continue
-            if d_row != 0 and d_col != 0:
-                # A* 와 같은 코너 컷 방지 — 대각선 양옆이 막힌 틈은 «도달 가능» 이 아니다.
-                if blocked[r + d_row, c] or blocked[r, c + d_col]:
-                    continue
+            # A* 와 같은 코너 컷 방지 — 대각선 양옆이 막힌 틈은 «도달 가능» 이 아니다.
+            if d_row != 0 and d_col != 0 and (blocked[r + d_row, c] or blocked[r, c + d_col]):
+                continue
             seen[r2, c2] = True
             queue.append((r2, c2))
     return seen
 
 
 def snap_to_free(
-    grid: OccupancyGrid, blocked: np.ndarray, point: Point, max_m: float,
+    grid: OccupancyGrid,
+    blocked: np.ndarray,
+    point: Point,
+    max_m: float,
     allowed: np.ndarray | None = None,
 ) -> tuple[Point, float]:
     """`point` 가 막힌 셀에 있으면 가장 가까운 자유 셀을 찾아 돌려준다.
@@ -295,7 +293,8 @@ def snap_to_free(
     row, col = grid.to_cell(*point)
     rows, cols = blocked.shape
     if (
-        0 <= row < rows and 0 <= col < cols
+        0 <= row < rows
+        and 0 <= col < cols
         and not blocked[row, col]
         and (allowed is None or allowed[row, col])
     ):
@@ -341,16 +340,21 @@ def plan_to(
         return Plan(None, requested=(float(goal[0]), float(goal[1])), fail_reason="start_blocked")
     allowed = reachable_mask(grid, blocked, start_free)
     requested_xy = (float(goal[0]), float(goal[1]))
-    goal_free, goal_moved = snap_to_free(
-        grid, blocked, goal, snap_m, allowed=allowed
-    )
+    goal_free, goal_moved = snap_to_free(grid, blocked, goal, snap_m, allowed=allowed)
     if not math.isfinite(goal_moved):
-        return Plan(None, requested=requested_xy, start_moved_m=start_moved,
-                    fail_reason="goal_unreachable")
+        return Plan(
+            None, requested=requested_xy, start_moved_m=start_moved, fail_reason="goal_unreachable"
+        )
     path = astar(grid.to_cell(*start_free), grid.to_cell(*goal_free), blocked)
     if path is None:
-        return Plan(None, requested=requested_xy, effective=goal_free,
-                    start_moved_m=start_moved, goal_moved_m=goal_moved, fail_reason="no_path")
+        return Plan(
+            None,
+            requested=requested_xy,
+            effective=goal_free,
+            start_moved_m=start_moved,
+            goal_moved_m=goal_moved,
+            fail_reason="no_path",
+        )
     return Plan(
         label,
         tuple(to_waypoints(path, grid, params.simplify_eps_m)),

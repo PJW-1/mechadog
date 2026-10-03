@@ -146,7 +146,9 @@ class CommandService:
         return CommandResult(command="manual_off", accepted=True, state=self._behavior.state)
 
     def _send_pose(self, pitch: float) -> None:
-        self._commander.once("POSE", pitch=pitch, roll=self._pose_roll, height=0.0, dur=self._pose_dur_ms)
+        self._commander.once(
+            "POSE", pitch=pitch, roll=self._pose_roll, height=0.0, dur=self._pose_dur_ms
+        )
         self._pose_tilted = pitch != 0.0
 
     def pose(self, preset: str) -> CommandResult:

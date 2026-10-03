@@ -71,8 +71,10 @@ def iter_revolutions(events: Path, mount_yaw_deg: float, angle_direction: int):
                     pending = (event["t"], revolution)
             elif kind == "localization" and pending is not None:
                 pose = event.get("pose")
-                yield pending[0], pending[1], (
-                    None if pose is None else (float(pose[0]), float(pose[1]), float(pose[2]))
+                yield (
+                    pending[0],
+                    pending[1],
+                    (None if pose is None else (float(pose[0]), float(pose[1]), float(pose[2]))),
                 )
                 pending = None
     if pending is not None:
@@ -148,13 +150,23 @@ def percentiles(values: list[float], *qs: int) -> dict[str, float]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--session", required=True, type=Path, help="events.jsonl 이 있는 세션 폴더")
-    parser.add_argument("--maps", required=True, type=Path, help="slam_map.npy · zones.json · pose_frame.json 폴더")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--session", required=True, type=Path, help="events.jsonl 이 있는 세션 폴더"
+    )
+    parser.add_argument(
+        "--maps", required=True, type=Path, help="slam_map.npy · zones.json · pose_frame.json 폴더"
+    )
     parser.add_argument("--device", default="mechdog-02")
     parser.add_argument("--truth", type=Path, help="map2d 가 저장한 truth_paths.jsonl (plan 좌표)")
-    parser.add_argument("--audit-every", type=int, default=400, help="몇 바퀴마다 지도 전역 감사를 돌릴지 (0=안 함)")
-    parser.add_argument("--replay", action="store_true", help="기록 자세 대신 컨트롤러로 처음부터 다시 추적한다")
+    parser.add_argument(
+        "--audit-every", type=int, default=400, help="몇 바퀴마다 지도 전역 감사를 돌릴지 (0=안 함)"
+    )
+    parser.add_argument(
+        "--replay", action="store_true", help="기록 자세 대신 컨트롤러로 처음부터 다시 추적한다"
+    )
     parser.add_argument("--bad-threshold-m", type=float, default=0.5)
     parser.add_argument("--max-revs", type=int, default=0, help="앞에서부터 이만큼만 평가 (0=전부)")
     parser.add_argument("--out", type=Path, help="결과 JSON 저장 경로")
@@ -162,7 +174,10 @@ def main() -> int:
 
     config = load_config(args.device)
     lidar = config["lidar"]
-    mount_yaw, direction = float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
+    mount_yaw, direction = (
+        float(lidar.get("mount_yaw_deg", 0.0)),
+        int(lidar.get("angle_direction", 1)),
+    )
     range_m = (float(lidar["range_min_mm"]) / 1000, float(lidar["range_max_mm"]) / 1000)
     occ_thresh = float(lidar["occupied_logodds"])
     max_peers = int(lidar.get("reloc_max_peers", 60))
@@ -183,7 +198,9 @@ def main() -> int:
     controller = None
     if args.replay:
         patrol_map = load_patrol_map(config, args.maps)
-        controller = controller_from_config(config, Commander(CommandEncoder()), *patrol_map, random.Random(0))
+        controller = controller_from_config(
+            config, Commander(CommandEncoder()), *patrol_map, random.Random(0)
+        )
         controller.zone_map = zone_map
         controller.loc_grid = loc_grid
         # 리플레이는 읽기 전용이다 — 지도 적분으로 평가 대상을 바꾸지 않는다.
@@ -217,7 +234,11 @@ def main() -> int:
             pose = recorded
         evaluated += 1
         world = rotate(points, pose[2]) + np.array(pose[:2])
-        frac = (loc_grid.score_field(world, field) if field is not None else loc_grid.score(world, occ_thresh)) / len(points)
+        frac = (
+            loc_grid.score_field(world, field)
+            if field is not None
+            else loc_grid.score(world, occ_thresh)
+        ) / len(points)
         fracs.append(frac)
         zone = zone_map.zone_at(pose[0], pose[1]) if zone_map else None
         if zone:
@@ -226,13 +247,20 @@ def main() -> int:
             truth_samples.append((t_ms, distance_to_polylines(pose[0], pose[1], truth), zone))
         if args.audit_every and index % args.audit_every == 0:
             result = global_match(
-                loc_grid, points,
+                loc_grid,
+                points,
                 lin_step_m=float(lidar.get("global_match_step_mm", 100)) / 1000,
                 ang_step_rad=math.radians(float(lidar.get("global_match_angle_deg", 15))),
-                occ_thresh=occ_thresh, min_known_cells=int(lidar["min_known_cells"]),
-                free_thresh=float(lidar["free_logodds"]), sigma_m=sigma_m,
+                occ_thresh=occ_thresh,
+                min_known_cells=int(lidar["min_known_cells"]),
+                free_thresh=float(lidar["free_logodds"]),
+                sigma_m=sigma_m,
             )
-            entry: dict[str, Any] = {"t_ms": t_ms, "pose": [round(v, 2) for v in pose], "frac_at_pose": round(frac, 3)}
+            entry: dict[str, Any] = {
+                "t_ms": t_ms,
+                "pose": [round(v, 2) for v in pose],
+                "frac_at_pose": round(frac, 3),
+            }
             if result is None:
                 entry["global"] = None
             else:
@@ -241,7 +269,9 @@ def main() -> int:
                     global_frac=round(result.score / len(points), 3),
                     peers=result.peers,
                     ambiguous=result.peers > max_peers,
-                    disagreement_m=round(math.hypot(result.pose[0] - pose[0], result.pose[1] - pose[1]), 2),
+                    disagreement_m=round(
+                        math.hypot(result.pose[0] - pose[0], result.pose[1] - pose[1]), 2
+                    ),
                 )
             audits.append(entry)
             print(f"  audit @{index}: {entry}", file=sys.stderr)
@@ -260,7 +290,9 @@ def main() -> int:
         "audits_ambiguous": sum(1 for a in audits if a.get("ambiguous")),
         "audits_disagree_over_0.5m": sum(1 for d in disagreements if d > 0.5),
         "audit_disagreement_m": percentiles(disagreements, 50, 90),
-        "zone_share": {k: round(v / evaluated, 3) for k, v in sorted(zone_counts.items())} if evaluated else {},
+        "zone_share": {k: round(v / evaluated, 3) for k, v in sorted(zone_counts.items())}
+        if evaluated
+        else {},
         "truth_paths": len(truth),
         "truth_error_m": percentiles([e for _, e, _ in truth_samples], 50, 90, 100),
         "bad_segments": bad_segments(truth_samples, args.bad_threshold_m),

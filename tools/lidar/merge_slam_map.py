@@ -67,30 +67,43 @@ def align(
     실제로 s0_patrol_1 에서 일어났고, 그 정렬로 보탠 지도는 S0 에서 가짜 자리를 만들었다.
     초기값(세션 첫 측위 = 사용자 배치 자리)은 ±수십 cm 안에 있으므로 좁은 창이 정답을 놓치지 않는다.
     """
-    p = MatchParams(window_m, 0.02, math.radians(window_deg), math.radians(1), occ_thresh, 1, sigma_m=sigma_m)
+    p = MatchParams(
+        window_m, 0.02, math.radians(window_deg), math.radians(1), occ_thresh, 1, sigma_m=sigma_m
+    )
     result = match(target, points, guess, p)
     return result.pose, result.score / max(1, len(points))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--maps", required=True, type=Path)
     parser.add_argument("--slam", required=True, type=Path, help="세션 지도 YAML (map_server 형식)")
     parser.add_argument("--session", type=Path, help="초기 정렬값을 뽑을 세션 폴더 (첫 측위 자세)")
     parser.add_argument("--guess", help="초기 정렬값 'x,y,yaw_deg' (세션 대신 직접)")
     parser.add_argument("--occ-thresh", type=float, default=1.0)
     parser.add_argument("--sigma-mm", type=float, default=100)
-    parser.add_argument("--min-align", type=float, default=0.5, help="이 정렬률 미만이면 반영하지 않는다")
-    parser.add_argument("--min-overlap", type=float, default=0.4, help="세션 벽이 기존 벽·그 이웃에 얹힌 비율 하한")
     parser.add_argument(
-        "--verify", type=Path,
+        "--min-align", type=float, default=0.5, help="이 정렬률 미만이면 반영하지 않는다"
+    )
+    parser.add_argument(
+        "--min-overlap", type=float, default=0.4, help="세션 벽이 기존 벽·그 이웃에 얹힌 비율 하한"
+    )
+    parser.add_argument(
+        "--verify",
+        type=Path,
         help="회귀 검증용 세션 폴더 — 이 세션의 첫 측위 바퀴들로, 합친 지도에서 전역 정합이 "
-             "기록 자세를 유지하는지 확인한다 (지도가 가짜 자리를 만들지 않았는지의 검증)",
+        "기록 자세를 유지하는지 확인한다 (지도가 가짜 자리를 만들지 않았는지의 검증)",
     )
     parser.add_argument("--verify-max-err", type=float, default=0.3)
     parser.add_argument("--device", default="mechdog-02")
-    parser.add_argument("--out", type=Path, help="비교용 출력 .npy (기본 <maps>/slam_map_merged.npy)")
-    parser.add_argument("--apply", action="store_true", help="운용 slam_map.npy 를 교체한다 (원본 1회 백업)")
+    parser.add_argument(
+        "--out", type=Path, help="비교용 출력 .npy (기본 <maps>/slam_map_merged.npy)"
+    )
+    parser.add_argument(
+        "--apply", action="store_true", help="운용 slam_map.npy 를 교체한다 (원본 1회 백업)"
+    )
     args = parser.parse_args()
 
     target = OccupancyGrid.load(args.maps)
@@ -103,24 +116,32 @@ def main() -> int:
         guess = first_fix(args.session) if args.session else None
         if guess is None:
             raise SystemExit("--session 의 첫 측위가 없다 — --guess 로 초기값을 직접 준다")
-    print(f"세션 지도 점유 셀 {len(points)}개 · 초기값 ({guess[0]:.2f},{guess[1]:.2f},{math.degrees(guess[2]):.0f}°)")
+    print(
+        f"세션 지도 점유 셀 {len(points)}개 · 초기값 ({guess[0]:.2f},{guess[1]:.2f},{math.degrees(guess[2]):.0f}°)"
+    )
 
     pose, align_frac = align(target, points, guess, args.occ_thresh, args.sigma_mm / 1000.0)
     moved = math.hypot(pose[0] - guess[0], pose[1] - guess[1])
-    print(f"정렬 → ({pose[0]:.2f},{pose[1]:.2f},{math.degrees(pose[2]):.1f}°) 정렬률 {align_frac:.2f} (초기값에서 {moved:.2f}m)")
+    print(
+        f"정렬 → ({pose[0]:.2f},{pose[1]:.2f},{math.degrees(pose[2]):.1f}°) 정렬률 {align_frac:.2f} (초기값에서 {moved:.2f}m)"
+    )
 
     world = rotate(points, pose[2]) + np.array(pose[:2])
     res = target.meta.resolution
     cols = np.floor((world[:, 0] - target.meta.origin_x) / res).astype(int)
     rows = np.floor((world[:, 1] - target.meta.origin_y) / res).astype(int)
-    inside = (rows >= 0) & (rows < target.cells.shape[0]) & (cols >= 0) & (cols < target.cells.shape[1])
+    inside = (
+        (rows >= 0) & (rows < target.cells.shape[0]) & (cols >= 0) & (cols < target.cells.shape[1])
+    )
     rows, cols = rows[inside], cols[inside]
-    already = target.cells[rows, cols] > args.occ_thresh
     # 운용 지도의 벽 1셀 이웃도 «이미 있음» 으로 본다 — 정렬 오차 한 칸으로 벽이 두 겹 되지 않게.
     near_wall = np.zeros(len(rows), dtype=bool)
     for d_r in (-1, 0, 1):
         for d_c in (-1, 0, 1):
-            r2, c2 = np.clip(rows + d_r, 0, target.cells.shape[0] - 1), np.clip(cols + d_c, 0, target.cells.shape[1] - 1)
+            r2, c2 = (
+                np.clip(rows + d_r, 0, target.cells.shape[0] - 1),
+                np.clip(cols + d_c, 0, target.cells.shape[1] - 1),
+            )
             near_wall |= target.cells[r2, c2] > args.occ_thresh
     add = ~near_wall
     # 추가 셀이 덩어리를 이루는지 본다 — 스캔 노이즈의 흩어진 점 하나가 지도에 들어가면
@@ -145,11 +166,16 @@ def main() -> int:
     # 떨어지면 그 셀은 실제 장애물이 아니라 정렬이 어긋난 흔적일 가능성이 크다.
     # 이 지도는 측위(랜드마크)용이라 그대로 두되, 항법 지도에는 쓰지 않는다.
     from host.common.config import load_config  # 지연 임포트 — 지도만 정렬할 땐 불필요
+
     free_logodds = float(load_config(args.device)["lidar"]["free_logodds"])
     on_free = int((target.cells[rows[add], cols[add]] <= free_logodds).sum()) if add.any() else 0
     report = {
         "slam": str(args.slam),
-        "transform": {"x": round(pose[0], 3), "y": round(pose[1], 3), "yaw_deg": round(math.degrees(pose[2]), 2)},
+        "transform": {
+            "x": round(pose[0], 3),
+            "y": round(pose[1], 3),
+            "yaw_deg": round(math.degrees(pose[2]), 2),
+        },
         "align_frac": round(align_frac, 3),
         "overlap_frac": round(overlap, 3),
         "session_occupied": int(len(points)),
@@ -172,8 +198,10 @@ def main() -> int:
         # 회귀 검증 — 합친 지도에서도 알려진 자리(세션 첫 측위들의 중앙값)가
         # 전역 정합의 **유일한** 답으로 남는지 확인한다. s0_patrol_1 사례에서 정렬이
         # 1.7m 어긋난 채 보태져 (1.2,-2.0) 가짜 자리가 진짜 자리보다 점수가 높아졌다.
-        from tools.lidar.localization_bench import iter_revolutions  # 지연 임포트 — 지도만 합칠 땐 불필요
         from host.common.config import load_config
+        from tools.lidar.localization_bench import (
+            iter_revolutions,  # 지연 임포트 — 지도만 합칠 땐 불필요
+        )
 
         lidar = load_config(args.device)["lidar"]
         revs: list[tuple] = []
@@ -192,14 +220,20 @@ def main() -> int:
             probe = OccupancyGrid(target.meta, merged.copy())
             errors = []
             from host.slam.scan_match import global_match, preprocess
+
             rng = (float(lidar["range_min_mm"]) / 1000.0, float(lidar["range_max_mm"]) / 1000.0)
             anchor = np.median(np.array([p for _r, p in revs]), axis=0)
             for rev, _p in revs[:5]:
                 pts = preprocess(rev.points, *rng)
                 found = global_match(
-                    probe, pts, lin_step_m=0.10, ang_step_rad=math.radians(10),
-                    occ_thresh=args.occ_thresh, min_known_cells=50,
-                    free_thresh=float(lidar["free_logodds"]), sigma_m=args.sigma_mm / 1000.0,
+                    probe,
+                    pts,
+                    lin_step_m=0.10,
+                    ang_step_rad=math.radians(10),
+                    occ_thresh=args.occ_thresh,
+                    min_known_cells=50,
+                    free_thresh=float(lidar["free_logodds"]),
+                    sigma_m=args.sigma_mm / 1000.0,
                 )
                 if found is None:
                     errors.append(float("inf"))
@@ -226,7 +260,9 @@ def main() -> int:
             shutil.copy2(source, backup)
         np.save(source, merged.astype(np.float32))
         report["applied"] = True
-    (out.with_suffix(".merge.json")).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (out.with_suffix(".merge.json")).write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

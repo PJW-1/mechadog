@@ -589,11 +589,7 @@ class PatrolController:
                 return
         # ── 정지 중 주기 감사 ── 국소 창만으론 «틀린 자리에 수렴한 잠금»을 스스로
         # 못 푼다. 서 있는 동안 지도 전체를 훑어 현재 자세가 전역으로도 맞는지 본다.
-        if (
-            self.verify_interval_ms > 0
-            and now_ms >= self._verify_next_ms
-            and self._is_stationary()
-        ):
+        if self.verify_interval_ms > 0 and now_ms >= self._verify_next_ms and self._is_stationary():
             self._verify_next_ms = now_ms + self.verify_interval_ms
             if self._verify_pose(points, scan, now_ms):
                 return
@@ -762,7 +758,11 @@ class PatrolController:
         아직 한 번도 못 잡은 경우에만, 시드가 있을 때만이다. 이렇게 잡은 자세는
         `pose_verified` 가 아니라 지도에 쓰지 않고, 서 있을 때 전역 감사가 확인한다.
         """
-        if not self.pose_seeded or self._last_pose_ms is not None or self.first_match_params is None:
+        if (
+            not self.pose_seeded
+            or self._last_pose_ms is not None
+            or self.first_match_params is None
+        ):
             return False
         result = match(self.match_grid, points, self.pose, self.first_match_params)
         # 사람의 말이 근거라 정합 하한은 절반만 요구한다 — 지도에 가구 다리가 빠진 자리면
@@ -791,7 +791,13 @@ class PatrolController:
             votes.clear()
         votes.append(pose)
         if len(votes) < self.reloc_votes:
-            LOG.info("global_vote", n=len(votes), need=self.reloc_votes, x=round(pose[0], 2), y=round(pose[1], 2))
+            LOG.info(
+                "global_vote",
+                n=len(votes),
+                need=self.reloc_votes,
+                x=round(pose[0], 2),
+                y=round(pose[1], 2),
+            )
             return False
         votes.clear()
         return True
@@ -815,7 +821,7 @@ class PatrolController:
         """로봇이 서 있는가 — 감사 탐색(수 초)은 서 있을 때만 돌려도 안전하다."""
         return self.phase is not Phase.MOVING or self._stopped_since_ms is not None
 
-    def _verify_pose(self, points: np.ndarray, scan: Scan, now_ms: int) -> bool:
+    def _verify_pose(self, points: np.ndarray, scan: Scan, _now_ms: int) -> bool:
         """정지 중 자세 감사 요청 — 전역 탐색을 워커로 보낸다.
 
         결과는 `_apply_verify_result` 가 뒤늦게 적용한다. 제출에 성공했으면 True 를
@@ -1306,11 +1312,13 @@ class PatrolController:
                 # 옮겨지는 일은 없다 (가구 다리 병합으로 앵커가 팽창 안에 들어갈 수 있다).
                 requested=(
                     [round(v, 2) for v in self.plan.requested]
-                    if self.plan.requested is not None else None
+                    if self.plan.requested is not None
+                    else None
                 ),
                 effective=(
                     [round(v, 2) for v in self.plan.effective]
-                    if self.plan.effective is not None else None
+                    if self.plan.effective is not None
+                    else None
                 ),
             )
         elif self.visited:
@@ -1325,10 +1333,13 @@ class PatrolController:
         # 가구 다리·팽창 안에 묻혔으면 그 자리엔 영원히 못 선다. 둘 중 가까운 곳이
         # 도착 반경 안이면 도착이다.
         effective = self.plan.effective or anchor
-        arrived = min(
-            math.hypot(anchor[0] - self.pose[0], anchor[1] - self.pose[1]),
-            math.hypot(effective[0] - self.pose[0], effective[1] - self.pose[1]),
-        ) < self.drive.arrival_radius_m
+        arrived = (
+            min(
+                math.hypot(anchor[0] - self.pose[0], anchor[1] - self.pose[1]),
+                math.hypot(effective[0] - self.pose[0], effective[1] - self.pose[1]),
+            )
+            < self.drive.arrival_radius_m
+        )
         if arrived:
             self._arrive(self.plan.label)
             return

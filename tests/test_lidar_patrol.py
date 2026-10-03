@@ -936,14 +936,24 @@ def test_loc_map_leg_is_not_a_new_obstacle() -> None:
     # 로봇 (3.0,2.5) 동향 — 다리 방향 빔이 1.0m 에서 멈춘다.
     scan = ((0.0, 1.0), (math.pi / 2, 4.0), (math.pi, 4.0), (-math.pi / 2, 4.0))
     hit = detect_new_obstacle(
-        (3.0, 2.5, 0.0), scan, grid, blocked,
-        check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+        (3.0, 2.5, 0.0),
+        scan,
+        grid,
+        blocked,
+        check_radius_m=1.5,
+        margin_m=0.25,
+        occ_thresh=1.0,
     )
     assert hit is not None, "항법 지도만 보면 다리는 «새 장애물»"
     assert (
         detect_new_obstacle(
-            (3.0, 2.5, 0.0), scan, grid, blocked,
-            check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+            (3.0, 2.5, 0.0),
+            scan,
+            grid,
+            blocked,
+            check_radius_m=1.5,
+            margin_m=0.25,
+            occ_thresh=1.0,
             known_grid=loc,
         )
         is None
@@ -963,8 +973,13 @@ def test_loc_map_margin_absorbs_alignment_error() -> None:
     scan = ((0.0, 0.9),)
     assert (
         detect_new_obstacle(
-            (3.0, 2.5, 0.0), scan, grid, blocked,
-            check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+            (3.0, 2.5, 0.0),
+            scan,
+            grid,
+            blocked,
+            check_radius_m=1.5,
+            margin_m=0.25,
+            occ_thresh=1.0,
             known_grid=loc,
         )
         is None
@@ -983,8 +998,13 @@ def test_genuinely_new_obstacle_still_detected_with_loc_map() -> None:
     loc.cells[leg_row, leg_col] = 3.0
     scan = ((0.0, 1.0), (math.pi / 2, 1.0))
     hit = detect_new_obstacle(
-        (3.0, 2.5, 0.0), scan, grid, blocked,
-        check_radius_m=1.5, margin_m=0.25, occ_thresh=1.0,
+        (3.0, 2.5, 0.0),
+        scan,
+        grid,
+        blocked,
+        check_radius_m=1.5,
+        margin_m=0.25,
+        occ_thresh=1.0,
         known_grid=loc,
     )
     assert hit is not None

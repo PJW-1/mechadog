@@ -187,7 +187,6 @@ def main(argv: list[str] | None = None) -> int:
     controller.start()
     now_ms = 0
     controller.note_sent(lines, now_ms)
-    seq = 0
     period_s = ms_to_s(controller.commander.period_ms)
 
     pose_errors: list[float] = []
@@ -196,11 +195,10 @@ def main(argv: list[str] | None = None) -> int:
     for tick in range(1, args.ticks + 1):
         if args.cycles > 0 and controller.stats.cycles >= args.cycles:
             break
-        seq += 1
         scan = Scan(
             "lidar-mock",
             "0" * 16,
-            seq,
+            tick,
             now_ms,
             points_from_wire(raycast_scan(truth_hit, truth_meta, true_pose, sim_params, rng)),
         )
