@@ -727,3 +727,20 @@ def test_feed_hands_raw_datagrams_to_the_recorder() -> None:
     raw = _raw("lidar-01", 2000)
     feed.handle(raw)
     assert seen == [(raw, 1234)], "디코드 전 원본 그대로, 받은 시각과 함께"
+
+
+def test_sent_commands_reach_the_navigator(config: dict, clock: FakeClock) -> None:
+    """런타임이 실제로 보낸 MOVE 를 순찰기도 안다 — 없으면 «정지 중» 판정이 걷는 중에도 참이다.
+
+    2026-10-03 Codex 검토: runtime 의 송신 경로가 odom 에만 알리고 navigator.note_sent 를
+    부르지 않아, AVOID·FAILSAFE 때 찍힌 정지 시각이 이후 MOVE 에도 남았다.
+    """
+    runtime, navigator = _runtime(config, clock)
+    sock = FakeSocket(clock)
+    runtime.begin(sock)
+    runtime._peer = ("127.0.0.1", 5001)
+    navigator._stopped_since_ms = 1
+    before = navigator._move_seq
+    runtime.send_immediate(CommandEncoder().encode("MOVE", step=40, angle=0))
+    assert navigator._move_seq == before + 1
+    assert navigator._stopped_since_ms is None

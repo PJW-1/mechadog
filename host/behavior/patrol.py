@@ -275,6 +275,21 @@ class PatrolController:
     #: 채워진 자리에서는 바퀴마다 전역 최적이 다른 벽에 얹혀 자리가 널뛴다(실측: 제자리
     #: 로봇이 16초에 세 자리) — 한 번의 최고점은 증거가 아니고 반복돼야 증거다.
     reloc_votes: int = 3
+    #: 투표에서 «같은 답» 으로 볼 방위 차 — 위치만 보면 58°·36° 처럼 방향이 다른 답이
+    #: 같은 표로 묶였다(2026-10-03 s0_live_4).
+    reloc_vote_yaw_rad: float = math.radians(10.0)
+    #: 로봇이 표 사이에 움직이지 않았으면(같은 장면) 이 수 이하의 경쟁 후보일 때만 표로
+    #: 센다 — 서 있는 로봇의 연속 스캔은 독립 증거가 아니라 모호한 답을 세 번 세게 된다.
+    reloc_stationary_max_peers: int = 10
+    #: IMU 가 신선하면 국소 정합의 방위 탐색을 이 창으로 좁힌다 (IMU 예측 ± 창).
+    #: None 이면 `match_params` 의 창 그대로. 우도장 지형은 방위 능선이 생겨(30~72° 가
+    #: 0.05 안) 정합만으로는 방위가 흘렀다 — 정지 중 23°, 걸은 세션 IMU 대비 132°.
+    imu_match_params: MatchParams | None = None
+    #: 텔레메트리 IMU 가 이보다 오래되면 방위 사전으로 쓰지 않는다.
+    imu_fresh_ms: int = 300
+    #: 측위가 이만큼 끊기면 «검증됨»·사람 시드의 신뢰를 버린다 — 그 사이 로봇이 들려
+    #: 옮겨졌을 수 있다. 0 이면 끈다 (Codex 검토 P1: 검증 상태에 유효기간이 없었다).
+    trust_expiry_ms: int = 5000
     #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
     maps_dir: Path | None = None
     #: 측위 전용 지도 (`slam_map_loc.npy`) — 세션 SLAM 병합으로 가구 다리까지 담은
@@ -347,9 +362,26 @@ class PatrolController:
     #: 제출됐지만 아직 루프가 소비하지 않은 전역 탐색이 있는가 (루프 스레드만 만진다).
     _global_inflight: bool = False
     #: 워커 요청 사서함 — (종류, 점, 스캔). 루프는 넣기만 하고 워커가 꺼낸다.
-    _global_req: tuple[str, np.ndarray, Scan] | None = None
-    #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔). 루프가 꺼낸다.
-    _global_result: tuple[str, MatchResult | None, np.ndarray, Scan] | None = None
+    _global_req: tuple[str, np.ndarray, Scan, Pose] | None = None
+    #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔, 요청 때 자세).
+    _global_result: tuple[str, MatchResult | None, np.ndarray, Scan, Pose] | None = None
+    #: 요청 때의 (IMU yaw, 이동 명령 수) — 루프 스레드만 만진다.
+    _global_req_context: tuple[float | None, int] | None = None
+    #: 마지막 표 뒤에 로봇이 움직였는가 (MOVE 송신 또는 IMU 방위 변화) — 표의 독립성.
+    _moved_since_vote: bool = True
+    _imu_at_vote: float | None = None
+    #: 이번 스캔의 IMU 변화량이 실제 측정인가 (신선한 텔레메트리 기준).
+    _imu_delta_fresh: bool = False
+    #: 지금 `pose` 가 관측된 시점의 IMU yaw — 다음 정합의 회전 예측은 «지금 IMU − 이 값».
+    #: 정합이 실패해도 앵커는 그대로라 회전량을 잃지 않고, 전역 채택 때는 그 스캔 시점의
+    #: IMU 로 다시 묶어 이중 반영하지 않는다 (Codex 검토 P1).
+    _imu_anchor: float | None = None
+    #: 실제로 나간 이동 명령(MOVE 0 이 아님)의 누적 수 — 비동기 결과가 낡았는지 본다.
+    _move_seq: int = 0
+    #: 신뢰를 잃었다고 기록했는가 (`trust_expiry_ms` 넘은 상실).
+    _trust_expired: bool = False
+    #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
+    _result_imu: float | None = None
     _global_cv: threading.Condition = field(
         default_factory=lambda: threading.Condition(threading.Lock())
     )
@@ -489,6 +521,8 @@ class PatrolController:
             return
         self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
         self._last_pose_ms = now_ms
+        self._imu_anchor = self.safety.yaw_rad
+        self._trust_expired = False
         zone = self.current_zone
         if zone != self._last_zone:
             self._last_zone = zone
@@ -512,6 +546,9 @@ class PatrolController:
             if message["type"] == "MOVE":
                 self._last_sent_moving = True
                 self._stopped_since_ms = None
+                if message.get("step") or message.get("angle"):
+                    self._moved_since_vote = True
+                    self._move_seq += 1
             elif message["type"] in ("STOP", "ESTOP", "RESET_SAFE"):
                 self._note_stopped(sent_ms)
 
@@ -551,16 +588,15 @@ class PatrolController:
         points = preprocess(scan.points, *self.range_m)
         if not points.size:
             return
+        self._expire_trust(now_ms)
         # 워커가 끝낸 전역 탐색 결과를 먼저 가져온다 — 비어 있으면 즉시 돌아간다.
         _t0 = time.perf_counter()
         self._poll_global(now_ms)
         _t_poll = time.perf_counter() - _t0
-        # 전역 탐색이 워커에서 도는 ~1.5초 동안 국소 정합은 쉰다 — CPython 에서
-        # 스레드가 GIL 을 나누면 24ms 정합이 1.7s 로 부풀어(실측 재현) 명령
-        # 주기를 해친다. 감사는 «서 있을 때»만, 재측위는 «이미 잃은 뒤»라
-        # 자세가 잠깐 낡아도 안전하다 — 명령은 그 사이에도 계속 나간다.
-        if self._global_inflight:
-            return
+        # ⚠️ **전역 탐색이 도는 동안에도 국소 추적을 멈추지 않는다.** 예전엔 파이썬 루프
+        # 탐색이 GIL 을 쥐어 국소 정합이 17ms→1~2.5s 로 부풀었고, 그래서 탐색 동안 국소
+        # 정합을 쉬게 했다 — 그것이 정지 감사마다(15초) 약 3.3초 LOST 를 만들었다(live_4
+        # 26회). 탐색을 벡터화해 같은 시간 국소 정합이 9ms 로 유지되므로 쉴 이유가 없다.
         if self.pose_stale(now_ms) and self.reloc_interval_ms > 0:
             # 한 번도 못 잡았거나 추적이 끊긴 상태 — 국소 창은 추정 위치가 틀리면
             # 답을 못 찾으니 지도 전체를 거칠게 훑어 다시 잠근다 (FR-6.6).
@@ -585,28 +621,26 @@ class PatrolController:
             # 회복되어 상실이 풀린다 (자세가 정말 틀렸으면 점수 0 이라 갱신이 없어
             # 상실이 유지되고 다음 전역 탐색이 다시 찾는다). 이 fallthrough 가 없으면
             # 전역 탐색이 국소 정합을 영원히 굶기는 기아 루프가 된다 (2026-10-03 실측).
-            if submitted or self._last_pose_ms is None:
+            if self._last_pose_ms is None:
                 return
+            del submitted
         # ── 정지 중 주기 감사 ── 국소 창만으론 «틀린 자리에 수렴한 잠금»을 스스로
         # 못 푼다. 서 있는 동안 지도 전체를 훑어 현재 자세가 전역으로도 맞는지 본다.
         if self.verify_interval_ms > 0 and now_ms >= self._verify_next_ms and self._is_stationary():
             self._verify_next_ms = now_ms + self.verify_interval_ms
-            if self._verify_pose(points, scan, now_ms):
-                return
+            self._verify_pose(points, scan, now_ms)
         # 아직 한 번도 정합되지 않았으면 넓은 창으로 찾는다 — 시드 자세가 배치 오차만큼
         # 어긋나 있어도 첫 고정은 잡히게. 잡힌 뒤에는 좁은 창으로 추적한다.
+        # 변화량만 넘긴다 — 절대 yaw 는 지도 좌표계와 옵셋이 있다.
+        yaw_delta = self._consume_yaw_delta(now_ms)
         params = self.match_params
         if self._last_pose_ms is None and self.first_match_params is not None:
             params = self.first_match_params
+        elif self._imu_delta_fresh and self.imu_match_params is not None:
+            # 신선한 IMU 가 회전량을 쟀다 — 방위는 IMU 예측 근처에서만 찾는다.
+            params = self.imu_match_params
         _t2 = time.perf_counter()
-        result = match(
-            self.match_grid,
-            points,
-            self.pose,
-            params,
-            # 변화량만 넘긴다 — 절대 yaw 는 지도 좌표계와 옵셋이 있다.
-            yaw_delta=self._consume_yaw_delta(),
-        )
+        result = match(self.match_grid, points, self.pose, params, yaw_delta=yaw_delta)
         _t_match = time.perf_counter() - _t2
         if _t_match > 0.2:
             LOG.warning(
@@ -634,6 +668,31 @@ class PatrolController:
                 poll_ms=round(_t_poll * 1000, 1),
                 obstacle_ms=round(_t_obs * 1000, 1),
             )
+
+    def _expire_trust(self, now_ms: int) -> None:
+        """측위가 `trust_expiry_ms` 넘게 끊겼다 — «검증됨»·사람 시드의 신뢰를 버린다.
+
+        그 사이 로봇이 들려 옮겨졌을 수 있어, 예전 확인이나 처음 받은 시드를 근거로 계속
+        주행·지도 기록을 허용하면 안 된다. 자세값 자체는 두고(전역 탐색의 출발점) 신뢰만 내린다.
+        """
+        if (
+            self.trust_expiry_ms <= 0
+            or self._trust_expired
+            or self._last_pose_ms is None
+            or now_ms - self._last_pose_ms <= self.trust_expiry_ms
+        ):
+            return
+        self._trust_expired = True
+        if self._pose_verified or self.pose_seeded:
+            LOG.warning(
+                "localization_trust_expired",
+                lost_ms=now_ms - self._last_pose_ms,
+                was_verified=self._pose_verified,
+                was_seeded=self.pose_seeded,
+            )
+        self._pose_verified = False
+        self.pose_seeded = False
+        self._global_votes.clear()
 
     def _min_match_score(self, points: np.ndarray) -> int:
         """**새 고정**(전역 재측위·시드 시작)의 채택 하한 — 연속 추적에는 적용하지 않는다."""
@@ -672,20 +731,24 @@ class PatrolController:
             with self._global_cv:
                 while self._global_req is None:
                     self._global_cv.wait()
-                kind, points, scan = self._global_req
+                kind, points, scan, asked_pose = self._global_req
                 self._global_req = None
-            result = global_match(
-                self.match_grid,
-                points,
-                lin_step_m=self.global_match_lin_step_m,
-                ang_step_rad=self.global_match_ang_step_rad,
-                occ_thresh=self.match_params.occ_thresh,
-                min_known_cells=self.match_params.min_known_cells,
-                free_thresh=self.plan_params.free_thresh,
-                sigma_m=self.match_params.sigma_m,
-            )
+            try:
+                result = global_match(
+                    self.match_grid,
+                    points,
+                    lin_step_m=self.global_match_lin_step_m,
+                    ang_step_rad=self.global_match_ang_step_rad,
+                    occ_thresh=self.match_params.occ_thresh,
+                    min_known_cells=self.match_params.min_known_cells,
+                    free_thresh=self.plan_params.free_thresh,
+                    sigma_m=self.match_params.sigma_m,
+                )
+            except Exception as exc:  # noqa: BLE001 — 결과를 안 두면 inflight 가 영영 안 풀린다
+                LOG.error("global_match_failed", error=f"{type(exc).__name__}: {exc}")
+                result = None
             with self._global_cv:
-                self._global_result = (kind, result, points, scan)
+                self._global_result = (kind, result, points, scan, asked_pose)
 
     def _submit_global(self, kind: str, points: np.ndarray, scan: Scan) -> bool:
         """전역 탐색을 워커에 맡긴다. 이미 한 건이 진행 중이면 놓친다(False)."""
@@ -693,8 +756,9 @@ class PatrolController:
             return False
         self._ensure_global_worker()
         self._global_inflight = True
+        self._global_req_context = (self.safety.yaw_rad, self._move_seq)
         with self._global_cv:
-            self._global_req = (kind, points.copy(), scan)
+            self._global_req = (kind, points.copy(), scan, self.pose)
             self._global_cv.notify()
         return True
 
@@ -706,9 +770,19 @@ class PatrolController:
         if done is None:
             return
         self._global_inflight = False
-        kind, result, points, scan = done
+        kind, result, points, scan, asked_pose = done
+        asked_imu, asked_moves = self._global_req_context or (None, self._move_seq)
+        if asked_moves != self._move_seq:
+            # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다 (Codex 검토 P1).
+            if self._edge.changed("global_result_stale", True):
+                LOG.info("global_result_stale", kind=kind, moves=self._move_seq - asked_moves)
+            if kind == "reloc":
+                self._global_votes.clear()
+            return
+        self._edge.changed("global_result_stale", False)
+        self._result_imu = asked_imu
         if kind == "verify":
-            self._apply_verify_result(result, points, now_ms)
+            self._apply_verify_result(result, points, now_ms, asked_pose)
         else:
             self._apply_reloc_result(result, points, scan, now_ms)
 
@@ -723,9 +797,11 @@ class PatrolController:
         if result is None or result.score < self._min_match_score(points):
             if self._edge.changed("relocalize_failed", True):
                 LOG.warning("relocalize_failed", frac=round(self._match_frac, 3))
+            self._global_votes.clear()
             self._seed_fallback(points, scan, now_ms)
             return
         if result.peers > self.reloc_max_peers:
+            self._global_votes.clear()
             # 스캔이 지도를 구분 못 한다 — 어느 자세든 우연이다 (벽 포켓·대칭).
             if self._edge.changed("relocalize_ambiguous", True):
                 LOG.warning(
@@ -735,7 +811,7 @@ class PatrolController:
                 )
             self._seed_fallback(points, scan, now_ms)
             return
-        if not self._vote_global(result.pose):
+        if not self._vote_global(result.pose, result.peers):
             return
         self._edge.changed("relocalize_failed", False)
         LOG.info(
@@ -747,6 +823,8 @@ class PatrolController:
             votes=self.reloc_votes,
         )
         self.observe_map_pose(result.pose, now_ms)
+        # 이 자세는 요청 때 스캔의 것이다 — IMU 앵커도 그때 값으로 (이중 반영 방지).
+        self._imu_anchor = self._result_imu
         # 전역 탐색이 변별력 있게 잡은 자세다 — 여기부터의 적분은 믿을 수 있다.
         self._mark_verified()
         self._grow_map(points, result.score)
@@ -781,14 +859,37 @@ class PatrolController:
         self._check_new_obstacle(scan)
         return True
 
-    def _vote_global(self, pose: Pose) -> bool:
-        """전역 탐색 결과 한 표. 직전 표와 0.3m 넘게 다르면 처음부터 다시 센다.
+    def _vote_global(self, pose: Pose, peers: int = 0) -> bool:
+        """전역 탐색 결과 한 표. 직전 표와 0.3m 또는 `reloc_vote_yaw_rad` 넘게 다르면 다시 센다.
 
-        `reloc_votes` 표가 모이면 True 를 돌리고 비운다 — 호출자가 그 자세를 채택한다.
+        로봇이 직전 표 뒤에 움직이지 않았으면(같은 장면) 경쟁 후보가
+        `reloc_stationary_max_peers` 이하인 **유일한 답**일 때만 표로 센다 — 같은 장면의
+        모호한 답을 세 번 세는 것은 증거가 아니다. `reloc_votes` 표가 모이면 True 를
+        돌리고 비운다 — 호출자가 그 자세를 채택한다.
         """
         votes = self._global_votes
-        if votes and math.hypot(pose[0] - votes[-1][0], pose[1] - votes[-1][1]) > 0.3:
+        imu = self.safety.yaw_rad
+        if (
+            imu is not None
+            and self._imu_at_vote is not None
+            and abs(wrap_pi(imu - self._imu_at_vote)) > math.radians(5.0)
+        ):
+            # 명령 없이 방위가 바뀌었다 — 사람이 들어 옮긴 경우도 «움직임» 이다.
+            self._moved_since_vote = True
+        # **모든 표**(첫 표 기준)와 맞아야 한다 — 직전 표만 보면 0, 0.29, 0.58m 가 한 무리가 된다.
+        if votes and any(
+            math.hypot(pose[0] - v[0], pose[1] - v[1]) > 0.3
+            or abs(wrap_pi(pose[2] - v[2])) > self.reloc_vote_yaw_rad
+            for v in votes
+        ):
             votes.clear()
+        if votes and not self._moved_since_vote and peers > self.reloc_stationary_max_peers:
+            if self._edge.changed("vote_not_independent", True):
+                LOG.info("global_vote_not_independent", peers=peers)
+            return False
+        self._edge.changed("vote_not_independent", False)
+        self._moved_since_vote = False
+        self._imu_at_vote = imu
         votes.append(pose)
         if len(votes) < self.reloc_votes:
             LOG.info(
@@ -831,7 +932,11 @@ class PatrolController:
         return self._submit_global("verify", points, scan)
 
     def _apply_verify_result(
-        self, result: MatchResult | None, points: np.ndarray, now_ms: int
+        self,
+        result: MatchResult | None,
+        points: np.ndarray,
+        now_ms: int,
+        asked_pose: Pose | None = None,
     ) -> bool:
         """전역 감사 결과 해석 — 다른 자리를 가리키면 자세를 바로잡고 True 를 돌린다."""
         self._match_frac = result.score / len(points) if result is not None else 0.0
@@ -841,6 +946,7 @@ class PatrolController:
             or result.peers > self.reloc_max_peers
         ):
             # 구분력 없는 스캔으로는 현재 자세를 의심도 확신도 못 한다 — 유지한다.
+            self._global_votes.clear()
             if self._edge.changed("pose_verify_ambiguous", True):
                 LOG.warning(
                     "pose_verify_ambiguous",
@@ -849,12 +955,18 @@ class PatrolController:
                 )
             return False
         self._edge.changed("pose_verify_ambiguous", False)
-        moved = math.hypot(result.pose[0] - self.pose[0], result.pose[1] - self.pose[1])
-        if moved <= 0.4:
+        # 탐색은 **요청 때의 스캔**으로 했다 — 그 사이 국소 추적이 자세를 옮겼을 수 있으니
+        # 요청 때 자세와 비교한다. 그 사이 로봇이 실제로 움직였으면 이 감사는 낡았다.
+        reference = self.pose if asked_pose is None else asked_pose
+        drift = math.hypot(self.pose[0] - reference[0], self.pose[1] - reference[1])
+        if drift > 0.1 or abs(wrap_pi(self.pose[2] - reference[2])) > math.radians(5):
+            return False
+        moved = math.hypot(result.pose[0] - reference[0], result.pose[1] - reference[1])
+        turned = abs(wrap_pi(result.pose[2] - reference[2]))
+        if moved <= 0.4 and turned <= self.reloc_vote_yaw_rad:
             # 국소 창의 잠금이 전역에서도 맞다 — 여기까지의 적분을 확정한다.
-            # 탐색하는 동안 국소 정합이 쉬었으니 «지금 확인됨»으로 신선도도 새로 찍는다.
+            # (신선도는 국소 추적이 계속 갱신한다 — 감사가 대신 찍지 않는다.)
             self._mark_verified()
-            self._last_pose_ms = now_ms
             return False
         if self.pose_seeded and not self._pose_verified:
             # 사람이 준 자리를 아직 전역이 한 번도 확인하지 못했다 — 지도가 덜 채워진
@@ -871,7 +983,7 @@ class PatrolController:
                 )
             return False
         self._edge.changed("pose_verify_disagree", False)
-        if not self._vote_global(result.pose):
+        if not self._vote_global(result.pose, result.peers):
             # 한 번 다른 답이 나온 것으로는 안 옮긴다 — 같은 답이 `reloc_votes` 번 반복돼야 한다.
             return False
         LOG.warning(
@@ -887,18 +999,34 @@ class PatrolController:
             self._rebuild_masks()
             LOG.warning("map_rolled_back", to="last_verified_snapshot")
         self.observe_map_pose(result.pose, now_ms)
+        self._imu_anchor = self._result_imu
         self._mark_verified()
         return True
 
-    def _consume_yaw_delta(self) -> float:
-        """직전 스캔 이후 IMU 가 본 회전량을 소비한다(두 번 반영하지 않는다). 없으면 0."""
+    def _consume_yaw_delta(self, now_ms: int | None = None) -> float:
+        """직전 스캔 이후 IMU 가 본 회전량을 소비한다(두 번 반영하지 않는다). 없으면 0.
+
+        `_imu_delta_fresh` 는 이 변화량이 신선한 텔레메트리 두 표본의 차일 때만 참이다 —
+        참이면 국소 정합이 방위를 IMU 예측 근처(`imu_match_params`)에서만 찾는다.
+        """
         current = self.safety.yaw_rad
-        if current is None:
-            self._last_imu_yaw = None
+        seen = self.safety.last_seen_ms
+        fresh = (
+            current is not None
+            and now_ms is not None
+            and seen is not None
+            and 0 <= now_ms - seen <= self.imu_fresh_ms
+        )
+        anchor = self._imu_anchor
+        if current is None or anchor is None:
+            self._imu_delta_fresh = False
+            if self._imu_anchor is None:
+                # 아직 앵커가 없으면 지금 값으로 — 다음부터 회전량이 이어진다.
+                self._imu_anchor = current
             return 0.0
-        previous = self._last_imu_yaw
-        self._last_imu_yaw = current
-        return 0.0 if previous is None else wrap_pi(current - previous)
+        # 앵커(지금 `pose` 의 관측 시점) 이후 회전량 — 정합 실패가 이어져도 누적이 남는다.
+        self._imu_delta_fresh = bool(fresh)
+        return wrap_pi(current - anchor)
 
     def _steering_yaw(self) -> float:
         """조향에 쓸 방위 — 스캔 사이에는 IMU 전파값, 없으면 정합 방위 그대로.
@@ -1503,6 +1631,22 @@ def controller_from_config(
         reloc_max_peers=int(lidar.get("reloc_max_peers", 60)),
         verify_interval_ms=int(lidar.get("verify_interval_ms", 15000)),
         reloc_votes=int(lidar.get("reloc_votes", 3)),
+        reloc_vote_yaw_rad=deg_to_rad(float(lidar.get("reloc_vote_yaw_deg", 10))),
+        trust_expiry_ms=int(lidar.get("trust_expiry_ms", 5000)),
+        reloc_stationary_max_peers=int(lidar.get("reloc_stationary_max_peers", 10)),
+        imu_match_params=(
+            None
+            if float(lidar.get("imu_yaw_window_deg", 0)) <= 0
+            else MatchParams(
+                search_lin_m=match_params.search_lin_m,
+                search_lin_step_m=match_params.search_lin_step_m,
+                search_ang_rad=deg_to_rad(float(lidar["imu_yaw_window_deg"])),
+                search_ang_step_rad=deg_to_rad(float(lidar.get("imu_yaw_step_deg", 1))),
+                occ_thresh=match_params.occ_thresh,
+                min_known_cells=match_params.min_known_cells,
+                sigma_m=match_params.sigma_m,
+            )
+        ),
         random_after_first_cycle=bool(config["zones"]["random_after_first_cycle"]),
         rng=rng,
     )

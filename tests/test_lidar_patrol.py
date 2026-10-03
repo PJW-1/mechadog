@@ -1009,3 +1009,127 @@ def test_genuinely_new_obstacle_still_detected_with_loc_map() -> None:
     )
     assert hit is not None
     assert hit == pytest.approx((3.0, 3.5), abs=1e-6)
+
+
+# ══════════════════════════════════════════════════════════════
+#  측위 신뢰 (2026-10-03 Claude 수정 — 투표 방위·독립성, IMU 방위 사전, 감사 기준 자세)
+# ══════════════════════════════════════════════════════════════
+
+
+def test_global_votes_must_agree_on_heading() -> None:
+    """위치가 같아도 방위가 다르면 다른 답이다 — 58°·36° 가 한 표로 묶였던 실기(s0_live_4)."""
+    controller = build(reloc_votes=3)
+    controller._moved_since_vote = True
+    assert controller._vote_global((1.9, -2.5, math.radians(58)), peers=0) is False
+    controller._moved_since_vote = True
+    assert controller._vote_global((1.95, -2.5, math.radians(36)), peers=0) is False
+    assert len(controller._global_votes) == 1, "방위가 22° 다르면 처음부터 다시 센다"
+
+
+def test_stationary_ambiguous_votes_are_not_independent() -> None:
+    """움직이지 않은 로봇의 같은 장면 — 모호한(경쟁 후보 많은) 답은 반복돼도 표가 늘지 않는다."""
+    controller = build(reloc_votes=3, reloc_stationary_max_peers=10)
+    pose = (1.0, 1.0, 0.5)
+    controller._vote_global(pose, peers=50)
+    for _ in range(5):
+        assert controller._vote_global(pose, peers=50) is False
+    assert len(controller._global_votes) == 1
+    # 유일한 답이면 서 있어도 센다 (들어 옮겨진 로봇은 움직이지 않고도 다시 찾아야 한다).
+    assert controller._vote_global(pose, peers=2) is False
+    assert controller._vote_global(pose, peers=2) is True
+
+
+def test_motion_between_votes_makes_them_independent() -> None:
+    controller = build(reloc_votes=2, reloc_stationary_max_peers=10)
+    pose = (1.0, 1.0, 0.5)
+    controller._vote_global(pose, peers=50)
+    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 2000)
+    assert controller._vote_global(pose, peers=50) is True
+
+
+def test_imu_rotation_is_measured_from_the_pose_anchor() -> None:
+    """회전 예측은 «지금 IMU − 지금 자세를 잡은 때의 IMU» — 정합이 실패해도 누적이 남는다.
+
+    예전엔 스캔마다 직전 IMU 를 소비해, 실패한 스캔 동안 돈 20° 를 다음 정합이 잃었다
+    (Codex 검토 P1).
+    """
+    controller = build(imu_fresh_ms=300)
+    controller.observe_telemetry(Reading(yaw=0.0), 1000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)  # 앵커 = IMU 0°
+    controller.observe_telemetry(Reading(yaw=20.0), 1100)
+    assert controller._consume_yaw_delta(1150) == pytest.approx(math.radians(20))  # 정합 실패 가정
+    controller.observe_telemetry(Reading(yaw=22.0), 1200)
+    assert controller._consume_yaw_delta(1250) == pytest.approx(math.radians(22)), (
+        "20° 를 잃지 않는다"
+    )
+    assert controller._imu_delta_fresh is True
+    controller._consume_yaw_delta(2000)
+    assert controller._imu_delta_fresh is False, "텔레메트리가 0.8초 묵었다"
+
+
+def test_global_result_is_dropped_if_the_robot_walked_since_the_request() -> None:
+    from host.slam.scan_match import MatchResult
+
+    controller = build(reloc_votes=1, min_match_frac=0.0)
+    controller._global_inflight = True
+    controller._global_req_context = (None, controller._move_seq)
+    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1500)
+    scan = __import__("host.common.lidar_link", fromlist=["Scan"]).Scan(
+        "l", "b", 1, 1, ((0.0, 1.0),)
+    )
+    controller._global_result = (
+        "reloc",
+        MatchResult((3.0, 3.0, 0.0), 100, peers=0),
+        np.zeros((100, 2)),
+        scan,
+        controller.pose,
+    )
+    before = controller.pose
+    controller._poll_global(2000)
+    assert controller.pose == before, "걷기 전 스캔의 답을 지금 자세로 올리지 않는다"
+
+
+def test_trust_expires_after_a_long_loss() -> None:
+    controller = build(trust_expiry_ms=5000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    controller._pose_verified = True
+    controller.pose_seeded = True
+    controller._expire_trust(5000)
+    assert controller._pose_verified is True
+    controller._expire_trust(7000)
+    assert controller._pose_verified is False and controller.pose_seeded is False
+
+
+def test_verify_needs_matching_heading_to_confirm() -> None:
+    """같은 자리 반대 방향은 확인이 아니다 — XY 만 보던 감사가 반대 방향을 통과시켰다."""
+    from host.slam.scan_match import MatchResult
+
+    controller = build(reloc_votes=3, min_match_frac=0.0)
+    controller.pose = (1.0, 1.0, 0.0)
+    flipped = MatchResult((1.05, 1.0, math.pi), 100, peers=0)
+    controller._apply_verify_result(flipped, np.zeros((100, 2)), 5000, controller.pose)
+    assert controller._pose_verified is False
+
+
+def test_votes_must_agree_with_every_earlier_vote() -> None:
+    """0, 0.29, 0.58m 처럼 한 칸씩 미끄러지는 답은 한 무리가 아니다."""
+    controller = build(reloc_votes=3)
+    for x in (0.0, 0.29):
+        controller._moved_since_vote = True
+        controller._vote_global((x, 0.0, 0.0), peers=0)
+    controller._moved_since_vote = True
+    assert controller._vote_global((0.58, 0.0, 0.0), peers=0) is False
+    assert len(controller._global_votes) == 1
+
+
+def test_verify_result_against_pose_at_request_time() -> None:
+    """감사는 요청 때 스캔으로 했다 — 그 사이 자세가 옮겨졌으면 결과를 적용하지 않는다."""
+    from host.slam.scan_match import MatchResult
+
+    controller = build(reloc_votes=1, min_match_frac=0.0)
+    controller.pose = (2.0, 2.0, 0.0)
+    asked = (1.0, 1.0, 0.0)
+    far = MatchResult((3.0, 3.0, 0.0), 100, peers=0)
+    points = np.zeros((100, 2))
+    assert controller._apply_verify_result(far, points, 5000, asked) is False
+    assert controller.pose == (2.0, 2.0, 0.0), "낡은 감사로 자세를 옮기지 않는다"
