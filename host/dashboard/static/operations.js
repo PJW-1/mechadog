@@ -293,6 +293,7 @@ export class Operations {
   const link=this.slots[event.slot].link;
   return this.requestDevice('구역 '+event.zoneId+' 기준 재등록',()=>link.zoneBaseline(event.zoneId),event.slot);
  }
+ requestGoto(x,y){if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('좌표가 숫자가 아닙니다.');return this.requestDevice('지도 이동 ('+x.toFixed(2)+', '+y.toFixed(2)+')',()=>this.link.goto(x,y))}
  requestLocate(zone){return this.requestDevice('위치 알려주기 · 구역 '+zone,()=>this.link.locate(zone))}
  get patrolZones(){const zones=this.policy?.patrol_zones;return Array.isArray(zones)?zones.filter(z=>typeof z==='string'&&/^[A-Za-z0-9_-]{1,16}$/.test(z)):[]}
  requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}

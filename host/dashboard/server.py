@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import socket
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
@@ -360,6 +361,11 @@ class _DriveBody(BaseModel):
     angle: Annotated[float, BeforeValidator(_as_float)]
 
 
+class _GotoBody(BaseModel):
+    x: Annotated[float, BeforeValidator(_as_float)]
+    y: Annotated[float, BeforeValidator(_as_float)]
+
+
 class _PoseBody(BaseModel):
     preset: StrictStr
 
@@ -471,6 +477,17 @@ def _command_routes(commands: CommandService) -> APIRouter:
         body = await _read_body(request, _ZoneBody)
         return commands.zone_baseline(body.zone).as_dict()
 
+    @router.post("/goto", response_model=None)
+    async def goto(request: Request) -> dict[str, object]:
+        """`{"x": 1.2, "y": -0.4}` (순찰 좌표 m) — 지도에서 찍은 곳으로 간다.
+
+        예약만 한다. 경로 유무·자기 위치 확인은 다음 틱에 판정되어 `/api/nav` 에 실린다.
+        """
+        body = await _read_body(request, _GotoBody)
+        if not (math.isfinite(body.x) and math.isfinite(body.y)):
+            return JSONResponse({"error": "x"}, status_code=400)
+        return commands.goto(body.x, body.y).as_dict()
+
     @router.post("/locate", response_model=None)
     async def locate(request: Request) -> dict[str, object]:
         """`{"zone": "C"}` — 사람이 로봇이 지금 있는 구역을 알려준다. 그 구역 안에서만 위치를 다시 찾는다.
@@ -550,6 +567,8 @@ def create_app(
     event_snapshot: Callable[[str], bytes | None] | None = None,
     policy: dict[str, Any] | None = None,
     broadcast: Broadcaster | None = None,
+    map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
+    nav_status: Callable[[], dict[str, Any]] | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -598,6 +617,27 @@ def create_app(
     @app.get("/api/telemetry", response_model=None)
     async def telemetry() -> dict[str, Any]:
         return state.snapshot()
+
+    @app.get("/api/map/meta", response_model=None)
+    async def map_meta() -> dict[str, Any] | JSONResponse:
+        """실제 집 지도의 크기·좌표 변환 행렬·구역. LiDAR 측위 순찰이 아니면 404."""
+        if map_view is None:
+            return JSONResponse({"error": "no_map"}, status_code=404)
+        return (await asyncio.to_thread(map_view))[1]
+
+    @app.get("/api/map.png", response_model=None)
+    async def map_png() -> Response:
+        if map_view is None:
+            return JSONResponse({"error": "no_map"}, status_code=404)
+        png, _meta = await asyncio.to_thread(map_view)
+        return Response(png, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/nav", response_model=None)
+    async def nav() -> dict[str, Any] | JSONResponse:
+        """로봇의 자기 위치·신뢰·목표·구역 (순찰 좌표). 화면이 주기적으로 묻는다."""
+        if nav_status is None:
+            return JSONResponse({"error": "no_nav"}, status_code=404)
+        return nav_status()
 
     @app.get("/api/policy", response_model=None)
     async def policy_values() -> dict[str, Any] | JSONResponse:
@@ -761,6 +801,8 @@ def running_server(
     event_snapshot: Callable[[str], bytes | None] | None = None,
     policy: dict[str, Any] | None = None,
     broadcast: Broadcaster | None = None,
+    map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
+    nav_status: Callable[[], dict[str, Any]] | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     app = create_app(
@@ -772,6 +814,8 @@ def running_server(
         event_snapshot=event_snapshot,
         policy=policy,
         broadcast=broadcast,
+        map_view=map_view,
+        nav_status=nav_status,
     )
     with serving(app, port) as server:
         yield server

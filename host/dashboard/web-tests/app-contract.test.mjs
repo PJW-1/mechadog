@@ -40,7 +40,7 @@ async function boot(hash='dashboard',{health=null,fleet=null,policy=null,search=
  // 음성 중계는 시험에서 연결하지 않는다 — 링크가 없을 때의 패널만 검증한다.
  class VoiceStub{status(){return Promise.resolve({})}transcript(){return Promise.resolve([])}mode(){return Promise.resolve({})}phrases(){return Promise.resolve([])}}
  const resolveVoiceBase=async()=>null;
- await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed,EventFeed,TelemetryFeed,describeTelemetry){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed,EventStub,TelemetryStub,describeTelemetry);
+ await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed,EventFeed,TelemetryFeed,describeTelemetry,LiveMap){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed,EventStub,TelemetryStub,describeTelemetry,class{constructor({document}){this.root=document.createElement('div');this.root.dataset.liveMap=''}});
  return {dom,window,document,store,panels,view,registered,revoked,failures,links,telemetryFeeds,eventFeeds,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},get eventFeed(){return eventFeed},get telemetryFeed(){return telemetryFeed},linkCalls};
 }
 

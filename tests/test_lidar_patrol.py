@@ -1956,3 +1956,58 @@ def test_zone_map_contains_matches_zone_at() -> None:
     assert zone_map.contains("Z", xs, ys).tolist() == [False] * 4
     for x, y, inside in zip(xs, ys, zone_map.contains("B", xs, ys), strict=True):
         assert (zone_map.zone_at(x, y) == "B") == inside
+
+
+# ── 지도에서 찍은 곳으로 이동 (2026-10-04) ──────────────────────
+def _verified_at(pose=(1.0, 1.0, 0.0)):
+    controller = build()
+    controller.observe_map_pose(pose, 1000)
+    controller._pose_verified = True
+    return controller
+
+
+def test_goto_refuses_without_a_trusted_pose() -> None:
+    controller = build()
+    controller._own_localization = True
+    ok, detail = controller.goto(3.0, 2.0)
+    assert ok is False and "자기 위치" in detail
+    assert controller.goal is None
+
+
+def test_goto_refuses_unreachable_or_nonfinite_points() -> None:
+    controller = _verified_at()
+    assert controller.goto(float("nan"), 1.0)[0] is False
+    ok, detail = controller.goto(50.0, 50.0)
+    assert ok is False and "길이 없다" in detail
+    assert controller.goal is None
+
+
+def test_goto_plans_to_the_point_before_zones_and_holds_on_arrival() -> None:
+    from host.behavior.patrol import GOAL_LABEL
+
+    controller = _verified_at()
+    controller.phase = Phase.PLANNING
+    ok, _detail = controller.goto(3.0, 2.5)
+    assert ok is True and controller.goal == (3.0, 2.5)
+    controller._advance()
+    assert controller.plan.label == GOAL_LABEL and controller.plan.reachable
+    assert controller.phase is Phase.MOVING
+    controller.observe_map_pose((3.0, 2.45, 0.0), 2000)  # 도착
+    controller._advance()
+    assert controller.holding_goal is True and controller.goal is None
+    assert controller.visited == frozenset(), "찍은 곳은 구역 방문이 아니다"
+    controller._advance()
+    assert controller.plan.label is None, "도착 뒤엔 구역으로 새지 않고 선다"
+    controller.cancel_goal("patrol_restart")
+    controller._advance()
+    assert controller.plan.label in {"A", "B", "C"}, "순찰을 다시 시작하면 구역 순찰로"
+
+
+def test_goto_that_becomes_blocked_holds_instead_of_wandering() -> None:
+    controller = _verified_at()
+    controller.goto(3.0, 2.5)
+    controller._goal = (50.0, 50.0)  # 가는 도중 길이 사라졌다
+    controller.plan = __import__("host.behavior.planner", fromlist=["Plan"]).Plan("GOAL")
+    controller.phase = Phase.PLANNING
+    controller._advance()
+    assert controller.holding_goal is True and controller.goal is None

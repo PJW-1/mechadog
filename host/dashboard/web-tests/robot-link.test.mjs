@@ -314,3 +314,11 @@ test('locate sends the zone to its own endpoint', async () => {
   assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/locate');
   assert.deepEqual(fetchImpl.calls[0].body, { zone: 'C' });
 });
+
+test('goto sends patrol coordinates to its own endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.goto(1.25, -0.5);
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/goto');
+  assert.deepEqual(fetchImpl.calls[0].body, { x: 1.25, y: -0.5 });
+});

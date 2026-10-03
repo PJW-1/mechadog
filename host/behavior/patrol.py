@@ -66,6 +66,10 @@ from host.slam.settings import (
 LOG = event_logger("mechadog.behavior.patrol")
 
 
+#: 지도에서 사람이 찍은 목표의 계획 라벨 — 구역 id 와 겹치지 않는다(구역 id 는 설정의 짧은 기호).
+GOAL_LABEL = "GOAL"
+
+
 class Phase(StrEnum):
     """순찰 내부 단계. 규약의 상태가 아니며 `FSM_STATE_FOR` 로 사상해 내려보낸다."""
 
@@ -431,6 +435,10 @@ class PatrolController:
     _global_req_allowed: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
     #: 사람이 알려준 구역과 그 시각 — 그 구역 안에서만 전역 재측위한다.
     _zone_hint: tuple[str, int] | None = None
+    #: 지도에서 찍은 목표 (순찰 좌표 m). 있으면 구역 순찰보다 먼저 그리로 간다.
+    _goal: tuple[float, float] | None = None
+    #: 찍은 곳에 도착(또는 못 가게 됨) — 사람이 순찰을 다시 시작할 때까지 그 자리에 선다.
+    _goal_hold: bool = False
     _global_prior_result: MatchResult | None = None
     #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
     _result_imu: float | None = None
@@ -913,6 +921,69 @@ class PatrolController:
             self._global_req_allowed = allowed
             self._global_cv.notify()
         return True
+
+    @property
+    def goal(self) -> tuple[float, float] | None:
+        return self._goal
+
+    @property
+    def holding_goal(self) -> bool:
+        return self._goal_hold
+
+    def goto(self, x: float, y: float) -> tuple[bool, str]:
+        """지도에서 찍은 곳으로 간다. **루프 스레드에서만** 부른다.
+
+        자기 위치를 보증받지 못했으면(전역 확인도 사람 시드도 없음) 거절한다 — 모르는 자리에서
+        찍은 곳으로 가는 경로는 근거가 없다. 지금 자리에서 경로가 없으면 그 이유로 거절한다.
+        도착하면 그 자리에 서서 기다리고, 순찰을 다시 시작하면 구역 순찰로 돌아간다.
+        """
+        if not (math.isfinite(x) and math.isfinite(y)):
+            return False, "좌표가 숫자가 아니다"
+        if self._own_localization and not (self._pose_verified or self.pose_seeded):
+            return False, "로봇이 아직 자기 위치를 확인하지 못했다 — 위치를 먼저 잡아야 한다"
+        trial = plan_to(
+            GOAL_LABEL,
+            (float(x), float(y)),
+            (self.pose[0], self.pose[1]),
+            self.grid,
+            self.blocked,
+            self.plan_params,
+            body_blocked=self.body_blocked,
+        )
+        if not trial.reachable:
+            return False, f"지금 자리에서 그곳으로 가는 길이 없다 ({trial.fail_reason})"
+        self._goal = (float(x), float(y))
+        self._goal_hold = False
+        self.plan = Plan(GOAL_LABEL)
+        self.waypoint_index = 0
+        self.phase = Phase.PLANNING
+        moved = trial.goal_moved_m
+        LOG.info(
+            "goal_set",
+            x=round(x, 2),
+            y=round(y, 2),
+            path_m=round(trial.length_m, 2),
+            goal_moved_m=round(moved, 2),
+        )
+        note = f" (막힌 자리라 {moved:.2f} m 옆 빈 곳으로)" if moved > 0.01 else ""
+        return True, f"찍은 곳으로 간다 — 경로 {trial.length_m:.1f} m{note}"
+
+    def cancel_goal(self, reason: str) -> None:
+        """찍은 목표를 버리고 구역 순찰로 돌아갈 수 있게 한다 (순찰 정지·재시작)."""
+        if self._goal is None and not self._goal_hold:
+            return
+        LOG.info("goal_cleared", reason=reason)
+        self._goal = None
+        self._goal_hold = False
+        if self.plan.label == GOAL_LABEL:
+            self.plan = Plan(None)
+        self.phase = Phase.PLANNING
+
+    def _target_xy(self, label: str) -> tuple[float, float]:
+        if label == GOAL_LABEL:
+            assert self._goal is not None
+            return self._goal
+        return self.zones.xy(label)
 
     def locate_zone_ids(self) -> tuple[str, ...]:
         """사람이 «여기» 라고 알려줄 수 있는 구역 — 좌표가 붙은 순찰 구역."""
@@ -1721,6 +1792,10 @@ class PatrolController:
                 LOG.warning("pose_unverified_hold", frac=round(self._match_frac, 3))
             return
         self._edge.changed("pose_unverified_hold", False)
+        if self._goal_hold:
+            # 찍은 곳에 섰다 — 사람이 순찰을 다시 시작할 때까지 기다린다.
+            self.commander.halt()
+            return
 
         if self.phase is Phase.INSPECT:
             # 도착하면 즉시 다음 구역으로 — 카메라 판독(FR-8)은 `change_detect` 소관이다.
@@ -1739,6 +1814,26 @@ class PatrolController:
         # 새 경로는 새 방위 오차에서 시작한다 — 지난 경로의 회전을 이어 가지 않는다.
         self._spinning = False
         start = (self.pose[0], self.pose[1])
+        if self._goal is not None:
+            plan = plan_to(
+                GOAL_LABEL,
+                self._goal,
+                start,
+                self.grid,
+                self.blocked,
+                self.plan_params,
+                body_blocked=self.body_blocked,
+            )
+            self.waypoint_index = 0
+            if plan.reachable:
+                self.plan = plan
+                return
+            # 가는 도중 길이 막혔다 — 다른 구역으로 새지 않고 그 자리에 선다(사람이 판단).
+            LOG.warning("goal_unreachable", reason=plan.fail_reason)
+            self._goal = None
+            self._goal_hold = True
+            self.plan = Plan(None)
+            return
         candidates = {label: self.zones.xy(label) for label in self.zones.labels}
 
         # 목표가 이미 정해져 있으면 경로만 다시 푼다 (재계획).
@@ -1845,7 +1940,7 @@ class PatrolController:
 
     def _follow(self) -> None:
         assert self.plan.label is not None
-        anchor = self.zones.xy(self.plan.label)
+        anchor = self._target_xy(self.plan.label)
         # 스냅된 목표(plan.effective)에 도착해도 «구역에 갔다» 로 인정한다 — 앵커가
         # 가구 다리·팽창 안에 묻혔으면 그 자리엔 영원히 못 선다. 둘 중 가까운 곳이
         # 도착 반경 안이면 도착이다.
@@ -1931,6 +2026,14 @@ class PatrolController:
     def _arrive(self, label: str) -> None:
         self.commander.halt()
         self._spinning = False
+        if label == GOAL_LABEL:
+            # 찍은 곳 — 구역 방문·점검이 아니다. 서서 기다린다.
+            LOG.info("goal_reached", x=round(self.pose[0], 2), y=round(self.pose[1], 2))
+            self._goal = None
+            self._goal_hold = True
+            self.plan = Plan(None)
+            self.phase = Phase.PLANNING
+            return
         self.phase = Phase.INSPECT
         self.visited = self.visited | {label}
         self.stats.zones_visited += 1

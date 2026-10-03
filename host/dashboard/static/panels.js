@@ -1,6 +1,7 @@
 import {EVENT_CATEGORIES,REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
 import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
+import {LiveMap} from './live-map.js';
 
 const VOICE_ROLES={user:'현장 발화',robot:'로봇 응답',admin:'경고 방송',system:'시스템',robot_evt:'로봇 사건'};
 const TITLES={missions:'제어 · 장치',events:'사건 검토',records:'운영 기록',zones:'공간 · 구역',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
@@ -568,7 +569,17 @@ export class OperationalPanels {
    this.el('div',{class:'op-toolbar'},this.previewButton('결과 JSON'),this.previewButton('결과 CSV')),
    this.note('저장된 영상이 없으므로 재생 버튼은 제공하지 않습니다. 위쪽 내보내기는 현재 브라우저의 예시·가져온 기록에만 해당합니다.')));
  }
+ confirmGoto(x,y,where=''){
+  return this.confirmDevice({icon:'route',title:'로봇을 이 곳으로 보낼까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m)까지 경로를 찾아 걸어갑니다. 순찰 중이 아니면 순찰이 함께 시작됩니다. 경로에 사람·물건이 없는지 먼저 확인하세요. 도착하면 그 자리에 서고, «실제 순찰 시작»을 누르면 구역 순찰로 돌아갑니다.',confirm:'예, 보냅니다',action:async()=>{const result=await this.store.requestGoto(x,y);this.onToast(result?.detail||'이동을 요청했어요.')}});
+ }
+ liveMapSection(){
+  // 실제 집 지도 — 서버에 연결됐을 때만. 한 번 만든 지도를 다시 붙인다(재렌더마다 새로 받지 않게).
+  if(!this.store.live||!this.store.link)return null;
+  this.liveMap??=new LiveMap({document:this.document,getLink:()=>this.store.live?this.store.link:null,onPick:(x,y,where)=>this.confirmGoto(x,y,where)});
+  return this.section('실제 집 지도',this.liveMap.root,this.note('로봇 표시(삼각형)는 로봇이 스스로 추정한 위치입니다. 지도를 누르면 그곳으로 보냅니다(확인 창). 위치를 못 믿는 동안(회색)에는 로봇이 이동을 거절합니다 — «제어 · 장치»의 «위치 알려주기»로 구역을 알려 주세요.'));
+ }
  zonePage(){
+  const live=this.liveMapSection();if(live)this.container.append(live);
   this.container.append(this.note('현재 공장은 신규 제작한 48 × 32m 예시 공간입니다. 실측 지도·SLAM·실제 로봇 좌표가 아닙니다.'));
   const nav=this.el('div',{class:'op-zone-list'});
   for(const zone of this.zones)nav.append(this.button([this.el('span',{},zone.label),this.el('small',{},zone.id)],()=>{this.zoneId=zone.id;this.render('zones')},{class:'op-zone-row'+(this.zoneId===zone.id?' selected':''),'aria-pressed':this.zoneId===zone.id}));

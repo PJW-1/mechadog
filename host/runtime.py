@@ -62,7 +62,7 @@ from host.common.logging_setup import (
     setup_logging,
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
-from host.common.units import deg_to_rad
+from host.common.units import deg_to_rad, rad_to_deg
 from host.dashboard.state import DashboardState
 from host.report.situation import describe
 from host.slam.occupancy import OccupancyGrid
@@ -244,6 +244,11 @@ class Runtime:
         #: 대시보드가 알려준 «지금 이 구역» — 서버 스레드가 넣고 루프가 꺼낸다.
         self._locate_lock = threading.Lock()
         self._locate_asked: str | None = None
+        #: 지도에서 찍은 목표 — 서버 스레드가 넣고 루프가 꺼낸다. 결과는 피드백으로.
+        self._goto_asked: tuple[float, float] | None = None
+        self._goal_feedback: dict[str, Any] | None = None
+        #: 사람이 순찰을 멈췄다(PATROL → IDLE) — 찍은 목표를 버린다 (루프에서).
+        self._goal_cancel_asked = False
         #: ROS2 컨테이너로 가는 ODOM (`--lidar-device`, 보행 실측이 있는 기체만). 없으면 보내지 않는다.
         self._odom = odom
         #: 대시보드로 가는 측위 포즈 — 지도 폴더의 `pose_frame.json` 이 있을 때만
@@ -268,6 +273,7 @@ class Runtime:
             # ⚠️ **훅에서 바로 풀지 않는다.** 전이는 대시보드 스레드(`apply_external`)에서도
             # 일어나고, 그때 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
             self._behavior.fsm.on_enter("PATROL", self._mark_navigator_resume)
+            self._behavior.fsm.on_exit("PATROL", self._mark_goal_cancel)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
@@ -782,6 +788,11 @@ class Runtime:
             self._navigator.steer(now_ms)
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
+
+    def _mark_goal_cancel(self, _previous: str, target: str) -> None:
+        """`PATROL` 이탈 훅. 사람이 멈춘 경우(`IDLE`)만 — 경보·추적으로 잠시 나간 것은 아니다."""
+        if target == "IDLE":
+            self._goal_cancel_asked = True
 
     def _mark_navigator_resume(self, _previous: str, _target: str) -> None:
         """`PATROL` 진입 훅. 표시만 한다 — 길 찾기 상태는 루프 스레드만 바꾼다."""
@@ -1446,6 +1457,47 @@ class Runtime:
         """
         return self._zone_inspector.ask_baseline_reset(zone)
 
+    def ask_goto(self, x: float, y: float) -> tuple[bool, str]:
+        """지도에서 찍은 곳(순찰 좌표)을 예약한다. **다른 스레드에서 부른다.**"""
+        navigator = self._navigator
+        if navigator is None or not hasattr(navigator, "goto"):
+            return False, "LiDAR 측위 순찰이 아니라 지도 이동을 할 수 없다"
+        with self._locate_lock:
+            self._goto_asked = (float(x), float(y))
+            self._goal_feedback = None
+        return True, "찍은 곳으로 갈 수 있는지 확인한다 — 결과는 지도에 표시된다"
+
+    def nav_status(self) -> dict[str, Any]:
+        """관제 지도가 그릴 자기 위치·신뢰·목표. **다른 스레드에서 부른다** — 읽기만 한다."""
+        navigator = self._navigator
+        if navigator is None:
+            return {"available": False}
+        x, y, yaw = navigator.pose
+        now_ms = self._clock()
+        goal = getattr(navigator, "goal", None)
+        hint = getattr(navigator, "_zone_hint", None)
+        return {
+            "available": True,
+            "frame": "patrol",
+            "pose": [round(x, 3), round(y, 3), round(rad_to_deg(yaw), 1)],
+            "stale": bool(navigator.pose_stale(now_ms)),
+            "verified": bool(getattr(navigator, "pose_verified", False)),
+            "seeded": bool(getattr(navigator, "pose_seeded", False)),
+            "phase": str(getattr(navigator, "phase", "")),
+            "target": getattr(navigator, "target", None),
+            "zone": getattr(navigator, "current_zone", None),
+            "goal": None if goal is None else [round(goal[0], 3), round(goal[1], 3)],
+            "holding_goal": bool(getattr(navigator, "holding_goal", False)),
+            "zone_hint": None if hint is None else hint[0],
+            "match_frac": round(float(getattr(navigator, "match_frac", 0.0)), 3),
+            "path": [
+                [round(px, 3), round(py, 3)]
+                for px, py in getattr(getattr(navigator, "plan", None), "waypoints", ())
+            ],
+            "goal_feedback": self._goal_feedback,
+            "fsm": self._behavior.state,
+        }
+
     def ask_locate_zone(self, zone: str) -> tuple[bool, str]:
         """사람이 알려준 «지금 이 구역» 을 예약한다. **다른 스레드에서 부른다.**
 
@@ -1522,6 +1574,34 @@ class Runtime:
             zone, self._locate_asked = self._locate_asked, None
         if zone is not None and self._navigator is not None:
             self._navigator.hint_zone(zone, now_ms)
+        with self._locate_lock:
+            goto, self._goto_asked = self._goto_asked, None
+        navigator = self._navigator
+        if self._goal_cancel_asked:
+            self._goal_cancel_asked = False
+            if navigator is not None and hasattr(navigator, "cancel_goal"):
+                navigator.cancel_goal("patrol_stopped")
+        if goto is not None and navigator is not None:
+            accepted, detail = navigator.goto(*goto)
+            self._goal_feedback = {
+                "accepted": accepted,
+                "detail": detail,
+                "goal": [round(goto[0], 3), round(goto[1], 3)],
+                "at_ms": now_ms,
+            }
+            LOG.info("goto_requested", accepted=accepted, detail=detail)
+            if accepted and self._behavior.state != "PATROL":
+                # 순찰 중이 아니면 순찰을 시작해야 길 찾기가 돈다 — 같은 예약 경로(리셋 정착 대기 포함).
+                self.ask_patrol()
+        if (
+            self._patrol_asked
+            and navigator is not None
+            and getattr(navigator, "holding_goal", False)
+            and self._behavior.state == "PATROL"
+        ):
+            # 찍은 곳에 서 있다가 «순찰 시작» — 구역 순찰로 돌아간다.
+            self._patrol_asked = False
+            navigator.cancel_goal("patrol_restart")
         self._zone_inspector.reset_baselines()
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
@@ -1946,6 +2026,7 @@ def dashboard_wiring(
         confirm_alarm=runtime.ask_alarm_confirm,
         reset_zone_baseline=runtime.ask_zone_baseline_reset,
         locate_zone=runtime.ask_locate_zone,
+        goto_point=getattr(runtime, "ask_goto", None),
         pose=(
             float(config["posture"]["pitch_up_deg"]),
             int(config["posture"]["settle_ms"]),
@@ -1964,7 +2045,34 @@ def dashboard_wiring(
         # PC 스피커 방송 음량·무음 조절. 없으면(piper 없음 등) None —
         # 화면은 "방송 없음" 을 보여 준다.
         "broadcast": broadcaster,
+        # 실제 집 지도·자기 위치 (LiDAR 측위 순찰일 때만).
+        "map_view": _map_view(runtime),
+        "nav_status": runtime.nav_status if _has_navigator(runtime) else None,
     }
+
+
+def _has_navigator(runtime: Any) -> bool:
+    return getattr(runtime, "_navigator", None) is not None and hasattr(runtime, "nav_status")
+
+
+def _map_view(runtime: Any) -> Callable[[], tuple[bytes, dict[str, Any]]] | None:
+    """항법 지도·구역을 관제 웹에 그릴 함수. 처음 부를 때 한 번 그린다."""
+    if not _has_navigator(runtime):
+        return None
+    from host.dashboard.live_map import MapView, PoseFrame, render
+
+    navigator = runtime._navigator
+    view = MapView(
+        lambda: render(
+            navigator.grid,
+            zones=navigator.zones,
+            zone_map=navigator.zone_map,
+            frame=PoseFrame.load(navigator.maps_dir),
+            occ_thresh=navigator.plan_params.occ_thresh,
+            free_thresh=navigator.plan_params.free_thresh,
+        )
+    )
+    return view.get
 
 
 def _publish_event(dashboard: DashboardState) -> Callable[[BlackboxEntry], None]:

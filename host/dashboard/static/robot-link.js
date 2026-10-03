@@ -139,6 +139,11 @@ export class RobotLink {
   }
 
   /** 위치 알려주기 — «로봇은 지금 이 구역 안» . 서버가 그 구역 안에서만 위치를 다시 찾는다(찾을 때까지 정지). */
+  /** 지도에서 찍은 곳(순찰 좌표 m)으로 — 서버가 다음 틱에 경로를 푼다. 결과는 /api/nav 의 goal_feedback. */
+  goto(x, y) {
+    return this.post('/api/command/goto', { x, y });
+  }
+
   locate(zone) {
     return this.post('/api/command/locate', { zone });
   }

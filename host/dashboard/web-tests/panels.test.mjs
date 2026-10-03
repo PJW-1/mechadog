@@ -332,3 +332,10 @@ test('locate buttons list patrol zones from the server and ask before sending',a
  await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(calls,['C']);assert.match(messages.at(-1),/구역 C 안에서 위치를 다시 찾는다/);
 });
+test('zone page shows the live house map only when connected to the server',()=>{
+ const {document,panels,store}=setup();
+ panels.render('zones');assert.equal(document.querySelector('[data-live-map]'),null,'예시 모드에서는 실제 지도를 지어내지 않는다');
+ store.link={baseUrl:'',get:async()=>({})};store.setDemo(false);panels.render('zones');
+ const first=document.querySelector('[data-live-map]');assert.ok(first);
+ panels.render('zones');assert.equal(document.querySelector('[data-live-map]'),first,'재렌더해도 같은 지도를 다시 붙인다');
+});

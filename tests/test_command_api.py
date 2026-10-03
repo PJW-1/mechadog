@@ -1239,3 +1239,93 @@ def test_policy_lists_patrol_zones(cfg):
     from host.runtime import policy_view
 
     assert policy_view(cfg)["patrol_zones"] == [str(z) for z in cfg["zones"]["ids"]]
+
+
+# ── 지도에서 찍은 곳으로 이동 · 자기 위치 (2026-10-04) ─────────────
+
+
+class _GotoNavigator(_FakeNavigator):
+    pose = (1.0, 2.0, 0.0)
+    pose_verified = True
+    pose_seeded = False
+    phase = "PLANNING"
+    target = None
+    current_zone = "B"
+    goal = None
+    holding_goal = False
+    match_frac = 0.8
+    plan = None
+
+    def __init__(self, accept=True):
+        super().__init__()
+        self.gotos = []
+        self.cancels = []
+        self.accept = accept
+
+    def pose_stale(self, _now):
+        return False
+
+    def goto(self, x, y):
+        self.gotos.append((x, y))
+        return self.accept, "찍은 곳으로 간다" if self.accept else "길이 없다"
+
+    def cancel_goal(self, reason):
+        self.cancels.append(reason)
+
+
+def test_goto_is_planned_on_the_next_tick_and_starts_patrol(cfg, clock, tmp_path):
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].goto(1.5, -0.5)
+    assert result.accepted is True and result.command == "goto"
+    assert navigator.gotos == [], "서버 스레드는 예약만 한다"
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.gotos == [(1.5, -0.5)]
+    assert runtime._patrol_asked or runtime._behavior.state == "PATROL", (
+        "순찰 중이 아니면 순찰 시작을 함께 예약한다"
+    )
+    status = runtime.nav_status()
+    assert status["goal_feedback"]["accepted"] is True
+    assert status["pose"] == [1.0, 2.0, 0.0] and status["zone"] == "B"
+
+
+def test_goto_refusal_is_reported_without_starting_patrol(cfg, clock, tmp_path):
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    runtime._navigator = _GotoNavigator(accept=False)
+    wiring["commands"].goto(9.0, 9.0)
+    runtime._drain_confirmations(clock.advance(100))
+    assert runtime._patrol_asked is False
+    assert runtime.nav_status()["goal_feedback"]["accepted"] is False
+
+
+def test_stopping_patrol_cancels_the_goal(cfg, clock, tmp_path):
+    runtime, _wiring = _zone_wired(cfg, clock, tmp_path)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._mark_goal_cancel("PATROL", "ALERT")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == [], "경보로 잠시 나간 것은 취소가 아니다"
+    runtime._mark_goal_cancel("PATROL", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == ["patrol_stopped"]
+
+
+def test_goto_endpoint_validates_coordinates(cfg, clock, tmp_path):
+    from host.dashboard.server import create_app
+
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    runtime._navigator = _GotoNavigator()
+    app = create_app(_state(), wiring["commands"], nav_status=runtime.nav_status)
+    with TestClient(app) as http:
+        assert http.post("/api/command/goto", json={"x": 1.0, "y": "2.5"}).json()["accepted"]
+        assert http.post("/api/command/goto", json={"x": "nan", "y": 0}).status_code == 400
+        assert http.post("/api/command/goto", json={"x": 1.0}).status_code == 400
+        assert http.get("/api/nav").json()["available"] is True
+        assert http.get("/api/map/meta").status_code == 404, "지도가 없으면 지어내지 않는다"
+
+
+def test_goto_refused_without_navigator(cfg, clock, tmp_path):
+    _runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    assert wiring["commands"].goto(1.0, 1.0).accepted is False
+    assert wiring["map_view"] is None and wiring["nav_status"] is None
