@@ -308,6 +308,10 @@ class PatrolController:
     reloc_restore_radius_m: float = 0.3
     reloc_restore_yaw_rad: float = math.radians(5.0)
     reloc_restore_score_ratio: float = 0.95
+    #: 상실 동안 pitch·roll 이 기준보다 이만큼 넘게 바뀌면 «들어 올렸다» 로 보고 기준을 버린다.
+    #: 같은 방위로 들어 옮기면 IMU yaw 로는 모르고, 대칭 구조에선 점수 비율도 통과한다
+    #: (Codex 검토 E2 P1) — 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
+    reloc_restore_tilt_rad: float = math.radians(8.0)
     #: 워커는 실시간으로 실행된다. 가속된 시뮬레이션의 루프 시계와 섞지 않는다.
     wall_clock_ms: Callable[[], int] = field(default=lambda: time.monotonic_ns() // 1_000_000)
     #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
@@ -409,8 +413,13 @@ class PatrolController:
     _trust_expired: bool = False
     #: 마지막 `observe_map_pose` 때의 신선한 IMU yaw (없으면 None) — 복원 기준의 방위.
     _last_pose_imu: float | None = None
+    #: 마지막 `observe_map_pose` 때의 이동 명령 수·몸체 기울기(pitch, roll rad) — 복원 기준의 시점.
+    _last_pose_moves: int = 0
+    _last_pose_tilt: tuple[float, float] | None = None
+    #: 가장 최근 텔레메트리의 (pitch, roll) rad.
+    _tilt: tuple[float, float] | None = None
     #: 신뢰 복원 기준 — (확인된 마지막 자세, 그때 IMU yaw, 그 시각, 그때 이동 명령 수).
-    _restore_anchor: tuple[Pose, float, int, int] | None = None
+    _restore_anchor: tuple[Pose, float, int, int, tuple[float, float] | None] | None = None
     _restore_votes: list[Pose] = field(default_factory=list)
     #: 워커에 넘긴 복원 기준 자세와 워커가 낸 창 안 정합 결과 (`_global_cv` 로 보호).
     _global_req_prior: Pose | None = None
@@ -550,6 +559,19 @@ class PatrolController:
             last_cmd_age_ms=getattr(reading, "last_cmd_age_ms", None),
             last_seen_ms=now_ms,
         )
+        pitch, roll = getattr(reading, "pitch", None), getattr(reading, "roll", None)
+        if isinstance(pitch, int | float) and isinstance(roll, int | float):
+            self._tilt = (deg_to_rad(float(pitch)), deg_to_rad(float(roll)))
+            anchor = self._restore_anchor
+            if (
+                anchor is not None
+                and anchor[4] is not None
+                and (
+                    abs(self._tilt[0] - anchor[4][0]) > self.reloc_restore_tilt_rad
+                    or abs(self._tilt[1] - anchor[4][1]) > self.reloc_restore_tilt_rad
+                )
+            ):
+                self._drop_restore_anchor("lifted")
         if self.safety.obstacle_active or self.safety.latched:
             self._note_stopped(now_ms)
         age = self.safety.last_cmd_age_ms
@@ -574,6 +596,8 @@ class PatrolController:
         # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (Codex 검토 2 P1).
         self._imu_anchor = self.safety.yaw_rad if self._imu_is_fresh(now_ms) else None
         self._last_pose_imu = self._imu_anchor
+        self._last_pose_moves = self._move_seq
+        self._last_pose_tilt = self._tilt
         self._trust_expired = False
         zone = self.current_zone
         if zone != self._last_zone:
@@ -757,13 +781,20 @@ class PatrolController:
             return
         self._trust_expired = True
         self._loc_epoch += 1
-        if self.reloc_restore_enabled and self._pose_verified and self._last_pose_imu is not None:
+        if (
+            self.reloc_restore_enabled
+            and self._pose_verified
+            and self._last_pose_imu is not None
+            and self._last_pose_tilt is not None
+        ):
             # 사람 시드는 기준으로 쓰지 않는다 — 전역 확인된 자세만 «제자리» 의 근거다.
+            # 이동 수·기울기는 **자세를 관측한 시점** 것 — 그 뒤 나간 MOVE 는 «이동» 이다.
             self._restore_anchor = (
                 self.pose,
                 self._last_pose_imu,
                 self._last_pose_ms,
-                self._move_seq,
+                self._last_pose_moves,
+                self._last_pose_tilt,
             )
             self._restore_votes.clear()
             LOG.info(
@@ -897,7 +928,7 @@ class PatrolController:
         anchor = self._restore_anchor
         if anchor is None or not self.reloc_restore_enabled:
             return None
-        pose, imu0, since_ms, moves = anchor
+        pose, imu0, since_ms, moves, _tilt0 = anchor
         imu = self.safety.yaw_rad
         if moves != self._move_seq:
             self._drop_restore_anchor("moved")
@@ -920,7 +951,12 @@ class PatrolController:
         now_ms: int,
     ) -> bool:
         """창 안 정합이 전역 최고에 버금가면 한 표. `reloc_votes` 표면 신뢰를 되살린다."""
-        if self._restore_anchor is None or prior_result is None or result is None:
+        if self._restore_anchor is None:
+            return False
+        # 요청 뒤 결과가 오는 사이 IMU 가 돌았거나 끊겼거나 기준이 묵었을 수 있다 — 적용 직전
+        # 다시 본다 (Codex 검토 E2 P1). 실패·결과 없음은 연속 표를 끊는다 (P2).
+        if self._restore_prior(now_ms) is None or prior_result is None or result is None:
+            self._restore_votes.clear()
             return False
         grid = self.match_grid
         row, col = grid.to_cell(prior_result.pose[0], prior_result.pose[1])
@@ -1970,6 +2006,7 @@ def controller_from_config(
         reloc_restore_radius_m=float(lidar.get("reloc_restore_radius_mm", 300)) / 1000.0,
         reloc_restore_yaw_rad=deg_to_rad(float(lidar.get("reloc_restore_yaw_deg", 5))),
         reloc_restore_score_ratio=float(lidar.get("reloc_restore_score_ratio", 0.95)),
+        reloc_restore_tilt_rad=deg_to_rad(float(lidar.get("reloc_restore_tilt_deg", 8))),
         imu_match_params=(
             None
             if float(lidar.get("imu_yaw_window_deg", 0)) <= 0

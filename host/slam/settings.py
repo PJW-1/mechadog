@@ -117,6 +117,7 @@ def validate_section(section: dict[str, Any]) -> None:
         ("reloc_restore_radius_mm", 0, 1000),
         ("reloc_restore_yaw_deg", 0, 30),
         ("reloc_restore_score_ratio", 0, 1),
+        ("reloc_restore_tilt_deg", 0, 45),
     ):
         value = section.get(key)
         if value is None:

@@ -1824,3 +1824,71 @@ def test_restore_real_worker_picks_home_in_a_symmetric_room() -> None:
     assert controller._pose_verified is True
     assert math.hypot(controller.pose[0] - home[0], controller.pose[1] - home[1]) <= 0.06
     assert abs(controller.pose[2] - home[2]) <= math.radians(2)
+
+
+def test_restore_anchor_uses_move_count_at_pose_time() -> None:
+    """마지막 자세 뒤 MOVE 가 나가고 만료됐으면 그 자세는 «제자리» 가 아니다 (Codex E2 P1)."""
+    controller = build(reloc_restore_enabled=True, trust_expiry_ms=5000, imu_fresh_ms=300)
+    controller.observe_telemetry(Reading(yaw=0.0), 1000)
+    controller.observe_map_pose(HOME, 1000)
+    controller._pose_verified = True
+    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 2000)
+    controller._expire_trust(7000)
+    controller.observe_telemetry(Reading(yaw=0.0), 7100)
+    assert controller._restore_prior(7100) is None
+
+
+def test_restore_rechecks_anchor_when_the_result_arrives() -> None:
+    """두 표 뒤 결과 도착 전에 IMU 가 돌았다 — 세 번째 결과로 복원하지 않는다 (Codex E2 P1)."""
+    controller = _lost_after_verified()
+    _restore_round(controller, 7100)
+    _restore_round(controller, 8100)
+    controller._global_inflight = True
+    controller._global_req_context = (
+        None,
+        controller._move_seq,
+        controller._loc_epoch,
+        controller.wall_clock_ms(),
+    )
+    controller._global_result = (
+        "reloc",
+        MatchResult((4.5, 3.5, 2.0), 100, peers=200),
+        POINTS,
+        SCAN,
+        controller.pose,
+    )
+    controller._global_prior_result = MatchResult(HOME, 95)
+    controller.observe_telemetry(Reading(yaw=15.0), 9100)
+    controller._poll_global(9100)
+    assert controller._pose_verified is False
+    assert controller._restore_anchor is None
+
+
+def test_restore_failure_breaks_the_vote_streak() -> None:
+    """성공·성공·결과 없음·성공 은 연속 세 표가 아니다 (Codex E2 P2)."""
+    controller = _lost_after_verified()
+    _restore_round(controller, 7100)
+    _restore_round(controller, 8100)
+    controller._try_restore(None, None, POINTS, SCAN, 8600)
+    assert controller._restore_votes == []
+    _restore_round(controller, 9100)
+    assert controller._pose_verified is False
+
+
+def test_restore_anchor_dropped_when_robot_is_lifted() -> None:
+    """같은 방위로 들어 옮겨도 몸체는 기운다 — pitch·roll 변화로 기준을 버린다."""
+    controller = _lost_after_verified()
+    controller.observe_telemetry(Reading(yaw=0.0, pitch=4.0, roll=-3.0), 7100)
+    assert controller._restore_anchor is not None, "서 있는 동안의 작은 흔들림은 괜찮다"
+    controller.observe_telemetry(Reading(yaw=0.0, pitch=15.0, roll=0.0), 7200)
+    assert controller._restore_anchor is None
+    controller.observe_telemetry(Reading(yaw=0.0), 7300)
+    assert controller._restore_prior(7300) is None, "다시 내려놓아도 기준은 돌아오지 않는다"
+
+
+def test_restore_needs_tilt_at_pose_time() -> None:
+    controller = build(reloc_restore_enabled=True, trust_expiry_ms=5000)
+    controller.observe_map_pose(HOME, 1000)  # 텔레메트리(IMU·기울기) 없이 잡은 자세
+    controller._pose_verified = True
+    controller._expire_trust(7000)
+    assert controller._restore_anchor is None
