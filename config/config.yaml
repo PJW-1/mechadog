@@ -506,6 +506,15 @@ lidar:
   reloc_vote_yaw_deg: 10
   # 표 사이에 로봇이 움직이지 않았으면(같은 장면) 경쟁 후보가 이 수 이하인 유일한 답만 표로 센다.
   reloc_stationary_max_peers: 10
+  # 신뢰 복원 (E2, 2026-10-04) — 확인된 자세로 달리다 상실해 신뢰가 만료된 뒤, 이동 명령이 없고
+  # IMU 방위가 yaw_deg 안이면 그 자세 반경 radius_mm·방위 ±yaw_deg 창에서만 다시 찾는다.
+  # 창 안 최고점이 전역 최고점의 score_ratio 이상이고 reloc_votes 번 연속 같은 답이면 신뢰 복원.
+  # 재생(9세션 232표본): 참 사전 105 수락, 1~2m 옮겨진 거짓 사전 2 수락(1회 판정, 표 전) — 0.95.
+  reloc_restore_enabled: true
+  reloc_restore_max_age_ms: 30000
+  reloc_restore_radius_mm: 300
+  reloc_restore_yaw_deg: 5
+  reloc_restore_score_ratio: 0.95
   # 신선한 IMU 가 있으면 국소 정합의 방위 탐색을 IMU 예측 ± 이 창으로 좁힌다 (0 이면 끔).
   # 우도장 지형에 방위 능선이 생겨 정합만으로는 방위가 흘렀다(정지 중 23°, 걸은 세션 IMU 대비 132°).
   imu_yaw_window_deg: 3

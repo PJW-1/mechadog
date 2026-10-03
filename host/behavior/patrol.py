@@ -298,6 +298,16 @@ class PatrolController:
     #: 전역 탐색 결과가 이보다 늦게 도착하면 버린다 — 그 사이 손으로 옮겨졌거나 돌았을 수
     #: 있는데 MOVE 수만으로는 모른다.
     global_result_max_age_ms: int = 3000
+    #: 신뢰 복원 — 확인된 자세로 달리다 상실한 뒤, **이동 명령 없이(정지)·IMU 방위가 그대로**
+    #: 인 동안 그 자세 반경·방위 창 안에서 다시 잡히면 신뢰를 되살린다. 집 지도는 스캔 하나로
+    #: 구별 안 되는 자리가 많아(재생 거절 대부분이 정당) 전역 탐색만으로는 복구가 막힌다.
+    #: 대신 «제자리에서 다시 맞는가» 만 묻는다 — 창 안 최고점이 전역 최고점의 비율 이상이어야
+    #: 하고(다른 곳이 훨씬 잘 맞으면 거절) `reloc_votes` 번 연속 같은 답이어야 한다.
+    reloc_restore_enabled: bool = False
+    reloc_restore_max_age_ms: int = 30000
+    reloc_restore_radius_m: float = 0.3
+    reloc_restore_yaw_rad: float = math.radians(5.0)
+    reloc_restore_score_ratio: float = 0.95
     #: 워커는 실시간으로 실행된다. 가속된 시뮬레이션의 루프 시계와 섞지 않는다.
     wall_clock_ms: Callable[[], int] = field(default=lambda: time.monotonic_ns() // 1_000_000)
     #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
@@ -397,6 +407,14 @@ class PatrolController:
     _move_seq: int = 0
     #: 신뢰를 잃었다고 기록했는가 (`trust_expiry_ms` 넘은 상실).
     _trust_expired: bool = False
+    #: 마지막 `observe_map_pose` 때의 신선한 IMU yaw (없으면 None) — 복원 기준의 방위.
+    _last_pose_imu: float | None = None
+    #: 신뢰 복원 기준 — (확인된 마지막 자세, 그때 IMU yaw, 그 시각, 그때 이동 명령 수).
+    _restore_anchor: tuple[Pose, float, int, int] | None = None
+    _restore_votes: list[Pose] = field(default_factory=list)
+    #: 워커에 넘긴 복원 기준 자세와 워커가 낸 창 안 정합 결과 (`_global_cv` 로 보호).
+    _global_req_prior: Pose | None = None
+    _global_prior_result: MatchResult | None = None
     #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
     _result_imu: float | None = None
     _global_cv: threading.Condition = field(
@@ -555,6 +573,7 @@ class PatrolController:
         # 앵커는 **신선한** IMU 일 때만 — 끊긴 IMU 의 옛 값을 묶어 두면 재개 때 그사이 회전
         # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (Codex 검토 2 P1).
         self._imu_anchor = self.safety.yaw_rad if self._imu_is_fresh(now_ms) else None
+        self._last_pose_imu = self._imu_anchor
         self._trust_expired = False
         zone = self.current_zone
         if zone != self._last_zone:
@@ -738,6 +757,21 @@ class PatrolController:
             return
         self._trust_expired = True
         self._loc_epoch += 1
+        if self.reloc_restore_enabled and self._pose_verified and self._last_pose_imu is not None:
+            # 사람 시드는 기준으로 쓰지 않는다 — 전역 확인된 자세만 «제자리» 의 근거다.
+            self._restore_anchor = (
+                self.pose,
+                self._last_pose_imu,
+                self._last_pose_ms,
+                self._move_seq,
+            )
+            self._restore_votes.clear()
+            LOG.info(
+                "restore_anchor_set",
+                x=round(self.pose[0], 2),
+                y=round(self.pose[1], 2),
+                yaw_deg=round(rad_to_deg(self.pose[2]), 1),
+            )
         if self._pose_verified or self.pose_seeded:
             LOG.warning(
                 "localization_trust_expired",
@@ -786,7 +820,9 @@ class PatrolController:
                 while self._global_req is None:
                     self._global_cv.wait()
                 kind, points, scan, asked_pose, match_grid = self._global_req
+                prior = self._global_req_prior
                 self._global_req = None
+                self._global_req_prior = None
             try:
                 result = global_match(
                     match_grid,
@@ -802,7 +838,14 @@ class PatrolController:
             except Exception as exc:  # noqa: BLE001 — 결과를 안 두면 inflight 가 영영 안 풀린다
                 LOG.error("global_match_failed", error=f"{type(exc).__name__}: {exc}")
                 result = None
+            prior_result = None
+            if prior is not None and result is not None:
+                try:
+                    prior_result = match(match_grid, points, prior, self._restore_params())
+                except Exception as exc:  # noqa: BLE001 — 복원은 덤이다, 전역 결과는 살린다
+                    LOG.error("restore_match_failed", error=f"{type(exc).__name__}: {exc}")
             with self._global_cv:
+                self._global_prior_result = prior_result
                 self._global_result = (kind, result, points, scan, asked_pose)
 
     def _submit_global(self, kind: str, points: np.ndarray, scan: Scan) -> bool:
@@ -820,16 +863,121 @@ class PatrolController:
             self._loc_epoch,
             self.wall_clock_ms(),
         )
+        prior = self._restore_prior(self._scan_now_ms) if kind == "reloc" else None
         with self._global_cv:
             self._global_req = (kind, points.copy(), scan, self.pose, match_grid)
+            self._global_req_prior = prior
             self._global_cv.notify()
+        return True
+
+    def _restore_params(self) -> MatchParams:
+        return MatchParams(
+            search_lin_m=self.reloc_restore_radius_m,
+            search_lin_step_m=self.match_params.search_lin_step_m,
+            search_ang_rad=self.reloc_restore_yaw_rad,
+            search_ang_step_rad=math.radians(1.0),
+            occ_thresh=self.match_params.occ_thresh,
+            min_known_cells=self.match_params.min_known_cells,
+            sigma_m=self.match_params.sigma_m,
+        )
+
+    def _drop_restore_anchor(self, reason: str) -> None:
+        if self._restore_anchor is not None:
+            LOG.info("restore_anchor_dropped", reason=reason)
+        self._restore_anchor = None
+        self._restore_votes.clear()
+
+    def _restore_prior(self, now_ms: int) -> Pose | None:
+        """복원 창의 중심 — 기준이 아직 유효하면 (기준 자세, IMU 가 본 회전만 반영한 방위).
+
+        상실 뒤 이동 명령이 나갔거나, 오래됐거나, IMU 가 끊겼거나 방위가 창 넘게 바뀌었으면
+        (사람이 들어 돌렸을 수 있다) 기준을 버린다. 들어서 **같은 방위로** 옮긴 경우는 IMU 로
+        모른다 — 그때는 창 안 점수가 전역 최고에 못 미쳐 거절되는 것에 기댄다(재생 실험).
+        """
+        anchor = self._restore_anchor
+        if anchor is None or not self.reloc_restore_enabled:
+            return None
+        pose, imu0, since_ms, moves = anchor
+        imu = self.safety.yaw_rad
+        if moves != self._move_seq:
+            self._drop_restore_anchor("moved")
+        elif not 0 <= now_ms - since_ms <= self.reloc_restore_max_age_ms:
+            self._drop_restore_anchor("too_old")
+        elif imu is None or not self._imu_is_fresh(now_ms):
+            self._drop_restore_anchor("imu_stale")
+        elif abs(wrap_pi(imu - imu0)) > self.reloc_restore_yaw_rad:
+            self._drop_restore_anchor("imu_turned")
+        else:
+            return (pose[0], pose[1], wrap_pi(pose[2] + wrap_pi(imu - imu0)))
+        return None
+
+    def _try_restore(
+        self,
+        result: MatchResult | None,
+        prior_result: MatchResult | None,
+        points: np.ndarray,
+        scan: Scan,
+        now_ms: int,
+    ) -> bool:
+        """창 안 정합이 전역 최고에 버금가면 한 표. `reloc_votes` 표면 신뢰를 되살린다."""
+        if self._restore_anchor is None or prior_result is None or result is None:
+            return False
+        grid = self.match_grid
+        row, col = grid.to_cell(prior_result.pose[0], prior_result.pose[1])
+        standable = grid.inside(row, col) and grid.cells[row, col] <= self.plan_params.free_thresh
+        ratio = prior_result.score / max(1, result.score)
+        if (
+            prior_result.skipped
+            or prior_result.score < self._min_match_score(points)
+            or ratio < self.reloc_restore_score_ratio
+            or not standable
+        ):
+            self._restore_votes.clear()
+            if self._edge.changed("restore_rejected", True):
+                LOG.info(
+                    "restore_rejected",
+                    ratio=round(ratio, 3),
+                    frac=round(prior_result.score / len(points), 3),
+                    standable=standable,
+                )
+            return False
+        self._edge.changed("restore_rejected", False)
+        votes = self._restore_votes
+        pose = prior_result.pose
+        if votes and any(
+            math.hypot(pose[0] - v[0], pose[1] - v[1]) > 0.1
+            or abs(wrap_pi(pose[2] - v[2])) > math.radians(3.0)
+            for v in votes
+        ):
+            votes.clear()
+        votes.append(pose)
+        if len(votes) < self.reloc_votes:
+            LOG.info("restore_vote", n=len(votes), need=self.reloc_votes, ratio=round(ratio, 3))
+            return False
+        self._drop_restore_anchor("restored")
+        self._global_votes.clear()
+        LOG.warning(
+            "localization_trust_restored",
+            x=round(pose[0], 2),
+            y=round(pose[1], 2),
+            yaw_deg=round(rad_to_deg(pose[2]), 1),
+            ratio=round(ratio, 3),
+            frac=round(prior_result.score / len(points), 3),
+        )
+        self._match_frac = prior_result.score / len(points)
+        self.observe_map_pose(pose, now_ms)
+        self._adopt_with_request_imu()
+        self._mark_verified()
+        self._check_new_obstacle(scan)
         return True
 
     def _poll_global(self, now_ms: int) -> None:
         """워커가 끝낸 결과를 루프 스레드에서 해석·적용한다 — 상태 변경은 여기서만."""
         with self._global_cv:
             done = self._global_result
+            prior_result = self._global_prior_result
             self._global_result = None
+            self._global_prior_result = None
         if done is None:
             return
         self._global_inflight = False
@@ -851,12 +999,16 @@ class PatrolController:
                 LOG.info("global_result_stale", kind=kind, moves=self._move_seq - asked_moves)
             if kind == "reloc":
                 self._global_votes.clear()
+                self._restore_votes.clear()
             return
         self._edge.changed("global_result_stale", False)
         self._result_imu = asked_imu
         if kind == "verify":
             self._apply_verify_result(result, points, now_ms, asked_pose)
         else:
+            if self._try_restore(result, prior_result, points, scan, now_ms):
+                self._reloc_next_ms = max(self._reloc_next_ms, now_ms + self.reloc_interval_ms)
+                return
             self._apply_reloc_result(result, points, scan, now_ms)
 
     def _apply_reloc_result(
@@ -982,6 +1134,8 @@ class PatrolController:
         """자세가 전역 확인됐다 — 지도 적분을 허용하고 되돌릴 기준점을 새로 찍는다."""
         self._pose_verified = True
         self._global_votes.clear()
+        self._restore_anchor = None
+        self._restore_votes.clear()
         self._verified_snapshot = self.match_grid.snapshot()
 
     def _rebuild_masks(self) -> None:
@@ -1811,6 +1965,11 @@ def controller_from_config(
         trust_expiry_ms=int(lidar.get("trust_expiry_ms", 5000)),
         global_result_max_age_ms=int(lidar.get("global_result_max_age_ms", 3000)),
         reloc_stationary_max_peers=int(lidar.get("reloc_stationary_max_peers", 10)),
+        reloc_restore_enabled=bool(lidar.get("reloc_restore_enabled", False)),
+        reloc_restore_max_age_ms=int(lidar.get("reloc_restore_max_age_ms", 30000)),
+        reloc_restore_radius_m=float(lidar.get("reloc_restore_radius_mm", 300)) / 1000.0,
+        reloc_restore_yaw_rad=deg_to_rad(float(lidar.get("reloc_restore_yaw_deg", 5))),
+        reloc_restore_score_ratio=float(lidar.get("reloc_restore_score_ratio", 0.95)),
         imu_match_params=(
             None
             if float(lidar.get("imu_yaw_window_deg", 0)) <= 0

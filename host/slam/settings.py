@@ -110,6 +110,24 @@ def read_lidar_section(path: Path = CONFIG_PATH) -> dict[str, Any]:
 def validate_section(section: dict[str, Any]) -> None:
     if not isinstance(section.get("global_full_scan_ambiguity", False), bool):
         raise ConfigError("lidar.global_full_scan_ambiguity must be true or false")
+    if not isinstance(section.get("reloc_restore_enabled", False), bool):
+        raise ConfigError("lidar.reloc_restore_enabled 는 true 또는 false 여야 함")
+    for key, low, high in (
+        ("reloc_restore_max_age_ms", 0, 120000),
+        ("reloc_restore_radius_mm", 0, 1000),
+        ("reloc_restore_yaw_deg", 0, 30),
+        ("reloc_restore_score_ratio", 0, 1),
+    ):
+        value = section.get(key)
+        if value is None:
+            continue
+        if (
+            not isinstance(value, int | float)
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or not low < value <= high
+        ):
+            raise ConfigError(f"lidar.{key} 는 {low} 초과 {high} 이하 숫자여야 함: {value!r}")
     missing = [key for key in REQUIRED_LIDAR_KEYS if key not in section]
     if missing:
         raise ConfigError(f"lidar 설정 누락: {missing}")

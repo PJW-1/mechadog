@@ -1593,3 +1593,234 @@ def test_dynamic_marks_do_not_hide_objects_just_outside_them() -> None:
         known_tolerance_m=0.10,
     )
     assert hit is not None
+
+
+# ── 신뢰 복원(E2, 2026-10-04) ─────────────────────────────────
+# 집 지도는 스캔 하나로 구별이 안 되는 자리가 많아 전역 탐색 거절이 대부분 정당했다(재생).
+# 그래서 «어디인가» 대신 «정지한 채 상실한 로봇이 제자리에서 다시 맞는가» 만 묻는다.
+from host.common.config import ConfigError  # noqa: E402
+from host.common.lidar_link import Scan  # noqa: E402
+from host.slam.scan_match import MatchResult  # noqa: E402
+from host.slam.settings import validate_section  # noqa: E402
+
+POINTS = np.zeros((100, 2))
+SCAN = Scan("l", "b", 1, 1, ((0.0, 1.0),))
+HOME = (2.0, 2.0, 0.0)
+
+
+def _lost_after_verified(**overrides):
+    """확인된 자세 HOME 에서 IMU 0° 로 서 있다가 신뢰가 만료된 컨트롤러."""
+    params = {
+        "reloc_restore_enabled": True,
+        "reloc_votes": 3,
+        "min_match_frac": 0.5,
+        "trust_expiry_ms": 5000,
+        "imu_fresh_ms": 300,
+    }
+    params.update(overrides)
+    controller = build(**params)
+    controller.observe_telemetry(Reading(yaw=0.0), 1000)
+    controller.observe_map_pose(HOME, 1000)
+    controller._pose_verified = True
+    controller._expire_trust(7000)
+    return controller
+
+
+def _restore_round(controller, now_ms, prior_pose=HOME, prior_score=95, global_score=100):
+    """워커가 전역 결과와 창 안 결과를 함께 낸 것처럼 꾸며 루프에서 해석한다."""
+    controller._global_inflight = True
+    controller._global_req_context = (
+        None,
+        controller._move_seq,
+        controller._loc_epoch,
+        controller.wall_clock_ms(),
+    )
+    controller._global_result = (
+        "reloc",
+        MatchResult((4.5, 3.5, 2.0), global_score, peers=200),  # 모호한 엉뚱한 자리
+        POINTS,
+        SCAN,
+        controller.pose,
+    )
+    controller._global_prior_result = MatchResult(prior_pose, prior_score)
+    controller.observe_telemetry(Reading(yaw=1.0), now_ms)
+    controller._poll_global(now_ms)
+
+
+def test_restore_anchor_is_set_only_for_a_verified_pose_with_fresh_imu() -> None:
+    controller = _lost_after_verified()
+    assert controller._restore_anchor is not None
+    assert controller._restore_anchor[0] == HOME
+    unverified = build(reloc_restore_enabled=True, trust_expiry_ms=5000)
+    unverified.observe_telemetry(Reading(yaw=0.0), 1000)
+    unverified.observe_map_pose(HOME, 1000)
+    unverified.pose_seeded = True  # 사람 시드는 «제자리» 근거가 아니다
+    unverified._expire_trust(7000)
+    assert unverified._restore_anchor is None
+
+
+def test_restore_disabled_by_default() -> None:
+    controller = build(trust_expiry_ms=5000)
+    controller.observe_telemetry(Reading(yaw=0.0), 1000)
+    controller.observe_map_pose(HOME, 1000)
+    controller._pose_verified = True
+    controller._expire_trust(7000)
+    assert controller._restore_anchor is None
+
+
+def test_restore_three_consistent_rounds_restore_trust_at_home() -> None:
+    controller = _lost_after_verified()
+    for n, now in enumerate((7100, 8100, 9100), start=1):
+        _restore_round(controller, now)
+        if n < 3:
+            assert controller._pose_verified is False, "한두 표로는 되살리지 않는다"
+    assert controller._pose_verified is True
+    assert controller.pose == HOME, "엉뚱한 전역 최고점이 아니라 제자리"
+    assert controller._restore_anchor is None
+
+
+def test_restore_window_score_far_below_global_best_is_rejected() -> None:
+    """창 안보다 다른 곳이 훨씬 잘 맞으면 — 들어서 옮겨졌을 수 있다."""
+    controller = _lost_after_verified()
+    for now in (7100, 8100, 9100, 10100):
+        _restore_round(controller, now, prior_score=80, global_score=100)
+    assert controller._pose_verified is False
+    assert controller._restore_votes == []
+
+
+def test_restore_weak_window_score_is_rejected_even_if_global_is_weaker() -> None:
+    controller = _lost_after_verified()
+    for now in (7100, 8100, 9100):
+        _restore_round(controller, now, prior_score=40, global_score=40)
+    assert controller._pose_verified is False
+
+
+def test_restore_votes_must_agree() -> None:
+    controller = _lost_after_verified()
+    _restore_round(controller, 7100, prior_pose=HOME)
+    _restore_round(controller, 8100, prior_pose=(2.2, 2.0, 0.0))
+    _restore_round(controller, 9100, prior_pose=HOME)
+    assert controller._pose_verified is False
+
+
+def test_restore_move_command_after_loss_drops_the_anchor() -> None:
+    controller = _lost_after_verified()
+    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 7050)
+    controller.observe_telemetry(Reading(yaw=0.0), 7100)
+    assert controller._restore_prior(7100) is None
+    assert controller._restore_anchor is None
+
+
+def test_restore_imu_turn_drops_the_anchor() -> None:
+    controller = _lost_after_verified()
+    controller.observe_telemetry(Reading(yaw=12.0), 7100)  # 사람이 들어 돌렸다
+    assert controller._restore_prior(7100) is None
+
+
+def test_restore_stale_imu_or_old_anchor_drops_it() -> None:
+    controller = _lost_after_verified()
+    assert controller._restore_prior(7500) is None, "IMU 가 0.3초 넘게 묵었다"
+    controller = _lost_after_verified(reloc_restore_max_age_ms=10000)
+    controller.observe_telemetry(Reading(yaw=0.0), 12000)
+    assert controller._restore_prior(12000) is None, "기준이 10초 넘게 묵었다"
+
+
+def test_restore_prior_yaw_follows_small_imu_rotation() -> None:
+    controller = _lost_after_verified()
+    controller.observe_telemetry(Reading(yaw=3.0), 7100)
+    prior = controller._restore_prior(7100)
+    assert prior is not None
+    assert prior[2] == pytest.approx(math.radians(3.0))
+
+
+def test_restore_submit_passes_prior_only_for_reloc() -> None:
+    controller = _lost_after_verified()
+    controller.observe_telemetry(Reading(yaw=0.0), 7100)
+    controller._scan_now_ms = 7100
+    controller._submit_global("reloc", POINTS, SCAN)
+    assert controller._global_req_prior == HOME
+    controller._global_req = None
+    controller._global_inflight = False
+    controller._global_result = None
+    controller._submit_global("verify", POINTS, SCAN)
+    assert controller._global_req_prior is None
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("reloc_restore_enabled", "yes"),
+        ("reloc_restore_score_ratio", 1.5),
+        ("reloc_restore_radius_mm", 0),
+        ("reloc_restore_yaw_deg", float("nan")),
+    ],
+)
+def test_restore_config_rejects_bad_restore_values(key, value) -> None:
+    from host.slam.settings import read_lidar_section
+
+    section = dict(read_lidar_section())
+    section[key] = value
+    with pytest.raises(ConfigError):
+        validate_section(section)
+
+
+def test_restore_shipped_config_is_valid_and_enables_restore() -> None:
+    from host.slam.settings import read_lidar_section
+
+    section = read_lidar_section()
+    validate_section(section)
+    assert section["reloc_restore_enabled"] is True
+
+
+def _room_scan(pose, beams=180):
+    """open_room 안쪽 벽(셀 경계 0.05·5.95 / 0.05·4.95)까지의 광선 — 로봇 기준 (각, 거리)."""
+    x, y, yaw = pose
+    out = []
+    for i in range(beams):
+        a = 2 * math.pi * i / beams
+        dx, dy = math.cos(yaw + a), math.sin(yaw + a)
+        hits = []
+        if dx > 1e-9:
+            hits.append((5.95 - x) / dx)
+        if dx < -1e-9:
+            hits.append((0.05 - x) / dx)
+        if dy > 1e-9:
+            hits.append((4.95 - y) / dy)
+        if dy < -1e-9:
+            hits.append((0.05 - y) / dy)
+        out.append((a, min(hits)))
+    return tuple(out)
+
+
+def test_restore_real_worker_picks_home_in_a_symmetric_room() -> None:
+    """대칭 방 — 전역 탐색은 반대편 거울 자리와 구별 못 해 거절되지만, 복원은 제자리를 잡는다."""
+    import time as _time
+
+    from host.slam.scan_match import preprocess
+
+    home = (1.5, 1.2, 0.3)
+    controller = build(
+        reloc_restore_enabled=True,
+        reloc_votes=3,
+        min_match_frac=0.5,
+        trust_expiry_ms=5000,
+        imu_fresh_ms=10_000,
+        reloc_max_peers=0,
+    )
+    controller.observe_telemetry(Reading(yaw=0.0), 1000)
+    controller.observe_map_pose(home, 1000)
+    controller._pose_verified = True
+    controller._expire_trust(7000)
+    assert controller._restore_anchor is not None
+    scan = Scan("l", "b", 1, 1, _room_scan(home))
+    points = preprocess(scan.points, 0.12, 8.0)
+    for round_ms in (7100, 8100, 9100):
+        controller._scan_now_ms = round_ms
+        assert controller._submit_global("reloc", points, scan)
+        deadline = _time.monotonic() + 20
+        while controller._global_result is None and _time.monotonic() < deadline:
+            _time.sleep(0.02)
+        controller._poll_global(round_ms)
+    assert controller._pose_verified is True
+    assert math.hypot(controller.pose[0] - home[0], controller.pose[1] - home[1]) <= 0.06
+    assert abs(controller.pose[2] - home[2]) <= math.radians(2)
