@@ -65,13 +65,18 @@ def _runtime(config: dict, clock: FakeClock, **kwargs: object) -> tuple[Runtime,
 
 
 def _fresh(navigator: PatrolController, now: int, pose: tuple[float, float, float]) -> None:
-    navigator.pose = pose
-    navigator._last_pose_ms = now
+    navigator.observe_map_pose(pose, now)
 
 
 def _patrolling(config: dict, clock: FakeClock, **kwargs: object):
     runtime, navigator = _runtime(config, clock, **kwargs)
-    runtime.attach_scans(lambda: None)  # 스캔은 없고, 측위 자세는 `_fresh` 로 준다
+    runtime.attach_scans(lambda: None)  # 정합 결과와 장애물 관측은 각 시험이 직접 준다.
+    # pose 시각만 새것으로 위장하면 실제 출발 관문을 우회한다. 공통 순찰 시험도
+    # 실제 STOP 전달 뒤 안정화 시간이 지난 유효 스캔을 받은 상태에서 출발한다.
+    navigator.note_sent([CommandEncoder().encode("STOP")], clock.ms - DRIVE.settle_delay_ms)
+    navigator.observe_obstacle_scan(
+        Scan("lidar-01", "0" * 16, 1, clock.ms, ((0.0, 3.0),)), clock.ms
+    )
     enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
     runtime.ingest(telemetry(enc), clock.ms)
     assert runtime.start_patrol(clock.ms)
@@ -94,7 +99,137 @@ def test_stale_pose_stands_the_patrol_still(config: dict, clock: FakeClock) -> N
     clock.advance(DRIVE.pose_timeout_ms + 100)
     runtime.tick(clock.ms)
     assert runtime.commander.intent.type_ == "STOP"
+    assert navigator.phase is Phase.LOST
     assert runtime.behavior.state == "PATROL", "측위 상실은 FSM 전이가 아니라 정지다"
+
+
+@pytest.mark.parametrize("space", ["unknown", "occupied", "outside"])
+def test_runtime_stops_when_pose_leaves_observed_free_space(
+    config: dict, clock: FakeClock, caplog: pytest.LogCaptureFixture, space: str
+) -> None:
+    """신선한 자세라도 출발 셀이 미관측/점유/지도 밖이면 실제 steer 경로에서 선다."""
+    runtime, navigator = _patrolling(config, clock)
+    if space == "outside":
+        _fresh(navigator, clock.ms, (-0.5, 2.0, 0.0))
+    else:
+        row, col = navigator.grid.to_cell(*navigator.pose[:2])
+        navigator.grid.cells[row, col] = 0.0 if space == "unknown" else 3.0
+    with caplog.at_level("WARNING"):
+        runtime.tick(clock.ms)
+    assert navigator.phase is Phase.LOST
+    assert runtime.commander.intent.type_ == "STOP"
+    assert runtime.behavior.state == "PATROL"
+    assert "pose_outside_observed_free_space" in caplog.text
+
+
+@pytest.mark.parametrize("missing", ["stop", "scan", "settled_scan", "fresh_scan"])
+def test_runtime_requires_a_fresh_scan_after_sent_stop(
+    config: dict, clock: FakeClock, caplog: pytest.LogCaptureFixture, missing: str
+) -> None:
+    """tf/pose 갱신은 정지 후 스캔의 증거가 아니다. 둘을 따로 주어 출발 경계를 검사한다."""
+    runtime, navigator = _runtime(config, clock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(enc), clock.ms)
+    assert runtime.start_patrol(clock.ms)
+    stopped_ms = clock.ms - DRIVE.settle_delay_ms
+    scan_ms = clock.ms
+    if missing == "settled_scan":
+        scan_ms -= 1
+    elif missing == "fresh_scan":
+        scan_ms -= DRIVE.scan_stall_timeout_ms + 1
+        stopped_ms = scan_ms - DRIVE.settle_delay_ms
+    if missing != "stop":
+        navigator.note_sent([CommandEncoder().encode("STOP")], stopped_ms)
+    if missing != "scan":
+        navigator.observe_obstacle_scan(
+            Scan("lidar-01", "0" * 16, 1, scan_ms, ((0.0, 3.0),)), scan_ms
+        )
+    _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))
+    with caplog.at_level("WARNING"):
+        runtime.tick(clock.ms)
+    assert navigator.phase is Phase.LOST
+    assert runtime.commander.intent.type_ == "STOP"
+    assert runtime.behavior.state == "PATROL"
+    assert "stationary_scan_unavailable" in caplog.text
+
+
+def test_runtime_recovers_only_after_post_stop_scan_and_replans(
+    config: dict, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정지 전 스캔+새 pose는 재출발 못 한다. 실제 송신/스캔 관측 후 같은 목표로 다시 푼다."""
+    runtime, navigator = _runtime(config, clock)
+    sock = FakeSocket(clock)
+    runtime.begin(sock)
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(enc), clock.ms)
+    assert runtime.start_patrol(clock.ms)
+    _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))
+    runtime.step(clock.ms)
+    assert navigator.phase is Phase.LOST
+    assert sock.types()[-1] == "STOP"
+
+    clock.advance(DRIVE.settle_delay_ms)
+    _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))
+    navigator.observe_obstacle_scan(
+        Scan("lidar-01", "0" * 16, 1, clock.ms, ((0.0, 3.0),)), clock.ms
+    )
+    runtime.step(clock.ms)
+    assert navigator.phase is Phase.MOVING
+    assert sock.types()[-1] == "MOVE"
+    target = navigator.target
+
+    clock.advance(DRIVE.pose_timeout_ms + 1)
+    runtime.step(clock.ms)
+    assert navigator.phase is Phase.LOST
+    assert sock.types()[-1] == "STOP"
+    stopped_ms = navigator._stopped_since_ms
+    assert stopped_ms == clock.ms
+
+    # 시각만 새 pose가 들어와도 정지 후 관측이 없으면 LOST를 유지한다.
+    clock.advance(DRIVE.settle_delay_ms)
+    _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))
+    runtime.step(clock.ms)
+    assert navigator.phase is Phase.LOST
+    assert runtime.commander.intent.type_ == "STOP"
+    assert navigator._stopped_since_ms == stopped_ms, "반복 STOP은 안정화 시각을 밀지 않는다"
+
+    replanning: list[Phase] = []
+    real_replan = navigator._replan
+
+    def replan() -> None:
+        replanning.append(navigator.phase)
+        real_replan()
+
+    monkeypatch.setattr(navigator, "_replan", replan)
+    navigator.observe_obstacle_scan(
+        Scan("lidar-01", "0" * 16, 2, clock.ms, ((0.0, 3.0),)), clock.ms
+    )
+    runtime.tick(clock.ms)
+    assert replanning == [Phase.PLANNING]
+    assert navigator.target == target
+    assert navigator.phase is Phase.MOVING
+    assert runtime.commander.intent.type_ == "MOVE"
+    assert runtime.behavior.state == "PATROL"
+
+
+def test_runtime_localization_guard_does_not_repeat_fsm_or_link_checks(
+    config: dict, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """측위 관문만 공유한다. step 전체 호출은 runtime FSM과 상태 송신을 중복시킨다."""
+    runtime, navigator = _patrolling(config, clock)
+
+    def forbidden(*_args: object) -> None:
+        pytest.fail("runtime의 steer가 컨트롤러 FSM/링크 관문 전체를 다시 호출했다")
+
+    monkeypatch.setattr(navigator, "step", forbidden)
+    monkeypatch.setattr(navigator, "_guard", forbidden)
+    clock.advance(DRIVE.pose_timeout_ms + 1)
+    messages = [json.loads(line) for line in runtime.tick(clock.ms)]
+    assert navigator.phase is Phase.LOST
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.commander.announced_state == "PATROL"
+    assert not [message for message in messages if message["type"] == "STATE"]
+    assert messages[-1]["type"] == "STOP"
 
 
 def test_telemetry_reaches_the_navigator(config: dict, clock: FakeClock) -> None:
@@ -121,7 +256,7 @@ def test_matched_pose_reaches_the_zone_inspector(
 
     monkeypatch.setattr(navigator, "observe_scan", matched)
     runtime.tick(clock.ms)
-    assert runtime._zone_inspector._fresh_pose(clock.ms) == (1.5, 1.0, 0.2)
+    assert runtime._zone_inspector._fresh_pose(clock.ms) == pytest.approx((1.5, 1.0, 0.2))
 
 
 def test_failed_match_does_not_refresh_the_zone_pose(
@@ -234,7 +369,8 @@ def _raw(device_id: str, dist_mm: int, seq: int = 1) -> bytes:
             "type": "SCAN",
             "device_id": device_id,
             "boot_id": "b",
-            "points": [[0.0, dist_mm]],
+            # 한 바퀴(5° 간격)여야 측위 칸에 들어간다 — `RevolutionAssembler`. 0° 만 시험 거리다.
+            "points": [[0.0, dist_mm]] + [[float(d), 3000] for d in range(5, 360, 5)],
         }
     ).encode("utf-8")
 
@@ -683,3 +819,70 @@ def test_unmeasured_unit_gets_no_odom_sender(config: dict) -> None:
 
     unmeasured = {k: v for k, v in config.items() if k != "gait_calibration"}
     assert open_odom_sender(unmeasured, DEVICE) is None
+
+
+def test_partial_packets_are_assembled_into_one_revolution() -> None:
+    """실기 중계는 한 바퀴를 약 7조각으로 보낸다 — 조각 하나로는 측위 칸이 채워지지 않는다."""
+    feed = _feed(False, lambda: None)
+
+    def part(seq: int, start: int) -> bytes:
+        return json.dumps(
+            {
+                "seq": seq,
+                "ts": 1,
+                "type": "SCAN",
+                "device_id": "lidar-01",
+                "boot_id": "b",
+                "points": [[float(d), 2000] for d in range(start, start + 52)],
+            }
+        ).encode("utf-8")
+
+    for i in range(6):
+        feed.handle(part(i + 1, i * 52))
+        assert feed.take() is None, f"조각 {i + 1}개로는 한 바퀴가 아니다"
+    feed.handle(part(7, 6 * 52))
+    revolution = feed.take()
+    assert revolution is not None
+    assert len(revolution.points) == 7 * 52
+    assert feed.revolutions == (1, 0)
+
+
+def test_feed_hands_raw_datagrams_to_the_recorder() -> None:
+    seen: list[tuple[bytes, int]] = []
+    feed = LidarFeed(
+        lidar_device="lidar-01",
+        decoder=ScanDecoder(),
+        forward_fan_rad=0.35,
+        estop_m=0.1,
+        armed=lambda: False,
+        on_danger=lambda: None,
+        on_raw=lambda raw, at: seen.append((raw, at)),
+        clock=lambda: 1234,
+    )
+    raw = _raw("lidar-01", 2000)
+    feed.handle(raw)
+    assert seen == [(raw, 1234)], "디코드 전 원본 그대로, 받은 시각과 함께"
+
+
+def test_sent_commands_reach_the_navigator(config: dict, clock: FakeClock) -> None:
+    """런타임이 실제로 보낸 MOVE 를 순찰기도 안다 — 없으면 «정지 중» 판정이 걷는 중에도 참이다.
+
+    2026-10-03 Codex 검토: runtime 의 송신 경로가 odom 에만 알리고 navigator.note_sent 를
+    부르지 않아, AVOID·FAILSAFE 때 찍힌 정지 시각이 이후 MOVE 에도 남았다.
+    """
+    runtime, navigator = _runtime(config, clock)
+    sock = FakeSocket(clock)
+    runtime.begin(sock)
+    runtime._peer = ("127.0.0.1", 5001)
+    navigator._stopped_since_ms = 1
+    before = navigator._move_seq
+    runtime.send_immediate(CommandEncoder().encode("MOVE", step=40, angle=0))
+    assert navigator._move_seq == before + 1
+    assert navigator._stopped_since_ms is None
+
+
+def test_zone_inspector_uses_the_navigator_zone_anchors(config, clock) -> None:
+    """도착 판정(길 찾기)과 점검(카메라)이 같은 구역 좌표를 본다 — 설정 지도와 다른 --maps 를 줘도."""
+    runtime, navigator = _runtime(config, clock)
+    anchors = {zone.label: (zone.x, zone.y) for zone in runtime._zone_inspector._anchors}
+    assert anchors == {label: navigator.zones.xy(label) for label in navigator.zones.labels}

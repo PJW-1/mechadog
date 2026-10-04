@@ -1,7 +1,8 @@
 """자율 순찰 운용 루프 (FR-7 · Phase 2 · 3단계).
 
-    LiDAR 소켓 ─▶ ScanDecoder ─▶ PatrolController ─▶ Commander ─▶ 명령 소켓
-    텔레메트리 소켓 ─▶ TelemetryReceiver ─┘
+    LiDAR 소켓 ─▶ ScanDecoder ─▶ 안전·장애물 ─┐
+    ROS2 자세 소켓 ─▶ MapPoseDecoder ─▶ 측위 ─┼▶ PatrolController ─▶ Commander ─▶ 명령
+    텔레메트리 소켓 ─▶ TelemetryReceiver ─────┘
 
 **소켓과 실시각을 만지는 곳은 이 파일 하나다.** 그 위의 컨트롤러는 바이트와
 시각만 받으므로 로봇도 LiDAR 도 없이 pytest 로 닫힌다 (ENGINEERING_GUIDE 2.1 ·
@@ -50,10 +51,14 @@ from host.common.lidar_link import (
     scan_of,
 )
 from host.common.logging_setup import event_logger, setup_logging
+from host.common.map_pose_link import MapPoseDecoder, map_pose_of
 from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.units import ms_to_s
 from host.slam import settings, simulation
+from host.slam.occupancy import OccupancyGrid
+from host.slam.pose_out import PoseOut
 from host.slam.settings import range_from_config
+from host.telemetry.lidar_feed import RevolutionAssembler
 from host.telemetry.receiver import TelemetryReceiver
 from host.telemetry.ros2_relay import (
     forward_peer_of,
@@ -104,13 +109,19 @@ def build_controller(config: dict, maps: Path, seed: int | None) -> PatrolContro
     # 주기는 설정에서 온다 (`network.cmd_rate_hz: 10`). 코드에 100ms 를 박으면
     # 설정을 고쳐도 안 바뀐다.
     period_ms = round(1000 / float(config["network"]["cmd_rate_hz"]))
-    return controller_from_config(
+    controller = controller_from_config(
         config,
         Commander(CommandEncoder(), period_ms=period_ms),
         grid,
         zones,
         random.Random(seed),
     )
+    # 측위 전용 지도 — 있으면 정합은 가구 다리까지 담은 그 지도로 하고,
+    # 경로 계획은 항법용 slam_map.npy 그대로다.
+    if (maps / "slam_map_loc.npy").is_file():
+        controller.loc_grid = OccupancyGrid.load(maps, stem="slam_map_loc")
+        LOG.info("loc_map_loaded", maps=str(maps))
+    return controller
 
 
 def stop_for_shutdown(
@@ -130,11 +141,17 @@ def stop_for_shutdown(
             time.sleep(SHUTDOWN_ESTOP_INTERVAL_S)
 
 
-def serve_real(args: argparse.Namespace, config: dict, controller: PatrolController) -> int:
-    """실기 운용. 두 소켓을 논블로킹으로 훑고 마감에 맞춰 전문을 낸다."""
+def serve_real(
+    args: argparse.Namespace,
+    config: dict,
+    controller: PatrolController,
+    pose_out: PoseOut | None,
+) -> int:
+    """실기 운용. 세 입력 소켓을 논블로킹으로 훑고 마감에 맞춰 전문을 낸다."""
     network = config["network"]
     lidar = config["lidar"]
     scan_sock = open_socket(int(lidar["scan_port"]))
+    map_pose_sock = open_socket(int(lidar["map_pose_port"]))
     tlm_sock = open_socket(int(network["telemetry_port"]))
     cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     peer_ip = args.robot or network.get("mechdog_ip")
@@ -145,12 +162,15 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
 
     def transmit(lines: list[str] | tuple[str, ...]) -> None:
         sent = send(cmd_sock, peer, lines)
+        sent_ms = system_clock_ms()
+        controller.note_sent(sent, sent_ms)
         if odom is not None:
-            odom.note_sent(sent, system_clock_ms())
+            odom.note_sent(sent, sent_ms)
 
     scan_decoder = ScanDecoder(
         float(lidar.get("mount_yaw_deg", 0.0)), int(lidar.get("angle_direction", 1))
     )
+    assembler = RevolutionAssembler()
     # 컨테이너 전달 목적지 (WBS 5.4.4) — 이 프로세스가 scan_port 의 유일한
     # 수신자로 남고, 받은 데이터그램을 바이트 그대로 여기로 복사해 넘긴다.
     # 꺼 두면 None 이라 아래 루프가 전달을 건너뛴다.
@@ -158,6 +178,8 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     forward_sock = open_forward_socket()
     forward_failing = False
     telemetry = TelemetryReceiver()
+    map_pose_decoder = MapPoseDecoder()
+    map_pose_invalid = False
     # 펌웨어는 MAC 이름을 보낸다 — 설정 이름과 함께 받는다 (`config.telemetry_ids`).
     own_ids = telemetry_ids(config, args.device)
 
@@ -235,7 +257,47 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
                 urgent = controller.guard_scan(scan)
                 if urgent:
                     transmit([urgent])
-                controller.observe_scan(scan, now_ms)
+                # 위험 판정은 패킷마다, 지도에 투영할 스캔은 한 바퀴씩 넘긴다.
+                scan_received_ms = system_clock_ms()
+                revolution = assembler.add(scan, scan_received_ms)
+                if revolution is None:
+                    continue
+                # 실기 측위는 ROS2의 map->base_link가 정본이다. 여기서 다시 스캔
+                # 정합하면 서로 다른 두 자세가 같은 컨트롤러를 번갈아 덮어쓴다.
+                controller.observe_obstacle_scan(revolution, scan_received_ms)
+
+            # ── ROS2 지도 측위 (WBS 5.4.4) ──
+            while True:
+                try:
+                    raw, _ = map_pose_sock.recvfrom(RECV_BYTES)
+                except (BlockingIOError, OSError):
+                    break
+                result = map_pose_decoder.decode(raw)
+                if result.warns:
+                    LOG.warning("map_pose_unknown_type", reason=result.reason)
+                    continue
+                pose = map_pose_of(result)
+                if pose is None:
+                    continue
+                if pose.device_id != args.device:
+                    LOG.warning(
+                        "foreign_map_pose",
+                        expected=args.device,
+                        received=pose.device_id,
+                    )
+                    continue
+                if not pose.valid:
+                    if not map_pose_invalid:
+                        LOG.warning("map_pose_invalid", effect="500ms 뒤 LOST 정지")
+                    map_pose_invalid = True
+                    continue
+                if map_pose_invalid:
+                    LOG.info("map_pose_recovered")
+                map_pose_invalid = False
+                controller.observe_map_pose((pose.x_m, pose.y_m, pose.yaw_rad), now_ms)
+                # 대시보드 실시간 위치 — pose_frame.json 이 있는 지도에서만 나간다.
+                if pose_out is not None:
+                    pose_out.send(controller.pose, moving=True)
 
             # ── 판단 ──
             transmit(controller.step(now_ms))
@@ -258,11 +320,14 @@ def serve_real(args: argparse.Namespace, config: dict, controller: PatrolControl
     finally:
         stop_for_shutdown(controller, cmd_sock, peer)
         scan_sock.close()
+        map_pose_sock.close()
         forward_sock.close()
         tlm_sock.close()
         cmd_sock.close()
         if odom is not None:
             odom.close()
+        if pose_out is not None:
+            pose_out.close()
     return 0
 
 
@@ -288,6 +353,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
     controller.start()
 
     now_ms = system_clock_ms()
+    controller.note_sent(lines, now_ms)
     seq = 0
     tick = 0
     # ⚠️ **자동 리셋에 상한을 둔다.** 상한이 없으면 "장애물로 들어가 E-STOP,
@@ -333,10 +399,13 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
         urgent = controller.guard_scan(scan)
         if urgent:
             lines.append(urgent)
+            controller.note_sent([urgent], now_ms)
             LOG.info("sim_estop_sent")
             if args.reset_after_estop and auto_resets < MAX_AUTO_RESETS:
                 auto_resets += 1
-                lines.append(controller.request_reset())
+                reset = controller.request_reset()
+                lines.append(reset)
+                controller.note_sent([reset], now_ms)
                 controller.observe_telemetry(
                     _FakeReading(
                         state="IDLE",
@@ -353,6 +422,7 @@ def serve_simulated(args: argparse.Namespace, config: dict, controller: PatrolCo
         lines.extend(controller.step(now_ms))
         emitted = controller.commander.tick(now_ms)
         lines.extend(emitted)
+        controller.note_sent(emitted, now_ms)
 
         # **실제 전문에서 보행을 읽어 자세에 반영한다.**
         for line in emitted:
@@ -457,6 +527,12 @@ def main(argv: list[str] | None = None) -> int:
         setup_logging(config, device_id=args.device or "patrol-sim", console=args.verbose)
         maps = Path(args.maps) if args.maps else settings.maps_dir(config)
         controller = build_controller(config, maps, args.seed)
+        lidar_cfg = config.get("lidar") or {}
+        pose_out = PoseOut.of(
+            maps,
+            host=str(lidar_cfg.get("pose_out_host", "127.0.0.1")),
+            port=int(lidar_cfg.get("pose_out_port", 5300)),
+        )
     except ConfigError as exc:
         print(f"[Patrol] 설정 오류: {exc}", file=sys.stderr)
         return 2
@@ -467,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.simulate:
         return serve_simulated(args, config, controller)
     try:
-        return serve_real(args, config, controller)
+        return serve_real(args, config, controller, pose_out)
     except ConfigError as exc:  # 전달·ODOM 목적지 이름 해석 (`_resolve`)
         print(f"[Patrol] 설정 오류: {exc}", file=sys.stderr)
         return 2

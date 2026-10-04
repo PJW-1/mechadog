@@ -53,6 +53,7 @@ from host.slam.scan_match import (
     preprocess,
 )
 from host.slam.settings import match_params_from_config, range_from_config
+from host.telemetry.lidar_feed import RevolutionAssembler
 
 LOG = event_logger("mechadog.tools.lidar_slam")
 
@@ -94,8 +95,10 @@ def collect_real(
     batch_size: int,
     expected_device_id: str | None = None,
 ) -> list[Scan]:
-    """정지 상태에서 스캔 여러 장을 모은다. **폐기된 패킷은 세지 않는다.**"""
+    """정지 상태에서 완성된 바퀴를 batch_size개 모은다. 미완성 조각은 반환하지 않는다."""
     batch: list[Scan] = []
+    # 위치를 옮기거나 수신이 끊긴 이전 수집의 조각을 다음 배치에 잇지 않는다.
+    assembler = RevolutionAssembler()
     while len(batch) < batch_size:
         try:
             raw, _ = sock.recvfrom(RECV_BYTES)
@@ -121,7 +124,9 @@ def collect_real(
                 continue
             if scan.dropped:
                 LOG.debug("scan_points_dropped", dropped=scan.dropped, kept=len(scan.points))
-            batch.append(scan)
+            revolution = assembler.add(scan, system_clock_ms())
+            if revolution is not None:
+                batch.append(revolution)
     return batch
 
 

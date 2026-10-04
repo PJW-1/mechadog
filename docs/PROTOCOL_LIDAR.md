@@ -174,6 +174,7 @@
 | 텔레메트리 | 5101 | `network.telemetry_port` |
 | **LiDAR 스캔** | **5201** | **`lidar.scan_port`** |
 | LiDAR 스캔 → ROS2 컨테이너 전달 | 5203 | `lidar.scan_forward_port` |
+| ROS2 지도 자세 → Host 순찰기 | 5205 | `lidar.map_pose_port` |
 
 ⚠️ **반드시 달라야 한다.** 같은 포트를 쓰면 한 소켓에 두 스키마가 섞여 들어와
 서로를 규칙 ④(모르는 타입)로 폐기하고, 로그에는 WARN 만 쌓인다.
@@ -323,3 +324,30 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 | `header.stamp` | **수신 시각.** 전문 `ts` 는 호스트 시계라 컨테이너 시계와 같다는 보장이 없다 — 6절 `LaserScan.header.stamp` 와 같은 이유 |
 | `odom → base_link` | `valid=true` 전문을 받을 때마다 1회. **무효·폐기·두절이면 내지 않는다** — 직전 값 반복이나 항등 변환으로 채우지 않는다 |
 | `base_link → laser` | `LASER_OFFSET_X_M`·`_Y_M`·`_Z_M` 이 **모두** 있을 때만 고정 변환. 없으면 경고만 한다. **회전은 0** — 장착 방향은 `scan_bridge` 디코더가 이미 적용한다(한 곳에서만 보정) |
+
+---
+
+## 9. 지도 자세 반환 — `MAP_POSE` (ROS2 컨테이너 → Host PC)
+
+`slam_toolbox`가 만든 `map → odom → base_link`의 합성 tf를
+`docker/ros2/pose_bridge.py`가 읽어 Windows 순찰기로 돌려준다. 실기 순찰기는
+내부 스캔 정합과 이 자세를 섞지 않고 `MAP_POSE`만 경로계획의 위치로 사용한다.
+LiDAR 즉시 위험 판정(`guard_scan`)은 이 링크와 무관한 직접 경로다.
+
+```json
+{"seq":42,"ts":912345,"type":"MAP_POSE","device_id":"mechdog-02","boot_id":"5c1e0a9b7d3f2468","frame_id":"map","child_frame_id":"base_link","x_m":1.204,"y_m":-0.117,"yaw_rad":0.52,"valid":true}
+```
+
+| 필드 | 타입 | 의미 |
+| :--- | :--- | :--- |
+| `seq` · `boot_id` | int · str | 브리지 프로세스 한 세션의 순서와 재기동 구분 |
+| `ts` | int | 브리지의 단조 시각 ms. 호스트는 신선도에 직접 쓰지 않고 수신 시각을 쓴다 |
+| `device_id` | str | 대상 로봇 개체 이름. 순찰기의 `--device`와 달라지면 폐기 |
+| `frame_id` · `child_frame_id` | str | 반드시 `map` · `base_link`. 다른 프레임은 폐기 |
+| `x_m` · `y_m` · `yaw_rad` | 실수 | 지도 좌표의 위치(m)와 방위(rad) |
+| `valid` | bool | tf 누락·500ms 초과 시 false. 좌표를 적용하지 않는다 |
+
+검증 규칙은 8절 ODOM과 같고, 프레임 이름 검증이 추가된다. `valid=false` 전문은
+마지막 자세를 갱신하지 않는다. 유효 자세가 `localization.pose_timeout_ms` 동안
+오지 않으면 순찰기는 `LOST`로 전환해 보행을 정지한다. 이 상태는 안전 래치가
+아니므로 측위가 돌아오면 재계획할 수 있다.

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import socket
 import time
 from pathlib import Path
@@ -82,6 +83,14 @@ def test_missing_required_key_is_refused() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("value", ["false", 0, 1, None, float("nan")])
+def test_full_scan_ambiguity_requires_boolean(value) -> None:
+    section = dict(settings.read_lidar_section())
+    section["global_full_scan_ambiguity"] = value
+    with pytest.raises(ConfigError, match="global_full_scan_ambiguity"):
+        settings.validate_section(section)
+
+
 @pytest.mark.parametrize("key", ["odom_rate_hz", "range_min_mm", "robot_radius_mm"])
 @pytest.mark.parametrize("value", ["10", None, True, float("nan"), float("inf")])
 def test_non_numeric_value_is_refused_by_name(key: str, value: object) -> None:
@@ -101,6 +110,21 @@ def test_scan_port_must_be_a_port_number(value: object) -> None:
     section = dict(settings.read_lidar_section())
     section["scan_port"] = value
     with pytest.raises(ConfigError, match=r"^lidar\.scan_port 는 1~65535"):
+        settings.validate_section(section)
+
+
+def test_spin_threshold_inside_heading_tolerance_is_refused() -> None:
+    """제자리 회전 임계가 직진 허용 오차 이하면 정렬 직후 다시 돈다 (ADR-11 개정)."""
+    section = dict(settings.read_lidar_section())
+    section["spin_threshold_deg"] = section["heading_tolerance_deg"]
+    with pytest.raises(ConfigError, match="spin_threshold_deg"):
+        settings.validate_section(section)
+
+
+def test_spin_turn_beyond_protocol_limit_is_refused() -> None:
+    section = dict(settings.read_lidar_section())
+    section["spin_turn_deg"] = 45
+    with pytest.raises(ConfigError, match="spin_turn_deg"):
         settings.validate_section(section)
 
 
@@ -162,6 +186,27 @@ def test_scan_forward_enabled_must_be_a_bool() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("value", [0, 70000, "5205", True])
+def test_map_pose_port_must_be_a_valid_integer(value: object) -> None:
+    section = dict(settings.read_lidar_section())
+    section["map_pose_port"] = value
+    with pytest.raises(ConfigError, match="map_pose_port"):
+        settings.validate_section(section)
+
+
+@pytest.mark.parametrize("other", ["scan_port", "scan_forward_port", "odom_port"])
+def test_map_pose_port_must_not_collide(other: str) -> None:
+    section = dict(settings.read_lidar_section())
+    section["map_pose_port"] = section[other]
+    with pytest.raises(ConfigError, match="map_pose_port"):
+        settings.validate_section(section)
+
+
+def test_map_pose_port_is_reserved_for_ros2_return() -> None:
+    section = settings.read_lidar_section()
+    assert section["map_pose_port"] == 5205
+
+
 def test_simulation_runs_even_when_track_is_none(lidar_config: dict) -> None:
     """⚠️ Phase 1 표준 구성에는 LiDAR 가 없다 (CONTRIBUTING 1절).
 
@@ -209,9 +254,20 @@ def test_parameter_builders_read_from_the_config(lidar_config: dict) -> None:
 
 
 def test_move_with_zero_step_does_not_move() -> None:
+    """제자리 회전 모형이 꺼져 있으면(`spin_deg_per_sec=0`) `step=0` 은 아무것도 바꾸지 않는다."""
     params = simulation.SimParams(200.0, 25.0, 0.0, 0.0, 90, 8.0)
     pose = (1.0, 2.0, 0.5)
     assert simulation.apply_move(pose, 0.0, 20.0, 0.1, params) == pose
+
+
+def test_zero_step_spins_in_place() -> None:
+    """`step=0 angle=±30` 은 **자리에서** 실측 각속도로 돈다 (2026-09-22 · 7.37 도/s · ADR-11)."""
+    params = simulation.SimParams(200.0, 25.0, 0.0, 0.0, 90, 8.0, spin_deg_per_sec=7.37)
+    x, y, yaw = simulation.apply_move((1.0, 2.0, 0.0), 0.0, 30.0, 1.0, params)
+    assert (x, y) == (1.0, 2.0), "자리를 옮기지 않는다"
+    assert yaw == pytest.approx(math.radians(7.37))
+    _, _, cw = simulation.apply_move((1.0, 2.0, 0.0), 0.0, -30.0, 1.0, params)
+    assert cw == pytest.approx(-math.radians(7.37)), "angle 음수는 시계 방향"
 
 
 def test_forward_move_advances_along_the_heading() -> None:
@@ -272,6 +328,7 @@ def test_sim_params_come_from_the_config(lidar_config: dict) -> None:
     params = simulation.sim_params_from_config(lidar_config, 8.0)
     assert params.beams == lidar_config["lidar"]["sim"]["beams"]
     assert params.range_max_m == 8.0
+    assert params.spin_deg_per_sec == lidar_config["lidar"]["sim"]["spin_deg_per_sec"]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -347,7 +404,8 @@ def test_collect_real_ignores_discarded_packets(lidar_config: dict) -> None:
                     ts_ms=1,
                     device_id="lidar-a",
                     boot_id="b",
-                    points_wire=[[0.0, 1000], [90.0, 1500]],
+                    # 한 바퀴(5° 간격) — 수집기는 이제 조각이 아니라 완성된 바퀴를 센다.
+                    points_wire=[[float(d), 1000] for d in range(0, 360, 5)],
                 ).encode("utf-8"),
             ]
 
@@ -359,7 +417,7 @@ def test_collect_real_ignores_discarded_packets(lidar_config: dict) -> None:
     del lidar_config
     batch = lidar_slam.collect_real(FakeSocket(), ScanDecoder(), 2)
     assert len(batch) == 1, "깨진 패킷은 세지 않았다"
-    assert len(batch[0].points) == 2
+    assert len(batch[0].points) == 72
 
 
 def test_collect_real_ignores_another_lidar_device() -> None:
@@ -371,14 +429,14 @@ def test_collect_real_ignores_another_lidar_device() -> None:
                     ts_ms=1,
                     device_id="lidar-other",
                     boot_id="a",
-                    points_wire=[[0.0, 1000]],
+                    points_wire=[[float(d), 1000] for d in range(0, 360, 5)],
                 ).encode(),
                 encode_scan(
                     seq=1,
                     ts_ms=2,
                     device_id="lidar-wanted",
                     boot_id="b",
-                    points_wire=[[0.0, 1200]],
+                    points_wire=[[float(d), 1200] for d in range(0, 360, 5)],
                 ).encode(),
             ]
 
@@ -553,6 +611,15 @@ def test_build_controller_uses_the_configured_command_rate(
     expected = round(1000 / float(lidar_config["network"]["cmd_rate_hz"]))
     assert controller.commander.period_ms == expected
     assert len(controller.zones) == 3
+
+
+def test_patrol_stationary_scan_limits_come_from_the_existing_config(
+    tmp_path: Path, lidar_config: dict
+) -> None:
+    seed_maps(tmp_path)
+    controller = patrol_run.build_controller(lidar_config, tmp_path, seed=1)
+    assert controller.drive.scan_stall_timeout_ms == lidar_config["lidar"]["scan_stall_timeout_ms"]
+    assert controller.drive.settle_delay_ms == lidar_config["localization"]["settle_delay_ms"]
 
 
 def test_simulated_patrol_emits_only_valid_protocol_lines(
@@ -911,3 +978,78 @@ def test_plan_to_reports_an_unreachable_goal() -> None:
     )
     assert not plan.reachable
     assert plan.label is None
+    assert plan.fail_reason == "start_unobserved"
+    assert plan.requested == (1.0, 1.0)
+
+
+def test_plan_to_accepts_an_exact_free_goal() -> None:
+    """빈 바닥에 찍은 목표는 그대로 받는다 — 스냅이 일어나지 않는다."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    blocked = inflate(grid, params)
+    plan = plan_to("A", (4.0, 3.0), (1.0, 1.0), grid, blocked, params)
+    assert plan.reachable
+    assert plan.goal_moved_m == 0.0
+    assert plan.start_moved_m == 0.0
+    assert plan.requested == (4.0, 3.0)
+    assert plan.effective == pytest.approx((4.0, 3.0), abs=0.05)
+
+
+def test_plan_to_snaps_a_blocked_goal_to_a_free_cell() -> None:
+    """가구 다리에 찍힌 목표는 가장 가까운 도달 가능 셀로 옮기고 거리를 보고한다."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    goal = (4.0, 3.0)
+    row, col = grid.to_cell(*goal)
+    grid.cells[row - 2 : row + 3, col - 2 : col + 3] = 3.0  # 25cm 덩어리로 덮는다
+    blocked = inflate(grid, params)
+    plan = plan_to("A", goal, (1.0, 1.0), grid, blocked, params)
+    assert plan.reachable, "목표는 막혀도 옆 바닥으로 스냅해 가야 한다"
+    assert plan.goal_moved_m > 0.0
+    assert plan.requested == pytest.approx(goal)
+    eff_row, eff_col = grid.to_cell(*plan.effective)
+    assert not blocked[eff_row, eff_col]
+    assert math.hypot(plan.effective[0] - goal[0], plan.effective[1] - goal[1]) == pytest.approx(
+        plan.goal_moved_m, abs=0.05
+    )
+
+
+def test_plan_to_refuses_a_goal_past_the_snap_radius() -> None:
+    """너무 깊이 막힌 목표는 억지로 옮기지 않고 실패한다 — 안전한 거절."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    goal = (4.0, 3.0)
+    row, col = grid.to_cell(*goal)
+    grid.cells[row - 16 : row + 17, col - 16 : col + 17] = 3.0  # 1.6m 넘는 덩어리
+    blocked = inflate(grid, params)
+    plan = plan_to("A", goal, (1.0, 1.0), grid, blocked, params, snap_m=0.6)
+    assert not plan.reachable
+    assert plan.fail_reason == "goal_unreachable"
+    assert plan.requested == pytest.approx(goal)
+
+
+def test_plan_to_snaps_goal_off_an_unreachable_island() -> None:
+    """벽으로 봉쇄된 방의 목표는 도달 가능한 쪽의 가장 가까운 셀로 옮긴다."""
+    from host.behavior.planner import PlanParams, inflate, plan_to
+
+    grid = room()
+    params = PlanParams(1.0, -1.0, 0.15, 0.08)
+    # 방을 x=3.5m 에서 위아래로 가르는 벽 — 팽창까지 합치면 틈이 없다.
+    wall_col = int(3.5 / grid.meta.resolution)
+    grid.cells[:, wall_col - 3 : wall_col + 4] = 3.0
+    blocked = inflate(grid, params)
+    plan = plan_to("A", (4.5, 3.0), (1.0, 3.0), grid, blocked, params)
+    if plan.reachable:
+        # 스냅이 됐다면 유효 목표는 시작점이 도는 벽 «이쪽» 이어야 한다.
+        assert plan.effective[0] < 3.5
+        assert plan.goal_moved_m > 0.0
+    else:
+        # 스냅 반경 안에 도달 가능한 자유 셀이 하나도 없으면 정직하게 실패.
+        assert plan.fail_reason == "goal_unreachable"
+        assert plan.effective is None or plan.effective[0] < 3.5

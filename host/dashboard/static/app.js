@@ -2,6 +2,7 @@ import {FactoryView,renderRobotPreviews} from './scene.js';
 import {icon,renderIcons} from './icons.js';
 import {Operations,ROBOTS} from './operations.js';
 import {OperationalPanels} from './panels.js';
+import {LiveMap} from './live-map.js';
 import {registerPageTools} from './webmcp.js';
 import {RobotDetailView} from './robot-view.js';
 import {RobotLink} from './robot-link.js';
@@ -15,6 +16,9 @@ const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
 let visionFeed=null,visionStatus={state:'connecting'};
 let panels=null;
+let mainLiveMap=null,mapAvailable=false;
+// 서버가 실제 지도를 줬을 때만 예시 공장 자리를 실제 집 지도로 바꾼다. 없으면 «지도 없음» 을 그대로 말한다.
+function showLiveMap(){const shown=operations.live&&mapAvailable;$('live-house-map').hidden=!shown;$('map-placeholder').hidden=operations.demo||shown;$('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':shown?'실제 집 지도 · 로봇이 추정한 위치':'지도 없음 · 예시 공장 숨김'}
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -169,7 +173,10 @@ function syncMain(){
  document.querySelector('.mission-summary').hidden=operations.live;
  syncTelemetry();
  $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'지도 없음 · 예시 공장 숨김';
- $('map-placeholder').hidden=operations.demo;
+ $('map-placeholder').hidden=operations.demo||(operations.live&&mapAvailable);
+ // 실제 집 지도 — 관제 서버에 붙었을 때만. 지도를 누르면 확인 창을 거쳐 로봇을 보낸다.
+ if(operations.live&&!mainLiveMap&&panels){mainLiveMap=new LiveMap({document,getLink:()=>operations.live?operations.link:null,onPick:(x,y,where)=>panels.confirmGoto(x,y,where),onAvailability:available=>{mapAvailable=available;showLiveMap()}});$('live-house-map').append(mainLiveMap.root)}
+ showLiveMap();
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');

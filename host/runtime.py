@@ -31,6 +31,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, cast
 
 from host.behavior.actions import PostureSequence, register_actions
@@ -46,6 +47,7 @@ from host.behavior.ppe_judge import PpeJudge
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zone_inspector import ZoneInspector
+from host.behavior.zone_map import ZoneMap
 from host.behavior.zone_policy import ZonePpePolicy
 from host.behavior.zones import Zone, ZoneStore
 from host.cloud import broadcast
@@ -61,8 +63,11 @@ from host.common.logging_setup import (
     setup_logging,
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
+from host.common.units import deg_to_rad, rad_to_deg
 from host.dashboard.state import DashboardState
 from host.report.situation import describe
+from host.slam.occupancy import OccupancyGrid
+from host.slam.pose_out import PoseOut
 from host.slam.settings import maps_dir, require_lidar_track, validate_section
 from host.telemetry.lidar_feed import open_lidar_feed
 from host.telemetry.receiver import Ingested, TelemetryReceiver
@@ -73,6 +78,7 @@ from host.telemetry.ros2_relay import (
     open_odom_sender,
     send,
 )
+from host.telemetry.session_recorder import SessionRecorder
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -105,6 +111,10 @@ def _is_oversized_datagram(exc: OSError) -> bool:
 SOUND_ACK_TIMEOUT_MS = 300
 SOUND_RETRIES = 2
 
+#: VLM 적재가 끝날 때까지 순찰 시작을 미루는 상한. 실측 적재는 ~15초 — 이 상한을
+#: 넘는 적재는 멈춰 있다고 보고, 굶김 위험을 로그로 남기고 시작한다.
+VLM_LOAD_WAIT_MS = 60_000
+
 
 def _is_command_ack(raw: str | bytes) -> bool:
     """로봇이 명령마다 돌려주는 응답(펌웨어 `sendAck`)인가. **텔레메트리가 아니다.**
@@ -118,6 +128,18 @@ def _is_command_ack(raw: str | bytes) -> bool:
     except (ValueError, RecursionError):
         return False
     return isinstance(msg, dict) and "verdict" in msg and "applied" in msg
+
+
+#: 보행 잠금(`--motion-lock`)에서 로봇으로 내보내는 전문 — 정지·상태 알림만.
+MOTION_LOCK_TYPES = frozenset({"STOP", "ESTOP", "STATE", "LED"})
+
+
+def _command_type(line: str) -> str:
+    try:
+        value = json.loads(line).get("type")
+    except (ValueError, AttributeError):
+        return ""
+    return value if isinstance(value, str) else ""
 
 
 def _peer_text(peer: tuple[str, int] | None) -> str:
@@ -179,6 +201,10 @@ class Runtime:
         announcer: Callable[[str], None] | None = None,
         navigator_factory: Callable[[Commander], PatrolController] | None = None,
         odom: OdomSender | None = None,
+        pose_out: PoseOut | None = None,
+        recorder: SessionRecorder | None = None,
+        motion_lock: bool = False,
+        record_frame_ms: int = 1000,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
@@ -216,8 +242,31 @@ class Runtime:
         # 뒤처진 쪽을 통째로 버린다 (`_send_lock` 설명과 같은 이유).
         navigator = navigator_factory(self._commander) if navigator_factory else None
         self._navigator = navigator
+        #: 대시보드가 알려준 «지금 이 구역» — 서버 스레드가 넣고 루프가 꺼낸다.
+        self._locate_lock = threading.Lock()
+        self._locate_asked: str | None = None
+        #: 지도에서 찍은 목표 — 서버 스레드가 넣고 루프가 꺼낸다. 결과는 피드백으로.
+        self._goto_asked: tuple[float, float] | None = None
+        self._goal_feedback: dict[str, Any] | None = None
+        #: 루프가 틱마다 만든 항법 상태 묶음 (서버는 참조만 읽는다).
+        self._nav_snapshot: dict[str, Any] | None = None
+        #: 사람이 순찰을 멈췄다(PATROL → IDLE) — 찍은 목표를 버린다 (루프에서).
+        self._goal_cancel_asked = False
         #: ROS2 컨테이너로 가는 ODOM (`--lidar-device`, 보행 실측이 있는 기체만). 없으면 보내지 않는다.
         self._odom = odom
+        #: 대시보드로 가는 측위 포즈 — 지도 폴더의 `pose_frame.json` 이 있을 때만
+        #: 만든다 (`PoseOut.of`). 변환 없는 원시 순찰 좌표는 뷰어에서 엉뚱한 자리에
+        #: 찍히므로 «모른다» 가 낫다.
+        self._pose_out = pose_out
+        #: 실기 동시 기록 (`--record-dir`). 없으면 기록하지 않는다.
+        self._recorder = recorder
+        #: 보행 잠금 (`--motion-lock`) — 로봇으로는 `MOTION_LOCK_TYPES` 만 나간다. 펌웨어는 명령을
+        #: 하나라도 받아야 텔레메트리를 보내므로(`telemetry_publisher.observe_command`) «아무것도 안
+        #: 보내는» 입력 검증은 성립하지 않는다 — 정지 명령만 보내 IMU·상태를 받는다.
+        self._motion_lock = motion_lock
+        self._record_frame_ms = record_frame_ms
+        self._last_frame_saved_ms: int | None = None
+        self._recorded_nav_phase: str | None = None
         #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
         self._take_scan: Callable[[], Scan | None] | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
@@ -227,6 +276,9 @@ class Runtime:
             # ⚠️ **훅에서 바로 풀지 않는다.** 전이는 대시보드 스레드(`apply_external`)에서도
             # 일어나고, 그때 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
             self._behavior.fsm.on_enter("PATROL", self._mark_navigator_resume)
+            self._behavior.fsm.on_exit("PATROL", self._mark_goal_cancel)
+            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다 (Codex 검토 G P1).
+            self._behavior.fsm.on_exit("MANUAL", self._mark_goal_cancel)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
@@ -254,6 +306,8 @@ class Runtime:
         self._reset_asked = False
         #: 순찰을 예약했다. ⚠️ **리셋이 정착한 뒤에 시작해야 한다** — 아래 참고.
         self._patrol_asked = False
+        #: 순찰 예약 시각 — VLM 적재 대기의 상한을 재는 데 쓴다.
+        self._patrol_asked_ms: int | None = None
         self._session_open: str | None = None
         self._ignored_since_ms: int | None = None
         self._cmd_timeout_ms = int(config["safety"]["cmd_timeout_ms"])
@@ -284,7 +338,14 @@ class Runtime:
         zone_ids = tuple(str(label) for label in config["zones"]["ids"])
         # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
         try:
-            anchors: tuple[Zone, ...] = ZoneStore.load(maps_dir(config), zone_ids).as_tuple()
+            # 길 찾기가 쓰는 지도(`--maps`)의 구역을 그대로 쓴다 — 설정의 maps_dir 를 따로 읽으면
+            # 다른 지도를 줬을 때 도착 판정(길 찾기)과 점검(카메라)이 서로 다른 자리를 본다.
+            navigator_zones = getattr(self._navigator, "zones", None)
+            anchors: tuple[Zone, ...] = (
+                navigator_zones.as_tuple()
+                if isinstance(navigator_zones, ZoneStore)
+                else ZoneStore.load(maps_dir(config), zone_ids).as_tuple()
+            )
         except (OSError, ValueError) as exc:
             LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
             anchors = ()
@@ -303,6 +364,8 @@ class Runtime:
                 budget_ms=int(config["vision"]["vlm"]["budget_ms"]),
             )
         )
+        #: 판독기를 주입받았나 — `begin()` 의 적재 여부 판정에 쓴다.
+        self._vlm_injected = vlm_reader is not None
         #: 쓰러짐 확정 기준. 기록에 함께 실어 **그때 무슨 기준이었는지**를 남긴다 —
         #: 설정을 고친 뒤 옛 기록을 보면 기준을 알 수 없다.
         self._fallen_confirm_ms = int(config["vision"]["fallen"]["confirm_ms"])
@@ -414,6 +477,9 @@ class Runtime:
             apply=self._apply,
             record=self._record_scene,
         )
+        # 모든 POSE 에 들어가는 정적 roll 보정 (`posture.roll_offset_deg`). IMU 상시
+        # 기울기 편향의 반대 부호 — 0 이면 기존 동작과 동일하다.
+        self._roll_offset_deg = float(config["posture"].get("roll_offset_deg", 0.0))
 
     @property
     def behavior(self) -> Behavior:
@@ -621,6 +687,8 @@ class Runtime:
         result = self._vision.latest()
         if result is not None and not self._edge.changed("vision_seq", result.frame_seq):
             result = None
+        if result is not None and self._recorder is not None:
+            self._record_vision(result, now_ms)
         if result is not None:
             self._ppe_judge.forget_lost(result, now_ms)
             self._summary.count("detections", len(result.detections))
@@ -699,6 +767,34 @@ class Runtime:
                 age_ms=self._vision.age_ms(now_ms),
             )
 
+    def _record_vision(self, result: VisionResult, now_ms: int) -> None:
+        """새 추론 결과 하나 — 모델 출력 그대로. 프레임은 `record_frame_ms` 간격으로만 파일로 둔다."""
+        assert self._recorder is not None
+        frame_file = None
+        due = self._last_frame_saved_ms is None or (
+            now_ms - self._last_frame_saved_ms >= self._record_frame_ms
+        )
+        if due and result.jpeg:
+            frame_file = self._recorder.save_frame(
+                result.jpeg, frame_seq=result.frame_seq, received_ms=result.frame_received_ms
+            )
+            self._last_frame_saved_ms = now_ms
+        self._recorder.record(
+            "vision",
+            at_ms=now_ms,
+            frame_seq=result.frame_seq,
+            frame_received_ms=result.frame_received_ms,
+            completed_ms=result.completed_ms,
+            inference_ms=round(result.inference_ms, 2),
+            size=[result.frame_width, result.frame_height],
+            detections=[
+                {"label": d.label, "score": round(d.score, 3), "box": [round(v, 1) for v in d.box]}
+                for d in result.detections
+            ],
+            person_present=result.sighting.present,
+            frame_file=frame_file,
+        )
+
     def _switch_hazard_detector(self) -> None:
         """위험물 추론은 위험구역 점검 중에만 켠다 (ADR-43 대안 ⓐ 개정).
 
@@ -726,6 +822,16 @@ class Runtime:
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
 
+    def _mark_goal_cancel(self, previous: str, target: str) -> None:
+        """사람이 멈췄다 — `PATROL`→`MANUAL`/`IDLE`, `MANUAL`→`IDLE`. 경보·추적으로 잠시 나간 것은 아니다.
+
+        수동 조종도 취소다 — 사람이 로봇을 옮긴 뒤 옛 목표로 걸어가면 안 된다. 표시만 하고 루프가 처리한다.
+        """
+        if (previous == "PATROL" and target in ("IDLE", "MANUAL")) or (
+            previous == "MANUAL" and target == "IDLE"
+        ):
+            self._goal_cancel_asked = True
+
     def _mark_navigator_resume(self, _previous: str, _target: str) -> None:
         """`PATROL` 진입 훅. 표시만 한다 — 길 찾기 상태는 루프 스레드만 바꾼다."""
         self._navigator_resume = True
@@ -747,6 +853,15 @@ class Runtime:
         그것이 없으면 아무도 부르지 않고 구역 도착이 일어나지 않는다.
         """
         self._zone_inspector.note_pose(pose, now_ms)
+        if self._pose_out is not None:
+            # 대시보드 실시간 위치 — 송신 실패는 순찰을 늦추지 않는다 (`PoseOut.send`).
+            self._pose_out.send(
+                pose,
+                moving=self._behavior.state == "PATROL",
+                score_frac=getattr(self._navigator, "match_frac", None),
+                zone=getattr(self._navigator, "current_zone", None),
+                verified=bool(getattr(self._navigator, "pose_verified", False)),
+            )
         self._zone_ppe.note_pose(pose, now_ms)
 
     def attach_scans(self, take: Callable[[], Scan | None]) -> None:
@@ -763,9 +878,56 @@ class Runtime:
             return
         scan = self._take_scan()
         if scan is not None:
-            self._navigator.observe_scan(scan, now_ms)
-            if self._navigator.pose_ms == now_ms:
-                self.note_pose(self._navigator.pose, now_ms)
+            navigator = self._navigator
+            _obs_started = time.perf_counter()
+            navigator.observe_scan(scan, now_ms)
+            _obs_ms = (time.perf_counter() - _obs_started) * 1000
+            if _obs_ms > 300:
+                LOG.warning("observe_scan_slow", ms=round(_obs_ms, 1), points=len(scan.points))
+            updated = navigator.pose_ms == now_ms
+            if updated:
+                self.note_pose(navigator.pose, now_ms)
+            elif (
+                self._pose_out is not None
+                and navigator.pose_ms is not None
+                and navigator.pose_stale(now_ms)
+            ):
+                # 약한 정합을 조용히 삼키지 않는다 — 마지막 자세를 LOST 로 표시해
+                # 대시보드가 낡은 위치를 신선한 것처럼 보여주지 않게 한다.
+                self._pose_out.send(
+                    navigator.pose,
+                    moving=False,
+                    lost=True,
+                    score_frac=getattr(navigator, "match_frac", None),
+                    zone=getattr(navigator, "current_zone", None),
+                    verified=False,
+                )
+            if self._recorder is not None:
+                x, y, yaw = navigator.pose
+                self._recorder.record(
+                    "localization",
+                    at_ms=now_ms,
+                    scan_seq=scan.seq,
+                    scan_boot=scan.boot_id,
+                    points=len(scan.points),
+                    updated=updated,
+                    score_frac=round(navigator.match_frac, 3),
+                    lost=navigator.pose_stale(now_ms),
+                    verified=navigator.pose_verified,
+                    zone=navigator.current_zone,
+                    pose=[round(x, 4), round(y, 4), round(yaw, 5)],
+                    phase=navigator.phase.value,
+                    target=navigator.target,
+                )
+        if self._recorder is not None and self._navigator.phase.value != self._recorded_nav_phase:
+            self._recorded_nav_phase = self._navigator.phase.value
+            self._recorder.record(
+                "navigator_phase",
+                at_ms=now_ms,
+                phase=self._recorded_nav_phase,
+                halt_reason=self._navigator.halt_reason,
+                target=self._navigator.target,
+            )
         for hit in self._navigator.take_new_obstacles():
             self._record_path_blocked(hit)
 
@@ -963,6 +1125,13 @@ class Runtime:
         after = self._behavior.state
         self._log.observe(state=after)
         trigger = self._behavior.last_trigger
+        if self._recorder is not None:
+            self._recorder.record(
+                "fsm",
+                previous=previous,
+                state=after,
+                trigger=trigger.name if trigger is not None else None,
+            )
         emit = LOG.error if after in ERROR_ON_ENTER else LOG.info
         emit(
             "fsm_transition",
@@ -1170,6 +1339,8 @@ class Runtime:
         phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
         self._watch_sound(lines, now_ms)
+        if self._navigator is not None:
+            self._nav_snapshot = self._build_nav_snapshot(now_ms)
         behavior_ms = (time.perf_counter() - phase_started) * 1000
         if self._behavior.state != before:
             self._stats.transitions += 1
@@ -1230,6 +1401,12 @@ class Runtime:
         로그가 거짓을 말하면 로그가 없는 것보다 나쁘다.
         """
         self._ppe_judge.note_time(now_ms)
+        if self._motion_lock and event is Event.START_PATROL:
+            # 보행 잠금 중에는 순찰을 시작하지 않는다 — MOVE 는 어차피 막히지만, FSM 이
+            # PATROL 로 가면 화면·기록이 «걷는 중» 이라고 거짓말한다.
+            if self._edge.changed("motion_lock_patrol", True):
+                LOG.warning("motion_lock_refused_patrol")
+            return False
         # ⚠️ **모드 게이트는 FSM 보다 앞이다** (FR-11.1). 뒤에 두면 전이는
         # 막아도 에스컬레이션이 올라가, 경비 모드에서 PPE 위반이 L3 경보를 만든다.
         # 여기가 사건이 지나는 유일한 지점이라 **한 곳에서 한 번만** 거른다.
@@ -1321,6 +1498,76 @@ class Runtime:
         """
         return self._zone_inspector.ask_baseline_reset(zone)
 
+    def ask_goto(self, x: float, y: float) -> tuple[bool, str]:
+        """지도에서 찍은 곳(순찰 좌표)을 예약한다. **다른 스레드에서 부른다.**"""
+        navigator = self._navigator
+        if navigator is None or not hasattr(navigator, "goto"):
+            return False, "LiDAR 측위 순찰이 아니라 지도 이동을 할 수 없다"
+        with self._locate_lock:
+            self._goto_asked = (float(x), float(y))
+            self._goal_feedback = None
+        return True, "찍은 곳으로 갈 수 있는지 확인한다 — 결과는 지도에 표시된다"
+
+    def nav_status(self) -> dict[str, Any]:
+        """관제 지도가 그릴 자기 위치·신뢰·목표. **다른 스레드에서 부른다.**
+
+        루프가 틱마다 만든 한 시점의 묶음을 돌려준다 — 서버 스레드가 컨트롤러 필드를 하나씩 읽으면
+        옛 좌표에 새 신뢰·구역·경로가 섞인다 (Codex 검토 G P2).
+        """
+        snapshot = self._nav_snapshot
+        if snapshot is None:
+            return {"available": self._navigator is not None, "starting": True}
+        return {**snapshot, "goal_feedback": self._goal_feedback}
+
+    def _build_nav_snapshot(self, now_ms: int) -> dict[str, Any]:
+        """루프 스레드에서 한 시점의 항법 상태를 묶는다."""
+        navigator = self._navigator
+        if navigator is None:
+            return {"available": False}
+        x, y, yaw = navigator.pose
+        goal = getattr(navigator, "goal", None)
+        hint = getattr(navigator, "_zone_hint", None)
+        return {
+            "available": True,
+            "frame": "patrol",
+            "pose": [round(x, 3), round(y, 3), round(rad_to_deg(yaw), 1)],
+            "stale": bool(navigator.pose_stale(now_ms)),
+            "verified": bool(getattr(navigator, "pose_verified", False)),
+            "seeded": bool(getattr(navigator, "pose_seeded", False)),
+            "phase": str(getattr(navigator, "phase", "")),
+            "target": getattr(navigator, "target", None),
+            "zone": getattr(navigator, "current_zone", None),
+            "goal": None if goal is None else [round(goal[0], 3), round(goal[1], 3)],
+            "holding_goal": bool(getattr(navigator, "holding_goal", False)),
+            "goal_hold_reason": getattr(navigator, "goal_hold_reason", None),
+            "zone_hint": None if hint is None else hint[0],
+            "match_frac": round(float(getattr(navigator, "match_frac", 0.0)), 3),
+            "path": [
+                [round(px, 3), round(py, 3)]
+                for px, py in getattr(getattr(navigator, "plan", None), "waypoints", ())
+            ],
+            "goal_feedback": self._goal_feedback,
+            "fsm": self._behavior.state,
+        }
+
+    def ask_locate_zone(self, zone: str) -> tuple[bool, str]:
+        """사람이 알려준 «지금 이 구역» 을 예약한다. **다른 스레드에서 부른다.**
+
+        길 찾기·측위 상태는 루프 스레드만 바꾼다 — 적용은 다음 틱(`_drain_confirmations`).
+        """
+        navigator = self._navigator
+        if navigator is None or not hasattr(navigator, "hint_zone"):
+            return False, "LiDAR 측위 순찰이 아니라 위치를 알려줄 대상이 없다"
+        known = navigator.locate_zone_ids()
+        if zone not in known:
+            return (
+                False,
+                f"구역 {zone!r} 이 없다 — 알려줄 수 있는 구역: {', '.join(known) or '없음'}",
+            )
+        with self._locate_lock:
+            self._locate_asked = zone
+        return True, f"구역 {zone} 안에서 위치를 다시 찾는다 — 찾을 때까지 로봇은 선다"
+
     def apply_external(self, event: Event) -> bool:
         """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**
 
@@ -1360,6 +1607,7 @@ class Runtime:
         은 `IDLE` 에서만 전이를 만들므로 상태 이름이 여기 들어오지 않는다.
         """
         self._patrol_asked = True
+        self._patrol_asked_ms = self._clock()
 
     def _drain_confirmations(self, now_ms: int) -> None:
         """사람이 누른 확인을 **판단보다 먼저** 처리한다.
@@ -1374,6 +1622,42 @@ class Runtime:
         if self._reset_asked:
             self._reset_asked = False
             self.request_reset()
+        with self._locate_lock:
+            zone, self._locate_asked = self._locate_asked, None
+        if zone is not None and self._navigator is not None:
+            self._navigator.hint_zone(zone, now_ms)
+        with self._locate_lock:
+            goto, self._goto_asked = self._goto_asked, None
+        navigator = self._navigator
+        if self._goal_cancel_asked:
+            self._goal_cancel_asked = False
+            if navigator is not None and hasattr(navigator, "cancel_goal"):
+                navigator.cancel_goal("patrol_stopped")
+            # 정지를 누르기 전에 들어온 이동 요청·그것이 건 순찰 시작도 버린다.
+            if goto is not None or self._goal_feedback is not None:
+                goto = None
+                self._patrol_asked = False
+        if goto is not None and navigator is not None:
+            accepted, detail = navigator.goto(*goto)
+            self._goal_feedback = {
+                "accepted": accepted,
+                "detail": detail,
+                "goal": [round(goto[0], 3), round(goto[1], 3)],
+                "at_ms": now_ms,
+            }
+            LOG.info("goto_requested", accepted=accepted, detail=detail)
+            if accepted and self._behavior.state != "PATROL":
+                # 순찰 중이 아니면 순찰을 시작해야 길 찾기가 돈다 — 같은 예약 경로(리셋 정착 대기 포함).
+                self.ask_patrol()
+        if (
+            self._patrol_asked
+            and navigator is not None
+            and getattr(navigator, "holding_goal", False)
+            and self._behavior.state == "PATROL"
+        ):
+            # 찍은 곳에 서 있다가 «순찰 시작» — 구역 순찰로 돌아간다.
+            self._patrol_asked = False
+            navigator.cancel_goal("patrol_restart")
         self._zone_inspector.reset_baselines()
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
@@ -1382,8 +1666,19 @@ class Runtime:
             and not self._reset_pending
             and self._behavior.fsm.can(Event.START_PATROL)
         ):
-            self._patrol_asked = False
-            self.start_patrol(now_ms)
+            # ⚠️ **VLM 적재가 끝날 때까지 보행을 미룬다.** 적재 스레드가 CPU·GIL 을
+            # 잡아먹는 동안 걸으면 명령 공백이 로봇의 통신 감시를 넘긴다
+            # (2026-10-02 실기: `cmd_gap 585ms` → `ONBOARD_FAILSAFE`).
+            # 상한을 둔다 — 적재가 붙잡혀 있으면 대기가 끝이 없다.
+            waited_ms = 0 if self._patrol_asked_ms is None else now_ms - self._patrol_asked_ms
+            if self._vlm.loading and waited_ms < VLM_LOAD_WAIT_MS:
+                if self._edge.changed("vlm_load_wait", True):
+                    LOG.info("patrol_deferred_vlm_loading")
+            else:
+                if self._vlm.loading:
+                    LOG.warning("patrol_starting_during_vlm_load", waited_ms=waited_ms)
+                self._patrol_asked = False
+                self.start_patrol(now_ms)
 
     def _settle_reset(self, latched: bool | None, now_ms: int) -> None:
         """로봇이 래치를 풀었다고 보고하면 그때 `RESET_CONFIRMED` 를 넣는다."""
@@ -1393,7 +1688,11 @@ class Runtime:
         if self._apply(Event.RESET_CONFIRMED, now_ms):
             # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
             self._commander.once(
-                "POSE", pitch=0.0, roll=0.0, height=0.0, dur=self._ppe_judge.settle_ms
+                "POSE",
+                pitch=0.0,
+                roll=self._roll_offset_deg,
+                height=0.0,
+                dur=self._ppe_judge.settle_ms,
             )
 
     def emergency_stop(self) -> str:
@@ -1469,7 +1768,12 @@ class Runtime:
         # 남았다. 경비 모드에 올라가 있어도 구역 점검이 없으니 판독은 생기지 않는다.
         # ⚠️ **생성자가 아니라 여기다.** 시험은 `Runtime` 을 수백 번 만들고, 거기서
         # 걸면 만들 때마다 적재가 돈다. `release()` 가 짝으로 내린다.
-        self._vlm.start()
+        # ⚠️ **`--no-vision` 이면 올리지 않는다.** 적재는 스레드에서 돌아도 4.1GB
+        # 체크포인트를 읽는 동안 CPU·GIL 을 잡아먹어 제어 루프의 명령이 끊기고,
+        # 실기에서 `cmd_gap 585ms` → `ONBOARD_FAILSAFE` 로 이어졌다 (2026-10-02).
+        # 시험 주입(`vlm_reader`)은 가짜 세션이라 그대로 올린다.
+        if self._vision is not None or self._vlm_injected:
+            self._vlm.start()
         self._sock = sock
         # ⚠️ **루프보다 먼저 인코딩한다.** 이것이 프로세스의 seq=1 이어야 로봇이
         # 세션 개시로 인정한다. 틱이 한 번이라도 앞서면 seq 1 을 다른 명령이 쓴다.
@@ -1493,6 +1797,15 @@ class Runtime:
     def receive(self, data: bytes, addr: tuple[str, int], now_ms: int) -> None:
         """받은 datagram 하나. 상대 주소를 모르면 첫 수락 텔레메트리에서 배운다."""
         out = self.ingest(data, now_ms)
+        if self._recorder is not None:
+            self._recorder.record_raw(
+                "telemetry",
+                data,
+                at_ms=now_ms,
+                src=f"{addr[0]}:{addr[1]}",
+                accepted=out.reading is not None,
+                discarded=out.discarded,
+            )
         if self._peer is None and out.reading is not None:
             self._peer = (addr[0], self._cmd_port)
             LOG.info("peer_learned", peer=_peer_text(self._peer))
@@ -1515,7 +1828,7 @@ class Runtime:
             lines = [line] if self._session_open is None else [self._session_open, line]
             if self._sock is not None and self._peer is not None:
                 self._session_open = None
-                self._note_odom_sent(send(self._sock, self._peer, lines))
+                self._transmit(self._sock, self._peer, lines)
         return line
 
     def send_immediate(self, line: str) -> None:
@@ -1528,7 +1841,30 @@ class Runtime:
         sock, peer = self._sock, self._peer
         if sock is None or peer is None:
             return
-        self._note_odom_sent(send(sock, peer, [line]))
+        self._transmit(sock, peer, [line])
+
+    def _transmit(self, sock: socket.socket, peer: tuple[str, int], lines: list[str]) -> list[str]:
+        """로봇으로 나가는 **유일한** 길(틱·관제·즉시·ESTOP). 보행 잠금을 적용하고 기록한다."""
+        if self._motion_lock:
+            blocked = [line for line in lines if _command_type(line) not in MOTION_LOCK_TYPES]
+            if blocked:
+                lines = [line for line in lines if _command_type(line) in MOTION_LOCK_TYPES]
+                if self._recorder is not None:
+                    self._recorder.record("command_blocked", lines=blocked)
+                if self._edge.changed("motion_lock_blocked", True):
+                    LOG.warning(
+                        "motion_lock_blocked", types=sorted({_command_type(b) for b in blocked})
+                    )
+        sent = send(sock, peer, lines)
+        if self._recorder is not None and sent:
+            self._recorder.record("command_sent", lines=sent, peer=_peer_text(peer))
+        self._note_odom_sent(sent)
+        if self._navigator is not None and sent:
+            # ⚠️ 순찰기에도 **실제로 나간** 명령을 알린다 — 없으면 «정지 중» 판정(`_is_stationary`)이
+            # AVOID·FAILSAFE 때 찍힌 정지 시각에 머물러, 걷는 중에도 감사가 돌고 표 독립성도
+            # 못 본다(2026-10-03 Codex 검토: runtime 이 navigator.note_sent 를 부르지 않았다).
+            self._navigator.note_sent(sent, self._clock())
+        return sent
 
     def _note_odom_sent(self, sent: list[str]) -> None:
         """**실제로 나간** 명령만 오도메트리에 알린다. 송신 경로(틱·관제·즉시)가 모두 부른다."""
@@ -1544,13 +1880,29 @@ class Runtime:
             self._session_open = None
         if not lines:
             return
-        self._note_odom_sent(send(sock, self._peer, lines))
+        self._transmit(sock, self._peer, lines)
 
     def _shutdown(self, sock: socket.socket) -> None:
         # ⚠️ **`ESTOP` 을 먼저 보낸다.** 워커 정리를 기다리다 늦으면, 로봇을 멈추는
         # 신호가 스레드 조인 뒤로 밀린다. 순서가 안전을 결정한다.
         self.stop_robot(sock)
         self.release()
+        # 이번 세션에 실측 스캔으로 자란 지도를 저장한다 — 다음 세션이 더 나은
+        # 지도에서 시작하게. 처음 덮어쓸 때 원본은 `slam_map.orig.*` 로 남는다.
+        navigator = self._navigator
+        if isinstance(navigator, PatrolController) and navigator.maps_dir is not None:
+            try:
+                written = navigator.save_map()
+            except OSError:
+                LOG.warning("patrol_map_save_failed", directory=str(navigator.maps_dir))
+            else:
+                if written:
+                    LOG.info("patrol_map_saved", directory=str(navigator.maps_dir))
+                else:
+                    LOG.info(
+                        "patrol_map_not_saved",
+                        reason="자세가 전역 확인된 적 없음 — 이 세션의 적분은 보류됐다",
+                    )
 
     def stop_robot(self, sock: socket.socket) -> None:
         """종료 ESTOP 을 여러 번 보낸다. 여러 대면 **전부 먼저 세운 뒤** `release` 한다."""
@@ -1563,6 +1915,8 @@ class Runtime:
             payload = line.encode("utf-8")
             # UDP 한 건의 유실로 600ms 온보드 타임아웃까지 마지막 동작이 남는 것을
             # 줄인다. 같은 seq의 중복은 멱등이고, 첫 건이 도착하면 나머지는 무시된다.
+            if self._recorder is not None:
+                self._recorder.record("command_sent", lines=[line], repeats=SHUTDOWN_ESTOP_REPEATS)
             for attempt in range(SHUTDOWN_ESTOP_REPEATS):
                 with contextlib.suppress(OSError):
                     sock.sendto(payload, self._peer)
@@ -1673,6 +2027,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-level", default=None, help="config.logging.level 을 덮어쓴다 (DEBUG 실행용)"
     )
+    parser.add_argument(
+        "--maps",
+        default=None,
+        help="지도·구역 폴더 — config 의 lidar.maps_dir 를 덮어쓴다 (patrol_run --maps 와 같다)",
+    )
+    parser.add_argument(
+        "--pose-seed",
+        default=None,
+        metavar="X,Y,YAW_DEG",
+        help="시작 자세 시드 (지도 좌표, m·deg) — 로봇을 원점이 아닌 곳에 놓을 때 첫 정합의 중심",
+    )
+    parser.add_argument(
+        "--record-dir",
+        default=None,
+        help="실기 동시 기록 폴더 — 원본 SCAN·TELEMETRY·송신 명령·측위·영상 인식을 한 시간축 JSONL 로",
+    )
+    parser.add_argument(
+        "--record-frame-ms",
+        type=int,
+        default=1000,
+        help="기록할 카메라 프레임 간격 (기본 1000ms — 추론 결과는 매번 기록)",
+    )
+    parser.add_argument(
+        "--motion-lock",
+        action="store_true",
+        help="보행 잠금 — 로봇에는 STOP·ESTOP·STATE·LED 만 보낸다 (입력 확인용, --patrol 과 함께 못 쓴다)",
+    )
     return parser
 
 
@@ -1701,9 +2082,12 @@ def dashboard_wiring(
         note_voice_listening=runtime.note_voice_listening,
         confirm_alarm=runtime.ask_alarm_confirm,
         reset_zone_baseline=runtime.ask_zone_baseline_reset,
+        locate_zone=runtime.ask_locate_zone,
+        goto_point=getattr(runtime, "ask_goto", None),
         pose=(
             float(config["posture"]["pitch_up_deg"]),
             int(config["posture"]["settle_ms"]),
+            float(config["posture"].get("roll_offset_deg", 0.0)),
         ),
     )
     return {
@@ -1718,8 +2102,35 @@ def dashboard_wiring(
         # PC 스피커 방송 음량·무음 조절. 없으면(piper 없음 등) None —
         # 화면은 "방송 없음" 을 보여 준다.
         "broadcast": broadcaster,
+        # 실제 집 지도·자기 위치 (LiDAR 측위 순찰일 때만).
+        "map_view": _map_view(runtime),
+        "nav_status": runtime.nav_status if _has_navigator(runtime) else None,
         "planning": PlanningService(dict(config), runtime.context.device_id),
     }
+
+
+def _has_navigator(runtime: Any) -> bool:
+    return getattr(runtime, "_navigator", None) is not None and hasattr(runtime, "nav_status")
+
+
+def _map_view(runtime: Any) -> Callable[[], tuple[bytes, dict[str, Any]]] | None:
+    """항법 지도·구역을 관제 웹에 그릴 함수. 처음 부를 때 한 번 그린다."""
+    if not _has_navigator(runtime):
+        return None
+    from host.dashboard.live_map import MapView, PoseFrame, render
+
+    navigator = runtime._navigator
+    view = MapView(
+        lambda: render(
+            navigator.grid,
+            zones=navigator.zones,
+            zone_map=navigator.zone_map,
+            frame=PoseFrame.load(navigator.maps_dir),
+            occ_thresh=navigator.plan_params.occ_thresh,
+            free_thresh=navigator.plan_params.free_thresh,
+        )
+    )
+    return view.get
 
 
 def _publish_event(dashboard: DashboardState) -> Callable[[BlackboxEntry], None]:
@@ -1774,6 +2185,8 @@ def policy_view(config: Mapping[str, Any]) -> dict[str, Any]:
         "auth_require_both": bool(auth.get("require_both", False)),
         "l3_warning": (esc.get("sound") or {}).get("l3_warning"),
         "led": {key: value for key, value in esc["led"].items() if key != "l3_blink_hz"},
+        # «위치 알려주기» 버튼 목록 — 순찰 구역 id (방 이름이 아니라 구역 기호).
+        "patrol_zones": [str(zone) for zone in config["zones"]["ids"]],
     }
 
 
@@ -1804,10 +2217,98 @@ def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
     return broadcaster
 
 
+def _open_recorder(
+    args: argparse.Namespace, config: Mapping[str, Any], argv: list[str] | None
+) -> SessionRecorder:
+    """기록 폴더와 manifest. 비밀값을 넣지 않는다 — 설정은 해시만, 인자는 그대로."""
+    import hashlib
+    import subprocess
+
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False, timeout=5
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        revision = ""
+    config_text = json.dumps(config, sort_keys=True, ensure_ascii=False, default=str)
+    return SessionRecorder(
+        Path(args.record_dir),
+        manifest={
+            "argv": sys.argv[1:] if argv is None else argv,
+            "device": args.device,
+            "lidar_device": args.lidar_device,
+            "maps": args.maps,
+            "motion_lock": args.motion_lock,
+            "git_revision": revision,
+            "config_sha256": hashlib.sha256(config_text.encode("utf-8")).hexdigest(),
+            "mount_yaw_deg": (config.get("lidar") or {}).get("mount_yaw_deg"),
+            "angle_direction": (config.get("lidar") or {}).get("angle_direction"),
+        },
+    )
+
+
+def _pose_out(config: dict[str, Any], maps: Path) -> PoseOut | None:
+    """대시보드 포즈 송신기 — 지도 폴더에 `pose_frame.json` 이 있을 때만 만든다.
+
+    순찰 좌표 → 표시(평면) 좌표 변환은 지도가 가진다 (`PoseOut.of` 문서). 송신
+    목적지는 `lidar.pose_out_host` · `pose_out_port` — 대시보드 포즈 수신 포트다.
+    """
+    lidar = config.get("lidar") or {}
+    return PoseOut.of(
+        maps,
+        host=str(lidar.get("pose_out_host", "127.0.0.1")),
+        port=int(lidar.get("pose_out_port", 5300)),
+    )
+
+
+def _seeded_controller(
+    config: dict[str, Any],
+    commander: Commander,
+    patrol_map: tuple[OccupancyGrid, ZoneStore],
+    pose_seed: str | None,
+    maps_dir: Path | None = None,
+) -> PatrolController:
+    """순찰 컨트롤러를 만들고 `--pose-seed` 가 있으면 첫 정합의 탐색 중심을 심는다.
+
+    `observe_map_pose` 가 아니라 `pose` 필드를 직접 쓴다 — 측위 완료 시각
+    (`_last_pose_ms`)을 찍지 않아야 첫 정합 전용 넓은 창(`first_match_params`)이
+    배치 오차를 흡수할 수 있다.
+    """
+    controller = controller_from_config(config, commander, *patrol_map, random.Random())
+    # 걸으며 자란 지도를 다음 세션도 쓰게 한다 — 종료 시 `save_map` 이 이 폴더에 쓴다.
+    controller.maps_dir = maps_dir
+    if maps_dir is not None:
+        # 구역 영역 지도 — 대시보드와 같은 파일이라 «지금 어느 방인가» 의 정의가 하나다.
+        controller.zone_map = ZoneMap.load(maps_dir)
+        LOG.info(
+            "zone_map_loaded" if controller.zone_map else "zone_map_absent", maps=str(maps_dir)
+        )
+        # 측위 전용 지도 — 세션 SLAM 병합(가구 다리 랜드마크)을 담은 `slam_map_loc.npy` 가
+        # 있으면 정합은 그것으로 하고, 경로 계획은 항법용 `slam_map.npy` 그대로다.
+        if (maps_dir / "slam_map_loc.npy").is_file():
+            controller.loc_grid = OccupancyGrid.load(maps_dir, stem="slam_map_loc")
+            LOG.info("loc_map_loaded", maps=str(maps_dir))
+    if pose_seed:
+        try:
+            x_s, y_s, yaw_s = (float(part) for part in pose_seed.split(","))
+        except ValueError:
+            raise ConfigError(
+                f"--pose-seed 형식은 'x,y,yaw_deg' 다 — 받은 값: {pose_seed!r}"
+            ) from None
+        controller.pose = (x_s, y_s, deg_to_rad(yaw_s))
+        controller.pose_seeded = True
+        LOG.info("pose_seeded", x=x_s, y=y_s, yaw_deg=yaw_s)
+    return controller
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
         raise SystemExit("dashboard-port must be between 1 and 65535")
+    if args.motion_lock and (args.patrol or args.reset_on_start):
+        raise SystemExit("--motion-lock 은 --patrol · --reset-on-start 와 함께 쓸 수 없다")
+    if args.record_frame_ms <= 0:
+        raise SystemExit("--record-frame-ms 는 1 이상이어야 한다")
     # ⚠️ 설정을 읽기 전에는 우리 로거가 없다. 여기서만 표준 출력을 쓴다.
     try:
         config = load_config(args.device)
@@ -1830,7 +2331,8 @@ def main(argv: list[str] | None = None) -> int:
             odom_peer_of(lidar)
         # 지도·구역이 없으면 기동을 거부한다 — 길 찾기를 달라고 했는데 고정 보행으로
         # 조용히 내려가면 운용자는 LiDAR 로 돈다고 믿는다.
-        patrol_map = load_patrol_map(config, maps_dir(config)) if args.lidar_device else None
+        patrol_maps = Path(args.maps) if args.maps else maps_dir(config)
+        patrol_map = load_patrol_map(config, patrol_maps) if args.lidar_device else None
     except (OSError, ValueError) as exc:  # `ConfigError` 와 깨진 지도·구역 파일(`json`·`np.load`)
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.runtime").error("설정을 읽을 수 없다 — %s", exc)
@@ -1846,6 +2348,7 @@ def main(argv: list[str] | None = None) -> int:
     # 로거를 세운 뒤에 연다 — 실측이 없는 기체의 `odometry_unavailable` 이 JSONL 에 남는다. 그런 기체는 `None`.
     odom = open_odom_sender(config, args.device) if args.lidar_device else None
 
+    recorder = None if args.record_dir is None else _open_recorder(args, config, argv)
     vision = None if args.no_vision else build_worker(config)
     blackbox = EventBlackbox(config)
     dashboard = (
@@ -1875,11 +2378,15 @@ def main(argv: list[str] | None = None) -> int:
         navigator_factory=(
             None
             if patrol_map is None
-            else lambda commander: controller_from_config(
-                config, commander, *patrol_map, random.Random()
+            else lambda commander: _seeded_controller(
+                config, commander, patrol_map, args.pose_seed, maps_dir=patrol_maps
             )
         ),
         odom=odom,
+        pose_out=_pose_out(config, patrol_maps) if args.lidar_device else None,
+        recorder=recorder,
+        motion_lock=args.motion_lock,
+        record_frame_ms=args.record_frame_ms,
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가
@@ -1895,6 +2402,10 @@ def main(argv: list[str] | None = None) -> int:
             # 내려오므로, 먼저 시작한 순찰은 조용히 취소된다 (`ask_patrol` 참고).
             runtime.ask_patrol()
         with contextlib.ExitStack() as stack:
+            if recorder is not None:
+                # 가장 먼저 등록 → 가장 나중에 닫힌다. 종료 ESTOP·수신 정지까지 기록한다.
+                stack.callback(recorder.close)
+                recorder.start()
             if odom is not None:
                 stack.callback(odom.close)
             if args.lidar_device:
@@ -1904,6 +2415,11 @@ def main(argv: list[str] | None = None) -> int:
                     # 순찰로 걷는 동안만 LiDAR 전방 거리로 세운다 (`LidarFeed.handle`).
                     armed=lambda: runtime.behavior.state == "PATROL",
                     on_danger=runtime.send_emergency_stop,
+                    on_raw=(
+                        None
+                        if recorder is None
+                        else lambda raw, at: recorder.record_raw("scan", raw, at_ms=at)
+                    ),
                 )
                 # 서비스 종료 ESTOP(`serve` 의 `finally`) 뒤에 닫힌다.
                 stack.callback(feed.stop)

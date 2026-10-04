@@ -64,6 +64,7 @@ class PpeJudge:
         self._reverse_step = -float(config["gait"]["step_length_mm"])
         self._settle_ms = int(config["posture"]["settle_ms"])
         self._pitch = float(config["posture"]["pitch_up_deg"])
+        self._roll = float(config["posture"].get("roll_offset_deg", 0.0))
         self._back_off_mm = float(config["posture"]["back_off_mm"])
         self._reverse_speed = (config.get("gait_calibration") or {}).get("reverse_mm_per_sec")
         self._unknown_ms = int(config["vision"]["ppe"]["violation_window_ms"])
@@ -153,7 +154,7 @@ class PpeJudge:
     def _step(self, step: str | None, now_ms: int) -> None:
         if step == "pitch_up":
             self._commander.once(
-                "POSE", pitch=self._pitch, roll=0.0, height=0.0, dur=self._settle_ms
+                "POSE", pitch=self._pitch, roll=self._roll, height=0.0, dur=self._settle_ms
             )
             self._pose_held = True
         elif step == "sit":

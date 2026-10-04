@@ -1,7 +1,12 @@
 """LiDAR 스캔 수신 — 호스트 런타임의 순찰 길 찾기에 스캔을 넘긴다 (FR-7 · `--lidar-device`).
 
-    LiDAR 소켓 ─▶ 수신 스레드 ─▶ 전방 위험거리 ─▶ 즉시 ESTOP (런타임 송신 락)
-                              └▶ 최신 스캔 한 칸 ─▶ 운용 루프가 틱마다 꺼내 측위
+    LiDAR 소켓 ─▶ 수신 스레드 ─▶ 전방 위험거리 ─▶ 즉시 ESTOP (런타임 송신 락)   ← 패킷마다
+                              └▶ 한 바퀴 조립 ─▶ 최신 한 바퀴 칸 ─▶ 운용 루프가 틱마다 꺼내 측위
+
+⚠️ **측위에는 한 바퀴를 모아 넘긴다** (`RevolutionAssembler`). 실기 중계는 9.9Hz 한 바퀴를
+약 7조각(패킷당 약 71점 · 약 50°)으로 보낸다(2026-10-01 실측). 예전에는 마지막 **패킷 한 개**만
+측위에 넘겨 한쪽 50° 로 정합했다 — 시뮬 스캔은 한 장이 360° 라 드러나지 않았다. 전방 위험
+판정은 지연을 늘리지 않게 패킷마다 그대로 한다.
 
 ⚠️ **스캔은 별도 스레드가 받는다.** 운용 루프(`Runtime.serve`)는 텔레메트리 소켓
 하나에서 송신 마감까지 기다리므로, 같은 루프에서 스캔 소켓을 훑으면 그 대기가
@@ -20,6 +25,7 @@ LiDAR 비상정지를 늦춘다. 그래서 위험 판정은 받은 자리에서 
 
 from __future__ import annotations
 
+import math
 import socket
 import threading
 from collections.abc import Callable, Mapping
@@ -29,6 +35,7 @@ from host.behavior.planner import min_forward_distance
 from host.common.config import ConfigError
 from host.common.lidar_link import Scan, ScanDecoder, scan_of
 from host.common.logging_setup import event_logger
+from host.common.protocol import system_clock_ms
 from host.common.units import deg_to_rad
 from host.telemetry.ros2_relay import forward_peer_of, forward_scan, open_forward_socket
 
@@ -38,6 +45,61 @@ LOG = event_logger("mechadog.telemetry.lidar_feed")
 RECV_BYTES = 65536
 #: 수신 대기 한 번의 상한 — 멈춤 요청을 이만큼 늦게 본다.
 POLL_S = 0.2
+#: 한 바퀴 판정 — 5° 칸 72개 중 이만큼 덮이면 한 바퀴로 본다(330°).
+REV_BINS = 72
+REV_MIN_BINS = 66
+#: 이보다 오래 모아도 덮이지 않으면 버린다 — 9.9Hz 한 바퀴는 약 100ms 다.
+REV_MAX_AGE_MS = 300
+
+
+class RevolutionAssembler:
+    """패킷 조각을 한 바퀴로 모은다. 덮인 각도로 판정하므로 장착 보정 뒤 경계가 어디든 된다.
+
+    같은 기기·같은 부팅의 패킷만 잇는다. 오래 모아도 덮이지 않은 조각은 **버린다** —
+    덜 덮인 스캔을 측위에 넘기면 예전 결함(한쪽만 보고 정합)으로 돌아간다.
+    """
+
+    def __init__(self) -> None:
+        self._parts: list[Scan] = []
+        self._bins: set[int] = set()
+        self._first_ms: int | None = None
+        self.completed = 0
+        self.discarded = 0
+
+    def add(self, scan: Scan, now_ms: int) -> Scan | None:
+        if self._parts and (
+            scan.boot_id != self._parts[0].boot_id
+            or scan.device_id != self._parts[0].device_id
+            or (self._first_ms is not None and now_ms - self._first_ms > REV_MAX_AGE_MS)
+        ):
+            self.discarded += 1
+            self._reset()
+        if not self._parts:
+            self._first_ms = now_ms
+        self._parts.append(scan)
+        for angle, _ in scan.points:
+            self._bins.add(int((angle % (2 * math.pi)) / (2 * math.pi) * REV_BINS) % REV_BINS)
+        if len(self._bins) < REV_MIN_BINS:
+            return None
+        merged = Scan(
+            scan.device_id,
+            scan.boot_id,
+            scan.seq,
+            scan.ts_ms,
+            tuple(point for part in self._parts for point in part.points),
+            sum(part.dropped for part in self._parts),
+        )
+        self.completed += 1
+        self._reset()
+        return merged
+
+    def _reset(self) -> None:
+        self._parts, self._bins, self._first_ms = [], set(), None
+
+    @property
+    def coverage_bins(self) -> int:
+        """현재 미완성 묶음의 각도 범위 — 패킷 수를 정상 회전으로 오인하지 않는다."""
+        return len(self._bins)
 
 
 class LidarFeed:
@@ -55,6 +117,8 @@ class LidarFeed:
         sock: socket.socket | None = None,
         forward_sock: socket.socket | None = None,
         forward_peer: tuple[str, int] | None = None,
+        on_raw: Callable[[bytes, int], object] | None = None,
+        clock: Callable[[], int] = system_clock_ms,
     ) -> None:
         self._lidar_device = lidar_device
         self._decoder = decoder
@@ -68,11 +132,24 @@ class LidarFeed:
         self._forward_failing = False
         self._lock = threading.Lock()
         self._latest: Scan | None = None
+        self._assembler = RevolutionAssembler()
+        #: 원본 데이터그램을 받은 자리에서 기록기로 넘긴다 (`SessionRecorder.record_raw`).
+        self._on_raw = on_raw
+        self._clock = clock
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._health_boot: tuple[str, str] | None = None
+        self._last_complete_ms: int | None = None
+        self._last_health_warning_ms: int | None = None
+        self._health_packets = 0
+        self._health_invalid_points = 0
+        self._input_incomplete = False
 
     def handle(self, raw: bytes) -> None:
-        """데이터그램 하나 — 전달 → 디코드 → 개체 확인 → 전방 위험거리 → 최신 칸."""
+        """데이터그램 하나 — 기록 → 전달 → 디코드 → 개체 확인 → 전방 위험거리 → 한 바퀴 조립."""
+        now_ms = self._clock()
+        if self._on_raw is not None:
+            self._on_raw(raw, now_ms)
         self._forward(raw)
         result = self._decoder.decode(raw)
         if result.warns:
@@ -91,8 +168,61 @@ class LidarFeed:
             if forward is not None and forward < self._estop_m:
                 LOG.error("lidar_estop", forward_m=round(forward, 3), limit_m=self._estop_m)
                 self._on_danger()
+        revolution = self._assembler.add(scan, now_ms)
+        self._note_input_health(scan, revolution, now_ms)
+        if revolution is None:
+            return
         with self._lock:
-            self._latest = scan
+            self._latest = revolution
+
+    def _note_input_health(self, scan: Scan, revolution: Scan | None, now_ms: int) -> None:
+        """수신이 계속돼도 완성 스캔이 없으면 경고한다. 원본/안전 판정은 그대로다."""
+        identity = (scan.device_id, scan.boot_id)
+        if identity != self._health_boot:
+            self._health_boot = identity
+            self._last_complete_ms = now_ms
+            self._last_health_warning_ms = None
+            self._health_packets = self._health_invalid_points = 0
+            self._input_incomplete = False
+        self._health_packets += 1
+        self._health_invalid_points += scan.dropped
+        if revolution is not None:
+            if self._input_incomplete:
+                LOG.info(
+                    "lidar_scan_input_recovered",
+                    boot_id=scan.boot_id,
+                    points=len(revolution.points),
+                )
+            self._last_complete_ms = now_ms
+            self._input_incomplete = False
+            self._last_health_warning_ms = None
+            return
+        assert self._last_complete_ms is not None
+        age_ms = now_ms - self._last_complete_ms
+        if age_ms <= REV_MAX_AGE_MS:
+            return
+        self._input_incomplete = True
+        if (
+            self._last_health_warning_ms is not None
+            and now_ms - self._last_health_warning_ms < 5000
+        ):
+            return
+        self._last_health_warning_ms = now_ms
+        LOG.warning(
+            "lidar_scan_input_incomplete",
+            boot_id=scan.boot_id,
+            complete_scan_age_ms=age_ms,
+            coverage_bins=self._assembler.coverage_bins,
+            required_bins=REV_MIN_BINS,
+            accepted_packets=self._health_packets,
+            invalid_points=self._health_invalid_points,
+            discarded_batches=self._assembler.discarded,
+        )
+
+    @property
+    def revolutions(self) -> tuple[int, int]:
+        """(완성한 바퀴 수, 덮이지 않아 버린 조각 묶음 수)."""
+        return self._assembler.completed, self._assembler.discarded
 
     def _forward(self, raw: bytes) -> None:
         """컨테이너로 원본을 복사한다 — 디코드 성패·개체와 무관하다. 실패는 전이 때만 로그."""
@@ -151,6 +281,7 @@ def open_lidar_feed(
     *,
     armed: Callable[[], bool],
     on_danger: Callable[[], object],
+    on_raw: Callable[[bytes, int], object] | None = None,
 ) -> LidarFeed:
     """`lidar.scan_port` 에 묶은 수신기. ⚠️ `SO_REUSEADDR` 를 쓰지 않는다(`runtime.open_socket`)."""
     lidar = config["lidar"]
@@ -174,4 +305,5 @@ def open_lidar_feed(
         sock=sock,
         forward_sock=None if forward_peer is None else open_forward_socket(),
         forward_peer=forward_peer,
+        on_raw=on_raw,
     )

@@ -135,7 +135,7 @@
 | # | 원본 | 왜 안 되는가 | 지금 |
 | :-- | :--- | :--- | :--- |
 | 1 | `{"cmd": "FORWARD", "ts": time.time()}` | 규약에 없는 스키마. `type`·`seq` 가 없고 `ts` 가 **초 단위 실수**라 규칙 ②·⑤ 로 폐기 | `Commander` 가 만드는 `MOVE` |
-| 2 | `TURN_LEFT` · `TURN_RIGHT` | **제자리 회전은 지원하지 않는다** (DR-11). 로봇이 할 수 없는 동작 | 호(arc) `MOVE{step, angle}` — `steering_for()` |
+| 2 | `TURN_LEFT` · `TURN_RIGHT` | 시간으로 도는 **개루프 회전** — 각속도 산포 82% 라 «몇 도» 가 정해지지 않는다 (DR-11) | 호(arc) `MOVE{step, angle}`, 크게 틀어지면 측위 방위를 보며 `MOVE{0, ±30}` 제자리 회전 — `steering_for()` (2026-10-01 개정) |
 | 3 | 위험 시 `send("STOP")` | `STOP` 은 일반 보행 정지이고 **FAILSAFE 를 걸지 않는다** | `ESTOP` (즉시 · 래치) |
 | 4 | 첫 전문이 아무거나 | 로봇이 seq 역전으로 **명령을 통째로 폐기한다** | `open_session()` = `STOP` seq=1 |
 | 5 | 상태 `MOVING`·`ROTATING`·`PLANNING`·`ARRIVED`·`ESTOP` | **FSM 13종에 없다.** 로봇이 폐기 + WARN 하고 텔레메트리 `state` 가 이전 값에 머문다 | 13종으로 사상 (`FSM_STATE_FOR`) |

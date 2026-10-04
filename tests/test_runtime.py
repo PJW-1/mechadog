@@ -21,7 +21,7 @@ from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
-from host.runtime import Runtime, dashboard_wiring, watch_console
+from host.runtime import VLM_LOAD_WAIT_MS, Runtime, dashboard_wiring, watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
@@ -1372,6 +1372,39 @@ def test_asking_patrol_twice_does_not_double_fire(config: dict, clock: FakeClock
     runtime.tick(clock.advance(100))
     assert runtime.behavior.state == "PATROL"
     assert runtime.stats.transitions == before
+
+
+def test_patrol_waits_for_vlm_load(config: dict, clock: FakeClock) -> None:
+    """⚠️ **실기가 잡은 결함이다.** VLM 적재(수초) 중 순찰을 시작하면 적재 스레드가
+    루프를 굶겨 명령 공백이 로봇의 통신 감시를 넘겼다 (2026-10-02 ·
+    `cmd_gap 585ms` → `ONBOARD_FAILSAFE`). 적재가 끝날 때까지 보행을 미룬다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    vlm = ScriptedVlm()
+    vlm.loading = True
+    runtime._vlm = runtime._fall._vlm = runtime._zone_inspector._vlm = vlm
+
+    runtime.ask_patrol()
+    runtime.tick(clock.ms)
+    assert runtime.behavior.state == "IDLE", "적재 중에는 보행을 미룬다"
+
+    vlm.loading = False
+    runtime.tick(clock.advance(100))
+    assert runtime.behavior.state == "PATROL", "적재가 끝나면 시작한다"
+
+
+def test_patrol_starts_past_vlm_load_cap(config: dict, clock: FakeClock) -> None:
+    """적재가 붙잡혀 있어도 상한(`VLM_LOAD_WAIT_MS`)을 넘기면 시작한다 —
+    대기가 끝이 없으면 순찰이 영영 안 켜진다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    vlm = ScriptedVlm()
+    vlm.loading = True
+    runtime._vlm = runtime._fall._vlm = runtime._zone_inspector._vlm = vlm
+
+    runtime.ask_patrol()
+    runtime.tick(clock.ms)
+    assert runtime.behavior.state == "IDLE"
+    runtime.tick(clock.advance(VLM_LOAD_WAIT_MS + 1000))
+    assert runtime.behavior.state == "PATROL"
 
 
 # ── TRACK 락온 배선 (WBS 3.5.4 · FR-3.5) ─────────────────────────
@@ -2826,6 +2859,8 @@ class ScriptedVlm:
     def __init__(self, *script) -> None:
         self.available = True
         self.busy = False
+        #: 적재 중이 아니라고 답한다 — 런타임이 순찰 시작을 적재 뒤로 미루는 게이트다.
+        self.loading = False
         self.slot: Reading | None = None
         self.submitted = 0
         self.images: list[bytes] = []
