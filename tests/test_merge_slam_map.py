@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 import sys
@@ -45,7 +46,15 @@ def _write_maps(tmp_path: Path, target: OccupancyGrid, session: OccupancyGrid) -
     return maps, yaml_path
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
+def _run(monkeypatch: pytest.MonkeyPatch, *argv: str, devices_dir: Path) -> int:
+    """`main` 을 돌리되 설정은 커밋된 개체 프로파일만 읽게 한다 (`committed_devices_dir`)."""
+    import host.common.config as config_mod
+
+    monkeypatch.setattr(
+        config_mod,
+        "load_config",
+        functools.partial(config_mod.load_config, devices_dir=devices_dir),
+    )
     monkeypatch.setattr(sys, "argv", ["merge_slam_map", *argv])
     return mm.main()
 
@@ -92,14 +101,26 @@ def test_align_recovers_identity_for_the_same_walls() -> None:
 
 
 def test_main_adds_only_the_missing_object(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    committed_devices_dir: Path,
 ) -> None:
     """운용 지도에 없는 물체(3x3)만 보태고, 기존 벽·빈 공간은 그대로 둔다."""
     target = _room()
     maps, slam = _write_maps(tmp_path, target, _room(block=True))
     out = tmp_path / "merged.npy"
     rc = _run(
-        monkeypatch, "--maps", str(maps), "--slam", str(slam), "--guess", "0,0,0", "--out", str(out)
+        monkeypatch,
+        "--maps",
+        str(maps),
+        "--slam",
+        str(slam),
+        "--guess",
+        "0,0,0",
+        "--out",
+        str(out),
+        devices_dir=committed_devices_dir,
     )
     assert rc == 0
     merged = np.load(out)
@@ -115,37 +136,87 @@ def test_main_adds_only_the_missing_object(
 
 
 def test_main_apply_replaces_map_and_backs_up_original_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, committed_devices_dir: Path
 ) -> None:
     """`--apply` 는 운용 지도를 교체하되 원본은 처음 한 번만 백업한다."""
     target = _room()
     maps, slam = _write_maps(tmp_path, target, _room(block=True))
     argv = ("--maps", str(maps), "--slam", str(slam), "--guess", "0,0,0", "--apply")
-    assert _run(monkeypatch, *argv) == 0
+    assert _run(monkeypatch, *argv, devices_dir=committed_devices_dir) == 0
     backup = maps / "slam_map.orig.npy"
     assert np.array_equal(np.load(backup), target.cells)
     assert (np.load(maps / "slam_map.npy")[49:52, 49:52] >= 3.0).all()
     # 두 번째 적용이 백업(원본)을 덮어쓰지 않는다
-    assert _run(monkeypatch, *argv) == 0
+    assert _run(monkeypatch, *argv, devices_dir=committed_devices_dir) == 0
     assert np.array_equal(np.load(backup), target.cells)
 
 
 def test_main_refuses_when_alignment_is_poor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    committed_devices_dir: Path,
 ) -> None:
     """정렬이 안 맞으면(벽이 좁은 창 밖) 반영하지 않고 1 을 돌려준다 — 벽 두 겹 방지."""
     maps, slam = _write_maps(tmp_path, _room(), _room(offset=-12, block=True))
     out = tmp_path / "merged.npy"
     rc = _run(
-        monkeypatch, "--maps", str(maps), "--slam", str(slam), "--guess", "0,0,0", "--out", str(out)
+        monkeypatch,
+        "--maps",
+        str(maps),
+        "--slam",
+        str(slam),
+        "--guess",
+        "0,0,0",
+        "--out",
+        str(out),
+        devices_dir=committed_devices_dir,
     )
     assert rc == 1
     assert not out.exists()
     assert "반영하지 않는다" in capsys.readouterr().out
 
 
-def test_main_requires_a_session_or_guess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_requires_a_session_or_guess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, committed_devices_dir: Path
+) -> None:
     """초기값(세션 첫 측위·`--guess`)이 없으면 추측하지 않고 멈춘다."""
     maps, slam = _write_maps(tmp_path, _room(), _room())
     with pytest.raises(SystemExit, match="--guess"):
-        _run(monkeypatch, "--maps", str(maps), "--slam", str(slam))
+        _run(
+            monkeypatch, "--maps", str(maps), "--slam", str(slam), devices_dir=committed_devices_dir
+        )
+
+
+def test_main_reads_only_the_committed_device_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, committed_devices_dir: Path
+) -> None:
+    """개발 PC 의 `<device>.local.yaml` 오버레이가 시험에 섞이면 안 된다 (`conftest.py`).
+
+    `main` 은 `load_config(args.device)` 를 기본 경로로 부른다. 그대로 두면 실기를 만지는
+    사람의 PC 에서만 판정이 달라진다(2026-10-05 · Devin 검수).
+    """
+    import host.common.config as config_mod
+
+    seen: list[Path] = []
+    real = config_mod.load_config
+
+    def spy(device_id: str, *args: object, **kwargs: object) -> dict:
+        seen.append(Path(kwargs.get("devices_dir", config_mod.DEFAULT_DEVICES_DIR)))
+        return real(device_id, *args, **kwargs)
+
+    monkeypatch.setattr(config_mod, "load_config", spy)
+    maps, slam = _write_maps(tmp_path, _room(), _room(block=True))
+    _run(
+        monkeypatch,
+        "--maps",
+        str(maps),
+        "--slam",
+        str(slam),
+        "--guess",
+        "0,0,0",
+        "--out",
+        str(tmp_path / "m.npy"),
+        devices_dir=committed_devices_dir,
+    )
+    assert seen == [committed_devices_dir]
