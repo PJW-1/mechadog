@@ -218,13 +218,48 @@ def test_roll_sweep_stops_before_a_larger_roll_once_the_robot_tips():
     link.commander, link.reading = Commander(), R()
     link.pump = lambda _seconds: None
     link.send_due = lambda: None
-    link.poll = lambda: setattr(R, "roll", sent[-1] * 4)  # 명령이 커지면 몸이 넘어간다
+    link.reading_ms = straight.system_clock_ms()
+    link.poll = lambda: (  # 명령이 커지면 몸이 넘어간다
+        setattr(R, "roll", sent[-1] * 4),
+        setattr(link, "reading_ms", straight.system_clock_ms()),
+    )
     link.record = lambda kind, **_fields: recorded.append(kind)
 
     with pytest.raises(KeyboardInterrupt):
         straight.roll_sweep(link, [2.0, 10.0, 20.0], 0.0, settle_s=0.0, measure_s=0.1)
     assert sent == [2.0, 10.0], "넘어진 뒤에도 다음 roll 을 보냈다"
     assert "tip" in recorded
+
+
+def test_roll_sweep_stops_when_telemetry_goes_stale():
+    """스윕 도중 텔레메트리가 끊기면 낡은 roll 로 검사·표본을 이어 가지 않고 비상정지로 넘긴다.
+
+    `tipped()` 는 마지막 값만 보므로 끊긴 뒤에도 통과했다(2026-10-05 · #400 Devin 검수).
+    """
+
+    class R:
+        roll, pitch, safety_latched, obstacle = 0.0, 0.0, False, False
+
+    sent: list[float] = []
+    recorded: list[tuple[str, dict]] = []
+
+    class Commander:
+        def once(self, _kind, **fields):
+            sent.append(fields["roll"])
+
+    link = straight.Link.__new__(straight.Link)
+    link.commander, link.reading = Commander(), R()
+    link.reading_ms = straight.system_clock_ms() - 5000
+    link.pump = lambda _seconds: None
+    link.send_due = lambda: None
+    link.poll = lambda: None  # 텔레메트리가 끊겼다 — reading·reading_ms 모두 그대로
+    link.record = lambda kind, **fields: recorded.append((kind, fields))
+
+    with pytest.raises(KeyboardInterrupt):
+        straight.roll_sweep(link, [2.0, 10.0, 20.0], 0.0, settle_s=0.0, measure_s=0.1)
+    assert sent == [2.0], "텔레메트리가 끊긴 뒤에도 다음 roll 을 보냈다"
+    assert recorded
+    assert "텔레메트리 끊김" in str(recorded[0][1].get("reason"))
 
 
 def test_estop_sends_three_frames_then_halts():
