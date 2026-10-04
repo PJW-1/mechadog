@@ -338,8 +338,10 @@ test('local route and zone saves share revisions in both directions even while t
   await ctx.planner.save(); assert.equal(ctx.snapshot().saved[0].name, '두 번째 동선 초안'); ctx.close();
 });
 
-test('external revision conflict never overwrites saved routes or silently changes the draft base', async () => {
-  const ctx = await setup(); input(ctx, '동선 이름', '충돌 초안'); ctx.bump(); await ctx.planner.save();
+test('a conflict during save preserves the draft and never overwrites saved routes', async () => {
+  const ctx = await setup(); input(ctx, '동선 이름', '충돌 초안');
+  const post = ctx.link.post; ctx.link.post = (path, body, timeout) => {if (path === '/api/planning/routes') ctx.bump(); return post(path, body, timeout);};
+  await ctx.planner.save();
   assert.equal(ctx.planner.current.revision, 'r1'); assert.equal(ctx.planner.current.dirty, true); assert.equal(ctx.snapshot().saved[0].name, '첫 동선');
   assert.match(ctx.document.querySelector('.route-feedback').textContent, /계획이 바뀌었습니다/);
   ctx.panels.render('settings'); ctx.panels.render('zones'); assert.equal(ctx.document.querySelector('[name="동선 이름"]').value, '충돌 초안');
@@ -561,5 +563,110 @@ test('blocked explanation survives navigation polling while the pointer stays on
     assert.match(ctx.document.querySelector('[data-route-blocked-hint]').textContent, /미관측 영역과 몸 반경/);
     mapElement(ctx).dispatchEvent(new ctx.dom.window.MouseEvent('pointermove', {clientX: 600, clientY: 500}));
     assert.equal(ctx.document.querySelector('[data-route-blocked-hint]').textContent, '');
+  } finally {ctx.close();}
+});
+
+
+test('preview 409 refreshes snapshots once and preserves all draft fields and selection', async () => {
+  const ctx = await setup();
+  try {
+    input(ctx, '지점 X (m)', '2'); input(ctx, '보는 방향 (°)', '45'); input(ctx, '머무름 (초)', '3'); input(ctx, '동선 이름', '오래된 초안');
+    const draft = copy(ctx.planner.current.draft), selected = ctx.planner.current.selected;
+    ctx.bump(); await ctx.planner.validate();
+    assert.equal(ctx.planner.current.revision, 'r2');
+    assert.deepEqual(ctx.planner.current.draft, draft); assert.equal(ctx.planner.current.selected, selected);
+    assert.equal(ctx.snapshot().saved[0].name, '첫 동선');
+    assert.deepEqual(ctx.calls.filter(call => call.path.endsWith('/preview')).map(call => call.body.revision), ['r1', 'r2']);
+    for (const path of ['/api/planning/routes', '/api/planning', '/api/map/meta']) assert.equal(ctx.calls.filter(call => call.method === 'get' && call.path === path).length, 1);
+    assert.match(ctx.document.querySelector('.route-feedback').textContent, /지도가 바뀌어 다시 확인했습니다/);
+    assert.match(ctx.document.querySelector('.route-validation').textContent, /✓ 주행 가능 · 2.0 m/);
+    const stored = JSON.parse(ctx.dom.window.localStorage.getItem('mechadog.routes.v1.' + ctx.planner.current.key));
+    assert.equal(stored.revision, 'r2'); assert.deepEqual(stored.draft, draft);
+  } finally {ctx.close();}
+});
+
+for (const failure of ['HTTP 409', 'HTTP 500', 'network unavailable']) test('preview failure shows a retry banner: ' + failure, async () => {
+  const ctx = await setup();
+  try {
+    const post = ctx.link.post; let requests = 0;
+    ctx.link.post = (path, body, timeout) => {if (path.endsWith('/preview')) {requests++; throw new Error(failure);} return post(path, body, timeout);};
+    await ctx.planner.validate();
+    assert.equal(requests, failure === 'HTTP 409' ? 2 : 1);
+    assert.match(ctx.document.querySelector('.route-validation-error[role="alert"]').textContent, /장애물을 확인하지 못했습니다/);
+    assert.equal(ctx.document.querySelector('[data-route-retry]').disabled, false);
+    assert.ok(ctx.document.querySelector('.route-line.unchecked'));
+    assert.equal(ctx.document.querySelector('[data-route-start]').disabled, true);
+    ctx.link.post = post; ctx.document.querySelector('[data-route-retry]').click(); await tick(); await tick();
+    assert.equal(ctx.document.querySelector('[data-route-retry]'), null);
+    assert.equal(ctx.planner.current.validation.valid, true);
+  } finally {ctx.close();}
+});
+
+test('pending segments are gray dashed, success green solid and blocked segments and points red', async () => {
+  const ctx = await setup();
+  try {
+    const css = (await import('node:fs/promises')).readFile;
+    const style = ctx.document.createElement('style'); style.textContent = await css(new URL('../static/styles.css', import.meta.url), 'utf8'); ctx.document.head.append(style); const theme = ctx.document.createElement('style'); theme.textContent = await css(new URL('../glass-preview/planning.css', import.meta.url), 'utf8'); ctx.document.head.append(theme);
+    assert.equal(ctx.document.querySelector('[data-route-preview]'), null);
+    assert.equal(ctx.document.querySelector('[data-route-retry]'), null);
+    input(ctx, '지점 X (m)', '2');
+    const getStyle = selector => ctx.dom.window.getComputedStyle(ctx.document.querySelector(selector));
+    assert.equal(getStyle('.route-line').stroke, 'rgb(107, 114, 128)'); assert.equal(getStyle('.route-line').strokeDasharray, '6 4');
+    assert.equal(ctx.document.querySelector('[data-route-save]').disabled, true);
+    let finish; const post = ctx.link.post;
+    ctx.link.post = () => new Promise(resolve => {finish = resolve;}); const pending = ctx.planner.validate();
+    assert.match(ctx.document.querySelector('.route-validation').textContent, /확인 중/);
+    finish(goodPreview({route: ctx.planner.current.draft})); await pending;
+    assert.equal(getStyle('.route-line').stroke, 'rgb(22, 163, 74)'); assert.equal(getStyle('.route-line').strokeDasharray, 'none');
+    ctx.link.post = async () => ({valid: false, invalid_points: [1], segments: [{from_index: 0, to_index: 1, valid: false, reason: '가구와 몸 반경이 겹칩니다.'}]});
+    await ctx.planner.validate();
+    assert.equal(getStyle('.route-line').stroke, 'rgb(220, 38, 38)'); assert.equal(getStyle('.route-line').strokeDasharray, 'none');
+    assert.equal(getStyle('.route-pin.blocked').stroke, 'rgb(220, 38, 38)');
+    assert.match(ctx.document.querySelector('.route-validation').textContent, /✗ 막힘 · 1→2 구간/);
+    assert.equal(ctx.document.querySelector('[data-route-save]').disabled, true);
+    assert.equal(ctx.document.querySelector('[data-route-start]').disabled, true);
+    assert.match(ctx.document.querySelector('[data-route-start]').title, /몸 반경/);
+    ctx.planner.current.dirty = false; ctx.planner.confirmStart(); assert.equal(ctx.confirmations.length, 0);
+    ctx.link.post = post;
+  } finally {ctx.close();}
+});
+
+test('a draft edited during conflict refresh cannot receive old snapshots or validation', async () => {
+  const ctx = await setup();
+  try {
+    ctx.bump(); let finish; const get = ctx.link.get;
+    ctx.link.get = path => path === '/api/planning/routes' ? new Promise(resolve => {finish = resolve;}) : get(path);
+    const pending = ctx.planner.validate(); await tick(); input(ctx, '지점 X (m)', '4');
+    finish(ctx.snapshot()); await pending;
+    assert.equal(ctx.planner.current.revision, 'r1'); assert.equal(ctx.planner.current.validation, null);
+    assert.equal(ctx.planner.current.draft.points[0].x, 4); assert.ok(ctx.document.querySelector('.route-line.unchecked'));
+  } finally {ctx.close();}
+});
+
+
+test('refresh preserves an externally replaced saved route as an unsaved draft and blocks start', async () => {
+  const ctx = await setup();
+  try {
+    const draft = copy(ctx.planner.current.draft);
+    ctx.replaceRoute({...route(), points: [point(5, 5), point(8, 8)]});
+    await ctx.planner.validate();
+    assert.deepEqual(ctx.planner.current.draft, draft); assert.equal(ctx.planner.current.dirty, true);
+    assert.equal(ctx.document.querySelector('[data-route-start]').disabled, true);
+    ctx.planner.confirmStart(); assert.equal(ctx.confirmations.length, 0);
+    assert.deepEqual(ctx.snapshot().saved[0].points, [point(5, 5), point(8, 8)]);
+  } finally {ctx.close();}
+});
+
+test('snapshot fetch failure after 409 leaves the draft base intact and offers retry', async () => {
+  const ctx = await setup();
+  try {
+    input(ctx, '지점 X (m)', '2'); const draft = copy(ctx.planner.current.draft);
+    ctx.bump(); const get = ctx.link.get;
+    ctx.link.get = path => path === '/api/planning/routes' ? Promise.reject(new Error('HTTP 503')) : get(path);
+    await ctx.planner.validate();
+    assert.equal(ctx.planner.current.revision, 'r1'); assert.deepEqual(ctx.planner.current.draft, draft);
+    assert.match(ctx.document.querySelector('.route-validation-error').textContent, /HTTP 503/);
+    assert.ok(ctx.document.querySelector('[data-route-retry]'));
+    assert.equal(ctx.document.querySelector('[data-route-save]').disabled, true);
   } finally {ctx.close();}
 });

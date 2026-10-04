@@ -126,7 +126,7 @@ export class RoutePlanner {
     session.dirty = true;
     session.error = '';
     session.notice = '';
-    if (validate) session.validation = null;
+    if (validate) {session.validation = null; session.validationError = '';}
     this.remember(session);
     this.updateStatus();
     this.drawPoints();
@@ -140,7 +140,7 @@ export class RoutePlanner {
   }
 
   // A successful save from the other editor is a known local revision change.
-  // External conflicts retain the old revision and require an explicit reload.
+  // Preview conflicts refresh automatically; save conflicts still require review.
   planningSaved(result, previousRevision, key) {
     const session = this.sessions.get(key);
     if (!session || session.revision !== previousRevision) return;
@@ -172,10 +172,11 @@ export class RoutePlanner {
     const session = this.current, points = session.draft.points;
     const invalid = Object.keys(session.invalid).length > 0 || !session.draft.name.trim();
     this.status.textContent = session.loading ? '동선 불러오는 중' : session.busy ? '처리 중' : invalid ? '숫자 입력을 확인하세요' : session.dirty ? '작성 중 · 브라우저에 보관' : session.snapshot?.saved.some(route => route.id === session.draft.id) ? '저장된 동선' : '새 동선';
-    this.saveButton.disabled = !session.snapshot || !session.dirty || this.isLocked() || invalid || !points.length || session.validation?.valid === false || session.snapshot.writable === false;
-    this.startButton.disabled = !this.canCommand() || session.dirty || invalid || !this.savedDigest() || !session.snapshot?.saved.some(route => route.id === session.draft.id) || !points.length;
+    this.saveButton.disabled = !session.snapshot || !session.dirty || this.isLocked() || invalid || !points.length || session.validation?.valid !== true || session.snapshot.writable === false;
+    this.startButton.disabled = !this.canCommand() || session.dirty || invalid || !this.savedDigest() || !session.snapshot?.saved.some(route => route.id === session.draft.id) || !points.length || session.validation?.valid !== true;
+    const reason = session.validation?.valid === false ? '벽·가구·몸 반경에 걸린 구간 또는 지점을 옮겨 주세요.' : session.validation?.valid !== true ? '장애물 확인이 끝나야 저장·주행할 수 있습니다.' : '';
+    this.saveButton.title = this.startButton.title = reason;
     this.stopButton.disabled = !this.p.store.live || !!this.p.store.readOnly;
-    this.previewButton.disabled = !session.snapshot?.map?.available || this.isLocked() || invalid || !points.length;
     for (const button of this.root.querySelectorAll('[data-map-mode]')) {
       const mode = button.dataset.mapMode;
       button.disabled = this.isLocked() || (mode === 'move' && !this.canCommand()) || (mode === 'locate' && !this.canLocate());
@@ -200,7 +201,6 @@ export class RoutePlanner {
     this.startButton = p.button('이 동선으로 주행', () => this.confirmStart(), {class: 'op-button primary', 'data-route-start': ''});
     // Existing patrol stop goes through the established device-command and safety path.
     this.stopButton = p.button('순찰 정지', () => p.store.requestPatrol(false), {'data-route-stop': ''});
-    this.previewButton = p.button('장애물 확인', () => this.validate(), {'data-route-preview': ''});
     const reload = p.button('저장본 불러오기', () => session.dirty ? p.confirmDevice({title: '작성 중인 동선을 바꿀까요?', body: '현재 동선 초안을 버리고 서버 저장본을 불러옵니다.', confirm: '저장본 불러오기', action: () => this.load(session, true)}) : this.load(session, true), {disabled: !session.link?.get || this.isLocked()});
     this.root.append(p.el('header', {class: 'route-header'}, p.el('div', {}, p.el('h2', {}, '동선을 그리고, 보는 방향까지'), p.el('p', {}, '구역을 골라 시작하거나 지도 위에 지점을 더해 순서를 만드세요.')), p.el('div', {class: 'route-actions'}, this.status, reload, this.saveButton)));
     this.feedback = p.el('div', {class: 'route-feedback', role: 'status', 'aria-live': 'polite'});
@@ -209,7 +209,7 @@ export class RoutePlanner {
     const routeOptions = [['', '새 동선'], ...(session.snapshot?.saved || []).map(route => [route.id, route.name])];
     const select = p.select('저장된 동선', routeOptions, session.snapshot?.saved.some(route => route.id === session.draft.id) ? session.draft.id : '', value => this.switchRoute(value));
     select.disabled = this.isLocked();
-    const name = p.el('input', {name: '동선 이름', value: session.draft.name, maxlength: 60, disabled: this.isLocked(), oninput: event => {session.draft.name = event.target.value; this.changed({map: false, validate: false});}});
+    const name = p.el('input', {name: '동선 이름', value: session.draft.name, maxlength: 60, disabled: this.isLocked(), oninput: event => {session.draft.name = event.target.value; this.changed({map: false});}});
     const repeatMode = session.draft.repeat === 0 ? 'forever' : session.draft.repeat === 1 ? 'once' : 'count';
     const repeat = p.select('동선 반복', [['once', '1회'], ['count', '횟수 지정'], ['forever', '계속']], repeatMode, value => {
       session.draft.repeat = value === 'forever' ? 0 : value === 'once' ? 1 : 2;
@@ -240,7 +240,7 @@ export class RoutePlanner {
     this.modeBar = mapClickMode(p, session.mode, mode => {session.mode = mode; this.draw();}, mode => !this.isLocked() && (mode === 'draw' || (mode === 'move' ? this.canCommand() : this.canLocate())));
     const canvas = p.el('section', {class: 'route-canvas'}, this.modeBar, p.el('label', {title: '각도 맞춤 중에는 직전 지점에서 10cm 간격으로 맞춥니다.'}, grid, '10cm 격자 맞춤'), this.snapStatus, this.map, this.blockedHint,
       p.note(session.mode === 'draw' ? '클릭으로 지점 추가 · 끌어서 이동 · 화살표 끝을 끌어 보는 방향 설정 · 직전 지점 기준 0/45/90° ±8° 자동 맞춤 · Shift로 맞춤 해제 · 빨간 구간에 마우스를 올리면 막힌 이유 표시' : session.mode === 'move' ? '지도에서 목적지를 누르면 이동 확인 창이 열립니다.' : '로봇이 지금 있는 곳을 누르면 위치 확인 창이 열립니다. 파란 원은 알려준 위치를 찾는 범위이며 위치가 확인되면 사라집니다.'),
-      this.canLocate() ? null : p.note('「위치 알려주기」는 지도 위치 지정 기능이 연결된 서버에서 사용할 수 있습니다.'), this.previewButton, this.validation);
+      this.canLocate() ? null : p.note('「위치 알려주기」는 지도 위치 지정 기능이 연결된 서버에서 사용할 수 있습니다.'), this.validation);
     this.inspector = p.el('aside', {class: 'route-inspector'});
     this.root.append(p.el('div', {class: 'route-layout'}, itinerary, canvas, this.inspector));
     this.progress = p.el('p', {class: 'route-progress', 'data-route-progress': '', role: 'status', 'aria-live': 'polite'});
@@ -285,7 +285,7 @@ export class RoutePlanner {
       const route = session.snapshot?.saved.find(item => item.id === id);
       session.draft = route ? clone(route) : freshRoute();
       session.dirty = false; session.invalid = {}; session.selected = route?.points.length ? 0 : -1;
-      session.validation = null; session.edit++; session.error = ''; session.notice = '';
+      session.validation = null; session.validationError = ''; session.edit++; session.error = ''; session.notice = '';
       session.zoneOrder = session.draft.points.map(point => point.label).filter(value => session.zones.some(zone => zone.id === value));
       this.forget(session); this.draw(); if (route) this.validate(session);
     };
@@ -371,7 +371,7 @@ export class RoutePlanner {
     if (points.length > 1 && session.draft.repeat !== 1) segments.push({from_index: points.length - 1, to_index: 0, points: [[points.at(-1).x, points.at(-1).y], [points[0].x, points[0].y]]});
     for (const segment of segments) {
       const checked = session.validation?.segments?.find(item => item.from_index === segment.from_index && item.to_index === segment.to_index);
-      const path = this.svg('polyline', {points: segment.points.map(([x, y]) => mapPoint(meta, x, y).join(',')).join(' '), class: 'route-line' + (checked?.valid === false ? ' blocked' : '') + (!session.validation ? ' unchecked' : ''), 'data-route-segment': segment.from_index + '-' + segment.to_index, 'data-blocked': checked?.valid === false, 'vector-effect': 'non-scaling-stroke'});
+      const path = this.svg('polyline', {points: segment.points.map(([x, y]) => mapPoint(meta, x, y).join(',')).join(' '), class: 'route-line' + (checked?.valid === false ? ' blocked' : '') + (checked?.valid !== true && checked?.valid !== false ? ' unchecked' : ''), 'data-route-segment': segment.from_index + '-' + segment.to_index, 'data-blocked': checked?.valid === false, 'vector-effect': 'non-scaling-stroke'});
       if (checked?.valid === false) {
         const message = (segment.from_index + 1) + ' → ' + (segment.to_index + 1) + ' 지점: ' + (checked.reason || '벽·가구·미관측 영역 또는 로봇 몸 반경에 걸립니다.');
         path.append(this.svg('title', {}, message));
@@ -550,9 +550,13 @@ export class RoutePlanner {
     this.feedback.replaceChildren(...[session.error && p.note(session.error, 'warning'), session.notice && p.note(session.notice)].filter(Boolean));
     if (!session.dirty && session.snapshot?.saved.some(route => route.id === session.draft.id) && !this.savedDigest(session)) this.feedback.append(p.note('주행 확인에 필요한 저장본 정보가 없습니다. 저장본을 다시 불러오세요.', 'warning'));
     this.validation.replaceChildren();
-    if (!session.validation) {this.validation.append(p.note(session.draft.points.length ? '동선을 바꾸면 저장 지도에서 장애물과 몸 반경을 확인합니다.' : '지도에 지점을 추가하세요.')); return;}
+    if (session.validationError) this.feedback.append(p.el('div', {class: 'route-validation-error', role: 'alert'},
+      p.el('strong', {}, session.validationError), p.button('다시 확인', () => this.validate(session), {'data-route-retry': '', disabled: !!session.validating || this.isLocked()})));
+    if (!session.validation) {this.validation.append(p.note(session.draft.points.length ? session.validating ? '장애물 확인 중…' : '미확인 · 장애물 확인이 끝나야 저장·주행할 수 있습니다.' : '지도에 지점을 추가하세요.')); return;}
     const result = session.validation;
-    this.validation.append(p.el('strong', {'data-route-valid': result.valid}, result.valid ? '장애물 확인 완료 · ' + (result.total_m || 0).toFixed(1) + ' m' : '저장 불가 · 빨간 구간 또는 지점을 옮겨 주세요.'));
+    const locations = (result.segments || []).filter(segment => segment.valid === false).map(segment => (segment.from_index + 1) + '→' + (segment.to_index + 1) + ' 구간');
+    if (result.invalid_points?.length) locations.push(result.invalid_points.map(index => index + 1).join(', ') + '번 지점');
+    this.validation.append(p.el('strong', {'data-route-valid': result.valid}, result.valid ? '✓ 주행 가능 · ' + (result.total_m || 0).toFixed(1) + ' m' : '✗ 막힘 · ' + (locations.join(', ') || '동선') + ' (벽·가구·몸 반경) · 저장·주행 불가'));
     for (const segment of result.segments || []) if (!segment.valid) this.validation.append(p.note((segment.from_index + 1) + ' → ' + (segment.to_index + 1) + ' 지점: ' + (segment.reason || '벽·가구 또는 몸 반경과 겹칩니다.'), 'warning'));
     if (result.invalid_points?.length) this.validation.append(p.note('이동할 지점: ' + result.invalid_points.map(index => index + 1).join(', '), 'warning'));
   }
@@ -572,20 +576,47 @@ export class RoutePlanner {
 
   async validateRoute(session) {
     if (!session.snapshot?.map?.available || !session.draft.points.length || Object.keys(session.invalid).length) return null;
-    const edit = session.edit, routeId = session.draft.id, revision = session.revision;
+    const edit = session.edit, routeId = session.draft.id;
+    let revision = session.revision, refreshed = false;
+    const current = () => session.edit === edit && session.draft.id === routeId && session.revision === revision;
+    session.validation = null; session.validationError = ''; session.validating = true;
+    if (this.visible(session)) {this.drawValidation(); this.drawMap(); this.updateStatus();}
     try {
-      const result = await session.link.post(ROUTES + '/preview', {revision: session.revision, route: clone(session.draft)}, 30000);
-      if (session.edit !== edit || session.draft.id !== routeId || session.revision !== revision) return null;
-      session.validation = result;
-      session.validatedEdit = edit;
-      session.validatedRevision = revision;
-      if (this.visible(session)) {this.drawValidation(); this.drawMap(); this.updateStatus();}
-      return result;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let result;
+        try {
+          result = await session.link.post(ROUTES + '/preview', {revision, route: clone(session.draft)}, 30000);
+        } catch (error) {
+          if (!current()) return null;
+          if (attempt !== 0 || !/HTTP 409\b/.test(error.message)) throw error;
+          const [snapshot, planning, mapMeta] = await Promise.all([
+            session.link.get(ROUTES), session.link.get('/api/planning'), session.link.get('/api/map/meta'),
+          ]);
+          if (!current()) return null;
+          if (!Array.isArray(snapshot.saved) || !snapshot.revision || snapshot.revision !== planning.revision) throw new Error('지도가 다시 바뀌었습니다. 다시 확인해 주세요.');
+          const saved = snapshot.saved.find(route => route.id === routeId);
+          if (!saved || JSON.stringify(saved) !== JSON.stringify(session.draft)) session.dirty = true;
+          session.snapshot = snapshot; session.mapMeta = mapMeta; session.mapError = '';
+          session.zones = planning.saved?.zones || [];
+          session.revision = revision = snapshot.revision;
+          // Keep the complete draft and selection while refreshing the preview base.
+          if (session.dirty) this.remember(session);
+          refreshed = true;
+          continue;
+        }
+        if (!current()) return null;
+        session.validation = result;
+        session.validatedEdit = edit; session.validatedRevision = revision;
+        if (refreshed) session.notice = '지도가 바뀌어 다시 확인했습니다';
+        return result;
+      }
     } catch (error) {
-      if (session.edit !== edit || session.draft.id !== routeId || session.revision !== revision) return null;
-      session.error = '장애물을 확인하지 못했습니다. ' + error.message;
-      if (this.visible(session)) {this.drawValidation(); this.updateStatus();}
+      if (!current()) return null;
+      session.validationError = '장애물을 확인하지 못했습니다. ' + error.message;
       return null;
+    } finally {
+      session.validating = false;
+      if (this.visible(session)) {this.drawValidation(); this.drawMap(); this.updateStatus();}
     }
   }
 
@@ -627,11 +658,12 @@ export class RoutePlanner {
 
   confirmStart() {
     const session = this.current, p = this.p, store = p.store;
-    if (session.dirty || !this.canCommand() || !this.savedDigest(session)) return;
+    if (session.dirty || !this.canCommand() || !this.savedDigest(session) || session.validation?.valid !== true) return;
     const route = clone(session.draft), link = session.link, robot = store.selected, expectedDigest = this.savedDigest(session), fingerprint = JSON.stringify(route);
     p.confirmDevice({icon: 'route', title: '「' + route.name + '」 동선으로 주행할까요?', body: route.points.length + '개 지점을 순서대로 방문합니다. 반복: ' + (route.repeat === 0 ? '계속' : route.repeat + '회') + '. 지점마다 보는 방향을 맞추고 지정한 시간 동안 머뭅니다. 로봇 주변과 경로를 확인하세요.', confirm: '예, 이 동선으로 주행합니다', action: async () => {
       if (store.link !== link || store.selected !== robot || this.context().key !== session.key) throw new Error('대상 로봇이 바뀌었습니다. 새 지도에서 동선을 다시 확인하세요.');
       if (session.dirty || JSON.stringify(session.draft) !== fingerprint || this.savedDigest(session) !== expectedDigest) throw new Error('동선이 변경되었습니다. 저장 후 다시 확인하세요.');
+      if (session.validation?.valid !== true) throw new Error('장애물 확인이 끝난 유효한 동선만 주행할 수 있습니다.');
       const result = await store.requestDevice('동선 시작 · ' + route.name, () => link.route('start', route.id, expectedDigest), robot);
       p.onToast(result?.detail || '동선 주행을 요청했습니다.');
       await this.poll();

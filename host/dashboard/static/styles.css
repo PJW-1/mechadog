@@ -337,3 +337,12 @@ dialog button+button { margin-left: 8px }
 .route-snap-guide { fill: none; stroke: #2563eb; stroke-width: 2; stroke-dasharray: 5 4; pointer-events: none }
 .route-line.blocked { pointer-events: stroke; cursor: help; stroke-width: 5 }
 .route-blocked-hint { min-height: 1.5em; color: var(--danger, #b91c1c) }
+
+.route-workspace .route-line { fill: none; stroke: #16a34a; stroke-width: 3; stroke-dasharray: none }
+.route-workspace .route-line.unchecked { stroke: #6b7280; stroke-dasharray: 6 4 }
+.route-workspace .route-line.blocked { stroke: #dc2626; stroke-dasharray: none }
+.route-workspace .route-map-point .route-pin.blocked { stroke: #dc2626; stroke-width: 4 }
+.route-validation { padding: .75rem; border: 1px solid #9ca3af; border-radius: .5rem }
+.route-validation [data-route-valid="true"] { color: #15803d }
+.route-validation [data-route-valid="false"] { color: #b91c1c }
+.route-validation-error { display: flex; align-items: center; gap: .75rem; padding: .75rem; border: 2px solid #dc2626; border-radius: .5rem; color: #b91c1c }
