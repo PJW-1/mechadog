@@ -44,6 +44,7 @@ from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.behavior.patrol import PatrolController, controller_from_config, load_patrol_map
 from host.behavior.ppe_judge import PpeJudge
+from host.behavior.routes import Route, load_routes, route_digest
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zone_inspector import ZoneInspector
@@ -248,6 +249,9 @@ class Runtime:
         #: 지도에서 찍은 목표 — 서버 스레드가 넣고 루프가 꺼낸다. 결과는 피드백으로.
         self._goto_asked: tuple[float, float] | None = None
         self._goal_feedback: dict[str, Any] | None = None
+        self._route_asked: Route | None = None
+        self._route_feedback: dict[str, Any] | None = None
+        self._navigation_epoch = 0
         #: 루프가 틱마다 만든 항법 상태 묶음 (서버는 참조만 읽는다).
         self._nav_snapshot: dict[str, Any] | None = None
         #: 사람이 순찰을 멈췄다(PATROL → IDLE) — 찍은 목표를 버린다 (루프에서).
@@ -271,6 +275,7 @@ class Runtime:
         self._take_scan: Callable[[], Scan | None] | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
         self._navigator_resume = False
+        self._navigator_resume_from_inspection = False
         if navigator is not None:
             # 추적·경보·구역 점검에서 돌아오면 지금 자리에서 같은 목표로 다시 푼다.
             # ⚠️ **훅에서 바로 풀지 않는다.** 전이는 대시보드 스레드(`apply_external`)에서도
@@ -465,7 +470,24 @@ class Runtime:
             anchors=anchors,
             apply=self._apply,
             record=self._record_scene,
+            ready_to_inspect=(lambda zone, now_ms: navigator.inspection_ready(zone.label, now_ms))
+            if isinstance(navigator, PatrolController)
+            else None,
+            route_inspection=(
+                lambda zone, now_ms: (
+                    navigator.inspection_ready(zone.label, now_ms)
+                    if navigator.route_controls_inspection
+                    else None
+                )
+            )
+            if isinstance(navigator, PatrolController)
+            else None,
+            route_visit=(lambda: navigator.route_visit)
+            if isinstance(navigator, PatrolController)
+            else None,
         )
+        if isinstance(navigator, PatrolController):
+            navigator.wait_for_inspection = self._awaits_zone_inspection
         # 보호구 판정 (FR-9 · ADR-42). 쓰러짐 의심 중에는 판정을 보류하므로 감시 뒤에 만든다.
         self._ppe_judge = PpeJudge(
             config,
@@ -810,13 +832,28 @@ class Runtime:
             vision.set_hazard_enabled(watching)
             LOG.info("hazard_detector_switched", enabled=watching)
 
+    def _awaits_zone_inspection(self, label: str) -> bool:
+        """방향을 맞춘 구역에서 다음 프레임까지 선다. 비전이 없으면 순찰을 잇는다."""
+        navigator = self._navigator
+        return (
+            navigator is not None
+            and (navigator.route_active or navigator.zones.get(label).aim_deg is not None)
+            and self._zone_inspector.awaits_inspection(label, self._clock())
+            and self._vision is not None
+            and self._vision.healthy()
+            and not self._vision.stalled(self._clock())
+        )
+
     def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
         if self._ppe_judge.halts_patrol(now_ms) or self._auth_judge.holds_patrol(now_ms):
             commander.halt()
         elif self._navigator is not None:
             if self._navigator_resume:
                 self._navigator_resume = False
-                self._navigator.resume()
+                if self._navigator_resume_from_inspection:
+                    self._navigator.resume(from_inspection=True)
+                else:
+                    self._navigator.resume()
             # 상태 알림·래치·링크는 FSM 이 쥔다 — 길 찾기만 맡긴다 (`PatrolController.steer`).
             self._navigator.steer(now_ms)
         elif self._normal_patrol is not None:
@@ -830,11 +867,17 @@ class Runtime:
         if (previous == "PATROL" and target in ("IDLE", "MANUAL")) or (
             previous == "MANUAL" and target == "IDLE"
         ):
-            self._goal_cancel_asked = True
+            with self._locate_lock:
+                self._navigation_epoch += 1
+                self._goal_cancel_asked = True
+                self._route_asked = None
+                self._goto_asked = None
+                self._patrol_asked = False
 
-    def _mark_navigator_resume(self, _previous: str, _target: str) -> None:
+    def _mark_navigator_resume(self, previous: str, _target: str) -> None:
         """`PATROL` 진입 훅. 표시만 한다 — 길 찾기 상태는 루프 스레드만 바꾼다."""
         self._navigator_resume = True
+        self._navigator_resume_from_inspection = previous == "ZONE_INSPECT"
 
     def _alert_sequence(self, commander: Commander, now_ms: int) -> None:
         """Factory PPE owns ALERT posture; guard keeps the existing alert sequence."""
@@ -1505,8 +1548,73 @@ class Runtime:
             return False, "LiDAR 측위 순찰이 아니라 지도 이동을 할 수 없다"
         with self._locate_lock:
             self._goto_asked = (float(x), float(y))
+            self._route_asked = None
             self._goal_feedback = None
         return True, "찍은 곳으로 갈 수 있는지 확인한다 — 결과는 지도에 표시된다"
+
+    def ask_route(self, route_id: str, expected_digest: str | None = None) -> tuple[bool, str]:
+        """명시적으로 고른 저장 동선을 읽고 루프에 검증·시작을 예약한다."""
+        navigator = self._navigator
+        if not isinstance(navigator, PatrolController) or navigator.maps_dir is None:
+            return False, "LiDAR 지도와 동선 저장소가 연결되지 않았다"
+        if self._motion_lock:
+            return False, "보행 잠금 중에는 동선을 시작할 수 없다"
+        if self._behavior.state not in ("IDLE", "PATROL") or self._reset_pending:
+            return False, "대기 또는 순찰 상태에서만 동선을 시작할 수 있다"
+        with self._locate_lock:
+            if self._goal_cancel_asked:
+                return False, "정지를 처리하고 있다 — 정지 완료 뒤 동선을 시작해야 한다"
+            epoch = self._navigation_epoch
+        try:
+            route = load_routes(navigator.maps_dir).get(route_id)
+        except (OSError, ValueError) as exc:
+            LOG.warning("route_load_failed", error=type(exc).__name__)
+            return False, "저장 동선을 읽을 수 없다"
+        if route is None:
+            return False, "저장된 동선을 찾을 수 없다"
+        if expected_digest is not None and route_digest(route) != expected_digest:
+            return False, "동선이 변경되었다 — 다시 불러와 확인한 뒤 시작해야 한다"
+        snapshot = self._nav_snapshot
+        if (
+            snapshot is None
+            or snapshot.get("stale")
+            or (
+                navigator._own_localization
+                and not (snapshot.get("verified") or snapshot.get("seeded"))
+            )
+        ):
+            return False, "로봇이 아직 자기 위치를 확인하지 못했다 — 위치를 먼저 잡아야 한다"
+        with self._locate_lock:
+            if epoch != self._navigation_epoch:
+                return False, "정지 요청으로 동선 시작을 취소했다"
+            self._route_asked = route
+            self._goto_asked = None
+            self._route_feedback = None
+        return True, "동선 주행을 예약했다 — 현재 위치와 경로 검증 결과는 지도에 표시된다"
+
+    def ask_route_stop(self) -> tuple[bool, str]:
+        """예약을 취소하고 기존 수동 경유 정지와 즉시 STOP을 같은 송신 락으로 묶는다."""
+        with self._send_lock:
+            with self._locate_lock:
+                self._navigation_epoch += 1
+                self._route_asked = None
+                self._goto_asked = None
+                self._patrol_asked = False
+                self._goal_cancel_asked = True
+            if self._behavior.state != "IDLE" and self._behavior.fsm.can(Event.MANUAL_ON):
+                self._apply(Event.MANUAL_ON, self._clock())
+                self._apply(Event.MANUAL_OFF, self._clock())
+            line = self._commander.stop_now()
+            self._route_feedback = {
+                "accepted": True,
+                "detail": "동선을 중지했다",
+                "at_ms": self._clock(),
+            }
+            if self._sock is not None and self._peer is not None:
+                lines = [line] if self._session_open is None else [self._session_open, line]
+                self._session_open = None
+                self._transmit(self._sock, self._peer, lines)
+        return True, "동선을 중지했다"
 
     def nav_status(self) -> dict[str, Any]:
         """관제 지도가 그릴 자기 위치·신뢰·목표. **다른 스레드에서 부른다.**
@@ -1517,7 +1625,11 @@ class Runtime:
         snapshot = self._nav_snapshot
         if snapshot is None:
             return {"available": self._navigator is not None, "starting": True}
-        return {**snapshot, "goal_feedback": self._goal_feedback}
+        return {
+            **snapshot,
+            "goal_feedback": self._goal_feedback,
+            "route_feedback": self._route_feedback,
+        }
 
     def _build_nav_snapshot(self, now_ms: int) -> dict[str, Any]:
         """루프 스레드에서 한 시점의 항법 상태를 묶는다."""
@@ -1547,6 +1659,8 @@ class Runtime:
                 for px, py in getattr(getattr(navigator, "plan", None), "waypoints", ())
             ],
             "goal_feedback": self._goal_feedback,
+            "route": navigator.route_status() if isinstance(navigator, PatrolController) else None,
+            "route_feedback": self._route_feedback,
             "fsm": self._behavior.state,
         }
 
@@ -1628,15 +1742,30 @@ class Runtime:
             self._navigator.hint_zone(zone, now_ms)
         with self._locate_lock:
             goto, self._goto_asked = self._goto_asked, None
+            route, self._route_asked = self._route_asked, None
         navigator = self._navigator
         if self._goal_cancel_asked:
             self._goal_cancel_asked = False
             if navigator is not None and hasattr(navigator, "cancel_goal"):
                 navigator.cancel_goal("patrol_stopped")
             # 정지를 누르기 전에 들어온 이동 요청·그것이 건 순찰 시작도 버린다.
-            if goto is not None or self._goal_feedback is not None:
+            if goto is not None or route is not None or self._goal_feedback is not None:
                 goto = None
                 self._patrol_asked = False
+            route = None
+        if route is not None and isinstance(navigator, PatrolController):
+            if self._behavior.state not in ("IDLE", "PATROL") or self._reset_pending:
+                accepted, detail = False, "상태가 바뀌어 동선 시작을 취소했다"
+            else:
+                accepted, detail = navigator.start_route(route, now_ms)
+            self._route_feedback = {
+                "accepted": accepted,
+                "detail": detail,
+                "route_id": route.id,
+                "at_ms": now_ms,
+            }
+            if accepted and self._behavior.state != "PATROL":
+                self.ask_patrol()
         if goto is not None and navigator is not None:
             accepted, detail = navigator.goto(*goto)
             self._goal_feedback = {
@@ -2084,6 +2213,8 @@ def dashboard_wiring(
         reset_zone_baseline=runtime.ask_zone_baseline_reset,
         locate_zone=runtime.ask_locate_zone,
         goto_point=getattr(runtime, "ask_goto", None),
+        start_route=getattr(runtime, "ask_route", None),
+        stop_route=getattr(runtime, "ask_route_stop", None),
         pose=(
             float(config["posture"]["pitch_up_deg"]),
             int(config["posture"]["settle_ms"]),

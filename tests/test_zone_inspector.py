@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -66,7 +67,16 @@ class SlotVlm:
         return reading
 
 
-def _build(cfg: dict, tmp_path: Path, *, zone: str = "A", **change) -> SimpleNamespace:
+def _build(
+    cfg: dict,
+    tmp_path: Path,
+    *,
+    zone: str = "A",
+    yaw: float | None = 0.0,
+    aim_deg: float | None = None,
+    ready_to_inspect=None,
+    **change,
+) -> SimpleNamespace:
     """순찰 중인 공장 모드의 점검기 하나. 구역 `zone` 은 원점에서 `yaw` 0 을 바라본다."""
     config = deepcopy(cfg)
     config["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
@@ -94,9 +104,10 @@ def _build(cfg: dict, tmp_path: Path, *, zone: str = "A", **change) -> SimpleNam
         mission=Mission(config, mode="factory"),
         vlm=vlm,
         fall=fall,
-        anchors=(Zone(zone, 0.0, 0.0, 0.0),),
+        anchors=(Zone(zone, 0.0, 0.0, yaw, aim_deg=aim_deg),),
         apply=apply,
         record=record,
+        ready_to_inspect=ready_to_inspect,
     )
     return SimpleNamespace(
         inspector=inspector,
@@ -128,6 +139,74 @@ def test_a_stale_pose_while_aligning_stops_and_reads_nothing(parts) -> None:
     parts.inspector.inspect(_frame(), T0 + parts.pose_timeout_ms + 1)
     assert parts.vlm.submitted == []
     assert parts.behavior.state == "ZONE_INSPECT"
+
+
+def test_camera_aim_waits_for_navigation_before_entering_inspection(cfg, tmp_path) -> None:
+    ready = {"value": False}
+    parts = _build(cfg, tmp_path, aim_deg=90.0, ready_to_inspect=lambda _zone, _now: ready["value"])
+    inspector = parts.inspector
+    inspector.note_pose((0.0, 0.0, 0.0), T0)
+    assert inspector.awaits_inspection("A", T0)
+    inspector.inspect(_frame(), T0)
+    assert parts.behavior.state == "PATROL"
+    assert parts.vlm.submitted == []
+    assert inspector._visit_seen == []
+    ready["value"] = True
+    inspector.note_pose((0.0, 0.0, math.pi / 2), T0 + 100)
+    inspector.inspect(_frame(), T0 + 100)
+    assert parts.behavior.state == "ZONE_INSPECT"
+    assert inspector._aligned, "길 찾기가 이미 맞춘 방향을 기존 yaw로 다시 돌리지 않는다"
+    assert not inspector.awaits_inspection("A", T0 + 100)
+    inspector.inspect(_frame(), T0 + 200)
+    assert parts.vlm.submitted == [T0 + 200]
+
+
+def test_legacy_zone_does_not_wait_for_navigation(cfg, tmp_path) -> None:
+    parts = _build(cfg, tmp_path, ready_to_inspect=lambda *_args: False)
+    _arrive(parts)
+    parts.inspector.inspect(_frame(), T0 + 100)
+    assert parts.vlm.submitted == [T0 + 100]
+
+
+def test_inspector_waits_only_when_a_fresh_pose_can_reach_the_anchor(cfg, tmp_path) -> None:
+    parts = _build(cfg, tmp_path, aim_deg=90.0)
+    inspector = parts.inspector
+    assert not inspector.awaits_inspection("A", T0)
+    inspector.note_pose((0.4, 0.0, 0.0), T0)
+    assert not inspector.awaits_inspection("A", T0)
+    inspector.note_pose((0.0, 0.0, 0.0), T0)
+    assert inspector.awaits_inspection("A", T0)
+    assert not inspector.awaits_inspection("B", T0)
+    assert not inspector.awaits_inspection("A", T0 + parts.pose_timeout_ms + 1)
+
+
+@pytest.mark.parametrize("facing", [0.0, math.pi / 2])
+def test_camera_aim_without_navigation_never_turns_or_inspects(cfg, tmp_path, facing) -> None:
+    parts = _build(cfg, tmp_path, aim_deg=90.0)
+    inspector = parts.inspector
+    inspector.note_pose((0.0, 0.0, facing), T0)
+    inspector.inspect(_frame(), T0)
+    assert parts.behavior.state == "PATROL", "항법의 안전 관문 없이 점검 정렬을 시작하지 않는다"
+    inspector.inspect(_frame(), T0 + 100)
+    commander = Commander()
+    inspector._turn(commander, T0 + 100)
+    assert commander.intent.fields == {"step": 0.0, "angle": 0.0}
+    assert parts.vlm.submitted == []
+    # PATROL의 온보드 장애물 반응도 점검 전이로 가로채지 않는다.
+    parts.behavior.event(Event.ONBOARD_AVOID, now_ms=T0 + 200)
+    assert parts.behavior.state == "AVOID"
+    inspector.inspect(_frame(), T0 + 200)
+    assert parts.vlm.submitted == []
+
+
+def test_legacy_yaw_without_navigation_still_aligns(cfg, tmp_path) -> None:
+    parts = _build(cfg, tmp_path, yaw=math.pi / 2)
+    _arrive(parts)
+    parts.inspector.inspect(_frame(), T0 + 100)
+    commander = Commander()
+    parts.inspector._turn(commander, T0 + 100)
+    assert commander.intent.fields == {"step": 0.0, "angle": cfg["zones"]["align_turn_deg"]}
+    assert parts.vlm.submitted == []
 
 
 def test_a_frame_without_a_size_is_not_read(parts) -> None:

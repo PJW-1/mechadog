@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -20,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from host.behavior.planner import Plan, PlanParams, Point, plan_to
+from host.behavior.zone_map import PLAN_FILENAME
 from host.common.logging_setup import event_logger
 from host.slam.occupancy import OccupancyGrid
 
@@ -34,12 +36,29 @@ class Zone:
 
     `yaw` 는 점검할 때 바라볼 방향(rad, 지도 좌표 · 측위 `Pose` 와 같은 규약)이다. 없으면
     도착한 방향 그대로 본다. 변화 감지는 기준과 같은 장면이어야 하므로 두는 값이다.
+    `aim_deg` 는 도착 후 점검 전에 몸을 돌릴 순찰 좌표 방위(deg)다. 0은 +X,
+    +90은 +Y이며, 미지정이면 기존 도착 동작을 유지한다. 기존 `yaw`와는 별도다.
     """
 
     label: str
     x: float
     y: float
     yaw: float | None = None
+    aim_deg: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.aim_deg is not None and (
+            isinstance(self.aim_deg, bool)
+            or not isinstance(self.aim_deg, (int, float))
+            or not math.isfinite(self.aim_deg)
+            or not -180 <= self.aim_deg <= 180
+        ):
+            raise ValueError("aim_deg는 -180~180 범위의 유한한 숫자여야 합니다")
+
+    @property
+    def aim_yaw(self) -> float | None:
+        """점검 정렬 방향(rad). 새 방위를 지정한 경우 기존 yaw보다 우선한다."""
+        return self.yaw if self.aim_deg is None else math.radians(self.aim_deg)
 
     @property
     def xy(self) -> tuple[float, float]:
@@ -111,6 +130,12 @@ class ZoneStore:
         self._zones[label] = zone
         return zone
 
+    def set_aim_deg(self, label: str, aim_deg: float | None) -> Zone:
+        """도착 후 카메라 방향을 정하거나 해제한다. 기존 yaw 설정은 보존한다."""
+        zone = replace(self._zones[label], aim_deg=aim_deg)
+        self._zones[label] = zone
+        return zone
+
     def undo(self) -> Zone | None:
         """가장 마지막으로 붙인 좌표를 뗀다."""
         placed = self.labels
@@ -133,6 +158,7 @@ class ZoneStore:
         if not isinstance(raw, dict):
             LOG.warning("zones_file_malformed", path=str(path))
             return store
+        plan_aims = _load_plan_aims(directory)
         unknown: list[str] = []
         for label, value in raw.items():
             if label not in store.allowed_labels:
@@ -143,7 +169,11 @@ class ZoneStore:
                 continue
             yaw = value.get("yaw")
             store._zones[label] = Zone(
-                label, float(value["x"]), float(value["y"]), None if yaw is None else float(yaw)
+                label,
+                float(value["x"]),
+                float(value["y"]),
+                None if yaw is None else float(yaw),
+                value.get("aim_deg", plan_aims.get(label)),
             )
         if unknown:
             LOG.warning(
@@ -159,6 +189,8 @@ class ZoneStore:
         payload: dict[str, Any] = {}
         for zone in self.as_tuple():
             payload[zone.label] = {"x": round(zone.x, 3), "y": round(zone.y, 3)}
+            # null도 기록해 별도 구역 계획의 이전 방향이 다시 살아나지 않게 한다.
+            payload[zone.label]["aim_deg"] = zone.aim_deg
             if zone.yaw is not None:
                 payload[zone.label]["yaw"] = round(zone.yaw, 3)
         path.write_text(
@@ -167,6 +199,21 @@ class ZoneStore:
         )
         LOG.info("zones_saved", path=str(path), count=len(payload))
         return path
+
+
+def _load_plan_aims(directory: Path) -> dict[str, Any]:
+    """기존 지도 구역 계획의 방향만 읽는다. 좌표의 정본은 계속 zones.json이다."""
+    path = directory / PLAN_FILENAME
+    if not path.is_file():
+        return {}
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(plan, dict) or not isinstance(plan.get("zones"), list):
+        raise ValueError("zones_plan.json의 구역 목록 형식이 올바르지 않습니다")
+    return {
+        str(zone["id"]): zone["aim_deg"]
+        for zone in plan["zones"]
+        if isinstance(zone, dict) and "id" in zone and "aim_deg" in zone
+    }
 
 
 def nearest_free_cell(

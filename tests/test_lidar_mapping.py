@@ -507,6 +507,67 @@ def test_a_zone_heading_survives_and_is_optional(tmp_path: Path) -> None:
     assert loaded.get("B").yaw is None
 
 
+@pytest.mark.parametrize("aim_deg", [-180.0, -45.5, 0.0, 90.0, 180.0, None])
+def test_camera_aim_roundtrips_independently_of_legacy_yaw(tmp_path: Path, aim_deg) -> None:
+    store = ZoneStore(("A", "B"))
+    store.place(1.0, 1.0)
+    store.place(2.0, 2.0)
+    store.aim("A", -1.571)
+    store.set_aim_deg("A", aim_deg)
+    store.save(tmp_path)
+    loaded = ZoneStore.load(tmp_path, ("A", "B"))
+    assert loaded.get("A").aim_deg == aim_deg
+    assert loaded.get("A").yaw == pytest.approx(-1.571)
+    assert loaded.get("A").aim_yaw == pytest.approx(
+        -1.571 if aim_deg is None else np.deg2rad(aim_deg)
+    )
+    assert loaded.get("B").aim_deg is None
+
+
+def test_camera_aim_loads_from_zone_plan_without_replacing_anchor_coordinates(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "zones.json").write_text(
+        json.dumps(
+            {
+                "A": {"x": 1, "y": 2},
+                "B": {"x": 3, "y": 4, "aim_deg": 0},
+                "C": {"x": 5, "y": 6, "aim_deg": None},
+                "D": {"x": 7, "y": 8, "yaw": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "zones_plan.json").write_text(
+        json.dumps(
+            {
+                "zones": [
+                    {"id": label, "aim_deg": 90, "patrol": {"x": 999, "y": 999}}
+                    for label in ("A", "B", "C")
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = ZoneStore.load(tmp_path, ("A", "B", "C", "D"))
+    assert store.get("A").aim_deg == 90
+    assert store.get("A").xy == (1, 2)
+    assert store.get("B").aim_deg == 0
+    assert store.get("C").aim_deg is None
+    assert store.get("D").aim_deg is None  # 기존 yaw를 새 도착 회전으로 승격하지 않는다.
+    store.save(tmp_path)
+    assert ZoneStore.load(tmp_path, store.allowed_labels).get("C").aim_deg is None
+
+
+@pytest.mark.parametrize("value", [True, "90", float("nan"), float("inf"), -181, 181])
+def test_invalid_camera_aim_cannot_reach_runtime(tmp_path: Path, value) -> None:
+    (tmp_path / "zones.json").write_text(
+        json.dumps({"A": {"x": 1, "y": 2, "aim_deg": value}}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="aim_deg"):
+        ZoneStore.load(tmp_path, ("A",))
+
+
 def test_undo_removes_the_last_placed_zone() -> None:
     store = ZoneStore(("A", "B", "C"))
     store.place(1.0, 1.0)

@@ -336,10 +336,12 @@ test('locate buttons list patrol zones from the server and ask before sending',a
  await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(calls,['C']);assert.match(messages.at(-1),/구역 C 안에서 위치를 다시 찾는다/);
 });
-test('zone page shows the live house map only when connected to the server',()=>{
+test('zone page uses one route map for move, locate and draw while preserving zone settings',()=>{
  const {document,panels,store}=setup();
  panels.render('zones');assert.equal(document.querySelector('[data-live-map]'),null,'예시 모드에서는 실제 지도를 지어내지 않는다');
  store.link={baseUrl:'',get:async path=>{if(path==='/api/planning')throw new Error('계획 서버 없음(시험)');return {}}};store.setDemo(false);panels.render('zones');
- const first=document.querySelector('[data-live-map]');assert.ok(first);
- panels.render('zones');assert.equal(document.querySelector('[data-live-map]'),first,'재렌더해도 같은 지도를 다시 붙인다');
+ assert.equal(document.querySelector('[data-live-map]'),null,'별도 이동 지도와 동선 지도를 중복으로 열지 않는다');
+ assert.deepEqual([...document.querySelectorAll('[data-map-mode]')].map(button=>button.textContent),['이동','위치 알려주기','선 그리기']);
+ assert.ok(document.querySelector('[data-plan-save]'),'기존 구역 정책 편집기는 보존한다');
+ const session=panels.routePlanner.current;panels.render('zones');assert.equal(panels.routePlanner.current,session,'재렌더해도 같은 로봇 초안을 유지한다');
 });

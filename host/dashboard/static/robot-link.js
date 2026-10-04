@@ -93,6 +93,23 @@ export class RobotLink {
     }
   }
 
+  /** Named plan deletion uses the same origin-checked JSON path as saving. */
+  async delete(path, body, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await this.fetch(this.baseUrl + path, {
+        method: 'DELETE', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body ?? {}), signal: controller?.signal,
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error((typeof detail?.error === 'string' ? detail.error : '삭제가 거절되었습니다.') + ' (HTTP ' + response.status + ')');
+      }
+      return await response.json();
+    } finally {if (timer) clearTimeout(timer);}
+  }
+
   /** **실패를 삼키지 않는다.** 비상정지가 안 갔다면 화면이 그것을 말해야 한다. */
   estop() {
     return this.post('/api/command/estop', {}, ESTOP_TIMEOUT_MS);
@@ -134,6 +151,10 @@ export class RobotLink {
   /** 실제 순찰 예약/정지 — action 은 'start'|'stop'. */
   patrol(action) {
     return this.post('/api/command/patrol', { action });
+  }
+
+  route(action, route_id, expected_digest) {
+    return this.post('/api/command/route', action === 'start' ? {action, route_id, ...(expected_digest ? {expected_digest} : {})} : {action});
   }
 
   /** 구역 기준 재등록 (WBS 3.6.5) — 서버가 기준을 지우고 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다. 경보는 풀지 않는다. */

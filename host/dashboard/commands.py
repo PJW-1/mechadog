@@ -65,6 +65,8 @@ class CommandService:
         locate_zone: Callable[[str], tuple[bool, str]] | None = None,
         goto_point: Callable[[float, float], tuple[bool, str]] | None = None,
         pose: tuple[float, int] | tuple[float, int, float] | None = None,
+        start_route: Callable[..., tuple[bool, str]] | None = None,
+        stop_route: Callable[[], tuple[bool, str]] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -90,6 +92,8 @@ class CommandService:
         self._reset_zone_baseline = reset_zone_baseline
         self._locate_zone = locate_zone
         self._goto_point = goto_point
+        self._start_route = start_route
+        self._stop_route = stop_route
         # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과 같은 검증된
         # 각도만 쓰고 임의 각도는 받지 않는다(검증하지 않은 자세로 보행하면 넘어진다).
         self._pose_pitch: dict[str, float] = (
@@ -283,6 +287,25 @@ class CommandService:
             command="goto", accepted=accepted, state=self._behavior.state, detail=detail
         )
 
+    def route_start(self, route_id: str, expected_digest: str | None = None) -> CommandResult:
+        """확인한 저장 동선을 요청한다. 운용 안전 관문은 런타임이 기존 규칙대로 검사한다."""
+        if self._start_route is None:
+            accepted, detail = False, "동선 주행 경로가 연결되지 않았다"
+        elif expected_digest is None:
+            accepted, detail = self._start_route(route_id)
+        else:
+            accepted, detail = self._start_route(route_id, expected_digest)
+        return CommandResult("route_start", accepted, self._behavior.state, detail)
+
+    def route_stop(self) -> CommandResult:
+        """예약 중인 동선까지 취소하는 런타임 정지 경로."""
+        accepted, detail = (
+            self._stop_route()
+            if self._stop_route is not None
+            else (False, "동선 주행 경로가 연결되지 않았다")
+        )
+        return CommandResult("route_stop", accepted, self._behavior.state, detail)
+
     def locate(self, zone: str) -> CommandResult:
         """사람이 «로봇은 지금 이 구역 안에 있다» 고 알려준다 — 그 구역 안에서만 위치를 다시 찾는다.
 
@@ -402,6 +425,13 @@ class CommandService:
         `IDLE` 에 정착한다. `ESTOP` 과 달리 래치를 걸지 않아 해제 절차가
         필요 없는, "정상 정지"다.
         """
+        if self._stop_route is not None and (
+            self._behavior.state in self._AUTONOMOUS or self._behavior.state == "IDLE"
+        ):
+            # 기존 정지 버튼도 새 동선·아직 IDLE인 시작 예약을 즉시 취소한다.
+            # 런타임이 송신 락 안에서 상태 전환과 STOP 전문까지 처리한다.
+            accepted, detail = self._stop_route()
+            return CommandResult("patrol_stop", accepted, self._behavior.state, detail)
         if self._behavior.state not in self._AUTONOMOUS:
             return CommandResult(
                 command="patrol_stop",

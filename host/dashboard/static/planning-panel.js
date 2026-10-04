@@ -1,6 +1,6 @@
 // 구역 순서의 정본은 서버 zones.ids. 초안은 로봇별로 분리하고 명령 API와 구분한다.
 const clone=value=>JSON.parse(JSON.stringify(value));
-const blankZone=id=>({id,name:id,x:null,y:null,yaw_deg:null,hazard:false,helmet:true,vest:true,note:''});
+const blankZone=id=>({id,name:id,x:null,y:null,yaw_deg:null,aim_deg:null,hazard:false,helmet:true,vest:true,note:''});
 const NS='http://www.w3.org/2000/svg';
 export function mapPoint(extent,x,y){return [(x-extent[0])/(extent[1]-extent[0])*1000,(extent[3]-y)/(extent[3]-extent[2])*1000]}
 export function worldPoint(extent,x,y){return [extent[0]+x*(extent[1]-extent[0]),extent[3]-y*(extent[3]-extent[2])]}
@@ -103,7 +103,7 @@ export class PlanningPanel {
    if(z.x==null)return;const [x,y]=mapPoint(meta.extent,z.x,z.y),selected=z.id===s.selected;
    const g=this.svg('g',{class:'plan-map-zone'+(selected?' selected':''),'data-zone':z.id});
    g.append(this.svg('ellipse',{cx:x,cy:y,rx:r/(meta.extent[1]-meta.extent[0])*1000,ry:r/(meta.extent[3]-meta.extent[2])*1000,class:z.hazard?'plan-radius hazard':'plan-radius','vector-effect':'non-scaling-stroke'}));
-   if(z.yaw_deg!=null){const angle=z.yaw_deg*Math.PI/180,[dx,dy]=mapPoint(meta.extent,z.x+Math.cos(angle)*r*1.8,z.y+Math.sin(angle)*r*1.8);g.append(this.svg('line',{x1:x,y1:y,x2:dx,y2:dy,class:'plan-heading','vector-effect':'non-scaling-stroke'}))}
+   this.drawAim(g,z,meta,r);this.drawLegacyHeading(g,z,meta,r);
    g.append(this.svg('circle',{cx:x,cy:y,r:17,class:'plan-pin','vector-effect':'non-scaling-stroke'}),this.svg('text',{x,y:y+1,'text-anchor':'middle','dominant-baseline':'middle',class:'plan-pin-label'},index+1));
    g.addEventListener('click',event=>{event.stopPropagation();if(s.busy||s.loading)return;s.selected=z.id;this.drawList();this.drawMap();this.drawInspector()});svg.append(g);
   });
@@ -114,23 +114,45 @@ export class PlanningPanel {
   });
   this.map.append(svg,p.el('span',{class:'plan-map-hint'},'선택한 구역을 지도에 클릭 · 정확한 위치는 오른쪽 좌표 입력'));
  }
+ drawAim(group,zone,meta,radius){
+  if(!Number.isFinite(zone.aim_deg))return;
+  const angle=zone.aim_deg*Math.PI/180,dx=Math.cos(angle),dy=Math.sin(angle);
+  const length=Math.max(radius*1.8,Math.min(meta.extent[1]-meta.extent[0],meta.extent[3]-meta.extent[2])*.045),head=length*.28;
+  const tipX=zone.x+dx*length,tipY=zone.y+dy*length,point=(x,y)=>mapPoint(meta.extent,x,y).join(' ');
+  const label=zone.id+' 카메라 방향 '+zone.aim_deg+'°';
+  const arrow=this.svg('path',{d:'M '+point(zone.x,zone.y)+' L '+point(tipX,tipY)+' M '+point(tipX-dx*head-dy*head*.55,tipY-dy*head+dx*head*.55)+' L '+point(tipX,tipY)+' L '+point(tipX-dx*head+dy*head*.55,tipY-dy*head-dx*head*.55),class:'plan-heading plan-aim','data-aim-deg':zone.aim_deg,'vector-effect':'non-scaling-stroke',role:'img','aria-label':label});
+  arrow.append(this.svg('title',{},label));group.append(arrow);
+ }
+ drawLegacyHeading(group,zone,meta,radius){
+  if(Number.isFinite(zone.aim_deg)||!Number.isFinite(zone.yaw_deg))return;
+  const angle=zone.yaw_deg*Math.PI/180,[x,y]=mapPoint(meta.extent,zone.x,zone.y),[dx,dy]=mapPoint(meta.extent,zone.x+Math.cos(angle)*radius*1.8,zone.y+Math.sin(angle)*radius*1.8),label=zone.id+' 기존 점검 방향 '+zone.yaw_deg+'°';
+  const line=this.svg('line',{x1:x,y1:y,x2:dx,y2:dy,class:'plan-heading plan-legacy-heading','stroke-dasharray':'5 4','vector-effect':'non-scaling-stroke',role:'img','aria-label':label});
+  line.append(this.svg('title',{},label));group.append(line);
+ }
+ aimHelp(zone){
+  return '도착 후 카메라 방향으로 몸을 돌린 다음 점검합니다. 0°는 오른쪽(+X), +90°는 위쪽(+Y), 범위는 −180°~180°입니다. '+(zone.yaw_deg!=null?'카메라 방향이 빈칸이면 기존 점검 방향을 사용합니다(지도 점선). 기존 점검 방향까지 비우면 도착 방향을 유지합니다.':'빈칸이면 도착 방향을 유지합니다.');
+ }
  drawInspector(){
   if(!this.inspector)return;const p=this.p,s=this.current,z=s.draft.zones.find(z=>z.id===s.selected);this.inspector.replaceChildren();if(!z)return;
   const text=(label,key,max)=>p.field(label,p.el(key==='note'?'textarea':'input',{name:label,value:key==='note'?null:z[key],maxlength:max,rows:key==='note'?3:null,disabled:s.busy||s.loading,oninput:e=>{z[key]=e.target.value;this.changed(false)}},key==='note'?z[key]:null));
   const number=(label,key)=>{
    const invalidKey=z.id+':'+key;
-   return p.field(label,p.el('input',{name:label,type:'number',step:'0.001',min:key==='yaw_deg'?-180:-10000,max:key==='yaw_deg'?180:10000,value:s.invalidNumbers[invalidKey]??z[key]??'','aria-invalid':invalidKey in s.invalidNumbers,placeholder:key==='yaw_deg'?'도착 방향 유지':'미지정',disabled:s.busy||s.loading,oninput:e=>{
+   const direction=key==='aim_deg'||key==='yaw_deg';
+   return p.field(label,p.el('input',{name:label,type:'number',step:'0.001',min:direction?-180:-10000,max:direction?180:10000,value:s.invalidNumbers[invalidKey]??z[key]??'','aria-invalid':invalidKey in s.invalidNumbers,placeholder:'미지정',disabled:s.busy||s.loading,oninput:e=>{
     if(!e.target.checkValidity()){s.invalidNumbers[invalidKey]=e.target.value;e.target.setAttribute('aria-invalid','true');this.changed();return}
     delete s.invalidNumbers[invalidKey];e.target.setAttribute('aria-invalid','false');
     const value=e.target.value===''?null:Number(e.target.value);z[key]=value;
     const sync=(other,label,value)=>{z[other]=value;delete s.invalidNumbers[z.id+':'+other];const input=this.inspector.querySelector('[name="'+label+'"]');if(input){input.value=value??'';input.setAttribute('aria-invalid','false')}};
-    if((key==='x'||key==='y')&&value===null){sync('x','X (m)',null);sync('y','Y (m)',null);sync('yaw_deg','점검 방향 (°)',null)}
+    if((key==='x'||key==='y')&&value===null){sync('x','X (m)',null);sync('y','Y (m)',null);sync('yaw_deg','기존 점검 방향 (°)',null);sync('aim_deg','카메라 방향 (°)',null)}
     else if(key==='x'&&z.y==null)sync('y','Y (m)',0);else if(key==='y'&&z.x==null)sync('x','X (m)',0);
+    this.aimNote.textContent=this.aimHelp(z);
     this.changed();
    }}));
   };
   const check=(label,key,description)=>p.el('label',{class:'plan-check'},p.el('input',{type:'checkbox',name:key,checked:z[key],disabled:s.busy||s.loading,onchange:e=>{z[key]=e.target.checked;this.changed()}}),p.el('span',{},p.el('strong',{},label),p.el('small',{},description)));
-  this.inspector.append(p.el('div',{class:'plan-section-heading'},p.el('h3',{},'구역 설정'),p.badge(z.id)),text('구역 이름','name',60),p.el('div',{class:'plan-coordinate'},number('X (m)','x'),number('Y (m)','y')),number('점검 방향 (°)','yaw_deg'),p.el('h4',{},'공장 모드 점검'),check('안전모 필수','helmet','머리 영역의 보호구 착용 확인'),check('안전조끼 필수','vest','몸통 영역의 보호구 착용 확인'),check('위험물 점검 구역','hazard','기존 위험물 판정을 이 구역에서 사용'),text('현장 메모','note',300));
+  this.aimNote=p.note(this.aimHelp(z));this.aimNote.dataset.planAimHelp='';
+  const legacy=z.yaw_deg!=null||z.id+':yaw_deg' in s.invalidNumbers;
+  this.inspector.append(p.el('div',{class:'plan-section-heading'},p.el('h3',{},'구역 설정'),p.badge(z.id)),text('구역 이름','name',60),p.el('div',{class:'plan-coordinate'},number('X (m)','x'),number('Y (m)','y')),number('카메라 방향 (°)','aim_deg'),...(legacy?[number('기존 점검 방향 (°)','yaw_deg')]:[]),this.aimNote,p.el('h4',{},'공장 모드 점검'),check('안전모 필수','helmet','머리 영역의 보호구 착용 확인'),check('안전조끼 필수','vest','몸통 영역의 보호구 착용 확인'),check('위험물 점검 구역','hazard','기존 위험물 판정을 이 구역에서 사용'),text('현장 메모','note',300));
   this.inspector.append(p.button('선택 구역 삭제',()=>{s.draft.zones=s.draft.zones.filter(item=>item!==z);for(const key of Object.keys(s.invalidNumbers))if(key.startsWith(z.id+':'))delete s.invalidNumbers[key];s.selected=s.draft.zones[0].id;this.changed();this.draw()},{disabled:s.busy||s.loading||s.draft.zones.length===1,class:'op-button plan-delete'}));
   const active=s.snapshot?.active?.zones.some(item=>item.id===z.id),slot=p.store.slot?.();
   if(active&&p.store.live&&slot?.commandsOpen)this.inspector.append(p.button('물품 기준 다시 등록',()=>p.confirmDevice({title:z.id+' 구역 기준을 다시 등록할까요?',body:'기존 기준을 지우고 다음 현장 관측을 새 기준으로 사용합니다. 현재 변화가 정상인지 확인해 주세요. 순찰 경로나 경보 잠금은 바뀌지 않습니다.',confirm:'기준 다시 등록',action:()=>p.store.requestDevice('구역 '+z.id+' 기준 재등록',()=>s.link.zoneBaseline(z.id))}),{disabled:s.busy||s.loading}));
@@ -147,10 +169,12 @@ export class PlanningPanel {
  }
  async save(){
   const s=this.current;if(!s.snapshot||s.busy||s.loading||Object.keys(s.invalidNumbers).length)return;
-  if(s.draft.zones.some(z=>z.x==null&&z.yaw_deg!=null)){s.error='위치가 없는 구역의 점검 방향을 지워 주세요.';this.draw();return}
+  if(s.draft.zones.some(z=>z.x==null&&(z.aim_deg!=null||z.yaw_deg!=null))){s.error='위치가 없는 구역의 점검 방향을 지워 주세요.';this.draw();return}
   s.busy=true;s.error='';this.draw();
   try{
+   const previousRevision=s.revision;
    const result=await s.link.post('/api/planning',{...clone(s.draft),revision:s.revision});s.snapshot=result;s.revision=result.revision;s.draft=clone(result.saved);s.dirty=false;this.forgetDraft(s);
+   this.p.routePlanner?.planningSaved(result,previousRevision,s.key);
    s.notice='계획을 저장했습니다. '+(result.pending_restart?'실행 중인 로봇 서버를 다음에 시작할 때 적용됩니다.':'로봇 서버가 시작할 때 이 설정을 읽습니다.');
   }catch(error){s.error='저장하지 못했습니다. 작성 내용은 유지됩니다. '+error.message}
   finally{s.busy=false;if(this.visible(s))this.draw()}
