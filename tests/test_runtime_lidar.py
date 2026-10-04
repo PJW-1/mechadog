@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import json
+import math
 import random
+from copy import deepcopy
 
 import pytest
 from conftest import FakeClock
@@ -17,6 +19,7 @@ from test_runtime import DEVICE, FakeSocket, FakeVision, config, telemetry, visi
 
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event
+from host.behavior.mission import Mission
 from host.behavior.patrol import PatrolController, Phase
 from host.behavior.zones import ZoneStore
 from host.common.config import ConfigError
@@ -886,3 +889,206 @@ def test_zone_inspector_uses_the_navigator_zone_anchors(config, clock) -> None:
     runtime, navigator = _runtime(config, clock)
     anchors = {zone.label: (zone.x, zone.y) for zone in runtime._zone_inspector._anchors}
     assert anchors == {label: navigator.zones.xy(label) for label in navigator.zones.labels}
+
+
+def _camera_aim_runtime(config, clock, tmp_path):
+    config = deepcopy(config)
+    config["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
+    vision = FakeVision()
+
+    def navigator_factory(commander):
+        navigator = _navigator(commander)
+        navigator.zones.set_aim_deg("A", 90.0)
+        return navigator
+
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        navigator_factory=navigator_factory,
+        mission=Mission(config, mode="factory"),
+        vision=vision,
+    )
+    navigator = runtime._navigator
+    assert navigator is not None
+    navigator.note_sent([CommandEncoder().encode("STOP")], clock.ms - DRIVE.settle_delay_ms)
+    navigator.observe_obstacle_scan(
+        Scan("lidar-01", "0" * 16, 1, clock.ms, ((0.0, 3.0),)), clock.ms
+    )
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(enc), clock.ms)
+    assert runtime.start_patrol(clock.ms)
+    _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))
+    runtime.tick(clock.ms)
+    assert navigator.target == "A"
+    return runtime, navigator, vision
+
+
+def _camera_aim_tick(runtime, navigator, vision, clock, *, yaw=0.0, new_frame=True):
+    clock.advance(100)
+    pose = (1.0, 1.0, yaw)
+    _fresh(navigator, clock.ms, pose)
+    runtime.note_pose(pose, clock.ms)
+    if new_frame:
+        vision.result = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
+    return runtime.tick(clock.ms)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_camera_aim_runtime_waits_for_rotation_then_a_fresh_frame(config, clock, tmp_path):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+    _camera_aim_tick(runtime, navigator, vision, clock)
+    assert runtime.behavior.state == "PATROL"
+    assert navigator.phase is Phase.AIMING
+    assert runtime.commander.intent.type_ == "STOP"
+    _camera_aim_tick(runtime, navigator, vision, clock)
+    assert runtime.commander.intent.fields == {"step": 0.0, "angle": DRIVE.spin_turn_deg}
+    assert runtime._zone_inspector._visit_seen == []
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
+    assert navigator.phase is Phase.INSPECT
+    assert runtime.behavior.state == "PATROL", "이번 프레임은 조준 완료 전에 처리됐다"
+    # 카메라와 제어 틱 주기는 다르다. 새 프레임이 없는 틱에서 다음 구역으로 떠나지 않는다.
+    for _ in range(2):
+        _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2, new_frame=False)
+        assert navigator.phase is Phase.INSPECT
+        assert runtime.commander.intent.type_ == "STOP"
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
+    assert runtime.behavior.state == "ZONE_INSPECT"
+    assert runtime._zone_inspector._aligned
+    assert navigator.stats.zones_visited == 1
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
+    assert len(runtime._zone_inspector._visit_seen) == 1
+    assert runtime.commander.intent.fields == {"step": 0.0, "angle": 0.0}
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("interruption", ["obstacle", "stale_pose"])
+def test_camera_aim_runtime_does_not_inspect_while_navigation_is_stopped(
+    config, clock, tmp_path, interruption
+):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+    _camera_aim_tick(runtime, navigator, vision, clock)
+    _camera_aim_tick(runtime, navigator, vision, clock)
+    if interruption == "obstacle":
+        navigator.safety.obstacle = True
+        _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
+    else:
+        clock.advance(DRIVE.pose_timeout_ms + 1)
+        # 점검기만 신선한 위치를 받아도 항법의 측위 상실을 우회할 수 없다.
+        runtime.note_pose((1.0, 1.0, math.pi / 2), clock.ms)
+        vision.result = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
+        runtime.tick(clock.ms)
+        assert navigator.phase is Phase.LOST
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.commander.intent.type_ == "STOP"
+    assert runtime._zone_inspector._visit_seen == []
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_camera_aim_runtime_does_not_wait_for_a_stalled_camera(config, clock, tmp_path):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+    _camera_aim_tick(runtime, navigator, vision, clock)
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
+    assert navigator.phase is Phase.INSPECT
+    vision.is_stalled = True
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2, new_frame=False)
+    assert navigator.phase is Phase.MOVING
+    assert navigator.target == "B"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_camera_aim_runtime_realigns_if_heading_changes_while_waiting(config, clock, tmp_path):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+    _camera_aim_tick(runtime, navigator, vision, clock)
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
+    assert navigator.phase is Phase.INSPECT
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=0.0)
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.commander.intent.fields == {"step": 0.0, "angle": DRIVE.spin_turn_deg}
+    assert navigator.stats.zones_visited == 1
+    _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
+    assert runtime.behavior.state == "ZONE_INSPECT"
+    assert navigator.stats.zones_visited == 1
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_camera_aim_runtime_keeps_pending_inspection_after_sent_stop(config, clock, tmp_path):
+    """실제로 송신된 spin→STOP과 정착 스캔 관문도 카메라 인계를 잃지 않는다."""
+    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+    runtime.begin(FakeSocket(clock))
+    clock.advance(100)
+    _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))
+    runtime.step(clock.ms)
+    assert navigator._last_sent_moving
+
+    def step_at(yaw, *, new_frame=True, settled_scan=False):
+        clock.advance(DRIVE.settle_delay_ms if settled_scan else 100)
+        pose = (1.0, 1.0, yaw)
+        _fresh(navigator, clock.ms, pose)
+        runtime.note_pose(pose, clock.ms)
+        if settled_scan:
+            navigator.observe_obstacle_scan(
+                Scan("lidar-01", "0" * 16, clock.ms, clock.ms, ((0.0, 3.0),)), clock.ms
+            )
+        if new_frame:
+            vision.result = vision_result(
+                clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None
+            )
+        runtime.step(clock.ms)
+
+    step_at(0.0)
+    assert navigator.phase is Phase.AIMING
+    assert not navigator._last_sent_moving
+    step_at(0.0, settled_scan=True)
+    assert navigator._last_sent_moving, "도착 STOP 뒤 정착 스캔이 있어야 spin을 송신한다"
+    step_at(math.pi / 2)
+    assert navigator.phase is Phase.INSPECT
+    assert not navigator._last_sent_moving
+    step_at(math.pi / 2, new_frame=False)
+    assert navigator.phase is Phase.LOST
+    assert runtime.behavior.state == "PATROL"
+    step_at(math.pi / 2, new_frame=False, settled_scan=True)
+    assert navigator.phase is Phase.INSPECT, "새 스캔 뒤 다음 구역으로 떠나지 않고 인계를 복구한다"
+    assert navigator.stats.zones_visited == 1
+    step_at(math.pi / 2)
+    assert runtime.behavior.state == "ZONE_INSPECT"
+    assert not navigator._last_sent_moving
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_camera_aim_without_navigator_preserves_onboard_obstacle_response(config, clock, tmp_path):
+    config = deepcopy(config)
+    maps = tmp_path / "maps"
+    config["lidar"]["maps_dir"] = str(maps)
+    zones = ZoneStore(config["zones"]["ids"])
+    zones.place(1.0, 1.0)
+    zones.set_aim_deg("A", 90.0)
+    zones.save(maps)
+    vision = FakeVision()
+    runtime = Runtime(
+        config,
+        device_id=DEVICE,
+        clock=clock,
+        mission=Mission(config, mode="factory"),
+        vision=vision,
+    )
+    enc = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(enc), clock.ms)
+    runtime.start_patrol(clock.ms)
+    runtime.note_pose((1.0, 1.0, 0.0), clock.ms)
+    vision.result = vision_result(1, clock.ms, present=False, hits=0, last_seen_ms=None)
+    runtime.tick(clock.ms)
+    assert runtime.behavior.state == "PATROL", "항법 없이 새 aim 점검에 진입하지 않는다"
+    clock.advance(100)
+    runtime.ingest(
+        telemetry(
+            enc,
+            state="AVOID",
+            flags={"obstacle": True, "link_ok": True, "lowbatt": False, "tipped": False},
+        ),
+        clock.ms,
+    )
+    runtime.tick(clock.ms)
+    assert runtime.behavior.state == "AVOID"
+    assert runtime.commander.intent.type_ == "STOP"
+    assert runtime._zone_inspector._visit_seen == []

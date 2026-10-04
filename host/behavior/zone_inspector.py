@@ -72,6 +72,9 @@ class ZoneInspector:
         anchors: tuple[Zone, ...],
         apply: Callable[[Event, int], bool],
         record: Callable[[str, Any, dict[str, Any]], None],
+        ready_to_inspect: Callable[[Zone, int], bool] | None = None,
+        route_inspection: Callable[[Zone, int], bool | None] | None = None,
+        route_visit: Callable[[], tuple[int, int, int] | None] | None = None,
     ) -> None:
         self._behavior = behavior
         self._mission = mission
@@ -80,6 +83,10 @@ class ZoneInspector:
         self._anchors = anchors
         self._apply = apply
         self._record = record
+        self._ready_to_inspect = ready_to_inspect
+        self._route_inspection = route_inspection
+        self._route_visit = route_visit
+        self._last_route_visit: tuple[int, int, int] | None = None
         #: 기준을 지우기로 한 구역 (`ask_baseline_reset`). 틱이 비운다.
         self._resets: set[str] = set()
         self._baselines = BaselineStore(config)
@@ -176,6 +183,23 @@ class ZoneInspector:
         """워커에 위험물 검출기가 있는지 받는다. 없으면 위험구역에서 창만큼 더 머물지 않는다."""
         self._hazard_available = available
 
+    def awaits_inspection(self, label: str, now_ms: int) -> bool:
+        """방향 맞추기를 마친 순찰이 다음 카메라 프레임을 기다려야 하나."""
+        same_visit = self._route_visit is None or self._route_visit() == self._last_route_visit
+        if not self._mission.enables("change_detect") or (self._zone == label and same_visit):
+            return False
+        pose = self._fresh_pose(now_ms)
+        if pose is None:
+            return False
+        anchor, distance = min(
+            ((a, math.hypot(a.x - pose[0], a.y - pose[1])) for a in self._anchors),
+            key=lambda pair: pair[1],
+            default=(None, math.inf),
+        )
+        # 안전한 셀로 옮긴 도착점이 카메라의 앵커 반경 밖일 수 있다. 그때는
+        # 점검기가 수락할 수 없으므로 무한히 기다리지 않는다.
+        return anchor is not None and anchor.label == label and distance < self._arrive_m
+
     def forget_alarm(self) -> None:
         """확인하지 않은 구역 경보를 잊는다 — 순찰을 새로 시작할 때."""
         self._alarm_alert = False
@@ -232,6 +256,12 @@ class ZoneInspector:
             return
         state = self._behavior.state
         if state == "PATROL":
+            visit = None if self._route_visit is None else self._route_visit()
+            if visit is not None and visit != self._last_route_visit:
+                # 명시적인 동선 방문은 같은 구역/반복이어도 새 점검이다.
+                # 일반 순찰의 공간 이탈 히스테리시스는 그대로 둔다.
+                self._zone = None
+            self._last_route_visit = visit
             pose = self._fresh_pose(now_ms)
             if pose is None:
                 return  # 위치를 모르면 도착도 떠남도 판정하지 않는다
@@ -248,11 +278,26 @@ class ZoneInspector:
                 return
             if anchor is None or distance >= self._arrive_m or anchor.label == self._zone:
                 return
+            navigation_aligned = False
+            route_ready = (
+                None if self._route_inspection is None else self._route_inspection(anchor, now_ms)
+            )
+            if route_ready is not None:
+                if not route_ready:
+                    return
+                navigation_aligned = True
+            elif anchor.aim_deg is not None:
+                # 길 찾기가 회전·안전 관문을 맡는다. 먼저 점검 상태로 바꾸면 PATROL의
+                # 조향이 멈춰 버리므로 완료한 뒤의 프레임에서만 방문을 연다. 항법이
+                # 없으면 온보드 장애물 관문 없이 돌게 되므로 이 점검은 열지 않는다.
+                if self._ready_to_inspect is None or not self._ready_to_inspect(anchor, now_ms):
+                    return
+                navigation_aligned = True
             zone = anchor.label
             if self._apply(Event.ZONE_ARRIVED, now_ms):
                 self._zone = zone
-                self._yaw = anchor.yaw
-                self._aligned = anchor.yaw is None  # 방향이 없으면 선 채로 본다
+                self._yaw = anchor.aim_yaw
+                self._aligned = navigation_aligned or self._yaw is None
                 self._asked = False
                 self._wait_until = None
                 self._done = False

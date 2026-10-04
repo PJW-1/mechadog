@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import (
     BaseModel,
     BeforeValidator,
+    ConfigDict,
     Field,
     StrictBool,
     StrictInt,
@@ -42,7 +43,13 @@ from starlette.concurrency import run_in_threadpool
 from host.behavior.mission import available_modes
 from host.cloud.broadcast import Broadcaster
 from host.dashboard.commands import CommandService
-from host.dashboard.planning import PlanError, PlanInput, PlanningService
+from host.dashboard.planning import (
+    PlanError,
+    PlanInput,
+    PlanningService,
+    RouteDeleteInput,
+    RouteInput,
+)
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
 if TYPE_CHECKING:
@@ -344,6 +351,13 @@ class _PatrolBody(BaseModel):
     action: Literal["start", "stop"]
 
 
+class _RouteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["start", "stop"]
+    route_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,48}$")
+    expected_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class _ZoneBody(BaseModel):
     zone: StrictStr
 
@@ -466,6 +480,15 @@ def _command_routes(commands: CommandService) -> APIRouter:
     async def reset() -> dict[str, object]:
         """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""
         return commands.reset().as_dict()
+
+    @router.post("/route", response_model=None)
+    async def route(request: Request) -> dict[str, object]:
+        body = await _read_body(request, _RouteBody)
+        if body.action == "stop":
+            return commands.route_stop().as_dict()
+        if body.route_id is None:
+            raise _RefusedError("route_id", 400)
+        return commands.route_start(body.route_id, body.expected_digest).as_dict()
 
     @router.post("/alarm", response_model=None)
     async def alarm() -> dict[str, object]:
@@ -618,6 +641,25 @@ def _planning_routes(planning: PlanningService) -> APIRouter:
     async def save(request: Request) -> dict[str, Any]:
         plan = await _read_body(request, PlanInput)
         return await call(planning.save, plan)
+
+    @router.get("/routes")
+    async def routes() -> dict[str, Any]:
+        return await call(planning.routes_snapshot)
+
+    @router.post("/routes/preview")
+    async def preview_route(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, RouteInput)
+        return await call(planning.preview_route, plan)
+
+    @router.post("/routes")
+    async def save_route(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, RouteInput)
+        return await call(planning.save_route, plan)
+
+    @router.delete("/routes/{route_id}")
+    async def delete_route(route_id: str, request: Request) -> dict[str, Any]:
+        body = await _read_body(request, RouteDeleteInput)
+        return await call(planning.delete_route, route_id, body.revision)
 
     return router
 

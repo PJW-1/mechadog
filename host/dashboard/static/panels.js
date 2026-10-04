@@ -1,4 +1,5 @@
 import {PlanningPanel} from './planning-panel.js';
+import {RoutePlanner} from './route-planner.js';
 import {EVENT_CATEGORIES,REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
 import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
@@ -21,7 +22,7 @@ export class OperationalPanels {
   this.reviewDrafts=new Map();this.policyDrafts=new Map();this.activeHold=null;
   // 이미 목록에 있던 사건. **첫 그림에는 표시하지 않는다** — 열자마자 전부 깜빡이면 새것이 묻힌다.
   this.seenEvents=null;
-  this.missionDraft=null;this.settingsSection='display';this.planning=new PlanningPanel(this);
+  this.missionDraft=null;this.settingsSection='display';this.planning=new PlanningPanel(this);this.routePlanner=new RoutePlanner(this);
   this.manualPressedKeys=new Set();this.keyboardEnabled=true;
   this.manualKeyDown=event=>this.handleManualKeyDown(event);
   this.manualKeyUp=event=>this.handleManualKeyUp(event);
@@ -87,7 +88,7 @@ export class OperationalPanels {
  }
  refresh(reason){
   if(this.view==='dashboard')return;
-  if(this.view==='zones'){this.planning.refresh();return}
+  if(this.view==='zones'){this.planning.refresh();this.routePlanner.refresh();return}
   // 초당 10번 오는 로봇 상태는 게이지만 고친다 — 화면을 통째로 다시 그리면 입력·초점·3D 미리보기가 날아간다.
   if(reason==='telemetry'){this.refreshTelemetry();return}
   if(reason==='command'){this.refreshControl();return}
@@ -572,7 +573,8 @@ export class OperationalPanels {
    this.note('저장된 영상이 없으므로 재생 버튼은 제공하지 않습니다. 위쪽 내보내기는 현재 브라우저의 예시·가져온 기록에만 해당합니다.')));
  }
  confirmGoto(x,y,where=''){
-  return this.confirmDevice({icon:'route',title:'로봇을 이 곳으로 보낼까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m)까지 경로를 찾아 걸어갑니다. 순찰 중이 아니면 순찰이 함께 시작됩니다. 경로에 사람·물건이 없는지 먼저 확인하세요. 도착하면 그 자리에 서고, «실제 순찰 시작»을 누르면 구역 순찰로 돌아갑니다.',confirm:'예, 보냅니다',action:async()=>{const result=await this.store.requestGoto(x,y);this.onToast(result?.detail||'이동을 요청했어요.')}});
+  const link=this.store.link,robot=this.store.selected;
+  return this.confirmDevice({icon:'route',title:'로봇을 이 곳으로 보낼까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m)까지 경로를 찾아 걸어갑니다. 순찰 중이 아니면 순찰이 함께 시작됩니다. 경로에 사람·물건이 없는지 먼저 확인하세요. 도착하면 그 자리에 서고, «실제 순찰 시작»을 누르면 구역 순찰로 돌아갑니다.',confirm:'예, 보냅니다',action:async()=>{if(this.store.link!==link||this.store.selected!==robot)throw new Error('대상 로봇이 바뀌었습니다. 새 지도에서 목적지를 다시 찍어 주세요.');const result=await this.store.requestGoto(x,y);this.onToast(result?.detail||'이동을 요청했어요.')}});
  }
  liveMapSection(){
   // 실제 집 지도 — 서버에 연결됐을 때만. 한 번 만든 지도를 다시 붙인다(재렌더마다 새로 받지 않게).
@@ -581,8 +583,8 @@ export class OperationalPanels {
   return this.section('실제 집 지도',this.liveMap.root,this.note('로봇 표시(삼각형)는 로봇이 스스로 추정한 위치입니다. 지도를 누르면 그곳으로 보냅니다(확인 창). 위치를 못 믿는 동안(회색)에는 로봇이 이동을 거절합니다 — «제어 · 장치»의 «위치 알려주기»로 구역을 알려 주세요.'));
  }
  zonePage(){
-  // 실제 집 지도(로봇 자기 위치·찍은 곳 이동)를 위에, 그 아래 구역·순찰 계획.
-  const live=this.liveMapSection();if(live)this.container.append(live);
+  // One route map owns move / locate / draw. Zone policy editing stays below it.
+  this.routePlanner.open();
   this.planning.open()
  }
  devices(){
@@ -728,5 +730,5 @@ export class OperationalPanels {
   const link=this.el('a',{href:url,download:name});this.document.body.append(link);link.click();link.remove();
   window.setTimeout(()=>window.URL.revokeObjectURL(url),1000);
  }
- dispose(){this.clearVoicePoll();this.store.release('패널 종료');this.document.removeEventListener('keydown',this.manualKeyDown,true);this.document.removeEventListener('keyup',this.manualKeyUp,true);this.document.removeEventListener('focusin',this.manualFocus);this.document.defaultView.removeEventListener('blur',this.manualBlur);this.manualPressedKeys.clear();for(const url of this.urls)this.document.defaultView.URL.revokeObjectURL(url);this.urls.clear()}
+ dispose(){this.routePlanner.dispose();this.clearVoicePoll();this.store.release('패널 종료');this.document.removeEventListener('keydown',this.manualKeyDown,true);this.document.removeEventListener('keyup',this.manualKeyUp,true);this.document.removeEventListener('focusin',this.manualFocus);this.document.defaultView.removeEventListener('blur',this.manualBlur);this.manualPressedKeys.clear();for(const url of this.urls)this.document.defaultView.URL.revokeObjectURL(url);this.urls.clear()}
 }

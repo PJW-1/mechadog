@@ -243,3 +243,109 @@ def test_shared_map_anchors_outside_this_plan_are_preserved(planning):
     planning.zones_path.write_text('{"OTHER": {"x": 8, "y": 9}}', encoding="utf-8")
     planning.save(proposal(planning))
     assert json.loads(planning.zones_path.read_text())["OTHER"] == {"x": 8, "y": 9}
+
+
+def camera_zone_plan(planning):
+    planning.maps.mkdir(exist_ok=True)
+    content = {
+        "meta": {"resolution": 0.05},
+        "pose_frame": {"rotate_deg": 23},
+        "zones": [
+            {"id": "A", "index": 1, "patrol": {"x": 1, "y": 0}, "plan": {"x": 9, "y": 8}},
+            {"id": "B", "index": 2, "patrol": {"x": -1, "y": 0}},
+            {"id": "OTHER", "index": 3, "aim_deg": 15},
+        ],
+    }
+    planning.zone_plan_path.write_text(json.dumps(content), encoding="utf-8")
+    return content
+
+
+def test_camera_aim_api_roundtrips_both_zone_files_and_runtime(planning):
+    original = camera_zone_plan(planning)
+    app = create_app(
+        DashboardState("mechdog-02", stale_after_ms=3000), planning=planning, static_dir=None
+    )
+    plan = proposal(planning).model_dump()
+    plan["zones"][0]["aim_deg"] = 0
+    plan["zones"][1]["aim_deg"] = -45.5
+    with TestClient(app) as client:
+        response = client.post("/api/planning", json=plan)
+        assert response.status_code == 200
+        assert [z["aim_deg"] for z in response.json()["saved"]["zones"]] == [0, -45.5]
+        assert response.json()["saved"]["zones"][0]["yaw_deg"] == 90
+    anchors = json.loads(planning.zones_path.read_text())
+    assert anchors["B"]["aim_deg"] == 0
+    saved_plan = json.loads(planning.zone_plan_path.read_text())
+    original["zones"][0]["aim_deg"] = -45.5
+    original["zones"][1]["aim_deg"] = 0
+    assert saved_plan == original
+    runtime = ZoneStore.load(planning.maps, ("A", "B"))
+    assert runtime.get("A").aim_deg == -45.5
+    assert runtime.get("B").aim_deg == 0
+    assert runtime.get("B").yaw == pytest.approx(np.pi / 2)
+    restarted = PlanningService(
+        planning._saved_config(),
+        planning.device,
+        config_path=planning.config_path,
+        devices_dir=planning.devices_dir,
+    )
+    assert restarted.snapshot()["pending_restart"] is False
+
+
+def test_clearing_camera_aim_does_not_resurrect_saved_plan_direction(planning):
+    camera_zone_plan(planning)
+    plan = proposal(planning)
+    plan.zones[0].aim_deg = 90
+    planning.save(plan)
+    cleared = proposal(planning)
+    cleared.zones[0].aim_deg = None
+    planning.save(cleared)
+    assert ZoneStore.load(planning.maps, ("B",)).get("B").aim_deg is None
+    assert "aim_deg" not in json.loads(planning.zone_plan_path.read_text())["zones"][1]
+    assert planning.snapshot()["saved"]["zones"][0]["yaw_deg"] == 90
+
+
+@pytest.mark.parametrize("failure", ["zone_plan_path", "local_path"])
+def test_camera_aim_save_failure_restores_all_written_files(planning, monkeypatch, failure):
+    import host.dashboard.planning as module
+
+    camera_zone_plan(planning)
+    planning.save(proposal(planning))
+    paths = [planning.zones_path, planning.zone_plan_path, planning.local_path]
+    before = {path: path.read_bytes() for path in paths}
+    plan = proposal(planning)
+    plan.zones[0].aim_deg = 30
+    original = module._atomic_write
+
+    def write(path, content):
+        if path == getattr(planning, failure):
+            raise OSError("disk full")
+        original(path, content)
+
+    monkeypatch.setattr(module, "_atomic_write", write)
+    with pytest.raises(OSError, match="disk full"):
+        planning.save(plan)
+    assert {path: path.read_bytes() for path in paths} == before
+
+
+def test_zone_plan_direction_change_invalidates_stale_draft(planning):
+    original = camera_zone_plan(planning)
+    plan = proposal(planning)
+    original["zones"][0]["aim_deg"] = 0
+    planning.zone_plan_path.write_text(json.dumps(original), encoding="utf-8")
+    with pytest.raises(PlanError, match="다른 화면"):
+        planning.save(plan)
+
+
+@pytest.mark.parametrize("value", [True, "90", float("nan"), float("inf"), -181, 181])
+def test_api_camera_aim_requires_a_finite_number(value):
+    with pytest.raises(ValidationError):
+        PlanInput(zones=[{"id": "A", "x": 1, "y": 2, "aim_deg": value}])
+
+
+def test_api_camera_aim_requires_an_anchor_and_legacy_yaw_is_not_promoted(planning):
+    with pytest.raises(ValidationError, match="위치"):
+        PlanInput(zones=[{"id": "A", "aim_deg": 0}])
+    saved = planning.save(proposal(planning))
+    assert saved["saved"]["zones"][0]["aim_deg"] is None
+    assert saved["saved"]["zones"][0]["yaw_deg"] == 90

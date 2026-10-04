@@ -73,3 +73,64 @@ test('reorder preserves keyboard focus and falls back to its zone at list bounda
  assert.equal(ctx.document.activeElement.dataset.planZone,'B');
  const select=ctx.document.querySelector('[data-plan-zone="A"]');select.focus();select.click();assert.equal(ctx.document.activeElement.dataset.planZone,'A');ctx.dom.window.close();
 });
+
+test('camera aim has no default and preserves a legacy yaw without promoting it',async()=>{
+ const saved=snapshot();saved.saved.zones[0].yaw_deg=45;saved.map={available:true,extent:[-4,4,-2,2],width:80,height:40};
+ const ctx=setup({get:async()=>saved});await tick();
+ assert.equal(ctx.document.querySelector('[name="카메라 방향 (°)"]').value,'');
+ assert.equal(ctx.document.querySelectorAll('.plan-aim').length,0);
+ input(ctx,'카메라 방향 (°)','0');
+ assert.equal(ctx.p.planning.current.draft.zones[0].aim_deg,0);
+ assert.equal(ctx.p.planning.current.draft.zones[0].yaw_deg,45);
+ ctx.document.querySelector('[data-plan-add]').click();
+ assert.equal(ctx.document.querySelector('[name="카메라 방향 (°)"]').value,'');
+ assert.equal(ctx.p.planning.current.draft.zones.at(-1).aim_deg,null);ctx.dom.window.close();
+});
+
+test('legacy inspection direction remains visible and clearable while camera aim independently takes priority',async()=>{
+ const saved=snapshot(),calls=[];saved.saved.zones[0].yaw_deg=45;saved.map={available:true,extent:[-4,4,-2,2],width:80,height:40};
+ const ctx=setup({get:async()=>saved,post:async(path,body)=>{calls.push(body);return {...saved,saved:{...saved.saved,zones:body.zones}}}});await tick();
+ const help=()=>ctx.document.querySelector('[data-plan-aim-help]').textContent;
+ assert.equal(ctx.document.querySelector('[name="기존 점검 방향 (°)"]').value,'45');assert.match(help(),/카메라 방향이 빈칸이면 기존 점검 방향을 사용/);
+ assert.match(ctx.document.querySelector('.plan-legacy-heading').getAttribute('aria-label'),/기존 점검 방향 45°/);assert.equal(ctx.document.querySelector('.plan-aim'),null);
+ input(ctx,'카메라 방향 (°)','90');assert.equal(ctx.document.querySelector('.plan-legacy-heading'),null);assert.equal(ctx.document.querySelector('.plan-aim').dataset.aimDeg,'90');
+ input(ctx,'카메라 방향 (°)','');assert.ok(ctx.document.querySelector('.plan-legacy-heading'));assert.equal(ctx.p.planning.current.draft.zones[0].yaw_deg,45);
+ input(ctx,'기존 점검 방향 (°)','181');assert.equal(ctx.document.querySelector('[data-plan-save]').disabled,true);
+ input(ctx,'기존 점검 방향 (°)','');assert.equal(ctx.document.querySelector('.plan-legacy-heading'),null);assert.doesNotMatch(help(),/기존 점검 방향을 사용/);assert.match(help(),/빈칸이면 도착 방향을 유지/);
+ await ctx.p.planning.save();assert.equal(calls[0].zones[0].aim_deg,null);assert.equal(calls[0].zones[0].yaw_deg,null);assert.equal(ctx.document.querySelector('[name="기존 점검 방향 (°)"]'),null);
+ ctx.document.querySelector('[data-plan-zone="B"]').click();assert.equal(ctx.document.querySelector('[name="기존 점검 방향 (°)"]'),null);ctx.dom.window.close();
+});
+
+test('camera aim arrows use patrol axes: zero right and positive 90 up on a rectangular map',async()=>{
+ const saved=snapshot();saved.map={available:true,extent:[-4,4,-2,2],width:80,height:40};
+ saved.saved.zones[0].aim_deg=0;saved.saved.zones[1].aim_deg=90;
+ const ctx=setup({get:async()=>saved});await tick();
+ const shaft=zone=>ctx.document.querySelector(`[data-zone="${zone}"] .plan-aim`).getAttribute('d').match(/^M ([\d.e+-]+) ([\d.e+-]+) L ([\d.e+-]+) ([\d.e+-]+)/).slice(1).map(Number);
+ const right=shaft('A'),up=shaft('B');assert.ok(right[2]>right[0]);assert.equal(right[3],right[1]);assert.equal(up[2],up[0]);assert.ok(up[3]<up[1]);
+ assert.match(ctx.document.querySelector('[data-zone="B"] .plan-aim').getAttribute('aria-label'),/90°/);
+ input(ctx,'카메라 방향 (°)','');assert.equal(ctx.document.querySelector('[data-zone="A"] .plan-aim'),null);ctx.dom.window.close();
+});
+
+test('camera aim survives drafts and server save/reload including explicit zero and clearing',async()=>{
+ let saved=snapshot();const calls=[],link={get:async()=>saved,post:async(path,body)=>{calls.push([path,body]);saved={...snapshot('v'+(calls.length+1)),saved:{zones:body.zones,random_after_first_cycle:body.random_after_first_cycle}};return saved}};
+ const ctx=setup(link);await tick();input(ctx,'카메라 방향 (°)','-90.125');
+ ctx.p.planning.sessions.clear();ctx.p.render('zones');await tick();
+ assert.equal(ctx.document.querySelector('[name="카메라 방향 (°)"]').value,'-90.125');
+ await ctx.p.planning.save();assert.equal(calls.at(-1)[1].zones[0].aim_deg,-90.125);
+ await ctx.p.planning.load(ctx.p.planning.current,true);assert.equal(ctx.document.querySelector('[name="카메라 방향 (°)"]').value,'-90.125');
+ input(ctx,'카메라 방향 (°)','0');await ctx.p.planning.save();assert.equal(calls.at(-1)[1].zones[0].aim_deg,0);
+ input(ctx,'카메라 방향 (°)','');await ctx.p.planning.save();await ctx.p.planning.load(ctx.p.planning.current,true);
+ assert.equal(calls.at(-1)[1].zones[0].aim_deg,null);assert.equal(ctx.document.querySelector('[name="카메라 방향 (°)"]').value,'');
+ assert.ok(calls.every(([path])=>path==='/api/planning'));ctx.dom.window.close();
+});
+
+test('out-of-range camera aim blocks saving and persists until corrected; clearing position clears aim',async()=>{
+ const calls=[],ctx=setup({get:async()=>snapshot(),post:async()=>calls.push('save')});await tick();
+ input(ctx,'카메라 방향 (°)','181');assert.equal(ctx.document.querySelector('[data-plan-save]').disabled,true);
+ await ctx.p.planning.save();assert.deepEqual(calls,[]);
+ ctx.document.querySelector('[data-plan-zone="B"]').click();ctx.document.querySelector('[data-plan-zone="A"]').click();
+ assert.equal(ctx.document.querySelector('[name="카메라 방향 (°)"]').value,'181');
+ input(ctx,'카메라 방향 (°)','-180');assert.equal(ctx.p.planning.current.draft.zones[0].aim_deg,-180);assert.equal(ctx.document.querySelector('[data-plan-save]').disabled,false);
+ input(ctx,'X (m)','');assert.equal(ctx.p.planning.current.draft.zones[0].aim_deg,null);assert.equal(ctx.document.querySelector('[name="카메라 방향 (°)"]').value,'');
+ input(ctx,'카메라 방향 (°)','90');await ctx.p.planning.save();assert.deepEqual(calls,[]);assert.match(ctx.document.querySelector('#panel').textContent,/위치가 없는 구역/);ctx.dom.window.close();
+});
