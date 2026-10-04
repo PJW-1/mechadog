@@ -1,7 +1,6 @@
 """구역 점검 단독 검증 — `ZoneInspector` (FR-8 · ADR-41 · ADR-42).
 
-틱을 거치는 시나리오(도착·기준 등록·반출·반입·판독 두 번 확정·기준 재등록)는
-`test_runtime.py`·`test_command_api.py` 에 있다. 여기서는 런타임 없이 닿기 어려운 분기만
+틱을 거치는 시나리오(도착·판독 두 번 확정)는 `test_runtime.py` 에 있다. 여기서는 런타임 없이 닿기 어려운 분기만
 본다 — 낡은 위치의 방향 맞추기, 크기 없는 프레임, 워커 중재, 워커 사망, 두 번째 판독 거절,
 화기 위험구역(`zones.hazard_ids`)의 위험물 가벼운 경고.
 """
@@ -10,13 +9,11 @@ from __future__ import annotations
 
 import math
 from copy import deepcopy
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from host.behavior.actions import register_actions
-from host.behavior.change_detect import Change, ChangeKind
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event, behavior_from_config
 from host.behavior.mission import Mission
@@ -69,7 +66,6 @@ class SlotVlm:
 
 def _build(
     cfg: dict,
-    tmp_path: Path,
     *,
     zone: str = "A",
     yaw: float | None = 0.0,
@@ -79,7 +75,6 @@ def _build(
 ) -> SimpleNamespace:
     """순찰 중인 공장 모드의 점검기 하나. 구역 `zone` 은 원점에서 `yaw` 0 을 바라본다."""
     config = deepcopy(cfg)
-    config["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
     config["change_detect"]["vlm_hazards"] = True
     config["change_detect"].update(change)
     behavior = behavior_from_config(Commander(), config)
@@ -122,9 +117,9 @@ def _build(
 
 
 @pytest.fixture
-def parts(cfg: dict, tmp_path: Path):
+def parts(cfg: dict):
     """구역 A(화기 위험구역 아님)의 점검기."""
-    return _build(cfg, tmp_path)
+    return _build(cfg)
 
 
 def _arrive(parts, now_ms: int = T0) -> None:
@@ -141,9 +136,9 @@ def test_a_stale_pose_while_aligning_stops_and_reads_nothing(parts) -> None:
     assert parts.behavior.state == "ZONE_INSPECT"
 
 
-def test_camera_aim_waits_for_navigation_before_entering_inspection(cfg, tmp_path) -> None:
+def test_camera_aim_waits_for_navigation_before_entering_inspection(cfg) -> None:
     ready = {"value": False}
-    parts = _build(cfg, tmp_path, aim_deg=90.0, ready_to_inspect=lambda _zone, _now: ready["value"])
+    parts = _build(cfg, aim_deg=90.0, ready_to_inspect=lambda _zone, _now: ready["value"])
     inspector = parts.inspector
     inspector.note_pose((0.0, 0.0, 0.0), T0)
     assert inspector.awaits_inspection("A", T0)
@@ -161,15 +156,15 @@ def test_camera_aim_waits_for_navigation_before_entering_inspection(cfg, tmp_pat
     assert parts.vlm.submitted == [T0 + 200]
 
 
-def test_legacy_zone_does_not_wait_for_navigation(cfg, tmp_path) -> None:
-    parts = _build(cfg, tmp_path, ready_to_inspect=lambda *_args: False)
+def test_legacy_zone_does_not_wait_for_navigation(cfg) -> None:
+    parts = _build(cfg, ready_to_inspect=lambda *_args: False)
     _arrive(parts)
     parts.inspector.inspect(_frame(), T0 + 100)
     assert parts.vlm.submitted == [T0 + 100]
 
 
-def test_inspector_waits_only_when_a_fresh_pose_can_reach_the_anchor(cfg, tmp_path) -> None:
-    parts = _build(cfg, tmp_path, aim_deg=90.0)
+def test_inspector_waits_only_when_a_fresh_pose_can_reach_the_anchor(cfg) -> None:
+    parts = _build(cfg, aim_deg=90.0)
     inspector = parts.inspector
     assert not inspector.awaits_inspection("A", T0)
     inspector.note_pose((0.4, 0.0, 0.0), T0)
@@ -181,8 +176,8 @@ def test_inspector_waits_only_when_a_fresh_pose_can_reach_the_anchor(cfg, tmp_pa
 
 
 @pytest.mark.parametrize("facing", [0.0, math.pi / 2])
-def test_camera_aim_without_navigation_never_turns_or_inspects(cfg, tmp_path, facing) -> None:
-    parts = _build(cfg, tmp_path, aim_deg=90.0)
+def test_camera_aim_without_navigation_never_turns_or_inspects(cfg, facing) -> None:
+    parts = _build(cfg, aim_deg=90.0)
     inspector = parts.inspector
     inspector.note_pose((0.0, 0.0, facing), T0)
     inspector.inspect(_frame(), T0)
@@ -199,8 +194,8 @@ def test_camera_aim_without_navigation_never_turns_or_inspects(cfg, tmp_path, fa
     assert parts.vlm.submitted == []
 
 
-def test_legacy_yaw_without_navigation_still_aligns(cfg, tmp_path) -> None:
-    parts = _build(cfg, tmp_path, yaw=math.pi / 2)
+def test_legacy_yaw_without_navigation_still_aligns(cfg) -> None:
+    parts = _build(cfg, yaw=math.pi / 2)
     _arrive(parts)
     parts.inspector.inspect(_frame(), T0 + 100)
     commander = Commander()
@@ -210,7 +205,7 @@ def test_legacy_yaw_without_navigation_still_aligns(cfg, tmp_path) -> None:
 
 
 def test_a_frame_without_a_size_is_not_read(parts) -> None:
-    """크기를 모르는 프레임은 기준과 견줄 수 없다 — 판독도 걸지 않는다."""
+    """크기를 모르는 프레임은 온전한 프레임이 아니다 — 판독을 걸지 않는다."""
     _arrive(parts)
     parts.inspector.inspect(_frame(width=0), T0 + 100)
     assert parts.vlm.submitted == []
@@ -283,9 +278,9 @@ def test_the_demo_settings_mark_zone_c_as_the_hazard_zone(cfg: dict) -> None:
     assert cfg["change_detect"]["vlm_hazards"] is False
 
 
-def test_hazard_item_yes_twice_is_one_light_notice(cfg: dict, tmp_path: Path) -> None:
+def test_hazard_item_yes_twice_is_one_light_notice(cfg: dict) -> None:
     """화기 위험구역에서 두 판독이 모두 «예» 면 가벼운 경고 하나 — L3 없이 순찰을 잇는다."""
-    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
+    parts = _build(cfg, zone="C", vlm_hazards=False)
     _visit(parts, _reading({"hazard_item": True}), _reading({"hazard_item": True}))
     assert parts.vlm.keys == [(*ZONE_KEYS, "hazard_item")] * 2
     assert parts.records == ["zone_reading", "zone_reading", "hazard_notice"]
@@ -294,18 +289,18 @@ def test_hazard_item_yes_twice_is_one_light_notice(cfg: dict, tmp_path: Path) ->
     assert not parts.inspector.alarm_alert
 
 
-def test_hazard_item_yes_then_no_confirms_nothing(cfg: dict, tmp_path: Path) -> None:
+def test_hazard_item_yes_then_no_confirms_nothing(cfg: dict) -> None:
     """두 번째 판독이 «아니오» 면 확정하지 않는다."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     _visit(parts, _reading({"hazard_item": True}), _reading({"hazard_item": False}))
     assert len(parts.vlm.submitted) == 2
     assert "hazard_notice" not in parts.records
     assert parts.behavior.state == "PATROL"
 
 
-def test_a_degraded_second_reading_confirms_no_hazard_item(cfg: dict, tmp_path: Path) -> None:
+def test_a_degraded_second_reading_confirms_no_hazard_item(cfg: dict) -> None:
     """저하된 두 번째 판독은 «빈 채널» 이다 — «예» 가 담겨 있어도 확정하지 않는다."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     _visit(
         parts,
         _reading({"hazard_item": True}),
@@ -316,35 +311,35 @@ def test_a_degraded_second_reading_confirms_no_hazard_item(cfg: dict, tmp_path: 
     assert parts.behavior.state == "PATROL"
 
 
-def test_hazard_items_switched_off_never_confirm(cfg: dict, tmp_path: Path) -> None:
+def test_hazard_items_switched_off_never_confirm(cfg: dict) -> None:
     """스위치를 끄면 «예» 라도 다시 묻지도 확정하지도 않는다 (묻기와 기록은 남는다)."""
-    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False, vlm_hazard_items=False)
+    parts = _build(cfg, zone="C", vlm_hazards=False, vlm_hazard_items=False)
     _visit(parts, _reading({"hazard_item": True}), _reading({"hazard_item": True}))
     assert parts.vlm.keys == [(*ZONE_KEYS, "hazard_item")], "두 번째 판독을 걸지 않는다"
     assert parts.records == ["zone_reading"]
     assert parts.behavior.state == "PATROL"
 
 
-def test_a_plain_zone_never_asks_for_hazard_items(cfg: dict, tmp_path: Path) -> None:
+def test_a_plain_zone_never_asks_for_hazard_items(cfg: dict) -> None:
     """화기 위험구역이 아니면 `hazard_item` 을 묻지 않는다 — 판독마다 시간이 붙는다."""
-    parts = _build(cfg, tmp_path, zone="A")
+    parts = _build(cfg, zone="A")
     _visit(parts, _reading({"hazard_item": True}), _reading({"hazard_item": True}))
     assert parts.vlm.keys == [ZONE_KEYS], "«예» 가 와도 이 구역에서는 보지 않는다"
     assert "hazard_notice" not in parts.records
 
 
-def test_the_l3_hazard_path_is_unchanged_at_a_hazard_zone(cfg: dict, tmp_path: Path) -> None:
+def test_the_l3_hazard_path_is_unchanged_at_a_hazard_zone(cfg: dict) -> None:
     """화기 위험구역에서도 넘어짐 두 번 «예» 는 그대로 `zone_changed`(L3) 이다."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     _visit(parts, _reading({"fallen_object": True}), _reading({"fallen_object": True}))
     assert parts.records == ["zone_reading", "zone_reading", "zone_changed"]
     assert parts.behavior.state == "ALERT"
     assert parts.inspector.alarm_alert
 
 
-def test_l3_and_hazard_item_in_one_visit_leave_both(cfg: dict, tmp_path: Path) -> None:
+def test_l3_and_hazard_item_in_one_visit_leave_both(cfg: dict) -> None:
     """같은 방문에서 둘 다 확정하면 가벼운 경고를 먼저 남기고 L3 로 간다."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     both = {"fallen_object": True, "hazard_item": True}
     _visit(parts, _reading(both), _reading(both))
     assert parts.records == ["zone_reading", "zone_reading", "hazard_notice", "zone_changed"]
@@ -353,19 +348,13 @@ def test_l3_and_hazard_item_in_one_visit_leave_both(cfg: dict, tmp_path: Path) -
     assert parts.behavior.state == "ALERT"
 
 
-def test_a_confirmed_object_change_still_waits_for_the_hazard_reading(
-    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """물건 변화를 확정한 방문도 남은 판독을 기다린다 — 안 기다리면 위험물 경고가 사라진다.
+def test_a_visit_with_all_frames_still_waits_for_the_hazard_reading(cfg: dict) -> None:
+    """프레임을 다 모은 방문도 남은 판독을 기다린다 — 안 기다리면 위험물 경고가 사라진다.
 
-    시연 둘째 바퀴의 C 는 놓아 둔 라이터·보조배터리가 «반입» 으로도 확정될 수 있다.
-    그때 두 번째 «예» 가 늦게 오면 방문이 먼저 끝나 `hazard_notice` 를 잃었다.
+    두 번째 «예» 가 늦게 오면 방문이 먼저 끝나 `hazard_notice` 를 잃는다.
     """
-    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
+    parts = _build(cfg, zone="C", vlm_hazards=False)
     inspector = parts.inspector
-    inspector._baselines.register("C", (), frame_size=(640, 480), now_ms=T0, jpeg=b"")
-    added = Change(ChangeKind.ADDED, "cell phone", 1, None)
-    monkeypatch.setattr(inspector._confirmer, "observe", lambda _zone, _observed: (added,))
     _arrive(parts)
     now = T0 + 100
     inspector.inspect(_frame(), now)  # 첫 판독을 건다
@@ -386,12 +375,36 @@ def test_a_confirmed_object_change_still_waits_for_the_hazard_reading(
     assert parts.behavior.state == "PATROL"
 
 
+def test_a_zone_visit_no_longer_reports_removed_or_added_objects(cfg: dict) -> None:
+    """반출·반입 비교는 폐기했다 (2026-10-05 · WBS 3.6.1~3.6.3). 첫 방문에 있던 병이 뒤의
+    연속 두 방문에 없어도 구역 점검은 판독만 남기고 `zone_notice`·`zone_changed` 를 내지 않는다."""
+    parts = _build(cfg)
+    bottle = SimpleNamespace(label="bottle", box=(500.0, 10.0, 600.0, 100.0), score=0.9)
+    now = T0
+    for scene in ((bottle,), (), ()):
+        frame = SimpleNamespace(detections=scene, jpeg=b"zone", frame_width=640, frame_height=480)
+        parts.inspector.note_pose((0.0, 0.0, 0.0), now)
+        parts.inspector.inspect(frame, now)
+        assert parts.behavior.state == "ZONE_INSPECT"
+        for _ in range(parts.visit_frames + 2):
+            now += 100
+            if parts.inspector.waiting:
+                parts.vlm.slot = _reading({})
+            parts.inspector.inspect(frame, now)
+        assert parts.behavior.state == "PATROL"
+        # 앵커 반경의 두 배 밖으로 나가야 다음에 같은 구역을 다시 점검한다.
+        now += 100
+        parts.inspector.note_pose((10.0, 0.0, 0.0), now)
+        parts.inspector.inspect(frame, now)
+    assert parts.records == ["zone_reading"] * 3
+
+
 # ── 구역 안 통로 막힘 (`blocked_path`) — L3 가 아니라 가벼운 경고 `path_blocked` ──────
 
 
-def test_blocked_path_yes_twice_is_one_light_notice(cfg: dict, tmp_path: Path) -> None:
+def test_blocked_path_yes_twice_is_one_light_notice(cfg: dict) -> None:
     """ADR-41 개정(2026-10-01): 통로 막힘 확정은 L3 없이 `path_blocked`(source vlm) 이다."""
-    parts = _build(cfg, tmp_path)
+    parts = _build(cfg)
     _visit(parts, _reading({"blocked_path": True}), _reading({"blocked_path": True}))
     assert parts.records == ["zone_reading", "zone_reading", "path_blocked"]
     assert parts.payloads[-1] == {"zone": "A", "source": "vlm"}
@@ -399,8 +412,8 @@ def test_blocked_path_yes_twice_is_one_light_notice(cfg: dict, tmp_path: Path) -
     assert not parts.inspector.alarm_alert
 
 
-def test_blocked_path_and_fallen_object_leave_the_notice_then_l3(cfg: dict, tmp_path: Path) -> None:
-    parts = _build(cfg, tmp_path)
+def test_blocked_path_and_fallen_object_leave_the_notice_then_l3(cfg: dict) -> None:
+    parts = _build(cfg)
     both = {"fallen_object": True, "blocked_path": True}
     _visit(parts, _reading(both), _reading(both))
     assert parts.records == ["zone_reading", "zone_reading", "path_blocked", "zone_changed"]
@@ -408,8 +421,8 @@ def test_blocked_path_and_fallen_object_leave_the_notice_then_l3(cfg: dict, tmp_
     assert parts.behavior.state == "ALERT"
 
 
-def test_blocked_path_switched_off_never_confirms(cfg: dict, tmp_path: Path) -> None:
-    parts = _build(cfg, tmp_path, vlm_hazards=False)
+def test_blocked_path_switched_off_never_confirms(cfg: dict) -> None:
+    parts = _build(cfg, vlm_hazards=False)
     _visit(parts, _reading({"blocked_path": True}), _reading({"blocked_path": True}))
     assert "path_blocked" not in parts.records
 
@@ -417,12 +430,9 @@ def test_blocked_path_switched_off_never_confirms(cfg: dict, tmp_path: Path) -> 
 # ── 판독을 기다리다 방문 밖으로 밀려나도 확정한 결론은 남는다 ─────────────────────────
 
 
-def _waiting_for_second_reading(parts, monkeypatch: pytest.MonkeyPatch, first: Reading) -> int:
-    """반출을 확정하고 두 번째 판독을 기다리는 중까지 간다. 그때의 시각을 돌려준다."""
+def _waiting_for_second_reading(parts, first: Reading) -> int:
+    """프레임을 다 모으고 두 번째 판독을 기다리는 중까지 간다. 그때의 시각을 돌려준다."""
     inspector = parts.inspector
-    inspector._baselines.register("C", (), frame_size=(640, 480), now_ms=T0, jpeg=b"")
-    removed = Change(ChangeKind.REMOVED, "bottle", 1, None)
-    monkeypatch.setattr(inspector._confirmer, "observe", lambda _zone, _observed: (removed,))
     _arrive(parts)
     now = T0 + 100
     inspector.inspect(_frame(), now)  # 첫 판독을 건다
@@ -435,49 +445,19 @@ def _waiting_for_second_reading(parts, monkeypatch: pytest.MonkeyPatch, first: R
         now += 100
         inspector.inspect(_frame(), now)
     assert parts.behavior.state == "ZONE_INSPECT"
-    assert "zone_notice" not in parts.records
     return now
 
 
-def test_a_removal_survives_a_fall_suspicion_read_while_waiting(
-    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
-    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
-    parts.fall.suspect = lambda *_a, **_kw: parts.behavior.event(Event.FALL_SUSPECTED, now_ms=now)
-    parts.vlm.busy = False
-    parts.vlm.slot = _reading({"person_down": True})
-    parts.inspector.inspect(_frame(), now + 100)
-    assert parts.behavior.state == "ALERT"
-    assert "zone_notice" in parts.records
-    assert not parts.inspector.alarm_alert, "떠난 뒤에는 ZONE_CHANGED 를 걸지 않는다"
-
-
-def test_a_removal_survives_an_external_transition_while_waiting(
-    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
-    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
-    parts.behavior.event(Event.MANUAL_ON, now_ms=now)
-    parts.inspector.inspect(_frame(), now + 100)
-    assert parts.behavior.state == "MANUAL"
-    assert parts.records.count("zone_notice") == 1
-    parts.inspector.inspect(_frame(), now + 200)
-    assert parts.records.count("zone_notice") == 1, "한 번만 남긴다"
-
-
-def test_a_hazard_item_survives_a_reading_that_also_says_person_down(
-    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
-    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
+def test_a_hazard_item_survives_a_reading_that_also_says_person_down(cfg: dict) -> None:
+    parts = _build(cfg, zone="C", vlm_hazards=False)
+    now = _waiting_for_second_reading(parts, _reading({"hazard_item": True}))
     parts.fall.suspect = lambda *_a, **_kw: parts.behavior.event(Event.FALL_SUSPECTED, now_ms=now)
     parts.vlm.busy = False
     parts.vlm.slot = _reading({"hazard_item": True, "person_down": True})
     parts.inspector.inspect(_frame(), now + 100)
     assert parts.behavior.state == "ALERT"
     assert "hazard_notice" in parts.records
-    assert "zone_notice" in parts.records
+    assert not parts.inspector.alarm_alert, "떠난 뒤에는 ZONE_CHANGED 를 걸지 않는다"
 
 
 @pytest.mark.parametrize(
@@ -489,14 +469,13 @@ def test_a_hazard_item_survives_a_reading_that_also_says_person_down(
     ],
 )
 def test_a_visit_cut_off_mid_collection_keeps_what_it_already_confirmed(
-    cfg: dict, tmp_path: Path, answer: str, record: str
+    cfg: dict, answer: str, record: str
 ) -> None:
     """프레임을 다 모으기 전에 방문이 끊겨도 이미 «예» 2회로 확정한 VLM 항목은 남긴다.
 
-    2026-10-01 사용자 결정 — 확정분만 기록한다. 전이는 하지 않는다(이미 떠났다). 반출·반입은
-    프레임이 모자라 판정하지 않는다.
+    2026-10-01 사용자 결정 — 확정분만 기록한다. 전이는 하지 않는다(이미 떠났다).
     """
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     inspector = parts.inspector
     _arrive(parts)
     now = T0 + 100
@@ -516,8 +495,8 @@ def test_a_visit_cut_off_mid_collection_keeps_what_it_already_confirmed(
     assert parts.records.count(record) == 1, "한 번만 남긴다"
 
 
-def test_a_visit_cut_off_before_any_confirmation_records_nothing(cfg: dict, tmp_path: Path) -> None:
-    parts = _build(cfg, tmp_path, zone="C")
+def test_a_visit_cut_off_before_any_confirmation_records_nothing(cfg: dict) -> None:
+    parts = _build(cfg, zone="C")
     _arrive(parts)
     parts.inspector.inspect(_frame(), T0 + 100)  # 첫 판독을 건다
     parts.vlm.slot = _reading({"hazard_item": True})
@@ -531,11 +510,9 @@ def test_a_visit_cut_off_before_any_confirmation_records_nothing(cfg: dict, tmp_
     assert "hazard_notice" not in parts.records
 
 
-def test_a_reading_that_arrives_after_leaving_confirms_nothing(
-    cfg: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    parts = _build(cfg, tmp_path, zone="C", vlm_hazards=False)
-    now = _waiting_for_second_reading(parts, monkeypatch, _reading({"hazard_item": True}))
+def test_a_reading_that_arrives_after_leaving_confirms_nothing(cfg: dict) -> None:
+    parts = _build(cfg, zone="C", vlm_hazards=False)
+    now = _waiting_for_second_reading(parts, _reading({"hazard_item": True}))
     parts.behavior.event(Event.MANUAL_ON, now_ms=now)
     parts.inspector.inspect(_frame(), now + 100)
     parts.vlm.busy = False
@@ -574,9 +551,9 @@ def _detector_visit(parts, frame, *readings: Reading, limit: int = 80) -> int:
     raise AssertionError("방문이 끝나지 않았다")
 
 
-def test_the_detector_confirms_a_hazard_in_the_hazard_zone(cfg: dict, tmp_path: Path) -> None:
+def test_the_detector_confirms_a_hazard_in_the_hazard_zone(cfg: dict) -> None:
     """위험구역에서 검출기가 확정하면 가벼운 경고 `hazard_notice` 하나를 남긴다 (source `detector`)."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     _detector_visit(parts, lambda: _hazard_frame("lighter"))
     assert parts.records.count("hazard_notice") == 1
     notice = parts.payloads[parts.records.index("hazard_notice")]
@@ -584,9 +561,9 @@ def test_the_detector_confirms_a_hazard_in_the_hazard_zone(cfg: dict, tmp_path: 
     assert parts.behavior.state == "PATROL", "가벼운 경고다 — 순찰을 잇는다"
 
 
-def test_a_hazard_outside_the_hazard_zone_raises_nothing(cfg: dict, tmp_path: Path) -> None:
+def test_a_hazard_outside_the_hazard_zone_raises_nothing(cfg: dict) -> None:
     """금지구역이 아닌 곳에서는 위험물이 확정돼 실려 와도 경고하지 않는다 — 검출기도 켜지 않는다."""
-    parts = _build(cfg, tmp_path, zone="A")
+    parts = _build(cfg, zone="A")
     parts.inspector.note_hazard_detector(True)
     _arrive(parts)
     parts.inspector.inspect(_hazard_frame("lighter"), T0 + 100)
@@ -595,11 +572,9 @@ def test_a_hazard_outside_the_hazard_zone_raises_nothing(cfg: dict, tmp_path: Pa
     assert "hazard_notice" not in parts.records
 
 
-def test_the_detector_is_watched_only_while_inspecting_the_hazard_zone(
-    cfg: dict, tmp_path: Path
-) -> None:
+def test_the_detector_is_watched_only_while_inspecting_the_hazard_zone(cfg: dict) -> None:
     """켤 때는 위험구역 점검 중 방향을 맞춘 뒤뿐이다 — 순찰 중·점검이 끝난 뒤에는 끈다."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     assert not parts.inspector.watching_hazards, "순찰 중"
     parts.inspector.note_hazard_detector(True)
     _arrive(parts)
@@ -610,10 +585,10 @@ def test_the_detector_is_watched_only_while_inspecting_the_hazard_zone(
     assert not parts.inspector.watching_hazards, "방문이 끝났다"
 
 
-def test_the_hazard_zone_visit_lasts_one_confirm_window(cfg: dict, tmp_path: Path) -> None:
+def test_the_hazard_zone_visit_lasts_one_confirm_window(cfg: dict) -> None:
     """사람 없는 프레임은 0.5초면 찬다 — 위험구역은 검출기의 확정 창만큼 머문다."""
     window = int(cfg["vision"]["hazard"]["confirm_window_ms"])
-    plain = _build(cfg, tmp_path / "a", zone="C")
+    plain = _build(cfg, zone="C")
     plain.inspector.note_hazard_detector(False)
     _arrive(plain)
     now = T0
@@ -623,13 +598,13 @@ def test_the_hazard_zone_visit_lasts_one_confirm_window(cfg: dict, tmp_path: Pat
             plain.vlm.slot = _reading({})
         plain.inspector.inspect(_frame(), now)
     without = now - T0
-    with_detector = _detector_visit(_build(cfg, tmp_path / "c", zone="C"), _frame) - T0
+    with_detector = _detector_visit(_build(cfg, zone="C"), _frame) - T0
     assert without < window <= with_detector
 
 
-def test_a_late_confirmation_inside_the_window_is_kept(cfg: dict, tmp_path: Path) -> None:
+def test_a_late_confirmation_inside_the_window_is_kept(cfg: dict) -> None:
     """창이 찰 무렵에야 확정돼도 방문 안이면 경고한다 — 떠난 뒤가 아니다."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     seen = {"n": 0}
 
     def frame():
@@ -641,9 +616,9 @@ def test_a_late_confirmation_inside_the_window_is_kept(cfg: dict, tmp_path: Path
     assert notice["items"] == ["powerbank"]
 
 
-def test_detector_and_vlm_in_one_visit_leave_one_notice(cfg: dict, tmp_path: Path) -> None:
+def test_detector_and_vlm_in_one_visit_leave_one_notice(cfg: dict) -> None:
     """둘 다 확정하면 방송이 두 번 나가지 않게 기록 하나로 합친다."""
-    parts = _build(cfg, tmp_path, zone="C")
+    parts = _build(cfg, zone="C")
     _detector_visit(
         parts,
         lambda: _hazard_frame("lighter"),
@@ -655,11 +630,11 @@ def test_detector_and_vlm_in_one_visit_leave_one_notice(cfg: dict, tmp_path: Pat
     assert notice["source"] == "detector" and notice["vlm"] is True
 
 
-def test_a_switched_off_detector_is_ignored(cfg: dict, tmp_path: Path) -> None:
+def test_a_switched_off_detector_is_ignored(cfg: dict) -> None:
     """`vision.hazard.enabled: false` 면 실려 온 판정도 버린다 — VLM 판독만 남는다."""
     config = deepcopy(cfg)
     config["vision"]["hazard"]["enabled"] = False
-    parts = _build(config, tmp_path, zone="C")
+    parts = _build(config, zone="C")
     _detector_visit(parts, lambda: _hazard_frame("lighter"))
     assert "hazard_notice" not in parts.records
     assert not parts.inspector.watching_hazards

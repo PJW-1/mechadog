@@ -343,12 +343,6 @@ def test_label_order_starts_with_person() -> None:
     assert len(set(COCO_CLASSES)) == 80
 
 
-def test_watched_change_classes_exist_in_vocabulary(cfg: dict) -> None:
-    """FR-8 시연 소품이 COCO 어휘 안에 있어야 한다 — 개방 어휘를 안 쓰기로 한 전제다."""
-    unknown = set(cfg["vision"]["coco"]["change_watch_classes"]) - set(COCO_CLASSES)
-    assert not unknown, f"COCO 80 에 없는 클래스: {sorted(unknown)}"
-
-
 def test_person_class_is_in_vocabulary(cfg: dict) -> None:
     assert cfg["vision"]["coco"]["person_class"] in COCO_CLASSES
 

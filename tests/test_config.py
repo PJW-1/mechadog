@@ -324,15 +324,6 @@ def test_posture_steps_are_known(cfg: dict) -> None:
     assert "stand_two_legs" not in steps
 
 
-def test_change_detect_confirms_over_cycles(cfg: dict) -> None:
-    """물체 변화는 연속 방문 확인 후 확정한다 (FR-8.4).
-
-    사람 출현은 여기서 다루지 않는다 — 사람 게이트(FR-3)가 맡는다.
-    """
-    cd = cfg["change_detect"]
-    assert cd["confirm_cycles"] >= 2
-
-
 def test_zones_are_declared(cfg: dict) -> None:
     """순찰 구역 A~E 가 선언되어 있어야 한다 (FR-7.1)."""
     zones = cfg["zones"]
@@ -688,7 +679,7 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     one = load_config("mechdog-01")
     two = load_config("mechdog-02")
 
-    # 신원은 번호가 아니라 보드 MAC 이다. 번호는 2.4.1 에서 바뀔 수 있다.
+    # 신원은 번호가 아니라 보드 MAC 이다.
     assert one["telemetry_device_id"] != two["telemetry_device_id"]
 
     # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.

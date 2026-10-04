@@ -289,16 +289,26 @@ class Link:
             self.poll()
             time.sleep(0.01)
 
+    def telemetry_stale(self, max_age_ms: int = 1000) -> str | None:
+        if self.reading is None or system_clock_ms() - self.reading_ms > max_age_ms:
+            return "텔레메트리 끊김"
+        return None
+
     def fresh(self, max_age_ms: int = 1000) -> str | None:
         now = system_clock_ms()
-        if self.reading is None or now - self.reading_ms > max_age_ms:
-            return "텔레메트리 끊김"
+        if reason := self.telemetry_stale(max_age_ms):
+            return reason
         if now - self.points_ms > max_age_ms:
             return "라이다 끊김"
         if self.reading.safety_latched:
             return "로봇 래치"
         if self.reading.obstacle:
             return "로봇 장애물 감지"
+        return self.tipped()
+
+    def tipped(self) -> str | None:
+        if self.reading is None:
+            return None
         roll, pitch = self.reading.roll or 0.0, self.reading.pitch or 0.0
         if abs(roll) > TIP_DEG or abs(pitch) > TIP_DEG:
             # 2026-10-04 실기: 2회차 전진 중 넘어져 roll −62°·−92° 인데 후진 명령을 계속 보냈다.
@@ -610,6 +620,20 @@ def wait_devices(link: Link, *, timeout_s: float, battery_warn_v: float) -> bool
     return False
 
 
+def _stop_if_unsafe(link: Link) -> None:
+    """스윕은 POSE roll 을 직접 명령하므로 텔레메트리 끊김과 25° 넘어짐에서 끊는다.
+
+    텔레메트리가 낡으면 `tipped()` 가 마지막 값에 고정돼 무력하므로 먼저 본다.
+    로봇이 제자리에 서 있어 LiDAR 신선도는 보지 않는다.
+    `KeyboardInterrupt` 를 던지면 `main` 이 걷기 중단과 같은 길로 비상정지를 보낸다.
+    """
+    reason = link.telemetry_stale() or link.tipped()
+    if reason:
+        print(f"중단 — {reason}")
+        link.record("tip", reason=reason)
+        raise KeyboardInterrupt
+
+
 def roll_sweep(
     link: Link,
     values: list[float],
@@ -622,12 +646,14 @@ def roll_sweep(
     for value in values:
         link.commander.once("POSE", pitch=pitch, roll=value, height=0, dur=300)
         link.pump(settle_s)
+        _stop_if_unsafe(link)
         start = len(samples)
         rolls = []
         end = time.perf_counter() + measure_s
         while time.perf_counter() < end:
             link.send_due()
             link.poll()
+            _stop_if_unsafe(link)
             if link.reading is not None and link.reading.roll is not None:
                 rolls.append(link.reading.roll)
             time.sleep(0.05)

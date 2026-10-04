@@ -155,8 +155,6 @@ export class PlanningPanel {
   const legacy=z.yaw_deg!=null||z.id+':yaw_deg' in s.invalidNumbers;
   this.inspector.append(p.el('div',{class:'plan-section-heading'},p.el('h3',{},'구역 설정'),p.badge(z.id)),text('구역 이름','name',60),p.el('div',{class:'plan-coordinate'},number('X (m)','x'),number('Y (m)','y')),number('카메라 방향 (°)','aim_deg'),...(legacy?[number('기존 점검 방향 (°)','yaw_deg')]:[]),this.aimNote,p.el('h4',{},'공장 모드 점검'),check('안전모 필수','helmet','머리 영역의 보호구 착용 확인'),check('안전조끼 필수','vest','몸통 영역의 보호구 착용 확인'),check('위험물 점검 구역','hazard','기존 위험물 판정을 이 구역에서 사용'),text('현장 메모','note',300));
   this.inspector.append(p.button('선택 구역 삭제',()=>{s.draft.zones=s.draft.zones.filter(item=>item!==z);for(const key of Object.keys(s.invalidNumbers))if(key.startsWith(z.id+':'))delete s.invalidNumbers[key];s.selected=s.draft.zones[0].id;this.changed();this.draw()},{disabled:s.busy||s.loading||s.draft.zones.length===1,class:'op-button plan-delete'}));
-  const active=s.snapshot?.active?.zones.some(item=>item.id===z.id),slot=p.store.slot?.();
-  if(active&&p.store.live&&slot?.commandsOpen)this.inspector.append(p.button('물품 기준 다시 등록',()=>p.confirmDevice({title:z.id+' 구역 기준을 다시 등록할까요?',body:'기존 기준을 지우고 다음 현장 관측을 새 기준으로 사용합니다. 현재 변화가 정상인지 확인해 주세요. 순찰 경로나 경보 잠금은 바뀌지 않습니다.',confirm:'기준 다시 등록',action:()=>p.store.requestDevice('구역 '+z.id+' 기준 재등록',()=>s.link.zoneBaseline(z.id))}),{disabled:s.busy||s.loading}));
  }
  drawRoute(){
   if(!this.route)return;const p=this.p,s=this.current;this.route.replaceChildren();

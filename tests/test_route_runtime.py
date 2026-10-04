@@ -322,8 +322,8 @@ def test_interrupted_dwell_requires_full_dwell_after_recovery(interruption):
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_single_zone_repeated_route_reopens_actual_inspection(config, clock, tmp_path):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+def test_single_zone_repeated_route_reopens_actual_inspection(config, clock):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     assert navigator.start_route(
         route(RoutePoint(x=1.0, y=1.0, aim_deg=90, label="A"), repeat=2), clock.ms
     )[0]
@@ -345,8 +345,8 @@ def test_single_zone_repeated_route_reopens_actual_inspection(config, clock, tmp
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_mismatched_zone_label_does_not_wait_for_impossible_camera_visit(config, clock, tmp_path):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+def test_mismatched_zone_label_does_not_wait_for_impossible_camera_visit(config, clock):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     assert navigator.start_route(route(RoutePoint(x=1.0, y=1.0, label="B", aim_deg=0)), clock.ms)[0]
     for _ in range(4):
         _camera_aim_tick(runtime, navigator, vision, clock)
@@ -358,10 +358,8 @@ def test_mismatched_zone_label_does_not_wait_for_impossible_camera_visit(config,
 
 @pytest.mark.usefixtures("unlock_modes")
 @pytest.mark.parametrize("label", [None, "A"])
-def test_route_camera_does_not_preempt_arrival_and_uses_route_heading(
-    config, clock, tmp_path, label
-):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+def test_route_camera_does_not_preempt_arrival_and_uses_route_heading(config, clock, label):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     # 구역 aim 유무와 무관하게 지점 도착·동선 방위가 먼저다.
     navigator.zones.set_aim_deg("A", None)
     runtime._zone_inspector._anchors = navigator.zones.as_tuple()

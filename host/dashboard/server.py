@@ -515,16 +515,6 @@ def _command_routes(commands: CommandService) -> APIRouter:
         """
         return commands.alarm_confirm().as_dict()
 
-    @router.post("/zone-baseline", response_model=None)
-    async def zone_baseline(request: Request) -> dict[str, object]:
-        """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
-
-        물건을 영구히 옮긴 경우의 문이다 (ADR-41 결정 6). 런타임이 다음 틱에 지운다.
-        `zones.ids` 에 없는 구역은 `accepted=false` 다. 경보(L3)는 풀지 않는다.
-        """
-        body = await _read_body(request, _ZoneBody)
-        return commands.zone_baseline(body.zone).as_dict()
-
     @router.post("/goto", response_model=None)
     async def goto(request: Request) -> dict[str, object] | JSONResponse:
         """`{"x": 1.2, "y": -0.4}` (순찰 좌표 m) — 지도에서 찍은 곳으로 간다.

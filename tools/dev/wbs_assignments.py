@@ -118,7 +118,8 @@ def parse_wbs(path: Path = WBS) -> list[WorkPackage]:
             continue
         effort = _clean(cells[_MD])
         if effort != "—" and not re.fullmatch(r"[\d.]+", effort):
-            continue
+            # 건너뛰면 그 일이 담당 목록에서 조용히 사라진다(`--check` 도 같이 빠져 못 잡는다).
+            raise ValueError(f"{wid}: 공수 칸을 읽을 수 없다 — {effort!r} (숫자 또는 `—`)")
         packages.append(
             WorkPackage(
                 wid=wid,

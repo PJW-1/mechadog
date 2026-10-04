@@ -891,9 +891,8 @@ def test_zone_inspector_uses_the_navigator_zone_anchors(config, clock) -> None:
     assert anchors == {label: navigator.zones.xy(label) for label in navigator.zones.labels}
 
 
-def _camera_aim_runtime(config, clock, tmp_path):
+def _camera_aim_runtime(config, clock):
     config = deepcopy(config)
-    config["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
     vision = FakeVision()
 
     def navigator_factory(commander):
@@ -935,8 +934,8 @@ def _camera_aim_tick(runtime, navigator, vision, clock, *, yaw=0.0, new_frame=Tr
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_camera_aim_runtime_waits_for_rotation_then_a_fresh_frame(config, clock, tmp_path):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+def test_camera_aim_runtime_waits_for_rotation_then_a_fresh_frame(config, clock):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     _camera_aim_tick(runtime, navigator, vision, clock)
     assert runtime.behavior.state == "PATROL"
     assert navigator.phase is Phase.AIMING
@@ -964,9 +963,9 @@ def test_camera_aim_runtime_waits_for_rotation_then_a_fresh_frame(config, clock,
 @pytest.mark.usefixtures("unlock_modes")
 @pytest.mark.parametrize("interruption", ["obstacle", "stale_pose"])
 def test_camera_aim_runtime_does_not_inspect_while_navigation_is_stopped(
-    config, clock, tmp_path, interruption
+    config, clock, interruption
 ):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     _camera_aim_tick(runtime, navigator, vision, clock)
     _camera_aim_tick(runtime, navigator, vision, clock)
     if interruption == "obstacle":
@@ -985,8 +984,8 @@ def test_camera_aim_runtime_does_not_inspect_while_navigation_is_stopped(
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_camera_aim_runtime_does_not_wait_for_a_stalled_camera(config, clock, tmp_path):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+def test_camera_aim_runtime_does_not_wait_for_a_stalled_camera(config, clock):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     _camera_aim_tick(runtime, navigator, vision, clock)
     _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
     assert navigator.phase is Phase.INSPECT
@@ -997,8 +996,8 @@ def test_camera_aim_runtime_does_not_wait_for_a_stalled_camera(config, clock, tm
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_camera_aim_runtime_realigns_if_heading_changes_while_waiting(config, clock, tmp_path):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+def test_camera_aim_runtime_realigns_if_heading_changes_while_waiting(config, clock):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     _camera_aim_tick(runtime, navigator, vision, clock)
     _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
     assert navigator.phase is Phase.INSPECT
@@ -1012,9 +1011,9 @@ def test_camera_aim_runtime_realigns_if_heading_changes_while_waiting(config, cl
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_camera_aim_runtime_keeps_pending_inspection_after_sent_stop(config, clock, tmp_path):
+def test_camera_aim_runtime_keeps_pending_inspection_after_sent_stop(config, clock):
     """실제로 송신된 spin→STOP과 정착 스캔 관문도 카메라 인계를 잃지 않는다."""
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     runtime.begin(FakeSocket(clock))
     clock.advance(100)
     _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))

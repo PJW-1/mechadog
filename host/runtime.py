@@ -1535,13 +1535,6 @@ class Runtime:
         """페일세이프(F) 해제 요청을 예약한다. **다른 스레드에서 부른다.**"""
         self._reset_asked = True
 
-    def ask_zone_baseline_reset(self, zone: str) -> tuple[bool, str]:
-        """구역 기준 재등록을 예약한다 (`ZoneInspector.ask_baseline_reset`). **다른 스레드에서 부른다.**
-
-        지우는 것은 다음 틱이다(`_drain_confirmations`). 경보(L3)는 풀지 않는다.
-        """
-        return self._zone_inspector.ask_baseline_reset(zone)
-
     def ask_goto(self, x: float, y: float) -> tuple[bool, str]:
         """지도에서 찍은 곳(순찰 좌표)을 예약한다. **다른 스레드에서 부른다.**"""
         navigator = self._navigator
@@ -1817,7 +1810,6 @@ class Runtime:
             # 찍은 곳에 서 있다가 «순찰 시작» — 구역 순찰로 돌아간다.
             self._patrol_asked = False
             navigator.cancel_goal("patrol_restart")
-        self._zone_inspector.reset_baselines()
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
         if (
@@ -2240,7 +2232,6 @@ def dashboard_wiring(
         note_voice_auth=runtime.note_voice_auth,
         note_voice_listening=runtime.note_voice_listening,
         confirm_alarm=runtime.ask_alarm_confirm,
-        reset_zone_baseline=runtime.ask_zone_baseline_reset,
         locate_zone=runtime.ask_locate_zone,
         locate_point=runtime.ask_locate_point,
         goto_point=getattr(runtime, "ask_goto", None),
@@ -2464,13 +2455,15 @@ def _seeded_controller(
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    # 인자 오류는 `parser.error` — 종료 코드 2 (`SystemExit(str)` 은 1 이라 설정 거부 rc 2 와 갈린다).
     if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
-        raise SystemExit("dashboard-port must be between 1 and 65535")
+        parser.error("dashboard-port must be between 1 and 65535")
     if args.motion_lock and (args.patrol or args.reset_on_start):
-        raise SystemExit("--motion-lock 은 --patrol · --reset-on-start 와 함께 쓸 수 없다")
+        parser.error("--motion-lock 은 --patrol · --reset-on-start 와 함께 쓸 수 없다")
     if args.record_frame_ms <= 0:
-        raise SystemExit("--record-frame-ms 는 1 이상이어야 한다")
+        parser.error("--record-frame-ms 는 1 이상이어야 한다")
     # ⚠️ 설정을 읽기 전에는 우리 로거가 없다. 여기서만 표준 출력을 쓴다.
     try:
         config = load_config(args.device)

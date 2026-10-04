@@ -252,3 +252,30 @@ def test_stray_websocket_closes_instead_of_crashing_the_static_mount() -> None:
         # 로봇 범위의 WS 는 그대로 붙는다.
         with client.websocket_connect(f"/robots/{A}/ws/telemetry") as ws:
             assert ws.receive_json()["device_id"] == A
+
+
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_cli_rejects_invalid_port_with_exit_code_2(port: str, capsys) -> None:
+    """인자 검증 실패는 설정 거부(rc 2)·argparse 오류와 같은 종료 코드 2 다 (`SystemExit(str)` 은 1)."""
+    from host.fleet import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--devices", A, "--dashboard-port", port])
+    assert exc.value.code == 2
+    assert "dashboard-port" in capsys.readouterr().err
+
+
+def test_cli_refuses_a_non_utf8_profile_with_exit_code_2(monkeypatch) -> None:
+    """UTF-8 이 아닌 설정은 `UnicodeDecodeError`(`ValueError`) — traceback 이 아니라 rc 2 로 거부한다."""
+    import host.fleet as module
+
+    def broken(_device):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(module, "load_config", broken)
+    assert module.main(["--devices", A, "--dashboard-port", "8000"]) == 2
+
+
+def test_deeply_nested_telemetry_is_dropped_not_raised() -> None:
+    """`RecursionError` 가 수신 루프를 뚫고 나가면 플릿 전체가 멈춘다."""
+    assert telemetry_device(b"[" * 100000) is None

@@ -3,6 +3,7 @@ import {RoutePlanner} from './route-planner.js';
 import {EVENT_CATEGORIES,REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
 import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
+import {LiveMap} from './live-map.js';
 
 const VOICE_ROLES={user:'현장 발화',robot:'로봇 응답',admin:'경고 방송',system:'시스템',robot_evt:'로봇 사건'};
 const TITLES={missions:'제어 · 장치',events:'사건 검토',records:'운영 기록',zones:'구역 · 동선',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
@@ -211,8 +212,6 @@ export class OperationalPanels {
    this.eventDetail.append(this.section('당시 검출·추적 근거',this.note('추적 ID는 영구 신원이 아닙니다. 박스 좌표는 원본 JPEG의 픽셀 기준입니다.'),tracks.length||detections.length?this.facts([...tracks,...detections]):this.note('저장된 검출·추적 항목이 없습니다.')),this.el('details',{class:'op-raw'},this.el('summary',{},'당시 텔레메트리 원문'),this.el('pre',{},JSON.stringify(event.meta.telemetry,null,2))));
   }
   if(event.source==='LIVE_FEED'){
-   // 구역 기준 재등록 (WBS 3.6.5) — 물건을 영구히 옮겼으면 순찰마다 «반출» 이 난다. 명령 API 가 열린 실시간 사건에만 보인다.
-   if(this.store.canResetZoneBaseline(event))this.eventDetail.append(this.section('구역 기준',this.note('지금 모습이 정상이면 기준을 다시 뜹니다. 기준은 로봇이 그 구역을 다음에 볼 때 새로 찍힙니다. 지금 그 구역을 점검하고 있다면 이번 장면이 기준이 됩니다.'),this.button('이 상태를 새 기준으로 등록',()=>this.confirmDevice({icon:'lock',title:'구역 '+event.zoneId+' 의 기준을 다시 등록하겠습니까?',body:'이 구역의 기준 사진과 물품 목록을 지우고, 로봇이 그 구역을 다음에 볼 때의 모습을 새 기준으로 씁니다(지금 점검 중이면 이번 장면). 지금 보이는 변화가 정상인지 현장에서 확인한 뒤에만 누르세요. 경보(L3)는 이 버튼으로 풀리지 않습니다.',confirm:'예, 새 기준으로 등록합니다',action:async()=>{const result=await this.store.requestZoneBaseline(event.id);this.onToast(result?.detail||'기준 재등록을 요청했어요.')}}))));
    this.eventDetail.append(this.section('검토 기록',this.note('실시간 사건 검토는 서버에 저장되지 않습니다. 이 화면에서는 조회만 가능합니다.','warning')));
    return;
   }
@@ -453,6 +452,12 @@ export class OperationalPanels {
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
     this.note('운용 모드는 로봇이 멈춰 있을 때(대기·수동)만 바꿀 수 있고, 바꿔도 경보(L3)와 안전 정지(F)는 풀리지 않습니다. 선행 기능이 없는 모드는 서버가 거절하며 사유를 알려 줍니다.'),
     this.note('모드 변경 버튼은 누르면 확인 창이 뜹니다. 순찰 정지·비상 정지처럼 안전으로 가는 명령은 확인 없이 즉시 보냅니다. 서비스 모드 해제 후에도 안전 래치는 남습니다.')));
+   // 위치 알려주기 — 들어 옮긴 뒤 집 안 비슷한 자리를 구별 못 해 위치를 못 잡을 때, 사람이 구역을 알려준다.
+   const zones=store.patrolZones;
+   this.container.append(this.section('위치 알려주기',
+    zones.length?this.el('div',{class:'op-toolbar','data-locate':'zones'},...zones.map(zone=>this.button('구역 '+zone,()=>this.confirmDevice({icon:'target',title:'로봇이 지금 구역 '+zone+' 안에 있습니까?',body:'로봇이 지금 믿고 있는 위치를 버리고 구역 '+zone+' 안에서만 다시 찾습니다. 찾을 때까지 로봇은 멈춰 섭니다. 잘못 알려주면 엉뚱한 자리로 잡힐 수 있으니 실제로 있는 구역만 누르세요.',confirm:'예, 구역 '+zone+' 입니다',action:async()=>{const result=await store.requestLocate(zone);this.onToast(result?.detail||'위치 다시 찾기를 요청했어요.')}}),{disabled:!store.live,'data-locate-zone':zone}))):this.note('구역 목록을 받지 못했습니다 — 서버 연결을 확인하세요.','warning'),
+    store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
+    this.note('로봇을 들어 옮긴 뒤 위치를 못 잡을 때 씁니다. 로봇은 방향과 상관없이 그 구역 안에서 위치를 찾고, 구역 안에서도 비슷한 자리가 여럿이면 계속 멈춰 있습니다(1분 뒤 포기).')));
   }
   // 관제 PC 스피커 방송 음량 · 무음 (`4.8.2`) — 로봇 스피커(SOUND)와 별개, 방송기는 플릿 전체가 하나를 나눠 쓴다.
   {
@@ -648,7 +653,7 @@ export class OperationalPanels {
  // 같은 모드로 바꾸는 것은 거절이 아니지만, 누를 수 있으면 «바뀌었나» 를 되묻게 된다.
  modeButton(name,label){
   const store=this.store;
-  return this.button(label+' 모드',()=>this.confirmDevice({icon:'lock',title:label+' 모드로 바꾸겠습니까?',body:'순찰 하나는 모드 하나로 돕니다. 경비는 인증, 공장은 보호구·물체 변화만 합니다. 로봇이 멈춰 있을 때만 바뀌며 경보와 안전 정지는 풀리지 않습니다.',confirm:'예, 바꿉니다',action:()=>store.requestMode(name)}),{disabled:!store.live||store.readOnly||store.missionMode===name,'data-mode':name});
+  return this.button(label+' 모드',()=>this.confirmDevice({icon:'lock',title:label+' 모드로 바꾸겠습니까?',body:'순찰 하나는 모드 하나로 돕니다. 경비는 인증, 공장은 보호구·쓰러짐·구역 위험만 봅니다. 로봇이 멈춰 있을 때만 바뀌며 경보와 안전 정지는 풀리지 않습니다.',confirm:'예, 바꿉니다',action:()=>store.requestMode(name)}),{disabled:!store.live||store.readOnly||store.missionMode===name,'data-mode':name});
  }
  fillDeviceCommands(){
   const store=this.store,t=store.live?store.deviceTelemetry:null,text=describeTelemetry(store.telemetry),svc=store.serviceMode;

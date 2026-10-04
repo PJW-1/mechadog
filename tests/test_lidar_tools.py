@@ -83,6 +83,15 @@ def test_missing_required_key_is_refused() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("key", ["scan_port", "reloc_restore_radius_mm"])
+def test_huge_int_is_refused_as_config_error(key: str) -> None:
+    """`math.isfinite(10**400)` 은 `OverflowError` — 다른 잘못된 값처럼 `ConfigError` 로 거부한다."""
+    section = dict(settings.read_lidar_section())
+    section[key] = 10**400
+    with pytest.raises(ConfigError, match=key):
+        settings.validate_section(section)
+
+
 @pytest.mark.parametrize("value", ["false", 0, 1, None, float("nan")])
 def test_full_scan_ambiguity_requires_boolean(value) -> None:
     section = dict(settings.read_lidar_section())
@@ -1053,3 +1062,26 @@ def test_plan_to_snaps_goal_off_an_unreachable_island() -> None:
         # 스냅 반경 안에 도달 가능한 자유 셀이 하나도 없으면 정직하게 실패.
         assert plan.fail_reason == "goal_unreachable"
         assert plan.effective is None or plan.effective[0] < 3.5
+
+
+def test_patrol_main_refuses_a_broken_map_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """지도 오류는 `ValueError` 다 — `FileNotFoundError` 만 잡으면 traceback 으로 끝난다."""
+    room().save(tmp_path)
+    (tmp_path / "map_meta.json").write_text("{broken", encoding="utf-8")
+    assert patrol_run.main(["--simulate", "--maps", str(tmp_path)]) == 2
+    assert "[Patrol]" in capsys.readouterr().err
+
+
+def test_patrol_main_refuses_an_unreadable_map_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`PermissionError` 같은 다른 `OSError` 도 같은 거부다."""
+
+    def deny(_config: dict, _maps: Path, _seed: int | None) -> None:
+        raise PermissionError("접근 거부")
+
+    monkeypatch.setattr(patrol_run, "build_controller", deny)
+    assert patrol_run.main(["--simulate", "--maps", str(tmp_path)]) == 2
+    assert "접근 거부" in capsys.readouterr().err

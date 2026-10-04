@@ -126,8 +126,6 @@ def test_approved_phase2_packages_are_listed_as_work(
     for wid in (
         "2.2.1",
         "2.5",
-        "3.6.1",
-        "3.6.5",
         "3.9.0",
         "3.9.1",
         "3.9.2",
@@ -167,9 +165,35 @@ def test_section_headings_match_their_packages(packages: list[WorkPackage]) -> N
 def test_packages_without_effort_still_appear(packages: list[WorkPackage]) -> None:
     """공수가 `—` 로 비어 있어도 할 일은 목록에 보여야 한다.
 
-    `3.6.4`·`3.6.5`·`4.8.4` 는 공수 산정 전에 추가돼 파서가 건너뛰었고,
+    `3.6.4`·`4.8.4` 는 공수 산정 전에 추가돼 파서가 건너뛰었고,
     진행 중인 일이 담당 목록에서 통째로 사라져 있었다.
     """
     text = render(packages)
-    for wid in ("3.6.4", "3.6.5", "4.8.4"):
+    for wid in ("3.6.4", "4.8.4"):
         assert f"`{wid}`" in text, f"{wid}: 담당 목록에 없다"
+
+
+def test_unreadable_effort_cell_fails_instead_of_dropping_the_row(tmp_path) -> None:
+    """공수 칸이 숫자도 `—` 도 아니면 행을 조용히 버리지 않고 실패한다.
+
+    `—` 를 받게 고친 뒤에도 `3.9.3`·`4.8.6`·`4.8.7`·`5.4.6` 의 공수 칸이 `,` 로 적혀
+    같은 방식으로 담당 목록에서 사라져 있었다(2026-10-05 · Devin 검수). `--check` 도
+    재생성 결과가 똑같이 빠지므로 잡지 못했다.
+    """
+    wbs = tmp_path / "WBS.md"
+    wbs.write_text("## 작업 사전\n\n| 9.9 | 시험 | — | DoD | C | — |, | — |\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"9\.9"):
+        parse_wbs(wbs)
+
+
+def test_retired_zone_change_packages_are_not_assigned(packages: list[WorkPackage]) -> None:
+    """`3.6.1`·`3.6.2`·`3.6.3`·`3.6.5` 는 폐기했다(2026-10-05 · ADR-44).
+
+    폐기 행은 `~~ID~~ ❌` 로 적어 파서가 건너뛴다. 다시 일반 행으로 돌아오면 공수가
+    이중 계상되고 담당 목록에 죽은 일이 올라오므로 못 박는다. 남긴 `3.6.4` 는 선행에서
+    `3.6.3` 이 빠졌는지도 본다.
+    """
+    by_id = {p.wid: p for p in packages}
+    for wid in ("3.6.1", "3.6.2", "3.6.3", "3.6.5"):
+        assert wid not in by_id, f"{wid}: 폐기한 항목이 담당 목록에 있다"
+    assert "3.6.3" not in by_id["3.6.4"].predecessor

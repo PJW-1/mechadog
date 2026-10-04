@@ -100,8 +100,8 @@ def test_route_hint_waits_for_votes_then_repeats_full_aim_and_dwell():
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_point_hint_suspends_zone_camera_arrival_until_pose_is_verified(config, clock, tmp_path):
-    runtime, navigator, vision = _camera_aim_runtime(config, clock, tmp_path)
+def test_point_hint_suspends_zone_camera_arrival_until_pose_is_verified(config, clock):
+    runtime, navigator, vision = _camera_aim_runtime(config, clock)
     _camera_aim_tick(runtime, navigator, vision, clock)
     _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
     assert navigator.phase is Phase.INSPECT

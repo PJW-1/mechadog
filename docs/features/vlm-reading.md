@@ -111,7 +111,7 @@ flowchart TD
 | 순찰 중 쓰러짐 판독 주기 | `host/behavior/fall_monitor.py` 의 `FallMonitor.ask` | `tests/test_runtime.py::test_a_patrol_reading_asks_only_person_down_every_interval` |
 | 쓰러짐 판독 결과 → 의심 · 확정 | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` · `FallMonitor._confirm` | `tests/test_runtime.py::test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` · `tests/test_runtime.py::test_a_fall_is_confirmed_by_readings_a_gap_apart` · `tests/test_runtime.py::test_a_no_between_readings_does_not_reset_the_count` |
 | 위험구역에서만 `hazard_item` · 두 번 «예» → `hazard_notice` | `host/behavior/zone_inspector.py` 의 `ZoneInspector._keys` · `ZoneInspector._leave` · `host/vision/vlm_reader.py` 의 `QUESTIONS` | `tests/test_zone_inspector.py::test_hazard_item_yes_twice_is_one_light_notice` · `tests/test_zone_inspector.py::test_hazard_item_yes_then_no_confirms_nothing` · `tests/test_zone_inspector.py::test_a_degraded_second_reading_confirms_no_hazard_item` · `tests/test_zone_inspector.py::test_hazard_items_switched_off_never_confirm` · `tests/test_zone_inspector.py::test_a_plain_zone_never_asks_for_hazard_items` · `tests/test_zone_inspector.py::test_l3_and_hazard_item_in_one_visit_leave_both` · `tests/test_situation.py::test_hazard_notice_with_zone` |
-| VLM 없이도 변화 감지 동작 | `host/behavior/zone_inspector.py` 의 `ZoneInspector.inspect` | `tests/test_runtime.py::test_change_detection_runs_without_any_vlm` |
+| VLM 없이도 구역 점검 동작 | `host/behavior/zone_inspector.py` 의 `ZoneInspector.inspect` | `tests/test_runtime.py::test_zone_inspection_runs_without_any_vlm` |
 
 실측 기록
 

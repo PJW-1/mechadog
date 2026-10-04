@@ -536,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"[Patrol] 설정 오류: {exc}", file=sys.stderr)
         return 2
-    except FileNotFoundError as exc:
+    except (OSError, ValueError) as exc:  # 지도 없음·권한 거부·깨진 지도·구역 파일
         print(f"[Patrol] {exc}", file=sys.stderr)
         return 2
 

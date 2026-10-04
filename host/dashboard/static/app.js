@@ -105,7 +105,7 @@ if(operations.connected){
  await Promise.all(Object.entries(bases).map(async([robot,base])=>{
   const health=await fetch(base+'/health').then(response=>response.json()).catch(()=>null);
   visionAvailable[robot]=health?.vision_clients!==null;
-  // 명령 API 가 열렸는지 (WBS 3.6.5). 옛 서버처럼 read_only 가 없으면 닫힌 것으로 본다.
+  // 명령 API 가 열렸는지. 옛 서버처럼 read_only 가 없으면 닫힌 것으로 본다.
   operations.setCommandsOpen(health?.read_only===false,robot);
   // 설정 화면의 단계 표 값 (B7). 못 받으면 화면이 «미수신» 이라고 적는다.
   fetch(base+'/api/policy').then(response=>response.ok?response.json():null).then(policy=>{if(policy)operations.setPolicy(policy,robot)}).catch(()=>{});

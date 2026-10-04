@@ -1,10 +1,10 @@
 """순찰 구역 앵커와 순찰 스케줄러 (WBS 3.9.1 · 3.9.2 · FR-7).
 
 구역 라벨의 정본은 `config.yaml` 의 `zones.ids` 다. `zones.json` 은 그 라벨에 좌표를 붙인
-것이며, 설정에 없는 라벨은 만들지 않고 파일에서 발견하면 경고와 함께 무시한다 — 변화 감지
-기준(FR-8)과 대시보드가 같은 라벨을 쓴다.
+것이며, 설정에 없는 라벨은 만들지 않고 파일에서 발견하면 경고와 함께 무시한다 — 구역 점검
+(FR-8)과 대시보드가 같은 라벨을 쓴다.
 
-구역 도착은 이 좌표와 FR-7.4 반경으로 판정한다(`ZoneInspector.inspect`) — 변화 감지는 같은
+구역 도착은 이 좌표와 FR-7.4 반경으로 판정한다(`ZoneInspector.inspect`) — 구역 판독은 같은
 자리·같은 방향에서 봐야 성립한다.
 """
 
@@ -22,6 +22,7 @@ import numpy as np
 
 from host.behavior.planner import Plan, PlanParams, Point, plan_to
 from host.behavior.zone_map import PLAN_FILENAME
+from host.common.config import _finite_number
 from host.common.logging_setup import event_logger
 from host.slam.occupancy import OccupancyGrid
 
@@ -35,7 +36,7 @@ class Zone:
     """구역 하나. 좌표는 실공간 m 다.
 
     `yaw` 는 점검할 때 바라볼 방향(rad, 지도 좌표 · 측위 `Pose` 와 같은 규약)이다. 없으면
-    도착한 방향 그대로 본다. 변화 감지는 기준과 같은 장면이어야 하므로 두는 값이다.
+    도착한 방향 그대로 본다. 구역 판독이 방문마다 같은 장면을 봐야 하므로 두는 값이다.
     `aim_deg` 는 도착 후 점검 전에 몸을 돌릴 순찰 좌표 방위(deg)다. 0은 +X,
     +90은 +Y이며, 미지정이면 기존 도착 동작을 유지한다. 기존 `yaw`와는 별도다.
     """
@@ -48,10 +49,7 @@ class Zone:
 
     def __post_init__(self) -> None:
         if self.aim_deg is not None and (
-            isinstance(self.aim_deg, bool)
-            or not isinstance(self.aim_deg, (int, float))
-            or not math.isfinite(self.aim_deg)
-            or not -180 <= self.aim_deg <= 180
+            not _finite_number(self.aim_deg) or not -180 <= self.aim_deg <= 180
         ):
             raise ValueError("aim_deg는 -180~180 범위의 유한한 숫자여야 합니다")
 
@@ -168,6 +166,13 @@ class ZoneStore:
                 LOG.warning("zone_entry_malformed", label=label)
                 continue
             yaw = value.get("yaw")
+            if not (
+                _finite_number(value["x"])
+                and _finite_number(value["y"])
+                and (yaw is None or _finite_number(yaw))
+            ):
+                LOG.warning("zone_entry_malformed", label=label)
+                continue
             store._zones[label] = Zone(
                 label,
                 float(value["x"]),

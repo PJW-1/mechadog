@@ -305,7 +305,6 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
             self.ask_alarm_confirm = lambda: None
-            self.ask_zone_baseline_reset = lambda _zone: (True, "")
             self.ask_locate_zone = lambda _zone: (True, "")
             self.ask_locate_point = lambda _x, _y: (True, "")
 
@@ -335,15 +334,17 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
 
 
 @pytest.mark.parametrize("port", ["0", "-1", "65536"])
-def test_cli_rejects_invalid_port_before_loading_config(port, monkeypatch):
+def test_cli_rejects_invalid_port_before_loading_config(port, monkeypatch, capsys):
     import host.runtime as module
 
     def unexpected(_device):
         pytest.fail("Loaded hardware profile before rejecting port")
 
     monkeypatch.setattr(module, "load_config", unexpected)
-    with pytest.raises(SystemExit, match="dashboard-port"):
+    with pytest.raises(SystemExit) as exc:
         module.main(["--device", "test", "--dashboard-port", port])
+    assert exc.value.code == 2, "인자 오류는 argparse 와 같은 종료 코드 2 다"
+    assert "dashboard-port" in capsys.readouterr().err
 
 
 def test_root_opens_the_white_dashboard(clock):
@@ -592,7 +593,6 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
             self.ask_alarm_confirm = lambda: None
-            self.ask_zone_baseline_reset = lambda _zone: (True, "")
             self.ask_locate_zone = lambda _zone: (True, "")
             self.ask_locate_point = lambda _x, _y: (True, "")
 
