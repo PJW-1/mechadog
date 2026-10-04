@@ -160,3 +160,23 @@ def test_trace_plot_writes_png(tmp_path):
     ]
     straight.plot_traces(tmp_path / "t.png", legs)
     assert (tmp_path / "t.png").stat().st_size > 1000
+
+
+def test_device_status_ready_and_warnings():
+    kw = {"battery_warn_v": 7.0}
+    ok_robot, ok_lidar, warn = straight.device_status(
+        telemetry_age_ms=200, batt_v=8.1, latched=False, packets_per_s=70, revs_per_s=10, **kw
+    )
+    assert ok_robot and ok_lidar and warn == []
+    _, ok_lidar, warn = straight.device_status(
+        telemetry_age_ms=None, batt_v=None, latched=None, packets_per_s=8, revs_per_s=0, **kw
+    )
+    assert not ok_lidar and any("347" in w for w in warn), "10-04 이상 모양(8패킷·0바퀴)"
+    ok_robot, _, warn = straight.device_status(
+        telemetry_age_ms=300, batt_v=6.8, latched=True, packets_per_s=70, revs_per_s=10, **kw
+    )
+    assert ok_robot and any("배터리" in w for w in warn) and any("래치" in w for w in warn)
+    ok_robot, _, _ = straight.device_status(
+        telemetry_age_ms=3000, batt_v=8.0, latched=False, packets_per_s=0, revs_per_s=0, **kw
+    )
+    assert not ok_robot, "3초 묵은 텔레메트리는 연결이 아니다"
