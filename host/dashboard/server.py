@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 import uvicorn
 from anyio import CancelScope
 from fastapi import APIRouter, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import (
     BaseModel,
@@ -731,6 +731,10 @@ def create_app(
     if static_dir is not None and static_dir.is_dir():
         # mount 는 등록 순서대로 탐색하므로 API·WS 경로를 먼저 등록하고 마지막에 붙인다.
         if GLASS_PREVIEW_DIR.is_dir():
+            # 첫 주소는 흰 화면(정본)으로 — 검정(앱 단독) 화면이 먼저 뜨지 않게.
+            app.add_api_route(
+                "/", lambda: RedirectResponse("/glass-preview/"), include_in_schema=False
+            )
             app.mount(
                 "/glass-preview",
                 _RevalidatedStatic(directory=GLASS_PREVIEW_DIR, html=True),
@@ -795,6 +799,10 @@ def create_fleet_app(
 
     if static_dir is not None and static_dir.is_dir():
         if GLASS_PREVIEW_DIR.is_dir():
+            # 첫 주소는 흰 화면(정본)으로 — 검정(앱 단독) 화면이 먼저 뜨지 않게.
+            app.add_api_route(
+                "/", lambda: RedirectResponse("/glass-preview/"), include_in_schema=False
+            )
             app.mount(
                 "/glass-preview",
                 _RevalidatedStatic(directory=GLASS_PREVIEW_DIR, html=True),

@@ -2,6 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<script>
+// 정본은 흰 관제 화면(/glass-preview/)이다 — 이 앱은 그 안에 감싸여 쓰인다. 단독으로(검정 화면) 열리면
+// 흰 화면으로 넘긴다. 시험 환경(jsdom)과 흰 화면 안(iframe)에서는 그대로 둔다.
+if(window.top===window.self&&!/jsdom/i.test(navigator.userAgent)&&location.protocol.startsWith('http')){const view=location.hash.replace(/^#/,'');location.replace('/glass-preview/'+(view?'?view='+encodeURIComponent(view):''))}
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1a1a2a">
 <title>MechaDog · 현장 관제</title>

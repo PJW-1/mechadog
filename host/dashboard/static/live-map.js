@@ -181,6 +181,15 @@ export class LiveMap {
       ctx.lineTo(u - 10, v + 10);
       ctx.stroke();
     }
+    if (Array.isArray(nav.sim_truth)) {
+      // 시뮬 전용 — 가상 로봇의 진짜 자리(옅은 원). 실제 로봇에서는 서버가 보내지 않는다.
+      const [u, v] = px(nav.sim_truth[0], nav.sim_truth[1]);
+      ctx.strokeStyle = 'rgba(217,119,6,.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(u, v, metre * 0.18, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     // 로봇 — 앞을 가리키는 삼각형. 위치를 못 믿으면 속이 빈 회색으로 그린다.
     const [x, y, yawDeg] = nav.pose;
     const yaw = (yawDeg * Math.PI) / 180;

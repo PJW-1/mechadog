@@ -579,7 +579,7 @@ export class OperationalPanels {
   return this.section('실제 집 지도',this.liveMap.root,this.note('로봇 표시(삼각형)는 로봇이 스스로 추정한 위치입니다. 지도를 누르면 그곳으로 보냅니다(확인 창). 위치를 못 믿는 동안(회색)에는 로봇이 이동을 거절합니다 — «제어 · 장치»의 «위치 알려주기»로 구역을 알려 주세요.'));
  }
  zonePage(){
-  const live=this.liveMapSection();if(live)this.container.append(live);
+  const live=this.liveMapSection();if(live){this.container.append(live);return} // 실제 집 지도가 있으면 예시 공장 구역은 보이지 않는다
   this.container.append(this.note('현재 공장은 신규 제작한 48 × 32m 예시 공간입니다. 실측 지도·SLAM·실제 로봇 좌표가 아닙니다.'));
   const nav=this.el('div',{class:'op-zone-list'});
   for(const zone of this.zones)nav.append(this.button([this.el('span',{},zone.label),this.el('small',{},zone.id)],()=>{this.zoneId=zone.id;this.render('zones')},{class:'op-zone-row'+(this.zoneId===zone.id?' selected':''),'aria-pressed':this.zoneId===zone.id}));

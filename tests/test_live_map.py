@@ -105,3 +105,8 @@ def test_runtime_server_serves_the_white_dashboard() -> None:
         assert page.status_code == 200 and "iframe" in page.text
         assert http.get("/glass-preview/theme.css").status_code == 200
         assert http.get("/index.html").status_code == 200
+        first = http.get("/", follow_redirects=False)
+        assert first.status_code in (302, 307) and first.headers["location"] == "/glass-preview/", (
+            "첫 주소는 흰 화면 — 검정(앱 단독) 화면이 먼저 뜨지 않는다"
+        )
+        assert "glass-preview" in http.get("/index.html").text, "단독으로 열면 흰 화면으로 넘기는 코드"
