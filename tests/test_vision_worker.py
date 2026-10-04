@@ -508,6 +508,65 @@ def test_ppe_runs_only_when_enabled_and_opens_on_mode_switch(cfg: dict, monkeypa
         assert ppe.resets > 0
 
 
+class _FakeHazard:
+    """`HazardDetector` 대역 — 부른 횟수와 비운 횟수를 센다."""
+
+    def __init__(self, *, missing: bool = False) -> None:
+        self.missing = missing
+        self.opened = 0
+        self.calls = 0
+        self.resets = 0
+
+    def open(self) -> None:
+        self.opened += 1
+        if self.missing:
+            from host.vision.detector import ModelMissingError
+
+            raise ModelMissingError("모델 파일 없음")
+
+    def observe(self, _image, _now_ms):
+        from host.vision.hazard_detector import HazardVerdict
+
+        self.calls += 1
+        return HazardVerdict(confirmed=("lighter",))
+
+    def reset(self) -> None:
+        self.resets += 1
+
+
+def test_hazard_runs_only_while_switched_on(cfg: dict, monkeypatch) -> None:
+    """위험물 추론은 켜진 동안만 돈다 — 세션은 기동 때 한 번 열고 켜고 끌 때는 열지 않는다."""
+    hazard = _FakeHazard()
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch, hazard=hazard)
+    with worker:
+        assert hazard.opened == 1
+        assert worker.hazard_available
+        worker._run_one(_frame(1), 1000)
+        assert hazard.calls == 0
+        assert worker.latest().hazard is None
+        worker.set_hazard_enabled(True)
+        worker._run_one(_frame(2), 1000)
+        assert hazard.calls == 1
+        assert worker.latest().hazard.confirmed == ("lighter",)
+        worker.set_hazard_enabled(False)
+        worker._run_one(_frame(3), 1000)
+        assert hazard.calls == 1
+        assert hazard.resets > 0, "끄면 창을 비운다"
+        assert hazard.opened == 1
+
+
+def test_a_missing_hazard_model_does_not_stop_the_worker(cfg: dict, monkeypatch) -> None:
+    """위험물 모델이 없으면 꺼질 뿐이다 — 사람 인지·순찰은 그대로 돈다."""
+    hazard = _FakeHazard(missing=True)
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch, hazard=hazard)
+    with worker:
+        assert not worker.hazard_available
+        worker.set_hazard_enabled(True)
+        assert _wait_until(lambda: worker.latest() is not None)
+        assert worker.latest().hazard is None
+        assert worker.healthy()
+
+
 def test_badges_are_not_read_without_a_person(cfg, monkeypatch):
     """사원증 판독은 사람이 있을 때만 돈다 — 귀속시킬 사람이 없으면 인증이 성립하지 않는다."""
     detector = _FakeDetector()

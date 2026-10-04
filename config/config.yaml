@@ -155,7 +155,10 @@ vision:
     # ⚠️ **`ultralytics` 가 아니다.** AGPL-3.0 이라 ADR-24 가 탈락시켰다.
     # WBS 3.7.2 의 "ultralytics 버전 기록" 문구는 그 결정 이전의 잔재다.
     #
-    # 학습 기록 (FR-9.1.2 재현성) — 2026-09-29 · Release 태그 ppe-v4 · XIAO 실측 전 후보
+    # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 ppe-v5 · XIAO 실측 전 후보
+    #   v5 = 아래 v4 에서 하단각도 자체 촬영 279장을 더해 30 epoch 미세 조정
+    #        (`tools/ppe/colab_ppe_v5_lowangle.ipynb` · lr ×0.3 · seed 20261001)
+    #   ── 이하는 v4 학습 기록 (2026-09-29 · Release 태그 ppe-v4) ──
     #   계열     YOLOX-S (Apache-2.0 · Megvii) · 640x640 · 4클래스 (person_down 없음 —
     #            쓰러짐은 `host/vision/person.py` 종횡비 의심 + VLM 확정, ADR-42)
     #   출발점   COCO 사전학습 yolox_s.pth
@@ -166,14 +169,17 @@ vision:
     #            (학습 2,255 크롭 · no_helmet 박스 346개)
     #   설정     100 epoch · batch 16 · fp16 · seed 20260928 · HSV 게인 (3, 15, 30)
     #            (주황·형광이 판정 단서라 약하게 — MODEL_PLAN 1.3)
-    #   산출물   models/ppe.onnx · 35,779,653 bytes
-    #            sha256 e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5
+    #   산출물   models/ppe.onnx (v5) · 35,779,654 bytes
+    #            sha256 145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2
     #   ⚠️ 출력은 **디코드 전 원시 [1, 8400, 9]** 다. 어댑터가 격자 디코드를 한다 —
     #      디코드된 모델을 넣으면 좌표가 두 번 변환돼 박스가 엉뚱한 곳에 찍힌다.
     #
     # ⚠️ 아래 수치는 공개 사진 기준이며 확정값이 아니다. FR-9 판정은 XIAO 실기로 한다.
     #      Roboflow test AP50 0.858 · Mendeley test AP50 0.966 (`docs/PPE_ACCEPTANCE.md`)
     #      운용 경로 목업에서 정상 착용자 → 위반 2/108 (이전 후보 v23b 7/108)
+    #      v5: 같은 시험셋 AP50 0.853 → 0.818 (−0.035, 정면 공개 사진에서 일부 손실 —
+    #      로봇은 아래에서 올려다보므로 감수) · 하단각도 검증 58장 착용자 → 적합 43 → 58,
+    #      오경보 2 → 0, 판정 불가 13 → 0
     model_family: yolox
     input_size: 640
     conf_threshold: 0.5
@@ -198,6 +204,48 @@ vision:
     max_posture_retries: 2      # FR-9.2.4 — 초과 시 PPE_UNDETERMINED 기록 후 순찰 재개
     # 자세 상승은 판정의 전제가 아니라 클리핑 시의 대응 수단이다 (FR-9.2.2).
     # 단계 정의는 posture.escalation_steps 를 따른다.
+
+  # ── 위험물 검출 (lighter / powerbank · 직접 학습, 2클래스) ──
+  # 화기 위험구역(`zones.hazard_ids`)에서 방향을 맞춘 뒤에만 돈다 — 다른 구역·이동 중에는 추론하지
+  # 않으므로 위험물이 보여도 경고가 없다. 확정은 PPE 위반과 같은 창·횟수 규칙이고, 확정되면
+  # 가벼운 경고 `hazard_notice`(source `detector`, 방송 + 관제 이력)를 남긴다 (ADR-43 대안 ⓐ 개정).
+  # 모델 파일이 없으면 기록만 남기고 꺼진다 — VLM `hazard_item` 판독은 따로 돈다.
+  # `normal` 클래스는 없다: 미검출 = 정상. 어댑터는 ppe 와 같은 YoloxAdapter 다.
+  #
+  # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 hazard-v1 · XIAO 실측 전 후보
+  #   계열     YOLOX-S (Apache-2.0 · Megvii) · 640x640 · 2클래스 · 출발점 COCO yolox_s.pth
+  #   데이터   lighter_powerbank_coco_2class (zip sha256 a674957c…faae52) — 전부 CC BY 4.0
+  #            · Roboflow vision-wajsm/lighter-wvso3 · vision-wajsm/portable-charger
+  #            · ia-act/my-first-project-3xogl (정상 배경 사진 포함)
+  #            (train 1,781장 · lighter 박스 686 · powerbank 박스 743 · 배경 800)
+  #   설정     100 epoch (no-aug 15) · batch 16 · fp16 · seed 20261002 · mosaic 0.5 · mixup 없음
+  #            best = epoch 96 · valid AP50:95 0.736
+  #   산출물   models/hazard.onnx · 35,776,558 bytes
+  #            sha256 7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746
+  #   ⚠️ 출력은 디코드 전 원시 [1, 8400, 7] 이다 (ppe 와 같은 규칙).
+  #
+  # ⚠️ 아래 수치는 공개 사진 기준이며 확정값이 아니다. 실기는 XIAO 로 다시 잰다.
+  #      test AP50 0.970 (COCOeval) · conf 0.5 에서 정상 사진 오경보 3/100 · 위험물 미검출 4/123
+  #      (오경보 3장은 라벨이 빠진 라이터 사진이다 — 실제로는 맞춘 것)
+  hazard:
+    model_path: "models/hazard.onnx"
+    model_family: yolox
+    input_size: 640
+    conf_threshold: 0.5
+    iou_threshold: 0.45
+    # 모델 출력 순서 — 모델과의 계약이다. 바꾸지 않는다 (`host/vision/hazard_detector.py`).
+    classes: [lighter, powerbank]
+    # ── 팀이 고르는 값 ──
+    # 위험물 검출기를 쓸지. 끄면 위험구역에서도 VLM 판독만 남는다.
+    enabled: true
+    # 금지 대상 — 위험구역에서 이 물건만 경고한다. `classes` 의 부분집합이어야 한다.
+    # 금지 구역은 여기가 아니라 `zones.hazard_ids` 에서 고른다.
+    alarm_classes: [lighter, powerbank]
+    # 확정 — 같은 물건이 이 시간 창 안에서 `hits_required` 번 이상 보여야 경고한다. PPE 위반
+    # (`vision.ppe.violation_window_ms`·`violation_hits_required`)과 같은 값에서 시작한다.
+    # 위험구역 방문은 방향을 맞춘 뒤 적어도 이 창만큼 머문다 (`change_detect.visit_max_ms` 안에서).
+    confirm_window_ms: 1500
+    hits_required: 3
 
   # ── 쓰러짐 규칙 판정 (FR-9 · 4.8.3 · ADR-35 대안 ⓓ) ──
   # 추론마다 돌며 쓰러짐 의심 진입에 쓴다. 확정은 VLM 이 한다 (ADR-42 결정 2).
@@ -375,9 +423,14 @@ zones:
   # FR-7.1 — 시연 규모에 맞춘다. 공장 시연 시나리오는 4개(A→B→C→D)를 돈다 (ADR-43).
   # 5개는 화면상 구분이 어렵다.
   ids: [A, B, C, D]
-  # 화기 위험구역 — 방문 때 위험물(라이터·보조배터리)을 VLM 으로 판독하는 구역이다
-  # (`change_detect.vlm_hazard_items`). `ids` 의 부분집합이어야 한다.
+  # 화기 위험구역(위험물 금지구역) — 방문 때 위험물(라이터·보조배터리)을 검출기(`vision.hazard`)와
+  # VLM(`change_detect.vlm_hazard_items`)으로 보는 구역이다. **여기 없는 구역에서는 위험물이 보여도
+  # 경고하지 않는다.** `ids` 의 부분집합이어야 한다. 비우면(`[]`) 위험물 경고가 없다.
   hazard_ids: [C]
+  # 관제의 구역별 공장 모드 점검 설정. 미지정 구역은 안전모·조끼 모두 필수다.
+  # 개체 local.yaml 예: {A: {name: 출입구, helmet: true, vest: false, note: ""}}
+  # 신선한 지도 위치가 도착 반경 안에 있을 때만 사용. 위치 불명/구역 밖은 기본 두 항목.
+  policies: {}
   # FR-7.4 — 도착 허용오차(구역의 크기가 아니다). 반경의 두 배를 벗어나야 떠난 것으로 본다.
   arrival_radius_mm: 300
   # 앵커에 바라볼 방향(yaw)이 있으면 `ZONE_INSPECT` 가 제자리에서 돌아 맞춘 뒤 본다 —

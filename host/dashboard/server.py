@@ -37,10 +37,12 @@ from pydantic import (
     StrictStr,
     ValidationError,
 )
+from starlette.concurrency import run_in_threadpool
 
 from host.behavior.mission import available_modes
 from host.cloud.broadcast import Broadcaster
 from host.dashboard.commands import CommandService
+from host.dashboard.planning import PlanError, PlanInput, PlanningService
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
 if TYPE_CHECKING:
@@ -55,8 +57,11 @@ CAMERA_PERIOD_S = 0.1
 # 새 추론 결과가 나왔는지 보는 주기 — 추론 주기(25fps = 40ms)보다 짧아야 화면이 추론률을 따라간다.
 VISION_POLL_PERIOD_S = 0.01
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
-#: 흰 관제 화면(정본) — 같은 앱을 감싸 테마만 입힌다. 운용 서버도 이 주소로 연다 (예전엔 404).
-GLASS_PREVIEW_DIR = Path(__file__).resolve().parent / "glass-preview"
+#: 흰색 관제 화면(#314). 본체 index도 같은 테마를 직접 읽는다. 정적 폴더와 같은
+#: 부모 아래에 있으면 `/glass-preview/` 로 내보내고 `/` 를 그리로 보낸다. **검정(과거 버전)
+#: 화면은 구버전이다** — 2026-10-02 운용자 결정. `/index.html` 은 흰색 화면이 iframe 으로 쓰므로 남긴다.
+GLASS_DIR_NAME = "glass-preview"
+GLASS_PATH = "/glass-preview"
 # 관제 화면은 빌드 없이 이 폴더를 그대로 내보낸다. three.js 도 `static/vendor/` 에 싣는다
 # (검사는 `npm run check`).
 
@@ -395,7 +400,9 @@ async def _read_body[B: BaseModel](
     try:
         return model.model_validate(body)
     except ValidationError as exc:
-        raise _RefusedError(invalid or str(exc.errors()[0]["loc"][0]), 400) from exc
+        first = exc.errors()[0]
+        detail = str(first["loc"][0]) if first["loc"] else first["msg"]
+        raise _RefusedError(invalid or detail, 400) from exc
 
 
 def _broadcast_routes(broadcast: Broadcaster | None) -> APIRouter:
@@ -560,6 +567,61 @@ def _command_routes(commands: CommandService) -> APIRouter:
     return router
 
 
+def _mount_dashboard(app: FastAPI, static_dir: Path | None) -> None:
+    """단일·플릿 서버가 같은 흰색 기본 화면을 제공한다."""
+    if static_dir is None or not static_dir.is_dir():
+        return
+    glass_dir = static_dir.parent / GLASS_DIR_NAME
+    if glass_dir.is_dir():
+
+        @app.get("/", include_in_schema=False)
+        async def white_dashboard(request: Request) -> RedirectResponse:
+            query = "?" + request.url.query if request.url.query else ""
+            return RedirectResponse(f"{GLASS_PATH}/{query}", status_code=307)
+
+        app.mount(GLASS_PATH, _RevalidatedStatic(directory=glass_dir, html=True), name="glass")
+    app.mount("/static", _RevalidatedStatic(directory=static_dir, html=True), name="static")
+    app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
+
+
+def _planning_routes(planning: PlanningService) -> APIRouter:
+    router = APIRouter(prefix="/api/planning", dependencies=_LOCAL_ORIGIN)
+
+    async def call[T](method: Callable[..., T], *args: Any) -> T:
+        try:
+            return await run_in_threadpool(method, *args)
+        except PlanError as exc:
+            raise _RefusedError(str(exc), exc.status) from exc
+        except (OSError, ValueError, KeyError) as exc:
+            raise _RefusedError(
+                "운용 설정을 읽거나 저장하지 못했습니다. 서버 설정 파일을 확인하세요.", 503
+            ) from exc
+
+    @router.get("")
+    async def snapshot() -> dict[str, Any]:
+        return await call(planning.snapshot)
+
+    @router.get("/map.png")
+    async def map_image() -> Response:
+        return Response(
+            await call(planning.map_png),
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/preview")
+    async def preview(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, PlanInput)
+        return await call(planning.preview, plan)
+
+    @router.post("")
+    async def save(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, PlanInput)
+        return await call(planning.save, plan)
+
+    return router
+
+
 def create_app(
     state: DashboardState,
     commands: CommandService | None = None,
@@ -571,6 +633,7 @@ def create_app(
     broadcast: Broadcaster | None = None,
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
+    planning: PlanningService | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -709,6 +772,8 @@ def create_app(
             )
 
     app.include_router(_broadcast_routes(broadcast))
+    if planning is not None:
+        app.include_router(_planning_routes(planning))
     if commands is not None:
         app.include_router(_command_routes(commands))
 
@@ -728,19 +793,7 @@ def create_app(
                 websocket, vision_hub, _send_frames, "Vision channel is read-only"
             )
 
-    if static_dir is not None and static_dir.is_dir():
-        # mount 는 등록 순서대로 탐색하므로 API·WS 경로를 먼저 등록하고 마지막에 붙인다.
-        if GLASS_PREVIEW_DIR.is_dir():
-            # 첫 주소는 흰 화면(정본)으로 — 검정(앱 단독) 화면이 먼저 뜨지 않게.
-            app.add_api_route(
-                "/", lambda: RedirectResponse("/glass-preview/"), include_in_schema=False
-            )
-            app.mount(
-                "/glass-preview",
-                _RevalidatedStatic(directory=GLASS_PREVIEW_DIR, html=True),
-                name="glass-preview",
-            )
-        app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
+    _mount_dashboard(app, static_dir)
 
     return app
 
@@ -797,18 +850,7 @@ def create_fleet_app(
         # `/` 의 정적 마운트는 http 범위만 받으므로, 매칭되지 않은 WS 를 잡는 경로를 먼저 등록한다.
         await websocket.close(code=1008)
 
-    if static_dir is not None and static_dir.is_dir():
-        if GLASS_PREVIEW_DIR.is_dir():
-            # 첫 주소는 흰 화면(정본)으로 — 검정(앱 단독) 화면이 먼저 뜨지 않게.
-            app.add_api_route(
-                "/", lambda: RedirectResponse("/glass-preview/"), include_in_schema=False
-            )
-            app.mount(
-                "/glass-preview",
-                _RevalidatedStatic(directory=GLASS_PREVIEW_DIR, html=True),
-                name="glass-preview",
-            )
-        app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
+    _mount_dashboard(app, static_dir)
     return app
 
 
@@ -825,6 +867,7 @@ def running_server(
     broadcast: Broadcaster | None = None,
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
+    planning: PlanningService | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     app = create_app(
@@ -838,6 +881,7 @@ def running_server(
         broadcast=broadcast,
         map_view=map_view,
         nav_status=nav_status,
+        planning=planning,
     )
     with serving(app, port) as server:
         yield server

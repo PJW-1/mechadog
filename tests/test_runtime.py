@@ -4277,3 +4277,90 @@ def test_main_finishes_the_broadcast_preload_before_the_loop(cfg, monkeypatch) -
     monkeypatch.setattr(module.sys, "stdin", None)
     assert module.main(["--device", "test", "--no-vision"]) == 0
     assert events == ["synth_loaded", "serve"]
+
+
+# ── 위험물 검출기 — 금지구역에서만 켜고 경고한다 (ADR-43 대안 ⓐ 개정) ────────────────
+
+
+class HazardVision(FakeVision):
+    """위험물 검출기가 붙은 워커 대역 — 켜고 끈 순서를 남긴다."""
+
+    hazard_available = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.switches: list[bool] = []
+
+    def set_hazard_enabled(self, enabled: bool) -> None:
+        self.switches.append(enabled)
+
+
+def _hazard_runtime(config: dict, clock: FakeClock, tmp_path: Path, *, hazard_ids: list):
+    from copy import deepcopy
+
+    cfg = _zone_config(deepcopy(config), tmp_path)
+    cfg["zones"]["hazard_ids"] = hazard_ids
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    vision = HazardVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(cfg, mode="factory"),
+        blackbox=blackbox,
+    )
+    runtime.start_patrol(0)
+    return runtime, vision, blackbox
+
+
+def _lighter_visit(runtime, vision, *, frames: int = 40) -> None:
+    """구역 밖에서 A 로 와서 라이터가 확정된 프레임을 본 뒤 다시 떠난다."""
+    from dataclasses import replace
+
+    from host.vision.hazard_detector import HazardVerdict
+
+    lighter = Detection("lighter", 0.92, (200.0, 150.0, 260.0, 300.0))
+    verdict = HazardVerdict(detections=(lighter,), confirmed=("lighter",))
+    at = 100
+    for index in range(frames + 2):
+        pose = AWAY if index == 0 or index == frames + 1 else _at("A")
+        runtime.note_pose(pose, at)
+        vision.result = replace(_zone_frame(at, at, detections=[]), hazard=verdict)
+        runtime.tick(at)
+        at += 100
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_lighter_in_the_forbidden_zone_reaches_the_event_history(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """금지구역에서 검출기가 확정하면 관제 이력에 가벼운 경고가 남고 방송 문장이 붙는다.
+    검출기는 그 방문 동안만 켜지고 떠나면 꺼진다."""
+    runtime, vision, blackbox = _hazard_runtime(config, clock, tmp_path, hazard_ids=["A"])
+    _lighter_visit(runtime, vision)
+    entries = [e for e in blackbox.feed() if e.event_type == "hazard_notice"]
+    assert len(entries) == 1
+    assert entries[0].judgement == {
+        "zone": "A",
+        "items": ["lighter"],
+        "source": "detector",
+        "vlm": False,
+        "sentence": "A 구역에서 화기 위험물 라이터가 보입니다.",
+    }
+    assert [d["label"] for d in entries[0].detections] == ["lighter"], "박스가 근거로 남는다"
+    assert True in vision.switches
+    assert vision.switches[-1] is False, "방문이 끝나면 끈다"
+    assert runtime.behavior.state == "PATROL", "가벼운 경고다 — L3 로 올리지 않는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_lighter_outside_the_forbidden_zones_raises_no_alarm(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """금지구역이 아니면 검출기를 켜지 않고, 확정이 실려 와도 경고하지 않는다."""
+    runtime, vision, blackbox = _hazard_runtime(config, clock, tmp_path, hazard_ids=[])
+    _lighter_visit(runtime, vision)
+    assert [e for e in blackbox.feed() if e.event_type == "hazard_notice"] == []
+    assert True not in vision.switches

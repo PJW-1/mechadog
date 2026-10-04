@@ -5,6 +5,7 @@ on:
     branches: [main, dev]
     paths:
       - 'host/dashboard/static/**'
+      - 'host/dashboard/glass-preview/**'
       - 'host/dashboard/web-tests/**'
       - 'host/dashboard/scripts/**'
       - 'host/dashboard/package.json'
@@ -14,6 +15,7 @@ on:
     branches: [main, dev]
     paths:
       - 'host/dashboard/static/**'
+      - 'host/dashboard/glass-preview/**'
       - 'host/dashboard/web-tests/**'
       - 'host/dashboard/scripts/**'
       - 'host/dashboard/package.json'

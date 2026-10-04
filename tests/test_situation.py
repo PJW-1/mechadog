@@ -148,6 +148,21 @@ def test_hazard_notice_with_zone() -> None:
     assert sentence == "C 구역에서 라이터나 보조배터리 같은 화기 위험물이 보입니다."
 
 
+def test_hazard_notice_from_the_detector_names_what_it_saw() -> None:
+    """검출기 확정은 무엇을 봤는지 안다 — VLM 처럼 «라이터나 보조배터리 같은» 으로 뭉뚱그리지 않는다."""
+    sentence = describe(
+        "hazard_notice", {"zone": "C", "items": ["lighter", "powerbank"], "source": "detector"}
+    )
+    assert sentence == "C 구역에서 화기 위험물 라이터·보조배터리가 보입니다."
+    one = describe("hazard_notice", {"zone": "C", "items": ["powerbank"], "source": "detector"})
+    assert one == "C 구역에서 화기 위험물 보조배터리가 보입니다."
+
+
+def test_hazard_notice_from_the_detector_without_known_items_falls_back() -> None:
+    sentence = describe("hazard_notice", {"zone": "C", "items": ["knife"], "source": "detector"})
+    assert sentence == "C 구역에서 라이터나 보조배터리 같은 화기 위험물이 보입니다."
+
+
 def test_hazard_notice_empty_judgement() -> None:
     assert describe("hazard_notice", {}) == "라이터나 보조배터리 같은 화기 위험물이 보입니다."
 

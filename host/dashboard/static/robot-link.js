@@ -70,7 +70,10 @@ export class RobotLink {
         body: JSON.stringify(body ?? {}),
         signal: controller?.signal,
       });
-      if (!response.ok) throw new Error('명령이 거절되었습니다. (HTTP ' + response.status + ')');
+      if (!response.ok) {
+        const detail=await response.json().catch(()=>null);
+        throw new Error((typeof detail?.error==='string'?detail.error:'요청이 거절되었습니다.')+' (HTTP '+response.status+')');
+      }
       return await response.json();
     } finally {
       if (timer) clearTimeout(timer);

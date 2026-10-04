@@ -168,7 +168,7 @@ function syncMain(){
  $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):operations.live?'관제 서버 연결':'실제 데이터 대기';
  // ⚠️ **머리글의 제어 문구도 사실대로 말한다.** 연결돼 있는데 "정지 명령 전달 불가" 라고 적혀 있으면
  // 운용자가 비상정지를 누르지 않거나, 반대로 화면 문구를 믿고 물리 정지 수단을 찾는다.
- {const note=document.querySelector('.safety-note>span:last-child');note.firstChild.nodeValue=operations.live?'실시간 제어 연결 ':'실시간 제어 잠김 ';note.querySelector('small').textContent=operations.live?'비상정지 즉시 전송':'미연결 · 정지 명령 전달 불가';}
+ {const note=document.querySelector('.safety-note>span:last-child');note.firstChild.nodeValue=operations.live&&!operations.readOnly?'실시간 제어 연결 ':'실시간 제어 잠김 ';note.querySelector('small').textContent=operations.readOnly?'조회·계획 전용 · 정지 명령 전달 불가':operations.live?'비상정지 즉시 전송':'미연결 · 정지 명령 전달 불가';}
  // 웹 시연 임무 칸은 실제 연결에서 숨긴다 — 실제 순찰과 헷갈린다. 실제 순찰은 제어 · 장치 화면에 있다.
  document.querySelector('.mission-summary').hidden=operations.live;
  syncTelemetry();
@@ -186,11 +186,11 @@ function syncMain(){
   $('frame-time').innerHTML='마지막 영상 수신　— <span class="muted">· 관측 전용</span>';
  }
  $('estop').classList.toggle('preview-latched',operations.estop);
- $('estop').classList.toggle('is-live',operations.live);
- $('stop-label').firstChild.nodeValue=operations.live?'긴급 정지':'정지 안내';
- $('estop').setAttribute('aria-label',operations.live?'긴급 정지 · 로봇에 즉시 전송':operations.estop?'정지 안내 · 웹 예시 정지 중':'정지 안내 · 실제 장비 미연결');
+ $('estop').classList.toggle('is-live',operations.live&&!operations.readOnly);
+ $('stop-label').firstChild.nodeValue=operations.live&&!operations.readOnly?'긴급 정지':'정지 안내';
+ $('estop').setAttribute('aria-label',operations.readOnly?'정지 안내 · 조회·계획 전용 화면':operations.live?'긴급 정지 · 로봇에 즉시 전송':operations.estop?'정지 안내 · 웹 예시 정지 중':'정지 안내 · 실제 장비 미연결');
  // 버튼에 적힌 말과 실제로 하는 일이 다르면 안 된다.
- {const note=$('estop').querySelector('.mobile-stop-note');if(note)note.textContent=operations.live?'연결됨 · 즉시 전송':'실제 정지 불가';}
+ {const note=$('estop').querySelector('.mobile-stop-note');if(note)note.textContent=operations.readOnly?'조회·계획 전용':operations.live?'연결됨 · 즉시 전송':'실제 정지 불가';}
  $('demo-toggle').innerHTML=icon(playing?'pause':'play');
  $('demo-toggle').setAttribute('aria-label',playing?'예시 순찰 일시정지':operations.mission.status==='paused'?'예시 순찰 재개':'예시 순찰 준비');
  $('demo-toggle').disabled=operations.blocked&&!playing;
@@ -373,6 +373,7 @@ function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!
 // 그만큼 늦고, 그 모달은 "장비가 연결되지 않았어요" 라고 거짓을 말한다. 연결이
 // 없을 때만 안내를 띄운다 — 그때는 실제로 보낼 곳이 없다.
 function onEstopPressed(){
+ if(operations.readOnly){toast('조회·계획 전용 서버입니다. 이 화면에서는 실제 정지 명령을 보낼 수 없습니다.');return}
  if(operations.live){
   operations.requestEstop().then(({serverAccepted})=>toast(serverAccepted
    ?'서버가 비상정지 명령을 보냈습니다. 실제 정지는 본체 상태로 확인하세요.'

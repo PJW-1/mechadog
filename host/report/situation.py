@@ -66,11 +66,27 @@ def _describe_zone_notice(judgement: dict[str, Any]) -> str:
     return f"{_zone_prefix(judgement.get('zone'))}물건이 반출된 것으로 보입니다."
 
 
+#: 위험물 검출기가 확정한 물건 이름 → 방송에서 읽을 말 (`HAZARD_CLASSES` 순서).
+_HAZARD_NAMES = {"lighter": "라이터", "powerbank": "보조배터리"}
+
+
 def _describe_hazard_notice(judgement: dict[str, Any]) -> str:
     """화기 위험구역의 위험물 가벼운 경고 (`hazard_notice`). `zone_notice` 와 같이 L3 없는
     경고라 «확인이 필요합니다» 없이 사실만 말한다 (`ZoneInspector._leave`).
+
+    검출기 확정(`source` 가 `detector`)은 무엇을 봤는지 안다 — 그 이름을 말한다. VLM 판독은
+    «예·아니요» 뿐이라 둘 중 무엇인지 모른다.
     """
-    return f"{_zone_prefix(judgement.get('zone'))}라이터나 보조배터리 같은 화기 위험물이 보입니다."
+    prefix = _zone_prefix(judgement.get("zone"))
+    items = judgement.get("items")
+    names = (
+        [_HAZARD_NAMES[item] for item in items if item in _HAZARD_NAMES]
+        if isinstance(items, list)
+        else []
+    )
+    if judgement.get("source") == "detector" and names:
+        return f"{prefix}화기 위험물 {'·'.join(names)}가 보입니다."
+    return f"{prefix}라이터나 보조배터리 같은 화기 위험물이 보입니다."
 
 
 def _describe_path_blocked(judgement: dict[str, Any]) -> str:

@@ -25,6 +25,7 @@ class PpeVerdict:
     reason: str = ""
     confirmed: bool = False
     clipped: bool = False
+    required: tuple[str, ...] = ("helmet", "vest")
 
 
 class PpeDetector:
@@ -39,6 +40,13 @@ class PpeDetector:
         self._window_ms = int(spec["violation_window_ms"])
         self._hits_required = int(spec["violation_hits_required"])
         self._hits: dict[int, deque[int]] = {}
+        self._required: tuple[str, ...] = ("helmet", "vest")
+
+    def set_requirements(self, required: tuple[str, ...]) -> None:
+        """워커 스레드에서만 호출. 구역이 바뀌면 이전 요구 항목의 위반 창을 버린다."""
+        if required != self._required:
+            self._required = required
+            self.reset()
 
     def reset(self) -> None:
         self._hits.clear()
@@ -51,9 +59,14 @@ class PpeDetector:
             self.reset()
             return None
         track = max(tracks, key=lambda t: t.height)
+        required = self._required
+        if not required:
+            return PpeVerdict(track.track_id, OK, "이 구역은 PPE 검사 미지정", required=required)
         self._hits = {track.track_id: self._hits.get(track.track_id, deque())}
-        if self._clip and track.box[1] <= self._margin:
-            return PpeVerdict(track.track_id, UNDETERMINED, "머리 클리핑", clipped=True)
+        if "helmet" in required and self._clip and track.box[1] <= self._margin:
+            return PpeVerdict(
+                track.track_id, UNDETERMINED, "머리 클리핑", clipped=True, required=required
+            )
 
         height, width = image.shape[:2]
         x1, y1, x2, y2 = track.box
@@ -61,21 +74,29 @@ class PpeDetector:
         left, top = max(0, int(x1 - dx)), max(0, int(y1 - dy))
         right, bottom = min(width, int(x2 + dx)), min(height, int(y2 + dy))
         if right - left < 8 or bottom - top < 8:
-            return PpeVerdict(track.track_id, UNDETERMINED, "크롭 실패")
+            return PpeVerdict(track.track_id, UNDETERMINED, "크롭 실패", required=required)
         found: list[Detection] = self._detector.detect(image[top:bottom, left:right])
         heads = [d for d in found if d.label in ("helmet", "no_helmet")]
         torsos = [d for d in found if d.label in ("vest", "no_vest")]
-        if not heads or not torsos:
-            reason = "머리 미검출" if not heads else "몸통 미검출"
-            return PpeVerdict(track.track_id, UNDETERMINED, reason)
-        if self._clip and min(d.box[1] for d in heads) + top <= self._margin:
-            return PpeVerdict(track.track_id, UNDETERMINED, "머리 클리핑", clipped=True)
-        if not any(d.label in ("no_helmet", "no_vest") for d in found):
+        if ("helmet" in required and not heads) or ("vest" in required and not torsos):
+            reason = "머리 미검출" if "helmet" in required and not heads else "몸통 미검출"
+            return PpeVerdict(track.track_id, UNDETERMINED, reason, required=required)
+        if (
+            "helmet" in required
+            and self._clip
+            and min(d.box[1] for d in heads) + top <= self._margin
+        ):
+            return PpeVerdict(
+                track.track_id, UNDETERMINED, "머리 클리핑", clipped=True, required=required
+            )
+        if not any(d.label in tuple("no_" + item for item in required) for d in found):
             self._hits[track.track_id].clear()
-            return PpeVerdict(track.track_id, OK)
+            return PpeVerdict(track.track_id, OK, required=required)
 
         hits = self._hits[track.track_id]
         hits.append(now_ms)
         while hits and now_ms - hits[0] > self._window_ms:
             hits.popleft()
-        return PpeVerdict(track.track_id, VIOLATION, confirmed=len(hits) >= self._hits_required)
+        return PpeVerdict(
+            track.track_id, VIOLATION, confirmed=len(hits) >= self._hits_required, required=required
+        )
