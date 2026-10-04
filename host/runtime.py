@@ -338,7 +338,14 @@ class Runtime:
         zone_ids = tuple(str(label) for label in config["zones"]["ids"])
         # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
         try:
-            anchors: tuple[Zone, ...] = ZoneStore.load(maps_dir(config), zone_ids).as_tuple()
+            # 길 찾기가 쓰는 지도(`--maps`)의 구역을 그대로 쓴다 — 설정의 maps_dir 를 따로 읽으면
+            # 다른 지도를 줬을 때 도착 판정(길 찾기)과 점검(카메라)이 서로 다른 자리를 본다.
+            navigator_zones = getattr(self._navigator, "zones", None)
+            anchors: tuple[Zone, ...] = (
+                navigator_zones.as_tuple()
+                if isinstance(navigator_zones, ZoneStore)
+                else ZoneStore.load(maps_dir(config), zone_ids).as_tuple()
+            )
         except (OSError, ValueError) as exc:
             LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
             anchors = ()

@@ -879,3 +879,10 @@ def test_sent_commands_reach_the_navigator(config: dict, clock: FakeClock) -> No
     runtime.send_immediate(CommandEncoder().encode("MOVE", step=40, angle=0))
     assert navigator._move_seq == before + 1
     assert navigator._stopped_since_ms is None
+
+
+def test_zone_inspector_uses_the_navigator_zone_anchors(config, clock) -> None:
+    """도착 판정(길 찾기)과 점검(카메라)이 같은 구역 좌표를 본다 — 설정 지도와 다른 --maps 를 줘도."""
+    runtime, navigator = _runtime(config, clock)
+    anchors = {zone.label: (zone.x, zone.y) for zone in runtime._zone_inspector._anchors}
+    assert anchors == {label: navigator.zones.xy(label) for label in navigator.zones.labels}
