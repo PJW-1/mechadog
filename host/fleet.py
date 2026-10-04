@@ -74,7 +74,7 @@ def telemetry_device(data: bytes) -> str | None:
     """텔레메트리의 개체 ID. 텔레메트리가 아니면(명령 응답 문자열·깨진 줄) None."""
     try:
         message = json.loads(data)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     device = message.get("device_id") if isinstance(message, dict) else None
     return device if isinstance(device, str) and device else None
