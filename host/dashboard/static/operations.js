@@ -27,24 +27,16 @@ function cleanText(value,max=1000){return typeof value==='string'?value.trim().s
 // 예전에는 person_found 만 AUTH 였고 나머지는 전부 SYSTEM 이라 PPE 필터가 아무것도 걸러내지 못했다.
 // 이름은 런타임(`runtime.py` 의 `_record_scene`·`FEED_TRANSITIONS`·`_announce_escalation`)이 정한다.
 export const EVENT_CATEGORIES=Object.freeze({PPE:'PPE',AUTH:'출입 인증',SAFETY:'안전 · 경보',OBJECT:'구역 · 물품',SYSTEM:'시스템'});
-const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',zone_notice:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY'};
+const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY'};
 export function eventCategory(name){return CATEGORY_OF[name]??'SYSTEM'}
-export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',zone_changed:'구역 물체 변화 확정',zone_notice:'물건 반출 경고',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
+export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',zone_changed:'구역 위험 확정',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
 // 단계가 바뀐 사유 (`escalation.py` 의 reason). 모르는 값은 원문 그대로 보인다.
-export const REASON_NAMES=Object.freeze({person_present:'사람 확인',unauthenticated_hold:'미인증 상태 지속',unauthenticated_left:'인증 요구 뒤 대상 이탈',AUTH_FAILED:'인증 실패 (시간 초과·시도 소진)',PPE_VIOLATION:'보호구 미착용 확정',ZONE_CHANGED:'구역 물체 변화 확정',PERSON_DOWN:'쓰러짐 확정',ONBOARD_FAILSAFE:'로봇 자체 안전 잠금',LINK_LOST:'링크 끊김',ESTOP:'비상정지',alarm_confirmed:'관리자 경보 확인',failsafe_confirmed:'안전 잠금 해제',failsafe_confirmed_alarm_kept:'안전 잠금 해제 — 경보 유지',authenticated:'인증 통과',target_lost:'대상 이탈',standby:'대기 전환',ppe_settled:'PPE 판정 종료'});
+export const REASON_NAMES=Object.freeze({person_present:'사람 확인',unauthenticated_hold:'미인증 상태 지속',unauthenticated_left:'인증 요구 뒤 대상 이탈',AUTH_FAILED:'인증 실패 (시간 초과·시도 소진)',PPE_VIOLATION:'보호구 미착용 확정',ZONE_CHANGED:'구역 위험 확정',PERSON_DOWN:'쓰러짐 확정',ONBOARD_FAILSAFE:'로봇 자체 안전 잠금',LINK_LOST:'링크 끊김',ESTOP:'비상정지',alarm_confirmed:'관리자 경보 확인',failsafe_confirmed:'안전 잠금 해제',failsafe_confirmed_alarm_kept:'안전 잠금 해제 — 경보 유지',authenticated:'인증 통과',target_lost:'대상 이탈',standby:'대기 전환',ppe_settled:'PPE 판정 종료'});
 export const reasonName=reason=>REASON_NAMES[reason]??(cleanText(reason,80)||'사유 미수신');
 const AUTH_TEXT={person_found:'검출 시점 · 인증 전',auth_required:'인증 요구됨',auth_granted:'통과',auth_failed:'실패 → 경보',voice_auth_granted:'암구호 확인 · 사원증 대기'};
 const shown=value=>typeof value==='number'?String(Math.round(value*100)/100):typeof value==='boolean'?(value?'예':'아니요'):cleanText(String(value??''),300)||'—';
-// 구역 물체 변화 (FR-8.3). 종류 이름은 `change_detect.py` 의 `ChangeKind` 와 1:1 이다.
-const CHANGE_KINDS={removed:'반출',added:'반입',person:'인원 출현',fallen_object:'넘어짐·무너짐',blocked_path:'통로 막힘'};
-// 격자 칸 `(열, 행)` → 위치 이름. 왼쪽 위가 (0, 0) 이고 픽셀이 아니라 칸이다. 3×3 이면 왼쪽/가운데/오른쪽 × 위/가운데/아래.
-// ⚠️ 칸이나 격자 형식이 틀리면 null — 위치를 지어내지 않는다 (격자가 없으면 3×3 이라고 가정하지도 않는다).
-function cellName(cell,grid){
- if(!Array.isArray(cell)||!Array.isArray(grid)||cell.length!==2||grid.length!==2||![...cell,...grid].every(n=>Number.isSafeInteger(n)&&n>=0)||cell[0]>=grid[0]||cell[1]>=grid[1])return null;
- const [c,r]=cell,[cols,rows]=grid;
- if(cols===3&&rows===3)return c===1&&r===1?'가운데':['왼쪽','가운데','오른쪽'][c]+' '+['위','가운데','아래'][r];
- return '열 '+(c+1)+'/'+cols+' · 행 '+(r+1)+'/'+rows;
-}
+// 구역 VLM 위험 확정 (WBS 3.6.4). 종류 이름은 `zone_inspector.py` 의 `ZONE_HAZARDS` 와 1:1 이다.
+const CHANGE_KINDS={fallen_object:'넘어짐·무너짐',blocked_path:'통로 막힘'};
 /** 사건 이름과 서버가 실어 준 근거 → 인증·PPE 칸과 근거 표. 근거가 없으면 지어내지 않는다. */
 export function describeEvidence(name,payload){
  const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
@@ -60,10 +52,9 @@ export function describeEvidence(name,payload){
  if(name==='zone_changed'){
   const changes=Array.isArray(j.changes)?j.changes.filter(c=>c&&typeof c==='object').slice(0,12):[];
   rows.push(['구역',shown(j.zone)]);
-  // VLM 판독(source:'vlm')에는 라벨·개수·칸이 없다 — 규칙 값처럼 빈 칸을 채우지 않고 위치도 지어내지 않는다.
-  for(const c of changes){if(c.source==='vlm'){rows.push([CHANGE_KINDS[c.kind]??(cleanText(c.kind,40)||'종류 미수신'),'VLM 판독 · 위치 없음']);continue}const where=cellName(c.cell,j.grid);rows.push([CHANGE_KINDS[c.kind]??(cleanText(c.kind,40)||'종류 미수신'),(cleanText(c.label,60)||'라벨 미수신')+(Number.isSafeInteger(c.count)&&c.count>0?' ×'+c.count:'')+(where?' · '+where:'')])}
+  // VLM 판독(source:'vlm')에는 라벨·개수·칸이 없다 — 빈 칸을 채우지 않고 위치도 지어내지 않는다.
+  for(const c of changes)rows.push([CHANGE_KINDS[c.kind]??(cleanText(c.kind,40)||'종류 미수신'),c.source==='vlm'?'VLM 판독 · 위치 없음':'판독 출처 미수신']);
   if(!changes.length)rows.push(['변화 내역','미수신']);
-  if(Number.isSafeInteger(j.baseline_ms)&&j.baseline_ms>=0&&j.baseline_ms<=8640000000000000)rows.push(['기준 시각',new Date(j.baseline_ms).toLocaleString('ko-KR',{hour12:false})]);
  }
  // 구역 안 VLM 가벼운 경고 — 구역만 싣는다 (LiDAR 막힘은 구역이 없다).
  if((name==='hazard_notice'||name==='path_blocked')&&j.zone!=null)rows.push(['구역',shown(j.zone)]);
@@ -288,16 +279,8 @@ export class Operations {
  requestResetSafe(){return this.requestDevice('안전 해제',()=>this.link.resetSafe())}
  // 경보(L3) 확인. ⚠️ **안전 해제와 합치지 않는다** — 확인하는 대상이 다르다 (ADR-26).
  requestAlarmConfirm(){return this.requestDevice('경보 확인',()=>this.link.confirmAlarm())}
- // 구역 기준 재등록 (WBS 3.6.5). ⚠️ **사건을 보낸 로봇의 서버로만** 보낸다 — 고른 로봇이 아니다.
- // 명령 API 가 열렸다고 /health 가 말한 자리(read_only:false)의 실시간 zone_changed 만 받는다.
+ // 명령 API 가 열렸다고 /health 가 말했나(read_only:false). 읽기 전용 서버로는 명령을 보내지 않는다.
  setCommandsOpen(open,robot=ROBOTS[0]){this.slots[robot].commandsKnown=true;this.slots[robot].commandsOpen=open===true;this.emit('mode')}
- canResetZoneBaseline(event){const slot=this.slots[event?.slot];return this.live&&event.source==='LIVE_FEED'&&event.event==='zone_changed'&&!!event.zoneId&&!!slot?.link&&slot.commandsOpen===true}
- requestZoneBaseline(id){
-  const event=this.events.find(e=>e.id===id);
-  if(!this.canResetZoneBaseline(event))throw new Error('이 사건으로는 구역 기준을 다시 등록할 수 없습니다.');
-  const link=this.slots[event.slot].link;
-  return this.requestDevice('구역 '+event.zoneId+' 기준 재등록',()=>link.zoneBaseline(event.zoneId),event.slot);
- }
  requestGoto(x,y){if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('좌표가 숫자가 아닙니다.');return this.requestDevice('지도 이동 ('+x.toFixed(2)+', '+y.toFixed(2)+')',()=>this.link.goto(x,y))}
  requestLocate(zone){return this.requestDevice('위치 알려주기 · 구역 '+zone,()=>this.link.locate(zone))}
  get patrolZones(){const zones=this.policy?.patrol_zones;return Array.isArray(zones)?zones.filter(z=>typeof z==='string'&&/^[A-Za-z0-9_-]{1,16}$/.test(z)):[]}

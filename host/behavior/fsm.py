@@ -83,7 +83,7 @@ class Event(StrEnum):
     POSE_REACQUIRED = "POSE_REACQUIRED"  # 재측위 성공
     ZONE_ARRIVED = "ZONE_ARRIVED"  # 구역 도착
     ZONE_CLEAR = "ZONE_CLEAR"  # 검사 완료 & 변화 없음
-    ZONE_CHANGED = "ZONE_CHANGED"  # 물체 변화 확정 (FR-8.4)
+    ZONE_CHANGED = "ZONE_CHANGED"  # 구역 위험(넘어짐·무너짐) 확정 (FR-8.4)
     ZONE_ALARM_CONFIRMED = "ZONE_ALARM_CONFIRMED"  # 구역 변화 경보(L3)를 사람이 확인했다
 
 
