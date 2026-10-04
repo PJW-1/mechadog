@@ -6,7 +6,7 @@ import {Operations} from '../static/operations.js';
 import {OperationalPanels} from '../static/panels.js';
 import {RobotLink} from '../static/robot-link.js';
 import {LiveMap} from '../static/live-map.js';
-import {pointsFromZones} from '../static/route-planner.js';
+import {pointsFromZones, snapRoutePoint} from '../static/route-planner.js';
 
 const copy = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -80,7 +80,12 @@ function mapElement(ctx) {
   const svg = ctx.document.querySelector('[data-route-map]');
   svg.getBoundingClientRect = () => ({left: 0, top: 0, width: 1000, height: 1000}); return svg;
 }
-function clickMap(ctx, x, y) {mapElement(ctx).dispatchEvent(new ctx.dom.window.MouseEvent('click', {bubbles: true, clientX: x, clientY: y}));}
+function clickMap(ctx, x, y, options = {}) {
+  const svg = mapElement(ctx), init = {bubbles: true, clientX: x, clientY: y, ...options};
+  svg.dispatchEvent(new ctx.dom.window.MouseEvent('pointerdown', init));
+  ctx.document.dispatchEvent(new ctx.dom.window.MouseEvent('pointerup', init));
+  svg.dispatchEvent(new ctx.dom.window.MouseEvent('click', init));
+}
 function normalizedPoint(ctx, x, y) {
   const [left, top, width, height] = mapElement(ctx).getAttribute('viewBox').split(/\s+/).map(Number);
   return [(x - left) / width, (y - top) / height];
@@ -457,4 +462,104 @@ test('zone map does not fall back to an unrotated image when display metadata fa
   const ctx = await setup({displayMap: new Error('no map metadata')});
   try {assert.equal(ctx.document.querySelector('.plan-map-svg'), null); assert.equal(ctx.document.querySelector('.plan-map image'), null);}
   finally {ctx.close();}
+});
+
+
+test('snap tolerance covers all eight directions, with Shift and grid choices', () => {
+  const previous = {x: 1.03, y: 2.07};
+  for (const degrees of [0, 45, 90, 135, 180, -45, -90, -135]) {
+    const a = (degrees + 7) * Math.PI / 180, target = [previous.x + 2 * Math.cos(a), previous.y + 2 * Math.sin(a)];
+    const result = snapRoutePoint(target, previous);
+    assert.equal((result.angle + 360) % 360, (degrees + 360) % 360);
+    const delta = result.point.map((v, i) => v - [previous.x, previous.y][i]);
+    assert.ok(Math.abs(delta[0] * Math.sin(degrees * Math.PI / 180) - delta[1] * Math.cos(degrees * Math.PI / 180)) < 1e-6);
+    assert.deepEqual(snapRoutePoint(target, previous, {shift: true, grid: true}), {point: target, angle: null});
+    const outside = (degrees + 9) * Math.PI / 180;
+    assert.equal(snapRoutePoint([previous.x + Math.cos(outside), previous.y + Math.sin(outside)], previous).angle, null);
+  }
+  near(snapRoutePoint([1.24, 2.36], null, {grid: true}).point, [1.2, 2.4]);
+  const diagonal = snapRoutePoint([2.05, 3.04], previous, {grid: true});
+  near(diagonal.point, [2.03, 3.07]);
+});
+
+test('drawing shows a guide, snaps clicks and Shift releases the same target', async () => {
+  const ctx = await setup();
+  try {
+    const svg = mapElement(ctx);
+    svg.dispatchEvent(new ctx.dom.window.MouseEvent('pointermove', {clientX: 500, clientY: 880}));
+    assert.ok(svg.querySelector('[data-route-snap-guide]'));
+    assert.match(ctx.document.querySelector('[data-route-snap-status]').textContent, /0° 맞춤/);
+    clickMap(ctx, 500, 880); near([ctx.planner.current.draft.points.at(-1).x, ctx.planner.current.draft.points.at(-1).y], [5, 1]);
+    clickMap(ctx, 700, 880, {shiftKey: true}); near([ctx.planner.current.draft.points.at(-1).x, ctx.planner.current.draft.points.at(-1).y], [7, 1.2]);
+    ctx.document.querySelector('[data-route-grid]').click();
+    clickMap(ctx, 824, 637, {shiftKey: true}); near([ctx.planner.current.draft.points.at(-1).x, ctx.planner.current.draft.points.at(-1).y], [8.24, 3.63]);
+    clickMap(ctx, 934, 517); near([ctx.planner.current.draft.points.at(-1).x, ctx.planner.current.draft.points.at(-1).y], [9.44, 4.83]);
+  } finally {ctx.close();}
+});
+
+test('dragging a later vertex follows the previous point and Shift disables snapping', async () => {
+  const ctx = await setup();
+  try {
+    mapElement(ctx); const down = () => ctx.document.querySelector('[data-route-pin="1"] circle.route-pin').dispatchEvent(new ctx.dom.window.MouseEvent('pointerdown', {bubbles: true}));
+    down(); ctx.document.dispatchEvent(new ctx.dom.window.MouseEvent('pointermove', {clientX: 400, clientY: 880}));
+    near([ctx.planner.current.draft.points[1].x, ctx.planner.current.draft.points[1].y], [4, 1]);
+    assert.ok(ctx.document.querySelector('[data-route-snap-guide]'));
+    ctx.document.dispatchEvent(new ctx.dom.window.MouseEvent('pointermove', {clientX: 400, clientY: 880, shiftKey: true}));
+    near([ctx.planner.current.draft.points[1].x, ctx.planner.current.draft.points[1].y], [4, 1.2]);
+    assert.equal(ctx.document.querySelector('[data-route-snap-guide]'), null);
+    ctx.document.dispatchEvent(new ctx.dom.window.MouseEvent('pointerup'));
+  } finally {ctx.close();}
+});
+
+test('map adds only a small primary click and ignores drag, scrolling, cancellation and outside', async () => {
+  const ctx = await setup();
+  try {
+    for (const action of ['drag', 'wheel', 'scroll', 'cancel', 'outside', 'right', 'bare']) {
+      const svg = mapElement(ctx), init = {bubbles: true, clientX: 500, clientY: 500, button: action === 'right' ? 2 : 0};
+      if (action !== 'bare') svg.dispatchEvent(new ctx.dom.window.MouseEvent('pointerdown', init));
+      if (action === 'drag') ctx.document.dispatchEvent(new ctx.dom.window.MouseEvent('pointermove', {...init, clientX: 520}));
+      if (action === 'wheel') svg.dispatchEvent(new ctx.dom.window.WheelEvent('wheel', {bubbles: true}));
+      if (action === 'scroll') ctx.document.dispatchEvent(new ctx.dom.window.Event('scroll'));
+      if (action === 'cancel') ctx.document.dispatchEvent(new ctx.dom.window.MouseEvent('pointercancel', init));
+      const end = {...init, clientX: action === 'outside' ? 1001 : 500};
+      ctx.document.dispatchEvent(new ctx.dom.window.MouseEvent('pointerup', end));
+      svg.dispatchEvent(new ctx.dom.window.MouseEvent('click', end));
+      assert.equal(ctx.planner.current.draft.points.length, 2, action);
+    }
+    clickMap(ctx, 500, 500); assert.equal(ctx.planner.current.draft.points.length, 3);
+  } finally {ctx.close();}
+});
+
+test('blocked segment hover and keyboard focus expose the actual server reason', async () => {
+  const reason = '벽·가구까지 거리 12 cm — 몸 반경 미달';
+  const ctx = await setup({preview: () => ({valid: false, invalid_points: [], segments: [{from_index: 0, to_index: 1, valid: false, reason}]})});
+  try {
+    await ctx.planner.validate(); const segment = ctx.document.querySelector('[data-route-segment="0-1"]'), hint = ctx.document.querySelector('[data-route-blocked-hint]');
+    segment.dispatchEvent(new ctx.dom.window.Event('pointerenter')); assert.match(hint.textContent, /거리 12 cm — 몸 반경 미달/);
+    segment.dispatchEvent(new ctx.dom.window.Event('pointerleave')); assert.equal(hint.textContent, '');
+    segment.focus(); assert.match(hint.textContent, /거리 12 cm/); segment.blur(); assert.equal(hint.textContent, '');
+    assert.match(segment.getAttribute('aria-label'), /몸 반경 미달/);
+  } finally {ctx.close();}
+});
+
+
+test('eight degree boundary is inclusive on both sides of every snap direction', () => {
+  for (const degrees of [0, 45, 90, 135, 180, -45, -90, -135]) for (const offset of [-8, 8]) {
+    const angle = (degrees + offset) * Math.PI / 180;
+    const result = snapRoutePoint([Math.cos(angle), Math.sin(angle)], {x: 0, y: 0});
+    assert.equal((result.angle + 360) % 360, (degrees + 360) % 360);
+  }
+});
+
+
+test('blocked explanation survives navigation polling while the pointer stays on the segment', async () => {
+  const ctx = await setup({preview: () => ({valid: false, invalid_points: [], segments: [{from_index: 0, to_index: 1, valid: false, reason: '미관측 영역과 몸 반경이 겹칩니다.'}]})});
+  try {
+    await ctx.planner.validate();
+    ctx.document.querySelector('[data-route-segment="0-1"]').dispatchEvent(new ctx.dom.window.Event('pointerenter'));
+    await ctx.planner.poll();
+    assert.match(ctx.document.querySelector('[data-route-blocked-hint]').textContent, /미관측 영역과 몸 반경/);
+    mapElement(ctx).dispatchEvent(new ctx.dom.window.MouseEvent('pointermove', {clientX: 600, clientY: 500}));
+    assert.equal(ctx.document.querySelector('[data-route-blocked-hint]').textContent, '');
+  } finally {ctx.close();}
 });

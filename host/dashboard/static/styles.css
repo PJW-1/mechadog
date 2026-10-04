@@ -333,3 +333,7 @@ dialog button+button { margin-left: 8px }
 
 .map-raster { image-rendering: pixelated }
 .op-live-map canvas { width: 100%; object-fit: contain }
+
+.route-snap-guide { fill: none; stroke: #2563eb; stroke-width: 2; stroke-dasharray: 5 4; pointer-events: none }
+.route-line.blocked { pointer-events: stroke; cursor: help; stroke-width: 5 }
+.route-blocked-hint { min-height: 1.5em; color: var(--danger, #b91c1c) }

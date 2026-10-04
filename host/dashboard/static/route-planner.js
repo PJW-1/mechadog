@@ -9,6 +9,21 @@ const phases = {following: '이동', moving: '이동', navigating: '이동', aim
 const freshRoute = () => ({id: 'route-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7), name: '새 동선', points: [], repeat: 1});
 const readyPoint = point => Number.isFinite(point?.x) && Number.isFinite(point?.y);
 
+export function snapRoutePoint(target, previous, {shift = false, grid = false} = {}) {
+  if (shift) return {point: target, angle: null};
+  let point = grid ? target.map(v => Math.round(v * 10) / 10) : [...target];
+  if (!previous) return {point, angle: null};
+  const dx = target[0] - previous.x, dy = target[1] - previous.y;
+  const angle = Math.atan2(dy, dx), nearest = Math.round(angle / (Math.PI / 4)) * Math.PI / 4;
+  if (!Math.hypot(dx, dy) || Math.abs(angle - nearest) > 8 * Math.PI / 180 + 1e-12) return {point, angle: null};
+  const ux = Math.cos(nearest), uy = Math.sin(nearest);
+  let distance = dx * ux + dy * uy;
+  // Angle takes priority: use relative grid steps for an off-grid anchor.
+  if (grid) {const spacing = Math.abs(ux * uy) > .1 ? Math.SQRT2 / 10 : .1; distance = Math.round(distance / spacing) * spacing;}
+  point = [previous.x + distance * ux, previous.y + distance * uy].map(v => +v.toFixed(6));
+  return {point, angle: Math.round(nearest * 180 / Math.PI)};
+}
+
 export function pointsFromZones(zones, orderedIds) {
   return orderedIds.map(id => zones.find(zone => zone.id === id)).filter(readyPoint).map(zone => ({
     x: zone.x, y: zone.y, label: zone.id, aim_deg: zone.aim_deg ?? null, dwell_s: 0,
@@ -177,6 +192,7 @@ export class RoutePlanner {
   }
 
   draw() {
+    this.cancelMapGesture?.(); this.clearGuide();
     const p = this.p, session = this.current;
     this.root.replaceChildren();
     this.status = p.el('span', {class: 'route-state', role: 'status'});
@@ -216,10 +232,14 @@ export class RoutePlanner {
       p.button('고른 구역으로 동선 만들기', () => this.useZones(), {disabled: this.isLocked() || !session.zones.some(readyPoint), 'data-route-from-zones': ''}),
       p.note('체크한 순서대로 방문합니다. 위·아래 버튼으로 순서를 바꾸세요.'), p.el('h3', {}, '방문 지점'), this.pointsList);
     this.map = p.el('div', {class: 'route-map'});
+    this.map.addEventListener('pointerdown', event => this.beginMapGesture(event));
+    const grid = p.el('input', {type: 'checkbox', checked: !!session.gridSnap, disabled: this.isLocked(), 'data-route-grid': '', onchange: event => {session.gridSnap = event.target.checked; this.clearGuide();}});
+    this.snapStatus = p.el('span', {role: 'status', 'data-route-snap-status': ''});
+    this.blockedHint = p.el('p', {class: 'route-blocked-hint', role: 'status', 'data-route-blocked-hint': ''});
     this.validation = p.el('div', {class: 'route-validation', role: 'status', 'aria-live': 'polite'});
     this.modeBar = mapClickMode(p, session.mode, mode => {session.mode = mode; this.draw();}, mode => !this.isLocked() && (mode === 'draw' || (mode === 'move' ? this.canCommand() : this.canLocate())));
-    const canvas = p.el('section', {class: 'route-canvas'}, this.modeBar, this.map,
-      p.note(session.mode === 'draw' ? '지도를 눌러 지점 추가 · 지점을 끌어 이동 · 화살표 끝을 끌어 보는 방향 설정' : session.mode === 'move' ? '지도에서 목적지를 누르면 이동 확인 창이 열립니다.' : '로봇이 지금 있는 곳을 누르면 위치 확인 창이 열립니다. 파란 원은 알려준 위치를 찾는 범위이며 위치가 확인되면 사라집니다.'),
+    const canvas = p.el('section', {class: 'route-canvas'}, this.modeBar, p.el('label', {title: '각도 맞춤 중에는 직전 지점에서 10cm 간격으로 맞춥니다.'}, grid, '10cm 격자 맞춤'), this.snapStatus, this.map, this.blockedHint,
+      p.note(session.mode === 'draw' ? '클릭으로 지점 추가 · 끌어서 이동 · 화살표 끝을 끌어 보는 방향 설정 · 직전 지점 기준 0/45/90° ±8° 자동 맞춤 · Shift로 맞춤 해제 · 빨간 구간에 마우스를 올리면 막힌 이유 표시' : session.mode === 'move' ? '지도에서 목적지를 누르면 이동 확인 창이 열립니다.' : '로봇이 지금 있는 곳을 누르면 위치 확인 창이 열립니다. 파란 원은 알려준 위치를 찾는 범위이며 위치가 확인되면 사라집니다.'),
       this.canLocate() ? null : p.note('「위치 알려주기」는 지도 위치 지정 기능이 연결된 서버에서 사용할 수 있습니다.'), this.previewButton, this.validation);
     this.inspector = p.el('aside', {class: 'route-inspector'});
     this.root.append(p.el('div', {class: 'route-layout'}, itinerary, canvas, this.inspector));
@@ -335,6 +355,7 @@ export class RoutePlanner {
     if (!this.map) return;
     const session = this.current, meta = session.mapMeta;
     this.map.replaceChildren();
+    if (this.blockedHint && !session.validation?.segments?.some(item => item.valid === false && item.from_index + '-' + item.to_index === this.hoveredSegment)) {this.blockedHint.textContent = ''; this.hoveredSegment = null;}
     if (!meta?.patrol_to_px || !meta.px_to_patrol || !(meta.width > 0 && meta.height > 0)) {this.map.append(this.p.el('div', {class: 'route-map-empty'}, this.p.el('h3', {}, '현장 지도 연결 대기'), this.p.note(session.mapError ? '관제 지도를 불러오지 못했습니다. ' + session.mapError : '저장된 실제 지도를 연결하면 동선을 그릴 수 있습니다.'))); return;}
     const svg = this.svg('svg', {viewBox: '0 0 1000 1000', preserveAspectRatio: 'none', class: 'route-map-svg', 'aria-label': '동선 지도', 'data-route-map': '', 'data-click-mode': session.mode});
     svg.style.aspectRatio = meta.width + '/' + meta.height;
@@ -351,7 +372,15 @@ export class RoutePlanner {
     for (const segment of segments) {
       const checked = session.validation?.segments?.find(item => item.from_index === segment.from_index && item.to_index === segment.to_index);
       const path = this.svg('polyline', {points: segment.points.map(([x, y]) => mapPoint(meta, x, y).join(',')).join(' '), class: 'route-line' + (checked?.valid === false ? ' blocked' : '') + (!session.validation ? ' unchecked' : ''), 'data-route-segment': segment.from_index + '-' + segment.to_index, 'data-blocked': checked?.valid === false, 'vector-effect': 'non-scaling-stroke'});
-      if (checked?.reason) path.append(this.svg('title', {}, checked.reason));
+      if (checked?.valid === false) {
+        const message = (segment.from_index + 1) + ' → ' + (segment.to_index + 1) + ' 지점: ' + (checked.reason || '벽·가구·미관측 영역 또는 로봇 몸 반경에 걸립니다.');
+        path.append(this.svg('title', {}, message));
+        path.setAttribute('tabindex', '0'); path.setAttribute('aria-label', message);
+        const show = () => {this.hoveredSegment = segment.from_index + '-' + segment.to_index; this.blockedHint.textContent = message;};
+        const hide = () => {this.hoveredSegment = null; this.blockedHint.textContent = '';};
+        path.addEventListener('pointerenter', show); path.addEventListener('pointerleave', hide);
+        path.addEventListener('focus', show); path.addEventListener('blur', hide);
+      }
       svg.append(path);
     }
     const active = this.activePoint();
@@ -368,8 +397,17 @@ export class RoutePlanner {
     const hint = pointHintOutline(session.nav);
     if (hint.length) svg.append(this.svg('polygon', {points: hint.map(([x, y]) => mapPoint(meta, x, y).join(',')).join(' '), class: 'route-location-hint', 'data-route-location-hint': '', 'aria-label': '알려준 위치를 찾는 범위', 'vector-effect': 'non-scaling-stroke'}));
     this.drawRobot(svg, meta);
-    svg.addEventListener('click', event => this.mapClick(event, svg));
+    svg.addEventListener('click', event => this.mapClick(event));
+    svg.addEventListener('pointermove', event => {
+      if (!event.target.closest('.route-line.blocked')) {this.hoveredSegment = null; this.blockedHint.textContent = '';}
+      if (this.cancelDrag || session.mode !== 'draw' || this.isLocked()) return;
+      const target = this.toWorld(event, svg.getBoundingClientRect());
+      if (target) this.showGuide(svg, this.snapped(target, points.at(-1), event), points.at(-1));
+      else this.clearGuide();
+    });
+    svg.addEventListener('pointerleave', () => {this.hoveredSegment = null; this.blockedHint.textContent = ''; if (!this.cancelDrag) this.clearGuide();});
     this.map.append(svg);
+    if (this.snapGuide) this.showGuide(svg, this.snapGuide.result, this.snapGuide.previous);
   }
 
   drawAim(group, point, index, meta) {
@@ -400,26 +438,77 @@ export class RoutePlanner {
     const meta = this.current.mapMeta;
     if (!meta?.px_to_patrol || !rect.width || !rect.height) return null;
     const x = (event.clientX - rect.left) / rect.width, y = (event.clientY - rect.top) / rect.height;
-    if (x < 0 || y < 0 || x > 1 || y > 1) return null;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 1 || y > 1) return null;
     return worldPoint(meta, x, y).map(value => +value.toFixed(3));
   }
 
-  mapClick(event, svg) {
-    const session = this.current;
+  mapClick(event) {
+    const session = this.current, gesture = this.mapGesture;
+    this.mapGesture = null;
+    if (!gesture?.released || Date.now() - gesture.released > 500 || gesture.cancelled || Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 5) return;
     if (!this.visible(session) || session.link !== this.context().link || this.isLocked() || Date.now() < (this.suppressClickUntil || 0)) return;
-    const point = this.toWorld(event, svg.getBoundingClientRect());
+    let point = this.toWorld(event, gesture.rect);
     if (!point) return;
     if (session.mode === 'move') {if (this.canCommand()) this.p.confirmGoto(...point); return;}
     if (session.mode === 'locate') {if (this.canLocate()) this.p.confirmLocatePoint(...point); return;}
+    point = this.snapped(point, session.draft.points.at(-1), event).point;
+    this.clearGuide();
+    if (!this.insideMap(point)) return;
     if (session.draft.points.length >= 256) {session.error = '동선은 최대 256개 지점까지 만들 수 있습니다.'; this.drawValidation(); return;}
     session.draft.points.push({x: point[0], y: point[1], aim_deg: null, dwell_s: 0, label: null});
     session.selected = session.draft.points.length - 1;
     this.changed(); this.drawInspector();
   }
 
+  beginMapGesture(event) {
+    if (event.isPrimary === false) {this.cancelMapGesture?.(); return;}
+    if (event.button > 0 || event.target.closest('[data-route-pin]')) return;
+    this.cancelMapGesture?.();
+    const svg = this.map.querySelector('svg'), document = this.p.document;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const gesture = {x: event.clientX, y: event.clientY, id: event.pointerId, rect, released: false, cancelled: !this.toWorld(event, rect)};
+    this.mapGesture = gesture;
+    const matches = next => next.pointerId === gesture.id;
+    const move = next => {if (matches(next) && Math.hypot(next.clientX - gesture.x, next.clientY - gesture.y) > 5) gesture.cancelled = true;};
+    const interrupt = () => {gesture.cancelled = true; this.clearGuide();};
+    const cleanup = () => {
+      document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel);
+      document.removeEventListener('wheel', interrupt, true); document.removeEventListener('scroll', interrupt, true); this.cancelMapGesture = null;
+    };
+    const up = next => {if (!matches(next)) return; move(next); gesture.released = Date.now(); cleanup();};
+    const cancel = next => {if (next && !matches(next)) return; interrupt(); cleanup(); this.mapGesture = null;};
+    this.cancelMapGesture = cancel;
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', cancel);
+    document.addEventListener('wheel', interrupt, true); document.addEventListener('scroll', interrupt, true);
+  }
+
+  insideMap(point) {
+    const [x, y] = mapPoint(this.current.mapMeta, ...point);
+    return x >= 0 && y >= 0 && x <= 1000 && y <= 1000;
+  }
+
+  snapped(target, previous, event) {
+    const result = snapRoutePoint(target, previous, {shift: event.shiftKey, grid: this.current.gridSnap});
+    return this.insideMap(result.point) ? result : {point: target, angle: null};
+  }
+
+  clearGuide() {
+    this.snapGuide = null; this.map?.querySelector('[data-route-snap-guide]')?.remove();
+    if (this.snapStatus) this.snapStatus.textContent = '';
+  }
+
+  showGuide(svg, result, previous) {
+    this.clearGuide();
+    if (result.angle == null || !previous) return;
+    this.snapGuide = {result, previous};
+    svg.append(this.svg('polyline', {points: [[previous.x, previous.y], result.point].map(([x, y]) => mapPoint(this.current.mapMeta, x, y).join(',')).join(' '), class: 'route-snap-guide', 'data-route-snap-guide': '', 'vector-effect': 'non-scaling-stroke'}));
+    this.snapStatus.textContent = result.angle + '° 맞춤 · Shift로 해제';
+  }
+
   beginDrag(event, index, kind, svg) {
     const session = this.current;
-    if (session.mode !== 'draw' || this.isLocked() || event.button > 0) return;
+    if (session.mode !== 'draw' || this.isLocked() || event.button > 0 || event.isPrimary === false) return;
     event.preventDefault(); event.stopPropagation();
     this.cancelDrag?.();
     session.selected = index;
@@ -432,11 +521,14 @@ export class RoutePlanner {
       if (!target) return;
       moved = true;
       if (kind === 'aim') point.aim_deg = Math.round(Math.atan2(target[1] - point.y, target[0] - point.x) * 180 / Math.PI);
-      else {point.x = target[0]; point.y = target[1];}
+      else {
+        const previous = session.draft.points[index - 1], result = this.snapped(target, previous, next);
+        point.x = result.point[0]; point.y = result.point[1]; this.showGuide(svg, result, previous);
+      }
       session.validation = null;
       this.drawMap();
     };
-    const cleanup = () => {document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel); this.cancelDrag = null;};
+    const cleanup = () => {document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel); this.cancelDrag = null; this.clearGuide();};
     const up = () => {cleanup(); if (!this.visible(session)) {Object.assign(point, start); return;} this.suppressClickUntil = Date.now() + 150; if (moved) {delete session.invalid[index + ':' + (kind === 'aim' ? 'aim_deg' : 'x')]; if (kind === 'point') delete session.invalid[index + ':y']; this.changed(); this.drawInspector();} else {this.drawPoints(); this.drawMap(); this.drawInspector();}};
     const cancel = () => {cleanup(); Object.assign(point, start); if (this.visible(session)) this.drawMap();};
     this.cancelDrag = cancel;
@@ -559,5 +651,5 @@ export class RoutePlanner {
     finally {session.polling = false;}
   }
 
-  dispose() {clearInterval(this.timer); clearTimeout(this.validationTimer); this.cancelDrag?.();}
+  dispose() {clearInterval(this.timer); clearTimeout(this.validationTimer); this.cancelDrag?.(); this.cancelMapGesture?.();}
 }
