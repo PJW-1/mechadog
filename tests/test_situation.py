@@ -51,10 +51,7 @@ def test_zone_changed_fallen_object() -> None:
         "zone_changed",
         {
             "zone": "A",
-            "grid": [3, 3],
             "changes": [{"kind": "fallen_object", "source": "vlm"}],
-            "baseline_ms": 1000,
-            "baseline_snapshot": None,
         },
     )
     assert sentence == "A 구역에서 적재물이 무너졌습니다. 확인이 필요합니다."
@@ -85,7 +82,7 @@ def test_zone_changed_two_hazards_are_separate_sentences() -> None:
 
 
 def test_zone_changed_mixed_with_removed_added() -> None:
-    """반출·반입이 같은 방문에서 함께 확정돼도 위험 문구만 말한다 (`ZoneInspector._leave` 주석)."""
+    """폐기한 반출·반입(WBS 3.6.1~3.6.3)이 실린 옛 기록이어도 위험 문구만 말한다."""
     sentence = describe(
         "zone_changed",
         {
@@ -118,26 +115,12 @@ def test_zone_changed_none_judgement() -> None:
     assert describe("zone_changed", None) is not None
 
 
-# ── zone_notice — 반출 가벼운 경고 (`ZoneInspector._leave` Z2) ────────────────────────
+# ── zone_notice — 반출 가벼운 경고는 폐기했다 (2026-10-05 · WBS 3.6.1~3.6.3) ──────────
 
 
-def test_zone_notice_with_zone() -> None:
-    sentence = describe(
-        "zone_notice",
-        {
-            "zone": "B",
-            "changes": [{"kind": "removed", "label": "toolbox", "count": 1, "cell": [2, 0]}],
-        },
-    )
-    assert sentence == "B 구역에서 물건이 반출된 것으로 보입니다."
-
-
-def test_zone_notice_empty_judgement() -> None:
-    assert describe("zone_notice", {}) == "물건이 반출된 것으로 보입니다."
-
-
-def test_zone_notice_none_judgement() -> None:
-    assert describe("zone_notice", None) is not None
+def test_zone_notice_is_no_longer_described() -> None:
+    """옛 기록의 `zone_notice` 에는 문장을 붙이지 않는다 — 더는 내지 않는 사건이다."""
+    assert describe("zone_notice", {"zone": "B", "changes": [{"kind": "removed"}]}) is None
 
 
 # ── hazard_notice — 화기 위험물 가벼운 경고 (`ZoneInspector._leave`) ──────────────────

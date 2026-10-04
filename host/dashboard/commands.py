@@ -6,7 +6,7 @@
 - ⚠️ E-Stop 은 어떤 상태에서도 조건 없이 통하고, 틱을 기다리지 않고 받은 자리에서 전문을
   보낸 뒤에 FSM 사건을 넣는다 — 로봇이 먼저 멈추고 호스트가 따라간다.
 - 수동 오버라이드는 `FAILSAFE` 에서 거절된다(전이표). 거절은 `accepted=False` 로 돌려준다.
-- `RESET_SAFE`·경보 확인·기준 재등록·모드 전환 등은 예약하고 운용 루프의 다음 틱이 처리한다.
+- `RESET_SAFE`·경보 확인·모드 전환 등은 예약하고 운용 루프의 다음 틱이 처리한다.
   사람 확인은 버튼 한 번이다.
 """
 
@@ -61,7 +61,6 @@ class CommandService:
         note_voice_auth: Callable[[bool, int | None], tuple[bool, str]] | None = None,
         note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
         confirm_alarm: Callable[[], None] | None = None,
-        reset_zone_baseline: Callable[[str], tuple[bool, str]] | None = None,
         locate_zone: Callable[[str], tuple[bool, str]] | None = None,
         goto_point: Callable[[float, float], tuple[bool, str]] | None = None,
         pose: tuple[float, int] | tuple[float, int, float] | None = None,
@@ -86,8 +85,6 @@ class CommandService:
         self._note_voice_listening = note_voice_listening
         # 경보(L3) 확인 — `request_reset`(F 해제)과 다른 경로다 (ADR-26 ①).
         self._confirm_alarm = confirm_alarm
-        # 구역 기준 재등록 (3.6.5). 어느 구역이 있는지 아는 쪽이 런타임이라 판정도 거기서 한다.
-        self._reset_zone_baseline = reset_zone_baseline
         self._locate_zone = locate_zone
         self._goto_point = goto_point
         # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과 같은 검증된
@@ -242,27 +239,6 @@ class CommandService:
             accepted=True,
             state=self._behavior.state,
             detail="경보 확인을 요청했다 — 다음 틱에 단계가 내려간다 (L3 가 아니면 무시된다)",
-        )
-
-    def zone_baseline(self, zone: str) -> CommandResult:
-        """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준을 지운다 (FR-8 · WBS 3.6.5).
-
-        기준을 지우면 다음 방문에서 새로 뜬다 (ADR-41 결정 6). 예약만 하고 다음 틱이 지운다.
-        경보(L3)는 풀지 않는다.
-        """
-        if self._reset_zone_baseline is None:
-            return CommandResult(
-                command="zone_baseline",
-                accepted=False,
-                state=self._behavior.state,
-                detail="기준 재등록 경로가 연결되지 않았다",
-            )
-        accepted, detail = self._reset_zone_baseline(zone)
-        return CommandResult(
-            command="zone_baseline",
-            accepted=accepted,
-            state=self._behavior.state,
-            detail=detail,
         )
 
     def goto(self, x: float, y: float) -> CommandResult:

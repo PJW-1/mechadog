@@ -8,7 +8,7 @@
 {"_case":"ERROR — 링크 두절. 호스트가 판정한 것","ts":1756800023000,"level":"ERROR","device_id":"mechdog-02","seq":880,"state":"FAILSAFE","escalation":"F","event":"link_lost","detail":{"silent_ms":3000}}
 {"_case":"주기 요약 — 매 프레임 대신 1초에 한 줄","ts":1756800001000,"level":"INFO","device_id":"mechdog-01","seq":1244,"state":"PATROL","escalation":"L0","event":"perf_summary","detail":{"fps":14.8,"infer_ms_avg":11.3,"drops":2,"telemetry":10}}
 {"_case":"주기 요약 — 텔레메트리 관측값 (배터리·링크)","ts":1756800002000,"level":"INFO","device_id":"mechdog-01","seq":1254,"state":"PATROL","escalation":"L0","event":"telemetry_summary","detail":{"batt_v_avg":8.09,"last_cmd_age_ms_avg":34.0,"accepted":10,"discarded":0}}
-{"_case":"구역 기준 등록 — zone 컨텍스트","ts":1756800030000,"level":"INFO","device_id":"mechdog-01","seq":1600,"state":"ZONE_INSPECT","escalation":"L0","zone":"B","event":"zone_baseline","detail":{"objects":{"chair":2,"backpack":1}}}
+{"_case":"구역 점검 끝 — zone 컨텍스트","ts":1756800030000,"level":"INFO","device_id":"mechdog-01","seq":1600,"state":"ZONE_INSPECT","escalation":"L0","zone":"B","event":"zone_clear","detail":{"frames":3}}
 {"_case":"수동 오버라이드 — 조작자가 잡았다","ts":1756800050000,"level":"INFO","device_id":"mechdog-01","seq":1800,"state":"MANUAL","escalation":"L0","event":"fsm_transition","detail":{"from":"PATROL","to":"MANUAL","trigger":"MANUAL_ON","operator":"dashboard"}}
 {"_case":"세션 개시 — 재시작한 호스트가 로봇에게 자신을 알린다","ts":1756800000000,"level":"INFO","device_id":"mechdog-01","seq":0,"state":"IDLE","escalation":"L0","event":"session_open","detail":{"cmd_seq":1,"type":"STOP","peer":"192.168.1.100:5001"}}
 {"_case":"detail 없는 레코드도 유효하다 — 사건 이름만으로 충분할 때","ts":1756800060000,"level":"INFO","device_id":"mechdog-01","seq":1900,"state":"IDLE","escalation":"L0","event":"runtime_stopped"}

@@ -253,8 +253,8 @@ test('served by the dashboard, live events flow from /ws/events into the review 
  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
  assert.deepEqual(failures,[]);dom.window.close();
 });
-test('the zone baseline button waits for /health to say the command API is open (WBS 3.6.5)',async()=>{
- // 옛 서버처럼 read_only 가 없으면 열렸다고 보지 않는다 — 없는 경로로 보내는 버튼을 띄우지 않는다.
+test('commands wait for /health to say the command API is open',async()=>{
+ // 옛 서버처럼 read_only 가 없으면 열렸다고 보지 않는다.
  for(const [health,open] of [[{service:'telemetry',vision_clients:0},false],[{service:'telemetry',vision_clients:0,read_only:true},false],[{service:'telemetry',vision_clients:0,read_only:false},true]]){
   const {dom,store,failures}=await boot('dashboard',{health});
   assert.equal(store.slot('MD-01').commandsOpen,open,JSON.stringify(health));assert.deepEqual(failures,[]);dom.window.close();
