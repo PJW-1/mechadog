@@ -679,7 +679,7 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     one = load_config("mechdog-01")
     two = load_config("mechdog-02")
 
-    # 신원은 번호가 아니라 보드 MAC 이다. 번호는 2.4.1 에서 바뀔 수 있다.
+    # 신원은 번호가 아니라 보드 MAC 이다.
     assert one["telemetry_device_id"] != two["telemetry_device_id"]
 
     # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
