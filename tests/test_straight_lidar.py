@@ -115,3 +115,48 @@ def test_roll_fit_recommends_level_command():
     assert fit["slope"] < 0, "명령 부호와 IMU 부호가 반대"
     assert 3.0 < fit["cmd_for_level"] < 6.0
     assert straight.fit_roll_offset([(0.0, 3.7)]) is None
+
+
+def test_trace_reports_right_shift_in_cm_from_both_walls():
+    refs = {
+        "left": straight.fit_side_wall(_scan((0.0, 0.0, 0.0)), "left"),
+        "right": straight.fit_side_wall(_scan((0.0, 0.0, 0.0)), "right"),
+    }
+    row = straight.trace_point(_scan((0.5, -0.03, 0.0)), refs, 0.5)  # 3cm 오른쪽으로
+    assert row["left_cm"] == pytest.approx(83.0, abs=0.3)
+    assert row["right_cm"] == pytest.approx(117.0, abs=0.3)
+    assert row["left_delta_cm"] == pytest.approx(3.0, abs=0.3)
+    assert row["right_delta_cm"] == pytest.approx(-3.0, abs=0.3)
+    assert row["right_shift_cm"] == pytest.approx(3.0, abs=0.3)
+    turned = straight.trace_point(_scan((0.5, 0.0, math.radians(3))), refs, 0.5)
+    assert turned["heading_change_deg"] == pytest.approx(3.0, abs=0.3)
+
+
+def test_trace_summary_slope_and_extremes():
+    rows = [
+        {
+            "travelled_m": d,
+            "right_shift_cm": 2.0 * d,
+            "heading_change_deg": -d,
+            "left_cm": 80 + 2 * d,
+        }
+        for d in np.linspace(0, 2, 21)
+    ]
+    out = straight.summarize_trace(rows)
+    assert out["shift_cm_per_m"] == pytest.approx(2.0, abs=0.01)
+    assert out["end_right_shift_cm"] == pytest.approx(4.0)
+    assert out["max_abs_shift_cm"] == pytest.approx(4.0)
+    assert out["left_wall_cm"]["start"] == pytest.approx(80.0)
+    assert straight.summarize_trace([]) is None
+
+
+def test_trace_plot_writes_png(tmp_path):
+    legs = [
+        {
+            "mode": "open",
+            "direction": "forward",
+            "_trace": [{"travelled_m": d, "right_shift_cm": 3 * d} for d in (0.0, 0.5, 1.0)],
+        }
+    ]
+    straight.plot_traces(tmp_path / "t.png", legs)
+    assert (tmp_path / "t.png").stat().st_size > 1000
