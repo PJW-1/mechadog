@@ -299,6 +299,11 @@ class Link:
             return "로봇 래치"
         if self.reading.obstacle:
             return "로봇 장애물 감지"
+        return self.tipped()
+
+    def tipped(self) -> str | None:
+        if self.reading is None:
+            return None
         roll, pitch = self.reading.roll or 0.0, self.reading.pitch or 0.0
         if abs(roll) > TIP_DEG or abs(pitch) > TIP_DEG:
             # 2026-10-04 실기: 2회차 전진 중 넘어져 roll −62°·−92° 인데 후진 명령을 계속 보냈다.
@@ -610,6 +615,18 @@ def wait_devices(link: Link, *, timeout_s: float, battery_warn_v: float) -> bool
     return False
 
 
+def _stop_if_tipped(link: Link) -> None:
+    """스윕은 POSE roll 을 직접 명령하므로 걷기와 같은 25° 규칙으로 끊는다.
+
+    `KeyboardInterrupt` 를 던지면 `main` 이 걷기 중단과 같은 길로 비상정지를 보낸다.
+    """
+    reason = link.tipped()
+    if reason:
+        print(f"중단 — {reason}")
+        link.record("tip", reason=reason)
+        raise KeyboardInterrupt
+
+
 def roll_sweep(
     link: Link,
     values: list[float],
@@ -622,12 +639,14 @@ def roll_sweep(
     for value in values:
         link.commander.once("POSE", pitch=pitch, roll=value, height=0, dur=300)
         link.pump(settle_s)
+        _stop_if_tipped(link)
         start = len(samples)
         rolls = []
         end = time.perf_counter() + measure_s
         while time.perf_counter() < end:
             link.send_due()
             link.poll()
+            _stop_if_tipped(link)
             if link.reading is not None and link.reading.roll is not None:
                 rolls.append(link.reading.roll)
             time.sleep(0.05)
