@@ -209,7 +209,7 @@ test('a confirmed zone change is filed under zones and lists its VLM findings (F
  const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
  const zone=(seq,judgement)=>store.ingestLiveEvent({...base,seq,ts_ms:seq,event:'zone_changed',judgement});
  const event=zone(1,{zone:'A',changes:[{kind:'fallen_object',source:'vlm'}]});
- assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 물체 변화 확정 · zone_changed$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
+ assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 위험 확정 · zone_changed$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
  assert.deepEqual(event.evidence,[['구역','A'],['넘어짐·무너짐','VLM 판독 · 위치 없음']]);
  panels.render('events');chooseFilter(document,'사건 유형',4);
  assert.equal(document.querySelectorAll('.op-event-row').length,1,'구역 · 물품 필터에 걸린다');

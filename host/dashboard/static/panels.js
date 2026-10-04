@@ -643,7 +643,7 @@ export class OperationalPanels {
  // 같은 모드로 바꾸는 것은 거절이 아니지만, 누를 수 있으면 «바뀌었나» 를 되묻게 된다.
  modeButton(name,label){
   const store=this.store;
-  return this.button(label+' 모드',()=>this.confirmDevice({icon:'lock',title:label+' 모드로 바꾸겠습니까?',body:'순찰 하나는 모드 하나로 돕니다. 경비는 인증, 공장은 보호구·물체 변화만 합니다. 로봇이 멈춰 있을 때만 바뀌며 경보와 안전 정지는 풀리지 않습니다.',confirm:'예, 바꿉니다',action:()=>store.requestMode(name)}),{disabled:!store.live||store.readOnly||store.missionMode===name,'data-mode':name});
+  return this.button(label+' 모드',()=>this.confirmDevice({icon:'lock',title:label+' 모드로 바꾸겠습니까?',body:'순찰 하나는 모드 하나로 돕니다. 경비는 인증, 공장은 보호구·쓰러짐·구역 위험만 봅니다. 로봇이 멈춰 있을 때만 바뀌며 경보와 안전 정지는 풀리지 않습니다.',confirm:'예, 바꿉니다',action:()=>store.requestMode(name)}),{disabled:!store.live||store.readOnly||store.missionMode===name,'data-mode':name});
  }
  fillDeviceCommands(){
   const store=this.store,t=store.live?store.deviceTelemetry:null,text=describeTelemetry(store.telemetry),svc=store.serviceMode;
