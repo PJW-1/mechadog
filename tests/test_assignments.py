@@ -173,3 +173,16 @@ def test_packages_without_effort_still_appear(packages: list[WorkPackage]) -> No
     text = render(packages)
     for wid in ("3.6.4", "3.6.5", "4.8.4"):
         assert f"`{wid}`" in text, f"{wid}: 담당 목록에 없다"
+
+
+def test_unreadable_effort_cell_fails_instead_of_dropping_the_row(tmp_path) -> None:
+    """공수 칸이 숫자도 `—` 도 아니면 행을 조용히 버리지 않고 실패한다.
+
+    `—` 를 받게 고친 뒤에도 `3.9.3`·`4.8.6`·`4.8.7`·`5.4.6` 의 공수 칸이 `,` 로 적혀
+    같은 방식으로 담당 목록에서 사라져 있었다(2026-10-05 · Devin 검수). `--check` 도
+    재생성 결과가 똑같이 빠지므로 잡지 못했다.
+    """
+    wbs = tmp_path / "WBS.md"
+    wbs.write_text("## 작업 사전\n\n| 9.9 | 시험 | — | DoD | C | — |, | — |\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"9\.9"):
+        parse_wbs(wbs)
