@@ -53,6 +53,9 @@ from host.telemetry.receiver import Reading, TelemetryDecoder  # noqa: E402
 
 # ── 순수 계산 (시험 대상) ────────────────────────────────────
 
+#: 몸이 이만큼 넘게 기울면 넘어짐으로 보고 즉시 비상정지 (걸을 때 정상 진폭은 ±10° 안팎).
+TIP_DEG = 25.0
+
 
 @dataclass(frozen=True, slots=True)
 class WallFit:
@@ -296,6 +299,10 @@ class Link:
             return "로봇 래치"
         if self.reading.obstacle:
             return "로봇 장애물 감지"
+        roll, pitch = self.reading.roll or 0.0, self.reading.pitch or 0.0
+        if abs(roll) > TIP_DEG or abs(pitch) > TIP_DEG:
+            # 2026-10-04 실기: 2회차 전진 중 넘어져 roll −62°·−92° 인데 후진 명령을 계속 보냈다.
+            return f"넘어짐 의심 roll {roll:+.0f}° pitch {pitch:+.0f}°"
         return None
 
     def stop(self, estop: bool = False) -> None:

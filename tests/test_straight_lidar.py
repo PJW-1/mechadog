@@ -180,3 +180,18 @@ def test_device_status_ready_and_warnings():
         telemetry_age_ms=3000, batt_v=8.0, latched=False, packets_per_s=0, revs_per_s=0, **kw
     )
     assert not ok_robot, "3초 묵은 텔레메트리는 연결이 아니다"
+
+
+def test_tip_over_stops_the_run():
+    class R:
+        roll, pitch, safety_latched, obstacle = -62.0, 3.0, False, False
+
+    link = straight.Link.__new__(straight.Link)
+    link.reading, link.reading_ms, link.points_ms = (
+        R(),
+        straight.system_clock_ms(),
+        straight.system_clock_ms(),
+    )
+    assert "넘어짐" in link.fresh()
+    R.roll = 8.0
+    assert link.fresh() is None
