@@ -16,6 +16,17 @@ const button=(document,label)=>[...document.querySelectorAll('button')].find(ele
 const change=(dom,element,value,type='change')=>{element.value=value;element.dispatchEvent(new dom.window.Event(type,{bubbles:true}))};
 const chooseFilter=(document,name,value)=>{const trigger=document.querySelector(`[data-filter="${name}"]`);trigger.click();trigger.parentElement.querySelectorAll('.op-choice-option')[value].click()};
 
+test('goto motion-lock rejection preserves the server reason in the visible toast',async()=>{
+ const {dom,store,panels,messages}=setup();
+ const detail='보행 잠금 중 — 이동할 수 없다',calls=[];
+ store.link={goto:async(x,y)=>{calls.push([x,y]);return{accepted:false,detail}}};
+ store.setDemo(false);dom.window.confirm=()=>true;
+ panels.confirmGoto(2,3);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(calls,[[2,3]]);
+ assert.equal(messages.at(-1),'거절됨 — '+detail);
+});
+
 for(const page of ['missions','events','records','zones','devices','settings'])test(page+' panel renders labeled actionable content without a browser',()=>{
  const {document,panels}=setup();panels.render(page);assert.ok(document.querySelector('#title').textContent);assert.ok(document.querySelector('.op-intro'));assert.ok(document.querySelector('.op-section'));assert.ok(document.querySelector('button'));assert.equal(document.querySelectorAll('script').length,0);
 });

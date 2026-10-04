@@ -1537,6 +1537,15 @@ class Runtime:
 
     def ask_goto(self, x: float, y: float) -> tuple[bool, str]:
         """지도에서 찍은 곳(순찰 좌표)을 예약한다. **다른 스레드에서 부른다.**"""
+        if self._motion_lock:
+            detail = "보행 잠금 중 — 이동할 수 없다"
+            with self._locate_lock:
+                self._goal_feedback = {
+                    "accepted": False,
+                    "detail": detail,
+                    "at_ms": self._clock(),
+                }
+            return False, detail
         navigator = self._navigator
         if navigator is None or not hasattr(navigator, "goto"):
             return False, "LiDAR 측위 순찰이 아니라 지도 이동을 할 수 없다"

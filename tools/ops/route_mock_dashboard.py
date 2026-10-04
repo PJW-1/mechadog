@@ -39,7 +39,7 @@ from host.dashboard.server import DEFAULT_STATIC_DIR, create_app, serving
 from host.dashboard.state import DashboardState
 from host.runtime import policy_view
 from host.slam import settings, simulation
-from tools.ops.patrol_mock import hit_mask, raycast_scan
+from tools.ops.patrol_mock import physical_hit_mask, raycast_scan
 from tools.ops.patrol_run import _FakeReading, build_controller
 
 
@@ -247,7 +247,12 @@ def main(argv: list[str] | None = None) -> int:
         planning=planning,
     )
     sim = simulation.sim_params_from_config(config, settings.range_from_config(config)[1])
-    hits = hit_mask(controller.grid, controller.plan_params.occ_thresh)
+    hits = physical_hit_mask(
+        controller.grid,
+        controller.match_grid,
+        controller.plan_params.occ_thresh,
+        controller.plan_params.free_thresh,
+    )
     rng = random.Random(7)
     period_ms = commander.period_ms
     send(commander.open_session())
@@ -275,7 +280,9 @@ def main(argv: list[str] | None = None) -> int:
                         "0" * 16,
                         now_ms // period_ms,
                         now_ms,
-                        points_from_wire(raycast_scan(hits, controller.grid.meta, truth, sim, rng)),
+                        points_from_wire(
+                            raycast_scan(hits, controller.match_grid.meta, truth, sim, rng)
+                        ),
                     )
                     if localize_from_scans:
                         controller.observe_scan(scan, now_ms)
