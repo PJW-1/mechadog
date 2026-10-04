@@ -19,7 +19,7 @@
 
 ## 2. 기준기 지정
 
-두 기준기는 [WBS 2.4.1](WBS.md)에서 지정하고 물리적으로 표시한다.
+두 기준기는 [WBS 2.4.1](WBS.md)에서 지정하고, 지정은 `config/devices/*.yaml` 의 `reference_role` 로 기록한다.
 
 ## 3. 작업 완료 판정과 WBS 반영
 
