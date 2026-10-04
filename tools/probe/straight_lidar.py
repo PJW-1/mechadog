@@ -380,6 +380,7 @@ def leg(
                     )
                     print(
                         f"   {travelled:4.2f} m | {sides} | 오른쪽 밀림 {row['right_shift_cm']:+.1f} cm"
+                        f" (최근5 중앙 {statistics.median(r['right_shift_cm'] for r in trace[-5:]):+.1f})"
                         f" | 방위 {row['heading_change_deg']:+.1f}°"
                     )
         angle = bias
