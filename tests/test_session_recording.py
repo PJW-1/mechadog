@@ -114,9 +114,11 @@ def test_motion_lock_never_sends_motion(config: dict, clock: FakeClock, tmp_path
     assert blocked and json.loads(blocked[0]["lines"][0])["type"] == "MOVE"
 
 
-def test_motion_lock_refuses_patrol_flags() -> None:
-    with pytest.raises(SystemExit, match="motion-lock"):
+def test_motion_lock_refuses_patrol_flags(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
         main(["--device", DEVICE, "--motion-lock", "--patrol"])
+    assert exc.value.code == 2
+    assert "motion-lock" in capsys.readouterr().err
 
 
 def test_record_flags_parse() -> None:

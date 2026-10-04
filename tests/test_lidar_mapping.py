@@ -689,6 +689,14 @@ def test_rotated_map_origin_is_refused(tmp_path: Path) -> None:
         OccupancyGrid.load_ros2(path)
 
 
+def test_broken_map_yaml_is_a_value_error(tmp_path: Path) -> None:
+    """깨진 yaml 이 `yaml.YAMLError` 로 새면 `except (OSError, ValueError)` 를 빠져나가 traceback 이 된다."""
+    path = tmp_path / "map.yaml"
+    path.write_text("image: [unclosed" + chr(10), encoding="utf-8")
+    with pytest.raises(ValueError, match="map.yaml"):
+        OccupancyGrid.load_ros2(path)
+
+
 def test_pgm_header_comments_are_skipped(tmp_path: Path) -> None:
     """주석은 헤더 어디에나 올 수 있다. 고정 오프셋으로 읽으면 어긋난다."""
     pixels = np.array([[0, 254, 254, 254]], dtype=np.uint8)

@@ -378,7 +378,10 @@ class OccupancyGrid:
         | `< free_thresh` | 자유 | `LOGODDS_MIN` |
         | 그 사이 | **미지** | `0` |
         """
-        spec = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        try:
+            spec = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:  # `YAMLError` 는 `ValueError` 가 아니다
+            raise ValueError(f"맵 yaml 파싱 실패: {yaml_path}") from exc
         if not isinstance(spec, dict):
             raise ValueError(f"맵 yaml 최상위가 매핑이 아님: {yaml_path}")
         for key in ("image", "resolution", "origin"):

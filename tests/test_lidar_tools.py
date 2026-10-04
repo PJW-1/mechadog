@@ -83,6 +83,15 @@ def test_missing_required_key_is_refused() -> None:
         settings.validate_section(section)
 
 
+@pytest.mark.parametrize("key", ["scan_port", "reloc_restore_radius_mm"])
+def test_huge_int_is_refused_as_config_error(key: str) -> None:
+    """`math.isfinite(10**400)` 은 `OverflowError` — 다른 잘못된 값처럼 `ConfigError` 로 거부한다."""
+    section = dict(settings.read_lidar_section())
+    section[key] = 10**400
+    with pytest.raises(ConfigError, match=key):
+        settings.validate_section(section)
+
+
 @pytest.mark.parametrize("value", ["false", 0, 1, None, float("nan")])
 def test_full_scan_ambiguity_requires_boolean(value) -> None:
     section = dict(settings.read_lidar_section())

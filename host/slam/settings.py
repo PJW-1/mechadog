@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -15,7 +14,7 @@ from typing import Any, cast
 import yaml
 
 from host.behavior.planner import PlanParams
-from host.common.config import ConfigError, load_base_config, load_config
+from host.common.config import ConfigError, _finite_number, load_base_config, load_config
 from host.common.units import deg_to_rad
 from host.slam.scan_match import MatchParams
 
@@ -122,12 +121,7 @@ def validate_section(section: dict[str, Any]) -> None:
         value = section.get(key)
         if value is None:
             continue
-        if (
-            not isinstance(value, int | float)
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-            or not low < value <= high
-        ):
+        if not _finite_number(value) or not low < value <= high:
             raise ConfigError(f"lidar.{key} 는 {low} 초과 {high} 이하 숫자여야 함: {value!r}")
     missing = [key for key in REQUIRED_LIDAR_KEYS if key not in section]
     if missing:
@@ -138,11 +132,7 @@ def validate_section(section: dict[str, Any]) -> None:
         if key in _TYPED_SEPARATELY:
             continue
         value = section[key]
-        if (
-            not isinstance(value, int | float)
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-        ):
+        if not _finite_number(value):
             raise ConfigError(f"lidar.{key} 는 유한한 숫자여야 함: {value!r}")
     scan_port = section["scan_port"]
     if not isinstance(scan_port, int) or isinstance(scan_port, bool) or not 1 <= scan_port <= 65535:
