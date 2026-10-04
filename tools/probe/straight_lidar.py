@@ -53,6 +53,9 @@ from host.telemetry.receiver import Reading, TelemetryDecoder  # noqa: E402
 
 # ── 순수 계산 (시험 대상) ────────────────────────────────────
 
+#: 몸이 이만큼 넘게 기울면 넘어짐으로 보고 즉시 비상정지 (걸을 때 정상 진폭은 ±10° 안팎).
+TIP_DEG = 25.0
+
 
 @dataclass(frozen=True, slots=True)
 class WallFit:
@@ -133,6 +136,59 @@ def hold_angle(
     return max(-gains.limit_deg, min(gains.limit_deg, angle))
 
 
+def trace_point(
+    points: np.ndarray, refs: dict[str, WallFit], travelled_m: float
+) -> dict[str, Any] | None:
+    """한 바퀴의 좌우 벽 거리(cm)와 시작 대비 변화. 양쪽이 보이면 «오른쪽 밀림» 은 둘의 평균.
+
+    오른쪽 밀림(+) = 왼벽에서 멀어짐 또는 오른벽에 가까워짐. 방위 변화(+) = 왼쪽으로 돎.
+    """
+    row: dict[str, Any] = {"travelled_m": round(travelled_m, 3)}
+    shifts, turns = [], []
+    for side, ref in refs.items():
+        fit = fit_side_wall(points, side)
+        if fit is None:
+            continue
+        delta = (fit.distance_m - ref.distance_m) * 100.0
+        row[f"{side}_cm"] = round(fit.distance_m * 100.0, 1)
+        row[f"{side}_delta_cm"] = round(delta, 1)
+        shifts.append(delta if side == "left" else -delta)
+        turns.append(fit.heading_deg - ref.heading_deg)
+    if not shifts:
+        return None
+    row["right_shift_cm"] = round(statistics.fmean(shifts), 1)
+    row["heading_change_deg"] = round(statistics.fmean(turns), 2)
+    return row
+
+
+def summarize_trace(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """한 구간의 벽 거리 기록 요약 — 끝 밀림, 가장 크게 벗어난 값, 1m 당 밀림(선형 맞춤)."""
+    rows = [r for r in rows if "right_shift_cm" in r]
+    if not rows:
+        return None
+    shift = np.array([r["right_shift_cm"] for r in rows], float)
+    dist = np.array([r["travelled_m"] for r in rows], float)
+    out: dict[str, Any] = {
+        "samples": len(rows),
+        "end_right_shift_cm": float(shift[-1]),
+        "max_abs_shift_cm": round(float(np.max(np.abs(shift))), 1),
+        "end_heading_change_deg": rows[-1]["heading_change_deg"],
+    }
+    if float(np.ptp(dist)) > 0.2:
+        slope = float(np.polyfit(dist, shift, 1)[0])
+        out["shift_cm_per_m"] = round(slope, 2)
+    for side in ("left", "right"):
+        values = [r[f"{side}_cm"] for r in rows if f"{side}_cm" in r]
+        if values:
+            out[f"{side}_wall_cm"] = {
+                "start": values[0],
+                "end": values[-1],
+                "min": min(values),
+                "max": max(values),
+            }
+    return out
+
+
 def wrap_deg(value: float) -> float:
     return (value + 180.0) % 360.0 - 180.0
 
@@ -177,6 +233,7 @@ class Link:
     reading_ms: int = 0
     points: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))
     points_ms: int = 0
+    lidar_packets: int = 0
 
     def record(self, kind: str, **fields: Any) -> None:
         self.log.write(
@@ -218,6 +275,7 @@ class Link:
             scan = scan_of(self.scans.decode(raw))
             if scan is None or scan.device_id != self.lidar_device:
                 continue
+            self.lidar_packets += 1
             now = system_clock_ms()
             rev = self.assembler.add(scan, now)
             if rev is not None:
@@ -241,6 +299,15 @@ class Link:
             return "로봇 래치"
         if self.reading.obstacle:
             return "로봇 장애물 감지"
+        return self.tipped()
+
+    def tipped(self) -> str | None:
+        if self.reading is None:
+            return None
+        roll, pitch = self.reading.roll or 0.0, self.reading.pitch or 0.0
+        if abs(roll) > TIP_DEG or abs(pitch) > TIP_DEG:
+            # 2026-10-04 실기: 2회차 전진 중 넘어져 roll −62°·−92° 인데 후진 명령을 계속 보냈다.
+            return f"넘어짐 의심 roll {roll:+.0f}° pitch {pitch:+.0f}°"
         return None
 
     def stop(self, estop: bool = False) -> None:
@@ -268,10 +335,20 @@ def leg(
     link.commander.halt()
     link.pump(1.0)  # 서서 새 스캔
     side_ref = None
+    refs: dict[str, WallFit] = {}
     for side in ("left", "right"):
         fit = fit_side_wall(link.points, side)
+        if fit is not None:
+            refs[side] = fit
         if fit and (side_ref is None or fit.inliers > side_ref.inliers):
             side_ref = fit
+    walls = " · ".join(
+        f"{'왼' if k == 'left' else '오른'}벽 {v.distance_m * 100:.1f}cm" for k, v in refs.items()
+    )
+    print(f"   시작 {walls or '옆벽 못 찾음 — 밀림을 잴 수 없다'}")
+    trace: list[dict[str, Any]] = []
+    last_points_ms = link.points_ms
+    last_print = 0.0
     start_range = range_along(link.points, forward)
     yaw0 = link.reading.yaw if link.reading else None
     rolls, pitches, angles = [], [], []
@@ -297,6 +374,29 @@ def leg(
         if time.perf_counter() > deadline:
             reason = "시간 초과(이동 거리 못 잼)" if start_range is None else "시간 초과"
             break
+        if refs and link.points_ms != last_points_ms:
+            last_points_ms = link.points_ms
+            row = trace_point(link.points, refs, travelled)
+            if row is not None:
+                if link.reading is not None:
+                    row["imu_yaw"] = link.reading.yaw
+                    row["imu_roll"] = link.reading.roll
+                trace.append(row)
+                link.record(
+                    "trace", direction="forward" if forward else "reverse", mode=mode, **row
+                )
+                if time.perf_counter() - last_print >= 0.5:
+                    last_print = time.perf_counter()
+                    sides = "  ".join(
+                        f"{'왼' if k == 'left' else '오른'} {row[k + '_cm']:.1f}cm({row[k + '_delta_cm']:+.1f})"
+                        for k in ("left", "right")
+                        if k + "_cm" in row
+                    )
+                    print(
+                        f"   {travelled:4.2f} m | {sides} | 오른쪽 밀림 {row['right_shift_cm']:+.1f} cm"
+                        f" (최근5 중앙 {statistics.median(r['right_shift_cm'] for r in trace[-5:]):+.1f})"
+                        f" | 방위 {row['heading_change_deg']:+.1f}°"
+                    )
         angle = bias
         if mode == "hold" and side_ref is not None:
             now_fit = fit_side_wall(link.points, side_ref.side)
@@ -311,6 +411,11 @@ def leg(
     link.commander.halt()
     link.pump(1.2)  # 서서 끝 스캔
     end_fit = fit_side_wall(link.points, side_ref.side) if side_ref else None
+    if refs:
+        final = trace_point(link.points, refs, travelled)
+        if final is not None:
+            final["settled"] = True
+            trace.append(final)
     yaw1 = link.reading.yaw if link.reading else None
 
     def stats(values):
@@ -348,24 +453,200 @@ def leg(
         "roll": stats(rolls),
         "pitch": stats(pitches),
         "angle_cmd": stats(angles),
+        "wall_trace": summarize_trace(trace),
     }
     link.record("leg", **result)
+    result["_trace"] = trace
     return result
 
 
+def plot_traces(path: Path, legs: list[dict[str, Any]]) -> None:
+    """구간마다 «이동 거리 → 오른쪽 밀림(cm)» 선 그래프. 0 선 위가 오른쪽."""
+    import cv2
+
+    width, height, pad = 900, 520, 60
+    img = np.full((height, width, 3), 255, np.uint8)
+    series = [(leg_, leg_.get("_trace") or []) for leg_ in legs]
+    shifts = [r["right_shift_cm"] for _, rows in series for r in rows if "right_shift_cm" in r] or [
+        0.0
+    ]
+    span = max(5.0, max(abs(v) for v in shifts) * 1.15)
+    max_d = max([r["travelled_m"] for _, rows in series for r in rows] or [2.0]) or 2.0
+
+    def px(d: float, cm: float) -> tuple[int, int]:
+        return int(pad + d / max_d * (width - 2 * pad)), int(
+            height / 2 - cm / span * (height / 2 - pad)
+        )
+
+    cv2.line(img, px(0, 0), px(max_d, 0), (150, 150, 150), 1)
+    for cm in (-span, span):
+        cv2.putText(
+            img,
+            f"{cm:+.0f} cm",
+            (5, px(0, cm)[1] + 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (90, 90, 90),
+            1,
+        )
+    cv2.putText(
+        img,
+        f"{max_d:.1f} m",
+        (px(max_d, 0)[0] - 30, height - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (90, 90, 90),
+        1,
+    )
+    colors = {
+        ("open", "forward"): (40, 40, 220),
+        ("open", "reverse"): (40, 140, 240),
+        ("hold", "forward"): (60, 160, 60),
+        ("hold", "reverse"): (160, 120, 40),
+    }
+    for leg_, rows in series:
+        pts = [px(r["travelled_m"], r["right_shift_cm"]) for r in rows if "right_shift_cm" in r]
+        color = colors.get((leg_["mode"], leg_["direction"]), (0, 0, 0))
+        for a_, b_ in zip(pts, pts[1:], strict=False):
+            cv2.line(img, a_, b_, color, 2)
+    y = 20
+    for (mode, direction), color in colors.items():
+        cv2.putText(
+            img, f"{mode} {direction}", (width - 200, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
+        )
+        y += 20
+    cv2.putText(
+        img,
+        "right shift (cm) vs travelled (m), + = right",
+        (pad, 20),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 0, 0),
+        1,
+    )
+    cv2.imwrite(str(path), img)
+
+
+def device_status(
+    *,
+    telemetry_age_ms: int | None,
+    batt_v: float | None,
+    latched: bool | None,
+    packets_per_s: float,
+    revs_per_s: float,
+    battery_warn_v: float,
+) -> tuple[bool, bool, list[str]]:
+    """(로봇 준비, 라이다 준비, 경고들). 로봇은 1초 안 텔레메트리, 라이다는 초당 3바퀴 이상.
+
+    패킷은 오는데 바퀴가 안 만들어지면 10-03/04 의 «347° 고착» 과 같은 모양이다 — 정상은 초당
+    약 70패킷·10바퀴, 이상 때는 8패킷·0바퀴였다(tools/lidar/input_anomaly.py).
+    """
+    warnings = []
+    robot_ok = telemetry_age_ms is not None and telemetry_age_ms <= 1000
+    lidar_ok = revs_per_s >= 3.0  # 정상 LD19 ~10바퀴/s, 이상 때 0
+    if packets_per_s > 0 and revs_per_s < 1.0:
+        warnings.append(
+            "라이다 패킷은 오는데 한 바퀴가 안 만들어짐 — 347° 이상 의심: 라이다·중계 전원 재시작"
+        )
+    elif 0 < packets_per_s < 40:
+        warnings.append(f"라이다 패킷이 적다({packets_per_s:.0f}/s, 정상 ~70)")
+    if robot_ok and batt_v is not None and batt_v < battery_warn_v:
+        warnings.append(f"배터리 낮음 {batt_v:.2f} V (< {battery_warn_v} V)")
+    if robot_ok and latched:
+        warnings.append("로봇 래치 걸림 — 시작 때 RESET_SAFE 로 푼다")
+    return robot_ok, lidar_ok, warnings
+
+
+def wait_devices(link: Link, *, timeout_s: float, battery_warn_v: float) -> bool:
+    """전원이 켜지기 전부터 돈다 — 정지 명령을 계속 보내 로봇이 켜지는 즉시 연결되고, 라이다를 듣는다.
+
+    둘 다 2초 연속 준비되면 참. 1초마다 상태 한 줄. 시간 안에 안 되면 거짓.
+    """
+    print(
+        "== 장치 대기 — 이제 로봇·라이다(·카메라) 전원을 켜세요. 준비되면 바로 묻습니다. (Ctrl+C 중단)"
+    )
+    link.commander.halt()
+    started = time.perf_counter()
+    last_report = started
+    packets0, revs0 = link.lidar_packets, link.assembler.completed
+    ready_since: float | None = None
+    while time.perf_counter() - started < timeout_s:
+        link.send_due()
+        link.poll()
+        time.sleep(0.01)
+        now = time.perf_counter()
+        if now - last_report < 1.0:
+            continue
+        dt = now - last_report
+        last_report = now
+        pps = (link.lidar_packets - packets0) / dt
+        rps = (link.assembler.completed - revs0) / dt
+        packets0, revs0 = link.lidar_packets, link.assembler.completed
+        reading = link.reading
+        age = None if reading is None else system_clock_ms() - link.reading_ms
+        robot_ok, lidar_ok, warnings = device_status(
+            telemetry_age_ms=age,
+            batt_v=None if reading is None else reading.batt_v,
+            latched=None if reading is None else reading.safety_latched,
+            packets_per_s=pps,
+            revs_per_s=rps,
+            battery_warn_v=battery_warn_v,
+        )
+        robot = (
+            f"로봇 연결 {reading.batt_v or 0:.2f}V · 기울기(roll) {reading.roll or 0:+.1f}° · {reading.state}"
+            if robot_ok and reading is not None
+            else "로봇 응답 없음"
+        )
+        lidar = f"라이다 {pps:.0f}패킷/s · {rps:.0f}바퀴/s" if pps else "라이다 수신 없음"
+        print(
+            f"  [{now - started:4.0f}s] {robot} | {lidar}"
+            + "".join(f"\n    ⚠ {w}" for w in warnings)
+        )
+        link.record(
+            "wait", robot_ok=robot_ok, lidar_ok=lidar_ok, pps=round(pps, 1), rps=round(rps, 1)
+        )
+        if robot_ok and lidar_ok:
+            if ready_since is None:
+                ready_since = now
+            elif now - ready_since >= 2.0:
+                return True
+        else:
+            ready_since = None
+    return False
+
+
+def _stop_if_tipped(link: Link) -> None:
+    """스윕은 POSE roll 을 직접 명령하므로 걷기와 같은 25° 규칙으로 끊는다.
+
+    `KeyboardInterrupt` 를 던지면 `main` 이 걷기 중단과 같은 길로 비상정지를 보낸다.
+    """
+    reason = link.tipped()
+    if reason:
+        print(f"중단 — {reason}")
+        link.record("tip", reason=reason)
+        raise KeyboardInterrupt
+
+
 def roll_sweep(
-    link: Link, values: list[float], pitch: float, settle_s: float, measure_s: float
+    link: Link,
+    values: list[float],
+    pitch: float,
+    settle_s: float,
+    measure_s: float,
+    restore_roll: float = 0.0,
 ) -> dict[str, Any]:
     samples = []
     for value in values:
         link.commander.once("POSE", pitch=pitch, roll=value, height=0, dur=300)
         link.pump(settle_s)
+        _stop_if_tipped(link)
         start = len(samples)
         rolls = []
         end = time.perf_counter() + measure_s
         while time.perf_counter() < end:
             link.send_due()
             link.poll()
+            _stop_if_tipped(link)
             if link.reading is not None and link.reading.roll is not None:
                 rolls.append(link.reading.roll)
             time.sleep(0.05)
@@ -378,7 +659,8 @@ def roll_sweep(
                 f"  POSE roll {value:+.1f}° → IMU roll 평균 {samples[-1][1]:+.2f}° ({len(rolls)}표본)"
             )
         del start
-    link.commander.once("POSE", pitch=pitch, roll=0.0, height=0, dur=300)
+    # 스윕이 끝나면 설정의 보정값으로 — 0 으로 두면 뒤따르는 걷기 시험이 보정 없이 돈다.
+    link.commander.once("POSE", pitch=pitch, roll=restore_roll, height=0, dur=300)
     link.pump(1.0)
     return {"samples": samples, "fit": fit_roll_offset(samples)}
 
@@ -399,6 +681,10 @@ def main() -> int:
     ap.add_argument("--clearance", type=float, default=0.5)
     ap.add_argument("--roll-sweep", default="", help="예: 0,2,4,6 — 서서 POSE roll 스윕")
     ap.add_argument("--pitch", type=float, default=0.0)
+    ap.add_argument("--wait-timeout", type=float, default=900.0, help="장치 대기 상한(초)")
+    ap.add_argument(
+        "--no-wait", action="store_true", help="장치 대기 없이 바로 (이미 켜져 있을 때)"
+    )
     a = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)  # 현장에서 진행이 바로 보이게
@@ -417,20 +703,6 @@ def main() -> int:
     print(
         f"왕복 {a.cycles}회 × {a.distance} m · 모드 {a.mode} · 걸음 {a.step} mm · 여유 {a.clearance} m"
     )
-    if (
-        input(
-            "  로봇을 S0 에 앞(서쪽)을 보게 놓았고, 앞뒤 2.5m 안에 사람·물건이 없나? (y/N) "
-        ).strip()
-        != "y"
-    ):
-        print("중단.")
-        return 1
-    if (
-        input("  래치를 풀고(RESET_SAFE) 시험을 시작한다. 정지는 Ctrl+C. 진행? (y/N) ").strip()
-        != "y"
-    ):
-        print("중단.")
-        return 1
     cmd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     cmd.bind(("", int(net["telemetry_port"])))
     cmd.setblocking(False)
@@ -456,18 +728,43 @@ def main() -> int:
     summary: dict[str, Any] = {"args": vars(a) | {"record_dir": str(a.record_dir)}, "legs": []}
     try:
         cmd.sendto(link.commander.open_session().encode("utf-8"), peer)
+        if not a.no_wait and not wait_devices(
+            link,
+            timeout_s=a.wait_timeout,
+            battery_warn_v=float(config["safety"].get("battery_warn_v", 7.0)),
+        ):
+            print("시간 안에 로봇·라이다가 준비되지 않았다 — 중단.")
+            return 2
+        print("\a== 준비 완료.")
+        if (
+            input(
+                "  로봇이 바닥 선 위(앞이 왕복 방향)이고 앞 2.5m·뒤 0.5m 가 비었나? "
+                "래치를 풀고 바로 시작한다 (정지 Ctrl+C) (y/N) "
+            ).strip()
+            != "y"
+        ):
+            print("중단.")
+            return 1
         link.commander.once("RESET_SAFE")
         link.commander.halt()
-        link.pump(3.0)
+        link.pump(1.5)
         problem = link.fresh(1500)
         if problem and problem != "로봇 래치":
             print(f"시작 불가 — {problem}")
             return 2
+        roll_offset = float((config.get("posture") or {}).get("roll_offset_deg") or 0.0)
         if a.roll_sweep:
             values = [float(v) for v in a.roll_sweep.split(",") if v.strip()]
             print("== 기울기 스윕 (서 있음)")
-            summary["roll_sweep"] = roll_sweep(link, values, a.pitch, 2.0, 6.0)
+            summary["roll_sweep"] = roll_sweep(
+                link, values, a.pitch, 2.0, 6.0, restore_roll=roll_offset
+            )
             print(f"  권장 POSE roll ≈ {summary['roll_sweep']['fit']}")
+        else:
+            link.commander.once("POSE", pitch=a.pitch, roll=roll_offset, height=0, dur=300)
+            link.pump(1.0)
+        print(f"== 걷기 시험은 설정 보정값 POSE roll {roll_offset:+.1f} 로")
+        summary["walk_pose_roll"] = roll_offset
         modes = {"open": ["open"], "hold": ["hold"], "both": ["open", "hold"]}[a.mode]
         for cycle in range(a.cycles):
             for mode in modes:
@@ -484,7 +781,8 @@ def main() -> int:
                         speed_mm_s=speed,
                     )
                     summary["legs"].append(result)
-                    print("  ", json.dumps(result, ensure_ascii=False))
+                    shown = {k: v for k, v in result.items() if k != "_trace"}
+                    print("  ", json.dumps(shown, ensure_ascii=False))
                     if (
                         result["stop_reason"] not in ("거리 도달", "시간 초과")
                         and "여유" not in result["stop_reason"]
@@ -496,6 +794,12 @@ def main() -> int:
         summary["aborted"] = True
     finally:
         link.stop()
+        try:
+            plot_traces(a.record_dir / "straight_wall_trace.png", summary["legs"])
+        except Exception as exc:  # noqa: BLE001 — 그래프 실패가 기록을 막으면 안 된다
+            print(f"그래프 실패: {exc}")
+        for leg_ in summary["legs"]:
+            leg_.pop("_trace", None)
         (a.record_dir / "straight_summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -517,7 +821,18 @@ def main() -> int:
                     f"{mode:4s} {direction:7s}: 방위 변화 평균 {statistics.fmean(r['heading_change_deg'] for r in rows):+.1f}° · "
                     f"오른쪽 밀림 평균 {statistics.fmean(r['right_drift_cm'] for r in rows):+.1f} cm ({len(rows)}회)"
                 )
-    print(f"요약: {a.record_dir / 'straight_summary.json'}")
+    for r in legs:
+        w = r.get("wall_trace")
+        if w:
+            per_m = w.get("shift_cm_per_m")
+            print(
+                f"  {r['mode']:4s} {r['direction']:7s}: 끝 오른쪽 밀림 {w['end_right_shift_cm']:+.1f} cm · "
+                f"최대 {w['max_abs_shift_cm']:.1f} cm"
+                + (f" · 1m 당 {per_m:+.2f} cm" if per_m is not None else "")
+            )
+    print(
+        f"요약: {a.record_dir / 'straight_summary.json'} · 그래프: {a.record_dir / 'straight_wall_trace.png'}"
+    )
     return 0
 
 

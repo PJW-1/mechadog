@@ -115,3 +115,140 @@ def test_roll_fit_recommends_level_command():
     assert fit["slope"] < 0, "명령 부호와 IMU 부호가 반대"
     assert 3.0 < fit["cmd_for_level"] < 6.0
     assert straight.fit_roll_offset([(0.0, 3.7)]) is None
+
+
+def test_trace_reports_right_shift_in_cm_from_both_walls():
+    refs = {
+        "left": straight.fit_side_wall(_scan((0.0, 0.0, 0.0)), "left"),
+        "right": straight.fit_side_wall(_scan((0.0, 0.0, 0.0)), "right"),
+    }
+    row = straight.trace_point(_scan((0.5, -0.03, 0.0)), refs, 0.5)  # 3cm 오른쪽으로
+    assert row["left_cm"] == pytest.approx(83.0, abs=0.3)
+    assert row["right_cm"] == pytest.approx(117.0, abs=0.3)
+    assert row["left_delta_cm"] == pytest.approx(3.0, abs=0.3)
+    assert row["right_delta_cm"] == pytest.approx(-3.0, abs=0.3)
+    assert row["right_shift_cm"] == pytest.approx(3.0, abs=0.3)
+    turned = straight.trace_point(_scan((0.5, 0.0, math.radians(3))), refs, 0.5)
+    assert turned["heading_change_deg"] == pytest.approx(3.0, abs=0.3)
+
+
+def test_trace_summary_slope_and_extremes():
+    rows = [
+        {
+            "travelled_m": d,
+            "right_shift_cm": 2.0 * d,
+            "heading_change_deg": -d,
+            "left_cm": 80 + 2 * d,
+        }
+        for d in np.linspace(0, 2, 21)
+    ]
+    out = straight.summarize_trace(rows)
+    assert out["shift_cm_per_m"] == pytest.approx(2.0, abs=0.01)
+    assert out["end_right_shift_cm"] == pytest.approx(4.0)
+    assert out["max_abs_shift_cm"] == pytest.approx(4.0)
+    assert out["left_wall_cm"]["start"] == pytest.approx(80.0)
+    assert straight.summarize_trace([]) is None
+
+
+def test_trace_plot_writes_png(tmp_path):
+    legs = [
+        {
+            "mode": "open",
+            "direction": "forward",
+            "_trace": [{"travelled_m": d, "right_shift_cm": 3 * d} for d in (0.0, 0.5, 1.0)],
+        }
+    ]
+    straight.plot_traces(tmp_path / "t.png", legs)
+    assert (tmp_path / "t.png").stat().st_size > 1000
+
+
+def test_device_status_ready_and_warnings():
+    kw = {"battery_warn_v": 7.0}
+    ok_robot, ok_lidar, warn = straight.device_status(
+        telemetry_age_ms=200, batt_v=8.1, latched=False, packets_per_s=70, revs_per_s=10, **kw
+    )
+    assert ok_robot and ok_lidar and warn == []
+    _, ok_lidar, warn = straight.device_status(
+        telemetry_age_ms=None, batt_v=None, latched=None, packets_per_s=8, revs_per_s=0, **kw
+    )
+    assert not ok_lidar and any("347" in w for w in warn), "10-04 이상 모양(8패킷·0바퀴)"
+    ok_robot, _, warn = straight.device_status(
+        telemetry_age_ms=300, batt_v=6.8, latched=True, packets_per_s=70, revs_per_s=10, **kw
+    )
+    assert ok_robot and any("배터리" in w for w in warn) and any("래치" in w for w in warn)
+    ok_robot, _, _ = straight.device_status(
+        telemetry_age_ms=3000, batt_v=8.0, latched=False, packets_per_s=0, revs_per_s=0, **kw
+    )
+    assert not ok_robot, "3초 묵은 텔레메트리는 연결이 아니다"
+
+
+def test_tip_over_stops_the_run():
+    class R:
+        roll, pitch, safety_latched, obstacle = -62.0, 3.0, False, False
+
+    link = straight.Link.__new__(straight.Link)
+    link.reading, link.reading_ms, link.points_ms = (
+        R(),
+        straight.system_clock_ms(),
+        straight.system_clock_ms(),
+    )
+    assert "넘어짐" in link.fresh()
+    R.roll = 8.0
+    assert link.fresh() is None
+
+
+def test_roll_sweep_stops_before_a_larger_roll_once_the_robot_tips():
+    """기울기 스윕도 25° 규칙 안이다 — 넘어진 뒤 더 큰 roll 을 보내지 않고 비상정지로 넘긴다.
+
+    걷기는 매 반복 `fresh()` 로 넘어짐을 보지만 `roll_sweep` 은 POSE roll 을 직접 명령하면서
+    한 번도 보지 않았다(2026-10-05 · #400 Devin 검수).
+    """
+
+    class R:
+        roll, pitch, safety_latched, obstacle = 0.0, 0.0, False, False
+
+    sent: list[float] = []
+    recorded: list[str] = []
+
+    class Commander:
+        def once(self, _kind, **fields):
+            sent.append(fields["roll"])
+
+    link = straight.Link.__new__(straight.Link)
+    link.commander, link.reading = Commander(), R()
+    link.pump = lambda _seconds: None
+    link.send_due = lambda: None
+    link.poll = lambda: setattr(R, "roll", sent[-1] * 4)  # 명령이 커지면 몸이 넘어간다
+    link.record = lambda kind, **_fields: recorded.append(kind)
+
+    with pytest.raises(KeyboardInterrupt):
+        straight.roll_sweep(link, [2.0, 10.0, 20.0], 0.0, settle_s=0.0, measure_s=0.1)
+    assert sent == [2.0, 10.0], "넘어진 뒤에도 다음 roll 을 보냈다"
+    assert "tip" in recorded
+
+
+def test_estop_sends_three_frames_then_halts():
+    """넘어짐·Ctrl+C 의 끝은 `stop(estop=True)` 다 — ESTOP 3회 뒤 정지 명령이 나가야 한다."""
+    frames: list[bytes] = []
+    order: list[str] = []
+
+    class Commander:
+        def emergency_stop(self):
+            return "ESTOP"
+
+        def halt(self):
+            order.append("halt")
+
+    class Sock:
+        def sendto(self, data, _peer):
+            frames.append(data)
+            order.append("estop")
+
+    link = straight.Link.__new__(straight.Link)
+    link.commander, link.cmd, link.peer = Commander(), Sock(), ("127.0.0.1", 1)
+    link.record = lambda _kind, **_fields: None
+    link.pump = lambda _seconds: None
+
+    link.stop(estop=True)
+    assert frames == [b"ESTOP"] * 3
+    assert order == ["estop", "estop", "estop", "halt"]

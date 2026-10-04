@@ -692,7 +692,10 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     assert one["telemetry_device_id"] != two["telemetry_device_id"]
 
     # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
-    assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
+    # 2026-10-04: mechdog-02 서보 편차도 기체 NVS 에서 실측했다 — null 검사는 «01 과 다르다» 로.
+    assert two["servo_offset"] is not None and two["servo_offset"] != one["servo_offset"], (
+        "01 의 서보 편차를 옮겨 적으면 안 된다"
+    )
     # 2026-09-22: mechdog-02 도 실측했다 — null 검사는 *"01 과 다르다"* 검사로
     # 바뀐다. 같은 값이면 개체 실측이 아니라 복사다.
     for name in ("forward_mm_per_sec", "turn_deg_per_sec", "reverse_mm_per_sec"):
