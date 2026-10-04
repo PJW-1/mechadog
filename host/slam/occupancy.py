@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import zipfile
 import zlib
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -55,11 +56,13 @@ class MapMeta:
 
     @classmethod
     def of(cls, raw: dict[str, Any], source: Path | str = "map_meta.json") -> MapMeta:
+        if not isinstance(raw, dict):
+            raise ValueError(f"지도 메타가 객체가 아님: {source}")
         for key in ("resolution", "origin_x", "origin_y", "width", "height"):
             if key not in raw:
                 raise ValueError(f"지도 메타에 {key} 가 없음: {source}")
         return cls(
-            resolution=_number(raw["resolution"], "resolution", source),
+            resolution=_positive(_number(raw["resolution"], "resolution", source), source),
             origin_x=_number(raw["origin_x"], "origin_x", source),
             origin_y=_number(raw["origin_y"], "origin_y", source),
             width=int(_number(raw["width"], "width", source)),
@@ -353,7 +356,12 @@ class OccupancyGrid:
         npy_path = directory / f"{stem}.npy"
         meta_path = directory / "map_meta.json"
         if npy_path.is_file() and meta_path.is_file():
-            cells = np.load(npy_path)
+            try:
+                cells = np.load(npy_path)
+            except zipfile.BadZipFile as exc:  # 깨진 zip 은 `ValueError` 가 아니다
+                raise ValueError(f"지도 배열을 읽을 수 없음: {npy_path}") from exc
+            if not isinstance(cells, np.ndarray):  # zip 서명으로 시작하면 `NpzFile` 이 온다
+                raise ValueError(f"지도 배열이 아님: {npy_path}")
             meta = MapMeta.of(json.loads(meta_path.read_text(encoding="utf-8")), meta_path)
             grid = cls(meta, cells)
             # 저장 당시의 width·height 와 배열이 어긋나면 배열을 믿는다.
@@ -427,7 +435,7 @@ class OccupancyGrid:
 
         height, width = cells.shape
         meta = MapMeta(
-            resolution=_number(spec["resolution"], "resolution", yaml_path),
+            resolution=_positive(_number(spec["resolution"], "resolution", yaml_path), yaml_path),
             origin_x=origin_xy[0],
             origin_y=origin_xy[1],
             width=width,
@@ -441,6 +449,13 @@ def _number(value: Any, key: str, source: Path | str) -> float:
     if not _finite_number(value):
         raise ValueError(f"{key} 는 유한한 수여야 함: {source}")
     return float(value)
+
+
+def _positive(value: float, source: Path | str) -> float:
+    """해상도 — 0 은 `to_cell` 의 나눗셈에서 죽고 음수는 기하를 조용히 뒤집는다."""
+    if value <= 0:
+        raise ValueError(f"resolution 은 0 보다 커야 함: {source}")
+    return value
 
 
 def _disk_dilate(mask: np.ndarray, radius_cells: int) -> np.ndarray:

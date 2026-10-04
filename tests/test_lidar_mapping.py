@@ -835,3 +835,46 @@ def test_edge_is_judged_per_axis_not_by_distance() -> None:
     """
     params = _edge_params(0.60)
     assert _warn_if_at_search_edge((0.0, 0.50, 0.0), (0.0, 0.0, 0.0), params, 1)
+
+
+@pytest.mark.parametrize("raw", ["null", "5", "true", "[1, 2]", '"abc"'])
+def test_map_meta_that_is_not_an_object_is_a_value_error(tmp_path: Path, raw: str) -> None:
+    """`map_meta.json` 이 객체가 아니면 `in`·`[]` 에서 `TypeError` 로 새어 기동 관문을 빠져나간다."""
+    OccupancyGrid.blank(resolution=0.05, span_cells=4).save(tmp_path)
+    (tmp_path / "map_meta.json").write_text(raw, encoding="utf-8")
+    with pytest.raises(ValueError, match="map_meta"):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("kind", ["npz", "broken_zip"])
+def test_slam_map_that_is_not_an_array_is_a_value_error(tmp_path: Path, kind: str) -> None:
+    """`np.load` 는 파일 앞부분으로 형식을 고른다 — zip 이면 `NpzFile`·`BadZipFile` 이 새어 나온다."""
+    OccupancyGrid.blank(resolution=0.05, span_cells=4).save(tmp_path)
+    npy_path = tmp_path / "slam_map.npy"
+    if kind == "npz":
+        np.savez(tmp_path / "bundle.npz", cells=np.zeros((4, 4), dtype=np.float32))
+        npy_path.write_bytes((tmp_path / "bundle.npz").read_bytes())
+    else:
+        npy_path.write_bytes(b"PK" + bytes([3, 4]) + b"broken")
+    with pytest.raises(ValueError, match="slam_map"):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("bad", [0, -0.05])
+def test_non_positive_map_meta_resolution_is_a_value_error(tmp_path: Path, bad: float) -> None:
+    """0 은 운용 중 `to_cell` 의 나눗셈에서 죽고, 음수는 기하를 조용히 뒤집는다."""
+    OccupancyGrid.blank(resolution=0.05, span_cells=4).save(tmp_path)
+    meta_path = tmp_path / "map_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["resolution"] = bad
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with pytest.raises(ValueError, match="resolution"):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("bad", [0, -0.05])
+def test_non_positive_ros2_map_resolution_is_a_value_error(tmp_path: Path, bad: float) -> None:
+    pixels = np.full((2, 2), 254, dtype=np.uint8)
+    path = write_ros2_map(tmp_path, pixels, resolution=bad)
+    with pytest.raises(ValueError, match="resolution"):
+        OccupancyGrid.load_ros2(path)

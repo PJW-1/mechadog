@@ -274,3 +274,8 @@ def test_cli_refuses_a_non_utf8_profile_with_exit_code_2(monkeypatch) -> None:
 
     monkeypatch.setattr(module, "load_config", broken)
     assert module.main(["--devices", A, "--dashboard-port", "8000"]) == 2
+
+
+def test_deeply_nested_telemetry_is_dropped_not_raised() -> None:
+    """`RecursionError` 가 수신 루프를 뚫고 나가면 플릿 전체가 멈춘다."""
+    assert telemetry_device(b"[" * 100000) is None
