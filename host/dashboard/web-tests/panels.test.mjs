@@ -326,15 +326,36 @@ test('locate buttons list patrol zones from the server and ask before sending',a
  const calls=[],prompts=[];
  const link={locate:async zone=>{calls.push(zone);return{accepted:true,detail:'구역 '+zone+' 안에서 위치를 다시 찾는다'}}};
  const {dom,document,panels,store,messages}=setup();
- panels.render('missions');assert.match(document.querySelector('#content').textContent,/구역 목록을 받지 못했습니다/);
+ panels.render('missions');assert.equal(document.querySelector('[data-locate-zone]'),null,'제어 · 장치에는 위치 힌트 묶음을 남기지 않는다');
  store.setPolicy({l1_to_l2_hold_s:12,target_lost_timeout_s:7,auth_timeout_s:40,auth_max_attempts:3,patrol_zones:['B','C','D','A','<x>']});
- store.link=link;store.setDemo(false);panels.render('missions');
+ store.link=link;store.setDemo(false);panels.render('zones');
  assert.deepEqual([...document.querySelectorAll('[data-locate-zone]')].map(b=>b.dataset.locateZone),['B','C','D','A'],'형식이 이상한 구역 id 는 버튼이 되지 않는다');
  let answer=false;dom.window.confirm=message=>{prompts.push(message);return answer};
  button(document,'구역 C').click();assert.deepEqual(calls,[]);assert.match(prompts[0],/구역 C 안에서만 다시 찾습니다/);
  answer=true;button(document,'구역 C').click();
  await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(calls,['C']);assert.match(messages.at(-1),/구역 C 안에서 위치를 다시 찾는다/);
+});
+
+test('map location picking asks before sending, cancellation restores goto, and robot changes invalidate confirmation',async()=>{
+ const {dom,document,panels,store,messages}=setup();
+ const calls=[],prompts=[];
+ const meta={width:100,height:100,resolution_m:0.1,patrol_to_px:[[10,0,0],[0,10,0]],px_to_patrol:[[0.1,0,0],[0,0.1,0]],zones:[]};
+ const link={baseUrl:'',get:async path=>{if(path==='/api/planning')throw new Error('계획 서버 없음(시험)');return path==='/api/map/meta'?meta:{available:true,pose:[0,0,0],verified:false}},locatePoint:async(x,y)=>{calls.push(['locate',x,y]);return{accepted:true}},goto:async(x,y)=>{calls.push(['goto',x,y]);return{accepted:true}}};
+ store.link=link;store.setDemo(false);panels.render('zones');
+ const map=panels.liveMap;map.canvas.getContext=()=>null;await map.tick();
+ map.canvas.getBoundingClientRect=()=>({left:0,top:0,width:100,height:100});
+ let answer=false;dom.window.confirm=prompt=>{prompts.push(prompt);return answer};
+ const click=()=>map.canvas.dispatchEvent(new dom.window.MouseEvent('click',{clientX:20,clientY:30,bubbles:true}));
+ button(document,'로봇 위치 알려주기').click();click();
+ assert.match(prompts.at(-1),/로봇이 여기 있다고 알려줄까요/);assert.deepEqual(calls,[]);assert.equal(map.locating,false);
+ answer=true;button(document,'로봇 위치 알려주기').click();click();await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(calls,[['locate',2,3]]);assert.equal(map.locating,false);
+ click();await new Promise(resolve=>setTimeout(resolve,0));assert.deepEqual(calls.at(-1),['goto',2,3]);
+ let confirmAction;panels.confirmDevice=options=>{confirmAction=options.action};
+ button(document,'로봇 위치 알려주기').click();click();store.link={};
+ await assert.rejects(confirmAction,/대상 로봇이 바뀌었습니다/);assert.equal(calls.length,2);
+ panels.render('missions');assert.equal(map.locating,false);assert.ok(messages.length);
 });
 test('zone page shows the live house map only when connected to the server',()=>{
  const {document,panels,store}=setup();

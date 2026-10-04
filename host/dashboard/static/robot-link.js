@@ -141,14 +141,19 @@ export class RobotLink {
     return this.post('/api/command/zone-baseline', { zone });
   }
 
-  /** 위치 알려주기 — «로봇은 지금 이 구역 안» . 서버가 그 구역 안에서만 위치를 다시 찾는다(찾을 때까지 정지). */
   /** 지도에서 찍은 곳(순찰 좌표 m)으로 — 서버가 다음 틱에 경로를 푼다. 결과는 /api/nav 의 goal_feedback. */
   goto(x, y) {
     return this.post('/api/command/goto', { x, y });
   }
 
+  /** 위치 알려주기 — 서버가 이 구역 안에서만 위치를 다시 찾는다(찾을 때까지 정지). */
   locate(zone) {
     return this.post('/api/command/locate', { zone });
+  }
+
+  /** 지도에 찍은 현재 위치(순찰 좌표 m) 주변에서 다시 찾는다. */
+  locatePoint(x, y) {
+    return this.post('/api/command/locate', { x, y });
   }
 
   // 운용 모드 전환 (FR-4.7 · FR-11.3). ⚠️ **온보드 `SERVICE` 와 다른 축이다** —

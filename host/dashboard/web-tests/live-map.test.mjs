@@ -62,3 +62,34 @@ test('rejections and blocked holds are told, not shown as arrival',()=>{
  assert.doesNotMatch(describeNav({available:true,pose:[0,0,0],verified:true,holding_goal:true,goal_hold_reason:'blocked'}),/도착/);
  assert.match(describeNav({available:true,starting:true}),/측위 시작 대기/);
 });
+
+test('location mode routes one map click to a hint, supports Escape and cancel, and resets on robot change',async()=>{
+ const dom=new JSDOM('<div id="host"></div>'),document=dom.window.document,picks=[],hints=[];
+ const makeLink=()=>({baseUrl:'',get:async path=>path==='/api/map/meta'?meta:{available:true,pose:[0,0,0],verified:false}});
+ let current=makeLink();
+ const map=new LiveMap({document,getLink:()=>current,onPick:(...point)=>picks.push(point),onLocatePick:(...point)=>hints.push(point),setInterval:()=>0});
+ map.canvas.getContext=()=>null;document.querySelector('#host').append(map.root);await map.tick();
+ map.canvas.getBoundingClientRect=()=>({left:0,top:0,width:200,height:100});
+ assert.equal(map.locateButton.disabled,false);
+ map.locateButton.click();assert.equal(map.locating,true);assert.equal(map.canvas.style.cursor,'crosshair');assert.equal(map.locateHelp.hidden,false);assert.match(map.locateHelp.textContent,/Esc/);
+ document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(map.locating,false);assert.equal(map.cancelButton.hidden,true);
+ map.locateButton.click();map.cancelButton.click();assert.equal(map.locating,false);
+ map.locateButton.click();map.canvas.dispatchEvent(new dom.window.MouseEvent('click',{clientX:60,clientY:50,bubbles:true}));
+ assert.deepEqual(hints,[[0.5,0,'구역 A 근처']]);assert.deepEqual(picks,[]);assert.equal(map.locating,false);assert.equal(map.canvas.style.cursor,'pointer');
+ map.canvas.dispatchEvent(new dom.window.MouseEvent('click',{clientX:60,clientY:50,bubbles:true}));assert.equal(picks.length,1);
+ map.locateButton.click();current=makeLink();await map.tick();assert.equal(map.locating,false);assert.equal(map.nav.point_hint,undefined);
+});
+
+test('point hint uses the server radius and affine transform, disappears on verification and robot switch',async()=>{
+ const dom=new JSDOM('<div id="host"></div>'),document=dom.window.document,lines=[];
+ const ctx={clearRect(){},beginPath(){},arc(){},fill(){},stroke(){},fillText(){},setLineDash(){},closePath(){},moveTo(...p){lines.push(['move',...p])},lineTo(...p){lines.push(['line',...p])}};
+ let nav={available:true,pose:[0,0,0],verified:false,point_hint:{x:0,y:0,radius:0.6}};
+ let current={baseUrl:'',get:async path=>path==='/api/map/meta'?meta:nav};
+ const map=new LiveMap({document,getLink:()=>current,onPick:()=>{},setInterval:()=>0});map.canvas.getContext=()=>ctx;
+ document.querySelector('#host').append(map.root);await map.tick();
+ assert.deepEqual(lines[0],['move',52,50]);assert.equal(lines.filter(([kind])=>kind==='line').length,66,'원판의 64 선분과 로봇의 2 선분');
+ assert.match(map.status.textContent,/알려준 점 주변/);
+ lines.length=0;nav={...nav,verified:true};await map.tick();assert.equal(lines.filter(([kind])=>kind==='line').length,2);assert.doesNotMatch(map.status.textContent,/알려준 점 주변/);
+ lines.length=0;current={baseUrl:'',get:async path=>path==='/api/map/meta'?meta:{available:true,pose:[0,0,0],verified:false}};await map.tick();
+ assert.equal(map.nav.point_hint,undefined);assert.equal(lines.filter(([kind])=>kind==='line').length,2);
+});

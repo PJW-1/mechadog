@@ -320,6 +320,8 @@ class PatrolController:
     zone_hint_ms: int = 60000
     #: 구역 영역 지도가 없을 때 구역 앵커 둘레 이 반경을 그 구역으로 본다.
     zone_hint_radius_m: float = 1.5
+    #: 사람이 지도에서 알려준 점 둘레에서만 찾는 반경. 방위·표결 규칙은 그대로다.
+    point_hint_radius_m: float = 0.6
     #: 워커는 실시간으로 실행된다. 가속된 시뮬레이션의 루프 시계와 섞지 않는다.
     wall_clock_ms: Callable[[], int] = field(default=lambda: time.monotonic_ns() // 1_000_000)
     #: 걸으며 자란 지도를 돌려 쓸 폴더 — None 이면 세션 끝에 자란 내용을 버린다.
@@ -435,6 +437,8 @@ class PatrolController:
     _global_req_allowed: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
     #: 사람이 알려준 구역과 그 시각 — 그 구역 안에서만 전역 재측위한다.
     _zone_hint: tuple[str, int] | None = None
+    #: 사람이 찍은 현재 위치 (순찰 좌표 x, y, Host 시각).
+    _point_hint: tuple[float, float, int] | None = None
     #: 지도에서 찍은 목표 (순찰 좌표 m). 있으면 구역 순찰보다 먼저 그리로 간다.
     _goal: tuple[float, float] | None = None
     #: 찍은 곳에 도착(또는 못 가게 됨) — 사람이 순찰을 다시 시작할 때까지 그 자리에 선다.
@@ -1008,20 +1012,61 @@ class PatrolController:
             LOG.warning("zone_hint_unknown", zone=zone)
             return False
         self._zone_hint = (zone, now_ms)
+        self._point_hint = None
+        x, y = self.zones.xy(zone)
+        self._reset_location_hint(x, y, "zone_hint")
+        LOG.warning("zone_hint", zone=zone, hint="이 구역 안에서만 위치를 다시 찾는다")
+        return True
+
+    def validate_hint_point(self, x: float, y: float) -> tuple[bool, str]:
+        """사람이 알려준 현재 위치가 지도 안의 비점유 셀인가. 자세·신뢰는 바꾸지 않는다."""
+        if not math.isfinite(x) or not math.isfinite(y):
+            return False, "위치 좌표는 유한한 숫자여야 한다"
+        row, col = self.grid.to_cell(x, y)
+        if not self.grid.inside(row, col):
+            return False, "알려준 위치가 지도 밖이다"
+        if self.grid.cells[row, col] >= self.plan_params.occ_thresh:
+            return False, "알려준 위치가 장애물 칸이다 — 로봇이 있는 빈 곳을 찍어 주세요"
+        return True, ""
+
+    def hint_point(self, x: float, y: float, now_ms: int) -> bool:
+        """지도에서 알려준 점 주변만 전역 탐색한다. **루프 스레드에서만** 부른다.
+
+        점은 표시용 자세일 뿐이다. 기존 구역 힌트처럼 신뢰·복원 기준을 버리고 멈추며,
+        같은 표결·모호성 관문을 통과해야 실제 자세로 채택한다.
+        """
+        accepted, detail = self.validate_hint_point(x, y)
+        if not accepted:
+            LOG.warning("point_hint_rejected", reason=detail)
+            return False
+        self._point_hint = (x, y, now_ms)
+        self._zone_hint = None
+        self._reset_location_hint(x, y, "point_hint")
+        LOG.warning("point_hint", x=x, y=y, radius_m=self.point_hint_radius_m)
+        return True
+
+    def _reset_location_hint(self, x: float, y: float, reason: str) -> None:
+        """사람의 새 위치 힌트로 이전 측위 근거를 버린다. xy만 표시하고 방위는 유지한다."""
         self._loc_epoch += 1  # 이미 날아간 전역 탐색 결과는 낡았다
         self._last_pose_ms = None
         self._pose_verified = False
         self.pose_seeded = False
         self._global_votes.clear()
-        self._drop_restore_anchor("zone_hint")
+        self._drop_restore_anchor(reason)
         self._reloc_next_ms = 0
-        x, y = self.zones.xy(zone)
         self.pose = (x, y, self.pose[2])
         self.commander.halt()
-        LOG.warning("zone_hint", zone=zone, hint="이 구역 안에서만 위치를 다시 찾는다")
-        return True
 
     def _zone_filter(self, now_ms: int) -> Callable[[np.ndarray, np.ndarray], np.ndarray] | None:
+        point = self._point_hint
+        if point is not None:
+            x, y, since_ms = point
+            if now_ms - since_ms > self.zone_hint_ms:
+                self._point_hint = None
+                LOG.warning("point_hint_expired", hint="찍은 점 주변에서도 위치를 못 찾았다")
+                return None
+            radius = self.point_hint_radius_m
+            return lambda xs, ys: np.hypot(xs - x, ys - y) <= radius
         hint = self._zone_hint
         if hint is None:
             return None
@@ -1221,9 +1266,6 @@ class PatrolController:
             frac=round(self._match_frac, 3),
             votes=self.reloc_votes,
         )
-        if self._zone_hint is not None:
-            LOG.info("zone_hint_resolved", zone=self._zone_hint[0])
-            self._zone_hint = None
         self.observe_map_pose(result.pose, now_ms)
         # 이 자세는 요청 때 스캔의 것이다 — IMU 앵커·조향 오프셋도 그때 값으로 (이중 반영 방지).
         self._adopt_with_request_imu()
@@ -1308,6 +1350,12 @@ class PatrolController:
     def _mark_verified(self) -> None:
         """자세가 전역 확인됐다 — 지도 적분을 허용하고 되돌릴 기준점을 새로 찍는다."""
         self._pose_verified = True
+        if self._zone_hint is not None:
+            LOG.info("zone_hint_resolved", zone=self._zone_hint[0])
+            self._zone_hint = None
+        if self._point_hint is not None:
+            LOG.info("point_hint_resolved")
+            self._point_hint = None
         self._global_votes.clear()
         self._restore_anchor = None
         self._restore_votes.clear()
@@ -2183,6 +2231,7 @@ def controller_from_config(
         reloc_restore_yaw_rad=deg_to_rad(float(lidar.get("reloc_restore_yaw_deg", 5))),
         reloc_restore_score_ratio=float(lidar.get("reloc_restore_score_ratio", 0.95)),
         reloc_restore_tilt_rad=deg_to_rad(float(lidar.get("reloc_restore_tilt_deg", 8))),
+        point_hint_radius_m=float(lidar.get("point_hint_radius_m", 0.6)),
         imu_match_params=(
             None
             if float(lidar.get("imu_yaw_window_deg", 0)) <= 0

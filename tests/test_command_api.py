@@ -1255,6 +1255,10 @@ class _GotoNavigator(_FakeNavigator):
     holding_goal = False
     match_frac = 0.8
     plan = None
+    _point_hint = None
+
+    def _zone_filter(self, _now_ms):
+        return None
 
     def __init__(self, accept=True):
         super().__init__()

@@ -22,6 +22,7 @@ export function describeNav(nav) {
   else parts.push('위치 미확인 — 이동 불가');
   if (nav.zone) parts.push('구역 ' + nav.zone);
   if (nav.zone_hint) parts.push('구역 ' + nav.zone_hint + ' 안에서 찾는 중');
+  if (nav.point_hint && !nav.verified) parts.push('알려준 점 주변에서 위치 찾는 중');
   if (nav.goal) parts.push('찍은 곳으로 이동 중');
   else if (nav.holding_goal && nav.goal_hold_reason === 'blocked') parts.push('찍은 곳으로 가는 길이 막혀 정지 · 대기');
   else if (nav.holding_goal) parts.push('찍은 곳 도착 · 대기 (순찰 시작으로 복귀)');
@@ -38,11 +39,14 @@ export class LiveMap {
    * @param {Document} o.document
    * @param {() => any} o.getLink 현재 RobotLink (없으면 null)
    * @param {(x:number,y:number,where:string) => void} o.onPick 지도에서 찍은 순찰 좌표
+   * @param {(x:number,y:number,where:string) => void} [o.onLocatePick] 현재 위치 찍기 — 제공한 화면에서만 모드 버튼을 보여 준다
+   * @param {() => boolean} [o.canLocate] 조회 전용 서버에서는 위치 찍기 비활성
    * @param {(available:boolean) => void} [o.onAvailability] 서버가 지도를 줬는가 — 화면이 «지도 없음» 을 바꾼다
    * @param {(fn: Function, ms: number) => any} [o.setInterval]
    */
-  constructor({ document, getLink, onPick, onAvailability = () => {}, setInterval: every = globalThis.setInterval }) {
-    Object.assign(this, { document, getLink, onPick, onAvailability });
+  constructor({ document, getLink, onPick, onLocatePick = null, canLocate = () => true, onAvailability = () => {}, setInterval: every = globalThis.setInterval }) {
+    Object.assign(this, { document, getLink, onPick, onLocatePick, canLocate, onAvailability });
+    this.locating = false;
     this.meta = null;
     this.nav = null;
     this.image = null;
@@ -55,10 +59,43 @@ export class LiveMap {
     this.status.setAttribute('role', 'status');
     this.canvas = document.createElement('canvas');
     this.canvas.setAttribute('aria-label', '실제 집 지도 — 누르면 그곳으로 로봇을 보냅니다');
-    this.canvas.style.cursor = 'crosshair';
+    this.canvas.style.cursor = 'pointer';
     this.canvas.style.border = '1px solid rgba(0,0,0,.12)';
     this.canvas.style.borderRadius = '8px';
     this.canvas.addEventListener('click', (event) => this.click(event));
+    if (onLocatePick) {
+      this.locateButton = document.createElement('button');
+      this.locateButton.type = 'button';
+      this.locateButton.className = 'op-button primary';
+      this.locateButton.dataset.locatePoint = '';
+      this.locateButton.textContent = '로봇 위치 알려주기';
+      this.locateButton.setAttribute('aria-pressed', 'false');
+      this.locateButton.disabled = true;
+      this.locateButton.addEventListener('click', () => this.setLocateMode(!this.locating));
+      this.cancelButton = document.createElement('button');
+      this.cancelButton.type = 'button';
+      this.cancelButton.className = 'op-button';
+      this.cancelButton.textContent = '찍기 취소';
+      this.cancelButton.hidden = true;
+      this.cancelButton.addEventListener('click', () => this.setLocateMode(false));
+      const toolbar = document.createElement('div');
+      toolbar.className = 'op-toolbar';
+      toolbar.append(this.locateButton, this.cancelButton);
+      this.locateHelp = document.createElement('p');
+      this.locateHelp.className = 'op-note';
+      this.locateHelp.dataset.locateHelp = '';
+      this.locateHelp.setAttribute('role', 'status');
+      this.locateHelp.hidden = true;
+      this.root.append(toolbar, this.locateHelp);
+      this.locateKeyDown = (event) => {
+        if (event.key === 'Escape' && this.locating && this.root.isConnected) {
+          event.preventDefault();
+          this.setLocateMode(false);
+          this.locateButton.focus();
+        }
+      };
+      document.addEventListener('keydown', this.locateKeyDown);
+    }
     this.root.append(this.status, this.canvas);
     this.timer = every(() => this.tick(), POLL_MS);
     // Node(시험)에서는 주기 타이머가 프로세스를 붙잡지 않게 — 브라우저는 숫자라 무시된다.
@@ -68,7 +105,19 @@ export class LiveMap {
 
   async tick() {
     const link = this.getLink();
-    if (!link || !this.root.isConnected) return;
+    if (!this.root.isConnected) return;
+    if (!link) {
+      if (this.link) {
+        this.generation = (this.generation || 0) + 1;
+        this.link = null;
+        this.meta = null;
+        this.image = null;
+        this.nav = null;
+      }
+      this.setLocateMode(false);
+      this.draw();
+      return;
+    }
     if (link !== this.link) {
       // 다른 로봇(서버)으로 바뀌었다 — 옛 지도·행렬로 새 로봇에 좌표를 보내면 안 된다 (Codex 검토 G P1).
       this.link = link;
@@ -76,6 +125,8 @@ export class LiveMap {
       this.meta = null;
       this.image = null;
       this.nav = null;
+      this.setLocateMode(false);
+      this.draw();
     }
     const generation = this.generation;
     try {
@@ -102,6 +153,26 @@ export class LiveMap {
       this.error = error?.message || String(error);
     }
     this.draw();
+  }
+
+  dispose() {
+    this.generation = (this.generation || 0) + 1;
+    globalThis.clearInterval(this.timer);
+    if (this.locateKeyDown) this.document.removeEventListener('keydown', this.locateKeyDown);
+    this.setLocateMode(false);
+  }
+
+  setLocateMode(active) {
+    this.locating = !!active && !!this.onLocatePick && !!this.meta && !!this.nav && this.link === this.getLink() && this.canLocate();
+    this.root.dataset.locateMode = String(this.locating);
+    this.canvas.style.cursor = this.locating ? 'crosshair' : 'pointer';
+    this.canvas.setAttribute('aria-label', this.locating ? '실제 집 지도 — 로봇이 지금 있는 위치를 찍어 알려줍니다' : '실제 집 지도 — 누르면 그곳으로 로봇을 보냅니다');
+    if (this.locateButton) {
+      this.locateButton.setAttribute('aria-pressed', String(this.locating));
+      this.cancelButton.hidden = !this.locating;
+      this.locateHelp.hidden = !this.locating;
+      this.locateHelp.textContent = this.locating ? '찍기 모드 · 로봇이 지금 있는 곳을 지도에서 한 번 누르세요. 이동 명령이 아닌 위치 힌트입니다. 취소하려면 Esc 또는 찍기 취소를 누르세요.' : '';
+    }
   }
 
   loadImage(src) {
@@ -136,7 +207,11 @@ export class LiveMap {
     if (!this.meta || !this.nav || this.link !== this.getLink()) return;
     const point = this.toPatrol(event.clientX, event.clientY);
     if (!point) return;
-    this.onPick(point[0], point[1], this.nearestZone(point));
+    if (this.locating) {
+      if (!this.canLocate()) { this.setLocateMode(false); return; }
+      this.setLocateMode(false);
+      this.onLocatePick(point[0], point[1], this.nearestZone(point));
+    } else this.onPick(point[0], point[1], this.nearestZone(point));
   }
 
   nearestZone([x, y]) {
@@ -149,13 +224,20 @@ export class LiveMap {
   }
 
   draw() {
+    if (this.locateButton) {
+      this.locateButton.disabled = !this.meta || !this.nav || this.link !== this.getLink() || !this.canLocate();
+      if (this.locating && this.locateButton.disabled) this.setLocateMode(false);
+    }
     if (this.error && !this.meta) {
       this.status.textContent = '지도를 받지 못했습니다 — ' + this.error;
       return;
     }
     this.status.textContent = (this.error ? '연결 끊김 — ' : '') + describeNav(this.nav);
     const meta = this.meta;
-    if (!meta) return;
+    if (!meta) {
+      this.canvas.getContext?.('2d')?.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      return;
+    }
     const canvas = this.canvas;
     if (canvas.width !== meta.width) canvas.width = meta.width;
     if (canvas.height !== meta.height) canvas.height = meta.height;
@@ -181,6 +263,24 @@ export class LiveMap {
       ctx.fillText(zone.id, u, v);
     }
     const nav = this.nav;
+    const hint = nav?.point_hint;
+    if (!nav?.verified && hint && Number.isFinite(hint.x) && Number.isFinite(hint.y) && Number.isFinite(hint.radius) && hint.radius > 0) {
+      // 원판을 서버의 순찰 좌표에서 만들고 기존 아핀 변환으로 그린다(회전·축 뒤집힘 포함).
+      ctx.fillStyle = 'rgba(37,99,235,.12)';
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      for (let step = 0; step <= 64; step++) {
+        const angle = step * Math.PI * 2 / 64;
+        const point = px(hint.x + hint.radius * Math.cos(angle), hint.y + hint.radius * Math.sin(angle));
+        if (step === 0) ctx.moveTo(...point); else ctx.lineTo(...point);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (!nav || nav.available === false || !Array.isArray(nav.pose)) return;
     if (nav.path?.length) {
       ctx.strokeStyle = 'rgba(37,99,235,.8)';
