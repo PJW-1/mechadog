@@ -272,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.no_vision and any(m.mission.enables("ppe") for m in members):
             raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
-    except (ConfigError, OSError) as exc:
+    except (OSError, ValueError) as exc:  # `ConfigError` 는 `ValueError`
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.fleet").error("설정을 읽을 수 없다 — %s", exc)
         return 2

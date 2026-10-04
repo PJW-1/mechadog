@@ -24,6 +24,8 @@ from typing import Any, cast
 import numpy as np
 import yaml
 
+from host.common.config import _finite_number
+
 #: 로그오즈 상·하한 — 오래 본 셀도 새 관측이 고칠 수 있게 한다.
 LOGODDS_MIN: float = -5.0
 LOGODDS_MAX: float = 5.0
@@ -52,13 +54,16 @@ class MapMeta:
         }
 
     @classmethod
-    def of(cls, raw: dict[str, Any]) -> MapMeta:
+    def of(cls, raw: dict[str, Any], source: Path | str = "map_meta.json") -> MapMeta:
+        for key in ("resolution", "origin_x", "origin_y", "width", "height"):
+            if key not in raw:
+                raise ValueError(f"지도 메타에 {key} 가 없음: {source}")
         return cls(
-            resolution=float(raw["resolution"]),
-            origin_x=float(raw["origin_x"]),
-            origin_y=float(raw["origin_y"]),
-            width=int(raw["width"]),
-            height=int(raw["height"]),
+            resolution=_number(raw["resolution"], "resolution", source),
+            origin_x=_number(raw["origin_x"], "origin_x", source),
+            origin_y=_number(raw["origin_y"], "origin_y", source),
+            width=int(_number(raw["width"], "width", source)),
+            height=int(_number(raw["height"], "height", source)),
         )
 
 
@@ -349,7 +354,7 @@ class OccupancyGrid:
         meta_path = directory / "map_meta.json"
         if npy_path.is_file() and meta_path.is_file():
             cells = np.load(npy_path)
-            meta = MapMeta.of(json.loads(meta_path.read_text(encoding="utf-8")))
+            meta = MapMeta.of(json.loads(meta_path.read_text(encoding="utf-8")), meta_path)
             grid = cls(meta, cells)
             # 저장 당시의 width·height 와 배열이 어긋나면 배열을 믿는다.
             grid._sync_meta()
@@ -391,11 +396,16 @@ class OccupancyGrid:
         image_path = yaml_path.parent / str(spec["image"])
         pixels = read_pgm(image_path)
 
-        negate = bool(int(spec.get("negate", 0)))
+        negate_raw = spec.get("negate", 0)
+        negate = (
+            negate_raw
+            if isinstance(negate_raw, bool)
+            else bool(int(_number(negate_raw, "negate", yaml_path)))
+        )
         # `negate: 1` 이면 픽셀이 그대로 점유 확률이다 (map_server 규약).
         probability = pixels / 255.0 if negate else (255.0 - pixels) / 255.0
-        occupied_thresh = float(spec.get("occupied_thresh", 0.65))
-        free_thresh = float(spec.get("free_thresh", 0.196))
+        occupied_thresh = _number(spec.get("occupied_thresh", 0.65), "occupied_thresh", yaml_path)
+        free_thresh = _number(spec.get("free_thresh", 0.196), "free_thresh", yaml_path)
 
         cells = np.zeros_like(probability, dtype=np.float32)
         cells[probability > occupied_thresh] = LOGODDS_MAX
@@ -408,7 +418,8 @@ class OccupancyGrid:
         origin = spec["origin"]
         if not isinstance(origin, list | tuple) or len(origin) < 2:
             raise ValueError(f"origin 은 [x, y, yaw] 여야 함: {yaml_path}")
-        if len(origin) >= 3 and abs(float(origin[2])) > 1e-6:
+        origin_xy = [_number(v, f"origin[{i}]", yaml_path) for i, v in enumerate(origin[:2])]
+        if len(origin) >= 3 and abs(_number(origin[2], "origin[2]", yaml_path)) > 1e-6:
             # 회전된 원점은 지원하지 않는다 — 무시하지 않고 거부한다.
             raise ValueError(
                 f"origin yaw 가 0 이 아님({origin[2]}) — 회전된 맵 원점은 지원하지 않는다"
@@ -416,13 +427,20 @@ class OccupancyGrid:
 
         height, width = cells.shape
         meta = MapMeta(
-            resolution=float(spec["resolution"]),
-            origin_x=float(origin[0]),
-            origin_y=float(origin[1]),
+            resolution=_number(spec["resolution"], "resolution", yaml_path),
+            origin_x=origin_xy[0],
+            origin_y=origin_xy[1],
             width=width,
             height=height,
         )
         return cls(meta, cells)
+
+
+def _number(value: Any, key: str, source: Path | str) -> float:
+    """지도 파일의 숫자 값 — `null`·문자열·거대한 정수는 `TypeError`·`OverflowError` 대신 `ValueError`."""
+    if not _finite_number(value):
+        raise ValueError(f"{key} 는 유한한 수여야 함: {source}")
+    return float(value)
 
 
 def _disk_dilate(mask: np.ndarray, radius_cells: int) -> np.ndarray:
