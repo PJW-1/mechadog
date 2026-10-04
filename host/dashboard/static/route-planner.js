@@ -1,4 +1,4 @@
-import {applyAffine, describeNav} from './live-map.js';
+import {applyAffine, describeNav, pointHintOutline} from './live-map.js';
 import {mapClickMode} from './map-click-mode.js';
 
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -153,7 +153,7 @@ export class RoutePlanner {
   }
 
   isLocked() { return this.current.busy || this.current.loading; }
-  canCommand() { return !!this.p.store.live && !this.p.store.readOnly && !this.isLocked(); }
+  canCommand() { return !!this.p.store.live && !this.p.store.readOnly && !this.isLocked() && this.visible() && this.current.link === this.p.store.link; }
   canLocate() { return this.canCommand() && typeof this.p.confirmLocatePoint === 'function' && typeof this.p.store.requestLocatePoint === 'function'; }
   savedDigest(session = this.current) {return session.snapshot?.digests?.[session.draft.id];}
 
@@ -224,7 +224,7 @@ export class RoutePlanner {
     this.validation = p.el('div', {class: 'route-validation', role: 'status', 'aria-live': 'polite'});
     this.modeBar = mapClickMode(p, session.mode, mode => {session.mode = mode; this.draw();}, mode => !this.isLocked() && (mode === 'draw' || (mode === 'move' ? this.canCommand() : this.canLocate())));
     const canvas = p.el('section', {class: 'route-canvas'}, this.modeBar, this.map,
-      p.note(session.mode === 'draw' ? '지도를 눌러 지점 추가 · 지점을 끌어 이동 · 화살표 끝을 끌어 보는 방향 설정' : session.mode === 'move' ? '지도에서 목적지를 누르면 이동 확인 창이 열립니다.' : '로봇이 지금 있는 곳을 누르면 위치 확인 창이 열립니다.'),
+      p.note(session.mode === 'draw' ? '지도를 눌러 지점 추가 · 지점을 끌어 이동 · 화살표 끝을 끌어 보는 방향 설정' : session.mode === 'move' ? '지도에서 목적지를 누르면 이동 확인 창이 열립니다.' : '로봇이 지금 있는 곳을 누르면 위치 확인 창이 열립니다. 파란 원은 알려준 위치를 찾는 범위이며 위치가 확인되면 사라집니다.'),
       this.canLocate() ? null : p.note('「위치 알려주기」는 지도 위치 지정 기능이 연결된 서버에서 사용할 수 있습니다.'), this.previewButton, this.validation);
     this.inspector = p.el('aside', {class: 'route-inspector'});
     this.root.append(p.el('div', {class: 'route-layout'}, itinerary, canvas, this.inspector));
@@ -341,7 +341,7 @@ export class RoutePlanner {
     const session = this.current, meta = session.mapMeta;
     this.map.replaceChildren();
     if (!meta?.patrol_to_px || !meta.px_to_patrol || !(meta.width > 0 && meta.height > 0)) {this.map.append(this.p.el('div', {class: 'route-map-empty'}, this.p.el('h3', {}, '현장 지도 연결 대기'), this.p.note(session.mapError ? '관제 지도를 불러오지 못했습니다. ' + session.mapError : '저장된 실제 지도를 연결하면 동선을 그릴 수 있습니다.'))); return;}
-    const svg = this.svg('svg', {viewBox: '0 0 1000 1000', preserveAspectRatio: 'none', class: 'route-map-svg', 'aria-label': '동선 지도', 'data-route-map': ''});
+    const svg = this.svg('svg', {viewBox: '0 0 1000 1000', preserveAspectRatio: 'none', class: 'route-map-svg', 'aria-label': '동선 지도', 'data-route-map': '', 'data-click-mode': session.mode});
     svg.style.aspectRatio = meta.width + '/' + meta.height;
     svg.append(this.svg('image', {href: (session.link.baseUrl || '') + '/api/map.png?rev=' + session.snapshot.revision, width: 1000, height: 1000, preserveAspectRatio: 'none'}));
     for (const zone of session.zones.filter(readyPoint)) {
@@ -368,6 +368,8 @@ export class RoutePlanner {
       group.addEventListener('click', event => {if (session.mode !== 'draw') return; event.stopPropagation(); session.selected = index; this.drawPoints(); this.drawMap(); this.drawInspector();});
       svg.append(group);
     });
+    const hint = pointHintOutline(session.nav);
+    if (hint.length) svg.append(this.svg('polygon', {points: hint.map(([x, y]) => mapPoint(meta, x, y).join(',')).join(' '), class: 'route-location-hint', 'data-route-location-hint': '', 'aria-label': '알려준 위치를 찾는 범위', 'vector-effect': 'non-scaling-stroke'}));
     this.drawRobot(svg, meta);
     svg.addEventListener('click', event => this.mapClick(event, svg));
     this.map.append(svg);
@@ -407,7 +409,7 @@ export class RoutePlanner {
 
   mapClick(event, svg) {
     const session = this.current;
-    if (this.isLocked() || Date.now() < (this.suppressClickUntil || 0)) return;
+    if (!this.visible(session) || session.link !== this.context().link || this.isLocked() || Date.now() < (this.suppressClickUntil || 0)) return;
     const point = this.toWorld(event, svg.getBoundingClientRect());
     if (!point) return;
     if (session.mode === 'move') {if (this.canCommand()) this.p.confirmGoto(...point); return;}

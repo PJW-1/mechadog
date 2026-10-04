@@ -362,6 +362,22 @@ class _ZoneBody(BaseModel):
     zone: StrictStr
 
 
+def _point_coordinate(value: Any) -> float:
+    """점 힌트에 bool·유한하지 않은 좌표를 넣지 않는다."""
+    if isinstance(value, bool):
+        raise ValueError("좌표는 숫자여야 한다")
+    result = _as_float(value)
+    if not math.isfinite(result):
+        raise ValueError("좌표는 유한한 숫자여야 한다")
+    return result
+
+
+class _LocateBody(BaseModel):
+    zone: StrictStr | None = None
+    x: Annotated[float, BeforeValidator(_point_coordinate)] | None = None
+    y: Annotated[float, BeforeValidator(_point_coordinate)] | None = None
+
+
 class _ModeBody(BaseModel):
     mode: StrictStr
 
@@ -522,13 +538,22 @@ def _command_routes(commands: CommandService) -> APIRouter:
 
     @router.post("/locate", response_model=None)
     async def locate(request: Request) -> dict[str, object]:
-        """`{"zone": "C"}` — 사람이 로봇이 지금 있는 구역을 알려준다. 그 구역 안에서만 위치를 다시 찾는다.
+        """`{"zone": "C"}` 또는 `{"x": 1.2, "y": -0.4}` — 현재 위치의 탐색 힌트.
 
         들어 옮긴 뒤처럼 전역 탐색이 집 안 비슷한 자리를 구별 못 할 때 쓴다. 지금 자세의
         신뢰는 버려지고 로봇은 다시 찾을 때까지 선다. 없는 구역은 `accepted=false` 다.
         """
-        body = await _read_body(request, _ZoneBody)
-        return commands.locate(body.zone).as_dict()
+        body = await _read_body(request, _LocateBody)
+        fields = body.model_fields_set
+        if "zone" in fields:
+            if fields & {"x", "y"}:
+                raise _RefusedError("구역 또는 점 좌표 중 하나만 알려주세요", 400)
+            if body.zone is None:
+                raise _RefusedError("zone", 400)
+            return commands.locate(body.zone).as_dict()
+        if body.x is None or body.y is None:
+            raise _RefusedError("x와 y 좌표가 모두 필요합니다", 400)
+        return commands.locate_point(body.x, body.y).as_dict()
 
     @router.post("/service", response_model=None)
     async def service(request: Request) -> dict[str, object]:

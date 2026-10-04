@@ -300,6 +300,7 @@ export class Operations {
  }
  requestGoto(x,y){if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('좌표가 숫자가 아닙니다.');return this.requestDevice('지도 이동 ('+x.toFixed(2)+', '+y.toFixed(2)+')',()=>this.link.goto(x,y))}
  requestLocate(zone){return this.requestDevice('위치 알려주기 · 구역 '+zone,()=>this.link.locate(zone))}
+ requestLocatePoint(x,y){if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('좌표가 숫자가 아닙니다.');return this.requestDevice('위치 알려주기 ('+x.toFixed(2)+', '+y.toFixed(2)+')',()=>this.link.locatePoint(x,y))}
  get patrolZones(){const zones=this.policy?.patrol_zones;return Array.isArray(zones)?zones.filter(z=>typeof z==='string'&&/^[A-Za-z0-9_-]{1,16}$/.test(z)):[]}
  requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
  // 본체 자세 (B6). 서버가 MANUAL 에서만 받는다 — 여기서는 제어권과 정지 상태를 먼저 본다.

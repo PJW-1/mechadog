@@ -246,6 +246,7 @@ class Runtime:
         #: 대시보드가 알려준 «지금 이 구역» — 서버 스레드가 넣고 루프가 꺼낸다.
         self._locate_lock = threading.Lock()
         self._locate_asked: str | None = None
+        self._locate_point_asked: tuple[float, float] | None = None
         #: 지도에서 찍은 목표 — 서버 스레드가 넣고 루프가 꺼낸다. 결과는 피드백으로.
         self._goto_asked: tuple[float, float] | None = None
         self._goal_feedback: dict[str, Any] | None = None
@@ -1638,7 +1639,10 @@ class Runtime:
             return {"available": False}
         x, y, yaw = navigator.pose
         goal = getattr(navigator, "goal", None)
+        # 스캔이 오지 않아도 힌트의 유효기간은 흐른다. 상태 변경은 이 루프에서만 한다.
+        navigator._zone_filter(now_ms)
         hint = getattr(navigator, "_zone_hint", None)
+        point_hint = navigator._point_hint
         return {
             "available": True,
             "frame": "patrol",
@@ -1653,6 +1657,15 @@ class Runtime:
             "holding_goal": bool(getattr(navigator, "holding_goal", False)),
             "goal_hold_reason": getattr(navigator, "goal_hold_reason", None),
             "zone_hint": None if hint is None else hint[0],
+            "point_hint": (
+                None
+                if point_hint is None
+                else {
+                    "x": point_hint[0],
+                    "y": point_hint[1],
+                    "radius": navigator.point_hint_radius_m,
+                }
+            ),
             "match_frac": round(float(getattr(navigator, "match_frac", 0.0)), 3),
             "path": [
                 [round(px, 3), round(py, 3)]
@@ -1680,7 +1693,21 @@ class Runtime:
             )
         with self._locate_lock:
             self._locate_asked = zone
+            self._locate_point_asked = None
         return True, f"구역 {zone} 안에서 위치를 다시 찾는다 — 찾을 때까지 로봇은 선다"
+
+    def ask_locate_point(self, x: float, y: float) -> tuple[bool, str]:
+        """사람이 찍은 현재 위치를 예약한다. 적용은 다음 틱이며 **다른 스레드에서 부른다.**"""
+        navigator = self._navigator
+        if navigator is None or not hasattr(navigator, "hint_point"):
+            return False, "LiDAR 측위 순찰이 아니라 위치를 알려줄 대상이 없다"
+        accepted, detail = navigator.validate_hint_point(x, y)
+        if not accepted:
+            return False, detail
+        with self._locate_lock:
+            self._locate_point_asked = (x, y)
+            self._locate_asked = None
+        return True, "찍은 점 주변에서 위치를 다시 찾는다 — 찾을 때까지 로봇은 선다"
 
     def apply_external(self, event: Event) -> bool:
         """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**
@@ -1738,8 +1765,11 @@ class Runtime:
             self.request_reset()
         with self._locate_lock:
             zone, self._locate_asked = self._locate_asked, None
+            point, self._locate_point_asked = self._locate_point_asked, None
         if zone is not None and self._navigator is not None:
             self._navigator.hint_zone(zone, now_ms)
+        if point is not None and self._navigator is not None:
+            self._navigator.hint_point(*point, now_ms)
         with self._locate_lock:
             goto, self._goto_asked = self._goto_asked, None
             route, self._route_asked = self._route_asked, None
@@ -2212,6 +2242,7 @@ def dashboard_wiring(
         confirm_alarm=runtime.ask_alarm_confirm,
         reset_zone_baseline=runtime.ask_zone_baseline_reset,
         locate_zone=runtime.ask_locate_zone,
+        locate_point=runtime.ask_locate_point,
         goto_point=getattr(runtime, "ask_goto", None),
         start_route=getattr(runtime, "ask_route", None),
         stop_route=getattr(runtime, "ask_route_stop", None),

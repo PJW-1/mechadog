@@ -35,6 +35,7 @@ async function setup({routes = [route()], preview = goodPreview, live = true, di
     },
     async post(path, body) {
       calls.push({method: 'post', path, body: copy(body)});
+      if (path === '/api/command/locate') return {accepted: true, detail: '알려준 점 주변에서 위치 찾는 중'};
       if (body.revision !== 'r' + revision) throw new Error('지도 또는 계획이 바뀌었습니다. 저장본을 다시 불러오세요. (HTTP 409)');
       if (path === '/api/planning/routes/preview') return preview(body);
       if (path === '/api/planning/routes') {
@@ -53,6 +54,7 @@ async function setup({routes = [route()], preview = goodPreview, live = true, di
     async route(action, id, expectedDigest) {calls.push({method: 'command', action, id, expectedDigest}); return {accepted: expectedDigest === digest(saved.find(item => item.id === id)), detail: '저장된 동선이 바뀌었습니다'};},
     async patrol(action) {calls.push({method: 'patrol', action}); return {accepted: true};},
     async goto(x, y) {calls.push({method: 'goto', x, y}); return {accepted: true};},
+    locatePoint(x, y) {return RobotLink.prototype.locatePoint.call(this, x, y);},
   };
   const store = new Operations({storage: dom.window.localStorage}); store.demo = !live; store.link = link;
   const panels = new OperationalPanels({store, container: document.querySelector('#panel'), title: document.querySelector('h1'), document, onToast: value => notices.push(value), onNavigate: () => {}});
@@ -201,19 +203,66 @@ test('zone selection preserves its explicit order and never promotes legacy yaw 
   assert.equal(ctx.calls.some(call => call.method === 'command' || call.method === 'goto'), false); ctx.close();
 });
 
-test('one exclusive map mode adds a vertex without goto and I localization stays disabled until connected', async () => {
+test('one exclusive map mode draws, confirms movement and sends point localization without changing the route', async () => {
   const ctx = await setup({routes: []});
   assert.deepEqual([...ctx.document.querySelectorAll('[data-map-mode]')].map(button => button.textContent), ['이동', '위치 알려주기', '선 그리기']);
-  assert.equal(ctx.document.querySelector('[data-map-mode="locate"]').disabled, true);
+  assert.equal(ctx.document.querySelector('[data-map-mode="locate"]').disabled, false);
   clickMap(ctx, 200, 800); assert.deepEqual(ctx.planner.current.draft.points[0], point(2, 2));
   assert.equal(ctx.calls.filter(call => ['goto', 'command'].includes(call.method)).length, 0);
   ctx.document.querySelector('[data-map-mode="move"]').click(); clickMap(ctx, 400, 600);
   assert.equal(ctx.planner.current.draft.points.length, 1); assert.equal(ctx.confirmations.length, 1); assert.match(ctx.confirmations[0].body, /x 4.00 m, y 4.00 m/);
   assert.equal(ctx.calls.filter(call => call.method === 'goto').length, 0);
   await ctx.confirmations[0].action(); assert.equal(ctx.calls.filter(call => call.method === 'goto').length, 1);
-  const located = []; ctx.panels.confirmLocatePoint = (...coords) => located.push(coords); ctx.store.requestLocatePoint = () => {};
   ctx.planner.draw(); ctx.document.querySelector('[data-map-mode="locate"]').click(); clickMap(ctx, 600, 300);
-  assert.deepEqual(located, [[6, 7]]); assert.equal(ctx.planner.current.draft.points.length, 1); ctx.close();
+  assert.match(ctx.confirmations.at(-1).title, /로봇이 여기 있다고 알려줄까요/);
+  assert.match(ctx.confirmations.at(-1).body, /x 6.00 m, y 7.00 m/);
+  assert.equal(ctx.calls.some(call => call.path === '/api/command/locate'), false);
+  await ctx.confirmations.at(-1).action();
+  assert.deepEqual(ctx.calls.find(call => call.path === '/api/command/locate'), {method: 'post', path: '/api/command/locate', body: {x: 6, y: 7}});
+  assert.equal(ctx.planner.current.draft.points.length, 1);
+  assert.deepEqual([...ctx.document.querySelectorAll('[data-map-mode][aria-pressed="true"]')].map(button => button.dataset.mapMode), ['locate']); ctx.close();
+});
+
+test('point localization cancellation and target changes cannot send a hint or a movement command', async () => {
+  const ctx = await setup({routes: []});
+  try {
+    ctx.document.querySelector('[data-map-mode="locate"]').click();
+    const queuedConfirmation = ctx.panels.confirmDevice;
+    ctx.panels.confirmDevice = OperationalPanels.prototype.confirmDevice.bind(ctx.panels);
+    const prompts = []; ctx.dom.window.confirm = prompt => {prompts.push(prompt); return false;};
+    clickMap(ctx, 200, 700); await tick();
+    assert.match(prompts.at(-1), /로봇이 여기 있다고 알려줄까요/);
+    assert.equal(ctx.calls.some(call => call.method === 'goto' || call.path === '/api/command/locate'), false);
+    assert.equal(ctx.planner.current.draft.points.length, 0);
+    ctx.panels.confirmDevice = queuedConfirmation;
+    clickMap(ctx, 200, 700);
+    const confirmation = ctx.confirmations.at(-1);
+    ctx.store.link = {...ctx.link, baseUrl: '/robots/other'};
+    await assert.rejects(confirmation.action(), /대상 로봇이 바뀌었습니다/);
+    clickMap(ctx, 400, 500);
+    assert.equal(ctx.confirmations.length, 1, '다른 로봇으로 바뀐 뒤 옛 지도에서는 새 확인도 열지 않는다');
+    assert.equal(ctx.calls.some(call => call.path === '/api/command/locate'), false);
+  } finally {ctx.close();}
+});
+
+for (const rotated of rotatedMaps) test(`${rotated.degrees} degree route map shows the server hint radius until verified and clears it on robot switch`, async () => {
+  const ctx = await setup({displayMap: rotated.meta});
+  try {
+    let nav = {available: true, pose: [1, 1, 0], verified: false, point_hint: {x: 1, y: 1, radius: .6}};
+    const get = ctx.link.get; ctx.link.get = path => path === '/api/nav' ? Promise.resolve(nav) : get(path);
+    await ctx.planner.poll();
+    const outline = polylinePoints(ctx, '[data-route-location-hint]');
+    assert.equal(outline.length, 65);
+    near(outline[0], rotated.degrees === 180 ? [.92, .1] : [.9, .92]);
+    near(outline[16], rotated.degrees === 180 ? [.95, .16] : [.84, .95]);
+    assert.match(ctx.document.querySelector('[data-route-progress]').textContent, /알려준 점 주변/);
+    nav = {...nav, verified: true}; await ctx.planner.poll();
+    assert.equal(ctx.document.querySelector('[data-route-location-hint]'), null);
+    nav = {...nav, verified: false}; await ctx.planner.poll();
+    ctx.store.link = {...ctx.link, baseUrl: '/robots/other', get}; ctx.panels.render('zones'); await tick(); await tick();
+    assert.equal(ctx.document.querySelector('[data-route-location-hint]'), null);
+    assert.equal(ctx.planner.current.mode, 'draw');
+  } finally {ctx.close();}
 });
 
 test('pointer drag moves the vertex, aim handle turns toward +Y, and drag release does not append a point', async () => {

@@ -307,6 +307,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             self.ask_alarm_confirm = lambda: None
             self.ask_zone_baseline_reset = lambda _zone: (True, "")
             self.ask_locate_zone = lambda _zone: (True, "")
+            self.ask_locate_point = lambda _x, _y: (True, "")
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -593,6 +594,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.ask_alarm_confirm = lambda: None
             self.ask_zone_baseline_reset = lambda _zone: (True, "")
             self.ask_locate_zone = lambda _zone: (True, "")
+            self.ask_locate_point = lambda _x, _y: (True, "")
 
         def serve(self, _sock, **_kwargs):
             pass

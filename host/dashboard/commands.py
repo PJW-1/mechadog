@@ -67,6 +67,7 @@ class CommandService:
         pose: tuple[float, int] | tuple[float, int, float] | None = None,
         start_route: Callable[..., tuple[bool, str]] | None = None,
         stop_route: Callable[[], tuple[bool, str]] | None = None,
+        locate_point: Callable[[float, float], tuple[bool, str]] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -91,6 +92,7 @@ class CommandService:
         # 구역 기준 재등록 (3.6.5). 어느 구역이 있는지 아는 쪽이 런타임이라 판정도 거기서 한다.
         self._reset_zone_baseline = reset_zone_baseline
         self._locate_zone = locate_zone
+        self._locate_point = locate_point
         self._goto_point = goto_point
         self._start_route = start_route
         self._stop_route = stop_route
@@ -326,6 +328,24 @@ class CommandService:
             accepted=accepted,
             state=self._behavior.state,
             detail=detail,
+        )
+
+    def locate_point(self, x: float, y: float) -> CommandResult:
+        """사람이 찍은 현재 위치 주변에서 다시 찾도록 다음 루프 틱에 예약한다.
+
+        클릭 자체로 위치를 확정하거나 이동을 시작하지 않는다. 좌표의 지도 범위와
+        장애물 검증은 지도를 소유한 런타임이 수행한다.
+        """
+        if self._locate_point is None:
+            return CommandResult(
+                command="locate",
+                accepted=False,
+                state=self._behavior.state,
+                detail="지도 위치 알려주기 경로가 연결되지 않았다 (LiDAR 측위 순찰이 아니다)",
+            )
+        accepted, detail = self._locate_point(x, y)
+        return CommandResult(
+            command="locate", accepted=accepted, state=self._behavior.state, detail=detail
         )
 
     #: 자율 동작 상태 — "순찰 정지" 가 받을 수 있는 상태들이다.

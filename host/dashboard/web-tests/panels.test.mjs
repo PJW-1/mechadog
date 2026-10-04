@@ -326,9 +326,9 @@ test('locate buttons list patrol zones from the server and ask before sending',a
  const calls=[],prompts=[];
  const link={locate:async zone=>{calls.push(zone);return{accepted:true,detail:'구역 '+zone+' 안에서 위치를 다시 찾는다'}}};
  const {dom,document,panels,store,messages}=setup();
- panels.render('missions');assert.match(document.querySelector('#content').textContent,/구역 목록을 받지 못했습니다/);
+ panels.render('missions');assert.equal(document.querySelector('[data-locate-zone]'),null,'제어 · 장치에는 위치 힌트 묶음을 남기지 않는다');
  store.setPolicy({l1_to_l2_hold_s:12,target_lost_timeout_s:7,auth_timeout_s:40,auth_max_attempts:3,patrol_zones:['B','C','D','A','<x>']});
- store.link=link;store.setDemo(false);panels.render('missions');
+ store.link=link;store.setDemo(false);panels.render('zones');
  assert.deepEqual([...document.querySelectorAll('[data-locate-zone]')].map(b=>b.dataset.locateZone),['B','C','D','A'],'형식이 이상한 구역 id 는 버튼이 되지 않는다');
  let answer=false;dom.window.confirm=message=>{prompts.push(message);return answer};
  button(document,'구역 C').click();assert.deepEqual(calls,[]);assert.match(prompts[0],/구역 C 안에서만 다시 찾습니다/);
@@ -342,6 +342,8 @@ test('zone page uses one route map for move, locate and draw while preserving zo
  store.link={baseUrl:'',get:async path=>{if(path==='/api/planning')throw new Error('계획 서버 없음(시험)');return {}}};store.setDemo(false);panels.render('zones');
  assert.equal(document.querySelector('[data-live-map]'),null,'별도 이동 지도와 동선 지도를 중복으로 열지 않는다');
  assert.deepEqual([...document.querySelectorAll('[data-map-mode]')].map(button=>button.textContent),['이동','위치 알려주기','선 그리기']);
+ assert.equal(document.querySelector('[data-locate-point]'),null,'위치 찍기 전용 버튼을 중복하지 않는다');
+ assert.ok(document.querySelector('[data-locate-support]'),'구역으로 알려주기는 보조 기능으로 유지한다');
  assert.ok(document.querySelector('[data-plan-save]'),'기존 구역 정책 편집기는 보존한다');
  const session=panels.routePlanner.current;panels.render('zones');assert.equal(panels.routePlanner.current,session,'재렌더해도 같은 로봇 초안을 유지한다');
 });

@@ -62,3 +62,17 @@ test('rejections and blocked holds are told, not shown as arrival',()=>{
  assert.doesNotMatch(describeNav({available:true,pose:[0,0,0],verified:true,holding_goal:true,goal_hold_reason:'blocked'}),/도착/);
  assert.match(describeNav({available:true,starting:true}),/측위 시작 대기/);
 });
+
+test('point hint uses the server radius and affine transform, disappears on verification and robot switch',async()=>{
+ const dom=new JSDOM('<div id="host"></div>'),document=dom.window.document,lines=[];
+ const ctx={clearRect(){},beginPath(){},arc(){},fill(){},stroke(){},fillText(){},setLineDash(){},closePath(){},moveTo(...p){lines.push(['move',...p])},lineTo(...p){lines.push(['line',...p])}};
+ let nav={available:true,pose:[0,0,0],verified:false,point_hint:{x:0,y:0,radius:0.6}};
+ let current={baseUrl:'',get:async path=>path==='/api/map/meta'?meta:nav};
+ const map=new LiveMap({document,getLink:()=>current,onPick:()=>{},setInterval:()=>0});map.canvas.getContext=()=>ctx;
+ document.querySelector('#host').append(map.root);await map.tick();
+ assert.deepEqual(lines[0],['move',52,50]);assert.equal(lines.filter(([kind])=>kind==='line').length,66,'원판의 64 선분과 로봇의 2 선분');
+ assert.match(map.status.textContent,/알려준 점 주변/);
+ lines.length=0;nav={...nav,verified:true};await map.tick();assert.equal(lines.filter(([kind])=>kind==='line').length,2);assert.doesNotMatch(map.status.textContent,/알려준 점 주변/);
+ lines.length=0;current={baseUrl:'',get:async path=>path==='/api/map/meta'?meta:{available:true,pose:[0,0,0],verified:false}};await map.tick();
+ assert.equal(map.nav.point_hint,undefined);assert.equal(lines.filter(([kind])=>kind==='line').length,2);
+});

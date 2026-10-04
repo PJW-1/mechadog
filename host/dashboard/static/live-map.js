@@ -11,6 +11,16 @@ export function applyAffine(m, x, y) {
   return [m[0][0] * x + m[0][1] * y + m[0][2], m[1][0] * x + m[1][1] * y + m[1][2]];
 }
 
+/** 위치 힌트 반경을 순찰 좌표에서 만든다. 두 지도는 각자의 표시 행렬만 적용한다. */
+export function pointHintOutline(nav) {
+  const hint = nav?.point_hint;
+  if (nav?.verified || !hint || !Number.isFinite(hint.x) || !Number.isFinite(hint.y) || !Number.isFinite(hint.radius) || hint.radius <= 0) return [];
+  return Array.from({length: 65}, (_, step) => {
+    const angle = step * Math.PI * 2 / 64;
+    return [hint.x + hint.radius * Math.cos(angle), hint.y + hint.radius * Math.sin(angle)];
+  });
+}
+
 /** 로봇 상태를 사람 말로. 위치를 모르면 그렇다고 먼저 말한다. */
 export function describeNav(nav) {
   if (!nav || nav.available === false) return '측위 정보 없음 — LiDAR 측위 순찰이 아닙니다.';
@@ -22,6 +32,7 @@ export function describeNav(nav) {
   else parts.push('위치 미확인 — 이동 불가');
   if (nav.zone) parts.push('구역 ' + nav.zone);
   if (nav.zone_hint) parts.push('구역 ' + nav.zone_hint + ' 안에서 찾는 중');
+  if (nav.point_hint && !nav.verified) parts.push('알려준 점 주변에서 위치 찾는 중');
   if (nav.goal) parts.push('찍은 곳으로 이동 중');
   else if (nav.holding_goal && nav.goal_hold_reason === 'blocked') parts.push('찍은 곳으로 가는 길이 막혀 정지 · 대기');
   else if (nav.holding_goal) parts.push('찍은 곳 도착 · 대기 (순찰 시작으로 복귀)');
@@ -55,7 +66,7 @@ export class LiveMap {
     this.status.setAttribute('role', 'status');
     this.canvas = document.createElement('canvas');
     this.canvas.setAttribute('aria-label', '실제 집 지도 — 누르면 그곳으로 로봇을 보냅니다');
-    this.canvas.style.cursor = 'crosshair';
+    this.canvas.style.cursor = 'pointer';
     this.canvas.style.border = '1px solid rgba(0,0,0,.12)';
     this.canvas.style.borderRadius = '8px';
     this.canvas.addEventListener('click', (event) => this.click(event));
@@ -68,7 +79,18 @@ export class LiveMap {
 
   async tick() {
     const link = this.getLink();
-    if (!link || !this.root.isConnected) return;
+    if (!this.root.isConnected) return;
+    if (!link) {
+      if (this.link) {
+        this.generation = (this.generation || 0) + 1;
+        this.link = null;
+        this.meta = null;
+        this.image = null;
+        this.nav = null;
+      }
+      this.draw();
+      return;
+    }
     if (link !== this.link) {
       // 다른 로봇(서버)으로 바뀌었다 — 옛 지도·행렬로 새 로봇에 좌표를 보내면 안 된다 (Codex 검토 G P1).
       this.link = link;
@@ -76,6 +98,7 @@ export class LiveMap {
       this.meta = null;
       this.image = null;
       this.nav = null;
+      this.draw();
     }
     const generation = this.generation;
     try {
@@ -102,6 +125,11 @@ export class LiveMap {
       this.error = error?.message || String(error);
     }
     this.draw();
+  }
+
+  dispose() {
+    this.generation = (this.generation || 0) + 1;
+    globalThis.clearInterval(this.timer);
   }
 
   loadImage(src) {
@@ -155,7 +183,10 @@ export class LiveMap {
     }
     this.status.textContent = (this.error ? '연결 끊김 — ' : '') + describeNav(this.nav);
     const meta = this.meta;
-    if (!meta) return;
+    if (!meta) {
+      this.canvas.getContext?.('2d')?.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      return;
+    }
     const canvas = this.canvas;
     if (canvas.width !== meta.width) canvas.width = meta.width;
     if (canvas.height !== meta.height) canvas.height = meta.height;
@@ -181,6 +212,23 @@ export class LiveMap {
       ctx.fillText(zone.id, u, v);
     }
     const nav = this.nav;
+    const hint = pointHintOutline(nav);
+    if (hint.length) {
+      // 원판을 서버의 순찰 좌표에서 만들고 기존 아핀 변환으로 그린다(회전·축 뒤집힘 포함).
+      ctx.fillStyle = 'rgba(37,99,235,.12)';
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      for (const [step, world] of hint.entries()) {
+        const point = px(...world);
+        if (step === 0) ctx.moveTo(...point); else ctx.lineTo(...point);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (!nav || nav.available === false || !Array.isArray(nav.pose)) return;
     if (nav.path?.length) {
       ctx.strokeStyle = 'rgba(37,99,235,.8)';

@@ -3,7 +3,6 @@ import {RoutePlanner} from './route-planner.js';
 import {EVENT_CATEGORIES,REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
 import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
-import {LiveMap} from './live-map.js';
 
 const VOICE_ROLES={user:'현장 발화',robot:'로봇 응답',admin:'경고 방송',system:'시스템',robot_evt:'로봇 사건'};
 const TITLES={missions:'제어 · 장치',events:'사건 검토',records:'운영 기록',zones:'구역 · 동선',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
@@ -454,12 +453,6 @@ export class OperationalPanels {
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
     this.note('운용 모드는 로봇이 멈춰 있을 때(대기·수동)만 바꿀 수 있고, 바꿔도 경보(L3)와 안전 정지(F)는 풀리지 않습니다. 선행 기능이 없는 모드는 서버가 거절하며 사유를 알려 줍니다.'),
     this.note('모드 변경 버튼은 누르면 확인 창이 뜹니다. 순찰 정지·비상 정지처럼 안전으로 가는 명령은 확인 없이 즉시 보냅니다. 서비스 모드 해제 후에도 안전 래치는 남습니다.')));
-   // 위치 알려주기 — 들어 옮긴 뒤 집 안 비슷한 자리를 구별 못 해 위치를 못 잡을 때, 사람이 구역을 알려준다.
-   const zones=store.patrolZones;
-   this.container.append(this.section('위치 알려주기',
-    zones.length?this.el('div',{class:'op-toolbar','data-locate':'zones'},...zones.map(zone=>this.button('구역 '+zone,()=>this.confirmDevice({icon:'target',title:'로봇이 지금 구역 '+zone+' 안에 있습니까?',body:'로봇이 지금 믿고 있는 위치를 버리고 구역 '+zone+' 안에서만 다시 찾습니다. 찾을 때까지 로봇은 멈춰 섭니다. 잘못 알려주면 엉뚱한 자리로 잡힐 수 있으니 실제로 있는 구역만 누르세요.',confirm:'예, 구역 '+zone+' 입니다',action:async()=>{const result=await store.requestLocate(zone);this.onToast(result?.detail||'위치 다시 찾기를 요청했어요.')}}),{disabled:!store.live,'data-locate-zone':zone}))):this.note('구역 목록을 받지 못했습니다 — 서버 연결을 확인하세요.','warning'),
-    store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
-    this.note('로봇을 들어 옮긴 뒤 위치를 못 잡을 때 씁니다. 로봇은 방향과 상관없이 그 구역 안에서 위치를 찾고, 구역 안에서도 비슷한 자리가 여럿이면 계속 멈춰 있습니다(1분 뒤 포기).')));
   }
   // 관제 PC 스피커 방송 음량 · 무음 (`4.8.2`) — 로봇 스피커(SOUND)와 별개, 방송기는 플릿 전체가 하나를 나눠 쓴다.
   {
@@ -576,15 +569,23 @@ export class OperationalPanels {
   const link=this.store.link,robot=this.store.selected;
   return this.confirmDevice({icon:'route',title:'로봇을 이 곳으로 보낼까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m)까지 경로를 찾아 걸어갑니다. 순찰 중이 아니면 순찰이 함께 시작됩니다. 경로에 사람·물건이 없는지 먼저 확인하세요. 도착하면 그 자리에 서고, «실제 순찰 시작»을 누르면 구역 순찰로 돌아갑니다.',confirm:'예, 보냅니다',action:async()=>{if(this.store.link!==link||this.store.selected!==robot)throw new Error('대상 로봇이 바뀌었습니다. 새 지도에서 목적지를 다시 찍어 주세요.');const result=await this.store.requestGoto(x,y);this.onToast(result?.detail||'이동을 요청했어요.')}});
  }
- liveMapSection(){
-  // 실제 집 지도 — 서버에 연결됐을 때만. 한 번 만든 지도를 다시 붙인다(재렌더마다 새로 받지 않게).
-  if(!this.store.live||!this.store.link)return null;
-  this.liveMap??=new LiveMap({document:this.document,getLink:()=>this.store.live?this.store.link:null,onPick:(x,y,where)=>this.confirmGoto(x,y,where)});
-  return this.section('실제 집 지도',this.liveMap.root,this.note('로봇 표시(삼각형)는 로봇이 스스로 추정한 위치입니다. 지도를 누르면 그곳으로 보냅니다(확인 창). 위치를 못 믿는 동안(회색)에는 로봇이 이동을 거절합니다 — «제어 · 장치»의 «위치 알려주기»로 구역을 알려 주세요.'));
+ confirmLocatePoint(x,y,where=''){
+  const link=this.store.link,robot=this.store.selected;
+  return this.confirmDevice({icon:'target',title:'로봇이 여기 있다고 알려줄까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m) 주변에서 로봇의 현재 위치를 다시 찾습니다. 위치가 확인될 때까지 로봇은 멈춰 있습니다. 실제로 로봇이 있는 곳인지 확인하세요.',confirm:'예, 위치를 알려줍니다',action:async()=>{
+   if(this.store.link!==link||this.store.selected!==robot)throw new Error('대상 로봇이 바뀌었습니다. 새 지도에서 위치를 다시 찍어 주세요.');
+   const result=await this.store.requestLocatePoint(x,y);this.onToast(result?.detail||'찍은 곳 주변에서 위치 다시 찾기를 요청했어요.');
+  }});
+ }
+ locateZones(){
+  const store=this.store,zones=store.patrolZones;
+  return this.el('div',{'data-locate-support':''},this.el('h4',{},'구역으로 알려주기 (보조)'),
+   zones.length?this.el('div',{class:'op-toolbar','data-locate':'zones'},...zones.map(zone=>this.button('구역 '+zone,()=>this.confirmDevice({icon:'target',title:'로봇이 지금 구역 '+zone+' 안에 있습니까?',body:'로봇이 지금 믿고 있는 위치를 버리고 구역 '+zone+' 안에서만 다시 찾습니다. 찾을 때까지 로봇은 멈춰 섭니다. 잘못 알려주면 엉뚱한 자리로 잡힐 수 있으니 실제로 있는 구역만 누르세요.',confirm:'예, 구역 '+zone+' 입니다',action:async()=>{const result=await store.requestLocate(zone);this.onToast(result?.detail||'위치 다시 찾기를 요청했어요.')}}),{disabled:!store.live||store.readOnly,'data-locate-zone':zone}))):this.note('구역 목록을 받지 못했습니다 — 서버 연결을 확인하세요.','warning'),
+   this.note('지도에서 정확한 자리를 찍기 어려우면 구역을 알려 주세요. 구역 안에서도 비슷한 자리가 여럿이면 로봇은 계속 멈춰 있습니다.'));
  }
  zonePage(){
   // One route map owns move / locate / draw. Zone policy editing stays below it.
   this.routePlanner.open();
+  this.container.append(this.section('로봇 위치 알려주기',this.locateZones()));
   this.planning.open()
  }
  devices(){

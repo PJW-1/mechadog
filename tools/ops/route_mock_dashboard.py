@@ -4,7 +4,8 @@ python tools/ops/route_mock_dashboard.py --maps <지도> --output <새 작업폴
     --start x,y,yaw_deg --port 8016
 
 원본 지도를 복사한 뒤 실제 계획 API·PatrolController·Commander를 사용한다.
-자세는 운동 모델의 참값을 주입하므로 실물 측위/보행 정확도를 검증하지 않는다.
+처음에는 운동 모델의 참 자세를 주입한다. 위치 힌트를 주면 참 자세 주입을 끊고
+합성 스캔을 기존 정합·표결 경로로 처리한다. 실물 측위/보행 정확도 검증은 아니다.
 개인 지도·좌표·화면은 Git 제외된 로컬 output만 사용해야 한다.
 """
 
@@ -99,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     lock = threading.RLock()
     now_ms = 0
     truth = (start[0], start[1], math.radians(start[2]))
+    localize_from_scans = False
     feedback: dict[str, object] = {}
     state = DashboardState("SIM-route", stale_after_ms=3000)
     view = MapView(
@@ -161,20 +163,59 @@ def main(argv: list[str] | None = None) -> int:
             behavior.event(Event.MANUAL_OFF, now_ms)
             return True, "SIM 동선을 정지했습니다"
 
+    def locate_point(x: float, y: float) -> tuple[bool, str]:
+        nonlocal localize_from_scans
+        with lock:
+            accepted, detail = controller.validate_hint_point(x, y)
+            if not accepted:
+                return False, detail
+            send(commander.stop_now())
+            if not controller.hint_point(x, y, now_ms):
+                return False, "위치 힌트를 적용하지 못했습니다"
+            localize_from_scans = True
+            return True, "알려준 점 주변을 합성 스캔으로 다시 확인합니다"
+
+    def locate_zone(zone: str) -> tuple[bool, str]:
+        nonlocal localize_from_scans
+        with lock:
+            if zone not in controller.zones.labels:
+                return False, "알려줄 구역이 없습니다"
+            send(commander.stop_now())
+            if not controller.hint_zone(zone, now_ms):
+                return False, "구역 힌트를 적용하지 못했습니다"
+            localize_from_scans = True
+            return True, "알려준 구역을 합성 스캔으로 다시 확인합니다"
+
     def nav_status() -> dict[str, object]:
         with lock:
+            controller._zone_filter(now_ms)
+            point_hint = controller._point_hint
             return {
                 "available": True,
                 "frame": "patrol",
                 "simulated": True,
-                "simulation": "운동 모델의 참 자세 주입 · 실물 측위 검증 아님",
+                "simulation": (
+                    "합성 스캔 정합 · 실물 측위 검증 아님"
+                    if localize_from_scans
+                    else "운동 모델의 참 자세 주입 · 실물 측위 검증 아님"
+                ),
                 "pose": [*controller.pose[:2], math.degrees(controller.pose[2])],
                 "verified": controller.pose_verified,
-                "seeded": True,
+                "seeded": controller.pose_seeded,
                 "stale": controller.pose_stale(now_ms),
                 "phase": controller.phase.value,
                 "target": controller.target,
                 "zone": controller.current_zone,
+                "zone_hint": controller._zone_hint[0] if controller._zone_hint else None,
+                "point_hint": (
+                    None
+                    if point_hint is None
+                    else {
+                        "x": point_hint[0],
+                        "y": point_hint[1],
+                        "radius": controller.point_hint_radius_m,
+                    }
+                ),
                 "goal": controller.goal,
                 "holding_goal": controller.holding_goal,
                 "goal_hold_reason": controller.goal_hold_reason,
@@ -191,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
         send,
         apply_event=apply,
         goto_point=goto,
+        locate_point=locate_point,
+        locate_zone=locate_zone,
         start_route=start_route,
         stop_route=stop_route,
     )
@@ -227,7 +270,6 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                         now_ms,
                     )
-                    controller.observe_map_pose(truth, now_ms)
                     scan = Scan(
                         "route-sim",
                         "0" * 16,
@@ -235,7 +277,11 @@ def main(argv: list[str] | None = None) -> int:
                         now_ms,
                         points_from_wire(raycast_scan(hits, controller.grid.meta, truth, sim, rng)),
                     )
-                    controller.observe_obstacle_scan(scan, now_ms)
+                    if localize_from_scans:
+                        controller.observe_scan(scan, now_ms)
+                    else:
+                        controller.observe_map_pose(truth, now_ms)
+                        controller.observe_obstacle_scan(scan, now_ms)
                     urgent = controller.guard_scan(scan)
                     if urgent:
                         send(urgent)
