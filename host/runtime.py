@@ -2302,13 +2302,15 @@ def _seeded_controller(
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    # 인자 오류는 `parser.error` — 종료 코드 2 (`SystemExit(str)` 은 1 이라 설정 거부 rc 2 와 갈린다).
     if args.dashboard_port is not None and not 1 <= args.dashboard_port <= 65535:
-        raise SystemExit("dashboard-port must be between 1 and 65535")
+        parser.error("dashboard-port must be between 1 and 65535")
     if args.motion_lock and (args.patrol or args.reset_on_start):
-        raise SystemExit("--motion-lock 은 --patrol · --reset-on-start 와 함께 쓸 수 없다")
+        parser.error("--motion-lock 은 --patrol · --reset-on-start 와 함께 쓸 수 없다")
     if args.record_frame_ms <= 0:
-        raise SystemExit("--record-frame-ms 는 1 이상이어야 한다")
+        parser.error("--record-frame-ms 는 1 이상이어야 한다")
     # ⚠️ 설정을 읽기 전에는 우리 로거가 없다. 여기서만 표준 출력을 쓴다.
     try:
         config = load_config(args.device)

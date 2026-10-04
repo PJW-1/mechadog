@@ -3615,6 +3615,24 @@ def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -
     assert module.main(["--device", "test", "--no-vision", "--mode", "factory"]) == 2
 
 
+@pytest.mark.parametrize(
+    ("argv", "needle"),
+    [
+        (["--dashboard-port", "0"], "dashboard-port"),
+        (["--motion-lock", "--patrol"], "--motion-lock"),
+        (["--record-frame-ms", "0"], "--record-frame-ms"),
+    ],
+)
+def test_cli_argument_conflicts_exit_with_code_2(argv: list[str], needle: str, capsys) -> None:
+    """인자 검증 실패는 설정 거부(rc 2)·argparse 오류와 같은 종료 코드 2 다 (`SystemExit(str)` 은 1)."""
+    import host.runtime as module
+
+    with pytest.raises(SystemExit) as exc:
+        module.main(["--device", "test", *argv])
+    assert exc.value.code == 2
+    assert needle in capsys.readouterr().err
+
+
 # ── 쓰러짐이 기록까지 가는가 (WBS 4.8.3 · FR-9) ──────────────────
 #
 # ⚠️ **여기도 호출부를 잠근다.** 규칙 자체는 `test_fallen_gate.py` 가 전수로 닫았다.

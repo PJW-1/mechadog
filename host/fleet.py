@@ -258,9 +258,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if not 1 <= args.dashboard_port <= 65535:
-        raise SystemExit("dashboard-port must be between 1 and 65535")
+        parser.error("dashboard-port must be between 1 and 65535")
     try:
         members = load_members(
             args.devices,

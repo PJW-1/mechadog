@@ -252,3 +252,14 @@ def test_stray_websocket_closes_instead_of_crashing_the_static_mount() -> None:
         # 로봇 범위의 WS 는 그대로 붙는다.
         with client.websocket_connect(f"/robots/{A}/ws/telemetry") as ws:
             assert ws.receive_json()["device_id"] == A
+
+
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_cli_rejects_invalid_port_with_exit_code_2(port: str, capsys) -> None:
+    """인자 검증 실패는 설정 거부(rc 2)·argparse 오류와 같은 종료 코드 2 다 (`SystemExit(str)` 은 1)."""
+    from host.fleet import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--devices", A, "--dashboard-port", port])
+    assert exc.value.code == 2
+    assert "dashboard-port" in capsys.readouterr().err
