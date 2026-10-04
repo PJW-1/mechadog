@@ -263,3 +263,14 @@ def test_cli_rejects_invalid_port_with_exit_code_2(port: str, capsys) -> None:
         main(["--devices", A, "--dashboard-port", port])
     assert exc.value.code == 2
     assert "dashboard-port" in capsys.readouterr().err
+
+
+def test_cli_refuses_a_non_utf8_profile_with_exit_code_2(monkeypatch) -> None:
+    """UTF-8 이 아닌 설정은 `UnicodeDecodeError`(`ValueError`) — traceback 이 아니라 rc 2 로 거부한다."""
+    import host.fleet as module
+
+    def broken(_device):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(module, "load_config", broken)
+    assert module.main(["--devices", A, "--dashboard-port", "8000"]) == 2

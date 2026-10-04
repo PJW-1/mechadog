@@ -697,6 +697,52 @@ def test_broken_map_yaml_is_a_value_error(tmp_path: Path) -> None:
         OccupancyGrid.load_ros2(path)
 
 
+@pytest.mark.parametrize("bad", [None, 10**400, "abc"])
+@pytest.mark.parametrize(
+    "key", ["negate", "occupied_thresh", "free_thresh", "resolution", "origin_x", "origin_yaw"]
+)
+def test_non_numeric_map_yaml_values_are_value_errors(
+    tmp_path: Path, key: str, bad: object
+) -> None:
+    """숫자 변환이 `TypeError`·`OverflowError` 로 새면 `except (OSError, ValueError)` 를 빠져나간다."""
+    pixels = np.full((2, 2), 254, dtype=np.uint8)
+    if key == "origin_x":
+        spec: dict[str, object] = {"origin": [bad, 0.0, 0.0]}
+    elif key == "origin_yaw":
+        spec = {"origin": [0.0, 0.0, bad]}
+    else:
+        spec = {key: bad}
+    path = write_ros2_map(tmp_path, pixels, **spec)
+    with pytest.raises(ValueError, match=key.split("_")[0]):
+        OccupancyGrid.load_ros2(path)
+
+
+@pytest.mark.parametrize("bad", ["missing", None, 10**400])
+@pytest.mark.parametrize("key", ["resolution", "origin_x", "origin_y", "width", "height"])
+def test_broken_map_meta_is_a_value_error(tmp_path: Path, key: str, bad: object) -> None:
+    """`map_meta.json` 의 빠진 키·null·거대한 정수가 `KeyError`·`TypeError`·`OverflowError` 로 새지 않는다."""
+    grid = OccupancyGrid.blank(resolution=0.05, span_cells=4)
+    grid.save(tmp_path)
+    meta_path = tmp_path / "map_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if bad == "missing":
+        del meta[key]
+    else:
+        meta[key] = bad
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with pytest.raises(ValueError, match=key):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("bad", [None, "abc", [1], {"v": 1}])
+def test_zone_entry_with_non_numeric_coordinate_is_skipped(tmp_path: Path, bad: object) -> None:
+    """좌표가 숫자가 아니면 `x`·`y` 가 없는 항목처럼 건너뛴다 — `TypeError` 로 새지 않는다."""
+    payload = {"A": {"x": bad, "y": 0}, "B": {"x": 1.0, "y": 2.0}}
+    (tmp_path / "zones.json").write_text(json.dumps(payload), encoding="utf-8")
+    loaded = ZoneStore.load(tmp_path, ("A", "B"))
+    assert [zone.label for zone in loaded.as_tuple()] == ["B"]
+
+
 def test_pgm_header_comments_are_skipped(tmp_path: Path) -> None:
     """주석은 헤더 어디에나 올 수 있다. 고정 오프셋으로 읽으면 어긋난다."""
     pixels = np.array([[0, 254, 254, 254]], dtype=np.uint8)

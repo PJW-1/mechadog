@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 
 from host.behavior.planner import Plan, PlanParams, Point, plan_to
+from host.common.config import _finite_number
 from host.common.logging_setup import event_logger
 from host.slam.occupancy import OccupancyGrid
 
@@ -142,6 +143,13 @@ class ZoneStore:
                 LOG.warning("zone_entry_malformed", label=label)
                 continue
             yaw = value.get("yaw")
+            if not (
+                _finite_number(value["x"])
+                and _finite_number(value["y"])
+                and (yaw is None or _finite_number(yaw))
+            ):
+                LOG.warning("zone_entry_malformed", label=label)
+                continue
             store._zones[label] = Zone(
                 label, float(value["x"]), float(value["y"]), None if yaw is None else float(yaw)
             )
