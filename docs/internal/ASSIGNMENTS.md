@@ -126,7 +126,7 @@
 | :--- | :--- | :--- | ---: |
 | `1.4` | 리스크 관리 및 주간 리뷰 | 리스크 레지스터 갱신 이력 | 1.0 |
 | `2.4.2` | 네트워크 환경 구성 | IP/포트 할당표 | 0.5 |
-| `3.6.4` | VLM 상태 위험(넘어짐·통로 막힘) 방문 내 확정 `[P2]` | `behavior/change_detect.py` · `runtime.py` (예정) | — |
+| `3.6.4` | VLM 상태 위험(넘어짐·통로 막힘) 방문 내 확정 `[P2]` | ~~`behavior/change_detect.py`~~ `behavior/zone_inspector.py` *(2026-10-05 · `change_detect.py` 는 ADR-44 로 지웠다)* · `runtime.py` (예정) | — |
 | `3.7.3` | 위반 판정 + 게이팅 + 클리핑 검사 | `vision/ppe_detector.py` | 0.5 |
 | `4.8.4` | VLM 판독 벤치 (우리 카메라) `[P2]` | `tools/probe/vlm_bench.py` + 결과 기록 | — |
 | `4.8.6` | 위험구역 `hazard_item` 판독 | `vision/vlm_reader.py` · `behavior/zone_inspector.py` | — |
