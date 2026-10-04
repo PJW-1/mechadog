@@ -109,4 +109,6 @@ def test_runtime_server_serves_the_white_dashboard() -> None:
         assert first.status_code in (302, 307) and first.headers["location"] == "/glass-preview/", (
             "첫 주소는 흰 화면 — 검정(앱 단독) 화면이 먼저 뜨지 않는다"
         )
-        assert "glass-preview" in http.get("/index.html").text, "단독으로 열면 흰 화면으로 넘기는 코드"
+        assert "glass-preview" in http.get("/index.html").text, (
+            "단독으로 열면 흰 화면으로 넘기는 코드"
+        )

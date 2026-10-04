@@ -2011,3 +2011,41 @@ def test_goto_that_becomes_blocked_holds_instead_of_wandering() -> None:
     controller.phase = Phase.PLANNING
     controller._advance()
     assert controller.holding_goal is True and controller.goal is None
+
+
+def test_goal_hold_reason_separates_arrival_from_blockage() -> None:
+    controller = _verified_at()
+    controller.goto(3.0, 2.5)
+    controller._goal = (50.0, 50.0)
+    controller.plan = __import__("host.behavior.planner", fromlist=["Plan"]).Plan("GOAL")
+    controller.phase = Phase.PLANNING
+    controller._advance()
+    assert controller.goal_hold_reason == "blocked"
+    controller.cancel_goal("patrol_restart")
+    assert controller.goal_hold_reason is None
+    controller.goto(3.0, 2.5)
+    controller._advance()
+    controller.observe_map_pose((3.0, 2.45, 0.0), 2000)
+    controller._advance()
+    assert controller.goal_hold_reason == "reached"
+
+
+def test_zone_restricted_global_match_never_returns_outside_the_zone() -> None:
+    """정밀 탐색이 경계 밖으로 번져도 결과는 알려준 범위 안 (Codex 검토 G P1)."""
+    from host.slam.scan_match import global_match, preprocess
+
+    controller = build()
+    home = (1.5, 1.2, 0.3)
+    points = preprocess(_room_scan(home), 0.12, 8.0)
+    # 참 자리 바로 옆까지만 허용 — 정밀 탐색은 참 자리(경계 밖)로 가고 싶어 한다.
+    allowed = lambda xs, _ys: np.asarray(xs) <= 1.42  # noqa: E731
+    result = global_match(
+        controller.match_grid,
+        points,
+        lin_step_m=0.1,
+        ang_step_rad=math.radians(15),
+        occ_thresh=1.0,
+        min_known_cells=50,
+        allowed=allowed,
+    )
+    assert result is not None and result.pose[0] <= 1.42 + 1e-9

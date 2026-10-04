@@ -373,6 +373,11 @@ def global_match(
         refined = match(grid, points_robot, coarse_pose, refine_params)
         row, col = grid.to_cell(refined.pose[0], refined.pose[1])
         standable_refined = grid.inside(row, col) and grid.cells[row, col] <= free_thresh
+        if standable_refined and allowed is not None:
+            # 정밀 탐색은 거친 후보 둘레로 번진다 — 사람이 알려준 범위 밖으로 나가면 거친 자리를 쓴다.
+            standable_refined = bool(
+                np.asarray(allowed(np.array([refined.pose[0]]), np.array([refined.pose[1]])))[0]
+            )
         candidate_pose = coarse_pose
         if standable_refined and refined.score > 0:
             refined_full_score = scorer(

@@ -14,6 +14,7 @@ export function applyAffine(m, x, y) {
 /** 로봇 상태를 사람 말로. 위치를 모르면 그렇다고 먼저 말한다. */
 export function describeNav(nav) {
   if (!nav || nav.available === false) return '측위 정보 없음 — LiDAR 측위 순찰이 아닙니다.';
+  if (nav.starting || !Array.isArray(nav.pose)) return '측위 시작 대기 — 첫 상태를 받는 중';
   const parts = [];
   if (nav.stale) parts.push('위치 상실 — 다시 찾는 중');
   else if (nav.verified) parts.push('위치 확인됨');
@@ -22,7 +23,10 @@ export function describeNav(nav) {
   if (nav.zone) parts.push('구역 ' + nav.zone);
   if (nav.zone_hint) parts.push('구역 ' + nav.zone_hint + ' 안에서 찾는 중');
   if (nav.goal) parts.push('찍은 곳으로 이동 중');
+  else if (nav.holding_goal && nav.goal_hold_reason === 'blocked') parts.push('찍은 곳으로 가는 길이 막혀 정지 · 대기');
   else if (nav.holding_goal) parts.push('찍은 곳 도착 · 대기 (순찰 시작으로 복귀)');
+  const fb = nav.goal_feedback;
+  if (fb && fb.accepted === false) parts.push('이동 거절 — ' + (fb.detail || '사유 미수신'));
   else if (nav.target) parts.push('목표 구역 ' + nav.target);
   if (nav.fsm) parts.push('상태 ' + nav.fsm);
   return parts.join(' · ');
@@ -65,21 +69,36 @@ export class LiveMap {
   async tick() {
     const link = this.getLink();
     if (!link || !this.root.isConnected) return;
+    if (link !== this.link) {
+      // 다른 로봇(서버)으로 바뀌었다 — 옛 지도·행렬로 새 로봇에 좌표를 보내면 안 된다 (Codex 검토 G P1).
+      this.link = link;
+      this.generation = (this.generation || 0) + 1;
+      this.meta = null;
+      this.image = null;
+      this.nav = null;
+    }
+    const generation = this.generation;
     try {
       if (!this.meta) {
+        let meta;
         try {
-          this.meta = await link.get('/api/map/meta');
+          meta = await link.get('/api/map/meta');
         } catch (error) {
-          this.onAvailability(false);
+          if (generation === this.generation) this.onAvailability(false);
           throw error;
         }
+        if (generation !== this.generation) return;
+        this.meta = meta;
         this.onAvailability(true);
         // 그림은 기다리지 않는다 — 오면 다시 그린다(못 오면 행렬·로봇만 그린다).
         this.loadImage(link.baseUrl + '/api/map.png');
       }
-      this.nav = await link.get('/api/nav');
+      const nav = await link.get('/api/nav');
+      if (generation !== this.generation) return; // 그 사이 로봇이 바뀌었다 — 옛 응답은 버린다
+      this.nav = nav;
       this.error = null;
     } catch (error) {
+      if (generation !== this.generation) return;
       this.error = error?.message || String(error);
     }
     this.draw();
@@ -88,8 +107,10 @@ export class LiveMap {
   loadImage(src) {
     const Image = this.document.defaultView?.Image;
     if (typeof Image !== 'function') return;
+    const generation = this.generation;
     const image = new Image();
     image.onload = () => {
+      if (generation !== this.generation) return;
       this.image = image;
       this.draw();
     };
@@ -111,6 +132,8 @@ export class LiveMap {
   }
 
   click(event) {
+    // 지도와 위치가 같은 로봇의 것일 때만 찍을 수 있다.
+    if (!this.meta || !this.nav || this.link !== this.getLink()) return;
     const point = this.toPatrol(event.clientX, event.clientY);
     if (!point) return;
     this.onPick(point[0], point[1], this.nearestZone(point));
@@ -158,7 +181,7 @@ export class LiveMap {
       ctx.fillText(zone.id, u, v);
     }
     const nav = this.nav;
-    if (!nav || nav.available === false) return;
+    if (!nav || nav.available === false || !Array.isArray(nav.pose)) return;
     if (nav.path?.length) {
       ctx.strokeStyle = 'rgba(37,99,235,.8)';
       ctx.lineWidth = 3;

@@ -439,6 +439,8 @@ class PatrolController:
     _goal: tuple[float, float] | None = None
     #: 찍은 곳에 도착(또는 못 가게 됨) — 사람이 순찰을 다시 시작할 때까지 그 자리에 선다.
     _goal_hold: bool = False
+    #: 대기 이유 — «reached»(찍은 곳 도착) | «blocked»(가는 도중 길이 막힘) | None.
+    _goal_hold_reason: str | None = None
     _global_prior_result: MatchResult | None = None
     #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
     _result_imu: float | None = None
@@ -930,6 +932,10 @@ class PatrolController:
     def holding_goal(self) -> bool:
         return self._goal_hold
 
+    @property
+    def goal_hold_reason(self) -> str | None:
+        return self._goal_hold_reason
+
     def goto(self, x: float, y: float) -> tuple[bool, str]:
         """지도에서 찍은 곳으로 간다. **루프 스레드에서만** 부른다.
 
@@ -954,6 +960,7 @@ class PatrolController:
             return False, f"지금 자리에서 그곳으로 가는 길이 없다 ({trial.fail_reason})"
         self._goal = (float(x), float(y))
         self._goal_hold = False
+        self._goal_hold_reason = None
         self.plan = Plan(GOAL_LABEL)
         self.waypoint_index = 0
         self.phase = Phase.PLANNING
@@ -975,6 +982,7 @@ class PatrolController:
         LOG.info("goal_cleared", reason=reason)
         self._goal = None
         self._goal_hold = False
+        self._goal_hold_reason = None
         if self.plan.label == GOAL_LABEL:
             self.plan = Plan(None)
         self.phase = Phase.PLANNING
@@ -1832,6 +1840,7 @@ class PatrolController:
             LOG.warning("goal_unreachable", reason=plan.fail_reason)
             self._goal = None
             self._goal_hold = True
+            self._goal_hold_reason = "blocked"
             self.plan = Plan(None)
             return
         candidates = {label: self.zones.xy(label) for label in self.zones.labels}
@@ -2031,6 +2040,7 @@ class PatrolController:
             LOG.info("goal_reached", x=round(self.pose[0], 2), y=round(self.pose[1], 2))
             self._goal = None
             self._goal_hold = True
+            self._goal_hold_reason = "reached"
             self.plan = Plan(None)
             self.phase = Phase.PLANNING
             return

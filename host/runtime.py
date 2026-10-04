@@ -247,6 +247,8 @@ class Runtime:
         #: 지도에서 찍은 목표 — 서버 스레드가 넣고 루프가 꺼낸다. 결과는 피드백으로.
         self._goto_asked: tuple[float, float] | None = None
         self._goal_feedback: dict[str, Any] | None = None
+        #: 루프가 틱마다 만든 항법 상태 묶음 (서버는 참조만 읽는다).
+        self._nav_snapshot: dict[str, Any] | None = None
         #: 사람이 순찰을 멈췄다(PATROL → IDLE) — 찍은 목표를 버린다 (루프에서).
         self._goal_cancel_asked = False
         #: ROS2 컨테이너로 가는 ODOM (`--lidar-device`, 보행 실측이 있는 기체만). 없으면 보내지 않는다.
@@ -274,6 +276,8 @@ class Runtime:
             # 일어나고, 그때 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
             self._behavior.fsm.on_enter("PATROL", self._mark_navigator_resume)
             self._behavior.fsm.on_exit("PATROL", self._mark_goal_cancel)
+            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다 (Codex 검토 G P1).
+            self._behavior.fsm.on_exit("MANUAL", self._mark_goal_cancel)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
         # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
@@ -789,9 +793,14 @@ class Runtime:
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
 
-    def _mark_goal_cancel(self, _previous: str, target: str) -> None:
-        """`PATROL` 이탈 훅. 사람이 멈춘 경우(`IDLE`)만 — 경보·추적으로 잠시 나간 것은 아니다."""
-        if target == "IDLE":
+    def _mark_goal_cancel(self, previous: str, target: str) -> None:
+        """사람이 멈췄다 — `PATROL`→`MANUAL`/`IDLE`, `MANUAL`→`IDLE`. 경보·추적으로 잠시 나간 것은 아니다.
+
+        수동 조종도 취소다 — 사람이 로봇을 옮긴 뒤 옛 목표로 걸어가면 안 된다. 표시만 하고 루프가 처리한다.
+        """
+        if (previous == "PATROL" and target in ("IDLE", "MANUAL")) or (
+            previous == "MANUAL" and target == "IDLE"
+        ):
             self._goal_cancel_asked = True
 
     def _mark_navigator_resume(self, _previous: str, _target: str) -> None:
@@ -1300,6 +1309,8 @@ class Runtime:
         phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
         self._watch_sound(lines, now_ms)
+        if self._navigator is not None:
+            self._nav_snapshot = self._build_nav_snapshot(now_ms)
         behavior_ms = (time.perf_counter() - phase_started) * 1000
         if self._behavior.state != before:
             self._stats.transitions += 1
@@ -1468,12 +1479,22 @@ class Runtime:
         return True, "찍은 곳으로 갈 수 있는지 확인한다 — 결과는 지도에 표시된다"
 
     def nav_status(self) -> dict[str, Any]:
-        """관제 지도가 그릴 자기 위치·신뢰·목표. **다른 스레드에서 부른다** — 읽기만 한다."""
+        """관제 지도가 그릴 자기 위치·신뢰·목표. **다른 스레드에서 부른다.**
+
+        루프가 틱마다 만든 한 시점의 묶음을 돌려준다 — 서버 스레드가 컨트롤러 필드를 하나씩 읽으면
+        옛 좌표에 새 신뢰·구역·경로가 섞인다 (Codex 검토 G P2).
+        """
+        snapshot = self._nav_snapshot
+        if snapshot is None:
+            return {"available": self._navigator is not None, "starting": True}
+        return {**snapshot, "goal_feedback": self._goal_feedback}
+
+    def _build_nav_snapshot(self, now_ms: int) -> dict[str, Any]:
+        """루프 스레드에서 한 시점의 항법 상태를 묶는다."""
         navigator = self._navigator
         if navigator is None:
             return {"available": False}
         x, y, yaw = navigator.pose
-        now_ms = self._clock()
         goal = getattr(navigator, "goal", None)
         hint = getattr(navigator, "_zone_hint", None)
         return {
@@ -1488,6 +1509,7 @@ class Runtime:
             "zone": getattr(navigator, "current_zone", None),
             "goal": None if goal is None else [round(goal[0], 3), round(goal[1], 3)],
             "holding_goal": bool(getattr(navigator, "holding_goal", False)),
+            "goal_hold_reason": getattr(navigator, "goal_hold_reason", None),
             "zone_hint": None if hint is None else hint[0],
             "match_frac": round(float(getattr(navigator, "match_frac", 0.0)), 3),
             "path": [
@@ -1581,6 +1603,10 @@ class Runtime:
             self._goal_cancel_asked = False
             if navigator is not None and hasattr(navigator, "cancel_goal"):
                 navigator.cancel_goal("patrol_stopped")
+            # 정지를 누르기 전에 들어온 이동 요청·그것이 건 순찰 시작도 버린다.
+            if goto is not None or self._goal_feedback is not None:
+                goto = None
+                self._patrol_asked = False
         if goto is not None and navigator is not None:
             accepted, detail = navigator.goto(*goto)
             self._goal_feedback = {

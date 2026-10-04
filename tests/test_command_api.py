@@ -1285,6 +1285,8 @@ def test_goto_is_planned_on_the_next_tick_and_starts_patrol(cfg, clock, tmp_path
     assert runtime._patrol_asked or runtime._behavior.state == "PATROL", (
         "순찰 중이 아니면 순찰 시작을 함께 예약한다"
     )
+    assert runtime.nav_status().get("starting") is True, "첫 틱 전에는 지어내지 않는다"
+    runtime._nav_snapshot = runtime._build_nav_snapshot(clock.advance(100))
     status = runtime.nav_status()
     assert status["goal_feedback"]["accepted"] is True
     assert status["pose"] == [1.0, 2.0, 0.0] and status["zone"] == "B"
@@ -1296,6 +1298,7 @@ def test_goto_refusal_is_reported_without_starting_patrol(cfg, clock, tmp_path):
     wiring["commands"].goto(9.0, 9.0)
     runtime._drain_confirmations(clock.advance(100))
     assert runtime._patrol_asked is False
+    runtime._nav_snapshot = runtime._build_nav_snapshot(clock.advance(100))
     assert runtime.nav_status()["goal_feedback"]["accepted"] is False
 
 
@@ -1329,3 +1332,30 @@ def test_goto_refused_without_navigator(cfg, clock, tmp_path):
     _runtime, wiring = _zone_wired(cfg, clock, tmp_path)
     assert wiring["commands"].goto(1.0, 1.0).accepted is False
     assert wiring["map_view"] is None and wiring["nav_status"] is None
+
+
+def test_real_stop_path_cancels_the_goal_and_pending_start(cfg, clock, tmp_path):
+    """실제 «순찰 정지» 는 PATROL → MANUAL → IDLE (Codex 검토 G P1). 리셋 정착(FAILSAFE→IDLE)은 취소가 아니다."""
+    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._mark_goal_cancel("FAILSAFE", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == []
+    runtime._mark_goal_cancel("PATROL", "MANUAL")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == ["patrol_stopped"], "수동 조종으로 넘어가도 옛 목표는 버린다"
+    wiring["commands"].goto(1.0, 1.0)
+    runtime._mark_goal_cancel("MANUAL", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.gotos == [], "정지 전에 들어온 이동 요청도 버린다"
+    assert runtime._patrol_asked is False
+
+
+def test_nav_status_is_one_loop_snapshot(cfg, clock, tmp_path):
+    runtime, _wiring = _zone_wired(cfg, clock, tmp_path)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._nav_snapshot = runtime._build_nav_snapshot(clock.advance(100))
+    navigator.pose = (9.0, 9.0, 0.0)  # 서버가 읽는 사이 루프가 바꿨다
+    assert runtime.nav_status()["pose"] == [1.0, 2.0, 0.0], "다음 틱 전까지는 같은 시점의 묶음"
