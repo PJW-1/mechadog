@@ -20,7 +20,7 @@
 | **`phase1_reference`** | **Phase 1 표준 구성**(LiDAR 미장착)의 지정 개체 | G1·G2·G3 검수, **Phase 1 NFR 성능 수치의 출처** |
 | **`phase2_reference`** | 측위 센서(LiDAR)를 장착한 지정 개체 | Phase 2 측위·매핑 검수 |
 
-- 두 기준기는 지정해 물리적으로 표시한다.
+- 두 기준기는 `config/devices/*.yaml` 의 `reference_role` 로 지정한다.
 - LiDAR 는 1대뿐이며 **`mechdog-02` 에 장착해 `phase2_reference`** 로 지정한다. `mechdog-02` 는 시연 기체이기도 하다.
 - **게이트 검수는 반드시 해당 Phase 의 기준기에서** 수행한다. 개발기 통과는 검수로 인정하지 않는다.
 - 권장 배치: **LiDAR 미장착 개체를 `phase1_reference`** 로 둔다. Phase 1 표준 물리 구성이 유지되어 NFR 수치의 기준이 흔들리지 않는다.
