@@ -133,6 +133,10 @@ measured:
   runtime_min: null
   wifi_rssi_dbm: null
 
+vision:
+  # XIAO 부팅 180도 펌웨어(2026-10-01)를 호스트 기본 0도가 덮어쓰던 문제 — 장착 방향은 기체 물리 사실이다.
+  mount_rotation: 180
+
 # ── 측위 (Phase 2) ────────────────────────────────────────────
 # ⚠️ **이 기체만 `lidar` 다.** 전역 `config.yaml` 은 Phase 1 표준 구성이라
 # `track: none` 으로 남긴다 — LiDAR 가 없는 기체에서 측위를 요구하면 기동이
