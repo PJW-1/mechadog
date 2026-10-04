@@ -218,7 +218,7 @@ tests/
 ├── test_fsm.py                  전이표 전수               ✅
 ├── test_escalation.py           L0~L3 진입·해제
 ├── test_tracker.py              ID 연속성
-├── test_change_detect.py        객체 목록 비교
+├── test_zone_inspector.py       구역 방문·VLM 확정
 └── test_geometry.py             bbox 클리핑
 ```
 
