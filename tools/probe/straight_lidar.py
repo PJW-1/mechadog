@@ -604,7 +604,12 @@ def wait_devices(link: Link, *, timeout_s: float, battery_warn_v: float) -> bool
 
 
 def roll_sweep(
-    link: Link, values: list[float], pitch: float, settle_s: float, measure_s: float
+    link: Link,
+    values: list[float],
+    pitch: float,
+    settle_s: float,
+    measure_s: float,
+    restore_roll: float = 0.0,
 ) -> dict[str, Any]:
     samples = []
     for value in values:
@@ -628,7 +633,8 @@ def roll_sweep(
                 f"  POSE roll {value:+.1f}° → IMU roll 평균 {samples[-1][1]:+.2f}° ({len(rolls)}표본)"
             )
         del start
-    link.commander.once("POSE", pitch=pitch, roll=0.0, height=0, dur=300)
+    # 스윕이 끝나면 설정의 보정값으로 — 0 으로 두면 뒤따르는 걷기 시험이 보정 없이 돈다.
+    link.commander.once("POSE", pitch=pitch, roll=restore_roll, height=0, dur=300)
     link.pump(1.0)
     return {"samples": samples, "fit": fit_roll_offset(samples)}
 
@@ -720,11 +726,19 @@ def main() -> int:
         if problem and problem != "로봇 래치":
             print(f"시작 불가 — {problem}")
             return 2
+        roll_offset = float((config.get("posture") or {}).get("roll_offset_deg") or 0.0)
         if a.roll_sweep:
             values = [float(v) for v in a.roll_sweep.split(",") if v.strip()]
             print("== 기울기 스윕 (서 있음)")
-            summary["roll_sweep"] = roll_sweep(link, values, a.pitch, 2.0, 6.0)
+            summary["roll_sweep"] = roll_sweep(
+                link, values, a.pitch, 2.0, 6.0, restore_roll=roll_offset
+            )
             print(f"  권장 POSE roll ≈ {summary['roll_sweep']['fit']}")
+        else:
+            link.commander.once("POSE", pitch=a.pitch, roll=roll_offset, height=0, dur=300)
+            link.pump(1.0)
+        print(f"== 걷기 시험은 설정 보정값 POSE roll {roll_offset:+.1f} 로")
+        summary["walk_pose_roll"] = roll_offset
         modes = {"open": ["open"], "hold": ["hold"], "both": ["open", "hold"]}[a.mode]
         for cycle in range(a.cycles):
             for mode in modes:
