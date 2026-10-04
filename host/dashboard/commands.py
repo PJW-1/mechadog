@@ -64,7 +64,7 @@ class CommandService:
         reset_zone_baseline: Callable[[str], tuple[bool, str]] | None = None,
         locate_zone: Callable[[str], tuple[bool, str]] | None = None,
         goto_point: Callable[[float, float], tuple[bool, str]] | None = None,
-        pose: tuple[float, int] | None = None,
+        pose: tuple[float, int] | tuple[float, int, float] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander

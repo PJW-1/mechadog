@@ -229,7 +229,9 @@ def _score_candidates(
     return values.sum(axis=1)
 
 
-def _scorer(grid: OccupancyGrid, occ_thresh: float, sigma_m: float):
+def _scorer(
+    grid: OccupancyGrid, occ_thresh: float, sigma_m: float
+) -> Callable[[np.ndarray], float]:
     """점수 함수 하나를 고른다 — 우도장(σ>0) 또는 적중 개수. 우도장은 정합당 한 번만 꺼낸다."""
     if sigma_m > 0:
         field = grid.likelihood_field(occ_thresh, sigma_m)

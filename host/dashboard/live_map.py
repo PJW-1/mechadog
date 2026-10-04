@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,10 +80,10 @@ def render(
     rows_k, cols_k = np.nonzero(np.abs(grid.cells) > 0.01)
     margin = 0.3
     if rows_k.size:
-        bx0 = x0 + cols_k.min() * res - margin
-        bx1 = x0 + (cols_k.max() + 1) * res + margin
-        by0 = y0 + rows_k.min() * res - margin
-        by1 = y0 + (rows_k.max() + 1) * res + margin
+        bx0 = float(x0 + cols_k.min() * res - margin)
+        bx1 = float(x0 + (cols_k.max() + 1) * res + margin)
+        by0 = float(y0 + rows_k.min() * res - margin)
+        by1 = float(y0 + (rows_k.max() + 1) * res + margin)
     else:
         bx0, by0 = x0, y0
         bx1, by1 = x0 + meta.width * res, y0 + meta.height * res
@@ -155,7 +156,7 @@ def render(
 class MapView:
     """한 번 그려 두고 같은 그림을 돌려준다 — 항법 지도는 운행 중 바뀌지 않는다."""
 
-    def __init__(self, renderer) -> None:
+    def __init__(self, renderer: Callable[[], tuple[bytes, dict[str, Any]]]) -> None:
         self._renderer = renderer
         self._cached: tuple[bytes, dict[str, Any]] | None = None
 

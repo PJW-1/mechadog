@@ -127,7 +127,7 @@ class MapRefinement:
         if not math.isclose(seed_grid.meta.resolution, resolution_m, abs_tol=1e-12):
             raise ValueError("seed_grid resolution must match lidar.resolution_mm")
         # ContinuousMap's existing constructor has no return annotation.
-        self._mapper = ContinuousMap(  # type: ignore[no-untyped-call]
+        self._mapper = ContinuousMap(  # type: ignore[no-untyped-call, unused-ignore]
             mapping_config, lidar_device, source="verified_stationary_refinement"
         )
         self._mapper.grid = _copy_grid(seed_grid)

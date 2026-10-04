@@ -1320,6 +1320,8 @@ class PatrolController:
         frame = (self.grid.meta.resolution, self.grid.meta.origin_x, self.grid.meta.origin_y)
         changed = (
             self._mask_frame != frame
+            or self._blocked is None
+            or self._body_blocked is None
             or not np.array_equal(self._blocked, static)
             or not np.array_equal(self._body_blocked, body)
         )
@@ -1498,6 +1500,7 @@ class PatrolController:
         # 계획에서 제외한 loc-only 셀도 실제 반사가 있으면 새 물체다.
         # 정적 추종 여유가 예상 거리를 줄여 물체를 숨기지 않도록 nav 점유와
         # 확인된 동적 표시로 비교한다. 측위 지도 자체로 탐지를 억제하지 않는다.
+        assert self._dynamic is not None  # _rebuild_masks 가 생성 때 채운다
         hit = detect_new_obstacle(
             self.pose,
             scan.points,

@@ -487,7 +487,7 @@ def _command_routes(commands: CommandService) -> APIRouter:
         return commands.zone_baseline(body.zone).as_dict()
 
     @router.post("/goto", response_model=None)
-    async def goto(request: Request) -> dict[str, object]:
+    async def goto(request: Request) -> dict[str, object] | JSONResponse:
         """`{"x": 1.2, "y": -0.4}` (순찰 좌표 m) — 지도에서 찍은 곳으로 간다.
 
         예약만 한다. 경로 유무·자기 위치 확인은 다음 틱에 판정되어 `/api/nav` 에 실린다.

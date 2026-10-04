@@ -2247,7 +2247,7 @@ def _open_recorder(
     )
 
 
-def _pose_out(config: dict, maps: Path) -> PoseOut | None:
+def _pose_out(config: dict[str, Any], maps: Path) -> PoseOut | None:
     """대시보드 포즈 송신기 — 지도 폴더에 `pose_frame.json` 이 있을 때만 만든다.
 
     순찰 좌표 → 표시(평면) 좌표 변환은 지도가 가진다 (`PoseOut.of` 문서). 송신
@@ -2262,9 +2262,9 @@ def _pose_out(config: dict, maps: Path) -> PoseOut | None:
 
 
 def _seeded_controller(
-    config: dict,
+    config: dict[str, Any],
     commander: Commander,
-    patrol_map: tuple,
+    patrol_map: tuple[OccupancyGrid, ZoneStore],
     pose_seed: str | None,
     maps_dir: Path | None = None,
 ) -> PatrolController:

@@ -90,7 +90,7 @@ class PoseOut:
         """순찰 좌표 `(x m, y m, yaw rad)` 를 표시 좌표로 변환해 보낸다."""
         x_d = self._cos * pose[0] - self._sin * pose[1] + self._tx
         y_d = self._sin * pose[0] + self._cos * pose[1] + self._ty
-        packet = {
+        packet: dict[str, Any] = {
             "x_m": round(x_d, 4),
             "y_m": round(y_d, 4),
             "yaw_rad": round(wrap_pi(pose[2] + self._rotate), 4),
