@@ -230,6 +230,7 @@ class Link:
     reading_ms: int = 0
     points: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))
     points_ms: int = 0
+    lidar_packets: int = 0
 
     def record(self, kind: str, **fields: Any) -> None:
         self.log.write(
@@ -271,6 +272,7 @@ class Link:
             scan = scan_of(self.scans.decode(raw))
             if scan is None or scan.device_id != self.lidar_device:
                 continue
+            self.lidar_packets += 1
             now = system_clock_ms()
             rev = self.assembler.add(scan, now)
             if rev is not None:
@@ -513,6 +515,94 @@ def plot_traces(path: Path, legs: list[dict[str, Any]]) -> None:
     cv2.imwrite(str(path), img)
 
 
+def device_status(
+    *,
+    telemetry_age_ms: int | None,
+    batt_v: float | None,
+    latched: bool | None,
+    packets_per_s: float,
+    revs_per_s: float,
+    battery_warn_v: float,
+) -> tuple[bool, bool, list[str]]:
+    """(로봇 준비, 라이다 준비, 경고들). 로봇은 1초 안 텔레메트리, 라이다는 초당 3바퀴 이상.
+
+    패킷은 오는데 바퀴가 안 만들어지면 10-03/04 의 «347° 고착» 과 같은 모양이다 — 정상은 초당
+    약 70패킷·10바퀴, 이상 때는 8패킷·0바퀴였다(tools/lidar/input_anomaly.py).
+    """
+    warnings = []
+    robot_ok = telemetry_age_ms is not None and telemetry_age_ms <= 1000
+    lidar_ok = revs_per_s >= 3.0  # 정상 LD19 ~10바퀴/s, 이상 때 0
+    if packets_per_s > 0 and revs_per_s < 1.0:
+        warnings.append(
+            "라이다 패킷은 오는데 한 바퀴가 안 만들어짐 — 347° 이상 의심: 라이다·중계 전원 재시작"
+        )
+    elif 0 < packets_per_s < 40:
+        warnings.append(f"라이다 패킷이 적다({packets_per_s:.0f}/s, 정상 ~70)")
+    if robot_ok and batt_v is not None and batt_v < battery_warn_v:
+        warnings.append(f"배터리 낮음 {batt_v:.2f} V (< {battery_warn_v} V)")
+    if robot_ok and latched:
+        warnings.append("로봇 래치 걸림 — 시작 때 RESET_SAFE 로 푼다")
+    return robot_ok, lidar_ok, warnings
+
+
+def wait_devices(link: Link, *, timeout_s: float, battery_warn_v: float) -> bool:
+    """전원이 켜지기 전부터 돈다 — 정지 명령을 계속 보내 로봇이 켜지는 즉시 연결되고, 라이다를 듣는다.
+
+    둘 다 2초 연속 준비되면 참. 1초마다 상태 한 줄. 시간 안에 안 되면 거짓.
+    """
+    print(
+        "== 장치 대기 — 이제 로봇·라이다(·카메라) 전원을 켜세요. 준비되면 바로 묻습니다. (Ctrl+C 중단)"
+    )
+    link.commander.halt()
+    started = time.perf_counter()
+    last_report = started
+    packets0, revs0 = link.lidar_packets, link.assembler.completed
+    ready_since: float | None = None
+    while time.perf_counter() - started < timeout_s:
+        link.send_due()
+        link.poll()
+        time.sleep(0.01)
+        now = time.perf_counter()
+        if now - last_report < 1.0:
+            continue
+        dt = now - last_report
+        last_report = now
+        pps = (link.lidar_packets - packets0) / dt
+        rps = (link.assembler.completed - revs0) / dt
+        packets0, revs0 = link.lidar_packets, link.assembler.completed
+        reading = link.reading
+        age = None if reading is None else system_clock_ms() - link.reading_ms
+        robot_ok, lidar_ok, warnings = device_status(
+            telemetry_age_ms=age,
+            batt_v=None if reading is None else reading.batt_v,
+            latched=None if reading is None else reading.safety_latched,
+            packets_per_s=pps,
+            revs_per_s=rps,
+            battery_warn_v=battery_warn_v,
+        )
+        robot = (
+            f"로봇 연결 {reading.batt_v or 0:.2f}V · 기울기(roll) {reading.roll or 0:+.1f}° · {reading.state}"
+            if robot_ok and reading is not None
+            else "로봇 응답 없음"
+        )
+        lidar = f"라이다 {pps:.0f}패킷/s · {rps:.0f}바퀴/s" if pps else "라이다 수신 없음"
+        print(
+            f"  [{now - started:4.0f}s] {robot} | {lidar}"
+            + "".join(f"\n    ⚠ {w}" for w in warnings)
+        )
+        link.record(
+            "wait", robot_ok=robot_ok, lidar_ok=lidar_ok, pps=round(pps, 1), rps=round(rps, 1)
+        )
+        if robot_ok and lidar_ok:
+            if ready_since is None:
+                ready_since = now
+            elif now - ready_since >= 2.0:
+                return True
+        else:
+            ready_since = None
+    return False
+
+
 def roll_sweep(
     link: Link, values: list[float], pitch: float, settle_s: float, measure_s: float
 ) -> dict[str, Any]:
@@ -559,6 +649,10 @@ def main() -> int:
     ap.add_argument("--clearance", type=float, default=0.5)
     ap.add_argument("--roll-sweep", default="", help="예: 0,2,4,6 — 서서 POSE roll 스윕")
     ap.add_argument("--pitch", type=float, default=0.0)
+    ap.add_argument("--wait-timeout", type=float, default=900.0, help="장치 대기 상한(초)")
+    ap.add_argument(
+        "--no-wait", action="store_true", help="장치 대기 없이 바로 (이미 켜져 있을 때)"
+    )
     a = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)  # 현장에서 진행이 바로 보이게
@@ -577,20 +671,6 @@ def main() -> int:
     print(
         f"왕복 {a.cycles}회 × {a.distance} m · 모드 {a.mode} · 걸음 {a.step} mm · 여유 {a.clearance} m"
     )
-    if (
-        input(
-            "  로봇을 바닥 선 위에 선 방향으로 놓았고(앞이 왕복 방향), 앞 2.5m·뒤 0.5m 안에 사람·물건이 없나? (y/N) "
-        ).strip()
-        != "y"
-    ):
-        print("중단.")
-        return 1
-    if (
-        input("  래치를 풀고(RESET_SAFE) 시험을 시작한다. 정지는 Ctrl+C. 진행? (y/N) ").strip()
-        != "y"
-    ):
-        print("중단.")
-        return 1
     cmd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     cmd.bind(("", int(net["telemetry_port"])))
     cmd.setblocking(False)
@@ -616,9 +696,26 @@ def main() -> int:
     summary: dict[str, Any] = {"args": vars(a) | {"record_dir": str(a.record_dir)}, "legs": []}
     try:
         cmd.sendto(link.commander.open_session().encode("utf-8"), peer)
+        if not a.no_wait and not wait_devices(
+            link,
+            timeout_s=a.wait_timeout,
+            battery_warn_v=float(config["safety"].get("battery_warn_v", 7.0)),
+        ):
+            print("시간 안에 로봇·라이다가 준비되지 않았다 — 중단.")
+            return 2
+        print("\a== 준비 완료.")
+        if (
+            input(
+                "  로봇이 바닥 선 위(앞이 왕복 방향)이고 앞 2.5m·뒤 0.5m 가 비었나? "
+                "래치를 풀고 바로 시작한다 (정지 Ctrl+C) (y/N) "
+            ).strip()
+            != "y"
+        ):
+            print("중단.")
+            return 1
         link.commander.once("RESET_SAFE")
         link.commander.halt()
-        link.pump(3.0)
+        link.pump(1.5)
         problem = link.fresh(1500)
         if problem and problem != "로봇 래치":
             print(f"시작 불가 — {problem}")
