@@ -4,12 +4,10 @@
 // 화면은 행렬만 곱한다 — 좌표계 규칙(출발 자리 원점·평면도 회전)은 서버 한 곳에만 있다.
 // 패널은 자주 통째로 다시 그려지므로 이 객체는 한 번 만들고 같은 DOM 을 다시 붙인다.
 
-const POLL_MS = 500;
+import {applyAffine} from './map-frame.js';
+export {applyAffine} from './map-frame.js';
 
-/** 2×3 아핀 행렬을 점에 곱한다. */
-export function applyAffine(m, x, y) {
-  return [m[0][0] * x + m[0][1] * y + m[0][2], m[1][0] * x + m[1][1] * y + m[1][2]];
-}
+const POLL_MS = 500;
 
 /** 위치 힌트 반경을 순찰 좌표에서 만든다. 두 지도는 각자의 표시 행렬만 적용한다. */
 export function pointHintOutline(nav) {
@@ -71,6 +69,8 @@ export class LiveMap {
     this.canvas.style.borderRadius = '8px';
     this.canvas.addEventListener('click', (event) => this.click(event));
     this.root.append(this.status, this.canvas);
+    const ResizeObserver = document.defaultView?.ResizeObserver;
+    if (ResizeObserver) {this.resizeObserver = new ResizeObserver(() => this.draw()); this.resizeObserver.observe(this.canvas);}
     this.timer = every(() => this.tick(), POLL_MS);
     // Node(시험)에서는 주기 타이머가 프로세스를 붙잡지 않게 — 브라우저는 숫자라 무시된다.
     this.timer?.unref?.();
@@ -130,6 +130,7 @@ export class LiveMap {
   dispose() {
     this.generation = (this.generation || 0) + 1;
     globalThis.clearInterval(this.timer);
+    this.resizeObserver?.disconnect();
   }
 
   loadImage(src) {
@@ -188,12 +189,20 @@ export class LiveMap {
       return;
     }
     const canvas = this.canvas;
-    if (canvas.width !== meta.width) canvas.width = meta.width;
-    if (canvas.height !== meta.height) canvas.height = meta.height;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = this.document.defaultView?.devicePixelRatio || 1;
+    const width = Math.max(meta.width, Math.ceil(rect.width * dpr));
+    const height = Math.round(width * meta.height / meta.width);
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    canvas.style.aspectRatio = meta.width + '/' + meta.height;
     const ctx = canvas.getContext?.('2d');
     if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (this.image) ctx.drawImage(this.image, 0, 0, canvas.width, canvas.height);
+    ctx.setTransform(width / meta.width, 0, 0, height / meta.height, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    if (this.image) ctx.drawImage(this.image, 0, 0, meta.width, meta.height);
     const px = (x, y) => applyAffine(meta.patrol_to_px, x, y);
     const metre = 1 / meta.resolution_m;
     ctx.font = 'bold ' + Math.round(metre * 0.35) + 'px sans-serif';

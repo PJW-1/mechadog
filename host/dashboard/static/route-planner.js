@@ -1,4 +1,5 @@
-import {applyAffine, describeNav, pointHintOutline} from './live-map.js';
+import {mapPoint, worldPoint, mapImage} from './map-frame.js';
+import {describeNav, pointHintOutline} from './live-map.js';
 import {mapClickMode} from './map-click-mode.js';
 
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -7,12 +8,6 @@ const ROUTES = '/api/planning/routes';
 const phases = {following: '이동', moving: '이동', navigating: '이동', aiming: '방향 맞추기', inspecting: '점검', inspection: '점검', dwelling: '머무름', dwell: '머무름', completed: '완료', stopped: '정지', cancelled: '취소', blocked: '길 막힘'};
 const freshRoute = () => ({id: 'route-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7), name: '새 동선', points: [], repeat: 1});
 const readyPoint = point => Number.isFinite(point?.x) && Number.isFinite(point?.y);
-
-// Match the live map's image pixels, normalized to the editor's SVG viewBox.
-const mapPoint = (meta, x, y) => {
-  const [u, v] = applyAffine(meta.patrol_to_px, x, y);
-  return [u / meta.width * 1000, v / meta.height * 1000];
-};
 
 export function pointsFromZones(zones, orderedIds) {
   return orderedIds.map(id => zones.find(zone => zone.id === id)).filter(readyPoint).map(zone => ({
@@ -343,7 +338,9 @@ export class RoutePlanner {
     if (!meta?.patrol_to_px || !meta.px_to_patrol || !(meta.width > 0 && meta.height > 0)) {this.map.append(this.p.el('div', {class: 'route-map-empty'}, this.p.el('h3', {}, '현장 지도 연결 대기'), this.p.note(session.mapError ? '관제 지도를 불러오지 못했습니다. ' + session.mapError : '저장된 실제 지도를 연결하면 동선을 그릴 수 있습니다.'))); return;}
     const svg = this.svg('svg', {viewBox: '0 0 1000 1000', preserveAspectRatio: 'none', class: 'route-map-svg', 'aria-label': '동선 지도', 'data-route-map': '', 'data-click-mode': session.mode});
     svg.style.aspectRatio = meta.width + '/' + meta.height;
-    svg.append(this.svg('image', {href: (session.link.baseUrl || '') + '/api/map.png?rev=' + session.snapshot.revision, width: 1000, height: 1000, preserveAspectRatio: 'none'}));
+    const imageUrl = (session.link.baseUrl || '') + '/api/map.png?rev=' + session.snapshot.revision;
+    if (this.imageUrl !== imageUrl) {this.imageUrl = imageUrl; this.mapImage = mapImage(this.svg.bind(this), session.link.baseUrl, session.snapshot.revision);}
+    svg.append(this.mapImage);
     for (const zone of session.zones.filter(readyPoint)) {
       const [x, y] = mapPoint(meta, zone.x, zone.y);
       svg.append(this.svg('circle', {cx: x, cy: y, r: 22, class: 'route-zone-anchor'}), this.svg('text', {x, y: y - 30, class: 'route-zone-label', 'text-anchor': 'middle'}, zone.id));
@@ -404,7 +401,7 @@ export class RoutePlanner {
     if (!meta?.px_to_patrol || !rect.width || !rect.height) return null;
     const x = (event.clientX - rect.left) / rect.width, y = (event.clientY - rect.top) / rect.height;
     if (x < 0 || y < 0 || x > 1 || y > 1) return null;
-    return applyAffine(meta.px_to_patrol, x * meta.width, y * meta.height).map(value => +value.toFixed(3));
+    return worldPoint(meta, x, y).map(value => +value.toFixed(3));
   }
 
   mapClick(event, svg) {

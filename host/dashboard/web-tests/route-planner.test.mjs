@@ -5,6 +5,7 @@ import {JSDOM} from 'jsdom';
 import {Operations} from '../static/operations.js';
 import {OperationalPanels} from '../static/panels.js';
 import {RobotLink} from '../static/robot-link.js';
+import {LiveMap} from '../static/live-map.js';
 import {pointsFromZones} from '../static/route-planner.js';
 
 const copy = value => JSON.parse(JSON.stringify(value));
@@ -418,4 +419,42 @@ test('RobotLink routes and deletion carry exact paths and deletion rejection rea
   await link.route('start', 'route-one', 'a'.repeat(64)); await link.route('stop'); await link.delete('/api/planning/routes/route-one', {revision: 'r1'});
   assert.deepEqual(calls, [{url: '/robots/one/api/command/route', method: 'POST', body: {action: 'start', route_id: 'route-one', expected_digest: 'a'.repeat(64)}}, {url: '/robots/one/api/command/route', method: 'POST', body: {action: 'stop'}}, {url: '/robots/one/api/planning/routes/route-one', method: 'DELETE', body: {revision: 'r1'}}]);
   const refused = new RobotLink({fetch: async () => ({ok: false, status: 409, json: async () => ({error: '저장본이 바뀌었습니다'})})}); await assert.rejects(refused.delete('/api/planning/routes/one', {revision: 'old'}), /저장본이 바뀌었습니다/);
+});
+
+for (const rotated of rotatedMaps) {
+  test(`${rotated.degrees} degree route, zone and location maps share clicks and image orientation`, async () => {
+    const ctx = await setup({displayMap: rotated.meta});
+    try {
+      const zoneSvg = ctx.document.querySelector('.plan-map-svg');
+      assert.ok(zoneSvg);
+      zoneSvg.getBoundingClientRect = () => ({left: 30, top: 50, width: 500, height: 250});
+      const routeImage = mapElement(ctx).querySelector('image');
+      const zoneImage = zoneSvg.querySelector('image');
+      assert.equal(zoneImage.getAttribute('href'), routeImage.getAttribute('href'));
+      assert.equal(zoneSvg.style.aspectRatio, mapElement(ctx).style.aspectRatio);
+      const zonePin = zoneSvg.querySelector('[data-zone="A"] .plan-pin');
+      near([+zonePin.getAttribute('cx') / 1000, +zonePin.getAttribute('cy') / 1000], rotated.pins[0]);
+      clickMap(ctx, 700, 400);
+      zoneSvg.dispatchEvent(new ctx.dom.window.MouseEvent('click', {clientX: 380, clientY: 150, bubbles: true}));
+      const selected = ctx.panels.planning.current.draft.zones[0];
+      near([selected.x, selected.y], rotated.clicked);
+      near([selected.x, selected.y], [ctx.planner.current.draft.points.at(-1).x, ctx.planner.current.draft.points.at(-1).y]);
+      ctx.planner.drawMap(); ctx.panels.planning.drawMap();
+      assert.equal(mapElement(ctx).querySelector('image'), routeImage, 'route redraw reuses raster DOM');
+      assert.equal(ctx.document.querySelector('.plan-map-svg image'), zoneImage, 'zone redraw reuses raster DOM');
+      const picks = [];
+      const live = new LiveMap({document: ctx.document, getLink: () => ctx.link, onPick: (...p) => picks.push(p), setInterval: () => 0});
+      ctx.document.body.append(live.root); await live.tick();
+      live.canvas.getBoundingClientRect = () => ({left: 10, top: 20, width: rotated.meta.width * 2, height: rotated.meta.height * 2});
+      live.click({clientX: 10 + rotated.meta.width * 2 * .7, clientY: 20 + rotated.meta.height * 2 * .4});
+      near(picks[0].slice(0, 2), rotated.clicked);
+      live.dispose();
+    } finally {ctx.close();}
+  });
+}
+
+test('zone map does not fall back to an unrotated image when display metadata fails', async () => {
+  const ctx = await setup({displayMap: new Error('no map metadata')});
+  try {assert.equal(ctx.document.querySelector('.plan-map-svg'), null); assert.equal(ctx.document.querySelector('.plan-map image'), null);}
+  finally {ctx.close();}
 });

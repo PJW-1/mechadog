@@ -8,7 +8,9 @@ import {mapPoint,worldPoint} from '../static/planning-panel.js';
 const zone=id=>({id,name:id,x:0,y:0,yaw_deg:null,helmet:true,vest:true,hazard:false,note:''});
 const snapshot=(revision='v1')=>({device:'mechdog-02',revision,saved:{zones:[zone('A'),zone('B')],random_after_first_cycle:false},active:{zones:[zone('A'),zone('B')],random_after_first_cycle:false},pending_restart:false,map:{available:false},arrival_radius_m:.3});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const displayMap={width:80,height:40,resolution_m:.1,patrol_to_px:[[10,0,40],[0,-10,20]],px_to_patrol:[[.1,0,-4],[0,-.1,2]],zones:[]};
 function setup(link=null){
+ if(link){const get=link.get;link.get=path=>path==='/api/map/meta'?Promise.resolve(displayMap):get.call(link,path)}
  const dom=new JSDOM('<h1></h1><div id="panel"></div>',{url:'http://127.0.0.1:8003'}),document=dom.window.document;
  const store=new Operations({storage:dom.window.localStorage});store.demo=false;store.link=link;
  const p=new OperationalPanels({store,container:document.querySelector('#panel'),title:document.querySelector('h1'),document,onToast:()=>{},onNavigate:()=>{}});
@@ -18,8 +20,8 @@ function setup(link=null){
 function input(ctx,name,value){const field=ctx.document.querySelector(`[name="${name}"]`);field.value=value;field.dispatchEvent(new ctx.dom.window.Event('input',{bubbles:true}));return field}
 
 test('coordinates map world positive Y upward and invert exactly',()=>{
- const extent=[-4,6,-2,3];assert.deepEqual(mapPoint(extent,-4,3),[0,0]);assert.deepEqual(mapPoint(extent,6,-2),[1000,1000]);
- assert.deepEqual(worldPoint(extent,.25,.2),[-1.5,2]);
+ const meta={width:100,height:50,patrol_to_px:[[10,0,40],[0,-10,30]],px_to_patrol:[[.1,0,-4],[0,-.1,3]]};assert.deepEqual(mapPoint(meta,-4,3),[0,0]);assert.deepEqual(mapPoint(meta,6,-2),[1000,1000]);
+ assert.deepEqual(worldPoint(meta,.25,.2),[-1.5,2]);
 });
 test('offline drafts survive navigation, incoming events and local reload without claiming server save',()=>{
  const ctx=setup();const field=input(ctx,'구역 이름','입구');field.focus();
@@ -63,7 +65,7 @@ test('invalid numeric edits remain visible and block save across zone switches',
 });
 test('replacement reload locks editing until the saved plan has arrived',async()=>{
  let finish;const link={get:async()=>snapshot()},ctx=setup(link);await tick();input(ctx,'구역 이름','초안');
- link.get=()=>new Promise(resolve=>{finish=resolve});const pending=ctx.p.planning.load(ctx.p.planning.current,true);
+ link.get=path=>path==='/api/map/meta'?Promise.resolve(displayMap):new Promise(resolve=>{finish=resolve});const pending=ctx.p.planning.load(ctx.p.planning.current,true);
  assert.equal(ctx.document.querySelector('[name="구역 이름"]').disabled,true);assert.equal(ctx.document.querySelector('[data-plan-add]').disabled,true);
  finish(snapshot('v2'));await pending;assert.equal(ctx.document.querySelector('[name="구역 이름"]').disabled,false);ctx.dom.window.close();
 });

@@ -1,10 +1,9 @@
+import {mapPoint, worldPoint, mapImage} from './map-frame.js';
+export {mapPoint, worldPoint} from './map-frame.js';
 // 구역 순서의 정본은 서버 zones.ids. 초안은 로봇별로 분리하고 명령 API와 구분한다.
 const clone=value=>JSON.parse(JSON.stringify(value));
 const blankZone=id=>({id,name:id,x:null,y:null,yaw_deg:null,aim_deg:null,hazard:false,helmet:true,vest:true,note:''});
 const NS='http://www.w3.org/2000/svg';
-export function mapPoint(extent,x,y){return [(x-extent[0])/(extent[1]-extent[0])*1000,(extent[3]-y)/(extent[3]-extent[2])*1000]}
-export function worldPoint(extent,x,y){return [extent[0]+x*(extent[1]-extent[0]),extent[3]-y*(extent[3]-extent[2])]}
-
 export class PlanningPanel {
  constructor(panel){this.p=panel;this.sessions=new Map();this.current=null;this.root=null}
  context(){const s=this.p.store;return {key:s.demo?'offline':(s.link?.baseUrl??'offline')+':'+s.selected,link:s.demo?null:s.link}}
@@ -25,7 +24,8 @@ export class PlanningPanel {
  async load(session=this.current,replace=false){
   session.loading=true;session.error='';if(this.visible(session))this.draw();
   try{
-   const data=await session.link.get('/api/planning');session.snapshot=data;session.loaded=true;
+   session.mapMeta=null;session.mapError='';
+   const [data,meta]=await Promise.all([session.link.get('/api/planning'),session.link.get('/api/map/meta').catch(error=>{session.mapError=error.message;return null})]);session.snapshot=data;session.mapMeta=meta;session.loaded=true;
    if(replace||!session.dirty){session.draft=clone(data.saved);session.revision=data.revision;session.selected=session.draft.zones[0].id;session.dirty=false;session.invalidNumbers={};session.route=null;this.forgetDraft(session)}
    session.revision??=data.revision;
    session.notice=session.dirty?'이 브라우저에 작성 중인 계획이 있습니다. 저장본과 비교한 뒤 저장하세요.':'';
@@ -61,7 +61,7 @@ export class PlanningPanel {
   const itinerary=p.el('aside',{class:'plan-itinerary'},p.el('div',{class:'plan-section-heading'},p.el('h3',{},'순찰 순서'),p.el('span',{},'첫 순회')),this.list,p.button('구역 추가',()=>this.add(),{'data-plan-add':'',disabled:s.busy||s.loading||s.draft.zones.length>=16}),p.el('label',{class:'op-check plan-random'},random,'첫 순회 후 순서 섞기'),p.note('목록 순서로 방문한 뒤 첫 구역으로 돌아옵니다.'));
   this.map=p.el('div',{class:'plan-map'});this.route=p.el('div',{class:'plan-route','aria-live':'polite'});
   this.previewButton=p.button('경로 확인',()=>this.preview(),{disabled:!s.snapshot?.map.available||s.busy,'data-plan-preview':''});
-  const canvas=p.el('section',{class:'plan-canvas'},p.el('div',{class:'plan-section-heading'},p.el('h3',{},'지도에 구역 배치'),this.previewButton),this.map,p.el('div',{class:'plan-map-caption'},p.el('span',{},'밝음: 빈 공간 · 진함: 장애물 · 회색: 미관측'),p.el('span',{},'단위 m · 위쪽 +Y')),this.route);
+  const canvas=p.el('section',{class:'plan-canvas'},p.el('div',{class:'plan-section-heading'},p.el('h3',{},'지도에 구역 배치'),this.previewButton),this.map,p.el('div',{class:'plan-map-caption'},p.el('span',{},'밝음: 빈 공간 · 진함: 장애물 · 회색: 미관측'),p.el('span',{},'단위 m · 동선 지도와 같은 방향')),this.route);
   this.inspector=p.el('aside',{class:'plan-inspector'});
   this.root.append(p.el('div',{class:'plan-layout'},itinerary,canvas,this.inspector));
   const radius=s.snapshot?.arrival_radius_m;
@@ -90,26 +90,27 @@ export class PlanningPanel {
  }
  svg(tag,attrs={},text){const node=this.p.document.createElementNS(NS,tag);for(const [key,value]of Object.entries(attrs))node.setAttribute(key,String(value));if(text!=null)node.textContent=text;return node}
  drawMap(){
-  if(!this.map)return;const p=this.p,s=this.current,meta=s.snapshot?.map;this.map.replaceChildren();
-  if(!meta?.available){this.map.append(p.el('div',{class:'plan-map-empty'},p.el('div',{class:'plan-empty-grid','aria-hidden':'true'}),p.el('h3',{},'현장 지도를 기다리고 있어요'),p.el('p',{},'라이다로 만든 지도를 연결하면 구역 위치를 찍고 실제 지도 위의 이동 경로를 확인할 수 있습니다.'),p.el('small',{},'예시 공장의 좌표는 실제 순찰에 사용하지 않습니다.')));return}
+  if(!this.map)return;const p=this.p,s=this.current,meta=s.mapMeta;this.map.replaceChildren();
+  if(!s.snapshot?.map?.available||!meta?.patrol_to_px||!meta?.px_to_patrol){this.map.append(p.el('div',{class:'plan-map-empty'},p.el('div',{class:'plan-empty-grid','aria-hidden':'true'}),p.el('h3',{},'현장 지도를 기다리고 있어요'),p.el('p',{},s.mapError?'지도 표시 정보를 읽지 못했습니다. '+s.mapError:'라이다로 만든 지도를 연결하면 구역 위치를 찍고 실제 지도 위의 이동 경로를 확인할 수 있습니다.'),p.el('small',{},'예시 공장의 좌표는 실제 순찰에 사용하지 않습니다.')));return}
   const svg=this.svg('svg',{viewBox:'0 0 1000 1000',preserveAspectRatio:'none',class:'plan-map-svg','aria-label':'저장된 현장 지도. 구역 선택 후 클릭하면 위치가 바뀝니다.'});
   svg.style.aspectRatio=meta.width+'/'+meta.height;
-  const imageUrl=(s.link.baseUrl||'')+'/api/planning/map.png?rev='+s.snapshot.revision;
-  if(this.imageUrl!==imageUrl){this.imageUrl=imageUrl;this.mapImage=this.svg('image',{href:imageUrl,width:1000,height:1000,preserveAspectRatio:'none'})}
+  const imageUrl=(s.link.baseUrl||'')+'/api/map.png?rev='+s.snapshot.revision;
+  if(this.imageUrl!==imageUrl){this.imageUrl=imageUrl;this.mapImage=mapImage(this.svg.bind(this),s.link.baseUrl,s.snapshot.revision)}
   svg.append(this.mapImage);
-  for(const segment of s.route?.segments||[])if(segment.reachable)svg.append(this.svg('polyline',{points:segment.points.map(([x,y])=>mapPoint(meta.extent,x,y).join(',')).join(' '),class:'plan-path','vector-effect':'non-scaling-stroke'}));
+  for(const segment of s.route?.segments||[])if(segment.reachable)svg.append(this.svg('polyline',{points:segment.points.map(([x,y])=>mapPoint(meta,x,y).join(',')).join(' '),class:'plan-path','vector-effect':'non-scaling-stroke'}));
   const r=s.snapshot.arrival_radius_m;
   s.draft.zones.forEach((z,index)=>{
-   if(z.x==null)return;const [x,y]=mapPoint(meta.extent,z.x,z.y),selected=z.id===s.selected;
+   if(z.x==null)return;const [x,y]=mapPoint(meta,z.x,z.y),selected=z.id===s.selected;
    const g=this.svg('g',{class:'plan-map-zone'+(selected?' selected':''),'data-zone':z.id});
-   g.append(this.svg('ellipse',{cx:x,cy:y,rx:r/(meta.extent[1]-meta.extent[0])*1000,ry:r/(meta.extent[3]-meta.extent[2])*1000,class:z.hazard?'plan-radius hazard':'plan-radius','vector-effect':'non-scaling-stroke'}));
+   const outline=Array.from({length:65},(_,i)=>mapPoint(meta,z.x+r*Math.cos(i*Math.PI/32),z.y+r*Math.sin(i*Math.PI/32)).join(','));
+   g.append(this.svg('polygon',{points:outline.join(' '),class:z.hazard?'plan-radius hazard':'plan-radius','vector-effect':'non-scaling-stroke'}));
    this.drawAim(g,z,meta,r);this.drawLegacyHeading(g,z,meta,r);
    g.append(this.svg('circle',{cx:x,cy:y,r:17,class:'plan-pin','vector-effect':'non-scaling-stroke'}),this.svg('text',{x,y:y+1,'text-anchor':'middle','dominant-baseline':'middle',class:'plan-pin-label'},index+1));
    g.addEventListener('click',event=>{event.stopPropagation();if(s.busy||s.loading)return;s.selected=z.id;this.drawList();this.drawMap();this.drawInspector()});svg.append(g);
   });
   svg.addEventListener('click',event=>{
    if(s.busy||s.loading)return;const rect=svg.getBoundingClientRect();if(!rect.width||!rect.height)return;
-   const [x,y]=worldPoint(meta.extent,(event.clientX-rect.left)/rect.width,(event.clientY-rect.top)/rect.height),zone=s.draft.zones.find(z=>z.id===s.selected);
+   const [x,y]=worldPoint(meta,(event.clientX-rect.left)/rect.width,(event.clientY-rect.top)/rect.height),zone=s.draft.zones.find(z=>z.id===s.selected);
    zone.x=+x.toFixed(3);zone.y=+y.toFixed(3);this.changed();this.drawInspector();
   });
   this.map.append(svg,p.el('span',{class:'plan-map-hint'},'선택한 구역을 지도에 클릭 · 정확한 위치는 오른쪽 좌표 입력'));
@@ -117,20 +118,20 @@ export class PlanningPanel {
  drawAim(group,zone,meta,radius){
   if(!Number.isFinite(zone.aim_deg))return;
   const angle=zone.aim_deg*Math.PI/180,dx=Math.cos(angle),dy=Math.sin(angle);
-  const length=Math.max(radius*1.8,Math.min(meta.extent[1]-meta.extent[0],meta.extent[3]-meta.extent[2])*.045),head=length*.28;
-  const tipX=zone.x+dx*length,tipY=zone.y+dy*length,point=(x,y)=>mapPoint(meta.extent,x,y).join(' ');
+  const length=Math.max(radius*1.8,Math.min(meta.width,meta.height)*meta.resolution_m*.045),head=length*.28;
+  const tipX=zone.x+dx*length,tipY=zone.y+dy*length,point=(x,y)=>mapPoint(meta,x,y).join(' ');
   const label=zone.id+' 카메라 방향 '+zone.aim_deg+'°';
   const arrow=this.svg('path',{d:'M '+point(zone.x,zone.y)+' L '+point(tipX,tipY)+' M '+point(tipX-dx*head-dy*head*.55,tipY-dy*head+dx*head*.55)+' L '+point(tipX,tipY)+' L '+point(tipX-dx*head+dy*head*.55,tipY-dy*head-dx*head*.55),class:'plan-heading plan-aim','data-aim-deg':zone.aim_deg,'vector-effect':'non-scaling-stroke',role:'img','aria-label':label});
   arrow.append(this.svg('title',{},label));group.append(arrow);
  }
  drawLegacyHeading(group,zone,meta,radius){
   if(Number.isFinite(zone.aim_deg)||!Number.isFinite(zone.yaw_deg))return;
-  const angle=zone.yaw_deg*Math.PI/180,[x,y]=mapPoint(meta.extent,zone.x,zone.y),[dx,dy]=mapPoint(meta.extent,zone.x+Math.cos(angle)*radius*1.8,zone.y+Math.sin(angle)*radius*1.8),label=zone.id+' 기존 점검 방향 '+zone.yaw_deg+'°';
+  const angle=zone.yaw_deg*Math.PI/180,[x,y]=mapPoint(meta,zone.x,zone.y),[dx,dy]=mapPoint(meta,zone.x+Math.cos(angle)*radius*1.8,zone.y+Math.sin(angle)*radius*1.8),label=zone.id+' 기존 점검 방향 '+zone.yaw_deg+'°';
   const line=this.svg('line',{x1:x,y1:y,x2:dx,y2:dy,class:'plan-heading plan-legacy-heading','stroke-dasharray':'5 4','vector-effect':'non-scaling-stroke',role:'img','aria-label':label});
   line.append(this.svg('title',{},label));group.append(line);
  }
  aimHelp(zone){
-  return '도착 후 카메라 방향으로 몸을 돌린 다음 점검합니다. 0°는 오른쪽(+X), +90°는 위쪽(+Y), 범위는 −180°~180°입니다. '+(zone.yaw_deg!=null?'카메라 방향이 빈칸이면 기존 점검 방향을 사용합니다(지도 점선). 기존 점검 방향까지 비우면 도착 방향을 유지합니다.':'빈칸이면 도착 방향을 유지합니다.');
+  return '도착 후 카메라 방향으로 몸을 돌린 다음 점검합니다. 순찰 좌표 기준 0°는 +X, +90°는 +Y이며 지도 회전이 반영됩니다. 범위는 −180°~180°입니다. '+(zone.yaw_deg!=null?'카메라 방향이 빈칸이면 기존 점검 방향을 사용합니다(지도 점선). 기존 점검 방향까지 비우면 도착 방향을 유지합니다.':'빈칸이면 도착 방향을 유지합니다.');
  }
  drawInspector(){
   if(!this.inspector)return;const p=this.p,s=this.current,z=s.draft.zones.find(z=>z.id===s.selected);this.inspector.replaceChildren();if(!z)return;

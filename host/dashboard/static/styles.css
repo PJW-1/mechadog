@@ -330,3 +330,6 @@ dialog button+button { margin-left: 8px }
 .route-location-hint { fill: rgba(37,99,235,.12); stroke: #2563eb; stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none }
 .route-map-svg[data-click-mode="move"],.route-map-svg[data-click-mode="move"] .route-pin { cursor: pointer }
 .route-map-svg[data-click-mode="locate"],.route-map-svg[data-click-mode="locate"] .route-pin { cursor: crosshair }
+
+.map-raster { image-rendering: pixelated }
+.op-live-map canvas { width: 100%; object-fit: contain }

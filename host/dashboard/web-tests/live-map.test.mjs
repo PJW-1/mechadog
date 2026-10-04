@@ -65,7 +65,7 @@ test('rejections and blocked holds are told, not shown as arrival',()=>{
 
 test('point hint uses the server radius and affine transform, disappears on verification and robot switch',async()=>{
  const dom=new JSDOM('<div id="host"></div>'),document=dom.window.document,lines=[];
- const ctx={clearRect(){},beginPath(){},arc(){},fill(){},stroke(){},fillText(){},setLineDash(){},closePath(){},moveTo(...p){lines.push(['move',...p])},lineTo(...p){lines.push(['line',...p])}};
+ const ctx={setTransform(){},clearRect(){},beginPath(){},arc(){},fill(){},stroke(){},fillText(){},setLineDash(){},closePath(){},moveTo(...p){lines.push(['move',...p])},lineTo(...p){lines.push(['line',...p])}};
  let nav={available:true,pose:[0,0,0],verified:false,point_hint:{x:0,y:0,radius:0.6}};
  let current={baseUrl:'',get:async path=>path==='/api/map/meta'?meta:nav};
  const map=new LiveMap({document,getLink:()=>current,onPick:()=>{},setInterval:()=>0});map.canvas.getContext=()=>ctx;
@@ -75,4 +75,16 @@ test('point hint uses the server radius and affine transform, disappears on veri
  lines.length=0;nav={...nav,verified:true};await map.tick();assert.equal(lines.filter(([kind])=>kind==='line').length,2);assert.doesNotMatch(map.status.textContent,/알려준 점 주변/);
  lines.length=0;current={baseUrl:'',get:async path=>path==='/api/map/meta'?meta:{available:true,pose:[0,0,0],verified:false}};await map.tick();
  assert.equal(map.nav.point_hint,undefined);assert.equal(lines.filter(([kind])=>kind==='line').length,2);
+});
+
+test('canvas backing store follows device pixels while clicks remain in server coordinates', async () => {
+ const dom=new JSDOM('<div id="host"></div>'),document=dom.window.document,transforms=[];
+ Object.defineProperty(dom.window,'devicePixelRatio',{value:3});
+ const context={setTransform(...args){transforms.push(args)},clearRect(){},drawImage(){},beginPath(){},arc(){},fill(){},stroke(){},fillText(){}};
+ const map=new LiveMap({document,getLink:()=>null,onPick:()=>{},setInterval:()=>0});
+ map.meta=meta;map.canvas.getContext=()=>context;map.image={};
+ map.canvas.getBoundingClientRect=()=>({left:0,top:0,width:400,height:200});
+ map.draw();assert.equal(map.canvas.width,1200);assert.equal(map.canvas.height,600);
+ assert.deepEqual(transforms.at(-1),[6,0,0,6,0,0]);assert.equal(context.imageSmoothingEnabled,false);
+ assert.deepEqual(map.toPatrol(120,100),[.5,0]);map.dispose();dom.window.close();
 });
