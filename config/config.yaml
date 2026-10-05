@@ -425,7 +425,7 @@ change_detect:
   # 남는 가벼운 경고라 오경보의 값이 낮다. 확정은 같은 방문 판독 2회 «예» 다(ADR-41 과 같다).
   vlm_hazard_items: true
   # LiDAR 막힘 확정 때 «무너진 물건인가» 판독(`blocked_by_fallen` · ADR-45)이 «예» 면 방송·대시보드
-  # 문장이 «무너진 물건이 통로를 막고 있습니다» 류로 바뀌는지. **기본은 끈다** — `vlm_hazards` 와 같이
+  # 문장이 «무너진 물건이 통로를 막고 있어 돌아서 갑니다» 류로 바뀌는지. **기본은 끈다** — `vlm_hazards` 와 같이
   # 벤치 통과 뒤에 켠다. 꺼도 질문은 걸고 답(`fallen`·원문·지연)은 `path_blocked` 판정 근거에 남는다.
   vlm_path_cause: false
 
