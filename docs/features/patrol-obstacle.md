@@ -5,7 +5,7 @@
 
 순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
 순찰기는 처음에는 `tools/ops/patrol_run.py` 단독 도구로만 돌았다. 지금은 런타임이 `--lidar-device <id>` 로 직접 돌릴 수도 있다([ADR-43](../DECISIONS.md#adr-43)): PATROL 이 LiDAR A* 경로를 따르고, 측위 자세는 구역 점검에 들어가며, LiDAR 전방 ESTOP 은 런타임 송신 락을 거친다. 플래그가 없으면 위의 `AVOID` 경로만 쓴다. `tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 컨테이너로의 스캔 전달(`lidar.scan_forward_*`)과 ODOM 송신도 같은 플래그가 켠다. 기동 관문은 `patrol_run` 과 같다: `lidar` 절 전수 검사, `localization.track == lidar`(ADR-18), 전달·ODOM 목적지 이름 해석, 지도·구역 적재 중 하나라도 실패하면 rc 2 로 기동을 거부한다.
-이동 중 장애물이 길을 막으면 **가벼운 경고 `path_blocked`**(방송 + 대시보드, 출처 `lidar`, 판정 `x`·`y`·`target`)를 낸 뒤 LiDAR A* 가 빈 쪽 중 가장 짧은 쪽으로 다시 계획해 이어 간다. L3 가 아니다. VLM 은 길을 정하지 않는다.
+이동 중 장애물이 길을 막으면 **가벼운 경고 `path_blocked`**(방송 + 대시보드, 출처 `lidar`, 판정 `x`·`y`·`target`, 원인 판독을 건 경우 `fallen`·`vlm_reason`·`raw`·`latency_ms`·`wait_ms`·`vlm_path_cause` 가 더 붙는다. 값은 [VLM 단일 장면 판독](vlm-reading.md))를 낸 뒤 LiDAR A* 가 빈 쪽 중 가장 짧은 쪽으로 다시 계획해 이어 간다. L3 가 아니다. VLM 은 길을 정하지 않는다.
 공장 모드에서는 막힘을 확정한 그 프레임에 VLM 질문 `blocked_by_fallen`(«통로를 막은 것이 무너진 물건인가»)을 걸어, 답(`fallen`)을 같은 `path_blocked` 의 판정 근거에 싣는다([ADR-45](../DECISIONS.md#adr-45)). 그래서 `path_blocked` 의 기록·방송은 답이 오거나 `vision.vlm.path_cause_wait_ms`(1500ms)를 넘길 때까지 미뤄진다. 재계획은 기다리지 않는다.
 
 ## 판단 흐름

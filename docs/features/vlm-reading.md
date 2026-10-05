@@ -90,6 +90,7 @@ flowchart TD
 - 구역을 떠난 뒤에 도착한 판독도 건 구역 이름과 건 프레임으로 기록한다. 그 판독의 `person_down` 이 «예» 이면 쓰러짐 의심에 든다.
 - 의심 중에 건 쓰러짐 판독이 의심이 끝난 뒤 도착하면 버린다.
 - LiDAR 막힘 원인 질문(`blocked_by_fallen`)은 쓰러짐·구역 판독과 같은 슬롯을 쓴다. 다른 판독이 걸려 있으면 상한 안에서 빌 때를 기다렸다가 같은 프레임을 걸고(그동안 쓰러짐·구역 판독은 걸지 않는다), 끝내 못 걸면 `busy`, 상한 안에 답이 없으면 `timeout` 으로 `fallen: null` 을 기록한다. 상한을 넘긴 판독은 끝날 때까지 슬롯을 쥐고 있다가 결과를 버리고 비운다. 비우는 동안에는 새 막힘의 판독도 걸지 않고 상한 안에서 기다린다.
+- LiDAR 막힘 원인 판독의 결과는 `path_blocked` 판정 근거에 `fallen`(`true`/`false`/`null`) · `vlm_reason` · `raw`(원문) · `latency_ms` · `wait_ms`(막힘 확정부터 기록까지) · `vlm_path_cause`(그때 스위치 값)로 붙는다. `vlm_reason` 은 판독이 정상이면 `null`, 그 밖에는 `mission`(공장 모드 아님) · `not_loaded` · `no_frame` · `stale_frame` · `busy` · `timeout` · `worker_failed` 중 하나이거나 판독의 reason 이다.
 - LiDAR 막힘 확정 때 최신 프레임이 없거나(`no_frame`) 받은 지 `vision.vlm.path_cause_max_frame_age_ms` 를 넘겼으면(`stale_frame`, 정확히 같으면 묻는다) 묻지 않고 그 사진도 남기지 않는다. 블랙박스 장면 기록 없이 방송만 나간다.
 - VLM 은 이동 중 길을 정하지 않는다. 질문 하나에 0.2초이고 예·아니요만 돌려주며 위치가 없기 때문이다. 이동 중 막힘은 LiDAR 몫이다([순찰 중 장애물 대응](patrol-obstacle.md)).
 - 판독 한 번은 단독으로 L3 를 올리지 않는다. «예» 한 번은 의심(L1)이고, 확정은 의심 뒤 판독 «예» 가 기준 횟수만큼 모여야 한다.
