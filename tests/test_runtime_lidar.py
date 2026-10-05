@@ -569,6 +569,20 @@ def test_collector_saves_blocked_and_clear_during_patrol(
     assert _collected(tmp_path, "clear") == 1, "blocked 직후 보류 시간"
 
 
+def test_collector_manifest_frame_ms_is_received_time_not_completed(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    runtime, navigator, vision = _collecting(config, clock, tmp_path)
+    received = clock.ms
+    vision.result = vision_result(
+        7, received, present=False, hits=0, last_seen_ms=None, completed_ms=received + 30
+    )
+    navigator._new_obstacles.append((2.5, 2.0))
+    runtime.tick(clock.advance(10))
+    (entry,) = [e for e in _manifest(tmp_path) if e["label"] == "blocked"]
+    assert entry["frame_ms"] == received and entry["frame_seq"] == 7
+
+
 def test_collector_skips_stale_blocked_frame_but_holds_off_clear(
     config: dict, clock: FakeClock, tmp_path
 ) -> None:
