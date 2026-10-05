@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import random
+import threading
+import time
 
 import pytest
 from conftest import FakeClock
@@ -17,6 +20,7 @@ from test_runtime import DEVICE, FakeSocket, FakeVision, config, telemetry, visi
 
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event
+from host.behavior.mission import Mission
 from host.behavior.patrol import PatrolController, Phase
 from host.behavior.zones import ZoneStore
 from host.common.config import ConfigError
@@ -27,6 +31,7 @@ from host.runtime import Runtime
 from host.slam.odometry import Odometry, OdomParams
 from host.telemetry.lidar_feed import LidarFeed
 from host.telemetry.ros2_relay import OdomSender
+from host.vision.vlm_reader import VlmReader
 
 __all__ = ["config"]  # 픽스처를 다시 쓴다 (`test_runtime.config`)
 
@@ -328,7 +333,19 @@ def test_path_blocked_is_recorded_once_without_escalating(
     event_type, result, judgement = records[0]
     assert event_type == "path_blocked"
     assert result is vision.result
-    assert judgement == {"x": 2.5, "y": 2.0, "target": target, "source": "lidar"}
+    assert judgement == {
+        "x": 2.5,
+        "y": 2.0,
+        "target": target,
+        "source": "lidar",
+        # 경비 모드는 원인을 묻지 않는다 — 기다리지 않고 바로 남긴다 (ADR-45).
+        "fallen": None,
+        "vlm_path_cause": False,
+        "vlm_reason": "mission",
+        "raw": None,
+        "latency_ms": None,
+        "wait_ms": 0,
+    }
     assert runtime.behavior.state == "PATROL"
     assert runtime.escalation.level == level
 
@@ -347,6 +364,160 @@ def test_path_blocked_without_a_frame_still_announces(
     assert runtime.behavior.state == "PATROL"
 
 
+# ── 막힘 원인 VLM 판독 (ADR-45) ─────────────────────────────
+class _CauseSession:
+    """판독 세션 대역 — `gate` 가 열릴 때까지 답하지 않고, 받은 질문을 남긴다."""
+
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+        self.asked: list[str] = []
+        self.gate = threading.Event()
+        self.gate.set()
+
+    def ask(self, image: object, prompt: str) -> str:
+        assert image == b"test-jpeg", "막힘을 확정한 프레임이 그대로 넘어와야 한다"
+        assert self.gate.wait(timeout=5.0), "시험이 판독을 풀어 주지 않았다"
+        self.asked.append(prompt)
+        return self.answer
+
+    def close(self) -> None:
+        pass
+
+
+def _settle(runtime: Runtime, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while runtime.vlm.busy and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+
+def _factory_block(
+    config: dict, clock: FakeClock, session: _CauseSession, *, switch: bool, frame_age_ms: int = 0
+):
+    """공장 모드 순찰에서 새 장애물 하나를 확정시킨다. 기록·방송 대역을 붙인다.
+
+    `frame_age_ms` 는 막힘 확정 때 최신 프레임을 받은 지 얼마나 됐나다(비전 끊김 흉내).
+    """
+    cfg = copy.deepcopy(config)
+    cfg["change_detect"]["vlm_path_cause"] = switch
+    reader = VlmReader(lambda: session, budget_ms=10_000)
+    reader.load()
+    vision = FakeVision()
+    vision.result = vision_result(
+        1, clock.ms - frame_age_ms, present=False, hits=0, last_seen_ms=None
+    )
+    said: list[str] = []
+    runtime, navigator = _patrolling(
+        cfg,
+        clock,
+        vision=vision,
+        vlm_reader=reader,
+        mission=Mission(cfg, mode="factory"),
+        announcer=said.append,
+    )
+    records: list[tuple] = []
+    real = runtime._record_scene
+    runtime._record_scene = lambda *args: (records.append(args), real(*args))[1]  # type: ignore[method-assign]
+    navigator._new_obstacles.append((2.5, 2.0))
+    runtime.tick(clock.ms)
+    return runtime, vision, records, said
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize(("answer", "fallen"), [("yes", True), ("no", False)])
+def test_path_blocked_carries_the_vlm_cause(
+    config: dict, clock: FakeClock, answer: str, fallen: bool
+) -> None:
+    session = _CauseSession(answer)
+    runtime, vision, records, said = _factory_block(config, clock, session, switch=False)
+    _settle(runtime)
+    runtime.tick(clock.advance(100))
+    runtime.tick(clock.advance(100))
+    assert session.asked == [
+        "Is the walkway blocked by an object that has fallen over or collapsed? "
+        "Answer with yes or no only."
+    ]
+    blocked = [r for r in records if r[0] == "path_blocked"]
+    assert len(blocked) == 1, "답을 받아도 기록은 한 번이다"
+    _kind, frame, judgement = blocked[0]
+    assert frame is not None and frame.jpeg == b"test-jpeg"
+    assert judgement["fallen"] is fallen
+    assert judgement["raw"] == answer
+    assert judgement["vlm_reason"] is None
+    assert judgement["vlm_path_cause"] is False
+    assert runtime.behavior.state == "PATROL"
+    # 스위치가 꺼져 있으면 답이 «예» 여도 방송은 «무너진» 을 말하지 않는다.
+    (line,) = said
+    assert "무너진" not in line
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_path_blocked_with_the_switch_on_says_fallen(config: dict, clock: FakeClock) -> None:
+    session = _CauseSession("yes")
+    runtime, _vision, records, said = _factory_block(config, clock, session, switch=True)
+    _settle(runtime)
+    runtime.tick(clock.advance(100))
+    assert len([r for r in records if r[0] == "path_blocked"]) == 1
+    (line,) = said
+    assert "무너진 물건" in line
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_slow_cause_reading_still_records_once(config: dict, clock: FakeClock) -> None:
+    """대기 상한(`vision.vlm.path_cause_wait_ms`)을 넘기면 `fallen: null` 로 한 번 남긴다."""
+    session = _CauseSession("yes")
+    session.gate.clear()
+    runtime, _vision, records, said = _factory_block(config, clock, session, switch=True)
+    wait_ms = int(config["vision"]["vlm"]["path_cause_wait_ms"])
+    runtime.tick(clock.advance(wait_ms - 100))
+    assert [r for r in records if r[0] == "path_blocked"] == []
+    runtime.tick(clock.advance(100))
+    blocked = [r for r in records if r[0] == "path_blocked"]
+    assert len(blocked) == 1
+    assert blocked[0][2]["fallen"] is None
+    assert blocked[0][2]["vlm_reason"] == "timeout"
+    session.gate.set()
+    _settle(runtime)
+    runtime.tick(clock.advance(100))
+    assert len([r for r in records if r[0] == "path_blocked"]) == 1, (
+        "늦은 답으로 다시 남기지 않는다"
+    )
+    assert all("무너진" not in line for line in said)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_stale_frame_is_announced_without_asking(config: dict, clock: FakeClock) -> None:
+    """비전이 끊겨 남은 마지막 프레임으로는 원인을 묻지 않는다 — `no_frame` 처럼 방송만 한다."""
+    max_age = int(config["vision"]["vlm"]["path_cause_max_frame_age_ms"])
+    session = _CauseSession("yes")
+    runtime, _vision, records, said = _factory_block(
+        config, clock, session, switch=True, frame_age_ms=max_age + 1
+    )
+    assert runtime.vlm.submitted == 0
+    assert [r for r in records if r[0] == "path_blocked"] == []
+    (line,) = said
+    assert "무너진" not in line
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_the_fall_reading_waits_for_the_path_cause_reading(config: dict, clock: FakeClock) -> None:
+    """막힘 원인 판독을 줍기 전에는 쓰러짐 판독을 걸지 않는다 — 결과 슬롯이 하나다."""
+    session = _CauseSession("no")
+    session.gate.clear()  # 막힘 틱 안에서 판독이 끝나 바로 주워지지 않게 붙잡는다
+    runtime, vision, records, _said = _factory_block(config, clock, session, switch=False)
+    session.gate.set()
+    _settle(runtime)  # 판독은 끝났지만 아직 줍지 않았다 — 워커는 비어 있다
+    assert not runtime.vlm.busy
+    assert [r for r in records if r[0] == "path_blocked"] == []
+    every = int(config["vision"]["vlm"]["patrol_interval_ms"])
+    runtime._fall.ask(vision.result, clock.ms)  # 첫 순찰 판독 시각을 잡는다
+    runtime._fall.ask(vision.result, clock.ms + every)
+    assert runtime.vlm.submitted == 1, "막힘 원인 판독이 슬롯을 쥔 동안 걸었다"
+    assert not runtime._fall.waiting
+    runtime.tick(clock.advance(100))  # 원인 판독을 줍는다
+    runtime._fall.ask(vision.result, clock.ms + 2 * every)
+    assert runtime.vlm.submitted == 2
+
+
 def test_obstacle_outside_patrol_is_not_a_path_block(
     config: dict, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -361,8 +532,9 @@ def test_obstacle_outside_patrol_is_not_a_path_block(
 
 
 # ── VLM 학습용 프레임 수집 (4.8.7) ──────────────────────────
-def _collecting(config: dict, clock: FakeClock, tmp_path):
-    config = {**config, "vision": {**config["vision"], "collect": {"root": str(tmp_path)}}}
+def _collecting(config: dict, clock: FakeClock, tmp_path, **collect: int):
+    collect_spec = {"root": str(tmp_path), **collect}
+    config = {**config, "vision": {**config["vision"], "collect": collect_spec}}
     vision = FakeVision()  # 프레임 없이 순찰에 들어가고, 각 시험이 프레임을 건넨다
     runtime, navigator = _patrolling(config, clock, vision=vision)
     vision.result = vision_result(1, clock.ms, present=False, hits=0, last_seen_ms=None)
@@ -371,6 +543,14 @@ def _collecting(config: dict, clock: FakeClock, tmp_path):
 
 def _collected(tmp_path, label: str) -> int:
     return len(list(tmp_path.rglob(f"{label}/*.jpg")))
+
+
+def _manifest(tmp_path) -> list[dict]:
+    return [
+        json.loads(line)
+        for path in tmp_path.glob("*/manifest.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 def test_collector_saves_blocked_and_clear_during_patrol(
@@ -382,9 +562,37 @@ def test_collector_saves_blocked_and_clear_during_patrol(
     navigator._new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.advance(100))
     assert _collected(tmp_path, "blocked") == 1
-    vision.result = vision_result(5, clock.ms, present=False, hits=0, last_seen_ms=None)
-    runtime.tick(clock.advance(6000))
+    (entry,) = [e for e in _manifest(tmp_path) if e["label"] == "blocked"]
+    assert entry["frame_seq"] == 1 and entry["frame_ms"] == vision.result.frame_received_ms
+    vision.result = vision_result(5, clock.advance(6000), present=False, hits=0, last_seen_ms=None)
+    runtime.tick(clock.advance(10))
     assert _collected(tmp_path, "clear") == 1, "blocked 직후 보류 시간"
+
+
+def test_collector_skips_stale_blocked_frame_but_holds_off_clear(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    # 다른 안전 시간 제한에 걸리지 않도록 1초 안에 끝나는 값으로 줄인다.
+    runtime, navigator, vision = _collecting(
+        config, clock, tmp_path, max_frame_age_ms=200, clear_holdoff_ms=600
+    )
+
+    def tick_at(now: int) -> None:
+        _fresh(navigator, now, (2.0, 2.0, 0.0))
+        runtime.tick(now)
+
+    clock.advance(300)  # 비전이 끊겨 마지막 결과가 낡았다
+    navigator._new_obstacles.append((2.5, 2.0))
+    tick_at(clock.ms)
+    blocked_ms = clock.ms
+    assert list(tmp_path.rglob("*.jpg")) == [], "낡은 프레임에는 라벨을 붙이지 않는다"
+    vision.result = vision_result(2, clock.advance(300), present=False, hits=0, last_seen_ms=None)
+    tick_at(clock.ms)
+    assert _collected(tmp_path, "clear") == 0, "사진을 못 남긴 막힘 사건도 보류 시간을 건다"
+    vision.result = vision_result(3, blocked_ms + 600, present=False, hits=0, last_seen_ms=None)
+    tick_at(clock.advance(300))
+    assert runtime.behavior.state == "PATROL"
+    assert _collected(tmp_path, "clear") == 1
 
 
 def test_collector_skips_clear_while_obstacle_active_or_pending(

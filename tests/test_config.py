@@ -844,3 +844,17 @@ def test_lidar_scan_forward_enabled_must_be_a_bool(cfg: dict) -> None:
         broken["lidar"]["scan_forward_enabled"] = bad
         with pytest.raises(ConfigError, match="scan_forward_enabled"):
             validate_base_config(broken)
+
+
+@pytest.mark.parametrize("key", ["path_cause_wait_ms", "path_cause_max_frame_age_ms"])
+@pytest.mark.parametrize("value", [0, -1, None])
+def test_path_cause_bounds_must_be_positive(cfg: dict, key: str, value: object) -> None:
+    """막힘 원인 판독(ADR-45)의 대기 상한·프레임 나이 상한은 기동 전에 양수인지 본다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["vlm"][key] = value
+    with pytest.raises(ConfigError, match=key):
+        validate_base_config(broken)

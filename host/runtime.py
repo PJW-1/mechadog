@@ -42,6 +42,7 @@ from host.behavior.escalation import Escalation
 from host.behavior.fall_monitor import FallMonitor
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
+from host.behavior.path_cause import PathCause
 from host.behavior.patrol import PatrolController, controller_from_config, load_patrol_map
 from host.behavior.ppe_judge import PpeJudge
 from host.behavior.track_controller import TrackController
@@ -455,7 +456,7 @@ class Runtime:
             vlm=self._vlm,
             apply=self._apply,
             record=self._record_scene,
-            zone_waiting=lambda: self._zone_inspector.waiting,
+            zone_waiting=lambda: self._zone_inspector.waiting or self._path_cause.waiting,
         )
         # 구역 점검 (FR-8 · ADR-41). 같은 판독 워커를 쓰고, 판독 «예» 는 쓰러짐 의심으로 넘긴다.
         self._zone_inspector = ZoneInspector(
@@ -467,6 +468,18 @@ class Runtime:
             anchors=anchors,
             apply=self._apply,
             record=self._record_scene,
+            path_waiting=lambda: self._path_cause.waiting,
+        )
+        # LiDAR 막힘 확정 프레임의 원인 판독 (ADR-45). 같은 판독 워커를 쓰므로 쓰러짐·구역
+        # 판독이 걸려 있으면 상한 안에서 빌 때를 기다린다.
+        self._path_cause = PathCause(
+            config,
+            mission=self._mission,
+            vlm=self._vlm,
+            # 호출 때 찾는다 — 시험이 기록·방송을 대역으로 바꿔 끼운다.
+            record=lambda kind, frame, judgement: self._record_scene(kind, frame, judgement),
+            announce=lambda kind, judgement: self._announce_situation(kind, judgement),
+            others_waiting=lambda: self._fall.waiting or self._zone_inspector.waiting,
         )
         # 보호구 판정 (FR-9 · ADR-42). 쓰러짐 의심 중에는 판정을 보류하므로 감시 뒤에 만든다.
         self._ppe_judge = PpeJudge(
@@ -933,19 +946,24 @@ class Runtime:
             )
         for hit in self._navigator.take_new_obstacles():
             self._collect_blocked(hit, now_ms)
-            self._record_path_blocked(hit)
+            self._record_path_blocked(hit, now_ms)
 
     def _collect_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
-        """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다)."""
-        result = self._vision.latest() if self._vision is not None else None
-        if result is None or not self._collector.enabled:
+        """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다).
+
+        프레임이 없어도 수집기에 알린다 — 막힘 사건 자체로 clear 보류 시간을 건다.
+        """
+        if not self._collector.enabled:
             return
+        result = self._vision.latest() if self._vision is not None else None
         self._collector.note_blocked(
             now_ms,
-            result.jpeg,
+            result.jpeg if result is not None else None,
             hit,
             cast(PatrolController, self._navigator).target,
             self._behavior.state,
+            frame_ms=result.frame_received_ms if result is not None else None,
+            frame_seq=result.frame_seq if result is not None else None,
         )
 
     def _collect_clear(self, result: VisionResult, now_ms: int) -> None:
@@ -958,9 +976,11 @@ class Runtime:
             state=self._behavior.state,
             obstacle_active=self._navigator.safety.obstacle_active,
             pending=self._navigator.obstacle_pending,
+            frame_ms=result.frame_received_ms,
+            frame_seq=result.frame_seq,
         )
 
-    def _record_path_blocked(self, hit: tuple[float, float]) -> None:
+    def _record_path_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
         """이동 경로가 새 장애물로 막혔다 — **가벼운 경고만** 남기고 순찰은 이어 간다.
 
         단계·FSM 은 바꾸지 않는다. 재계획(A*)이 돌아갈 길을 찾고, 못 찾으면 컨트롤러가
@@ -968,6 +988,9 @@ class Runtime:
 
         ⚠️ **순찰 중일 때만 기록한다.** 추적·경보 중에는 앞에 선 사람이 신규 장애물로
         확정되는데, 그것은 «경로가 막혔다» 가 아니다. 표시 자체는 남아 재계획이 피해 간다.
+
+        기록은 `PathCause` 가 그 프레임의 원인 판독(«무너진 물건인가» · ADR-45)을 실어 한 번
+        남긴다 — 판독을 걸 수 있으면 답이나 `vision.vlm.path_cause_wait_ms` 까지 미룬다.
         """
         judgement: dict[str, Any] = {
             "x": round(hit[0], 2),
@@ -980,11 +1003,7 @@ class Runtime:
             return
         LOG.warning("path_blocked", **judgement)
         result = self._vision.latest() if self._vision is not None else None
-        if result is not None:
-            self._record_scene("path_blocked", result, judgement)
-            return
-        # 프레임이 없으면 사진 기록은 못 남기지만 관제가 들어야 할 경고는 그대로 낸다.
-        self._announce_situation("path_blocked", judgement)
+        self._path_cause.blocked(judgement, result, now_ms)
 
     def _observe_fallen(self, result: VisionResult, now_ms: int) -> None:
         """누움 후보로 쓰러짐 의심에 든다.
@@ -1349,6 +1368,8 @@ class Runtime:
         self._drain_confirmations(now_ms)
         # 측위를 비전보다 앞에 둔다 — 구역 점검(`_poll_vision`)이 이번 틱의 자세로 도착을 본다.
         self._observe_scan(now_ms)
+        # 막힘 원인 판독을 쓰러짐·구역 판독보다 먼저 줍는다 — 같은 틱에 그쪽이 워커를 쓴다.
+        self._path_cause.poll(now_ms)
         # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
         if self._behavior.standby:
             self._escalation.stand_down(now_ms)
