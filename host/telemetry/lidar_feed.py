@@ -88,6 +88,8 @@ class RevolutionAssembler:
             scan.ts_ms,
             tuple(point for part in self._parts for point in part.points),
             sum(part.dropped for part in self._parts),
+            received_ms=now_ms,
+            started_ms=self._first_ms,
         )
         self.completed += 1
         self._reset()

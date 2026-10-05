@@ -33,6 +33,56 @@ from host.telemetry.ros2_relay import OdomSender
 
 __all__ = ["config"]  # 픽스처를 다시 쓴다 (`test_runtime.config`)
 
+
+def test_scan_posture_returns_neutral_and_waits_for_level_lidar(config, clock, monkeypatch):
+    """AP 관문이 카메라 SCAN을 유지하고 복귀 확인 전 MOVE를 막는다."""
+    from host.slam.scan_match import MatchResult
+
+    runtime, navigator = _patrolling(config, clock)
+    assert runtime._apply(Event.SCAN_DUE, clock.ms)
+    clock.advance(100)
+    lines = runtime.tick(clock.ms)
+    navigator.note_sent(lines, clock.ms)
+    poses = [json.loads(line) for line in lines if json.loads(line)["type"] == "POSE"]
+    assert poses[0]["pitch"] == config["fsm"]["scan_pitch_deg"]
+    assert runtime.behavior.state == "SCAN"
+    runtime.attach_scans(lambda: Scan("lidar-01", "0" * 16, 2, 0, ((0.0, 3.0),)))
+    clock.advance(100)
+    runtime.tick(clock.ms)
+    assert navigator.local_status["scan_rejected"] == "pose_tilt"
+    assert runtime._apply(Event.SCAN_DONE, clock.ms)
+    clock.advance(100)
+    lines = runtime.tick(clock.ms)
+    navigator.note_sent(lines, clock.ms)
+    poses = [json.loads(line) for line in lines if json.loads(line)["type"] == "POSE"]
+    assert poses[0]["pitch"] == 0
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.commander.intent.type_ == "STOP"
+    # 명령 보간+안정 시간이 지나도 새 수평 스캔 전에는 재출발 못한다.
+    runtime.attach_scans(lambda: None)
+    clock.advance(int(config["posture"]["settle_ms"]) + navigator.scan_gate.settle_ms + 1)
+    runtime.tick(clock.ms)
+    assert runtime.commander.intent.type_ == "STOP"
+    monkeypatch.setattr(
+        "host.behavior.patrol.match", lambda *_args, **_kwargs: MatchResult(navigator.pose, 1)
+    )
+    navigator.observe_telemetry(SimpleReading(), clock.ms)
+    runtime.attach_scans(lambda: Scan("lidar-01", "0" * 16, 3, 0, ((0.0, 3.0),)))
+    clock.advance(100)
+    runtime.tick(clock.ms)
+    assert navigator.pose_ms == clock.ms
+    assert runtime._build_nav_snapshot(clock.ms)["local_navigation"]["scan_rejected"] is None
+
+
+class SimpleReading:
+    pitch = 0.0
+    roll = 0.0
+    yaw = 0.0
+    safety_latched = False
+    obstacle = False
+    state = "PATROL"
+
+
 SCAN = Scan("lidar-01", "0" * 16, 1, 0, ())
 
 
@@ -126,7 +176,8 @@ def test_runtime_stops_when_pose_leaves_observed_free_space(
         assert "pose_outside_map" in caplog.text
     else:
         assert navigator.phase is not Phase.LOST
-        assert navigator.local_status["reason"] == "no_observed_gap"
+        assert navigator.local_status["reason"] == "blockage_confirm"
+        assert navigator._recovery is not None, "AO: incomplete scan waits for evidence"
 
 
 @pytest.mark.parametrize("missing", ["stop", "scan", "settled_scan", "fresh_scan"])

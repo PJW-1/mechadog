@@ -114,10 +114,10 @@ class BlockageMemory:
                     p = pending.pop(cell)
                     item.points[cell] = p
                     frontier.append(p)
-            # 같은 셀 또는 인접 셀의 반사는 측위/격자 경계 흔들림으로 같은 물체일 수 있다.
+            # 인접 반사는 확인 증거지만, 새 빔이 실제 비운 셀에 옛 끝점을 남기지 않는다.
             for cell in list(item.points):
                 visible = any(max(abs(cell[0] - h[0]), abs(cell[1] - h[1])) <= 1 for h in hits)
-                if cell in free and not visible:
+                if cell in free and cell not in hits:
                     del item.points[cell]
                 elif visible and now_ms - item.first_ms >= self.params.blockage_confirm_ms:
                     item.confirmed = True

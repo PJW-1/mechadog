@@ -1022,6 +1022,7 @@ class Runtime:
                     pose=[round(x, 4), round(y, 4), round(yaw, 5)],
                     phase=navigator.phase.value,
                     target=navigator.target,
+                    scan_gate=navigator.scan_gate.status,
                 )
         if self._recorder is not None and self._navigator.phase.value != self._recorded_nav_phase:
             self._recorded_nav_phase = self._navigator.phase.value

@@ -19,8 +19,8 @@ from host.common.protocol import CommandEncoder
 __all__ = ["config"]
 
 
-def test_recorded_single_goto_failure_finishes_idle_and_preserves_event(monkeypatch):
-    """The logged failure must end the mission instead of holding PLANNING forever."""
+def test_fully_blocked_single_goto_finishes_idle_and_preserves_event(monkeypatch):
+    """AO: only a scan with no body corridor ends the mission as spatially blocked."""
     c = ready(front=0.446)
     c._goal = (4, 2)
     c.plan = Plan(GOAL_LABEL)
@@ -29,7 +29,7 @@ def test_recorded_single_goto_failure_finishes_idle_and_preserves_event(monkeypa
         "host.behavior.patrol.plan_to",
         lambda *_args, **_kwargs: Plan(None, fail_reason="start_clearance_blocked"),
     )
-    finish_scan(c, front=0.446)
+    finish_scan(c, front=0.3, distance=0.3)
     assert c._recovery is None
     assert c.phase is Phase.IDLE
     assert c.goal is None and c.holding_goal and c.goal_hold_reason == "blocked"
@@ -187,6 +187,7 @@ def test_runtime_immediate_failed_retry_announces_idle_in_same_tick(config, cloc
     )
     c.note_sent([CommandEncoder().encode("STOP")], clock.ms - 2000)
     c._local_scan.received_ms = clock.ms
+    c.observe_obstacle_scan(revolution(99999, distance=0.3), clock.ms)
     monkeypatch.setattr(
         "host.behavior.patrol.plan_to",
         lambda *_args, **_kwargs: Plan(None, fail_reason="start_clearance_blocked"),

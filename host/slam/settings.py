@@ -104,6 +104,18 @@ def read_lidar_section(path: Path = CONFIG_PATH) -> dict[str, Any]:
 
 
 def validate_section(section: dict[str, Any]) -> None:
+    for key, low, high in (
+        ("scan_tilt_imu_max_age_ms", 1, 5000),
+        ("scan_tilt_max_deg", 0.1, 45),
+        ("scan_tilt_settle_ms", 0, 10000),
+        ("scan_tilt_pitch_offset_deg", -45, 45),
+        ("scan_tilt_roll_offset_deg", -45, 45),
+    ):
+        value = section.get(key)
+        if value is not None and (not _finite_number(value) or not low <= value <= high):
+            raise ConfigError(f"lidar.{key} 는 {low}~{high} 유한한 숫자여야 함: {value!r}")
+        if key.endswith("_ms") and value is not None and not isinstance(value, int):
+            raise ConfigError(f"lidar.{key} 는 정수여야 함")
     if not isinstance(section.get("global_full_scan_ambiguity", False), bool):
         raise ConfigError("lidar.global_full_scan_ambiguity must be true or false")
     if not isinstance(section.get("reloc_restore_enabled", False), bool):

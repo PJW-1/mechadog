@@ -27,9 +27,9 @@ from host.common.lidar_link import Scan
 from host.report.situation import describe
 
 
-def tick(c, now, yaw=0.0, front=None):
+def tick(c, now, yaw=0.0, front=None, distance=3.0):
     c.observe_map_pose((*c.pose[:2], yaw), now)
-    scan = revolution(now, front=front)
+    scan = revolution(now, distance=distance, front=front)
     scan = replace(
         scan,
         points=tuple(((a - yaw + math.pi) % (2 * math.pi) - math.pi, d) for a, d in scan.points),
@@ -40,13 +40,19 @@ def tick(c, now, yaw=0.0, front=None):
     c.note_sent(c.commander.tick(now), now)
 
 
-def finish_scan(c, start=1100, front=0.6):
+def finish_scan(c, start=1100, front=0.6, distance=3.0):
     """STOP 송신 후 측정 방위 한 바퀴, 다시 STOP 후 새 스캔을 입력한다."""
-    tick(c, start, front=front)
-    tick(c, start + 2100, front=front)
+    tick(c, start, front=front, distance=distance)
+    tick(c, start + 2100, front=front, distance=distance)
     for index in range(1, 14):
-        tick(c, start + 2100 + index * 100, yaw=(index * math.pi / 6) % (2 * math.pi), front=front)
-    tick(c, start + 5000, yaw=math.pi / 6, front=front)
+        tick(
+            c,
+            start + 2100 + index * 100,
+            yaw=(index * math.pi / 6) % (2 * math.pi),
+            front=front,
+            distance=distance,
+        )
+    tick(c, start + 5000, yaw=math.pi / 6, front=front, distance=distance)
 
 
 def blocked_target(c):
@@ -110,7 +116,7 @@ def test_no_detour_skips_zone_and_does_not_count_as_visited():
     c.grid.cells[:, 60] = 5
     blocked_target(c)
     c._begin_recovery("path_obstacle")
-    finish_scan(c)
+    finish_scan(c, front=0.3, distance=0.3)
     assert c.skipped == {"A"}
     assert not c.visited and c.stats.zones_visited == 0
     (event,) = c.take_navigation_events()
@@ -298,8 +304,9 @@ def test_next_zone_is_selected_after_confirmed_skip():
     c.grid.cells[:, 60] = 5
     blocked_target(c)
     c._begin_recovery("path_obstacle")
-    finish_scan(c)
+    finish_scan(c, front=0.3, distance=0.3)
     assert c.skipped == {"A"}
+    c.observe_obstacle_scan(revolution(10000), 6100)
     c._replan()
     assert c.plan.label == "B" and c.plan.reachable
 

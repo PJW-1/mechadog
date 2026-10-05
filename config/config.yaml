@@ -14,6 +14,7 @@ nav:
   local_slow_m: 0.40          # 진행 방향 ±30도 최근접 거리 40cm 아래 감속
   local_stop_m: 0.25          # 25cm 아래 STOP, 로봇 자체 초음파 25cm 정지는 유지
   local_fan_deg: 30
+  corridor_margin_m: 0.02     # AO: 최신 끝점 사이 몸 지름 30cm + 좌우 각 2cm
   scan_max_age_ms: 500        # 움직이는 동안에도 최신 한 바퀴 없으면 정지
   dynamic_ttl_ms: 2000        # 실제 끝점 + 몸 반경만, 다시 보이면 만료 시각 갱신
   gap_bin_deg: 5
@@ -595,6 +596,18 @@ lidar:
   # 우도장 지형에 방위 능선이 생겨 정합만으로는 방위가 흘렀다(정지 중 23°, 걸은 세션 IMU 대비 132°).
   imu_yaw_window_deg: 3
   imu_yaw_step_deg: 1
+  # AP: SCAN 상체 pitch -15도에서 주방 정지 스캔 39/43개가 6도를 넘었다(AN).
+  # 신선한 IMU만 수평 판정에 쓴다. 오래되거나 없으면 실제 송신 POSE 상태로 판단.
+  scan_tilt_imu_max_age_ms: 250
+  scan_tilt_max_deg: 6
+  # 보행 중(MOVE 후 700ms)은 몸체 흔들림 허용: lap_1 보행 p50 6.3°·p90 10.7° — 6° 면 보행 스캔 54% 를 버려 추적이 굶는다(Claude 검토).
+  scan_tilt_walking_max_deg: 12
+  # POSE 보간 완료 뒤 첫 수평 한 바퀴를 기다린다. 기존 보행 정지 안정 대기와 같은 750ms.
+  scan_tilt_settle_ms: 750
+  # IMU 설치/영점의 수평 기준(측정값에서 뺌). 실측 보정 전에는 0.
+  # posture.roll_offset_deg는 POSE 명령에 얹는 보정이므로 IMU 값에서 빼지 않는다.
+  scan_tilt_pitch_offset_deg: 0
+  scan_tilt_roll_offset_deg: 0
   # 걸으며 지도에 바로 쓰기. **기본 끔** — 틀린 자세로 쓰면 지도가 그 자리를 맞는 것처럼
   # 굳혀 정합기가 스스로를 확신한다(제자리 로봇 실측: 정합률 0.66→0.95 로 자기강화).
   # 세션 스캔은 기록되므로 tools/lidar/localization_bench.py 로 검토한 뒤 반영한다.

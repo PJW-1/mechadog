@@ -14,6 +14,7 @@ import math
 import re
 import sys
 from collections import deque
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -127,6 +128,35 @@ def replay(
         "last_sent_moving": c._last_sent_moving,
         "stopped_since_ms": c._stopped_since_ms,
     }
+    nearest = min(
+        (p for b in c._blockages.items for p in b.points.values()),
+        key=lambda p: math.dist(c.pose[:2], p),
+        default=None,
+    )
+    result["geometry"] = {
+        "resolution_m": grid.meta.resolution,
+        "body_radius_m": c.plan_params.body_radius_m,
+        "static_clearance_m": c.plan_params.clearance_m,
+        "soft_clearance_m": c.plan_params.soft_clearance_m,
+        "memory_xy": nearest,
+        "old_cell_centre_distance_m": None
+        if nearest is None
+        else math.dist(
+            grid.to_world(*grid.to_cell(*nearest)), grid.to_world(*grid.to_cell(*c.pose[:2]))
+        ),
+        "endpoint_clear_exclusion_cells": 2,
+    }
+    corridor = c._corridor_to(goal)
+    result["corridor"] = (
+        None
+        if corridor is None
+        else {
+            "relative_heading_deg": math.degrees(corridor[0]),
+            "clearance_m": corridor[1],
+            "swept_width_m": corridor[2],
+            "required_width_m": 2 * (c.plan_params.body_radius_m + c.nav_params.corridor_margin_m),
+        }
+    )
     c._recover()
     result["after_retry"] = {
         "phase": c.phase.value,
@@ -134,7 +164,45 @@ def replay(
         "holding_goal": c.holding_goal,
         "reason": c.goal_hold_reason,
         "recovery": c.blockage_status["recovery"],
+        "local": c.local_status,
+        "avoidance": c._avoidance,
     }
+    if c._avoidance is not None:
+        # 새 정책이 움직이기로 했다면 기록의 정지 궤적을 미래 이동으로 쓰지 않는다.
+        # 같은 최신 관측에서 다음 명령 의도까지만 확인한다(실제 송신 없음).
+        c._avoid()
+        result["next_intent"] = {
+            "type": c.commander.intent.type_,
+            "fields": c.commander.intent.fields,
+        }
+        if c._avoidance is not None:
+            # 같은 끝점의 좌표계만 선택 방위로 회전한 기하 검사. 실제 후속 센서/궤적 아님.
+            heading = c._avoidance[2]
+            scan_pose = c._local_scan_pose or c.pose
+            points = []
+            for a, d in c._local_scan.points:
+                x = scan_pose[0] + math.cos(scan_pose[2] + a) * d - c.pose[0]
+                y = scan_pose[1] + math.sin(scan_pose[2] + a) * d - c.pose[1]
+                points.append((math.atan2(y, x) - heading, math.hypot(x, y)))
+            c.observe_map_pose((*c.pose[:2], heading), now)
+            scan = scans[-1][1]
+            aligned = replace(scan, seq=scan.seq + 1, points=tuple(points))
+            c.observe_obstacle_scan(aligned, now)
+            c._avoid()
+            result["alignment_geometry_probe"] = {
+                "type": c.commander.intent.type_,
+                "fields": c.commander.intent.fields,
+                "physical_motion_verified": False,
+            }
+        result["after_tail"] = None
+        result["tail_replay"] = "not_applicable_after_counterfactual_motion"
+        result["events"] = c.take_navigation_events()
+        result["source_hashes"] = before
+        result["sources_unchanged"] = all(
+            hashlib.sha256(Path(p).read_bytes()).hexdigest() == digest
+            for p, digest in before.items()
+        )
+        return result
     # Exercise the former goal-hold return for the entire observed stalled tail.
     for later in rows:
         if later["t"] * 1000 <= now:
