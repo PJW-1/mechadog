@@ -310,9 +310,16 @@ def write_jsonl(entries: Iterable[Entry], path: Path) -> None:
 
 
 def read_jsonl(path: Path) -> list[Entry]:
-    """목록을 읽는다. 깨진 줄은 `ListError(파일:줄: 까닭)` 로 멈춘다 — 손으로 고친 목록을 위한 것."""
+    """목록을 읽는다. 깨진 줄은 `ListError(파일:줄: 까닭)` 로 멈춘다 — 손으로 고친 목록을 위한 것.
+
+    파일이 없거나 UTF-8 이 아니면 `ListError(파일: 목록을 읽지 못했다 …)` 다.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ListError(f"{path}: 목록을 읽지 못했다 ({error})") from None
     entries = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
         where = f"{path}:{number}"

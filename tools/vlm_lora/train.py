@@ -55,39 +55,51 @@ def target_modules(*, mlp: bool) -> str:
     return rf"^(?!.*\bvisual\b).*\.({'|'.join(names)})$"
 
 
-def answer_labels(
-    input_ids: Sequence[int], prompt_len: int, turn_end_ids: Sequence[int]
-) -> list[int]:
-    """프롬프트 토큰(`prompt_len` 개)을 가린 라벨. 뒤가 비었거나 턴 끝 토큰으로 안 끝나면 `ValueError`.
+class ExampleError(ValueError):
+    """학습 예제를 만들 수 없다 — 토크나이저·템플릿이 이 도구의 가정과 다르다."""
 
-    정답 토큰을 끝에서 맞춰 찾지 않는다 — 프롬프트 끝과 답 첫 글자가 한 토큰으로 묶이면
-    맞춤이 모든 예제에서 깨진다. 프롬프트만 토큰화한 길이로 자른다.
+
+def answer_labels(
+    input_ids: Sequence[int], prompt_ids: Sequence[int], turn_end_ids: Sequence[int]
+) -> list[int]:
+    """프롬프트 토큰을 가린 라벨. 프롬프트가 입력의 앞머리가 아니거나, 뒤가 비었거나,
+    턴 끝 토큰으로 안 끝나면 `ExampleError`.
+
+    정답 토큰을 끝에서 맞춰 찾지 않고 프롬프트만 토큰화한 결과로 자른다. 프롬프트 끝과 답 첫
+    글자가 한 토큰으로 묶이면 길이로 자른 라벨은 그 토큰을 가려 답의 나머지만 가르친다 — 그래서
+    앞머리가 그대로인지 비교해 멈춘다.
     """
     ids = list(input_ids)
-    if len(ids) <= prompt_len:
-        raise ValueError("프롬프트 뒤에 정답 토큰이 없다 — 토큰 경계가 어긋났다")
+    prompt = list(prompt_ids)
+    if ids[: len(prompt)] != prompt:
+        raise ExampleError(
+            "프롬프트 끝과 정답 첫 글자가 한 토큰으로 묶였다 — 정답만 가르칠 수 없다"
+        )
+    if len(ids) <= len(prompt):
+        raise ExampleError("프롬프트 뒤에 정답 토큰이 없다 — 토큰 경계가 어긋났다")
     n = len(turn_end_ids)
     if n == 0 or ids[-n:] != list(turn_end_ids):
-        raise ValueError(f"입력이 턴 끝 토큰 {TURN_END} 으로 끝나지 않는다")
-    return [IGNORE] * prompt_len + ids[prompt_len:]
+        raise ExampleError(f"입력이 턴 끝 토큰 {TURN_END} 으로 끝나지 않는다")
+    return [IGNORE] * len(prompt) + ids[len(prompt) :]
 
 
 def build_example(processor: Any, entry: Entry, *, image: Any) -> tuple[Any, list[int]]:
     """운용 프롬프트 + 정답 한 마디를 토큰으로. (프로세서 출력, 라벨 목록)을 돌려준다."""
     if entry.answer not in ANSWER_TEXT:
-        raise ValueError(f"정답이 yes·no 가 아니다: {entry.answer!r} ({entry.image})")
+        raise ExampleError(f"정답이 yes·no 가 아니다: {entry.answer!r} ({entry.image})")
     prompt = processor.apply_chat_template(
         chat_messages(question_for(entry.key).prompt),
         tokenize=False,
         add_generation_prompt=True,
     )
     answer = ANSWER_TEXT[entry.answer] + TURN_END
-    # 같은 이미지로 프롬프트만 토큰화해 길이를 잰다 — 이미지 패드 토큰 수가 같아야 한다.
-    prompt_ids = processor(text=[prompt], images=[image], return_tensors="pt")["input_ids"][0]
+    # 같은 이미지로 프롬프트만 토큰화한다 — 이미지 패드 토큰 수가 같아야 앞머리가 맞는다.
+    prompt_out = processor(text=[prompt], images=[image], return_tensors="pt")
+    prompt_ids = [int(token) for token in prompt_out["input_ids"][0]]
     inputs = processor(text=[prompt + answer], images=[image], return_tensors="pt")
     ids = [int(token) for token in inputs["input_ids"][0]]
     turn_end_ids = processor.tokenizer(TURN_END, add_special_tokens=False)["input_ids"]
-    return inputs, answer_labels(ids, len(prompt_ids), turn_end_ids)
+    return inputs, answer_labels(ids, prompt_ids, turn_end_ids)
 
 
 def training_entries(entries: Sequence[Entry], keys: Sequence[str] | None) -> list[Entry]:
@@ -239,7 +251,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     config = run_config(args, entries)
     print(json.dumps(config["examples"], ensure_ascii=False), flush=True)
-    train(args, entries, config)
+    try:
+        train(args, entries, config)
+    except ExampleError as exc:  # 첫 예제에서 난다 — 어댑터를 쓰기 전이다
+        print(exc, file=sys.stderr)
+        return 2
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / CONFIG_NAME).write_text(
         json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"

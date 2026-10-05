@@ -298,6 +298,22 @@ def test_train_and_evaluate_report_a_broken_list_instead_of_crashing(
     assert capsys.readouterr().err.count("list.jsonl:1:") == 2
 
 
+def test_a_missing_or_undecodable_list_is_reported_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "nope.jsonl"
+    with pytest.raises(ds.ListError, match="nope.jsonl: 목록을 읽지 못했다"):
+        ds.read_jsonl(missing)
+    garbled = tmp_path / "garbled.jsonl"
+    garbled.write_bytes(b"\xff\xfe{}\n")
+    with pytest.raises(ds.ListError, match="garbled.jsonl: 목록을 읽지 못했다"):
+        ds.read_jsonl(garbled)
+    monkeypatch.setattr(tr, "train", lambda *_a: pytest.fail("GPU 로 갔다"))
+    assert tr.main([str(missing), "--out", str(tmp_path / "adapter")]) == 2
+    assert ev.main([str(missing), "--base-only"]) == 2
+    assert capsys.readouterr().err.count("nope.jsonl: 목록을 읽지 못했다") == 2
+
+
 def test_auto_root_must_exist(tmp_path: Path) -> None:
     with pytest.raises(bench.LayoutError):
         ds.read_auto(tmp_path / "none")
@@ -546,11 +562,20 @@ class FakeProcessor:
 
 
 def test_loss_is_only_after_the_prompt_tokens() -> None:
-    assert tr.answer_labels([1, 2, 3, 7, IM_END], 3, [IM_END]) == [-100, -100, -100, 7, IM_END]
-    with pytest.raises(ValueError, match="정답 토큰"):
-        tr.answer_labels([1, 2, 3], 3, [IM_END])  # 프롬프트 뒤에 아무것도 없다
-    with pytest.raises(ValueError, match="턴 끝"):
-        tr.answer_labels([1, 2, 3, 7], 3, [IM_END])
+    prompt = [1, 2, 3]
+    assert tr.answer_labels([1, 2, 3, 7, IM_END], prompt, [IM_END]) == [
+        -100,
+        -100,
+        -100,
+        7,
+        IM_END,
+    ]
+    with pytest.raises(tr.ExampleError, match="정답 토큰"):
+        tr.answer_labels([1, 2, 3], prompt, [IM_END])  # 프롬프트 뒤에 아무것도 없다
+    with pytest.raises(tr.ExampleError, match="턴 끝"):
+        tr.answer_labels([1, 2, 3, 7], prompt, [IM_END])
+    with pytest.raises(tr.ExampleError, match="묶였다"):
+        tr.answer_labels([1, 2, 9, 7, IM_END], prompt, [IM_END])  # 프롬프트 꼬리가 바뀌었다
 
 
 def test_build_example_teaches_the_answer_and_the_turn_end() -> None:
@@ -566,10 +591,29 @@ def test_build_example_teaches_the_answer_and_the_turn_end() -> None:
     assert [t for t in labels if t != -100] == [ord("N"), ord("o"), IM_END]
 
 
-def test_build_example_survives_a_token_merged_across_the_boundary() -> None:
-    """⚠️ 프롬프트 끝과 답 첫 글자가 한 토큰으로 묶여도 멈추지 않는다 — 프롬프트 길이로 자른다."""
-    _, labels = tr.build_example(FakeProcessor(merge=True), _entry(answer="yes"), image="IMG")
-    assert [t for t in labels if t != -100] == [ord("e"), ord("s"), IM_END]
+def test_build_example_refuses_a_token_merged_across_the_boundary() -> None:
+    """⚠️ 프롬프트 끝과 답 첫 글자가 한 토큰으로 묶이면 멈춘다.
+
+    길이로만 자르면 묶인 토큰이 가려져 답의 나머지(`es`)만 배운다 — 운용에서는 판독 불가가 된다.
+    """
+    with pytest.raises(tr.ExampleError, match="묶였다"):
+        tr.build_example(FakeProcessor(merge=True), _entry(answer="yes"), image="IMG")
+
+
+def test_train_cli_reports_an_example_error_instead_of_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "list.jsonl"
+    ds.write_jsonl([_entry(image="a", split="train")], path)
+
+    def boundary(*_a: object) -> None:
+        raise tr.ExampleError("토큰 경계가 묶였다")
+
+    monkeypatch.setattr(tr, "train", boundary)
+    out = tmp_path / "adapter"
+    assert tr.main([str(path), "--out", str(out)]) == 2
+    assert "토큰 경계가 묶였다" in capsys.readouterr().err
+    assert not (out / tr.CONFIG_NAME).exists()
 
 
 def test_build_example_refuses_an_unknown_answer() -> None:
