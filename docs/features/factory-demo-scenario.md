@@ -43,6 +43,7 @@ flowchart TD
 | 화기 위험물 확정 | 같은 방문 안 서로 다른 프레임의 «예» 2회 | `change_detect.vlm_hazard_items` (기본 켬) | [ADR-43](../DECISIONS.md#adr-43) · [ADR-41](../DECISIONS.md#adr-41) |
 | 화기 위험물 확정 (검출기 · 2026-10-02 개정) | 금지 대상이 1500ms 안에 3번 이상 검출 (PPE 위반과 같은 규칙). 위험구역에서 방향을 맞춘 뒤에만 켠다 | `vision.hazard` (`enabled` · `alarm_classes` · `confirm_window_ms` · `hits_required`) | [ADR-43](../DECISIONS.md#adr-43) 대안 ⓐ 개정 |
 | 이동 중 막힘 | 가벼운 경고 + LiDAR 우회, L3 아님 | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
+| 막힘 원인 판독 (VLM `blocked_by_fallen`) | LiDAR 가 막힘을 확정한 프레임에 한 번 묻고 답을 `path_blocked` 판정 근거 `fallen` 에 싣는다. 기록은 답 또는 1500ms 상한까지 미룬다. 방송 문장은 켠 뒤 «예» 일 때만 «무너진 물건» 을 말함 (꺼짐 · 벤치 통과 전) | `vision.vlm.path_cause_wait_ms` · `change_detect.vlm_path_cause` | [ADR-45](../DECISIONS.md#adr-45) |
 | 구역 방문 VLM `blocked_path` 가벼운 경고 `path_blocked` (L3 아님 · 2026-10-01 개정) | 꺼짐 (벤치 통과 전) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
 | 쓰러짐 확정 | 의심 뒤 판독 «예» 2회, 간격 1000ms 이상 | `fsm.fall_confirm_vlm_yes` · `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | PPE | 모든 구역에서 판정, 위반은 경고 뒤 자동 복귀 | `escalation.ppe_warning_hold_ms` | [ADR-42](../DECISIONS.md#adr-42) |
@@ -51,7 +52,7 @@ flowchart TD
 ## 실패·예외 시 동작
 
 - `--lidar-device` 를 주지 않으면 런타임은 전과 같이 움직인다. 위 흐름의 2단계 우회는 일어나지 않고, 막히면 초음파 온보드 회피(후진 + 좌선회)만 있다.
-- VLM 은 방향을 정하지 않는다. 막힘 판정은 LiDAR 몫이고, VLM 이 없거나 늦어도 우회는 그대로 된다.
+- VLM 은 방향을 정하지 않는다. 막힘 판정은 LiDAR 몫이고, VLM 이 없거나 늦어도 우회는 그대로 된다. VLM 은 막힘의 원인만 덧붙이며, 답이 없으면 `fallen: null` 로 기록하고 문장은 «장애물» 그대로다.
 - 초음파 온보드 회피는 근거리 예비 수단으로 남는다. LiDAR 전방 부채꼴 ESTOP 은 런타임 송신 락을 거쳐 즉시 나간다.
 - 가벼운 경고(`path_blocked` · `hazard_notice`)는 L3 가 아니다. 눈 LED 는 그대로이고 순찰이 이어진다.
 - 쓰러짐 확정 뒤 순찰 복귀는 운용자 확인으로만 일어난다. 복귀하면 원래 목표로 경로를 다시 짠다.
