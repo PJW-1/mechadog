@@ -6,8 +6,9 @@
 
 ## 준비
 
-- 시험 개체의 `--device`와 **현재** XIAO IP를 확인한다. 과거 DHCP 주소나 아래 예시 주소를
-  현재 주소로 간주하지 않는다.
+- 시험 개체는 **mechdog-01**(2026-10-05 결정)이다. XIAO IP는
+  `config/devices/mechdog-01.local.yaml`에서 읽고, 과거 DHCP 주소나 아래 예시 주소를 현재
+  주소로 간주하지 않는다. `vision.mount_rotation`은 180이다.
 - `models/coco.onnx`와 `models/ppe.onnx`를 준비한다.
 - PPE 모델은 35,779,654바이트, SHA-256
   `145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2`인지 확인한다. (ppe-v5 ·
@@ -18,7 +19,7 @@
 ## 실행
 
 ```powershell
-$xiaoIp = "현재 XIAO IP로 교체"
+$xiaoIp = "config/devices/mechdog-01.local.yaml 의 XIAO IP"
 $runDate = Get-Date -Format yyyyMMdd
 python tools/ppe/ppe_live_check.py `
   --device mechdog-01 `
@@ -32,7 +33,7 @@ python tools/ppe/ppe_live_check.py `
   --session "field_tests/results/${runDate}_ppe-xiao/session.json"
 ```
 
-실제 개체명·IP·날짜로 바꿔 실행한다. XIAO 검수에서는 `--window-ms`와 `--hits`를 주지
+IP를 채워 실행한다. 실행 전에 이 문서 아래 «XIAO 수집 세션 · 실행» 의 1)처럼 방향 보정(`rot 180`)을 확인한다. XIAO 검수에서는 `--window-ms`와 `--hits`를 주지
 않는다. `config/config.yaml`의 운영값으로 알람 창을 확인해야 한다.
 
 브라우저에서 구간을 선택한 뒤 네 방향을 차례로 관찰한다. 직립과 웅크림은 전신이 화면에
@@ -46,6 +47,36 @@ python tools/ppe/ppe_live_check.py `
 900초 검수는 파일이 수만 장이 될 수 있다. 종료할 때 브라우저의 **시험 종료 및 결과
 저장**을 누른다. 정상 종료되면 `summary.md`, 재계산 가능한 `session.json`,
 판정을 그린 `frames/`가 함께 남는다.
+
+## 합격 기준 C1~C4 (측정 전 고정 · 2026-10-05)
+
+ppe-v5(SHA-256 `145c2dc9…90e2`)를 XIAO로 실측하기 **전에** 정했다. 측정 결과를 보고 고치지
+않는다. 11개 구간을 모두 네 방향으로 수행하고, «위반 확정»은 운용 창 `1500ms / 3회`가 확정한
+것이다. 임계값은 `config/ppe_acceptance.json`의 `scenarios.xiao.criteria`에 있다.
+
+| 기준 | 내용 | 임계값 |
+| --- | --- | --- |
+| C1 | 적합 기대 구간(`standing-all`·`crouching-all`·`pitch-up`·`sit`)의 위반 확정 합계 | **≤ 1회** |
+| C2 | 위반 기대 6구간(직립·웅크림 × 안전모·조끼·둘 다 미착용) 각각에서 위반이 확정된 방향 수 | **4방향 중 ≥ 3** |
+| C3 | 전신 구간(`clipped-base` 제외 10개) 전체의 판정 가능률(확인불가가 아닌 판정 / 전체 판정) | **≥ 60%** |
+| C4 | `clipped-base`의 위반 확정 | **0회** |
+
+네 기준을 모두 만족해야 합격이다. 관측이 없는 구간은 «경보 0회»로 통과하지 않는다 — C1·C4는
+그 구간이 비어 있으면 실패하고, C2는 방향 수 0으로 센다.
+
+### 자동 판정 실행
+
+`session.json`이 남으면 아래로 기준별 PASS/FAIL과 수치를 출력한다. 모두 통과하면 종료 코드
+0, 하나라도 실패하면 1이다. 오프라인 계산이며 로봇·카메라·모델을 건드리지 않는다.
+
+```powershell
+python tools/ppe/acceptance_judge.py "field_tests/results/${runDate}_ppe-xiao/session.json"
+```
+
+C2의 방향 판정은 `tools/ppe/episode_eval.py`의 에피소드 최종 판정을 쓴다. 앞 방향의 확정이
+켜진 채 다음 방향으로 넘어오면(창은 방향이 바뀔 때 비워지지 않는다) 그 방향도 확정으로 센다.
+방향은 사람 손으로 도는 시각에 따라 어긋날 수 있으므로 경계에 걸린 결과는 저장 프레임으로
+확인한다.
 
 ## 결과 읽기
 
@@ -97,12 +128,15 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
 두세 명 차이는 잡음 범위다. **XIAO 후보는 v2 로 정했다** — v23b 기각 사유(정상 착용자 오경고)가
 가장 적고, no_helmet 재현율이 올랐고, 두 세트에서 고르게 동작한다. 채택은 XIAO 로만 판단한다.
 
-아직 WBS 3.7.3과 PPE 기능 전체 완료는 아니며, 다음 작업을 이어서 수행한다.
+**2026-10-05 — 3.7.3 종결 범위와 합격 기준을 확정했다.** WBS 3.7.3은 **ppe-v5의 전 구간 XIAO
+재실측과 위 합격 기준 C1~C4**로 닫는다. 공장 모드 종단 실기(사람 발견 → 자세 상승 → 판정 →
+순찰 복귀)는 3.7.3에서 빼고 **WBS 5.4.6(공장 모드 시연 한 바퀴 실기)**에서 검증한다.
+아직 3.7.3은 닫히지 않았다 — ppe-v5 XIAO 실측이 남아 있다.
 
-1. **다음 모델(4클래스) 학습 후 XIAO 재실측**: v23b는 기각됐다(위 단락). 다음 모델이 나오면
-   실제 기체에서 운영 설정 `1500ms / 3회`로 위 절차를 수행하고 `summary.md`와
-   `session.json`을 수집한다. XIAO 독립 Test set 은 학습·검증과 분리하고 촬영 세션·장소·
-   인물 단위로 나눈다(2026-09-28 세션은 학습·검증에만 쓰고 Test 에는 쓰지 않는다).
+1. **ppe-v5 XIAO 재실측**: mechdog-01에서 운영 설정 `1500ms / 3회`로 위 절차를 수행하고
+   `summary.md`와 `session.json`을 수집한 뒤 `acceptance_judge.py`로 C1~C4를 판정한다.
+   XIAO 독립 Test set은 학습·검증과 분리하고 촬영 세션·장소·인물 단위로 나눈다(2026-09-28
+   세션은 학습·검증에만 쓰고 Test에는 쓰지 않는다).
 2. **운용 판정기 구현 완료(실기 미검증)**: `host/vision/ppe_detector.py`에서 사람 크롭,
    상단 클리핑 보류, 추적 ID별 `1500ms / 3회` 위반 확정을 구현했다.
 3. **런타임 통합 완료(실기 미검증)**: 공장 모드 전용 추론, 자세 상승과 복귀,
@@ -110,13 +144,11 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
    `PPE_UNDETERMINED` 블랙박스 사건을 연결했다.
    2026-09-20 자세 실측 판단에 따라 출고 단계는 `pitch_up → sit`으로 제한한다.
    후진은 시야 이득이 작고 앉은 자세를 풀어야 하므로 운용 설정에서 제외했다.
-4. **실기 종단 검증 필요**: 공장 모드에서 사람 발견 → 정지 확인 → 클리핑 검사 → 자세 상승 →
-   PPE 판정 → L3 또는 순찰 복귀까지 실제 XIAO·MechDog 흐름을 검증한다.
-5. **합격 기준 확정**: XIAO 실측 결과를 바탕으로 판정 가능률의 합격 하한과 오알람률의
-   합격 상한을 명시한다.
+4. **종단 실기는 5.4.6으로 이동**: 공장 모드에서 사람 발견 → 정지 확인 → 클리핑 검사 → 자세
+   상승 → PPE 판정 → 경고·순찰 복귀까지의 실제 XIAO·MechDog 흐름은 시연 한 바퀴(5.4.6 ⑤·⑥)에서
+   확인한다. 3.7.3의 종결 조건이 아니다.
 
-위 다섯 항목과 관련 회귀 시험을 모두 통과한 뒤에만 WBS 3.7.3과 PPE 기능 전체 완료를
-선언한다.
+위 1번에서 C1~C4를 모두 통과하고 2·3번의 회귀 시험이 통과하면 WBS 3.7.3을 닫는다.
 
 ## XIAO 수집 세션
 

@@ -4,6 +4,13 @@
   "scenarios": {
     "xiao": {
       "description": "실제 기체의 15cm 장착 XIAO 카메라로 수행하는 FR-9 검수",
+      "criteria": {
+        "max_ok_segment_alarms": 1,
+        "min_violation_directions": 3,
+        "min_decidable_rate": 0.6,
+        "max_clipped_alarms": 0,
+        "clipped_segment": "clipped-base"
+      },
       "segments": [
         {"key": "standing-all", "condition": "직립·전신", "wear": "전부 착용", "expected": "적합"},
         {"key": "standing-nohelmet", "condition": "직립·전신", "wear": "안전모 미착용", "expected": "위반"},
