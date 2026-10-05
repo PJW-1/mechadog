@@ -286,7 +286,7 @@ vision:
     budget_ms: 3000
     # 공장 순찰 중 `person_down` 만 묻는 간격 (ADR-42 결정 5). 의심 중에는 판독이 끝날 때마다 다시 묻는다.
     patrol_interval_ms: 2000
-    # LiDAR 막힘 확정 프레임의 원인 판독(`blocked_by_fallen` · ADR-45)을 기다리는 상한. 넘기면
+    # LiDAR 막힘 확정 프레임의 원인 판독(`blocked_by_fallen` · ADR-45)을 기다리는 상한. 경과가 상한에 닿으면
     # `path_blocked` 를 `fallen: null` 로 남긴다. 재계획으로 로봇이 서 있는 동안이라 알림이 이만큼 늦어도 된다.
     path_cause_wait_ms: 1500
     # 막힘 확정 때 최신 프레임을 받은 지 이보다 오래됐으면(비전 끊김) 원인을 묻지 않고 사진도 남기지
