@@ -5,7 +5,8 @@
 
 순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
 순찰기는 처음에는 `tools/ops/patrol_run.py` 단독 도구로만 돌았다. 지금은 런타임이 `--lidar-device <id>` 로 직접 돌릴 수도 있다([ADR-43](../DECISIONS.md#adr-43)): PATROL 이 LiDAR A* 경로를 따르고, 측위 자세는 구역 점검에 들어가며, LiDAR 전방 ESTOP 은 런타임 송신 락을 거친다. 플래그가 없으면 위의 `AVOID` 경로만 쓴다. `tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 컨테이너로의 스캔 전달(`lidar.scan_forward_*`)과 ODOM 송신도 같은 플래그가 켠다. 기동 관문은 `patrol_run` 과 같다: `lidar` 절 전수 검사, `localization.track == lidar`(ADR-18), 전달·ODOM 목적지 이름 해석, 지도·구역 적재 중 하나라도 실패하면 rc 2 로 기동을 거부한다.
-이동 중 장애물이 길을 막으면 **가벼운 경고 `path_blocked`**(방송 + 대시보드, 출처 `lidar`, 판정 `x`·`y`·`target`)를 낸 뒤 LiDAR A* 가 빈 쪽 중 가장 짧은 쪽으로 다시 계획해 이어 간다. L3 가 아니다. VLM 은 길을 정하지 않는다.
+이동 중 장애물이 길을 막으면 **가벼운 경고 `path_blocked`**(방송 + 대시보드, 출처 `lidar`, 판정 `x`·`y`·`target` 과 원인 판독의 `fallen`·`vlm_reason`·`raw`·`latency_ms`·`wait_ms`·`vlm_path_cause`. 묻지 못했으면 `fallen` 은 `null` 이고 `vlm_reason` 에 사유가 남는다. 값은 [VLM 단일 장면 판독](vlm-reading.md))를 낸 뒤 LiDAR A* 가 빈 쪽 중 가장 짧은 쪽으로 다시 계획해 이어 간다. L3 가 아니다. VLM 은 길을 정하지 않는다.
+공장 모드에서는 막힘을 확정한 그 프레임에 VLM 질문 `blocked_by_fallen`(«통로를 막은 것이 무너진 물건인가»)을 걸어, 답(`fallen`)을 같은 `path_blocked` 의 판정 근거에 싣는다([ADR-45](../DECISIONS.md#adr-45)). 그래서 `path_blocked` 의 기록·방송은 답이 오거나 `vision.vlm.path_cause_wait_ms`(1500ms)를 넘길 때까지 미뤄진다. 재계획은 기다리지 않는다.
 
 ## 판단 흐름
 
@@ -41,7 +42,7 @@ flowchart TD
   ADV -->|다음 스캔| SC["LiDAR 스캔 수신"]
   SC --> EST{"전방 부채꼴 최소 거리가 estop_distance_mm 미만인가?"}
   EST -->|예| ESTOP["ESTOP 즉시 송신 · HALTED"]
-  EST -->|아니요| NEW{"새 장애물이 같은 자리에서 연속 2회 잡혔나?"}
+  EST -->|아니요| NEW{"새 장애물이 같은 자리에서 연속 3회 잡혔나?"}
   NEW -->|아니요| ADV
   NEW -->|예| WARN["가벼운 경고 path_blocked · L3 아님"]
   WARN --> MARK["동적 장애물 표시 · 경로만 버림"]
@@ -65,7 +66,7 @@ flowchart TD
 | 후진 선회 미실측 기체 | 후진 200mm 뒤 전진 좌선회 30도 (옛 구간표) | `gait_calibration.reverse_mm_per_sec` (없으면 전진 속도) | [ADR-29](../DECISIONS.md#adr-29) |
 | 회피 시도 상한 | 3회 | `fsm.avoid_attempts` | — |
 | LiDAR 비상정지 거리 | 전방 ±20° 안 최소 거리 100mm 미만 | `lidar.estop_distance_mm` · `lidar.forward_fan_deg` | — |
-| 새 장애물 확정 | 1.5m 안의 빔이 지도가 예상한 거리보다 250mm 이상 가깝고, 0.3m 안 같은 자리에서 연속 2회 | `lidar.new_obstacle_check_radius_mm` · `new_obstacle_margin_mm` · `new_obstacle_confirmations` | — |
+| 새 장애물 확정 | 1.5m 안의 빔이 지도가 예상한 거리보다 250mm 이상 가깝고, 0.3m 안 같은 자리에서 연속 3회 | `lidar.new_obstacle_check_radius_mm` · `new_obstacle_margin_mm` · `new_obstacle_confirmations` | — |
 | 구역 재확인 상한 | 구역당 사이클마다 3회 | `fsm.avoid_attempts` | — |
 | 이동 중 막힘의 처리 | 가벼운 경고 `path_blocked` + LiDAR 우회 + 순찰 계속 (L3 아님) | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
 | 런타임이 LiDAR 순찰을 돌림 | 선택. `--lidar-device <id>` 가 있을 때만 | CLI 인자 | [ADR-43](../DECISIONS.md#adr-43) |
@@ -79,6 +80,7 @@ flowchart TD
 - 시도 3회를 다 쓰면 `avoid_exhausted` 를 한 번 남기고 정지를 계속 보낸다. 그 뒤에도 전방이 비면 `AVOID_CLEARED` 로 순찰에 돌아간다.
 - 반사 정지 중 로봇은 후진·선회 명령을 받고 전진 명령은 거부한다(`applied=false`). 그래서 후진 선회는 반사 정지가 걸린 채로도 나간다.
 - 순찰기에서 LiDAR 비상정지는 `ESTOP` 이라 로봇이 래치된다. 사람이 해제하고 로봇이 `safety_latched=false` 를 보고해야 경로 계획으로 돌아간다.
+- 원인 판독이 «예» 이고 스위치 `change_detect.vlm_path_cause`(기본 꺼짐)가 켜져 있을 때만 방송 문장이 «무너진 물건이 통로를 막고 있어 돌아서 갑니다» 류로 바뀐다. 그 밖에는 «장애물이 있어 돌아서 갑니다» 그대로이고, 답은 판정 근거에만 남는다. 공장 모드가 아니거나 VLM 이 없거나 워커가 바빠 상한 안에 못 걸면 `fallen: null` 로 바로 기록한다.
 - `path_blocked` 는 L3 를 올리지 않는다. 우회로가 없으면 위 «구역 재확인 상한» 대로 `zone_unreachable` 로 그 구역을 건너뛴다.
 - 순찰기에서 동적 장애물 표시는 지도에 쓰지 않는다. 사이클이 끝나면 표시와 재확인 횟수를 모두 지운다.
 - 순찰기에서 텔레메트리가 `safety.link_loss_failsafe_ms`(3000ms) 넘게 없으면 `HALTED`, 측위가 `localization.pose_timeout_ms` 넘게 갱신되지 않으면 `LOST` 로 멈춘다. 둘 다 명령 송신은 계속한다.
