@@ -874,3 +874,39 @@ def test_vlm_section_must_be_a_mapping(cfg: dict, broken_vlm: object) -> None:
         broken["vision"]["vlm"] = broken_vlm
     with pytest.raises(ConfigError, match="vision.vlm"):
         validate_base_config(broken)
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize("key", ["budget_ms", "patrol_interval_ms"])
+@pytest.mark.parametrize("bad", [_MISSING, 0, -1])
+def test_vlm_positive_keys_are_validated(cfg: dict, key: str, bad: object) -> None:
+    """런타임이 바로 꺼내 쓰는 vision.vlm 의 양수 키는 없음·0·음수가 ConfigError 다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if bad is _MISSING:
+        del broken["vision"]["vlm"][key]
+    else:
+        broken["vision"]["vlm"][key] = bad
+    with pytest.raises(ConfigError, match=key):
+        validate_base_config(broken)
+
+
+@pytest.mark.parametrize("bad", [_MISSING, "", "  ", 7])
+def test_vlm_model_id_must_be_non_empty_string(cfg: dict, bad: object) -> None:
+    """`vision.vlm.model_id` 가 없거나 빈 문자열이거나 문자열이 아니면 ConfigError 다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if bad is _MISSING:
+        del broken["vision"]["vlm"]["model_id"]
+    else:
+        broken["vision"]["vlm"]["model_id"] = bad
+    with pytest.raises(ConfigError, match="vision.vlm.model_id"):
+        validate_base_config(broken)
