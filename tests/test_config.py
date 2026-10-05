@@ -858,3 +858,19 @@ def test_path_cause_bounds_must_be_positive(cfg: dict, key: str, value: object) 
     broken["vision"]["vlm"][key] = value
     with pytest.raises(ConfigError, match=key):
         validate_base_config(broken)
+
+
+@pytest.mark.parametrize("broken_vlm", ["missing", None, "text"])
+def test_vlm_section_must_be_a_mapping(cfg: dict, broken_vlm: object) -> None:
+    """`vision.vlm` 절이 없거나 매핑이 아니면 traceback 이 아니라 ConfigError 다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if broken_vlm == "missing":
+        del broken["vision"]["vlm"]
+    else:
+        broken["vision"]["vlm"] = broken_vlm
+    with pytest.raises(ConfigError, match="vision.vlm"):
+        validate_base_config(broken)

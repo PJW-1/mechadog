@@ -184,8 +184,11 @@ def validate_base_config(config: dict[str, Any]) -> None:
 
     _validate_collect(vision.get("collect"))
     # LiDAR 막힘 원인 판독 (ADR-45) — 대기 상한과 프레임 나이 상한.
+    vlm = vision.get("vlm")
+    if not isinstance(vlm, dict):
+        raise ConfigError("vision.vlm 절이 없음")
     for name in ("path_cause_wait_ms", "path_cause_max_frame_age_ms"):
-        _require_positive(vision["vlm"], name)
+        _require_positive(vlm, name)
 
     # 인증 (FR-10) — 사원증 사전과 발급 대장. 절의 존재는 `REQUIRED_SECTIONS` 가 본다.
     auth = config["auth"]
