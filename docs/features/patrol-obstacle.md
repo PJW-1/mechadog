@@ -42,7 +42,7 @@ flowchart TD
   ADV -->|다음 스캔| SC["LiDAR 스캔 수신"]
   SC --> EST{"전방 부채꼴 최소 거리가 estop_distance_mm 미만인가?"}
   EST -->|예| ESTOP["ESTOP 즉시 송신 · HALTED"]
-  EST -->|아니요| NEW{"새 장애물이 같은 자리에서 연속 2회 잡혔나?"}
+  EST -->|아니요| NEW{"새 장애물이 같은 자리에서 연속 3회 잡혔나?"}
   NEW -->|아니요| ADV
   NEW -->|예| WARN["가벼운 경고 path_blocked · L3 아님"]
   WARN --> MARK["동적 장애물 표시 · 경로만 버림"]
@@ -66,7 +66,7 @@ flowchart TD
 | 후진 선회 미실측 기체 | 후진 200mm 뒤 전진 좌선회 30도 (옛 구간표) | `gait_calibration.reverse_mm_per_sec` (없으면 전진 속도) | [ADR-29](../DECISIONS.md#adr-29) |
 | 회피 시도 상한 | 3회 | `fsm.avoid_attempts` | — |
 | LiDAR 비상정지 거리 | 전방 ±20° 안 최소 거리 100mm 미만 | `lidar.estop_distance_mm` · `lidar.forward_fan_deg` | — |
-| 새 장애물 확정 | 1.5m 안의 빔이 지도가 예상한 거리보다 250mm 이상 가깝고, 0.3m 안 같은 자리에서 연속 2회 | `lidar.new_obstacle_check_radius_mm` · `new_obstacle_margin_mm` · `new_obstacle_confirmations` | — |
+| 새 장애물 확정 | 1.5m 안의 빔이 지도가 예상한 거리보다 250mm 이상 가깝고, 0.3m 안 같은 자리에서 연속 3회 | `lidar.new_obstacle_check_radius_mm` · `new_obstacle_margin_mm` · `new_obstacle_confirmations` | — |
 | 구역 재확인 상한 | 구역당 사이클마다 3회 | `fsm.avoid_attempts` | — |
 | 이동 중 막힘의 처리 | 가벼운 경고 `path_blocked` + LiDAR 우회 + 순찰 계속 (L3 아님) | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
 | 런타임이 LiDAR 순찰을 돌림 | 선택. `--lidar-device <id>` 가 있을 때만 | CLI 인자 | [ADR-43](../DECISIONS.md#adr-43) |
