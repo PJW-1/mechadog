@@ -60,9 +60,6 @@ REQUIRED_LIDAR_KEYS = (
     "spin_threshold_deg",
     "spin_turn_deg",
     "new_obstacle_check_radius_mm",
-    "new_obstacle_margin_mm",
-    "new_obstacle_confirmations",
-    "obstacle_mark_radius_mm",
     "estop_distance_mm",
     "forward_fan_deg",
     "odom_host",
@@ -241,6 +238,9 @@ def plan_params_from_config(config: Mapping[str, Any]) -> PlanParams:
         soft_clearance_m=float(lidar["furniture_clearance_mm"]) / 1000.0,
         body_radius_m=float(lidar["robot_radius_mm"]) / 1000.0,
         start_escape_max_m=float(lidar["start_escape_max_mm"]) / 1000.0,
+        inflation_radius_m=float(config.get("nav", {}).get("inflation_radius_m", 0.55)),
+        cost_scaling_factor=float(config.get("nav", {}).get("cost_scaling_factor", 3.0)),
+        cost_weight=float(config.get("nav", {}).get("cost_weight", 2.0)),
     )
 
 

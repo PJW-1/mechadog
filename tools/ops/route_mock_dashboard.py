@@ -19,14 +19,17 @@ import shutil
 import sys
 import threading
 import time
+from io import BytesIO
 from pathlib import Path
 
 import yaml
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from host.behavior.fsm import Behavior, Event, Fsm
 from host.behavior.patrol import Phase
+from host.behavior.planner import mark_obstacle
 from host.behavior.routes import route_digest
 from host.behavior.zone_map import ZoneMap
 from host.common.config import DEFAULT_CONFIG, DEFAULT_DEVICES_DIR, load_config
@@ -81,12 +84,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8016)
     parser.add_argument("--start", required=True, help="SIM 시작 자세 x,y,yaw_deg")
     parser.add_argument("--speed", type=float, default=1.0)
+    parser.add_argument(
+        "--self-test", action="store_true", help="소켓 없는 센서/보행 모델로 A→B→C→D 자동 이동"
+    )
+    parser.add_argument("--max-ticks", type=int, default=4000)
+    parser.add_argument(
+        "--obstacle", action="append", default=[], help="SIM 물체 x,y,반경_m (여러 번 지정)"
+    )
+    parser.add_argument(
+        "--remove-after-ms", type=int, default=0, help="SIM 물체를 치울 모의 시각 (0: 유지)"
+    )
+    parser.add_argument(
+        "--insert-after-ms", type=int, default=0, help="주행 중 SIM 물체를 넣을 시각"
+    )
+    parser.add_argument("--auto-patrol", action="store_true", help="자동 구역 순찰 시작")
+    parser.add_argument(
+        "--patrol-cycles", type=int, default=0, help="자동 순찰 지정 바퀴 완료 후 결과 저장/종료"
+    )
+    parser.add_argument("--pause-after-event", default="", help="화면 캡처용 사건 뒤 SIM 정지")
     parser.add_argument("--scene3d-url", default="", help="외부 3D 보기 URL (SIM 시험용)")
     args = parser.parse_args(argv)
     if args.port in (5101, 5201, 8000) or not 1024 <= args.port <= 65535:
         parser.error("현장 포트 대신 1024~65535의 별도 포트를 고르세요")
     if not math.isfinite(args.speed) or args.speed <= 0:
         parser.error("배속은 양수여야 합니다")
+    obstacles = [tuple(float(v) for v in item.split(",")) for item in args.obstacle]
+    if any(
+        len(item) != 3 or not all(math.isfinite(v) for v in item) or item[2] <= 0
+        for item in obstacles
+    ):
+        parser.error("SIM 물체는 유한한 x,y,양수 반경_m 입니다")
     start = tuple(float(value) for value in args.start.split(","))
     if len(start) != 3 or not all(math.isfinite(value) for value in start):
         parser.error("시작 자세는 유한한 x,y,yaw_deg입니다")
@@ -206,6 +233,8 @@ def main(argv: list[str] | None = None) -> int:
                 "seeded": controller.pose_seeded,
                 "stale": controller.pose_stale(now_ms),
                 "phase": controller.phase.value,
+                "local_navigation": controller.local_status,
+                "blockage": controller.blockage_status,
                 "target": controller.target,
                 "zone": controller.current_zone,
                 "zone_hint": controller._zone_hint[0] if controller._zone_hint else None,
@@ -240,6 +269,11 @@ def main(argv: list[str] | None = None) -> int:
         stop_route=stop_route,
     )
     dashboard_demo.record_examples(state)
+    synthetic_snapshots: dict[str, bytes] = {}
+
+    def event_snapshot(entry: str) -> bytes | None:
+        return synthetic_snapshots.get(entry) or dashboard_demo.snapshot(entry)
+
     app = create_app(
         state,
         commands,
@@ -249,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
         map_view=view.get,
         nav_status=nav_status,
         planning=planning,
-        event_snapshot=dashboard_demo.snapshot,
+        event_snapshot=event_snapshot,
         simulated=True,
         voice_path="/api/demo-voice",
         extra_routes=dashboard_demo.voice_routes(),
@@ -263,10 +297,22 @@ def main(argv: list[str] | None = None) -> int:
         controller.plan_params.free_thresh,
     )
     rng = random.Random(7)
+    base_hits = hits.copy()
+    if not args.insert_after_ms:
+        for x, y, radius in obstacles:
+            mark_obstacle(hits, controller.grid, (x, y), radius)
+    frozen = False
     period_ms = commander.period_ms
     send(commander.open_session())
     print(f"SIM only: http://127.0.0.1:{args.port}/glass-preview/?view=zones", flush=True)
     trace_path = args.output / "route-trace.jsonl"
+    visits: list[str] = []
+    navigation_events: list[dict[str, object]] = []
+    visited_count = 0
+    self_test_labels = list(controller.zones.labels)
+    test_started = False
+    tick_count = 0
+    min_range = math.inf
     with trace_path.open("w", encoding="utf-8") as trace, serving(app, args.port):
         try:
             while True:
@@ -284,6 +330,11 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                         now_ms,
                     )
+                    if args.insert_after_ms and now_ms >= args.insert_after_ms:
+                        for x, y, radius in obstacles:
+                            mark_obstacle(hits, controller.grid, (x, y), radius)
+                    if args.remove_after_ms and now_ms >= args.remove_after_ms:
+                        hits = base_hits.copy()
                     scan = Scan(
                         "route-sim",
                         "0" * 16,
@@ -298,11 +349,90 @@ def main(argv: list[str] | None = None) -> int:
                     else:
                         controller.observe_map_pose(truth, now_ms)
                         controller.observe_obstacle_scan(scan, now_ms)
+                    tick_count += 1
+                    if (args.auto_patrol or args.patrol_cycles) and tick_count == 1:
+                        controller.start()
+                        begin()
+                    if args.self_test:
+                        distances = [d for _, d in scan.points if d > 0]
+                        if distances:
+                            min_range = min(min_range, min(distances))
+                        if controller.holding_goal and controller.goal_hold_reason == "reached":
+                            visits.append(self_test_labels[len(visits)])
+                            test_started = False
+                        complete = len(visits) == len(self_test_labels)
+                        if (
+                            complete
+                            or tick_count >= args.max_ticks
+                            or controller.phase is Phase.HALTED
+                        ):
+                            result = {
+                                "completed": complete,
+                                "visited": visits,
+                                "ticks": tick_count,
+                                "simulated_ms": now_ms,
+                                "min_scan_range_m": min_range,
+                                "estops": controller.stats.estops,
+                                "local_navigation": controller.local_status,
+                                "limitation": "운동 모델 참 자세 주입, 실물 측위/보행/충돌 안전 검증 아님",
+                            }
+                            (args.output / "self-test.json").write_text(
+                                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+                            )
+                            print(json.dumps(result, ensure_ascii=True), flush=True)
+                            return 0 if complete else 1
+                        if not test_started:
+                            label = self_test_labels[len(visits)]
+                            accepted, detail = goto(*controller.zones.xy(label))
+                            if not accepted:
+                                raise RuntimeError(f"self-test {label}: {detail}")
+                            test_started = True
                     urgent = controller.guard_scan(scan)
                     if urgent:
                         send(urgent)
-                    if behavior.state == "PATROL":
+                    if behavior.state == "PATROL" and not frozen:
                         controller.step(now_ms)
+                        if controller.stats.zones_visited > visited_count:
+                            visited_count = controller.stats.zones_visited
+                            if controller._inspection_zone is not None:
+                                visits.append(controller._inspection_zone)
+                        for event in controller.take_navigation_events():
+                            entry = f"ah-sim-{event['judgement']['at_ms']}"
+                            # 목업 증거는 물리 마스크의 합성 평면도다. 실물 카메라 사진으로 표시하지 않는다.
+                            picture = (
+                                Image.fromarray((~hits).astype("uint8") * 255)
+                                .convert("RGB")
+                                .resize((560, 480))
+                            )
+                            draw = ImageDraw.Draw(picture)
+                            draw.text((12, 12), "SIM / SYNTHETIC OBSTACLE EVIDENCE", fill="#b91c1c")
+                            buffer = BytesIO()
+                            picture.save(buffer, format="JPEG")
+                            synthetic_snapshots[entry] = buffer.getvalue()
+                            if len(synthetic_snapshots) > 32:
+                                del synthetic_snapshots[next(iter(synthetic_snapshots))]
+                            event["judgement"]["camera_available"] = True
+                            event["judgement"]["synthetic_evidence"] = True
+                            navigation_events.append(event)
+                            state.record_event(
+                                {
+                                    **event,
+                                    "ts_ms": now_ms,
+                                    "state": "PATROL",
+                                    "escalation": "NORMAL",
+                                    "mode": config["mission"]["mode"],
+                                    "entry": entry,
+                                    "snapshot": "snapshot.jpg",
+                                    "simulated": True,
+                                }
+                            )
+                            with (args.output / "navigation-events.jsonl").open(
+                                "a", encoding="utf-8"
+                            ) as stream:
+                                stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+                            if event["event"] == args.pause_after_event:
+                                frozen = True
+                                commander.halt()
                     else:
                         commander.halt()
                     emitted = commander.tick(now_ms)
@@ -351,6 +481,27 @@ def main(argv: list[str] | None = None) -> int:
                         + "\n"
                     )
                     trace.flush()
+                    if args.patrol_cycles and (
+                        controller.stats.cycles >= args.patrol_cycles
+                        or tick_count >= args.max_ticks
+                        or controller.phase is Phase.HALTED
+                    ):
+                        result = {
+                            "completed": controller.stats.cycles >= args.patrol_cycles,
+                            "visited": visits,
+                            "cycles": controller.stats.cycles,
+                            "ticks": tick_count,
+                            "simulated_ms": now_ms,
+                            "estops": controller.stats.estops,
+                            "events": navigation_events,
+                            "blockage": controller.blockage_status,
+                            "limitation": "합성 운동/센서 모델. 실물 보행 검증 아님",
+                        }
+                        (args.output / "patrol-test.json").write_text(
+                            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+                        )
+                        print(json.dumps(result, ensure_ascii=True), flush=True)
+                        return 0 if result["completed"] else 1
                 time.sleep(
                     max(0.0, period_ms / 1000 / args.speed - (time.perf_counter() - started))
                 )

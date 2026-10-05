@@ -1,5 +1,6 @@
 """AF: 이동·모델·현장 포트 없이 프레임 기록과 쓰러짐 교차검증을 확인한다."""
 
+import copy
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -24,6 +25,12 @@ from host.vision.vlm_reader import Answer, Reading
 from host.vision.worker import VisionResult, VisionWorker
 
 pytestmark = pytest.mark.usefixtures("unlock_modes")
+
+
+@pytest.fixture
+def cfg(cfg: dict) -> dict:
+    # 세션 공용 설정을 test_mode 로 바꾸면 뒤 시험 런타임이 전부 거부된다. 사본만 고친다.
+    return copy.deepcopy(cfg)
 
 
 class Vlm:

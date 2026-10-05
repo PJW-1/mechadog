@@ -144,11 +144,30 @@ def render(
     if not ok:
         raise RuntimeError("지도 PNG 인코딩 실패")
     zone_list = []
+    zone_runs: dict[str, list[list[float]]] = {}
+    if zone_map is not None:
+        # 같은 구역 라벨 격자를 행별 연속 구간으로 전송한다. 외접 사각형으로 다른 방을 칠하지 않는다.
+        for index, label in zone_map.names.items():
+            runs: list[list[float]] = []
+            for row in range(zone_map.labels.shape[0]):
+                mine = zone_map.labels[row] == index
+                edges = np.flatnonzero(np.diff(np.pad(mine.astype(np.int8), (1, 1))))
+                for left, right in zip(edges[::2], edges[1::2], strict=True):
+                    runs.append(
+                        [
+                            zone_map.origin_x + int(left) * zone_map.resolution,
+                            zone_map.origin_y + row * zone_map.resolution,
+                            (int(right) - int(left)) * zone_map.resolution,
+                            zone_map.resolution,
+                        ]
+                    )
+            zone_runs[label] = runs
     for index, label in enumerate(labels):
         zx, zy = zones.xy(label)
         zone_list.append(
             {
                 "id": label,
+                "runs": zone_runs.get(label, []),
                 "x": round(zx, 3),
                 "y": round(zy, 3),
                 "color": "#{:02x}{:02x}{:02x}".format(

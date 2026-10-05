@@ -56,6 +56,9 @@ class PlanParams:
     #: 추종 여유 안에서 탈출할 때도 지켜야 하는 몸체 반경. config의 실측 반경을 사용한다.
     body_radius_m: float = 0.15
     start_escape_max_m: float = 0.6
+    inflation_radius_m: float = 0.55
+    cost_scaling_factor: float = 3.0
+    cost_weight: float = 0.0
 
 
 def _collision_cells(
@@ -197,9 +200,9 @@ def escape_start(
     if not math.isfinite(max_m) or max_m <= 0:
         return None
     cell = grid.to_cell(*start)
-    if not grid.inside(*cell) or body_blocked[cell]:
+    if not grid.inside(*cell) or not segment_clear(grid, body_blocked, start, start):
         return None
-    if not blocked[cell]:
+    if segment_clear(grid, blocked, start, start):
         return (start,)
     center = grid.to_world(*cell)
     if not segment_clear(grid, body_blocked, start, center):
@@ -280,7 +283,27 @@ def mark_obstacle(blocked: np.ndarray, grid: OccupancyGrid, hit: Point, radius_m
                 blocked[row, col] = True
 
 
-def astar(start: Cell, goal: Cell, blocked: np.ndarray) -> list[Cell] | None:
+def distance_costs(
+    blocked: np.ndarray, resolution: float, radius_m: float, scaling: float
+) -> np.ndarray:
+    """충돌 경계 밖에서 지수 감소하는 통행 비용. 이진 안전 마스크는 유지한다."""
+    out = np.zeros(blocked.shape, dtype=np.float32)
+    height, width = blocked.shape
+    ring = math.ceil(radius_m / resolution)
+    for dr in range(-ring, ring + 1):
+        for dc in range(-ring, ring + 1):
+            distance = math.hypot(dr, dc) * resolution
+            if distance > radius_m:
+                continue
+            src = (slice(max(0, -dr), height - max(0, dr)), slice(max(0, -dc), width - max(0, dc)))
+            dst = (slice(max(0, dr), height - max(0, -dr)), slice(max(0, dc), width - max(0, -dc)))
+            np.maximum(out[dst], blocked[src] * math.exp(-scaling * distance), out=out[dst])
+    return out
+
+
+def astar(
+    start: Cell, goal: Cell, blocked: np.ndarray, costs: np.ndarray | None = None
+) -> list[Cell] | None:
     """8방향 A*. 경로가 없으면 `None`.
 
     출발 셀이 막혀 있어도 탐색한다(측위 오차·팽창으로 자기 자리가 막혀 보일 수 있다).
@@ -323,7 +346,9 @@ def astar(start: Cell, goal: Cell, blocked: np.ndarray) -> list[Cell] | None:
                 side_b = (current[0], current[1] + d_col)
                 if blocked[side_a] or blocked[side_b]:
                     continue
-            tentative = g_score[current] + cost
+            tentative = g_score[current] + cost * (
+                1.0 + (float(costs[neighbour]) if costs is not None else 0.0)
+            )
             if tentative < g_score.get(neighbour, math.inf):
                 g_score[neighbour] = tentative
                 came_from[neighbour] = current
@@ -377,6 +402,48 @@ def _perpendicular(point: Point, start: Point, end: Point) -> float:
     (x1, y1), (x2, y2) = start, end
     numerator = abs((y2 - y1) * point[0] - (x2 - x1) * point[1] + x2 * y1 - y2 * x1)
     return numerator / math.hypot(x2 - x1, y2 - y1)
+
+
+def _weighted_length(grid: OccupancyGrid, costs: np.ndarray, start: Point, end: Point) -> float:
+    length = math.dist(start, end)
+    count = max(2, math.ceil(length / grid.meta.resolution * 2) + 1)
+    xs, ys = np.linspace(start[0], end[0], count), np.linspace(start[1], end[1], count)
+    cols = np.floor((xs - grid.meta.origin_x) / grid.meta.resolution).astype(int)
+    rows = np.floor((ys - grid.meta.origin_y) / grid.meta.resolution).astype(int)
+    if (
+        np.any(rows < 0)
+        or np.any(cols < 0)
+        or np.any(rows >= costs.shape[0])
+        or np.any(cols >= costs.shape[1])
+    ):
+        return math.inf
+    return length * (1.0 + float(costs[rows, cols].mean()))
+
+
+def cost_waypoints(
+    points: list[Point], grid: OccupancyGrid, blocked: np.ndarray, costs: np.ndarray
+) -> list[Point]:
+    """충돌 없고 비용 증가 2% 이내인 선분만 합친다. 비용 경로의 잔떨림을 줄인다."""
+    if len(points) < 3:
+        return points
+    accumulated = [0.0]
+    for a, b in zip(points, points[1:], strict=False):
+        accumulated.append(accumulated[-1] + _weighted_length(grid, costs, a, b))
+    result = [points[0]]
+    index = 0
+    while index < len(points) - 1:
+        chosen = index + 1
+        for end in range(min(len(points) - 1, index + 30), index + 1, -1):
+            if (
+                segment_clear(grid, blocked, points[index], points[end])
+                and _weighted_length(grid, costs, points[index], points[end])
+                <= (accumulated[end] - accumulated[index]) * 1.02
+            ):
+                chosen = end
+                break
+        result.append(points[chosen])
+        index = chosen
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,7 +524,7 @@ def snap_to_free(
     if (
         0 <= row < rows
         and 0 <= col < cols
-        and not blocked[row, col]
+        and segment_clear(grid, blocked, point, point)
         and (allowed is None or allowed[row, col])
     ):
         return point, 0.0
@@ -474,13 +541,13 @@ def snap_to_free(
                 continue
             if allowed is not None and not allowed[r2, c2]:
                 continue
-            dist = math.hypot(d_row, d_col) * res
+            candidate = grid.to_world(r2, c2)
+            dist = math.dist(point, candidate)
+            if dist > max_m:
+                continue
             if dist < best_d:
                 best_d = dist
-                best = (
-                    float(grid.meta.origin_x + (c2 + 0.5) * res),
-                    float(grid.meta.origin_y + (r2 + 0.5) * res),
-                )
+                best = candidate
     if best is None:
         return point, math.inf
     return best, float(best_d)
@@ -496,6 +563,7 @@ def plan_to(
     snap_m: float = 0.6,
     *,
     body_blocked: np.ndarray | None = None,
+    costs: np.ndarray | None = None,
 ) -> Plan:
     """실제 출발점부터 계획한다. 여유 영역에서는 몸체 검사한 탈출 연결을 포함한다."""
     requested_xy = (float(goal[0]), float(goal[1]))
@@ -509,7 +577,9 @@ def plan_to(
         return Plan(None, requested=requested_xy, fail_reason="start_unobserved")
     connector: tuple[Point, ...] = ()
     start_free, start_moved = start, 0.0
-    if blocked[start_cell]:
+    # 격자선 위 자세는 to_cell 한 칸뿐 아니라 접촉한 양쪽 칸을 검사한다.
+    # 첫 선분과 같은 기준을 써야 자유 셀에서 탈출 연결을 건너뛰는 no_path가 없다.
+    if not segment_clear(grid, blocked, start, start):
         if body_blocked is None:
             # 출처가 불명확한 추가 차단(동적 표시 등)은 여유 완화로 버리지 않는다.
             body_blocked = body_collision_mask(grid, params) | (blocked & ~inflate(grid, params))
@@ -526,7 +596,14 @@ def plan_to(
         return Plan(
             None, requested=requested_xy, start_moved_m=start_moved, fail_reason="goal_unreachable"
         )
-    path = astar(grid.to_cell(*start_free), grid.to_cell(*goal_free), blocked)
+    if costs is None and params.cost_weight > 0:
+        costs = (
+            distance_costs(
+                blocked, grid.meta.resolution, params.inflation_radius_m, params.cost_scaling_factor
+            )
+            * params.cost_weight
+        )
+    path = astar(grid.to_cell(*start_free), grid.to_cell(*goal_free), blocked, costs)
     if path is None:
         return Plan(
             None,
@@ -536,7 +613,8 @@ def plan_to(
             goal_moved_m=goal_moved,
             fail_reason="no_path",
         )
-    points = to_waypoints(path, grid, params.simplify_eps_m)
+    # 비용으로 벽에서 떨어진 경로를 직선 단순화가 다시 벽 옆으로 자르지 않는다.
+    points = to_waypoints(path, grid, 0.0 if costs is not None else params.simplify_eps_m)
     points = [start_free, *points[1:-1], goal_free] if len(points) > 1 else [start_free, goal_free]
     if any(
         not segment_clear(grid, blocked, a, b) for a, b in zip(points, points[1:], strict=False)
@@ -546,6 +624,8 @@ def plan_to(
         not segment_clear(grid, blocked, a, b) for a, b in zip(points, points[1:], strict=False)
     ):
         return Plan(None, requested=requested_xy, fail_reason="no_path")
+    if costs is not None:
+        points = cost_waypoints(points, grid, blocked, costs)
     escape_end = len(connector) - 1 if connector else -1
     if connector:
         points = [*connector, *points[1:]]

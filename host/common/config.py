@@ -98,6 +98,9 @@ def _require_positive(mapping: dict[str, Any], key: str) -> None:
 
 
 def validate_base_config(config: dict[str, Any]) -> None:
+    from host.behavior.live_nav import NavParams
+
+    NavParams.of(config)
     if not isinstance(config.get("profile"), str) or config["profile"] not in {"dev", "prod"}:
         raise ConfigError("profile 은 dev 또는 prod 여야 함")
     missing = [

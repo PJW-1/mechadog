@@ -273,6 +273,7 @@ class Runtime:
         self._record_frame_ms = record_frame_ms
         self._last_frame_saved_ms: int | None = None
         self._recorded_nav_phase: str | None = None
+        self._navigation_frames: dict[int | str, VisionResult] = {}
         #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
         self._take_scan: Callable[[], Scan | None] | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
@@ -884,6 +885,16 @@ class Runtime:
                     self._navigator.resume()
             # 상태 알림·래치·링크는 FSM 이 쥔다 — 길 찾기만 맡긴다 (`PatrolController.steer`).
             self._navigator.steer(now_ms)
+            recovery = self._navigator._recovery
+            if recovery is not None and self._vision is not None:
+                key = recovery.blockage_id if recovery.blockage_id is not None else recovery.target
+                frame = self._vision.latest()
+                if key not in self._navigation_frames and frame is not None:
+                    self._navigation_frames[key] = frame
+                    if len(self._navigation_frames) > 32:
+                        del self._navigation_frames[next(iter(self._navigation_frames))]
+            for event in self._navigator.take_navigation_events():
+                self._record_navigation_event(event, now_ms)
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
 
@@ -999,8 +1010,41 @@ class Runtime:
                 halt_reason=self._navigator.halt_reason,
                 target=self._navigator.target,
             )
-        for hit in self._navigator.take_new_obstacles():
-            self._record_path_blocked(hit)
+        # 센서의 모든 새 끝점을 사건으로 만들지 않는다. 막힘 복구의 결정만 발행한다.
+        self._navigator.take_new_obstacles()
+
+    def _record_navigation_event(self, event: dict[str, Any], now_ms: int) -> None:
+        kind = str(event["event"])
+        judgement = dict(event["judgement"])
+        result = self._vision.latest() if self._vision is not None else None
+        key = judgement.get("blockage_id") or judgement.get("target") or judgement.get("zone")
+        if isinstance(key, (int, str)):
+            result = self._navigation_frames.get(key, result)
+        judgement["camera_available"] = result is not None and bool(result.jpeg)
+        judgement["camera_completed_ms"] = None if result is None else result.completed_ms
+        judgement["camera_age_ms"] = (
+            None if result is None else max(0, now_ms - result.completed_ms)
+        )
+        judgement["sentence"] = self._announce_situation(kind, judgement)
+        if self._blackbox is None:
+            return
+        try:
+            entry = self._blackbox.record(
+                kind,
+                jpeg=None if result is None else result.jpeg,
+                tracks=() if result is None else result.tracks,
+                detections=() if result is None else result.detections,
+                judgement=judgement,
+                telemetry=self._last_telemetry,
+                state=self._behavior.state,
+                escalation=self._escalation.level.value,
+                mode=self._mission.mode,
+                now_ms=now_ms,
+            )
+            if self._event_publisher is not None:
+                self._event_publisher(entry)
+        except Exception as exc:
+            LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
 
     def _record_path_blocked(self, hit: tuple[float, float]) -> None:
         """이동 경로가 새 장애물로 막혔다 — **가벼운 경고만** 남기고 순찰은 이어 간다.
@@ -1701,6 +1745,8 @@ class Runtime:
             "verified": bool(getattr(navigator, "pose_verified", False)),
             "seeded": bool(getattr(navigator, "pose_seeded", False)),
             "phase": str(getattr(navigator, "phase", "")),
+            "local_navigation": getattr(navigator, "local_status", {}),
+            "blockage": getattr(navigator, "blockage_status", {}),
             "target": getattr(navigator, "target", None),
             "zone": getattr(navigator, "current_zone", None),
             "goal": None if goal is None else [round(goal[0], 3), round(goal[1], 3)],

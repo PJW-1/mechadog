@@ -129,7 +129,7 @@ def test_route_aiming_obeys_existing_safety_guards(guard: str) -> None:
     if guard == "obstacle":
         controller.safety.obstacle = True
     elif guard == "body":
-        controller._body_blocked[controller.grid.to_cell(1.0, 1.0)] = True
+        controller.grid.cells[controller.grid.to_cell(1.0, 1.0)] = 5.0
     elif guard == "trust":
         controller._own_localization = True
     controller.step(1800 if guard == "stale" else 1200)
@@ -145,9 +145,10 @@ def test_route_blocked_while_moving_does_not_fall_back_to_zone_patrol() -> None:
     controller._rebuild_masks()
     controller.plan = Plan("GOAL")
     controller.step(1000)
-    assert controller.route_status()["status"] == "blocked"
+    assert controller.route_status()["status"] == "active"
     assert controller.commander.intent.type_ == "STOP"
-    assert controller.holding_goal
+    assert not controller.holding_goal
+    assert controller.goal == (4.0, 1.0)
 
 
 @pytest.mark.parametrize("after_start", [False, True])
@@ -157,10 +158,11 @@ def test_route_does_not_snap_a_dynamically_blocked_point_elsewhere(after_start):
     saved = route(RoutePoint(x=4.0, y=1.0))
     if after_start:
         assert controller.start_route(saved, 1000)[0]
-    controller._dynamic[controller.grid.to_cell(4.0, 1.0)] = True
+    controller._dynamic_seen[controller.grid.to_cell(4.0, 1.0)] = (4.0, 1.0, 1000)
+    controller._refresh_navigation(1000)
     if after_start:
         controller.step(1000)
-        assert controller.route_status()["status"] == "blocked"
+        assert controller.route_status()["status"] == "active"
     else:
         accepted, _detail = controller.start_route(saved, 1000)
         assert not accepted
