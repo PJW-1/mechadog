@@ -66,6 +66,10 @@ export class Scene3D {
   }
   get shown() { return this.active && this.mode === '3d' && this.ready; }
   render() {
+    const stage = this.mount.closest('#stage');
+    const entering = this.shown && !stage?.classList.contains('scene3d-active');
+    stage?.classList.toggle('scene3d-active', this.shown);
+    if (entering && !stage.querySelector('#camera-dock')?.classList.contains('collapsed')) stage.querySelector('#collapse-camera')?.click();
     this.controls.hidden = !this.url; this.mount.hidden = !this.shown;
     this.notice.hidden = !this.url || !this.active || !this.notice.textContent;
     for (const button of this.controls.children) button.setAttribute('aria-pressed', String(button.dataset.mapView === this.mode));

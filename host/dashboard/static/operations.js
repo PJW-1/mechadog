@@ -27,9 +27,9 @@ function cleanText(value,max=1000){return typeof value==='string'?value.trim().s
 // 예전에는 person_found 만 AUTH 였고 나머지는 전부 SYSTEM 이라 PPE 필터가 아무것도 걸러내지 못했다.
 // 이름은 런타임(`runtime.py` 의 `_record_scene`·`FEED_TRANSITIONS`·`_announce_escalation`)이 정한다.
 export const EVENT_CATEGORIES=Object.freeze({PPE:'PPE',AUTH:'출입 인증',SAFETY:'안전 · 경보',OBJECT:'구역 · 물품',SYSTEM:'시스템'});
-const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY'};
+const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',fall_review_required:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY'};
 export function eventCategory(name){return CATEGORY_OF[name]??'SYSTEM'}
-export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',zone_changed:'구역 위험 확정',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
+export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',fall_review_required:'쓰러짐 확인 필요',zone_reading:'구역 장면 판독',zone_changed:'구역 위험 확정',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
 // 단계가 바뀐 사유 (`escalation.py` 의 reason). 모르는 값은 원문 그대로 보인다.
 export const REASON_NAMES=Object.freeze({person_present:'사람 확인',unauthenticated_hold:'미인증 상태 지속',unauthenticated_left:'인증 요구 뒤 대상 이탈',AUTH_FAILED:'인증 실패 (시간 초과·시도 소진)',PPE_VIOLATION:'보호구 미착용 확정',ZONE_CHANGED:'구역 위험 확정',PERSON_DOWN:'쓰러짐 확정',ONBOARD_FAILSAFE:'로봇 자체 안전 잠금',LINK_LOST:'링크 끊김',ESTOP:'비상정지',alarm_confirmed:'관리자 경보 확인',failsafe_confirmed:'안전 잠금 해제',failsafe_confirmed_alarm_kept:'안전 잠금 해제 — 경보 유지',authenticated:'인증 통과',target_lost:'대상 이탈',standby:'대기 전환',ppe_settled:'PPE 판정 종료'});
 export const reasonName=reason=>REASON_NAMES[reason]??(cleanText(reason,80)||'사유 미수신');
@@ -44,7 +44,11 @@ export function describeEvidence(name,payload){
  let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
  if(name.startsWith('PPE_')&&j.state){ppe=({VIOLATION:'미착용',UNDETERMINED:'판정 불가',COMPLIANT:'착용 확인'}[j.state]??cleanText(j.state,40))+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
  // VLM 이 판독한 쓰러짐(source:'vlm')에는 규칙 값이 없다 — 빈 행을 그리지 않는다.
- if(name==='person_fallen')for(const [label,key,unit] of [['세로/가로 비','aspect',''],['정지 시간','still_ms',' ms'],['확정 기준','confirm_ms',' ms']])if(j[key]!=null)rows.push([label,shown(j[key])+unit]);
+ if(name==='person_fallen'||name==='fall_review_required'){
+  for(const [label,key,unit] of [['가로/세로 비','aspect',''],['정지 시간','still_ms',' ms'],['확정 기준','confirm_ms',' ms'],['VLM 지연','latency_ms',' ms']])if(j[key]!=null)rows.push([label,shown(j[key])+unit]);
+  if('rule_yes' in j)rows.push(['규칙',shown(j.rule_yes)],['VLM',j.vlm==null?'판정 불가':shown(j.vlm)],['교차검증',shown(j.status)],['사유',shown(j.reason)],['시험 모드',shown(j.test_mode)],['v12 참고',shown(j.reference_reason)]);
+  for(const d of j.person_down_reference??[])rows.push(['v12 person_down (참고)',shown(d.score)]);
+ }
  if(name==='zone_reading'){
   rows.push(['구역',shown(j.zone)],['판독 저하',j.degraded?('예 · '+shown(j.reason)):'아니요']);
   if(j.answers&&typeof j.answers==='object')for(const [key,value] of Object.entries(j.answers).slice(0,12))rows.push(['판독 · '+cleanText(key,60),shown(value)]);

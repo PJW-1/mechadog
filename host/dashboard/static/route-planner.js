@@ -1,4 +1,4 @@
-import {mapPoint, worldPoint, mapImage} from './map-frame.js';
+import {mapPoint, worldPoint, mapImage, mapRobotPoints} from './map-frame.js';
 import {describeNav, pointHintOutline} from './live-map.js';
 import {mapClickMode} from './map-click-mode.js';
 
@@ -431,10 +431,9 @@ export class RoutePlanner {
   drawRobot(svg, meta) {
     const nav = this.current.nav;
     if (!Array.isArray(nav?.pose) || nav.available === false) return;
-    const [x, y, yaw] = nav.pose, length = Math.min(meta.width, meta.height) * meta.resolution_m * .035;
-    const angle = yaw * Math.PI / 180, dx = Math.cos(angle), dy = Math.sin(angle);
-    const points = [[x + dx * length, y + dy * length], [x - dx * length * .7 - dy * length * .6, y - dy * length * .7 + dx * length * .6], [x - dx * length * .7 + dy * length * .6, y - dy * length * .7 - dx * length * .6]];
-    svg.append(this.svg('polygon', {points: points.map(([px, py]) => mapPoint(meta, px, py).join(',')).join(' '), class: 'route-robot' + (this.current.navError || nav.stale || !(nav.verified || nav.seeded) ? ' uncertain' : ''), 'data-route-robot': '', 'aria-label': '로봇 추정 위치', 'vector-effect': 'non-scaling-stroke'}));
+    const length = Math.min(meta.width, meta.height) * meta.resolution_m * .035;
+    const points = mapRobotPoints(meta, nav.pose, {length});
+    svg.append(this.svg('polygon', {points: points.map(p => p.join(',')).join(' '), class: 'route-robot' + (this.current.navError || nav.stale || !(nav.verified || nav.seeded) ? ' uncertain' : ''), 'data-route-robot': '', 'aria-label': '로봇 추정 위치', 'vector-effect': 'non-scaling-stroke'}));
   }
 
   toWorld(event, rect) {

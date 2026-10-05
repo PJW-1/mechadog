@@ -35,7 +35,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .skip-link { position: fixed; top: -80px; left: 16px; z-index: 100; background: var(--brass); color: var(--bg); padding: 12px }
 .skip-link:focus { top: 8px }
 
-#app { height: 100dvh; min-height: 760px; display: grid; grid-template-rows: 55px 71px minmax(480px,1fr) 151px; overflow: hidden }
+#app { height: 100dvh; min-height: 760px; display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: 55px 71px minmax(480px,1fr) 151px; overflow: hidden }
 .topbar { display: flex; align-items: center; gap: 18px; padding: 0 14px 0 1.9%; border-bottom: 1px solid var(--rule); background: var(--bg); z-index: 20 }
 .brand { white-space: nowrap; font-size: 26px; font-weight: 700; letter-spacing: -.7px; line-height: 27px; padding-right: 21px; border-right: 1px solid var(--rule) }
 .main-nav { display: flex; align-self: stretch; gap: 13px }

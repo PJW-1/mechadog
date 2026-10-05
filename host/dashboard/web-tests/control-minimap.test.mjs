@@ -2,9 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {ControlMinimap} from '../static/control-minimap.js';
+import {readFile} from 'node:fs/promises';
 
 const meta = {width:200,height:100,patrol_to_px:[[10,0,0],[0,-10,100]],zones:[{id:'A',x:2,y:3,name:'작업방'}]};
 const nav = {available:true,pose:[2,3,45],verified:true,zone:'A',path:[[3,3],[4,4]],route:{id:'r1',name:'현재 순찰',points:[{x:2,y:3},{x:5,y:3}]}};
+test('minimap fits the native pixel frame without stretching and reserves a large observation area', async () => {
+  const dom = new JSDOM('<main></main>'), document = dom.window.document;
+  const link = {get:async p=>p==='/api/map/meta'?meta:nav};
+  const map = new ControlMinimap({document,getLink:()=>link,onOpen:()=>{},setInterval:()=>0});
+  document.querySelector('main').append(map.root); await map.tick();
+  assert.equal(map.canvas.getAttribute('viewBox'),'0 0 200 100');
+  assert.equal(map.canvas.getAttribute('preserveAspectRatio'),'xMidYMid meet');
+  assert.equal(map.canvas.style.aspectRatio,'200/100');
+  assert.equal(map.canvas.querySelector('image').getAttribute('width'),'200');
+  assert.equal(map.canvas.querySelector('image').getAttribute('height'),'100');
+  assert.equal(map.canvas.querySelector('.minimap-zone').getAttribute('cx'),'20');
+  const css = await readFile(new URL('../static/panels.css',import.meta.url),'utf8');
+  const styles = new JSDOM(`<style>${css}</style><section class="control-minimap"><svg></svg></section>`);
+  const computed = styles.window.getComputedStyle(styles.window.document.querySelector('svg'));
+  assert.equal(computed.minHeight,'320px'); assert.equal(computed.height,'auto');
+  assert.match(css,/grid-template-areas:'camera controls' 'minimap controls'/);
+  assert.match(css,/grid-template-areas:'camera' 'minimap' 'controls'/);
+  styles.window.close(); dom.window.close();
+});
 test('10Hz updates only the overlay, retains raster and metadata, and never commands on click', async () => {
   const dom=new JSDOM('<main></main>'), document=dom.window.document, calls=[];let open=0,period;
   const link={baseUrl:'',get:async p=>{calls.push(p);return p==='/api/map/meta'?meta:nav;}};

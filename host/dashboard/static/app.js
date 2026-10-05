@@ -27,7 +27,7 @@ function syncVisionStatus(){
  $('app').classList.toggle('vision-has-frame',!!visionStatus.lastFrameAt);
  if(!operations.live)return;
  const [badge,status]=VISION_TEXT[visionStatus.state]||VISION_TEXT.connecting;
- $('frame-source').textContent=badge;
+ $('frame-source').textContent=badge+(visionStatus.ppeTest?' · PPE 시험':'');
  $('camera-status').textContent=visionStatus.state==='live'?status+' · 검출 '+visionStatus.detections+'건 · 사람 '+visionStatus.persons+'명':status;
  $('camera-resolution').hidden=visionStatus.state!=='live';
  if(visionStatus.state==='live'){

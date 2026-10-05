@@ -1,4 +1,4 @@
-import {mapPoint, mapImage} from './map-frame.js';
+import {applyAffine, mapImage, mapRobotPoints} from './map-frame.js';
 import {describeNav} from './live-map.js';
 
 const point = p => Array.isArray(p) && p.length >= 2 && p.slice(0, 2).every(Number.isFinite);
@@ -13,7 +13,7 @@ export class ControlMinimap {
     const title = document.createElement('h4'); title.textContent = '자기 위치 · 2D 미니맵';
     const button = document.createElement('button'); button.type = 'button'; button.className = 'op-button'; button.textContent = '크게 보기'; button.addEventListener('click', onOpen);
     heading.append(title, button);
-    this.canvas = this.svg('svg', {viewBox:'0 0 1000 1000', preserveAspectRatio:'none', role:'img', 'aria-label':'로봇 위치, 경로와 현재 동선 · 관측 전용'});
+    this.canvas = this.svg('svg', {viewBox:'0 0 1000 1000', preserveAspectRatio:'xMidYMid meet', role:'img', 'aria-label':'로봇 위치, 경로와 현재 동선 · 관측 전용'});
     this.status = document.createElement('p'); this.status.className = 'op-note'; this.status.setAttribute('role','status');
     this.routeStatus = document.createElement('p'); this.routeStatus.className = 'op-note minimap-legend';
     this.root.append(heading, this.canvas, this.status, this.routeStatus);
@@ -55,9 +55,16 @@ export class ControlMinimap {
     this.canvas.hidden = !meta;
     if (!meta) {this.canvas.replaceChildren(); return;}
     this.canvas.style.aspectRatio = meta.width + '/' + meta.height;
+    this.canvas.setAttribute('viewBox', `0 0 ${meta.width} ${meta.height}`);
+    s.image.setAttribute('width', meta.width); s.image.setAttribute('height', meta.height);
     if (s.image.parentNode !== this.canvas) this.canvas.replaceChildren(s.image);
     this.overlay?.remove(); this.overlay = this.svg('g'); this.canvas.append(this.overlay);
-    const px = (x, y) => mapPoint(meta, x, y);
+    const px = (x, y) => applyAffine(meta.patrol_to_px, x, y);
+    const unit = Math.min(meta.width, meta.height) / 1000;
+    const rect = this.canvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / meta.width, rect.height / meta.height) || 1;
+    const labelSize = Math.max(32 * unit, 12 / scale);
+    const zoneRadius = Math.max(19 * unit, 5 / scale);
     const line = (points, cls) => {if (points?.length > 1) this.overlay.append(this.svg('polyline', {points:points.filter(point).map(p => px(...p).join(',')).join(' '), class:cls}));};
     const route = nav?.route;
     const selected = route;
@@ -68,11 +75,13 @@ export class ControlMinimap {
     if (point(nav?.pose)) line([nav.pose, ...(nav.path || [])], 'minimap-path');
     for (const zone of meta.zones || []) {
       const [x,y] = px(zone.x, zone.y);
-      this.overlay.append(this.svg('circle',{cx:x,cy:y,r:19,class:'minimap-zone'}),this.svg('text',{x,y:y-29,'text-anchor':'middle',class:'minimap-zone-label'},zone.name || zone.label || zone.id));
+      this.overlay.append(this.svg('circle',{cx:x,cy:y,r:zoneRadius,class:'minimap-zone','vector-effect':'non-scaling-stroke'}),this.svg('text',{x,y:y-zoneRadius-labelSize*.7,'text-anchor':'middle',class:'minimap-zone-label',style:`font-size:${labelSize}px;stroke-width:${Math.max(5*unit,2/scale)}px`},zone.name || zone.label || zone.id));
     }
     if (nav?.available !== false && point(nav?.pose) && Number.isFinite(nav.pose[2])) {
-      const [x,y,yawDeg] = nav.pose, yaw = yawDeg * Math.PI / 180;
-      const corners = [[.3,0],[.15,2.5],[.15,-2.5]].map(([r,a]) => px(x+r*Math.cos(yaw+a),y+r*Math.sin(yaw+a)).join(','));
+      const m = meta.patrol_to_px, yaw = nav.pose[2] * Math.PI / 180;
+      const pixelsPerMetre = Math.hypot(m[0][0]*Math.cos(yaw)+m[0][1]*Math.sin(yaw),m[1][0]*Math.cos(yaw)+m[1][1]*Math.sin(yaw));
+      const length = Math.max(.3, 12 / (scale * pixelsPerMetre || 1));
+      const corners = mapRobotPoints(meta, nav.pose, {normalized:false, length}).map(p => p.join(','));
       this.overlay.append(this.svg('polygon',{points:corners.join(' '),class:'minimap-robot' + (s.error || nav.stale || !(nav.verified || nav.seeded) ? ' uncertain' : '')}));
       if (nav.zone) this.status.textContent += ' · 현재 구역 ' + nav.zone;
     }

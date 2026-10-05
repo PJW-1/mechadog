@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -26,6 +26,25 @@ class PpeVerdict:
     confirmed: bool = False
     clipped: bool = False
     required: tuple[str, ...] = ("helmet", "vest")
+    regions: tuple[PpeRegion, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PpeRegion:
+    item: str
+    label: str
+    box: tuple[float, float, float, float]
+    score: float | None = None
+    reason: str = ""
+
+
+def ppe_payload(result: Any) -> list[dict[str, Any]]:
+    """WS와 기록이 같은 원본 좌표·판정 근거를 사용한다."""
+    verdicts = getattr(result, "ppe_tracks", ())
+    single = getattr(result, "ppe", None)
+    if not verdicts and single is not None:
+        verdicts = (single,)
+    return [asdict(verdict) for verdict in verdicts]
 
 
 class PpeDetector:
@@ -41,6 +60,34 @@ class PpeDetector:
         self._hits_required = int(spec["violation_hits_required"])
         self._hits: dict[int, deque[int]] = {}
         self._required: tuple[str, ...] = ("helmet", "vest")
+        self._regions: tuple[PpeRegion, ...] = ()
+
+    def observe_all(
+        self, image: np.ndarray, tracks: Sequence[Track], now_ms: int
+    ) -> tuple[PpeVerdict, ...]:
+        active = {track.track_id for track in tracks}
+        self._hits = {key: hits for key, hits in self._hits.items() if key in active}
+        verdicts = []
+        for track in tracks:
+            x1, y1, x2, y2 = track.box
+            h = y2 - y1
+            self._regions = tuple(
+                PpeRegion(item, "UNDETERMINED", box, reason="미검출")
+                for item, box in (
+                    ("helmet", (x1, y1, x2, y1 + h * 0.3)),
+                    ("vest", (x1, y1 + h * 0.3, x2, y1 + h * 0.75)),
+                )
+                if item in self._required
+            )
+            verdict = self._observe_one(image, (track,), now_ms)
+            assert verdict is not None
+            regions = self._regions
+            if verdict.clipped or verdict.reason == "크롭 실패":
+                regions = tuple(
+                    replace(r, label="UNDETERMINED", reason=verdict.reason) for r in regions
+                )
+            verdicts.append(replace(verdict, regions=regions))
+        return tuple(verdicts)
 
     def set_requirements(self, required: tuple[str, ...]) -> None:
         """워커 스레드에서만 호출. 구역이 바뀌면 이전 요구 항목의 위반 창을 버린다."""
@@ -58,11 +105,20 @@ class PpeDetector:
         if not tracks:
             self.reset()
             return None
+        primary = max(tracks, key=lambda track: track.height)
+        return self.observe_all(image, (primary,), now_ms)[0]
+
+    def _observe_one(
+        self, image: np.ndarray, tracks: Sequence[Track], now_ms: int
+    ) -> PpeVerdict | None:
+        if not tracks:
+            self.reset()
+            return None
         track = max(tracks, key=lambda t: t.height)
         required = self._required
         if not required:
             return PpeVerdict(track.track_id, OK, "이 구역은 PPE 검사 미지정", required=required)
-        self._hits = {track.track_id: self._hits.get(track.track_id, deque())}
+        self._hits.setdefault(track.track_id, deque())
         if "helmet" in required and self._clip and track.box[1] <= self._margin:
             return PpeVerdict(
                 track.track_id, UNDETERMINED, "머리 클리핑", clipped=True, required=required
@@ -76,6 +132,22 @@ class PpeDetector:
         if right - left < 8 or bottom - top < 8:
             return PpeVerdict(track.track_id, UNDETERMINED, "크롭 실패", required=required)
         found: list[Detection] = self._detector.detect(image[top:bottom, left:right])
+        regions = []
+        for region in self._regions:
+            choices = [d for d in found if d.label in (region.item, "no_" + region.item)]
+            if choices:
+                # 위반을 적합으로 덮지 않는다. 사건 판정의 기존 보수적 규칙과 같다.
+                missing = [d for d in choices if d.label.startswith("no_")]
+                best = max(missing or choices, key=lambda d: d.score)
+                bx1, by1, bx2, by2 = best.box
+                region = PpeRegion(
+                    region.item,
+                    best.label,
+                    (bx1 + left, by1 + top, bx2 + left, by2 + top),
+                    best.score,
+                )
+            regions.append(region)
+        self._regions = tuple(regions)
         heads = [d for d in found if d.label in ("helmet", "no_helmet")]
         torsos = [d for d in found if d.label in ("vest", "no_vest")]
         if ("helmet" in required and not heads) or ("vest" in required and not torsos):

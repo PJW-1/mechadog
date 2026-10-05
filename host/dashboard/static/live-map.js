@@ -4,7 +4,7 @@
 // 화면은 행렬만 곱한다 — 좌표계 규칙(출발 자리 원점·평면도 회전)은 서버 한 곳에만 있다.
 // 패널은 자주 통째로 다시 그려지므로 이 객체는 한 번 만들고 같은 DOM 을 다시 붙인다.
 
-import {applyAffine} from './map-frame.js';
+import {applyAffine, mapRobotPoints} from './map-frame.js';
 export {applyAffine} from './map-frame.js';
 
 const POLL_MS = 500;
@@ -283,11 +283,7 @@ export class LiveMap {
       ctx.stroke();
     }
     // 로봇 — 앞을 가리키는 삼각형. 위치를 못 믿으면 속이 빈 회색으로 그린다.
-    const [x, y, yawDeg] = nav.pose;
-    const yaw = (yawDeg * Math.PI) / 180;
-    const tip = px(x + 0.3 * Math.cos(yaw), y + 0.3 * Math.sin(yaw));
-    const left = px(x + 0.15 * Math.cos(yaw + 2.5), y + 0.15 * Math.sin(yaw + 2.5));
-    const right = px(x + 0.15 * Math.cos(yaw - 2.5), y + 0.15 * Math.sin(yaw - 2.5));
+    const [tip, left, right] = mapRobotPoints(meta, nav.pose, {normalized:false});
     const trusted = !nav.stale && (nav.verified || nav.seeded);
     ctx.beginPath();
     ctx.moveTo(...tip);

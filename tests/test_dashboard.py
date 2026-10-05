@@ -433,6 +433,8 @@ def test_vision_frame_keeps_boxes_with_the_jpeg_they_were_computed_on():
         "completed_ms": 1234,
         "detections": [{"label": "person", "score": 0.912, "box": [10.0, 20.0, 110.0, 300.3]}],
         "tracks": [{"track_id": 3, "score": 0.9, "box": [10.0, 20.0, 110.0, 300.0]}],
+        "ppe": [],
+        "ppe_test_mode": False,
     }
 
 

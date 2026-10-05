@@ -80,6 +80,7 @@ from host.telemetry.ros2_relay import (
     send,
 )
 from host.telemetry.session_recorder import SessionRecorder
+from host.vision.ppe_detector import ppe_payload
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -327,6 +328,10 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
+        self._ppe_test = bool(config["vision"]["ppe"].get("test_mode", False))
+        if self._ppe_test and (not motion_lock or not self._mission.enables("ppe")):
+            raise ConfigError("PPE 시험은 공장 모드와 보행 잠금이 필요하다")
+        self._vision_records_in_worker = False
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
         # 경비 추종 (FR-3.5 · ADR-40). 쓰러짐 감시는 아래에서 만들므로 의심 여부는 호출 때 묻는다.
@@ -710,6 +715,8 @@ class Runtime:
         result = self._vision.latest()
         if result is not None and not self._edge.changed("vision_seq", result.frame_seq):
             result = None
+        if result is not None and self._ppe_test and not self._vision_records_in_worker:
+            self._record_ppe_frame(result)
         if result is not None and self._recorder is not None:
             self._record_vision(result, now_ms)
         if result is not None:
@@ -769,7 +776,8 @@ class Runtime:
         if result is not None:
             self._fall.take_reading(now_ms)
             self._observe_fallen(result, now_ms)
-            self._ppe_judge.judge(result, now_ms)
+            if not self._ppe_test:
+                self._ppe_judge.judge(result, now_ms)
             self._track_controller.track(result, now_ms)
             self._zone_inspector.inspect(result, now_ms)
             self._fall.ask(result, now_ms)
@@ -815,8 +823,27 @@ class Runtime:
                 for d in result.detections
             ],
             person_present=result.sighting.present,
+            ppe=ppe_payload(result),
             frame_file=frame_file,
         )
+
+    def _record_ppe_frame(self, result: VisionResult) -> None:
+        """시험 결과만 기록한다. FSM·경보·자세 명령은 호출하지 않는다."""
+        payload = ppe_payload(result)
+        if not self._mission.enables("ppe"):
+            return
+        LOG.info("ppe_debug", frame_seq=result.frame_seq, ppe=payload)
+        if self._recorder is not None:
+            self._recorder.record(
+                "ppe_debug",
+                at_ms=result.completed_ms,
+                frame_seq=result.frame_seq,
+                ppe=payload,
+                person_down_reference=[
+                    {"score": d.score, "box": list(d.box)} for d in result.person_down_reference
+                ],
+                reference_reason=result.person_down_reference_reason,
+            )
 
     def _switch_hazard_detector(self) -> None:
         """위험물 추론은 위험구역 점검 중에만 켠다 (ADR-43 대안 ⓐ 개정).
@@ -1007,9 +1034,8 @@ class Runtime:
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
         같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
 
-        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다.** 누움은 의심 진입에만 쓰고 확정에는
-        세지 않는다 — 누운 사람을 거의 못 잡는다. 워커의 3초 정지
-        확정(`fallen`)은 엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
+        누움 후보는 의심 진입에 쓴다. 공장 확정은 `FallMonitor`가 3초 정지 규칙과
+        같은 프레임의 VLM yes를 교차검증한다. 경비 모드는 규칙 엣지를 기록만 한다.
         """
         verdict = getattr(result, "fallen", None)
         if verdict is None:
@@ -1064,9 +1090,31 @@ class Runtime:
         에서도 방송만은 막지 않는다.
         """
         sentence: str | None = None
+        cross_result = judgement is not None and "rule_yes" in judgement
+        if (
+            cross_result
+            and self._dashboard is not None
+            and (self._blackbox is None or self._event_publisher is None)
+        ):
+            self._dashboard.record_event(
+                {
+                    "event": event_type,
+                    "ts_ms": self._clock(),
+                    "state": self._behavior.state,
+                    "escalation": self._escalation.level.value,
+                    "mode": self._mission.mode,
+                    "judgement": judgement,
+                }
+            )
+        if judgement is not None and "rule_yes" in judgement and self._recorder is not None:
+            self._recorder.record(
+                "fall_cross_result", at_ms=self._clock(), frame_seq=result.frame_seq, **judgement
+            )
         # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
         # 방송·자막 문장을 붙이지 않는다.
-        if event_type != "person_fallen" or self._mission.enables("fallen"):
+        if not (judgement or {}).get("test_mode") and (
+            event_type != "person_fallen" or self._mission.enables("fallen")
+        ):
             sentence = self._announce_situation(event_type, judgement)
         if self._blackbox is None:
             return
@@ -1922,6 +1970,9 @@ class Runtime:
         # 세션 생성·워밍업은 운용 루프 전에 끝낸다. 루프 안에서 처음 열면 DirectML
         # 초기화가 600ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
         if self._vision is not None:
+            if self._ppe_test and hasattr(self._vision, "set_result_sink"):
+                self._vision.set_result_sink(self._record_ppe_frame)
+                self._vision_records_in_worker = True
             self._vision.start()
         # VLM 을 모드와 상관없이 한 번 올린다 — ADR-35 결정 5 (상시 적재).
         # 모드를 바꿀 때 올리고 내리면 판독 시작과 해제가 겹쳐 세션을 닫거나 VRAM 이
@@ -2174,6 +2225,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="운용 모드 — guard | factory (config 의 mission.mode 를 덮어쓴다)",
     )
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
+    parser.add_argument(
+        "--ppe-test", action="store_true", help="PPE 시험: 공장 모드 표시·기록, 보행 자동 잠금"
+    )
+    parser.add_argument(
+        "--ppe-down-reference",
+        action="store_true",
+        help="로컬 v12 person_down 참고 의견 (다운로드 없음)",
+    )
     parser.add_argument(
         "--lidar-device",
         default=None,
@@ -2482,6 +2541,19 @@ def main(argv: list[str] | None = None) -> int:
         # 만드는 이유는 **모르는 모드나 선행 기능 없는 모드로는 기동 자체를 거부**
         # 하기 때문이다 (FR-11.7) — `ModeError` 가 `ConfigError` 라서 이 절이 잡는다.
         mission = Mission(config, mode=args.mode)
+        if args.ppe_test:
+            if not mission.enables("ppe") or args.no_vision or args.patrol or args.reset_on_start:
+                raise ConfigError(
+                    "--ppe-test는 factory 비전 모드이며 --patrol/--reset-on-start와 함께 쓸 수 없다"
+                )
+            args.motion_lock = True
+            config = dict(config)
+            config["vision"] = dict(config["vision"])
+            config["vision"]["ppe"] = dict(
+                config["vision"]["ppe"], test_mode=True, down_reference=args.ppe_down_reference
+            )
+        elif args.ppe_down_reference:
+            raise ConfigError("--ppe-down-reference에는 --ppe-test가 필요하다")
         if mission.enables("ppe") and args.no_vision:
             raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
         if args.lidar_device:

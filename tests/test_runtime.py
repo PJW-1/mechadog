@@ -3667,6 +3667,7 @@ def _floor(
     *,
     person: bool = True,
     lying: bool = False,
+    rule_confirmed: bool = False,
     ppe: PpeVerdict | None = None,
     box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 480.0),
 ) -> None:
@@ -3685,11 +3686,11 @@ def _floor(
         result,
         ppe=ppe,
         fallen=FallenVerdict(
-            fallen=False,
+            fallen=rule_confirmed,
             changed=False,
-            candidate=lying,
-            aspect=3.25 if lying else 0.4,
-            still_ms=0,
+            candidate=lying or rule_confirmed,
+            aspect=3.25 if lying or rule_confirmed else 0.4,
+            still_ms=3000 if rule_confirmed else 0,
         ),
     )
     runtime.tick(at_ms)
@@ -3702,7 +3703,7 @@ UP = {"person_down": False}
 def _until_alarm(runtime: Runtime, vision: FakeVision, at_ms: int, **frame) -> int:
     """쓰러짐을 확정할 때까지 0.1초마다 누운 사람 한 프레임씩 본다. 확정한 시각을 돌려준다."""
     for at in range(at_ms, at_ms + 5000, 100):
-        _floor(runtime, vision, at, lying=True, **frame)
+        _floor(runtime, vision, at, lying=True, rule_confirmed=at - at_ms >= 3000, **frame)
         if runtime.escalation.reason == "PERSON_DOWN":
             return at
     raise AssertionError("쓰러짐을 확정하지 못했다")
@@ -3753,31 +3754,21 @@ def test_a_lying_candidate_suspects_a_fall_and_approaches(config: dict, clock: F
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_a_fall_is_confirmed_by_readings_a_gap_apart(config: dict, clock: FakeClock) -> None:
-    """확정 = 의심 뒤에 건 판독의 «예» `fsm.fall_confirm_vlm_yes` 회, 센 «예» 끼리는
-    `fsm.fall_confirm_gap_ms` 이상 떨어진 프레임이다 (2026-09-28 사용자 결정 · S4).
-
-    의심 중에는 판독이 끝날 때마다 다시 묻지만, 1초 안의 «예» 는 거의 같은 사진이라 하나로
-    센다. 누움 누적은 확정에 쓰지 않는다 — YOLOX 는 누운 사람을 거의 못 잡는다(4.8.0 벤치
-    10장 중 1장). 확정하면 `PERSON_DOWN` 이 L3 를 올리고 기록이 남는다."""
-    need = int(config["fsm"]["fall_confirm_vlm_yes"])
-    gap = int(config["fsm"]["fall_confirm_gap_ms"])
+def test_a_fall_needs_rule_and_same_frame_vlm(config: dict, clock: FakeClock) -> None:
+    """AF: 후보·누적 VLM만으로 확정하지 않고 규칙 확정 JPEG를 다시 검증한다."""
     runtime, vision, fake, recorded = _factory_runtime(config, clock, *[DOWN] * 100)
-    _floor(runtime, vision, 100, lying=True)  # 의심 진입 — 판독을 곧바로 건다
-    assert runtime.escalation.level is Level.L1
-    assert fake.keys[0] == ("person_down",), "의심 판독은 `person_down` 하나만 묻는다"
-    # 센 «예» 는 100, 100 + gap, … 에 건 프레임이다. 마지막 것은 다음 틱에 줍는다.
-    last = 100 + (need - 1) * gap
-    for at in range(200, last + 100, 100):
-        _floor(runtime, vision, at)  # 누움 후보가 없어도 판독만으로 확정한다
-        assert runtime.escalation.level is Level.L1, f"{at}ms — 간격이 차기 전에 확정했다"
-    _floor(runtime, vision, last + 100)
+    for at in range(100, 3000, 100):
+        _floor(runtime, vision, at, lying=True)
+        assert runtime.escalation.level is Level.L1
+    _floor(runtime, vision, 3000, lying=True, rule_confirmed=True)
+    assert fake.keys[-1] == ("person_down",)
+    _floor(runtime, vision, 3100, lying=True, rule_confirmed=True)
     assert runtime.escalation.level is Level.L3
-    assert runtime.escalation.reason == "PERSON_DOWN"
     falls = [entry for kind, entry in recorded if kind == "person_fallen"]
     assert len(falls) == 1
+    assert falls[0]["judgement"]["rule_yes"] is True
+    assert falls[0]["judgement"]["vlm"] is True
     assert falls[0]["judgement"]["raw"] == "yes"
-    assert falls[0]["judgement"]["vlm_yes"] == need
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3839,7 +3830,7 @@ def test_a_reading_alone_suspects_and_its_entry_answer_does_not_count(
         assert runtime.escalation.level is Level.L1, f"진입 뒤 {now - asked}ms 만에 확정했다"
     assert fake.submitted >= need * gap // 100, "의심 중에는 판독이 끝날 때마다 다시 묻는다"
     _floor(runtime, vision, last + 100, person=False)
-    assert runtime.escalation.reason == "PERSON_DOWN", "누움 없이 판독만으로 확정하지 못했다"
+    assert runtime.escalation.reason != "PERSON_DOWN", "규칙 없이 VLM만으로 확정하면 안 된다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3884,7 +3875,7 @@ def test_a_no_between_readings_does_not_reset_the_count(config: dict, clock: Fak
         _floor(runtime, vision, at, lying=True)
         assert runtime.escalation.level is Level.L1, f"{at}ms — 간격이 차기 전에 확정했다"
     _floor(runtime, vision, last + 100, lying=True)
-    assert runtime.escalation.reason == "PERSON_DOWN", "«아니오» 가 센 «예» 를 지웠다"
+    assert runtime.escalation.reason != "PERSON_DOWN", "규칙이 없는 누적 VLM yes로 확정하면 안 된다"
 
 
 @pytest.mark.usefixtures("unlock_modes")

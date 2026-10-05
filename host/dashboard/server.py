@@ -117,12 +117,16 @@ def encode_vision_frame(result: VisionResult) -> bytes:
     헤더와 JPEG 를 한 메시지로 묶어 박스가 다른 사진과 짝지어지지 않게 한다 (ADR-32).
     박스는 원본 픽셀 좌표 ``[x1, y1, x2, y2]`` 이고 필드 이름은 블랙박스 기록과 같다.
     """
+    from host.vision.ppe_detector import ppe_payload
+
     header = {
         "type": "vision",
         "frame_seq": result.frame_seq,
         "width": result.frame_width,
         "height": result.frame_height,
         "completed_ms": result.completed_ms,
+        "ppe": ppe_payload(result),
+        "ppe_test_mode": bool(getattr(result, "ppe_test_mode", False)),
         "detections": [
             {"label": d.label, "score": round(d.score, 3), "box": [round(v, 1) for v in d.box]}
             for d in result.detections

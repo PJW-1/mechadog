@@ -11,6 +11,19 @@ function fixture() {
   return {scene, document, signal, tick:ms=>{now=ms;sceneTick();}, dom};
 }
 let sceneTick;
+test('entering 3D collapses the camera once and removes layout state on fallback', () => {
+  const {scene,document,signal,dom} = fixture();
+  const stage = document.createElement('main'); stage.id='stage';
+  document.body.append(stage); stage.append(scene.mount);
+  const dock=document.createElement('section');dock.id='camera-dock';stage.append(dock);
+  const button=document.createElement('button');button.id='collapse-camera';dock.append(button);
+  let clicks=0;button.addEventListener('click',()=>{clicks++;dock.classList.toggle('collapsed')});
+  scene.setUrl('http://127.0.0.1:8791/'); signal(true);
+  assert.equal(stage.classList.contains('scene3d-active'),true);assert.equal(clicks,1);
+  button.click();signal(true);assert.equal(clicks,2);assert.equal(dock.classList.contains('collapsed'),false);
+  scene.fallback();assert.equal(stage.classList.contains('scene3d-active'),false);
+  dom.window.close();
+});
 test('empty URL preserves 2D and rejects executable or credentialed URLs', () => {
   const {scene, document, dom} = fixture(); scene.setUrl('');
   assert.equal(scene.shown, false); assert.equal(document.querySelector('#controls').hidden, true); assert.equal(scene.frame, undefined);
