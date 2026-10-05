@@ -22,20 +22,22 @@
     | blocked  | 예           | 미상 → `review`            |
 
     미상은 목록에 `answer: null`·`split: review` 로 남기고 학습·평가에서 뺀다. 사람이 보고
-    정하면 연출 폴더 형식(`blocked_by_fallen/<yes|no>/`)으로 옮겨 넣는다. 다른 질문키
-    (`person_down` 등)는 LiDAR 라벨로 알 수 없어 목록에 넣지 않는다.
+    정하면 연출 폴더 형식(`blocked_by_fallen/<yes|no>/`)으로 **복사해** 넣는다 — 옮기면
+    manifest 가 가리키는 사진이 없어져 멈춘다. 다른 질문키(`person_down` 등)는 LiDAR 라벨로
+    알 수 없어 목록에 넣지 않는다.
 
 분할 — 다른 날·다른 배치로 보류한다 (ADR-43 «재검토»)
 
     묶음(`group`)은 연출 사진이면 `staged/<장면>`, 자동 수집이면 `auto/<날짜>` 다. 묶음은
     통째로 한쪽에만 간다. 보류는 `--holdout-date`·`--holdout-group` 으로 지정하고, 둘 다
     없으면 가장 늦은 날짜를 보류한다(날짜가 하나뿐이면 멈춘다). 보류 날짜가 하나라도 섞인
-    묶음은 통째로 보류로 간다 — 그래서 학습에는 보류 날짜의 사진이 없다.
+    묶음은 통째로 보류로 간다 — 그래서 학습에는 보류 날짜의 사진이 없다. 내용(sha256)이
+    같은 사진이 든 묶음들은 하나로 이어 함께 움직인다(복사본 누수 방지).
 
 출력 (JSONL 한 줄 = 사진 하나 × 질문 하나)
 
     image(절대 경로)·key·answer(yes|no|null)·source(staged|auto)·date(YYYYMMDD)·group·
-    origin(자동 수집 라벨 또는 연출 폴더의 yes/no)·split(train|holdout|review)
+    origin(자동 수집 라벨 또는 연출 폴더의 yes/no)·split(train|holdout|review)·sha256(사진 내용)
 """
 
 from __future__ import annotations
@@ -82,6 +84,8 @@ class Entry:
     group: str
     origin: str
     split: str = ""
+    #: 사진 내용의 sha256. 같은 사진이 다른 경로(복사본)로 들어와도 같은 사진으로 본다.
+    sha256: str = ""
 
 
 class MissingQuestionError(LookupError):
@@ -111,6 +115,10 @@ def auto_answer(label: str, key: str) -> str | None:
     return AUTO_RULES[label][key]
 
 
+def _content_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _file_date(path: Path) -> str:
     return dt.datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y%m%d")
 
@@ -129,6 +137,7 @@ def read_staged(root: Path) -> list[Entry]:
             date=_file_date(sample.path),
             group=f"staged/{sample.scene}",
             origin=sample.label,
+            sha256=_content_sha256(sample.path),
         )
         for sample in collect(root, keys=question_keys())
     ]
@@ -177,6 +186,7 @@ def read_auto(root: Path) -> list[Entry]:
             if folder in AUTO_LABELS and folder != label:
                 problems.append(f"{where}: {file}: 폴더({folder})와 라벨({label})이 다르다")
                 continue
+            sha = _content_sha256(path)
             for key, answer in AUTO_RULES[label].items():
                 entries.append(
                     Entry(
@@ -187,6 +197,7 @@ def read_auto(root: Path) -> list[Entry]:
                         date=day.name,
                         group=f"auto/{day.name}",
                         origin=label,
+                        sha256=sha,
                     )
                 )
     if problems:
@@ -195,7 +206,10 @@ def read_auto(root: Path) -> list[Entry]:
 
 
 def check_no_leak(entries: Iterable[Entry]) -> None:
-    """학습과 보류에 같은 묶음이나 같은 사진이 있으면 `ValueError`."""
+    """학습과 보류에 같은 묶음이나 같은 사진이 있으면 `ValueError`.
+
+    사진은 경로가 아니라 내용(sha256)으로 견준다 — 복사본은 경로가 달라도 같은 사진이다.
+    """
     sides: dict[str, dict[str, set[str]]] = {
         "group": {"train": set(), "holdout": set()},
         "image": {"train": set(), "holdout": set()},
@@ -203,11 +217,34 @@ def check_no_leak(entries: Iterable[Entry]) -> None:
     for entry in entries:
         if entry.split in ("train", "holdout"):
             sides["group"][entry.split].add(entry.group)
-            sides["image"][entry.split].add(entry.image)
+            sides["image"][entry.split].add(entry.sha256 or entry.image)
     for kind, name in (("group", "묶음"), ("image", "사진")):
         both = sides[kind]["train"] & sides[kind]["holdout"]
         if both:
             raise ValueError(f"학습과 보류에 같은 {name}이 있다: {sorted(both)[:5]}")
+
+
+def _linked_groups(entries: Sequence[Entry]) -> dict[str, str]:
+    """같은 사진(sha256)을 가진 묶음들을 하나로 잇는다(union-find). 묶음 → 대표 묶음."""
+    parent: dict[str, str] = {}
+
+    def find(group: str) -> str:
+        parent.setdefault(group, group)
+        while parent[group] != group:
+            parent[group] = parent[parent[group]]
+            group = parent[group]
+        return group
+
+    first: dict[str, str] = {}
+    for entry in entries:
+        find(entry.group)
+        if not entry.sha256:
+            continue
+        if entry.sha256 in first:
+            parent[find(entry.group)] = find(first[entry.sha256])
+        else:
+            first[entry.sha256] = entry.group
+    return {group: find(group) for group in parent}
 
 
 def split_entries(
@@ -216,7 +253,11 @@ def split_entries(
     holdout_dates: Sequence[str] = (),
     holdout_groups: Sequence[str] = (),
 ) -> list[Entry]:
-    """묶음 단위로 학습/보류를 나눈다. 정답 미상은 `review` 로 뺀다."""
+    """묶음 단위로 학습/보류를 나눈다. 정답 미상은 `review` 로 뺀다.
+
+    같은 사진이 든 묶음들(예: 자동 수집 원본과 사람이 확인해 연출 폴더로 복사한 사본)은
+    하나로 이어 통째로 한쪽에 보낸다.
+    """
     labelled = [entry for entry in entries if entry.answer is not None]
     dates = {entry.date for entry in labelled}
     groups = {entry.group for entry in labelled}
@@ -233,6 +274,9 @@ def split_entries(
             )
         chosen_dates = {max(dates)}
     held = set(holdout_groups) | {e.group for e in labelled if e.date in chosen_dates}
+    root = _linked_groups(entries)
+    held_roots = {root[group] for group in held}
+    held = {group for group in root if root[group] in held_roots}
 
     result = [
         replace(

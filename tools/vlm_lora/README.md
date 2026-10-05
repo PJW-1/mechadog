@@ -33,7 +33,10 @@ uv pip install --python ~/.venv-mechdog-vlm/Scripts/python.exe peft
 
 자동 수집 라벨은 «막혔나» 만 안다. 그래서 `clear` 는 `blocked_path`·`blocked_by_fallen` 둘 다
 «아니오», `blocked` 는 `blocked_path` «예» 이고 `blocked_by_fallen` 은 **미상**(`split: review`)으로
-남아 학습·평가에서 빠진다. 미상 사진은 사람이 보고 연출 폴더 형식으로 옮겨 넣는다.
+남아 학습·평가에서 빠진다. 미상 사진은 사람이 보고 연출 폴더 형식(`blocked_by_fallen/<yes|no>/`)으로
+**복사해 넣는다**. 옮기면 manifest 가 가리키는 사진이 없어져 `dataset.py` 가 «사진이 없다» 로 멈춘다.
+같은 사진은 경로가 달라도 내용(sha256)으로 알아보고, 원본 묶음(`auto/<날짜>`)과 사본 묶음을 이어
+학습·보류 중 같은 쪽으로 보낸다 — 그래서 사본 하나가 원본 날짜 전체를 끌고 갈 수 있다.
 
 ## 명령
 

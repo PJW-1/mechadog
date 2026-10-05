@@ -67,7 +67,7 @@ def _set_date(path: Path, yyyymmdd: str) -> None:
 def _auto_day(root: Path, date: str, rows: list[dict]) -> Path:
     day = root / date
     for row in rows:
-        _write(day / row["file"])
+        _write(day / row["file"], _jpeg(f"{date}/{row['file']}"))  # 사진마다 다른 내용
     day.mkdir(parents=True, exist_ok=True)
     (day / "manifest.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
@@ -341,6 +341,77 @@ def test_leak_check_catches_a_group_or_image_on_both_sides() -> None:
         ds.check_no_leak(
             [_entry(image="a", split="train"), _entry(image="a", group="g2", split="holdout")]
         )
+
+
+def test_leak_check_compares_photo_content_not_paths() -> None:
+    """⚠️ 같은 사진을 다른 경로로 복사하면 경로 비교로는 누수가 안 보인다."""
+    with pytest.raises(ValueError, match="사진"):
+        ds.check_no_leak(
+            [
+                _entry(image="a", sha256="f" * 64, split="train"),
+                _entry(image="b", sha256="f" * 64, group="g2", split="holdout"),
+            ]
+        )
+
+
+def _collect_two_days(root: Path) -> dict[str, Path]:
+    """실제 수집기로 10-04·10-05 를 모은다 — 날마다 blocked 한 장, clear 한 장."""
+    import datetime as dt
+
+    collector = FrameCollector(root, "mechdog-02", clear_every_ms=0, clear_holdoff_ms=0)
+    files: dict[str, Path] = {}
+    for day in (4, 5):
+        t0 = int(dt.datetime(2026, 10, day, 10, 0, 0).timestamp() * 1000)
+        assert collector.note_blocked(t0, _jpeg(f"blocked-{day}"), (1.0, 0.0), "B", "PATROL")
+        assert collector.note_clear(
+            t0 + 1000, _jpeg(f"clear-{day}"), state="PATROL", obstacle_active=False, pending=False
+        )
+        folder = root / f"202610{day:02d}" / "blocked"
+        files[f"blocked-{day}"] = next(folder.glob("*.jpg"))
+    return files
+
+
+def test_a_reviewed_copy_goes_to_the_same_side_as_its_original(tmp_path: Path) -> None:
+    """미상 사진을 사람이 보고 연출 폴더로 **복사**해도 같은 사진은 한쪽으로만 간다."""
+    auto = tmp_path / "auto"
+    files = _collect_two_days(auto)
+    staged = tmp_path / "staged"
+    copy = _write(staged / "blocked_by_fallen/yes/box_01.jpg", files["blocked-4"].read_bytes())
+    same = copy.read_bytes()
+    entries = ds.read_auto(auto) + ds.read_staged(staged)
+
+    def sides(split: list[ds.Entry]) -> set[str]:
+        return {e.split for e in split if Path(e.image).read_bytes() == same} - {"review"}
+
+    # 복사본의 날짜(10-05)가 기본 보류 날짜라도 원본(auto/20261004)과 한쪽으로 간다.
+    for kwargs in ({}, {"holdout_groups": ["staged/box"]}, {"holdout_dates": ["20261004"]}):
+        try:
+            split = ds.split_entries(entries, **kwargs)
+        except ValueError as exc:  # 묶음이 이어져 한쪽이 비면 누수 대신 멈춘다
+            assert "세트가 비었다" in str(exc)
+            continue
+        assert len(sides(split)) == 1, f"같은 사진이 학습과 보류 양쪽에 들어갔다 {kwargs}"
+
+    split = {e.group: e.split for e in ds.split_entries(entries, holdout_groups=["staged/box"])}
+    assert split["auto/20261004"] == "holdout", "복사본과 이어진 원본 묶음이 따라오지 않았다"
+    assert split["auto/20261005"] == "train"
+
+
+def test_moving_a_collected_photo_out_stops_the_auto_reader(tmp_path: Path) -> None:
+    """옮기면 manifest 가 가리키는 사진이 없어져 멈춘다 — README 가 «복사» 를 안내하는 까닭."""
+    auto = tmp_path / "auto"
+    files = _collect_two_days(auto)
+    target = tmp_path / "staged/blocked_by_fallen/yes/box_01.jpg"
+    target.parent.mkdir(parents=True)
+    files["blocked-4"].rename(target)
+    with pytest.raises(bench.LayoutError, match="사진이 없다"):
+        ds.read_auto(auto)
+
+
+def test_readme_says_copy_not_move() -> None:
+    readme = Path(ds.__file__).with_name("README.md").read_text(encoding="utf-8")
+    assert "복사해 넣는다" in readme
+    assert "옮겨 넣는다" not in readme
 
 
 def test_dataset_cli_writes_one_list(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
