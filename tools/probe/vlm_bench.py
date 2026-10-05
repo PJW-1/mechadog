@@ -91,7 +91,7 @@ from host.vision.stream_client import (  # noqa: E402
     apply_profile,
     stream_endpoints,
 )
-from host.vision.vlm_reader import QUESTIONS, VlmReader, VlmSession  # noqa: E402
+from host.vision.vlm_reader import QUESTIONS, Question, VlmReader, VlmSession  # noqa: E402
 from host.vision.vlm_session import build_session_factory, missing_packages  # noqa: E402
 from tools.probe.camera_link_check import percentile  # noqa: E402
 
@@ -130,11 +130,15 @@ def scene_of(stem: str) -> tuple[str, int]:
     return match["scene"], int(match["frame"])
 
 
-def collect(root: Path) -> list[Sample]:
-    """폴더를 훑어 사진 목록을 만든다. 틀린 곳이 있으면 모두 모아 `LayoutError`."""
+def collect(root: Path, *, keys: Sequence[str] = KEYS) -> list[Sample]:
+    """폴더를 훑어 사진 목록을 만든다. 틀린 곳이 있으면 모두 모아 `LayoutError`.
+
+    `keys` 는 허용할 질문키 폴더다 — LoRA 데이터 목록(`tools/vlm_lora`)이 운용 질문 밖의
+    키를 더해 부른다.
+    """
     if not root.is_dir():
         raise LayoutError([f"{root}: 폴더가 없다"])
-    keys = sorted(KEYS)
+    keys = sorted(keys)
     problems: list[str] = []
     samples: list[Sample] = []
     for key_dir in sorted(root.iterdir()):
@@ -229,12 +233,16 @@ def capture(args: argparse.Namespace) -> int:
 
 
 def measure(
-    samples: Sequence[Sample], session: VlmSession, *, budget_ms: int
+    samples: Sequence[Sample],
+    session: VlmSession,
+    *,
+    budget_ms: int,
+    questions: Sequence[Question] = QUESTIONS,
 ) -> list[dict[str, Any]]:
     """사진마다 그 폴더의 질문 하나를 운용의 `VlmReader` 로 묻는다. 맨 첫 질문이 워밍업이다."""
     readers = {
         question.key: VlmReader(lambda: session, questions=(question,), budget_ms=budget_ms)
-        for question in QUESTIONS
+        for question in questions
     }
     for reader in readers.values():
         reader.load()

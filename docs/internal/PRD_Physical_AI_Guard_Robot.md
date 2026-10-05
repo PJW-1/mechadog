@@ -18,7 +18,6 @@
 | **개정 (2026-10-01)** | 공장 모드 시연 시나리오 4구역 정본, FR-11 안에 **«공장 모드 시연 시나리오 (정본 · 2026-10-01)»** 소절을 신설. 구역 A~D · 매 바퀴 고정 순서(FR-7.3 의 «첫 순회 뒤 무작위» 를 시연에서 끔) · C 는 화기 위험구역(`hazard_item` VLM «예» 2회 → 가벼운 경고 `hazard_notice`) · 이동 중 막힘은 가벼운 경고 `path_blocked` + LiDAR 우회(VLM 은 방향을 정하지 않음) · 운용 런타임이 LiDAR 순찰을 직접 돌림(`--lidar-device`). [ADR-43](../DECISIONS.md#adr-43) |
 | **개정 (2026-10-01 · 사용자 결정)** | 구역 안 VLM `blocked_path` 확정은 L3 가 아니라 가벼운 경고 `path_blocked`(source `vlm`) — 이동 중 LiDAR 막힘과 같은 사건 이름(FR-8.3 · FR-8.4 · Z4) · FR-7.3 은 «고정 순서가 기본, `zones.random_after_first_cycle` 로 켜는 선택지» · FR-2.4.2 LiDAR 순찰은 SCAN 뒤 현재 자리에서 재계산. [ADR-41](../DECISIONS.md#adr-41) · [ADR-43](../DECISIONS.md#adr-43) |
 | **개정 (2026-10-05 · 사용자 결정)** | 구역별 물건 검증 라인 폐기 — FR-8.1 기준 등록 · FR-8.2 객체 목록 비교 · FR-8.3 의 반출·반입 분류 · FR-8.4 의 반출·반입 확정(FR-8.4.1 의 과반 변화 인정 · FR-8.4.2 — 방문 프레임 수집과 «못 본 방문» 은 남긴다) · FR-8.6 기준 재등록을 폐기하고 [ADR-42](../DECISIONS.md#adr-42) 의 반출 가벼운 경고·반입 기록(Z2·Z3)도 함께 없앤다. 사유는 [ADR-43](../DECISIONS.md#adr-43) 이 반출·반입 감지를 시연 경로에 넣지 않기로 한 것이다. **FR-8.3 의 인원 출현(사람 게이트로 넘김) · FR-8.4 의 넘어짐·통로 막힘·화기 위험물(VLM) · FR-8.4.3~8.4.4 · FR-8.5 의 VLM 판독은 유지한다.** [ADR-41](../DECISIONS.md#adr-41) 의 반출·반입 부분을 대체한다 ([ADR-44](../DECISIONS.md#adr-44) · WBS `3.6.1`·`3.6.2`·`3.6.3`·`3.6.5` 폐기) |
-| **개정 (2026-10-05 · 사용자 결정 · VLM)** | LiDAR 막힘 확정 프레임에 VLM 원인 판독을 붙인다 — 감지·우회는 LiDAR 그대로이고, VLM 고정 질문 `blocked_by_fallen` 의 답을 같은 `path_blocked` 의 판정 근거 `fallen` 으로 싣는다(대기 상한 1.5초 · 문장 스위치 `change_detect.vlm_path_cause` 기본 꺼짐). 그 질문은 연출 촬영 + LiDAR 자동 수집 데이터로 LoRA 미세조정한다(FR-11 시연 2단계 · [ADR-45](../DECISIONS.md#adr-45)) |
 | **대상 플랫폼** | Hiwonder MechDog (ESP32, Advanced Kit) + Seeed XIAO ESP32S3 Sense + Host PC |
 | **저장소** | [`PJW-1/mechadog`](https://github.com/PJW-1/mechadog) |
 
@@ -519,7 +518,7 @@ FastAPI + WebSocket 기반 관제 UI를 새로 구현한다.
 | 단계 | 구역·구간 | 로봇이 하는 일 | 사건·단계 | 관련 |
 | :-: | :--- | :--- | :--- | :--- |
 | 1 | A → B | 정상 순찰 | 없음 · L0 | FR-7 · FR-2 |
-| 2 | B → C 복도 | 복도 한쪽을 막은 장애물을 LiDAR 로 알아채고, 가벼운 경고(방송 + 대시보드)를 낸 뒤 A* 가 **빈 쪽**으로 우회해 C 로 간다. *(2026-10-05 · [ADR-45](../DECISIONS.md#adr-45))* 막힘을 확정한 프레임에 VLM `blocked_by_fallen` 을 물어 **무너진 물건이 막았는지**를 같은 경고에 싣는다 | `path_blocked`(출처 `lidar`, 판정 `x`·`y`·`target`·`fallen`) · 가벼운 경고, **L3 아님** · 순찰 계속 | FR-2 · ADR-43 · ADR-45 |
+| 2 | B → C 복도 | 복도 한쪽을 막은 장애물을 LiDAR 로 알아채고, 가벼운 경고(방송 + 대시보드)를 낸 뒤 A* 가 **빈 쪽**으로 우회해 C 로 간다 | `path_blocked`(출처 `lidar`, 판정 `x`·`y`·`target`) · 가벼운 경고, **L3 아님** · 순찰 계속 | FR-2 · ADR-43 |
 | 3 | C | 도착 뒤 VLM 에 `hazard_item` 을 묻고, 같은 방문 안 서로 다른 프레임의 «예» 2회면 확정한다 | `hazard_notice` · 가벼운 경고(방송 + 대시보드), **L3 아님** · 순찰 계속 | FR-8.3 · ADR-41 · ADR-43 |
 | 4 | C → D | 이동 중 B 구역에서 쓰러진 사람이 보이면 **먼저 접근**(TRACK)해 확인한다(의심 L1 → VLM `person_down` «예» 2회, 간격 1초 이상 → L3). 방송 + 관제(대시보드) 알림 → 운용자 확인 → 순찰로 돌아가 **현재 위치에서 원래 목표 D 로 경로를 다시 짠다** | `FALL_SUSPECTED` → `PERSON_DOWN` · L1 → L3 → 확인 뒤 L0 | FR-3.7 · FR-11 정본(S3~S5) · ADR-42 |
 | 5 | D | PPE(안전모·조끼)를 판정한다. 보호구 없는 사람이면 위반 경고 뒤 자동으로 순찰에 돌아온다 | PPE 위반 경고 · 래치 아님 | FR-9 · ADR-42 |
