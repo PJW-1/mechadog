@@ -133,8 +133,9 @@ def vision_result(
     # 명시적으로 먼 박스를 넘긴다.
     box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 480.0),
     frame_width: int = 640,
+    completed_ms: int | None = None,
 ) -> VisionResult:
-    """런타임 통합 시험용 판정 결과."""
+    """런타임 통합 시험용 판정 결과. `completed_ms` 를 안 주면 수신 시각과 같다."""
     return VisionResult(
         detections=(Detection("person", 0.9, box),) if hits else (),
         jpeg=b"test-jpeg",
@@ -142,7 +143,7 @@ def vision_result(
         frame_width=frame_width,
         frame_height=480,
         frame_received_ms=at_ms,
-        completed_ms=at_ms,
+        completed_ms=at_ms if completed_ms is None else completed_ms,
         inference_ms=1.0,
         sighting=Sighting(
             present=present,

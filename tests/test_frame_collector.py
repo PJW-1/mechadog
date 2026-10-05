@@ -212,6 +212,10 @@ def test_startup_count_ignores_unrelated_jpgs(tmp_path: Path) -> None:
     (tmp_path / "unrelated.jpg").write_bytes(JPEG)
     (tmp_path / "deep" / "a" / "b").mkdir(parents=True)
     (tmp_path / "deep" / "a" / "b" / "x.jpg").write_bytes(JPEG)
+    (tmp_path / "misc" / "x").mkdir(parents=True)
+    (tmp_path / "misc" / "x" / "y.jpg").write_bytes(JPEG)
+    (tmp_path / DAY / "other").mkdir(parents=True)
+    (tmp_path / DAY / "other" / "z.jpg").write_bytes(JPEG)
     c = _make(tmp_path, max_files=1)
     assert _clear(c, T0), "수집기 배치(<날짜>/<label>/*.jpg) 밖의 사진은 상한에 세지 않는다"
 
@@ -266,3 +270,29 @@ def test_config_rejects_bad_frame_age() -> None:
     cfg["vision"]["collect"]["max_frame_age_ms"] = 0
     with pytest.raises(ConfigError, match="max_frame_age_ms"):
         validate_base_config(cfg)
+
+
+def test_blocked_outside_patrol_holds_off_clear_without_saving(tmp_path: Path) -> None:
+    c = _make(tmp_path, clear_holdoff_ms=10000)
+    assert not c.note_blocked(T0, JPEG, (1.0, 2.0), "B", "ZONE_INSPECT")
+    assert not (tmp_path / DAY).exists(), "순찰 밖 막힘은 사진을 남기지 않는다"
+    assert not _clear(c, T0 + 5000)
+    assert not (tmp_path / DAY).exists()
+    assert _clear(c, T0 + 10000)
+
+
+def test_jpg_without_manifest_is_still_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _make(tmp_path, max_files=5)
+    real_open = Path.open
+
+    def no_manifest(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == "manifest.jsonl":
+            raise OSError("manifest 쓰기 실패")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", no_manifest)
+    assert not _clear(c, T0)
+    assert len(list(tmp_path.rglob("*.jpg"))) == 1
+    assert c._count == 1
