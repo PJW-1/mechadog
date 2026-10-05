@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -136,7 +137,7 @@ class FrameCollector:
         return True
 
 
-def collector_from_config(config: dict[str, Any], device_id: str) -> FrameCollector:
+def collector_from_config(config: Mapping[str, Any], device_id: str) -> FrameCollector:
     """`vision.collect` 절로 수집기를 만든다. 절이 없거나 `root` 가 비면 꺼진 수집기다."""
     spec = config.get("vision", {}).get("collect") or {}
     return FrameCollector(
