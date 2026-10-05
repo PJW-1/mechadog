@@ -38,6 +38,10 @@ export function describeNav(nav) {
   if (fb && fb.accepted === false) parts.push('이동 거절 — ' + (fb.detail || '사유 미수신'));
   else if (nav.target) parts.push('목표 구역 ' + nav.target);
   if (nav.fsm) parts.push('상태 ' + nav.fsm);
+  if (nav.blockage?.waiting) parts.push('순찰 불가 · 대기');
+  else if (nav.blockage?.returning_home) parts.push('출발 자리로 복귀');
+  else if (nav.blockage?.recovery) parts.push(nav.blockage.recovery.scanning ? '막힘 재확인 · 회전 스캔' : '막힘 감지 · 정지');
+  if (nav.blockage?.skipped_zones?.length) parts.push('이번 바퀴 건너뜀: ' + nav.blockage.skipped_zones.join(', '));
   return parts.join(' · ');
 }
 
@@ -220,9 +224,19 @@ export class LiveMap {
     ctx.font = 'bold ' + Math.round(metre * 0.35) + 'px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    const skipped = new Set(this.nav?.blockage?.skipped_zones || []);
     for (const zone of meta.zones) {
+      if (skipped.has(zone.id)) {
+        ctx.fillStyle = 'rgba(107,114,128,.55)';
+        for (const [x,y,w,h] of zone.runs || []) {
+          ctx.beginPath();
+          ctx.moveTo(...px(x,y)); ctx.lineTo(...px(x+w,y));
+          ctx.lineTo(...px(x+w,y+h)); ctx.lineTo(...px(x,y+h));
+          ctx.closePath(); ctx.fill();
+        }
+      }
       const [u, v] = px(zone.x, zone.y);
-      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.fillStyle = skipped.has(zone.id) ? '#9ca3af' : 'rgba(255,255,255,.85)';
       ctx.beginPath();
       ctx.arc(u, v, metre * 0.28, 0, Math.PI * 2);
       ctx.fill();
@@ -233,6 +247,13 @@ export class LiveMap {
       ctx.fillText(zone.id, u, v);
     }
     const nav = this.nav;
+    for (const obstacle of nav?.blockage?.obstacles || []) {
+      ctx.fillStyle = 'rgba(220,38,38,.3)'; ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2;
+      for (const [x,y] of obstacle.points || [[obstacle.x,obstacle.y]]) {
+        ctx.beginPath(); ctx.arc(...px(x,y), metre*.15, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      }
+      ctx.fillStyle = '#b91c1c'; ctx.fillText('장애물', ...px(obstacle.x,obstacle.y+.3));
+    }
     const hint = pointHintOutline(nav);
     if (hint.length) {
       // 원판을 서버의 순찰 좌표에서 만들고 기존 아핀 변환으로 그린다(회전·축 뒤집힘 포함).

@@ -119,10 +119,14 @@ def test_runtime_stops_when_pose_leaves_observed_free_space(
         navigator.grid.cells[row, col] = 0.0 if space == "unknown" else 3.0
     with caplog.at_level("WARNING"):
         runtime.tick(clock.ms)
-    assert navigator.phase is Phase.LOST
     assert runtime.commander.intent.type_ == "STOP"
     assert runtime.behavior.state == "PATROL"
-    assert "pose_outside_observed_free_space" in caplog.text
+    if space == "outside":
+        assert navigator.phase is Phase.LOST
+        assert "pose_outside_map" in caplog.text
+    else:
+        assert navigator.phase is not Phase.LOST
+        assert navigator.local_status["reason"] == "no_observed_gap"
 
 
 @pytest.mark.parametrize("missing", ["stop", "scan", "settled_scan", "fresh_scan"])
@@ -150,10 +154,14 @@ def test_runtime_requires_a_fresh_scan_after_sent_stop(
     _fresh(navigator, clock.ms, (2.0, 2.0, 0.0))
     with caplog.at_level("WARNING"):
         runtime.tick(clock.ms)
-    assert navigator.phase is Phase.LOST
-    assert runtime.commander.intent.type_ == "STOP"
     assert runtime.behavior.state == "PATROL"
-    assert "stationary_scan_unavailable" in caplog.text
+    if missing in {"scan", "fresh_scan"}:
+        assert navigator.phase is Phase.LOST
+        assert runtime.commander.intent.type_ == "STOP"
+        assert "live_scan_unavailable" in caplog.text
+    else:
+        assert navigator.phase is Phase.MOVING
+        assert runtime.commander.intent.type_ == "MOVE"
 
 
 def test_runtime_recovers_only_after_post_stop_scan_and_replans(
@@ -314,40 +322,66 @@ def test_patrol_reentry_resumes_the_navigator_on_the_loop_tick(
 
 
 # ── 경로 막힘 = 가벼운 경고 하나 ───────────────────────────
-def test_path_blocked_is_recorded_once_without_escalating(
-    config: dict, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    vision = FakeVision()
-    vision.result = vision_result(1, clock.ms, present=False, hits=0, last_seen_ms=None)
-    runtime, navigator = _patrolling(config, clock, vision=vision)
-    records: list[tuple] = []
-    monkeypatch.setattr(runtime, "_record_scene", lambda *args: records.append(args))
+def test_navigation_decision_is_recorded_once_without_escalating(config, clock, monkeypatch):
+    runtime, navigator = _patrolling(config, clock)
+    records = []
+    monkeypatch.setattr(
+        runtime, "_record_navigation_event", lambda event, now: records.append((event, now))
+    )
     level = runtime.escalation.level
-    navigator._new_obstacles.append((2.5, 2.0))
-    target = navigator.target
+    navigator._nav_events.append(
+        {"event": "obstacle_detour", "judgement": {"x": 2.5, "y": 2.0, "severity": "low"}}
+    )
     runtime.tick(clock.ms)
     runtime.tick(clock.advance(100))
     assert len(records) == 1
-    event_type, result, judgement = records[0]
-    assert event_type == "path_blocked"
-    assert result is vision.result
-    assert judgement == {"x": 2.5, "y": 2.0, "target": target, "source": "lidar"}
+    assert records[0][0]["event"] == "obstacle_detour"
     assert runtime.behavior.state == "PATROL"
     assert runtime.escalation.level == level
 
 
-def test_path_blocked_without_a_frame_still_announces(
-    config: dict, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_navigation_decision_without_frame_still_announces(config, clock, monkeypatch):
     import host.runtime as runtime_module
 
-    said: list[str] = []
+    said = []
     monkeypatch.setattr(runtime_module, "describe", lambda kind, _j: f"{kind} 문장")
     runtime, navigator = _patrolling(config, clock, announcer=said.append)
-    navigator._new_obstacles.append((2.5, 2.0))
+    navigator._nav_events.append(
+        {
+            "event": "zone_skipped",
+            "judgement": {"x": 2.5, "y": 2.0, "zone": "A", "severity": "medium"},
+        }
+    )
     runtime.tick(clock.ms)
-    assert said == ["path_blocked 문장"]
+    assert said == ["zone_skipped 문장"]
     assert runtime.behavior.state == "PATROL"
+
+
+def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock):
+    from types import SimpleNamespace
+
+    vision = FakeVision()
+    runtime, navigator = _patrolling(config, clock, vision=vision)
+    original = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
+    runtime._navigation_frames[7] = original
+    calls = []
+    runtime._blackbox = SimpleNamespace(record=lambda *args, **kwargs: calls.append((args, kwargs)))
+    navigator._nav_events.append(
+        {
+            "event": "zone_skipped",
+            "judgement": {"x": 2.8, "y": 3, "zone": "A", "blockage_id": 7, "severity": "medium"},
+        }
+    )
+    clock.advance(1000)
+    vision.result = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
+    runtime._record_navigation_event(navigator.take_navigation_events()[0], clock.ms)
+    args, kwargs = calls[0]
+    assert args == ("zone_skipped",)
+    assert kwargs["jpeg"] == original.jpeg
+    assert kwargs["judgement"]["severity"] == "medium"
+    assert kwargs["judgement"]["camera_completed_ms"] == original.completed_ms
+    assert kwargs["judgement"]["camera_age_ms"] == 1000
+    assert "건너뜀" in kwargs["judgement"]["sentence"]
 
 
 def test_obstacle_outside_patrol_is_not_a_path_block(
@@ -927,6 +961,16 @@ def _camera_aim_tick(runtime, navigator, vision, clock, *, yaw=0.0, new_frame=Tr
     clock.advance(100)
     pose = (1.0, 1.0, yaw)
     _fresh(navigator, clock.ms, pose)
+    navigator.observe_obstacle_scan(
+        Scan(
+            "lidar-01",
+            "0" * 16,
+            clock.ms,
+            clock.ms,
+            tuple((math.radians(a), 3.0) for a in range(-180, 180, 5)),
+        ),
+        clock.ms,
+    )
     runtime.note_pose(pose, clock.ms)
     if new_frame:
         vision.result = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
@@ -1044,7 +1088,7 @@ def test_camera_aim_runtime_keeps_pending_inspection_after_sent_stop(config, clo
     assert navigator.phase is Phase.INSPECT
     assert not navigator._last_sent_moving
     step_at(math.pi / 2, new_frame=False)
-    assert navigator.phase is Phase.LOST
+    assert navigator.phase is Phase.INSPECT
     assert runtime.behavior.state == "PATROL"
     step_at(math.pi / 2, new_frame=False, settled_scan=True)
     assert navigator.phase is Phase.INSPECT, "새 스캔 뒤 다음 구역으로 떠나지 않고 인계를 복구한다"

@@ -275,6 +275,7 @@ def select_next(
     rng: random.Random | None = None,
     skipped_out: list[tuple[str, str]] | None = None,
     body_blocked: np.ndarray | None = None,
+    costs: np.ndarray | None = None,
 ) -> Plan:
     """다음 순찰 구역을 고른다 (FR-7.3).
 
@@ -299,7 +300,7 @@ def select_next(
     sequential = cycle == 0 or not random_after_first_cycle
     if sequential:
         return _first_reachable(
-            remaining, candidates, start, grid, blocked, params, skipped_out, body_blocked
+            remaining, candidates, start, grid, blocked, params, skipped_out, body_blocked, costs
         )
 
     if not visited:
@@ -307,13 +308,28 @@ def select_next(
         label = chooser.choice(remaining)
         rest = [other for other in remaining if other != label]
         return _first_reachable(
-            [label, *rest], candidates, start, grid, blocked, params, skipped_out, body_blocked
+            [label, *rest],
+            candidates,
+            start,
+            grid,
+            blocked,
+            params,
+            skipped_out,
+            body_blocked,
+            costs,
         )
 
     best = Plan(None)
     for label in remaining:
         plan = plan_to(
-            label, candidates[label], start, grid, blocked, params, body_blocked=body_blocked
+            label,
+            candidates[label],
+            start,
+            grid,
+            blocked,
+            params,
+            body_blocked=body_blocked,
+            costs=costs,
         )
         if plan.reachable and (not best.reachable or plan.length_m < best.length_m):
             best = plan
@@ -329,11 +345,19 @@ def _first_reachable(
     params: PlanParams,
     skipped_out: list[tuple[str, str]] | None = None,
     body_blocked: np.ndarray | None = None,
+    costs: np.ndarray | None = None,
 ) -> Plan:
     """순서대로 풀어 **처음 도달 가능한** 구역의 계획. 막힌 구역은 남긴 채 넘어간다."""
     for label in labels:
         plan = plan_to(
-            label, candidates[label], start, grid, blocked, params, body_blocked=body_blocked
+            label,
+            candidates[label],
+            start,
+            grid,
+            blocked,
+            params,
+            body_blocked=body_blocked,
+            costs=costs,
         )
         if plan.reachable:
             return plan

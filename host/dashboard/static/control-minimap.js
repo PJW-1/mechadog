@@ -66,9 +66,19 @@ export class ControlMinimap {
       this.routeStatus.textContent = '주황: 현재 동선 · ' + (selected.name || selected.id);
     } else this.routeStatus.textContent = route?.id ? '현재 동선 · ' + (route.name || route.id) : '현재 동선 없음';
     if (point(nav?.pose)) line([nav.pose, ...(nav.path || [])], 'minimap-path');
+    const skipped = new Set(nav?.blockage?.skipped_zones || []);
     for (const zone of meta.zones || []) {
+      if (skipped.has(zone.id)) for (const [x,y,w,h] of zone.runs || []) {
+        this.overlay.append(this.svg('polygon',{points:[[x,y],[x+w,y],[x+w,y+h],[x,y+h]].map(p=>px(...p).join(',')).join(' '),fill:'#9ca3af','fill-opacity':'.6','data-skipped-zone':zone.id}));
+      }
       const [x,y] = px(zone.x, zone.y);
-      this.overlay.append(this.svg('circle',{cx:x,cy:y,r:19,class:'minimap-zone'}),this.svg('text',{x,y:y-29,'text-anchor':'middle',class:'minimap-zone-label'},zone.name || zone.label || zone.id));
+      this.overlay.append(this.svg('circle',{cx:x,cy:y,r:19,class:'minimap-zone',fill:skipped.has(zone.id)?'#9ca3af':'none'}),this.svg('text',{x,y:y-29,'text-anchor':'middle',class:'minimap-zone-label'},zone.name || zone.label || zone.id));
+    }
+    for (const obstacle of nav?.blockage?.obstacles || []) {
+      for (const p of obstacle.points || [[obstacle.x,obstacle.y]]) {
+        const [cx,cy]=px(...p);
+        this.overlay.append(this.svg('circle',{cx,cy,r:12,fill:'#dc2626','fill-opacity':'.6','data-blockage-id':obstacle.id}));
+      }
     }
     if (nav?.available !== false && point(nav?.pose) && Number.isFinite(nav.pose[2])) {
       const [x,y,yawDeg] = nav.pose, yaw = yawDeg * Math.PI / 180;

@@ -27,9 +27,9 @@ function cleanText(value,max=1000){return typeof value==='string'?value.trim().s
 // 예전에는 person_found 만 AUTH 였고 나머지는 전부 SYSTEM 이라 PPE 필터가 아무것도 걸러내지 못했다.
 // 이름은 런타임(`runtime.py` 의 `_record_scene`·`FEED_TRANSITIONS`·`_announce_escalation`)이 정한다.
 export const EVENT_CATEGORIES=Object.freeze({PPE:'PPE',AUTH:'출입 인증',SAFETY:'안전 · 경보',OBJECT:'구역 · 물품',SYSTEM:'시스템'});
-const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY'};
+const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY',obstacle_detour:'SAFETY',zone_skipped:'SAFETY',patrol_unavailable:'SAFETY'};
 export function eventCategory(name){return CATEGORY_OF[name]??'SYSTEM'}
-export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',zone_changed:'구역 위험 확정',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
+export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',zone_changed:'구역 위험 확정',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',obstacle_detour:'장애물 있음 — 치워 주세요 · 우회',zone_skipped:'장애물로 구역 건너뜀',patrol_unavailable:'순찰 불가',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
 // 단계가 바뀐 사유 (`escalation.py` 의 reason). 모르는 값은 원문 그대로 보인다.
 export const REASON_NAMES=Object.freeze({person_present:'사람 확인',unauthenticated_hold:'미인증 상태 지속',unauthenticated_left:'인증 요구 뒤 대상 이탈',AUTH_FAILED:'인증 실패 (시간 초과·시도 소진)',PPE_VIOLATION:'보호구 미착용 확정',ZONE_CHANGED:'구역 위험 확정',PERSON_DOWN:'쓰러짐 확정',ONBOARD_FAILSAFE:'로봇 자체 안전 잠금',LINK_LOST:'링크 끊김',ESTOP:'비상정지',alarm_confirmed:'관리자 경보 확인',failsafe_confirmed:'안전 잠금 해제',failsafe_confirmed_alarm_kept:'안전 잠금 해제 — 경보 유지',authenticated:'인증 통과',target_lost:'대상 이탈',standby:'대기 전환',ppe_settled:'PPE 판정 종료'});
 export const reasonName=reason=>REASON_NAMES[reason]??(cleanText(reason,80)||'사유 미수신');
@@ -41,6 +41,7 @@ const CHANGE_KINDS={fallen_object:'넘어짐·무너짐',blocked_path:'통로 �
 export function describeEvidence(name,payload){
  const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
  const rows=[];
+ if(['obstacle_detour','zone_skipped','patrol_unavailable'].includes(name)){if(j.zone)rows.push(['구역',shown(j.zone)]);if(Number.isFinite(j.x)&&Number.isFinite(j.y))rows.push(['장애물 위치 (순찰 m)',shown(j.x)+', '+shown(j.y)]);rows.push(['심각도',j.severity==='low'?'낮음':'중간'],['사진',j.camera_available?'카메라 프레임 있음':'카메라 프레임 없음']);if(j.blockage_id!=null)rows.push(['장애물 묶음',shown(j.blockage_id)]);}
  let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
  if(name.startsWith('PPE_')&&j.state){ppe=({VIOLATION:'미착용',UNDETERMINED:'판정 불가',COMPLIANT:'착용 확인'}[j.state]??cleanText(j.state,40))+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
  // VLM 이 판독한 쓰러짐(source:'vlm')에는 규칙 값이 없다 — 빈 행을 그리지 않는다.

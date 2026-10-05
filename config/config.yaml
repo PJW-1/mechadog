@@ -7,6 +7,33 @@
 
 profile: dev            # dev | prod
 
+nav:
+  # AG 사용자 승인: 지도는 큰 길, 최신 360도 LiDAR는 실제 장애물 판단.
+  live_clear_scans: 3          # verified 자세에서 연속 3바퀴 빔 통과 셀만 임시 비움
+  live_clear_ttl_ms: 2000      # 2초 안에 재관측되지 않으면 원래 지도 복귀
+  local_slow_m: 0.40          # 진행 방향 ±30도 최근접 거리 40cm 아래 감속
+  local_stop_m: 0.25          # 25cm 아래 STOP, 로봇 자체 초음파 25cm 정지는 유지
+  local_fan_deg: 30
+  scan_max_age_ms: 500        # 움직이는 동안에도 최신 한 바퀴 없으면 정지
+  dynamic_ttl_ms: 2000        # 실제 끝점 + 몸 반경만, 다시 보이면 만료 시각 갱신
+  gap_bin_deg: 5
+  avoidance_m: 0.20           # gap 방향으로 최대 20cm 전진 후 전역 재계획
+  avoidance_timeout_ms: 3000  # 회피도 3초마다 STOP/재계획, 후진은 사용하지 않음
+  avoidance_turn_deg: 15      # 회피 회전 조향은 일반 회전보다 작게
+  avoidance_step_scale: 0.5   # 회피 전진 보폭은 일반의 최대 절반
+  obstacle_event_interval_ms: 1000 # 신규 점 경고는 최근접 한 점만, 초당 최대 1건
+  blockage_short_ms: 4000     # 지나가는 물체는 짧게 기억
+  blockage_confirm_ms: 2000   # 정지 재확인 뒤에도 반사가 남으면 장기 기억
+  blockage_long_ms: 180000    # 3분, 실제 빔이 빈 칸으로 통과하면 즉시 해제
+  recovery_scan_timeout_ms: 120000 # 느린 실측 회전도 한 바퀴 완료할 시간 제한
+  recovery_motion_timeout_ms: 5000 # 회전 지시 후 실제 방위 변화가 없으면 중단
+  obstacle_max_m: 2.5         # 실제 반사점 표시 범위
+  raytrace_max_m: 3.0         # 빔 통과 칸 비움 범위
+  local_window_m: 3.0         # 로봇 중심 국소 비용지도 폭
+  inflation_radius_m: 0.55    # 안전 차단 경계 밖 비용 범위
+  cost_scaling_factor: 3.0    # 거리별 지수 감소
+  cost_weight: 2.0            # A* 통행 비용 가중치
+
 network:
   # 개체별 IP/포트는 devices/*.yaml 에서 덮어쓴다 (WBS 2.4.2)
   cmd_port: 5001        # Host PC → MechDog (UDP)
@@ -577,9 +604,8 @@ lidar:
   # ── 경로 계획 ────────────────────────────────────────────────
   # 로봇 폭의 절반 (`2.2.1` 실측 후 확정).
   robot_radius_mm: 150
-  # 경로 추종 오차를 위한 추가 여유. 팽창은 `robot_radius_mm + 이 값`이며 0 이면 정상 추종이
-  # LiDAR E-STOP 으로 끝난다 — 호 조향 로봇에 추종 오차 0 을 요구할 수 없다 (ADR-11).
-  tracking_margin_mm: 100
+  # AG 승인: 전역 경로의 작은 여유. 즉시 정지/감속은 nav의 최신 LiDAR 거리로 판단한다.
+  tracking_margin_mm: 50       # AG: 전역 기준 경로는 몸 반경 15cm + 여유 5cm
   # logodds 가 이 값 이상인 점유 셀만 «단단한» 장애물 — 벽·반복 확인된 물체는
   # `robot_radius_mm + tracking_margin_mm` 전부를 부풀린다. 그 미만(세션 지도
   # 병합으로 들어온 가구 다리급, 1~4)은 `furniture_clearance_mm` 만큼 부풀린다.
@@ -589,7 +615,7 @@ lidar:
   # 추종 여유 안에서 출발하면 몸체 반경을 지키는 연결을 이 거리 안에서 찾는다.
   start_escape_max_mm: 600
   hard_occ_thresh: 4.0
-  furniture_clearance_mm: 150    # 가구급 셀 팽창 — 로봇 반경만(추종 여유 없음)
+  furniture_clearance_mm: 200    # AG: 지도 가구도 15cm + 5cm, 실제 물체는 최신 LiDAR
   path_simplify_mm: 80         # 웨이포인트 단순화 허용 오차
   waypoint_radius_mm: 100      # 중간 웨이포인트 통과 판정 (도착은 zones.arrival_radius_mm)
   # 방위 오차가 이 안이면 직진한다. 좁히면 진동한다.
@@ -606,14 +632,8 @@ lidar:
   # 이 거리 안의 빔만 후보로 본다. 측위 오차가 거리에 비례하므로 멀리서
   # 판정하면 오탐이 늘고, 오탐 하나가 통로를 막는다.
   new_obstacle_check_radius_mm: 1500
-  new_obstacle_margin_mm: 250     # 측위 오차 여유. 좁히면 벽을 신규 장애물로 본다
-  # 연속 확인 횟수. 2026-10-02 통로 실기에서 가구 다리가 한 번의 스캔 흔들림으로
-  # 확정돼 경로가 플랩했다 — 한 번 더 물어 걸러낸다 (연속 확인으로 확정하는 발상).
-  new_obstacle_confirmations: 3
-  # 동적 마스크에 찍을 반경. 표시는 팽창 없이 그대로 들어가므로 0.3m blob 하나가
-  # 0.6m 통로를 통째로 막았다(2026-10-02 실기) — 점유 자체는 스캔이 다시 확인하니
-  # 로봇 반경(~0.1m)에 가까운 값으로 좁힌다.
-  obstacle_mark_radius_mm: 150
+  # AG: 연속 장애물 확인/측위 오차 추가 팽창/별도 표시 반경 폐기.
+  # 매 최신 스캔의 실제 끝점에 robot_radius_mm만 적용, nav.dynamic_ttl_ms 후 만료.
 
   # ── 호스트측 위험 판정 ───────────────────────────────────────
   # LiDAR 전방 부채꼴에 대한 호스트의 추가 판정 — 온보드 초음파(Tier 1)를 대체하지 않는다.

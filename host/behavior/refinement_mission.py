@@ -105,9 +105,11 @@ def mission_params_from_config(config: Mapping[str, Any]) -> MissionParams:
         immediate_stop_m=float(lidar["estop_distance_mm"]) / 1000.0,
         forward_fan_rad=math.radians(float(lidar["forward_fan_deg"])),
         new_obstacle_check_m=float(lidar["new_obstacle_check_radius_mm"]) / 1000.0,
-        new_obstacle_margin_m=float(lidar["new_obstacle_margin_mm"]) / 1000.0,
-        obstacle_radius_m=float(lidar["obstacle_mark_radius_mm"]) / 1000.0,
-        new_obstacle_confirmations=int(lidar["new_obstacle_confirmations"]),
+        # 파일 전용 정제 도구의 이전 설정 호환. AG 실시간 정책과 반경을 이중 팽창하지 않는다.
+        new_obstacle_margin_m=float(lidar.get("new_obstacle_margin_mm", 100)) / 1000.0,
+        obstacle_radius_m=float(lidar.get("obstacle_mark_radius_mm", lidar["robot_radius_mm"]))
+        / 1000.0,
+        new_obstacle_confirmations=int(lidar.get("new_obstacle_confirmations", 2)),
     )
 
 
