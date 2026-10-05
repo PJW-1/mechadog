@@ -5,7 +5,7 @@
 으로 싣는다. VLM 은 감지·방향을 정하지 않는다 (ADR-43 결정 3).
 
 - 막지 않는다 — 걸어 두고 다음 틱에서 줍는다(`FallMonitor`·`ZoneInspector` 와 같다).
-- 답을 받거나 `vision.vlm.path_cause_wait_ms` 를 넘기면 `path_blocked` 를 **한 번만** 남긴다.
+- 답을 받거나 `vision.vlm.path_cause_wait_ms` 에 닿으면 `path_blocked` 를 **한 번만** 남긴다.
   로봇은 재계획 때문에 어차피 서 있으므로 알림이 그만큼 늦는 것은 괜찮다.
 - 워커의 결과 슬롯은 하나다. 쓰러짐·구역 판독이 걸려 있으면 상한 안에서 빌 때를 기다려
   같은 프레임을 걸고, 끝내 못 걸면 `fallen: null` 이다.

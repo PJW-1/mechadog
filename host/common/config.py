@@ -187,8 +187,16 @@ def validate_base_config(config: dict[str, Any]) -> None:
     vlm = vision.get("vlm")
     if not isinstance(vlm, dict):
         raise ConfigError("vision.vlm 절이 없음")
-    for name in ("path_cause_wait_ms", "path_cause_max_frame_age_ms"):
+    for name in (
+        "budget_ms",
+        "patrol_interval_ms",
+        "path_cause_wait_ms",
+        "path_cause_max_frame_age_ms",
+    ):
         _require_positive(vlm, name)
+    model_id = vlm.get("model_id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ConfigError("vision.vlm.model_id 는 비어 있지 않은 문자열이어야 함")
 
     # 인증 (FR-10) — 사원증 사전과 발급 대장. 절의 존재는 `REQUIRED_SECTIONS` 가 본다.
     auth = config["auth"]

@@ -1,4 +1,4 @@
-"""Qwen2-VL LoRA 학습 — 비전 인코더는 얼리고 언어 모델 투영에만 LoRA (ADR-43 «재검토»).
+"""Qwen2-VL LoRA 학습 — 비전 인코더는 얼리고 언어 모델 투영에만 LoRA (ADR-45 결정 5).
 
     ~/.venv-mechdog-vlm/Scripts/python.exe tools/vlm_lora/train.py list.jsonl --out <어댑터폴더>
 
