@@ -263,12 +263,14 @@ vision:
   # ── VLM 미세조정용 프레임 자동 수집 (4.8.7) ──
   # LiDAR 순찰 판정을 라벨로 쓴다: 막힘 확정 프레임 = blocked, 막힘 없는 순찰 프레임 = clear.
   # ⚠️ 사진에 얼굴이 찍히므로 `root` 는 **저장소 밖** 경로만 허용한다. null 이면 수집하지 않는다.
+  # 상대 경로는 저장소 루트 기준이다(예: ../mechdog-collect).
   # 구조: <root>/<YYYYMMDD>/<blocked|clear>/<시각>_<번호>.jpg + 같은 폴더의 manifest.jsonl
   collect:
     root: null
     clear_every_ms: 5000      # clear 를 남기는 최소 간격
-    clear_holdoff_ms: 10000   # blocked 직후 clear 를 남기지 않는 시간 (같은 장애물이 아직 보일 수 있다)
+    clear_holdoff_ms: 10000   # 막힘 확정 직후 clear 를 남기지 않는 시간 (같은 장애물이 아직 보일 수 있다)
     max_files: 5000           # 사진 상한. 넘으면 더 쓰지 않고 한 번만 경고한다
+    max_frame_age_ms: 1000    # 받은 지 이보다 오래된 프레임(비전 끊김)은 라벨을 붙이지 않는다
 
   # ── ③ 로컬 VLM 상황 판독 (FR-8 · 4.8.0 · ADR-35) ──
   # 가중치는 Hugging Face 캐시에서 모델 ID 로 읽는다(`models/README.md` ③). 없어도 멈추지

@@ -361,8 +361,9 @@ def test_obstacle_outside_patrol_is_not_a_path_block(
 
 
 # ── VLM 학습용 프레임 수집 (4.8.7) ──────────────────────────
-def _collecting(config: dict, clock: FakeClock, tmp_path):
-    config = {**config, "vision": {**config["vision"], "collect": {"root": str(tmp_path)}}}
+def _collecting(config: dict, clock: FakeClock, tmp_path, **collect: int):
+    collect_spec = {"root": str(tmp_path), **collect}
+    config = {**config, "vision": {**config["vision"], "collect": collect_spec}}
     vision = FakeVision()  # 프레임 없이 순찰에 들어가고, 각 시험이 프레임을 건넨다
     runtime, navigator = _patrolling(config, clock, vision=vision)
     vision.result = vision_result(1, clock.ms, present=False, hits=0, last_seen_ms=None)
@@ -371,6 +372,14 @@ def _collecting(config: dict, clock: FakeClock, tmp_path):
 
 def _collected(tmp_path, label: str) -> int:
     return len(list(tmp_path.rglob(f"{label}/*.jpg")))
+
+
+def _manifest(tmp_path) -> list[dict]:
+    return [
+        json.loads(line)
+        for path in tmp_path.glob("*/manifest.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 def test_collector_saves_blocked_and_clear_during_patrol(
@@ -382,9 +391,37 @@ def test_collector_saves_blocked_and_clear_during_patrol(
     navigator._new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.advance(100))
     assert _collected(tmp_path, "blocked") == 1
-    vision.result = vision_result(5, clock.ms, present=False, hits=0, last_seen_ms=None)
-    runtime.tick(clock.advance(6000))
+    (entry,) = [e for e in _manifest(tmp_path) if e["label"] == "blocked"]
+    assert entry["frame_seq"] == 1 and entry["frame_ms"] == vision.result.frame_received_ms
+    vision.result = vision_result(5, clock.advance(6000), present=False, hits=0, last_seen_ms=None)
+    runtime.tick(clock.advance(10))
     assert _collected(tmp_path, "clear") == 1, "blocked 직후 보류 시간"
+
+
+def test_collector_skips_stale_blocked_frame_but_holds_off_clear(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    # 다른 안전 시간 제한에 걸리지 않도록 1초 안에 끝나는 값으로 줄인다.
+    runtime, navigator, vision = _collecting(
+        config, clock, tmp_path, max_frame_age_ms=200, clear_holdoff_ms=600
+    )
+
+    def tick_at(now: int) -> None:
+        _fresh(navigator, now, (2.0, 2.0, 0.0))
+        runtime.tick(now)
+
+    clock.advance(300)  # 비전이 끊겨 마지막 결과가 낡았다
+    navigator._new_obstacles.append((2.5, 2.0))
+    tick_at(clock.ms)
+    blocked_ms = clock.ms
+    assert list(tmp_path.rglob("*.jpg")) == [], "낡은 프레임에는 라벨을 붙이지 않는다"
+    vision.result = vision_result(2, clock.advance(300), present=False, hits=0, last_seen_ms=None)
+    tick_at(clock.ms)
+    assert _collected(tmp_path, "clear") == 0, "사진을 못 남긴 막힘 사건도 보류 시간을 건다"
+    vision.result = vision_result(3, blocked_ms + 600, present=False, hits=0, last_seen_ms=None)
+    tick_at(clock.advance(300))
+    assert runtime.behavior.state == "PATROL"
+    assert _collected(tmp_path, "clear") == 1
 
 
 def test_collector_skips_clear_while_obstacle_active_or_pending(

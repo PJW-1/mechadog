@@ -936,16 +936,21 @@ class Runtime:
             self._record_path_blocked(hit)
 
     def _collect_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
-        """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다)."""
-        result = self._vision.latest() if self._vision is not None else None
-        if result is None or not self._collector.enabled:
+        """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다).
+
+        프레임이 없어도 수집기에 알린다 — 막힘 사건 자체로 clear 보류 시간을 건다.
+        """
+        if not self._collector.enabled:
             return
+        result = self._vision.latest() if self._vision is not None else None
         self._collector.note_blocked(
             now_ms,
-            result.jpeg,
+            result.jpeg if result is not None else None,
             hit,
             cast(PatrolController, self._navigator).target,
             self._behavior.state,
+            frame_ms=result.frame_received_ms if result is not None else None,
+            frame_seq=result.frame_seq if result is not None else None,
         )
 
     def _collect_clear(self, result: VisionResult, now_ms: int) -> None:
@@ -958,6 +963,8 @@ class Runtime:
             state=self._behavior.state,
             obstacle_active=self._navigator.safety.obstacle_active,
             pending=self._navigator.obstacle_pending,
+            frame_ms=result.frame_received_ms,
+            frame_seq=result.frame_seq,
         )
 
     def _record_path_blocked(self, hit: tuple[float, float]) -> None:
