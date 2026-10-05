@@ -260,6 +260,16 @@ vision:
     # 빠진다. 추적기가 대상을 버리는 시간(`tracker.track_lost_ms`)과 같다.
     gap_ms: 1000
 
+  # ── VLM 미세조정용 프레임 자동 수집 (4.8.7) ──
+  # LiDAR 순찰 판정을 라벨로 쓴다: 막힘 확정 프레임 = blocked, 막힘 없는 순찰 프레임 = clear.
+  # ⚠️ 사진에 얼굴이 찍히므로 `root` 는 **저장소 밖** 경로만 허용한다. null 이면 수집하지 않는다.
+  # 구조: <root>/<YYYYMMDD>/<blocked|clear>/<시각>_<번호>.jpg + 같은 폴더의 manifest.jsonl
+  collect:
+    root: null
+    clear_every_ms: 5000      # clear 를 남기는 최소 간격
+    clear_holdoff_ms: 10000   # blocked 직후 clear 를 남기지 않는 시간 (같은 장애물이 아직 보일 수 있다)
+    max_files: 5000           # 사진 상한. 넘으면 더 쓰지 않고 한 번만 경고한다
+
   # ── ③ 로컬 VLM 상황 판독 (FR-8 · 4.8.0 · ADR-35) ──
   # 가중치는 Hugging Face 캐시에서 모델 ID 로 읽는다(`models/README.md` ③). 없어도 멈추지
   # 않고 기능 저하로 기록한다 (ADR-35 결정 6).

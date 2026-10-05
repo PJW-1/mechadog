@@ -182,6 +182,8 @@ def validate_base_config(config: dict[str, Any]) -> None:
             f"({period_ms}ms) 보다 짧아 한 번만 놓쳐도 ID 가 바뀜"
         )
 
+    _validate_collect(vision.get("collect"))
+
     # 인증 (FR-10) — 사원증 사전과 발급 대장. 절의 존재는 `REQUIRED_SECTIONS` 가 본다.
     auth = config["auth"]
     dictionary = auth.get("badge_dictionary")
@@ -455,6 +457,25 @@ def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
         raise ConfigError("posture_amplitude.source 는 phone_imu 또는 onboard_imu 여야 함")
     if not isinstance(amplitude.get("measured_on"), str) or not amplitude["measured_on"]:
         raise ConfigError("posture_amplitude.measured_on 기록이 필요함")
+
+
+def _validate_collect(collect: Any) -> None:
+    """VLM 학습용 프레임 수집 (`vision.collect`). 절이 없으면 꺼진 것이다."""
+    if collect is None:
+        return
+    if not isinstance(collect, dict):
+        raise ConfigError("vision.collect 는 매핑이어야 함")
+    for key in ("clear_every_ms", "clear_holdoff_ms", "max_files"):
+        if key in collect:
+            _require_positive(collect, key)
+    root = collect.get("root")
+    if root is None:
+        return
+    if not isinstance(root, str) or not root.strip():
+        raise ConfigError("vision.collect.root 는 null 이거나 비어 있지 않은 경로 문자열이어야 함")
+    # 사진에 얼굴이 찍힌다 — 커밋될 수 있는 저장소 안에는 두지 않는다.
+    if repo_path(root).resolve().is_relative_to(ROOT.resolve()):
+        raise ConfigError(f"vision.collect.root 는 저장소 밖 경로여야 함: {root}")
 
 
 def _validate_hazard(hazard: Any) -> None:

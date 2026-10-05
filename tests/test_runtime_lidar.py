@@ -360,6 +360,54 @@ def test_obstacle_outside_patrol_is_not_a_path_block(
     assert records == []
 
 
+# ── VLM 학습용 프레임 수집 (4.8.7) ──────────────────────────
+def _collecting(config: dict, clock: FakeClock, tmp_path):
+    config = {**config, "vision": {**config["vision"], "collect": {"root": str(tmp_path)}}}
+    vision = FakeVision()  # 프레임 없이 순찰에 들어가고, 각 시험이 프레임을 건넨다
+    runtime, navigator = _patrolling(config, clock, vision=vision)
+    vision.result = vision_result(1, clock.ms, present=False, hits=0, last_seen_ms=None)
+    return runtime, navigator, vision
+
+
+def _collected(tmp_path, label: str) -> int:
+    return len(list(tmp_path.rglob(f"{label}/*.jpg")))
+
+
+def test_collector_saves_blocked_and_clear_during_patrol(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    runtime, navigator, vision = _collecting(config, clock, tmp_path)
+    runtime.tick(clock.advance(100))
+    assert _collected(tmp_path, "clear") == 1
+    navigator._new_obstacles.append((2.5, 2.0))
+    runtime.tick(clock.advance(100))
+    assert _collected(tmp_path, "blocked") == 1
+    vision.result = vision_result(5, clock.ms, present=False, hits=0, last_seen_ms=None)
+    runtime.tick(clock.advance(6000))
+    assert _collected(tmp_path, "clear") == 1, "blocked 직후 보류 시간"
+
+
+def test_collector_skips_clear_while_obstacle_active_or_pending(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    runtime, navigator, vision = _collecting(config, clock, tmp_path)
+    navigator._pending_hit = (2.5, 2.0)
+    runtime.tick(clock.advance(100))
+    navigator._pending_hit = None
+    navigator.safety.obstacle = True
+    vision.result = vision_result(2, clock.ms, present=False, hits=0, last_seen_ms=None)
+    runtime.tick(clock.advance(100))
+    assert _collected(tmp_path, "clear") == 0
+
+
+def test_collector_ignores_frames_outside_patrol(config: dict, clock: FakeClock, tmp_path) -> None:
+    runtime, navigator, _vision = _collecting(config, clock, tmp_path)
+    assert runtime._apply(Event.SCAN_DUE, clock.ms)
+    navigator._new_obstacles.append((2.5, 2.0))
+    runtime.tick(clock.advance(100))
+    assert list(tmp_path.rglob("*.jpg")) == []
+
+
 # ── 스캔 수신기의 전방 위험거리 ─────────────────────────────
 def _raw(device_id: str, dist_mm: int, seq: int = 1) -> bytes:
     return json.dumps(
