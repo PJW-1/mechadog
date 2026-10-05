@@ -392,7 +392,7 @@ def test_cli_does_not_swallow_unexpected_errors(tmp_path, monkeypatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("예상 밖")
 
-    monkeypatch.setattr(aj, "judge_session", boom)
+    monkeypatch.setattr(aj, "load_criteria", boom)  # 입력 읽기 try 안에서 불리는 대상
     with pytest.raises(RuntimeError):
         aj.main([str(_write(tmp_path, build_session()))])
 

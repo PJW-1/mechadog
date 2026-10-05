@@ -76,7 +76,8 @@ ppe-v5(SHA-256 `145c2dc9…90e2`)를 XIAO로 실측하기 **전에** 정했다. 
 | 2 | 입력 오류: 세션·계획 파일이 없거나, JSON이 깨졌거나, 시나리오에 합격 기준이 없다 |
 
 마지막 줄은 종료 코드가 1이면 항상 `전체 FAIL — <이유>`이고, 이유에는 실패한 기준·커버리지
-누락·운용 창 문제를 적는다. 종료 코드 2는 표준 오류에 한 줄만 출력한다.
+누락·운용 창 문제를 적는다. 파일·계획·합격 기준 오류로 종료 코드 2가 나올 때는 표준 오류에
+`입력 오류: <이유>` 한 줄만 출력한다(명령행 인자 오류는 argparse 안내가 따로 나온다).
 
 ```powershell
 python tools/ppe/acceptance_judge.py "field_tests/results/${runDate}_ppe-xiao/session.json"
