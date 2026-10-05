@@ -58,7 +58,7 @@ test('switching robots drops the old map and late replies before any click can s
 
 test('rejections and blocked holds are told, not shown as arrival',()=>{
  assert.match(describeNav({available:true,pose:[0,0,0],verified:true,goal_feedback:{accepted:false,detail:'지금 자리에서 그곳으로 가는 길이 없다 (goal_unreachable)'}}),/이동 거절 — 지금 자리에서 그곳으로 가는 길이 없다/);
- assert.match(describeNav({available:true,pose:[0,0,0],verified:true,holding_goal:true,goal_hold_reason:'blocked'}),/길이 막혀 정지/);
+ assert.match(describeNav({available:true,pose:[0,0,0],verified:true,holding_goal:true,goal_hold_reason:'blocked'}),/목표 도달 불가 · 이동 종료/);
  assert.doesNotMatch(describeNav({available:true,pose:[0,0,0],verified:true,holding_goal:true,goal_hold_reason:'blocked'}),/도착/);
  assert.match(describeNav({available:true,starting:true}),/측위 시작 대기/);
 });

@@ -587,5 +587,6 @@ def test_exhaustive_coverage_counts() -> None:
     # 2026-09-24 `3.6.x` — `ZONE_INSPECT → ALERT` 사람 게이트 전이를 더했다 (FR-8.3 → FR-3).
     # 2026-09-25 `3.6.x` — `ZONE_ALARM_CONFIRMED` 와 `ALERT → PATROL` 복귀 전이를 더했다 (FR-8.4).
     # 2026-09-25 `4.8.3` — `FALL_SUSPECTED`·`FALL_RESOLVED` 와 쓰러짐 의심 진입·복귀 전이 4줄을 더했다 (S3~S5).
-    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 32, 35)
-    assert (len(effective), len(blocked), len(undefined)) == (101, 6, 315)
+    # 2026-10-06 AM: single goto failure ends in IDLE from four navigation states.
+    assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 33, 39)
+    assert (len(effective), len(blocked), len(undefined)) == (105, 6, 324)

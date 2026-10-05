@@ -893,16 +893,38 @@ class Runtime:
                     self._navigation_frames[key] = frame
                     if len(self._navigation_frames) > 32:
                         del self._navigation_frames[next(iter(self._navigation_frames))]
-            for event in self._navigator.take_navigation_events():
-                self._record_navigation_event(event, now_ms)
+            self._settle_unreachable_goal(now_ms, from_sequence=True)
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
+
+    def _settle_unreachable_goal(self, now_ms: int, *, from_sequence: bool = False) -> None:
+        navigator = self._navigator
+        if (
+            isinstance(navigator, PatrolController)
+            and navigator.goal_hold_reason == "blocked"
+            and navigator.goal is None
+            and not navigator.route_active
+        ):
+            if from_sequence:
+                # Runtime.tick records sequence transitions once, after Behavior.tick.
+                self._behavior.event(Event.GOAL_UNREACHABLE, now_ms=now_ms)
+            else:
+                self._apply(Event.GOAL_UNREACHABLE, now_ms)
 
     def _mark_goal_cancel(self, previous: str, target: str) -> None:
         """사람이 멈췄다 — `PATROL`→`MANUAL`/`IDLE`, `MANUAL`→`IDLE`. 경보·추적으로 잠시 나간 것은 아니다.
 
         수동 조종도 취소다 — 사람이 로봇을 옮긴 뒤 옛 목표로 걸어가면 안 된다. 표시만 하고 루프가 처리한다.
         """
+        if (
+            previous == "PATROL"
+            and target == "IDLE"
+            and isinstance(self._navigator, PatrolController)
+            and self._navigator.goal_hold_reason == "blocked"
+            and self._navigator.goal is None
+        ):
+            # Automatic failure completion keeps the result visible in nav status.
+            return
         if (previous == "PATROL" and target in ("IDLE", "MANUAL")) or (
             previous == "MANUAL" and target == "IDLE"
         ):
@@ -1456,6 +1478,9 @@ class Runtime:
         self._drain_confirmations(now_ms)
         # 측위를 비전보다 앞에 둔다 — 구역 점검(`_poll_vision`)이 이번 틱의 자세로 도착을 본다.
         self._observe_scan(now_ms)
+        if isinstance(self._navigator, PatrolController):
+            self._navigator.expire_recovery(now_ms)
+            self._settle_unreachable_goal(now_ms)
         # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
         if self._behavior.standby:
             self._escalation.stand_down(now_ms)
@@ -1474,6 +1499,9 @@ class Runtime:
         before = self._behavior.state
         phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
+        if isinstance(self._navigator, PatrolController):
+            for event in self._navigator.take_navigation_events():
+                self._record_navigation_event(event, now_ms)
         self._watch_sound(lines, now_ms)
         if self._navigator is not None:
             self._nav_snapshot = self._build_nav_snapshot(now_ms)
@@ -1908,10 +1936,11 @@ class Runtime:
             self._patrol_asked
             and navigator is not None
             and getattr(navigator, "holding_goal", False)
-            and self._behavior.state == "PATROL"
+            and self._behavior.state in ("IDLE", "PATROL")
         ):
             # 찍은 곳에 서 있다가 «순찰 시작» — 구역 순찰로 돌아간다.
-            self._patrol_asked = False
+            if self._behavior.state == "PATROL":
+                self._patrol_asked = False
             navigator.cancel_goal("patrol_restart")
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
