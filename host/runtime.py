@@ -79,6 +79,7 @@ from host.telemetry.ros2_relay import (
     send,
 )
 from host.telemetry.session_recorder import SessionRecorder
+from host.vision.frame_collector import collector_from_config
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -321,6 +322,7 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
+        self._collector = collector_from_config(config, device_id)
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
         # 경비 추종 (FR-3.5 · ADR-40). 쓰러짐 감시는 아래에서 만들므로 의심 여부는 호출 때 묻는다.
@@ -690,6 +692,7 @@ class Runtime:
         if result is not None and self._recorder is not None:
             self._record_vision(result, now_ms)
         if result is not None:
+            self._collect_clear(result, now_ms)
             self._ppe_judge.forget_lost(result, now_ms)
             self._summary.count("detections", len(result.detections))
             self._behavior.note_vision(result.completed_ms)
@@ -929,7 +932,33 @@ class Runtime:
                 target=self._navigator.target,
             )
         for hit in self._navigator.take_new_obstacles():
+            self._collect_blocked(hit, now_ms)
             self._record_path_blocked(hit)
+
+    def _collect_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
+        """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다)."""
+        result = self._vision.latest() if self._vision is not None else None
+        if result is None or not self._collector.enabled:
+            return
+        self._collector.note_blocked(
+            now_ms,
+            result.jpeg,
+            hit,
+            cast(PatrolController, self._navigator).target,
+            self._behavior.state,
+        )
+
+    def _collect_clear(self, result: VisionResult, now_ms: int) -> None:
+        """막힘 없는 순찰 프레임을 VLM 학습용으로 모은다. 근거리 반사 정지·장애물 확인 중엔 거른다."""
+        if not self._collector.enabled or self._navigator is None:
+            return
+        self._collector.note_clear(
+            now_ms,
+            result.jpeg,
+            state=self._behavior.state,
+            obstacle_active=self._navigator.safety.obstacle_active,
+            pending=self._navigator.obstacle_pending,
+        )
 
     def _record_path_blocked(self, hit: tuple[float, float]) -> None:
         """이동 경로가 새 장애물로 막혔다 — **가벼운 경고만** 남기고 순찰은 이어 간다.

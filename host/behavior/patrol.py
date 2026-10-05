@@ -535,6 +535,11 @@ class PatrolController:
             now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
         )
 
+    @property
+    def obstacle_pending(self) -> bool:
+        """새 장애물을 확인 중인가 — 후보는 잡혔지만 연속 확정 횟수에 못 미쳤다."""
+        return self._pending_hit is not None
+
     def take_new_obstacles(self) -> tuple[tuple[float, float], ...]:
         """지난 호출 뒤 확정된 신규 장애물 `(x m, y m)` 을 꺼낸다 — 한 번 꺼내면 비워진다.
 
