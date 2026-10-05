@@ -117,7 +117,9 @@ class PathCause:
     def _submit(self, now_ms: int) -> bool:
         pending = self._pending
         assert pending is not None
-        if self._others_waiting():
+        # ⚠️ **앞 막힘의 늦은 판독을 비우기 전에는 걸지 않는다.** 워커는 끝난 스레드면 새 판독을
+        # 받으므로, 걸면 새 답을 `poll` 이 늦은 판독으로 주워 버린다.
+        if self._draining or self._others_waiting():
             return False
         if not self._vlm.submit(pending[1].jpeg, now_ms=now_ms, keys=(PATH_CAUSE_KEY,)):
             return False

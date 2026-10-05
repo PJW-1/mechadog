@@ -178,6 +178,31 @@ def test_the_wait_is_bounded_and_the_late_answer_is_only_logged(
     assert "path_cause_late" in caplog.text
 
 
+def test_a_new_block_does_not_ask_until_the_late_answer_is_cleared(parts, conf: dict) -> None:
+    """상한을 넘긴 앞 판독이 끝나 슬롯에 남아 있는 동안 새 막힘이 걸면, 새 답이 «늦은 판독» 으로
+    버려진다. 늦은 결과를 먼저 비운 뒤에 건다."""
+    wait_ms = int(conf["vision"]["vlm"]["path_cause_wait_ms"])
+    _block(parts)
+    parts.vlm.busy = True
+    parts.cause.poll(T0 + wait_ms)  # A 는 timeout 으로 남는다
+    assert parts.cause.waiting
+    # A 의 스레드가 끝났다 — 결과는 아직 슬롯에 있다(실제 `VlmWorker` 는 끝난 스레드면 받는다).
+    parts.vlm.busy = False
+    parts.vlm.slot = _reading("no")
+    later = T0 + wait_ms + 100
+    parts.cause.blocked({**HIT, "target": "C"}, FRAME, later)  # `_observe_scan` 이 `poll` 보다 먼저
+    assert len(parts.vlm.submitted) == 1, "늦은 결과가 슬롯에 있는 동안 걸지 않는다"
+    parts.cause.poll(later)  # 늦은 결과를 비우고 같은 호출에서 B 를 건다
+    assert parts.vlm.slot is None
+    assert parts.vlm.submitted[-1] == (later, (PATH_CAUSE_KEY,))
+    parts.vlm.slot = _reading("yes")
+    parts.cause.poll(later + 400)
+    a, b = (judgement for _kind, _frame, judgement in parts.records)
+    assert (a["fallen"], a["vlm_reason"]) == (None, "timeout")
+    assert b["target"] == "C"
+    assert (b["fallen"], b["vlm_reason"]) == (True, None)
+
+
 # ── 워커를 나눠 쓴다 ────────────────────────────────────────────
 
 
