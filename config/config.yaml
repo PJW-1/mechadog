@@ -288,6 +288,9 @@ vision:
     # LiDAR 막힘 확정 프레임의 원인 판독(`blocked_by_fallen` · ADR-45)을 기다리는 상한. 넘기면
     # `path_blocked` 를 `fallen: null` 로 남긴다. 재계획으로 로봇이 서 있는 동안이라 알림이 이만큼 늦어도 된다.
     path_cause_wait_ms: 1500
+    # 막힘 확정 때 최신 프레임을 받은 지 이보다 오래됐으면(비전 끊김) 원인을 묻지 않고 사진도 남기지
+    # 않는다 — `vlm_reason: stale_frame`. 수집기의 `max_frame_age_ms` 와 같은 기준이다.
+    path_cause_max_frame_age_ms: 1000
 
   # ── 다중 인원 추적 (FR-3.6) ──
   tracker:

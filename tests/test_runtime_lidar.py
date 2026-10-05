@@ -390,14 +390,21 @@ def _settle(runtime: Runtime, timeout_s: float = 5.0) -> None:
         time.sleep(0.005)
 
 
-def _factory_block(config: dict, clock: FakeClock, session: _CauseSession, *, switch: bool):
-    """공장 모드 순찰에서 새 장애물 하나를 확정시킨다. 기록·방송 대역을 붙인다."""
+def _factory_block(
+    config: dict, clock: FakeClock, session: _CauseSession, *, switch: bool, frame_age_ms: int = 0
+):
+    """공장 모드 순찰에서 새 장애물 하나를 확정시킨다. 기록·방송 대역을 붙인다.
+
+    `frame_age_ms` 는 막힘 확정 때 최신 프레임을 받은 지 얼마나 됐나다(비전 끊김 흉내).
+    """
     cfg = copy.deepcopy(config)
     cfg["change_detect"]["vlm_path_cause"] = switch
     reader = VlmReader(lambda: session, budget_ms=10_000)
     reader.load()
     vision = FakeVision()
-    vision.result = vision_result(1, clock.ms, present=False, hits=0, last_seen_ms=None)
+    vision.result = vision_result(
+        1, clock.ms - frame_age_ms, present=False, hits=0, last_seen_ms=None
+    )
     said: list[str] = []
     runtime, navigator = _patrolling(
         cfg,
@@ -475,6 +482,40 @@ def test_a_slow_cause_reading_still_records_once(config: dict, clock: FakeClock)
         "늦은 답으로 다시 남기지 않는다"
     )
     assert all("무너진" not in line for line in said)
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_stale_frame_is_announced_without_asking(config: dict, clock: FakeClock) -> None:
+    """비전이 끊겨 남은 마지막 프레임으로는 원인을 묻지 않는다 — `no_frame` 처럼 방송만 한다."""
+    max_age = int(config["vision"]["vlm"]["path_cause_max_frame_age_ms"])
+    session = _CauseSession("yes")
+    runtime, _vision, records, said = _factory_block(
+        config, clock, session, switch=True, frame_age_ms=max_age + 1
+    )
+    assert runtime.vlm.submitted == 0
+    assert [r for r in records if r[0] == "path_blocked"] == []
+    (line,) = said
+    assert "무너진" not in line
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_the_fall_reading_waits_for_the_path_cause_reading(config: dict, clock: FakeClock) -> None:
+    """막힘 원인 판독을 줍기 전에는 쓰러짐 판독을 걸지 않는다 — 결과 슬롯이 하나다."""
+    session = _CauseSession("no")
+    session.gate.clear()  # 막힘 틱 안에서 판독이 끝나 바로 주워지지 않게 붙잡는다
+    runtime, vision, records, _said = _factory_block(config, clock, session, switch=False)
+    session.gate.set()
+    _settle(runtime)  # 판독은 끝났지만 아직 줍지 않았다 — 워커는 비어 있다
+    assert not runtime.vlm.busy
+    assert [r for r in records if r[0] == "path_blocked"] == []
+    every = int(config["vision"]["vlm"]["patrol_interval_ms"])
+    runtime._fall.ask(vision.result, clock.ms)  # 첫 순찰 판독 시각을 잡는다
+    runtime._fall.ask(vision.result, clock.ms + every)
+    assert runtime.vlm.submitted == 1, "막힘 원인 판독이 슬롯을 쥔 동안 걸었다"
+    assert not runtime._fall.waiting
+    runtime.tick(clock.advance(100))  # 원인 판독을 줍는다
+    runtime._fall.ask(vision.result, clock.ms + 2 * every)
+    assert runtime.vlm.submitted == 2
 
 
 def test_obstacle_outside_patrol_is_not_a_path_block(

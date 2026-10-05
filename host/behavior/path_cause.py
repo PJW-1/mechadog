@@ -56,6 +56,14 @@ class PathCause:
         self._wait_ms = int(config["vision"]["vlm"]["path_cause_wait_ms"])
         if self._wait_ms <= 0:
             raise ValueError(f"vision.vlm.path_cause_wait_ms 는 0 보다 커야 함: {self._wait_ms}")
+        #: 받은 지 이보다 오래된 프레임은 막힘 확정 때의 장면이 아니다 — 비전이 끊겨도
+        #: `VisionWorker.latest()` 는 마지막 결과를 돌려준다.
+        self._max_frame_age_ms = int(config["vision"]["vlm"]["path_cause_max_frame_age_ms"])
+        if self._max_frame_age_ms <= 0:
+            raise ValueError(
+                "vision.vlm.path_cause_max_frame_age_ms 는 0 보다 커야 함: "
+                f"{self._max_frame_age_ms}"
+            )
         #: 스위치. 판정 근거에 실어 **그때 문장이 원인을 말할 수 있었는지** 를 남긴다.
         self._announce_cause = bool(config["change_detect"]["vlm_path_cause"])
         #: 기다리는 막힘 `[판정 근거, 프레임, 확정 시각, 걸었나]`. `None` 이면 없다.
@@ -74,6 +82,10 @@ class PathCause:
         judgement = {**judgement, "vlm_path_cause": self._announce_cause}
         if frame is None:
             reason = "no_frame"
+        elif now_ms - frame.frame_received_ms > self._max_frame_age_ms:
+            # 낡은 장면으로 묻지도, 그 사진을 남기지도 않는다 — `no_frame` 처럼 방송만 한다.
+            reason = "stale_frame"
+            frame = None
         elif not self._mission.enables("change_detect"):
             reason = "mission"  # 공장 모드에서만 VLM 을 묻는다
         elif not self._vlm.available:
@@ -108,8 +120,10 @@ class PathCause:
             return
         if now_ms - since >= self._wait_ms:
             self._pending = None
-            # 건 판독이 아직 돌면 끝날 때까지 슬롯을 쥔다(`_draining`).
-            self._draining = submitted
+            # 건 판독이 아직 돌면 끝날 때까지 슬롯을 쥔다(`_draining`). ⚠️ **못 건 막힘은 앞
+            # 막힘의 배수를 지우지 않는다** — 지우면 그 낡은 답이 다음 막힘의 것으로 읽힌다.
+            if submitted:
+                self._draining = True
             reason = "timeout" if submitted else "busy"
             LOG.warning("path_cause_timeout", reason=reason, wait_ms=self._wait_ms)
             self._finish(judgement, frame, since, now_ms, reading=None, reason=reason)

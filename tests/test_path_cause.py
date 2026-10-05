@@ -19,7 +19,14 @@ T0 = 1_000_000
 #: 공장 모드의 선행 기능 검사를 연다 — 원인 판독은 공장 모드에서만 묻는다.
 pytestmark = pytest.mark.usefixtures("unlock_modes")
 
-FRAME = SimpleNamespace(jpeg=b"jpeg")
+FRAME = SimpleNamespace(jpeg=b"jpeg", frame_received_ms=T0)
+
+
+def _frame_at(received_ms: int) -> SimpleNamespace:
+    """그 시각에 받은 프레임 — 막힘 확정 때의 장면이다."""
+    return SimpleNamespace(jpeg=b"jpeg", frame_received_ms=received_ms)
+
+
 HIT = {"x": 2.5, "y": 2.0, "target": "B", "source": "lidar"}
 
 
@@ -190,7 +197,8 @@ def test_a_new_block_does_not_ask_until_the_late_answer_is_cleared(parts, conf: 
     parts.vlm.busy = False
     parts.vlm.slot = _reading("no")
     later = T0 + wait_ms + 100
-    parts.cause.blocked({**HIT, "target": "C"}, FRAME, later)  # `_observe_scan` 이 `poll` 보다 먼저
+    # `_observe_scan` 이 `poll` 보다 먼저 돈다.
+    parts.cause.blocked({**HIT, "target": "C"}, _frame_at(later), later)
     assert len(parts.vlm.submitted) == 1, "늦은 결과가 슬롯에 있는 동안 걸지 않는다"
     parts.cause.poll(later)  # 늦은 결과를 비우고 같은 호출에서 B 를 건다
     assert parts.vlm.slot is None
@@ -201,6 +209,54 @@ def test_a_new_block_does_not_ask_until_the_late_answer_is_cleared(parts, conf: 
     assert (a["fallen"], a["vlm_reason"]) == (None, "timeout")
     assert b["target"] == "C"
     assert (b["fallen"], b["vlm_reason"]) == (True, None)
+
+
+def test_a_block_that_never_asked_keeps_the_live_drain(parts, conf: dict) -> None:
+    """못 건 막힘이 상한을 넘겨도 앞 막힘의 살아 있는 배수를 지우지 않는다.
+
+    지우면 앞 판독의 결과가 슬롯에 남고, 다음 막힘의 판독이 슬롯을 못 쓰고 끝났을 때
+    그 낡은 답을 제 것으로 기록한다.
+    """
+    wait_ms = int(conf["vision"]["vlm"]["path_cause_wait_ms"])
+    _block(parts)  # A 를 건다
+    parts.vlm.busy = True
+    parts.cause.poll(T0 + wait_ms)  # A timeout — A 스레드는 아직 돈다
+    t_b = T0 + wait_ms + 100
+    parts.cause.blocked({**HIT, "target": "B"}, _frame_at(t_b), t_b)  # 배수 중이라 못 건다
+    parts.cause.poll(t_b + wait_ms)  # B 도 상한 초과(busy)
+    assert parts.cause.waiting, "A 의 판독이 아직 돌고 있다 — 배수를 지우지 않는다"
+    parts.vlm.busy = False
+    parts.vlm.slot = _reading("yes")  # A 의 낡은 답이 슬롯에 남는다
+    t_c = t_b + wait_ms + 100
+    parts.cause.blocked({**HIT, "target": "C"}, _frame_at(t_c), t_c)
+    parts.cause.poll(t_c)  # 낡은 답을 비우고 C 를 건다
+    assert parts.vlm.slot is None
+    assert parts.vlm.submitted[-1] == (t_c, (PATH_CAUSE_KEY,))
+    # C 의 판독이 슬롯을 못 쓰고 끝났다(워커 예외) — 슬롯은 비어 있다.
+    parts.cause.poll(t_c + 300)
+    c = parts.records[-1][2]
+    assert c["target"] == "C"
+    assert (c["fallen"], c["vlm_reason"]) == (None, "worker_failed"), (
+        "A 의 낡은 답을 C 에 싣지 않는다"
+    )
+
+
+def test_a_stale_frame_is_not_asked_and_not_photographed(parts, conf: dict) -> None:
+    """비전이 끊겨 받은 지 오래된 프레임은 확정 시점의 장면이 아니다 — 묻지 않고 사진도 남기지 않는다."""
+    max_age = int(conf["vision"]["vlm"]["path_cause_max_frame_age_ms"])
+    _block(parts, frame=_frame_at(T0 - max_age))  # 상한 그대로는 아직 쓴다
+    assert len(parts.vlm.submitted) == 1
+    parts.vlm.slot = _reading("no")
+    parts.cause.poll(T0 + 100)
+    late = T0 + 10_000
+    parts.cause.blocked(dict(HIT), _frame_at(late - max_age - 1), late)
+    assert len(parts.vlm.submitted) == 1, "낡은 프레임으로 묻지 않는다"
+    assert len(parts.records) == 1, "낡은 사진으로 블랙박스를 남기지 않는다"
+    (kind, judgement) = parts.said[-1]
+    assert kind == "path_blocked"
+    assert judgement["fallen"] is None
+    assert judgement["vlm_reason"] == "stale_frame"
+    assert not parts.cause.waiting
 
 
 # ── 워커를 나눠 쓴다 ────────────────────────────────────────────
@@ -313,12 +369,14 @@ def test_the_switch_is_carried_into_the_judgement(parts, conf: dict) -> None:
 def test_the_defaults_are_off_and_bounded(conf: dict) -> None:
     assert conf["change_detect"]["vlm_path_cause"] is False
     assert conf["vision"]["vlm"]["path_cause_wait_ms"] == 1500
+    assert conf["vision"]["vlm"]["path_cause_max_frame_age_ms"] == 1000
 
 
+@pytest.mark.parametrize("key", ["path_cause_wait_ms", "path_cause_max_frame_age_ms"])
 @pytest.mark.parametrize("wait_ms", [0, -1])
-def test_a_non_positive_wait_is_refused(conf: dict, wait_ms: int) -> None:
-    conf["vision"]["vlm"]["path_cause_wait_ms"] = wait_ms
-    with pytest.raises(ValueError, match="path_cause_wait_ms"):
+def test_a_non_positive_wait_is_refused(conf: dict, key: str, wait_ms: int) -> None:
+    conf["vision"]["vlm"][key] = wait_ms
+    with pytest.raises(ValueError, match=key):
         PathCause(
             conf,
             mission=Mission(conf, mode="factory"),
