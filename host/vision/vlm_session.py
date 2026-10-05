@@ -4,7 +4,8 @@
 않는다 — 없으면 팩토리가 `None` 을 돌려주고 판독은 «없음» 으로 동작한다 (ADR-35 결정 6).
 
 가중치는 설정 경로가 아니라 Hugging Face 캐시에서 모델 ID 로 읽는다 (세팅 절차:
-`models/README.md` ③).
+`models/README.md` ③). `model_id` 자리에 LoRA 병합 모델 폴더의 절대 경로를 주면 그 폴더를
+읽는다 — `from_pretrained` 가 둘 다 받는다 (`tools/vlm_lora/README.md`).
 """
 
 from __future__ import annotations
@@ -51,6 +52,11 @@ def to_image(payload: Any) -> Any:
     raise TypeError(f"판독에 넣을 수 없는 형식: {type(payload).__name__}")
 
 
+def chat_messages(prompt: str) -> list[dict[str, Any]]:
+    """질문 하나의 채팅 메시지 — 이미지 한 장 뒤에 질문 글. LoRA 학습(`tools/vlm_lora`)도 이것을 쓴다."""
+    return [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+
+
 class QwenVlSession:
     """`Qwen2-VL` 한 벌 — bf16 으로만 올린다(양자화하지 않는다 · ADR-35 대안 ⓐ · ADR-41 결정 7)."""
 
@@ -71,11 +77,8 @@ class QwenVlSession:
 
     def ask(self, image: Any, prompt: str) -> str:
         """이미지 한 장에 질문 하나. 결정론적 생성(`do_sample=False`)이다 — 같은 입력에 같은 답."""
-        messages = [
-            {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}
-        ]
         text = self._processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            chat_messages(prompt), tokenize=False, add_generation_prompt=True
         )
         inputs = self._processor(text=[text], images=[to_image(image)], return_tensors="pt")
         inputs = inputs.to(self._device)
@@ -119,6 +122,7 @@ __all__ = [
     "REQUIRED_PACKAGES",
     "QwenVlSession",
     "build_session_factory",
+    "chat_messages",
     "missing_packages",
     "to_image",
 ]
