@@ -14,7 +14,12 @@
 «위반 확정» 은 운용 창(`settings.window_ms` / `hits_required`)이 확정한 상승 에지
 (`confirmed: true`)다. C2 의 방향 판정은 `episode_eval` 의 에피소드 최종 판정을 그대로
 쓴다 — 앞 방향의 확정이 켜진 채 넘어온 방향도 경보가 울리는 중이므로 확정으로 본다.
-모두 통과하면 종료 코드 0, 하나라도 실패하면 1 이다.
+에피소드가 `episode_eval` 의 제외(확정 기준보다 프레임이 적음)이면 C2 의 방향 수와 커버리지에
+세지 않는다. C1·C4 의 경보에는 그대로 센다(보수적인 쪽).
+
+모든 구간을 모든 방향으로 찍지 않은 세션(커버리지 누락)과 운용 창이 아닌 세션은 합격 판정에
+쓸 수 없다. 종료 코드는 모두 통과하면 0, 기준 실패·커버리지 누락·운용 창 문제가 있으면 1,
+입력 파일·계획을 읽을 수 없으면 2 이다.
 """
 
 from __future__ import annotations
@@ -94,6 +99,23 @@ def operating_window_problems(session: dict[str, Any], criteria: dict[str, Any])
     return problems
 
 
+def coverage_gaps(
+    session: dict[str, Any],
+    specs: list[dict[str, str]],
+    orientations: list[str],
+    orientation_step_s: float,
+) -> list[tuple[str, str]]:
+    """제외되지 않은 에피소드가 없는 (구간, 방향) 쌍을 계획 순서대로 돌려준다."""
+    episodes = evaluate_session("session", session, timeout_s=orientation_step_s)
+    covered = {(ep.segment, ep.orientation) for ep in episodes if ep.excluded is None}
+    return [
+        (spec["key"], orientation)
+        for spec in specs
+        for orientation in orientations
+        if (spec["key"], orientation) not in covered
+    ]
+
+
 def judge_session(
     session: dict[str, Any],
     specs: list[dict[str, str]],
@@ -108,7 +130,7 @@ def judge_session(
     carried: dict[str, set[str | None]] = {}
     for ep in episodes:
         alarms[ep.segment] = alarms.get(ep.segment, 0) + ep.alarms
-        if ep.final == STATE_VIOLATION:
+        if ep.final == STATE_VIOLATION and ep.excluded is None:
             directions.setdefault(ep.segment, set()).add(ep.orientation)
             if ep.carried:
                 carried.setdefault(ep.segment, set()).add(ep.orientation)
@@ -175,7 +197,13 @@ def judge_session(
     return [c1, c2, c3, c4]
 
 
-def render(session: dict[str, Any], results: list[Criterion], source: str) -> str:
+def render(
+    session: dict[str, Any],
+    results: list[Criterion],
+    source: str,
+    gaps: list[tuple[str, str]] | None = None,
+    problems: list[str] | None = None,
+) -> str:
     settings = session.get("settings", {})
     lines = [
         f"PPE 합격 기준 판정 — {source}",
@@ -185,8 +213,20 @@ def render(session: dict[str, Any], results: list[Criterion], source: str) -> st
     ]
     for c in results:
         lines.append(f"{c.key} {'PASS' if c.passed else 'FAIL'}  {c.name}: {c.detail}")
+    if gaps:
+        lines.append(
+            f"커버리지 누락 {len(gaps)}칸 (구간·방향): "
+            + ", ".join(f"{segment}/{orientation}" for segment, orientation in gaps)
+        )
+    for problem in problems or []:
+        lines.append(f"⚠️ 운용 창이 아니다 — 합격 판정에 쓰지 않는다: {problem}")
     lines.append("")
-    lines.append("전체 PASS" if all(c.passed for c in results) else "전체 FAIL")
+    reasons = [f"{c.key} 실패" for c in results if not c.passed]
+    if gaps:
+        reasons.append(f"커버리지 누락 {len(gaps)}칸")
+    if problems:
+        reasons.append("운용 창 아님")
+    lines.append("전체 PASS" if not reasons else "전체 FAIL — " + ", ".join(reasons))
     return "\n".join(lines)
 
 
@@ -197,11 +237,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scenario", help="기본 = 세션에 적힌 시나리오")
     args = parser.parse_args(argv)
 
-    session = json.loads(args.session.read_text(encoding="utf-8"))
-    scenario = args.scenario or session.get("scenario") or "xiao"
-    specs, step_s, _ = load_acceptance_plan(args.plan, scenario)
-    criteria = load_criteria(args.plan, scenario)
+    try:
+        session = json.loads(args.session.read_text(encoding="utf-8"))
+        scenario = args.scenario or session.get("scenario") or "xiao"
+        specs, step_s, orientations = load_acceptance_plan(args.plan, scenario)
+        criteria = load_criteria(args.plan, scenario)
+    except (OSError, ValueError) as exc:  # JSONDecodeError 는 ValueError 의 하위 클래스
+        print(f"입력 오류: {exc}", file=sys.stderr)
+        return 2
     results = judge_session(session, specs, criteria, step_s)
+    gaps = coverage_gaps(session, specs, orientations, step_s)
     problems = operating_window_problems(session, criteria)
 
     # 한국어 Windows 콘솔(cp949)에서 죽지 않게 한다 (ppe_live_check 와 같은 가드).
@@ -209,10 +254,8 @@ def main(argv: list[str] | None = None) -> int:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(errors="replace")
-    print(render(session, results, str(args.session)))
-    for problem in problems:
-        print(f"⚠️ 운용 창이 아니다 — 합격 판정에 쓰지 않는다: {problem}")
-    return 0 if all(c.passed for c in results) and not problems else 1
+    print(render(session, results, str(args.session), gaps, problems))
+    return 0 if all(c.passed for c in results) and not gaps and not problems else 1
 
 
 if __name__ == "__main__":

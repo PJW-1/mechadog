@@ -465,7 +465,7 @@ def _validate_collect(collect: Any) -> None:
         return
     if not isinstance(collect, dict):
         raise ConfigError("vision.collect 는 매핑이어야 함")
-    for key in ("clear_every_ms", "clear_holdoff_ms", "max_files"):
+    for key in ("clear_every_ms", "clear_holdoff_ms", "max_files", "max_frame_age_ms"):
         if key in collect:
             _require_positive(collect, key)
     root = collect.get("root")
