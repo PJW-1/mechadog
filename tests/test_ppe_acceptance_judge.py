@@ -32,12 +32,17 @@ def build_session(
     *,
     alarms: dict[tuple[str, str], int] | None = None,
     skip: tuple[str, ...] = (),
+    skip_cells: tuple[tuple[str, str], ...] = (),
+    frames: dict[tuple[str, str], int] | None = None,
 ) -> dict:
     """11구간 × 4방향 세션. 기본은 위반 구간마다 전 방향 확정, 적합 구간은 무경보.
 
     alarms: (구간, 방향) → 그 칸의 확정 에지 수. 주면 기본값을 덮어쓴다.
+    skip_cells: 아예 찍지 않은 (구간, 방향).
+    frames: (구간, 방향) → 그 칸의 프레임 수(기본 10).
     """
     alarms = alarms or {}
+    frames = frames or {}
     events: list[dict] = []
     segments: dict[str, dict] = {}
     t = 0.0
@@ -47,9 +52,11 @@ def build_session(
             continue
         verdicts = {STATE_VIOLATION: 0, STATE_OK: 0, STATE_UNKNOWN: 0}
         for ori in ORIENTATIONS:
+            if (key, ori) in skip_cells:
+                continue
             default = 1 if expected == STATE_VIOLATION else 0
             count = alarms.get((key, ori), default)
-            for i in range(10):
+            for i in range(frames.get((key, ori), 10)):
                 t = round(t + 0.1, 1)
                 state = expected
                 verdicts[state] += 1
@@ -278,6 +285,116 @@ def test_c2_detail_marks_carried_directions():
         if e["segment"] == "crouching-none":
             e["hits"] = 3
     assert "이월" in verdicts_of(session)["C2"].detail
+
+
+def _write(tmp_path: Path, session: dict, name: str = "s.json") -> Path:
+    path = tmp_path / name
+    path.write_text(json.dumps(session, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_coverage_gaps_empty_for_full_session():
+    assert aj.coverage_gaps(build_session(), SPECS, ORIENTATIONS, STEP_S) == []
+
+
+def test_coverage_gap_lists_missing_segment_direction_pairs():
+    session = build_session(skip_cells=(("standing-all", "후면"), ("standing-all", "좌측")))
+    gaps = aj.coverage_gaps(session, SPECS, ORIENTATIONS, STEP_S)
+    assert gaps == [("standing-all", "후면"), ("standing-all", "좌측")]
+
+
+def test_coverage_gap_includes_segment_never_run():
+    gaps = aj.coverage_gaps(build_session(skip=("sit",)), SPECS, ORIENTATIONS, STEP_S)
+    assert gaps == [("sit", ori) for ori in ORIENTATIONS]
+
+
+def test_excluded_episode_does_not_count_as_coverage():
+    """확정 기준보다 프레임이 적은 에피소드는 그 방향을 찍은 것으로 치지 않는다."""
+    session = build_session(frames={("sit", "정면"): 2})
+    assert aj.coverage_gaps(session, SPECS, ORIENTATIONS, STEP_S) == [("sit", "정면")]
+
+
+def test_excluded_episode_does_not_count_as_confirmed_direction():
+    session = build_session(
+        alarms={("standing-novest", "좌측"): 0},
+        frames={("standing-novest", "정면"): 2},
+    )
+    result = verdicts_of(session)["C2"]
+    assert not result.passed
+    assert "standing-novest 2방향" in result.detail
+
+
+def test_excluded_episode_alarms_still_count_for_c1_and_c4():
+    session = build_session(
+        alarms={("standing-all", "정면"): 1, ("sit", "정면"): 1},
+        frames={("standing-all", "정면"): 2, ("sit", "정면"): 2},
+    )
+    assert not verdicts_of(session)["C1"].passed
+    session = build_session(
+        alarms={("clipped-base", "정면"): 1}, frames={("clipped-base", "정면"): 2}
+    )
+    assert not verdicts_of(session)["C4"].passed
+
+
+def test_cli_one_direction_only_session_is_invalid(tmp_path, capsys):
+    """standing-all 을 한 방향만 돌린 세션은 C1 이 초록이어도 합격이 아니다."""
+    session = build_session(
+        skip_cells=tuple(("standing-all", ori) for ori in ORIENTATIONS[1:]),
+    )
+    assert aj.main([str(_write(tmp_path, session))]) == 1
+    out = capsys.readouterr().out
+    assert "누락" in out
+    assert "standing-all" in out
+    assert out.strip().splitlines()[-1].startswith("전체 FAIL")
+    assert "전체 PASS" not in out
+
+
+def test_cli_final_line_is_fail_with_reason_for_operating_window(tmp_path, capsys):
+    session = build_session()
+    session["settings"]["window_ms"] = 3000
+    assert aj.main([str(_write(tmp_path, session))]) == 1
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert last.startswith("전체 FAIL")
+    assert "운용 창" in last
+
+
+def test_cli_final_line_names_failed_criteria(tmp_path, capsys):
+    session = build_session(alarms={("clipped-base", "정면"): 1})
+    assert aj.main([str(_write(tmp_path, session))]) == 1
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert last.startswith("전체 FAIL")
+    assert "C4" in last
+
+
+def test_cli_missing_file_exits_2_with_one_stderr_line(tmp_path, capsys):
+    assert aj.main([str(tmp_path / "none.json")]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+
+
+def test_cli_broken_json_exits_2(tmp_path, capsys):
+    path = tmp_path / "broken.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert aj.main([str(path)]) == 2
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+
+
+def test_cli_scenario_without_criteria_exits_2(tmp_path, capsys):
+    path = _write(tmp_path, build_session())
+    assert aj.main([str(path), "--scenario", "webcam"]) == 2
+    err = capsys.readouterr().err
+    assert "기준" in err
+    assert len(err.strip().splitlines()) == 1
+
+
+def test_cli_does_not_swallow_unexpected_errors(tmp_path, monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("예상 밖")
+
+    monkeypatch.setattr(aj, "judge_session", boom)
+    with pytest.raises(RuntimeError):
+        aj.main([str(_write(tmp_path, build_session()))])
 
 
 @pytest.mark.parametrize(
