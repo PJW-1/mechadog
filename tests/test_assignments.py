@@ -75,7 +75,10 @@ def test_completed_predecessor_unlocks_work(packages: list[WorkPackage]) -> None
 def test_group_and_range_predecessors_stay_blocked(packages: list[WorkPackage]) -> None:
     """묶음 선행은 그 안의 작업이 모두 끝나야 풀린다."""
     by_id = {p.wid: p for p in packages}
-    assert not is_ready(by_id["2.5"], packages)
+    # `2.5` 의 선행 `2.1~2.4` 는 2026-10-05 에 모두 끝났으므로, 범위 안 한 칸을
+    # 미완료로 되돌려 «하나라도 남으면 대기» 를 확인한다.
+    pending = [replace(p, done=False) if p.wid == "2.4.2" else p for p in packages]
+    assert not is_ready(by_id["2.5"], pending)
     # WBS 밖 조건(장비 도착·승인)은 맞는 ID 가 없으므로 계속 대기다. 실제 예였던
     # `2.2.1` 의 «LiDAR·마스트 도착» 은 2026-09-28 장비가 와서 지웠으므로 꾸며 쓴다.
     outside = replace(by_id["2.2.1"], predecessor="LiDAR·마스트 도착")
