@@ -70,7 +70,7 @@ test('before the robot speaks, telemetry is null and the snapshot counts as stal
 test('malformed telemetry is refused, not guessed at', () => {
   assert.throws(() => decodeTelemetryMessage('{"type":"event"}'));
   assert.throws(() => decodeTelemetryMessage(message({ batt_v: 'full' })));
-  assert.throws(() => decodeTelemetryMessage(message({ imu: { pitch: 1, roll: NaN, yaw: 0 } })));
+  assert.throws(() => decodeTelemetryMessage(message({ imu: { pitch: 1, roll: "invalid", yaw: 0 } })));
   assert.throws(() => decodeTelemetryMessage(new ArrayBuffer(4)));
 });
 
@@ -223,4 +223,21 @@ test('a missing mode is said to be missing, never guessed', () => {
 test('an unknown mode name is shown as sent, not translated away', () => {
   const text = describeTelemetry(view({ snapshot: decodeTelemetryMessage(message({ mode: 'sentry' })) }));
   assert.match(text.headline, /모드 미수신/, '모르는 이름에 뜻을 지어내지 않는다');
+});
+
+test('missing sensor and identity fields update the host state without inventing measurements', () => {
+ const raw=JSON.parse(message());raw.telemetry={state:'IDLE',safety_latched:true};
+ const snapshot=decodeTelemetryMessage(JSON.stringify(raw));
+ const tracker=new TelemetryTracker();assert.equal(tracker.push(snapshot,0),false);
+ const text=describeTelemetry({state:'live',snapshot});assert.match(text.summary,/미수신/);
+ assert.equal(snapshot.telemetry.battV,null);assert.equal(tracker.rateHz(3000),null);
+ const feed=new TelemetryFeed({url:'ws://test',onUpdate:()=>{}});feed.receive(JSON.stringify(raw));
+ assert.equal(feed.state,'live');assert.equal(feed.malformed,0);
+});
+
+test('a malformed update exposes an error instead of leaving the last sample apparently live',()=>{
+ const feed=new TelemetryFeed({url:'ws://test'});feed.receive(message());feed.receive('invalid');
+ assert.equal(feed.state,'invalid');const text=describeTelemetry({state:feed.state,snapshot:feed.snapshot});
+ assert.equal(text.tone,'stale');assert.match(text.headline,/상태 형식 오류/);
+ feed.receive(message({seq:2}));assert.equal(feed.state,'live');
 });

@@ -222,9 +222,10 @@ export class RoutePlanner {
       else {delete session.invalid.repeat; session.draft.repeat = Number(event.target.value);}
       event.target.setAttribute('aria-invalid', String('repeat' in session.invalid)); this.changed();
     }});
-    this.root.append(p.el('div', {class: 'route-library'}, p.field('저장된 동선', select), p.field('동선 이름', name), p.field('반복', repeat), repeatMode === 'count' ? p.field('반복 횟수', repetitions) : null,
+    this.root.append(p.el('details',{class:'route-library-settings',...(session.libraryOpen??!p.document.defaultView.matchMedia?.('(max-width:899px)').matches?{open:''}:{})},p.el('summary',{},'저장 동선 · 이름 · 반복 설정'),p.el('div', {class: 'route-library'}, p.field('저장된 동선', select), p.field('동선 이름', name), p.field('반복', repeat), repeatMode === 'count' ? p.field('반복 횟수', repetitions) : null,
       p.button('새 동선', () => this.switchRoute(''), {disabled: this.isLocked(), 'data-route-new': ''}),
-      p.button('동선 삭제', () => this.confirmDelete(), {disabled: this.isLocked() || !session.snapshot?.saved.some(route => route.id === session.draft.id), 'data-route-delete': ''})));
+      p.button('동선 삭제', () => this.confirmDelete(), {disabled: this.isLocked() || !session.snapshot?.saved.some(route => route.id === session.draft.id), 'data-route-delete': ''}))));
+    this.root.querySelector('.route-library-settings').addEventListener('toggle',event=>{session.libraryOpen=event.target.open;});
 
     this.zoneList = p.el('div', {class: 'route-zone-list'});
     this.pointsList = p.el('div', {class: 'route-points', 'aria-label': '동선 지점 목록'});
@@ -239,10 +240,12 @@ export class RoutePlanner {
     this.validation = p.el('div', {class: 'route-validation', role: 'status', 'aria-live': 'polite'});
     this.modeBar = mapClickMode(p, session.mode, mode => {session.mode = mode; this.draw();}, mode => !this.isLocked() && (mode === 'draw' || (mode === 'move' ? this.canCommand() : this.canLocate())));
     const canvas = p.el('section', {class: 'route-canvas'}, this.modeBar, p.el('label', {title: '각도 맞춤 중에는 직전 지점에서 10cm 간격으로 맞춥니다.'}, grid, '10cm 격자 맞춤'), this.snapStatus, this.map, this.blockedHint,
-      p.note(session.mode === 'draw' ? '클릭으로 지점 추가 · 끌어서 이동 · 화살표 끝을 끌어 보는 방향 설정 · 직전 지점 기준 0/45/90° ±8° 자동 맞춤 · Shift로 맞춤 해제 · 빨간 구간에 마우스를 올리면 막힌 이유 표시' : session.mode === 'move' ? '지도에서 목적지를 누르면 이동 확인 창이 열립니다.' : '로봇이 지금 있는 곳을 누르면 위치 확인 창이 열립니다. 파란 원은 알려준 위치를 찾는 범위이며 위치가 확인되면 사라집니다.'),
+      p.note(session.mode === 'draw' ? '지도 누르기: 지점 추가 · 끌기: 위치와 방향 변경 · 빨간 구간: 이동 불가' : session.mode === 'move' ? '지도에서 목적지를 누르면 이동 확인 창이 열립니다.' : '로봇이 지금 있는 곳을 누르면 위치 확인 창이 열립니다. 파란 원은 알려준 위치를 찾는 범위이며 위치가 확인되면 사라집니다.'),
       this.canLocate() ? null : p.note('「위치 알려주기」는 지도 위치 지정 기능이 연결된 서버에서 사용할 수 있습니다.'), this.validation);
     this.inspector = p.el('aside', {class: 'route-inspector'});
-    this.root.append(p.el('div', {class: 'route-layout'}, itinerary, canvas, this.inspector));
+    const mobile = p.document.defaultView.matchMedia?.('(max-width:899px)').matches;
+    const settings = (node,label,key) => {const d=p.el('details',{class:node.className+' route-settings',...(session[key]??!mobile?{open:''}:{})},p.el('summary',{},label),node);d.addEventListener('toggle',()=>{session[key]=d.open;});return d;};
+    this.root.append(p.el('div', {class: 'route-layout'}, settings(itinerary,'구역 · 방문 지점 설정','itineraryOpen'), canvas, settings(this.inspector,'동선 상세 설정','inspectorOpen')));
     this.progress = p.el('p', {class: 'route-progress', 'data-route-progress': '', role: 'status', 'aria-live': 'polite'});
     this.root.append(p.el('footer', {class: 'route-footer'}, p.el('div', {}, this.progress,
       p.note('저장본은 다음 서버 시작에도 유지됩니다. 주행은 저장 후 아래 버튼으로 따로 시작합니다. 빨간 구간은 벽·가구·몸 반경에 걸려 저장할 수 없습니다.')),

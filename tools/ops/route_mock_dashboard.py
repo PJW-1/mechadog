@@ -39,6 +39,7 @@ from host.dashboard.server import DEFAULT_STATIC_DIR, create_app, serving
 from host.dashboard.state import DashboardState
 from host.runtime import policy_view
 from host.slam import settings, simulation
+from tools.ops import dashboard_demo
 from tools.ops.patrol_mock import physical_hit_mask, raycast_scan
 from tools.ops.patrol_run import _FakeReading, build_controller
 
@@ -80,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8016)
     parser.add_argument("--start", required=True, help="SIM 시작 자세 x,y,yaw_deg")
     parser.add_argument("--speed", type=float, default=1.0)
+    parser.add_argument("--scene3d-url", default="", help="외부 3D 보기 URL (SIM 시험용)")
     args = parser.parse_args(argv)
     if args.port in (5101, 5201, 8000) or not 1024 <= args.port <= 65535:
         parser.error("현장 포트 대신 1024~65535의 별도 포트를 고르세요")
@@ -237,15 +239,22 @@ def main(argv: list[str] | None = None) -> int:
         start_route=start_route,
         stop_route=stop_route,
     )
+    dashboard_demo.record_examples(state)
     app = create_app(
         state,
         commands,
         static_dir=DEFAULT_STATIC_DIR,
+        scene3d_url=args.scene3d_url,
         policy=policy_view(config),
         map_view=view.get,
         nav_status=nav_status,
         planning=planning,
+        event_snapshot=dashboard_demo.snapshot,
+        simulated=True,
+        voice_path="/api/demo-voice",
+        extra_routes=dashboard_demo.voice_routes(),
     )
+
     sim = simulation.sim_params_from_config(config, settings.range_from_config(config)[1])
     hits = physical_hit_mask(
         controller.grid,
@@ -306,6 +315,19 @@ def main(argv: list[str] | None = None) -> int:
                             )
                     state.publish(
                         telemetry={
+                            "device_id": "SIM-route",
+                            "boot_id": "route-sim-boot",
+                            "seq": now_ms // period_ms,
+                            "ts_ms": now_ms,
+                            "batt_v": 7.8,
+                            "imu": {"pitch": 0.0, "roll": 0.0, "yaw": math.degrees(truth[2])},
+                            "flags": {
+                                "lowbatt": False,
+                                "tipped": False,
+                                "obstacle": False,
+                                "link_ok": True,
+                            },
+                            "last_cmd_age_ms": 0,
                             "state": behavior.state,
                             "safety_latched": False,
                             "obstacle": False,

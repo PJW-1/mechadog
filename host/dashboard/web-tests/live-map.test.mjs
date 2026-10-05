@@ -88,3 +88,14 @@ test('canvas backing store follows device pixels while clicks remain in server c
  assert.deepEqual(transforms.at(-1),[6,0,0,6,0,0]);assert.equal(context.imageSmoothingEnabled,false);
  assert.deepEqual(map.toPatrol(120,100),[.5,0]);map.dispose();dom.window.close();
 });
+
+test('zoom and rotation preserve inverse click coordinates and reset restores the view',()=>{
+ const dom=new JSDOM('<div></div>');const picks=[];
+ const map=new LiveMap({document:dom.window.document,getLink:()=>null,onPick:(...point)=>picks.push(point),setInterval:()=>0});
+ map.meta=meta;map.canvas.getBoundingClientRect=()=>({left:10,top:20,width:400,height:200});
+ map.zoom(.5);map.orbit(Math.PI/2);
+ // map pixel (120,50) rotates about (100,50), then zooms to screen (210,200).
+ const point=map.toPatrol(210,200);assert.ok(Math.abs(point[0]+.25)<1e-8);assert.ok(Math.abs(point[1])<1e-8);
+ map.resetView();assert.deepEqual(map.toPatrol(250,120),[-.25,0]);
+ map.dispose();dom.window.close();
+});

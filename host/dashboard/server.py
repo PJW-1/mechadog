@@ -691,6 +691,10 @@ def create_app(
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
+    simulated: bool | None = None,
+    voice_path: str | None = None,
+    extra_routes: APIRouter | None = None,
+    scene3d_url: str = "",
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -723,6 +727,8 @@ def create_app(
             # 이 서버가 어느 개체 프로파일로 떴는지 — 여러 런타임을 띄웠을 때 가려내는 데 쓴다.
             "device_id": state.snapshot()["device_id"],
             "read_only": commands is None,
+            "capabilities": {"simulated": simulated, "voice_path": voice_path},
+            "dashboard": {"scene3d_url": scene3d_url},
             "clients": len(hub.clients),
             "coalesced_updates": hub.coalesced,
             # 비전이 없으면 null — "연결 0" 과 "채널 없음" 을 구분한다.
@@ -850,6 +856,8 @@ def create_app(
                 websocket, vision_hub, _send_frames, "Vision channel is read-only"
             )
 
+    if extra_routes is not None:
+        app.include_router(extra_routes)
     _mount_dashboard(app, static_dir)
 
     return app
@@ -925,6 +933,8 @@ def running_server(
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
+    scene3d_url: str = "",
+    simulated: bool | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     app = create_app(
@@ -939,6 +949,8 @@ def running_server(
         map_view=map_view,
         nav_status=nav_status,
         planning=planning,
+        scene3d_url=scene3d_url,
+        simulated=simulated,
     )
     with serving(app, port) as server:
         yield server

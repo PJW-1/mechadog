@@ -56,6 +56,8 @@ export class LiveMap {
     this.nav = null;
     this.image = null;
     this.error = null;
+    this.viewScale = 1;
+    this.viewAngle = 0;
     this.root = document.createElement('div');
     this.root.className = 'op-live-map';
     this.root.dataset.liveMap = '';
@@ -147,6 +149,10 @@ export class LiveMap {
   }
 
   /** 캔버스 좌표(픽셀) → 순찰 좌표. 화면 크기와 그림 크기가 달라도 맞춘다. */
+  zoom(factor) { this.viewScale = Math.min(4, Math.max(.5, this.viewScale / factor)); this.draw(); }
+  orbit(angle) { this.viewAngle += angle; this.draw(); }
+  resetView() { this.viewScale = 1; this.viewAngle = 0; this.draw(); }
+
   toPatrol(clientX, clientY) {
     const rect = this.canvas.getBoundingClientRect();
     if (!this.meta || !rect.width || !rect.height) return null;
@@ -154,8 +160,10 @@ export class LiveMap {
     const scale = Math.min(rect.width / this.meta.width, rect.height / this.meta.height);
     const left = rect.left + (rect.width - this.meta.width * scale) / 2;
     const top = rect.top + (rect.height - this.meta.height * scale) / 2;
-    const u = (clientX - left) / scale;
-    const v = (clientY - top) / scale;
+    const dx = ((clientX - left) / scale - this.meta.width / 2) / this.viewScale;
+    const dy = ((clientY - top) / scale - this.meta.height / 2) / this.viewScale;
+    const u = this.meta.width / 2 + dx * Math.cos(this.viewAngle) + dy * Math.sin(this.viewAngle);
+    const v = this.meta.height / 2 - dx * Math.sin(this.viewAngle) + dy * Math.cos(this.viewAngle);
     if (u < 0 || v < 0 || u > this.meta.width || v > this.meta.height) return null;
     return applyAffine(this.meta.px_to_patrol, u, v);
   }
@@ -200,7 +208,11 @@ export class LiveMap {
     if (!ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(width / meta.width, 0, 0, height / meta.height, 0, 0);
+    const sx = width / meta.width, sy = height / meta.height;
+    const a = this.viewScale * Math.cos(this.viewAngle), b = this.viewScale * Math.sin(this.viewAngle);
+    ctx.setTransform(sx*a, sy*b, -sx*b || 0, sy*a,
+      sx*(meta.width/2-a*meta.width/2+b*meta.height/2),
+      sy*(meta.height/2-b*meta.width/2-a*meta.height/2));
     ctx.imageSmoothingEnabled = false;
     if (this.image) ctx.drawImage(this.image, 0, 0, meta.width, meta.height);
     const px = (x, y) => applyAffine(meta.patrol_to_px, x, y);

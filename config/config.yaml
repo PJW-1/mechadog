@@ -673,3 +673,7 @@ broadcast:
   length_scale: 1.2
   # 초기 음량(0~100) — 관제 화면 슬라이더가 기동 이후 값을 바꾼다.
   volume: 100
+
+# 외부 로컬 3D 보기. 개인 집 장면은 별도 SIM 폴더에 보관합니다.
+dashboard:
+  scene3d_url: ""

@@ -42,7 +42,7 @@ export function describeEvidence(name,payload){
  const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
  const rows=[];
  let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
- if(name.startsWith('PPE_')&&j.state){ppe=cleanText(j.state,40)+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
+ if(name.startsWith('PPE_')&&j.state){ppe=({VIOLATION:'미착용',UNDETERMINED:'판정 불가',COMPLIANT:'착용 확인'}[j.state]??cleanText(j.state,40))+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
  // VLM 이 판독한 쓰러짐(source:'vlm')에는 규칙 값이 없다 — 빈 행을 그리지 않는다.
  if(name==='person_fallen')for(const [label,key,unit] of [['세로/가로 비','aspect',''],['정지 시간','still_ms',' ms'],['확정 기준','confirm_ms',' ms']])if(j[key]!=null)rows.push([label,shown(j[key])+unit]);
  if(name==='zone_reading'){
@@ -148,6 +148,9 @@ export class Operations {
  // 실제 연결(link)이 있으면 예시 모드가 아니어도 조작이 열린다. 링크가 없을
  // 때의 차단 사유는 그대로다 — **붙일 서버가 없는데 열어 두지 않는다.**
  get live(){return !this.demo&&this.connected}
+ get simulated(){return this.live ? this.slot()?.capabilities?.simulated ?? null : true}
+ get runtimeLabel(){return !this.live?'웹 예시':this.simulated===true?'시뮬레이션':this.simulated===false?'실제 로봇':'연결 유형 미확인'}
+ get transmissionLabel(){return this.simulated===true?'시뮬레이션 전송':this.simulated===false?'실제 전송':'서버 전송 · 유형 미확인'}
  get readOnly(){return this.live&&this.slot()?.commandsKnown===true&&this.slot()?.commandsOpen===false}
  get connected(){return ROBOTS.some(id=>this.slots[id].link)}
  slot(id=this.selected){return this.slots[id]??null}
@@ -338,7 +341,7 @@ export class Operations {
   if(existing){if(snapshot&&!existing.snapshot)existing.snapshot=snapshot;this.emit('import');return existing}
   if(this.events.filter(e=>e.source==='IMPORTED_BLACKBOX').length>=50)throw new Error('이번 세션에는 최대 50건까지 가져올 수 있습니다.');
   const evidence=describeEvidence(meta.event,meta);
-  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:meta.event,category:eventCategory(meta.event),robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:cleanText(meta.judgement?.zone,40)||'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,mode:cleanText(meta.mode,40)||null,auth:meta.judgement?evidence.auth:'필드 미제공',ppe:meta.judgement?evidence.ppe:'필드 미제공',evidence:evidence.rows,detail:'Git 블랙박스 형식의 저장 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
+  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:EVENT_TITLES[meta.event]??meta.event,category:eventCategory(meta.event),robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:cleanText(meta.judgement?.zone,40)||'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,mode:cleanText(meta.mode,40)||null,auth:meta.judgement?evidence.auth:'필드 미제공',ppe:meta.judgement?evidence.ppe:'필드 미제공',evidence:evidence.rows,detail:'저장된 사건 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
   this.events.unshift(event);this.log('블랙박스 파일 가져오기',event.id,'LOCAL_IMPORTED_REVIEW');this.emit('import');return event;
  }
  // ── 실시간 사건 피드 (WBS 4.6.4) ────────────────────────────────
@@ -358,7 +361,7 @@ export class Operations {
   const person=(payload.tracks||[]).length,evidence=describeEvidence(name,payload);
   const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):name==='path_blocked'&&payload.judgement?.source==='vlm'?'통로 막힘 경고':EVENT_TITLES[name];
   const photo=payload.entry!=null||payload.snapshot!=null;
-  const event={id,seq,slot:slotId,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',title:label?label+' · '+name:name,category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
+  const event={id,seq,slot:slotId,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',simulated:payload.simulated===true,title:(payload.simulated?'[예시] ':'')+(label||name),category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:(payload.simulated?'시뮬레이션 예시 사건 · 합성 증거입니다.':'실시간 수신된 사건입니다.')+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
   // 최근 단계 사건 — 경보 띠가 «왜 이 단계인가» 와 경고 문장을 보인다 (B1). 백로그는 순번이 낮은 것부터 온다.
   if(name==='escalation_changed'&&(!slot.lastEscalation||seq>slot.lastEscalation.seq))slot.lastEscalation={seq,escalation:event.escalation,reason:cleanText(payload.reason,80),warning:cleanText(payload.warning,300),ts_ms:payload.ts_ms};

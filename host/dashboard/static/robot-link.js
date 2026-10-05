@@ -86,7 +86,10 @@ export class RobotLink {
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     try {
       const response = await this.fetch(this.baseUrl + path, { signal: controller?.signal });
-      if (!response.ok) throw new Error('조회가 거절되었습니다. (HTTP ' + response.status + ')');
+      if (!response.ok) {
+        const detail=await response.json().catch(()=>null);
+        throw new Error((typeof detail?.error==='string'?detail.error:typeof detail?.detail==='string'?detail.detail:'조회가 거절되었습니다.')+' (HTTP '+response.status+')');
+      }
       return await response.json();
     } finally {
       if (timer) clearTimeout(timer);

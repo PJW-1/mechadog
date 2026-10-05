@@ -2254,6 +2254,8 @@ def dashboard_wiring(
     )
     return {
         "commands": commands,
+        "simulated": False,
+        "scene3d_url": config.get("dashboard", {}).get("scene3d_url", ""),
         "camera": _latest_jpeg(vision) if vision is not None else None,
         # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다.
         "vision": vision.latest if vision is not None else None,
