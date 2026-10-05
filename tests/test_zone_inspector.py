@@ -74,6 +74,7 @@ def _build(cfg: dict, *, zone: str = "A", **change) -> SimpleNamespace:
     vlm = SlotVlm()
     fall = SimpleNamespace(waiting=False, suspected=[])
     fall.suspect = lambda source, _now_ms, **_kw: fall.suspected.append(source)
+    path = SimpleNamespace(waiting=False)
     records: list[str] = []
     payloads: list[dict] = []
 
@@ -93,12 +94,14 @@ def _build(cfg: dict, *, zone: str = "A", **change) -> SimpleNamespace:
         anchors=(Zone(zone, 0.0, 0.0, 0.0),),
         apply=apply,
         record=record,
+        path_waiting=lambda: path.waiting,
     )
     return SimpleNamespace(
         inspector=inspector,
         behavior=behavior,
         vlm=vlm,
         fall=fall,
+        path=path,
         records=records,
         payloads=payloads,
         pose_timeout_ms=int(config["localization"]["pose_timeout_ms"]),
@@ -146,6 +149,17 @@ def test_the_zone_reading_waits_for_the_fall_reading(parts) -> None:
     parts.inspector.inspect(_frame(), T0 + 200)
     assert parts.vlm.submitted == [T0 + 200]
     assert parts.inspector.waiting
+
+
+def test_the_zone_reading_waits_for_the_path_cause_reading(parts) -> None:
+    """LiDAR 막힘 원인 판독(ADR-45)이 걸려 있어도 걸지 않는다 — 결과 슬롯이 섞인다."""
+    _arrive(parts)
+    parts.path.waiting = True
+    parts.inspector.inspect(_frame(), T0 + 100)
+    assert parts.vlm.submitted == []
+    parts.path.waiting = False
+    parts.inspector.inspect(_frame(), T0 + 200)
+    assert parts.vlm.submitted == [T0 + 200]
 
 
 def test_a_dead_worker_leaves_nothing_behind(parts) -> None:
