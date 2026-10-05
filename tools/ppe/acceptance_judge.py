@@ -38,6 +38,8 @@ from tools.ppe.ppe_live_check import (  # noqa: E402
 )
 
 CRITERIA_KEYS = (
+    "window_ms",
+    "hits_required",
     "max_ok_segment_alarms",
     "min_violation_directions",
     "min_decidable_rate",
@@ -63,7 +65,33 @@ def load_criteria(path: Path, scenario: str) -> dict[str, Any]:
     missing = [key for key in CRITERIA_KEYS if key not in criteria]
     if missing:
         raise ValueError(f"합격 기준에 빠진 값 {missing}: 시나리오 {scenario} ({path})")
+    for key in CRITERIA_KEYS:
+        if key == "clipped_segment":
+            continue
+        value = criteria[key]
+        if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+            raise ValueError(f"합격 기준 {key} 는 0 이상의 숫자여야 함: {value!r} ({path})")
+    spec = {s.get("key"): s for s in data["scenarios"][scenario].get("segments", [])}.get(
+        criteria["clipped_segment"]
+    )
+    if spec is None or spec.get("expected") != STATE_UNKNOWN:
+        raise ValueError(
+            f"clipped_segment 는 기대가 {STATE_UNKNOWN} 인 구간이어야 함: "
+            f"{criteria['clipped_segment']!r} ({path})"
+        )
     return criteria
+
+
+def operating_window_problems(session: dict[str, Any], criteria: dict[str, Any]) -> list[str]:
+    """세션이 고정 기준의 운용 창으로 잰 것인지 본다. 덮어쓴 창은 C1·C2 를 느슨하게 만든다."""
+    settings = session.get("settings", {})
+    problems = []
+    if settings.get("overridden"):
+        problems.append("--window-ms/--hits 로 덮어쓴 세션이다")
+    for key in ("window_ms", "hits_required"):
+        if settings.get(key) != criteria[key]:
+            problems.append(f"{key} {settings.get(key)} != 기준 {criteria[key]}")
+    return problems
 
 
 def judge_session(
@@ -77,10 +105,13 @@ def judge_session(
     episodes = evaluate_session("session", session, timeout_s=orientation_step_s)
     alarms: dict[str, int] = {}
     directions: dict[str, set[str | None]] = {}
+    carried: dict[str, set[str | None]] = {}
     for ep in episodes:
         alarms[ep.segment] = alarms.get(ep.segment, 0) + ep.alarms
         if ep.final == STATE_VIOLATION:
             directions.setdefault(ep.segment, set()).add(ep.orientation)
+            if ep.carried:
+                carried.setdefault(ep.segment, set()).add(ep.orientation)
 
     ok_keys = [k for k, e in expected.items() if e == STATE_OK]
     bad_keys = [k for k, e in expected.items() if e == STATE_VIOLATION]
@@ -109,7 +140,10 @@ def judge_session(
         "C2",
         "위반 구간 방향별 확정",
         not short,
-        ", ".join(f"{k} {n}방향" for k, n in counts.items())
+        ", ".join(
+            f"{k} {n}방향" + (f"(이월 {len(carried[k])})" if k in carried else "")
+            for k, n in counts.items()
+        )
         + (f" — 하한 {need}방향 미달: {', '.join(short)}" if short else f" (하한 {need}방향)"),
     )
 
@@ -168,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     specs, step_s, _ = load_acceptance_plan(args.plan, scenario)
     criteria = load_criteria(args.plan, scenario)
     results = judge_session(session, specs, criteria, step_s)
+    problems = operating_window_problems(session, criteria)
 
     # 한국어 Windows 콘솔(cp949)에서 죽지 않게 한다 (ppe_live_check 와 같은 가드).
     for stream in (sys.stdout, sys.stderr):
@@ -175,7 +210,9 @@ def main(argv: list[str] | None = None) -> int:
         if reconfigure is not None:
             reconfigure(errors="replace")
     print(render(session, results, str(args.session)))
-    return 0 if all(c.passed for c in results) else 1
+    for problem in problems:
+        print(f"⚠️ 운용 창이 아니다 — 합격 판정에 쓰지 않는다: {problem}")
+    return 0 if all(c.passed for c in results) and not problems else 1
 
 
 if __name__ == "__main__":

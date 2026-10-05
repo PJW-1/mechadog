@@ -5,6 +5,8 @@
     "xiao": {
       "description": "실제 기체의 15cm 장착 XIAO 카메라로 수행하는 FR-9 검수",
       "criteria": {
+        "window_ms": 1500,
+        "hits_required": 3,
         "max_ok_segment_alarms": 1,
         "min_violation_directions": 3,
         "min_decidable_rate": 0.6,

@@ -31,16 +31,13 @@ SPECS, STEP_S, _ = load_acceptance_plan(DEFAULT_ACCEPTANCE_PLAN, "xiao")
 def build_session(
     *,
     alarms: dict[tuple[str, str], int] | None = None,
-    unknown_in: dict[str, int] | None = None,
     skip: tuple[str, ...] = (),
 ) -> dict:
     """11구간 × 4방향 세션. 기본은 위반 구간마다 전 방향 확정, 적합 구간은 무경보.
 
     alarms: (구간, 방향) → 그 칸의 확정 에지 수. 주면 기본값을 덮어쓴다.
-    unknown_in: 구간 → 확인불가 판정 수(나머지 10건은 기대 상태).
     """
     alarms = alarms or {}
-    unknown_in = unknown_in or {}
     events: list[dict] = []
     segments: dict[str, dict] = {}
     t = 0.0
@@ -48,16 +45,13 @@ def build_session(
         key, expected = spec["key"], spec["expected"]
         if key in skip:
             continue
-        unknown = unknown_in.get(key, 0)
-        verdicts = {STATE_VIOLATION: 0, STATE_OK: 0, STATE_UNKNOWN: unknown}
+        verdicts = {STATE_VIOLATION: 0, STATE_OK: 0, STATE_UNKNOWN: 0}
         for ori in ORIENTATIONS:
             default = 1 if expected == STATE_VIOLATION else 0
             count = alarms.get((key, ori), default)
             for i in range(10):
                 t = round(t + 0.1, 1)
-                state = STATE_UNKNOWN if unknown and i == 0 and ori == "정면" else expected
-                if expected == STATE_UNKNOWN:
-                    state = STATE_UNKNOWN
+                state = expected
                 verdicts[state] += 1
                 events.append(
                     {
@@ -99,6 +93,8 @@ def test_all_clean_passes_every_criterion():
 def test_thresholds_come_from_plan_file():
     criteria = aj.load_criteria(DEFAULT_ACCEPTANCE_PLAN, "xiao")
     assert criteria == {
+        "window_ms": 1500,
+        "hits_required": 3,
         "max_ok_segment_alarms": 1,
         "min_violation_directions": 3,
         "min_decidable_rate": 0.6,
@@ -251,3 +247,69 @@ def test_c1_and_c4_fail_when_their_segments_were_never_observed():
     assert "pitch-up" in result["C1"].detail
     assert not result["C4"].passed
     assert "관측 없음" in result["C4"].detail
+
+
+def test_c2_confirmation_after_timeout_does_not_count():
+    """방향 15초가 지난 뒤에야 나온 확정은 그 방향의 확정이 아니다."""
+    alarms = {("standing-nohelmet", ori): 1 for ori in ORIENTATIONS}
+    session = build_session(alarms=alarms)
+    for e in session["events"]:
+        if e["segment"] == "standing-nohelmet" and e["orientation"] in ("후면", "좌측"):
+            e["confirmed"] = False
+            e["hits"] = 0
+    # 후면의 확정을 제한시간 뒤로 민다.
+    late = [
+        e
+        for e in session["events"]
+        if e["segment"] == "standing-nohelmet" and e["orientation"] == "후면"
+    ][-1]
+    late["t"] = late["t"] + STEP_S + 1
+    late["confirmed"] = True  # 창은 바로 풀린 것으로 둔다(hits 0) — 다음 방향으로 이월되지 않게
+    result = verdicts_of(session)["C2"]
+    assert not result.passed
+    assert "standing-nohelmet 2방향" in result.detail
+
+
+def test_c2_detail_marks_carried_directions():
+    session = build_session(alarms={("crouching-none", ori): 0 for ori in ORIENTATIONS})
+    first = next(e for e in session["events"] if e["segment"] == "crouching-none")
+    first["confirmed"] = True
+    for e in session["events"]:
+        if e["segment"] == "crouching-none":
+            e["hits"] = 3
+    assert "이월" in verdicts_of(session)["C2"].detail
+
+
+@pytest.mark.parametrize(
+    ("settings", "word"),
+    [
+        ({"window_ms": 3000, "hits_required": 3}, "window_ms"),
+        ({"window_ms": 1500, "hits_required": 2}, "hits_required"),
+        ({"window_ms": 1500, "hits_required": 3, "overridden": True}, "덮어"),
+    ],
+)
+def test_session_with_non_operational_window_is_rejected(settings, word, tmp_path, capsys):
+    """덮어쓴 창으로 잰 세션은 기준을 느슨하게 만든다 — 합격 판정에 쓰지 않는다."""
+    session = build_session()
+    session["settings"].update(settings)
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(session, ensure_ascii=False), encoding="utf-8")
+    assert aj.main([str(path)]) == 1
+    assert word in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("patch", "word"),
+    [
+        ({"min_decidable_rate": "0.6"}, "min_decidable_rate"),
+        ({"clipped_segment": "no-such-segment"}, "clipped_segment"),
+        ({"clipped_segment": "standing-all"}, "clipped_segment"),
+    ],
+)
+def test_malformed_criteria_values_are_rejected(patch, word, tmp_path):
+    plan = json.loads(DEFAULT_ACCEPTANCE_PLAN.read_text(encoding="utf-8"))
+    plan["scenarios"]["xiao"]["criteria"].update(patch)
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError, match=word):
+        aj.load_criteria(path, "xiao")
