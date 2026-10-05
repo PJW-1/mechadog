@@ -25,11 +25,25 @@ from host.common.console import survive_encoding_errors  # noqa: E402
 from tools.vlm_lora.train import CONFIG_NAME  # noqa: E402
 
 RECORD_NAME = "lora_merge.json"
+_REQUIRED = ("base_model", "dataset_sha256")
+
+
+class AdapterError(ValueError):
+    """어댑터의 `train_config.json` 을 병합 기록으로 읽지 못했다."""
 
 
 def merge_record(adapter_dir: Path) -> dict[str, Any]:
-    """병합 기록. 어댑터의 `train_config.json` 이 없으면 `FileNotFoundError`."""
-    config = json.loads((adapter_dir / CONFIG_NAME).read_text(encoding="utf-8"))
+    """병합 기록. `train_config.json` 이 없으면 `FileNotFoundError`, 깨졌으면 `AdapterError`."""
+    path = adapter_dir / CONFIG_NAME
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise AdapterError(f"{path}: {CONFIG_NAME} 가 JSON 이 아니다 ({error.msg})") from None
+    if not isinstance(config, dict):
+        raise AdapterError(f"{path}: {CONFIG_NAME} 가 JSON 객체가 아니다")
+    missing = [key for key in _REQUIRED if key not in config]
+    if missing:
+        raise AdapterError(f"{path}: {CONFIG_NAME} 에 {', '.join(missing)} 가 없다")
     return {
         "base_model": config["base_model"],
         "adapter": str(adapter_dir.resolve()),
@@ -69,6 +83,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         record = merge_record(args.adapter)
     except FileNotFoundError:
         print(f"{args.adapter}: {CONFIG_NAME} 가 없다 — train.py 의 출력이 아니다", file=sys.stderr)
+        return 2
+    except AdapterError as exc:
+        print(exc, file=sys.stderr)
         return 2
     merge(record["base_model"], args.adapter, args.out)
     (args.out / RECORD_NAME).write_text(

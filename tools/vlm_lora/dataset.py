@@ -88,6 +88,10 @@ class Entry:
     sha256: str = ""
 
 
+class ListError(ValueError):
+    """목록 JSONL 한 줄을 Entry 로 읽지 못했다 — 메시지에 `파일:줄` 이 붙는다."""
+
+
 class MissingQuestionError(LookupError):
     """질문키가 운용 질문 셋(`vlm_reader.QUESTIONS`)에 없다."""
 
@@ -173,6 +177,9 @@ def read_auto(root: Path) -> list[Entry]:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 problems.append(f"{where}: JSON 이 아니다")
+                continue
+            if not isinstance(record, dict):
+                problems.append(f"{where}: JSON 객체가 아니다")
                 continue
             label, file = record.get("label"), str(record.get("file", ""))
             if label not in AUTO_LABELS:
@@ -303,8 +310,23 @@ def write_jsonl(entries: Iterable[Entry], path: Path) -> None:
 
 
 def read_jsonl(path: Path) -> list[Entry]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [Entry(**json.loads(line)) for line in lines if line.strip()]
+    """목록을 읽는다. 깨진 줄은 `ListError(파일:줄: 까닭)` 로 멈춘다 — 손으로 고친 목록을 위한 것."""
+    entries = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        where = f"{path}:{number}"
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ListError(f"{where}: JSON 이 아니다 ({error.msg})") from None
+        if not isinstance(record, dict):
+            raise ListError(f"{where}: JSON 객체가 아니다")
+        try:
+            entries.append(Entry(**record))
+        except TypeError as error:
+            raise ListError(f"{where}: 목록 줄이 아니다 ({error})") from None
+    return entries
 
 
 def file_sha256(path: Path) -> str:

@@ -4,8 +4,8 @@
 
 - 기본 모델은 운용 설정(`vision.vlm.model_id`)이고 bf16 으로 올린다 (ADR-35 · 무양자화).
 - 프롬프트는 운용과 같은 문장(실행할 때 `vlm_reader.QUESTIONS` 에서 읽는다)과 같은 채팅
-  형식(`vlm_session.chat_messages`)이다. 정답은 `Yes`/`No` 한 마디이고 **손실은 그 토큰에만**
-  건다 — 프롬프트·이미지 토큰은 `-100` 이다.
+  형식(`vlm_session.chat_messages`)이다. 정답은 `Yes`/`No` 한 마디와 턴 끝 `<|im_end|>` 이고
+  **손실은 그 토큰에만** 건다 — 프롬프트·이미지 토큰은 `-100` 이다(프롬프트만 토큰화한 길이로 자른다).
 - 배치 1 + 누적(`--accum`), gradient checkpointing, 이미지 픽셀 상한(`--max-pixels`).
   상한은 프로세서 설정으로 어댑터 폴더에 함께 저장되고, 병합 폴더로 이어져 운용도 같은
   해상도로 읽는다.
@@ -32,6 +32,7 @@ from host.common.console import survive_encoding_errors  # noqa: E402
 from host.vision.vlm_session import chat_messages, to_image  # noqa: E402
 from tools.vlm_lora.dataset import (  # noqa: E402
     Entry,
+    ListError,
     MissingQuestionError,
     file_sha256,
     question_for,
@@ -41,6 +42,8 @@ from tools.vlm_lora.dataset import (  # noqa: E402
 #: 학습 정답 글. `parse_answer` 가 그대로 참/거짓으로 읽는다.
 ANSWER_TEXT = {"yes": "Yes", "no": "No"}
 IGNORE = -100
+#: Qwen2-VL 채팅 템플릿이 assistant 턴을 닫는 토큰 — 이것까지 가르쳐야 답 뒤에서 멈춘다.
+TURN_END = "<|im_end|>"
 CONFIG_NAME = "train_config.json"
 _ATTN = ("q_proj", "k_proj", "v_proj", "o_proj")
 _MLP = ("gate_proj", "up_proj", "down_proj")
@@ -52,12 +55,21 @@ def target_modules(*, mlp: bool) -> str:
     return rf"^(?!.*\bvisual\b).*\.({'|'.join(names)})$"
 
 
-def answer_labels(input_ids: Sequence[int], answer_ids: Sequence[int]) -> list[int]:
-    """정답 토큰만 남긴 라벨. 끝이 정답 토큰과 다르면 `ValueError` — 마스크가 어긋난 것이다."""
-    n = len(answer_ids)
-    if n == 0 or len(input_ids) <= n or list(input_ids[-n:]) != list(answer_ids):
-        raise ValueError("입력 끝이 정답 토큰과 다르다 — 토큰 경계가 어긋났다")
-    return [IGNORE] * (len(input_ids) - n) + list(answer_ids)
+def answer_labels(
+    input_ids: Sequence[int], prompt_len: int, turn_end_ids: Sequence[int]
+) -> list[int]:
+    """프롬프트 토큰(`prompt_len` 개)을 가린 라벨. 뒤가 비었거나 턴 끝 토큰으로 안 끝나면 `ValueError`.
+
+    정답 토큰을 끝에서 맞춰 찾지 않는다 — 프롬프트 끝과 답 첫 글자가 한 토큰으로 묶이면
+    맞춤이 모든 예제에서 깨진다. 프롬프트만 토큰화한 길이로 자른다.
+    """
+    ids = list(input_ids)
+    if len(ids) <= prompt_len:
+        raise ValueError("프롬프트 뒤에 정답 토큰이 없다 — 토큰 경계가 어긋났다")
+    n = len(turn_end_ids)
+    if n == 0 or ids[-n:] != list(turn_end_ids):
+        raise ValueError(f"입력이 턴 끝 토큰 {TURN_END} 으로 끝나지 않는다")
+    return [IGNORE] * prompt_len + ids[prompt_len:]
 
 
 def build_example(processor: Any, entry: Entry, *, image: Any) -> tuple[Any, list[int]]:
@@ -69,11 +81,13 @@ def build_example(processor: Any, entry: Entry, *, image: Any) -> tuple[Any, lis
         tokenize=False,
         add_generation_prompt=True,
     )
-    answer = ANSWER_TEXT[entry.answer]
+    answer = ANSWER_TEXT[entry.answer] + TURN_END
+    # 같은 이미지로 프롬프트만 토큰화해 길이를 잰다 — 이미지 패드 토큰 수가 같아야 한다.
+    prompt_ids = processor(text=[prompt], images=[image], return_tensors="pt")["input_ids"][0]
     inputs = processor(text=[prompt + answer], images=[image], return_tensors="pt")
     ids = [int(token) for token in inputs["input_ids"][0]]
-    answer_ids = processor.tokenizer(answer, add_special_tokens=False)["input_ids"]
-    return inputs, answer_labels(ids, answer_ids)
+    turn_end_ids = processor.tokenizer(TURN_END, add_special_tokens=False)["input_ids"]
+    return inputs, answer_labels(ids, len(prompt_ids), turn_end_ids)
 
 
 def training_entries(entries: Sequence[Entry], keys: Sequence[str] | None) -> list[Entry]:
@@ -209,7 +223,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.out.exists() and any(args.out.iterdir()):
         print(f"{args.out}: 비어 있지 않다 — 어댑터를 덮지 않는다", file=sys.stderr)
         return 2
-    entries = training_entries(read_jsonl(args.dataset), args.keys)
+    try:
+        entries = training_entries(read_jsonl(args.dataset), args.keys)
+    except ListError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     try:  # GPU 를 만지기 전에 질문 문장부터 본다
         for key in dict.fromkeys([*(args.keys or ()), *(entry.key for entry in entries)]):
             question_for(key)

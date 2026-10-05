@@ -257,6 +257,47 @@ def test_auto_manifest_names_every_problem(tmp_path: Path) -> None:
         assert expected in problems
 
 
+def test_auto_manifest_line_that_is_not_an_object_is_a_problem(tmp_path: Path) -> None:
+    root = tmp_path / "auto"
+    day = _auto_day(root, "20261004", [{"file": "clear/ok.jpg", "label": "clear"}])
+    with (day / "manifest.jsonl").open("a", encoding="utf-8") as out:
+        out.write("[1]\n")
+        out.write('"clear/ok.jpg"\n')
+    with pytest.raises(bench.LayoutError) as caught:
+        ds.read_auto(root)
+    problems = "\n".join(caught.value.problems)
+    assert "manifest.jsonl:2: JSON 객체가 아니다" in problems
+    assert "manifest.jsonl:3: JSON 객체가 아니다" in problems
+
+
+def test_a_broken_list_line_stops_with_its_line_number(tmp_path: Path) -> None:
+    path = tmp_path / "list.jsonl"
+    ds.write_jsonl([_entry(split="train")], path)
+    with path.open("a", encoding="utf-8") as out:
+        out.write(json.dumps({"image": "x.jpg", "key": "k"}) + "\n")
+    with pytest.raises(ds.ListError, match=r"list.jsonl:2: .*목록 줄이 아니다"):
+        ds.read_jsonl(path)
+    for bad in (
+        "[1]",
+        "{깨짐",
+        json.dumps({**json.loads(path.read_text("utf-8").splitlines()[0]), "extra": 1}),
+    ):
+        path.write_text(bad + "\n", encoding="utf-8")
+        with pytest.raises(ds.ListError, match=r"list.jsonl:1: "):
+            ds.read_jsonl(path)
+
+
+def test_train_and_evaluate_report_a_broken_list_instead_of_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "list.jsonl"
+    path.write_text('{"image": "x.jpg"}\n', encoding="utf-8")
+    monkeypatch.setattr(tr, "train", lambda *_a: pytest.fail("GPU 로 갔다"))
+    assert tr.main([str(path), "--out", str(tmp_path / "adapter")]) == 2
+    assert ev.main([str(path), "--base-only"]) == 2
+    assert capsys.readouterr().err.count("list.jsonl:1:") == 2
+
+
 def test_auto_root_must_exist(tmp_path: Path) -> None:
     with pytest.raises(bench.LayoutError):
         ds.read_auto(tmp_path / "none")
@@ -456,17 +497,40 @@ def test_training_prompt_uses_the_runtime_chat_format() -> None:
     ]
 
 
+IM_END = 151645
+
+
+def _fake_ids(text: str, merge: bool = False) -> list[int]:
+    """글자 하나 = 토큰 하나, `<|im_end|>` 는 특수 토큰 하나. `merge` 면 `>Y` 를 한 토큰으로 묶는다."""
+    ids: list[int] = []
+    for index, part in enumerate(text.split(tr.TURN_END)):
+        if index:
+            ids.append(IM_END)
+        ids += [ord(c) for c in part]
+    if merge:
+        out: list[int] = []
+        for token in ids:
+            if out and out[-1] == ord(">") and token == ord("Y"):
+                out[-1] = 9999
+            else:
+                out.append(token)
+        ids = out
+    return ids
+
+
 class FakeTokenizer:
-    """글자 하나 = 토큰 하나."""
+    def __init__(self, merge: bool = False) -> None:
+        self.merge = merge
 
     def __call__(self, text: str, add_special_tokens: bool = True) -> dict:
         assert add_special_tokens is False
-        return {"input_ids": [ord(c) for c in text]}
+        return {"input_ids": _fake_ids(text, self.merge)}
 
 
 class FakeProcessor:
-    def __init__(self) -> None:
-        self.tokenizer = FakeTokenizer()
+    def __init__(self, merge: bool = False) -> None:
+        self.merge = merge
+        self.tokenizer = FakeTokenizer(merge)
         self.templated: list = []
 
     def apply_chat_template(self, messages, tokenize: bool, add_generation_prompt: bool) -> str:
@@ -478,28 +542,34 @@ class FakeProcessor:
     def __call__(self, text, images, return_tensors):
         assert return_tensors == "pt"
         assert len(images) == 1
-        return {"input_ids": [[ord(c) for c in text[0]]], "pixel_values": "px"}
+        return {"input_ids": [_fake_ids(text[0], self.merge)], "pixel_values": "px"}
 
 
-def test_loss_is_only_on_the_answer_tokens() -> None:
-    assert tr.answer_labels([1, 2, 3, 7, 8], [7, 8]) == [-100, -100, -100, 7, 8]
+def test_loss_is_only_after_the_prompt_tokens() -> None:
+    assert tr.answer_labels([1, 2, 3, 7, IM_END], 3, [IM_END]) == [-100, -100, -100, 7, IM_END]
     with pytest.raises(ValueError, match="정답 토큰"):
-        tr.answer_labels([1, 2, 3], [7])
-    with pytest.raises(ValueError, match="정답 토큰"):
-        tr.answer_labels([7], [7])  # 프롬프트 없이 정답만 있으면 뜻이 없다
+        tr.answer_labels([1, 2, 3], 3, [IM_END])  # 프롬프트 뒤에 아무것도 없다
+    with pytest.raises(ValueError, match="턴 끝"):
+        tr.answer_labels([1, 2, 3, 7], 3, [IM_END])
 
 
-def test_build_example_appends_yes_or_no_after_the_runtime_prompt() -> None:
+def test_build_example_teaches_the_answer_and_the_turn_end() -> None:
+    """Qwen2-VL 템플릿은 assistant 턴을 `<|im_end|>` 로 닫는다 — 그 토큰까지 가르쳐야 멈춘다."""
     processor = FakeProcessor()
-    entry = _entry(answer="yes")
-    inputs, labels = tr.build_example(processor, entry, image="IMG")
-    text = "".join(chr(t) for t in inputs["input_ids"][0])
-    assert text == f"<U>{FALLEN_PROMPT}<A>Yes"
+    inputs, labels = tr.build_example(processor, _entry(answer="yes"), image="IMG")
+    assert inputs["input_ids"][0][-1] == IM_END
+    prompt_len = len(_fake_ids(f"<U>{FALLEN_PROMPT}<A>"))
+    assert labels[:prompt_len] == [-100] * prompt_len
+    assert labels[prompt_len:] == [ord("Y"), ord("e"), ord("s"), IM_END]
     assert processor.templated[0] == vlm_session.chat_messages(FALLEN_PROMPT)
-    assert labels[-3:] == [ord("Y"), ord("e"), ord("s")]
-    assert set(labels[:-3]) == {-100}
     _, labels = tr.build_example(processor, _entry(answer="no"), image="IMG")
-    assert [chr(t) for t in labels if t != -100] == ["N", "o"]
+    assert [t for t in labels if t != -100] == [ord("N"), ord("o"), IM_END]
+
+
+def test_build_example_survives_a_token_merged_across_the_boundary() -> None:
+    """⚠️ 프롬프트 끝과 답 첫 글자가 한 토큰으로 묶여도 멈추지 않는다 — 프롬프트 길이로 자른다."""
+    _, labels = tr.build_example(FakeProcessor(merge=True), _entry(answer="yes"), image="IMG")
+    assert [t for t in labels if t != -100] == [ord("e"), ord("s"), IM_END]
 
 
 def test_build_example_refuses_an_unknown_answer() -> None:
@@ -594,6 +664,20 @@ def test_merge_record_carries_train_config_and_dataset_hash(tmp_path: Path) -> N
     assert record["dtype"] == "bfloat16"
     with pytest.raises(FileNotFoundError):
         mg.merge_record(tmp_path / "none")
+    for broken in ("{}", '{"base_model": "b"}', "[1]", "{깨짐"):
+        (adapter / tr.CONFIG_NAME).write_text(broken, encoding="utf-8")
+        with pytest.raises(mg.AdapterError, match=tr.CONFIG_NAME):
+            mg.merge_record(adapter)
+
+
+def test_merge_cli_reports_a_broken_train_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / tr.CONFIG_NAME).write_text('{"base_model": "b"}', encoding="utf-8")
+    assert mg.main([str(adapter), "--out", str(tmp_path / "merged")]) == 2
+    assert "dataset_sha256" in capsys.readouterr().err
 
 
 def test_merge_cli_writes_the_record_next_to_the_weights(
@@ -695,7 +779,21 @@ def test_evaluate_uses_the_runtime_reader_and_parser(tmp_path: Path) -> None:
 
     table = ev.compare(summaries)
     assert "| `blocked_by_fallen` | base | 2/2 | 100.0% | 100.0% | 0/0 |" in table
-    assert "| `blocked_by_fallen` | merged | 2/2 | 100.0% | 0.0% | 0/1 |" in table
+    assert "| `blocked_by_fallen` | merged | 2/2 | 100.0% | 0.0% | 0/1 | 25.0% |" in table
+    assert "| `blocked_by_fallen` | base | 2/2 | 100.0% | 100.0% | 0/0 | 0.0% |" in table
+    # 퇴행 관문 질문이 보류 세트에 없으면 조용히 지나가지 않는다 (ADR-45 결정 6).
+    for key in ev.REGRESSION_KEYS:
+        assert f"⚠️ 퇴행 관문 `{key}`" in table
+
+
+def test_regression_warning_disappears_when_the_gate_questions_are_measured() -> None:
+    entry = {
+        "frames": {"tp": 1, "fn": 0, "fp": 0, "tn": 1, "recall": 1.0, "false_alarm": 0.0},
+        "unreadable": {"yes": 0, "no": 0},
+        "latency_ms": {"p50": 1, "p95": 1},
+    }
+    summary = {"questions": dict.fromkeys(ev.REGRESSION_KEYS, entry)}
+    assert "⚠️" not in ev.compare({"m": summary})
 
 
 def test_evaluate_refuses_without_a_session_factory(tmp_path: Path) -> None:
@@ -713,6 +811,7 @@ def test_evaluate_cli(
     ds.write_jsonl(_holdout(tmp_path), path)
     merged = tmp_path / "merged"
     merged.mkdir()
+    (merged / mg.RECORD_NAME).write_text("{}", encoding="utf-8")
 
     def build(config):
         model = config["vision"]["vlm"]["model_id"]
@@ -728,6 +827,12 @@ def test_evaluate_cli(
     assert saved["dataset_sha256"] == ds.file_sha256(path)
 
     assert ev.main([str(path), "--merged", str(tmp_path / "none")]) == 2
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    assert ev.main([str(path), "--merged", str(adapter)]) == 2
+    assert "lora_merge.json 이 없다" in capsys.readouterr().err
+    assert ev.main([str(path), "--base-only", "--keys", "blocked_by_falen"]) == 2
+    assert "질문 키 blocked_by_falen 이 vlm_reader.QUESTIONS 에 없다" in capsys.readouterr().err
     assert ev.main([str(path), "--merged", str(merged), "--keys", "person_down"]) == 2
     assert "보류 사진이 없다" in capsys.readouterr().err
 

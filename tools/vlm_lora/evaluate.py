@@ -9,8 +9,10 @@
   `build_session_factory` 로 세션을 만들고, `vlm_bench.measure`(운용의 `VlmReader`·질문
   문장·`parse_answer`)로 사진마다 그 질문 하나를 묻는다. 병합 폴더가 이 길로 읽히면 운용
   런타임도 같은 설정으로 읽는다.
-- 판독 불가는 «예 아님» 으로 채점하고 따로 센다(`vlm_bench` 와 같다). 모델은 한 번에 하나만
-  올리고 다 쓰면 내린다.
+- 판독 불가는 «예 아님» 으로 채점하고 따로 센다(`vlm_bench` 와 같다). 표에 판독 불가율도
+  낸다(ADR-45 결정 6: 5% 이하). 모델은 한 번에 하나만 올리고 다 쓰면 내린다.
+- 퇴행 관문 질문(`person_down`·`hazard_item`)이 보류 세트에 없으면 표 밑에 ⚠️ 를 단다 —
+  없는 질문은 퇴행했는지 알 수 없다.
 
 ⚠️ 가중치를 **내려받지 않는다** (`HF_HUB_OFFLINE=1`). 기본 모델이 캐시에 없으면 적재에서 멈춘다.
 """
@@ -35,11 +37,16 @@ from host.vision.vlm_session import build_session_factory, missing_packages  # n
 from tools.probe.vlm_bench import Sample, _num, _rate, measure, summarize  # noqa: E402
 from tools.vlm_lora.dataset import (  # noqa: E402
     Entry,
+    ListError,
     MissingQuestionError,
     file_sha256,
     question_for,
     read_jsonl,
 )
+from tools.vlm_lora.merge import RECORD_NAME  # noqa: E402
+
+#: 미세조정으로 나빠지면 안 되는 운용 질문 (ADR-45 결정 6 의 퇴행 관문).
+REGRESSION_KEYS = ("person_down", "hazard_item")
 
 FactoryBuilder = Callable[[Mapping[str, Any]], Callable[[], Any] | None]
 
@@ -83,10 +90,11 @@ def evaluate_model(
 
 
 def compare(summaries: Mapping[str, dict[str, Any]]) -> str:
-    """질문별로 모델들을 한 표에 나란히 둔다."""
+    """질문별로 모델들을 한 표에 나란히 둔다. 재지 않은 퇴행 관문 질문은 밑에 ⚠️ 로 적는다."""
     lines = [
-        "| 질문 | 모델 | 예/아니오 | 적중률 | 오경보율 | 판독 불가 (예/아니오) | p50 ms | p95 ms |",
-        "| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| 질문 | 모델 | 예/아니오 | 적중률 | 오경보율 | 판독 불가 (예/아니오) "
+        "| 판독 불가율 | p50 ms | p95 ms |",
+        "| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     keys = dict.fromkeys(key for s in summaries.values() for key in s["questions"])
     for key in keys:
@@ -95,11 +103,20 @@ def compare(summaries: Mapping[str, dict[str, Any]]) -> str:
             if entry is None:
                 continue
             f, u, t = entry["frames"], entry["unreadable"], entry["latency_ms"]
+            total = f["tp"] + f["fn"] + f["fp"] + f["tn"]
+            unreadable = (u["yes"] + u["no"]) / total if total else None
             lines.append(
                 f"| `{key}` | {model} | {f['tp'] + f['fn']}/{f['fp'] + f['tn']} "
                 f"| {_rate(f['recall'])} | {_rate(f['false_alarm'])} | {u['yes']}/{u['no']} "
-                f"| {_num(t['p50'])} | {_num(t['p95'])} |"
+                f"| {_rate(unreadable)} | {_num(t['p50'])} | {_num(t['p95'])} |"
             )
+    missing = [key for key in REGRESSION_KEYS if key not in keys]
+    if missing:
+        lines.append("")
+        lines += [
+            f"⚠️ 퇴행 관문 `{key}` 를 재지 않았다 — 보류 세트에 없거나 `--keys` 가 뺐다"
+            for key in missing
+        ]
     return "\n".join(lines)
 
 
@@ -123,8 +140,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.merged.is_dir():
             print(f"{args.merged}: 병합 폴더가 없다", file=sys.stderr)
             return 2
+        if not (args.merged / RECORD_NAME).is_file():
+            print(
+                f"{args.merged}: {RECORD_NAME} 이 없다 — merge.py 의 출력이 아니다"
+                " (어댑터 폴더라면 merge.py 로 먼저 병합한다)",
+                file=sys.stderr,
+            )
+            return 2
         models.append(str(args.merged.resolve()))
-    samples = holdout_samples(read_jsonl(args.dataset), args.keys)
+    try:  # 모델을 올리기 전에 --keys 오타부터 본다
+        for key in args.keys or ():
+            question_for(key)
+    except MissingQuestionError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    try:
+        samples = holdout_samples(read_jsonl(args.dataset), args.keys)
+    except ListError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     if not samples:
         print("보류 사진이 없다 — split=holdout 이고 정답이 있는 줄이 없다", file=sys.stderr)
         return 2
