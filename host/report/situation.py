@@ -83,12 +83,20 @@ def _describe_path_blocked(judgement: dict[str, Any]) -> str:
 
     구역 안 VLM 확정(`source` 가 `vlm`, `zone` 있음)은 우회하지 않으니 «돌아서 갑니다» 없이
     사실만 말한다.
+
+    LiDAR 막힘의 원인 판독(`fallen` · ADR-45)은 스위치(`vlm_path_cause`)가 켜져 있고 답이
+    «예» 일 때만 «무너진 물건» 을 말한다 — 꺼져 있으면 답은 기록에만 남는다.
     """
     zone = judgement.get("zone")
     if judgement.get("source") == "vlm" and isinstance(zone, str) and zone.strip():
         return f"{zone} 구역에서 통로가 막혀 있습니다."
     target = judgement.get("target")
-    if isinstance(target, str) and target.strip():
+    has_target = isinstance(target, str) and bool(target.strip())
+    if judgement.get("vlm_path_cause") is True and judgement.get("fallen") is True:
+        if has_target:
+            return f"{target} 구역으로 가는 통로를 무너진 물건이 막고 있어 돌아서 갑니다."
+        return "무너진 물건이 통로를 막고 있어 돌아서 갑니다."
+    if has_target:
         return f"{target} 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
     return "통로에 장애물이 있어 돌아서 갑니다."
 

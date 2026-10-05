@@ -64,6 +64,7 @@ class ZoneInspector:
         anchors: tuple[Zone, ...],
         apply: Callable[[Event, int], bool],
         record: Callable[[str, Any, dict[str, Any]], None],
+        path_waiting: Callable[[], bool] = lambda: False,
     ) -> None:
         self._behavior = behavior
         self._mission = mission
@@ -72,6 +73,8 @@ class ZoneInspector:
         self._anchors = anchors
         self._apply = apply
         self._record = record
+        #: LiDAR 막힘 원인 판독(`PathCause` · ADR-45)이 워커를 쥐고 있나.
+        self._path_waiting = path_waiting
         zones = config["zones"]
         #: 화기 위험구역 — 여기서만 `hazard_item` 을 묻는다.
         self._hazard_ids = frozenset(str(label) for label in zones["hazard_ids"])
@@ -330,8 +333,9 @@ class ZoneInspector:
         """
         if self._asked:
             return
-        if self._fall.waiting:
-            return  # 쓰러짐 판독이 끝나면 다음 틱에 건다 — 워커는 하나다(`FallMonitor.ask`)
+        if self._fall.waiting or self._path_waiting():
+            # 쓰러짐·막힘 원인 판독이 끝나면 다음 틱에 건다 — 워커는 하나다(`FallMonitor.ask`)
+            return
         self._asked = True
         # ⚠️ **앞 판독을 줍기 전에는 걸지 않는다.** 걸면 슬롯에 남은 앞 결과가 새로 건
         # 구역의 것으로 읽힌다 — 스레드가 끝나는 순간과 거는 순간이 겹치면 그렇게 된다.

@@ -39,7 +39,8 @@ class Question:
 
 #: 고정 질문 셋 — 모두 «본 것» 을 묻는다. «위험한가» 류 열린 질문은 넣지 않는다 (ADR-35 결정 2).
 #: 질문 하나마다 판독 시간이 붙는다 — 그래서 부르는 쪽이 `keys` 로 필요한 것만 묻는다
-#: (`hazard_item` 은 화기 위험구역에서만 · `ZoneInspector`).
+#: (`hazard_item` 은 화기 위험구역에서만 · `ZoneInspector`, `blocked_by_fallen` 은 LiDAR 막힘
+#: 확정 때만 · `PathCause`).
 QUESTIONS: tuple[Question, ...] = (
     Question(
         key="person_down",
@@ -60,6 +61,14 @@ QUESTIONS: tuple[Question, ...] = (
         key="hazard_item",
         prompt="Is there a lighter or a power bank in this image? Answer with yes or no only.",
         intent="화기 위험구역의 위험물(라이터·보조배터리) — COCO 어휘 밖",
+    ),
+    Question(
+        key="blocked_by_fallen",
+        prompt=(
+            "Is the walkway blocked by an object that has fallen over or collapsed? "
+            "Answer with yes or no only."
+        ),
+        intent="통로를 막은 것이 무너진 물건인가 — LiDAR 막힘 확정 프레임에만 묻는다 (ADR-45)",
     ),
 )
 

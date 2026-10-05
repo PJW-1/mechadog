@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from host.report.situation import describe
 
 # ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `FallMonitor._confirm`) ──
@@ -179,6 +181,33 @@ def test_path_blocked_from_the_vlm_without_a_zone_falls_back() -> None:
 
 def test_path_blocked_none_judgement() -> None:
     assert describe("path_blocked", None) == "통로에 장애물이 있어 돌아서 갑니다."
+
+
+# LiDAR 막힘 확정 프레임의 VLM 원인 판독 (ADR-45). 스위치 `change_detect.vlm_path_cause` 는
+# 판정 근거의 `vlm_path_cause` 로 실려 온다 — 꺼져 있으면 답이 «예» 여도 문장이 그대로다.
+LIDAR_BLOCK = {"x": 1.2, "y": 0.4, "target": "D", "source": "lidar"}
+
+
+@pytest.mark.parametrize("fallen", [True, False, None])
+def test_path_blocked_with_the_switch_off_never_says_fallen(fallen: bool | None) -> None:
+    sentence = describe("path_blocked", {**LIDAR_BLOCK, "fallen": fallen, "vlm_path_cause": False})
+    assert sentence == "D 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
+    assert "무너진" not in sentence
+
+
+def test_path_blocked_with_the_switch_on_and_yes_says_fallen() -> None:
+    sentence = describe("path_blocked", {**LIDAR_BLOCK, "fallen": True, "vlm_path_cause": True})
+    assert sentence == "D 구역으로 가는 통로를 무너진 물건이 막고 있어 돌아서 갑니다."
+    no_target = describe(
+        "path_blocked", {**LIDAR_BLOCK, "target": None, "fallen": True, "vlm_path_cause": True}
+    )
+    assert no_target == "무너진 물건이 통로를 막고 있어 돌아서 갑니다."
+
+
+@pytest.mark.parametrize("fallen", [False, None])
+def test_path_blocked_with_the_switch_on_but_no_yes_stays_plain(fallen: bool | None) -> None:
+    sentence = describe("path_blocked", {**LIDAR_BLOCK, "fallen": fallen, "vlm_path_cause": True})
+    assert sentence == "D 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
 
 
 # ── 대상이 아닌 사건 — None ──────────────────────────────────────────────────

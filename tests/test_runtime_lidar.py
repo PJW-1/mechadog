@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import random
+import threading
+import time
 
 import pytest
 from conftest import FakeClock
@@ -17,6 +20,7 @@ from test_runtime import DEVICE, FakeSocket, FakeVision, config, telemetry, visi
 
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event
+from host.behavior.mission import Mission
 from host.behavior.patrol import PatrolController, Phase
 from host.behavior.zones import ZoneStore
 from host.common.config import ConfigError
@@ -27,6 +31,7 @@ from host.runtime import Runtime
 from host.slam.odometry import Odometry, OdomParams
 from host.telemetry.lidar_feed import LidarFeed
 from host.telemetry.ros2_relay import OdomSender
+from host.vision.vlm_reader import VlmReader
 
 __all__ = ["config"]  # 픽스처를 다시 쓴다 (`test_runtime.config`)
 
@@ -328,7 +333,19 @@ def test_path_blocked_is_recorded_once_without_escalating(
     event_type, result, judgement = records[0]
     assert event_type == "path_blocked"
     assert result is vision.result
-    assert judgement == {"x": 2.5, "y": 2.0, "target": target, "source": "lidar"}
+    assert judgement == {
+        "x": 2.5,
+        "y": 2.0,
+        "target": target,
+        "source": "lidar",
+        # 경비 모드는 원인을 묻지 않는다 — 기다리지 않고 바로 남긴다 (ADR-45).
+        "fallen": None,
+        "vlm_path_cause": False,
+        "vlm_reason": "mission",
+        "raw": None,
+        "latency_ms": None,
+        "wait_ms": 0,
+    }
     assert runtime.behavior.state == "PATROL"
     assert runtime.escalation.level == level
 
@@ -345,6 +362,119 @@ def test_path_blocked_without_a_frame_still_announces(
     runtime.tick(clock.ms)
     assert said == ["path_blocked 문장"]
     assert runtime.behavior.state == "PATROL"
+
+
+# ── 막힘 원인 VLM 판독 (ADR-45) ─────────────────────────────
+class _CauseSession:
+    """판독 세션 대역 — `gate` 가 열릴 때까지 답하지 않고, 받은 질문을 남긴다."""
+
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+        self.asked: list[str] = []
+        self.gate = threading.Event()
+        self.gate.set()
+
+    def ask(self, image: object, prompt: str) -> str:
+        assert image == b"test-jpeg", "막힘을 확정한 프레임이 그대로 넘어와야 한다"
+        assert self.gate.wait(timeout=5.0), "시험이 판독을 풀어 주지 않았다"
+        self.asked.append(prompt)
+        return self.answer
+
+    def close(self) -> None:
+        pass
+
+
+def _settle(runtime: Runtime, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while runtime.vlm.busy and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+
+def _factory_block(config: dict, clock: FakeClock, session: _CauseSession, *, switch: bool):
+    """공장 모드 순찰에서 새 장애물 하나를 확정시킨다. 기록·방송 대역을 붙인다."""
+    cfg = copy.deepcopy(config)
+    cfg["change_detect"]["vlm_path_cause"] = switch
+    reader = VlmReader(lambda: session, budget_ms=10_000)
+    reader.load()
+    vision = FakeVision()
+    vision.result = vision_result(1, clock.ms, present=False, hits=0, last_seen_ms=None)
+    said: list[str] = []
+    runtime, navigator = _patrolling(
+        cfg,
+        clock,
+        vision=vision,
+        vlm_reader=reader,
+        mission=Mission(cfg, mode="factory"),
+        announcer=said.append,
+    )
+    records: list[tuple] = []
+    real = runtime._record_scene
+    runtime._record_scene = lambda *args: (records.append(args), real(*args))[1]  # type: ignore[method-assign]
+    navigator._new_obstacles.append((2.5, 2.0))
+    runtime.tick(clock.ms)
+    return runtime, vision, records, said
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize(("answer", "fallen"), [("yes", True), ("no", False)])
+def test_path_blocked_carries_the_vlm_cause(
+    config: dict, clock: FakeClock, answer: str, fallen: bool
+) -> None:
+    session = _CauseSession(answer)
+    runtime, vision, records, said = _factory_block(config, clock, session, switch=False)
+    _settle(runtime)
+    runtime.tick(clock.advance(100))
+    runtime.tick(clock.advance(100))
+    assert session.asked == [
+        "Is the walkway blocked by an object that has fallen over or collapsed? "
+        "Answer with yes or no only."
+    ]
+    blocked = [r for r in records if r[0] == "path_blocked"]
+    assert len(blocked) == 1, "답을 받아도 기록은 한 번이다"
+    _kind, frame, judgement = blocked[0]
+    assert frame is not None and frame.jpeg == b"test-jpeg"
+    assert judgement["fallen"] is fallen
+    assert judgement["raw"] == answer
+    assert judgement["vlm_reason"] is None
+    assert judgement["vlm_path_cause"] is False
+    assert runtime.behavior.state == "PATROL"
+    # 스위치가 꺼져 있으면 답이 «예» 여도 방송은 «무너진» 을 말하지 않는다.
+    (line,) = said
+    assert "무너진" not in line
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_path_blocked_with_the_switch_on_says_fallen(config: dict, clock: FakeClock) -> None:
+    session = _CauseSession("yes")
+    runtime, _vision, records, said = _factory_block(config, clock, session, switch=True)
+    _settle(runtime)
+    runtime.tick(clock.advance(100))
+    assert len([r for r in records if r[0] == "path_blocked"]) == 1
+    (line,) = said
+    assert "무너진 물건" in line
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_slow_cause_reading_still_records_once(config: dict, clock: FakeClock) -> None:
+    """대기 상한(`vision.vlm.path_cause_wait_ms`)을 넘기면 `fallen: null` 로 한 번 남긴다."""
+    session = _CauseSession("yes")
+    session.gate.clear()
+    runtime, _vision, records, said = _factory_block(config, clock, session, switch=True)
+    wait_ms = int(config["vision"]["vlm"]["path_cause_wait_ms"])
+    runtime.tick(clock.advance(wait_ms - 100))
+    assert [r for r in records if r[0] == "path_blocked"] == []
+    runtime.tick(clock.advance(100))
+    blocked = [r for r in records if r[0] == "path_blocked"]
+    assert len(blocked) == 1
+    assert blocked[0][2]["fallen"] is None
+    assert blocked[0][2]["vlm_reason"] == "timeout"
+    session.gate.set()
+    _settle(runtime)
+    runtime.tick(clock.advance(100))
+    assert len([r for r in records if r[0] == "path_blocked"]) == 1, (
+        "늦은 답으로 다시 남기지 않는다"
+    )
+    assert all("무너진" not in line for line in said)
 
 
 def test_obstacle_outside_patrol_is_not_a_path_block(
