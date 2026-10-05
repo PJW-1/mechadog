@@ -253,7 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(config["examples"], ensure_ascii=False), flush=True)
     try:
         train(args, entries, config)
-    except ExampleError as exc:  # 첫 예제에서 난다 — 어댑터를 쓰기 전이다
+    except ExampleError as exc:  # 어느 예제에서 나든 어댑터는 루프가 끝난 뒤에야 쓴다
         print(exc, file=sys.stderr)
         return 2
     args.out.mkdir(parents=True, exist_ok=True)
