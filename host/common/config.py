@@ -194,6 +194,13 @@ def validate_base_config(config: dict[str, Any]) -> None:
         "path_cause_max_frame_age_ms",
     ):
         _require_positive(vlm, name)
+        if not isinstance(vlm[name], int) or isinstance(vlm[name], bool):
+            raise ConfigError(f"vision.vlm.{name} 는 양의 정수여야 함")
+    # 없으면 세션이 기본값 32 를 쓴다. 있으면 양의 정수여야 한다.
+    if "max_new_tokens" in vlm:
+        tokens = vlm["max_new_tokens"]
+        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+            raise ConfigError("vision.vlm.max_new_tokens 는 양의 정수여야 함")
     model_id = vlm.get("model_id")
     if not isinstance(model_id, str) or not model_id.strip():
         raise ConfigError("vision.vlm.model_id 는 비어 있지 않은 문자열이어야 함")
@@ -264,6 +271,17 @@ def validate_base_config(config: dict[str, Any]) -> None:
     }.items():
         for name in names:
             _require_positive(config[section], name)
+
+    # `change_detect` 스위치는 bool 이어야 한다 — `bool("false")` 는 True 라서 따옴표로 쓴
+    # 문자열이 스위치를 켠다. 방문 키는 소비자가 `int()` 로 내린다.
+    change_detect = config["change_detect"]
+    for name in ("vlm_path_cause", "vlm_hazards", "vlm_hazard_items"):
+        if not isinstance(change_detect.get(name), bool):
+            raise ConfigError(f"change_detect.{name} 는 true 또는 false 여야 함")
+    for name in ("visit_frames", "visit_max_ms"):
+        value = change_detect.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"change_detect.{name} 는 양의 정수여야 함")
 
     fsm = config["fsm"]
     deadzone = fsm.get("track_deadzone_px")

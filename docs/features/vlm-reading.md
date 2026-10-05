@@ -79,7 +79,7 @@ flowchart TD
 
 ## 실패·예외 시 동작
 
-- 의존성(`torch`·`transformers`·`torchvision`·`PIL`)이 없으면 세션 팩토리가 없다. 판독 요청은 늘 거절되고 나머지 기능은 그대로 돈다. `vision.vlm` 절이 없거나 필수 키(`model_id`·`budget_ms`·`patrol_interval_ms`·`path_cause_wait_ms`·`path_cause_max_frame_age_ms`)가 빠지거나 잘못되면 설정 검증이 `ConfigError` 로 기동을 거부한다.
+- 의존성(`torch`·`transformers`·`torchvision`·`PIL`)이 없으면 세션 팩토리가 없다. 판독 요청은 늘 거절되고 나머지 기능은 그대로 돈다. `vision.vlm` 절이 없거나 필수 키(`model_id`·`budget_ms`·`patrol_interval_ms`·`path_cause_wait_ms`·`path_cause_max_frame_age_ms`)가 빠지거나 잘못되면 설정 검증이 `ConfigError` 로 기동을 거부한다. 시간 키 넷은 양의 정수만 받는다(`0.5` 같은 소수는 거부). `max_new_tokens` 는 선택 키라 없으면 32 를 쓰고, 있으면 양의 정수여야 한다. `change_detect` 의 스위치(`vlm_path_cause`·`vlm_hazards`·`vlm_hazard_items`)가 빠지거나 `bool` 이 아니면, `visit_frames`·`visit_max_ms` 가 양의 정수가 아니면 마찬가지로 기동을 거부한다.
 - 모델 적재는 기동 때 별도 스레드에서 한 번 한다. 적재가 끝나기 전이나 적재가 실패한 뒤 닿은 구역은 `zone_reading_skipped`(`not_loaded`) 를 남기고 지나간다.
 - 앞 판독이 돌고 있으면 새 요청은 거절된다. 구역 판독은 방문당 한 번만 시도하므로, 거절된 방문은 기다릴 판독 없이 진행한다.
 - 구역 판독과 쓰러짐 판독은 서로 겹치지 않는다. 결과 슬롯이 하나라서, 한쪽이 돌고 있으면 다른 쪽은 걸지 않는다.
