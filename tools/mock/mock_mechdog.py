@@ -307,7 +307,7 @@ class MockRobot:
         return at_s is not None and self._elapsed_s(now_ms) >= at_s
 
     def battery_v(self, now_ms: int) -> float:
-        """방전 곡선. 물리 하한에서 멈춘다.
+        """방전 곡선. 물리 하한에서 멈추고, 충전은 만충(상한)에서 멈춘다.
 
         6.0V 아래로 내려가면 호스트가 규칙 ④로 **레코드 자체를 폐기**하므로,
         정작 보여주려던 셧다운 동작이 화면에 나타나지 않는다. 하한에서 붙든다.
@@ -316,7 +316,7 @@ class MockRobot:
         if start is None:
             start = BATT_MAX_V  # 만충
         drained = start - self._faults.battery_drain_v_per_min * (self._elapsed_s(now_ms) / 60.0)
-        return round(max(BATT_MIN_V, drained), 2)
+        return round(min(BATT_MAX_V, max(BATT_MIN_V, drained)), 2)
 
     def distance_cm(self, now_ms: int) -> int:
         """초음파. 장애물 주입 전에는 복도를 걷는 정도의 값을 흔들어 준다.

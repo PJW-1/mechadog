@@ -238,6 +238,23 @@ def test_battery_never_drops_below_physical_floor(config: dict) -> None:
     assert p.TelemetryDecoder().decode(robot.telemetry(late)).accepted
 
 
+def test_charging_battery_stops_at_physical_ceiling(config: dict) -> None:
+    """충전(음의 방전 속도)이 만충을 넘으면 인코더가 ValueError 로 목업을 죽인다."""
+    robot = _robot(config, battery_start_v=8.5, battery_drain_v_per_min=-1.0)
+    late = START_MS + 600_000
+    _feed(robot, late)
+    assert robot.battery_v(late) == p.BATT_MAX_V
+    assert p.TelemetryDecoder().decode(robot.telemetry(late)).accepted
+
+
+def test_battery_start_above_ceiling_is_held_at_ceiling(config: dict) -> None:
+    """CLI 검사를 거치지 않고 Faults 를 직접 만들어도 상한을 넘지 않는다."""
+    robot = _robot(config, battery_start_v=9.0)
+    _feed(robot, START_MS)
+    assert robot.battery_v(START_MS) == p.BATT_MAX_V
+    assert p.TelemetryDecoder().decode(robot.telemetry(START_MS)).accepted
+
+
 def test_tip_sets_flag_and_failsafe_together(config: dict) -> None:
     """`tipped` 인데 `PATROL` 이면 호스트가 규칙 ⑤로 폐기한다. 둘이 같이 가야 한다."""
     robot = _robot(config, tip_at_s=30)
