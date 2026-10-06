@@ -11,7 +11,7 @@ import pytest
 
 from host.report.situation import describe
 
-# ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `FallMonitor._confirm`) ──
+# ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `FallMonitor._cross_result`) ──
 
 
 def test_person_fallen_non_factory_shape() -> None:
@@ -25,8 +25,29 @@ def test_person_fallen_non_factory_shape() -> None:
     assert "확인" in sentence
 
 
+def test_person_fallen_cross_verified_shape() -> None:
+    """공장 판(`FallMonitor._cross_result`, ADR-47) 형태 — 규칙 확정 프레임의 VLM 교차검증."""
+    sentence = describe(
+        "person_fallen",
+        {
+            "fallen": True,
+            "rule_yes": True,
+            "aspect": 1.8,
+            "still_ms": 3000,
+            "vlm": True,
+            "latency_ms": 400,
+            "reason": "agreement",
+            "raw": "yes",
+            "status": "확정",
+        },
+    )
+    assert sentence is not None
+    assert "쓰러" in sentence
+
+
 def test_person_fallen_factory_shape() -> None:
-    """공장 판(`FallMonitor._confirm`) 형태 — `vlm_yes`·`suspect_ms`·`raw`. 문장은 같다."""
+    """옛 공장 판(ADR-42 «예» 누적 확정) 형태 — `vlm_yes`·`suspect_ms`·`raw`. 이미 남은
+    블랙박스 기록이 이 형태라 문장을 계속 낸다."""
     sentence = describe(
         "person_fallen",
         {"fallen": True, "vlm_yes": 2, "suspect_ms": 5000, "raw": "yes"},

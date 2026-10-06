@@ -36,8 +36,8 @@ PERSON_LABEL = "person"
 
 #: 같은 방문에서 두 번 읽어 확정하는 판독 항목. `person_down` 은 여기 없다 — 그 «예»
 #: 한 번은 쓰러짐 **의심**에 들 뿐이고(`ZoneInspector._take_reading`), `PERSON_DOWN` 확정은
-#: 의심 뒤 판독 «예» `fsm.fall_confirm_vlm_yes`(2)회, 서로 `fsm.fall_confirm_gap_ms`(1000ms)
-#: 이상 떨어진 프레임이어야 한다(`FallMonitor` · ADR-42).
+#: YOLOX 누움이 정지 `vision.fallen.confirm_ms` 를 채운 같은 프레임을 VLM 에 물어 «예» 일
+#: 때뿐이다(`FallMonitor._ask_cross` · ADR-47 결정 6).
 ZONE_HAZARDS = ("fallen_object", "blocked_path")
 #: 화기 위험구역에서만 묻고 같은 방문 판독 2회 «예» 로 확정하는 항목. L3 가 아니라
 #: 가벼운 경고(`hazard_notice`)다 — 순찰은 이어 간다.

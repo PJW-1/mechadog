@@ -59,7 +59,7 @@ flowchart TD
 
 `hazard_item` 은 `zones.hazard_ids`(시연은 C) 의 방문에서만 묻는다. 같은 방문 안 서로 다른 프레임의 «예» 2회로 확정하고, 확정은 가벼운 경고(`hazard_notice`)이지 L3 가 아니다([ADR-43](../DECISIONS.md#adr-43)).
 
-구역 판독의 «예» 는 의심에 들게만 하고, 확정 횟수에는 세지 않는다. 확정은 쓰러짐 판독(`F0`)의 «예» 로만 센다.
+구역 판독과 순찰 중 쓰러짐 판독(`F0`)의 «예» 는 의심에 들게 하거나 의심을 이어 갈 뿐 확정에는 쓰지 않는다. 확정은 위 교차검증, 곧 YOLOX 누움이 정지 3초를 채운 같은 프레임의 판독 «예» 로만 한다 *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47))*.
 
 ## 판단 기준
 
@@ -96,7 +96,7 @@ flowchart TD
 - LiDAR 막힘 원인 판독의 결과는 `path_blocked` 판정 근거에 `fallen`(`true`/`false`/`null`) · `vlm_reason` · `raw`(원문) · `latency_ms` · `wait_ms`(막힘 확정부터 기록까지) · `vlm_path_cause`(그때 스위치 값)로 붙는다. `vlm_reason` 은 판독이 정상이면 `null`, 그 밖에는 `mission`(공장 모드 아님) · `not_loaded` · `no_frame` · `stale_frame` · `busy` · `timeout` · `worker_failed` 중 하나이거나 판독의 reason 이다.
 - LiDAR 막힘 확정 때 최신 프레임이 없거나(`no_frame`) 받은 지 `vision.vlm.path_cause_max_frame_age_ms` 를 넘겼으면(`stale_frame`, 정확히 같으면 묻는다) 묻지 않고 그 사진도 남기지 않는다. 블랙박스 장면 기록 없이 관제 방송(Host PC 스피커)만 나가고 대시보드에는 사건이 뜨지 않는다.
 - VLM 은 이동 중 길을 정하지 않는다. 질문 하나에 0.2초이고 예·아니요만 돌려주며 위치가 없기 때문이다. 이동 중 막힘은 LiDAR 몫이다([순찰 중 장애물 대응](patrol-obstacle.md)).
-- 판독 한 번은 단독으로 L3 를 올리지 않는다. «예» 한 번은 의심(L1)이고, 확정은 의심 뒤 판독 «예» 가 기준 횟수만큼 모여야 한다.
+- 순찰·구역 판독은 «예» 가 몇 번이든 단독으로 L3 를 올리지 않는다. «예» 는 의심(L1)이고, 확정(L3)은 규칙 확정 프레임의 교차 판독 «예» 로만 한다 *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47))*.
 - 종료할 때는 돌고 있는 판독을 최대 2초 기다린 뒤 모델을 내린다. 적재 중이면 내리지 않고 나간다.
 
 ## 코드와 검증
@@ -117,7 +117,7 @@ flowchart TD
 | `person_down` → 의심 (구역 · 늦은 결과) | `host/behavior/zone_inspector.py` 의 `ZoneInspector._take_reading` · `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `tests/test_runtime.py::test_a_person_down_reading_at_a_zone_suspects_a_fall_not_an_alarm` · `tests/test_runtime.py::test_a_person_down_reading_that_lands_after_leaving_still_suspects` |
 | 넘어짐 (L3) · 통로 막힘 (가벼운 경고) 두 번 판독 확정 | `host/behavior/zone_inspector.py` 의 `ZoneInspector._take_reading` · `ZoneInspector._leave` | `tests/test_runtime.py::test_a_hazard_read_twice_is_confirmed_on_the_first_visit` · `tests/test_runtime.py::test_a_blocked_path_read_twice_is_a_light_notice_not_l3` · `tests/test_zone_inspector.py::test_blocked_path_yes_twice_is_one_light_notice` · `tests/test_zone_inspector.py::test_blocked_path_and_fallen_object_leave_the_notice_then_l3` · `tests/test_zone_inspector.py::test_blocked_path_switched_off_never_confirms` · `tests/test_runtime.py::test_a_single_fallen_reading_is_not_confirmed` · `tests/test_runtime.py::test_vlm_hazards_switched_off_never_confirm` · `tests/test_runtime.py::test_an_unusable_second_reading_confirms_nothing_and_lets_go` · `tests/test_runtime.py::test_a_late_reading_from_the_last_visit_does_not_count` |
 | 순찰 중 쓰러짐 판독 주기 | `host/behavior/fall_monitor.py` 의 `FallMonitor.ask` | `tests/test_runtime.py::test_a_patrol_reading_asks_only_person_down_every_interval` |
-| 쓰러짐 판독 결과 → 의심 · 확정 | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` · `FallMonitor._confirm` | `tests/test_runtime.py::test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` · `tests/test_runtime.py::test_a_fall_is_confirmed_by_readings_a_gap_apart` · `tests/test_runtime.py::test_a_no_between_readings_does_not_reset_the_count` |
+| 쓰러짐 판독 결과 → 의심 · 규칙 확정 프레임 교차검증 → 확정 | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` · `FallMonitor._ask_cross` · `FallMonitor.take_cross_reading` · `FallMonitor._cross_result` | `tests/test_runtime.py::test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` · `tests/test_ppe_test_mode.py::test_rule_cross_verification_at_rest` · `tests/test_ppe_test_mode.py::test_unavailable_vlm_releases_a_review_without_new_frames` · `tests/test_runtime.py::test_a_no_between_readings_does_not_reset_the_count` |
 | 위험구역에서만 `hazard_item` · 두 번 «예» → `hazard_notice` | `host/behavior/zone_inspector.py` 의 `ZoneInspector._keys` · `ZoneInspector._leave` · `host/vision/vlm_reader.py` 의 `QUESTIONS` | `tests/test_zone_inspector.py::test_hazard_item_yes_twice_is_one_light_notice` · `tests/test_zone_inspector.py::test_hazard_item_yes_then_no_confirms_nothing` · `tests/test_zone_inspector.py::test_a_degraded_second_reading_confirms_no_hazard_item` · `tests/test_zone_inspector.py::test_hazard_items_switched_off_never_confirm` · `tests/test_zone_inspector.py::test_a_plain_zone_never_asks_for_hazard_items` · `tests/test_zone_inspector.py::test_l3_and_hazard_item_in_one_visit_leave_both` · `tests/test_situation.py::test_hazard_notice_with_zone` |
 | LiDAR 막힘 원인 판독 (`blocked_by_fallen`) · 물을 수 없으면 바로 기록 · 상한에 닿으면 `timeout` | `host/behavior/path_cause.py` 의 `PathCause.blocked` · `PathCause.poll` | `tests/test_path_cause.py::test_the_answer_lands_in_the_judgement_once` · `tests/test_path_cause.py::test_the_wait_is_bounded_and_the_late_answer_is_only_logged` · `tests/test_path_cause.py::test_a_new_block_does_not_ask_until_the_late_answer_is_cleared` · `tests/test_path_cause.py::test_a_stale_frame_is_not_asked_and_not_photographed` · `tests/test_path_cause.py::test_it_waits_for_the_other_reading_within_the_bound` · `tests/test_path_cause.py::test_a_worker_that_never_frees_up_gives_unknown` · `tests/test_path_cause.py::test_no_vlm_records_at_once` |
 | VLM 없이도 구역 점검 동작 | `host/behavior/zone_inspector.py` 의 `ZoneInspector.inspect` | `tests/test_runtime.py::test_zone_inspection_runs_without_any_vlm` |
