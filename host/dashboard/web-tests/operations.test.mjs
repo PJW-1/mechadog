@@ -90,6 +90,18 @@ test('a broadcast TTS sentence (4.8.2) lands in the evidence rows, regardless of
  assert.deepEqual(event.evidence.find(([label])=>label==='방송 문장'),['방송 문장','2번 구역에서 사람을 확인했습니다.']);
  assert.equal(op.importBlackbox(raw()).evidence.some(([label])=>label==='방송 문장'),false,'문장이 없으면 행을 지어내지 않는다');
 });
+test('an event trace (session, frame, models, latency) lands in the evidence rows; old files show none',()=>{
+ const op=new Operations(),traced={...raw(),event_id:'e'.repeat(32),session_id:'20261006T120000-abcd1234',device_id:'mechdog-01',frame_id:17,config_sha256:'cd'.repeat(32),models:[{name:'coco',sha256:'ab'.repeat(32),provider:'DmlExecutionProvider'}],latency:{inference_ms:8.5,frame_to_result_ms:12,frame_to_decision_ms:40}};
+ const rows=Object.fromEntries(op.importBlackbox(traced).evidence);
+ assert.equal(rows['사건 ID'],'e'.repeat(32));
+ assert.equal(rows['세션'],'20261006T120000-abcd1234');
+ assert.equal(rows['프레임'],'#17');
+ assert.equal(rows['설정 해시'],'cdcdcdcdcdcd');
+ assert.equal(rows['모델'],'coco · abababababab · DmlExecutionProvider');
+ assert.equal(rows['지연'],'추론 8.5 ms · 프레임→결과 12 ms · 프레임→판단 40 ms');
+ const old=Object.fromEntries(op.importBlackbox(raw()).evidence);
+ for(const label of ['사건 ID','세션','프레임','설정 해시','모델','지연'])assert.equal(old[label],undefined,label+' 를 지어내지 않는다');
+});
 test('bad blackbox fields are rejected',()=>{
  for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.mode={}},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}
 });

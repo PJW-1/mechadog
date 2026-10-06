@@ -469,6 +469,9 @@ class PatrolController:
     _relaxed_leg_start: tuple[float, float] = (0.0, 0.0)
     _relaxed_distance: float = math.inf
     _relaxed_blocked_reported: bool = False
+    #: 새 장애물 연속 확인 후보 — 현장 AG 정책은 후보 단계 없이 바로 끝점을 낸다(항상 None).
+    #: 프레임 수집기(4.8.7)의 `obstacle_pending` 계약을 위해 남긴다.
+    _pending_hit: tuple[float, float] | None = None
     _relaxed_progress: tuple[tuple[float, float], float, int] | None = None  # (목표, 최소 거리, 그때 시각)
     _relaxed_stuck: bool = False
     _relaxed_escape_turn: bool = False
@@ -658,6 +661,11 @@ class PatrolController:
         return self._last_pose_ms is None or (
             now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
         )
+
+    @property
+    def obstacle_pending(self) -> bool:
+        """새 장애물을 확인 중인가 — 후보는 잡혔지만 연속 확정 횟수에 못 미쳤다."""
+        return self._pending_hit is not None
 
     def take_new_obstacles(self) -> tuple[tuple[float, float], ...]:
         """지난 호출 뒤 확정된 신규 장애물 `(x m, y m)` 을 꺼낸다 — 한 번 꺼내면 비워진다.

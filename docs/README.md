@@ -31,12 +31,18 @@
 
 ## 사례 연구
 
-실기에서 드러난 문제를 증상 → 가설과 배제 → 측정 → 원인 → 수정 → 검증 → 남은 한계 순서로 정리한다. 목록은 [case-studies/README.md](case-studies/README.md) 에 있다.
+실기에서 드러난 문제를 증상 → 가설과 배제 → 측정 → 원인 → 수정 → 검증 → 남은 한계 순서로 정리한다. 5~10번은 초기 가설 → 관측된 실패 → 근거 데이터 → 원인 → 변경 → 동일 조건 재평가 순서다. 목록은 [case-studies/README.md](case-studies/README.md) 에 있다.
 
 - [case-studies/01-command-timeout.md](case-studies/01-command-timeout.md) — 명령 타임아웃 300ms → 600ms.
 - [case-studies/02-person-gate-time-window.md](case-studies/02-person-gate-time-window.md) — 10fps 추론이 진짜 검출의 절반 이상을 놓친 문제.
 - [case-studies/03-echoed-state-self-lock.md](case-studies/03-echoed-state-self-lock.md) — 반향된 상태값 때문에 Host 가 스스로를 잠글 수 있었던 문제.
 - [case-studies/04-i2c-voice-relay.md](case-studies/04-i2c-voice-relay.md) — 로봇 I²C 경유 음성 파형 중계가 불가능했던 사례.
+- [case-studies/05-ppe-domain-gap.md](case-studies/05-ppe-domain-gap.md) — 공개 PPE 데이터 성능이 XIAO 에서 재현되지 않은 사례.
+- [case-studies/06-partial-label-background.md](case-studies/06-partial-label-background.md) — 부분 라벨이 맨머리를 배경으로 가르친 사례.
+- [case-studies/07-track-turn-asymmetry.md](case-studies/07-track-turn-asymmetry.md) — TRACK 좌우 비대칭을 회전율 곡선으로 고친 사례.
+- [case-studies/08-vlm-two-image-compare.md](case-studies/08-vlm-two-image-compare.md) — VLM 두 장 비교 실패와 한 장 판독 한정.
+- [case-studies/09-bbox-height-stop-line.md](case-studies/09-bbox-height-stop-line.md) — bbox 높이 정지선이 화면 밖이었던 사례.
+- [case-studies/10-model-provider-mismatch.md](case-studies/10-model-provider-mismatch.md) — 추론 환경 차이로 빈 결과가 나온 사례.
 
 ## 근거 자료
 
@@ -45,6 +51,7 @@
 - [measurements/](measurements/) — 현장에서 재현한 개별 실측 기록 모음이다.
 - [archive/](archive/) — 더는 정본이 아닌 지난 문서를 보관한다.
 - [PPE_ACCEPTANCE.md](PPE_ACCEPTANCE.md) — PPE 검수 절차다. (개발 중)
+- [ppe-data-card.md](ppe-data-card.md) — 배포 PPE 모델 ppe-v5 의 데이터 출처·라이선스·분할·학습 설정·알려진 한계다.
 - [../field_tests/README.md](../field_tests/README.md) — 실기 시험 원자료 폴더의 색인과 대표 기록이다.
 - [../tools/README.md](../tools/README.md) — 운영·측정·개발 보조 스크립트의 분류표다.
 

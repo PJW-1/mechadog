@@ -68,6 +68,7 @@ class ZoneInspector:
         route_inspection: Callable[[Zone, int], bool | None] | None = None,
         route_visit: Callable[[], tuple[int, int, int] | None] | None = None,
         zone_at: Callable[[int], str | None] | None = None,
+        path_waiting: Callable[[], bool] = lambda: False,
     ) -> None:
         self._behavior = behavior
         self._mission = mission
@@ -81,6 +82,8 @@ class ZoneInspector:
         self._route_visit = route_visit
         self._zone_at = zone_at
         self._last_route_visit: tuple[int, int, int] | None = None
+        #: LiDAR 막힘 원인 판독(`PathCause` · ADR-45)이 워커를 쥐고 있나.
+        self._path_waiting = path_waiting
         zones = config["zones"]
         #: 화기 위험구역 — 여기서만 `hazard_item` 을 묻는다.
         self._hazard_ids = frozenset(str(label) for label in zones["hazard_ids"])
@@ -146,6 +149,11 @@ class ZoneInspector:
     def waiting(self) -> bool:
         """구역 판독이 워커에 걸려 있나. 쓰러짐 판독은 이것이 참이면 걸지 않는다."""
         return self._pending is not None
+
+    @property
+    def zone(self) -> str | None:
+        """지금 도착해 있는 구역. 앵커 반경의 두 배를 벗어나면 `None` 이다."""
+        return self._zone
 
     @property
     def alarm_alert(self) -> bool:
@@ -423,8 +431,9 @@ class ZoneInspector:
         """
         if self._asked:
             return
-        if self._fall.waiting:
-            return  # 쓰러짐 판독이 끝나면 다음 틱에 건다 — 워커는 하나다(`FallMonitor.ask`)
+        if self._fall.waiting or self._path_waiting():
+            # 쓰러짐·막힘 원인 판독이 끝나면 다음 틱에 건다 — 워커는 하나다(`FallMonitor.ask`)
+            return
         self._asked = True
         # ⚠️ **앞 판독을 줍기 전에는 걸지 않는다.** 걸면 슬롯에 남은 앞 결과가 새로 건
         # 구역의 것으로 읽힌다 — 스레드가 끝나는 순간과 거는 순간이 겹치면 그렇게 된다.

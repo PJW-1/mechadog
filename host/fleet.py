@@ -27,6 +27,7 @@ from typing import Any
 from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError, load_config
+from host.common.history import open_history
 from host.common.logging_setup import LogContext, event_logger, setup_logging
 from host.common.protocol import system_clock_ms
 from host.dashboard.state import DashboardState
@@ -286,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     # PC 스피커는 하나다 — 방송기도 하나를 모든 로봇이 나눠 쓴다 (`4.8.2`).
     # 어느 로봇 화면에서 음량·무음을 바꿔도 같은 방송기가 바뀐다.
     broadcaster = _broadcaster(members[0].config)
+    # 이력 DB 도 하나다 — 모든 로봇의 사건·순찰을 한 파일에 쌓고, 화면은 `?robot=` 로 거른다 (ADR-46).
+    history = open_history(members[0].config)
     for member in members:
         config = member.config
         # 카메라 주소가 없는 로봇은 비전 없이 돈다.
@@ -307,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             mission=member.mission,
             event_publisher=_publish_event(dashboard),
             announcer=(None if broadcaster is None else broadcaster.say),
+            history=history,
         )
         runtimes.append(runtime)
         apps[member.device_id] = create_app(
@@ -330,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
         LOG.info("interrupted", action="모든 로봇에 ESTOP 송신 후 종료")
     finally:
         sock.close()
+        if history is not None:
+            history.close()
     return 0
 
 

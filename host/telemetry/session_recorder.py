@@ -7,12 +7,15 @@
 흐트러뜨리지 않기 위해서다). 디스크 쓰기가 실패하면 `failed` 가 서고, 운용 쪽은 그것을
 «기록 불가» 로 보고 출발을 거절할 수 있다(`healthy`).
 
-⚠️ **시각은 Host 단조 시계(`system_clock_ms`) 하나로 찍는다.** 장치가 보낸 `ts`·`seq`·
-`boot_id` 는 원본 전문 안에 그대로 남으므로 따로 빼지 않는다. 벽시계(UTC)와 단조 시계의
-기준점은 `manifest.json` 에 한 번 남긴다.
+⚠️ **시각은 Host 벽시계(`system_clock_ms`, epoch 밀리초) 하나로 찍는다.** 단조 시계가 아니라서
+NTP 보정이 일어나면 시각이 앞뒤로 뛸 수 있다. 장치가 보낸 `ts`·`seq`·
+`boot_id` 는 원본 전문 안에 그대로 남으므로 따로 빼지 않는다. 시작 시각은 UTC 문자열과
+같은 시계의 밀리초(`started_clock_ms`)로 `manifest.json` 에 한 번 남긴다.
 
-이 기록은 **원본 보존용**이다 — 측위·지도 갱신은 이 파일을 읽지 않는다. 재생은
-`tools/ops/session_summary.py` 가 한다.
+이 기록은 **원본 보존용**이다 — 측위·지도 갱신은 이 파일을 읽지 않는다. 읽는 도구는 둘이다.
+`tools/ops/session_summary.py` 는 흐름별 수·공백·명령 통계를 요약하고,
+`tools/ops/replay_session.py` 는 입력 사건(`runtime_begin`·`telemetry`·`vision`·`operator`)을
+`Runtime` 에 다시 넣어 같은 명령·FSM 전이·경보 단계(`escalation`)가 나오는지 맞춰 본다.
 """
 
 from __future__ import annotations
@@ -67,8 +70,8 @@ class SessionRecorder:
         (directory / FRAMES_DIR).mkdir(exist_ok=True)
         self._manifest = {
             "started_utc": dt.datetime.now(dt.UTC).isoformat(),
-            "started_mono_ms": clock(),
-            "clock_domain": "host system_clock_ms (monotonic)",
+            "started_clock_ms": clock(),
+            "clock_domain": "host system_clock_ms (epoch wall clock)",
             "events_file": EVENTS_FILE,
             **(manifest or {}),
         }
@@ -159,7 +162,7 @@ class SessionRecorder:
         with self._lock:
             return {
                 "stopped_utc": dt.datetime.now(dt.UTC).isoformat(),
-                "stopped_mono_ms": self._clock(),
+                "stopped_clock_ms": self._clock(),
                 "written": self.written,
                 "dropped": self.dropped,
                 "max_backlog": self.max_backlog,

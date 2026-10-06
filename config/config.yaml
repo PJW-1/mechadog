@@ -16,6 +16,9 @@ nav:
   route_search_pause_ms: 1000
   route_search_turn_deg: 10
   relaxed_follow: true  # AV: 최신 검증 위치(최대 2초) + LiDAR 빈 방향 추종. false면 기존 경로.
+  # 지도에 없던 새 끝점마다 «통로 막힘» 사건·원인 판독(ADR-45)을 낸다. 시연 중 사람·의자마다
+  # 방송이 나가므로 기본은 끈다(현장 10-06) — 막힘 사건은 항법 정책(path_blocked·obstacle_detour)이 낸다.
+  publish_new_obstacles: false
   # AR: 미리보기 통과 동선은 다음 지점으로 직접 추종. false면 기존 A*/막힘 복구 사용.
   route_direct: true
   route_direct_stop_ms: 3000  # 실제 장애물 STOP이 3초 지속될 때만 AO 통로/우회로 전환
@@ -193,7 +196,7 @@ vision:
     # ⚠️ **`ultralytics` 가 아니다.** AGPL-3.0 이라 ADR-24 가 탈락시켰다.
     # WBS 3.7.2 의 "ultralytics 버전 기록" 문구는 그 결정 이전의 잔재다.
     #
-    # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 ppe-v5 · XIAO 실측 전 후보
+    # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 ppe-v5 · XIAO 직립 4구간 합격 (2026-10-06 · WBS 3.7.3)
     #   v5 = 아래 v4 에서 하단각도 자체 촬영 279장을 더해 30 epoch 미세 조정
     #        (`tools/ppe/colab_ppe_v5_lowangle.ipynb` · lr ×0.3 · seed 20261001)
     #   ── 이하는 v4 학습 기록 (2026-09-29 · Release 태그 ppe-v4) ──
@@ -300,11 +303,24 @@ vision:
     # 빠진다. 추적기가 대상을 버리는 시간(`tracker.track_lost_ms`)과 같다.
     gap_ms: 1000
 
+  # ── VLM 미세조정용 프레임 자동 수집 (4.8.7) ──
+  # LiDAR 순찰 판정을 라벨로 쓴다: 막힘 확정 프레임 = blocked, 막힘 없는 순찰 프레임 = clear.
+  # ⚠️ 사진에 얼굴이 찍히므로 `root` 는 **저장소 밖** 경로만 허용한다. null 이면 수집하지 않는다.
+  # 상대 경로는 저장소 루트 기준이다(예: ../mechdog-collect).
+  # 구조: <root>/<YYYYMMDD>/<blocked|clear>/<시각>_<번호>.jpg + 같은 폴더의 manifest.jsonl
+  collect:
+    root: null
+    clear_every_ms: 5000      # clear 를 남기는 최소 간격
+    clear_holdoff_ms: 10000   # 막힘 확정 직후 clear 를 남기지 않는 시간 (같은 장애물이 아직 보일 수 있다)
+    max_files: 5000           # 사진 상한. 넘으면 더 쓰지 않고 한 번만 경고한다
+    max_frame_age_ms: 1000    # 받은 지 이보다 오래된 프레임(비전 끊김)은 라벨을 붙이지 않는다
+
   # ── ③ 로컬 VLM 상황 판독 (FR-8 · 4.8.0 · ADR-35) ──
   # 가중치는 Hugging Face 캐시에서 모델 ID 로 읽는다(`models/README.md` ③). 없어도 멈추지
   # 않고 기능 저하로 기록한다 (ADR-35 결정 6).
   vlm:
-    # Hugging Face 모델 ID. 정밀도는 코드가 bf16 으로 고정한다 (ADR-35 대안 ⓐ).
+    # Hugging Face 모델 ID. 정밀도는 코드가 bf16 으로 고정한다 (ADR-35 대안 ⓐ). LoRA 병합
+    # 모델 폴더의 절대 경로도 받는다 (`tools/vlm_lora/README.md`).
     model_id: "Qwen/Qwen2-VL-2B-Instruct"
     # 답 하나의 최대 길이 — 닫힌 질문이라 한 단어면 끝나고, 서술로 샐 때의 상한이다.
     max_new_tokens: 32
@@ -313,6 +329,12 @@ vision:
     budget_ms: 3000
     # 공장 순찰 중 `person_down` 만 묻는 간격 (ADR-42 결정 5). 의심 중에는 판독이 끝날 때마다 다시 묻는다.
     patrol_interval_ms: 2000
+    # LiDAR 막힘 확정 프레임의 원인 판독(`blocked_by_fallen` · ADR-45)을 기다리는 상한. 경과가 상한에 닿으면
+    # `path_blocked` 를 `fallen: null` 로 남긴다. 재계획으로 로봇이 서 있는 동안이라 알림이 이만큼 늦어도 된다.
+    path_cause_wait_ms: 1500
+    # 막힘 확정 때 최신 프레임을 받은 지 이보다 오래됐으면(비전 끊김) 원인을 묻지 않고 사진도 남기지
+    # 않는다 — `vlm_reason: stale_frame`. 수집기의 `max_frame_age_ms` 와 같은 기준이다.
+    path_cause_max_frame_age_ms: 1000
 
   # ── 다중 인원 추적 (FR-3.6) ──
   tracker:
@@ -452,6 +474,10 @@ change_detect:
   # 경고를 낼지. **기본은 켠다** — `vlm_hazards` 와 달리 L3·눈 변화 없이 방송 문장과 관제 화면에만
   # 남는 가벼운 경고라 오경보의 값이 낮다. 확정은 같은 방문 판독 2회 «예» 다(ADR-41 과 같다).
   vlm_hazard_items: true
+  # LiDAR 막힘 확정 때 «무너진 물건인가» 판독(`blocked_by_fallen` · ADR-45)이 «예» 면 방송·대시보드
+  # 문장이 «무너진 물건이 통로를 막고 있어 돌아서 갑니다» 류로 바뀌는지. **기본은 끈다** — `vlm_hazards` 와 같이
+  # 벤치 통과 뒤에 켠다. 꺼도 질문은 걸고 답(`fallen`·원문·지연)은 `path_blocked` 판정 근거에 남는다.
+  vlm_path_cause: false
 
 # ── 구역 (FR-7 / FR-8) ───────────────────────────────────────
 # 구역은 지도 좌표 앵커(`maps/zones.json` · `tools/ops/zone_select.py`)이고, 도착은 측위 위치가
@@ -486,6 +512,7 @@ logging:                # NFR-3④
   rotate_mb: 10
   rotate_keep: 5
   blackbox_dir: blackbox      # FR-3.9
+  history_db: history/mechdog.sqlite3  # ADR-46 — 사건·순찰 이력 색인. 비우면 끈다
 
 # ══════════════════════════════════════════════════════════════
 #  LiDAR 측위 · 매핑 · 구역 순찰 (FR-6 · FR-7 · Phase 2 · ADR-18)

@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
@@ -72,6 +73,10 @@ class VisionResult:
     ppe_test_mode: bool = False
 
 
+#: 추론 지연 분포를 낼 최근 표본 수 — 10fps 로 약 50초.
+LATENCY_WINDOW = 512
+
+
 @dataclass
 class WorkerStats:
     """워커가 실제로 한 일 — 실패와 유휴도 센다."""
@@ -83,9 +88,27 @@ class WorkerStats:
     last_error: str | None = None
     inference_ms_max: float = 0.0
 
+    def __post_init__(self) -> None:
+        # 필드가 아니다 — `asdict(stats)` 를 JSON 으로 남기는 도구(`vision_link_check`)가 있다.
+        self._samples: deque[float] = deque(maxlen=LATENCY_WINDOW)
+
     def note(self, ms: float) -> None:
         self.inferences += 1
         self.inference_ms_max = max(self.inference_ms_max, ms)
+        self._samples.append(ms)
+
+    def latency(self) -> dict[str, Any]:
+        """최근 추론 지연(프레임 하나의 디코드·검출·판정)의 p50·p95. 표본이 없으면 `None`."""
+        # 다른 스레드가 덧붙이는 중이어도 `list()` 복사는 GIL 아래 한 번에 끝난다.
+        ordered = list(self._samples)
+        ordered.sort()
+        if not ordered:
+            return {"n": 0, "p50_ms": None, "p95_ms": None}
+
+        def pick(fraction: float) -> float:
+            return ordered[max(0, round(fraction * (len(ordered) - 1)))]
+
+        return {"n": len(ordered), "p50_ms": pick(0.5), "p95_ms": pick(0.95)}
 
 
 class VisionSource(Protocol):
@@ -290,6 +313,27 @@ class VisionWorker:
     def set_hazard_enabled(self, enabled: bool) -> None:
         """위험물 추론을 켜고 끈다 — 위험구역 방문 중에만 켠다. 세션은 열지 않는다."""
         self._hazard_enabled = enabled
+
+    # ── 모델 메타데이터 (사건 추적) ─────────────────────────
+    def _detectors(self) -> list[Any]:
+        """설정된 검출기 — 범용 · PPE · 위험물 순. 위험물은 모델이 없어 끈 경우 빠진다."""
+        found = [self._detector]
+        for wrapper in (self._ppe, self._hazard):
+            if wrapper is not None:
+                found.append(getattr(wrapper, "detector", None))
+        return [item for item in found if hasattr(item, "model_summary")]
+
+    def models(self) -> list[dict[str, Any]]:
+        """지금 세션이 열린 모델의 이름·sha256·provider. 해시는 로드 때 계산한 값이다."""
+        return [item.model_summary() for item in self._detectors() if item.loaded]
+
+    def model_files(self) -> list[dict[str, Any]]:
+        """설정된 가중치 전부의 sha256·메타 파일 (세션 manifest 용). 처음 부를 때 해시한다."""
+        return [item.model_file().as_dict() for item in self._detectors()]
+
+    def status(self) -> dict[str, Any]:
+        """관제 화면 상태 칸 — 로드된 모델과 최근 추론 지연 분포."""
+        return {"models": self.models(), "inference": self.stats.latency()}
 
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:

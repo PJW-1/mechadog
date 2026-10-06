@@ -48,6 +48,11 @@ class DashboardState:
         # 사건 로그 (WBS 4.4.3) — 텔레메트리와 달리 최신 한 건으로 합치지 않는다.
         self._events: deque[dict[str, Any]] = deque(maxlen=EVENT_BUFFER)
         self._event_seq = 0
+        self._vision_status: Callable[[], dict[str, Any]] | None = None
+
+    def attach_vision_status(self, source: Callable[[], dict[str, Any]]) -> None:
+        """로드된 모델·추론 지연을 물을 곳 (`VisionWorker.status`). 없으면 `vision: null`."""
+        self._vision_status = source
 
     def now(self) -> int:
         return self._clock()
@@ -90,8 +95,18 @@ class DashboardState:
             runtime_stale=runtime_age is None or runtime_age >= self._stale_after_ms,
             # 로봇 uptime과 PC 시계는 동기화되지 않았다. age나 명령 age를 RTT로 쓰지 않는다.
             link_rtt_ms=None,
+            vision=self._read_vision_status(),
         )
         return result
+
+    def _read_vision_status(self) -> dict[str, Any] | None:
+        # 서버 스레드에서 불린다 — 비전 쪽 오류가 상태 전문 전체를 막지 않게 `null` 로 낮춘다.
+        if self._vision_status is None:
+            return None
+        try:
+            return copy.deepcopy(self._vision_status())
+        except Exception:  # noqa: BLE001
+            return None
 
     # ── 사건 (WBS 4.4.3 · FR-3.9) ────────────────────────────
     def record_event(self, payload: dict[str, Any]) -> int:

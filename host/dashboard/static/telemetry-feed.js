@@ -82,7 +82,38 @@ export function decodeTelemetryMessage(data) {
     ageMs: isNumber(message.telemetry_age_ms) ? message.telemetry_age_ms : null,
     stale: message.stale !== false,
     runtimeStale: message.runtime_stale !== false,
+    vision: decodeVisionStatus(message.vision),
   };
+}
+
+/** 로드된 모델·추론 지연 (`VisionWorker.status`). 없거나 형식이 틀리면 `null` — 지어내지 않는다. */
+function decodeVisionStatus(raw) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.models)) return null;
+  const text = (value) => (typeof value === 'string' && value ? value : null);
+  const inference = raw.inference ?? {};
+  return {
+    models: raw.models
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({ name: text(item.name) ?? '이름 미상', sha256: text(item.sha256), provider: text(item.provider) })),
+    n: Number.isInteger(inference.n) ? inference.n : 0,
+    p50: isNumber(inference.p50_ms) ? inference.p50_ms : null,
+    p95: isNumber(inference.p95_ms) ? inference.p95_ms : null,
+  };
+}
+
+/** 상태 칸 두 줄 — 모델 이름 · sha256 앞 12자리 · provider, 추론 지연 p50 / p95. */
+function describeVision(vision) {
+  if (!vision) return ['비전 없음 · 미수신', '비전 없음 · 미수신'];
+  const models = vision.models.length
+    ? vision.models
+        .map((m) => `${m.name} · ${m.sha256 ? m.sha256.slice(0, 12) : '해시 없음'} · ${m.provider ?? '장치 미상'}`)
+        .join(' / ')
+    : '로드된 모델 없음';
+  const latency =
+    vision.n > 0 && vision.p50 != null && vision.p95 != null
+      ? `${vision.p50.toFixed(1)} / ${vision.p95.toFixed(1)} ms · 최근 ${vision.n}건`
+      : '측정 전';
+  return [models, latency];
 }
 
 /**
@@ -196,6 +227,7 @@ export function describeTelemetry(view) {
     }
   }
 
+  const [visionModels, visionLatency] = describeVision(snapshot?.vision ?? null);
   const rows = telemetry
     ? [
         ['연결 · 마지막 수신', `${tone === 'live' ? '수신 중' : '끊김'} / ${ago(snapshot.ageMs)}`],
@@ -208,6 +240,8 @@ export function describeTelemetry(view) {
         ['링크 · 안전 래치', `${rate}${lost} / ${telemetry.safetyLatched == null ? '미수신' : telemetry.safetyLatched ? '잠김' : '해제'}`],
         ['마지막 명령 수락 나이', telemetry.lastCmdAgeMs == null ? '— · 미수신' : `${Math.round(telemetry.lastCmdAgeMs)} ms · 로봇 기준`],
         ['링크 지연 (RTT)', '미측정 — 로봇과 PC 시계가 달라 빼지 않는다'],
+        ['비전 모델', visionModels],
+        ['추론 지연 p50 / p95', visionLatency],
       ]
     : null;
   const badge = { live: ['실시간', ''], stale: ['수신 끊김', 'amber'], closed: ['채널 끊김', 'amber'], waiting: ['연결 대기', ''] }[tone];

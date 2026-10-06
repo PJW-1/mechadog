@@ -364,3 +364,62 @@ def test_repeated_decode_preserves_grid_coordinates_and_input(size: int) -> None
         np.testing.assert_allclose(scores, 0.6)
         np.testing.assert_array_equal(ids, 1)
         np.testing.assert_array_equal(raw, saved)
+
+
+def test_open_hashes_the_model_before_it_reports_loaded(
+    cfg: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """해시를 계산하는 동안 `loaded` 가 True 면 상태 조회가 같은 해시를 한 번 더 계산한다."""
+    import host.vision.detector as module
+
+    seen: list[bool] = []
+    det, _ = _detector(cfg, _raw_with_one_box(index=1, class_id=0))
+
+    def fake_inspect(*_args, **_kwargs):
+        seen.append(det.loaded)
+        return object()
+
+    monkeypatch.setattr(module, "inspect_model", fake_inspect)
+    det.open()
+    assert seen == [False]
+    assert det.loaded
+
+
+def test_open_does_not_hash_when_the_factory_fails(
+    cfg: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import host.vision.detector as module
+
+    def boom(*_args):
+        raise RuntimeError("no session")
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("해시를 계산하면 안 된다")
+
+    monkeypatch.setattr(module, "inspect_model", forbidden)
+    det = Detector(cfg, labels=COCO_CLASSES, session_factory=boom)
+    with pytest.raises(RuntimeError):
+        det.open()
+    assert not det.loaded
+
+
+def test_open_is_not_loaded_when_warm_up_fails_and_retries_the_factory(cfg: dict) -> None:
+    """`open()` 이 예외를 던졌다면 열리지 않은 것이다 — 다음 `open()` 은 팩토리부터 다시 한다."""
+
+    class _FailingSession(_FakeSession):
+        def run(self, *_args, **_kwargs):
+            raise RuntimeError("warm-up boom")
+
+    calls: list[int] = []
+
+    def factory(*_):
+        calls.append(1)
+        return _FailingSession(np.zeros((1, 1, 1), dtype=np.float32))
+
+    det = Detector(cfg, labels=COCO_CLASSES, session_factory=factory)
+    with pytest.raises(RuntimeError, match="warm-up boom"):
+        det.open()
+    assert not det.loaded
+    with pytest.raises(RuntimeError, match="warm-up boom"):
+        det.open()
+    assert len(calls) == 2

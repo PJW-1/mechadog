@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event, behavior_from_config
 from host.behavior.mission import Mission
-from host.dashboard.commands import CommandService
+from host.dashboard.commands import CommandResult, CommandService
 from host.dashboard.server import create_app
 from host.dashboard.state import DashboardState
 
@@ -240,6 +240,34 @@ def test_patrol_stop_leaves_autonomy_and_parks_at_idle(service):
     assert behavior.state == "IDLE"
     # 수동 경유는 로봇을 멈추고 들어가는 경로다 — 멈춘 뒤 대기다.
     assert svc._commander.intent.type_ == "STOP"
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        (Event.START_PATROL, Event.ZONE_ARRIVED),
+        (Event.START_PATROL, Event.POSE_STALE),
+    ],
+    ids=["ZONE_INSPECT", "LOST"],
+)
+def test_patrol_stop_is_accepted_in_zone_inspect_and_lost(service, events):
+    """구역 점검·재측위 중에도 정지할 수 있어야 끝난 뒤 순찰이 이어지지 않는다."""
+    svc, behavior, _sent = service
+    _drive_to(behavior, events)
+    assert behavior.state in ("ZONE_INSPECT", "LOST")
+    assert svc.patrol_stop().accepted is True
+    assert behavior.state == "IDLE"
+
+
+def test_patrol_stop_reports_the_manual_off_refusal(service):
+    svc, behavior, _sent = service
+    behavior.event(Event.START_PATROL, now_ms=1000)
+    svc.manual_off = lambda: CommandResult(
+        command="manual_off", accepted=False, state="MANUAL", detail="거절 사유"
+    )
+    result = svc.patrol_stop()
+    assert result.accepted is False
+    assert result.detail == "거절 사유"
 
 
 def test_patrol_stop_is_refused_when_not_autonomous(service):

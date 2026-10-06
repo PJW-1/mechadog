@@ -37,6 +37,22 @@ const AUTH_TEXT={person_found:'검출 시점 · 인증 전',auth_required:'인�
 const shown=value=>typeof value==='number'?String(Math.round(value*100)/100):typeof value==='boolean'?(value?'예':'아니요'):cleanText(String(value??''),300)||'—';
 // 구역 VLM 위험 확정 (WBS 3.6.4). 종류 이름은 `zone_inspector.py` 의 `ZONE_HAZARDS` 와 1:1 이다.
 const CHANGE_KINDS={fallen_object:'넘어짐·무너짐',blocked_path:'통로 막힘'};
+// 사건 추적 (meta.json `event_id`·`session_id`·`frame_id`·`config_sha256`·`models`·`latency`).
+// 옛 기록에는 없다 — 없는 값은 행을 만들지 않는다.
+const LATENCY_NAMES=[['inference_ms','추론'],['frame_to_result_ms','프레임→결과'],['frame_to_decision_ms','프레임→판단']];
+function describeTrace(payload){
+ const rows=[],text=(value,max)=>typeof value==='string'?cleanText(value,max):'';
+ if(text(payload?.event_id,64))rows.push(['사건 ID',text(payload.event_id,64)]);
+ if(text(payload?.session_id,80))rows.push(['세션',text(payload.session_id,80)]);
+ if(Number.isSafeInteger(payload?.frame_id))rows.push(['프레임','#'+payload.frame_id]);
+ if(text(payload?.config_sha256,64))rows.push(['설정 해시',text(payload.config_sha256,64).slice(0,12)]);
+ const models=Array.isArray(payload?.models)?payload.models.filter(m=>m&&typeof m==='object').slice(0,8):[];
+ if(models.length)rows.push(['모델',models.map(m=>(text(m.name,40)||'이름 미상')+' · '+(text(m.sha256,64).slice(0,12)||'해시 없음')+' · '+(text(m.provider,60)||'장치 미상')).join(' / ')]);
+ const latency=payload?.latency&&typeof payload.latency==='object'?payload.latency:{};
+ const parts=LATENCY_NAMES.filter(([key])=>Number.isFinite(latency[key])).map(([key,label])=>label+' '+shown(latency[key])+' ms');
+ if(parts.length)rows.push(['지연',parts.join(' · ')]);
+ return rows;
+}
 /** 사건 이름과 서버가 실어 준 근거 → 인증·PPE 칸과 근거 표. 근거가 없으면 지어내지 않는다. */
 export function describeEvidence(name,payload){
  const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
@@ -77,6 +93,7 @@ export function describeEvidence(name,payload){
  // 관제 방송 TTS 문장 (4.8.2) — 사건 종류와 무관하게 실려 오면 그대로 보인다.
  // `BlackboxEntry` 가 frozen 이라 `4.8.1` 이 최상위가 아니라 judgement 안에 병합했다.
  if(j.sentence)rows.push(['방송 문장',cleanText(j.sentence,300)]);
+ rows.push(...describeTrace(payload));
  return {auth:AUTH_TEXT[name]??'해당 없음',ppe,rows};
 }
 export function parseBlackbox(value) {

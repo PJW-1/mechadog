@@ -23,6 +23,7 @@ import numpy as np
 
 from host.common.config import repo_path
 from host.common.logging_setup import event_logger
+from host.vision.model_info import ModelFile, inspect_model
 from host.vision.providers import log_selection, select_providers
 
 LOG = event_logger("mechadog.vision")
@@ -224,21 +225,51 @@ class Detector:
         self._preferred = list(vision["providers"])
         self._factory = session_factory or _make_onnx_session
         self._session: Any | None = None
+        self._section = section
+        self._model_file: ModelFile | None = None
 
     @property
     def adapter(self) -> DetectorAdapter:
         return self._adapter
 
+    @property
+    def loaded(self) -> bool:
+        return self._session is not None
+
+    def model_file(self) -> ModelFile:
+        """가중치 sha256·메타 파일. 처음 부를 때 한 번만 계산한다 (35MB 해시)."""
+        if self._model_file is None:
+            self._model_file = inspect_model(self._section, self._model_path, labels=self._labels)
+        return self._model_file
+
+    def model_summary(self) -> dict[str, Any]:
+        """사건 기록·관제 화면용 — 이름·sha256·실제로 잡힌 실행 장치(provider)."""
+        providers = getattr(self._session, "get_providers", None)
+        chosen = providers() if callable(providers) else []
+        return {
+            "name": self._section,
+            "sha256": self.model_file().sha256,
+            "provider": str(chosen[0]) if chosen else None,
+        }
+
     def open(self) -> None:
         """세션을 만들고 전처리 → 추론을 한 번 흘려 데운다.
 
         첫 프레임 비용의 대부분은 OpenCV 첫 호출 초기화라 세션만이 아니라 전처리까지 흘린다
-        (ADR-24 «실측이 드러낸 것»).
+        (ADR-24 «실측이 드러낸 것»). 가중치 해시도 여기서(로드할 때) 한 번 계산한다.
         """
         if self._session is not None:
             return
-        self._session = self._factory(self._model_path, self._preferred)
-        self._warm_up()
+        session = self._factory(self._model_path, self._preferred)
+        # 해시(35MB)를 먼저 끝낸 뒤에 `loaded` 가 True 가 된다 — 그 전에 상태 조회가 오면 해시를 또 계산한다.
+        self.model_file()
+        self._session = session
+        try:
+            self._warm_up()
+        except BaseException:
+            # `open()` 이 예외를 던졌다면 열리지 않은 것이다 — 다음 `open()` 이 워밍업을 건너뛰지 않게 되돌린다.
+            self._session = None
+            raise
 
     def _warm_up(self) -> None:
         """빈 프레임으로 전처리 → 추론을 한 번 지나간다. 결과는 쓰지 않는다."""

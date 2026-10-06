@@ -97,6 +97,11 @@ class PpeDetector:
     def reset(self) -> None:
         self._hits.clear()
 
+    @property
+    def detector(self) -> Any:
+        """감싼 검출기 — 모델 메타데이터(`model_summary`)를 묻는 데 쓴다."""
+        return self._detector
+
     def open(self) -> None:
         self._detector.open()
 

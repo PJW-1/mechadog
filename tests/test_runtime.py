@@ -133,8 +133,9 @@ def vision_result(
     # 명시적으로 먼 박스를 넘긴다.
     box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 480.0),
     frame_width: int = 640,
+    completed_ms: int | None = None,
 ) -> VisionResult:
-    """런타임 통합 시험용 판정 결과."""
+    """런타임 통합 시험용 판정 결과. `completed_ms` 를 안 주면 수신 시각과 같다."""
     return VisionResult(
         detections=(Detection("person", 0.9, box),) if hits else (),
         jpeg=b"test-jpeg",
@@ -142,7 +143,7 @@ def vision_result(
         frame_width=frame_width,
         frame_height=480,
         frame_received_ms=at_ms,
-        completed_ms=at_ms,
+        completed_ms=at_ms if completed_ms is None else completed_ms,
         inference_ms=1.0,
         sighting=Sighting(
             present=present,
@@ -660,6 +661,102 @@ def test_confirmed_person_is_recorded_once_and_published(
     assert entries[0].detections[0]["label"] == "person"
 
 
+class DescribedVision(FakeVision):
+    """로드된 모델을 말하는 비전 대역 (`VisionWorker.models`)."""
+
+    MODELS = [{"name": "coco", "sha256": "ab" * 32, "provider": "DmlExecutionProvider"}]
+
+    def models(self) -> list[dict]:
+        return [dict(item) for item in self.MODELS]
+
+    def model_files(self) -> list[dict]:
+        return [{"name": "coco", "file": "coco.onnx", "sha256": "ab" * 32, "meta": {}}]
+
+
+def test_recorded_event_is_traceable(config: dict, clock: FakeClock, tmp_path) -> None:
+    """사건마다 세션·장치·프레임·모델·설정·지연을 남겨 «무엇으로 어떻게» 를 되짚는다."""
+    from host.common.trace import config_sha256
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=DescribedVision(),
+        blackbox=blackbox,
+        session_id="S-1",
+    )
+    result = vision_result(
+        42, clock.ms - 40, present=True, hits=1, last_seen_ms=None, completed_ms=clock.ms - 30
+    )
+    runtime._record_scene("person_found", result)
+
+    (entry,) = blackbox.feed()
+    assert entry.event_id
+    assert entry.session_id == "S-1" == runtime.session_id
+    assert entry.device_id == DEVICE
+    assert entry.frame_id == 42
+    assert entry.config_sha256 == config_sha256(local)
+    assert entry.models == DescribedVision.MODELS
+    assert entry.latency == {
+        "inference_ms": 1.0,
+        "frame_to_result_ms": 10,
+        "frame_to_decision_ms": 40,
+    }
+
+
+def test_runtime_makes_a_session_id_and_skips_unmeasurable_latency(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    """기록기가 없어도 세션 ID 는 생긴다. 시계가 어긋난 지연(음수)과 모델 목록이 없는 비전은 싣지 않는다."""
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(local, device_id=DEVICE, clock=clock, vision=FakeVision(), blackbox=blackbox)
+    other = Runtime(local, device_id=DEVICE, clock=clock)
+    assert runtime.session_id and runtime.session_id != other.session_id
+
+    future = clock.ms + 500
+    result = vision_result(1, future, present=True, hits=1, last_seen_ms=None)
+    runtime._record_scene("person_found", result)
+
+    (entry,) = blackbox.feed()
+    assert entry.session_id == runtime.session_id
+    assert entry.latency == {"inference_ms": 1.0, "frame_to_result_ms": 0}
+    meta = json.loads(entry.meta_path.read_text(encoding="utf-8"))
+    assert "models" not in meta, "모델을 말하지 못하는 비전이면 키를 쓰지 않는다"
+
+
+def test_published_event_carries_the_trace(config: dict, clock: FakeClock, tmp_path) -> None:
+    from host.dashboard.state import DashboardState
+    from host.runtime import _publish_event
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    dashboard = DashboardState(DEVICE, stale_after_ms=1000)
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=DescribedVision(),
+        blackbox=blackbox,
+        event_publisher=_publish_event(dashboard),
+        session_id="S-2",
+    )
+    runtime._record_scene(
+        "person_found", vision_result(7, clock.ms, present=True, hits=1, last_seen_ms=None)
+    )
+    (event,), _ = dashboard.events_since(0)
+    assert event["event_id"] == blackbox.feed()[0].event_id
+    assert event["session_id"] == "S-2"
+    assert event["frame_id"] == 7
+    assert event["models"] == DescribedVision.MODELS
+    assert event["latency"]["inference_ms"] == 1.0
+
+
 # ── 상황 서술 문장 (4.8.1) — 강제 차단 시험 ──────────────────────────────────
 #
 # `describe`·`announcer` 는 관제용 부가 기능이다. 둘 중 무엇이 죽어도 사건은
@@ -1002,6 +1099,50 @@ def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> 
     assert captured["config"]["network"]["xiao_ip"] == "192.0.2.10"
     assert captured["duration_s"] == 0.0
     assert captured["closed"] is True
+
+
+def test_cli_shares_one_session_id_with_the_recorder_manifest(
+    config: dict, monkeypatch, tmp_path
+) -> None:
+    """세션 ID 는 런타임과 기록기 manifest 에 같은 값이고, manifest 에 모델 sha256 이 남는다."""
+    import host.runtime as runtime_module
+    from host.common.trace import config_sha256
+
+    vision = DescribedVision()
+    captured: dict = {}
+
+    class CliRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, cfg, **kwargs) -> None:
+            captured["config"] = cfg
+            captured.update(kwargs)
+
+        def serve(self, _sock, *, duration_s=None) -> None:
+            pass
+
+    class CliSocket:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
+    monkeypatch.setattr(runtime_module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(runtime_module, "build_worker", lambda _cfg: vision)
+    monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
+    monkeypatch.setattr(runtime_module, "open_socket", lambda _port: CliSocket())
+
+    record_dir = tmp_path / "session"
+    assert (
+        runtime_module.main(
+            ["--device", DEVICE, "--duration", "0", "--record-dir", str(record_dir)]
+        )
+        == 0
+    )
+    manifest = json.loads((record_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["session_id"] == captured["session_id"]
+    assert manifest["session_id"]
+    assert manifest["models"] == vision.model_files()
+    assert manifest["config_sha256"] == config_sha256(captured["config"])
 
 
 def test_estop_event_is_not_forged_by_the_runtime(config: dict, clock: FakeClock) -> None:
@@ -4078,3 +4219,184 @@ def test_a_lighter_outside_the_forbidden_zones_raises_no_alarm(
     _lighter_visit(runtime, vision)
     assert [e for e in blackbox.feed() if e.event_type == "hazard_notice"] == []
     assert True not in vision.switches
+
+
+# ── 사건·순찰 이력 DB (WBS 4.6.6 · ADR-46) ─────────────────────
+def _history(tmp_path: Path):
+    from host.common.history import HistoryStore
+
+    return HistoryStore(tmp_path / "history" / "mechdog.sqlite3")
+
+
+def test_history_registers_the_robot_and_zones_and_closes_runs_left_open(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """기동하면 기체·구역을 맞추고, 지난 비정상 종료가 열어 둔 판을 `interrupted` 로 닫는다."""
+    store = _history(tmp_path)
+    left = store.open_run(DEVICE, mode="guard", started_at=1)
+    local = dict(config, telemetry_device_id="mechdog-3c8a1f1d80cc")
+    Runtime(local, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+
+    [robot] = store.robots()
+    assert (robot["robot_id"], robot["serial_no"]) == (DEVICE, "mechdog-3c8a1f1d80cc")
+    assert [z["zone_id"] for z in store.zones()] == sorted(config["zones"]["ids"])
+    [run], _ = store.runs()
+    assert run["mission_id"] == left
+    assert (run["result"], run["ended_at"]) == ("interrupted", clock.ms)
+
+
+def test_a_patrol_is_one_run_closed_by_the_trigger_that_ended_it(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """대기·수동·페일세이프를 떠나면 판이 열리고, 그중 하나로 들어가면 닫힌다 (ADR-46 결정 5)."""
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    started = clock.ms
+    runtime.start_patrol(started)
+    [run], _ = store.runs()
+    assert run["mission_id"] == f"{DEVICE}-{started}"
+    assert (run["mode"], run["ended_at"], run["result"]) == (runtime.mission.mode, None, None)
+
+    clock.advance(5000)
+    assert runtime.apply_external(Event.ESTOP)
+    [run], _ = store.runs()
+    assert (run["ended_at"], run["result"], run["stop_reason"]) == (clock.ms, "failsafe", "ESTOP")
+
+
+def test_the_dashboard_patrol_stop_closes_the_run_as_stopped(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ «순찰 정지» 는 수동을 거쳐 `IDLE` 로 내린다 — 그래도 수동 조종(`manual`)과 구별해 남긴다.
+
+    FSM 에는 자율 → `IDLE` 직행 사건이 없어, 표시하지 않으면 정상 정지가 모두 `manual` 로 찍힌다.
+    """
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    commands = dashboard_wiring(runtime, config, vision=None, blackbox=None)["commands"]
+    runtime.start_patrol(clock.ms)
+    clock.advance(3000)
+    assert commands.patrol_stop().accepted
+    assert runtime.behavior.state == "IDLE"
+    clock.advance(1000)
+    runtime.start_patrol(clock.ms)
+    clock.advance(2000)
+    assert commands.manual_on().accepted
+
+    stopped, taken = sorted(store.runs()[0], key=lambda run: run["started_at"])
+    assert (stopped["result"], stopped["stop_reason"]) == ("stopped", "patrol_stop")
+    assert (taken["result"], taken["stop_reason"]) == ("manual", "MANUAL_ON")
+    store.close()
+
+
+def test_feed_events_reach_the_history_without_a_dashboard(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ **대시보드를 켜지 않고 돈 런타임의 사건도 남는다** — 기록은 런타임이 맡는다(대안 ⓒ 미채택).
+
+    사진이 있는 사건은 블랙박스 폴더를 가리키고, 단계 변화는 경고 문구를 `detail` 로 남긴다.
+    """
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    store = _history(tmp_path)
+    vision = FakeVision()
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=EventBlackbox(local),
+        history=store,
+    )
+    runtime.start_patrol(0)
+    _engage(runtime, vision, local, at_ms=100)
+
+    [run], _ = store.runs()
+    found, _ = store.incidents(event="person_found")
+    assert len(found) == 1
+    assert found[0]["mission_id"] == run["mission_id"]
+    assert found[0]["snapshot_path"] == f"{found[0]['blackbox_entry']}/snapshot.jpg"
+    assert found[0]["confidence"] == pytest.approx(0.9)
+    # 첫 틱의 `L0` 도 관제 피드에 뜨는 사건이다 — 피드와 같은 것을 남긴다 (최근 것부터).
+    changed, _ = store.incidents(event="escalation_changed")
+    assert [c["escalation_level"] for c in changed] == ["L1", "L0"]
+    assert set(changed[0]["detail"]) == {"warning", "reason"}
+    assert run["incident_count"] == 3
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_zone_arrival_is_added_to_the_run(config: dict, clock: FakeClock, tmp_path: Path) -> None:
+    """구역 도착(앵커 반경 안)을 그 판의 방문 구역에 남긴다."""
+    cfg = _zone_config(config, tmp_path)
+    store = _history(tmp_path)
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(cfg, mode="factory"),
+        history=store,
+    )
+    runtime.start_patrol(0)
+    _see(runtime, vision, seq=1, at_ms=100, detections=[])
+    assert runtime.behavior.state == "ZONE_INSPECT"
+
+    [run], _ = store.runs()
+    assert run["zones_visited"] == ["A"]
+
+
+def test_accepted_telemetry_marks_the_robot_as_seen(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    encoder = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(encoder), 1234)
+
+    [robot] = store.robots()
+    assert (robot["last_seen_at"], robot["status"]) == (1234, runtime.behavior.state)
+
+
+def test_stopping_the_runtime_closes_the_open_run(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    runtime.start_patrol(clock.ms)
+    clock.advance(700)
+    runtime.release()
+
+    [run], _ = store.runs()
+    assert (run["ended_at"], run["result"], run["stop_reason"]) == (
+        clock.ms,
+        "shutdown",
+        "runtime_stopped",
+    )
+
+
+def test_a_broken_history_does_not_stop_the_loop(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """⚠️ **DB 는 색인이다.** 쓰기가 모두 실패해도 순찰·전이·틱은 그대로 돈다."""
+    store = _history(tmp_path)
+    store.close()
+    vision = FakeVision()
+    with caplog.at_level(logging.ERROR, logger="mechadog.history"):
+        runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision, history=store)
+        assert runtime.start_patrol(0)
+        _engage(runtime, vision, config, at_ms=100)
+        runtime.release()
+    assert runtime.escalation.level is Level.L1
+    assert any(r.getMessage() == "history_write_failed" for r in caplog.records)
+
+
+def test_the_dashboard_wiring_hands_over_the_history(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """관제 서버(`/api/history`)는 런타임이 쓰는 **같은** 저장소를 읽는다 — 한 대·여러 대 공통."""
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, history=store)
+    assert dashboard_wiring(runtime, config, vision=None, blackbox=None)["history"] is store
+    bare = Runtime(config, device_id=DEVICE, clock=clock)
+    assert dashboard_wiring(bare, config, vision=None, blackbox=None)["history"] is None
+    store.close()

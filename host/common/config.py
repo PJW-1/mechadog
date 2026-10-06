@@ -119,6 +119,11 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
         raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
 
+    # 이력 DB 는 색인이라 끌 수 있다 — 키가 없거나 빈 문자열이면 쓰지 않는다 (ADR-46).
+    history_db = config["logging"].get("history_db")
+    if history_db is not None and not isinstance(history_db, str):
+        raise ConfigError("logging.history_db 는 문자열이어야 함")
+
     # 모드 이름 목록의 정본은 `behavior/mission.py` 하나다 — 여기서는 문자열인지만 본다.
     mode = config["mission"].get("mode")
     if not isinstance(mode, str) or not mode.strip():
@@ -191,6 +196,29 @@ def validate_base_config(config: dict[str, Any]) -> None:
             f"({period_ms}ms) 보다 짧아 한 번만 놓쳐도 ID 가 바뀜"
         )
 
+    _validate_collect(vision.get("collect"))
+    # LiDAR 막힘 원인 판독 (ADR-45) — 대기 상한과 프레임 나이 상한.
+    vlm = vision.get("vlm")
+    if not isinstance(vlm, dict):
+        raise ConfigError("vision.vlm 절이 없음")
+    for name in (
+        "budget_ms",
+        "patrol_interval_ms",
+        "path_cause_wait_ms",
+        "path_cause_max_frame_age_ms",
+    ):
+        _require_positive(vlm, name)
+        if not isinstance(vlm[name], int) or isinstance(vlm[name], bool):
+            raise ConfigError(f"vision.vlm.{name} 는 양의 정수여야 함")
+    # 없으면 세션이 기본값 32 를 쓴다. 있으면 양의 정수여야 한다.
+    if "max_new_tokens" in vlm:
+        tokens = vlm["max_new_tokens"]
+        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+            raise ConfigError("vision.vlm.max_new_tokens 는 양의 정수여야 함")
+    model_id = vlm.get("model_id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ConfigError("vision.vlm.model_id 는 비어 있지 않은 문자열이어야 함")
+
     # 인증 (FR-10) — 사원증 사전과 발급 대장. 절의 존재는 `REQUIRED_SECTIONS` 가 본다.
     auth = config["auth"]
     dictionary = auth.get("badge_dictionary")
@@ -257,6 +285,17 @@ def validate_base_config(config: dict[str, Any]) -> None:
     }.items():
         for name in names:
             _require_positive(config[section], name)
+
+    # `change_detect` 스위치는 bool 이어야 한다 — `bool("false")` 는 True 라서 따옴표로 쓴
+    # 문자열이 스위치를 켠다. 방문 키는 소비자가 `int()` 로 내린다.
+    change_detect = config["change_detect"]
+    for name in ("vlm_path_cause", "vlm_hazards", "vlm_hazard_items"):
+        if not isinstance(change_detect.get(name), bool):
+            raise ConfigError(f"change_detect.{name} 는 true 또는 false 여야 함")
+    for name in ("visit_frames", "visit_max_ms"):
+        value = change_detect.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"change_detect.{name} 는 양의 정수여야 함")
 
     fsm = config["fsm"]
     deadzone = fsm.get("track_deadzone_px")
@@ -464,6 +503,25 @@ def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
         raise ConfigError("posture_amplitude.source 는 phone_imu 또는 onboard_imu 여야 함")
     if not isinstance(amplitude.get("measured_on"), str) or not amplitude["measured_on"]:
         raise ConfigError("posture_amplitude.measured_on 기록이 필요함")
+
+
+def _validate_collect(collect: Any) -> None:
+    """VLM 학습용 프레임 수집 (`vision.collect`). 절이 없으면 꺼진 것이다."""
+    if collect is None:
+        return
+    if not isinstance(collect, dict):
+        raise ConfigError("vision.collect 는 매핑이어야 함")
+    for key in ("clear_every_ms", "clear_holdoff_ms", "max_files", "max_frame_age_ms"):
+        if key in collect:
+            _require_positive(collect, key)
+    root = collect.get("root")
+    if root is None:
+        return
+    if not isinstance(root, str) or not root.strip():
+        raise ConfigError("vision.collect.root 는 null 이거나 비어 있지 않은 경로 문자열이어야 함")
+    # 사진에 얼굴이 찍힌다 — 커밋될 수 있는 저장소 안에는 두지 않는다.
+    if repo_path(root).resolve().is_relative_to(ROOT.resolve()):
+        raise ConfigError(f"vision.collect.root 는 저장소 밖 경로여야 함: {root}")
 
 
 def _validate_hazard(hazard: Any) -> None:
