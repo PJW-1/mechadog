@@ -661,6 +661,102 @@ def test_confirmed_person_is_recorded_once_and_published(
     assert entries[0].detections[0]["label"] == "person"
 
 
+class DescribedVision(FakeVision):
+    """로드된 모델을 말하는 비전 대역 (`VisionWorker.models`)."""
+
+    MODELS = [{"name": "coco", "sha256": "ab" * 32, "provider": "DmlExecutionProvider"}]
+
+    def models(self) -> list[dict]:
+        return [dict(item) for item in self.MODELS]
+
+    def model_files(self) -> list[dict]:
+        return [{"name": "coco", "file": "coco.onnx", "sha256": "ab" * 32, "meta": {}}]
+
+
+def test_recorded_event_is_traceable(config: dict, clock: FakeClock, tmp_path) -> None:
+    """사건마다 세션·장치·프레임·모델·설정·지연을 남겨 «무엇으로 어떻게» 를 되짚는다."""
+    from host.common.trace import config_sha256
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=DescribedVision(),
+        blackbox=blackbox,
+        session_id="S-1",
+    )
+    result = vision_result(
+        42, clock.ms - 40, present=True, hits=1, last_seen_ms=None, completed_ms=clock.ms - 30
+    )
+    runtime._record_scene("person_found", result)
+
+    (entry,) = blackbox.feed()
+    assert entry.event_id
+    assert entry.session_id == "S-1" == runtime.session_id
+    assert entry.device_id == DEVICE
+    assert entry.frame_id == 42
+    assert entry.config_sha256 == config_sha256(local)
+    assert entry.models == DescribedVision.MODELS
+    assert entry.latency == {
+        "inference_ms": 1.0,
+        "frame_to_result_ms": 10,
+        "frame_to_decision_ms": 40,
+    }
+
+
+def test_runtime_makes_a_session_id_and_skips_unmeasurable_latency(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    """기록기가 없어도 세션 ID 는 생긴다. 시계가 어긋난 지연(음수)과 모델 목록이 없는 비전은 싣지 않는다."""
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(local, device_id=DEVICE, clock=clock, vision=FakeVision(), blackbox=blackbox)
+    other = Runtime(local, device_id=DEVICE, clock=clock)
+    assert runtime.session_id and runtime.session_id != other.session_id
+
+    future = clock.ms + 500
+    result = vision_result(1, future, present=True, hits=1, last_seen_ms=None)
+    runtime._record_scene("person_found", result)
+
+    (entry,) = blackbox.feed()
+    assert entry.session_id == runtime.session_id
+    assert entry.latency == {"inference_ms": 1.0, "frame_to_result_ms": 0}
+    meta = json.loads(entry.meta_path.read_text(encoding="utf-8"))
+    assert "models" not in meta, "모델을 말하지 못하는 비전이면 키를 쓰지 않는다"
+
+
+def test_published_event_carries_the_trace(config: dict, clock: FakeClock, tmp_path) -> None:
+    from host.dashboard.state import DashboardState
+    from host.runtime import _publish_event
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    dashboard = DashboardState(DEVICE, stale_after_ms=1000)
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=DescribedVision(),
+        blackbox=blackbox,
+        event_publisher=_publish_event(dashboard),
+        session_id="S-2",
+    )
+    runtime._record_scene(
+        "person_found", vision_result(7, clock.ms, present=True, hits=1, last_seen_ms=None)
+    )
+    (event,), _ = dashboard.events_since(0)
+    assert event["event_id"] == blackbox.feed()[0].event_id
+    assert event["session_id"] == "S-2"
+    assert event["frame_id"] == 7
+    assert event["models"] == DescribedVision.MODELS
+    assert event["latency"]["inference_ms"] == 1.0
+
+
 # ── 상황 서술 문장 (4.8.1) — 강제 차단 시험 ──────────────────────────────────
 #
 # `describe`·`announcer` 는 관제용 부가 기능이다. 둘 중 무엇이 죽어도 사건은
@@ -1003,6 +1099,50 @@ def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> 
     assert captured["config"]["network"]["xiao_ip"] == "192.0.2.10"
     assert captured["duration_s"] == 0.0
     assert captured["closed"] is True
+
+
+def test_cli_shares_one_session_id_with_the_recorder_manifest(
+    config: dict, monkeypatch, tmp_path
+) -> None:
+    """세션 ID 는 런타임과 기록기 manifest 에 같은 값이고, manifest 에 모델 sha256 이 남는다."""
+    import host.runtime as runtime_module
+    from host.common.trace import config_sha256
+
+    vision = DescribedVision()
+    captured: dict = {}
+
+    class CliRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, cfg, **kwargs) -> None:
+            captured["config"] = cfg
+            captured.update(kwargs)
+
+        def serve(self, _sock, *, duration_s=None) -> None:
+            pass
+
+    class CliSocket:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
+    monkeypatch.setattr(runtime_module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(runtime_module, "build_worker", lambda _cfg: vision)
+    monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
+    monkeypatch.setattr(runtime_module, "open_socket", lambda _port: CliSocket())
+
+    record_dir = tmp_path / "session"
+    assert (
+        runtime_module.main(
+            ["--device", DEVICE, "--duration", "0", "--record-dir", str(record_dir)]
+        )
+        == 0
+    )
+    manifest = json.loads((record_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["session_id"] == captured["session_id"]
+    assert manifest["session_id"]
+    assert manifest["models"] == vision.model_files()
+    assert manifest["config_sha256"] == config_sha256(captured["config"])
 
 
 def test_estop_event_is_not_forged_by_the_runtime(config: dict, clock: FakeClock) -> None:

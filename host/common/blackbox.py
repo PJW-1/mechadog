@@ -12,7 +12,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -46,6 +46,43 @@ class BlackboxEntry:
     judgement: dict[str, Any]
     jpeg_path: Path | None
     meta_path: Path
+    # ── 사건 추적 — 없는 옛 기록은 빈 값(«모름»)으로 읽는다 ──
+    event_id: str = ""
+    #: 런타임 시작마다 하나 (`host.common.trace.new_session_id`) — 세션 manifest 와 같은 값.
+    session_id: str = ""
+    device_id: str = ""
+    #: 사건을 일으킨 영상 프레임의 수신 순번 (`Frame.seq`).
+    frame_id: int | None = None
+    config_sha256: str = ""
+    #: 로드된 모델별 `{name, sha256, provider}`.
+    models: list[dict[str, Any]] = field(default_factory=list)
+    #: 실제로 잰 지연만 (ms). 잴 수 없는 값은 키가 없다.
+    latency: dict[str, Any] = field(default_factory=dict)
+
+
+def _trace_fields(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """meta.json 의 추적 값. 없거나 형식이 틀린 값(옛 기록 포함)은 빈 값(«모름»)으로 둔다."""
+
+    def text(key: str) -> str:
+        value = metadata.get(key)
+        return value if isinstance(value, str) else ""
+
+    frame_id = metadata.get("frame_id")
+    models = metadata.get("models")
+    latency = metadata.get("latency")
+    return {
+        "event_id": text("event_id"),
+        "session_id": text("session_id"),
+        "device_id": text("device_id"),
+        "frame_id": frame_id
+        if isinstance(frame_id, int) and not isinstance(frame_id, bool)
+        else None,
+        "config_sha256": text("config_sha256"),
+        "models": [dict(item) for item in models if isinstance(item, dict)]
+        if isinstance(models, list)
+        else [],
+        "latency": dict(latency) if isinstance(latency, dict) else {},
+    }
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
@@ -96,8 +133,18 @@ class EventBlackbox:
         mode: str = "",
         judgement: Mapping[str, Any] | None = None,
         now_ms: int,
+        session_id: str | None = None,
+        device_id: str | None = None,
+        frame_id: int | None = None,
+        config_sha256: str | None = None,
+        models: Sequence[Mapping[str, Any]] | None = None,
+        latency: Mapping[str, Any] | None = None,
     ) -> BlackboxEntry:
-        """JPEG를 재인코딩하지 않고 사건의 모든 관측값과 함께 기록한다."""
+        """JPEG를 재인코딩하지 않고 사건의 모든 관측값과 함께 기록한다.
+
+        `event_id` 는 여기서 만든다. 추적 값(`session_id` ~ `latency`)은 준 것만 쓴다 —
+        주지 않은 값의 키를 빈 값으로 채우면 «모름» 과 «없음» 이 섞인다.
+        """
         if not isinstance(event_type, str) or not event_type.strip():
             raise ValueError("event_type 은 비어 있지 않은 문자열이어야 함")
         if not isinstance(now_ms, int) or isinstance(now_ms, bool) or now_ms < 0:
@@ -122,7 +169,17 @@ class EventBlackbox:
             "detections": detections_data,
             "telemetry": telemetry_data,
             "judgement": judgement_data,
+            "event_id": uuid4().hex,
         }
+        trace: dict[str, Any] = {
+            "session_id": session_id,
+            "device_id": device_id,
+            "frame_id": frame_id,
+            "config_sha256": config_sha256,
+            "models": None if models is None else [dict(item) for item in models],
+            "latency": None if latency is None else dict(latency),
+        }
+        metadata.update(deepcopy({key: value for key, value in trace.items() if value is not None}))
 
         entry_dir = self._new_entry_dir(now_ms, event_type)
         jpeg_path = entry_dir / "snapshot.jpg" if jpeg is not None else None
@@ -151,6 +208,7 @@ class EventBlackbox:
             judgement=judgement_data,
             jpeg_path=jpeg_path,
             meta_path=meta_path,
+            **_trace_fields(metadata),
         )
 
     def feed(self, since_ms: int = 0) -> list[BlackboxEntry]:
@@ -205,6 +263,7 @@ class EventBlackbox:
                     judgement=judgement if isinstance(judgement, dict) else {},
                     jpeg_path=jpeg_path if jpeg_path.is_file() else None,
                     meta_path=meta_path,
+                    **_trace_fields(metadata),
                 )
             )
         entries.sort(key=lambda entry: (entry.ts_ms, str(entry.meta_path)))

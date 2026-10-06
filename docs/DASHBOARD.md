@@ -164,6 +164,8 @@ python -m host.dashboard.preview --device mechdog-02 --port 8003
 | 링크 · 안전 래치 | 초당 **새 seq** 수 · 누락 수 / 잠김·해제 |
 | 마지막 명령 수락 나이 | 로봇 시계 기준 |
 | 링크 지연 (RTT) | **미측정** — `link_rtt_ms: null` 을 그대로 말한다 |
+| 비전 모델 | 로드된 모델마다 `이름 · sha256 앞 12자리 · provider`. 비전 없이 띄우면 *비전 없음 · 미수신*, 아직 연 모델이 없으면 *로드된 모델 없음* |
+| 추론 지연 p50 / p95 | 비전 워커가 잰 프레임당 처리 시간(최근 512건, nearest-rank). 표본이 없으면 *측정 전* |
 
 배터리와 전방 거리는 **최근 60초 추이**(선 · 최소 · 최대 · 지금)를 함께 그린다.
 
@@ -217,12 +219,31 @@ Origin만 허용한다. 로컬 비브라우저 클라이언트는 Origin 없이 
 | `telemetry_age_ms`, `stale` | 마지막 유효 수신 후 PC 단조 시계 경과. 기존 `safety.link_loss_failsafe_ms` 이상이면 stale |
 | `runtime_age_ms`, `runtime_stale` | 마지막 운용 틱 상태 갱신 후 경과. 런타임 중단과 센서 수신 중단을 구분 |
 | `link_rtt_ms` | 현재 null. 시계가 다른 로봇 uptime과 PC 시각을 빼서 RTT라고 표시하지 않음 |
+| `vision` | `{models:[{name,sha256,provider}], inference:{n,p50_ms,p95_ms}}` — `VisionWorker.status()`. 비전 없이 띄우면 null. `/api/telemetry` 도 같은 값 |
 
 유효하지 않은 패킷·타 개체·역전 seq는 기존 수신 규칙으로 폐기하며 최신 값과
 수신 시각을 갱신하지 않는다. 새 부팅의 seq=1은 기존 부팅 세션 규칙대로 수락한다.
 WS 10Hz는 **표시 갱신률**이다. 동일 seq가 반복되거나 stale인 상태를 새 센서 측정으로
 세면 안 된다. stale 상태에서도 마지막 관측은 남지만 정상/안전 판정으로 사용하지 않는다.
 전압 범위와 온보드 안전 판정은 변경하지 않았다.
+
+## 사건 추적 — 블랙박스 `meta.json`
+
+사건 기록(`host/common/blackbox.py`)과 대시보드 이벤트 푸시는 아래 추적 값을 함께 싣는다. 관제 화면의
+사건 근거 표(`operations.js`)는 값이 있는 것만 *사건 ID · 세션 · 프레임 · 설정 해시 · 모델 · 지연* 행으로 보인다.
+
+| 필드 | 값의 출처 |
+| --- | --- |
+| `event_id` | 기록할 때마다 새 `uuid4().hex` |
+| `session_id` | 런타임 시작마다 하나(`host.common.trace.new_session_id`). 세션 기록기가 꺼져 있어도 만들고, 켜져 있으면 `manifest.json` 의 `session_id` 와 같다 |
+| `device_id` | 실행 시 고른 개체 프로파일 이름 |
+| `frame_id` | 사건을 일으킨 영상 프레임의 수신 순번(`Frame.seq`) |
+| `config_sha256` | 병합된 설정을 키 정렬 JSON 으로 만든 sha256 — manifest 의 값과 같은 계산 |
+| `models` | 로드된 모델마다 `{name, sha256, provider}`. sha256 은 기동 때 한 번만 계산한다 |
+| `latency` | 잰 값만(ms): `inference_ms` 프레임당 처리 시간, `frame_to_result_ms` 수신→추론 완료, `frame_to_decision_ms` 수신→판단. 잴 수 없는 값은 키가 없다 |
+
+⚠️ 이 필드가 없는 옛 `meta.json` 도 그대로 읽는다 — 빈 값(«모름»)으로 둔다. 세션 manifest 는 같은
+`session_id` 와 모델별 `{name, file, sha256, meta}` 를 남긴다(`meta` 는 `models/<이름>.meta.json`, 없으면 `{}`).
 
 ## 검출 오버레이 — `/ws/vision`
 
