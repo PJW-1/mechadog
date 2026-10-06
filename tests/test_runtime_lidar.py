@@ -11,9 +11,9 @@ import copy
 import json
 import math
 import random
-from copy import deepcopy
 import threading
 import time
+from copy import deepcopy
 
 import pytest
 from conftest import FakeClock
@@ -440,6 +440,8 @@ def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock
     assert kwargs["judgement"]["camera_completed_ms"] == original.completed_ms
     assert kwargs["judgement"]["camera_age_ms"] == 1000
     assert "건너뜀" in kwargs["judgement"]["sentence"]
+
+
 # ── 막힘 원인 VLM 판독 (ADR-45) ─────────────────────────────
 class _CauseSession:
     """판독 세션 대역 — `gate` 가 열릴 때까지 답하지 않고, 받은 질문을 남긴다."""

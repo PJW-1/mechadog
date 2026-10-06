@@ -1,0 +1,1634 @@
+[
+  {
+    "index": 17308,
+    "support": [
+      16817,
+      17063,
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17309,
+    "support": [
+      16817,
+      17063,
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17310,
+    "support": [
+      16817,
+      17063,
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17311,
+    "support": [
+      16817,
+      17063,
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17554,
+    "support": [
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17555,
+    "support": [
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17556,
+    "support": [
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17557,
+    "support": [
+      17309,
+      17555,
+      17801
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17800,
+    "support": [
+      17309,
+      17555,
+      17801,
+      18047
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17801,
+    "support": [
+      17309,
+      17555,
+      17801,
+      18047
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17802,
+    "support": [
+      17309,
+      17555,
+      17801,
+      18047
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 17803,
+    "support": [
+      17309,
+      17555,
+      17801,
+      18047
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18046,
+    "support": [
+      17801,
+      18047,
+      18293
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18047,
+    "support": [
+      17801,
+      18047,
+      18293
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18048,
+    "support": [
+      17801,
+      18047,
+      18293
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18049,
+    "support": [
+      17801,
+      18047,
+      18293
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18292,
+    "support": [
+      18047,
+      18293,
+      18538,
+      18539
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18293,
+    "support": [
+      18047,
+      18293,
+      18538,
+      18539
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18294,
+    "support": [
+      18047,
+      18293,
+      18538,
+      18539
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18295,
+    "support": [
+      18047,
+      18293,
+      18538,
+      18539
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18538,
+    "support": [
+      18293,
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18539,
+    "support": [
+      18293,
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18540,
+    "support": [
+      18293,
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18541,
+    "support": [
+      18293,
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035,
+      19036
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18784,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18785,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18786,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 18787,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035,
+      19036
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19030,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19031,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19032,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19033,
+    "support": [
+      18538,
+      18539,
+      18784,
+      18785,
+      19031,
+      19032,
+      19033,
+      19034,
+      19035,
+      19036
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19276,
+    "support": [
+      19031,
+      19032,
+      19033
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19277,
+    "support": [
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19278,
+    "support": [
+      19031,
+      19032,
+      19033,
+      19034,
+      19035
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19279,
+    "support": [
+      19031,
+      19032,
+      19033,
+      19034,
+      19035,
+      19036
+    ],
+    "cell_directly_observed": true,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19522,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19523,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19524,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19525,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19768,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19769,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19770,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 19771,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20014,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20015,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20016,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20017,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20260,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20261,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20262,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20263,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20506,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20507,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20508,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20509,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20752,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20753,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20754,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20755,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20998,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 20999,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21000,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21001,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21244,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21245,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21246,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21247,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21490,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21491,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21492,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21493,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21736,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21737,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21738,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21739,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21982,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21983,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21984,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 21985,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22228,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22229,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22230,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22231,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22474,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22475,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22476,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22477,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22720,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22721,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22722,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22723,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22966,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22967,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22968,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 22969,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23212,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23213,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23214,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23215,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23458,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23459,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23460,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23461,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23704,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23705,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23706,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23707,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23950,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23951,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23952,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 23953,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24196,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24197,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24198,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24199,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24442,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24443,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24444,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24445,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24688,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24689,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24690,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24691,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24934,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24935,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24936,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 24937,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25180,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25181,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25182,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25183,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25426,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25427,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25428,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25429,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25672,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25673,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25674,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25675,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25918,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25919,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25920,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 25921,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26164,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26165,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26166,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26167,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26410,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26411,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26412,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26413,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26656,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26657,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26658,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26659,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26902,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26903,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26904,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 26905,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27148,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27149,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27150,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27151,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27394,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27395,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27396,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27397,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27640,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27641,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27642,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27643,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27886,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27887,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27888,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 27889,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28132,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28133,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28134,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28135,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28378,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28379,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28380,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28381,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28624,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28625,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28626,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28627,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28870,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28871,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28872,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 28873,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29116,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29117,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29118,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29119,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29362,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29363,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29364,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29365,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29608,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29609,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29610,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29611,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29854,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29855,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29856,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 29857,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30100,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30101,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30102,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30103,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30346,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30347,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30348,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30349,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30592,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30593,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30594,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30595,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30838,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30839,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30840,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 30841,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31084,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31085,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31086,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31087,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31330,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31331,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31332,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  },
+  {
+    "index": 31333,
+    "support": [],
+    "cell_directly_observed": false,
+    "prior": "user tape: continuous partition from window y1.11 to pillar end y4.00, x approximately7.1..7.3"
+  }
+]

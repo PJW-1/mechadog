@@ -26,8 +26,12 @@ def planning(tmp_path):
     root = Path(__file__).resolve().parents[1]
     devices = tmp_path / "devices"
     devices.mkdir()
-    (devices / "mechdog-02.yaml").write_bytes(
-        (root / "config/devices/mechdog-02.yaml").read_bytes()
+    # 기체 설정이 저장소 지도(`maps/…`)를 가리키므로 시험 지도 폴더로 바꿔 쓴다 (10-06 지도 커밋 이후).
+    device = yaml.safe_load((root / "config/devices/mechdog-02.yaml").read_text(encoding="utf-8"))
+    device.setdefault("lidar", {})["maps_dir"] = str(tmp_path / "maps")
+    device.pop("zones", None)  # 현장 구역 순서·정책은 시험의 기준 구성을 덮지 않게 뺀다
+    (devices / "mechdog-02.yaml").write_text(
+        yaml.safe_dump(device, allow_unicode=True), encoding="utf-8"
     )
     base = yaml.safe_load((root / "config/config.yaml").read_text(encoding="utf-8"))
     base["lidar"]["maps_dir"] = str(tmp_path / "maps")

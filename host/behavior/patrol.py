@@ -472,7 +472,9 @@ class PatrolController:
     #: 새 장애물 연속 확인 후보 — 현장 AG 정책은 후보 단계 없이 바로 끝점을 낸다(항상 None).
     #: 프레임 수집기(4.8.7)의 `obstacle_pending` 계약을 위해 남긴다.
     _pending_hit: tuple[float, float] | None = None
-    _relaxed_progress: tuple[tuple[float, float], float, int] | None = None  # (목표, 최소 거리, 그때 시각)
+    _relaxed_progress: tuple[tuple[float, float], float, int] | None = (
+        None  # (목표, 최소 거리, 그때 시각)
+    )
     _relaxed_stuck: bool = False
     _relaxed_escape_turn: bool = False
     _last_verified_pose_ms: int | None = None
@@ -1503,7 +1505,11 @@ class PatrolController:
         # 정면이 실제로 막혔을 때만 «길 막힘» — 문틀 앞에서 느려진 것을 막힘으로 보지 않는다
         # (2026-10-06 실기: 침실 문 앞 정면 0.56m 에서 오판해 계속 대기).
         if front is None or front > 0.35:
-            self._relaxed_progress = (target, min(distance, prog[1]), self._now_ms) if front is None or front > 0.45 else prog
+            self._relaxed_progress = (
+                (target, min(distance, prog[1]), self._now_ms)
+                if front is None or front > 0.45
+                else prog
+            )
             return False
         if self._now_ms - prog[2] >= self.nav_params.relaxed_stuck_ms:
             self._relaxed_stuck = True
@@ -1552,7 +1558,9 @@ class PatrolController:
             self._relaxed_progress, self._relaxed_stuck = None, False
             self._arrive(GOAL_LABEL)
             return
-        if self.nav_params.relaxed_stuck_hold and self._relaxed_stuck_check(target, distance, front):
+        if self.nav_params.relaxed_stuck_hold and self._relaxed_stuck_check(
+            target, distance, front
+        ):
             return
         self.plan = Plan(GOAL_LABEL, (self.pose[:2], target), distance, effective=target)
         self.phase = Phase.MOVING

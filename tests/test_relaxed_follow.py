@@ -38,7 +38,9 @@ def tick(c, now, *, pose=(2, 2, 0), front=None, distance=3, entry="step", **read
 
 
 @pytest.mark.parametrize("entry", ["step", "steer"])
-@pytest.mark.parametrize("heading,spin", [(0, False), (2, False), (10, False), (34, True), (150, True)])
+@pytest.mark.parametrize(
+    "heading,spin", [(0, False), (2, False), (10, False), (34, True), (150, True)]
+)
 def test_heading_and_never_reverse(entry, heading, spin):
     c = relaxed()
     tick(c, 1000, pose=(2, 2, math.radians(heading)), entry=entry)

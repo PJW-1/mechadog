@@ -90,8 +90,8 @@ from host.telemetry.ros2_relay import (
     send,
 )
 from host.telemetry.session_recorder import SessionRecorder
-from host.vision.ppe_detector import ppe_payload
 from host.vision.frame_collector import collector_from_config
+from host.vision.ppe_detector import ppe_payload
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker

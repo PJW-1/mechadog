@@ -1,0 +1,20 @@
+{
+  "legacy_masks_and_spec": "inherited original history, unchanged; not refreshed current occupancy masks",
+  "measurements_plan_m": {
+    "living_window_y": 1.11,
+    "kitchen_balcony_wall_y": 1.21,
+    "partition_x": [
+      7.1,
+      7.3
+    ],
+    "partition_y": [
+      1.11,
+      4
+    ],
+    "bathroom_wall_behind_hanger_y": 5.71
+  },
+  "partition_policy": "explicit tape measured structural prior; not claimed as direct repeated lidar observations",
+  "changed_cells_file": "changed_cells.json",
+  "repeated_evidence_file": "repeated_evidence.json",
+  "wall_prior_support_file": "wall_prior_support.json"
+}
