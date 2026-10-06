@@ -288,6 +288,14 @@ def _active_dict(row: sqlite3.Row) -> dict[str, Any]:
     return data
 
 
+def _ensure_robot(conn: sqlite3.Connection, robot_id: str) -> None:
+    """없는 기체면 자리표 행을 만든다. 있으면 건드리지 않는다."""
+    conn.execute(
+        "INSERT INTO robots(robot_id, display_name) VALUES (?, ?) ON CONFLICT(robot_id) DO NOTHING",
+        (robot_id, robot_id),
+    )
+
+
 class HistoryStore:
     """SQLite 파일 하나. 런타임이 쓰고 관제 서버가 읽는다."""
 
@@ -417,9 +425,11 @@ class HistoryStore:
         return written
 
     def open_run(self, robot_id: str, *, mode: str, started_at: int) -> str | None:
+        """⚠️ 기동 때 기체 등록이 실패했어도 판을 잃지 않는다 — 자리표 행을 만든다."""
         mission_id = f"{robot_id}-{started_at}"
 
         def work(conn: sqlite3.Connection) -> str:
+            _ensure_robot(conn, robot_id)
             conn.execute(
                 "INSERT INTO mission_runs(mission_id, robot_id, mode, started_at) "
                 "VALUES (?, ?, ?, ?)",
@@ -493,11 +503,7 @@ class HistoryStore:
         """
 
         def work(conn: sqlite3.Connection) -> bool:
-            conn.execute(
-                "INSERT INTO robots(robot_id, display_name) VALUES (?, ?) "
-                "ON CONFLICT(robot_id) DO NOTHING",
-                (row.robot_id, row.robot_id),
-            )
+            _ensure_robot(conn, row.robot_id)
             if row.zone_id is not None:
                 conn.execute(
                     "INSERT INTO zones(zone_id, zone_name, ppe_policy, risk_level) "

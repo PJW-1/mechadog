@@ -54,6 +54,14 @@ from host.behavior.zones import Zone, ZoneStore
 from host.cloud import broadcast
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, load_config, telemetry_ids
+from host.common.history import (
+    HistoryStore,
+    IncidentRow,
+    incident_from_entry,
+    incident_from_feed,
+    open_history,
+    zones_from_config,
+)
 from host.common.lidar_link import Scan
 from host.common.logging_setup import (
     ERROR_ON_ENTER,
@@ -102,6 +110,8 @@ FEED_TRANSITIONS: dict[Event, str] = {
     Event.AUTH_FAILED: "auth_failed",
     Event.RESET_CONFIRMED: "failsafe_cleared",
 }
+#: 순찰 한 판을 닫는 상태와 그 결과 (ADR-46 결정 5). 이 셋을 떠나면 판이 열린다.
+RUN_ENDS: dict[str, str] = {"IDLE": "stopped", "MANUAL": "manual", "FAILSAFE": "failsafe"}
 
 
 def _is_oversized_datagram(exc: OSError) -> bool:
@@ -205,6 +215,7 @@ class Runtime:
         odom: OdomSender | None = None,
         pose_out: PoseOut | None = None,
         recorder: SessionRecorder | None = None,
+        history: HistoryStore | None = None,
         motion_lock: bool = False,
         record_frame_ms: int = 1000,
     ) -> None:
@@ -215,6 +226,17 @@ class Runtime:
         self._device_id = device_id
         self._dashboard = dashboard
         self._clock = clock
+        # 사건·순찰 이력 색인 (ADR-46). 쓰기가 실패해도 기록만 하고 제어는 멈추지 않는다.
+        self._history = history
+        # 열려 있는 순찰 한 판과, 그 판에 마지막으로 남긴 도착 구역.
+        self._mission_run: str | None = None
+        self._visited_zone: str | None = None
+        if history is not None:
+            serial = config.get("telemetry_device_id")
+            history.upsert_robot(device_id, serial_no=serial if isinstance(serial, str) else None)
+            history.sync_zones(zones_from_config(config))
+            # 열린 채 남은 판은 지난 비정상 종료의 흔적이다.
+            history.close_open_runs(device_id, ended_at=clock())
         # 운용 모드. **FSM·에스컬레이션과 직교하는 세 번째 축**이며 표는
         # 하나다 — 모드는 *어떤 사건이 생길 수 있는지*만 고른다 (FR-11 · ADR-33).
         # `main()` 이 `--mode` 를 반영해 만들어 넘기고, 없으면 설정에서 만든다.
@@ -433,7 +455,7 @@ class Runtime:
             mission=self._mission,
             apply=self._apply,
             clock=clock,
-            feed=self._feed_event if dashboard is not None else None,
+            feed=self._feed_event if dashboard is not None or history is not None else None,
         )
         # 사원증 인증 (FR-10 · ADR-28). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
         # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 판정기가 정한다.
@@ -617,6 +639,8 @@ class Runtime:
         self._stats.accepted += 1
         if self._dashboard is not None:
             self._telemetry_received_at = self._dashboard.now()
+        if self._history is not None:
+            self._history.note_seen(self._device_id, at_ms=now_ms, status=self._behavior.state)
         self._last_telemetry = {
             "device_id": out.reading.device_id,
             "available": True,
@@ -1093,6 +1117,14 @@ class Runtime:
         except Exception as exc:  # noqa: BLE001 — 기록 실패가 10Hz 제어를 죽이면 안 된다
             LOG.error("blackbox_record_failed", error=f"{type(exc).__name__}: {exc}")
             return
+        self._remember(
+            lambda: incident_from_entry(
+                entry,
+                robot_id=self._device_id,
+                mission_id=self._mission_run,
+                zone_id=self._zone_inspector.zone,
+            )
+        )
         if self._event_publisher is None:
             return
         try:
@@ -1164,7 +1196,7 @@ class Runtime:
                 hint="세션 개시 실패 가능 (PROTOCOL 4절)",
             )
 
-    def _log_transition(self, previous: str) -> None:
+    def _log_transition(self, previous: str, now_ms: int) -> None:
         """**최우선 로깅 지점** — 전 전이 + 트리거 (ENGINEERING_GUIDE 1.4).
 
         페일세이프 진입은 기능 상실이므로 `ERROR` 다 (레벨 정책 1.2). 상태 이름을
@@ -1189,6 +1221,54 @@ class Runtime:
                 "trigger": trigger.name if trigger is not None else None,
             },
         )
+        self._track_run(after, trigger.name if trigger is not None else None, now_ms)
+
+    def _track_run(self, after: str, trigger: str | None, now_ms: int) -> None:
+        """순찰 한 판을 열고 닫는다 (ADR-46 결정 5).
+
+        대기·수동·페일세이프(`RUN_ENDS`)를 떠나면 열고, 그중 하나로 들어가면 닫는다.
+        닫게 한 트리거가 `stop_reason` 이다.
+        """
+        if self._history is None:
+            return
+        result = RUN_ENDS.get(after)
+        if result is None:
+            if self._mission_run is None:
+                self._mission_run = self._history.open_run(
+                    self._device_id, mode=self._mission.mode, started_at=now_ms
+                )
+            return
+        if self._mission_run is not None:
+            self._history.close_run(
+                self._mission_run, ended_at=now_ms, result=result, stop_reason=trigger
+            )
+            self._mission_run = None
+
+    def _note_zone_visit(self) -> None:
+        """구역에 새로 도착했으면 열린 판의 방문 구역에 더한다 (처음 도착한 순서).
+
+        ⚠️ **판이 닫혀도 마지막 구역을 잊지 않는다.** 구역 점검은 같은 구역에 서 있는 동안
+        다시 도착하지 않으므로, 그 자리에서 새 판을 시작하면 떠났다가 와야 방문이다.
+        """
+        zone = self._zone_inspector.zone
+        if zone == self._visited_zone:
+            return
+        self._visited_zone = zone
+        if zone is not None and self._history is not None and self._mission_run is not None:
+            self._history.visit_zone(self._mission_run, zone)
+
+    def _remember(self, build: Callable[[], IncidentRow]) -> None:
+        """사건 하나를 이력 DB 에 남긴다 (ADR-46).
+
+        ⚠️ **실패는 기록만 한다.** DB 는 색인이고 원본은 블랙박스·JSONL 이다 — 색인이
+        10Hz 제어를 멈추면 로깅이 안전보다 앞서는 꼴이 된다.
+        """
+        if self._history is None:
+            return
+        try:
+            self._history.record_incident(build())
+        except Exception as exc:  # noqa: BLE001 — 색인 실패가 10Hz 제어를 죽이면 안 된다
+            LOG.error("history_record_failed", error=f"{type(exc).__name__}: {exc}")
 
     def _emit_eye_led(self, now_ms: int) -> None:
         """단계 색을 눈 LED 로 내려보낸다 (FR-10.4).
@@ -1232,14 +1312,14 @@ class Runtime:
         ⚠️ **읽을 문장을 여기서 실어 보낸다.** 단계와 문구가 한곳에 있어야 단계를
         고칠 때 문구가 남지 않는다. 음성 쪽은 받은 문장을 읽기만 한다.
         """
-        if self._dashboard is None:
+        if self._dashboard is None and self._history is None:
             return
         level = self._escalation.level.value
         # ⚠️ **래치 여부도 엣지다.** 보호구 경고(L3·래치 아님) 중에 쓰러짐이 확정되면 단계는
         # L3 그대로라, 단계만 보면 경보 문장이 나가지 않는다 — 음성은 이 사건의 문장만 읽는다.
         if not self._edge.changed("escalation_level", (level, self._escalation.latched)):
             return
-        self._dashboard.record_event(
+        self._publish_feed(
             {
                 "event": "escalation_changed",
                 "ts_ms": now_ms,
@@ -1253,7 +1333,7 @@ class Runtime:
 
     def _announce_transition(self, event: Event, previous: str, now_ms: int) -> None:
         """인증·안전 전이를 관제 사건으로 낸다. 전이 로그(jsonl)에만 있던 것들이다."""
-        if self._dashboard is None:
+        if self._dashboard is None and self._history is None:
             return
         after = self._behavior.state
         name = (
@@ -1265,7 +1345,7 @@ class Runtime:
             self._feed_event(name, now_ms, previous=previous, trigger=event.name)
 
     def _feed_event(self, name: str, now_ms: int, **extra: Any) -> None:
-        cast("DashboardState", self._dashboard).record_event(
+        self._publish_feed(
             {
                 "event": name,
                 "ts_ms": now_ms,
@@ -1274,6 +1354,19 @@ class Runtime:
                 "mode": self._mission.mode,
                 **extra,
             }
+        )
+
+    def _publish_feed(self, payload: dict[str, Any]) -> None:
+        """관제 사건 하나를 화면과 이력 DB 에 낸다. 둘 중 하나만 있어도 된다 (ADR-46 결정 4)."""
+        if self._dashboard is not None:
+            self._dashboard.record_event(payload)
+        self._remember(
+            lambda: incident_from_feed(
+                payload,
+                robot_id=self._device_id,
+                mission_id=self._mission_run,
+                zone_id=self._zone_inspector.zone,
+            )
         )
 
     def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
@@ -1376,6 +1469,8 @@ class Runtime:
         phase_started = time.perf_counter()
         self._poll_vision(now_ms)
         vision_ms = (time.perf_counter() - phase_started) * 1000
+        # 구역 도착은 `_poll_vision` 안의 구역 점검이 판정한다 — 그 뒤에 본다.
+        self._note_zone_visit()
         # 단계의 시간 조건 — L1 해제(5초)와 L2 승격(10초). **전이와 무관하게 돈다.**
         #
         # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
@@ -1400,7 +1495,7 @@ class Runtime:
             trigger = self._behavior.last_trigger
             if trigger is not None:
                 self._escalation.note_event(trigger.name, now_ms)
-            self._log_transition(before)
+            self._log_transition(before, now_ms)
         if lines:
             self._stats.ticks += 1
             self._stats.sent += len(lines)
@@ -1485,7 +1580,7 @@ class Runtime:
                 self._auth_judge.reset()
         elif before == "AUTH_WAIT" and self._behavior.state != "AUTH_WAIT":
             self._voice_auth.close()
-        self._log_transition(before)
+        self._log_transition(before, now_ms)
         self._announce_transition(event, before, now_ms)
         return True
 
@@ -1974,6 +2069,14 @@ class Runtime:
         # 데몬이라 프로세스와 함께 끝난다. `serve` 의 `finally` 에서 불리므로 `submit()` 과
         # 같은 스레드다.
         self._vlm.stop()
+        if self._history is not None and self._mission_run is not None:
+            self._history.close_run(
+                self._mission_run,
+                ended_at=self._clock(),
+                result="shutdown",
+                stop_reason="runtime_stopped",
+            )
+            self._mission_run = None
         LOG.info(
             "runtime_stopped",
             ticks=self._stats.ticks,
@@ -2394,6 +2497,8 @@ def main(argv: list[str] | None = None) -> int:
     recorder = None if args.record_dir is None else _open_recorder(args, config, argv)
     vision = None if args.no_vision else build_worker(config)
     blackbox = EventBlackbox(config)
+    # 비었거나 열 수 없으면 `None` — 이력 없이 돈다 (ADR-46). 닫는 것은 아래 `finally` 다.
+    history = open_history(config)
     dashboard = (
         DashboardState(args.device, stale_after_ms=int(config["safety"]["link_loss_failsafe_ms"]))
         if args.dashboard_port is not None
@@ -2428,6 +2533,7 @@ def main(argv: list[str] | None = None) -> int:
         odom=odom,
         pose_out=_pose_out(config, patrol_maps) if args.lidar_device else None,
         recorder=recorder,
+        history=history,
         motion_lock=args.motion_lock,
         record_frame_ms=args.record_frame_ms,
     )
@@ -2489,6 +2595,8 @@ def main(argv: list[str] | None = None) -> int:
         LOG.info("interrupted", action="ESTOP 송신 후 종료")
     finally:
         sock.close()
+        if history is not None:
+            history.close()
     return 0
 
 

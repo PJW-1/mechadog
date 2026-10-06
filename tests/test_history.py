@@ -157,6 +157,16 @@ def test_runs_left_open_by_a_crash_are_closed_as_interrupted(tmp_path: Path) -> 
     assert (runs[0]["ended_at"], runs[0]["result"]) == (5000, "interrupted")
 
 
+def test_a_run_of_an_unregistered_robot_is_kept(tmp_path: Path) -> None:
+    """⚠️ 기동 때 기체 등록이 실패했어도 그 세션의 순찰 판을 잃지 않는다 — 자리표 행을 만든다."""
+    store = HistoryStore(tmp_path / "h.sqlite3")
+    mission = store.open_run("mechdog-09", mode="guard", started_at=1000)
+    robots = store.robots()
+    store.close()
+    assert mission == "mechdog-09-1000"
+    assert [(r["robot_id"], r["display_name"]) for r in robots] == [("mechdog-09", "mechdog-09")]
+
+
 def test_the_same_incident_is_stored_once(store: HistoryStore) -> None:
     """가져오기 도구를 두 번 돌려도, 같은 사건을 두 경로가 넣어도 한 건이다."""
     mission = store.open_run(ROBOT, mode="guard", started_at=1000)
