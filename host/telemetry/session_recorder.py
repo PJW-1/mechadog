@@ -162,7 +162,7 @@ class SessionRecorder:
         with self._lock:
             return {
                 "stopped_utc": dt.datetime.now(dt.UTC).isoformat(),
-                "stopped_mono_ms": self._clock(),
+                "stopped_clock_ms": self._clock(),
                 "written": self.written,
                 "dropped": self.dropped,
                 "max_backlog": self.max_backlog,

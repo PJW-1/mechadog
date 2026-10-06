@@ -49,10 +49,16 @@ def test_recorder_writes_events_in_order_with_manifest(tmp_path: Path) -> None:
     assert events[2]["raw_b64"] == "/wA=", "규약 밖 바이트도 버리지 않는다"
     assert summary["written"] == 3 and summary["dropped"] == 0 and summary["failed"] is None
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["device"] == "x" and "started_clock_ms" in manifest
+    assert manifest["device"] == "x"
+    # 시계 호출 순서: 생성자(manifest)=100, record("a")=101, close→summary=102. record_raw 는 at_ms 를 쓴다.
+    assert manifest["started_clock_ms"] == 100
+    assert events[0]["t"] == 101
+    assert summary["stopped_clock_ms"] == 102
+    assert "stopped_mono_ms" not in summary
     assert "started_mono_ms" not in manifest
     assert manifest["clock_domain"] == "host system_clock_ms (epoch wall clock)"
-    assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))["written"] == 3
+    saved = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert saved["written"] == 3 and saved["stopped_clock_ms"] == 102
 
 
 def test_full_queue_drops_and_reports_unhealthy(tmp_path: Path) -> None:

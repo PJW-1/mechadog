@@ -401,3 +401,25 @@ def test_open_does_not_hash_when_the_factory_fails(
     with pytest.raises(RuntimeError):
         det.open()
     assert not det.loaded
+
+
+def test_open_is_not_loaded_when_warm_up_fails_and_retries_the_factory(cfg: dict) -> None:
+    """`open()` 이 예외를 던졌다면 열리지 않은 것이다 — 다음 `open()` 은 팩토리부터 다시 한다."""
+
+    class _FailingSession(_FakeSession):
+        def run(self, *_args, **_kwargs):
+            raise RuntimeError("warm-up boom")
+
+    calls: list[int] = []
+
+    def factory(*_):
+        calls.append(1)
+        return _FailingSession(np.zeros((1, 1, 1), dtype=np.float32))
+
+    det = Detector(cfg, labels=COCO_CLASSES, session_factory=factory)
+    with pytest.raises(RuntimeError, match="warm-up boom"):
+        det.open()
+    assert not det.loaded
+    with pytest.raises(RuntimeError, match="warm-up boom"):
+        det.open()
+    assert len(calls) == 2
