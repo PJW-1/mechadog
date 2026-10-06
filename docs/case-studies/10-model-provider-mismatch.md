@@ -45,7 +45,7 @@ DirectML 쪽은 같은 조건 재평가가 없습니다. 3.7.2 의 개발 PC 에
 
 ## 남은 한계
 
-- **XIAO 실측 기록에는 «실제로 쓴 EP» 가 남지 않습니다.** `ppe_live_check.py` 는 `summary.md` 와 `session.json` 에 설정값 `config['vision']['providers']` 를 적습니다(656·701행). 2026-10-06 기록의 «프로바이더: ['DmlExecutionProvider', 'CPUExecutionProvider']» 는 선호 목록이지 선택 결과가 아닙니다. 그 런이 DirectML 로 돌았는지는 이 기록만으로는 확인되지 않습니다. 실제 선택은 `Detector` 가 `log_selection()` 으로 로그에 남기므로, 결과 파일에 그 값을 함께 적으면 메울 수 있습니다.
+- **2026-10-06 기록에는 «실제로 쓴 EP» 가 남지 않았습니다.** 당시 `ppe_live_check.py` 는 `summary.md` 와 `session.json` 에 설정값 `config['vision']['providers']` 만 적었습니다. 그 기록의 «프로바이더: ['DmlExecutionProvider', 'CPUExecutionProvider']» 는 선호 목록이지 선택 결과가 아니어서, 그 런이 DirectML 로 돌았는지는 기록만으로는 확인되지 않고 이 기록은 고치지 않았습니다. 이후 기록부터는 `session.json` 의 `models`(`{name, sha256, provider}`, 블랙박스 meta.json 과 같은 모양)와 `summary.md` 의 «실제 실행 장치» 줄에 `Detector.model_summary()` 가 돌려준 실제 장치가 남고, 선호 목록 첫 값이 GPU 인데 실제가 CPU 이면 경고 한 줄이 붙습니다. 이 키가 없는 옛 `session.json` 은 읽는 도구가 그대로 처리합니다.
 - **`host_check` 도 EP 를 적지 않습니다.** 박스가 나온 장수만 기록하므로, DirectML 이 비워 냈는지 CPU 로 떨어졌는지를 사후에 가를 수 없습니다.
 - parity 는 CPU EP 기준이라, DirectML 에서 원시 출력이 허용 오차 안에 드는지는 검사하지 않습니다.
 - DirectML 빈 출력의 근본 원인은 밝히지 못했습니다.

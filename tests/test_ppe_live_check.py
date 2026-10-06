@@ -205,6 +205,9 @@ class FakeDetector:
     def open(self) -> None:
         return None
 
+    def model_summary(self) -> dict:
+        return {"name": "fake", "sha256": None, "provider": "CPUExecutionProvider"}
+
     def detect(self, image: np.ndarray) -> list[Detection]:
         self.calls.append(image.shape[:2])
         return list(self._results)
@@ -593,3 +596,113 @@ def test_ppe_model_override_points_config_at_candidate_without_touching_runtime(
     assert config["vision"]["ppe"]["model_path"] == str(model.resolve())
     with pytest.raises(SystemExit):
         ppe.apply_ppe_model_override(config, str(tmp_path / "missing.onnx"))
+
+
+# ── 실제 실행 장치 기록 ─────────────────────────────────────────────
+
+
+class _CpuSession:
+    def get_inputs(self) -> list:
+        return [SimpleNamespace(name="images")]
+
+    def get_providers(self) -> list[str]:
+        return ["CPUExecutionProvider"]
+
+    def run(self, _outputs, _feed) -> list[np.ndarray]:
+        return [np.zeros((1, 8400, 85), dtype=np.float32)]
+
+
+def _cpu_detectors(tmp_path: Path) -> list:
+    from host.vision.coco_labels import COCO_CLASSES
+    from host.vision.detector import Detector
+
+    cfg = ppe.load_config("mechdog-01")
+    detectors = []
+    for section in ("coco", "ppe"):
+        weights = tmp_path / f"{section}.onnx"
+        weights.write_bytes(section.encode())
+        local = dict(cfg)
+        local["vision"] = dict(
+            cfg["vision"], **{section: dict(cfg["vision"][section], model_path=str(weights))}
+        )
+        labels = COCO_CLASSES if section == "coco" else list(cfg["vision"]["ppe"]["classes"])
+        detector = Detector(
+            local, section=section, labels=labels, session_factory=lambda *_: _CpuSession()
+        )
+        detector.open()
+        detectors.append(detector)
+    return detectors
+
+
+def _gpu_first_config() -> dict:
+    config = report_config()
+    config["vision"]["providers"] = ["DmlExecutionProvider", "CPUExecutionProvider"]
+    return config
+
+
+def test_session_json_records_the_provider_that_actually_ran(tmp_path: Path) -> None:
+    models = ppe.loaded_models(_cpu_detectors(tmp_path))
+    path = tmp_path / "session.json"
+    ppe.write_session(
+        path,
+        report_args(tmp_path),
+        _gpu_first_config(),
+        1500,
+        3,
+        0,
+        1.0,
+        {},
+        {},
+        [],
+        None,
+        models,
+    )
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["settings"]["providers"] == ["DmlExecutionProvider", "CPUExecutionProvider"]
+    assert [m["name"] for m in data["models"]] == ["coco", "ppe"]
+    assert all(m["provider"] == "CPUExecutionProvider" for m in data["models"])
+    assert all(len(m["sha256"]) == 64 for m in data["models"])
+
+
+def test_summary_separates_preference_from_actual_device_and_warns(tmp_path: Path) -> None:
+    path = tmp_path / "report.md"
+    ppe.write_report(
+        path,
+        report_args(tmp_path),
+        _gpu_first_config(),
+        1500,
+        3,
+        frames=0,
+        elapsed=1.0,
+        counts={},
+        reasons={},
+        events=[],
+        models=ppe.loaded_models(_cpu_detectors(tmp_path)),
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "- 프로바이더 선호 목록: ['DmlExecutionProvider', 'CPUExecutionProvider']" in text
+    assert "- 실제 실행 장치: coco=CPUExecutionProvider, ppe=CPUExecutionProvider" in text
+    assert "선호 목록 첫 값(DmlExecutionProvider)이 아니라 CPU 로 떨어졌다" in text
+
+
+def test_summary_has_no_warning_when_the_preferred_device_ran(tmp_path: Path) -> None:
+    path = tmp_path / "report.md"
+    ppe.write_report(
+        path,
+        report_args(tmp_path),
+        report_config(),
+        1500,
+        3,
+        frames=0,
+        elapsed=1.0,
+        counts={},
+        reasons={},
+        events=[],
+        models=ppe.loaded_models(_cpu_detectors(tmp_path)),
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "실제 실행 장치" in text
+    assert "CPU 로 떨어졌" not in text
