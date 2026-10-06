@@ -199,12 +199,15 @@ class ZoneInspector:
             key=lambda pair: pair[1],
             default=(None, math.inf),
         )
-        if anchor is None or distance >= self._arrive_m:
+        if anchor is None:
             return None, False
         route_ready = (
             None if self._route_inspection is None else self._route_inspection(anchor, now_ms)
         )
         if route_ready is False:
+            return None, False
+        # AV의 지나침 도착도 항법이 확인한 방문이다. 앵커 반경으로 다시 거절하지 않는다.
+        if distance >= self._arrive_m and route_ready is not True:
             return None, False
         return anchor, route_ready is True
 
@@ -225,12 +228,23 @@ class ZoneInspector:
         self._pose = (pose, int(now_ms))
 
     def _fresh_pose(self, now_ms: int) -> tuple[float, float, float] | None:
-        """`localization.pose_timeout_ms` 안의 위치. 낡았으면 모르는 위치다 (FR-6.6)."""
+        """기본 측위 기한 또는 항법이 확인한 AV 방문의 2초 유예 안의 위치."""
         if (
             self._pose is None
-            or not 0 <= now_ms - self._pose[1] <= self._pose_timeout_ms
+            or now_ms < self._pose[1]
             or not all(math.isfinite(value) for value in self._pose[0])
         ):
+            return None
+        timeout = self._pose_timeout_ms
+        if (
+            now_ms - self._pose[1] > timeout
+            and self._route_inspection is not None
+            and any(self._route_inspection(anchor, now_ms) is True for anchor in self._anchors)
+        ):
+            # 도착·조준과 검증 위치 유예는 항법이 확인한다. 영역 소속의 신선도는
+            # `_candidate`·`hazards_allowed`에서 별도로 확인한다.
+            timeout = max(timeout, 2000)
+        if now_ms - self._pose[1] > timeout:
             return None
         return self._pose[0]
 
@@ -285,15 +299,17 @@ class ZoneInspector:
             pose = self._fresh_pose(now_ms)
             if pose is None:
                 return  # 위치를 모르면 도착도 떠남도 판정하지 않는다
+            anchor, navigation_aligned = self._candidate(now_ms)
             if self._zone_at is not None:
                 if self._zone_at(now_ms) != self._zone:
                     self._zone = None
-            elif all(math.dist(a.xy, pose[:2]) > 2 * self._arrive_m for a in self._anchors):
+            elif not navigation_aligned and all(
+                math.dist(a.xy, pose[:2]) > 2 * self._arrive_m for a in self._anchors
+            ):
                 # ⚠️ **반경의 두 배를 벗어나야 떠난 것이다.** 비우지 않으면 다음 순회에 같은
                 # 구역을 다시 점검하지 못하고, 반경에서 바로 비우면 가장자리에서 떨 때마다
                 # 같은 구역을 거듭 점검한다.
                 self._zone = None
-            anchor, navigation_aligned = self._candidate(now_ms)
             if anchor is None or anchor.label == self._zone:
                 return
             if not navigation_aligned and anchor.aim_deg is not None:
