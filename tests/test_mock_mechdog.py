@@ -26,6 +26,7 @@ from tools.mock.mock_mechdog import (
     MockRobot,
     _describe,
     build_parser,
+    delay_lines,
     delay_rng,
     deliver,
     faults_from_args,
@@ -389,6 +390,24 @@ def test_delay_rejects_values_that_are_not_finite_and_non_negative(bad: float) -
         DelayLine(0.0, bad, random.Random(1))
 
 
+def test_delay_rejects_release_time_that_overflows_to_inf() -> None:
+    """각각은 유한해도 지연 + 흔들림이 넘치면 풀림 시각이 inf 가 되어 패킷을 삼킨다."""
+    with pytest.raises(ValueError):
+        DelayLine(1e308, 1e308, random.Random(1))
+
+
+def test_delay_lines_wire_each_direction_to_its_own_settings() -> None:
+    """명령 쪽은 명령 지연·흔들림, 텔레메트리 쪽은 텔레메트리 값을 받는다."""
+    faults = Faults(
+        cmd_delay_ms=100.0, cmd_jitter_ms=0.0, telemetry_delay_ms=500.0, telemetry_jitter_ms=0.0
+    )
+    commands, outbound = delay_lines(faults)
+    commands.push(b"c", 0)
+    outbound.push("t", 0)
+    assert commands.pop_ready(99) == [] and commands.pop_ready(100) == [b"c"]
+    assert outbound.pop_ready(499) == [] and outbound.pop_ready(500) == ["t"]
+
+
 def test_delayed_command_reaches_the_robot_only_after_the_delay(config: dict) -> None:
     """명령 지연은 로봇이 명령을 받는 시각을 늦춘다. 그 전까지 래치는 풀리지 않는다."""
     robot = _robot(config)
@@ -405,7 +424,7 @@ def test_delayed_command_reaches_the_robot_only_after_the_delay(config: dict) ->
 def test_delay_path_leaves_packet_loss_sequence_unchanged(config: dict) -> None:
     """지연 대기열을 거쳐도 같은 씨앗의 유실 패턴은 그대로여야 기존 재현 스크립트가 산다.
 
-    `run` 과 같은 방식으로 대기열을 만들어 `deliver` 로 넣는다. 지연 쪽이 로봇의
+    `run` 이 쓰는 `delay_lines` 로 대기열을 만들어 `deliver` 로 넣는다. 지연 쪽이 로봇의
     유실 난수를 하나라도 소비하면 n 번째 수신의 유실 여부가 달라진다.
     """
 
@@ -416,13 +435,10 @@ def test_delay_path_leaves_packet_loss_sequence_unchanged(config: dict) -> None:
 
     def delayed() -> list[bool]:
         robot = _robot(config, drop_rate=0.5, seed=42, cmd_delay_ms=300.0, cmd_jitter_ms=50.0)
-        faults = robot.faults
-        line: DelayLine[str] = DelayLine(
-            faults.cmd_delay_ms, faults.cmd_jitter_ms, delay_rng(faults.seed, "cmd")
-        )
+        line, _ = delay_lines(robot.faults)  # run() 과 같은 함수로 만든다
         encoder = p.CommandEncoder(clock=lambda: START_MS)
         for i in range(20):
-            line.push(encoder.stop(), START_MS + i)
+            line.push(encoder.stop().encode("utf-8"), START_MS + i)  # run() 처럼 bytes
         return [result is None for result in deliver(line, robot, START_MS + 10_000)]
 
     first = direct()
@@ -528,6 +544,42 @@ def test_cli_rejects_delay_that_is_not_a_non_negative_number(option: str, value:
     with pytest.raises(SystemExit) as exc:
         build_parser().parse_args([option, value])
     assert exc.value.code == 2
+
+
+_FINITE_OPTIONS = [
+    "--battery-start",
+    "--battery-drain",
+    "--tip-at",
+    "--obstacle-at",
+    "--go-silent",
+]
+
+
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "abc"])
+@pytest.mark.parametrize("option", ["--drop-rate", "--corrupt-rate", *_FINITE_OPTIONS])
+def test_cli_rejects_fault_value_that_is_not_finite_and_non_negative(
+    option: str, value: str
+) -> None:
+    """nan 이면 `random() < nan` 이 늘 거짓이라 유실이 조용히 0 이 되고, 시각은 영영 오지 않는다."""
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args([option, value])
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("option", ["--drop-rate", "--corrupt-rate"])
+def test_cli_rejects_rate_above_one(option: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args([option, "1.5"])
+    assert exc.value.code == 2
+
+
+def test_cli_accepts_rate_bounds_and_plain_values() -> None:
+    args = build_parser().parse_args(
+        ["--drop-rate", "0.2", "--corrupt-rate", "1", "--tip-at", "30", "--battery-drain", "0"]
+    )
+    faults = faults_from_args(args)
+    assert (faults.drop_rate, faults.corrupt_rate, faults.tip_at_s) == (0.2, 1.0, 30.0)
+    assert faults.battery_drain_v_per_min == 0.0
 
 
 def test_log_line_distinguishes_loss_discard_and_clamp(config: dict) -> None:
