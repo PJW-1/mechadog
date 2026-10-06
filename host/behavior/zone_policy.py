@@ -16,6 +16,8 @@ class ZonePpePolicy:
         self.zone_map = zone_map
         self.labels = frozenset(str(label) for label in config["zones"]["ids"])
         self.policies = config["zones"].get("policies", {})
+        # 구역 불명(위치 상실·영역 밖)일 때의 정책. 없으면 기본 두 항목을 요구한다.
+        self.unknown_policy = config["zones"].get("unknown_policy", {}) or {}
         self.timeout = int(config["localization"]["pose_timeout_ms"])
         self.pose: tuple[float, float, float] | None = None
         self.pose_ms: int | None = None
@@ -36,7 +38,7 @@ class ZonePpePolicy:
         return label if label in self.labels else None
 
     def requirements_for(self, zone: str | None) -> tuple[str, ...]:
-        policy = self.policies.get(zone, {}) if zone in self.labels else {}
+        policy = self.policies.get(zone, {}) if zone in self.labels else self.unknown_policy
         return tuple(item for item in DEFAULT_PPE if policy.get(item, True))
 
     def required(self, now_ms: int) -> tuple[str, ...]:
