@@ -579,11 +579,18 @@ def paired_tally(
 ) -> dict[str, collections.Counter[tuple[str, str]]]:
     """같은 사람 검출로 판정한 두 세션을 사람 단위로 맞대어 (a 판정, b 판정) 쌍을 센다.
 
-    사람 검출(COCO)이 같아야 사람 순서가 맞는다. 프레임마다 사람 수가 다르면 거부한다.
+    사람 검출(COCO)이 같아야 사람 순서가 맞는다. 태그·구간·사람 수가 다르면 거부한다.
     """
     out: dict[str, collections.Counter[tuple[str, str]]] = {}
     for x, y in zip(a["events"], b["events"], strict=True):
-        if x["tag"] != y["tag"] or len(x["states"]) != len(y["states"]):
+        if x["tag"] != y["tag"]:
+            raise ValueError(f"프레임 태그가 다르다: {x['tag']} ≠ {y['tag']} — 같은 세션인지 본다")
+        if x.get("segment") != y.get("segment"):
+            raise ValueError(
+                f"프레임 {x['tag']} 의 구간이 다르다: {x.get('segment')} ≠ {y.get('segment')}"
+                " — 같은 세션인지 본다"
+            )
+        if len(x["states"]) != len(y["states"]):
             raise ValueError(f"프레임 {x['tag']} 의 사람 수가 다르다 — 같은 사람 검출인지 본다")
         key = x.get("segment")
         if not key:
@@ -659,6 +666,12 @@ def run_compare(args: argparse.Namespace) -> int:
     cache_meta: dict[str, dict[str, Any]] = {}
     for name, path in args.cache:
         cache = json.loads(Path(path).read_text(encoding="utf-8"))
+        floor = cache.get("meta", {}).get("conf_floor")
+        if floor is not None and floor > BASE.conf + 1e-9:
+            raise SystemExit(
+                f"캐시 {name} 의 PPE conf 하한 {floor} 이 base conf {BASE.conf} 보다 높다"
+                " — 하한 이하로 다시 infer 한다"
+            )
         cache_meta[name] = {"frames": len(cache["frames"]), **cache.get("meta", {})}
         replays[name] = replay(
             cache["frames"], session["events"], BASE, int(args.head_margin), orientations, meta
@@ -673,6 +686,7 @@ def _write_text(text: str, out: str | None) -> None:
         if reconfigure is not None:
             reconfigure(errors="replace")
     if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_text(text, encoding="utf-8")
         print(f"표 {out}")
     else:
