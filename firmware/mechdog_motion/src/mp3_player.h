@@ -8,7 +8,8 @@
 
 // 0~30. 현장 보정 손잡이다 — 빌드 플래그로 바꾼다.
 #ifndef MECHADOG_MP3_VOLUME
-#define MECHADOG_MP3_VOLUME 28  // 2026-10-06 20→28: 시연 촬영에서 소리가 작다(사용자). 최대 30
+// 2026-10-06 20→28: 시연 촬영에서 소리가 작다(사용자). 최대 30
+#define MECHADOG_MP3_VOLUME 28
 #endif
 
 namespace mechadog {
