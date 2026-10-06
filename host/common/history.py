@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -356,10 +357,11 @@ class HistoryStore:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 yield conn
+                conn.execute("COMMIT")
             except BaseException:
-                conn.execute("ROLLBACK")
+                with contextlib.suppress(sqlite3.Error):
+                    conn.execute("ROLLBACK")
                 raise
-            conn.execute("COMMIT")
 
     def _write(self, op: str, work: Callable[[sqlite3.Connection], T]) -> T | None:
         try:
@@ -422,6 +424,7 @@ class HistoryStore:
             return False
 
         def work(conn: sqlite3.Connection) -> bool:
+            _ensure_robot(conn, robot_id)
             conn.execute(
                 "UPDATE robots SET last_seen_at = ?, status = ? WHERE robot_id = ?",
                 (at_ms, status, robot_id),

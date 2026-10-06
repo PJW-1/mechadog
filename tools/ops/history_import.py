@@ -82,7 +82,12 @@ def main(argv: list[str] | None = None) -> int:
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 counts["skipped"] += 1
                 continue
-            if store.incident(row.incident_id) is not None:
+            try:
+                known = store.incident(row.incident_id) is not None
+            except sqlite3.Error:
+                counts["failed"] += 1
+                continue
+            if known:
                 counts["existing"] += 1
             elif store.record_incident(row):
                 counts["inserted"] += 1

@@ -395,6 +395,50 @@ def test_write_failures_are_reported_not_raised(store: HistoryStore) -> None:
     assert not store.sync_zones([])
 
 
+def test_note_seen_creates_the_missing_robot_row(tmp_path: Path) -> None:
+    """기동 때 upsert_robot 이 실패한 세션에서도 마지막 수신 시각이 남는다."""
+    opened = HistoryStore(tmp_path / "h.sqlite3")
+    try:
+        assert opened.note_seen(ROBOT, at_ms=10_000, status="PATROL")
+        with sqlite3.connect(opened.path) as raw:
+            row = raw.execute(
+                "SELECT last_seen_at, status FROM robots WHERE robot_id = ?", (ROBOT,)
+            ).fetchone()
+        assert row == (10_000, "PATROL")
+    finally:
+        opened.close()
+
+
+class _CommitFailsOnce:
+    """COMMIT 을 한 번만 실패시키고 나머지는 진짜 연결로 넘기는 대리 객체."""
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+        self.failed = False
+
+    def execute(self, sql: str, *args):
+        if sql == "COMMIT" and not self.failed:
+            self.failed = True
+            raise sqlite3.OperationalError("disk I/O error")
+        return self._real.execute(sql, *args)
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+def test_a_failed_commit_rolls_back_so_later_writes_succeed(store: HistoryStore, caplog) -> None:
+    proxy = _CommitFailsOnce(store._writer)
+    store._writer = proxy  # type: ignore[assignment]
+
+    with caplog.at_level(logging.ERROR, logger="mechadog.history"):
+        assert not store.record_incident(_incident("1_a", 1))
+        assert len(_failures(caplog)) == 1
+        assert store.record_incident(_incident("2_b", 2))
+
+    assert proxy.failed
+    assert store.incident("2_b") is not None
+
+
 def test_open_history_follows_the_config(tmp_path: Path) -> None:
     opened = open_history({"logging": {"history_db": str(tmp_path / "a" / "h.sqlite3")}})
     assert opened is not None

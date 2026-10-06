@@ -1,6 +1,7 @@
 """블랙박스 → 이력 DB 가져오기 (`tools/ops/history_import.py`, WBS 4.6.6 · ADR-46)."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -81,3 +82,15 @@ def test_device_is_required(blackbox):
     with pytest.raises(SystemExit) as exc:
         history_import.main(["--blackbox", str(blackbox)])
     assert exc.value.code == 2
+
+
+def test_incident_lookup_failure_counts_the_folder_as_failed_and_continues(
+    blackbox, tmp_path, capsys, monkeypatch
+):
+    def broken(*_args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(HistoryStore, "incident", broken)
+
+    assert run(blackbox, tmp_path / "h.sqlite3") == 1
+    assert "failed 2" in capsys.readouterr().out
