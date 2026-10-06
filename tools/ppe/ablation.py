@@ -34,6 +34,19 @@
     hits_required 위반 확정 히트 수. 1 이면 연속 프레임 누적(투표)을 끈 것이다.
 
 창은 세션 도구처럼 구간이 바뀔 때 비운다. 시각은 기록된 `t`(0.1초 반올림)를 쓴다.
+
+합격 기준이 없는 계획 (예: 위반 구간만 찍은 후면 세션)
+    C1~C3 칸은 `-` 로 두고 표 위에 한 줄로 밝힌다. 판정 가능률·실효 성공률의 분모는 세션에
+    있는 라벨 구간 전체다(기준이 있으면 `judged_specs` 구간만). 에피소드 지표는 그대로 내되
+    정상 에피소드가 없으면 오경보율은 `-` 다.
+
+클리핑 제외 실효 성공률 (표 끝 열)
+    그 변형이 스스로 `머리 클리핑` 사유로 낸 확인불가를 분모에서 뺀 실효 성공률 —
+    `compare` 표의 같은 이름 열과 같은 정의다.
+
+단계 누적 (`STAGES`, 캐시가 있을 때)
+    한 축씩 끄는 변형과 달리 Raw 검출기(풀프레임·클리핑 끔·누적 끔)에서 사람 크롭 → 머리
+    클리핑 필터 → 시간 누적을 차례로 쌓는다. 마지막 단계는 base 와 같다.
 """
 
 from __future__ import annotations
@@ -128,6 +141,21 @@ VARIANTS: tuple[Variant, ...] = (
         window="clear",
         clear_after_ok=5,
     ),
+)
+
+#: 계획서 2단계 표 — Raw 검출기에서 단계를 하나씩 쌓는다. 앞 단계와 한 축씩만 다르고 끝은 base 다.
+STAGES: tuple[Variant, ...] = (
+    replace(
+        BASE,
+        name="stage-raw",
+        note="Raw — 풀프레임 PPE, 클리핑 끔, 누적 끔",
+        gate=False,
+        clip="off",
+        hits_required=1,
+    ),
+    replace(BASE, name="stage-crop", note="+ 사람 크롭", clip="off", hits_required=1),
+    replace(BASE, name="stage-clip", note="+ 머리 클리핑 필터", hits_required=1),
+    replace(BASE, name="stage-vote", note="+ 시간 누적 (= base)"),
 )
 
 #: 기록된 판정만 다시 누적하는 변형 (추론 없이, 프레임 오염과 무관). 누적 규칙 축만 의미가 있다.
@@ -428,18 +456,34 @@ def _expected_by_segment(plan: Path, scenario: str) -> dict[str, str]:
     return {spec["key"]: spec["expected"] for spec in specs}
 
 
+def _criteria_or_none(plan: Path, scenario: str) -> dict[str, Any] | None:
+    """계획에 합격 기준이 아예 없으면 None. 있는데 잘못됐으면 `load_criteria` 처럼 거부한다."""
+    data = json.loads(plan.read_text(encoding="utf-8"))
+    if not data.get("scenarios", {}).get(scenario, {}).get("criteria"):
+        return None
+    return load_criteria(plan, scenario)
+
+
 def evaluate_variant(
     session: dict[str, Any], plan: Path = DEFAULT_ACCEPTANCE_PLAN
 ) -> dict[str, Any]:
-    """세션 하나 → 표 한 줄: 판정 가능률·실효 성공률·C1~C3·사유·에피소드 지표."""
+    """세션 하나 → 표 한 줄: 판정 가능률·실효 성공률·C1~C3·사유·에피소드 지표.
+
+    계획에 합격 기준이 없으면 `criteria` 는 None 이고, 분모는 세션에 있는 라벨 구간 전체다.
+    """
     scenario = session.get("scenario") or "xiao"
     specs, step_s, _ = load_acceptance_plan(plan, scenario)
-    criteria = load_criteria(plan, scenario)
-    results: list[Criterion] = judge_session(session, specs, criteria, step_s)
+    criteria = _criteria_or_none(plan, scenario)
+    results: list[Criterion] | None = None
+    if criteria is None:
+        counted = [s for s in specs if s["key"] in session.get("segments", {})]
+    else:
+        results = judge_session(session, specs, criteria, step_s)
+        counted = judged_specs(specs, criteria)
 
     right = total = determinate = covered = 0
-    # C1·C3 와 같은 분모 — 판정 대상 구간만 센다.
-    for spec in judged_specs(specs, criteria):
+    # C1·C3 와 같은 분모 — 판정 대상 구간만 센다 (기준이 없으면 세션의 라벨 구간 전체).
+    for spec in counted:
         stats = session.get("segments", {}).get(spec["key"])
         if not stats:
             continue
@@ -453,7 +497,10 @@ def evaluate_variant(
     ep = summary["total"]["episode"]
     # C2 는 앞 방향에서 이월된 경보도 확정으로 센다. 그 방향 에피소드 안에서 제한시간 안에
     # 스스로 낸 경보가 있는 방향만 따로 센다.
-    judged = {spec["key"] for spec in judged_specs(specs, criteria)}
+    judged = {spec["key"] for spec in counted}
+    # 그 변형이 스스로 낸 머리 클리핑 확인불가 — 클리핑 제외 실효 성공률의 분모에서 뺀다.
+    by_segment = segment_tally(session)
+    clipped = sum(by_segment[key]["clipped"] for key in judged if key in by_segment)
     own: dict[str, set[str | None]] = {
         s["key"]: set() for s in specs if s["key"] in judged and s["expected"] == STATE_VIOLATION
     }
@@ -473,6 +520,8 @@ def evaluate_variant(
         "right": right,
         "count": total,
         "effective_rate": right / total if total else None,
+        "clipped": clipped,
+        "clip_excluded_rate": right / (total - clipped) if total - clipped else None,
         "criteria": results,
         "reasons": dict(session.get("reasons", {})),
         "alarms_total": sum(bool(e.get("confirmed")) for e in session.get("events", [])),
@@ -850,10 +899,29 @@ def table(rows: Sequence[dict[str, Any]], notes: dict[str, str]) -> list[str]:
         "오경보율",
         "판정시간 P95(n)",
         *REASON_ORDER,
+        "클리핑 제외 실효 성공률",
     ]
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    if any(r["criteria"] is None for r in rows):
+        lines = [
+            "- 합격 기준 없음: C1~C3 는 `-`, 판정 가능률·실효 성공률의 분모는 세션의 라벨 구간"
+            " 전체, 정상 에피소드가 없으면 오경보율은 `-`",
+            "",
+            *lines,
+        ]
     for r in rows:
-        c1, c2, c3 = r["criteria"]
+        if r["criteria"] is None:
+            c1_cell = c2_cell = c3_cell = "-"
+        else:
+            c1, c2, c3 = r["criteria"]
+            c1_cell = ("PASS " if c1.passed else "FAIL ") + c1.detail.split(" — ")[0]
+            c2_cell = ("PASS " if c2.passed else "FAIL ") + _c2_short(c2.detail)
+            c3_cell = "PASS" if c3.passed else "FAIL"
+        false_alarm = (
+            f"{_pct(r['false_alarm_rate'])} ({r['false_alarms']}/{r['normal_episodes']})"
+            if r["normal_episodes"]
+            else "-"
+        )
         lines.append(
             "| "
             + " | ".join(
@@ -862,14 +930,15 @@ def table(rows: Sequence[dict[str, Any]], notes: dict[str, str]) -> list[str]:
                     notes.get(r["name"], ""),
                     f"{_pct(r['decidable_rate'])} ({r['determinate']}/{r['total']})",
                     f"{_pct(r['effective_rate'])} ({r['right']}/{r['count']})",
-                    ("PASS " if c1.passed else "FAIL ") + c1.detail.split(" — ")[0],
-                    ("PASS " if c2.passed else "FAIL ") + _c2_short(c2.detail),
+                    c1_cell,
+                    c2_cell,
                     " · ".join(str(n) for n in r["own_directions"].values()),
-                    "PASS" if c3.passed else "FAIL",
+                    c3_cell,
                     f"{_pct(r['recall'])} ({r['detected']}/{r['violation_episodes']})",
-                    f"{_pct(r['false_alarm_rate'])} ({r['false_alarms']}/{r['normal_episodes']})",
+                    false_alarm,
                     f"{_sec(r['latency_p95_s'])}초 ({r['latency_n']})",
                     *(str(r["reasons"].get(k, 0)) for k in REASON_ORDER),
+                    f"{_pct(r['clip_excluded_rate'])} ({r['right']}/{r['count'] - r['clipped']})",
                 ]
             )
             + " |"
@@ -952,6 +1021,19 @@ def run_report(args: argparse.Namespace) -> int:
         lines += table(rows, notes)
         lines += ["", "### 조건별 분해 — base 재추론", ""]
         lines += breakdown_table(base, plan)
+
+        stage_rows = []
+        for variant in STAGES:
+            row = evaluate_variant(
+                replay(
+                    cache["frames"], session["events"], variant, head_margin, orientations, meta
+                ),
+                plan,
+            )
+            row["name"] = variant.name
+            stage_rows.append(row)
+        lines += ["", "## 단계 누적 (계획서 2단계 표)", ""]
+        lines += table(stage_rows, {v.name: v.note for v in STAGES})
     _write_text("\n".join(lines) + "\n", args.out)
     return 0
 
