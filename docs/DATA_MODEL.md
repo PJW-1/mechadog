@@ -113,7 +113,7 @@ erDiagram
 
 | 필드 | 형식 | 뜻 | 출처 |
 | :--- | :--- | :--- | :--- |
-| `incident_id` | TEXT PK | 블랙박스 사건은 그 폴더 이름, 그 밖의 사건은 `<ts_ms>_<event>_<8자리 16진수>` | 블랙박스 폴더 이름 또는 런타임 |
+| `incident_id` | TEXT PK | 블랙박스 사건은 `<robot_id>_<폴더 이름>`(여러 대는 폴더를 로봇마다 나누므로, 같은 밀리초에 같은 사건을 남긴 두 로봇의 폴더 이름이 같을 수 있다), 그 밖의 사건은 `<ts_ms>_<event>_<8자리 16진수>` | 기체 ID 와 블랙박스 폴더 이름, 또는 런타임 |
 | `mission_id` | TEXT FK NULL | 속한 순찰 판. 열린 판이 없을 때 발생했으면 NULL | `mission_runs.mission_id` |
 | `robot_id` | TEXT NOT NULL FK | 사건이 난 로봇 | `robots.robot_id` |
 | `zone_id` | TEXT FK NULL | 사건 구역. 판정의 `zone`, 없으면 로봇이 그때 있던 구역, 그것도 없으면 NULL | 판정 `judgement.zone` · ZoneInspector |
@@ -189,10 +189,10 @@ erDiagram
 | `GET /api/history/zones` | 구역 목록. 응답 `{items}` |
 | `POST /api/history/incidents/{incident_id}/review` | 검토 저장. 본문 `{reviewed: bool, resolution: str ≤ 2000자(기본 "")}`. 갱신된 사건을 돌려주고 없으면 404 |
 
-- 오류: 잘못된 질의·본문은 422, 저장소가 `sqlite3.Error` 를 내면 503 `history_unavailable`. 오류 본문은 `{"detail": <사유>}`.
+- 오류 본문은 다른 관제 경로와 같은 `{"error": <사유>}` 다. 잘못된 본문은 400(사유는 첫 번째로 틀린 필드), 없는 사건은 404 `incident_not_found`, 저장소가 `sqlite3.Error` 를 내면 503 `history_unavailable`. 질의 매개변수의 형식 오류만 FastAPI 기본 422 다.
 - `logging.history_db` 가 비어 저장소가 없으면 **경로는 남고 모두 503 `history_disabled`** — 화면이 «꺼짐» 과 «없음(404)» 을 가른다.
 - ⚠️ 플릿(`host/fleet.py`)에서는 모든 기체의 앱이 같은 저장소 하나를 쓰므로 **어느 `/robots/<id>` 아래에서도 전 기체의 기록이 나온다.** 기체별은 `?robot=` 으로 거른다.
-- 스냅샷은 새 경로를 만들지 않고 기존 `GET /events/{entry}/snapshot.jpg` 를 쓴다(사건의 `blackbox_entry`).
+- 스냅샷은 새 경로를 만들지 않고 기존 `GET /events/{entry}/snapshot.jpg` 를 쓴다(사건의 `blackbox_entry`). 플릿에서는 블랙박스 폴더가 로봇마다 나뉘므로 사건의 `robot_id` 를 따라 `/robots/<robot_id>/events/<blackbox_entry>/snapshot.jpg` 를 부른다.
 
 기존 블랙박스에서 DB 를 만들거나 되살릴 때(몇 번을 돌려도 같고, 이미 있는 사건과 검토 기록은 건드리지 않는다):
 
@@ -200,7 +200,7 @@ erDiagram
 python tools/ops/history_import.py --device <unit-id> [--blackbox DIR] [--db PATH]
 ```
 
-경로 기본값은 `logging.blackbox_dir` · `logging.history_db`. 순찰 판은 블랙박스에 없어 복구되지 않는다.
+경로 기본값은 `logging.blackbox_dir` · `logging.history_db`. 플릿이 남긴 기록은 로봇마다 `<blackbox_dir>/<device>` 에 있으므로 `--blackbox` 로 그 폴더를 주고 기체마다 한 번씩 돌린다. 순찰 판은 블랙박스에 없어 복구되지 않는다.
 
 ## 7. DB 밖에 남는 데이터
 

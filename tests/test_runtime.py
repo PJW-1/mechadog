@@ -4230,3 +4230,15 @@ def test_a_broken_history_does_not_stop_the_loop(
         runtime.release()
     assert runtime.escalation.level is Level.L1
     assert any(r.getMessage() == "history_write_failed" for r in caplog.records)
+
+
+def test_the_dashboard_wiring_hands_over_the_history(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """관제 서버(`/api/history`)는 런타임이 쓰는 **같은** 저장소를 읽는다 — 한 대·여러 대 공통."""
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, history=store)
+    assert dashboard_wiring(runtime, config, vision=None, blackbox=None)["history"] is store
+    bare = Runtime(config, device_id=DEVICE, clock=clock)
+    assert dashboard_wiring(bare, config, vision=None, blackbox=None)["history"] is None
+    store.close()

@@ -72,7 +72,7 @@ python -m host.dashboard.preview --device mechdog-02 --port 8003
 | `GET /api/history/robots` · `GET /api/history/zones` | 로봇·구역 목록 `{items}` |
 | `POST /api/history/incidents/{id}/review` | 검토 저장 `{reviewed, resolution}`. 갱신된 사건을 돌려준다 |
 
-이력 API는 로컬 출처만 받고, 잘못된 질의·본문은 422, 저장소 오류는 503이다. `logging.history_db`가 비어 저장소가 없으면 경로는 그대로 두고 모두 503 `history_disabled`를 돌려준다(화면이 «꺼짐»과 «없음»을 가른다). **플릿에서는 모든 기체가 저장소 하나를 공유하므로 어느 `/robots/<id>` 아래에서도 전 기체 기록이 나온다** — 기체별은 `?robot=`으로 거른다. 사진은 새 경로 없이 기존 `GET /events/{entry}/snapshot.jpg`를 쓴다(사건의 `blackbox_entry`). 자세한 형식은 [DATA_MODEL](DATA_MODEL.md#6-조회-api).
+이력 API는 로컬 출처만 받는다. 오류 본문은 다른 경로와 같은 `{"error": <사유>}`이고, 잘못된 본문은 400, 없는 사건은 404, 저장소 오류는 503이며, 질의 매개변수 형식 오류만 422다. `logging.history_db`가 비어 저장소가 없으면 경로는 그대로 두고 모두 503 `history_disabled`를 돌려준다(화면이 «꺼짐»과 «없음»을 가른다). **플릿에서는 모든 기체가 저장소 하나를 공유하므로 어느 `/robots/<id>` 아래에서도 전 기체 기록이 나온다** — 기체별은 `?robot=`으로 거른다. 사진은 새 경로 없이 기존 `GET /events/{entry}/snapshot.jpg`를 쓴다(사건의 `blackbox_entry`). 플릿에서는 사건의 `robot_id`를 따라 `/robots/<robot_id>/events/...`를 부른다. 자세한 형식은 [DATA_MODEL](DATA_MODEL.md#6-조회-api).
 
 ### 화면 구성
 

@@ -586,6 +586,11 @@ class Runtime:
         return self._vlm
 
     @property
+    def history(self) -> HistoryStore | None:
+        """사건·순찰 이력 색인. 꺼져 있으면 `None` 이다 (ADR-46). 관제 서버도 같은 것을 읽는다."""
+        return self._history
+
+    @property
     def actions(self) -> dict[str, str]:
         """등록된 상태별 모션과, 못 만든 것의 이유."""
         return dict(self._actions)
@@ -2250,6 +2255,8 @@ def dashboard_wiring(
         "map_view": _map_view(runtime),
         "nav_status": runtime.nav_status if _has_navigator(runtime) else None,
         "planning": PlanningService(dict(config), runtime.context.device_id),
+        # 사건·순찰 이력 조회(`/api/history`). 런타임이 쓰는 저장소를 그대로 읽는다 (ADR-46).
+        "history": runtime.history,
     }
 
 

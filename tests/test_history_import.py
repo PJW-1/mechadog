@@ -47,13 +47,13 @@ def test_import_inserts_valid_entries_and_is_idempotent(blackbox, tmp_path, caps
     store = HistoryStore(db)
     try:
         assert store.incidents()[1] == 2
-        fall = store.incident("1000_fall")
+        fall = store.incident("mechdog-02_1000_fall")
         assert fall["robot_id"] == "mechdog-02"
         assert fall["snapshot_path"] == "1000_fall/snapshot.jpg"
         assert fall["blackbox_entry"] == "1000_fall"
-        ppe = store.incident("2000_ppe")
+        ppe = store.incident("mechdog-02_2000_ppe")
         assert ppe["zone_id"] == "B" and ppe["snapshot_path"] is None
-        store.review("1000_fall", reviewed=True, resolution="ok", at_ms=9)
+        store.review("mechdog-02_1000_fall", reviewed=True, resolution="ok", at_ms=9)
     finally:
         store.close()
 
@@ -62,7 +62,7 @@ def test_import_inserts_valid_entries_and_is_idempotent(blackbox, tmp_path, caps
     assert "inserted 0" in out and "existing 2" in out and "skipped 3" in out
     store = HistoryStore(db)
     try:
-        assert store.incident("1000_fall")["reviewed"] is True  # 검토 기록을 덮지 않는다
+        assert store.incident("mechdog-02_1000_fall")["reviewed"] is True  # 검토 기록을 덮지 않는다
     finally:
         store.close()
 

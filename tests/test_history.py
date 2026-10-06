@@ -15,6 +15,7 @@ from host.common.history import (
     IncidentRow,
     incident_from_entry,
     incident_from_feed,
+    incident_from_meta,
     open_history,
     zones_from_config,
 )
@@ -211,7 +212,7 @@ def test_a_blackbox_entry_becomes_an_incident_that_points_back_at_its_folder(
     row = incident_from_entry(entry, robot_id=ROBOT, mission_id="m", zone_id="A")
 
     name = entry.meta_path.parent.name
-    assert row.incident_id == name
+    assert row.incident_id == f"{ROBOT}_{name}"
     assert row.blackbox_entry == name
     assert row.snapshot_path == f"{name}/snapshot.jpg"
     # 판단 근거의 구역이 지금 서 있는 구역보다 앞선다 — 판독은 그 구역에서 건 것이다.
@@ -225,6 +226,24 @@ def test_a_blackbox_entry_becomes_an_incident_that_points_back_at_its_folder(
         "factory",
     )
     assert row.detail == {"zone": "C", "items": ["lighter"], "source": "detector"}
+
+
+def test_two_robots_with_the_same_folder_name_keep_both_incidents(tmp_path: Path) -> None:
+    """⚠️ 여러 대는 블랙박스 폴더는 나누고 DB 는 하나다 — 같은 밀리초에 같은 사건을 남기면
+    폴더 이름이 같다. 사건 ID 에 기체를 붙여 둘 다 남긴다."""
+    store = HistoryStore(tmp_path / "h.sqlite3")
+    meta = {"ts_ms": 1000, "event": "ppe_violation"}
+    kept = [
+        store.record_incident(incident_from_meta("1000_ppe_violation", meta, robot_id=robot))
+        for robot in ("mechdog-01", "mechdog-02")
+    ]
+    rows, total = store.incidents()
+    store.close()
+    assert kept == [True, True] and total == 2
+    assert {(r["robot_id"], r["blackbox_entry"]) for r in rows} == {
+        ("mechdog-01", "1000_ppe_violation"),
+        ("mechdog-02", "1000_ppe_violation"),
+    }
 
 
 def test_an_entry_without_a_picture_or_scores_keeps_nulls(tmp_path: Path) -> None:

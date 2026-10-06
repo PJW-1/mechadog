@@ -194,12 +194,15 @@ def incident_from_meta(
 
     구역은 판단 근거에 적힌 것이 먼저다 — 구역 판독은 그 구역에서 건 것이라, 결과가
     도착했을 때 로봇이 이미 떠났어도 사건은 그 구역의 것이다.
+
+    ⚠️ 사건 ID 는 `<기체>_<폴더 이름>` 이다. 여러 대는 폴더를 로봇마다 나누고 DB 는 하나라,
+    같은 밀리초에 같은 사건을 남긴 두 로봇의 폴더 이름이 같을 수 있다.
     """
     judgement = meta.get("judgement")
     detail = dict(judgement) if isinstance(judgement, Mapping) else {}
     judged_zone = detail.get("zone")
     return IncidentRow(
-        incident_id=entry_name,
+        incident_id=f"{robot_id}_{entry_name}",
         robot_id=robot_id,
         occurred_at=int(meta["ts_ms"]),
         event_type=str(meta["event"]),
@@ -218,7 +221,7 @@ def incident_from_meta(
 def incident_from_entry(
     entry: BlackboxEntry, *, robot_id: str, mission_id: str | None, zone_id: str | None
 ) -> IncidentRow:
-    """방금 남긴 블랙박스 기록을 사건 행으로. 사건 ID 는 블랙박스 폴더 이름이다."""
+    """방금 남긴 블랙박스 기록을 사건 행으로. 사건 ID 는 `<기체>_<블랙박스 폴더 이름>` 이다."""
     meta = {
         "ts_ms": entry.ts_ms,
         "event": entry.event_type,

@@ -99,7 +99,8 @@ def test_incidents_bad_query_is_422(client, params):
 
 def test_incident_detail_and_404(client):
     assert client.get("/api/history/incidents/2001_fall").json()["zone_id"] == "B"
-    assert client.get("/api/history/incidents/nope").status_code == 404
+    missing = client.get("/api/history/incidents/nope")
+    assert (missing.status_code, missing.json()) == (404, {"error": "incident_not_found"})
 
 
 def test_runs_robots_zones(client):
@@ -136,14 +137,16 @@ def test_review_round_trip(client):
         [],
     ],
 )
-def test_review_bad_body_is_422(client, body):
+def test_review_bad_body_is_400(client, body):
+    """본문 오류는 다른 POST 경로처럼 400 `{"error": <첫 필드>}` 다 (`_read_body`)."""
     response = client.post("/api/history/incidents/2001_fall/review", json=body)
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert set(response.json()) == {"error"}
 
 
 def test_review_unknown_is_404(client):
     response = client.post("/api/history/incidents/nope/review", json=REVIEW)
-    assert response.status_code == 404
+    assert (response.status_code, response.json()) == (404, {"error": "incident_not_found"})
 
 
 ROUTES = [
@@ -161,7 +164,7 @@ def test_disabled_history_is_503(method, path):
     with make_client(None) as http:
         response = call(http, method, path)
     assert response.status_code == 503
-    assert response.json()["detail"] == "history_disabled"
+    assert response.json() == {"error": "history_disabled"}
 
 
 @pytest.mark.parametrize(("method", "path"), ROUTES)
@@ -170,16 +173,17 @@ def test_store_error_is_503(store, method, path):
     with make_client(store) as http:
         response = call(http, method, path)
     assert response.status_code == 503
-    assert response.json()["detail"] == "history_unavailable"
+    assert response.json() == {"error": "history_unavailable"}
 
 
-def test_store_value_error_is_422():
+def test_store_value_error_is_400():
     class Stub:
         def incidents(self, **_):
             raise ValueError("limit")
 
     with make_client(Stub()) as http:
-        assert http.get("/api/history/incidents").status_code == 422
+        response = http.get("/api/history/incidents")
+    assert (response.status_code, response.json()) == (400, {"error": "limit"})
 
 
 def test_foreign_origin_is_refused(client):

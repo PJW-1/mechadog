@@ -31,7 +31,6 @@ from fastapi import (
     APIRouter,
     Depends,
     FastAPI,
-    HTTPException,
     Query,
     Request,
     WebSocket,
@@ -635,18 +634,20 @@ def _history_routes(history: HistoryStore | None) -> APIRouter:
     ⚠️ 플릿에서는 모든 기체의 앱이 **같은 저장소 하나**를 가리킨다 — 어느 `/robots/<id>` 아래에서
     물어도 전 기체의 기록이 나오며, 기체별은 `?robot=` 으로 거른다.
     ⚠️ 저장소가 없어도 경로는 남긴다. 화면이 «꺼짐»(503 `history_disabled`) 과 «없음»(404) 을 가른다.
+    ⚠️ 거절은 다른 경로와 같은 `{"error": <사유>}` 다(`_RefusedError`) — 질의 매개변수 형식 오류만
+    FastAPI 기본 422 다.
     """
     router = APIRouter(prefix="/api/history", dependencies=_LOCAL_ORIGIN)
 
     async def call(method: str, *args: Any, **kwargs: Any) -> Any:
         if history is None:
-            raise HTTPException(503, "history_disabled")
+            raise _RefusedError("history_disabled", 503)
         try:
             return await run_in_threadpool(getattr(history, method), *args, **kwargs)
         except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise _RefusedError(str(exc), 400) from exc
         except sqlite3.Error as exc:
-            raise HTTPException(503, "history_unavailable") from exc
+            raise _RefusedError("history_unavailable", 503) from exc
 
     @router.get("/incidents")
     async def incidents(
@@ -680,11 +681,12 @@ def _history_routes(history: HistoryStore | None) -> APIRouter:
     async def incident(incident_id: str) -> dict[str, Any]:
         found = await call("incident", incident_id)
         if found is None:
-            raise HTTPException(404, "incident_not_found")
+            raise _RefusedError("incident_not_found", 404)
         return cast("dict[str, Any]", found)
 
     @router.post("/incidents/{incident_id}/review")
-    async def review(incident_id: str, body: _ReviewBody) -> dict[str, Any]:
+    async def review(incident_id: str, request: Request) -> dict[str, Any]:
+        body = await _read_body(request, _ReviewBody)
         updated = await call(
             "review",
             incident_id,
@@ -693,7 +695,7 @@ def _history_routes(history: HistoryStore | None) -> APIRouter:
             at_ms=int(time.time() * 1000),
         )
         if updated is None:
-            raise HTTPException(404, "incident_not_found")
+            raise _RefusedError("incident_not_found", 404)
         return cast("dict[str, Any]", updated)
 
     @router.get("/runs")
