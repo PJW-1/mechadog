@@ -6,6 +6,7 @@ import math
 import os
 import socket
 import time
+from collections.abc import Mapping
 
 from host.common.lidar_link import ScanDecoder, scan_of
 
@@ -48,6 +49,30 @@ class Revolution:
         return ranges
 
 
+MOUNT_ENV = ("LIDAR_MOUNT_YAW_DEG", "LIDAR_ANGLE_DIRECTION")
+
+
+def mount_from_env(env: Mapping[str, str]) -> tuple[float, int, str]:
+    """장착 보정 `(yaw, direction)` 과 경고. 미설정·빈 값은 «보정 없음»(0, +1)으로 둔다.
+
+    기본값은 배치가 없는 목업용이고 실물 정본이 아니다 — `config.yaml` 의
+    `lidar.mount_yaw_deg`(270) · `lidar.angle_direction`(-1) 을 넘겨야 한다. 안 넘기면
+    조용히 돌아간 지도가 나온다(2026-09-29 실측: 같은 물체가 40° 대 229°).
+    `odom_bridge` 가 `LASER_OFFSET_*` 에 하는 것과 같이 경고한다.
+    """
+    missing = [name for name in MOUNT_ENV if not env.get(name, "").strip()]
+    yaw = float(env.get("LIDAR_MOUNT_YAW_DEG", "").strip() or "0")
+    direction = int(env.get("LIDAR_ANGLE_DIRECTION", "").strip() or "1")
+    if not missing:
+        return yaw, direction, ""
+    return (
+        yaw,
+        direction,
+        f"{missing} 미설정 — 장착 보정 없이 발행한다 "
+        "(config.yaml lidar.mount_yaw_deg · angle_direction 을 넘긴다)",
+    )
+
+
 def main() -> None:
     import rclpy
     from rclpy.node import Node
@@ -61,8 +86,7 @@ def main() -> None:
             # (config.yaml lidar.scan_forward_port · WBS 5.4.4).
             self.port = int(os.getenv("LIDAR_SCAN_PORT", "5203"))
             self.expected_device = os.getenv("LIDAR_DEVICE_ID", "")
-            yaw = float(os.getenv("LIDAR_MOUNT_YAW_DEG", "0"))
-            direction = int(os.getenv("LIDAR_ANGLE_DIRECTION", "1"))
+            yaw, direction, mount_warning = mount_from_env(os.environ)
             self.rotation = Revolution(
                 int(os.getenv("LIDAR_ANGLE_BINS", "450")),
                 float(os.getenv("LIDAR_RANGE_MIN_M", "0.12")),
@@ -78,6 +102,8 @@ def main() -> None:
             self.last_publish: float | None = None
             self.scan_started_stamp = None
             self.create_timer(0.01, self.poll)
+            if mount_warning:
+                self.get_logger().warning(mount_warning)
             self.get_logger().info(f"SCAN UDP :{self.port} -> /scan")
 
         def publish(self, ranges: list[float]) -> None:

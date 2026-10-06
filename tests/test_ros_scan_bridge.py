@@ -6,9 +6,9 @@ from pathlib import Path
 
 from host.common.lidar_link import ScanDecoder, encode_scan, scan_of
 
-Revolution = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "docker/ros2/scan_bridge.py")
-)["Revolution"]
+_BRIDGE = runpy.run_path(str(Path(__file__).resolve().parents[1] / "docker/ros2/scan_bridge.py"))
+Revolution = _BRIDGE["Revolution"]
+mount_from_env = _BRIDGE["mount_from_env"]
 
 
 def test_sectors_become_fixed_bins_with_missing_beams() -> None:
@@ -122,3 +122,24 @@ def test_same_boot_id_after_restart_is_still_rejected() -> None:
     )
     assert not result.accepted
     assert "seq" in result.reason
+
+
+def test_mount_missing_warns_and_keeps_mock_defaults() -> None:
+    """장착 보정 없이 뜨면 기본(0, +1)으로 돌되 경고한다 — 조용히 돌아간 지도 방지."""
+    yaw, direction, warning = mount_from_env({})
+    assert (yaw, direction) == (0.0, 1)
+    assert "LIDAR_MOUNT_YAW_DEG" in warning and "LIDAR_ANGLE_DIRECTION" in warning
+
+    yaw, direction, partial = mount_from_env(
+        {"LIDAR_MOUNT_YAW_DEG": "270", "LIDAR_ANGLE_DIRECTION": " "}
+    )
+    assert (yaw, direction) == (270.0, 1)
+    assert "LIDAR_ANGLE_DIRECTION" in partial and "LIDAR_MOUNT_YAW_DEG" not in partial
+
+
+def test_mount_from_config_values_is_silent() -> None:
+    assert mount_from_env({"LIDAR_MOUNT_YAW_DEG": "270", "LIDAR_ANGLE_DIRECTION": "-1"}) == (
+        270.0,
+        -1,
+        "",
+    )

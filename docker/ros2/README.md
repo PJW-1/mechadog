@@ -33,6 +33,8 @@ docker run -d --name mechdog-ros2 -p 5203:5203/udp -p 5204:5204/udp `
   -e MAP_POSE_DEVICE_ID=mechdog-02 mechdog-ros2:prelidar
 ```
 
+실물 라이다로 띄울 때는 장착 보정을 반드시 넘긴다 — 아래 「장착 보정」 절.
+
 **컨테이너만 검증할 때**(순찰기 없이 브리지 디코더만 확인) — 목업을 `5203`으로 바로 보낸다:
 
 ```powershell
@@ -161,11 +163,26 @@ UART 타이밍·모터 노이즈·차폐·전원 문제를 검증하지 않는�
 `LIDAR_RANGE_MAX_M`(8.0)도 실측 후 조정한다. ROS 시각은 첫 조각 수신 시각을 쓰며,
 중계 노드 `ts`(부팅 후 밀리초)를 epoch로 해석하지 않는다.
 
-실제 2026-09-26 장착 방향은 원시270° 정면·180° 왼쪽·90° 뒤·0° 오른쪽으로
+## 장착 보정 — 실물에서는 반드시 넘긴다
+
+실제 2026-09-26 장착 방향은 원시 270° 정면·180° 왼쪽·90° 뒤·0° 오른쪽으로
 물리 표적 차분 확인했다. 이 기체의 브리지에는 `LIDAR_MOUNT_YAW_DEG=270` 과
 `LIDAR_ANGLE_DIRECTION=-1` 을 **함께** 설정해야 한다. 기본 0/+1 은 배치가
-없는 목업용이고, 실물 좌표로 간주하면 지도가 뒤집힌다. 이 설정의 ROS 토픽과
-마스트 tf·주행 지도 전체 검증은 별도다.
+없는 목업용이고, 실물 좌표로 간주하면 지도가 돌고 좌우가 뒤집힌 채 `slam_toolbox` 에
+들어간다(2026-09-29 실측: 같은 물체가 `40°` 대 `229°` — 변환식 `(-40 + 270) mod 360 = 230` 과 1° 안에서 맞는다).
+그래서 둘 중 하나라도 없으면 `scan_bridge` 가 기동 때 **경고**한다(`mount_from_env`).
+
+```powershell
+docker run -d --name mechdog-ros2 -p 5203:5203/udp `
+  -e LIDAR_DEVICE_ID=<중계 장치 ID> `
+  -e LIDAR_MOUNT_YAW_DEG=270 -e LIDAR_ANGLE_DIRECTION=-1 `
+  mechdog-ros2:prelidar
+```
+
+값은 `config.yaml` 의 `lidar.mount_yaw_deg` · `lidar.angle_direction` 을 그대로 옮긴다 —
+그쪽이 정본이고 여기는 사본이다. 장치 ID 는 **로봇 ID 가 아니라 중계 ID** `lidar-<MAC 12자리>` 다
+(중계 부팅 로그, 런타임 `--lidar-device` 인자와 같은 값). 로봇 ID 를 넣으면 브리지가 모든 스캔을 버린다.
+이 설정의 마스트 tf·주행 지도 전체 검증은 별도다.
 
 ## 남은 연결
 
