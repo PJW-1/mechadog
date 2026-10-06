@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -241,3 +243,12 @@ def test_cli_writes_report(
     assert report["overrides"] == {"network.cmd_rate_hz": 5}
     text = capsys.readouterr().out
     assert "명령 일치" in text
+
+
+def test_cli_help_survives_cp949_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """한국어 Windows 콘솔(cp949)은 `—` 를 못 찍는다. CI 러너는 UTF-8 이라 여기서만 잡힌다."""
+    console = io.TextIOWrapper(io.BytesIO(), encoding="cp949")
+    monkeypatch.setattr(sys, "stdout", console)
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0

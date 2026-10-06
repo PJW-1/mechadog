@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from host.behavior.fsm import Event  # noqa: E402
 from host.behavior.mission import Mission  # noqa: E402
 from host.common.config import load_config  # noqa: E402
+from host.common.console import survive_encoding_errors  # noqa: E402
 from host.runtime import Runtime, build_parser  # noqa: E402
 from host.telemetry.session_recorder import EVENTS_FILE, MANIFEST_FILE  # noqa: E402
 from host.vision.badge import Marker  # noqa: E402
@@ -672,6 +673,7 @@ def _print_report(name: str, report: Mapping[str, Any], start_ms: int) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    survive_encoding_errors()
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
