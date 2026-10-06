@@ -470,7 +470,8 @@ def evaluate_variant(
 ) -> dict[str, Any]:
     """세션 하나 → 표 한 줄: 판정 가능률·실효 성공률·C1~C3·사유·에피소드 지표.
 
-    계획에 합격 기준이 없으면 `criteria` 는 None 이고, 분모는 세션에 있는 라벨 구간 전체다.
+    계획에 합격 기준이 없으면 `criteria` 는 None 이고, 분모는 계획에 있고 세션에도 있는 라벨
+    구간이다.
     """
     scenario = session.get("scenario") or "xiao"
     specs, step_s, _ = load_acceptance_plan(plan, scenario)
@@ -483,7 +484,7 @@ def evaluate_variant(
         counted = judged_specs(specs, criteria)
 
     right = total = determinate = covered = 0
-    # C1·C3 와 같은 분모 — 판정 대상 구간만 센다 (기준이 없으면 세션의 라벨 구간 전체).
+    # C1·C3 와 같은 분모 — 판정 대상 구간만 센다 (기준이 없으면 계획과 세션에 함께 있는 구간).
     for spec in counted:
         stats = session.get("segments", {}).get(spec["key"])
         if not stats:
@@ -905,8 +906,8 @@ def table(rows: Sequence[dict[str, Any]], notes: dict[str, str]) -> list[str]:
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     if any(r["criteria"] is None for r in rows):
         lines = [
-            "- 합격 기준 없음: C1~C3 는 `-`, 판정 가능률·실효 성공률의 분모는 세션의 라벨 구간"
-            " 전체, 정상 에피소드가 없으면 오경보율은 `-`",
+            "- 합격 기준 없음: C1~C3 는 `-`, 판정 가능률·실효 성공률의 분모는 계획에 있고"
+            " 세션에도 있는 라벨 구간, 정상 에피소드가 없으면 오경보율은 `-`",
             "",
             *lines,
         ]
