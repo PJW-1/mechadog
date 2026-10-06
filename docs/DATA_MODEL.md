@@ -176,19 +176,31 @@ erDiagram
 - `stop_reason`: 닫은 FSM 트리거 이름 또는 `runtime_stopped`.
 - `zones_visited`: 구역 도착(ZoneInspector 의 앵커 도착)을 처음 도착한 순서로 담는다.
 
-## 6. 조회 API (계획)
+## 6. 조회 API
 
-모두 기존 로컬 출처 검사 아래에 있다(`127.0.0.1` 전용).
+모두 기존 로컬 출처 검사 아래에 있다(`127.0.0.1` 전용, 다른 출처는 403). 구현은 `host/dashboard/server.py` 의 `_history_routes` 다.
 
-| 메서드 · 경로 | 뜻 |
+| 메서드 · 경로 | 뜻 · 응답 |
 | :--- | :--- |
-| `GET /api/history/incidents` | 사건 목록. 필터 `since` · `until` · `robot` · `zone` · `event` · `escalation` · `mission` · `reviewed` · `limit` · `offset` |
-| `GET /api/history/runs` | 순찰 판 목록 |
-| `GET /api/history/robots` | 로봇 목록 |
-| `GET /api/history/zones` | 구역 목록 |
-| `POST /api/history/incidents/{incident_id}/review` | 검토 저장. 본문 `reviewed` · `resolution` |
+| `GET /api/history/incidents` | 사건 목록(최근 것부터). 필터 `since` · `until`(epoch ms, 양 끝 포함) · `robot` · `zone` · `event` · `escalation` · `mission` · `reviewed`, 쪽 `limit`(1~500, 기본 50) · `offset`. 응답 `{items, total, limit, offset}` |
+| `GET /api/history/incidents/{incident_id}` | 사건 하나. 없으면 404 |
+| `GET /api/history/runs` | 순찰 판 목록(최근 것부터). `robot` · `limit` · `offset`. 응답 `{items, total, limit, offset}` |
+| `GET /api/history/robots` | 로봇 목록. 응답 `{items}` |
+| `GET /api/history/zones` | 구역 목록. 응답 `{items}` |
+| `POST /api/history/incidents/{incident_id}/review` | 검토 저장. 본문 `{reviewed: bool, resolution: str ≤ 2000자(기본 "")}`. 갱신된 사건을 돌려주고 없으면 404 |
 
-스냅샷은 새 경로를 만들지 않고 기존 `GET /events/{entry}/snapshot.jpg` 를 쓴다.
+- 오류: 잘못된 질의·본문은 422, 저장소가 `sqlite3.Error` 를 내면 503 `history_unavailable`. 오류 본문은 `{"detail": <사유>}`.
+- `logging.history_db` 가 비어 저장소가 없으면 **경로는 남고 모두 503 `history_disabled`** — 화면이 «꺼짐» 과 «없음(404)» 을 가른다.
+- ⚠️ 플릿(`host/fleet.py`)에서는 모든 기체의 앱이 같은 저장소 하나를 쓰므로 **어느 `/robots/<id>` 아래에서도 전 기체의 기록이 나온다.** 기체별은 `?robot=` 으로 거른다.
+- 스냅샷은 새 경로를 만들지 않고 기존 `GET /events/{entry}/snapshot.jpg` 를 쓴다(사건의 `blackbox_entry`).
+
+기존 블랙박스에서 DB 를 만들거나 되살릴 때(몇 번을 돌려도 같고, 이미 있는 사건과 검토 기록은 건드리지 않는다):
+
+```
+python tools/ops/history_import.py --device <unit-id> [--blackbox DIR] [--db PATH]
+```
+
+경로 기본값은 `logging.blackbox_dir` · `logging.history_db`. 순찰 판은 블랙박스에 없어 복구되지 않는다.
 
 ## 7. DB 밖에 남는 데이터
 

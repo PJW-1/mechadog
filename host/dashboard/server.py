@@ -17,7 +17,9 @@ import contextlib
 import json
 import math
 import socket
+import sqlite3
 import threading
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -25,7 +27,16 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import uvicorn
 from anyio import CancelScope
-from fastapi import APIRouter, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import (
@@ -46,6 +57,7 @@ from host.dashboard.planning import PlanError, PlanInput, PlanningService
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
 if TYPE_CHECKING:
+    from host.common.history import HistoryStore
     from host.vision.worker import VisionResult
 
 PERIOD_S = 0.1
@@ -377,6 +389,11 @@ class _PoseBody(BaseModel):
     preset: StrictStr
 
 
+class _ReviewBody(BaseModel):
+    reviewed: StrictBool
+    resolution: Annotated[StrictStr, Field(max_length=2000)] = ""
+
+
 class _BroadcastPatch(BaseModel):
     # 기본값 None 은 «필드 없음» 표시일 뿐이다 — 명시한 null 은 거절한다. 있는지는 `model_fields_set`.
     volume: Annotated[StrictInt, Field(ge=0, le=100)] = None  # type: ignore[assignment]
@@ -612,6 +629,93 @@ def _planning_routes(planning: PlanningService) -> APIRouter:
     return router
 
 
+def _history_routes(history: HistoryStore | None) -> APIRouter:
+    """사건·순찰 이력 조회와 검토 저장 (ADR-46).
+
+    ⚠️ 플릿에서는 모든 기체의 앱이 **같은 저장소 하나**를 가리킨다 — 어느 `/robots/<id>` 아래에서
+    물어도 전 기체의 기록이 나오며, 기체별은 `?robot=` 으로 거른다.
+    ⚠️ 저장소가 없어도 경로는 남긴다. 화면이 «꺼짐»(503 `history_disabled`) 과 «없음»(404) 을 가른다.
+    """
+    router = APIRouter(prefix="/api/history", dependencies=_LOCAL_ORIGIN)
+
+    async def call(method: str, *args: Any, **kwargs: Any) -> Any:
+        if history is None:
+            raise HTTPException(503, "history_disabled")
+        try:
+            return await run_in_threadpool(getattr(history, method), *args, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except sqlite3.Error as exc:
+            raise HTTPException(503, "history_unavailable") from exc
+
+    @router.get("/incidents")
+    async def incidents(
+        since: Annotated[int | None, Query(ge=0)] = None,
+        until: Annotated[int | None, Query(ge=0)] = None,
+        robot: str | None = None,
+        zone: str | None = None,
+        event: str | None = None,
+        escalation: str | None = None,
+        mission: str | None = None,
+        reviewed: bool | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict[str, Any]:
+        items, total = await call(
+            "incidents",
+            since=since,
+            until=until,
+            robot=robot,
+            zone=zone,
+            event=event,
+            escalation=escalation,
+            mission=mission,
+            reviewed=reviewed,
+            limit=limit,
+            offset=offset,
+        )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    @router.get("/incidents/{incident_id}")
+    async def incident(incident_id: str) -> dict[str, Any]:
+        found = await call("incident", incident_id)
+        if found is None:
+            raise HTTPException(404, "incident_not_found")
+        return cast("dict[str, Any]", found)
+
+    @router.post("/incidents/{incident_id}/review")
+    async def review(incident_id: str, body: _ReviewBody) -> dict[str, Any]:
+        updated = await call(
+            "review",
+            incident_id,
+            reviewed=body.reviewed,
+            resolution=body.resolution,
+            at_ms=int(time.time() * 1000),
+        )
+        if updated is None:
+            raise HTTPException(404, "incident_not_found")
+        return cast("dict[str, Any]", updated)
+
+    @router.get("/runs")
+    async def runs(
+        robot: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict[str, Any]:
+        items, total = await call("runs", robot=robot, limit=limit, offset=offset)
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    @router.get("/robots")
+    async def robots() -> dict[str, Any]:
+        return {"items": await call("robots")}
+
+    @router.get("/zones")
+    async def zones() -> dict[str, Any]:
+        return {"items": await call("zones")}
+
+    return router
+
+
 def create_app(
     state: DashboardState,
     commands: CommandService | None = None,
@@ -624,6 +728,7 @@ def create_app(
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
+    history: HistoryStore | None = None,
 ) -> FastAPI:
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
@@ -764,6 +869,7 @@ def create_app(
     app.include_router(_broadcast_routes(broadcast))
     if planning is not None:
         app.include_router(_planning_routes(planning))
+    app.include_router(_history_routes(history))
     if commands is not None:
         app.include_router(_command_routes(commands))
 
@@ -858,6 +964,7 @@ def running_server(
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
+    history: HistoryStore | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     app = create_app(
@@ -872,6 +979,7 @@ def running_server(
         map_view=map_view,
         nav_status=nav_status,
         planning=planning,
+        history=history,
     )
     with serving(app, port) as server:
         yield server
