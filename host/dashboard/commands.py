@@ -299,6 +299,8 @@ class CommandService:
             "AUTH_WAIT",
             "HAZARD_DISPATCH",
             "HAZARD_SCAN",
+            "ZONE_INSPECT",
+            "LOST",
         }
     )
 
@@ -406,7 +408,7 @@ class CommandService:
             command="patrol_stop",
             accepted=released.accepted,
             state=self._behavior.state,
-            detail="수동을 거쳐 대기로 내렸다",
+            detail="수동을 거쳐 대기로 내렸다" if released.accepted else released.detail,
         )
 
     def mission_mode(self, target: str) -> CommandResult:

@@ -9,7 +9,7 @@
 
 - 엔진은 파이썬 표준 `sqlite3` 이다(새 의존성 없음). 파일 위치는 설정 `logging.history_db`(기본 `history/mechdog.sqlite3`, git 제외)다. WAL 모드와 외래키 검사를 켠다.
 - 구현은 `host/common/history.py` 의 `HistoryStore` 다.
-- **DB 는 색인이지 원본이 아니다.** 그림과 판정 원문의 정본은 블랙박스 폴더이고, DB 는 `tools/ops/history_import.py` 로 블랙박스에서 다시 만들 수 있다.
+- **DB 는 색인이지 원본이 아니다.** 그림과 판정 원문의 정본은 블랙박스 폴더이고, DB 의 사건(`incidents`)은 `tools/ops/history_import.py` 로 블랙박스에서 다시 만들 수 있다. 순찰 판(`mission_runs`)은 블랙박스에 없어 다시 만들 수 없다.
 - DB 쓰기가 실패하면 `history_write_failed` 로 기록만 하고 10 Hz 제어 루프는 멈추지 않는다(블랙박스 쓰기와 같은 규칙).
 - 시각은 모두 **epoch 밀리초(Host PC 시계)** 다.
 
@@ -81,7 +81,7 @@ erDiagram
 | `serial_no` | TEXT | 하드웨어 식별자(MAC 기반) | 텔레메트리 `telemetry_device_id` |
 | `display_name` | TEXT NOT NULL | 화면 표시 이름. 지금은 `device_id` 와 같다 | 설정 `device_id` |
 | `status` | TEXT | 마지막으로 본 FSM 상태 | 런타임 FSM 상태 |
-| `last_seen_at` | INTEGER | 마지막으로 받아들인 텔레메트리 시각. **5초에 한 번 이하**로 쓴다 | 텔레메트리 수신 시각 |
+| `last_seen_at` | INTEGER | 마지막으로 받아들인 텔레메트리 시각. **상태가 같으면 5초에 한 번 이하, 상태가 바뀌면 바로** 쓴다 | 텔레메트리 수신 시각 |
 | `active` | INTEGER | 사용 중이면 1, 아니면 0. 기본 1 | 기본값 |
 
 ### 3.2 `zones` · 구역
@@ -107,7 +107,7 @@ erDiagram
 | `result` | TEXT | 진행 중 NULL, 끝나면 `stopped` · `manual` · `failsafe` · `shutdown` · `interrupted` | 5절 |
 | `zones_visited` | TEXT | 구역 id 의 JSON 배열(처음 도착한 순서) | ZoneInspector 앵커 도착 |
 | `incident_count` | INTEGER | 그 판에 쌓인 사건 수 | `incidents` 집계 |
-| `stop_reason` | TEXT | 끝낸 FSM 트리거 이름(`ESTOP` · `LINK_LOST` · `MANUAL_ON` 등) · `patrol_stop` · `runtime_stopped` | FSM 전이 |
+| `stop_reason` | TEXT | 끝낸 FSM 트리거 이름(`ESTOP` · `LINK_LOST` · `MANUAL_ON` 등) · `patrol_stop` · `runtime_stopped`. `interrupted` 로 닫힌 판은 NULL | FSM 전이 |
 
 ### 3.4 `incidents` · 사건
 
@@ -174,7 +174,7 @@ erDiagram
 - **닫는다:** 그 상태 중 하나로 다시 들어가는 순간, 또는 런타임이 멈출 때.
 - `result`: `stopped`(관제 «순찰 정지») · `manual`(그 밖의 MANUAL 진입) · `failsafe`(FAILSAFE) · `shutdown`(런타임 정상 종료) · `interrupted`(다음 기동 때 열린 채 발견됨, 예 비정상 종료).
 - **«순찰 정지» 는 `MANUAL` 을 거치지만 `stopped` 다.** 전이표에 자율 → `IDLE` 직행 사건이 없어 정지 명령은 `MANUAL_ON` 뒤 곧바로 `MANUAL_OFF` 로 내린다. 이 `MANUAL` 진입은 수동 조종과 구별해 `stopped` · `patrol_stop` 으로 닫는다(`Runtime.stopping_patrol`).
-- `stop_reason`: 닫은 FSM 트리거 이름, `patrol_stop`(«순찰 정지»), 또는 `runtime_stopped`.
+- `stop_reason`: 닫은 FSM 트리거 이름, `patrol_stop`(«순찰 정지»), 또는 `runtime_stopped`. `interrupted` 로 닫힌 판은 NULL 이다.
 - `zones_visited`: 구역 도착(ZoneInspector 의 앵커 도착)을 처음 도착한 순서로 담는다.
 
 ## 6. 조회 API
