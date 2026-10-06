@@ -1,4 +1,4 @@
-"""공장 모드의 구역 점검 — 앵커 도착·방향 맞추기·판독·종류별 결론 (FR-8 · ADR-41 · ADR-42).
+"""공장 모드의 구역 점검 — 순찰 앵커·동선 정지점·방향 정렬·판독 (FR-8 · ADR-41 · ADR-42).
 
 넘어짐·통로 막힘·화기 위험물은 같은 방문 안 판독 2회 «예» 에서 확정한다 (WBS 3.6.4).
 넘어짐만 `ZONE_CHANGED`(L3) 이고 통로 막힘과 화기 위험구역(`zones.hazard_ids`)의 위험물은
@@ -67,6 +67,7 @@ class ZoneInspector:
         ready_to_inspect: Callable[[Zone, int], bool] | None = None,
         route_inspection: Callable[[Zone, int], bool | None] | None = None,
         route_visit: Callable[[], tuple[int, int, int] | None] | None = None,
+        zone_at: Callable[[int], str | None] | None = None,
     ) -> None:
         self._behavior = behavior
         self._mission = mission
@@ -78,6 +79,7 @@ class ZoneInspector:
         self._ready_to_inspect = ready_to_inspect
         self._route_inspection = route_inspection
         self._route_visit = route_visit
+        self._zone_at = zone_at
         self._last_route_visit: tuple[int, int, int] | None = None
         zones = config["zones"]
         #: 화기 위험구역 — 여기서만 `hazard_item` 을 묻는다.
@@ -166,31 +168,56 @@ class ZoneInspector:
         """워커에 위험물 검출기가 있는지 받는다. 없으면 위험구역에서 창만큼 더 머물지 않는다."""
         self._hazard_available = available
 
-    def awaits_inspection(self, label: str, now_ms: int) -> bool:
-        """방향 맞추기를 마친 순찰이 다음 카메라 프레임을 기다려야 하나."""
-        same_visit = self._route_visit is None or self._route_visit() == self._last_route_visit
-        if not self._mission.enables("change_detect") or (self._zone == label and same_visit):
-            return False
+    def hazards_allowed(self, now_ms: int) -> bool:
+        """신선한 영역 소속까지 확인해 위험물 추론을 허용한다."""
+        return self.watching_hazards and (
+            self._zone_at is None or self._zone_at(now_ms) == self._zone
+        )
+
+    def _candidate(self, now_ms: int) -> tuple[Zone | None, bool]:
+        """동선은 영역 안 정지점, 일반 순찰은 기존 앵커 도착점에서만 연다."""
         pose = self._fresh_pose(now_ms)
         if pose is None:
-            return False
+            return None, False
+        if self._zone_at is not None:
+            label = self._zone_at(now_ms)
+            if label is None:
+                return None, False
+            anchor = next((a for a in self._anchors if a.label == label), None)
+            # 동선 정지점은 앵커 좌표/라벨 지정과 무관하다. 방향은 동선 항법이 맡는다.
+            region = anchor or Zone(label, pose[0], pose[1])
+            route_ready = (
+                None if self._route_inspection is None else self._route_inspection(region, now_ms)
+            )
+            if route_ready is not None:
+                return (region, True) if route_ready else (None, False)
+            if anchor is None or math.dist(anchor.xy, pose[:2]) >= self._arrive_m:
+                return None, False
+            return anchor, False
         anchor, distance = min(
             ((a, math.hypot(a.x - pose[0], a.y - pose[1])) for a in self._anchors),
             key=lambda pair: pair[1],
             default=(None, math.inf),
         )
-        # 안전한 셀로 옮긴 도착점이 카메라의 앵커 반경 밖일 수 있다. 그때는
-        # 점검기가 수락할 수 없으므로 무한히 기다리지 않는다.
+        if anchor is None:
+            return None, False
         route_ready = (
-            anchor is not None
-            and self._route_inspection is not None
-            and self._route_inspection(anchor, now_ms) is True
+            None if self._route_inspection is None else self._route_inspection(anchor, now_ms)
         )
-        return (
-            anchor is not None
-            and anchor.label == label
-            and (route_ready or distance < self._arrive_m)
-        )
+        if route_ready is False:
+            return None, False
+        # AV의 지나침 도착도 항법이 확인한 방문이다. 앵커 반경으로 다시 거절하지 않는다.
+        if distance >= self._arrive_m and route_ready is not True:
+            return None, False
+        return anchor, route_ready is True
+
+    def awaits_inspection(self, label: str, now_ms: int) -> bool:
+        """방향 맞추기를 마친 순찰이 다음 카메라 프레임을 기다려야 하나."""
+        same_visit = self._route_visit is None or self._route_visit() == self._last_route_visit
+        if not self._mission.enables("change_detect") or (self._zone == label and same_visit):
+            return False
+        anchor, _ = self._candidate(now_ms)
+        return anchor is not None and anchor.label == label
 
     def forget_alarm(self) -> None:
         """확인하지 않은 구역 경보를 잊는다 — 순찰을 새로 시작할 때."""
@@ -202,13 +229,22 @@ class ZoneInspector:
 
     def _fresh_pose(self, now_ms: int) -> tuple[float, float, float] | None:
         """기본 측위 기한 또는 항법이 확인한 AV 방문의 2초 유예 안의 위치."""
-        timeout = self._pose_timeout_ms
-        if self._route_inspection is not None and any(
-            self._route_inspection(anchor, now_ms) is True for anchor in self._anchors
+        if (
+            self._pose is None
+            or now_ms < self._pose[1]
+            or not all(math.isfinite(value) for value in self._pose[0])
         ):
-            # AV가 도착/조준과 최대 2초의 측위 유효성을 확인한 방문을 카메라도 소비한다.
+            return None
+        timeout = self._pose_timeout_ms
+        if (
+            now_ms - self._pose[1] > timeout
+            and self._route_inspection is not None
+            and any(self._route_inspection(anchor, now_ms) is True for anchor in self._anchors)
+        ):
+            # 도착·조준과 검증 위치 유예는 항법이 확인한다. 영역 소속의 신선도는
+            # `_candidate`·`hazards_allowed`에서 별도로 확인한다.
             timeout = max(timeout, 2000)
-        if self._pose is None or now_ms - self._pose[1] > timeout:
+        if now_ms - self._pose[1] > timeout:
             return None
         return self._pose[0]
 
@@ -232,7 +268,7 @@ class ZoneInspector:
         return False
 
     def inspect(self, result: VisionResult, now_ms: int) -> None:
-        """구역 앵커에 닿으면 장면을 판독한다 (FR-8). 새 프레임마다 부른다.
+        """순찰 앵커 또는 동선의 영역 정지점에서 장면을 판독한다. 새 프레임마다 부른다.
 
         공장 모드의 `PATROL`·`ZONE_INSPECT` 에서만 돌지만 판독은 상태·모드와 무관하게
         줍는다 (ADR-33).
@@ -263,34 +299,20 @@ class ZoneInspector:
             pose = self._fresh_pose(now_ms)
             if pose is None:
                 return  # 위치를 모르면 도착도 떠남도 판정하지 않는다
-            anchor, distance = min(
-                ((a, math.hypot(a.x - pose[0], a.y - pose[1])) for a in self._anchors),
-                key=lambda pair: pair[1],
-                default=(None, math.inf),
-            )
-            route_ready = (
-                None
-                if self._route_inspection is None or anchor is None
-                else self._route_inspection(anchor, now_ms)
-            )
-            if distance > 2 * self._arrive_m and route_ready is not True:
+            anchor, navigation_aligned = self._candidate(now_ms)
+            if self._zone_at is not None:
+                if self._zone_at(now_ms) != self._zone:
+                    self._zone = None
+            elif not navigation_aligned and all(
+                math.dist(a.xy, pose[:2]) > 2 * self._arrive_m for a in self._anchors
+            ):
                 # ⚠️ **반경의 두 배를 벗어나야 떠난 것이다.** 비우지 않으면 다음 순회에 같은
                 # 구역을 다시 점검하지 못하고, 반경에서 바로 비우면 가장자리에서 떨 때마다
                 # 같은 구역을 거듭 점검한다.
                 self._zone = None
+            if anchor is None or anchor.label == self._zone:
                 return
-            if (
-                anchor is None
-                or (distance >= self._arrive_m and route_ready is not True)
-                or anchor.label == self._zone
-            ):
-                return
-            navigation_aligned = False
-            if route_ready is not None:
-                if not route_ready:
-                    return
-                navigation_aligned = True
-            elif anchor.aim_deg is not None:
+            if not navigation_aligned and anchor.aim_deg is not None:
                 # 길 찾기가 회전·안전 관문을 맡는다. 먼저 점검 상태로 바꾸면 PATROL의
                 # 조향이 멈춰 버리므로 완료한 뒤의 프레임에서만 방문을 연다. 항법이
                 # 없으면 온보드 장애물 관문 없이 돌게 되므로 이 점검은 열지 않는다.
@@ -316,6 +338,11 @@ class ZoneInspector:
                 LOG.info("zone_arrived", zone=zone)
             return
         if state != "ZONE_INSPECT" or self._zone is None:
+            return
+        if self._zone_at is not None and self._zone_at(now_ms) != self._zone:
+            # 영역 이탈/측위 상실은 미확인 방문으로 끝낸다. 다른 방의 장면을 섞지 않는다.
+            self._visit_outcome = "zone_unverified"
+            self._leave(result, now_ms)
             return
         if self._done:
             self._leave(result, now_ms)  # 점검은 끝났고 판독·경보를 기다리는 중이다
@@ -449,7 +476,11 @@ class ZoneInspector:
             if self._suspects:
                 self._hazards = tuple(k for k in self._suspects if k in said)
                 self._suspects = ()
-            elif said and self._behavior.state == "ZONE_INSPECT":
+            elif (
+                said
+                and self._behavior.state == "ZONE_INSPECT"
+                and (self._zone_at is None or self._zone_at(now_ms) == zone)
+            ):
                 if HAZARD_ITEM in said:
                     # 확정 전의 관찰이다 — 경고가 아니지만 첫 «예» 는 로그로 남긴다.
                     LOG.info("hazard_item_seen", zone=zone)

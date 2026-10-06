@@ -1196,7 +1196,9 @@ def test_goto_is_planned_on_the_next_tick_and_starts_patrol(cfg, clock):
     runtime._nav_snapshot = runtime._build_nav_snapshot(clock.advance(100))
     status = runtime.nav_status()
     assert status["goal_feedback"]["accepted"] is True
-    assert status["pose"] == [1.0, 2.0, 0.0] and status["zone"] == "B"
+    assert status["pose"] == [1.0, 2.0, 0.0]
+    # 정책에 전달된 신선한 위치가 없으면 navigator의 라벨만으로 소속을 정하지 않는다.
+    assert status["zone"] is None
 
 
 def test_goto_refusal_is_reported_without_starting_patrol(cfg, clock):

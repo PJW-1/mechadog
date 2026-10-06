@@ -11,8 +11,9 @@ import yaml
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from host.behavior.zone_map import ZoneMap
 from host.behavior.zone_policy import DEFAULT_PPE, ZonePpePolicy
-from host.behavior.zones import Zone, ZoneStore
+from host.behavior.zones import ZoneStore
 from host.common.config import ConfigError, load_config, validate_base_config
 from host.dashboard.planning import PlanError, PlanInput, PlanningService
 from host.dashboard.server import DEFAULT_STATIC_DIR, create_app, create_fleet_app
@@ -203,18 +204,24 @@ def test_fleet_root_and_direct_index_are_white():
     assert 'id="glass-theme"' in (DEFAULT_STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
-def test_ppe_policy_uses_fresh_pose_and_combines_overlap(cfg):
+def test_ppe_policy_uses_fresh_region_labels(cfg):
     config = deepcopy(cfg)
     config["zones"]["policies"] = {
         "A": {"helmet": False, "vest": True},
         "B": {"helmet": True, "vest": False},
     }
-    policy = ZonePpePolicy(config, (Zone("A", 0, 0), Zone("B", 0.4, 0)))
+    # 앵커 반경과 무관하게 셀 영역이 정책을 고른다. 0은 구역 불명이다.
+    zone_map = ZoneMap(np.array([[1, 2, 0]]), 1.0, 0.0, 0.0, {1: "A", 2: "B"})
+    policy = ZonePpePolicy(config, zone_map)
     assert policy.required(100) == DEFAULT_PPE
     policy.note_pose((0, 0, 0), 100)
     assert policy.required(100) == ("vest",)
-    policy.note_pose((0.2, 0, 0), 200)
-    assert policy.required(200) == DEFAULT_PPE
+    policy.note_pose((0.9, 0.9, 0), 200)
+    assert policy.current_zone(200) == "A"
+    assert policy.required(200) == ("vest",)
+    policy.note_pose((1.0, 0.9, 0), 250)
+    assert policy.current_zone(250) == "B"
+    assert policy.required(250) == ("helmet",)
     policy.note_pose((0, 0, 0), 300)
     assert policy.required(301 + config["localization"]["pose_timeout_ms"]) == DEFAULT_PPE
     assert policy.required(299) == DEFAULT_PPE

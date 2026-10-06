@@ -1332,7 +1332,15 @@ class PatrolController:
         if self._route_dwell_until_ms is None:
             self._route_phase = "dwell"
             self._route_dwell_until_ms = self._now_ms + int((point.dwell_s or 0.0) * 1000)
-            self._inspection_zone = point.label if point.label in self.zones.labels else None
+            # 영역 지도가 있으면 이름 없는 동선 점도 실제 소속 구역을 점검한다.
+            # 지도 없는 기존 동선은 명시한 앵커 라벨만 사용한다.
+            self._inspection_zone = (
+                self.current_zone
+                if self.zone_map is not None
+                else point.label
+                if point.label in self.zones.labels
+                else None
+            )
             # 적어도 한 틱 동안 도착 상태를 공개하여 다음 카메라 프레임이 소비하게 한다.
             return
         if self._now_ms < self._route_dwell_until_ms:
