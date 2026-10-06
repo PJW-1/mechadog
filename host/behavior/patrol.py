@@ -1265,6 +1265,8 @@ class PatrolController:
         self._route_index = 0
         self._route_cycle = 1
         self._route_status = "active"
+        self._relaxed_progress, self._relaxed_stuck = None, False
+        self._relaxed_blocked_reported = False
         self.skipped = frozenset()
         self._route_skipped_indices = frozenset()
         self._route_phase = "moving"
@@ -1294,6 +1296,7 @@ class PatrolController:
             return
         self._route_status = reason
         self._route_phase = reason
+        self._relaxed_progress, self._relaxed_stuck = None, False
         self._route_dwell_until_ms = None
         self._inspection_zone = None
         self._goal = None
@@ -1323,6 +1326,7 @@ class PatrolController:
         assert self._route_search_base is not None
         if self._now_ms >= (self._route_dwell_until_ms or 0):
             self._route_search_base = None
+            self.commander.halt()  # 탐색 회전 의도가 다음 지점 첫 틱에 남지 않게 (Codex 10-06 [확정])
             self._next_route_point()
             return
         if (

@@ -702,6 +702,9 @@ class Runtime:
                 except (ValueError, AttributeError):
                     latched = None
                 if isinstance(latched, bool):
+                    # FSM 래치 가드도 ACK 값으로 갱신한다 — 텔레메트리의 옛 `true` 가 해제를 막지 않게
+                    # (Codex 10-06 검수 [확정]).
+                    self._behavior.note_robot_latch(latched)
                     self._settle_reset(latched, now_ms)
                 if (
                     self._sound_wait is not None
@@ -1451,6 +1454,9 @@ class Runtime:
         track = self._robot_tracks.get(key)
         if track is None or not 0 < track <= ROBOT_SOUND_TRACK_MAX:
             return
+        # 새 소리가 나가면 이전 경고의 반복은 취소한다 — 경보 확인 뒤 옛 경고가 다시 나오지 않게
+        # (Codex 10-06 검수 [확정]).
+        self._robot_repeat = None
         try:
             self._commander.once("SOUND", track=track)
             LOG.info("robot_sound", key=key, track=track)
@@ -2350,16 +2356,17 @@ class Runtime:
         """로봇이 래치를 풀었다고 보고하면 그때 `RESET_CONFIRMED` 를 넣는다."""
         if not self._reset_pending or latched is not False:
             return
+        if self._behavior.state == "FAILSAFE" and not self._apply(Event.RESET_CONFIRMED, now_ms):
+            return  # 해제 전이가 거부되면 요청을 남겨 다음 보고에 다시 시도한다
         self._reset_pending = False
-        if self._apply(Event.RESET_CONFIRMED, now_ms):
-            # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
-            self._commander.once(
-                "POSE",
-                pitch=0.0,
-                roll=self._roll_offset_deg,
-                height=0.0,
-                dur=self._ppe_judge.settle_ms,
-            )
+        # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
+        self._commander.once(
+            "POSE",
+            pitch=0.0,
+            roll=self._roll_offset_deg,
+            height=0.0,
+            dur=self._ppe_judge.settle_ms,
+        )
 
     def emergency_stop(self) -> str:
         """종료 전문. **틱을 기다리지 않는다.**

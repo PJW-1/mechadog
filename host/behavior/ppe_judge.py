@@ -80,6 +80,7 @@ class PpeJudge:
         self._recheck_since = 0
         self._recheck_seen = 0
         self._recheck_ok_since: int | None = None
+        self._limit_result: tuple[Any, int] | None = None
         self._edge = EdgeTrigger()
         # 시작값은 «보류 아님» 이다. 비우면 첫 판정의 `False` 가 해제 로그로 남는다.
         self._edge.changed("ppe_held_for_fall", False)
@@ -142,8 +143,21 @@ class PpeJudge:
                 # 이번 프레임의 재경고 전에 만료한 비래치 경고를 내린다.
                 self._escalation.tick(now_ms, require_auth=False)
                 return
+            limit, self._limit_result = getattr(self, "_limit_result", None), None
             if self._behavior.state == "ALERT" and self._apply(Event.PPE_SETTLED, now_ms):
                 self._escalation.settle_ppe(now_ms)
+            if limit is not None:
+                frame, track = limit
+                self._record(
+                    "PPE_SETTLED",
+                    frame,
+                    {
+                        "track_id": track,
+                        "state": VIOLATION,
+                        "reason": "경고 횟수 한도",
+                        "rechecked": True,
+                    },
+                )
 
     def forget_lost(self, result: VisionResult, now_ms: int) -> None:
         """판정한 트랙 중 보이는 것은 시각을 갱신하고 `track_lost_ms` 넘게 안 보인 것은 잊는다."""
@@ -228,6 +242,13 @@ class PpeJudge:
             # 없이 순찰로 돌아간다. 돌아가는 길은 적합 판정과 같은 `PPE_SETTLED` 다.
             self._apply(Event.PPE_VIOLATION, now_ms)
             self._warning_count += 1
+            # 마지막 경고였으면 경고 시간 뒤 «경고 횟수 한도» 로 닫는다 (Codex 10-06 [확정]: 재확인 없이
+            # 복귀해 한도 사건·0198 이 나오지 않았다).
+            self._limit_result = (
+                (result, track_id)
+                if self._recheck and self._warning_count >= self._max_warnings
+                else None
+            )
             self._recheck_pending = self._recheck and (
                 self._warning_count == 1 or self._warning_count < self._max_warnings
             )
