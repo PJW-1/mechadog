@@ -84,6 +84,8 @@ def _describe_path_blocked(judgement: dict[str, Any]) -> str:
     구역 안 VLM 확정(`source` 가 `vlm`, `zone` 있음)은 우회하지 않으니 «돌아서 갑니다» 없이
     사실만 말한다.
     """
+    if judgement.get("message") == "길 막힘":
+        return "길이 막혔습니다. 장애물을 치워 주세요."
     zone = judgement.get("zone")
     if judgement.get("source") == "vlm" and isinstance(zone, str) and zone.strip():
         return f"{zone} 구역에서 통로가 막혀 있습니다."

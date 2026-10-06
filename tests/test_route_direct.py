@@ -17,7 +17,7 @@ from host.common.config import ConfigError
 
 
 def direct():
-    c = build(nav_params=NavParams(local_slow_m=0.36))
+    c = build(nav_params=NavParams(relaxed_follow=False, local_slow_m=0.36))
     c.observe_telemetry(Reading(), 1000)
     c.observe_map_pose((2, 2, 0), 1000)
     assert c.start_route(route(RoutePoint(x=4, y=2)), 1000)[0]

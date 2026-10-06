@@ -139,7 +139,7 @@ def test_route_aiming_obeys_existing_safety_guards(guard: str) -> None:
 
 
 def test_route_blocked_while_moving_does_not_fall_back_to_zone_patrol() -> None:
-    controller = build(nav_params=NavParams(route_direct=False))
+    controller = build(nav_params=NavParams(relaxed_follow=False, route_direct=False))
     fresh(controller, 1000, (1.0, 1.0, 0.0))
     assert controller.start_route(route(RoutePoint(x=4.0, y=1.0)), 1000)[0]
     controller.grid.cells[:, 50:60] = 3
@@ -154,7 +154,7 @@ def test_route_blocked_while_moving_does_not_fall_back_to_zone_patrol() -> None:
 
 @pytest.mark.parametrize("after_start", [False, True])
 def test_route_does_not_snap_a_dynamically_blocked_point_elsewhere(after_start):
-    controller = build(nav_params=NavParams(route_direct=False))
+    controller = build(nav_params=NavParams(relaxed_follow=False, route_direct=False))
     fresh(controller, 1000, (1.0, 1.0, 0.0))
     saved = route(RoutePoint(x=4.0, y=1.0))
     if after_start:
@@ -217,7 +217,7 @@ def test_runtime_starts_new_saved_route_without_restart_and_exposes_progress(
 def test_runtime_rechecks_localization_after_start_queue(config, clock, tmp_path):
     runtime, navigator = saved_runtime(config, clock, tmp_path)
     assert runtime.ask_route("route-test")[0]
-    clock.advance(DRIVE.pose_timeout_ms + 1)
+    clock.advance(2001 if navigator.nav_params.relaxed_follow else DRIVE.pose_timeout_ms + 1)
     runtime.tick(clock.ms)
     assert not navigator.route_active
     assert not runtime.nav_status()["route_feedback"]["accepted"]

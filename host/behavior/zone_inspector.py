@@ -181,7 +181,16 @@ class ZoneInspector:
         )
         # 안전한 셀로 옮긴 도착점이 카메라의 앵커 반경 밖일 수 있다. 그때는
         # 점검기가 수락할 수 없으므로 무한히 기다리지 않는다.
-        return anchor is not None and anchor.label == label and distance < self._arrive_m
+        route_ready = (
+            anchor is not None
+            and self._route_inspection is not None
+            and self._route_inspection(anchor, now_ms) is True
+        )
+        return (
+            anchor is not None
+            and anchor.label == label
+            and (route_ready or distance < self._arrive_m)
+        )
 
     def forget_alarm(self) -> None:
         """확인하지 않은 구역 경보를 잊는다 — 순찰을 새로 시작할 때."""
@@ -192,8 +201,14 @@ class ZoneInspector:
         self._pose = (pose, int(now_ms))
 
     def _fresh_pose(self, now_ms: int) -> tuple[float, float, float] | None:
-        """`localization.pose_timeout_ms` 안의 위치. 낡았으면 모르는 위치다 (FR-6.6)."""
-        if self._pose is None or now_ms - self._pose[1] > self._pose_timeout_ms:
+        """기본 측위 기한 또는 항법이 확인한 AV 방문의 2초 유예 안의 위치."""
+        timeout = self._pose_timeout_ms
+        if self._route_inspection is not None and any(
+            self._route_inspection(anchor, now_ms) is True for anchor in self._anchors
+        ):
+            # AV가 도착/조준과 최대 2초의 측위 유효성을 확인한 방문을 카메라도 소비한다.
+            timeout = max(timeout, 2000)
+        if self._pose is None or now_ms - self._pose[1] > timeout:
             return None
         return self._pose[0]
 
@@ -253,18 +268,24 @@ class ZoneInspector:
                 key=lambda pair: pair[1],
                 default=(None, math.inf),
             )
-            if distance > 2 * self._arrive_m:
+            route_ready = (
+                None
+                if self._route_inspection is None or anchor is None
+                else self._route_inspection(anchor, now_ms)
+            )
+            if distance > 2 * self._arrive_m and route_ready is not True:
                 # ⚠️ **반경의 두 배를 벗어나야 떠난 것이다.** 비우지 않으면 다음 순회에 같은
                 # 구역을 다시 점검하지 못하고, 반경에서 바로 비우면 가장자리에서 떨 때마다
                 # 같은 구역을 거듭 점검한다.
                 self._zone = None
                 return
-            if anchor is None or distance >= self._arrive_m or anchor.label == self._zone:
+            if (
+                anchor is None
+                or (distance >= self._arrive_m and route_ready is not True)
+                or anchor.label == self._zone
+            ):
                 return
             navigation_aligned = False
-            route_ready = (
-                None if self._route_inspection is None else self._route_inspection(anchor, now_ms)
-            )
             if route_ready is not None:
                 if not route_ready:
                     return
