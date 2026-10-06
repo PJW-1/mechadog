@@ -17,7 +17,7 @@ import contextlib
 import json
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -193,11 +193,15 @@ def incident_from_meta(
     mission_id: str | None = None,
     zone_id: str | None = None,
     snapshot_name: str | None = None,
+    zone_ids: Collection[str] | None = None,
 ) -> IncidentRow:
     """블랙박스 폴더 하나(`meta.json`)를 사건 행으로. 가져오기 도구도 이것을 쓴다.
 
     구역은 판단 근거에 적힌 것이 먼저다 — 구역 판독은 그 구역에서 건 것이라, 결과가
     도착했을 때 로봇이 이미 떠났어도 사건은 그 구역의 것이다.
+
+    ⚠️ `zone_ids`(설정 `zones.ids`)를 주면 판단 근거의 구역은 그 안에 있을 때만 쓴다 —
+    항법 사건의 `전체`·`GOAL`·`지점 3` 은 구역이 아니라 `zones` 표에 자리표 행을 만든다.
 
     ⚠️ 사건 ID 는 `<기체>_<폴더 이름>` 이다. 여러 대는 폴더를 로봇마다 나누고 DB 는 하나라,
     같은 밀리초에 같은 사건을 남긴 두 로봇의 폴더 이름이 같을 수 있다.
@@ -205,6 +209,8 @@ def incident_from_meta(
     judgement = meta.get("judgement")
     detail = dict(judgement) if isinstance(judgement, Mapping) else {}
     judged_zone = detail.get("zone")
+    if zone_ids is not None and not (isinstance(judged_zone, str) and judged_zone in zone_ids):
+        judged_zone = None
     return IncidentRow(
         incident_id=f"{robot_id}_{entry_name}",
         robot_id=robot_id,

@@ -46,10 +46,13 @@ def main(argv: list[str] | None = None) -> int:
     survive_encoding_errors()
     args = build_parser().parse_args(argv)
     try:
-        logging_config = load_base_config().get("logging") or {}
+        config = load_base_config()
     except ConfigError as exc:
         print(f"[HistoryImport] 설정 오류: {exc}", file=sys.stderr)
         return 2
+    logging_config = config.get("logging") or {}
+    # 런타임처럼 설정 구역만 사건 구역으로 받는다 — 항법 사건의 `전체`·`GOAL` 은 구역이 아니다.
+    zone_ids = frozenset(str(zone) for zone in (config.get("zones") or {}).get("ids") or ())
     blackbox = args.blackbox or logging_config.get("blackbox_dir")
     db = args.db or logging_config.get("history_db")
     if not db:
@@ -78,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
                     meta,
                     robot_id=args.device,
                     snapshot_name="snapshot.jpg" if (folder / "snapshot.jpg").is_file() else None,
+                    zone_ids=zone_ids,
                 )
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 counts["skipped"] += 1

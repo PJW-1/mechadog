@@ -111,3 +111,27 @@ def test_corrupt_existing_row_counts_as_failed_instead_of_crashing(blackbox, tmp
     assert run(blackbox, db) == 1
     out = capsys.readouterr().out
     assert "existing 1" in out and "failed 1" in out
+
+
+def test_a_navigation_label_is_not_imported_as_a_zone(tmp_path, capsys):
+    """⚠️ 항법 사건의 판정 `zone` 은 `전체`·`GOAL`·`지점 3` 일 수 있다 — 설정 구역이 아니면
+    `zone_id` 로 가져오지 않는다. 그대로 넣으면 `zones` 표에 자리표 구역이 생긴다 (DATA_MODEL 3.4).
+    """
+    root = tmp_path / "blackbox"
+    root.mkdir()
+    unavailable = {"ts_ms": 1000, "event": "patrol_unavailable", "judgement": {"zone": "전체"}}
+    skipped = {"ts_ms": 2000, "event": "zone_skipped", "judgement": {"zone": "C"}}
+    _entry(root, "1000_patrol_unavailable", unavailable)
+    _entry(root, "2000_zone_skipped", skipped)
+    db = tmp_path / "h.sqlite3"
+    assert run(root, db) == 0
+    capsys.readouterr()
+    store = HistoryStore(db)
+    try:
+        row = store.incident("mechdog-02_1000_patrol_unavailable")
+        assert row["zone_id"] is None
+        assert row["detail"]["zone"] == "전체"  # 판정 원문은 그대로 남는다
+        assert store.incident("mechdog-02_2000_zone_skipped")["zone_id"] == "C"
+        assert "전체" not in {zone["zone_id"] for zone in store.zones()}
+    finally:
+        store.close()
