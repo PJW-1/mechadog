@@ -411,6 +411,37 @@ def test_cli_scenario_without_criteria_exits_2(tmp_path, capsys):
     assert len(err.strip().splitlines()) == 1
 
 
+@pytest.mark.parametrize(
+    "replace",
+    [
+        lambda scenario: scenario.update(criteria=5),
+        lambda scenario: scenario.update(criteria=True),
+        lambda scenario: scenario.update(criteria=list(aj.CRITERIA_KEYS)),
+    ],
+    ids=["number", "bool", "key-list"],
+)
+def test_cli_criteria_that_is_not_an_object_exits_2(replace, tmp_path, capsys):
+    """합격 기준이 객체가 아니면 traceback 이 아니라 «입력 오류» 한 줄과 종료 2 다."""
+    plan = json.loads(DEFAULT_ACCEPTANCE_PLAN.read_text(encoding="utf-8"))
+    replace(plan["scenarios"]["xiao"])
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+    session = _write(tmp_path, build_session())
+    assert aj.main([str(session), "--plan", str(plan_path)]) == 2
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+
+
+@pytest.mark.parametrize("scenario", [["standing-all"], "xiao"])
+def test_cli_scenario_that_is_not_an_object_exits_2(scenario, tmp_path, capsys):
+    plan = json.loads(DEFAULT_ACCEPTANCE_PLAN.read_text(encoding="utf-8"))
+    plan["scenarios"]["xiao"] = scenario
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+    session = _write(tmp_path, build_session())
+    assert aj.main([str(session), "--plan", str(plan_path)]) == 2
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+
+
 def test_cli_does_not_swallow_unexpected_errors(tmp_path, monkeypatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("예상 밖")
