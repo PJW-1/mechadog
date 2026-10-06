@@ -16,6 +16,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import cv2
@@ -69,7 +70,7 @@ def render(
     frame: PoseFrame,
     occ_thresh: float,
     free_thresh: float,
-    scale: int = 4,
+    scale: int = 12,
 ) -> tuple[bytes, dict[str, Any]]:
     """지도 PNG 와 메타(크기·행렬·구역)를 돌려준다. 그림 한 칸 = 지도 한 칸을 `scale` 배로."""
     meta = grid.meta
@@ -122,6 +123,20 @@ def render(
         picture = cv2.resize(
             picture, (width * scale, height * scale), interpolation=cv2.INTER_NEAREST
         )
+        # Blend only zone tint; preserve exact occupancy cell edges.
+        free_mask = cv2.resize(
+            free.reshape(height, width).astype(np.uint8),
+            (width * scale, height * scale),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(bool)
+        zone_tint = image.copy()
+        zone_tint[~free] = (250, 250, 250)
+        tint = cv2.resize(
+            zone_tint.reshape(height, width, 3),
+            (width * scale, height * scale),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        picture[free_mask] = tint[free_mask]
         scaler = np.diag([scale, scale, 1.0])
         patrol_to_px = scaler @ patrol_to_px
         px_to_patrol = np.linalg.inv(patrol_to_px)
@@ -129,11 +144,30 @@ def render(
     if not ok:
         raise RuntimeError("지도 PNG 인코딩 실패")
     zone_list = []
+    zone_runs: dict[str, list[list[float]]] = {}
+    if zone_map is not None:
+        # 같은 구역 라벨 격자를 행별 연속 구간으로 전송한다. 외접 사각형으로 다른 방을 칠하지 않는다.
+        for index, label in zone_map.names.items():
+            runs: list[list[float]] = []
+            for row in range(zone_map.labels.shape[0]):
+                mine = zone_map.labels[row] == index
+                edges = np.flatnonzero(np.diff(np.pad(mine.astype(np.int8), (1, 1))))
+                for left, right in zip(edges[::2], edges[1::2], strict=True):
+                    runs.append(
+                        [
+                            zone_map.origin_x + int(left) * zone_map.resolution,
+                            zone_map.origin_y + row * zone_map.resolution,
+                            (int(right) - int(left)) * zone_map.resolution,
+                            zone_map.resolution,
+                        ]
+                    )
+            zone_runs[label] = runs
     for index, label in enumerate(labels):
         zx, zy = zones.xy(label)
         zone_list.append(
             {
                 "id": label,
+                "runs": zone_runs.get(label, []),
                 "x": round(zx, 3),
                 "y": round(zy, 3),
                 "color": "#{:02x}{:02x}{:02x}".format(
@@ -157,10 +191,12 @@ class MapView:
     """한 번 그려 두고 같은 그림을 돌려준다 — 항법 지도는 운행 중 바뀌지 않는다."""
 
     def __init__(self, renderer: Callable[[], tuple[bytes, dict[str, Any]]]) -> None:
+        self._lock = Lock()
         self._renderer = renderer
         self._cached: tuple[bytes, dict[str, Any]] | None = None
 
     def get(self) -> tuple[bytes, dict[str, Any]]:
-        if self._cached is None:
-            self._cached = self._renderer()
-        return self._cached
+        with self._lock:
+            if self._cached is None:
+                self._cached = self._renderer()
+            return self._cached

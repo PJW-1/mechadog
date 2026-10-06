@@ -86,11 +86,31 @@ export class RobotLink {
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     try {
       const response = await this.fetch(this.baseUrl + path, { signal: controller?.signal });
-      if (!response.ok) throw new Error('조회가 거절되었습니다. (HTTP ' + response.status + ')');
+      if (!response.ok) {
+        const detail=await response.json().catch(()=>null);
+        throw new Error((typeof detail?.error==='string'?detail.error:typeof detail?.detail==='string'?detail.detail:'조회가 거절되었습니다.')+' (HTTP '+response.status+')');
+      }
       return await response.json();
     } finally {
       if (timer) clearTimeout(timer);
     }
+  }
+
+  /** Named plan deletion uses the same origin-checked JSON path as saving. */
+  async delete(path, body, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await this.fetch(this.baseUrl + path, {
+        method: 'DELETE', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body ?? {}), signal: controller?.signal,
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error((typeof detail?.error === 'string' ? detail.error : '삭제가 거절되었습니다.') + ' (HTTP ' + response.status + ')');
+      }
+      return await response.json();
+    } finally {if (timer) clearTimeout(timer);}
   }
 
   /** **실패를 삼키지 않는다.** 비상정지가 안 갔다면 화면이 그것을 말해야 한다. */
@@ -136,14 +156,23 @@ export class RobotLink {
     return this.post('/api/command/patrol', { action });
   }
 
-  /** 위치 알려주기 — «로봇은 지금 이 구역 안» . 서버가 그 구역 안에서만 위치를 다시 찾는다(찾을 때까지 정지). */
+  route(action, route_id, expected_digest) {
+    return this.post('/api/command/route', action === 'start' ? {action, route_id, ...(expected_digest ? {expected_digest} : {})} : {action});
+  }
+
   /** 지도에서 찍은 곳(순찰 좌표 m)으로 — 서버가 다음 틱에 경로를 푼다. 결과는 /api/nav 의 goal_feedback. */
   goto(x, y) {
     return this.post('/api/command/goto', { x, y });
   }
 
+  /** 위치 알려주기 — 서버가 이 구역 안에서만 위치를 다시 찾는다(찾을 때까지 정지). */
   locate(zone) {
     return this.post('/api/command/locate', { zone });
+  }
+
+  /** 지도에 찍은 현재 위치(순찰 좌표 m) 주변에서 다시 찾는다. */
+  locatePoint(x, y) {
+    return this.post('/api/command/locate', { x, y });
   }
 
   // 운용 모드 전환 (FR-4.7 · FR-11.3). ⚠️ **온보드 `SERVICE` 와 다른 축이다** —

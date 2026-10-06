@@ -16,6 +16,17 @@ const button=(document,label)=>[...document.querySelectorAll('button')].find(ele
 const change=(dom,element,value,type='change')=>{element.value=value;element.dispatchEvent(new dom.window.Event(type,{bubbles:true}))};
 const chooseFilter=(document,name,value)=>{const trigger=document.querySelector(`[data-filter="${name}"]`);trigger.click();trigger.parentElement.querySelectorAll('.op-choice-option')[value].click()};
 
+test('goto motion-lock rejection preserves the server reason in the visible toast',async()=>{
+ const {dom,store,panels,messages}=setup();
+ const detail='보행 잠금 중 — 이동할 수 없다',calls=[];
+ store.link={goto:async(x,y)=>{calls.push([x,y]);return{accepted:false,detail}}};
+ store.setDemo(false);dom.window.confirm=()=>true;
+ panels.confirmGoto(2,3);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(calls,[[2,3]]);
+ assert.equal(messages.at(-1),'거절됨 — '+detail);
+});
+
 for(const page of ['missions','events','records','zones','devices','settings'])test(page+' panel renders labeled actionable content without a browser',()=>{
  const {document,panels}=setup();panels.render(page);assert.ok(document.querySelector('#title').textContent);assert.ok(document.querySelector('.op-intro'));assert.ok(document.querySelector('.op-section'));assert.ok(document.querySelector('button'));assert.equal(document.querySelectorAll('script').length,0);
 });
@@ -81,7 +92,7 @@ test('rerender while held stops command; technician cannot edit a review',()=>{
 test('settings sends PPE editing to the real zone planner, preserving management previews',()=>{
  const {document,panels,navigation}=setup();panels.render('settings');
  button(document,'구역 · 동선에서 설정').click();assert.deepEqual(navigation,['zones']);
- button(document,'사원증').click();assert.ok(document.querySelector('.op-preview'));assert.equal(document.querySelector('form'),null);
+ button(document,'사원증 · 준비 중').click();assert.ok(document.querySelector('.op-preview'));assert.equal(document.querySelector('form'),null);
  panels.render('zones');assert.ok(document.querySelector('[name="helmet"]'));assert.ok(document.querySelector('[data-plan-add]'));
  assert.match(document.querySelector('#content').textContent,/초안 작성/);
 });
@@ -93,7 +104,7 @@ test('blackbox file validation rejects oversized JSON and spoofed JPEG',async()=
 });
 test('import selects stored record, does not enable live data, and does not duplicate files',async()=>{
  const {panels,store,document}=setup();panels.render('events');const raw={ts_ms:100,event:'person_found',state:'OBSERVE',escalation:'L1',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'}};
- const file={name:'meta.json',size:100,text:async()=>JSON.stringify(raw)};store.setDemo(false);await panels.importFiles([file]);assert.equal(store.demo,false);assert.equal(document.querySelector('.op-detail-title').textContent,'person_found');await panels.importFiles([file]);assert.equal(store.queryEvents().length,1);
+ const file={name:'meta.json',size:100,text:async()=>JSON.stringify(raw)};store.setDemo(false);await panels.importFiles([file]);assert.equal(store.demo,false);assert.equal(document.querySelector('.op-detail-title').textContent,'사람 확인');await panels.importFiles([file]);assert.equal(store.queryEvents().length,1);
 });
 test('STOP preempts a held direction on pointerdown, not only click',()=>{
  const {dom,document,panels,store}=setup();panels.render('missions');store.claim();const forward=document.querySelector('[data-drive="FORWARD"]');forward.setPointerCapture=()=>{};
@@ -195,21 +206,21 @@ test('light warnings get their own titles and categories (hazard item · path bl
  const {store}=setup();store.setDemo(false);
  const base={state:'PATROL',escalation:'L0',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
  const hazard=store.ingestLiveEvent({...base,seq:1,ts_ms:1,event:'hazard_notice',judgement:{zone:'C',items:['hazard_item'],source:'vlm'}});
- assert.equal(hazard.category,'OBJECT');assert.equal(hazard.title,'화기 위험물 경고 · hazard_notice');assert.equal(hazard.zone,'C');
+ assert.equal(hazard.category,'OBJECT');assert.equal(hazard.title,'화기 위험물 경고');assert.equal(hazard.zone,'C');
  const blocked=store.ingestLiveEvent({...base,seq:2,ts_ms:2,event:'path_blocked',judgement:{x:1.2,y:0.4,target:'D',source:'lidar'}});
- assert.equal(blocked.category,'SAFETY');assert.equal(blocked.title,'통로 막힘 · 우회 · path_blocked');
+ assert.equal(blocked.category,'SAFETY');assert.equal(blocked.title,'통로 막힘 · 우회');
  assert.deepEqual(hazard.evidence,[['구역','C']],'구역 행이 근거 표에 든다');assert.deepEqual(blocked.evidence,[],'LiDAR 막힘은 구역이 없다');
  const inZone=store.ingestLiveEvent({...base,seq:4,ts_ms:4,event:'path_blocked',judgement:{zone:'C',source:'vlm'}});
- assert.equal(inZone.category,'SAFETY');assert.equal(inZone.title,'통로 막힘 경고 · path_blocked');assert.equal(inZone.zone,'C');assert.deepEqual(inZone.evidence,[['구역','C']]);
+ assert.equal(inZone.category,'SAFETY');assert.equal(inZone.title,'통로 막힘 경고');assert.equal(inZone.zone,'C');assert.deepEqual(inZone.evidence,[['구역','C']]);
  const detected=store.ingestLiveEvent({...base,seq:5,ts_ms:5,event:'hazard_notice',judgement:{zone:'C',items:['lighter','powerbank'],source:'detector',vlm:true}});
- assert.equal(detected.title,'화기 위험물 경고 · hazard_notice');assert.deepEqual(detected.evidence,[['구역','C'],['검출 대상','라이터 · 보조배터리'],['확정 근거','위험물 검출기 + VLM 판독']],'검출기 확정은 무엇을 봤는지 보인다');
+ assert.equal(detected.title,'화기 위험물 경고');assert.deepEqual(detected.evidence,[['구역','C'],['검출 대상','라이터 · 보조배터리'],['확정 근거','위험물 검출기 + VLM 판독']],'검출기 확정은 무엇을 봤는지 보인다');
 });
 test('a confirmed zone change is filed under zones and lists its VLM findings (FR-8.3)',()=>{
  const {document,panels,store}=setup();store.setDemo(false);
  const base={state:'ALERT',escalation:'L3',tracks:[],detections:[],telemetry:{device_id:'mechdog-01'},entry:'e',snapshot:null};
  const zone=(seq,judgement)=>store.ingestLiveEvent({...base,seq,ts_ms:seq,event:'zone_changed',judgement});
  const event=zone(1,{zone:'A',changes:[{kind:'fallen_object',source:'vlm'}]});
- assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 위험 확정 · zone_changed$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
+ assert.equal(event.category,'OBJECT');assert.match(event.title,/^구역 위험 확정$/);assert.equal(event.zone,'A','목록 줄의 구역 칸도 판정의 구역을 쓴다');
  assert.deepEqual(event.evidence,[['구역','A'],['넘어짐·무너짐','VLM 판독 · 위치 없음']]);
  panels.render('events');chooseFilter(document,'사건 유형',4);
  assert.equal(document.querySelectorAll('.op-event-row').length,1,'구역 · 물품 필터에 걸린다');
@@ -245,11 +256,11 @@ test('pose buttons are live only under manual control and send the chosen preset
 });
 test('pose buttons stay preview-only without a link',()=>{
  const {document,panels}=setup();panels.render('missions');
- assert.equal(document.querySelector('[data-pose]'),null);assert.equal(button(document,'앞쪽 들기').disabled,true);
+ assert.equal(document.querySelector('[data-pose]'),null);assert.equal(button(document,'앞쪽 들기 · 준비 중').disabled,true);
 });
 test('the escalation table reads server values and says when it could not (B7)',()=>{
  const {document,panels,store}=setup();panels.render('settings');
- const table=()=>[...document.querySelectorAll('.op-section')].find(s=>s.querySelector('h3')?.textContent==='대응 단계 · 안전 해제 구분').textContent;
+ const table=()=>[...document.querySelectorAll('.op-section')].find(s=>s.querySelector('summary')?.textContent==='대응 단계 · 안전 해제 상세').textContent;
  assert.match(table(),/서버 설정값 미수신/);
  store.setPolicy({l1_to_l2_hold_s:12,target_lost_timeout_s:7,auth_timeout_s:40,auth_max_attempts:3,auth_session_valid_s:60,detect_window_ms:300,detect_hits_required:3,l3_warning:'경보입니다.',led:{l3_alarm:'red'}});
  assert.match(table(),/미인증 12초면 L2/);assert.match(table(),/미검출 7초/);assert.match(table(),/인증 40초 초과 \/ 3회 실패/);assert.match(table(),/「경보입니다.」/);assert.match(table(),/눈 red/);assert.match(table(),/config\.yaml/);
@@ -268,7 +279,7 @@ test('device commands still ask before sending when the dialog is unavailable',(
  let answer=false;dom.window.confirm=message=>{prompts.push(message);return answer};
  button(document,'서비스 모드 진입 — 패치용 워치독').click();
  button(document,'안전 해제 (RESET_SAFE)').click();
- button(document,'실제 순찰 시작').click();
+ button(document,'순찰 시작').click();
  assert.deepEqual(calls,[]);assert.equal(prompts.length,3);assert.match(prompts[1],/원인이 제거.*주변에 사람이 없는지/);
  // 확인 창 자체가 없는 환경도 보내지 않는다.
  dom.window.confirm=undefined;button(document,'안전 해제 (RESET_SAFE)').click();assert.deepEqual(calls,[]);
@@ -285,9 +296,9 @@ test('locate buttons list patrol zones from the server and ask before sending',a
  const calls=[],prompts=[];
  const link={locate:async zone=>{calls.push(zone);return{accepted:true,detail:'구역 '+zone+' 안에서 위치를 다시 찾는다'}}};
  const {dom,document,panels,store,messages}=setup();
- panels.render('missions');assert.match(document.querySelector('#content').textContent,/구역 목록을 받지 못했습니다/);
+ panels.render('missions');assert.equal(document.querySelector('[data-locate-zone]'),null,'제어 · 장치에는 위치 힌트 묶음을 남기지 않는다');
  store.setPolicy({l1_to_l2_hold_s:12,target_lost_timeout_s:7,auth_timeout_s:40,auth_max_attempts:3,patrol_zones:['B','C','D','A','<x>']});
- store.link=link;store.setDemo(false);panels.render('missions');
+ store.link=link;store.setDemo(false);panels.render('zones');
  assert.deepEqual([...document.querySelectorAll('[data-locate-zone]')].map(b=>b.dataset.locateZone),['B','C','D','A'],'형식이 이상한 구역 id 는 버튼이 되지 않는다');
  let answer=false;dom.window.confirm=message=>{prompts.push(message);return answer};
  button(document,'구역 C').click();assert.deepEqual(calls,[]);assert.match(prompts[0],/구역 C 안에서만 다시 찾습니다/);
@@ -295,10 +306,14 @@ test('locate buttons list patrol zones from the server and ask before sending',a
  await new Promise(resolve=>setTimeout(resolve,0));
  assert.deepEqual(calls,['C']);assert.match(messages.at(-1),/구역 C 안에서 위치를 다시 찾는다/);
 });
-test('zone page shows the live house map only when connected to the server',()=>{
+test('zone page uses one route map for move, locate and draw while preserving zone settings',()=>{
  const {document,panels,store}=setup();
  panels.render('zones');assert.equal(document.querySelector('[data-live-map]'),null,'예시 모드에서는 실제 지도를 지어내지 않는다');
  store.link={baseUrl:'',get:async path=>{if(path==='/api/planning')throw new Error('계획 서버 없음(시험)');return {}}};store.setDemo(false);panels.render('zones');
- const first=document.querySelector('[data-live-map]');assert.ok(first);
- panels.render('zones');assert.equal(document.querySelector('[data-live-map]'),first,'재렌더해도 같은 지도를 다시 붙인다');
+ assert.equal(document.querySelector('[data-live-map]'),null,'별도 이동 지도와 동선 지도를 중복으로 열지 않는다');
+ assert.deepEqual([...document.querySelectorAll('[data-map-mode]')].map(button=>button.textContent),['이동','위치 알려주기','선 그리기']);
+ assert.equal(document.querySelector('[data-locate-point]'),null,'위치 찍기 전용 버튼을 중복하지 않는다');
+ assert.ok(document.querySelector('[data-locate-support]'),'구역으로 알려주기는 보조 기능으로 유지한다');
+ assert.ok(document.querySelector('[data-plan-save]'),'기존 구역 정책 편집기는 보존한다');
+ const session=panels.routePlanner.current;panels.render('zones');assert.equal(panels.routePlanner.current,session,'재렌더해도 같은 로봇 초안을 유지한다');
 });

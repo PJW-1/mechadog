@@ -152,6 +152,10 @@ class FallenGate:
         self._track_id = None
         self._clear()
 
+    @property
+    def aspect_ratio(self) -> float:
+        return self._ratio
+
     def _clear(self, *, aspect: float | None = None) -> FallenVerdict:
         changed = self._fallen
         self._fallen = False

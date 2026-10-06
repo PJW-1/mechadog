@@ -3,6 +3,7 @@ import {icon,renderIcons} from './icons.js';
 import {Operations,ROBOTS} from './operations.js';
 import {OperationalPanels} from './panels.js';
 import {LiveMap} from './live-map.js';
+import {Scene3D} from './scene3d.js';
 import {registerPageTools} from './webmcp.js';
 import {RobotDetailView} from './robot-view.js';
 import {RobotLink} from './robot-link.js';
@@ -16,9 +17,9 @@ const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
 let visionFeed=null,visionStatus={state:'connecting'};
 let panels=null;
-let mainLiveMap=null,mapAvailable=false;
+let mainLiveMap=null,mapAvailable=false,scene3d=null;
 // 서버가 실제 지도를 줬을 때만 예시 공장 자리를 실제 집 지도로 바꾼다. 없으면 «지도 없음» 을 그대로 말한다.
-function showLiveMap(){const shown=operations.live&&mapAvailable;$('live-house-map').hidden=!shown;$('map-placeholder').hidden=operations.demo||shown;$('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':shown?'실제 집 지도 · 로봇이 추정한 위치':'지도 없음 · 예시 공장 숨김'}
+function showLiveMap(){const three=scene3d?.shown,shown=operations.live&&mapAvailable&&!three;$('live-house-map').hidden=!shown;$('map-placeholder').hidden=operations.demo||shown||three;$('scene-subtitle').textContent=three?'집 3D SIM · 드래그 회전, 휠 확대':operations.demo?'예시 공간 · 실제 위치 미수신':shown?'실제 집 지도 · 로봇이 추정한 위치':'지도 없음 · 예시 공장 숨김'}
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -26,7 +27,7 @@ function syncVisionStatus(){
  $('app').classList.toggle('vision-has-frame',!!visionStatus.lastFrameAt);
  if(!operations.live)return;
  const [badge,status]=VISION_TEXT[visionStatus.state]||VISION_TEXT.connecting;
- $('frame-source').textContent=badge;
+ $('frame-source').textContent=badge+(visionStatus.ppeTest?' · PPE 시험':'');
  $('camera-status').textContent=visionStatus.state==='live'?status+' · 검출 '+visionStatus.detections+'건 · 사람 '+visionStatus.persons+'명':status;
  $('camera-resolution').hidden=visionStatus.state!=='live';
  if(visionStatus.state==='live'){
@@ -74,7 +75,9 @@ const operations=fleetInfo
  :new Operations({storage,link:apiBase?new RobotLink({baseUrl:apiBase}):null});
 // 음성 중계는 대시보드 명령 링크와 별개다 — voice_pipeline --web 이 떠 있으면
 // 로컬 기본 주소(127.0.0.1:8090)로 자동으로 붙고, 없으면 패널이 준비만 표시한다.
-const voiceBase=await resolveVoiceBase();
+const runtimeHealth=apiBase?await fetch(apiBase+'/health').then(r=>r.ok?r.json():null).catch(()=>null):null;
+const voicePath=runtimeHealth?.capabilities?.voice_path;
+const voiceBase=apiBase&&typeof voicePath==='string'&&/^\/api\/[a-z0-9-]+$/.test(voicePath)?apiBase+voicePath:await resolveVoiceBase();
 const voiceLink=voiceBase?new VoiceLink({baseUrl:voiceBase}):null;
 const visionAvailable={},feeds=[];
 let visionRobot=null;
@@ -104,6 +107,8 @@ if(operations.connected){
  fetch(bases[ROBOTS[0]]+'/api/broadcast').then(response=>response.ok?response.json():null).then(state=>{if(state)operations.setBroadcast(state)}).catch(()=>{});
  await Promise.all(Object.entries(bases).map(async([robot,base])=>{
   const health=await fetch(base+'/health').then(response=>response.json()).catch(()=>null);
+  operations.slot(robot).capabilities=health?.capabilities??{};
+  operations.slot(robot).scene3dUrl=health?.dashboard?.scene3d_url||'';
   visionAvailable[robot]=health?.vision_clients!==null;
   // 명령 API 가 열렸는지. 옛 서버처럼 read_only 가 없으면 닫힌 것으로 본다.
   operations.setCommandsOpen(health?.read_only===false,robot);
@@ -155,6 +160,7 @@ function syncObservationView(){
 function reportObservationError(message){
  observationFailed=true;panels.setObservationError(message);operations.suspend('3D 렌더링 중단');syncObservationView();$('scene-failure').hidden=false;toast(message);
 }
+scene3d=new Scene3D({document,mount:$('scene3d-mount'),controls:$('scene3d-controls'),notice:$('scene3d-notice'),onChange:showLiveMap});
 function syncMain(){
  const selected=operations.selected,playing=operations.demo&&!operations.stale&&!operations.estop&&operations.mission.status==='running';
  view?.selectRobot(selected);view?.setPatrolRobot(operations.mission.robot);view?.setPlaying(playing);
@@ -165,7 +171,7 @@ function syncMain(){
  for(const element of document.querySelectorAll('.robot-tab,.camera-robot-switch [data-robot]'))element.hidden=!operations.robots.includes(element.dataset.robot);
  syncVisionFeed();
  $('app').classList.toggle('data-waiting',!operations.demo);
- $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):operations.live?'관제 서버 연결':'실제 데이터 대기';
+ $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):operations.runtimeLabel;
  // ⚠️ **머리글의 제어 문구도 사실대로 말한다.** 연결돼 있는데 "정지 명령 전달 불가" 라고 적혀 있으면
  // 운용자가 비상정지를 누르지 않거나, 반대로 화면 문구를 믿고 물리 정지 수단을 찾는다.
  {const note=document.querySelector('.safety-note>span:last-child');note.firstChild.nodeValue=operations.live&&!operations.readOnly?'실시간 제어 연결 ':'실시간 제어 잠김 ';note.querySelector('small').textContent=operations.readOnly?'조회·계획 전용 · 정지 명령 전달 불가':operations.live?'비상정지 즉시 전송':'미연결 · 정지 명령 전달 불가';}
@@ -176,6 +182,8 @@ function syncMain(){
  $('map-placeholder').hidden=operations.demo||(operations.live&&mapAvailable);
  // 실제 집 지도 — 관제 서버에 붙었을 때만. 지도를 누르면 확인 창을 거쳐 로봇을 보낸다.
  if(operations.live&&!mainLiveMap&&panels){mainLiveMap=new LiveMap({document,getLink:()=>operations.live?operations.link:null,onPick:(x,y,where)=>panels.confirmGoto(x,y,where),onAvailability:available=>{mapAvailable=available;showLiveMap()}});$('live-house-map').append(mainLiveMap.root)}
+ scene3d.setActive(currentPage==='dashboard');
+ scene3d.setUrl(operations.live?operations.slot(operations.selected).scene3dUrl:'');
  showLiveMap();
  if(operations.live)syncVisionStatus();
  else{
@@ -288,9 +296,9 @@ document.querySelectorAll('[data-camera]').forEach(element=>element.addEventList
 $('close-panel').addEventListener('click',()=>navigate('dashboard'));
 $('open-events').addEventListener('click',()=>navigate('events'));
 $('attention-marker').addEventListener('click',()=>navigate('events'));
-$('zoom-in').addEventListener('click',()=>view?.zoom(.8));$('zoom-out').addEventListener('click',()=>view?.zoom(1.25));
-$('orbit-left').addEventListener('click',()=>view?.orbit(Math.PI/8));
-$('reset-view').addEventListener('click',()=>{view?.setView('overview');toast('기본 시야로 돌아왔어요.')});
+$('zoom-in').addEventListener('click',()=>mapAvailable&&operations.live?mainLiveMap?.zoom(.8):view?.zoom(.8));$('zoom-out').addEventListener('click',()=>mapAvailable&&operations.live?mainLiveMap?.zoom(1.25):view?.zoom(1.25));
+$('orbit-left').addEventListener('click',()=>mapAvailable&&operations.live?mainLiveMap?.orbit(Math.PI/8):view?.orbit(Math.PI/8));
+$('reset-view').addEventListener('click',()=>{if(mapAvailable&&operations.live)mainLiveMap?.resetView();else view?.setView('overview');toast('기본 시야로 돌아왔어요.')});
 $('fullscreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{toast('이 브라우저에서는 전체 화면을 사용할 수 없어요.')}});
 function setCameraDockState({expanded=false,collapsed=false}){
  const dock=$('camera-dock'),expand=$('expand-camera'),collapse=$('collapse-camera');
@@ -393,7 +401,7 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));
-window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();for(const feed of feeds)feed.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
+window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();for(const feed of feeds)feed.stop();robotView?.dispose();panels.dispose();mainLiveMap?.dispose();scene3d?.dispose();view?.dispose()}});
 const unregisterTools=registerPageTools({document,store:operations,navigate,onError:()=>operations.log('페이지 도구 등록 실패','일반 화면 조작은 계속 사용 가능')});
 window.addEventListener('pagehide',event=>{if(!event.persisted)unregisterTools()});
 $('retry-render').addEventListener('click',()=>location.reload());

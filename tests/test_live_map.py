@@ -112,3 +112,52 @@ def test_runtime_server_serves_the_white_dashboard() -> None:
         assert "glass-preview" in http.get("/index.html").text, (
             "단독으로 열면 흰 화면으로 넘기는 코드"
         )
+
+
+@pytest.mark.parametrize("rotate", [90.0, 180.0])
+def test_default_high_resolution_preserves_walls_and_smooths_zone_tint(rotate) -> None:
+    from host.behavior.zone_map import ZoneMap
+
+    grid = _grid()
+    zones = ZoneStore(("A", "B"))
+    zones.place(0.0, 0.5)
+    labels = np.ones(grid.cells.shape, dtype=np.uint8)
+    labels[:, 30:] = 2
+    area = ZoneMap(labels, 0.05, -1.0, -0.5, {1: "A", 2: "B"})
+    png, meta = render(
+        grid,
+        zones=zones,
+        zone_map=area,
+        frame=PoseFrame(rotate),
+        occ_thresh=1.0,
+        free_thresh=-1.0,
+    )
+    image = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+    assert meta["resolution_m"] == pytest.approx(0.05 / 12)
+    assert max(meta["width"], meta["height"]) >= 800
+    wall = _apply(meta["patrol_to_px"], 0.0, -0.475).astype(int)
+    assert list(image[wall[1], wall[0]]) == [40, 40, 40]
+    a = _apply(meta["patrol_to_px"], 0.4, 0.5).astype(int)
+    b = _apply(meta["patrol_to_px"], 0.6, 0.5).astype(int)
+    boundary = _apply(meta["patrol_to_px"], 0.5, 0.5).astype(int)
+    assert not np.array_equal(image[boundary[1], boundary[0]], image[a[1], a[0]])
+    assert not np.array_equal(image[boundary[1], boundary[0]], image[b[1], b[0]])
+    assert image[boundary[1], boundary[0]].min() > 200
+
+
+def test_concurrent_map_requests_render_once() -> None:
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    calls = []
+
+    def renderer():
+        calls.append(1)
+        time.sleep(0.01)
+        return b"png", {"width": 1}
+
+    view = MapView(renderer)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: view.get(), range(8)))
+    assert len(calls) == 1
+    assert all(result is results[0] for result in results)

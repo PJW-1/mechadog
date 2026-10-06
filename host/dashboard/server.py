@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import (
     BaseModel,
     BeforeValidator,
+    ConfigDict,
     Field,
     StrictBool,
     StrictInt,
@@ -52,7 +53,13 @@ from starlette.concurrency import run_in_threadpool
 from host.behavior.mission import available_modes
 from host.cloud.broadcast import Broadcaster
 from host.dashboard.commands import CommandService
-from host.dashboard.planning import PlanError, PlanInput, PlanningService
+from host.dashboard.planning import (
+    PlanError,
+    PlanInput,
+    PlanningService,
+    RouteDeleteInput,
+    RouteInput,
+)
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
 if TYPE_CHECKING:
@@ -121,12 +128,16 @@ def encode_vision_frame(result: VisionResult) -> bytes:
     헤더와 JPEG 를 한 메시지로 묶어 박스가 다른 사진과 짝지어지지 않게 한다 (ADR-32).
     박스는 원본 픽셀 좌표 ``[x1, y1, x2, y2]`` 이고 필드 이름은 블랙박스 기록과 같다.
     """
+    from host.vision.ppe_detector import ppe_payload
+
     header = {
         "type": "vision",
         "frame_seq": result.frame_seq,
         "width": result.frame_width,
         "height": result.frame_height,
         "completed_ms": result.completed_ms,
+        "ppe": ppe_payload(result),
+        "ppe_test_mode": bool(getattr(result, "ppe_test_mode", False)),
         "detections": [
             {"label": d.label, "score": round(d.score, 3), "box": [round(v, 1) for v in d.box]}
             for d in result.detections
@@ -355,8 +366,31 @@ class _PatrolBody(BaseModel):
     action: Literal["start", "stop"]
 
 
+class _RouteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["start", "stop"]
+    route_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,48}$")
+    expected_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class _ZoneBody(BaseModel):
     zone: StrictStr
+
+
+def _point_coordinate(value: Any) -> float:
+    """점 힌트에 bool·유한하지 않은 좌표를 넣지 않는다."""
+    if isinstance(value, bool):
+        raise ValueError("좌표는 숫자여야 한다")
+    result = _as_float(value)
+    if not math.isfinite(result):
+        raise ValueError("좌표는 유한한 숫자여야 한다")
+    return result
+
+
+class _LocateBody(BaseModel):
+    zone: StrictStr | None = None
+    x: Annotated[float, BeforeValidator(_point_coordinate)] | None = None
+    y: Annotated[float, BeforeValidator(_point_coordinate)] | None = None
 
 
 class _ModeBody(BaseModel):
@@ -483,6 +517,15 @@ def _command_routes(commands: CommandService) -> APIRouter:
         """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""
         return commands.reset().as_dict()
 
+    @router.post("/route", response_model=None)
+    async def route(request: Request) -> dict[str, object]:
+        body = await _read_body(request, _RouteBody)
+        if body.action == "stop":
+            return commands.route_stop().as_dict()
+        if body.route_id is None:
+            raise _RefusedError("route_id", 400)
+        return commands.route_start(body.route_id, body.expected_digest).as_dict()
+
     @router.post("/alarm", response_model=None)
     async def alarm() -> dict[str, object]:
         """사람이 상황을 확인한 뒤 누르는 경보(L3) 해제 (FR-10.3.2).
@@ -505,13 +548,22 @@ def _command_routes(commands: CommandService) -> APIRouter:
 
     @router.post("/locate", response_model=None)
     async def locate(request: Request) -> dict[str, object]:
-        """`{"zone": "C"}` — 사람이 로봇이 지금 있는 구역을 알려준다. 그 구역 안에서만 위치를 다시 찾는다.
+        """`{"zone": "C"}` 또는 `{"x": 1.2, "y": -0.4}` — 현재 위치의 탐색 힌트.
 
         들어 옮긴 뒤처럼 전역 탐색이 집 안 비슷한 자리를 구별 못 할 때 쓴다. 지금 자세의
         신뢰는 버려지고 로봇은 다시 찾을 때까지 선다. 없는 구역은 `accepted=false` 다.
         """
-        body = await _read_body(request, _ZoneBody)
-        return commands.locate(body.zone).as_dict()
+        body = await _read_body(request, _LocateBody)
+        fields = body.model_fields_set
+        if "zone" in fields:
+            if fields & {"x", "y"}:
+                raise _RefusedError("구역 또는 점 좌표 중 하나만 알려주세요", 400)
+            if body.zone is None:
+                raise _RefusedError("zone", 400)
+            return commands.locate(body.zone).as_dict()
+        if body.x is None or body.y is None:
+            raise _RefusedError("x와 y 좌표가 모두 필요합니다", 400)
+        return commands.locate_point(body.x, body.y).as_dict()
 
     @router.post("/service", response_model=None)
     async def service(request: Request) -> dict[str, object]:
@@ -625,6 +677,25 @@ def _planning_routes(planning: PlanningService) -> APIRouter:
         plan = await _read_body(request, PlanInput)
         return await call(planning.save, plan)
 
+    @router.get("/routes")
+    async def routes() -> dict[str, Any]:
+        return await call(planning.routes_snapshot)
+
+    @router.post("/routes/preview")
+    async def preview_route(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, RouteInput)
+        return await call(planning.preview_route, plan)
+
+    @router.post("/routes")
+    async def save_route(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, RouteInput)
+        return await call(planning.save_route, plan)
+
+    @router.delete("/routes/{route_id}")
+    async def delete_route(route_id: str, request: Request) -> dict[str, Any]:
+        body = await _read_body(request, RouteDeleteInput)
+        return await call(planning.delete_route, route_id, body.revision)
+
     return router
 
 
@@ -730,6 +801,10 @@ def create_app(
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
+    simulated: bool | None = None,
+    voice_path: str | None = None,
+    extra_routes: APIRouter | None = None,
+    scene3d_url: str = "",
     history: HistoryStore | None = None,
     vision_status: Callable[[], dict[str, Any]] | None = None,
 ) -> FastAPI:
@@ -767,6 +842,8 @@ def create_app(
             # 이 서버가 어느 개체 프로파일로 떴는지 — 여러 런타임을 띄웠을 때 가려내는 데 쓴다.
             "device_id": state.snapshot()["device_id"],
             "read_only": commands is None,
+            "capabilities": {"simulated": simulated, "voice_path": voice_path},
+            "dashboard": {"scene3d_url": scene3d_url},
             "clients": len(hub.clients),
             "coalesced_updates": hub.coalesced,
             # 비전이 없으면 null — "연결 0" 과 "채널 없음" 을 구분한다.
@@ -895,6 +972,8 @@ def create_app(
                 websocket, vision_hub, _send_frames, "Vision channel is read-only"
             )
 
+    if extra_routes is not None:
+        app.include_router(extra_routes)
     _mount_dashboard(app, static_dir)
 
     return app
@@ -970,6 +1049,8 @@ def running_server(
     map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
+    scene3d_url: str = "",
+    simulated: bool | None = None,
     history: HistoryStore | None = None,
     vision_status: Callable[[], dict[str, Any]] | None = None,
 ) -> Iterator[uvicorn.Server]:
@@ -986,6 +1067,8 @@ def running_server(
         map_view=map_view,
         nav_status=nav_status,
         planning=planning,
+        scene3d_url=scene3d_url,
+        simulated=simulated,
         history=history,
         vision_status=vision_status,
     )

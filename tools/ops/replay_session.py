@@ -199,7 +199,9 @@ def vision_from_event(event: Mapping[str, Any]) -> tuple[VisionResult, bool]:
             )
             for m in event.get("markers", [])
         )
-        p = event.get("ppe")
+        p = event.get("ppe_verdict")
+        if p is None and isinstance(event.get("ppe"), dict):
+            p = event["ppe"]  # 예전 기록: 대표 판정 하나를 `ppe` 에 남겼다
         ppe = (
             None
             if p is None

@@ -10,11 +10,15 @@ from pathlib import Path
 
 import pytest
 from conftest import FakeClock
+from fastapi.testclient import TestClient
 from test_runtime import DEVICE, PEER, FakeSocket, telemetry
+from test_runtime_lidar import _runtime
 
 from host.behavior.fsm import Event
 from host.common.protocol import TelemetryEncoder
-from host.runtime import MOTION_LOCK_TYPES, Runtime, build_parser, main
+from host.dashboard.server import create_app
+from host.dashboard.state import DashboardState
+from host.runtime import MOTION_LOCK_TYPES, Runtime, build_parser, dashboard_wiring, main
 from host.telemetry.session_recorder import SessionRecorder
 
 
@@ -127,6 +131,38 @@ def test_motion_lock_refuses_patrol_flags(capsys: pytest.CaptureFixture[str]) ->
         main(["--device", DEVICE, "--motion-lock", "--patrol"])
     assert exc.value.code == 2
     assert "motion-lock" in capsys.readouterr().err
+
+
+def test_motion_lock_rejects_goto_without_reservation_but_allows_point_hint(config, clock):
+    runtime, navigator = _runtime(config, clock, motion_lock=True)
+    navigator.observe_map_pose((2.0, 2.0, 0.0), clock.ms)
+    runtime.begin(FakeSocket(clock))
+    try:
+        app = create_app(
+            DashboardState(DEVICE, stale_after_ms=3000),
+            **dashboard_wiring(runtime, config, vision=None, blackbox=None),
+        )
+        with TestClient(app) as client:
+            response = client.post("/api/command/goto", json={"x": 4.0, "y": 1.0})
+            assert response.status_code == 200
+            assert response.json()["accepted"] is False
+            assert response.json()["detail"] == "보행 잠금 중 — 이동할 수 없다"
+            assert runtime._goto_asked is None
+            assert runtime._route_asked is None
+            assert not runtime._patrol_asked
+            runtime.tick(clock.ms)
+            feedback = client.get("/api/nav").json()["goal_feedback"]
+            assert feedback["accepted"] is False
+            assert feedback["detail"] == response.json()["detail"]
+            assert navigator.goal is None
+            assert runtime.behavior.state == "IDLE"
+            hint = client.post("/api/command/locate", json={"x": 2.0, "y": 2.0})
+            assert hint.json()["accepted"] is True
+            runtime.tick(clock.ms)
+            assert navigator._point_hint == (2.0, 2.0, clock.ms)
+            assert runtime._goto_asked is None
+    finally:
+        runtime.release()
 
 
 def test_record_flags_parse() -> None:

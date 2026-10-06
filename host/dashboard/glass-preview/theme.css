@@ -347,3 +347,43 @@ dialog[open] {animation:dialog-enter 220ms var(--ease-out)}
  @keyframes event-arrive-still{0%,70%{background:#f6efdf}100%{background:transparent}}
  .op-spark-empty{animation:none;opacity:.75}
 }
+/* Y1: bright surfaces and readable state in the default dashboard. */
+.observation-waiting .scene-stage,.observation-waiting .camera-body{background:#edf2eb!important;color:#233d2c}
+.scene-heading h1{color:#24462e!important;text-shadow:none!important}
+.op-table thead,.op-table th{background:#e9efe6!important;color:#2d4934!important}
+.op-details>summary,.op-preview>summary,.route-settings>summary,.plan-settings>summary{cursor:pointer;font-weight:650;padding:12px;color:#31533c}
+.route-settings>aside,.plan-settings>aside{border:0;padding:12px}
+.op-preview{opacity:1!important}
+.connection-label{position:static!important;display:block;background:#edf4e9;color:#31533c;font:500 11px/1.4 system-ui;padding:4px 8px;border-radius:8px;max-width:220px;pointer-events:none}
+@media(max-width:899px){
+ .route-layout,.plan-layout{display:flex!important;flex-direction:column}
+ .route-canvas,.plan-canvas{order:-1;padding:8px!important}
+ .route-settings,.plan-settings{width:100%;box-sizing:border-box}
+ .route-header,.plan-header{gap:8px!important;padding:10px 0!important}
+ .route-header h2,.plan-header h2{font-size:18px!important}
+ .route-header p,.plan-header p,.op-intro .op-note{display:none}
+ .route-footer{position:sticky;bottom:0;background:#f7faf4;padding:8px!important;z-index:2}
+ .route-footer .op-note{display:none}
+ .view-switch{position:static!important;align-self:flex-start;margin:8px!important}
+ .scene-heading{position:static!important;margin:8px!important}
+ .scene-stage{display:flex;flex-direction:column}
+ .live-house-map{top:115px!important}
+ .connection-label{max-width:none;flex-basis:100%}
+}
+.observation-waiting .camera-viewport{background:#edf2eb!important;border-color:#d5dfcf!important;color:#31533c}
+.observation-waiting .camera-viewport .observation-placeholder{color:#31533c!important}
+.route-library-settings>summary{cursor:pointer;font-weight:600;padding:12px;color:#31533c}
+@media(max-width:899px){
+ .route-workspace{display:flex;flex-direction:column}
+ .route-workspace>.route-header{order:0}
+ .route-workspace>.route-feedback{order:1}
+ .route-workspace>.route-layout{order:2}
+ .route-workspace>.route-footer{order:3;position:static}
+ .route-workspace>.route-library-settings{order:4}
+ .route-header h2{display:none}
+ .route-map{min-height:0!important}
+ .route-progress{font-size:11px!important;margin:4px 0!important}
+}
+.op-management-menu{padding:6px 10px;border:1px solid #d4dfce;border-radius:8px;align-self:flex-start}
+.op-management-menu>summary{cursor:pointer;font-size:12px;color:#31533c}
+.op-management-menu[open]>.op-button{display:block;margin-top:8px}

@@ -1,11 +1,14 @@
 import {PlanningPanel} from './planning-panel.js';
+import {RoutePlanner} from './route-planner.js';
 import {EVENT_CATEGORIES,REVIEW_STATES,ROBOTS} from './operations.js';
 import {icon} from './icons.js';
 import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
 import {LiveMap} from './live-map.js';
+import {ControlMinimap} from './control-minimap.js';
 
 const VOICE_ROLES={user:'현장 발화',robot:'로봇 응답',admin:'경고 방송',system:'시스템',robot_evt:'로봇 사건'};
 const TITLES={missions:'제어 · 장치',events:'사건 검토',records:'운영 기록',zones:'구역 · 동선',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
+const STATE_NAMES={IDLE:'대기',PATROL:'순찰',OBSERVE:'관찰',MANUAL:'수동 제어',ESTOP:'긴급 정지',AUTH_WAIT:'인증 대기',TRACK:'대상 추적',FAILSAFE:'안전 정지'};
 const STATUS={idle:'시작 전',running:'예시 진행 중',paused:'일시정지',ended:'종료'};
 const MANUAL_KEYS={KeyW:'FORWARD',KeyA:'LEFT',KeyS:'BACKWARD',KeyD:'RIGHT'};
 const time=value=>value==null?'—':new Date(value).toLocaleString('ko-KR',{hour12:false});
@@ -21,7 +24,7 @@ export class OperationalPanels {
   this.reviewDrafts=new Map();this.policyDrafts=new Map();this.activeHold=null;
   // 이미 목록에 있던 사건. **첫 그림에는 표시하지 않는다** — 열자마자 전부 깜빡이면 새것이 묻힌다.
   this.seenEvents=null;
-  this.missionDraft=null;this.settingsSection='display';this.planning=new PlanningPanel(this);
+  this.missionDraft=null;this.settingsSection='display';this.planning=new PlanningPanel(this);this.routePlanner=new RoutePlanner(this);
   this.manualPressedKeys=new Set();this.keyboardEnabled=true;
   this.manualKeyDown=event=>this.handleManualKeyDown(event);
   this.manualKeyUp=event=>this.handleManualKeyUp(event);
@@ -56,9 +59,10 @@ export class OperationalPanels {
  }
  facts(rows){return this.el('dl',{class:'op-facts'},rows.map(([label,value])=>this.el('div',{},this.el('dt',{},label),this.el('dd',{},value))))}
  section(title,...content){return this.el('section',{class:'op-section'},this.el('h3',{},title),content)}
+ details(title,...content){return this.el('details',{class:'op-section op-details'},this.el('summary',{},title),content)}
  // Unconnected screen outlines: labels and layout only, with no submission or storage.
  previewSection(title,...content){
-  const section=this.section(title,this.note('화면 미리보기 · 등록·저장·적용 준비 중'),content);
+  const section=this.details(title+' · 준비 중',this.note('등록·저장·적용은 준비 중입니다.'),content);
   section.classList.add('op-preview');return section;
  }
  previewField(label,placeholder,type='text'){
@@ -68,7 +72,7 @@ export class OperationalPanels {
   const select=this.select(label,[['','선택 준비 중'],...options.map(value=>[value,value])],'');select.disabled=true;
   return this.field(label,select);
  }
- previewButton(label){return this.button(label,()=>{},{disabled:true})}
+ previewButton(label){return this.button(label+' · 준비 중',()=>{},{disabled:true})}
  openDisplaySettings(){this.settingsSection='display';this.onNavigate('settings')}
  emptyTable(headers,message){
   return this.el('div',{class:'op-table-wrap'},this.el('table',{class:'op-table'},this.el('caption',{},message),this.el('thead',{},this.el('tr',{},headers.map(label=>this.el('th',{scope:'col'},label)))),this.el('tbody',{},this.el('tr',{},this.el('td',{colspan:headers.length,class:'op-table-empty'},'연결된 기록이 없습니다.')))));
@@ -81,13 +85,13 @@ export class OperationalPanels {
   this.clearVoicePoll();
   this.activeHold=null;this.view=view;this.title.textContent=TITLES[view]||'';
   this.container.dataset.page=view;this.container.replaceChildren();if(!TITLES[view])return;
-  const intro=this.el('div',{class:'op-intro'},this.note({missions:'로봇 관측·제어와 현재 장치 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태와 발화 기록을 보고, 시나리오와 멘트를 관리합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?'관제 서버 연결':this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
+  const intro=this.el('div',{class:'op-intro'},this.note({missions:'로봇 관측·제어와 현재 장치 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태와 발화 기록을 보고, 시나리오와 멘트를 관리합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?this.store.runtimeLabel:this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
   this.container.append(intro,this.el('div',{class:'op-feedback',role:'status','aria-live':'polite'}));
   this[view==='zones'?'zonePage':view]();
  }
  refresh(reason){
   if(this.view==='dashboard')return;
-  if(this.view==='zones'){this.planning.refresh();return}
+  if(this.view==='zones'){this.planning.refresh();this.routePlanner.refresh();return}
   // 초당 10번 오는 로봇 상태는 게이지만 고친다 — 화면을 통째로 다시 그리면 입력·초점·3D 미리보기가 날아간다.
   if(reason==='telemetry'){this.refreshTelemetry();return}
   if(reason==='command'){this.refreshControl();return}
@@ -186,7 +190,7 @@ export class OperationalPanels {
   const fresh=new Set();
   for(const event of records){if(!firstDraw&&!this.seenEvents.has(event.id))fresh.add(event.id);this.seenEvents.add(event.id);}
   this.eventList.replaceChildren(...records.map(event=>this.button([
-   this.el('span',{class:'op-row-meta'},event.robot,this.badge(event.source==='DEMO'?'예시':event.source==='LIVE_FEED'?'실시간':'저장 파일',event.source==='LIVE_FEED'?'':'')),
+   this.el('span',{class:'op-row-meta'},event.robot,this.badge(event.source==='DEMO'||event.simulated?'예시':event.source==='LIVE_FEED'?'실시간':'저장 파일',event.source==='LIVE_FEED'?'':'')),
    this.el('strong',{},event.title),
    // ⚠️ **시각이 없으면 같은 이름의 사건을 고를 수 없다.** 09-27 실측에서 `person_found` 11건이
    // 글자까지 똑같이 나열돼 화면으로는 구분이 되지 않았다. 시각이 없는 사건(예시)은 비워 둔다.
@@ -200,7 +204,7 @@ export class OperationalPanels {
  }
  renderEventDetail(event){
   this.eventDetail.replaceChildren();this.eventDetail.hidden=!event;if(!event)return;
-  this.eventDetail.append(this.el('div',{class:'op-row-meta'},event.id,this.badge(event.source==='DEMO'?'실제 사건 아님':event.source==='LIVE_FEED'?'실시간 수신 사건':'과거 저장 기록')),this.el('h3',{class:'op-detail-title'},event.title),this.note(event.detail),this.facts([['FSM',event.state],['대응 단계',event.escalation],['운용 모드',MODE_NAMES[event.mode]??event.mode??'기록 없음'],['출입 인증',event.auth],['PPE',event.ppe]]));
+  this.eventDetail.append(this.el('div',{class:'op-row-meta'},event.id,this.badge(event.simulated||event.source==='DEMO'?'예시 사건':event.source==='LIVE_FEED'?'실시간 수신 사건':'과거 저장 기록')),this.el('h3',{class:'op-detail-title'},event.title),this.note(event.detail),this.facts([['상태',STATE_NAMES[event.state]??event.state],['대응 단계',event.escalation],['운용 모드',MODE_NAMES[event.mode]??event.mode??'기록 없음'],['출입 인증',event.auth],['보호구',event.ppe]]));
   if(event.evidence?.length)this.eventDetail.append(this.section('판정 근거',this.facts(event.evidence)));
   if(event.snapshot)this.eventDetail.append(this.evidenceImage(event));
   else this.eventDetail.append(this.el('div',{class:'op-evidence-empty'},this.el('strong',{},'첨부된 스냅샷 없음'),this.el('span',{},'3D 예시 화면은 이 사건의 증거가 아닙니다.')));
@@ -223,7 +227,7 @@ export class OperationalPanels {
  }
  evidenceImage(event){
   const image=this.el('img',{src:event.snapshot,alt:event.title+' 원본 저장 스냅샷'}),overlay=this.el('div',{class:'op-box-overlay','aria-hidden':'true'});
-  const wrap=this.el('figure',{class:'op-evidence-image'},this.el('div',{class:'op-image-inner'},image,overlay),this.el('figcaption',{},'원본 저장 JPEG · 현재 영상 아님'));
+  const wrap=this.el('figure',{class:'op-evidence-image'},this.el('div',{class:'op-image-inner'},image,overlay),this.el('figcaption',{},event.simulated?'예시 합성 이미지 · 실제 사건 사진 아님':'원본 저장 JPEG · 현재 영상 아님'));
   image.addEventListener('load',()=>{
    overlay.replaceChildren();if(!event.meta||!image.naturalWidth||!image.naturalHeight)return;
    for(const track of event.meta.tracks){
@@ -288,12 +292,12 @@ export class OperationalPanels {
   catSel.addEventListener('change',()=>refreshPhrases());
   this.container.append(
    this.section('로봇 음성 상태',
-    link?this.note('음성 서버 연결됨 — '+link.baseUrl):this.note('음성 서버 미연결 — voice_pipeline 을 --web 으로 실행하면 자동으로 붙습니다.','warning'),
+    link?this.note('음성 중계 연결됨'+(this.store.simulated===true?' · 예시 발화':'')):this.note('음성 서버 미연결 · 운영 PC에서 음성 중계를 켜 주세요.','warning'),
     this.voiceStatusEl,
     this.el('div',{class:'op-toolbar'},
      this.button('대기/깨우기',()=>this.run(async()=>{await link.mode();this.pollVoice()}),{disabled:!link}))),
    this.section('멘트 관리',
-    this.note('로봇이 말하는 문구 라이브러리입니다. 문구는 코드(phrases.py)에 있고 여기서는 보기만 합니다.'),
+    this.note('녹음된 방송 문구를 확인합니다.'),
     this.phraseCatEl,
     this.el('div',{class:'op-toolbar'},
      catSel,
@@ -306,7 +310,7 @@ export class OperationalPanels {
   const runScenario=()=>{
    const name=scenarioSel.value;if(!name)throw new Error('실행할 시나리오를 고르세요.');
    const label=scenarioSel.selectedOptions[0]?.textContent||name;
-   this.confirmDevice({icon:'play',title:'시나리오를 실행하겠습니까?',body:'「'+label+'」 — 로봇 스피커로 방송하고, 일부 시나리오는 현장 대답을 듣습니다. 로봇을 움직이지는 않습니다.',confirm:'예, 실행합니다',action:async()=>{await link.runScenario(name);this.onToast('시나리오를 대기열에 넣었어요.');this.pollVoice()}});
+   this.confirmDevice({icon:'play',title:'시나리오를 실행하겠습니까?',body:'「'+label+'」 — '+(this.store.simulated===true?'예시 기록을 추가합니다. 실제 방송은 없습니다.':'로봇 스피커로 방송합니다. 로봇은 움직이지 않습니다.'),confirm:'예, 실행합니다',action:async()=>{await link.runScenario(name);this.onToast('시나리오를 대기열에 넣었어요.');this.pollVoice()}});
   };
   const showReport=()=>this.run(async()=>{
    let r;try{r=await link.report()}catch(error){if(/404/.test(error.message)){reportEl.replaceChildren(this.note('음성 저널이 꺼져 있어 리포트가 없습니다. voice_pipeline 을 저널과 함께 실행하세요.','warning'));return}throw error}
@@ -387,7 +391,7 @@ export class OperationalPanels {
   const pad=this.el('div',{class:'op-drive-pad','aria-label':live?'누르는 동안 실제 이동':'누르는 동안 예시 이동'});
   for(const [command,label]of [['FORWARD','전진'],['LEFT','좌회전'],['STOP','정지'],['RIGHT','우회전'],['BACKWARD','후진']]){
    const shortcut=command==='STOP'?'Space':Object.keys(MANUAL_KEYS).find(key=>MANUAL_KEYS[key]===command).slice(-1);
-   const button=this.el('button',{type:'button',class:'op-drive '+command.toLowerCase(),'data-drive':command,'aria-label':label+(live?' · 실제 전송':' · 예시'),'aria-keyshortcuts':shortcut});
+   const button=this.el('button',{type:'button',class:'op-drive '+command.toLowerCase(),'data-drive':command,'aria-label':label+(live?' · '+store.transmissionLabel:' · 예시'),'aria-keyshortcuts':shortcut});
    if(command==='STOP')button.textContent='STOP';
    else{button.innerHTML=icon('arrow');button.append(this.el('kbd',{class:'op-drive-key'},shortcut))}
    if(command==='STOP'){
@@ -410,16 +414,16 @@ export class OperationalPanels {
     this.el('span',{},this.el('kbd',{},'W A S D'),' 이동 · ',this.el('kbd',{},'Space'),' 정지')),
    // ⚠️ **실제 연결이면 로봇이 움직인다.** 예전에는 연결돼 있어도 "로봇은 움직이지 않습니다" 라고 적혀 있었다.
    // 서버가 받은 것과 로봇이 걸은 것은 다르므로 "반영" 은 상태 칸에서 확인하라고 적는다.
-   this.note(live?'누르는 동안만 유지 · 놓으면 STOP. 관제 서버를 거쳐 실제 로봇이 움직입니다 — 3D 모델은 움직이지 않습니다.':'누르는 동안만 유지 · 놓으면 STOP. 웹 시연이며 로봇과 3D 모델은 움직이지 않습니다.',live?'warning':'quiet'),
+   this.note(live?'누르는 동안 이동 · 놓으면 정지. '+store.runtimeLabel+'에 명령을 보냅니다.':'누르는 동안만 유지 · 놓으면 STOP. 웹 시연이며 로봇과 3D 모델은 움직이지 않습니다.',live?'warning':'quiet'),
    this.el('p',{class:'op-transmission'},live?'관제 서버로 전송 · 로봇 반영은 아래 상태 칸에서 확인':'명령 미전송 · ACK 없음'),
    this.el('section',{class:'op-camera-posture','aria-label':'본체 자세로 시야 조절'},
-    this.el('div',{class:'op-posture-heading'},this.el('h4',{},'본체 자세로 시야 조절'),this.badge(live?'실제 전송 · 수동 중에만':'연결 준비',live?'amber':'')),
+    this.el('div',{class:'op-posture-heading'},this.el('h4',{},'본체 자세로 시야 조절'),this.badge(live?store.transmissionLabel+' · 수동 중에만':'연결 준비',live?'amber':'')),
     // 각도는 서버가 config(posture.pitch_up_deg)에서 정한다 — 화면은 세 가지 중 하나만 고른다.
     this.el('div',{class:'op-posture-buttons'},[['up','앞쪽 들기'],['level','기준 자세'],['down','앞쪽 낮추기']].map(([preset,label])=>live?this.button(label,()=>store.requestPose(preset),{'data-pose':preset}):this.previewButton(label))),
     this.note(live?'수동 제어권을 잡고 멈춘 상태에서만 보냅니다. 각도는 PPE 자세 상승과 같은 ±15°이며, 반납하면 기준 자세로 되돌립니다. 반영은 장치 화면의 IMU pitch로 확인하세요.':'기체의 앞뒤 기울임 기능을 이용하는 방식입니다. 실제 연결에서 수동 제어 중에만 보냅니다.'),
     this.el('p',{class:'op-camera-capability'},'카메라 독립 회전 · 지원 미확인')));
   const manual=this.el('section',{class:'op-manual-workspace','aria-label':'로봇 관측과 수동 제어'},
-   this.el('div',{class:'op-manual-heading'},this.el('h3',{},'로봇을 보며 제어'),this.field('관측 · 제어 대상',target),live?this.badge('관제 서버 연결 · 실제 전송','amber'):this.badge('실제 장비 미연결')),
+   this.el('div',{class:'op-manual-heading'},this.el('h3',{},'로봇을 보며 제어'),this.field('관측 · 제어 대상',target),live?this.badge(store.runtimeLabel+' · '+store.transmissionLabel,'amber'):this.badge('실제 장비 미연결')),
    this.el('div',{class:'op-observation-layout'},cameraMount,controls,this.manualLocation()));
   const firstSection=this.container.querySelector('.op-section');
   if(firstSection)firstSection.before(manual);else this.container.append(manual);
@@ -442,12 +446,12 @@ export class OperationalPanels {
    this.container.append(this.section('실제 장비 명령',
     this.deviceFacts,
     this.el('div',{class:'op-toolbar'},
-     this.button('실제 순찰 시작',()=>this.confirmDevice({icon:'play',title:'실제 순찰을 시작하겠습니까?',body:'로봇이 자율 순찰을 시작합니다. 안전 래치가 해제된 상태여야 하며, 주행 경로에 사람·장애물이 없는지 먼저 확인하세요.',confirm:'예, 순찰을 시작합니다',action:()=>store.requestPatrol(true)}),{disabled:!store.live||store.readOnly}),
+     this.button('순찰 시작',()=>this.confirmDevice({icon:'play',title:store.runtimeLabel+' 순찰을 시작하겠습니까?',body:'로봇이 자율 순찰을 시작합니다. 안전 래치가 해제된 상태여야 하며, 주행 경로에 사람·장애물이 없는지 먼저 확인하세요.',confirm:'예, 순찰을 시작합니다',action:()=>store.requestPatrol(true)}),{disabled:!store.live||store.readOnly}),
      this.button('실제 순찰 정지',()=>store.requestPatrol(false),{disabled:!store.live||store.readOnly}),
      this.serviceButton,
      this.modeButton('guard','경비'),this.modeButton('factory','공장'),
      this.button('경보 확인 (L3 해제)',()=>this.confirmDevice({icon:'stop',title:'경보를 확인했습니까?',body:'현장 상황을 직접 확인한 뒤에만 누르세요. 경보 단계(L3)가 내려가고 순찰이 이어집니다. 안전 래치(F)는 이 버튼으로 풀리지 않습니다 — 그쪽은 "안전 해제"가 따로 필요합니다.',confirm:'예, 확인했습니다',danger:true,action:()=>store.requestAlarmConfirm()}),{disabled:!store.live||store.readOnly,'data-alarm-confirm':'confirm'}),
-     this.button('안전 해제 (RESET_SAFE)',()=>this.confirmDevice({icon:'stop',title:'안전 래치를 해제하겠습니까?',body:'안전 정지 원인이 제거됐고 로봇 주변에 사람이 없는지 먼저 확인하세요. 래치가 풀리면 다음 이동 명령부터 로봇이 실제로 움직입니다 — 잠금만 해제되며 자동 보행은 시작하지 않습니다.',confirm:'예, 해제합니다',danger:true,action:()=>store.requestResetSafe()}),{disabled:!store.live||store.readOnly,'data-reset-safe':'confirm'})),
+     this.button('안전 해제 (RESET_SAFE)',()=>this.confirmDevice({icon:'stop',title:'안전 래치를 해제하겠습니까?',body:'안전 정지 원인이 제거됐고 로봇 주변에 사람이 없는지 먼저 확인하세요. 래치가 풀리면 다음 이동 명령부터 로봇이 움직일 수 있습니다 — 잠금만 해제되며 자동 보행은 시작하지 않습니다.',confirm:'예, 해제합니다',danger:true,action:()=>store.requestResetSafe()}),{disabled:!store.live||store.readOnly,'data-reset-safe':'confirm'})),
     store.live?null:this.note('실제 장비 미연결 — 이 버튼들은 명령을 보내지 않습니다.','warning'),
     this.note('운용 모드는 로봇이 멈춰 있을 때(대기·수동)만 바꿀 수 있고, 바꿔도 경보(L3)와 안전 정지(F)는 풀리지 않습니다. 선행 기능이 없는 모드는 서버가 거절하며 사유를 알려 줍니다.'),
     this.note('모드 변경 버튼은 누르면 확인 창이 뜹니다. 순찰 정지·비상 정지처럼 안전으로 가는 명령은 확인 없이 즉시 보냅니다. 서비스 모드 해제 후에도 안전 래치는 남습니다.')));
@@ -475,6 +479,11 @@ export class OperationalPanels {
   this.refreshControl();
  }
  manualLocation(){
+  if(this.store.live){
+   if(!this.controlMinimap)this.controlMinimap=new ControlMinimap({document:this.document,getLink:()=>this.view==='missions'&&this.store.live?this.store.link:null,onOpen:()=>this.onNavigate('zones')});
+   this.controlMinimap.tick();
+   return this.controlMinimap.root;
+  }
   const section=this.el('section',{class:'op-location','aria-label':'선택 로봇 위치'});
   section.append(this.el('div',{class:'op-location-heading'},this.el('h4',{},this.store.robotName(this.store.selected)+' · 위치와 방향'),this.badge('예시 배치 · 실측 아님')));
   const svg=(tag,attrs={},text)=>{const node=this.document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,value]of Object.entries(attrs))node.setAttribute(key,String(value));if(text)node.textContent=text;return node};
@@ -558,7 +567,7 @@ export class OperationalPanels {
   this.container.append(this.note('이 페이지는 로컬 UI 작업 기록입니다. 실물 운행·서버 감사 로그가 아닙니다. 최대 500건을 세션에 보관하며 새로고침하면 초기화됩니다.'),this.el('div',{class:'op-toolbar'},this.button('조작 이력 CSV',()=>{this.download(this.store.exportRecords(),'mechadog-ui-records.csv','text/csv');this.render('records')}),this.button('사건 검토 JSON',()=>this.download(this.store.exportReview(),'mechadog-review.json','application/json'))));
   this.container.append(this.section('예시 순찰 세션',this.store.sessions.length?this.el('div',{class:'op-session-list'},this.store.sessions.map(session=>this.el('article',{},this.el('strong',{},session.robot+' · '+session.zone),this.badge(STATUS[session.id===this.store.mission.id?this.store.mission.status:session.status]),this.el('p',{},time(session.startedAt)+' → '+time(session.endedAt))))):this.note('이 세션에서 시작한 예시 임무가 없습니다.')));
   const list=this.el('div',{class:'op-record-list'}),count=this.el('p',{class:'op-result-count',role:'status'});
-  const render=term=>{const rows=this.store.records.filter(row=>[row.action,row.detail,row.source].join(' ').toLowerCase().includes(term.toLowerCase()));count.textContent=rows.length+'건 · 로컬 기록';list.replaceChildren(...rows.map(row=>this.el('article',{class:'op-record'},this.el('time',{datetime:new Date(row.ts_ms).toISOString()},time(row.ts_ms)),this.el('div',{},this.el('strong',{},row.action),this.el('p',{},row.detail),this.el('small',{},row.source)))));if(!rows.length)list.append(this.note('조건에 맞는 기록이 없습니다.'))};
+  const render=term=>{const rows=this.store.records.filter(row=>[row.action,row.detail,row.source].join(' ').toLowerCase().includes(term.toLowerCase()));count.textContent=rows.length+'건 · 로컬 기록';list.replaceChildren(...rows.map(row=>this.el('article',{class:'op-record'},this.el('time',{datetime:new Date(row.ts_ms).toISOString()},time(row.ts_ms)),this.el('div',{},this.el('strong',{},row.action),this.el('p',{},row.detail),this.el('small',{},({'LOCAL_UI_PREVIEW_ONLY':'화면 조작','LOCAL_IMPORTED_REVIEW':'가져온 사건 검토'}[row.source]??row.source))))));if(!rows.length)list.append(this.note('조건에 맞는 기록이 없습니다.'))};
   this.container.append(this.section('조작 이력',this.field('기록 검색',this.el('input',{type:'search',placeholder:'동작 · 메모 · 출처',oninput:event=>render(event.target.value)})),count,list));render('');
   this.container.append(this.previewSection('순찰 결과 · 세션 상세',
    this.el('div',{class:'op-form-grid'},this.previewField('조회 시작일','', 'date'),this.previewField('조회 종료일','', 'date')),
@@ -570,17 +579,26 @@ export class OperationalPanels {
    this.note('저장된 영상이 없으므로 재생 버튼은 제공하지 않습니다. 위쪽 내보내기는 현재 브라우저의 예시·가져온 기록에만 해당합니다.')));
  }
  confirmGoto(x,y,where=''){
-  return this.confirmDevice({icon:'route',title:'로봇을 이 곳으로 보낼까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m)까지 경로를 찾아 걸어갑니다. 순찰 중이 아니면 순찰이 함께 시작됩니다. 경로에 사람·물건이 없는지 먼저 확인하세요. 도착하면 그 자리에 서고, «실제 순찰 시작»을 누르면 구역 순찰로 돌아갑니다.',confirm:'예, 보냅니다',action:async()=>{const result=await this.store.requestGoto(x,y);this.onToast(result?.detail||'이동을 요청했어요.')}});
+  const link=this.store.link,robot=this.store.selected;
+  return this.confirmDevice({icon:'route',title:'로봇을 이 곳으로 보낼까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m)까지 경로를 찾아 걸어갑니다. 순찰 중이 아니면 순찰이 함께 시작됩니다. 경로에 사람·물건이 없는지 먼저 확인하세요. 도착하면 그 자리에 서고, «실제 순찰 시작»을 누르면 구역 순찰로 돌아갑니다.',confirm:'예, 보냅니다',action:async()=>{if(this.store.link!==link||this.store.selected!==robot)throw new Error('대상 로봇이 바뀌었습니다. 새 지도에서 목적지를 다시 찍어 주세요.');const result=await this.store.requestGoto(x,y);this.onToast(result?.detail||'이동을 요청했어요.')}});
  }
- liveMapSection(){
-  // 실제 집 지도 — 서버에 연결됐을 때만. 한 번 만든 지도를 다시 붙인다(재렌더마다 새로 받지 않게).
-  if(!this.store.live||!this.store.link)return null;
-  this.liveMap??=new LiveMap({document:this.document,getLink:()=>this.store.live?this.store.link:null,onPick:(x,y,where)=>this.confirmGoto(x,y,where)});
-  return this.section('실제 집 지도',this.liveMap.root,this.note('로봇 표시(삼각형)는 로봇이 스스로 추정한 위치입니다. 지도를 누르면 그곳으로 보냅니다(확인 창). 위치를 못 믿는 동안(회색)에는 로봇이 이동을 거절합니다 — «제어 · 장치»의 «위치 알려주기»로 구역을 알려 주세요.'));
+ confirmLocatePoint(x,y,where=''){
+  const link=this.store.link,robot=this.store.selected;
+  return this.confirmDevice({icon:'target',title:'로봇이 여기 있다고 알려줄까요?',body:'찍은 곳 ('+(where?where+', ':'')+'x '+x.toFixed(2)+' m, y '+y.toFixed(2)+' m) 주변에서 로봇의 현재 위치를 다시 찾습니다. 위치가 확인될 때까지 로봇은 멈춰 있습니다. 실제로 로봇이 있는 곳인지 확인하세요.',confirm:'예, 위치를 알려줍니다',action:async()=>{
+   if(this.store.link!==link||this.store.selected!==robot)throw new Error('대상 로봇이 바뀌었습니다. 새 지도에서 위치를 다시 찍어 주세요.');
+   const result=await this.store.requestLocatePoint(x,y);this.onToast(result?.detail||'찍은 곳 주변에서 위치 다시 찾기를 요청했어요.');
+  }});
+ }
+ locateZones(){
+  const store=this.store,zones=store.patrolZones;
+  return this.el('div',{'data-locate-support':''},this.el('h4',{},'구역으로 알려주기 (보조)'),
+   zones.length?this.el('div',{class:'op-toolbar','data-locate':'zones'},...zones.map(zone=>this.button('구역 '+zone,()=>this.confirmDevice({icon:'target',title:'로봇이 지금 구역 '+zone+' 안에 있습니까?',body:'로봇이 지금 믿고 있는 위치를 버리고 구역 '+zone+' 안에서만 다시 찾습니다. 찾을 때까지 로봇은 멈춰 섭니다. 잘못 알려주면 엉뚱한 자리로 잡힐 수 있으니 실제로 있는 구역만 누르세요.',confirm:'예, 구역 '+zone+' 입니다',action:async()=>{const result=await store.requestLocate(zone);this.onToast(result?.detail||'위치 다시 찾기를 요청했어요.')}}),{disabled:!store.live||store.readOnly,'data-locate-zone':zone}))):this.note('구역 목록을 받지 못했습니다 — 서버 연결을 확인하세요.','warning'),
+   this.note('지도에서 정확한 자리를 찍기 어려우면 구역을 알려 주세요. 구역 안에서도 비슷한 자리가 여럿이면 로봇은 계속 멈춰 있습니다.'));
  }
  zonePage(){
-  // 실제 집 지도(로봇 자기 위치·찍은 곳 이동)를 위에, 그 아래 구역·순찰 계획.
-  const live=this.liveMapSection();if(live)this.container.append(live);
+  // One route map owns move / locate / draw. Zone policy editing stays below it.
+  this.routePlanner.open();
+  this.container.append(this.section('로봇 위치 알려주기',this.locateZones()));
   this.planning.open()
  }
  devices(){
@@ -600,8 +618,8 @@ export class OperationalPanels {
   // 연결 여부만 적는다 — 로봇 수신 상태는 10Hz 로 바뀌므로 아래 "로봇 상태" 배지가 말한다.
   this.container.append(this.el('div',{class:'op-device-switch','aria-label':'상세 로봇 선택'},store.robots.map(id=>this.button([this.el('strong',{},store.robotName(id)),this.el('span',{},store.live?(store.isRegistered(id)?'':'미등록 · ')+describeTelemetry(store.telemetryOf(id)).badge[0]:'미연결')],()=>store.selectRobot(id),{'aria-label':store.robotName(id)+' 상태 보기','aria-pressed':id===store.selected,class:'op-button'+(id===store.selected?' selected':'')}))),this.el('div',{class:'robot-detail-layout'},preview,status));
   this.onRobotPreview?.(this.robotCanvas);
-  this.container.append(this.section('장치 역할과 지원 상태',this.facts([['Motion ESP32','MOVE·STOP·ESTOP·RESET_SAFE·POSE·ACTION·LED·SOUND·SERVICE 적용 경로 존재'],['Vision XIAO / 카메라','/ws/vision 검출 영상 수신 구현'],['Host / 블랙박스','사건별 JPEG + meta.json 저장 구현'],['실시간 웹 전송','/ws/vision + /ws/events 구현'],['LiDAR / 기준기','2대 운용 계획 · 개체별 배정 미확정'],['전도 자동 감지','Phase 2 이연 · 정상 작동 추정 금지']]),this.note('Git 코드 구현 상태이며, 이 기체에서 동작한다는 검증 결과가 아닙니다. GAIT는 펌웨어가 해석만 하고 적용하지 않습니다. STATE는 저장·반향만 하며 안전 래치를 풀지 않습니다. 경고 음성은 PC 음성 파이프라인이 문장을 TF 카드 트랙 번호로 바꿔 SOUND 로 재생합니다(--robot-speaker).')));
-  this.container.append(this.section('응답을 읽는 기준',this.facts([['ok','파서 수락 여부'],['applied','명령 처리 적용 여부'],['actuators','실제 액추에이터 활성 정보'],['ACK safe_latched','명령 응답의 안전 필드'],['telemetry safety_latched','텔레메트리의 안전 필드']]),this.note('ACK 한 항목만 보고 정지 완료 또는 안전 복구 완료로 판단하지 않습니다.')));
+  this.container.append(this.details('장치 지원 상세',this.facts([['Motion ESP32','MOVE·STOP·ESTOP·RESET_SAFE·POSE·ACTION·LED·SOUND·SERVICE 적용 경로 존재'],['Vision XIAO / 카메라','/ws/vision 검출 영상 수신 구현'],['Host / 블랙박스','사건별 JPEG + meta.json 저장 구현'],['실시간 웹 전송','/ws/vision + /ws/events 구현'],['LiDAR / 기준기','2대 운용 계획 · 개체별 배정 미확정'],['전도 자동 감지','Phase 2 이연 · 정상 작동 추정 금지']]),this.note('Git 코드 구현 상태이며, 이 기체에서 동작한다는 검증 결과가 아닙니다. GAIT는 펌웨어가 해석만 하고 적용하지 않습니다. STATE는 저장·반향만 하며 안전 래치를 풀지 않습니다. 경고 음성은 PC 음성 파이프라인이 문장을 TF 카드 트랙 번호로 바꿔 SOUND 로 재생합니다(--robot-speaker).')));
+  this.container.append(this.details('명령 응답 상세',this.facts([['ok','파서 수락 여부'],['applied','명령 처리 적용 여부'],['actuators','실제 액추에이터 활성 정보'],['ACK safe_latched','명령 응답의 안전 필드'],['telemetry safety_latched','텔레메트리의 안전 필드']]),this.note('ACK 한 항목만 보고 정지 완료 또는 안전 복구 완료로 판단하지 않습니다.')));
   this.container.append(this.previewSection('개체 프로파일 · 노드 진단',
    this.facts([['선택 장치',store.selected+' · 웹 표시 이름'],['실제 개체 프로파일',store.live?(store.slot()?.device||store.telemetry?.snapshot?.deviceId||'미수신'):'미연결'],['Phase 1 기준기','미지정'],['Phase 2 기준기','미지정']]),
    this.previewSelect('진단 노드',['MechDog 모션','XIAO 비전','LiDAR 중계']),
@@ -618,9 +636,9 @@ export class OperationalPanels {
    :text.tone==='stale'?this.note('마지막으로 받은 값입니다 — 지금 상태로 판단하지 마세요.','warning')
    :text.tone==='closed'?this.note('상태 채널이 끊겨 다시 연결하는 중입니다. 아래는 끊기기 전 값입니다.','warning')
    :!text.rows?this.note('관제 서버에는 붙었지만 로봇에서 받은 상태가 아직 없습니다.')
-   :this.note('표시는 초당 10번 갱신합니다. 수신률·누락은 새 seq 로만 셉니다 — 같은 값의 반복은 세지 않습니다.');
+   :this.note('새로 받은 상태를 표시합니다. 일부 항목이 없으면 미수신으로 표시합니다.');
   const history=store.telemetry?.history||[];
-  const charts=live&&text.rows?this.el('div',{class:'robot-status-charts'},this.sparkline(history,'battV','배터리','V',2),this.sparkline(history,'distCm','전방 거리','cm',0)):null;
+  const charts=live&&text.rows?this.el('div',{class:'robot-status-charts'},this.sparkline(history.filter(point=>Number.isFinite(point.battV)),'battV','배터리','V',2),this.sparkline(history.filter(point=>Number.isFinite(point.distCm)),'distCm','전방 거리','cm',0)):null;
   this.statusLive.replaceChildren(...[this.el('div',{class:'op-status-heading'},this.el('h2',{},'로봇 상태'),this.badge(badgeText,badgeTone)),note,this.facts(rows),charts].filter(Boolean));
  }
  refreshTelemetry(){
@@ -636,7 +654,7 @@ export class OperationalPanels {
   const body=!store.live?'실물 상태 수신 안 함':fresh?'새 상태 수신 중':tone==='stale'?'수신 중단 · 마지막 값만 있음':tone==='closed'?'상태 채널 끊김':'상태 수신 대기';
   const camera=!store.live?'실제 영상 미연결':({live:'새 검출 프레임 수신 중',waiting:'영상 채널 연결 · 프레임 대기',stale:'새 프레임 없음 · 마지막 영상',closed:'영상 채널 끊김',off:'비전 채널 없음',connecting:'영상 연결 중'})[vision]??'영상 연결 중';
   const mode=fresh?(MODE_NAMES[store.missionMode]??store.missionMode??'미수신'):'현재 모드 확인 불가';
-  const safety=fresh?(store.safetyLatched?'안전 잠금 · 이동 금지':'잠금 해제 상태 수신 · 이동 허가 아님'):'현재 안전 상태 확인 불가';
+  const safety=fresh&&store.deviceTelemetry?.safetyLatched!=null?(store.safetyLatched?'안전 잠금 · 이동 금지':'잠금 해제 상태 수신 · 이동 허가 아님'):'현재 안전 상태 확인 불가';
   this.guardReadiness.replaceChildren(this.facts([['관제 서버',store.live?'연결됨 · 로봇 연결과 별개':'미연결 · 웹 미리보기'],['본체 상태',body],['카메라 검출 영상',camera],['현재 운용 모드',mode],['안전 래치',safety]]));
  }
  // 운용 모드 전환 버튼 (FR-4.7 · FR-11.3). ⚠️ **지금 모드는 누를 수 없게 둔다** —
@@ -652,7 +670,7 @@ export class OperationalPanels {
    ['상태 수신',received],
    ['운용 모드',store.missionMode?(MODE_NAMES[store.missionMode]??store.missionMode):'미수신 — 판단 규칙을 알 수 없음'],
    ['FSM · 온보드',t?(store.fsmState||'기동 전')+' · 온보드 '+(t.state||'—'):'미수신'],
-   ['안전 래치',t?(t.safetyLatched?'걸림':'해제됨'):'미수신'],
+   ['안전 래치',t?(t.safetyLatched==null?'미수신':t.safetyLatched?'걸림':'해제됨'):'미수신'],
    ['서비스 모드',!t?'미수신':svc===null?'모름 · 펌웨어가 알리지 않음':svc?'켜짐 · 루프 워치독 동작 중':'꺼짐']]));
   this.serviceButton.textContent=svc===true?'서비스 모드 해제 — 워치독 끄기':'서비스 모드 진입 — 패치용 워치독';
  }
@@ -685,7 +703,11 @@ export class OperationalPanels {
  }
  settings(){
   const store=this.store;
-  this.container.append(this.el('nav',{class:'op-subnav','aria-label':'설정 항목'},[['display','화면 · 정책'],['badges','사원증'],['accounts','사용자 · 권한'],['audit','감사 기록']].map(([id,label])=>this.button(label,()=>{this.settingsSection=id;this.render('settings');this.container.querySelector('[data-settings="'+id+'"]').focus()},{'data-settings':id,'aria-pressed':id===this.settingsSection,class:'op-button'+(id===this.settingsSection?' selected':'')}))));
+  this.container.append(this.el('nav',{class:'op-subnav','aria-label':'설정 항목'},[['display','화면 · 정책'],['badges','사원증 · 준비 중'],['accounts','사용자 · 권한 · 준비 중'],['audit','감사 기록 · 준비 중']].map(([id,label])=>this.button(label,()=>{this.settingsSection=id;this.render('settings');this.container.querySelector('[data-settings="'+id+'"]').focus()},{'data-settings':id,'aria-pressed':id===this.settingsSection,class:'op-button'+(id===this.settingsSection?' selected':'')}))));
+  const nav=this.container.querySelector('.op-subnav');
+  const management=this.el('details',{class:'op-management-menu',...(this.settingsSection!=='display'?{open:''}:{})},this.el('summary',{},'관리 기능 · 준비 중'));
+  for(const button of nav.querySelectorAll('[data-settings]'))if(button.dataset.settings!=='display')management.append(button);
+  nav.append(management);
   if(this.settingsSection!=='display'){this.managementPreview();return}
   this.container.append(this.section('화면 데이터 · 시연 권한',this.note('아래 역할은 UI 흐름을 시험하는 선택입니다. 계정 로그인이나 실제 접근 제어가 아닙니다.'),this.el('div',{class:'op-form-grid'},this.field('표시 데이터',this.select('표시 데이터',[['demo','예시 데이터 표시'],['real','실제 데이터 대기']],store.demo?'demo':'real',value=>store.setDemo(value==='demo'))),this.field('시연 역할',this.select('시연 역할',[['operator','운영자 · 시연'],['reviewer','검토자 · 시연'],['technician','기술자 · 시연']],store.role,value=>store.setRole(value)))),this.el('div',{class:'op-toolbar'},this.button(store.stale?'예시 수신 상태 복구':'예시 수신 만료 시험',()=>store.setStale(!store.stale),{disabled:!store.demo}),this.button('웹 예시 정지 잠금 초기화',()=>store.clearPreviewStop(),{disabled:!store.estop})),this.note('복구·역할 변경·정지 잠금 초기화 후에는 자동으로 움직이지 않습니다. 실물 안전 잠금은 이 화면에서 해제할 수 없습니다.','warning')));
   this.container.append(this.section('구역 · 점검 정책',this.note('순찰 순서, 구역 위치와 공장 모드의 안전모·조끼·위험물 점검 기준을 함께 설정합니다.'),this.button('구역 · 동선에서 설정',()=>this.onNavigate('zones'),{class:'op-button primary'})));
@@ -694,10 +716,10 @@ export class OperationalPanels {
   const p=store.policy,v=(key,fallback)=>p?.[key]??fallback;
   const led=level=>p?.led?.[{L0:'l0_patrol',L1:'l1_observe',L2:'l2_auth_request',L3:'l3_alarm',F:'failsafe'}[level]];
   const auth='인증 '+v('auth_timeout_s',30)+'초 초과 / '+v('auth_max_attempts',2)+'회 실패'+(p?.auth_require_both?' · 암구호 뒤 사원증까지 확인':'')+(p?.auth_verdict_grace_s?' · 발화 판정 대기 1회 '+p.auth_verdict_grace_s+'초 유예':'');
-  this.container.append(this.section('대응 단계 · 안전 해제 구분',this.el('ol',{class:'op-escalation'},[
+  this.container.append(this.details('대응 단계 · 안전 해제 상세',this.el('ol',{class:'op-escalation'},[
    ['L0','평상 단계','L1에서 사람 미검출 '+v('target_lost_timeout_s',5)+'초면 L0 복귀'],['L1','대상 관찰',v('detect_window_ms',300)+'ms 내 '+v('detect_hits_required',3)+'회 검출 (경비: 정렬 후 고개를 든 순간부터) · 미인증 '+v('l1_to_l2_hold_s',10)+'초면 L2'],['L2','인증 대응','미검출 '+v('target_lost_timeout_s',5)+'초 / '+auth+' 시 L3 · 인증 유효 '+v('auth_session_valid_s',60)+'초'],['L3','관리자 판단 필요','관리자 확인과 조치로 해제 · PPE 판정과 별개'+(p?.l3_warning?' · 음성 경고 「'+p.l3_warning+'」':'')],['F','안전 잠금','원인 확인 → RESET_SAFE → 래치 해제 보고 확인']
   ].map(([level,title,detail])=>this.el('li',{},this.el('span',{class:'op-level'},level),this.el('div',{},this.el('strong',{},title+(led(level)?' · 눈 '+led(level):'')),this.el('p',{},detail))))),this.note((p?'관제 서버가 기동 때 읽은 config.yaml 값을 읽기 전용으로 표시합니다.':'서버 설정값 미수신 — 설계 기준값을 표시합니다. 실제 값과 다를 수 있습니다.')+' F 이전에 L3였다면 F 해제 뒤 L3가 유지됩니다. 사건 검토 저장은 두 잠금을 모두 해제하지 않습니다.',p?'':'warning')));
-  this.container.append(this.section('연결과 구현 기준',this.facts([['실제 로봇',store.live?'관제 서버 연결됨 · '+(store.robots.length>1?store.robots.length+'대 ('+store.robots.map(id=>store.robotName(id)).join(', ')+') · 비상정지는 고른 로봇에만':'로봇 상태는 제어 · 장치 화면에서'):'연결 안 됨'],['구역 · 동선','설정 서버 저장 · 다음 로봇 서버 시작에 적용'],['사원증 관리','등록 화면 미구현 · 기존 인증 기능과 별개'],['저장 범위','구역 계획: 서버 / 작성 중 초안·예시 검토: 브라우저']])));
+  this.container.append(this.details('연결과 저장 상세',this.facts([['실제 로봇',store.live?'관제 서버 연결됨 · '+(store.robots.length>1?store.robots.length+'대 ('+store.robots.map(id=>store.robotName(id)).join(', ')+') · 비상정지는 고른 로봇에만':'로봇 상태는 제어 · 장치 화면에서'):'연결 안 됨'],['구역 · 동선','설정 서버 저장 · 다음 로봇 서버 시작에 적용'],['사원증 관리','등록 화면 미구현 · 기존 인증 기능과 별개'],['저장 범위','구역 계획: 서버 / 작성 중 초안·예시 검토: 브라우저']])));
  }
  managementPreview(){
   if(this.settingsSection==='badges'){
@@ -726,5 +748,5 @@ export class OperationalPanels {
   const link=this.el('a',{href:url,download:name});this.document.body.append(link);link.click();link.remove();
   window.setTimeout(()=>window.URL.revokeObjectURL(url),1000);
  }
- dispose(){this.clearVoicePoll();this.store.release('패널 종료');this.document.removeEventListener('keydown',this.manualKeyDown,true);this.document.removeEventListener('keyup',this.manualKeyUp,true);this.document.removeEventListener('focusin',this.manualFocus);this.document.defaultView.removeEventListener('blur',this.manualBlur);this.manualPressedKeys.clear();for(const url of this.urls)this.document.defaultView.URL.revokeObjectURL(url);this.urls.clear()}
+ dispose(){this.controlMinimap?.dispose();this.routePlanner.dispose();this.clearVoicePoll();this.store.release('패널 종료');this.document.removeEventListener('keydown',this.manualKeyDown,true);this.document.removeEventListener('keyup',this.manualKeyUp,true);this.document.removeEventListener('focusin',this.manualFocus);this.document.defaultView.removeEventListener('blur',this.manualBlur);this.manualPressedKeys.clear();for(const url of this.urls)this.document.defaultView.URL.revokeObjectURL(url);this.urls.clear()}
 }
