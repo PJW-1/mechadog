@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from host.behavior.commander import Commander
+from host.behavior.live_nav import NavParams
 from host.behavior.patrol import (
     FSM_STATE_FOR,
     DriveParams,
@@ -97,6 +98,8 @@ def open_room() -> OccupancyGrid:
 
 
 def build(**overrides: object) -> PatrolController:
+    # 기존 관문 회귀 시험은 명시적으로 AV를 끈다. AV 시험은 별도 생성한다.
+    overrides.setdefault("nav_params", NavParams(relaxed_follow=False))
     ready = overrides.pop("ready", True)
     grid = overrides.pop("grid", None) or open_room()
     zones = ZoneStore(("A", "B", "C"))

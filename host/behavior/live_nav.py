@@ -18,6 +18,7 @@ from host.slam.scan_match import Pose
 
 @dataclass(frozen=True)
 class NavParams:
+    relaxed_follow: bool = True
     route_direct: bool = True
     route_direct_stop_ms: int = 3000
     live_clear_scans: int = 3
@@ -230,6 +231,36 @@ class LocalScan:
             if abs(wrap_pi(a - heading)) <= math.radians(self.params.local_fan_deg)
         ]
         return min(distances) if distances else None
+
+    def open_heading(self, target: float) -> float | None:
+        """몸 반경 15cm + 여유 5cm로 35cm 이동 가능한 가장 목표에 가까운 방위."""
+        if not self.points:
+            return None
+        count = round(360 / self.params.gap_bin_deg)
+        step = 2 * math.pi / count
+        observed = {round(a / step) % count for a, _ in self.points}
+        angles, distances = np.array(self.points).T
+        guard = math.atan2(0.20, 0.35)
+        candidates = [wrap_pi(target)] + [
+            wrap_pi(math.radians(a)) for a in np.arange(-180, 180, self.params.gap_bin_deg)
+        ]
+        candidates.sort(key=lambda a: abs(wrap_pi(a - target)))
+        for heading in candidates:
+            # 한 바퀴 조립은 약 330도에서 끝난다. 미관측은 해당 방향만 닫는다.
+            required = {
+                round((heading + offset) / step) % count
+                for offset in np.arange(-guard, guard + step, step)
+            }
+            if not required <= observed:
+                continue
+            along = distances * np.cos(angles - heading)
+            cross = distances * np.sin(angles - heading)
+            # 시작 원판과 겹친 옆/뒤 반사도 멀어지는 방향의 출발을 막지는 않는다.
+            hits = (along > 1e-6) & (np.abs(cross) <= 0.20)
+            contact = along[hits] - np.sqrt(np.maximum(0.0, 0.20**2 - cross[hits] ** 2))
+            if not contact.size or contact.min() >= 0.35 - 1e-9:
+                return heading
+        return None
 
     def corridor(
         self,

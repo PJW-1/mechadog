@@ -466,6 +466,13 @@ class PatrolController:
     _route_dwell_until_ms: int | None = None
     _route_direct_stopped_ms: int | None = None
     _route_direct_detour_start: tuple[float, float] | None = None
+    _relaxed_leg_start: tuple[float, float] = (0.0, 0.0)
+    _relaxed_distance: float = math.inf
+    _relaxed_blocked_reported: bool = False
+    _relaxed_escape_turn: bool = False
+    _last_verified_pose_ms: int | None = None
+    _relaxed_scan: LocalScan = field(init=False)
+    _relaxed_scan_yaw: float = 0.0
     _now_ms: int = 0
     _global_prior_result: MatchResult | None = None
     #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
@@ -513,6 +520,7 @@ class PatrolController:
         self._blockages = BlockageMemory(self.nav_params)
         self._live_clear = LiveClear(self.nav_params)
         self._local_scan = LocalScan(self.nav_params)
+        self._relaxed_scan = LocalScan(self.nav_params)
         static = inflate(self.grid, self.plan_params)
         self._blocked = static
         self._body_blocked = body_collision_mask(self.grid, self.plan_params)
@@ -720,6 +728,8 @@ class PatrolController:
             return
         self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
         self._last_pose_ms = now_ms
+        if self.pose_verified:
+            self._last_verified_pose_ms = now_ms
         # 앵커는 **신선한** IMU 일 때만 — 끊긴 IMU 의 옛 값을 묶어 두면 재개 때 그사이 회전
         # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (Codex 검토 2 P1).
         self._imu_anchor = self.safety.yaw_rad if self._imu_is_fresh(now_ms) else None
@@ -782,6 +792,9 @@ class PatrolController:
         )
         rejected = self.scan_gate.check(scan, now_ms)
         self._local_scan.clear_allowed = rejected is None
+        if rejected is None:
+            self._relaxed_scan.observe(scan, now_ms, self.range_m)
+            self._relaxed_scan_yaw = self._steering_yaw()
         self._local_scan_pose = (*self.pose[:2], self._steering_yaw())
         # 빈 전문/범위 밖 점만 있는 전문은 관측을 복구하지 않는다.
         if rejected is None and any(
@@ -1194,18 +1207,22 @@ class PatrolController:
         """동선과 첫 접근을 검증하고 직접 추종 또는 기존 goto로 예약한다."""
         if self.phase is Phase.HALTED or self.safety.latched:
             return False, "안전 정지를 해제한 뒤 동선을 시작해야 한다"
-        if self.pose_stale(now_ms) or (
-            self._own_localization and not (self._pose_verified or self.pose_seeded)
-        ):
+        located = (
+            self._relaxed_pose_available(now_ms)
+            if self.nav_params.relaxed_follow
+            else not self.pose_stale(now_ms)
+            and (not self._own_localization or self._pose_verified or self.pose_seeded)
+        )
+        if not located:
             return False, "로봇이 아직 자기 위치를 확인하지 못했다 — 위치를 먼저 잡아야 한다"
         validation = validate_route(route, self.navigation_grid, self.plan_params)
         if not validation["valid"]:
             return False, "동선이 벽·미관측 공간·로봇 여유 반경을 지난다 — 지점을 고쳐야 한다"
         first = route.points[0]
-        if self.nav_params.route_direct:
+        if self.nav_params.relaxed_follow or self.nav_params.route_direct:
             # 현재→첫 점도 직선으로 갈 수 있어야 한다. 기억/동적 마스크는
             # 미리보기의 저장 지도 검증에 더하지 않고 실시간 거리로 다룬다.
-            if not segment_clear(
+            if not self.nav_params.relaxed_follow and not segment_clear(
                 self.navigation_grid,
                 inflate(self.navigation_grid, self.plan_params)
                 | body_collision_mask(self.navigation_grid, self.plan_params),
@@ -1237,12 +1254,16 @@ class PatrolController:
         self._route_dwell_until_ms = None
         self._route_direct_stopped_ms = None
         self._route_direct_detour_start = None
+        self._relaxed_leg_start = self.pose[:2]
+        self._relaxed_distance = math.inf
+        self._relaxed_blocked_reported = False
         self._now_ms = now_ms
         self.commander.halt()
         return True, f"동선 ‘{route.name}’의 {len(route.points)}개 지점을 차례로 주행한다"
 
     def cancel_route(self, reason: str = "stopped", *, hold: bool = True) -> None:
         """동선과 대기를 취소한다. 완료·막힘도 자동 구역 순찰로 흘러가지 않는다."""
+        self._relaxed_escape_turn = False
         self._avoidance = None
         self._recovery = None
         self._patrol_wait = self._returning_home = False
@@ -1277,7 +1298,9 @@ class PatrolController:
 
     def _advance_route_arrival(self) -> None:
         point = self._route_point()
-        if math.dist(self.pose[:2], (point.x, point.y)) >= self.drive.arrival_radius_m:
+        if not self._relaxed_route and (
+            math.dist(self.pose[:2], (point.x, point.y)) >= self.drive.arrival_radius_m
+        ):
             # 경보·측위 복구 뒤 다른 자리에 있으면 먼저 같은 지점으로 다시 접근한다.
             self._route_phase = "moving"
             self._route_dwell_until_ms = None
@@ -1339,6 +1362,9 @@ class PatrolController:
             self._route_cycle += 1
             self.skipped = frozenset()
             self._route_skipped_indices = frozenset()
+        self._relaxed_leg_start = (self._route_point().x, self._route_point().y)
+        self._relaxed_distance = math.inf
+        self._relaxed_blocked_reported = False
         self._route_index = index
         point = route.points[index]
         # 동적 막힘은 다음 지점도 정지·스캔·우회/건너뛰기로 처리한다.
@@ -1353,6 +1379,101 @@ class PatrolController:
         self._spinning = False
 
     @property
+    def _relaxed_route(self) -> bool:
+        return self.nav_params.relaxed_follow and self.route_active and not self._returning_home
+
+    def _relaxed_pose_available(self, now_ms: int) -> bool:
+        verified = self._last_verified_pose_ms
+        return (
+            self._last_pose_ms is not None
+            and verified is not None
+            and 0 <= now_ms - verified <= 2000
+        )
+
+    def _follow_relaxed(self) -> None:
+        """동선만 단순 추종한다. 안전/측위 외에는 복구 관문을 열지 않는다."""
+        self._avoidance = self._recovery = None
+        self._needs_escape = self._replan_stop_required = False
+        scan = self._relaxed_scan
+        front = min_forward_distance(self._local_scan.points, math.radians(30))
+        stopped = front is not None and front <= 0.25
+        if stopped and self._route_direct_stopped_ms is None:
+            self._route_direct_stopped_ms = self._now_ms
+        if not stopped:
+            self._route_direct_stopped_ms = None
+            self._relaxed_escape_turn = False
+        if self._route_phase != "moving":
+            if stopped:
+                self.commander.halt()
+                self._local_decision("stop", "relaxed_front_stop", front)
+            else:
+                self._advance_route_arrival()
+            return
+        point = self._route_point()
+        target = (point.x, point.y)
+        distance = math.dist(self.pose[:2], target)
+        sx, sy = self._relaxed_leg_start
+        vx, vy = point.x - sx, point.y - sy
+        px, py = self.pose[0] - sx, self.pose[1] - sy
+        length = math.hypot(vx, vy)
+        passed = (
+            length > 1e-6
+            and px * vx + py * vy >= length * length
+            and abs(px * vy - py * vx) / length <= self.drive.arrival_radius_m
+            and distance > self._relaxed_distance
+        )
+        self._relaxed_distance = distance
+        if distance <= self.drive.arrival_radius_m or passed:
+            self._arrive(GOAL_LABEL)
+            return
+        self.plan = Plan(GOAL_LABEL, (self.pose[:2], target), distance, effective=target)
+        self.phase = Phase.MOVING
+        # 기울어진 스캔은 조향에 덮어쓰지 않는다. 마지막 정상 바퀴도 2초를 넘기면 정지.
+        max_age = self.nav_params.scan_max_age_ms if self._local_scan.clear_allowed else 2000
+        if scan.received_ms is None or not 0 <= self._now_ms - scan.received_ms <= max_age:
+            self.commander.halt()
+            self._route_direct_stopped_ms = None
+            self._local_decision("stop", "relaxed_scan_unavailable", front)
+            return
+        heading = math.atan2(point.y - self.pose[1], point.x - self.pose[0])
+        scan_yaw = self._relaxed_scan_yaw
+        chosen = scan.open_heading(wrap_pi(heading - scan_yaw))
+        if chosen is None:
+            self.commander.halt()
+            self._local_decision("stop", "relaxed_path_blocked", front)
+            count = round(360 / self.nav_params.gap_bin_deg)
+            covered = {round(a / (2 * math.pi / count)) % count for a, _ in scan.points}
+            if len(covered) >= 0.9 * count and not self._relaxed_blocked_reported:
+                self._navigation_event("path_blocked", message="길 막힘")
+                self._relaxed_blocked_reported = True
+            return
+        self._relaxed_blocked_reported = False
+        error = wrap_pi(scan_yaw + chosen - self._steering_yaw())
+        if stopped:
+            self.commander.halt()
+            self._local_decision("stop", "relaxed_front_stop", front)
+            since = self._route_direct_stopped_ms
+            actual_stop = self._stopped_since_ms
+            if not self._relaxed_escape_turn and (
+                since is None
+                or actual_stop is None
+                or self._last_sent_moving
+                or self._now_ms - max(since, actual_stop) < 3000
+            ):
+                return
+            self._relaxed_escape_turn = True
+            self.commander.drive(0.0, math.copysign(abs(self.drive.spin_turn_deg), error))
+            self._local_decision("turn", "relaxed_escape_turn", front)
+            return
+        scale = min(1.0, abs(error) / self.drive.reverse_threshold_rad)
+        spin = abs(error) > math.radians(35)
+        self.commander.drive(
+            0.0 if spin else self.drive.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
+            math.copysign(self.drive.spin_turn_deg if spin else self.drive.turn_deg * scale, error),
+        )
+        self._local_decision("turn" if spin else "clear", "relaxed_follow", front)
+
+    @property
     def _route_direct_moving(self) -> bool:
         return (
             self.nav_params.route_direct
@@ -1364,6 +1485,10 @@ class PatrolController:
 
     def _route_direct_obstacle_stop(self) -> None:
         """장애물 정지만 계시한다. 측위/스캔/안전 상실은 회피 자격이 아니다."""
+        if self._relaxed_route:
+            self._route_direct_stopped_ms = None
+            self._relaxed_escape_turn = False
+            return
         if self._own_localization and not (self._pose_verified or self.pose_seeded):
             self._route_direct_stopped_ms = None
             return
@@ -1784,6 +1909,7 @@ class PatrolController:
     def _mark_verified(self) -> None:
         """자세가 전역 확인됐다 — 지도 적분을 허용하고 되돌릴 기준점을 새로 찍는다."""
         self._pose_verified = True
+        self._last_verified_pose_ms = self._last_pose_ms
         if self._zone_hint is not None:
             LOG.info("zone_hint_resolved", zone=self._zone_hint[0])
             self._zone_hint = None
@@ -2004,6 +2130,8 @@ class PatrolController:
             return
         self._local_scan_pose = (*self.pose[:2], self._steering_yaw())
         self._projected_scan_id = self._local_scan.last_id
+        if self._relaxed_scan.last_id == self._local_scan.last_id:
+            self._relaxed_scan_yaw = self._local_scan_pose[2]
         now_ms = self._scan_now_ms
         if self.pose_verified and not self.pose_stale(now_ms):
             free = self._blockages.observe(self.grid, self.pose, scan, now_ms)
@@ -2605,6 +2733,7 @@ class PatrolController:
         self._avoidance = None
         self._recovery = None
         self._route_direct_stopped_ms = None
+        self._relaxed_escape_turn = False
         self._local_decision("stop", "estop", self._local_scan.distance())
         self._spinning = False
         self.stats.estops += 1
@@ -2655,7 +2784,8 @@ class PatrolController:
         주기 전문은 호출자가 `commander.tick(now_ms)` 로 따로 받는다.
         """
         self._now_ms = now_ms
-        self.expire_recovery(now_ms)
+        if not self._relaxed_route:
+            self.expire_recovery(now_ms)
         urgent = self._guard(now_ms)
         if urgent:
             return urgent
@@ -2701,7 +2831,8 @@ class PatrolController:
         여기서 그것들을 다시 판정하면 상태 알림이 둘이 되어 서로 덮는다.
         """
         self._now_ms = now_ms
-        self.expire_recovery(now_ms)
+        if not self._relaxed_route:
+            self.expire_recovery(now_ms)
         if self.phase in (Phase.IDLE, Phase.HALTED):
             self.commander.halt()
             self._route_direct_stopped_ms = None
@@ -2785,6 +2916,14 @@ class PatrolController:
         self.commander.halt()
 
     def _guard_localization(self, now_ms: int) -> tuple[str, ...]:
+        if self._relaxed_route:
+            self._avoidance = self._recovery = None
+            if not self._relaxed_pose_available(now_ms):
+                self._relaxed_escape_turn = False
+                self._lose("relaxed_pose_stale")
+            elif self.phase is Phase.LOST:
+                self.phase = Phase.PLANNING
+            return ()
         if not self._local_scan.clear_allowed:
             self._lose("scan_rejected")
             return ()
@@ -2882,6 +3021,9 @@ class PatrolController:
 
     # ── 순찰 진행 ─────────────────────────────────────────────
     def _advance(self) -> None:
+        if self._relaxed_route:
+            self._follow_relaxed()
+            return
         if (
             self._replan_stop_required
             or self.phase is Phase.LOST
@@ -3290,9 +3432,16 @@ class PatrolController:
             return (
                 self.phase is Phase.INSPECT
                 and self._inspection_zone == label
-                and not self.pose_stale(now_ms)
+                and (
+                    self._relaxed_pose_available(now_ms)
+                    if self._relaxed_route
+                    else not self.pose_stale(now_ms)
+                )
                 and not self.safety.obstacle_active
-                and math.dist(self.pose[:2], (point.x, point.y)) < self.drive.arrival_radius_m
+                and (
+                    self._relaxed_route
+                    or math.dist(self.pose[:2], (point.x, point.y)) < self.drive.arrival_radius_m
+                )
                 and abs(self._route_aim_error()) <= self.drive.heading_tolerance_rad
             )
         return (

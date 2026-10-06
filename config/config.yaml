@@ -8,6 +8,7 @@
 profile: dev            # dev | prod
 
 nav:
+  relaxed_follow: true  # AV: 최신 검증 위치(최대 2초) + LiDAR 빈 방향 추종. false면 기존 경로.
   # AR: 미리보기 통과 동선은 다음 지점으로 직접 추종. false면 기존 A*/막힘 복구 사용.
   route_direct: true
   route_direct_stop_ms: 3000  # 실제 장애물 STOP이 3초 지속될 때만 AO 통로/우회로 전환
