@@ -49,7 +49,9 @@ def test_recorder_writes_events_in_order_with_manifest(tmp_path: Path) -> None:
     assert events[2]["raw_b64"] == "/wA=", "규약 밖 바이트도 버리지 않는다"
     assert summary["written"] == 3 and summary["dropped"] == 0 and summary["failed"] is None
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["device"] == "x" and "started_mono_ms" in manifest
+    assert manifest["device"] == "x" and "started_clock_ms" in manifest
+    assert "started_mono_ms" not in manifest
+    assert manifest["clock_domain"] == "host system_clock_ms (epoch wall clock)"
     assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))["written"] == 3
 
 
