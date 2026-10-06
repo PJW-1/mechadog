@@ -9,6 +9,9 @@
         --cache <저장소 밖>/cache.json
     # ② 캐시와 세션 라벨로 변형별 표를 낸다 (모델 불필요)
     python tools/ppe/ablation.py report <세션>/session.json --cache <저장소 밖>/cache.json
+    # ③ 모델만 바꿔 뽑은 캐시 여러 개를 base 설정으로 맞대어 센다 (모델 불필요)
+    python tools/ppe/ablation.py compare <세션>/session.json --plan <세션>/plan.json \\
+        --cache v4=<저장소 밖>/cache_v4.json --cache v5=<저장소 밖>/cache_v5.json
 
 캐시
     사람 검출(COCO, 설정 conf)은 한 번, PPE 검출은 크롭 여유(`--pads`)·축소 배율(`--scales`)마다
@@ -526,6 +529,156 @@ def agreement(a: dict[str, Any], b: dict[str, Any]) -> float:
     return sum(x["states"] == y["states"] for x, y in pairs) / len(pairs) if pairs else 0.0
 
 
+# ── 모델 비교 ───────────────────────────────────────────────
+
+CLIP_REASON = "머리 클리핑"
+STATE_ORDER = (STATE_OK, STATE_VIOLATION, STATE_UNKNOWN)
+
+
+def segment_tally(session: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """구간별 사람 판정 집계. 머리 클리핑 확인불가는 `clipped` 로 따로 센다(`unknown` 에 포함).
+
+    기대값은 이벤트에 기록된 `expected` 를 쓴다. 구간 밖 프레임은 뺀다.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for event in session["events"]:
+        key = event.get("segment")
+        if not key:
+            continue
+        expected = event["expected"]
+        slot = out.setdefault(
+            key,
+            {
+                "expected": expected,
+                "count": 0,
+                "right": 0,
+                "wrong": 0,
+                "unknown": 0,
+                "clipped": 0,
+                "alarms": 0,
+            },
+        )
+        states = event["states"]
+        for state, reason in zip(
+            states, _align_reasons(states, event.get("reasons", [])), strict=True
+        ):
+            slot["count"] += 1
+            if state == STATE_UNKNOWN:
+                slot["unknown"] += 1
+                slot["clipped"] += reason == CLIP_REASON
+            elif state == expected:
+                slot["right"] += 1
+            else:
+                slot["wrong"] += 1
+        slot["alarms"] += bool(event.get("confirmed"))
+    return out
+
+
+def paired_tally(
+    a: dict[str, Any], b: dict[str, Any]
+) -> dict[str, collections.Counter[tuple[str, str]]]:
+    """같은 사람 검출로 판정한 두 세션을 사람 단위로 맞대어 (a 판정, b 판정) 쌍을 센다.
+
+    사람 검출(COCO)이 같아야 사람 순서가 맞는다. 프레임마다 사람 수가 다르면 거부한다.
+    """
+    out: dict[str, collections.Counter[tuple[str, str]]] = {}
+    for x, y in zip(a["events"], b["events"], strict=True):
+        if x["tag"] != y["tag"] or len(x["states"]) != len(y["states"]):
+            raise ValueError(f"프레임 {x['tag']} 의 사람 수가 다르다 — 같은 사람 검출인지 본다")
+        key = x.get("segment")
+        if not key:
+            continue
+        out.setdefault(key, collections.Counter()).update(
+            zip(x["states"], y["states"], strict=True)
+        )
+    return out
+
+
+def compare_lines(
+    session: dict[str, Any], replays: dict[str, dict[str, Any]], cache_meta: dict[str, Any]
+) -> list[str]:
+    """기록 세션과 모델별 base 재추론 → 구간 집계 표와 사람 단위 맞대기 표."""
+    lines = ["## 모델별 구간 집계 (base 설정, 같은 사람 검출)", ""]
+    for name, replayed in replays.items():
+        meta = cache_meta[name]
+        lines.append(
+            f"- {name}: 기록 판정과의 프레임별 판정 일치율 {agreement(replayed, session):.1%}"
+            f" · 프레임 {meta.get('frames', '-')} · PPE conf 하한 {meta.get('conf_floor', '-')}"
+        )
+    lines += [
+        "",
+        "| 구간 | 기대 | 모델 | 판정 | 일치 | 불일치 | 확인불가 | 머리 클리핑 | 판정 가능률 "
+        "| 실효 성공률 | 클리핑 제외 실효 성공률 | 확정 경보 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    tallies = {"기록": segment_tally(session)}
+    tallies.update({name: segment_tally(replayed) for name, replayed in replays.items()})
+    for key in tallies["기록"]:
+        for name, tally in tallies.items():
+            r = tally[key]
+            unclipped = r["count"] - r["clipped"]
+            lines.append(
+                f"| {key} | {r['expected']} | {name} | {r['count']} | {r['right']} | "
+                f"{r['wrong']} | {r['unknown']} | {r['clipped']} | "
+                f"{_pct((r['right'] + r['wrong']) / r['count'] if r['count'] else None)} | "
+                f"{_pct(r['right'] / r['count'] if r['count'] else None)} | "
+                f"{_pct(r['right'] / unclipped if unclipped else None)} | {r['alarms']} |"
+            )
+    names = list(replays)
+    for i, first in enumerate(names):
+        for second in names[i + 1 :]:
+            pairs = paired_tally(replays[first], replays[second])
+            lines += [
+                "",
+                f"## 사람 단위 맞대기 ({first} 판정 → {second} 판정)",
+                "",
+                f"| 구간 | {first} 판정 | "
+                + " | ".join(f"{second} {state}" for state in STATE_ORDER)
+                + " |",
+                "|---|---|---|---|---|",
+            ]
+            for key, counter in pairs.items():
+                for row in STATE_ORDER:
+                    cells = " | ".join(str(counter.get((row, col), 0)) for col in STATE_ORDER)
+                    lines.append(f"| {key} | {row} | {cells} |")
+    return lines
+
+
+def _named_path(text: str) -> tuple[str, str]:
+    name, sep, path = text.partition("=")
+    if not sep or not name or not path:
+        raise argparse.ArgumentTypeError(f"이름=경로 꼴이어야 한다: {text!r}")
+    return name, path
+
+
+def run_compare(args: argparse.Namespace) -> int:
+    session = json.loads(Path(args.session).read_text(encoding="utf-8"))
+    orientations = _plan_orientations(Path(args.plan))
+    meta = {k: v for k, v in session.items() if k not in ("events", "segments")}
+    replays: dict[str, dict[str, Any]] = {}
+    cache_meta: dict[str, dict[str, Any]] = {}
+    for name, path in args.cache:
+        cache = json.loads(Path(path).read_text(encoding="utf-8"))
+        cache_meta[name] = {"frames": len(cache["frames"]), **cache.get("meta", {})}
+        replays[name] = replay(
+            cache["frames"], session["events"], BASE, int(args.head_margin), orientations, meta
+        )
+    _write_text("\n".join(compare_lines(session, replays, cache_meta)) + "\n", args.out)
+    return 0
+
+
+def _write_text(text: str, out: str | None) -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="replace")
+    if out:
+        Path(out).write_text(text, encoding="utf-8")
+        print(f"표 {out}")
+    else:
+        print(text)
+
+
 # ── 추론 캐시 ───────────────────────────────────────────────
 
 
@@ -772,16 +925,7 @@ def run_report(args: argparse.Namespace) -> int:
         lines += table(rows, notes)
         lines += ["", "### 조건별 분해 — base 재추론", ""]
         lines += breakdown_table(base, plan)
-    text = "\n".join(lines) + "\n"
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(errors="replace")
-    if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"표 {args.out}")
-    else:
-        print(text)
+    _write_text("\n".join(lines) + "\n", args.out)
     return 0
 
 
@@ -806,8 +950,25 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--head-margin", type=int, default=8)
     report.add_argument("--out", help="Markdown 표를 쓸 파일")
 
+    compare = sub.add_parser(
+        "compare", help="모델별 캐시를 base 설정으로 맞대어 센다 (모델 불필요)"
+    )
+    compare.add_argument("session", help="ppe_live_check 의 session.json (라벨 구간)")
+    compare.add_argument(
+        "--cache",
+        type=_named_path,
+        action="append",
+        required=True,
+        metavar="이름=경로",
+        help="같은 프레임·같은 COCO 로 뽑은 infer 캐시. 두 개 이상이면 사람 단위로 맞댄다",
+    )
+    compare.add_argument("--plan", default=str(DEFAULT_ACCEPTANCE_PLAN), help="방향 목록용 계획")
+    compare.add_argument("--head-margin", type=int, default=8)
+    compare.add_argument("--out", help="Markdown 표를 쓸 파일")
+
     args = parser.parse_args(argv)
-    return run_infer(args) if args.command == "infer" else run_report(args)
+    commands = {"infer": run_infer, "report": run_report, "compare": run_compare}
+    return commands[args.command](args)
 
 
 if __name__ == "__main__":
