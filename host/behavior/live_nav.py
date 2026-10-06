@@ -251,7 +251,9 @@ class LocalScan:
                 round((heading + offset) / step) % count
                 for offset in np.arange(-guard, guard + step, step)
             }
-            if not required <= observed:
+            # 2026-10-06 실기: 라이다 한 바퀴의 빈 30°(미관측)가 정면 근처에 오면 목표 방향을 버리고
+            # 옆 방향을 골라 한쪽으로 계속 휘었다. 구간의 절반 이상이 관측됐으면 막힘 판정은 실제 반사로만 한다.
+            if len(required & observed) * 2 < len(required):
                 continue
             along = distances * np.cos(angles - heading)
             cross = distances * np.sin(angles - heading)
