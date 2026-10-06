@@ -14,12 +14,23 @@
 
 import itertools
 import json
+import random
 
 import pytest
 from conftest import FakeClock
 
 from host.common import protocol as p
-from tools.mock.mock_mechdog import Faults, MockRobot, _describe, build_parser, load_config
+from tools.mock.mock_mechdog import (
+    DelayLine,
+    Faults,
+    MockRobot,
+    _describe,
+    build_parser,
+    delay_rng,
+    deliver,
+    faults_from_args,
+    load_config,
+)
 
 START_MS = 1_756_800_000_000
 
@@ -328,6 +339,78 @@ def test_fake_clock_matches_the_mock_time_base() -> None:
     assert FakeClock()() == START_MS
 
 
+def test_delay_line_without_delay_releases_in_arrival_order() -> None:
+    """지연이 0 이면 대기열을 거쳐도 지금과 똑같이 도착 순서대로 바로 나온다."""
+    line: DelayLine[int] = DelayLine(0.0, 0.0, random.Random(1))
+    for i in range(3):
+        line.push(i, START_MS)
+    assert line.pop_ready(START_MS) == [0, 1, 2]
+    assert len(line) == 0
+
+
+def test_delay_line_holds_packets_until_their_release_time() -> None:
+    """고정 지연은 패킷마다 같은 시간만큼 늦춘다. 간격은 그대로다."""
+    line: DelayLine[str] = DelayLine(300.0, 0.0, random.Random(1))
+    line.push("a", START_MS)
+    line.push("b", START_MS + 100)
+    assert line.pop_ready(START_MS + 299) == []
+    assert line.pop_ready(START_MS + 300) == ["a"]
+    assert line.pop_ready(START_MS + 399) == []
+    assert line.pop_ready(START_MS + 400) == ["b"]
+
+
+def test_jitter_is_reproducible_with_a_seed_and_can_reorder() -> None:
+    """흔들림이 송신 간격보다 크면 순서가 바뀐다. 그것이 UDP 이고, 씨앗이 같으면 똑같이 바뀐다."""
+
+    def run(seed: int) -> list[int]:
+        line: DelayLine[int] = DelayLine(50.0, 200.0, delay_rng(seed, "cmd"))
+        for i in range(20):
+            line.push(i, START_MS + i * 10)
+        return line.pop_ready(START_MS + 10_000)
+
+    first, second = run(7), run(7)
+    assert first == second
+    assert sorted(first) == list(range(20)), "지연은 패킷을 없애지 않는다"
+    assert first != list(range(20))
+
+
+def test_delay_streams_do_not_share_random_numbers() -> None:
+    """명령 쪽과 텔레메트리 쪽 흔들림은 서로의 난수열을 소비하지 않는다."""
+    assert delay_rng(42, "cmd").random() != delay_rng(42, "telemetry").random()
+    assert delay_rng(42, "cmd").random() == delay_rng(42, "cmd").random()
+
+
+def test_delay_rejects_negative_values() -> None:
+    with pytest.raises(ValueError):
+        DelayLine(-1.0, 0.0, random.Random(1))
+    with pytest.raises(ValueError):
+        DelayLine(0.0, -1.0, random.Random(1))
+
+
+def test_delayed_command_reaches_the_robot_only_after_the_delay(config: dict) -> None:
+    """명령 지연은 로봇이 명령을 받는 시각을 늦춘다. 그 전까지 래치는 풀리지 않는다."""
+    robot = _robot(config)
+    line: DelayLine[str] = DelayLine(300.0, 0.0, random.Random(1))
+    encoder = p.CommandEncoder(clock=lambda: START_MS)
+    line.push(encoder.reset_safe(), START_MS)
+
+    assert deliver(line, robot, START_MS + 299) == []
+    assert robot.state(START_MS + 299) == "FAILSAFE"
+    assert len(deliver(line, robot, START_MS + 300)) == 1
+    assert robot.state(START_MS + 300) != "FAILSAFE"
+
+
+def test_delay_options_leave_packet_loss_sequence_unchanged(config: dict) -> None:
+    """지연 옵션을 켜도 같은 씨앗의 유실 패턴은 그대로여야 기존 재현 스크립트가 산다."""
+
+    def drops(**extra: object) -> list[bool]:
+        robot = _robot(config, drop_rate=0.5, seed=42, **extra)
+        encoder = p.CommandEncoder(clock=lambda: START_MS)
+        return [robot.receive(encoder.stop(), START_MS) is None for _ in range(20)]
+
+    assert drops() == drops(cmd_delay_ms=300.0, cmd_jitter_ms=50.0, telemetry_delay_ms=80.0)
+
+
 # ══════════════════════════════════════════════════════════════
 #  CLI 배선 — 소켓 루프는 시험 대상이 아니지만 옵션 연결은 맞다
 # ══════════════════════════════════════════════════════════════
@@ -376,6 +459,55 @@ def test_cli_defaults_are_a_healthy_robot() -> None:
     args = build_parser().parse_args([])
     assert (args.drop_rate, args.corrupt_rate, args.battery_drain) == (0.0, 0.0, 0.0)
     assert (args.tip_at, args.obstacle_at, args.go_silent, args.seed) == (None,) * 4
+
+
+def test_cli_delay_options_map_onto_faults() -> None:
+    """지연 옵션도 이름이 바뀌면 재현 스크립트가 조용히 무력화된다."""
+    args = build_parser().parse_args(
+        [
+            "--cmd-delay",
+            "300",
+            "--cmd-jitter",
+            "50",
+            "--telemetry-delay",
+            "120",
+            "--telemetry-jitter",
+            "30",
+            "--seed",
+            "3",
+        ]
+    )
+    faults = faults_from_args(args)
+    assert (
+        faults.cmd_delay_ms,
+        faults.cmd_jitter_ms,
+        faults.telemetry_delay_ms,
+        faults.telemetry_jitter_ms,
+        faults.seed,
+    ) == (300.0, 50.0, 120.0, 30.0, 3)
+
+
+def test_cli_faults_from_args_keeps_every_existing_option() -> None:
+    """main 이 쓰는 변환이 기존 옵션을 하나도 빠뜨리지 않는다."""
+    args = build_parser().parse_args(
+        ["--drop-rate", "0.25", "--corrupt-rate", "0.1", "--battery-start", "7.4"]
+        + ["--battery-drain", "0.5", "--tip-at", "30", "--obstacle-at", "15"]
+        + ["--go-silent", "20", "--seed", "42"]
+    )
+    assert faults_from_args(args) == Faults(0.25, 0.1, 7.4, 0.5, 30.0, 15.0, 20.0, 42)
+
+
+def test_cli_defaults_have_no_delay() -> None:
+    assert faults_from_args(build_parser().parse_args([])) == Faults()
+
+
+@pytest.mark.parametrize(
+    "option", ["--cmd-delay", "--cmd-jitter", "--telemetry-delay", "--telemetry-jitter"]
+)
+def test_cli_rejects_negative_delay(option: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args([option, "-1"])
+    assert exc.value.code == 2
 
 
 def test_log_line_distinguishes_loss_discard_and_clamp(config: dict) -> None:

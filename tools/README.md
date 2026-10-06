@@ -41,7 +41,7 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 
 | 파일 | 설명 | 하드웨어 | 명령 |
 |---|---|---|---|
-| [mock_mechdog.py](mock/mock_mechdog.py) | 명령을 받고 텔레메트리를 응답하는 가상 로봇, 장애 주입 지원 | 불필요(이 도구 자체가 대역이다) | 읽기전용(명령을 받는 쪽) |
+| [mock_mechdog.py](mock/mock_mechdog.py) | 명령을 받고 텔레메트리를 응답하는 가상 로봇, 장애 주입(명령 유실·텔레메트리 손상·두절·양방향 지연과 흔들림·전도·장애물·저전압) 지원 | 불필요(이 도구 자체가 대역이다) | 읽기전용(명령을 받는 쪽) |
 | [mock_lidar.py](mock/mock_lidar.py) | UDP 라이다 스캔 프로토콜을 흉내내는 가상 중계 노드 | 불필요 | 읽기전용 |
 
 ## 실기 측정·점검(probe)
