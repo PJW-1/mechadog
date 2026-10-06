@@ -1169,7 +1169,23 @@ class Runtime:
             None if result is None else max(0, now_ms - result.completed_ms)
         )
         judgement["sentence"] = self._announce_situation(kind, judgement)
+        # ⚠️ **블랙박스가 없어도 이력에는 남긴다** (ADR-46 결정 4) — 사진 없는 사건 행이 된다.
         if self._blackbox is None:
+            self._remember(
+                lambda: incident_from_feed(
+                    {
+                        "event": kind,
+                        "ts_ms": now_ms,
+                        "state": self._behavior.state,
+                        "escalation": self._escalation.level.value,
+                        "mode": self._mission.mode,
+                        **judgement,
+                    },
+                    robot_id=self._device_id,
+                    mission_id=self._mission_run,
+                    zone_id=self._zone_inspector.zone,
+                )
+            )
             return
         try:
             entry = self._blackbox.record(
@@ -1184,8 +1200,21 @@ class Runtime:
                 mode=self._mission.mode,
                 now_ms=now_ms,
             )
-            if self._event_publisher is not None:
-                self._event_publisher(entry)
+        except Exception as exc:
+            LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
+            return
+        self._remember(
+            lambda: incident_from_entry(
+                entry,
+                robot_id=self._device_id,
+                mission_id=self._mission_run,
+                zone_id=self._zone_inspector.zone,
+            )
+        )
+        if self._event_publisher is None:
+            return
+        try:
+            self._event_publisher(entry)
         except Exception as exc:
             LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
 

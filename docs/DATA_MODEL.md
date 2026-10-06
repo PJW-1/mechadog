@@ -150,11 +150,16 @@ erDiagram
 | `person_fallen` | 쓰러짐이 확정됐다(의심 뒤 VLM «예» 연속) | `host/behavior/fall_monitor.py` |
 | `zone_reading` | 구역 도착 때 VLM 이 읽은 결과 | `host/behavior/zone_inspector.py` |
 | `hazard_notice` | 위험물 확인 가벼운 경고(검출기·VLM) | `host/behavior/zone_inspector.py` |
-| `path_blocked` | 통로 막힘. LiDAR 확정 또는 VLM 판독 | `host/behavior/path_cause.py` · `zone_inspector.py` |
+| `path_blocked` | 통로 막힘. LiDAR 확정 또는 VLM 판독, 동선 따라가기(`nav.relaxed_follow`) 정지 | `host/behavior/path_cause.py` · `zone_inspector.py` · `patrol.py` |
+| `obstacle_detour` | 장애물을 돌아 경로를 다시 짰다 | `host/behavior/patrol.py` |
+| `zone_skipped` | 막혀서 그 구역을 이번 사이클에서 건너뛰었다 | `host/behavior/patrol.py` |
+| `patrol_unavailable` | 갈 수 있는 구역이 없어 순찰을 이어 가지 못한다 | `host/behavior/patrol.py` |
 | `zone_changed` | 구역 안 넘어짐·무너짐 확정 | `host/behavior/zone_inspector.py` |
 | `PPE_VIOLATION` | 보호구 미착용 판정 | `host/behavior/ppe_judge.py` |
 | `PPE_UNDETERMINED` | 보호구 판정 불가 | `host/behavior/ppe_judge.py` |
 | `PPE_SETTLED` | 보호구 적합 또는 경고 뒤 복귀 | `host/behavior/ppe_judge.py` |
+
+`patrol.py` 의 항법 사건은 그 순간 카메라 프레임이 없으면 사진 없이 남고, 블랙박스가 꺼진 구성에서도 `blackbox_entry` 없이 DB 에 남는다.
 
 피드에만 뜨는 사건(그림이 없다):
 
