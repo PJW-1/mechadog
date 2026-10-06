@@ -1484,7 +1484,7 @@ class PatrolController:
                 self._relaxed_stuck = False
             prog = self._relaxed_progress
         if self._relaxed_stuck:
-            if front is None or front > 0.6:
+            if front is None or front > 0.45:
                 self._relaxed_stuck = False
                 self._relaxed_blocked_reported = False
                 self._relaxed_progress = (target, distance, self._now_ms)
@@ -1492,6 +1492,11 @@ class PatrolController:
             self.commander.halt()
             self._local_decision("stop", "relaxed_stuck_wait", front)
             return True
+        # 정면이 실제로 막혔을 때만 «길 막힘» — 문틀 앞에서 느려진 것을 막힘으로 보지 않는다
+        # (2026-10-06 실기: 침실 문 앞 정면 0.56m 에서 오판해 계속 대기).
+        if front is None or front > 0.35:
+            self._relaxed_progress = (target, min(distance, prog[1]), self._now_ms) if front is None or front > 0.45 else prog
+            return False
         if self._now_ms - prog[2] >= self.nav_params.relaxed_stuck_ms:
             self._relaxed_stuck = True
             self.commander.halt()
