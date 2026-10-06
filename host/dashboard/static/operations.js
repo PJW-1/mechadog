@@ -49,6 +49,7 @@ export function describeEvidence(name,payload){
  if(['obstacle_detour','zone_skipped','patrol_unavailable'].includes(name)){if(j.zone)rows.push(['구역',shown(j.zone)]);if(Number.isFinite(j.x)&&Number.isFinite(j.y))rows.push(['장애물 위치 (순찰 m)',shown(j.x)+', '+shown(j.y)]);rows.push(['심각도',j.severity==='low'?'낮음':'중간'],['사진',j.camera_available?'카메라 프레임 있음':'카메라 프레임 없음']);if(j.blockage_id!=null)rows.push(['장애물 묶음',shown(j.blockage_id)]);}
  let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
  if(name.startsWith('PPE_')&&j.state){ppe=({VIOLATION:'미착용',UNDETERMINED:'판정 불가',COMPLIANT:'착용 확인'}[j.state]??cleanText(j.state,40))+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
+ if(name==='PPE_SETTLED'&&j.rechecked===true&&j.reason==='착용 확인')ppe='정상 · 착용 확인';
  // VLM 이 판독한 쓰러짐(source:'vlm')에는 규칙 값이 없다 — 빈 행을 그리지 않는다.
  if(name==='person_fallen'||name==='fall_review_required'){
   for(const [label,key,unit] of [['가로/세로 비','aspect',''],['정지 시간','still_ms',' ms'],['확정 기준','confirm_ms',' ms'],['VLM 지연','latency_ms',' ms']])if(j[key]!=null)rows.push([label,shown(j[key])+unit]);

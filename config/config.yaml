@@ -8,6 +8,13 @@
 profile: dev            # dev | prod
 
 nav:
+  relaxed_detour_notice: false  # 우회 시작 알림. 목표 통로의 가까운 장애물도 있어야 한다.
+  relaxed_walk_detour: false  # AX: 0.7m 앞을 보고 보행 조향으로 상자를 우회한다.
+  relaxed_detour_distance_m: 0.9
+  relaxed_detour_angle_deg: 20
+  route_person_search: false  # search_deg가 있는 동선 정지점에서만 사람 탐색
+  route_search_pause_ms: 1000
+  route_search_turn_deg: 10
   relaxed_follow: true  # AV: 최신 검증 위치(최대 2초) + LiDAR 빈 방향 추종. false면 기존 경로.
   # AR: 미리보기 통과 동선은 다음 지점으로 직접 추종. false면 기존 A*/막힘 복구 사용.
   route_direct: true
@@ -100,6 +107,7 @@ mission:
   # 바꿀 수 있다 (FR-11.3). 전환은 L3·F 를 풀지 않는다 (FR-11.4).
 
 fsm:
+  hold_on_latched_alarm: false  # AX: 래치 L3 동안 정지, 관제 경보 확인 뒤 재개
   patrol_scan_interval_s: 10  # FR-2.4
   scan_duration_s: 3
   # 부호 주의 — 양수 pitch 는 앞이 «내려간다» (PROTOCOL 2절 · ROS REP-103). 그래서 «고개를
@@ -374,6 +382,13 @@ escalation:
   # PPE 위반 경고의 빨간 눈을 유지하는 시간 — 래치가 아니다, 지나면 확인 없이 L0 로 돌아간다
   # (ADR-42 결정 1). 경고 문장이 끝날 만큼 둔다.
   ppe_warning_hold_ms: 5000
+  ppe_recheck: false  # AX: 경고 후 같은 대상의 새 프레임에서 착용 재확인
+  ppe_recheck_max_warnings: 2
+
+# 착용 재확인 사건의 TF 카드 연결 지점. 트랙 배정 전에는 0(재생 없음).
+robot_sound:
+  tracks:
+    ppe_settled: 0
 
 # ── 인증 (FR-10) ──────────────────────────────────────────────
 auth:

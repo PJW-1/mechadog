@@ -24,9 +24,10 @@ class RoutePoint(BaseModel):
     y: float = Field(ge=-10000, le=10000)
     aim_deg: float | None = Field(default=None, ge=-180, le=180)
     dwell_s: float | None = Field(default=None, ge=0, le=3600)
+    search_deg: float | None = Field(default=None, ge=0, le=60)
     label: str | None = Field(default=None, max_length=60)
 
-    @field_validator("x", "y", "aim_deg", "dwell_s", mode="before")
+    @field_validator("x", "y", "aim_deg", "dwell_s", "search_deg", mode="before")
     @classmethod
     def numbers_only(cls, value: Any) -> Any:
         if value is not None and (isinstance(value, bool) or not isinstance(value, (float, int))):

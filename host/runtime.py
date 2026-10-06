@@ -38,7 +38,7 @@ from host.behavior.actions import PostureSequence, register_actions
 from host.behavior.auth import Authenticator
 from host.behavior.auth_judge import AuthJudge
 from host.behavior.commander import Commander
-from host.behavior.escalation import Escalation
+from host.behavior.escalation import Escalation, Level
 from host.behavior.fall_monitor import FallMonitor
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
@@ -450,6 +450,12 @@ class Runtime:
         # 대응 강도 축. FSM 상태와 **직교한다** — 같은 `ALERT` 에서도 단계가
         # 다르면 눈 색깔과 음향이 다르다.
         self._escalation = Escalation(config)
+        self._behavior.set_alarm_guard(
+            lambda: (
+                self._escalation.latched
+                and (self._escalation.level is Level.L3 or self._escalation.alarm_pending)
+            )
+        )
         # ⚠️ **값을 넣지 않고 물어볼 대상을 넘긴다.** 단계는 사건·시간·확인 어느
         # 쪽으로도 바뀌므로 갱신 지점이 하나가 아니고, 복사해 두면 반드시 어긋난다.
         self._log.bind_escalation(lambda: self._escalation.level.value)
@@ -1196,6 +1202,25 @@ class Runtime:
             "ppe_required", list(self._zone_ppe.requirements_for(judgement["zone"]))
         )
         sentence: str | None = None
+        if (
+            event_type == "PPE_SETTLED"
+            and judgement.get("rechecked")
+            and judgement.get("reason") == "착용 확인"
+        ):
+            if self._dashboard is not None and (
+                self._blackbox is None or self._event_publisher is None
+            ):
+                self._dashboard.record_event(
+                    {
+                        "event": event_type,
+                        "ts_ms": now_ms,
+                        "state": self._behavior.state,
+                        "escalation": self._escalation.level.value,
+                        "mode": self._mission.mode,
+                        "judgement": judgement,
+                    }
+                )
+            self._play_robot_track("ppe_settled")
         cross_result = judgement is not None and "rule_yes" in judgement
         if (
             cross_result
@@ -1680,6 +1705,8 @@ class Runtime:
         # (`ALERT` 의 PPE 위반) 내리는 것은 그렇지 않다 — 로봇 래치가 걸려 있으면
         # `RESET_CONFIRMED` 가 거부되고, 그때 F 를 풀면 호스트만 풀린다.
         self._escalation.note_event(event.name, now_ms, accepted=accepted)
+        if self._behavior.alarm_holding:
+            self._commander.halt()
         if not accepted:
             return False
         self._stats.transitions += 1
@@ -1726,6 +1753,7 @@ class Runtime:
         판단*(침입자가 갔나·안전모·물건)이라 로봇에 보낼 것이 없다. 하나로 묶으면
         **비상정지를 눌렀다 푸는 것으로 경보를 지우는 길**이 생긴다.
         """
+        held = self._behavior.alarm_holding
         released = self._escalation.confirm_alarm(now_ms)
         if not released:
             LOG.info("alarm_confirm_ignored", level=self._escalation.level.value)
@@ -1735,6 +1763,8 @@ class Runtime:
         elif self._fall.confirmed:
             # 확정한 쓰러짐도 확인하면 순찰로 돌아간다 (S4) — 누운 사람은 스스로 떠나지 않는다.
             self._fall.resolve(now_ms)
+        if released and held:
+            self._apply(Event.ALARM_CONFIRMED, now_ms)
         return released
 
     def ask_alarm_confirm(self) -> None:
