@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
@@ -554,6 +554,7 @@ class Runtime:
         ⚠️ **상태를 여기서 읽어 넘긴다.** `Mission` 이 `Behavior` 를 알면 모드 축을
         FSM 없이 단독으로 시험할 수 없다 — 두 축을 잇는 곳은 런타임 하나다.
         """
+        self._record_input("set_mode", target=target)
         reason = self._mission.refuse_reason(target, state=self._behavior.state)
         if reason is None and target == "factory" and self._vision is not None:
             try:
@@ -849,6 +850,13 @@ class Runtime:
             ],
             person_present=result.sighting.present,
             frame_file=frame_file,
+            # 재생(`tools/ops/replay_session.py`)이 같은 결과를 다시 만들 수 있게 판정 전체를 남긴다.
+            sighting=asdict(result.sighting),
+            tracks=[asdict(track) for track in result.tracks],
+            fallen=asdict(result.fallen),
+            markers=[asdict(marker) for marker in result.markers],
+            ppe=None if result.ppe is None else asdict(result.ppe),
+            hazard=None if result.hazard is None else asdict(result.hazard),
         )
 
     def _switch_hazard_detector(self) -> None:
@@ -1411,6 +1419,11 @@ class Runtime:
             )
         )
 
+    def _record_input(self, action: str, **fields: Any) -> None:
+        """관제·콘솔 입력 하나 — 재생(`tools/ops/replay_session.py`)이 같은 시각에 다시 넣는다."""
+        if self._recorder is not None:
+            self._recorder.record("operator", action=action, **fields)
+
     def _rearm_person_gate(self, previous: str, _target: str = "") -> None:
         """순찰을 **시작할 때** 사람 게이트를 재장전한다 (FR-3.2)."""
         self._track_controller.rearm()
@@ -1577,6 +1590,9 @@ class Runtime:
         self._summary.maximum("tick_vision_ms", vision_ms)
         self._summary.maximum("tick_behavior_ms", behavior_ms)
         self._summary.maximum("tick_dashboard_ms", dashboard_ms)
+        level = self._escalation.level.value
+        if self._recorder is not None and self._edge.changed("recorded_escalation", level):
+            self._recorder.record("escalation", at_ms=now_ms, level=level)
         return lines
 
     def _apply(self, event: Event, now_ms: int) -> bool:
@@ -1672,14 +1688,17 @@ class Runtime:
         여기서 곧바로 풀지 않는 이유는 스레드다. 운용 루프가 전문을 만드는 중간에
         단계가 바뀌면 그 틱의 명령이 어느 단계의 것인지 말할 수 없게 된다.
         """
+        self._record_input("ask_alarm_confirm")
         self._alarm_confirm_asked = True
 
     def ask_reset(self) -> None:
         """페일세이프(F) 해제 요청을 예약한다. **다른 스레드에서 부른다.**"""
+        self._record_input("ask_reset")
         self._reset_asked = True
 
     def ask_goto(self, x: float, y: float) -> tuple[bool, str]:
         """지도에서 찍은 곳(순찰 좌표)을 예약한다. **다른 스레드에서 부른다.**"""
+        self._record_input("ask_goto", x=x, y=y)
         navigator = self._navigator
         if navigator is None or not hasattr(navigator, "goto"):
             return False, "LiDAR 측위 순찰이 아니라 지도 이동을 할 수 없다"
@@ -1735,6 +1754,7 @@ class Runtime:
 
         길 찾기·측위 상태는 루프 스레드만 바꾼다 — 적용은 다음 틱(`_drain_confirmations`).
         """
+        self._record_input("ask_locate_zone", zone=zone)
         navigator = self._navigator
         if navigator is None or not hasattr(navigator, "hint_zone"):
             return False, "LiDAR 측위 순찰이 아니라 위치를 알려줄 대상이 없다"
@@ -1763,6 +1783,7 @@ class Runtime:
         (`estop()` 이 전문을 받은 자리에서 보내는 것과 같은 이유), `MANUAL_ON` 은
         결과를 그 자리에서 화면에 돌려줘야 한다.
         """
+        self._record_input("apply_external", event=event.name)
         return self._apply(event, self._clock())
 
     @contextlib.contextmanager
@@ -1780,10 +1801,12 @@ class Runtime:
 
     def note_voice_listening(self, captured_at_ms: int | None = None) -> tuple[bool, str]:
         """판정 대기 유예 (`VoiceAuthWindow.note_listening`). 대시보드 스레드가 부른다."""
+        self._record_input("note_voice_listening", captured_at_ms=captured_at_ms)
         return self._voice_auth.note_listening(captured_at_ms)
 
     def note_voice_auth(self, ok: bool, captured_at_ms: int | None = None) -> tuple[bool, str]:
         """음성 암구호 판정 (`VoiceAuthWindow.note_verdict`). 대시보드 스레드가 부른다."""
+        self._record_input("note_voice_auth", ok=ok, captured_at_ms=captured_at_ms)
         return self._voice_auth.note_verdict(ok, captured_at_ms)
 
     def ask_patrol(self) -> None:
@@ -1799,6 +1822,7 @@ class Runtime:
         그래서 의도를 세워 두고 **전이표가 허락할 때** 발행한다 — `START_PATROL`
         은 `IDLE` 에서만 전이를 만들므로 상태 이름이 여기 들어오지 않는다.
         """
+        self._record_input("ask_patrol")
         self._patrol_asked = True
         self._patrol_asked_ms = self._clock()
 
@@ -1967,6 +1991,9 @@ class Runtime:
         if self._vision is not None or self._vlm_injected:
             self._vlm.start()
         self._sock = sock
+        if self._recorder is not None:
+            # 재생이 세션 개시·첫 틱 시각을 여기에 맞춘다 (`tools/ops/replay_session.py`).
+            self._recorder.record("runtime_begin")
         # ⚠️ **루프보다 먼저 인코딩한다.** 이것이 프로세스의 seq=1 이어야 로봇이
         # 세션 개시로 인정한다. 틱이 한 번이라도 앞서면 seq 1 을 다른 명령이 쓴다.
         self._session_open = self._commander.open_session()
@@ -2015,6 +2042,7 @@ class Runtime:
         상대를 아직 모르면 보내지 않고 FSM 만 `halt` 로 내려간다(`send_immediate` 와 같다).
         세션 개시 전문이 아직 안 나갔으면 그것을 먼저 보낸다 — 첫 datagram 이어야 한다.
         """
+        self._record_input("send_emergency_stop")
         with self._send_lock:
             line = self._commander.emergency_stop()
             lines = [line] if self._session_open is None else [self._session_open, line]
@@ -2030,6 +2058,7 @@ class Runtime:
         안 된다. 상대를 아직 모르면(텔레메트리 0건) 조용히 버린다 — 보낼 곳이
         없는데 세우는 것보다, FSM 은 어차피 `halt` 로 내려간다.
         """
+        self._record_input("send_immediate", line=line)
         sock, peer = self._sock, self._peer
         if sock is None or peer is None:
             return
