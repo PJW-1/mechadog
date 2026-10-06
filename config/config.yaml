@@ -450,7 +450,7 @@ zones:
   hazard_ids: [C]
   # 관제의 구역별 공장 모드 점검 설정. 미지정 구역은 안전모·조끼 모두 필수다.
   # 개체 local.yaml 예: {A: {name: 출입구, helmet: true, vest: false, note: ""}}
-  # 신선한 지도 위치가 도착 반경 안에 있을 때만 사용. 위치 불명/구역 밖은 기본 두 항목.
+  # 신선한 지도 위치의 zone_labels 영역으로 선택. 위치 불명/구역 밖은 기본 두 항목.
   policies: {}
   # FR-7.4 — 도착 허용오차(구역의 크기가 아니다). 반경의 두 배를 벗어나야 떠난 것으로 본다.
   arrival_radius_mm: 300

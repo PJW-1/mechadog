@@ -68,7 +68,7 @@ export class PlanningPanel {
   this.root.append(p.el('div',{class:'plan-layout'},settings(itinerary,'순찰 순서 설정','itineraryOpen'),canvas,settings(this.inspector,'구역 상세 설정','inspectorOpen')));
   const radius=s.snapshot?.arrival_radius_m;
   this.root.append(p.el('footer',{class:'plan-footer'},p.el('div',{},p.el('strong',{},'계획 → 지도 확인 → 저장 → 운용'),p.el('p',{},'저장한 계획은 다음 로봇 서버 시작에 적용됩니다. 경로 확인은 저장 지도의 계산 결과이며, 실물 주행 검증은 별도입니다.')),p.button('제어 · 장치로 이동',()=>p.onNavigate('missions'))));
-  this.root.append(p.el('details',{class:'plan-mode-guide'},p.el('summary',{},'점검 기준 상세'),p.el('p',{},p.el('strong',{},'경비 모드'), ' · 구역 순찰과 신원 확인·암구호'),p.el('p',{},p.el('strong',{},'공장 모드'),' · 구역별 보호구 검사·물품 변화·위험물 점검'),p.note('구역은 점검 지점'+(radius!=null?' 반경 '+radius.toFixed(2)+'m':' 반경')+'입니다. 경계 밖이나 위치가 불확실하면 안전모·조끼를 모두 검사합니다. 위험 구역은 출입 금지가 아니라 기존 위험물 판정 대상입니다.')));
+  this.root.append(p.el('details',{class:'plan-mode-guide'},p.el('summary',{},'점검 기준 상세'),p.el('p',{},p.el('strong',{},'경비 모드'), ' · 구역 순찰과 신원 확인·암구호'),p.el('p',{},p.el('strong',{},'공장 모드'),' · 구역별 보호구 검사·물품 변화·위험물 점검'),p.note('구역 소속과 필수 보호구는 지도의 영역 라벨로 판정합니다. 순찰 도착 허용오차'+(radius!=null?' '+radius.toFixed(2)+'m':'')+'는 점검 지점에 적용됩니다. 영역 밖이나 위치가 불확실하면 안전모·조끼가 모두 필수입니다. 공장 모드는 모든 구역에서 착용 여부를 표시하고, 필수 항목의 미착용만 경고합니다. 위험물 점검은 해당 구역의 정지점에서 방향을 맞춘 뒤 시작합니다.')));
   this.root.append(p.note('순서와 점검 기준은 선택한 로봇에 저장합니다. 같은 지도 폴더를 사용하는 로봇끼리는 구역 좌표를 공유합니다.'));
   // 편집 중에 완료 응답이 초안을 덮어쓰지 않도록 저장/계산 동안 입력을 잠근다.
   if(s.busy||s.loading)for(const element of this.root.querySelectorAll('input,button'))element.disabled=true;

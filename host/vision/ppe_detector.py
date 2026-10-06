@@ -77,7 +77,6 @@ class PpeDetector:
                     ("helmet", (x1, y1, x2, y1 + h * 0.3)),
                     ("vest", (x1, y1 + h * 0.3, x2, y1 + h * 0.75)),
                 )
-                if item in self._required
             )
             verdict = self._observe_one(image, (track,), now_ms)
             assert verdict is not None
@@ -116,8 +115,6 @@ class PpeDetector:
             return None
         track = max(tracks, key=lambda t: t.height)
         required = self._required
-        if not required:
-            return PpeVerdict(track.track_id, OK, "이 구역은 PPE 검사 미지정", required=required)
         self._hits.setdefault(track.track_id, deque())
         if "helmet" in required and self._clip and track.box[1] <= self._margin:
             return PpeVerdict(
@@ -146,8 +143,20 @@ class PpeDetector:
                     (bx1 + left, by1 + top, bx2 + left, by2 + top),
                     best.score,
                 )
+            if (
+                region.item == "helmet"
+                and self._clip
+                and (track.box[1] <= self._margin or region.box[1] <= self._margin)
+            ):
+                region = replace(region, label="UNDETERMINED", reason="머리 클리핑")
             regions.append(region)
         self._regions = tuple(regions)
+        if not required:
+            # 착용 상태는 모든 구역에서 추론·표시한다. 필수 항목이 없으면 경고는 없다.
+            self._hits[track.track_id].clear()
+            return PpeVerdict(
+                track.track_id, OK, "필수 보호구 없음 — 착용 여부 표시", required=required
+            )
         heads = [d for d in found if d.label in ("helmet", "no_helmet")]
         torsos = [d for d in found if d.label in ("vest", "no_vest")]
         if ("helmet" in required and not heads) or ("vest" in required and not torsos):

@@ -344,8 +344,8 @@ class Runtime:
             apply=self._apply,
             fall_suspected=lambda: self._fall.suspected,
         )
-        # 구역 변화 감지 (FR-8). 구역 도착은 **지도 좌표 앵커**(`maps/zones.json`)와
-        # 측위 위치로 판정한다 (FR-7.4) — ArUco 구역 마커는 쓰지 않는다. 점검은
+        # 구역 변화 감지 (FR-8). 일반 순찰은 지도 앵커, 명시 동선은 정지점에서 점검한다.
+        # 정책·사건의 소속은 같은 지도 영역 라벨로 판정한다. 점검은
         # `ZoneInspector` 가 맡고(아래), 앵커는 기동 로그 순서를 지키려고 여기서 읽는다.
         zone_ids = tuple(str(label) for label in config["zones"]["ids"])
         # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
@@ -361,7 +361,16 @@ class Runtime:
         except (OSError, ValueError) as exc:
             LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
             anchors = ()
-        self._zone_ppe = ZonePpePolicy(config, anchors)
+        try:
+            zone_map = (
+                navigator.zone_map
+                if isinstance(navigator, PatrolController)
+                else ZoneMap.load(maps_dir(config))
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            LOG.error("zone_map_unreadable", error=f"{type(exc).__name__}: {exc}")
+            zone_map = None
+        self._zone_ppe = ZonePpePolicy(config, zone_map)
         # 상황 판독 (FR-8 · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
@@ -492,6 +501,7 @@ class Runtime:
             route_visit=(lambda: navigator.route_visit)
             if isinstance(navigator, PatrolController)
             else None,
+            zone_at=self._zone_ppe.current_zone if zone_map is not None else None,
         )
         if isinstance(navigator, PatrolController):
             navigator.wait_for_inspection = self._awaits_zone_inspection
@@ -860,7 +870,7 @@ class Runtime:
         if vision is None or not hasattr(vision, "set_hazard_enabled"):
             return
         self._zone_inspector.note_hazard_detector(bool(vision.hazard_available))
-        watching = self._zone_inspector.watching_hazards
+        watching = self._zone_inspector.hazards_allowed(self._clock())
         if self._edge.changed("hazard_detector", watching):
             vision.set_hazard_enabled(watching)
             LOG.info("hazard_detector_switched", enabled=watching)
@@ -960,6 +970,7 @@ class Runtime:
         LiDAR 길 찾기(`--lidar-device`)의 스캔 정합이 `_observe_scan` 에서 부른다.
         그것이 없으면 아무도 부르지 않고 구역 도착이 일어나지 않는다.
         """
+        self._zone_ppe.note_pose(pose, now_ms)
         self._zone_inspector.note_pose(pose, now_ms)
         if self._pose_out is not None:
             # 대시보드 실시간 위치 — 송신 실패는 순찰을 늦추지 않는다 (`PoseOut.send`).
@@ -967,10 +978,9 @@ class Runtime:
                 pose,
                 moving=self._behavior.state == "PATROL",
                 score_frac=getattr(self._navigator, "match_frac", None),
-                zone=getattr(self._navigator, "current_zone", None),
+                zone=self._zone_ppe.current_zone(now_ms),
                 verified=bool(getattr(self._navigator, "pose_verified", False)),
             )
-        self._zone_ppe.note_pose(pose, now_ms)
 
     def attach_scans(self, take: Callable[[], Scan | None]) -> None:
         """최신 스캔 공급자를 붙인다 (`LidarFeed.take`). 길 찾기가 없으면 쓰지 않는다."""
@@ -1007,7 +1017,7 @@ class Runtime:
                     moving=False,
                     lost=True,
                     score_frac=getattr(navigator, "match_frac", None),
-                    zone=getattr(navigator, "current_zone", None),
+                    zone=self._zone_ppe.current_zone(now_ms),
                     verified=False,
                 )
             if self._recorder is not None:
@@ -1022,7 +1032,7 @@ class Runtime:
                     score_frac=round(navigator.match_frac, 3),
                     lost=navigator.pose_stale(now_ms),
                     verified=navigator.pose_verified,
-                    zone=navigator.current_zone,
+                    zone=self._zone_ppe.current_zone(now_ms),
                     pose=[round(x, 4), round(y, 4), round(yaw, 5)],
                     phase=navigator.phase.value,
                     target=navigator.target,
@@ -1160,6 +1170,12 @@ class Runtime:
         할 경고이지 블랙박스 파일이 아니므로, 블랙박스가 없는 구성(`blackbox=None`)
         에서도 방송만은 막지 않는다.
         """
+        now_ms = self._clock()
+        judgement = dict(judgement or {})
+        judgement.setdefault("zone", self._zone_ppe.current_zone(now_ms))
+        judgement.setdefault(
+            "ppe_required", list(self._zone_ppe.requirements_for(judgement["zone"]))
+        )
         sentence: str | None = None
         cross_result = judgement is not None and "rule_yes" in judgement
         if (
@@ -1781,7 +1797,8 @@ class Runtime:
             "local_navigation": getattr(navigator, "local_status", {}),
             "blockage": getattr(navigator, "blockage_status", {}),
             "target": getattr(navigator, "target", None),
-            "zone": getattr(navigator, "current_zone", None),
+            "zone": self._zone_ppe.current_zone(now_ms),
+            "ppe_required": list(self._zone_ppe.required(now_ms)),
             "goal": None if goal is None else [round(goal[0], 3), round(goal[1], 3)],
             "holding_goal": bool(getattr(navigator, "holding_goal", False)),
             "goal_hold_reason": getattr(navigator, "goal_hold_reason", None),

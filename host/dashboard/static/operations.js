@@ -41,6 +41,11 @@ const CHANGE_KINDS={fallen_object:'넘어짐·무너짐',blocked_path:'통로 �
 export function describeEvidence(name,payload){
  const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
  const rows=[];
+ if(Array.isArray(j.ppe_required)){
+  if(!['zone_reading','zone_changed','hazard_notice','path_blocked','obstacle_detour','zone_skipped','patrol_unavailable'].includes(name))rows.push(['구역',shown(j.zone)]);
+  const names={helmet:'안전모',vest:'안전조끼'};
+  rows.push(['필수 보호구',j.ppe_required.map(item=>names[item]??cleanText(item,40)).join(' · ')||'없음 (착용 여부 표시)']);
+ }
  if(['obstacle_detour','zone_skipped','patrol_unavailable'].includes(name)){if(j.zone)rows.push(['구역',shown(j.zone)]);if(Number.isFinite(j.x)&&Number.isFinite(j.y))rows.push(['장애물 위치 (순찰 m)',shown(j.x)+', '+shown(j.y)]);rows.push(['심각도',j.severity==='low'?'낮음':'중간'],['사진',j.camera_available?'카메라 프레임 있음':'카메라 프레임 없음']);if(j.blockage_id!=null)rows.push(['장애물 묶음',shown(j.blockage_id)]);}
  let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
  if(name.startsWith('PPE_')&&j.state){ppe=({VIOLATION:'미착용',UNDETERMINED:'판정 불가',COMPLIANT:'착용 확인'}[j.state]??cleanText(j.state,40))+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}

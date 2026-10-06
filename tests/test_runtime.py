@@ -2685,8 +2685,9 @@ def test_a_hazard_read_twice_is_confirmed_on_the_first_visit(
     assert runtime.escalation.level is Level.L3
     (entry,) = [e for e in blackbox.feed() if e.event_type == "zone_changed"]
     # `4.8.1` — `sentence` 는 상황 서술 문장이다.
-    assert set(entry.judgement) == {"zone", "changes", "sentence"}
+    assert set(entry.judgement) == {"zone", "ppe_required", "changes", "sentence"}
     assert entry.judgement["zone"] == "A"
+    assert entry.judgement["ppe_required"] == ["helmet", "vest"]
     assert entry.judgement["changes"] == [{"kind": kind, "source": "vlm"}]
 
 
@@ -4056,6 +4057,7 @@ def test_a_lighter_in_the_forbidden_zone_reaches_the_event_history(
     assert len(entries) == 1
     assert entries[0].judgement == {
         "zone": "A",
+        "ppe_required": ["helmet", "vest"],
         "items": ["lighter"],
         "source": "detector",
         "vlm": False,
