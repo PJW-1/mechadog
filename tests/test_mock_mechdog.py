@@ -566,6 +566,23 @@ def test_cli_rejects_fault_value_that_is_not_finite_and_non_negative(
     assert exc.value.code == 2
 
 
+@pytest.mark.parametrize("value", ["9", "8.61", "5.9", "nan", "inf"])
+def test_cli_rejects_battery_start_outside_protocol_range(
+    value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """범위 밖 값은 인자 검사를 통과해 첫 텔레메트리에서 ValueError 로 죽으면 안 된다."""
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["--battery-start", value])
+    assert exc.value.code == 2
+    assert "6.0" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["6.0", "7.4", "8.6"])
+def test_cli_accepts_battery_start_within_protocol_range(value: str) -> None:
+    args = build_parser().parse_args(["--battery-start", value])
+    assert faults_from_args(args).battery_start_v == float(value)
+
+
 @pytest.mark.parametrize("option", ["--drop-rate", "--corrupt-rate"])
 def test_cli_rejects_rate_above_one(option: str) -> None:
     with pytest.raises(SystemExit) as exc:
