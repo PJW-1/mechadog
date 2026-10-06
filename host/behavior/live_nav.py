@@ -21,6 +21,9 @@ class NavParams:
     relaxed_follow: bool = True
     #: 목표 통로의 가까운 장애물을 비켜 가기 시작하면 알린다 (기본 끔).
     relaxed_detour_notice: bool = False
+    #: 따라가기에서 목표까지 거리가 `relaxed_stuck_ms` 동안 줄지 않으면 «길 막힘» 1회 알리고 앞이 열릴 때까지 선다.
+    relaxed_stuck_hold: bool = False
+    relaxed_stuck_ms: int = 12000
     relaxed_walk_detour: bool = False
     relaxed_detour_distance_m: float = 0.9
     relaxed_detour_angle_deg: float = 20.0

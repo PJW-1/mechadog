@@ -469,6 +469,8 @@ class PatrolController:
     _relaxed_leg_start: tuple[float, float] = (0.0, 0.0)
     _relaxed_distance: float = math.inf
     _relaxed_blocked_reported: bool = False
+    _relaxed_progress: tuple[tuple[float, float], float, int] | None = None  # (목표, 최소 거리, 그때 시각)
+    _relaxed_stuck: bool = False
     _relaxed_escape_turn: bool = False
     _last_verified_pose_ms: int | None = None
     _relaxed_scan: LocalScan = field(init=False)
@@ -1467,6 +1469,39 @@ class PatrolController:
             and 0 <= now_ms - verified <= 2000
         )
 
+    def _relaxed_stuck_check(
+        self, target: tuple[float, float], distance: float, front: float | None
+    ) -> bool:
+        """목표까지 거리가 정해진 시간 동안 0.1m 도 줄지 않으면 «길 막힘» 을 한 번 알리고 선다.
+
+        앞(±30°)이 0.6m 넘게 열리면 풀고 다시 따라간다 — 사람이 장애물을 치운 경우다.
+        정면 정지·탈출 회전을 끝없이 되풀이하는 것을 막는다(2026-10-06 목업: 침실 문 막힘).
+        """
+        prog = self._relaxed_progress
+        if prog is None or prog[0] != target or distance < prog[1] - 0.10:
+            self._relaxed_progress = (target, distance, self._now_ms)
+            if prog is not None and prog[0] != target:
+                self._relaxed_stuck = False
+            prog = self._relaxed_progress
+        if self._relaxed_stuck:
+            if front is None or front > 0.6:
+                self._relaxed_stuck = False
+                self._relaxed_blocked_reported = False
+                self._relaxed_progress = (target, distance, self._now_ms)
+                return False
+            self.commander.halt()
+            self._local_decision("stop", "relaxed_stuck_wait", front)
+            return True
+        if self._now_ms - prog[2] >= self.nav_params.relaxed_stuck_ms:
+            self._relaxed_stuck = True
+            self.commander.halt()
+            self._local_decision("stop", "relaxed_stuck_wait", front)
+            if not self._relaxed_blocked_reported:
+                self._navigation_event("path_blocked", message="길 막힘")
+                self._relaxed_blocked_reported = True
+            return True
+        return False
+
     def _follow_relaxed(self) -> None:
         """동선만 단순 추종한다. 안전/측위 외에는 복구 관문을 열지 않는다."""
         self._avoidance = self._recovery = None
@@ -1501,7 +1536,10 @@ class PatrolController:
         )
         self._relaxed_distance = distance
         if distance <= self.drive.arrival_radius_m or passed:
+            self._relaxed_progress, self._relaxed_stuck = None, False
             self._arrive(GOAL_LABEL)
+            return
+        if self.nav_params.relaxed_stuck_hold and self._relaxed_stuck_check(target, distance, front):
             return
         self.plan = Plan(GOAL_LABEL, (self.pose[:2], target), distance, effective=target)
         self.phase = Phase.MOVING

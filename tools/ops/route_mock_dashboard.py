@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import shutil
 import sys
@@ -68,6 +69,12 @@ def prepare(source: Path, output: Path, device: str) -> tuple[Path, Path, Path]:
     devices = output / "devices"
     devices.mkdir()
     shutil.copyfile(DEFAULT_DEVICES_DIR / f"{device}.yaml", devices / f"{device}.yaml")
+    local = DEFAULT_DEVICES_DIR / f"{device}.local.yaml"
+    if os.environ.get("MOCK_WITH_LOCAL") == "1" and local.is_file():
+        # 현장 로컬 설정(항법·음향 스위치)까지 얹어 본다. 지도 경로는 아래에서 복사본으로 덮는다.
+        data = yaml.safe_load(local.read_text(encoding="utf-8")) or {}
+        data.get("lidar", {}).pop("maps_dir", None)
+        (devices / f"{device}.local.yaml").write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
     config = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
     config["lidar"]["maps_dir"] = str(maps.resolve())
     config_path = output / "config.yaml"
@@ -414,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:
                             event["judgement"]["camera_available"] = True
                             event["judgement"]["synthetic_evidence"] = True
                             navigation_events.append(event)
+                            print("nav_event", json.dumps(event, ensure_ascii=False)[:200], flush=True)
                             state.record_event(
                                 {
                                     **event,
