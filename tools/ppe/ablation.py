@@ -43,6 +43,10 @@
 클리핑 제외 실효 성공률 (표 끝 열)
     그 변형이 스스로 `머리 클리핑` 사유로 낸 확인불가를 분모에서 뺀 실효 성공률 —
     `compare` 표의 같은 이름 열과 같은 정의다.
+
+단계 누적 (`STAGES`, 캐시가 있을 때)
+    한 축씩 끄는 변형과 달리 Raw 검출기(풀프레임·클리핑 끔·누적 끔)에서 사람 크롭 → 머리
+    클리핑 필터 → 시간 누적을 차례로 쌓는다. 마지막 단계는 base 와 같다.
 """
 
 from __future__ import annotations
@@ -137,6 +141,21 @@ VARIANTS: tuple[Variant, ...] = (
         window="clear",
         clear_after_ok=5,
     ),
+)
+
+#: 계획서 2단계 표 — Raw 검출기에서 단계를 하나씩 쌓는다. 앞 단계와 한 축씩만 다르고 끝은 base 다.
+STAGES: tuple[Variant, ...] = (
+    replace(
+        BASE,
+        name="stage-raw",
+        note="Raw — 풀프레임 PPE, 클리핑 끔, 누적 끔",
+        gate=False,
+        clip="off",
+        hits_required=1,
+    ),
+    replace(BASE, name="stage-crop", note="+ 사람 크롭", clip="off", hits_required=1),
+    replace(BASE, name="stage-clip", note="+ 머리 클리핑 필터", hits_required=1),
+    replace(BASE, name="stage-vote", note="+ 시간 누적 (= base)"),
 )
 
 #: 기록된 판정만 다시 누적하는 변형 (추론 없이, 프레임 오염과 무관). 누적 규칙 축만 의미가 있다.
@@ -1002,6 +1021,19 @@ def run_report(args: argparse.Namespace) -> int:
         lines += table(rows, notes)
         lines += ["", "### 조건별 분해 — base 재추론", ""]
         lines += breakdown_table(base, plan)
+
+        stage_rows = []
+        for variant in STAGES:
+            row = evaluate_variant(
+                replay(
+                    cache["frames"], session["events"], variant, head_margin, orientations, meta
+                ),
+                plan,
+            )
+            row["name"] = variant.name
+            stage_rows.append(row)
+        lines += ["", "## 단계 누적 (계획서 2단계 표)", ""]
+        lines += table(stage_rows, {v.name: v.note for v in STAGES})
     _write_text("\n".join(lines) + "\n", args.out)
     return 0
 

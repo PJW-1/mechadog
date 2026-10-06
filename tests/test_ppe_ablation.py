@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -559,3 +560,49 @@ def test_clip_excluded_column_is_appended_after_existing_columns(recorded):
         row["right"] / (row["count"] - row["clipped"])
     )
     assert "PASS" in lines[2]  # 기준이 있으면 C1~C3 칸은 그대로다
+
+
+# ── 단계 누적 (계획서 2단계 표) ─────────────────────────────────
+
+
+def test_stages_add_one_step_at_a_time():
+    """Raw → 사람 크롭 → 머리 클리핑 필터 → 시간 누적. 앞 단계와 한 축씩만 다르고 끝은 base 다."""
+    raw, crop, clip, vote = ab.STAGES
+    assert (raw.gate, raw.clip, raw.hits_required) == (False, "off", 1)
+    assert (crop.gate, crop.clip, crop.hits_required) == (True, "off", 1)
+    assert (clip.gate, clip.clip, clip.hits_required) == (True, "crop", 1)
+    assert dataclasses.replace(vote, name=ab.BASE.name, note=ab.BASE.note) == ab.BASE
+    for before, after in zip(ab.STAGES, ab.STAGES[1:], strict=False):
+        changed = [
+            f.name
+            for f in dataclasses.fields(ab.Variant)
+            if f.name not in ("name", "note") and getattr(before, f.name) != getattr(after, f.name)
+        ]
+        assert len(changed) == 1, (before.name, after.name, changed)
+
+
+def test_report_with_cache_writes_stage_table(tmp_path):
+    plan, session = _violation_only(tmp_path)
+    path = tmp_path / "session.json"
+    path.write_text(json.dumps(session, ensure_ascii=False), encoding="utf-8")
+    keys = {v.crop for v in ab.VARIANTS}
+    # 사람 크롭에서는 맨머리를 보고, 풀프레임에서는 아무것도 못 본다.
+    frames = [
+        frame(e["tag"], [(0.9, (0, 50, 60, 200))], {k: [person(NO_HELMET)] for k in keys})
+        for e in session["events"]
+    ]
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps({"meta": {"conf_floor": 0.1}, "frames": frames}), encoding="utf-8")
+    out = tmp_path / "report.md"
+    args = ["report", str(path), "--plan", str(plan), "--cache", str(cache), "--out", str(out)]
+    assert ab.main(args) == 0
+
+    lines = out.read_text(encoding="utf-8").splitlines()
+    start = lines.index("## 단계 누적 (계획서 2단계 표)")
+    rows = [line for line in lines[start:] if line.startswith("| stage-")]
+    assert [r.split("|")[1].strip() for r in rows] == [v.name for v in ab.STAGES]
+    assert "0.0% (0/10)" in rows[0]  # 풀프레임은 판정 못 함
+    assert "100.0% (10/10)" in rows[1]  # 사람 크롭은 모두 위반으로 맞힘
+    replayed = lines.index("## 다시 추론한 결과 (캐시)")
+    base = next(line for line in lines[replayed:] if line.startswith("| base |"))
+    assert rows[-1].split("|")[3:] == base.split("|")[3:]  # 마지막 단계 = base 재추론
