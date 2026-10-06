@@ -83,6 +83,12 @@ python tools/ops/replay_session.py <기록 폴더> --set network.cmd_rate_hz=5 -
 | [run_movement_batch.py](probe/run_movement_batch.py) | 이동 테스트 카탈로그를 GUI 없이 터미널에서 일괄 실행한다 | 필요 | 보냄 |
 | [pose_recheck.py](probe/pose_recheck.py) | 단일 pitch 자세를 posture 경로와 같은 명령 시퀀스로 재측정한다 | 필요 | 보냄 |
 
+## 모델 벤치(bench)
+
+| 파일 | 설명 | 하드웨어 | 명령 |
+|---|---|---|---|
+| [precision_bench.py](bench/precision_bench.py) | coco·ppe ONNX 를 FP16·INT8(동적·정적 QDQ)로 바꾸고 FP32 대비 검출 일치율·3.7.3 판정·지연·크기·RSS 를 저장된 세션 프레임으로 비교한다(`convert`/`accuracy`/`latency`) | 불필요(저장된 프레임·GPU 선택) | 읽기전용 |
+
 ## 개발 보조·CI
 
 | 파일 | 설명 | 하드웨어 | 명령 |
@@ -96,6 +102,7 @@ python tools/ops/replay_session.py <기록 폴더> --set network.cmd_rate_hz=5 -
 - `lidar/` — 라이다 지도·스캔 도구와 중계. `lidar/scene_viewer/` 는 `lidar_scene_view.py`가 서빙하는 3D 지도 뷰어 정적 파일(HTML/JS/CSS)이며 단독 실행 대상이 아니다.
 - `mock/` — 하드웨어 없이 개발할 때 쓰는 가상 로봇·가상 라이다.
 - `probe/` — 실기 측정·점검 도구.
+- `bench/` — 모델 정밀도·지연 비교(오프라인). 변환 모델은 깃이 무시하는 `models/precision/` 에 둔다.
 - `field/` — 현장 실측 CLI·GUI(`field_measure`·`field_plan`·`field_measure_ui`·`field_sessions`). 네 파일이 서로 부르므로 한 폴더에 둔다.
 - `dev/` — 개발 보조·CI(`check_doc_links.py`·`check_firmware_scope.py`·`wbs_assignments.py`·`firmware_env.py`).
 - [pc_control/](pc_control/README.md) — Windows 개인 PC용 로봇 유지보수 GUI(Wi-Fi OTA·USB 모드 전환). 자체 README를 둔다.
