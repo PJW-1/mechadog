@@ -597,6 +597,15 @@ def _non_negative(text: str) -> float:
     return value
 
 
+def _battery_start(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or not BATT_MIN_V <= value <= BATT_MAX_V:
+        raise argparse.ArgumentTypeError(
+            f"{BATT_MIN_V} V 이상 {BATT_MAX_V} V 이하의 유한한 값이어야 한다: {text}"
+        )
+    return value
+
+
 def _rate(text: str) -> float:
     value = float(text)
     if not math.isfinite(value) or not 0 <= value <= 1:
@@ -620,7 +629,7 @@ def build_parser() -> argparse.ArgumentParser:
     faults = parser.add_argument_group("장애 주입")
     faults.add_argument("--drop-rate", type=_rate, default=0.0, help="수신 명령 유실률 0.0~1.0")
     faults.add_argument("--corrupt-rate", type=_rate, default=0.0, help="깨진 텔레메트리 송신률")
-    faults.add_argument("--battery-start", type=_non_negative, default=None, help="시작 전압 V")
+    faults.add_argument("--battery-start", type=_battery_start, default=None, help="시작 전압 V")
     faults.add_argument("--battery-drain", type=_non_negative, default=0.0, help="방전 속도 V/분")
     faults.add_argument("--tip-at", type=_non_negative, default=None, help="N초 후 전도")
     faults.add_argument(
