@@ -18,6 +18,10 @@ class ZonePpePolicy:
         self.policies = config["zones"].get("policies", {})
         # 구역 불명(위치 상실·영역 밖)일 때의 정책. 없으면 기본 두 항목을 요구한다.
         self.unknown_policy = config["zones"].get("unknown_policy", {}) or {}
+        # 위치를 잃으면 마지막으로 알던 구역을 쓴다(`zones.sticky_last_zone`). 2026-10-06 촬영: 주방에서
+        # 위치를 잃어 구역 불명 → PPE 필수 구역인데 판정이 «필수 없음» 으로 빠졌다.
+        self.sticky = bool(config["zones"].get("sticky_last_zone", False))
+        self._last_zone: str | None = None
         self.timeout = int(config["localization"]["pose_timeout_ms"])
         self.pose: tuple[float, float, float] | None = None
         self.pose_ms: int | None = None
@@ -42,4 +46,9 @@ class ZonePpePolicy:
         return tuple(item for item in DEFAULT_PPE if policy.get(item, True))
 
     def required(self, now_ms: int) -> tuple[str, ...]:
-        return self.requirements_for(self.current_zone(now_ms))
+        zone = self.current_zone(now_ms)
+        if zone is not None:
+            self._last_zone = zone
+        elif self.sticky:
+            zone = self._last_zone
+        return self.requirements_for(zone)
