@@ -114,6 +114,10 @@ SOUND_ACK_TIMEOUT_MS = 300
 SOUND_RETRIES = 2
 # `SOUND.track` 상한 (PROTOCOL `SOUND` 절 · `dashboard.commands.SOUND_TRACK_MAX` 와 같은 값).
 ROBOT_SOUND_TRACK_MAX = 3000
+# 안내 문장은 한 번만 — 반복은 놓치면 안 되는 경고에만 건다 (`robot_sound.repeat_after_ms`).
+ROBOT_SOUND_NO_REPEAT = frozenset(
+    {"route_started", "route_finished", "alarm_confirmed", "ppe_settled", "fall_suspected"}
+)
 
 #: VLM 적재가 끝날 때까지 순찰 시작을 미루는 상한. 실측 적재는 ~15초 — 이 상한을
 #: 넘는 적재는 멈춰 있다고 보고, 굶김 위험을 로그로 남기고 시작한다.
@@ -413,6 +417,8 @@ class Runtime:
         #: 보내므로 재생 실패를 알 수 없다 — 2026-10-06 리허설에서 ACK 는 왔는데 무음이었다.
         self._robot_repeat_ms = int((config.get("robot_sound") or {}).get("repeat_after_ms") or 0)
         self._robot_repeat: tuple[int, int] | None = None  # (시각, 트랙)
+        #: 동선 시작·완료 안내용 직전 상태 (`_announce_route_edges`).
+        self._route_was_active = False
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -1221,6 +1227,8 @@ class Runtime:
                     }
                 )
             self._play_robot_track("ppe_settled")
+        elif event_type == "PPE_SETTLED" and (judgement or {}).get("reason") == "경고 횟수 한도":
+            self._play_robot_track("ppe_unresolved")
         cross_result = judgement is not None and "rule_yes" in judgement
         if (
             cross_result
@@ -1312,10 +1320,24 @@ class Runtime:
         try:
             self._commander.once("SOUND", track=track)
             LOG.info("robot_sound", key=key, track=track)
-            if self._robot_repeat_ms > 0:
+            if self._robot_repeat_ms > 0 and key not in ROBOT_SOUND_NO_REPEAT:
                 self._robot_repeat = (self._clock() + self._robot_repeat_ms, track)
         except Exception as exc:  # noqa: BLE001 — 소리 실패가 제어를 막으면 안 된다
             LOG.error("robot_sound_failed", error=f"{type(exc).__name__}: {exc}")
+
+    def _announce_route_edges(self) -> None:
+        """동선 시작·완료를 로봇 스피커로 알린다 (`route_started`·`route_finished`). 정지·교체는 말하지 않는다."""
+        navigator = self._navigator
+        if not isinstance(navigator, PatrolController):
+            return
+        active = navigator.route_active
+        if active and not self._route_was_active:
+            self._play_robot_track("route_started")
+        elif self._route_was_active and not active:
+            status = (navigator.route_status() or {}).get("status")
+            if isinstance(status, str) and status.startswith("completed"):
+                self._play_robot_track("route_finished")
+        self._route_was_active = active
 
     def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
         """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (좌우 대칭 근거).
@@ -1454,6 +1476,8 @@ class Runtime:
             }
         )
         reason = self._escalation.reason
+        if level == "L1" and reason == "fall_suspected":
+            self._play_robot_track("fall_suspected")
         if self._escalation.presentation().warning and isinstance(reason, str):
             key = f"{reason.lower()}_warning"
             if reason == "PPE_VIOLATION":
@@ -1610,6 +1634,7 @@ class Runtime:
         self._emit_eye_led(now_ms)
         self._auth_judge.request(now_ms)
         self._resend_sound(now_ms)
+        self._announce_route_edges()
         if self._robot_repeat is not None and now_ms >= self._robot_repeat[0]:
             track = self._robot_repeat[1]
             self._robot_repeat = None
@@ -1763,6 +1788,8 @@ class Runtime:
         elif self._fall.confirmed:
             # 확정한 쓰러짐도 확인하면 순찰로 돌아간다 (S4) — 누운 사람은 스스로 떠나지 않는다.
             self._fall.resolve(now_ms)
+        if released:
+            self._play_robot_track("alarm_confirmed")
         if released and held:
             self._apply(Event.ALARM_CONFIRMED, now_ms)
         return released
