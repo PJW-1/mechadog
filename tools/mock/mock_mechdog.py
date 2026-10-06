@@ -146,6 +146,9 @@ class DelayLine[T]:
             raise ValueError(
                 f"지연과 흔들림은 0 이상의 유한한 값이어야 한다: {delay_ms}, {jitter_ms}"
             )
+        # 각각은 유한해도 합이 넘치면 풀림 시각이 inf 가 되어 패킷을 영영 삼킨다.
+        if not math.isfinite(delay_ms + jitter_ms):
+            raise ValueError(f"지연 + 흔들림이 넘친다: {delay_ms} + {jitter_ms}")
         self._delay_ms = delay_ms
         self._jitter_ms = jitter_ms
         self._rng = rng
@@ -166,6 +169,18 @@ class DelayLine[T]:
         while self._heap and self._heap[0][0] <= now_ms:
             ready.append(heapq.heappop(self._heap)[2])
         return ready
+
+
+def delay_lines(faults: Faults) -> tuple[DelayLine[bytes], DelayLine[str]]:
+    """`run` 이 쓰는 명령(수신, bytes)·텔레메트리(송신, str) 대기열. 시험도 이 함수를 쓴다."""
+    return (
+        DelayLine(faults.cmd_delay_ms, faults.cmd_jitter_ms, delay_rng(faults.seed, "cmd")),
+        DelayLine(
+            faults.telemetry_delay_ms,
+            faults.telemetry_jitter_ms,
+            delay_rng(faults.seed, "telemetry"),
+        ),
+    )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -501,12 +516,7 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None, bind_host: st
     peer: tuple[str, int] | None = (peer_host, net["telemetry_port"]) if peer_host else None
     next_tx = time.monotonic()
     faults = robot.faults
-    commands: DelayLine[bytes] = DelayLine(
-        faults.cmd_delay_ms, faults.cmd_jitter_ms, delay_rng(faults.seed, "cmd")
-    )
-    outbound: DelayLine[str] = DelayLine(
-        faults.telemetry_delay_ms, faults.telemetry_jitter_ms, delay_rng(faults.seed, "telemetry")
-    )
+    commands, outbound = delay_lines(faults)
 
     _log(system_clock_ms(), f"수신 대기 :{net['cmd_port']} · 텔레메트리 :{net['telemetry_port']}")
     delays = (
@@ -580,6 +590,20 @@ def _non_negative_ms(text: str) -> float:
     return value
 
 
+def _non_negative(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError(f"0 이상의 유한한 값이어야 한다: {text}")
+    return value
+
+
+def _rate(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        raise argparse.ArgumentTypeError(f"0 이상 1 이하의 값이어야 한다: {text}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mock_mechdog",
@@ -594,13 +618,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     faults = parser.add_argument_group("장애 주입")
-    faults.add_argument("--drop-rate", type=float, default=0.0, help="수신 명령 유실률 0.0~1.0")
-    faults.add_argument("--corrupt-rate", type=float, default=0.0, help="깨진 텔레메트리 송신률")
-    faults.add_argument("--battery-start", type=float, default=None, help="시작 전압 V")
-    faults.add_argument("--battery-drain", type=float, default=0.0, help="방전 속도 V/분")
-    faults.add_argument("--tip-at", type=float, default=None, help="N초 후 전도")
-    faults.add_argument("--obstacle-at", type=float, default=None, help="N초 후 장애물 출현")
-    faults.add_argument("--go-silent", type=float, default=None, help="N초 후 텔레메트리 중단")
+    faults.add_argument("--drop-rate", type=_rate, default=0.0, help="수신 명령 유실률 0.0~1.0")
+    faults.add_argument("--corrupt-rate", type=_rate, default=0.0, help="깨진 텔레메트리 송신률")
+    faults.add_argument("--battery-start", type=_non_negative, default=None, help="시작 전압 V")
+    faults.add_argument("--battery-drain", type=_non_negative, default=0.0, help="방전 속도 V/분")
+    faults.add_argument("--tip-at", type=_non_negative, default=None, help="N초 후 전도")
+    faults.add_argument(
+        "--obstacle-at", type=_non_negative, default=None, help="N초 후 장애물 출현"
+    )
+    faults.add_argument(
+        "--go-silent", type=_non_negative, default=None, help="N초 후 텔레메트리 중단"
+    )
     faults.add_argument("--seed", type=int, default=None, help="같은 고장을 재현하기 위한 씨앗")
     faults.add_argument(
         "--cmd-delay", type=_non_negative_ms, default=0.0, help="명령 지연 ms (호스트 → 로봇)"
