@@ -629,6 +629,14 @@ def model_sha256(config) -> str:
     return hashlib.sha256(model_path.read_bytes()).hexdigest()
 
 
+def loaded_models(detectors: list[Detector]) -> list[dict[str, Any]]:
+    """열린 검출기마다 `{name, sha256, provider}` — 설정값이 아니라 실제로 잡힌 실행 장치.
+
+    블랙박스 meta.json 의 `models` 와 같은 모양이다. 세션이 열린 뒤에만 부른다.
+    """
+    return [detector.model_summary() for detector in detectors]
+
+
 def write_session(
     path: Path,
     args,
@@ -641,6 +649,7 @@ def write_session(
     reasons,
     events,
     segment_log: SegmentLog | None,
+    models: list[dict[str, Any]] | None = None,
 ) -> None:
     """기계가 다시 계산할 수 있는 원자료를 원자적으로 저장한다."""
     payload = {
@@ -660,6 +669,7 @@ def write_session(
             "hits_required": hits,
             "overridden": bool(args.window_ms or args.hits),
         },
+        "models": models or [],
         "segments": segment_log.snapshot() if segment_log is not None else {},
         "events": list(events),
     }
@@ -670,7 +680,18 @@ def write_session(
 
 
 def write_report(
-    path, args, config, window_ms, hits, frames, elapsed, counts, reasons, events, segment_log=None
+    path,
+    args,
+    config,
+    window_ms,
+    hits,
+    frames,
+    elapsed,
+    counts,
+    reasons,
+    events,
+    segment_log=None,
+    models=None,
 ) -> None:
     """시험 결과를 사람이 읽을 MD 로 남긴다.
 
@@ -698,7 +719,14 @@ def write_report(
     add(f"- 개체 프로파일: `{args.device}`")
     if args.scenario:
         add(f"- 검수 시나리오: `{args.scenario}`")
-    add(f"- 프로바이더: {config['vision']['providers']}")
+    preferred = list(config["vision"]["providers"])
+    add(f"- 프로바이더 선호 목록: {preferred}")
+    if models:
+        actual = {str(m["name"]): m.get("provider") for m in models}
+        add("- 실제 실행 장치: " + ", ".join(f"{k}={v or '(모름)'}" for k, v in actual.items()))
+        fell = [k for k, v in actual.items() if v == "CPUExecutionProvider"]
+        if fell and preferred and preferred[0] != "CPUExecutionProvider":
+            add(f"- ⚠️ 선호 목록 첫 값({preferred[0]})이 아니라 CPU 로 떨어졌다: " + ", ".join(fell))
     add(
         f"- 모델: `{ppe_cfg['model_path']}` · 입력 {ppe_cfg['input_size']} · conf {ppe_cfg['conf_threshold']}"
     )
@@ -932,7 +960,9 @@ def main(argv: list[str] | None = None) -> int:
     window_ms = int(args.window_ms or ppe_cfg.get("violation_window_ms", 1500))
     hits = int(args.hits or ppe_cfg.get("violation_hits_required", 3))
     window = ViolationWindow(window_ms, hits)
-    print(f"프로바이더 {config['vision']['providers']}")
+    models = loaded_models([coco, ppe])
+    print(f"프로바이더 선호 목록 {config['vision']['providers']}")
+    print("실제 실행 장치 " + ", ".join(f"{m['name']}={m['provider']}" for m in models))
     print(
         f"위반 확정 조건 {window_ms}ms 안 {hits}회"
         + ("  ← 설정값 덮어씀 (관찰용)" if args.window_ms or args.hits else "")
@@ -1117,6 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
             reasons,
             events,
             segment_log,
+            models,
         )
         print(f"보고서 {args.report}")
     if args.session:
@@ -1132,6 +1163,7 @@ def main(argv: list[str] | None = None) -> int:
             reasons,
             events,
             segment_log,
+            models,
         )
         print(f"원자료 {args.session}")
     if args.show:
