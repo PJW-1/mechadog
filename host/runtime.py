@@ -29,7 +29,7 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -236,6 +236,8 @@ class Runtime:
         # 열려 있는 순찰 한 판과, 그 판에 마지막으로 남긴 도착 구역.
         self._mission_run: str | None = None
         self._visited_zone: str | None = None
+        # 대시보드 «순찰 정지» 가 수동을 거치는 동안 켠다 — 그 `MANUAL` 진입은 `stopped` 로 닫는다.
+        self._stopping_patrol = False
         if history is not None:
             serial = config.get("telemetry_device_id")
             history.upsert_robot(device_id, serial_no=serial if isinstance(serial, str) else None)
@@ -1264,7 +1266,8 @@ class Runtime:
         """순찰 한 판을 열고 닫는다 (ADR-46 결정 5).
 
         대기·수동·페일세이프(`RUN_ENDS`)를 떠나면 열고, 그중 하나로 들어가면 닫는다.
-        닫게 한 트리거가 `stop_reason` 이다.
+        닫게 한 트리거가 `stop_reason` 이다. 대시보드 «순찰 정지» 가 거치는 `MANUAL` 은
+        `stopped`·`patrol_stop` 으로 닫는다(`stopping_patrol`).
         """
         if self._history is None:
             return
@@ -1276,6 +1279,8 @@ class Runtime:
                 )
             return
         if self._mission_run is not None:
+            if result == "manual" and self._stopping_patrol:
+                result, trigger = "stopped", "patrol_stop"
             self._history.close_run(
                 self._mission_run, ended_at=now_ms, result=result, stop_reason=trigger
             )
@@ -1759,6 +1764,19 @@ class Runtime:
         결과를 그 자리에서 화면에 돌려줘야 한다.
         """
         return self._apply(event, self._clock())
+
+    @contextlib.contextmanager
+    def stopping_patrol(self) -> Iterator[None]:
+        """대시보드 «순찰 정지» 의 `MANUAL_ON` 을 수동 조종과 구별한다 (ADR-46 결정 5).
+
+        전이표에 자율 → `IDLE` 직행 사건이 없어 정지는 `MANUAL` 을 거친다. 이 안에서
+        `MANUAL` 로 닫힌 판은 `manual` 이 아니라 `stopped`(`stop_reason` `patrol_stop`)로 남는다.
+        """
+        self._stopping_patrol = True
+        try:
+            yield
+        finally:
+            self._stopping_patrol = False
 
     def note_voice_listening(self, captured_at_ms: int | None = None) -> tuple[bool, str]:
         """판정 대기 유예 (`VoiceAuthWindow.note_listening`). 대시보드 스레드가 부른다."""
@@ -2265,6 +2283,7 @@ def dashboard_wiring(
         confirm_alarm=runtime.ask_alarm_confirm,
         locate_zone=runtime.ask_locate_zone,
         goto_point=getattr(runtime, "ask_goto", None),
+        stopping_patrol=runtime.stopping_patrol,
         pose=(
             float(config["posture"]["pitch_up_deg"]),
             int(config["posture"]["settle_ms"]),

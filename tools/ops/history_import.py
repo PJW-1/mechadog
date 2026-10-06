@@ -3,7 +3,8 @@
     python tools/ops/history_import.py --device <unit-id> [--blackbox DIR] [--db PATH]
 
 `<epoch_ms>_<event>/meta.json` 하나가 사건 한 건이다. 몇 번을 돌려도 같다 — 이미 있는 사건은
-건드리지 않는다(검토 기록 보존). 기체 이름은 폴더에 없어 `--device` 로 준 것을 붙인다.
+건드리지 않는다(검토 기록 보존). 기체 이름은 폴더에 없어 `--device` 로 준 것을 붙인다 — 런타임
+`--device` 와 같은 프로필 이름이어야 한다. 텔레메트리 ID 를 주면 사건 ID 가 달라져 한 번 더 들어간다.
 순찰 판(`mission_runs`)은 블랙박스에 없으므로 만들지 않는다.
 
 종료 코드: 0 정상 · 1 넣지 못한 사건이 있음 · 2 인자·설정 오류.
@@ -30,7 +31,12 @@ _ENTRY_NAME = re.compile(r"^\d+_.+$")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="블랙박스 → 사건 이력 DB 가져오기")
-    parser.add_argument("--device", required=True, help="사건을 붙일 기체 ID")
+    parser.add_argument(
+        "--device",
+        required=True,
+        help="사건을 붙일 기체 id — 런타임 --device 와 같은 config/devices/<id>.yaml 이름 "
+        "(예 mechdog-02). 텔레메트리 ID(mechdog-<MAC>)가 아니다",
+    )
     parser.add_argument("--blackbox", default=None, help="기본은 logging.blackbox_dir")
     parser.add_argument("--db", default=None, help="기본은 logging.history_db")
     return parser

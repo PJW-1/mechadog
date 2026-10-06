@@ -4270,6 +4270,31 @@ def test_a_patrol_is_one_run_closed_by_the_trigger_that_ended_it(
     assert (run["ended_at"], run["result"], run["stop_reason"]) == (clock.ms, "failsafe", "ESTOP")
 
 
+def test_the_dashboard_patrol_stop_closes_the_run_as_stopped(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ «순찰 정지» 는 수동을 거쳐 `IDLE` 로 내린다 — 그래도 수동 조종(`manual`)과 구별해 남긴다.
+
+    FSM 에는 자율 → `IDLE` 직행 사건이 없어, 표시하지 않으면 정상 정지가 모두 `manual` 로 찍힌다.
+    """
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    commands = dashboard_wiring(runtime, config, vision=None, blackbox=None)["commands"]
+    runtime.start_patrol(clock.ms)
+    clock.advance(3000)
+    assert commands.patrol_stop().accepted
+    assert runtime.behavior.state == "IDLE"
+    clock.advance(1000)
+    runtime.start_patrol(clock.ms)
+    clock.advance(2000)
+    assert commands.manual_on().accepted
+
+    stopped, taken = sorted(store.runs()[0], key=lambda run: run["started_at"])
+    assert (stopped["result"], stopped["stop_reason"]) == ("stopped", "patrol_stop")
+    assert (taken["result"], taken["stop_reason"]) == ("manual", "MANUAL_ON")
+    store.close()
+
+
 def test_feed_events_reach_the_history_without_a_dashboard(
     config: dict, clock: FakeClock, tmp_path: Path
 ) -> None:

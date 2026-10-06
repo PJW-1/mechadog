@@ -35,6 +35,9 @@ T = TypeVar("T")
 SCHEMA_VERSION = "1"
 #: `last_seen_at` 을 다시 쓰기까지의 최소 간격(ms). 텔레메트리는 10Hz 라 매번 쓰지 않는다.
 SEEN_WRITE_MS = 5000
+#: 런타임이 쓰기 잠금을 기다리는 최대 시간(초). 런타임 틱은 100ms, 로봇 명령 타임아웃은 600ms 라
+#: 다른 프로세스가 잠금을 쥐어도 제어 루프를 붙잡지 않도록 짧게 잡는다.
+RUNTIME_WRITE_TIMEOUT_S = 0.05
 #: 한 번에 돌려주는 최대 행 수.
 MAX_PAGE = 500
 #: 검토 메모의 최대 길이 — 관제 화면 검토 양식과 같다.
@@ -302,7 +305,7 @@ def _ensure_robot(conn: sqlite3.Connection, robot_id: str) -> None:
 class HistoryStore:
     """SQLite 파일 하나. 런타임이 쓰고 관제 서버가 읽는다."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, write_timeout_s: float = 2.0) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._write_lock = threading.Lock()
@@ -312,6 +315,8 @@ class HistoryStore:
         self._writer = self._connect()
         try:
             self._migrate(self._writer)
+            # 스키마 준비는 넉넉히 기다렸고, 이후 쓰기만 `write_timeout_s` 로 줄인다.
+            self._writer.execute(f"PRAGMA busy_timeout = {int(write_timeout_s * 1000)}")
             self._reader = self._connect()
         except BaseException:
             self._writer.close()
@@ -360,7 +365,8 @@ class HistoryStore:
         try:
             with self._transaction() as conn:
                 return work(conn)
-        except sqlite3.Error as exc:
+        except Exception as exc:  # noqa: BLE001
+            # 이 DB 는 색인이다 — sqlite3.Error 가 아닌 예외(깨진 칸의 JSON 등)도 기록만 하고 삼킨다.
             LOG.error("history_write_failed", op=op, error=f"{type(exc).__name__}: {exc}")
             return None
 
@@ -422,10 +428,9 @@ class HistoryStore:
             )
             return True
 
-        written = bool(self._write("note_seen", work))
-        if written:
-            self._seen[robot_id] = (at_ms, status)
-        return written
+        # 실패해도 시도한 시각을 기억한다 — DB 가 계속 실패해도 10Hz 로 다시 쓰지 않는다.
+        self._seen[robot_id] = (at_ms, status)
+        return bool(self._write("note_seen", work))
 
     def open_run(self, robot_id: str, *, mode: str, started_at: int) -> str | None:
         """⚠️ 기동 때 기체 등록이 실패했어도 판을 잃지 않는다 — 자리표 행을 만든다."""
@@ -650,7 +655,7 @@ def open_history(config: Mapping[str, Any]) -> HistoryStore | None:
         return None
     path = repo_path(value)
     try:
-        return HistoryStore(path)
+        return HistoryStore(path, write_timeout_s=RUNTIME_WRITE_TIMEOUT_S)
     except (sqlite3.Error, OSError) as exc:
         LOG.error("history_unavailable", path=str(path), error=f"{type(exc).__name__}: {exc}")
         return None
