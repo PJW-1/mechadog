@@ -579,8 +579,12 @@ def paired_tally(
 ) -> dict[str, collections.Counter[tuple[str, str]]]:
     """같은 사람 검출로 판정한 두 세션을 사람 단위로 맞대어 (a 판정, b 판정) 쌍을 센다.
 
-    사람 검출(COCO)이 같아야 사람 순서가 맞는다. 태그·구간·사람 수가 다르면 거부한다.
+    사람 검출(COCO)이 같아야 사람 순서가 맞는다. 프레임 수·태그·구간·사람 수가 다르면 거부한다.
     """
+    if len(a["events"]) != len(b["events"]):
+        raise ValueError(
+            f"프레임 수가 다르다: {len(a['events'])} ≠ {len(b['events'])} — 같은 세션인지 본다"
+        )
     out: dict[str, collections.Counter[tuple[str, str]]] = {}
     for x, y in zip(a["events"], b["events"], strict=True):
         if x["tag"] != y["tag"]:
@@ -666,18 +670,23 @@ def run_compare(args: argparse.Namespace) -> int:
     cache_meta: dict[str, dict[str, Any]] = {}
     for name, path in args.cache:
         cache = json.loads(Path(path).read_text(encoding="utf-8"))
-        floor = cache.get("meta", {}).get("conf_floor")
-        if floor is not None and floor > BASE.conf + 1e-9:
-            raise SystemExit(
-                f"캐시 {name} 의 PPE conf 하한 {floor} 이 base conf {BASE.conf} 보다 높다"
-                " — 하한 이하로 다시 infer 한다"
-            )
+        _require_base_conf(name, cache)
         cache_meta[name] = {"frames": len(cache["frames"]), **cache.get("meta", {})}
         replays[name] = replay(
             cache["frames"], session["events"], BASE, int(args.head_margin), orientations, meta
         )
     _write_text("\n".join(compare_lines(session, replays, cache_meta)) + "\n", args.out)
     return 0
+
+
+def _require_base_conf(name: str, cache: dict[str, Any]) -> None:
+    """base 재추론에는 conf 0.5 까지의 검출이 필요하다 — 캐시 하한이 더 높으면 거부한다."""
+    floor = cache.get("meta", {}).get("conf_floor")
+    if floor is not None and floor > BASE.conf + 1e-9:
+        raise SystemExit(
+            f"캐시 {name} 의 PPE conf 하한 {floor} 이 base conf {BASE.conf} 보다 높다"
+            " — 하한 이하로 다시 infer 한다"
+        )
 
 
 def _write_text(text: str, out: str | None) -> None:
@@ -901,6 +910,10 @@ def run_report(args: argparse.Namespace) -> int:
     session = json.loads(Path(args.session).read_text(encoding="utf-8"))
     plan = Path(args.plan)
     orientations = _plan_orientations(plan)
+    cache: dict[str, Any] | None = None
+    if args.cache:
+        cache = json.loads(Path(args.cache).read_text(encoding="utf-8"))
+        _require_base_conf(args.cache, cache)
     notes = {v.name: v.note for v in VARIANTS}
     lines = ["## 기록된 판정에 누적 규칙만 바꿔 다시 센 결과 (추론 없음)", ""]
     recorded_rows = []
@@ -912,14 +925,14 @@ def run_report(args: argparse.Namespace) -> int:
     lines += ["", "### 조건별 분해 — 기록값", ""]
     lines += breakdown_table(session, plan)
 
-    if args.cache:
-        cache = json.loads(Path(args.cache).read_text(encoding="utf-8"))
+    if cache is not None:
         meta = {k: v for k, v in session.items() if k not in ("events", "segments")}
         head_margin = int(args.head_margin)
+        floor = cache.get("meta", {}).get("conf_floor", 0.0)
         rows = []
         replays: dict[str, dict[str, Any]] = {}
         for variant in VARIANTS:
-            if variant.conf < cache["meta"]["conf_floor"] - 1e-9:
+            if variant.conf < floor - 1e-9:
                 continue
             replayed = replay(
                 cache["frames"], session["events"], variant, head_margin, orientations, meta

@@ -439,6 +439,24 @@ def test_compare_rejects_cache_with_conf_floor_above_base(tmp_path):
         ab.main(["compare", str(session), "--plan", str(plan), "--cache", f"high={cache}"])
 
 
+def test_paired_tally_rejects_sessions_with_different_event_counts():
+    a = {"events": [judged_event("00001", [OK]), judged_event("00002", [OK])]}
+    b = {"events": [judged_event("00001", [OK])]}
+    with pytest.raises(ValueError, match="프레임 수"):
+        ab.paired_tally(a, b)
+
+
+def test_report_rejects_cache_with_conf_floor_above_base(tmp_path):
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"orientation_step_s": 60, "orientations": ["후면"]}))
+    session = tmp_path / "session.json"
+    session.write_text(json.dumps({"scenario": "xiao-rear", "events": []}))
+    cache = tmp_path / "high.json"
+    cache.write_text(json.dumps({"meta": {"conf_floor": 0.7}, "frames": []}))
+    with pytest.raises(SystemExit, match="0.7"):
+        ab.main(["report", str(session), "--plan", str(plan), "--cache", str(cache)])
+
+
 def test_compare_creates_missing_parent_folder_of_out(tmp_path):
     out = tmp_path / "새" / "폴더" / "compare.md"
     ab._write_text("표\n", str(out))
