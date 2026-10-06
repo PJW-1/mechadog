@@ -541,7 +541,8 @@ def test_head_tail_skips_unnamed_nodes() -> None:
 
     nodes = [
         helper.make_node("Conv", ["images", "w"], ["conv"], name="conv"),
-        helper.make_node("Relu", ["conv"], ["relu"]),  # 이름 없음
+        helper.make_node("Mul", ["conv", "conv"], ["mulout"], name="mul"),
+        helper.make_node("Relu", ["mulout"], ["relu"]),  # 이름 없음
         helper.make_node("Sigmoid", ["relu"], ["output"], name="sig"),
     ]
     graph = helper.make_graph(
@@ -550,7 +551,8 @@ def test_head_tail_skips_unnamed_nodes() -> None:
         [helper.make_tensor_value_info("images", TensorProto.FLOAT, [1, 3, 4, 4])],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 6, 4, 4])],
     )
-    assert pb.head_tail_nodes(helper.make_model(graph)) == ["sig"]
+    # 이름 없는 노드를 지나서도 상류(mul)까지 탐색이 이어져야 한다.
+    assert pb.head_tail_nodes(helper.make_model(graph)) == ["mul", "sig"]
 
 
 def test_static_qdq_keeps_head_tail_float(tmp_path: Path) -> None:
@@ -783,6 +785,26 @@ def test_latency_one_builds_detector_with_given_nms_settings(
         )
     assert seen["iou_threshold"] == 0.2
     assert seen["model_family"] == "yolox"
+
+
+def test_latency_one_passes_model_family_to_detector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """기본값이 아닌 계열을 넘기면 운용 Detector 가 그 값으로 어댑터를 찾다가 거부한다."""
+    monkeypatch.setattr(pb, "make_session", lambda *_a: FakeSession())
+    model = tmp_path / "m.onnx"
+    model.write_bytes(b"x")
+    with pytest.raises(ValueError, match="모르는 model_family.*not-a-family"):
+        pb.latency_one(
+            model,
+            "CPUExecutionProvider",
+            [],
+            input_size=32,
+            labels=["a"],
+            warmup=0,
+            runs=1,
+            model_family="not-a-family",
+        )
 
 
 def test_cli_latency_one_passes_nms_settings(
