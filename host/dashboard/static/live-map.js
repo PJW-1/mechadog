@@ -221,7 +221,11 @@ export class LiveMap {
     if (this.image) ctx.drawImage(this.image, 0, 0, meta.width, meta.height);
     const px = (x, y) => applyAffine(meta.patrol_to_px, x, y);
     const metre = 1 / meta.resolution_m;
-    ctx.font = 'bold ' + Math.round(metre * 0.35) + 'px sans-serif';
+    // Keep main-map annotations readable in CSS pixels, including tall maps.
+    const mainMap = !!this.root.closest('.live-house-map');
+    const displayScale = Math.min(rect.width / meta.width, rect.height / meta.height) * this.viewScale;
+    const ink = mainMap && displayScale > 0 ? Math.max(1, 1 / displayScale) : 1;
+    ctx.font = 'bold ' + Math.round(Math.max(metre * 0.35, mainMap ? 14 * ink : 0)) + 'px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const skipped = new Set(this.nav?.blockage?.skipped_zones || []);
@@ -238,19 +242,19 @@ export class LiveMap {
       const [u, v] = px(zone.x, zone.y);
       ctx.fillStyle = skipped.has(zone.id) ? '#9ca3af' : 'rgba(255,255,255,.85)';
       ctx.beginPath();
-      ctx.arc(u, v, metre * 0.28, 0, Math.PI * 2);
+      ctx.arc(u, v, Math.max(metre * 0.28, mainMap ? 12 * ink : 0), 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = zone.color;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 * ink;
       ctx.stroke();
       ctx.fillStyle = '#1f2933';
       ctx.fillText(zone.id, u, v);
     }
     const nav = this.nav;
     for (const obstacle of nav?.blockage?.obstacles || []) {
-      ctx.fillStyle = 'rgba(220,38,38,.3)'; ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(220,38,38,.3)'; ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2 * ink;
       for (const [x,y] of obstacle.points || [[obstacle.x,obstacle.y]]) {
-        ctx.beginPath(); ctx.arc(...px(x,y), metre*.15, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(...px(x,y), Math.max(metre*.15, mainMap ? 5 * ink : 0), 0, Math.PI*2); ctx.fill(); ctx.stroke();
       }
       ctx.fillStyle = '#b91c1c'; ctx.fillText('장애물', ...px(obstacle.x,obstacle.y+.3));
     }
@@ -259,7 +263,7 @@ export class LiveMap {
       // 원판을 서버의 순찰 좌표에서 만들고 기존 아핀 변환으로 그린다(회전·축 뒤집힘 포함).
       ctx.fillStyle = 'rgba(37,99,235,.12)';
       ctx.strokeStyle = '#2563eb';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * ink;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
       for (const [step, world] of hint.entries()) {
@@ -274,8 +278,8 @@ export class LiveMap {
     if (!nav || nav.available === false || !Array.isArray(nav.pose)) return;
     if (nav.path?.length) {
       ctx.strokeStyle = 'rgba(37,99,235,.8)';
-      ctx.lineWidth = 3;
-      ctx.setLineDash([8, 6]);
+      ctx.lineWidth = 3 * ink;
+      ctx.setLineDash([8 * ink, 6 * ink]);
       ctx.beginPath();
       const [sx, sy] = px(nav.pose[0], nav.pose[1]);
       ctx.moveTo(sx, sy);
@@ -284,34 +288,35 @@ export class LiveMap {
       ctx.setLineDash([]);
     }
     if (nav.goal) {
+      const goalSize = 10 * ink;
       const [u, v] = px(nav.goal[0], nav.goal[1]);
       ctx.strokeStyle = '#2563eb';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 * ink;
       ctx.beginPath();
-      ctx.moveTo(u - 10, v - 10);
-      ctx.lineTo(u + 10, v + 10);
-      ctx.moveTo(u + 10, v - 10);
-      ctx.lineTo(u - 10, v + 10);
+      ctx.moveTo(u - goalSize, v - goalSize);
+      ctx.lineTo(u + goalSize, v + goalSize);
+      ctx.moveTo(u + goalSize, v - goalSize);
+      ctx.lineTo(u - goalSize, v + goalSize);
       ctx.stroke();
     }
     if (Array.isArray(nav.sim_truth)) {
       // 시뮬 전용 — 가상 로봇의 진짜 자리(옅은 원). 실제 로봇에서는 서버가 보내지 않는다.
       const [u, v] = px(nav.sim_truth[0], nav.sim_truth[1]);
       ctx.strokeStyle = 'rgba(217,119,6,.9)';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * ink;
       ctx.beginPath();
       ctx.arc(u, v, metre * 0.18, 0, Math.PI * 2);
       ctx.stroke();
     }
     // 로봇 — 앞을 가리키는 삼각형. 위치를 못 믿으면 속이 빈 회색으로 그린다.
-    const [tip, left, right] = mapRobotPoints(meta, nav.pose, {normalized:false});
+    const [tip, left, right] = mapRobotPoints(meta, nav.pose, {normalized:false, length:Math.max(.3, mainMap ? 12 * ink / metre : 0)});
     const trusted = !nav.stale && (nav.verified || nav.seeded);
     ctx.beginPath();
     ctx.moveTo(...tip);
     ctx.lineTo(...left);
     ctx.lineTo(...right);
     ctx.closePath();
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 * ink;
     ctx.strokeStyle = trusted ? '#0f766e' : '#6b7280';
     ctx.fillStyle = trusted ? 'rgba(15,118,110,.85)' : 'rgba(255,255,255,.6)';
     ctx.fill();

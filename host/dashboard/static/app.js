@@ -314,6 +314,7 @@ function setCameraDockState({expanded=false,collapsed=false}){
  syncObservationView();
  // ResizeObserver also follows later viewport changes.
  view?.resize();
+ dock.persistDock?.();
 }
 $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$('camera-dock').classList.contains('expanded')}));
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
@@ -324,37 +325,63 @@ $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:
  const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header');
  const clampTo=(v,min,max)=>Math.min(max,Math.max(min,v));
  const dockInStage=()=>dock.parentElement===stage&&currentPage==='dashboard';
+ const storageKey='mechadog.dashboard.camera.v1';
+ const desktop=()=>!globalThis.matchMedia?.('(max-width:899px)').matches;
+ const aspect=()=>{const w=visionStatus.width,h=visionStatus.height;return w>0&&h>0?w/h:4/3};
+ // Storage is optional. Invalid/old records leave the CSS default untouched.
+ let saved=null;
+ try{
+  const record=JSON.parse(storage?.getItem(storageKey)||'null');
+  if(record?.version===1&&['left','top','width'].every(key=>Number.isFinite(record[key])&&record[key]>=0)&&record.width>=200&&typeof record.collapsed==='boolean')saved=record;
+ }catch{/* Disabled storage or malformed JSON: use the default placement. */}
+ const fitDock=()=>{
+  if(!dockInStage()||!desktop())return;
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  if(!s.width||!s.height)return;
+  const maxWidth=Math.max(1,Math.min(s.width-20,1100,Math.max(1,s.height-148)*aspect()));
+  const width=clampTo(d.width,Math.min(280,maxWidth),maxWidth);
+  dock.style.width=width+'px';
+  dock.style.left=clampTo(d.left-s.left,0,Math.max(0,s.width-width))+'px';
+  dock.style.top=clampTo(d.top-s.top,0,Math.max(0,s.height-dock.offsetHeight))+'px';
+  dock.style.bottom='auto';dock.style.right='auto';
+ };
+ dock.persistDock=()=>{
+  if(!dockInStage()||!desktop())return;
+  fitDock();
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  if(!s.width||!d.width)return;
+  try{storage?.setItem(storageKey,JSON.stringify({version:1,left:d.left-s.left,top:d.top-s.top,width:d.width,collapsed:dock.classList.contains('collapsed')}))}catch{/* Session interactions still work when storage is full or blocked. */}
+ };
  // 확대 전 크기와 위치를 기억한다. 확대 상태에서도 이동·크기 조절이 가능하다.
  let beforeExpandGeom=null;
  const expandInPlace=()=>{
-  beforeExpandGeom={left:dock.style.left,top:dock.style.top,bottom:dock.style.bottom,width:dock.style.width};
+  beforeExpandGeom={left:dock.style.left,top:dock.style.top,bottom:dock.style.bottom,right:dock.style.right,width:dock.style.width};
   const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
   const maxVideoWidth=(s.height-160)*(visionStatus.width>0&&visionStatus.height>0?visionStatus.width/visionStatus.height:4/3)+18;
   const width=Math.min(920,s.width-20,maxVideoWidth,Math.max(d.width,s.width*.75));
   dock.style.left=clampTo(d.left-s.left,0,Math.max(0,s.width-width))+'px';
-  dock.style.top='auto';dock.style.bottom=Math.max(0,s.bottom-d.bottom)+'px';dock.style.width=width+'px';
+  dock.style.top=clampTo(d.top-s.top,0,Math.max(0,s.height-148-width/aspect()))+'px';dock.style.bottom='auto';dock.style.right='auto';dock.style.width=width+'px';
  };
  const restoreBeforeExpand=()=>{if(beforeExpandGeom)Object.assign(dock.style,beforeExpandGeom);beforeExpandGeom=null};
  dock.expandDockInPlace=expandInPlace;dock.restoreDockBeforeExpand=restoreBeforeExpand;
  header.addEventListener('pointerdown',event=>{
-  if(!dockInStage()||matchMedia('(max-width:800px)').matches||event.target.closest('button'))return;
+  if(!dockInStage()||!desktop()||event.button!==0||event.target.closest('button'))return;
   event.preventDefault();
   const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
-  dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';
+  dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';dock.style.right='auto';
   const offX=event.clientX-d.left,offY=event.clientY-d.top;
   const move=move=>{
    dock.style.left=clampTo(move.clientX-s.left-offX,0,Math.max(0,s.width-dock.offsetWidth))+'px';
    dock.style.top=clampTo(move.clientY-s.top-offY,0,Math.max(0,s.height-dock.offsetHeight))+'px';
   };
-  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);view?.resize()};
+  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);dock.persistDock();view?.resize()};
   header.setPointerCapture?.(event.pointerId);
   header.addEventListener('pointermove',move);
   header.addEventListener('pointerup',up);
   header.addEventListener('pointercancel',up);
  });
- const aspect=()=>{const w=visionStatus.width,h=visionStatus.height;return w>0&&h>0?w/h:4/3};
  for(const grip of dock.querySelectorAll('.camera-resize'))grip.addEventListener('pointerdown',event=>{
-  if(!dockInStage())return;
+  if(!dockInStage()||!desktop()||event.button!==0)return;
   event.preventDefault();
   const edge=grip.dataset.edge,s=stage.getBoundingClientRect(),startW=dock.getBoundingClientRect().width,startX=event.clientX,startY=event.clientY;
   const move=move=>{
@@ -367,13 +394,24 @@ $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:
    // 너비가 커지면 오른쪽 경계를 넘을 수 있다 — 왼쪽을 당겨 안에 둔다.
    const over=dock.getBoundingClientRect().right-s.right;
    if(over>0)dock.style.left=clampTo((dock.offsetLeft||0)-over,0,s.width)+'px';
+   fitDock();
   };
-  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);view?.resize()};
+  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);dock.persistDock();view?.resize()};
   grip.setPointerCapture?.(event.pointerId);
   grip.addEventListener('pointermove',move);
   grip.addEventListener('pointerup',up);
   grip.addEventListener('pointercancel',up);
  });
+ if(saved){
+  Object.assign(dock.style,{left:saved.left+'px',top:saved.top+'px',width:saved.width+'px',bottom:'auto',right:'auto'});
+  setCameraDockState({collapsed:saved.collapsed});
+ }
+ globalThis.addEventListener('resize',fitDock);
+ const observer=globalThis.ResizeObserver?new ResizeObserver(fitDock):null;
+ observer?.observe(stage);
+ observer?.observe(dock);
+ // Returning from the manual camera mount can change available space.
+ new MutationObserver(fitDock).observe(stage,{childList:true});
 }
 $('demo-toggle').addEventListener('click',()=>attempt(()=>{if(operations.mission.status==='running')operations.pauseMission();else if(operations.mission.status==='paused')operations.resumeMission();else navigate('missions')}));
 function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!$('stop-dialog').open)$('stop-dialog').showModal()}
