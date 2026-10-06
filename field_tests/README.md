@@ -78,4 +78,4 @@ PPE 관련 폴더(이름에 `ppe`가 들어가거나 `3.7.x`)는 개발 중이�
 | [20260923_xiao-mic](results/20260923_xiao-mic/summary.md) | 2026-09-23 | XIAO 마이크 인식 품질·영상 동시 전송 | 통과 |
 | [20260924_4.7.20-mp3-driver](results/20260924_4.7.20-mp3-driver/summary.md) | 2026-09-24 | 로봇 MP3 모듈 드라이버 | 통과 |
 | [20260924_4.7.21-tf-card](results/20260924_4.7.21-tf-card/summary.md) | 2026-09-24 | TF 카드 문장·로봇 스피커 재생 | 통과 |
-| [20260928_4.8.0-vlm-bench](results/20260928_4.8.0-vlm-bench/summary.md) | 2026-09-28 | VLM 판독 카메라 벤치 | 기록만 |
+| [20260928_4.8.0-vlm-bench](results/20260928_4.8.0-vlm-bench/summary.md) | 2026-09-28 | VLM 판독 카메라 벤치 | 기록만 · `person_down`·YOLOX 결과는 폐기(2026-10-06 · 재실측 예정) |
