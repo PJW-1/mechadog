@@ -67,6 +67,8 @@ def load_criteria(path: Path, scenario: str) -> dict[str, Any]:
     criteria = data.get("scenarios", {}).get(scenario, {}).get("criteria")
     if not criteria:
         raise ValueError(f"합격 기준 없음: 시나리오 {scenario} ({path})")
+    if not isinstance(criteria, dict):
+        raise ValueError(f"합격 기준은 키·값 객체여야 함: {criteria!r} ({path})")
     missing = [key for key in CRITERIA_KEYS if key not in criteria]
     if missing:
         raise ValueError(f"합격 기준에 빠진 값 {missing}: 시나리오 {scenario} ({path})")

@@ -83,6 +83,8 @@ def load_acceptance_plan(path: Path, scenario: str) -> tuple[list[dict[str, str]
     scenarios = data.get("scenarios", {})
     if scenario not in scenarios:
         raise ValueError(f"검수 시나리오 없음: {scenario}")
+    if not isinstance(scenarios[scenario], dict):
+        raise ValueError(f"PPE 검수 시나리오 {scenario} 는 객체여야 함: {path}")
     segments = scenarios[scenario].get("segments", [])
     orientations = data.get("orientations", [])
     step_s = data.get("orientation_step_s")
