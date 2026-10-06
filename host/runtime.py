@@ -606,6 +606,13 @@ class Runtime:
                 # (telemetry_publisher «Telemetry unavailable») ACK 는 오는데 LINK_LOST 로 서던 문제.
                 # 명령 응답도 로봇 링크 생존 증거로 센다. 온보드 링크 두절 정지(3s)는 그대로다.
                 self._behavior.note_telemetry(now_ms)
+                # 2026-10-06: 텔레메트리가 끊긴 동안에도 ACK 의 safe_latched 로 래치 해제를 확인한다.
+                try:
+                    latched = json.loads(raw).get("safe_latched")
+                except (ValueError, AttributeError):
+                    latched = None
+                if isinstance(latched, bool):
+                    self._settle_reset(latched, now_ms)
                 if (
                     self._sound_wait is not None
                     and json.loads(raw).get("seq") == self._sound_wait[0]
