@@ -86,7 +86,7 @@ flowchart TD
 | 저전압 경고 `lowbatt` | 7.0V 이하 1표본 (동작을 막지 않음) | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
 | 저전압 셧다운 → 래치 | 6.6V 이하 새 표본 연속 3개 | `safety.battery_shutdown_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
 | 셧다운 재무장 · 해제 허용 | 7.0V 초과로 회복 | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
-| 반사 정지 | 25cm 미만 연속 2표본 (센서 주기 40ms) | `safety.obstacle_stop_cm` | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 반사 정지 | 7cm 미만 연속 2표본(2026-10-06 25→7) (센서 주기 40ms) | `safety.obstacle_stop_cm` | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 반사 해제 | 30cm 이상 연속 5표본 | 펌웨어 `kObstacleClearCm` · `clear_samples` (설정 키 없음) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 표본 신선도 | 측정 뒤 200ms 이내, 같은 표본은 한 번만 셈 | 펌웨어 `max_sample_age_ms` (설정 키 없음) | — |
 | 반사 정지 중 허용 명령 | 후진·제자리 조향(step 0)·정지 | 없음 | [ADR-22](../DECISIONS.md#adr-22) |

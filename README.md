@@ -81,7 +81,7 @@ flowchart TD
 - 로봇은 마지막 유효 명령 뒤 600ms 동안 다음 명령이 없으면 스스로 페일세이프로 래치합니다. 처음 값인 300ms 에서 무선 구간 지연 때문에 래치가 반복되는 것을 실측으로 확인하고 옮긴 값입니다([ADR-39](docs/DECISIONS.md#adr-39), [사례 1](docs/case-studies/01-command-timeout.md)).
 - 페일세이프 해제는 사람이 해제를 누르고 로봇이 `safety_latched=false` 를 보고해야만 끝납니다. Host 가 보낸 값을 되돌려 받는 `state` 는 판단에 쓰지 않습니다([ADR-21](docs/DECISIONS.md#adr-21), [사례 3](docs/case-studies/03-echoed-state-self-lock.md)).
 - E-Stop 명령은 다른 모든 조건보다 우선해 로봇을 래치합니다([제어 링크와 페일세이프](docs/features/failsafe.md)).
-- 초음파가 25cm 미만을 연속 2표본 읽으면 로봇이 전진을 멈춥니다. 이 반사 정지는 래치가 아니어서 전방이 비면 로봇이 스스로 풉니다([순찰 중 장애물 대응](docs/features/patrol-obstacle.md)).
+- 초음파가 7cm 미만을 연속 2표본 읽으면 로봇이 전진을 멈춥니다. 이 반사 정지는 래치가 아니어서 전방이 비면 로봇이 스스로 풉니다([순찰 중 장애물 대응](docs/features/patrol-obstacle.md)).
 
 ### 2. 비전·ML 파이프라인
 
