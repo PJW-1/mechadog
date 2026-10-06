@@ -1,3 +1,0 @@
-# Windows USB mode utility; Wi-Fi updater uses Python's standard library.
-esptool==5.4.0
-pyserial==3.5
