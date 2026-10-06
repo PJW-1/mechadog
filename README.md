@@ -136,6 +136,12 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 - [10fps 추론이 진짜 검출의 절반 이상을 놓친 문제](docs/case-studies/02-person-gate-time-window.md): 실기 343프레임을 분석해 추론률과 판정 방식을 함께 바꿨습니다.
 - [반향된 상태값 때문에 Host 가 스스로를 잠글 수 있었던 문제](docs/case-studies/03-echoed-state-self-lock.md): 반향되지 않는 플래그만 판단에 쓰도록 바꿨습니다.
 - [로봇 I²C 경유 음성 파형 중계가 불가능했던 사례](docs/case-studies/04-i2c-voice-relay.md): 브리지를 직접 읽고 써서 한계를 확인하고 듣기와 말하기 경로를 나눴습니다.
+- [공개 PPE 데이터 성능이 XIAO 에서 재현되지 않은 사례](docs/case-studies/05-ppe-domain-gap.md): 공개 사진 점수가 높은 후보가 15cm 로봇 카메라에서 정상 착용자를 위반으로 읽어 기각됐고, 채택 기준을 XIAO 실측으로 옮겼습니다.
+- [부분 라벨이 맨머리를 «배경» 으로 가르친 사례](docs/case-studies/06-partial-label-background.md): 3,219장 중 544장에 머리 라벨이 없었고, 라벨이 빠진 사람을 학습에서 빼는 검사를 도구와 시험에 넣었습니다. 같은 조건 재평가는 없습니다.
+- [TRACK 좌우 비대칭을 회전율 곡선으로 고친 사례](docs/case-studies/07-track-turn-asymmetry.md): 두 점으로 세운 데드밴드 값이 틀렸음을 IMU 회전율 곡선으로 확인하고, 보정을 −5.0° 로 내려 드리프트를 거스르는 쪽에만 더했습니다.
+- [VLM 두 장 비교 실패와 한 장 판독 한정](docs/case-studies/08-vlm-two-image-compare.md): 로컬 2B VLM 이 같은 사진 두 장을 «다르다» 고 답해, 변화 확정을 한 장 판독을 두 번 묻는 방식으로 바꿨습니다.
+- [bbox 높이 정지선이 화면 밖이었던 사례](docs/case-studies/09-bbox-height-stop-line.md): 기존 정지선 490px 이 VGA 높이 480px 을 넘어, 정지선을 화면 안으로 옮기고 초음파 40cm 를 더했습니다.
+- [추론 환경 차이로 «빈 결과» 가 나온 사례](docs/case-studies/10-model-provider-mismatch.md): DirectML·패키지 충돌·전처리 규약 어긋남이 오류 없이 빈 결과나 느린 CPU 로 나타나, 전처리 계약과 EP 선택 기록을 두었습니다.
 
 **더 읽기**
 
@@ -143,13 +149,16 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 - [문서 색인](docs/README.md)
 - [기능별 판단 흐름도 9건](docs/features/)
 - [대표 설계 결정](docs/design-decisions.md)
-- [설계 결정 기록(ADR 42건)](docs/DECISIONS.md)
+- [설계 결정 기록(ADR 46건)](docs/DECISIONS.md)
 - [실기 시험 기록](field_tests/README.md)
+- [PPE 데이터 카드](docs/ppe-data-card.md): 배포 모델 ppe-v5 의 구조·전처리·클래스 규칙·평가 근거를 한곳에 모았고, 원문에서 확인하지 못한 값은 «확인 못 함» 으로 적었습니다.
+- [PPE 전처리·후처리 ablation](field_tests/results/20261006_ppe-xiao/ablation.md): 기록된 판정으로는 XIAO 기준을 재현했지만, 저장된 프레임이 판정을 덧그린 이미지라 재추론이 필요한 변형은 무효이고 누적 규칙 축만 유효합니다.
+- [세션 재생 결과](field_tests/results/20261006_session-replay/summary.md): 기록 세션을 Runtime 에 다시 넣어 명령·FSM 전이·경보 단계를 맞춰 본 기록으로, 재생할 실기 세션이 없어 합성 세션으로만 확인했습니다.
 
 ## 개발 방식
 
-- **테스트**: 하드웨어 없이 도는 pytest 3,162건(86개 파일, 2026-09-29 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. CI 는 `host`·`tools` 커버리지 80% 미만이면 실패합니다.
+- **테스트**: 하드웨어 없이 도는 pytest 4,190건(123개 파일, 2026-10-06 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. CI 는 `host`·`tools` 커버리지 80% 미만이면 실패합니다.
 - **CI 게이트**: [`ci.yml`](.github/workflows/ci.yml)이 ruff 린트·포맷, pytest, 펌웨어 3종 arduino-cli 빌드와 펌웨어 정적 분석을 PR 마다 돌립니다.
 - **문서·코드 일치 검사**: [ARCHITECTURE.md](docs/ARCHITECTURE.md)의 상태 전이표와 코드의 전이표가 같은지를 테스트가 대조하고([`tests/test_fsm.py`](tests/test_fsm.py)), 작업 목록 생성 결과가 원본과 같은지(`wbs_assignments.py --check`)와 문서 상대 링크가 실제 파일을 가리키는지(`check_doc_links.py`)를 CI 가 확인합니다.
-- **커밋과 리뷰**: 커밋은 Conventional Commits 규약을 따르고, 변경은 PR 로 검토해 병합합니다(병합된 PR 335건, 2026-09-29 기준).
+- **커밋과 리뷰**: 커밋은 Conventional Commits 규약을 따르고, 변경은 PR 로 검토해 병합합니다(병합된 PR 425건, 2026-10-06 기준).
 - **라이선스**: 저장소 코드는 [Apache-2.0](LICENSE)입니다. 검출 모델 가중치는 저장소에 넣지 않고 `python tools/fetch_models.py` 로 받으며, 출처와 라이선스는 [models/README.md](models/README.md)에 있습니다. 제조사 모션 라이브러리는 라이선스 표기가 없어 저장소에 넣지 않습니다([ADR-20](docs/DECISIONS.md#adr-20)).
