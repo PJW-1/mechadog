@@ -72,6 +72,7 @@ LOG = event_logger("mechadog.behavior.patrol")
 #: 지도에서 사람이 찍은 목표의 계획 라벨 — 구역 id 와 겹치지 않는다(구역 id 는 설정의 짧은 기호).
 GOAL_LABEL = "GOAL"
 HOME_LABEL = "HOME"
+REPLAN_SETTLE_TIMEOUT_MS = 3000
 
 
 class Phase(StrEnum):
@@ -370,9 +371,12 @@ class PatrolController:
     _dynamic: np.ndarray | None = None
     _last_pose_ms: int | None = None
     _last_scan_ms: int | None = None
+    _local_scan_started_ms: int | None = None
     _stopped_since_ms: int | None = None
     _last_sent_moving: bool = False
     _replan_stop_required: bool = False
+    _replan_wait_started_ms: int | None = None
+    _replan_timeout_hold_ms: int | None = None
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
     #: 마지막 정합 자세와 그때의 IMU yaw 의 차이 — 스캔 사이에 IMU 로 방위를 전파할 때
@@ -773,6 +777,9 @@ class PatrolController:
         self._now_ms = now_ms
         if not self._local_scan.observe(scan, now_ms, self.range_m):
             return False
+        self._local_scan_started_ms = (
+            scan.started_ms if scan.started_ms is not None else self._local_scan.received_ms
+        )
         rejected = self.scan_gate.check(scan, now_ms)
         self._local_scan.clear_allowed = rejected is None
         self._local_scan_pose = (*self.pose[:2], self._steering_yaw())
@@ -1111,6 +1118,7 @@ class PatrolController:
         self._recovery = None
         self._avoidance = None
         self._replan_stop_required = False
+        self._replan_wait_started_ms = None
         self._goal = (float(x), float(y))
         self._goal_hold = False
         self._goal_hold_reason = None
@@ -1134,6 +1142,7 @@ class PatrolController:
         self._avoidance = None
         self._recovery = None
         self._replan_stop_required = False
+        self._replan_wait_started_ms = None
         if self._goal is None and not self._goal_hold:
             return
         LOG.info("goal_cleared", reason=reason)
@@ -1211,6 +1220,7 @@ class PatrolController:
             self._goal_hold_reason = None
             self.plan, self.phase = Plan(GOAL_LABEL), Phase.PLANNING
             self._replan_stop_required = False
+            self._replan_wait_started_ms = None
             self._spinning = False
         else:
             accepted, detail = self.goto(first.x, first.y, exact_goal=True)
@@ -1808,6 +1818,9 @@ class PatrolController:
         if (
             changed
             and self.plan.reachable
+            # 직접 동선은 최신 거리로 추종한다. 저장 격자상의 선분이 막혔다고
+            # 회전마다 재계획하면 STOP/회전이 번갈아 안정 스캔을 계속 무효화한다.
+            and not (self._route_direct_moving and self._route_direct_detour_start is None)
             and not segment_clear(
                 self.navigation_grid,
                 static,
@@ -1819,9 +1832,11 @@ class PatrolController:
             # 유지하면 그 장애물을 그대로 통과하므로 목표만 보존해 다시 계획한다.
             self.plan = Plan(self.plan.label)
             self.waypoint_index = 0
-            if self.phase in (Phase.MOVING, Phase.AIMING) or self._spinning:
+            if self.phase in (Phase.MOVING, Phase.AIMING) or (
+                self._spinning and self.phase is Phase.PLANNING
+            ):
                 self.phase = Phase.PLANNING
-                self._replan_stop_required = True
+                self._require_replan_stop()
                 self.commander.halt()
             LOG.info("navigation_mask_changed_replan", target=self.plan.label)
 
@@ -2171,7 +2186,7 @@ class PatrolController:
             target, self._now_ms, self._steering_yaw(), item.id if item else None, reason=reason
         )
         self.phase = Phase.PLANNING
-        self._replan_stop_required = True
+        self._require_replan_stop()
         self._local_decision("stop", "blockage_confirm", self._local_scan.distance())
 
     def expire_recovery(self, now_ms: int) -> bool:
@@ -2238,6 +2253,7 @@ class PatrolController:
                 return
             recovery.scanning = True
             self._replan_stop_required = False
+            self._replan_wait_started_ms = None
             recovery.yaw = self._steering_yaw()
             recovery.last_motion_ms = self._now_ms
             if recovery.blockage_id is not None and not any(
@@ -2300,6 +2316,7 @@ class PatrolController:
         )
         self._recovery = None
         self._replan_stop_required = False
+        self._replan_wait_started_ms = None
         if retry.reachable:
             self.plan, self.waypoint_index, self.phase = retry, 0, Phase.MOVING
             if any(b.id == recovery.blockage_id for b in self._blockages.items):
@@ -2325,6 +2342,7 @@ class PatrolController:
         """End a failed attempt without treating a skipped goal as an arrival."""
         self._recovery = None
         self._avoidance = None
+        self._replan_wait_started_ms = None
         self._replan_stop_required = self._last_sent_moving or self._stopped_since_ms is None
         self.commander.halt()
         if recovery.target == HOME_LABEL:
@@ -2504,7 +2522,7 @@ class PatrolController:
             self.stats.replans += 1
             LOG.info("local_avoidance_replan", reason=reason)
             if reason in {"start_escape", "lidar_corridor"}:
-                self._replan_stop_required = True
+                self._require_replan_stop()
                 self._replan()
             return
         error = wrap_pi(heading - self._steering_yaw())
@@ -2760,6 +2778,12 @@ class PatrolController:
 
         return self._guard_localization(now_ms)
 
+    def _require_replan_stop(self) -> None:
+        if not self._replan_stop_required or self._replan_wait_started_ms is None:
+            self._replan_wait_started_ms = self._now_ms
+        self._replan_stop_required = True
+        self.commander.halt()
+
     def _guard_localization(self, now_ms: int) -> tuple[str, ...]:
         if not self._local_scan.clear_allowed:
             self._lose("scan_rejected")
@@ -2769,6 +2793,10 @@ class PatrolController:
         if stale:
             self._lose("pose_stale")
             return ()
+        # 마스크 갱신도 정지를 요구할 수 있으므로 출발 관문보다 먼저 적용한다.
+        self._refresh_navigation(now_ms)
+        if self._replan_stop_required and self._replan_wait_started_ms is None:
+            self._replan_wait_started_ms = now_ms
         if self._replan_stop_required and (
             self._last_sent_moving or self._stopped_since_ms is None
         ):
@@ -2776,15 +2804,29 @@ class PatrolController:
             # 송신 기록이 STOP을 확인할 때까지 정지하며, 아래에서 새 스캔도 요구한다.
             self._lose("replan_waiting_for_sent_stop")
             return ()
-        if self._replan_stop_required and (
-            self._local_scan.received_ms is None
-            or self._stopped_since_ms is None
-            or self._local_scan.received_ms < self._stopped_since_ms + self.drive.settle_delay_ms
+        timed_out = (
+            self._replan_stop_required
+            and self._replan_wait_started_ms is not None
+            and now_ms - self._replan_wait_started_ms >= REPLAN_SETTLE_TIMEOUT_MS
+            and self._local_scan.fresh(now_ms)
+            and self._local_scan.complete
+            and self._local_scan.received_ms is not None
+            and self._local_scan.received_ms >= self._replan_wait_started_ms
+        )
+        if (
+            self._replan_stop_required
+            and not timed_out
+            and (
+                self._local_scan.received_ms is None
+                or self._stopped_since_ms is None
+                or self._local_scan_started_ms is None
+                or self._local_scan_started_ms < self._stopped_since_ms + self.drive.settle_delay_ms
+                or not self._local_scan.complete
+            )
         ):
             self._lose("replan_waiting_for_settled_scan")
             return ()
 
-        self._refresh_navigation(now_ms)
         if not self._local_scan.fresh(now_ms):
             self._avoidance = None
             self._local_decision("stop", "scan_unavailable")
@@ -2803,6 +2845,14 @@ class PatrolController:
             LOG.info("localization_reacquired")
             self.phase = Phase.PLANNING
         self._replan_stop_required = False
+        self._replan_wait_started_ms = None
+        if timed_out:
+            # 상한은 안정 대기만 해제한다. 이 틱은 STOP으로 끝내고 다음 틱에
+            # 온보드/측위/스캔 관문을 다시 통과한 뒤 추종한다.
+            self._replan_timeout_hold_ms = now_ms
+            self.commander.halt()
+            self._local_decision("stop", "replan_settle_timeout", self._local_scan.distance())
+            LOG.warning("replan_settle_timeout", limit_ms=REPLAN_SETTLE_TIMEOUT_MS)
         self._edge.forget("localization_problem")
         return ()
 
@@ -2832,6 +2882,13 @@ class PatrolController:
 
     # ── 순찰 진행 ─────────────────────────────────────────────
     def _advance(self) -> None:
+        if (
+            self._replan_stop_required
+            or self.phase is Phase.LOST
+            or self._replan_timeout_hold_ms == self._now_ms
+        ):
+            self.commander.halt()
+            return
         if self._home is None:
             self._home = self.pose[:2]
         if not len(self.zones) and not self.route_active:

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MechaDog · 로컬 기본 웹</title>
+<style>
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#e7e9e5}
+iframe{display:block;width:100%;height:100%;border:0;visibility:hidden}
+iframe.ready{visibility:visible}
+.connection-label{position:static;z-index:10;padding:5px 9px;border-radius:10px;background:#f0faf6eb;color:#225149;font:600 11px/1.4 system-ui,sans-serif;pointer-events:none}
+</style>
+</head>
+<body>
+<iframe id="preview" title="MechDog 관제 화면"></iframe>
+<div id="connection-label" class="connection-label" role="status">화면 연결 확인 중</div>
+<script>
+const frame=document.querySelector('#preview');
+const label=document.querySelector('#connection-label');
+const pages=['dashboard','events','missions','records','zones','devices','voice','settings'];
+frame.addEventListener('load',()=>{
+ const doc=frame.contentDocument;
+ if(!doc?.querySelector('#app'))return;
+ doc.querySelector('.topbar')?.append(label);
+ // Keep the visible page in the outer URL so reloads and copied links reopen it.
+ // The iframe still owns navigation history; replacing this URL adds no extra step.
+ const syncPage=()=>{
+  const page=frame.contentWindow.location.hash.slice(1);
+  if(!pages.includes(page))return;
+  const url=new URL(location.href);url.searchParams.set('view',page);
+  history.replaceState(history.state,'',url);
+ };
+ frame.contentWindow.addEventListener('hashchange',syncPage);syncPage();
+ let theme=doc.querySelector('#glass-theme');
+ if(theme){frame.classList.add('ready');return}
+ theme=doc.createElement('link');theme.id='glass-theme';theme.rel='stylesheet';theme.href=new URL('./theme.css',location.href).href;
+ theme.addEventListener('load',()=>frame.classList.add('ready'),{once:true});
+ theme.addEventListener('error',()=>{label.textContent='화면 디자인을 불러오지 못했습니다 · 새로고침해 주세요'},{once:true});
+ doc.head.append(theme);
+ const motion=doc.createElement('script');motion.type='module';
+ motion.src=new URL('./motion.js',location.href).href;doc.head.append(motion);
+});
+const view=new URLSearchParams(location.search).get('view')||location.hash.slice(1);
+const page=pages.includes(view)?view:'dashboard';
+// 디자인 서버와 실제 관제 서버는 둘 다 :8000을 사용하지만 디렉터리 기준이 다르다.
+// 같은 출처의 실제 API가 확인될 때만 운영 화면(/index.html)을 연다.
+async function openDashboard(){
+ let live=false;
+ try{
+  if(['127.0.0.1','localhost','[::1]'].includes(location.hostname)){
+   const response=await fetch('/health',{signal:globalThis.AbortSignal?.timeout?.(1500)});
+   const health=response.ok?await response.json():null;
+   live=health?.service==='telemetry';
+  }
+ }catch{/* 미리보기 서버에는 /health가 없거나 연결이 실패할 수 있다. */}
+ label.textContent=live
+  ?'관제 서버 연결 · 기기 상태는 화면에서 확인'
+  :'디자인 미리보기 · 실제 명령 미연결';
+ frame.classList.remove('ready');
+ frame.src=(live?'../index.html':'../static/index.html')+'#'+page;
+}
+openDashboard();
+</script>
+</body>
+</html>

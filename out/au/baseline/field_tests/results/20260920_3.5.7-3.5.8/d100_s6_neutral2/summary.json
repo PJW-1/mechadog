@@ -1,0 +1,36 @@
+{
+  "requested_seconds": 15.0,
+  "elapsed_seconds": 15.01472159998957,
+  "startup_seconds": 0.5826547000033315,
+  "stream": {
+    "connects": 1,
+    "failures": 0,
+    "frames": 351,
+    "stalls": 0,
+    "backoff_slept_s": 0.0
+  },
+  "worker": {
+    "frames_in": 351,
+    "inferences": 347,
+    "idle": 219,
+    "errors": 0,
+    "last_error": null,
+    "inference_ms_max": 40.0
+  },
+  "observed_results": 346,
+  "observed_result_fps": 23.044050313942574,
+  "arrival_to_result_p95_ms": 50,
+  "arrival_to_result_max_ms": 61,
+  "configured_inference_fps": 25,
+  "queue_dropped": 4,
+  "queue_max_depth": 2,
+  "stop_ms": 10.941500018816441,
+  "threads_still_alive": [],
+  "error": null,
+  "notes": [
+    "Observed latest-result samples can miss overwritten results; worker totals are separate.",
+    "Queue drops follow existing production policy; this tool adds no frame skipping.",
+    "Includes PC queue/decode/detection/tracking/badge time; excludes camera/network/commands.",
+    "No long-run stability or full end-to-end acceptance claimed."
+  ]
+}

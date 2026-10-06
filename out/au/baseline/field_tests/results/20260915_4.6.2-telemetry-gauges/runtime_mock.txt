@@ -1,0 +1,333 @@
+20:14:47 INFO    [IDLE] avoid_ready ， attempts=3 cycle_ms=6045 phases=['settle', 'reverse_turn', 'verify']
+20:14:47 INFO    [IDLE] runtime_started ， listen_port=5101 peer=127.0.0.1:5001 period_ms=100 actions={'PATROL': '去系', 'ZONE_INSPECT': '去系', 'TRACK': '去系', 'AVOID': '去系'}
+20:14:47 INFO    [IDLE] robot_state ， reported=IDLE latched=False
+20:14:48 INFO    [IDLE] telemetry_summary ， sent=12 accepted=10 batt_v_avg=7.38 last_cmd_age_ms_avg=9.0
+20:14:49 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.35 last_cmd_age_ms_avg=16.9 sent=10
+20:14:50 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.33 last_cmd_age_ms_avg=29.3 sent=10
+20:14:51 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.32 last_cmd_age_ms_avg=16.4 sent=10
+20:14:52 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.29 last_cmd_age_ms_avg=19.4 sent=10
+20:14:53 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.27 last_cmd_age_ms_avg=7.0 sent=10
+20:14:54 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.25 last_cmd_age_ms_avg=18.7 sent=10
+20:14:55 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.24 last_cmd_age_ms_avg=39.0 sent=10
+20:14:56 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.21 last_cmd_age_ms_avg=18.8 sent=10
+20:14:57 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.19 last_cmd_age_ms_avg=6.6 sent=10
+20:14:58 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.17 last_cmd_age_ms_avg=18.7 sent=10
+20:14:59 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.15 last_cmd_age_ms_avg=18.1 sent=10
+20:15:00 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.13 last_cmd_age_ms_avg=16.8 sent=10
+20:15:01 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.12 last_cmd_age_ms_avg=29.3 sent=10
+20:15:02 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.1 last_cmd_age_ms_avg=30.3 sent=10
+20:15:03 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.08 last_cmd_age_ms_avg=16.8 sent=10
+20:15:04 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.05 last_cmd_age_ms_avg=18.4 sent=10
+20:15:05 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.04 last_cmd_age_ms_avg=28.8 sent=10
+20:15:06 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.01 last_cmd_age_ms_avg=16.6 sent=10
+20:15:07 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=7.0 last_cmd_age_ms_avg=8.5 sent=10
+20:15:08 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.97 last_cmd_age_ms_avg=38.2 sent=10
+20:15:09 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.96 last_cmd_age_ms_avg=8.1 sent=10
+20:15:10 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.93 last_cmd_age_ms_avg=5.8 sent=10
+20:15:11 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.91 last_cmd_age_ms_avg=8.4 sent=10
+20:15:12 INFO    [IDLE] robot_state ， reported=AVOID latched=False
+20:15:12 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.9 last_cmd_age_ms_avg=38.5 sent=10
+20:15:13 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.87 last_cmd_age_ms_avg=30.3 sent=10
+20:15:14 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.86 last_cmd_age_ms_avg=29.4 sent=10
+20:15:15 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.83 last_cmd_age_ms_avg=29.6 sent=10
+20:15:16 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.82 last_cmd_age_ms_avg=6.3 sent=10
+20:15:17 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.79 last_cmd_age_ms_avg=7.6 sent=10
+20:15:18 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.77 last_cmd_age_ms_avg=7.7 sent=10
+20:15:19 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.75 last_cmd_age_ms_avg=27.5 sent=10
+20:15:20 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.74 last_cmd_age_ms_avg=8.5 sent=10
+20:15:21 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.72 last_cmd_age_ms_avg=28.8 sent=10
+20:15:22 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.69 last_cmd_age_ms_avg=29.4 sent=10
+20:15:23 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.67 last_cmd_age_ms_avg=9.1 sent=10
+20:15:24 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.65 last_cmd_age_ms_avg=7.2 sent=10
+20:15:25 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.64 last_cmd_age_ms_avg=26.1 sent=10
+20:15:26 INFO    [IDLE] telemetry_summary ， accepted=10 batt_v_avg=6.62 last_cmd_age_ms_avg=20.4 sent=10
+20:15:26 INFO    [IDLE] robot_state ， reported=FAILSAFE latched=True
+20:15:26 INFO    [IDLE] escalation ， from=L0 to=F reason=ONBOARD_FAILSAFE led=white
+20:15:26 ERROR   [FAILSAFE] fsm_transition ， from=IDLE to=FAILSAFE trigger=ONBOARD_FAILSAFE
+20:15:27 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.6 last_cmd_age_ms_avg=18.4 sent=11
+20:15:28 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.58 last_cmd_age_ms_avg=38.2 sent=10
+20:15:29 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.55 last_cmd_age_ms_avg=18.7 sent=10
+20:15:30 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.54 last_cmd_age_ms_avg=18.8 sent=10
+20:15:31 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.51 last_cmd_age_ms_avg=17.9 sent=10
+20:15:32 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.5 last_cmd_age_ms_avg=41.4 sent=10
+20:15:33 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.47 last_cmd_age_ms_avg=6.8 sent=10
+20:15:34 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.46 last_cmd_age_ms_avg=19.1 sent=10
+20:15:35 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.43 last_cmd_age_ms_avg=27.2 sent=10
+20:15:36 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.41 last_cmd_age_ms_avg=28.4 sent=10
+20:15:37 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.4 last_cmd_age_ms_avg=30.2 sent=10
+20:15:38 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.37 last_cmd_age_ms_avg=9.0 sent=10
+20:15:39 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.36 last_cmd_age_ms_avg=8.0 sent=10
+20:15:40 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.33 last_cmd_age_ms_avg=6.8 sent=10
+20:15:41 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.32 last_cmd_age_ms_avg=6.8 sent=10
+20:15:42 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.29 last_cmd_age_ms_avg=8.7 sent=10
+20:15:43 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.27 last_cmd_age_ms_avg=29.2 sent=10
+20:15:44 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.25 last_cmd_age_ms_avg=17.7 sent=10
+20:15:45 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.24 last_cmd_age_ms_avg=27.2 sent=10
+20:15:46 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.21 last_cmd_age_ms_avg=7.1 sent=10
+20:15:47 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.19 last_cmd_age_ms_avg=19.6 sent=10
+20:15:48 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.18 last_cmd_age_ms_avg=7.2 sent=10
+20:15:49 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.15 last_cmd_age_ms_avg=8.3 sent=10
+20:15:50 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.14 last_cmd_age_ms_avg=18.5 sent=10
+20:15:51 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.12 last_cmd_age_ms_avg=7.2 sent=10
+20:15:52 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.1 last_cmd_age_ms_avg=8.3 sent=10
+20:15:53 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.08 last_cmd_age_ms_avg=29.1 sent=10
+20:15:54 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.05 last_cmd_age_ms_avg=17.9 sent=10
+20:15:55 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.04 last_cmd_age_ms_avg=18.8 sent=10
+20:15:56 INFO    [FAILSAFE] telemetry_summary ， accepted=10 batt_v_avg=6.01 last_cmd_age_ms_avg=6.2 sent=10
+20:15:57 INFO    [FAILSAFE] telemetry_summary ， accepted=3 batt_v_avg=6.0 last_cmd_age_ms_avg=46.33 sent=10
+20:15:58 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:15:59 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:00 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:01 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:02 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:03 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:04 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:05 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:06 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:07 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:08 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:09 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:10 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:11 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:12 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:13 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:14 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:15 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:16 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:17 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:18 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:19 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:20 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:21 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:22 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:23 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:24 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:25 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:26 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:27 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:28 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:29 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:30 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:31 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:32 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:33 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:34 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:35 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:36 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:37 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:38 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:39 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:40 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:41 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:42 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:43 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:44 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:45 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:46 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:47 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:48 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:49 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:50 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:51 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:52 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:53 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:54 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:55 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:56 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:57 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:58 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:16:59 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:00 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:01 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:02 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:03 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:04 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:05 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:06 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:07 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:08 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:09 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:10 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:11 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:12 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:13 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:14 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:15 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:16 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:17 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:18 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:19 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:20 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:21 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:22 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:23 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:24 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:25 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:26 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:27 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:28 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:29 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:30 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:31 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:32 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:33 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:34 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:35 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:36 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:37 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:38 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:39 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:40 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:41 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:42 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:43 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:44 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:45 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:46 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:47 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:48 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:49 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:50 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:51 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:52 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:53 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:54 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:55 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:56 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:57 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:58 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:17:59 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:00 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:01 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:02 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:03 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:04 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:05 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:06 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:07 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:08 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:09 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:10 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:11 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:12 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:13 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:14 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:15 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:16 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:17 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:18 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:19 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:20 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:21 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:22 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:23 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:24 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:25 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:26 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:27 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:28 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:29 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:30 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:31 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:32 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:33 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:34 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:35 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:36 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:37 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:38 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:39 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:40 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:41 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:42 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:43 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:44 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:45 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:46 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:47 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:48 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:49 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:50 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:51 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:52 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:53 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:54 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:55 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:56 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:57 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:58 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:18:59 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:00 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:01 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:02 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:03 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:04 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:05 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:06 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:07 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:08 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:09 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:10 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:11 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:12 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:13 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:14 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:15 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:16 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:17 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:18 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:19 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:20 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:21 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:22 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:23 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:24 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:25 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:26 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:27 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:28 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:29 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:30 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:31 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:32 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:33 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:34 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:35 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:36 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:37 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:38 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:39 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:40 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:41 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:42 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:43 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:44 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:45 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:46 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:47 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:48 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:49 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:50 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:51 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:52 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:53 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:54 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:55 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:56 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:57 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:58 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:19:59 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:00 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:01 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:02 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:03 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:04 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:05 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:06 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:07 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:08 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:09 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:10 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:11 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:12 INFO    [FAILSAFE] telemetry_summary ， sent=10
+20:20:13 INFO    [FAILSAFE] telemetry_summary ， sent=10

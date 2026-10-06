@@ -1,0 +1,4430 @@
+{
+  "counts": {
+    "navigation_mask_changed_replan": 137,
+    "replan_waiting_for_settled_scan": 129,
+    "localization_reacquired": 135
+  },
+  "events": [
+    {
+      "ts": 1791268900881,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 521,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268900886,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 521,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268901687,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 529,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268903194,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 544,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268904184,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 554,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268904383,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 556,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268904583,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 558,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268904783,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 560,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268904987,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 562,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268905186,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 563,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268906786,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 580,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268906811,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 580,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268907684,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 589,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268907784,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 589,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268907785,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 590,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268908683,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 598,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268908778,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 600,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268908786,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 600,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268909689,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 609,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268909778,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 610,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268909786,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 610,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268910685,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 618,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268910779,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 620,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268910787,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 620,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268911689,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 628,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268911779,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 630,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268911787,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 630,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268912584,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 638,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268912680,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 639,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268912687,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 639,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268913485,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 646,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268913585,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 648,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268913592,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 648,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268914384,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 656,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268914483,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 657,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268914492,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 657,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268915285,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 665,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268915388,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 666,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268915396,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 666,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268916188,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 674,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268916279,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 674,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268916280,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 675,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268917083,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 683,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268917179,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 684,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268917187,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 684,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268917983,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 692,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268918080,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 693,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268918087,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 693,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268918900,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 701,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268918970,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 702,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268918998,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 702,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268919085,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 703,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268919918,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 711,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268920004,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 712,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268920065,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 713,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268920983,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 721,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268921000,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 722,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268921068,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 723,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268921984,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 732,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268922015,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 732,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268922070,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 733,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268922983,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 742,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268923009,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 742,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268923083,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 743,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268923909,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 751,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268924084,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 753,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268924109,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 753,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268924988,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 762,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268925013,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 762,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268925070,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 763,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268925982,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 772,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268926080,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 773,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268926090,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 773,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268926982,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 782,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268927079,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 783,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268927088,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 783,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268927985,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 792,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268928080,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 793,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268928086,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 793,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268928985,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 802,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268929082,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 802,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268929083,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 803,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268929991,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 812,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268930080,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 812,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268930081,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 813,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268930884,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 821,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268930980,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 822,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268930987,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 822,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268931784,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 830,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268931879,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 831,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268931886,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 831,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268932681,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 839,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268932779,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 840,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268932786,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 840,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268933585,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 848,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268933678,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 848,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268933680,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 849,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268934482,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 857,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268934578,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 858,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268934586,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 858,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268935383,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 866,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268935481,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 867,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268935489,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 867,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268936288,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 875,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268936380,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 876,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268936389,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 876,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268937199,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 884,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268937297,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 885,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268937365,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 886,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268938284,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 895,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268938393,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 896,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268938470,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 897,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268939303,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 905,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268939481,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 907,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268939506,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 907,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268940318,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 915,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268940483,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 917,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268940508,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 917,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268941387,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 926,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268941409,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 926,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268941471,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 927,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268942384,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 936,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268942479,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 937,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268942488,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 937,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268943391,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 945,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268943431,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 946,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268943476,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 947,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268944388,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 956,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268944479,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 957,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268944493,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 957,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268945386,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 966,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268945480,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 967,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268945488,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 967,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268946388,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 976,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268946480,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 977,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268946489,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 977,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268947383,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 986,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268947480,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 987,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268947486,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 987,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268948384,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 996,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268948481,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 996,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268948484,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 997,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268949385,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1006,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268949480,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1007,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268949487,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1007,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268950392,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1016,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268950484,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1017,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268950492,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1017,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268951383,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1026,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268951480,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1027,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268951487,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1027,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268952293,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1035,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268952386,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1036,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268952395,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1036,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268953183,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1044,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268953277,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1045,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268953286,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1045,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268954085,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1053,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268954181,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1053,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268954183,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1054,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268954986,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1062,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268955000,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1062,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268955081,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1063,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268955089,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1063,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268955883,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1071,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268955978,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1072,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268955986,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1072,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268956787,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1080,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268956865,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1081,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268956888,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1081,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268956963,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1082,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268957885,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1091,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268957908,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1091,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268957969,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1092,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268958807,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1100,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268958978,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1102,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268959007,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1102,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268959806,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1110,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268959877,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1111,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268959976,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1111,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268959979,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1112,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268960804,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1120,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268960979,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1122,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268961008,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1122,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268961882,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1131,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268961981,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1132,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268961988,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1132,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268962883,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1141,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268962979,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1141,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268962980,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1142,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268963881,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1151,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268964079,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1153,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268964086,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1153,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268964983,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1162,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268965078,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1162,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268965079,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1163,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268965982,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1172,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268966081,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1172,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268966083,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1173,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268966989,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1182,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268967080,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1183,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268967088,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1183,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268967990,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1192,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268968084,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1193,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268968094,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1193,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268968985,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1201,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268969087,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1202,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268969089,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1203,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268969995,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1212,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268970083,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1213,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268970095,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1213,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268970884,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1220,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268970979,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1222,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268970987,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1222,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268971782,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1230,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268971878,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1231,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268971886,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1231,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268972683,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1239,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268972780,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1240,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268972788,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1240,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268973587,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1248,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268973678,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1249,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268973686,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1249,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268974486,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1257,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268974583,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1258,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268974590,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1258,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268975382,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1266,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268975480,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1267,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268975488,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1267,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268976290,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1275,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268976391,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1276,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268976491,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1277,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268977383,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1286,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268977407,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1286,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268977470,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1287,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268978302,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1295,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268978376,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1296,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268978478,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1296,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268978479,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1297,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268979306,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1305,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268979486,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1307,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268979510,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1307,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268980382,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1316,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268980478,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1317,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268980484,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1317,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268981386,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1326,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268981578,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1327,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268981580,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1328,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268982489,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1337,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268982583,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1338,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268982591,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1338,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268983486,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1346,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268983580,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1348,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268983592,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1348,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268984487,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1357,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268984577,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1357,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268984579,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1358,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268985483,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1367,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268985578,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1368,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268985610,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1368,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268986386,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1376,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268986481,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1377,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268986488,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1377,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268987287,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1385,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268987384,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1386,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268987396,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1386,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268988199,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1393,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268988289,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1395,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268988296,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1395,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268989082,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1403,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268989189,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1404,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268989202,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1404,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268990006,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1412,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268990090,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1413,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268990246,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1414,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268991029,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1422,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268991190,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1423,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268991209,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1424,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268992013,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1432,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268992181,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1433,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268992202,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1434,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268993008,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1442,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268993067,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1443,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268993180,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1444,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268993186,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1444,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268994084,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1453,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268994183,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1453,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268994184,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1454,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268995084,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1463,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268995184,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1464,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268995191,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1464,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268996084,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1473,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268996184,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1473,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268996185,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1474,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268997088,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1483,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268997181,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1483,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268997182,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1484,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268998090,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1493,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268998189,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1494,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268998197,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1494,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791268999084,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1502,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791268999181,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1504,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791268999189,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1504,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269000090,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1513,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269000185,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1514,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269000197,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1514,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269001085,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1522,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269001091,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1523,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269001194,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1523,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269001195,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1524,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269002084,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1533,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269002186,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1533,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269002188,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1534,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269002994,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1541,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269003091,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1543,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269003110,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1543,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269003888,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1551,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269003984,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1551,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269003987,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1552,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269004786,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1560,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269004887,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1561,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269004898,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1561,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269005683,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1569,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269005778,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1570,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269005785,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1570,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269006581,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1578,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269006688,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1579,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269006786,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1580,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269007594,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1588,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269007699,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1589,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269007764,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1590,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269008682,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1599,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269008704,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1599,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269008770,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1600,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269009603,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1608,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269009776,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1609,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269009777,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1610,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269010682,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1618,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269010698,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1619,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269010772,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1620,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269011607,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1628,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269011780,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1629,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269011781,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1630,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269012685,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1639,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269012708,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1639,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269012768,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1640,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269013681,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1649,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269013779,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1650,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269013787,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1650,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269014681,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1659,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269014780,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1660,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269014789,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1660,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269015683,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1669,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269015779,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1670,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269015786,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1670,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269016692,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1679,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269016782,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1680,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269016790,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1680,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269017683,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1688,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269017780,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1690,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269017787,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1690,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269018681,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1699,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269018778,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1700,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269018786,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1700,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269019582,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1708,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269019679,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1709,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269019686,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1709,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269020486,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1717,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269020579,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1718,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269020587,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1718,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269021381,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1726,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269021478,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1727,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269021485,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1727,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269022282,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1735,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269022379,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1736,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269022387,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1736,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269023182,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1743,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269023278,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1745,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269023285,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1745,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269024082,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1753,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269024179,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1754,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269024186,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1754,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269024982,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1762,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269025078,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1763,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269025086,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1763,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269025881,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1771,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269025978,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1772,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269025987,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1772,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269026786,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1780,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269026881,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1780,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269026882,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1781,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269027711,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1789,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269027767,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1789,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269027791,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1790,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269027891,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1791,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269028693,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1799,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269028795,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1800,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269028873,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1801,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    },
+    {
+      "ts": 1791269029783,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1810,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "localization_reacquired"
+    },
+    {
+      "ts": 1791269029806,
+      "level": "INFO",
+      "device_id": "mechdog-02",
+      "seq": 1810,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "navigation_mask_changed_replan",
+      "detail": {
+        "target": "GOAL"
+      }
+    },
+    {
+      "ts": 1791269029870,
+      "level": "WARN",
+      "device_id": "mechdog-02",
+      "seq": 1811,
+      "state": "PATROL",
+      "escalation": "L0",
+      "mode": "guard",
+      "event": "replan_waiting_for_settled_scan"
+    }
+  ]
+}

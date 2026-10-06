@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "timestamp": "2026-09-12T02:41:52",
+    "epoch_ms": 1789148512228,
+    "host_ip": "192.168.45.183",
+    "subnet": "192.168.45.0/24",
+    "platform": "Windows-11-10.0.26200-SP0"
+  },
+  "nodes": {
+    "mechdog": {
+      "ip": "192.168.45.86",
+      "port": 5001,
+      "info": {
+        "ok": true,
+        "verdict": "ACCEPT",
+        "seq": 1,
+        "type": "STOP",
+        "applied": true,
+        "safe_latched": true,
+        "failsafe_count": 5,
+        "actuators": false
+      }
+    },
+    "xiao": {
+      "ip": "192.168.45.245",
+      "port": 80,
+      "info": {
+        "ok": true,
+        "sensor": "OV3660",
+        "profile": "VGA",
+        "fps_limit": 25,
+        "psram_free": 8247867,
+        "rssi": -72,
+        "stream": "http://192.168.45.245:81/stream"
+      }
+    }
+  },
+  "summary": {
+    "PASS": 12,
+    "FAIL": 1,
+    "SKIP": 1
+  },
+  "checks": [
+    {
+      "id": "link",
+      "name": "로봇 UDP 링크",
+      "wbs": "2.4.2",
+      "status": "PASS",
+      "detail": "ACK 수신 · verdict=ACCEPT",
+      "data": {
+        "path": "ack",
+        "safe_latched": true,
+        "actuators": false,
+        "failsafe_count": 5
+      }
+    },
+    {
+      "id": "rtt",
+      "name": "UDP 왕복 시간·손실률",
+      "wbs": "2.4.2",
+      "status": "PASS",
+      "detail": "평균 7.85ms · 최대 27.87ms · 손실 0.0%",
+      "data": {
+        "samples": 30,
+        "lost": 0,
+        "loss_pct": 0.0,
+        "mean_ms": 7.85,
+        "p95_ms": 16.28,
+        "max_ms": 27.87
+      }
+    },
+    {
+      "id": "malformed",
+      "name": "기형 패킷 폐기",
+      "wbs": "3.1.2",
+      "status": "PASS",
+      "detail": "5종 전부 폐기",
+      "data": {
+        "cases": [
+          "JSON 아님",
+          "최상위가 배열",
+          "seq 가 실수",
+          "type 이 배열",
+          "필수 필드 누락"
+        ]
+      }
+    },
+    {
+      "id": "unknown_type",
+      "name": "미지 타입 폐기 (크래시 없음)",
+      "wbs": "3.1.2",
+      "status": "PASS",
+      "detail": "폐기 후에도 정상 명령이 통한다",
+      "data": {}
+    },
+    {
+      "id": "clamp",
+      "name": "범위 초과 클램핑",
+      "wbs": "3.1.2",
+      "status": "PASS",
+      "detail": "받아들였다 · verdict=ACCEPT (step 500→100 기대)",
+      "data": {
+        "verdict": "ACCEPT"
+      }
+    },
+    {
+      "id": "seq_gate",
+      "name": "seq 역전·중복 폐기",
+      "wbs": "3.1.2",
+      "status": "PASS",
+      "detail": "지난 seq(1033) 폐기",
+      "data": {}
+    },
+    {
+      "id": "actuators",
+      "name": "서보 활성화 여부",
+      "wbs": "4.1.2",
+      "status": "SKIP",
+      "detail": "서보 비활성 빌드 (MECHADOG_ENABLE_ACTUATORS=0). 네트워크·파서·안전만 검증된다 — 실패가 아니다",
+      "data": {
+        "actuators": false
+      }
+    },
+    {
+      "id": "telemetry",
+      "name": "10Hz 텔레메트리 수신·스키마",
+      "wbs": "4.1.4",
+      "status": "PASS",
+      "detail": "30건 · 10.0Hz · 수락 30건",
+      "data": {
+        "count": 30,
+        "accepted": 30,
+        "seconds": 3.0,
+        "rate_hz": 10.0,
+        "senders": [
+          "192.168.45.86"
+        ],
+        "discard_reasons": []
+      }
+    },
+    {
+      "id": "cmd_timeout",
+      "name": "명령 타임아웃 페일세이프",
+      "wbs": "3.2.1",
+      "status": "PASS",
+      "detail": "300ms 침묵 후 FAILSAFE 래치 확인",
+      "data": {
+        "timeout_ms": 300,
+        "failsafe_count": 6
+      }
+    },
+    {
+      "id": "estop",
+      "name": "ESTOP 래치 · MOVE 차단",
+      "wbs": "3.2.5",
+      "status": "PASS",
+      "detail": "래치 성립 · 래치 중 MOVE 차단 확인",
+      "data": {
+        "failsafe_count": 6
+      }
+    },
+    {
+      "id": "reset_safe",
+      "name": "RESET_SAFE 수동 해제",
+      "wbs": "3.2.5",
+      "status": "PASS",
+      "detail": "래치 해제됨",
+      "data": {}
+    },
+    {
+      "id": "camera",
+      "name": "카메라 상태",
+      "wbs": "4.2.1",
+      "status": "PASS",
+      "detail": "센서 OV3660 · 프로파일 VGA · RSSI -63dBm",
+      "data": {
+        "ok": true,
+        "sensor": "OV3660",
+        "profile": "VGA",
+        "fps_limit": 25,
+        "psram_free": 8247867,
+        "rssi": -63,
+        "stream": "http://192.168.45.245:81/stream"
+      }
+    },
+    {
+      "id": "camera_profile",
+      "name": "프로파일 전환 VGA@25fps",
+      "wbs": "4.2.2",
+      "status": "PASS",
+      "detail": "VGA 25fps 로 전환됨",
+      "data": {
+        "ok": true,
+        "profile": "VGA",
+        "fps_limit": 25
+      }
+    },
+    {
+      "id": "stream",
+      "name": "MJPEG 스트림 수신률",
+      "wbs": "6.3.1",
+      "status": "FAIL",
+      "detail": "스트림 수신 실패: Remote end closed connection without response (브라우저가 점유 중인지 확인)",
+      "data": {}
+    }
+  ]
+}

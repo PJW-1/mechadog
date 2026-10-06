@@ -1,0 +1,25 @@
+정본 작업일지 반영 대기: 현재 세션의 쓰기 허용 범위에 04_작업일지 및 _ai_collab이 없음.
+반영 대상:
+C:/Users/a9800/Desktop/공부/피지컬ai/로봇독 프로젝트/04_작업일지/2026-10-06.md
+C:/Users/a9800/Desktop/공부/피지컬ai/로봇독 프로젝트/04_작업일지/README.md
+
+날짜 일지 추가안
+Codex AU — 직접 동선 재계획/안정 스캔 대기 반복 수정 (2026-10-06)
+- 요청: AU_lost_settle_loop.md. 지정 워크트리 fix/lost-settle-loop-20261006, HEAD18daa42.
+  add/commit 금지, 로봇·현장 포트 금지 준수.
+- 원인: 직접 동선도 _rebuild_masks가 정적 격자로 재계획해 안정 STOP→측위 재개→
+  _follow_route_direct 제자리 회전→마스크 재계획 반복. 현장 로그 재계획137/재개135로 확인.
+- 수정: 직접 추종 구간 마스크 재계획 제외(우회는 유지), 출발 관문/LOST 보호,
+  STOP+settle_delay 뒤 시작한 완성 스캔으로 해제, 리셋되지 않는3초 상한.
+  상한도 안전 근거를 요구하고 해제 틱STOP, 다음 틱 기존 관문 뒤 회전/진행.
+- 파일: host/behavior/patrol.py, tests/test_replan_settle.py, tests/test_runtime_lidar.py.
+- 검증: AU19·관련342 통과. 전체4202pass2skip3fail;3fail은GUI환경이며 기반에서도 동일.
+  ruff check/format309·diffcheck통과. LibreOffice Python3.12.13+기존 의존성 사용.
+- 한계: 실물 회전/문 통과/물리 정지/통신·측위 정확도 미검증. Claude 검토·반영 대기.
+  커밋/배포 없음. 보고 C:/dev/mechadog-codex-au-lost/out/au/AU_REPORT.txt.
+
+README 추가안
+- 2026-10-06 Codex AU: 직접 동선 안정 스캔 대기 반복 수정.
+  정적 마스크 재계획/회전 재개 반복 차단·정지 후 전체 스캔·3초 상한.
+  관련342통과·전체4202pass2skip3GUI환경fail(기반동일),ruff통과.
+  미커밋·실물미검증·Claude검토대기. 날짜 일지 해당 항목으로 연결.

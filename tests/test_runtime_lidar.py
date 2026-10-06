@@ -175,9 +175,12 @@ def test_runtime_stops_when_pose_leaves_observed_free_space(
         assert navigator.phase is Phase.LOST
         assert "pose_outside_map" in caplog.text
     else:
-        assert navigator.phase is not Phase.LOST
-        assert navigator.local_status["reason"] == "blockage_confirm"
-        assert navigator._recovery is not None, "AO: incomplete scan waits for evidence"
+        # AU: a changed mask must stop at the localization gate before recovery
+        # can rotate. This fixture has only one beam, not a settled revolution.
+        assert navigator.phase is Phase.LOST
+        assert navigator.local_status["reason"] == "replan_waiting_for_settled_scan"
+        assert navigator._replan_stop_required
+        assert navigator._recovery is None
 
 
 @pytest.mark.parametrize("missing", ["stop", "scan", "settled_scan", "fresh_scan"])
