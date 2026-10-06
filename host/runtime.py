@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -386,6 +386,7 @@ class Runtime:
         # 정책·사건의 소속은 같은 지도 영역 라벨로 판정한다. 점검은
         # `ZoneInspector` 가 맡고(아래), 앵커는 기동 로그 순서를 지키려고 여기서 읽는다.
         zone_ids = tuple(str(label) for label in config["zones"]["ids"])
+        self._zone_ids = frozenset(zone_ids)
         # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
         try:
             # 길 찾기가 쓰는 지도(`--maps`)의 구역을 그대로 쓴다 — 설정의 maps_dir 를 따로 읽으면
@@ -1169,6 +1170,14 @@ class Runtime:
             None if result is None else max(0, now_ms - result.completed_ms)
         )
         judgement["sentence"] = self._announce_situation(kind, judgement)
+        # ⚠️ 판정의 `zone` 은 설정 구역일 때만 사건 구역이다 — `전체`·`GOAL`·`지점 3` 을 그대로
+        # 쓰면 `zones` 표에 자리표 구역이 생긴다 (DATA_MODEL 3.4). 두 경로가 같은 값을 쓴다.
+        judged = judgement.get("zone")
+        zone_id = (
+            judged
+            if isinstance(judged, str) and judged in self._zone_ids
+            else self._zone_inspector.zone
+        )
         # ⚠️ **블랙박스가 없어도 이력에는 남긴다** (ADR-46 결정 4) — 사진 없는 사건 행이 된다.
         if self._blackbox is None:
             self._remember(
@@ -1183,7 +1192,7 @@ class Runtime:
                     },
                     robot_id=self._device_id,
                     mission_id=self._mission_run,
-                    zone_id=self._zone_inspector.zone,
+                    zone_id=zone_id,
                 )
             )
             return
@@ -1204,11 +1213,14 @@ class Runtime:
             LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
             return
         self._remember(
-            lambda: incident_from_entry(
-                entry,
-                robot_id=self._device_id,
-                mission_id=self._mission_run,
-                zone_id=self._zone_inspector.zone,
+            lambda: replace(
+                incident_from_entry(
+                    entry,
+                    robot_id=self._device_id,
+                    mission_id=self._mission_run,
+                    zone_id=zone_id,
+                ),
+                zone_id=zone_id,
             )
         )
         if self._event_publisher is None:

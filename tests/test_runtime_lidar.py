@@ -1500,3 +1500,30 @@ def test_navigation_event_reaches_the_history_without_a_blackbox(config, clock, 
     assert rows[0]["blackbox_entry"] is None
     assert rows[0]["state"] == "PATROL"
     assert rows[0]["detail"]["severity"] == "medium"
+
+
+@pytest.mark.parametrize("with_blackbox", [True, False])
+def test_navigation_event_history_zone_is_a_configured_zone(config, clock, tmp_path, with_blackbox):
+    """⚠️ 판정의 `zone` 은 설정 구역 id 일 때만 사건 구역이다 — 블랙박스 유무와 관계없이 같다.
+
+    `patrol_unavailable` 의 `전체`, 목표점 건너뛰기의 `GOAL`, 이름 없는 정지점의 `지점 3` 을
+    그대로 쓰면 `zones` 표에 없는 구역의 자리표 행이 생긴다 (DATA_MODEL 3.4).
+    """
+    from host.common.blackbox import EventBlackbox
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    store = _history_store(tmp_path)
+    extra = {"blackbox": EventBlackbox(local)} if with_blackbox else {}
+    runtime, navigator = _patrolling(local, clock, history=store, **extra)
+    navigator._nav_events += [
+        {"event": "zone_skipped", "judgement": {"x": 1.0, "y": 1.0, "zone": "B", "reason": "x"}},
+        {"event": "patrol_unavailable", "judgement": {"x": 1.0, "y": 1.0, "zone": "전체"}},
+    ]
+    runtime.tick(clock.ms)
+
+    [skipped], _ = store.incidents(event="zone_skipped")
+    [unavailable], _ = store.incidents(event="patrol_unavailable")
+    assert skipped["zone_id"] == "B"
+    assert unavailable["zone_id"] == runtime._zone_inspector.zone
+    assert "전체" not in {zone["zone_id"] for zone in store.zones()}
