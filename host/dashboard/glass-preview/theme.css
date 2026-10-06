@@ -387,3 +387,20 @@ dialog[open] {animation:dialog-enter 220ms var(--ease-out)}
 .op-management-menu{padding:6px 10px;border:1px solid #d4dfce;border-radius:8px;align-self:flex-start}
 .op-management-menu>summary{cursor:pointer;font-size:12px;color:#31533c}
 .op-management-menu[open]>.op-button{display:block;margin-top:8px}
+/* AW: the live 2D map owns the main workspace; camera starts beside it. */
+@media (min-width:900px) {
+  #app:not(.workspace-open) {grid-template-rows:64px 76px minmax(360px,1fr) 100px}
+  .fleet-band {padding-block:6px}
+  .robot-tab,.robot-tab:not(:first-child) {min-height:58px}
+  #stage .live-house-map {left:20px;right:auto;top:92px;bottom:68px;width:calc(72% - 32px);height:auto;box-sizing:border-box;padding:14px 16px;background:#fff;border:1px solid #d7dfd5;box-shadow:0 4px 18px #3040270d}
+  #stage .live-house-map .op-note {font-size:14px;line-height:1.5;flex:none}
+  #stage .camera-dock {left:auto;right:20px;top:92px;bottom:auto;width:calc(28% - 8px)}
+  #stage .camera-dock .camera-viewport {max-height:calc(100cqh - 240px)}
+  #stage .camera-dock.collapsed {min-width:0}
+  #stage .scene-controls {bottom:16px}
+  .operation-rail {margin-block:12px 16px}
+  .operation-rail>section,.operation-rail>section+section {padding-block:8px}
+}
+@media (min-width:761px) and (max-width:899px) {
+  #stage .camera-dock {left:12px!important;top:auto!important;right:auto!important;bottom:12px!important;width:calc(100% - 24px)!important}
+}

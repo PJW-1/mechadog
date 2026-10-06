@@ -99,3 +99,19 @@ test('zoom and rotation preserve inverse click coordinates and reset restores th
  map.resetView();assert.deepEqual(map.toPatrol(250,120),[-.25,0]);
  map.dispose();dom.window.close();
 });
+
+test('AW main-map labels and route strokes retain a readable size when a tall map is contained',()=>{
+ const dom=new JSDOM('<div class="live-house-map"></div>'),document=dom.window.document;
+ const widths=[],labels=[];
+ const ctx={setTransform(){},clearRect(){},drawImage(){},beginPath(){},arc(){},fill(){},stroke(){widths.push(this.lineWidth)},fillText(text){labels.push([text,this.font])},setLineDash(){},closePath(){},moveTo(){},lineTo(){}};
+ const map=new LiveMap({document,getLink:()=>null,onPick:()=>{},setInterval:()=>0});
+ document.querySelector('.live-house-map').append(map.root);
+ map.meta={...meta,width:2000,height:3000};map.nav={available:true,pose:[0,0,0],verified:true,path:[[.2,.3]],goal:[.2,.3]};
+ map.canvas.getContext=()=>ctx;map.canvas.getBoundingClientRect=()=>({left:0,top:0,width:1000,height:450});
+ map.draw();
+ const screenScale=.15;
+ assert.ok(widths.every(width=>width*screenScale>=2.99));
+ assert.ok(parseInt(labels[0][1].split(' ')[1],10)*screenScale>=13.9);
+ assert.deepEqual(map.toPatrol(500,225),applyAffine(meta.px_to_patrol,1000,1500),'annotation scaling must not alter click coordinates');
+ map.dispose();dom.window.close();
+});
