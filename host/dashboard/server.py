@@ -731,7 +731,11 @@ def create_app(
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
     history: HistoryStore | None = None,
+    vision_status: Callable[[], dict[str, Any]] | None = None,
 ) -> FastAPI:
+    if vision_status is not None:
+        # 로드된 모델·추론 지연을 상태 전문(`/ws/telemetry`·`/api/telemetry`)의 `vision` 에 싣는다.
+        state.attach_vision_status(vision_status)
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
     event_hub = EventHub(state)
@@ -967,6 +971,7 @@ def running_server(
     nav_status: Callable[[], dict[str, Any]] | None = None,
     planning: PlanningService | None = None,
     history: HistoryStore | None = None,
+    vision_status: Callable[[], dict[str, Any]] | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     app = create_app(
@@ -982,6 +987,7 @@ def running_server(
         nav_status=nav_status,
         planning=planning,
         history=history,
+        vision_status=vision_status,
     )
     with serving(app, port) as server:
         yield server

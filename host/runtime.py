@@ -72,6 +72,7 @@ from host.common.logging_setup import (
     setup_logging,
 )
 from host.common.protocol import CommandEncoder, system_clock_ms
+from host.common.trace import config_sha256, new_session_id
 from host.common.units import deg_to_rad, rad_to_deg
 from host.dashboard.state import DashboardState
 from host.report.situation import describe
@@ -218,12 +219,16 @@ class Runtime:
         history: HistoryStore | None = None,
         motion_lock: bool = False,
         record_frame_ms: int = 1000,
+        session_id: str | None = None,
     ) -> None:
         network = config["network"]
         rate_hz = int(network["cmd_rate_hz"])
         if rate_hz <= 0:
             raise ConfigError("network.cmd_rate_hz 는 1 이상이어야 함")
         self._device_id = device_id
+        # 사건 추적 (블랙박스 meta.json) — 세션 기록기가 꺼져 있어도 세션 ID 는 있다.
+        self._session_id = session_id or new_session_id()
+        self._config_sha256 = config_sha256(config)
         self._dashboard = dashboard
         self._clock = clock
         # 사건·순찰 이력 색인 (ADR-46). 쓰기가 실패해도 기록만 하고 제어는 멈추지 않는다.
@@ -517,6 +522,10 @@ class Runtime:
         # 모든 POSE 에 들어가는 정적 roll 보정 (`posture.roll_offset_deg`). IMU 상시
         # 기울기 편향의 반대 부호 — 0 이면 기존 동작과 동일하다.
         self._roll_offset_deg = float(config["posture"].get("roll_offset_deg", 0.0))
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
 
     @property
     def behavior(self) -> Behavior:
@@ -1118,6 +1127,7 @@ class Runtime:
                 escalation=self._escalation.level.value,
                 mode=self._mission.mode,
                 now_ms=result.completed_ms,
+                **self._event_trace(result),
             )
         except Exception as exc:  # noqa: BLE001 — 기록 실패가 10Hz 제어를 죽이면 안 된다
             LOG.error("blackbox_record_failed", error=f"{type(exc).__name__}: {exc}")
@@ -1136,6 +1146,28 @@ class Runtime:
             self._event_publisher(entry)
         except Exception as exc:  # noqa: BLE001 — 브라우저 단절은 제어 실패가 아니다
             LOG.error("dashboard_event_publish_failed", error=f"{type(exc).__name__}: {exc}")
+
+    def _event_trace(self, result: VisionResult) -> dict[str, Any]:
+        """사건이 «어느 세션·장치·프레임·모델·설정으로, 얼마 걸려» 판단됐는지.
+
+        지연은 같은 PC 시계로 잰 값만 싣는다 — 시계가 어긋나 음수가 나오면 뺀다.
+        """
+        latency: dict[str, Any] = {"inference_ms": round(result.inference_ms, 2)}
+        for key, end_ms in (
+            ("frame_to_result_ms", result.completed_ms),
+            ("frame_to_decision_ms", self._clock()),
+        ):
+            if end_ms >= result.frame_received_ms:
+                latency[key] = end_ms - result.frame_received_ms
+        models = getattr(self._vision, "models", None)
+        return {
+            "session_id": self._session_id,
+            "device_id": self._device_id,
+            "frame_id": result.frame_seq,
+            "config_sha256": self._config_sha256,
+            "models": models() if callable(models) else None,
+            "latency": latency,
+        }
 
     def _announce_situation(self, event_type: str, judgement: dict[str, Any] | None) -> str | None:
         """상황 문장을 만들어 방송한다. 만든 문장(없으면 `None`)을 돌려준다."""
@@ -2244,6 +2276,8 @@ def dashboard_wiring(
         "camera": _latest_jpeg(vision) if vision is not None else None,
         # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다.
         "vision": vision.latest if vision is not None else None,
+        # 상태 칸의 로드된 모델·추론 지연 p50/p95 (`VisionWorker.status`).
+        "vision_status": getattr(vision, "status", None),
         # 사건 전문에는 디렉터리 이름만 실으므로 그림은 여기서
         # 꺼낸다. 이름 검증은 저장 구조를 아는 블랙박스가 한다.
         "event_snapshot": None if blackbox is None else blackbox.snapshot_bytes,
@@ -2312,6 +2346,13 @@ def _publish_event(dashboard: DashboardState) -> Callable[[BlackboxEntry], None]
                 "snapshot": entry.jpeg_path.name if entry.jpeg_path is not None else None,
                 # 그릴 수 없는 판단 근거 — PPE 판정·쓰러짐 수치·VLM 판독 (B2).
                 "judgement": entry.judgement,
+                # 사건 추적 — 어느 세션·프레임·모델로, 얼마 걸려 판단했나.
+                "event_id": entry.event_id,
+                "session_id": entry.session_id,
+                "frame_id": entry.frame_id,
+                "config_sha256": entry.config_sha256,
+                "models": entry.models,
+                "latency": entry.latency,
             }
         )
 
@@ -2369,10 +2410,17 @@ def _broadcaster(config: dict[str, Any]) -> broadcast.Broadcaster | None:
 
 
 def _open_recorder(
-    args: argparse.Namespace, config: Mapping[str, Any], argv: list[str] | None
+    args: argparse.Namespace,
+    config: Mapping[str, Any],
+    argv: list[str] | None,
+    *,
+    session_id: str,
+    models: list[dict[str, Any]],
 ) -> SessionRecorder:
-    """기록 폴더와 manifest. 비밀값을 넣지 않는다 — 설정은 해시만, 인자는 그대로."""
-    import hashlib
+    """기록 폴더와 manifest. 비밀값을 넣지 않는다 — 설정은 해시만, 인자는 그대로.
+
+    `session_id` 는 블랙박스 meta.json 과 같은 값이고, `models` 는 설정된 가중치의 sha256·메타다.
+    """
     import subprocess
 
     try:
@@ -2381,17 +2429,18 @@ def _open_recorder(
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         revision = ""
-    config_text = json.dumps(config, sort_keys=True, ensure_ascii=False, default=str)
     return SessionRecorder(
         Path(args.record_dir),
         manifest={
+            "session_id": session_id,
             "argv": sys.argv[1:] if argv is None else argv,
             "device": args.device,
             "lidar_device": args.lidar_device,
             "maps": args.maps,
             "motion_lock": args.motion_lock,
             "git_revision": revision,
-            "config_sha256": hashlib.sha256(config_text.encode("utf-8")).hexdigest(),
+            "config_sha256": config_sha256(config),
+            "models": models,
             "mount_yaw_deg": (config.get("lidar") or {}).get("mount_yaw_deg"),
             "angle_direction": (config.get("lidar") or {}).get("angle_direction"),
         },
@@ -2501,8 +2550,20 @@ def main(argv: list[str] | None = None) -> int:
     # 로거를 세운 뒤에 연다 — 실측이 없는 기체의 `odometry_unavailable` 이 JSONL 에 남는다. 그런 기체는 `None`.
     odom = open_odom_sender(config, args.device) if args.lidar_device else None
 
-    recorder = None if args.record_dir is None else _open_recorder(args, config, argv)
+    session_id = new_session_id()
     vision = None if args.no_vision else build_worker(config)
+    # 가중치 sha256 은 여기서 한 번 계산된다 (검출기가 들고 있다가 로드 때 다시 쓴다).
+    recorder = (
+        None
+        if args.record_dir is None
+        else _open_recorder(
+            args,
+            config,
+            argv,
+            session_id=session_id,
+            models=[] if vision is None else vision.model_files(),
+        )
+    )
     blackbox = EventBlackbox(config)
     # 비었거나 열 수 없으면 `None` — 이력 없이 돈다 (ADR-46). 닫는 것은 아래 `finally` 다.
     history = open_history(config)
@@ -2543,6 +2604,7 @@ def main(argv: list[str] | None = None) -> int:
         history=history,
         motion_lock=args.motion_lock,
         record_frame_ms=args.record_frame_ms,
+        session_id=session_id,
     )
     sock = open_socket(runtime.telemetry_port)
     # ⚠️ **tty 일 때만 붙인다.** 서비스·CI 로 돌리면 stdin 이 즉시 EOF 라 스레드가

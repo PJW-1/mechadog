@@ -89,6 +89,53 @@ def test_runtime_stall_is_separate_from_telemetry(clock):
     assert state.snapshot()["runtime_age_ms"] == 3100
 
 
+VISION_STATUS = {
+    "models": [{"name": "coco", "sha256": "ab" * 32, "provider": "DmlExecutionProvider"}],
+    "inference": {"n": 3, "p50_ms": 8.0, "p95_ms": 12.0},
+}
+
+
+def test_snapshot_has_no_vision_status_without_vision(clock):
+    """비전이 없으면 `null` — 모델·지연을 지어내지 않는다."""
+    assert state_at(clock).snapshot()["vision"] is None
+
+
+def test_snapshot_carries_vision_models_and_latency(clock):
+    state = state_at(clock)
+    state.attach_vision_status(lambda: VISION_STATUS)
+    assert state.snapshot()["vision"] == VISION_STATUS
+
+
+def test_broken_vision_status_does_not_break_the_snapshot(clock):
+    state = state_at(clock)
+    state.attach_vision_status(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    snapshot = state.snapshot()
+    assert snapshot["vision"] is None
+    assert snapshot["link_rtt_ms"] is None
+
+
+def test_telemetry_api_reports_vision_status(clock):
+    with TestClient(create_app(state_at(clock), vision_status=lambda: VISION_STATUS)) as client:
+        assert client.get("/api/telemetry").json()["vision"] == VISION_STATUS
+
+
+def test_wiring_passes_the_worker_status(cfg, clock):
+    from host.runtime import dashboard_wiring
+
+    class Vision:
+        def latest(self):
+            return None
+
+        def status(self):
+            return VISION_STATUS
+
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    vision = Vision()
+    wiring = dashboard_wiring(runtime, cfg, vision=vision, blackbox=None)  # type: ignore[arg-type]
+    assert wiring["vision_status"]() == VISION_STATUS
+    assert dashboard_wiring(runtime, cfg, vision=None, blackbox=None)["vision_status"] is None
+
+
 def test_invalid_stale_threshold():
     with pytest.raises(ValueError):
         DashboardState("test", stale_after_ms=0)
@@ -630,6 +677,13 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             judgement={"state": "위반", "reason": "1500ms 창 위반 확정"},
             meta_path=Path("bb/entry-1/meta.json"),
             jpeg_path=Path("bb/entry-1/frame.jpg"),
+            # `BlackboxEntry` 의 사건 추적 필드 — 옛 기록이면 빈 값이다.
+            event_id="",
+            session_id="",
+            frame_id=None,
+            config_sha256="",
+            models=[],
+            latency={},
         )
     )
     assert board.event_seq == before + 1, "넘긴 어댑터가 이 대시보드로 들어가야 한다"

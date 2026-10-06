@@ -17,6 +17,14 @@
 | `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v5`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ YOLOX-S 4클래스 · XIAO 실측 전 후보 (`docs/PPE_ACCEPTANCE.md`) |
 | `hazard.onnx` | 위험물 — `lighter` / `powerbank` (미검출 = 정상) | **`python tools/fetch_models.py`** — 팀 Release 자산(`hazard-v1`)에서 받고 크기 **35,776,558** 바이트 · SHA-256 `7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746` 을 검증한다. 학습 노트북은 `tools/hazard/colab_hazard_yolox.ipynb` | ⚠️ YOLOX-S 2클래스 · XIAO 실측 전 후보 · 위험구역(`zones.hazard_ids`) 점검 중에만 돈다 (`vision.hazard`) |
 
+### 구조화 메타 파일 — `<이름>.meta.json`
+
+가중치 옆의 `coco.meta.json`·`ppe.meta.json` 은 Git 에 싣는다(가중치가 아니다). 형식은
+`host/vision/model_info.py` 독스트링이 정본이다 — `name`·`model_family`·`input_size`·`classes`(모델 출력 순서)·
+`source{url,release,license}`·`training_data`·`sha256`·`size`. 런타임은 기동 때 가중치의 sha256 을 한 번 계산해
+세션 manifest·사건 기록에 남기고, 메타 파일이 있으면 읽어 해시·클래스가 어긋날 때 경고만 한다. 없으면 건너뛴다
+(`hazard.onnx` 는 아직 없다). `WEIGHTS`·클래스 상수와 어긋나지 않는지는 `tests/test_model_info.py` 가 대조한다.
+
 ---
 
 ## ① `coco.onnx` 획득 절차 — YOLOX-S

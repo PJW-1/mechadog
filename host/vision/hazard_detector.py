@@ -46,6 +46,11 @@ class HazardDetector:
         self._hits_required = int(spec["hits_required"])
         self._hits: dict[str, deque[int]] = {label: deque() for label in self._alarm}
 
+    @property
+    def detector(self) -> Any:
+        """감싼 검출기 — 모델 메타데이터(`model_summary`)를 묻는 데 쓴다."""
+        return self._detector
+
     def open(self) -> None:
         self._detector.open()
 

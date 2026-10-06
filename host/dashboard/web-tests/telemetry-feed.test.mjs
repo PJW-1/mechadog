@@ -152,6 +152,38 @@ test('robot-side alarms are surfaced from its own flags, not recomputed from thr
   assert.match(Object.fromEntries(text.rows)['배터리 전압'], /저전압 \(로봇 판정\)/);
 });
 
+const withVision = (vision) => {
+  const body = JSON.parse(message());
+  if (vision !== undefined) body.vision = vision;
+  return decodeTelemetryMessage(JSON.stringify(body));
+};
+
+test('loaded models and inference latency are shown from the server status', () => {
+  const snap = withVision({
+    models: [
+      { name: 'coco', sha256: 'ab'.repeat(32), provider: 'DmlExecutionProvider' },
+      { name: 'ppe', sha256: null, provider: null },
+    ],
+    inference: { n: 3, p50_ms: 8, p95_ms: 12.25 },
+  });
+  const rows = Object.fromEntries(describeTelemetry(view({ snapshot: snap })).rows);
+  assert.equal(rows['비전 모델'], 'coco · abababababab · DmlExecutionProvider / ppe · 해시 없음 · 장치 미상');
+  assert.equal(rows['추론 지연 p50 / p95'], '8.0 / 12.3 ms · 최근 3건');
+});
+
+test('vision status that is absent, empty or not yet measured is said as such', () => {
+  for (const vision of [undefined, null]) {
+    const rows = Object.fromEntries(describeTelemetry(view({ snapshot: withVision(vision) })).rows);
+    assert.equal(rows['비전 모델'], '비전 없음 · 미수신');
+    assert.equal(rows['추론 지연 p50 / p95'], '비전 없음 · 미수신');
+  }
+  const rows = Object.fromEntries(
+    describeTelemetry(view({ snapshot: withVision({ models: [], inference: { n: 0, p50_ms: null, p95_ms: null } }) })).rows,
+  );
+  assert.equal(rows['비전 모델'], '로드된 모델 없음');
+  assert.equal(rows['추론 지연 p50 / p95'], '측정 전');
+});
+
 test('connected but nothing from the robot yet is not shown as values', () => {
   const text = describeTelemetry(view({ snapshot: decodeTelemetryMessage(message({ telemetry: false, stale: true })) }));
   assert.equal(text.rows, null);
