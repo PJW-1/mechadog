@@ -517,7 +517,7 @@ def test_evaluate_variant_without_criteria_counts_every_labelled_segment(tmp_pat
     plan, session = _violation_only(tmp_path)
     row = ab.evaluate_variant(session, plan)
     assert row["criteria"] is None
-    # 분모는 세션에 있는 라벨 구간 전체다 (nohelmet 6 + none 4).
+    # 분모는 계획에 있고 세션에도 있는 라벨 구간이다 (nohelmet 6 + none 4).
     assert (row["determinate"], row["total"]) == (8, 10)
     assert (row["right"], row["count"]) == (7, 10)
     # 스스로 낸 머리 클리핑 확인불가 1건을 분모에서 뺀다.
@@ -539,6 +539,8 @@ def test_report_without_criteria_writes_table_with_dashes(tmp_path):
     lines = out.read_text(encoding="utf-8").splitlines()
     header = next(i for i, line in enumerate(lines) if line.startswith("| 변형 |"))
     assert "합격 기준 없음" in lines[header - 2]
+    # 분모 안내는 코드와 같아야 한다: 계획과 세션에 함께 있는 라벨 구간이다.
+    assert "계획에 있고 세션에도 있는 라벨 구간" in lines[header - 2]
     columns = [c.strip() for c in lines[header].strip("|").split("|")]
     base = next(line for line in lines if line.startswith("| base |"))
     cells = dict(zip(columns, (c.strip() for c in base.strip("|").split("|")), strict=True))
