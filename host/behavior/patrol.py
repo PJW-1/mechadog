@@ -1456,6 +1456,11 @@ class PatrolController:
                 self._relaxed_blocked_reported = True
             return
         self._relaxed_blocked_reported = False
+        if self.nav_params.relaxed_detour_notice and abs(
+            wrap_pi(chosen - wrap_pi(heading - scan_yaw))
+        ) > math.radians(30):
+            # 목표 쪽이 막혀 빈 쪽으로 비켜 간다 — 알림만 낸다(`blockage_long_ms` 안 1회).
+            self._navigation_event("obstacle_detour", target=self.plan.label)
         error = wrap_pi(scan_yaw + chosen - self._steering_yaw())
         if stopped:
             self.commander.halt()

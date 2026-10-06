@@ -19,6 +19,8 @@ from host.slam.scan_match import Pose
 @dataclass(frozen=True)
 class NavParams:
     relaxed_follow: bool = True
+    #: 따라가기 중 빈 방향이 목표에서 30° 넘게 벗어나면 `obstacle_detour` 알림 (우회 장면용, 기본 끔).
+    relaxed_detour_notice: bool = False
     route_direct: bool = True
     route_direct_stop_ms: int = 3000
     live_clear_scans: int = 3

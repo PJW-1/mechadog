@@ -1259,7 +1259,17 @@ class Runtime:
             except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
                 LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
         if sentence is not None:
-            self._play_robot_track(event_type)
+            key = event_type
+            items = (judgement or {}).get("items")
+            if (
+                event_type == "hazard_notice"
+                and (judgement or {}).get("source") == "detector"
+                and isinstance(items, list)
+                and len(set(items)) == 1
+                and f"hazard_notice_{items[0]}" in self._robot_tracks
+            ):
+                key = f"hazard_notice_{items[0]}"
+            self._play_robot_track(key)
         return sentence
 
     def _play_robot_track(self, key: str) -> None:
