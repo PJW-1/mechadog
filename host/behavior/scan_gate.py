@@ -30,9 +30,13 @@ class ScanGate:
 
     def observe_imu(self, reading: Any, now_ms: int) -> None:
         pitch, roll = getattr(reading, "pitch", None), getattr(reading, "roll", None)
-        if all(
-            isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
-            for v in (pitch, roll)
+        if (
+            isinstance(pitch, int | float)
+            and isinstance(roll, int | float)
+            and not isinstance(pitch, bool)
+            and not isinstance(roll, bool)
+            and math.isfinite(pitch)
+            and math.isfinite(roll)
         ):
             self._imu.append((now_ms, float(pitch), float(roll)))
 
