@@ -1468,14 +1468,17 @@ class PatrolController:
         # 2026-10-06 실기: 걸으며 호 조향은 약해서 보행 우편향을 못 이기고(오른쪽으로 밀려 방1 벽 앞
         # 정지), 몸도 기운다(10-04 roll +17~26°). 오차가 8° 넘으면 멈춰서 제자리 회전으로 바로잡고,
         # 그 안이면 조향 없이 직진한다 — 매 틱 측위 방위로 다시 재므로 폐루프다.
-        spin = abs(error) > math.radians(8) or (
-            self._spinning and abs(error) > self.drive.heading_tolerance_rad
-        )
+        # 2026-10-06 사용자: 제자리 회전으로 자주 멈추면 느리다 → 30° 안은 걸으면서 조향.
+        # 예전 호 조향은 약해서(turn_deg·비율) 우편향을 못 이겼다 — 오차 1°당 1.2° 로 강하게, 상한 25°.
+        spin = abs(error) > math.radians(30) or (self._spinning and abs(error) > math.radians(15))
         self._spinning = spin
-        self.commander.drive(
-            0.0 if spin else self.drive.step_mm,
-            math.copysign(self.drive.spin_turn_deg, error) if spin else 0.0,
-        )
+        if spin:
+            self.commander.drive(0.0, math.copysign(self.drive.spin_turn_deg, error))
+        else:
+            angle = max(-25.0, min(25.0, math.degrees(error) * 1.2))
+            if abs(math.degrees(error)) <= 3.0:
+                angle = 0.0
+            self.commander.drive(self.drive.step_mm, angle)
         self._local_decision("turn" if spin else "clear", "relaxed_follow", front)
 
     @property

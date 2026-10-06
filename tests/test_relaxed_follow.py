@@ -38,17 +38,17 @@ def tick(c, now, *, pose=(2, 2, 0), front=None, distance=3, entry="step", **read
 
 
 @pytest.mark.parametrize("entry", ["step", "steer"])
-@pytest.mark.parametrize("heading,spin", [(0, False), (6, False), (10, True), (34, True), (150, True)])
+@pytest.mark.parametrize("heading,spin", [(0, False), (2, False), (10, False), (34, True), (150, True)])
 def test_heading_and_never_reverse(entry, heading, spin):
     c = relaxed()
     tick(c, 1000, pose=(2, 2, math.radians(heading)), entry=entry)
     assert c.commander.intent.type_ == "MOVE"
     assert (c.commander.intent.fields["step"] == 0) is spin
     assert c.commander.intent.fields["step"] >= 0
-    if spin:
+    if heading > 3:
+        # 30° 안은 걸으면서 조향, 넘으면 제자리 회전 — 어느 쪽이든 오차 반대로 돈다
         assert c.commander.intent.fields["angle"] < 0
     else:
-        # 8° 안은 호 조향 없이 직진(실기 우편향·기울어짐 대응)
         assert c.commander.intent.fields == {"step": c.drive.step_mm, "angle": 0.0}
 
 
