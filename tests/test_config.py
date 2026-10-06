@@ -577,6 +577,26 @@ def test_blackbox_directory_is_required(cfg: dict) -> None:
         validate_base_config(broken)
 
 
+def test_history_db_must_be_a_path_or_empty(cfg: dict) -> None:
+    """이력 DB 는 끌 수 있다(빈 문자열·키 없음). 문자열이 아니면 기동 시점에 실패한다 (ADR-46)."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    assert cfg["logging"]["history_db"] == "history/mechdog.sqlite3"
+    for value in ("", None):
+        allowed = deepcopy(cfg)
+        if value is None:
+            del allowed["logging"]["history_db"]
+        else:
+            allowed["logging"]["history_db"] = value
+        validate_base_config(allowed)
+    broken = deepcopy(cfg)
+    broken["logging"]["history_db"] = 1
+    with pytest.raises(ConfigError, match="logging.history_db"):
+        validate_base_config(broken)
+
+
 def test_relative_paths_resolve_against_the_repo_not_the_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
