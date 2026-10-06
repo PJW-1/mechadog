@@ -141,8 +141,11 @@ class DelayLine[T]:
     """
 
     def __init__(self, delay_ms: float, jitter_ms: float, rng: random.Random) -> None:
-        if delay_ms < 0 or jitter_ms < 0:
-            raise ValueError(f"지연과 흔들림은 0 이상이어야 한다: {delay_ms}, {jitter_ms}")
+        # nan 이나 inf 면 풀릴 시각이 오지 않아 패킷을 영영 삼킨다.
+        if not all(math.isfinite(v) and v >= 0 for v in (delay_ms, jitter_ms)):
+            raise ValueError(
+                f"지연과 흔들림은 0 이상의 유한한 값이어야 한다: {delay_ms}, {jitter_ms}"
+            )
         self._delay_ms = delay_ms
         self._jitter_ms = jitter_ms
         self._rng = rng
