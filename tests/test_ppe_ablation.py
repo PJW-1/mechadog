@@ -296,3 +296,119 @@ def test_infer_frame_records_crops_scales_and_full_frame():
     assert rec["crops"]["0@0.5"][0]["dets"][0][2:] == [20.0, 20.0, 40.0, 40.0]
     assert rec["full"][0][0] == "helmet"
     assert (100, 50) in ppe_fake.shapes  # 0.5 배로 줄인 0 여유 크롭
+
+
+# ── 모델 비교 (같은 프레임·같은 사람 검출) ──────────────────────
+
+
+CLIPPED = [det("no_helmet", box=(10, 0, 30, 20)), det("no_vest", box=(5, 60, 50, 120))]
+NO_BOTH = [det("no_helmet", box=(10, 20, 30, 40)), det("no_vest", box=(5, 60, 50, 120))]
+
+
+def judged_event(tag, states, reasons=(), seg="standing-none", exp=BAD, confirmed=False):
+    return {
+        "t": 0.1,
+        "tag": tag,
+        "segment": seg,
+        "expected": exp,
+        "orientation": "후면",
+        "states": list(states),
+        "reasons": list(reasons),
+        "confirmed": confirmed,
+    }
+
+
+def test_segment_tally_counts_head_clipping_apart_from_other_unknowns():
+    session = {
+        "events": [
+            judged_event("00001", [BAD, OK]),
+            judged_event("00002", [UNK, UNK], ["머리 미검출", "머리 클리핑"], confirmed=True),
+            judged_event("00003", [OK], seg="standing-nohelmet"),
+            {"t": 0.4, "tag": "00004", "segment": None, "states": [BAD], "reasons": []},
+        ]
+    }
+    tally = ab.segment_tally(session)
+    assert tally["standing-none"] == {
+        "expected": BAD,
+        "count": 4,
+        "right": 1,
+        "wrong": 1,
+        "unknown": 2,
+        "clipped": 1,
+        "alarms": 1,
+    }
+    assert tally["standing-nohelmet"]["wrong"] == 1
+    assert set(tally) == {"standing-none", "standing-nohelmet"}
+
+
+def test_paired_tally_matches_people_one_to_one():
+    a = {"events": [judged_event("00001", [OK, BAD]), judged_event("00002", [UNK])]}
+    b = {"events": [judged_event("00001", [BAD, BAD]), judged_event("00002", [BAD])]}
+    pairs = ab.paired_tally(a, b)
+    assert pairs["standing-none"] == {(OK, BAD): 1, (BAD, BAD): 1, (UNK, BAD): 1}
+
+
+def test_paired_tally_rejects_sessions_with_different_people():
+    a = {"events": [judged_event("00001", [OK, BAD])]}
+    b = {"events": [judged_event("00001", [BAD])]}
+    with pytest.raises(ValueError, match="00001"):
+        ab.paired_tally(a, b)
+
+
+def test_compare_replays_each_cache_with_base_and_writes_table(tmp_path):
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "orientation_step_s": 60,
+                "orientations": ["후면"],
+                "scenarios": {
+                    "xiao-rear": {
+                        "segments": [
+                            {"key": "standing-none", "expected": BAD},
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tags = [f"{i:05d}" for i in range(1, 5)]
+    session = {
+        "scenario": "xiao-rear",
+        "events": [
+            {**labelled(i * 0.1, tag, "standing-none", BAD, "후면"), "states": [BAD], "reasons": []}
+            for i, tag in enumerate(tags, start=1)
+        ],
+    }
+    (tmp_path / "session.json").write_text(json.dumps(session), encoding="utf-8")
+    box = (0, 50, 60, 300)
+    caches = {
+        # 옛 모델: 두 장은 적합으로 오판하고 한 장은 머리가 크롭 위에 닿아 확인불가다.
+        "old": [WORN, WORN, CLIPPED, NO_BOTH],
+        "new": [NO_BOTH] * 4,
+    }
+    args = ["compare", str(tmp_path / "session.json"), "--plan", str(plan)]
+    for name, dets in caches.items():
+        frames = [
+            frame(t, [(0.9, box)], {"0.08": [person(d)]}) for t, d in zip(tags, dets, strict=True)
+        ]
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps({"meta": {"conf_floor": 0.1}, "frames": frames}))
+        args += ["--cache", f"{name}={path}"]
+    out = tmp_path / "compare.md"
+    assert ab.main([*args, "--out", str(out)]) == 0
+
+    text = out.read_text(encoding="utf-8")
+    assert "| standing-none | 위반 | old | 4 | 1 | 2 | 1 | 1 |" in text
+    assert "| standing-none | 위반 | new | 4 | 4 | 0 | 0 | 0 |" in text
+    assert "old: 기록 판정과의 프레임별 판정 일치율 25.0%" in text
+    assert "new: 기록 판정과의 프레임별 판정 일치율 100.0%" in text
+    # 사람 단위 맞대기: old 의 적합 오판 2건과 클리핑 1건을 new 가 모두 위반으로 읽었다.
+    assert "| standing-none | 적합 | 0 | 2 | 0 |" in text
+    assert "| standing-none | 확인불가 | 0 | 1 | 0 |" in text
+
+
+def test_compare_rejects_cache_argument_without_name(tmp_path):
+    with pytest.raises(SystemExit):
+        ab.main(["compare", "session.json", "--cache", str(tmp_path / "cache.json")])
