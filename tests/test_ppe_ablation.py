@@ -461,3 +461,101 @@ def test_compare_creates_missing_parent_folder_of_out(tmp_path):
     out = tmp_path / "새" / "폴더" / "compare.md"
     ab._write_text("표\n", str(out))
     assert out.read_text(encoding="utf-8") == "표\n"
+
+
+# ── 합격 기준 없는 계획 (위반 구간만 찍은 세션) ─────────────────
+
+
+def _violation_only(tmp_path):
+    """적합 구간 없이 위반 두 구간만 찍은 세션과 기준 없는 계획."""
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "orientation_step_s": 60,
+                "orientations": ["후면"],
+                "scenarios": {
+                    "rear": {
+                        "segments": [
+                            {"key": "standing-all", "expected": OK},
+                            {"key": "standing-nohelmet", "expected": BAD},
+                            {"key": "standing-none", "expected": BAD},
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    judged = [
+        ("standing-nohelmet", [BAD], []),
+        ("standing-nohelmet", [BAD], []),
+        ("standing-nohelmet", [UNK], ["머리 클리핑"]),
+        ("standing-nohelmet", [BAD], []),
+        ("standing-nohelmet", [BAD], []),
+        ("standing-nohelmet", [UNK], ["머리 미검출"]),
+        ("standing-none", [BAD], []),
+        ("standing-none", [BAD], []),
+        ("standing-none", [BAD], []),
+        ("standing-none", [OK], []),
+    ]
+    events = [
+        {
+            **labelled(round(i * 0.1, 1), f"{i:05d}", seg, BAD, "후면"),
+            "states": states,
+            "reasons": reasons,
+        }
+        for i, (seg, states, reasons) in enumerate(judged, start=1)
+    ]
+    raw = {"scenario": "rear", "events": events}
+    session = ab.replay_recorded(raw, ab.Variant("base"), ["후면"])
+    return plan, session
+
+
+def test_evaluate_variant_without_criteria_counts_every_labelled_segment(tmp_path):
+    plan, session = _violation_only(tmp_path)
+    row = ab.evaluate_variant(session, plan)
+    assert row["criteria"] is None
+    # 분모는 세션에 있는 라벨 구간 전체다 (nohelmet 6 + none 4).
+    assert (row["determinate"], row["total"]) == (8, 10)
+    assert (row["right"], row["count"]) == (7, 10)
+    # 스스로 낸 머리 클리핑 확인불가 1건을 분모에서 뺀다.
+    assert row["clipped"] == 1
+    assert row["clip_excluded_rate"] == pytest.approx(7 / 9)
+    assert (row["detected"], row["violation_episodes"]) == (2, 2)
+    assert row["latency_n"] == 2
+    assert row["normal_episodes"] == 0
+    assert row["false_alarm_rate"] is None
+
+
+def test_report_without_criteria_writes_table_with_dashes(tmp_path):
+    plan, session = _violation_only(tmp_path)
+    path = tmp_path / "session.json"
+    path.write_text(json.dumps(session, ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "report.md"
+    assert ab.main(["report", str(path), "--plan", str(plan), "--out", str(out)]) == 0
+
+    lines = out.read_text(encoding="utf-8").splitlines()
+    header = next(i for i, line in enumerate(lines) if line.startswith("| 변형 |"))
+    assert "합격 기준 없음" in lines[header - 2]
+    columns = [c.strip() for c in lines[header].strip("|").split("|")]
+    base = next(line for line in lines if line.startswith("| base |"))
+    cells = dict(zip(columns, (c.strip() for c in base.strip("|").split("|")), strict=True))
+    assert cells["판정 가능률"] == "80.0% (8/10)"
+    assert cells["실효 성공률"] == "70.0% (7/10)"
+    assert (cells["C1 경보"], cells["C2 방향(이월)"], cells["C3"]) == ("-", "-", "-")
+    assert cells["recall"] == "100.0% (2/2)"
+    assert cells["오경보율"] == "-"
+    assert cells["클리핑 제외 실효 성공률"] == "77.8% (7/9)"
+
+
+def test_clip_excluded_column_is_appended_after_existing_columns(recorded):
+    row = ab.evaluate_variant(ab.replay_recorded(recorded, ab.Variant("base")), PLAN)
+    lines = ab.table([row], {})
+    columns = [c.strip() for c in lines[0].strip("|").split("|")]
+    assert columns[-1] == "클리핑 제외 실효 성공률"
+    assert columns[-1 - len(ab.REASON_ORDER) : -1] == list(ab.REASON_ORDER)
+    assert row["clip_excluded_rate"] == pytest.approx(
+        row["right"] / (row["count"] - row["clipped"])
+    )
+    assert "PASS" in lines[2]  # 기준이 있으면 C1~C3 칸은 그대로다
