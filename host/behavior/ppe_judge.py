@@ -64,6 +64,7 @@ class PpeJudge:
         self._reverse_step = -float(config["gait"]["step_length_mm"])
         self._settle_ms = int(config["posture"]["settle_ms"])
         self._pitch = float(config["posture"]["pitch_up_deg"])
+        self._roll = float(config["posture"].get("roll_offset_deg", 0.0))
         self._back_off_mm = float(config["posture"]["back_off_mm"])
         self._reverse_speed = (config.get("gait_calibration") or {}).get("reverse_mm_per_sec")
         self._unknown_ms = int(config["vision"]["ppe"]["violation_window_ms"])
@@ -71,9 +72,25 @@ class PpeJudge:
         self._clear_margin = 2 * float(config["vision"]["ppe"]["head_margin_px"])
         #: 보호구 미착용 경고를 내고 순찰로 돌아가기까지 — 단계 축의 경고 시간과 같다.
         self._warning_ms = int(config["escalation"]["ppe_warning_hold_ms"])
+        self._recheck = bool(config["escalation"].get("ppe_recheck", False))
+        self._max_warnings = int(config["escalation"].get("ppe_recheck_max_warnings", 2))
+        self._warning_count = 0
+        self._recheck_pending = False
+        self._rechecking = False
+        self._recheck_since = 0
+        self._recheck_seen = 0
+        self._recheck_ok_since: int | None = None
+        self._limit_result: tuple[Any, int] | None = None
         self._edge = EdgeTrigger()
         # 시작값은 «보류 아님» 이다. 비우면 첫 판정의 `False` 가 해제 로그로 남는다.
         self._edge.changed("ppe_held_for_fall", False)
+        self._requirements: tuple[str, ...] = ("helmet", "vest")
+
+    def set_requirements(self, required: tuple[str, ...]) -> None:
+        if required != self._requirements:
+            self._requirements = required
+            self._done.clear()
+            self._unknown_since = None
 
     @property
     def pose_held(self) -> bool:
@@ -101,13 +118,46 @@ class PpeJudge:
         self._lost_since = None
         self._settle_at = None
         self._move_after = None
+        self._warning_count = 0
+        self._recheck_pending = self._rechecking = False
+        self._recheck_ok_since = None
 
     def settle(self, now_ms: int) -> None:
         """예약한 판정 종료 시각이 지났으면 `PPE_SETTLED` 를 낸다 (쓰러짐 의심 중에는 미룬다)."""
+        if getattr(self._behavior, "alarm_holding", False) or self._fall.suspected:
+            return
+        if self._rechecking and now_ms - self._recheck_seen >= self._lost_ms:
+            self._rechecking = False
+            self._settle_at = now_ms
+            if self._target is not None:
+                self._done[self._target] = now_ms
         if self._settle_at is not None and now_ms >= self._settle_at and not self._fall.suspected:
             self._settle_at = None
+            if self._recheck_pending:
+                self._recheck_pending = False
+                self._rechecking = True
+                self._recheck_since = self._recheck_seen = now_ms
+                self._recheck_ok_since = None
+                if self._target is not None:
+                    self._done.pop(self._target, None)
+                # 이번 프레임의 재경고 전에 만료한 비래치 경고를 내린다.
+                self._escalation.tick(now_ms, require_auth=False)
+                return
+            limit, self._limit_result = getattr(self, "_limit_result", None), None
             if self._behavior.state == "ALERT" and self._apply(Event.PPE_SETTLED, now_ms):
                 self._escalation.settle_ppe(now_ms)
+            if limit is not None:
+                frame, track = limit
+                self._record(
+                    "PPE_SETTLED",
+                    frame,
+                    {
+                        "track_id": track,
+                        "state": VIOLATION,
+                        "reason": "경고 횟수 한도",
+                        "rechecked": True,
+                    },
+                )
 
     def forget_lost(self, result: VisionResult, now_ms: int) -> None:
         """판정한 트랙 중 보이는 것은 시각을 갱신하고 `track_lost_ms` 넘게 안 보인 것은 잊는다."""
@@ -146,7 +196,7 @@ class PpeJudge:
     def _step(self, step: str | None, now_ms: int) -> None:
         if step == "pitch_up":
             self._commander.once(
-                "POSE", pitch=self._pitch, roll=0.0, height=0.0, dur=self._settle_ms
+                "POSE", pitch=self._pitch, roll=self._roll, height=0.0, dur=self._settle_ms
             )
             self._pose_held = True
         elif step == "sit":
@@ -170,29 +220,54 @@ class PpeJudge:
         if track_id is None or track_id in self._done:
             return
         self._done[track_id] = now_ms
+        rechecked = self._rechecking
+        self._rechecking = False
+        if rechecked and state == OK:
+            reason = "착용 확인"
+        limit_reached = (
+            rechecked and state == VIOLATION and self._warning_count >= self._max_warnings
+        )
+        if limit_reached:
+            reason = "경고 횟수 한도"
         self._unknown_since = None
         returned = self.return_pose() or returned
         event = (
             "PPE_VIOLATION"
-            if state == VIOLATION
+            if state == VIOLATION and not limit_reached
             else ("PPE_UNDETERMINED" if state == UNDETERMINED else "PPE_SETTLED")
         )
         LOG.info("ppe_judged", track_id=track_id, state=state, reason=reason)
-        if state == VIOLATION:
+        if state == VIOLATION and not limit_reached:
             # 위반은 **경고**다 (S2) — 빨간 눈과 문장을 함께 내고 경고 시간 뒤에 관제 확인
             # 없이 순찰로 돌아간다. 돌아가는 길은 적합 판정과 같은 `PPE_SETTLED` 다.
             self._apply(Event.PPE_VIOLATION, now_ms)
+            self._warning_count += 1
+            # 마지막 경고였으면 경고 시간 뒤 «경고 횟수 한도» 로 닫는다 (Codex 10-06 [확정]: 재확인 없이
+            # 복귀해 한도 사건·0198 이 나오지 않았다).
+            self._limit_result = (
+                (result, track_id)
+                if self._recheck and self._warning_count >= self._max_warnings
+                else None
+            )
+            self._recheck_pending = self._recheck and (
+                self._warning_count == 1 or self._warning_count < self._max_warnings
+            )
             self._settle_at = now_ms + self._warning_ms
         elif returned:
             self._settle_at = now_ms + max(self._settle_ms, 1000)
         else:
             if self._apply(Event.PPE_SETTLED, now_ms):
                 self._escalation.settle_ppe(now_ms)
-        self._record(event, result, {"track_id": track_id, "state": state, "reason": reason})
+        judgement: dict[str, Any] = {"track_id": track_id, "state": state, "reason": reason}
+        if rechecked:
+            judgement["rechecked"] = True
+        self._record(event, result, judgement)
 
     def judge(self, result: VisionResult, now_ms: int) -> None:
         """공장 모드 `ALERT` 에서 프레임 하나로 대상 트랙의 보호구를 판정한다 (ADR-42)."""
         if not self._mission.enables("ppe") or self._behavior.state != "ALERT":
+            return
+        if getattr(self._behavior, "alarm_holding", False):
             return
         if self._settle_at is not None:
             return
@@ -209,6 +284,25 @@ class PpeJudge:
             self._lost_since = None
             return
         verdict = getattr(result, "ppe", None)
+        if verdict is not None and verdict.required != self._requirements:
+            return  # 구역 변경 직전 워커 결과는 새 정책의 판정으로 쓰지 않는다.
+        if self._rechecking:
+            if (
+                verdict is None
+                or verdict.track_id != self._target
+                or getattr(result, "completed_ms", now_ms) < self._recheck_since
+                or not any(t.track_id == self._target for t in result.tracks)
+            ):
+                self._recheck_ok_since = None
+                return
+            self._recheck_seen = now_ms
+            if verdict.state == OK:
+                if self._recheck_ok_since is None:
+                    self._recheck_ok_since = now_ms
+                if now_ms - self._recheck_ok_since < self._unknown_ms:
+                    return
+            else:
+                self._recheck_ok_since = None
         if verdict is None:
             if self._lost_since is None:
                 self._lost_since = now_ms
@@ -221,15 +315,34 @@ class PpeJudge:
             return
         self._lost_since = None
         if verdict.track_id in self._done:
+            # 이미 판정한 대상을 다시 «사람 발견» 으로 잡으면 ALERT 에 머문다 — 판정은 반복하지 않고
+            # 순찰로 돌려보낸다 (2026-10-06 실기: 침실 옷걸이 옷을 사람 0.46 으로 잡아 D 에서 정지).
+            if self._settle_at is None and self._apply(Event.PPE_SETTLED, now_ms):
+                self._escalation.settle_ppe(now_ms)
             return
         if verdict.track_id != self._target:
             self.return_pose()
             self._target = verdict.track_id
             self._unknown_since = None
+            self._warning_count = 0
         if self._reverse_start is not None:
             return
         track = next((t for t in result.tracks if t.track_id == verdict.track_id), None)
         if track is None:
+            return
+        if "helmet" not in verdict.required:
+            returned = self.return_pose()
+            if verdict.state == VIOLATION and verdict.confirmed:
+                self._finish(
+                    VIOLATION, result, now_ms, "구역 필수 보호구 미착용", returned=returned
+                )
+            elif verdict.state == OK:
+                self._finish(OK, result, now_ms, verdict.reason, returned=returned)
+            elif verdict.state == UNDETERMINED:
+                if self._unknown_since is None:
+                    self._unknown_since = now_ms
+                elif now_ms - self._unknown_since >= self._unknown_ms:
+                    self._finish(UNDETERMINED, result, now_ms, verdict.reason, returned=returned)
             return
         decision = self._posture.update(
             box=track.box,

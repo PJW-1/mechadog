@@ -6,7 +6,7 @@ import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -87,6 +87,53 @@ def test_runtime_stall_is_separate_from_telemetry(clock):
     clock.ms = 3100
     assert state.snapshot()["runtime_stale"]
     assert state.snapshot()["runtime_age_ms"] == 3100
+
+
+VISION_STATUS = {
+    "models": [{"name": "coco", "sha256": "ab" * 32, "provider": "DmlExecutionProvider"}],
+    "inference": {"n": 3, "p50_ms": 8.0, "p95_ms": 12.0},
+}
+
+
+def test_snapshot_has_no_vision_status_without_vision(clock):
+    """비전이 없으면 `null` — 모델·지연을 지어내지 않는다."""
+    assert state_at(clock).snapshot()["vision"] is None
+
+
+def test_snapshot_carries_vision_models_and_latency(clock):
+    state = state_at(clock)
+    state.attach_vision_status(lambda: VISION_STATUS)
+    assert state.snapshot()["vision"] == VISION_STATUS
+
+
+def test_broken_vision_status_does_not_break_the_snapshot(clock):
+    state = state_at(clock)
+    state.attach_vision_status(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    snapshot = state.snapshot()
+    assert snapshot["vision"] is None
+    assert snapshot["link_rtt_ms"] is None
+
+
+def test_telemetry_api_reports_vision_status(clock):
+    with TestClient(create_app(state_at(clock), vision_status=lambda: VISION_STATUS)) as client:
+        assert client.get("/api/telemetry").json()["vision"] == VISION_STATUS
+
+
+def test_wiring_passes_the_worker_status(cfg, clock):
+    from host.runtime import dashboard_wiring
+
+    class Vision:
+        def latest(self):
+            return None
+
+        def status(self):
+            return VISION_STATUS
+
+    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
+    vision = Vision()
+    wiring = dashboard_wiring(runtime, cfg, vision=vision, blackbox=None)  # type: ignore[arg-type]
+    assert wiring["vision_status"]() == VISION_STATUS
+    assert dashboard_wiring(runtime, cfg, vision=None, blackbox=None)["vision_status"] is None
 
 
 def test_invalid_stale_threshold():
@@ -289,11 +336,14 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
 
         def __init__(self, _config, **kwargs):
             self.dashboard = kwargs["dashboard"]
+            self.context = SimpleNamespace(device_id=kwargs["device_id"])
             self.behavior = None
             self.commander = None
             self.send_immediate = lambda _line: None
             self.send_emergency_stop = lambda: ""
             self.ask_reset = lambda: None
+            self.history = kwargs.get("history")
+            self.stopping_patrol = nullcontext
             # 명령은 런타임의 `_apply` 경로로 들어간다 — 대응 단계와 전이 로그가
             # 거기 묶여 있다 (2026-09-14 실기).
             self.apply_external = lambda _event: True
@@ -304,7 +354,8 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
             self.ask_alarm_confirm = lambda: None
-            self.ask_zone_baseline_reset = lambda _zone: (True, "")
+            self.ask_locate_zone = lambda _zone: (True, "")
+            self.ask_locate_point = lambda _x, _y: (True, "")
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -332,15 +383,46 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
 
 
 @pytest.mark.parametrize("port", ["0", "-1", "65536"])
-def test_cli_rejects_invalid_port_before_loading_config(port, monkeypatch):
+def test_cli_rejects_invalid_port_before_loading_config(port, monkeypatch, capsys):
     import host.runtime as module
 
     def unexpected(_device):
         pytest.fail("Loaded hardware profile before rejecting port")
 
     monkeypatch.setattr(module, "load_config", unexpected)
-    with pytest.raises(SystemExit, match="dashboard-port"):
+    with pytest.raises(SystemExit) as exc:
         module.main(["--device", "test", "--dashboard-port", port])
+    assert exc.value.code == 2, "인자 오류는 argparse 와 같은 종료 코드 2 다"
+    assert "dashboard-port" in capsys.readouterr().err
+
+
+def test_root_opens_the_white_dashboard(clock):
+    """`/` 는 흰색 화면(`/glass-preview/`)으로 간다 — 검정 기본 화면은 구버전이다 (2026-10-02).
+
+    흰색 화면은 실서버(`/health` 의 service=telemetry)에서 `../index.html` 을 iframe 으로 띄우므로
+    `/index.html` 은 그대로 `static/` 이어야 한다. 그것까지 보내면 자기 자신을 다시 띄운다.
+    """
+    state = DashboardState("mechdog-01", stale_after_ms=1000, clock=clock)
+    with TestClient(create_app(state, static_dir=DEFAULT_STATIC_DIR)) as client:
+        root = client.get("/", follow_redirects=False)
+        assert root.status_code == 307
+        assert root.headers["location"] == "/glass-preview/"
+        white = client.get("/glass-preview/")
+        assert white.status_code == 200 and "glass-theme" in white.text
+        assert client.get("/glass-preview/theme.css").status_code == 200
+        assert client.get("/glass-preview/motion.js").status_code == 200
+        inner = client.get("/index.html")
+        assert inner.status_code == 200 and 'id="app"' in inner.text, "iframe 이 띄울 화면"
+        assert client.get("/health").json()["service"] == "telemetry", "흰색 화면의 실서버 판정"
+
+
+def test_static_dir_without_white_dashboard_serves_it_at_root(clock, tmp_path):
+    """흰색 폴더가 없는 정적 폴더(시험·임시)는 예전처럼 `/` 에서 바로 띄운다."""
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "index.html").write_text("<p>plain</p>", encoding="utf-8")
+    state = DashboardState("mechdog-01", stale_after_ms=1000, clock=clock)
+    with TestClient(create_app(state, static_dir=tmp_path / "web")) as client:
+        assert client.get("/", follow_redirects=False).status_code == 200
 
 
 def test_dashboard_ships_its_page_and_three_without_install(clock):
@@ -400,6 +482,8 @@ def test_vision_frame_keeps_boxes_with_the_jpeg_they_were_computed_on():
         "completed_ms": 1234,
         "detections": [{"label": "person", "score": 0.912, "box": [10.0, 20.0, 110.0, 300.3]}],
         "tracks": [{"track_id": 3, "score": 0.9, "box": [10.0, 20.0, 110.0, 300.0]}],
+        "ppe": [],
+        "ppe_test_mode": False,
     }
 
 
@@ -544,6 +628,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
         telemetry_port = 5101
 
         def __init__(self, _config, **kwargs):
+            self.context = SimpleNamespace(device_id=kwargs["device_id"])
             captured["publisher"] = kwargs.get("event_publisher")
             captured["dashboard"] = kwargs["dashboard"]
             self.behavior = None
@@ -551,6 +636,8 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.send_immediate = lambda _line: None
             self.send_emergency_stop = lambda: ""
             self.ask_reset = lambda: None
+            self.history = kwargs.get("history")
+            self.stopping_patrol = nullcontext
             self.apply_external = lambda _event: True
             self.ask_patrol = lambda: None
             self.set_mode = lambda _mode: None
@@ -559,7 +646,8 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.note_voice_auth = lambda _ok, _captured_at_ms=None: (True, "")
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
             self.ask_alarm_confirm = lambda: None
-            self.ask_zone_baseline_reset = lambda _zone: (True, "")
+            self.ask_locate_zone = lambda _zone: (True, "")
+            self.ask_locate_point = lambda _x, _y: (True, "")
 
         def serve(self, _sock, **_kwargs):
             pass
@@ -595,6 +683,13 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             judgement={"state": "위반", "reason": "1500ms 창 위반 확정"},
             meta_path=Path("bb/entry-1/meta.json"),
             jpeg_path=Path("bb/entry-1/frame.jpg"),
+            # `BlackboxEntry` 의 사건 추적 필드 — 옛 기록이면 빈 값이다.
+            event_id="",
+            session_id="",
+            frame_id=None,
+            config_sha256="",
+            models=[],
+            latency={},
         )
     )
     assert board.event_seq == before + 1, "넘긴 어댑터가 이 대시보드로 들어가야 한다"
@@ -617,6 +712,7 @@ def test_cli_omits_the_publisher_without_a_dashboard(cfg, monkeypatch):
         telemetry_port = 5101
 
         def __init__(self, _config, **kwargs):
+            self.context = SimpleNamespace(device_id=kwargs["device_id"])
             captured["publisher"] = kwargs.get("event_publisher")
 
         def serve(self, _sock, **_kwargs):

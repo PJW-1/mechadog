@@ -10,6 +10,7 @@
 
 야간 경비와 산업안전 점검은 사람이 정해진 경로를 반복해서 돌며 이상을 찾는 일입니다. 이 프로젝트는 그 반복 순찰과 1차 판단을 로봇에게 맡깁니다.
 로봇은 순찰마다 **경비 모드**(침입자 확인·인증·경보)와 **공장 모드**(쓰러짐·넘어진 물건·막힌 통로 판독) 중 하나로 움직이며, 한 순찰에서 두 모드의 판단을 섞지 않습니다([ADR-33](docs/DECISIONS.md#adr-33)).
+공장 모드 시연은 구역 A~D 를 같은 순서로 돌며 이동 중 막힘 우회, 화기 위험구역(C)의 위험물 경고, 쓰러진 사람과 보호구 판정을 한 바퀴에 보여 줍니다([시연 시나리오](docs/features/factory-demo-scenario.md)).
 사람은 로봇이 올린 경보를 관제 화면에서 확인하고 해제할 때, 그리고 비상정지를 누를 때 개입합니다. 최고 단계 경보(L3)와 페일세이프는 로봇이 스스로 풀지 않습니다.
 
 ## 시스템 구성과 역할 분담
@@ -80,7 +81,7 @@ flowchart TD
 - 로봇은 마지막 유효 명령 뒤 600ms 동안 다음 명령이 없으면 스스로 페일세이프로 래치합니다. 처음 값인 300ms 에서 무선 구간 지연 때문에 래치가 반복되는 것을 실측으로 확인하고 옮긴 값입니다([ADR-39](docs/DECISIONS.md#adr-39), [사례 1](docs/case-studies/01-command-timeout.md)).
 - 페일세이프 해제는 사람이 해제를 누르고 로봇이 `safety_latched=false` 를 보고해야만 끝납니다. Host 가 보낸 값을 되돌려 받는 `state` 는 판단에 쓰지 않습니다([ADR-21](docs/DECISIONS.md#adr-21), [사례 3](docs/case-studies/03-echoed-state-self-lock.md)).
 - E-Stop 명령은 다른 모든 조건보다 우선해 로봇을 래치합니다([제어 링크와 페일세이프](docs/features/failsafe.md)).
-- 초음파가 25cm 미만을 연속 2표본 읽으면 로봇이 전진을 멈춥니다. 이 반사 정지는 래치가 아니어서 전방이 비면 로봇이 스스로 풉니다([순찰 중 장애물 대응](docs/features/patrol-obstacle.md)).
+- 초음파가 7cm 미만을 연속 2표본 읽으면 로봇이 전진을 멈춥니다. 이 반사 정지는 래치가 아니어서 전방이 비면 로봇이 스스로 풉니다([순찰 중 장애물 대응](docs/features/patrol-obstacle.md)).
 
 ### 2. 비전·ML 파이프라인
 
@@ -127,7 +128,20 @@ python tools/mock/mock_mechdog.py --device mechdog-01
 python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --dashboard-port 8000
 ```
 
-둘째 줄은 가상 로봇을 띄우고, 셋째 줄은 카메라 없이 런타임과 관제 서버를 띄웁니다. 이 두 명령은 서로 다른 터미널에서 실행하고 http://127.0.0.1:8000/#dashboard 를 엽니다. 가상 로봇은 실제 로봇처럼 안전 잠금(FAILSAFE)이 걸린 채 켜지므로, 움직이려면 먼저 관제 화면의 «안전 해제 (RESET_SAFE)» 를 누릅니다. 실제 로봇에 연결한 상태에서는 관제 화면의 수동 조작이 로봇을 움직입니다.
+둘째 줄은 가상 로봇을 띄우고, 셋째 줄은 카메라 없이 런타임과 관제 서버를 띄웁니다. 이 두 명령은 서로 다른 터미널에서 실행하고 http://127.0.0.1:8000/ 을 엽니다(흰색 관제 화면 `/glass-preview/` 로 갑니다 — 직접 연 `/index.html` 도 동일한 흰색 화면). 가상 로봇은 실제 로봇처럼 안전 잠금(FAILSAFE)이 걸린 채 켜지므로, 움직이려면 먼저 관제 화면의 «안전 해제 (RESET_SAFE)» 를 누릅니다. 실제 로봇에 연결한 상태에서는 관제 화면의 수동 조작이 로봇을 움직입니다.
+
+## 외부 집 3D 보기와 제어 미니맵
+
+외부 SIM을 따로 실행한 뒤, gitignore 대상인 개체별 로컬 설정(예: `config/devices/mechdog-02.local.yaml`)에 아래 값만 넣습니다. 개인 집 장면·사진은 이 저장소에 넣지 않습니다.
+
+```yaml
+dashboard:
+  scene3d_url: "http://127.0.0.1:8789/"
+```
+
+기본값은 빈 문자열이며 기존 2D 지도를 사용합니다. 설정을 바꾸면 관제 런타임을 다시 시작합니다. 통합 관제의 2D/3D 버튼으로 전환하며, 3D 연결 실패·서버 중단·WebGL 오류 때는 2D로 돌아가 안내합니다. 3D를 다시 누르면 재연결합니다. 외부 뷰어는 `?embed=1` 모드를 지원하고, 준비 완료 후 부모 창으로 `{type: 'house-sim-status', ready: true}` 메시지를 주기적으로 보내야 합니다. 준비 실패 시 `ready: false`를 보냅니다. 관제는 메시지의 iframe 출처와 창을 검증합니다.
+
+제어 화면의 미니맵은 로봇 위치·방향, 파란 경로, 주황 현재 동선, 구역 이름을 표시합니다. 카메라 옆에 표시하고 모바일에서는 아래에 배치합니다. 지도 터치로 이동 명령을 보내지 않으며, «크게 보기»는 구역·동선 화면으로 이동합니다. 위치는 최대 10Hz로 조회하고 지도 PNG와 메타데이터는 같은 연결에서 재사용합니다.
 
 ## 해결한 어려운 문제
 
@@ -135,20 +149,29 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 - [10fps 추론이 진짜 검출의 절반 이상을 놓친 문제](docs/case-studies/02-person-gate-time-window.md): 실기 343프레임을 분석해 추론률과 판정 방식을 함께 바꿨습니다.
 - [반향된 상태값 때문에 Host 가 스스로를 잠글 수 있었던 문제](docs/case-studies/03-echoed-state-self-lock.md): 반향되지 않는 플래그만 판단에 쓰도록 바꿨습니다.
 - [로봇 I²C 경유 음성 파형 중계가 불가능했던 사례](docs/case-studies/04-i2c-voice-relay.md): 브리지를 직접 읽고 써서 한계를 확인하고 듣기와 말하기 경로를 나눴습니다.
+- [공개 PPE 데이터 성능이 XIAO 에서 재현되지 않은 사례](docs/case-studies/05-ppe-domain-gap.md): 공개 사진 점수가 높은 후보가 15cm 로봇 카메라에서 정상 착용자를 위반으로 읽어 기각됐고, 채택 기준을 XIAO 실측으로 옮겼습니다.
+- [부분 라벨이 맨머리를 «배경» 으로 가르친 사례](docs/case-studies/06-partial-label-background.md): 3,219장 중 544장에 머리 라벨이 없었고, 라벨이 빠진 사람을 학습에서 빼는 검사를 도구와 시험에 넣었습니다. 같은 조건 재평가는 없습니다.
+- [TRACK 좌우 비대칭을 회전율 곡선으로 고친 사례](docs/case-studies/07-track-turn-asymmetry.md): 두 점으로 세운 데드밴드 값이 틀렸음을 IMU 회전율 곡선으로 확인하고, 보정을 −5.0° 로 내려 드리프트를 거스르는 쪽에만 더했습니다.
+- [VLM 두 장 비교 실패와 한 장 판독 한정](docs/case-studies/08-vlm-two-image-compare.md): 로컬 2B VLM 이 같은 사진 두 장을 «다르다» 고 답해, 변화 확정을 한 장 판독을 두 번 묻는 방식으로 바꿨습니다.
+- [bbox 높이 정지선이 화면 밖이었던 사례](docs/case-studies/09-bbox-height-stop-line.md): 기존 정지선 490px 이 VGA 높이 480px 을 넘어, 정지선을 화면 안으로 옮기고 초음파 40cm 를 더했습니다.
+- [추론 환경 차이로 «빈 결과» 가 나온 사례](docs/case-studies/10-model-provider-mismatch.md): DirectML·패키지 충돌·전처리 규약 어긋남이 오류 없이 빈 결과나 느린 CPU 로 나타나, 전처리 계약과 EP 선택 기록을 두었습니다.
 
 **더 읽기**
 
 - [코드 읽는 순서](docs/code-tour.md): 처음 코드를 열 때 어느 파일부터 볼지와 5분 안에 목업으로 돌려 보는 방법입니다.
 - [문서 색인](docs/README.md)
-- [기능별 판단 흐름도 8건](docs/features/)
+- [기능별 판단 흐름도 9건](docs/features/)
 - [대표 설계 결정](docs/design-decisions.md)
-- [설계 결정 기록(ADR 42건)](docs/DECISIONS.md)
+- [설계 결정 기록(ADR 46건)](docs/DECISIONS.md)
 - [실기 시험 기록](field_tests/README.md)
+- [PPE 데이터 카드](docs/ppe-data-card.md): 배포 모델 ppe-v5 의 구조·전처리·클래스 규칙·평가 근거를 한곳에 모았고, 원문에서 확인하지 못한 값은 «확인 못 함» 으로 적었습니다.
+- [PPE 전처리·후처리 ablation](field_tests/results/20261006_ppe-xiao/ablation.md): 기록된 판정으로는 XIAO 기준을 재현했지만, 저장된 프레임이 판정을 덧그린 이미지라 재추론이 필요한 변형은 무효이고 누적 규칙 축만 유효합니다.
+- [세션 재생 결과](field_tests/results/20261006_session-replay/summary.md): 기록 세션을 Runtime 에 다시 넣어 명령·FSM 전이·경보 단계를 맞춰 본 기록으로, 재생할 실기 세션이 없어 합성 세션으로만 확인했습니다.
 
 ## 개발 방식
 
-- **테스트**: 하드웨어 없이 도는 pytest 3,162건(86개 파일, 2026-09-29 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. CI 는 `host`·`tools` 커버리지 80% 미만이면 실패합니다.
+- **테스트**: 하드웨어 없이 도는 pytest 4,190건(123개 파일, 2026-10-06 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. CI 는 `host`·`tools` 커버리지 80% 미만이면 실패합니다.
 - **CI 게이트**: [`ci.yml`](.github/workflows/ci.yml)이 ruff 린트·포맷, pytest, 펌웨어 3종 arduino-cli 빌드와 펌웨어 정적 분석을 PR 마다 돌립니다.
 - **문서·코드 일치 검사**: [ARCHITECTURE.md](docs/ARCHITECTURE.md)의 상태 전이표와 코드의 전이표가 같은지를 테스트가 대조하고([`tests/test_fsm.py`](tests/test_fsm.py)), 작업 목록 생성 결과가 원본과 같은지(`wbs_assignments.py --check`)와 문서 상대 링크가 실제 파일을 가리키는지(`check_doc_links.py`)를 CI 가 확인합니다.
-- **커밋과 리뷰**: 커밋은 Conventional Commits 규약을 따르고, 변경은 PR 로 검토해 병합합니다(병합된 PR 335건, 2026-09-29 기준).
+- **커밋과 리뷰**: 커밋은 Conventional Commits 규약을 따르고, 변경은 PR 로 검토해 병합합니다(병합된 PR 425건, 2026-10-06 기준).
 - **라이선스**: 저장소 코드는 [Apache-2.0](LICENSE)입니다. 검출 모델 가중치는 저장소에 넣지 않고 `python tools/fetch_models.py` 로 받으며, 출처와 라이선스는 [models/README.md](models/README.md)에 있습니다. 제조사 모션 라이브러리는 라이선스 표기가 없어 저장소에 넣지 않습니다([ADR-20](docs/DECISIONS.md#adr-20)).

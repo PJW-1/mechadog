@@ -16,12 +16,16 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+import zipfile
+import zlib
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import yaml
+
+from host.common.config import _finite_number
 
 #: 로그오즈 상·하한 — 오래 본 셀도 새 관측이 고칠 수 있게 한다.
 LOGODDS_MIN: float = -5.0
@@ -51,13 +55,18 @@ class MapMeta:
         }
 
     @classmethod
-    def of(cls, raw: dict[str, Any]) -> MapMeta:
+    def of(cls, raw: dict[str, Any], source: Path | str = "map_meta.json") -> MapMeta:
+        if not isinstance(raw, dict):
+            raise ValueError(f"지도 메타가 객체가 아님: {source}")
+        for key in ("resolution", "origin_x", "origin_y", "width", "height"):
+            if key not in raw:
+                raise ValueError(f"지도 메타에 {key} 가 없음: {source}")
         return cls(
-            resolution=float(raw["resolution"]),
-            origin_x=float(raw["origin_x"]),
-            origin_y=float(raw["origin_y"]),
-            width=int(raw["width"]),
-            height=int(raw["height"]),
+            resolution=_positive(_number(raw["resolution"], "resolution", source), source),
+            origin_x=_number(raw["origin_x"], "origin_x", source),
+            origin_y=_number(raw["origin_y"], "origin_y", source),
+            width=int(_number(raw["width"], "width", source)),
+            height=int(_number(raw["height"], "height", source)),
         )
 
 
@@ -92,6 +101,18 @@ class OccupancyGrid:
 
     def _sync_meta(self) -> None:
         self.meta.height, self.meta.width = (int(n) for n in self.cells.shape)
+
+    # ── 스냅샷 ────────────────────────────────────────────────
+    def snapshot(self) -> tuple[np.ndarray, MapMeta]:
+        """셀·메타의 독립 사본 — 검증 안 된 적분을 되돌릴 기준점으로 쓴다."""
+        return self.cells.copy(), replace(self.meta)
+
+    def restore(self, snapshot: tuple[np.ndarray, MapMeta]) -> None:
+        """`snapshot` 상태로 되돌린다. 그 뒤 자란 영역(원점 이동)도 함께 되돌아간다."""
+        cells, meta = snapshot
+        self.cells = cells.copy()
+        self.meta.origin_x, self.meta.origin_y = meta.origin_x, meta.origin_y
+        self._sync_meta()
 
     # ── 좌표 변환 ─────────────────────────────────────────────
     def to_cell(self, x: float, y: float) -> tuple[int, int]:
@@ -197,6 +218,57 @@ class OccupancyGrid:
             return 0
         return int(np.count_nonzero(self.cells[rows[valid], cols[valid]] > occ_thresh))
 
+    # ── 우도장 (likelihood field) ─────────────────────────────
+    def likelihood_field(self, occ_thresh: float, sigma_m: float) -> np.ndarray:
+        """셀마다 «가장 가까운 벽까지의 거리» 로 매긴 점수 `exp(-d²/2σ²)` 의 격자.
+
+        적중 개수 점수(`score`)는 점이 벽 셀 **위에** 있어야만 1 이고 한 셀(5cm) 비껴가면
+        0 이다 — 점수 지형이 계단식이라 가짜 봉우리에 갇히고, 1셀 두께 물체(가구 다리)는
+        정확한 자세에서만 점수가 난다. 거리 점수는 벽 근처에서 매끄럽게 줄어 봉우리가
+        하나로 모인다(Thrun·Burgard·Fox 《Probabilistic Robotics》 6.4).
+
+        거리는 반경 1·2·…·R 셀 원판 팽창으로 셀 단위로 양자화한다(scipy 없이). 지도 내용의
+        지문(합·점유 수·모양)이 같으면 캐시를 돌려준다 — 정합 한 번에 한 번만 계산된다.
+        """
+        res = self.meta.resolution
+        radius_cells = max(1, int(math.ceil(3.0 * sigma_m / res)))
+        occupied = self.cells > occ_thresh
+        # 지문은 **배치까지** 본다 — 합·점유 수만 보면 같은 수의 장애물이 옮겨져도 옛 장을
+        # 재사용한다 (Codex 검토 P2). crc32 는 이 크기(수만 셀)에서 0.1ms 안쪽이다.
+        fingerprint = (
+            self.cells.shape,
+            zlib.crc32(np.ascontiguousarray(self.cells).tobytes()),
+            round(occ_thresh, 6),
+            round(sigma_m, 6),
+        )
+        cached = getattr(self, "_lf_cache", None)
+        if cached is not None and cached[0] == fingerprint:
+            return cast(np.ndarray, cached[1])
+        distance = np.full(self.cells.shape, np.inf, dtype=np.float32)
+        distance[occupied] = 0.0
+        covered = occupied.copy()
+        for k in range(1, radius_cells + 1):
+            ring = _disk_dilate(occupied, k) & ~covered
+            distance[ring] = k * res
+            covered |= ring
+        field = np.exp(-(distance**2) / (2.0 * sigma_m * sigma_m)).astype(np.float32)
+        field[~covered] = 0.0
+        self._lf_cache = (fingerprint, field)
+        return field
+
+    def score_field(self, points_world: np.ndarray, field: np.ndarray) -> float:
+        """우도장 점수 — 점마다 0~1, 합이 «설명된 점의 수» 에 해당한다. 격자 밖은 0."""
+        if points_world.size == 0:
+            return 0.0
+        height, width = field.shape
+        res = self.meta.resolution
+        rows = np.floor((points_world[:, 1] - self.meta.origin_y) / res).astype(np.int64)
+        cols = np.floor((points_world[:, 0] - self.meta.origin_x) / res).astype(np.int64)
+        valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+        if not valid.any():
+            return 0.0
+        return float(field[rows[valid], cols[valid]].sum())
+
     def known_cells(self, epsilon: float = 0.01) -> int:
         """한 번이라도 관측된 셀 수. 정합을 시작할 만한지 판단할 때 쓴다."""
         return int(np.count_nonzero(np.abs(self.cells) > epsilon))
@@ -284,8 +356,13 @@ class OccupancyGrid:
         npy_path = directory / f"{stem}.npy"
         meta_path = directory / "map_meta.json"
         if npy_path.is_file() and meta_path.is_file():
-            cells = np.load(npy_path)
-            meta = MapMeta.of(json.loads(meta_path.read_text(encoding="utf-8")))
+            try:
+                cells = np.load(npy_path)
+            except zipfile.BadZipFile as exc:  # 깨진 zip 은 `ValueError` 가 아니다
+                raise ValueError(f"지도 배열을 읽을 수 없음: {npy_path}") from exc
+            if not isinstance(cells, np.ndarray):  # zip 서명으로 시작하면 `NpzFile` 이 온다
+                raise ValueError(f"지도 배열이 아님: {npy_path}")
+            meta = MapMeta.of(json.loads(meta_path.read_text(encoding="utf-8")), meta_path)
             grid = cls(meta, cells)
             # 저장 당시의 width·height 와 배열이 어긋나면 배열을 믿는다.
             grid._sync_meta()
@@ -314,7 +391,10 @@ class OccupancyGrid:
         | `< free_thresh` | 자유 | `LOGODDS_MIN` |
         | 그 사이 | **미지** | `0` |
         """
-        spec = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        try:
+            spec = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:  # `YAMLError` 는 `ValueError` 가 아니다
+            raise ValueError(f"맵 yaml 파싱 실패: {yaml_path}") from exc
         if not isinstance(spec, dict):
             raise ValueError(f"맵 yaml 최상위가 매핑이 아님: {yaml_path}")
         for key in ("image", "resolution", "origin"):
@@ -324,11 +404,16 @@ class OccupancyGrid:
         image_path = yaml_path.parent / str(spec["image"])
         pixels = read_pgm(image_path)
 
-        negate = bool(int(spec.get("negate", 0)))
+        negate_raw = spec.get("negate", 0)
+        negate = (
+            negate_raw
+            if isinstance(negate_raw, bool)
+            else bool(int(_number(negate_raw, "negate", yaml_path)))
+        )
         # `negate: 1` 이면 픽셀이 그대로 점유 확률이다 (map_server 규약).
         probability = pixels / 255.0 if negate else (255.0 - pixels) / 255.0
-        occupied_thresh = float(spec.get("occupied_thresh", 0.65))
-        free_thresh = float(spec.get("free_thresh", 0.196))
+        occupied_thresh = _number(spec.get("occupied_thresh", 0.65), "occupied_thresh", yaml_path)
+        free_thresh = _number(spec.get("free_thresh", 0.196), "free_thresh", yaml_path)
 
         cells = np.zeros_like(probability, dtype=np.float32)
         cells[probability > occupied_thresh] = LOGODDS_MAX
@@ -341,7 +426,8 @@ class OccupancyGrid:
         origin = spec["origin"]
         if not isinstance(origin, list | tuple) or len(origin) < 2:
             raise ValueError(f"origin 은 [x, y, yaw] 여야 함: {yaml_path}")
-        if len(origin) >= 3 and abs(float(origin[2])) > 1e-6:
+        origin_xy = [_number(v, f"origin[{i}]", yaml_path) for i, v in enumerate(origin[:2])]
+        if len(origin) >= 3 and abs(_number(origin[2], "origin[2]", yaml_path)) > 1e-6:
             # 회전된 원점은 지원하지 않는다 — 무시하지 않고 거부한다.
             raise ValueError(
                 f"origin yaw 가 0 이 아님({origin[2]}) — 회전된 맵 원점은 지원하지 않는다"
@@ -349,13 +435,43 @@ class OccupancyGrid:
 
         height, width = cells.shape
         meta = MapMeta(
-            resolution=float(spec["resolution"]),
-            origin_x=float(origin[0]),
-            origin_y=float(origin[1]),
+            resolution=_positive(_number(spec["resolution"], "resolution", yaml_path), yaml_path),
+            origin_x=origin_xy[0],
+            origin_y=origin_xy[1],
             width=width,
             height=height,
         )
         return cls(meta, cells)
+
+
+def _number(value: Any, key: str, source: Path | str) -> float:
+    """지도 파일의 숫자 값 — `null`·문자열·거대한 정수는 `TypeError`·`OverflowError` 대신 `ValueError`."""
+    if not _finite_number(value):
+        raise ValueError(f"{key} 는 유한한 수여야 함: {source}")
+    return float(value)
+
+
+def _positive(value: float, source: Path | str) -> float:
+    """해상도 — 0 은 `to_cell` 의 나눗셈에서 죽고 음수는 기하를 조용히 뒤집는다."""
+    if value <= 0:
+        raise ValueError(f"resolution 은 0 보다 커야 함: {source}")
+    return value
+
+
+def _disk_dilate(mask: np.ndarray, radius_cells: int) -> np.ndarray:
+    """원판 커널 팽창 — `planner.dilate` 와 같은 잘라 붙이기 방식(감김 없음)."""
+    out = mask.copy()
+    height, width = mask.shape
+    for d_row in range(-radius_cells, radius_cells + 1):
+        for d_col in range(-radius_cells, radius_cells + 1):
+            if d_row * d_row + d_col * d_col > radius_cells * radius_cells:
+                continue
+            src_rows = slice(max(0, -d_row), height - max(0, d_row))
+            src_cols = slice(max(0, -d_col), width - max(0, d_col))
+            dst_rows = slice(max(0, d_row), height - max(0, -d_row))
+            dst_cols = slice(max(0, d_col), width - max(0, -d_col))
+            out[dst_rows, dst_cols] |= mask[src_rows, src_cols]
+    return out
 
 
 def bresenham(row0: int, col0: int, row1: int, col1: int) -> list[tuple[int, int]]:

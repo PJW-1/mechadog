@@ -17,14 +17,16 @@ from __future__ import annotations
 import contextlib
 import threading
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections import deque
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
 from host.vision.badge import BadgeReader, Marker
-from host.vision.detector import Detection
+from host.vision.detector import Detection, ModelMissingError
+from host.vision.hazard_detector import HAZARD_CLASSES, HazardDetector, HazardVerdict
 from host.vision.person import FallenGate, FallenVerdict, PersonGate, Sighting
 from host.vision.ppe_detector import PPE_CLASSES, PpeDetector, PpeVerdict
 from host.vision.stream_client import Frame, FrameQueue, decode_jpeg
@@ -63,6 +65,16 @@ class VisionResult:
     #: 이 프레임에서 읽은 사원증 마커 (FR-10.1). 추적 대상이 있을 때만 읽는다.
     markers: tuple[Marker, ...]
     ppe: PpeVerdict | None = None
+    #: 화기 위험물 판정 — 위험구역 방문 중 켜졌을 때만 있다. `None` 이면 이 프레임은 보지 않았다.
+    hazard: HazardVerdict | None = None
+    ppe_tracks: tuple[PpeVerdict, ...] = ()
+    person_down_reference: tuple[Detection, ...] = ()
+    person_down_reference_reason: str = "disabled"
+    ppe_test_mode: bool = False
+
+
+#: 추론 지연 분포를 낼 최근 표본 수 — 10fps 로 약 50초.
+LATENCY_WINDOW = 512
 
 
 @dataclass
@@ -76,15 +88,34 @@ class WorkerStats:
     last_error: str | None = None
     inference_ms_max: float = 0.0
 
+    def __post_init__(self) -> None:
+        # 필드가 아니다 — `asdict(stats)` 를 JSON 으로 남기는 도구(`vision_link_check`)가 있다.
+        self._samples: deque[float] = deque(maxlen=LATENCY_WINDOW)
+
     def note(self, ms: float) -> None:
         self.inferences += 1
         self.inference_ms_max = max(self.inference_ms_max, ms)
+        self._samples.append(ms)
+
+    def latency(self) -> dict[str, Any]:
+        """최근 추론 지연(프레임 하나의 디코드·검출·판정)의 p50·p95. 표본이 없으면 `None`."""
+        # 다른 스레드가 덧붙이는 중이어도 `list()` 복사는 GIL 아래 한 번에 끝난다.
+        ordered = list(self._samples)
+        ordered.sort()
+        if not ordered:
+            return {"n": 0, "p50_ms": None, "p95_ms": None}
+
+        def pick(fraction: float) -> float:
+            return ordered[max(0, round(fraction * (len(ordered) - 1)))]
+
+        return {"n": len(ordered), "p50_ms": pick(0.5), "p95_ms": pick(0.95)}
 
 
 class VisionSource(Protocol):
     """운용 루프(`runtime.py`)가 비전에 기대는 표면. `VisionWorker` 와 시험 대역이 채운다.
 
-    ⚠️ `set_ppe_enabled` 가 없는 대역도 있어 런타임은 켜기·끄기 전에 `hasattr` 로 확인한다.
+    ⚠️ `set_ppe_enabled`·`set_hazard_enabled` 가 없는 대역도 있어 런타임은 켜기·끄기 전에
+    `hasattr` 로 확인한다.
     """
 
     def start(self) -> None: ...
@@ -94,6 +125,9 @@ class VisionSource(Protocol):
     def stalled(self, now_ms: int) -> bool: ...
     def healthy(self) -> bool: ...
     def set_ppe_enabled(self, enabled: bool) -> None: ...
+    def set_hazard_enabled(self, enabled: bool) -> None: ...
+    @property
+    def hazard_available(self) -> bool: ...
 
 
 class VisionWorker:
@@ -112,6 +146,8 @@ class VisionWorker:
         queue: FrameQueue | None = None,
         clock: Any = None,
         ppe: PpeDetector | None = None,
+        hazard: HazardDetector | None = None,
+        down_reference: Any = None,
     ) -> None:
         vision = config["vision"]
         self._detector = detector
@@ -122,7 +158,14 @@ class VisionWorker:
         self._badges = BadgeReader(config)
         self._ppe = ppe
         self._ppe_enabled = False
+        self._ppe_requirements: tuple[str, ...] = ("helmet", "vest")
         self._ppe_opened = False
+        self._ppe_test = bool(vision["ppe"].get("test_mode", False))
+        self._reference_requested = bool(vision["ppe"].get("down_reference", False))
+        self._down_reference = down_reference
+        self._result_sink: Callable[[VisionResult], None] | None = None
+        self._hazard = hazard
+        self._hazard_enabled = False
         self._queue = queue if queue is not None else FrameQueue()
         self._clock = clock if clock is not None else system_clock_ms
         self._stall_ms = int(vision["stall_timeout_ms"])
@@ -152,6 +195,7 @@ class VisionWorker:
         if self._ppe_enabled and self._ppe is not None:
             self._ppe.open()
             self._ppe_opened = True
+        self._open_hazard()
         LOG.info("vision_detector_opened", ms=self._clock() - opened)
         # 첫 결과 전 단절 판정의 기준 시각 — 세션 준비 뒤부터 잰다.
         self._started_ms = self._clock()
@@ -230,6 +274,14 @@ class VisionWorker:
         """사람 판정 게이트. 스트림이 끊기면 호출부가 `reset()` 한다."""
         return self._gate
 
+    def set_ppe_requirements(self, required: tuple[str, ...]) -> None:
+        # 불변 튜플을 전달하고 검출기의 상태 변경은 아래 워커 스레드에서 수행한다.
+        self._ppe_requirements = required
+
+    def set_result_sink(self, sink: Callable[[VisionResult], None]) -> None:
+        """완료한 모든 추론을 기록 큐로 보낸다. 최신 슬롯 덮어쓰기로 기록을 잃지 않는다."""
+        self._result_sink = sink
+
     def set_ppe_enabled(self, enabled: bool) -> None:
         """Only factory mode pays for PPE inference; the worker owns its state."""
         if enabled and self._started_ms is not None and not self._ppe_opened:
@@ -238,6 +290,50 @@ class VisionWorker:
             self._ppe.open()
             self._ppe_opened = True
         self._ppe_enabled = enabled
+
+    def _open_hazard(self) -> None:
+        """위험물 세션을 기동 때 한 번 연다 — 방문마다 켜고 끄므로 그때 열면 틱이 막힌다.
+
+        ⚠️ **없으면 멈추지 않는다.** 위험물 검출은 가벼운 경고라 모델이 없어도 순찰·사람 인지는
+        그대로 돌아야 한다. 기록만 남기고 꺼 둔다 — VLM `hazard_item` 판독은 따로 돈다.
+        """
+        if self._hazard is None:
+            return
+        try:
+            self._hazard.open()
+        except (ModelMissingError, OSError, RuntimeError) as exc:
+            LOG.warning("hazard_detector_unavailable", error=f"{type(exc).__name__}: {exc}")
+            self._hazard = None
+
+    @property
+    def hazard_available(self) -> bool:
+        """위험물 검출기가 있나 (모델이 없어 끈 경우 거짓)."""
+        return self._hazard is not None
+
+    def set_hazard_enabled(self, enabled: bool) -> None:
+        """위험물 추론을 켜고 끈다 — 위험구역 방문 중에만 켠다. 세션은 열지 않는다."""
+        self._hazard_enabled = enabled
+
+    # ── 모델 메타데이터 (사건 추적) ─────────────────────────
+    def _detectors(self) -> list[Any]:
+        """설정된 검출기 — 범용 · PPE · 위험물 순. 위험물은 모델이 없어 끈 경우 빠진다."""
+        found = [self._detector]
+        for wrapper in (self._ppe, self._hazard):
+            if wrapper is not None:
+                found.append(getattr(wrapper, "detector", None))
+        return [item for item in found if hasattr(item, "model_summary")]
+
+    def models(self) -> list[dict[str, Any]]:
+        """지금 세션이 열린 모델의 이름·sha256·provider. 해시는 로드 때 계산한 값이다."""
+        return [item.model_summary() for item in self._detectors() if item.loaded]
+
+    def model_files(self) -> list[dict[str, Any]]:
+        """설정된 가중치 전부의 sha256·메타 파일 (세션 manifest 용). 처음 부를 때 해시한다."""
+        return [item.model_file().as_dict() for item in self._detectors()]
+
+    def status(self) -> dict[str, Any]:
+        """관제 화면 상태 칸 — 로드된 모델과 최근 추론 지연 분포."""
+        return {"models": self.models(), "inference": self.stats.latency()}
 
     # ── ① 수신 스레드 ───────────────────────────────────────
     def _recv_loop(self) -> None:
@@ -295,18 +391,57 @@ class VisionWorker:
             sighting = self._gate.observe(observed, detections)
             tracks = self._tracker.update(detections, observed)
             # 게이트의 대표 박스를 추적 ID 와 함께 본다 — 다른 사람의 정지가 섞이지 않게.
-            fallen = self._fallen.observe(
-                observed, sighting.box, track_id=tracks[0].track_id if tracks else None
-            )
+            # 2026-10-06 실기: 서 있는 사람(또는 사람으로 잡힌 의자)이 대표 박스가 되면 화면의
+            # 누운 사람을 끝내 보지 못했다. 누움 비율을 넘는 사람 박스가 있으면 그중 가장 큰 것을 본다.
+            lying = [
+                d.box
+                for d in detections
+                if d.label == "person"
+                and (d.box[3] - d.box[1]) > 0
+                and (d.box[2] - d.box[0]) / (d.box[3] - d.box[1]) >= self._fallen.aspect_ratio
+            ]
+            if lying:
+                fall_box = max(lying, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+                fallen = self._fallen.observe(observed, fall_box, track_id=None)
+            else:
+                fallen = self._fallen.observe(
+                    observed, sighting.box, track_id=tracks[0].track_id if tracks else None
+                )
             # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
             markers = self._badges.read(image) if tracks else ()
-            ppe = (
-                self._ppe.observe(image, tracks, observed)
-                if self._ppe_enabled and self._ppe
-                else None
-            )
+            if self._ppe is not None and hasattr(self._ppe, "set_requirements"):
+                self._ppe.set_requirements(self._ppe_requirements)
+            ppe_tracks: tuple[PpeVerdict, ...] = ()
+            ppe = None
+            if self._ppe_enabled and self._ppe is not None:
+                if self._ppe_test:
+                    ppe_tracks = self._ppe.observe_all(image, tracks, observed)
+                    if ppe_tracks:
+                        primary = max(tracks, key=lambda track: track.height).track_id
+                        ppe = next(verdict for verdict in ppe_tracks if verdict.track_id == primary)
+                else:
+                    ppe = self._ppe.observe(image, tracks, observed)
             if not self._ppe_enabled and self._ppe is not None:
                 self._ppe.reset()
+            hazard_on = self._hazard_enabled and self._hazard is not None
+            hazard = self._hazard.observe(image, observed) if hazard_on and self._hazard else None
+            reference: tuple[Detection, ...] = ()
+            reference_reason = "disabled"
+            if self._ppe_enabled and self._ppe_test and self._reference_requested:
+                reference_reason = (
+                    "candidate_missing" if self._down_reference is None else "reference_only"
+                )
+                if self._down_reference is not None:
+                    try:
+                        reference = tuple(
+                            d
+                            for d in self._down_reference.detect(image)
+                            if d.label == "person_down"
+                        )
+                    except Exception as exc:  # noqa: BLE001 — 후보 실패는 정본 인식을 막지 않는다
+                        reference_reason = f"candidate_failed: {type(exc).__name__}"
+            if not hazard_on and self._hazard is not None:
+                self._hazard.reset()
         except Exception as exc:  # noqa: BLE001
             self._note_error("vision_inference_failed", exc, seq=frame.seq)
             return
@@ -327,7 +462,17 @@ class VisionWorker:
             tracks=tracks,
             markers=markers,
             ppe=ppe,
+            hazard=hazard,
+            ppe_tracks=ppe_tracks,
+            person_down_reference=reference,
+            person_down_reference_reason=reference_reason,
+            ppe_test_mode=self._ppe_test and self._ppe_enabled,
         )
+        if self._result_sink is not None:
+            try:
+                self._result_sink(result)
+            except Exception as exc:  # noqa: BLE001 — 기록 실패로 영상 슬롯을 잃지 않는다
+                self._note_error("vision_result_record_failed", exc, seq=frame.seq)
         with self._slot_lock:
             # 덮어쓴다 — 낡은 결과를 쌓지 않는다 (ADR-23 최신 프레임 우선).
             self._slot = result
@@ -361,7 +506,29 @@ def build_worker(
         config,
         Detector(config, section="ppe", labels=PPE_CLASSES),
     )
-    return VisionWorker(config, detector=detector, reader=reader, ppe=ppe)
+    hazard_spec = config["vision"].get("hazard") or {}
+    hazard = (
+        HazardDetector(config, Detector(config, section="hazard", labels=HAZARD_CLASSES))
+        if hazard_spec.get("enabled")
+        else None
+    )
+    reference = None
+    if config["vision"]["ppe"].get("test_mode") and config["vision"]["ppe"].get("down_reference"):
+        from host.common.config import repo_path
+
+        candidate = "models/candidates/ppe-v12/ppe_v12_joint5_context_candidate.onnx"
+        if repo_path(candidate).is_file():
+            reference_config = dict(config)
+            reference_config["vision"] = dict(config["vision"])
+            reference_config["vision"]["ppe_reference"] = dict(
+                config["vision"]["ppe"], model_path=candidate
+            )
+            reference = Detector(
+                reference_config, section="ppe_reference", labels=(*PPE_CLASSES, "person_down")
+            )
+    return VisionWorker(
+        config, detector=detector, reader=reader, ppe=ppe, hazard=hazard, down_reference=reference
+    )
 
 
 @dataclass

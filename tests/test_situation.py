@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from host.report.situation import describe
 
 # ── person_fallen — 쓰러짐 확정 (`runtime._observe_fallen` · `FallMonitor._confirm`) ──
@@ -51,10 +53,7 @@ def test_zone_changed_fallen_object() -> None:
         "zone_changed",
         {
             "zone": "A",
-            "grid": [3, 3],
             "changes": [{"kind": "fallen_object", "source": "vlm"}],
-            "baseline_ms": 1000,
-            "baseline_snapshot": None,
         },
     )
     assert sentence == "A 구역에서 적재물이 무너졌습니다. 확인이 필요합니다."
@@ -69,14 +68,6 @@ def test_zone_changed_collapsed_load_future_name() -> None:
     assert sentence == "B 구역에서 적재물이 무너졌습니다. 확인이 필요합니다."
 
 
-def test_zone_changed_blocked_path() -> None:
-    sentence = describe(
-        "zone_changed",
-        {"zone": "C", "changes": [{"kind": "blocked_path", "source": "vlm"}]},
-    )
-    assert sentence == "C 구역에서 통로가 막혔습니다. 확인이 필요합니다."
-
-
 def test_zone_changed_two_hazards_are_separate_sentences() -> None:
     """위험이 둘이면 기호로 잇지 않고 문장을 나눈다 — 스피커로 읽힌다."""
     sentence = describe(
@@ -85,15 +76,15 @@ def test_zone_changed_two_hazards_are_separate_sentences() -> None:
             "zone": "A",
             "changes": [
                 {"kind": "collapsed_load", "source": "vlm"},
-                {"kind": "blocked_path", "source": "vlm"},
+                {"kind": "smoke_detected", "source": "vlm"},
             ],
         },
     )
-    assert sentence == "A 구역에서 적재물이 무너졌습니다. 통로가 막혔습니다. 확인이 필요합니다."
+    assert sentence == "A 구역에서 적재물이 무너졌습니다. 위험이 감지되었습니다. 확인이 필요합니다."
 
 
 def test_zone_changed_mixed_with_removed_added() -> None:
-    """반출·반입이 같은 방문에서 함께 확정돼도 위험 문구만 말한다 (`ZoneInspector._leave` 주석)."""
+    """폐기한 반출·반입(WBS 3.6.1~3.6.3)이 실린 옛 기록이어도 위험 문구만 말한다."""
     sentence = describe(
         "zone_changed",
         {
@@ -101,11 +92,11 @@ def test_zone_changed_mixed_with_removed_added() -> None:
             "changes": [
                 {"kind": "removed", "label": "backpack", "count": 1, "cell": [0, 0]},
                 {"kind": "added", "label": "box", "count": 1, "cell": [1, 1]},
-                {"kind": "blocked_path", "source": "vlm"},
+                {"kind": "fallen_object", "source": "vlm"},
             ],
         },
     )
-    assert sentence == "A 구역에서 통로가 막혔습니다. 확인이 필요합니다."
+    assert sentence == "A 구역에서 적재물이 무너졌습니다. 확인이 필요합니다."
 
 
 def test_zone_changed_unknown_hazard_kind() -> None:
@@ -126,26 +117,97 @@ def test_zone_changed_none_judgement() -> None:
     assert describe("zone_changed", None) is not None
 
 
-# ── zone_notice — 반출 가벼운 경고 (`ZoneInspector._leave` Z2) ────────────────────────
+# ── zone_notice — 반출 가벼운 경고는 폐기했다 (2026-10-05 · WBS 3.6.1~3.6.3) ──────────
 
 
-def test_zone_notice_with_zone() -> None:
+def test_zone_notice_is_no_longer_described() -> None:
+    """옛 기록의 `zone_notice` 에는 문장을 붙이지 않는다 — 더는 내지 않는 사건이다."""
+    assert describe("zone_notice", {"zone": "B", "changes": [{"kind": "removed"}]}) is None
+
+
+# ── hazard_notice — 화기 위험물 가벼운 경고 (`ZoneInspector._leave`) ──────────────────
+
+
+def test_hazard_notice_with_zone() -> None:
+    sentence = describe("hazard_notice", {"zone": "C", "items": ["hazard_item"], "source": "vlm"})
+    assert sentence == "C 구역에서 라이터나 보조배터리 같은 화기 위험물이 보입니다."
+
+
+def test_hazard_notice_from_the_detector_names_what_it_saw() -> None:
+    """검출기 확정은 무엇을 봤는지 안다 — VLM 처럼 «라이터나 보조배터리 같은» 으로 뭉뚱그리지 않는다."""
     sentence = describe(
-        "zone_notice",
-        {
-            "zone": "B",
-            "changes": [{"kind": "removed", "label": "toolbox", "count": 1, "cell": [2, 0]}],
-        },
+        "hazard_notice", {"zone": "C", "items": ["lighter", "powerbank"], "source": "detector"}
     )
-    assert sentence == "B 구역에서 물건이 반출된 것으로 보입니다."
+    assert sentence == "C 구역에서 화기 위험물 라이터·보조배터리가 보입니다."
+    one = describe("hazard_notice", {"zone": "C", "items": ["powerbank"], "source": "detector"})
+    assert one == "C 구역에서 화기 위험물 보조배터리가 보입니다."
 
 
-def test_zone_notice_empty_judgement() -> None:
-    assert describe("zone_notice", {}) == "물건이 반출된 것으로 보입니다."
+def test_hazard_notice_from_the_detector_without_known_items_falls_back() -> None:
+    sentence = describe("hazard_notice", {"zone": "C", "items": ["knife"], "source": "detector"})
+    assert sentence == "C 구역에서 라이터나 보조배터리 같은 화기 위험물이 보입니다."
 
 
-def test_zone_notice_none_judgement() -> None:
-    assert describe("zone_notice", None) is not None
+def test_hazard_notice_empty_judgement() -> None:
+    assert describe("hazard_notice", {}) == "라이터나 보조배터리 같은 화기 위험물이 보입니다."
+
+
+def test_hazard_notice_none_judgement() -> None:
+    assert describe("hazard_notice", None) is not None
+
+
+# ── path_blocked — 이동 중 LiDAR 장애물 우회 가벼운 경고 ──────────────────────────────
+
+
+def test_path_blocked_with_target() -> None:
+    sentence = describe("path_blocked", {"x": 1.2, "y": 0.4, "target": "D", "source": "lidar"})
+    assert sentence == "D 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
+
+
+def test_path_blocked_without_target() -> None:
+    for judgement in ({"x": 1.2, "y": 0.4, "target": None, "source": "lidar"}, {"target": " "}):
+        assert describe("path_blocked", judgement) == "통로에 장애물이 있어 돌아서 갑니다."
+
+
+def test_path_blocked_from_the_vlm_states_only_the_fact() -> None:
+    """구역 안 VLM 확정은 우회하지 않는다 — «돌아서 갑니다» 가 없다."""
+    sentence = describe("path_blocked", {"zone": "C", "source": "vlm"})
+    assert sentence == "C 구역에서 통로가 막혀 있습니다."
+
+
+def test_path_blocked_from_the_vlm_without_a_zone_falls_back() -> None:
+    assert describe("path_blocked", {"source": "vlm"}) == "통로에 장애물이 있어 돌아서 갑니다."
+
+
+def test_path_blocked_none_judgement() -> None:
+    assert describe("path_blocked", None) == "통로에 장애물이 있어 돌아서 갑니다."
+
+
+# LiDAR 막힘 확정 프레임의 VLM 원인 판독 (ADR-45). 스위치 `change_detect.vlm_path_cause` 는
+# 판정 근거의 `vlm_path_cause` 로 실려 온다 — 꺼져 있으면 답이 «예» 여도 문장이 그대로다.
+LIDAR_BLOCK = {"x": 1.2, "y": 0.4, "target": "D", "source": "lidar"}
+
+
+@pytest.mark.parametrize("fallen", [True, False, None])
+def test_path_blocked_with_the_switch_off_never_says_fallen(fallen: bool | None) -> None:
+    sentence = describe("path_blocked", {**LIDAR_BLOCK, "fallen": fallen, "vlm_path_cause": False})
+    assert sentence == "D 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
+    assert "무너진" not in sentence
+
+
+def test_path_blocked_with_the_switch_on_and_yes_says_fallen() -> None:
+    sentence = describe("path_blocked", {**LIDAR_BLOCK, "fallen": True, "vlm_path_cause": True})
+    assert sentence == "D 구역으로 가는 통로를 무너진 물건이 막고 있어 돌아서 갑니다."
+    no_target = describe(
+        "path_blocked", {**LIDAR_BLOCK, "target": None, "fallen": True, "vlm_path_cause": True}
+    )
+    assert no_target == "무너진 물건이 통로를 막고 있어 돌아서 갑니다."
+
+
+@pytest.mark.parametrize("fallen", [False, None])
+def test_path_blocked_with_the_switch_on_but_no_yes_stays_plain(fallen: bool | None) -> None:
+    sentence = describe("path_blocked", {**LIDAR_BLOCK, "fallen": fallen, "vlm_path_cause": True})
+    assert sentence == "D 구역으로 가는 통로에 장애물이 있어 돌아서 갑니다."
 
 
 # ── 대상이 아닌 사건 — None ──────────────────────────────────────────────────
@@ -166,4 +228,5 @@ def test_every_runtime_hazard_has_a_phrase() -> None:
     from host.behavior.zone_inspector import ZONE_HAZARDS
     from host.report.situation import _HAZARD_PHRASES
 
-    assert set(ZONE_HAZARDS) <= set(_HAZARD_PHRASES)
+    # `blocked_path` 는 L3 가 아니라 `path_blocked` 가벼운 경고라 이 표를 거치지 않는다.
+    assert set(ZONE_HAZARDS) - {"blocked_path"} <= set(_HAZARD_PHRASES)

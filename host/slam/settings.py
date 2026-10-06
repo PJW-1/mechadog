@@ -14,7 +14,7 @@ from typing import Any, cast
 import yaml
 
 from host.behavior.planner import PlanParams
-from host.common.config import ConfigError, load_base_config, load_config
+from host.common.config import ConfigError, _finite_number, load_base_config, load_config
 from host.common.units import deg_to_rad
 from host.slam.scan_match import MatchParams
 
@@ -51,21 +51,34 @@ REQUIRED_LIDAR_KEYS = (
     "search_angle_step_deg",
     "min_known_cells",
     "robot_radius_mm",
+    "start_escape_max_mm",
     "tracking_margin_mm",
     "path_simplify_mm",
     "waypoint_radius_mm",
     "heading_tolerance_deg",
     "reverse_threshold_deg",
+    "spin_threshold_deg",
+    "spin_turn_deg",
     "new_obstacle_check_radius_mm",
-    "new_obstacle_margin_mm",
-    "new_obstacle_confirmations",
-    "obstacle_mark_radius_mm",
     "estop_distance_mm",
     "forward_fan_deg",
     "odom_host",
     "odom_port",
     "odom_rate_hz",
     "odom_imu_stale_ms",
+    "map_pose_port",
+)
+
+#: 숫자 검사에서 빼는 키 — 문자열·참거짓이거나, 포트처럼 아래에서 범위까지 따로 본다.
+_TYPED_SEPARATELY = frozenset(
+    {
+        "scan_port",
+        "scan_forward_host",
+        "scan_forward_enabled",
+        "scan_forward_port",
+        "odom_host",
+        "odom_port",
+    }
 )
 
 
@@ -91,9 +104,48 @@ def read_lidar_section(path: Path = CONFIG_PATH) -> dict[str, Any]:
 
 
 def validate_section(section: dict[str, Any]) -> None:
+    for key, low, high in (
+        ("scan_tilt_imu_max_age_ms", 1, 5000),
+        ("scan_tilt_max_deg", 0.1, 45),
+        ("scan_tilt_settle_ms", 0, 10000),
+        ("scan_tilt_pitch_offset_deg", -45, 45),
+        ("scan_tilt_roll_offset_deg", -45, 45),
+    ):
+        value = section.get(key)
+        if value is not None and (not _finite_number(value) or not low <= value <= high):
+            raise ConfigError(f"lidar.{key} 는 {low}~{high} 유한한 숫자여야 함: {value!r}")
+        if key.endswith("_ms") and value is not None and not isinstance(value, int):
+            raise ConfigError(f"lidar.{key} 는 정수여야 함")
+    if not isinstance(section.get("global_full_scan_ambiguity", False), bool):
+        raise ConfigError("lidar.global_full_scan_ambiguity must be true or false")
+    if not isinstance(section.get("reloc_restore_enabled", False), bool):
+        raise ConfigError("lidar.reloc_restore_enabled 는 true 또는 false 여야 함")
+    for key, low, high in (
+        ("reloc_restore_max_age_ms", 0, 120000),
+        ("reloc_restore_radius_mm", 0, 1000),
+        ("reloc_restore_yaw_deg", 0, 30),
+        ("reloc_restore_score_ratio", 0, 1),
+        ("reloc_restore_tilt_deg", 0, 45),
+    ):
+        value = section.get(key)
+        if value is None:
+            continue
+        if not _finite_number(value) or not low < value <= high:
+            raise ConfigError(f"lidar.{key} 는 {low} 초과 {high} 이하 숫자여야 함: {value!r}")
     missing = [key for key in REQUIRED_LIDAR_KEYS if key not in section]
     if missing:
         raise ConfigError(f"lidar 설정 누락: {missing}")
+    # 아래 비교가 문자열·빈 값에서 `TypeError` 로 새지 않게 숫자부터 확인한다. NaN 은 모든
+    # 대소 비교가 거짓이라 범위 검사를 조용히 통과하므로 유한한 수만 받는다.
+    for key in REQUIRED_LIDAR_KEYS:
+        if key in _TYPED_SEPARATELY:
+            continue
+        value = section[key]
+        if not _finite_number(value):
+            raise ConfigError(f"lidar.{key} 는 유한한 숫자여야 함: {value!r}")
+    scan_port = section["scan_port"]
+    if not isinstance(scan_port, int) or isinstance(scan_port, bool) or not 1 <= scan_port <= 65535:
+        raise ConfigError("lidar.scan_port 는 1~65535 정수여야 함")
     if section["range_min_mm"] >= section["range_max_mm"]:
         raise ConfigError("range_min_mm 이 range_max_mm 보다 작아야 함")
     if section["free_logodds"] >= section["occupied_logodds"]:
@@ -127,8 +179,26 @@ def validate_section(section: dict[str, Any]) -> None:
     if section["odom_rate_hz"] <= 0 or section["odom_imu_stale_ms"] <= 0:
         raise ConfigError("odom_rate_hz · odom_imu_stale_ms 는 0보다 커야 함")
 
+    # 제자리 회전 임계는 직진 허용 오차보다 커야 한다 — 아니면 허용 오차 밖이 전부 회전이라
+    # 호 조향 구간이 사라지고, 같거나 작으면 정렬을 마친 직후 다시 돈다 (ADR-11 개정).
+    if not section["heading_tolerance_deg"] < section["spin_threshold_deg"] <= 180:
+        raise ConfigError("heading_tolerance_deg < spin_threshold_deg <= 180 이어야 함")
+    if not 0 < section["spin_turn_deg"] <= 30:
+        raise ConfigError("spin_turn_deg 는 0 초과 30 이하여야 함 (MOVE angle 규약 상한)")
+    map_pose_port = section["map_pose_port"]
+    if (
+        not isinstance(map_pose_port, int)
+        or isinstance(map_pose_port, bool)
+        or not 1 <= map_pose_port <= 65535
+    ):
+        raise ConfigError("lidar.map_pose_port 는 1~65535 정수여야 함")
+    if map_pose_port in (section["scan_port"], section["scan_forward_port"], odom_port, 5202):
+        raise ConfigError("map_pose_port 는 scan · forward · odom · live-map 포트와 달라야 함")
+
     # 팽창(반경 + 추종 여유)이 E-STOP 거리보다 커야 한다 — 아니면 정상 추종이 비상정지로 끝난다.
     clearance = section["robot_radius_mm"] + section["tracking_margin_mm"]
+    if section["robot_radius_mm"] <= 0 or section["start_escape_max_mm"] <= 0:
+        raise ConfigError("robot_radius_mm · start_escape_max_mm 는 양수여야 함")
     if clearance <= section["estop_distance_mm"]:
         raise ConfigError(
             f"robot_radius_mm + tracking_margin_mm ({clearance}) 이 "
@@ -173,6 +243,16 @@ def plan_params_from_config(config: Mapping[str, Any]) -> PlanParams:
         # 반경 + 추종 여유. 둘을 더해 두는 이유는 `PlanParams.clearance_m` 주석에.
         clearance_m=(float(lidar["robot_radius_mm"]) + float(lidar["tracking_margin_mm"])) / 1000.0,
         simplify_eps_m=float(lidar["path_simplify_mm"]) / 1000.0,
+        # 벽·충분히 확인된 장애물(logodds ≥ 이 값)만 전체 여유를 부풀린다.
+        hard_thresh=float(lidar["hard_occ_thresh"]),
+        # 그 미만의 셀(세션 지도 병합으로 들어온 가구 다리급)은 이 여유만 —
+        # 기본은 로봇 반경: 다리를 피해 갈 수는 있되 몸이 닿지는 않는다.
+        soft_clearance_m=float(lidar["furniture_clearance_mm"]) / 1000.0,
+        body_radius_m=float(lidar["robot_radius_mm"]) / 1000.0,
+        start_escape_max_m=float(lidar["start_escape_max_mm"]) / 1000.0,
+        inflation_radius_m=float(config.get("nav", {}).get("inflation_radius_m", 0.55)),
+        cost_scaling_factor=float(config.get("nav", {}).get("cost_scaling_factor", 3.0)),
+        cost_weight=float(config.get("nav", {}).get("cost_weight", 2.0)),
     )
 
 
@@ -188,6 +268,7 @@ def match_params_from_config(config: Mapping[str, Any]) -> MatchParams:
         search_ang_step_rad=deg_to_rad(float(lidar["search_angle_step_deg"])),
         occ_thresh=float(lidar["occupied_logodds"]),
         min_known_cells=int(lidar["min_known_cells"]),
+        sigma_m=float(lidar.get("match_sigma_mm", 0)) / 1000.0,
     )
 
 

@@ -6,13 +6,14 @@
 - ⚠️ E-Stop 은 어떤 상태에서도 조건 없이 통하고, 틱을 기다리지 않고 받은 자리에서 전문을
   보낸 뒤에 FSM 사건을 넣는다 — 로봇이 먼저 멈추고 호스트가 따라간다.
 - 수동 오버라이드는 `FAILSAFE` 에서 거절된다(전이표). 거절은 `accepted=False` 로 돌려준다.
-- `RESET_SAFE`·경보 확인·기준 재등록·모드 전환 등은 예약하고 운용 루프의 다음 틱이 처리한다.
+- `RESET_SAFE`·경보 확인·모드 전환 등은 예약하고 운용 루프의 다음 틱이 처리한다.
   사람 확인은 버튼 한 번이다.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 
 from host.behavior.commander import Commander
@@ -61,8 +62,13 @@ class CommandService:
         note_voice_auth: Callable[[bool, int | None], tuple[bool, str]] | None = None,
         note_voice_listening: Callable[[int | None], tuple[bool, str]] | None = None,
         confirm_alarm: Callable[[], None] | None = None,
-        reset_zone_baseline: Callable[[str], tuple[bool, str]] | None = None,
-        pose: tuple[float, int] | None = None,
+        locate_zone: Callable[[str], tuple[bool, str]] | None = None,
+        goto_point: Callable[[float, float], tuple[bool, str]] | None = None,
+        pose: tuple[float, int] | tuple[float, int, float] | None = None,
+        start_route: Callable[..., tuple[bool, str]] | None = None,
+        stop_route: Callable[[], tuple[bool, str]] | None = None,
+        locate_point: Callable[[float, float], tuple[bool, str]] | None = None,
+        stopping_patrol: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -84,14 +90,23 @@ class CommandService:
         self._note_voice_listening = note_voice_listening
         # 경보(L3) 확인 — `request_reset`(F 해제)과 다른 경로다 (ADR-26 ①).
         self._confirm_alarm = confirm_alarm
-        # 구역 기준 재등록 (3.6.5). 어느 구역이 있는지 아는 쪽이 런타임이라 판정도 거기서 한다.
-        self._reset_zone_baseline = reset_zone_baseline
+        self._locate_zone = locate_zone
+        self._locate_point = locate_point
+        self._goto_point = goto_point
+        self._start_route = start_route
+        self._stop_route = stop_route
+        # «순찰 정지» 가 수동을 거치는 동안 런타임에 알려, 그 판을 `manual` 이 아닌 `stopped` 로
+        # 닫게 한다 (ADR-46 결정 5). 런타임 없는 시험에서는 아무것도 하지 않는다.
+        self._stopping_patrol: Callable[[], AbstractContextManager[None]] = (
+            stopping_patrol if stopping_patrol is not None else nullcontext
+        )
         # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과 같은 검증된
         # 각도만 쓰고 임의 각도는 받지 않는다(검증하지 않은 자세로 보행하면 넘어진다).
         self._pose_pitch: dict[str, float] = (
             {} if pose is None else {"up": pose[0], "level": 0.0, "down": -pose[0]}
         )
         self._pose_dur_ms = 0 if pose is None else int(pose[1])
+        self._pose_roll = 0.0 if pose is None or len(pose) < 3 else float(pose[2])
         self._pose_tilted = False
 
     @property
@@ -145,7 +160,9 @@ class CommandService:
         return CommandResult(command="manual_off", accepted=True, state=self._behavior.state)
 
     def _send_pose(self, pitch: float) -> None:
-        self._commander.once("POSE", pitch=pitch, roll=0.0, height=0.0, dur=self._pose_dur_ms)
+        self._commander.once(
+            "POSE", pitch=pitch, roll=self._pose_roll, height=0.0, dur=self._pose_dur_ms
+        )
         self._pose_tilted = pitch != 0.0
 
     def pose(self, preset: str) -> CommandResult:
@@ -237,25 +254,81 @@ class CommandService:
             detail="경보 확인을 요청했다 — 다음 틱에 단계가 내려간다 (L3 가 아니면 무시된다)",
         )
 
-    def zone_baseline(self, zone: str) -> CommandResult:
-        """관리자가 «이 상태가 정상» 이라고 인정한 구역의 기준을 지운다 (FR-8 · WBS 3.6.5).
+    def goto(self, x: float, y: float) -> CommandResult:
+        """지도에서 찍은 곳(순찰 좌표 m)으로 보낸다. 예약만 하고 다음 틱이 경로를 푼다.
 
-        기준을 지우면 다음 방문에서 새로 뜬다 (ADR-41 결정 6). 예약만 하고 다음 틱이 지운다.
-        경보(L3)는 풀지 않는다.
+        경로가 있는지·자기 위치를 아는지는 루프가 판정한다 — 결과는 `/api/nav` 의
+        `goal_feedback` 으로 본다. 순찰 중이 아니면 순찰 시작을 함께 예약한다.
         """
-        if self._reset_zone_baseline is None:
+        if self._goto_point is None:
             return CommandResult(
-                command="zone_baseline",
+                command="goto",
                 accepted=False,
                 state=self._behavior.state,
-                detail="기준 재등록 경로가 연결되지 않았다",
+                detail="지도 이동 경로가 연결되지 않았다 (LiDAR 측위 순찰이 아니다)",
             )
-        accepted, detail = self._reset_zone_baseline(zone)
+        accepted, detail = self._goto_point(x, y)
         return CommandResult(
-            command="zone_baseline",
+            command="goto", accepted=accepted, state=self._behavior.state, detail=detail
+        )
+
+    def route_start(self, route_id: str, expected_digest: str | None = None) -> CommandResult:
+        """확인한 저장 동선을 요청한다. 운용 안전 관문은 런타임이 기존 규칙대로 검사한다."""
+        if self._start_route is None:
+            accepted, detail = False, "동선 주행 경로가 연결되지 않았다"
+        elif expected_digest is None:
+            accepted, detail = self._start_route(route_id)
+        else:
+            accepted, detail = self._start_route(route_id, expected_digest)
+        return CommandResult("route_start", accepted, self._behavior.state, detail)
+
+    def route_stop(self) -> CommandResult:
+        """예약 중인 동선까지 취소하는 런타임 정지 경로."""
+        accepted, detail = (
+            self._stop_route()
+            if self._stop_route is not None
+            else (False, "동선 주행 경로가 연결되지 않았다")
+        )
+        return CommandResult("route_stop", accepted, self._behavior.state, detail)
+
+    def locate(self, zone: str) -> CommandResult:
+        """사람이 «로봇은 지금 이 구역 안에 있다» 고 알려준다 — 그 구역 안에서만 위치를 다시 찾는다.
+
+        집 지도는 스캔 하나로 구별이 안 되는 자리가 많아 들어 옮긴 뒤 전역 탐색이 확정을
+        못 한다. 구역으로 범위를 좁히면 구역 안에서 유일한 답만 받는다. 지금 믿던 자세는
+        버리므로 로봇은 다시 찾을 때까지 선다. 예약만 하고 다음 틱이 적용한다.
+        """
+        if self._locate_zone is None:
+            return CommandResult(
+                command="locate",
+                accepted=False,
+                state=self._behavior.state,
+                detail="위치 알려주기 경로가 연결되지 않았다 (LiDAR 측위 순찰이 아니다)",
+            )
+        accepted, detail = self._locate_zone(zone)
+        return CommandResult(
+            command="locate",
             accepted=accepted,
             state=self._behavior.state,
             detail=detail,
+        )
+
+    def locate_point(self, x: float, y: float) -> CommandResult:
+        """사람이 찍은 현재 위치 주변에서 다시 찾도록 다음 루프 틱에 예약한다.
+
+        클릭 자체로 위치를 확정하거나 이동을 시작하지 않는다. 좌표의 지도 범위와
+        장애물 검증은 지도를 소유한 런타임이 수행한다.
+        """
+        if self._locate_point is None:
+            return CommandResult(
+                command="locate",
+                accepted=False,
+                state=self._behavior.state,
+                detail="지도 위치 알려주기 경로가 연결되지 않았다 (LiDAR 측위 순찰이 아니다)",
+            )
+        accepted, detail = self._locate_point(x, y)
+        return CommandResult(
+            command="locate", accepted=accepted, state=self._behavior.state, detail=detail
         )
 
     #: 자율 동작 상태 — "순찰 정지" 가 받을 수 있는 상태들이다.
@@ -269,6 +342,8 @@ class CommandService:
             "AUTH_WAIT",
             "HAZARD_DISPATCH",
             "HAZARD_SCAN",
+            "ZONE_INSPECT",
+            "LOST",
         }
     )
 
@@ -353,8 +428,17 @@ class CommandService:
         전이표에 `PATROL → IDLE` 직행 사건이 없으므로 **수동을 한 번 거친다** —
         `MANUAL_ON` 으로 자율을 끊고(로봇 halt) 곧바로 `MANUAL_OFF` 로 내려
         `IDLE` 에 정착한다. `ESTOP` 과 달리 래치를 걸지 않아 해제 절차가
-        필요 없는, "정상 정지"다.
+        필요 없는, "정상 정지"다. 이력에는 수동 조종과 구별해 `stopped` 로 남긴다 (ADR-46).
         """
+        if self._stop_route is not None and (
+            self._behavior.state in self._AUTONOMOUS or self._behavior.state == "IDLE"
+        ):
+            # 기존 정지 버튼도 새 동선·아직 IDLE인 시작 예약을 즉시 취소한다.
+            # 런타임이 송신 락 안에서 상태 전환과 STOP 전문까지 처리한다.
+            # 동선 정지도 수동을 거치므로 이력에 `stopped` 로 남게 감싼다 (ADR-46 결정 5).
+            with self._stopping_patrol():
+                accepted, detail = self._stop_route()
+            return CommandResult("patrol_stop", accepted, self._behavior.state, detail)
         if self._behavior.state not in self._AUTONOMOUS:
             return CommandResult(
                 command="patrol_stop",
@@ -362,7 +446,8 @@ class CommandService:
                 state=self._behavior.state,
                 detail="자율 동작 중이 아니다",
             )
-        entered = self.manual_on()
+        with self._stopping_patrol():
+            entered = self.manual_on()
         if not entered.accepted:
             return CommandResult(
                 command="patrol_stop",
@@ -375,7 +460,7 @@ class CommandService:
             command="patrol_stop",
             accepted=released.accepted,
             state=self._behavior.state,
-            detail="수동을 거쳐 대기로 내렸다",
+            detail="수동을 거쳐 대기로 내렸다" if released.accepted else released.detail,
         )
 
     def mission_mode(self, target: str) -> CommandResult:

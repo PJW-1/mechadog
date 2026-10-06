@@ -1,0 +1,21 @@
+{
+  "kind": "remap_candidate_hashes",
+  "excluded_self": true,
+  "files": {
+    "evidence_spec.json": "8605fd15d24a3d5f0053588abbba491e071d893f4c83f6391573b827da062cc4",
+    "map_meta.json": "a8e16463069245ab93b190cae2e2ece84e4abd9130623eb114bfbdf1dc562906",
+    "pose_frame.json": "fa463b5450e0fae0a80bedc84cb43b2a52312b8d79f089d11ab5da11f6b7d049",
+    "README.txt": "217d00741286eb67058bb5eaf0593615bbde57eb9d17cea85267246bf9ead6fb",
+    "remap_report.json": "6625da7537a630648a0b51a63a2b5029ab69d6cdeb2f69df2bac390a80579c10",
+    "repeated_observation_evidence.json": "e300a8c6916862792a58fcecade885d0f30b5fb550a782ee3480226193ee7e39",
+    "S0.json": "038fe2c0dc88a480db89bc9027f1478854748211bf97820622c2cbcb0aa631a4",
+    "slam_map.npy": "09aad5be621fa7a7d716a88667afb18a80305cd8a74d69f01f3aec14b268d640",
+    "slam_map.pgm": "d7eb6e1afe3cca86b2bf8a0d85f3e1c5bceb3ecec1ebe146b5f4ebd56146b54f",
+    "slam_map.yaml": "18de943cf5dfd82f1421e946134eb30ff1efc041c2765e4b8436103254e12110",
+    "slam_map_loc.npy": "d676fab3d03c8acb3c36141ba21b7413e7bb71478ade49949543bcc5483caf28",
+    "source_masks.npz": "bcc0708096215be81a0293629d9c2dbbaa301277bddae8fda110e37ec5e32954",
+    "zones.json": "ec3f1e22b96d8fe689e18888a09ab6394eb67e2c935b693263873c0835eaf489",
+    "zones_plan.json": "fbf24975222b844c8de36134952add92cda4d36e42dfa095214bc48099d1b1e8",
+    "zone_labels.npy": "440c8e6bcba959c7700ca74dbe70ca3e4fecd1c21ef27ecf0e1f0d80338c6260"
+  }
+}

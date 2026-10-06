@@ -6,6 +6,7 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {GTAOPass} from 'three/addons/postprocessing/GTAOPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {buildFactoryMeshes,makeRobot,disposeFactoryResources} from './scene-materials.js';
+import {createCameraFlight} from './camera-flight.js';
 
 const OVERVIEW = new THREE.Vector3(46,43,55);
 const LOOK_AT = new THREE.Vector3(0,.3,-.7);
@@ -30,7 +31,7 @@ export class FactoryView {
     this.reduced=matchMedia('(prefers-reduced-motion: reduce)');
     this.scene=new THREE.Scene();
     // ACES at exposure 1.12 maps this input to the approved scene ground (#1e1f2c).
-    this.scene.background=new THREE.Color(0x2c2d38);
+    this.scene.background=new THREE.Color(document.querySelector('#glass-theme')?0xdde3d8:0x2c2d38);
     this.renderer=this.createRenderer(worldCanvas,true);
     this.fpvRenderer=this.createRenderer(fpvCanvas,true);
     this.camera=new THREE.OrthographicCamera(-32,32,14.4,-14.4,.1,200);
@@ -46,6 +47,12 @@ export class FactoryView {
     this.controls.minPolarAngle=.05;
     this.controls.screenSpacePanning=false;
     this.controls.addEventListener('change',()=>this.invalidate());
+    this.controls.addEventListener('start',()=>this.cancelCameraFlight());
+    this.motionPreferenceHandler=()=>{
+      if(this.reduced.matches&&this.cameraFlight)this.updateCameraFlight(Infinity);
+      this.controls.enableDamping=!this.reduced.matches;this.invalidate();
+    };
+    this.reduced.addEventListener('change',this.motionPreferenceHandler);
     this.scene.add(new THREE.HemisphereLight(0xbfc9ed,0x696878,1.05));
     const key=new THREE.DirectionalLight(0xfff4e7,3.1);
     key.position.set(-12,38,23);
@@ -139,19 +146,23 @@ export class FactoryView {
 
   resize(){
     if(this.disposed)return;
-    const a=this.renderer.domElement.getBoundingClientRect(),b=this.fpvRenderer.domElement.getBoundingClientRect();
-    if(a.width>0&&a.height>0){
-      const aspect=a.width/a.height;
+    // FLIP transforms change visual bounds, not the canvas's layout or video ratio.
+    // ResizeObserver follows layout; sampling transformed bounds could leave a
+    // stretched frame behind after the animation ends without another resize.
+    const a=this.renderer.domElement,b=this.fpvRenderer.domElement;
+    const worldSize={width:a.clientWidth,height:a.clientHeight},videoSize={width:b.clientWidth,height:b.clientHeight};
+    if(worldSize.width>0&&worldSize.height>0){
+      const aspect=worldSize.width/worldSize.height;
       Object.assign(this.camera,getOverviewFrustum(this.factoryBounds,aspect));
       this.camera.updateProjectionMatrix();
-      this.renderer.setSize(a.width,a.height,false);
-      this.composer?.setSize(a.width,a.height);
+      this.renderer.setSize(worldSize.width,worldSize.height,false);
+      this.composer?.setSize(worldSize.width,worldSize.height);
       // Reduced-resolution AO is a spatial quality setting, not simulation frame skipping.
-      this.ao?.setSize(Math.ceil(a.width*.8),Math.ceil(a.height*.8));
+      this.ao?.setSize(Math.ceil(worldSize.width*.8),Math.ceil(worldSize.height*.8));
     }
-    if(b.width>0&&b.height>0){
-      this.fpvRenderer.setSize(b.width,b.height,false);
-      this.fpvCamera.aspect=b.width/b.height;this.fpvCamera.updateProjectionMatrix();
+    if(videoSize.width>0&&videoSize.height>0){
+      this.fpvRenderer.setSize(videoSize.width,videoSize.height,false);
+      this.fpvCamera.aspect=videoSize.width/videoSize.height;this.fpvCamera.updateProjectionMatrix();
     }
     this.invalidate();
   }
@@ -164,23 +175,50 @@ export class FactoryView {
   setActive(value){
     if(this.active===!!value)return;
     this.active=!!value;this.controls.enabled=this.active&&this.worldVisible;this.last=performance.now();
-    if(this.active)this.resize();else{cancelAnimationFrame(this.frame);this.frame=0}
+    if(this.active)this.resize();else{this.cancelCameraFlight();cancelAnimationFrame(this.frame);this.frame=0}
+  }
+  cancelCameraFlight(){this.cameraFlight=null;this.controls.enableDamping=!this.reduced.matches}
+  flyTo(position,target,zoom=1,duration=380){
+    // Flush residual orbit damping before taking the new flight's start pose.
+    this.controls.enableDamping=false;this.controls.update();
+    this.cameraFlight=createCameraFlight(
+      {position:this.camera.position.toArray(),target:this.controls.target.toArray(),zoom:this.camera.zoom},
+      {position:position.toArray(),target:target.toArray(),zoom},
+      performance.now(),this.reduced.matches?0:duration
+    );
+    this.updateCameraFlight(performance.now());this.invalidate();
+  }
+  updateCameraFlight(now){
+    if(!this.cameraFlight)return;
+    const pose=this.cameraFlight.sample(now);
+    this.camera.position.fromArray(pose.position);this.controls.target.fromArray(pose.target);this.camera.zoom=pose.zoom;
+    this.camera.updateProjectionMatrix();this.controls.update();
+    if(pose.done)this.cancelCameraFlight();
   }
   setView(mode){
-    this.viewMode=mode;this.camera.zoom=1;
+    this.viewMode=mode;
     const robot=this.robots.find(r=>r.id===this.selected);
-    if(mode==='top'){this.camera.position.set(.01,75,.01);this.controls.target.set(0,0,0)}
-    else if(mode==='robot'){const pos=robot.model.position;this.camera.position.set(pos.x+12,10,pos.z+13);this.controls.target.copy(pos);this.camera.zoom=2.5}
-    else{this.camera.position.copy(OVERVIEW);this.controls.target.copy(LOOK_AT)}
-    this.camera.updateProjectionMatrix();this.controls.update();this.invalidate();
+    if(mode==='top')this.flyTo(new THREE.Vector3(.01,75,.01),new THREE.Vector3());
+    else if(mode==='robot'){const pos=robot.model.position;this.flyTo(new THREE.Vector3(pos.x+12,10,pos.z+13),pos,2.5)}
+    else this.flyTo(OVERVIEW,LOOK_AT);
   }
-  zoom(factor){this.camera.zoom=THREE.MathUtils.clamp(this.camera.zoom/factor,.5,6);this.camera.updateProjectionMatrix();this.invalidate()}
+  zoom(factor){
+    const destination=this.cameraFlight?.destination;
+    this.flyTo(destination?new THREE.Vector3().fromArray(destination.position):this.camera.position,
+      destination?new THREE.Vector3().fromArray(destination.target):this.controls.target,
+      THREE.MathUtils.clamp((destination?.zoom??this.camera.zoom)/factor,.5,6),220);
+  }
   focusZone(zone){
-    this.viewMode='zone';this.controls.target.set(zone.center[0],0,-zone.center[1]);
-    this.camera.position.copy(this.controls.target).add(new THREE.Vector3(24,35,30));
-    this.camera.zoom=1.7;this.camera.updateProjectionMatrix();this.controls.update();this.invalidate();
+    this.viewMode='zone';const target=new THREE.Vector3(zone.center[0],0,-zone.center[1]);
+    this.flyTo(target.clone().add(new THREE.Vector3(24,35,30)),target,1.7);
   }
-  orbit(angle){const offset=this.camera.position.clone().sub(this.controls.target).applyAxisAngle(new THREE.Vector3(0,1,0),angle);this.camera.position.copy(this.controls.target).add(offset);this.controls.update();this.invalidate()}
+  orbit(angle){
+    const destination=this.cameraFlight?.destination;
+    const target=destination?new THREE.Vector3().fromArray(destination.target):this.controls.target.clone();
+    const position=destination?new THREE.Vector3().fromArray(destination.position):this.camera.position.clone();
+    position.sub(target).applyAxisAngle(new THREE.Vector3(0,1,0),angle).add(target);
+    this.flyTo(position,target,destination?.zoom??this.camera.zoom,280);
+  }
 
   updateRobot(dt){
     if(!this.playing)return;
@@ -203,7 +241,7 @@ export class FactoryView {
   render(now){
     this.frame=0;if(this.disposed||this.lost||!this.visible||!this.active)return;
     const dt=Math.min((now-this.last)/1000,.1);this.last=now;
-    this.updateRobot(dt);if(this.worldVisible)this.controls.update();
+    this.updateRobot(dt);this.updateCameraFlight(now);if(this.worldVisible)this.controls.update();
     for(const mesh of this.factory.interior)mesh.visible=false;
     if(this.worldVisible)this.composer.render();
     const selected=this.robots.find(r=>r.id===this.selected);
@@ -224,11 +262,12 @@ export class FactoryView {
     const size=this.renderer.getSize(new THREE.Vector2());
     const project=(id,position)=>{const p=position.clone().project(this.camera);return{id,x:(p.x+1)*size.x/2,y:(1-p.y)*size.y/2,visible:p.z>-1&&p.z<1}};
     if(this.worldVisible)this.onProject([...this.robots.map(r=>project(r.id,r.model.position.clone().add(new THREE.Vector3(0,1.25,0)))),project('attention',this.attentionPosition.clone().add(new THREE.Vector3(0,1.8,0)))]);
-    if(this.playing)this.invalidate();
+    if(this.playing||this.cameraFlight)this.invalidate();
   }
   dispose(){
     this.disposed=true;cancelAnimationFrame(this.frame);this.resizeObserver.disconnect();
     document.removeEventListener('visibilitychange',this.visibilityHandler);
+    this.reduced.removeEventListener('change',this.motionPreferenceHandler);
     this.controls.dispose();this.composer.passes.forEach(p=>p.dispose?.());this.composer.dispose();
     this.renderer.dispose();this.fpvRenderer.dispose();this.environment.dispose();this.fpvEnvironment.dispose();disposeFactoryResources();
   }

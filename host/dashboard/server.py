@@ -15,8 +15,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import socket
+import sqlite3
 import threading
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -24,25 +27,43 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import uvicorn
 from anyio import CancelScope
-from fastapi import APIRouter, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import (
     BaseModel,
     BeforeValidator,
+    ConfigDict,
     Field,
     StrictBool,
     StrictInt,
     StrictStr,
     ValidationError,
 )
+from starlette.concurrency import run_in_threadpool
 
 from host.behavior.mission import available_modes
 from host.cloud.broadcast import Broadcaster
 from host.dashboard.commands import CommandService
+from host.dashboard.planning import (
+    PlanError,
+    PlanInput,
+    PlanningService,
+    RouteDeleteInput,
+    RouteInput,
+)
 from host.dashboard.state import EVENT_BUFFER, DashboardState
 
 if TYPE_CHECKING:
+    from host.common.history import HistoryStore
     from host.vision.worker import VisionResult
 
 PERIOD_S = 0.1
@@ -54,6 +75,11 @@ CAMERA_PERIOD_S = 0.1
 # 새 추론 결과가 나왔는지 보는 주기 — 추론 주기(25fps = 40ms)보다 짧아야 화면이 추론률을 따라간다.
 VISION_POLL_PERIOD_S = 0.01
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
+#: 흰색 관제 화면(#314). 본체 index도 같은 테마를 직접 읽는다. 정적 폴더와 같은
+#: 부모 아래에 있으면 `/glass-preview/` 로 내보내고 `/` 를 그리로 보낸다. **검정(과거 버전)
+#: 화면은 구버전이다** — 2026-10-02 운용자 결정. `/index.html` 은 흰색 화면이 iframe 으로 쓰므로 남긴다.
+GLASS_DIR_NAME = "glass-preview"
+GLASS_PATH = "/glass-preview"
 # 관제 화면은 빌드 없이 이 폴더를 그대로 내보낸다. three.js 도 `static/vendor/` 에 싣는다
 # (검사는 `npm run check`).
 
@@ -102,12 +128,16 @@ def encode_vision_frame(result: VisionResult) -> bytes:
     헤더와 JPEG 를 한 메시지로 묶어 박스가 다른 사진과 짝지어지지 않게 한다 (ADR-32).
     박스는 원본 픽셀 좌표 ``[x1, y1, x2, y2]`` 이고 필드 이름은 블랙박스 기록과 같다.
     """
+    from host.vision.ppe_detector import ppe_payload
+
     header = {
         "type": "vision",
         "frame_seq": result.frame_seq,
         "width": result.frame_width,
         "height": result.frame_height,
         "completed_ms": result.completed_ms,
+        "ppe": ppe_payload(result),
+        "ppe_test_mode": bool(getattr(result, "ppe_test_mode", False)),
         "detections": [
             {"label": d.label, "score": round(d.score, 3), "box": [round(v, 1) for v in d.box]}
             for d in result.detections
@@ -336,8 +366,31 @@ class _PatrolBody(BaseModel):
     action: Literal["start", "stop"]
 
 
+class _RouteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["start", "stop"]
+    route_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,48}$")
+    expected_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class _ZoneBody(BaseModel):
     zone: StrictStr
+
+
+def _point_coordinate(value: Any) -> float:
+    """점 힌트에 bool·유한하지 않은 좌표를 넣지 않는다."""
+    if isinstance(value, bool):
+        raise ValueError("좌표는 숫자여야 한다")
+    result = _as_float(value)
+    if not math.isfinite(result):
+        raise ValueError("좌표는 유한한 숫자여야 한다")
+    return result
+
+
+class _LocateBody(BaseModel):
+    zone: StrictStr | None = None
+    x: Annotated[float, BeforeValidator(_point_coordinate)] | None = None
+    y: Annotated[float, BeforeValidator(_point_coordinate)] | None = None
 
 
 class _ModeBody(BaseModel):
@@ -360,8 +413,18 @@ class _DriveBody(BaseModel):
     angle: Annotated[float, BeforeValidator(_as_float)]
 
 
+class _GotoBody(BaseModel):
+    x: Annotated[float, BeforeValidator(_as_float)]
+    y: Annotated[float, BeforeValidator(_as_float)]
+
+
 class _PoseBody(BaseModel):
     preset: StrictStr
+
+
+class _ReviewBody(BaseModel):
+    reviewed: StrictBool
+    resolution: Annotated[StrictStr, Field(max_length=2000)] = ""
 
 
 class _BroadcastPatch(BaseModel):
@@ -387,7 +450,9 @@ async def _read_body[B: BaseModel](
     try:
         return model.model_validate(body)
     except ValidationError as exc:
-        raise _RefusedError(invalid or str(exc.errors()[0]["loc"][0]), 400) from exc
+        first = exc.errors()[0]
+        detail = str(first["loc"][0]) if first["loc"] else first["msg"]
+        raise _RefusedError(invalid or detail, 400) from exc
 
 
 def _broadcast_routes(broadcast: Broadcaster | None) -> APIRouter:
@@ -452,6 +517,15 @@ def _command_routes(commands: CommandService) -> APIRouter:
         """사람이 원인 해소를 확인한 뒤 누르는 `FAILSAFE` 해제 요청."""
         return commands.reset().as_dict()
 
+    @router.post("/route", response_model=None)
+    async def route(request: Request) -> dict[str, object]:
+        body = await _read_body(request, _RouteBody)
+        if body.action == "stop":
+            return commands.route_stop().as_dict()
+        if body.route_id is None:
+            raise _RefusedError("route_id", 400)
+        return commands.route_start(body.route_id, body.expected_digest).as_dict()
+
     @router.post("/alarm", response_model=None)
     async def alarm() -> dict[str, object]:
         """사람이 상황을 확인한 뒤 누르는 경보(L3) 해제 (FR-10.3.2).
@@ -461,15 +535,35 @@ def _command_routes(commands: CommandService) -> APIRouter:
         """
         return commands.alarm_confirm().as_dict()
 
-    @router.post("/zone-baseline", response_model=None)
-    async def zone_baseline(request: Request) -> dict[str, object]:
-        """`{"zone": "A"}` — 관리자가 인정한 구역의 기준을 지워 그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜨게 한다.
+    @router.post("/goto", response_model=None)
+    async def goto(request: Request) -> dict[str, object] | JSONResponse:
+        """`{"x": 1.2, "y": -0.4}` (순찰 좌표 m) — 지도에서 찍은 곳으로 간다.
 
-        물건을 영구히 옮긴 경우의 문이다 (ADR-41 결정 6). 런타임이 다음 틱에 지운다.
-        `zones.ids` 에 없는 구역은 `accepted=false` 다. 경보(L3)는 풀지 않는다.
+        예약만 한다. 경로 유무·자기 위치 확인은 다음 틱에 판정되어 `/api/nav` 에 실린다.
         """
-        body = await _read_body(request, _ZoneBody)
-        return commands.zone_baseline(body.zone).as_dict()
+        body = await _read_body(request, _GotoBody)
+        if not (math.isfinite(body.x) and math.isfinite(body.y)):
+            return JSONResponse({"error": "x"}, status_code=400)
+        return commands.goto(body.x, body.y).as_dict()
+
+    @router.post("/locate", response_model=None)
+    async def locate(request: Request) -> dict[str, object]:
+        """`{"zone": "C"}` 또는 `{"x": 1.2, "y": -0.4}` — 현재 위치의 탐색 힌트.
+
+        들어 옮긴 뒤처럼 전역 탐색이 집 안 비슷한 자리를 구별 못 할 때 쓴다. 지금 자세의
+        신뢰는 버려지고 로봇은 다시 찾을 때까지 선다. 없는 구역은 `accepted=false` 다.
+        """
+        body = await _read_body(request, _LocateBody)
+        fields = body.model_fields_set
+        if "zone" in fields:
+            if fields & {"x", "y"}:
+                raise _RefusedError("구역 또는 점 좌표 중 하나만 알려주세요", 400)
+            if body.zone is None:
+                raise _RefusedError("zone", 400)
+            return commands.locate(body.zone).as_dict()
+        if body.x is None or body.y is None:
+            raise _RefusedError("x와 y 좌표가 모두 필요합니다", 400)
+        return commands.locate_point(body.x, body.y).as_dict()
 
     @router.post("/service", response_model=None)
     async def service(request: Request) -> dict[str, object]:
@@ -531,6 +625,170 @@ def _command_routes(commands: CommandService) -> APIRouter:
     return router
 
 
+def _mount_dashboard(app: FastAPI, static_dir: Path | None) -> None:
+    """단일·플릿 서버가 같은 흰색 기본 화면을 제공한다."""
+    if static_dir is None or not static_dir.is_dir():
+        return
+    glass_dir = static_dir.parent / GLASS_DIR_NAME
+    if glass_dir.is_dir():
+
+        @app.get("/", include_in_schema=False)
+        async def white_dashboard(request: Request) -> RedirectResponse:
+            query = "?" + request.url.query if request.url.query else ""
+            return RedirectResponse(f"{GLASS_PATH}/{query}", status_code=307)
+
+        app.mount(GLASS_PATH, _RevalidatedStatic(directory=glass_dir, html=True), name="glass")
+    app.mount("/static", _RevalidatedStatic(directory=static_dir, html=True), name="static")
+    app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
+
+
+def _planning_routes(planning: PlanningService) -> APIRouter:
+    router = APIRouter(prefix="/api/planning", dependencies=_LOCAL_ORIGIN)
+
+    async def call[T](method: Callable[..., T], *args: Any) -> T:
+        try:
+            return await run_in_threadpool(method, *args)
+        except PlanError as exc:
+            raise _RefusedError(str(exc), exc.status) from exc
+        except (OSError, ValueError, KeyError) as exc:
+            raise _RefusedError(
+                "운용 설정을 읽거나 저장하지 못했습니다. 서버 설정 파일을 확인하세요.", 503
+            ) from exc
+
+    @router.get("")
+    async def snapshot() -> dict[str, Any]:
+        return await call(planning.snapshot)
+
+    @router.get("/map.png")
+    async def map_image() -> Response:
+        return Response(
+            await call(planning.map_png),
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/preview")
+    async def preview(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, PlanInput)
+        return await call(planning.preview, plan)
+
+    @router.post("")
+    async def save(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, PlanInput)
+        return await call(planning.save, plan)
+
+    @router.get("/routes")
+    async def routes() -> dict[str, Any]:
+        return await call(planning.routes_snapshot)
+
+    @router.post("/routes/preview")
+    async def preview_route(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, RouteInput)
+        return await call(planning.preview_route, plan)
+
+    @router.post("/routes")
+    async def save_route(request: Request) -> dict[str, Any]:
+        plan = await _read_body(request, RouteInput)
+        return await call(planning.save_route, plan)
+
+    @router.delete("/routes/{route_id}")
+    async def delete_route(route_id: str, request: Request) -> dict[str, Any]:
+        body = await _read_body(request, RouteDeleteInput)
+        return await call(planning.delete_route, route_id, body.revision)
+
+    return router
+
+
+def _history_routes(history: HistoryStore | None) -> APIRouter:
+    """사건·순찰 이력 조회와 검토 저장 (ADR-46).
+
+    ⚠️ 플릿에서는 모든 기체의 앱이 **같은 저장소 하나**를 가리킨다 — 어느 `/robots/<id>` 아래에서
+    물어도 전 기체의 기록이 나오며, 기체별은 `?robot=` 으로 거른다.
+    ⚠️ 저장소가 없어도 경로는 남긴다. 화면이 «꺼짐»(503 `history_disabled`) 과 «없음»(404) 을 가른다.
+    ⚠️ 거절은 다른 경로와 같은 `{"error": <사유>}` 다(`_RefusedError`) — 질의 매개변수 형식 오류만
+    FastAPI 기본 422 다.
+    """
+    router = APIRouter(prefix="/api/history", dependencies=_LOCAL_ORIGIN)
+
+    async def call(method: str, *args: Any, **kwargs: Any) -> Any:
+        if history is None:
+            raise _RefusedError("history_disabled", 503)
+        try:
+            return await run_in_threadpool(getattr(history, method), *args, **kwargs)
+        except ValueError as exc:
+            raise _RefusedError(str(exc), 400) from exc
+        except sqlite3.Error as exc:
+            raise _RefusedError("history_unavailable", 503) from exc
+
+    @router.get("/incidents")
+    async def incidents(
+        since: Annotated[int | None, Query(ge=0)] = None,
+        until: Annotated[int | None, Query(ge=0)] = None,
+        robot: str | None = None,
+        zone: str | None = None,
+        event: str | None = None,
+        escalation: str | None = None,
+        mission: str | None = None,
+        reviewed: bool | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict[str, Any]:
+        items, total = await call(
+            "incidents",
+            since=since,
+            until=until,
+            robot=robot,
+            zone=zone,
+            event=event,
+            escalation=escalation,
+            mission=mission,
+            reviewed=reviewed,
+            limit=limit,
+            offset=offset,
+        )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    @router.get("/incidents/{incident_id}")
+    async def incident(incident_id: str) -> dict[str, Any]:
+        found = await call("incident", incident_id)
+        if found is None:
+            raise _RefusedError("incident_not_found", 404)
+        return cast("dict[str, Any]", found)
+
+    @router.post("/incidents/{incident_id}/review")
+    async def review(incident_id: str, request: Request) -> dict[str, Any]:
+        body = await _read_body(request, _ReviewBody)
+        updated = await call(
+            "review",
+            incident_id,
+            reviewed=body.reviewed,
+            resolution=body.resolution,
+            at_ms=int(time.time() * 1000),
+        )
+        if updated is None:
+            raise _RefusedError("incident_not_found", 404)
+        return cast("dict[str, Any]", updated)
+
+    @router.get("/runs")
+    async def runs(
+        robot: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict[str, Any]:
+        items, total = await call("runs", robot=robot, limit=limit, offset=offset)
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    @router.get("/robots")
+    async def robots() -> dict[str, Any]:
+        return {"items": await call("robots")}
+
+    @router.get("/zones")
+    async def zones() -> dict[str, Any]:
+        return {"items": await call("zones")}
+
+    return router
+
+
 def create_app(
     state: DashboardState,
     commands: CommandService | None = None,
@@ -540,7 +798,19 @@ def create_app(
     event_snapshot: Callable[[str], bytes | None] | None = None,
     policy: dict[str, Any] | None = None,
     broadcast: Broadcaster | None = None,
+    map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
+    nav_status: Callable[[], dict[str, Any]] | None = None,
+    planning: PlanningService | None = None,
+    simulated: bool | None = None,
+    voice_path: str | None = None,
+    extra_routes: APIRouter | None = None,
+    scene3d_url: str = "",
+    history: HistoryStore | None = None,
+    vision_status: Callable[[], dict[str, Any]] | None = None,
 ) -> FastAPI:
+    if vision_status is not None:
+        # 로드된 모델·추론 지연을 상태 전문(`/ws/telemetry`·`/api/telemetry`)의 `vision` 에 싣는다.
+        state.attach_vision_status(vision_status)
     hub = TelemetryHub(state)
     vision_hub = VisionHub(vision) if vision is not None else None
     event_hub = EventHub(state)
@@ -572,6 +842,8 @@ def create_app(
             # 이 서버가 어느 개체 프로파일로 떴는지 — 여러 런타임을 띄웠을 때 가려내는 데 쓴다.
             "device_id": state.snapshot()["device_id"],
             "read_only": commands is None,
+            "capabilities": {"simulated": simulated, "voice_path": voice_path},
+            "dashboard": {"scene3d_url": scene3d_url},
             "clients": len(hub.clients),
             "coalesced_updates": hub.coalesced,
             # 비전이 없으면 null — "연결 0" 과 "채널 없음" 을 구분한다.
@@ -588,6 +860,27 @@ def create_app(
     @app.get("/api/telemetry", response_model=None)
     async def telemetry() -> dict[str, Any]:
         return state.snapshot()
+
+    @app.get("/api/map/meta", response_model=None)
+    async def map_meta() -> dict[str, Any] | JSONResponse:
+        """실제 집 지도의 크기·좌표 변환 행렬·구역. LiDAR 측위 순찰이 아니면 404."""
+        if map_view is None:
+            return JSONResponse({"error": "no_map"}, status_code=404)
+        return (await asyncio.to_thread(map_view))[1]
+
+    @app.get("/api/map.png", response_model=None)
+    async def map_png() -> Response:
+        if map_view is None:
+            return JSONResponse({"error": "no_map"}, status_code=404)
+        png, _meta = await asyncio.to_thread(map_view)
+        return Response(png, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/nav", response_model=None)
+    async def nav() -> dict[str, Any] | JSONResponse:
+        """로봇의 자기 위치·신뢰·목표·구역 (순찰 좌표). 화면이 주기적으로 묻는다."""
+        if nav_status is None:
+            return JSONResponse({"error": "no_nav"}, status_code=404)
+        return nav_status()
 
     @app.get("/api/policy", response_model=None)
     async def policy_values() -> dict[str, Any] | JSONResponse:
@@ -657,6 +950,9 @@ def create_app(
             )
 
     app.include_router(_broadcast_routes(broadcast))
+    if planning is not None:
+        app.include_router(_planning_routes(planning))
+    app.include_router(_history_routes(history))
     if commands is not None:
         app.include_router(_command_routes(commands))
 
@@ -676,9 +972,9 @@ def create_app(
                 websocket, vision_hub, _send_frames, "Vision channel is read-only"
             )
 
-    if static_dir is not None and static_dir.is_dir():
-        # mount 는 등록 순서대로 탐색하므로 API·WS 경로를 먼저 등록하고 마지막에 붙인다.
-        app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
+    if extra_routes is not None:
+        app.include_router(extra_routes)
+    _mount_dashboard(app, static_dir)
 
     return app
 
@@ -735,8 +1031,7 @@ def create_fleet_app(
         # `/` 의 정적 마운트는 http 범위만 받으므로, 매칭되지 않은 WS 를 잡는 경로를 먼저 등록한다.
         await websocket.close(code=1008)
 
-    if static_dir is not None and static_dir.is_dir():
-        app.mount("/", _RevalidatedStatic(directory=static_dir, html=True), name="web")
+    _mount_dashboard(app, static_dir)
     return app
 
 
@@ -751,6 +1046,13 @@ def running_server(
     event_snapshot: Callable[[str], bytes | None] | None = None,
     policy: dict[str, Any] | None = None,
     broadcast: Broadcaster | None = None,
+    map_view: Callable[[], tuple[bytes, dict[str, Any]]] | None = None,
+    nav_status: Callable[[], dict[str, Any]] | None = None,
+    planning: PlanningService | None = None,
+    scene3d_url: str = "",
+    simulated: bool | None = None,
+    history: HistoryStore | None = None,
+    vision_status: Callable[[], dict[str, Any]] | None = None,
 ) -> Iterator[uvicorn.Server]:
     """기존 동기 운용 루프와 별도 스레드에서 실행한다. 로컬 인터페이스만 사용한다."""
     app = create_app(
@@ -762,6 +1064,13 @@ def running_server(
         event_snapshot=event_snapshot,
         policy=policy,
         broadcast=broadcast,
+        map_view=map_view,
+        nav_status=nav_status,
+        planning=planning,
+        scene3d_url=scene3d_url,
+        simulated=simulated,
+        history=history,
+        vision_status=vision_status,
     )
     with serving(app, port) as server:
         yield server

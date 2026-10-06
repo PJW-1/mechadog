@@ -324,20 +324,44 @@ def test_posture_steps_are_known(cfg: dict) -> None:
     assert "stand_two_legs" not in steps
 
 
-def test_change_detect_confirms_over_cycles(cfg: dict) -> None:
-    """물체 변화는 연속 방문 확인 후 확정한다 (FR-8.4).
-
-    사람 출현은 여기서 다루지 않는다 — 사람 게이트(FR-3)가 맡는다.
-    """
-    cd = cfg["change_detect"]
-    assert cd["confirm_cycles"] >= 2
-
-
 def test_zones_are_declared(cfg: dict) -> None:
     """순찰 구역 A~E 가 선언되어 있어야 한다 (FR-7.1)."""
     zones = cfg["zones"]
     assert len(zones["ids"]) >= 2
     assert zones["arrival_radius_mm"] > 0
+
+
+def test_hazard_zones_must_be_patrol_zones(cfg: dict) -> None:
+    """화기 위험구역은 순찰 구역의 부분집합이어야 한다 — 없는 구역은 판독이 돌지 않는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    assert set(cfg["zones"]["hazard_ids"]) <= set(cfg["zones"]["ids"])
+    broken = deepcopy(cfg)
+    broken["zones"]["hazard_ids"] = ["C", "Z"]
+    with pytest.raises(ConfigError, match=r"부분집합.*'Z'"):
+        validate_base_config(broken)
+    broken["zones"]["hazard_ids"] = "C"
+    with pytest.raises(ConfigError, match="목록"):
+        validate_base_config(broken)
+
+
+@pytest.mark.parametrize("ids", ["missing", "A", []])
+def test_patrol_zone_ids_must_be_a_non_empty_list(cfg: dict, ids: object) -> None:
+    """`zones.ids` 가 없으면 구역 판독·지도 적재가 `KeyError` 로 기동 중에 죽는다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["zones"]["hazard_ids"] = []
+    if ids == "missing":
+        del broken["zones"]["ids"]
+    else:
+        broken["zones"]["ids"] = ids
+    with pytest.raises(ConfigError, match="zones.ids"):
+        validate_base_config(broken)
 
 
 def test_reconnect_backoff_is_increasing(cfg: dict) -> None:
@@ -553,6 +577,26 @@ def test_blackbox_directory_is_required(cfg: dict) -> None:
         validate_base_config(broken)
 
 
+def test_history_db_must_be_a_path_or_empty(cfg: dict) -> None:
+    """이력 DB 는 끌 수 있다(빈 문자열·키 없음). 문자열이 아니면 기동 시점에 실패한다 (ADR-46)."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    assert cfg["logging"]["history_db"] == "history/mechdog.sqlite3"
+    for value in ("", None):
+        allowed = deepcopy(cfg)
+        if value is None:
+            del allowed["logging"]["history_db"]
+        else:
+            allowed["logging"]["history_db"] = value
+        validate_base_config(allowed)
+    broken = deepcopy(cfg)
+    broken["logging"]["history_db"] = 1
+    with pytest.raises(ConfigError, match="logging.history_db"):
+        validate_base_config(broken)
+
+
 def test_relative_paths_resolve_against_the_repo_not_the_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -655,11 +699,14 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     one = load_config("mechdog-01")
     two = load_config("mechdog-02")
 
-    # 신원은 번호가 아니라 보드 MAC 이다. 번호는 2.4.1 에서 바뀔 수 있다.
+    # 신원은 번호가 아니라 보드 MAC 이다.
     assert one["telemetry_device_id"] != two["telemetry_device_id"]
 
     # 아직 안 잰 값을 옆 기체에서 베껴 오지 않았는지 본다.
-    assert two["servo_offset"] is None, "재기 전에는 null 이다 — 01 의 값을 옮기지 않는다"
+    # 2026-10-04: mechdog-02 서보 편차도 기체 NVS 에서 실측했다 — null 검사는 «01 과 다르다» 로.
+    assert two["servo_offset"] is not None and two["servo_offset"] != one["servo_offset"], (
+        "01 의 서보 편차를 옮겨 적으면 안 된다"
+    )
     # 2026-09-22: mechdog-02 도 실측했다 — null 검사는 *"01 과 다르다"* 검사로
     # 바뀐다. 같은 값이면 개체 실측이 아니라 복사다.
     for name in ("forward_mm_per_sec", "turn_deg_per_sec", "reverse_mm_per_sec"):
@@ -670,6 +717,15 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     assert two["gait_calibration"]["forward_yaw_drift_deg_per_sec"] < 0
     # straight_bias_deg 는 bias 스윕 실측이 아직 없으므로 null 이어야 한다.
     assert two["gait_calibration"]["straight_bias_deg"] is None
+
+
+def test_mechdog_02_mount_rotation_is_in_the_committed_profile(
+    committed_devices_dir: Path,
+) -> None:
+    """로컬 설정 없이도 호스트가 XIAO의 180도 장착 방향을 유지한다."""
+    loaded = load_config("mechdog-02", config_path=CONFIG_PATH, devices_dir=committed_devices_dir)
+
+    assert loaded["vision"]["mount_rotation"] == 180
 
 
 def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
@@ -817,3 +873,141 @@ def test_lidar_scan_forward_enabled_must_be_a_bool(cfg: dict) -> None:
         broken["lidar"]["scan_forward_enabled"] = bad
         with pytest.raises(ConfigError, match="scan_forward_enabled"):
             validate_base_config(broken)
+
+
+@pytest.mark.parametrize("key", ["path_cause_wait_ms", "path_cause_max_frame_age_ms"])
+@pytest.mark.parametrize("value", [0, -1, None])
+def test_path_cause_bounds_must_be_positive(cfg: dict, key: str, value: object) -> None:
+    """막힘 원인 판독(ADR-45)의 대기 상한·프레임 나이 상한은 기동 전에 양수인지 본다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["vlm"][key] = value
+    with pytest.raises(ConfigError, match=key):
+        validate_base_config(broken)
+
+
+@pytest.mark.parametrize("broken_vlm", ["missing", None, "text"])
+def test_vlm_section_must_be_a_mapping(cfg: dict, broken_vlm: object) -> None:
+    """`vision.vlm` 절이 없거나 매핑이 아니면 traceback 이 아니라 ConfigError 다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if broken_vlm == "missing":
+        del broken["vision"]["vlm"]
+    else:
+        broken["vision"]["vlm"] = broken_vlm
+    with pytest.raises(ConfigError, match="vision.vlm"):
+        validate_base_config(broken)
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize("key", ["budget_ms", "patrol_interval_ms"])
+@pytest.mark.parametrize("bad", [_MISSING, 0, -1])
+def test_vlm_positive_keys_are_validated(cfg: dict, key: str, bad: object) -> None:
+    """런타임이 바로 꺼내 쓰는 vision.vlm 의 양수 키는 없음·0·음수가 ConfigError 다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if bad is _MISSING:
+        del broken["vision"]["vlm"][key]
+    else:
+        broken["vision"]["vlm"][key] = bad
+    with pytest.raises(ConfigError, match=key):
+        validate_base_config(broken)
+
+
+@pytest.mark.parametrize("bad", [_MISSING, "", "  ", 7])
+def test_vlm_model_id_must_be_non_empty_string(cfg: dict, bad: object) -> None:
+    """`vision.vlm.model_id` 가 없거나 빈 문자열이거나 문자열이 아니면 ConfigError 다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if bad is _MISSING:
+        del broken["vision"]["vlm"]["model_id"]
+    else:
+        broken["vision"]["vlm"]["model_id"] = bad
+    with pytest.raises(ConfigError, match="vision.vlm.model_id"):
+        validate_base_config(broken)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["budget_ms", "patrol_interval_ms", "path_cause_wait_ms", "path_cause_max_frame_age_ms"],
+)
+@pytest.mark.parametrize("bad", [0.5, 1.5, "3000", True])
+def test_vlm_time_keys_must_be_positive_int(cfg: dict, key: str, bad: object) -> None:
+    """vision.vlm 의 시간 키는 소수·문자열·bool 이면 ConfigError 다 (소비자가 int() 로 0 이 된다)."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["vlm"][key] = bad
+    with pytest.raises(ConfigError, match=key):
+        validate_base_config(broken)
+
+
+@pytest.mark.parametrize("bad", [0, -1, 0.5, "32"])
+def test_vlm_max_new_tokens_must_be_positive_int(cfg: dict, bad: object) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    broken["vision"]["vlm"]["max_new_tokens"] = bad
+    with pytest.raises(ConfigError, match="max_new_tokens"):
+        validate_base_config(broken)
+
+
+def test_vlm_max_new_tokens_is_optional(cfg: dict) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    ok = deepcopy(cfg)
+    ok["vision"]["vlm"].pop("max_new_tokens", None)
+    validate_base_config(ok)
+
+
+@pytest.mark.parametrize("key", ["vlm_path_cause", "vlm_hazards", "vlm_hazard_items"])
+@pytest.mark.parametrize("bad", [_MISSING, "false", 0])
+def test_change_detect_switches_must_be_bool(cfg: dict, key: str, bad: object) -> None:
+    """bool("false") 는 True 라서 따옴표 문자열이 스위치를 켠다. 빠지면 KeyError 가 난다."""
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if bad is _MISSING:
+        del broken["change_detect"][key]
+    else:
+        broken["change_detect"][key] = bad
+    with pytest.raises(ConfigError, match=key):
+        validate_base_config(broken)
+
+
+@pytest.mark.parametrize("key", ["visit_frames", "visit_max_ms"])
+@pytest.mark.parametrize("bad", [_MISSING, 0, 0.5])
+def test_change_detect_visit_keys_must_be_positive_int(cfg: dict, key: str, bad: object) -> None:
+    from copy import deepcopy
+
+    from host.common.config import validate_base_config
+
+    broken = deepcopy(cfg)
+    if bad is _MISSING:
+        del broken["change_detect"][key]
+    else:
+        broken["change_detect"][key] = bad
+    with pytest.raises(ConfigError, match=key):
+        validate_base_config(broken)

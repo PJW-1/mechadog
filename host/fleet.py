@@ -27,6 +27,7 @@ from typing import Any
 from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError, load_config
+from host.common.history import open_history
 from host.common.logging_setup import LogContext, event_logger, setup_logging
 from host.common.protocol import system_clock_ms
 from host.dashboard.state import DashboardState
@@ -74,7 +75,7 @@ def telemetry_device(data: bytes) -> str | None:
     """텔레메트리의 개체 ID. 텔레메트리가 아니면(명령 응답 문자열·깨진 줄) None."""
     try:
         message = json.loads(data)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     device = message.get("device_id") if isinstance(message, dict) else None
     return device if isinstance(device, str) and device else None
@@ -258,9 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if not 1 <= args.dashboard_port <= 65535:
-        raise SystemExit("dashboard-port must be between 1 and 65535")
+        parser.error("dashboard-port must be between 1 and 65535")
     try:
         members = load_members(
             args.devices,
@@ -271,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.no_vision and any(m.mission.enables("ppe") for m in members):
             raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
-    except (ConfigError, OSError) as exc:
+    except (OSError, ValueError) as exc:  # `ConfigError` 는 `ValueError`
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.fleet").error("설정을 읽을 수 없다 — %s", exc)
         return 2
@@ -285,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     # PC 스피커는 하나다 — 방송기도 하나를 모든 로봇이 나눠 쓴다 (`4.8.2`).
     # 어느 로봇 화면에서 음량·무음을 바꿔도 같은 방송기가 바뀐다.
     broadcaster = _broadcaster(members[0].config)
+    # 이력 DB 도 하나다 — 모든 로봇의 사건·순찰을 한 파일에 쌓고, 화면은 `?robot=` 로 거른다 (ADR-46).
+    history = open_history(members[0].config)
     for member in members:
         config = member.config
         # 카메라 주소가 없는 로봇은 비전 없이 돈다.
@@ -306,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             mission=member.mission,
             event_publisher=_publish_event(dashboard),
             announcer=(None if broadcaster is None else broadcaster.say),
+            history=history,
         )
         runtimes.append(runtime)
         apps[member.device_id] = create_app(
@@ -329,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
         LOG.info("interrupted", action="모든 로봇에 ESTOP 송신 후 종료")
     finally:
         sock.close()
+        if history is not None:
+            history.close()
     return 0
 
 

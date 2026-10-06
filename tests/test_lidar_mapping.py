@@ -507,6 +507,67 @@ def test_a_zone_heading_survives_and_is_optional(tmp_path: Path) -> None:
     assert loaded.get("B").yaw is None
 
 
+@pytest.mark.parametrize("aim_deg", [-180.0, -45.5, 0.0, 90.0, 180.0, None])
+def test_camera_aim_roundtrips_independently_of_legacy_yaw(tmp_path: Path, aim_deg) -> None:
+    store = ZoneStore(("A", "B"))
+    store.place(1.0, 1.0)
+    store.place(2.0, 2.0)
+    store.aim("A", -1.571)
+    store.set_aim_deg("A", aim_deg)
+    store.save(tmp_path)
+    loaded = ZoneStore.load(tmp_path, ("A", "B"))
+    assert loaded.get("A").aim_deg == aim_deg
+    assert loaded.get("A").yaw == pytest.approx(-1.571)
+    assert loaded.get("A").aim_yaw == pytest.approx(
+        -1.571 if aim_deg is None else np.deg2rad(aim_deg)
+    )
+    assert loaded.get("B").aim_deg is None
+
+
+def test_camera_aim_loads_from_zone_plan_without_replacing_anchor_coordinates(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "zones.json").write_text(
+        json.dumps(
+            {
+                "A": {"x": 1, "y": 2},
+                "B": {"x": 3, "y": 4, "aim_deg": 0},
+                "C": {"x": 5, "y": 6, "aim_deg": None},
+                "D": {"x": 7, "y": 8, "yaw": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "zones_plan.json").write_text(
+        json.dumps(
+            {
+                "zones": [
+                    {"id": label, "aim_deg": 90, "patrol": {"x": 999, "y": 999}}
+                    for label in ("A", "B", "C")
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = ZoneStore.load(tmp_path, ("A", "B", "C", "D"))
+    assert store.get("A").aim_deg == 90
+    assert store.get("A").xy == (1, 2)
+    assert store.get("B").aim_deg == 0
+    assert store.get("C").aim_deg is None
+    assert store.get("D").aim_deg is None  # 기존 yaw를 새 도착 회전으로 승격하지 않는다.
+    store.save(tmp_path)
+    assert ZoneStore.load(tmp_path, store.allowed_labels).get("C").aim_deg is None
+
+
+@pytest.mark.parametrize("value", [True, "90", float("nan"), float("inf"), -181, 181, 10**400])
+def test_invalid_camera_aim_cannot_reach_runtime(tmp_path: Path, value) -> None:
+    (tmp_path / "zones.json").write_text(
+        json.dumps({"A": {"x": 1, "y": 2, "aim_deg": value}}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="aim_deg"):
+        ZoneStore.load(tmp_path, ("A",))
+
+
 def test_undo_removes_the_last_placed_zone() -> None:
     store = ZoneStore(("A", "B", "C"))
     store.place(1.0, 1.0)
@@ -600,7 +661,9 @@ def test_host_lidar_estop_is_tighter_than_the_onboard_threshold() -> None:
     root = Path(__file__).resolve().parents[1]
     base = yaml.safe_load((root / "config" / "config.yaml").read_text(encoding="utf-8"))
     section = read_lidar_section()
-    onboard_mm = base["safety"]["obstacle_stop_cm"] * 10
+    # 초음파는 코끝에서, LiDAR 는 센서 중심에서 잰다 — 같은 기준점(LiDAR 중심)으로 옮겨 비교한다
+    # (2026-10-06 초음파 25→7cm: 코끝 7cm = LiDAR 중심 약 18cm 로 여전히 온보드가 먼저다).
+    onboard_mm = base["safety"]["obstacle_stop_cm"] * 10 + base["safety"]["sonar_from_lidar_mm"]
     assert section["estop_distance_mm"] < onboard_mm
 
 
@@ -687,6 +750,60 @@ def test_rotated_map_origin_is_refused(tmp_path: Path) -> None:
     path = write_ros2_map(tmp_path, pixels, origin=[0.0, 0.0, 1.57])
     with pytest.raises(ValueError, match="origin yaw"):
         OccupancyGrid.load_ros2(path)
+
+
+def test_broken_map_yaml_is_a_value_error(tmp_path: Path) -> None:
+    """깨진 yaml 이 `yaml.YAMLError` 로 새면 `except (OSError, ValueError)` 를 빠져나가 traceback 이 된다."""
+    path = tmp_path / "map.yaml"
+    path.write_text("image: [unclosed" + chr(10), encoding="utf-8")
+    with pytest.raises(ValueError, match="map.yaml"):
+        OccupancyGrid.load_ros2(path)
+
+
+@pytest.mark.parametrize("bad", [None, 10**400, "abc"])
+@pytest.mark.parametrize(
+    "key", ["negate", "occupied_thresh", "free_thresh", "resolution", "origin_x", "origin_yaw"]
+)
+def test_non_numeric_map_yaml_values_are_value_errors(
+    tmp_path: Path, key: str, bad: object
+) -> None:
+    """숫자 변환이 `TypeError`·`OverflowError` 로 새면 `except (OSError, ValueError)` 를 빠져나간다."""
+    pixels = np.full((2, 2), 254, dtype=np.uint8)
+    if key == "origin_x":
+        spec: dict[str, object] = {"origin": [bad, 0.0, 0.0]}
+    elif key == "origin_yaw":
+        spec = {"origin": [0.0, 0.0, bad]}
+    else:
+        spec = {key: bad}
+    path = write_ros2_map(tmp_path, pixels, **spec)
+    with pytest.raises(ValueError, match=key.split("_")[0]):
+        OccupancyGrid.load_ros2(path)
+
+
+@pytest.mark.parametrize("bad", ["missing", None, 10**400])
+@pytest.mark.parametrize("key", ["resolution", "origin_x", "origin_y", "width", "height"])
+def test_broken_map_meta_is_a_value_error(tmp_path: Path, key: str, bad: object) -> None:
+    """`map_meta.json` 의 빠진 키·null·거대한 정수가 `KeyError`·`TypeError`·`OverflowError` 로 새지 않는다."""
+    grid = OccupancyGrid.blank(resolution=0.05, span_cells=4)
+    grid.save(tmp_path)
+    meta_path = tmp_path / "map_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if bad == "missing":
+        del meta[key]
+    else:
+        meta[key] = bad
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with pytest.raises(ValueError, match=key):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("bad", [None, "abc", [1], {"v": 1}])
+def test_zone_entry_with_non_numeric_coordinate_is_skipped(tmp_path: Path, bad: object) -> None:
+    """좌표가 숫자가 아니면 `x`·`y` 가 없는 항목처럼 건너뛴다 — `TypeError` 로 새지 않는다."""
+    payload = {"A": {"x": bad, "y": 0}, "B": {"x": 1.0, "y": 2.0}}
+    (tmp_path / "zones.json").write_text(json.dumps(payload), encoding="utf-8")
+    loaded = ZoneStore.load(tmp_path, ("A", "B"))
+    assert [zone.label for zone in loaded.as_tuple()] == ["B"]
 
 
 def test_pgm_header_comments_are_skipped(tmp_path: Path) -> None:
@@ -781,3 +898,46 @@ def test_edge_is_judged_per_axis_not_by_distance() -> None:
     """
     params = _edge_params(0.60)
     assert _warn_if_at_search_edge((0.0, 0.50, 0.0), (0.0, 0.0, 0.0), params, 1)
+
+
+@pytest.mark.parametrize("raw", ["null", "5", "true", "[1, 2]", '"abc"'])
+def test_map_meta_that_is_not_an_object_is_a_value_error(tmp_path: Path, raw: str) -> None:
+    """`map_meta.json` 이 객체가 아니면 `in`·`[]` 에서 `TypeError` 로 새어 기동 관문을 빠져나간다."""
+    OccupancyGrid.blank(resolution=0.05, span_cells=4).save(tmp_path)
+    (tmp_path / "map_meta.json").write_text(raw, encoding="utf-8")
+    with pytest.raises(ValueError, match="map_meta"):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("kind", ["npz", "broken_zip"])
+def test_slam_map_that_is_not_an_array_is_a_value_error(tmp_path: Path, kind: str) -> None:
+    """`np.load` 는 파일 앞부분으로 형식을 고른다 — zip 이면 `NpzFile`·`BadZipFile` 이 새어 나온다."""
+    OccupancyGrid.blank(resolution=0.05, span_cells=4).save(tmp_path)
+    npy_path = tmp_path / "slam_map.npy"
+    if kind == "npz":
+        np.savez(tmp_path / "bundle.npz", cells=np.zeros((4, 4), dtype=np.float32))
+        npy_path.write_bytes((tmp_path / "bundle.npz").read_bytes())
+    else:
+        npy_path.write_bytes(b"PK" + bytes([3, 4]) + b"broken")
+    with pytest.raises(ValueError, match="slam_map"):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("bad", [0, -0.05])
+def test_non_positive_map_meta_resolution_is_a_value_error(tmp_path: Path, bad: float) -> None:
+    """0 은 운용 중 `to_cell` 의 나눗셈에서 죽고, 음수는 기하를 조용히 뒤집는다."""
+    OccupancyGrid.blank(resolution=0.05, span_cells=4).save(tmp_path)
+    meta_path = tmp_path / "map_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["resolution"] = bad
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with pytest.raises(ValueError, match="resolution"):
+        OccupancyGrid.load(tmp_path)
+
+
+@pytest.mark.parametrize("bad", [0, -0.05])
+def test_non_positive_ros2_map_resolution_is_a_value_error(tmp_path: Path, bad: float) -> None:
+    pixels = np.full((2, 2), 254, dtype=np.uint8)
+    path = write_ros2_map(tmp_path, pixels, resolution=bad)
+    with pytest.raises(ValueError, match="resolution"):
+        OccupancyGrid.load_ros2(path)

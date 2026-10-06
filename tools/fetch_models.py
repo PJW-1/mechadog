@@ -58,10 +58,18 @@ class Weight:
     note: str
 
 
-#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v4` 의 자산이다 (`ppe.json`·`NOTICE.txt` 도 같은 태그에 있다).
+#: `ppe.onnx` 를 올린 Release 자산 주소. 태그 `ppe-v5` 의 자산이다 (`ppe.json`·`NOTICE.txt` 도 같은 태그에 있다).
 #: ⚠️ **모델을 다시 학습하면 새 태그를 쓴다** — 같은 태그의 자산을 갈아끼우면
 #: 아래 SHA-256 과 어긋나 받은 사람이 검증 실패로 멈춘다.
-PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v4/ppe.onnx"
+PPE_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/ppe-v5/ppe.onnx"
+
+#: `hazard.onnx` 를 올린 Release 자산 주소. 태그 `hazard-v1` (`hazard.json`·`NOTICE.txt` 도 같은 태그).
+#: 다시 학습하면 PPE 와 같이 새 태그를 쓴다.
+HAZARD_RELEASE = "https://github.com/PJW-1/mechadog/releases/download/hazard-v1/hazard.onnx"
+#: 로봇 시점 합성 학습 후보 (2026-10-06 · `tools/hazard/synth/`). 시연 기체 설정이 이 파일을 쓴다.
+HAZARD_SYNTH_RELEASE = (
+    "https://github.com/PJW-1/mechadog/releases/download/hazard-synth-v2/hazard.onnx"
+)
 
 #: ⚠️ **여기가 정본이다.** `models/README.md` 의 표는 이 값을 사람이 읽게 옮긴 것이다.
 WEIGHTS: tuple[Weight, ...] = (
@@ -79,9 +87,25 @@ WEIGHTS: tuple[Weight, ...] = (
     Weight(
         dest="models/ppe.onnx",
         url=PPE_RELEASE,
-        size=35_779_653,
-        sha256="e4f81bdbeaadebe19d94e1d915e5e5202baccea3660c2b9f8c4e3622e0db84f5",
+        size=35_779_654,
+        sha256="145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2",
         note="PPE 4클래스 YOLOX-S · CC BY 4.0 (models/NOTICE) · XIAO 실측 전 후보",
+    ),
+    # ⚠️ 자체 학습 산출물 — `ppe.onnx` 와 같은 규칙이다. 고지는 `models/NOTICE` §5.
+    Weight(
+        dest="models/hazard.onnx",
+        url=HAZARD_RELEASE,
+        size=35_776_558,
+        sha256="7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746",
+        note="위험물 2클래스(lighter·powerbank) YOLOX-S · CC BY 4.0 (models/NOTICE) · XIAO 실측 전 후보",
+    ),
+    # 10-06 로봇 시점 합성 학습 — 실물 라이터 0.87·0.88, 보조배터리 미검출, 의자·PC 오검출 제거 (실물 9장).
+    Weight(
+        dest="models/hazard_synth.onnx",
+        url=HAZARD_SYNTH_RELEASE,
+        size=35_776_558,
+        sha256="06e6274aaf8f04a5d1b11598cd6db64ab997d0d8e0b8ccd3d2b82cdb5ad3c4cc",
+        note="위험물 2클래스 YOLOX-S · 로봇 시점 합성 후보(hazard-synth-v2) · 라이터만 실측 검출",
     ),
 )
 

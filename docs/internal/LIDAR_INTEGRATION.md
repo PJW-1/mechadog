@@ -109,7 +109,7 @@
 | :--- | :--- |
 | `lidar_slam.py` | ① 매핑 실행기 |
 | `zone_select.py` | ② 구역 클릭 지정 |
-| `patrol_run.py` | ③ 순찰 운용 루프 — **소켓·실시각은 이 파일에만 있다** |
+| `patrol_run.py` | ③ 순찰 운용 루프 — **소켓·실시각은 이 파일에만 있다** (런타임 `--lidar-device` 는 `host/telemetry/lidar_feed.py` · `ros2_relay.py` 를 같이 쓴다) |
 | `mock_lidar.py` | 가상 중계 노드 (`mock_mechdog.py` 와 같은 자리) |
 
 ### 그 외
@@ -135,7 +135,7 @@
 | # | 원본 | 왜 안 되는가 | 지금 |
 | :-- | :--- | :--- | :--- |
 | 1 | `{"cmd": "FORWARD", "ts": time.time()}` | 규약에 없는 스키마. `type`·`seq` 가 없고 `ts` 가 **초 단위 실수**라 규칙 ②·⑤ 로 폐기 | `Commander` 가 만드는 `MOVE` |
-| 2 | `TURN_LEFT` · `TURN_RIGHT` | **제자리 회전은 지원하지 않는다** (DR-11). 로봇이 할 수 없는 동작 | 호(arc) `MOVE{step, angle}` — `steering_for()` |
+| 2 | `TURN_LEFT` · `TURN_RIGHT` | 시간으로 도는 **개루프 회전** — 각속도 산포 82% 라 «몇 도» 가 정해지지 않는다 (DR-11) | 호(arc) `MOVE{step, angle}`, 크게 틀어지면 측위 방위를 보며 `MOVE{0, ±30}` 제자리 회전 — `steering_for()` (2026-10-01 개정) |
 | 3 | 위험 시 `send("STOP")` | `STOP` 은 일반 보행 정지이고 **FAILSAFE 를 걸지 않는다** | `ESTOP` (즉시 · 래치) |
 | 4 | 첫 전문이 아무거나 | 로봇이 seq 역전으로 **명령을 통째로 폐기한다** | `open_session()` = `STOP` seq=1 |
 | 5 | 상태 `MOVING`·`ROTATING`·`PLANNING`·`ARRIVED`·`ESTOP` | **FSM 13종에 없다.** 로봇이 폐기 + WARN 하고 텔레메트리 `state` 가 이전 값에 머문다 | 13종으로 사상 (`FSM_STATE_FOR`) |
@@ -170,7 +170,7 @@
 
 | 조건 | 판정 주체 | 이 코드의 대응 |
 | :--- | :--- | :--- |
-| 초음파 25cm 반사 정지 | **온보드 (Tier 1)** | `flags.obstacle` 을 따라 의도를 정지로 |
+| 초음파 7cm 반사 정지 | **온보드 (Tier 1)** | `flags.obstacle` 을 따라 의도를 정지로 |
 | 저전압 · 링크두절 · E-Stop | **온보드 (Tier 1)** | `safety_latched` · `state=FAILSAFE` 를 따라 `HALTED`. 전도 자동 감지는 폐기(ADR-36) |
 | 사용자 E-STOP | 호스트 | `ESTOP` 즉시 |
 | **LiDAR 전방 위험거리** | **호스트** | `ESTOP` 즉시 — 아래 각주 |
@@ -180,8 +180,9 @@
 > **LiDAR 판정만 호스트인 이유** — LiDAR 는 호스트에 붙은 센서이므로 판정 주체가
 > 호스트일 수밖에 없다. Tier 1 을 옮기는 것이 아니라 **온보드가 볼 수 없는 것을
 > 보는 것**이다 (초음파는 정면 근거리만 본다 · DR-15). 온보드 판정을 대체하지
-> 않고 더하며, 임계를 `obstacle_stop_cm`(25cm)보다 짧은 15cm 로 두어 **온보드가
-> 먼저 반응한다.** `test_host_lidar_estop_is_tighter_than_the_onboard_threshold`
+> 않고 더하며, 임계를 온보드보다 짧게 두어 **온보드가
+> 먼저 반응한다.** (2026-10-06 개정: 초음파는 코끝 기준 7cm, LiDAR 는 센서 중심 기준
+> 0.1m 라 같은 기준점으로 옮겨 비교한다 — 코끝은 LiDAR 중심에서 약 110mm, `safety.sonar_from_lidar_mm`.) `test_host_lidar_estop_is_tighter_than_the_onboard_threshold`
 > 가 대조한다.
 
 ---

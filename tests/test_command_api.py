@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event, behavior_from_config
 from host.behavior.mission import Mission
-from host.dashboard.commands import CommandService
+from host.dashboard.commands import CommandResult, CommandService
 from host.dashboard.server import create_app
 from host.dashboard.state import DashboardState
 
@@ -240,6 +240,34 @@ def test_patrol_stop_leaves_autonomy_and_parks_at_idle(service):
     assert behavior.state == "IDLE"
     # 수동 경유는 로봇을 멈추고 들어가는 경로다 — 멈춘 뒤 대기다.
     assert svc._commander.intent.type_ == "STOP"
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        (Event.START_PATROL, Event.ZONE_ARRIVED),
+        (Event.START_PATROL, Event.POSE_STALE),
+    ],
+    ids=["ZONE_INSPECT", "LOST"],
+)
+def test_patrol_stop_is_accepted_in_zone_inspect_and_lost(service, events):
+    """구역 점검·재측위 중에도 정지할 수 있어야 끝난 뒤 순찰이 이어지지 않는다."""
+    svc, behavior, _sent = service
+    _drive_to(behavior, events)
+    assert behavior.state in ("ZONE_INSPECT", "LOST")
+    assert svc.patrol_stop().accepted is True
+    assert behavior.state == "IDLE"
+
+
+def test_patrol_stop_reports_the_manual_off_refusal(service):
+    svc, behavior, _sent = service
+    behavior.event(Event.START_PATROL, now_ms=1000)
+    svc.manual_off = lambda: CommandResult(
+        command="manual_off", accepted=False, state="MANUAL", detail="거절 사유"
+    )
+    result = svc.patrol_stop()
+    assert result.accepted is False
+    assert result.detail == "거절 사유"
 
 
 def test_patrol_stop_is_refused_when_not_autonomous(service):
@@ -1059,110 +1087,212 @@ def test_sound_endpoint_reaches_the_runtime_through_the_real_wiring(cfg, clock):
     assert _sounds(runtime.tick(clock.advance(100))) == [0]
 
 
-# ── 구역 기준 재등록 (FR-8 · WBS 3.6.5) ──────────────────────────
-#
-# 물건을 영구히 옮기면 그 구역은 순찰마다 «반출» 을 낸다. 관리자가 «이 상태가
-# 정상» 이라고 인정하면 기준을 지우고 **그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다.** 지우는 것은
-# 틱이다 — 틱이 그 구역의 기준을 읽고 견주는 도중에 서버 스레드가 지우면 옛 기준의
-# 누적이 새 기준에 섞인다 (`ask_alarm_confirm` 과 같은 예약 방식).
-
-
-def _zone_wired(cfg, clock, tmp_path):
-    """설정의 구역(`zones.ids` A·B·C)과 임시 기준 폴더를 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
+def _zone_wired(cfg, clock):
+    """설정의 구역(`zones.ids` A·B·C·D)을 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
     from copy import deepcopy
 
     from host.runtime import Runtime, dashboard_wiring
 
     changed = deepcopy(cfg)
-    assert set(changed["zones"]["ids"]) == {"A", "B", "C"}
-    changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
+    assert set(changed["zones"]["ids"]) == {"A", "B", "C", "D"}
     runtime = Runtime(changed, device_id="mechdog-01", clock=clock)
-    runtime._zone_inspector._baselines.register("A", [], frame_size=(640, 480), now_ms=1, jpeg=b"a")
     return runtime, dashboard_wiring(runtime, changed, vision=None, blackbox=None)
 
 
-def _removed():
-    from host.behavior.change_detect import Change, ChangeKind
-
-    return Change(kind=ChangeKind.REMOVED, label="bottle", count=1, cell=(0, 0))
-
-
-def test_zone_baseline_reset_clears_on_the_next_tick(cfg, clock, tmp_path, caplog):
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
-    runtime._zone_inspector._confirmer.observe("A", [_removed()])  # 옛 기준으로 센 1회
-
-    result = wiring["commands"].zone_baseline("A")
-
-    assert result.accepted is True and result.command == "zone_baseline"
-    assert wiring["commands"].zone_baseline("C").accepted is True
-    assert runtime._zone_inspector._baselines.load("A") is not None, "요청만 세운다"
-    with caplog.at_level("INFO"):
-        runtime.tick(clock.advance(100))
-    assert runtime._zone_inspector._baselines.load("A") is None
-    assert list((tmp_path / "snapshots").glob("*.jpg")) == []
-    assert "zone_baseline_reset" in [getattr(r, "event", "") for r in caplog.records]
-    assert runtime._zone_inspector._confirmer.observe("A", [_removed()]) == (), (
-        "옛 기준으로 센 횟수가 새 기준의 확정을 앞당기면 안 된다"
-    )
+# ── 위치 알려주기 (2026-10-04) ────────────────────────────────────
+# 들어 옮긴 뒤 집 안 비슷한 자리를 구별 못 할 때 사람이 «지금 이 구역» 을 알려준다.
+# 측위 상태는 루프 스레드만 바꾼다 — 서버 스레드는 예약만 한다.
 
 
-@pytest.mark.parametrize("zone", ["Z", "a", "10", "../A", "A/..", "", " A"])
-def test_zone_baseline_reset_refuses_zones_outside_the_config(cfg, clock, tmp_path, zone):
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+class _FakeNavigator:
+    def __init__(self):
+        self.hints = []
 
-    result = wiring["commands"].zone_baseline(zone)
+    def locate_zone_ids(self):
+        return ("B", "C", "D", "A")
 
+    def hint_zone(self, zone, now_ms):
+        self.hints.append((zone, now_ms))
+        return True
+
+
+def test_locate_is_applied_on_the_next_tick(cfg, clock):
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _FakeNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].locate("C")
+    assert result.accepted is True and result.command == "locate"
+    assert navigator.hints == [], "서버 스레드는 예약만 한다"
+    runtime._drain_confirmations(clock.advance(100))
+    assert [zone for zone, _ in navigator.hints] == ["C"]
+    runtime._drain_confirmations(clock.advance(100))
+    assert len(navigator.hints) == 1, "한 번 알려준 것은 한 번만 적용한다"
+
+
+@pytest.mark.parametrize("zone", ["Z", "a", "", " C", "../C"])
+def test_locate_refuses_unknown_zones(cfg, clock, zone):
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _FakeNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].locate(zone)
     assert result.accepted is False
-    runtime.tick(clock.advance(100))
-    assert runtime._zone_inspector._baselines.load("A") is not None
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.hints == []
 
 
-def test_a_zone_baseline_that_cannot_be_cleared_does_not_stop_the_runtime(
-    cfg, clock, tmp_path, caplog, monkeypatch
-):
-    """기준 파일이 10Hz 제어를 죽이면 안 된다 — `ZoneInspector.inspect` 의 load·register 와 같다."""
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
-
-    def locked(_zone):
-        raise PermissionError("다른 프로그램이 파일을 쥐고 있다")
-
-    monkeypatch.setattr(runtime._zone_inspector._baselines, "clear", locked)
-    assert wiring["commands"].zone_baseline("A").accepted is True
-    with caplog.at_level("INFO"):
-        runtime.tick(clock.advance(100))
-    events = [getattr(r, "event", "") for r in caplog.records]
-    assert "zone_baseline_reset_failed" in events
-    assert "zone_baseline_reset" not in events, "지우지 못한 기준을 지웠다고 적지 않는다"
+def test_locate_refused_without_lidar_navigator(cfg, clock):
+    _runtime, wiring = _zone_wired(cfg, clock)
+    result = wiring["commands"].locate("A")
+    assert result.accepted is False
+    assert "LiDAR" in result.detail
 
 
-def test_zone_baseline_reset_is_refused_when_the_host_cannot_reset(service):
+def test_locate_is_refused_when_unwired(service):
     svc, _behavior, _sent = service
-    result = svc.zone_baseline("A")
+    result = svc.locate("A")
     assert result.accepted is False
     assert "연결되지 않았다" in result.detail
 
 
-def test_zone_baseline_endpoint_round_trips(cfg, clock, tmp_path):
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
-    with TestClient(create_app(_state(), **wiring)) as http:
-        body = http.post("/api/command/zone-baseline", json={"zone": "A"}).json()
-        assert body["accepted"] is True and body["command"] == "zone_baseline"
-        refused = http.post("/api/command/zone-baseline", json={"zone": "Z"}).json()
-        assert refused["accepted"] is False
-        for bad in ({"zone": 7}, {"zone": None}, {}):
-            response = http.post("/api/command/zone-baseline", json=bad)
-            assert response.status_code == 400 and response.json() == {"error": "zone"}
-        foreign = http.post(
-            "/api/command/zone-baseline",
-            json={"zone": "A"},
-            headers={"origin": "http://evil.example"},
-        )
-        assert foreign.status_code == 403
-    runtime.tick(clock.advance(100))
-    assert runtime._zone_inspector._baselines.load("A") is None
+def test_locate_endpoint_round_trips(cfg, clock):
+    from host.dashboard.server import create_app
+
+    runtime, wiring = _zone_wired(cfg, clock)
+    runtime._navigator = _FakeNavigator()
+    app = create_app(_state(), wiring["commands"])
+    with TestClient(app) as http:
+        assert http.post("/api/command/locate", json={"zone": "D"}).json()["accepted"] is True
+        assert http.post("/api/command/locate", json={"zone": 3}).status_code == 400
+        assert http.post("/api/command/locate", json={}).status_code == 400
 
 
-def test_zone_baseline_endpoint_is_absent_on_a_read_only_server():
-    with TestClient(create_app(_state())) as http:
-        response = http.post("/api/command/zone-baseline", json={"zone": "A"})
-        assert response.status_code in (404, 405)
+def test_policy_lists_patrol_zones(cfg):
+    from host.runtime import policy_view
+
+    assert policy_view(cfg)["patrol_zones"] == [str(z) for z in cfg["zones"]["ids"]]
+
+
+# ── 지도에서 찍은 곳으로 이동 · 자기 위치 (2026-10-04) ─────────────
+
+
+class _GotoNavigator(_FakeNavigator):
+    pose = (1.0, 2.0, 0.0)
+    pose_verified = True
+    pose_seeded = False
+    phase = "PLANNING"
+    target = None
+    current_zone = "B"
+    goal = None
+    holding_goal = False
+    match_frac = 0.8
+    plan = None
+    _point_hint = None
+
+    def _zone_filter(self, _now_ms):
+        return None
+
+    def __init__(self, accept=True):
+        super().__init__()
+        self.gotos = []
+        self.cancels = []
+        self.accept = accept
+
+    def pose_stale(self, _now):
+        return False
+
+    def goto(self, x, y):
+        self.gotos.append((x, y))
+        return self.accept, "찍은 곳으로 간다" if self.accept else "길이 없다"
+
+    def cancel_goal(self, reason):
+        self.cancels.append(reason)
+
+
+def test_goto_is_planned_on_the_next_tick_and_starts_patrol(cfg, clock):
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].goto(1.5, -0.5)
+    assert result.accepted is True and result.command == "goto"
+    assert navigator.gotos == [], "서버 스레드는 예약만 한다"
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.gotos == [(1.5, -0.5)]
+    assert runtime._patrol_asked or runtime._behavior.state == "PATROL", (
+        "순찰 중이 아니면 순찰 시작을 함께 예약한다"
+    )
+    assert runtime.nav_status().get("starting") is True, "첫 틱 전에는 지어내지 않는다"
+    runtime._nav_snapshot = runtime._build_nav_snapshot(clock.advance(100))
+    status = runtime.nav_status()
+    assert status["goal_feedback"]["accepted"] is True
+    assert status["pose"] == [1.0, 2.0, 0.0]
+    # 정책에 전달된 신선한 위치가 없으면 navigator의 라벨만으로 소속을 정하지 않는다.
+    assert status["zone"] is None
+
+
+def test_goto_refusal_is_reported_without_starting_patrol(cfg, clock):
+    runtime, wiring = _zone_wired(cfg, clock)
+    runtime._navigator = _GotoNavigator(accept=False)
+    wiring["commands"].goto(9.0, 9.0)
+    runtime._drain_confirmations(clock.advance(100))
+    assert runtime._patrol_asked is False
+    runtime._nav_snapshot = runtime._build_nav_snapshot(clock.advance(100))
+    assert runtime.nav_status()["goal_feedback"]["accepted"] is False
+
+
+def test_stopping_patrol_cancels_the_goal(cfg, clock):
+    runtime, _wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._mark_goal_cancel("PATROL", "ALERT")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == [], "경보로 잠시 나간 것은 취소가 아니다"
+    runtime._mark_goal_cancel("PATROL", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == ["patrol_stopped"]
+
+
+def test_goto_endpoint_validates_coordinates(cfg, clock):
+    from host.dashboard.server import create_app
+
+    runtime, wiring = _zone_wired(cfg, clock)
+    runtime._navigator = _GotoNavigator()
+    app = create_app(_state(), wiring["commands"], nav_status=runtime.nav_status)
+    with TestClient(app) as http:
+        assert http.post("/api/command/goto", json={"x": 1.0, "y": "2.5"}).json()["accepted"]
+        assert http.post("/api/command/goto", json={"x": "nan", "y": 0}).status_code == 400
+        assert http.post("/api/command/goto", json={"x": 1.0}).status_code == 400
+        assert http.get("/api/nav").json()["available"] is True
+        assert http.get("/api/map/meta").status_code == 404, "지도가 없으면 지어내지 않는다"
+
+
+def test_goto_refused_without_navigator(cfg, clock):
+    _runtime, wiring = _zone_wired(cfg, clock)
+    assert wiring["commands"].goto(1.0, 1.0).accepted is False
+    assert wiring["map_view"] is None and wiring["nav_status"] is None
+
+
+def test_real_stop_path_cancels_the_goal_and_pending_start(cfg, clock):
+    """실제 «순찰 정지» 는 PATROL → MANUAL → IDLE (Codex 검토 G P1). 리셋 정착(FAILSAFE→IDLE)은 취소가 아니다."""
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._mark_goal_cancel("FAILSAFE", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == []
+    runtime._mark_goal_cancel("PATROL", "MANUAL")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == ["patrol_stopped"], "수동 조종으로 넘어가도 옛 목표는 버린다"
+    wiring["commands"].goto(1.0, 1.0)
+    runtime._mark_goal_cancel("MANUAL", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.gotos == [], "정지 전에 들어온 이동 요청도 버린다"
+    assert runtime._patrol_asked is False
+
+
+def test_nav_status_is_one_loop_snapshot(cfg, clock):
+    runtime, _wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._nav_snapshot = runtime._build_nav_snapshot(clock.advance(100))
+    navigator.pose = (9.0, 9.0, 0.0)  # 서버가 읽는 사이 루프가 바꿨다
+    assert runtime.nav_status()["pose"] == [1.0, 2.0, 0.0], "다음 틱 전까지는 같은 시점의 묶음"

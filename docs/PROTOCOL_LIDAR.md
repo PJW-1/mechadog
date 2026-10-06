@@ -15,21 +15,35 @@
 | :--- | :--- | :--- |
 | LiDAR 를 로봇 메인보드에 직결하지 않는다 | 보행 제어 루프를 방해한다 | **ADR-6** |
 | 별도 ESP32 DevKit 을 중계로 쓴다 | LiDAR → UART → DevKit → UDP → Host | 아키텍처 2절 LIDAR NODE |
-| 걸으면서 스캔하지 않는다 | 흔들려서 못 쓴다. 멈춰서 재고 다시 걷는다 | **ADR-7** |
+| 정지 측위 원칙과 보행 중 사용을 구분한다 | ADR-7은 멈춰서 재는 설계 원칙. 현재 송신은 보행 여부로 제한하지 않으며, 위험 판정과 측위 채택은 별도 조건이다 | **ADR-7**; [10-06 상태](lidar/STATUS_20261006.md) |
 
 즉 스캔 데이터그램은 **MechDog 을 거치지 않는 독립 노드**에서 온다. 기존 두
 스키마에 얹을 자리가 없어서 세 번째 링크가 된다.
 
 | 링크 | 방향 | 프로토콜 | 주기 |
 | :--- | :--- | :--- | :--- |
-| **LiDAR 스캔** | **LiDAR 중계 노드 → Host PC** | **UDP** | **정지 중에만 · 5 Hz** |
+| **LiDAR 스캔** | **LiDAR 중계 노드 → Host PC** | **UDP** | **센서 회전 약 9.90 Hz; UDP는 약 72점 청크별 송신** |
 
-> **주기가 고정이 아니다.** 제어 명령이 10Hz 고정인 것은 그 송신이 곧 링크
-> 신호이기 때문인데(PROTOCOL 1절), 스캔은 그렇지 않다 — 로봇이 걷는 동안에는
-> 쓸 수 없는 데이터라(ADR-7) 보내도 버린다. 그래서 **스캔 두절은 안전 문제가
-> 아니라 측위 능력의 상실**이다. `lidar.scan_stall_timeout_ms` 는 **정지 후 스캔을 기대하는 구간에서만** 적용한다. 걷는 동안 스캔이 없는 것은 정상이다. 기대한 스캔이 이 시간을 넘겨 없으면
-> `FAILSAFE` 가 아니라 `LOST` 로 간다. 비전의 `stall_timeout_ms` 가
-> `safety` 절 밖에 있는 것과 같은 판단이다 (`config.yaml` vision 절 각주).
+> **회전・UDP 패킷・ROS2 발행 빈도를 구별한다.** 2026-09-29 실측 인용은
+> 센서 회전 약 **9.90 Hz**, ROS2 `/scan` **9.919 Hz**다. 중계는 한 회전을
+> 약 72점 청크의 여러 UDP 데이터그램으로 나누므로 **패킷 빈도 ≠ 회전 빈도**다.
+> 이 수치는 해당 시험의 실측이며 송신 주기를 5 Hz로 고정하는 규약이 아니다.
+> 근거: [중계 README](../firmware/lidar_relay/README.md), [WBS](internal/WBS.md) 5.4.2,
+> [실측 자료](measurements/2026-10-06-field-patrol.md#5-우회와-남은-측정).
+>
+> **송신 여부와 측위 채택 조건은 별개다.** 중계는 로봇 정지 여부로 송신을
+> 제한하지 않는다. 호스트는 보행 중에도 수신・5203 복사・청크별 근접 비상정지
+> 판정과 최신 반사점 회피를 수행한다. 측위는 완성 회전을 조립한 뒤 POSE・복귀
+> 대기・IMU 기울기 등 스캔 관문과 정합 신뢰 조건을 적용해 채택한다. 따라서
+> 패킷 수신이 측위 갱신을 보장하지 않으며, 측위에서 거절한 스캔도 위험 판정에
+> 사용할 수 있다. ADR-7의 정지 측위 원칙을 송신 중단이나 보행 중 전량 폐기로
+> 해석하지 않는다. 현장 `91362ad`는 45° 초과 IMU 이상값을 불신하지만 그 이하
+> 이상값・위치 상실 한계는 남아 있다([상태 문서](lidar/STATUS_20261006.md)).
+>
+> 스캔 입력 두절(`lidar.scan_stall_timeout_ms`)과 위치 갱신 만료
+> (`localization.pose_timeout_ms`)도 구별한다. 측위 상실의 `LOST`와 패킷별 근접
+> 위험의 비상정지는 별도 경로다. 보행 중 무수신을 일괄 정상으로 간주하지 않는다.
+> 청크 수신・완성 회전・측위 갱신 상태를 각각 기록해 판단한다.
 
 ---
 
@@ -174,13 +188,14 @@
 | 텔레메트리 | 5101 | `network.telemetry_port` |
 | **LiDAR 스캔** | **5201** | **`lidar.scan_port`** |
 | LiDAR 스캔 → ROS2 컨테이너 전달 | 5203 | `lidar.scan_forward_port` |
+| ROS2 지도 자세 → Host 순찰기 | 5205 | `lidar.map_pose_port` |
 
 ⚠️ **반드시 달라야 한다.** 같은 포트를 쓰면 한 소켓에 두 스키마가 섞여 들어와
 서로를 규칙 ④(모르는 타입)로 폐기하고, 로그에는 WARN 만 쌓인다.
 `test_lidar_scan_port_differs_from_the_other_links` 가 대조한다.
 
-`lidar.scan_forward_port`(5201 의 유일한 수신자인 `tools/ops/patrol_run.py` 가
-바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
+`lidar.scan_forward_port`(5201 의 유일한 수신자인 런타임 `LidarFeed` 또는
+런타임 `--lidar-device` 또는 `tools/ops/patrol_run.py` 가 바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
 `host/slam/settings.py`·`host/common/config.py` 의 설정 검증이 이를 거부한다
 (`docker/ros2/README.md` 「남은 연결」 절).
 
@@ -201,7 +216,7 @@
 | `header.frame_id` | — | 브리지가 정한다 (`laser` 권장). **`base_link` 로 두지 말 것** — 마스트 오프셋이 tf 로 표현되어야 한다 |
 | `angle_min` · `angle_max` | `0` · `2π - angle_increment` | 데이터그램은 부채꼴 조각이다 (2절) — 브리지가 각도 빈으로 한 바퀴분을 모은 뒤 발행한다 |
 | `angle_increment` | `2π / len(ranges)` | 아래 각주 참조 |
-| `time_increment` | `0` | 정지 중에만 스캔하므로(ADR-7) 빔별 시각차를 쓰지 않는다 |
+| `time_increment` | `0` | 현행 브리지는 빔별 시각차를 표현하지 않는다. 보행 중에도 수신하며 이 값이 정지 상태를 보장하지 않는다 |
 | `scan_time` | 브리지의 직전 발행 간격 (첫 회전은 `0.1`) | 실물 회전 속도에 맞춰 확인 |
 | `range_min` · `range_max` | `lidar.range_min_mm` · `range_max_mm` / 1000 | **m 로 바꾼다** |
 | `ranges[i]` | `dist_mm` / 1000 | **m 로 바꾼다** |
@@ -261,7 +276,9 @@ ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom`
 
 ## 8. 오도메트리 전달 — `ODOM` (Host PC → ROS2 컨테이너)
 
-6절의 «우리에게 오도메트리가 없다» 를 메우는 링크다. 호스트(`tools/ops/patrol_run.py`)가
+> **2026-10-06 적용 범위:** 5204 ODOM 개체별 추가 구현・검수 작업은 폐기됐고 기존 송신・브리지・tf 코드는 보존한다. 아래는 보존된 링크 규약이며 시연 주 측위의 필수 경로가 아니다. [현재 상태](lidar/STATUS_20261006.md#2-보고서-3장에-넣을-설계-설명)를 참조한다.
+
+6절의 «우리에게 오도메트리가 없다» 를 메우기 위해 추가했던 링크다. 호스트(런타임 `--lidar-device` 또는 `tools/ops/patrol_run.py`)가
 **실제로 보낸 명령의 시간 창 × 그 기체의 `gait_calibration` 속도**로 거리를, **IMU
 yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이너의
 `docker/ros2/odom_bridge.py` 로 보낸다. 브리지가 `odom → base_link` tf 를 낸다.
@@ -301,7 +318,7 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
   유효하다고 내보내지 않는다.**
 
 `gait_calibration` 이 없는 기체는 오도메트리를 만들지 않는다. 전문 자체가
-나가지 않고 순찰기가 `odometry_unavailable` 오류를 남긴다.
+나가지 않고 런타임과 `tools/ops/patrol_run.py` 가 `odometry_unavailable` 오류를 남긴다.
 
 ### 로봇의 정지 보고가 명령보다 우선한다
 
@@ -323,3 +340,32 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 | `header.stamp` | **수신 시각.** 전문 `ts` 는 호스트 시계라 컨테이너 시계와 같다는 보장이 없다 — 6절 `LaserScan.header.stamp` 와 같은 이유 |
 | `odom → base_link` | `valid=true` 전문을 받을 때마다 1회. **무효·폐기·두절이면 내지 않는다** — 직전 값 반복이나 항등 변환으로 채우지 않는다 |
 | `base_link → laser` | `LASER_OFFSET_X_M`·`_Y_M`·`_Z_M` 이 **모두** 있을 때만 고정 변환. 없으면 경고만 한다. **회전은 0** — 장착 방향은 `scan_bridge` 디코더가 이미 적용한다(한 곳에서만 보정) |
+
+---
+
+## 9. 지도 자세 반환 — `MAP_POSE` (ROS2 컨테이너 → Host PC)
+
+> **2026-10-06 시연 런타임:** `host.runtime`은 5205 MAP_POSE를 사용하지 않고 호스트 스캔 정합・전역 재측위를 주 측위로 쓴다. 아래 규약은 별도 도구의 반환 경로다([현재 상태](lidar/STATUS_20261006.md#2-보고서-3장에-넣을-설계-설명)).
+
+`slam_toolbox`가 만든 `map → odom → base_link`의 합성 tf를
+`docker/ros2/pose_bridge.py`가 읽어 별도 `tools/ops/patrol_run.py` 순찰기로 돌려준다. 이 경로의 순찰기는
+내부 스캔 정합과 이 자세를 섞지 않고 `MAP_POSE`만 경로계획의 위치로 사용한다.
+LiDAR 즉시 위험 판정(`guard_scan`)은 이 링크와 무관한 직접 경로다.
+
+```json
+{"seq":42,"ts":912345,"type":"MAP_POSE","device_id":"mechdog-02","boot_id":"5c1e0a9b7d3f2468","frame_id":"map","child_frame_id":"base_link","x_m":1.204,"y_m":-0.117,"yaw_rad":0.52,"valid":true}
+```
+
+| 필드 | 타입 | 의미 |
+| :--- | :--- | :--- |
+| `seq` · `boot_id` | int · str | 브리지 프로세스 한 세션의 순서와 재기동 구분 |
+| `ts` | int | 브리지의 단조 시각 ms. 호스트는 신선도에 직접 쓰지 않고 수신 시각을 쓴다 |
+| `device_id` | str | 대상 로봇 개체 이름. 순찰기의 `--device`와 달라지면 폐기 |
+| `frame_id` · `child_frame_id` | str | 반드시 `map` · `base_link`. 다른 프레임은 폐기 |
+| `x_m` · `y_m` · `yaw_rad` | 실수 | 지도 좌표의 위치(m)와 방위(rad) |
+| `valid` | bool | tf 누락·500ms 초과 시 false. 좌표를 적용하지 않는다 |
+
+검증 규칙은 8절 ODOM과 같고, 프레임 이름 검증이 추가된다. `valid=false` 전문은
+마지막 자세를 갱신하지 않는다. 유효 자세가 `localization.pose_timeout_ms` 동안
+오지 않으면 순찰기는 `LOST`로 전환해 보행을 정지한다. 이 상태는 안전 래치가
+아니므로 측위가 돌아오면 재계획할 수 있다.

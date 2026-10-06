@@ -1,0 +1,233 @@
+{
+  "task": "AL",
+  "source": "<local>",
+  "target": "<local>",
+  "selected_intervals": 9,
+  "office_intervals": 8,
+  "office_distinct_spatial_groups": 6,
+  "additional_regression_only_intervals": 3,
+  "training_revolutions": 1299,
+  "evaluation_revolutions": 2145,
+  "summary": {
+    "nav": {
+      "changed": 477,
+      "cleared_occupied": 40,
+      "opened_unknown": 121,
+      "new_occupied": 316,
+      "confidence_only": 0
+    },
+    "loc": {
+      "changed": 673,
+      "cleared_occupied": 144,
+      "opened_unknown": 73,
+      "new_occupied": 217,
+      "confidence_only": 239
+    }
+  },
+  "partition_prior_cells": 232,
+  "partition_directly_supported_cells": 36,
+  "partition_occluded_measured_prior_cells": 196,
+  "policy": {
+    "min_revolutions": 5,
+    "min_seconds": 3,
+    "office_min_distinct_spatial_groups": 3,
+    "post_measured_xy_station_min_spatial_groups": 1,
+    "clear_fraction": 0.9,
+    "occupied_fraction": 0.65,
+    "endpoint_guard_m": 0.1,
+    "office_clear_stable_nearby_hit_veto_m": 0.1,
+    "partition_unseen_continuation": "explicit tape measured structural prior; not claimed as direct repeated lidar observations"
+  },
+  "post_caution": "Only one measured post station; repeated seconds are not independent viewpoints.",
+  "navigation_ready": false,
+  "activation": "none",
+  "localization": [
+    {
+      "map": "before",
+      "source": "verified_office",
+      "count": 33,
+      "median_xy_m": 0.050000000000000044,
+      "max_xy_m": 0.30000000000000004,
+      "median_yaw_deg": 2.0000000000000027,
+      "median_fraction": 0.8412768029277363,
+      "within_30cm_10deg": 33
+    },
+    {
+      "map": "after",
+      "source": "verified_office",
+      "count": 33,
+      "median_xy_m": 0.050000000000000044,
+      "max_xy_m": 0.30000000000000004,
+      "median_yaw_deg": 2.0000000000000027,
+      "median_fraction": 0.8499154012699593,
+      "within_30cm_10deg": 33
+    },
+    {
+      "map": "before",
+      "source": "post_front_measured_xy",
+      "count": 3,
+      "median_xy_m": 0.1044030650891061,
+      "max_xy_m": 0.241660919471891,
+      "median_yaw_deg": 3.707451747932478,
+      "median_fraction": 0.6931904523363036,
+      "within_30cm_10deg": 3
+    },
+    {
+      "map": "after",
+      "source": "post_front_measured_xy",
+      "count": 3,
+      "median_xy_m": 0.030000000000000693,
+      "max_xy_m": 0.030000000000000693,
+      "median_yaw_deg": 0.29254825206752677,
+      "median_fraction": 0.8896044068505622,
+      "within_30cm_10deg": 3
+    },
+    {
+      "map": "before",
+      "source": "S0_measured_xy",
+      "count": 3,
+      "median_xy_m": 0.04999999999999999,
+      "max_xy_m": 0.07071067811865478,
+      "median_yaw_deg": 0,
+      "median_fraction": 0.8726018981347161,
+      "within_30cm_10deg": 3
+    },
+    {
+      "map": "after",
+      "source": "S0_measured_xy",
+      "count": 3,
+      "median_xy_m": 0.04999999999999999,
+      "max_xy_m": 0.04999999999999999,
+      "median_yaw_deg": 0,
+      "median_fraction": 0.8684950680321744,
+      "within_30cm_10deg": 3
+    }
+  ],
+  "regression": {
+    "individual_office_xy_worsening_over_5cm": [
+      {
+        "interval": 0,
+        "t": 1791204305805,
+        "source": "verified_office",
+        "xy_delta_m": 0.15615528128088313,
+        "fraction_delta": -0.001881356713424931
+      },
+      {
+        "interval": 5,
+        "t": 1791204839759,
+        "source": "verified_office",
+        "xy_delta_m": 0.07071067811865465,
+        "fraction_delta": 0.015990493656887206
+      },
+      {
+        "interval": 10,
+        "t": 1791204930597,
+        "source": "verified_office",
+        "xy_delta_m": 0.2549509756796394,
+        "fraction_delta": 0.0034667379507298257
+      }
+    ],
+    "maximum_individual_xy_worsening_m": 0.2549509756796394,
+    "S0_median_xy_before_after_m": [
+      0.05,
+      0.05
+    ]
+  },
+  "post_error": {
+    "recorded_robot_xy_error_m": 0.8668333173107734,
+    "same_Node_replay_before_median_m": 0.1044030650891061,
+    "same_Node_replay_after_median_m": 0.030000000000000693,
+    "measured_xy_uncertainty_m": 0.1,
+    "actual_runtime_accuracy_verified": false
+  },
+  "routes": [
+    {
+      "profile": "field_clearance_25cm",
+      "map": "before",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    },
+    {
+      "profile": "field_clearance_25cm",
+      "map": "after",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    },
+    {
+      "profile": "AG_clearance_20cm",
+      "map": "before",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    },
+    {
+      "profile": "AG_clearance_20cm",
+      "map": "after",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    }
+  ],
+  "integrity": {
+    "source_sha256_unchanged": {
+      "base/evidence_spec.json": true,
+      "base/map_meta.json": true,
+      "base/output_sha256.json": true,
+      "base/pose_frame.json": true,
+      "base/README.txt": true,
+      "base/remap_report.json": true,
+      "base/repeated_observation_evidence.json": true,
+      "base/S0.json": true,
+      "base/slam_map.npy": true,
+      "base/slam_map.pgm": true,
+      "base/slam_map.yaml": true,
+      "base/slam_map_loc.npy": true,
+      "base/source_masks.npz": true,
+      "base/zones.json": true,
+      "base/zones_plan.json": true,
+      "base/zone_labels.npy": true,
+      "session/events.jsonl": true,
+      "session/nav_poll.log": true,
+      "session/spots.jsonl": true,
+      "session/truth_markers.json": true,
+      "session/NOTE_구간제외.md": true,
+      "session/runtime.log": true
+    },
+    "identical_metadata_and_anchor_files": {
+      "map_meta.json": true,
+      "pose_frame.json": true,
+      "zones.json": true,
+      "zones_plan.json": true,
+      "S0.json": true,
+      "zone_labels.npy": true,
+      "slam_map.yaml": true,
+      "source_masks.npz": true,
+      "evidence_spec.json": true
+    },
+    "outside_scope_unchanged": true,
+    "npy_readback_exact": true,
+    "pgm_matches_navigation": true,
+    "measured_partition_continuous_cells": 232,
+    "static_routes_all_20_pairs_pass": true,
+    "python_executed": false,
+    "robot_contact": false,
+    "activation": "none"
+  },
+  "warnings": [
+    "기둥 실측 XY 불확실도 ±10cm. Node 3cm는 같은 자리 시간 분리 스캔의 정합 진단이며 실물 정확도 보증 아님.",
+    "현장 기록 86.7cm와 동일 Node 재생 전 10.4cm는 서로 다른 방법이다. 지도 변경만으로 현장 오차가 3cm가 됐다고 확정할 수 없음.",
+    "작업실 verified 자세는 독립 정답이 아니다. 중앙값/최대값 유지와 별개로 개별 스캔의 위치 편차 악화가 남는다.",
+    "가벽 232칸 중 직접 반복 반사 지원은 일부뿐. 가구에 가려진 연속부는 사용자 줄자 실측 구조 사전정보로 추가.",
+    "기둥 구간은 물리적으로 한 자리이다. 반복 시간 근거이며 다중 위치 관측이 아님. 작업실은 3개의 서로 다른 자리 근거를 요구.",
+    "행거 앞 반사는 물체로 남는다. 가려진 뒤 벽 y5.71은 치수 근거로 기록하되 관측 없는 벽의 전체 가로 범위/욕실 깊이를 추정해 그리지 않음.",
+    "source_masks.npz/evidence_spec.json은 바이트 보존된 기존 지도 이력이다. 새 점유의 근거는 AL 파일을 참조.",
+    "Python 실제 정합/경로/전역 모호성 및 실물 검증 대기, 현장 적용 안 함.",
+    "쓰기 제한 때문에 정본 작업일지는 반영 대기."
+  ]
+}

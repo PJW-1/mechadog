@@ -15,7 +15,7 @@ LiDAR 는 중계 MCU 가 UART 를 받아 UDP 로 올리는 세 번째 방향의 
     ⑥ 기형인 점은 그 점만 버리고 스캔은 살린다. 버린 수는 `Scan.dropped` 로 돌려준다
 
 이 모듈은 소켓을 만지지 않는다 (ENGINEERING_GUIDE 2.1). 수신은 `tools/lidar/lidar_slam.py` ·
-`tools/ops/patrol_run.py` 가 한다.
+`host/telemetry/lidar_feed.py`(런타임) · `tools/ops/patrol_run.py` 가 한다.
 """
 
 from __future__ import annotations
@@ -62,6 +62,9 @@ class Scan:
     points: tuple[tuple[float, float], ...]
     #: 규칙 ⑥ 으로 버린 점의 수. 계속 늘면 배선·전원을 의심한다.
     dropped: int = 0
+    #: 호스트 수신 시간축. MCU ts_ms는 텔레메트리/호스트와 동기화되지 않는다.
+    received_ms: int | None = None
+    started_ms: int | None = None
 
     @property
     def scan_id(self) -> int:

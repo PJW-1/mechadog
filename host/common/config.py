@@ -74,7 +74,8 @@ def _read_mapping(path: Path) -> dict[str, Any]:
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
+        # 구역 정책은 ID 목록과 함께 교체한다. 삭제한 구역의 하위 정책을 되살리지 않는다.
+        if key != "policies" and isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _merge(out[key], value)
         else:
             out[key] = deepcopy(value)
@@ -97,6 +98,9 @@ def _require_positive(mapping: dict[str, Any], key: str) -> None:
 
 
 def validate_base_config(config: dict[str, Any]) -> None:
+    from host.behavior.live_nav import NavParams
+
+    NavParams.of(config)
     if not isinstance(config.get("profile"), str) or config["profile"] not in {"dev", "prod"}:
         raise ConfigError("profile 은 dev 또는 prod 여야 함")
     missing = [
@@ -104,10 +108,21 @@ def validate_base_config(config: dict[str, Any]) -> None:
     ]
     if missing:
         raise ConfigError(f"필수 설정 섹션 누락: {missing}")
+    for section, key in (("fsm", "hold_on_latched_alarm"), ("escalation", "ppe_recheck")):
+        if not isinstance(config[section].get(key, False), bool):
+            raise ConfigError(f"{section}.{key} 는 bool이어야 함")
+    warnings = config["escalation"].get("ppe_recheck_max_warnings", 2)
+    if isinstance(warnings, bool) or not isinstance(warnings, int) or not 1 <= warnings <= 10:
+        raise ConfigError("escalation.ppe_recheck_max_warnings 는 1~10 정수여야 함")
 
     blackbox_dir = config["logging"].get("blackbox_dir")
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
         raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
+
+    # 이력 DB 는 색인이라 끌 수 있다 — 키가 없거나 빈 문자열이면 쓰지 않는다 (ADR-46).
+    history_db = config["logging"].get("history_db")
+    if history_db is not None and not isinstance(history_db, str):
+        raise ConfigError("logging.history_db 는 문자열이어야 함")
 
     # 모드 이름 목록의 정본은 `behavior/mission.py` 하나다 — 여기서는 문자열인지만 본다.
     mode = config["mission"].get("mode")
@@ -181,6 +196,29 @@ def validate_base_config(config: dict[str, Any]) -> None:
             f"({period_ms}ms) 보다 짧아 한 번만 놓쳐도 ID 가 바뀜"
         )
 
+    _validate_collect(vision.get("collect"))
+    # LiDAR 막힘 원인 판독 (ADR-45) — 대기 상한과 프레임 나이 상한.
+    vlm = vision.get("vlm")
+    if not isinstance(vlm, dict):
+        raise ConfigError("vision.vlm 절이 없음")
+    for name in (
+        "budget_ms",
+        "patrol_interval_ms",
+        "path_cause_wait_ms",
+        "path_cause_max_frame_age_ms",
+    ):
+        _require_positive(vlm, name)
+        if not isinstance(vlm[name], int) or isinstance(vlm[name], bool):
+            raise ConfigError(f"vision.vlm.{name} 는 양의 정수여야 함")
+    # 없으면 세션이 기본값 32 를 쓴다. 있으면 양의 정수여야 한다.
+    if "max_new_tokens" in vlm:
+        tokens = vlm["max_new_tokens"]
+        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+            raise ConfigError("vision.vlm.max_new_tokens 는 양의 정수여야 함")
+    model_id = vlm.get("model_id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ConfigError("vision.vlm.model_id 는 비어 있지 않은 문자열이어야 함")
+
     # 인증 (FR-10) — 사원증 사전과 발급 대장. 절의 존재는 `REQUIRED_SECTIONS` 가 본다.
     auth = config["auth"]
     dictionary = auth.get("badge_dictionary")
@@ -247,6 +285,17 @@ def validate_base_config(config: dict[str, Any]) -> None:
     }.items():
         for name in names:
             _require_positive(config[section], name)
+
+    # `change_detect` 스위치는 bool 이어야 한다 — `bool("false")` 는 True 라서 따옴표로 쓴
+    # 문자열이 스위치를 켠다. 방문 키는 소비자가 `int()` 로 내린다.
+    change_detect = config["change_detect"]
+    for name in ("vlm_path_cause", "vlm_hazards", "vlm_hazard_items"):
+        if not isinstance(change_detect.get(name), bool):
+            raise ConfigError(f"change_detect.{name} 는 true 또는 false 여야 함")
+    for name in ("visit_frames", "visit_max_ms"):
+        value = change_detect.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"change_detect.{name} 는 양의 정수여야 함")
 
     fsm = config["fsm"]
     deadzone = fsm.get("track_deadzone_px")
@@ -316,6 +365,32 @@ def validate_base_config(config: dict[str, Any]) -> None:
         and not isinstance(lidar["scan_forward_enabled"], bool)
     ):
         raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
+    # 화기 위험구역은 순찰 구역 가운데서 고른다 — 없는 구역을 적으면 그 구역의 위험물
+    # 판독이 조용히 한 번도 돌지 않는다 (`ZoneInspector`).
+    zones = config["zones"]
+    ids = zones.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise ConfigError("zones.ids 는 비어 있지 않은 목록이어야 함")
+    hazard_ids = zones.get("hazard_ids")
+    if not isinstance(hazard_ids, list):
+        raise ConfigError("zones.hazard_ids 는 목록이어야 함")
+    unknown = [label for label in hazard_ids if label not in zones.get("ids", [])]
+    if unknown:
+        raise ConfigError(f"zones.hazard_ids 는 zones.ids 의 부분집합이어야 함: {unknown}")
+    policies = zones.get("policies", {})
+    if not isinstance(policies, dict):
+        raise ConfigError("zones.policies 는 구역별 설정 객체여야 함")
+    for label, policy in policies.items():
+        if label not in ids or not isinstance(policy, dict):
+            raise ConfigError("zones.policies 에 정의되지 않은 구역 또는 잘못된 값이 있음")
+        if any(key not in {"name", "helmet", "vest", "note"} for key in policy):
+            raise ConfigError("zones.policies 에 지원하지 않는 항목이 있음")
+        for item in ("helmet", "vest"):
+            if item in policy and not isinstance(policy[item], bool):
+                raise ConfigError(f"zones.policies.{label}.{item} 은 true/false 여야 함")
+        for key, limit in (("name", 60), ("note", 300)):
+            if key in policy and (not isinstance(policy[key], str) or len(policy[key]) > limit):
+                raise ConfigError(f"zones.policies.{label}.{key} 값이 올바르지 않음")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")
@@ -338,6 +413,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
             raise ConfigError(f"vision.ppe.{name} 안전 판정 조건은 켜져 있어야 함")
     if ppe["static_frames"] < 2 or not 1 <= ppe["max_posture_retries"] <= 5:
         raise ConfigError("PPE 정지 판정은 2프레임 이상, 재시도는 1~5회여야 함")
+    _validate_hazard(config["vision"].get("hazard"))
 
     providers = config["vision"].get("providers")
     if not isinstance(providers, list) or not providers:
@@ -427,6 +503,54 @@ def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
         raise ConfigError("posture_amplitude.source 는 phone_imu 또는 onboard_imu 여야 함")
     if not isinstance(amplitude.get("measured_on"), str) or not amplitude["measured_on"]:
         raise ConfigError("posture_amplitude.measured_on 기록이 필요함")
+
+
+def _validate_collect(collect: Any) -> None:
+    """VLM 학습용 프레임 수집 (`vision.collect`). 절이 없으면 꺼진 것이다."""
+    if collect is None:
+        return
+    if not isinstance(collect, dict):
+        raise ConfigError("vision.collect 는 매핑이어야 함")
+    for key in ("clear_every_ms", "clear_holdoff_ms", "max_files", "max_frame_age_ms"):
+        if key in collect:
+            _require_positive(collect, key)
+    root = collect.get("root")
+    if root is None:
+        return
+    if not isinstance(root, str) or not root.strip():
+        raise ConfigError("vision.collect.root 는 null 이거나 비어 있지 않은 경로 문자열이어야 함")
+    # 사진에 얼굴이 찍힌다 — 커밋될 수 있는 저장소 안에는 두지 않는다.
+    if repo_path(root).resolve().is_relative_to(ROOT.resolve()):
+        raise ConfigError(f"vision.collect.root 는 저장소 밖 경로여야 함: {root}")
+
+
+def _validate_hazard(hazard: Any) -> None:
+    """위험물 검출 절 (`vision.hazard`). 없으면 기능이 꺼진 것이다 — 있으면 값을 본다.
+
+    ⚠️ 금지 대상에 모델이 모르는 이름을 적으면 그 물건은 조용히 한 번도 경고되지 않는다.
+    """
+    if hazard is None:
+        return
+    if not isinstance(hazard, dict):
+        raise ConfigError("vision.hazard 는 매핑이어야 함")
+    if not isinstance(hazard.get("enabled"), bool):
+        raise ConfigError("vision.hazard.enabled 는 true 또는 false 여야 함")
+    classes = hazard.get("classes")
+    alarm = hazard.get("alarm_classes")
+    if not isinstance(classes, list) or not classes:
+        raise ConfigError("vision.hazard.classes 는 비어 있지 않은 목록이어야 함")
+    if not isinstance(alarm, list) or not alarm:
+        raise ConfigError("vision.hazard.alarm_classes 는 비어 있지 않은 목록이어야 함")
+    unknown = [label for label in alarm if label not in classes]
+    if unknown:
+        raise ConfigError(f"vision.hazard.alarm_classes 는 classes 의 부분집합이어야 함: {unknown}")
+    for name in ("confirm_window_ms", "hits_required"):
+        value = hazard.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"vision.hazard.{name} 는 양의 정수여야 함")
+    confidence = hazard.get("conf_threshold")
+    if not _finite_number(confidence) or not 0 < confidence <= 1:
+        raise ConfigError("vision.hazard.conf_threshold 는 0 초과 1 이하여야 함")
 
 
 def load_base_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:

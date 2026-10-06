@@ -9,7 +9,7 @@ FSM 상태(«무엇을 하는가»)와 직교하는 «얼마나 강하게 대응
          경비 추종은 고개를 든 뒤부터 (ADR-40 · 게이트는 `runtime`)
     L2   L1 이 10초 지속 & 미인증              인증 성공 → L0
                                              미검출 5초 · 30초 무응답 → **L3**
-    L3   인증 실패 · 사람 쓰러짐 · 물체 변화     **관리자 확인만**
+    L3   인증 실패 · 사람 쓰러짐 · 구역 위험     **관리자 확인만**
     F    링크두절 · 저전압 · 전도 · E-Stop     **로봇 래치 해제 확인만**
 
     (PPE 위반은 L3 래치가 아니라 `WARNED_BY` 의 경고다 — 아래 참고)
@@ -70,7 +70,7 @@ LED_KEYS: dict[Level, str] = {
 RAISED_BY: dict[str, Level] = {
     # ── L3 경보 ──
     "AUTH_FAILED": Level.L3,  # 2회 실패 또는 30초 무응답 (FR-10.3)
-    "ZONE_CHANGED": Level.L3,  # 물체 변화 확정 (FR-8.4)
+    "ZONE_CHANGED": Level.L3,  # 구역 위험(넘어짐·무너짐) 확정 (FR-8.4)
     "PERSON_DOWN": Level.L3,  # 쓰러짐 확정 (FR-9 · 4.8.3)
     # ── F 페일세이프 — 어느 단계에서든 즉시 들어간다 ──
     "ONBOARD_FAILSAFE": Level.F,  # 링크두절·저전압을 로봇이 보고

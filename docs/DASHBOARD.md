@@ -13,8 +13,21 @@ python -m pip install -r requirements-dev.txt
 python -m host.runtime --device mechdog-01 --dashboard-port 8000
 ```
 
-이 명령은 **기존 로봇 운용 런타임도 실행한다.** 서버만 시험하려면 아래 pytest를 쓴다.
-현재 작업에서는 런타임을 실물에 연결하지 않았다.
+**관제 화면 주소는 `http://127.0.0.1:8000/` 이다 — 흰색 화면(`/glass-preview/`)으로 간다.**
+단일 로봇·플릿 서버 모두 이 주소를 쓴다. `/index.html`을 직접 열어도 **같은 흰색 테마**가 적용된다.
+검정 화면은 Git 과거 버전의 복구용일 뿐 운용 진입점이 아니다. 정본은 저장소의
+`host/dashboard/glass-preview/`(흰색 테마·모션) + `host/dashboard/static/`(화면 본체)이며, 저장소 밖
+로컬 사본을 기준으로 삼지 않는다.
+
+이 명령은 **기존 로봇 운용 런타임도 실행한다.** 로봇·카메라·라이다를 시작하지 않고
+계획 편집만 하려면 별도 포트에서 아래를 실행한다. 저장 버튼은 이 PC의 설정 파일에 저장한다.
+
+```powershell
+python -m host.dashboard.preview --device mechdog-02 --port 8003
+```
+
+`http://127.0.0.1:8003/glass-preview/?view=zones`에서 편집한다. 이 서버는 명령 API를 제공하지 않으며,
+화면에 조회·계획 전용이라고 표시한다. 이미 실행 중인 로봇 서버를 종료할 필요가 없다.
 
 - `http://127.0.0.1:8000/health`: 서버 상태, 연결 수, 느린 클라이언트의 상태 갱신 합침 횟수.
 - `http://127.0.0.1:8000/api/telemetry`: 최신 상태 한 건.
@@ -24,6 +37,44 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 - `http://127.0.0.1:8000/#dashboard`: 관제 화면 (아래 절).
 
 ## 관제 화면
+
+### 구역 · 동선
+
+주 메뉴에서 순찰 순서·점검 지점·방향·공장 모드의 안전모/조끼 필수 여부와 위험물 점검 구역을 편집한다.
+설정의 `zones.ids`가 첫 순회 순서이고, 마지막에서 첫 구역으로 돌아온다. 첫 순회 뒤 순서를 섞는
+기존 옵션도 설정할 수 있다. 경비 모드는 기존 신원 확인/암구호를 사용하고, PPE·위험물 검사는 공장 모드에만 적용한다.
+
+- **실제 지도:** `lidar.maps_dir`의 기존 점유격자를 읽는다. 미관측 셀·장애물과 기존 로봇 여유 폭을 반영한 A*로 경로를 미리 계산한다. 지도 없는 화면에 예시 경로를 표시하지 않는다.
+- **구역 의미:** 앵커와 `zones.arrival_radius_mm` 반경의 점검 지점이다. 임의 다각형의 출입 금지 구역은 아니다. 위치는 m, 방향은 지도 기준 도(0° = +X, 90° = +Y)로 입력하고 기존 `zones.json`에는 rad로 저장한다.
+- **저장/적용:** 선택한 개체의 `config/devices/<id>.local.yaml`에 순서·위험 구역·`zones.policies`를, 지도 폴더의 `zones.json`에 좌표를 저장한다. 기존 통신·보행 설정은 보존한다. **다음 런타임 시작에 적용**되며 현재 설정과 다르면 재시작 대기를 표시한다. 저장은 주행 명령이 아니다.
+- **공유 지도:** 동일 지도 폴더를 사용하는 로봇은 동일 라벨의 좌표를 공유한다. 다른 계획만 사용하는 좌표는 삭제하지 않는다. 순서와 점검 항목은 개체별이다.
+- **작성 보호:** 서버 변경 충돌은 409로 거절한다. 저장 실패·페이지 이동·텔레메트리 수신에도 초안을 유지하고 로봇별로 분리한다. 브라우저 초안은 서버 적용으로 표시하지 않는다.
+- **PPE 기준:** 신선한 위치가 앵커 반경 안에 있을 때 구역 정책을 사용한다. 반경이 겹치면 요구 항목을 합친다. 위치 불명·수신 만료·구역 밖에서는 안전모와 조끼를 모두 요구한다. 구역 요구 항목이 바뀌면 이전 위반 시간 창과 완료 기억을 비우고 이전 항목으로 계산한 결과는 쓰지 않는다.
+- ~~**물품 기준:** 명령 API가 있는 실제 관제 연결에서는 현재 운용 중인 구역의 기준 재등록도 요청할 수 있다. 다음 현장 관측을 새 기준으로 사용하며 경보 잠금은 해제하지 않는다.~~ *(2026-10-05 폐기 — [ADR-44](DECISIONS.md#adr-44): 기준 재등록 버튼은 코드와 함께 제거된다.)*
+
+계획 미리보기는 첫 순회 구간만 계산한다. 현재 로봇 위치에서 첫 구역까지의 이동, 순서 섞기 이후 경로,
+현장의 동적 장애물, 주행 정확도는 실물 검증 대상이다. 공장 모드의 기존 기능 개방 조건도 그대로 유지한다.
+
+| API | 용도 |
+| --- | --- |
+| `GET /api/planning` | 저장본·기동 당시 설정·지도 상태·수정 버전 |
+| `GET /api/planning/map.png` | 저장 점유격자 이미지 |
+| `POST /api/planning/preview` | 구역 사이 첫 순회 A* 계산, 명령 전송 없음 |
+| `POST /api/planning` | 수정 버전 검사 후 설정 저장 |
+
+플릿에서는 각 `/robots/<id>` 아래 같은 API를 쓴다. 파일 읽기와 경로 계산은 관제 이벤트 루프 밖에서 처리한다.
+
+| API | 용도 |
+| --- | --- |
+| `GET /api/history/incidents` | 사건 이력 목록. 필터 `since` `until` `robot` `zone` `event` `escalation` `mission` `reviewed`, 쪽 `limit`(1~500) `offset`. 응답 `{items, total, limit, offset}` |
+| `GET /api/history/incidents/{id}` | 사건 하나. 없으면 404 |
+| `GET /api/history/runs` | 순찰 판 목록. `robot` `limit` `offset` |
+| `GET /api/history/robots` · `GET /api/history/zones` | 로봇·구역 목록 `{items}` |
+| `POST /api/history/incidents/{id}/review` | 검토 저장 `{reviewed, resolution}`. 갱신된 사건을 돌려준다 |
+
+이력 API는 로컬 출처만 받는다. 오류 본문은 다른 경로와 같은 `{"error": <사유>}`이고, 잘못된 본문은 400, 없는 사건은 404, 저장소 오류는 503이며, 질의 매개변수 형식 오류만 422다. `logging.history_db`가 비어 저장소가 없으면 경로는 그대로 두고 모두 503 `history_disabled`를 돌려준다(화면이 «꺼짐»과 «없음»을 가른다). **플릿에서는 모든 기체가 저장소 하나를 공유하므로 어느 `/robots/<id>` 아래에서도 전 기체 기록이 나온다** — 기체별은 `?robot=`으로 거른다. 사진은 새 경로 없이 기존 `GET /events/{entry}/snapshot.jpg`를 쓴다(사건의 `blackbox_entry`). 플릿에서는 사건의 `robot_id`를 따라 `/robots/<robot_id>/events/...`를 부른다. 자세한 형식은 [DATA_MODEL](DATA_MODEL.md#6-조회-api).
+
+### 화면 구성
 
 화면은 **`host/dashboard/static/`** 에 있고 서버가 빌드 없이 그대로 내보낸다. three.js 는
 `node_modules` 설치 없이도 동작하도록 **`static/vendor/`** 에 함께 싣는다 — 설치를 빠뜨리면
@@ -113,6 +164,8 @@ python -m host.runtime --device mechdog-01 --dashboard-port 8000
 | 링크 · 안전 래치 | 초당 **새 seq** 수 · 누락 수 / 잠김·해제 |
 | 마지막 명령 수락 나이 | 로봇 시계 기준 |
 | 링크 지연 (RTT) | **미측정** — `link_rtt_ms: null` 을 그대로 말한다 |
+| 비전 모델 | 로드된 모델마다 `이름 · sha256 앞 12자리 · provider`. 비전 없이 띄우면 *비전 없음 · 미수신*, 아직 연 모델이 없으면 *로드된 모델 없음* |
+| 추론 지연 p50 / p95 | 비전 워커가 잰 프레임당 처리 시간(최근 512건, nearest-rank). 표본이 없으면 *측정 전* |
 
 배터리와 전방 거리는 **최근 60초 추이**(선 · 최소 · 최대 · 지금)를 함께 그린다.
 
@@ -166,12 +219,31 @@ Origin만 허용한다. 로컬 비브라우저 클라이언트는 Origin 없이 
 | `telemetry_age_ms`, `stale` | 마지막 유효 수신 후 PC 단조 시계 경과. 기존 `safety.link_loss_failsafe_ms` 이상이면 stale |
 | `runtime_age_ms`, `runtime_stale` | 마지막 운용 틱 상태 갱신 후 경과. 런타임 중단과 센서 수신 중단을 구분 |
 | `link_rtt_ms` | 현재 null. 시계가 다른 로봇 uptime과 PC 시각을 빼서 RTT라고 표시하지 않음 |
+| `vision` | `{models:[{name,sha256,provider}], inference:{n,p50_ms,p95_ms}}` — `VisionWorker.status()`. 비전 없이 띄우면 null. `/api/telemetry` 도 같은 값 |
 
 유효하지 않은 패킷·타 개체·역전 seq는 기존 수신 규칙으로 폐기하며 최신 값과
 수신 시각을 갱신하지 않는다. 새 부팅의 seq=1은 기존 부팅 세션 규칙대로 수락한다.
 WS 10Hz는 **표시 갱신률**이다. 동일 seq가 반복되거나 stale인 상태를 새 센서 측정으로
 세면 안 된다. stale 상태에서도 마지막 관측은 남지만 정상/안전 판정으로 사용하지 않는다.
 전압 범위와 온보드 안전 판정은 변경하지 않았다.
+
+## 사건 추적 — 블랙박스 `meta.json`
+
+사건 기록(`host/common/blackbox.py`)과 대시보드 이벤트 푸시는 아래 추적 값을 함께 싣는다. 관제 화면의
+사건 근거 표(`operations.js`)는 값이 있는 것만 *사건 ID · 세션 · 프레임 · 설정 해시 · 모델 · 지연* 행으로 보인다.
+
+| 필드 | 값의 출처 |
+| --- | --- |
+| `event_id` | 기록할 때마다 새 `uuid4().hex` |
+| `session_id` | 런타임 시작마다 하나(`host.common.trace.new_session_id`). 세션 기록기가 꺼져 있어도 만들고, 켜져 있으면 `manifest.json` 의 `session_id` 와 같다 |
+| `device_id` | 실행 시 고른 개체 프로파일 이름 |
+| `frame_id` | 사건을 일으킨 영상 프레임의 수신 순번(`Frame.seq`) |
+| `config_sha256` | 병합된 설정을 키 정렬 JSON 으로 만든 sha256 — manifest 의 값과 같은 계산 |
+| `models` | 로드된 모델마다 `{name, sha256, provider}`. sha256 은 기동 때 한 번만 계산한다 |
+| `latency` | 잰 값만(ms): `inference_ms` 프레임당 처리 시간, `frame_to_result_ms` 수신→추론 완료, `frame_to_decision_ms` 수신→판단. 잴 수 없는 값은 키가 없다 |
+
+⚠️ 이 필드가 없는 옛 `meta.json` 도 그대로 읽는다 — 빈 값(«모름»)으로 둔다. 세션 manifest 는 같은
+`session_id` 와 모델별 `{name, file, sha256, meta}` 를 남긴다(`meta` 는 `models/<이름>.meta.json`, 없으면 `{}`).
 
 ## 검출 오버레이 — `/ws/vision`
 
