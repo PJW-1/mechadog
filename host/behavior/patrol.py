@@ -1466,9 +1466,9 @@ class PatrolController:
             self._local_decision("turn", "relaxed_escape_turn", front)
             return
         # 2026-10-06 실기: 걸으며 호 조향은 약해서 보행 우편향을 못 이기고(오른쪽으로 밀려 방1 벽 앞
-        # 정지), 몸도 기운다(10-04 roll +17~26°). 오차가 12° 넘으면 멈춰서 제자리 회전으로 바로잡고,
+        # 정지), 몸도 기운다(10-04 roll +17~26°). 오차가 8° 넘으면 멈춰서 제자리 회전으로 바로잡고,
         # 그 안이면 조향 없이 직진한다 — 매 틱 측위 방위로 다시 재므로 폐루프다.
-        spin = abs(error) > math.radians(12) or (
+        spin = abs(error) > math.radians(8) or (
             self._spinning and abs(error) > self.drive.heading_tolerance_rad
         )
         self._spinning = spin
