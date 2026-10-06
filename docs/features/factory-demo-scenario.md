@@ -18,7 +18,7 @@ flowchart TD
   HZ -->|예| HN["가벼운 경고 hazard_notice, 방송 + 대시보드. L3 아님"]
   HZ -->|아니요| S4
   HN --> S4["4. C 에서 D 로 이동"]
-  S4 --> FALL{"이동 중 쓰러진 사람? 의심 L1 에서 VLM person_down 예 2회, 간격 1초 이상"}
+  S4 --> FALL{"이동 중 쓰러진 사람? 의심 L1 뒤 정지 3초 규칙 확정 프레임에 VLM person_down 예"}
   FALL -->|예| TRK["우선 접근 TRACK, 확정 시 L3, 방송 + 관제 알림"]
   TRK --> CONF{"운용자가 대시보드에서 확인?"}
   CONF -->|예| REPLAN["순찰 복귀, 현재 위치에서 원래 목표 D 로 재계획"]
@@ -51,7 +51,7 @@ flowchart TD
 | 이동 중 막힘 | 가벼운 경고 + LiDAR 우회, L3 아님 | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
 | 막힘 원인 판독 (VLM `blocked_by_fallen`) | LiDAR 가 막힘을 확정한 프레임에 한 번 묻고 답을 `path_blocked` 판정 근거 `fallen` 에 싣는다. 물었으면 기록은 답 또는 1500ms 상한에 닿을 때까지 미루고, 물을 수 없으면 바로 기록한다. 방송 문장은 켠 뒤 «예» 일 때만 «무너진 물건» 을 말함 (꺼짐 · 벤치 통과 전) | `vision.vlm.path_cause_wait_ms` · `change_detect.vlm_path_cause` | [ADR-45](../DECISIONS.md#adr-45) |
 | 구역 방문 VLM `blocked_path` 가벼운 경고 `path_blocked` (L3 아님 · 2026-10-01 개정) | 꺼짐 (벤치 통과 전) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
-| 쓰러짐 확정 | 의심 뒤 판독 «예» 2회, 간격 1000ms 이상 | `fsm.fall_confirm_vlm_yes` · `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) |
+| 쓰러짐 확정 (2026-10-07 개정) | YOLOX 누움 규칙이 정지 3초를 채운 프레임의 같은 JPEG 에 VLM `person_down` «예». 불일치 · 시간 초과는 «확인 필요»(`fall_review_required`), L3 아님 | `vision.fallen.confirm_ms` · `vision.vlm.budget_ms` | [ADR-42](../DECISIONS.md#adr-42) · [ADR-47](../DECISIONS.md#adr-47) |
 | PPE | 모든 구역에서 판정, 위반은 경고 뒤 자동 복귀 | `escalation.ppe_warning_hold_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | 런타임 LiDAR 순찰 | 선택. 켜는 인자 | `python -m host.runtime ... --lidar-device <id>` | [ADR-43](../DECISIONS.md#adr-43) |
 

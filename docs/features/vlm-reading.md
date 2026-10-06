@@ -51,7 +51,10 @@ flowchart TD
   PD -->|예| SUS["쓰러짐 의심 · FALL_SUSPECTED · 단계 L1"]
   F0["공장 모드 PATROL 에서 2000ms 마다 · 의심 중에는 판독이 끝날 때마다 · person_down 한 항목 판독"]
   F0 -->|의심 전에 건 판독이 예| SUS
-  F0 -->|의심 중에 건 판독이 예| CNT["예 횟수 누적 · 1000ms 이상 떨어진 2회면 PERSON_DOWN · L3"]
+  F0 -->|의심 중에 건 판독이 예| CNT["의심 유지 · 확정에는 세지 않음"]
+  RULE["YOLOX 누움이 정지 3초를 채운 프레임"] -->|같은 JPEG 로 person_down 판독| CROSS{"예?"}
+  CROSS -->|예| PDN["PERSON_DOWN · L3"]
+  CROSS -->|아니요 · 실패 · 3초 초과| REV["fall_review_required · 확인 필요"]
 ```
 
 `hazard_item` 은 `zones.hazard_ids`(시연은 C) 의 방문에서만 묻는다. 같은 방문 안 서로 다른 프레임의 «예» 2회로 확정하고, 확정은 가벼운 경고(`hazard_notice`)이지 L3 가 아니다([ADR-43](../DECISIONS.md#adr-43)).
@@ -69,7 +72,7 @@ flowchart TD
 | 동시 판독 | 1건 · 겹치면 거절 (쌓지 않음) | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
 | 구역 판독 | 방문당 한 번 · 세 항목 | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
 | 순찰 중 쓰러짐 판독 | 공장 모드 `PATROL` 에서 2000ms 마다 · `person_down` 한 항목 | `vision.vlm.patrol_interval_ms` | [ADR-42](../DECISIONS.md#adr-42) |
-| 쓰러짐 확정 | 의심 뒤 건 판독의 «예» 2회 · 서로 1000ms 이상 떨어진 프레임 | `fsm.fall_confirm_vlm_yes` · `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) |
+| 쓰러짐 확정 (2026-10-07 개정) | YOLOX 누움 규칙이 정지 3초를 채운 프레임의 같은 JPEG 에 `person_down` «예». «아니오» · 실패 · 상한 초과는 «확인 필요»(`fall_review_required`). 의심 중 판독 «예» 는 확정에 세지 않는다 | `vision.fallen.confirm_ms` · `vision.vlm.budget_ms` | [ADR-42](../DECISIONS.md#adr-42) · [ADR-47](../DECISIONS.md#adr-47) |
 | 넘어짐 확정 (L3) · 통로 막힘 확정 (가벼운 경고 `path_blocked`) | 같은 방문 안 두 판독이 모두 «예» (기본값은 꺼짐) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) |
 | LiDAR 막힘 원인 질문 | `Is the walkway blocked by an object that has fallen over or collapsed? Answer with yes or no only.` (`blocked_by_fallen`) · LiDAR 가 막힘을 확정한 그 프레임에만 · 공장 모드에서만 · 답 대기 상한 1500ms | `vision.vlm.path_cause_wait_ms` · `vision.vlm.path_cause_max_frame_age_ms` (기본 1000ms · 최신 프레임이 이보다 오래됐으면 묻지 않음) | [ADR-45](../DECISIONS.md#adr-45) |
 | LiDAR 막힘 원인 방송 문장 | 답이 «예» 일 때만 «무너진 물건» 을 말함 (기본값은 꺼짐). 꺼져도 질문은 걸고 답은 판정 근거에 남김 | `change_detect.vlm_path_cause` | [ADR-45](../DECISIONS.md#adr-45) |

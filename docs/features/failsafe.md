@@ -58,14 +58,14 @@ flowchart TD
   S0["거리 표본 확인 · loop 마다"] --> FRESH{"유효하고 200ms 이내인 새 표본인가?"}
   FRESH -->|아니요| KEEP["판정 유지 · 카운터 그대로"]
   KEEP --> S0
-  FRESH -->|예| NEAR{"25cm 미만인가?"}
-  NEAR -->|예| N2{"25cm 미만이 연속 2표본인가?"}
+  FRESH -->|예| NEAR{"7cm 미만인가?"}
+  NEAR -->|예| N2{"7cm 미만이 연속 2표본인가?"}
   N2 -->|아니요| S0
   N2 -->|예 · 처음 걸림| STOP["move 0,0 · flags.obstacle=true · state=AVOID 보고"]
-  NEAR -->|아니요| FAR{"30cm 이상인가?"}
-  FAR -->|아니요 · 25~30cm| MID["두 카운터 0 · 상태 유지"]
+  NEAR -->|아니요| FAR{"10cm 이상인가?"}
+  FAR -->|아니요 · 7~10cm| MID["두 카운터 0 · 상태 유지"]
   MID --> S0
-  FAR -->|예| C5{"30cm 이상이 연속 5표본인가?"}
+  FAR -->|예| C5{"10cm 이상이 연속 5표본인가?"}
   C5 -->|아니요| S0
   C5 -->|예| REL["flags.obstacle=false · 해제"]
   MV["MOVE 수신"] --> MQ{"래치 또는 서비스 모드인가?"}
@@ -87,7 +87,7 @@ flowchart TD
 | 저전압 셧다운 → 래치 | 6.6V 이하 새 표본 연속 3개 | `safety.battery_shutdown_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
 | 셧다운 재무장 · 해제 허용 | 7.0V 초과로 회복 | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
 | 반사 정지 | 7cm 미만 연속 2표본(2026-10-06 25→7) (센서 주기 40ms) | `safety.obstacle_stop_cm` | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
-| 반사 해제 | 30cm 이상 연속 5표본 | 펌웨어 `kObstacleClearCm` · `clear_samples` (설정 키 없음) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 반사 해제 | 10cm 이상 연속 5표본(2026-10-06 30→10) | 펌웨어 `kObstacleClearCm` · `clear_samples` (설정 키 없음) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 표본 신선도 | 측정 뒤 200ms 이내, 같은 표본은 한 번만 셈 | 펌웨어 `max_sample_age_ms` (설정 키 없음) | — |
 | 반사 정지 중 허용 명령 | 후진·제자리 조향(step 0)·정지 | 없음 | [ADR-22](../DECISIONS.md#adr-22) |
 | `RESET_SAFE` 거부 | Wi-Fi 끊김 · 저전압 원인 남음 · OTA 확인 대기 이미지 | 없음 | [ADR-21](../DECISIONS.md#adr-21) |

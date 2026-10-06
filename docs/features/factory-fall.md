@@ -1,7 +1,7 @@
 # 공장 모드 쓰러짐 확정
 
 공장 모드에서 쓰러진 작업자를 찾아 경보(L3)를 올린다. 웅크리거나 물건을 줍는 자세 하나로 경보가 뜨지 않게 의심과 확정을 두 단계로 나눈다.
-YOLOX 누움 후보나 VLM 판독 «예» 한 번은 의심(L1)만 만든다. 확정은 의심에 든 뒤 건 VLM 판독의 «예» 가 서로 1초 이상 떨어진 프레임에서 2회 모일 때뿐이다.
+YOLOX 누움 후보나 VLM 판독 «예» 한 번은 의심(L1)만 만든다. 확정은 YOLOX 누움 규칙이 정지 3초를 채운 프레임을 VLM 에 다시 물어 «예» 를 받을 때뿐이다. «아니오» · 판독 실패 · 시간 초과는 «확인 필요»(`fall_review_required`)로만 남는다 (2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47)).
 
 ## 판단 흐름
 
@@ -15,9 +15,11 @@ flowchart TD
   C -->|예| CD
   CD -->|예| A
   CD -->|아니요| S["FALL_SUSPECTED, ALERT, L1 노랑. 박스가 있으면 TRACK 으로 접근"]
-  S --> R{"의심 뒤 건 판독의 예가 1초 이상 간격으로 2회?"}
+  S --> R{"YOLOX 누움이 정지 3초를 채운 같은 프레임을 VLM 에 물어 예?"}
   R -->|예| PD["PERSON_DOWN, L3 빨강 점멸, 쓰러짐 문장, 장면 기록"]
-  R -->|아니요| T{"의심 20초 초과?"}
+  R -->|아니요, 판독 실패, 3초 초과| RV["fall_review_required 확인 필요 기록, L3 아님"]
+  RV --> T
+  R -->|규칙 확정 전| T{"의심 20초 초과?"}
   T -->|예| RES["FALL_RESOLVED, PATROL, L0, 쿨다운 20초"]
   T -->|아니요| U{"5초 동안 검출도 판독 예도 없나?"}
   U -->|예| END["TARGET_LOST, PATROL, L0, 쿨다운 없음"]
@@ -35,8 +37,9 @@ flowchart TD
 | 누움 후보: 정지 판정 | 박스 중심 이동 20px 이하 | `vision.fallen.still_threshold_px` | [쓰러짐 규칙 실기](../../field_tests/results/20260923_person-down/summary.md) |
 | 누움 후보를 이어 주는 박스 공백 | 1000ms 이하 | `vision.fallen.gap_ms` | [쓰러짐 규칙 실기](../../field_tests/results/20260923_person-down/summary.md) |
 | 순찰 중 판독 주기 | 2000ms | `vision.vlm.patrol_interval_ms` | [ADR-42](../DECISIONS.md#adr-42) |
-| 확정에 필요한 판독 «예» | 2회 (의심에 들게 한 «예» 는 세지 않음) | `fsm.fall_confirm_vlm_yes` | [ADR-42](../DECISIONS.md#adr-42) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
-| 센 «예» 끼리의 프레임 간격 | 1000ms 이상 | `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) |
+| 확정 (2026-10-07 개정) | 누움 후보가 정지를 이어 간 시간이 3000ms 를 채운 프레임의 같은 JPEG 에 VLM `person_down` «예». 의심 중 판독 «예» 는 확정에 세지 않는다 | `vision.fallen.confirm_ms` | [ADR-47](../DECISIONS.md#adr-47) · [10-06 현장 실측](../measurements/2026-10-06-field-patrol.md) |
+| 교차검증 판독 상한 | 3000ms, 넘거나 판독기가 바쁘면 «확인 필요» | `vision.vlm.budget_ms` | [ADR-47](../DECISIONS.md#adr-47) |
+| 의심 중 센 «예» 끼리의 프레임 간격 (진단용, 확정에 쓰지 않음) | 1000ms 이상 | `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) · [ADR-47](../DECISIONS.md#adr-47) |
 | 의심 제한 시간 | 20000ms | `fsm.fall_suspect_timeout_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | 재의심 쿨다운 | 20000ms | `fsm.fall_resuspect_cooldown_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | 의심 중 대상 상실 | 5초 | `fsm.target_lost_timeout_s` | [ADR-42](../DECISIONS.md#adr-42) |
@@ -65,9 +68,10 @@ flowchart TD
 | 누움 후보 → 의심, 접근 | `host/runtime.py` 의 `Runtime._observe_fallen` · `host/behavior/track_controller.py` 의 `TrackController.track` · `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `test_a_lying_candidate_suspects_a_fall_and_approaches` |
 | 순찰 판독 «예» → 의심, 진입 «예» 는 세지 않음 | `host/behavior/fall_monitor.py` 의 `FallMonitor.ask` · `FallMonitor.take_reading` | `test_a_patrol_reading_asks_only_person_down_every_interval` · `test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` |
 | 구역 판독 «예» → 의심 | `host/behavior/zone_inspector.py` 의 `ZoneInspector._take_reading` | `test_a_person_down_reading_at_a_zone_suspects_a_fall_not_an_alarm` · `test_a_person_down_reading_that_lands_after_leaving_still_suspects` |
-| «예» 2회, 1초 간격 → `PERSON_DOWN` | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` · `FallMonitor._confirm` | `test_a_fall_is_confirmed_by_readings_a_gap_apart` · `test_a_no_between_readings_does_not_reset_the_count` |
-| YOLOX 단독 확정 없음 | `host/runtime.py` 의 `Runtime._observe_fallen` | `test_lying_alone_never_raises_the_alarm` |
-| `PERSON_DOWN` → L3, 상태는 그대로 | `host/behavior/escalation.py` 의 `RAISED_BY` · `host/behavior/fall_monitor.py` 의 `FallMonitor._confirm` | `test_factory_fall_raises_l3_without_moving_the_state` · `test_a_confirmed_fall_is_recorded_with_its_reason` |
+| 규칙 확정 프레임의 VLM 교차검증 → `person_fallen` 또는 `fall_review_required` | `host/behavior/fall_monitor.py` 의 `FallMonitor._ask_cross` · `FallMonitor.take_cross_reading` · `FallMonitor._cross_result` | `tests/test_ppe_test_mode.py::test_rule_cross_verification_at_rest` · `tests/test_ppe_test_mode.py::test_unavailable_vlm_releases_a_review_without_new_frames` |
+| 의심 중 VLM «예» 누적만으로는 확정 없음 | `host/behavior/fall_monitor.py` 의 `FallMonitor.take_reading` | `test_a_reading_alone_suspects_and_its_entry_answer_does_not_count` · `test_a_no_between_readings_does_not_reset_the_count` |
+| YOLOX 단독 확정 없음 (VLM «아니오» 면 정지 3초 확정도 L3 아님) | `host/runtime.py` 의 `Runtime._observe_fallen` · `host/behavior/fall_monitor.py` 의 `FallMonitor._cross_result` | `test_lying_alone_never_raises_the_alarm` |
+| `PERSON_DOWN` → L3, 상태는 그대로 | `host/behavior/escalation.py` 의 `RAISED_BY` · `host/behavior/fall_monitor.py` 의 `FallMonitor._cross_result` | `test_factory_fall_raises_l3_without_moving_the_state` · `test_a_confirmed_fall_is_recorded_with_its_reason` |
 | 의심 동안 L1 유지 | `host/behavior/escalation.py` 의 `Escalation.note_fall_suspect` · `Escalation.tick` | `test_a_fall_suspect_holds_observe_until_released` |
 | 20초 제한 시간 → 순찰 | `host/behavior/fall_monitor.py` 의 `FallMonitor.watch` · `FallMonitor.resolve` | `test_an_unconfirmed_suspect_times_out_back_to_patrol` |
 | 재의심 쿨다운 | `host/behavior/fall_monitor.py` 의 `FallMonitor.suspect` | `test_a_timed_out_suspect_is_not_suspected_again_during_the_cooldown` · `test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm` |

@@ -15,7 +15,8 @@ namespace mechadog {
 // 이 파일에는 하드웨어 호출이 없다 — 센서 값을 받아 판정만 돌려준다. 그래서
 // 로봇 없이 PC 에서 전수 시험할 수 있다 (CONTRIBUTING 5.2 HAL 분리).
 struct SafetyThresholds {
-  // config/config.yaml `safety` 절과 같은 값이어야 한다.
+  // 기본값은 PC 단위 시험(test/test_safety_monitor.cpp)용이다. 실기 값은 스케치가
+  // kObstacleStopCm·kObstacleClearCm(7/10cm, 2026-10-06 · ADR-47)로 덮어쓴다.
   float obstacle_stop_cm = 25.0F;   // safety.obstacle_stop_cm (FR-2.2)
   float battery_warn_v = 7.0F;      // safety.battery_warn_v (NFR-2.3)
   float battery_shutdown_v = 6.6F;  // safety.battery_shutdown_v (NFR-2.3)
