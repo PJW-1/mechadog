@@ -241,6 +241,23 @@ def test_evaluate_variant_reports_episode_metrics(recorded):
     assert sum(row["own_directions"].values()) <= row["alarms_total"]
 
 
+def test_evaluate_variant_counts_only_judged_segments(recorded):
+    """판정 대상이 아닌 구간이 세션에 있어도 분모는 C1·C3 와 같은 판정 대상 구간만 센다."""
+    session = ab.replay_recorded(recorded, ab.Variant("base"))
+    base = ab.evaluate_variant(session, PLAN)
+    extra = {
+        "verdicts": {BAD: 0, OK: 50, UNK: 50},
+        "orientations": {},
+        "frames": 100,
+    }
+    mixed = {**session, "segments": {**session["segments"], "crouching-all": extra}}
+    row = ab.evaluate_variant(mixed, PLAN)
+    for key in ("determinate", "total", "right", "count"):
+        assert row[key] == base[key]
+    assert row["decidable_rate"] == base["decidable_rate"]
+    assert row["effective_rate"] == base["effective_rate"]
+
+
 def test_breakdown_by_condition(recorded):
     rows = ab.breakdown(ab.replay_recorded(recorded, ab.Variant("base")))
     row = next(r for r in rows if r["segment"] == "standing-all" and r["orientation"] == "좌측")

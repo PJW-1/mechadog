@@ -50,7 +50,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from host.vision.detector import Detection  # noqa: E402
 from tools.ppe import episode_eval  # noqa: E402
-from tools.ppe.acceptance_judge import Criterion, judge_session, load_criteria  # noqa: E402
+from tools.ppe.acceptance_judge import (  # noqa: E402
+    Criterion,
+    judge_session,
+    judged_specs,
+    load_criteria,
+)
 from tools.ppe.ppe_live_check import (  # noqa: E402
     DEFAULT_ACCEPTANCE_PLAN,
     STATE_OK,
@@ -351,6 +356,8 @@ def _assemble(
             **meta.get("settings", {}),
             "window_ms": variant.window_ms,
             "hits_required": variant.hits_required,
+            # CLI 의 --window-ms/--hits 덮어쓰기 표시다. 변형의 창은 window_ms·hits_required 로
+            # 이미 기록되고 judge 가 기준과 따로 비교하므로 여기서는 항상 False 다.
             "overridden": False,
         },
         "segments": rebuild_segments(events, orientations),
@@ -428,7 +435,8 @@ def evaluate_variant(
     results: list[Criterion] = judge_session(session, specs, criteria, step_s)
 
     right = total = determinate = covered = 0
-    for spec in specs:
+    # C1·C3 와 같은 분모 — 판정 대상 구간만 센다.
+    for spec in judged_specs(specs, criteria):
         stats = session.get("segments", {}).get(spec["key"])
         if not stats:
             continue
@@ -442,7 +450,7 @@ def evaluate_variant(
     ep = summary["total"]["episode"]
     # C2 는 앞 방향에서 이월된 경보도 확정으로 센다. 그 방향 에피소드 안에서 제한시간 안에
     # 스스로 낸 경보가 있는 방향만 따로 센다.
-    judged = set(criteria["judged_segments"])
+    judged = {spec["key"] for spec in judged_specs(specs, criteria)}
     own: dict[str, set[str | None]] = {
         s["key"]: set() for s in specs if s["key"] in judged and s["expected"] == STATE_VIOLATION
     }
