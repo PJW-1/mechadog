@@ -130,7 +130,10 @@ def test_mount_missing_warns_and_keeps_mock_defaults() -> None:
     assert (yaw, direction) == (0.0, 1)
     assert "LIDAR_MOUNT_YAW_DEG" in warning and "LIDAR_ANGLE_DIRECTION" in warning
 
-    _, _, partial = mount_from_env({"LIDAR_MOUNT_YAW_DEG": "270", "LIDAR_ANGLE_DIRECTION": " "})
+    yaw, direction, partial = mount_from_env(
+        {"LIDAR_MOUNT_YAW_DEG": "270", "LIDAR_ANGLE_DIRECTION": " "}
+    )
+    assert (yaw, direction) == (270.0, 1)
     assert "LIDAR_ANGLE_DIRECTION" in partial and "LIDAR_MOUNT_YAW_DEG" not in partial
 
 
