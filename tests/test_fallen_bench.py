@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from host.common.config import load_base_config
-from host.vision.detector import Detection, ModelMissingError
+from host.vision.detector import Detection, ModelMissingError, nms
 from tools.probe import fallen_bench as fb
 
 BASE = load_base_config()
@@ -161,6 +161,29 @@ def test_sweep_row_with_lower_conf_recovers_low_score(tmp_path: Path) -> None:
     assert rows[round(low, 2), 1.5]["frames"]["recall"] == 1.0
     assert rows[OP_CONF, 1.5]["frames"]["recall"] == 0.0
     assert raw["summary"]["operating"]["missed"][fb.MISS_PERSON] == 1
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_refilter_after_floor_nms_equals_nms_at_conf(seed: int) -> None:
+    """바닥값에서 억제한 뒤 거른 박스 = 그 conf 에서 바로 억제한 박스 (런타임 `nms`).
+
+    대역 검출기는 NMS 를 하지 않으므로 훑기의 전제를 실제 `nms` 로 따로 고정한다.
+    """
+    rng = np.random.default_rng(seed)
+    centers = rng.uniform(0, 200, size=(6, 2))
+    xy = centers[rng.integers(0, 6, size=40)] + rng.normal(0, 15, size=(40, 2))
+    wh = rng.uniform(20, 120, size=(40, 2))
+    boxes = np.hstack([xy, xy + wh])
+    scores = rng.permutation(np.linspace(0.1, 0.95, 40))  # 같은 점수 없음
+    iou = float(BASE["vision"]["coco"]["iou_threshold"])
+    floor = 0.1
+    above_floor = np.flatnonzero(scores >= floor)
+    kept_floor = above_floor[nms(boxes[above_floor], scores[above_floor], iou)]
+    for conf in (0.2, 0.3, 0.4, 0.5, 0.7):
+        above = np.flatnonzero(scores >= conf)
+        direct = set(above[nms(boxes[above], scores[above], iou)].tolist())
+        refiltered = {int(i) for i in kept_floor if scores[i] >= conf}
+        assert refiltered == direct, conf
 
 
 # ── ③ 장면 채점 ─────────────────────────────────────────────────────
