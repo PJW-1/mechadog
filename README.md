@@ -90,7 +90,7 @@ flowchart TD
 - 추적은 IoU 로 ID 를 잇고, 박스 높이와 초음파 거리로 정지선을 정한 뒤 가로 편차로 정면을 맞춥니다([사람 확인·추적](docs/features/person-tracking.md)).
 - 스트림 수신과 추론은 제어 루프와 분리되어 있고, 추론이 밀리면 오래된 프레임을 버립니다([비전 스트림](docs/features/vision-stream.md)).
 - 검출기가 말할 수 없는 장면(쓰러진 사람, 막힌 통로)은 로컬 VLM(Qwen2-VL-2B-Instruct)에 닫힌 질문으로 한 장씩 묻습니다. VLM 이 늦거나 실패해도 주행은 막히지 않습니다([VLM 단일 장면 판독](docs/features/vlm-reading.md)).
-- PPE(보호구) 검출은 개발 중입니다.
+- PPE(안전모·조끼) 검출은 사람 크롭마다 직접 학습한 YOLOX-S(ppe-v5)를 돌리고, 로봇 카메라 직립 4구간 실측에서 합격 기준을 통과했습니다. 웅크림·머리 잘림은 아직 실기로 검증하지 않았습니다([PPE 실기 검수](docs/PPE_ACCEPTANCE.md), [PPE 데이터 카드](docs/ppe-data-card.md)).
 
 ### 3. 백엔드와 관측성
 
