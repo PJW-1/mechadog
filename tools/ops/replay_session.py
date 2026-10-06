@@ -99,11 +99,20 @@ def load_session(directory: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]
 
 
 def load_summary(directory: Path) -> dict[str, Any] | None:
-    """기록기가 닫을 때 남긴 summary.json. 없으면 None — 기록이 정상 종료되지 않았다."""
+    """기록기가 닫을 때 남긴 summary.json. 없으면 None — 기록이 정상 종료되지 않았다.
+
+    있는데 읽지 못하면(반쯤 쓰였거나 JSON 객체가 아님) `{"read_error": 이유}` — «없음» 과 구별한다.
+    """
     path = directory / SUMMARY_FILE
     if not path.is_file():
         return None
-    return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # JSONDecodeError·UnicodeDecodeError 는 ValueError
+        return {"read_error": f"{type(exc).__name__}: {exc}"}
+    if not isinstance(data, dict):
+        return {"read_error": f"JSON 객체가 아니다({type(data).__name__})"}
+    return cast("dict[str, Any]", data)
 
 
 def manifest_begin_ms(manifest: Mapping[str, Any]) -> int | None:
@@ -381,7 +390,10 @@ def _apply_operator(runtime: Runtime, event: Mapping[str, Any]) -> bool:
     if action in _PLAIN_ACTIONS:
         getattr(runtime, str(action))()
     elif action == "apply_external":
-        runtime.apply_external(Event[str(event["event"])])
+        name = str(event.get("event"))
+        if name not in Event.__members__:  # 이름이 바뀌기 전에 남긴 옛 기록
+            return False
+        runtime.apply_external(Event[name])
     elif action == "set_mode":
         runtime.set_mode(str(event["target"]))
     elif action == "ask_goto":
@@ -693,8 +705,22 @@ def limitations(
     if unknown:
         names = ", ".join(f"{name} {count}건" for name, count in sorted(unknown.items()))
         notes.append(f"재생기가 모르는 관제 입력({names}) — 재생에서 빠졌다")
+    external = Counter(
+        str(e.get("event"))
+        for e in events
+        if e["kind"] == "operator"
+        and e.get("action") == "apply_external"
+        and str(e.get("event")) not in Event.__members__
+    )
+    if external:
+        names = ", ".join(f"{name} {count}건" for name, count in sorted(external.items()))
+        notes.append(f"재생기가 모르는 외부 사건({names}) — 재생에서 빠졌다")
     if summary is None:
         notes.append("summary.json 이 없다 — 기록이 정상 종료되지 않아 버린 사건 수를 모른다")
+    elif "read_error" in summary:
+        notes.append(
+            f"summary.json 을 읽지 못했다({summary['read_error']}) — 버린 사건 수를 모른다"
+        )
     else:
         if summary.get("dropped"):
             notes.append(
