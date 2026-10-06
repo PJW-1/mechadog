@@ -260,8 +260,10 @@ class Detector:
         """
         if self._session is not None:
             return
-        self._session = self._factory(self._model_path, self._preferred)
+        session = self._factory(self._model_path, self._preferred)
+        # 해시(35MB)를 먼저 끝낸 뒤에 `loaded` 가 True 가 된다 — 그 전에 상태 조회가 오면 해시를 또 계산한다.
         self.model_file()
+        self._session = session
         self._warm_up()
 
     def _warm_up(self) -> None:
