@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import inspect
 import io
 import json
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -22,12 +24,17 @@ from host.runtime import Runtime
 from host.telemetry.session_recorder import SessionRecorder
 from host.vision.vlm_reader import VlmReader
 from tools.ops.replay_session import (
+    OPERATOR_ACTIONS,
     RecordedVision,
     compare,
+    limitations,
     load_session,
+    load_summary,
     main,
+    manifest_begin_ms,
     normalize_command,
     replay,
+    session_start_ms,
     vision_from_event,
 )
 
@@ -241,6 +248,7 @@ def test_cli_writes_report(
     assert report["baseline"]["commands"]["match_ratio"] == 1.0
     assert report["what_if"]["commands"]["match_ratio"] < 1.0
     assert report["overrides"] == {"network.cmd_rate_hz": 5}
+    assert report["limitations"] == []  # summary.json 을 읽었고 버린 사건이 없다
     text = capsys.readouterr().out
     assert "명령 일치" in text
 
@@ -252,3 +260,64 @@ def test_cli_help_survives_cp949_console(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(SystemExit) as exc:
         main(["--help"])
     assert exc.value.code == 0
+
+
+def test_every_recorded_operator_input_is_replayable() -> None:
+    """런타임이 기록하는 관제 입력은 재생기도 안다 — 새 입력이 재생에서 조용히 빠지지 않게."""
+    source = Path(str(inspect.getsourcefile(Runtime))).read_text(encoding="utf-8")
+    recorded = set(re.findall(r'_record_input\(\s*"(\w+)"', source))
+    assert len(recorded) == 11
+    assert recorded <= OPERATOR_ACTIONS
+
+
+def test_limitations_name_unknown_operator_inputs() -> None:
+    events = [
+        {"t": 0, "kind": "runtime_begin"},
+        {"t": 10, "kind": "operator", "action": "ask_patrol"},
+        {"t": 20, "kind": "operator", "action": "made_up"},
+        {"t": 30, "kind": "operator", "action": "made_up"},
+    ]
+    notes = limitations(events, {"dropped": 0, "failed": None})
+    assert len(notes) == 1
+    assert "made_up" in notes[0] and "2건" in notes[0]
+
+
+def test_limitations_report_dropped_failed_and_missing_summary() -> None:
+    events = [{"t": 0, "kind": "runtime_begin"}]
+    assert limitations(events, {"dropped": 0, "failed": None}) == []
+    assert any("3건" in note for note in limitations(events, {"dropped": 3, "failed": None}))
+    failed = limitations(events, {"dropped": 0, "failed": "disk full"})
+    assert any("disk full" in note for note in failed)
+    assert any("summary.json" in note for note in limitations(events, None))
+
+
+def test_load_summary_reads_recorder_summary(session: Path, tmp_path: Path) -> None:
+    summary = load_summary(session)
+    assert summary is not None and summary["dropped"] == 0
+    assert load_summary(tmp_path) is None
+
+
+def test_compare_counts_escalation_seen_only_in_replay() -> None:
+    recorded = [{"t": 0, "kind": "runtime_begin"}]
+    replayed = [*recorded, {"t": 50, "kind": "escalation", "level": "L1"}]
+    esc = compare(recorded, replayed)["escalation"]
+    assert esc["recorded"] == 0 and esc["replayed"] == 1 and esc["match_ratio"] == 0.0
+
+
+def test_compare_skips_escalation_for_old_recordings() -> None:
+    """runtime_begin 이전 형식은 경보 단계를 기록하지 않았다 — 비교하면 가짜 불일치다."""
+    old = [{"t": 0, "kind": "command_sent", "lines": []}]
+    assert "escalation" not in compare(old, [*old, {"t": 50, "kind": "escalation", "level": "L1"}])
+
+
+def test_start_ms_is_the_same_rule_for_report_and_replay() -> None:
+    events = [{"t": 500, "kind": "telemetry"}]
+    assert session_start_ms(events, 400) == 400
+    assert session_start_ms(events, None) == 500
+    assert session_start_ms([{"t": 450, "kind": "runtime_begin"}, *events], 400) == 450
+
+
+def test_manifest_begin_reads_both_clock_keys() -> None:
+    assert manifest_begin_ms({"started_clock_ms": 7}) == 7
+    assert manifest_begin_ms({"started_mono_ms": 9}) == 9  # 10-06 이전 기록의 키
+    assert manifest_begin_ms({}) is None

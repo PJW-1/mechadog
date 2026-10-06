@@ -47,7 +47,11 @@ from host.behavior.mission import Mission  # noqa: E402
 from host.common.config import load_config  # noqa: E402
 from host.common.console import survive_encoding_errors  # noqa: E402
 from host.runtime import Runtime, build_parser  # noqa: E402
-from host.telemetry.session_recorder import EVENTS_FILE, MANIFEST_FILE  # noqa: E402
+from host.telemetry.session_recorder import (  # noqa: E402
+    EVENTS_FILE,
+    MANIFEST_FILE,
+    SUMMARY_FILE,
+)
 from host.vision.badge import Marker  # noqa: E402
 from host.vision.detector import Detection  # noqa: E402
 from host.vision.hazard_detector import HazardVerdict  # noqa: E402
@@ -61,6 +65,20 @@ from host.vision.worker import VisionResult  # noqa: E402
 VOLATILE_FIELDS = ("seq", "ts")
 #: 같은 시각에 다시 부르는 관제 입력 중 인자가 없는 것.
 _PLAIN_ACTIONS = ("ask_patrol", "ask_reset", "ask_alarm_confirm", "send_emergency_stop")
+#: 재생기가 다시 부를 수 있는 관제 입력 전체 — `Runtime._record_input` 이 남기는 이름과 같아야
+#: 한다(시험이 런타임 소스와 맞춰 본다). 여기 없는 입력은 재생에서 빠지고 `limitations` 에 남는다.
+OPERATOR_ACTIONS = frozenset(
+    (
+        *_PLAIN_ACTIONS,
+        "apply_external",
+        "set_mode",
+        "ask_goto",
+        "ask_locate_zone",
+        "note_voice_listening",
+        "note_voice_auth",
+        "send_immediate",
+    )
+)
 
 
 # ── 읽기 ─────────────────────────────────────────────────────
@@ -78,6 +96,33 @@ def load_session(directory: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]
                 events.append(json.loads(line))
     events.sort(key=lambda e: e["t"])
     return manifest, events
+
+
+def load_summary(directory: Path) -> dict[str, Any] | None:
+    """기록기가 닫을 때 남긴 summary.json. 없으면 None — 기록이 정상 종료되지 않았다."""
+    path = directory / SUMMARY_FILE
+    if not path.is_file():
+        return None
+    return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+
+
+def manifest_begin_ms(manifest: Mapping[str, Any]) -> int | None:
+    """기록 시작 시각. 10-06 이전 기록은 같은 벽시계 값을 `started_mono_ms` 로 남겼다."""
+    value = manifest.get("started_clock_ms", manifest.get("started_mono_ms"))
+    return None if value is None else int(value)
+
+
+def session_start_ms(events: Sequence[Mapping[str, Any]], begin_ms: int | None) -> int:
+    """재생을 시작하는 시각 — 첫 `runtime_begin`, 없으면 manifest 시작, 그것도 없으면 첫 사건.
+
+    `events` 는 시각 순이어야 한다. 보고의 «기동 기준» 표시도 이 값을 쓴다.
+    """
+    for event in events:
+        if event["kind"] == "runtime_begin":
+            return int(event["t"])
+    if begin_ms is not None:
+        return begin_ms
+    return int(events[0]["t"]) if events else 0
 
 
 def normalize_command(line: str) -> str:
@@ -383,8 +428,7 @@ def replay(
     vision_spec = config.get("vision")
     if isinstance(vision_spec, dict) and vision_spec.get("collect"):
         vision_spec["collect"] = {}  # 학습용 프레임 수집이 디스크에 쓰지 않게
-    starts = [e["t"] for e in ordered if e["kind"] == "runtime_begin"]
-    start_ms = starts[0] if starts else (begin_ms if begin_ms is not None else ordered[0]["t"])
+    start_ms = session_start_ms(ordered, begin_ms)
     shutdown = [e["t"] for e in ordered if e["kind"] == "command_sent" and "repeats" in e]
     end_ms = shutdown[-1] if shutdown else ordered[-1]["t"]
 
@@ -533,7 +577,8 @@ def compare(
         },
         "fsm": _align(_transitions(recorded), _transitions(replayed)),
     }
-    if any(e["kind"] == "escalation" for e in recorded):
+    # 경보 단계는 runtime_begin 과 같은 때부터 기록했다 — 그 전 형식은 비교하면 가짜 불일치다.
+    if any(e["kind"] in ("escalation", "runtime_begin") for e in recorded):
         report["escalation"] = _align(_levels(recorded), _levels(replayed))
     return report
 
@@ -625,8 +670,10 @@ def _merge(base: dict[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def limitations(events: Sequence[Mapping[str, Any]]) -> list[str]:
-    """이 세션에서 재생이 재현하지 못하는 것."""
+def limitations(
+    events: Sequence[Mapping[str, Any]], summary: Mapping[str, Any] | None
+) -> list[str]:
+    """이 세션에서 재생이 재현하지 못하는 것. `summary` 는 기록기의 summary.json(없으면 None)."""
     kinds = Counter(e["kind"] for e in events)
     notes = []
     if not kinds.get("runtime_begin"):
@@ -638,6 +685,24 @@ def limitations(events: Sequence[Mapping[str, Any]]) -> list[str]:
         notes.append("영상 판정 전체가 없는 옛 기록 — 사람 판정을 검출로 근사했다(추적·PPE 없음)")
     if kinds.get("scan") or kinds.get("localization") or kinds.get("navigator_phase"):
         notes.append("LiDAR 길 찾기는 재생하지 않는다 — PATROL 중 MOVE 는 고정 보행 시퀀스가 낸다")
+    unknown = Counter(
+        str(e.get("action"))
+        for e in events
+        if e["kind"] == "operator" and e.get("action") not in OPERATOR_ACTIONS
+    )
+    if unknown:
+        names = ", ".join(f"{name} {count}건" for name, count in sorted(unknown.items()))
+        notes.append(f"재생기가 모르는 관제 입력({names}) — 재생에서 빠졌다")
+    if summary is None:
+        notes.append("summary.json 이 없다 — 기록이 정상 종료되지 않아 버린 사건 수를 모른다")
+    else:
+        if summary.get("dropped"):
+            notes.append(
+                f"기록 큐가 넘쳐 사건 {summary['dropped']}건을 버렸다 — "
+                "빠진 입력 때문에 재생이 기록과 갈릴 수 있다"
+            )
+        if summary.get("failed"):
+            notes.append(f"기록 쓰기 실패({summary['failed']}) — 그 뒤 사건이 빠졌을 수 있다")
     return notes
 
 
@@ -729,10 +794,9 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         "robot_ip": None if options is None else options.robot_ip,
         "no_vision": None if options is None or not options.no_vision else True,
         "motion_lock": bool(options is not None and options.motion_lock),
-        "begin_ms": manifest.get("started_mono_ms"),
+        "begin_ms": manifest_begin_ms(manifest),
     }
-    begin = [e["t"] for e in events if e["kind"] == "runtime_begin"]
-    start_ms = begin[0] if begin else (events[0]["t"] if events else 0)
+    start_ms = session_start_ms(events, replay_kwargs["begin_ms"])
 
     baseline = replay(events, config, **replay_kwargs)
     report: dict[str, Any] = {
@@ -745,7 +809,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             if recorded_hash is None
             else config_sha256(_as_run_config(config, options)) == recorded_hash
         ),
-        "limitations": limitations(events),
+        "limitations": limitations(events, load_summary(args.session)),
         "baseline": compare(events, baseline),
         "timeline": timeline(baseline, start_ms, args.timeline),
     }
