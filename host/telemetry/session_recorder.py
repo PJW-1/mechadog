@@ -11,8 +11,10 @@
 `boot_id` 는 원본 전문 안에 그대로 남으므로 따로 빼지 않는다. 벽시계(UTC)와 단조 시계의
 기준점은 `manifest.json` 에 한 번 남긴다.
 
-이 기록은 **원본 보존용**이다 — 측위·지도 갱신은 이 파일을 읽지 않는다. 재생은
-`tools/ops/session_summary.py` 가 한다.
+이 기록은 **원본 보존용**이다 — 측위·지도 갱신은 이 파일을 읽지 않는다. 읽는 도구는 둘이다.
+`tools/ops/session_summary.py` 는 흐름별 수·공백·명령 통계를 요약하고,
+`tools/ops/replay_session.py` 는 입력 사건(`runtime_begin`·`telemetry`·`vision`·`operator`)을
+`Runtime` 에 다시 넣어 같은 명령·FSM 전이·경보 단계(`escalation`)가 나오는지 맞춰 본다.
 """
 
 from __future__ import annotations

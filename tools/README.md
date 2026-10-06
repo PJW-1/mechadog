@@ -26,6 +26,8 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 | [mechdog_command.py](ops/mechdog_command.py) | UDP로 임의의 명령(POSE/사운드 등)을 직접 보내는 범용 CLI | 필요 | 보냄 |
 | [fetch_models.py](fetch_models.py) | 모델 가중치를 받고 해시로 검증한다 | 불필요 | 읽기전용 |
 | [firmware_env.py](dev/firmware_env.py) | 펌웨어 빌드 환경(버전·파일·gitignore)을 점검만 한다 | 불필요 | 읽기전용 |
+| [session_summary.py](ops/session_summary.py) | `--record-dir` 기록의 흐름별 수·공백·IMU·측위·명령을 요약한다(오프라인) | 불필요 | 읽기전용 |
+| [replay_session.py](ops/replay_session.py) | `--record-dir` 기록을 `Runtime` 에 다시 넣어 같은 명령·FSM 전이·경보 단계가 나오는지 비교한다(`--set` 으로 «이 설정이었다면») | 불필요 | 읽기전용(가짜 소켓, 아무것도 보내지 않는다) |
 | [zone_select.py](ops/zone_select.py) | 저장된 지도 위에서 클릭으로 순찰 구역 좌표를 붙인다 | 불필요 | 읽기전용 |
 | [make_badges.py](ops/make_badges.py) | 사원증 ArUco 마커를 인쇄용 이미지로 만든다 | 불필요 | 읽기전용 |
 | [lidar_slam.py](lidar/lidar_slam.py) | 사람이 옮긴 로봇의 정지 스캔들을 정합해 공간 지도를 만든다 | 선택(`--simulate`) | 읽기전용(명령 소켓을 열지 않는다) |
@@ -36,6 +38,16 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 | [lidar_scene_export.py](lidar/lidar_scene_export.py) | 저장된 지도를 3D 뷰어용 `scene.json`으로 내보낸다 | 불필요 | 읽기전용 |
 | [lidar_scene_view.py](lidar/lidar_scene_view.py) | 내보낸 scene을 로컬 웹서버로 띄워 확인한다(`scene_viewer/` 사용) | 불필요 | 읽기전용 |
 | [ld19_serial_relay.py](lidar/ld19_serial_relay.py) | LD19 라이다를 USB-UART로 PC에 직결해 UDP로 중계한다(중계보드 대역) | 필요(시리얼 포트) | 읽기전용(스캔 중계, 로봇 명령 아님) |
+
+## 기록 세션 재생
+
+```
+python -m host.runtime --device mechdog-01 --record-dir field_tests/results/<날짜_이름>/raw ...
+python tools/ops/replay_session.py field_tests/results/<날짜_이름>/raw
+python tools/ops/replay_session.py <기록 폴더> --set network.cmd_rate_hz=5 --json report.json
+```
+
+첫 줄이 실기 세션을 기록하고(`raw/` 는 gitignore 다 — 프레임에 얼굴이 찍힌다), 둘째 줄이 그 기록의 텔레메트리·영상 판정·관제 입력을 기록 시각 그대로 `Runtime` 에 다시 넣는다. 재생한 명령(`seq`·`ts` 제외)·FSM 전이·경보 단계를 기록과 순서대로 맞춰 일치율과 첫 불일치를 찍는다. 설정은 manifest 의 `--device` 로 읽고(`--config` 로 바꿀 수 있다), 지금 설정의 해시가 기록 당시와 다르면 알린다. 셋째 줄처럼 `--set`(여러 번)·`--overlay <YAML>` 을 주면 바꾼 설정으로 한 번 더 재생해 기록·기준 재생과 비교한다. LiDAR 길 찾기·VLM 판독·대시보드 직접 조종은 재생하지 않으며, 해당하는 세션이면 «재현 한계» 로 출력한다.
 
 ## 하드웨어 없이 개발하기
 
@@ -80,7 +92,7 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 
 ## 하위 폴더
 
-- `ops/` — 운영 도구(조종·순찰·OTA·명령·구역·사원증).
+- `ops/` — 운영 도구(조종·순찰·OTA·명령·구역·사원증·기록 요약·재생).
 - `lidar/` — 라이다 지도·스캔 도구와 중계. `lidar/scene_viewer/` 는 `lidar_scene_view.py`가 서빙하는 3D 지도 뷰어 정적 파일(HTML/JS/CSS)이며 단독 실행 대상이 아니다.
 - `mock/` — 하드웨어 없이 개발할 때 쓰는 가상 로봇·가상 라이다.
 - `probe/` — 실기 측정·점검 도구.
