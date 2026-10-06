@@ -3900,7 +3900,7 @@ def test_a_fall_is_confirmed_by_readings_a_gap_apart(config: dict, clock: FakeCl
 
     의심 중에는 판독이 끝날 때마다 다시 묻지만, 1초 안의 «예» 는 거의 같은 사진이라 하나로
     센다. 누움 누적은 확정에 쓰지 않는다 — YOLOX 는 누운 사람을 거의 못 잡는다(4.8.0 벤치
-    10장 중 1장). 확정하면 `PERSON_DOWN` 이 L3 를 올리고 기록이 남는다."""
+    10장 중 1장, 이 수치는 2026-10-06 폐기·재실측 중). 확정하면 `PERSON_DOWN` 이 L3 를 올리고 기록이 남는다."""
     need = int(config["fsm"]["fall_confirm_vlm_yes"])
     gap = int(config["fsm"]["fall_confirm_gap_ms"])
     runtime, vision, fake, recorded = _factory_runtime(config, clock, *[DOWN] * 100)
