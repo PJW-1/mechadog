@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 
 from host.behavior.commander import Commander
@@ -64,6 +65,7 @@ class CommandService:
         locate_zone: Callable[[str], tuple[bool, str]] | None = None,
         goto_point: Callable[[float, float], tuple[bool, str]] | None = None,
         pose: tuple[float, int] | tuple[float, int, float] | None = None,
+        stopping_patrol: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> None:
         self._behavior = behavior
         self._commander = commander
@@ -87,6 +89,11 @@ class CommandService:
         self._confirm_alarm = confirm_alarm
         self._locate_zone = locate_zone
         self._goto_point = goto_point
+        # «순찰 정지» 가 수동을 거치는 동안 런타임에 알려, 그 판을 `manual` 이 아닌 `stopped` 로
+        # 닫게 한다 (ADR-46 결정 5). 런타임 없는 시험에서는 아무것도 하지 않는다.
+        self._stopping_patrol: Callable[[], AbstractContextManager[None]] = (
+            stopping_patrol if stopping_patrol is not None else nullcontext
+        )
         # 수동 자세 (B6). `(posture.pitch_up_deg, posture.settle_ms)` — PPE 자세 상승과 같은 검증된
         # 각도만 쓰고 임의 각도는 받지 않는다(검증하지 않은 자세로 보행하면 넘어진다).
         self._pose_pitch: dict[str, float] = (
@@ -376,7 +383,7 @@ class CommandService:
         전이표에 `PATROL → IDLE` 직행 사건이 없으므로 **수동을 한 번 거친다** —
         `MANUAL_ON` 으로 자율을 끊고(로봇 halt) 곧바로 `MANUAL_OFF` 로 내려
         `IDLE` 에 정착한다. `ESTOP` 과 달리 래치를 걸지 않아 해제 절차가
-        필요 없는, "정상 정지"다.
+        필요 없는, "정상 정지"다. 이력에는 수동 조종과 구별해 `stopped` 로 남긴다 (ADR-46).
         """
         if self._behavior.state not in self._AUTONOMOUS:
             return CommandResult(
@@ -385,7 +392,8 @@ class CommandService:
                 state=self._behavior.state,
                 detail="자율 동작 중이 아니다",
             )
-        entered = self.manual_on()
+        with self._stopping_patrol():
+            entered = self.manual_on()
         if not entered.accepted:
             return CommandResult(
                 command="patrol_stop",

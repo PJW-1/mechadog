@@ -107,7 +107,7 @@ erDiagram
 | `result` | TEXT | 진행 중 NULL, 끝나면 `stopped` · `manual` · `failsafe` · `shutdown` · `interrupted` | 5절 |
 | `zones_visited` | TEXT | 구역 id 의 JSON 배열(처음 도착한 순서) | ZoneInspector 앵커 도착 |
 | `incident_count` | INTEGER | 그 판에 쌓인 사건 수 | `incidents` 집계 |
-| `stop_reason` | TEXT | 끝낸 FSM 트리거 이름(`ESTOP` · `LINK_LOST` · `MANUAL_ON` 등) 또는 `runtime_stopped` | FSM 전이 |
+| `stop_reason` | TEXT | 끝낸 FSM 트리거 이름(`ESTOP` · `LINK_LOST` · `MANUAL_ON` 등) · `patrol_stop` · `runtime_stopped` | FSM 전이 |
 
 ### 3.4 `incidents` · 사건
 
@@ -172,8 +172,9 @@ erDiagram
 
 - **연다:** FSM 이 대기·안전 상태 `{IDLE, MANUAL, FAILSAFE}` 를 떠나 다른 상태로 가는 순간. 보통 `START_PATROL` 로 `IDLE → PATROL` 이다.
 - **닫는다:** 그 상태 중 하나로 다시 들어가는 순간, 또는 런타임이 멈출 때.
-- `result`: `stopped`(IDLE 로 들어감) · `manual`(MANUAL) · `failsafe`(FAILSAFE) · `shutdown`(런타임 정상 종료) · `interrupted`(다음 기동 때 열린 채 발견됨, 예 비정상 종료).
-- `stop_reason`: 닫은 FSM 트리거 이름 또는 `runtime_stopped`.
+- `result`: `stopped`(관제 «순찰 정지») · `manual`(그 밖의 MANUAL 진입) · `failsafe`(FAILSAFE) · `shutdown`(런타임 정상 종료) · `interrupted`(다음 기동 때 열린 채 발견됨, 예 비정상 종료).
+- **«순찰 정지» 는 `MANUAL` 을 거치지만 `stopped` 다.** 전이표에 자율 → `IDLE` 직행 사건이 없어 정지 명령은 `MANUAL_ON` 뒤 곧바로 `MANUAL_OFF` 로 내린다. 이 `MANUAL` 진입은 수동 조종과 구별해 `stopped` · `patrol_stop` 으로 닫는다(`Runtime.stopping_patrol`).
+- `stop_reason`: 닫은 FSM 트리거 이름, `patrol_stop`(«순찰 정지»), 또는 `runtime_stopped`.
 - `zones_visited`: 구역 도착(ZoneInspector 의 앵커 도착)을 처음 도착한 순서로 담는다.
 
 ## 6. 조회 API
@@ -201,6 +202,8 @@ python tools/ops/history_import.py --device <unit-id> [--blackbox DIR] [--db PAT
 ```
 
 경로 기본값은 `logging.blackbox_dir` · `logging.history_db`. 플릿이 남긴 기록은 로봇마다 `<blackbox_dir>/<device>` 에 있으므로 `--blackbox` 로 그 폴더를 주고 기체마다 한 번씩 돌린다. 순찰 판은 블랙박스에 없어 복구되지 않는다.
+
+`--device` 는 런타임 `--device` 와 같은 프로필 이름(`config/devices/<id>.yaml`, 예 `mechdog-02`)이다. 텔레메트리 ID(`mechdog-<MAC>`)를 주면 사건 ID(`<robot_id>_<폴더 이름>`)가 달라져 같은 사건이 한 번 더 들어간다.
 
 ## 7. DB 밖에 남는 데이터
 
