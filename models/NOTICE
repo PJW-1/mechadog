@@ -17,7 +17,7 @@ Copyright 2026 MechDog Physical AI Team
             출력은 격자 디코드 전 원시 [1, 8400, 9]
   학습일    2026-10-02 · ppe-v4 에서 미세 조정 · 데이터 ppe4_cs_md_v2 + 하단각도 자체 촬영
             · Release 태그 ppe-v5
-  상태      XIAO 실측 전 후보 (WBS 3.7.3 은 mechdog-01 실측으로만 판단한다)
+  상태      배포 모델 · 2026-10-06 mechdog-01 XIAO 직립 4구간 합격 (WBS 3.7.3, docs/PPE_ACCEPTANCE.md)
   라이선스  CC BY 4.0 — 공개 학습 데이터 두 개가 모두 CC BY 4.0 이고(§3),
             나머지는 팀이 직접 촬영한 사진이다(§3 (3)). 비상업(NC) 데이터는 쓰지 않았다.
 
