@@ -1,0 +1,281 @@
+"""PPE 전처리·후처리 ablation(`tools/ppe/ablation.py`) 검증.
+
+모델과 프레임은 CI 에 없다. 판정·누적 규칙은 합성 검출값으로, 기준 재현은 저장소에 있는
+2026-10-06 세션 원자료(`session.json`)로 본다.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from host.vision.detector import Detection  # noqa: E402
+from tools.ppe import ablation as ab  # noqa: E402
+from tools.ppe import ppe_live_check as ppe  # noqa: E402
+
+OK, BAD, UNK = ppe.STATE_OK, ppe.STATE_VIOLATION, ppe.STATE_UNKNOWN
+SESSION_1006 = (
+    Path(__file__).resolve().parents[1]
+    / "field_tests"
+    / "results"
+    / "20261006_ppe-xiao"
+    / "session.json"
+)
+PLAN = ppe.DEFAULT_ACCEPTANCE_PLAN
+
+
+def det(label, score=0.9, box=(10.0, 20.0, 40.0, 50.0)):
+    return [label, score, *box]
+
+
+def person(dets, origin=(0, 0)):
+    return {"origin": list(origin), "dets": dets}
+
+
+def frame(tag, persons, crops, full=None, shape=(480, 640)):
+    """persons: [(score, box)], crops: {키: [person(...) | None]}"""
+    return {
+        "tag": tag,
+        "shape": list(shape),
+        "persons": [{"score": s, "box": list(b)} for s, b in persons],
+        "crops": crops,
+        "full": full or [],
+    }
+
+
+WORN = [det("helmet", box=(10, 20, 30, 40)), det("vest", box=(5, 60, 50, 120))]
+NO_HELMET = [det("no_helmet", box=(10, 20, 30, 40)), det("vest", box=(5, 60, 50, 120))]
+
+
+# ── 한 사람 판정 ─────────────────────────────────────────────
+
+
+def test_conf_threshold_filters_cached_detections():
+    dets = [
+        det("helmet", 0.8, (10, 20, 30, 40)),
+        det("no_helmet", 0.45, (10, 20, 30, 40)),
+        det("vest", 0.9, (5, 60, 50, 120)),
+    ]
+    base = {"clip": "crop", "head_margin": 8, "origin": (0, 0), "person_box": (0, 50, 60, 200)}
+    assert ab.judge_person(dets, conf=0.5, **base).state == OK
+    assert ab.judge_person(dets, conf=0.4, **base).state == BAD
+    assert ab.judge_person(dets, conf=0.95, **base).reason == "아무것도 미검출"
+
+
+def test_clip_modes_crop_frame_off():
+    """도구는 머리 상단을 크롭 좌표로, 런타임은 프레임 좌표로 잰다."""
+    head_at_crop_top = [det("helmet", box=(10, 3, 30, 40)), det("vest", box=(5, 60, 50, 120))]
+    kw = {"conf": 0.5, "head_margin": 8, "origin": (50, 100), "person_box": (60, 110, 120, 300)}
+    assert ab.judge_person(head_at_crop_top, clip="crop", **kw).reason == "머리 클리핑"
+    assert ab.judge_person(head_at_crop_top, clip="frame", **kw).state == OK
+    assert ab.judge_person(head_at_crop_top, clip="off", **kw).state == OK
+
+
+def test_frame_clip_uses_person_top_like_runtime():
+    kw = {"conf": 0.5, "head_margin": 8, "origin": (0, 0), "person_box": (60, 2, 120, 300)}
+    assert ab.judge_person(WORN, clip="frame", **kw).reason == "머리 클리핑"
+
+
+def test_missing_crop_is_crop_failure():
+    kw = {
+        "conf": 0.5,
+        "clip": "crop",
+        "head_margin": 8,
+        "origin": (0, 0),
+        "person_box": (0, 0, 1, 1),
+    }
+    assert ab.judge_person(None, **kw).reason == "크롭 실패"
+
+
+# ── 프레임 판정 ─────────────────────────────────────────────
+
+
+def test_frame_judgements_gate_and_primary():
+    small, tall = (0.9, (0, 100, 50, 200)), (0.9, (100, 50, 200, 400))
+    fr = frame(
+        "00001",
+        [small, tall],
+        {"0.08": [person(NO_HELMET), person(WORN)]},
+        full=NO_HELMET,
+    )
+    base = ab.Variant("base")
+    assert [j.state for j in ab.frame_judgements(fr, base, head_margin=8)] == [BAD, OK]
+    primary = ab.Variant("p", primary_only=True)
+    assert [j.state for j in ab.frame_judgements(fr, primary, head_margin=8)] == [OK]
+    gate_off = ab.Variant("g", gate=False)
+    assert [j.state for j in ab.frame_judgements(fr, gate_off, head_margin=8)] == [BAD]
+
+
+def test_gate_off_judges_empty_frames_and_gate_on_skips_them():
+    fr = frame("00001", [], {"0.08": []}, full=[det("no_vest")])
+    assert ab.frame_judgements(fr, ab.Variant("base"), head_margin=8) == []
+    states = [j.state for j in ab.frame_judgements(fr, ab.Variant("g", gate=False), head_margin=8)]
+    assert states == [UNK]
+
+
+# ── 누적 규칙 ───────────────────────────────────────────────
+
+
+def test_clearing_window_hysteresis():
+    """런타임은 적합 한 번에 누적을 지운다. N 회 연속 적합일 때만 지우면 확정된다."""
+    seq = [BAD, BAD, OK, BAD]
+    once = ab.ClearingWindow(1500, 3, clear_after_ok=1)
+    assert [once.observe([s], i * 100) for i, s in enumerate(seq)] == [False] * 4
+    twice = ab.ClearingWindow(1500, 3, clear_after_ok=2)
+    assert [twice.observe([s], i * 100) for i, s in enumerate(seq)] == [False, False, False, True]
+
+
+def test_clearing_window_resets_without_people_and_time_window_still_applies():
+    w = ab.ClearingWindow(1500, 3, clear_after_ok=1)
+    w.observe([BAD], 0)
+    w.observe([BAD], 100)
+    w.observe([], 200)
+    assert w.hits == 0
+    w.observe([BAD], 300)
+    w.observe([BAD], 400)
+    assert w.observe([BAD], 2000) is False  # 300 · 400 은 창 밖이다
+    assert w.hits == 1
+
+
+def test_clearing_window_rising_edge_only():
+    w = ab.ClearingWindow(1500, 2, clear_after_ok=1)
+    assert [w.observe([BAD], t) for t in (0, 100, 200)] == [False, True, False]
+
+
+# ── 재생 ───────────────────────────────────────────────────
+
+
+def labelled(t, tag, seg="standing-all", exp=OK, ori="정면"):
+    return {"t": t, "tag": tag, "segment": seg, "expected": exp, "orientation": ori}
+
+
+def test_replay_builds_session_from_cache():
+    frames = [
+        frame(f"{i:05d}", [(0.9, (0, 50, 60, 300))], {"0.08": [person(NO_HELMET)]})
+        for i in range(1, 5)
+    ]
+    labels = [labelled(i * 0.1, f"{i:05d}", "standing-nohelmet", BAD) for i in range(1, 5)]
+    out = ab.replay(frames, labels, ab.Variant("base"), head_margin=8, orientations=["정면"])
+    assert [e["confirmed"] for e in out["events"]] == [False, False, True, False]
+    assert out["segments"]["standing-nohelmet"]["verdicts"][BAD] == 4
+    assert out["segments"]["standing-nohelmet"]["orientations"]["정면"][BAD] == 4
+    assert out["settings"]["hits_required"] == 3
+
+
+def test_replay_resets_window_on_segment_change():
+    frames = [
+        frame(f"{i:05d}", [(0.9, (0, 50, 60, 300))], {"0.08": [person(NO_HELMET)]})
+        for i in range(1, 5)
+    ]
+    labels = [
+        labelled(0.1, "00001", "standing-nohelmet", BAD),
+        labelled(0.2, "00002", "standing-nohelmet", BAD),
+        labelled(0.3, "00003", "standing-none", BAD),
+        labelled(0.4, "00004", "standing-none", BAD),
+    ]
+    out = ab.replay(frames, labels, ab.Variant("base"), head_margin=8, orientations=["정면"])
+    assert [e["hits"] for e in out["events"]] == [1, 2, 1, 2]
+
+
+def test_replay_rejects_cache_that_does_not_match_labels():
+    frames = [frame("00002", [], {"0.08": []})]
+    with pytest.raises(ValueError, match="00001"):
+        ab.replay(frames, [labelled(0.1, "00001")], ab.Variant("base"), 8, ["정면"])
+
+
+# ── 기준 재현 (저장소에 있는 실측 원자료) ──────────────────────
+
+
+@pytest.fixture(scope="module")
+def recorded():
+    return json.loads(SESSION_1006.read_text(encoding="utf-8"))
+
+
+def test_recorded_replay_reproduces_summary(recorded):
+    """기록된 판정만 다시 누적해도 summary.md 의 83% · 79% · C1~C3 가 그대로 나와야 한다."""
+    replayed = ab.replay_recorded(recorded, ab.Variant("base"))
+    for key, row in recorded["segments"].items():
+        assert replayed["segments"][key]["verdicts"] == row["verdicts"]
+        assert replayed["segments"][key]["orientations"] == row["orientations"]
+    row = ab.evaluate_variant(replayed, PLAN)
+    assert (row["determinate"], row["total"]) == (4880, 5913)
+    assert round(row["decidable_rate"], 2) == 0.83
+    assert round(row["effective_rate"], 2) == 0.79
+    assert [c.passed for c in row["criteria"]] == [True, True, True]
+    assert row["alarms_total"] == sum(e["confirmed"] for e in recorded["events"])
+
+
+def test_recorded_replay_matches_recorded_window(recorded):
+    """0.1초로 반올림된 t 로 다시 센 창이 기록된 창과 같은 상태(빔·미달·확정)여야 한다.
+
+    히트 수 자체는 창 경계에서 반올림 때문에 1~3 씩 어긋난다(20 fps 에서 창 안 30여 회).
+    경보와 이월을 가르는 것은 «비었나·기준 이상인가» 뿐이다.
+    """
+    replayed = ab.replay_recorded(recorded, ab.Variant("base"))
+
+    def level(hits):
+        return 0 if hits == 0 else (2 if hits >= 3 else 1)
+
+    pairs = list(zip(replayed["events"], recorded["events"], strict=True))
+    same = sum(level(a["hits"]) == level(b["hits"]) for a, b in pairs)
+    assert same / len(pairs) > 0.99
+    assert [a["tag"] for a, _ in pairs if a["confirmed"]] == [
+        b["tag"] for _, b in pairs if b["confirmed"]
+    ]
+
+
+def test_evaluate_variant_reports_episode_metrics(recorded):
+    row = ab.evaluate_variant(ab.replay_recorded(recorded, ab.Variant("base")), PLAN)
+    assert row["recall"] == 1.0
+    assert row["false_alarm_rate"] == 0.0
+    assert row["latency_p95_s"] is not None
+    assert row["reasons"]["머리 미검출"] == 1091
+    # C2 는 이월을 확정으로 센다. 이월을 빼면 방향마다 제 경보가 있어야 한다.
+    assert set(row["own_directions"]) == {"standing-nohelmet", "standing-novest", "standing-none"}
+    assert sum(row["own_directions"].values()) <= row["alarms_total"]
+
+
+def test_breakdown_by_condition(recorded):
+    rows = ab.breakdown(ab.replay_recorded(recorded, ab.Variant("base")))
+    row = next(r for r in rows if r["segment"] == "standing-all" and r["orientation"] == "좌측")
+    assert (row["count"], row["right"], row["unknown"]) == (449, 328, 121)
+    people = {r["people"]: r for r in ab.breakdown_by_people(recorded)}
+    assert set(people) == {1, 2}
+
+
+# ── 추론 캐시 ───────────────────────────────────────────────
+
+
+class FakeDetector:
+    def __init__(self, result):
+        self.result = result
+        self.shapes = []
+
+    def detect(self, image):
+        self.shapes.append(image.shape[:2])
+        return list(self.result)
+
+
+def test_infer_frame_records_crops_scales_and_full_frame():
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    coco = FakeDetector(
+        [Detection("person", 0.9, (100, 100, 200, 300)), Detection("cup", 0.9, (0, 0, 5, 5))]
+    )
+    ppe_fake = FakeDetector([Detection("helmet", 0.7, (10, 10, 20, 20))])
+    rec = ab.infer_frame(
+        image, "00001", coco, ppe_fake, person_label="person", pads=(0.0, 0.1), scales=(0.5,)
+    )
+    assert rec["shape"] == [480, 640]
+    assert len(rec["persons"]) == 1
+    assert set(rec["crops"]) == {"0", "0.1", "0@0.5", "0.1@0.5"}
+    assert rec["crops"]["0.1"][0]["origin"] == [90, 80]
+    # 절반 해상도로 넣은 크롭의 박스는 원래 크롭 좌표로 되돌린다.
+    assert rec["crops"]["0@0.5"][0]["dets"][0][2:] == [20.0, 20.0, 40.0, 40.0]
+    assert rec["full"][0][0] == "helmet"
+    assert (100, 50) in ppe_fake.shapes  # 0.5 배로 줄인 0 여유 크롭
