@@ -170,7 +170,7 @@
 
 | 조건 | 판정 주체 | 이 코드의 대응 |
 | :--- | :--- | :--- |
-| 초음파 25cm 반사 정지 | **온보드 (Tier 1)** | `flags.obstacle` 을 따라 의도를 정지로 |
+| 초음파 7cm 반사 정지 | **온보드 (Tier 1)** | `flags.obstacle` 을 따라 의도를 정지로 |
 | 저전압 · 링크두절 · E-Stop | **온보드 (Tier 1)** | `safety_latched` · `state=FAILSAFE` 를 따라 `HALTED`. 전도 자동 감지는 폐기(ADR-36) |
 | 사용자 E-STOP | 호스트 | `ESTOP` 즉시 |
 | **LiDAR 전방 위험거리** | **호스트** | `ESTOP` 즉시 — 아래 각주 |
@@ -180,8 +180,9 @@
 > **LiDAR 판정만 호스트인 이유** — LiDAR 는 호스트에 붙은 센서이므로 판정 주체가
 > 호스트일 수밖에 없다. Tier 1 을 옮기는 것이 아니라 **온보드가 볼 수 없는 것을
 > 보는 것**이다 (초음파는 정면 근거리만 본다 · DR-15). 온보드 판정을 대체하지
-> 않고 더하며, 임계를 `obstacle_stop_cm`(25cm)보다 짧은 15cm 로 두어 **온보드가
-> 먼저 반응한다.** `test_host_lidar_estop_is_tighter_than_the_onboard_threshold`
+> 않고 더하며, 임계를 온보드보다 짧게 두어 **온보드가
+> 먼저 반응한다.** (2026-10-06 개정: 초음파는 코끝 기준 7cm, LiDAR 는 센서 중심 기준
+> 0.1m 라 같은 기준점으로 옮겨 비교한다 — 코끝은 LiDAR 중심에서 약 110mm, `safety.sonar_from_lidar_mm`.) `test_host_lidar_estop_is_tighter_than_the_onboard_threshold`
 > 가 대조한다.
 
 ---
