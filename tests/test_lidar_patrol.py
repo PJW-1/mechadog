@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from host.behavior.commander import Commander
+from host.behavior.live_nav import NavParams
 from host.behavior.patrol import (
     FSM_STATE_FOR,
     DriveParams,
@@ -25,7 +26,7 @@ from host.behavior.patrol import (
     Phase,
     steering_for,
 )
-from host.behavior.planner import PlanParams
+from host.behavior.planner import Plan, PlanParams
 from host.behavior.zones import ZoneStore
 from host.common.protocol import (
     CLAMP_RANGES,
@@ -97,6 +98,8 @@ def open_room() -> OccupancyGrid:
 
 
 def build(**overrides: object) -> PatrolController:
+    # 기존 관문 회귀 시험은 명시적으로 AV를 끈다. AV 시험은 별도 생성한다.
+    overrides.setdefault("nav_params", NavParams(relaxed_follow=False))
     ready = overrides.pop("ready", True)
     grid = overrides.pop("grid", None) or open_room()
     zones = ZoneStore(("A", "B", "C"))
@@ -125,7 +128,16 @@ def build(**overrides: object) -> PatrolController:
         from host.common.lidar_link import Scan
 
         controller.note_sent([CommandEncoder().encode("STOP")], 0)
-        controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", 1, 1000, ((0.0, 3.0),)), 1000)
+        controller.observe_obstacle_scan(
+            Scan(
+                "lidar-a",
+                "boot-a",
+                1,
+                1000,
+                tuple((math.radians(a), 3.0) for a in range(-180, 180, 5)),
+            ),
+            1000,
+        )
     return controller
 
 
@@ -397,6 +409,7 @@ def test_external_map_pose_recovers_only_after_all_guards_and_normalizes_yaw() -
     assert controller._last_pose_ms == 2000
     assert controller.phase is Phase.LOST
     controller.observe_telemetry(Reading(), 2000)
+    stationary_scan(controller, 2000)
     controller.step(2000)
     assert controller.phase is Phase.MOVING
 
@@ -423,7 +436,14 @@ def stationary_scan(controller: PatrolController, now_ms: int) -> None:
     from host.common.lidar_link import Scan
 
     controller.observe_obstacle_scan(
-        Scan("lidar-a", "boot-a", now_ms + 1, now_ms, ((math.pi / 2, 3.0),)), now_ms
+        Scan(
+            "lidar-a",
+            "boot-a",
+            now_ms + 1,
+            now_ms,
+            tuple((math.radians(a), 3.0) for a in range(-180, 180, 5)),
+        ),
+        now_ms,
     )
 
 
@@ -441,80 +461,50 @@ def test_fresh_external_pose_without_any_scan_never_starts() -> None:
     assert controller.stats.lost == 1, "새 pose마다 LOST를 풀었다 다시 세면 안 된다"
 
 
-def test_start_requires_a_scan_after_the_successful_stop_settles() -> None:
+def test_start_uses_latest_scan_without_old_settle_wait() -> None:
     controller = build(ready=False)
     controller.start()
-    # STOP 의도만 만들어 놓고 송신에 실패했으면 안정화 시계가 시작되지 않는다.
     external_observation(controller, 1000)
     stationary_scan(controller, 1000)
     controller.note_sent([], 0)
     controller.step(1000)
-    assert controller.commander.intent.type_ == "STOP"
-
-    controller.note_sent([controller.commander.open_session()], 1100)
-    stationary_scan(controller, 1849)
-    external_observation(controller, 1850)
-    controller.step(1850)
-    assert controller.phase is Phase.LOST
-
-    # 정확히 750ms 경계에 받은 스캔은 허용한다.
-    stationary_scan(controller, 1850)
-    controller.step(1850)
     assert controller.phase is Phase.MOVING
     assert controller.commander.intent.type_ == "MOVE"
 
 
-def test_scans_may_pause_while_moving_but_cannot_release_the_next_stop() -> None:
+def test_scans_cannot_pause_while_moving_and_fresh_scan_restores_motion() -> None:
     controller = build(ready=False)
-    controller.note_sent([controller.commander.open_session()], 0)
     controller.start()
     external_observation(controller, 1000)
     stationary_scan(controller, 1000)
     controller.step(1000)
     controller.note_sent(controller.commander.tick(1000), 1000)
-
-    # 실제 MOVE가 송신된 동안에는 4초 스캔 공백도 두절로 오판하지 않는다.
-    external_observation(controller, 5000)
-    controller.step(5000)
-    assert controller.phase is Phase.MOVING
-    assert controller.commander.intent.type_ == "MOVE"
-
-    controller.commander.halt()
-    controller.note_sent(controller.commander.tick(5000), 5000)
-    external_observation(controller, 5100)
-    controller.step(5100)
+    external_observation(controller, 1501)
+    controller.step(1501)
     assert controller.phase is Phase.LOST
     assert controller.commander.intent.type_ == "STOP"
-    controller.note_sent(controller.commander.tick(5100), 5100)
-    # 반복 STOP이 안정화 시계를 매번 초기화하면 영원히 재개할 수 없다.
-    stationary_scan(controller, 5749)
-    external_observation(controller, 5750)
-    controller.step(5750)
-    assert controller.phase is Phase.LOST
-    stationary_scan(controller, 5750)
-    controller.step(5750)
+    stationary_scan(controller, 1501)
+    controller.step(1501)
     assert controller.phase is Phase.MOVING
 
 
 def test_old_stationary_scan_and_pose_only_recovery_remain_stopped() -> None:
     controller = build()
     controller.start()
-    external_observation(controller, 2500)
-    controller.step(2500)  # 마지막 스캔 1000 + 허용 1500ms의 경계
+    external_observation(controller, 1500)
+    controller.step(1500)
     assert controller.commander.intent.type_ == "MOVE"
-    external_observation(controller, 2501)
-    controller.step(2501)
+    external_observation(controller, 1501)
+    controller.step(1501)
     assert controller.phase is Phase.LOST
-    external_observation(controller, 2600)
-    controller.step(2600)
     assert controller.commander.intent.type_ == "STOP"
-    stationary_scan(controller, 2600)
-    controller.step(2600)
+    stationary_scan(controller, 1501)
+    controller.step(1501)
     assert controller.phase is Phase.MOVING
 
 
 @pytest.mark.parametrize("value", [0.0, 3.0])
-def test_current_unknown_or_occupied_cell_cannot_be_an_astar_escape(value: float) -> None:
+def test_current_unknown_or_occupied_cell_uses_live_gap_escape(value: float) -> None:
     grid = open_room()
     grid.cells[grid.to_cell(2.0, 1.0)] = value
     controller = build(grid=grid)
@@ -522,9 +512,13 @@ def test_current_unknown_or_occupied_cell_cannot_be_an_astar_escape(value: float
     external_observation(controller, 1000)
     controller.step(1000)
     assert controller.blocked[grid.to_cell(2.0, 1.0)]
-    assert controller.phase is Phase.LOST
+    assert controller.phase is not Phase.LOST
+    assert controller.local_status["action"] == "escape"
     assert controller.commander.intent.type_ == "STOP"
-    assert controller.target is None
+    stationary_scan(controller, 1100)
+    external_observation(controller, 1100)
+    controller.step(1100)
+    assert controller.commander.intent.fields["step"] > 0
 
 
 @pytest.mark.parametrize("xy", [(-0.1, 1.0), (6.1, 1.0), (2.0, -0.1), (2.0, 5.1)])
@@ -550,7 +544,7 @@ def test_empty_or_out_of_range_scans_do_not_release_start(
     external_observation(controller, 1000)
     controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", 1, 1000, points), 1000)
     controller.step(1000)
-    assert controller.phase is Phase.LOST
+    assert controller.phase is (Phase.PLANNING if points == ((0.0, 0.01),) else Phase.LOST)
     assert controller.commander.intent.type_ == "STOP"
 
 
@@ -781,6 +775,12 @@ def test_blocked_zone_does_not_end_the_cycle_early() -> None:
     controller.pose = (2.0, 2.0, 0.0)
     controller._last_pose_ms = 1000
     controller.step(1000)
+    assert controller.target == "B"  # 먼저 정지·스캔 재확인한다.
+    assert controller._recovery is not None
+    controller._recovery = None
+    controller.skipped = frozenset({"B"})
+    controller.plan = Plan(None)
+    controller._replan()
     assert controller.target == "C"
     assert controller.cycle == 0, "C 를 두고 사이클을 끝냈다"
 
@@ -794,6 +794,216 @@ def test_arrival_marks_the_zone_and_moves_on() -> None:
     controller.step(1000)  # A 를 목표로 잡는다 (이미 A 위에 있다)
     assert "A" in controller.visited
     assert controller.fsm_state == "ZONE_INSPECT"
+
+
+@pytest.mark.parametrize("tick", ["step", "steer"])
+def test_zone_aim_arrives_stops_spins_then_inspects(tick: str) -> None:
+    """합성 자유 격자에서 조준 완료 전에는 방문·점검을 기록하지 않는다."""
+    controller = build()
+    controller.zones.set_aim_deg("A", 90.0)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((2.0, 1.0, math.pi), 1000)
+    advance = getattr(controller, tick)
+    advance(1000)
+    assert controller.phase is Phase.MOVING
+
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1100)
+    advance(1100)
+    assert controller.phase is Phase.AIMING
+    assert controller.commander.intent.type_ == "STOP"
+    assert not controller.inspection_ready("A", 1100)
+    assert controller.stats.zones_visited == 0
+
+    advance(1200)
+    assert controller.phase is Phase.AIMING
+    assert controller.commander.intent.fields == {"step": 0.0, "angle": DRIVE.spin_turn_deg}
+    assert "A" not in controller.visited
+    messages = decode_all(controller.commander.tick(1200))
+    assert any(m["type"] == "MOVE" and m["step"] == 0 for m in messages)
+    assert controller.fsm_state == "PATROL"
+
+    controller.observe_map_pose((1.0, 1.0, math.radians(85)), 1300)
+    advance(1300)
+    assert controller.phase is Phase.INSPECT
+    assert controller.commander.intent.type_ == "STOP"
+    assert controller.stats.zones_visited == 1
+    assert controller.inspection_ready("A", 1300)
+
+
+@pytest.mark.parametrize("aim,start,sign", [(0, 20, -1), (20, 0, 1), (-170, 170, 1)])
+def test_zone_aim_small_error_and_wrap_use_spin(aim: float, start: float, sign: int) -> None:
+    controller = build()
+    controller.zones.set_aim_deg("A", aim)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((1.0, 1.0, math.radians(start)), 1000)
+    controller.step(1000)
+    controller.step(1100)
+    assert controller.phase is Phase.AIMING
+    assert controller.commander.intent.fields == {"step": 0.0, "angle": sign * DRIVE.spin_turn_deg}
+
+
+def test_zone_without_aim_keeps_legacy_arrival_even_with_yaw() -> None:
+    controller = build()
+    controller.zones.aim("A", math.pi / 2)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    controller.step(1000)
+    assert controller.phase is Phase.INSPECT
+    assert controller.stats.zones_visited == 1
+    assert controller.commander.intent.type_ == "STOP"
+    controller.step(1100)
+    assert controller.phase is Phase.MOVING
+    assert controller.target == "B"
+
+
+@pytest.mark.parametrize("tick", ["step", "steer"])
+def test_zone_aim_holds_for_obstacle_and_lost_pose(tick: str) -> None:
+    controller = build()
+    controller.zones.set_aim_deg("A", 90.0)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    advance = getattr(controller, tick)
+    advance(1000)
+    advance(1100)
+    assert controller.commander.intent.type_ == "MOVE"
+    controller.observe_telemetry(Reading(obstacle=True), 1200)
+    advance(1200)
+    assert controller.commander.intent.type_ == "STOP"
+    assert controller.stats.zones_visited == 0
+    controller.observe_telemetry(Reading(obstacle=False), 1300)
+    advance(1300)
+    assert controller.commander.intent.type_ == "MOVE"
+    advance(1600)
+    assert controller.phase is Phase.LOST
+    assert controller.commander.intent.type_ == "STOP"
+    assert controller.stats.zones_visited == 0
+
+
+def test_zone_aim_lidar_obstacle_uses_existing_estop() -> None:
+    from host.common.lidar_link import Scan
+
+    controller = build()
+    controller.zones.set_aim_deg("A", 90.0)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    controller.step(1000)
+    controller.step(1100)
+    urgent = controller.guard_scan(Scan("lidar-a", "boot-a", 2, 1200, ((0.0, 0.1),)))
+    assert urgent is not None and json.loads(urgent)["type"] == "ESTOP"
+    assert controller.phase is Phase.HALTED
+    assert controller.stats.zones_visited == 0
+
+
+def test_zone_aim_keeps_rotation_for_distant_live_hit() -> None:
+    from host.common.lidar_link import Scan
+
+    controller = build()
+    controller.zones.set_aim_deg("A", 90)
+    controller.start()
+    external_observation(controller, 1000)
+    controller.observe_map_pose((1, 1, 0), 1000)
+    controller.step(1000)
+    controller.step(1100)
+    scan = Scan("lidar-a", "boot-a", 2, 1200, ((0, 1),))
+    controller.observe_obstacle_scan(scan, 1200)
+    controller.step(1200)
+    assert controller.phase is Phase.AIMING
+    assert controller.commander.intent.fields["step"] == 0
+    assert controller.stats.zones_visited == 0
+    assert controller.obstacles == ((2, 1),)
+
+
+def test_zone_aim_does_not_inspect_after_pose_leaves_arrival_radius() -> None:
+    controller = build()
+    controller.zones.set_aim_deg("A", 90.0)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    controller.step(1000)
+    controller.observe_map_pose((2.0, 1.0, math.pi / 2), 1100)
+    controller.step(1100)
+    assert controller.phase is Phase.PLANNING
+    assert controller.commander.intent.type_ == "STOP"
+    assert controller.stats.zones_visited == 0
+
+
+def test_zone_aim_waits_for_late_frame_and_realigns_drift() -> None:
+    controller = build(wait_for_inspection=lambda label: label == "A")
+    controller.zones.set_aim_deg("A", 0.0)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    controller.step(1000)
+    controller.step(1100)
+    controller.step(1200)
+    assert controller.inspection_ready("A", 1200)
+    assert controller.commander.intent.type_ == "STOP"
+    controller.observe_map_pose((1.0, 1.0, math.radians(20)), 1300)
+    assert not controller.inspection_ready("A", 1300)
+    controller.step(1300)
+    assert controller.commander.intent.fields == {"step": 0.0, "angle": -DRIVE.spin_turn_deg}
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1400)
+    controller.step(1400)
+    assert controller.inspection_ready("A", 1400)
+    assert controller.stats.zones_visited == 1
+    controller.resume()
+    assert not controller.inspection_ready("A", 1400)
+
+
+def test_zone_inspection_survives_sent_stop_and_settling_scan() -> None:
+    from host.common.lidar_link import Scan
+
+    controller = build(wait_for_inspection=lambda label: label == "A")
+    controller.zones.set_aim_deg("A", 90.0)
+    controller.start()
+    controller.observe_telemetry(Reading(), 1000)
+    controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
+    controller.step(1000)
+    controller.step(1100)
+    controller.note_sent(controller.commander.tick(1100), 1100)
+    controller.observe_map_pose((1.0, 1.0, math.pi / 2), 1200)
+    controller.step(1200)
+    controller.note_sent(controller.commander.tick(1200), 1200)
+    assert controller.phase is Phase.INSPECT
+    assert not controller._last_sent_moving
+
+    for now in (1300, 2000):
+        controller.observe_telemetry(Reading(), now)
+        controller.observe_map_pose((1.0, 1.0, math.pi / 2), now)
+        controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", now, now, ((0.0, 3.0),)), now)
+        controller.step(now)
+        assert controller.commander.intent.type_ == "STOP"
+        assert controller.phase is Phase.INSPECT
+    assert controller.inspection_ready("A", 2000)
+    assert controller.stats.zones_visited == 1
+
+
+def test_zone_inspection_survives_unrelated_live_obstacle() -> None:
+    from host.common.lidar_link import Scan
+
+    controller = build(wait_for_inspection=lambda label: label == "A")
+    controller.zones.set_aim_deg("A", 0)
+    controller.start()
+    external_observation(controller, 1000)
+    controller.observe_map_pose((1, 1, 0), 1000)
+    controller.step(1000)
+    controller.step(1100)
+    controller.observe_map_pose((1, 1, math.radians(20)), 1200)
+    controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", 2, 1200, ((0, 1),)), 1200)
+    controller.step(1200)
+    assert controller.phase is Phase.INSPECT
+    assert controller._inspection_zone == "A"
+    assert controller.stats.zones_visited == 1
+    assert controller.goto(4, 1)[0]
+    stationary_scan(controller, 1300)
+    controller.step(1300)
+    assert controller.target == "GOAL"
+    assert controller._inspection_zone is None
 
 
 def test_full_cycle_visits_every_zone_once() -> None:
@@ -893,19 +1103,12 @@ def test_resume_replans_from_here_to_the_same_unvisited_zone() -> None:
     assert target not in controller.visited
 
 
-def test_new_obstacles_are_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    """확정된 장애물은 한 번만 꺼내진다 — 런타임이 경고를 두 번 내지 않게."""
-    import host.behavior.patrol as patrol
-
-    controller = _steerable(1000)
-    controller.steer(1000)
-    monkeypatch.setattr(patrol, "detect_new_obstacle", lambda *_args, **_kw: (2.5, 2.0))
+def test_new_obstacles_are_taken_once() -> None:
     from host.common.lidar_link import Scan
 
-    scan = Scan("lidar-01", "0" * 16, 1, 1000, ())
-    controller._check_new_obstacle(scan)
-    assert controller.take_new_obstacles() == ()  # 한 번으로는 확정하지 않는다
-    controller._check_new_obstacle(scan)
+    controller = _steerable(1000)
+    controller.take_new_obstacles()
+    controller.observe_obstacle_scan(Scan("lidar-01", "0" * 16, 2, 1000, ((0, 0.5),)), 1000)
     assert controller.take_new_obstacles() == ((2.5, 2.0),)
     assert controller.take_new_obstacles() == ()
 
@@ -1008,141 +1211,105 @@ def test_genuinely_new_obstacle_still_detected_with_loc_map() -> None:
     assert hit == pytest.approx((3.0, 3.5), abs=1e-6)
 
 
-def test_controller_detects_excluded_legs_and_replans_without_erasing_originals() -> None:
-    """정적 계획 예외가 실제 물체 감지·동적 충돌 마스크를 억제하지 않는다."""
-    from host.behavior.planner import plan_to
+def test_controller_projects_actual_leg_with_body_radius_and_expires_it() -> None:
     from host.common.lidar_link import Scan
 
     grid, loc = open_room(), open_room()
-    leg = loc.to_cell(4.0, 2.5)
-    loc.cells[leg] = 3.0
+    leg = loc.to_cell(4, 2.5)
+    loc.cells[leg] = 3
     controller = build(grid=grid, loc_grid=loc)
-    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
-    assert grid.cells[leg] < PLAN.free_thresh
+    controller.observe_map_pose((3, 2.5, 0), 1000)
+    controller.observe_obstacle_scan(Scan("lidar-01", "boot", 2, 1000, ((0, 1),)), 1000)
+    assert controller.take_new_obstacles() == ((4, 2.5),)
+    assert controller.blocked[leg]
+    controller._refresh_navigation(3000)
     assert not controller.blocked[leg]
-    plan = plan_to("A", (4.5, 2.5), (3.0, 2.5), grid, controller.blocked, PLAN)
-    assert plan.reachable
-    assert plan.length_m == pytest.approx(1.5)
-    controller.plan = plan
-    controller.phase = Phase.MOVING
-    controller.commander.drive(40, 0)
-
-    scan = Scan("lidar-01", "boot", 1, 1000, ((0.0, 1.0),))
-    controller._check_new_obstacle(scan)
-    controller._check_new_obstacle(scan)
-    assert controller.take_new_obstacles() == ((4.0, 2.5),)
-    assert controller._dynamic[leg] and controller.blocked[leg]
-    assert controller.phase is Phase.PLANNING and controller.commander.intent.type_ == "STOP"
-    controller._obstacles.append((2.0, 2.0))
-    controller._rebuild_masks()
-    assert controller._clear_dynamic("test")
-    assert not controller.blocked[leg]
-    assert loc.cells[leg] == 3.0, "동적 복구도 원본 loc 증거를 지우지 않는다"
+    assert loc.cells[leg] == 3 and grid.cells[leg] == -3
 
 
-def test_steer_escapes_tracking_margin_but_stops_on_body_overlap():
+def test_steer_uses_live_gap_for_body_overlap() -> None:
     grid = open_room()
-    grid.cells[:, 40] = 5.0
+    grid.cells[:, 40] = 5
     controller = build(grid=grid)
     controller.zones = ZoneStore(("A",))
-    controller.zones.place(4.0, 2.0)
-    start = grid.to_world(40, 44)
+    controller.zones.place(4, 2)
     controller.resume()
-    controller.observe_map_pose((*start, 0.0), 1000)
+    controller.observe_map_pose((*grid.to_world(40, 42), 0), 1000)
+    # AO: a scan acquired at the old pose cannot prove space at the new pose.
+    from test_live_nav import revolution
+
+    controller.observe_obstacle_scan(revolution(2), 1000)
     controller.steer(1000)
-    assert controller.phase is Phase.MOVING
-    assert controller.plan.escape_end_index > 0
-    assert controller.plan.waypoints[0] == start
-    assert controller.commander.intent.type_ == "MOVE"
-    controller.observe_map_pose((*grid.to_world(40, 42), 0.0), 1100)
+    assert controller.phase is not Phase.LOST
+    assert controller.local_status["action"] == "escape"
+    stationary_scan(controller, 1100)
+    controller.observe_map_pose(controller.pose, 1100)
     controller.steer(1100)
-    assert controller.phase is Phase.LOST and controller.commander.intent.type_ == "STOP"
+    assert controller.commander.intent.fields["step"] > 0
 
 
-def test_confirmed_leg_waits_for_actual_stop_and_new_settled_scan_before_replan():
+def test_live_leg_replans_without_old_confirmation_or_settle_wait():
     from host.common.lidar_link import Scan
 
     controller = build()
     controller.zones = ZoneStore(("A",))
     controller.zones.place(4.5, 2.5)
-    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
-    controller.phase = Phase.MOVING
-    controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 900)
-    scan = Scan("lidar-01", "boot", 1, 1000, ((0.0, 1.0),))
-    controller.observe_obstacle_scan(scan, 1000)
-    controller.observe_obstacle_scan(scan, 1010)
-    controller.steer(1010)
-    assert controller.phase is Phase.LOST and controller.commander.intent.type_ == "STOP"
-    controller.note_sent([CommandEncoder().encode("STOP")], 1020)
-    controller.observe_map_pose((3.0, 2.5, 0.0), 1200)
-    controller.steer(1200)
-    assert controller.phase is Phase.LOST and controller.commander.intent.type_ == "STOP"
-    controller.observe_map_pose((3.0, 2.5, 0.0), 1800)
-    controller.observe_obstacle_scan(Scan("lidar-01", "boot", 2, 1800, ((0.0, 1.0),)), 1800)
-    controller.steer(1800)
-    assert controller.phase is Phase.MOVING and controller.commander.intent.type_ == "MOVE"
-    assert not controller._replan_stop_required
+    controller.observe_map_pose((3, 2.5, 0), 1000)
+    controller.resume()
+    controller.observe_obstacle_scan(Scan("lidar-01", "boot", 1, 1000, ((0, 1),)), 1000)
+    controller.steer(1000)
+    assert controller._dynamic[controller.grid.to_cell(4, 2.5)]
+    assert controller.plan.reachable
+    assert controller.phase is Phase.MOVING
+    assert controller.commander.intent.type_ == "MOVE"
 
 
 def test_new_loc_hit_before_mask_rebuild_is_still_detected() -> None:
-    """라이브 loc 적분과 주기적 팽창 사이에도 양쪽에서 다리가 빠지는 틈이 없다."""
     from host.common.lidar_link import Scan
 
     grid, loc = open_room(), open_room()
     controller = build(grid=grid, loc_grid=loc)
-    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
-    leg = loc.to_cell(4.0, 2.5)
-    loc.cells[leg] = 3.0
-    assert not controller.blocked[leg]
-    scan = Scan("lidar-01", "boot", 1, 1000, ((0.0, 1.0),))
-    controller._check_new_obstacle(scan)
-    controller._check_new_obstacle(scan)
-    assert controller.take_new_obstacles() == ((4.0, 2.5),)
+    controller.observe_map_pose((3, 2.5, 0), 1000)
+    leg = loc.to_cell(4, 2.5)
+    loc.cells[leg] = 3
+    controller.observe_obstacle_scan(Scan("lidar-01", "boot", 2, 1000, ((0, 1),)), 1000)
+    assert controller.take_new_obstacles() == ((4, 2.5),)
     assert controller.blocked[leg]
 
 
-def test_new_static_loc_obstacle_invalidates_the_existing_route() -> None:
+@pytest.mark.parametrize("phase", [Phase.MOVING, Phase.AIMING])
+def test_new_loc_only_obstacle_does_not_invalidate_global_route(phase: Phase) -> None:
     from host.behavior.planner import plan_to
 
     grid, loc = open_room(), open_room()
-    grid.cells[grid.to_cell(4.0, 2.5)] = 0.0  # free 예외가 아닌 점유 추가는 기존 경로를 폐기한다.
     controller = build(grid=grid, loc_grid=loc)
-    controller.observe_map_pose((3.0, 2.5, 0.0), 1000)
-    controller.zones = ZoneStore(("A",))
-    controller.zones.place(4.5, 2.5)
-    controller.plan = plan_to("A", (4.5, 2.5), (3.0, 2.5), grid, controller.blocked, PLAN)
+    controller.observe_map_pose((3, 2.5, 0), 1000)
+    controller.plan = plan_to("A", (4.5, 2.5), (3, 2.5), grid, controller.blocked, PLAN)
     original = controller.plan
-    controller.phase = Phase.MOVING
+    controller.phase = phase
+    loc.cells[loc.to_cell(4, 2.5)] = 3
     controller._rebuild_masks()
-    assert controller.plan is original, "변하지 않은 마스크로 매번 경로를 버리지는 않는다"
-
-    loc.cells[loc.to_cell(4.0, 2.5)] = 3.0
-    controller._rebuild_masks()
-
-    assert controller.phase is Phase.PLANNING
-    assert controller.target == "A" and not controller.plan.reachable
-    assert controller.commander.intent.type_ == "STOP"
-    controller.steer(1000)
-    assert controller.plan.reachable
-    assert controller.plan.length_m > original.length_m
+    assert controller.plan is original
+    assert controller.phase is phase
+    assert not controller.blocked[grid.to_cell(4, 2.5)]
 
 
-def test_tracking_cannot_follow_an_old_route_from_loc_clearance() -> None:
-    """계획 후 신선한 자세가 loc 충돌 영역에 들어가도 매 틱 관문에서 정지한다."""
+def test_tracking_uses_live_escape_from_old_map_clearance() -> None:
     grid, loc = open_room(), open_room()
-    loc.cells[loc.to_cell(3.0, 2.0)] = 3.0
-    grid.cells[grid.to_cell(3.0, 2.0)] = 3.0
+    cell = grid.to_cell(3, 2)
+    grid.cells[cell] = loc.cells[cell] = 3
     controller = build(grid=grid, loc_grid=loc)
     controller.resume()
-    controller.observe_map_pose((2.0, 2.0, 0.0), 1000)
+    controller.observe_map_pose((2, 2, 0), 1000)
     controller.steer(1000)
-    assert controller.plan.reachable
-    controller.observe_map_pose((3.0, 2.0, 0.0), 1000)
+    controller.observe_map_pose((3, 2, 0), 1000)
+    from test_live_nav import revolution
 
+    controller.observe_obstacle_scan(revolution(2), 1000)
     controller.steer(1000)
-
-    assert controller.phase is Phase.LOST
+    assert controller.phase is not Phase.LOST
     assert controller.commander.intent.type_ == "STOP"
+    assert controller.local_status["action"] == "escape"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1451,6 +1618,8 @@ def _margin_follower():
 
 
 def test_repeated_tracking_margin_entries_keep_following_without_replans() -> None:
+    from host.common.lidar_link import Scan
+
     controller = _margin_follower()
     plan = controller.plan
     for tick in range(20):
@@ -1458,6 +1627,8 @@ def test_repeated_tracking_margin_entries_keep_following_without_replans() -> No
         x = 2.285 if tick % 2 == 0 else 2.375
         controller.observe_map_pose((x, 1.5 + tick * 0.05, math.pi / 2), now)
         controller.observe_telemetry(Reading(), now)
+        # 진행 방향은 북쪽이다. 동/서쪽 벽을 통과하는 가짜 3m 빔을 넣지 않는다.
+        controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", now, now, ((0.0, 3.0),)), now)
         controller.steer(now)
         assert controller.phase is Phase.MOVING
         assert controller.commander.intent.type_ == "MOVE"
@@ -1500,14 +1671,12 @@ def test_obstacle_in_front_of_known_wall_is_not_hidden_by_tracking_inflation() -
     from host.common.lidar_link import Scan
 
     grid = open_room()
-    grid.cells[:, 60] = 5.0  # x=3.0 벽, 실제 반사보다 37.5cm 뒤.
+    grid.cells[:, 60] = 5
     controller = build(grid=grid)
-    controller.pose = (2.025, 2.025, 0.0)
-    scan = Scan("l", "b", 1, 1000, ((0.0, 0.6),))
-    controller._check_new_obstacle(scan)
-    controller._check_new_obstacle(scan)
-    assert controller.stats.replans == 1
+    controller.observe_map_pose((2.025, 2.025, 0), 1000)
+    controller.observe_obstacle_scan(Scan("l", "b", 2, 1000, ((0, 0.6),)), 1000)
     assert controller.take_new_obstacles()[0] == pytest.approx((2.625, 2.025))
+    assert controller._dynamic[grid.to_cell(2.625, 2.025)]
 
 
 @pytest.mark.parametrize("dynamic", [False, True])

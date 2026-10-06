@@ -56,6 +56,8 @@ blackbox/
 history/
 maps/*
 !maps/README.md
+# 시연 장소 지도는 다른 기체·PC 에서 그대로 쓰도록 저장소에 둔다 (2026-10-06 사용자 결정 · 공개 저장소).
+!maps/home_20261006_remap2/
 
 # 검증용 실제 사진 — COCO 주석은 CC-BY-4.0 이지만 사진은 Flickr 개별 라이선스다.
 # `python tools/fetch_models.py --samples` 로 받는다.
@@ -119,3 +121,20 @@ field_tests/results/**/raw/
 # ── Claude Code 로컬 작업 파일 ─────────────────────────
 # 스킬·워크트리·세션 설정은 각자 PC 에만 둔다
 .claude/
+
+# AG 실기 재생·집 지도 사본·목업 trace는 로컬 검증 산출물이다.
+/out/ag/
+/out/ah/
+/out/am/
+/out/ao/
+/out/ap/
+/out/ar/
+/out/at/
+/out/au/
+/out/av/
+
+# 3D SIM 장면 데이터는 Release 첨부(tools/house_sim/fetch_data.py)로 받는다.
+tools/house_sim/data/
+tools/house_sim/audit/
+tools/house_sim/exports/
+tools/house_sim/out/

@@ -16,6 +16,7 @@
 | `coco.onnx` | ① 범용 검출기 — 사람 검출(FR-3) + 변화 감지 대상 객체(FR-8) | **YOLOX-S 공식 배포 ONNX 를 받아 이름만 바꾼다.** 학습·export 불요 | ✅ 계열 확정 (ADR-24) |
 | `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v5`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ YOLOX-S 4클래스 · XIAO 실측 전 후보 (`docs/PPE_ACCEPTANCE.md`) |
 | `hazard.onnx` | 위험물 — `lighter` / `powerbank` (미검출 = 정상) | **`python tools/fetch_models.py`** — 팀 Release 자산(`hazard-v1`)에서 받고 크기 **35,776,558** 바이트 · SHA-256 `7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746` 을 검증한다. 학습 노트북은 `tools/hazard/colab_hazard_yolox.ipynb` | ⚠️ YOLOX-S 2클래스 · XIAO 실측 전 후보 · 위험구역(`zones.hazard_ids`) 점검 중에만 돈다 (`vision.hazard`) |
+| `hazard_synth.onnx` | 위험물 — `lighter` / `powerbank` (로봇 시점 합성 후보) | **`python tools/fetch_models.py`** — 팀 Release 자산(`hazard-synth-v2`)에서 받고 크기 **35,776,558** 바이트 · SHA-256 `06e6274aaf8f04a5d1b11598cd6db64ab997d0d8e0b8ccd3d2b82cdb5ad3c4cc` 을 검증한다. 학습 도구는 `tools/hazard/synth/` | ⚠️ `mechdog-02` 시연 설정이 쓴다(`vision.hazard.model_path`). 실물 라이터 0.87·0.88, 보조배터리 미검출(10-06 실물 9장) |
 
 ### 구조화 메타 파일 — `<이름>.meta.json`
 

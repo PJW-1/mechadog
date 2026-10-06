@@ -6,6 +6,7 @@ import {Operations,ROBOTS} from '../static/operations.js';
 import {OperationalPanels} from '../static/panels.js';
 import {registerPageTools} from '../static/webmcp.js';
 import {describeTelemetry} from '../static/telemetry-feed.js';
+import {Scene3D} from '../static/scene3d.js';
 
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
 const source=(await readFile(new URL('../static/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
@@ -40,10 +41,24 @@ async function boot(hash='dashboard',{health=null,fleet=null,policy=null,search=
  // 음성 중계는 시험에서 연결하지 않는다 — 링크가 없을 때의 패널만 검증한다.
  class VoiceStub{status(){return Promise.resolve({})}transcript(){return Promise.resolve([])}mode(){return Promise.resolve({})}phrases(){return Promise.resolve([])}}
  const resolveVoiceBase=async()=>null;
- await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed,EventFeed,TelemetryFeed,describeTelemetry,LiveMap){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed,EventStub,TelemetryStub,describeTelemetry,class{constructor({document}){this.root=document.createElement('div');this.root.dataset.liveMap=''}});
+ await window.eval('(async function(FactoryView,renderRobotPreviews,icon,renderIcons,Operations,ROBOTS,OperationalPanels,registerPageTools,RobotDetailView,RobotLink,VoiceLink,resolveVoiceBase,VisionFeed,EventFeed,TelemetryFeed,describeTelemetry,LiveMap,Scene3D){'+source+'\n})')(View,()=>{},()=>'<svg aria-hidden="true"></svg>',()=>{},TestOperations,ROBOTS,TestPanels,registerPageTools,RobotView,Link,VoiceStub,resolveVoiceBase,Feed,EventStub,TelemetryStub,describeTelemetry,class{constructor({document}){this.root=document.createElement('div');this.root.dataset.liveMap=''}dispose(){}},class extends Scene3D{constructor(o){super({...o,setInterval:()=>0})}});
  return {dom,window,document,store,panels,view,registered,revoked,failures,links,telemetryFeeds,eventFeeds,get robotView(){return robotView},get robotViewCount(){return robotViewCount},get visionFeed(){return visionFeed},get eventFeed(){return eventFeed},get telemetryFeed(){return telemetryFeed},linkCalls};
 }
 
+test('served scene URL embeds SIM, authenticates readiness, and returns to 2D on failure',async()=>{
+ const {dom,window,document}=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:null,dashboard:{scene3d_url:'http://127.0.0.1:8791/'}}});
+ const frame=document.querySelector('#scene3d-mount iframe');assert.ok(frame);assert.equal(frame.src,'http://127.0.0.1:8791/?embed=1');assert.equal(document.querySelector('#scene3d-mount').hidden,true);
+ const send=ready=>window.dispatchEvent(new window.MessageEvent('message',{origin:'http://127.0.0.1:8791',source:frame.contentWindow,data:{type:'house-sim-status',ready}}));
+ send(true);assert.equal(document.querySelector('#scene3d-mount').hidden,false);assert.match(document.querySelector('#scene-subtitle').textContent,/집 3D SIM/);
+ document.querySelector('[data-map-view="2d"]').click();assert.equal(document.querySelector('#scene3d-mount').hidden,true);
+ document.querySelector('[data-map-view="3d"]').click();assert.equal(document.querySelector('#scene3d-mount').hidden,false);
+ send(false);assert.equal(document.querySelector('#scene3d-mount').hidden,true);assert.match(document.querySelector('#scene3d-notice').textContent,/2D 지도로 전환/);dom.window.close();
+});
+test('without scene configuration the served dashboard retains 2D and control mini-map opens zones',async()=>{
+ const {dom,document}=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:null}});
+ assert.equal(document.querySelector('#scene3d-controls').hidden,true);assert.equal(document.querySelector('#scene3d-mount iframe'),null);
+ assert.ok(document.querySelector('[data-control-minimap]'));document.querySelector('[data-control-minimap] button').click();assert.equal(document.querySelector('#panel-content').dataset.page,'zones');dom.window.close();
+});
 test('application opens direct hash, aligns 3D and camera selection, routes named scene buttons',async()=>{
  const {dom,document,store,view,failures}=await boot('events');assert.equal(document.querySelector('#map-placeholder').hidden,true);assert.equal(document.querySelector('#panel-title').textContent,'사건 검토');assert.equal(document.querySelector('#detail-panel').hidden,false);
  document.querySelector('[data-camera="top"]').click();assert.equal(document.querySelector('#panel-title').textContent,'구역 · 동선');
@@ -164,7 +179,7 @@ test('fullscreen includes external workspace panels as well as the factory app',
 });
 
 test('served by the dashboard, robot state from /ws/telemetry fills the status card and the device gauges in place',async()=>{
- const state=await boot('devices',{health:{service:'telemetry',read_only:false,vision_clients:0}}),{dom,document,store,failures}=state,feed=state.telemetryFeed;
+ const state=await boot('devices',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}}),{dom,document,store,failures}=state,feed=state.telemetryFeed;
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/telemetry');assert.equal(feed.started,true);assert.deepEqual(failures,[]);
  // 펌웨어 지원 표는 `.ino` 의 applyCommand 와 맞아야 한다 — POSE·ACTION·LED·SOUND 는 적용하고 GAIT 는 적용하지 않는다.
  const page=document.querySelector('#panel-content').textContent;assert.match(page,/POSE·ACTION·LED·SOUND·SERVICE 적용 경로 존재/);assert.match(page,/GAIT는 펌웨어가 해석만 하고 적용하지 않습니다/);assert.doesNotMatch(page,/GAIT·SOUND는/);assert.doesNotMatch(page,/POSE·GAIT·ACTION·LED·SOUND·STATE는/);
@@ -185,7 +200,7 @@ test('served by the dashboard, robot state from /ws/telemetry fills the status c
  dom.window.close();
 });
 test('device commands on 제어 · 장치 follow the telemetry feed without rebuilding their buttons',async()=>{
- const state=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:0}}),{dom,document,failures,linkCalls}=state,feed=state.telemetryFeed;
+ const state=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}}),{dom,document,failures,linkCalls}=state,feed=state.telemetryFeed;
  const section=()=>[...document.querySelectorAll('.op-section')].find(s=>s.querySelector('h3')?.textContent==='실제 장비 명령');
  const toggle=()=>section().querySelector('[data-service="toggle"]');
  assert.match(section().textContent,/서비스 모드미수신/);assert.equal(toggle().disabled,false);
@@ -216,7 +231,7 @@ test('without the dashboard server there is no telemetry feed and the gauges sta
  dom.window.close();
 });
 test('served by the dashboard, the robot view draws /ws/vision and says what it actually receives',async()=>{
- const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0}}),{dom,document,store,failures}=state,feed=state.visionFeed;
+ const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}}),{dom,document,store,failures}=state,feed=state.visionFeed;
  const text=id=>document.querySelector('#'+id).textContent;
  assert.equal(store.live,true);assert.deepEqual(failures,[]);
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/vision');assert.equal(feed.options.canvas,document.querySelector('#vision-frame'));assert.equal(feed.started,true);
@@ -240,7 +255,7 @@ test('served by the dashboard, the robot view draws /ws/vision and says what it 
  dom.window.close();
 });
 test('served by the dashboard, live events flow from /ws/events into the review list',async()=>{
- const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0}}),{dom,document,store,failures}=state,feed=state.eventFeed;
+ const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}}),{dom,document,store,failures}=state,feed=state.eventFeed;
  assert.equal(feed.options.url,'ws://127.0.0.1:4175/ws/events');assert.equal(feed.started,true);
  feed.options.onStatus({state:'live',received:0,dropped:0,malformed:0});
  assert.equal(store.liveFeed.state,'live');
@@ -248,32 +263,32 @@ test('served by the dashboard, live events flow from /ws/events into the review 
  feed.options.onEvent({seq:7,event:'person_found',ts_ms:1000,state:'OBSERVE',escalation:'L1',tracks:[{track_id:3,box:[1,2,3,4],score:0.9}],detections:[],telemetry:{device_id:'MD-01'},entry:'20260914_120000_person_found',snapshot:'snapshot.jpg'});
  const event=store.events.find(e=>e.id==='LIVE-7');assert.ok(event);assert.equal(event.source,'LIVE_FEED');assert.equal(event.robot,'MD-01');assert.equal(event.review,'pending');
  document.querySelector('[data-view="events"]').click();
- assert.match(document.querySelector('#panel-content').textContent,/실시간 수신 연결됨/);assert.match(document.querySelector('.op-event-list').textContent,/person_found/);assert.match(document.querySelector('.op-event-list').textContent,/실시간/);
+ assert.match(document.querySelector('#panel-content').textContent,/실시간 수신 연결됨/);assert.match(document.querySelector('.op-event-list').textContent,/사람 확인/);assert.match(document.querySelector('.op-event-list').textContent,/실시간/);
  feed.options.onGap(3);assert.match(store.records[0].detail,/3건/);
  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide',{persisted:false}));assert.equal(feed.stopped,true);
  assert.deepEqual(failures,[]);dom.window.close();
 });
 test('commands wait for /health to say the command API is open',async()=>{
  // 옛 서버처럼 read_only 가 없으면 열렸다고 보지 않는다.
- for(const [health,open] of [[{service:'telemetry',vision_clients:0},false],[{service:'telemetry',vision_clients:0,read_only:true},false],[{service:'telemetry',vision_clients:0,read_only:false},true]]){
+ for(const [health,open] of [[{service:'telemetry',vision_clients:0,capabilities:{simulated:false}},false],[{service:'telemetry',vision_clients:0,read_only:true},false],[{service:'telemetry',vision_clients:0,read_only:false},true]]){
   const {dom,store,failures}=await boot('dashboard',{health});
   assert.equal(store.slot('MD-01').commandsOpen,open,JSON.stringify(health));assert.deepEqual(failures,[]);dom.window.close();
  }
 });
 test('connected, the header, robot tabs and manual controls say the robot is really driven',async()=>{
  // 예전에는 연결돼 있어도 "실제 장비 미연결 · 명령 미전송 · 로봇은 움직이지 않습니다" 가 그대로였다 — 움직이는 로봇을 안 움직인다고 적었다.
- const state=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:0}}),{dom,document,store,failures}=state,feed=state.telemetryFeed;
+ const state=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}}),{dom,document,store,failures}=state,feed=state.telemetryFeed;
  assert.equal(store.live,true);
  const note=document.querySelector('.safety-note').textContent;
  assert.match(note,/실시간 제어 연결/);assert.match(note,/비상정지 즉시 전송/);assert.doesNotMatch(note,/전달 불가|잠김/);
- assert.equal(document.querySelector('#source-status').textContent,'관제 서버 연결');assert.match(document.querySelector('.op-intro').textContent,/관제 서버 연결/);
+ assert.equal(document.querySelector('#source-status').textContent,'실제 로봇');assert.match(document.querySelector('.op-intro').textContent,/실제 로봇/);
  // 관제 서버 하나가 기체 하나를 몬다 — 예시 로봇은 숨기고 고를 수도 없다.
  for(const selector of ['.robot-tab[data-robot="MD-02"]','.camera-robot-switch [data-robot="MD-02"]'])assert.equal(document.querySelector(selector).hidden,true,selector);
  assert.equal(document.querySelector('.robot-tab[data-robot="MD-01"]').hidden,false);
  assert.throws(()=>store.selectRobot('MD-02'),/알 수 없는 로봇/);
  assert.deepEqual([...document.querySelectorAll('[name="수동 제어 대상"] option')].map(option=>option.value),['MD-01']);
  const manual=document.querySelector('.op-manual-workspace').textContent;
- assert.match(manual,/수동 제어권 요청/);assert.match(manual,/실제 로봇이 움직입니다/);assert.match(manual,/관제 서버로 전송/);assert.match(manual,/관제 서버 연결 · 실제 전송/);
+ assert.match(manual,/수동 제어권 요청/);assert.match(manual,/실제 로봇에 명령을 보냅니다/);assert.match(manual,/관제 서버로 전송/);assert.match(manual,/실제 로봇 · 실제 전송/);
  assert.doesNotMatch(manual,/예시 제어권|명령 미전송|실제 장비 미연결|로봇과 3D 모델은 움직이지 않습니다/);
  assert.match(document.querySelector('[data-drive="FORWARD"]').getAttribute('aria-label'),/실제 전송/);
  // 웹 시연 임무는 실제 순찰 옆에 두지 않는다.
@@ -300,7 +315,7 @@ test('without a link the header, tabs and manual controls keep saying nothing is
  dom.window.close();
 });
 test('switching a connected page to preview and back returns to the one real robot',async()=>{
- const {dom,document,store}=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0}});
+ const {dom,document,store}=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}});
  store.setDemo(true);store.selectRobot('MD-02');assert.equal(document.querySelector('.robot-tab[data-robot="MD-02"]').hidden,false);
  store.setDemo(false);assert.equal(store.live,true);assert.equal(store.selected,'MD-01');assert.equal(document.querySelector('.robot-tab[data-robot="MD-02"]').hidden,true);
  dom.window.close();
@@ -340,7 +355,7 @@ test('connected, the E-Stop shortcut sends straight away instead of opening the 
  // FR-4.4 는 단축키를 요구한다. 예전에는 Shift+E 가 모달만 열어 연결돼 있어도 한 번
  // 더 눌러야 나갔다 — 버튼 쪽 주석이 "모달을 한 단계 끼우면 급할 때 그만큼 늦다" 고
  // 적어 둔 바로 그 문제를 단축키만 안고 있었다.
- const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0}}),{dom,document,store}=state;
+ const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}}),{dom,document,store}=state;
  assert.equal(store.live,true);
  document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'E',shiftKey:true}));
  assert.deepEqual(state.linkCalls,['http://127.0.0.1:4175:estop']);
@@ -350,7 +365,7 @@ test('connected, the E-Stop shortcut sends straight away instead of opening the 
  dom.window.close();
 });
 test('connected, L2·L3·F raise a visible alarm banner with the reason and warning text (B1)',async()=>{
- const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0}}),{document,failures}=state;
+ const state=await boot('dashboard',{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}}}),{document,failures}=state;
  const banner=document.querySelector('#alarm-banner');
  const at=(level,extra={})=>state.telemetryFeed.options.onUpdate({state:'live',snapshot:{deviceId:'mechdog-01',state:'ALERT',escalation:level,mode:'guard',ageMs:30,stale:false,runtimeStale:false,telemetry:null,...extra},rateHz:10,lost:0,history:[]});
  at('L1');assert.equal(banner.hidden,true,'관찰 단계는 띠를 띄우지 않는다');
@@ -377,7 +392,7 @@ test('without a link the E-Stop shortcut still opens the notice',async()=>{
 });
 // ── 여러 대 (host.fleet) — 한 화면이 로봇마다 따로 연결한다 ────────────────
 const fleetBody={robots:[{id:'mechdog-01',base:'/robots/mechdog-01',registered:true},{id:'mechdog-02',base:'/robots/mechdog-02',registered:true}]};
-const fleetBoot=(hash='dashboard',extra={})=>boot(hash,{health:{service:'telemetry',read_only:false,vision_clients:0},fleet:fleetBody,...extra});
+const fleetBoot=(hash='dashboard',extra={})=>boot(hash,{health:{service:'telemetry',read_only:false,vision_clients:0,capabilities:{simulated:false}},fleet:fleetBody,...extra});
 const telem=(device,extra={})=>({deviceId:device,state:'PATROL',escalation:'L0',ageMs:30,stale:false,runtimeStale:false,telemetry:{deviceId:device+'-mac',bootId:'b',seq:1,state:'IDLE',battV:7.6,distCm:80,imu:{pitch:0,roll:0,yaw:0},lastCmdAgeMs:20,safetyLatched:false,flags:{lowbatt:false,tipped:false,obstacle:false,linkOk:true}},...extra});
 
 test('fleet boot connects each robot to its own /robots/<id> endpoints',async()=>{
@@ -448,4 +463,18 @@ test('read-only planning server never advertises or sends an emergency robot com
  document.querySelector('#estop').click();await Promise.resolve();assert.deepEqual(linkCalls,[]);
  assert.throws(()=>store.claim(),/조회·계획 전용/);assert.throws(()=>store.requestPatrol(true),/조회·계획 전용/);
  dom.window.close();
+});
+
+test('simulation capability labels the header and control target without claiming physical transmission',async()=>{
+ const {dom,document,store,failures}=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:null,capabilities:{simulated:true}}});
+ assert.equal(store.simulated,true);assert.equal(document.querySelector('#source-status').textContent,'시뮬레이션');
+ assert.match(document.querySelector('[data-drive="FORWARD"]').getAttribute('aria-label'),/시뮬레이션 전송/);
+ assert.doesNotMatch(document.querySelector('.op-manual-workspace').textContent,/실제 전송|실제 로봇이 움직입니다/);
+ assert.equal(failures.length,0);dom.window.close();
+});
+
+test('a legacy health response keeps the connection type unknown',async()=>{
+ const {dom,document,store}=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:null}});
+ assert.equal(store.simulated,null);assert.equal(document.querySelector('#source-status').textContent,'연결 유형 미확인');
+ assert.match(document.querySelector('[data-drive="FORWARD"]').getAttribute('aria-label'),/유형 미확인/);dom.window.close();
 });

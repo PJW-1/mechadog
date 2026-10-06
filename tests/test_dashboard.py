@@ -355,6 +355,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
             self.ask_alarm_confirm = lambda: None
             self.ask_locate_zone = lambda _zone: (True, "")
+            self.ask_locate_point = lambda _x, _y: (True, "")
 
         def serve(self, _sock, **_kwargs):
             assert self.dashboard is captured[0]
@@ -481,6 +482,8 @@ def test_vision_frame_keeps_boxes_with_the_jpeg_they_were_computed_on():
         "completed_ms": 1234,
         "detections": [{"label": "person", "score": 0.912, "box": [10.0, 20.0, 110.0, 300.3]}],
         "tracks": [{"track_id": 3, "score": 0.9, "box": [10.0, 20.0, 110.0, 300.0]}],
+        "ppe": [],
+        "ppe_test_mode": False,
     }
 
 
@@ -644,6 +647,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
             self.note_voice_listening = lambda _captured_at_ms=None: (True, "")
             self.ask_alarm_confirm = lambda: None
             self.ask_locate_zone = lambda _zone: (True, "")
+            self.ask_locate_point = lambda _x, _y: (True, "")
 
         def serve(self, _sock, **_kwargs):
             pass

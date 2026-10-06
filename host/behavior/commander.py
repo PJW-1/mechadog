@@ -131,6 +131,11 @@ class Commander:
         self.halt()
         return self._encoder.estop()
 
+    def stop_now(self) -> str:
+        """동선 취소의 즉시 STOP. 안전 래치나 주기 송신 마감은 바꾸지 않는다."""
+        self.halt()
+        return self._encoder.encode("STOP")
+
     def open_session(self) -> str:
         """새 호스트 프로세스의 첫 전문 — 세션 개시 신호 `STOP` seq=1 (PROTOCOL 4절).
 

@@ -20,6 +20,29 @@ from host.slam.occupancy import MapMeta, OccupancyGrid
 PARAMS = PlanParams(1.0, -1.0, 0.2, 0.0, soft_clearance_m=0.2)
 
 
+@pytest.mark.parametrize("goal", [(-2.5, -1), (-0.5, -1), (-2.5, -2), (-0.5, -2)])
+def test_ad_1622_exact_grid_boundary_uses_safe_body_connector(goal):
+    grid = OccupancyGrid(
+        MapMeta(0.05, -6.875000000000001, -4.375, 246, 162),
+        np.full((162, 246), -5, dtype=np.float32),
+    )
+    grid.cells[86, 106:109] = 5
+    params = PlanParams(1, -1, 0.25, 0.08, soft_clearance_m=0.15)
+    start = (-1.415, -0.275)
+    blocked = inflate(grid, params)
+    body = body_collision_mask(grid, params)
+    assert not blocked[grid.to_cell(*start)]
+    assert not segment_clear(grid, blocked, start, start)
+    assert segment_clear(grid, body, start, start)
+    plan = plan_to("AD", goal, start, grid, blocked, params, body_blocked=body)
+    assert plan.reachable and plan.waypoints[0] == start and plan.escape_end_index >= 1
+    assert 0 < plan.start_moved_m <= 0.6
+    assert all(
+        segment_clear(grid, body if i < plan.escape_end_index else blocked, a, b)
+        for i, (a, b) in enumerate(zip(plan.waypoints, plan.waypoints[1:], strict=False))
+    )
+
+
 def free_grid() -> OccupancyGrid:
     return OccupancyGrid(
         MapMeta(0.1, 0.0, 0.0, 30, 30),
@@ -206,3 +229,41 @@ def test_escape_does_not_cross_wall_to_reachable_goal():
     grid, params, start = escape_room()
     plan = plan_to("A", grid.to_world(30, 3), start, grid, inflate(grid, params), params)
     assert plan.fail_reason == "goal_unreachable" and not plan.reachable
+
+
+def test_grid_boundary_start_uses_body_checked_connector():
+    grid, params, _ = escape_room()
+    start = (0.8, grid.to_world(30, 16)[1])
+    blocked = inflate(grid, params)
+    body = body_collision_mask(grid, params)
+    assert not blocked[grid.to_cell(*start)]
+    assert not segment_clear(grid, blocked, start, start)
+    assert segment_clear(grid, body, start, start)
+
+    plan = plan_to("B", grid.to_world(30, 45), start, grid, blocked, params)
+
+    assert plan.reachable
+    assert plan.waypoints[0] == start
+    assert plan.start_moved_m > 0 and plan.escape_end_index > 0
+    assert all(
+        segment_clear(grid, body, a, b)
+        for a, b in zip(
+            plan.waypoints[: plan.escape_end_index + 1],
+            plan.waypoints[1 : plan.escape_end_index + 1],
+            strict=False,
+        )
+    )
+
+
+def test_grid_boundary_start_cannot_ignore_body_contact():
+    grid, params, _ = escape_room()
+    start = (14 * grid.meta.resolution, grid.to_world(30, 14)[1])
+    blocked = inflate(grid, params)
+    body = body_collision_mask(grid, params)
+    assert not body[grid.to_cell(*start)]
+    assert not segment_clear(grid, body, start, start)
+
+    plan = plan_to("B", grid.to_world(30, 45), start, grid, blocked, params)
+
+    assert not plan.reachable
+    assert plan.fail_reason == "start_clearance_blocked"

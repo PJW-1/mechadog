@@ -62,6 +62,9 @@ class Scan:
     points: tuple[tuple[float, float], ...]
     #: 규칙 ⑥ 으로 버린 점의 수. 계속 늘면 배선·전원을 의심한다.
     dropped: int = 0
+    #: 호스트 수신 시간축. MCU ts_ms는 텔레메트리/호스트와 동기화되지 않는다.
+    received_ms: int | None = None
+    started_ms: int | None = None
 
     @property
     def scan_id(self) -> int:

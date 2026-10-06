@@ -65,6 +65,9 @@ class CommandService:
         locate_zone: Callable[[str], tuple[bool, str]] | None = None,
         goto_point: Callable[[float, float], tuple[bool, str]] | None = None,
         pose: tuple[float, int] | tuple[float, int, float] | None = None,
+        start_route: Callable[..., tuple[bool, str]] | None = None,
+        stop_route: Callable[[], tuple[bool, str]] | None = None,
+        locate_point: Callable[[float, float], tuple[bool, str]] | None = None,
         stopping_patrol: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> None:
         self._behavior = behavior
@@ -88,7 +91,10 @@ class CommandService:
         # 경보(L3) 확인 — `request_reset`(F 해제)과 다른 경로다 (ADR-26 ①).
         self._confirm_alarm = confirm_alarm
         self._locate_zone = locate_zone
+        self._locate_point = locate_point
         self._goto_point = goto_point
+        self._start_route = start_route
+        self._stop_route = stop_route
         # «순찰 정지» 가 수동을 거치는 동안 런타임에 알려, 그 판을 `manual` 이 아닌 `stopped` 로
         # 닫게 한다 (ADR-46 결정 5). 런타임 없는 시험에서는 아무것도 하지 않는다.
         self._stopping_patrol: Callable[[], AbstractContextManager[None]] = (
@@ -266,6 +272,25 @@ class CommandService:
             command="goto", accepted=accepted, state=self._behavior.state, detail=detail
         )
 
+    def route_start(self, route_id: str, expected_digest: str | None = None) -> CommandResult:
+        """확인한 저장 동선을 요청한다. 운용 안전 관문은 런타임이 기존 규칙대로 검사한다."""
+        if self._start_route is None:
+            accepted, detail = False, "동선 주행 경로가 연결되지 않았다"
+        elif expected_digest is None:
+            accepted, detail = self._start_route(route_id)
+        else:
+            accepted, detail = self._start_route(route_id, expected_digest)
+        return CommandResult("route_start", accepted, self._behavior.state, detail)
+
+    def route_stop(self) -> CommandResult:
+        """예약 중인 동선까지 취소하는 런타임 정지 경로."""
+        accepted, detail = (
+            self._stop_route()
+            if self._stop_route is not None
+            else (False, "동선 주행 경로가 연결되지 않았다")
+        )
+        return CommandResult("route_stop", accepted, self._behavior.state, detail)
+
     def locate(self, zone: str) -> CommandResult:
         """사람이 «로봇은 지금 이 구역 안에 있다» 고 알려준다 — 그 구역 안에서만 위치를 다시 찾는다.
 
@@ -286,6 +311,24 @@ class CommandService:
             accepted=accepted,
             state=self._behavior.state,
             detail=detail,
+        )
+
+    def locate_point(self, x: float, y: float) -> CommandResult:
+        """사람이 찍은 현재 위치 주변에서 다시 찾도록 다음 루프 틱에 예약한다.
+
+        클릭 자체로 위치를 확정하거나 이동을 시작하지 않는다. 좌표의 지도 범위와
+        장애물 검증은 지도를 소유한 런타임이 수행한다.
+        """
+        if self._locate_point is None:
+            return CommandResult(
+                command="locate",
+                accepted=False,
+                state=self._behavior.state,
+                detail="지도 위치 알려주기 경로가 연결되지 않았다 (LiDAR 측위 순찰이 아니다)",
+            )
+        accepted, detail = self._locate_point(x, y)
+        return CommandResult(
+            command="locate", accepted=accepted, state=self._behavior.state, detail=detail
         )
 
     #: 자율 동작 상태 — "순찰 정지" 가 받을 수 있는 상태들이다.
@@ -387,6 +430,15 @@ class CommandService:
         `IDLE` 에 정착한다. `ESTOP` 과 달리 래치를 걸지 않아 해제 절차가
         필요 없는, "정상 정지"다. 이력에는 수동 조종과 구별해 `stopped` 로 남긴다 (ADR-46).
         """
+        if self._stop_route is not None and (
+            self._behavior.state in self._AUTONOMOUS or self._behavior.state == "IDLE"
+        ):
+            # 기존 정지 버튼도 새 동선·아직 IDLE인 시작 예약을 즉시 취소한다.
+            # 런타임이 송신 락 안에서 상태 전환과 STOP 전문까지 처리한다.
+            # 동선 정지도 수동을 거치므로 이력에 `stopped` 로 남게 감싼다 (ADR-46 결정 5).
+            with self._stopping_patrol():
+                accepted, detail = self._stop_route()
+            return CommandResult("patrol_stop", accepted, self._behavior.state, detail)
         if self._behavior.state not in self._AUTONOMOUS:
             return CommandResult(
                 command="patrol_stop",

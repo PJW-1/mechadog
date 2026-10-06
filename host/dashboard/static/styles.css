@@ -35,7 +35,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .skip-link { position: fixed; top: -80px; left: 16px; z-index: 100; background: var(--brass); color: var(--bg); padding: 12px }
 .skip-link:focus { top: 8px }
 
-#app { height: 100dvh; min-height: 760px; display: grid; grid-template-rows: 55px 71px minmax(480px,1fr) 151px; overflow: hidden }
+#app { height: 100dvh; min-height: 760px; display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: 55px 71px minmax(480px,1fr) 151px; overflow: hidden }
 .topbar { display: flex; align-items: center; gap: 18px; padding: 0 14px 0 1.9%; border-bottom: 1px solid var(--rule); background: var(--bg); z-index: 20 }
 .brand { white-space: nowrap; font-size: 26px; font-weight: 700; letter-spacing: -.7px; line-height: 27px; padding-right: 21px; border-right: 1px solid var(--rule) }
 .main-nav { display: flex; align-self: stretch; gap: 13px }
@@ -164,6 +164,8 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 /* 실제 집 지도 — 서버에 연결되면 예시 공장 자리(오른쪽 넓은 칸)에 뜬다. 로봇 시점 창(왼쪽)을 가리지 않는다. */
 .live-house-map { position: absolute; z-index: 3; top: 76px; right: 2%; width: min(62%, 980px); height: calc(100% - 200px); display: flex; flex-direction: column; padding: 12px 14px; border-radius: 12px; background: var(--panel, rgba(20,24,32,.92)); box-shadow: 0 8px 28px rgba(0,0,0,.25) }
 .op-live-map canvas { display: block; max-width: 100%; height: auto }
+.op-live-map [hidden] { display: none }
+.op-live-map[data-locate-mode=true] canvas { outline: 2px solid #2563eb; outline-offset: 2px }
 @media (max-width: 900px) { .live-house-map { left: 12px; right: 12px; top: 120px; width: auto; height: 52vh } }
 .live-house-map .op-live-map { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column }
 .live-house-map canvas { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; max-width: none; object-fit: contain }
@@ -325,3 +327,22 @@ dialog button+button { margin-left: 8px }
 @media(prefers-reduced-motion:reduce) {
  *,*:before,*:after { transition: none!important; animation: none!important; scroll-behavior: auto!important }
 }
+.route-location-hint { fill: rgba(37,99,235,.12); stroke: #2563eb; stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none }
+.route-map-svg[data-click-mode="move"],.route-map-svg[data-click-mode="move"] .route-pin { cursor: pointer }
+.route-map-svg[data-click-mode="locate"],.route-map-svg[data-click-mode="locate"] .route-pin { cursor: crosshair }
+
+.map-raster { image-rendering: pixelated }
+.op-live-map canvas { width: 100%; object-fit: contain }
+
+.route-snap-guide { fill: none; stroke: #2563eb; stroke-width: 2; stroke-dasharray: 5 4; pointer-events: none }
+.route-line.blocked { pointer-events: stroke; cursor: help; stroke-width: 5 }
+.route-blocked-hint { min-height: 1.5em; color: var(--danger, #b91c1c) }
+
+.route-workspace .route-line { fill: none; stroke: #16a34a; stroke-width: 3; stroke-dasharray: none }
+.route-workspace .route-line.unchecked { stroke: #6b7280; stroke-dasharray: 6 4 }
+.route-workspace .route-line.blocked { stroke: #dc2626; stroke-dasharray: none }
+.route-workspace .route-map-point .route-pin.blocked { stroke: #dc2626; stroke-width: 4 }
+.route-validation { padding: .75rem; border: 1px solid #9ca3af; border-radius: .5rem }
+.route-validation [data-route-valid="true"] { color: #15803d }
+.route-validation [data-route-valid="false"] { color: #b91c1c }
+.route-validation-error { display: flex; align-items: center; gap: .75rem; padding: .75rem; border: 2px solid #dc2626; border-radius: .5rem; color: #b91c1c }

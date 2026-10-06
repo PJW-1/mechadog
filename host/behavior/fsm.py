@@ -43,6 +43,7 @@ class Event(StrEnum):
     # ── 순찰 ──
     START_PATROL = "START_PATROL"  # 대시보드에서 순찰 시작을 눌렀다
     SCAN_DUE = "SCAN_DUE"  # 순찰 타이머 10s 만료 (FR-2.4)
+    GOAL_UNREACHABLE = "GOAL_UNREACHABLE"  # Single goto ended without reaching its goal.
     SCAN_DONE = "SCAN_DONE"  # 상체 스캔 3초 완료
     # ── 온보드 반사를 호스트가 따라간다 ──
     ONBOARD_AVOID = "ONBOARD_AVOID"  # 초음파 25cm 반사 정지를 로봇이 보고했다
@@ -63,6 +64,7 @@ class Event(StrEnum):
     # 의심 제한 시간 초과 · 쓰러짐 경보(L3) 확인 → 순찰 복귀. 누운 사람은 스스로
     # 떠나지 않아 대상 상실이 걸리지 않는다 — `ZONE_ALARM_CONFIRMED` 와 같은 이유다.
     FALL_RESOLVED = "FALL_RESOLVED"
+    ALARM_CONFIRMED = "ALARM_CONFIRMED"  # 래치 경보 확인 뒤 보류한 임무 재개
     # ── 인증 ──
     AUTH_REQUIRED = "AUTH_REQUIRED"  # 미인증 상태 지속 → L2
     AUTH_OK = "AUTH_OK"  # 사원증 또는 암구호 인증 성공
@@ -109,6 +111,10 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("IDLE", Event.START_PATROL, "PATROL"),
     Transition("PATROL", Event.SCAN_DUE, "SCAN"),
     Transition("SCAN", Event.SCAN_DONE, "PATROL"),
+    Transition("PATROL", Event.GOAL_UNREACHABLE, "IDLE"),
+    Transition("SCAN", Event.GOAL_UNREACHABLE, "IDLE"),
+    Transition("AVOID", Event.GOAL_UNREACHABLE, "IDLE"),
+    Transition("LOST", Event.GOAL_UNREACHABLE, "IDLE"),
     # ── 온보드 반사를 호스트가 따라간다 (FAILSAFE 와 같은 방식) ──
     Transition("PATROL", Event.ONBOARD_AVOID, "AVOID"),
     Transition("AVOID", Event.AVOID_CLEARED, "PATROL"),
@@ -127,6 +133,9 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("ZONE_INSPECT", Event.FALL_SUSPECTED, "ALERT"),
     Transition("ALERT", Event.FALL_RESOLVED, "PATROL"),
     Transition("TRACK", Event.FALL_RESOLVED, "PATROL"),
+    Transition("ALERT", Event.ALARM_CONFIRMED, "PATROL"),
+    Transition("TRACK", Event.ALARM_CONFIRMED, "PATROL"),
+    Transition("AUTH_WAIT", Event.ALARM_CONFIRMED, "PATROL"),
     # ── 인증 ──
     Transition("ALERT", Event.AUTH_REQUIRED, "AUTH_WAIT"),
     Transition("AUTH_WAIT", Event.AUTH_OK, "PATROL"),
@@ -297,6 +306,7 @@ class Behavior:
         vision_stall_ms: int = 2000,
         timers: Mapping[str, tuple[Event, int]] | None = None,
         target_lost_ms: int | None = None,
+        hold_on_latched_alarm: bool = False,
     ) -> None:
         if link_loss_ms <= 0 or vision_stall_ms <= 0:
             raise ValueError("타임아웃은 1 이상이어야 함")
@@ -322,6 +332,15 @@ class Behavior:
         self._fired: set[str] = set()
         # 이번 체류에서 타이머 마감을 미룬 총합. 상태가 바뀌면 0 이 된다 (`_mark_state`).
         self._timer_deferred_ms = 0
+        self._hold_on_latched_alarm = hold_on_latched_alarm
+        self._alarm_latched: Callable[[], bool] = lambda: False
+
+    def set_alarm_guard(self, latched: Callable[[], bool]) -> None:
+        self._alarm_latched = latched
+
+    @property
+    def alarm_holding(self) -> bool:
+        return self._hold_on_latched_alarm and self._alarm_latched()
 
     # ── 두 링크는 다르게 대응한다 (NFR-2.6) ────────────────────
     #
@@ -447,6 +466,15 @@ class Behavior:
         self._timer_deferred_ms = 0
 
     def _handle(self, event: Event, now_ms: int | None) -> bool:
+        if self.alarm_holding and event not in {
+            Event.ONBOARD_FAILSAFE,
+            Event.LINK_LOST,
+            Event.ESTOP,
+            Event.RESET_CONFIRMED,
+            Event.MANUAL_ON,
+            Event.MANUAL_OFF,
+        }:
+            return False
         changed = self._fsm.handle(event)
         if changed:
             self._last_trigger = event
@@ -503,7 +531,7 @@ class Behavior:
         self._watch_timers(now_ms)
         state = self._fsm.state
         directive = self._fsm.directive
-        if directive is Directive.HALT:
+        if self.alarm_holding or directive is Directive.HALT:
             self._commander.halt()
         elif directive is Directive.SEQUENCE:
             sequence = self._sequences.get(state)
@@ -512,7 +540,8 @@ class Behavior:
             else:
                 sequence(self._commander, now_ms)
         # YIELD 은 건드리지 않는다 — 조작자가 세운 의도를 살려둔다.
-        self._commander.announce(state)
+        # A sequence may end a navigation mission during this tick.
+        self._commander.announce(self._fsm.state)
         return self._commander.tick(now_ms)
 
 
@@ -543,4 +572,5 @@ def behavior_from_config(
         vision_stall_ms=int(config["vision"]["stall_timeout_ms"]),
         timers=timers,
         target_lost_ms=_lookup(config, ("fsm", "target_lost_timeout_s")) * 1000,
+        hold_on_latched_alarm=bool(config["fsm"].get("hold_on_latched_alarm", False)),
     )

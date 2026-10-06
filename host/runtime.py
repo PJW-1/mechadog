@@ -38,13 +38,14 @@ from host.behavior.actions import PostureSequence, register_actions
 from host.behavior.auth import Authenticator
 from host.behavior.auth_judge import AuthJudge
 from host.behavior.commander import Commander
-from host.behavior.escalation import Escalation
+from host.behavior.escalation import Escalation, Level
 from host.behavior.fall_monitor import FallMonitor
 from host.behavior.fsm import STANDBY, Behavior, Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.behavior.path_cause import PathCause
 from host.behavior.patrol import PatrolController, controller_from_config, load_patrol_map
 from host.behavior.ppe_judge import PpeJudge
+from host.behavior.routes import Route, load_routes, route_digest
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zone_inspector import ZoneInspector
@@ -90,6 +91,7 @@ from host.telemetry.ros2_relay import (
 )
 from host.telemetry.session_recorder import SessionRecorder
 from host.vision.frame_collector import collector_from_config
+from host.vision.ppe_detector import ppe_payload
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -123,6 +125,12 @@ def _is_oversized_datagram(exc: OSError) -> bool:
 # `SOUND` ACK 대기 — 실측 왕복은 30ms 안팎(`last_cmd_age_ms`)이라 세 주기면 넉넉하다.
 SOUND_ACK_TIMEOUT_MS = 300
 SOUND_RETRIES = 2
+# `SOUND.track` 상한 (PROTOCOL `SOUND` 절 · `dashboard.commands.SOUND_TRACK_MAX` 와 같은 값).
+ROBOT_SOUND_TRACK_MAX = 3000
+# 안내 문장은 한 번만 — 반복은 놓치면 안 되는 경고에만 건다 (`robot_sound.repeat_after_ms`).
+ROBOT_SOUND_NO_REPEAT = frozenset(
+    {"route_started", "route_finished", "alarm_confirmed", "ppe_settled", "fall_suspected"}
+)
 
 #: VLM 적재가 끝날 때까지 순찰 시작을 미루는 상한. 실측 적재는 ~15초 — 이 상한을
 #: 넘는 적재는 멈춰 있다고 보고, 굶김 위험을 로그로 남기고 시작한다.
@@ -276,9 +284,13 @@ class Runtime:
         #: 대시보드가 알려준 «지금 이 구역» — 서버 스레드가 넣고 루프가 꺼낸다.
         self._locate_lock = threading.Lock()
         self._locate_asked: str | None = None
+        self._locate_point_asked: tuple[float, float] | None = None
         #: 지도에서 찍은 목표 — 서버 스레드가 넣고 루프가 꺼낸다. 결과는 피드백으로.
         self._goto_asked: tuple[float, float] | None = None
         self._goal_feedback: dict[str, Any] | None = None
+        self._route_asked: Route | None = None
+        self._route_feedback: dict[str, Any] | None = None
+        self._navigation_epoch = 0
         #: 루프가 틱마다 만든 항법 상태 묶음 (서버는 참조만 읽는다).
         self._nav_snapshot: dict[str, Any] | None = None
         #: 사람이 순찰을 멈췄다(PATROL → IDLE) — 찍은 목표를 버린다 (루프에서).
@@ -298,10 +310,12 @@ class Runtime:
         self._record_frame_ms = record_frame_ms
         self._last_frame_saved_ms: int | None = None
         self._recorded_nav_phase: str | None = None
+        self._navigation_frames: dict[int | str, VisionResult] = {}
         #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
         self._take_scan: Callable[[], Scan | None] | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
         self._navigator_resume = False
+        self._navigator_resume_from_inspection = False
         if navigator is not None:
             # 추적·경보·구역 점검에서 돌아오면 지금 자리에서 같은 목표로 다시 푼다.
             # ⚠️ **훅에서 바로 풀지 않는다.** 전이는 대시보드 스레드(`apply_external`)에서도
@@ -352,6 +366,10 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
+        self._ppe_test = bool(config["vision"]["ppe"].get("test_mode", False))
+        if self._ppe_test and (not motion_lock or not self._mission.enables("ppe")):
+            raise ConfigError("PPE 시험은 공장 모드와 보행 잠금이 필요하다")
+        self._vision_records_in_worker = False
         self._collector = collector_from_config(config, device_id)
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
@@ -364,8 +382,8 @@ class Runtime:
             apply=self._apply,
             fall_suspected=lambda: self._fall.suspected,
         )
-        # 구역 변화 감지 (FR-8). 구역 도착은 **지도 좌표 앵커**(`maps/zones.json`)와
-        # 측위 위치로 판정한다 (FR-7.4) — ArUco 구역 마커는 쓰지 않는다. 점검은
+        # 구역 변화 감지 (FR-8). 일반 순찰은 지도 앵커, 명시 동선은 정지점에서 점검한다.
+        # 정책·사건의 소속은 같은 지도 영역 라벨로 판정한다. 점검은
         # `ZoneInspector` 가 맡고(아래), 앵커는 기동 로그 순서를 지키려고 여기서 읽는다.
         zone_ids = tuple(str(label) for label in config["zones"]["ids"])
         # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
@@ -381,7 +399,16 @@ class Runtime:
         except (OSError, ValueError) as exc:
             LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
             anchors = ()
-        self._zone_ppe = ZonePpePolicy(config, anchors)
+        try:
+            zone_map = (
+                navigator.zone_map
+                if isinstance(navigator, PatrolController)
+                else ZoneMap.load(maps_dir(config))
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            LOG.error("zone_map_unreadable", error=f"{type(exc).__name__}: {exc}")
+            zone_map = None
+        self._zone_ppe = ZonePpePolicy(config, zone_map)
         # 상황 판독 (FR-8 · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
@@ -412,6 +439,20 @@ class Runtime:
         #: 않는 계약이지만 `_record_scene` 에서 다시 한 번 감싼다 — 아직 없는 계약을
         #: 믿고 안 감싸면 방송기가 하나라도 어기는 순간 제어 틱이 죽는다.
         self._announcer = announcer
+        #: 사건 → 로봇 MP3 모듈 TF 카드 트랙 (`robot_sound.tracks` · ADR-38 말하기 경로).
+        #: 키는 사건 이름(`person_fallen` 등)이나 경고 키(`ppe_violation_warning`). 비면 안 튼다.
+        self._robot_tracks = {
+            str(k): int(v)
+            for k, v in ((config.get("robot_sound") or {}).get("tracks") or {}).items()
+        }
+        #: 같은 경고를 이만큼 뒤 한 번 더 튼다(0 이면 안 함). 로봇은 모듈에 쓰기 전에 ACK 를
+        #: 보내므로 재생 실패를 알 수 없다 — 2026-10-06 리허설에서 ACK 는 왔는데 무음이었다.
+        self._robot_repeat_ms = int((config.get("robot_sound") or {}).get("repeat_after_ms") or 0)
+        #: 항법 설정 중 런타임이 직접 읽는 스위치(`publish_new_obstacles` 등).
+        self._config_nav = dict(config.get("nav") or {})
+        self._robot_repeat: tuple[int, int] | None = None  # (시각, 트랙)
+        #: 동선 시작·완료 안내용 직전 상태 (`_announce_route_edges`).
+        self._route_was_active = False
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -449,6 +490,12 @@ class Runtime:
         # 대응 강도 축. FSM 상태와 **직교한다** — 같은 `ALERT` 에서도 단계가
         # 다르면 눈 색깔과 음향이 다르다.
         self._escalation = Escalation(config)
+        self._behavior.set_alarm_guard(
+            lambda: (
+                self._escalation.latched
+                and (self._escalation.level is Level.L3 or self._escalation.alarm_pending)
+            )
+        )
         # ⚠️ **값을 넣지 않고 물어볼 대상을 넘긴다.** 단계는 사건·시간·확인 어느
         # 쪽으로도 바뀌므로 갱신 지점이 하나가 아니고, 복사해 두면 반드시 어긋난다.
         self._log.bind_escalation(lambda: self._escalation.level.value)
@@ -497,6 +544,22 @@ class Runtime:
             anchors=anchors,
             apply=self._apply,
             record=self._record_scene,
+            ready_to_inspect=(lambda zone, now_ms: navigator.inspection_ready(zone.label, now_ms))
+            if isinstance(navigator, PatrolController)
+            else None,
+            route_inspection=(
+                lambda zone, now_ms: (
+                    navigator.inspection_ready(zone.label, now_ms)
+                    if navigator.route_controls_inspection
+                    else None
+                )
+            )
+            if isinstance(navigator, PatrolController)
+            else None,
+            route_visit=(lambda: navigator.route_visit)
+            if isinstance(navigator, PatrolController)
+            else None,
+            zone_at=self._zone_ppe.current_zone if zone_map is not None else None,
             path_waiting=lambda: self._path_cause.waiting,
         )
         # LiDAR 막힘 확정 프레임의 원인 판독 (ADR-45). 같은 판독 워커를 쓰므로 쓰러짐·구역
@@ -510,6 +573,8 @@ class Runtime:
             announce=lambda kind, judgement: self._announce_situation(kind, judgement),
             others_waiting=lambda: self._fall.waiting or self._zone_inspector.waiting,
         )
+        if isinstance(navigator, PatrolController):
+            navigator.wait_for_inspection = self._awaits_zone_inspection
         # 보호구 판정 (FR-9 · ADR-42). 쓰러짐 의심 중에는 판정을 보류하므로 감시 뒤에 만든다.
         self._ppe_judge = PpeJudge(
             config,
@@ -627,6 +692,20 @@ class Runtime:
         if out.reading is None:
             if _is_command_ack(raw):
                 self._summary.count("acks")
+                # 2026-10-06 사용자 승인: 펌웨어가 센서 표본이 무효면 텔레메트리를 통째로 버려
+                # (telemetry_publisher «Telemetry unavailable») ACK 는 오는데 LINK_LOST 로 서던 문제.
+                # 명령 응답도 로봇 링크 생존 증거로 센다. 온보드 링크 두절 정지(3s)는 그대로다.
+                self._behavior.note_telemetry(now_ms)
+                # 2026-10-06: 텔레메트리가 끊긴 동안에도 ACK 의 safe_latched 로 래치 해제를 확인한다.
+                try:
+                    latched = json.loads(raw).get("safe_latched")
+                except (ValueError, AttributeError):
+                    latched = None
+                if isinstance(latched, bool):
+                    # FSM 래치 가드도 ACK 값으로 갱신한다 — 텔레메트리의 옛 `true` 가 해제를 막지 않게
+                    # (Codex 10-06 검수 [확정]).
+                    self._behavior.note_robot_latch(latched)
+                    self._settle_reset(latched, now_ms)
                 if (
                     self._sound_wait is not None
                     and json.loads(raw).get("seq") == self._sound_wait[0]
@@ -743,6 +822,8 @@ class Runtime:
         result = self._vision.latest()
         if result is not None and not self._edge.changed("vision_seq", result.frame_seq):
             result = None
+        if result is not None and self._ppe_test and not self._vision_records_in_worker:
+            self._record_ppe_frame(result)
         if result is not None and self._recorder is not None:
             self._record_vision(result, now_ms)
         if result is not None:
@@ -803,7 +884,8 @@ class Runtime:
         if result is not None:
             self._fall.take_reading(now_ms)
             self._observe_fallen(result, now_ms)
-            self._ppe_judge.judge(result, now_ms)
+            if not self._ppe_test:
+                self._ppe_judge.judge(result, now_ms)
             self._track_controller.track(result, now_ms)
             self._zone_inspector.inspect(result, now_ms)
             self._fall.ask(result, now_ms)
@@ -849,15 +931,35 @@ class Runtime:
                 for d in result.detections
             ],
             person_present=result.sighting.present,
+            ppe=ppe_payload(result),
             frame_file=frame_file,
             # 재생(`tools/ops/replay_session.py`)이 같은 결과를 다시 만들 수 있게 판정 전체를 남긴다.
             sighting=asdict(result.sighting),
             tracks=[asdict(track) for track in result.tracks],
             fallen=asdict(result.fallen),
             markers=[asdict(marker) for marker in result.markers],
-            ppe=None if result.ppe is None else asdict(result.ppe),
+            # `ppe` 는 현장 분석 도구가 읽는 트랙별 목록이다 — 재생용 대표 판정은 따로 둔다.
+            ppe_verdict=None if result.ppe is None else asdict(result.ppe),
             hazard=None if result.hazard is None else asdict(result.hazard),
         )
+
+    def _record_ppe_frame(self, result: VisionResult) -> None:
+        """시험 결과만 기록한다. FSM·경보·자세 명령은 호출하지 않는다."""
+        payload = ppe_payload(result)
+        if not self._mission.enables("ppe"):
+            return
+        LOG.info("ppe_debug", frame_seq=result.frame_seq, ppe=payload)
+        if self._recorder is not None:
+            self._recorder.record(
+                "ppe_debug",
+                at_ms=result.completed_ms,
+                frame_seq=result.frame_seq,
+                ppe=payload,
+                person_down_reference=[
+                    {"score": d.score, "box": list(d.box)} for d in result.person_down_reference
+                ],
+                reference_reason=result.person_down_reference_reason,
+            )
 
     def _switch_hazard_detector(self) -> None:
         """위험물 추론은 위험구역 점검 중에만 켠다 (ADR-43 대안 ⓐ 개정).
@@ -869,10 +971,22 @@ class Runtime:
         if vision is None or not hasattr(vision, "set_hazard_enabled"):
             return
         self._zone_inspector.note_hazard_detector(bool(vision.hazard_available))
-        watching = self._zone_inspector.watching_hazards
+        watching = self._zone_inspector.hazards_allowed(self._clock())
         if self._edge.changed("hazard_detector", watching):
             vision.set_hazard_enabled(watching)
             LOG.info("hazard_detector_switched", enabled=watching)
+
+    def _awaits_zone_inspection(self, label: str) -> bool:
+        """방향을 맞춘 구역에서 다음 프레임까지 선다. 비전이 없으면 순찰을 잇는다."""
+        navigator = self._navigator
+        return (
+            navigator is not None
+            and (navigator.route_active or navigator.zones.get(label).aim_deg is not None)
+            and self._zone_inspector.awaits_inspection(label, self._clock())
+            and self._vision is not None
+            and self._vision.healthy()
+            and not self._vision.stalled(self._clock())
+        )
 
     def _patrol_sequence(self, commander: Commander, now_ms: int) -> None:
         if self._ppe_judge.halts_patrol(now_ms) or self._auth_judge.holds_patrol(now_ms):
@@ -880,25 +994,66 @@ class Runtime:
         elif self._navigator is not None:
             if self._navigator_resume:
                 self._navigator_resume = False
-                self._navigator.resume()
+                if self._navigator_resume_from_inspection:
+                    self._navigator.resume(from_inspection=True)
+                else:
+                    self._navigator.resume()
             # 상태 알림·래치·링크는 FSM 이 쥔다 — 길 찾기만 맡긴다 (`PatrolController.steer`).
             self._navigator.steer(now_ms)
+            recovery = self._navigator._recovery
+            if recovery is not None and self._vision is not None:
+                key = recovery.blockage_id if recovery.blockage_id is not None else recovery.target
+                frame = self._vision.latest()
+                if key not in self._navigation_frames and frame is not None:
+                    self._navigation_frames[key] = frame
+                    if len(self._navigation_frames) > 32:
+                        del self._navigation_frames[next(iter(self._navigation_frames))]
+            self._settle_unreachable_goal(now_ms, from_sequence=True)
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
+
+    def _settle_unreachable_goal(self, now_ms: int, *, from_sequence: bool = False) -> None:
+        navigator = self._navigator
+        if (
+            isinstance(navigator, PatrolController)
+            and navigator.goal_hold_reason == "blocked"
+            and navigator.goal is None
+            and not navigator.route_active
+        ):
+            if from_sequence:
+                # Runtime.tick records sequence transitions once, after Behavior.tick.
+                self._behavior.event(Event.GOAL_UNREACHABLE, now_ms=now_ms)
+            else:
+                self._apply(Event.GOAL_UNREACHABLE, now_ms)
 
     def _mark_goal_cancel(self, previous: str, target: str) -> None:
         """사람이 멈췄다 — `PATROL`→`MANUAL`/`IDLE`, `MANUAL`→`IDLE`. 경보·추적으로 잠시 나간 것은 아니다.
 
         수동 조종도 취소다 — 사람이 로봇을 옮긴 뒤 옛 목표로 걸어가면 안 된다. 표시만 하고 루프가 처리한다.
         """
+        if (
+            previous == "PATROL"
+            and target == "IDLE"
+            and isinstance(self._navigator, PatrolController)
+            and self._navigator.goal_hold_reason == "blocked"
+            and self._navigator.goal is None
+        ):
+            # Automatic failure completion keeps the result visible in nav status.
+            return
         if (previous == "PATROL" and target in ("IDLE", "MANUAL")) or (
             previous == "MANUAL" and target == "IDLE"
         ):
-            self._goal_cancel_asked = True
+            with self._locate_lock:
+                self._navigation_epoch += 1
+                self._goal_cancel_asked = True
+                self._route_asked = None
+                self._goto_asked = None
+                self._patrol_asked = False
 
-    def _mark_navigator_resume(self, _previous: str, _target: str) -> None:
+    def _mark_navigator_resume(self, previous: str, _target: str) -> None:
         """`PATROL` 진입 훅. 표시만 한다 — 길 찾기 상태는 루프 스레드만 바꾼다."""
         self._navigator_resume = True
+        self._navigator_resume_from_inspection = previous == "ZONE_INSPECT"
 
     def _alert_sequence(self, commander: Commander, now_ms: int) -> None:
         """Factory PPE owns ALERT posture; guard keeps the existing alert sequence."""
@@ -916,6 +1071,7 @@ class Runtime:
         LiDAR 길 찾기(`--lidar-device`)의 스캔 정합이 `_observe_scan` 에서 부른다.
         그것이 없으면 아무도 부르지 않고 구역 도착이 일어나지 않는다.
         """
+        self._zone_ppe.note_pose(pose, now_ms)
         self._zone_inspector.note_pose(pose, now_ms)
         if self._pose_out is not None:
             # 대시보드 실시간 위치 — 송신 실패는 순찰을 늦추지 않는다 (`PoseOut.send`).
@@ -923,10 +1079,9 @@ class Runtime:
                 pose,
                 moving=self._behavior.state == "PATROL",
                 score_frac=getattr(self._navigator, "match_frac", None),
-                zone=getattr(self._navigator, "current_zone", None),
+                zone=self._zone_ppe.current_zone(now_ms),
                 verified=bool(getattr(self._navigator, "pose_verified", False)),
             )
-        self._zone_ppe.note_pose(pose, now_ms)
 
     def attach_scans(self, take: Callable[[], Scan | None]) -> None:
         """최신 스캔 공급자를 붙인다 (`LidarFeed.take`). 길 찾기가 없으면 쓰지 않는다."""
@@ -963,7 +1118,7 @@ class Runtime:
                     moving=False,
                     lost=True,
                     score_frac=getattr(navigator, "match_frac", None),
-                    zone=getattr(navigator, "current_zone", None),
+                    zone=self._zone_ppe.current_zone(now_ms),
                     verified=False,
                 )
             if self._recorder is not None:
@@ -978,10 +1133,11 @@ class Runtime:
                     score_frac=round(navigator.match_frac, 3),
                     lost=navigator.pose_stale(now_ms),
                     verified=navigator.pose_verified,
-                    zone=navigator.current_zone,
+                    zone=self._zone_ppe.current_zone(now_ms),
                     pose=[round(x, 4), round(y, 4), round(yaw, 5)],
                     phase=navigator.phase.value,
                     target=navigator.target,
+                    scan_gate=navigator.scan_gate.status,
                 )
         if self._recorder is not None and self._navigator.phase.value != self._recorded_nav_phase:
             self._recorded_nav_phase = self._navigator.phase.value
@@ -992,9 +1148,46 @@ class Runtime:
                 halt_reason=self._navigator.halt_reason,
                 target=self._navigator.target,
             )
+        # 지도에 없던 새 끝점을 모두 «통로 막힘» 사건으로 내면 시연 중 사람·의자마다 방송이 나간다
+        # (현장 10-06). 원인 판독(ADR-45)은 `nav.publish_new_obstacles` 로 켤 때만 낸다.
+        publish = bool(self._config_nav.get("publish_new_obstacles", False))
         for hit in self._navigator.take_new_obstacles():
             self._collect_blocked(hit, now_ms)
-            self._record_path_blocked(hit, now_ms)
+            if publish:
+                self._record_path_blocked(hit, now_ms)
+
+    def _record_navigation_event(self, event: dict[str, Any], now_ms: int) -> None:
+        kind = str(event["event"])
+        judgement = dict(event["judgement"])
+        result = self._vision.latest() if self._vision is not None else None
+        key = judgement.get("blockage_id") or judgement.get("target") or judgement.get("zone")
+        if isinstance(key, (int, str)):
+            result = self._navigation_frames.get(key, result)
+        judgement["camera_available"] = result is not None and bool(result.jpeg)
+        judgement["camera_completed_ms"] = None if result is None else result.completed_ms
+        judgement["camera_age_ms"] = (
+            None if result is None else max(0, now_ms - result.completed_ms)
+        )
+        judgement["sentence"] = self._announce_situation(kind, judgement)
+        if self._blackbox is None:
+            return
+        try:
+            entry = self._blackbox.record(
+                kind,
+                jpeg=None if result is None else result.jpeg,
+                tracks=() if result is None else result.tracks,
+                detections=() if result is None else result.detections,
+                judgement=judgement,
+                telemetry=self._last_telemetry,
+                state=self._behavior.state,
+                escalation=self._escalation.level.value,
+                mode=self._mission.mode,
+                now_ms=now_ms,
+            )
+            if self._event_publisher is not None:
+                self._event_publisher(entry)
+        except Exception as exc:
+            LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
 
     def _collect_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
         """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다).
@@ -1059,9 +1252,8 @@ class Runtime:
         ⚠️ **판정은 워커가 추론마다 했고 여기서는 결과만 읽는다** — 게이트·추적과
         같은 이유다(10Hz 에서 재면 25fps 중 10개만 본다).
 
-        ⚠️ **규칙 단독 `PERSON_DOWN` 은 없다.** 누움은 의심 진입에만 쓰고 확정에는
-        세지 않는다 — 누운 사람을 거의 못 잡는다. 워커의 3초 정지
-        확정(`fallen`)은 엣지 로그로만 남는다. 경비 모드는 예전처럼 그 엣지를 기록까지만 남긴다.
+        누움 후보는 의심 진입에 쓴다. 공장 확정은 `FallMonitor`가 3초 정지 규칙과
+        같은 프레임의 VLM yes를 교차검증한다. 경비 모드는 규칙 엣지를 기록만 한다.
         """
         verdict = getattr(result, "fallen", None)
         if verdict is None:
@@ -1115,10 +1307,59 @@ class Runtime:
         할 경고이지 블랙박스 파일이 아니므로, 블랙박스가 없는 구성(`blackbox=None`)
         에서도 방송만은 막지 않는다.
         """
+        now_ms = self._clock()
+        judgement = dict(judgement or {})
+        judgement.setdefault("zone", self._zone_ppe.current_zone(now_ms))
+        judgement.setdefault(
+            "ppe_required", list(self._zone_ppe.requirements_for(judgement["zone"]))
+        )
         sentence: str | None = None
+        if (
+            event_type == "PPE_SETTLED"
+            and judgement.get("rechecked")
+            and judgement.get("reason") == "착용 확인"
+        ):
+            if self._dashboard is not None and (
+                self._blackbox is None or self._event_publisher is None
+            ):
+                self._dashboard.record_event(
+                    {
+                        "event": event_type,
+                        "ts_ms": now_ms,
+                        "state": self._behavior.state,
+                        "escalation": self._escalation.level.value,
+                        "mode": self._mission.mode,
+                        "judgement": judgement,
+                    }
+                )
+            self._play_robot_track("ppe_settled")
+        elif event_type == "PPE_SETTLED" and (judgement or {}).get("reason") == "경고 횟수 한도":
+            self._play_robot_track("ppe_unresolved")
+        cross_result = judgement is not None and "rule_yes" in judgement
+        if (
+            cross_result
+            and self._dashboard is not None
+            and (self._blackbox is None or self._event_publisher is None)
+        ):
+            self._dashboard.record_event(
+                {
+                    "event": event_type,
+                    "ts_ms": self._clock(),
+                    "state": self._behavior.state,
+                    "escalation": self._escalation.level.value,
+                    "mode": self._mission.mode,
+                    "judgement": judgement,
+                }
+            )
+        if judgement is not None and "rule_yes" in judgement and self._recorder is not None:
+            self._recorder.record(
+                "fall_cross_result", at_ms=self._clock(), frame_seq=result.frame_seq, **judgement
+            )
         # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
         # 방송·자막 문장을 붙이지 않는다.
-        if event_type != "person_fallen" or self._mission.enables("fallen"):
+        if not (judgement or {}).get("test_mode") and (
+            event_type != "person_fallen" or self._mission.enables("fallen")
+        ):
             sentence = self._announce_situation(event_type, judgement)
         if self._blackbox is None:
             return
@@ -1191,7 +1432,52 @@ class Runtime:
                 self._announcer(sentence)
             except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
                 LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
+        if sentence is not None:
+            key = event_type
+            items = (judgement or {}).get("items")
+            if (
+                event_type == "hazard_notice"
+                and (judgement or {}).get("source") == "detector"
+                and isinstance(items, list)
+                and len(set(items)) == 1
+                and f"hazard_notice_{items[0]}" in self._robot_tracks
+            ):
+                key = f"hazard_notice_{items[0]}"
+            self._play_robot_track(key)
         return sentence
+
+    def _play_robot_track(self, key: str) -> None:
+        """`key` 에 맞는 TF 카드 트랙을 로봇 스피커로 튼다. 표에 없으면 아무것도 안 한다.
+
+        ACK 가 없으면 `_resend_sound` 가 새 seq 로 다시 싣는다.
+        """
+        track = self._robot_tracks.get(key)
+        if track is None or not 0 < track <= ROBOT_SOUND_TRACK_MAX:
+            return
+        # 새 소리가 나가면 이전 경고의 반복은 취소한다 — 경보 확인 뒤 옛 경고가 다시 나오지 않게
+        # (Codex 10-06 검수 [확정]).
+        self._robot_repeat = None
+        try:
+            self._commander.once("SOUND", track=track)
+            LOG.info("robot_sound", key=key, track=track)
+            if self._robot_repeat_ms > 0 and key not in ROBOT_SOUND_NO_REPEAT:
+                self._robot_repeat = (self._clock() + self._robot_repeat_ms, track)
+        except Exception as exc:  # noqa: BLE001 — 소리 실패가 제어를 막으면 안 된다
+            LOG.error("robot_sound_failed", error=f"{type(exc).__name__}: {exc}")
+
+    def _announce_route_edges(self) -> None:
+        """동선 시작·완료를 로봇 스피커로 알린다 (`route_started`·`route_finished`). 정지·교체는 말하지 않는다."""
+        navigator = self._navigator
+        if not isinstance(navigator, PatrolController):
+            return
+        active = navigator.route_active
+        if active and not self._route_was_active:
+            self._play_robot_track("route_started")
+        elif self._route_was_active and not active:
+            status = (navigator.route_status() or {}).get("status")
+            if isinstance(status, str) and status.startswith("completed"):
+                self._play_robot_track("route_finished")
+        self._route_was_active = active
 
     def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
         """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (좌우 대칭 근거).
@@ -1380,6 +1666,29 @@ class Runtime:
                 "reason": self._escalation.reason,
             }
         )
+        reason = self._escalation.reason
+        if level == "L1" and reason == "fall_suspected":
+            self._play_robot_track("fall_suspected")
+        if self._escalation.presentation().warning and isinstance(reason, str):
+            key = f"{reason.lower()}_warning"
+            if reason == "PPE_VIOLATION":
+                key = self._ppe_warning_key(key)
+            self._play_robot_track(key)
+
+    def _ppe_warning_key(self, base: str) -> str:
+        """빠진 보호구가 하나면 그것만 말하는 키(`ppe_violation_helmet_warning` 등)를 고른다.
+
+        표에 그 키가 없거나 둘 다 빠졌거나 판정을 못 읽으면 통합 문장 키(`base`)를 쓴다.
+        """
+        result = self._vision.latest() if self._vision is not None else None
+        verdict = getattr(result, "ppe", None)
+        regions = getattr(verdict, "regions", ()) or ()
+        missing = {r.item for r in regions if str(r.label).startswith("no_")}
+        if len(missing) == 1:
+            key = f"ppe_violation_{next(iter(missing))}_warning"
+            if key in self._robot_tracks:
+                return key
+        return base
 
     def _announce_transition(self, event: Event, previous: str, now_ms: int) -> None:
         """인증·안전 전이를 관제 사건으로 낸다. 전이 로그(jsonl)에만 있던 것들이다."""
@@ -1516,6 +1825,9 @@ class Runtime:
         self._drain_confirmations(now_ms)
         # 측위를 비전보다 앞에 둔다 — 구역 점검(`_poll_vision`)이 이번 틱의 자세로 도착을 본다.
         self._observe_scan(now_ms)
+        if isinstance(self._navigator, PatrolController):
+            self._navigator.expire_recovery(now_ms)
+            self._settle_unreachable_goal(now_ms)
         # 막힘 원인 판독을 쓰러짐·구역 판독보다 먼저 줍는다 — 같은 틱에 그쪽이 워커를 쓴다.
         self._path_cause.poll(now_ms)
         # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
@@ -1535,9 +1847,18 @@ class Runtime:
         self._emit_eye_led(now_ms)
         self._auth_judge.request(now_ms)
         self._resend_sound(now_ms)
+        self._announce_route_edges()
+        if self._robot_repeat is not None and now_ms >= self._robot_repeat[0]:
+            track = self._robot_repeat[1]
+            self._robot_repeat = None
+            self._commander.once("SOUND", track=track)
+            LOG.info("robot_sound_repeat", track=track)
         before = self._behavior.state
         phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
+        if isinstance(self._navigator, PatrolController):
+            for event in self._navigator.take_navigation_events():
+                self._record_navigation_event(event, now_ms)
         self._watch_sound(lines, now_ms)
         if self._navigator is not None:
             self._nav_snapshot = self._build_nav_snapshot(now_ms)
@@ -1625,6 +1946,8 @@ class Runtime:
         # (`ALERT` 의 PPE 위반) 내리는 것은 그렇지 않다 — 로봇 래치가 걸려 있으면
         # `RESET_CONFIRMED` 가 거부되고, 그때 F 를 풀면 호스트만 풀린다.
         self._escalation.note_event(event.name, now_ms, accepted=accepted)
+        if self._behavior.alarm_holding:
+            self._commander.halt()
         if not accepted:
             return False
         self._stats.transitions += 1
@@ -1671,6 +1994,7 @@ class Runtime:
         판단*(침입자가 갔나·안전모·물건)이라 로봇에 보낼 것이 없다. 하나로 묶으면
         **비상정지를 눌렀다 푸는 것으로 경보를 지우는 길**이 생긴다.
         """
+        held = self._behavior.alarm_holding
         released = self._escalation.confirm_alarm(now_ms)
         if not released:
             LOG.info("alarm_confirm_ignored", level=self._escalation.level.value)
@@ -1680,6 +2004,10 @@ class Runtime:
         elif self._fall.confirmed:
             # 확정한 쓰러짐도 확인하면 순찰로 돌아간다 (S4) — 누운 사람은 스스로 떠나지 않는다.
             self._fall.resolve(now_ms)
+        if released:
+            self._play_robot_track("alarm_confirmed")
+        if released and held:
+            self._apply(Event.ALARM_CONFIRMED, now_ms)
         return released
 
     def ask_alarm_confirm(self) -> None:
@@ -1698,14 +2026,88 @@ class Runtime:
 
     def ask_goto(self, x: float, y: float) -> tuple[bool, str]:
         """지도에서 찍은 곳(순찰 좌표)을 예약한다. **다른 스레드에서 부른다.**"""
+        if self._motion_lock:
+            detail = "보행 잠금 중 — 이동할 수 없다"
+            with self._locate_lock:
+                self._goal_feedback = {
+                    "accepted": False,
+                    "detail": detail,
+                    "at_ms": self._clock(),
+                }
+            return False, detail
         self._record_input("ask_goto", x=x, y=y)
         navigator = self._navigator
         if navigator is None or not hasattr(navigator, "goto"):
             return False, "LiDAR 측위 순찰이 아니라 지도 이동을 할 수 없다"
         with self._locate_lock:
             self._goto_asked = (float(x), float(y))
+            self._route_asked = None
             self._goal_feedback = None
         return True, "찍은 곳으로 갈 수 있는지 확인한다 — 결과는 지도에 표시된다"
+
+    def ask_route(self, route_id: str, expected_digest: str | None = None) -> tuple[bool, str]:
+        """명시적으로 고른 저장 동선을 읽고 루프에 검증·시작을 예약한다."""
+        navigator = self._navigator
+        if not isinstance(navigator, PatrolController) or navigator.maps_dir is None:
+            return False, "LiDAR 지도와 동선 저장소가 연결되지 않았다"
+        if self._motion_lock:
+            return False, "보행 잠금 중에는 동선을 시작할 수 없다"
+        if self._behavior.state not in ("IDLE", "PATROL") or self._reset_pending:
+            return False, "대기 또는 순찰 상태에서만 동선을 시작할 수 있다"
+        with self._locate_lock:
+            if self._goal_cancel_asked:
+                return False, "정지를 처리하고 있다 — 정지 완료 뒤 동선을 시작해야 한다"
+            epoch = self._navigation_epoch
+        try:
+            route = load_routes(navigator.maps_dir).get(route_id)
+        except (OSError, ValueError) as exc:
+            LOG.warning("route_load_failed", error=type(exc).__name__)
+            return False, "저장 동선을 읽을 수 없다"
+        if route is None:
+            return False, "저장된 동선을 찾을 수 없다"
+        if expected_digest is not None and route_digest(route) != expected_digest:
+            return False, "동선이 변경되었다 — 다시 불러와 확인한 뒤 시작해야 한다"
+        snapshot = self._nav_snapshot
+        if (
+            snapshot is None
+            or snapshot.get("stale")
+            or (
+                navigator._own_localization
+                and not (snapshot.get("verified") or snapshot.get("seeded"))
+            )
+        ):
+            return False, "로봇이 아직 자기 위치를 확인하지 못했다 — 위치를 먼저 잡아야 한다"
+        with self._locate_lock:
+            if epoch != self._navigation_epoch:
+                return False, "정지 요청으로 동선 시작을 취소했다"
+            self._route_asked = route
+            self._goto_asked = None
+            self._route_feedback = None
+        return True, "동선 주행을 예약했다 — 현재 위치와 경로 검증 결과는 지도에 표시된다"
+
+    def ask_route_stop(self) -> tuple[bool, str]:
+        """예약을 취소하고 기존 수동 경유 정지와 즉시 STOP을 같은 송신 락으로 묶는다."""
+        with self._send_lock:
+            with self._locate_lock:
+                self._navigation_epoch += 1
+                self._route_asked = None
+                self._goto_asked = None
+                self._patrol_asked = False
+                self._goal_cancel_asked = True
+            if self._behavior.state != "IDLE" and self._behavior.fsm.can(Event.MANUAL_ON):
+                self._apply(Event.MANUAL_ON, self._clock())
+                self._apply(Event.MANUAL_OFF, self._clock())
+            line = self._commander.stop_now()
+            self._route_feedback = {
+                "accepted": True,
+                "detail": "동선을 중지했다",
+                "at_ms": self._clock(),
+            }
+            if self._sock is not None and self._peer is not None:
+                lines = [line] if self._session_open is None else [self._session_open, line]
+                self._session_open = None
+                self._transmit(self._sock, self._peer, lines)
+        return True, "동선을 중지했다"
 
     def nav_status(self) -> dict[str, Any]:
         """관제 지도가 그릴 자기 위치·신뢰·목표. **다른 스레드에서 부른다.**
@@ -1716,7 +2118,11 @@ class Runtime:
         snapshot = self._nav_snapshot
         if snapshot is None:
             return {"available": self._navigator is not None, "starting": True}
-        return {**snapshot, "goal_feedback": self._goal_feedback}
+        return {
+            **snapshot,
+            "goal_feedback": self._goal_feedback,
+            "route_feedback": self._route_feedback,
+        }
 
     def _build_nav_snapshot(self, now_ms: int) -> dict[str, Any]:
         """루프 스레드에서 한 시점의 항법 상태를 묶는다."""
@@ -1725,7 +2131,10 @@ class Runtime:
             return {"available": False}
         x, y, yaw = navigator.pose
         goal = getattr(navigator, "goal", None)
+        # 스캔이 오지 않아도 힌트의 유효기간은 흐른다. 상태 변경은 이 루프에서만 한다.
+        navigator._zone_filter(now_ms)
         hint = getattr(navigator, "_zone_hint", None)
+        point_hint = navigator._point_hint
         return {
             "available": True,
             "frame": "patrol",
@@ -1734,18 +2143,32 @@ class Runtime:
             "verified": bool(getattr(navigator, "pose_verified", False)),
             "seeded": bool(getattr(navigator, "pose_seeded", False)),
             "phase": str(getattr(navigator, "phase", "")),
+            "local_navigation": getattr(navigator, "local_status", {}),
+            "blockage": getattr(navigator, "blockage_status", {}),
             "target": getattr(navigator, "target", None),
-            "zone": getattr(navigator, "current_zone", None),
+            "zone": self._zone_ppe.current_zone(now_ms),
+            "ppe_required": list(self._zone_ppe.required(now_ms)),
             "goal": None if goal is None else [round(goal[0], 3), round(goal[1], 3)],
             "holding_goal": bool(getattr(navigator, "holding_goal", False)),
             "goal_hold_reason": getattr(navigator, "goal_hold_reason", None),
             "zone_hint": None if hint is None else hint[0],
+            "point_hint": (
+                None
+                if point_hint is None
+                else {
+                    "x": point_hint[0],
+                    "y": point_hint[1],
+                    "radius": navigator.point_hint_radius_m,
+                }
+            ),
             "match_frac": round(float(getattr(navigator, "match_frac", 0.0)), 3),
             "path": [
                 [round(px, 3), round(py, 3)]
                 for px, py in getattr(getattr(navigator, "plan", None), "waypoints", ())
             ],
             "goal_feedback": self._goal_feedback,
+            "route": navigator.route_status() if isinstance(navigator, PatrolController) else None,
+            "route_feedback": self._route_feedback,
             "fsm": self._behavior.state,
         }
 
@@ -1766,7 +2189,21 @@ class Runtime:
             )
         with self._locate_lock:
             self._locate_asked = zone
+            self._locate_point_asked = None
         return True, f"구역 {zone} 안에서 위치를 다시 찾는다 — 찾을 때까지 로봇은 선다"
+
+    def ask_locate_point(self, x: float, y: float) -> tuple[bool, str]:
+        """사람이 찍은 현재 위치를 예약한다. 적용은 다음 틱이며 **다른 스레드에서 부른다.**"""
+        navigator = self._navigator
+        if navigator is None or not hasattr(navigator, "hint_point"):
+            return False, "LiDAR 측위 순찰이 아니라 위치를 알려줄 대상이 없다"
+        accepted, detail = navigator.validate_hint_point(x, y)
+        if not accepted:
+            return False, detail
+        with self._locate_lock:
+            self._locate_point_asked = (x, y)
+            self._locate_asked = None
+        return True, "찍은 점 주변에서 위치를 다시 찾는다 — 찾을 때까지 로봇은 선다"
 
     def apply_external(self, event: Event) -> bool:
         """대시보드 명령이 FSM 사건을 넣는 진입점. **다른 스레드에서 부른다.**
@@ -1841,19 +2278,37 @@ class Runtime:
             self.request_reset()
         with self._locate_lock:
             zone, self._locate_asked = self._locate_asked, None
+            point, self._locate_point_asked = self._locate_point_asked, None
         if zone is not None and self._navigator is not None:
             self._navigator.hint_zone(zone, now_ms)
+        if point is not None and self._navigator is not None:
+            self._navigator.hint_point(*point, now_ms)
         with self._locate_lock:
             goto, self._goto_asked = self._goto_asked, None
+            route, self._route_asked = self._route_asked, None
         navigator = self._navigator
         if self._goal_cancel_asked:
             self._goal_cancel_asked = False
             if navigator is not None and hasattr(navigator, "cancel_goal"):
                 navigator.cancel_goal("patrol_stopped")
             # 정지를 누르기 전에 들어온 이동 요청·그것이 건 순찰 시작도 버린다.
-            if goto is not None or self._goal_feedback is not None:
+            if goto is not None or route is not None or self._goal_feedback is not None:
                 goto = None
                 self._patrol_asked = False
+            route = None
+        if route is not None and isinstance(navigator, PatrolController):
+            if self._behavior.state not in ("IDLE", "PATROL") or self._reset_pending:
+                accepted, detail = False, "상태가 바뀌어 동선 시작을 취소했다"
+            else:
+                accepted, detail = navigator.start_route(route, now_ms)
+            self._route_feedback = {
+                "accepted": accepted,
+                "detail": detail,
+                "route_id": route.id,
+                "at_ms": now_ms,
+            }
+            if accepted and self._behavior.state != "PATROL":
+                self.ask_patrol()
         if goto is not None and navigator is not None:
             accepted, detail = navigator.goto(*goto)
             self._goal_feedback = {
@@ -1870,10 +2325,11 @@ class Runtime:
             self._patrol_asked
             and navigator is not None
             and getattr(navigator, "holding_goal", False)
-            and self._behavior.state == "PATROL"
+            and self._behavior.state in ("IDLE", "PATROL")
         ):
             # 찍은 곳에 서 있다가 «순찰 시작» — 구역 순찰로 돌아간다.
-            self._patrol_asked = False
+            if self._behavior.state == "PATROL":
+                self._patrol_asked = False
             navigator.cancel_goal("patrol_restart")
         # ⚠️ **리셋을 기다린다.** 해제가 정착하기 전에 순찰을 시작하면 그 해제가
         # 순찰을 `IDLE` 로 되돌린다.
@@ -1900,16 +2356,17 @@ class Runtime:
         """로봇이 래치를 풀었다고 보고하면 그때 `RESET_CONFIRMED` 를 넣는다."""
         if not self._reset_pending or latched is not False:
             return
+        if self._behavior.state == "FAILSAFE" and not self._apply(Event.RESET_CONFIRMED, now_ms):
+            return  # 해제 전이가 거부되면 요청을 남겨 다음 보고에 다시 시도한다
         self._reset_pending = False
-        if self._apply(Event.RESET_CONFIRMED, now_ms):
-            # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
-            self._commander.once(
-                "POSE",
-                pitch=0.0,
-                roll=self._roll_offset_deg,
-                height=0.0,
-                dur=self._ppe_judge.settle_ms,
-            )
+        # FAILSAFE 중 거절된 자세 복귀를 래치 해제 직후 다시 보낸다.
+        self._commander.once(
+            "POSE",
+            pitch=0.0,
+            roll=self._roll_offset_deg,
+            height=0.0,
+            dur=self._ppe_judge.settle_ms,
+        )
 
     def emergency_stop(self) -> str:
         """종료 전문. **틱을 기다리지 않는다.**
@@ -1978,6 +2435,9 @@ class Runtime:
         # 세션 생성·워밍업은 운용 루프 전에 끝낸다. 루프 안에서 처음 열면 DirectML
         # 초기화가 600ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
         if self._vision is not None:
+            if self._ppe_test and hasattr(self._vision, "set_result_sink"):
+                self._vision.set_result_sink(self._record_ppe_frame)
+                self._vision_records_in_worker = True
             self._vision.start()
         # VLM 을 모드와 상관없이 한 번 올린다 — ADR-35 결정 5 (상시 적재).
         # 모드를 바꿀 때 올리고 내리면 판독 시작과 해제가 겹쳐 세션을 닫거나 VRAM 이
@@ -2244,6 +2704,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--patrol", action="store_true", help="기동 직후 순찰을 시작한다")
     parser.add_argument(
+        "--ppe-test", action="store_true", help="PPE 시험: 공장 모드 표시·기록, 보행 자동 잠금"
+    )
+    parser.add_argument(
+        "--ppe-down-reference",
+        action="store_true",
+        help="로컬 v12 person_down 참고 의견 (다운로드 없음)",
+    )
+    parser.add_argument(
         "--lidar-device",
         default=None,
         help="LiDAR 중계 노드 device_id — 주면 순찰을 LiDAR 측위·A* 경로로 돈다 (기본 비활성)",
@@ -2311,7 +2779,10 @@ def dashboard_wiring(
         note_voice_listening=runtime.note_voice_listening,
         confirm_alarm=runtime.ask_alarm_confirm,
         locate_zone=runtime.ask_locate_zone,
+        locate_point=runtime.ask_locate_point,
         goto_point=getattr(runtime, "ask_goto", None),
+        start_route=getattr(runtime, "ask_route", None),
+        stop_route=getattr(runtime, "ask_route_stop", None),
         stopping_patrol=runtime.stopping_patrol,
         pose=(
             float(config["posture"]["pitch_up_deg"]),
@@ -2321,6 +2792,8 @@ def dashboard_wiring(
     )
     return {
         "commands": commands,
+        "simulated": False,
+        "scene3d_url": config.get("dashboard", {}).get("scene3d_url", ""),
         "camera": _latest_jpeg(vision) if vision is not None else None,
         # 박스와 그 박스를 계산한 JPEG 를 함께 보낸다.
         "vision": vision.latest if vision is not None else None,
@@ -2566,6 +3039,19 @@ def main(argv: list[str] | None = None) -> int:
         # 만드는 이유는 **모르는 모드나 선행 기능 없는 모드로는 기동 자체를 거부**
         # 하기 때문이다 (FR-11.7) — `ModeError` 가 `ConfigError` 라서 이 절이 잡는다.
         mission = Mission(config, mode=args.mode)
+        if args.ppe_test:
+            if not mission.enables("ppe") or args.no_vision or args.patrol or args.reset_on_start:
+                raise ConfigError(
+                    "--ppe-test는 factory 비전 모드이며 --patrol/--reset-on-start와 함께 쓸 수 없다"
+                )
+            args.motion_lock = True
+            config = dict(config)
+            config["vision"] = dict(config["vision"])
+            config["vision"]["ppe"] = dict(
+                config["vision"]["ppe"], test_mode=True, down_reference=args.ppe_down_reference
+            )
+        elif args.ppe_down_reference:
+            raise ConfigError("--ppe-down-reference에는 --ppe-test가 필요하다")
         if mission.enables("ppe") and args.no_vision:
             raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
         if args.lidar_device:

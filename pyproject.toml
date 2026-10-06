@@ -14,7 +14,8 @@ target-version = "py312"
 # ruff 0.16 부터 .md 안의 파이썬 코드 블록도 포맷 검사 대상이 되었는데,
 # 문서의 예시 코드는 설명을 위해 일부러 압축하거나 안티패턴으로 쓴 것이라
 # 포맷터가 강제할 대상이 아니다. 코드 품질 게이트는 실제 소스에만 건다.
-exclude = ["third_party", ".venv", "build", "*.md"]
+# tools/house_sim 은 별도로 자란 SIM 뷰어(Node 중심)를 가져온 것이라 품질 게이트 밖에 둔다 (2026-10-06).
+exclude = ["third_party", ".venv", "build", "*.md", "tools/house_sim"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH"]

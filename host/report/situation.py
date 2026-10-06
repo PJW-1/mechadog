@@ -87,6 +87,8 @@ def _describe_path_blocked(judgement: dict[str, Any]) -> str:
     LiDAR 막힘의 원인 판독(`fallen` · ADR-45)은 스위치(`vlm_path_cause`)가 켜져 있고 답이
     «예» 일 때만 «무너진 물건» 을 말한다 — 꺼져 있으면 답은 기록에만 남는다.
     """
+    if judgement.get("message") == "길 막힘":
+        return "길이 막혔습니다. 장애물을 치워 주세요."
     zone = judgement.get("zone")
     if judgement.get("source") == "vlm" and isinstance(zone, str) and zone.strip():
         return f"{zone} 구역에서 통로가 막혀 있습니다."
@@ -106,6 +108,13 @@ _TEMPLATES: dict[str, Callable[[dict[str, Any]], str]] = {
     "zone_changed": _describe_zone_changed,
     "hazard_notice": _describe_hazard_notice,
     "path_blocked": _describe_path_blocked,
+    "obstacle_detour": lambda _j: "장애물 있음 — 치워 주세요. 우회해서 지나갑니다.",
+    "zone_skipped": lambda j: (
+        f"장애물로 구역 {j.get('zone', '미상')} 건너뜀. 이번 바퀴는 다음 구역으로 갑니다."
+    ),
+    "patrol_unavailable": lambda _j: (
+        "순찰 불가 — 모든 구역이 막혀 출발 자리로 복귀하거나 대기합니다. 장애물을 치워 주세요."
+    ),
 }
 
 

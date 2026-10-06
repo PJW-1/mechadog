@@ -27,9 +27,9 @@ function cleanText(value,max=1000){return typeof value==='string'?value.trim().s
 // 예전에는 person_found 만 AUTH 였고 나머지는 전부 SYSTEM 이라 PPE 필터가 아무것도 걸러내지 못했다.
 // 이름은 런타임(`runtime.py` 의 `_record_scene`·`FEED_TRANSITIONS`·`_announce_escalation`)이 정한다.
 export const EVENT_CATEGORIES=Object.freeze({PPE:'PPE',AUTH:'출입 인증',SAFETY:'안전 · 경보',OBJECT:'구역 · 물품',SYSTEM:'시스템'});
-const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY'};
+const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',fall_review_required:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY',obstacle_detour:'SAFETY',zone_skipped:'SAFETY',patrol_unavailable:'SAFETY'};
 export function eventCategory(name){return CATEGORY_OF[name]??'SYSTEM'}
-export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',zone_reading:'구역 장면 판독',zone_changed:'구역 위험 확정',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
+export const EVENT_TITLES=Object.freeze({person_found:'사람 확인',PPE_VIOLATION:'보호구 미착용 확정',PPE_UNDETERMINED:'보호구 판정 불가',PPE_SETTLED:'보호구 판정 종료',person_fallen:'쓰러짐 감지',fall_review_required:'쓰러짐 확인 필요',zone_reading:'구역 장면 판독',zone_changed:'구역 위험 확정',hazard_notice:'화기 위험물 경고',path_blocked:'통로 막힘 · 우회',obstacle_detour:'장애물 있음 — 치워 주세요 · 우회',zone_skipped:'장애물로 구역 건너뜀',patrol_unavailable:'순찰 불가',escalation_changed:'대응 단계 변경',auth_required:'인증 요구 (대기 시작)',auth_granted:'인증 통과',auth_failed:'인증 실패',voice_auth_granted:'암구호 확인 · 사원증 대기',failsafe_entered:'안전 잠금',failsafe_cleared:'안전 잠금 해제'});
 // 단계가 바뀐 사유 (`escalation.py` 의 reason). 모르는 값은 원문 그대로 보인다.
 export const REASON_NAMES=Object.freeze({person_present:'사람 확인',unauthenticated_hold:'미인증 상태 지속',unauthenticated_left:'인증 요구 뒤 대상 이탈',AUTH_FAILED:'인증 실패 (시간 초과·시도 소진)',PPE_VIOLATION:'보호구 미착용 확정',ZONE_CHANGED:'구역 위험 확정',PERSON_DOWN:'쓰러짐 확정',ONBOARD_FAILSAFE:'로봇 자체 안전 잠금',LINK_LOST:'링크 끊김',ESTOP:'비상정지',alarm_confirmed:'관리자 경보 확인',failsafe_confirmed:'안전 잠금 해제',failsafe_confirmed_alarm_kept:'안전 잠금 해제 — 경보 유지',authenticated:'인증 통과',target_lost:'대상 이탈',standby:'대기 전환',ppe_settled:'PPE 판정 종료'});
 export const reasonName=reason=>REASON_NAMES[reason]??(cleanText(reason,80)||'사유 미수신');
@@ -57,10 +57,21 @@ function describeTrace(payload){
 export function describeEvidence(name,payload){
  const j=payload?.judgement&&typeof payload.judgement==='object'&&!Array.isArray(payload.judgement)?payload.judgement:{};
  const rows=[];
+ if(Array.isArray(j.ppe_required)){
+  if(!['zone_reading','zone_changed','hazard_notice','path_blocked','obstacle_detour','zone_skipped','patrol_unavailable'].includes(name))rows.push(['구역',shown(j.zone)]);
+  const names={helmet:'안전모',vest:'안전조끼'};
+  rows.push(['필수 보호구',j.ppe_required.map(item=>names[item]??cleanText(item,40)).join(' · ')||'없음 (착용 여부 표시)']);
+ }
+ if(['obstacle_detour','zone_skipped','patrol_unavailable'].includes(name)){if(j.zone)rows.push(['구역',shown(j.zone)]);if(Number.isFinite(j.x)&&Number.isFinite(j.y))rows.push(['장애물 위치 (순찰 m)',shown(j.x)+', '+shown(j.y)]);rows.push(['심각도',j.severity==='low'?'낮음':'중간'],['사진',j.camera_available?'카메라 프레임 있음':'카메라 프레임 없음']);if(j.blockage_id!=null)rows.push(['장애물 묶음',shown(j.blockage_id)]);}
  let ppe=name.startsWith('PPE_')?'판정 근거 미수신':'해당 없음';
- if(name.startsWith('PPE_')&&j.state){ppe=cleanText(j.state,40)+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
+ if(name.startsWith('PPE_')&&j.state){ppe=({VIOLATION:'미착용',UNDETERMINED:'판정 불가',COMPLIANT:'착용 확인'}[j.state]??cleanText(j.state,40))+(j.reason?' · '+cleanText(j.reason,160):'');if(j.track_id!=null)rows.push(['대상 추적 ID','#'+shown(j.track_id)])}
+ if(name==='PPE_SETTLED'&&j.rechecked===true&&j.reason==='착용 확인')ppe='정상 · 착용 확인';
  // VLM 이 판독한 쓰러짐(source:'vlm')에는 규칙 값이 없다 — 빈 행을 그리지 않는다.
- if(name==='person_fallen')for(const [label,key,unit] of [['세로/가로 비','aspect',''],['정지 시간','still_ms',' ms'],['확정 기준','confirm_ms',' ms']])if(j[key]!=null)rows.push([label,shown(j[key])+unit]);
+ if(name==='person_fallen'||name==='fall_review_required'){
+  for(const [label,key,unit] of [['가로/세로 비','aspect',''],['정지 시간','still_ms',' ms'],['확정 기준','confirm_ms',' ms'],['VLM 지연','latency_ms',' ms']])if(j[key]!=null)rows.push([label,shown(j[key])+unit]);
+  if('rule_yes' in j)rows.push(['규칙',shown(j.rule_yes)],['VLM',j.vlm==null?'판정 불가':shown(j.vlm)],['교차검증',shown(j.status)],['사유',shown(j.reason)],['시험 모드',shown(j.test_mode)],['v12 참고',shown(j.reference_reason)]);
+  for(const d of j.person_down_reference??[])rows.push(['v12 person_down (참고)',shown(d.score)]);
+ }
  if(name==='zone_reading'){
   rows.push(['구역',shown(j.zone)],['판독 저하',j.degraded?('예 · '+shown(j.reason)):'아니요']);
   if(j.answers&&typeof j.answers==='object')for(const [key,value] of Object.entries(j.answers).slice(0,12))rows.push(['판독 · '+cleanText(key,60),shown(value)]);
@@ -165,6 +176,9 @@ export class Operations {
  // 실제 연결(link)이 있으면 예시 모드가 아니어도 조작이 열린다. 링크가 없을
  // 때의 차단 사유는 그대로다 — **붙일 서버가 없는데 열어 두지 않는다.**
  get live(){return !this.demo&&this.connected}
+ get simulated(){return this.live ? this.slot()?.capabilities?.simulated ?? null : true}
+ get runtimeLabel(){return !this.live?'웹 예시':this.simulated===true?'시뮬레이션':this.simulated===false?'실제 로봇':'연결 유형 미확인'}
+ get transmissionLabel(){return this.simulated===true?'시뮬레이션 전송':this.simulated===false?'실제 전송':'서버 전송 · 유형 미확인'}
  get readOnly(){return this.live&&this.slot()?.commandsKnown===true&&this.slot()?.commandsOpen===false}
  get connected(){return ROBOTS.some(id=>this.slots[id].link)}
  slot(id=this.selected){return this.slots[id]??null}
@@ -300,6 +314,7 @@ export class Operations {
  setCommandsOpen(open,robot=ROBOTS[0]){this.slots[robot].commandsKnown=true;this.slots[robot].commandsOpen=open===true;this.emit('mode')}
  requestGoto(x,y){if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('좌표가 숫자가 아닙니다.');return this.requestDevice('지도 이동 ('+x.toFixed(2)+', '+y.toFixed(2)+')',()=>this.link.goto(x,y))}
  requestLocate(zone){return this.requestDevice('위치 알려주기 · 구역 '+zone,()=>this.link.locate(zone))}
+ requestLocatePoint(x,y){if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('좌표가 숫자가 아닙니다.');return this.requestDevice('위치 알려주기 ('+x.toFixed(2)+', '+y.toFixed(2)+')',()=>this.link.locatePoint(x,y))}
  get patrolZones(){const zones=this.policy?.patrol_zones;return Array.isArray(zones)?zones.filter(z=>typeof z==='string'&&/^[A-Za-z0-9_-]{1,16}$/.test(z)):[]}
  requestPatrol(start){return this.requestDevice(start?'순찰 시작':'순찰 정지',()=>this.link.patrol(start?'start':'stop'))}
  // 본체 자세 (B6). 서버가 MANUAL 에서만 받는다 — 여기서는 제어권과 정지 상태를 먼저 본다.
@@ -354,7 +369,7 @@ export class Operations {
   if(existing){if(snapshot&&!existing.snapshot)existing.snapshot=snapshot;this.emit('import');return existing}
   if(this.events.filter(e=>e.source==='IMPORTED_BLACKBOX').length>=50)throw new Error('이번 세션에는 최대 50건까지 가져올 수 있습니다.');
   const evidence=describeEvidence(meta.event,meta);
-  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:meta.event,category:eventCategory(meta.event),robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:cleanText(meta.judgement?.zone,40)||'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,mode:cleanText(meta.mode,40)||null,auth:meta.judgement?evidence.auth:'필드 미제공',ppe:meta.judgement?evidence.ppe:'필드 미제공',evidence:evidence.rows,detail:'Git 블랙박스 형식의 저장 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
+  const event={id:'FILE-'+(++this.serial),source:'IMPORTED_BLACKBOX',importKey:key,title:EVENT_TITLES[meta.event]??meta.event,category:eventCategory(meta.event),robot:cleanText(meta.telemetry.device_id,80)||'장치 미상',zone:cleanText(meta.judgement?.zone,40)||'파일에 구역 정보 없음',event:meta.event,state:meta.state,escalation:meta.escalation,mode:cleanText(meta.mode,40)||null,auth:meta.judgement?evidence.auth:'필드 미제공',ppe:meta.judgement?evidence.ppe:'필드 미제공',evidence:evidence.rows,detail:'저장된 사건 기록입니다. 현재 실시간 상태가 아니며 인증/PPE를 추정하지 않습니다.',ts_ms:meta.ts_ms,review:'pending',note:'',snapshot,meta};
   this.events.unshift(event);this.log('블랙박스 파일 가져오기',event.id,'LOCAL_IMPORTED_REVIEW');this.emit('import');return event;
  }
  // ── 실시간 사건 피드 (WBS 4.6.4) ────────────────────────────────
@@ -374,7 +389,7 @@ export class Operations {
   const person=(payload.tracks||[]).length,evidence=describeEvidence(name,payload);
   const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):name==='path_blocked'&&payload.judgement?.source==='vlm'?'통로 막힘 경고':EVENT_TITLES[name];
   const photo=payload.entry!=null||payload.snapshot!=null;
-  const event={id,seq,slot:slotId,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',title:label?label+' · '+name:name,category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:'실시간 수신된 사건입니다.'+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
+  const event={id,seq,slot:slotId,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',simulated:payload.simulated===true,title:(payload.simulated?'[예시] ':'')+(label||name),category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:(payload.simulated?'시뮬레이션 예시 사건 · 합성 증거입니다.':'실시간 수신된 사건입니다.')+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
   // 최근 단계 사건 — 경보 띠가 «왜 이 단계인가» 와 경고 문장을 보인다 (B1). 백로그는 순번이 낮은 것부터 온다.
   if(name==='escalation_changed'&&(!slot.lastEscalation||seq>slot.lastEscalation.seq))slot.lastEscalation={seq,escalation:event.escalation,reason:cleanText(payload.reason,80),warning:cleanText(payload.warning,300),ts_ms:payload.ts_ms};

@@ -57,6 +57,13 @@ def hit_mask(grid: OccupancyGrid, occ_thresh: float) -> np.ndarray:
     return grid.cells >= occ_thresh
 
 
+def physical_hit_mask(
+    nav_grid: OccupancyGrid, loc_grid: OccupancyGrid, occ_thresh: float, free_thresh: float
+) -> np.ndarray:
+    """측위 지도에서 항법 지도의 확정 빈 바닥과 모순되는 점유 셀을 뺀다."""
+    return hit_mask(loc_grid, occ_thresh) & ~(nav_grid.cells <= free_thresh)
+
+
 def raycast_scan(
     hit: np.ndarray,
     meta: MapMeta,
@@ -154,8 +161,9 @@ def main(argv: list[str] | None = None) -> int:
         truth_hit = hit_mask(controller.grid, plan_params.occ_thresh)
         truth_meta = controller.grid.meta
     else:
-        free_confirmed = controller.grid.cells <= plan_params.free_thresh
-        truth_hit = hit_mask(controller.match_grid, plan_params.occ_thresh) & ~free_confirmed
+        truth_hit = physical_hit_mask(
+            controller.grid, controller.match_grid, plan_params.occ_thresh, plan_params.free_thresh
+        )
         truth_meta = controller.match_grid.meta
     print(
         f"[Mock] truth={args.truth} "

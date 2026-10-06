@@ -719,6 +719,15 @@ def test_unit_profiles_are_not_copies_of_each_other() -> None:
     assert two["gait_calibration"]["straight_bias_deg"] is None
 
 
+def test_mechdog_02_mount_rotation_is_in_the_committed_profile(
+    committed_devices_dir: Path,
+) -> None:
+    """로컬 설정 없이도 호스트가 XIAO의 180도 장착 방향을 유지한다."""
+    loaded = load_config("mechdog-02", config_path=CONFIG_PATH, devices_dir=committed_devices_dir)
+
+    assert loaded["vision"]["mount_rotation"] == 180
+
+
 def test_mount_rotation_only_accepts_zero_or_one_eighty(tmp_path: Path) -> None:
     """펌웨어가 vflip+hmirror 합성으로 구현하므로 90·270 은 만들 수 없다.
 

@@ -1,9 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Operations,parseBlackbox,csvCell,REVIEW_STATES,liveSnapshotUrl} from '../static/operations.js';
+import {Operations,parseBlackbox,csvCell,REVIEW_STATES,liveSnapshotUrl,describeEvidence} from '../static/operations.js';
+
+test('region PPE requirements appear with the actual event zone, including optional gear',()=>{
+ const optional=describeEvidence('PPE_SETTLED',{judgement:{zone:'B',ppe_required:[]}});
+ assert.deepEqual(optional.rows,[['구역','B'],['필수 보호구','없음 (착용 여부 표시)']]);
+ const required=describeEvidence('PPE_VIOLATION',{judgement:{zone:'C',ppe_required:['helmet','vest']}});
+ assert.deepEqual(required.rows,[['구역','C'],['필수 보호구','안전모 · 안전조끼']]);
+ const hazard=describeEvidence('hazard_notice',{judgement:{zone:'A',ppe_required:[]}});
+ assert.equal(hazard.rows.filter(([label])=>label==='구역').length,1);
+});
 
 const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',mode:'guard',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
 const memory=()=>{const data=new Map();return {getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value)}};
+
+test('point location hints require a live link and finite coordinates, and surface rejection',async()=>{
+ const calls=[];const store=new Operations();
+ assert.throws(()=>store.requestLocatePoint(2,3),/실제 제어는 연결되지 않았습니다/);
+ store.link={locatePoint:async(x,y)=>{calls.push([x,y]);return{accepted:false,detail:'장애물 칸입니다'}}};store.setDemo(false);
+ assert.throws(()=>store.requestLocatePoint(NaN,3),/좌표가 숫자가 아닙니다/);
+ assert.throws(()=>store.requestLocatePoint(2,Infinity),/좌표가 숫자가 아닙니다/);
+ assert.deepEqual(calls,[]);
+ await assert.rejects(()=>store.requestLocatePoint(2,3),/장애물 칸입니다/);
+ assert.deepEqual(calls,[[2,3]]);
+});
 
 test('initial state is preview only, stopped, unowned, no real telemetry',()=>{
  const op=new Operations();assert.equal(op.demo,true);assert.equal(op.command,'STOP');assert.equal(op.control,null);assert.equal(op.mission.status,'idle');assert.equal(op.records.length,0);

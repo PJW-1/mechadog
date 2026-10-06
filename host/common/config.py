@@ -98,6 +98,9 @@ def _require_positive(mapping: dict[str, Any], key: str) -> None:
 
 
 def validate_base_config(config: dict[str, Any]) -> None:
+    from host.behavior.live_nav import NavParams
+
+    NavParams.of(config)
     if not isinstance(config.get("profile"), str) or config["profile"] not in {"dev", "prod"}:
         raise ConfigError("profile 은 dev 또는 prod 여야 함")
     missing = [
@@ -105,6 +108,12 @@ def validate_base_config(config: dict[str, Any]) -> None:
     ]
     if missing:
         raise ConfigError(f"필수 설정 섹션 누락: {missing}")
+    for section, key in (("fsm", "hold_on_latched_alarm"), ("escalation", "ppe_recheck")):
+        if not isinstance(config[section].get(key, False), bool):
+            raise ConfigError(f"{section}.{key} 는 bool이어야 함")
+    warnings = config["escalation"].get("ppe_recheck_max_warnings", 2)
+    if isinstance(warnings, bool) or not isinstance(warnings, int) or not 1 <= warnings <= 10:
+        raise ConfigError("escalation.ppe_recheck_max_warnings 는 1~10 정수여야 함")
 
     blackbox_dir = config["logging"].get("blackbox_dir")
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
