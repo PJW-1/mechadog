@@ -75,6 +75,7 @@ python tools/ops/replay_session.py <기록 폴더> --set network.cmd_rate_hz=5 -
 | [service_action_probe.py](probe/service_action_probe.py) | SERVICE 모드에서 ACTION이 거부되고 재부팅하지 않는지 확인한다 | 필요 | 보냄(`--regression` 없이는 STOP만) |
 | [runtime_compare.py](probe/runtime_compare.py) | 정지 상태 런타임을 캡처하고(`capture`) 오프라인으로 비교한다(`summarize`/`compare`) | 선택(캡처만 실물 필요) | 보냄(캡처 중 STOP·STATE IDLE만) |
 | [vlm_bench.py](probe/vlm_bench.py) | VLM 고정 질문 판정을 사진으로 재현율·오경보율·지연으로 잰다(`capture`/`measure`) | 선택(`capture`만 카메라 필요) | 읽기전용(로봇 명령 없음) |
+| [fallen_bench.py](probe/fallen_bench.py) | `vlm_bench` 의 `person_down` 사진으로 YOLOX 누움 후보(쓰러짐 의심 진입)의 적중률·오경보율을 잰다, conf·종횡비 훑기 포함 | 불필요 | 읽기전용(오프라인) |
 | [lidar_inspect.py](lidar/lidar_inspect.py) | LD19 원시 스캔의 회전속도·점수·노이즈 통계를 잰다 | 필요(시리얼 포트) | 읽기전용 |
 | [field_measure.py](field/field_measure.py) | 항목별(0~10) 현장 실측 CLI. 항목 0은 수신만, 구동 항목은 `--allow-motion` 필요 | 선택 | 보냄(선택, `--allow-motion`) |
 | [field_plan.py](field/field_plan.py) | 기체별 실측 계획·기록 GUI 노트북, 항목 실행 시 `field_measure_ui`를 부른다 | 선택(항목 실행 시에만) | 보냄(선택) |
