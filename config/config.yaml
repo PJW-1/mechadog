@@ -153,7 +153,7 @@ vision:
     # ⚠️ **`ultralytics` 가 아니다.** AGPL-3.0 이라 ADR-24 가 탈락시켰다.
     # WBS 3.7.2 의 "ultralytics 버전 기록" 문구는 그 결정 이전의 잔재다.
     #
-    # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 ppe-v5 · XIAO 실측 전 후보
+    # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 ppe-v5 · XIAO 직립 4구간 합격 (2026-10-06 · WBS 3.7.3)
     #   v5 = 아래 v4 에서 하단각도 자체 촬영 279장을 더해 30 epoch 미세 조정
     #        (`tools/ppe/colab_ppe_v5_lowangle.ipynb` · lr ×0.3 · seed 20261001)
     #   ── 이하는 v4 학습 기록 (2026-09-29 · Release 태그 ppe-v4) ──

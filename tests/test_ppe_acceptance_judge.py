@@ -1,6 +1,7 @@
-"""PPE 합격 기준 C1~C4 자동 판정(`tools/ppe/acceptance_judge.py`) 검증.
+"""PPE 합격 기준 C1~C3 자동 판정(`tools/ppe/acceptance_judge.py`) 검증.
 
-⚠️ **기준은 측정 전에 고정했다(2026-10-05).** 임계값은 코드가 아니라
+⚠️ **임계값은 측정 전에 고정했다(2026-10-05).** 판정 범위는 10-06 실측 뒤 사용자 결정으로
+직립 4구간(`criteria.judged_segments`)으로 줄였고 C4(머리 잘림)는 없앴다. 임계값은 코드가 아니라
 `config/ppe_acceptance.json` 에 있고, 여기서는 합성 세션으로 경계마다 합·불을 본다.
 """
 
@@ -26,6 +27,9 @@ from tools.ppe.ppe_live_check import (  # noqa: E402
 
 ORIENTATIONS = ["정면", "우측", "후면", "좌측"]
 SPECS, STEP_S, _ = load_acceptance_plan(DEFAULT_ACCEPTANCE_PLAN, "xiao")
+STANDING = ["standing-all", "standing-nohelmet", "standing-novest", "standing-none"]
+JUDGED = [spec for spec in SPECS if spec["key"] in STANDING]
+OUTSIDE = tuple(spec["key"] for spec in SPECS if spec["key"] not in STANDING)
 
 
 def build_session(
@@ -35,7 +39,7 @@ def build_session(
     skip_cells: tuple[tuple[str, str], ...] = (),
     frames: dict[tuple[str, str], int] | None = None,
 ) -> dict:
-    """11구간 × 4방향 세션. 기본은 위반 구간마다 전 방향 확정, 적합 구간은 무경보.
+    """계획의 전 구간 × 4방향 세션. 기본은 위반 구간마다 전 방향 확정, 적합 구간은 무경보.
 
     alarms: (구간, 방향) → 그 칸의 확정 에지 수. 주면 기본값을 덮어쓴다.
     skip_cells: 아예 찍지 않은 (구간, 방향).
@@ -93,7 +97,7 @@ def verdicts_of(session: dict, criteria: dict | None = None) -> dict[str, aj.Cri
 
 def test_all_clean_passes_every_criterion():
     result = verdicts_of(build_session())
-    assert set(result) == {"C1", "C2", "C3", "C4"}
+    assert set(result) == {"C1", "C2", "C3"}
     assert all(c.passed for c in result.values()), [c.detail for c in result.values()]
 
 
@@ -105,17 +109,43 @@ def test_thresholds_come_from_plan_file():
         "max_ok_segment_alarms": 1,
         "min_violation_directions": 3,
         "min_decidable_rate": 0.6,
-        "max_clipped_alarms": 0,
-        "clipped_segment": "clipped-base",
+        "judged_segments": STANDING,
     }
+
+
+def test_judged_scope_is_standing_four_and_other_buttons_stay_in_plan():
+    """판정은 직립 4구간만 한다(2026-10-06 사용자 결정). 나머지 버튼은 기록·재학습용으로 남는다."""
+    criteria = aj.load_criteria(DEFAULT_ACCEPTANCE_PLAN, "xiao")
+    judged = aj.judged_specs(SPECS, criteria)
+    assert [spec["key"] for spec in judged] == STANDING
+    assert [spec["expected"] for spec in judged] == [STATE_OK] + [STATE_VIOLATION] * 3
+    assert {"crouching-all", "clipped-base", "pitch-up", "sit"} <= set(OUTSIDE)
+
+
+def test_segments_outside_judged_scope_do_not_count():
+    session = build_session(
+        alarms={
+            ("crouching-all", "정면"): 5,
+            ("sit", "우측"): 3,
+            ("clipped-base", "후면"): 2,
+            **{("crouching-none", ori): 0 for ori in ORIENTATIONS},
+        }
+    )
+    session["segments"]["crouching-all"]["verdicts"][STATE_UNKNOWN] = 10_000
+    result = verdicts_of(session)
+    assert all(c.passed for c in result.values()), [c.detail for c in result.values()]
+    for word in ("crouching", "sit", "pitch-up", "clipped-base"):
+        assert all(word not in c.detail for c in result.values())
 
 
 def test_c1_boundary_one_false_alarm_passes_two_fail():
     one = verdicts_of(build_session(alarms={("standing-all", "정면"): 1}))
     assert one["C1"].passed
-    two = verdicts_of(build_session(alarms={("standing-all", "정면"): 1, ("sit", "우측"): 1}))
+    two = verdicts_of(
+        build_session(alarms={("standing-all", "정면"): 1, ("standing-all", "우측"): 1})
+    )
     assert not two["C1"].passed
-    assert "2" in two["C1"].detail
+    assert "2회" in two["C1"].detail
 
 
 def test_c1_counts_only_ok_segments_not_violation_segments():
@@ -135,16 +165,16 @@ def test_c2_three_of_four_directions_passes_two_fails():
 
 def test_c2_alarm_carried_over_from_previous_direction_counts():
     """창이 방향 전환에서 이어지면 뒤 방향엔 새 에지가 없다 — 놓친 것이 아니다."""
-    session = build_session(alarms={("crouching-none", ori): 0 for ori in ORIENTATIONS})
+    session = build_session(alarms={("standing-none", ori): 0 for ori in ORIENTATIONS})
     events = session["events"]
     first = next(
         i
         for i, e in enumerate(events)
-        if e["segment"] == "crouching-none" and e["orientation"] == "정면"
+        if e["segment"] == "standing-none" and e["orientation"] == "정면"
     )
     events[first]["confirmed"] = True
     for e in events:
-        if e["segment"] == "crouching-none":
+        if e["segment"] == "standing-none":
             e["hits"] = 3  # 구간 내내 창이 켜진 채 이어진다
     assert verdicts_of(session)["C2"].passed
 
@@ -155,49 +185,35 @@ def test_c2_unobserved_violation_segment_fails():
     assert "standing-none" in result.detail
 
 
-def _fixed_verdicts(session: dict, unknown: int) -> None:
-    """전신 구간 10개의 판정 집계를 구간당 40건으로 맞추고, 한 구간에 확인불가를 몰아 둔다."""
-    for spec in SPECS:
-        if spec["key"] == "clipped-base":
-            continue
-        session["segments"][spec["key"]]["verdicts"] = {
+def _fixed_verdicts(session: dict, unknown: dict[str, int]) -> None:
+    """직립 4구간의 판정 집계를 구간당 40건으로 맞추고, 구간별 확인불가 수를 넣는다."""
+    for key in STANDING:
+        n = unknown.get(key, 0)
+        session["segments"][key]["verdicts"] = {
             STATE_VIOLATION: 0,
-            STATE_OK: 40,
-            STATE_UNKNOWN: 0,
+            STATE_OK: 40 - n,
+            STATE_UNKNOWN: n,
         }
-    session["segments"]["standing-all"]["verdicts"] = {
-        STATE_VIOLATION: 0,
-        STATE_OK: 40 - unknown,
-        STATE_UNKNOWN: unknown,
-    }
 
 
 def test_c3_boundary_at_sixty_percent():
-    # 전신 구간 10개 = 400건. 확인불가 160건(4구간) → 가능률 60.0% 통과, 200건 → 50% 실패.
+    # 직립 4구간 = 160건. 확인불가 64건 → 가능률 60.0% 통과, 65건 → 59.4% 실패.
     session = build_session()
-    _fixed_verdicts(session, 40)
-    session["segments"]["crouching-all"]["verdicts"] = {
-        STATE_VIOLATION: 0,
-        STATE_OK: 0,
-        STATE_UNKNOWN: 40,
-    }
-    for key in ("standing-nohelmet", "standing-novest"):
-        session["segments"][key]["verdicts"] = {STATE_VIOLATION: 0, STATE_OK: 0, STATE_UNKNOWN: 40}
+    _fixed_verdicts(session, {"standing-all": 40, "standing-nohelmet": 24})
     result = verdicts_of(session)["C3"]
     assert result.passed, result.detail
-    assert "240/400" in result.detail
-    session["segments"]["crouching-novest"]["verdicts"] = {
-        STATE_VIOLATION: 0,
-        STATE_OK: 0,
-        STATE_UNKNOWN: 40,
-    }
+    assert "96/160" in result.detail
+    _fixed_verdicts(session, {"standing-all": 40, "standing-nohelmet": 25})
     assert not verdicts_of(session)["C3"].passed
 
 
-def test_c3_ignores_clipped_base_unknowns():
+def test_c3_ignores_unknowns_outside_judged_scope():
     session = build_session()
-    session["segments"]["clipped-base"]["verdicts"][STATE_UNKNOWN] = 10_000
-    assert verdicts_of(session)["C3"].passed
+    for key in ("clipped-base", "crouching-all", "sit"):
+        session["segments"][key]["verdicts"][STATE_UNKNOWN] = 10_000
+    result = verdicts_of(session)["C3"]
+    assert result.passed
+    assert "160/160" in result.detail
 
 
 def test_c3_without_judgements_fails_not_crashes():
@@ -206,19 +222,14 @@ def test_c3_without_judgements_fails_not_crashes():
     assert not verdicts_of(session)["C3"].passed
 
 
-def test_c4_any_alarm_in_clipped_base_fails():
-    assert verdicts_of(build_session())["C4"].passed
-    result = verdicts_of(build_session(alarms={("clipped-base", "후면"): 1}))["C4"]
-    assert not result.passed
-
-
-def test_missing_criteria_key_is_rejected(tmp_path):
+@pytest.mark.parametrize("key", ["min_decidable_rate", "judged_segments"])
+def test_missing_criteria_key_is_rejected(key, tmp_path):
     plan = json.loads(DEFAULT_ACCEPTANCE_PLAN.read_text(encoding="utf-8"))
     broken = copy.deepcopy(plan)
-    del broken["scenarios"]["xiao"]["criteria"]["min_decidable_rate"]
+    del broken["scenarios"]["xiao"]["criteria"][key]
     path = tmp_path / "plan.json"
     path.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
-    with pytest.raises(ValueError, match="min_decidable_rate"):
+    with pytest.raises(ValueError, match=key):
         aj.load_criteria(path, "xiao")
 
 
@@ -232,28 +243,39 @@ def test_cli_prints_pass_fail_and_sets_exit_code(tmp_path, capsys):
     good.write_text(json.dumps(build_session(), ensure_ascii=False), encoding="utf-8")
     assert aj.main([str(good)]) == 0
     out = capsys.readouterr().out
-    for key in ("C1", "C2", "C3", "C4"):
+    for key in ("C1", "C2", "C3"):
         assert f"{key} PASS" in out
+    assert "C4" not in out
     assert "전체 PASS" in out
 
     bad = tmp_path / "bad.json"
     bad.write_text(
-        json.dumps(build_session(alarms={("clipped-base", "정면"): 1}), ensure_ascii=False),
+        json.dumps(
+            build_session(alarms={("standing-all", "정면"): 1, ("standing-all", "후면"): 1}),
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     assert aj.main([str(bad)]) == 1
     out = capsys.readouterr().out
-    assert "C4 FAIL" in out
+    assert "C1 FAIL" in out
     assert "전체 FAIL" in out
 
 
-def test_c1_and_c4_fail_when_their_segments_were_never_observed():
-    """관측 없는 구간은 «경보 0회» 로 통과하지 않는다 — 11구간 전부 찍어야 한다."""
-    result = verdicts_of(build_session(skip=("pitch-up", "clipped-base")))
+def test_cli_standing_only_session_passes(tmp_path, capsys):
+    """직립 4구간만 찍은 세션(2026-10-06 실측 형태)은 커버리지 누락 없이 합격할 수 있다."""
+    assert aj.main([str(_write(tmp_path, build_session(skip=OUTSIDE)))]) == 0
+    out = capsys.readouterr().out
+    assert "누락" not in out
+    assert out.strip().splitlines()[-1] == "전체 PASS"
+
+
+def test_c1_fails_when_ok_segment_was_never_observed():
+    """관측 없는 구간은 «경보 0회» 로 통과하지 않는다 — 판정 구간은 전부 찍어야 한다."""
+    result = verdicts_of(build_session(skip=("standing-all",)))
     assert not result["C1"].passed
-    assert "pitch-up" in result["C1"].detail
-    assert not result["C4"].passed
-    assert "관측 없음" in result["C4"].detail
+    assert "관측 없음" in result["C1"].detail
+    assert "standing-all" in result["C1"].detail
 
 
 def test_c2_confirmation_after_timeout_does_not_count():
@@ -278,11 +300,11 @@ def test_c2_confirmation_after_timeout_does_not_count():
 
 
 def test_c2_detail_marks_carried_directions():
-    session = build_session(alarms={("crouching-none", ori): 0 for ori in ORIENTATIONS})
-    first = next(e for e in session["events"] if e["segment"] == "crouching-none")
+    session = build_session(alarms={("standing-none", ori): 0 for ori in ORIENTATIONS})
+    first = next(e for e in session["events"] if e["segment"] == "standing-none")
     first["confirmed"] = True
     for e in session["events"]:
-        if e["segment"] == "crouching-none":
+        if e["segment"] == "standing-none":
             e["hits"] = 3
     assert "이월" in verdicts_of(session)["C2"].detail
 
@@ -294,24 +316,29 @@ def _write(tmp_path: Path, session: dict, name: str = "s.json") -> Path:
 
 
 def test_coverage_gaps_empty_for_full_session():
-    assert aj.coverage_gaps(build_session(), SPECS, ORIENTATIONS, STEP_S) == []
+    assert aj.coverage_gaps(build_session(), JUDGED, ORIENTATIONS, STEP_S) == []
+
+
+def test_coverage_ignores_segments_outside_judged_scope():
+    assert aj.coverage_gaps(build_session(skip=OUTSIDE), JUDGED, ORIENTATIONS, STEP_S) == []
 
 
 def test_coverage_gap_lists_missing_segment_direction_pairs():
     session = build_session(skip_cells=(("standing-all", "후면"), ("standing-all", "좌측")))
-    gaps = aj.coverage_gaps(session, SPECS, ORIENTATIONS, STEP_S)
+    gaps = aj.coverage_gaps(session, JUDGED, ORIENTATIONS, STEP_S)
     assert gaps == [("standing-all", "후면"), ("standing-all", "좌측")]
 
 
 def test_coverage_gap_includes_segment_never_run():
-    gaps = aj.coverage_gaps(build_session(skip=("sit",)), SPECS, ORIENTATIONS, STEP_S)
-    assert gaps == [("sit", ori) for ori in ORIENTATIONS]
+    gaps = aj.coverage_gaps(build_session(skip=("standing-none",)), JUDGED, ORIENTATIONS, STEP_S)
+    assert gaps == [("standing-none", ori) for ori in ORIENTATIONS]
 
 
 def test_excluded_episode_does_not_count_as_coverage():
     """확정 기준보다 프레임이 적은 에피소드는 그 방향을 찍은 것으로 치지 않는다."""
-    session = build_session(frames={("sit", "정면"): 2})
-    assert aj.coverage_gaps(session, SPECS, ORIENTATIONS, STEP_S) == [("sit", "정면")]
+    session = build_session(frames={("standing-all", "정면"): 2})
+    gaps = aj.coverage_gaps(session, JUDGED, ORIENTATIONS, STEP_S)
+    assert gaps == [("standing-all", "정면")]
 
 
 def test_excluded_episode_does_not_count_as_confirmed_direction():
@@ -324,16 +351,12 @@ def test_excluded_episode_does_not_count_as_confirmed_direction():
     assert "standing-novest 2방향" in result.detail
 
 
-def test_excluded_episode_alarms_still_count_for_c1_and_c4():
+def test_excluded_episode_alarms_still_count_for_c1():
     session = build_session(
-        alarms={("standing-all", "정면"): 1, ("sit", "정면"): 1},
-        frames={("standing-all", "정면"): 2, ("sit", "정면"): 2},
+        alarms={("standing-all", "정면"): 1, ("standing-all", "우측"): 1},
+        frames={("standing-all", "정면"): 2, ("standing-all", "우측"): 2},
     )
     assert not verdicts_of(session)["C1"].passed
-    session = build_session(
-        alarms={("clipped-base", "정면"): 1}, frames={("clipped-base", "정면"): 2}
-    )
-    assert not verdicts_of(session)["C4"].passed
 
 
 def test_cli_one_direction_only_session_is_invalid(tmp_path, capsys):
@@ -359,11 +382,11 @@ def test_cli_final_line_is_fail_with_reason_for_operating_window(tmp_path, capsy
 
 
 def test_cli_final_line_names_failed_criteria(tmp_path, capsys):
-    session = build_session(alarms={("clipped-base", "정면"): 1})
+    session = build_session(alarms={("standing-all", "정면"): 1, ("standing-all", "좌측"): 1})
     assert aj.main([str(_write(tmp_path, session))]) == 1
     last = capsys.readouterr().out.strip().splitlines()[-1]
     assert last.startswith("전체 FAIL")
-    assert "C4" in last
+    assert "C1" in last
 
 
 def test_cli_missing_file_exits_2_with_one_stderr_line(tmp_path, capsys):
@@ -419,8 +442,14 @@ def test_session_with_non_operational_window_is_rejected(settings, word, tmp_pat
     ("patch", "word"),
     [
         ({"min_decidable_rate": "0.6"}, "min_decidable_rate"),
-        ({"clipped_segment": "no-such-segment"}, "clipped_segment"),
-        ({"clipped_segment": "standing-all"}, "clipped_segment"),
+        ({"judged_segments": "standing-all"}, "judged_segments"),
+        ({"judged_segments": []}, "judged_segments"),
+        ({"judged_segments": ["standing-all", "standing-all", "standing-none"]}, "중복"),
+        ({"judged_segments": ["standing-all", "no-such-segment"]}, "no-such-segment"),
+        ({"judged_segments": ["standing-all", "standing-none", "clipped-base"]}, "clipped-base"),
+        ({"judged_segments": ["standing-nohelmet", "standing-none"]}, STATE_OK),
+        ({"judged_segments": ["standing-all", "crouching-all"]}, STATE_VIOLATION),
+        ({"max_clipped_alarms": 0}, "max_clipped_alarms"),
     ],
 )
 def test_malformed_criteria_values_are_rejected(patch, word, tmp_path):

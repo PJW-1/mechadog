@@ -10,8 +10,7 @@
         "max_ok_segment_alarms": 1,
         "min_violation_directions": 3,
         "min_decidable_rate": 0.6,
-        "max_clipped_alarms": 0,
-        "clipped_segment": "clipped-base"
+        "judged_segments": ["standing-all", "standing-nohelmet", "standing-novest", "standing-none"]
       },
       "segments": [
         {"key": "standing-all", "condition": "직립·전신", "wear": "전부 착용", "expected": "적합"},
