@@ -3,7 +3,9 @@
 DB 는 블랙박스의 **색인**이다 — 원본은 블랙박스 폴더에 있고, 쓰기 실패는 제어를 멈추지 않는다.
 """
 
+import logging
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -407,3 +409,68 @@ def test_open_history_returns_none_when_the_file_cannot_be_opened(tmp_path: Path
     blocked.mkdir()
 
     assert open_history({"logging": {"history_db": str(blocked)}}) is None
+
+
+def _failures(caplog) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if getattr(r, "event", None) == "history_write_failed"]
+
+
+def test_a_broken_column_is_reported_not_raised(store: HistoryStore, caplog) -> None:
+    """⚠️ sqlite3.Error 가 아닌 예외도 10Hz 루프까지 올라가면 안 된다."""
+    mission = store.open_run(ROBOT, mode="factory", started_at=1000)
+    with sqlite3.connect(store.path) as raw:
+        raw.execute("UPDATE mission_runs SET zones_visited = 'not json'")
+
+    with caplog.at_level(logging.ERROR, logger="mechadog.history"):
+        assert not store.visit_zone(mission, "A")
+
+    assert len(_failures(caplog)) == 1
+
+
+def test_a_failing_last_seen_write_is_not_retried_every_telemetry(
+    store: HistoryStore, caplog
+) -> None:
+    store.close()
+
+    with caplog.at_level(logging.ERROR, logger="mechadog.history"):
+        assert not store.note_seen(ROBOT, at_ms=10_000, status="PATROL")
+        assert not store.note_seen(ROBOT, at_ms=10_000 + SEEN_WRITE_MS - 1, status="PATROL")
+        assert len(_failures(caplog)) == 1
+        # 상태가 바뀌거나 간격이 지나면 다시 시도한다.
+        assert not store.note_seen(ROBOT, at_ms=10_500, status="ALERT")
+        assert len(_failures(caplog)) == 2
+        assert not store.note_seen(ROBOT, at_ms=10_500 + SEEN_WRITE_MS, status="ALERT")
+        assert len(_failures(caplog)) == 3
+
+
+def _hold_write_lock(path: Path) -> sqlite3.Connection:
+    holder = sqlite3.connect(path, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    return holder
+
+
+def test_a_held_write_lock_does_not_stall_the_writer(tmp_path: Path) -> None:
+    """런타임 틱은 100ms, 로봇 명령 타임아웃은 600ms 다 — 잠금 대기가 길면 제어가 멈춘다."""
+    opened = HistoryStore(tmp_path / "h.sqlite3", write_timeout_s=0.05)
+    holder = _hold_write_lock(opened.path)
+    try:
+        started = time.monotonic()
+        assert not opened.record_incident(_incident("1_a", 1))
+        assert time.monotonic() - started < 0.5
+    finally:
+        holder.close()
+        opened.close()
+
+
+def test_open_history_waits_only_briefly_for_the_write_lock(tmp_path: Path) -> None:
+    path = tmp_path / "h.sqlite3"
+    opened = open_history({"logging": {"history_db": str(path)}})
+    assert opened is not None
+    holder = _hold_write_lock(path)
+    try:
+        started = time.monotonic()
+        assert not opened.record_incident(_incident("1_a", 1))
+        assert time.monotonic() - started < 0.5
+    finally:
+        holder.close()
+        opened.close()
