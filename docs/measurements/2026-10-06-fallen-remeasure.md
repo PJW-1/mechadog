@@ -38,7 +38,8 @@ YOLOX 도구는 런타임과 같은 `Detector`·`PersonGate`·`FallenGate` 로 �
 
 - **기체**: `mechdog-02` 의 XIAO, 시연 때와 같은 장착. 바닥에서 렌즈까지 높이와 틸트를 재어 적는다.
   첫 장을 찍으면 사진을 열어 위아래가 맞는지 본다 — 촬영 도구는 `mechdog-02` 프로필의 장착 방향
-  (`vision.mount_rotation`, 지금 0)을 카메라에 내린다.
+  (`vision.mount_rotation`)을 카메라에 내린다. `mechdog-02` 프로필에는 이 값이 없어 전역 기본값 0 이
+  내려가는데, 이 기체에서 잰 값이 아니다(`mechdog-01` 은 180).
 - **로봇**: 시연 때처럼 서 있는 자세로 둔다. 도구는 로봇에 명령을 보내지 않는다 — 위치는 손으로 옮긴다.
 - **런타임은 내린다.** 런타임이 스트림을 쥐고 있으면 캡처 도구가 함께 열지 못할 수 있다.
 - **장소·조명**: 시연장 바닥과 시연 조명 그대로. 날짜·시각·장소·조명을 적는다.
@@ -130,6 +131,7 @@ VLM 측정은 GPU 를 쓴다. 런타임이 VLM 을 올려 둔 동안에는 돌�
 - 숫자와 장면별 표: `field_tests/results/<촬영일>_4.8.3-fallen-remeasure/summary.md`. 사진과 원자료 JSON
   은 저장소 밖에만 둔다.
 - 새 숫자로 바꿀 곳: [ADR-42](../DECISIONS.md#adr-42) 근거 단락, [ADR-35](../DECISIONS.md#adr-35) 상태 줄,
-  PRD 개정 이력의 «10장 중 1장», WBS `4.8.0`·`4.8.5` 기록, [쓰러짐 기능 문서](../features/factory-fall.md),
+  PRD 개정 이력의 «10장 중 1장», WBS `4.8.0`·`4.8.3`·`4.8.5` 기록, [쓰러짐 기능 문서](../features/factory-fall.md),
   [사례 연구 08](../case-studies/08-vlm-two-image-compare.md), 실측 카탈로그 `HW-015`(YOLOX 새 측정)·
-  `HW-020`(폐기한 `person_down` 수치가 들어 있다). 폐기 표시만 달아 둔 곳은 새 숫자로 바꾸며 표시를 뗀다.
+  `HW-020`(폐기한 `person_down` 수치가 들어 있다),
+  `tests/test_runtime.py` 의 확정 시험 설명(«10장 중 1장»). 폐기 표시만 달아 둔 곳은 새 숫자로 바꾸며 표시를 뗀다.
