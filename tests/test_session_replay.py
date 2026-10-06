@@ -13,6 +13,7 @@ import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import create_autospec
 
 import pytest
 from conftest import FakeClock
@@ -26,6 +27,7 @@ from host.vision.vlm_reader import VlmReader
 from tools.ops.replay_session import (
     OPERATOR_ACTIONS,
     RecordedVision,
+    _apply_operator,
     compare,
     limitations,
     load_session,
@@ -267,7 +269,48 @@ def test_every_recorded_operator_input_is_replayable() -> None:
     source = Path(str(inspect.getsourcefile(Runtime))).read_text(encoding="utf-8")
     recorded = set(re.findall(r'_record_input\(\s*"(\w+)"', source))
     assert len(recorded) == 11
-    assert recorded <= OPERATOR_ACTIONS
+    # 상등 — OPERATOR_ACTIONS 에만 있는 이름은 런타임이 더는 기록하지 않는 죽은 항목이다.
+    assert recorded == OPERATOR_ACTIONS
+
+
+#: `Runtime._record_input` 호출부가 실제로 남기는 필드 이름으로 만든 견본 사건.
+_SAMPLE_OPERATOR_EVENTS = {
+    "ask_patrol": {},
+    "ask_reset": {},
+    "ask_alarm_confirm": {},
+    "send_emergency_stop": {},
+    "apply_external": {"event": "START_PATROL"},
+    "set_mode": {"target": "factory"},
+    "ask_goto": {"x": 1.0, "y": 2.0},
+    "ask_locate_zone": {"zone": "A"},
+    "note_voice_listening": {"captured_at_ms": 5},
+    "note_voice_auth": {"ok": True, "captured_at_ms": 5},
+    "send_immediate": {"line": "stop"},
+}
+
+
+def test_sample_events_cover_every_operator_action() -> None:
+    assert set(_SAMPLE_OPERATOR_EVENTS) == OPERATOR_ACTIONS
+
+
+@pytest.mark.parametrize("action", sorted(OPERATOR_ACTIONS))
+def test_apply_operator_handles_every_listed_action(action: str) -> None:
+    """OPERATOR_ACTIONS 의 이름마다 분기가 있고 런타임 서명에 맞게 부른다."""
+    runtime = create_autospec(Runtime, instance=True)
+    event = {"t": 0, "kind": "operator", "action": action, **_SAMPLE_OPERATOR_EVENTS[action]}
+    assert _apply_operator(runtime, event) is True
+
+
+def test_unknown_external_event_is_skipped_and_reported() -> None:
+    runtime = create_autospec(Runtime, instance=True)
+    old = {"t": 0, "kind": "operator", "action": "apply_external", "event": "RENAMED_LONG_AGO"}
+    assert _apply_operator(runtime, old) is False
+    runtime.apply_external.assert_not_called()
+    events = [{"t": 0, "kind": "runtime_begin"}, old, {**old, "t": 5}]
+    notes = limitations(events, {"dropped": 0, "failed": None})
+    assert len(notes) == 1
+    assert "모르는 외부 사건" in notes[0]
+    assert "RENAMED_LONG_AGO 2건" in notes[0]
 
 
 def test_limitations_name_unknown_operator_inputs() -> None:
@@ -295,6 +338,18 @@ def test_load_summary_reads_recorder_summary(session: Path, tmp_path: Path) -> N
     summary = load_summary(session)
     assert summary is not None and summary["dropped"] == 0
     assert load_summary(tmp_path) is None
+
+
+@pytest.mark.parametrize("text", ['{"dropped": 0, "fai', "[1, 2]", ""])
+def test_unreadable_summary_is_not_the_same_as_missing(tmp_path: Path, text: str) -> None:
+    (tmp_path / "summary.json").write_text(text, encoding="utf-8")
+    summary = load_summary(tmp_path)
+    assert summary is not None and summary["read_error"]
+    events = [{"t": 0, "kind": "runtime_begin"}]
+    notes = limitations(events, summary)
+    assert len(notes) == 1
+    assert "summary.json 을 읽지 못했다" in notes[0] and summary["read_error"] in notes[0]
+    assert "summary.json 이 없다" not in notes[0]
 
 
 def test_compare_counts_escalation_seen_only_in_replay() -> None:
