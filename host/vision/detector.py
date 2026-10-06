@@ -264,7 +264,12 @@ class Detector:
         # 해시(35MB)를 먼저 끝낸 뒤에 `loaded` 가 True 가 된다 — 그 전에 상태 조회가 오면 해시를 또 계산한다.
         self.model_file()
         self._session = session
-        self._warm_up()
+        try:
+            self._warm_up()
+        except BaseException:
+            # `open()` 이 예외를 던졌다면 열리지 않은 것이다 — 다음 `open()` 이 워밍업을 건너뛰지 않게 되돌린다.
+            self._session = None
+            raise
 
     def _warm_up(self) -> None:
         """빈 프레임으로 전처리 → 추론을 한 번 지나간다. 결과는 쓰지 않는다."""
