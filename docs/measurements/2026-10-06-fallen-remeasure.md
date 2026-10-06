@@ -10,7 +10,7 @@ VLM(`Qwen2-VL-2B` bf16 · `person_down` 현행 문장)을 그대로 두고, 시�
 [2026-09-28 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md)의 `person_down`·
 YOLOX 결과(누운 사람 10장 중 VLM 7장 · YOLOX 1장)는 **폐기한다**(2026-10-06 사용자 결정). 그 벤치는:
 
-- 누운 사람 10장(5장면) · 아닌 사진 15장뿐이었다. 사람 한 명, 한 곳, 한 시간대였다.
+- 누운 사람 10장(4장면) · 아닌 사진 15장뿐이었다. 사람 한 명, 한 곳, 한 시간대였다.
 - YOLOX 는 측정 도구 없이 손으로 셌다. 임계값을 훑지 않았고, 놓친 9장이 문턱 근처였는지 아예
   안 보였는지 남지 않았다.
 - 기체가 `mechdog-01` 이었다. 시연기는 `mechdog-02` 다(`config/devices/mechdog-02.yaml`).
@@ -131,7 +131,7 @@ VLM 측정은 GPU 를 쓴다. 런타임이 VLM 을 올려 둔 동안에는 돌�
 - 숫자와 장면별 표: `field_tests/results/<촬영일>_4.8.3-fallen-remeasure/summary.md`. 사진과 원자료 JSON
   은 저장소 밖에만 둔다.
 - 새 숫자로 바꿀 곳: [ADR-42](../DECISIONS.md#adr-42) 근거 단락, [ADR-35](../DECISIONS.md#adr-35) 상태 줄,
-  PRD 개정 이력의 «10장 중 1장», WBS `4.8.0`·`4.8.3`·`4.8.5` 기록, [쓰러짐 기능 문서](../features/factory-fall.md),
+  PRD 개정 이력의 «10장 중 1장», WBS `1.4`(09-28 재개정 기록)·`4.8.0`·`4.8.3`·`4.8.4`·`4.8.5` 기록, [쓰러짐 기능 문서](../features/factory-fall.md),
   [사례 연구 08](../case-studies/08-vlm-two-image-compare.md), 실측 카탈로그 `HW-015`(YOLOX 새 측정)·
   `HW-020`(폐기한 `person_down` 수치가 들어 있다),
   `tests/test_runtime.py` 의 확정 시험 설명(«10장 중 1장»). 폐기 표시만 달아 둔 곳은 새 숫자로 바꾸며 표시를 뗀다.
