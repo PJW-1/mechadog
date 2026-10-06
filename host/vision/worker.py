@@ -347,9 +347,22 @@ class VisionWorker:
             sighting = self._gate.observe(observed, detections)
             tracks = self._tracker.update(detections, observed)
             # 게이트의 대표 박스를 추적 ID 와 함께 본다 — 다른 사람의 정지가 섞이지 않게.
-            fallen = self._fallen.observe(
-                observed, sighting.box, track_id=tracks[0].track_id if tracks else None
-            )
+            # 2026-10-06 실기: 서 있는 사람(또는 사람으로 잡힌 의자)이 대표 박스가 되면 화면의
+            # 누운 사람을 끝내 보지 못했다. 누움 비율을 넘는 사람 박스가 있으면 그중 가장 큰 것을 본다.
+            lying = [
+                d.box
+                for d in detections
+                if d.label == "person"
+                and (d.box[3] - d.box[1]) > 0
+                and (d.box[2] - d.box[0]) / (d.box[3] - d.box[1]) >= self._fallen.aspect_ratio
+            ]
+            if lying:
+                fall_box = max(lying, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+                fallen = self._fallen.observe(observed, fall_box, track_id=None)
+            else:
+                fallen = self._fallen.observe(
+                    observed, sighting.box, track_id=tracks[0].track_id if tracks else None
+                )
             # 후처리도 워커의 일부다. 오류를 세고 다음 프레임에서 다시 시도한다.
             markers = self._badges.read(image) if tracks else ()
             if self._ppe is not None and hasattr(self._ppe, "set_requirements"):
