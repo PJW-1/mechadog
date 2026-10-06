@@ -329,7 +329,7 @@ def test_onboard_latch_wins_over_host_plan() -> None:
 
 
 def test_host_does_not_judge_the_ultrasonic_threshold() -> None:
-    """⚠️ **초음파 25cm 는 Tier 1 이다.**
+    """⚠️ **초음파 정지(현재 7cm)는 Tier 1 이다.**
 
     합치기 전 코드는 `dist_cm` 을 보고 호스트가 E-STOP 을 걸었다. 그것은 Tier 1
     판정을 호스트로 옮기는 것이고, 호스트가 꺼지면 판정이 사라진다. 지금은
