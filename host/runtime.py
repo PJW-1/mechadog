@@ -409,6 +409,10 @@ class Runtime:
             str(k): int(v)
             for k, v in ((config.get("robot_sound") or {}).get("tracks") or {}).items()
         }
+        #: 같은 경고를 이만큼 뒤 한 번 더 튼다(0 이면 안 함). 로봇은 모듈에 쓰기 전에 ACK 를
+        #: 보내므로 재생 실패를 알 수 없다 — 2026-10-06 리허설에서 ACK 는 왔는데 무음이었다.
+        self._robot_repeat_ms = int((config.get("robot_sound") or {}).get("repeat_after_ms") or 0)
+        self._robot_repeat: tuple[int, int] | None = None  # (시각, 트랙)
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -1283,6 +1287,8 @@ class Runtime:
         try:
             self._commander.once("SOUND", track=track)
             LOG.info("robot_sound", key=key, track=track)
+            if self._robot_repeat_ms > 0:
+                self._robot_repeat = (self._clock() + self._robot_repeat_ms, track)
         except Exception as exc:  # noqa: BLE001 — 소리 실패가 제어를 막으면 안 된다
             LOG.error("robot_sound_failed", error=f"{type(exc).__name__}: {exc}")
 
@@ -1579,6 +1585,11 @@ class Runtime:
         self._emit_eye_led(now_ms)
         self._auth_judge.request(now_ms)
         self._resend_sound(now_ms)
+        if self._robot_repeat is not None and now_ms >= self._robot_repeat[0]:
+            track = self._robot_repeat[1]
+            self._robot_repeat = None
+            self._commander.once("SOUND", track=track)
+            LOG.info("robot_sound_repeat", track=track)
         before = self._behavior.state
         phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
