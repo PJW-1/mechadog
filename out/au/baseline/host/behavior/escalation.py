@@ -1,0 +1,363 @@
+"""대응 에스컬레이션 단계 L0~L3 · F (WBS 3.8.3 · 아키텍처 3.1).
+
+FSM 상태(«무엇을 하는가»)와 직교하는 «얼마나 강하게 대응하는가» 축이다. 단계 표는
+아키텍처 3.1 과 일치해야 하며 임계는 전부 `config.yaml` 에서 읽는다.
+
+    단계  진입                                해제
+    L0   정상                                —
+    L1   person 300ms 안에 3회 (FR-3.2)       미검출 5초 → L0
+         경비 추종은 고개를 든 뒤부터 (ADR-40 · 게이트는 `runtime`)
+    L2   L1 이 10초 지속 & 미인증              인증 성공 → L0
+                                             미검출 5초 · 30초 무응답 → **L3**
+    L3   인증 실패 · 사람 쓰러짐 · 구역 위험     **관리자 확인만**
+    F    링크두절 · 저전압 · 전도 · E-Stop     **로봇 래치 해제 확인만**
+
+    (PPE 위반은 L3 래치가 아니라 `WARNED_BY` 의 경고다 — 아래 참고)
+
+불변식:
+
+- 공장 PPE 위반은 래치가 아니라 경고다 — L3 표현을 빌리되 `ppe_warning_hold_ms` 뒤 스스로
+  내려온다 (ADR-42 결정 1).
+- ⚠️ L3 와 F 는 자동으로 해제되지 않는다. L3 는 `confirm_alarm`, F 는 로봇 래치 해제 확인
+  (`RESET_CONFIRMED`)으로만 풀리며 둘은 다른 경로다 — F 로 올라갈 때 경보를 기억해 두고 F 를
+  풀면 L3 로 되돌린다 (ADR-26 ①).
+- L3 해제는 진입 원인과 무관하다. 원인 해소는 표시만 한다 (ADR-26 ①).
+- 미검출 5초는 이 축이 스스로 잰다 (`fsm.target_lost_timeout_s` 공유 · ADR-26 ③).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+from host.common.logging_setup import event_logger
+
+LOG = event_logger("mechadog.escalation")
+
+
+class Level(Enum):
+    """대응 강도. 순서가 의미를 가진다 — 다중 대상에서 최댓값을 쓴다(FR-3.8.1)."""
+
+    L0 = "L0"
+    L1 = "L1"
+    L2 = "L2"
+    L3 = "L3"
+    F = "F"
+
+    @property
+    def rank(self) -> int:
+        """비교용 순위. F 가 가장 높다 — 안전이 대응보다 앞선다."""
+        return _RANK[self]
+
+
+_RANK: dict[Level, int] = {Level.L0: 0, Level.L1: 1, Level.L2: 2, Level.L3: 3, Level.F: 4}
+
+#: 사람이 확인해야만 풀리는 단계 (아키텍처 3.1).
+LATCHED: frozenset[Level] = frozenset({Level.L3, Level.F})
+
+#: `config.yaml` 의 `escalation.led` 키. 단계와 설정을 잇는 유일한 지점이다.
+LED_KEYS: dict[Level, str] = {
+    Level.L0: "l0_patrol",
+    Level.L1: "l1_observe",
+    Level.L2: "l2_auth_request",
+    Level.L3: "l3_alarm",
+    Level.F: "failsafe",
+}
+
+#: 사건 → 올릴 단계 (아키텍처 3.1 진입 조건). `fsm` 순환 import 를 피해 사건 이름 문자열로 둔다.
+RAISED_BY: dict[str, Level] = {
+    # ── L3 경보 ──
+    "AUTH_FAILED": Level.L3,  # 2회 실패 또는 30초 무응답 (FR-10.3)
+    "ZONE_CHANGED": Level.L3,  # 구역 위험(넘어짐·무너짐) 확정 (FR-8.4)
+    "PERSON_DOWN": Level.L3,  # 쓰러짐 확정 (FR-9 · 4.8.3)
+    # ── F 페일세이프 — 어느 단계에서든 즉시 들어간다 ──
+    "ONBOARD_FAILSAFE": Level.F,  # 링크두절·저전압을 로봇이 보고
+    "LINK_LOST": Level.F,
+    "ESTOP": Level.F,
+}
+
+#: 래치 없이 잠깐 빨간 눈과 문장을 내는 사건 (`warn` · ADR-42 결정 1). `RAISED_BY` 에 두지 않는다.
+WARNED_BY: frozenset[str] = frozenset({"PPE_VIOLATION"})
+
+#: 인증 성공으로 보는 사건. L2 만 L0 으로 내린다 (FR-10 · `note_authenticated`).
+AUTH_CLEARS: frozenset[str] = frozenset({"AUTH_OK"})
+
+#: F 해제로 보는 사건 — 로봇이 래치를 실제로 풀었다는 확인이다 (PROTOCOL 2절 · ADR-21).
+FAILSAFE_CLEARS: frozenset[str] = frozenset({"RESET_CONFIRMED"})
+
+
+@dataclass(frozen=True, slots=True)
+class Presentation:
+    """그 단계에서 로봇이 내보내는 표현 — 눈 LED 는 관측 가능한 상태 출력이다 (FR-10.4)."""
+
+    level: Level
+    led: str
+    #: 점멸 주기. L3 에만 붙어 켜져 있는 것과 경보를 구분한다.
+    blink_hz: float | None
+    #: 그 단계에서 읽어 줄 경고 문장(문구 ID 가 아니다). L2·L3 에만 있다. 문장 → MP3 트랙
+    #: 변환은 음성 경로가 한다 (ADR-38 «남는 제약»).
+    warning: str | None
+
+
+class Escalation:
+    """단계를 올리고 내린다. 시각은 `now_ms` 로 받는다.
+
+    올리는 것은 사건(`raise_to`)이, 내리는 것은 조건과 확인(`tick`·`confirm_*`)이 한다.
+    내부 잠금이 없다 — 운용 루프와 대시보드 스레드(`Runtime.apply_external`) 양쪽에서 사건이 들어온다.
+    """
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        esc = config["escalation"]
+        self._hold_ms = int(esc["l1_to_l2_hold_s"]) * 1000
+        # FSM 과 같은 키를 읽는다 — 5초는 하나다.
+        self._lost_ms = int(config["fsm"]["target_lost_timeout_s"]) * 1000
+        self._led = dict(esc["led"])
+        self._sound = dict(esc.get("sound") or {})
+        self._level = Level.L0
+        #: L1 진입 시각. L2 승격 타이머의 기준이다.
+        self._l1_since_ms: int | None = None
+        #: 마지막으로 사람을 실제 검출한 시각(게이트 확정 시각이 아니다).
+        self._last_seen_ms: int | None = None
+        self._authenticated = False
+        #: F 아래에 깔린 경보가 있나 — 비상정지로 경보를 끄지 못하게 한다.
+        self._alarm_pending = False
+        #: 마지막으로 단계가 바뀐 사유. 관제 사건에 실어 «왜 L3 인가» 를 보인다.
+        self._reason = ""
+        #: 경고(`warn`)의 빨간 눈을 유지하는 시간과 끝나는 시각. `None` 이면 경고 중이 아니다.
+        self._warn_ms = int(esc["ppe_warning_hold_ms"])
+        self._warn_until_ms: int | None = None
+        #: 쓰러짐 의심 중인가 (S3). 의심의 L1 은 대상 상실로 내리지 않는다.
+        self._fall_suspected = False
+
+    # ── 상태 ────────────────────────────────────────────────
+    @property
+    def level(self) -> Level:
+        return self._level
+
+    @property
+    def reason(self) -> str:
+        return self._reason
+
+    @property
+    def latched(self) -> bool:
+        """사람 확인 없이는 내려갈 수 없는 단계인가. 경고(`warn`)의 L3 는 아니다."""
+        return self._level in LATCHED and self._warn_until_ms is None
+
+    @property
+    def authenticated(self) -> bool:
+        """지금 대상이 인증을 통과했나. 표시용이며 L3 해제 조건이 아니다."""
+        return self._authenticated
+
+    @property
+    def alarm_pending(self) -> bool:
+        """F 아래에 경보가 깔려 있나. 대시보드가 *"풀면 빨강으로 돌아간다"* 를 알린다."""
+        return self._alarm_pending
+
+    def presentation(self) -> Presentation:
+        return Presentation(
+            level=self._level,
+            led=str(self._led[LED_KEYS[self._level]]),
+            blink_hz=float(self._led["l3_blink_hz"]) if self._level is Level.L3 else None,
+            warning=self._warning_for(self._level),
+        )
+
+    def _warning_for(self, level: Level) -> str | None:
+        value = None
+        if level is Level.L2:
+            value = self._sound.get("l2_warning")
+        elif level is Level.L3:
+            # 원인별 문장이 있으면 그것을 읽는다. TF 카드에서는 문장마다 트랙이 따로다
+            # (ADR-38 · `4.7.21`). 없으면 공통 문장으로 돌아간다.
+            value = self._sound.get(f"{self._reason.lower()}_warning") or self._sound.get(
+                "l3_warning"
+            )
+        return None if value is None else str(value)
+
+    # ── 올리기 ──────────────────────────────────────────────
+    def raise_to(self, level: Level, *, reason: str, now_ms: int) -> bool:
+        """단계를 올리기만 한다 — 사건 순서가 뒤바뀌어도 안전하다."""
+        if level.rank <= self._level.rank:
+            # 경고 중에 온 경보는 래치로 바꾼다 — 삼키면 경고가 끝날 때 경보도 내려간다.
+            if level is Level.L3 and self._warn_until_ms is not None:
+                return self._enter(level, reason=reason, now_ms=now_ms)
+            # F 중에 온 경보는 깔아 둔다 — F 가 풀리면 L3 로 돌아간다.
+            if self._level is Level.F and level is Level.L3:
+                self._alarm_pending = True
+            return False
+        return self._enter(level, reason=reason, now_ms=now_ms)
+
+    def warn(self, reason: str, now_ms: int) -> bool:
+        """빨간 눈과 경고 문장을 `ppe_warning_hold_ms` 동안만 낸다 — 래치가 아니다 (ADR-42 결정 1).
+
+        이미 L3·F 면 아무것도 하지 않는다 — 경보를 경고로 낮추지 않는다.
+        """
+        if self._level.rank >= Level.L3.rank:
+            return False
+        self._enter(Level.L3, reason=reason, now_ms=now_ms)
+        self._alarm_pending = False
+        self._warn_until_ms = now_ms + self._warn_ms
+        return True
+
+    def note_event(self, event: str, now_ms: int, *, accepted: bool = True) -> None:
+        """FSM 사건 하나를 넣는다. 표에 있는 사건에만 반응한다.
+
+        `accepted` 는 FSM 이 그 사건을 받아들였는지다. 올리기는 전이 여부와 무관하다.
+        ⚠️ 내리기는 받아들여졌을 때만이다 — `LATCH_GUARDED` 로 거부된 `RESET_CONFIRMED` 에
+        F 를 풀면 로봇은 잠긴 채 호스트만 풀린다 (ADR-21 · ADR-26 ③).
+        """
+        level = RAISED_BY.get(event)
+        if level is not None:
+            self.raise_to(level, reason=event, now_ms=now_ms)
+        if event in WARNED_BY:
+            self.warn(event, now_ms)
+        if not accepted:
+            return
+        if event in AUTH_CLEARS:
+            self.note_authenticated(now_ms)
+        if event in FAILSAFE_CLEARS:
+            self.confirm_failsafe(now_ms)
+
+    # ── 관측 ────────────────────────────────────────────────
+    def note_person(self, *, present: bool, last_seen_ms: int | None, now_ms: int) -> None:
+        """사람 게이트 결과를 넣는다 (FR-3.2 · `3.3.3`).
+
+        `present` 는 시간 창 확정이고 `last_seen_ms` 는 실제 검출 시각이다 — 확정 해제와
+        대상 상실은 다른 시계다 (ADR-25). 래치된 단계에서는 올리지도 내리지도 않는다.
+        """
+        if last_seen_ms is not None:
+            self._last_seen_ms = last_seen_ms
+        if self.latched:
+            return
+        if present:
+            self.raise_to(Level.L1, reason="person_present", now_ms=now_ms)
+
+    def note_authenticated(self, now_ms: int) -> None:
+        """인증 성공 (FR-10). L2 를 L0 으로 내리고 승격을 막는다.
+
+        L3 는 내리지 않고(표시만 한다), L1 도 내리지 않는다 — 내리면 관측과 인증이 번갈아
+        `L0↔L1` 이 진동한다 (ADR-26 ②-보충).
+        """
+        self._authenticated = True
+        if self.latched:
+            return
+        if self._level is Level.L2:
+            self._enter(Level.L0, reason="authenticated", now_ms=now_ms)
+
+    def stand_down(self, now_ms: int) -> None:
+        """임무 밖(`fsm.STANDBY`)에 들어섰다 — 래치되지 않은 L1·L2 만 내린다 (잠정)."""
+        if self._level in (Level.L1, Level.L2):
+            self._release("standby", now_ms)
+
+    def note_fall_suspect(self, active: bool, now_ms: int) -> None:
+        """쓰러짐 의심에 들고 난다 (ADR-42 결정 2). 의심 동안 L1 을 붙든다.
+
+        끝낼 때는 런타임이 정한다 — 판독만으로 든 의심은 박스가 없어 대상 상실로 풀면 안 된다.
+        """
+        self._fall_suspected = active
+        if active:
+            self.raise_to(Level.L1, reason="fall_suspected", now_ms=now_ms)
+        elif self._level is Level.L1:
+            self._release("fall_cleared", now_ms)
+
+    def settle_ppe(self, now_ms: int) -> None:
+        """공장 PPE 판정 종료 시 L1을 내린다. L3/F 래치는 유지한다."""
+        if self._level is Level.L1:
+            self._release("ppe_settled", now_ms)
+
+    def note_authentication_lost(self) -> None:
+        """인증이 더 이상 유효하지 않다 — 유효 시간 만료(FR-10.2.4)나 미인증자 합류.
+
+        표시만 지운다. 승격은 `tick()` 의 L1 체류 조건이 평소대로 정한다.
+        """
+        self._authenticated = False
+
+    def tick(self, now_ms: int, *, require_auth: bool = True) -> None:
+        """시간으로 정해지는 것들을 처리한다 — 경고 종료 · L1 해제 · L1→L2 승격 · L2 상실→L3.
+
+        대상 상실은 L1 에서는 L0 복귀, L2 에서는 L3(미인증 이탈)다 (ADR-26 ②).
+        `require_auth=False`(공장 모드)는 L2 를 만들지 않고 상실은 L0 복귀다.
+        경고가 끝날 때 쓰러짐 의심 중이면 L1 로 돌아간다.
+        """
+        if self._warn_until_ms is not None and now_ms >= self._warn_until_ms:
+            if self._fall_suspected:
+                self._enter(Level.L1, reason="fall_suspected", now_ms=now_ms)
+            else:
+                self._release("warning_done", now_ms)
+            return
+        if self._lost(now_ms) and not self._fall_suspected:
+            if self._level is Level.L1:
+                self._release("target_lost", now_ms)
+                return
+            if self._level is Level.L2:
+                if require_auth:
+                    self.raise_to(Level.L3, reason="unauthenticated_left", now_ms=now_ms)
+                else:
+                    self._release("target_lost", now_ms)
+                return
+        # 쓰러짐 의심의 L1 은 인증을 기다리는 관찰이 아니다 — L2 로 올리지 않는다.
+        if (
+            require_auth
+            and self._level is Level.L1
+            and not self._authenticated
+            and not self._fall_suspected
+        ):
+            since = self._l1_since_ms
+            if since is not None and now_ms - since >= self._hold_ms:
+                self.raise_to(Level.L2, reason="unauthenticated_hold", now_ms=now_ms)
+
+    def _lost(self, now_ms: int) -> bool:
+        """마지막 검출 이후 임계가 지났나 (FR-3.7). 한 번도 못 봤으면 상실이 아니다."""
+        return self._last_seen_ms is not None and now_ms - self._last_seen_ms >= self._lost_ms
+
+    # ── 내리기 (사람 확인) ──────────────────────────────────
+    def confirm_alarm(self, now_ms: int) -> bool:
+        """관리자가 경보(L3)를 확인했다 — 유일한 L3 해제 경로다.
+
+        ⚠️ F 는 풀지 않는다 — 경보 확인이 페일세이프를 풀면 안 된다 (ADR-26 ①).
+        """
+        if self._level is not Level.L3:
+            return False
+        self._alarm_pending = False
+        self._release("alarm_confirmed", now_ms)
+        return True
+
+    def confirm_failsafe(self, now_ms: int) -> bool:
+        """로봇이 안전 래치를 풀었다 — F 해제 (`RESET_CONFIRMED`).
+
+        경보가 깔려 있었으면 L0 이 아니라 L3 로 돌아간다 (ADR-26 ①).
+        """
+        if self._level is not Level.F:
+            return False
+        if self._alarm_pending:
+            return self._enter(Level.L3, reason="failsafe_confirmed_alarm_kept", now_ms=now_ms)
+        self._release("failsafe_confirmed", now_ms)
+        return True
+
+    # ── 내부 ────────────────────────────────────────────────
+    def _release(self, reason: str, now_ms: int) -> None:
+        """L0 으로 되돌리고 인증 사실도 잊는다 — 다음 사람은 다시 인증한다."""
+        self._authenticated = False
+        self._enter(Level.L0, reason=reason, now_ms=now_ms)
+
+    def _enter(self, level: Level, *, reason: str, now_ms: int) -> bool:
+        previous, self._level = self._level, level
+        self._reason = reason
+        self._warn_until_ms = None
+        self._l1_since_ms = now_ms if level is Level.L1 else None
+        if level is Level.L3:
+            self._alarm_pending = True
+        elif level is Level.L0:
+            self._alarm_pending = False
+        # 전이 로그와 같은 `from`/`to` 표기로 맞춘다.
+        LOG.info(
+            "escalation",
+            **{
+                "from": previous.value,
+                "to": level.value,
+                "reason": reason,
+                "led": self.presentation().led,
+            },
+        )
+        return True

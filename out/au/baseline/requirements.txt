@@ -1,0 +1,40 @@
+# ══════════════════════════════════════════════════════════════
+#  Host PC 런타임 의존성
+#  주의: 플랫폼별 패키지는 PEP 508 환경 마커로 분기한다.
+#        CI 러너(ubuntu)와 개발 PC(Windows)가 다르기 때문이다.
+# ══════════════════════════════════════════════════════════════
+
+PyYAML>=6.0
+numpy>=1.26
+opencv-python>=4.10
+
+# ── ONNX 추론 (WBS 3.3.1) ─────────────────────────────────────
+# DirectML EP 는 Windows 전용이다. 리눅스 CI 에서는 CPU 빌드를 쓴다.
+#  · Windows 개발 PC : DirectML EP — 모든 DX12 GPU 에서 동작 (DR-13)
+#  · Linux CI        : CPU EP — import 및 단위 시험만 수행
+#
+# ⚠️ **둘을 같이 깔면 안 된다.** 같은 `onnxruntime` 이름을 점유해서 **에러 없이
+# 한쪽이 다른 쪽을 가린다.** 실제로 개발 PC 에 둘 다 깔려 있었고, DirectML 이
+# EP 목록에서 사라져 CPU 로 도는 것을 몰랐다 — 검출 61.9ms 였고 하나만 남긴 뒤
+# 8.2ms 가 됐다. 아래 마커는 새 환경을 위한 것이며, **이미 섞인 환경은 둘 다 지우고
+# 하나만 다시 깔아야 한다** (CONTRIBUTING 8절).
+onnxruntime-directml>=1.19 ; sys_platform == "win32"
+onnxruntime>=1.19          ; sys_platform != "win32"
+
+# ── 관제 대시보드 (WBS 4.5) ───────────────────────────────────
+fastapi>=0.115
+anyio>=4.0
+uvicorn[standard]>=0.32
+websockets>=13.0
+
+# ── 관제 방송 TTS (WBS 4.8.2, ADR-38) ─────────────────────────
+sounddevice>=0.5
+
+# `piper-tts` 는 여기 목록에 넣지 않는다. 일반 `pip install piper-tts` 는
+# `onnxruntime`(CPU 빌드)을 끌어와 위 `onnxruntime-directml` 과 이름을 다투고
+# DirectML 을 가린다 — 위와 같은 사고가 재현된다. 대신 아래처럼 따로 깐다.
+#
+#   pip install --no-deps piper-tts==1.8.0 pathvalidate
+#
+# Piper 모델 파일은 사원증 마커와 같은 규칙(ADR-20)으로 저장소에 없다 —
+# `config.yaml` 의 `broadcast.piper_model` 로 실제 경로를 가리킨다.

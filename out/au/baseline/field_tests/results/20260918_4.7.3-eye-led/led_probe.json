@@ -1,0 +1,52 @@
+{
+  "stages": [
+    {
+      "stage": "L0 순찰",
+      "color": "blue",
+      "blink_hz": 0.0,
+      "applied": true,
+      "telemetry_count": 0,
+      "latched": false
+    },
+    {
+      "stage": "L1 관찰",
+      "color": "yellow",
+      "blink_hz": 0.0,
+      "applied": true,
+      "telemetry_count": 0,
+      "latched": false
+    },
+    {
+      "stage": "L2 인증요구",
+      "color": "orange",
+      "blink_hz": 0.0,
+      "applied": true,
+      "telemetry_count": 0,
+      "latched": false
+    },
+    {
+      "stage": "L3 경보",
+      "color": "red",
+      "blink_hz": 2.0,
+      "applied": true,
+      "telemetry_count": 0,
+      "latched": false
+    },
+    {
+      "stage": "F 페일세이프",
+      "color": "white",
+      "blink_hz": 0.0,
+      "applied": true,
+      "telemetry_count": 0,
+      "latched": false
+    },
+    {
+      "stage": "거부 확인",
+      "color": "magenta",
+      "blink_hz": 0.0,
+      "applied": false,
+      "telemetry_count": 0,
+      "latched": false
+    }
+  ]
+}

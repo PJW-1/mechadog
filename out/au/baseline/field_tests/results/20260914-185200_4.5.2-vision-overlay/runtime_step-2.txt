@@ -1,0 +1,213 @@
+18:46:22 INFO    [IDLE] avoid_ready · attempts=3 cycle_ms=6045 phases=['settle', 'reverse_turn', 'verify']
+18:46:23 INFO    [IDLE] execution_provider · selected=DmlExecutionProvider order=['DmlExecutionProvider', 'CPUExecutionProvider'] preferred=['DmlExecutionProvider', 'CPUExecutionProvider'] available=['DmlExecutionProvider', 'CPUExecutionProvider']
+18:46:23 INFO    [IDLE] detector_warmed_up · ms=12.6
+18:46:23 INFO    [IDLE] vision_detector_opened · ms=595
+18:46:23 INFO    [IDLE] vision_worker_started · period_ms=40
+18:46:23 INFO    [IDLE] runtime_started · listen_port=5101 peer=127.0.0.1:5001 period_ms=100 actions={'PATROL': '등록', 'ZONE_INSPECT': '등록', 'TRACK': '등록', 'AVOID': '등록'}
+18:46:23 INFO    [IDLE] robot_state · reported=IDLE latched=False
+18:46:24 INFO    [IDLE] profile_applied · profile=VGA fps_limit=25
+18:46:24 INFO    [IDLE] stream_connected · url=http://192.168.1.102:81/stream boundary=mechdog-frame-boundary
+18:46:24 INFO    [IDLE] track_opened · score=0.737
+18:46:24 INFO    [IDLE] person_present · hits=3 required=3 window_ms=300 score=0.75
+18:46:24 INFO    [IDLE] person_gate · present=True hits=4 score=0.597
+18:46:24 INFO    [IDLE] blackbox_recorded · event_type=person_found ts_ms=1789379184582 meta_path=C:\Users\pjw\Desktop\mechdog_physical_ai\blackbox\1789379184582_person_found\meta.json
+18:46:24 INFO    [IDLE] telemetry_summary · sent=12 accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.6 detections=12
+18:46:24 INFO    [IDLE] frame_queue_summary · frames_received=20 frames_processed=18 frames_dropped=2 drop_rate=0.1 queue_depth=0 queue_depth_max=2
+18:46:25 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=22.4 detections=17 sent=10
+18:46:25 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=34 latest_seq=45
+18:46:26 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.5 detections=13 sent=10
+18:46:26 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=24 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:46:27 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=18.3 detections=18 sent=10
+18:46:28 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=21 frames_dropped=2 drop_rate=0.087 queue_depth=0 queue_depth_max=2
+18:46:28 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=18.0 detections=19 sent=10
+18:46:28 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=21 frames_dropped=2 drop_rate=0.087 queue_depth=0 queue_depth_max=2 latest_age_ms=25 latest_seq=115
+18:46:29 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=15 sent=10
+18:46:29 INFO    [IDLE] frame_queue_summary · frames_received=16 frames_processed=16 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:46:30 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.7 detections=14 sent=10
+18:46:30 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=23 frames_dropped=2 drop_rate=0.08 queue_depth=0 queue_depth_max=2 latest_age_ms=6 latest_seq=156
+18:46:31 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.2 detections=17 sent=10
+18:46:32 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=21 frames_dropped=3 drop_rate=0.125 queue_depth=0 queue_depth_max=2
+18:46:32 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.0 detections=19 sent=10
+18:46:32 INFO    [IDLE] frame_queue_summary · frames_received=21 frames_processed=19 frames_dropped=2 drop_rate=0.095 queue_depth=0 queue_depth_max=2
+18:46:33 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.8 detections=18 sent=10
+18:46:33 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2
+18:46:34 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.9 detections=14 sent=10
+18:46:34 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=20 frames_dropped=1 drop_rate=0.045 queue_depth=1 queue_depth_max=2
+18:46:35 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=23 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2
+18:46:35 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.0 detections=13 sent=10
+18:46:36 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.1 detections=25 sent=10
+18:46:36 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=21 frames_dropped=1 drop_rate=0.045 queue_depth=0 queue_depth_max=2
+18:46:37 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=22 frames_dropped=1 drop_rate=0.04 queue_depth=2 queue_depth_max=2
+18:46:37 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.9 detections=24 sent=10
+18:46:38 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=22 frames_dropped=3 drop_rate=0.13 queue_depth=0 queue_depth_max=2
+18:46:38 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.1 detections=19 sent=10
+18:46:39 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.7 detections=15 sent=10
+18:46:39 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=18 frames_dropped=2 drop_rate=0.091 queue_depth=2 queue_depth_max=2
+18:46:40 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.9 detections=19 sent=10
+18:46:40 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=23 frames_dropped=1 drop_rate=0.045 queue_depth=0 queue_depth_max=2
+18:46:41 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.9 detections=18 sent=10
+18:46:41 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=23 frames_dropped=2 drop_rate=0.077 queue_depth=1 queue_depth_max=2
+18:46:42 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=24 frames_dropped=1 drop_rate=0.04 queue_depth=1 queue_depth_max=2
+18:46:42 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=13 sent=10
+18:46:43 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=23 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=14 latest_seq=458
+18:46:43 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=15 sent=10
+18:46:44 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.4 detections=15 sent=10
+18:46:44 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=1 drop_rate=0.042 queue_depth=1 queue_depth_max=2
+18:46:45 INFO    [IDLE] frame_queue_summary · frames_received=21 frames_processed=22 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=45 latest_seq=503
+18:46:45 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.0 detections=14 sent=10
+18:46:46 INFO    [IDLE] person_cleared · hits=0 required=3 window_ms=300 score=0.0
+18:46:46 INFO    [IDLE] person_gate · present=False hits=0 score=0.0
+18:46:46 INFO    [IDLE] person_present · hits=3 required=3 window_ms=300 score=0.849
+18:46:46 INFO    [IDLE] person_gate · present=True hits=3 score=0.849
+18:46:46 INFO    [IDLE] blackbox_recorded · event_type=person_found ts_ms=1789379206850 meta_path=C:\Users\pjw\Desktop\mechdog_physical_ai\blackbox\1789379206850_person_found\meta.json
+18:46:46 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=20 frames_dropped=3 drop_rate=0.125 queue_depth=1 queue_depth_max=2
+18:46:46 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=18.9 detections=10 sent=10
+18:46:47 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.3 detections=21 sent=10
+18:46:47 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=22 frames_dropped=2 drop_rate=0.087 queue_depth=0 queue_depth_max=2
+18:46:48 INFO    [IDLE] track_opened · score=0.79
+18:46:48 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=22 frames_dropped=2 drop_rate=0.08 queue_depth=1 queue_depth_max=2
+18:46:48 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.6 detections=31 sent=10
+18:46:49 INFO    [IDLE] track_dropped · reason=lost age_ms=1011
+18:46:49 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=18.9 detections=46 sent=10
+18:46:49 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=3 drop_rate=0.125 queue_depth=0 queue_depth_max=2
+18:46:50 INFO    [IDLE] track_opened · score=0.501
+18:46:50 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=1 queue_depth_max=1
+18:46:50 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.2 detections=39 sent=10
+18:46:51 INFO    [IDLE] track_dropped · reason=lost age_ms=1017
+18:46:51 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.0 detections=50 sent=10
+18:46:51 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=23 frames_dropped=3 drop_rate=0.12 queue_depth=0 queue_depth_max=2 latest_age_ms=37 latest_seq=650
+18:46:52 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.3 detections=75 sent=10
+18:46:52 INFO    [IDLE] frame_queue_summary · frames_received=21 frames_processed=19 frames_dropped=2 drop_rate=0.095 queue_depth=0 queue_depth_max=2
+18:46:53 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.3 detections=64 sent=10
+18:46:53 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=22 frames_dropped=3 drop_rate=0.12 queue_depth=0 queue_depth_max=2
+18:46:54 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.9 detections=52 sent=10
+18:46:54 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=23 frames_dropped=1 drop_rate=0.04 queue_depth=1 queue_depth_max=2
+18:46:55 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=12 latest_seq=745
+18:46:55 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.3 detections=48 sent=10
+18:46:56 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2 latest_age_ms=24 latest_seq=769
+18:46:56 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.6 detections=44 sent=10
+18:46:57 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.5 detections=60 sent=10
+18:46:58 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=23 frames_dropped=1 drop_rate=0.038 queue_depth=2 queue_depth_max=2
+18:46:58 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.0 detections=41 sent=10
+18:46:58 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=21 frames_dropped=4 drop_rate=0.174 queue_depth=0 queue_depth_max=2
+18:46:59 INFO    [IDLE] track_opened · score=0.54
+18:46:59 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.5 detections=51 sent=10
+18:47:00 INFO    [IDLE] frame_queue_summary · frames_received=27 frames_processed=24 frames_dropped=2 drop_rate=0.074 queue_depth=1 queue_depth_max=2
+18:47:00 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=23 frames_dropped=1 drop_rate=0.043 queue_depth=0 queue_depth_max=2 latest_age_ms=15 latest_seq=868
+18:47:00 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.5 detections=41 sent=10
+18:47:01 INFO    [IDLE] track_dropped · reason=lost age_ms=1023
+18:47:01 INFO    [IDLE] track_opened · score=0.568
+18:47:01 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.4 detections=56 sent=10
+18:47:01 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=22 frames_dropped=1 drop_rate=0.043 queue_depth=0 queue_depth_max=2
+18:47:02 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=20 frames_dropped=2 drop_rate=0.091 queue_depth=0 queue_depth_max=2
+18:47:02 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.0 detections=53 sent=10
+18:47:03 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.1 detections=57 sent=10
+18:47:04 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=21 frames_dropped=3 drop_rate=0.12 queue_depth=1 queue_depth_max=2
+18:47:04 INFO    [IDLE] track_dropped · reason=lost age_ms=1022
+18:47:04 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=18.2 detections=56 sent=10
+18:47:04 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=5 latest_seq=962
+18:47:05 INFO    [IDLE] track_opened · score=0.567
+18:47:05 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=24 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:47:05 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.7 detections=60 sent=10
+18:47:06 INFO    [IDLE] track_dropped · reason=lost age_ms=1033
+18:47:06 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.2 detections=61 sent=10
+18:47:06 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=1 drop_rate=0.042 queue_depth=1 queue_depth_max=2
+18:47:07 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=22 frames_dropped=2 drop_rate=0.087 queue_depth=0 queue_depth_max=2 latest_age_ms=35 latest_seq=1033
+18:47:07 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.5 detections=53 sent=10
+18:47:08 INFO    [IDLE] track_opened · score=0.58
+18:47:08 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.9 detections=35 sent=10
+18:47:08 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=22 frames_dropped=1 drop_rate=0.043 queue_depth=0 queue_depth_max=2
+18:47:09 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=24 frames_dropped=1 drop_rate=0.038 queue_depth=1 queue_depth_max=2
+18:47:09 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=22.5 detections=35 sent=10
+18:47:10 INFO    [IDLE] track_dropped · reason=lost age_ms=1018
+18:47:10 INFO    [IDLE] track_opened · score=0.506
+18:47:10 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.9 detections=51 sent=10
+18:47:11 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=40 latest_seq=1106
+18:47:11 INFO    [IDLE] track_dropped · reason=lost age_ms=1000
+18:47:11 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.6 detections=36 sent=10
+18:47:11 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=22 frames_dropped=2 drop_rate=0.08 queue_depth=1 queue_depth_max=2
+18:47:12 INFO    [IDLE] track_opened · score=0.506
+18:47:12 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.7 detections=35 sent=10
+18:47:12 INFO    [IDLE] frame_queue_summary · frames_received=21 frames_processed=20 frames_dropped=2 drop_rate=0.095 queue_depth=0 queue_depth_max=2 latest_age_ms=10 latest_seq=1152
+18:47:13 INFO    [IDLE] track_dropped · reason=lost age_ms=1041
+18:47:13 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.0 detections=37 sent=10
+18:47:13 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=20 frames_dropped=2 drop_rate=0.087 queue_depth=1 queue_depth_max=2
+18:47:14 INFO    [IDLE] frame_queue_summary · frames_received=21 frames_processed=21 frames_dropped=1 drop_rate=0.048 queue_depth=0 queue_depth_max=2
+18:47:14 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.9 detections=33 sent=10
+18:47:15 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=21 frames_dropped=4 drop_rate=0.16 queue_depth=0 queue_depth_max=2
+18:47:15 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.1 detections=39 sent=10
+18:47:16 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2 latest_age_ms=28 latest_seq=1245
+18:47:16 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.2 detections=34 sent=10
+18:47:17 INFO    [IDLE] track_opened · score=0.521
+18:47:17 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.5 detections=30 sent=10
+18:47:17 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=23 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=11 latest_seq=1268
+18:47:18 INFO    [IDLE] track_dropped · reason=lost age_ms=1028
+18:47:18 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=21 frames_dropped=1 drop_rate=0.045 queue_depth=0 queue_depth_max=2 latest_age_ms=11 latest_seq=1290
+18:47:18 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.0 detections=42 sent=10
+18:47:19 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=22.3 detections=37 sent=10
+18:47:19 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=23 frames_dropped=1 drop_rate=0.042 queue_depth=0 queue_depth_max=2 latest_age_ms=18 latest_seq=1314
+18:47:20 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=24 frames_dropped=1 drop_rate=0.04 queue_depth=0 queue_depth_max=2 latest_age_ms=10 latest_seq=1339
+18:47:20 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=42 sent=10
+18:47:21 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=22.7 detections=53 sent=10
+18:47:21 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=21 frames_dropped=1 drop_rate=0.045 queue_depth=0 queue_depth_max=2 latest_age_ms=45 latest_seq=1361
+18:47:22 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=22.1 detections=48 sent=10
+18:47:22 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=23 frames_dropped=2 drop_rate=0.08 queue_depth=0 queue_depth_max=2
+18:47:23 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.7 detections=48 sent=10
+18:47:23 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=1 drop_rate=0.042 queue_depth=1 queue_depth_max=2
+18:47:24 INFO    [IDLE] frame_queue_summary · frames_received=20 frames_processed=20 frames_dropped=1 drop_rate=0.05 queue_depth=0 queue_depth_max=2
+18:47:24 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.3 detections=39 sent=10
+18:47:25 INFO    [IDLE] track_opened · score=0.591
+18:47:25 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.5 detections=43 sent=10
+18:47:25 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=21 frames_dropped=2 drop_rate=0.087 queue_depth=0 queue_depth_max=2
+18:47:26 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.5 detections=52 sent=10
+18:47:27 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=21 frames_dropped=1 drop_rate=0.043 queue_depth=1 queue_depth_max=2
+18:47:27 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.9 detections=64 sent=10
+18:47:27 INFO    [IDLE] frame_queue_summary · frames_received=20 frames_processed=21 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:47:28 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2
+18:47:28 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.1 detections=38 sent=10
+18:47:29 INFO    [IDLE] person_cleared · hits=0 required=3 window_ms=300 score=0.0
+18:47:29 INFO    [IDLE] person_gate · present=False hits=0 score=0.0
+18:47:29 INFO    [IDLE] track_dropped · reason=lost age_ms=1016
+18:47:29 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=17.3 detections=1 sent=10
+18:47:29 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=23 frames_dropped=3 drop_rate=0.115 queue_depth=0 queue_depth_max=2
+18:47:30 INFO    [IDLE] track_dropped · reason=lost age_ms=1005
+18:47:30 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.1 detections=0 sent=10
+18:47:30 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=23 frames_dropped=2 drop_rate=0.077 queue_depth=1 queue_depth_max=2
+18:47:31 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=0 sent=10
+18:47:31 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=21 frames_dropped=3 drop_rate=0.125 queue_depth=1 queue_depth_max=2
+18:47:32 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.2 detections=0 sent=10
+18:47:33 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=21 frames_dropped=2 drop_rate=0.091 queue_depth=0 queue_depth_max=2 latest_age_ms=32 latest_seq=1618
+18:47:33 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2
+18:47:33 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.1 detections=1 sent=10
+18:47:34 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=0 sent=10
+18:47:34 INFO    [IDLE] frame_queue_summary · frames_received=27 frames_processed=26 frames_dropped=0 drop_rate=0.0 queue_depth=1 queue_depth_max=1
+18:47:35 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.0 detections=0 sent=10
+18:47:35 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=23 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:47:36 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.7 detections=0 sent=10
+18:47:36 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=25 frames_dropped=1 drop_rate=0.038 queue_depth=0 queue_depth_max=2 latest_age_ms=16 latest_seq=1717
+18:47:37 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=22 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:47:37 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.0 detections=0 sent=10
+18:47:38 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.1 detections=0 sent=10
+18:47:38 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=23 frames_dropped=2 drop_rate=0.077 queue_depth=1 queue_depth_max=2
+18:47:39 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.8 detections=0 sent=10
+18:47:39 INFO    [IDLE] frame_queue_summary · frames_received=22 frames_processed=21 frames_dropped=2 drop_rate=0.091 queue_depth=0 queue_depth_max=2
+18:47:40 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.3 detections=0 sent=10
+18:47:40 INFO    [IDLE] frame_queue_summary · frames_received=26 frames_processed=25 frames_dropped=1 drop_rate=0.038 queue_depth=0 queue_depth_max=2 latest_age_ms=6 latest_seq=1813
+18:47:41 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.4 detections=0 sent=10
+18:47:41 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2 latest_age_ms=13 latest_seq=1837
+18:47:42 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=23 frames_dropped=1 drop_rate=0.04 queue_depth=1 queue_depth_max=2
+18:47:42 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.7 detections=0 sent=10
+18:47:43 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:47:43 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=21.3 detections=0 sent=10
+18:47:44 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.0 detections=0 sent=10
+18:47:44 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=14 latest_seq=1911
+18:47:45 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=18.6 detections=0 sent=10
+18:47:45 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:47:46 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=22.8 detections=0 sent=10
+18:47:46 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=25 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1
+18:47:47 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=19.3 detections=0 sent=10
+18:47:47 INFO    [IDLE] frame_queue_summary · frames_received=24 frames_processed=22 frames_dropped=2 drop_rate=0.083 queue_depth=0 queue_depth_max=2
+18:47:48 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=0 sent=10
+18:47:48 INFO    [IDLE] frame_queue_summary · frames_received=25 frames_processed=23 frames_dropped=2 drop_rate=0.08 queue_depth=0 queue_depth_max=2 latest_age_ms=15 latest_seq=2010
+18:47:49 INFO    [IDLE] frame_queue_summary · frames_received=23 frames_processed=23 frames_dropped=0 drop_rate=0.0 queue_depth=0 queue_depth_max=1 latest_age_ms=15 latest_seq=2033
+18:47:49 INFO    [IDLE] telemetry_summary · accepted=10 batt_v_avg=8.6 last_cmd_age_ms_avg=20.2 detections=0 sent=10

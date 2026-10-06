@@ -1,0 +1,7 @@
+WBS 3.5.4 — 방향별 보정 적용 뒤 락온 지시 (2026-09-18 02:24~ · mechdog-01)
+deviation 음수=화면 왼쪽. 좌선회 명령에는 보정이 붙지 않고, 우선회에만 -8.0 이 더해진다.
+
+02:28:03  dev=   -193.7  angle=  10.98  step= 60.0  centered=False
+02:28:16  dev=    -28.5  angle=   0.00  step=  0.0  centered=True
+02:29:39  dev=    137.0  angle= -14.93  step= 60.0  centered=False
+02:29:54  dev=     26.3  angle=   0.00  step=  0.0  centered=True

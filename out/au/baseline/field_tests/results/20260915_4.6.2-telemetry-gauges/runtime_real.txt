@@ -1,0 +1,260 @@
+22:59:08 INFO    [IDLE] avoid_ready ， attempts=3 cycle_ms=6045 phases=['settle', 'reverse_turn', 'verify']
+22:59:10 INFO    [IDLE] runtime_started ， listen_port=5101 peer=192.168.1.101:5001 period_ms=100 actions={'PATROL': '去系', 'ZONE_INSPECT': '去系', 'TRACK': '去系', 'AVOID': '去系'}
+22:59:10 INFO    [IDLE] robot_state ， reported=FAILSAFE latched=True
+22:59:10 INFO    [IDLE] escalation ， from=L0 to=F reason=ONBOARD_FAILSAFE led=white
+22:59:10 ERROR   [FAILSAFE] fsm_transition ， from=IDLE to=FAILSAFE trigger=ONBOARD_FAILSAFE
+22:59:11 INFO    [FAILSAFE] telemetry_summary ， sent=13 acks=13 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=13.0
+22:59:12 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.44 last_cmd_age_ms_avg=12.0
+22:59:13 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.52 last_cmd_age_ms_avg=21.0
+22:59:14 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:15 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=21.0
+22:59:16 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:17 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.58 last_cmd_age_ms_avg=22.0
+22:59:18 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=2 batt_v_avg=8.52 last_cmd_age_ms_avg=16.0 sent=10
+22:59:19 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=4 batt_v_avg=8.55 last_cmd_age_ms_avg=22.0
+22:59:20 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.54 last_cmd_age_ms_avg=22.0
+22:59:21 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=21.0
+22:59:22 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:23 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=13.0
+22:59:24 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.58 last_cmd_age_ms_avg=25.0
+22:59:25 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.57 last_cmd_age_ms_avg=20.0
+22:59:26 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=3 batt_v_avg=8.56 last_cmd_age_ms_avg=20.67 sent=10
+22:59:27 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=1 batt_v_avg=8.59 last_cmd_age_ms_avg=23.0 sent=10
+22:59:28 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.58 last_cmd_age_ms_avg=20.67
+22:59:29 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.54 last_cmd_age_ms_avg=18.5
+22:59:30 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.54 last_cmd_age_ms_avg=21.5
+22:59:31 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.52 last_cmd_age_ms_avg=20.5
+22:59:32 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.58 last_cmd_age_ms_avg=13.0
+22:59:33 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=3 batt_v_avg=8.55 last_cmd_age_ms_avg=22.33 sent=10
+22:59:34 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.55 last_cmd_age_ms_avg=20.33
+22:59:35 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:36 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.52 last_cmd_age_ms_avg=17.0
+22:59:37 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=6 batt_v_avg=8.58 last_cmd_age_ms_avg=20.5 sent=10
+22:59:38 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.52 last_cmd_age_ms_avg=24.0
+22:59:39 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.58 last_cmd_age_ms_avg=21.5
+22:59:40 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:41 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.56 last_cmd_age_ms_avg=24.5
+22:59:42 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:43 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=19.0
+22:59:44 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.53 last_cmd_age_ms_avg=25.0
+22:59:45 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=18.0
+22:59:46 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.52 last_cmd_age_ms_avg=27.0
+22:59:47 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.49 last_cmd_age_ms_avg=20.5
+22:59:48 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.55 last_cmd_age_ms_avg=23.0
+22:59:49 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=14.0
+22:59:50 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=25.0 sent=10
+22:59:51 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:52 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:53 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.56 last_cmd_age_ms_avg=20.0
+22:59:54 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.52 last_cmd_age_ms_avg=14.0
+22:59:55 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.54 last_cmd_age_ms_avg=17.0
+22:59:56 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:57 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+22:59:58 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.58 last_cmd_age_ms_avg=27.0
+22:59:59 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.55 last_cmd_age_ms_avg=22.0
+23:00:00 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:01 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=27.0
+23:00:02 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=3 batt_v_avg=8.53 last_cmd_age_ms_avg=22.0 sent=10
+23:00:03 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.57 last_cmd_age_ms_avg=27.0
+23:00:04 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:05 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=3 batt_v_avg=8.53 last_cmd_age_ms_avg=16.0 sent=10
+23:00:06 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.49 last_cmd_age_ms_avg=18.0
+23:00:07 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.55 last_cmd_age_ms_avg=24.0
+23:00:08 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:09 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.58 last_cmd_age_ms_avg=29.0
+23:00:10 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.54 last_cmd_age_ms_avg=25.0
+23:00:11 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:12 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:13 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.55 last_cmd_age_ms_avg=19.5
+23:00:14 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.51 last_cmd_age_ms_avg=20.5
+23:00:15 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.53 last_cmd_age_ms_avg=17.5
+23:00:16 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.57 last_cmd_age_ms_avg=14.0
+23:00:17 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:18 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.55 last_cmd_age_ms_avg=22.0
+23:00:19 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:20 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.6 last_cmd_age_ms_avg=20.0
+23:00:21 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.55 last_cmd_age_ms_avg=25.5
+23:00:22 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=4 batt_v_avg=8.53 last_cmd_age_ms_avg=22.0
+23:00:23 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:24 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.55 last_cmd_age_ms_avg=18.0
+23:00:25 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=15.0
+23:00:26 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:27 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=2 batt_v_avg=8.54 last_cmd_age_ms_avg=19.5 sent=10
+23:00:28 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.59 last_cmd_age_ms_avg=18.0
+23:00:29 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=2 batt_v_avg=8.51 last_cmd_age_ms_avg=26.5 sent=10
+23:00:30 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:31 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:32 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=24.0
+23:00:33 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:34 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:35 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.58 last_cmd_age_ms_avg=21.0
+23:00:36 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=21.0
+23:00:37 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:38 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:39 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.56 last_cmd_age_ms_avg=24.0
+23:00:40 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.59 last_cmd_age_ms_avg=16.0
+23:00:41 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:42 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.6 last_cmd_age_ms_avg=19.0
+23:00:43 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:44 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=1 batt_v_avg=8.57 last_cmd_age_ms_avg=16.0 sent=10
+23:00:45 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.54 last_cmd_age_ms_avg=15.5
+23:00:46 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.56 last_cmd_age_ms_avg=16.0
+23:00:47 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.54 last_cmd_age_ms_avg=25.0
+23:00:48 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.54 last_cmd_age_ms_avg=26.0
+23:00:49 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.57 last_cmd_age_ms_avg=24.0
+23:00:50 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.53 last_cmd_age_ms_avg=19.0
+23:00:51 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=1 batt_v_avg=8.53 last_cmd_age_ms_avg=16.0 sent=10
+23:00:52 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.46 last_cmd_age_ms_avg=27.0
+23:00:53 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.52 last_cmd_age_ms_avg=24.0
+23:00:54 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:55 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:00:56 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.55 last_cmd_age_ms_avg=22.0
+23:00:57 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.52 last_cmd_age_ms_avg=29.0
+23:00:58 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.48 last_cmd_age_ms_avg=19.0
+23:00:59 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.53 last_cmd_age_ms_avg=27.0
+23:01:00 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.58 last_cmd_age_ms_avg=17.0
+23:01:01 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:01:02 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.54 last_cmd_age_ms_avg=16.0
+23:01:03 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.43 last_cmd_age_ms_avg=20.5
+23:01:04 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10
+23:01:05 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.59 last_cmd_age_ms_avg=22.0
+23:01:06 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.47 last_cmd_age_ms_avg=23.0
+23:01:07 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.54 last_cmd_age_ms_avg=21.33
+23:01:08 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=4 batt_v_avg=8.55 last_cmd_age_ms_avg=23.5
+23:01:09 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=1 batt_v_avg=8.54 last_cmd_age_ms_avg=22.0 sent=10
+23:01:10 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=2 batt_v_avg=8.57 last_cmd_age_ms_avg=25.0 sent=10
+23:01:11 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.53 last_cmd_age_ms_avg=20.67
+23:01:12 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.48 last_cmd_age_ms_avg=27.0
+23:01:13 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=1 batt_v_avg=8.53 last_cmd_age_ms_avg=22.0
+23:01:14 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=5 batt_v_avg=8.54 last_cmd_age_ms_avg=21.6
+23:01:15 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=4 batt_v_avg=8.55 last_cmd_age_ms_avg=24.75 sent=10
+23:01:16 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=2 batt_v_avg=8.55 last_cmd_age_ms_avg=27.5
+23:01:17 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=3 batt_v_avg=8.56 last_cmd_age_ms_avg=22.67
+23:01:18 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=5 batt_v_avg=8.57 last_cmd_age_ms_avg=20.8 sent=10
+23:01:19 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=5 batt_v_avg=8.54 last_cmd_age_ms_avg=25.2
+23:01:20 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=7 batt_v_avg=8.55 last_cmd_age_ms_avg=21.71 sent=10
+23:01:21 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=3 batt_v_avg=8.54 last_cmd_age_ms_avg=24.67 sent=10
+23:01:22 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=8 batt_v_avg=8.52 last_cmd_age_ms_avg=22.5
+23:01:23 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=5 batt_v_avg=8.56 last_cmd_age_ms_avg=24.2
+23:01:24 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=5 batt_v_avg=8.49 last_cmd_age_ms_avg=23.6 sent=10
+23:01:25 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=7 batt_v_avg=8.57 last_cmd_age_ms_avg=21.43
+23:01:26 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=6 batt_v_avg=8.56 last_cmd_age_ms_avg=24.83 sent=10
+23:01:27 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=7 batt_v_avg=8.55 last_cmd_age_ms_avg=22.43
+23:01:28 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.53 last_cmd_age_ms_avg=22.78 sent=10
+23:01:29 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=4 batt_v_avg=8.52 last_cmd_age_ms_avg=24.75
+23:01:30 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=8 batt_v_avg=8.53 last_cmd_age_ms_avg=20.62
+23:01:31 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=6 batt_v_avg=8.58 last_cmd_age_ms_avg=24.67
+23:01:32 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.54 last_cmd_age_ms_avg=22.11 sent=10
+23:01:33 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=7 batt_v_avg=8.54 last_cmd_age_ms_avg=24.86
+23:01:34 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=8 batt_v_avg=8.49 last_cmd_age_ms_avg=20.88 sent=10
+23:01:35 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=7 batt_v_avg=8.54 last_cmd_age_ms_avg=20.29
+23:01:36 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.56 last_cmd_age_ms_avg=23.22 sent=10
+23:01:37 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.5 last_cmd_age_ms_avg=22.78 sent=10
+23:01:38 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=8 batt_v_avg=8.54 last_cmd_age_ms_avg=24.88
+23:01:39 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=6 batt_v_avg=8.5 last_cmd_age_ms_avg=20.0
+23:01:40 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=8 batt_v_avg=8.54 last_cmd_age_ms_avg=20.0 sent=10
+23:01:41 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=8 batt_v_avg=8.56 last_cmd_age_ms_avg=22.25
+23:01:42 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.52 last_cmd_age_ms_avg=22.4 sent=10
+23:01:43 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=7 batt_v_avg=8.54 last_cmd_age_ms_avg=21.86
+23:01:44 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.55 last_cmd_age_ms_avg=20.67 sent=10
+23:01:45 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.5 last_cmd_age_ms_avg=23.8 sent=10
+23:01:46 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.52 last_cmd_age_ms_avg=26.78 sent=10
+23:01:47 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=8 batt_v_avg=8.51 last_cmd_age_ms_avg=22.62 sent=10
+23:01:48 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=8 batt_v_avg=8.52 last_cmd_age_ms_avg=22.5
+23:01:49 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=22.7 sent=10
+23:01:50 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=8 batt_v_avg=8.46 last_cmd_age_ms_avg=23.88 sent=10
+23:01:51 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.53 last_cmd_age_ms_avg=21.67 sent=10
+23:01:52 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=8 batt_v_avg=8.56 last_cmd_age_ms_avg=23.25 sent=10
+23:01:53 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=8 batt_v_avg=8.52 last_cmd_age_ms_avg=21.38 sent=10
+23:01:54 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=7 batt_v_avg=8.53 last_cmd_age_ms_avg=25.43 sent=10
+23:01:55 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.53 last_cmd_age_ms_avg=21.9 sent=10
+23:01:56 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.51 last_cmd_age_ms_avg=23.44 sent=10
+23:01:57 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.46 last_cmd_age_ms_avg=23.9 sent=10
+23:01:58 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=9 batt_v_avg=8.51 last_cmd_age_ms_avg=22.78
+23:01:59 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.49 last_cmd_age_ms_avg=23.5 sent=10
+23:02:00 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=8 batt_v_avg=8.56 last_cmd_age_ms_avg=36.25
+23:02:01 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.54 last_cmd_age_ms_avg=22.9 sent=10
+23:02:02 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.52 last_cmd_age_ms_avg=20.78 sent=10
+23:02:03 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.49 last_cmd_age_ms_avg=22.56 sent=10
+23:02:04 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.54 last_cmd_age_ms_avg=23.1 sent=10
+23:02:05 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=24.1 sent=10
+23:02:06 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.53 last_cmd_age_ms_avg=24.11 sent=10
+23:02:07 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.48 last_cmd_age_ms_avg=24.44 sent=10
+23:02:08 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=9 batt_v_avg=8.53 last_cmd_age_ms_avg=23.22
+23:02:09 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.49 last_cmd_age_ms_avg=22.44 sent=10
+23:02:10 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.52 last_cmd_age_ms_avg=21.8 sent=10
+23:02:11 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=24.3 sent=10
+23:02:12 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.52 last_cmd_age_ms_avg=23.22 sent=10
+23:02:13 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.5 last_cmd_age_ms_avg=20.67 sent=10
+23:02:14 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.49 last_cmd_age_ms_avg=20.9 sent=10
+23:02:15 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.52 last_cmd_age_ms_avg=22.2 sent=10
+23:02:16 INFO    [FAILSAFE] telemetry_summary ， acks=10 sent=10 accepted=6 batt_v_avg=8.5 last_cmd_age_ms_avg=21.33
+23:02:17 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.52 last_cmd_age_ms_avg=22.6 sent=10
+23:02:18 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.49 last_cmd_age_ms_avg=30.33 sent=10
+23:02:19 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.54 last_cmd_age_ms_avg=23.11 sent=10
+23:02:20 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.48 last_cmd_age_ms_avg=23.11 sent=10
+23:02:21 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.55 last_cmd_age_ms_avg=21.9 sent=10
+23:02:22 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.54 last_cmd_age_ms_avg=20.9 sent=10
+23:02:23 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.52 last_cmd_age_ms_avg=23.44 sent=10
+23:02:24 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.49 last_cmd_age_ms_avg=21.78 sent=10
+23:02:25 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.48 last_cmd_age_ms_avg=24.3 sent=10
+23:02:26 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.54 last_cmd_age_ms_avg=21.2 sent=10
+23:02:27 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=8 batt_v_avg=8.55 last_cmd_age_ms_avg=25.25 sent=10
+23:02:28 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.51 last_cmd_age_ms_avg=23.33 sent=10
+23:02:29 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.55 last_cmd_age_ms_avg=23.4 sent=10
+23:02:30 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=23.4 sent=10
+23:02:31 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=22.0 sent=10
+23:02:32 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.53 last_cmd_age_ms_avg=31.7 sent=10
+23:02:33 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.53 last_cmd_age_ms_avg=23.11 sent=10
+23:02:34 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.53 last_cmd_age_ms_avg=21.9 sent=10
+23:02:35 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.49 last_cmd_age_ms_avg=22.8 sent=10
+23:02:36 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.48 last_cmd_age_ms_avg=20.78 sent=10
+23:02:37 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.53 last_cmd_age_ms_avg=22.0 sent=10
+23:02:38 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.47 last_cmd_age_ms_avg=23.6 sent=10
+23:02:39 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.55 last_cmd_age_ms_avg=23.22 sent=10
+23:02:40 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.52 last_cmd_age_ms_avg=23.2 sent=10
+23:02:41 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.47 last_cmd_age_ms_avg=25.0 sent=10
+23:02:42 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.49 last_cmd_age_ms_avg=21.67 sent=10
+23:02:43 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=23.7 sent=10
+23:02:44 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.47 last_cmd_age_ms_avg=24.4 sent=10
+23:02:45 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.52 last_cmd_age_ms_avg=24.0 sent=10
+23:02:46 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=23.4 sent=10
+23:02:47 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.5 last_cmd_age_ms_avg=22.89 sent=10
+23:02:48 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=9 batt_v_avg=8.5 last_cmd_age_ms_avg=24.11 sent=10
+23:02:49 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.47 last_cmd_age_ms_avg=23.8 sent=10
+23:02:50 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.5 last_cmd_age_ms_avg=24.5 sent=10
+23:02:51 INFO    [FAILSAFE] telemetry_summary ， acks=10 accepted=10 batt_v_avg=8.51 last_cmd_age_ms_avg=25.1 sent=10
+23:02:52 INFO    [FAILSAFE] telemetry_summary ， acks=3 accepted=2 batt_v_avg=8.59 last_cmd_age_ms_avg=20.5 sent=10
+23:02:53 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:02:54 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:02:55 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:02:56 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:02:57 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:02:58 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:02:59 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:00 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:01 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:02 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:03 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:04 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:05 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:06 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:07 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:08 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:09 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:10 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:11 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:12 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:13 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:14 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:15 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:16 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:17 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:18 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:19 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:20 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:21 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:22 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:23 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:24 INFO    [FAILSAFE] telemetry_summary ， sent=10
+23:03:25 INFO    [FAILSAFE] telemetry_summary ， sent=10

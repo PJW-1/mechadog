@@ -1,0 +1,715 @@
+# ══════════════════════════════════════════════════════════════
+#  MechDog Physical AI — 전역 파라미터
+#  NFR-3① : 하드코딩된 매직 넘버 0개를 목표로 한다.
+#           코드에 숫자를 박지 말고 여기에 추가할 것.
+#  개체별 값은 config/devices/<unit-id>.yaml 에서 병합된다.
+# ══════════════════════════════════════════════════════════════
+
+profile: dev            # dev | prod
+
+nav:
+  # AR: 미리보기 통과 동선은 다음 지점으로 직접 추종. false면 기존 A*/막힘 복구 사용.
+  route_direct: true
+  route_direct_stop_ms: 3000  # 실제 장애물 STOP이 3초 지속될 때만 AO 통로/우회로 전환
+  # AG 사용자 승인: 지도는 큰 길, 최신 360도 LiDAR는 실제 장애물 판단.
+  live_clear_scans: 3          # verified 자세에서 연속 3바퀴 빔 통과 셀만 임시 비움
+  live_clear_ttl_ms: 2000      # 2초 안에 재관측되지 않으면 원래 지도 복귀
+  local_slow_m: 0.36          # 현장 기준: 진행 방향 ±30도 36cm 아래 감속, 37cm는 진행
+  local_stop_m: 0.25          # 25cm 아래 STOP, 로봇 자체 초음파 25cm 정지는 유지
+  local_fan_deg: 30
+  corridor_margin_m: 0.02     # AO: 최신 끝점 사이 몸 지름 30cm + 좌우 각 2cm
+  scan_max_age_ms: 500        # 움직이는 동안에도 최신 한 바퀴 없으면 정지
+  dynamic_ttl_ms: 2000        # 실제 끝점 + 몸 반경만, 다시 보이면 만료 시각 갱신
+  gap_bin_deg: 5
+  avoidance_m: 0.20           # gap 방향으로 최대 20cm 전진 후 전역 재계획
+  avoidance_timeout_ms: 3000  # 회피도 3초마다 STOP/재계획, 후진은 사용하지 않음
+  avoidance_turn_deg: 15      # 회피 회전 조향은 일반 회전보다 작게
+  avoidance_step_scale: 0.5   # 회피 전진 보폭은 일반의 최대 절반
+  obstacle_event_interval_ms: 1000 # 신규 점 경고는 최근접 한 점만, 초당 최대 1건
+  blockage_short_ms: 4000     # 지나가는 물체는 짧게 기억
+  blockage_confirm_ms: 2000   # 정지 재확인 뒤에도 반사가 남으면 장기 기억
+  blockage_long_ms: 180000    # 3분, 실제 빔이 빈 칸으로 통과하면 즉시 해제
+  recovery_scan_timeout_ms: 120000 # 느린 실측 회전도 한 바퀴 완료할 시간 제한
+  recovery_motion_timeout_ms: 5000 # 회전 지시 후 실제 방위 변화가 없으면 중단
+  obstacle_max_m: 2.5         # 실제 반사점 표시 범위
+  raytrace_max_m: 3.0         # 빔 통과 칸 비움 범위
+  local_window_m: 3.0         # 로봇 중심 국소 비용지도 폭
+  inflation_radius_m: 0.55    # 안전 차단 경계 밖 비용 범위
+  cost_scaling_factor: 3.0    # 거리별 지수 감소
+  cost_weight: 2.0            # A* 통행 비용 가중치
+
+network:
+  # 개체별 IP/포트는 devices/*.yaml 에서 덮어쓴다 (WBS 2.4.2)
+  cmd_port: 5001        # Host PC → MechDog (UDP)
+  telemetry_port: 5101  # MechDog → Host PC (UDP)
+  # 스트림 URL 은 여기 적지 않고 개체 프로파일의 `xiao_ip` 에서 조립한다.
+  vision_control_port: 80   # 상태·프로파일 (XIAO 펌웨어)
+  vision_stream_port: 81    # MJPEG. 스트림이 오래 점유하므로 제어 포트와 분리한다
+  cmd_rate_hz: 10       # FR-5.1 — 변화 없어도 고정 송신
+  telemetry_rate_hz: 10 # FR-1.4
+
+safety:                 # Tier 1 — 온보드에서만 판정 (아키텍처 1.2 불변 규칙)
+  cmd_timeout_ms: 600         # FR-1.3
+  link_loss_failsafe_ms: 3000 # FR-1.5
+  obstacle_stop_cm: 25        # FR-2.2
+  battery_warn_v: 7.0         # NFR-2.3
+  battery_shutdown_v: 6.6     # NFR-2.3
+  # 전도 감지(NFR-2.4)는 폐기했다 (ADR-36). 아래 두 값은 전도 임계가 아니라 목업이
+  # `ONBOARD_FAILSAFE` 를 만드는 눈금이며 시험이 쓴다 (ADR-36 결정 3).
+  tip_angle_deg: 60
+  tip_duration_ms: 2000       # NFR-2.4
+
+gait:                   # HW_MechDog API 파라미터 (ADR-1)
+  # 이름과 달리 보폭이 아니라 전진 속도 지령이다 — 벤더 서명 `move(speed_x, angle_rate)`.
+  step_length_mm: 60          # -100 ~ 100
+  # -30 ~ 30 (arc 조향 · ADR-11). 양수는 반시계 = 좌회전이다 (PROTOCOL 부호 규약) — 회피가
+  # 이 값을 그대로 써서 좌로 돌므로 `turn_deg_per_sec` 도 좌선회 실측값이다.
+  turn_angle_deg: 20
+  # 아래 셋은 지금 로봇에 도달하지 않는다 — 벤더가 `set_gait_params` 를 노출하지 않아 로봇은
+  # 초기값 `(150, 200, 25)` 로 걷는다. 노출되면 쓸 자리로 남긴다 (PROTOCOL.md `GAIT` 각주).
+  lift_time_ms: 120
+  ground_time_ms: 180
+  lift_height_mm: 25
+  reverse_distance_mm: 200    # FR-2.3 — 제자리 회전 불가로 후진 거리 확보
+
+# ── 내장 액션 (FR-1.2) ────────────────────────────
+# 벤더 `action_run(이름)` 에 넘길 이름표 — 벤더는 `aclist[]` 를 이름으로 훑는다. 모르는
+# 이름은 오류 없이 무동작이라 펌웨어가 기동 때 실재 여부를 로그에 남긴다.
+#
+# ⚠️ 단일 구간 액션만 싣는다 — `action_run` 은 구간마다 `delay()` 로 `loop()` 를 막아 UDP
+# 수신과 명령 타임아웃 검사도 멈춘다. 펌웨어는 보행 중 액션을 거절한다.
+actions:
+  id_map:
+    0: stand_four_legs   # 기본 자세 복귀 (FR-9.2.3 `posture.return_before_move`)
+    1: sit_dowm          # 앉기 — `posture.escalation_steps` 의 `sit`.
+                         # 벤더 오타 그대로다. 고쳐 적으면 못 찾는다
+    2: go_prone          # 엎드림 — `FAILSAFE` 안정 자세 (아키텍처 3.1 `F` 행)
+
+# ══════════════════════════════════════════════════════════════
+#  운용 모드 (FR-11 · ADR-33 · WBS 3.4.4)
+#  순찰 하나는 모드 하나로 돈다. 표는 `host/behavior/mission.py` 가 정본이며
+#  여기서는 **어느 모드로 기동할지**만 고른다.
+# ══════════════════════════════════════════════════════════════
+mission:
+  # guard(경비) | factory(공장). 모르는 값은 기동을 거부한다 (FR-11.2).
+  # `factory` 는 보호구만이 아니라 쓰러진 사람·무너진 물건까지 본다 (ADR-33 «공장 모드의 범위»)
+  # 그리고 PPE 판정기·VLM 판독기가 없으면 켜지지 않는다 (FR-11.7 · ADR-33 규칙 7).
+  mode: guard
+  # 기동 인자 `--mode` 가 이 값을 덮어쓰고, 관제 화면은 `IDLE`·`MANUAL` 에서만
+  # 바꿀 수 있다 (FR-11.3). 전환은 L3·F 를 풀지 않는다 (FR-11.4).
+
+fsm:
+  patrol_scan_interval_s: 10  # FR-2.4
+  scan_duration_s: 3
+  # 부호 주의 — 양수 pitch 는 앞이 «내려간다» (PROTOCOL 2절 · ROS REP-103). 그래서 «고개를
+  # 드는» 자세는 음수이고, 설정 검증이 0 이상을 거부한다.
+  scan_pitch_deg: -15         # 스캔은 위를 훑는다. yaw는 불가 — ADR-11
+  alert_pitch_deg: -15        # FR-3.3 — 경계 자세는 «고개를 든다» = 음수
+  target_lost_timeout_s: 5    # FR-3.7
+  track_deadzone_px: 40       # FR-3.5 — 이 안에서는 조향하지 않고 거리만 맞춘다
+  # 마지막 추종 지시(회전 포함)를 몇 ms 까지 이어 보낼지. 넘으면 정지를 보낸다.
+  # «관측이 신선한가» 의 값이라 `safety.cmd_timeout_ms`(링크 생존)와 따로 둔다. 1초는 실측
+  # 검출 공백의 중앙값 바로 위이고 `target_lost_timeout_s` 보다 짧아야 한다(설정 검증).
+  track_coast_ms: 1000
+  # ── FR-3.5.2 거리 유지 ──────────────────────────────────────
+  # 목표 `person` bbox 높이(px) — 미터로 바꾸지 않는 비주얼 서보잉이다 (ADR-15). 15cm 카메라에서는
+  # 발이 화면 밖이라 높이가 사실상 «머리 위치»(`480 - y1`)이고 상한 480px 이 있다. 1.5m 에서
+  # `tools/probe/vision_link_check.py` 로 잰 값이며 개체·사람 키에 묶인다(다른 기체에 복사하지 않는다).
+  track_target_height_px: 310
+  # 목표 높이의 몇 배가 되면 완전히 세우는가(`step=0`). 목표 × 비율이 480px 아래여야 선다
+  # (310 × 1.48 = 459px). 459px 은 카메라를 숙이기 전 곡선의 값이다 (ADR-40 결정 1).
+  track_stop_ratio: 1.48
+  # 박스가 459px 에 못 닿는 사람(웅크림·앉음)도 세운다. 둘 중 먼저 닿는 쪽이 정지선이다
+  # (ADR-40). 온보드 반사 정지(25cm)보다 앞에 둔다 — 그쪽은 추종을 끊는 안전 정지다.
+  track_stop_dist_cm: 40
+  # ── 제자리 회전 (ADR-40) ─────────────────────────────────────
+  # 정지선에서는 제자리에서 돌아 중앙을 맞춘 뒤 고개를 든다. 정지선 전이라도 편차가
+  # `split` 을 넘으면 먼저 제자리에서 돈다. 각은 두 단계뿐이다 (ADR-40 결정 4 · 근거).
+  track_turn_split_px: 120
+  track_turn_small_deg: 20
+  track_turn_large_deg: 30
+  # 정지선에 닿은 뒤 이 시간 안에 중앙을 못 맞추면 **그대로 고개를 든다** (ADR-40).
+  # 정상 조준 최장 실측(약 5초) 위에 둔다.
+  track_aim_timeout_ms: 8000
+  # 정지선 전 호 추종의 최소 보폭 — 0 이면 호 조향이 죽는다 (ADR-40 «정지선 전의 호 추종»).
+  track_min_step_mm: 15
+  # FR-2.3 — 회피 시퀀스를 최대 몇 번 되풀이할지. 다 쓰면 멈춘 채 사람을 기다린다.
+  avoid_attempts: 3
+  # ── 공장 쓰러짐 의심 → 확정 (ADR-42 결정 2 · WBS 4.8.3) ──
+  # 누움 후보나 VLM `person_down` «예» 한 번이면 의심(L1)이다. 확정(L3)은 의심 뒤에 건 판독의
+  # «예» 가 이 횟수만큼 모일 때다(의심에 들게 한 «예» 는 세지 않고, 연속이 아니어도 센다).
+  fall_confirm_vlm_yes: 2
+  # 센 «예» 끼리(의심에 들게 한 «예» 포함) 건 프레임이 이만큼 떨어져야 다음 «예» 로 센다.
+  fall_confirm_gap_ms: 1000
+  # 이 시간 안에 확정하지 못하면 파란 눈으로 순찰에 돌아간다. 대상 상실(5초)은
+  # `target_lost_timeout_s` 가 그대로 정한다.
+  fall_suspect_timeout_ms: 20000
+  # 제한 시간 초과나 경보 확인으로 순찰에 돌아간 뒤 이 시간 동안은 다시 의심하지 않는다 —
+  # 헛검출 앞에서 L1 을 되풀이하지 않게. 5초 상실로 끝난 의심에는 걸지 않는다.
+  fall_resuspect_cooldown_ms: 20000
+
+vision:
+  # ── 실행 프로바이더 ── Windows GPU 우선, CI·비지원 환경은 CPU 폴백 (ADR-13)
+  providers: [DmlExecutionProvider, CPUExecutionProvider]
+
+  # ── 스트림 ──
+  # 카메라가 초당 몇 장을 보낼지의 상한 — 최악 부하를 예측 가능하게 한다. 호스트가 연결 때
+  # XIAO 에 내려보낸다. 추론률의 상한이기도 하다 (ADR-23).
+  stream_fps_limit: 25
+
+  # 모듈을 광축 기준으로 180도 돌려 단 경우의 보정 (0 | 180). 펌웨어는 재부팅마다 잊으므로
+  # 호스트가 연결 때 내려보낸다 (NFR-3①).
+  mount_rotation: 0
+
+  # 이 시간 동안 프레임이 없으면 비전 단절(기능 저하)로 본다 (NFR-2.6). 링크 두절(안전 ·
+  # `safety.link_loss_failsafe_ms`)과 대응이 달라 다른 절에 둔다.
+  stall_timeout_ms: 2000
+
+  # ── ① COCO 범용 검출기 (학습 불요, ADR-12) ──
+  # FR-3 사람 인지 + FR-8 변화 감지 대상 객체를 담당
+  coco:
+    model_path: "models/coco.onnx"
+    # YOLOX-S, Apache-2.0 / Megvii Inc. (ADR-24). `host/vision/detector.py` 의 어댑터를 고르며
+    # 모르는 이름은 거부된다. 가중치를 바꾸면 `coco_labels.py` 의 순서도 함께 확인한다.
+    model_family: yolox
+    input_size: 640           # YOLOX 격자(stride 8/16/32)의 배수여야 한다
+    conf_threshold: 0.5        # FR-3.2
+    iou_threshold: 0.45
+    person_class: person
+
+  # ── ② PPE 전용 모델 (직접 학습, 4클래스) ──
+  # person 검출 프레임에서만 실행 (FR-3.1.1 게이팅)
+  ppe:
+    model_path: "models/ppe.onnx"
+    # ⚠️ **`ultralytics` 가 아니다.** AGPL-3.0 이라 ADR-24 가 탈락시켰다.
+    # WBS 3.7.2 의 "ultralytics 버전 기록" 문구는 그 결정 이전의 잔재다.
+    #
+    # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 ppe-v5 · XIAO 실측 전 후보
+    #   v5 = 아래 v4 에서 하단각도 자체 촬영 279장을 더해 30 epoch 미세 조정
+    #        (`tools/ppe/colab_ppe_v5_lowangle.ipynb` · lr ×0.3 · seed 20261001)
+    #   ── 이하는 v4 학습 기록 (2026-09-29 · Release 태그 ppe-v4) ──
+    #   계열     YOLOX-S (Apache-2.0 · Megvii) · 640x640 · 4클래스 (person_down 없음 —
+    #            쓰러짐은 `host/vision/person.py` 종횡비 의심 + VLM 확정, ADR-42)
+    #   출발점   COCO 사전학습 yolox_s.pth
+    #   데이터   ppe4_cs_md_v2 — 사람 크롭, 머리·몸통 라벨이 빠진 사람은 제외
+    #            · Roboflow construction-safety (CC BY 4.0)
+    #            · Mendeley PPE2286 (Huang·Cheng, CC BY 4.0) — 사람 박스는 COCO 검출기,
+    #              Roboflow 와 겹친 사진(좌우 반전 포함)은 dHash 로 제외
+    #            (학습 2,255 크롭 · no_helmet 박스 346개)
+    #   설정     100 epoch · batch 16 · fp16 · seed 20260928 · HSV 게인 (3, 15, 30)
+    #            (주황·형광이 판정 단서라 약하게 — MODEL_PLAN 1.3)
+    #   산출물   models/ppe.onnx (v5) · 35,779,654 bytes
+    #            sha256 145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2
+    #   ⚠️ 출력은 **디코드 전 원시 [1, 8400, 9]** 다. 어댑터가 격자 디코드를 한다 —
+    #      디코드된 모델을 넣으면 좌표가 두 번 변환돼 박스가 엉뚱한 곳에 찍힌다.
+    #
+    # ⚠️ 아래 수치는 공개 사진 기준이며 확정값이 아니다. FR-9 판정은 XIAO 실기로 한다.
+    #      Roboflow test AP50 0.858 · Mendeley test AP50 0.966 (`docs/PPE_ACCEPTANCE.md`)
+    #      운용 경로 목업에서 정상 착용자 → 위반 2/108 (이전 후보 v23b 7/108)
+    #      v5: 같은 시험셋 AP50 0.853 → 0.818 (−0.035, 정면 공개 사진에서 일부 손실 —
+    #      로봇은 아래에서 올려다보므로 감수) · 하단각도 검증 58장 착용자 → 적합 43 → 58,
+    #      오경보 2 → 0, 판정 불가 13 → 0
+    model_family: yolox
+    input_size: 640
+    conf_threshold: 0.5
+    classes: [helmet, no_helmet, vest, no_vest]
+    violation_classes: [no_helmet, no_vest]
+    crop_pad: 0.08             # person bbox 크롭 여유 (XIAO 실측으로 조정)
+    # ── 위반 확정 (FR-9.4) ──
+    # 프레임 수가 아니라 시간 창이다 (ADR-25). 사람이 멈춰 선 뒤 판정하므로 `person` 게이트
+    # 보다 긴 창을 써 단발 오검출이 위반 경고를 부르지 않게 한다.
+    violation_window_ms: 1500
+    violation_hits_required: 3
+    # ── 판정 조건 (FR-9.2.1) ──
+    # 미터 거리를 쓰지 않고 «머리가 화각에 들어오는가» 를 bbox 로 직접 판정한다 (ADR-15).
+    require_head_visible: true  # person bbox 상단이 프레임 경계에 닿지 않을 때만 판정
+    head_margin_px: 8           # 상단 경계로부터 이 픽셀 이내면 클리핑으로 본다
+    # ── 대상 정지 조건 (FR-9.2.0) ──
+    # 이동하는 대상은 추종이 불가능하다. 로봇 10~30cm/s vs 사람 120~150cm/s.
+    # 게다가 상향 자세에서는 이동할 수 없어(FR-9.2.3) 루프에 빠진다.
+    require_target_static: true # 대상이 정지 상태일 때만 자세 상승 시퀀스 개시
+    static_threshold_px: 20     # bbox 중심 이동량이 이 값 이하면 정지로 본다
+    static_frames: 5            # 위 조건이 이 프레임 수만큼 지속되어야 한다
+    max_posture_retries: 2      # FR-9.2.4 — 초과 시 PPE_UNDETERMINED 기록 후 순찰 재개
+    # 자세 상승은 판정의 전제가 아니라 클리핑 시의 대응 수단이다 (FR-9.2.2).
+    # 단계 정의는 posture.escalation_steps 를 따른다.
+
+  # ── 위험물 검출 (lighter / powerbank · 직접 학습, 2클래스) ──
+  # 화기 위험구역(`zones.hazard_ids`)에서 방향을 맞춘 뒤에만 돈다 — 다른 구역·이동 중에는 추론하지
+  # 않으므로 위험물이 보여도 경고가 없다. 확정은 PPE 위반과 같은 창·횟수 규칙이고, 확정되면
+  # 가벼운 경고 `hazard_notice`(source `detector`, 방송 + 관제 이력)를 남긴다 (ADR-43 대안 ⓐ 개정).
+  # 모델 파일이 없으면 기록만 남기고 꺼진다 — VLM `hazard_item` 판독은 따로 돈다.
+  # `normal` 클래스는 없다: 미검출 = 정상. 어댑터는 ppe 와 같은 YoloxAdapter 다.
+  #
+  # 학습 기록 (FR-9.1.2 재현성) — 2026-10-02 · Release 태그 hazard-v1 · XIAO 실측 전 후보
+  #   계열     YOLOX-S (Apache-2.0 · Megvii) · 640x640 · 2클래스 · 출발점 COCO yolox_s.pth
+  #   데이터   lighter_powerbank_coco_2class (zip sha256 a674957c…faae52) — 전부 CC BY 4.0
+  #            · Roboflow vision-wajsm/lighter-wvso3 · vision-wajsm/portable-charger
+  #            · ia-act/my-first-project-3xogl (정상 배경 사진 포함)
+  #            (train 1,781장 · lighter 박스 686 · powerbank 박스 743 · 배경 800)
+  #   설정     100 epoch (no-aug 15) · batch 16 · fp16 · seed 20261002 · mosaic 0.5 · mixup 없음
+  #            best = epoch 96 · valid AP50:95 0.736
+  #   산출물   models/hazard.onnx · 35,776,558 bytes
+  #            sha256 7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746
+  #   ⚠️ 출력은 디코드 전 원시 [1, 8400, 7] 이다 (ppe 와 같은 규칙).
+  #
+  # ⚠️ 아래 수치는 공개 사진 기준이며 확정값이 아니다. 실기는 XIAO 로 다시 잰다.
+  #      test AP50 0.970 (COCOeval) · conf 0.5 에서 정상 사진 오경보 3/100 · 위험물 미검출 4/123
+  #      (오경보 3장은 라벨이 빠진 라이터 사진이다 — 실제로는 맞춘 것)
+  hazard:
+    model_path: "models/hazard.onnx"
+    model_family: yolox
+    input_size: 640
+    conf_threshold: 0.5
+    iou_threshold: 0.45
+    # 모델 출력 순서 — 모델과의 계약이다. 바꾸지 않는다 (`host/vision/hazard_detector.py`).
+    classes: [lighter, powerbank]
+    # ── 팀이 고르는 값 ──
+    # 위험물 검출기를 쓸지. 끄면 위험구역에서도 VLM 판독만 남는다.
+    enabled: true
+    # 금지 대상 — 위험구역에서 이 물건만 경고한다. `classes` 의 부분집합이어야 한다.
+    # 금지 구역은 여기가 아니라 `zones.hazard_ids` 에서 고른다.
+    alarm_classes: [lighter, powerbank]
+    # 확정 — 같은 물건이 이 시간 창 안에서 `hits_required` 번 이상 보여야 경고한다. PPE 위반
+    # (`vision.ppe.violation_window_ms`·`violation_hits_required`)과 같은 값에서 시작한다.
+    # 위험구역 방문은 방향을 맞춘 뒤 적어도 이 창만큼 머문다 (`change_detect.visit_max_ms` 안에서).
+    confirm_window_ms: 1500
+    hits_required: 3
+
+  # ── 쓰러짐 규칙 판정 (FR-9 · 4.8.3 · ADR-35 대안 ⓓ) ──
+  # 추론마다 돌며 쓰러짐 의심 진입에 쓴다. 확정은 VLM 이 한다 (ADR-42 결정 2).
+  fallen:
+    # 가로 ÷ 세로가 이 값 이상이면 «누움» 후보다 — 서 있는 사람(≈0.4)·앉은 사람(≈1.0)과
+    # 누운 사람(실측 3.25) 사이다.
+    aspect_ratio: 1.5
+    # bbox 중심 이동량이 이 값 이하면 정지로 본다.
+    still_threshold_px: 20
+    # 위 둘이 이만큼 이어지면 `fallen` 이 선다(시간 기준 · ADR-25). 의심 진입은 이것을
+    # 기다리지 않는다 (ADR-42 결정 2 ⓐ). `vision.ppe.static_*` 와 목적이 달라 공유하지 않는다.
+    confirm_ms: 3000
+    # 박스가 이보다 짧게 빠지면 누적을 잇는다 — 누운 사람은 점수가 임계 근처라 박스가 자주
+    # 빠진다. 추적기가 대상을 버리는 시간(`tracker.track_lost_ms`)과 같다.
+    gap_ms: 1000
+
+  # ── ③ 로컬 VLM 상황 판독 (FR-8 · 4.8.0 · ADR-35) ──
+  # 가중치는 Hugging Face 캐시에서 모델 ID 로 읽는다(`models/README.md` ③). 없어도 멈추지
+  # 않고 기능 저하로 기록한다 (ADR-35 결정 6).
+  vlm:
+    # Hugging Face 모델 ID. 정밀도는 코드가 bf16 으로 고정한다 (ADR-35 대안 ⓐ).
+    model_id: "Qwen/Qwen2-VL-2B-Instruct"
+    # 답 하나의 최대 길이 — 닫힌 질문이라 한 단어면 끝나고, 서술로 샐 때의 상한이다.
+    max_new_tokens: 32
+    # 판독 한 번의 상한. 넘으면 남은 항목을 묻지 않고 거기까지 돌려준다. 질문 셋의 실측
+    # (약 0.65초)에 여유를 둔 값이다 (ADR-35 결정 6).
+    budget_ms: 3000
+    # 공장 순찰 중 `person_down` 만 묻는 간격 (ADR-42 결정 5). 의심 중에는 판독이 끝날 때마다 다시 묻는다.
+    patrol_interval_ms: 2000
+
+  # ── 다중 인원 추적 (FR-3.6) ──
+  tracker:
+    # 이 값 이상 겹치면 같은 사람으로 잇는다 — 낮추면 스치는 두 사람의 ID 가 바뀌고, 높이면
+    # 빠른 사람이 매번 새 ID 를 받는다.
+    iou_match_threshold: 0.3
+    # 이 시간 동안 못 보면 ID 를 버린다 — 프레임 수가 아니라 시간이다 (ADR-27 ③). 늘리면
+    # ID 에 귀속된 인증 세션도 오래 산다 (ADR-27 «운용 설정» 각주).
+    track_lost_ms: 1000
+
+  # ── 다중 대상 처리 (FR-3.8) ──
+  # 추적·인증은 개인별이지만 눈 LED 와 스피커가 하나뿐이라
+  # 에스컬레이션 표현은 로봇 단위로 축약해야 한다.
+  max_tracked_persons: 5       # FR-3.8.5 — 초과 시 bbox 큰 순 유지 + WARN
+  # FR-3.8.2 — 주 대상은 가장 가까운(bbox 최대) 대상. 단일 기준이다.
+  # 판정 결과(에스컬레이션 단계)를 기준으로 쓰면 순환 논리가 된다 —
+  # 단계는 판정으로 올라가고 판정은 주 대상만 받으므로.
+  primary_target_criterion: nearest
+  primary_target_hold_ms: 2000 # FR-3.8.3 — 주 대상 최소 유지 시간
+  primary_target_seq_lock: true # FR-3.8.3 — 시퀀스 진행 중 전환 금지 (히스테리시스보다 강함)
+
+  # ── 사람 판정 (FR-3.2) — 고정 시간 창 안의 히트 수 (ADR-25) ──
+  detect_window_ms: 300        # 이 시간 안에
+  detect_hits_required: 3      # 이만큼 검출되면 사람으로 확정한다
+  # 해제는 창이 완전히 빌 때만이다. TARGET_LOST 는 별개로 마지막 검출부터 5초를 센다.
+  resolution: VGA              # VGA | QVGA (FR-5.3)
+  # NFR-1.3 요구 하한이지 실제 수신률이 아니다(수신률은 `stream_fps_limit`).
+  target_fps: 15               # NFR-1.3 하한 (실제 수신률은 stream_fps_limit)
+  # 수신률과 같게 둔다 (ADR-23 · ADR-25). 바꾸면 검출률·오검출률을 다시 잰다.
+  inference_fps: 25
+  reconnect_backoff_s: [1, 2, 4, 8, 16, 30]  # FR-5.3
+
+localization:           # Track A(LiDAR) 확정 — OI-9 닫힘 (docs/DECISIONS.md ADR-18)
+  # Phase 1 은 측위를 쓰지 않으므로 none 이다. Phase 2 에서 lidar 로 바꾼다.
+  track: none                 # none | lidar | aruco
+  settle_delay_ms: 750        # 정지 후 스캔 전 대기 (공통 원칙 4)
+  move_increment_mm: 250      # 공통 원칙 5
+  turn_increment_deg: 30      # 공통 원칙 5
+  pose_timeout_ms: 500        # FR-6.6 — 초과 시 STATE_LOST
+
+# ══════════════════════════════════════════════════════════════
+#  에스컬레이션 (아키텍처 3.1) — FSM 상태와 직교하는 대응 강도 축
+# ══════════════════════════════════════════════════════════════
+escalation:
+  l1_to_l2_hold_s: 10          # L1 관찰이 이만큼 지속되고 미인증이면 L2
+  multi_target_policy: max      # FR-3.8.1 — 전 대상 중 최고 단계를 로봇 단계로 채택
+  led:                          # FR-10.4 — 눈 색깔로 단계 표시
+    l0_patrol: blue
+    l1_observe: yellow
+    l2_auth_request: orange
+    l3_alarm: red
+    failsafe: white
+    l3_blink_hz: 2
+  sound:                        # FR-3.4 · WBS 3.5.6 — 단계 진입 시 읽어 줄 경고 문장
+    # 문구 ID 가 아니라 한국어 문장이다. 음성 경로가 문장 → MP3 트랙으로 바꿔 재생한다
+    # (ADR-38 «남는 제약»). L2 안내는 음성 쪽 `Hub.auth_prompt` 가 한다 — 그 안내가 시도
+    # 계수 창을 여는 행위라 문장만 이리로 옮기지 않는다.
+    l2_warning: null            # 음성 `Hub.auth_prompt` 가 말한다
+    l3_warning: "경보가 발령되었습니다. 관리자에게 통보되었습니다."
+    # L3 원인별 문장 — 키는 `{원인 사건 이름 소문자}_warning`. 없으면 `l3_warning` 을 읽는다.
+    # 문장마다 TF 카드 트랙이 필요하다 (`4.7.21` 문장 표 · ADR-38).
+    person_down_warning: "작업자가 쓰러졌습니다. 관리자에게 통보되었습니다."
+    # 공장 보호구 미착용 경고 (WBS 4.7.8 · ADR-42 결정 1). TF 카드 트랙 0185.
+    ppe_violation_warning: "안전모와 안전조끼를 착용해 주십시오."
+    auth_granted: null
+    ppe_violation: null
+  # PPE 위반 경고의 빨간 눈을 유지하는 시간 — 래치가 아니다, 지나면 확인 없이 L0 로 돌아간다
+  # (ADR-42 결정 1). 경고 문장이 끝날 만큼 둔다.
+  ppe_warning_hold_ms: 5000
+
+# ── 인증 (FR-10) ──────────────────────────────────────────────
+auth:
+  session_valid_s: 60          # FR-10.2.4 — 인증 유효 시간
+  max_attempts: 2              # FR-10.3
+  timeout_s: 30                # FR-10.3
+  # 창 안에서 발화가 시작됐을 때 `timeout_s` 를 미뤄 주는 상한 — 판정 대기 신호당 한 번이다
+  # (ADR-37).
+  verdict_grace_s: 10          # FR-10.3 · ADR-37
+  bind_to_track_id: false      # 실기: 추적 ID 불안정. 사원증 확인을 현장 인증으로 취급
+  require_both: true           # 암구호 확인 뒤 새로 제시한 사원증까지 확인
+  # ponytail: 60초 안에 사람이 바뀌면 새 사람도 인증 상태를 공유한다. 개인별 보안이 필요하면 추적·재인증으로 복귀.
+  resume_delay_ms: 6000        # 사원증 감지→음성 상태 확인→복귀 안내 발화 동안 정지
+  # 미등록 마커가 시도로 세어지기까지 필요한 1초 창 안 검출 횟수 (ADR-28 ⑤). 등록 마커는
+  # 즉시 인증한다.
+  unknown_marker_min_frames: 3
+  # FR-10.1 — 사원증에 인쇄할 ArUco 사전. 바꾸면 인쇄한 사원증도 바꿔야 한다 (ADR-28 ①).
+  badge_dictionary: DICT_4X4_50
+  # FR-10.1 — ArUco ID -> 사번/이름. **여기 없는 ID 는 미승인이다.**
+  # 시연용 두 장이며 실제 운용에서는 발급 대장이 정본이 된다.
+  badge_marker_map:
+    0: "EMP-001"
+    1: "EMP-002"
+  # FR-10.2 — 옛 WonderEcho 온칩 인식 ID 목록. 지금은 읽는 코드가 없다: 암구호는
+  # PC 의 Whisper·규칙이 인식한다 (ADR-31, ADR-38). 키는 호환을 위해 남긴다.
+  passphrase_command_ids: []
+
+# ── 자세 상승 (FR-9.2.2) ──────────────────────────────────────
+posture:
+  # 후진(`back_off`)은 쓰지 않는다 — 앉은 자세의 시야 이득을 되돌리고 이동 위험만 더한다.
+  escalation_steps: [pitch_up, sit]
+  # 음수가 «고개를 드는» 쪽이다 (`fsm` 절 부호 각주).
+  pitch_up_deg: -15
+  settle_ms: 500               # 자세 변경 후 안정 대기 (POSE 의 `dur` 로도 쓴다)
+  # 몸의 상시 기울기(IMU roll 편향)를 상쇄하는 정적 오프셋 — 모든 POSE 의 roll 필드에
+  # 그대로 들어간다. 부호 규약은 펌웨어 기준: IMU roll 과 같은 부호로 명령하면 같은 쪽으로
+  # 기므로, 측정 편향의 «반대 부호»를 넣는다. 2026-10-02 실측 정지 평균 +3.7° → -4.0 시험.
+  # 0 이면 기존과 동일. 보행 중 ±40° 스윙은 펌웨어 균형 동작이라 건드리지 않는다.
+  roll_offset_deg: 0.0
+  # `ALERT` 에 이만큼 머물러야 경계 자세를 잡는다(`SCAN` 은 기다리지 않는다). 조준 중
+  # `ALERT ⇄ TRACK` 짧은 왕복(실측 0.6초 이하)에서 자세 보간이 끊기지 않게 한다.
+  alert_hold_ms: 1000
+  back_off_mm: 300             # 3단계 후진 거리
+  return_before_move: true     # FR-9.2.3 — 이동 전 기본 자세 복귀
+  abort_on_target_lost: true   # FR-9.2.4 — 자세 상승 중 대상 이탈 시 즉시 중단·복귀
+
+# ── 변화 감지 (FR-8) ──────────────────────────────────────────
+change_detect:
+  # 한 방문에서 모으는 «사람 없는» 프레임 수. 이만큼 모으면 그 구역을 본 방문(`zone_clear`)이다.
+  # `ZONE_INSPECT` 는 제자리 정지(`MOVE 0,0` = `move(0,0)`)라 방문 중 시점은 같다. 10Hz 로 약 0.5초.
+  visit_frames: 5
+  # 한 방문의 한도. 이 안에 사람 없는 프레임을 `visit_frames` 장 못 모으면 «못 본 방문»
+  # (`zone_unverified`)다. 사람이 비키기를 기다리며 구역 앞에
+  # 서 있지 않게 하는 상한이다. VLM 판독은 이 한도가 아니라 판독마다 `vision.vlm.budget_ms` 까지 기다린다.
+  visit_max_ms: 5000
+  # VLM 판독(넘어짐 `fallen_object`·통로 막힘 `blocked_path`)으로 경보를 확정할지. **기본은 끈다** —
+  # 우리 카메라로 벤치 측정(적중률·오경보율, WBS 3.6.4 벤치 관문)을 통과하기 전에는 VLM 경보를
+  # 믿지 않는다. 측정이 나쁘면 코드를 고치지 않고 이 값으로 막는다. 꺼도 도착 판독의 로그·기록은 남는다.
+  vlm_hazards: false
+  # 화기 위험구역(`zones.hazard_ids`)의 위험물(라이터·보조배터리 `hazard_item`) 판독으로 가벼운
+  # 경고를 낼지. **기본은 켠다** — `vlm_hazards` 와 달리 L3·눈 변화 없이 방송 문장과 관제 화면에만
+  # 남는 가벼운 경고라 오경보의 값이 낮다. 확정은 같은 방문 판독 2회 «예» 다(ADR-41 과 같다).
+  vlm_hazard_items: true
+
+# ── 구역 (FR-7 / FR-8) ───────────────────────────────────────
+# 구역은 지도 좌표 앵커(`maps/zones.json` · `tools/ops/zone_select.py`)이고, 도착은 측위 위치가
+# 앵커 반경 안에 드는 것이다. 측위가 필요하므로 Phase 2 이며 localization.track 에 종속된다.
+zones:
+  # FR-7.1 — 시연 규모에 맞춘다. 공장 시연 시나리오는 4개(A→B→C→D)를 돈다 (ADR-43).
+  # 5개는 화면상 구분이 어렵다.
+  ids: [A, B, C, D]
+  # 화기 위험구역(위험물 금지구역) — 방문 때 위험물(라이터·보조배터리)을 검출기(`vision.hazard`)와
+  # VLM(`change_detect.vlm_hazard_items`)으로 보는 구역이다. **여기 없는 구역에서는 위험물이 보여도
+  # 경고하지 않는다.** `ids` 의 부분집합이어야 한다. 비우면(`[]`) 위험물 경고가 없다.
+  hazard_ids: [C]
+  # 관제의 구역별 공장 모드 점검 설정. 미지정 구역은 안전모·조끼 모두 필수다.
+  # 개체 local.yaml 예: {A: {name: 출입구, helmet: true, vest: false, note: ""}}
+  # 신선한 지도 위치가 도착 반경 안에 있을 때만 사용. 위치 불명/구역 밖은 기본 두 항목.
+  policies: {}
+  # FR-7.4 — 도착 허용오차(구역의 크기가 아니다). 반경의 두 배를 벗어나야 떠난 것으로 본다.
+  arrival_radius_mm: 300
+  # 앵커에 바라볼 방향(yaw)이 있으면 `ZONE_INSPECT` 가 제자리에서 돌아 맞춘 뒤 본다 —
+  # 기준과 같은 장면이어야 견줄 수 있다 (ADR-40 과 같은 제자리 회전 예외 · ADR-11).
+  align_tolerance_deg: 10      # 이 안이면 맞춘 것이다
+  align_turn_deg: 20           # 회전 지시 한 번의 각도 (`MOVE angle` · 상한 30). ADR-40 의 작은 회전과 같다
+  # 이 안에 못 맞추면 못 본 방문(`zone_unverified`)으로 순찰에 돌아간다. 실측 6.6~6.8°/s 로
+  # 180° 가 약 27초다.
+  align_timeout_ms: 30000
+  random_after_first_cycle: false  # FR-7.3(개정) — 시연 재현성을 위해 매 사이클 설정 순서대로 돈다 (ADR-43)
+
+logging:                # NFR-3④
+  level: INFO                 # DEBUG | INFO | WARN | ERROR
+  format: jsonl
+  dir: logs
+  rotate_mb: 10
+  rotate_keep: 5
+  blackbox_dir: blackbox      # FR-3.9
+
+# ══════════════════════════════════════════════════════════════
+#  LiDAR 측위 · 매핑 · 구역 순찰 (FR-6 · FR-7 · Phase 2 · ADR-18)
+#
+#  단위는 **규약과 같다** — mm · deg · ms (PROTOCOL.md 2절). 내부 계산의
+#  m · rad 로는 `host/common/units.py` 가 경계에서 한 번만 바꾼다.
+#
+#  여기에는 다른 절에 없는 값만 둔다. 아래는 그대로 읽어 쓴다:
+#       safety.obstacle_stop_cm · cmd_timeout_ms · link_loss_failsafe_ms
+#       gait.step_length_mm · turn_angle_deg · reverse_distance_mm
+#       localization.settle_delay_ms · move_increment_mm · pose_timeout_ms · track
+#       zones.ids · arrival_radius_mm · random_after_first_cycle
+#       network.cmd_port · telemetry_port · cmd_rate_hz  ·  fsm.avoid_attempts
+
+# ══════════════════════════════════════════════════════════════
+
+lidar:
+  # ── 중계 노드 링크 (ESP32 DevKit → Host PC · UDP) ─────────────
+  # 제어(5001)·텔레메트리(5101)와 다른 포트여야 한다 — 한 소켓에 두 스키마가 섞이지 않게.
+  scan_port: 5201
+  # 이 시간 동안 스캔이 없으면 LiDAR 링크 두절(측위 상실 → `LOST`)로 본다 — 안전 절의 링크
+  # 두절과 대응이 다르다.
+  scan_stall_timeout_ms: 1500
+
+  # ── 컨테이너 전달 (WBS 5.4.4) ──────────────────────────────────
+  # 중계 노드 펌웨어는 `scan_port` 한 곳으로만 보낸다. ROS2 컨테이너
+  # (`docker/ros2/scan_bridge.py`)가 같은 포트를 또 바인드하면 동시에 켤 수
+  # 없으므로, `scan_port` 의 유일한 수신자(런타임 `--lidar-device` 의 `LidarFeed`,
+  # 또는 단독 도구 `tools/ops/patrol_run.py`)가 받은 데이터그램을 바이트 그대로 여기로
+  # 복사해 넘긴다 (`host/telemetry/ros2_relay.py`).
+  # LiDAR 비상정지(`guard_scan`)는 이 전달과 무관한 직접 경로로 남는다.
+  # `tools/lidar/lidar_live_map.py` 의 `--pose-port` 기본값(5202)과 겹치지 않게 5203 이다.
+  scan_forward_host: 127.0.0.1
+  scan_forward_port: 5203
+  # 꺼 두면 전달을 멈추고 컨테이너 없이 순찰만 돈다. `scan_port` 와 같은 값은
+  # 거부한다 — 두 스키마가 한 소켓에 섞여 들어온다 (위 `scan_port` 주석).
+  scan_forward_enabled: true
+
+  # ── 설치각 ────────────────────────────────────────────────────
+  # 로봇 기준 각도 = (수신 원시각 × angle_direction + mount_yaw_deg) mod 360.
+  # 로봇 좌표는 정면0°·왼쪽+90°(반시계 증가). 원시각의 증가 방향은
+  # 장착 방향과 별개이므로 부호를 따로 적는다.
+  #
+  # 커넥터를 로봇 뒤로 두는 조립이다 — 원시 270°=정면, 180°=왼쪽, 90°=뒤, 0°=오른쪽이라
+  # 이 기체에서는 270 - 원시각이다. 책상 단품 시험은 그 배치에 맞게 따로 설정한다.
+  # 보정은 `lidar_link._valid_point` 한 곳에서만 하고, 시뮬레이션은 이 값을 받지 않는다.
+  mount_yaw_deg: 270
+  angle_direction: -1
+
+  # ── 센서 유효 범위 ────────────────────────────────────────────
+  # 하한은 로봇 몸통 반사를 걸러내고, 상한은 정합이 성립하는 거리다 —
+  # 넓은 공터에서는 벽이 안 잡혀 스캔 정합이 무의미해진다 (ADR-18 각주).
+  # 상한은 제품의 실측 유효 사거리로 맞춘다.
+  range_min_mm: 120
+  range_max_mm: 8000
+  # 정지 상태에서 완성된 몇 바퀴를 모아 중앙값으로 합칠지 (패킷 수 아님, ADR-7).
+  scan_batch: 3
+
+  # ── 점유격자 ─────────────────────────────────────────────────
+  # 5cm 는 로봇 폭(약 20cm) 대비 4셀이라 문틈을 구분하고, A* 격자가
+  # 10m x 10m 에서 200x200 으로 남아 완전 탐색이 감당된다.
+  resolution_mm: 50
+  initial_span_cells: 200      # 200 x 50mm = 10m. 경계에 닿으면 자동 확장한다
+  expand_pad_cells: 60         # 확장할 때 붙이는 여유 (매 사이클 재할당 방지)
+  # 로그오즈 가중치. 점유를 자유보다 크게 두는 이유 — 벽은 한 번 봐도 벽이지만
+  # 빈 공간은 여러 번 통과해야 확신할 수 있다. 반대로 두면 벽이 지워진다.
+  hit_logodds: 0.9
+  miss_logodds: -0.4
+  occupied_logodds: 1.0        # 이 값 이상이면 막힌 셀
+  free_logodds: -1.0           # 이 값 이하만 **확실히 빈** 셀 (미관측과 구분)
+
+  # ── 스캔 정합 (측위) ──────────────────────────────────────────
+  # 탐색 반경 = localization.move_increment_mm x 이 비율. 한 사이클 이동량보다
+  # 좁으면 정상 이동을 놓치고, 넓히면 탐색이 제곱으로 커진다.
+  search_span_ratio: 0.6
+  search_step_mm: 40
+  search_angle_deg: 8
+  search_angle_step_deg: 2
+  # 이만큼 관측된 셀이 있어야 정합을 시도한다. 빈 지도에 정합하면 점수가 전부
+  # 0 이라 탐색 격자의 첫 후보가 우연히 채택된다.
+  min_known_cells: 50
+  # 우도장(likelihood field) 폭 — 벽까지의 거리로 매긴 매끄러운 점수. 0 이면 옛 «적중 개수»
+  # 점수(5cm 비껴가면 0점 → 계단식 지형·가짜 봉우리·1셀 두께 가구 다리 무시). 100mm 는
+  # 라이다 잡음(2~3cm)과 추정 배치 가구의 오차(5~10cm)를 흡수하는 값.
+  match_sigma_mm: 100
+  # 정합 품질 게이트 — 스캔 끝점 중 이 비율 미만만 벽에 얹히면 틀린 잠금(오정합)으로
+  # 버리고 자세를 갱신하지 않는다. 갱신이 끊겨 pose_timeout_ms 를 넘으면 로봇은
+  # 선다 (LOST). 0 이면 «점수 0 만 거절»하는 옛 동작.
+  min_match_frac: 0.45
+  # 측위가 끊긴 동안 지도 전체를 거칠게 훑어 다시 잠그는 재측위 주기 — 국소 창은
+  # 추정 위치가 틀리면 못 여는 잠김을 연다. 0 이면 끈다.
+  reloc_interval_ms: 1000
+  # 사람이 지도에서 찍은 현재 위치 주변에서만 전역 후보를 찾는다(m).
+  # 힌트가 있어도 기존 표결/경쟁 후보 기준을 통과해야 위치를 확정한다.
+  point_hint_radius_m: 0.6
+  global_match_step_mm: 100
+  global_match_angle_deg: 15
+  # 전체 스캔으로 거친 후보와 정밀 경쟁 봉우리를 같은 척도에서 비교한다.
+  # 정밀 탐색 예산 초과·경쟁 봉우리는 거절. 재생 오인식/지연 검증 전에는 끈다.
+  global_full_scan_ambiguity: false
+  # 전역 재측위 채택 한도 — 최고점의 90% 이상인 후보가 이 수를 넘으면 이 스캔은
+  # 지도를 구분 못 하는 것(벽 포켓·대칭 구간)이라 어떤 잠금도 근거가 없어 거절한다.
+  reloc_max_peers: 60
+  # 서 있을 때 이 주기로 지도 전체와 자세를 대조한다 — 국소 창만으론 틀린 잠금을
+  # 스스로 못 푼다. 0 이면 끈다.
+  verify_interval_ms: 15000
+  # 전역 탐색 답을 채택(재측위·자세 교정)하기 전에 같은 자리(0.3m 안)가 연속으로 나와야
+  # 하는 횟수. 가구 다리가 덜 그려진 자리에서는 바퀴마다 최적이 다른 벽에 얹혀 널뛴다.
+  reloc_votes: 3
+  # 투표에서 «같은 답» 의 방위 허용 — 위치만 보던 때 58°·36° 가 한 표로 묶였다 (2026-10-03).
+  reloc_vote_yaw_deg: 10
+  # 표 사이에 로봇이 움직이지 않았으면(같은 장면) 경쟁 후보가 이 수 이하인 유일한 답만 표로 센다.
+  reloc_stationary_max_peers: 10
+  # 신뢰 복원 (E2, 2026-10-04) — 확인된 자세로 달리다 상실해 신뢰가 만료된 뒤, 이동 명령이 없고
+  # IMU 방위가 yaw_deg 안이면 그 자세 반경 radius_mm·방위 ±yaw_deg 창에서만 다시 찾는다.
+  # 창 안 최고점이 전역 최고점의 score_ratio 이상이고 reloc_votes 번 연속 같은 답이면 신뢰 복원.
+  # 재생(9세션 232표본): 참 사전 105 수락, 1~2m 옮겨진 거짓 사전 2 수락(1회 판정, 표 전) — 0.95.
+  reloc_restore_enabled: true
+  reloc_restore_max_age_ms: 30000
+  reloc_restore_radius_mm: 300
+  reloc_restore_yaw_deg: 5
+  reloc_restore_score_ratio: 0.95
+  # 상실 동안 pitch·roll 이 이만큼 넘게 바뀌면 들어 올린 것으로 보고 복원하지 않는다.
+  # 같은 방위로 들어 옮겨 대칭 구조에 내려놓으면 스캔·yaw 로는 모른다(Codex 검토 E2 P1).
+  reloc_restore_tilt_deg: 8
+  # 신선한 IMU 가 있으면 국소 정합의 방위 탐색을 IMU 예측 ± 이 창으로 좁힌다 (0 이면 끔).
+  # 우도장 지형에 방위 능선이 생겨 정합만으로는 방위가 흘렀다(정지 중 23°, 걸은 세션 IMU 대비 132°).
+  imu_yaw_window_deg: 3
+  imu_yaw_step_deg: 1
+  # AP: SCAN 상체 pitch -15도에서 주방 정지 스캔 39/43개가 6도를 넘었다(AN).
+  # 신선한 IMU만 수평 판정에 쓴다. 오래되거나 없으면 실제 송신 POSE 상태로 판단.
+  scan_tilt_imu_max_age_ms: 250
+  scan_tilt_max_deg: 6
+  # 보행 중(MOVE 후 700ms)은 몸체 흔들림 허용: lap_1 보행 p50 6.3°·p90 10.7° — 6° 면 보행 스캔 54% 를 버려 추적이 굶는다(Claude 검토).
+  scan_tilt_walking_max_deg: 12
+  # POSE 보간 완료 뒤 첫 수평 한 바퀴를 기다린다. 기존 보행 정지 안정 대기와 같은 750ms.
+  scan_tilt_settle_ms: 750
+  # IMU 설치/영점의 수평 기준(측정값에서 뺌). 실측 보정 전에는 0.
+  # posture.roll_offset_deg는 POSE 명령에 얹는 보정이므로 IMU 값에서 빼지 않는다.
+  scan_tilt_pitch_offset_deg: 0
+  scan_tilt_roll_offset_deg: 0
+  # 걸으며 지도에 바로 쓰기. **기본 끔** — 틀린 자세로 쓰면 지도가 그 자리를 맞는 것처럼
+  # 굳혀 정합기가 스스로를 확신한다(제자리 로봇 실측: 정합률 0.66→0.95 로 자기강화).
+  # 세션 스캔은 기록되므로 tools/lidar/localization_bench.py 로 검토한 뒤 반영한다.
+  # 지도가 라이다가 보는 것(가구 다리)을 담게 된 뒤 켠다.
+  live_map_write: false
+
+  # ── 경로 계획 ────────────────────────────────────────────────
+  # 로봇 폭의 절반 (`2.2.1` 실측 후 확정).
+  robot_radius_mm: 150
+  # AG 승인: 전역 경로의 작은 여유. 즉시 정지/감속은 nav의 최신 LiDAR 거리로 판단한다.
+  tracking_margin_mm: 50       # AG: 전역 기준 경로는 몸 반경 15cm + 여유 5cm
+  # logodds 가 이 값 이상인 점유 셀만 «단단한» 장애물 — 벽·반복 확인된 물체는
+  # `robot_radius_mm + tracking_margin_mm` 전부를 부풀린다. 그 미만(세션 지도
+  # 병합으로 들어온 가구 다리급, 1~4)은 `furniture_clearance_mm` 만큼 부풀린다.
+  # 2026-10-03 사용자 선택: nav free 위 loc-only 점유는 계획에서 제외한다.
+  # 원본은 보존하고 실제 물체는 LiDAR로 확인해 동적 장애물/정지/재계획으로 처리한다.
+  # nav 벽·미관측 및 지도 밖 점유는 이 예외로 열지 않는다.
+  # 추종 여유 안에서 출발하면 몸체 반경을 지키는 연결을 이 거리 안에서 찾는다.
+  start_escape_max_mm: 600
+  hard_occ_thresh: 4.0
+  furniture_clearance_mm: 200    # AG: 지도 가구도 15cm + 5cm, 실제 물체는 최신 LiDAR
+  path_simplify_mm: 80         # 웨이포인트 단순화 허용 오차
+  waypoint_radius_mm: 100      # 중간 웨이포인트 통과 판정 (도착은 zones.arrival_radius_mm)
+  # 방위 오차가 이 안이면 직진한다. 좁히면 진동한다.
+  heading_tolerance_deg: 8
+  # 호 조향의 비례 기준 — 오차/이 값 만큼 조향을 키우고 보폭을 줄인다 (`patrol.steering_for`).
+  reverse_threshold_deg: 90
+  # 방위 오차가 이보다 크면 걷지 않고 **제자리에서 돌아** 맞춘 뒤 걷는다 (ADR-11 개정 2026-10-01).
+  # 측위 방위를 매 틱 보는 폐루프라 각속도 산포(82%)가 결과를 바꾸지 않는다.
+  spin_threshold_deg: 45
+  # 제자리 회전 지시의 `MOVE angle`. 실측(2026-09-22)이 ±30 한 점뿐이라 그 값을 쓴다 — 약 7.4 도/s.
+  spin_turn_deg: 30
+
+  # ── 신규 장애물 ──────────────────────────────────────────────
+  # 이 거리 안의 빔만 후보로 본다. 측위 오차가 거리에 비례하므로 멀리서
+  # 판정하면 오탐이 늘고, 오탐 하나가 통로를 막는다.
+  new_obstacle_check_radius_mm: 1500
+  # AG: 연속 장애물 확인/측위 오차 추가 팽창/별도 표시 반경 폐기.
+  # 매 최신 스캔의 실제 끝점에 robot_radius_mm만 적용, nav.dynamic_ttl_ms 후 만료.
+
+  # ── 호스트측 위험 판정 ───────────────────────────────────────
+  # LiDAR 전방 부채꼴에 대한 호스트의 추가 판정 — 온보드 초음파(Tier 1)를 대체하지 않는다.
+  # 온보드 임계(25cm)보다 짧고, `robot_radius_mm + tracking_margin_mm` 보다 작아야 한다
+  # (`settings._validate` 가 기동 시 확인한다).
+  estop_distance_mm: 100
+  forward_fan_deg: 20             # 전방으로 볼 부채꼴 반각
+
+  # ── 오도메트리 전달 (WBS 5.4.3 · 호스트 → ROS2 컨테이너 `odom_bridge`) ──
+  # 런타임(`--lidar-device`)과 `tools/ops/patrol_run.py` 가 보낸 명령 × `gait_calibration` + IMU yaw 변화량으로 만든
+  # `odom` 자세를 ODOM 전문(docs/PROTOCOL_LIDAR.md 8절)으로 보낸다. 5201(스캔)·
+  # 5202(`lidar_live_map` 자세 입력)·5203(스캔 복사 전달)과 **다른 포트**여야 한다.
+  odom_host: 127.0.0.1
+  odom_port: 5204
+  odom_rate_hz: 10                # WBS 5.4.3 — 이동 중에도 10Hz 로 tf 갱신
+  # IMU yaw 가 이보다 오래되면 자세를 무효로 보내고 컨테이너는 tf 를 내지 않는다.
+  # 텔레메트리 10Hz 의 5주기이며 WBS 5.4.4 의 «위치 500ms 미갱신» 과 같은 값이다.
+  odom_imu_stale_ms: 500
+
+  # ── ROS2 지도 측위 반환 (WBS 5.4.4 · 컨테이너 → Windows 순찰기) ──
+  # slam_toolbox 의 map->base_link 를 MAP_POSE 전문으로 받는다. 스캔·ODOM·기존
+  # lidar_live_map 입력과 겹치지 않는 포트여야 한다.
+  map_pose_port: 5205
+
+  # ── 대시보드 실시간 위치 표시 (순찰기 → 대시보드 포즈 수신) ──
+  # 측위가 갱신될 때마다 표시(평면) 좌표로 변환해 보낸다. 변환은 지도 폴더의
+  # `pose_frame.json` 이 담는다 — 그 파일이 없는 지도로는 보내지 않는다
+  # (`host/slam/pose_out.py`). 수신 측은 대시보드의 포즈 UDP 수신부다.
+  pose_out_host: 127.0.0.1
+  pose_out_port: 5300
+
+  # ── 시뮬레이션 (실기 연결 전 검증 · WBS 12절) ─────────────────
+  # 실측이 아닌 명목값이다 — `gait_calibration` 이 있으면 그것을 쓴다.
+  sim:
+    forward_mm_per_sec: 200       # 명목. 실측은 gait_calibration 소관
+    turn_deg_per_sec: 25          # 명목
+    spin_deg_per_sec: 7.37        # 제자리 회전 `angle=±30` 실측 평균 (2026-09-22 · ADR-11)
+    scan_noise_mm: 10
+    dropout_rate: 0.02            # 빔 유실률
+    beams: 360
+
+# ══════════════════════════════════════════════════════════════
+#  관제 방송 TTS (WBS 4.8.2 · ADR-38)
+#
+#  `4.8.1` 이 사건마다 만드는 한국어 한 문장을 Host PC 스피커로 읽고 대시보드
+#  자막으로도 낸다. 로봇 스피커(MP3 모듈, escalation.sound)와는 다른 경로다(ADR-38).
+#
+#  Piper 는 `pip install --no-deps piper-tts==1.8.0 pathvalidate` 로 따로 깐다 — 의존성을
+#  끌어오면 onnxruntime 이 DirectML 판을 가린다 (`requirements.txt` · CONTRIBUTING 8절).
+# ══════════════════════════════════════════════════════════════
+broadcast:
+  # 켜 둔다 — Piper·모델이 없는 PC 에서는 `broadcast_disabled` 경고 한 번을 남기고
+  # 방송만 꺼지며 런타임은 그대로 기동한다(`host/cloud/broadcast.py`).
+  enabled: true
+  piper_model: "C:/dev/mechadog-voice/models/piper/ko_KR-kss-medium.onnx"
+  # 1.0 이 모델 기본 속도다. 1.2 가 듣기 좋았다는 실측 기록 — docs/internal/MODEL_PLAN.md 198행.
+  length_scale: 1.2
+  # 초기 음량(0~100) — 관제 화면 슬라이더가 기동 이후 값을 바꾼다.
+  volume: 100
+
+# 외부 로컬 3D 보기. 개인 집 장면은 별도 SIM 폴더에 보관합니다.
+dashboard:
+  scene3d_url: ""

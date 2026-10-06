@@ -1,0 +1,46 @@
+{
+  "device": "mechdog-01",
+  "3.3.1": {
+    "n": 50,
+    "resolution": "640x480",
+    "provider": "CPUExecutionProvider",
+    "warmup_ms": 914.9,
+    "first_frame_ms": 700.4,
+    "mean_ms": 705.76,
+    "p95_ms": 909.74,
+    "p99_ms": 1021.85,
+    "max_ms": 1021.85,
+    "jpeg_decode_mean_ms": 2.03,
+    "person_frames": 0
+  },
+  "3.3.2": {
+    "seconds": 60.6,
+    "frames_received": 1434,
+    "frames_processed": 83,
+    "frames_dropped": 1349,
+    "drop_pct": 94.1,
+    "max_queue_depth": 2,
+    "queue_capacity": 2,
+    "recv_fps": 23.7,
+    "infer_fps": 1.4,
+    "inference_fps_cap": 25,
+    "worker_errors": 0,
+    "worker_last_error": null,
+    "inference_ms_max": 873.0,
+    "recv_thread_restarts": 0
+  },
+  "3.3.3": {
+    "window_ms": 300,
+    "hits_required": 3,
+    "confirms": 0,
+    "releases": 0,
+    "best_score": 0.0,
+    "results_observed": 82,
+    "person_in_view": false
+  },
+  "3.3.4": {
+    "distinct_track_ids": 0,
+    "max_concurrent_tracks": 0,
+    "iou_match_threshold": 0.3
+  }
+}

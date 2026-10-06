@@ -1,0 +1,366 @@
+"""순찰 구역 앵커와 순찰 스케줄러 (WBS 3.9.1 · 3.9.2 · FR-7).
+
+구역 라벨의 정본은 `config.yaml` 의 `zones.ids` 다. `zones.json` 은 그 라벨에 좌표를 붙인
+것이며, 설정에 없는 라벨은 만들지 않고 파일에서 발견하면 경고와 함께 무시한다 — 구역 점검
+(FR-8)과 대시보드가 같은 라벨을 쓴다.
+
+구역 도착은 이 좌표와 FR-7.4 반경으로 판정한다(`ZoneInspector.inspect`) — 구역 판독은 같은
+자리·같은 방향에서 봐야 성립한다.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import random
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from host.behavior.planner import Plan, PlanParams, Point, plan_to
+from host.behavior.zone_map import PLAN_FILENAME
+from host.common.config import _finite_number
+from host.common.logging_setup import event_logger
+from host.slam.occupancy import OccupancyGrid
+
+LOG = event_logger("mechadog.behavior.zones")
+
+ZONES_FILENAME = "zones.json"
+
+
+@dataclass(frozen=True, slots=True)
+class Zone:
+    """구역 하나. 좌표는 실공간 m 다.
+
+    `yaw` 는 점검할 때 바라볼 방향(rad, 지도 좌표 · 측위 `Pose` 와 같은 규약)이다. 없으면
+    도착한 방향 그대로 본다. 구역 판독이 방문마다 같은 장면을 봐야 하므로 두는 값이다.
+    `aim_deg` 는 도착 후 점검 전에 몸을 돌릴 순찰 좌표 방위(deg)다. 0은 +X,
+    +90은 +Y이며, 미지정이면 기존 도착 동작을 유지한다. 기존 `yaw`와는 별도다.
+    """
+
+    label: str
+    x: float
+    y: float
+    yaw: float | None = None
+    aim_deg: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.aim_deg is not None and (
+            not _finite_number(self.aim_deg) or not -180 <= self.aim_deg <= 180
+        ):
+            raise ValueError("aim_deg는 -180~180 범위의 유한한 숫자여야 합니다")
+
+    @property
+    def aim_yaw(self) -> float | None:
+        """점검 정렬 방향(rad). 새 방위를 지정한 경우 기존 yaw보다 우선한다."""
+        return self.yaw if self.aim_deg is None else math.radians(self.aim_deg)
+
+    @property
+    def xy(self) -> tuple[float, float]:
+        return self.x, self.y
+
+
+class ZoneStore:
+    """구역 목록. **설정의 `zones.ids` 순서를 순찰 순서로 쓴다.**
+
+    첫 사이클이 사용자 지정 순서를 따르는데(FR-7.3), 그 "사용자 지정"의 정본이
+    설정 파일이다. 클릭한 순서를 따로 저장하면 두 개의 순서가 생긴다.
+    """
+
+    def __init__(self, allowed_labels: Sequence[str]) -> None:
+        self._allowed = tuple(allowed_labels)
+        self._zones: dict[str, Zone] = {}
+
+    # ── 조회 ──────────────────────────────────────────────────
+    @property
+    def allowed_labels(self) -> tuple[str, ...]:
+        return self._allowed
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """좌표가 붙은 구역을 **설정 순서로** 돌려준다."""
+        return tuple(label for label in self._allowed if label in self._zones)
+
+    def __len__(self) -> int:
+        return len(self._zones)
+
+    def __contains__(self, label: object) -> bool:
+        return label in self._zones
+
+    def __iter__(self) -> Iterable[Zone]:
+        return iter(self.as_tuple())
+
+    def as_tuple(self) -> tuple[Zone, ...]:
+        return tuple(self._zones[label] for label in self.labels)
+
+    def get(self, label: str) -> Zone:
+        return self._zones[label]
+
+    def xy(self, label: str) -> tuple[float, float]:
+        return self._zones[label].xy
+
+    @property
+    def next_label(self) -> str | None:
+        """아직 좌표가 없는 첫 라벨. 없으면 `None` (설정된 구역을 다 채웠다)."""
+        return next((label for label in self._allowed if label not in self._zones), None)
+
+    # ── 편집 ──────────────────────────────────────────────────
+    def place(self, x: float, y: float) -> Zone | None:
+        """다음 라벨에 좌표를 붙인다. 라벨이 남아 있지 않으면 `None`."""
+        label = self.next_label
+        if label is None:
+            LOG.warning(
+                "zone_labels_exhausted",
+                allowed=list(self._allowed),
+                hint="config.yaml 의 zones.ids 를 늘려야 한다",
+            )
+            return None
+        zone = Zone(label, float(x), float(y))
+        self._zones[label] = zone
+        return zone
+
+    def aim(self, label: str, yaw: float) -> Zone:
+        """구역이 점검할 때 바라볼 방향(rad)을 정한다."""
+        zone = replace(self._zones[label], yaw=float(yaw))
+        self._zones[label] = zone
+        return zone
+
+    def set_aim_deg(self, label: str, aim_deg: float | None) -> Zone:
+        """도착 후 카메라 방향을 정하거나 해제한다. 기존 yaw 설정은 보존한다."""
+        zone = replace(self._zones[label], aim_deg=aim_deg)
+        self._zones[label] = zone
+        return zone
+
+    def undo(self) -> Zone | None:
+        """가장 마지막으로 붙인 좌표를 뗀다."""
+        placed = self.labels
+        if not placed:
+            return None
+        return self._zones.pop(placed[-1])
+
+    def clear(self) -> None:
+        self._zones.clear()
+
+    # ── 파일 ──────────────────────────────────────────────────
+    @classmethod
+    def load(cls, directory: Path, allowed_labels: Sequence[str]) -> ZoneStore:
+        """`zones.json` 을 읽는다. 없으면 빈 저장소를 돌려준다. 설정에 없는 라벨은 버리고 경고한다."""
+        store = cls(allowed_labels)
+        path = directory / ZONES_FILENAME
+        if not path.is_file():
+            return store
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            LOG.warning("zones_file_malformed", path=str(path))
+            return store
+        plan_aims = _load_plan_aims(directory)
+        unknown: list[str] = []
+        for label, value in raw.items():
+            if label not in store.allowed_labels:
+                unknown.append(label)
+                continue
+            if not isinstance(value, Mapping) or "x" not in value or "y" not in value:
+                LOG.warning("zone_entry_malformed", label=label)
+                continue
+            yaw = value.get("yaw")
+            if not (
+                _finite_number(value["x"])
+                and _finite_number(value["y"])
+                and (yaw is None or _finite_number(yaw))
+            ):
+                LOG.warning("zone_entry_malformed", label=label)
+                continue
+            store._zones[label] = Zone(
+                label,
+                float(value["x"]),
+                float(value["y"]),
+                None if yaw is None else float(yaw),
+                value.get("aim_deg", plan_aims.get(label)),
+            )
+        if unknown:
+            LOG.warning(
+                "zone_labels_not_in_config",
+                ignored=sorted(unknown),
+                allowed=list(store.allowed_labels),
+            )
+        return store
+
+    def save(self, directory: Path) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / ZONES_FILENAME
+        payload: dict[str, Any] = {}
+        for zone in self.as_tuple():
+            payload[zone.label] = {"x": round(zone.x, 3), "y": round(zone.y, 3)}
+            # null도 기록해 별도 구역 계획의 이전 방향이 다시 살아나지 않게 한다.
+            payload[zone.label]["aim_deg"] = zone.aim_deg
+            if zone.yaw is not None:
+                payload[zone.label]["yaw"] = round(zone.yaw, 3)
+        path.write_text(
+            json.dumps(payload, indent=4, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        LOG.info("zones_saved", path=str(path), count=len(payload))
+        return path
+
+
+def _load_plan_aims(directory: Path) -> dict[str, Any]:
+    """기존 지도 구역 계획의 방향만 읽는다. 좌표의 정본은 계속 zones.json이다."""
+    path = directory / PLAN_FILENAME
+    if not path.is_file():
+        return {}
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(plan, dict) or not isinstance(plan.get("zones"), list):
+        raise ValueError("zones_plan.json의 구역 목록 형식이 올바르지 않습니다")
+    return {
+        str(zone["id"]): zone["aim_deg"]
+        for zone in plan["zones"]
+        if isinstance(zone, dict) and "id" in zone and "aim_deg" in zone
+    }
+
+
+def nearest_free_cell(
+    grid: OccupancyGrid,
+    row: int,
+    col: int,
+    *,
+    free_thresh: float,
+    max_radius_cells: int,
+) -> tuple[int, int] | None:
+    """막힌 셀을 클릭했을 때 가장 가까운 **확실히 빈** 셀을 찾는다.
+
+    `free_thresh` 이하만 받아들인다 — 미관측(값 0) 셀을 허용하면 지도 밖 빈
+    공간에 구역이 놓이고, A* 는 거기까지 갈 경로를 못 찾는다. 클릭을 그냥
+    거절하지 않는 이유는 벽에서 몇 cm 안쪽을 노린 클릭이 대부분이기 때문이다.
+    """
+    if grid.inside(row, col) and grid.cells[row, col] <= free_thresh:
+        return row, col
+    for radius in range(1, max_radius_cells + 1):
+        for d_row in range(-radius, radius + 1):
+            for d_col in range(-radius, radius + 1):
+                if max(abs(d_row), abs(d_col)) != radius:
+                    continue  # 껍질만 훑는다 — 안쪽은 이미 봤다
+                r, c = row + d_row, col + d_col
+                if grid.inside(r, c) and grid.cells[r, c] <= free_thresh:
+                    return r, c
+    return None
+
+
+def zone_arrays(store: ZoneStore) -> tuple[np.ndarray, tuple[str, ...]]:
+    """시각화용. 좌표 배열과 라벨을 같은 순서로 돌려준다."""
+    labels = store.labels
+    if not labels:
+        return np.zeros((0, 2)), ()
+    return np.array([store.xy(label) for label in labels], dtype=np.float64), labels
+
+
+# ══════════════════════════════════════════════════════════════
+#  순찰 스케줄러 — WBS 3.9.2 · FR-7.2/7.3/7.4
+# ══════════════════════════════════════════════════════════════
+
+
+def select_next(
+    *,
+    cycle: int,
+    visited: frozenset[str],
+    start: Point,
+    candidates: dict[str, Point],
+    order: tuple[str, ...],
+    grid: OccupancyGrid,
+    blocked: np.ndarray,
+    params: PlanParams,
+    random_after_first_cycle: bool,
+    rng: random.Random | None = None,
+    skipped_out: list[tuple[str, str]] | None = None,
+    body_blocked: np.ndarray | None = None,
+    costs: np.ndarray | None = None,
+) -> Plan:
+    """다음 순찰 구역을 고른다 (FR-7.3).
+
+    | 상황 | 규칙 | 근거 |
+    | :--- | :--- | :--- |
+    | 사이클 0 | 설정 순서 그대로 | 첫 사이클은 사용자 지정 순서다 |
+    | 사이클 1+ 첫 구역 | 무작위 | `zones.random_after_first_cycle` |
+    | 그 뒤 | **실제 경로가 가장 짧은** 미방문 구역 | 직선거리는 벽을 무시한다 |
+
+    `random_after_first_cycle` 이 거짓이면 모든 사이클이 설정 순서를 따른다 —
+    설정 항목이 있으니 코드가 그것을 실제로 지켜야 한다. 무작위 순찰은
+    예측 가능한 순회를 막는 보안 목적이므로 끌 수 있어야 옳다.
+
+    `skipped_out` 이 주어지면 도달 불가로 건너뛴 구역의 `(label, fail_reason)` 을
+    모아 준다 — 호출자(컨트롤러)가 경계 중복 제거로 한 번만 기록하게.
+    """
+    remaining = [label for label in order if label not in visited and label in candidates]
+    if not remaining:
+        return Plan(None)
+
+    # 막힌 구역은 그 구역만 건너뛰고 다음 후보를 푼다 — 빈 계획은 사이클을 끝낸다.
+    sequential = cycle == 0 or not random_after_first_cycle
+    if sequential:
+        return _first_reachable(
+            remaining, candidates, start, grid, blocked, params, skipped_out, body_blocked, costs
+        )
+
+    if not visited:
+        chooser = rng if rng is not None else random
+        label = chooser.choice(remaining)
+        rest = [other for other in remaining if other != label]
+        return _first_reachable(
+            [label, *rest],
+            candidates,
+            start,
+            grid,
+            blocked,
+            params,
+            skipped_out,
+            body_blocked,
+            costs,
+        )
+
+    best = Plan(None)
+    for label in remaining:
+        plan = plan_to(
+            label,
+            candidates[label],
+            start,
+            grid,
+            blocked,
+            params,
+            body_blocked=body_blocked,
+            costs=costs,
+        )
+        if plan.reachable and (not best.reachable or plan.length_m < best.length_m):
+            best = plan
+    return best
+
+
+def _first_reachable(
+    labels: Sequence[str],
+    candidates: dict[str, Point],
+    start: Point,
+    grid: OccupancyGrid,
+    blocked: np.ndarray,
+    params: PlanParams,
+    skipped_out: list[tuple[str, str]] | None = None,
+    body_blocked: np.ndarray | None = None,
+    costs: np.ndarray | None = None,
+) -> Plan:
+    """순서대로 풀어 **처음 도달 가능한** 구역의 계획. 막힌 구역은 남긴 채 넘어간다."""
+    for label in labels:
+        plan = plan_to(
+            label,
+            candidates[label],
+            start,
+            grid,
+            blocked,
+            params,
+            body_blocked=body_blocked,
+            costs=costs,
+        )
+        if plan.reachable:
+            return plan
+        if skipped_out is not None:
+            skipped_out.append((label, plan.fail_reason))
+    return Plan(None)
