@@ -116,7 +116,7 @@ erDiagram
 | `incident_id` | TEXT PK | 블랙박스 사건은 `<robot_id>_<폴더 이름>`(여러 대는 폴더를 로봇마다 나누므로, 같은 밀리초에 같은 사건을 남긴 두 로봇의 폴더 이름이 같을 수 있다), 그 밖의 사건은 `<ts_ms>_<event>_<8자리 16진수>` | 기체 ID 와 블랙박스 폴더 이름, 또는 런타임 |
 | `mission_id` | TEXT FK NULL | 속한 순찰 판. 열린 판이 없을 때 발생했으면 NULL | `mission_runs.mission_id` |
 | `robot_id` | TEXT NOT NULL FK | 사건이 난 로봇 | `robots.robot_id` |
-| `zone_id` | TEXT FK NULL | 사건 구역. 판정의 `zone`, 없으면 로봇이 그때 있던 구역, 그것도 없으면 NULL. 항법 사건은 판정의 `zone` 이 설정 구역 id 일 때만 쓴다 — `전체`·`GOAL`·`지점 3` 은 구역이 아니다 | 판정 `judgement.zone` · ZoneInspector |
+| `zone_id` | TEXT FK NULL | 사건 구역. 판정의 `zone`, 없으면 로봇이 그때 있던 구역, 그것도 없으면 NULL. 항법 사건과 블랙박스 가져오기(`tools/ops/history_import.py`)는 판정의 `zone` 이 설정 구역 id 일 때만 쓴다 — `전체`·`GOAL`·`지점 3` 은 구역이 아니다 | 판정 `judgement.zone` · ZoneInspector |
 | `occurred_at` | INTEGER NOT NULL | 발생 시각 | 사건의 `ts_ms` |
 | `event_type` | TEXT NOT NULL | 사건 종류(4절) | 사건의 `event` |
 | `mode` | TEXT | 그때의 운용 모드 | 사건의 `mode` |
