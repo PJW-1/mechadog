@@ -69,6 +69,17 @@ def _no_real_vlm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("host.runtime.build_session_factory", lambda _config: None)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_history_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`main()` 을 부르는 시험이 저장소 안의 실제 이력 DB(`logging.history_db`)를 열지 않게 한다.
+
+    ⚠️ 기본 설정의 경로는 저장소 기준 `history/mechdog.sqlite3` 다. 막지 않으면 CLI 시험이
+    운용 중인 DB 파일을 만들고 스키마를 쓴다. 이력을 보는 시험은 `history=` 를 주입한다.
+    """
+    monkeypatch.setattr("host.runtime.open_history", lambda _config: None)
+    monkeypatch.setattr("host.fleet.open_history", lambda _config: None)
+
+
 @pytest.fixture(scope="session")
 def cfg() -> dict:
     return yaml.safe_load(CONFIG.read_text(encoding="utf-8"))

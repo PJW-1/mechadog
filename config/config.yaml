@@ -462,6 +462,7 @@ logging:                # NFR-3④
   rotate_mb: 10
   rotate_keep: 5
   blackbox_dir: blackbox      # FR-3.9
+  history_db: history/mechdog.sqlite3  # ADR-46 — 사건·순찰 이력 색인. 비우면 끈다
 
 # ══════════════════════════════════════════════════════════════
 #  LiDAR 측위 · 매핑 · 구역 순찰 (FR-6 · FR-7 · Phase 2 · ADR-18)

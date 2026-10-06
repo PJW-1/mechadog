@@ -110,6 +110,11 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
         raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
 
+    # 이력 DB 는 색인이라 끌 수 있다 — 키가 없거나 빈 문자열이면 쓰지 않는다 (ADR-46).
+    history_db = config["logging"].get("history_db")
+    if history_db is not None and not isinstance(history_db, str):
+        raise ConfigError("logging.history_db 는 문자열이어야 함")
+
     # 모드 이름 목록의 정본은 `behavior/mission.py` 하나다 — 여기서는 문자열인지만 본다.
     mode = config["mission"].get("mode")
     if not isinstance(mode, str) or not mode.strip():

@@ -142,6 +142,11 @@ class ZoneInspector:
         return self._pending is not None
 
     @property
+    def zone(self) -> str | None:
+        """지금 도착해 있는 구역. 앵커 반경의 두 배를 벗어나면 `None` 이다."""
+        return self._zone
+
+    @property
     def alarm_alert(self) -> bool:
         """지금의 `ALERT` 가 구역 변화 확정으로 섰나."""
         return self._alarm_alert

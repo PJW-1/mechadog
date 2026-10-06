@@ -4086,3 +4086,159 @@ def test_a_lighter_outside_the_forbidden_zones_raises_no_alarm(
     _lighter_visit(runtime, vision)
     assert [e for e in blackbox.feed() if e.event_type == "hazard_notice"] == []
     assert True not in vision.switches
+
+
+# ── 사건·순찰 이력 DB (WBS 4.6.6 · ADR-46) ─────────────────────
+def _history(tmp_path: Path):
+    from host.common.history import HistoryStore
+
+    return HistoryStore(tmp_path / "history" / "mechdog.sqlite3")
+
+
+def test_history_registers_the_robot_and_zones_and_closes_runs_left_open(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """기동하면 기체·구역을 맞추고, 지난 비정상 종료가 열어 둔 판을 `interrupted` 로 닫는다."""
+    store = _history(tmp_path)
+    left = store.open_run(DEVICE, mode="guard", started_at=1)
+    local = dict(config, telemetry_device_id="mechdog-3c8a1f1d80cc")
+    Runtime(local, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+
+    [robot] = store.robots()
+    assert (robot["robot_id"], robot["serial_no"]) == (DEVICE, "mechdog-3c8a1f1d80cc")
+    assert [z["zone_id"] for z in store.zones()] == sorted(config["zones"]["ids"])
+    [run], _ = store.runs()
+    assert run["mission_id"] == left
+    assert (run["result"], run["ended_at"]) == ("interrupted", clock.ms)
+
+
+def test_a_patrol_is_one_run_closed_by_the_trigger_that_ended_it(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """대기·수동·페일세이프를 떠나면 판이 열리고, 그중 하나로 들어가면 닫힌다 (ADR-46 결정 5)."""
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    started = clock.ms
+    runtime.start_patrol(started)
+    [run], _ = store.runs()
+    assert run["mission_id"] == f"{DEVICE}-{started}"
+    assert (run["mode"], run["ended_at"], run["result"]) == (runtime.mission.mode, None, None)
+
+    clock.advance(5000)
+    assert runtime.apply_external(Event.ESTOP)
+    [run], _ = store.runs()
+    assert (run["ended_at"], run["result"], run["stop_reason"]) == (clock.ms, "failsafe", "ESTOP")
+
+
+def test_feed_events_reach_the_history_without_a_dashboard(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ **대시보드를 켜지 않고 돈 런타임의 사건도 남는다** — 기록은 런타임이 맡는다(대안 ⓒ 미채택).
+
+    사진이 있는 사건은 블랙박스 폴더를 가리키고, 단계 변화는 경고 문구를 `detail` 로 남긴다.
+    """
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    store = _history(tmp_path)
+    vision = FakeVision()
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=EventBlackbox(local),
+        history=store,
+    )
+    runtime.start_patrol(0)
+    _engage(runtime, vision, local, at_ms=100)
+
+    [run], _ = store.runs()
+    found, _ = store.incidents(event="person_found")
+    assert len(found) == 1
+    assert found[0]["mission_id"] == run["mission_id"]
+    assert found[0]["snapshot_path"] == f"{found[0]['blackbox_entry']}/snapshot.jpg"
+    assert found[0]["confidence"] == pytest.approx(0.9)
+    # 첫 틱의 `L0` 도 관제 피드에 뜨는 사건이다 — 피드와 같은 것을 남긴다 (최근 것부터).
+    changed, _ = store.incidents(event="escalation_changed")
+    assert [c["escalation_level"] for c in changed] == ["L1", "L0"]
+    assert set(changed[0]["detail"]) == {"warning", "reason"}
+    assert run["incident_count"] == 3
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_zone_arrival_is_added_to_the_run(config: dict, clock: FakeClock, tmp_path: Path) -> None:
+    """구역 도착(앵커 반경 안)을 그 판의 방문 구역에 남긴다."""
+    cfg = _zone_config(config, tmp_path)
+    store = _history(tmp_path)
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(cfg, mode="factory"),
+        history=store,
+    )
+    runtime.start_patrol(0)
+    _see(runtime, vision, seq=1, at_ms=100, detections=[])
+    assert runtime.behavior.state == "ZONE_INSPECT"
+
+    [run], _ = store.runs()
+    assert run["zones_visited"] == ["A"]
+
+
+def test_accepted_telemetry_marks_the_robot_as_seen(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    encoder = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(encoder), 1234)
+
+    [robot] = store.robots()
+    assert (robot["last_seen_at"], robot["status"]) == (1234, runtime.behavior.state)
+
+
+def test_stopping_the_runtime_closes_the_open_run(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    runtime.start_patrol(clock.ms)
+    clock.advance(700)
+    runtime.release()
+
+    [run], _ = store.runs()
+    assert (run["ended_at"], run["result"], run["stop_reason"]) == (
+        clock.ms,
+        "shutdown",
+        "runtime_stopped",
+    )
+
+
+def test_a_broken_history_does_not_stop_the_loop(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """⚠️ **DB 는 색인이다.** 쓰기가 모두 실패해도 순찰·전이·틱은 그대로 돈다."""
+    store = _history(tmp_path)
+    store.close()
+    vision = FakeVision()
+    with caplog.at_level(logging.ERROR, logger="mechadog.history"):
+        runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision, history=store)
+        assert runtime.start_patrol(0)
+        _engage(runtime, vision, config, at_ms=100)
+        runtime.release()
+    assert runtime.escalation.level is Level.L1
+    assert any(r.getMessage() == "history_write_failed" for r in caplog.records)
+
+
+def test_the_dashboard_wiring_hands_over_the_history(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """관제 서버(`/api/history`)는 런타임이 쓰는 **같은** 저장소를 읽는다 — 한 대·여러 대 공통."""
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, history=store)
+    assert dashboard_wiring(runtime, config, vision=None, blackbox=None)["history"] is store
+    bare = Runtime(config, device_id=DEVICE, clock=clock)
+    assert dashboard_wiring(bare, config, vision=None, blackbox=None)["history"] is None
+    store.close()

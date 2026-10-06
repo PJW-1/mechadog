@@ -55,6 +55,7 @@
 | **43** | 시연 한 바퀴를 **매번 무작위 순서**로 · 이동 중 막힘을 **VLM 으로 풀거나 L3 로** · 화기 위험물을 **L3 로** · 라이터·보조배터리용 **YOLOX 를 지금 학습** | 같은 시연을 다시 보일 수 없고, 우회할 수 있는 막힘마다 서서 관리자를 기다리며, VLM 은 위치 없이 예·아니요만 준다(막힘 적중 1/3·오경보 3/6). **A→B→C→D 고정, C 는 화기 위험구역(`hazard_item` «예» 2회 → 가벼운 경고), 이동 중 막힘은 가벼운 경고 + LiDAR 우회, 런타임이 LiDAR 순찰을 직접(`--lidar-device`)** |
 | **44** | 구역별 **물건 검증 라인**(기준 스냅샷 · 객체 목록 비교 · 반출·반입 확정 · 기준 재등록 버튼)을 시연 밖에서 **계속 유지** | ADR-43 이 반출·반입 감지를 시연 경로에서 이미 뺐다. 쓰이지 않는 라인은 시험·문서·코드 부담만 남긴다. **폐기** — WBS `3.6.1`·`3.6.2`·`3.6.3`·`3.6.5`(2.5 M/D). **VLM 넘어짐·통로 막힘(`3.6.4`)과 `4.8.4` 벤치는 유지** |
 | **45** | 무너진 물건이 통로를 막았는지를 **VLM 이 혼자 감지** · VLM 답 없이 먼저 알리고 **두 번 알림** · LoRA 어댑터를 **병합하지 않고 질문별로 켜기** | VLM 막힘 판독은 벤치 오경보 3/6 이라 혼자 감지할 수 없다. **LiDAR 가 막힘을 확정한 프레임에 «무너진 물건이 막았나» 하나만 묻고** 같은 `path_blocked` 에 싣는다(대기 상한 1.5초). 그 질문은 **LoRA 로 미세조정해 bf16 으로 병합**하고, 다른 질문의 퇴행을 통과 조건으로 잰다 |
+| **46** | 사건 이력을 **서버 DB**(Supabase·Postgres)에 두기 · 파일만 두고 질의 때마다 훑기 · DB 를 대시보드 프로세스 안에만 두기 | 서버 DB 는 서비스와 클라우드 경로가 늘어 127.0.0.1 로컬 설계와 어긋나고 #259 에서 막 지운 것이다. 파일만 훑으면 검토 상태와 «순찰 한 판» 이 없고 폴더가 늘수록 느리다. 대시보드 안에만 두면 `--dashboard-port` 없이 돈 런타임의 사건이 사라진다. **로컬 SQLite 한 파일에 색인으로 두고**, 그림과 판정 원문의 정본은 블랙박스에 남긴다 |
 
 > ⚠️ **11 · 15 · 16 은 처음 보면 반드시 헷갈린다.** 코드를 짜기 전에 본문을 읽는다.
 
@@ -2225,3 +2226,45 @@ A* 순찰(`PatrolController`)은 `tools/ops/patrol_run.py` 단독 도구로만 �
 - 결정 6 의 기준을 넘지 못하면 대안 ⓔ(작은 CNN)를 연다.
 - 실기에서 1.5초 대기가 시연 흐름을 끊으면 상한을 줄이거나 대안 ⓒ 로 간다.
 - 걷는 로봇의 프레임(`4.8.5`)에서 판독이 크게 나빠지면 자동 수집 프레임의 비중을 늘려 다시 학습한다.
+
+<a id="adr-46"></a>
+## ADR-46 · 사건·순찰 이력을 **로컬 SQLite 색인**에 쌓는다 (서버 DB · 파일만 훑기 · 대시보드 프로세스 안 DB 미채택)
+
+**상태** — **확정** (2026-10-06 · 사용자 결정). 구현 진행 중이다(WBS `4.6.6`). 웹 «이력» 화면(`4.6.7`)은 팀원 PR #407 이 병합된 뒤에 한다.
+
+**관련:** FR-4.5 · FR-4.8 · WBS `4.6.4` · `4.6.6` · `4.6.7` · [DATA_MODEL](DATA_MODEL.md) ·
+[ADR-34](#adr-34)(폐기, [ADR-38](#adr-38) 이 대체) · `logging.history_db` · `host/common/history.py` · `host/common/blackbox.py`.
+
+**사용자 결정 (2026-10-06)** — 웹에서 지난 데이터를 조회하고 싶어서 DB 를 두기로 했다.
+
+**문제** — 프로젝트에는 지금 DB 가 없다. 음성 설정 DB(`voice_data.db`·Supabase)와 가상 MES 표는 #254(2026-09-23, [ADR-38](#adr-38))와 #259(2026-09-24, WBS `4.7.22`)에서 지웠다. 그때 [ADR-34](#adr-34) 는 «기존 사건 JSONL·블랙박스·순찰 리포트는 SQLite 로 옮기지 않는다. `incidents`·`mission_runs` 색인은 지난 사건 검색이 실제 요구가 될 때 따로 정한다» 고 미뤄 두었고, [대시보드 기능 대조](internal/DASHBOARD_FEATURES.md)도 «서버 감사·실제 운행 이력·증거 보관» 을 범위 밖으로 적었다. 한편 관제 대시보드(`host/dashboard`, FastAPI, 127.0.0.1 전용)는 실시간 상태와 메모리의 최근 사건 64건(`state.py` `EVENT_BUFFER = 64`)만 보여 주고 재시작하면 지워진다. 블랙박스(`host/common/blackbox.py`)는 사건마다 `<epoch_ms>_<event>` 폴더에 `snapshot.jpg` 와 `meta.json`(`ts_ms` · `event` · `state` · `escalation` · `mode` · `tracks` · `detections` · `telemetry` · `judgement`)을 남기지만 보관 정책이 없고 로봇·순찰·검토 정보가 없다. 사용자가 웹에서 지난 데이터를 조회하기를 원하므로 «실제 요구» 가 생겼다.
+
+**결정**
+
+1. **엔진은 파이썬 표준 `sqlite3` 다**(새 의존성 없음). 파일 하나를 설정 `logging.history_db`(기본 `history/mechdog.sqlite3`, 저장소 추적 제외)로 정한다. WAL 모드와 외래키 검사를 켠다. 모듈은 `host/common/history.py` 의 `HistoryStore` 다.
+2. **DB 는 색인이지 원본이 아니다.** 그림과 판정 원문의 정본은 블랙박스 폴더이고, DB 는 가져오기 도구(`tools/ops/history_import.py`)로 블랙박스에서 다시 만들 수 있다. DB 쓰기가 실패하면 `history_write_failed` 로 기록만 하고 10 Hz 제어 루프를 멈추지 않는다(블랙박스 쓰기와 같은 규칙).
+3. **표는 네 개다**: `robots` · `zones` · `mission_runs` · `incidents`(앞서 제안한 ERD 를 실제 있는 데이터에 맞춘 것). 필드와 출처는 [DATA_MODEL](DATA_MODEL.md) 이 정본이다. 처음 제안에 `incidents.state` · `blackbox_entry` · `detail` · `reviewed_at` 을 더했고 스키마 버전을 담는 `schema_meta` 표를 두었다.
+4. **«관제 사건 피드에 뜨는 사건은 모두 DB 에도 남는다».** 블랙박스 장면이 있는 사건(`person_found` · `person_fallen` · `zone_reading` · `hazard_notice` · `path_blocked` · `zone_changed` · `PPE_VIOLATION` · `PPE_UNDETERMINED` · `PPE_SETTLED`)과 피드에만 뜨는 사건(`escalation_changed` · `auth_required` · `auth_granted` · `auth_failed` · `failsafe_entered` · `failsafe_cleared` · `voice_auth_granted`)을 모두 담는다. 대시보드를 켜지 않고 런타임만 돌려도 남긴다.
+5. **순찰 한 판(`mission_run`)**: FSM 이 `{IDLE, MANUAL, FAILSAFE}` 를 떠나 다른 상태로 가면 열고(보통 `START_PATROL` 로 `IDLE → PATROL`), 그 셋 중 하나로 다시 들어가거나 런타임이 멈추면 닫는다. `result` 는 `stopped`(IDLE) · `manual`(MANUAL) · `failsafe`(FAILSAFE) · `shutdown`(런타임 정상 종료) · `interrupted`(다음 기동 때 열린 채 발견됨, 예 비정상 종료)이고 `stop_reason` 은 FSM 트리거 이름(`ESTOP` · `LINK_LOST` · `MANUAL_ON` 등) 또는 `runtime_stopped` 다. `zones_visited` 는 구역 id 를 처음 도착한 순서로 담는다(도착은 ZoneInspector 앵커 도착).
+6. **두 단계로 나눈다.** 1단계(이 결정의 PR)는 DB 모듈 · 런타임 기록 · 조회·검토 API(`/api/history/*`) · 블랙박스 가져오기 도구다. 2단계는 웹 «이력» 화면이며, 같은 대시보드 파일을 크게 고치는 팀원 PR #407 이 병합된 뒤에 한다.
+
+**대안**
+
+- **ⓐ Supabase·Postgres 등 서버 DB**: ❌ 서비스와 클라우드 경로가 늘고, 127.0.0.1 로컬 설계와 어긋난다. #259 에서 막 지운 경로이기도 하다.
+- **ⓑ 파일만 두고 질의 때마다 블랙박스·JSONL 을 훑기**: ❌ 검토 상태를 담을 곳이 없고, 폴더가 늘수록 느리며(주 PC 에 이미 약 470개), «순찰 한 판» 이라는 개념이 없다.
+- **ⓒ DB 를 대시보드 프로세스 안에만 두기**: ❌ `--dashboard-port` 없이 런타임을 돌리면 그 사건이 남지 않는다. 기록은 런타임이 맡는다.
+
+**치르는 대가**
+
+- `zones` 표는 전역인데 구역 정책은 장치별 `local.yaml` 에 있다. **마지막으로 기동한 런타임의 값이 이긴다.** 시연은 한 대(`mechdog-02`)로 하므로 지금은 문제가 되지 않는다.
+- `robots.last_seen_at` 은 5초에 한 번 이하로 쓴다.
+- 보관·삭제 정책이 아직 없다(블랙박스와 같다).
+- **실기 확인이 남았다**: DB 쓰기가 10 Hz 루프를 늦추지 않는지.
+
+**ADR-34 · 대시보드 기능 대조와의 관계** — 이 결정은 [ADR-34](#adr-34) 가 미뤄 둔 `incidents`·`mission_runs` 색인을 열고, [대시보드 기능 대조](internal/DASHBOARD_FEATURES.md)의 «실제 운행 이력 범위 밖» 항목을 되돌린다. «서버 감사·증거 보관» 은 여전히 범위 밖이다(DB 는 로컬 색인이고 증거의 정본은 블랙박스다).
+
+**재검토**
+
+- 여러 대를 동시에 운용하게 되면 `zones` 의 전역 표와 장치별 정책 충돌을 다시 연다.
+- 보관 기간이나 용량 문제가 생기면 블랙박스와 함께 정리 정책을 정한다.
+- 실기에서 DB 쓰기가 제어 루프를 늦추면 쓰기를 별도 스레드로 옮기는 것을 연다.

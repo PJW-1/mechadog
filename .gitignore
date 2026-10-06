@@ -51,6 +51,7 @@ logs/
 !tests/fixtures/*.jsonl
 snapshots/
 blackbox/
+history/
 maps/*
 !maps/README.md
 
