@@ -380,11 +380,13 @@ def test_delay_streams_do_not_share_random_numbers() -> None:
     assert delay_rng(42, "cmd").random() == delay_rng(42, "cmd").random()
 
 
-def test_delay_rejects_negative_values() -> None:
+@pytest.mark.parametrize("bad", [-1.0, float("nan"), float("inf")])
+def test_delay_rejects_values_that_are_not_finite_and_non_negative(bad: float) -> None:
+    """nan 이나 inf 가 들어오면 풀릴 시각이 오지 않아 패킷을 영영 삼킨다."""
     with pytest.raises(ValueError):
-        DelayLine(-1.0, 0.0, random.Random(1))
+        DelayLine(bad, 0.0, random.Random(1))
     with pytest.raises(ValueError):
-        DelayLine(0.0, -1.0, random.Random(1))
+        DelayLine(0.0, bad, random.Random(1))
 
 
 def test_delayed_command_reaches_the_robot_only_after_the_delay(config: dict) -> None:
@@ -400,15 +402,32 @@ def test_delayed_command_reaches_the_robot_only_after_the_delay(config: dict) ->
     assert robot.state(START_MS + 300) != "FAILSAFE"
 
 
-def test_delay_options_leave_packet_loss_sequence_unchanged(config: dict) -> None:
-    """지연 옵션을 켜도 같은 씨앗의 유실 패턴은 그대로여야 기존 재현 스크립트가 산다."""
+def test_delay_path_leaves_packet_loss_sequence_unchanged(config: dict) -> None:
+    """지연 대기열을 거쳐도 같은 씨앗의 유실 패턴은 그대로여야 기존 재현 스크립트가 산다.
 
-    def drops(**extra: object) -> list[bool]:
-        robot = _robot(config, drop_rate=0.5, seed=42, **extra)
+    `run` 과 같은 방식으로 대기열을 만들어 `deliver` 로 넣는다. 지연 쪽이 로봇의
+    유실 난수를 하나라도 소비하면 n 번째 수신의 유실 여부가 달라진다.
+    """
+
+    def direct() -> list[bool]:
+        robot = _robot(config, drop_rate=0.5, seed=42)
         encoder = p.CommandEncoder(clock=lambda: START_MS)
         return [robot.receive(encoder.stop(), START_MS) is None for _ in range(20)]
 
-    assert drops() == drops(cmd_delay_ms=300.0, cmd_jitter_ms=50.0, telemetry_delay_ms=80.0)
+    def delayed() -> list[bool]:
+        robot = _robot(config, drop_rate=0.5, seed=42, cmd_delay_ms=300.0, cmd_jitter_ms=50.0)
+        faults = robot.faults
+        line: DelayLine[str] = DelayLine(
+            faults.cmd_delay_ms, faults.cmd_jitter_ms, delay_rng(faults.seed, "cmd")
+        )
+        encoder = p.CommandEncoder(clock=lambda: START_MS)
+        for i in range(20):
+            line.push(encoder.stop(), START_MS + i)
+        return [result is None for result in deliver(line, robot, START_MS + 10_000)]
+
+    first = direct()
+    assert any(first) and not all(first), "20건 중 일부만 사라져야 의미가 있다"
+    assert delayed() == first
 
 
 # ══════════════════════════════════════════════════════════════
@@ -501,12 +520,13 @@ def test_cli_defaults_have_no_delay() -> None:
     assert faults_from_args(build_parser().parse_args([])) == Faults()
 
 
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "abc"])
 @pytest.mark.parametrize(
     "option", ["--cmd-delay", "--cmd-jitter", "--telemetry-delay", "--telemetry-jitter"]
 )
-def test_cli_rejects_negative_delay(option: str) -> None:
+def test_cli_rejects_delay_that_is_not_a_non_negative_number(option: str, value: str) -> None:
     with pytest.raises(SystemExit) as exc:
-        build_parser().parse_args([option, "-1"])
+        build_parser().parse_args([option, value])
     assert exc.value.code == 2
 
 
