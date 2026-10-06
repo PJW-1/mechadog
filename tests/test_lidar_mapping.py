@@ -661,7 +661,9 @@ def test_host_lidar_estop_is_tighter_than_the_onboard_threshold() -> None:
     root = Path(__file__).resolve().parents[1]
     base = yaml.safe_load((root / "config" / "config.yaml").read_text(encoding="utf-8"))
     section = read_lidar_section()
-    onboard_mm = base["safety"]["obstacle_stop_cm"] * 10
+    # 초음파는 코끝에서, LiDAR 는 센서 중심에서 잰다 — 같은 기준점(LiDAR 중심)으로 옮겨 비교한다
+    # (2026-10-06 초음파 25→7cm: 코끝 7cm = LiDAR 중심 약 18cm 로 여전히 온보드가 먼저다).
+    onboard_mm = base["safety"]["obstacle_stop_cm"] * 10 + base["safety"]["sonar_from_lidar_mm"]
     assert section["estop_distance_mm"] < onboard_mm
 
 

@@ -57,7 +57,7 @@ flowchart TD
 
 | 조건 | 값 | 설정 키 | 근거 |
 | :--- | :--- | :--- | :--- |
-| 반사 정지 · 해제 | 25cm 미만 연속 2표본 · 30cm 이상 연속 5표본 | `safety.obstacle_stop_cm` (해제는 펌웨어 상수) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 반사 정지 · 해제 | 7cm 미만 연속 2표본 · 10cm 이상 연속 5표본 (2026-10-06 25/30→7/10, LiDAR 가 먼저 선다) | `safety.obstacle_stop_cm` (해제는 펌웨어 상수) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 해제 판단 근거 | `flags.obstacle` 의 참→거짓 변화 (플래그가 없는 펌웨어는 `AVOID`→`PATROL` 상태 변화) | 없음 | [ADR-22](../DECISIONS.md#adr-22) |
 | 회피 구간 등록 조건 | `forward_mm_per_sec` · `turn_deg_per_sec` 실측값이 있음 | `gait_calibration.*` (기체 프로파일) | [ADR-29](../DECISIONS.md#adr-29) |
 | settle · verify 정지 | 각 750ms | `localization.settle_delay_ms` | — |
