@@ -1414,7 +1414,25 @@ class Runtime:
         )
         reason = self._escalation.reason
         if self._escalation.presentation().warning and isinstance(reason, str):
-            self._play_robot_track(f"{reason.lower()}_warning")
+            key = f"{reason.lower()}_warning"
+            if reason == "PPE_VIOLATION":
+                key = self._ppe_warning_key(key)
+            self._play_robot_track(key)
+
+    def _ppe_warning_key(self, base: str) -> str:
+        """빠진 보호구가 하나면 그것만 말하는 키(`ppe_violation_helmet_warning` 등)를 고른다.
+
+        표에 그 키가 없거나 둘 다 빠졌거나 판정을 못 읽으면 통합 문장 키(`base`)를 쓴다.
+        """
+        result = self._vision.latest() if self._vision is not None else None
+        verdict = getattr(result, "ppe", None)
+        regions = getattr(verdict, "regions", ()) or ()
+        missing = {r.item for r in regions if str(r.label).startswith("no_")}
+        if len(missing) == 1:
+            key = f"ppe_violation_{next(iter(missing))}_warning"
+            if key in self._robot_tracks:
+                return key
+        return base
 
     def _announce_transition(self, event: Event, previous: str, now_ms: int) -> None:
         """인증·안전 전이를 관제 사건으로 낸다. 전이 로그(jsonl)에만 있던 것들이다."""
