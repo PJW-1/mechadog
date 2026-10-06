@@ -412,3 +412,34 @@ def test_compare_replays_each_cache_with_base_and_writes_table(tmp_path):
 def test_compare_rejects_cache_argument_without_name(tmp_path):
     with pytest.raises(SystemExit):
         ab.main(["compare", "session.json", "--cache", str(tmp_path / "cache.json")])
+
+
+def test_paired_tally_names_the_cause_when_tags_differ():
+    a = {"events": [judged_event("00001", [OK])]}
+    b = {"events": [judged_event("00002", [OK])]}
+    with pytest.raises(ValueError, match="태그"):
+        ab.paired_tally(a, b)
+
+
+def test_paired_tally_rejects_sessions_with_different_segments():
+    a = {"events": [judged_event("00001", [OK], seg="standing-none")]}
+    b = {"events": [judged_event("00001", [OK], seg="standing-nohelmet")]}
+    with pytest.raises(ValueError, match="구간"):
+        ab.paired_tally(a, b)
+
+
+def test_compare_rejects_cache_with_conf_floor_above_base(tmp_path):
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"orientation_step_s": 60, "orientations": ["후면"]}))
+    session = tmp_path / "session.json"
+    session.write_text(json.dumps({"scenario": "xiao-rear", "events": []}))
+    cache = tmp_path / "high.json"
+    cache.write_text(json.dumps({"meta": {"conf_floor": 0.7}, "frames": []}))
+    with pytest.raises(SystemExit, match="high"):
+        ab.main(["compare", str(session), "--plan", str(plan), "--cache", f"high={cache}"])
+
+
+def test_compare_creates_missing_parent_folder_of_out(tmp_path):
+    out = tmp_path / "새" / "폴더" / "compare.md"
+    ab._write_text("표\n", str(out))
+    assert out.read_text(encoding="utf-8") == "표\n"
