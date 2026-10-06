@@ -58,6 +58,11 @@ class ScanGate:
         latest = past[-1] if past else None
         samples = [v for v in past if v[0] >= start - self.max_imu_age_ms]
         fresh = latest is not None and 0 <= end - latest[0] <= self.max_imu_age_ms
+        # 2026-10-06 실기: 서 있는데 IMU roll −112~−123° 처럼 드리프트한 값이 와서 모든 스캔을 거절했다.
+        # 선 채로 45° 넘는 값은 믿지 않고 POSE 명령 상태로만 판단한다.
+        if fresh and latest is not None and max(abs(latest[1]), abs(latest[2])) > 45.0:
+            fresh = False
+            samples = []
         walking = (
             self._last_move_ms is not None
             and 0 <= end - self._last_move_ms <= self.walking_window_ms
