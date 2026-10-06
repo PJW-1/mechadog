@@ -1465,11 +1465,16 @@ class PatrolController:
             self.commander.drive(0.0, math.copysign(abs(self.drive.spin_turn_deg), error))
             self._local_decision("turn", "relaxed_escape_turn", front)
             return
-        scale = min(1.0, abs(error) / self.drive.reverse_threshold_rad)
-        spin = abs(error) > math.radians(35)
+        # 2026-10-06 실기: 걸으며 호 조향은 약해서 보행 우편향을 못 이기고(오른쪽으로 밀려 방1 벽 앞
+        # 정지), 몸도 기운다(10-04 roll +17~26°). 오차가 12° 넘으면 멈춰서 제자리 회전으로 바로잡고,
+        # 그 안이면 조향 없이 직진한다 — 매 틱 측위 방위로 다시 재므로 폐루프다.
+        spin = abs(error) > math.radians(12) or (
+            self._spinning and abs(error) > self.drive.heading_tolerance_rad
+        )
+        self._spinning = spin
         self.commander.drive(
-            0.0 if spin else self.drive.step_mm * (1.0 - TURN_STEP_REDUCTION * scale),
-            math.copysign(self.drive.spin_turn_deg if spin else self.drive.turn_deg * scale, error),
+            0.0 if spin else self.drive.step_mm,
+            math.copysign(self.drive.spin_turn_deg, error) if spin else 0.0,
         )
         self._local_decision("turn" if spin else "clear", "relaxed_follow", front)
 
