@@ -562,7 +562,8 @@ def head_tail_nodes(model: Any) -> list[str]:
         if node is None or tensor in seen or node.op_type == "Conv":
             continue
         seen.add(tensor)
-        names.add(node.name)
+        if node.name:  # ONNX 는 이름 없는 노드를 허용한다
+            names.add(node.name)
         stack.extend(node.input)
     return sorted(names)
 
@@ -645,6 +646,7 @@ def latency_one(
     runs: int,
     conf: float = 0.5,
     iou_threshold: float = 0.45,
+    model_family: str = "yolox",
 ) -> dict[str, Any]:
     """한 모델·한 프로바이더의 지연과 RSS 증가분. 새 프로세스에서 부르는 것을 전제로 한다.
 
@@ -656,7 +658,7 @@ def latency_one(
         "vision": {
             "providers": [provider],
             "m": {
-                "model_family": "yolox",
+                "model_family": model_family,
                 "input_size": input_size,
                 "conf_threshold": conf,
                 "iou_threshold": iou_threshold,
@@ -812,6 +814,8 @@ def cmd_accuracy(args: argparse.Namespace) -> int:
     hits = int(ppe_cfg.get("violation_hits_required", 3))
     specs, _, orientations = load_acceptance_plan(args.plan, base.get("scenario") or "xiao")
     eval_tags = [t for t in tags if t not in excluded]
+    # states_vs_fp32 는 보정 프레임을 뺀 eval_tags, states_vs_live 는 보정 프레임을 포함한 전체
+    # 프레임(tags)으로 센다 — 실기 기록과의 비교는 전체 세션이 기준이다.
     live_states = {str(e["tag"]): e for e in base["events"]}
     report: dict[str, Any] = {
         "provider": provider,
@@ -897,6 +901,15 @@ def cmd_latency(args: argparse.Namespace) -> int:
                     ",".join(labels_for(config, section)),
                     "--conf",
                     str(config["vision"][section]["conf_threshold"]),
+                    *[
+                        arg
+                        for key, flag in (
+                            ("iou_threshold", "--iou-threshold"),
+                            ("model_family", "--model-family"),
+                        )
+                        if key in config["vision"][section]
+                        for arg in (flag, str(config["vision"][section][key]))
+                    ],
                     "--warmup",
                     str(args.warmup),
                     "--runs",
@@ -936,6 +949,8 @@ def cmd_latency_one(args: argparse.Namespace) -> int:
         warmup=args.warmup,
         runs=args.runs,
         conf=args.conf,
+        iou_threshold=args.iou_threshold,
+        model_family=args.model_family,
     )
     print(json.dumps(out, ensure_ascii=False))
     return 0
@@ -993,6 +1008,8 @@ def build_parser() -> argparse.ArgumentParser:
     one.add_argument("--input-size", type=int, required=True)
     one.add_argument("--labels", required=True)
     one.add_argument("--conf", type=float, default=0.5)
+    one.add_argument("--iou-threshold", type=float, default=0.45)
+    one.add_argument("--model-family", default="yolox")
     one.add_argument("--warmup", type=int, default=20)
     one.add_argument("--runs", type=int, default=200)
     one.set_defaults(func=cmd_latency_one)

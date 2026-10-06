@@ -467,6 +467,7 @@ def test_write_json_creates_parent(tmp_path: Path) -> None:
 def _tiny_yolox(path: Path) -> None:
     """32x32 입력 · 출력 [1, 21, 6] (격자 16+4+1, 클래스 1개) 인 YOLOX 모양 모델."""
     onnx = pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
     from onnx import TensorProto, helper, numpy_helper
 
     rng = np.random.default_rng(0)
@@ -526,13 +527,37 @@ def test_convert_all_variants_keep_float_io_and_stay_close(tmp_path: Path) -> No
 def test_head_tail_stops_at_conv(tmp_path: Path) -> None:
     """출력에서 거꾸로 Conv 를 만날 때까지의 디코드 꼬리만 FP32 로 남긴다."""
     onnx = pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
     src = tmp_path / "tiny.onnx"
     _tiny_yolox(src)
     assert pb.head_tail_nodes(onnx.load(str(src))) == ["expand", "flat", "pool", "relu"]
 
 
+def test_head_tail_skips_unnamed_nodes() -> None:
+    """ONNX 는 이름 없는 노드를 허용한다 — 빈 이름은 nodes_to_exclude 에 들어가면 안 된다."""
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+    from onnx import TensorProto, helper
+
+    nodes = [
+        helper.make_node("Conv", ["images", "w"], ["conv"], name="conv"),
+        helper.make_node("Mul", ["conv", "conv"], ["mulout"], name="mul"),
+        helper.make_node("Relu", ["mulout"], ["relu"]),  # 이름 없음
+        helper.make_node("Sigmoid", ["relu"], ["output"], name="sig"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "unnamed",
+        [helper.make_tensor_value_info("images", TensorProto.FLOAT, [1, 3, 4, 4])],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 6, 4, 4])],
+    )
+    # 이름 없는 노드를 지나서도 상류(mul)까지 탐색이 이어져야 한다.
+    assert pb.head_tail_nodes(helper.make_model(graph)) == ["mul", "sig"]
+
+
 def test_static_qdq_keeps_head_tail_float(tmp_path: Path) -> None:
     onnx = pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
     src = tmp_path / "tiny.onnx"
     _tiny_yolox(src)
     tensors = [np.full((1, 3, 32, 32), 100.0, dtype=np.float32)]
@@ -687,6 +712,113 @@ def test_cli_latency_collects_subprocess_rows(
     assert any(row.get("error") == "InvalidGraph" for row in rows)
     # 보정 프레임은 지연 입력에서도 뺀다.
     assert "00001" not in calls[0][calls[0].index("--tags") + 1].split(",")
+
+
+def test_cli_latency_forwards_nms_settings_from_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frames, session_path, variants = _cli_fixture(tmp_path)
+    variants.mkdir()
+    (variants / "calibration.json").write_text('{"calibration_tags": []}', encoding="utf-8")
+    real = pb.load_config
+
+    def patched(device: str) -> dict:
+        config = real(device)
+        config["vision"]["coco"]["iou_threshold"] = 0.33
+        config["vision"]["coco"]["model_family"] = "yolox"
+        config["vision"]["ppe"].pop("iou_threshold", None)
+        config["vision"]["ppe"].pop("model_family", None)
+        return config
+
+    monkeypatch.setattr(pb, "load_config", patched)
+    calls: list[list[str]] = []
+
+    class Done:
+        returncode = 0
+        stdout = "{}\n"
+        stderr = ""
+
+    monkeypatch.setattr(pb.subprocess, "run", lambda c, **_k: calls.append(c) or Done())
+    args = ["latency", *_cli_base(frames, session_path), "--variants-dir", str(variants)]
+    assert pb.main([*args, "--providers", "cpu", "--out", str(tmp_path / "l.json")]) == 0
+    by_section: dict[str, list[list[str]]] = {"coco": [], "ppe": []}
+    for command in calls:
+        section = "coco" if "coco" in command[command.index("--model") + 1] else "ppe"
+        by_section[section].append(command)
+    assert by_section["coco"] and by_section["ppe"]
+    for command in by_section["coco"]:
+        assert command[command.index("--iou-threshold") + 1] == "0.33"
+        assert command[command.index("--model-family") + 1] == "yolox"
+    # 설정에 값이 없으면 자식 프로세스의 기본값(0.45·yolox)에 맡긴다.
+    for command in by_section["ppe"]:
+        assert "--iou-threshold" not in command
+        assert "--model-family" not in command
+
+
+def test_latency_one_builds_detector_with_given_nms_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StopError(Exception):
+        pass
+
+    seen: dict = {}
+
+    def fake_detector(config, **_kwargs):
+        seen.update(config["vision"]["m"])
+        raise StopError
+
+    monkeypatch.setattr(pb, "Detector", fake_detector)
+    monkeypatch.setattr(pb, "make_session", lambda *_a: FakeSession())
+    model = tmp_path / "m.onnx"
+    model.write_bytes(b"x")
+    with pytest.raises(StopError):
+        pb.latency_one(
+            model,
+            "CPUExecutionProvider",
+            [],
+            input_size=32,
+            labels=["a"],
+            warmup=0,
+            runs=1,
+            iou_threshold=0.2,
+            model_family="yolox",
+        )
+    assert seen["iou_threshold"] == 0.2
+    assert seen["model_family"] == "yolox"
+
+
+def test_latency_one_passes_model_family_to_detector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """기본값이 아닌 계열을 넘기면 운용 Detector 가 그 값으로 어댑터를 찾다가 거부한다."""
+    monkeypatch.setattr(pb, "make_session", lambda *_a: FakeSession())
+    model = tmp_path / "m.onnx"
+    model.write_bytes(b"x")
+    with pytest.raises(ValueError, match="모르는 model_family.*not-a-family"):
+        pb.latency_one(
+            model,
+            "CPUExecutionProvider",
+            [],
+            input_size=32,
+            labels=["a"],
+            warmup=0,
+            runs=1,
+            model_family="not-a-family",
+        )
+
+
+def test_cli_latency_one_passes_nms_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_frames(tmp_path / "f", 1)
+    seen: dict = {}
+    monkeypatch.setattr(pb, "latency_one", lambda *_a, **k: seen.update(k) or {})
+    args = ["latency-one", "--model", "m.onnx", "--provider", "cpu", "--frames"]
+    args += [str(tmp_path / "f"), "--tags", "00001", "--input-size", "640", "--labels", "a"]
+    args += ["--iou-threshold", "0.3", "--model-family", "yolox"]
+    assert pb.main(args) == 0
+    assert seen["iou_threshold"] == 0.3
+    assert seen["model_family"] == "yolox"
 
 
 def test_cli_latency_one_prints_json(
