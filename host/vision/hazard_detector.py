@@ -44,6 +44,9 @@ class HazardDetector:
         self._alarm = tuple(label for label in HAZARD_CLASSES if label in alarm)
         self._window_ms = int(spec["confirm_window_ms"])
         self._hits_required = int(spec["hits_required"])
+        #: 긴 변이 이보다 작은 박스는 버린다(0 이면 끔). 2026-10-06 합성 학습 모델이 PC 본체의
+        #: 작은 빨간 표시(16×10px)를 보조배터리로 잡았다 — 실물 라이터는 25~50px.
+        self._min_side_px = float(spec.get("min_box_side_px", 0) or 0)
         self._hits: dict[str, deque[int]] = {label: deque() for label in self._alarm}
 
     def open(self) -> None:
@@ -55,7 +58,12 @@ class HazardDetector:
             hits.clear()
 
     def observe(self, image: np.ndarray, now_ms: int) -> HazardVerdict:
-        found = tuple(d for d in self._detector.detect(image) if d.label in self._hits)
+        found = tuple(
+            d
+            for d in self._detector.detect(image)
+            if d.label in self._hits
+            and max(d.box[2] - d.box[0], d.box[3] - d.box[1]) >= self._min_side_px
+        )
         seen = {d.label for d in found}
         for label, hits in self._hits.items():
             if label in seen:
