@@ -294,6 +294,10 @@ class PpeJudge:
             return
         self._lost_since = None
         if verdict.track_id in self._done:
+            # 이미 판정한 대상을 다시 «사람 발견» 으로 잡으면 ALERT 에 머문다 — 판정은 반복하지 않고
+            # 순찰로 돌려보낸다 (2026-10-06 실기: 침실 옷걸이 옷을 사람 0.46 으로 잡아 D 에서 정지).
+            if self._settle_at is None and self._apply(Event.PPE_SETTLED, now_ms):
+                self._escalation.settle_ppe(now_ms)
             return
         if verdict.track_id != self._target:
             self.return_pose()
