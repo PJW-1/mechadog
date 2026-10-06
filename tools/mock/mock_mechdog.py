@@ -41,10 +41,13 @@ L1·L2)에 있고 여기 있는 것은 그 *대역*이다. 임계값을 `config.
 
     python tools/mock/mock_mechdog.py --device mechdog-ref
     python tools/mock/mock_mechdog.py --tip-at 30 --drop-rate 0.2 --seed 42
+    python tools/mock/mock_mechdog.py --cmd-delay 300 --cmd-jitter 100 --seed 7
 """
 
 import argparse
 import contextlib
+import heapq
+import itertools
 import math
 import random
 import socket
@@ -97,6 +100,11 @@ class Faults:
     obstacle_at_s: float | None = None  # 이 시각에 장애물 출현 (초음파 반사)
     go_silent_at_s: float | None = None  # 이 시각부터 텔레메트리 중단 (링크 두절)
     seed: int | None = None  # 같은 고장을 재현하기 위한 난수 씨앗
+    # 지연 주입 (ms). 흔들림은 0~jitter 균등 분포라 송신 간격보다 크면 순서가 바뀐다.
+    cmd_delay_ms: float = 0.0  # 호스트 → 로봇 명령 지연
+    cmd_jitter_ms: float = 0.0
+    telemetry_delay_ms: float = 0.0  # 로봇 → 호스트 텔레메트리 지연
+    telemetry_jitter_ms: float = 0.0
 
 
 @dataclass
@@ -113,6 +121,48 @@ class Stats:
             f"수신 {self.received} · 수락 {self.accepted} · 클램핑 {self.clamped} · "
             f"폐기 {self.discarded} · 유실 {self.dropped} · 송신 {self.sent}"
         )
+
+
+# ══════════════════════════════════════════════════════════════
+#  지연 주입 — 소켓을 모르는 대기열
+# ══════════════════════════════════════════════════════════════
+
+
+def delay_rng(seed: int | None, stream: str) -> random.Random:
+    """지연 흔들림용 난수. 방향마다 따로 둬서 유실 난수열(`MockRobot`)을 건드리지 않는다."""
+    return random.Random(None if seed is None else f"{seed}:{stream}")
+
+
+class DelayLine[T]:
+    """패킷을 정해진 시각까지 붙잡아 두는 대기열.
+
+    ⚠️ **패킷을 없애지 않는다.** 유실은 `drop_rate` 의 몫이다. 여기서는 늦추기만 하고,
+    흔들림이 송신 간격보다 크면 순서가 바뀐다. UDP 에서 실제로 일어나는 일이다.
+    """
+
+    def __init__(self, delay_ms: float, jitter_ms: float, rng: random.Random) -> None:
+        if delay_ms < 0 or jitter_ms < 0:
+            raise ValueError(f"지연과 흔들림은 0 이상이어야 한다: {delay_ms}, {jitter_ms}")
+        self._delay_ms = delay_ms
+        self._jitter_ms = jitter_ms
+        self._rng = rng
+        self._heap: list[tuple[float, int, T]] = []
+        self._order = itertools.count()  # 풀리는 시각이 같으면 도착 순서를 지킨다
+
+    def __len__(self) -> int:
+        return len(self._heap)
+
+    def push(self, item: T, now_ms: int) -> None:
+        # 흔들림이 없으면 난수를 소비하지 않는다. 씨앗이 같은 기존 재현이 그대로 남는다.
+        jitter = self._rng.uniform(0.0, self._jitter_ms) if self._jitter_ms else 0.0
+        heapq.heappush(self._heap, (now_ms + self._delay_ms + jitter, next(self._order), item))
+
+    def pop_ready(self, now_ms: int) -> list[T]:
+        """풀릴 시각이 지난 패킷을 풀리는 시각 순서대로 꺼낸다."""
+        ready: list[T] = []
+        while self._heap and self._heap[0][0] <= now_ms:
+            ready.append(heapq.heappop(self._heap)[2])
+        return ready
 
 
 # ══════════════════════════════════════════════════════════════
@@ -172,6 +222,10 @@ class MockRobot:
         self._retreat_mm = 0.0
         self._motion_at_ms = start_ms
         self.stats = Stats()
+
+    @property
+    def faults(self) -> Faults:
+        return self._faults
 
     # ── 수신 ────────────────────────────────────────────────
 
@@ -412,6 +466,13 @@ def _describe(result: DecodeResult | None) -> str:
     return f"{msg.get('type')} {body}{tail}".strip()
 
 
+def deliver[R: (str, bytes)](
+    line: DelayLine[R], robot: MockRobot, now_ms: int
+) -> list[DecodeResult | None]:
+    """대기열에서 풀려난 명령을 로봇에 넣는다. 로봇이 명령을 받는 시각은 풀려난 시각이다."""
+    return [robot.receive(raw, now_ms) for raw in line.pop_ready(now_ms)]
+
+
 def _log(now_ms: int, message: str) -> None:
     print(f"[{now_ms % 1_000_000:6d}] {message}", flush=True)
 
@@ -436,8 +497,26 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None, bind_host: st
     log = _LogState()
     peer: tuple[str, int] | None = (peer_host, net["telemetry_port"]) if peer_host else None
     next_tx = time.monotonic()
+    faults = robot.faults
+    commands: DelayLine[bytes] = DelayLine(
+        faults.cmd_delay_ms, faults.cmd_jitter_ms, delay_rng(faults.seed, "cmd")
+    )
+    outbound: DelayLine[str] = DelayLine(
+        faults.telemetry_delay_ms, faults.telemetry_jitter_ms, delay_rng(faults.seed, "telemetry")
+    )
 
     _log(system_clock_ms(), f"수신 대기 :{net['cmd_port']} · 텔레메트리 :{net['telemetry_port']}")
+    delays = (
+        faults.cmd_delay_ms,
+        faults.cmd_jitter_ms,
+        faults.telemetry_delay_ms,
+        faults.telemetry_jitter_ms,
+    )
+    if any(delays):
+        _log(
+            system_clock_ms(),
+            "지연 주입 · 명령 {:g}+0~{:g}ms · 텔레메트리 {:g}+0~{:g}ms".format(*delays),
+        )
     while True:
         now_ms = system_clock_ms()
 
@@ -453,7 +532,9 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None, bind_host: st
             if peer is None:
                 peer = (addr[0], net["telemetry_port"])
                 _log(now_ms, f"호스트 발견 {peer[0]}")
-            result = robot.receive(data, now_ms)
+            commands.push(data, now_ms)
+
+        for result in deliver(commands, robot, now_ms):
             described = _describe(result)
             if described != log.command:  # 엣지 트리거
                 _log(now_ms, f"◀ {described}")
@@ -467,10 +548,14 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None, bind_host: st
         if time.monotonic() >= next_tx:
             line = robot.telemetry(now_ms)
             if line is not None and peer is not None:
+                outbound.push(line, now_ms)
+            next_tx += period_s
+
+        if peer is not None:
+            for line in outbound.pop_ready(now_ms):
                 # 호스트가 내려가 있어도 목업은 계속 보낸다 — 진짜 로봇도 그렇다.
                 with contextlib.suppress(OSError):
                     sock.sendto(line.encode("utf-8"), peer)
-            next_tx += period_s
 
         if now_ms >= log.next_summary_ms:  # 주기 요약
             if log.next_summary_ms:
@@ -483,6 +568,13 @@ def run(robot: MockRobot, cfg: dict, peer_host: str | None = None, bind_host: st
 # ══════════════════════════════════════════════════════════════
 #  CLI
 # ══════════════════════════════════════════════════════════════
+
+
+def _non_negative_ms(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError(f"0 이상의 ms 여야 한다: {text}")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -507,7 +599,45 @@ def build_parser() -> argparse.ArgumentParser:
     faults.add_argument("--obstacle-at", type=float, default=None, help="N초 후 장애물 출현")
     faults.add_argument("--go-silent", type=float, default=None, help="N초 후 텔레메트리 중단")
     faults.add_argument("--seed", type=int, default=None, help="같은 고장을 재현하기 위한 씨앗")
+    faults.add_argument(
+        "--cmd-delay", type=_non_negative_ms, default=0.0, help="명령 지연 ms (호스트 → 로봇)"
+    )
+    faults.add_argument(
+        "--cmd-jitter",
+        type=_non_negative_ms,
+        default=0.0,
+        help="명령 지연 흔들림 0~N ms. 송신 간격보다 크면 순서가 바뀐다",
+    )
+    faults.add_argument(
+        "--telemetry-delay",
+        type=_non_negative_ms,
+        default=0.0,
+        help="텔레메트리 지연 ms (로봇 → 호스트)",
+    )
+    faults.add_argument(
+        "--telemetry-jitter",
+        type=_non_negative_ms,
+        default=0.0,
+        help="텔레메트리 지연 흔들림 0~N ms",
+    )
     return parser
+
+
+def faults_from_args(args: argparse.Namespace) -> Faults:
+    return Faults(
+        drop_rate=args.drop_rate,
+        corrupt_rate=args.corrupt_rate,
+        battery_start_v=args.battery_start,
+        battery_drain_v_per_min=args.battery_drain,
+        tip_at_s=args.tip_at,
+        obstacle_at_s=args.obstacle_at,
+        go_silent_at_s=args.go_silent,
+        seed=args.seed,
+        cmd_delay_ms=args.cmd_delay,
+        cmd_jitter_ms=args.cmd_jitter,
+        telemetry_delay_ms=args.telemetry_delay,
+        telemetry_jitter_ms=args.telemetry_jitter,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -519,16 +649,7 @@ def main(argv: list[str] | None = None) -> int:
     robot = MockRobot(
         device_id=args.device,
         cfg=cfg,
-        faults=Faults(
-            drop_rate=args.drop_rate,
-            corrupt_rate=args.corrupt_rate,
-            battery_start_v=args.battery_start,
-            battery_drain_v_per_min=args.battery_drain,
-            tip_at_s=args.tip_at,
-            obstacle_at_s=args.obstacle_at,
-            go_silent_at_s=args.go_silent,
-            seed=args.seed,
-        ),
+        faults=faults_from_args(args),
         start_ms=system_clock_ms(),
     )
     with contextlib.suppress(KeyboardInterrupt):
