@@ -18,6 +18,8 @@ from host.slam.scan_match import Pose
 
 @dataclass(frozen=True)
 class NavParams:
+    route_direct: bool = True
+    route_direct_stop_ms: int = 3000
     live_clear_scans: int = 3
     live_clear_ttl_ms: int = 2000
     local_slow_m: float = 0.40
@@ -53,6 +55,11 @@ class NavParams:
         values: dict[str, Any] = {}
         for key in cls.__dataclass_fields__:
             value = section.get(key, getattr(defaults, key))
+            if isinstance(getattr(defaults, key), bool):
+                if not isinstance(value, bool):
+                    raise ConfigError(f"nav.{key} 는 bool이어야 함")
+                values[key] = value
+                continue
             if (
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
