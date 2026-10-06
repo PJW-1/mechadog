@@ -78,8 +78,8 @@ constexpr uint32_t kLinkHealthyAgeMs = 3000;
 constexpr float kBatteryWarningV = 7.0f;
 // Tier 1 온보드 판정 임계 — config/config.yaml `safety` 절과 같은 값이다.
 constexpr float kBatteryShutdownV = 6.6f;  // safety.battery_shutdown_v (NFR-2.3)
-constexpr float kObstacleStopCm = 25.0f;   // safety.obstacle_stop_cm (FR-2.2)
-constexpr float kObstacleClearCm = 30.0f;  // 해제는 더 멀리서 — 경계 진동 방지
+constexpr float kObstacleStopCm = 7.0f;    // safety.obstacle_stop_cm (FR-2.2) — 2026-10-06 25→7: LiDAR 가 코끝 약 14cm 에서 먼저 서므로 초음파는 낮은 물체용 마지막 안전장치. 25cm 는 좁은 코너에서 자주 끼어들었다(10-06 로그 4회)
+constexpr float kObstacleClearCm = 10.0f;  // 해제는 더 멀리서 — 경계 진동 방지 (10-06 30→10)
 constexpr size_t kPacketBufferSize = 512;
 
 WiFiUDP g_udp;
