@@ -112,6 +112,8 @@ def _is_oversized_datagram(exc: OSError) -> bool:
 # `SOUND` ACK 대기 — 실측 왕복은 30ms 안팎(`last_cmd_age_ms`)이라 세 주기면 넉넉하다.
 SOUND_ACK_TIMEOUT_MS = 300
 SOUND_RETRIES = 2
+# `SOUND.track` 상한 (PROTOCOL `SOUND` 절 · `dashboard.commands.SOUND_TRACK_MAX` 와 같은 값).
+ROBOT_SOUND_TRACK_MAX = 3000
 
 #: VLM 적재가 끝날 때까지 순찰 시작을 미루는 상한. 실측 적재는 ~15초 — 이 상한을
 #: 넘는 적재는 멈춰 있다고 보고, 굶김 위험을 로그로 남기고 시작한다.
@@ -401,6 +403,12 @@ class Runtime:
         #: 않는 계약이지만 `_record_scene` 에서 다시 한 번 감싼다 — 아직 없는 계약을
         #: 믿고 안 감싸면 방송기가 하나라도 어기는 순간 제어 틱이 죽는다.
         self._announcer = announcer
+        #: 사건 → 로봇 MP3 모듈 TF 카드 트랙 (`robot_sound.tracks` · ADR-38 말하기 경로).
+        #: 키는 사건 이름(`person_fallen` 등)이나 경고 키(`ppe_violation_warning`). 비면 안 튼다.
+        self._robot_tracks = {
+            str(k): int(v)
+            for k, v in ((config.get("robot_sound") or {}).get("tracks") or {}).items()
+        }
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -1250,7 +1258,23 @@ class Runtime:
                 self._announcer(sentence)
             except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
                 LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
+        if sentence is not None:
+            self._play_robot_track(event_type)
         return sentence
+
+    def _play_robot_track(self, key: str) -> None:
+        """`key` 에 맞는 TF 카드 트랙을 로봇 스피커로 튼다. 표에 없으면 아무것도 안 한다.
+
+        ACK 가 없으면 `_resend_sound` 가 새 seq 로 다시 싣는다.
+        """
+        track = self._robot_tracks.get(key)
+        if track is None or not 0 < track <= ROBOT_SOUND_TRACK_MAX:
+            return
+        try:
+            self._commander.once("SOUND", track=track)
+            LOG.info("robot_sound", key=key, track=track)
+        except Exception as exc:  # noqa: BLE001 — 소리 실패가 제어를 막으면 안 된다
+            LOG.error("robot_sound_failed", error=f"{type(exc).__name__}: {exc}")
 
     def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
         """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (좌우 대칭 근거).
@@ -1388,6 +1412,9 @@ class Runtime:
                 "reason": self._escalation.reason,
             }
         )
+        reason = self._escalation.reason
+        if self._escalation.presentation().warning and isinstance(reason, str):
+            self._play_robot_track(f"{reason.lower()}_warning")
 
     def _announce_transition(self, event: Event, previous: str, now_ms: int) -> None:
         """인증·안전 전이를 관제 사건으로 낸다. 전이 로그(jsonl)에만 있던 것들이다."""
