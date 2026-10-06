@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             try:
                 known = store.incident(row.incident_id) is not None
-            except sqlite3.Error:
+            except (sqlite3.Error, ValueError):  # 잠긴 DB · 깨진 detail JSON
                 counts["failed"] += 1
                 continue
             if known:

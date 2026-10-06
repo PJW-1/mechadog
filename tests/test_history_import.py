@@ -94,3 +94,20 @@ def test_incident_lookup_failure_counts_the_folder_as_failed_and_continues(
 
     assert run(blackbox, tmp_path / "h.sqlite3") == 1
     assert "failed 2" in capsys.readouterr().out
+
+
+def test_corrupt_existing_row_counts_as_failed_instead_of_crashing(blackbox, tmp_path, capsys):
+    db = tmp_path / "h.sqlite3"
+    assert run(blackbox, db) == 0
+    capsys.readouterr()
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "UPDATE incidents SET detail = '{not json' WHERE incident_id = ?",
+            ("mechdog-02_1000_fall",),
+        )
+    conn.close()
+
+    assert run(blackbox, db) == 1
+    out = capsys.readouterr().out
+    assert "existing 1" in out and "failed 1" in out
