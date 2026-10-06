@@ -11,9 +11,12 @@ import {Scene3D} from '../static/scene3d.js';
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
 const source=(await readFile(new URL('../static/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
 const layout=JSON.parse(await readFile(new URL('../static/factory-layout.json',import.meta.url),'utf8'));
-async function boot(hash='dashboard',{health=null,fleet=null,policy=null,search=''}={}){
+async function boot(hash='dashboard',{health=null,fleet=null,policy=null,search='',cameraRecord=null,storageFailure=false,storageWriteFailure=false}={}){
  const dom=new JSDOM(html,{url:'http://127.0.0.1:4175/'+search+'#'+hash,runScripts:'outside-only',pretendToBeVisual:true}),window=dom.window,document=window.document,registered=new Map(),revoked=[];
  let store,panels,view,robotView,robotViewCount=0;const failures=[];window.addEventListener('error',event=>failures.push(event.error));
+ if(cameraRecord!==null)window.localStorage.setItem('mechadog.dashboard.camera.v1',cameraRecord);
+ if(storageFailure)Object.defineProperty(window,'localStorage',{get(){throw new Error('storage blocked')}});
+ if(storageWriteFailure)window.Storage.prototype.setItem=()=>{throw new Error('storage quota exceeded')};
  // health 를 주면 대시보드 서버가 내보낸 화면처럼 실제 연결 경로로 뜬다. fleet 을 주면 /api/fleet 가 응답한다 (여러 대).
  window.fetch=async url=>{
   const s=String(url);
@@ -477,4 +480,61 @@ test('a legacy health response keeps the connection type unknown',async()=>{
  const {dom,document,store}=await boot('missions',{health:{service:'telemetry',read_only:false,vision_clients:null}});
  assert.equal(store.simulated,null);assert.equal(document.querySelector('#source-status').textContent,'연결 유형 미확인');
  assert.match(document.querySelector('[data-drive="FORWARD"]').getAttribute('aria-label'),/유형 미확인/);dom.window.close();
+});
+
+function cameraGeometry(document,{width=1200,height=650}={}){
+ const stage=document.querySelector('#stage'),dock=document.querySelector('#camera-dock');
+ const bounds={left:100,top:140,width,height};
+ stage.getBoundingClientRect=()=>({...bounds,right:bounds.left+bounds.width,bottom:bounds.top+bounds.height});
+ dock.getBoundingClientRect=()=>{
+  const w=parseFloat(dock.style.width)||320,h=dock.classList.contains('collapsed')?48:148+w/(4/3);
+  const left=100+(dock.style.left ? parseFloat(dock.style.left) : 850),top=140+(dock.style.top ? parseFloat(dock.style.top) : 92);
+  return {left,top,width:w,height:h,right:left+w,bottom:top+h};
+ };
+ Object.defineProperties(dock,{offsetWidth:{get:()=>dock.getBoundingClientRect().width},offsetHeight:{get:()=>dock.getBoundingClientRect().height},offsetLeft:{get:()=>parseFloat(dock.style.left)||0}});
+ return {dock,bounds};
+}
+function cameraPointer(window,target,type,x,y){
+ const event=new window.Event(type,{bubbles:true,cancelable:true});
+ Object.assign(event,{pointerId:1,button:0,clientX:x,clientY:y});target.dispatchEvent(event);
+}
+test('AW camera drag and corner resize persist, restore, collapse and clamp to a smaller viewport',async()=>{
+ const state=await boot();const {document,window}=state;
+ const {dock,bounds}=cameraGeometry(document),header=dock.querySelector('.camera-header'),grip=dock.querySelector('.resize-se');
+ cameraPointer(window,header,'pointerdown',1000,250);
+ cameraPointer(window,header,'pointermove',850,220);
+ cameraPointer(window,header,'pointerup',850,220);
+ assert.equal(dock.style.left,'700px');assert.equal(dock.style.top,'62px');
+ cameraPointer(window,grip,'pointerdown',1120,570);
+ cameraPointer(window,grip,'pointermove',1220,600);
+ cameraPointer(window,grip,'pointerup',1220,600);
+ assert.equal(dock.style.width,'420px');
+ const key='mechadog.dashboard.camera.v1',record=window.localStorage.getItem(key);
+ const restored=await boot('dashboard',{cameraRecord:record});
+ assert.equal(restored.document.querySelector('#camera-dock').style.width,'420px');
+ assert.equal(restored.document.querySelector('#camera-dock').style.left,'700px');
+ document.querySelector('#collapse-camera').click();
+ assert.equal(JSON.parse(window.localStorage.getItem(key)).collapsed,true);
+ const folded=await boot('dashboard',{cameraRecord:window.localStorage.getItem(key)});
+ assert.equal(folded.document.querySelector('#collapse-camera').getAttribute('aria-expanded'),'false');
+ document.querySelector('#collapse-camera').click();
+ bounds.width=800;bounds.height=400;window.dispatchEvent(new window.Event('resize'));
+ const rect=dock.getBoundingClientRect();assert.ok(rect.right<=bounds.left+bounds.width);assert.ok(rect.bottom<=bounds.top+bounds.height);
+ assert.deepEqual(state.failures,[]);
+ for(const s of [state,restored,folded])s.dom.window.close();
+});
+test('AW invalid or blocked camera storage uses defaults and leaves dragging functional',async()=>{
+ for(const options of [{cameraRecord:'invalid json'},{cameraRecord:JSON.stringify({version:1,left:-1,top:0,width:320,collapsed:false})},{storageFailure:true},{storageWriteFailure:true}]){
+  const state=await boot('dashboard',options),{document,window}=state;
+  const dock=document.querySelector('#camera-dock');assert.equal(dock.style.left,'');assert.equal(dock.style.width,'');
+  cameraGeometry(document);const header=dock.querySelector('.camera-header');
+  cameraPointer(window,header,'pointerdown',1000,250);cameraPointer(window,header,'pointermove',850,220);cameraPointer(window,header,'pointerup',850,220);
+  assert.equal(dock.style.left,'700px');assert.deepEqual(state.failures,[]);state.dom.window.close();
+ }
+});
+test('AW stored camera geometry is isolated from the manual control mount and mobile dragging',async()=>{
+ const state=await boot(),{document,window}=state;const {dock}=cameraGeometry(document),header=dock.querySelector('.camera-header');
+ window.matchMedia=()=>({matches:true});cameraPointer(window,header,'pointerdown',1000,250);cameraPointer(window,header,'pointermove',700,220);cameraPointer(window,header,'pointerup',700,220);assert.equal(dock.style.left,'');
+ window.matchMedia=()=>({matches:false});document.querySelector('[data-view="missions"]').click();
+ cameraPointer(window,header,'pointerdown',1000,250);cameraPointer(window,header,'pointermove',700,220);cameraPointer(window,header,'pointerup',700,220);assert.equal(dock.style.left,'');assert.equal(window.localStorage.getItem('mechadog.dashboard.camera.v1'),null);state.dom.window.close();
 });
