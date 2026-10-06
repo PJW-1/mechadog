@@ -439,6 +439,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 
 | 현재 상태 | 트리거 | 다음 상태 | 액션 | Tier |
 | :--- | :--- | :--- | :--- | :---: |
+| `PATROL` / `SCAN` / `AVOID` / `LOST` | `GOAL_UNREACHABLE` (단일 지도 이동 목표 도달 불가) | `IDLE` | STOP, 실패 결과·관제 사건 유지. 안전 래치·FAILSAFE는 해제하지 않음 | Tier 2 |
 | `IDLE` | `CMD_START_PATROL` | `PATROL` | Trot 보행 개시 | 2 |
 | `PATROL` | 초음파 < 25 cm | `AVOID` | **즉시 정지(온보드)** 후 회피 시퀀스 | 1→2 |
 | `PATROL` | person 300ms 안에 3회 검출 | `ALERT` | **`POSE pitch = -15°`**(고개를 든다 · 음수가 그 방향이다 · 2026-09-15 IMU 실측), 정지, 경고 발령, 스냅샷 저장. **실기 확인 2026-09-18** (`pitch` +0.2 → **-11.5**, 38초 유지 ±0.13°). ⚠️ **진입 즉시가 아니라 `posture.alert_hold_ms`(1초) 머문 뒤에 잡는다** — `TRACK` 과의 왕복 체류가 0.2~0.6초라 즉시 보내면 보간이 매번 재시작해 고개가 들썩인다 | 2 |

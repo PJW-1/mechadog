@@ -32,7 +32,7 @@ export function describeNav(nav) {
   if (nav.zone_hint) parts.push('구역 ' + nav.zone_hint + ' 안에서 찾는 중');
   if (nav.point_hint && !nav.verified) parts.push('알려준 점 주변에서 위치 찾는 중');
   if (nav.goal) parts.push('찍은 곳으로 이동 중');
-  else if (nav.holding_goal && nav.goal_hold_reason === 'blocked') parts.push('찍은 곳으로 가는 길이 막혀 정지 · 대기');
+  else if (nav.holding_goal && nav.goal_hold_reason === 'blocked') parts.push('목표 도달 불가 · 이동 종료');
   else if (nav.holding_goal) parts.push('찍은 곳 도착 · 대기 (순찰 시작으로 복귀)');
   const fb = nav.goal_feedback;
   if (fb && fb.accepted === false) parts.push('이동 거절 — ' + (fb.detail || '사유 미수신'));

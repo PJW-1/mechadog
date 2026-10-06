@@ -1232,6 +1232,10 @@ def test_steer_uses_live_gap_for_body_overlap() -> None:
     controller.zones.place(4, 2)
     controller.resume()
     controller.observe_map_pose((*grid.to_world(40, 42), 0), 1000)
+    # AO: a scan acquired at the old pose cannot prove space at the new pose.
+    from test_live_nav import revolution
+
+    controller.observe_obstacle_scan(revolution(2), 1000)
     controller.steer(1000)
     assert controller.phase is not Phase.LOST
     assert controller.local_status["action"] == "escape"
@@ -1296,6 +1300,9 @@ def test_tracking_uses_live_escape_from_old_map_clearance() -> None:
     controller.observe_map_pose((2, 2, 0), 1000)
     controller.steer(1000)
     controller.observe_map_pose((3, 2, 0), 1000)
+    from test_live_nav import revolution
+
+    controller.observe_obstacle_scan(revolution(2), 1000)
     controller.steer(1000)
     assert controller.phase is not Phase.LOST
     assert controller.commander.intent.type_ == "STOP"

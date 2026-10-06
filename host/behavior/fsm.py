@@ -43,6 +43,7 @@ class Event(StrEnum):
     # ── 순찰 ──
     START_PATROL = "START_PATROL"  # 대시보드에서 순찰 시작을 눌렀다
     SCAN_DUE = "SCAN_DUE"  # 순찰 타이머 10s 만료 (FR-2.4)
+    GOAL_UNREACHABLE = "GOAL_UNREACHABLE"  # Single goto ended without reaching its goal.
     SCAN_DONE = "SCAN_DONE"  # 상체 스캔 3초 완료
     # ── 온보드 반사를 호스트가 따라간다 ──
     ONBOARD_AVOID = "ONBOARD_AVOID"  # 초음파 25cm 반사 정지를 로봇이 보고했다
@@ -109,6 +110,10 @@ TRANSITIONS: tuple[Transition, ...] = (
     Transition("IDLE", Event.START_PATROL, "PATROL"),
     Transition("PATROL", Event.SCAN_DUE, "SCAN"),
     Transition("SCAN", Event.SCAN_DONE, "PATROL"),
+    Transition("PATROL", Event.GOAL_UNREACHABLE, "IDLE"),
+    Transition("SCAN", Event.GOAL_UNREACHABLE, "IDLE"),
+    Transition("AVOID", Event.GOAL_UNREACHABLE, "IDLE"),
+    Transition("LOST", Event.GOAL_UNREACHABLE, "IDLE"),
     # ── 온보드 반사를 호스트가 따라간다 (FAILSAFE 와 같은 방식) ──
     Transition("PATROL", Event.ONBOARD_AVOID, "AVOID"),
     Transition("AVOID", Event.AVOID_CLEARED, "PATROL"),
@@ -512,7 +517,8 @@ class Behavior:
             else:
                 sequence(self._commander, now_ms)
         # YIELD 은 건드리지 않는다 — 조작자가 세운 의도를 살려둔다.
-        self._commander.announce(state)
+        # A sequence may end a navigation mission during this tick.
+        self._commander.announce(self._fsm.state)
         return self._commander.tick(now_ms)
 
 

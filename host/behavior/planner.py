@@ -272,15 +272,19 @@ def mark_obstacle(blocked: np.ndarray, grid: OccupancyGrid, hit: Point, radius_m
     지도(`grid.cells`)는 고치지 않는다 — 동적 장애물은 이번 순찰의 사실이지 공간의 사실이 아니다.
     """
     row0, col0 = grid.to_cell(*hit)
-    radius_cells = int(math.ceil(radius_m / grid.meta.resolution))
+    res = grid.meta.resolution
+    radius_cells = int(math.ceil(radius_m / res)) + 1
     height, width = blocked.shape
-    for d_row in range(-radius_cells, radius_cells + 1):
-        for d_col in range(-radius_cells, radius_cells + 1):
-            if d_row * d_row + d_col * d_col > radius_cells * radius_cells:
-                continue
-            row, col = row0 + d_row, col0 + d_col
-            if 0 <= row < height and 0 <= col < width:
-                blocked[row, col] = True
+    r0, r1 = max(0, row0 - radius_cells), min(height, row0 + radius_cells + 1)
+    c0, c1 = max(0, col0 - radius_cells), min(width, col0 + radius_cells + 1)
+    if r0 >= r1 or c0 >= c1:
+        return
+    # 실제 끝점 원판과 셀 사각형의 교차. 끝점/반경은 격자로 반올림하지 않는다.
+    x = grid.meta.origin_x + np.arange(c0, c1) * res
+    y = grid.meta.origin_y + np.arange(r0, r1) * res
+    dx = np.maximum(np.maximum(x - hit[0], hit[0] - (x + res)), 0)
+    dy = np.maximum(np.maximum(y - hit[1], hit[1] - (y + res)), 0)
+    blocked[r0:r1, c0:c1] |= dy[:, None] ** 2 + dx[None, :] ** 2 <= radius_m**2
 
 
 def distance_costs(

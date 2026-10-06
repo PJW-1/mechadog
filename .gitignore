@@ -120,3 +120,6 @@ field_tests/results/**/raw/
 # AG 실기 재생·집 지도 사본·목업 trace는 로컬 검증 산출물이다.
 /out/ag/
 /out/ah/
+/out/am/
+/out/ao/
+/out/ap/
