@@ -12,6 +12,7 @@ from test_runtime import FakeSocket, config
 from test_runtime_lidar import _camera_aim_runtime, _camera_aim_tick, _patrolling
 
 from host.behavior.fsm import Event
+from host.behavior.live_nav import NavParams
 from host.behavior.patrol import PatrolController, Phase
 from host.behavior.planner import Plan
 from host.behavior.routes import Route, RoutePoint, load_routes, route_digest, routes_content
@@ -138,7 +139,7 @@ def test_route_aiming_obeys_existing_safety_guards(guard: str) -> None:
 
 
 def test_route_blocked_while_moving_does_not_fall_back_to_zone_patrol() -> None:
-    controller = build()
+    controller = build(nav_params=NavParams(route_direct=False))
     fresh(controller, 1000, (1.0, 1.0, 0.0))
     assert controller.start_route(route(RoutePoint(x=4.0, y=1.0)), 1000)[0]
     controller.grid.cells[:, 50:60] = 3
@@ -153,7 +154,7 @@ def test_route_blocked_while_moving_does_not_fall_back_to_zone_patrol() -> None:
 
 @pytest.mark.parametrize("after_start", [False, True])
 def test_route_does_not_snap_a_dynamically_blocked_point_elsewhere(after_start):
-    controller = build()
+    controller = build(nav_params=NavParams(route_direct=False))
     fresh(controller, 1000, (1.0, 1.0, 0.0))
     saved = route(RoutePoint(x=4.0, y=1.0))
     if after_start:

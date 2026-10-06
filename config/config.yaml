@@ -8,10 +8,13 @@
 profile: dev            # dev | prod
 
 nav:
+  # AR: 미리보기 통과 동선은 다음 지점으로 직접 추종. false면 기존 A*/막힘 복구 사용.
+  route_direct: true
+  route_direct_stop_ms: 3000  # 실제 장애물 STOP이 3초 지속될 때만 AO 통로/우회로 전환
   # AG 사용자 승인: 지도는 큰 길, 최신 360도 LiDAR는 실제 장애물 판단.
   live_clear_scans: 3          # verified 자세에서 연속 3바퀴 빔 통과 셀만 임시 비움
   live_clear_ttl_ms: 2000      # 2초 안에 재관측되지 않으면 원래 지도 복귀
-  local_slow_m: 0.40          # 진행 방향 ±30도 최근접 거리 40cm 아래 감속
+  local_slow_m: 0.36          # 현장 기준: 진행 방향 ±30도 36cm 아래 감속, 37cm는 진행
   local_stop_m: 0.25          # 25cm 아래 STOP, 로봇 자체 초음파 25cm 정지는 유지
   local_fan_deg: 30
   corridor_margin_m: 0.02     # AO: 최신 끝점 사이 몸 지름 30cm + 좌우 각 2cm
