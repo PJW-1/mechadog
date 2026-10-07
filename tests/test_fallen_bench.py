@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 import pytest
 
-from host.common.config import load_base_config
+from host.common.config import load_base_config, load_config
 from host.vision.detector import Detection, ModelMissingError, nms
 from tools.probe import fallen_bench as fb
 
@@ -284,6 +284,36 @@ def test_operating_row_uses_config_values_even_if_not_swept(tmp_path: Path, caps
         (OP_CONF, OP_ASPECT, True),
     ]
     assert f"conf {OP_CONF}" in capsys.readouterr().out
+
+
+def test_device_profile_sets_operating_row(tmp_path: Path) -> None:
+    # 시연기 프로파일은 `vision.coco.conf_threshold` 를 덮어쓴다(mechdog-02 · 2026-10-06 실기 0.35).
+    # 전역 설정만 읽으면 «운용» 행이 그 기체가 실제로 쓰지 않는 값으로 나온다.
+    device = load_config("mechdog-02")
+    dev_conf = float(device["vision"]["coco"]["conf_threshold"])
+    dev_aspect = float(device["vision"]["fallen"]["aspect_ratio"])
+    root = _tree(tmp_path / "root", {"person_down/yes/누움_01.jpg": 40})
+    code, _ = _run(
+        root,
+        {40: [person(0.9, WIDE)]},
+        ["--device", "mechdog-02"],
+        out=tmp_path / "raw.json",
+    )
+    assert code == 0
+    raw = json.loads((tmp_path / "raw.json").read_text(encoding="utf-8"))
+    assert raw["meta"]["device"] == "mechdog-02"
+    assert raw["meta"]["operating"] == {"conf": dev_conf, "aspect": dev_aspect}
+    rows = raw["summary"]["sweep"]
+    assert [(r["conf"], r["aspect"]) for r in rows if r["operating"]] == [(dev_conf, dev_aspect)]
+
+
+def test_without_device_operating_row_is_global_config(tmp_path: Path) -> None:
+    root = _tree(tmp_path / "root", {"person_down/yes/누움_01.jpg": 40})
+    code, _ = _run(root, {40: [person(0.9, WIDE)]}, out=tmp_path / "raw.json")
+    assert code == 0
+    raw = json.loads((tmp_path / "raw.json").read_text(encoding="utf-8"))
+    assert raw["meta"]["device"] is None
+    assert raw["meta"]["operating"] == {"conf": OP_CONF, "aspect": OP_ASPECT}
 
 
 def test_raw_json_keeps_floor_detections_without_image_bytes(tmp_path: Path) -> None:

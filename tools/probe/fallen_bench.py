@@ -43,6 +43,8 @@
     (`vlm_bench.scene_of`), **장면 안 프레임 하나라도 후보면** 그 장면을 «후보» 로 친다 —
     런타임은 후보 한 번으로 의심에 들어가기 때문이다. 운용 설정(설정 파일의
     `vision.coco.conf_threshold`·`vision.fallen.aspect_ratio`)은 훑기 값에 없어도 늘 보고한다.
+    `--device <id>` 를 주면 그 개체 프로파일을 합친 값이 운용 설정이다 — 시연기 `mechdog-02` 는
+    conf 를 0.35 로 덮어쓰므로(2026-10-06 실기) 시연기 사진은 `--device mechdog-02` 로 잰다.
 
     ⚠️ `vision.coco.conf_threshold` 는 쓰러짐만의 값이 아니다 — 내리면 사람 판정
     (`PersonGate`)·추적·PPE 게이팅도 함께 바뀐다.
@@ -67,7 +69,7 @@ from typing import Any, Protocol
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from host.common.config import load_base_config  # noqa: E402
+from host.common.config import load_base_config, load_config  # noqa: E402
 from host.common.console import survive_encoding_errors  # noqa: E402
 from host.vision.coco_labels import COCO_CLASSES  # noqa: E402
 from host.vision.detector import Detection, Detector, ModelMissingError  # noqa: E402
@@ -314,9 +316,12 @@ def main(
         "--aspects", type=_values, default=[1.2, 1.5, 2.0], help="훑을 종횡비 (쉼표)"
     )
     parser.add_argument("--out", type=Path, help="원자료 JSON 경로 (이미지는 담지 않는다)")
+    parser.add_argument(
+        "--device", help="운용 설정을 읽을 개체 프로파일 (없으면 전역 설정 · 시연기는 mechdog-02)"
+    )
     args = parser.parse_args(argv)
 
-    config = load_base_config()
+    config = load_base_config() if args.device is None else load_config(args.device)
     operating = (
         float(config["vision"]["coco"]["conf_threshold"]),
         float(config["vision"]["fallen"]["aspect_ratio"]),
@@ -361,7 +366,7 @@ def main(
         f"# 쓰러짐 후보 벤치 — 모델 `{model['name']}` · sha256 {str(model['sha256'])[:12]} "
         f"· {model['provider']}\n\n"
         f"사진 예 {yes}장 · 아니오 {len(records) - yes}장 · 장면 {scenes}개 "
-        f"· conf 바닥값 {args.conf_floor}\n"
+        f"· conf 바닥값 {args.conf_floor} · 운용 설정 {args.device or '전역'}\n"
     )
     print(render(summary, operating))
     if args.out is not None:
@@ -375,6 +380,7 @@ def main(
                     "meta": {
                         "model": model,
                         "conf_floor": args.conf_floor,
+                        "device": args.device,
                         "operating": {"conf": operating[0], "aspect": operating[1]},
                         "confs": args.confs,
                         "aspects": args.aspects,

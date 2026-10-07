@@ -24,7 +24,7 @@ ADR-42 의 근거 단락과 PRD 개정 이력의 «10장 중 1장» 은 새 결�
 
 | 대상 | 운용 조건 | 도구 |
 | :--- | :--- | :--- |
-| YOLOX 누움 후보 | `vision.coco.conf_threshold` 0.5 이상인 사람 중 점수 최고 박스의 가로÷세로 ≥ `vision.fallen.aspect_ratio` 1.5. **한 장으로 의심(L1)에 든다** | `tools/probe/fallen_bench.py` |
+| YOLOX 누움 후보 | `vision.coco.conf_threshold` 0.5 *(2026-10-06 개정 — 시연기 `mechdog-02` 프로필은 0.35. 거실 바닥에 누운 사람이 0.5 에서 거의 안 잡혀 낮췄다)* 이상인 사람 중 점수 최고 박스의 가로÷세로 ≥ `vision.fallen.aspect_ratio` 1.5. **한 장으로 의심(L1)에 든다** | `tools/probe/fallen_bench.py` |
 | VLM `person_down` | 현행 문장 · 2초마다 순찰 판독, 구역 점검 판독. 어느 쪽이든 «예» 한 번으로도 의심(L1)에 든다. 의심 뒤 서로 다른 프레임의 «예» 2회로 확정(L3) — 사이에 «아니오» 가 끼어도 누적은 지워지지 않는다. *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47): 확정은 YOLOX 규칙 확정 프레임의 VLM «예» 한 번이다. 이 계획을 쓸 때의 규칙이다.)* | `tools/probe/vlm_bench.py measure` |
 
 YOLOX 도구는 런타임과 같은 `Detector`·`PersonGate`·`FallenGate` 로 판정하고, conf 와 종횡비를
@@ -39,8 +39,8 @@ YOLOX 도구는 런타임과 같은 `Detector`·`PersonGate`·`FallenGate` 로 �
 
 - **기체**: `mechdog-02` 의 XIAO, 시연 때와 같은 장착. 바닥에서 렌즈까지 높이와 틸트를 재어 적는다.
   첫 장을 찍으면 사진을 열어 위아래가 맞는지 본다 — 촬영 도구는 `mechdog-02` 프로필의 장착 방향
-  (`vision.mount_rotation`)을 카메라에 내린다. `mechdog-02` 프로필에는 이 값이 없어 전역 기본값 0 이
-  내려가는데, 이 기체에서 잰 값이 아니다(`mechdog-01` 은 180).
+  (`vision.mount_rotation`)을 카메라에 내린다. `mechdog-02` 프로필의 값은 180 이다. *(2026-10-06 개정 — 이 계획을
+  쓸 때는 프로필에 값이 없어 전역 기본값 0 이 내려갔다. 같은 날 현장 주행본 설정이 들어오며 180 이 됐다.)*
 - **로봇**: 시연 때처럼 서 있는 자세로 둔다. 도구는 로봇에 명령을 보내지 않는다 — 위치는 손으로 옮긴다.
 - **런타임은 내린다.** 런타임이 스트림을 쥐고 있으면 캡처 도구가 함께 열지 못할 수 있다.
 - **장소·조명**: 시연장 바닥과 시연 조명 그대로. 날짜·시각·장소·조명을 적는다.
@@ -120,7 +120,7 @@ foreach ($d in "150cm","250cm") {
 ## 재는 법 (로봇·카메라 불필요)
 
 ```
-python tools/probe/fallen_bench.py <root> --out <root>_yolox.json
+python tools/probe/fallen_bench.py <root> --device mechdog-02 --out <root>_yolox.json
 ~/.venv-mechdog-vlm/Scripts/python.exe tools/probe/vlm_bench.py measure <root> \
     --repeat 1 --out <root>_vlm.json
 ```
