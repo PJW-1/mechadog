@@ -558,7 +558,7 @@
       "scope": "기체별 실측",
       "needs": "실제 카메라·안전한 연출/동의한 영상; 로봇 구동 OFF",
       "steps": "가로/세로 비율≥1.5 + 정지3초 조건 대조. 서기·앉기·눕기·빠른 이동·track 교체/상실 재현. confirm/clear와 중복 이벤트 확인.",
-      "criteria": "현재 구현은 블랙박스 판정 로그이며 FSM/PERSON_DOWN/L3 연동은 아님. 실사 오탐/미탐 기록; 기체 전도 감지와 구별. 개정(2026-09-25 · ADR-42): 연동되면 이 규칙(비율≥1.5+정지3초) 단독은 «의심»(L1)까지만이다. 개정(2026-09-28 · ADR-42 재개정, 4.8.0 카메라 벤치): «확정»(PERSON_DOWN·L3)은 이 조건의 누적이 아니라 VLM 만으로 한다 — 의심 진입 뒤 서로 다른 프레임의 VLM person_down=«예» 가 fsm.fall_confirm_vlm_yes(기본 2회) 모이고, 각 간격이 fsm.fall_confirm_gap_ms(기본 1000ms) 이상이면 fsm.fall_suspect_timeout_ms(20000ms) 안에서 확정한다. 이 규칙은 의심 진입과 TRACK 접근에만 쓰이고, fsm.fall_suspect_hits 는 삭제됐다.",
+      "criteria": "현재 구현은 블랙박스 판정 로그이며 FSM/PERSON_DOWN/L3 연동은 아님. 실사 오탐/미탐 기록; 기체 전도 감지와 구별. 개정(2026-09-25 · ADR-42): 연동되면 이 규칙(비율≥1.5+정지3초) 단독은 «의심»(L1)까지만이다. 개정(2026-09-28 · ADR-42 재개정, 4.8.0 카메라 벤치): «확정»(PERSON_DOWN·L3)은 이 조건의 누적이 아니라 VLM 만으로 한다 — 의심 진입 뒤 서로 다른 프레임의 VLM person_down=«예» 가 fsm.fall_confirm_vlm_yes(기본 2회) 모이고, 각 간격이 fsm.fall_confirm_gap_ms(기본 1000ms) 이상이면 fsm.fall_suspect_timeout_ms(20000ms) 안에서 확정한다. 이 규칙은 의심 진입과 TRACK 접근에만 쓰이고, fsm.fall_suspect_hits 는 삭제됐다. 개정(2026-10-07 · ADR-47 결정 6): 위 «VLM «예» 2회 누적» 확정은 폐기됐다 — 확정은 이 규칙이 정지 vision.fallen.confirm_ms(3000ms)를 채운 같은 프레임을 VLM person_down 에 물어 «예» 일 때뿐이고, 그 밖에는 fall_review_required(확인 필요)를 남긴다. fsm.fall_confirm_vlm_yes 는 코드가 읽지 않는다.",
       "tool": "host/vision/person.py (FallenGate) 및 런타임 blackbox; 최신 PR #219",
       "reference": "기체별 신규 측정. 다른 기체 값 복사 금지.",
       "source": "https://github.com/PJW-1/mechadog/blob/eee908a9ded706d7de2852a4c110cfaaf7958ac9/docs/WBS.md"

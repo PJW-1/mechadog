@@ -81,7 +81,7 @@ XIAO는 PPE를 판정하지 않는다. 비전 노드가 하는 일은 OV3660 영
 [XIAO ESP32S3 Sense]                                   [MechDog ESP32]
   OV3660 VGA 640x480                                     HW_MechDog HAL
       | JPEG (상한 25fps)                                   ^        |
-      | HTTP MJPEG  :81/stream                              |        | 초음파 25cm
+      | HTTP MJPEG  :81/stream                              |        | 초음파 7cm
       v                                         UDP :5001   |        v 반사 정지(Tier 1)
 +--------------------------------- HOST PC ----------------+-----------+ 10Hz
 | StreamReader -> FrameQueue(최신 1장) -> VisionWorker(별도 스레드)     | <- UDP :5101

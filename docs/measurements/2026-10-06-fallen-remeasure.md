@@ -24,7 +24,7 @@ ADR-42 의 근거 단락과 PRD 개정 이력의 «10장 중 1장» 은 새 결�
 | 대상 | 운용 조건 | 도구 |
 | :--- | :--- | :--- |
 | YOLOX 누움 후보 | `vision.coco.conf_threshold` 0.5 이상인 사람 중 점수 최고 박스의 가로÷세로 ≥ `vision.fallen.aspect_ratio` 1.5. **한 장으로 의심(L1)에 든다** | `tools/probe/fallen_bench.py` |
-| VLM `person_down` | 현행 문장 · 2초마다 순찰 판독, 구역 점검 판독. 어느 쪽이든 «예» 한 번으로도 의심(L1)에 든다. 의심 뒤 서로 다른 프레임의 «예» 2회로 확정(L3) — 사이에 «아니오» 가 끼어도 누적은 지워지지 않는다 | `tools/probe/vlm_bench.py measure` |
+| VLM `person_down` | 현행 문장 · 2초마다 순찰 판독, 구역 점검 판독. 어느 쪽이든 «예» 한 번으로도 의심(L1)에 든다. 의심 뒤 서로 다른 프레임의 «예» 2회로 확정(L3) — 사이에 «아니오» 가 끼어도 누적은 지워지지 않는다. *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47): 확정은 YOLOX 규칙 확정 프레임의 VLM «예» 한 번이다. 이 계획을 쓸 때의 규칙이다.)* | `tools/probe/vlm_bench.py measure` |
 
 YOLOX 도구는 런타임과 같은 `Detector`·`PersonGate`·`FallenGate` 로 판정하고, conf 와 종횡비를
 훑은 표를 함께 낸다. **훑기는 참고용이다** — 이 사진으로 기본값을 고르면 09-28 과 같은 «고른 사진으로
