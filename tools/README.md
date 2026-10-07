@@ -88,7 +88,7 @@ python tools/ops/replay_session.py <기록 폴더> --set network.cmd_rate_hz=5 -
 
 | 파일 | 설명 | 하드웨어 | 명령 |
 |---|---|---|---|
-| [precision_bench.py](bench/precision_bench.py) | coco·ppe ONNX 를 FP16·INT8(동적·정적 QDQ)로 바꾸고 FP32 대비 검출 일치율·3.7.3 판정·지연·크기·RSS 를 저장된 세션 프레임으로 비교한다(`convert`/`accuracy`/`latency`) | 불필요(저장된 프레임·GPU 선택) | 읽기전용 |
+| [precision_bench.py](bench/precision_bench.py) | coco·ppe ONNX 를 FP16·INT8(동적·정적 QDQ)로 바꾸고 FP32 대비 검출 일치율·3.7.3 판정·지연·크기·RSS 를 저장된 세션 프레임으로 비교한다(`convert`/`accuracy`/`latency`). 10-06 결과와 FP32 유지 결정은 [20261006_precision](../field_tests/results/20261006_precision/summary.md) | 불필요(저장된 프레임·GPU 선택) | 읽기전용 |
 
 ## 개발 보조·CI
 
