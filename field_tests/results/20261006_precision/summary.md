@@ -51,16 +51,17 @@ coco·ppe 모델을 FP16·INT8 동적·INT8 정적(QDQ)으로 바꿔 FP32 와 �
 | ppe INT8 동적 | 9.2 / 10.1 | 6.4 / 7.0 | 158.8 / 217.5 | 151.0 / 203.4 |
 | ppe INT8 QDQ | 10.5 / 11.8 | 7.4 / 8.3 | **58.0 / 75.2** | **51.3 / 68.9** |
 
-DirectML 에서는 FP16 만 FP32 보다 빨랐고, CPU 에서는 INT8 QDQ 만 빨랐다. CPU 에서 FP16 의 pipeline 은
-FP32 보다 조금 느렸다.
+DirectML 에서는 FP16 만 FP32 보다 빨랐다. CPU 의 pipeline 에서는 INT8 QDQ 만 빨랐고 FP16 은 조금 느렸다
+(coco 87.4 대 83.2ms, ppe 99.9 대 96.6ms). CPU 의 모델 단독(`run`)에서는 ppe FP16 이 FP32 보다 빨랐지만
+(89.4 대 95.0ms) coco FP16 은 느렸으므로(86.2 대 82.6ms), CPU 에서 FP16 이 빠르다고 할 근거는 없다.
 
 ## FP16 을 채택하지 않은 이유
 
 - **이득이 작다.** 전처리를 포함하면 모델당 약 1ms 다(coco 8.5 → 7.3ms, ppe 6.3 → 5.2ms).
 - **실행 장치별로 정밀도를 고를 수 없다.** `model_path` 는 검출기 절마다 하나이고, `vision.providers` 는 모든
   검출기가 함께 쓰며 CPU 가 항상 마지막에 붙는다(`host/vision/providers.py`, `host/common/config.py`).
-  FP16 으로 바꾸면 DirectML 을 쓸 수 없을 때 CPU 도 FP16 을 돌린다. CPU 에서는 FP16 이 더 느리고(ppe 99.9ms
-  대 96.6ms), CPU FP16 의 정확도는 재지 않았다.
+  FP16 으로 바꾸면 DirectML 을 쓸 수 없을 때 CPU 도 FP16 을 돌린다. CPU 에서는 FP16 이 빠르다는 근거가 없고
+  (pipeline 은 coco·ppe 모두 FP32 보다 느렸다), CPU FP16 의 정확도는 재지 않았다.
 - **배포 검증 체계를 바꿔야 한다.** `tests/test_model_info.py` 는 설정이 가리키는 모델마다 메타 파일이 있고
   그 해시가 `tools/fetch_models.py` 의 `WEIGHTS` 와 같기를 요구한다. 로컬에서 변환한 파일은 이 목록에 없으므로,
   채택하려면 FP16 파일을 Release 로 배포해 목록에 넣어야 한다.
