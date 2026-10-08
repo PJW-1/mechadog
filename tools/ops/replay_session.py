@@ -67,7 +67,7 @@ VOLATILE_FIELDS = ("seq", "ts")
 #: 같은 시각에 다시 부르는 관제 입력 중 인자가 없는 것.
 _PLAIN_ACTIONS = ("ask_patrol", "ask_reset", "ask_alarm_confirm", "send_emergency_stop")
 #: 재생기가 다시 부를 수 있는 관제 입력 전체 — `Runtime._record_input` 이 남기는 이름과 같아야
-#: 한다(시험이 런타임 소스와 맞춰 본다). 여기 없는 입력은 재생에서 빠지고 `limitations` 에 남는다.
+#: 한다(시험이 런타임·`NavRequests` 소스와 맞춰 본다). 여기 없는 입력은 재생에서 빠지고 `limitations` 에 남는다.
 OPERATOR_ACTIONS = frozenset(
     (
         *_PLAIN_ACTIONS,

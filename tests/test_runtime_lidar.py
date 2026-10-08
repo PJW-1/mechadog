@@ -75,7 +75,9 @@ def test_scan_posture_returns_neutral_and_waits_for_level_lidar(config, clock, m
     clock.advance(100)
     runtime.tick(clock.ms)
     assert navigator.pose_ms == clock.ms
-    assert runtime._build_nav_snapshot(clock.ms)["local_navigation"]["scan_rejected"] is None
+    assert (
+        runtime.nav_requests.build_snapshot(clock.ms)["local_navigation"]["scan_rejected"] is None
+    )
 
 
 class SimpleReading:
