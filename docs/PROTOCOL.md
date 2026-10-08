@@ -401,7 +401,7 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
 
 | 파일 | 역할 |
 | :--- | :--- |
-| `tests/fixtures/protocol_samples.jsonl` | 유효 메시지 정본 (10종 + 경계값) |
+| `tests/fixtures/protocol_samples.jsonl` | 유효 메시지 정본 (11종 + 경계값) |
 | `tests/fixtures/protocol_sessions.jsonl` | Host 재시작·이전 세션 폐기·정수/부호 검증 |
 | `tests/fixtures/protocol_invalid.jsonl` | 폐기·클램핑 대상 + 기대 동작 |
 | `tests/test_protocol_fixtures.py` | 픽스처 자체의 일관성 검증 |
@@ -414,7 +414,7 @@ Host 프로세스가 재시작되면 `seq`가 다시 1부터 시작한다. 새 �
 
 ### 구현자 체크리스트
 
-- [ ] 10종 전부 파싱되는가 (`protocol_samples.jsonl` 전 라인)
+- [ ] 11종 전부 파싱되는가 (`protocol_samples.jsonl` 전 라인)
 - [ ] 규칙 ①\~⑤ 가 순서대로 동작하는가 (`protocol_invalid.jsonl` 의 `_expect` 대로)
 - [ ] `step` 500 → 100 으로 **클램핑**되는가 (폐기가 아니라)
 - [ ] `type: "FUTURE_CMD"` 수신 시 크래시 없이 WARN 만 남기는가
