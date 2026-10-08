@@ -82,7 +82,7 @@ if not (d.get("accepted") and d.get("state") == "MANUAL"):
   rep3 RIGHT (-30) 원시  -5.13 - 바이어스 +2.82 =  -7.95°/s  ( -20.0° / 3.9s, n=34)
 ```
 
-전 시행 `cmd_age_max` 35~36ms, 래치 0건. 명령 주기는 `cmd_gap_ms_max` 112~114ms 로
+전 시행 `cmd_age_max` 35\~36ms, 래치 0건. 명령 주기는 `cmd_gap_ms_max` 112\~114ms 로
 온보드 300ms 워치독에 닿지 않았다.
 
 ## 5. 그런데도 ADR-11 을 유지하는 이유
