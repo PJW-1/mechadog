@@ -11,7 +11,7 @@
 
 **원칙은 한 줄이다 — 로봇 위의 장치끼리 선을 연결하지 않는다.**
 
-카메라도, 나중에 붙일 LiDAR 도 **자기 배터리로 켜지고 Wi-Fi 로만 말한다.** 서로 직접
+카메라도, mechdog-02 에 붙인 LiDAR 도 **자기 배터리로 켜지고 Wi-Fi 로만 말한다.** 서로 직접
 대화하지 않고 전부 노트북을 거친다. 자전거 바큇살처럼 가운데(노트북)에서 뻗어 나가는
 모양이라 **성형(星形, star) 구조**라고 부른다.
 
@@ -272,7 +272,7 @@ XIAO · 중계 MCU · LD19 를 **한 보조배터리에서 급전**한다. LiDAR
 >
 > 인식도 PC 로 옮겼으므로(ADR-31) **펌웨어에 미리 확정해야 하는 암구호 문구가 없다.** 방송 문구는 개발 중에 늘리면 된다.
 > MP3 모듈은 로봇 IIC1 에서 `0x7B` 로 응답하고 공장 기본 곡 재생까지 확인됐다.
-> 재생·정지·음량과 트랙 번호 규칙(파일 이름 앞 네 자리)은 드라이버가 실측으로 확정했다. `0x7E` 의 정체는 아직 모른다.
+> 재생·정지·음량과 트랙 번호 규칙(파일 이름 앞 네 자리)은 드라이버가 실측으로 확정했다. `0x7E` 의 정체는 확인하지 못했고 한계로 남긴다.
 > 원자료: [`field_tests/results/20260923_4.7.9-bridge-transparency/summary.md`](../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md).
 >
 > **상태 표시등은 별도 부품이 필요하지 않다.** 초음파 센서에 RGB LED 가 내장되어 있음을 실물로 확인했다(OI-12 닫힘).
@@ -348,7 +348,7 @@ WonderEcho ─ USB COM ─→ PC faster-whisper → 규칙 → Piper 실시간 �
 | ID | 항목 | 목표 | 측정 방법 |
 | :--- | :--- | :--- | :--- |
 | NFR-1.1 | **단일 프레임 E2E 인지 지연** (촬영 → 검출 → 명령 적용 ACK) | ≤ 250 ms | 화면의 ms 카운터 촬영값과 검출·ACK의 호스트 타임스탬프를 연결한다 — 아래 참고 |
-| NFR-1.2 | 객체 검출 추론 시간 | ≤ 15 ms | 2단 구조 합산 기준. **①번 실측 완료 (2026-09-10) — 기준 PC·DirectML 에서 전처리+추론+후처리 mean 8.2ms · p95 8.6ms.** ②번 PPE 는 미학습이라 합산 확정은 대기. ⚠️ **CPU EP 로는 61.9ms** — 이 목표는 GPU 전제다 |
+| NFR-1.2 | 객체 검출 추론 시간 | ≤ 15 ms | 2단 구조 합산 기준. **①번 실측 완료 (2026-09-10) — 기준 PC·DirectML 에서 전처리+추론+후처리 mean 8.2ms · p95 8.6ms.** ②번 PPE(ppe-v5)를 더한 2단 합산 추론 시간은 따로 재지 않았다(한계). ⚠️ **CPU EP 로는 61.9ms** — 이 목표는 GPU 전제다 |
 | NFR-1.3 | MJPEG 스트림 | ≥ 15 fps @ VGA | 수신 프레임 카운트 |
 | NFR-1.4 | 명령 → 서보 반영 | ≤ 50 ms | 온보드 타임스탬프 |
 | NFR-1.5 | **온보드 반사 정지** (초음파 → 정지) | **≤ 50 ms** | 안전 요구. Host PC 미경유 |
@@ -418,7 +418,7 @@ JPEG 디코드와 `STOP` 적용 ACK까지는 평균 31.2ms·p95 69ms·p99 124ms�
 | NFR-2.2 | Link Loss | 3 s 무통신 → `STATE_FAILSAFE`, 안정 자세 |
 | NFR-2.3 | 저전압 | 7.0 V 경고 / 6.6 V 셧다운 및 서보 토크 해제 |
 | NFR-2.4 ❌ | 전도 자동 감지는 제공하지 않는다([ADR-36](DECISIONS.md#adr-36)) — `FAILSAFE` 로 정지한 로봇의 IMU 피치가 정지 중에도 60° 임계를 넘나들어, 어떤 임계로도 의도된 자세와 전도를 가를 수 없었다. 2차 손상 방지는 `A-13`(상시 인적 감시) 아래 사람의 `ESTOP` 이 맡는다 | 넘어진 로봇의 서보는 도달 불가능한 목표 각도를 계속 추종하며 스톨(stall) 상태로 최대 토크·최대 전류를 소모해 ① 기어 톱니 파손 ② 권선 과열·소손 ③ 배터리 급방전을 유발할 수 있다 |
-| NFR-2.5 ⏸ | Watchdog | 행(hang) 시 1초 이내 자동 리셋. **구동 OFF 진단 빌드에서 충족** — `loop_monitor` 태스크가 750ms 무진척을 래치하고 재부팅하며 실측 약 813ms 다. ⚠️ **걷는 빌드에는 아직 적용하지 않았다** — 리셋 직후 벤더 시작 코드가 서보를 움직일 수 있어 조합을 `#error` 로 막아 두었다. 그래서 보행 중 `loop()` 가 멈추면 **같은 루프 안의 600ms 명령 타임아웃 검사도 함께 멈춰 서보가 마지막 보행 명령으로 굳는다.** 호스트는 3초 링크 두절로 정확히 알아채지만 세울 수단이 없다. **사람의 `ESTOP`·전원 차단이 그 자리를 대신하며** `A-13` 상시 인적 감시에 기댄다 — `NFR-2.4` 전도 감지와 같은 근거다. **무인 운용으로 확장하면 먼저 푼다** |
+| NFR-2.5 ⏸ | Watchdog | 행(hang) 시 1초 이내 자동 리셋. **구동 OFF 진단 빌드에서 충족** — `loop_monitor` 태스크가 750ms 무진척을 래치하고 재부팅하며 실측 약 813ms 다. ⚠️ **걷는 빌드에는 적용하지 않았다** — 리셋 직후 벤더 시작 코드가 서보를 움직일 수 있어 조합을 `#error` 로 막아 두었다. 그래서 보행 중 `loop()` 가 멈추면 **같은 루프 안의 600ms 명령 타임아웃 검사도 함께 멈춰 서보가 마지막 보행 명령으로 굳는다.** 호스트는 3초 링크 두절로 정확히 알아채지만 세울 수단이 없다. **사람의 `ESTOP`·전원 차단이 그 자리를 대신하며** `A-13` 상시 인적 감시에 기댄다 — `NFR-2.4` 전도 감지와 같은 근거다. **무인 운용으로 확장하면 먼저 푼다** |
 | NFR-2.6 ✅ | Graceful Degradation | 비전 노드 단절 시에도 순찰·회피는 계속 동작해야 한다 (사람 인지 기능만 비활성) — **호스트 FSM 에서 구현·검증됨.** 로봇 링크 두절(`safety.link_loss_failsafe_ms`)은 `FAILSAFE` 로 가고, 비전 단절(`vision.stall_timeout_ms`)은 `degraded` 만 세운 채 순찰을 유지한다. 런타임은 새 결과마다 `note_vision()`을 갱신하고 스톨·워커 중단을 `degraded`에 반영한다. 첫 프레임 전에는 워커 시작 시각부터 기동 유예를 재므로 **카메라가 처음부터 응답하지 않는 경우도 영구 정상으로 남지 않는다.** **둘을 같은 사건으로 묶으면 카메라가 딸꾹질할 때마다 로봇이 멈춘다** |
 | NFR-2.7 | E-Stop 우선순위 | 대시보드 E-Stop은 모든 상태에서 최우선 처리 |
 
@@ -492,7 +492,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 > 벗어나 5초 타이머가 추종을 끝낸다** — 회피가 임무를 취소하는 셈이다. 게다가 초음파 정지 거리(현재 7cm, 2026-10-06 에 25cm 에서 개정 · [ADR-47](DECISIONS.md#adr-47))에 든 것이
 > **대상 본인일 수 있고**, 그때 물러나는 것은 경비 로봇으로서 틀린 행동이다.
 >
-> ⚠️ **대신 «추종 중 막힘» 이 아직 어디에도 기록되지 않는다.** 그 상황에서 실제로 일어나는 일은
+> ⚠️ **대신 «추종 중 막힘» 은 어디에도 기록되지 않는다(한계).** 그 상황에서 실제로 일어나는 일은
 > 이렇다 — 온보드가 **전진만** 거부하고(`move_allowed` · 3.2.6) 호 조향은 전진이 있어야 돌므로
 > 로봇은 **선 채로** 멈춘다. 호스트는 `TRACK` 을 유지하며 추종 지시를 계속 보내고, 대상이 계속
 > 보이면 `TARGET_LOST` 도 돌지 않아 **그 자리에 머문다.** 안전한 정지이지만 «왜 멈췄는지» 가
@@ -682,52 +682,48 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 
 ## 5. 프로젝트 구조
 
-**`✅` 는 지금 있는 것, `⬜` 는 계획이다.** 표시가 없으면 디렉터리 자체가 아직 없다.
+저장소에 들어 있는 것을 개발 종료 시점(2026-10-09) 기준으로 적는다.
 
 ```
 mechdog_physical_ai/
-├── docs/                                 ARCHITECTURE · DECISIONS · PROTOCOL · DASHBOARD
-│                                         ENGINEERING_GUIDE · features/ · case-studies/ · internal/(PRD·WBS·HARDWARE 등)
+├── docs/                                 ARCHITECTURE · DECISIONS · PROTOCOL · DASHBOARD · ENGINEERING_GUIDE
+│                                         features/ · case-studies/ · measurements/ · lidar/ · archive/ · internal/(PRD·WBS·HARDWARE 등)
 ├── config/
-│   ├── config.yaml                    ✅ 전 파라미터 (Dev/Prod 프로파일)
-│   ├── devices/mechdog-01.yaml        ✅ 개체별 실측값 (서보 오프셋 등)
-│   └── .env.example                   ✅ 시크릿 템플릿
+│   ├── config.yaml                       전 파라미터 (Dev/Prod 프로파일)
+│   ├── devices/mechdog-0{1,2}.yaml       개체별 실측값 (서보 오프셋 등)
+│   ├── ppe_acceptance.json               PPE 검수 합격 기준
+│   └── .env.example                      시크릿 템플릿
 ├── firmware/                             온보드 펌웨어 (Arduino 스케치)
-│   ├── mechdog_motion/                MechDog ESP32 (Arduino)
-│   │   ├── mechdog_motion.ino         ✅ Wi-Fi STA · UDP 수신 · SAFE 래치
-│   │   ├── src/command_parser.*       ✅ HAL 비의존 → 호스트에서 g++ 로 시험
-│   │   ├── src/motion_hal.*           🔶 MOVE·STOP 구현, 나머지 HAL 매핑 대기 (4.1.2)
-│   │   ├── src/safety_monitor.*       ⬜ 온보드 안전 감시기 (3.2.x)
-│   │   ├── test/test_command_parser.cpp ✅ CI 가 컴파일·실행하고 골든 픽스처를 물린다
-│   │   └── diagnostics/               ✅ wifi_scan · wifi_sta_probe (H2 확인용)
-│   ├── xiao_vision/                   ✅ 카메라 + MJPEG 서버 (4.2)
-│   └── lidar_relay/                   🔶 LD19 UART → Wi-Fi UDP 중계 — 구현됨
+│   ├── mechdog_motion/                   MechDog ESP32
+│   │   ├── mechdog_motion.ino            Wi-Fi STA · UDP 수신 · SAFE 래치
+│   │   ├── src/command_parser.*          HAL 비의존 → 호스트에서 g++ 로 시험
+│   │   ├── src/motion_hal.* · sensor_hal.*  벤더 라이브러리를 감싼 HAL
+│   │   ├── src/safety_monitor.*          온보드 안전 감시기
+│   │   ├── src/telemetry_* · stationary_ota.* · mp3_player.h  텔레메트리 · 정지 상태 OTA · MP3 모듈
+│   │   ├── test/                         CI 가 컴파일·실행하고 골든 픽스처를 물린다
+│   │   └── diagnostics/                  wifi · i2c · imu · led · watchdog 진단 스케치
+│   ├── xiao_vision/                      카메라 + MJPEG 서버
+│   └── lidar_relay/                      LD19 UART → Wi-Fi UDP 중계
 ├── host/                                 Host PC (Python)
-│   ├── behavior/
-│   │   ├── actions.py                 ✅ 상태별 모션 — PATROL·AVOID (3.5.1)
-│   │   ├── commander.py               ✅ 10Hz 고정 송신 — 소켓을 만지지 않는다
-│   │   └── fsm.py                     ✅ 전이표 13상태 + 가드·타이머 (3.4.1~3)
-│   ├── common/
-│   │   ├── protocol.py                ✅ 규약 구현 — 이 파일이 C++ 파서의 참조 구현
-│   │   ├── config.py                  ✅ 로더 + 스키마 검증
-│   │   ├── logging_setup.py           ✅ JSON Lines 로거 + 샘플링 (4.4.2)
-│   │   └── blackbox.py                ✅ JPEG·텔레메트리 저장 + WS 푸시 + 사건 스냅샷 조회 (4.4.3)
-│   ├── vision/                        ✅ MJPEG 수신·재연결·큐·검출기·추론 워커·사람 게이트·다중 인원 추적 (3.3.1~4, 4.3.3~5)·사원증 마커 판독 (3.8.1)
-│   ├── telemetry/                     ✅ 텔레메트리 수신·사건 변환 (4.3.6)
-│   ├── runtime.py                     ✅ UDP 운용 루프 + 비전 워커 수명 관리 (4.3.7, 3.3.2)
-│   ├── dashboard/                     ✅ FastAPI + WS + 검출 FPV · 명령 API · 사건 피드 (4.5 · 4.6.1/3/4)
-│   └── slam/                          🔶 점유격자·스캔정합·경로계획 (`3.9.0`) — **실기 미연결** · 오도메트리·tf(`5.4.3`) 대기
-├── tools/
-│   ├── mock/mock_mechdog.py           ✅ 가상 MechDog — 로봇 없이 호스트를 검증
-│   ├── ops/teleop.py                  ✅ 키보드 수동 조작
-│   ├── ops/mechdog_command.py         ✅ 실기 시험 송신기 (safety · move · watchdog)
-│   ├── probe/udp_probe.py             ✅ UDP 왕복 측정
-│   ├── probe/latency_probe.py         ✅ E2E 지연 하네스 — 화면 카운터 촬영 (6.1.2)
-│   └── dev/wbs_assignments.py         ✅ 담당자별 작업 목록 생성
-├── tests/                             ✅ pytest — 하드웨어 불요
-├── third_party/                       ❌ **비워 둔다** — 벤더 라이브러리는 라이선스 표기가 없어 재배포 불가 (ADR-20)
-├── models/ · maps/                    ⬜ 가중치 · 지도 산출물 (git 제외)
-└── .github/workflows/ci.yml           ✅ Python 품질 · 펌웨어 품질 · 빌드 · 릴리스
+│   ├── behavior/                         FSM 전이표 · 순찰·회피·추종 · 경로계획 · 암구호 인증 · PPE 판정 · 구역
+│   ├── common/                           규약 구현(protocol.py) · 설정 · 로거 · 블랙박스 · LiDAR·오도메트리 링크
+│   ├── vision/                           MJPEG 수신 · 검출기 · 추론 워커 · 추적 · PPE · 위험물 · 사원증 · VLM 판독
+│   ├── telemetry/                        텔레메트리·LiDAR 수신 · ROS2 전달 · 세션 기록
+│   ├── slam/                             점유격자 · 스캔정합 · 오도메트리 · 지도 정제
+│   ├── dashboard/                        FastAPI + WS 관제 화면
+│   ├── report/situation.py               사건 한 문장 (규칙 템플릿)
+│   ├── cloud/broadcast.py                관제 방송 TTS
+│   ├── fleet.py                          다중 개체 관제
+│   └── runtime.py                        UDP 운용 루프 + 비전 워커 수명 관리
+├── docker/ros2/                          ROS2 경계 (스캔·오도메트리·위치 브리지)
+├── tools/                                실측·운용·학습 도구 — tools/README.md
+├── tests/                                pytest — 하드웨어 불요
+├── field_tests/                          실기 시험 원자료
+├── maps/                                 시연 지도 산출물
+├── models/ · datasets/                   메타·안내만 — 가중치와 데이터는 git 제외
+├── experiments/                          보관용 시제품 — 런타임에 포함되지 않는다
+├── third_party/                          **비워 둔다** — 벤더 라이브러리는 라이선스 표기가 없어 재배포 불가 (ADR-20)
+└── .github/workflows/                    ci.yml(Python·펌웨어 품질 · 빌드 · 릴리스) · web.yml(대시보드)
 ```
 
 > **`third_party/` 는 의도적으로 비어 있다.** 벤더 라이브러리를 넣을 수 없다는 것이 확인됐고

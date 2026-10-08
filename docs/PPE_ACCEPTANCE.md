@@ -140,8 +140,8 @@ C2의 «이월»은 출력에 `(이월 N)`으로 따로 적는다.
 
 ## 현재 상태와 다음 작업
 
-현재 상태는 **운용 판정기와 런타임 연결 구현 · 자동 회귀 통과, 배포 모델 ppe-v5(YOLOX-S 4클래스 · v4 에 하단각도 보강) 직립 4구간 XIAO 실측 합격(2026-10-06)**이다. 웅크림·머리 잘림·`pitch-up`·`sit` 의 실기 검증은 남아 있다. 이전 후보 v23b 는 XIAO 실기에서 기각됐다.
-2026-09-22 XIAO 부분 실측은 이전 모델(SHA-256 `ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`)로 수행했다. 11개 구간 중 4개만 관측했고 판정 가능률 14%·실효 성공률 7%였다. 이는 이후 모델(ppe-v3·v4)의 합격 근거가 아니며, 당시 모델의 성능도 부족했다(`field_tests/results/20260922_ppe-xiao-run2/summary.md`).
+현재 상태는 **운용 판정기와 런타임 연결 구현 · 자동 회귀 통과, 배포 모델 ppe-v5(YOLOX-S 4클래스 · v4 에 하단각도 보강) 직립 4구간 XIAO 실측 합격(2026-10-06)**이다. 웅크림·머리 잘림·`pitch-up`·`sit` 은 실기로 검증하지 못했고 한계로 남긴다. 이전 후보 v23b 는 XIAO 실기에서 기각됐다.
+2026-09-22 XIAO 부분 실측은 이전 모델(SHA-256 `ee46da018e8d35c60b41f89dfca33e47786d4e487bb942d78405557a7457db13`)로 수행했다. 11개 구간 중 4개만 관측했고 판정 가능률 14%·실효 성공률 7%였다. 이는 이후 모델(ppe-v3·v4)의 합격 근거가 아니며, 당시 모델의 성능도 부족했다. 결과 폴더(`20260922_ppe-xiao-run2`)는 커밋되지 않아 수치는 이 문서의 기록으로만 남는다.
 
 **2026-09-28 XIAO 실측 — v23b 기각.** PPE 후보 모델 v23b(YOLOX-S, 5클래스
 helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01 에서
@@ -150,7 +150,7 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
 오경고 ≤1)에 못 미친다. 오검출 유형은 둘이다 — 정면에서 주황 안전모를 `no_helmet`으로,
 측면에서 조끼를 `no_vest`로 봤다. 결과 폴더는 `field_tests/results/20260928_ppe-xiao/`이나
 커밋되지 않아 경로만 인용한다. 다음 모델은 `person_down`을 빼고 **4클래스**로 다시 학습한다
-(데이터는 Roboflow Universe construction-safety CC BY 4.0 + XIAO 실측 어려운 사례, 아직 학습 전).
+(데이터는 Roboflow Universe construction-safety CC BY 4.0 + XIAO 실측 어려운 사례, 당시 학습 전).
 
 **2026-09-29 — 4클래스 후보 둘을 학습했다(XIAO 미실측).** 둘 다 YOLOX-S · COCO 사전학습에서
 출발했고 사람 크롭 입력이다. 파일은 깃이 무시하는 `models/candidates/` 에 있다.

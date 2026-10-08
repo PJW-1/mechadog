@@ -34,7 +34,7 @@
 6. **`host/dashboard/server.py`** — 관제 서버. FSM 상태와 텔레메트리를 `/ws/events`·`/ws/vision`으로 내보내는 부분만 보면 된다. `EventHub` 클래스가 시작점이다.
 7. **`docs/features/`** — 여기까지 읽고 나면 기능별 문서(페일세이프·장애물 회피·비전 스트림·쓰러짐 판정 등)의 판단 흐름도가 코드와 바로 대응된다.
 
-PPE(개인보호구) 판정은 `host/vision/worker.py`에 배선돼 있지만 모델은 아직 개발 중이다.
+PPE(개인보호구) 판정은 `host/vision/worker.py`에 배선돼 있고, 배포 모델은 `ppe-v5`(YOLOX-S 4클래스)다. 검수 기록은 [PPE_ACCEPTANCE.md](PPE_ACCEPTANCE.md)에 있다.
 
 ## 전체 데이터 흐름
 

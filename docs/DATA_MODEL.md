@@ -214,7 +214,7 @@ python tools/ops/history_import.py --device <unit-id> [--blackbox DIR] [--db PAT
 
 | 데이터 | 위치 | 비고 |
 | :--- | :--- | :--- |
-| 블랙박스 폴더 | `<epoch_ms>_<event>/` 안의 `snapshot.jpg` · `meta.json` | **그림과 판정 원문의 정본.** 보관 정책은 아직 없다 |
+| 블랙박스 폴더 | `<epoch_ms>_<event>/` 안의 `snapshot.jpg` · `meta.json` | **그림과 판정 원문의 정본.** 보관 정책은 범위 밖이다 |
 | 구조화 로그(JSONL) | `logs/<device>.jsonl` | 10 MB 씩 5개 순환 |
 | 설정 | `config/config.yaml` · `config/devices/*.yaml` · `local.yaml` | 구역 정책은 장치별 설정에 있다 |
 | 지도·구역 좌표 | `maps/zones.json` | LiDAR 지도와 구역 앵커 |

@@ -107,11 +107,13 @@ python tools/ops/replay_session.py <기록 폴더> --set network.cmd_rate_hz=5 -
 - `field/` — 현장 실측 CLI·GUI(`field_measure`·`field_plan`·`field_measure_ui`·`field_sessions`). 네 파일이 서로 부르므로 한 폴더에 둔다.
 - `dev/` — 개발 보조·CI(`check_doc_links.py`·`check_firmware_scope.py`·`wbs_assignments.py`·`firmware_env.py`).
 - [pc_control/](pc_control/README.md) — Windows 개인 PC용 로봇 유지보수 GUI(Wi-Fi OTA·USB 모드 전환). 자체 README를 둔다.
-- `ppe/` — PPE 데이터셋 전처리 스크립트와 `ppe_live_check.py`. 개발 중.
+- `ppe/` — PPE 데이터셋 전처리·학습·검수 스크립트와 `ppe_live_check.py`. 검수 절차는 [docs/PPE_ACCEPTANCE.md](../docs/PPE_ACCEPTANCE.md).
 - [vlm_lora/](vlm_lora/README.md) — VLM(`Qwen2-VL-2B`) LoRA 미세조정: 데이터 목록·분할(`dataset.py`)·학습(`train.py`)·병합(`merge.py`)·평가(`evaluate.py`). 자체 README를 둔다.
-- `hazard/` — 위험물(라이터·보조배터리) 검출 모델 학습 Colab 노트북(`colab_hazard_yolox.ipynb`, 같은 내용의 `.py`). 산출물은 Release `hazard-v1`.
+- `hazard/` — 위험물(라이터·보조배터리) 검출 모델 학습 Colab 노트북(`colab_hazard_yolox.ipynb`, 같은 내용의 `.py`). 산출물은 Release `hazard-v1`. 로봇 시점 합성 학습은 [hazard/synth/](hazard/synth/README.md).
+- [maps/](maps/README.md) — 근거 지도 생성·정합 점검 오프라인 도구. 자체 README를 둔다.
+- [house_sim/](house_sim/README.md) — 시연 장소 3D SIM 장면과 웹 뷰어. 자체 README를 둔다.
 - `fetch_models.py` 는 배포 안내가 이 경로를 가리키므로 `tools/` 바로 아래에 둔다.
 
-## PPE (개발 중)
+## PPE
 
-`ppe/`(전처리 스크립트 4개)와 [ppe_live_check.py](ppe/ppe_live_check.py)는 개발 중이다.
+`ppe/` 의 전처리·학습·검수 스크립트와 [ppe_live_check.py](ppe/ppe_live_check.py)는 배포 모델 ppe-v5 의 학습과 XIAO 검수에 썼다. 절차와 결과는 [docs/PPE_ACCEPTANCE.md](../docs/PPE_ACCEPTANCE.md)에 있다.
