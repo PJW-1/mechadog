@@ -79,6 +79,13 @@ test('primary navigation keeps operations visible and moves preview tools to a s
  assert.equal(document.querySelector('.nav-more').open,false);
  dom.window.close();
 });
+test('history hash opens the stored incident history page instead of the local records page',async()=>{
+ const {dom,document}=await boot('history');
+ assert.equal(document.querySelector('#panel-content').dataset.page,'history');assert.equal(document.querySelector('#panel-title').textContent,'사건 이력');
+ assert.ok(document.querySelector('.nav-more [data-view="history"]').classList.contains('active'));
+ assert.match(document.querySelector('#panel-content').textContent,/관제 서버에 연결된 화면/);
+ dom.window.close();
+});
 test('secondary menu marks the current page, closes on Escape and never takes focus back while closed',async()=>{
  const {dom,window,document}=await boot('dashboard'),more=document.querySelector('.nav-more'),summary=more.querySelector('summary');
  more.open=true;document.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape'}));

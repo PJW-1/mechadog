@@ -86,6 +86,7 @@ python -m host.dashboard.preview --device mechdog-02 --port 8003
 | `panels.js`, `panels.css` | 작업 페이지와 수동 조작 |
 | `app.js`, `operations.js` | 화면 연결, 상태·검증 규칙 |
 | `robot-link.js` | 명령 API 연결 (E-Stop · 수동 · 조이스틱) |
+| `history-link.js` | 이력 API 연결 (사건·순찰 판 조회, 검토 저장, 거절 사유 문구) |
 | `vision-feed.js` | `/ws/vision` 수신, JPEG 디코드, 검출 박스 캔버스 합성, 멈춤·재연결 표시 |
 | `telemetry-feed.js` | `/ws/telemetry` 수신, 새 seq 기준 수신률·누락, 60초 추이, 상태 문구 |
 | `scene.js`, `scene-materials.js`, `robot-view.js` | 공장·로봇 3D, 장치 상세 |
@@ -150,6 +151,14 @@ python -m host.dashboard.preview --device mechdog-02 --port 8003
   멘트 관리·일일 리포트를 다룬다. ⚠️ **자유 문장 방송 입력칸과 「말하기」·「긴급 방송」 버튼은 없다** —
   로봇 스피커(MP3 모듈)는 미리 녹음한 문장만 낸다([ADR-38](DECISIONS.md#adr-38)). 발화 기록의 `admin` 역할은
   단계 경고뿐이며 화면에는 「경고 방송」·「경고 대기」로 표시된다.
+- **사건 이력 화면**(`#history`, «기록 · 설정» 메뉴) — 위 이력 API 로 서버 저장소의 지난 사건과 순찰 판을 본다.
+  종류 · 대응 단계 · 장치 · 구역 · 검토 상태 · 시작일/종료일과 «이 판의 사건»(순찰 판)은 서버가 거르고, 검색어는
+  받은 목록(최근 100건) 안에서 거른다. 사건을 고르면 사건 검토와 **같은 상세 보기**에 판정 근거와 그때의 스냅샷을
+  보인다. 검토는 «검토 대기 / 검토 완료» 와 처리 메모를 `POST /api/history/incidents/{id}/review` 로 **서버에 저장**하고,
+  돌려받은 상태(검토 시각 포함)를 그린다. 기술자 역할은 저장할 수 없다. 저장소가 꺼져 있으면(503 `history_disabled`)
+  «이력 저장이 꺼져 있습니다» 를 띄운다. 사건 검토 화면의 실시간 사건은 검토 칸 대신 **«사건 이력에서 검토»** 로
+  이 화면의 같은 사건(`<기체>_<블랙박스 기록>`)을 연다 — 사진 없는 사건은 ID 를 알 수 없어 같은 종류로 좁혀 연다.
+  서버 없이 연 화면에는 읽을 저장소가 없다고 적는다.
 
 ### 로봇 상태 게이지 — `telemetry-feed.js`
 

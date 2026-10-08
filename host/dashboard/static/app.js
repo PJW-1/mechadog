@@ -132,7 +132,9 @@ if(operations.connected){
 }
 function toast(message){const node=$('toast');if(!node)return;node.textContent=message;node.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>node.hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
-panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,getVisionStatus:()=>visionStatus,
+// 사건 이력 (4.6.7) — 플릿도 저장소는 하나라 첫 로봇의 경로로 묻고, 사진만 사건을 낸 로봇의 경로에서 받는다.
+const historyConfig=apiBase?{baseUrl:bases[ROBOTS[0]],fetch:(url,init)=>fetch(url,init),snapshotBase:id=>{if(!fleetInfo)return apiBase;const member=fleetInfo.find(robot=>robot.id===id);return member?apiBase+member.base:null}}:null;
+panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,history:historyConfig,getVisionStatus:()=>visionStatus,
  onManualObservation:mount=>{
   if(mount)mount.append(cameraDock);
   else if(cameraDock.parentElement!==cameraHome)cameraHome.insertBefore(cameraDock,cameraNext);
@@ -258,7 +260,7 @@ $('alarm-action').addEventListener('click',()=>{if(alarmRobot&&alarmRobot!==oper
 operations.subscribe(reason=>{if(reason==='telemetry'){syncTelemetry();panels.refresh(reason);return}syncMain();panels.refresh(reason)});
 
 function navigate(page){
- const target=['dashboard','missions','events','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
+ const target=['dashboard','missions','events','history','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
  if(location.hash!=='#'+target)location.hash=target;
  openPage(target);
 }
@@ -287,7 +289,7 @@ function openPage(page){
  syncMain();
  operations.log('화면 열기',page);
 }
-window.addEventListener('hashchange',()=>{const page=location.hash.slice(1);navigate(page==='history'?'records':page)});
+window.addEventListener('hashchange',()=>{const page=location.hash.slice(1);navigate(page)});
 document.querySelector('.skip-link').addEventListener('click',event=>{event.preventDefault();(currentPage==='dashboard'?$('scene-title'):$('panel-title')).focus()});
 for(const id of ROBOTS){const marker=document.createElement('button');marker.className='map-marker';marker.dataset.robot=id;marker.append(document.createTextNode(id+' · '));const small=document.createElement('small');small.textContent='예시';marker.append(small);$('markers').append(marker)}
 document.querySelectorAll('[data-robot]').forEach(element=>element.addEventListener('click',()=>element.closest('.camera-robot-switch')?operations.selectRobot(element.dataset.robot):openRobotDetail(element.dataset.robot)));

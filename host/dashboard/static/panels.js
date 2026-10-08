@@ -1,14 +1,18 @@
 import {PlanningPanel} from './planning-panel.js';
 import {RoutePlanner} from './route-planner.js';
-import {EVENT_CATEGORIES,REVIEW_STATES,ROBOTS} from './operations.js';
+import {EVENT_CATEGORIES,EVENT_TITLES,REVIEW_STATES,ROBOTS,historyEvent} from './operations.js';
+import {HistoryLink} from './history-link.js';
 import {icon} from './icons.js';
 import {MODE_NAMES,describeTelemetry} from './telemetry-feed.js';
 import {LiveMap} from './live-map.js';
 import {ControlMinimap} from './control-minimap.js';
 
 const VOICE_ROLES={user:'현장 발화',robot:'로봇 응답',admin:'경고 방송',system:'시스템',robot_evt:'로봇 사건'};
-const TITLES={missions:'제어 · 장치',events:'사건 검토',records:'운영 기록',zones:'구역 · 동선',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
+const TITLES={missions:'제어 · 장치',events:'사건 검토',history:'사건 이력',records:'운영 기록',zones:'구역 · 동선',devices:'장치 상태',voice:'음성 중계',settings:'운영 설정'};
 const STATE_NAMES={IDLE:'대기',PATROL:'순찰',OBSERVE:'관찰',MANUAL:'수동 제어',ESTOP:'긴급 정지',AUTH_WAIT:'인증 대기',TRACK:'대상 추적',FAILSAFE:'안전 정지'};
+// 순찰 판의 끝 (DATA_MODEL 5절 `result`). 진행 중이면 NULL 이다.
+const RUN_RESULTS={stopped:'순찰 정지',manual:'수동 전환',failsafe:'안전 정지',shutdown:'런타임 종료',interrupted:'비정상 종료'};
+const HISTORY_FILTERS=()=>({event:'all',escalation:'all',robot:'all',zone:'all',reviewed:'all',since:'',until:'',mission:null});
 const STATUS={idle:'시작 전',running:'예시 진행 중',paused:'일시정지',ended:'종료'};
 const MANUAL_KEYS={KeyW:'FORWARD',KeyA:'LEFT',KeyS:'BACKWARD',KeyD:'RIGHT'};
 const time=value=>value==null?'—':new Date(value).toLocaleString('ko-KR',{hour12:false});
@@ -17,8 +21,10 @@ const clock=value=>new Date(value).toLocaleTimeString('ko-KR',{hour12:false});
 
 // All record content is text, never HTML. Files stay in this browser session.
 export class OperationalPanels {
- constructor({store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotViewAction,onRobotPreview,onManualObservation,onToast,voiceLink=null,getVisionStatus=()=>({state:'off'}),document=globalThis.document}){
+ constructor({store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotViewAction,onRobotPreview,onManualObservation,onToast,voiceLink=null,history=null,getVisionStatus=()=>({state:'off'}),document=globalThis.document}){
   Object.assign(this,{store,container,title,onNavigate,onFocusZone,onFocusRobot,onRobotPreview,onRobotViewAction,onManualObservation,onToast,voiceLink,getVisionStatus,document});
+  // 사건 이력 (WBS 4.6.7). 관제 서버가 내보낸 화면에서만 있다 — 없으면 이력 화면이 그렇다고 적는다.
+  this.historyLink=history?new HistoryLink(history):null;this.historyFilters=HISTORY_FILTERS();this.historyQuery='';this.historyItems=[];this.historyRuns=[];this.historyTotal=0;this.historyMeta=null;this.historyFocus=null;this.historyId=null;this.historyToken=0;
   this.view='dashboard';this.zones=[];this.eventId=null;this.zoneId=null;
   this.filters={type:'all',status:'all',robot:'all',query:''};this.urls=new Set();
   this.reviewDrafts=new Map();this.policyDrafts=new Map();this.activeHold=null;
@@ -85,7 +91,7 @@ export class OperationalPanels {
   this.clearVoicePoll();
   this.activeHold=null;this.view=view;this.title.textContent=TITLES[view]||'';
   this.container.dataset.page=view;this.container.replaceChildren();if(!TITLES[view])return;
-  const intro=this.el('div',{class:'op-intro'},this.note({missions:'로봇 관측·제어와 현재 장치 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태와 발화 기록을 보고, 시나리오와 멘트를 관리합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?this.store.runtimeLabel:this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
+  const intro=this.el('div',{class:'op-intro'},this.note({missions:'로봇 관측·제어와 현재 장치 상태를 한곳에서 확인합니다.',events:'사건을 찾고, 증거와 판단 근거를 함께 검토합니다.',history:'서버에 저장된 지난 사건과 순찰 판을 찾고, 검토 결과를 서버에 남깁니다.',records:'순찰 결과와 운영 기록을 확인합니다.',zones:'구역을 살펴보고 점검 기준을 구성합니다.',devices:'로봇의 모습과 연결·센서 상태를 함께 확인합니다.',voice:'로봇 음성 상태와 발화 기록을 보고, 시나리오와 멘트를 관리합니다.',settings:'표시 방식과 운영 정책, 관리 항목을 구성합니다.'}[view]),this.badge(this.store.live?this.store.runtimeLabel:this.store.demo?'예시 모드':'실제 데이터 대기',this.store.demo?'amber':''));
   this.container.append(intro,this.el('div',{class:'op-feedback',role:'status','aria-live':'polite'}));
   this[view==='zones'?'zonePage':view]();
  }
@@ -95,6 +101,8 @@ export class OperationalPanels {
   // 초당 10번 오는 로봇 상태는 게이지만 고친다 — 화면을 통째로 다시 그리면 입력·초점·3D 미리보기가 날아간다.
   if(reason==='telemetry'){this.refreshTelemetry();return}
   if(reason==='command'){this.refreshControl();return}
+  // 이력은 서버에서 읽은 것이다 — 실시간 사건·상태 변화로 다시 묻지 않는다(입력·선택이 날아간다).
+  if(this.view==='history')return;
   // 재렌더가 패널을 통째로 갈아끼우므로 스크롤을 보존한다 — 안 하면
   // 텔레메트리 갱신(2초)·명령 응답마다 화면이 맨 위로 튄다.
   const top=this.container.scrollTop;
@@ -204,7 +212,7 @@ export class OperationalPanels {
  }
  renderEventDetail(event){
   this.eventDetail.replaceChildren();this.eventDetail.hidden=!event;if(!event)return;
-  this.eventDetail.append(this.el('div',{class:'op-row-meta'},event.id,this.badge(event.simulated||event.source==='DEMO'?'예시 사건':event.source==='LIVE_FEED'?'실시간 수신 사건':'과거 저장 기록')),this.el('h3',{class:'op-detail-title'},event.title),this.note(event.detail),this.facts([['상태',STATE_NAMES[event.state]??event.state],['대응 단계',event.escalation],['운용 모드',MODE_NAMES[event.mode]??event.mode??'기록 없음'],['출입 인증',event.auth],['보호구',event.ppe]]));
+  this.eventDetail.append(this.el('div',{class:'op-row-meta'},event.id,this.badge(event.simulated||event.source==='DEMO'?'예시 사건':event.source==='LIVE_FEED'?'실시간 수신 사건':event.source==='HISTORY'?'서버 이력 기록':'과거 저장 기록')),this.el('h3',{class:'op-detail-title'},event.title),this.note(event.detail),this.facts([['상태',STATE_NAMES[event.state]??event.state],['대응 단계',event.escalation],['운용 모드',MODE_NAMES[event.mode]??event.mode??'기록 없음'],['출입 인증',event.auth],['보호구',event.ppe]]));
   if(event.evidence?.length)this.eventDetail.append(this.section('판정 근거',this.facts(event.evidence)));
   if(event.snapshot)this.eventDetail.append(this.evidenceImage(event));
   else this.eventDetail.append(this.el('div',{class:'op-evidence-empty'},this.el('strong',{},'첨부된 스냅샷 없음'),this.el('span',{},'3D 예시 화면은 이 사건의 증거가 아닙니다.')));
@@ -214,10 +222,12 @@ export class OperationalPanels {
    const detections=event.meta.detections.map(detection=>[detection.label,Math.round(detection.score*100)+'% · ['+detection.box.join(', ')+']']);
    this.eventDetail.append(this.section('당시 검출·추적 근거',this.note('추적 ID는 영구 신원이 아닙니다. 박스 좌표는 원본 JPEG의 픽셀 기준입니다.'),tracks.length||detections.length?this.facts([...tracks,...detections]):this.note('저장된 검출·추적 항목이 없습니다.')),this.el('details',{class:'op-raw'},this.el('summary',{},'당시 텔레메트리 원문'),this.el('pre',{},JSON.stringify(event.meta.telemetry,null,2))));
   }
+  // 실시간 사건은 이력 저장소에도 남는다(4.6.6) — 검토는 그 기록에 서버로 남긴다.
   if(event.source==='LIVE_FEED'){
-   this.eventDetail.append(this.section('검토 기록',this.note('실시간 사건 검토는 서버에 저장되지 않습니다. 이 화면에서는 조회만 가능합니다.','warning')));
+   this.eventDetail.append(this.section('검토 기록',this.note('실시간 사건의 검토는 «사건 이력» 화면에서 서버에 저장합니다.'),this.button('사건 이력에서 검토',()=>this.openHistoryFor(event),{disabled:!this.historyLink})));
    return;
   }
+  if(event.source==='HISTORY'){this.eventDetail.append(this.historyReview(event));return}
   const draft=this.reviewDrafts.get(event.id)||{status:event.review,note:event.note};
   const remember=()=>this.reviewDrafts.set(event.id,{status:status.value,note:memo.value});
   const status=this.select('검토 결과',Object.entries(REVIEW_STATES),draft.status,remember);
@@ -258,6 +268,102 @@ export class OperationalPanels {
    if(this.view==='events')this.render('events');
    this.onToast('저장 기록을 열었어요. 실시간 연결은 변경되지 않습니다.');
   }catch(error){if(url)this.document.defaultView.URL.revokeObjectURL(url);throw error}
+ }
+ // ── 사건 이력 (WBS 4.6.7 · ADR-46) ──────────────────────────────
+ // 서버 저장소(`/api/history/*`)를 읽는다. 종류·단계·장치·구역·검토·날짜·순찰 판은 서버가 거르고,
+ // 검색어는 받은 목록 안에서 거른다(서버에 글자 검색이 없다). 상세 보기는 사건 검토와 같은 `renderEventDetail` 이다.
+ history(){
+  if(!this.historyLink){this.container.append(this.section('사건 이력',this.note('관제 서버에 연결된 화면에서만 사건 이력을 조회합니다. 지금 화면에는 읽을 저장소가 없습니다.','warning')));return}
+  const f=this.historyFilters;
+  this.container.append(this.note('관제 서버의 사건 이력 저장소에서 읽습니다. 검토 결과는 서버에 저장되어 새로고침 뒤에도 남습니다.'));
+  const search=this.el('input',{type:'search',name:'이력 검색',placeholder:'사건명 · 장치 · 구역 · 처리 메모',value:this.historyQuery,oninput:event=>{this.historyQuery=event.target.value;this.renderHistoryList()}});
+  const date=(name,key)=>this.el('input',{type:'date',name,'aria-label':name,value:f[key],onchange:event=>{f[key]=event.target.value;this.loadHistory()}});
+  this.historyFilterBar=this.el('div',{class:'op-filters'});
+  this.container.append(this.el('div',{class:'op-filters'},this.field('검색',search),this.field('시작일',date('이력 시작일','since')),this.field('종료일',date('이력 종료일','until')),this.button('초기화',()=>{this.historyFilters=HISTORY_FILTERS();this.historyQuery='';this.render('history')})),this.historyFilterBar);
+  this.historyStatus=this.el('p',{class:'op-result-count',role:'status'});
+  this.eventList=this.el('div',{class:'op-event-list','aria-label':'이력 사건 목록'});
+  this.eventDetail=this.el('section',{class:'op-event-detail','aria-label':'선택한 이력 사건',hidden:true});
+  this.historyRunsEl=this.el('div',{class:'op-table-wrap','data-history-runs':''});
+  this.container.append(this.historyStatus,this.el('div',{class:'op-evidence-workspace empty'},this.eventList,this.eventDetail),this.section('순찰 판',this.note('순찰 한 판은 대기·수동·안전 정지를 떠날 때 열리고 돌아올 때 닫힙니다. «이 판의 사건» 은 위 목록을 그 판으로 좁힙니다.'),this.historyRunsEl));
+  if(this.historyMeta)this.renderHistoryFilters();
+  this.loadHistory();
+ }
+ renderHistoryFilters(){
+  const f=this.historyFilters,set=key=>value=>{f[key]=value;this.loadHistory()},{robots,zones}=this.historyMeta;
+  this.historyFilterBar.replaceChildren(
+   this.filterChoice('종류','이력 사건 종류',[['all','전체 종류'],...Object.entries(EVENT_TITLES)],f.event,set('event')),
+   this.filterChoice('대응 단계','이력 대응 단계',[['all','전체 단계'],...['L0','L1','L2','L3','F'].map(level=>[level,level])],f.escalation,set('escalation')),
+   this.filterChoice('장치','이력 장치',[['all','전체 장치'],...robots.map(robot=>[robot.robot_id,robot.display_name||robot.robot_id])],f.robot,set('robot')),
+   this.filterChoice('구역','이력 구역',[['all','전체 구역'],...zones.map(zone=>[zone.zone_id,zone.zone_name&&zone.zone_name!==zone.zone_id?zone.zone_id+' · '+zone.zone_name:zone.zone_id])],f.zone,set('zone')),
+   this.filterChoice('검토 상태','이력 검토 상태',[['all','전체 상태'],['no','검토 대기'],['yes','검토 완료']],f.reviewed,set('reviewed')));
+ }
+ loadHistory(){
+  const token=++this.historyToken,f=this.historyFilters,focus=this.historyFocus,pick=key=>f[key]==='all'?null:f[key];
+  const day=(value,end)=>value?new Date(value+(end?'T23:59:59.999':'T00:00:00')).getTime():null;
+  this.historyFocus=null;this.historyStatus.textContent='이력을 불러오는 중…';this.historyStatus.dataset.tone='';
+  const meta=this.historyMeta??Promise.all([this.historyLink.robots(),this.historyLink.zones()]).then(([robots,zones])=>({robots:robots.items,zones:zones.items}));
+  this.historyLoad=Promise.all([meta,this.historyLink.incidents({event:pick('event'),escalation:pick('escalation'),robot:pick('robot'),zone:pick('zone'),reviewed:f.reviewed==='all'?null:f.reviewed==='yes',since:day(f.since),until:day(f.until,true),mission:f.mission,limit:100}),this.historyLink.runs({robot:pick('robot'),limit:20}),focus?this.historyLink.incident(focus).catch(error=>{this.onToast(error.message);return null}):null]).then(([meta,incidents,runs,focused])=>{
+   if(token!==this.historyToken||this.view!=='history')return;
+   if(!this.historyMeta){this.historyMeta=meta;this.renderHistoryFilters()}
+   const event=row=>historyEvent(row,this.historyLink.snapshotBase(row.robot_id));
+   this.historyItems=incidents.items.map(event);this.historyTotal=incidents.total;this.historyRuns=runs.items;
+   if(focused){const found=event(focused);if(!this.historyItems.some(e=>e.id===found.id))this.historyItems.unshift(found);this.historyId=found.id;this.historyQuery=''}
+   this.renderHistoryList();this.renderHistoryRuns();
+  }).catch(error=>{
+   if(token!==this.historyToken||this.view!=='history')return;
+   this.historyItems=[];this.historyRuns=[];this.historyStatus.textContent=error.message;this.historyStatus.dataset.tone='error';
+   this.eventList.replaceChildren(this.note(error.message,'warning'));this.eventDetail.hidden=true;this.historyRunsEl.replaceChildren();
+  });
+  return this.historyLoad;
+ }
+ renderHistoryList(){
+  const q=this.historyQuery.trim().toLocaleLowerCase(),f=this.historyFilters;
+  const records=this.historyItems.filter(e=>!q||[e.incidentId,e.title,e.robot,e.zone,e.event,e.resolution].join(' ').toLocaleLowerCase().includes(q));
+  if(!records.some(e=>e.id===this.historyId))this.historyId=records[0]?.id||null;
+  this.historyStatus.textContent=records.length+'건 표시 · 서버 '+this.historyTotal+'건'+(f.mission?' · 순찰 판 '+f.mission:'')+(this.historyTotal>this.historyItems.length?' · 최근 '+this.historyItems.length+'건만 받았습니다 — 조건을 좁히세요':'');
+  this.eventList.replaceChildren(...records.map(event=>this.button([
+   this.el('span',{class:'op-row-meta'},event.robot,this.badge('서버 이력')),
+   this.el('strong',{},event.title),
+   this.el('span',{class:'op-row-meta'},event.zone,event.ts_ms?this.el('time',{class:'op-row-time',datetime:new Date(event.ts_ms).toISOString()},time(event.ts_ms)):null),
+   this.el('span',{class:'op-row-foot'},this.badge(event.reviewed?'검토 완료':'검토 대기',event.reviewed?'':'amber'),this.el('span',{},event.escalation))
+  ],()=>{this.historyId=event.id;this.renderHistoryList();this.eventList.querySelector('.op-event-row.selected')?.focus()},{class:'op-event-row'+(event.id===this.historyId?' selected':''),'aria-pressed':event.id===this.historyId})));
+  this.eventList.parentElement.classList.toggle('empty',!records.length);
+  if(!records.length)this.eventList.append(this.note(this.historyItems.length?'검색 결과가 없습니다. 검색어를 바꾸세요.':'조건에 맞는 저장된 사건이 없습니다.'));
+  this.renderEventDetail(records.find(e=>e.id===this.historyId));
+ }
+ renderHistoryRuns(){
+  const f=this.historyFilters,rows=this.historyRuns.map(run=>this.el('tr',{},
+   this.el('td',{},time(run.started_at)+' → '+(run.ended_at==null?'진행 중':time(run.ended_at))),this.el('td',{},run.robot_id),this.el('td',{},MODE_NAMES[run.mode]??run.mode),
+   this.el('td',{},run.result==null?'진행 중':RUN_RESULTS[run.result]??run.result),this.el('td',{},(run.zones_visited||[]).join(' → ')||'—'),this.el('td',{},run.incident_count+'건'),
+   this.el('td',{},this.button('이 판의 사건',()=>{f.mission=run.mission_id;this.loadHistory()},{'aria-pressed':f.mission===run.mission_id}))));
+  this.historyRunsEl.replaceChildren(this.el('table',{class:'op-table'},this.el('caption',{},'최근 순찰 판 '+this.historyRuns.length+'개'+(f.mission?' · ':''),f.mission?this.button('순찰 판 조건 해제',()=>{f.mission=null;this.loadHistory()}):null),
+   this.el('thead',{},this.el('tr',{},['시작 → 종료','로봇','모드','결과','방문 구역','사건','사건 보기'].map(label=>this.el('th',{scope:'col'},label)))),
+   this.el('tbody',{},rows.length?rows:this.el('tr',{},this.el('td',{colspan:7,class:'op-table-empty'},'저장된 순찰 판이 없습니다.')))));
+ }
+ historyReview(event){
+  const draft=this.reviewDrafts.get(event.id)||{status:event.reviewed?'reviewed':'pending',note:event.resolution};
+  const remember=()=>this.reviewDrafts.set(event.id,{status:status.value,note:memo.value});
+  const status=this.select('이력 검토 결과',[['pending','검토 대기'],['reviewed','검토 완료']],draft.status,remember);
+  const memo=this.el('textarea',{name:'이력 처리 메모',rows:4,maxlength:2000,placeholder:'판단 근거와 후속 조치를 남겨 주세요.',oninput:remember},draft.note);
+  const form=this.el('form',{class:'op-review-form',onsubmit:submit=>{submit.preventDefault();this.historySave=this.run(()=>this.saveHistoryReview(event,status.value==='reviewed',memo.value))}},this.field('검토 결과',status),this.field('처리 메모',memo),this.el('button',{type:'submit',class:'op-button primary',disabled:this.store.role==='technician'},'서버에 검토 저장'));
+  const saved=event.reviewed?'서버 저장됨 · 검토 완료'+(event.reviewedAt?' '+time(event.reviewedAt):''):event.resolution?'서버 저장됨 · 검토 대기':'아직 검토하지 않은 사건입니다.';
+  return this.section('검토 기록',this.note('검토는 관제 서버의 이력 저장소에 남습니다. 경보 확인이나 기체 안전 리셋을 실행하지 않습니다.'),this.badge(saved,event.reviewed?'':'amber'),form);
+ }
+ async saveHistoryReview(event,reviewed,resolution){
+  if(this.store.role==='technician')throw new Error('운영자 또는 검토자 시연 역할에서 검토하세요.');
+  const row=await this.historyLink.review(event.incidentId,{reviewed,resolution:resolution.trim().slice(0,2000)});
+  const updated=historyEvent(row,this.historyLink.snapshotBase(row.robot_id));
+  this.historyItems=this.historyItems.map(e=>e.id===updated.id?updated:e);this.reviewDrafts.delete(event.id);
+  this.store.log('사건 검토 서버 저장',row.incident_id+' · '+(reviewed?'검토 완료':'검토 대기'),'HISTORY_REVIEW');
+  if(this.view==='history')this.renderHistoryList();
+  this.onToast('서버에 검토를 저장했어요.');
+ }
+ // 실시간 사건 → 이력의 같은 사건. 블랙박스 사건의 이력 ID 는 `<기체>_<기록 폴더>` 다(DATA_MODEL 3.4).
+ // 사진 없는 사건은 ID 를 알 수 없어 같은 종류로 좁혀 연다.
+ openHistoryFor(event){
+  this.historyFilters=HISTORY_FILTERS();this.historyQuery='';
+  if(event.entry)this.historyFocus=event.robot+'_'+event.entry;else this.historyFilters.event=event.event;
+  this.onNavigate('history');
  }
  // ── 음성 중계 (WBS 4.7.14) ───────────────────────────────────────
  // 음성 링크는 메인 루프가 단독 소유하고 웹은 큐로 요청한다. 타자로 친 임의
@@ -567,7 +673,7 @@ export class OperationalPanels {
   this.container.append(this.note('이 페이지는 로컬 UI 작업 기록입니다. 실물 운행·서버 감사 로그가 아닙니다. 최대 500건을 세션에 보관하며 새로고침하면 초기화됩니다.'),this.el('div',{class:'op-toolbar'},this.button('조작 이력 CSV',()=>{this.download(this.store.exportRecords(),'mechadog-ui-records.csv','text/csv');this.render('records')}),this.button('사건 검토 JSON',()=>this.download(this.store.exportReview(),'mechadog-review.json','application/json'))));
   this.container.append(this.section('예시 순찰 세션',this.store.sessions.length?this.el('div',{class:'op-session-list'},this.store.sessions.map(session=>this.el('article',{},this.el('strong',{},session.robot+' · '+session.zone),this.badge(STATUS[session.id===this.store.mission.id?this.store.mission.status:session.status]),this.el('p',{},time(session.startedAt)+' → '+time(session.endedAt))))):this.note('이 세션에서 시작한 예시 임무가 없습니다.')));
   const list=this.el('div',{class:'op-record-list'}),count=this.el('p',{class:'op-result-count',role:'status'});
-  const render=term=>{const rows=this.store.records.filter(row=>[row.action,row.detail,row.source].join(' ').toLowerCase().includes(term.toLowerCase()));count.textContent=rows.length+'건 · 로컬 기록';list.replaceChildren(...rows.map(row=>this.el('article',{class:'op-record'},this.el('time',{datetime:new Date(row.ts_ms).toISOString()},time(row.ts_ms)),this.el('div',{},this.el('strong',{},row.action),this.el('p',{},row.detail),this.el('small',{},({'LOCAL_UI_PREVIEW_ONLY':'화면 조작','LOCAL_IMPORTED_REVIEW':'가져온 사건 검토'}[row.source]??row.source))))));if(!rows.length)list.append(this.note('조건에 맞는 기록이 없습니다.'))};
+  const render=term=>{const rows=this.store.records.filter(row=>[row.action,row.detail,row.source].join(' ').toLowerCase().includes(term.toLowerCase()));count.textContent=rows.length+'건 · 로컬 기록';list.replaceChildren(...rows.map(row=>this.el('article',{class:'op-record'},this.el('time',{datetime:new Date(row.ts_ms).toISOString()},time(row.ts_ms)),this.el('div',{},this.el('strong',{},row.action),this.el('p',{},row.detail),this.el('small',{},({'LOCAL_UI_PREVIEW_ONLY':'화면 조작','LOCAL_IMPORTED_REVIEW':'가져온 사건 검토','HISTORY_REVIEW':'서버 이력 검토'}[row.source]??row.source))))));if(!rows.length)list.append(this.note('조건에 맞는 기록이 없습니다.'))};
   this.container.append(this.section('조작 이력',this.field('기록 검색',this.el('input',{type:'search',placeholder:'동작 · 메모 · 출처',oninput:event=>render(event.target.value)})),count,list));render('');
   this.container.append(this.previewSection('순찰 결과 · 세션 상세',
    this.el('div',{class:'op-form-grid'},this.previewField('조회 시작일','', 'date'),this.previewField('조회 종료일','', 'date')),
