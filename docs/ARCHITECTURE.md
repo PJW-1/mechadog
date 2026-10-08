@@ -209,10 +209,10 @@ XIAO · 중계 MCU · LD19 를 **한 보조배터리에서 급전**한다. LiDAR
 | MechDog ESP32 | Arduino / C++17 | `HW_MechDog.h`, `mech_base_types.h`, `WiFi.h`, `WiFiUdp.h` |
 | XIAO ESP32S3 | Arduino / C++17 | `esp_camera.h`, `WiFi.h`, ESP32 HTTP 서버 |
 | Host PC (런타임) | Python 3.12 | OpenCV, **onnxruntime** (Win: DirectML EP / Linux CI: CPU EP), FastAPI, uvicorn, websockets, PyYAML |
-| Host PC (모델 학습) | Python 3.12 | PPE 모델 학습 및 ONNX export (FR-9.1). YOLOX-Nano(Apache-2.0) |
+| Host PC (모델 학습) | Python 3.12 | PPE 모델 학습 및 ONNX export (FR-9.1). YOLOX-S(Apache-2.0) |
 | Host PC (Phase 2) | ROS2 Jazzy (WSL2) | `slam_toolbox`, `rviz2`, `tf2` |
 
-> ⚠️ **학습 도구의 라이선스를 주의한다.** `ultralytics` 는 **AGPL-3.0** 이다 — 이 코드를 쓴 소프트웨어는 소스를 공개해야 하는 강한 조건(카피레프트)이 붙어, 대시보드를 웹으로 띄우는 구조에서 팀 코드 전체가 공개 의무에 걸린다. 그래서 쓰지 않고 **Apache-2.0** 인 YOLOX 를 쓴다 — 범용 검출기는 YOLOX-S, PPE 는 YOLOX-Nano 다(OI-15 · [ADR-24](DECISIONS.md)). 런타임은 **자체 작성 코드 + `onnxruntime`** 이다.
+> ⚠️ **학습 도구의 라이선스를 주의한다.** `ultralytics` 는 **AGPL-3.0** 이다 — 이 코드를 쓴 소프트웨어는 소스를 공개해야 하는 강한 조건(카피레프트)이 붙어, 대시보드를 웹으로 띄우는 구조에서 팀 코드 전체가 공개 의무에 걸린다. 그래서 쓰지 않고 **Apache-2.0** 인 YOLOX 를 쓴다 — 범용 검출기와 PPE 모델(`ppe-v5`) 모두 YOLOX-S 다(OI-15 · [ADR-24](DECISIONS.md) · [PPE 데이터 카드](ppe-data-card.md)). 런타임은 **자체 작성 코드 + `onnxruntime`** 이다.
 
 **추론 실행 프로바이더 (EP) 선택**
 
@@ -411,7 +411,7 @@ JPEG 디코드와 `STOP` 적용 ACK까지는 평균 31.2ms·p95 69ms·p99 124ms�
 | :--- | :--- | :--- |
 | NFR-2.1 | Command Timeout | 600 ms 무명령 → 정지 (FR-1.3 · ADR-39) |
 | NFR-2.2 | Link Loss | 3 s 무통신 → `STATE_FAILSAFE`, 안정 자세 |
-| NFR-2.3 | 저전압 | 7.0 V 경고 / 6.6 V 셧다운 및 서보 토크 해제 |
+| NFR-2.3 | 저전압 | 7.0 V 경고 / 6.6 V 셧다운 — 보행 정지·래치(`FAILSAFE`). 서보 토크는 풀지 않는다([ADR-36](DECISIONS.md#adr-36)) |
 | NFR-2.4 ❌ | 전도 자동 감지는 제공하지 않는다([ADR-36](DECISIONS.md#adr-36)) — `FAILSAFE` 로 정지한 로봇의 IMU 피치가 정지 중에도 60° 임계를 넘나들어, 어떤 임계로도 의도된 자세와 전도를 가를 수 없었다. 2차 손상 방지는 `A-13`(상시 인적 감시) 아래 사람의 `ESTOP` 이 맡는다 | 넘어진 로봇의 서보는 도달 불가능한 목표 각도를 계속 추종하며 스톨(stall) 상태로 최대 토크·최대 전류를 소모해 ① 기어 톱니 파손 ② 권선 과열·소손 ③ 배터리 급방전을 유발할 수 있다 |
 | NFR-2.5 ⏸ | Watchdog | 행(hang) 시 1초 이내 자동 리셋. **구동 OFF 진단 빌드에서 충족** — `loop_monitor` 태스크가 750ms 무진척을 래치하고 재부팅하며 실측 약 813ms 다. ⚠️ **걷는 빌드에는 적용하지 않는다** — 리셋 직후 벤더 시작 코드가 서보를 움직일 수 있어 조합을 `#error` 로 막아 두었다. 그래서 보행 중 `loop()` 가 멈추면 **같은 루프 안의 600ms 명령 타임아웃 검사도 함께 멈춰 서보가 마지막 보행 명령으로 굳는다.** 호스트는 3초 링크 두절로 정확히 알아채지만 세울 수단이 없다. **사람의 `ESTOP`·전원 차단이 그 자리를 대신하며** `A-13` 상시 인적 감시에 기댄다 — `NFR-2.4` 전도 감지와 같은 근거다. **무인 운용으로 확장하면 먼저 푼다** |
 | NFR-2.6 ✅ | Graceful Degradation | 비전 노드 단절 시에도 순찰·회피는 계속 동작해야 한다 (사람 인지 기능만 비활성) — **호스트 FSM 에서 구현·검증됨.** 로봇 링크 두절(`safety.link_loss_failsafe_ms`)은 `FAILSAFE` 로 가고, 비전 단절(`vision.stall_timeout_ms`)은 `degraded` 만 세운 채 순찰을 유지한다. 런타임은 새 결과마다 `note_vision()`을 갱신하고 스톨·워커 중단을 `degraded`에 반영한다. 첫 프레임 전에는 워커 시작 시각부터 기동 유예를 재므로 **카메라가 처음부터 응답하지 않는 경우도 영구 정상으로 남지 않는다.** **둘을 같은 사건으로 묶으면 카메라가 딸꾹질할 때마다 로봇이 멈춘다** |
@@ -810,7 +810,7 @@ mechdog_physical_ai/
 | **`ALERT` vs `AUTH_WAIT`** | 앞은 사람을 **발견**한 상태, 뒤는 **인증을 요구하고 기다리는** 상태 |
 | **폐기 vs 클램핑** | 앞은 **버린다**, 뒤는 **잘라서 쓴다** |
 | **유실 vs 파싱 실패** | 앞은 **도착조차 안 함**, 뒤는 도착했지만 **못 읽음** |
-| **저전압 판정 임계 vs 물리 범위** | 앞은 *"안전한가"*(6.6V), 뒤는 *"측정이 가능한 값인가"*(6.0\~8.4V) |
+| **저전압 판정 임계 vs 물리 범위** | 앞은 *"안전한가"*(6.6V), 뒤는 *"측정이 가능한 값인가"*(6.0\~8.6V — 만충 8.4V 에 측정 여유 0.2V, [ADR-30](DECISIONS.md#adr-30)) |
 | **구역 식별 vs 구역 이동** | 구역은 LiDAR 앵커로 식별한다([ADR-8](DECISIONS.md#adr-8)) — 둘 다 측위를 쓴다. 앞은 위치가 앵커 반경 안인지 **판정하는 것**(FR-7.4), 뒤는 그 앵커로 **찾아가는 것**(FR-7.2) |
 | **ArUco 마커 vs 구역 앵커** | 앞은 **인쇄물**(사원증 인증), 뒤는 `maps/zones.json` 의 **좌표**(구역 식별) |
 | **에스컬레이션 vs FSM 상태** | **서로 직교한다.** "무엇을 하는 중"(FSM) 과 "얼마나 세게 대응"(에스컬레이션) 은 별개 축 |
