@@ -109,7 +109,7 @@ class RouteFollower:
         if patrol.phase is Phase.HALTED or patrol.safety.latched:
             return False, "안전 정지를 해제한 뒤 동선을 시작해야 한다"
         located = (
-            patrol._relaxed_pose_available(now_ms)
+            patrol.relaxed.pose_available(now_ms)
             if patrol.nav_params.relaxed_follow
             else not patrol.pose_stale(now_ms) and not patrol.localization.untrusted
         )
@@ -148,19 +148,19 @@ class RouteFollower:
         self.index = 0
         self.cycle = 1
         self.status = "active"
-        patrol._relaxed_progress, patrol._relaxed_stuck = None, False
-        patrol._relaxed_blocked_reported = False
+        patrol.relaxed.progress, patrol.relaxed.stuck = None, False
+        patrol.relaxed.blocked_reported = False
         patrol.skipped = frozenset()
         self.skipped_indices = frozenset()
         self.stage = "moving"
         self.dwell_until_ms = None
         self.direct_stopped_ms = None
         self.direct_detour_start = None
-        patrol._relaxed_leg_start = patrol.pose[:2]
+        patrol.relaxed.leg_start = patrol.pose[:2]
         self.search_base = None
-        patrol._relaxed_detouring = False
-        patrol._relaxed_distance = math.inf
-        patrol._relaxed_blocked_reported = False
+        patrol.relaxed.detouring = False
+        patrol.relaxed.last_distance = math.inf
+        patrol.relaxed.blocked_reported = False
         patrol._now_ms = now_ms
         patrol.commander.halt()
         return True, f"동선 ‘{route.name}’의 {len(route.points)}개 지점을 차례로 주행한다"
@@ -168,9 +168,9 @@ class RouteFollower:
     def cancel(self, reason: str = "stopped", *, hold: bool = True) -> None:
         """동선과 대기를 취소한다. 완료·막힘도 자동 구역 순찰로 흘러가지 않는다."""
         patrol = self._patrol
-        patrol._relaxed_escape_turn = False
+        patrol.relaxed.escape_turn = False
         self.search_base = None
-        patrol._relaxed_detouring = False
+        patrol.relaxed.detouring = False
         patrol.avoidance.active = None
         patrol.recovery.active = None
         patrol.recovery.waiting = patrol.recovery.returning_home = False
@@ -180,7 +180,7 @@ class RouteFollower:
             return
         self.status = reason
         self.stage = reason
-        patrol._relaxed_progress, patrol._relaxed_stuck = None, False
+        patrol.relaxed.progress, patrol.relaxed.stuck = None, False
         self.dwell_until_ms = None
         patrol._inspection_zone = None
         patrol._goal = None
@@ -259,7 +259,7 @@ class RouteFollower:
         if self.search_base is not None:
             self.search_person()
             return
-        if not patrol._relaxed_route and (
+        if not patrol.relaxed.active and (
             math.dist(patrol.pose[:2], (point.x, point.y)) >= patrol.drive.arrival_radius_m
         ):
             # 경보·측위 복구 뒤 다른 자리에 있으면 먼저 같은 지점으로 다시 접근한다.
@@ -338,12 +338,12 @@ class RouteFollower:
             self.cycle += 1
             patrol.skipped = frozenset()
             self.skipped_indices = frozenset()
-        patrol._relaxed_leg_start = (self.point().x, self.point().y)
-        patrol._relaxed_distance = math.inf
-        patrol._relaxed_blocked_reported = False
+        patrol.relaxed.leg_start = (self.point().x, self.point().y)
+        patrol.relaxed.last_distance = math.inf
+        patrol.relaxed.blocked_reported = False
         self.index = index
         self.search_base = None
-        patrol._relaxed_detouring = False
+        patrol.relaxed.detouring = False
         point = route.points[index]
         # 동적 막힘은 다음 지점도 정지·스캔·우회/건너뛰기로 처리한다.
         patrol._goal = (point.x, point.y)
@@ -370,9 +370,9 @@ class RouteFollower:
     def direct_obstacle_stop(self) -> None:
         """장애물 정지만 계시한다. 측위/스캔/안전 상실은 회피 자격이 아니다."""
         patrol = self._patrol
-        if patrol._relaxed_route:
+        if patrol.relaxed.active:
             self.direct_stopped_ms = None
-            patrol._relaxed_escape_turn = False
+            patrol.relaxed.escape_turn = False
             return
         if patrol.localization.untrusted:
             self.direct_stopped_ms = None

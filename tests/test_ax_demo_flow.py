@@ -318,7 +318,7 @@ def box_scan(now, distance, width, *, side=1):
 def test_box_detour_walks_into_free_side_then_returns_to_goal(distance, width, side):
     c = relaxed()
     c.nav_params = replace(c.nav_params, relaxed_walk_detour=True, relaxed_detour_notice=True)
-    c._relaxed_scan.params = c.nav_params
+    c.relaxed.scan.params = c.nav_params
     events = []
     for now in (1100, 1200, 1300):
         c.observe_telemetry(Reading(), now)
@@ -328,7 +328,7 @@ def test_box_detour_walks_into_free_side_then_returns_to_goal(distance, width, s
         assert c.commander.intent.type_ == "MOVE"
         assert c.commander.intent.fields["step"] > 0
         assert c.commander.intent.fields["angle"] * side > 0
-        assert not c._relaxed_escape_turn
+        assert not c.relaxed.escape_turn
         events.extend(c.take_navigation_events())
     assert [e["event"] for e in events] == ["obstacle_detour"]
     tick(c, 1400, pose=(2.5, 2 + side * 0.2, 0))
@@ -344,10 +344,10 @@ def test_box_detour_walks_into_free_side_then_returns_to_goal(distance, width, s
 def test_detour_notice_requires_angle_and_near_target_obstacle(monkeypatch):
     c = relaxed()
     c.nav_params = replace(c.nav_params, relaxed_detour_notice=True)
-    monkeypatch.setattr(c._relaxed_scan, "open_heading", lambda _target, **_kw: math.radians(35))
+    monkeypatch.setattr(c.relaxed.scan, "open_heading", lambda _target, **_kw: math.radians(35))
     tick(c, 1100)  # 빈 공간 또는 문틀의 먼 편향은 우회 방송이 아니다.
     assert not c.take_navigation_events()
-    monkeypatch.setattr(c._relaxed_scan, "open_heading", lambda _target, **_kw: math.radians(10))
+    monkeypatch.setattr(c.relaxed.scan, "open_heading", lambda _target, **_kw: math.radians(10))
     tick(c, 1200, front=0.7)
     assert not c.take_navigation_events()
 

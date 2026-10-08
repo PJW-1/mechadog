@@ -180,12 +180,12 @@ def test_tilt_keeps_last_normal_scan_and_does_not_restart_dwell():
     tick(c, 1000)
     tick(c, 1100, pose=(2, 2, math.pi / 2))
     assert c.route.stage == "dwell"
-    normal = c._relaxed_scan.last_id
+    normal = c.relaxed.scan.last_id
     c.observe_telemetry(Reading(pitch=15), 1500)
     c.observe_obstacle_scan(revolution(1500), 1500)
     assert not c._local_scan.clear_allowed
     c.step(1500)
-    assert c._relaxed_scan.last_id == normal
+    assert c.relaxed.scan.last_id == normal
     assert c.route_status()["dwell_remaining_s"] == pytest.approx(0.6)
     c.step(2100)
     assert c.route.status == "completed"
