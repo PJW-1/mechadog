@@ -199,8 +199,11 @@ tests/
 ├── fixtures/
 │   ├── protocol_samples.jsonl   정본 (11종 + 경계값)     ✅
 │   ├── protocol_invalid.jsonl   폐기·클램핑 대상          ✅
+│   ├── protocol_sessions.jsonl  재시작·이전 세션 폐기     ✅
 │   ├── telemetry_samples.jsonl  상태 13종 + 안전 경계값   ✅
 │   ├── telemetry_invalid.jsonl  폐기 대상                 ✅
+│   ├── lidar_samples.jsonl      LiDAR 스캔 정본·거리 경계 ✅
+│   ├── lidar_invalid.jsonl      LiDAR 폐기·부분 수락 대상 ✅
 │   ├── log_samples.jsonl        로그 필수 컨텍스트 정본   ✅
 │   └── log_invalid.jsonl        컨텍스트 누락·레벨 오류   ✅
 ├── test_config.py               config 스키마·불변조건    ✅
