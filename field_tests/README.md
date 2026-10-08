@@ -30,7 +30,7 @@
 | 온보드 근거리 반사 정지가 전진만 거부하고 후진 탈출로는 열려 있는가 | **9/9 통과.** 다만 초음파가 21cm 표적을 13%꼴로 34cm 로 잘못 읽어(150표본 중 20건) 해제 2표본에서는 회피 상태가 29회 깜빡였다 — 해제를 5표본으로 올려 0회로 고쳤다 (2026-09-17 · `mechdog-01`) | [20260917_3.2.6-obstacle-stop](results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 양방향 조향 보정을 걸면 좌우 선회가 대칭이 되는가 | **기각.** 11.5배 비대칭이 나와 되돌렸다 (2026-09-19 · `mechdog-01`) | [20260919_bias-symmetry](results/20260919_bias-symmetry/summary.md) |
 | 조향 각도별 선회율(순 회전) 곡선을 실측한다 | +28°에서 +9.41°/s, −28°에서 −7.90°/s 로 좌우가 비대칭이었고, 자이로 바이어스가 부팅마다 달라(세 부팅에서 +38.4 / +0.2 / −1.1 °/s) 정지 기준선을 같은 부팅에서 빼야 함을 확인했다 (2026-09-18 · `mechdog-01`) | [20260918_turn-curve](results/20260918_turn-curve/summary.md) |
-| 검출→명령 적용까지 지연 체인의 각 구간 시각을 프레임 단위로 남긴다(NFR-1.1) | 이 폴더는 `summary.md`가 없다 — 통과/기각을 단정하지 않는다. `chain.json`에 프레임별 `decode_infer_ms`(9~11ms)·`ack_ms_from_detect`(1~7ms)만 원자료로 남아 있다 (2026-09-15 · `mechdog-01`) | [20260915_nfr1.1-chain](results/20260915_nfr1.1-chain/chain.json) |
+| 검출→명령 적용까지 지연 체인의 각 구간 시각을 프레임 단위로 남긴다(NFR-1.1) | 이 폴더는 `summary.md`가 없다 — 통과/기각을 단정하지 않는다. `chain.json`에 프레임별 `decode_infer_ms`(9\~11ms)·`ack_ms_from_detect`(1\~7ms)만 원자료로 남아 있다 (2026-09-15 · `mechdog-01`) | [20260915_nfr1.1-chain](results/20260915_nfr1.1-chain/chain.json) |
 
 ## 전체 목록
 

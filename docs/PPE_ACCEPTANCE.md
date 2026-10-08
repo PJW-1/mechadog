@@ -175,13 +175,13 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
 가장 적고, no_helmet 재현율이 올랐고, 두 세트에서 고르게 동작한다. 채택은 XIAO 로만 판단한다.
 
 **2026-10-05 — 3.7.3 종결 범위와 합격 기준을 확정했다.** WBS 3.7.3은 **ppe-v5의 전 구간 XIAO
-재실측과 위 합격 기준 C1~C4**로 닫는다. 공장 모드 종단 실기(사람 발견 → 자세 상승 → 판정 →
+재실측과 위 합격 기준 C1\~C4**로 닫는다. 공장 모드 종단 실기(사람 발견 → 자세 상승 → 판정 →
 순찰 복귀)는 3.7.3에서 빼고 **WBS 5.4.6(공장 모드 시연 한 바퀴 실기)**에서 검증한다.
-2026-10-06에 합격 범위를 직립 4구간·C1~C3로 줄였고, 판정기 전체 PASS 와 회귀 시험 통과로
+2026-10-06에 합격 범위를 직립 4구간·C1\~C3로 줄였고, 판정기 전체 PASS 와 회귀 시험 통과로
 3.7.3을 닫는다(2026-10-06). 아래 «2026-10-06 XIAO 실측» 을 본다.
 
-1. **ppe-v5 XIAO 재실측**: mechdog-01에서 운영 설정 `1500ms / 3회`로 위 절차를 수행하고
-   `summary.md`와 `session.json`을 수집한 뒤 `acceptance_judge.py`로 C1~C3를 판정한다.
+1. **ppe-v5 XIAO 실측**: mechdog-01에서 운영 설정 `1500ms / 3회`로 위 절차를 수행하고
+   `summary.md`와 `session.json`을 수집한 뒤 `acceptance_judge.py`로 C1~C3를 판정했다(아래 «2026-10-06 XIAO 실측»).
    XIAO 독립 Test set은 학습·검증과 분리하고 촬영 세션·장소·인물 단위로 나눈다(2026-09-28
    세션은 학습·검증에만 쓰고 Test에는 쓰지 않는다).
 2. **운용 판정기 구현 완료(실기 미검증)**: `host/vision/ppe_detector.py`에서 사람 크롭,
@@ -195,7 +195,7 @@ helmet/no_helmet/vest/no_vest/person_down, sha256 5b35eb4f…6089)를 mechdog-01
    상승 → PPE 판정 → 경고·순찰 복귀까지의 실제 XIAO·MechDog 흐름은 시연 한 바퀴(5.4.6 ⑤·⑥)에서
    확인한다. 3.7.3의 종결 조건이 아니다.
 
-위 1번에서 C1~C3를 모두 통과하고 2·3번의 회귀 시험이 통과하면 WBS 3.7.3을 닫는다.
+WBS 3.7.3은 위 1번에서 C1~C3를 모두 통과하고 2·3번의 회귀 시험이 통과해 닫혔다(2026-10-06).
 
 ### 2026-10-06 XIAO 실측 — 직립 4구간 합격
 
@@ -387,7 +387,7 @@ python tools/ppe/ppe_live_check.py `
    본다. 칸 아래에 구간 이름이 적혀 있다. 구간과 보이는 착용이 맞는지, 머리·몸통 박스가 제자리인지
    확인하고, 특히 구간 첫머리 칸(버튼 직후)을 본다. 틀린 칸이 있으면 그 세션의
    `annotations/xiao_<세션>_{train,val}.json`을 지우고 합본을 다시 만든다. 칸 하나만 빼는
-   옵션은 아직 없다.
+   옵션은 없다.
 
    ```powershell
    python -c "from pathlib import Path; from tools.ppe.xiao_hardcases import merge_build; print(merge_build(Path('datasets/ppe/build/ppe4_cs_md_v2')))"

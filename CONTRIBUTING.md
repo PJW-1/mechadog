@@ -236,7 +236,7 @@ ruff check . && ruff format --check .
 python -m pytest -q --cov=host --cov=tools --cov-fail-under=80
 ```
 
-`requirements.txt`·`requirements-dev.txt` 를 고쳤으면 CI 용 잠금 파일을 다시 만든다 (Linux·CPython 3.12 기준, 해시 포함). Windows 개발 PC 는 예전처럼 `requirements*.txt` 로 설치한다.
+`requirements.txt`·`requirements-dev.txt` 를 고쳤으면 CI 용 잠금 파일을 다시 만든다 (Linux·CPython 3.12 기준, 해시 포함). Windows 개발 PC 는 `requirements*.txt` 로 설치한다.
 
 ```bash
 pip install uv

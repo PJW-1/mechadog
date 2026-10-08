@@ -82,7 +82,7 @@ flowchart TD
 | 명령 타임아웃 → 래치 | 마지막 유효 명령 뒤 600ms 이상 (첫 유효 명령을 받은 뒤, 래치가 풀려 있을 때만) | `safety.cmd_timeout_ms` · 펌웨어 `kCommandTimeoutMs` | [ADR-39](../DECISIONS.md#adr-39) |
 | 온보드 링크 두절 → 래치 | Wi-Fi 연결 끊김, 즉시 | 없음 (`WiFi.status()`) | — |
 | 링크 정상 표시 `link_ok` | 마지막 유효 명령이 3000ms 이내 (표시만 하고 래치하지 않음) | 펌웨어 `kLinkHealthyAgeMs` (`safety.link_loss_failsafe_ms` 와 같은 값) | — |
-| 호스트 링크 두절 → `LINK_LOST` | 텔레메트리와 명령 ACK 가 모두 3000ms 이상 없음 (첫 수신 전에는 보지 않음). *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47))* `verdict` 와 `applied` 가 있는 명령 ACK 도 텔레메트리처럼 링크 시계를 갱신하고(`host/runtime.py` `_is_command_ack`), ACK 의 `safe_latched` 는 래치 해제 확인에도 반영된다 | `safety.link_loss_failsafe_ms` | — |
+| 호스트 링크 두절 → `LINK_LOST` | 텔레메트리와 명령 ACK 가 모두 3000ms 이상 없음 (첫 수신 전에는 보지 않음). `verdict` 와 `applied` 가 있는 명령 ACK 도 텔레메트리처럼 링크 시계를 갱신하고(`host/runtime.py` `_is_command_ack`), ACK 의 `safe_latched` 는 래치 해제 확인에도 반영된다 | `safety.link_loss_failsafe_ms` | [ADR-47](../DECISIONS.md#adr-47) |
 | 저전압 경고 `lowbatt` | 7.0V 이하 1표본 (동작을 막지 않음) | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
 | 저전압 셧다운 → 래치 | 6.6V 이하 새 표본 연속 3개 | `safety.battery_shutdown_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
 | 셧다운 재무장 · 해제 허용 | 7.0V 초과로 회복 | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
