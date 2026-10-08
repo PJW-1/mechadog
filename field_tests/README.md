@@ -34,7 +34,7 @@
 
 ## 전체 목록
 
-PPE 관련 폴더(이름에 `ppe`가 들어가거나 `3.7.x`)는 개발 중이라 결과를 적지 않는다.
+2026-09 의 PPE 폴더(이름에 `ppe`가 들어가거나 `3.7.x`)는 배포 모델 ppe-v5 이전 후보의 기록이라 결과를 적지 않는다. 판정은 [docs/PPE_ACCEPTANCE.md](../docs/PPE_ACCEPTANCE.md) 에 있다.
 
 | 폴더 | 날짜 | 주제 | 결과 |
 | :--- | :--- | :--- | :--- |
@@ -57,16 +57,16 @@ PPE 관련 폴더(이름에 `ppe`가 들어가거나 `3.7.x`)는 개발 중이�
 | [20260917_6.4.1-g1](results/20260917_6.4.1-g1/summary.md) | 2026-09-17 | G1 제어 링크 게이트 검수 | 통과 |
 | [20260918_3.5.4-recheck](results/20260918_3.5.4-recheck/summary.md) | 2026-09-18 | TRACK 락온 좌우 대칭 재검증 | 통과(방향별 보정으로 좌우 수렴) |
 | [20260918_3.5.4-track](results/20260918_3.5.4-track/summary.md) | 2026-09-18 | TRACK 락온 실기 | 부분 실패(오른쪽 수렴 결함, recheck 에서 해결) |
-| [20260918_3.7.2-ppe-model](results/20260918_3.7.2-ppe-model/report.md) | 2026-09-18 | PPE (개발 중) | — |
+| [20260918_3.7.2-ppe-model](results/20260918_3.7.2-ppe-model/report.md) | 2026-09-18 | PPE (이전 후보 모델) | — |
 | [20260918_4.7.3-eye-led](results/20260918_4.7.3-eye-led/report.md) | 2026-09-18 | 눈 LED 상태 표시(진단 스케치) | 통과 |
 | [20260918_posture](results/20260918_posture/summary.md) | 2026-09-18 | SCAN·ALERT 자세 실기 | 통과 |
 | [20260918_turn-curve](results/20260918_turn-curve/summary.md) | 2026-09-18 | 선회율 곡선 실측 | 기록만 |
 | [20260919_4.7.3-eye-led-host](results/20260919_4.7.3-eye-led-host/summary.md) | 2026-09-19 | 눈 LED 호스트 발신 경로 실기 | 통과(발신 누락 발견·수정) |
 | [20260919_bias-symmetry](results/20260919_bias-symmetry/summary.md) | 2026-09-19 | 양방향 보정·coast·사람 게이트 | 기각(양방향 보정), 나머지 항목 통과 |
-| [20260919_ppe-pc-test](results/20260919_ppe-pc-test/summary.md) | 2026-09-19 | PPE (개발 중) | — |
+| [20260919_ppe-pc-test](results/20260919_ppe-pc-test/summary.md) | 2026-09-19 | PPE (이전 후보 모델) | — |
 | [20260920_3.5.7-3.5.8](results/20260920_3.5.7-3.5.8/summary.md) | 2026-09-20 | 자세 상승(3.5.7)·거리 유지(3.5.8) 실측 | 결함 발견(IMU 가 카메라 피치 변화를 못 읽음) |
 | [20260920_4.8.0-vlm-compare](results/20260920_4.8.0-vlm-compare/summary.md) | 2026-09-20 | VLM 두 장 비교 가능성 | 기각 |
-| [20260920_ppe-novest-orient](results/20260920_ppe-novest-orient/summary.md) | 2026-09-20 | PPE (개발 중) | — |
+| [20260920_ppe-novest-orient](results/20260920_ppe-novest-orient/summary.md) | 2026-09-20 | PPE (이전 후보 모델) | — |
 | [20260922_4.7.7-guard-voice](results/20260922_4.7.7-guard-voice/summary.md) | 2026-09-22 | 경비모드 음성 신원 확인 | 통과 |
 | [20260922_alarm-web-release](results/20260922_alarm-web-release/summary.md) | 2026-09-22 | 헤드리스 L3 해제·판정 대기 유예 | 통과 |
 | [20260922_guard-auth](results/20260922_guard-auth/summary.md) | 2026-09-22 | 경비 모드 휴대폰 ArUco 인증 | 기록만(재인증 반복 원인 미확정) |
@@ -78,4 +78,8 @@ PPE 관련 폴더(이름에 `ppe`가 들어가거나 `3.7.x`)는 개발 중이�
 | [20260923_xiao-mic](results/20260923_xiao-mic/summary.md) | 2026-09-23 | XIAO 마이크 인식 품질·영상 동시 전송 | 통과 |
 | [20260924_4.7.20-mp3-driver](results/20260924_4.7.20-mp3-driver/summary.md) | 2026-09-24 | 로봇 MP3 모듈 드라이버 | 통과 |
 | [20260924_4.7.21-tf-card](results/20260924_4.7.21-tf-card/summary.md) | 2026-09-24 | TF 카드 문장·로봇 스피커 재생 | 통과 |
-| [20260928_4.8.0-vlm-bench](results/20260928_4.8.0-vlm-bench/summary.md) | 2026-09-28 | VLM 판독 카메라 벤치 | 기록만 · `person_down`·YOLOX 결과는 폐기(2026-10-06 · 재실측 예정) |
+| [20260928_4.8.0-vlm-bench](results/20260928_4.8.0-vlm-bench/summary.md) | 2026-09-28 | VLM 판독 카메라 벤치 | 기록만 · `person_down`·YOLOX 결과는 폐기(2026-10-06 · 재실측은 [docs/measurements/2026-10-06-fallen-remeasure.md](../docs/measurements/2026-10-06-fallen-remeasure.md)) |
+| [20261006_ppe-xiao](results/20261006_ppe-xiao/summary.md) | 2026-10-06 | PPE ppe-v5 XIAO 검수(직립 4구간) | 통과(C1~C3 · [PPE_ACCEPTANCE.md](../docs/PPE_ACCEPTANCE.md)) |
+| [20261006_ppe-xiao-rear](results/20261006_ppe-xiao-rear/summary.md) | 2026-10-06~07 | PPE ppe-v5 후면 재측정 | 기록만 · 후면 맨머리 오판 재현 안 됨([analysis.md](results/20261006_ppe-xiao-rear/analysis.md)) |
+| [20261006_precision](results/20261006_precision/summary.md) | 2026-10-06 | ONNX 정밀도 비교(FP16·INT8) | FP32 유지 · INT8 기각 |
+| [20261006_session-replay](results/20261006_session-replay/summary.md) | 2026-10-06 | 기록 세션 재생 | 합성 세션 일치, 실기 세션은 재생 입력 없음 |

@@ -11,7 +11,7 @@
 
 **원칙은 한 줄이다 — 로봇 위의 장치끼리 선을 연결하지 않는다.**
 
-카메라도, 나중에 붙일 LiDAR 도 **자기 배터리로 켜지고 Wi-Fi 로만 말한다.** 서로 직접
+카메라도, mechdog-02 에 붙인 LiDAR 도 **자기 배터리로 켜지고 Wi-Fi 로만 말한다.** 서로 직접
 대화하지 않고 전부 노트북을 거친다. 자전거 바큇살처럼 가운데(노트북)에서 뻗어 나가는
 모양이라 **성형(星形, star) 구조**라고 부른다.
 
@@ -272,7 +272,7 @@ XIAO · 중계 MCU · LD19 를 **한 보조배터리에서 급전**한다. LiDAR
 >
 > 인식도 PC 로 옮겼으므로(ADR-31) **펌웨어에 미리 확정해야 하는 암구호 문구가 없다.** 방송 문구는 개발 중에 늘리면 된다.
 > MP3 모듈은 로봇 IIC1 에서 `0x7B` 로 응답하고 공장 기본 곡 재생까지 확인됐다.
-> 재생·정지·음량과 트랙 번호 규칙(파일 이름 앞 네 자리)은 드라이버가 실측으로 확정했다. `0x7E` 의 정체는 아직 모른다.
+> 재생·정지·음량과 트랙 번호 규칙(파일 이름 앞 네 자리)은 드라이버가 실측으로 확정했다. `0x7E` 의 정체는 확인하지 못했고 한계로 남긴다.
 > 원자료: [`field_tests/results/20260923_4.7.9-bridge-transparency/summary.md`](../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md).
 >
 > **상태 표시등은 별도 부품이 필요하지 않다.** 초음파 센서에 RGB LED 가 내장되어 있음을 실물로 확인했다(OI-12 닫힘).
@@ -348,7 +348,7 @@ WonderEcho ─ USB COM ─→ PC faster-whisper → 규칙 → Piper 실시간 �
 | ID | 항목 | 목표 | 측정 방법 |
 | :--- | :--- | :--- | :--- |
 | NFR-1.1 | **단일 프레임 E2E 인지 지연** (촬영 → 검출 → 명령 적용 ACK) | ≤ 250 ms | 화면의 ms 카운터 촬영값과 검출·ACK의 호스트 타임스탬프를 연결한다 — 아래 참고 |
-| NFR-1.2 | 객체 검출 추론 시간 | ≤ 15 ms | 2단 구조 합산 기준. **①번 실측 완료 (2026-09-10) — 기준 PC·DirectML 에서 전처리+추론+후처리 mean 8.2ms · p95 8.6ms.** ②번 PPE 는 미학습이라 합산 확정은 대기. ⚠️ **CPU EP 로는 61.9ms** — 이 목표는 GPU 전제다 |
+| NFR-1.2 | 객체 검출 추론 시간 | ≤ 15 ms | 2단 구조 합산 기준. **①번 실측 완료 (2026-09-10) — 기준 PC·DirectML 에서 전처리+추론+후처리 mean 8.2ms · p95 8.6ms.** ②번 PPE(ppe-v5)를 더한 2단 합산 추론 시간은 따로 재지 않았다(한계). ⚠️ **CPU EP 로는 61.9ms** — 이 목표는 GPU 전제다 |
 | NFR-1.3 | MJPEG 스트림 | ≥ 15 fps @ VGA | 수신 프레임 카운트 |
 | NFR-1.4 | 명령 → 서보 반영 | ≤ 50 ms | 온보드 타임스탬프 |
 | NFR-1.5 | **온보드 반사 정지** (초음파 → 정지) | **≤ 50 ms** | 안전 요구. Host PC 미경유 |
@@ -418,7 +418,7 @@ JPEG 디코드와 `STOP` 적용 ACK까지는 평균 31.2ms·p95 69ms·p99 124ms�
 | NFR-2.2 | Link Loss | 3 s 무통신 → `STATE_FAILSAFE`, 안정 자세 |
 | NFR-2.3 | 저전압 | 7.0 V 경고 / 6.6 V 셧다운 및 서보 토크 해제 |
 | NFR-2.4 ❌ | 전도 자동 감지는 제공하지 않는다([ADR-36](DECISIONS.md#adr-36)) — `FAILSAFE` 로 정지한 로봇의 IMU 피치가 정지 중에도 60° 임계를 넘나들어, 어떤 임계로도 의도된 자세와 전도를 가를 수 없었다. 2차 손상 방지는 `A-13`(상시 인적 감시) 아래 사람의 `ESTOP` 이 맡는다 | 넘어진 로봇의 서보는 도달 불가능한 목표 각도를 계속 추종하며 스톨(stall) 상태로 최대 토크·최대 전류를 소모해 ① 기어 톱니 파손 ② 권선 과열·소손 ③ 배터리 급방전을 유발할 수 있다 |
-| NFR-2.5 ⏸ | Watchdog | 행(hang) 시 1초 이내 자동 리셋. **구동 OFF 진단 빌드에서 충족** — `loop_monitor` 태스크가 750ms 무진척을 래치하고 재부팅하며 실측 약 813ms 다. ⚠️ **걷는 빌드에는 아직 적용하지 않았다** — 리셋 직후 벤더 시작 코드가 서보를 움직일 수 있어 조합을 `#error` 로 막아 두었다. 그래서 보행 중 `loop()` 가 멈추면 **같은 루프 안의 600ms 명령 타임아웃 검사도 함께 멈춰 서보가 마지막 보행 명령으로 굳는다.** 호스트는 3초 링크 두절로 정확히 알아채지만 세울 수단이 없다. **사람의 `ESTOP`·전원 차단이 그 자리를 대신하며** `A-13` 상시 인적 감시에 기댄다 — `NFR-2.4` 전도 감지와 같은 근거다. **무인 운용으로 확장하면 먼저 푼다** |
+| NFR-2.5 ⏸ | Watchdog | 행(hang) 시 1초 이내 자동 리셋. **구동 OFF 진단 빌드에서 충족** — `loop_monitor` 태스크가 750ms 무진척을 래치하고 재부팅하며 실측 약 813ms 다. ⚠️ **걷는 빌드에는 적용하지 않았다** — 리셋 직후 벤더 시작 코드가 서보를 움직일 수 있어 조합을 `#error` 로 막아 두었다. 그래서 보행 중 `loop()` 가 멈추면 **같은 루프 안의 600ms 명령 타임아웃 검사도 함께 멈춰 서보가 마지막 보행 명령으로 굳는다.** 호스트는 3초 링크 두절로 정확히 알아채지만 세울 수단이 없다. **사람의 `ESTOP`·전원 차단이 그 자리를 대신하며** `A-13` 상시 인적 감시에 기댄다 — `NFR-2.4` 전도 감지와 같은 근거다. **무인 운용으로 확장하면 먼저 푼다** |
 | NFR-2.6 ✅ | Graceful Degradation | 비전 노드 단절 시에도 순찰·회피는 계속 동작해야 한다 (사람 인지 기능만 비활성) — **호스트 FSM 에서 구현·검증됨.** 로봇 링크 두절(`safety.link_loss_failsafe_ms`)은 `FAILSAFE` 로 가고, 비전 단절(`vision.stall_timeout_ms`)은 `degraded` 만 세운 채 순찰을 유지한다. 런타임은 새 결과마다 `note_vision()`을 갱신하고 스톨·워커 중단을 `degraded`에 반영한다. 첫 프레임 전에는 워커 시작 시각부터 기동 유예를 재므로 **카메라가 처음부터 응답하지 않는 경우도 영구 정상으로 남지 않는다.** **둘을 같은 사건으로 묶으면 카메라가 딸꾹질할 때마다 로봇이 멈춘다** |
 | NFR-2.7 | E-Stop 우선순위 | 대시보드 E-Stop은 모든 상태에서 최우선 처리 |
 
@@ -463,10 +463,10 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 | *ANY* `[P2]` | SLAM pose 500 ms 미갱신 | `LOST` | 즉시 정지, 재측위 대기 | 2 |
 | `LOST` `[P2]` | 재측위 성공 | `PATROL` | 순찰 재개 | 2 |
 | `PATROL` | **구역 도착** `[P2]` | `ZONE_INSPECT` | 정지 → 스캔 → **변화 감지**(FR-8) | 2 |
-| `ZONE_INSPECT` | 검사 완료 & 변화 없음 — 방문 1회 관찰을 마쳤거나 한도 시간(5초)이 지남 (FR-8.4.1 · 2026-10-05 개정 뒤에도 VLM 판독용으로 남음 · [ADR-44](DECISIONS.md#adr-44)) | `PATROL` | 다음 구역으로 (순차 또는 랜덤). 사람 때문에 5장을 못 모은 방문은 `zone_unverified` 로 남긴다 | 2 |
-| `ZONE_INSPECT` | **구역 변화 확정** (FR-8.4 · [ADR-41](DECISIONS.md#adr-41)) · 공장 모드 — 이 전이(`ZONE_CHANGED`)는 **넘어짐 확정에서만** 난다. ~~반출·반입만 확정된 방문은 `ALERT` 로 가지 않고 위 «검사 완료» 행처럼 `ZONE_CLEAR` 로 `PATROL` 에 돌아간다(`ZoneInspector._leave`). 반출·반입은 **연속 2방문**,~~ *(2026-10-05 폐기 — [ADR-44](DECISIONS.md#adr-44))* 넘어짐·통로 막힘은 **같은 방문 안 VLM 2회 연속 «예»**(경보 스위치 기본 꺼짐 · 벤치 통과 뒤 켬) | `ALERT` | **넘어짐·무너짐만** 에스컬레이션 **L3** + VLM 리포트 요청 ([ADR-42](DECISIONS.md#adr-42)). ~~**반출은 관제 가벼운 경고만(L3 아님), 반입은 기록만(경고도 없음)** — 사건 이름 미정.~~ *(2026-10-05 폐기 — [ADR-44](DECISIONS.md#adr-44))* *(2026-10-01 — 위험구역(`zones.hazard_ids`)의 `hazard_item` 확정도 L3 가 아닌 가벼운 경고 `hazard_notice` 다 · [ADR-43](DECISIONS.md#adr-43). 구역 안 `blocked_path` 확정도 L3 가 아니라 가벼운 경고 `path_blocked`(source `vlm`)이고 방문은 `ZONE_CLEAR` 로 이어진다 · [ADR-41](DECISIONS.md#adr-41) 개정)* ~~확정기 누적은 방문 사이에 유지하고 기준 재등록(FR-8.6) 때만 지운다~~ *(2026-10-05 폐기 — [ADR-44](DECISIONS.md#adr-44))* | 2→3 |
-| `ALERT` | **구역 변화 경보(L3)를 사람이 확인** (`ZONE_ALARM_CONFIRMED`) · 공장 모드 | `PATROL` | 에스컬레이션 **L0**, 순찰 재개. 이 행은 넘어짐 경보에만 걸린다 — 반출·반입은 L3 로 가지 않으므로 이 확인 행 자체가 필요 없다([ADR-42](DECISIONS.md#adr-42)). ⚠️ **이 행이 없으면 경보를 확인해도 경계 자세로 서 있는다** — 구역 변화의 `ALERT` 는 사람이 보이지 않으면 대상 상실·보호구 판정 종료가 걸리지 않는다(지나가는 사람이 있으면 그 사건들로 먼저 순찰에 돌아가고 L3 는 남는다 — 단계는 별도 축이다). 사람 때문에 선 `ALERT` 는 확인해도 그대로이고, 같은 구역은 마커가 시야에서 빠진 뒤에야 다시 점검한다 | 2 |
-| `ZONE_INSPECT` | person 300ms 안에 3회 검출 (FR-8.3 인원 출현 → FR-3) · 공장 모드 | `ALERT` | 점검을 멈추고 사람 대응으로 넘긴다 — 에스컬레이션은 **L0 그대로**(사람만으로는 L1 도 올리지 않는다) — 상태만 `ALERT` 로 옮겨 PPE·쓰러짐 판정을 잇는다([ADR-42](DECISIONS.md#adr-42)). ~~⚠️ **사람이 보이는 프레임은 물건 비교에도 기준 등록에도 쓰지 않는다** — 사람이 물건을 가리면 반출로 세어지고, 기준으로 뜨면 그 뒤 순찰마다 «반입» 이 된다. 그래서 사람 때문에 한도 시간(5초) 안에 사람 없는 프레임 5장을 못 모으면 «못 본 방문» 으로 `zone_unverified` 를 남기고 순찰로 돌아간다 — 연속 방문 수를 세지도 끊지도 않는다 (FR-8.4.1)~~ *(2026-10-05 폐기 — [ADR-44](DECISIONS.md#adr-44))* | 2 |
+| `ZONE_INSPECT` | 검사 완료 & 변화 없음 — 방문 1회 관찰을 마쳤거나 한도 시간(5초)이 지남 (FR-8.4.1 · VLM 판독용) | `PATROL` | 다음 구역으로 (순차 또는 랜덤). 사람 때문에 5장을 못 모은 방문은 `zone_unverified` 로 남긴다 | 2 |
+| `ZONE_INSPECT` | **구역 위험 확정** (FR-8.4 · [ADR-41](DECISIONS.md#adr-41)) · 공장 모드 — 이 전이(`ZONE_CHANGED`)는 **넘어짐·무너짐 확정에서만** 난다. 넘어짐·통로 막힘은 **같은 방문 안 VLM 2회 연속 «예»**로 확정한다(경보 스위치 기본 꺼짐 · 벤치 통과 뒤 켬) | `ALERT` | 에스컬레이션 **L3** + VLM 리포트 요청 ([ADR-42](DECISIONS.md#adr-42)). 위험구역(`zones.hazard_ids`)의 `hazard_item` 확정은 L3 가 아닌 가벼운 경고 `hazard_notice` 다([ADR-43](DECISIONS.md#adr-43)). 구역 안 `blocked_path` 확정도 가벼운 경고 `path_blocked`(source `vlm`)이고 방문은 `ZONE_CLEAR` 로 이어진다([ADR-41](DECISIONS.md#adr-41) 개정). 구역 물건 검증 라인(반출·반입·기준 재등록)은 [ADR-44](DECISIONS.md#adr-44) 로 폐기됐다 | 2→3 |
+| `ALERT` | **구역 변화 경보(L3)를 사람이 확인** (`ZONE_ALARM_CONFIRMED`) · 공장 모드 | `PATROL` | 에스컬레이션 **L0**, 순찰 재개. 이 행은 넘어짐·무너짐 경보에만 걸린다([ADR-42](DECISIONS.md#adr-42)). ⚠️ **이 행이 없으면 경보를 확인해도 경계 자세로 서 있는다** — 구역 변화의 `ALERT` 는 사람이 보이지 않으면 대상 상실·보호구 판정 종료가 걸리지 않는다(지나가는 사람이 있으면 그 사건들로 먼저 순찰에 돌아가고 L3 는 남는다 — 단계는 별도 축이다). 사람 때문에 선 `ALERT` 는 확인해도 그대로이고, 같은 구역은 마커가 시야에서 빠진 뒤에야 다시 점검한다 | 2 |
+| `ZONE_INSPECT` | person 300ms 안에 3회 검출 (FR-8.3 인원 출현 → FR-3) · 공장 모드 | `ALERT` | 점검을 멈추고 사람 대응으로 넘긴다 — 에스컬레이션은 **L0 그대로**(사람만으로는 L1 도 올리지 않는다) — 상태만 `ALERT` 로 옮겨 PPE·쓰러짐 판정을 잇는다([ADR-42](DECISIONS.md#adr-42)). | 2 |
 | `TRACK` | **PPE 위반 검출** (FR-9.3) · 공장 모드 | `ALERT` | 에스컬레이션 **L3**, 경고 방송. `escalation.ppe_warning_hold_ms`(5000ms) 뒤 관리자 확인 없이 자동으로 L0 복귀한다 — 아래 3.1절, [ADR-42](DECISIONS.md#adr-42) 참조 | 2 |
 | `ALERT` | **보호구 판정 종료** (`PPE_SETTLED` — 적합 또는 `PPE_UNDETERMINED`) · 공장 모드 | `PATROL` | 에스컬레이션 **L0**, 순찰 재개. ⚠️ **이 행이 없으면 보호구를 제대로 쓴 작업자가 서 있는 동안 로봇이 떠나지 못한다** — 복귀가 대상 미검출 5초 하나뿐이기 때문이다 (FR-11.6 · `3.4.4`). 판정 결과를 추적 ID 에 귀속해 같은 ID 로 다시 멈추지 않는 것은 판정기(`3.7.3`) 소관이다 | 2 |
 | `PATROL` · `ZONE_INSPECT` | **쓰러짐 의심** (`FALL_SUSPECTED` — YOLOX 누움 후보 또는 VLM `person_down` «예» 한 번 · [PRD FR-11 정본](internal/PRD_Physical_AI_Guard_Robot.md) S3 · 2026-09-25) · 공장 모드 | `ALERT` | 에스컬레이션 **L1**(노란 눈). 박스가 있으면 `TRACK` 조준·접근(사람만), 없으면 제자리. 이미 `ALERT`·`TRACK` 이면 사건 없이 의심만 켠다. 확정(`PERSON_DOWN` → L3)은 전이가 아니라 단계만 올린다 | 2 |
@@ -492,7 +492,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 > 벗어나 5초 타이머가 추종을 끝낸다** — 회피가 임무를 취소하는 셈이다. 게다가 초음파 정지 거리(현재 7cm, 2026-10-06 에 25cm 에서 개정 · [ADR-47](DECISIONS.md#adr-47))에 든 것이
 > **대상 본인일 수 있고**, 그때 물러나는 것은 경비 로봇으로서 틀린 행동이다.
 >
-> ⚠️ **대신 «추종 중 막힘» 이 아직 어디에도 기록되지 않는다.** 그 상황에서 실제로 일어나는 일은
+> ⚠️ **대신 «추종 중 막힘» 은 어디에도 기록되지 않는다(한계).** 그 상황에서 실제로 일어나는 일은
 > 이렇다 — 온보드가 **전진만** 거부하고(`move_allowed` · 3.2.6) 호 조향은 전진이 있어야 돌므로
 > 로봇은 **선 채로** 멈춘다. 호스트는 `TRACK` 을 유지하며 추종 지시를 계속 보내고, 대상이 계속
 > 보이면 `TARGET_LOST` 도 돌지 않아 **그 자리에 머문다.** 안전한 정지이지만 «왜 멈췄는지» 가
@@ -554,17 +554,17 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 
 ### 3.1 대응 에스컬레이션 단계 (Escalation Ladder)
 
-위험구역·미확인 인원·안전 위반에 대한 대응 강도를 단계로 정의한다. **FSM 상태와 직교하는 별도 축**이며, 각 상태에서 현재 에스컬레이션 단계에 맞는 표현을 취한다. **운용 모드(FR-11)는 사다리를 바꾸지 않고, 어떤 사건이 사다리를 올리는지만 고른다** — 경비는 인증, 공장은 보호구 위반·물체 변화·쓰러짐으로 단계를 올린다. Tier 1 안전 사건은 두 모드 모두 F로 간다. 운용 모드는 **경비·공장** 둘이다([ADR-38](DECISIONS.md#adr-38)).
+위험구역·미확인 인원·안전 위반에 대한 대응 강도를 단계로 정의한다. **FSM 상태와 직교하는 별도 축**이며, 각 상태에서 현재 에스컬레이션 단계에 맞는 표현을 취한다. **운용 모드(FR-11)는 사다리를 바꾸지 않고, 어떤 사건이 사다리를 올리는지만 고른다** — 경비는 인증, 공장은 보호구 위반·구역 위험(넘어짐·무너짐)·쓰러짐으로 단계를 올린다. Tier 1 안전 사건은 두 모드 모두 F로 간다. 운용 모드는 **경비·공장** 둘이다([ADR-38](DECISIONS.md#adr-38)).
 
 > 판단 흐름은 [features/escalation.md](features/escalation.md).
-공장 모드에서 **사람 출현만으로는 사다리를 올리지 않는다** — L1 은 쓰러짐 «의심» 에서만 켜진다. **PPE 위반은 L3 를 래치하지 않고 경고 뒤 자동으로 L0 복귀**한다. **물체 변화 확정 중 반출·반입은 L3 가 아니다**(~~반출은 가벼운 경고, 반입은 기록만~~ *(2026-10-05 폐기 — [ADR-44](DECISIONS.md#adr-44): 반출·반입 확정 자체가 없다)*) — L3 로 남는 것은 넘어짐·무너짐과 쓰러짐 확정뿐이다([ADR-42](DECISIONS.md#adr-42)). **가벼운 경고는 ~~반출 `zone_notice` 외에~~ *(2026-10-05 폐기 — [ADR-44](DECISIONS.md#adr-44))* `path_blocked`(이동 중 막힘 · LiDAR 우회, 구역 안 VLM 통로 막힘 확정) 와 `hazard_notice`(위험구역 C 의 라이터·보조배터리 `hazard_item` 확정) 가 있다** — 모두 방송·대시보드 표시만이고 L3 가 아니며 순찰은 계속된다([ADR-43](DECISIONS.md#adr-43)). 자세한 표는 아래 각 행과 [PRD FR-11](internal/PRD_Physical_AI_Guard_Robot.md) 정본을 본다.
+공장 모드에서 **사람 출현만으로는 사다리를 올리지 않는다** — L1 은 쓰러짐 «의심» 에서만 켜진다. **PPE 위반은 L3 를 래치하지 않고 경고 뒤 자동으로 L0 복귀**한다. L3 로 남는 것은 구역 위험 확정(넘어짐·무너짐)과 쓰러짐 확정뿐이다([ADR-42](DECISIONS.md#adr-42) · 구역 물건 검증 라인은 [ADR-44](DECISIONS.md#adr-44) 로 폐기). **가벼운 경고는 `path_blocked`(이동 중 막힘 · LiDAR 우회, 구역 안 VLM 통로 막힘 확정) 와 `hazard_notice`(위험구역 C 의 라이터·보조배터리 `hazard_item` 확정) 가 있다** — 모두 방송·대시보드 표시만이고 L3 가 아니며 순찰은 계속된다([ADR-43](DECISIONS.md#adr-43)). 자세한 표는 아래 각 행과 [PRD FR-11](internal/PRD_Physical_AI_Guard_Robot.md) 정본을 본다.
 
 | 단계 | 진입 조건 | 눈 LED | 음향 | 자세·기동 | 기록 | Tier |
 | :---: | :--- | :---: | :--- | :--- | :--- | :---: |
 | **L0** 순찰 | 정상 | 🔵 파랑 | — | 통상 보행 | — | 1 |
 | **L1** 관찰 | 경비 모드: `person` 300ms 안에 3회 검출. **정렬 후 고개를 든 순간부터**([ADR-40](DECISIONS.md#adr-40)). 공장 모드: **쓰러짐 의심**(YOLOX 종횡비 후보 1회 또는 VLM `person_down` 1회, 어느 하나)뿐이다 — **사람 출현만으로는 오르지 않는다**([ADR-42](DECISIONS.md#adr-42)) | 🟡 노랑 | — | 정지 + **Pitch Up 경계 자세** | 스냅샷 | 2 |
 | **L2** 인증요구 | L1이 설정 시간 지속 & 미인증 · **경비 모드만** | 🟠 주황 | 비프음 | 경계 유지 + 선회 추종 | 스냅샷 + 이벤트 | 2 |
-| **L3** 경보 | 경비 모드: 인증 실패 / 공장 모드: **PPE 위반**(경고, 자동 복귀·래치 아님) · **물체 변화 확정 중 넘어짐·무너짐만**(반출·반입은 L3 아님) · **쓰러짐 확정**(~~의심 뒤 서로 다른 프레임의 VLM «예» 2회, 간격 1초 이상~~ *(2026-10-07 개정)* YOLOX 누움 규칙이 정지 3초를 채운 프레임의 VLM «예», 불일치·시간 초과는 «확인 필요»)([ADR-42](DECISIONS.md#adr-42) · [ADR-47](DECISIONS.md#adr-47)) | 🔴 빨강 (점멸) | **즉각 경고 방송** (사전 등록 문구) | 추종 | 이벤트 + **VLM 리포트** + 경고 방송 발화 기록 | 2→3 |
+| **L3** 경보 | 경비 모드: 인증 실패 / 공장 모드: **PPE 위반**(경고, 자동 복귀·래치 아님) · **구역 위험 확정(넘어짐·무너짐)** · **쓰러짐 확정**(YOLOX 누움 규칙이 정지 3초를 채운 프레임의 VLM «예», 불일치·시간 초과는 «확인 필요»)([ADR-42](DECISIONS.md#adr-42) · [ADR-47](DECISIONS.md#adr-47)) | 🔴 빨강 (점멸) | **즉각 경고 방송** (사전 등록 문구) | 추종 | 이벤트 + **VLM 리포트** + 경고 방송 발화 기록 | 2→3 |
 | **F** 페일세이프 | 링크두절 · 저전압 · E-Stop | ⚪ 흰색 | — | 보행 정지·래치; 사람의 상태 확인·조치 필요 | 로그 | **1** |
 
 **해제 규칙**
@@ -606,10 +606,10 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 > | :--- | :--- |
 > | 인증 실패 | ○ |
 > | **PPE 위반** | 해당 없음 — 관리자 확인이 아니라 `escalation.ppe_warning_hold_ms` 타이머로 자동 복귀한다 |
-> | **물체 변화 확정**(넘어짐·무너짐) | **✕ — 사람이 없다.** 인증할 대상 자체가 존재하지 않는다. 반출·반입 확정은 애초에 L3 가 아니다 |
+> | **구역 위험 확정**(넘어짐·무너짐) | **✕ — 사람이 없다.** 인증할 대상 자체가 존재하지 않는다 |
 > | **쓰러짐 확정** | **✕ — 인증할 수 없는 사람이다.** 쓰러진 사람에게 사원증을 요구하지 않는다 |
 >
-> **물체 변화 확정(넘어짐)과 쓰러짐 확정으로 인한 L3 는 원인과 무관하게 관리자 확인으로만 해제한다.**
+> **구역 위험 확정(넘어짐)과 쓰러짐 확정으로 인한 L3 는 원인과 무관하게 관리자 확인으로만 해제한다.**
 > 원인 해소 여부(물건 복귀 등)는 **대시보드에 표시하되 해제 조건으로 쓰지 않는다.**
 > 이유는 둘이다. ① 원인별 자동 해제 조건을 만들면 조건이 셋으로 갈려 버그가 생긴다.
 > ② 물건이 돌아왔다고 그것이 정상 상황인지 로봇은 판단할 수 없다 — 사람이 봐야 한다.
@@ -682,52 +682,48 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 
 ## 5. 프로젝트 구조
 
-**`✅` 는 지금 있는 것, `⬜` 는 계획이다.** 표시가 없으면 디렉터리 자체가 아직 없다.
+저장소에 들어 있는 것을 개발 종료 시점(2026-10-09) 기준으로 적는다.
 
 ```
 mechdog_physical_ai/
-├── docs/                                 ARCHITECTURE · DECISIONS · PROTOCOL · DASHBOARD
-│                                         ENGINEERING_GUIDE · features/ · case-studies/ · internal/(PRD·WBS·HARDWARE 등)
+├── docs/                                 ARCHITECTURE · DECISIONS · PROTOCOL · DASHBOARD · ENGINEERING_GUIDE
+│                                         features/ · case-studies/ · measurements/ · lidar/ · archive/ · internal/(PRD·WBS·HARDWARE 등)
 ├── config/
-│   ├── config.yaml                    ✅ 전 파라미터 (Dev/Prod 프로파일)
-│   ├── devices/mechdog-01.yaml        ✅ 개체별 실측값 (서보 오프셋 등)
-│   └── .env.example                   ✅ 시크릿 템플릿
+│   ├── config.yaml                       전 파라미터 (Dev/Prod 프로파일)
+│   ├── devices/mechdog-0{1,2}.yaml       개체별 실측값 (서보 오프셋 등)
+│   ├── ppe_acceptance.json               PPE 검수 합격 기준
+│   └── .env.example                      시크릿 템플릿
 ├── firmware/                             온보드 펌웨어 (Arduino 스케치)
-│   ├── mechdog_motion/                MechDog ESP32 (Arduino)
-│   │   ├── mechdog_motion.ino         ✅ Wi-Fi STA · UDP 수신 · SAFE 래치
-│   │   ├── src/command_parser.*       ✅ HAL 비의존 → 호스트에서 g++ 로 시험
-│   │   ├── src/motion_hal.*           🔶 MOVE·STOP 구현, 나머지 HAL 매핑 대기 (4.1.2)
-│   │   ├── src/safety_monitor.*       ⬜ 온보드 안전 감시기 (3.2.x)
-│   │   ├── test/test_command_parser.cpp ✅ CI 가 컴파일·실행하고 골든 픽스처를 물린다
-│   │   └── diagnostics/               ✅ wifi_scan · wifi_sta_probe (H2 확인용)
-│   ├── xiao_vision/                   ✅ 카메라 + MJPEG 서버 (4.2)
-│   └── lidar_relay/                   🔶 LD19 UART → Wi-Fi UDP 중계 — 구현됨
+│   ├── mechdog_motion/                   MechDog ESP32
+│   │   ├── mechdog_motion.ino            Wi-Fi STA · UDP 수신 · SAFE 래치
+│   │   ├── src/command_parser.*          HAL 비의존 → 호스트에서 g++ 로 시험
+│   │   ├── src/motion_hal.* · sensor_hal.*  벤더 라이브러리를 감싼 HAL
+│   │   ├── src/safety_monitor.*          온보드 안전 감시기
+│   │   ├── src/telemetry_* · stationary_ota.* · mp3_player.h  텔레메트리 · 정지 상태 OTA · MP3 모듈
+│   │   ├── test/                         CI 가 컴파일·실행하고 골든 픽스처를 물린다
+│   │   └── diagnostics/                  wifi · i2c · imu · led · watchdog 진단 스케치
+│   ├── xiao_vision/                      카메라 + MJPEG 서버
+│   └── lidar_relay/                      LD19 UART → Wi-Fi UDP 중계
 ├── host/                                 Host PC (Python)
-│   ├── behavior/
-│   │   ├── actions.py                 ✅ 상태별 모션 — PATROL·AVOID (3.5.1)
-│   │   ├── commander.py               ✅ 10Hz 고정 송신 — 소켓을 만지지 않는다
-│   │   └── fsm.py                     ✅ 전이표 13상태 + 가드·타이머 (3.4.1~3)
-│   ├── common/
-│   │   ├── protocol.py                ✅ 규약 구현 — 이 파일이 C++ 파서의 참조 구현
-│   │   ├── config.py                  ✅ 로더 + 스키마 검증
-│   │   ├── logging_setup.py           ✅ JSON Lines 로거 + 샘플링 (4.4.2)
-│   │   └── blackbox.py                ✅ JPEG·텔레메트리 저장 + WS 푸시 + 사건 스냅샷 조회 (4.4.3)
-│   ├── vision/                        ✅ MJPEG 수신·재연결·큐·검출기·추론 워커·사람 게이트·다중 인원 추적 (3.3.1~4, 4.3.3~5)·사원증 마커 판독 (3.8.1)
-│   ├── telemetry/                     ✅ 텔레메트리 수신·사건 변환 (4.3.6)
-│   ├── runtime.py                     ✅ UDP 운용 루프 + 비전 워커 수명 관리 (4.3.7, 3.3.2)
-│   ├── dashboard/                     ✅ FastAPI + WS + 검출 FPV · 명령 API · 사건 피드 (4.5 · 4.6.1/3/4)
-│   └── slam/                          🔶 점유격자·스캔정합·경로계획 (`3.9.0`) — **실기 미연결** · 오도메트리·tf(`5.4.3`) 대기
-├── tools/
-│   ├── mock/mock_mechdog.py           ✅ 가상 MechDog — 로봇 없이 호스트를 검증
-│   ├── ops/teleop.py                  ✅ 키보드 수동 조작
-│   ├── ops/mechdog_command.py         ✅ 실기 시험 송신기 (safety · move · watchdog)
-│   ├── probe/udp_probe.py             ✅ UDP 왕복 측정
-│   ├── probe/latency_probe.py         ✅ E2E 지연 하네스 — 화면 카운터 촬영 (6.1.2)
-│   └── dev/wbs_assignments.py         ✅ 담당자별 작업 목록 생성
-├── tests/                             ✅ pytest — 하드웨어 불요
-├── third_party/                       ❌ **비워 둔다** — 벤더 라이브러리는 라이선스 표기가 없어 재배포 불가 (ADR-20)
-├── models/ · maps/                    ⬜ 가중치 · 지도 산출물 (git 제외)
-└── .github/workflows/ci.yml           ✅ Python 품질 · 펌웨어 품질 · 빌드 · 릴리스
+│   ├── behavior/                         FSM 전이표 · 순찰·회피·추종 · 경로계획 · 암구호 인증 · PPE 판정 · 구역
+│   ├── common/                           규약 구현(protocol.py) · 설정 · 로거 · 블랙박스 · LiDAR·오도메트리 링크
+│   ├── vision/                           MJPEG 수신 · 검출기 · 추론 워커 · 추적 · PPE · 위험물 · 사원증 · VLM 판독
+│   ├── telemetry/                        텔레메트리·LiDAR 수신 · ROS2 전달 · 세션 기록
+│   ├── slam/                             점유격자 · 스캔정합 · 오도메트리 · 지도 정제
+│   ├── dashboard/                        FastAPI + WS 관제 화면
+│   ├── report/situation.py               사건 한 문장 (규칙 템플릿)
+│   ├── cloud/broadcast.py                관제 방송 TTS
+│   ├── fleet.py                          다중 개체 관제
+│   └── runtime.py                        UDP 운용 루프 + 비전 워커 수명 관리
+├── docker/ros2/                          ROS2 경계 (스캔·오도메트리·위치 브리지)
+├── tools/                                실측·운용·학습 도구 — tools/README.md
+├── tests/                                pytest — 하드웨어 불요
+├── field_tests/                          실기 시험 원자료
+├── maps/                                 시연 지도 산출물
+├── models/ · datasets/                   메타·안내만 — 가중치와 데이터는 git 제외
+├── experiments/                          보관용 시제품 — 런타임에 포함되지 않는다
+├── third_party/                          **비워 둔다** — 벤더 라이브러리는 라이선스 표기가 없어 재배포 불가 (ADR-20)
+└── .github/workflows/                    ci.yml(Python·펌웨어 품질 · 빌드 · 릴리스) · web.yml(대시보드)
 ```
 
 > **`third_party/` 는 의도적으로 비어 있다.** 벤더 라이브러리를 넣을 수 없다는 것이 확인됐고
