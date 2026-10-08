@@ -1114,25 +1114,8 @@ class PatrolController:
             self.commander.halt()
             return
 
-        if self.recovery.waiting:
-            self.commander.halt()
-            removed = bool(
-                self.recovery.wait_memory_ids
-            ) and not self.recovery.wait_memory_ids.intersection(
-                b.id for b in self.recovery.memory.items
-            )
-            if self._now_ms < self.recovery.retry_after_ms and not removed:
-                return
-            self.recovery.waiting = False
-            self.recovery.wait_reported = False
-            self._complete_cycle()
-            if self.route.active:
-                self.route.cycle += 1
-                self.route.index = 0
-                self.route.skipped_indices = frozenset()
-                point = self.route.point()
-                self._goal = (point.x, point.y)
-            self.phase = Phase.PLANNING
+        if self.recovery.waiting and self._end_recovery_wait():
+            return
 
         if self.recovery.active is not None:
             self.recovery.step()
@@ -1225,31 +1208,7 @@ class PatrolController:
                 self.recovery.wait_patrol()
             return
         if self._goal is not None:
-            if not self.grid.inside(*self.grid.to_cell(*self._goal)):
-                self._goal = None
-                self._goal_hold = True
-                self._goal_hold_reason = "blocked"
-                self.plan = Plan(None)
-                self.commander.halt()
-                return
-            plan = plan_to(
-                GOAL_LABEL,
-                self._goal,
-                start,
-                self.navigation_grid,
-                self.blocked,
-                self.plan_params,
-                snap_m=0.0 if self.route.active else 0.6,
-                body_blocked=self.body_blocked,
-                costs=self.navmap.costs,
-            )
-            self.waypoint_index = 0
-            if plan.reachable:
-                self.plan = plan
-                return
-            LOG.warning("goal_unreachable", reason=plan.fail_reason)
-            self.plan = Plan(GOAL_LABEL)
-            self.recovery.begin("global_path_blocked")
+            self._replan_goal(start, self._goal)
             return
         candidates = {label: self.zones.xy(label) for label in self.zones.labels}
 
@@ -1274,6 +1233,62 @@ class PatrolController:
             self.recovery.begin("global_path_blocked")
             return
 
+        self._select_zone(start, candidates)
+
+    def _end_recovery_wait(self) -> bool:
+        """복구 대기가 아직이면 True. 끝났으면 사이클을 닫고 계획 단계로 돌린다."""
+        self.commander.halt()
+        removed = bool(
+            self.recovery.wait_memory_ids
+        ) and not self.recovery.wait_memory_ids.intersection(
+            b.id for b in self.recovery.memory.items
+        )
+        if self._now_ms < self.recovery.retry_after_ms and not removed:
+            return True
+        self.recovery.waiting = False
+        self.recovery.wait_reported = False
+        self._complete_cycle()
+        if self.route.active:
+            self.route.cycle += 1
+            self.route.index = 0
+            self.route.skipped_indices = frozenset()
+            point = self.route.point()
+            self._goal = (point.x, point.y)
+        self.phase = Phase.PLANNING
+        return False
+
+    def _replan_goal(self, start: tuple[float, float], goal: tuple[float, float]) -> None:
+        """찍은 곳(또는 동선 지점)까지 경로를 푼다."""
+        if not self.grid.inside(*self.grid.to_cell(*goal)):
+            self._goal = None
+            self._goal_hold = True
+            self._goal_hold_reason = "blocked"
+            self.plan = Plan(None)
+            self.commander.halt()
+            return
+        plan = plan_to(
+            GOAL_LABEL,
+            goal,
+            start,
+            self.navigation_grid,
+            self.blocked,
+            self.plan_params,
+            snap_m=0.0 if self.route.active else 0.6,
+            body_blocked=self.body_blocked,
+            costs=self.navmap.costs,
+        )
+        self.waypoint_index = 0
+        if plan.reachable:
+            self.plan = plan
+            return
+        LOG.warning("goal_unreachable", reason=plan.fail_reason)
+        self.plan = Plan(GOAL_LABEL)
+        self.recovery.begin("global_path_blocked")
+
+    def _select_zone(
+        self, start: tuple[float, float], candidates: dict[str, tuple[float, float]]
+    ) -> None:
+        """다음 구역을 고르고, 고를 수 없으면 복구·귀환·사이클 마감으로 넘긴다."""
         skipped: list[tuple[str, str]] = []
         self.plan = select_next(
             cycle=self.cycle,
