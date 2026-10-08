@@ -61,7 +61,7 @@
   - [measurements/2026-09-23-camera-tilt.md](measurements/2026-09-23-camera-tilt.md) — 카메라 틸트 각도 선정 근거.
   - [measurements/2026-09-23-xiao-mic.md](measurements/2026-09-23-xiao-mic.md) — XIAO 마이크 인식 품질과 영상 동시 전송.
   - [measurements/2026-09-25-xiao-core-and-stream.md](measurements/2026-09-25-xiao-core-and-stream.md) — XIAO 코어 버전과 스트림 재측정.
-  - [measurements/2026-10-06-fallen-remeasure.md](measurements/2026-10-06-fallen-remeasure.md) — 쓰러진 사람 재실측(기존 YOLOX·VLM).
+  - [measurements/2026-10-06-fallen-remeasure.md](measurements/2026-10-06-fallen-remeasure.md) — 쓰러진 사람 재실측 계획(실행하지 않음 · 한계).
   - [measurements/2026-10-06-field-patrol.md](measurements/2026-10-06-field-patrol.md) — 2026-10-06 현장 순찰 실측 데이터.
 - [lidar/](lidar/) — LiDAR 측위·항법 기록이다.
   - [lidar/STATUS_20261006.md](lidar/STATUS_20261006.md) — 2026-10-06 기준 LiDAR·항법 방향과 상태.
