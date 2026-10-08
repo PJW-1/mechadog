@@ -15,7 +15,8 @@ from host.behavior.fsm import Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.dashboard.server import encode_vision_frame
 from host.dashboard.state import DashboardState
-from host.runtime import Runtime, build_parser
+from host.runtime import Runtime
+from host.runtime_cli import build_parser
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
 from host.vision.ppe_detector import PpeDetector, ppe_payload

@@ -46,7 +46,8 @@ from host.behavior.fsm import Event  # noqa: E402
 from host.behavior.mission import Mission  # noqa: E402
 from host.common.config import load_config  # noqa: E402
 from host.common.console import survive_encoding_errors  # noqa: E402
-from host.runtime import Runtime, build_parser  # noqa: E402
+from host.runtime import Runtime  # noqa: E402
+from host.runtime_cli import build_parser  # noqa: E402
 from host.telemetry.session_recorder import (  # noqa: E402
     EVENTS_FILE,
     MANIFEST_FILE,

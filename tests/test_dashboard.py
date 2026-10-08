@@ -29,7 +29,8 @@ from host.dashboard.server import (
     running_server,
 )
 from host.dashboard.state import DashboardState
-from host.runtime import Runtime, build_parser
+from host.runtime import Runtime
+from host.runtime_cli import build_parser
 
 
 def packet(*, device="mechdog-01", seq=1, boot="test-boot"):
@@ -323,7 +324,7 @@ def test_dashboard_is_opt_in():
 
 
 def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
-    import host.runtime as module
+    import host.runtime_cli as module
 
     events = []
 
@@ -384,7 +385,7 @@ def test_cli_passes_state_and_closes_server_after_runtime(cfg, monkeypatch):
 
 @pytest.mark.parametrize("port", ["0", "-1", "65536"])
 def test_cli_rejects_invalid_port_before_loading_config(port, monkeypatch, capsys):
-    import host.runtime as module
+    import host.runtime_cli as module
 
     def unexpected(_device):
         pytest.fail("Loaded hardware profile before rejecting port")
@@ -616,7 +617,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
     `event_publisher` 훅도 있었지만 아무도 넘기지 않아 발행이 죽어 있었다.
     어댑터를 직접 넣어 시험하면 이 구멍이 보이지 않으므로 **CLI 를 본다.**
     """
-    import host.runtime as module
+    import host.runtime_cli as module
 
     captured: dict = {}
 
@@ -700,7 +701,7 @@ def test_cli_wires_the_event_publisher_to_the_dashboard(cfg, monkeypatch):
 
 def test_cli_omits_the_publisher_without_a_dashboard(cfg, monkeypatch):
     """대시보드가 없으면 발행할 곳도 없다 — 빈 어댑터를 만들지 않는다."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     captured: dict = {}
 

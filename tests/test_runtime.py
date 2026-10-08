@@ -22,7 +22,8 @@ from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
 from host.dashboard.wiring import dashboard_wiring
-from host.runtime import VLM_LOAD_WAIT_MS, Runtime, watch_console
+from host.runtime import VLM_LOAD_WAIT_MS, Runtime
+from host.runtime_cli import watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
@@ -1066,7 +1067,7 @@ def test_dead_vision_worker_marks_degraded(config: dict, clock: FakeClock) -> No
 
 def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> None:
     """정식 CLI가 별도 수동 조립 없이 실제 비전 경로를 붙인다."""
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     vision = FakeVision()
     captured: dict = {}
@@ -1106,7 +1107,7 @@ def test_cli_shares_one_session_id_with_the_recorder_manifest(
     config: dict, monkeypatch, tmp_path
 ) -> None:
     """세션 ID 는 런타임과 기록기 manifest 에 같은 값이고, manifest 에 모델 sha256 이 남는다."""
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
     from host.common.trace import config_sha256
 
     vision = DescribedVision()
@@ -3447,7 +3448,7 @@ def test_mode_switch_is_refused_while_patrolling(config: dict, clock: FakeClock)
 
 def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None:
     """모르는 모드는 **기본값으로 떨어지지 않고 기동을 거부한다** (WBS 3.4.4 ①)."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
     assert module.main(["--device", "test", "--no-vision", "--mode", "safety"]) == 2
@@ -3455,7 +3456,7 @@ def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None
 
 def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -> None:
     """FR-11.7 — 판정기 없이 켜면 로봇이 사람 앞에 서서 아무 판정도 내지 못한다."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
     assert module.main(["--device", "test", "--no-vision", "--mode", "factory"]) == 2
@@ -3471,7 +3472,7 @@ def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -
 )
 def test_cli_argument_conflicts_exit_with_code_2(argv: list[str], needle: str, capsys) -> None:
     """인자 검증 실패는 설정 거부(rc 2)·argparse 오류와 같은 종료 코드 2 다 (`SystemExit(str)` 은 1)."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     with pytest.raises(SystemExit) as exc:
         module.main(["--device", "test", *argv])
@@ -4099,7 +4100,7 @@ def test_main_finishes_the_broadcast_preload_before_the_loop(cfg, monkeypatch) -
     루프와 겹치면 적재가 GIL 을 1.3~1.7초 쥐어 명령 간격이 600ms 를 넘고, 로봇이
     기동 직후 페일세이프에 다시 걸린다 (`--reset-on-start` 직후 재래치).
     """
-    import host.runtime as module
+    import host.runtime_cli as module
     from host.cloud import broadcast
 
     events: list[str] = []

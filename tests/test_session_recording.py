@@ -19,7 +19,8 @@ from host.common.protocol import TelemetryEncoder
 from host.dashboard.server import create_app
 from host.dashboard.state import DashboardState
 from host.dashboard.wiring import dashboard_wiring
-from host.runtime import MOTION_LOCK_TYPES, Runtime, build_parser, main
+from host.runtime import MOTION_LOCK_TYPES, Runtime, main
+from host.runtime_cli import build_parser
 from host.telemetry.session_recorder import SessionRecorder
 
 

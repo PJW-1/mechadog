@@ -774,7 +774,7 @@ def _lidar_unit(config: dict) -> dict:
 
 
 def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict:
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     captured: dict = {"feeds": [], "odom_opened": [], "order": []}
 
@@ -939,7 +939,7 @@ def test_cli_lidar_device_with_a_bad_lidar_section_refuses_to_start(
 def test_cli_lidar_device_without_zones_refuses_to_start(
     config: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     def no_zones(_cfg, _maps):
         raise ConfigError("구역 좌표가 없다")
@@ -953,7 +953,7 @@ def test_cli_lidar_device_with_a_broken_map_refuses_to_start(
     config: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """깨진 지도·구역 파일도 traceback 이 아니라 기동 거부(rc 2)다."""
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     def broken(_cfg, _maps):
         raise json.JSONDecodeError("Expecting value", "", 0)

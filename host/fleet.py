@@ -32,14 +32,8 @@ from host.common.logging_setup import LogContext, event_logger, setup_logging
 from host.common.protocol import system_clock_ms
 from host.dashboard.state import DashboardState
 from host.dashboard.wiring import _publish_event, dashboard_wiring
-from host.runtime import (
-    RECV_BYTES,
-    WSAEMSGSIZE,
-    Runtime,
-    _broadcaster,
-    _is_oversized_datagram,
-    open_socket,
-)
+from host.runtime import RECV_BYTES, WSAEMSGSIZE, Runtime, _is_oversized_datagram, open_socket
+from host.runtime_cli import _broadcaster
 from host.vision.worker import build_worker
 
 LOG = event_logger("mechadog.fleet")

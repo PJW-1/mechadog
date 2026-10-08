@@ -30,7 +30,7 @@
 2. **`host/common/protocol.py`** — Host와 로봇이 주고받는 메시지의 정본. `CommandEncoder`/`CommandDecoder`, `TelemetryEncoder`/`TelemetryDecoder`가 이 파일에 있다. 여기를 보면 "Host가 로봇에 무엇을 보낼 수 있는지"와 "로봇이 무엇을 보고하는지"가 그대로 드러난다.
 3. **`host/behavior/fsm.py`** — 상태 전이표. 상태 이름과 전이 조건을 코드가 아니라 데이터(표)로 표현한 것이 이 프로젝트의 핵심 설계다. 모듈 docstring에 명령 타임아웃 등 FSM과 무관한 안전장치가 무엇인지도 정리돼 있다.
 4. **`host/vision/worker.py`** — 카메라 프레임을 받아 검출·추적·PPE 판정을 만드는 추론 워커. 수신 스레드와 추론 스레드가 분리된 이유는 [features/vision-stream.md](features/vision-stream.md)에 판단 흐름도로 정리돼 있다.
-5. **`host/runtime.py`** — 위 모듈들을 묶어서 10Hz로 도는 운용 루프. 모듈 docstring의 파이프라인 다이어그램(`소켓 → 수신기 → 사건 → FSM → 지시 → 송신기 → 소켓`)을 먼저 읽고 나서 `main()` → `Runtime.serve()` 순으로 따라가면 전체 흐름이 잡힌다.
+5. **`host/runtime.py`** — 위 모듈들을 묶어서 10Hz로 도는 운용 루프. 모듈 docstring의 파이프라인 다이어그램(`소켓 → 수신기 → 사건 → FSM → 지시 → 송신기 → 소켓`)을 먼저 읽고 나서 `host/runtime_cli.py` 의 `main()` → `Runtime.serve()` 순으로 따라가면 전체 흐름이 잡힌다.
 6. **`host/dashboard/server.py`** — 관제 서버. FSM 상태와 텔레메트리를 `/ws/events`·`/ws/vision`으로 내보내는 부분만 보면 된다. `EventHub` 클래스가 시작점이다.
 7. **`docs/features/`** — 여기까지 읽고 나면 기능별 문서(페일세이프·장애물 회피·비전 스트림·쓰러짐 판정 등)의 판단 흐름도가 코드와 바로 대응된다.
 
