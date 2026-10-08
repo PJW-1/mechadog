@@ -1,6 +1,6 @@
 """WonderEcho 음성 테스트 도구 — 버튼으로 스피커/파이프라인을 확인한다.
 
-로컬 전용 도구. Git에 올리지 않는다.
+로컬 전용 도구.
 
   python -X utf8 voice_tool.py
 

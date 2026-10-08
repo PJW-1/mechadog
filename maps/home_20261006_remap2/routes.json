@@ -35,7 +35,7 @@
           "aim_deg": 0.0,
           "dwell_s": 10.0,
           "search_deg": null,
-          "label": "A 작업실(PPE)"
+          "label": "A 작업실"
         },
         {
           "x": 2.425,
@@ -162,7 +162,7 @@
           "aim_deg": 0.0,
           "dwell_s": 10.0,
           "search_deg": null,
-          "label": "A 작업실(PPE)"
+          "label": "A 작업실"
         },
         {
           "x": 2.425,
@@ -313,7 +313,7 @@
           "aim_deg": 0.0,
           "dwell_s": 10.0,
           "search_deg": null,
-          "label": "A 작업실 중간(PPE)"
+          "label": "A 작업실 중간"
         },
         {
           "x": 2.425,

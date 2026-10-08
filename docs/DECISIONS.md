@@ -2251,7 +2251,7 @@ A* 순찰(`PatrolController`)은 `tools/ops/patrol_run.py` 단독 도구로만 �
 3. **표는 네 개다**: `robots` · `zones` · `mission_runs` · `incidents`(앞서 제안한 ERD 를 실제 있는 데이터에 맞춘 것). 필드와 출처는 [DATA_MODEL](DATA_MODEL.md) 이 정본이다. 처음 제안에 `incidents.state` · `blackbox_entry` · `detail` · `reviewed_at` 을 더했고 스키마 버전을 담는 `schema_meta` 표를 두었다.
 4. **«관제 사건 피드에 뜨는 사건은 모두 DB 에도 남는다».** 블랙박스 장면이 있는 사건(`person_found` · `person_fallen` · `zone_reading` · `hazard_notice` · `path_blocked` · `zone_changed` · `PPE_VIOLATION` · `PPE_UNDETERMINED` · `PPE_SETTLED`)과 피드에만 뜨는 사건(`escalation_changed` · `auth_required` · `auth_granted` · `auth_failed` · `failsafe_entered` · `failsafe_cleared` · `voice_auth_granted`)을 모두 담는다. 대시보드를 켜지 않고 런타임만 돌려도 남긴다.
 5. **순찰 한 판(`mission_run`)**: FSM 이 `{IDLE, MANUAL, FAILSAFE}` 를 떠나 다른 상태로 가면 열고(보통 `START_PATROL` 로 `IDLE → PATROL`), 그 셋 중 하나로 다시 들어가거나 런타임이 멈추면 닫는다. `result` 는 `stopped`(관제 «순찰 정지») · `manual`(그 밖의 MANUAL 진입) · `failsafe`(FAILSAFE) · `shutdown`(런타임 정상 종료) · `interrupted`(다음 기동 때 열린 채 발견됨, 예 비정상 종료)이고 `stop_reason` 은 FSM 트리거 이름(`ESTOP` · `LINK_LOST` · `MANUAL_ON` 등), `patrol_stop`, 또는 `runtime_stopped` 다(`interrupted` 로 닫힌 판은 NULL). «순찰 정지» 는 전이표에 자율 → `IDLE` 직행이 없어 `MANUAL` 을 거치지만, 수동 조종과 구별해 `stopped` 로 닫는다(리뷰 지적 · 2026-10-06). `zones_visited` 는 구역 id 를 처음 도착한 순서로 담는다(도착은 ZoneInspector 앵커 도착).
-6. **두 단계로 나눈다.** 1단계(이 결정의 PR)는 DB 모듈 · 런타임 기록 · 조회·검토 API(`/api/history/*`) · 블랙박스 가져오기 도구다. 2단계는 웹 «이력» 화면이며, 같은 대시보드 파일을 크게 고치는 팀원 PR #407 이 병합된 뒤에 한다.
+6. **두 단계로 나눈다.** 1단계(이 결정의 PR)는 DB 모듈 · 런타임 기록 · 조회·검토 API(`/api/history/*`) · 블랙박스 가져오기 도구다. 2단계는 웹 «이력» 화면이며, 같은 대시보드 파일을 크게 고치는 팀원 PR #407 이 병합된 뒤에 한다. 2단계는 [#478](https://github.com/PJW-1/mechadog/pull/478)(2026-10-09)로 완료했다.
 
 **대안**
 
