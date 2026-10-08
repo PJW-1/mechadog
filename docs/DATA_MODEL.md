@@ -1,11 +1,11 @@
 # 데이터 모델 · 사건 이력 DB
 
 > 결정 근거는 [ADR-46](DECISIONS.md#adr-46), 요구사항은 [PRD FR-4.8](internal/PRD_Physical_AI_Guard_Robot.md), 작업은 WBS `4.6.6`·`4.6.7` 이다.
-> 상태: **구현 중** (2026-10-06). 1단계(DB 모듈·런타임 기록·조회 API·블랙박스 가져오기 도구)를 진행하고, 2단계 웹 «사건 이력» 화면(`4.6.7`)은 이 API 로 사건·순찰 판을 조회하고 검토를 저장한다 — 화면 설명은 [DASHBOARD](DASHBOARD.md#화면-구성).
+> 상태: **구현 완료** (2026-10-09). 1단계는 DB 모듈·런타임 기록·조회 API·블랙박스 가져오기 도구(`4.6.6`)이고, 2단계 웹 «사건 이력» 화면(`4.6.7`)은 이 API 로 사건·순찰 판을 조회하고 검토를 저장한다 — 화면 설명은 [DASHBOARD](DASHBOARD.md#화면-구성).
 
 ## 1. 목적
 
-관제 대시보드는 지금 실시간 상태와 메모리에 든 최근 사건 64건만 보여 주고, 재시작하면 모두 사라진다. 웹에서 지난 사건과 순찰 이력을 찾아 보고 검토 결과를 남기려고, 사건과 순찰 한 판(`mission_run`)을 **SQLite 한 파일**에 색인으로 쌓는다.
+관제 대시보드의 실시간 사건 피드는 메모리에 든 최근 사건 64건뿐이고, 재시작하면 모두 사라진다. 웹에서 지난 사건과 순찰 이력을 찾아 보고 검토 결과를 남기려고, 사건과 순찰 한 판(`mission_run`)을 **SQLite 한 파일**에 색인으로 쌓는다.
 
 - 엔진은 파이썬 표준 `sqlite3` 이다(새 의존성 없음). 파일 위치는 설정 `logging.history_db`(기본 `history/mechdog.sqlite3`, git 제외)다. WAL 모드와 외래키 검사를 켠다.
 - 구현은 `host/common/history.py` 의 `HistoryStore` 다.
@@ -88,7 +88,7 @@ erDiagram
 
 | 필드 | 형식 | 뜻 | 출처 |
 | :--- | :--- | :--- | :--- |
-| `zone_id` | TEXT PK | 구역 이름표(`A`~`D`) | 설정 `zones.ids` |
+| `zone_id` | TEXT PK | 구역 이름표(`A`\~`D`) | 설정 `zones.ids` |
 | `zone_name` | TEXT NOT NULL | 구역 표시 이름. 정책에 이름이 없으면 `zone_id` | 설정 `zones.policies.<id>.name` |
 | `ppe_policy` | TEXT NOT NULL | 요구 보호구. `helmet+vest` · `helmet` · `vest` · `none` 중 하나. 정책이 없는 구역은 `helmet+vest` | 설정 `zones.policies.<id>.helmet`·`vest` |
 | `risk_level` | TEXT NOT NULL | `hazard`(위험구역) 또는 `normal` | 설정 `zones.hazard_ids` 에 있으면 `hazard` |
@@ -121,7 +121,7 @@ erDiagram
 | `event_type` | TEXT NOT NULL | 사건 종류(4절) | 사건의 `event` |
 | `mode` | TEXT | 그때의 운용 모드 | 사건의 `mode` |
 | `state` | TEXT | 그때의 FSM 상태 | 사건의 `state` |
-| `escalation_level` | TEXT | `L0`~`L3` 또는 `F` | 사건의 `escalation` |
+| `escalation_level` | TEXT | `L0`\~`L3` 또는 `F` | 사건의 `escalation` |
 | `confidence` | REAL NULL | 검출·추적 점수의 최댓값 | 블랙박스 `detections`·`tracks` 의 `score` |
 | `snapshot_path` | TEXT NULL | `<폴더>/snapshot.jpg`(블랙박스 폴더 기준 상대 경로) | 블랙박스 |
 | `blackbox_entry` | TEXT NULL | 블랙박스 폴더 이름 | 블랙박스 |
@@ -136,7 +136,7 @@ erDiagram
 
 ### 3.6 처음 제안에서 더한 열
 
-`incidents.state` · `incidents.blackbox_entry` · `incidents.detail` · `incidents.reviewed_at` 과 `schema_meta` 표를 더했다. 실제로 남는 데이터(블랙박스 폴더, FSM 상태, 판정 원문)에 맞추려는 것이다.
+`incidents.state` · `incidents.blackbox_entry` · `incidents.detail` · `incidents.reviewed_at` 과 `schema_meta` 표는 실제로 남는 데이터(블랙박스 폴더, FSM 상태, 판정 원문)에 맞춘 열이다.
 
 ## 4. 사건 종류
 
@@ -188,7 +188,7 @@ erDiagram
 
 | 메서드 · 경로 | 뜻 · 응답 |
 | :--- | :--- |
-| `GET /api/history/incidents` | 사건 목록(최근 것부터). 필터 `since` · `until`(epoch ms, 양 끝 포함) · `robot` · `zone` · `event` · `escalation` · `mission` · `reviewed`, 쪽 `limit`(1~500, 기본 50) · `offset`. 응답 `{items, total, limit, offset}` |
+| `GET /api/history/incidents` | 사건 목록(최근 것부터). 필터 `since` · `until`(epoch ms, 양 끝 포함) · `robot` · `zone` · `event` · `escalation` · `mission` · `reviewed`, 쪽 `limit`(1\~500, 기본 50) · `offset`. 응답 `{items, total, limit, offset}` |
 | `GET /api/history/incidents/{incident_id}` | 사건 하나. 없으면 404 |
 | `GET /api/history/runs` | 순찰 판 목록(최근 것부터). `robot` · `limit` · `offset`. 응답 `{items, total, limit, offset}` |
 | `GET /api/history/robots` | 로봇 목록. 응답 `{items}` |

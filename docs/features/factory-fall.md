@@ -1,7 +1,7 @@
 # 공장 모드 쓰러짐 확정
 
 공장 모드에서 쓰러진 작업자를 찾아 경보(L3)를 올린다. 웅크리거나 물건을 줍는 자세 하나로 경보가 뜨지 않게 의심과 확정을 두 단계로 나눈다.
-YOLOX 누움 후보나 VLM 판독 «예» 한 번은 의심(L1)만 만든다. 확정은 YOLOX 누움 규칙이 정지 3초를 채운 프레임을 VLM 에 다시 물어 «예» 를 받을 때뿐이다. «아니오» · 판독 실패 · 시간 초과는 «확인 필요»(`fall_review_required`)로만 남는다 (2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47)).
+YOLOX 누움 후보나 VLM 판독 «예» 한 번은 의심(L1)만 만든다. 확정은 YOLOX 누움 규칙이 정지 3초를 채운 프레임을 VLM 에 다시 물어 «예» 를 받을 때뿐이다. «아니오» · 판독 실패 · 시간 초과는 «확인 필요»(`fall_review_required`)로만 남는다 ([ADR-47](../DECISIONS.md#adr-47)).
 
 ## 판단 흐름
 
@@ -37,7 +37,7 @@ flowchart TD
 | 누움 후보: 정지 판정 | 박스 중심 이동 20px 이하 | `vision.fallen.still_threshold_px` | [쓰러짐 규칙 실기](../../field_tests/results/20260923_person-down/summary.md) |
 | 누움 후보를 이어 주는 박스 공백 | 1000ms 이하 | `vision.fallen.gap_ms` | [쓰러짐 규칙 실기](../../field_tests/results/20260923_person-down/summary.md) |
 | 순찰 중 판독 주기 | 2000ms | `vision.vlm.patrol_interval_ms` | [ADR-42](../DECISIONS.md#adr-42) |
-| 확정 (2026-10-07 개정) | 누움 후보가 정지를 이어 간 시간이 3000ms 를 채운 프레임의 같은 JPEG 에 VLM `person_down` «예». 의심 중 판독 «예» 는 확정에 세지 않는다 | `vision.fallen.confirm_ms` | [ADR-47](../DECISIONS.md#adr-47) · [10-06 현장 실측](../measurements/2026-10-06-field-patrol.md) |
+| 확정 | 누움 후보가 정지를 이어 간 시간이 3000ms 를 채운 프레임의 같은 JPEG 에 VLM `person_down` «예». 의심 중 판독 «예» 는 확정에 세지 않는다 | `vision.fallen.confirm_ms` | [ADR-47](../DECISIONS.md#adr-47) · [10-06 현장 실측](../measurements/2026-10-06-field-patrol.md) |
 | 교차검증 판독 상한 | 3000ms, 넘거나 판독기가 바쁘면 «확인 필요» | `vision.vlm.budget_ms` | [ADR-47](../DECISIONS.md#adr-47) |
 | 의심 중 센 «예» 끼리의 프레임 간격 (진단용, 확정에 쓰지 않음) | 1000ms 이상 | `fsm.fall_confirm_gap_ms` | [ADR-42](../DECISIONS.md#adr-42) · [ADR-47](../DECISIONS.md#adr-47) |
 | 의심 제한 시간 | 20000ms | `fsm.fall_suspect_timeout_ms` | [ADR-42](../DECISIONS.md#adr-42) |
@@ -49,7 +49,7 @@ flowchart TD
 
 ## 실패·예외 시 동작
 
-- YOLOX 누움 후보만으로는 확정하지 않는다. 워커가 3초 정지(`vision.fallen.confirm_ms`)를 채우면 그 프레임을 VLM 에 묻고, «아니오»·판독 실패·3초 초과·워커 점유면 확정하지 않고 `fall_review_required`(확인 필요) 사건을 남긴다 *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47))*.
+- YOLOX 누움 후보만으로는 확정하지 않는다. 워커가 3초 정지(`vision.fallen.confirm_ms`)를 채우면 그 프레임을 VLM 에 묻고, «아니오»·판독 실패·3초 초과·워커 점유면 확정하지 않고 `fall_review_required`(확인 필요) 사건을 남긴다 ([ADR-47](../DECISIONS.md#adr-47)).
 - 의심 중 판독 사이에 «아니오» 가 끼어도 센 «예» 를 지우지 않는다. 이 횟수는 로그(`fall_suspect_timeout` 의 `vlm_yes`)에만 남고 확정에는 쓰지 않는다.
 - 의심 중에 건 판독이 의심이 끝난 뒤 도착하면 버린다. 의심 전에 건 판독은 «예» 로 세지 않는다.
 - 질문이 실패했거나 답을 «예»·«아니오» 로 읽지 못하면 값이 없으므로 «예» 로 세지 않는다. 모델이 적재되지 않았으면 판독을 걸지 않는다. 판독 워커가 바쁘거나 구역 판독이 진행 중이면 새 판독을 걸지 않고 다음 프레임에 다시 본다.

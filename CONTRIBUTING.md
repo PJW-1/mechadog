@@ -116,7 +116,7 @@ Refs: #12
 ```
 feat(motion): 명령 타임아웃 감시기 추가
 
-300ms 무명령 시 move(0,0)으로 정지한다. 마지막 명령을 계속
+600ms 무명령 시 move(0,0)으로 정지한다. 마지막 명령을 계속
 실행하면 Wi-Fi 단절 시 로봇이 벽에 충돌하므로 온보드에 둔다.
 
 Refs: #12
@@ -236,7 +236,7 @@ ruff check . && ruff format --check .
 python -m pytest -q --cov=host --cov=tools --cov-fail-under=80
 ```
 
-`requirements.txt`·`requirements-dev.txt` 를 고쳤으면 CI 용 잠금 파일을 다시 만든다 (Linux·CPython 3.12 기준, 해시 포함). Windows 개발 PC 는 예전처럼 `requirements*.txt` 로 설치한다.
+`requirements.txt`·`requirements-dev.txt` 를 고쳤으면 CI 용 잠금 파일을 다시 만든다 (Linux·CPython 3.12 기준, 해시 포함). Windows 개발 PC 는 `requirements*.txt` 로 설치한다.
 
 ```bash
 pip install uv

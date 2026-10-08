@@ -78,7 +78,7 @@ flowchart TD
 ### 1. 실시간 제어와 안전
 
 - Host 는 변화가 없어도 명령을 10Hz 로 고정 송신하고, 로봇은 텔레메트리를 10Hz 로 보고합니다([PROTOCOL.md](docs/PROTOCOL.md)).
-- 로봇은 마지막 유효 명령 뒤 600ms 동안 다음 명령이 없으면 스스로 페일세이프로 래치합니다. 처음 값인 300ms 에서 무선 구간 지연 때문에 래치가 반복되는 것을 실측으로 확인하고 옮긴 값입니다([ADR-39](docs/DECISIONS.md#adr-39), [사례 1](docs/case-studies/01-command-timeout.md)).
+- 로봇은 마지막 유효 명령 뒤 600ms 동안 다음 명령이 없으면 스스로 페일세이프로 래치합니다. 300ms 로는 무선 구간 지연 때문에 래치가 반복되는 것을 실측으로 확인해 정한 값입니다([ADR-39](docs/DECISIONS.md#adr-39), [사례 1](docs/case-studies/01-command-timeout.md)).
 - 페일세이프 해제는 사람이 해제를 누르고 로봇이 `safety_latched=false` 를 보고해야만 끝납니다. Host 가 보낸 값을 되돌려 받는 `state` 는 판단에 쓰지 않습니다([ADR-21](docs/DECISIONS.md#adr-21), [사례 3](docs/case-studies/03-echoed-state-self-lock.md)).
 - E-Stop 명령은 다른 모든 조건보다 우선해 로봇을 래치합니다([제어 링크와 페일세이프](docs/features/failsafe.md)).
 - 초음파가 7cm 미만을 연속 2표본 읽으면 로봇이 전진을 멈추고, 10cm 를 넘으면 스스로 풉니다. 주행 중 정지는 LiDAR 정면 정지(센서 중심 0.25m)가 먼저 맡고, 초음파는 LiDAR 높이 아래의 낮은 물체를 막는 마지막 안전장치입니다([순찰 중 장애물 대응](docs/features/patrol-obstacle.md), [ADR-47](docs/DECISIONS.md#adr-47)).
@@ -114,7 +114,7 @@ flowchart TD
 | 카메라 → 판단 → 정지 명령 | 최소 81ms, 최대 121ms (예산 250ms) | 2026-09-15, `mechdog-01`, 사슬을 끝까지 확정한 프레임 4장 | [E2E 측정](docs/measurements/2026-09-15-e2e-chain.md) |
 | 관제 화면 FPV | 22.62fps (272장 / 11.982초) | 2026-09-15, 검출 박스 포함 브라우저 WebSocket, 순서 역전·JPEG 오류 0건 | [DECISIONS.md](docs/DECISIONS.md) |
 | 초음파 반사 정지 | 9/9 통과, 상태 떨림 29회 → 0회 | 2026-09-17, `mechdog-01` 받침대 시험, 21cm 장애물, 해제 조건 수정 전후 비교. 당시 정지 거리는 25cm 였고 10-06 현장에서 7cm 로 개정했으며, 7cm 기준 받침대 시험은 하지 않았습니다(한계) | [반사 정지 실측](field_tests/results/20260917_3.2.6-obstacle-stop/summary.md), [ADR-47](docs/DECISIONS.md#adr-47) |
-| 공장 시연 동선 한 바퀴 | 약 6분 완주(16:40~16:46), 측위 일치율 0.74~0.92, `LINK_LOST` 0회 | 2026-10-06, `mechdog-02`, 실내 4구역 시연 동선 S0→A→B→C→D→S0, LiDAR 동선 점 추종. 17:41 리허설에서도 완주했습니다. 600초 연속 시험은 따로 하지 않았습니다(한계) | [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md) |
+| 공장 시연 동선 한 바퀴 | 약 6분 완주(16:40\~16:46), 측위 일치율 0.74\~0.92, `LINK_LOST` 0회 | 2026-10-06, `mechdog-02`, 실내 4구역 시연 동선 S0→A→B→C→D→S0, LiDAR 동선 점 추종. 17:41 리허설에서도 완주했습니다. 600초 연속 시험은 따로 하지 않았습니다(한계) | [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md) |
 | 쓰러짐 확정(규칙 + VLM 교차검증) | 3회 확정, VLM 판독 306ms(첫 회) | 2026-10-06, `mechdog-02`, 누움 규칙이 정지 3초를 채운 프레임을 VLM 에 한 번 더 물음 | [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md) |
 
 ## 실제 시연
