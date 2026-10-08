@@ -3,15 +3,18 @@
 `field_plan.py` 의 "이동 테스트 일괄 실행" 버튼과 동일한 경로:
 phase 2 자동 경로 항목을 카탈로그 순서로 실행하고, 각 항목이 끝날 때마다
 그 항목의 기록을 즉시 저장한다. 프롬프트는 stdin으로 받는다.
+기록 폴더는 환경변수 MECHDOG_MOVEMENT_OUT 으로 바꾼다(기본: 저장소의 `_local/movement_batch`).
 """
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,7 +31,16 @@ from tools.field.field_sessions import write_session  # noqa: E402
 
 DEVICE = "mechdog-02"
 HOST = "192.168.0.18"
-OUT = Path("C:/Users/a9800/Desktop/공부/피지컬ai/로봇독 프로젝트/05_실물_측정결과/2026-09-21")
+
+
+def output_dir(env: Mapping[str, str]) -> Path:
+    """기록 저장 폴더 — MECHDOG_MOVEMENT_OUT 이 없으면 저장소의 `_local/movement_batch`."""
+    if env.get("MECHDOG_MOVEMENT_OUT"):
+        return Path(env["MECHDOG_MOVEMENT_OUT"])
+    return Path(__file__).resolve().parents[2] / "_local" / "movement_batch"
+
+
+OUT = output_dir(os.environ)
 ENV = {
     "operator": "사용자(현장)",
     "firmware": "svc-20260915-b",

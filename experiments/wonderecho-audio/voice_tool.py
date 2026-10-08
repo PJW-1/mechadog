@@ -21,6 +21,7 @@ import os
 import struct
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 import tkinter as tk
@@ -33,7 +34,7 @@ VOICE_API = "http://127.0.0.1:8090"
 ROBOT_API = "http://127.0.0.1:8000"
 PORT = "COM5"
 
-SITE = r"C:\Users\a9800\AppData\Local\Programs\Python\Python312\Lib\site-packages"
+SITE = sysconfig.get_paths()["purelib"]
 ENV = dict(os.environ)
 ENV["PATH"] = (
     rf"{SITE}\torch\lib;{SITE}\nvidia\cublas\bin;{SITE}\nvidia\cuda_nvrtc\bin;" + ENV["PATH"]
