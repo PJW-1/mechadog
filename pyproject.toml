@@ -1,6 +1,6 @@
 [project]
 name = "mechdog-physical-ai"
-version = "0.3.0"
+version = "1.0.0"
 description = "MechDog Physical AI Security & Patrol Robot"
 requires-python = ">=3.12"
 
