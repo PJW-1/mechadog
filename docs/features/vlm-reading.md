@@ -59,7 +59,7 @@ flowchart TD
 
 `hazard_item` 은 `zones.hazard_ids`(시연은 C) 의 방문에서만 묻는다. 같은 방문 안 서로 다른 프레임의 «예» 2회로 확정하고, 확정은 가벼운 경고(`hazard_notice`)이지 L3 가 아니다([ADR-43](../DECISIONS.md#adr-43)).
 
-구역 판독과 순찰 중 쓰러짐 판독(`F0`)의 «예» 는 의심에 들게 하거나 의심을 이어 갈 뿐 확정에는 쓰지 않는다. 확정은 위 교차검증, 곧 YOLOX 누움이 정지 3초를 채운 같은 프레임의 판독 «예» 로만 한다 *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47))*.
+구역 판독과 순찰 중 쓰러짐 판독(`F0`)의 «예» 는 의심에 들게 하거나 의심을 이어 갈 뿐 확정에는 쓰지 않는다. 확정은 위 교차검증, 곧 YOLOX 누움이 정지 3초를 채운 같은 프레임의 판독 «예» 로만 한다 ([ADR-47](../DECISIONS.md#adr-47)).
 
 ## 판단 기준
 
@@ -72,7 +72,7 @@ flowchart TD
 | 동시 판독 | 1건 · 겹치면 거절 (쌓지 않음) | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
 | 구역 판독 | 방문당 한 번 · 세 항목 | 없음 | [ADR-35](../DECISIONS.md#adr-35) |
 | 순찰 중 쓰러짐 판독 | 공장 모드 `PATROL` 에서 2000ms 마다 · `person_down` 한 항목 | `vision.vlm.patrol_interval_ms` | [ADR-42](../DECISIONS.md#adr-42) |
-| 쓰러짐 확정 (2026-10-07 개정) | YOLOX 누움 규칙이 정지 3초를 채운 프레임의 같은 JPEG 에 `person_down` «예». «아니오» · 실패 · 상한 초과는 «확인 필요»(`fall_review_required`). 의심 중 판독 «예» 는 확정에 세지 않는다 | `vision.fallen.confirm_ms` · `vision.vlm.budget_ms` | [ADR-42](../DECISIONS.md#adr-42) · [ADR-47](../DECISIONS.md#adr-47) |
+| 쓰러짐 확정 | YOLOX 누움 규칙이 정지 3초를 채운 프레임의 같은 JPEG 에 `person_down` «예». «아니오» · 실패 · 상한 초과는 «확인 필요»(`fall_review_required`). 의심 중 판독 «예» 는 확정에 세지 않는다 | `vision.fallen.confirm_ms` · `vision.vlm.budget_ms` | [ADR-42](../DECISIONS.md#adr-42) · [ADR-47](../DECISIONS.md#adr-47) |
 | 넘어짐 확정 (L3) · 통로 막힘 확정 (가벼운 경고 `path_blocked`) | 같은 방문 안 두 판독이 모두 «예» (기본값은 꺼짐) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) |
 | LiDAR 막힘 원인 질문 | `Is the walkway blocked by an object that has fallen over or collapsed? Answer with yes or no only.` (`blocked_by_fallen`) · LiDAR 가 막힘을 확정한 그 프레임에만 · 공장 모드에서만 · 답 대기 상한 1500ms | `vision.vlm.path_cause_wait_ms` · `vision.vlm.path_cause_max_frame_age_ms` (기본 1000ms · 최신 프레임이 이보다 오래됐으면 묻지 않음) | [ADR-45](../DECISIONS.md#adr-45) |
 | LiDAR 막힘 원인 방송 문장 | 답이 «예» 일 때만 «무너진 물건» 을 말함 (기본값은 꺼짐). 꺼져도 질문은 걸고 답은 판정 근거에 남김 | `change_detect.vlm_path_cause` | [ADR-45](../DECISIONS.md#adr-45) |
@@ -89,14 +89,14 @@ flowchart TD
 - 결과는 판독 스레드가 끝난 뒤에만 가져간다. 가져가면 슬롯이 비워진다.
 - 질문 하나가 실패하면(`ask_failed`) 그때까지의 답만 담아 돌려준다. 예산을 넘기면(`budget_exhausted`) 남은 질문을 묻지 않는다. 두 경우 모두 `degraded` 이다.
 - 답을 읽지 못하면 그 항목은 «모름» 이고, 원문을 로그와 기록에 남긴다. «모름» 을 «아니요» 로 접지 않는다.
-- 저하된 판독은 넘어짐·통로 막힘 확정에 쓰지 않는다. 통로 막힘 확정은 L3 가 아니라 가벼운 경고 `path_blocked`(source `vlm`)이고, 같은 방문에서 넘어짐도 확정되면 `path_blocked` 를 먼저 남기고 L3 로 간다([ADR-41](../DECISIONS.md#adr-41) 개정 2026-10-01). 두 번째 판독이 저하되면 아무것도 확정하지 않고 구역을 끝낸다.
+- 저하된 판독은 넘어짐·통로 막힘 확정에 쓰지 않는다. 통로 막힘 확정은 L3 가 아니라 가벼운 경고 `path_blocked`(source `vlm`)이고, 같은 방문에서 넘어짐도 확정되면 `path_blocked` 를 먼저 남기고 L3 로 간다([ADR-41](../DECISIONS.md#adr-41)). 두 번째 판독이 저하되면 아무것도 확정하지 않고 구역을 끝낸다.
 - 구역을 떠난 뒤에 도착한 판독도 건 구역 이름과 건 프레임으로 기록한다. 그 판독의 `person_down` 이 «예» 이면 쓰러짐 의심에 든다.
 - 의심 중에 건 쓰러짐 판독이 의심이 끝난 뒤 도착하면 버린다.
 - LiDAR 막힘 원인 질문(`blocked_by_fallen`)은 쓰러짐·구역 판독과 같은 슬롯을 쓴다. 다른 판독이 걸려 있으면 상한 안에서 빌 때를 기다렸다가 같은 프레임을 걸고(그동안 쓰러짐·구역 판독은 걸지 않는다), 끝내 못 걸면 `busy`, 상한 안에 답이 없으면 `timeout` 으로 `fallen: null` 을 기록한다. 상한에 닿은 판독은 끝날 때까지 슬롯을 쥐고 있다가 결과를 버리고 비운다. 비우는 동안에는 새 막힘의 판독도 걸지 않고 상한 안에서 기다린다.
 - LiDAR 막힘 원인 판독의 결과는 `path_blocked` 판정 근거에 `fallen`(`true`/`false`/`null`) · `vlm_reason` · `raw`(원문) · `latency_ms` · `wait_ms`(막힘 확정부터 기록까지) · `vlm_path_cause`(그때 스위치 값)로 붙는다. `vlm_reason` 은 판독이 정상이면 `null`, 그 밖에는 `mission`(공장 모드 아님) · `not_loaded` · `no_frame` · `stale_frame` · `busy` · `timeout` · `worker_failed` 중 하나이거나 판독의 reason 이다.
 - LiDAR 막힘 확정 때 최신 프레임이 없거나(`no_frame`) 받은 지 `vision.vlm.path_cause_max_frame_age_ms` 를 넘겼으면(`stale_frame`, 정확히 같으면 묻는다) 묻지 않고 그 사진도 남기지 않는다. 블랙박스 장면 기록 없이 관제 방송(Host PC 스피커)만 나가고 대시보드에는 사건이 뜨지 않는다.
 - VLM 은 이동 중 길을 정하지 않는다. 질문 하나에 0.2초이고 예·아니요만 돌려주며 위치가 없기 때문이다. 이동 중 막힘은 LiDAR 몫이다([순찰 중 장애물 대응](patrol-obstacle.md)).
-- 순찰·구역 판독은 «예» 가 몇 번이든 단독으로 L3 를 올리지 않는다. «예» 는 의심(L1)이고, 확정(L3)은 규칙 확정 프레임의 교차 판독 «예» 로만 한다 *(2026-10-07 개정 — [ADR-47](../DECISIONS.md#adr-47))*.
+- 순찰·구역 판독은 «예» 가 몇 번이든 단독으로 L3 를 올리지 않는다. «예» 는 의심(L1)이고, 확정(L3)은 규칙 확정 프레임의 교차 판독 «예» 로만 한다 ([ADR-47](../DECISIONS.md#adr-47)).
 - 종료할 때는 돌고 있는 판독을 최대 2초 기다린 뒤 모델을 내린다. 적재 중이면 내리지 않고 나간다.
 
 ## 코드와 검증
