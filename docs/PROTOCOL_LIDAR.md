@@ -170,12 +170,17 @@
 
 ### 구현자 체크리스트
 
-- [ ] `lidar_samples.jsonl` 전 라인이 파싱되는가
-- [ ] 규칙 ①\~⑥ 이 `lidar_invalid.jsonl` 의 `_expect` 대로 동작하는가
-- [ ] 재부팅(`boot_id` 변경) 뒤 `seq=1` 을 **수락**하는가
-- [ ] 기형 점 하나가 스캔 전체를 폐기하지 **않는가** (규칙 ⑥)
-- [ ] 파싱 실패 패킷이 두절 타이머를 갱신하지 **않는가**
-- [ ] `ts` 를 초 단위 실수로 보내지 **않는가** — 정수 밀리초다
+수신측(`host/common/lidar_link.py` `ScanDecoder`)은 아래 항목을 시험으로 잠근다. 중계 노드의 C++
+인코더가 만든 패킷은 CI 의 «LiDAR encoder vs Python decoder» 단계가 같은 `ScanDecoder` 로 다시 검증한다.
+
+| 확인 항목 | 검증하는 시험 (`tests/test_lidar_link.py`) |
+| :--- | :--- |
+| `lidar_samples.jsonl` 전 라인이 파싱된다 | `test_all_samples_are_accepted` |
+| 규칙 ①\~⑥ 이 `lidar_invalid.jsonl` 의 `_expect` 대로 동작한다 | `test_invalid_rows_behave_as_declared` |
+| 재부팅(`boot_id` 변경) 뒤 `seq=1` 을 **수락**한다 | `test_seq_gate_is_per_device_and_boot` |
+| 기형 점 하나가 스캔 전체를 폐기하지 **않는다** (규칙 ⑥) | `lidar_invalid.jsonl` 의 `accept_dropped` 행 · `test_invalid_rows_behave_as_declared` |
+| 파싱 실패 패킷이 두절 타이머를 갱신하지 **않는다** | `test_parse_failure_does_not_refresh_the_link` |
+| `ts` 는 정수 밀리초다. 초 단위 실수는 폐기한다 | `lidar_invalid.jsonl` 의 «ts 가 초 단위 실수» 행 · `test_invalid_rows_behave_as_declared` |
 
 ---
 

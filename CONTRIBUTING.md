@@ -2,7 +2,7 @@
 
 > 팀 안의 작업 관리 절차(WBS·완료 판정·주간 리뷰)는 [TEAM_PROCESS](docs/internal/TEAM_PROCESS.md)
 >
-> **처음이라면 [README](README.md)의 문서 지도를 먼저 보세요.**
+> **처음이라면 [문서 색인](docs/README.md)과 [코드 읽는 순서](docs/code-tour.md)를 먼저 보세요.**
 > **절차는 이 문서, 구현 기준은 [엔지니어링 가이드](docs/ENGINEERING_GUIDE.md)** (로깅·테스트·CI)
 > **메시지 스키마 정본은 [통신 프로토콜](docs/PROTOCOL.md)** — 팀장이 결정하여 전파한다
 >
