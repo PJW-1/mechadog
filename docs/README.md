@@ -31,7 +31,7 @@
 
 ## 사례 연구
 
-실기에서 드러난 문제를 증상 → 가설과 배제 → 측정 → 원인 → 수정 → 검증 → 남은 한계 순서로 정리한다. 5~10번은 초기 가설 → 관측된 실패 → 근거 데이터 → 원인 → 변경 → 동일 조건 재평가 순서다. 목록은 [case-studies/README.md](case-studies/README.md) 에 있다.
+실기에서 드러난 문제를 증상 → 가설과 배제 → 측정 → 원인 → 수정 → 검증 → 남은 한계 순서로 정리한다. 5~10번은 초기 가설 → 관측된 실패 → 근거 데이터 → 원인 → 변경 → 재평가(같은 조건 기록이 있을 때) 순서다. 목록은 [case-studies/README.md](case-studies/README.md) 에 있다.
 
 - [case-studies/01-command-timeout.md](case-studies/01-command-timeout.md) — 명령 타임아웃 300ms → 600ms.
 - [case-studies/02-person-gate-time-window.md](case-studies/02-person-gate-time-window.md) — 10fps 추론이 진짜 검출의 절반 이상을 놓친 문제.

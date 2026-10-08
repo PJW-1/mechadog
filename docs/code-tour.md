@@ -4,25 +4,25 @@
 
 ## 디렉터리 역할
 
-파일 수는 2026-09-29 기준 실제 개수다. Python 디렉터리는 `.py` 파일을 세고 `__init__.py`는 뺐다. `tools/` 안의 시험 파일(`test_*.py`)도 뺐다. 펌웨어 디렉터리는 소스 파일(`.ino`·`.cpp`·`.h`)을 세고, 호스트 시험(`test/`)·진단 스케치(`diagnostics/`)·설정 템플릿(`*.example.h`)은 뺐다.
+파일 수는 2026-10-09 기준 실제 개수다. Python 디렉터리는 `.py` 파일을 세고 `__init__.py`는 뺐다. `tools/` 안의 시험 파일(`test_*.py`)도 뺐다. 펌웨어 디렉터리는 소스 파일(`.ino`·`.cpp`·`.h`)을 세고, 호스트 시험(`test/`)·진단 스케치(`diagnostics/`)·설정 템플릿(`*.example.h`)은 뺐다.
 
 | 디렉터리 | 역할 | 파일 수 |
 |---|---|---|
-| `host/behavior/` | FSM·시퀀스·미션, 그리고 런타임에서 떼어 낸 판정기(인증·추종·쓰러짐·구역·PPE) | 18 |
-| `host/vision/` | 카메라 스트림 수신·추론 워커·VLM 판독 | 12 |
-| `host/common/` | 통신 규약 인코더/디코더 (Host ↔ 로봇) | 8 |
-| `host/telemetry/` | 로봇 텔레메트리를 FSM 사건으로 변환 | 1 |
-| `host/dashboard/` | 관제 서버(FastAPI)와 웹 대시보드 | 3 |
-| `host/slam/` | LiDAR 스캔 정합과 지도 생성 | 10 |
-| `host/report/` | 실기 리포트 생성 | 1 |
-| `host/cloud/` | 외부 연동(원격 갱신 등) | 1 |
+| `host/behavior/` | FSM·시퀀스·미션, 그리고 런타임에서 떼어 낸 판정기(인증·추종·쓰러짐·구역·PPE) | 25 |
+| `host/vision/` | 카메라 스트림 수신·추론 워커·PPE·위험물·VLM 판독 | 15 |
+| `host/common/` | 통신 규약 인코더/디코더 (Host ↔ 로봇)·설정·블랙박스·LiDAR 링크 | 11 |
+| `host/telemetry/` | 로봇 텔레메트리를 FSM 사건으로 변환·LiDAR 수신·ROS2 전달·세션 기록 | 4 |
+| `host/dashboard/` | 관제 서버(FastAPI)와 웹 대시보드 | 6 |
+| `host/slam/` | LiDAR 스캔 정합과 지도 생성 | 12 |
+| `host/report/` | 사건 한 문장 생성(규칙 템플릿) | 1 |
+| `host/cloud/` | 관제 방송 TTS | 1 |
 | `host/runtime.py` | 위 모듈을 묶어 운용 루프를 도는 진입점 | 1 |
 | `host/fleet.py` | 여러 대를 한 프로세스·한 소켓으로 함께 운용 | 1 |
 | `firmware/mechdog_motion/` | 로봇 본체 펌웨어(모션·Tier 1 반사) | 21 |
 | `firmware/xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 1 |
 | `firmware/lidar_relay/` | LiDAR 중계 보드 펌웨어 | 5 |
-| `tools/` | 운영·측정·개발 보조 스크립트 | 59 |
-| `tests/` | 단위·통합 테스트 | 89 |
+| `tools/` | 운영·측정·개발 보조 스크립트 | 104 |
+| `tests/` | 단위·통합 테스트 | 148 |
 
 ## 읽는 순서
 

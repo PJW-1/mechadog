@@ -1,6 +1,6 @@
 # WBS 실제 방식 반영 근거 — 2026-10-06
 
-이 문서는 [WBS](WBS.md)의 10-06 개정 근거다. 제공된 현장 기록을 인용했으며 새 실기를 수행한 결과가 아니다. 현장 코드와 데이터는 [PR #450](https://github.com/PJW-1/mechadog/pull/450)으로, 현재 상태·실측 문서는 [PR #451](https://github.com/PJW-1/mechadog/pull/451)(`docs/lidar/STATUS_20261006.md`·`docs/measurements/2026-10-06-field-patrol.md`)으로 dev 에 병합됐다.
+이 문서는 [WBS](WBS.md)의 10-06 개정 근거다. 출처: 2026-10-06 현장 로그 집계. 현장 코드와 데이터는 [PR #450](https://github.com/PJW-1/mechadog/pull/450)으로, 현재 상태·실측 문서는 [PR #451](https://github.com/PJW-1/mechadog/pull/451)(`docs/lidar/STATUS_20261006.md`·`docs/measurements/2026-10-06-field-patrol.md`)으로 dev 에 병합됐다.
 
 ## 근거 문서
 

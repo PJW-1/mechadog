@@ -1,6 +1,6 @@
 # 공장 모드 시연 시나리오 (4구역 한 바퀴)
 
-공장 모드 시연의 한 바퀴를 A→B→C→D 고정 순서로 정한다. 정상 순찰, 이동 중 막힘 우회, 위험구역의 화기 위험물, 쓰러진 사람, 보호구 위반과 적합을 한 바퀴에 모두 보여 준다.
+공장 모드 시연의 한 바퀴를 A→B→C→D 고정 순서로 정한다([ADR-43](../DECISIONS.md#adr-43) 설계 기준). 이 순서와 기본 위험구역 C 는 공장 모드 기본값이다. 시연 기체 `mechdog-02` 는 [ADR-47](../DECISIONS.md#adr-47) 현장 개정대로 저장된 시연 동선 S0→A→B→C→D→S0 를 따르고, 위험구역은 A(라이터만), 보호구 필수 구역은 C 다(아래 «2026-10-07 시연 촬영»). 정상 순찰, 이동 중 막힘 우회, 위험구역의 화기 위험물, 쓰러진 사람, 보호구 위반과 적합을 한 바퀴에 모두 보여 준다.
 결정과 대안은 [ADR-43](../DECISIONS.md#adr-43), 정본 표는 [PRD FR-11 시연 시나리오](../internal/PRD_Physical_AI_Guard_Robot.md) 소절이다.
 이 페이지는 그 흐름이 어느 설정과 어느 코드로 이어지는지만 한 장에 모은다.
 
@@ -35,16 +35,17 @@ flowchart TD
 
 ## 2026-10-07 시연 촬영 (현장 기체 `mechdog-02`)
 
-- 현장 기체 설정은 위험구역을 **A 작업실**로 둔다(`config/devices/mechdog-02.yaml` `zones.hazard_ids`). 위 표의 C 는 공장 모드 기본값이다.
+- 시연 기체 `mechdog-02` 는 저장된 동선 `demo_lap` «시연 동선 S0→A→B→C→D→S0»(`maps/home_20261006_remap2/routes.json`)를 따른다 — A 작업실(위험물) → B 거실(쓰러짐) → C 주방(PPE) → D 침실 → S0. 10-06 첫 완주는 같은 순서의 `demo_quick` 이었다. `zones.ids: [B, C, D, A]` 는 동선이 아닌 연속 구역 순찰의 순서다.
+- 현장 기체 설정은 위험구역을 **A 작업실**로(`zones.hazard_ids`), 보호구 필수 구역을 **C 주방**으로(`zones.policies.C` 안전모·조끼 필수) 둔다(`config/devices/mechdog-02.yaml`). 위 표의 위험구역 C 와 A→B→C→D 고정 순서는 공장 모드 기본값이다.
 - **화기 위험물 장면은 라이터만 쓴다 (사용자 결정 · 2026-10-07).** 로봇 시점 합성 학습 후보(Release `hazard-synth-v2`)가 미학습 실물 사진에서 라이터는 0.87·0.88 로 잡았지만 보조배터리는 0/5 였다. 안내 음성은 물건 이름 없이 «화기 위험물» 하나(TF 0193)다.
-- 근거: [10-06 현장 실측](../measurements/2026-10-06-field-patrol.md), [WBS 4.8.6](../internal/WBS.md). 보조배터리 검출은 실물 사진을 더 모아 재학습해야 한다(미착수).
+- 근거: [10-06 현장 실측](../measurements/2026-10-06-field-patrol.md), [WBS 4.8.6](../internal/WBS.md). 보조배터리는 검출하지 못해 시연에서 뺐다(한계).
 
 ## 판단 기준
 
 | 조건 | 값 | 설정 키 | 근거 |
 | :--- | :--- | :--- | :--- |
 | 구역 | A·B·C·D, 복도로 연결 | `zones.ids` | [ADR-43](../DECISIONS.md#adr-43) |
-| 방문 순서 | 매 바퀴 A→B→C→D 고정 | `zones.random_after_first_cycle: false` | [ADR-43](../DECISIONS.md#adr-43) |
+| 방문 순서 | 매 바퀴 A→B→C→D 고정(시연 기체는 저장 동선 S0→A→B→C→D→S0) | `zones.random_after_first_cycle: false` | [ADR-43](../DECISIONS.md#adr-43) |
 | 화기 위험구역 | C | `zones.hazard_ids: [C]` | [ADR-43](../DECISIONS.md#adr-43) |
 | 화기 위험물 확정 | 같은 방문 안 서로 다른 프레임의 «예» 2회 | `change_detect.vlm_hazard_items` (기본 켬) | [ADR-43](../DECISIONS.md#adr-43) · [ADR-41](../DECISIONS.md#adr-41) |
 | 화기 위험물 확정 (검출기 · 2026-10-02 개정) | 금지 대상이 1500ms 안에 3번 이상 검출 (PPE 위반과 같은 규칙). 위험구역에서 방향을 맞춘 뒤에만 켠다 | `vision.hazard` (`enabled` · `alarm_classes` · `confirm_window_ms` · `hits_required`) | [ADR-43](../DECISIONS.md#adr-43) 대안 ⓐ 개정 |
@@ -76,9 +77,9 @@ flowchart TD
 | 6 적합 통과 | 경보 없음 | — | `host/runtime.py` |
 | 사건 문장 | 방송·대시보드 자막 | `escalation.sound.*` | `host/report/situation.py` |
 
-시험 이름은 이 페이지에 적지 않는다. 코드가 병합되면 단계별로 시험을 확인해 이 표에 더한다. 전체 한 바퀴의 실기는 아직 하지 않았다(WBS `5.4.6`, 시연 기체 `mechdog-02`).
+시험 이름은 이 페이지에 적지 않는다. 전체 한 바퀴 실기는 2026-10-06 `mechdog-02` 로 했다 — 16:40~16:46 첫 완주(약 6분, LINK_LOST 0회)와 17:41~17:47 리허설1 동선 완주다([현장 순찰 실측](../measurements/2026-10-06-field-patrol.md#2-완주-기록)). 막힘 우회는 목업 1회만 확인했고 실물 반복은 0회라 한계로 남긴다.
 
 실측 기록
 
-- 전체 바퀴 실기 기록은 아직 없다.
+- [현장 순찰 실측 — 2026-10-06](../measurements/2026-10-06-field-patrol.md) 이 전체 바퀴 기록(첫 완주 · 리허설1)이다.
 - [VLM 판독 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) 는 막힘 적중 1/3 · 오경보 3/6 이라 VLM 이 길을 정하지 않는 근거다.
