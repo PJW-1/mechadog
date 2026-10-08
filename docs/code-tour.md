@@ -8,21 +8,21 @@
 
 | 디렉터리 | 역할 | 파일 수 |
 |---|---|---|
-| `host/behavior/` | FSM·시퀀스·미션, 그리고 런타임에서 떼어 낸 판정기(인증·추종·쓰러짐·구역·PPE) | 25 |
+| `host/behavior/` | FSM·시퀀스·미션, 그리고 런타임에서 떼어 낸 판정기(인증·추종·쓰러짐·구역·PPE)·방송·항법 요청·LiDAR 스캔 중계 | 28 |
 | `host/vision/` | 카메라 스트림 수신·추론 워커·PPE·위험물·VLM 판독 | 15 |
 | `host/common/` | 통신 규약 인코더/디코더 (Host ↔ 로봇)·설정·블랙박스·LiDAR 링크 | 11 |
-| `host/telemetry/` | 로봇 텔레메트리를 FSM 사건으로 변환·LiDAR 수신·ROS2 전달·세션 기록 | 4 |
-| `host/dashboard/` | 관제 서버(FastAPI)와 웹 대시보드 | 6 |
+| `host/telemetry/` | 로봇 텔레메트리를 FSM 사건으로 변환·LiDAR 수신·ROS2 전달·세션 기록·텔레메트리 진단·비전 결과 기록 | 6 |
+| `host/dashboard/` | 관제 서버(FastAPI)와 웹 대시보드, 런타임과의 배선 | 7 |
 | `host/slam/` | LiDAR 스캔 정합과 지도 생성 | 12 |
-| `host/report/` | 사건 한 문장 생성(규칙 템플릿) | 1 |
+| `host/report/` | 사건 한 문장 생성(규칙 템플릿)·사건 기록(블랙박스·관제 사건 목록·이력 DB) | 2 |
 | `host/cloud/` | 관제 방송 TTS | 1 |
-| `host/runtime.py` | 위 모듈을 묶어 운용 루프를 도는 진입점 | 1 |
+| `host/runtime.py` · `host/runtime_cli.py` | 위 모듈을 묶어 운용 루프를 도는 진입점과 그 명령행 | 2 |
 | `host/fleet.py` | 여러 대를 한 프로세스·한 소켓으로 함께 운용 | 1 |
 | `firmware/mechdog_motion/` | 로봇 본체 펌웨어(모션·Tier 1 반사) | 21 |
 | `firmware/xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 1 |
 | `firmware/lidar_relay/` | LiDAR 중계 보드 펌웨어 | 5 |
 | `tools/` | 운영·측정·개발 보조 스크립트 | 104 |
-| `tests/` | 단위·통합 테스트 | 148 |
+| `tests/` | 단위·통합 테스트 | 156 |
 
 ## 읽는 순서
 
