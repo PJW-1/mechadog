@@ -142,6 +142,19 @@ test('a single server opens the history incident by profile name, not the firmwa
  assert.ok(!server.calls.some(c=>c.url.pathname.includes('mechdog-3c8a1f333208')));
 });
 
+test('an event replayed before the first state snapshot still opens the history by profile name',async()=>{
+ // 재연결하면 사건 버퍼 재생이 첫 상태 스냅샷보다 먼저 올 수 있다 — 이력 ID 는 누를 때의 프로필로 만든다.
+ const ctx=setup();const {document,store,panels,server}=ctx;
+ store.setDemo(false);
+ store.ingestLiveEvent({seq:3,event:'PPE_VIOLATION',ts_ms:1759900000000,entry:'e1',snapshot:'snapshot.jpg',escalation:'L2',state:'OBSERVE',telemetry:{device_id:'mechdog-3c8a1f333208'}},'http://127.0.0.1:8000');
+ store.setTelemetry({state:'live',snapshot:{deviceId:'mechdog-02',state:'OBSERVE',escalation:'L2',stale:false,runtimeStale:false},rateHz:10,lost:0,history:[]});
+ panels.render('events');
+ [...document.querySelectorAll('.op-event-detail button')].find(b=>b.textContent==='사건 이력에서 검토').click();
+ await panels.historyLoad;await settle();
+ assert.ok(server.calls.some(c=>c.url.pathname==='/api/history/incidents/mechdog-02_e1'));
+ assert.ok(!server.calls.some(c=>c.url.pathname.includes('mechdog-3c8a1f333208')));
+});
+
 test('history link turns server refusals into coded errors',async()=>{
  const link=new HistoryLink({fetch:fakeServer({status:404,error:'incident_not_found'}).fetch});
  await assert.rejects(link.incident('x'),error=>error.code==='incident_not_found'&&error.status===404&&/이력에 없는 사건/.test(error.message));

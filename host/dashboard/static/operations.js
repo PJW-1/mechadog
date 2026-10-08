@@ -398,16 +398,22 @@ export class Operations {
   if(this.events.filter(e=>e.source==='LIVE_FEED').length>=100)this.events.splice(this.events.findLastIndex(e=>e.source==='LIVE_FEED'),1);
   // 단계·인증 사건은 사진이 없어 텔레메트리를 싣지 않는다 — 이 서버가 알려 준 개체 이름을 쓴다.
   const name=cleanText(payload.event,160),device=slot.device||cleanText(payload.telemetry?.device_id,80)||cleanText(slot.telemetry?.snapshot?.deviceId,80)||'장치 미상';
-  // 이력의 robot_id 는 런타임 프로필(`--device`)이다 — 사건 텔레메트리의 device_id 는 펌웨어 MAC 이름이라 이력 ID 에 쓰지 않는다.
-  const historyRobot=slot.device||cleanText(slot.telemetry?.snapshot?.deviceId,80)||device;
   const person=(payload.tracks||[]).length,evidence=describeEvidence(name,payload);
   const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):name==='path_blocked'&&payload.judgement?.source==='vlm'?'통로 막힘 경고':EVENT_TITLES[name];
   const photo=payload.entry!=null||payload.snapshot!=null;
-  const event={id,seq,slot:slotId,entry:cleanText(payload.entry,160)||null,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',simulated:payload.simulated===true,title:(payload.simulated?'[예시] ':'')+(label||name),category:eventCategory(name),robot:device,historyRobot,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:(payload.simulated?'시뮬레이션 예시 사건 · 합성 증거입니다.':'실시간 수신된 사건입니다.')+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
+  const event={id,seq,slot:slotId,entry:cleanText(payload.entry,160)||null,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',simulated:payload.simulated===true,title:(payload.simulated?'[예시] ':'')+(label||name),category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:(payload.simulated?'시뮬레이션 예시 사건 · 합성 증거입니다.':'실시간 수신된 사건입니다.')+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
   // 최근 단계 사건 — 경보 띠가 «왜 이 단계인가» 와 경고 문장을 보인다 (B1). 백로그는 순번이 낮은 것부터 온다.
   if(name==='escalation_changed'&&(!slot.lastEscalation||seq>slot.lastEscalation.seq))slot.lastEscalation={seq,escalation:event.escalation,reason:cleanText(payload.reason,80),warning:cleanText(payload.warning,300),ts_ms:payload.ts_ms};
   this.events.unshift(event);this.log('실시간 사건 수신',id+' · '+event.title,'LIVE_EVENT_FEED');this.emit('import');return event;
+ }
+ // 실시간 사건의 이력 ID `<robot_id>_<기록 폴더>`. 이력의 robot_id 는 런타임 프로필(`--device`)이다 —
+ // 사건 텔레메트리의 device_id 는 펌웨어 MAC 이름이라 쓰지 않는다. 재연결 때 사건 재생이 첫 상태
+ // 스냅샷보다 먼저 올 수 있어 받을 때가 아니라 찾을 때 슬롯을 읽는다.
+ historyIncidentId(event){
+  if(!event.entry)return null;
+  const slot=this.slots[event.slot];
+  return (slot?.device||cleanText(slot?.telemetry?.snapshot?.deviceId,80)||event.robot)+'_'+event.entry;
  }
  noteEventGap(dropped){
   this.log('사건 수신 공백',dropped+'건을 버퍼에서 놓쳤습니다 · 서버가 조용히 넘기지 않고 알려준 것','LIVE_EVENT_FEED');this.emit('import');
