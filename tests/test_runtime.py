@@ -770,7 +770,7 @@ def test_situation_describe_failure_does_not_block_recording(
 ) -> None:
     """`describe` 가 예외를 던져도 사건은 그대로 기록·발행되고 틱은 계속 돈다."""
     monkeypatch.setattr(
-        "host.runtime.describe",
+        "host.behavior.speaker.describe",
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     local = dict(config)

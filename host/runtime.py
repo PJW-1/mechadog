@@ -41,6 +41,7 @@ from host.behavior.path_cause import PathCause
 from host.behavior.patrol import PatrolController
 from host.behavior.ppe_judge import PpeJudge
 from host.behavior.routes import Route, load_routes, route_digest
+from host.behavior.speaker import Speaker
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
 from host.behavior.zone_inspector import ZoneInspector
@@ -68,7 +69,6 @@ from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.trace import config_sha256, new_session_id
 from host.common.units import rad_to_deg
 from host.dashboard.state import DashboardState
-from host.report.situation import describe
 from host.slam.pose_out import PoseOut
 from host.slam.settings import maps_dir
 from host.telemetry.receiver import Ingested, TelemetryReceiver
@@ -105,16 +105,6 @@ def _is_oversized_datagram(exc: OSError) -> bool:
     """Windows가 수신 버퍼보다 큰 UDP 전문에 붙이는 오류만 가려낸다."""
     return getattr(exc, "winerror", None) == WSAEMSGSIZE or exc.errno == WSAEMSGSIZE
 
-
-# `SOUND` ACK 대기 — 실측 왕복은 30ms 안팎(`last_cmd_age_ms`)이라 세 주기면 넉넉하다.
-SOUND_ACK_TIMEOUT_MS = 300
-SOUND_RETRIES = 2
-# `SOUND.track` 상한 (PROTOCOL `SOUND` 절 · `dashboard.commands.SOUND_TRACK_MAX` 와 같은 값).
-ROBOT_SOUND_TRACK_MAX = 3000
-# 안내 문장은 한 번만 — 반복은 놓치면 안 되는 경고에만 건다 (`robot_sound.repeat_after_ms`).
-ROBOT_SOUND_NO_REPEAT = frozenset(
-    {"route_started", "route_finished", "alarm_confirmed", "ppe_settled", "fall_suspected"}
-)
 
 #: VLM 적재가 끝날 때까지 순찰 시작을 미루는 상한. 실측 적재는 ~15초 — 이 상한을
 #: 넘는 적재는 멈춰 있다고 보고, 굶김 위험을 로그로 남기고 시작한다.
@@ -252,9 +242,6 @@ class Runtime:
             clock=clock,
         )
         self._behavior = behavior_from_config(self._commander, config)
-        # ACK 를 기다리는 `SOUND` 하나 — (seq, track, 다시 보낼 시각, 남은 재전송) (`_resend_sound`).
-        self._sound_wait: tuple[int, int, int, int] | None = None
-        self._sound_retries_left = SOUND_RETRIES
         # 상태별 모션을 붙인다. 만들 수 없는 것은 등록하지 않고 이유를 남기며,
         # 등록되지 않은 상태는 `Behavior` 가 정지로 처리한다 — 안전측 기본값이다.
         self._actions = register_actions(self._behavior, config)
@@ -420,24 +407,16 @@ class Runtime:
         # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
         self._blackbox = blackbox
         self._event_publisher = event_publisher
-        #: 상황 서술 문장을 관제로 내보내는 방송기. 비동기·예외를 던지지
-        #: 않는 계약이지만 `_record_scene` 에서 다시 한 번 감싼다 — 아직 없는 계약을
-        #: 믿고 안 감싸면 방송기가 하나라도 어기는 순간 제어 틱이 죽는다.
-        self._announcer = announcer
-        #: 사건 → 로봇 MP3 모듈 TF 카드 트랙 (`robot_sound.tracks` · ADR-38 말하기 경로).
-        #: 키는 사건 이름(`person_fallen` 등)이나 경고 키(`ppe_violation_warning`). 비면 안 튼다.
-        self._robot_tracks = {
-            str(k): int(v)
-            for k, v in ((config.get("robot_sound") or {}).get("tracks") or {}).items()
-        }
-        #: 같은 경고를 이만큼 뒤 한 번 더 튼다(0 이면 안 함). 로봇은 모듈에 쓰기 전에 ACK 를
-        #: 보내므로 재생 실패를 알 수 없다 — 2026-10-06 리허설에서 ACK 는 왔는데 무음이었다.
-        self._robot_repeat_ms = int((config.get("robot_sound") or {}).get("repeat_after_ms") or 0)
+        #: 상황 문장 방송과 로봇 스피커 트랙 (ADR-38 말하기 경로 · `SOUND` 재전송·반복).
+        self._speaker = Speaker(
+            config,
+            commander=self._commander,
+            clock=self._clock,
+            announcer=announcer,
+            latest=lambda: self._vision.latest() if self._vision is not None else None,
+        )
         #: 항법 설정 중 런타임이 직접 읽는 스위치(`publish_new_obstacles` 등).
         self._config_nav = dict(config.get("nav") or {})
-        self._robot_repeat: tuple[int, int] | None = None  # (시각, 트랙)
-        #: 동선 시작·완료 안내용 직전 상태 (`_announce_route_edges`).
-        self._route_was_active = False
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -555,7 +534,7 @@ class Runtime:
             vlm=self._vlm,
             # 호출 때 찾는다 — 시험이 기록·방송을 대역으로 바꿔 끼운다.
             record=lambda kind, frame, judgement: self._record_scene(kind, frame, judgement),
-            announce=lambda kind, judgement: self._announce_situation(kind, judgement),
+            announce=lambda kind, judgement: self._speaker.announce(kind, judgement),
             others_waiting=lambda: self._fall.waiting or self._zone_inspector.waiting,
         )
         if isinstance(navigator, PatrolController):
@@ -582,6 +561,11 @@ class Runtime:
     @property
     def behavior(self) -> Behavior:
         return self._behavior
+
+    @property
+    def speaker(self) -> Speaker:
+        """상황 방송·로봇 스피커 트랙. 시험이 재생 키를 가로챈다."""
+        return self._speaker
 
     @property
     def auth(self) -> Authenticator:
@@ -691,11 +675,7 @@ class Runtime:
                     # (10-06 현장 검수).
                     self._behavior.note_robot_latch(latched)
                     self._settle_reset(latched, now_ms)
-                if (
-                    self._sound_wait is not None
-                    and json.loads(raw).get("seq") == self._sound_wait[0]
-                ):
-                    self._sound_wait = None
+                self._speaker.note_ack(raw)
                 return Ingested(discarded="명령 응답")
             self._stats.discarded += 1
             self._summary.count("discarded")
@@ -1153,7 +1133,7 @@ class Runtime:
         judgement["camera_age_ms"] = (
             None if result is None else max(0, now_ms - result.completed_ms)
         )
-        judgement["sentence"] = self._announce_situation(kind, judgement)
+        judgement["sentence"] = self._speaker.announce(kind, judgement)
         # ⚠️ 판정의 `zone` 은 설정 구역일 때만 사건 구역이다 — `전체`·`GOAL`·`지점 3` 을 그대로
         # 쓰면 `zones` 표에 자리표 구역이 생긴다 (DATA_MODEL 3.4). 두 경로가 같은 값을 쓴다.
         judged = judgement.get("zone")
@@ -1357,9 +1337,9 @@ class Runtime:
                         "judgement": judgement,
                     }
                 )
-            self._play_robot_track("ppe_settled")
+            self._speaker.play("ppe_settled")
         elif event_type == "PPE_SETTLED" and (judgement or {}).get("reason") == "경고 횟수 한도":
-            self._play_robot_track("ppe_unresolved")
+            self._speaker.play("ppe_unresolved")
         cross_result = judgement is not None and "rule_yes" in judgement
         if (
             cross_result
@@ -1385,7 +1365,7 @@ class Runtime:
         if not (judgement or {}).get("test_mode") and (
             event_type != "person_fallen" or self._mission.enables("fallen")
         ):
-            sentence = self._announce_situation(event_type, judgement)
+            sentence = self._speaker.announce(event_type, judgement)
         if self._blackbox is None:
             return
         recorded_judgement = judgement
@@ -1444,65 +1424,6 @@ class Runtime:
             "models": models() if callable(models) else None,
             "latency": latency,
         }
-
-    def _announce_situation(self, event_type: str, judgement: dict[str, Any] | None) -> str | None:
-        """상황 문장을 만들어 방송한다. 만든 문장(없으면 `None`)을 돌려준다."""
-        sentence: str | None = None
-        try:
-            sentence = describe(event_type, judgement)
-        except Exception as exc:  # noqa: BLE001 — 문장 생성 실패가 10Hz 제어를 죽이면 안 된다
-            LOG.error("situation_failed", error=f"{type(exc).__name__}: {exc}")
-        if sentence is not None and self._announcer is not None:
-            try:
-                self._announcer(sentence)
-            except Exception as exc:  # noqa: BLE001 — 방송 실패가 제어를 막으면 안 된다
-                LOG.error("announce_failed", error=f"{type(exc).__name__}: {exc}")
-        if sentence is not None:
-            key = event_type
-            items = (judgement or {}).get("items")
-            if (
-                event_type == "hazard_notice"
-                and (judgement or {}).get("source") == "detector"
-                and isinstance(items, list)
-                and len(set(items)) == 1
-                and f"hazard_notice_{items[0]}" in self._robot_tracks
-            ):
-                key = f"hazard_notice_{items[0]}"
-            self._play_robot_track(key)
-        return sentence
-
-    def _play_robot_track(self, key: str) -> None:
-        """`key` 에 맞는 TF 카드 트랙을 로봇 스피커로 튼다. 표에 없으면 아무것도 안 한다.
-
-        ACK 가 없으면 `_resend_sound` 가 새 seq 로 다시 싣는다.
-        """
-        track = self._robot_tracks.get(key)
-        if track is None or not 0 < track <= ROBOT_SOUND_TRACK_MAX:
-            return
-        # 새 소리가 나가면 이전 경고의 반복은 취소한다 — 경보 확인 뒤 옛 경고가 다시 나오지 않게
-        # (10-06 현장 검수).
-        self._robot_repeat = None
-        try:
-            self._commander.once("SOUND", track=track)
-            LOG.info("robot_sound", key=key, track=track)
-            if self._robot_repeat_ms > 0 and key not in ROBOT_SOUND_NO_REPEAT:
-                self._robot_repeat = (self._clock() + self._robot_repeat_ms, track)
-        except Exception as exc:  # noqa: BLE001 — 소리 실패가 제어를 막으면 안 된다
-            LOG.error("robot_sound_failed", error=f"{type(exc).__name__}: {exc}")
-
-    def _announce_route_edges(self) -> None:
-        """동선 시작·완료를 로봇 스피커로 알린다 (`route_started`·`route_finished`). 정지·교체는 말하지 않는다."""
-        navigator = self._navigator
-        if not isinstance(navigator, PatrolController):
-            return
-        active = navigator.route_active
-        if active and not self._route_was_active:
-            self._play_robot_track("route_started")
-        elif self._route_was_active and not active:
-            status = (navigator.route_status() or {}).get("status")
-            if isinstance(status, str) and status.startswith("completed"):
-                self._play_robot_track("route_finished")
-        self._route_was_active = active
 
     def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
         """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (좌우 대칭 근거).
@@ -1693,27 +1614,12 @@ class Runtime:
         )
         reason = self._escalation.reason
         if level == "L1" and reason == "fall_suspected":
-            self._play_robot_track("fall_suspected")
+            self._speaker.play("fall_suspected")
         if self._escalation.presentation().warning and isinstance(reason, str):
             key = f"{reason.lower()}_warning"
             if reason == "PPE_VIOLATION":
-                key = self._ppe_warning_key(key)
-            self._play_robot_track(key)
-
-    def _ppe_warning_key(self, base: str) -> str:
-        """빠진 보호구가 하나면 그것만 말하는 키(`ppe_violation_helmet_warning` 등)를 고른다.
-
-        표에 그 키가 없거나 둘 다 빠졌거나 판정을 못 읽으면 통합 문장 키(`base`)를 쓴다.
-        """
-        result = self._vision.latest() if self._vision is not None else None
-        verdict = getattr(result, "ppe", None)
-        regions = getattr(verdict, "regions", ()) or ()
-        missing = {r.item for r in regions if str(r.label).startswith("no_")}
-        if len(missing) == 1:
-            key = f"ppe_violation_{next(iter(missing))}_warning"
-            if key in self._robot_tracks:
-                return key
-        return base
+                key = self._speaker.ppe_warning_key(key)
+            self._speaker.play(key)
 
     def _announce_transition(self, event: Event, previous: str, now_ms: int) -> None:
         """인증·안전 전이를 관제 사건으로 낸다. 전이 로그(jsonl)에만 있던 것들이다."""
@@ -1810,36 +1716,6 @@ class Runtime:
             blocked_ms=None if since is None else now_ms - since,
         )
 
-    def _watch_sound(self, lines: list[str], now_ms: int) -> None:
-        """이번 틱에 나간 `SOUND` 를 ACK 대기에 올린다. 새 것이 옛 것을 밀어낸다."""
-        for line in lines:
-            msg = json.loads(line)
-            if msg["type"] == "SOUND":
-                due = now_ms + SOUND_ACK_TIMEOUT_MS
-                self._sound_wait = (msg["seq"], msg["track"], due, self._sound_retries_left)
-                self._sound_retries_left = SOUND_RETRIES
-
-    def _resend_sound(self, now_ms: int) -> None:
-        """ACK 없이 마감이 지난 `SOUND` 를 **새 seq 로** 다시 싣는다.
-
-        `SOUND` 는 한 번만 나가서 UDP 한 개가 빠지면 문장이 소리 없이 사라진다 —
-        실기에서 명령의 약 1.2% 가 빠졌고 대체 문장 하나가 그렇게 나오지
-        않았다. 같은 seq 는 펌웨어 순서 게이트가 거부하므로 `once` 로 다시 만든다.
-        ⚠️ ACK 만 빠진 경우엔 같은 문장이 처음부터 다시 나온다 — 무음보다 낫다.
-        """
-        if self._sound_wait is None or now_ms < self._sound_wait[2]:
-            return
-        _seq, track, _due, left = self._sound_wait
-        self._sound_wait = None
-        # 더 새 문장이 이미 실려 있으면 옛 것은 버린다 — 뒤에 붙이면 새 문장을 덮는다.
-        # 확인과 넣기는 한 덩어리다: 대시보드 스레드가 그 사이에 끼면 옛 것이 뒤에 붙었다.
-        if left <= 0:
-            if not self._commander.has_pending("SOUND"):
-                LOG.warning("sound_unacked", track=track, retries=SOUND_RETRIES)
-            return
-        if self._commander.once_unless_pending("SOUND", track=track):
-            self._sound_retries_left = left - 1
-
     def tick(self, now_ms: int) -> list[str]:
         """한 주기. 보낼 전문 목록을 돌려준다 (보내지는 않는다)."""
         # ⚠️ **이 함수의 소요가 명령 주기를 결정한다.** 운용 루프는 단일 스레드이고
@@ -1871,20 +1747,17 @@ class Runtime:
         # 단계 색을 로봇에 내려보낸다 — 위 호출 바로 뒤가 제자리다.
         self._emit_eye_led(now_ms)
         self._auth_judge.request(now_ms)
-        self._resend_sound(now_ms)
-        self._announce_route_edges()
-        if self._robot_repeat is not None and now_ms >= self._robot_repeat[0]:
-            track = self._robot_repeat[1]
-            self._robot_repeat = None
-            self._commander.once("SOUND", track=track)
-            LOG.info("robot_sound_repeat", track=track)
+        self._speaker.resend(now_ms)
+        if isinstance(self._navigator, PatrolController):
+            self._speaker.route_edges(self._navigator)
+        self._speaker.repeat(now_ms)
         before = self._behavior.state
         phase_started = time.perf_counter()
         lines = self._behavior.tick(now_ms)
         if isinstance(self._navigator, PatrolController):
             for event in self._navigator.take_navigation_events():
                 self._record_navigation_event(event, now_ms)
-        self._watch_sound(lines, now_ms)
+        self._speaker.watch(lines, now_ms)
         if self._navigator is not None:
             self._nav_snapshot = self._build_nav_snapshot(now_ms)
         behavior_ms = (time.perf_counter() - phase_started) * 1000
@@ -2030,7 +1903,7 @@ class Runtime:
             # 확정한 쓰러짐도 확인하면 순찰로 돌아간다 (S4) — 누운 사람은 스스로 떠나지 않는다.
             self._fall.resolve(now_ms)
         if released:
-            self._play_robot_track("alarm_confirmed")
+            self._speaker.play("alarm_confirmed")
         if released and held:
             self._apply(Event.ALARM_CONFIRMED, now_ms)
         return released

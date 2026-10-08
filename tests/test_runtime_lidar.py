@@ -399,10 +399,10 @@ def test_navigation_decision_is_recorded_once_without_escalating(config, clock, 
 
 
 def test_navigation_decision_without_frame_still_announces(config, clock, monkeypatch):
-    import host.runtime as runtime_module
+    import host.behavior.speaker as speaker_module
 
     said = []
-    monkeypatch.setattr(runtime_module, "describe", lambda kind, _j: f"{kind} 문장")
+    monkeypatch.setattr(speaker_module, "describe", lambda kind, _j: f"{kind} 문장")
     runtime, navigator = _patrolling(config, clock, announcer=said.append)
     navigator._nav_events.append(
         {
