@@ -21,7 +21,8 @@ from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
-from host.runtime import VLM_LOAD_WAIT_MS, Runtime, dashboard_wiring, watch_console
+from host.dashboard.wiring import dashboard_wiring
+from host.runtime import VLM_LOAD_WAIT_MS, Runtime, watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
@@ -731,7 +732,7 @@ def test_runtime_makes_a_session_id_and_skips_unmeasurable_latency(
 
 def test_published_event_carries_the_trace(config: dict, clock: FakeClock, tmp_path) -> None:
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     local = dict(config)
     local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
@@ -2934,7 +2935,7 @@ def test_a_confirmed_person_reaches_the_dashboard_event_feed(
 
     from host.common.blackbox import EventBlackbox
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     cfg = deepcopy(config)
     cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
@@ -2975,7 +2976,7 @@ def test_the_gate_edge_publishes_one_event_not_one_per_tick(
 
     from host.common.blackbox import EventBlackbox
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     cfg = deepcopy(config)
     cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")

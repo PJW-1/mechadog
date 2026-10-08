@@ -517,7 +517,7 @@ def test_failsafe_entry_reaches_the_event_feed(cfg, clock):
 
 def test_policy_endpoint_serves_the_config_values(cfg):
     """설정 화면이 숫자를 지어내지 않게 판정 코드와 같은 키를 내보낸다 (B7)."""
-    from host.runtime import policy_view
+    from host.dashboard.wiring import policy_view
 
     with TestClient(create_app(_state(), policy=policy_view(cfg))) as http:
         body = http.get("/api/policy").json()
@@ -1078,7 +1078,8 @@ def test_sound_plays_under_the_safety_latch_without_touching_it(cfg, clock):
 
 def test_sound_endpoint_reaches_the_runtime_through_the_real_wiring(cfg, clock):
     """`dashboard_wiring` 이 만든 서비스로 HTTP → 런타임 틱 전문까지 간다."""
-    from host.runtime import Runtime, dashboard_wiring
+    from host.dashboard.wiring import dashboard_wiring
+    from host.runtime import Runtime
 
     runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
     app = create_app(_state(), **dashboard_wiring(runtime, cfg, vision=None, blackbox=None))
@@ -1091,7 +1092,8 @@ def _zone_wired(cfg, clock):
     """설정의 구역(`zones.ids` A·B·C·D)을 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
     from copy import deepcopy
 
-    from host.runtime import Runtime, dashboard_wiring
+    from host.dashboard.wiring import dashboard_wiring
+    from host.runtime import Runtime
 
     changed = deepcopy(cfg)
     assert set(changed["zones"]["ids"]) == {"A", "B", "C", "D"}
@@ -1167,7 +1169,7 @@ def test_locate_endpoint_round_trips(cfg, clock):
 
 
 def test_policy_lists_patrol_zones(cfg):
-    from host.runtime import policy_view
+    from host.dashboard.wiring import policy_view
 
     assert policy_view(cfg)["patrol_zones"] == [str(z) for z in cfg["zones"]["ids"]]
 

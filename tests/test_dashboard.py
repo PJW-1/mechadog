@@ -120,7 +120,7 @@ def test_telemetry_api_reports_vision_status(clock):
 
 
 def test_wiring_passes_the_worker_status(cfg, clock):
-    from host.runtime import dashboard_wiring
+    from host.dashboard.wiring import dashboard_wiring
 
     class Vision:
         def latest(self):

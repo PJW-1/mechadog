@@ -15,7 +15,7 @@ from host.behavior.patrol import Phase
 from host.behavior.routes import RoutePoint
 from host.dashboard.server import create_app
 from host.dashboard.state import DashboardState
-from host.runtime import dashboard_wiring
+from host.dashboard.wiring import dashboard_wiring
 from host.slam.scan_match import MatchResult
 
 __all__ = ["config"]
