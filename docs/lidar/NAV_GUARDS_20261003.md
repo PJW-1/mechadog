@@ -21,7 +21,7 @@
 - 정상 Python3.12.10 환경에서 B/C 포함 **전체3,568건: 통과3,566 · 건너뜀2 · 실패/오류0**. GUI Tk 시험도 통과했다.
 - 새 정책에 맞춘 회귀: 계획 제외 셀의 실시간 물체 감지·STOP·동적 마스크, 실제 STOP/안정화 새 스캔 전 재출발 금지, 전체 탈출 연결/몸체 충돌/동적 물체/미관측/거리 한도/모서리 절단 거부.
 - Ruff check·format 및 git diff 공백 검사 모두 통과했다. 상세 결과는 로컬 검증 폴더에 보관한다.
-- 검증 폴더: `C:/dev/_ai_collab/reviews/20261003_nav_resume/`. `before_203054/`는 이전9파일+해시/패치, `final-pytest-result.json`·`final-tests.xml`은 실제 전체 시험, `real-map-validation.json`은 지도 비교 근거다.
+- 검증 폴더: 저장소 밖 로컬 검증 폴더(`20261003_nav_resume/`). `before_203054/`는 이전9파일+해시/패치, `final-pytest-result.json`·`final-tests.xml`은 실제 전체 시험, `real-map-validation.json`은 지도 비교 근거다.
 
 ## 저장된 실제 지도 비교
 
