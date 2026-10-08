@@ -1,6 +1,6 @@
 """LiDAR 막힘 확정 프레임의 원인 판독 — «통로를 막은 것이 무너진 물건인가» (ADR-45).
 
-감지와 우회는 LiDAR 가 맡는다(`PatrolController._check_new_obstacle`). 여기서는 막힘을 확정한
+감지와 우회는 LiDAR 가 맡는다(`NavigationMap.project_scan`). 여기서는 막힘을 확정한
 그 프레임에 VLM 질문 하나(`blocked_by_fallen`)를 걸고, 답을 `path_blocked` 판정 근거의 `fallen`
 으로 싣는다. VLM 은 감지·방향을 정하지 않는다 (ADR-43 결정 3).
 

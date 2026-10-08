@@ -1036,9 +1036,9 @@ def test_dynamic_obstacle_does_not_change_the_map() -> None:
     before = controller.grid.cells.copy()
     from host.behavior.planner import mark_obstacle
 
-    mark_obstacle(controller._dynamic, controller.grid, (2.5, 2.5), 0.3)
+    mark_obstacle(controller.navmap.dynamic, controller.grid, (2.5, 2.5), 0.3)
     assert np.array_equal(controller.grid.cells, before), "지도는 그대로여야 한다"
-    assert controller._dynamic.any(), "동적 마스크에만 찍혀야 한다"
+    assert controller.navmap.dynamic.any(), "동적 마스크에만 찍혀야 한다"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1222,7 +1222,7 @@ def test_controller_projects_actual_leg_with_body_radius_and_expires_it() -> Non
     controller.observe_obstacle_scan(Scan("lidar-01", "boot", 2, 1000, ((0, 1),)), 1000)
     assert controller.take_new_obstacles() == ((4, 2.5),)
     assert controller.blocked[leg]
-    controller._refresh_navigation(3000)
+    controller.navmap.refresh(3000)
     assert not controller.blocked[leg]
     assert loc.cells[leg] == 3 and grid.cells[leg] == -3
 
@@ -1258,7 +1258,7 @@ def test_live_leg_replans_without_old_confirmation_or_settle_wait():
     controller.resume()
     controller.observe_obstacle_scan(Scan("lidar-01", "boot", 1, 1000, ((0, 1),)), 1000)
     controller.steer(1000)
-    assert controller._dynamic[controller.grid.to_cell(4, 2.5)]
+    assert controller.navmap.dynamic[controller.grid.to_cell(4, 2.5)]
     assert controller.plan.reachable
     assert controller.phase is Phase.MOVING
     assert controller.commander.intent.type_ == "MOVE"
@@ -1288,7 +1288,7 @@ def test_new_loc_only_obstacle_does_not_invalidate_global_route(phase: Phase) ->
     original = controller.plan
     controller.phase = phase
     loc.cells[loc.to_cell(4, 2.5)] = 3
-    controller._rebuild_masks()
+    controller.navmap.rebuild_masks()
     assert controller.plan is original
     assert controller.phase is phase
     assert not controller.blocked[grid.to_cell(4, 2.5)]
@@ -1609,7 +1609,7 @@ def test_waypoint_radius_cannot_cut_an_unsafe_corner(escape_end) -> None:
     controller = build()
     controller.pose = (1.94, 2.025, 0.0)
     controller.plan = Plan("A", ((2.025, 2.025), (2.025, 2.225)), escape_end_index=escape_end)
-    controller._body_blocked[41, 39] = True  # 다음 점으로 자르는 대각선만 막는다.
+    controller.navmap.body[41, 39] = True  # 다음 점으로 자르는 대각선만 막는다.
     assert controller._current_waypoint() == (2.025, 2.025)
     assert controller.waypoint_index == 0
 
@@ -1659,9 +1659,9 @@ def test_margin_following_preserves_stop_boundaries(hazard) -> None:
         x = 2.225  # 몸체는 안전하지만 기존 선분에서 도달 반경보다 멀다.
     elif hazard == "unknown":
         controller.grid.cells[controller.grid.to_cell(x, 2.025)] = 0.0
-        controller._rebuild_masks()
+        controller.navmap.rebuild_masks()
     elif hazard == "dynamic":
-        controller._dynamic[controller.grid.to_cell(2.325, 3.025)] = True
+        controller.navmap.dynamic[controller.grid.to_cell(2.325, 3.025)] = True
     controller.observe_map_pose((x, 2.025, math.pi / 2), 1000 if hazard == "stale" else 2000)
     controller.observe_telemetry(Reading(), 2000)
     controller.steer(2000)
@@ -1688,7 +1688,7 @@ def test_obstacle_in_front_of_known_wall_is_not_hidden_by_tracking_inflation() -
     controller.observe_map_pose((2.025, 2.025, 0), 1000)
     controller.observe_obstacle_scan(Scan("l", "b", 2, 1000, ((0, 0.6),)), 1000)
     assert controller.take_new_obstacles()[0] == pytest.approx((2.625, 2.025))
-    assert controller._dynamic[grid.to_cell(2.625, 2.025)]
+    assert controller.navmap.dynamic[grid.to_cell(2.625, 2.025)]
 
 
 @pytest.mark.parametrize("dynamic", [False, True])
@@ -1730,9 +1730,9 @@ def test_grazing_known_cell_is_not_a_new_obstacle(dynamic) -> None:
     )
     controller = build(grid=grid)
     controller.pose = pose
-    controller._dynamic[:] = mask
+    controller.navmap.dynamic[:] = mask
     for _ in range(3):
-        controller._check_new_obstacle(Scan("l", "b", 1, 1000, ((angle, distance),)))
+        controller.navmap.project_scan(Scan("l", "b", 1, 1000, ((angle, distance),)))
     assert controller.stats.replans == 0
     assert controller.take_new_obstacles() == ()
 

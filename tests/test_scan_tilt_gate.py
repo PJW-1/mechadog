@@ -116,7 +116,7 @@ def test_rejected_scan_cannot_update_pose_vote_audit_or_map_then_level_recovers(
     assert c.pose_ms == 900
     assert not c.localization.global_votes
     assert np.array_equal(before, c.grid.cells)
-    assert c._live_clear.counts is None
+    assert c.navmap.live_clear.counts is None
     assert c.local_status["scan_rejected"] == "tilted"
     c.observe_telemetry(Reading(), 1500)
     c.verify_interval_ms = 0
@@ -150,14 +150,14 @@ def test_tilted_free_rays_do_not_erase_blockage_or_accumulate_live_clear():
     c.observe_obstacle_scan(scan(1), 1000)
     item = c.recovery.memory.remember(c.grid, [(2.5, 2)], 1000)
     assert item is not None
-    counts = c._live_clear.counts.copy()
-    seen = c._live_clear.seen_ms.copy()
+    counts = c.navmap.live_clear.counts.copy()
+    seen = c.navmap.live_clear.seen_ms.copy()
     points = dict(item.points)
     c.observe_telemetry(Reading(pitch=-15), 1100)
     c.observe_obstacle_scan(scan(2), 1100)
     assert c.recovery.memory.items[0].points == points
-    assert np.array_equal(c._live_clear.counts, counts)
-    assert np.array_equal(c._live_clear.seen_ms, seen)
+    assert np.array_equal(c.navmap.live_clear.counts, counts)
+    assert np.array_equal(c.navmap.live_clear.seen_ms, seen)
     c.observe_telemetry(Reading(), 1500)
     c.observe_map_pose(c.pose, 1500)
     c.observe_obstacle_scan(scan(3), 1500)

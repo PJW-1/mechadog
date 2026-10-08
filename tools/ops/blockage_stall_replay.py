@@ -89,7 +89,7 @@ def replay(
         )
         for b in row["blockage"]["obstacles"]
     ]
-    c._refresh_navigation(now)
+    c.navmap.refresh(now)
     trial = plan_to(
         GOAL_LABEL,
         goal,
@@ -117,8 +117,8 @@ def replay(
         "recorded_recovery": row["blockage"]["recovery"],
         "pose": c.pose,
         "plan_reason": trial.fail_reason,
-        "static_body_point_clear": segment_clear(grid, c._body_blocked, c.pose[:2], c.pose[:2]),
-        "dynamic_body_point_clear": segment_clear(grid, c._dynamic, c.pose[:2], c.pose[:2]),
+        "static_body_point_clear": segment_clear(grid, c.navmap.body, c.pose[:2], c.pose[:2]),
+        "dynamic_body_point_clear": segment_clear(grid, c.navmap.dynamic, c.pose[:2], c.pose[:2]),
         "front_m": c._local_scan.distance(),
         "latest_scan_nearest_m": min(d for _, d in c._local_scan.points),
         "nearest_memory_m": min(

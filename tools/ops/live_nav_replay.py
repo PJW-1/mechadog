@@ -168,7 +168,7 @@ def main() -> int:
                 and not bool((old_body | old_dynamic)[grid.to_cell(*pose[:2])]),
                 "new_path": new.reachable,
                 "new_reason": new.fail_reason,
-                "live_clear_cells": int(controller._live_clear.mask(grid, timestamp).sum()),
+                "live_clear_cells": int(controller.navmap.live_clear.mask(grid, timestamp).sum()),
                 "dynamic_points": len(controller.obstacles),
                 "front_m": controller._local_scan.distance(),
                 "gap_deg": None if gap is None else math.degrees(gap[0]),

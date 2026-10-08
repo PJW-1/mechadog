@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     planning = PlanningService(config, args.device, config_path=config_path, devices_dir=devices)
     controller = build_controller(config, maps, 7)
     controller.zone_map = ZoneMap.load(maps)
-    controller._rebuild_masks()
+    controller.navmap.rebuild_masks()
     controller.pose_seeded = True
     commander = controller.commander
     behavior = Behavior(commander, Fsm(initial="IDLE"))

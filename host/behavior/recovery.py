@@ -127,7 +127,7 @@ class BlockageRecovery:
         ax, ay = patrol.pose[:2]
         dx, dy = endpoint[0] - ax, endpoint[1] - ay
         denominator = dx * dx + dy * dy
-        for x, y in patrol._obstacles:
+        for x, y in patrol.navmap.obstacles:
             t = (
                 min(1.0, max(0.0, ((x - ax) * dx + (y - ay) * dy) / denominator))
                 if denominator
@@ -294,7 +294,7 @@ class BlockageRecovery:
             patrol.plan_params,
             snap_m=0.0 if patrol.route.active else 0.6,
             body_blocked=patrol.body_blocked,
-            costs=patrol.navigation_costs,
+            costs=patrol.navmap.costs,
         )
         self.active = None
         patrol._replan_stop_required = False

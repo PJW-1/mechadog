@@ -141,7 +141,7 @@ def test_gap_uses_widest_observed_run_but_prefers_small_turn():
 def test_start_inside_old_map_obstacle_escapes_without_settle_wait():
     c = ready()
     c.grid.cells[c.grid.to_cell(*c.pose[:2])] = 5
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     c.step(1000)
     assert c.phase is not Phase.LOST
     assert c.local_status["action"] == "escape"
@@ -155,18 +155,18 @@ def test_start_inside_old_map_obstacle_escapes_without_settle_wait():
 
 def test_dynamic_hit_expires_after_two_seconds_and_refreshes_when_seen():
     c = ready(front=1.0)
-    assert c._dynamic_seen
+    assert c.navmap.dynamic_seen
     cell = c.grid.to_cell(3, 2)
-    assert cell in c._dynamic_seen
+    assert cell in c.navmap.dynamic_seen
     c.observe_map_pose(c.pose, 2900)
     c.observe_obstacle_scan(revolution(2, front=1.0), 2900)
-    c._refresh_navigation(3000)
-    assert cell in c._dynamic_seen
-    c._refresh_navigation(4899)
-    assert cell in c._dynamic_seen
-    c._refresh_navigation(4900)
-    assert cell not in c._dynamic_seen
-    assert not c._dynamic.any()
+    c.navmap.refresh(3000)
+    assert cell in c.navmap.dynamic_seen
+    c.navmap.refresh(4899)
+    assert cell in c.navmap.dynamic_seen
+    c.navmap.refresh(4900)
+    assert cell not in c.navmap.dynamic_seen
+    assert not c.navmap.dynamic.any()
 
 
 def test_close_positive_range_below_localization_minimum_still_stops():
@@ -255,7 +255,7 @@ def test_live_clear_evidence_does_not_accumulate_across_long_scan_gaps():
 def test_blocked_patrol_target_is_preserved_until_recovery_decision():
     c = ready()
     c.grid.cells[:, 60] = 5
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     c.plan = Plan("A")
     c._replan()
     assert c.plan.label == "A"
@@ -270,7 +270,7 @@ def test_unreachable_remaining_zone_does_not_complete_patrol_cycle():
     c.zones.place(4, 2)
     c.zones.place(4, 3)
     c.grid.cells[:, 60] = 5
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     c.visited = frozenset({"A"})
     c._replan()
     assert c.plan.label == "B"

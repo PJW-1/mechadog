@@ -132,7 +132,7 @@ def test_all_zones_blocked_attempts_home_and_waits_once_if_home_unreachable():
     c._home = (4, 2)
     c.grid.cells[:, 60] = 5
     c.skipped = frozenset({"A"})
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     c._replan()
     assert c.recovery.returning_home and c.plan.label == HOME_LABEL
     c._replan()
@@ -228,7 +228,7 @@ def test_clearing_rays_stop_at_three_metres_and_marking_at_two_point_five():
     assert c.grid.to_cell(5.4, 2) not in free
     assert c.grid.to_cell(5.4, 2) in item.points
     c.observe_obstacle_scan(Scan("lidar-a", "boot-a", 2, 0, ((0, 2.6),)), 1100)
-    assert c.grid.to_cell(4.6, 2) not in c._dynamic_seen
+    assert c.grid.to_cell(4.6, 2) not in c.navmap.dynamic_seen
 
 
 def test_static_clear_overlay_also_has_raytrace_range_limit():
@@ -341,7 +341,7 @@ def test_route_next_dynamic_blockage_uses_recovery_instead_of_cancelling_route()
     assert c.start_route(route, 1000)[0]
     c.grid.cells[:, 60] = 5
     c.route.next_point()
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     c._replan()
     assert c.route_active and c.recovery.active is not None
     assert c.recovery.active.target == "GOAL"

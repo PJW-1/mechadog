@@ -29,16 +29,13 @@ from host.behavior.avoidance import LocalAvoidance
 from host.behavior.blockage import Recovery
 from host.behavior.commander import Commander
 from host.behavior.heading import HeadingTracker
-from host.behavior.live_nav import LiveClear, LocalScan, NavParams
+from host.behavior.live_nav import LocalScan, NavParams
 from host.behavior.localization import LocalizationTrust
+from host.behavior.nav_map import NavigationMap
 from host.behavior.patrol_phase import FSM_STATE_FOR, GOAL_LABEL, HOME_LABEL, Phase
 from host.behavior.planner import (
     Plan,
     PlanParams,
-    body_collision_mask,
-    distance_costs,
-    inflate,
-    mark_obstacle,
     min_forward_distance,
     plan_to,
     segment_clear,
@@ -55,11 +52,10 @@ from host.common.lidar_link import Scan
 from host.common.logging_setup import EdgeTrigger, event_logger
 from host.common.protocol import clamp
 from host.common.units import deg_to_rad, rad_to_deg, wrap_pi
-from host.slam.occupancy import MapMeta, OccupancyGrid
+from host.slam.occupancy import OccupancyGrid
 from host.slam.scan_match import (
     MatchParams,
     Pose,
-    integrate_scan,
 )
 from host.slam.settings import (
     match_params_from_config,
@@ -108,17 +104,6 @@ class DriveParams:
 #: 조향은 규약 상한(±30deg)에 걸리므로, 더 급히 도는 손잡이는 보폭뿐이다. 호 반경
 #: 실측 전이라 설정으로 빼지 않았다.
 TURN_STEP_REDUCTION: float = 0.5
-
-#: 정합 점수가 전체 점수의 이 비율 이상일 때만 그 바퀴를 지도에 적분한다. 낮은 점수의
-#: 자세로 적분하면 틀린 위치에 벽을 찍어 지도가 스스로 오염된다 — 아래에서는
-#: «이 위치가 맞다» 는 정합만 공간 사실로 승격한다.
-MAP_WRITE_MIN_SCORE_FRAC: float = 0.6
-
-#: 지도가 자랐을 때 팽창 마스크를 다시 만드는 간격(적분한 바퀴 수). A* 는
-#: `_blocked` 를 보고 푸는데, 적분으로 새로 «확실히 빈» 셀이 생겨도 팽창이
-#: 옛 지도 그대로면 로봇이 선 자리가 계속 막혀 보인다 (2026-10-02 실기:
-#: 측위는 잠겼는데 시작 셀이 미관측이라 `no_reachable_zone`).
-MAP_INFLATE_EVERY: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,10 +320,6 @@ class PatrolController:
     stats: PatrolStats = field(default_factory=PatrolStats)
     _inspection_zone: str | None = None
 
-    _blocked: np.ndarray | None = None
-    _body_blocked: np.ndarray | None = None
-    _mask_frame: tuple[float, float, float] | None = None
-    _dynamic: np.ndarray | None = None
     _last_scan_ms: int | None = None
     _local_scan_started_ms: int | None = None
     _stopped_since_ms: int | None = None
@@ -348,8 +329,6 @@ class PatrolController:
     _replan_timeout_hold_ms: int | None = None
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
-    #: 지도에 적분한 뒤 팽창을 아직 안 다시 한 바퀴 수.
-    _updates_since_inflate: int = 0
     _reset_requested: bool = False
     #: 지금 처리 중인 스캔의 Host 시각 (`observe_scan` 이 찍는다).
     _scan_now_ms: int = 0
@@ -359,27 +338,15 @@ class PatrolController:
     _goal_hold: bool = False
     #: 대기 이유 — «reached»(찍은 곳 도착) | «blocked»(가는 도중 길이 막힘) | None.
     _goal_hold_reason: str | None = None
-    #: 새 장애물 연속 확인 후보 — 현장 AG 정책은 후보 단계 없이 바로 끝점을 낸다(항상 None).
-    #: 프레임 수집기(4.8.7)의 `obstacle_pending` 계약을 위해 남긴다.
-    _pending_hit: tuple[float, float] | None = None
     _now_ms: int = 0
     _halt_reason: str = ""
     #: 직전 추종 틱이 제자리 회전이었나 (`steering_for(spinning=)`).
     _spinning: bool = False
     _edge: EdgeTrigger = field(default_factory=EdgeTrigger)
-    _obstacles: list[tuple[float, float]] = field(default_factory=list)
-    #: 아직 아무도 꺼내 가지 않은 신규 장애물 확정 (`take_new_obstacles`).
-    _new_obstacles: list[tuple[float, float]] = field(default_factory=list)
-    _live_clear: LiveClear = field(init=False)
     _local_scan: LocalScan = field(init=False)
-    _dynamic_seen: dict[tuple[int, int], tuple[float, float, int]] = field(default_factory=dict)
     _local_scan_pose: Pose | None = None
-    _projected_scan_id: tuple[str, str, int] | None = None
-    _last_obstacle_event_ms: int | None = None
     skipped: frozenset[str] = frozenset()
     _home: tuple[float, float] | None = None
-    _costs: np.ndarray | None = None
-    _cost_blocked: np.ndarray | None = None
     #: IMU 방위 앵커·조향 옵셋 (`host/behavior/heading.py`).
     heading: HeadingTracker = field(init=False, repr=False, compare=False)
     #: 측위 상태와 신뢰·전역 탐색 워커 (`host/behavior/localization.py`).
@@ -392,6 +359,8 @@ class PatrolController:
     route: RouteFollower = field(init=False, repr=False, compare=False)
     #: 느슨한 동선 추종 상태와 조향용 스캔 (`host/behavior/relaxed_follow.py`).
     relaxed: RelaxedFollower = field(init=False, repr=False, compare=False)
+    #: 막힘 마스크·실시간 장애물·거리 비용 (`host/behavior/nav_map.py`).
+    navmap: NavigationMap = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.heading = HeadingTracker(self)
@@ -400,22 +369,13 @@ class PatrolController:
         self.avoidance = LocalAvoidance(self)
         self.route = RouteFollower(self, steering_for)
         self.relaxed = RelaxedFollower(self)
-        self._live_clear = LiveClear(self.nav_params)
+        self.navmap = NavigationMap(self)
         self._local_scan = LocalScan(self.nav_params)
-        static = inflate(self.grid, self.plan_params)
-        self._blocked = static
-        self._body_blocked = body_collision_mask(self.grid, self.plan_params)
-        self._dynamic = np.zeros_like(static, dtype=bool)
-        self._mask_frame = (
-            self.grid.meta.resolution,
-            self.grid.meta.origin_x,
-            self.grid.meta.origin_y,
-        )
 
     # ── 조회 ──────────────────────────────────────────────────
     @property
     def navigation_grid(self) -> OccupancyGrid:
-        return self._live_clear.grid(self.grid, self._now_ms, self.plan_params.free_thresh)
+        return self.navmap.live_clear.grid(self.grid, self._now_ms, self.plan_params.free_thresh)
 
     @property
     def local_status(self) -> dict[str, Any]:
@@ -444,14 +404,14 @@ class PatrolController:
     @property
     def blocked(self) -> np.ndarray:
         """정적 팽창 + 이번 순찰에서 발견한 동적 장애물."""
-        assert self._blocked is not None and self._dynamic is not None
-        return cast(np.ndarray, self._blocked | self._dynamic)
+        assert self.navmap.static is not None and self.navmap.dynamic is not None
+        return cast(np.ndarray, self.navmap.static | self.navmap.dynamic)
 
     @property
     def body_blocked(self) -> np.ndarray:
         """몸체 최소 여유 + 실시간 장애물. 동적 물체는 탈출 예외로 지우지 않는다."""
-        assert self._body_blocked is not None and self._dynamic is not None
-        return cast(np.ndarray, self._body_blocked | self._dynamic)
+        assert self.navmap.body is not None and self.navmap.dynamic is not None
+        return cast(np.ndarray, self.navmap.body | self.navmap.dynamic)
 
     @property
     def target(self) -> str | None:
@@ -459,7 +419,7 @@ class PatrolController:
 
     @property
     def obstacles(self) -> tuple[tuple[float, float], ...]:
-        return tuple(self._obstacles)
+        return tuple(self.navmap.obstacles)
 
     @property
     def halt_reason(self) -> str:
@@ -503,7 +463,7 @@ class PatrolController:
     @property
     def obstacle_pending(self) -> bool:
         """새 장애물을 확인 중인가 — 후보는 잡혔지만 연속 확정 횟수에 못 미쳤다."""
-        return self._pending_hit is not None
+        return self.navmap.pending_hit is not None
 
     def take_new_obstacles(self) -> tuple[tuple[float, float], ...]:
         """지난 호출 뒤 확정된 신규 장애물 `(x m, y m)` 을 꺼낸다 — 한 번 꺼내면 비워진다.
@@ -511,8 +471,8 @@ class PatrolController:
         ⚠️ **런타임을 받지 않고 꺼내 가게 한다.** 컨트롤러가 기록·방송 경로를 알면
         소켓 없이 닫히는 시험(이 클래스의 계약)이 깨진다.
         """
-        taken = tuple(self._new_obstacles)
-        self._new_obstacles.clear()
+        taken = tuple(self.navmap.new_obstacles)
+        self.navmap.new_obstacles.clear()
         return taken
 
     def save_map(self, directory: Path | None = None) -> dict[str, Path]:
@@ -636,7 +596,7 @@ class PatrolController:
             return
         if not self._local_scan.clear_allowed or self.pose_stale(now_ms):
             return
-        self._check_new_obstacle(scan)
+        self.navmap.project_scan(scan)
 
     def observe_scan(self, scan: Scan, now_ms: int) -> None:
         """내장 스캔 정합(시뮬레이션용)으로 측위하고 신규 장애물을 확인한다."""
@@ -800,231 +760,20 @@ class PatrolController:
     def _zone_filter(self, now_ms: int) -> Callable[[np.ndarray, np.ndarray], np.ndarray] | None:
         return self.localization.zone_filter(now_ms)
 
-    def _rebuild_masks(self) -> None:
-        """격자 모양·내용이 바뀐 직후 팽창·동적 마스크를 새로 만든다."""
-        static = inflate(self.navigation_grid, self.plan_params)
-        body = body_collision_mask(self.navigation_grid, self.plan_params)
-        frame = (self.grid.meta.resolution, self.grid.meta.origin_x, self.grid.meta.origin_y)
-        changed = (
-            self._mask_frame != frame
-            or self._blocked is None
-            or self._body_blocked is None
-            or not np.array_equal(self._blocked, static)
-            or not np.array_equal(self._body_blocked, body)
-        )
-        self._blocked, self._mask_frame = static, frame
-        self._body_blocked = body
-        dynamic = np.zeros_like(self._blocked, dtype=bool)
-        for hit in self._obstacles:
-            mark_obstacle(dynamic, self.grid, hit, self.plan_params.body_radius_m)
-        dynamic |= self.recovery.memory.mask(self.grid, self.plan_params.body_radius_m)
-        self._dynamic = dynamic
-        self._updates_since_inflate = 0
-        if (
-            changed
-            and self.plan.reachable
-            # 직접 동선은 최신 거리로 추종한다. 저장 격자상의 선분이 막혔다고
-            # 회전마다 재계획하면 STOP/회전이 번갈아 안정 스캔을 계속 무효화한다.
-            and not (self.route.direct_moving and self.route.direct_detour_start is None)
-            and not segment_clear(
-                self.navigation_grid,
-                static,
-                self.pose[:2],
-                self.plan.waypoints[min(self.waypoint_index, len(self.plan.waypoints) - 1)],
-            )
-        ):
-            # 새 정적 장애물은 신규 탐지에서 이미 아는 것으로 빠진다. 옛 경로까지
-            # 유지하면 그 장애물을 그대로 통과하므로 목표만 보존해 다시 계획한다.
-            self.plan = Plan(self.plan.label)
-            self.waypoint_index = 0
-            if self.phase in (Phase.MOVING, Phase.AIMING) or (
-                self._spinning and self.phase is Phase.PLANNING
-            ):
-                self.phase = Phase.PLANNING
-                self._require_replan_stop()
-                self.commander.halt()
-            LOG.info("navigation_mask_changed_replan", target=self.plan.label)
+    # ── 항법 지도 (`NavigationMap` 에 위임 — 런타임·대시보드가 쓰는 이름) ──────────
+    @property
+    def navigation_costs(self) -> np.ndarray:
+        return self.navmap.costs
+
+    @property
+    def local_costmap(self) -> dict[str, Any]:
+        return self.navmap.local_window
 
     def _is_stationary(self) -> bool:
         """로봇이 서 있는가 — 감사 탐색(수 초)은 서 있을 때만 돌려도 안전하다."""
         return (
             self.phase not in (Phase.MOVING, Phase.AIMING) and not self._spinning
         ) or self._stopped_since_ms is not None
-
-    def _grow_map(self, points: np.ndarray, score: int) -> None:
-        """정합이 확실한 바퀴를 지도에 적분하고 주기적으로 팽창을 새로 만든다.
-
-        보행 속도에서 한 바퀴(~0.1초) 사이의 이동은 수 cm 이하라 이동 중 적분 오차는
-        셀 하나 이하다 — 지도는 로봇이 지나간 곳을 «확실히 빈» 셀로 채워 나간다.
-        """
-        if (
-            not self.live_map_write
-            or self.map_hit_logodds <= 0
-            or not self.localization.verified
-            or score < MAP_WRITE_MIN_SCORE_FRAC * len(points)
-        ):
-            return
-        integrate_scan(
-            self.match_grid,
-            self.pose,
-            points,
-            hit=self.map_hit_logodds,
-            miss=self.map_miss_logodds,
-            pad_cells=self.map_pad_cells,
-        )
-        self._updates_since_inflate += 1
-        # `integrate` 가 격자를 늘리면 원점이 옮겨져 두 마스크의 셀 좌표가 전부 어긋난다 —
-        # 주기와 무관하게 모양이 달라진 즉시 둘 다 새로 만든다. 장애물 표시는 월드 좌표라
-        # (`self._obstacles`) 새 격자에 다시 찍을 수 있다.
-        if self._updates_since_inflate >= MAP_INFLATE_EVERY or (
-            self._blocked is not None and self._blocked.shape != self.grid.cells.shape
-        ):
-            self._rebuild_masks()
-
-    def _check_new_obstacle(self, scan: Scan) -> None:
-        """verified 빔 비움과 실제 끝점+몸 반경만 임시로 투영한다."""
-        if not self._local_scan.clear_allowed:
-            return
-        if (scan.device_id, scan.boot_id, scan.seq) != self._local_scan.last_id:
-            return
-        if self._projected_scan_id == self._local_scan.last_id:
-            return
-        self._local_scan_pose = (*self.pose[:2], self.heading.steering_yaw())
-        self._projected_scan_id = self._local_scan.last_id
-        if self.relaxed.scan.last_id == self._local_scan.last_id:
-            self.relaxed.scan_yaw = self._local_scan_pose[2]
-        now_ms = self._scan_now_ms
-        if self.pose_verified and not self.pose_stale(now_ms):
-            free = self.recovery.memory.observe(self.grid, self.pose, scan, now_ms)
-            self._dynamic_seen = {
-                cell: value for cell, value in self._dynamic_seen.items() if cell not in free
-            }
-        self._live_clear.observe(
-            self.grid,
-            self.pose,
-            scan,
-            now_ms,
-            verified=self.pose_verified and not self.pose_stale(now_ms),
-            range_m=self.range_m,
-        )
-        new_hit: tuple[float, float, float] | None = None
-        if not self.pose_stale(now_ms) and (not self.localization.untrusted):
-            for angle, distance in scan.points:
-                if (
-                    not math.isfinite(angle)
-                    or not math.isfinite(distance)
-                    or not self.range_m[0]
-                    <= distance
-                    <= min(self.new_obstacle_check_radius_m, self.nav_params.obstacle_max_m)
-                ):
-                    continue
-                heading = self.pose[2] + angle
-                x = self.pose[0] + math.cos(heading) * distance
-                y = self.pose[1] + math.sin(heading) * distance
-                cell = self.grid.to_cell(x, y)
-                if not self.grid.inside(*cell):
-                    continue
-                if (
-                    cell not in self._dynamic_seen
-                    and self.grid.cells[cell] < self.plan_params.occ_thresh
-                    and (new_hit is None or distance < new_hit[2])
-                ):
-                    new_hit = (x, y, distance)
-                self._dynamic_seen[cell] = (x, y, now_ms)
-        if new_hit is not None and (
-            self._last_obstacle_event_ms is None
-            or now_ms - self._last_obstacle_event_ms >= self.nav_params.obstacle_event_interval_ms
-        ):
-            self._new_obstacles.append(new_hit[:2])
-            self._last_obstacle_event_ms = now_ms
-        self._refresh_navigation(now_ms)
-
-    def _refresh_navigation(self, now_ms: int) -> None:
-        self._now_ms = now_ms
-        if self.pose_stale(now_ms) or (
-            self.localization.own_localization and not self.localization.verified
-        ):
-            self._live_clear.reset(self.grid)
-        self._dynamic_seen = {
-            cell: item
-            for cell, item in self._dynamic_seen.items()
-            if 0 <= now_ms - item[2] < self.nav_params.dynamic_ttl_ms
-        }
-        self._obstacles = [(x, y) for x, y, _ in self._dynamic_seen.values()]
-        self.recovery.memory.expire(now_ms)
-        self._rebuild_masks()
-
-    @property
-    def navigation_costs(self) -> np.ndarray:
-        blocked = self.blocked
-        if self._cost_blocked is None or not np.array_equal(self._cost_blocked, blocked):
-            self._costs = (
-                distance_costs(
-                    blocked,
-                    self.grid.meta.resolution,
-                    self.nav_params.inflation_radius_m,
-                    self.nav_params.cost_scaling_factor,
-                )
-                * self.nav_params.cost_weight
-            )
-            self._cost_blocked = blocked.copy()
-        assert self._costs is not None
-        return self._costs
-
-    @property
-    def local_costmap(self) -> dict[str, Any]:
-        """로봇 중심 3m 창. 미관측/창 밖을 자유로 추정하지 않는다."""
-        row, col = self.grid.to_cell(*self.pose[:2])
-        half = math.ceil(self.nav_params.local_window_m / self.grid.meta.resolution / 2)
-        rows, cols = self.grid.cells.shape
-        r0, r1, c0, c1 = (
-            max(0, row - half),
-            min(rows, row + half + 1),
-            max(0, col - half),
-            min(cols, col + half + 1),
-        )
-        if r0 >= r1 or c0 >= c1:
-            return {"width": 0, "height": 0, "blocked": [], "costs": []}
-        return {
-            "resolution_m": self.grid.meta.resolution,
-            "origin": [
-                self.grid.meta.origin_x + c0 * self.grid.meta.resolution,
-                self.grid.meta.origin_y + r0 * self.grid.meta.resolution,
-            ],
-            "width": c1 - c0,
-            "height": r1 - r0,
-            "blocked": self.blocked[r0:r1, c0:c1].tolist(),
-            "costs": self.navigation_costs[r0:r1, c0:c1].round(3).tolist(),
-        }
-
-    def _local_path_clear(self, waypoint: tuple[float, float]) -> bool:
-        """로봇 중심 3m 창의 몸체 마스크로 국소 진행 선분을 확인한다."""
-        row, col = self.grid.to_cell(*self.pose[:2])
-        half = math.ceil(self.nav_params.local_window_m / self.grid.meta.resolution / 2)
-        rows, cols = self.grid.cells.shape
-        r0, r1, c0, c1 = (
-            max(0, row - half),
-            min(rows, row + half + 1),
-            max(0, col - half),
-            min(cols, col + half + 1),
-        )
-        if r0 >= r1 or c0 >= c1:
-            return False
-        local = OccupancyGrid(
-            MapMeta(
-                self.grid.meta.resolution,
-                self.grid.meta.origin_x + c0 * self.grid.meta.resolution,
-                self.grid.meta.origin_y + r0 * self.grid.meta.resolution,
-                c1 - c0,
-                r1 - r0,
-            ),
-            self.grid.cells[r0:r1, c0:c1],
-        )
-        dx, dy = waypoint[0] - self.pose[0], waypoint[1] - self.pose[1]
-        extent = self.nav_params.local_window_m / 2 - self.grid.meta.resolution
-        scale = min(1.0, extent / max(abs(dx), abs(dy), 1e-9))
-        end = (self.pose[0] + dx * scale, self.pose[1] + dy * scale)
-        return segment_clear(local, self.body_blocked[r0:r1, c0:c1], self.pose[:2], end)
 
     # ── 조작자 ────────────────────────────────────────────────
     def start(self) -> None:
@@ -1244,7 +993,7 @@ class PatrolController:
             self._lose("pose_stale")
             return ()
         # 마스크 갱신도 정지를 요구할 수 있으므로 출발 관문보다 먼저 적용한다.
-        self._refresh_navigation(now_ms)
+        self.navmap.refresh(now_ms)
         if self._replan_stop_required and self._replan_wait_started_ms is None:
             self._replan_wait_started_ms = now_ms
         if self._replan_stop_required and (
@@ -1469,7 +1218,7 @@ class PatrolController:
                 self.plan_params,
                 snap_m=0.0,
                 body_blocked=self.body_blocked,
-                costs=self.navigation_costs,
+                costs=self.navmap.costs,
             )
             self.waypoint_index = 0
             if not self.plan.reachable:
@@ -1492,7 +1241,7 @@ class PatrolController:
                 self.plan_params,
                 snap_m=0.0 if self.route.active else 0.6,
                 body_blocked=self.body_blocked,
-                costs=self.navigation_costs,
+                costs=self.navmap.costs,
             )
             self.waypoint_index = 0
             if plan.reachable:
@@ -1514,7 +1263,7 @@ class PatrolController:
                 self.blocked,
                 self.plan_params,
                 body_blocked=self.body_blocked,
-                costs=self.navigation_costs,
+                costs=self.navmap.costs,
             )
             if retry.reachable:
                 self.plan = retry
@@ -1539,7 +1288,7 @@ class PatrolController:
             rng=self.rng,
             skipped_out=skipped,
             body_blocked=self.body_blocked,
-            costs=self.navigation_costs,
+            costs=self.navmap.costs,
         )
         self.waypoint_index = 0
         # 도달 불가 구역은 같은 목록이 바뀔 때만 기록한다 — 매 틱 재시도하면
@@ -1622,7 +1371,7 @@ class PatrolController:
             return
 
         waypoint = self._current_waypoint()
-        if not self._local_path_clear(waypoint):
+        if not self.navmap.path_clear(waypoint):
             self.recovery.begin("path_obstacle")
             return
         heading = math.atan2(waypoint[1] - self.pose[1], waypoint[0] - self.pose[0])

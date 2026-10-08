@@ -236,9 +236,9 @@ class LocalizationTrust:
         # 옮긴다(실측 재현). 자세의 신뢰는 frac 이 아니라 전역 감사의 반복 일치
         # (`pose_verified`)로 판단하고, 지도 기록·자율 주행이 그 플래그를 본다.
         self._patrol.observe_map_pose(result.pose, now_ms)
-        self._patrol._grow_map(points, result.score)
+        self._patrol.navmap.grow(points, result.score)
         _t0 = time.perf_counter()
-        self._patrol._check_new_obstacle(scan)
+        self._patrol.navmap.project_scan(scan)
         _t_obs = time.perf_counter() - _t0
         if _t_obs > 0.2 or _t_poll > 0.2:
             LOG.warning(
@@ -553,7 +553,7 @@ class LocalizationTrust:
         self._patrol.observe_map_pose(pose, now_ms)
         self._patrol.heading.adopt(self.result_imu)
         self.mark_verified()
-        self._patrol._check_new_obstacle(scan)
+        self._patrol.navmap.project_scan(scan)
         return True
 
     def poll_global(self, now_ms: int) -> None:
@@ -636,8 +636,8 @@ class LocalizationTrust:
         self._patrol.heading.adopt(self.result_imu)
         # 전역 탐색이 변별력 있게 잡은 자세다 — 여기부터의 적분은 믿을 수 있다.
         self.mark_verified()
-        self._patrol._grow_map(points, result.score)
-        self._patrol._check_new_obstacle(scan)
+        self._patrol.navmap.grow(points, result.score)
+        self._patrol.navmap.project_scan(scan)
 
     def seed_fallback(self, points: np.ndarray, scan: Scan, now_ms: int) -> bool:
         """사람이 준 시드 주변 넓은 창으로 첫 추적을 시작한다. 잡았으면 True.
@@ -667,7 +667,7 @@ class LocalizationTrust:
             hint="전역 확인 전 — 지도에 쓰지 않음",
         )
         self._patrol.observe_map_pose(result.pose, now_ms)
-        self._patrol._check_new_obstacle(scan)
+        self._patrol.navmap.project_scan(scan)
         return True
 
     def vote_global(self, pose: Pose, peers: int = 0) -> bool:
@@ -804,7 +804,7 @@ class LocalizationTrust:
         if self.verified_snapshot is not None:
             # 마지막 확인 뒤의 적분은 틀린 자세로 한 것이다 — 지도를 그 시점으로 되돌린다.
             self._patrol.match_grid.restore(self.verified_snapshot)
-            self._patrol._rebuild_masks()
+            self._patrol.navmap.rebuild_masks()
             LOG.warning("map_rolled_back", to="last_verified_snapshot")
         self._patrol.observe_map_pose(result.pose, now_ms)
         self._patrol.heading.adopt(self.result_imu)

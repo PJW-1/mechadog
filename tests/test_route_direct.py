@@ -39,8 +39,8 @@ def tick(c, now, *, front=3.0, pose=(2, 2, 0), entry="step", onboard=False):
 def test_remembered_wall_does_not_replan_validated_route(monkeypatch, entry):
     c = direct()
     c.recovery.memory.remember(c.grid, [(2.37, 2.0)], 1000)
-    c._refresh_navigation(1000)
-    assert not c._local_path_clear((4, 2))
+    c.navmap.refresh(1000)
+    assert not c.navmap.path_clear((4, 2))
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("직접 추종 구간에서 A*/막힘 복구를 호출했다")
@@ -214,7 +214,7 @@ def test_direct_start_ignores_memory_and_never_calls_astar(monkeypatch):
     c = direct()
     c.cancel_route()
     c.recovery.memory.remember(c.grid, [(2.37, 2.0)], 1000)
-    c._refresh_navigation(1000)
+    c.navmap.refresh(1000)
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("동선 직접 추종 시작에서 A*를 호출했다")
@@ -230,7 +230,7 @@ def test_current_pose_to_first_point_must_be_a_valid_line():
     c = direct()
     c.cancel_route()
     c.grid.cells[20:70, 60] = 5
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     assert not c.start_route(route(RoutePoint(x=4, y=2)), 1000)[0]
     assert c.commander.intent.type_ == "STOP"
 

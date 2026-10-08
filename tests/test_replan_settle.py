@@ -35,7 +35,7 @@ def test_direct_spin_does_not_replan_for_changing_static_mask(entry):
 @pytest.mark.parametrize("entry", ["step", "steer"])
 def test_refresh_replan_cannot_be_overwritten_by_direct_spin(monkeypatch, entry):
     c = direct()
-    original = c._refresh_navigation
+    original = c.navmap.refresh
     c.note_sent([CommandEncoder().encode("MOVE", step=0, angle=-30)], 1099)
 
     def refresh(now):
@@ -43,7 +43,7 @@ def test_refresh_replan_cannot_be_overwritten_by_direct_spin(monkeypatch, entry)
         c._replan_stop_required = True
         c.commander.halt()
 
-    monkeypatch.setattr(c, "_refresh_navigation", refresh)
+    monkeypatch.setattr(c.navmap, "refresh", refresh)
     tick(c, 1100, pose=(2, 2, math.pi), entry=entry)
     assert c._replan_stop_required
     assert c.commander.intent.type_ == "STOP"
@@ -128,7 +128,7 @@ def test_mask_update_cannot_change_lost_to_planning_during_spin():
     c.route.direct_detour_start = (2, 2)
     c.phase = Phase.LOST
     c.grid.cells[c.grid.to_cell(2.16, 2)] = 5
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     assert c.phase is Phase.LOST
     assert not c.plan.reachable
 
@@ -138,7 +138,7 @@ def test_detour_still_replans_when_static_mask_blocks_start():
     tick(c, 1000, pose=(2, 2, math.pi))
     c.route.direct_detour_start = (2, 2)
     c.grid.cells[c.grid.to_cell(2.16, 2)] = 5
-    c._rebuild_masks()
+    c.navmap.rebuild_masks()
     assert c._replan_stop_required
     assert c.commander.intent.type_ == "STOP"
 
