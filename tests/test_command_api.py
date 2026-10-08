@@ -1272,7 +1272,7 @@ def test_goto_refused_without_navigator(cfg, clock):
 
 
 def test_real_stop_path_cancels_the_goal_and_pending_start(cfg, clock):
-    """실제 «순찰 정지» 는 PATROL → MANUAL → IDLE (Codex 검토 G P1). 리셋 정착(FAILSAFE→IDLE)은 취소가 아니다."""
+    """실제 «순찰 정지» 는 PATROL → MANUAL → IDLE (리뷰 지적). 리셋 정착(FAILSAFE→IDLE)은 취소가 아니다."""
     runtime, wiring = _zone_wired(cfg, clock)
     navigator = _GotoNavigator()
     runtime._navigator = navigator

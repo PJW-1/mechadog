@@ -209,7 +209,7 @@ def test_bad_gate_settings_are_rejected(key, value):
 
 
 def test_walking_sway_uses_wider_limit_but_scan_pose_still_rejected():
-    # lap_1 실기: 보행 p50 6.3°·p90 10.7° — 6° 로 거르면 추적이 굶는다(Claude 검토).
+    # lap_1 실기: 보행 p50 6.3°·p90 10.7° — 6° 로 거르면 추적이 굶는다(리뷰 지적).
     gate = ScanGate()
     gate.observe_imu(SimpleNamespace(pitch=9.0, roll=0.0), 1_000)
     gate.note_move(900)

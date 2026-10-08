@@ -149,7 +149,7 @@ def test_section_headings_match_their_packages(packages: list[WorkPackage]) -> N
     """절 제목의 공수가 그 아래 워크패키지 합과 같아야 한다.
 
     `3.9.0` 을 등재하며 `#### 3.9` 와 총 공수는 고쳤지만 `### 3.0` 제목은 26.0 으로
-    남았다(2026-09-28 · Devin 검수). 총 공수 시험은 행 합만 보므로 절 제목은 못 잡았다.
+    남았다(2026-09-28 · 검수). 총 공수 시험은 행 합만 보므로 절 제목은 못 잡았다.
     """
     body = (ROOT / "docs" / "internal" / "WBS.md").read_text(encoding="utf-8")
     headings = re.findall(r"^#{3,4} (\d+\.\d+) .*? — ([\d.]+) M/D", body, re.M)
@@ -180,7 +180,7 @@ def test_unreadable_effort_cell_fails_instead_of_dropping_the_row(tmp_path) -> N
     """공수 칸이 숫자도 `—` 도 아니면 행을 조용히 버리지 않고 실패한다.
 
     `—` 를 받게 고친 뒤에도 `3.9.3`·`4.8.6`·`4.8.7`·`5.4.6` 의 공수 칸이 `,` 로 적혀
-    같은 방식으로 담당 목록에서 사라져 있었다(2026-10-05 · Devin 검수). `--check` 도
+    같은 방식으로 담당 목록에서 사라져 있었다(2026-10-05 · 검수). `--check` 도
     재생성 결과가 똑같이 빠지므로 잡지 못했다.
     """
     wbs = tmp_path / "WBS.md"

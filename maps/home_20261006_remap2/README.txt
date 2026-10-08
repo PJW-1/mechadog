@@ -10,8 +10,8 @@ S0: 편차 중앙값 5→5cm. 작업실: 33평가 스캔 편차 중앙값 5→5c
 가벽: 측정 y1.11~4.00 연속 점유 232칸. 직접 반복 반사 지원 36칸 / 가려진 실측 연속부 196칸.
 행거 앞 물체 반사 유지. 가려진 뒤 벽 y5.71과 창문·주방 10cm 치수는 근거 파일에 기록; 관측 없는 전체 벽 범위/욕실 깊이는 미작성.
 원본 지도·측정 22파일 SHA 불변, pose_frame/zones/S0 등 9파일 바이트 동일. 로봇·현장 포트·저장소·기본 설정 변경 없음.
-Python 검증: run_exact_checks.py 준비만, 미실행. Claude가 python -B run_exact_checks.py 실행; --global 추가하면 전체 전역 정합(오프라인, 긴 실행 가능). 결과는 al_work의 새 exact_python_* 폴더에만 생성.
+Python 검증: run_exact_checks.py 준비만, 미실행. 후속 작업자가 python -B run_exact_checks.py 실행; --global 추가하면 전체 전역 정합(오프라인, 긴 실행 가능). 결과는 al_work의 새 exact_python_* 폴더에만 생성.
 비교 그림: before_after.png. 세부: AL_REPORT.json / changed_cells.json / integrity_checks.json.
 남은 위험: verified 작업실 좌표의 순환 검증, 기둥 한 자리 관측, 가려진 실측 벽 사전정보, 개별 정합 회귀·전역 모호성·실제 주행 미검증.
 돌리기: 후보를 적용하지 않았으므로 운영 복원 불필요. 후속 적용 후에는 기존 ..._remap 폴더를 사용.
-정본 04_작업일지/2026-10-05.md와 README: 사용자 쓰기 범위 제한으로 미변경·Claude 반영 대기.
+정본 04_작업일지/2026-10-05.md와 README: 사용자 쓰기 범위 제한으로 미변경·후속 반영 대기.

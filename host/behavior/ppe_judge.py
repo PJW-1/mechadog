@@ -242,7 +242,7 @@ class PpeJudge:
             # 없이 순찰로 돌아간다. 돌아가는 길은 적합 판정과 같은 `PPE_SETTLED` 다.
             self._apply(Event.PPE_VIOLATION, now_ms)
             self._warning_count += 1
-            # 마지막 경고였으면 경고 시간 뒤 «경고 횟수 한도» 로 닫는다 (Codex 10-06 [확정]: 재확인 없이
+            # 마지막 경고였으면 경고 시간 뒤 «경고 횟수 한도» 로 닫는다 (10-06 현장 검수: 재확인 없이
             # 복귀해 한도 사건·0198 이 나오지 않았다).
             self._limit_result = (
                 (result, track_id)

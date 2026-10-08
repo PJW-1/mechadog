@@ -1216,7 +1216,7 @@ def test_feed_hands_raw_datagrams_to_the_recorder() -> None:
 def test_sent_commands_reach_the_navigator(config: dict, clock: FakeClock) -> None:
     """런타임이 실제로 보낸 MOVE 를 순찰기도 안다 — 없으면 «정지 중» 판정이 걷는 중에도 참이다.
 
-    2026-10-03 Codex 검토: runtime 의 송신 경로가 odom 에만 알리고 navigator.note_sent 를
+    2026-10-03 검토: runtime 의 송신 경로가 odom 에만 알리고 navigator.note_sent 를
     부르지 않아, AVOID·FAILSAFE 때 찍힌 정지 시각이 이후 MOVE 에도 남았다.
     """
     runtime, navigator = _runtime(config, clock)

@@ -98,7 +98,7 @@ export class LiveMap {
       return;
     }
     if (link !== this.link) {
-      // 다른 로봇(서버)으로 바뀌었다 — 옛 지도·행렬로 새 로봇에 좌표를 보내면 안 된다 (Codex 검토 G P1).
+      // 다른 로봇(서버)으로 바뀌었다 — 옛 지도·행렬로 새 로봇에 좌표를 보내면 안 된다 (리뷰 지적).
       this.link = link;
       this.generation = (this.generation || 0) + 1;
       this.meta = null;

@@ -234,7 +234,7 @@ class OccupancyGrid:
         radius_cells = max(1, int(math.ceil(3.0 * sigma_m / res)))
         occupied = self.cells > occ_thresh
         # 지문은 **배치까지** 본다 — 합·점유 수만 보면 같은 수의 장애물이 옮겨져도 옛 장을
-        # 재사용한다 (Codex 검토 P2). crc32 는 이 크기(수만 셀)에서 0.1ms 안쪽이다.
+        # 재사용한다 (리뷰 지적). crc32 는 이 크기(수만 셀)에서 0.1ms 안쪽이다.
         fingerprint = (
             self.cells.shape,
             zlib.crc32(np.ascontiguousarray(self.cells).tobytes()),
