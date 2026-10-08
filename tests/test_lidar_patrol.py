@@ -1358,14 +1358,14 @@ def test_imu_rotation_is_measured_from_the_pose_anchor() -> None:
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)  # 앵커 = IMU 0°
     controller.observe_telemetry(Reading(yaw=20.0), 1100)
-    assert controller._consume_yaw_delta(1150) == pytest.approx(math.radians(20))  # 정합 실패 가정
+    assert controller.heading.consume_yaw_delta(1150) == pytest.approx(math.radians(20))  # 정합 실패 가정
     controller.observe_telemetry(Reading(yaw=22.0), 1200)
-    assert controller._consume_yaw_delta(1250) == pytest.approx(math.radians(22)), (
+    assert controller.heading.consume_yaw_delta(1250) == pytest.approx(math.radians(22)), (
         "20° 를 잃지 않는다"
     )
-    assert controller._imu_delta_fresh is True
-    controller._consume_yaw_delta(2000)
-    assert controller._imu_delta_fresh is False, "텔레메트리가 0.8초 묵었다"
+    assert controller.heading.delta_fresh is True
+    controller.heading.consume_yaw_delta(2000)
+    assert controller.heading.delta_fresh is False, "텔레메트리가 0.8초 묵었다"
 
 
 def test_global_result_is_dropped_if_the_robot_walked_since_the_request() -> None:
@@ -1483,11 +1483,11 @@ def test_stale_imu_is_not_used_as_anchor() -> None:
     controller = build(imu_fresh_ms=300)
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose((1.0, 1.0, math.radians(20)), 3000)  # IMU 는 2초 묵음
-    assert controller._imu_anchor is None
+    assert controller.heading.anchor is None
     controller.observe_telemetry(Reading(yaw=20.0), 3100)
-    assert controller._consume_yaw_delta(3150) == 0.0, "재개 시점에 다시 묶는다"
+    assert controller.heading.consume_yaw_delta(3150) == 0.0, "재개 시점에 다시 묶는다"
     controller.observe_telemetry(Reading(yaw=25.0), 3200)
-    assert controller._consume_yaw_delta(3250) == pytest.approx(math.radians(5))
+    assert controller.heading.consume_yaw_delta(3250) == pytest.approx(math.radians(5))
 
 
 def test_adopted_global_pose_aligns_steering_offset_to_request_imu() -> None:
@@ -1496,9 +1496,9 @@ def test_adopted_global_pose_aligns_steering_offset_to_request_imu() -> None:
     _pending_reloc(controller, pose=(3.0, 3.0, math.radians(10)), imu=math.radians(10))
     controller._poll_global(1500)
     assert controller.pose[:2] == (3.0, 3.0)
-    assert controller._imu_anchor == pytest.approx(math.radians(10))
+    assert controller.heading.anchor == pytest.approx(math.radians(10))
     # 조향 방위 = 지금 IMU(30°) − 오프셋(10°−10°=0) = 30° — 요청 이후 20° 회전이 들어 있다.
-    assert controller._steering_yaw() == pytest.approx(math.radians(30))
+    assert controller.heading.steering_yaw() == pytest.approx(math.radians(30))
 
 
 def test_move_zero_counts_as_stop() -> None:

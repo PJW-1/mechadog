@@ -29,6 +29,7 @@ import numpy as np
 
 from host.behavior.blockage import BlockageMemory, Recovery
 from host.behavior.commander import Commander
+from host.behavior.heading import HeadingTracker
 from host.behavior.live_nav import LiveClear, LocalScan, NavParams
 from host.behavior.planner import (
     Plan,
@@ -379,9 +380,6 @@ class PatrolController:
     _replan_timeout_hold_ms: int | None = None
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
-    #: 마지막 정합 자세와 그때의 IMU yaw 의 차이 — 스캔 사이에 IMU 로 방위를 전파할 때
-    #: 지도 좌표계로 되돌리는 옵셋이다. 정합될 때마다 다시 맞춘다.
-    _imu_offset: float | None = None
     #: 지도에 적분한 뒤 팽창을 아직 안 다시 한 바퀴 수.
     _updates_since_inflate: int = 0
     _reset_requested: bool = False
@@ -423,12 +421,6 @@ class PatrolController:
     #: 마지막 표 뒤에 로봇이 움직였는가 (MOVE 송신 또는 IMU 방위 변화) — 표의 독립성.
     _moved_since_vote: bool = True
     _imu_at_vote: float | None = None
-    #: 이번 스캔의 IMU 변화량이 실제 측정인가 (신선한 텔레메트리 기준).
-    _imu_delta_fresh: bool = False
-    #: 지금 `pose` 가 관측된 시점의 IMU yaw — 다음 정합의 회전 예측은 «지금 IMU − 이 값».
-    #: 정합이 실패해도 앵커는 그대로라 회전량을 잃지 않고, 전역 채택 때는 그 스캔 시점의
-    #: IMU 로 다시 묶어 이중 반영하지 않는다 (리뷰 지적).
-    _imu_anchor: float | None = None
     #: 실제로 나간 이동 명령(MOVE 0 이 아님)의 누적 수 — 비동기 결과가 낡았는지 본다.
     _move_seq: int = 0
     #: 신뢰를 잃었다고 기록했는가 (`trust_expiry_ms` 넘은 상실).
@@ -527,8 +519,11 @@ class PatrolController:
     _route_skipped_indices: frozenset[int] = frozenset()
     _costs: np.ndarray | None = None
     _cost_blocked: np.ndarray | None = None
+    #: IMU 방위 앵커·조향 옵셋 (`host/behavior/heading.py`).
+    heading: HeadingTracker = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        self.heading = HeadingTracker(self)
         self._blockages = BlockageMemory(self.nav_params)
         self._live_clear = LiveClear(self.nav_params)
         self._local_scan = LocalScan(self.nav_params)
@@ -747,10 +742,7 @@ class PatrolController:
         self._last_pose_ms = now_ms
         if self.pose_verified:
             self._last_verified_pose_ms = now_ms
-        # 앵커는 **신선한** IMU 일 때만 — 끊긴 IMU 의 옛 값을 묶어 두면 재개 때 그사이 회전
-        # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (리뷰 지적).
-        self._imu_anchor = self.safety.yaw_rad if self._imu_is_fresh(now_ms) else None
-        self._last_pose_imu = self._imu_anchor
+        self._last_pose_imu = self.heading.anchor_pose(now_ms)
         self._last_pose_moves = self._move_seq
         self._last_pose_tilt = self._tilt
         self._trust_expired = False
@@ -758,11 +750,7 @@ class PatrolController:
         if zone != self._last_zone:
             self._last_zone = zone
             LOG.info("zone_entered", zone=zone, x=round(self.pose[0], 2), y=round(self.pose[1], 2))
-        imu = self.safety.yaw_rad
-        if imu is not None:
-            # IMU 절대 yaw 는 지도 좌표계와 옵셋이 다르다 — 옵셋을 정합 시점에 맞춰 두면
-            # 다음 스캔 전까지 `imu - offset` 이 지도 방위의 연속 추정치가 된다.
-            self._imu_offset = wrap_pi(imu - self.pose[2])
+        self.heading.align_offset()
         # 재개는 step의 전체 관문에서 한다. 새 tf 하나가 스캔 두절이나
         # 미관측 셀 정지를 해제해서는 안 된다.
 
@@ -811,8 +799,8 @@ class PatrolController:
         self._local_scan.clear_allowed = rejected is None
         if rejected is None:
             self._relaxed_scan.observe(scan, now_ms, self.range_m)
-            self._relaxed_scan_yaw = self._steering_yaw()
-        self._local_scan_pose = (*self.pose[:2], self._steering_yaw())
+            self._relaxed_scan_yaw = self.heading.steering_yaw()
+        self._local_scan_pose = (*self.pose[:2], self.heading.steering_yaw())
         # 빈 전문/범위 밖 점만 있는 전문은 관측을 복구하지 않는다.
         if rejected is None and any(
             math.isfinite(angle)
@@ -896,11 +884,11 @@ class PatrolController:
         # 아직 한 번도 정합되지 않았으면 넓은 창으로 찾는다 — 시드 자세가 배치 오차만큼
         # 어긋나 있어도 첫 고정은 잡히게. 잡힌 뒤에는 좁은 창으로 추적한다.
         # 변화량만 넘긴다 — 절대 yaw 는 지도 좌표계와 옵셋이 있다.
-        yaw_delta = self._consume_yaw_delta(now_ms)
+        yaw_delta = self.heading.consume_yaw_delta(now_ms)
         params = self.match_params
         if self._last_pose_ms is None and self.first_match_params is not None:
             params = self.first_match_params
-        elif self._imu_delta_fresh and self.imu_match_params is not None:
+        elif self.heading.delta_fresh and self.imu_match_params is not None:
             # 신선한 IMU 가 회전량을 쟀다 — 방위는 IMU 예측 근처에서만 찾는다.
             params = self.imu_match_params
         _t2 = time.perf_counter()
@@ -932,24 +920,6 @@ class PatrolController:
                 poll_ms=round(_t_poll * 1000, 1),
                 obstacle_ms=round(_t_obs * 1000, 1),
             )
-
-    def _imu_is_fresh(self, now_ms: int) -> bool:
-        seen = self.safety.last_seen_ms
-        return (
-            self.safety.yaw_rad is not None
-            and seen is not None
-            and 0 <= now_ms - seen <= self.imu_fresh_ms
-        )
-
-    def _adopt_with_request_imu(self) -> None:
-        """전역 결과로 자세를 바꾼 직후 — IMU 앵커와 조향 오프셋을 **요청 시점** IMU 로 함께 맞춘다.
-
-        `observe_map_pose` 는 현재 IMU 로 오프셋을 만들지만, 자세는 요청 때 스캔의 것이다.
-        둘이 다르면 다음 정합 실패 동안 조향 방위가 요청 이후 회전을 빠뜨린다 (리뷰 지적).
-        """
-        self._imu_anchor = self._result_imu
-        if self._result_imu is not None:
-            self._imu_offset = wrap_pi(self._result_imu - self.pose[2])
 
     def _expire_trust(self, now_ms: int) -> None:
         """측위가 `trust_expiry_ms` 넘게 끊겼다 — «검증됨»·사람 시드의 신뢰를 버린다.
@@ -1077,7 +1047,7 @@ class PatrolController:
         self._ensure_global_worker()
         self._global_inflight = True
         self._global_req_context = (
-            self.safety.yaw_rad if self._imu_is_fresh(self._scan_now_ms) else None,
+            self.safety.yaw_rad if self.heading.imu_is_fresh(self._scan_now_ms) else None,
             self._move_seq,
             self._loc_epoch,
             self.wall_clock_ms(),
@@ -1312,7 +1282,7 @@ class PatrolController:
 
     def _route_aim_error(self) -> float:
         aim = self._route_point().aim_deg
-        return 0.0 if aim is None else wrap_pi(deg_to_rad(aim) - self._steering_yaw())
+        return 0.0 if aim is None else wrap_pi(deg_to_rad(aim) - self.heading.steering_yaw())
 
     def _reset_route_dwell(self) -> None:
         if self.route_active and self._route_phase != "moving":
@@ -1352,7 +1322,9 @@ class PatrolController:
             self.commander.halt()
             return
         error = wrap_pi(
-            self._route_search_base + offsets[self._route_search_index] - self._steering_yaw()
+            self._route_search_base
+            + offsets[self._route_search_index]
+            - self.heading.steering_yaw()
         )
         if abs(error) <= self.drive.heading_tolerance_rad:
             self.commander.halt()
@@ -1408,7 +1380,7 @@ class PatrolController:
             self._route_phase = "dwell"
             self._route_dwell_until_ms = self._now_ms + int((point.dwell_s or 0.0) * 1000)
             if self.nav_params.route_person_search and point.search_deg:
-                self._route_search_base = self._steering_yaw()
+                self._route_search_base = self.heading.steering_yaw()
                 self._route_search_index = 0
                 self._route_search_started_ms = self._now_ms
                 self._route_search_pause_until = (
@@ -1613,7 +1585,7 @@ class PatrolController:
         ):
             self._navigation_event("obstacle_detour", target=self.plan.label)
         self._relaxed_detouring = detouring
-        error = wrap_pi(scan_yaw + chosen - self._steering_yaw())
+        error = wrap_pi(scan_yaw + chosen - self.heading.steering_yaw())
         if stopped:
             self.commander.halt()
             self._local_decision("stop", "relaxed_front_stop", front)
@@ -1640,7 +1612,7 @@ class PatrolController:
             self.nav_params.relaxed_walk_detour
             and 0 < deviation <= math.radians(60)
             and abs(error) <= math.radians(60)
-            and abs(wrap_pi(heading - self._steering_yaw())) <= math.radians(60)
+            and abs(wrap_pi(heading - self.heading.steering_yaw())) <= math.radians(60)
         )
         if walking_detour:
             spin = False
@@ -1711,7 +1683,7 @@ class PatrolController:
             self._arrive(GOAL_LABEL)
             return
         heading = math.atan2(point.y - self.pose[1], point.x - self.pose[0])
-        error = wrap_pi(heading - self._steering_yaw())
+        error = wrap_pi(heading - self.heading.steering_yaw())
         steering = steering_for(error, self.drive, spinning=self._spinning)
         self._spinning = steering.step_mm == 0 and steering.angle_deg != 0
         if self._edge.changed("spin", self._spinning) and self._spinning:
@@ -1855,7 +1827,7 @@ class PatrolController:
             self._drop_restore_anchor("moved")
         elif not 0 <= now_ms - since_ms <= self.reloc_restore_max_age_ms:
             self._drop_restore_anchor("too_old")
-        elif imu is None or not self._imu_is_fresh(now_ms):
+        elif imu is None or not self.heading.imu_is_fresh(now_ms):
             self._drop_restore_anchor("imu_stale")
         elif abs(wrap_pi(imu - imu0)) > self.reloc_restore_yaw_rad:
             self._drop_restore_anchor("imu_turned")
@@ -1923,7 +1895,7 @@ class PatrolController:
         )
         self._match_frac = prior_result.score / len(points)
         self.observe_map_pose(pose, now_ms)
-        self._adopt_with_request_imu()
+        self.heading.adopt(self._result_imu)
         self._mark_verified()
         self._check_new_obstacle(scan)
         return True
@@ -2008,7 +1980,7 @@ class PatrolController:
         )
         self.observe_map_pose(result.pose, now_ms)
         # 이 자세는 요청 때 스캔의 것이다 — IMU 앵커·조향 오프셋도 그때 값으로 (이중 반영 방지).
-        self._adopt_with_request_imu()
+        self.heading.adopt(self._result_imu)
         # 전역 탐색이 변별력 있게 잡은 자세다 — 여기부터의 적분은 믿을 수 있다.
         self._mark_verified()
         self._grow_map(points, result.score)
@@ -2231,45 +2203,9 @@ class PatrolController:
             self._rebuild_masks()
             LOG.warning("map_rolled_back", to="last_verified_snapshot")
         self.observe_map_pose(result.pose, now_ms)
-        self._adopt_with_request_imu()
+        self.heading.adopt(self._result_imu)
         self._mark_verified()
         return True
-
-    def _consume_yaw_delta(self, now_ms: int | None = None) -> float:
-        """직전 스캔 이후 IMU 가 본 회전량을 소비한다(두 번 반영하지 않는다). 없으면 0.
-
-        `_imu_delta_fresh` 는 이 변화량이 신선한 텔레메트리 두 표본의 차일 때만 참이다 —
-        참이면 국소 정합이 방위를 IMU 예측 근처(`imu_match_params`)에서만 찾는다.
-        """
-        current = self.safety.yaw_rad
-        seen = self.safety.last_seen_ms
-        fresh = (
-            current is not None
-            and now_ms is not None
-            and seen is not None
-            and 0 <= now_ms - seen <= self.imu_fresh_ms
-        )
-        anchor = self._imu_anchor
-        if current is None or anchor is None:
-            self._imu_delta_fresh = False
-            if self._imu_anchor is None:
-                # 아직 앵커가 없으면 지금 값으로 — 다음부터 회전량이 이어진다.
-                self._imu_anchor = current
-            return 0.0
-        # 앵커(지금 `pose` 의 관측 시점) 이후 회전량 — 정합 실패가 이어져도 누적이 남는다.
-        self._imu_delta_fresh = bool(fresh)
-        return wrap_pi(current - anchor)
-
-    def _steering_yaw(self) -> float:
-        """조향에 쓸 방위 — 스캔 사이에는 IMU 전파값, 없으면 정합 방위 그대로.
-
-        정합 방위는 바퀴(수백 ms)마다만 갱신되므로 그 사이의 휨을 IMU 가 즉시 본다.
-        옵셋은 `observe_map_pose` 에서 정합될 때마다 다시 맞춘다.
-        """
-        imu = self.safety.yaw_rad
-        if imu is not None and self._imu_offset is not None:
-            return wrap_pi(imu - self._imu_offset)
-        return self.pose[2]
 
     def _grow_map(self, points: np.ndarray, score: int) -> None:
         """정합이 확실한 바퀴를 지도에 적분하고 주기적으로 팽창을 새로 만든다.
@@ -2309,7 +2245,7 @@ class PatrolController:
             return
         if self._projected_scan_id == self._local_scan.last_id:
             return
-        self._local_scan_pose = (*self.pose[:2], self._steering_yaw())
+        self._local_scan_pose = (*self.pose[:2], self.heading.steering_yaw())
         self._projected_scan_id = self._local_scan.last_id
         if self._relaxed_scan.last_id == self._local_scan.last_id:
             self._relaxed_scan_yaw = self._local_scan_pose[2]
@@ -2492,7 +2428,11 @@ class PatrolController:
                 ]
         item = self._blockages.remember(self.grid, points, self._now_ms)
         self._recovery = Recovery(
-            target, self._now_ms, self._steering_yaw(), item.id if item else None, reason=reason
+            target,
+            self._now_ms,
+            self.heading.steering_yaw(),
+            item.id if item else None,
+            reason=reason,
         )
         self.phase = Phase.PLANNING
         self._require_replan_stop()
@@ -2563,7 +2503,7 @@ class PatrolController:
             recovery.scanning = True
             self._replan_stop_required = False
             self._replan_wait_started_ms = None
-            recovery.yaw = self._steering_yaw()
+            recovery.yaw = self.heading.steering_yaw()
             recovery.last_motion_ms = self._now_ms
             if recovery.blockage_id is not None and not any(
                 b.id == recovery.blockage_id for b in self._blockages.items
@@ -2572,8 +2512,8 @@ class PatrolController:
                 self.commander.halt()
                 return
         if recovery.settling_ms is None:
-            delta = wrap_pi(self._steering_yaw() - recovery.yaw)
-            recovery.yaw = self._steering_yaw()
+            delta = wrap_pi(self.heading.steering_yaw() - recovery.yaw)
+            recovery.yaw = self.heading.steering_yaw()
             # 큰 측위 점프를 실제 회전으로 세지 않는다.
             if 0 < delta <= math.radians(45):
                 recovery.swept_rad += delta
@@ -2772,7 +2712,7 @@ class PatrolController:
         )
         if gap is None:
             return None
-        return wrap_pi(gap[0] + scan_pose[2] - self._steering_yaw()), gap[1], gap[2]
+        return wrap_pi(gap[0] + scan_pose[2] - self.heading.steering_yaw()), gap[1], gap[2]
 
     def _start_avoidance(self, reason: str) -> bool:
         if not self._local_scan.fresh(self._now_ms) or self.pose_stale(self._now_ms):
@@ -2798,7 +2738,7 @@ class PatrolController:
         self._avoidance = (
             self.pose[0],
             self.pose[1],
-            wrap_pi(self._steering_yaw() + angle),
+            wrap_pi(self.heading.steering_yaw() + angle),
             self._now_ms,
             reason,
         )
@@ -2834,7 +2774,7 @@ class PatrolController:
                 self._require_replan_stop()
                 self._replan()
             return
-        error = wrap_pi(heading - self._steering_yaw())
+        error = wrap_pi(heading - self.heading.steering_yaw())
         turn_needed = abs(error) > self.drive.heading_tolerance_rad
         if reason in {"start_escape", "lidar_corridor"}:
             scan_pose = self._local_scan_pose or self.pose
@@ -2843,12 +2783,12 @@ class PatrolController:
             # 일반 추종 허용각 안에서도 좁은 통로의 실제 직진 원판이 닿으면 더 맞춘다.
             if not turn_needed and not self._local_scan.corridor_clear(
                 self.plan_params.body_radius_m,
-                wrap_pi(self._steering_yaw() - scan_pose[2]),
+                wrap_pi(self.heading.steering_yaw() - scan_pose[2]),
                 self.nav_params.avoidance_m,
                 origin=(dx * c + dy * s, -dx * s + dy * c),
             ):
                 turn_needed = True
-            actual_heading = heading if turn_needed else self._steering_yaw()
+            actual_heading = heading if turn_needed else self.heading.steering_yaw()
             if not self._local_scan.corridor_clear(
                 self.plan_params.body_radius_m,
                 wrap_pi(actual_heading - scan_pose[2]),
@@ -3498,7 +3438,9 @@ class PatrolController:
             self._begin_recovery("path_obstacle")
             return
         heading = math.atan2(waypoint[1] - self.pose[1], waypoint[0] - self.pose[0])
-        steering = steering_for(heading - self._steering_yaw(), self.drive, spinning=self._spinning)
+        steering = steering_for(
+            heading - self.heading.steering_yaw(), self.drive, spinning=self._spinning
+        )
         spinning = steering.step_mm == 0.0 and steering.angle_deg != 0.0
         if self._edge.changed("spin", spinning) and spinning:
             LOG.info(
@@ -3510,7 +3452,7 @@ class PatrolController:
         # 규약 범위는 인코더가 자르지만(규칙 ②), 잘려서 나가는 것을 로그로
         # 보고 싶지는 않으므로 여기서 설정값 안에 둔다.
         distance = self._local_scan.distance()
-        desired_distance = self._local_scan.distance(wrap_pi(heading - self._steering_yaw()))
+        desired_distance = self._local_scan.distance(wrap_pi(heading - self.heading.steering_yaw()))
         if desired_distance is not None:
             distance = min(distance, desired_distance) if distance is not None else desired_distance
         if distance is None or distance < self.nav_params.local_stop_m:
@@ -3596,7 +3538,9 @@ class PatrolController:
 
     def _zone_aim_error(self, label: str) -> float:
         aim_deg = self.zones.get(label).aim_deg
-        return 0.0 if aim_deg is None else wrap_pi(deg_to_rad(aim_deg) - self._steering_yaw())
+        return (
+            0.0 if aim_deg is None else wrap_pi(deg_to_rad(aim_deg) - self.heading.steering_yaw())
+        )
 
     def _steer_zone_aim(self, label: str) -> bool:
         error = self._zone_aim_error(label)
