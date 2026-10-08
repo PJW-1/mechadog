@@ -66,14 +66,14 @@ def test_point_and_zone_hints_replace_each_other() -> None:
 
 def test_point_hint_rejects_global_result_submitted_before_the_hint() -> None:
     controller = build(reloc_votes=1)
-    controller._global_inflight = True
-    controller._global_req_context = (
+    controller.global_worker.inflight = True
+    controller.global_worker.context = (
         None,
         controller._move_seq,
         controller._loc_epoch,
         controller.wall_clock_ms(),
     )
-    controller._global_result = (
+    controller.global_worker.result = (
         "reloc",
         MatchResult((4.0, 3.5, 0.0), 100),
         POINTS,
@@ -85,7 +85,7 @@ def test_point_hint_rejects_global_result_submitted_before_the_hint() -> None:
     assert controller.pose[:2] == (2.0, 2.0)
     assert not controller.pose_verified
     assert controller._point_hint == (2.0, 2.0, 1000)
-    assert not controller._global_inflight
+    assert not controller.global_worker.inflight
 
 
 def test_point_hint_expires_without_verifying_display_pose() -> None:

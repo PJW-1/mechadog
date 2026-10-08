@@ -179,15 +179,15 @@ def test_pre_tilt_global_audit_result_is_discarded_after_return():
     c = build(wall_clock_ms=lambda: 3000)
     c.observe_map_pose((2, 2, 0), 1000)
     points = np.array([[1.0, 0.0]])
-    c._global_inflight = True
-    c._global_req_context = (None, c._move_seq, c._loc_epoch, 1000)
-    c._global_result = ("verify", MatchResult(c.pose, 1), points, scan(), c.pose)
+    c.global_worker.inflight = True
+    c.global_worker.context = (None, c._move_seq, c._loc_epoch, 1000)
+    c.global_worker.result = ("verify", MatchResult(c.pose, 1), points, scan(), c.pose)
     c.note_sent([json.dumps(pose(-15))], 1100)
     c.note_sent([json.dumps(pose(dur=100))], 1200)
     with patch.object(c, "_apply_verify_result") as adopt:
         c._poll_global(3000)
         adopt.assert_not_called()
-    assert not c._global_inflight
+    assert not c.global_worker.inflight
 
 
 @pytest.mark.parametrize(

@@ -1358,7 +1358,9 @@ def test_imu_rotation_is_measured_from_the_pose_anchor() -> None:
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)  # 앵커 = IMU 0°
     controller.observe_telemetry(Reading(yaw=20.0), 1100)
-    assert controller.heading.consume_yaw_delta(1150) == pytest.approx(math.radians(20))  # 정합 실패 가정
+    assert controller.heading.consume_yaw_delta(1150) == pytest.approx(
+        math.radians(20)
+    )  # 정합 실패 가정
     controller.observe_telemetry(Reading(yaw=22.0), 1200)
     assert controller.heading.consume_yaw_delta(1250) == pytest.approx(math.radians(22)), (
         "20° 를 잃지 않는다"
@@ -1372,13 +1374,13 @@ def test_global_result_is_dropped_if_the_robot_walked_since_the_request() -> Non
     from host.slam.scan_match import MatchResult
 
     controller = build(reloc_votes=1, min_match_frac=0.0, wall_clock_ms=lambda: 1500)
-    controller._global_inflight = True
-    controller._global_req_context = (None, controller._move_seq, controller._loc_epoch, 1000)
+    controller.global_worker.inflight = True
+    controller.global_worker.context = (None, controller._move_seq, controller._loc_epoch, 1000)
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1500)
     scan = __import__("host.common.lidar_link", fromlist=["Scan"]).Scan(
         "l", "b", 1, 1, ((0.0, 1.0),)
     )
-    controller._global_result = (
+    controller.global_worker.result = (
         "reloc",
         MatchResult((3.0, 3.0, 0.0), 100, peers=0),
         np.zeros((100, 2)),
@@ -1440,11 +1442,11 @@ def _pending_reloc(controller, pose=(3.0, 3.0, 0.0), asked_ms=None, imu=None):
     from host.common.lidar_link import Scan
     from host.slam.scan_match import MatchResult
 
-    controller._global_inflight = True
+    controller.global_worker.inflight = True
     if asked_ms is None:
         asked_ms = controller.wall_clock_ms()
-    controller._global_req_context = (imu, controller._move_seq, controller._loc_epoch, asked_ms)
-    controller._global_result = (
+    controller.global_worker.context = (imu, controller._move_seq, controller._loc_epoch, asked_ms)
+    controller.global_worker.result = (
         "reloc",
         MatchResult(pose, 100, peers=0),
         np.zeros((100, 2)),
@@ -1515,12 +1517,12 @@ def test_fast_loop_does_not_expire_a_fresh_global_result(monkeypatch) -> None:
 
     wall = [1000]
     controller = build(reloc_votes=1, min_match_frac=0.0, wall_clock_ms=lambda: wall[0])
-    monkeypatch.setattr(controller, "_ensure_global_worker", lambda: None)
+    monkeypatch.setattr(controller.global_worker, "ensure_started", lambda: None)
     controller._scan_now_ms = 100_000
     scan = Scan("l", "b", 1, 1, ((0.0, 1.0),))
     assert controller._submit_global("reloc", np.zeros((100, 2)), scan)
-    assert controller._global_req_context[-1] == 1000
-    _pending_reloc(controller, asked_ms=controller._global_req_context[-1])
+    assert controller.global_worker.context[-1] == 1000
+    _pending_reloc(controller, asked_ms=controller.global_worker.context[-1])
     wall[0] += 300
     controller._poll_global(120_000)
     assert controller.pose == (3.0, 3.0, 0.0)
@@ -1532,12 +1534,12 @@ def test_global_request_owns_readonly_map_and_metadata(monkeypatch) -> None:
     from host.common.lidar_link import Scan
 
     controller = build(loc_grid=open_room())
-    monkeypatch.setattr(controller, "_ensure_global_worker", lambda: None)
+    monkeypatch.setattr(controller.global_worker, "ensure_started", lambda: None)
     points = np.ones((60, 2))
     scan = Scan("l", "b", 1, 1, ((0.0, 1.0),))
     expected, meta = controller.match_grid.snapshot()
     assert controller._submit_global("reloc", points, scan)
-    request = controller._global_req
+    request = controller.global_worker.request
     snapshot = request[4]
     controller.match_grid.cells[:] = 0.0
     controller.match_grid.meta.origin_x += 2.0
@@ -1549,7 +1551,7 @@ def test_global_request_owns_readonly_map_and_metadata(monkeypatch) -> None:
     with pytest.raises(ValueError):
         snapshot.cells[0, 0] = 5.0
     assert not controller._submit_global("verify", points, scan)
-    assert controller._global_req is request
+    assert controller.global_worker.request is request
 
 
 @pytest.mark.parametrize("kind", ["reloc", "verify"])
@@ -1797,21 +1799,21 @@ def _lost_after_verified(**overrides):
 
 def _restore_round(controller, now_ms, prior_pose=HOME, prior_score=95, global_score=100):
     """워커가 전역 결과와 창 안 결과를 함께 낸 것처럼 꾸며 루프에서 해석한다."""
-    controller._global_inflight = True
-    controller._global_req_context = (
+    controller.global_worker.inflight = True
+    controller.global_worker.context = (
         None,
         controller._move_seq,
         controller._loc_epoch,
         controller.wall_clock_ms(),
     )
-    controller._global_result = (
+    controller.global_worker.result = (
         "reloc",
         MatchResult((4.5, 3.5, 2.0), global_score, peers=200),  # 모호한 엉뚱한 자리
         POINTS,
         SCAN,
         controller.pose,
     )
-    controller._global_prior_result = MatchResult(prior_pose, prior_score)
+    controller.global_worker.prior_result = MatchResult(prior_pose, prior_score)
     controller.observe_telemetry(Reading(yaw=1.0), now_ms)
     controller._poll_global(now_ms)
 
@@ -1907,12 +1909,12 @@ def test_restore_submit_passes_prior_only_for_reloc() -> None:
     controller.observe_telemetry(Reading(yaw=0.0), 7100)
     controller._scan_now_ms = 7100
     controller._submit_global("reloc", POINTS, SCAN)
-    assert controller._global_req_prior == HOME
-    controller._global_req = None
-    controller._global_inflight = False
-    controller._global_result = None
+    assert controller.global_worker.request_prior == HOME
+    controller.global_worker.request = None
+    controller.global_worker.inflight = False
+    controller.global_worker.result = None
     controller._submit_global("verify", POINTS, SCAN)
-    assert controller._global_req_prior is None
+    assert controller.global_worker.request_prior is None
 
 
 @pytest.mark.parametrize(
@@ -1987,7 +1989,7 @@ def test_restore_real_worker_picks_home_in_a_symmetric_room() -> None:
         controller._scan_now_ms = round_ms
         assert controller._submit_global("reloc", points, scan)
         deadline = _time.monotonic() + 20
-        while controller._global_result is None and _time.monotonic() < deadline:
+        while controller.global_worker.result is None and _time.monotonic() < deadline:
             _time.sleep(0.02)
         controller._poll_global(round_ms)
     assert controller._pose_verified is True
@@ -2012,21 +2014,21 @@ def test_restore_rechecks_anchor_when_the_result_arrives() -> None:
     controller = _lost_after_verified()
     _restore_round(controller, 7100)
     _restore_round(controller, 8100)
-    controller._global_inflight = True
-    controller._global_req_context = (
+    controller.global_worker.inflight = True
+    controller.global_worker.context = (
         None,
         controller._move_seq,
         controller._loc_epoch,
         controller.wall_clock_ms(),
     )
-    controller._global_result = (
+    controller.global_worker.result = (
         "reloc",
         MatchResult((4.5, 3.5, 2.0), 100, peers=200),
         POINTS,
         SCAN,
         controller.pose,
     )
-    controller._global_prior_result = MatchResult(HOME, 95)
+    controller.global_worker.prior_result = MatchResult(HOME, 95)
     controller.observe_telemetry(Reading(yaw=15.0), 9100)
     controller._poll_global(9100)
     assert controller._pose_verified is False
@@ -2092,7 +2094,7 @@ def test_zone_hint_limits_global_search_to_that_zone() -> None:
         controller._scan_now_ms = round_ms
         assert controller._submit_global("reloc", points, scan)
         deadline = _time.monotonic() + 20
-        while controller._global_result is None and _time.monotonic() < deadline:
+        while controller.global_worker.result is None and _time.monotonic() < deadline:
             _time.sleep(0.02)
         controller._poll_global(round_ms)
     assert controller._pose_verified is True

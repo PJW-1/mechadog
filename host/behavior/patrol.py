@@ -17,7 +17,6 @@ import json
 import math
 import random
 import shutil
-import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -42,6 +41,7 @@ from host.behavior.planner import (
     plan_to,
     segment_clear,
 )
+from host.behavior.reloc_worker import GlobalMatchWorker
 from host.behavior.routes import Route, RoutePoint, validate_route
 from host.behavior.scan_gate import ScanGate
 from host.behavior.zone_map import ZoneMap
@@ -399,21 +399,6 @@ class PatrolController:
     _last_zone: str | None = None
     #: 연속된 전역 탐색 결과 — 서로 0.3m 안에서 `reloc_votes` 번 모이면 채택한다.
     _global_votes: list[Pose] = field(default_factory=list)
-    # ── 전역 탐색 워커 ─────────────────────────────────────────
-    # `global_match` 는 지도 전체를 훑어 실기 PC 에서도 **1~2초**가 걸린다.
-    # `observe_scan` 이 명령 루프 스레드에서 도는데 여기서 동기로 기다리면 명령
-    # 간격이 온보드 워치독(600ms)을 넘어 `ONBOARD_FAILSAFE` 를 낸다(2026-10-04
-    # 실측: 틱 1.9s → 명령 거부 → 래치). 그래서 전역 탐색만 데몬 스레드로 보내고
-    # 결과는 루프 스레드가 `_poll_global` 로 가져와 적용한다 — **상태 변경은
-    # 루프 스레드에서만** 일어나는 규칙을 지키면서 명령은 계속 나간다.
-    #: 제출됐지만 아직 루프가 소비하지 않은 전역 탐색이 있는가 (루프 스레드만 만진다).
-    _global_inflight: bool = False
-    #: 요청 사서함 — 종류, 점, 스캔, 요청 자세, 독립된 읽기 전용 지도 사본.
-    _global_req: tuple[str, np.ndarray, Scan, Pose, OccupancyGrid] | None = None
-    #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔, 요청 때 자세).
-    _global_result: tuple[str, MatchResult | None, np.ndarray, Scan, Pose] | None = None
-    #: 요청 때의 (신선한 IMU yaw | None, 이동 명령 수, 측위 세대, monotonic ms).
-    _global_req_context: tuple[float | None, int, int, int] | None = None
     #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다 (리뷰 지적).
     _loc_epoch: int = 0
     #: 지금 처리 중인 스캔의 Host 시각 (`observe_scan` 이 찍는다).
@@ -435,10 +420,6 @@ class PatrolController:
     #: 신뢰 복원 기준 — (확인된 마지막 자세, 그때 IMU yaw, 그 시각, 그때 이동 명령 수).
     _restore_anchor: tuple[Pose, float, int, int, tuple[float, float] | None] | None = None
     _restore_votes: list[Pose] = field(default_factory=list)
-    #: 워커에 넘긴 복원 기준 자세와 워커가 낸 창 안 정합 결과 (`_global_cv` 로 보호).
-    _global_req_prior: Pose | None = None
-    #: 워커에 넘긴 탐색 범위 거름 (사람이 알려준 구역) — `_global_cv` 로 보호.
-    _global_req_allowed: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
     #: 사람이 알려준 구역과 그 시각 — 그 구역 안에서만 전역 재측위한다.
     _zone_hint: tuple[str, int] | None = None
     #: 사람이 찍은 현재 위치 (순찰 좌표 x, y, Host 시각).
@@ -478,13 +459,8 @@ class PatrolController:
     _route_search_pause_until: int = 0
     _route_search_started_ms: int = 0
     _now_ms: int = 0
-    _global_prior_result: MatchResult | None = None
     #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
     _result_imu: float | None = None
-    _global_cv: threading.Condition = field(
-        default_factory=lambda: threading.Condition(threading.Lock())
-    )
-    _global_thread: threading.Thread | None = None
     #: 자세가 **내장 스캔 정합**(`observe_scan`)에서 나오는가. 외부 측위(ROS2 `MAP_POSE`·
     #: 시뮬레이션)가 `observe_map_pose` 로 넣는 자세는 그쪽이 보증하므로 확인 보류를
     #: 적용하지 않는다.
@@ -521,9 +497,12 @@ class PatrolController:
     _cost_blocked: np.ndarray | None = None
     #: IMU 방위 앵커·조향 옵셋 (`host/behavior/heading.py`).
     heading: HeadingTracker = field(init=False, repr=False, compare=False)
+    #: 전역 탐색 데몬 스레드와 사서함 (`host/behavior/reloc_worker.py`).
+    global_worker: GlobalMatchWorker = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.heading = HeadingTracker(self)
+        self.global_worker = GlobalMatchWorker(self._global_search, self._restore_search)
         self._blockages = BlockageMemory(self.nav_params)
         self._live_clear = LiveClear(self.nav_params)
         self._local_scan = LocalScan(self.nav_params)
@@ -986,67 +965,45 @@ class PatrolController:
 
     # ── 전역 탐색 비동기 실행 ─────────────────────────────────
     # 동기로 돌리면 1~2초 동안 명령이 멈춰 온보드 워치독이 `ONBOARD_FAILSAFE` 를
-    # 건다 — 탐색만 워커 스레드로 보내고, 결과 해석(투표·채택·지도 쓰기·장애물
-    # 표시)은 루프 스레드가 `_poll_global` 에서 한다. 워커는 `match_grid` 를
-    # 요청 시점의 독립 사본만 읽는다. 적분·팽창·복원이 워커의 셀/메타를 바꿀 수 없다.
+    # 건다 — 탐색만 워커 스레드(`GlobalMatchWorker`)로 보내고, 결과 해석(투표·채택·
+    # 지도 쓰기·장애물 표시)은 루프 스레드가 `_poll_global` 에서 한다. 워커는
+    # `match_grid` 를 요청 시점의 독립 사본만 읽는다. 적분·팽창·복원이 워커의 셀/메타를
+    # 바꿀 수 없다.
 
-    def _ensure_global_worker(self) -> None:
-        if self._global_thread is not None and self._global_thread.is_alive():
-            return
-        self._global_thread = threading.Thread(
-            target=self._global_worker_main,
-            name="patrol-global-match",
-            daemon=True,
+    def _global_search(
+        self,
+        match_grid: OccupancyGrid,
+        points: np.ndarray,
+        allowed: Callable[[np.ndarray, np.ndarray], np.ndarray] | None,
+    ) -> MatchResult | None:
+        """워커 스레드에서 도는 지도 전역 탐색 — 설정값은 탐색하는 그때 읽는다."""
+        return global_match(
+            match_grid,
+            points,
+            lin_step_m=self.global_match_lin_step_m,
+            ang_step_rad=self.global_match_ang_step_rad,
+            occ_thresh=self.match_params.occ_thresh,
+            min_known_cells=self.match_params.min_known_cells,
+            free_thresh=self.plan_params.free_thresh,
+            sigma_m=self.match_params.sigma_m,
+            full_scan_ambiguity=self.global_full_scan_ambiguity,
+            allowed=allowed,
         )
-        self._global_thread.start()
 
-    def _global_worker_main(self) -> None:
-        while True:
-            with self._global_cv:
-                while self._global_req is None:
-                    self._global_cv.wait()
-                kind, points, scan, asked_pose, match_grid = self._global_req
-                prior = self._global_req_prior
-                allowed = self._global_req_allowed
-                self._global_req = None
-                self._global_req_prior = None
-                self._global_req_allowed = None
-            try:
-                result = global_match(
-                    match_grid,
-                    points,
-                    lin_step_m=self.global_match_lin_step_m,
-                    ang_step_rad=self.global_match_ang_step_rad,
-                    occ_thresh=self.match_params.occ_thresh,
-                    min_known_cells=self.match_params.min_known_cells,
-                    free_thresh=self.plan_params.free_thresh,
-                    sigma_m=self.match_params.sigma_m,
-                    full_scan_ambiguity=self.global_full_scan_ambiguity,
-                    allowed=allowed,
-                )
-            except Exception as exc:  # noqa: BLE001 — 결과를 안 두면 inflight 가 영영 안 풀린다
-                LOG.error("global_match_failed", error=f"{type(exc).__name__}: {exc}")
-                result = None
-            prior_result = None
-            if prior is not None and result is not None:
-                try:
-                    prior_result = match(match_grid, points, prior, self._restore_params())
-                except Exception as exc:  # noqa: BLE001 — 복원은 덤이다, 전역 결과는 살린다
-                    LOG.error("restore_match_failed", error=f"{type(exc).__name__}: {exc}")
-            with self._global_cv:
-                self._global_prior_result = prior_result
-                self._global_result = (kind, result, points, scan, asked_pose)
+    def _restore_search(
+        self, match_grid: OccupancyGrid, points: np.ndarray, prior: Pose
+    ) -> MatchResult:
+        """워커 스레드에서 도는 복원 기준 둘레 창 안 정합."""
+        return match(match_grid, points, prior, self._restore_params())
 
     def _submit_global(self, kind: str, points: np.ndarray, scan: Scan) -> bool:
         """전역 탐색을 워커에 맡긴다. 이미 한 건이 진행 중이면 놓친다(False)."""
-        if self._global_inflight:
+        if self.global_worker.inflight:
             return False
         cells, meta = self.match_grid.snapshot()
         cells.setflags(write=False)
         match_grid = OccupancyGrid(meta, cells)
-        self._ensure_global_worker()
-        self._global_inflight = True
-        self._global_req_context = (
+        context = (
             self.safety.yaw_rad if self.heading.imu_is_fresh(self._scan_now_ms) else None,
             self._move_seq,
             self._loc_epoch,
@@ -1054,11 +1011,9 @@ class PatrolController:
         )
         prior = self._restore_prior(self._scan_now_ms) if kind == "reloc" else None
         allowed = self._zone_filter(self._scan_now_ms) if kind == "reloc" else None
-        with self._global_cv:
-            self._global_req = (kind, points.copy(), scan, self.pose, match_grid)
-            self._global_req_prior = prior
-            self._global_req_allowed = allowed
-            self._global_cv.notify()
+        self.global_worker.submit(
+            (kind, points.copy(), scan, self.pose, match_grid), context, prior, allowed
+        )
         return True
 
     @property
@@ -1902,17 +1857,12 @@ class PatrolController:
 
     def _poll_global(self, now_ms: int) -> None:
         """워커가 끝낸 결과를 루프 스레드에서 해석·적용한다 — 상태 변경은 여기서만."""
-        with self._global_cv:
-            done = self._global_result
-            prior_result = self._global_prior_result
-            self._global_result = None
-            self._global_prior_result = None
+        done, prior_result = self.global_worker.take()
         if done is None:
             return
-        self._global_inflight = False
         kind, result, points, scan, asked_pose = done
         wall_now_ms = self.wall_clock_ms()
-        asked_imu, asked_moves, asked_epoch, asked_ms = self._global_req_context or (
+        asked_imu, asked_moves, asked_epoch, asked_ms = self.global_worker.context or (
             None,
             self._move_seq,
             self._loc_epoch,
