@@ -1,7 +1,7 @@
 """말하기 경로 (ADR-38) — 상황 문장은 관제 방송으로, 사건 키는 로봇 MP3 트랙으로.
 
 `SOUND` 는 한 번만 나가는 전문이라 ACK 대기·재전송과 경고 반복도 여기서 맡는다.
-모든 메서드는 운용 루프 스레드에서 부른다 (`Runtime.tick`·`ingest`·`_record_scene`).
+모든 메서드는 운용 루프 스레드에서 부른다 (`Runtime.tick`·`ingest`·`IncidentLog.record_scene`).
 """
 
 from __future__ import annotations

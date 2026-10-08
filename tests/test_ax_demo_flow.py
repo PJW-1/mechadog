@@ -365,7 +365,7 @@ def test_wearing_confirmation_dashboard_and_unassigned_sound_key(config, clock):
     runtime = Runtime(config, device_id=DEVICE, clock=clock, dashboard=dashboard)
     played = []
     runtime.speaker.play = played.append
-    runtime._record_scene(
+    runtime.incidents.record_scene(
         "PPE_SETTLED",
         SimpleNamespace(),
         {"state": OK, "track_id": 1, "reason": "착용 확인", "rechecked": True},

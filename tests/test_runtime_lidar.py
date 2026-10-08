@@ -421,9 +421,11 @@ def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock
     vision = FakeVision()
     runtime, navigator = _patrolling(config, clock, vision=vision)
     original = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
-    runtime._navigation_frames[7] = original
+    runtime.incidents.navigation_frames[7] = original
     calls = []
-    runtime._blackbox = SimpleNamespace(record=lambda *args, **kwargs: calls.append((args, kwargs)))
+    runtime.incidents.blackbox = SimpleNamespace(
+        record=lambda *args, **kwargs: calls.append((args, kwargs))
+    )
     navigator._nav_events.append(
         {
             "event": "zone_skipped",
@@ -432,7 +434,7 @@ def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock
     )
     clock.advance(1000)
     vision.result = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
-    runtime._record_navigation_event(navigator.take_navigation_events()[0], clock.ms)
+    runtime.incidents.record_navigation_event(navigator.take_navigation_events()[0], clock.ms)
     args, kwargs = calls[0]
     assert args == ("zone_skipped",)
     assert kwargs["jpeg"] == original.jpeg
@@ -494,8 +496,8 @@ def _factory_block(
         announcer=said.append,
     )
     records: list[tuple] = []
-    real = runtime._record_scene
-    runtime._record_scene = lambda *args: (records.append(args), real(*args))[1]  # type: ignore[method-assign]
+    real = runtime.incidents.record_scene
+    runtime.incidents.record_scene = lambda *args: (records.append(args), real(*args))[1]  # type: ignore[method-assign]
     navigator._new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.ms)
     return runtime, vision, records, said
@@ -603,7 +605,7 @@ def test_obstacle_outside_patrol_is_not_a_path_block(
     """추적·경보 중 앞에 선 사람은 «경로 막힘» 이 아니다."""
     runtime, navigator = _patrolling(config, clock)
     records: list[tuple] = []
-    monkeypatch.setattr(runtime, "_record_scene", lambda *args: records.append(args))
+    monkeypatch.setattr(runtime.incidents, "record_scene", lambda *args: records.append(args))
     assert runtime._apply(Event.SCAN_DUE, clock.ms)
     navigator._new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.ms)

@@ -25,8 +25,9 @@ import json
 import socket
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import asdict, dataclass, field, replace
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
+from dataclasses import asdict, dataclass, field
 from typing import Any, cast
 
 from host.behavior.actions import PostureSequence, register_actions
@@ -50,13 +51,7 @@ from host.behavior.zone_policy import ZonePpePolicy
 from host.behavior.zones import Zone, ZoneStore
 from host.common.blackbox import BlackboxEntry, EventBlackbox
 from host.common.config import ConfigError, telemetry_ids
-from host.common.history import (
-    HistoryStore,
-    IncidentRow,
-    incident_from_entry,
-    incident_from_feed,
-    zones_from_config,
-)
+from host.common.history import HistoryStore, zones_from_config
 from host.common.lidar_link import Scan
 from host.common.logging_setup import (
     ERROR_ON_ENTER,
@@ -69,6 +64,7 @@ from host.common.protocol import CommandEncoder, system_clock_ms
 from host.common.trace import config_sha256, new_session_id
 from host.common.units import rad_to_deg
 from host.dashboard.state import DashboardState
+from host.report.incidents import IncidentLog
 from host.slam.pose_out import PoseOut
 from host.slam.settings import maps_dir
 from host.telemetry.receiver import Ingested, TelemetryReceiver
@@ -89,16 +85,6 @@ WSAEMSGSIZE = 10040
 SHUTDOWN_ESTOP_REPEATS = 3
 SHUTDOWN_ESTOP_INTERVAL_S = 0.02
 EYE_LED_REFRESH_MS = 1000
-#: 관제 사건 목록에 올리는 FSM 전이 — 인증과 안전 래치 해제만. ⚠️ 순찰·추적 전이는
-#: 싣지 않는다. `ALERT ⇄ TRACK` 은 초당 몇 번씩 왕복해 목록을 덮는다.
-FEED_TRANSITIONS: dict[Event, str] = {
-    Event.AUTH_REQUIRED: "auth_required",
-    Event.AUTH_OK: "auth_granted",
-    Event.AUTH_FAILED: "auth_failed",
-    Event.RESET_CONFIRMED: "failsafe_cleared",
-}
-#: 순찰 한 판을 닫는 상태와 그 결과 (ADR-46 결정 5). 이 셋을 떠나면 판이 열린다.
-RUN_ENDS: dict[str, str] = {"IDLE": "stopped", "MANUAL": "manual", "FAILSAFE": "failsafe"}
 
 
 def _is_oversized_datagram(exc: OSError) -> bool:
@@ -215,11 +201,6 @@ class Runtime:
         self._clock = clock
         # 사건·순찰 이력 색인 (ADR-46). 쓰기가 실패해도 기록만 하고 제어는 멈추지 않는다.
         self._history = history
-        # 열려 있는 순찰 한 판과, 그 판에 마지막으로 남긴 도착 구역.
-        self._mission_run: str | None = None
-        self._visited_zone: str | None = None
-        # 대시보드 «순찰 정지» 가 수동을 거치는 동안 켠다 — 그 `MANUAL` 진입은 `stopped` 로 닫는다.
-        self._stopping_patrol = False
         if history is not None:
             serial = config.get("telemetry_device_id")
             history.upsert_robot(device_id, serial_no=serial if isinstance(serial, str) else None)
@@ -281,7 +262,6 @@ class Runtime:
         self._record_frame_ms = record_frame_ms
         self._last_frame_saved_ms: int | None = None
         self._recorded_nav_phase: str | None = None
-        self._navigation_frames: dict[int | str, VisionResult] = {}
         #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
         self._take_scan: Callable[[], Scan | None] | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
@@ -402,11 +382,6 @@ class Runtime:
         self._fallen_confirm_ms = int(config["vision"]["fallen"]["confirm_ms"])
         # 시작값은 «쓰러짐 없음» 이다. 비우면 첫 프레임의 `False` 가 해제 로그로 남는다.
         self._edge.changed("fallen", False)
-        # 저장소와 대시보드 송신자를 주입한다. 정식 CLI는 저장소를 항상 연결하고,
-        # FastAPI/WebSocket 서버가 생기면 같은 항목을 publisher로 받는다.
-        # 둘을 분리해야 디스크 기록 성공과 브라우저 연결 여부가 서로 발목을 잡지 않는다.
-        self._blackbox = blackbox
-        self._event_publisher = event_publisher
         #: 상황 문장 방송과 로봇 스피커 트랙 (ADR-38 말하기 경로 · `SOUND` 재전송·반복).
         self._speaker = Speaker(
             config,
@@ -466,6 +441,27 @@ class Runtime:
         # 같은 이유로 모드도 물어본다 (FR-11.5) — 관제 화면에서 바뀌므로 갱신 지점이
         # 하나가 아니다.
         self._log.bind_mode(lambda: self._mission.mode)
+        # 사건 기록 (블랙박스·관제 사건 목록·이력 DB · ADR-46). 판정기들이 기록을 넘기므로 먼저 만든다.
+        self._incidents = IncidentLog(
+            device_id=device_id,
+            session_id=self._session_id,
+            config_sha256=self._config_sha256,
+            clock=clock,
+            behavior=self._behavior,
+            escalation=self._escalation,
+            mission=self._mission,
+            speaker=self._speaker,
+            zone_ppe=self._zone_ppe,
+            zone_ids=self._zone_ids,
+            zone=lambda: self._zone_inspector.zone,
+            telemetry=lambda: self._last_telemetry,
+            vision=self._vision,
+            recorder=self._recorder,
+            dashboard=dashboard,
+            history=history,
+            blackbox=blackbox,
+            event_publisher=event_publisher,
+        )
         # 음성 암구호의 인증 창 (FR-10.3 · ADR-37). 창을 열고 닫는 것은 `_apply` 다.
         self._voice_auth = VoiceAuthWindow(
             config,
@@ -473,7 +469,9 @@ class Runtime:
             mission=self._mission,
             apply=self._apply,
             clock=clock,
-            feed=self._feed_event if dashboard is not None or history is not None else None,
+            feed=self._incidents.feed_event
+            if dashboard is not None or history is not None
+            else None,
         )
         # 사원증 인증 (FR-10 · ADR-28). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
         # 쥔 쪽에서 하고 누구의 인증인지는 추적 결과를 함께 보는 판정기가 정한다.
@@ -495,7 +493,7 @@ class Runtime:
             escalation=self._escalation,
             vlm=self._vlm,
             apply=self._apply,
-            record=self._record_scene,
+            record=self._incidents.record_scene,
             zone_waiting=lambda: self._zone_inspector.waiting or self._path_cause.waiting,
         )
         # 구역 점검 (FR-8 · ADR-41). 같은 판독 워커를 쓰고, 판독 «예» 는 쓰러짐 의심으로 넘긴다.
@@ -507,7 +505,7 @@ class Runtime:
             fall=self._fall,
             anchors=anchors,
             apply=self._apply,
-            record=self._record_scene,
+            record=self._incidents.record_scene,
             ready_to_inspect=(lambda zone, now_ms: navigator.inspection_ready(zone.label, now_ms))
             if isinstance(navigator, PatrolController)
             else None,
@@ -533,7 +531,9 @@ class Runtime:
             mission=self._mission,
             vlm=self._vlm,
             # 호출 때 찾는다 — 시험이 기록·방송을 대역으로 바꿔 끼운다.
-            record=lambda kind, frame, judgement: self._record_scene(kind, frame, judgement),
+            record=lambda kind, frame, judgement: self._incidents.record_scene(
+                kind, frame, judgement
+            ),
             announce=lambda kind, judgement: self._speaker.announce(kind, judgement),
             others_waiting=lambda: self._fall.waiting or self._zone_inspector.waiting,
         )
@@ -548,7 +548,7 @@ class Runtime:
             fall=self._fall,
             commander=self._commander,
             apply=self._apply,
-            record=self._record_scene,
+            record=self._incidents.record_scene,
         )
         # 모든 POSE 에 들어가는 정적 roll 보정 (`posture.roll_offset_deg`). IMU 상시
         # 기울기 편향의 반대 부호 — 0 이면 기존 동작과 동일하다.
@@ -561,6 +561,11 @@ class Runtime:
     @property
     def behavior(self) -> Behavior:
         return self._behavior
+
+    @property
+    def incidents(self) -> IncidentLog:
+        """사건 기록. 시험이 블랙박스·기록 경로를 바꿔 끼운다."""
+        return self._incidents
 
     @property
     def speaker(self) -> Speaker:
@@ -968,11 +973,7 @@ class Runtime:
             recovery = self._navigator._recovery
             if recovery is not None and self._vision is not None:
                 key = recovery.blockage_id if recovery.blockage_id is not None else recovery.target
-                frame = self._vision.latest()
-                if key not in self._navigation_frames and frame is not None:
-                    self._navigation_frames[key] = frame
-                    if len(self._navigation_frames) > 32:
-                        del self._navigation_frames[next(iter(self._navigation_frames))]
+                self._incidents.keep_navigation_frame(key, self._vision.latest())
             self._settle_unreachable_goal(now_ms, from_sequence=True)
         elif self._normal_patrol is not None:
             self._normal_patrol(commander, now_ms)
@@ -1122,77 +1123,8 @@ class Runtime:
                 self._record_path_blocked(hit, now_ms)
 
     def _record_navigation_event(self, event: dict[str, Any], now_ms: int) -> None:
-        kind = str(event["event"])
-        judgement = dict(event["judgement"])
-        result = self._vision.latest() if self._vision is not None else None
-        key = judgement.get("blockage_id") or judgement.get("target") or judgement.get("zone")
-        if isinstance(key, (int, str)):
-            result = self._navigation_frames.get(key, result)
-        judgement["camera_available"] = result is not None and bool(result.jpeg)
-        judgement["camera_completed_ms"] = None if result is None else result.completed_ms
-        judgement["camera_age_ms"] = (
-            None if result is None else max(0, now_ms - result.completed_ms)
-        )
-        judgement["sentence"] = self._speaker.announce(kind, judgement)
-        # ⚠️ 판정의 `zone` 은 설정 구역일 때만 사건 구역이다 — `전체`·`GOAL`·`지점 3` 을 그대로
-        # 쓰면 `zones` 표에 자리표 구역이 생긴다 (DATA_MODEL 3.4). 두 경로가 같은 값을 쓴다.
-        judged = judgement.get("zone")
-        zone_id = (
-            judged
-            if isinstance(judged, str) and judged in self._zone_ids
-            else self._zone_inspector.zone
-        )
-        # ⚠️ **블랙박스가 없어도 이력에는 남긴다** (ADR-46 결정 4) — 사진 없는 사건 행이 된다.
-        if self._blackbox is None:
-            self._remember(
-                lambda: incident_from_feed(
-                    {
-                        "event": kind,
-                        "ts_ms": now_ms,
-                        "state": self._behavior.state,
-                        "escalation": self._escalation.level.value,
-                        "mode": self._mission.mode,
-                        **judgement,
-                    },
-                    robot_id=self._device_id,
-                    mission_id=self._mission_run,
-                    zone_id=zone_id,
-                )
-            )
-            return
-        try:
-            entry = self._blackbox.record(
-                kind,
-                jpeg=None if result is None else result.jpeg,
-                tracks=() if result is None else result.tracks,
-                detections=() if result is None else result.detections,
-                judgement=judgement,
-                telemetry=self._last_telemetry,
-                state=self._behavior.state,
-                escalation=self._escalation.level.value,
-                mode=self._mission.mode,
-                now_ms=now_ms,
-            )
-        except Exception as exc:
-            LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
-            return
-        self._remember(
-            lambda: replace(
-                incident_from_entry(
-                    entry,
-                    robot_id=self._device_id,
-                    mission_id=self._mission_run,
-                    zone_id=zone_id,
-                ),
-                zone_id=zone_id,
-            )
-        )
-        if self._event_publisher is None:
-            return
-        try:
-            self._event_publisher(entry)
-        except Exception as exc:
-            LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
+        # 호출 때 찾는다 — 시험이 이 자리를 대역으로 바꿔 끼운다.
+        self._incidents.record_navigation_event(event, now_ms)
 
     def _collect_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
         """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다).
@@ -1279,7 +1211,7 @@ class Runtime:
         # 공장 모드의 기록은 확정(`FallMonitor`) 때 한 번 남긴다.
         if not verdict.fallen or self._mission.enables("fallen"):
             return
-        self._record_scene(
+        self._incidents.record_scene(
             "person_fallen",
             result,
             {
@@ -1297,133 +1229,7 @@ class Runtime:
         저장·대시보드 오류가 제어 루프를 죽이면 로깅이 안전보다 우선하는 꼴이 되므로
         두 실패는 각각 기록하고 제어는 계속한다.
         """
-        self._record_scene("person_found", result)
-
-    def _record_scene(
-        self, event_type: str, result: VisionResult, judgement: dict[str, Any] | None = None
-    ) -> None:
-        """사진과 **그릴 수 없는 판단 근거**를 한자리에 남긴다.
-
-        ⚠️ **검출 박스와 달리 이것들은 그림이 없다.** 쓰러짐 판정은 숫자이고
-        VLM 판독은 문장이라, 사진 옆에 적어 두지 않으면 나중에 *"왜 그렇게
-        판정했나"* 를 되짚을 방법이 없다.
-
-        ⚠️ **문장 생성·방송은 기록이 없어도 나간다.** 관제가 그 순간 들어야
-        할 경고이지 블랙박스 파일이 아니므로, 블랙박스가 없는 구성(`blackbox=None`)
-        에서도 방송만은 막지 않는다.
-        """
-        now_ms = self._clock()
-        judgement = dict(judgement or {})
-        judgement.setdefault("zone", self._zone_ppe.current_zone(now_ms))
-        judgement.setdefault(
-            "ppe_required", list(self._zone_ppe.requirements_for(judgement["zone"]))
-        )
-        sentence: str | None = None
-        if (
-            event_type == "PPE_SETTLED"
-            and judgement.get("rechecked")
-            and judgement.get("reason") == "착용 확인"
-        ):
-            if self._dashboard is not None and (
-                self._blackbox is None or self._event_publisher is None
-            ):
-                self._dashboard.record_event(
-                    {
-                        "event": event_type,
-                        "ts_ms": now_ms,
-                        "state": self._behavior.state,
-                        "escalation": self._escalation.level.value,
-                        "mode": self._mission.mode,
-                        "judgement": judgement,
-                    }
-                )
-            self._speaker.play("ppe_settled")
-        elif event_type == "PPE_SETTLED" and (judgement or {}).get("reason") == "경고 횟수 한도":
-            self._speaker.play("ppe_unresolved")
-        cross_result = judgement is not None and "rule_yes" in judgement
-        if (
-            cross_result
-            and self._dashboard is not None
-            and (self._blackbox is None or self._event_publisher is None)
-        ):
-            self._dashboard.record_event(
-                {
-                    "event": event_type,
-                    "ts_ms": self._clock(),
-                    "state": self._behavior.state,
-                    "escalation": self._escalation.level.value,
-                    "mode": self._mission.mode,
-                    "judgement": judgement,
-                }
-            )
-        if judgement is not None and "rule_yes" in judgement and self._recorder is not None:
-            self._recorder.record(
-                "fall_cross_result", at_ms=self._clock(), frame_seq=result.frame_seq, **judgement
-            )
-        # 경비 모드의 쓰러짐은 기록만 남긴다 — 경보도 확인할 것도 없는 사건이라
-        # 방송·자막 문장을 붙이지 않는다.
-        if not (judgement or {}).get("test_mode") and (
-            event_type != "person_fallen" or self._mission.enables("fallen")
-        ):
-            sentence = self._speaker.announce(event_type, judgement)
-        if self._blackbox is None:
-            return
-        recorded_judgement = judgement
-        if sentence is not None:
-            recorded_judgement = {**(judgement or {}), "sentence": sentence}
-        try:
-            entry = self._blackbox.record(
-                event_type,
-                judgement=recorded_judgement,
-                jpeg=result.jpeg,
-                tracks=result.tracks,
-                detections=result.detections,
-                telemetry=self._last_telemetry,
-                state=self._behavior.state,
-                escalation=self._escalation.level.value,
-                mode=self._mission.mode,
-                now_ms=result.completed_ms,
-                **self._event_trace(result),
-            )
-        except Exception as exc:  # noqa: BLE001 — 기록 실패가 10Hz 제어를 죽이면 안 된다
-            LOG.error("blackbox_record_failed", error=f"{type(exc).__name__}: {exc}")
-            return
-        self._remember(
-            lambda: incident_from_entry(
-                entry,
-                robot_id=self._device_id,
-                mission_id=self._mission_run,
-                zone_id=self._zone_inspector.zone,
-            )
-        )
-        if self._event_publisher is None:
-            return
-        try:
-            self._event_publisher(entry)
-        except Exception as exc:  # noqa: BLE001 — 브라우저 단절은 제어 실패가 아니다
-            LOG.error("dashboard_event_publish_failed", error=f"{type(exc).__name__}: {exc}")
-
-    def _event_trace(self, result: VisionResult) -> dict[str, Any]:
-        """사건이 «어느 세션·장치·프레임·모델·설정으로, 얼마 걸려» 판단됐는지.
-
-        지연은 같은 PC 시계로 잰 값만 싣는다 — 시계가 어긋나 음수가 나오면 뺀다.
-        """
-        latency: dict[str, Any] = {"inference_ms": round(result.inference_ms, 2)}
-        for key, end_ms in (
-            ("frame_to_result_ms", result.completed_ms),
-            ("frame_to_decision_ms", self._clock()),
-        ):
-            if end_ms >= result.frame_received_ms:
-                latency[key] = end_ms - result.frame_received_ms
-        models = getattr(self._vision, "models", None)
-        return {
-            "session_id": self._session_id,
-            "device_id": self._device_id,
-            "frame_id": result.frame_seq,
-            "config_sha256": self._config_sha256,
-            "models": models() if callable(models) else None,
-            "latency": latency,
-        }
+        self._incidents.record_scene("person_found", result)
 
     def _observe_yaw_rate(self, yaw: float | None, now_ms: int) -> None:
         """IMU 방위를 **각속도**로 바꿔 1초 요약에 싣는다 (좌우 대칭 근거).
@@ -1500,57 +1306,7 @@ class Runtime:
                 "trigger": trigger.name if trigger is not None else None,
             },
         )
-        self._track_run(after, trigger.name if trigger is not None else None, now_ms)
-
-    def _track_run(self, after: str, trigger: str | None, now_ms: int) -> None:
-        """순찰 한 판을 열고 닫는다 (ADR-46 결정 5).
-
-        대기·수동·페일세이프(`RUN_ENDS`)를 떠나면 열고, 그중 하나로 들어가면 닫는다.
-        닫게 한 트리거가 `stop_reason` 이다. 대시보드 «순찰 정지» 가 거치는 `MANUAL` 은
-        `stopped`·`patrol_stop` 으로 닫는다(`stopping_patrol`).
-        """
-        if self._history is None:
-            return
-        result = RUN_ENDS.get(after)
-        if result is None:
-            if self._mission_run is None:
-                self._mission_run = self._history.open_run(
-                    self._device_id, mode=self._mission.mode, started_at=now_ms
-                )
-            return
-        if self._mission_run is not None:
-            if result == "manual" and self._stopping_patrol:
-                result, trigger = "stopped", "patrol_stop"
-            self._history.close_run(
-                self._mission_run, ended_at=now_ms, result=result, stop_reason=trigger
-            )
-            self._mission_run = None
-
-    def _note_zone_visit(self) -> None:
-        """구역에 새로 도착했으면 열린 판의 방문 구역에 더한다 (처음 도착한 순서).
-
-        ⚠️ **판이 닫혀도 마지막 구역을 잊지 않는다.** 구역 점검은 같은 구역에 서 있는 동안
-        다시 도착하지 않으므로, 그 자리에서 새 판을 시작하면 떠났다가 와야 방문이다.
-        """
-        zone = self._zone_inspector.zone
-        if zone == self._visited_zone:
-            return
-        self._visited_zone = zone
-        if zone is not None and self._history is not None and self._mission_run is not None:
-            self._history.visit_zone(self._mission_run, zone)
-
-    def _remember(self, build: Callable[[], IncidentRow]) -> None:
-        """사건 하나를 이력 DB 에 남긴다 (ADR-46).
-
-        ⚠️ **실패는 기록만 한다.** DB 는 색인이고 원본은 블랙박스·JSONL 이다 — 색인이
-        10Hz 제어를 멈추면 로깅이 안전보다 앞서는 꼴이 된다.
-        """
-        if self._history is None:
-            return
-        try:
-            self._history.record_incident(build())
-        except Exception as exc:  # noqa: BLE001 — 색인 실패가 10Hz 제어를 죽이면 안 된다
-            LOG.error("history_record_failed", error=f"{type(exc).__name__}: {exc}")
+        self._incidents.track_run(after, trigger.name if trigger is not None else None, now_ms)
 
     def _emit_eye_led(self, now_ms: int) -> None:
         """단계 색을 눈 LED 로 내려보낸다 (FR-10.4).
@@ -1578,86 +1334,6 @@ class Runtime:
             return
         self._commander.once("LED", color=seen.led, blink_hz=blink)
         self._last_eye_led_ms = now_ms
-
-    def _announce_escalation(self, now_ms: int) -> None:
-        """단계가 바뀐 **그 순간**을 사건으로 낸다 (FR-3.4).
-
-        ⚠️ **상태가 아니라 단계에 건다.** `ALERT ⇄ TRACK` 왕복 체류가 0.2~0.6초로
-        실측됐다. 상태 진입에 걸면 경고가 초당 몇 번씩 겹쳐 나간다.
-        단계는 그 왕복에 영향받지 않으므로 엣지가 그대로 중복 억제가 된다.
-
-        ⚠️ **블랙박스 사건에 얹지 않는다.** 그 사건은 사진을 저장할 때만 나가는데
-        (`_record_scene` 네 곳), 미인증 10초로 조용히 L2 가 되는 경우에는 그 넷 중
-        아무 일도 일어나지 않는다. 얹어 두면 **경고가 늦거나 아예 안 나간다** —
-        음성 쪽은 한참 뒤 엉뚱한 사건에 얹혀 온 값을 보고서야 알아챈다.
-
-        ⚠️ **읽을 문장을 여기서 실어 보낸다.** 단계와 문구가 한곳에 있어야 단계를
-        고칠 때 문구가 남지 않는다. 음성 쪽은 받은 문장을 읽기만 한다.
-        """
-        if self._dashboard is None and self._history is None:
-            return
-        level = self._escalation.level.value
-        # ⚠️ **래치 여부도 엣지다.** 보호구 경고(L3·래치 아님) 중에 쓰러짐이 확정되면 단계는
-        # L3 그대로라, 단계만 보면 경보 문장이 나가지 않는다 — 음성은 이 사건의 문장만 읽는다.
-        if not self._edge.changed("escalation_level", (level, self._escalation.latched)):
-            return
-        self._publish_feed(
-            {
-                "event": "escalation_changed",
-                "ts_ms": now_ms,
-                "state": self._behavior.state,
-                "escalation": level,
-                "mode": self._mission.mode,
-                "warning": self._escalation.presentation().warning,
-                "reason": self._escalation.reason,
-            }
-        )
-        reason = self._escalation.reason
-        if level == "L1" and reason == "fall_suspected":
-            self._speaker.play("fall_suspected")
-        if self._escalation.presentation().warning and isinstance(reason, str):
-            key = f"{reason.lower()}_warning"
-            if reason == "PPE_VIOLATION":
-                key = self._speaker.ppe_warning_key(key)
-            self._speaker.play(key)
-
-    def _announce_transition(self, event: Event, previous: str, now_ms: int) -> None:
-        """인증·안전 전이를 관제 사건으로 낸다. 전이 로그(jsonl)에만 있던 것들이다."""
-        if self._dashboard is None and self._history is None:
-            return
-        after = self._behavior.state
-        name = (
-            "failsafe_entered"
-            if after == "FAILSAFE" and previous != "FAILSAFE"
-            else FEED_TRANSITIONS.get(event)
-        )
-        if name is not None:
-            self._feed_event(name, now_ms, previous=previous, trigger=event.name)
-
-    def _feed_event(self, name: str, now_ms: int, **extra: Any) -> None:
-        self._publish_feed(
-            {
-                "event": name,
-                "ts_ms": now_ms,
-                "state": self._behavior.state,
-                "escalation": self._escalation.level.value,
-                "mode": self._mission.mode,
-                **extra,
-            }
-        )
-
-    def _publish_feed(self, payload: dict[str, Any]) -> None:
-        """관제 사건 하나를 화면과 이력 DB 에 낸다. 둘 중 하나만 있어도 된다 (ADR-46 결정 4)."""
-        if self._dashboard is not None:
-            self._dashboard.record_event(payload)
-        self._remember(
-            lambda: incident_from_feed(
-                payload,
-                robot_id=self._device_id,
-                mission_id=self._mission_run,
-                zone_id=self._zone_inspector.zone,
-            )
-        )
 
     def _record_input(self, action: str, **fields: Any) -> None:
         """관제·콘솔 입력 하나 — 재생(`tools/ops/replay_session.py`)이 같은 시각에 다시 넣는다."""
@@ -1738,7 +1414,7 @@ class Runtime:
         self._poll_vision(now_ms)
         vision_ms = (time.perf_counter() - phase_started) * 1000
         # 구역 도착은 `_poll_vision` 안의 구역 점검이 판정한다 — 그 뒤에 본다.
-        self._note_zone_visit()
+        self._incidents.note_zone_visit()
         # 단계의 시간 조건 — L1 해제(5초)와 L2 승격(10초). **전이와 무관하게 돈다.**
         #
         # ⚠️ **판단보다 앞에 둔다.** 뒤에 두면 이번 틱의 전문이 이전 단계에서 만들어져,
@@ -1791,7 +1467,7 @@ class Runtime:
         if digest:
             LOG.info("telemetry_summary", **digest)
         phase_started = time.perf_counter()
-        self._announce_escalation(now_ms)
+        self._incidents.announce_escalation(now_ms)
         if self._dashboard is not None:
             self._dashboard.publish(
                 telemetry=self._last_telemetry if self._last_telemetry["available"] else None,
@@ -1860,7 +1536,7 @@ class Runtime:
         elif before == "AUTH_WAIT" and self._behavior.state != "AUTH_WAIT":
             self._voice_auth.close()
         self._log_transition(before, now_ms)
-        self._announce_transition(event, before, now_ms)
+        self._incidents.announce_transition(event, before, now_ms)
         return True
 
     def start_patrol(self, now_ms: int) -> bool:
@@ -2121,18 +1797,9 @@ class Runtime:
         self._record_input("apply_external", event=event.name)
         return self._apply(event, self._clock())
 
-    @contextlib.contextmanager
-    def stopping_patrol(self) -> Iterator[None]:
-        """대시보드 «순찰 정지» 의 `MANUAL_ON` 을 수동 조종과 구별한다 (ADR-46 결정 5).
-
-        전이표에 자율 → `IDLE` 직행 사건이 없어 정지는 `MANUAL` 을 거친다. 이 안에서
-        `MANUAL` 로 닫힌 판은 `manual` 이 아니라 `stopped`(`stop_reason` `patrol_stop`)로 남는다.
-        """
-        self._stopping_patrol = True
-        try:
-            yield
-        finally:
-            self._stopping_patrol = False
+    def stopping_patrol(self) -> AbstractContextManager[None]:
+        """대시보드 «순찰 정지» 의 `MANUAL_ON` 을 수동 조종과 구별한다 (`IncidentLog.stopping_patrol`)."""
+        return self._incidents.stopping_patrol()
 
     def note_voice_listening(self, captured_at_ms: int | None = None) -> tuple[bool, str]:
         """판정 대기 유예 (`VoiceAuthWindow.note_listening`). 대시보드 스레드가 부른다."""
@@ -2511,14 +2178,7 @@ class Runtime:
         # 데몬이라 프로세스와 함께 끝난다. `serve` 의 `finally` 에서 불리므로 `submit()` 과
         # 같은 스레드다.
         self._vlm.stop()
-        if self._history is not None and self._mission_run is not None:
-            self._history.close_run(
-                self._mission_run,
-                ended_at=self._clock(),
-                result="shutdown",
-                stop_reason="runtime_stopped",
-            )
-            self._mission_run = None
+        self._incidents.close_run_on_shutdown()
         LOG.info(
             "runtime_stopped",
             ticks=self._stats.ticks,

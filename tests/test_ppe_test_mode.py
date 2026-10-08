@@ -174,7 +174,7 @@ def test_ppe_debug_record_is_display_only(cfg, clock):
     assert records[0][1]["frame_seq"] == 1
     assert runtime.behavior.state == "IDLE"
     assert build_parser().parse_args(["--device", "mechdog-01", "--ppe-test"]).ppe_test
-    runtime._record_scene(
+    runtime.incidents.record_scene(
         "fall_review_required",
         frame(),
         {

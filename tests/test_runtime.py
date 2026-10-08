@@ -693,7 +693,7 @@ def test_recorded_event_is_traceable(config: dict, clock: FakeClock, tmp_path) -
     result = vision_result(
         42, clock.ms - 40, present=True, hits=1, last_seen_ms=None, completed_ms=clock.ms - 30
     )
-    runtime._record_scene("person_found", result)
+    runtime.incidents.record_scene("person_found", result)
 
     (entry,) = blackbox.feed()
     assert entry.event_id
@@ -722,7 +722,7 @@ def test_runtime_makes_a_session_id_and_skips_unmeasurable_latency(
 
     future = clock.ms + 500
     result = vision_result(1, future, present=True, hits=1, last_seen_ms=None)
-    runtime._record_scene("person_found", result)
+    runtime.incidents.record_scene("person_found", result)
 
     (entry,) = blackbox.feed()
     assert entry.session_id == runtime.session_id
@@ -748,7 +748,7 @@ def test_published_event_carries_the_trace(config: dict, clock: FakeClock, tmp_p
         event_publisher=_publish_event(dashboard),
         session_id="S-2",
     )
-    runtime._record_scene(
+    runtime.incidents.record_scene(
         "person_found", vision_result(7, clock.ms, present=True, hits=1, last_seen_ms=None)
     )
     (event,), _ = dashboard.events_since(0)
@@ -787,7 +787,7 @@ def test_situation_describe_failure_does_not_block_recording(
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     entries = blackbox.feed()
     assert len(entries) == 1, "문장 생성이 죽어도 기록은 남는다"
@@ -821,7 +821,7 @@ def test_situation_announcer_failure_does_not_block_recording(
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     entries = blackbox.feed()
     assert len(entries) == 1, "방송이 죽어도 기록은 남는다"
@@ -849,7 +849,7 @@ def test_situation_announcer_fires_without_blackbox(config: dict, clock: FakeClo
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     assert announced == ["사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."]
 
@@ -866,7 +866,7 @@ def test_guard_mode_does_not_announce_a_fall(config: dict, clock: FakeClock, tmp
     assert runtime.mission.mode == "guard"
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     assert announced == []
     entries = blackbox.feed()
