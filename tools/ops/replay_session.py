@@ -46,7 +46,8 @@ from host.behavior.fsm import Event  # noqa: E402
 from host.behavior.mission import Mission  # noqa: E402
 from host.common.config import load_config  # noqa: E402
 from host.common.console import survive_encoding_errors  # noqa: E402
-from host.runtime import Runtime, build_parser  # noqa: E402
+from host.runtime import Runtime  # noqa: E402
+from host.runtime_cli import build_parser  # noqa: E402
 from host.telemetry.session_recorder import (  # noqa: E402
     EVENTS_FILE,
     MANIFEST_FILE,
@@ -66,7 +67,7 @@ VOLATILE_FIELDS = ("seq", "ts")
 #: 같은 시각에 다시 부르는 관제 입력 중 인자가 없는 것.
 _PLAIN_ACTIONS = ("ask_patrol", "ask_reset", "ask_alarm_confirm", "send_emergency_stop")
 #: 재생기가 다시 부를 수 있는 관제 입력 전체 — `Runtime._record_input` 이 남기는 이름과 같아야
-#: 한다(시험이 런타임 소스와 맞춰 본다). 여기 없는 입력은 재생에서 빠지고 `limitations` 에 남는다.
+#: 한다(시험이 런타임·`NavRequests` 소스와 맞춰 본다). 여기 없는 입력은 재생에서 빠지고 `limitations` 에 남는다.
 OPERATOR_ACTIONS = frozenset(
     (
         *_PLAIN_ACTIONS,

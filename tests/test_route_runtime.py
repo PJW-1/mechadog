@@ -240,7 +240,7 @@ def test_runtime_route_stop_is_immediate_and_cancels_queued_start(config, clock,
     runtime.tick(clock.ms)
     assert not navigator.route_active
     assert not runtime._patrol_asked
-    assert runtime._route_asked is None
+    assert runtime.nav_requests.route_asked is None
     assert runtime.commander.intent.type_ == "STOP"
 
 
@@ -261,7 +261,7 @@ def test_start_after_stop_before_next_tick_is_explicitly_refused(config, clock, 
     accepted, detail = runtime.ask_route("route-test")
     assert not accepted
     assert "정지" in detail
-    assert runtime._route_asked is None
+    assert runtime.nav_requests.route_asked is None
 
 
 def test_stop_during_route_file_read_cannot_rearm_start(config, clock, tmp_path, monkeypatch):
@@ -272,11 +272,11 @@ def test_stop_during_route_file_read_cannot_rearm_start(config, clock, tmp_path,
         runtime.ask_route_stop()
         return result
 
-    monkeypatch.setattr("host.runtime.load_routes", read_then_stop)
+    monkeypatch.setattr("host.behavior.nav_requests.load_routes", read_then_stop)
     assert not runtime.ask_route("route-test")[0]
     runtime.tick(clock.ms)
     assert runtime.behavior.state == "IDLE"
-    assert runtime._route_asked is None
+    assert runtime.nav_requests.route_asked is None
     assert runtime.commander.intent.type_ == "STOP"
 
 
@@ -289,7 +289,7 @@ def test_route_rejects_changed_confirmation_content_and_keeps_accepted_snapshot(
     changed = initial.model_copy(update={"name": "변경된 동선"})
     (tmp_path / "routes.json").write_bytes(routes_content({changed.id: changed}))
     assert not runtime.ask_route(initial.id, digest)[0]
-    assert runtime._route_asked is None
+    assert runtime.nav_requests.route_asked is None
     assert runtime.ask_route(initial.id, route_digest(changed))[0]
     (tmp_path / "routes.json").write_bytes(routes_content({initial.id: initial}))
     runtime.tick(clock.ms)

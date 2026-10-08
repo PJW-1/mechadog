@@ -20,6 +20,7 @@ from conftest import FakeClock
 from test_runtime import DEVICE, PEER, FakeSocket, telemetry, vision_result
 
 from host.behavior.fsm import Event
+from host.behavior.nav_requests import NavRequests
 from host.common.protocol import TelemetryEncoder
 from host.runtime import Runtime
 from host.telemetry.session_recorder import SessionRecorder
@@ -266,7 +267,11 @@ def test_cli_help_survives_cp949_console(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_every_recorded_operator_input_is_replayable() -> None:
     """런타임이 기록하는 관제 입력은 재생기도 안다 — 새 입력이 재생에서 조용히 빠지지 않게."""
-    source = Path(str(inspect.getsourcefile(Runtime))).read_text(encoding="utf-8")
+    # 항법 요청(지도 이동·위치 알려주기)은 `NavRequests` 가 같은 기록 함수로 남긴다.
+    source = "".join(
+        Path(str(inspect.getsourcefile(owner))).read_text(encoding="utf-8")
+        for owner in (Runtime, NavRequests)
+    )
     recorded = set(re.findall(r'_record_input\(\s*"(\w+)"', source))
     assert len(recorded) == 11
     # 상등 — OPERATOR_ACTIONS 에만 있는 이름은 런타임이 더는 기록하지 않는 죽은 항목이다.

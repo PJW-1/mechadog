@@ -76,7 +76,7 @@ def _no_real_history_db(monkeypatch: pytest.MonkeyPatch) -> None:
     ⚠️ 기본 설정의 경로는 저장소 기준 `history/mechdog.sqlite3` 다. 막지 않으면 CLI 시험이
     운용 중인 DB 파일을 만들고 스키마를 쓴다. 이력을 보는 시험은 `history=` 를 주입한다.
     """
-    monkeypatch.setattr("host.runtime.open_history", lambda _config: None)
+    monkeypatch.setattr("host.runtime_cli.open_history", lambda _config: None)
     monkeypatch.setattr("host.fleet.open_history", lambda _config: None)
 
 

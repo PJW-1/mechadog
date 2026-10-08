@@ -15,7 +15,8 @@ from host.behavior.fsm import Event, behavior_from_config
 from host.behavior.mission import Mission
 from host.dashboard.server import encode_vision_frame
 from host.dashboard.state import DashboardState
-from host.runtime import Runtime, build_parser
+from host.runtime import Runtime
+from host.runtime_cli import build_parser
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
 from host.vision.ppe_detector import PpeDetector, ppe_payload
@@ -168,12 +169,12 @@ def test_ppe_debug_record_is_display_only(cfg, clock):
         recorder=recorder,
         dashboard=board,
     )
-    runtime._record_ppe_frame(frame())
+    runtime.vision_recording.record_ppe_frame(frame())
     assert records[0][0] == ("ppe_debug",)
     assert records[0][1]["frame_seq"] == 1
     assert runtime.behavior.state == "IDLE"
     assert build_parser().parse_args(["--device", "mechdog-01", "--ppe-test"]).ppe_test
-    runtime._record_scene(
+    runtime.incidents.record_scene(
         "fall_review_required",
         frame(),
         {

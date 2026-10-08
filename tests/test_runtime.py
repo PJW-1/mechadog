@@ -21,7 +21,9 @@ from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
-from host.runtime import VLM_LOAD_WAIT_MS, Runtime, dashboard_wiring, watch_console
+from host.dashboard.wiring import dashboard_wiring
+from host.runtime import VLM_LOAD_WAIT_MS, Runtime
+from host.runtime_cli import watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
@@ -691,7 +693,7 @@ def test_recorded_event_is_traceable(config: dict, clock: FakeClock, tmp_path) -
     result = vision_result(
         42, clock.ms - 40, present=True, hits=1, last_seen_ms=None, completed_ms=clock.ms - 30
     )
-    runtime._record_scene("person_found", result)
+    runtime.incidents.record_scene("person_found", result)
 
     (entry,) = blackbox.feed()
     assert entry.event_id
@@ -720,7 +722,7 @@ def test_runtime_makes_a_session_id_and_skips_unmeasurable_latency(
 
     future = clock.ms + 500
     result = vision_result(1, future, present=True, hits=1, last_seen_ms=None)
-    runtime._record_scene("person_found", result)
+    runtime.incidents.record_scene("person_found", result)
 
     (entry,) = blackbox.feed()
     assert entry.session_id == runtime.session_id
@@ -731,7 +733,7 @@ def test_runtime_makes_a_session_id_and_skips_unmeasurable_latency(
 
 def test_published_event_carries_the_trace(config: dict, clock: FakeClock, tmp_path) -> None:
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     local = dict(config)
     local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
@@ -746,7 +748,7 @@ def test_published_event_carries_the_trace(config: dict, clock: FakeClock, tmp_p
         event_publisher=_publish_event(dashboard),
         session_id="S-2",
     )
-    runtime._record_scene(
+    runtime.incidents.record_scene(
         "person_found", vision_result(7, clock.ms, present=True, hits=1, last_seen_ms=None)
     )
     (event,), _ = dashboard.events_since(0)
@@ -768,7 +770,7 @@ def test_situation_describe_failure_does_not_block_recording(
 ) -> None:
     """`describe` 가 예외를 던져도 사건은 그대로 기록·발행되고 틱은 계속 돈다."""
     monkeypatch.setattr(
-        "host.runtime.describe",
+        "host.behavior.speaker.describe",
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     local = dict(config)
@@ -785,7 +787,7 @@ def test_situation_describe_failure_does_not_block_recording(
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     entries = blackbox.feed()
     assert len(entries) == 1, "문장 생성이 죽어도 기록은 남는다"
@@ -819,7 +821,7 @@ def test_situation_announcer_failure_does_not_block_recording(
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     entries = blackbox.feed()
     assert len(entries) == 1, "방송이 죽어도 기록은 남는다"
@@ -847,7 +849,7 @@ def test_situation_announcer_fires_without_blackbox(config: dict, clock: FakeClo
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     assert announced == ["사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."]
 
@@ -864,7 +866,7 @@ def test_guard_mode_does_not_announce_a_fall(config: dict, clock: FakeClock, tmp
     assert runtime.mission.mode == "guard"
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     assert announced == []
     entries = blackbox.feed()
@@ -1065,7 +1067,7 @@ def test_dead_vision_worker_marks_degraded(config: dict, clock: FakeClock) -> No
 
 def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> None:
     """정식 CLI가 별도 수동 조립 없이 실제 비전 경로를 붙인다."""
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     vision = FakeVision()
     captured: dict = {}
@@ -1105,7 +1107,7 @@ def test_cli_shares_one_session_id_with_the_recorder_manifest(
     config: dict, monkeypatch, tmp_path
 ) -> None:
     """세션 ID 는 런타임과 기록기 manifest 에 같은 값이고, manifest 에 모델 sha256 이 남는다."""
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
     from host.common.trace import config_sha256
 
     vision = DescribedVision()
@@ -2934,7 +2936,7 @@ def test_a_confirmed_person_reaches_the_dashboard_event_feed(
 
     from host.common.blackbox import EventBlackbox
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     cfg = deepcopy(config)
     cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
@@ -2975,7 +2977,7 @@ def test_the_gate_edge_publishes_one_event_not_one_per_tick(
 
     from host.common.blackbox import EventBlackbox
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     cfg = deepcopy(config)
     cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
@@ -3446,7 +3448,7 @@ def test_mode_switch_is_refused_while_patrolling(config: dict, clock: FakeClock)
 
 def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None:
     """모르는 모드는 **기본값으로 떨어지지 않고 기동을 거부한다** (WBS 3.4.4 ①)."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
     assert module.main(["--device", "test", "--no-vision", "--mode", "safety"]) == 2
@@ -3454,7 +3456,7 @@ def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None
 
 def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -> None:
     """FR-11.7 — 판정기 없이 켜면 로봇이 사람 앞에 서서 아무 판정도 내지 못한다."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
     assert module.main(["--device", "test", "--no-vision", "--mode", "factory"]) == 2
@@ -3470,7 +3472,7 @@ def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -
 )
 def test_cli_argument_conflicts_exit_with_code_2(argv: list[str], needle: str, capsys) -> None:
     """인자 검증 실패는 설정 거부(rc 2)·argparse 오류와 같은 종료 코드 2 다 (`SystemExit(str)` 은 1)."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     with pytest.raises(SystemExit) as exc:
         module.main(["--device", "test", *argv])
@@ -4098,7 +4100,7 @@ def test_main_finishes_the_broadcast_preload_before_the_loop(cfg, monkeypatch) -
     루프와 겹치면 적재가 GIL 을 1.3~1.7초 쥐어 명령 간격이 600ms 를 넘고, 로봇이
     기동 직후 페일세이프에 다시 걸린다 (`--reset-on-start` 직후 재래치).
     """
-    import host.runtime as module
+    import host.runtime_cli as module
     from host.cloud import broadcast
 
     events: list[str] = []

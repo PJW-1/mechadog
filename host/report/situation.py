@@ -4,7 +4,7 @@
 템플릿뿐이다 (ADR-35 결정 3 · ADR-38). 문장은 관제 스피커로 그대로 읽히므로(`4.8.2`) 기호·영문
 키 없이 짧게 만든다.
 
-대상은 `runtime._record_scene` 이 기록하는 사건 중 **변화 확정과 쓰러짐, 가벼운 경고**뿐이다 —
+대상은 `IncidentLog.record_scene` 이 기록하는 사건 중 **변화 확정과 쓰러짐, 가벼운 경고**뿐이다 —
 `person_fallen`(쓰러짐 확정) · `zone_changed`(넘어짐 확정) · `hazard_notice`(화기 위험구역의 위험물 가벼운 경고) ·
 `path_blocked`(통로 막힘 가벼운 경고 — 이동 중 LiDAR 우회, 구역 안 VLM 확정). 그 밖의 사건(`PPE_*`·`person_found`·`zone_reading`
 등)은 아직 확정된 상황 서술이 아니므로 `None` 을 돌려준다.
@@ -122,7 +122,7 @@ def describe(event_type: str, judgement: dict[str, Any] | None) -> str | None:
     """대상 사건에 한국어 한 문장을 붙인다. 대상이 아니면 `None`.
 
     `judgement` 가 비어 있거나 `None` 이어도(합성 시험·형식이 어긋난 실기록) 죽지
-    않고 일반 문구로 채운다 — 호출부(`runtime._record_scene`)는 이 함수를 try/except
+    않고 일반 문구로 채운다 — 호출부(`Speaker.announce`)는 이 함수를 try/except
     로 감싸지만, 감싸는 것과 별개로 여기서부터 흔한 입력에 안전한 편이 낫다.
     """
     template = _TEMPLATES.get(event_type)

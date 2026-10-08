@@ -187,10 +187,10 @@ def test_person_and_fall_records_share_region_and_ppe_policy(config, clock, tmp_
     runtime, navigator, vision, _ = regional_runtime(config, clock, "B")
     record_config = deepcopy(config)
     record_config["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
-    blackbox = runtime._blackbox = EventBlackbox(record_config)
+    blackbox = runtime.incidents.blackbox = EventBlackbox(record_config)
     _camera_aim_tick(runtime, navigator, vision, clock)
     for event in ("person_found", "fall_review_required"):
-        runtime._record_scene(event, vision.result)
+        runtime.incidents.record_scene(event, vision.result)
     assert len(blackbox.feed()) == 2
     assert all(entry.judgement["zone"] == "B" for entry in blackbox.feed())
     assert all(entry.judgement["ppe_required"] == [] for entry in blackbox.feed())

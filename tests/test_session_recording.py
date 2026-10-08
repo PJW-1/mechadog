@@ -18,7 +18,9 @@ from host.behavior.fsm import Event
 from host.common.protocol import TelemetryEncoder
 from host.dashboard.server import create_app
 from host.dashboard.state import DashboardState
-from host.runtime import MOTION_LOCK_TYPES, Runtime, build_parser, dashboard_wiring, main
+from host.dashboard.wiring import dashboard_wiring
+from host.runtime import MOTION_LOCK_TYPES, Runtime, main
+from host.runtime_cli import build_parser
 from host.telemetry.session_recorder import SessionRecorder
 
 
@@ -147,8 +149,8 @@ def test_motion_lock_rejects_goto_without_reservation_but_allows_point_hint(conf
             assert response.status_code == 200
             assert response.json()["accepted"] is False
             assert response.json()["detail"] == "보행 잠금 중 — 이동할 수 없다"
-            assert runtime._goto_asked is None
-            assert runtime._route_asked is None
+            assert runtime.nav_requests.goto_asked is None
+            assert runtime.nav_requests.route_asked is None
             assert not runtime._patrol_asked
             runtime.tick(clock.ms)
             feedback = client.get("/api/nav").json()["goal_feedback"]
@@ -160,7 +162,7 @@ def test_motion_lock_rejects_goto_without_reservation_but_allows_point_hint(conf
             assert hint.json()["accepted"] is True
             runtime.tick(clock.ms)
             assert navigator._point_hint == (2.0, 2.0, clock.ms)
-            assert runtime._goto_asked is None
+            assert runtime.nav_requests.goto_asked is None
     finally:
         runtime.release()
 

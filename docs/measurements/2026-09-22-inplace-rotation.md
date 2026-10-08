@@ -50,7 +50,7 @@ if not (d.get("accepted") and d.get("state") == "MANUAL"):
 5. 좌·우를 번갈아 3회씩. `imu.yaw` 는 ±180 에서 접히므로 **누적각으로 펴서** 최소제곱이
    아니라 (끝-시작)/창길이 로 낸다.
 
-⚠️ **`yaw_rate_deg_s` 를 «자이로 직독» 으로 믿지 않는다.** `runtime.py:1134` 가 같은
+⚠️ **`yaw_rate_deg_s` 를 «자이로 직독» 으로 믿지 않는다.** `TelemetryWatch.observe_yaw_rate`(`host/telemetry/telemetry_watch.py` · 측정 당시 `runtime.py:1134`)가 같은
 `imu.yaw` 를 유한차분한 값이라 **드리프트를 그대로 물고 있다.** 실제로 이 측정 중 정지
 구간의 `yaw_rate_deg_s_avg` 가 1.92~2.89 로, 따로 잰 바이어스 +2.90 과 같았다.
 [2026-09-18 문서](2026-09-18-turn-rate-curve.md) 의 *"정지 표준오차 0.14 °/s"* 는

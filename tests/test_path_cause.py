@@ -197,7 +197,7 @@ def test_a_new_block_does_not_ask_until_the_late_answer_is_cleared(parts, conf: 
     parts.vlm.busy = False
     parts.vlm.slot = _reading("no")
     later = T0 + wait_ms + 100
-    # `_observe_scan` 이 `poll` 보다 먼저 돈다.
+    # `ScanRelay.observe` 가 `poll` 보다 먼저 돈다.
     parts.cause.blocked({**HIT, "target": "C"}, _frame_at(later), later)
     assert len(parts.vlm.submitted) == 1, "늦은 결과가 슬롯에 있는 동안 걸지 않는다"
     parts.cause.poll(later)  # 늦은 결과를 비우고 같은 호출에서 B 를 건다

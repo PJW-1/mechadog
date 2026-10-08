@@ -228,7 +228,7 @@ def test_fleet_app_mounts_each_robot_and_runs_their_broadcast_loops(monkeypatch)
 
 def test_fleet_robot_commands_keep_the_origin_check(cfg: dict, clock: FakeClock) -> None:
     """명령 경로는 한 대짜리와 같은 코드다 — 붙인 뒤에도 남의 출처를 거절한다."""
-    from host.runtime import dashboard_wiring
+    from host.dashboard.wiring import dashboard_wiring
 
     runtime = Runtime(_config(cfg, A_IP), device_id=A, clock=clock)
     state = DashboardState(A, stale_after_ms=3000)

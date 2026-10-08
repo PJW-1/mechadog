@@ -75,7 +75,9 @@ def test_scan_posture_returns_neutral_and_waits_for_level_lidar(config, clock, m
     clock.advance(100)
     runtime.tick(clock.ms)
     assert navigator.pose_ms == clock.ms
-    assert runtime._build_nav_snapshot(clock.ms)["local_navigation"]["scan_rejected"] is None
+    assert (
+        runtime.nav_requests.build_snapshot(clock.ms)["local_navigation"]["scan_rejected"] is None
+    )
 
 
 class SimpleReading:
@@ -399,10 +401,10 @@ def test_navigation_decision_is_recorded_once_without_escalating(config, clock, 
 
 
 def test_navigation_decision_without_frame_still_announces(config, clock, monkeypatch):
-    import host.runtime as runtime_module
+    import host.behavior.speaker as speaker_module
 
     said = []
-    monkeypatch.setattr(runtime_module, "describe", lambda kind, _j: f"{kind} 문장")
+    monkeypatch.setattr(speaker_module, "describe", lambda kind, _j: f"{kind} 문장")
     runtime, navigator = _patrolling(config, clock, announcer=said.append)
     navigator._nav_events.append(
         {
@@ -421,9 +423,11 @@ def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock
     vision = FakeVision()
     runtime, navigator = _patrolling(config, clock, vision=vision)
     original = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
-    runtime._navigation_frames[7] = original
+    runtime.incidents.navigation_frames[7] = original
     calls = []
-    runtime._blackbox = SimpleNamespace(record=lambda *args, **kwargs: calls.append((args, kwargs)))
+    runtime.incidents.blackbox = SimpleNamespace(
+        record=lambda *args, **kwargs: calls.append((args, kwargs))
+    )
     navigator._nav_events.append(
         {
             "event": "zone_skipped",
@@ -432,7 +436,7 @@ def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock
     )
     clock.advance(1000)
     vision.result = vision_result(clock.ms, clock.ms, present=False, hits=0, last_seen_ms=None)
-    runtime._record_navigation_event(navigator.take_navigation_events()[0], clock.ms)
+    runtime.incidents.record_navigation_event(navigator.take_navigation_events()[0], clock.ms)
     args, kwargs = calls[0]
     assert args == ("zone_skipped",)
     assert kwargs["jpeg"] == original.jpeg
@@ -494,8 +498,8 @@ def _factory_block(
         announcer=said.append,
     )
     records: list[tuple] = []
-    real = runtime._record_scene
-    runtime._record_scene = lambda *args: (records.append(args), real(*args))[1]  # type: ignore[method-assign]
+    real = runtime.incidents.record_scene
+    runtime.incidents.record_scene = lambda *args: (records.append(args), real(*args))[1]  # type: ignore[method-assign]
     navigator._new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.ms)
     return runtime, vision, records, said
@@ -603,7 +607,7 @@ def test_obstacle_outside_patrol_is_not_a_path_block(
     """추적·경보 중 앞에 선 사람은 «경로 막힘» 이 아니다."""
     runtime, navigator = _patrolling(config, clock)
     records: list[tuple] = []
-    monkeypatch.setattr(runtime, "_record_scene", lambda *args: records.append(args))
+    monkeypatch.setattr(runtime.incidents, "record_scene", lambda *args: records.append(args))
     assert runtime._apply(Event.SCAN_DUE, clock.ms)
     navigator._new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.ms)
@@ -774,7 +778,7 @@ def _lidar_unit(config: dict) -> dict:
 
 
 def _cli(config: dict, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict:
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     captured: dict = {"feeds": [], "odom_opened": [], "order": []}
 
@@ -939,7 +943,7 @@ def test_cli_lidar_device_with_a_bad_lidar_section_refuses_to_start(
 def test_cli_lidar_device_without_zones_refuses_to_start(
     config: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     def no_zones(_cfg, _maps):
         raise ConfigError("구역 좌표가 없다")
@@ -953,7 +957,7 @@ def test_cli_lidar_device_with_a_broken_map_refuses_to_start(
     config: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """깨진 지도·구역 파일도 traceback 이 아니라 기동 거부(rc 2)다."""
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     def broken(_cfg, _maps):
         raise json.JSONDecodeError("Expecting value", "", 0)

@@ -496,7 +496,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 > 로봇은 **선 채로** 멈춘다. 호스트는 `TRACK` 을 유지하며 추종 지시를 계속 보내고, 대상이 계속
 > 보이면 `TARGET_LOST` 도 돌지 않아 **그 자리에 머문다.** 안전한 정지이지만 «왜 멈췄는지» 를
 > 남기려고 `track_blocked`(state · dist_cm) / `track_unblocked`(blocked_ms)를 **변화 때 1회씩**
-> 낸다(`runtime._watch_track_blocked`). 판단은 바꾸지 않는다.
+> 낸다(`TelemetryWatch.watch_track_blocked` · `host/telemetry/telemetry_watch.py`). 판단은 바꾸지 않는다.
 > 거리 제어는 Tier 1 반사가 아니라 **`FR-3.5.2`(거리 유지 · bbox 높이 · `host/behavior/tracker.py`)** 가
 > 맡는다 — 반사는 마지막 방어선이지 제어 루프가 아니며, 초음파는 정면만 보므로 대상이 비껴 서
 > 있으면 감지도 못 한다.

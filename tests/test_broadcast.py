@@ -212,7 +212,7 @@ def test_from_config_builds_a_broadcaster_when_enabled(monkeypatch) -> None:
 
 def test_a_mistyped_broadcast_config_does_not_stop_the_runtime() -> None:
     """설정 오기(`length_scale: "빠르게"`)는 방송만 끄고 기동은 막지 않는다 (리뷰 지적)."""
-    from host.runtime import _broadcaster
+    from host.runtime_cli import _broadcaster
 
     assert _broadcaster({"broadcast": {"enabled": True, "length_scale": "빠르게"}}) is None
 

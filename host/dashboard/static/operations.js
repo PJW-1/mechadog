@@ -25,7 +25,7 @@ function cleanText(value,max=1000){return typeof value==='string'?value.trim().s
 
 // ── 사건 분류·제목·판단 근거 (B2·B3·B4) ─────────────────────────
 // 예전에는 person_found 만 AUTH 였고 나머지는 전부 SYSTEM 이라 PPE 필터가 아무것도 걸러내지 못했다.
-// 이름은 런타임(`runtime.py` 의 `_record_scene`·`FEED_TRANSITIONS`·`_announce_escalation`)이 정한다.
+// 이름은 런타임(`host/report/incidents.py` 의 `record_scene`·`FEED_TRANSITIONS`·`announce_escalation`)이 정한다.
 export const EVENT_CATEGORIES=Object.freeze({PPE:'PPE',AUTH:'출입 인증',SAFETY:'안전 · 경보',OBJECT:'구역 · 물품',SYSTEM:'시스템'});
 const CATEGORY_OF={PPE_VIOLATION:'PPE',PPE_UNDETERMINED:'PPE',PPE_SETTLED:'PPE',person_found:'AUTH',auth_required:'AUTH',auth_granted:'AUTH',auth_failed:'AUTH',voice_auth_granted:'AUTH',person_fallen:'SAFETY',fall_review_required:'SAFETY',escalation_changed:'SAFETY',failsafe_entered:'SAFETY',failsafe_cleared:'SAFETY',zone_reading:'OBJECT',zone_changed:'OBJECT',hazard_notice:'OBJECT',path_blocked:'SAFETY',obstacle_detour:'SAFETY',zone_skipped:'SAFETY',patrol_unavailable:'SAFETY'};
 export function eventCategory(name){return CATEGORY_OF[name]??'SYSTEM'}

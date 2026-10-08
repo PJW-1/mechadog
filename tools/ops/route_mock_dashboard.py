@@ -41,7 +41,7 @@ from host.dashboard.live_map import MapView, PoseFrame, render
 from host.dashboard.planning import PlanError, PlanningService
 from host.dashboard.server import DEFAULT_STATIC_DIR, create_app, serving
 from host.dashboard.state import DashboardState
-from host.runtime import policy_view
+from host.dashboard.wiring import policy_view
 from host.slam import settings, simulation
 from tools.ops import dashboard_demo
 from tools.ops.patrol_mock import physical_hit_mask, raycast_scan
