@@ -131,7 +131,7 @@ class RouteFollower:
             ):
                 return False, "첫 지점까지 직접 가는 선이 벽·미관측 공간을 지난다"
             self.cancel("replaced", hold=False)
-            patrol._inspection_zone = None
+            patrol.arrival.zone = None
             patrol._goal = (first.x, first.y)
             patrol._goal_hold = False
             patrol._goal_hold_reason = None
@@ -182,7 +182,7 @@ class RouteFollower:
         self.stage = reason
         patrol.relaxed.progress, patrol.relaxed.stuck = None, False
         self.dwell_until_ms = None
-        patrol._inspection_zone = None
+        patrol.arrival.zone = None
         patrol._goal = None
         patrol._goal_hold = hold
         patrol._goal_hold_reason = f"route_{reason}" if hold else None
@@ -204,7 +204,7 @@ class RouteFollower:
         if self.active and self.stage != "moving":
             self.stage = "aiming"
             self.dwell_until_ms = None
-            self._patrol._inspection_zone = None
+            self._patrol.arrival.zone = None
             self.search_base = None
 
     def search_person(self) -> None:
@@ -265,7 +265,7 @@ class RouteFollower:
             # 경보·측위 복구 뒤 다른 자리에 있으면 먼저 같은 지점으로 다시 접근한다.
             self.stage = "moving"
             self.dwell_until_ms = None
-            patrol._inspection_zone = None
+            patrol.arrival.zone = None
             patrol.phase = Phase.PLANNING
             patrol.plan = Plan(GOAL_LABEL)
             patrol.commander.halt()
@@ -274,7 +274,7 @@ class RouteFollower:
         if abs(error) > patrol.drive.heading_tolerance_rad:
             self.stage = "aiming"
             self.dwell_until_ms = None
-            patrol._inspection_zone = None
+            patrol.arrival.zone = None
             patrol.phase = Phase.AIMING
             steering = self._steering_for(error, patrol.drive, spinning=True)
             patrol._spinning = True
@@ -301,7 +301,7 @@ class RouteFollower:
                 self.stage = "search"
             # 영역 지도가 있으면 이름 없는 동선 점도 실제 소속 구역을 점검한다.
             # 지도 없는 기존 동선은 명시한 앵커 라벨만 사용한다.
-            patrol._inspection_zone = (
+            patrol.arrival.zone = (
                 patrol.current_zone
                 if patrol.zone_map is not None
                 else point.label
@@ -312,7 +312,7 @@ class RouteFollower:
             return
         if patrol._now_ms < self.dwell_until_ms:
             return
-        label = patrol._inspection_zone
+        label = patrol.arrival.zone
         if (
             label is not None
             and patrol.wait_for_inspection is not None
@@ -326,7 +326,7 @@ class RouteFollower:
         patrol = self._patrol
         route = self.current
         assert route is not None
-        if patrol._inspection_zone is not None:
+        if patrol.arrival.zone is not None:
             patrol.stats.zones_visited += 1
         index = self.index + 1
         if index == len(route.points):
@@ -416,7 +416,7 @@ class RouteFollower:
             return
         self.direct_stopped_ms = None
         if math.dist(patrol.pose[:2], target) < patrol.drive.arrival_radius_m:
-            patrol._arrive(GOAL_LABEL)
+            patrol.arrival.arrive(GOAL_LABEL)
             return
         heading = math.atan2(point.y - patrol.pose[1], point.x - patrol.pose[0])
         error = wrap_pi(heading - patrol.heading.steering_yaw())
@@ -440,7 +440,7 @@ class RouteFollower:
         patrol = self._patrol
         assert self.current is not None
         self.direct_stopped_ms = None
-        patrol._inspection_zone = None
+        patrol.arrival.zone = None
         label = self.point().label
         self.skipped_indices |= {
             i

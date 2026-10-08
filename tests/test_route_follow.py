@@ -55,7 +55,7 @@ def test_cancel_holds_in_place_with_a_route_reason() -> None:
 
 def test_next_point_advances_then_completes_the_last_cycle() -> None:
     c = started(A, B, repeat=1)
-    c._inspection_zone = "A"
+    c.arrival.zone = "A"
     c.route.next_point()
     assert c.route.index == 1 and c.goal == (B.x, B.y)
     assert c.stats.zones_visited == 1

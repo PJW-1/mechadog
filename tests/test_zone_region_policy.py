@@ -125,7 +125,7 @@ def test_route_dwell_inspects_actual_region_after_route_heading(config, clock, l
     assert runtime.behavior.state == "ZONE_INSPECT"
     assert runtime._zone_inspector._zone == label
     assert runtime._zone_inspector._aligned
-    assert navigator._inspection_zone == label
+    assert navigator.arrival.zone == label
     assert vlm.keys == [(*ZONE_KEYS, HAZARD_ITEM) if label == "A" else ZONE_KEYS]
     assert runtime._zone_inspector.hazards_allowed(clock.ms) == (label == "A")
     assert runtime.nav_status()["zone"] == label

@@ -997,13 +997,13 @@ def test_zone_inspection_survives_unrelated_live_obstacle() -> None:
     controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", 2, 1200, ((0, 1),)), 1200)
     controller.step(1200)
     assert controller.phase is Phase.INSPECT
-    assert controller._inspection_zone == "A"
+    assert controller.arrival.zone == "A"
     assert controller.stats.zones_visited == 1
     assert controller.goto(4, 1)[0]
     stationary_scan(controller, 1300)
     controller.step(1300)
     assert controller.target == "GOAL"
-    assert controller._inspection_zone is None
+    assert controller.arrival.zone is None
 
 
 def test_full_cycle_visits_every_zone_once() -> None:

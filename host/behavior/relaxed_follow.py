@@ -146,7 +146,7 @@ class RelaxedFollower:
         self.last_distance = distance
         if distance <= patrol.drive.arrival_radius_m or passed:
             self.progress, self.stuck = None, False
-            patrol._arrive(GOAL_LABEL)
+            patrol.arrival.arrive(GOAL_LABEL)
             return
         if patrol.nav_params.relaxed_stuck_hold and self.stuck_check(target, distance, front):
             return

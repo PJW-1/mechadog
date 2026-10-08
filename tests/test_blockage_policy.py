@@ -123,7 +123,7 @@ def test_no_detour_skips_zone_and_does_not_count_as_visited():
     assert event["event"] == "zone_skipped"
     assert event["judgement"]["zone"] == "A"
     assert event["judgement"]["severity"] == "medium"
-    c._complete_cycle()
+    c.arrival.complete_cycle()
     assert not c.skipped
 
 
