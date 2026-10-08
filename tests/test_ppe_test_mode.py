@@ -169,7 +169,7 @@ def test_ppe_debug_record_is_display_only(cfg, clock):
         recorder=recorder,
         dashboard=board,
     )
-    runtime._record_ppe_frame(frame())
+    runtime.vision_recording.record_ppe_frame(frame())
     assert records[0][0] == ("ppe_debug",)
     assert records[0][1]["frame_seq"] == 1
     assert runtime.behavior.state == "IDLE"

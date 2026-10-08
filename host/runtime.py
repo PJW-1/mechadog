@@ -27,7 +27,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from host.behavior.actions import PostureSequence, register_actions
@@ -71,7 +71,7 @@ from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.telemetry.ros2_relay import OdomSender, send
 from host.telemetry.session_recorder import SessionRecorder
 from host.telemetry.telemetry_watch import TelemetryWatch
-from host.vision.ppe_detector import ppe_payload
+from host.telemetry.vision_recording import VisionRecording
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
 from host.vision.vlm_worker import VlmWorker
@@ -241,8 +241,6 @@ class Runtime:
         #: 하나라도 받아야 텔레메트리를 보내므로(`telemetry_publisher.observe_command`) «아무것도 안
         #: 보내는» 입력 검증은 성립하지 않는다 — 정지 명령만 보내 IMU·상태를 받는다.
         self._motion_lock = motion_lock
-        self._record_frame_ms = record_frame_ms
-        self._last_frame_saved_ms: int | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
         self._navigator_resume = False
         self._navigator_resume_from_inspection = False
@@ -302,10 +300,14 @@ class Runtime:
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
-        self._ppe_test = bool(config["vision"]["ppe"].get("test_mode", False))
-        if self._ppe_test and (not motion_lock or not self._mission.enables("ppe")):
-            raise ConfigError("PPE 시험은 공장 모드와 보행 잠금이 필요하다")
-        self._vision_records_in_worker = False
+        #: 비전 결과 기록 (`--record-dir` 의 `vision` 줄 · `--ppe-test` 의 `ppe_debug`).
+        self._vision_recording = VisionRecording(
+            config,
+            mission=self._mission,
+            recorder=recorder,
+            record_frame_ms=record_frame_ms,
+            motion_lock=motion_lock,
+        )
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
         # 경비 추종 (FR-3.5 · ADR-40). 쓰러짐 감시는 아래에서 만들므로 의심 여부는 호출 때 묻는다.
@@ -583,6 +585,11 @@ class Runtime:
         return self._speaker
 
     @property
+    def vision_recording(self) -> VisionRecording:
+        """비전 결과 기록 (`vision`·`ppe_debug`). 시험이 PPE 시험 기록을 직접 넣는다."""
+        return self._vision_recording
+
+    @property
     def auth(self) -> Authenticator:
         """인증 세션. 대시보드가 *"누가 인증됐나"* 를 보이는 데 쓴다 (FR-3.6.2)."""
         return self._auth_judge.authenticator
@@ -802,11 +809,8 @@ class Runtime:
         result = self._vision.latest()
         if result is not None and not self._edge.changed("vision_seq", result.frame_seq):
             result = None
-        if result is not None and self._ppe_test and not self._vision_records_in_worker:
-            self._record_ppe_frame(result)
-        if result is not None and self._recorder is not None:
-            self._record_vision(result, now_ms)
         if result is not None:
+            self._vision_recording.take(result, now_ms)
             self._scan_relay.collect_clear(result, now_ms)
             self._ppe_judge.forget_lost(result, now_ms)
             self._summary.count("detections", len(result.detections))
@@ -864,7 +868,7 @@ class Runtime:
         if result is not None:
             self._fall.take_reading(now_ms)
             self._observe_fallen(result, now_ms)
-            if not self._ppe_test:
+            if not self._vision_recording.ppe_test:
                 self._ppe_judge.judge(result, now_ms)
             self._track_controller.track(result, now_ms)
             self._zone_inspector.inspect(result, now_ms)
@@ -884,61 +888,6 @@ class Runtime:
             LOG.warning(
                 "vision_stalled" if stalled else "vision_recovered",
                 age_ms=self._vision.age_ms(now_ms),
-            )
-
-    def _record_vision(self, result: VisionResult, now_ms: int) -> None:
-        """새 추론 결과 하나 — 모델 출력 그대로. 프레임은 `record_frame_ms` 간격으로만 파일로 둔다."""
-        assert self._recorder is not None
-        frame_file = None
-        due = self._last_frame_saved_ms is None or (
-            now_ms - self._last_frame_saved_ms >= self._record_frame_ms
-        )
-        if due and result.jpeg:
-            frame_file = self._recorder.save_frame(
-                result.jpeg, frame_seq=result.frame_seq, received_ms=result.frame_received_ms
-            )
-            self._last_frame_saved_ms = now_ms
-        self._recorder.record(
-            "vision",
-            at_ms=now_ms,
-            frame_seq=result.frame_seq,
-            frame_received_ms=result.frame_received_ms,
-            completed_ms=result.completed_ms,
-            inference_ms=round(result.inference_ms, 2),
-            size=[result.frame_width, result.frame_height],
-            detections=[
-                {"label": d.label, "score": round(d.score, 3), "box": [round(v, 1) for v in d.box]}
-                for d in result.detections
-            ],
-            person_present=result.sighting.present,
-            ppe=ppe_payload(result),
-            frame_file=frame_file,
-            # 재생(`tools/ops/replay_session.py`)이 같은 결과를 다시 만들 수 있게 판정 전체를 남긴다.
-            sighting=asdict(result.sighting),
-            tracks=[asdict(track) for track in result.tracks],
-            fallen=asdict(result.fallen),
-            markers=[asdict(marker) for marker in result.markers],
-            # `ppe` 는 현장 분석 도구가 읽는 트랙별 목록이다 — 재생용 대표 판정은 따로 둔다.
-            ppe_verdict=None if result.ppe is None else asdict(result.ppe),
-            hazard=None if result.hazard is None else asdict(result.hazard),
-        )
-
-    def _record_ppe_frame(self, result: VisionResult) -> None:
-        """시험 결과만 기록한다. FSM·경보·자세 명령은 호출하지 않는다."""
-        payload = ppe_payload(result)
-        if not self._mission.enables("ppe"):
-            return
-        LOG.info("ppe_debug", frame_seq=result.frame_seq, ppe=payload)
-        if self._recorder is not None:
-            self._recorder.record(
-                "ppe_debug",
-                at_ms=result.completed_ms,
-                frame_seq=result.frame_seq,
-                ppe=payload,
-                person_down_reference=[
-                    {"score": d.score, "box": list(d.box)} for d in result.person_down_reference
-                ],
-                reference_reason=result.person_down_reference_reason,
             )
 
     def _switch_hazard_detector(self) -> None:
@@ -1575,9 +1524,7 @@ class Runtime:
         # 세션 생성·워밍업은 운용 루프 전에 끝낸다. 루프 안에서 처음 열면 DirectML
         # 초기화가 600ms 명령 타임아웃을 넘겨 로봇을 멈출 수 있다.
         if self._vision is not None:
-            if self._ppe_test and hasattr(self._vision, "set_result_sink"):
-                self._vision.set_result_sink(self._record_ppe_frame)
-                self._vision_records_in_worker = True
+            self._vision_recording.attach(self._vision)
             self._vision.start()
         # VLM 을 모드와 상관없이 한 번 올린다 — ADR-35 결정 5 (상시 적재).
         # 모드를 바꿀 때 올리고 내리면 판독 시작과 해제가 겹쳐 세션을 닫거나 VRAM 이
