@@ -22,7 +22,7 @@
 | `firmware/xiao_vision/` | 카메라 모듈 펌웨어(MJPEG 스트림) | 1 |
 | `firmware/lidar_relay/` | LiDAR 중계 보드 펌웨어 | 5 |
 | `tools/` | 운영·측정·개발 보조 스크립트 | 104 |
-| `tests/` | 단위·통합 테스트 | 156 |
+| `tests/` | 단위·통합 테스트 | 157 |
 
 ## 읽는 순서
 
