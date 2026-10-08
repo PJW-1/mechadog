@@ -162,6 +162,35 @@ class Stats:
         self.states[state] = self.states.get(state, 0) + 1
 
 
+def _zone_layout(
+    config: Mapping[str, Any], navigator: PatrolController | None, zone_ids: tuple[str, ...]
+) -> tuple[tuple[Zone, ...], ZoneMap | None]:
+    """구역 점검 앵커와 지도 영역을 읽는다 — 어느 쪽이 없거나 깨져도 기동은 계속한다."""
+    # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
+    try:
+        # 길 찾기가 쓰는 지도(`--maps`)의 구역을 그대로 쓴다 — 설정의 maps_dir 를 따로 읽으면
+        # 다른 지도를 줬을 때 도착 판정(길 찾기)과 점검(카메라)이 서로 다른 자리를 본다.
+        navigator_zones = getattr(navigator, "zones", None)
+        anchors: tuple[Zone, ...] = (
+            navigator_zones.as_tuple()
+            if isinstance(navigator_zones, ZoneStore)
+            else ZoneStore.load(maps_dir(config), zone_ids).as_tuple()
+        )
+    except (OSError, ValueError) as exc:
+        LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
+        anchors = ()
+    try:
+        zone_map = (
+            navigator.zone_map
+            if isinstance(navigator, PatrolController)
+            else ZoneMap.load(maps_dir(config))
+        )
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        LOG.error("zone_map_unreadable", error=f"{type(exc).__name__}: {exc}")
+        zone_map = None
+    return anchors, zone_map
+
+
 class Runtime:
     """수신·판단·송신을 한 객체로 묶는다. **소켓은 여기 없다.**"""
 
@@ -254,13 +283,25 @@ class Runtime:
             self._behavior.fsm.on_exit("MANUAL", self._mark_goal_cancel)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
-        # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝에서 만들고 호출 때 찾는다.
+        # 판정 자세는 `ALERT` 를 떠날 때 푼다. 판정기는 `__init__` 끝(`_init_patrol_judges`)에서
+        # 만들고 호출 때 찾는다.
         self._behavior.fsm.on_exit(
             "ALERT", lambda _previous, _target: self._ppe_judge.return_pose()
         )
+        self._init_link(config, robot_ip, context)
+        anchors, zone_map = self._init_perception(config, vision, motion_lock, record_frame_ms)
+        self._init_reading(config, vlm_reader, announcer)
+        self._init_judges(config, blackbox, event_publisher)
+        self._init_patrol_judges(config, anchors, zone_map, pose_out)
+
+    # ── 기동 단계 — `__init__` 이 이 순서로 부른다. 순서가 곧 기동 로그 순서다 ──
+    def _init_link(
+        self, config: Mapping[str, Any], robot_ip: str | None, context: LogContext | None
+    ) -> None:
+        """송신 상대·송신 잠금·관제 예약 칸·로깅 컨텍스트·텔레메트리 진단을 만든다."""
         # ⚠️ `network` 절 안에 있다. 최상위에서 찾으면 프로파일에 주소를 적어도
         # 못 읽고, 첫 텔레메트리가 올 때까지 아무것도 보내지 않는 상태가 된다.
-        host = robot_ip or network.get("mechdog_ip")
+        host = robot_ip or config["network"].get("mechdog_ip")
         self._peer: tuple[str, int] | None = (host, self._cmd_port) if host else None
         # 운용 루프의 송신 소켓 — 대시보드 명령(ESTOP 등)이 다음 틱을 기다리지
         # 않게 즉시 보내는 경로가 쓴다. `serve` 가 시작할 때 채워진다.
@@ -286,7 +327,7 @@ class Runtime:
         self._stats = Stats()
         # 로깅 컨텍스트와 샘플링. **매 수신마다 한 줄씩 찍으면 10Hz × 운용시간이 되고
         # 정작 중요한 전이가 묻힌다** (ENGINEERING_GUIDE 1.3).
-        self._log = context if context is not None else LogContext(device_id=device_id)
+        self._log = context if context is not None else LogContext(device_id=self._device_id)
         self._log.observe(state=self._behavior.state)
         self._edge = EdgeTrigger()
         self._summary = PeriodicSummary(interval_ms=1000)
@@ -297,6 +338,15 @@ class Runtime:
             summary=self._summary,
             session_pending=lambda: self._session_open is not None,
         )
+
+    def _init_perception(
+        self,
+        config: Mapping[str, Any],
+        vision: VisionSource | None,
+        motion_lock: bool,
+        record_frame_ms: int,
+    ) -> tuple[tuple[Zone, ...], ZoneMap | None]:
+        """비전·비전 기록·추종·구역 정책·항법 요청을 만들고 구역 앵커와 지도 영역을 돌려준다."""
         # ⚠️ **비전은 선택이다.** 카메라가 없어도 순찰·회피는 돌아야 하고(NFR-2.6),
         # 목업 검증도 비전 없이 해 왔다. 붙이지 않으면 이 아래는 전부 비활성이다.
         self._vision = vision
@@ -304,13 +354,13 @@ class Runtime:
         self._vision_recording = VisionRecording(
             config,
             mission=self._mission,
-            recorder=recorder,
+            recorder=self._recorder,
             record_frame_ms=record_frame_ms,
             motion_lock=motion_lock,
         )
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
-        # 경비 추종 (FR-3.5 · ADR-40). 쓰러짐 감시는 아래에서 만들므로 의심 여부는 호출 때 묻는다.
+        # 경비 추종 (FR-3.5 · ADR-40). 쓰러짐 감시는 뒤(`_init_judges`)에서 만들므로 의심 여부는 호출 때 묻는다.
         self._track_controller = TrackController(
             config,
             behavior=self._behavior,
@@ -321,44 +371,32 @@ class Runtime:
         )
         # 구역 변화 감지 (FR-8). 일반 순찰은 지도 앵커, 명시 동선은 정지점에서 점검한다.
         # 정책·사건의 소속은 같은 지도 영역 라벨로 판정한다. 점검은
-        # `ZoneInspector` 가 맡고(아래), 앵커는 기동 로그 순서를 지키려고 여기서 읽는다.
+        # `ZoneInspector` 가 맡고(`_init_patrol_judges`), 앵커는 기동 로그 순서를 지키려고 여기서 읽는다.
         zone_ids = tuple(str(label) for label in config["zones"]["ids"])
         self._zone_ids = frozenset(zone_ids)
-        # ⚠️ **앵커 파일이 기동을 막으면 안 된다** — 없거나 깨졌으면 구역 점검만 쉰다.
-        try:
-            # 길 찾기가 쓰는 지도(`--maps`)의 구역을 그대로 쓴다 — 설정의 maps_dir 를 따로 읽으면
-            # 다른 지도를 줬을 때 도착 판정(길 찾기)과 점검(카메라)이 서로 다른 자리를 본다.
-            navigator_zones = getattr(self._navigator, "zones", None)
-            anchors: tuple[Zone, ...] = (
-                navigator_zones.as_tuple()
-                if isinstance(navigator_zones, ZoneStore)
-                else ZoneStore.load(maps_dir(config), zone_ids).as_tuple()
-            )
-        except (OSError, ValueError) as exc:
-            LOG.error("zones_unreadable", error=f"{type(exc).__name__}: {exc}")
-            anchors = ()
-        try:
-            zone_map = (
-                navigator.zone_map
-                if isinstance(navigator, PatrolController)
-                else ZoneMap.load(maps_dir(config))
-            )
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            LOG.error("zone_map_unreadable", error=f"{type(exc).__name__}: {exc}")
-            zone_map = None
+        anchors, zone_map = _zone_layout(config, self._navigator, zone_ids)
         self._zone_ppe = ZonePpePolicy(config, zone_map)
         #: 관제의 항법 요청 (위치 알려주기·지도 이동·저장 동선) — 서버 스레드가 넣고 루프가 꺼낸다.
         self._nav_requests = NavRequests(
             navigator=lambda: self._navigator,
             behavior=self._behavior,
             zone_ppe=self._zone_ppe,
-            clock=clock,
+            clock=self._clock,
             motion_lock=motion_lock,
             record_input=self._record_input,
             reset_pending=lambda: self._reset_pending,
             ask_patrol=self.ask_patrol,
             drop_patrol=self._drop_patrol,
         )
+        return anchors, zone_map
+
+    def _init_reading(
+        self,
+        config: Mapping[str, Any],
+        vlm_reader: VlmReader | None,
+        announcer: Callable[[str], None] | None,
+    ) -> None:
+        """판독 워커·방송·엣지 초기값·사람 게이트 재장전·에스컬레이션을 만든다."""
         # 상황 판독 (FR-8 · ADR-35). 객체 목록 비교로는 COCO 어휘 밖의
         # «넘어진 소화기» 를 말할 수 없어 사진을 그대로 읽는 경로를 하나 둔다.
         #
@@ -389,7 +427,7 @@ class Runtime:
             latest=lambda: self._vision.latest() if self._vision is not None else None,
         )
         self._last_telemetry: dict[str, Any] = {
-            "device_id": device_id,
+            "device_id": self._device_id,
             "available": False,
         }
         # ⚠️ **정상값을 미리 심는다.** `EdgeTrigger` 는 첫 관측을 변화로 보므로, 심지
@@ -433,12 +471,20 @@ class Runtime:
         # 같은 이유로 모드도 물어본다 (FR-11.5) — 관제 화면에서 바뀌므로 갱신 지점이
         # 하나가 아니다.
         self._log.bind_mode(lambda: self._mission.mode)
+
+    def _init_judges(
+        self,
+        config: Mapping[str, Any],
+        blackbox: EventBlackbox | None,
+        event_publisher: Callable[[BlackboxEntry], None] | None,
+    ) -> None:
+        """사건 기록과 사람 판정기(음성 암구호·사원증 인증·쓰러짐 감시)를 만든다."""
         # 사건 기록 (블랙박스·관제 사건 목록·이력 DB · ADR-46). 판정기들이 기록을 넘기므로 먼저 만든다.
         self._incidents = IncidentLog(
-            device_id=device_id,
+            device_id=self._device_id,
             session_id=self._session_id,
             config_sha256=self._config_sha256,
-            clock=clock,
+            clock=self._clock,
             behavior=self._behavior,
             escalation=self._escalation,
             mission=self._mission,
@@ -449,8 +495,8 @@ class Runtime:
             telemetry=lambda: self._last_telemetry,
             vision=self._vision,
             recorder=self._recorder,
-            dashboard=dashboard,
-            history=history,
+            dashboard=self._dashboard,
+            history=self._history,
             blackbox=blackbox,
             event_publisher=event_publisher,
         )
@@ -460,9 +506,9 @@ class Runtime:
             behavior=self._behavior,
             mission=self._mission,
             apply=self._apply,
-            clock=clock,
+            clock=self._clock,
             feed=self._incidents.feed_event
-            if dashboard is not None or history is not None
+            if self._dashboard is not None or self._history is not None
             else None,
         )
         # 사원증 인증 (FR-10 · ADR-28). **판정은 여기, 픽셀은 워커**다 — 마커 읽기는 프레임을
@@ -488,6 +534,16 @@ class Runtime:
             record=self._incidents.record_scene,
             zone_waiting=lambda: self._zone_inspector.waiting or self._path_cause.waiting,
         )
+
+    def _init_patrol_judges(
+        self,
+        config: Mapping[str, Any],
+        anchors: tuple[Zone, ...],
+        zone_map: ZoneMap | None,
+        pose_out: PoseOut | None,
+    ) -> None:
+        """순찰 판정기(구역 점검·막힘 원인·스캔 중계·보호구)와 자세 보정을 만든다."""
+        navigator = self._navigator
         # 구역 점검 (FR-8 · ADR-41). 같은 판독 워커를 쓰고, 판독 «예» 는 쓰러짐 의심으로 넘긴다.
         self._zone_inspector = ZoneInspector(
             config,
@@ -534,7 +590,7 @@ class Runtime:
         # (`PoseOut.of`). 변환 없는 원시 순찰 좌표는 뷰어에서 엉뚱한 자리에 찍히므로 «모른다» 가 낫다.
         self._scan_relay = ScanRelay(
             config,
-            device_id=device_id,
+            device_id=self._device_id,
             navigator=lambda: self._navigator,
             behavior=self._behavior,
             zone_ppe=self._zone_ppe,
@@ -542,7 +598,7 @@ class Runtime:
             path_cause=self._path_cause,
             latest=lambda: self._vision.latest() if self._vision is not None else None,
             pose_out=pose_out,
-            recorder=recorder,
+            recorder=self._recorder,
         )
         if isinstance(navigator, PatrolController):
             navigator.wait_for_inspection = self._awaits_zone_inspection
