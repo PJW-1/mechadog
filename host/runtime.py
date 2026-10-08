@@ -322,7 +322,7 @@ class Runtime:
             # 일어나고, 그때 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
             self._behavior.fsm.on_enter("PATROL", self._mark_navigator_resume)
             self._behavior.fsm.on_exit("PATROL", self._mark_goal_cancel)
-            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다 (Codex 검토 G P1).
+            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다 (리뷰 지적).
             self._behavior.fsm.on_exit("MANUAL", self._mark_goal_cancel)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
@@ -704,7 +704,7 @@ class Runtime:
                     latched = None
                 if isinstance(latched, bool):
                     # FSM 래치 가드도 ACK 값으로 갱신한다 — 텔레메트리의 옛 `true` 가 해제를 막지 않게
-                    # (Codex 10-06 검수 [확정]).
+                    # (10-06 현장 검수).
                     self._behavior.note_robot_latch(latched)
                     self._settle_reset(latched, now_ms)
                 if (
@@ -1496,7 +1496,7 @@ class Runtime:
         if track is None or not 0 < track <= ROBOT_SOUND_TRACK_MAX:
             return
         # 새 소리가 나가면 이전 경고의 반복은 취소한다 — 경보 확인 뒤 옛 경고가 다시 나오지 않게
-        # (Codex 10-06 검수 [확정]).
+        # (10-06 현장 검수).
         self._robot_repeat = None
         try:
             self._commander.once("SOUND", track=track)
@@ -2154,7 +2154,7 @@ class Runtime:
         """관제 지도가 그릴 자기 위치·신뢰·목표. **다른 스레드에서 부른다.**
 
         루프가 틱마다 만든 한 시점의 묶음을 돌려준다 — 서버 스레드가 컨트롤러 필드를 하나씩 읽으면
-        옛 좌표에 새 신뢰·구역·경로가 섞인다 (Codex 검토 G P2).
+        옛 좌표에 새 신뢰·구역·경로가 섞인다 (리뷰 지적).
         """
         snapshot = self._nav_snapshot
         if snapshot is None:
@@ -2584,7 +2584,7 @@ class Runtime:
         if self._navigator is not None and sent:
             # ⚠️ 순찰기에도 **실제로 나간** 명령을 알린다 — 없으면 «정지 중» 판정(`_is_stationary`)이
             # AVOID·FAILSAFE 때 찍힌 정지 시각에 머물러, 걷는 중에도 감사가 돌고 표 독립성도
-            # 못 본다(2026-10-03 Codex 검토: runtime 이 navigator.note_sent 를 부르지 않았다).
+            # 못 본다(2026-10-03 검토: runtime 이 navigator.note_sent 를 부르지 않았다).
             self._navigator.note_sent(sent, self._clock())
         return sent
 

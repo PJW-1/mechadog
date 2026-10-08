@@ -194,7 +194,7 @@ def test_main_reads_only_the_committed_device_profile(
     """개발 PC 의 `<device>.local.yaml` 오버레이가 시험에 섞이면 안 된다 (`conftest.py`).
 
     `main` 은 `load_config(args.device)` 를 기본 경로로 부른다. 그대로 두면 실기를 만지는
-    사람의 PC 에서만 판정이 달라진다(2026-10-05 · Devin 검수).
+    사람의 PC 에서만 판정이 달라진다(2026-10-05 · 검수).
     """
     import host.common.config as config_mod
 

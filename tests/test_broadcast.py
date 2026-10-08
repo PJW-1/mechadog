@@ -211,7 +211,7 @@ def test_from_config_builds_a_broadcaster_when_enabled(monkeypatch) -> None:
 
 
 def test_a_mistyped_broadcast_config_does_not_stop_the_runtime() -> None:
-    """설정 오기(`length_scale: "빠르게"`)는 방송만 끄고 기동은 막지 않는다 (Devin 지적)."""
+    """설정 오기(`length_scale: "빠르게"`)는 방송만 끄고 기동은 막지 않는다 (리뷰 지적)."""
     from host.runtime import _broadcaster
 
     assert _broadcaster({"broadcast": {"enabled": True, "length_scale": "빠르게"}}) is None
@@ -231,7 +231,7 @@ def test_from_config_passes_the_settings_through() -> None:
 
 
 def test_a_bad_pcm_does_not_kill_the_worker() -> None:
-    """음량을 곱하다 실패해도(홀수 길이 PCM) 워커는 살아 다음 문장을 낸다 (Devin 지적)."""
+    """음량을 곱하다 실패해도(홀수 길이 PCM) 워커는 살아 다음 문장을 낸다 (리뷰 지적)."""
     played: list[bytes] = []
 
     def synth(text: str) -> tuple[bytes, int]:

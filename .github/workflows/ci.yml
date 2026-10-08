@@ -269,7 +269,8 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install "${{ matrix.target.core }}"
 
-      # OI-5: HW_MechDog 라이브러리 라이선스 확인 후 third_party/ 벤더링 필요 (RISK-07)
+      # 벤더 라이브러리(HW_MechDog 등)는 라이선스 표기가 없어 저장소에 넣지 않는다 (ADR-20).
+      # third_party/ 가 로컬에 있을 때만 복사하며, CI 에는 없으므로 보통 건너뛴다.
       - name: Link vendored libraries
         if: steps.sketch.outputs.found == 'true'
         run: |

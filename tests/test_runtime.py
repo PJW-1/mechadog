@@ -349,7 +349,7 @@ def test_newer_sound_replaces_the_one_awaiting_ack(config: dict, clock: FakeCloc
 
 
 def test_resend_never_follows_a_newer_queued_sound(config: dict, clock: FakeClock) -> None:
-    """마감 틱에 새 문장이 이미 대기열에 있으면 옛 문장을 다시 싣지 않는다 (Devin 검수).
+    """마감 틱에 새 문장이 이미 대기열에 있으면 옛 문장을 다시 싣지 않는다 (리뷰 지적).
 
     다시 실으면 `[새, 옛]` 순서로 나가 옛 문장이 새 문장을 덮고, ACK 대기도 옛 문장이
     차지해 새 문장은 유실돼도 다시 안 나간다.
@@ -1671,7 +1671,7 @@ def test_aim_timeout_raises_the_head_for_a_dodging_target(config: dict, clock: F
     """정지선에서 대상이 분기점을 1초보다 짧게 계속 넘나들어도 **상한이 지나면 고개를 든다**.
 
     `ALERT` 에 들 때마다 자세 대기가 다시 시작되므로, 상한이 없으면 L1 에 영영 닿지
-    않는다 — 경비 로봇 앞에서 계속 피하는 사람이 L0 에 머문다 (Devin 검수 F1).
+    않는다 — 경비 로봇 앞에서 계속 피하는 사람이 L0 에 머문다 (리뷰 지적 F1).
     """
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
@@ -1730,7 +1730,7 @@ def test_without_height_target_centered_person_is_the_stop_line(
     """높이 목표가 없으면(`null` · 거리 제어 끔) 추종기는 중앙 대상 앞에서 `step=0` 이다.
 
     그 자리를 정지선으로 보지 않으면 `TRACK` 에서 (0, 0) 만 보내며 영영 고개를 들지 않는다
-    — ADR-40 이전에는 `step == 0` 이 `ALERT` 로 보냈다 (Devin 검수 F3).
+    — ADR-40 이전에는 `step == 0` 이 `ALERT` 로 보냈다 (리뷰 지적 F3).
     """
     config = dict(config, fsm=dict(config["fsm"], track_target_height_px=None))
     runtime, vision = _tracking_runtime(config, clock)

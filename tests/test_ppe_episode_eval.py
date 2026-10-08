@@ -113,7 +113,7 @@ def test_episode_with_fewer_frames_than_needed_to_confirm_is_excluded_but_frames
 
 
 def test_short_but_dense_episode_is_counted_and_its_alarm_is_not_dropped():
-    # Devin 검수(2026-09-28): 창(1.5초)보다 짧아도 프레임이 조밀하면 런타임은 확정한다.
+    # 검수(2026-09-28): 창(1.5초)보다 짧아도 프레임이 조밀하면 런타임은 확정한다.
     # 길이로 빼면 실제 경보가 오경보율 분모·분자에서 사라진다.
     events = run(0, 10, ori="정면") + confirm_at(run(10, 11.2, ori="우측", step=0.1), 10.5)
     ep = evaluate(events)["total"]["episode"]
@@ -232,7 +232,7 @@ def test_alarm_latched_across_orientation_change_is_carried_not_a_new_alarm():
 
 
 def test_violation_alarm_still_latched_across_orientation_change_counts_as_detected():
-    # Devin 검수(2026-09-28): 같은 위반 구간에서 방향만 바뀌고 경보가 계속 켜져 있으면
+    # 검수(2026-09-28): 같은 위반 구간에서 방향만 바뀌고 경보가 계속 켜져 있으면
     # 새 상승 에지가 없어도 놓친 것이 아니다 — 검출로 세고 판정 시간은 «이월» 로 뺀다.
     front = confirm_at(run(0, 10, exp=BAD, ori="정면", states=(BAD,)), 2.0)
     for e in front:

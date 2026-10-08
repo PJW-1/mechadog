@@ -23,7 +23,7 @@ from PIL import Image
 from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
 MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct"
-REPO = Path(r"C:\Users\pjw\Desktop\mechdog_physical_ai")
+REPO = Path(__file__).resolve().parents[3]
 
 
 def vram_gb() -> float:

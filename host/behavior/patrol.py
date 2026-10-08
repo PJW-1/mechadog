@@ -306,7 +306,7 @@ class PatrolController:
     imu_fresh_ms: int = 300
     scan_gate: ScanGate = field(default_factory=ScanGate)
     #: 측위가 이만큼 끊기면 «검증됨»·사람 시드의 신뢰를 버린다 — 그 사이 로봇이 들려
-    #: 옮겨졌을 수 있다. 0 이면 끈다 (Codex 검토 P1: 검증 상태에 유효기간이 없었다).
+    #: 옮겨졌을 수 있다. 0 이면 끈다 (리뷰 지적).
     trust_expiry_ms: int = 5000
     #: 전역 탐색 결과가 이보다 늦게 도착하면 버린다 — 그 사이 손으로 옮겨졌거나 돌았을 수
     #: 있는데 MOVE 수만으로는 모른다.
@@ -323,7 +323,7 @@ class PatrolController:
     reloc_restore_score_ratio: float = 0.95
     #: 상실 동안 pitch·roll 이 기준보다 이만큼 넘게 바뀌면 «들어 올렸다» 로 보고 기준을 버린다.
     #: 같은 방위로 들어 옮기면 IMU yaw 로는 모르고, 대칭 구조에선 점수 비율도 통과한다
-    #: (Codex 검토 E2 P1) — 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
+    #: (리뷰 지적) — 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
     reloc_restore_tilt_rad: float = math.radians(8.0)
     #: 사람이 알려준 구역(대시보드 «위치 알려주기») 은 이 시간 안에 잡히지 않으면 버린다.
     zone_hint_ms: int = 60000
@@ -416,7 +416,7 @@ class PatrolController:
     _global_result: tuple[str, MatchResult | None, np.ndarray, Scan, Pose] | None = None
     #: 요청 때의 (신선한 IMU yaw | None, 이동 명령 수, 측위 세대, monotonic ms).
     _global_req_context: tuple[float | None, int, int, int] | None = None
-    #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다 (Codex 검토 2 P1).
+    #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다 (리뷰 지적).
     _loc_epoch: int = 0
     #: 지금 처리 중인 스캔의 Host 시각 (`observe_scan` 이 찍는다).
     _scan_now_ms: int = 0
@@ -427,7 +427,7 @@ class PatrolController:
     _imu_delta_fresh: bool = False
     #: 지금 `pose` 가 관측된 시점의 IMU yaw — 다음 정합의 회전 예측은 «지금 IMU − 이 값».
     #: 정합이 실패해도 앵커는 그대로라 회전량을 잃지 않고, 전역 채택 때는 그 스캔 시점의
-    #: IMU 로 다시 묶어 이중 반영하지 않는다 (Codex 검토 P1).
+    #: IMU 로 다시 묶어 이중 반영하지 않는다 (리뷰 지적).
     _imu_anchor: float | None = None
     #: 실제로 나간 이동 명령(MOVE 0 이 아님)의 누적 수 — 비동기 결과가 낡았는지 본다.
     _move_seq: int = 0
@@ -748,7 +748,7 @@ class PatrolController:
         if self.pose_verified:
             self._last_verified_pose_ms = now_ms
         # 앵커는 **신선한** IMU 일 때만 — 끊긴 IMU 의 옛 값을 묶어 두면 재개 때 그사이 회전
-        # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (Codex 검토 2 P1).
+        # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (리뷰 지적).
         self._imu_anchor = self.safety.yaw_rad if self._imu_is_fresh(now_ms) else None
         self._last_pose_imu = self._imu_anchor
         self._last_pose_moves = self._move_seq
@@ -783,7 +783,7 @@ class PatrolController:
                 self._local_scan.clear_allowed = False
                 self.scan_gate.status = {"scan_rejected": "pose_settling", "clear_allowed": False}
             if message["type"] == "MOVE" and not (message.get("step") or message.get("angle")):
-                # MOVE {0,0} 은 «서 있으라» 다 — 걷는 중으로 치면 정지 감사가 막힌다 (Codex 검토 2 P2).
+                # MOVE {0,0} 은 «서 있으라» 다 — 걷는 중으로 치면 정지 감사가 막힌다 (리뷰 지적).
                 self._note_stopped(sent_ms)
             elif message["type"] == "MOVE":
                 self.scan_gate.note_move(sent_ms)
@@ -945,7 +945,7 @@ class PatrolController:
         """전역 결과로 자세를 바꾼 직후 — IMU 앵커와 조향 오프셋을 **요청 시점** IMU 로 함께 맞춘다.
 
         `observe_map_pose` 는 현재 IMU 로 오프셋을 만들지만, 자세는 요청 때 스캔의 것이다.
-        둘이 다르면 다음 정합 실패 동안 조향 방위가 요청 이후 회전을 빠뜨린다 (Codex 검토 2 P1).
+        둘이 다르면 다음 정합 실패 동안 조향 방위가 요청 이후 회전을 빠뜨린다 (리뷰 지적).
         """
         self._imu_anchor = self._result_imu
         if self._result_imu is not None:
@@ -1326,7 +1326,7 @@ class PatrolController:
         assert self._route_search_base is not None
         if self._now_ms >= (self._route_dwell_until_ms or 0):
             self._route_search_base = None
-            self.commander.halt()  # 탐색 회전 의도가 다음 지점 첫 틱에 남지 않게 (Codex 10-06 [확정])
+            self.commander.halt()  # 탐색 회전 의도가 다음 지점 첫 틱에 남지 않게 (10-06 현장 검수)
             self._next_route_point()
             return
         if (
@@ -1875,7 +1875,7 @@ class PatrolController:
         if self._restore_anchor is None:
             return False
         # 요청 뒤 결과가 오는 사이 IMU 가 돌았거나 끊겼거나 기준이 묵었을 수 있다 — 적용 직전
-        # 다시 본다 (Codex 검토 E2 P1). 실패·결과 없음은 연속 표를 끊는다 (P2).
+        # 다시 본다 (리뷰 지적). 실패·결과 없음은 연속 표를 끊는다 (P2).
         if self._restore_prior(now_ms) is None or prior_result is None or result is None:
             self._restore_votes.clear()
             return False
@@ -1951,7 +1951,7 @@ class PatrolController:
             or asked_epoch != self._loc_epoch
             or not 0 <= wall_now_ms - asked_ms <= self.global_result_max_age_ms
         ):
-            # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다 (Codex 검토 P1).
+            # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다 (리뷰 지적).
             if self._edge.changed("global_result_stale", True):
                 LOG.info("global_result_stale", kind=kind, moves=self._move_seq - asked_moves)
             if kind == "reloc":

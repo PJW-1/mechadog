@@ -175,7 +175,7 @@ def match(
         )
     best_score = float(scores.max())
     # 동점(같은 점수)이면 **예측에 가장 가까운** 후보 — 대칭 격자의 첫 후보는 −끝이라
-    # 예전처럼 «먼저 나온 것» 을 고르면 평평한 지형에서 한쪽으로 끌려간다 (Codex 검토 P2).
+    # 예전처럼 «먼저 나온 것» 을 고르면 평평한 지형에서 한쪽으로 끌려간다 (리뷰 지적).
     tied = np.flatnonzero(scores.ravel() >= best_score - 1e-9)
     yaw_index, cand_index_all = np.divmod(tied, cand_x.size)
     distance = (
@@ -415,7 +415,7 @@ def global_match(
     strong = scores[:filled] >= (best_full_score if full_scan_ambiguity else best_score) * 0.9
     far = np.hypot(positions[:filled, 0] - best_pose[0], positions[:filled, 1] - best_pose[1]) > 0.5
     # 같은 자리라도 방위가 30° 넘게 다른 강한 후보는 **경쟁하는 답**이다 — 예전엔 거리만 봐서
-    # 같은 자리의 반대 방향 후보가 빠졌다 (Codex 검토 P1).
+    # 같은 자리의 반대 방향 후보가 빠졌다 (리뷰 지적).
     turned = np.abs((cand_yaws - best_pose[2] + math.pi) % (2 * math.pi) - math.pi) > (
         math.radians(30) + 1e-12
     )

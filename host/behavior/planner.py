@@ -720,7 +720,7 @@ def detect_new_obstacle(
             # 5~7cm). 허용치는 호출자가 `계획 여유 − 몸체 반경` 으로 준다 — 벽에서 그만큼 안의
             # 물체는 벽에서 계획 여유만큼 떨어진 경로와 몸체 반경 이상 떨어진다.
             # ⚠️ 확인된 동적 표시(`blocked`)는 «아는 것» 에 넣지 않는다 — 이미 반경으로 넓힌
-            # 표시에 허용치를 더하면 그 바깥의 새 물체까지 숨긴다 (Codex 교차 검토).
+            # 표시에 허용치를 더하면 그 바깥의 새 물체까지 숨긴다 (리뷰 지적).
             if known_tolerance_m > 0 and _near_known_obstacle(
                 grid, hit, known_tolerance_m, occ_thresh
             ):

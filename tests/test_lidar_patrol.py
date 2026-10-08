@@ -1313,7 +1313,7 @@ def test_tracking_uses_live_escape_from_old_map_clearance() -> None:
 
 
 # ══════════════════════════════════════════════════════════════
-#  측위 신뢰 (2026-10-03 Claude 수정 — 투표 방위·독립성, IMU 방위 사전, 감사 기준 자세)
+#  측위 신뢰 (2026-10-03 수정 — 투표 방위·독립성, IMU 방위 사전, 감사 기준 자세)
 # ══════════════════════════════════════════════════════════════
 
 
@@ -1352,7 +1352,7 @@ def test_imu_rotation_is_measured_from_the_pose_anchor() -> None:
     """회전 예측은 «지금 IMU − 지금 자세를 잡은 때의 IMU» — 정합이 실패해도 누적이 남는다.
 
     예전엔 스캔마다 직전 IMU 를 소비해, 실패한 스캔 동안 돈 20° 를 다음 정합이 잃었다
-    (Codex 검토 P1).
+    (리뷰 지적).
     """
     controller = build(imu_fresh_ms=300)
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
@@ -1454,7 +1454,7 @@ def _pending_reloc(controller, pose=(3.0, 3.0, 0.0), asked_ms=None, imu=None):
 
 
 def test_result_requested_before_trust_expiry_is_dropped() -> None:
-    """만료 전에 요청한 결과가 만료 뒤 도착해도 신뢰를 되살리지 못한다 (Codex 검토 2 P1)."""
+    """만료 전에 요청한 결과가 만료 뒤 도착해도 신뢰를 되살리지 못한다 (리뷰 지적)."""
     controller = build(
         reloc_votes=1, min_match_frac=0.0, trust_expiry_ms=5000, wall_clock_ms=lambda: 1600
     )
@@ -1744,7 +1744,7 @@ def test_hit_next_to_a_known_wall_is_not_a_new_obstacle() -> None:
 
 
 def test_dynamic_marks_do_not_hide_objects_just_outside_them() -> None:
-    """확인된 동적 표시 바로 바깥의 새 물체는 숨기지 않는다 (Codex 교차 검토)."""
+    """확인된 동적 표시 바로 바깥의 새 물체는 숨기지 않는다 (리뷰 지적)."""
     from host.behavior.planner import detect_new_obstacle, mark_obstacle
 
     grid = open_room()
@@ -1996,7 +1996,7 @@ def test_restore_real_worker_picks_home_in_a_symmetric_room() -> None:
 
 
 def test_restore_anchor_uses_move_count_at_pose_time() -> None:
-    """마지막 자세 뒤 MOVE 가 나가고 만료됐으면 그 자세는 «제자리» 가 아니다 (Codex E2 P1)."""
+    """마지막 자세 뒤 MOVE 가 나가고 만료됐으면 그 자세는 «제자리» 가 아니다 (리뷰 지적)."""
     controller = build(reloc_restore_enabled=True, trust_expiry_ms=5000, imu_fresh_ms=300)
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose(HOME, 1000)
@@ -2008,7 +2008,7 @@ def test_restore_anchor_uses_move_count_at_pose_time() -> None:
 
 
 def test_restore_rechecks_anchor_when_the_result_arrives() -> None:
-    """두 표 뒤 결과 도착 전에 IMU 가 돌았다 — 세 번째 결과로 복원하지 않는다 (Codex E2 P1)."""
+    """두 표 뒤 결과 도착 전에 IMU 가 돌았다 — 세 번째 결과로 복원하지 않는다 (리뷰 지적)."""
     controller = _lost_after_verified()
     _restore_round(controller, 7100)
     _restore_round(controller, 8100)
@@ -2034,7 +2034,7 @@ def test_restore_rechecks_anchor_when_the_result_arrives() -> None:
 
 
 def test_restore_failure_breaks_the_vote_streak() -> None:
-    """성공·성공·결과 없음·성공 은 연속 세 표가 아니다 (Codex E2 P2)."""
+    """성공·성공·결과 없음·성공 은 연속 세 표가 아니다 (리뷰 지적)."""
     controller = _lost_after_verified()
     _restore_round(controller, 7100)
     _restore_round(controller, 8100)
@@ -2200,7 +2200,7 @@ def test_goal_hold_reason_separates_arrival_from_blockage() -> None:
 
 
 def test_zone_restricted_global_match_never_returns_outside_the_zone() -> None:
-    """정밀 탐색이 경계 밖으로 번져도 결과는 알려준 범위 안 (Codex 검토 G P1)."""
+    """정밀 탐색이 경계 밖으로 번져도 결과는 알려준 범위 안 (리뷰 지적)."""
     from host.slam.scan_match import global_match, preprocess
 
     controller = build()

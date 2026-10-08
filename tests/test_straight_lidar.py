@@ -201,7 +201,7 @@ def test_roll_sweep_stops_before_a_larger_roll_once_the_robot_tips():
     """기울기 스윕도 25° 규칙 안이다 — 넘어진 뒤 더 큰 roll 을 보내지 않고 비상정지로 넘긴다.
 
     걷기는 매 반복 `fresh()` 로 넘어짐을 보지만 `roll_sweep` 은 POSE roll 을 직접 명령하면서
-    한 번도 보지 않았다(2026-10-05 · #400 Devin 검수).
+    한 번도 보지 않았다(2026-10-05 · #400 검수).
     """
 
     class R:
@@ -234,7 +234,7 @@ def test_roll_sweep_stops_before_a_larger_roll_once_the_robot_tips():
 def test_roll_sweep_stops_when_telemetry_goes_stale():
     """스윕 도중 텔레메트리가 끊기면 낡은 roll 로 검사·표본을 이어 가지 않고 비상정지로 넘긴다.
 
-    `tipped()` 는 마지막 값만 보므로 끊긴 뒤에도 통과했다(2026-10-05 · #400 Devin 검수).
+    `tipped()` 는 마지막 값만 보므로 끊긴 뒤에도 통과했다(2026-10-05 · #400 검수).
     """
 
     class R:
