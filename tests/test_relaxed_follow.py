@@ -21,6 +21,10 @@ from host.report.situation import describe
 __all__ = ["config"]
 
 
+#: 경로 계획을 부르는 모듈 — 순찰기와 협력 객체가 각자 `plan_to` 를 import 한다.
+PLAN_TO = ("host.behavior.patrol.plan_to", "host.behavior.recovery.plan_to")
+
+
 def relaxed(*points, pose=(2, 2, 0), **kwargs):
     c = build(nav_params=NavParams(), **kwargs)
     c.observe_telemetry(Reading(), 1000)
@@ -67,7 +71,7 @@ def test_front_stop_then_continuous_escape_and_forward(entry):
         assert abs(c.commander.intent.fields["angle"]) == c.drive.spin_turn_deg
     tick(c, 4300, entry=entry)
     assert c.commander.intent.fields["step"] > 0
-    assert c._recovery is None and c._avoidance is None
+    assert c.recovery.active is None and c._avoidance is None
 
 
 def test_escape_requires_transmitted_stop():
@@ -108,18 +112,20 @@ def test_old_gates_do_not_run(monkeypatch, gate):
         c._needs_escape = True
         c.grid.cells[c.grid.to_cell(2, 2)] = 5
     elif gate == "memory":
-        c._blockages.remember(c.grid, [(2.37, 2)], 1000)
+        c.recovery.memory.remember(c.grid, [(2.37, 2)], 1000)
     else:
-        c._begin_recovery("test")
+        c.recovery.begin("test")
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("AV에서 기존 회복/계획 관문 실행")
 
-    for method in ("_replan", "_recover", "_start_avoidance", "_begin_recovery", "expire_recovery"):
+    for method in ("_replan", "_start_avoidance", "expire_recovery"):
         monkeypatch.setattr(c, method, forbidden)
+    for method in ("step", "begin", "expire"):
+        monkeypatch.setattr(c.recovery, method, forbidden)
     tick(c, 1000)
     assert c.commander.intent.fields["step"] > 0
-    assert c._recovery is None and c._avoidance is None
+    assert c.recovery.active is None and c._avoidance is None
 
 
 @pytest.mark.parametrize("entry", ["step", "steer"])
@@ -213,7 +219,8 @@ def test_first_approach_ignores_map_clearance(monkeypatch):
     c = relaxed()
     c.cancel_route()
     c.grid.cells[20:70, 60] = 5
-    monkeypatch.setattr("host.behavior.patrol.plan_to", lambda *_a, **_k: pytest.fail("A*"))
+    for target in PLAN_TO:
+        monkeypatch.setattr(target, lambda *_a, **_k: pytest.fail("A*"))
     assert c.start_route(route(RoutePoint(x=4, y=2)), 1000)[0]
     tick(c, 1000)
     assert c.commander.intent.fields["step"] > 0

@@ -79,7 +79,7 @@ def replay(
                     c.observe_obstacle_scan(scan, received)
     c._now_ms = now
     c.pose = (row["pose"][0], row["pose"][1], math.radians(row["pose"][2]))
-    c._blockages.items = [
+    c.recovery.memory.items = [
         Blockage(
             b["id"],
             {grid.to_cell(*p): tuple(p) for p in b["points"]},
@@ -103,11 +103,11 @@ def replay(
     c._goal = goal
     c.plan = Plan(GOAL_LABEL)
     c.phase = Phase.PLANNING
-    c._recovery = Recovery(
+    c.recovery.active = Recovery(
         GOAL_LABEL,
         now - 2100,
         c.pose[2],
-        c._blockages.items[0].id if c._blockages.items else None,
+        c.recovery.memory.items[0].id if c.recovery.memory.items else None,
         scanning=True,
         settling_ms=now - 2000,
     )
@@ -122,14 +122,14 @@ def replay(
         "front_m": c._local_scan.distance(),
         "latest_scan_nearest_m": min(d for _, d in c._local_scan.points),
         "nearest_memory_m": min(
-            (math.dist(c.pose[:2], p) for b in c._blockages.items for p in b.points.values()),
+            (math.dist(c.pose[:2], p) for b in c.recovery.memory.items for p in b.points.values()),
             default=None,
         ),
         "last_sent_moving": c._last_sent_moving,
         "stopped_since_ms": c._stopped_since_ms,
     }
     nearest = min(
-        (p for b in c._blockages.items for p in b.points.values()),
+        (p for b in c.recovery.memory.items for p in b.points.values()),
         key=lambda p: math.dist(c.pose[:2], p),
         default=None,
     )
@@ -157,7 +157,7 @@ def replay(
             "required_width_m": 2 * (c.plan_params.body_radius_m + c.nav_params.corridor_margin_m),
         }
     )
-    c._recover()
+    c.recovery.step()
     result["after_retry"] = {
         "phase": c.phase.value,
         "goal": c.goal,

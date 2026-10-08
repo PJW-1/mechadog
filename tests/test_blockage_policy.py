@@ -65,25 +65,25 @@ def test_persistent_obstacle_detours_after_one_measured_sweep_and_deduplicates()
     c = ready(front=0.6)
     blocked_target(c)
     c._follow()
-    assert c._recovery is not None
+    assert c.recovery.active is not None
     assert c.commander.intent.type_ == "STOP"
     assert not c.take_navigation_events()
     finish_scan(c)
-    assert c._recovery is None
+    assert c.recovery.active is None
     assert c.plan.reachable and c.plan.label == "A"
     events = c.take_navigation_events()
     assert [e["event"] for e in events] == ["obstacle_detour"]
     assert events[0]["judgement"]["severity"] == "low"
     assert events[0]["judgement"]["x"] > c.pose[0]
-    assert c._blockages.items[0].confirmed
-    assert c._blockages.items[0].expires_ms > 100000
-    recovery_id = c._blockages.items[0].id
+    assert c.recovery.memory.items[0].confirmed
+    assert c.recovery.memory.items[0].expires_ms > 100000
+    recovery_id = c.recovery.memory.items[0].id
     from host.behavior.blockage import Recovery
 
-    c._navigation_event("obstacle_detour", Recovery("A", 0, 0, recovery_id))
+    c.recovery.report("obstacle_detour", Recovery("A", 0, 0, recovery_id))
     assert not c.take_navigation_events()
     assert not any(
-        segment_clear(c.grid, c._blockages.mask(c.grid, 0.15), a, b) is False
+        segment_clear(c.grid, c.recovery.memory.mask(c.grid, 0.15), a, b) is False
         for a, b in zip(c.plan.waypoints, c.plan.waypoints[1:], strict=False)
     )
 
@@ -94,7 +94,7 @@ def test_temporary_person_is_cleared_and_resumes_without_cleanup_event():
     c._follow()
     finish_scan(c, front=None)
     assert c.plan.reachable
-    assert not c._blockages.items
+    assert not c.recovery.memory.items
     assert not c.take_navigation_events()
     assert not c.skipped
 
@@ -115,7 +115,7 @@ def test_no_detour_skips_zone_and_does_not_count_as_visited():
     c = ready(front=0.6)
     c.grid.cells[:, 60] = 5
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     finish_scan(c, front=0.3, distance=0.3)
     assert c.skipped == {"A"}
     assert not c.visited and c.stats.zones_visited == 0
@@ -134,47 +134,47 @@ def test_all_zones_blocked_attempts_home_and_waits_once_if_home_unreachable():
     c.skipped = frozenset({"A"})
     c._rebuild_masks()
     c._replan()
-    assert c._returning_home and c.plan.label == HOME_LABEL
+    assert c.recovery.returning_home and c.plan.label == HOME_LABEL
     c._replan()
-    assert c._patrol_wait
+    assert c.recovery.waiting
     assert c.commander.intent.type_ == "STOP"
     assert [e["event"] for e in c.take_navigation_events()] == ["patrol_unavailable"]
-    c._wait_patrol()
+    c.recovery.wait_patrol()
     assert not c.take_navigation_events()
     tick(c, 1100)
-    assert c._patrol_wait
+    assert c.recovery.waiting
 
 
 def test_cleared_blockage_releases_wait_and_retries_skipped_zone():
     c = ready(front=0.6)
     c._home = c.pose[:2]
-    item = c._blockages.remember(c.grid, [(2.6, 2)], 1000)
+    item = c.recovery.memory.remember(c.grid, [(2.6, 2)], 1000)
     assert item is not None
     c.skipped = frozenset({"A"})
-    c._wait_patrol()
+    c.recovery.wait_patrol()
     tick(c, 1100)
-    assert not c._patrol_wait and not c.skipped
+    assert not c.recovery.waiting and not c.skipped
     assert c.plan.reachable
 
 
 def test_no_rotation_without_complete_safe_observation():
     c = ready(front=0.2)
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     tick(c, 1100, front=0.2)
     tick(c, 3200, front=0.2)
     assert c.commander.intent.type_ == "STOP"
-    assert c._recovery is not None and c._recovery.settling_ms == 3200
+    assert c.recovery.active is not None and c.recovery.active.settling_ms == 3200
 
 
 @pytest.mark.parametrize("mode", ["stale", "onboard", "estop"])
 def test_safety_overrides_recovery_scan(mode):
     c = ready(front=0.6)
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     tick(c, 1100, front=0.6)
     tick(c, 3200, front=0.6)
-    assert c._recovery is not None
+    assert c.recovery.active is not None
     if mode == "stale":
         c.localization.last_pose_ms = None
     elif mode == "onboard":
@@ -189,16 +189,16 @@ def test_stop_must_be_sent_before_scan_and_same_pose_does_not_complete_sweep():
     c = ready(front=0.6)
     blocked_target(c)
     c._last_sent_moving = True
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     c._now_ms = 3200
-    c._recover()
-    assert not c._recovery.scanning
+    c.recovery.step()
+    assert not c.recovery.active.scanning
     c._last_sent_moving = False
     c._stopped_since_ms = 1100
     for now in range(3200, 4500, 100):
         tick(c, now, front=0.6)
-    assert c._recovery is not None
-    assert c._recovery.swept_rad == 0
+    assert c.recovery.active is not None
+    assert c.recovery.active.swept_rad == 0
 
 
 def test_blockage_memory_clears_only_observed_cells_and_expires_short_and_long():
@@ -303,7 +303,7 @@ def test_next_zone_is_selected_after_confirmed_skip():
     c.zones.place(2, 4)
     c.grid.cells[:, 60] = 5
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     finish_scan(c, front=0.3, distance=0.3)
     assert c.skipped == {"A"}
     c.observe_obstacle_scan(revolution(10000), 6100)
@@ -343,8 +343,8 @@ def test_route_next_dynamic_blockage_uses_recovery_instead_of_cancelling_route()
     c._next_route_point()
     c._rebuild_masks()
     c._replan()
-    assert c.route_active and c._recovery is not None
-    assert c._recovery.target == "GOAL"
+    assert c.route_active and c.recovery.active is not None
+    assert c.recovery.active.target == "GOAL"
 
 
 def test_grid_origin_change_preserves_world_blockage_until_real_beam_clears():
@@ -364,9 +364,9 @@ def test_grid_origin_change_preserves_world_blockage_until_real_beam_clears():
 def test_recovery_rotation_stalls_at_five_seconds_then_stops():
     c = ready(front=0.6)
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     tick(c, 1100, front=0.6)
     tick(c, 3200, front=0.6)
     tick(c, 8200, front=0.6)
-    assert c._recovery is not None and c._recovery.settling_ms == 8200
+    assert c.recovery.active is not None and c.recovery.active.settling_ms == 8200
     assert c.commander.intent.type_ == "STOP"

@@ -186,7 +186,7 @@ def test_runtime_stops_when_pose_leaves_observed_free_space(
         assert navigator.phase is Phase.LOST
         assert navigator.local_status["reason"] == "replan_waiting_for_settled_scan"
         assert navigator._replan_stop_required
-        assert navigator._recovery is None
+        assert navigator.recovery.active is None
 
 
 @pytest.mark.parametrize("missing", ["stop", "scan", "settled_scan", "fresh_scan"])
@@ -389,7 +389,7 @@ def test_navigation_decision_is_recorded_once_without_escalating(config, clock, 
         runtime, "_record_navigation_event", lambda event, now: records.append((event, now))
     )
     level = runtime.escalation.level
-    navigator._nav_events.append(
+    navigator.recovery.events.append(
         {"event": "obstacle_detour", "judgement": {"x": 2.5, "y": 2.0, "severity": "low"}}
     )
     runtime.tick(clock.ms)
@@ -406,7 +406,7 @@ def test_navigation_decision_without_frame_still_announces(config, clock, monkey
     said = []
     monkeypatch.setattr(speaker_module, "describe", lambda kind, _j: f"{kind} 문장")
     runtime, navigator = _patrolling(config, clock, announcer=said.append)
-    navigator._nav_events.append(
+    navigator.recovery.events.append(
         {
             "event": "zone_skipped",
             "judgement": {"x": 2.5, "y": 2.0, "zone": "A", "severity": "medium"},
@@ -428,7 +428,7 @@ def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock
     runtime.incidents.blackbox = SimpleNamespace(
         record=lambda *args, **kwargs: calls.append((args, kwargs))
     )
-    navigator._nav_events.append(
+    navigator.recovery.events.append(
         {
             "event": "zone_skipped",
             "judgement": {"x": 2.8, "y": 3, "zone": "A", "blockage_id": 7, "severity": "medium"},
@@ -1481,7 +1481,7 @@ def test_navigation_event_reaches_the_history_once_with_its_blackbox_entry(confi
         event_publisher=published.append,
         history=store,
     )
-    navigator._nav_events.append(deepcopy(_BLOCKED))
+    navigator.recovery.events.append(deepcopy(_BLOCKED))
     runtime.tick(clock.ms)
 
     [run], _ = store.runs()
@@ -1496,7 +1496,7 @@ def test_navigation_event_reaches_the_history_without_a_blackbox(config, clock, 
     """⚠️ 블랙박스가 없는 구성에서도 런타임만 돌면 항법 사건이 DB 에 남는다 (ADR-46 결정 4)."""
     store = _history_store(tmp_path)
     runtime, navigator = _patrolling(config, clock, history=store)
-    navigator._nav_events.append(deepcopy(_BLOCKED))
+    navigator.recovery.events.append(deepcopy(_BLOCKED))
     runtime.tick(clock.ms)
 
     rows, total = store.incidents(event="path_blocked")
@@ -1520,7 +1520,7 @@ def test_navigation_event_history_zone_is_a_configured_zone(config, clock, tmp_p
     store = _history_store(tmp_path)
     extra = {"blackbox": EventBlackbox(local)} if with_blackbox else {}
     runtime, navigator = _patrolling(local, clock, history=store, **extra)
-    navigator._nav_events += [
+    navigator.recovery.events += [
         {"event": "zone_skipped", "judgement": {"x": 1.0, "y": 1.0, "zone": "B", "reason": "x"}},
         {"event": "patrol_unavailable", "judgement": {"x": 1.0, "y": 1.0, "zone": "전체"}},
     ]

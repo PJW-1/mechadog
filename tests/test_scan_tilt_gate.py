@@ -148,20 +148,20 @@ def test_tilted_free_rays_do_not_erase_blockage_or_accumulate_live_clear():
     c.observe_map_pose((2, 2, 0), 1000)
     c.localization.verified = True
     c.observe_obstacle_scan(scan(1), 1000)
-    item = c._blockages.remember(c.grid, [(2.5, 2)], 1000)
+    item = c.recovery.memory.remember(c.grid, [(2.5, 2)], 1000)
     assert item is not None
     counts = c._live_clear.counts.copy()
     seen = c._live_clear.seen_ms.copy()
     points = dict(item.points)
     c.observe_telemetry(Reading(pitch=-15), 1100)
     c.observe_obstacle_scan(scan(2), 1100)
-    assert c._blockages.items[0].points == points
+    assert c.recovery.memory.items[0].points == points
     assert np.array_equal(c._live_clear.counts, counts)
     assert np.array_equal(c._live_clear.seen_ms, seen)
     c.observe_telemetry(Reading(), 1500)
     c.observe_map_pose(c.pose, 1500)
     c.observe_obstacle_scan(scan(3), 1500)
-    assert not c._blockages.items
+    assert not c.recovery.memory.items
 
 
 def test_pose_invalidates_inflight_epoch_and_waits_for_first_return_scan():

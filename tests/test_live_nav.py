@@ -259,7 +259,7 @@ def test_blocked_patrol_target_is_preserved_until_recovery_decision():
     c.plan = Plan("A")
     c._replan()
     assert c.plan.label == "A"
-    assert c._recovery is not None
+    assert c.recovery.active is not None
     assert c.commander.intent.type_ == "STOP"
     assert c.stats.cycles == 0 and not c.visited
 

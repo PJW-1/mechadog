@@ -19,18 +19,22 @@ from host.common.protocol import CommandEncoder
 __all__ = ["config"]
 
 
+#: 경로 계획을 부르는 모듈 — 순찰기와 협력 객체가 각자 `plan_to` 를 import 한다.
+PLAN_TO = ("host.behavior.patrol.plan_to", "host.behavior.recovery.plan_to")
+
+
 def test_fully_blocked_single_goto_finishes_idle_and_preserves_event(monkeypatch):
     """AO: only a scan with no body corridor ends the mission as spatially blocked."""
     c = ready(front=0.446)
     c._goal = (4, 2)
     c.plan = Plan(GOAL_LABEL)
-    c._begin_recovery("global_path_blocked")
-    monkeypatch.setattr(
-        "host.behavior.patrol.plan_to",
-        lambda *_args, **_kwargs: Plan(None, fail_reason="start_clearance_blocked"),
-    )
+    c.recovery.begin("global_path_blocked")
+    for target in PLAN_TO:
+        monkeypatch.setattr(
+            target, lambda *_args, **_kwargs: Plan(None, fail_reason="start_clearance_blocked")
+        )
     finish_scan(c, front=0.3, distance=0.3)
-    assert c._recovery is None
+    assert c.recovery.active is None
     assert c.phase is Phase.IDLE
     assert c.goal is None and c.holding_goal and c.goal_hold_reason == "blocked"
     assert c.local_status["reason"] == "goal_unreachable"
@@ -52,8 +56,8 @@ def test_every_recovery_wait_expires_without_movement(gate, entry):
     c = ready(front=0.6)
     c._goal = (4, 2)
     c.plan = Plan(GOAL_LABEL)
-    c._begin_recovery("path_obstacle")
-    recovery = c._recovery
+    c.recovery.begin("path_obstacle")
+    recovery = c.recovery.active
     assert recovery is not None
     c._stopped_since_ms = None if gate in ("stop", "moving") else 1000
     c._last_sent_moving = gate == "moving"
@@ -71,7 +75,7 @@ def test_every_recovery_wait_expires_without_movement(gate, entry):
     now = 1000 + c.nav_params.recovery_scan_timeout_ms
     c.safety.last_seen_ms = now
     getattr(c, entry)(now)
-    assert c._recovery is None
+    assert c.recovery.active is None
     assert c.goal is None and c.goal_hold_reason == "blocked"
     assert c.commander.intent.type_ == "STOP"
     assert len(c.take_navigation_events()) == 1
@@ -81,7 +85,7 @@ def test_missing_stop_has_short_deadline_and_zero_time_is_valid():
     c = ready(front=0.6)
     blocked_target(c)
     c._now_ms = 0
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     c._stopped_since_ms = None
     budget = (
         max(c.drive.settle_delay_ms, c.nav_params.blockage_confirm_ms)
@@ -89,7 +93,7 @@ def test_missing_stop_has_short_deadline_and_zero_time_is_valid():
     )
     assert not c.expire_recovery(budget - 1)
     assert c.expire_recovery(budget)
-    assert c._recovery is None and c.skipped == {"A"}
+    assert c.recovery.active is None and c.skipped == {"A"}
     assert c.commander.intent.type_ == "STOP"
     assert not c.expire_recovery(budget + 1)
 
@@ -97,20 +101,20 @@ def test_missing_stop_has_short_deadline_and_zero_time_is_valid():
 def test_scanning_has_an_absolute_deadline_even_with_continuing_rotation():
     c = ready(front=0.6)
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
-    recovery = c._recovery
+    c.recovery.begin("path_obstacle")
+    recovery = c.recovery.active
     assert recovery is not None
     recovery.scanning = True
     recovery.last_motion_ms = 1000 + c.nav_params.recovery_scan_timeout_ms - 1
     c._last_sent_moving = True
     assert c.expire_recovery(1000 + c.nav_params.recovery_scan_timeout_ms)
-    assert c._recovery is None and c.commander.intent.type_ == "STOP"
+    assert c.recovery.active is None and c.commander.intent.type_ == "STOP"
 
 
 def test_expiry_does_not_release_existing_safety_halt():
     c = ready(front=0.6)
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     c.phase = Phase.HALTED
     assert c.expire_recovery(1000 + c.nav_params.recovery_scan_timeout_ms)
     assert c.phase is Phase.HALTED and c.commander.intent.type_ == "STOP"
@@ -119,12 +123,12 @@ def test_expiry_does_not_release_existing_safety_halt():
 def test_new_goal_and_cancellation_discard_old_recovery():
     c = ready()
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     assert c.goto(3, 3)[0]
-    assert c._recovery is None and not c._replan_stop_required
-    c._begin_recovery("path_obstacle")
+    assert c.recovery.active is None and not c._replan_stop_required
+    c.recovery.begin("path_obstacle")
     c.cancel_goal("test")
-    assert c._recovery is None and not c._replan_stop_required
+    assert c.recovery.active is None and not c._replan_stop_required
 
 
 def test_escape_gate_uses_same_boundary_cells_as_planner(monkeypatch):
@@ -145,10 +149,10 @@ def test_escape_gate_uses_same_boundary_cells_as_planner(monkeypatch):
 def test_runtime_failure_finishes_idle_preserves_result_and_can_restart(config, clock, state):
     runtime, c = _patrolling(config, clock)
     c._goal = (4, 2)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     if state == "SCAN":
         assert runtime._apply(Event.SCAN_DUE, clock.ms)
-    recovery = c._recovery
+    recovery = c.recovery.active
     assert recovery is not None
     deadline = clock.ms + c.nav_params.recovery_scan_timeout_ms
     clock.ms = deadline
@@ -157,7 +161,7 @@ def test_runtime_failure_finishes_idle_preserves_result_and_can_restart(config, 
     events = []
     runtime._record_navigation_event = lambda event, _now: events.append(event)
     lines = runtime.tick(deadline)
-    assert c._recovery is None
+    assert c.recovery.active is None
     assert runtime.behavior.state == "IDLE"
     assert c.goal is None and c.goal_hold_reason == "blocked"
     assert not any(json.loads(line)["type"] == "MOVE" for line in lines)
@@ -182,16 +186,16 @@ def test_runtime_immediate_failed_retry_announces_idle_in_same_tick(config, cloc
     runtime._navigator_resume = False
     c._goal = (4, 2)
     c.plan = Plan(GOAL_LABEL)
-    c._recovery = Recovery(
+    c.recovery.active = Recovery(
         GOAL_LABEL, clock.ms, 0, None, scanning=True, settling_ms=clock.ms - 2000
     )
     c.note_sent([CommandEncoder().encode("STOP")], clock.ms - 2000)
     c._local_scan.received_ms = clock.ms
     c.observe_obstacle_scan(revolution(99999, distance=0.3), clock.ms)
-    monkeypatch.setattr(
-        "host.behavior.patrol.plan_to",
-        lambda *_args, **_kwargs: Plan(None, fail_reason="start_clearance_blocked"),
-    )
+    for target in PLAN_TO:
+        monkeypatch.setattr(
+            target, lambda *_args, **_kwargs: Plan(None, fail_reason="start_clearance_blocked")
+        )
     transitions = runtime._stats.transitions
     lines = runtime.tick(clock.ms)
     assert runtime._stats.transitions == transitions + 1
@@ -203,20 +207,20 @@ def test_runtime_immediate_failed_retry_announces_idle_in_same_tick(config, cloc
 def test_timeout_cannot_release_robot_failsafe(config, clock):
     runtime, c = _patrolling(config, clock)
     c._goal = (4, 2)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     runtime.behavior.note_robot_latch(True)
     runtime._apply(Event.ONBOARD_FAILSAFE, clock.ms)
     clock.advance(c.nav_params.recovery_scan_timeout_ms)
     lines = runtime.tick(clock.ms)
     assert runtime.behavior.state == "FAILSAFE"
-    assert c._recovery is None
+    assert c.recovery.active is None
     assert not any(json.loads(line)["type"] == "MOVE" for line in lines)
 
 
 def test_skipped_patrol_target_cannot_move_until_stop_and_settled_scan():
     c = ready(front=0.6)
     blocked_target(c)
-    c._begin_recovery("path_obstacle")
+    c.recovery.begin("path_obstacle")
     c._last_sent_moving = True
     c._stopped_since_ms = None
     deadline = 1000 + c.nav_params.recovery_scan_timeout_ms
@@ -226,7 +230,7 @@ def test_skipped_patrol_target_cannot_move_until_stop_and_settled_scan():
     c._local_scan.received_ms = deadline
     c.step(deadline)
     assert c.commander.intent.type_ == "STOP"
-    assert c._recovery is None and c.local_status["reason"] == "replan_waiting_for_sent_stop"
+    assert c.recovery.active is None and c.local_status["reason"] == "replan_waiting_for_sent_stop"
     c.note_sent([CommandEncoder().encode("STOP")], deadline)
     c.observe_map_pose(c.pose, deadline + 100)
     c._local_scan.received_ms = deadline + 100

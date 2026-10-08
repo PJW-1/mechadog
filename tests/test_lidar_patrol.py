@@ -776,8 +776,8 @@ def test_blocked_zone_does_not_end_the_cycle_early() -> None:
     controller.localization.last_pose_ms = 1000
     controller.step(1000)
     assert controller.target == "B"  # 먼저 정지·스캔 재확인한다.
-    assert controller._recovery is not None
-    controller._recovery = None
+    assert controller.recovery.active is not None
+    controller.recovery.active = None
     controller.skipped = frozenset({"B"})
     controller.plan = Plan(None)
     controller._replan()
