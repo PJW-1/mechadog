@@ -146,7 +146,7 @@ def replay(
         ),
         "endpoint_clear_exclusion_cells": 2,
     }
-    corridor = c._corridor_to(goal)
+    corridor = c.avoidance.corridor_to(goal)
     result["corridor"] = (
         None
         if corridor is None
@@ -165,19 +165,19 @@ def replay(
         "reason": c.goal_hold_reason,
         "recovery": c.blockage_status["recovery"],
         "local": c.local_status,
-        "avoidance": c._avoidance,
+        "avoidance": c.avoidance.active,
     }
-    if c._avoidance is not None:
+    if c.avoidance.active is not None:
         # 새 정책이 움직이기로 했다면 기록의 정지 궤적을 미래 이동으로 쓰지 않는다.
         # 같은 최신 관측에서 다음 명령 의도까지만 확인한다(실제 송신 없음).
-        c._avoid()
+        c.avoidance.step()
         result["next_intent"] = {
             "type": c.commander.intent.type_,
             "fields": c.commander.intent.fields,
         }
-        if c._avoidance is not None:
+        if c.avoidance.active is not None:
             # 같은 끝점의 좌표계만 선택 방위로 회전한 기하 검사. 실제 후속 센서/궤적 아님.
-            heading = c._avoidance[2]
+            heading = c.avoidance.active[2]
             scan_pose = c._local_scan_pose or c.pose
             points = []
             for a, d in c._local_scan.points:
@@ -188,7 +188,7 @@ def replay(
             scan = scans[-1][1]
             aligned = replace(scan, seq=scan.seq + 1, points=tuple(points))
             c.observe_obstacle_scan(aligned, now)
-            c._avoid()
+            c.avoidance.step()
             result["alignment_geometry_probe"] = {
                 "type": c.commander.intent.type_,
                 "fields": c.commander.intent.fields,

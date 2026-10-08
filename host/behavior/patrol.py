@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from host.behavior.avoidance import LocalAvoidance
 from host.behavior.blockage import Recovery
 from host.behavior.commander import Commander
 from host.behavior.heading import HeadingTracker
@@ -394,9 +395,6 @@ class PatrolController:
     _live_clear: LiveClear = field(init=False)
     _local_scan: LocalScan = field(init=False)
     _dynamic_seen: dict[tuple[int, int], tuple[float, float, int]] = field(default_factory=dict)
-    _local_status: dict[str, Any] = field(default_factory=dict)
-    _avoidance: tuple[float, float, float, int, str] | None = None
-    _needs_escape: bool = False
     _local_scan_pose: Pose | None = None
     _projected_scan_id: tuple[str, str, int] | None = None
     _last_obstacle_event_ms: int | None = None
@@ -411,11 +409,14 @@ class PatrolController:
     localization: LocalizationTrust = field(init=False, repr=False, compare=False)
     #: 막힘 복구 시도·막힘 기억·항법 사건 (`host/behavior/recovery.py`).
     recovery: BlockageRecovery = field(init=False, repr=False, compare=False)
+    #: 국소 판단 기록·진행 중인 회피·출발 탈출 (`host/behavior/avoidance.py`).
+    avoidance: LocalAvoidance = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.heading = HeadingTracker(self)
         self.localization = LocalizationTrust(self)
         self.recovery = BlockageRecovery(self)
+        self.avoidance = LocalAvoidance(self)
         self._live_clear = LiveClear(self.nav_params)
         self._local_scan = LocalScan(self.nav_params)
         self._relaxed_scan = LocalScan(self.nav_params)
@@ -436,7 +437,7 @@ class PatrolController:
 
     @property
     def local_status(self) -> dict[str, Any]:
-        return {**self._local_status, **self.scan_gate.status}
+        return {**self.avoidance.status, **self.scan_gate.status}
 
     @property
     def blockage_status(self) -> dict[str, Any]:
@@ -709,7 +710,7 @@ class PatrolController:
             and self.grid.inside(*self.grid.to_cell(x, y))
             and not self.pose_stale(self._now_ms)
             and self._local_scan.fresh(self._now_ms)
-            and self._corridor_to((x, y)) is not None
+            and self.avoidance.corridor_to((x, y)) is not None
         )
         if not trial.reachable and not can_escape:
             return False, f"지금 자리에서 그곳으로 가는 길이 없다 ({trial.fail_reason})"
@@ -717,7 +718,7 @@ class PatrolController:
             self.cancel_route("replaced", hold=False)
         self._inspection_zone = None
         self.recovery.active = None
-        self._avoidance = None
+        self.avoidance.active = None
         self._replan_stop_required = False
         self._replan_wait_started_ms = None
         self._goal = (float(x), float(y))
@@ -740,7 +741,7 @@ class PatrolController:
     def cancel_goal(self, reason: str) -> None:
         """찍은 목표를 버리고 구역 순찰로 돌아갈 수 있게 한다 (순찰 정지·재시작)."""
         self.cancel_route("stopped", hold=False)
-        self._avoidance = None
+        self.avoidance.active = None
         self.recovery.active = None
         self._replan_stop_required = False
         self._replan_wait_started_ms = None
@@ -857,7 +858,7 @@ class PatrolController:
         self._relaxed_escape_turn = False
         self._route_search_base = None
         self._relaxed_detouring = False
-        self._avoidance = None
+        self.avoidance.active = None
         self.recovery.active = None
         self.recovery.waiting = self.recovery.returning_home = False
         self._route_direct_stopped_ms = None
@@ -1080,7 +1081,7 @@ class PatrolController:
                 self._relaxed_progress = (target, distance, self._now_ms)
                 return False
             self.commander.halt()
-            self._local_decision("stop", "relaxed_stuck_wait", front)
+            self.avoidance.decide("stop", "relaxed_stuck_wait", front)
             return True
         # 정면이 실제로 막혔을 때만 «길 막힘» — 문틀 앞에서 느려진 것을 막힘으로 보지 않는다
         # (2026-10-06 실기: 침실 문 앞 정면 0.56m 에서 오판해 계속 대기).
@@ -1094,7 +1095,7 @@ class PatrolController:
         if self._now_ms - prog[2] >= self.nav_params.relaxed_stuck_ms:
             self._relaxed_stuck = True
             self.commander.halt()
-            self._local_decision("stop", "relaxed_stuck_wait", front)
+            self.avoidance.decide("stop", "relaxed_stuck_wait", front)
             if not self._relaxed_blocked_reported:
                 self.recovery.report("path_blocked", message="길 막힘")
                 self._relaxed_blocked_reported = True
@@ -1103,8 +1104,8 @@ class PatrolController:
 
     def _follow_relaxed(self) -> None:
         """동선만 단순 추종한다. 안전/측위 외에는 복구 관문을 열지 않는다."""
-        self._avoidance = self.recovery.active = None
-        self._needs_escape = self._replan_stop_required = False
+        self.avoidance.active = self.recovery.active = None
+        self.avoidance.needs_escape = self._replan_stop_required = False
         scan = self._relaxed_scan
         front = min_forward_distance(self._local_scan.points, math.radians(30))
         stopped = front is not None and front <= 0.25
@@ -1116,7 +1117,7 @@ class PatrolController:
         if self._route_phase != "moving":
             if stopped:
                 self.commander.halt()
-                self._local_decision("stop", "relaxed_front_stop", front)
+                self.avoidance.decide("stop", "relaxed_front_stop", front)
             else:
                 self._advance_route_arrival()
             return
@@ -1149,7 +1150,7 @@ class PatrolController:
         if scan.received_ms is None or not 0 <= self._now_ms - scan.received_ms <= max_age:
             self.commander.halt()
             self._route_direct_stopped_ms = None
-            self._local_decision("stop", "relaxed_scan_unavailable", front)
+            self.avoidance.decide("stop", "relaxed_scan_unavailable", front)
             return
         heading = math.atan2(point.y - self.pose[1], point.x - self.pose[0])
         scan_yaw = self._relaxed_scan_yaw
@@ -1159,7 +1160,7 @@ class PatrolController:
         )
         if chosen is None:
             self.commander.halt()
-            self._local_decision("stop", "relaxed_path_blocked", front)
+            self.avoidance.decide("stop", "relaxed_path_blocked", front)
             count = round(360 / self.nav_params.gap_bin_deg)
             covered = {round(a / (2 * math.pi / count)) % count for a, _ in scan.points}
             if len(covered) >= 0.9 * count and not self._relaxed_blocked_reported:
@@ -1192,7 +1193,7 @@ class PatrolController:
         error = wrap_pi(scan_yaw + chosen - self.heading.steering_yaw())
         if stopped:
             self.commander.halt()
-            self._local_decision("stop", "relaxed_front_stop", front)
+            self.avoidance.decide("stop", "relaxed_front_stop", front)
             since = self._route_direct_stopped_ms
             actual_stop = self._stopped_since_ms
             if not self._relaxed_escape_turn and (
@@ -1204,7 +1205,7 @@ class PatrolController:
                 return
             self._relaxed_escape_turn = True
             self.commander.drive(0.0, math.copysign(abs(self.drive.spin_turn_deg), error))
-            self._local_decision("turn", "relaxed_escape_turn", front)
+            self.avoidance.decide("turn", "relaxed_escape_turn", front)
             return
         # 2026-10-06 실기: 걸으며 호 조향은 약해서 보행 우편향을 못 이기고(오른쪽으로 밀려 방1 벽 앞
         # 정지), 몸도 기운다(10-04 roll +17~26°). 오차가 8° 넘으면 멈춰서 제자리 회전으로 바로잡고,
@@ -1228,7 +1229,7 @@ class PatrolController:
             if abs(math.degrees(error)) <= 3.0:
                 angle = 0.0
             self.commander.drive(self.drive.step_mm * (0.5 if walking_detour else 1.0), angle)
-        self._local_decision("turn" if spin else "clear", "relaxed_follow", front)
+        self.avoidance.decide("turn" if spin else "clear", "relaxed_follow", front)
 
     @property
     def _route_direct_moving(self) -> bool:
@@ -1263,7 +1264,7 @@ class PatrolController:
             return
         self._route_direct_detour_start = self.pose[:2]
         # AO의 실제 끝점 통로를 먼저 사용하고, 없으면 기존 정지/스캔/우회로 간다.
-        if not self._start_avoidance("lidar_corridor"):
+        if not self.avoidance.start("lidar_corridor"):
             self.recovery.begin("route_direct_obstacle")
 
     def _follow_route_direct(self) -> None:
@@ -1276,7 +1277,7 @@ class PatrolController:
         distance = self._local_scan.distance()
         if distance is None or distance <= self.nav_params.local_stop_m:
             self.commander.halt()
-            self._local_decision("stop", "local_stop_distance", distance)
+            self.avoidance.decide("stop", "local_stop_distance", distance)
             if distance is not None:
                 self._route_direct_obstacle_stop()
             else:
@@ -1297,7 +1298,7 @@ class PatrolController:
             (distance - self.nav_params.local_stop_m)
             / (self.nav_params.local_slow_m - self.nav_params.local_stop_m),
         )
-        self._local_decision("slow" if scale < 1 else "clear", "route_direct", distance)
+        self.avoidance.decide("slow" if scale < 1 else "clear", "route_direct", distance)
         limit = abs(self.drive.spin_turn_deg if self._spinning else self.drive.turn_deg)
         self.commander.drive(
             clamp(steering.step_mm * scale, 0.0, abs(self.drive.step_mm)),
@@ -1610,174 +1611,6 @@ class PatrolController:
         self._route_dwell_until_ms = None
         self.plan, self.phase = Plan(GOAL_LABEL), Phase.PLANNING
 
-    def _local_decision(
-        self, action: str, reason: str, distance: float | None = None, gap_rad: float | None = None
-    ) -> None:
-        self._local_status = {
-            "action": action,
-            "reason": reason,
-            "distance_m": None if distance is None else round(distance, 3),
-            "gap_deg": None if gap_rad is None else round(rad_to_deg(gap_rad), 1),
-            "scan_age_ms": None
-            if self._local_scan.received_ms is None
-            else self._now_ms - self._local_scan.received_ms,
-            "slow_m": self.nav_params.local_slow_m,
-            "stop_m": self.nav_params.local_stop_m,
-            "message": (f"앞 {distance:.2f}m — " if distance is not None else "")
-            + {
-                "clear": "진행",
-                "slow": "감속",
-                "stop": "정지",
-                "avoid": "회피 중",
-                "escape": "출발 탈출",
-            }.get(action, reason),
-        }
-        if self._edge.changed("local_navigation", (action, reason)):
-            LOG.info("local_navigation", **self._local_status)
-
-    def _corridor_to(self, target: tuple[float, float]) -> tuple[float, float, float] | None:
-        scan_pose = self._local_scan_pose or self.pose
-        dx, dy = self.pose[0] - scan_pose[0], self.pose[1] - scan_pose[1]
-        c, s = math.cos(scan_pose[2]), math.sin(scan_pose[2])
-        heading = wrap_pi(
-            math.atan2(target[1] - self.pose[1], target[0] - self.pose[0]) - scan_pose[2]
-        )
-        gap = self._local_scan.corridor(
-            self.plan_params.body_radius_m,
-            heading,
-            self.nav_params.avoidance_m,
-            origin=(dx * c + dy * s, -dx * s + dy * c),
-        )
-        if gap is None:
-            return None
-        return wrap_pi(gap[0] + scan_pose[2] - self.heading.steering_yaw()), gap[1], gap[2]
-
-    def _start_avoidance(self, reason: str) -> bool:
-        if not self._local_scan.fresh(self._now_ms) or self.pose_stale(self._now_ms):
-            self.commander.halt()
-            return False
-        if reason in {"start_escape", "lidar_corridor"}:
-            target = self.plan.label or (
-                GOAL_LABEL
-                if self._goal is not None
-                else next(
-                    (z for z in self.zones.labels if z not in self.visited | self.skipped),
-                    HOME_LABEL,
-                )
-            )
-            gap = self._corridor_to(self._target_xy(target))
-        else:
-            gap = self._local_scan.gap(self.plan_params.body_radius_m)
-        if gap is None:
-            self.commander.halt()
-            self._local_decision("stop", "no_observed_gap", self._local_scan.distance())
-            return False
-        angle, _distance, _ = gap
-        self._avoidance = (
-            self.pose[0],
-            self.pose[1],
-            wrap_pi(self.heading.steering_yaw() + angle),
-            self._now_ms,
-            reason,
-        )
-        self.commander.halt()
-        self._local_decision(
-            "escape" if reason == "start_escape" else "avoid",
-            reason,
-            self._local_scan.distance(),
-            angle,
-        )
-        return True
-
-    def _avoid(self) -> None:
-        assert self._avoidance is not None
-        x, y, heading, started, reason = self._avoidance
-        if (
-            math.hypot(self.pose[0] - x, self.pose[1] - y) >= self.nav_params.avoidance_m
-            or self._now_ms - started >= self.nav_params.avoidance_timeout_ms
-        ):
-            self._avoidance = None
-            self.plan = Plan(self.plan.label)
-            self.phase = Phase.PLANNING
-            self.commander.halt()
-            if self._route_direct_moving:
-                self._route_direct_stopped_ms = None
-                self._route_direct_detour_start = None
-                self._spinning = False
-                self._local_decision("clear", "route_direct_resumed", self._local_scan.distance())
-                return
-            self.stats.replans += 1
-            LOG.info("local_avoidance_replan", reason=reason)
-            if reason in {"start_escape", "lidar_corridor"}:
-                self._require_replan_stop()
-                self._replan()
-            return
-        error = wrap_pi(heading - self.heading.steering_yaw())
-        turn_needed = abs(error) > self.drive.heading_tolerance_rad
-        if reason in {"start_escape", "lidar_corridor"}:
-            scan_pose = self._local_scan_pose or self.pose
-            dx, dy = self.pose[0] - scan_pose[0], self.pose[1] - scan_pose[1]
-            c, s = math.cos(scan_pose[2]), math.sin(scan_pose[2])
-            # 일반 추종 허용각 안에서도 좁은 통로의 실제 직진 원판이 닿으면 더 맞춘다.
-            if not turn_needed and not self._local_scan.corridor_clear(
-                self.plan_params.body_radius_m,
-                wrap_pi(self.heading.steering_yaw() - scan_pose[2]),
-                self.nav_params.avoidance_m,
-                origin=(dx * c + dy * s, -dx * s + dy * c),
-            ):
-                turn_needed = True
-            actual_heading = heading if turn_needed else self.heading.steering_yaw()
-            if not self._local_scan.corridor_clear(
-                self.plan_params.body_radius_m,
-                wrap_pi(actual_heading - scan_pose[2]),
-                self.nav_params.avoidance_m,
-                origin=(dx * c + dy * s, -dx * s + dy * c),
-            ):
-                self._avoidance = None
-                self.commander.halt()
-                self._local_decision("stop", "corridor_closed", self._local_scan.distance(error))
-                self.recovery.begin("corridor_closed")
-                return
-        if turn_needed:
-            self.commander.drive(
-                0,
-                math.copysign(
-                    min(
-                        self.nav_params.avoidance_turn_deg,
-                        self.drive.spin_turn_deg,
-                        rad_to_deg(abs(error)),
-                    ),
-                    error,
-                ),
-            )
-            self._local_decision(
-                "escape" if reason == "start_escape" else "avoid",
-                reason,
-                self._local_scan.distance(error),
-                error,
-            )
-            return
-        distance = self._local_scan.distance()
-        if distance is None or distance < self.nav_params.local_stop_m:
-            self._avoidance = None
-            self.commander.halt()
-            self._local_decision("stop", "local_stop_distance", distance)
-            return
-        scale = min(
-            1.0,
-            max(
-                0.0,
-                (distance - self.nav_params.local_stop_m)
-                / (self.nav_params.local_slow_m - self.nav_params.local_stop_m),
-            ),
-        )
-        self.commander.drive(
-            self.drive.step_mm * min(self.nav_params.avoidance_step_scale, scale), 0
-        )
-        self._local_decision(
-            "escape" if reason == "start_escape" else "avoid", reason, distance, error
-        )
-
     # ── 조작자 ────────────────────────────────────────────────
     def start(self) -> None:
         if self.phase is Phase.IDLE:
@@ -1789,11 +1622,11 @@ class PatrolController:
         """`ESTOP` 전문을 돌려준다. 호출자가 즉시 보낸다."""
         self.phase = Phase.HALTED
         self._halt_reason = reason
-        self._avoidance = None
+        self.avoidance.active = None
         self.recovery.active = None
         self._route_direct_stopped_ms = None
         self._relaxed_escape_turn = False
-        self._local_decision("stop", "estop", self._local_scan.distance())
+        self.avoidance.decide("stop", "estop", self._local_scan.distance())
         self._spinning = False
         self.stats.estops += 1
         self.plan = Plan(None)
@@ -1865,7 +1698,7 @@ class PatrolController:
         elif self.safety.obstacle_active:
             # 온보드가 이미 멈췄다 — 판정을 흉내내지 않고 의도만 정지로 내린다 (아키텍처 1.2).
             self.commander.halt()
-            self._local_decision(
+            self.avoidance.decide(
                 "stop",
                 "onboard_ultrasonic",
                 self.safety.dist_cm / 100 if self.safety.dist_cm is not None else None,
@@ -1905,7 +1738,7 @@ class PatrolController:
         if self.safety.obstacle_active:
             # 온보드가 이미 멈췄다 — 판정을 흉내내지 않고 의도만 정지로 내린다 (아키텍처 1.2).
             self.commander.halt()
-            self._local_decision(
+            self.avoidance.decide(
                 "stop",
                 "onboard_ultrasonic",
                 self.safety.dist_cm / 100 if self.safety.dist_cm is not None else None,
@@ -1980,7 +1813,7 @@ class PatrolController:
 
     def _guard_localization(self, now_ms: int) -> tuple[str, ...]:
         if self._relaxed_route:
-            self._avoidance = self.recovery.active = None
+            self.avoidance.active = self.recovery.active = None
             if not self._relaxed_pose_available(now_ms):
                 self._relaxed_escape_turn = False
                 self._lose("relaxed_pose_stale")
@@ -2030,8 +1863,8 @@ class PatrolController:
             return ()
 
         if not self._local_scan.fresh(now_ms):
-            self._avoidance = None
-            self._local_decision("stop", "scan_unavailable")
+            self.avoidance.active = None
+            self.avoidance.decide("stop", "scan_unavailable")
             self._lose("live_scan_unavailable")
             return ()
         row, col = self.grid.to_cell(*self.pose[:2])
@@ -2040,7 +1873,7 @@ class PatrolController:
             return ()
         # Use the same boundary-cell test as plan_to/escape_start. A single
         # to_cell lookup misses an adjacent blocked cell on an exact grid line.
-        self._needs_escape = not segment_clear(
+        self.avoidance.needs_escape = not segment_clear(
             self.navigation_grid, self.body_blocked, self.pose[:2], self.pose[:2]
         )
         if self.phase is Phase.LOST:
@@ -2053,16 +1886,16 @@ class PatrolController:
             # 온보드/측위/스캔 관문을 다시 통과한 뒤 추종한다.
             self._replan_timeout_hold_ms = now_ms
             self.commander.halt()
-            self._local_decision("stop", "replan_settle_timeout", self._local_scan.distance())
+            self.avoidance.decide("stop", "replan_settle_timeout", self._local_scan.distance())
             LOG.warning("replan_settle_timeout", limit_ms=REPLAN_SETTLE_TIMEOUT_MS)
         self._edge.forget("localization_problem")
         return ()
 
     def _lose(self, reason: str) -> None:
-        self._avoidance = None
+        self.avoidance.active = None
         self._route_direct_stopped_ms = None
         if reason != "live_scan_unavailable":
-            self._local_decision("stop", reason, self._local_scan.distance())
+            self.avoidance.decide("stop", reason, self._local_scan.distance())
         self._reset_route_dwell()
         if self.phase is not Phase.LOST:
             self.stats.lost += 1
@@ -2105,7 +1938,7 @@ class PatrolController:
             # 사람도 지도도 이 자세를 보증한 적이 없다 — 걷지 않는다. 서 있으면 전역 감사가
             # 돌아 확인되거나(재개) 다른 자리로 바로잡는다.
             self.commander.halt()
-            self._local_decision("stop", "pose_unverified", self._local_scan.distance())
+            self.avoidance.decide("stop", "pose_unverified", self._local_scan.distance())
             self._route_direct_stopped_ms = None
             self._reset_route_dwell()
             if self._edge.changed("pose_unverified_hold", True):
@@ -2141,8 +1974,8 @@ class PatrolController:
             self.recovery.step()
             return
 
-        if self._avoidance is not None:
-            self._avoid()
+        if self.avoidance.active is not None:
+            self.avoidance.step()
             return
         if self._route_direct_moving:
             start = self._route_direct_detour_start
@@ -2165,8 +1998,8 @@ class PatrolController:
             if self._route_direct_detour_start is None:
                 self._follow_route_direct()
                 return
-        if self._needs_escape:
-            if not self._start_avoidance("start_escape"):
+        if self.avoidance.needs_escape:
+            if not self.avoidance.start("start_escape"):
                 self.recovery.begin("start_clearance_blocked")
             return
         if self.route_active and self._route_phase != "moving":
@@ -2397,7 +2230,7 @@ class PatrolController:
             distance = min(distance, desired_distance) if distance is not None else desired_distance
         if distance is None or distance < self.nav_params.local_stop_m:
             self.commander.halt()
-            self._local_decision("stop", "local_stop_distance", distance)
+            self.avoidance.decide("stop", "local_stop_distance", distance)
             self.recovery.begin("path_obstacle")
             return
         scale = min(
@@ -2406,7 +2239,7 @@ class PatrolController:
             / (self.nav_params.local_slow_m - self.nav_params.local_stop_m),
         )
         steering = Steering(steering.step_mm * max(0.0, scale), steering.angle_deg)
-        self._local_decision(
+        self.avoidance.decide(
             "slow" if scale < 1 else "clear",
             "local_slow_distance" if scale < 1 else "path_clear",
             distance,

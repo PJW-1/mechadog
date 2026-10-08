@@ -140,7 +140,7 @@ def test_escape_gate_uses_same_boundary_cells_as_planner(monkeypatch):
     assert not segment_clear(c.grid, c.body_blocked, c.pose[:2], c.pose[:2])
     monkeypatch.setattr(c, "_refresh_navigation", lambda _now: None)
     c._guard_localization(1000)
-    assert c._needs_escape
+    assert c.avoidance.needs_escape
     assert c.plan_params.body_radius_m == 0.15
     assert c.nav_params.local_stop_m == 0.25
 

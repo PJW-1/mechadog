@@ -71,7 +71,7 @@ def test_front_stop_then_continuous_escape_and_forward(entry):
         assert abs(c.commander.intent.fields["angle"]) == c.drive.spin_turn_deg
     tick(c, 4300, entry=entry)
     assert c.commander.intent.fields["step"] > 0
-    assert c.recovery.active is None and c._avoidance is None
+    assert c.recovery.active is None and c.avoidance.active is None
 
 
 def test_escape_requires_transmitted_stop():
@@ -109,7 +109,7 @@ def test_old_gates_do_not_run(monkeypatch, gate):
         c._replan_stop_required = True
         c._stopped_since_ms = None
     elif gate == "escape":
-        c._needs_escape = True
+        c.avoidance.needs_escape = True
         c.grid.cells[c.grid.to_cell(2, 2)] = 5
     elif gate == "memory":
         c.recovery.memory.remember(c.grid, [(2.37, 2)], 1000)
@@ -119,13 +119,15 @@ def test_old_gates_do_not_run(monkeypatch, gate):
     def forbidden(*_args, **_kwargs):
         pytest.fail("AV에서 기존 회복/계획 관문 실행")
 
-    for method in ("_replan", "_start_avoidance", "expire_recovery"):
+    for method in ("_replan", "expire_recovery"):
         monkeypatch.setattr(c, method, forbidden)
     for method in ("step", "begin", "expire"):
         monkeypatch.setattr(c.recovery, method, forbidden)
+    for method in ("start", "step"):
+        monkeypatch.setattr(c.avoidance, method, forbidden)
     tick(c, 1000)
     assert c.commander.intent.fields["step"] > 0
-    assert c.recovery.active is None and c._avoidance is None
+    assert c.recovery.active is None and c.avoidance.active is None
 
 
 @pytest.mark.parametrize("entry", ["step", "steer"])

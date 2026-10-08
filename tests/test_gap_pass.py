@@ -77,7 +77,7 @@ def test_goto_accepts_goalward_observed_gap_despite_grid_failure(monkeypatch, re
 def test_grid_blocked_but_raw_corridor_moves_and_replans(monkeypatch):
     c = blocked_retry(monkeypatch, corridor_scan(0.4))
     assert c.goal == (4, 2) and not c.holding_goal and not c.skipped
-    assert c._avoidance is not None and c.recovery.active is None
+    assert c.avoidance.active is not None and c.recovery.active is None
     c.step(1000)
     assert c.commander.intent.type_ == "MOVE"
     assert 0 < c.commander.intent.fields["step"] <= c.drive.step_mm * 0.5
@@ -87,7 +87,7 @@ def test_grid_blocked_but_raw_corridor_moves_and_replans(monkeypatch):
     c.observe_map_pose((2.21, 2, 0), 1100)
     c.observe_obstacle_scan(corridor_scan(0.4, 51), 1100)
     c.step(1100)
-    assert c._avoidance is None and c.phase is Phase.PLANNING
+    assert c.avoidance.active is None and c.phase is Phase.PLANNING
     assert c.commander.intent.type_ == "STOP" and c.goal == (4, 2)
 
 
@@ -123,7 +123,7 @@ def test_passage_between_angle_bins_turns_even_inside_normal_heading_tolerance(m
         tuple((a + tilt, d) for a, d in scan.points),
     )
     c = blocked_retry(monkeypatch, scan)
-    assert c._avoidance is not None
+    assert c.avoidance.active is not None
     c.step(1000)
     assert c.commander.intent.type_ == "MOVE"
     assert c.commander.intent.fields["step"] == 0
@@ -133,7 +133,7 @@ def test_passage_between_angle_bins_turns_even_inside_normal_heading_tolerance(m
 @pytest.mark.parametrize("angle,moves", [(60, True), (20, False)])
 def test_close_side_outside_stop_fan_moves_inside_fan_stops(monkeypatch, angle, moves):
     c = blocked_retry(monkeypatch, corridor_scan(0.45))
-    assert c._avoidance is not None
+    assert c.avoidance.active is not None
     scan = corridor_scan(0.45, 51)
     points = scan.points + ((math.radians(angle), 0.24),)
     c.observe_obstacle_scan(Scan(scan.device_id, scan.boot_id, scan.seq, 1000, points), 1000)

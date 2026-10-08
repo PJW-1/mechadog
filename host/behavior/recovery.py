@@ -106,7 +106,7 @@ class BlockageRecovery:
     def begin(self, reason: str) -> None:
         patrol = self._patrol
         patrol.commander.halt()
-        patrol._avoidance = None
+        patrol.avoidance.active = None
         if self.active is not None:
             return
         target = patrol.plan.label or (
@@ -159,7 +159,7 @@ class BlockageRecovery:
         )
         patrol.phase = Phase.PLANNING
         patrol._require_replan_stop()
-        patrol._local_decision("stop", "blockage_confirm", patrol._local_scan.distance())
+        patrol.avoidance.decide("stop", "blockage_confirm", patrol._local_scan.distance())
 
     def expire(self, now_ms: int) -> bool:
         """Bound every recovery wait, including waits behind safety/FSM gates.
@@ -270,7 +270,7 @@ class BlockageRecovery:
                 patrol.commander.drive(
                     0, min(patrol.drive.spin_turn_deg, patrol.nav_params.avoidance_turn_deg)
                 )
-                patrol._local_decision(
+                patrol.avoidance.decide(
                     "scan", "blockage_rotation_scan", patrol._local_scan.distance()
                 )
                 return
@@ -303,7 +303,7 @@ class BlockageRecovery:
             patrol.plan, patrol.waypoint_index, patrol.phase = retry, 0, Phase.MOVING
             if any(b.id == recovery.blockage_id for b in self.memory.items):
                 self.report("obstacle_detour", recovery, target=recovery.target)
-            patrol._local_decision(
+            patrol.avoidance.decide(
                 "avoid" if recovery.blockage_id is not None else "clear",
                 "detour_planned",
                 patrol._local_scan.distance(),
@@ -311,12 +311,12 @@ class BlockageRecovery:
             return
         # 전역 격자/기억이 막아도 최신 실제 끝점 사이로 몸이 들어가면 우회한다.
         patrol.plan = Plan(recovery.target)
-        if patrol._start_avoidance("lidar_corridor"):
+        if patrol.avoidance.start("lidar_corridor"):
             self.report("obstacle_detour", recovery, target=recovery.target)
             return
         if not patrol._local_scan.complete:
             self.active = recovery
-            patrol._local_decision(
+            patrol.avoidance.decide(
                 "stop", "corridor_scan_incomplete", patrol._local_scan.distance()
             )
             return
@@ -326,7 +326,7 @@ class BlockageRecovery:
         """End a failed attempt without treating a skipped goal as an arrival."""
         patrol = self._patrol
         self.active = None
-        patrol._avoidance = None
+        patrol.avoidance.active = None
         patrol._replan_wait_started_ms = None
         patrol._replan_stop_required = patrol._last_sent_moving or patrol._stopped_since_ms is None
         patrol.commander.halt()
@@ -344,7 +344,7 @@ class BlockageRecovery:
             patrol._goal_hold_reason = "blocked"
             patrol.plan = Plan(None, fail_reason=reason)
             patrol.phase = Phase.IDLE
-            patrol._local_decision("stop", "goal_unreachable", patrol._local_scan.distance())
+            patrol.avoidance.decide("stop", "goal_unreachable", patrol._local_scan.distance())
             self.report("zone_skipped", recovery, zone=GOAL_LABEL, reason=reason)
         else:
             patrol.skipped |= {recovery.target}

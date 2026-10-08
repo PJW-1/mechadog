@@ -194,7 +194,7 @@ def test_scan_loss_stops_motion_and_duplicate_does_not_refresh_age():
 def test_estop_onboard_stop_and_pose_loss_override_escape():
     for mode in ("estop", "onboard", "pose"):
         c = ready()
-        c._start_avoidance("start_escape")
+        c.avoidance.start("start_escape")
         if mode == "estop":
             c.emergency_stop("test")
         elif mode == "onboard":
@@ -207,21 +207,21 @@ def test_estop_onboard_stop_and_pose_loss_override_escape():
 
 def test_gap_turn_forward_then_replan_preserves_target():
     c = ready(front=0.2)
-    c._start_avoidance("path_obstacle")
-    assert c._avoidance is not None
-    heading = c._avoidance[2]
-    c._avoid()
+    c.avoidance.start("path_obstacle")
+    assert c.avoidance.active is not None
+    heading = c.avoidance.active[2]
+    c.avoidance.step()
     assert c.commander.intent.fields["step"] == 0
     assert 0 < abs(c.commander.intent.fields["angle"]) <= 15
     c.observe_map_pose((2, 2, heading), 1100)
     c.observe_obstacle_scan(revolution(2), 1100)
-    c._avoid()
+    c.avoidance.step()
     assert 0 < c.commander.intent.fields["step"] <= c.drive.step_mm * 0.5
     assert c.commander.intent.fields["angle"] == 0
     c.observe_map_pose((2 + 0.21 * math.cos(heading), 2 + 0.21 * math.sin(heading), heading), 1200)
     c._now_ms = 1200
-    c._avoid()
-    assert c._avoidance is None
+    c.avoidance.step()
+    assert c.avoidance.active is None
     assert c.phase is Phase.PLANNING
     assert c.commander.intent.type_ == "STOP"
 

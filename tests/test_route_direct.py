@@ -51,7 +51,7 @@ def test_remembered_wall_does_not_replan_validated_route(monkeypatch, entry):
     tick(c, 1000, front=0.37, entry=entry)
     assert c.commander.intent.fields == {"step": c.drive.step_mm, "angle": 0.0}
     assert c.local_status["reason"] == "route_direct"
-    assert c.recovery.active is None and c._avoidance is None
+    assert c.recovery.active is None and c.avoidance.active is None
     assert c.stats.replans == 0
 
 
@@ -62,11 +62,11 @@ def test_stop_for_three_seconds_then_existing_avoidance(distance, entry):
     tick(c, 1000, front=distance, entry=entry)
     tick(c, 3999, front=distance, entry=entry)
     assert c.commander.intent.type_ == "STOP"
-    assert c._avoidance is None and c.recovery.active is None
+    assert c.avoidance.active is None and c.recovery.active is None
     tick(c, 4000, front=distance, entry=entry)
     assert c.commander.intent.type_ == "STOP"
-    assert c._avoidance is not None
-    assert c._avoidance[-1] == "lidar_corridor"
+    assert c.avoidance.active is not None
+    assert c.avoidance.active[-1] == "lidar_corridor"
     # 전방이 막혀 있을 때는 통로 방향 제자리 회전만 한다.
     tick(c, 4100, front=distance, entry=entry)
     assert c.commander.intent.type_ == "MOVE"
@@ -79,7 +79,7 @@ def test_avoidance_finishes_and_direct_following_resumes(monkeypatch):
     tick(c, 1000, front=0.24)
     tick(c, 4000, front=0.24)
     tick(c, 4100, pose=(2.21, 2.1, 0))
-    assert c._avoidance is None
+    assert c.avoidance.active is None
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("회피 후 A*를 다시 호출했다")
@@ -110,11 +110,11 @@ def test_temporary_obstacle_and_pose_loss_reset_stop_timer():
     c.step(4700)  # 실제 측위 공백은 회피 근거가 될 수 없다.
     assert c.phase is Phase.LOST
     tick(c, 7000, front=0.24)
-    assert c._avoidance is None and c.recovery.active is None
+    assert c.avoidance.active is None and c.recovery.active is None
     tick(c, 9999, front=0.24)
-    assert c._avoidance is None
+    assert c.avoidance.active is None
     tick(c, 10000, front=0.24)
-    assert c._avoidance is not None
+    assert c.avoidance.active is not None
 
 
 def test_stop_timer_requires_actual_sent_stop():
@@ -126,12 +126,12 @@ def test_stop_timer_requires_actual_sent_stop():
         c.observe_obstacle_scan(revolution(now, front=0.24), now)
         c.step(now)
     assert c.commander.intent.type_ == "STOP"
-    assert c._avoidance is None and c.recovery.active is None
+    assert c.avoidance.active is None and c.recovery.active is None
     c.note_sent(c.commander.tick(4100), 4100)
     tick(c, 7099, front=0.24)
-    assert c._avoidance is None
+    assert c.avoidance.active is None
     tick(c, 7100, front=0.24)
-    assert c._avoidance is not None
+    assert c.avoidance.active is not None
 
 
 @pytest.mark.parametrize("entry", ["step", "steer"])
@@ -264,4 +264,4 @@ def test_unverified_pose_cannot_arm_ultrasonic_avoidance(entry):
     tick(c, 5000, onboard=True, entry=entry)
     assert c.commander.intent.type_ == "STOP"
     assert c._route_direct_stopped_ms is None
-    assert c._avoidance is None and c.recovery.active is None
+    assert c.avoidance.active is None and c.recovery.active is None
