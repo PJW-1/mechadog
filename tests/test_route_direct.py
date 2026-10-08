@@ -162,7 +162,7 @@ def test_existing_safety_gates_override_direct_following(gate):
         c.safety.last_seen_ms = -3001
     c.step(1100)
     assert c.commander.intent.type_ == "STOP"
-    assert c._route_direct_stopped_ms is None
+    assert c.route.direct_stopped_ms is None
 
 
 def test_no_observed_corridor_uses_existing_recovery_after_delay():
@@ -237,11 +237,11 @@ def test_current_pose_to_first_point_must_be_a_valid_line():
 
 def test_astar_detour_returns_to_direct_when_goalward_sweep_is_clear():
     c = direct()
-    c._route_direct_detour_start = (2, 2)
+    c.route.direct_detour_start = (2, 2)
     c.plan = Plan(GOAL_LABEL, ((2, 2), (3, 3), (4, 2)), 3, effective=(4, 2))
     c.phase = Phase.MOVING
     tick(c, 1100, pose=(2.21, 2, 0))
-    assert c._route_direct_detour_start is None
+    assert c.route.direct_detour_start is None
     assert c.local_status["reason"] == "route_direct"
     assert c.commander.intent.fields == {"step": c.drive.step_mm, "angle": 0.0}
 
@@ -250,7 +250,7 @@ def test_route_unavailable_return_home_does_not_restart_direct_point():
     c = direct()
     c._home = (1, 2)
     c.recovery.return_home()
-    assert not c._route_direct_moving
+    assert not c.route.direct_moving
     tick(c, 1100)
     assert c.plan.label == "HOME"
 
@@ -263,5 +263,5 @@ def test_unverified_pose_cannot_arm_ultrasonic_avoidance(entry):
     tick(c, 1000, onboard=True, entry=entry)
     tick(c, 5000, onboard=True, entry=entry)
     assert c.commander.intent.type_ == "STOP"
-    assert c._route_direct_stopped_ms is None
+    assert c.route.direct_stopped_ms is None
     assert c.avoidance.active is None and c.recovery.active is None

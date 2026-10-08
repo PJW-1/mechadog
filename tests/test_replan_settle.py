@@ -125,7 +125,7 @@ def test_timeout_does_not_bypass_onboard_obstacle(entry):
 def test_mask_update_cannot_change_lost_to_planning_during_spin():
     c = direct()
     tick(c, 1000, pose=(2, 2, math.pi))
-    c._route_direct_detour_start = (2, 2)
+    c.route.direct_detour_start = (2, 2)
     c.phase = Phase.LOST
     c.grid.cells[c.grid.to_cell(2.16, 2)] = 5
     c._rebuild_masks()
@@ -136,7 +136,7 @@ def test_mask_update_cannot_change_lost_to_planning_during_spin():
 def test_detour_still_replans_when_static_mask_blocks_start():
     c = direct()
     tick(c, 1000, pose=(2, 2, math.pi))
-    c._route_direct_detour_start = (2, 2)
+    c.route.direct_detour_start = (2, 2)
     c.grid.cells[c.grid.to_cell(2.16, 2)] = 5
     c._rebuild_masks()
     assert c._replan_stop_required

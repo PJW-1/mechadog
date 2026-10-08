@@ -321,10 +321,10 @@ def test_explicit_route_skips_blocked_zone_and_retries_on_next_lap():
     )
     assert c.start_route(route, 1000)[0]
     c.skipped = frozenset({"A"})
-    c._skip_route_point()
+    c.route.skip_point()
     assert c.route_status()["point_index"] == 1
     assert c.goal == (2, 4) and c.route_active
-    c._next_route_point()
+    c.route.next_point()
     assert c.route_status()["cycle"] == 2
     assert c.route_status()["point_index"] == 0
     assert not c.skipped and c.goal == (4, 2)
@@ -340,7 +340,7 @@ def test_route_next_dynamic_blockage_uses_recovery_instead_of_cancelling_route()
     )
     assert c.start_route(route, 1000)[0]
     c.grid.cells[:, 60] = 5
-    c._next_route_point()
+    c.route.next_point()
     c._rebuild_masks()
     c._replan()
     assert c.route_active and c.recovery.active is not None

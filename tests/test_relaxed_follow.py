@@ -179,7 +179,7 @@ def test_tilt_keeps_last_normal_scan_and_does_not_restart_dwell():
     c = relaxed(RoutePoint(x=2, y=2, aim_deg=90, dwell_s=1, label="A"))
     tick(c, 1000)
     tick(c, 1100, pose=(2, 2, math.pi / 2))
-    assert c._route_phase == "dwell"
+    assert c.route.stage == "dwell"
     normal = c._relaxed_scan.last_id
     c.observe_telemetry(Reading(pitch=15), 1500)
     c.observe_obstacle_scan(revolution(1500), 1500)
@@ -188,7 +188,7 @@ def test_tilt_keeps_last_normal_scan_and_does_not_restart_dwell():
     assert c._relaxed_scan.last_id == normal
     assert c.route_status()["dwell_remaining_s"] == pytest.approx(0.6)
     c.step(2100)
-    assert c._route_status == "completed"
+    assert c.route.status == "completed"
 
 
 def test_passed_point_finishes_aim_dwell_inspection_without_returning():
@@ -197,16 +197,16 @@ def test_passed_point_finishes_aim_dwell_inspection_without_returning():
     c.wait_for_inspection = lambda _label: waiting
     tick(c, 1000, pose=(2.6, 2, 0))
     tick(c, 1100, pose=(3.6, 2, 0))
-    assert c._route_phase == "aiming"
+    assert c.route.stage == "aiming"
     tick(c, 1200, pose=(3.6, 2, 0))
     assert c.commander.intent.fields["step"] == 0
     tick(c, 1300, pose=(3.6, 2, math.pi / 2))
     tick(c, 2300, pose=(3.6, 2, math.pi / 2))
-    assert c._route_phase == "inspection"
+    assert c.route.stage == "inspection"
     assert c.inspection_ready("A", 2300)
     waiting = False
     tick(c, 2400, pose=(3.6, 2, math.pi / 2))
-    assert c._route_status == "completed"
+    assert c.route.status == "completed"
     assert c.stats.zones_visited == 1
 
 
@@ -214,7 +214,7 @@ def test_projection_does_not_skip_from_far_side():
     c = relaxed(RoutePoint(x=3, y=2))
     tick(c, 1000, pose=(2.6, 2, 0))
     tick(c, 1100, pose=(3.6, 3, 0))
-    assert c._route_phase == "moving"
+    assert c.route.stage == "moving"
 
 
 def test_first_approach_ignores_map_clearance(monkeypatch):

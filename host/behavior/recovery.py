@@ -292,7 +292,7 @@ class BlockageRecovery:
             patrol.navigation_grid,
             patrol.blocked,
             patrol.plan_params,
-            snap_m=0.0 if patrol.route_active else 0.6,
+            snap_m=0.0 if patrol.route.active else 0.6,
             body_blocked=patrol.body_blocked,
             costs=patrol.navigation_costs,
         )
@@ -332,12 +332,12 @@ class BlockageRecovery:
         patrol.commander.halt()
         if recovery.target == HOME_LABEL:
             self.wait_patrol()
-        elif patrol.route_active:
-            point = patrol._route_point()
-            zone = point.label or f"지점 {patrol._route_index + 1}"
+        elif patrol.route.active:
+            point = patrol.route.point()
+            zone = point.label or f"지점 {patrol.route.index + 1}"
             patrol.skipped |= {zone}
             self.report("zone_skipped", recovery, zone=zone, reason=reason)
-            patrol._skip_route_point()
+            patrol.route.skip_point()
         elif patrol._goal is not None:
             patrol._goal = None
             patrol._goal_hold = True

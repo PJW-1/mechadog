@@ -123,7 +123,7 @@ def test_search_turns_both_ways_with_camera_pauses_and_timeout():
     assert c.commander.intent.fields["angle"] < 0
     assert not c.inspection_ready("A", 4100), "구역 점검이 탐색을 가로채지 않는다"
     tick(c, 9100)
-    assert c._route_status == "completed"
+    assert c.route.status == "completed"
 
 
 @pytest.mark.parametrize("enabled,extent", [(False, 60), (True, None), (True, 0)])
@@ -131,7 +131,7 @@ def test_search_requires_both_switch_and_point_opt_in(enabled, extent):
     c = search_controller(enabled=enabled, extent=extent)
     tick(c, 2100)
     assert c.commander.intent.type_ == "STOP"
-    assert c._route_search_base is None
+    assert c.route.search_base is None
 
 
 def test_person_response_finishes_search_on_patrol_resume():
@@ -139,7 +139,7 @@ def test_person_response_finishes_search_on_patrol_resume():
     tick(c, 2100)
     # Runtime의 ALERT→PATROL 훅이 호출하는 기존 resume 경로다.
     c.resume()
-    assert c._route_status == "completed"
+    assert c.route.status == "completed"
     assert c.commander.intent.type_ == "STOP"
 
 
@@ -152,7 +152,7 @@ def test_runtime_search_yields_to_person_found_and_ppe_judgement(config, clock):
     )[0]
     for _ in range(3):
         _camera_aim_tick(runtime, navigator, vision, clock, yaw=math.pi / 2)
-    assert navigator._route_phase == "search"
+    assert navigator.route.stage == "search"
     assert runtime.behavior.state == "PATROL"
     clock.advance(100)
     navigator.observe_map_pose((1, 1, math.pi / 2), clock.ms)
@@ -338,7 +338,7 @@ def test_box_detour_walks_into_free_side_then_returns_to_goal(distance, width, s
     tick(c, 1500, pose=(4, 2, 0))
     tick(c, 1600, pose=(4, 2, 0))
     tick(c, 1700, pose=(4, 2, 0))
-    assert c._route_status == "completed"
+    assert c.route.status == "completed"
 
 
 def test_detour_notice_requires_angle_and_near_target_obstacle(monkeypatch):

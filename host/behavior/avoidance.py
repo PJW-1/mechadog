@@ -136,9 +136,9 @@ class LocalAvoidance:
             patrol.plan = Plan(patrol.plan.label)
             patrol.phase = Phase.PLANNING
             patrol.commander.halt()
-            if patrol._route_direct_moving:
-                patrol._route_direct_stopped_ms = None
-                patrol._route_direct_detour_start = None
+            if patrol.route.direct_moving:
+                patrol.route.direct_stopped_ms = None
+                patrol.route.direct_detour_start = None
                 patrol._spinning = False
                 self.decide("clear", "route_direct_resumed", patrol._local_scan.distance())
                 return

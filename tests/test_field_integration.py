@@ -77,7 +77,7 @@ def test_route_hint_waits_for_votes_then_repeats_full_aim_and_dwell():
     navigator.step(1200)
     assert navigator.phase is Phase.LOST
     assert navigator.commander.intent.type_ == "STOP"
-    assert navigator._route_dwell_until_ms is None
+    assert navigator.route.dwell_until_ms is None
 
     result = MatchResult((1.0, 1.0, 0.0), 100)
     for now in (1300, 1400):
