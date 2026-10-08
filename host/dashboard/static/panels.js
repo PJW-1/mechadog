@@ -362,7 +362,7 @@ export class OperationalPanels {
  // 사진 없는 사건은 ID 를 알 수 없어 같은 종류로 좁혀 연다.
  openHistoryFor(event){
   this.historyFilters=HISTORY_FILTERS();this.historyQuery='';
-  if(event.entry)this.historyFocus=event.robot+'_'+event.entry;else this.historyFilters.event=event.event;
+  if(event.entry)this.historyFocus=(event.historyRobot||event.robot)+'_'+event.entry;else this.historyFilters.event=event.event;
   this.onNavigate('history');
  }
  // ── 음성 중계 (WBS 4.7.14) ───────────────────────────────────────
