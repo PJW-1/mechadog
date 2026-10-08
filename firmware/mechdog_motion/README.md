@@ -611,7 +611,7 @@ python tools/ops/mechdog_command.py 192.168.1.100 watchdog --step 10 --duration 
 ```
 
 `move`는 10Hz로 명령을 보내고 마지막에 `STOP`을 보낸다. `watchdog`은 마지막
-`MOVE` 뒤 송신을 450ms 중단하고 SAFE 잠금과 failsafe 카운터 증가를 확인한다.
+`MOVE` 뒤 송신을 0.8초 중단하고(명령 타임아웃 600ms + 텔레메트리 두 주기) SAFE 잠금과 failsafe 카운터 증가를 확인한다.
 
 ## 2.1.3 센서 로그 확인 도구
 
