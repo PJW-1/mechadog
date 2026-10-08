@@ -42,6 +42,7 @@ from host.behavior.nav_requests import NavRequests
 from host.behavior.path_cause import PathCause
 from host.behavior.patrol import PatrolController
 from host.behavior.ppe_judge import PpeJudge
+from host.behavior.scan_relay import ScanRelay
 from host.behavior.speaker import Speaker
 from host.behavior.track_controller import TrackController
 from host.behavior.voice_auth import VoiceAuthWindow
@@ -69,7 +70,6 @@ from host.slam.settings import maps_dir
 from host.telemetry.receiver import Ingested, TelemetryReceiver
 from host.telemetry.ros2_relay import OdomSender, send
 from host.telemetry.session_recorder import SessionRecorder
-from host.vision.frame_collector import collector_from_config
 from host.vision.ppe_detector import ppe_payload
 from host.vision.vlm_reader import VlmReader
 from host.vision.vlm_session import build_session_factory
@@ -234,10 +234,6 @@ class Runtime:
         self._navigator = navigator
         #: ROS2 컨테이너로 가는 ODOM (`--lidar-device`, 보행 실측이 있는 기체만). 없으면 보내지 않는다.
         self._odom = odom
-        #: 대시보드로 가는 측위 포즈 — 지도 폴더의 `pose_frame.json` 이 있을 때만
-        #: 만든다 (`PoseOut.of`). 변환 없는 원시 순찰 좌표는 뷰어에서 엉뚱한 자리에
-        #: 찍히므로 «모른다» 가 낫다.
-        self._pose_out = pose_out
         #: 실기 동시 기록 (`--record-dir`). 없으면 기록하지 않는다.
         self._recorder = recorder
         #: 보행 잠금 (`--motion-lock`) — 로봇으로는 `MOTION_LOCK_TYPES` 만 나간다. 펌웨어는 명령을
@@ -246,9 +242,6 @@ class Runtime:
         self._motion_lock = motion_lock
         self._record_frame_ms = record_frame_ms
         self._last_frame_saved_ms: int | None = None
-        self._recorded_nav_phase: str | None = None
-        #: 스캔 공급자 — `main()` 이 `LidarFeed.take` 를 붙인다 (`attach_scans`).
-        self._take_scan: Callable[[], Scan | None] | None = None
         #: `PATROL` 에 다시 들어왔다 — 다음 순찰 시퀀스가 길 찾기를 다시 푼다 (`_patrol_sequence`).
         self._navigator_resume = False
         self._navigator_resume_from_inspection = False
@@ -306,7 +299,6 @@ class Runtime:
         if self._ppe_test and (not motion_lock or not self._mission.enables("ppe")):
             raise ConfigError("PPE 시험은 공장 모드와 보행 잠금이 필요하다")
         self._vision_records_in_worker = False
-        self._collector = collector_from_config(config, device_id)
         if self._vision is not None and hasattr(self._vision, "set_ppe_enabled"):
             self._vision.set_ppe_enabled(self._mission.enables("ppe"))
         # 경비 추종 (FR-3.5 · ADR-40). 쓰러짐 감시는 아래에서 만들므로 의심 여부는 호출 때 묻는다.
@@ -387,8 +379,6 @@ class Runtime:
             announcer=announcer,
             latest=lambda: self._vision.latest() if self._vision is not None else None,
         )
-        #: 항법 설정 중 런타임이 직접 읽는 스위치(`publish_new_obstacles` 등).
-        self._config_nav = dict(config.get("nav") or {})
         self._last_telemetry: dict[str, Any] = {
             "device_id": device_id,
             "available": False,
@@ -533,6 +523,21 @@ class Runtime:
             ),
             announce=lambda kind, judgement: self._speaker.announce(kind, judgement),
             others_waiting=lambda: self._fall.waiting or self._zone_inspector.waiting,
+        )
+        # LiDAR 스캔 중계 — 측위·위치 전파·측위 기록·새 장애물(막힘 기록·학습 프레임 수집).
+        # 대시보드 포즈(`pose_out`)는 지도 폴더의 `pose_frame.json` 이 있을 때만 만든다
+        # (`PoseOut.of`). 변환 없는 원시 순찰 좌표는 뷰어에서 엉뚱한 자리에 찍히므로 «모른다» 가 낫다.
+        self._scan_relay = ScanRelay(
+            config,
+            device_id=device_id,
+            navigator=lambda: self._navigator,
+            behavior=self._behavior,
+            zone_ppe=self._zone_ppe,
+            zone_inspector=self._zone_inspector,
+            path_cause=self._path_cause,
+            latest=lambda: self._vision.latest() if self._vision is not None else None,
+            pose_out=pose_out,
+            recorder=recorder,
         )
         if isinstance(navigator, PatrolController):
             navigator.wait_for_inspection = self._awaits_zone_inspection
@@ -799,7 +804,7 @@ class Runtime:
         if result is not None and self._recorder is not None:
             self._record_vision(result, now_ms)
         if result is not None:
-            self._collect_clear(result, now_ms)
+            self._scan_relay.collect_clear(result, now_ms)
             self._ppe_judge.forget_lost(result, now_ms)
             self._summary.count("detections", len(result.detections))
             self._behavior.note_vision(result.completed_ms)
@@ -1018,156 +1023,16 @@ class Runtime:
         self._ppe_judge.alert_sequence(commander, now_ms)
 
     def note_pose(self, pose: tuple[float, float, float], now_ms: int) -> None:
-        """측위의 최신 위치 `(x m, y m, yaw rad)` 를 받는다 (`ZoneInspector.note_pose`).
-
-        LiDAR 길 찾기(`--lidar-device`)의 스캔 정합이 `_observe_scan` 에서 부른다.
-        그것이 없으면 아무도 부르지 않고 구역 도착이 일어나지 않는다.
-        """
-        self._zone_ppe.note_pose(pose, now_ms)
-        self._zone_inspector.note_pose(pose, now_ms)
-        if self._pose_out is not None:
-            # 대시보드 실시간 위치 — 송신 실패는 순찰을 늦추지 않는다 (`PoseOut.send`).
-            self._pose_out.send(
-                pose,
-                moving=self._behavior.state == "PATROL",
-                score_frac=getattr(self._navigator, "match_frac", None),
-                zone=self._zone_ppe.current_zone(now_ms),
-                verified=bool(getattr(self._navigator, "pose_verified", False)),
-            )
+        """측위의 최신 위치를 받는다 (`ScanRelay.note_pose`)."""
+        self._scan_relay.note_pose(pose, now_ms)
 
     def attach_scans(self, take: Callable[[], Scan | None]) -> None:
-        """최신 스캔 공급자를 붙인다 (`LidarFeed.take`). 길 찾기가 없으면 쓰지 않는다."""
-        self._take_scan = take
-
-    def _observe_scan(self, now_ms: int) -> None:
-        """최신 스캔으로 측위하고, 자세가 갱신됐으면 구역 점검에 넘긴다.
-
-        ⚠️ **루프 스레드에서만 길 찾기 상태를 바꾼다.** 수신 스레드는 스캔을 칸에
-        넣고 전방 위험만 즉시 세운다 (`host/telemetry/lidar_feed.py`).
-        """
-        if self._navigator is None or self._take_scan is None:
-            return
-        scan = self._take_scan()
-        if scan is not None:
-            navigator = self._navigator
-            _obs_started = time.perf_counter()
-            navigator.observe_scan(scan, now_ms)
-            _obs_ms = (time.perf_counter() - _obs_started) * 1000
-            if _obs_ms > 300:
-                LOG.warning("observe_scan_slow", ms=round(_obs_ms, 1), points=len(scan.points))
-            updated = navigator.pose_ms == now_ms
-            if updated:
-                self.note_pose(navigator.pose, now_ms)
-            elif (
-                self._pose_out is not None
-                and navigator.pose_ms is not None
-                and navigator.pose_stale(now_ms)
-            ):
-                # 약한 정합을 조용히 삼키지 않는다 — 마지막 자세를 LOST 로 표시해
-                # 대시보드가 낡은 위치를 신선한 것처럼 보여주지 않게 한다.
-                self._pose_out.send(
-                    navigator.pose,
-                    moving=False,
-                    lost=True,
-                    score_frac=getattr(navigator, "match_frac", None),
-                    zone=self._zone_ppe.current_zone(now_ms),
-                    verified=False,
-                )
-            if self._recorder is not None:
-                x, y, yaw = navigator.pose
-                self._recorder.record(
-                    "localization",
-                    at_ms=now_ms,
-                    scan_seq=scan.seq,
-                    scan_boot=scan.boot_id,
-                    points=len(scan.points),
-                    updated=updated,
-                    score_frac=round(navigator.match_frac, 3),
-                    lost=navigator.pose_stale(now_ms),
-                    verified=navigator.pose_verified,
-                    zone=self._zone_ppe.current_zone(now_ms),
-                    pose=[round(x, 4), round(y, 4), round(yaw, 5)],
-                    phase=navigator.phase.value,
-                    target=navigator.target,
-                    scan_gate=navigator.scan_gate.status,
-                )
-        if self._recorder is not None and self._navigator.phase.value != self._recorded_nav_phase:
-            self._recorded_nav_phase = self._navigator.phase.value
-            self._recorder.record(
-                "navigator_phase",
-                at_ms=now_ms,
-                phase=self._recorded_nav_phase,
-                halt_reason=self._navigator.halt_reason,
-                target=self._navigator.target,
-            )
-        # 지도에 없던 새 끝점을 모두 «통로 막힘» 사건으로 내면 시연 중 사람·의자마다 방송이 나간다
-        # (현장 10-06). 원인 판독(ADR-45)은 `nav.publish_new_obstacles` 로 켤 때만 낸다.
-        publish = bool(self._config_nav.get("publish_new_obstacles", False))
-        for hit in self._navigator.take_new_obstacles():
-            self._collect_blocked(hit, now_ms)
-            if publish:
-                self._record_path_blocked(hit, now_ms)
+        """최신 스캔 공급자를 붙인다 (`ScanRelay.attach`)."""
+        self._scan_relay.attach(take)
 
     def _record_navigation_event(self, event: dict[str, Any], now_ms: int) -> None:
         # 호출 때 찾는다 — 시험이 이 자리를 대역으로 바꿔 끼운다.
         self._incidents.record_navigation_event(event, now_ms)
-
-    def _collect_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
-        """LiDAR 막힘 확정 프레임을 VLM 학습용으로 모은다 (4.8.7 · 꺼져 있으면 아무 일 없다).
-
-        프레임이 없어도 수집기에 알린다 — 막힘 사건 자체로 clear 보류 시간을 건다.
-        """
-        if not self._collector.enabled:
-            return
-        result = self._vision.latest() if self._vision is not None else None
-        self._collector.note_blocked(
-            now_ms,
-            result.jpeg if result is not None else None,
-            hit,
-            cast(PatrolController, self._navigator).target,
-            self._behavior.state,
-            frame_ms=result.frame_received_ms if result is not None else None,
-            frame_seq=result.frame_seq if result is not None else None,
-        )
-
-    def _collect_clear(self, result: VisionResult, now_ms: int) -> None:
-        """막힘 없는 순찰 프레임을 VLM 학습용으로 모은다. 근거리 반사 정지·장애물 확인 중엔 거른다."""
-        if not self._collector.enabled or self._navigator is None:
-            return
-        self._collector.note_clear(
-            now_ms,
-            result.jpeg,
-            state=self._behavior.state,
-            obstacle_active=self._navigator.safety.obstacle_active,
-            pending=self._navigator.obstacle_pending,
-            frame_ms=result.frame_received_ms,
-            frame_seq=result.frame_seq,
-        )
-
-    def _record_path_blocked(self, hit: tuple[float, float], now_ms: int) -> None:
-        """이동 경로가 새 장애물로 막혔다 — **가벼운 경고만** 남기고 순찰은 이어 간다.
-
-        단계·FSM 은 바꾸지 않는다. 재계획(A*)이 돌아갈 길을 찾고, 못 찾으면 컨트롤러가
-        재확인 뒤 그 구역을 이번 사이클에서 버린다 (`PatrolController._replan`).
-
-        ⚠️ **순찰 중일 때만 기록한다.** 추적·경보 중에는 앞에 선 사람이 신규 장애물로
-        확정되는데, 그것은 «경로가 막혔다» 가 아니다. 표시 자체는 남아 재계획이 피해 간다.
-
-        기록은 `PathCause` 가 그 프레임의 원인 판독(«무너진 물건인가» · ADR-45)을 실어 한 번
-        남긴다 — 판독을 걸 수 있으면 답이나 `vision.vlm.path_cause_wait_ms` 까지 미룬다.
-        """
-        judgement: dict[str, Any] = {
-            "x": round(hit[0], 2),
-            "y": round(hit[1], 2),
-            "target": cast(PatrolController, self._navigator).target,
-            "source": "lidar",
-        }
-        if self._behavior.state != "PATROL":
-            LOG.info("path_obstacle_ignored", state=self._behavior.state, **judgement)
-            return
-        LOG.warning("path_blocked", **judgement)
-        result = self._vision.latest() if self._vision is not None else None
-        self._path_cause.blocked(judgement, result, now_ms)
 
     def _observe_fallen(self, result: VisionResult, now_ms: int) -> None:
         """누움 후보로 쓰러짐 의심에 든다.
@@ -1387,7 +1252,7 @@ class Runtime:
         self._ppe_judge.note_time(now_ms)
         self._drain_confirmations(now_ms)
         # 측위를 비전보다 앞에 둔다 — 구역 점검(`_poll_vision`)이 이번 틱의 자세로 도착을 본다.
-        self._observe_scan(now_ms)
+        self._scan_relay.observe(now_ms)
         if isinstance(self._navigator, PatrolController):
             self._navigator.expire_recovery(now_ms)
             self._settle_unreachable_goal(now_ms)
