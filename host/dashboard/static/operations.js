@@ -407,6 +407,14 @@ export class Operations {
   if(name==='escalation_changed'&&(!slot.lastEscalation||seq>slot.lastEscalation.seq))slot.lastEscalation={seq,escalation:event.escalation,reason:cleanText(payload.reason,80),warning:cleanText(payload.warning,300),ts_ms:payload.ts_ms};
   this.events.unshift(event);this.log('실시간 사건 수신',id+' · '+event.title,'LIVE_EVENT_FEED');this.emit('import');return event;
  }
+ // 실시간 사건의 이력 ID `<robot_id>_<기록 폴더>`. 이력의 robot_id 는 런타임 프로필(`--device`)이다 —
+ // 사건 텔레메트리의 device_id 는 펌웨어 MAC 이름이라 쓰지 않는다. 재연결 때 사건 재생이 첫 상태
+ // 스냅샷보다 먼저 올 수 있어 받을 때가 아니라 찾을 때 슬롯을 읽는다.
+ historyIncidentId(event){
+  if(!event.entry)return null;
+  const slot=this.slots[event.slot];
+  return (slot?.device||cleanText(slot?.telemetry?.snapshot?.deviceId,80)||event.robot)+'_'+event.entry;
+ }
  noteEventGap(dropped){
   this.log('사건 수신 공백',dropped+'건을 버퍼에서 놓쳤습니다 · 서버가 조용히 넘기지 않고 알려준 것','LIVE_EVENT_FEED');this.emit('import');
  }
