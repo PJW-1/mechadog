@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import sys
 import threading
 import time
+from pathlib import Path
 from types import TracebackType
 
 import pytest
@@ -226,3 +228,28 @@ def test_command_cli_reports_timeout_without_traceback(
 
     assert mechdog_command.main() == 2
     assert "통신 실패" in capsys.readouterr().err
+
+
+def test_watchdog_silence_outlasts_firmware_command_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = Path(__file__).resolve().parents[1] / "firmware/mechdog_motion/mechdog_motion.ino"
+    match = re.search(r"kCommandTimeoutMs\s*=\s*(\d+)", source.read_text(encoding="utf-8"))
+    assert match is not None
+    timeout_s = int(match.group(1)) / 1000
+
+    class StubClient:
+        calls = 0
+
+        def send(self, *_args: object, **_fields: object) -> dict[str, object]:
+            self.calls += 1
+            return {"safe_latched": True, "failsafe_count": self.calls}
+
+        def send_only(self, *_args: object, **_fields: object) -> None:
+            pass
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(mechdog_command.time, "sleep", sleeps.append)
+    assert mechdog_command.run_watchdog(StubClient(), 10.0, 0.0, 0.0) == 0  # type: ignore[arg-type]
+    # 송신을 멈춘 시간은 타임아웃보다 텔레메트리 한 주기(0.1 s) 이상 길어야 래치가 걸린다.
+    assert max(sleeps) >= timeout_s + 0.1

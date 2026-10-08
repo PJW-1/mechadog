@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from host.common.console import survive_encoding_errors
 
+# 펌웨어 kCommandTimeoutMs = 600 (ADR-39) + 텔레메트리 두 주기(0.1 s). 이보다 짧으면 래치가 걸리지 않는다.
+WATCHDOG_SILENCE_S = 0.8
+
 
 class Client:
     def __init__(self, host: str, port: int, timeout: float) -> None:
@@ -76,7 +79,7 @@ class Client:
 def establish_safe_session(client: Client) -> None:
     client.send("STOP")
     # Do not wait for RESET_SAFE's ACK. Waiting would couple the 10 Hz command
-    # stream to Wi-Fi RTT and can trigger the 300 ms watchdog by itself.
+    # stream to Wi-Fi RTT and can trigger the 600 ms watchdog by itself.
     client.send_only("RESET_SAFE")
 
 
@@ -120,11 +123,11 @@ def run_watchdog(client: Client, step: float, angle: float, duration: float) -> 
         next_send += 0.1
         time.sleep(max(0.0, next_send - time.monotonic()))
 
-    print("Intentionally stopping command transmission for 0.45 s...")
-    time.sleep(0.45)
+    print(f"Intentionally stopping command transmission for {WATCHDOG_SILENCE_S} s...")
+    time.sleep(WATCHDOG_SILENCE_S)
     state = client.send("STOP")
     if state.get("safe_latched") is not True:
-        raise RuntimeError("300 ms command watchdog did not latch SAFE")
+        raise RuntimeError("600 ms command watchdog did not latch SAFE")
     if int(state.get("failsafe_count", 0)) <= last_count:
         raise RuntimeError("failsafe counter did not advance")
     print("WATCHDOG RESULT: SAFE latched after command stream stopped")
@@ -151,7 +154,7 @@ def main() -> int:
 
     sub.add_parser("safety", help="verify malformed-command and ESTOP behavior")
     move = sub.add_parser("move", help="send MOVE at 10 Hz and finish with STOP")
-    watchdog = sub.add_parser("watchdog", help="stop sending MOVE and verify 300 ms failsafe")
+    watchdog = sub.add_parser("watchdog", help="stop sending MOVE and verify 600 ms failsafe")
     for command in (move, watchdog):
         command.add_argument("--step", type=float, default=20.0)
         command.add_argument("--angle", type=float, default=0.0)
