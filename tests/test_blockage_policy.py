@@ -176,7 +176,7 @@ def test_safety_overrides_recovery_scan(mode):
     tick(c, 3200, front=0.6)
     assert c._recovery is not None
     if mode == "stale":
-        c._last_pose_ms = None
+        c.localization.last_pose_ms = None
     elif mode == "onboard":
         c.safety.obstacle = True
     else:

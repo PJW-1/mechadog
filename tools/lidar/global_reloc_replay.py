@@ -134,10 +134,10 @@ def evaluate(result, points, reference, lidar, voter, elapsed_s):
     late = elapsed_s * 1000 > int(lidar.get("global_result_max_age_ms", 3000))
     confirmed = False
     if not eligible or late:
-        voter._global_votes.clear()
+        voter.global_votes.clear()
     else:
-        voter._moved_since_vote = False
-        confirmed = voter._vote_global(result.pose, result.peers)
+        voter.moved_since_vote = False
+        confirmed = voter.vote_global(result.pose, result.peers)
     diagnostic = None if result is None else asdict(result)
     if diagnostic is not None:
         diagnostic.pop("pose")  # No measured house coordinates in the report.
@@ -205,14 +205,16 @@ def main() -> int:
         stats = Counter()
         with redirect_stdout(sys.stderr):
             voters = {
-                mode: controller_from_config(config, Commander(CommandEncoder()), nav, zones, None)
+                mode: controller_from_config(
+                    config, Commander(CommandEncoder()), nav, zones, None
+                ).localization
                 for mode in ("before", "after")
             }
         count = 0
         for index, _t_ms, scan, reference in iter_samples(session, args.every, stats):
             if scan is None:
                 for voter in voters.values():
-                    voter._global_votes.clear()
+                    voter.global_votes.clear()
                 continue
             points = preprocess(
                 scan.points,

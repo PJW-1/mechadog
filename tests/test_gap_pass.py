@@ -145,7 +145,7 @@ def test_close_side_outside_stop_fan_moves_inside_fan_stops(monkeypatch, angle, 
 def test_safety_overrides_raw_corridor(monkeypatch, gate):
     c = blocked_retry(monkeypatch, corridor_scan(0.4))
     if gate == "pose":
-        c._last_pose_ms = None
+        c.localization.last_pose_ms = None
     elif gate == "scan":
         c._local_scan.received_ms = None
     elif gate == "onboard":
@@ -153,8 +153,8 @@ def test_safety_overrides_raw_corridor(monkeypatch, gate):
     elif gate == "estop":
         c.emergency_stop("test")
     else:
-        c._own_localization = True
-        c._pose_verified = False
+        c.localization.own_localization = True
+        c.localization.verified = False
     c.step(1000)
     assert c.commander.intent.type_ != "MOVE"
 

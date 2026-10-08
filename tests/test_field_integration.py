@@ -58,7 +58,7 @@ def test_point_hint_in_same_tick_prevents_queued_route_start(config, clock, tmp_
     if not hint_first:
         assert runtime.ask_locate_point(2.0, 2.0)[0]
     runtime.tick(clock.ms)
-    assert navigator._point_hint is not None
+    assert navigator.localization.point_hint is not None
     assert not runtime.nav_status()["route_feedback"]["accepted"]
     assert not navigator.route_active
     assert runtime.commander.intent.type_ == "STOP"
@@ -66,9 +66,9 @@ def test_point_hint_in_same_tick_prevents_queued_route_start(config, clock, tmp_
 
 def test_route_hint_waits_for_votes_then_repeats_full_aim_and_dwell():
     navigator = build(reloc_votes=3)
-    navigator._own_localization = True
+    navigator.localization.own_localization = True
     fresh(navigator, 1000, (1.0, 1.0, math.pi / 2))
-    navigator._mark_verified()
+    navigator.localization.mark_verified()
     assert navigator.start_route(route(RoutePoint(x=1.0, y=1.0, aim_deg=90, dwell_s=1)), 1000)[0]
     navigator.step(1000)
     tick(navigator, 1100, (1.0, 1.0, math.pi / 2))
@@ -81,13 +81,13 @@ def test_route_hint_waits_for_votes_then_repeats_full_aim_and_dwell():
 
     result = MatchResult((1.0, 1.0, 0.0), 100)
     for now in (1300, 1400):
-        navigator._apply_reloc_result(result, POINTS, SCAN, now)
+        navigator.localization.apply_reloc_result(result, POINTS, SCAN, now)
         navigator.step(now)
         assert not navigator.pose_verified
         assert navigator.commander.intent.type_ == "STOP"
-    navigator._apply_reloc_result(result, POINTS, SCAN, 1500)
+    navigator.localization.apply_reloc_result(result, POINTS, SCAN, 1500)
     navigator.step(1500)
-    assert navigator.pose_verified and navigator._point_hint is None
+    assert navigator.pose_verified and navigator.localization.point_hint is None
     assert navigator.phase is Phase.AIMING
     assert navigator.commander.intent.fields["step"] == 0
 
@@ -119,7 +119,7 @@ def test_point_hint_suspends_zone_camera_arrival_until_pose_is_verified(config, 
     result = MatchResult((1.0, 1.0, math.pi / 2), 100)
     for vote in range(2):
         clock.advance(100)
-        navigator._apply_reloc_result(result, POINTS, SCAN, clock.ms)
+        navigator.localization.apply_reloc_result(result, POINTS, SCAN, clock.ms)
         runtime.tick(clock.ms)
         assert navigator.pose_verified is (vote == 1)
         assert runtime._zone_inspector._visit_seen == []
@@ -137,6 +137,6 @@ def test_point_hint_cannot_release_estop_or_start_queued_route(config, clock, tm
     runtime.tick(clock.ms)
     assert runtime.behavior.state == "FAILSAFE"
     assert not navigator.route_active
-    assert navigator._point_hint is not None
+    assert navigator.localization.point_hint is not None
     assert not navigator.pose_verified and not navigator.pose_seeded
     assert runtime.commander.intent.type_ == "STOP"

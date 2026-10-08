@@ -101,23 +101,26 @@ def test_assembled_scan_preserves_host_interval():
 def test_rejected_scan_cannot_update_pose_vote_audit_or_map_then_level_recovers():
     c = build(ready=False, live_map_write=True, map_hit_logodds=1, map_miss_logodds=-1)
     c.observe_map_pose((2.0, 2.0, 0), 900)
-    c._pose_verified = True
+    c.localization.verified = True
     c.verify_interval_ms = 1
-    c._global_votes.append(((2.0, 2.0, 0), 0))
+    c.localization.global_votes.append(((2.0, 2.0, 0), 0))
     before = c.grid.cells.copy()
     c.observe_telemetry(Reading(pitch=-15), 1000)
-    with patch("host.behavior.patrol.match") as matcher, patch.object(c, "_verify_pose") as audit:
+    with (
+        patch("host.behavior.localization.match") as matcher,
+        patch.object(c.localization, "verify_pose") as audit,
+    ):
         c.observe_scan(scan(), 1100)
         matcher.assert_not_called()
         audit.assert_not_called()
     assert c.pose_ms == 900
-    assert not c._global_votes
+    assert not c.localization.global_votes
     assert np.array_equal(before, c.grid.cells)
     assert c._live_clear.counts is None
     assert c.local_status["scan_rejected"] == "tilted"
     c.observe_telemetry(Reading(), 1500)
     c.verify_interval_ms = 0
-    with patch("host.behavior.patrol.match", return_value=MatchResult(c.pose, 72, False)):
+    with patch("host.behavior.localization.match", return_value=MatchResult(c.pose, 72, False)):
         c.observe_scan(scan(11), 1500)
     assert c.pose_ms == 1500
     assert c.local_status["scan_rejected"] is None
@@ -143,7 +146,7 @@ def test_tilted_scan_retains_stop_distance_but_cannot_clear_or_drive():
 def test_tilted_free_rays_do_not_erase_blockage_or_accumulate_live_clear():
     c = build(ready=False)
     c.observe_map_pose((2, 2, 0), 1000)
-    c._pose_verified = True
+    c.localization.verified = True
     c.observe_obstacle_scan(scan(1), 1000)
     item = c._blockages.remember(c.grid, [(2.5, 2)], 1000)
     assert item is not None
@@ -164,9 +167,9 @@ def test_tilted_free_rays_do_not_erase_blockage_or_accumulate_live_clear():
 def test_pose_invalidates_inflight_epoch_and_waits_for_first_return_scan():
     c = build()
     c.observe_map_pose((2, 2, 0), 1000)
-    epoch = c._loc_epoch
+    epoch = c.localization.loc_epoch
     c.note_sent([json.dumps(pose(-15))], 1100)
-    assert c._loc_epoch > epoch
+    assert c.localization.loc_epoch > epoch
     assert not c._local_scan.clear_allowed
     c.note_sent([json.dumps(pose())], 2000)
     c.observe_obstacle_scan(scan(10, received=3300, started=3200), 4000)
@@ -179,15 +182,15 @@ def test_pre_tilt_global_audit_result_is_discarded_after_return():
     c = build(wall_clock_ms=lambda: 3000)
     c.observe_map_pose((2, 2, 0), 1000)
     points = np.array([[1.0, 0.0]])
-    c.global_worker.inflight = True
-    c.global_worker.context = (None, c._move_seq, c._loc_epoch, 1000)
-    c.global_worker.result = ("verify", MatchResult(c.pose, 1), points, scan(), c.pose)
+    c.localization.worker.inflight = True
+    c.localization.worker.context = (None, c.localization.move_seq, c.localization.loc_epoch, 1000)
+    c.localization.worker.result = ("verify", MatchResult(c.pose, 1), points, scan(), c.pose)
     c.note_sent([json.dumps(pose(-15))], 1100)
     c.note_sent([json.dumps(pose(dur=100))], 1200)
-    with patch.object(c, "_apply_verify_result") as adopt:
-        c._poll_global(3000)
+    with patch.object(c.localization, "apply_verify_result") as adopt:
+        c.localization.poll_global(3000)
         adopt.assert_not_called()
-    assert not c.global_worker.inflight
+    assert not c.localization.worker.inflight
 
 
 @pytest.mark.parametrize(

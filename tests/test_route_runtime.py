@@ -96,7 +96,7 @@ def test_route_refuses_untrusted_start(untrusted: str) -> None:
     controller = build()
     fresh(controller, 1000, (2.0, 2.0, 0.0))
     if untrusted == "unverified":
-        controller._own_localization = True
+        controller.localization.own_localization = True
     accepted, detail = controller.start_route(
         route(RoutePoint(x=1.0, y=1.0)), 2000 if untrusted == "stale" else 1000
     )
@@ -132,7 +132,7 @@ def test_route_aiming_obeys_existing_safety_guards(guard: str) -> None:
     elif guard == "body":
         controller.grid.cells[controller.grid.to_cell(1.0, 1.0)] = 5.0
     elif guard == "trust":
-        controller._own_localization = True
+        controller.localization.own_localization = True
     controller.step(1800 if guard == "stale" else 1200)
     assert controller.commander.intent.type_ == "STOP"
     assert controller.route_status()["point_index"] == 0
@@ -309,7 +309,7 @@ def test_interrupted_dwell_requires_full_dwell_after_recovery(interruption):
         controller.step(1200)
         controller.safety.obstacle = False
     elif interruption == "trust":
-        controller._own_localization = True
+        controller.localization.own_localization = True
         controller.step(1200)
         controller.pose_seeded = True
     elif interruption == "alarm":

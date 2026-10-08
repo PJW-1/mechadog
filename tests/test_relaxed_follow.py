@@ -145,15 +145,15 @@ def test_safety_retained(gate):
 
 def test_verified_grace_then_stops_without_exploration():
     c = relaxed()
-    c._own_localization = True
-    c._pose_verified = False
+    c.localization.own_localization = True
+    c.localization.verified = False
     for now in (1500, 3000, 3001, 6000):
         c.observe_telemetry(Reading(), now)
         c.observe_map_pose((2, 2, 0), now)  # 미검증 국소 정합으로 유예를 연장하지 않는다.
         c.observe_obstacle_scan(revolution(now), now)
         c.step(now)
         assert c.commander.intent.type_ == ("MOVE" if now <= 3000 else "STOP")
-    c._mark_verified()
+    c.localization.mark_verified()
     c.step(6000)
     assert c.commander.intent.type_ == "MOVE"
 

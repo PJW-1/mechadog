@@ -98,7 +98,7 @@ def test_timeout_keeps_localization_and_scan_safety_gates(gate):
         c._last_sent_moving = True
         c._stopped_since_ms = None
     elif gate == "pose":
-        c._last_pose_ms = 1000
+        c.localization.last_pose_ms = 1000
     elif gate == "scan":
         c._local_scan.received_ms = 1000
     elif gate == "rejected":

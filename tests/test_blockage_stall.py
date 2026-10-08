@@ -62,12 +62,12 @@ def test_every_recovery_wait_expires_without_movement(gate, entry):
         recovery.scanning = True
         recovery.settling_ms = 1100
     if gate == "stale_pose":
-        c._last_pose_ms = None
+        c.localization.last_pose_ms = None
     if gate == "onboard":
         c.safety.obstacle = True
     if gate == "unverified":
-        c._own_localization = True
-        c._pose_verified = False
+        c.localization.own_localization = True
+        c.localization.verified = False
     now = 1000 + c.nav_params.recovery_scan_timeout_ms
     c.safety.last_seen_ms = now
     getattr(c, entry)(now)

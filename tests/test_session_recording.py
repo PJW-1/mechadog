@@ -161,7 +161,7 @@ def test_motion_lock_rejects_goto_without_reservation_but_allows_point_hint(conf
             hint = client.post("/api/command/locate", json={"x": 2.0, "y": 2.0})
             assert hint.json()["accepted"] is True
             runtime.tick(clock.ms)
-            assert navigator._point_hint == (2.0, 2.0, clock.ms)
+            assert navigator.localization.point_hint == (2.0, 2.0, clock.ms)
             assert runtime.nav_requests.goto_asked is None
     finally:
         runtime.release()

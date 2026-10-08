@@ -242,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
         if args.mode == "inject":
             controller.pose = true_pose
-            controller._last_pose_ms = now_ms
+            controller.localization.last_pose_ms = now_ms
 
         # ── 계획이 바뀌면 스냅 결과를 기록한다 ──
         plan = controller.plan

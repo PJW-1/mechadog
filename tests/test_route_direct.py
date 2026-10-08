@@ -143,14 +143,14 @@ def test_existing_safety_gates_override_direct_following(gate):
     c = direct()
     tick(c, 1000)
     if gate == "pose":
-        c._last_pose_ms = None
+        c.localization.last_pose_ms = None
     elif gate == "scan":
         c._local_scan.received_ms = None
     elif gate == "rejected":
         c._local_scan.clear_allowed = False
     elif gate == "trust":
-        c._own_localization = True
-        c._pose_verified = False
+        c.localization.own_localization = True
+        c.localization.verified = False
     elif gate == "estop":
         c.emergency_stop("test")
     else:
@@ -252,8 +252,8 @@ def test_route_unavailable_return_home_does_not_restart_direct_point():
 @pytest.mark.parametrize("entry", ["step", "steer"])
 def test_unverified_pose_cannot_arm_ultrasonic_avoidance(entry):
     c = direct()
-    c._own_localization = True
-    c._pose_verified = False
+    c.localization.own_localization = True
+    c.localization.verified = False
     tick(c, 1000, onboard=True, entry=entry)
     tick(c, 5000, onboard=True, entry=entry)
     assert c.commander.intent.type_ == "STOP"

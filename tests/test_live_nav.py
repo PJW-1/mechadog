@@ -200,7 +200,7 @@ def test_estop_onboard_stop_and_pose_loss_override_escape():
         elif mode == "onboard":
             c.safety.obstacle = True
         else:
-            c._last_pose_ms = None
+            c.localization.last_pose_ms = None
         c.step(1000)
         assert c.commander.intent.type_ != "MOVE"
 

@@ -73,7 +73,7 @@ def replay(
                 c.note_sent(event["lines"], event["t"])
             elif event["kind"] == "localization" and event.get("updated"):
                 c.observe_map_pose(tuple(event["pose"]), event["t"])
-                c._pose_verified = event["verified"]
+                c.localization.verified = event["verified"]
                 if scans:
                     received, scan = scans[-1]
                     c.observe_obstacle_scan(scan, received)

@@ -68,7 +68,7 @@ def test_scan_posture_returns_neutral_and_waits_for_level_lidar(config, clock, m
     runtime.tick(clock.ms)
     assert runtime.commander.intent.type_ == "STOP"
     monkeypatch.setattr(
-        "host.behavior.patrol.match", lambda *_args, **_kwargs: MatchResult(navigator.pose, 1)
+        "host.behavior.localization.match", lambda *_args, **_kwargs: MatchResult(navigator.pose, 1)
     )
     navigator.observe_telemetry(SimpleReading(), clock.ms)
     runtime.attach_scans(lambda: Scan("lidar-01", "0" * 16, 3, 0, ((0.0, 3.0),)))
@@ -1228,9 +1228,9 @@ def test_sent_commands_reach_the_navigator(config: dict, clock: FakeClock) -> No
     runtime.begin(sock)
     runtime._peer = ("127.0.0.1", 5001)
     navigator._stopped_since_ms = 1
-    before = navigator._move_seq
+    before = navigator.localization.move_seq
     runtime.send_immediate(CommandEncoder().encode("MOVE", step=40, angle=0))
-    assert navigator._move_seq == before + 1
+    assert navigator.localization.move_seq == before + 1
     assert navigator._stopped_since_ms is None
 
 
