@@ -96,6 +96,18 @@ export function describeEvidence(name,payload){
  rows.push(...describeTrace(payload));
  return {auth:AUTH_TEXT[name]??'해당 없음',ppe,rows};
 }
+// 이력 저장소의 사건(`/api/history/incidents` 한 행) → 사건 검토와 같은 상세 보기가 그리는 사건 (WBS 4.6.7).
+// `detail` 은 블랙박스 사건이면 판정 원문, 피드 사건이면 나머지 필드(`reason`·`warning` 등)다 — 둘 다 근거로 읽는다.
+// 검토는 서버 모델 그대로 `reviewed`·`resolution` 이다. `snapshotBase` 는 사건을 낸 로봇 서버 주소다.
+export function historyEvent(row,snapshotBase=null){
+ const name=cleanText(row.event_type,160),detail=row.detail&&typeof row.detail==='object'&&!Array.isArray(row.detail)?row.detail:{};
+ const evidence=describeEvidence(name,{...detail,judgement:detail});
+ const photo=row.blackbox_entry!=null&&row.snapshot_path!=null;
+ return {id:'HIST-'+row.incident_id,incidentId:row.incident_id,missionId:row.mission_id??null,source:'HISTORY',title:(name==='escalation_changed'&&row.escalation_level?'대응 단계 → '+cleanText(row.escalation_level,8):EVENT_TITLES[name])||name,category:eventCategory(name),robot:cleanText(row.robot_id,80)||'장치 미상',zone:cleanText(row.zone_id,40)||'구역 기록 없음',event:name,state:cleanText(row.state,40),escalation:cleanText(row.escalation_level,40)||'—',mode:cleanText(row.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,
+  detail:'사건 이력 저장소의 기록입니다. 현재 실시간 상태가 아닙니다. '+(photo?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+row.blackbox_entry+' 안에 있습니다.':'저장된 스냅샷이 없는 사건입니다.'),
+  ts_ms:row.occurred_at,reviewed:row.reviewed===true,resolution:typeof row.resolution==='string'?row.resolution:'',reviewedAt:row.reviewed_at??null,
+  snapshot:photo?liveSnapshotUrl(snapshotBase,{entry:row.blackbox_entry,snapshot:row.snapshot_path}):null};
+}
 export function parseBlackbox(value) {
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('meta.json 객체를 선택해 주세요.');
  if(!Number.isSafeInteger(value.ts_ms)||value.ts_ms<0||value.ts_ms>8640000000000000)throw new Error('유효한 ts_ms가 없습니다.');
@@ -357,7 +369,7 @@ export class Operations {
  reviewEvent(id,status,note){
   if(!Object.hasOwn(REVIEW_STATES,status))throw new Error('검토 상태를 선택해 주세요.');
   const event=this.events.find(e=>e.id===id);if(!event)throw new Error('사건을 찾을 수 없습니다.');
-  if(event.source==='LIVE_FEED')throw new Error('실시간 사건의 검토 결과는 서버 저장 기능이 없어 기록할 수 없습니다.');
+  if(event.source==='LIVE_FEED')throw new Error('실시간 사건은 «사건 이력» 화면에서 서버에 검토를 저장하세요.');
   if(this.role==='technician')throw new Error('운영자 또는 검토자 시연 역할에서 검토하세요.');
   note=cleanText(note,2000);if(status==='false_positive'&&!note)throw new Error('오탐으로 판단한 근거를 입력해 주세요.');
   event.review=status;event.note=note;event.reviewedAt=this.clock();
@@ -389,7 +401,7 @@ export class Operations {
   const person=(payload.tracks||[]).length,evidence=describeEvidence(name,payload);
   const label=name==='escalation_changed'?'대응 단계 → '+cleanText(payload.escalation,8):name==='path_blocked'&&payload.judgement?.source==='vlm'?'통로 막힘 경고':EVENT_TITLES[name];
   const photo=payload.entry!=null||payload.snapshot!=null;
-  const event={id,seq,slot:slotId,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',simulated:payload.simulated===true,title:(payload.simulated?'[예시] ':'')+(label||name),category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:(payload.simulated?'시뮬레이션 예시 사건 · 합성 증거입니다.':'실시간 수신된 사건입니다.')+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
+  const event={id,seq,slot:slotId,entry:cleanText(payload.entry,160)||null,zoneId:cleanText(payload.judgement?.zone,40)||null,source:'LIVE_FEED',simulated:payload.simulated===true,title:(payload.simulated?'[예시] ':'')+(label||name),category:eventCategory(name),robot:device,zone:cleanText(payload.judgement?.zone,40)||'구역 미수신',event:name,state:cleanText(payload.state,40),escalation:cleanText(payload.escalation,40),mode:cleanText(payload.mode,40)||null,auth:evidence.auth,ppe:evidence.ppe,evidence:evidence.rows,detail:(payload.simulated?'시뮬레이션 예시 사건 · 합성 증거입니다.':'실시간 수신된 사건입니다.')+(person?' 추적 '+person+'명이 함께 기록됐습니다. ':' ')+(payload.snapshot?'그때 저장된 스냅샷을 함께 보여 줍니다. 원본은 기록 디렉터리 '+(payload.entry||'')+' 안에 있습니다.':photo?'스냅샷 파일이 없는 사건입니다.':'상태 전이 사건이라 사진을 남기지 않습니다.'),ts_ms:payload.ts_ms,review:'pending',note:'',snapshot:liveSnapshotUrl(snapshotBase,payload),
    meta:{tracks:payload.tracks||[],detections:payload.detections||[],telemetry:payload.telemetry||{}}};
   // 최근 단계 사건 — 경보 띠가 «왜 이 단계인가» 와 경고 문장을 보인다 (B1). 백로그는 순번이 낮은 것부터 온다.
   if(name==='escalation_changed'&&(!slot.lastEscalation||seq>slot.lastEscalation.seq))slot.lastEscalation={seq,escalation:event.escalation,reason:cleanText(payload.reason,80),warning:cleanText(payload.warning,300),ts_ms:payload.ts_ms};
