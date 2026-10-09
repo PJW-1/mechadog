@@ -114,10 +114,7 @@ def build(**overrides: object) -> PatrolController:
         plan_params=PLAN,
         match_params=MATCH,
         range_m=(0.12, 8.0),
-        new_obstacle_margin_m=0.25,
-        new_obstacle_confirmations=2,
         new_obstacle_check_radius_m=1.5,
-        obstacle_mark_radius_m=0.3,
         forward_fan_rad=math.radians(20),
         rng=random.Random(7),
         **overrides,
@@ -183,6 +180,20 @@ def test_avoid_is_never_announced() -> None:
 # ══════════════════════════════════════════════════════════════
 #  세션 개시 — PROTOCOL.md 2절 「Host 재시작」
 # ══════════════════════════════════════════════════════════════
+
+
+def test_controller_carries_no_unread_compatibility_fields() -> None:
+    """읽는 곳 없이 생성자에만 남아 있던 옛 필드를 다시 들이지 않는다."""
+    import dataclasses
+
+    names = {f.name for f in dataclasses.fields(PatrolController)}
+    unread = {
+        "new_obstacle_margin_m",
+        "new_obstacle_confirmations",
+        "obstacle_mark_radius_m",
+        "max_reverify_attempts",
+    }
+    assert names.isdisjoint(unread)
 
 
 def test_first_datagram_is_stop_with_seq_one() -> None:

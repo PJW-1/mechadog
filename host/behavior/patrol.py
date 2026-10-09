@@ -209,10 +209,6 @@ class PatrolController:
     match_params: MatchParams
     #: `(min_m, max_m)` LiDAR 유효 거리.
     range_m: tuple[float, float]
-    #: 이전 생성자 호환 필드 3개. AG에서는 오차/확인 횟수/별도 표시 반경을 쓰지 않는다.
-    new_obstacle_margin_m: float
-    new_obstacle_confirmations: int
-    obstacle_mark_radius_m: float
     #: 이 거리 안의 빔만 신규 장애물 후보로 본다 — 측위 오차는 거리에 비례해 커진다.
     new_obstacle_check_radius_m: float
     forward_fan_rad: float
@@ -302,8 +298,6 @@ class PatrolController:
     #: 사람이 `--pose-seed` 로 시작 자세를 줬는가. 전역 재측위가 모호할 때(책상 밑 등)
     #: 시드 주변 넓은 창으로 **추적은 시작하되** 전역 확인 전에는 지도에 쓰지 않는다.
     pose_seeded: bool = False
-    #: 이전 생성자 호환 필드. AG는 표시를 강제로 지우지 않고 재관측/TTL로만 갱신한다.
-    max_reverify_attempts: int = 3
     random_after_first_cycle: bool = True
     rng: random.Random | None = None
     #: 런타임의 카메라가 도착을 소비할 때까지 정지한다. 독립 순찰 도구는 기다리지 않는다.
@@ -1535,14 +1529,8 @@ def controller_from_config(
             sigma_m=match_params.sigma_m,
         ),
         range_m=range_from_config(config),
-        new_obstacle_margin_m=0.0,  # 이전 생성자 호환용; 새 정책에서는 사용하지 않는다.
         new_obstacle_check_radius_m=float(lidar["new_obstacle_check_radius_mm"]) / 1000.0,
-        new_obstacle_confirmations=1,
-        obstacle_mark_radius_m=float(lidar["robot_radius_mm"]) / 1000.0,
         forward_fan_rad=deg_to_rad(float(lidar["forward_fan_deg"])),
-        # 회피 시퀀스와 **같은 값을 쓴다** — 갇힌 상황을 몇 번까지
-        # 스스로 풀어 보고 사람에게 넘길지의 값이다 (FR-2.3).
-        max_reverify_attempts=int(config["fsm"]["avoid_attempts"]),
         live_map_write=bool(lidar.get("live_map_write", False)),
         map_hit_logodds=float(lidar["hit_logodds"]),
         map_miss_logodds=float(lidar["miss_logodds"]),
