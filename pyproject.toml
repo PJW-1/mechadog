@@ -18,8 +18,13 @@ target-version = "py312"
 exclude = ["third_party", ".venv", "build", "*.md", "tools/house_sim"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH", "BLE"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# 실험 스크립트와 노트북은 한 번 돌리고 버리는 코드라 광범위 except 를 허용한다.
+"experiments/**" = ["BLE001"]
+"*.ipynb" = ["BLE001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

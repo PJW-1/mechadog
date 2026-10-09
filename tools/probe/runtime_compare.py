@@ -447,7 +447,7 @@ def uart_worker(connection, raw_output, events, stopped, origin):
                         "line": line.decode("utf-8", errors="replace").rstrip("\r"),
                     }
                 )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 읽기 스레드 실패를 이벤트로 넘긴다
         events.put(
             {
                 "kind": "error",
@@ -474,7 +474,7 @@ def https_worker(client, events, stopped, origin, expected_image, expected_boot)
         except CaptureError as exc:
             row["error"] = str(exc)
             row["fatal"] = True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 상태 확인 실패를 행에 기록하고 중단한다
             row["error"] = f"{type(exc).__name__}: {exc}"
             row["fatal"] = True
         row.update(t=time.monotonic() - origin, rtt_ms=(time.monotonic() - began) * 1000)
@@ -696,7 +696,7 @@ def run_capture(args) -> int:
                     acknowledged.add(ack["seq"])
                 drain_events()
             completed = handshake
-        except (Exception, KeyboardInterrupt) as exc:
+        except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 — 실패를 기록한 뒤 정리 단계에서 스레드를 거둔다
             record(
                 {
                     "kind": "error",
@@ -722,7 +722,7 @@ def run_capture(args) -> int:
             elif threads:
                 try:
                     status_check("after", boot)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — 사후 상태 확인 실패를 기록한다
                     completed = False
                     record(
                         {

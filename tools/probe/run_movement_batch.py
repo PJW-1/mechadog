@@ -185,7 +185,7 @@ def main() -> int:  # pragma: no cover - 실기 측정용
     except sessions.MeasurementCancelledError as exc:
         payload.update(state="cancelled", error=str(exc))
         print(f"\n[중단] {exc}", flush=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 일괄 실행 실패도 결과 파일에 남긴다
         payload.update(state="error", error=f"{type(exc).__name__}: {exc}")
         print(f"\n[중단] 오류로 일괄 실행 종료: {exc}", flush=True)
     finally:

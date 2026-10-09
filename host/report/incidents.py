@@ -165,7 +165,7 @@ class IncidentLog:
                 mode=self._mission.mode,
                 now_ms=now_ms,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 사건 기록 실패가 10Hz 제어 루프를 멈추면 안 된다
             LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
             return
         self.remember(
@@ -183,7 +183,7 @@ class IncidentLog:
             return
         try:
             self._event_publisher(entry)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 관제 발행 실패가 10Hz 제어 루프를 멈추면 안 된다
             LOG.error("navigation_event_record_failed", error=f"{type(exc).__name__}: {exc}")
 
     def record_scene(
