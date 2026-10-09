@@ -1,7 +1,7 @@
 """WBS 작업 사전에서 담당자별 작업 목록을 생성한다.
 
 `docs/internal/WBS.md`의 작업 사전을 파싱해 **누가 무엇을 하는가**를
-`docs/internal/ASSIGNMENTS.md`로 펼친다. 팀원은 생성된 파일에서 지금 시작할 수 있는 일만 본다.
+`docs/internal/ASSIGNMENTS.md`로 펼친다. 생성된 파일은 담당 묶음별 완료 기록과 남은 항목을 보여 준다.
 
 **왜 손으로 쓰지 않는가** — 같은 숫자를 두 곳에 두면 반드시 어긋난다. 이 프로젝트에서
 이미 여러 번 일어났다(총 공수 69.0 vs 70.0, 절 제목 5.5 vs 하위 합 6.5, 명령 7종 vs 8종).
@@ -219,7 +219,7 @@ def render(packages: list[WorkPackage]) -> str:
     """
     total = sum(p.effort for p in packages)
     lines: list[str] = [
-        "# 내가 할 일",
+        "# 담당자별 작업 목록",
         "",
         "> ⚠️ **이 파일은 생성된다. 직접 고치지 마라.**",
         "> 정본은 [WBS 작업 사전](WBS.md)이며, 여기는 그것을 담당자 기준으로 펼친 것이다.",
@@ -230,10 +230,11 @@ def render(packages: list[WorkPackage]) -> str:
         ">",
         "> 작업 범위·선행·DoD·상태를 바꿨을 때만 WBS를 고치고 이 파일을 재생성한다.",
         "",
-        "**읽는 법** — 자기 이름을 찾고 🟢 부터 잡는다. 선행 작업이 없거나 모두 끝난 것들이다.",
+        "**읽는 법** — 담당 묶음마다 WBS 항목의 완료 실적과 공수를 기록한다. 🟢·⏳ 는 남은 항목 수이며, "
+        "0건이면 그 묶음의 항목이 모두 끝났다는 뜻이다.",
         "**끝났다고 말할 수 있는 조건(DoD)** 은 [WBS 작업 사전](WBS.md)에서 같은 번호를 찾으면 있다.",
         "",
-        "| 담당 | ✅ 완료 | 🟢 지금 가능 | ⏳ 대기 | 남은 공수 | 그중 Phase 2 | 전체 |",
+        "| 담당 | ✅ 완료 | 🟢 남은 항목(선행 끝남) | ⏳ 남은 항목(선행 대기) | 남은 공수 | 그중 Phase 2 | 전체 |",
         "| :--- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     left = later = 0.0
@@ -282,16 +283,16 @@ def render(packages: list[WorkPackage]) -> str:
             f"· 그중 Phase 2 {sum(p.effort for p in phase2):.1f} M/D · {len(phase2)}건 "
             f"(전체 {sum(p.effort for p in mine):.1f} M/D · {len(mine)}건)",
             "",
-            f"### 🟢 지금 시작할 수 있다 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",
+            f"### 🟢 선행이 끝난 남은 항목 — {len(ready)}건 · {sum(p.effort for p in ready):.1f} M/D",
             "",
-            "선행 작업이 없거나 모두 완료됐다. 이 중 하나를 잡으면 된다.",
+            "선행 작업이 없거나 모두 완료된 미완료 항목이다.",
             "",
             *_table(ready, with_predecessor=False),
             "",
-            f"### ⏳ 선행이 끝나야 시작한다 — {len(waiting)}건 · "
+            f"### ⏳ 선행을 기다리는 남은 항목 — {len(waiting)}건 · "
             f"{sum(p.effort for p in waiting):.1f} M/D",
             "",
-            "**기다리는 것** 열의 번호가 끝나면 시작할 수 있다.",
+            "**기다리는 것** 열의 번호가 끝나야 시작할 수 있는 항목이다.",
             "",
             *_table(waiting, with_predecessor=True),
             "",
@@ -317,7 +318,7 @@ def render(packages: list[WorkPackage]) -> str:
         lines += ["", "</details>", "", "---", ""]
 
     lines += [
-        "> 할 일이 새로 생기거나 선행·상태가 바뀌면 WBS 작업 사전에 반영한 뒤 이 파일을 재생성한다.",
+        "> WBS 작업 사전의 범위·선행·상태가 바뀌면 이 파일을 재생성한다.",
         "",
     ]
     return "\n".join(lines)
