@@ -347,7 +347,7 @@ class PatrolController:
         self.recovery = BlockageRecovery(self)
         self.avoidance = LocalAvoidance(self)
         self.route = RouteFollower(self, steering_for)
-        self.relaxed = RelaxedFollower(self)
+        self.relaxed = RelaxedFollower(self, self.nav_state)
         self.navmap = NavigationMap(self, self.nav_state)
         self.arrival = ZoneArrival(self, self.nav_state, steering_for)
 

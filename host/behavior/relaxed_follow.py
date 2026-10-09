@@ -24,14 +24,17 @@ from host.behavior.planner import Plan, min_forward_distance
 from host.common.units import wrap_pi
 
 if TYPE_CHECKING:
+    from host.behavior.nav_state import PatrolNavState
     from host.behavior.patrol import PatrolController
 
 
 class RelaxedFollower:
     """순찰기의 느슨한 동선 추종 상태를 쥔다."""
 
-    def __init__(self, patrol: PatrolController) -> None:
+    def __init__(self, patrol: PatrolController, state: PatrolNavState) -> None:
         self._patrol = patrol
+        #: 순찰기와 함께 쓰는 항법 상태 — 값은 복사하지 않고 매번 여기서 읽는다.
+        self._state = state
         #: 지금 구간의 시작점 — 지점을 지나쳤는지 이 선분으로 판단한다.
         self.leg_start: tuple[float, float] = (0.0, 0.0)
         #: 직전 틱의 목표 거리 — 지나친 뒤 멀어지기 시작했는지 본다.
@@ -78,7 +81,7 @@ class RelaxedFollower:
         patrol = self._patrol
         prog = self.progress
         if prog is None or prog[0] != target or distance < prog[1] - 0.10:
-            self.progress = (target, distance, patrol._now_ms)
+            self.progress = (target, distance, self._state.now_ms)
             if prog is not None and prog[0] != target:
                 self.stuck = False
             prog = self.progress
@@ -86,7 +89,7 @@ class RelaxedFollower:
             if front is None or front > 0.45:
                 self.stuck = False
                 self.blocked_reported = False
-                self.progress = (target, distance, patrol._now_ms)
+                self.progress = (target, distance, self._state.now_ms)
                 return False
             patrol.commander.halt()
             patrol.avoidance.decide("stop", "relaxed_stuck_wait", front)
@@ -95,12 +98,12 @@ class RelaxedFollower:
         # (2026-10-06 실기: 침실 문 앞 정면 0.56m 에서 오판해 계속 대기).
         if front is None or front > 0.35:
             self.progress = (
-                (target, min(distance, prog[1]), patrol._now_ms)
+                (target, min(distance, prog[1]), self._state.now_ms)
                 if front is None or front > 0.45
                 else prog
             )
             return False
-        if patrol._now_ms - prog[2] >= patrol.nav_params.relaxed_stuck_ms:
+        if self._state.now_ms - prog[2] >= patrol.nav_params.relaxed_stuck_ms:
             self.stuck = True
             patrol.commander.halt()
             patrol.avoidance.decide("stop", "relaxed_stuck_wait", front)
@@ -114,12 +117,12 @@ class RelaxedFollower:
         """동선만 단순 추종한다. 안전/측위 외에는 복구 관문을 열지 않는다."""
         patrol = self._patrol
         patrol.avoidance.active = patrol.recovery.active = None
-        patrol.avoidance.needs_escape = patrol._replan_stop_required = False
+        patrol.avoidance.needs_escape = self._state.replan.required = False
         scan = self.scan
-        front = min_forward_distance(patrol._local_scan.points, math.radians(30))
+        front = min_forward_distance(self._state.local_scan.points, math.radians(30))
         stopped = front is not None and front <= 0.25
         if stopped and patrol.route.direct_stopped_ms is None:
-            patrol.route.direct_stopped_ms = patrol._now_ms
+            patrol.route.direct_stopped_ms = self._state.now_ms
         if not stopped:
             patrol.route.direct_stopped_ms = None
             self.escape_turn = False
@@ -153,8 +156,10 @@ class RelaxedFollower:
         patrol.plan = Plan(GOAL_LABEL, (patrol.pose[:2], target), distance, effective=target)
         patrol.phase = Phase.MOVING
         # 기울어진 스캔은 조향에 덮어쓰지 않는다. 마지막 정상 바퀴도 2초를 넘기면 정지.
-        max_age = patrol.nav_params.scan_max_age_ms if patrol._local_scan.clear_allowed else 2000
-        if scan.received_ms is None or not 0 <= patrol._now_ms - scan.received_ms <= max_age:
+        max_age = (
+            patrol.nav_params.scan_max_age_ms if self._state.local_scan.clear_allowed else 2000
+        )
+        if scan.received_ms is None or not 0 <= self._state.now_ms - scan.received_ms <= max_age:
             patrol.commander.halt()
             patrol.route.direct_stopped_ms = None
             patrol.avoidance.decide("stop", "relaxed_scan_unavailable", front)
@@ -202,12 +207,12 @@ class RelaxedFollower:
             patrol.commander.halt()
             patrol.avoidance.decide("stop", "relaxed_front_stop", front)
             since = patrol.route.direct_stopped_ms
-            actual_stop = patrol._stopped_since_ms
+            actual_stop = self._state.stopped_since_ms
             if not self.escape_turn and (
                 since is None
                 or actual_stop is None
-                or patrol._last_sent_moving
-                or patrol._now_ms - max(since, actual_stop) < 3000
+                or self._state.last_sent_moving
+                or self._state.now_ms - max(since, actual_stop) < 3000
             ):
                 return
             self.escape_turn = True
@@ -224,7 +229,9 @@ class RelaxedFollower:
         # 그 안이면 조향 없이 직진한다 — 매 틱 측위 방위로 다시 재므로 폐루프다.
         # 2026-10-06 사용자: 제자리 회전으로 자주 멈추면 느리다 → 30° 안은 걸으면서 조향.
         # 예전 호 조향은 약해서(turn_deg·비율) 우편향을 못 이겼다 — 오차 1°당 1.2° 로 강하게, 상한 25°.
-        spin = abs(error) > math.radians(30) or (patrol._spinning and abs(error) > math.radians(15))
+        spin = abs(error) > math.radians(30) or (
+            self._state.spinning and abs(error) > math.radians(15)
+        )
         walking_detour = (
             patrol.nav_params.relaxed_walk_detour
             and 0 < deviation <= math.radians(60)
@@ -233,7 +240,7 @@ class RelaxedFollower:
         )
         if walking_detour:
             spin = False
-        patrol._spinning = spin
+        self._state.spinning = spin
         if spin:
             patrol.commander.drive(0.0, math.copysign(patrol.drive.spin_turn_deg, error))
         else:
