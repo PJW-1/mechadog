@@ -34,7 +34,7 @@ EXPECTED: dict[str, int] = {
     "arrival.py": 0,
     "avoidance.py": 26,
     "localization.py": 19,
-    "nav_map.py": 11,
+    "nav_map.py": 0,
     "recovery.py": 55,
     "relaxed_follow.py": 14,
     "route_follow.py": 49,

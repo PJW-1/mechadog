@@ -348,7 +348,7 @@ class PatrolController:
         self.avoidance = LocalAvoidance(self)
         self.route = RouteFollower(self, steering_for)
         self.relaxed = RelaxedFollower(self)
-        self.navmap = NavigationMap(self)
+        self.navmap = NavigationMap(self, self.nav_state)
         self.arrival = ZoneArrival(self, self.nav_state, steering_for)
 
     # ── 조회 ──────────────────────────────────────────────────
@@ -684,10 +684,6 @@ class PatrolController:
     @property
     def _local_scan_pose(self) -> Pose | None:
         return self.nav_state.local_scan_pose
-
-    @_local_scan_pose.setter
-    def _local_scan_pose(self, value: Pose | None) -> None:
-        self.nav_state.local_scan_pose = value
 
     def goto(
         self, x: float, y: float, *, keep_route: bool = False, exact_goal: bool = False
