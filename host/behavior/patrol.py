@@ -258,7 +258,7 @@ class PatrolController:
     imu_fresh_ms: int = 300
     scan_gate: ScanGate = field(default_factory=ScanGate)
     #: 측위가 이만큼 끊기면 «검증됨»·사람 시드의 신뢰를 버린다 — 그 사이 로봇이 들려
-    #: 옮겨졌을 수 있다. 0 이면 끈다 (리뷰 지적).
+    #: 옮겨졌을 수 있다. 0 이면 끈다.
     trust_expiry_ms: int = 5000
     #: 전역 탐색 결과가 이보다 늦게 도착하면 버린다 — 그 사이 손으로 옮겨졌거나 돌았을 수
     #: 있는데 MOVE 수만으로는 모른다.
@@ -274,8 +274,8 @@ class PatrolController:
     reloc_restore_yaw_rad: float = math.radians(5.0)
     reloc_restore_score_ratio: float = 0.95
     #: 상실 동안 pitch·roll 이 기준보다 이만큼 넘게 바뀌면 «들어 올렸다» 로 보고 기준을 버린다.
-    #: 같은 방위로 들어 옮기면 IMU yaw 로는 모르고, 대칭 구조에선 점수 비율도 통과한다
-    #: (리뷰 지적) — 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
+    #: 같은 방위로 들어 옮기면 IMU yaw 로는 모르고, 대칭 구조에선 점수 비율도 통과한다.
+    #: 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
     reloc_restore_tilt_rad: float = math.radians(8.0)
     #: 사람이 알려준 구역(대시보드 «위치 알려주기») 은 이 시간 안에 잡히지 않으면 버린다.
     zone_hint_ms: int = 60000
@@ -543,7 +543,7 @@ class PatrolController:
                 self._local_scan.clear_allowed = False
                 self.scan_gate.status = {"scan_rejected": "pose_settling", "clear_allowed": False}
             if message["type"] == "MOVE" and not (message.get("step") or message.get("angle")):
-                # MOVE {0,0} 은 «서 있으라» 다 — 걷는 중으로 치면 정지 감사가 막힌다 (리뷰 지적).
+                # MOVE {0,0} 은 «서 있으라» 다 — 걷는 중으로 치면 정지 감사가 막힌다.
                 self._note_stopped(sent_ms)
             elif message["type"] == "MOVE":
                 self.scan_gate.note_move(sent_ms)

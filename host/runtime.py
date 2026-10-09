@@ -279,7 +279,7 @@ class Runtime:
             # 일어나고, 그때 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
             self._behavior.fsm.on_enter("PATROL", self._mark_navigator_resume)
             self._behavior.fsm.on_exit("PATROL", self._mark_goal_cancel)
-            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다 (리뷰 지적).
+            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다.
             self._behavior.fsm.on_exit("MANUAL", self._mark_goal_cancel)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)

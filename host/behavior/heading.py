@@ -35,7 +35,7 @@ class HeadingTracker:
         self.offset: float | None = None
         #: 지금 `pose` 가 관측된 시점의 IMU yaw — 다음 정합의 회전 예측은 «지금 IMU − 이 값».
         #: 정합이 실패해도 앵커는 그대로라 회전량을 잃지 않고, 전역 채택 때는 그 스캔 시점의
-        #: IMU 로 다시 묶어 이중 반영하지 않는다 (리뷰 지적).
+        #: IMU 로 다시 묶어 이중 반영하지 않는다.
         self.anchor: float | None = None
         #: 이번 스캔의 IMU 변화량이 실제 측정인가 (신선한 텔레메트리 기준).
         self.delta_fresh: bool = False
@@ -53,7 +53,7 @@ class HeadingTracker:
         """새 자세를 관측했다 — 앵커를 지금 IMU 로 다시 묶고 그 값을 돌려준다.
 
         앵커는 **신선한** IMU 일 때만 — 끊긴 IMU 의 옛 값을 묶어 두면 재개 때 그사이 회전
-        (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (리뷰 지적).
+        (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다.
         """
         self.anchor = self._patrol.safety.yaw_rad if self.imu_is_fresh(now_ms) else None
         return self.anchor
@@ -71,7 +71,7 @@ class HeadingTracker:
         """전역 결과로 자세를 바꾼 직후 — 앵커와 조향 옵셋을 **요청 시점** IMU 로 함께 맞춘다.
 
         `observe_map_pose` 는 현재 IMU 로 옵셋을 만들지만, 자세는 요청 때 스캔의 것이다.
-        둘이 다르면 다음 정합 실패 동안 조향 방위가 요청 이후 회전을 빠뜨린다 (리뷰 지적).
+        둘이 다르면 다음 정합 실패 동안 조향 방위가 요청 이후 회전을 빠뜨린다.
         """
         self.anchor = request_imu
         if request_imu is not None:

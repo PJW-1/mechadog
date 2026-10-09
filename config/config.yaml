@@ -642,7 +642,7 @@ lidar:
   reloc_restore_yaw_deg: 5
   reloc_restore_score_ratio: 0.95
   # 상실 동안 pitch·roll 이 이만큼 넘게 바뀌면 들어 올린 것으로 보고 복원하지 않는다.
-  # 같은 방위로 들어 옮겨 대칭 구조에 내려놓으면 스캔·yaw 로는 모른다(리뷰 지적).
+  # 같은 방위로 들어 옮겨 대칭 구조에 내려놓으면 스캔·yaw 로는 모른다.
   reloc_restore_tilt_deg: 8
   # 신선한 IMU 가 있으면 국소 정합의 방위 탐색을 IMU 예측 ± 이 창으로 좁힌다 (0 이면 끔).
   # 우도장 지형에 방위 능선이 생겨 정합만으로는 방위가 흘렀다(정지 중 23°, 걸은 세션 IMU 대비 132°).
@@ -652,7 +652,7 @@ lidar:
   # 신선한 IMU만 수평 판정에 쓴다. 오래되거나 없으면 실제 송신 POSE 상태로 판단.
   scan_tilt_imu_max_age_ms: 250
   scan_tilt_max_deg: 6
-  # 보행 중(MOVE 후 700ms)은 몸체 흔들림 허용: lap_1 보행 p50 6.3°·p90 10.7° — 6° 면 보행 스캔 54% 를 버려 추적이 굶는다(리뷰 지적).
+  # 보행 중(MOVE 후 700ms)은 몸체 흔들림 허용: lap_1 보행 p50 6.3°·p90 10.7° — 6° 면 보행 스캔 54% 를 버려 추적이 굶는다.
   scan_tilt_walking_max_deg: 12
   # POSE 보간 완료 뒤 첫 수평 한 바퀴를 기다린다. 기존 보행 정지 안정 대기와 같은 750ms.
   scan_tilt_settle_ms: 750
