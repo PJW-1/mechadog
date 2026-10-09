@@ -51,7 +51,7 @@ from host.behavior.zone_map import ZoneMap
 from host.behavior.zones import ZoneStore, select_next
 from host.common.config import ConfigError
 from host.common.lidar_link import Scan
-from host.common.logging_setup import EdgeTrigger, event_logger
+from host.common.logging_setup import event_logger
 from host.common.protocol import clamp
 from host.common.units import deg_to_rad, rad_to_deg, wrap_pi
 from host.slam.occupancy import OccupancyGrid
@@ -346,7 +346,7 @@ class PatrolController:
         self.localization = LocalizationTrust(self, self.nav_state)
         self.recovery = BlockageRecovery(self)
         self.avoidance = LocalAvoidance(self, self.nav_state)
-        self.route = RouteFollower(self, steering_for)
+        self.route = RouteFollower(self, self.nav_state, steering_for)
         self.relaxed = RelaxedFollower(self, self.nav_state)
         self.navmap = NavigationMap(self, self.nav_state)
         self.arrival = ZoneArrival(self, self.nav_state, steering_for)
@@ -672,10 +672,6 @@ class PatrolController:
     @_replan_wait_started_ms.setter
     def _replan_wait_started_ms(self, value: int | None) -> None:
         self.nav_state.replan.wait_started_ms = value
-
-    @property
-    def _edge(self) -> EdgeTrigger:
-        return self.nav_state.edge
 
     @property
     def _local_scan(self) -> LocalScan:

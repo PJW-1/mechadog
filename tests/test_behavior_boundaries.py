@@ -37,7 +37,7 @@ EXPECTED: dict[str, int] = {
     "nav_map.py": 0,
     "recovery.py": 55,
     "relaxed_follow.py": 0,
-    "route_follow.py": 49,
+    "route_follow.py": 0,
 }
 
 _ATTR_FUNCS = frozenset({"getattr", "setattr", "hasattr", "delattr"})

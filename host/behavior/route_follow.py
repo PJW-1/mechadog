@@ -29,6 +29,7 @@ from host.common.units import deg_to_rad, rad_to_deg, wrap_pi
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from host.behavior.nav_state import PatrolNavState
     from host.behavior.patrol import PatrolController, Steering
 
 #: 순찰 컨트롤러와 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
@@ -38,8 +39,15 @@ LOG = event_logger("mechadog.behavior.patrol")
 class RouteFollower:
     """순찰기의 명시 동선과 그 진행 상태를 쥔다."""
 
-    def __init__(self, patrol: PatrolController, steering_for: Callable[..., Steering]) -> None:
+    def __init__(
+        self,
+        patrol: PatrolController,
+        state: PatrolNavState,
+        steering_for: Callable[..., Steering],
+    ) -> None:
         self._patrol = patrol
+        #: 순찰기와 함께 쓰는 항법 상태 — 값은 복사하지 않고 매번 여기서 읽는다.
+        self._state = state
         #: 방위 오차 → 보행 의도 — 순찰기가 `host.behavior.patrol.steering_for` 를 넘겨준다
         #: (이 모듈이 patrol 을 import 하면 순환 import 가 된다).
         self._steering_for = steering_for
@@ -80,7 +88,7 @@ class RouteFollower:
     @property
     def controls_inspection(self) -> bool:
         return self.active or bool(
-            self._patrol._goal_hold_reason and self._patrol._goal_hold_reason.startswith("route_")
+            self._state.goal.hold_reason and self._state.goal.hold_reason.startswith("route_")
         )
 
     def summary(self) -> dict[str, Any] | None:
@@ -99,7 +107,7 @@ class RouteFollower:
             "phase": self.stage,
             "points": [point.model_dump() for point in route.points],
             "dwell_remaining_s": max(
-                0.0, ((self.dwell_until_ms or self._patrol._now_ms) - self._patrol._now_ms) / 1000
+                0.0, ((self.dwell_until_ms or self._state.now_ms) - self._state.now_ms) / 1000
             ),
         }
 
@@ -132,13 +140,10 @@ class RouteFollower:
                 return False, "첫 지점까지 직접 가는 선이 벽·미관측 공간을 지난다"
             self.cancel("replaced", hold=False)
             patrol.arrival.zone = None
-            patrol._goal = (first.x, first.y)
-            patrol._goal_hold = False
-            patrol._goal_hold_reason = None
+            self._state.goal.set((first.x, first.y))
             patrol.plan, patrol.phase = Plan(GOAL_LABEL), Phase.PLANNING
-            patrol._replan_stop_required = False
-            patrol._replan_wait_started_ms = None
-            patrol._spinning = False
+            self._state.replan.clear()
+            self._state.spinning = False
         else:
             accepted, detail = patrol.goto(first.x, first.y, exact_goal=True)
             if not accepted:
@@ -161,7 +166,7 @@ class RouteFollower:
         patrol.relaxed.detouring = False
         patrol.relaxed.last_distance = math.inf
         patrol.relaxed.blocked_reported = False
-        patrol._now_ms = now_ms
+        self._state.now_ms = now_ms
         patrol.commander.halt()
         return True, f"동선 ‘{route.name}’의 {len(route.points)}개 지점을 차례로 주행한다"
 
@@ -183,9 +188,10 @@ class RouteFollower:
         patrol.relaxed.progress, patrol.relaxed.stuck = None, False
         self.dwell_until_ms = None
         patrol.arrival.zone = None
-        patrol._goal = None
-        patrol._goal_hold = hold
-        patrol._goal_hold_reason = f"route_{reason}" if hold else None
+        if hold:
+            self._state.goal.hold_at(f"route_{reason}")
+        else:
+            self._state.goal.clear()
         patrol.plan = Plan(None)
         patrol.phase = Phase.PLANNING
         patrol.commander.halt()
@@ -211,16 +217,16 @@ class RouteFollower:
         """도착 방향의 좌우를 제자리 탐색한다. dwell 마감은 회전 중에도 유지한다."""
         patrol = self._patrol
         assert self.search_base is not None
-        if patrol._now_ms >= (self.dwell_until_ms or 0):
+        if self._state.now_ms >= (self.dwell_until_ms or 0):
             self.search_base = None
             patrol.commander.halt()  # 탐색 회전 의도가 다음 지점 첫 틱에 남지 않게 (10-06 현장 검수)
             self.next_point()
             return
         if (
-            not patrol._local_scan.clear_allowed
-            or patrol._local_scan.received_ms is None
+            not self._state.local_scan.clear_allowed
+            or self._state.local_scan.received_ms is None
             or not 0
-            <= patrol._now_ms - patrol._local_scan.received_ms
+            <= self._state.now_ms - self._state.local_scan.received_ms
             <= patrol.nav_params.scan_max_age_ms
         ):
             patrol.commander.halt()
@@ -229,11 +235,11 @@ class RouteFollower:
         offsets = (extent, -extent, 0.0)
         # 짧은 dwell에서도 한쪽 회전만 하다 끝나지 않게 좌/우/중앙에 시간을 나눈다.
         duration = max(1, (self.dwell_until_ms or 0) - self.search_started_ms)
-        slot = min(2, (patrol._now_ms - self.search_started_ms) * 3 // duration)
+        slot = min(2, (self._state.now_ms - self.search_started_ms) * 3 // duration)
         self.search_index = max(self.search_index, slot)
         patrol.phase = Phase.INSPECT
         self.stage = "search"
-        if patrol._now_ms < self.search_pause_until or self.search_index >= len(offsets):
+        if self._state.now_ms < self.search_pause_until or self.search_index >= len(offsets):
             patrol.commander.halt()
             return
         error = wrap_pi(
@@ -242,13 +248,13 @@ class RouteFollower:
         if abs(error) <= patrol.drive.heading_tolerance_rad:
             patrol.commander.halt()
             self.search_index += 1
-            self.search_pause_until = patrol._now_ms + patrol.nav_params.route_search_pause_ms
+            self.search_pause_until = self._state.now_ms + patrol.nav_params.route_search_pause_ms
             return
         # 회전 중에도 일정 간격으로 멈춰 새 카메라 프레임을 받는다.
-        elapsed = patrol._now_ms - self.search_pause_until
+        elapsed = self._state.now_ms - self.search_pause_until
         if elapsed >= patrol.nav_params.route_search_pause_ms:
             patrol.commander.halt()
-            self.search_pause_until = patrol._now_ms + patrol.nav_params.route_search_pause_ms
+            self.search_pause_until = self._state.now_ms + patrol.nav_params.route_search_pause_ms
             return
         limit = min(abs(patrol.drive.spin_turn_deg), patrol.nav_params.route_search_turn_deg)
         patrol.commander.drive(0.0, math.copysign(min(limit, rad_to_deg(abs(error))), error))
@@ -277,7 +283,7 @@ class RouteFollower:
             patrol.arrival.zone = None
             patrol.phase = Phase.AIMING
             steering = self._steering_for(error, patrol.drive, spinning=True)
-            patrol._spinning = True
+            self._state.spinning = True
             patrol.commander.drive(
                 0.0,
                 clamp(
@@ -288,16 +294,18 @@ class RouteFollower:
             )
             return
         patrol.commander.halt()
-        patrol._spinning = False
+        self._state.spinning = False
         patrol.phase = Phase.INSPECT
         if self.dwell_until_ms is None:
             self.stage = "dwell"
-            self.dwell_until_ms = patrol._now_ms + int((point.dwell_s or 0.0) * 1000)
+            self.dwell_until_ms = self._state.now_ms + int((point.dwell_s or 0.0) * 1000)
             if patrol.nav_params.route_person_search and point.search_deg:
                 self.search_base = patrol.heading.steering_yaw()
                 self.search_index = 0
-                self.search_started_ms = patrol._now_ms
-                self.search_pause_until = patrol._now_ms + patrol.nav_params.route_search_pause_ms
+                self.search_started_ms = self._state.now_ms
+                self.search_pause_until = (
+                    self._state.now_ms + patrol.nav_params.route_search_pause_ms
+                )
                 self.stage = "search"
             # 영역 지도가 있으면 이름 없는 동선 점도 실제 소속 구역을 점검한다.
             # 지도 없는 기존 동선은 명시한 앵커 라벨만 사용한다.
@@ -310,7 +318,7 @@ class RouteFollower:
             )
             # 적어도 한 틱 동안 도착 상태를 공개하여 다음 카메라 프레임이 소비하게 한다.
             return
-        if patrol._now_ms < self.dwell_until_ms:
+        if self._state.now_ms < self.dwell_until_ms:
             return
         label = patrol.arrival.zone
         if (
@@ -346,15 +354,13 @@ class RouteFollower:
         patrol.relaxed.detouring = False
         point = route.points[index]
         # 동적 막힘은 다음 지점도 정지·스캔·우회/건너뛰기로 처리한다.
-        patrol._goal = (point.x, point.y)
-        patrol._goal_hold = False
-        patrol._goal_hold_reason = None
+        self._state.goal.set((point.x, point.y))
         patrol.plan, patrol.phase = Plan(GOAL_LABEL), Phase.PLANNING
         self.stage = "moving"
         self.dwell_until_ms = None
         self.direct_stopped_ms = None
         self.direct_detour_start = None
-        patrol._spinning = False
+        self._state.spinning = False
 
     @property
     def direct_moving(self) -> bool:
@@ -363,7 +369,7 @@ class RouteFollower:
             patrol.nav_params.route_direct
             and self.active
             and self.stage == "moving"
-            and patrol._goal is not None
+            and self._state.goal.xy is not None
             and not patrol.recovery.returning_home
         )
 
@@ -380,12 +386,12 @@ class RouteFollower:
         if not self.direct_moving or self.direct_detour_start is not None:
             return
         if self.direct_stopped_ms is None:
-            self.direct_stopped_ms = patrol._now_ms
-        stopped = patrol._stopped_since_ms
+            self.direct_stopped_ms = self._state.now_ms
+        stopped = self._state.stopped_since_ms
         if (
-            patrol._last_sent_moving
+            self._state.last_sent_moving
             or stopped is None
-            or patrol._now_ms - max(stopped, self.direct_stopped_ms)
+            or self._state.now_ms - max(stopped, self.direct_stopped_ms)
             < patrol.nav_params.route_direct_stop_ms
         ):
             return
@@ -405,7 +411,7 @@ class RouteFollower:
             effective=target,
         )
         patrol.phase = Phase.MOVING
-        distance = patrol._local_scan.distance()
+        distance = self._state.local_scan.distance()
         if distance is None or distance <= patrol.nav_params.local_stop_m:
             patrol.commander.halt()
             patrol.avoidance.decide("stop", "local_stop_distance", distance)
@@ -420,9 +426,9 @@ class RouteFollower:
             return
         heading = math.atan2(point.y - patrol.pose[1], point.x - patrol.pose[0])
         error = wrap_pi(heading - patrol.heading.steering_yaw())
-        steering = self._steering_for(error, patrol.drive, spinning=patrol._spinning)
-        patrol._spinning = steering.step_mm == 0 and steering.angle_deg != 0
-        if patrol._edge.changed("spin", patrol._spinning) and patrol._spinning:
+        steering = self._steering_for(error, patrol.drive, spinning=self._state.spinning)
+        self._state.spinning = steering.step_mm == 0 and steering.angle_deg != 0
+        if self._state.edge.changed("spin", self._state.spinning) and self._state.spinning:
             LOG.info("spin_in_place", error_deg=round(rad_to_deg(error), 1), target=GOAL_LABEL)
         scale = min(
             1.0,
@@ -430,7 +436,7 @@ class RouteFollower:
             / (patrol.nav_params.local_slow_m - patrol.nav_params.local_stop_m),
         )
         patrol.avoidance.decide("slow" if scale < 1 else "clear", "route_direct", distance)
-        limit = abs(patrol.drive.spin_turn_deg if patrol._spinning else patrol.drive.turn_deg)
+        limit = abs(patrol.drive.spin_turn_deg if self._state.spinning else patrol.drive.turn_deg)
         patrol.commander.drive(
             clamp(steering.step_mm * scale, 0.0, abs(patrol.drive.step_mm)),
             clamp(steering.angle_deg, -limit, limit),
@@ -448,7 +454,7 @@ class RouteFollower:
             if i == self.index or (label is not None and p.label == label)
         }
         if len(self.skipped_indices) == len(self.current.points):
-            patrol._goal = None
+            self._state.goal.xy = None
             patrol.recovery.return_home()
             return
         index = self.index + 1
@@ -459,7 +465,7 @@ class RouteFollower:
                 (p.label or f"지점 {i + 1}") in patrol.skipped
                 for i, p in enumerate(self.current.points)
             ):
-                patrol._goal = None
+                self._state.goal.xy = None
                 patrol.recovery.return_home()
                 return
             if self.current.repeat and self.cycle >= self.current.repeat:
@@ -471,7 +477,7 @@ class RouteFollower:
             self.skipped_indices = frozenset()
         self.index = index
         point = self.current.points[index]
-        patrol._goal = (point.x, point.y)
+        self._state.goal.xy = (point.x, point.y)
         self.stage = "moving"
         self.dwell_until_ms = None
         patrol.plan, patrol.phase = Plan(GOAL_LABEL), Phase.PLANNING
