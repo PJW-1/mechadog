@@ -3,104 +3,18 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
-from host.common.config import ConfigError
 from host.common.lidar_link import Scan
+
+# `NavParams` 는 기본 설정 검증(`host.common.config`)도 쓰므로 아래 계층에 둔다.
+# 옛 경로로도 읽히게 다시 내보낸다.
+from host.common.nav_params import NavParams as NavParams
 from host.common.units import wrap_pi
 from host.slam.occupancy import OccupancyGrid, bresenham
 from host.slam.scan_match import Pose
-
-
-@dataclass(frozen=True)
-class NavParams:
-    relaxed_follow: bool = True
-    #: 목표 통로의 가까운 장애물을 비켜 가기 시작하면 알린다 (기본 끔).
-    relaxed_detour_notice: bool = False
-    #: 따라가기에서 목표까지 거리가 `relaxed_stuck_ms` 동안 줄지 않으면 «길 막힘» 1회 알리고 앞이 열릴 때까지 선다.
-    relaxed_stuck_hold: bool = False
-    relaxed_stuck_ms: int = 12000
-    relaxed_walk_detour: bool = False
-    relaxed_detour_distance_m: float = 0.9
-    relaxed_detour_angle_deg: float = 20.0
-    route_person_search: bool = False
-    route_search_pause_ms: int = 1000
-    route_search_turn_deg: float = 10.0
-    route_direct: bool = True
-    route_direct_stop_ms: int = 3000
-    live_clear_scans: int = 3
-    live_clear_ttl_ms: int = 2000
-    local_slow_m: float = 0.40
-    local_stop_m: float = 0.25
-    local_fan_deg: float = 30.0
-    scan_max_age_ms: int = 500
-    dynamic_ttl_ms: int = 2000
-    gap_bin_deg: float = 5.0
-    corridor_margin_m: float = 0.02
-    avoidance_m: float = 0.20
-    avoidance_timeout_ms: int = 3000
-    avoidance_turn_deg: float = 15.0
-    avoidance_step_scale: float = 0.5
-    obstacle_event_interval_ms: int = 1000
-    blockage_short_ms: int = 4000
-    blockage_long_ms: int = 180000
-    blockage_confirm_ms: int = 2000
-    recovery_scan_timeout_ms: int = 120000
-    recovery_motion_timeout_ms: int = 5000
-    raytrace_max_m: float = 3.0
-    obstacle_max_m: float = 2.5
-    local_window_m: float = 3.0
-    inflation_radius_m: float = 0.55
-    cost_scaling_factor: float = 3.0
-    cost_weight: float = 2.0
-
-    @classmethod
-    def of(cls, config: Mapping[str, Any]) -> NavParams:
-        section = config.get("nav", {})
-        if not isinstance(section, Mapping):
-            raise ConfigError("nav 는 설정 객체여야 함")
-        defaults = cls()
-        values: dict[str, Any] = {}
-        for key in cls.__dataclass_fields__:
-            value = section.get(key, getattr(defaults, key))
-            if isinstance(getattr(defaults, key), bool):
-                if not isinstance(value, bool):
-                    raise ConfigError(f"nav.{key} 는 bool이어야 함")
-                values[key] = value
-                continue
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value <= 0
-            ):
-                raise ConfigError(f"nav.{key} 는 유한한 양수여야 함")
-            if isinstance(getattr(defaults, key), int) and not isinstance(value, int):
-                raise ConfigError(f"nav.{key} 는 정수여야 함")
-            values[key] = value
-        result = cls(**values)
-        if result.route_search_turn_deg > 30 or result.relaxed_detour_angle_deg > 60:
-            raise ConfigError("nav 탐색 회전은 30도 이하, 우회 알림 편향은 60도 이하여야 함")
-        if not 0.25 <= result.local_stop_m < result.local_slow_m:
-            raise ConfigError("0.25 <= nav.local_stop_m < nav.local_slow_m 이어야 함")
-        if not 5 <= result.local_fan_deg <= 90 or not 1 <= result.gap_bin_deg <= 10:
-            raise ConfigError("nav 부채꼴/각도 구간 범위 오류")
-        if result.avoidance_turn_deg > 30 or result.avoidance_step_scale > 1:
-            raise ConfigError("nav 회피 조향은 30도 이하, 보폭 비율은 1 이하여야 함")
-        if result.corridor_margin_m < 0.02:
-            raise ConfigError("nav.corridor_margin_m 은 0.02m 이상이어야 함")
-        if (
-            result.blockage_long_ms < result.blockage_short_ms
-            or result.blockage_confirm_ms >= result.blockage_short_ms
-        ):
-            raise ConfigError("nav 막힘 확인/단기/장기 시간 순서 오류")
-        if result.raytrace_max_m < result.obstacle_max_m:
-            raise ConfigError("nav 비움 범위는 표시 범위 이상이어야 함")
-        return result
 
 
 @dataclass

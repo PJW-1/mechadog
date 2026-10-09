@@ -9,26 +9,26 @@ profile: dev            # dev | prod
 
 nav:
   relaxed_detour_notice: false  # 우회 시작 알림. 목표 통로의 가까운 장애물도 있어야 한다.
-  relaxed_walk_detour: false  # AX: 0.7m 앞을 보고 보행 조향으로 상자를 우회한다.
+  relaxed_walk_detour: false  # 0.7m 앞을 보고 보행 조향으로 상자를 우회한다.
   relaxed_detour_distance_m: 0.9
   relaxed_detour_angle_deg: 20
   route_person_search: false  # search_deg가 있는 동선 정지점에서만 사람 탐색
   route_search_pause_ms: 1000
   route_search_turn_deg: 10
-  relaxed_follow: true  # AV: 최신 검증 위치(최대 2초) + LiDAR 빈 방향 추종. false면 기존 경로.
+  relaxed_follow: true  # 따라가기: 최신 검증 위치(최대 2초) + LiDAR 빈 방향 추종. false면 기존 경로.
   # 지도에 없던 새 끝점마다 «통로 막힘» 사건·원인 판독(ADR-45)을 낸다. 시연 중 사람·의자마다
   # 방송이 나가므로 기본은 끈다(현장 10-06) — 막힘 사건은 항법 정책(path_blocked·obstacle_detour)이 낸다.
   publish_new_obstacles: false
-  # AR: 미리보기 통과 동선은 다음 지점으로 직접 추종. false면 기존 A*/막힘 복구 사용.
+  # 동선 직접 추종: 미리보기 통과 동선은 다음 지점으로 직접 추종. false면 기존 A*/막힘 복구 사용.
   route_direct: true
-  route_direct_stop_ms: 3000  # 실제 장애물 STOP이 3초 지속될 때만 AO 통로/우회로 전환
-  # AG 사용자 승인: 지도는 큰 길, 최신 360도 LiDAR는 실제 장애물 판단.
+  route_direct_stop_ms: 3000  # 실제 장애물 STOP이 3초 지속될 때만 틈 통과(몸 폭 통로)·우회로 전환
+  # 실시간 회피 정책(사용자 승인): 지도는 큰 길, 최신 360도 LiDAR는 실제 장애물 판단.
   live_clear_scans: 3          # verified 자세에서 연속 3바퀴 빔 통과 셀만 임시 비움
   live_clear_ttl_ms: 2000      # 2초 안에 재관측되지 않으면 원래 지도 복귀
   local_slow_m: 0.36          # 현장 기준: 진행 방향 ±30도 36cm 아래 감속, 37cm는 진행
   local_stop_m: 0.25          # 25cm 아래 STOP, 로봇 자체 초음파 정지(7cm · ADR-47)는 유지
   local_fan_deg: 30
-  corridor_margin_m: 0.02     # AO: 최신 끝점 사이 몸 지름 30cm + 좌우 각 2cm
+  corridor_margin_m: 0.02     # 틈 통과: 최신 끝점 사이 몸 지름 30cm + 좌우 각 2cm
   scan_max_age_ms: 500        # 움직이는 동안에도 최신 한 바퀴 없으면 정지
   dynamic_ttl_ms: 2000        # 실제 끝점 + 몸 반경만, 다시 보이면 만료 시각 갱신
   gap_bin_deg: 5
@@ -113,7 +113,7 @@ mission:
   # 바꿀 수 있다 (FR-11.3). 전환은 L3·F 를 풀지 않는다 (FR-11.4).
 
 fsm:
-  hold_on_latched_alarm: false  # AX: 래치 L3 동안 정지, 관제 경보 확인 뒤 재개
+  hold_on_latched_alarm: false  # 래치 L3 동안 정지, 관제 경보 확인 뒤 재개
   patrol_scan_interval_s: 10  # FR-2.4
   scan_duration_s: 3
   # 부호 주의 — 양수 pitch 는 앞이 «내려간다» (PROTOCOL 2절 · ROS REP-103). 그래서 «고개를
@@ -410,7 +410,7 @@ escalation:
   # PPE 위반 경고의 빨간 눈을 유지하는 시간 — 래치가 아니다, 지나면 확인 없이 L0 로 돌아간다
   # (ADR-42 결정 1). 경고 문장이 끝날 만큼 둔다.
   ppe_warning_hold_ms: 5000
-  ppe_recheck: false  # AX: 경고 후 같은 대상의 새 프레임에서 착용 재확인
+  ppe_recheck: false  # 경고 후 같은 대상의 새 프레임에서 착용 재확인
   ppe_recheck_max_warnings: 2
 
 # 착용 재확인 사건의 TF 카드 연결 지점. 트랙 배정 전에는 0(재생 없음).
@@ -642,7 +642,7 @@ lidar:
   reloc_restore_yaw_deg: 5
   reloc_restore_score_ratio: 0.95
   # 상실 동안 pitch·roll 이 이만큼 넘게 바뀌면 들어 올린 것으로 보고 복원하지 않는다.
-  # 같은 방위로 들어 옮겨 대칭 구조에 내려놓으면 스캔·yaw 로는 모른다(리뷰 지적).
+  # 같은 방위로 들어 옮겨 대칭 구조에 내려놓으면 스캔·yaw 로는 모른다.
   reloc_restore_tilt_deg: 8
   # 신선한 IMU 가 있으면 국소 정합의 방위 탐색을 IMU 예측 ± 이 창으로 좁힌다 (0 이면 끔).
   # 우도장 지형에 방위 능선이 생겨 정합만으로는 방위가 흘렀다(정지 중 23°, 걸은 세션 IMU 대비 132°).
@@ -652,7 +652,7 @@ lidar:
   # 신선한 IMU만 수평 판정에 쓴다. 오래되거나 없으면 실제 송신 POSE 상태로 판단.
   scan_tilt_imu_max_age_ms: 250
   scan_tilt_max_deg: 6
-  # 보행 중(MOVE 후 700ms)은 몸체 흔들림 허용: lap_1 보행 p50 6.3°·p90 10.7° — 6° 면 보행 스캔 54% 를 버려 추적이 굶는다(리뷰 지적).
+  # 보행 중(MOVE 후 700ms)은 몸체 흔들림 허용: lap_1 보행 p50 6.3°·p90 10.7° — 6° 면 보행 스캔 54% 를 버려 추적이 굶는다.
   scan_tilt_walking_max_deg: 12
   # POSE 보간 완료 뒤 첫 수평 한 바퀴를 기다린다. 기존 보행 정지 안정 대기와 같은 750ms.
   scan_tilt_settle_ms: 750
@@ -669,8 +669,8 @@ lidar:
   # ── 경로 계획 ────────────────────────────────────────────────
   # 로봇 폭의 절반 (`2.2.1` 실측 후 확정).
   robot_radius_mm: 150
-  # AG 승인: 전역 경로의 작은 여유. 즉시 정지/감속은 nav의 최신 LiDAR 거리로 판단한다.
-  tracking_margin_mm: 50       # AG: 전역 기준 경로는 몸 반경 15cm + 여유 5cm
+  # 실시간 회피 정책: 전역 경로의 작은 여유. 즉시 정지/감속은 nav의 최신 LiDAR 거리로 판단한다.
+  tracking_margin_mm: 50       # 전역 기준 경로는 몸 반경 15cm + 여유 5cm
   # logodds 가 이 값 이상인 점유 셀만 «단단한» 장애물 — 벽·반복 확인된 물체는
   # `robot_radius_mm + tracking_margin_mm` 전부를 부풀린다. 그 미만(세션 지도
   # 병합으로 들어온 가구 다리급, 1~4)은 `furniture_clearance_mm` 만큼 부풀린다.
@@ -680,7 +680,7 @@ lidar:
   # 추종 여유 안에서 출발하면 몸체 반경을 지키는 연결을 이 거리 안에서 찾는다.
   start_escape_max_mm: 600
   hard_occ_thresh: 4.0
-  furniture_clearance_mm: 200    # AG: 지도 가구도 15cm + 5cm, 실제 물체는 최신 LiDAR
+  furniture_clearance_mm: 200    # 지도 가구도 15cm + 5cm, 실제 물체는 최신 LiDAR
   path_simplify_mm: 80         # 웨이포인트 단순화 허용 오차
   waypoint_radius_mm: 100      # 중간 웨이포인트 통과 판정 (도착은 zones.arrival_radius_mm)
   # 방위 오차가 이 안이면 직진한다. 좁히면 진동한다.
@@ -697,7 +697,7 @@ lidar:
   # 이 거리 안의 빔만 후보로 본다. 측위 오차가 거리에 비례하므로 멀리서
   # 판정하면 오탐이 늘고, 오탐 하나가 통로를 막는다.
   new_obstacle_check_radius_mm: 1500
-  # AG: 연속 장애물 확인/측위 오차 추가 팽창/별도 표시 반경 폐기.
+  # 실시간 회피 정책에서 연속 장애물 확인/측위 오차 추가 팽창/별도 표시 반경 폐기.
   # 매 최신 스캔의 실제 끝점에 robot_radius_mm만 적용, nav.dynamic_ttl_ms 후 만료.
 
   # ── 호스트측 위험 판정 ───────────────────────────────────────
@@ -754,7 +754,8 @@ broadcast:
   # 켜 둔다 — Piper·모델이 없는 PC 에서는 `broadcast_disabled` 경고 한 번을 남기고
   # 방송만 꺼지며 런타임은 그대로 기동한다(`host/cloud/broadcast.py`).
   enabled: true
-  piper_model: "C:/dev/mechadog-voice/models/piper/ko_KR-kss-medium.onnx"
+  # 저장소 루트 기준 상대 경로 — 모델(.onnx·.onnx.json)을 `models/piper/` 에 둔다(저장소에는 올리지 않는다).
+  piper_model: "models/piper/ko_KR-kss-medium.onnx"
   # 1.0 이 모델 기본 속도다. 1.2 가 듣기 좋았다는 실측 기록 — docs/internal/MODEL_PLAN.md 198행.
   length_scale: 1.2
   # 초기 음량(0~100) — 관제 화면 슬라이더가 기동 이후 값을 바꾼다.

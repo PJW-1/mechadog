@@ -24,7 +24,7 @@ PLAN_TO = ("host.behavior.patrol.plan_to", "host.behavior.recovery.plan_to")
 
 
 def test_fully_blocked_single_goto_finishes_idle_and_preserves_event(monkeypatch):
-    """AO: only a scan with no body corridor ends the mission as spatially blocked."""
+    """Gap pass: only a scan with no body corridor ends the mission as spatially blocked."""
     c = ready(front=0.446)
     c._goal = (4, 2)
     c.plan = Plan(GOAL_LABEL)

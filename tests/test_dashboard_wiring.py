@@ -14,13 +14,12 @@ from host.dashboard.state import DashboardState
 from host.dashboard.wiring import _has_navigator, _latest_jpeg, _map_view, _publish_event
 
 
-def test_navigator_features_need_both_a_navigator_and_nav_status() -> None:
-    """지도·항법 상태는 LiDAR 길 찾기가 붙은 런타임에만 연결한다."""
-    bare = SimpleNamespace(_navigator=None, nav_status=lambda: {})
-    assert not _has_navigator(bare)
-    assert _map_view(bare) is None
-    assert not _has_navigator(SimpleNamespace(_navigator=object()))
-    assert _has_navigator(SimpleNamespace(_navigator=object(), nav_status=lambda: {}))
+def test_navigator_features_need_a_navigator() -> None:
+    """지도·항법 상태는 LiDAR 길 찾기가 붙은 런타임에만 연결한다 — 공개 `navigator` 로 본다."""
+    bare = SimpleNamespace(navigator=None, nav_status=lambda: {})
+    assert not _has_navigator(bare)  # type: ignore[arg-type]
+    assert _map_view(bare) is None  # type: ignore[arg-type]
+    assert _has_navigator(SimpleNamespace(navigator=object(), nav_status=lambda: {}))  # type: ignore[arg-type]
 
 
 def test_latest_jpeg_reads_the_newest_frame_on_every_call() -> None:

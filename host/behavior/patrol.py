@@ -209,10 +209,6 @@ class PatrolController:
     match_params: MatchParams
     #: `(min_m, max_m)` LiDAR 유효 거리.
     range_m: tuple[float, float]
-    #: 이전 생성자 호환 필드 3개. AG에서는 오차/확인 횟수/별도 표시 반경을 쓰지 않는다.
-    new_obstacle_margin_m: float
-    new_obstacle_confirmations: int
-    obstacle_mark_radius_m: float
     #: 이 거리 안의 빔만 신규 장애물 후보로 본다 — 측위 오차는 거리에 비례해 커진다.
     new_obstacle_check_radius_m: float
     forward_fan_rad: float
@@ -262,7 +258,7 @@ class PatrolController:
     imu_fresh_ms: int = 300
     scan_gate: ScanGate = field(default_factory=ScanGate)
     #: 측위가 이만큼 끊기면 «검증됨»·사람 시드의 신뢰를 버린다 — 그 사이 로봇이 들려
-    #: 옮겨졌을 수 있다. 0 이면 끈다 (리뷰 지적).
+    #: 옮겨졌을 수 있다. 0 이면 끈다.
     trust_expiry_ms: int = 5000
     #: 전역 탐색 결과가 이보다 늦게 도착하면 버린다 — 그 사이 손으로 옮겨졌거나 돌았을 수
     #: 있는데 MOVE 수만으로는 모른다.
@@ -278,8 +274,8 @@ class PatrolController:
     reloc_restore_yaw_rad: float = math.radians(5.0)
     reloc_restore_score_ratio: float = 0.95
     #: 상실 동안 pitch·roll 이 기준보다 이만큼 넘게 바뀌면 «들어 올렸다» 로 보고 기준을 버린다.
-    #: 같은 방위로 들어 옮기면 IMU yaw 로는 모르고, 대칭 구조에선 점수 비율도 통과한다
-    #: (리뷰 지적) — 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
+    #: 같은 방위로 들어 옮기면 IMU yaw 로는 모르고, 대칭 구조에선 점수 비율도 통과한다.
+    #: 네 발 로봇을 들면 몸체가 기운다는 것에 기댄다.
     reloc_restore_tilt_rad: float = math.radians(8.0)
     #: 사람이 알려준 구역(대시보드 «위치 알려주기») 은 이 시간 안에 잡히지 않으면 버린다.
     zone_hint_ms: int = 60000
@@ -302,8 +298,6 @@ class PatrolController:
     #: 사람이 `--pose-seed` 로 시작 자세를 줬는가. 전역 재측위가 모호할 때(책상 밑 등)
     #: 시드 주변 넓은 창으로 **추적은 시작하되** 전역 확인 전에는 지도에 쓰지 않는다.
     pose_seeded: bool = False
-    #: 이전 생성자 호환 필드. AG는 표시를 강제로 지우지 않고 재관측/TTL로만 갱신한다.
-    max_reverify_attempts: int = 3
     random_after_first_cycle: bool = True
     rng: random.Random | None = None
     #: 런타임의 카메라가 도착을 소비할 때까지 정지한다. 독립 순찰 도구는 기다리지 않는다.
@@ -320,15 +314,12 @@ class PatrolController:
     safety: SafetyView = field(default_factory=SafetyView)
     stats: PatrolStats = field(default_factory=PatrolStats)
 
-    _last_scan_ms: int | None = None
     _local_scan_started_ms: int | None = None
     _stopped_since_ms: int | None = None
     _last_sent_moving: bool = False
     _replan_stop_required: bool = False
     _replan_wait_started_ms: int | None = None
     _replan_timeout_hold_ms: int | None = None
-    #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
-    _last_imu_yaw: float | None = None
     _reset_requested: bool = False
     #: 지금 처리 중인 스캔의 Host 시각 (`observe_scan` 이 찍는다).
     _scan_now_ms: int = 0
@@ -549,7 +540,7 @@ class PatrolController:
                 self._local_scan.clear_allowed = False
                 self.scan_gate.status = {"scan_rejected": "pose_settling", "clear_allowed": False}
             if message["type"] == "MOVE" and not (message.get("step") or message.get("angle")):
-                # MOVE {0,0} 은 «서 있으라» 다 — 걷는 중으로 치면 정지 감사가 막힌다 (리뷰 지적).
+                # MOVE {0,0} 은 «서 있으라» 다 — 걷는 중으로 치면 정지 감사가 막힌다.
                 self._note_stopped(sent_ms)
             elif message["type"] == "MOVE":
                 self.scan_gate.note_move(sent_ms)
@@ -578,14 +569,6 @@ class PatrolController:
             self.relaxed.scan.observe(scan, now_ms, self.range_m)
             self.relaxed.scan_yaw = self.heading.steering_yaw()
         self._local_scan_pose = (*self.pose[:2], self.heading.steering_yaw())
-        # 빈 전문/범위 밖 점만 있는 전문은 관측을 복구하지 않는다.
-        if rejected is None and any(
-            math.isfinite(angle)
-            and math.isfinite(distance)
-            and self.range_m[0] <= distance <= self.range_m[1]
-            for angle, distance in scan.points
-        ):
-            self._last_scan_ms = now_ms
         return True
 
     def observe_obstacle_scan(self, scan: Scan, now_ms: int) -> None:
@@ -1309,21 +1292,11 @@ class PatrolController:
             costs=self.navmap.costs,
         )
         self.waypoint_index = 0
-        # 도달 불가 구역은 같은 목록이 바뀔 때만 기록한다 — 매 틱 재시도하면
-        # 로그가 초당 10줄씩 쌓여 진짜 신호를 덮는다 (목업에서 실제로 확인).
-        skip_key = ",".join(f"{label}:{reason}" for label, reason in skipped)
+        # 도달 불가 구역이 있으면 막힘 복구가 이어받는다.
         if skipped:
             self.plan = Plan(skipped[0][0])
             self.recovery.begin("global_path_blocked")
             return
-        if skipped and self._edge.changed("zones_unreachable", skip_key):
-            LOG.warning(
-                "zones_unreachable",
-                skipped=[label for label, _ in skipped],
-                reasons=[reason for _, reason in skipped],
-            )
-        if not skipped:
-            self._edge.changed("zones_unreachable", "")
         if self.plan.reachable:
             self._edge.changed("no_reachable_zone", False)
             LOG.info(
@@ -1535,14 +1508,8 @@ def controller_from_config(
             sigma_m=match_params.sigma_m,
         ),
         range_m=range_from_config(config),
-        new_obstacle_margin_m=0.0,  # 이전 생성자 호환용; 새 정책에서는 사용하지 않는다.
         new_obstacle_check_radius_m=float(lidar["new_obstacle_check_radius_mm"]) / 1000.0,
-        new_obstacle_confirmations=1,
-        obstacle_mark_radius_m=float(lidar["robot_radius_mm"]) / 1000.0,
         forward_fan_rad=deg_to_rad(float(lidar["forward_fan_deg"])),
-        # 회피 시퀀스와 **같은 값을 쓴다** — 갇힌 상황을 몇 번까지
-        # 스스로 풀어 보고 사람에게 넘길지의 값이다 (FR-2.3).
-        max_reverify_attempts=int(config["fsm"]["avoid_attempts"]),
         live_map_write=bool(lidar.get("live_map_write", False)),
         map_hit_logodds=float(lidar["hit_logodds"]),
         map_miss_logodds=float(lidar["miss_logodds"]),

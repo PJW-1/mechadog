@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from host.behavior.fsm import Event
+from host.common.events import Event
 from host.common.protocol import ONBOARD_STATES, DecodeResult, TelemetryDecoder
 
 

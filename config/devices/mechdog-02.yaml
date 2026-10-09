@@ -223,8 +223,8 @@ nav:  # 2026-10-05 사용자 승인: 덜 조심스럽게. 코끝 기준 25cm부�
   avoidance_timeout_ms: 2000
   blockage_confirm_ms: 1000
   inflation_radius_m: 0.40
-  route_person_search: true  # 2026-10-06 AX: 동선 점 search_deg 가 있는 곳(C)에서 좌우로 돌며 사람 찾기
-  relaxed_walk_detour: true  # 2026-10-06 AX: 걸으며 비켜 가는 우회
+  route_person_search: true  # 2026-10-06 시연 설정: 동선 점 search_deg 가 있는 곳(C)에서 좌우로 돌며 사람 찾기
+  relaxed_walk_detour: true  # 2026-10-06 시연 설정: 걸으며 비켜 가는 우회
   relaxed_detour_notice: true  # 우회 시작 때 «돌아서 지나갑니다» 1회
   relaxed_stuck_hold: true  # 2026-10-06 목업: 막히면 정면정지·탈출회전 무한반복 → 10초간 진척 없으면 «길이 막혔습니다» 1회 후 대기, 앞이 열리면 재개
   relaxed_stuck_ms: 10000
@@ -232,7 +232,7 @@ nav:  # 2026-10-05 사용자 승인: 덜 조심스럽게. 코끝 기준 25cm부�
 fsm:  # 2026-10-06 사용자: 걷다가 10초마다 고개 들기(상체 스캔)로 멈춤·동선 정지점 대기가 안 끝남 → 이동 중 주기 스캔 사실상 끔(정지점에서 검사)
   patrol_scan_interval_s: 600
   track_stop_dist_cm: 150  # 2026-10-06 리허설3: 쓰러짐 의심 때 40cm 까지 다가가 «돌진», 누운 사람이 화면에 안 들어옴 → 1.5m 에서 멈추고 방향만 맞춤
-  hold_on_latched_alarm: true  # 2026-10-06 AX 사용자 승인: 쓰러짐 L3 동안 그 자리 대기, 관제 경보 확인 뒤 재개
-escalation:  # 2026-10-06 AX: PPE 경고 뒤 같은 대상 착용 재확인
+  hold_on_latched_alarm: true  # 2026-10-06 시연 설정(사용자 승인): 쓰러짐 L3 동안 그 자리 대기, 관제 경보 확인 뒤 재개
+escalation:  # 2026-10-06 시연 설정: PPE 경고 뒤 같은 대상 착용 재확인
   ppe_recheck: true
   ppe_recheck_max_warnings: 2

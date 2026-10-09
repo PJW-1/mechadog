@@ -105,10 +105,7 @@ def _navigator(commander: Commander) -> PatrolController:
         plan_params=PLAN,
         match_params=MATCH,
         range_m=(0.12, 8.0),
-        new_obstacle_margin_m=0.25,
-        new_obstacle_confirmations=2,
         new_obstacle_check_radius_m=1.5,
-        obstacle_mark_radius_m=0.3,
         forward_fan_rad=0.35,
         random_after_first_cycle=False,
         rng=random.Random(7),
@@ -143,6 +140,14 @@ def _patrolling(config: dict, clock: FakeClock, **kwargs: object):
     runtime.tick(clock.ms)
     assert runtime.behavior.state == "PATROL"
     return runtime, navigator
+
+
+def test_runtime_exposes_the_navigator_read_only(config: dict, clock: FakeClock) -> None:
+    """관제 배선은 비공개 `_navigator` 대신 공개 `navigator` 로 길 찾기를 읽는다."""
+    runtime, navigator = _runtime(config, clock)
+    assert runtime.navigator is navigator
+    with pytest.raises(AttributeError):
+        runtime.navigator = None  # type: ignore[misc]
 
 
 # ── 순찰이 길 찾기로 걷는다 ─────────────────────────────────

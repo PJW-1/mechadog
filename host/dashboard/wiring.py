@@ -89,17 +89,17 @@ def dashboard_wiring(
     }
 
 
-def _has_navigator(runtime: Any) -> bool:
-    return getattr(runtime, "_navigator", None) is not None and hasattr(runtime, "nav_status")
+def _has_navigator(runtime: Runtime) -> bool:
+    return runtime.navigator is not None
 
 
-def _map_view(runtime: Any) -> Callable[[], tuple[bytes, dict[str, Any]]] | None:
+def _map_view(runtime: Runtime) -> Callable[[], tuple[bytes, dict[str, Any]]] | None:
     """항법 지도·구역을 관제 웹에 그릴 함수. 처음 부를 때 한 번 그린다."""
-    if not _has_navigator(runtime):
+    navigator = runtime.navigator
+    if navigator is None:
         return None
     from host.dashboard.live_map import MapView, PoseFrame, render
 
-    navigator = runtime._navigator
     view = MapView(
         lambda: render(
             navigator.grid,

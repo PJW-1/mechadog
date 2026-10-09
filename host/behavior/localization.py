@@ -62,7 +62,7 @@ class LocalizationTrust:
         self.last_zone: str | None = None
         #: 연속된 전역 탐색 결과 — 서로 0.3m 안에서 `reloc_votes` 번 모이면 채택한다.
         self.global_votes: list[Pose] = []
-        #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다 (리뷰 지적).
+        #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다.
         self.loc_epoch: int = 0
         #: 마지막 표 뒤에 로봇이 움직였는가 (MOVE 송신 또는 IMU 방위 변화) — 표의 독립성.
         self.moved_since_vote: bool = True
@@ -499,7 +499,7 @@ class LocalizationTrust:
         if self.restore_anchor is None:
             return False
         # 요청 뒤 결과가 오는 사이 IMU 가 돌았거나 끊겼거나 기준이 묵었을 수 있다 — 적용 직전
-        # 다시 본다 (리뷰 지적). 실패·결과 없음은 연속 표를 끊는다 (P2).
+        # 다시 본다. 실패·결과 없음은 연속 표를 끊는다 (P2).
         if self.restore_prior(now_ms) is None or prior_result is None or result is None:
             self.restore_votes.clear()
             return False
@@ -574,7 +574,7 @@ class LocalizationTrust:
             or asked_epoch != self.loc_epoch
             or not 0 <= wall_now_ms - asked_ms <= self._patrol.global_result_max_age_ms
         ):
-            # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다 (리뷰 지적).
+            # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다.
             if self._patrol._edge.changed("global_result_stale", True):
                 LOG.info("global_result_stale", kind=kind, moves=self.move_seq - asked_moves)
             if kind == "reloc":

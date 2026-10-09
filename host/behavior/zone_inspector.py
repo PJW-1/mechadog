@@ -236,7 +236,7 @@ class ZoneInspector:
         self._pose = (pose, int(now_ms))
 
     def _fresh_pose(self, now_ms: int) -> tuple[float, float, float] | None:
-        """기본 측위 기한 또는 항법이 확인한 AV 방문의 2초 유예 안의 위치."""
+        """기본 측위 기한 또는 항법이 확인한 따라가기(`nav.relaxed_follow`) 방문의 2초 유예 안의 위치."""
         if (
             self._pose is None
             or now_ms < self._pose[1]

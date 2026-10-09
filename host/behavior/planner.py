@@ -17,6 +17,10 @@ from typing import cast
 
 import numpy as np
 
+# `PlanParams`·`min_forward_distance` 는 LiDAR 설정 적재(`host.slam.settings`)·LiDAR 수신
+# (`host.telemetry.lidar_feed`)도 쓰므로 아래 계층에 둔다. 옛 경로로도 읽히게 다시 내보낸다.
+from host.common.nav_params import PlanParams as PlanParams
+from host.common.scan_geometry import min_forward_distance as min_forward_distance
 from host.slam.occupancy import OccupancyGrid
 
 Cell = tuple[int, int]
@@ -34,31 +38,6 @@ MOVES: tuple[tuple[int, int, float], ...] = (
     (1, -1, math.sqrt(2)),
     (1, 1, math.sqrt(2)),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class PlanParams:
-    """계획 파라미터. 로봇 반경만 빼면 전부 `config.yaml` 의 `lidar:` 절에서 온다."""
-
-    occ_thresh: float
-    free_thresh: float
-    #: 경로 중심선이 장애물에서 유지할 거리 = 로봇 반경 + 추종 여유. 호스트 LiDAR E-STOP
-    #: 거리보다 커야 정상 추종이 비상정지로 끝나지 않는다 (`settings._validate` 가 확인한다).
-    clearance_m: float
-    simplify_eps_m: float
-    #: 이 값 이상의 점유 셀(원본 벽·충분히 확인된 장애물)은 `clearance_m` 전부를 부풀린다.
-    #: 병합으로 들어온 가구 다리급 셀(occ_thresh 이상 ~ 이 값 미만)은
-    #: `soft_clearance_m` 만 부풀린다 — 로봇이 실제로 섰던 자리 옆의 다리까지
-    #: 도달 불가로 만들지 않기 위해서다. 라이브 적분으로 다시 확인되면 값이
-    #: 올라 저절로 단단한 층이 된다.
-    hard_thresh: float = 4.0
-    soft_clearance_m: float = 0.15
-    #: 추종 여유 안에서 탈출할 때도 지켜야 하는 몸체 반경. config의 실측 반경을 사용한다.
-    body_radius_m: float = 0.15
-    start_escape_max_m: float = 0.6
-    inflation_radius_m: float = 0.55
-    cost_scaling_factor: float = 3.0
-    cost_weight: float = 0.0
 
 
 def _collision_cells(
@@ -720,7 +699,7 @@ def detect_new_obstacle(
             # 5~7cm). 허용치는 호출자가 `계획 여유 − 몸체 반경` 으로 준다 — 벽에서 그만큼 안의
             # 물체는 벽에서 계획 여유만큼 떨어진 경로와 몸체 반경 이상 떨어진다.
             # ⚠️ 확인된 동적 표시(`blocked`)는 «아는 것» 에 넣지 않는다 — 이미 반경으로 넓힌
-            # 표시에 허용치를 더하면 그 바깥의 새 물체까지 숨긴다 (리뷰 지적).
+            # 표시에 허용치를 더하면 그 바깥의 새 물체까지 숨긴다.
             if known_tolerance_m > 0 and _near_known_obstacle(
                 grid, hit, known_tolerance_m, occ_thresh
             ):
@@ -744,16 +723,3 @@ def _near_known_obstacle(
     inside = (rows - row) ** 2 + (cols - col) ** 2 <= ring * ring
     known = grid.cells[r0:r1, c0:c1] >= occ_thresh
     return bool((known & inside).any())
-
-
-def min_forward_distance(
-    scan_points: tuple[tuple[float, float], ...],
-    half_angle_rad: float,
-) -> float | None:
-    """전방 부채꼴 안의 최단 거리. 호스트측 위험 판단에 쓴다."""
-    forward = [
-        dist
-        for angle, dist in scan_points
-        if abs((angle + math.pi) % (2 * math.pi) - math.pi) <= half_angle_rad
-    ]
-    return min(forward) if forward else None

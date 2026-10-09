@@ -98,7 +98,9 @@ def _require_positive(mapping: dict[str, Any], key: str) -> None:
 
 
 def validate_base_config(config: dict[str, Any]) -> None:
-    from host.behavior.live_nav import NavParams
+    from host.common.nav_params import (
+        NavParams,  # nav_params 가 ConfigError 를 쓰므로 여기서 읽는다
+    )
 
     NavParams.of(config)
     if not isinstance(config.get("profile"), str) or config["profile"] not in {"dev", "prod"}:

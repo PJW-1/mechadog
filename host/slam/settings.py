@@ -13,8 +13,8 @@ from typing import Any, cast
 
 import yaml
 
-from host.behavior.planner import PlanParams
 from host.common.config import ConfigError, _finite_number, load_base_config, load_config
+from host.common.nav_params import PlanParams
 from host.common.units import deg_to_rad
 from host.slam.scan_match import MatchParams
 

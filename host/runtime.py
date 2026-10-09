@@ -279,7 +279,7 @@ class Runtime:
             # 일어나고, 그때 풀면 루프가 웨이포인트를 따라가는 중에 경로가 비워진다.
             self._behavior.fsm.on_enter("PATROL", self._mark_navigator_resume)
             self._behavior.fsm.on_exit("PATROL", self._mark_goal_cancel)
-            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다 (리뷰 지적).
+            # 실제 «순찰 정지» 는 PATROL → MANUAL → IDLE 이다.
             self._behavior.fsm.on_exit("MANUAL", self._mark_goal_cancel)
         self._normal_alert = cast("PostureSequence | None", self._behavior.sequence_for("ALERT"))
         self._behavior.register_sequence("ALERT", self._alert_sequence)
@@ -636,6 +636,11 @@ class Runtime:
         return self._nav_requests
 
     @property
+    def navigator(self) -> PatrolController | None:
+        """LiDAR 길 찾기 (`--lidar-device`). 없으면 None — 관제 지도·항법 상태도 붙지 않는다."""
+        return self._navigator
+
+    @property
     def speaker(self) -> Speaker:
         """상황 방송·로봇 스피커 트랙. 시험이 재생 키를 가로챈다."""
         return self._speaker
@@ -879,7 +884,7 @@ class Runtime:
             # 대응 단계는 확정과 실제 검출을 **둘 다** 본다 — 확정으로 L1 에 올라가고
             # 마지막 검출로 L1 을 내린다. 하나로 합치면 창이 빌 때마다 단계가 흔들린다.
             #
-            # ⚠️ (잠정) **임무 밖(대기·수동)에서는 올리지 않는다** (`fsm.STANDBY`). 인증도
+            # **임무 밖(대기·수동)에서는 올리지 않는다** (`fsm.STANDBY`). 인증도
             # 보지 않는다 — 대기 중 모르는 사원증 2장이 `AUTH_FAILED` 로 L3 를 만든다.
             inspected = (
                 self._mission.enables("ppe")
@@ -1175,7 +1180,7 @@ class Runtime:
             self._settle_unreachable_goal(now_ms)
         # 막힘 원인 판독을 쓰러짐·구역 판독보다 먼저 줍는다 — 같은 틱에 그쪽이 워커를 쓴다.
         self._path_cause.poll(now_ms)
-        # (잠정) 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
+        # 임무 밖(대기·수동)에서는 래치되지 않은 단계를 내린다 (`fsm.STANDBY`).
         if self._behavior.standby:
             self._escalation.stand_down(now_ms)
         phase_started = time.perf_counter()

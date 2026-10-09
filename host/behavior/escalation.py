@@ -246,7 +246,7 @@ class Escalation:
             self._enter(Level.L0, reason="authenticated", now_ms=now_ms)
 
     def stand_down(self, now_ms: int) -> None:
-        """임무 밖(`fsm.STANDBY`)에 들어섰다 — 래치되지 않은 L1·L2 만 내린다 (잠정)."""
+        """임무 밖(`fsm.STANDBY`)에 들어섰다 — 래치되지 않은 L1·L2 만 내린다."""
         if self._level in (Level.L1, Level.L2):
             self._release("standby", now_ms)
 

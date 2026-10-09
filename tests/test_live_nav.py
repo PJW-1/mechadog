@@ -1,4 +1,4 @@
-"""AG: 빔 비움/복귀, 최신 거리, gap, 탈출, TTL과 실제 MOVE 경계."""
+"""실시간 회피 정책: 빔 비움/복귀, 최신 거리, gap, 탈출, TTL과 실제 MOVE 경계."""
 
 from __future__ import annotations
 

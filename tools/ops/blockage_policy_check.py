@@ -1,4 +1,4 @@
-"""AH 오프라인 근거와 합성 목업 지도. 로봇 소켓을 사용하지 않는다."""
+"""막힘 정책 오프라인 근거와 합성 목업 지도. 로봇 소켓을 사용하지 않는다."""
 
 from __future__ import annotations
 
@@ -36,7 +36,11 @@ def ad_regression(maps: Path, output: Path) -> None:
         plan_params_from_config(load_base_config()),
     ]
     cases = []
-    for name, param in zip(("AD 당시 여유 + AH 경계 연결", "AG/AH 현재 설정"), params, strict=True):
+    for name, param in zip(
+        ("이전 여유 0.25m + 막힘 정책 경계 연결", "실시간 회피·막힘 정책 현재 설정"),
+        params,
+        strict=True,
+    ):
         blocked = inflate(grid, param, obstacle_grid=loc if param.clearance_m == 0.25 else None)
         body = body_collision_mask(
             grid, param, obstacle_grid=loc if param.clearance_m == 0.25 else None
@@ -169,7 +173,7 @@ def render_traces(output: Path, traces: list[Path]) -> None:
                 "end_blockage": rows[-1].get("blockage"),
             }
         )
-    fig.suptitle("AH 합성 주행 기록 — 관제 브라우저 캡처가 아님", fontsize=14)
+    fig.suptitle("막힘 정책 합성 주행 기록 — 관제 브라우저 캡처가 아님", fontsize=14)
     fig.tight_layout()
     fig.savefig(output / "mock-traces.png", dpi=140)
     plt.close(fig)

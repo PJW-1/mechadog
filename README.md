@@ -164,7 +164,7 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 
 ## 개발 방식
 
-- **테스트**: 하드웨어 없이 도는 pytest 4,900여 건(147개 파일, 2026-10-09 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. 관제 화면은 node 테스트(jsdom)로 따로 검사합니다.
+- **테스트**: 하드웨어 없이 도는 pytest 5,000여 건(166개 파일, 2026-10-09 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. 관제 화면은 node 테스트(jsdom)로 따로 검사합니다.
 - **CI 게이트**: [`ci.yml`](.github/workflows/ci.yml)이 ruff 린트·포맷, mypy 타입 검사, pytest(`host`·`tools` 커버리지 80% 미만이면 실패), 펌웨어 3종 arduino-cli 빌드와 펌웨어 정적 분석을 PR 마다 돌리고, [`web.yml`](.github/workflows/web.yml)이 관제 화면 테스트와 정적 검사를 돌립니다.
 - **문서·코드 일치 검사**: [ARCHITECTURE.md](docs/ARCHITECTURE.md)의 상태 전이표와 코드의 전이표가 같은지를 테스트가 대조하고([`tests/test_fsm.py`](tests/test_fsm.py)), 작업 목록 생성 결과가 원본과 같은지(`wbs_assignments.py --check`)와 문서 상대 링크가 실제 파일을 가리키는지(`check_doc_links.py`)를 CI 가 확인합니다.
 - **커밋과 병합**: 커밋은 Conventional Commits 규약을 따릅니다. `main`·`dev` 는 보호 브랜치라 모든 변경이 PR 로 들어오며, 필수 검사 네 가지(Python Quality, Firmware Quality, MechDog-Motion 빌드, XIAO-Vision 빌드)를 통과해야 병합됩니다([CONTRIBUTING](CONTRIBUTING.md)). 병합된 PR 은 479건입니다(2026-10-09 기준).
