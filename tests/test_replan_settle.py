@@ -1,4 +1,4 @@
-"""AU: mask replans must not alternate settled STOP and route rotation forever."""
+"""Settle wait: mask replans must not alternate settled STOP and route rotation forever."""
 
 from __future__ import annotations
 

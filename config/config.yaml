@@ -648,7 +648,7 @@ lidar:
   # 우도장 지형에 방위 능선이 생겨 정합만으로는 방위가 흘렀다(정지 중 23°, 걸은 세션 IMU 대비 132°).
   imu_yaw_window_deg: 3
   imu_yaw_step_deg: 1
-  # AP: SCAN 상체 pitch -15도에서 주방 정지 스캔 39/43개가 6도를 넘었다(AN).
+  # 기울어진 스캔 관문: SCAN 상체 pitch -15도에서 주방 정지 스캔 39/43개가 6도를 넘었다.
   # 신선한 IMU만 수평 판정에 쓴다. 오래되거나 없으면 실제 송신 POSE 상태로 판단.
   scan_tilt_imu_max_age_ms: 250
   scan_tilt_max_deg: 6
