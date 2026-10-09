@@ -636,6 +636,11 @@ class Runtime:
         return self._nav_requests
 
     @property
+    def navigator(self) -> PatrolController | None:
+        """LiDAR 길 찾기 (`--lidar-device`). 없으면 None — 관제 지도·항법 상태도 붙지 않는다."""
+        return self._navigator
+
+    @property
     def speaker(self) -> Speaker:
         """상황 방송·로봇 스피커 트랙. 시험이 재생 키를 가로챈다."""
         return self._speaker

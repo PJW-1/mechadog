@@ -145,6 +145,14 @@ def _patrolling(config: dict, clock: FakeClock, **kwargs: object):
     return runtime, navigator
 
 
+def test_runtime_exposes_the_navigator_read_only(config: dict, clock: FakeClock) -> None:
+    """관제 배선은 비공개 `_navigator` 대신 공개 `navigator` 로 길 찾기를 읽는다."""
+    runtime, navigator = _runtime(config, clock)
+    assert runtime.navigator is navigator
+    with pytest.raises(AttributeError):
+        runtime.navigator = None  # type: ignore[misc]
+
+
 # ── 순찰이 길 찾기로 걷는다 ─────────────────────────────────
 def test_patrol_walks_by_the_navigator(config: dict, clock: FakeClock) -> None:
     runtime, navigator = _patrolling(config, clock)

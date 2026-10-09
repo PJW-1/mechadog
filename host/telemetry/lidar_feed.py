@@ -31,11 +31,11 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from host.behavior.planner import min_forward_distance
 from host.common.config import ConfigError
 from host.common.lidar_link import Scan, ScanDecoder, scan_of
 from host.common.logging_setup import event_logger
 from host.common.protocol import system_clock_ms
+from host.common.scan_geometry import min_forward_distance
 from host.common.units import deg_to_rad
 from host.telemetry.ros2_relay import forward_peer_of, forward_scan, open_forward_socket
 
