@@ -12,7 +12,7 @@
 | **상태** | Draft / In-Review |
 | **작성일자** | 2026-09-02 |
 | **대상 플랫폼** | Hiwonder MechDog (ESP32) + Seeed Studio XIAO ESP32S3 Sense |
-| **저장소 위치** | `C:\Users\pjw\Desktop\mechdog_physical_ai` |
+| **저장소 위치** | `mechdog_physical_ai` (GitHub `PJW-1/mechadog`) |
 
 ### 1.1 프로젝트 비전 (Project Vision)
 본 프로젝트는 기존의 완구형 4족 보행 로봇(토이 레벨)의 한계를 탈피하여, **온디바이스 Edge AI(Vision & Audio)**와 **임베디드 모션 제어(8-DOF Inverse Kinematics)**를 융합한 **산업/시설물 대상 "피지컬 AI(Physical AI) 지능형 자율 경비·순찰 로봇"**을 개발하는 것을 목표로 한다. 

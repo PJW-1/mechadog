@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from tools.service_action_probe import Tap, ack_for
+from tools.probe.service_action_probe import Tap, ack_for
 
 
 @pytest.fixture

@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,7 +17,7 @@ from fastapi.testclient import TestClient
 from host.behavior.commander import Commander
 from host.behavior.fsm import Event, behavior_from_config
 from host.behavior.mission import Mission
-from host.dashboard.commands import CommandService
+from host.dashboard.commands import CommandResult, CommandService
 from host.dashboard.server import create_app
 from host.dashboard.state import DashboardState
 
@@ -243,6 +242,34 @@ def test_patrol_stop_leaves_autonomy_and_parks_at_idle(service):
     assert svc._commander.intent.type_ == "STOP"
 
 
+@pytest.mark.parametrize(
+    "events",
+    [
+        (Event.START_PATROL, Event.ZONE_ARRIVED),
+        (Event.START_PATROL, Event.POSE_STALE),
+    ],
+    ids=["ZONE_INSPECT", "LOST"],
+)
+def test_patrol_stop_is_accepted_in_zone_inspect_and_lost(service, events):
+    """구역 점검·재측위 중에도 정지할 수 있어야 끝난 뒤 순찰이 이어지지 않는다."""
+    svc, behavior, _sent = service
+    _drive_to(behavior, events)
+    assert behavior.state in ("ZONE_INSPECT", "LOST")
+    assert svc.patrol_stop().accepted is True
+    assert behavior.state == "IDLE"
+
+
+def test_patrol_stop_reports_the_manual_off_refusal(service):
+    svc, behavior, _sent = service
+    behavior.event(Event.START_PATROL, now_ms=1000)
+    svc.manual_off = lambda: CommandResult(
+        command="manual_off", accepted=False, state="MANUAL", detail="거절 사유"
+    )
+    result = svc.patrol_stop()
+    assert result.accepted is False
+    assert result.detail == "거절 사유"
+
+
 def test_patrol_stop_is_refused_when_not_autonomous(service):
     svc, behavior, _sent = service
     result = svc.patrol_stop()
@@ -308,6 +335,37 @@ def test_manual_endpoint_round_trips(client):
 def test_manual_endpoint_rejects_a_non_boolean(client):
     http, _behavior, _sent = client
     assert http.post("/api/command/manual", json={"on": "yes"}).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "path", ["/api/command/manual", "/api/command/patrol", "/api/command/sound"]
+)
+@pytest.mark.parametrize("content", [b"{not json", b"", b"\xff\xfe", b"[]", b"null"])
+def test_command_rejects_a_body_that_is_not_a_json_object(client, path, content):
+    """깨진 JSON·빈 본문·객체가 아닌 본문은 다른 잘못된 본문처럼 400 이다(500 이 아니다)."""
+    http, behavior, sent = client
+    response = http.post(path, content=content, headers={"content-type": "application/json"})
+    assert response.status_code == 400
+    assert response.json() == {"error": "body"}
+    assert behavior.state == "IDLE"
+    assert sent == []
+
+
+def test_drive_rejects_malformed_json_with_its_own_reason(client):
+    http, _behavior, _sent = client
+    http.post("/api/command/manual", json={"on": True})
+    response = http.post("/api/command/drive", content=b"{not json")
+    assert response.status_code == 400
+    assert response.json() == {"error": "fields"}
+
+
+def test_foreign_origin_is_refused_before_the_body_is_read(client):
+    http, _behavior, _sent = client
+    response = http.post(
+        "/api/command/manual", content=b"{not json", headers={"origin": "http://evil.example"}
+    )
+    assert response.status_code == 403
+    assert response.json() == {"error": "origin"}
 
 
 def test_drive_endpoint_requires_both_fields(client):
@@ -459,7 +517,7 @@ def test_failsafe_entry_reaches_the_event_feed(cfg, clock):
 
 def test_policy_endpoint_serves_the_config_values(cfg):
     """설정 화면이 숫자를 지어내지 않게 판정 코드와 같은 키를 내보낸다 (B7)."""
-    from host.runtime import policy_view
+    from host.dashboard.wiring import policy_view
 
     with TestClient(create_app(_state(), policy=policy_view(cfg))) as http:
         body = http.get("/api/policy").json()
@@ -529,6 +587,19 @@ def test_broadcast_update_rejects_a_non_boolean_muted():
         with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
             assert http.post("/api/broadcast", json={"muted": "yes"}).status_code == 400
             assert broadcaster.muted is False
+    finally:
+        broadcaster.close()
+
+
+def test_broadcast_update_rejects_malformed_json():
+    broadcaster = _fake_broadcaster()
+    try:
+        with TestClient(create_app(_state(), broadcast=broadcaster)) as http:
+            response = http.post("/api/broadcast", content=b"{not json")
+            assert response.status_code == 400
+            assert response.json() == {"error": "body"}
+            assert http.post("/api/broadcast", json={"volume": None}).json() == {"error": "volume"}
+            assert broadcaster.volume == 100
     finally:
         broadcaster.close()
 
@@ -768,410 +839,6 @@ def test_auth_endpoint_does_not_execute_speech(client):
     assert sent == []
 
 
-# ── 음성 암구호 시도 횟수 (FR-10.3 · 2026-09-21 실기) ──────────────
-#
-# 실기 3라운드에서 **암구호를 한 번 틀리자 곧바로 L3 경보**가 됐다. 설정은
-# `auth.max_attempts: 2` 인데 그 값을 읽는 곳이 사원증 인증기뿐이어서, 음성
-# 경로는 첫 불일치가 그대로 `AUTH_FAILED` 로 나갔다. 말은 사원증과 달리 잘못
-# 들릴 수 있으므로 재시도 여유가 있어야 한다 — 그것이 이 값의 존재 이유다.
-
-
-def _voice_auth_service(cfg, clock, *, require_both=False):
-    """런타임이 붙은 서비스. **시도를 세는 쪽이 런타임이라** 이 조합이어야 한다."""
-    from host.runtime import Runtime
-
-    config = dict(cfg, auth=dict(cfg["auth"], require_both=require_both))
-    runtime = Runtime(config, device_id="mechdog-01", clock=clock)
-    svc = CommandService(
-        runtime.behavior,
-        runtime.commander,
-        lambda _line: None,
-        apply_event=runtime.apply_external,
-        note_voice_auth=runtime.note_voice_auth,
-        note_voice_listening=runtime.note_voice_listening,
-    )
-    for event in AUTH_WAIT_ROUTE:
-        runtime.apply_external(event)
-    assert runtime.behavior.state == "AUTH_WAIT"
-    return svc, runtime
-
-
-def test_voice_auth_first_mismatch_keeps_waiting(cfg, clock):
-    """**첫 불일치로 경보를 울리지 않는다.** 아직 한 번 남았다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    result = svc.auth("fail")
-
-    assert runtime.behavior.state == "AUTH_WAIT", "재시도 여유가 남아 있으면 대기를 유지한다"
-    # 단계는 사건으로만 움직이므로 이 경로에서는 올라가지 않는다 — 중요한 것은
-    # **L3 로 뛰지 않았다**는 것이다.
-    assert runtime.escalation.level.value != "L3", "L3 경보는 소진 뒤에만 울린다"
-    # 전달은 성공했다 — 거짓으로 돌려주면 파이프라인이 "전달하지 못했습니다" 라고
-    # 말해, 사람이 다시 말할 이유를 잃는다.
-    assert result.accepted is True
-    assert "1회 남았다" in result.detail
-
-
-def test_voice_auth_exhausts_at_max_attempts(cfg, clock):
-    """`max_attempts` 를 채우면 그때 `AUTH_FAILED` — L3 경보다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    assert cfg["auth"]["max_attempts"] == 2
-
-    svc.auth("fail")
-    result = svc.auth("fail")
-
-    assert runtime.behavior.state == "ALERT"
-    assert runtime.escalation.level.value == "L3"
-    assert result.accepted is True
-
-
-def test_voice_auth_retry_can_still_pass(cfg, clock):
-    """틀린 뒤 **다시 말해서 통과**할 수 있어야 한다 — 이것이 재시도의 목적이다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    svc.auth("fail")
-    result = svc.auth("ok")
-
-    assert result.accepted is True
-    assert runtime.behavior.state == "PATROL"
-    assert runtime.escalation.level.value == "L0"
-
-
-def test_voice_auth_attempts_reset_on_each_auth_wait(cfg, clock):
-    """**다음 대기는 0 부터 센다.** 앞사람의 실패가 넘어오면 처음 말하는 사람이
-    한 마디에 소진된다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    svc.auth("fail")  # 1회 소모하고
-    svc.auth("ok")  # 통과해서 AUTH_WAIT 를 떠난다
-    assert runtime.behavior.state == "PATROL"
-
-    runtime.apply_external(Event.PERSON_FOUND)
-    runtime.apply_external(Event.AUTH_REQUIRED)
-    assert runtime.behavior.state == "AUTH_WAIT"
-
-    result = svc.auth("fail")
-    assert runtime.behavior.state == "AUTH_WAIT", "새 대기의 첫 실패가 소진이 되면 안 된다"
-    assert "1회 남았다" in result.detail
-
-
-def test_voice_auth_outside_auth_wait_is_not_counted(cfg, clock):
-    """대기 중이 아닌 실패는 **세지도 않는다** — 세면 엉뚱한 대기에 쌓인다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    svc.auth("ok")
-    assert runtime.behavior.state == "PATROL"
-
-    result = svc.auth("fail")
-    assert result.accepted is False
-    assert "AUTH_WAIT" in result.detail
-
-    runtime.apply_external(Event.PERSON_FOUND)
-    runtime.apply_external(Event.AUTH_REQUIRED)
-    svc.auth("fail")
-    assert runtime.behavior.state == "AUTH_WAIT", "밖에서 온 실패가 시도로 쌓이면 안 된다"
-
-
-# ── 음성 인증 유효 시간 (FR-10.2.4 · 2026-09-21 실기) ──────────────
-#
-# 실기에서 암구호로 통과한 직후 **다시 인증을 요구**했다. 음성은 `Authenticator`
-# 세션을 만들지 않는데 `_judge_auth` 는 세션이 붙은 트랙만 보고 인증 여부를
-# 판정해서, 통과한 다음 틱에 `note_authentication_lost()` 가 불렸다.
-# `session_valid_s` 가 음성 경로에 적용된 적이 한 번도 없었다.
-#
-# 허가를 트랙에 붙이지 않는 것은 타협이 아니라 판단이다 — 마이크는 로봇 몸통에
-# 하나뿐이라 **그 소리가 누구 목소리인지 모른다**. 없는 근거로 트랙을 고르면
-# 틀렸을 때 엉뚱한 사람이 허가를 받는다.
-
-
-def _frame(tracks: tuple = (), markers: tuple = ()) -> SimpleNamespace:
-    """`_judge_auth` 가 만지는 두 칸만 있는 가짜 프레임."""
-    return SimpleNamespace(tracks=tuple(tracks), markers=tuple(markers))
-
-
-def test_guard_requires_passphrase_then_new_badge(cfg, clock):
-    from host.vision.badge import Marker
-
-    svc, runtime = _voice_auth_service(cfg, clock, require_both=True)
-    badge_id = next(iter(cfg["auth"]["badge_marker_map"]))
-    badge = Marker(marker_id=int(badge_id), center=(320.0, 300.0))
-
-    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
-    assert runtime.behavior.state == "AUTH_WAIT", "암구호 전 사원증은 통과가 아니다"
-    assert svc.auth("ok").accepted
-    assert runtime.behavior.state == "AUTH_WAIT", "암구호만으로 출발하지 않는다"
-    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
-    assert runtime.behavior.state == "AUTH_WAIT", "먼저 든 사원증을 재사용하지 않는다"
-    runtime._judge_auth(_frame(), clock.ms)
-    runtime._judge_auth(_frame(markers=(badge,)), clock.ms)
-    assert runtime.behavior.state == "PATROL"
-
-
-def test_voice_auth_holds_without_any_track(cfg, clock):
-    """통과 뒤에는 **보이는 사람이 없어도** 인증 상태다 — 허가는 현장에 붙는다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    assert svc.auth("ok").accepted is True
-
-    clock.advance(1_000)
-    runtime._judge_auth(_frame(), clock.ms)
-    assert runtime.escalation.authenticated is True
-
-
-def test_voice_auth_expires_after_session_valid_s(cfg, clock):
-    """**만료되면 재인증을 요구한다** (FR-10.2.4). 유효 시간은 설정값이다."""
-    valid_ms = int(cfg["auth"]["session_valid_s"]) * 1000
-    svc, runtime = _voice_auth_service(cfg, clock)
-    svc.auth("ok")
-
-    clock.advance(valid_ms - 1)
-    runtime._judge_auth(_frame(), clock.ms)
-    assert runtime.escalation.authenticated is True, "만료 직전은 아직 유효하다"
-
-    clock.advance(2)
-    runtime._judge_auth(_frame(), clock.ms)
-    assert runtime.escalation.authenticated is False, "만료 뒤에는 재인증을 요구한다"
-
-
-def test_voice_auth_rejected_verdict_opens_no_window(cfg, clock):
-    """**받아들여지지 않은 판정은 허가가 아니다** — `AUTH_WAIT` 밖의 `ok`."""
-    from host.runtime import Runtime
-
-    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
-    svc = CommandService(
-        runtime.behavior,
-        runtime.commander,
-        lambda _line: None,
-        apply_event=runtime.apply_external,
-        note_voice_auth=runtime.note_voice_auth,
-    )
-    assert svc.auth("ok").accepted is False, "IDLE 에서는 인증 결과를 받지 않는다"
-
-    runtime._judge_auth(_frame(), clock.ms)
-    assert runtime.escalation.authenticated is False
-
-
-# ── 창이 열리기 전에 녹음된 발화 (2026-09-21 실기 · 빨간 눈의 원인) ──────
-#
-# 파이프라인은 `capture_pcm` 으로 최대 15초를 녹음하고 전사까지 마친 **뒤에**
-# 상태를 묻는다. 그래서 «말한 시각» 과 «판정이 도착한 시각» 이 수 초 벌어지고,
-# 그 사이에 `AUTH_WAIT` 가 열리면 **창 밖에서 한 말이 시도로 세어진다.** 실기에서
-# 방문객이 말을 걸기도 전에 `max_attempts` 2회가 소진돼 눈이 빨개졌다.
-
-
-def test_voice_auth_before_the_window_opened_is_not_counted(cfg, clock):
-    """**창이 열리기 전에 녹음된 발화는 시도가 아니다.** 몇 번 와도 소진되지 않는다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    opened = runtime._voice_auth_opened_ms
-    assert opened == clock.ms, "창이 열린 시각이 기록되어야 한다"
-
-    result = svc.auth("fail", captured_at_ms=opened - 1)
-
-    assert result.accepted is True, "제대로 받아 버린 것을 전달 실패로 말하면 안 된다"
-    assert "다시 말해" in result.detail
-    assert runtime._voice_auth_attempts == 0, "창 밖의 말이 시도로 세어지면 안 된다"
-
-    svc.auth("fail", captured_at_ms=opened - 1)
-    svc.auth("fail", captured_at_ms=opened - 1)
-    assert runtime.behavior.state == "AUTH_WAIT", "창 밖의 말로는 소진되지 않는다"
-    assert runtime.escalation.level.value != "L3"
-
-
-def test_voice_auth_match_before_the_window_does_not_grant(cfg, clock):
-    """**묻기 전의 대답은 허가가 아니다.** 우연히 맞는 말을 한 것은 인증이 아니다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    opened = runtime._voice_auth_opened_ms
-
-    result = svc.auth("ok", captured_at_ms=opened - 500)
-
-    assert result.accepted is True
-    assert runtime.behavior.state == "AUTH_WAIT", "허가하지 않고 다시 묻는다"
-    runtime._judge_auth(_frame(), clock.ms)
-    assert runtime.escalation.authenticated is False, "창이 열리지 않아야 한다"
-
-
-def test_voice_auth_after_the_window_opened_is_counted(cfg, clock):
-    """**창이 열린 뒤의 발화는 정상으로 센다** — 가드가 과하게 막으면 인증이 죽는다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    clock.advance(1200)
-
-    result = svc.auth("fail", captured_at_ms=clock.ms)
-
-    assert "1회 남았다" in result.detail
-    assert runtime._voice_auth_attempts == 1
-
-
-def test_voice_auth_without_capture_time_is_counted(cfg, clock):
-    """발화 시각 없이 오는 호출(관제 화면의 수동 주입)은 **예전대로 센다.**"""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    result = svc.auth("fail")
-
-    assert "1회 남았다" in result.detail
-    assert runtime._voice_auth_attempts == 1
-
-
-def test_voice_auth_utterance_from_the_previous_window_is_stale(cfg, clock):
-    """**앞 대기에서 한 말이 새 대기의 시도가 되면 안 된다.**
-
-    시도 횟수는 대기마다 0 으로 되돌아가는데(`..._attempts_reset_on_each_auth_wait`),
-    창이 열린 시각도 함께 갱신되어야 그 초기화가 의미를 갖는다.
-    """
-    svc, runtime = _voice_auth_service(cfg, clock)
-    spoke_in_first_window = clock.ms + 10
-    clock.advance(20)
-    svc.auth("ok", captured_at_ms=spoke_in_first_window)
-    assert runtime.behavior.state == "PATROL", "첫 대기에서는 창 안의 말이라 통과한다"
-
-    clock.advance(1000)
-    runtime.apply_external(Event.PERSON_FOUND)
-    runtime.apply_external(Event.AUTH_REQUIRED)
-    assert runtime.behavior.state == "AUTH_WAIT"
-
-    result = svc.auth("fail", captured_at_ms=spoke_in_first_window)
-
-    assert runtime._voice_auth_attempts == 0
-    assert "다시 말해" in result.detail
-
-
-def test_voice_auth_window_open_time_clears_on_leaving(cfg, clock):
-    """`AUTH_WAIT` 를 떠나면 **열린 시각을 지운다** — 남겨 두면 다음 판정이 옛
-    창을 기준으로 걸러진다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    assert runtime._voice_auth_opened_ms is not None
-
-    svc.auth("ok", captured_at_ms=clock.ms)
-
-    assert runtime.behavior.state == "PATROL"
-    assert runtime._voice_auth_opened_ms is None
-
-
-# ── 판정을 기다리는 동안의 유예 (ADR-37 · 2026-09-22 실기) ────────────
-#
-# ⑥ 으로 «창 밖의 말이 시도가 되는» 길은 막았지만, **창이 30초 만에 닫히는 것**은
-# 그대로였다. 파이프라인은 녹음(최대 15초)·무음 1초·전사를 직렬로 하므로 방문객이
-# 창 안에서 말해도 판정이 30초를 넘겨 도착할 수 있다 — 2026-09-22 실기에서 통과한
-# 2건이 각각 24초·18초를 썼고 여유는 6초뿐이었다. **말하는 도중에 눈이 빨개진다.**
-# 그래서 «말을 받았다» 를 먼저 보내 마감을 한 번 미룬다.
-
-
-def _timeout_ms(cfg) -> int:
-    return int(cfg["auth"]["timeout_s"]) * 1000
-
-
-def _grace_ms(cfg) -> int:
-    return int(cfg["auth"]["verdict_grace_s"]) * 1000
-
-
-def test_voice_listening_holds_the_window_open(cfg, clock):
-    """**말을 받았다고 알리면 창이 그만큼 더 열려 있다.**"""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    result = svc.auth("pending", captured_at_ms=clock.ms)
-    assert result.accepted is True
-    assert "미뤘다" in result.detail
-
-    runtime.behavior.tick(clock.advance(_timeout_ms(cfg)))
-    assert runtime.behavior.state == "AUTH_WAIT", "원래 마감에는 아직 닫히지 않는다"
-    runtime.behavior.tick(clock.advance(_grace_ms(cfg)))
-    assert runtime.behavior.state == "ALERT", "유예가 끝나면 닫힌다"
-
-
-def test_voice_listening_is_not_a_verdict(cfg, clock):
-    """**유예는 인증이 아니다.** 시도를 세지도, 허가를 주지도 않는다 —
-    그렇지 않으면 소리만 내서 통과하는 길이 생긴다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    svc.auth("pending", captured_at_ms=clock.ms)
-
-    assert runtime.behavior.state == "AUTH_WAIT"
-    assert runtime._voice_auth_attempts == 0
-    runtime._judge_auth(_frame(), clock.ms)
-    assert runtime.escalation.authenticated is False
-
-
-def test_voice_listening_buys_grace_only_once_per_window(cfg, clock):
-    """**창마다 1회다.** 계속 보내도 마감은 한 번만 밀린다 — 무한정 미룰 수
-    있으면 소리만 내서 경보를 영영 막는다. 경보가 늦는 것보다 오지 않는 것이 나쁘다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    assert "미뤘다" in svc.auth("pending", captured_at_ms=clock.ms).detail
-    again = svc.auth("pending", captured_at_ms=clock.ms)
-    assert again.accepted is True, "거절이 아니라 조용히 아무 일도 안 하는 것이다"
-    assert "이미 한 번" in again.detail
-    svc.auth("pending", captured_at_ms=clock.ms)
-
-    assert runtime.behavior.timer_deferred_ms == _grace_ms(cfg)
-    runtime.behavior.tick(clock.advance(_timeout_ms(cfg) + _grace_ms(cfg)))
-    assert runtime.behavior.state == "ALERT", "몇 번을 보내도 상한에서 닫힌다"
-
-
-def test_voice_listening_outside_auth_wait_is_refused(cfg, clock):
-    """묻지도 않았는데 창을 늘릴 수는 없다 — `AUTH_WAIT` 에서만이다."""
-    from host.runtime import Runtime
-
-    runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
-    svc = CommandService(
-        runtime.behavior,
-        runtime.commander,
-        lambda _line: None,
-        apply_event=runtime.apply_external,
-        note_voice_auth=runtime.note_voice_auth,
-        note_voice_listening=runtime.note_voice_listening,
-    )
-
-    result = svc.auth("pending", captured_at_ms=clock.ms)
-
-    assert result.accepted is False
-    assert "AUTH_WAIT" in result.detail
-    assert runtime.behavior.timer_deferred_ms == 0
-
-
-def test_voice_listening_before_the_window_buys_nothing(cfg, clock):
-    """**창이 열리기 전에 시작된 말은 창의 수명을 늘리지 못한다.**
-
-    이것을 허용하면 ⑥ 에서 막은 길이 옆문으로 되살아난다 — 창 밖에서 떠들어
-    두면 그 말이 창을 늘려 준다.
-    """
-    svc, runtime = _voice_auth_service(cfg, clock)
-    opened = runtime._voice_auth_opened_ms
-
-    result = svc.auth("pending", captured_at_ms=opened - 1)
-
-    assert result.accepted is True
-    assert "열리기 전" in result.detail
-    assert runtime.behavior.timer_deferred_ms == 0
-    runtime.behavior.tick(clock.advance(_timeout_ms(cfg)))
-    assert runtime.behavior.state == "ALERT", "제 시각에 닫힌다"
-
-
-def test_voice_listening_grace_returns_with_a_new_window(cfg, clock):
-    """유예는 **대기마다** 새로 주어진다 — 앞 대기에서 썼다고 다음이 굶으면
-    두 번째 방문객이 말하는 도중에 경보가 된다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-    svc.auth("pending", captured_at_ms=clock.ms)
-    clock.advance(100)
-    svc.auth("ok", captured_at_ms=clock.ms)
-    assert runtime.behavior.state == "PATROL"
-
-    clock.advance(1000)
-    runtime.apply_external(Event.PERSON_FOUND)
-    runtime.apply_external(Event.AUTH_REQUIRED)
-    assert runtime.behavior.state == "AUTH_WAIT"
-
-    result = svc.auth("pending", captured_at_ms=clock.ms)
-
-    assert "미뤘다" in result.detail
-    assert runtime.behavior.timer_deferred_ms == _grace_ms(cfg)
-
-
-def test_voice_listening_without_capture_time_still_holds(cfg, clock):
-    """시각 없이 오는 통지도 받는다 — 시각은 «오래됨» 을 가리기 위한 것일 뿐,
-    없다고 해서 오래된 것은 아니다."""
-    svc, runtime = _voice_auth_service(cfg, clock)
-
-    assert "미뤘다" in svc.auth("pending").detail
-    assert runtime.behavior.timer_deferred_ms == _grace_ms(cfg)
-
-
 def test_pending_is_refused_when_the_host_cannot_defer(service):
     """런타임이 붙지 않은 조합에서는 **조용히 성공한 척하지 않는다.**"""
     svc, behavior, _sent = service
@@ -1207,7 +874,7 @@ def test_auth_endpoint_accepts_pending(cfg, clock):
             "/api/command/auth", json={"result": "pending", "captured_at_ms": clock.ms}
         ).json()
         assert body["accepted"] is True and body["state"] == "AUTH_WAIT"
-        assert runtime.behavior.timer_deferred_ms == _grace_ms(cfg)
+        assert runtime.behavior.timer_deferred_ms == int(cfg["auth"]["verdict_grace_s"]) * 1000
 
 
 # ── 경보(L3) 확인 (FR-10.3.2 · 2026-09-22 실기) ──────────────────
@@ -1383,7 +1050,7 @@ def test_sound_plays_under_the_safety_latch_without_touching_it(cfg, clock):
     적용 여부 대신 **디코더 수락 · 래치 유지 · RESET_SAFE 부재** 를 본다.
     """
     from host.runtime import Runtime
-    from tools.mock_mechdog import MockRobot
+    from tools.mock.mock_mechdog import MockRobot
 
     robot = MockRobot("mechdog-01", cfg, start_ms=clock.ms)
     runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
@@ -1411,7 +1078,8 @@ def test_sound_plays_under_the_safety_latch_without_touching_it(cfg, clock):
 
 def test_sound_endpoint_reaches_the_runtime_through_the_real_wiring(cfg, clock):
     """`dashboard_wiring` 이 만든 서비스로 HTTP → 런타임 틱 전문까지 간다."""
-    from host.runtime import Runtime, dashboard_wiring
+    from host.dashboard.wiring import dashboard_wiring
+    from host.runtime import Runtime
 
     runtime = Runtime(cfg, device_id="mechdog-01", clock=clock)
     app = create_app(_state(), **dashboard_wiring(runtime, cfg, vision=None, blackbox=None))
@@ -1420,110 +1088,213 @@ def test_sound_endpoint_reaches_the_runtime_through_the_real_wiring(cfg, clock):
     assert _sounds(runtime.tick(clock.advance(100))) == [0]
 
 
-# ── 구역 기준 재등록 (FR-8 · WBS 3.6.5) ──────────────────────────
-#
-# 물건을 영구히 옮기면 그 구역은 순찰마다 «반출» 을 낸다. 관리자가 «이 상태가
-# 정상» 이라고 인정하면 기준을 지우고 **그 구역을 다음에 볼 때(점검 중이면 이번 장면) 새로 뜬다.** 지우는 것은
-# 틱이다 — 틱이 그 구역의 기준을 읽고 견주는 도중에 서버 스레드가 지우면 옛 기준의
-# 누적이 새 기준에 섞인다 (`ask_alarm_confirm` 과 같은 예약 방식).
-
-
-def _zone_wired(cfg, clock, tmp_path):
-    """설정의 구역(`zones.ids` A·B·C)과 임시 기준 폴더를 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
+def _zone_wired(cfg, clock):
+    """설정의 구역(`zones.ids` A·B·C·D)을 쓰는 런타임, 실제 배선으로 만든 서버 인자."""
     from copy import deepcopy
 
-    from host.runtime import Runtime, dashboard_wiring
+    from host.dashboard.wiring import dashboard_wiring
+    from host.runtime import Runtime
 
     changed = deepcopy(cfg)
-    assert set(changed["zones"]["ids"]) == {"A", "B", "C"}
-    changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
+    assert set(changed["zones"]["ids"]) == {"A", "B", "C", "D"}
     runtime = Runtime(changed, device_id="mechdog-01", clock=clock)
-    runtime._baselines.register("A", [], frame_size=(640, 480), now_ms=1, jpeg=b"a")
     return runtime, dashboard_wiring(runtime, changed, vision=None, blackbox=None)
 
 
-def _removed():
-    from host.behavior.change_detect import Change, ChangeKind
-
-    return Change(kind=ChangeKind.REMOVED, label="bottle", count=1, cell=(0, 0))
-
-
-def test_zone_baseline_reset_clears_on_the_next_tick(cfg, clock, tmp_path, caplog):
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
-    runtime._confirmer.observe("A", [_removed()])  # 옛 기준으로 센 1회
-
-    result = wiring["commands"].zone_baseline("A")
-
-    assert result.accepted is True and result.command == "zone_baseline"
-    assert wiring["commands"].zone_baseline("C").accepted is True
-    assert runtime._baselines.load("A") is not None, "요청만 세운다"
-    with caplog.at_level("INFO"):
-        runtime.tick(clock.advance(100))
-    assert runtime._baselines.load("A") is None
-    assert list((tmp_path / "snapshots").glob("*.jpg")) == []
-    assert "zone_baseline_reset" in [getattr(r, "event", "") for r in caplog.records]
-    assert runtime._confirmer.observe("A", [_removed()]) == (), (
-        "옛 기준으로 센 횟수가 새 기준의 확정을 앞당기면 안 된다"
-    )
+# ── 위치 알려주기 (2026-10-04) ────────────────────────────────────
+# 들어 옮긴 뒤 집 안 비슷한 자리를 구별 못 할 때 사람이 «지금 이 구역» 을 알려준다.
+# 측위 상태는 루프 스레드만 바꾼다 — 서버 스레드는 예약만 한다.
 
 
-@pytest.mark.parametrize("zone", ["Z", "a", "10", "../A", "A/..", "", " A"])
-def test_zone_baseline_reset_refuses_zones_outside_the_config(cfg, clock, tmp_path, zone):
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
+class _FakeNavigator:
+    def __init__(self):
+        self.hints = []
 
-    result = wiring["commands"].zone_baseline(zone)
+    def locate_zone_ids(self):
+        return ("B", "C", "D", "A")
 
+    def hint_zone(self, zone, now_ms):
+        self.hints.append((zone, now_ms))
+        return True
+
+
+def test_locate_is_applied_on_the_next_tick(cfg, clock):
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _FakeNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].locate("C")
+    assert result.accepted is True and result.command == "locate"
+    assert navigator.hints == [], "서버 스레드는 예약만 한다"
+    runtime._drain_confirmations(clock.advance(100))
+    assert [zone for zone, _ in navigator.hints] == ["C"]
+    runtime._drain_confirmations(clock.advance(100))
+    assert len(navigator.hints) == 1, "한 번 알려준 것은 한 번만 적용한다"
+
+
+@pytest.mark.parametrize("zone", ["Z", "a", "", " C", "../C"])
+def test_locate_refuses_unknown_zones(cfg, clock, zone):
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _FakeNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].locate(zone)
     assert result.accepted is False
-    runtime.tick(clock.advance(100))
-    assert runtime._baselines.load("A") is not None
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.hints == []
 
 
-def test_a_zone_baseline_that_cannot_be_cleared_does_not_stop_the_runtime(
-    cfg, clock, tmp_path, caplog, monkeypatch
-):
-    """기준 파일이 10Hz 제어를 죽이면 안 된다 — `_inspect_zone` 의 load·register 와 같다."""
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
-
-    def locked(_zone):
-        raise PermissionError("다른 프로그램이 파일을 쥐고 있다")
-
-    monkeypatch.setattr(runtime._baselines, "clear", locked)
-    assert wiring["commands"].zone_baseline("A").accepted is True
-    with caplog.at_level("INFO"):
-        runtime.tick(clock.advance(100))
-    events = [getattr(r, "event", "") for r in caplog.records]
-    assert "zone_baseline_reset_failed" in events
-    assert "zone_baseline_reset" not in events, "지우지 못한 기준을 지웠다고 적지 않는다"
+def test_locate_refused_without_lidar_navigator(cfg, clock):
+    _runtime, wiring = _zone_wired(cfg, clock)
+    result = wiring["commands"].locate("A")
+    assert result.accepted is False
+    assert "LiDAR" in result.detail
 
 
-def test_zone_baseline_reset_is_refused_when_the_host_cannot_reset(service):
+def test_locate_is_refused_when_unwired(service):
     svc, _behavior, _sent = service
-    result = svc.zone_baseline("A")
+    result = svc.locate("A")
     assert result.accepted is False
     assert "연결되지 않았다" in result.detail
 
 
-def test_zone_baseline_endpoint_round_trips(cfg, clock, tmp_path):
-    runtime, wiring = _zone_wired(cfg, clock, tmp_path)
-    with TestClient(create_app(_state(), **wiring)) as http:
-        body = http.post("/api/command/zone-baseline", json={"zone": "A"}).json()
-        assert body["accepted"] is True and body["command"] == "zone_baseline"
-        refused = http.post("/api/command/zone-baseline", json={"zone": "Z"}).json()
-        assert refused["accepted"] is False
-        for bad in ({"zone": 7}, {"zone": None}, {}):
-            response = http.post("/api/command/zone-baseline", json=bad)
-            assert response.status_code == 400 and response.json() == {"error": "zone"}
-        foreign = http.post(
-            "/api/command/zone-baseline",
-            json={"zone": "A"},
-            headers={"origin": "http://evil.example"},
-        )
-        assert foreign.status_code == 403
-    runtime.tick(clock.advance(100))
-    assert runtime._baselines.load("A") is None
+def test_locate_endpoint_round_trips(cfg, clock):
+    from host.dashboard.server import create_app
+
+    runtime, wiring = _zone_wired(cfg, clock)
+    runtime._navigator = _FakeNavigator()
+    app = create_app(_state(), wiring["commands"])
+    with TestClient(app) as http:
+        assert http.post("/api/command/locate", json={"zone": "D"}).json()["accepted"] is True
+        assert http.post("/api/command/locate", json={"zone": 3}).status_code == 400
+        assert http.post("/api/command/locate", json={}).status_code == 400
 
 
-def test_zone_baseline_endpoint_is_absent_on_a_read_only_server():
-    with TestClient(create_app(_state())) as http:
-        response = http.post("/api/command/zone-baseline", json={"zone": "A"})
-        assert response.status_code in (404, 405)
+def test_policy_lists_patrol_zones(cfg):
+    from host.dashboard.wiring import policy_view
+
+    assert policy_view(cfg)["patrol_zones"] == [str(z) for z in cfg["zones"]["ids"]]
+
+
+# ── 지도에서 찍은 곳으로 이동 · 자기 위치 (2026-10-04) ─────────────
+
+
+class _GotoNavigator(_FakeNavigator):
+    pose = (1.0, 2.0, 0.0)
+    pose_verified = True
+    pose_seeded = False
+    phase = "PLANNING"
+    target = None
+    current_zone = "B"
+    goal = None
+    holding_goal = False
+    match_frac = 0.8
+    plan = None
+    _point_hint = None
+
+    def _zone_filter(self, _now_ms):
+        return None
+
+    def __init__(self, accept=True):
+        super().__init__()
+        self.gotos = []
+        self.cancels = []
+        self.accept = accept
+
+    def pose_stale(self, _now):
+        return False
+
+    def goto(self, x, y):
+        self.gotos.append((x, y))
+        return self.accept, "찍은 곳으로 간다" if self.accept else "길이 없다"
+
+    def cancel_goal(self, reason):
+        self.cancels.append(reason)
+
+
+def test_goto_is_planned_on_the_next_tick_and_starts_patrol(cfg, clock):
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    result = wiring["commands"].goto(1.5, -0.5)
+    assert result.accepted is True and result.command == "goto"
+    assert navigator.gotos == [], "서버 스레드는 예약만 한다"
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.gotos == [(1.5, -0.5)]
+    assert runtime._patrol_asked or runtime._behavior.state == "PATROL", (
+        "순찰 중이 아니면 순찰 시작을 함께 예약한다"
+    )
+    assert runtime.nav_status().get("starting") is True, "첫 틱 전에는 지어내지 않는다"
+    runtime.nav_requests.snapshot = runtime.nav_requests.build_snapshot(clock.advance(100))
+    status = runtime.nav_status()
+    assert status["goal_feedback"]["accepted"] is True
+    assert status["pose"] == [1.0, 2.0, 0.0]
+    # 정책에 전달된 신선한 위치가 없으면 navigator의 라벨만으로 소속을 정하지 않는다.
+    assert status["zone"] is None
+
+
+def test_goto_refusal_is_reported_without_starting_patrol(cfg, clock):
+    runtime, wiring = _zone_wired(cfg, clock)
+    runtime._navigator = _GotoNavigator(accept=False)
+    wiring["commands"].goto(9.0, 9.0)
+    runtime._drain_confirmations(clock.advance(100))
+    assert runtime._patrol_asked is False
+    runtime.nav_requests.snapshot = runtime.nav_requests.build_snapshot(clock.advance(100))
+    assert runtime.nav_status()["goal_feedback"]["accepted"] is False
+
+
+def test_stopping_patrol_cancels_the_goal(cfg, clock):
+    runtime, _wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._mark_goal_cancel("PATROL", "ALERT")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == [], "경보로 잠시 나간 것은 취소가 아니다"
+    runtime._mark_goal_cancel("PATROL", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == ["patrol_stopped"]
+
+
+def test_goto_endpoint_validates_coordinates(cfg, clock):
+    from host.dashboard.server import create_app
+
+    runtime, wiring = _zone_wired(cfg, clock)
+    runtime._navigator = _GotoNavigator()
+    app = create_app(_state(), wiring["commands"], nav_status=runtime.nav_status)
+    with TestClient(app) as http:
+        assert http.post("/api/command/goto", json={"x": 1.0, "y": "2.5"}).json()["accepted"]
+        assert http.post("/api/command/goto", json={"x": "nan", "y": 0}).status_code == 400
+        assert http.post("/api/command/goto", json={"x": 1.0}).status_code == 400
+        assert http.get("/api/nav").json()["available"] is True
+        assert http.get("/api/map/meta").status_code == 404, "지도가 없으면 지어내지 않는다"
+
+
+def test_goto_refused_without_navigator(cfg, clock):
+    _runtime, wiring = _zone_wired(cfg, clock)
+    assert wiring["commands"].goto(1.0, 1.0).accepted is False
+    assert wiring["map_view"] is None and wiring["nav_status"] is None
+
+
+def test_real_stop_path_cancels_the_goal_and_pending_start(cfg, clock):
+    """실제 «순찰 정지» 는 PATROL → MANUAL → IDLE (리뷰 지적). 리셋 정착(FAILSAFE→IDLE)은 취소가 아니다."""
+    runtime, wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime._mark_goal_cancel("FAILSAFE", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == []
+    runtime._mark_goal_cancel("PATROL", "MANUAL")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.cancels == ["patrol_stopped"], "수동 조종으로 넘어가도 옛 목표는 버린다"
+    wiring["commands"].goto(1.0, 1.0)
+    runtime._mark_goal_cancel("MANUAL", "IDLE")
+    runtime._drain_confirmations(clock.advance(100))
+    assert navigator.gotos == [], "정지 전에 들어온 이동 요청도 버린다"
+    assert runtime._patrol_asked is False
+
+
+def test_nav_status_is_one_loop_snapshot(cfg, clock):
+    runtime, _wiring = _zone_wired(cfg, clock)
+    navigator = _GotoNavigator()
+    runtime._navigator = navigator
+    runtime.nav_requests.snapshot = runtime.nav_requests.build_snapshot(clock.advance(100))
+    navigator.pose = (9.0, 9.0, 0.0)  # 서버가 읽는 사이 루프가 바꿨다
+    assert runtime.nav_status()["pose"] == [1.0, 2.0, 0.0], "다음 틱 전까지는 같은 시점의 묶음"

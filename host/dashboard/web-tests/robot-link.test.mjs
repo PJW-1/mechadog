@@ -123,8 +123,7 @@ test('estop goes out without control authority', async () => {
   const fetchImpl = fakeFetch();
   const ops = liveOps(fetchImpl);
   assert.equal(ops.control, null); // 제어권을 잡지 않았다
-  ops.requestEstop();
-  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(await ops.requestEstop(), { serverAccepted: true });
   assert.ok(fetchImpl.calls.some((c) => c.url.endsWith('/estop')));
 });
 
@@ -150,8 +149,7 @@ test('estop goes out again even when already latched', async () => {
 
 test('a failed estop is recorded, not swallowed', async () => {
   const ops = liveOps(fakeFetch({ fail: '/estop' }));
-  ops.requestEstop();
-  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(await ops.requestEstop(), { serverAccepted: false });
   assert.match(ops.linkError, /비상정지/);
   assert.ok(ops.records.some((r) => r.action === '전송 실패'));
 });
@@ -222,14 +220,6 @@ test('resetSafe and patrol hit their own endpoints', async () => {
   assert.deepEqual(fetchImpl.calls[1].body, { action: 'start' });
   await link.patrol('stop');
   assert.deepEqual(fetchImpl.calls[2].body, { action: 'stop' });
-});
-
-test('zoneBaseline sends the zone to its own endpoint', async () => {
-  const fetchImpl = fakeFetch();
-  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
-  await link.zoneBaseline('A');
-  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/zone-baseline');
-  assert.deepEqual(fetchImpl.calls[0].body, { zone: 'A' });
 });
 
 test('device commands never leave when there is no link', () => {
@@ -307,4 +297,28 @@ test('device state is read from the telemetry feed, and a missing service flag i
   // 확장 이전 펌웨어 — service 를 보내지 않는다. 꺼짐으로 읽으면 켜진 서비스 모드를 놓친다.
   ops.setTelemetry({ state: 'live', snapshot: snapshot({ lowbatt: false, tipped: false, link_ok: true }) });
   assert.equal(ops.serviceMode, null);
+});
+
+test('locate sends the zone to its own endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.locate('C');
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/locate');
+  assert.deepEqual(fetchImpl.calls[0].body, { zone: 'C' });
+});
+
+test('goto sends patrol coordinates to its own endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.goto(1.25, -0.5);
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/goto');
+  assert.deepEqual(fetchImpl.calls[0].body, { x: 1.25, y: -0.5 });
+});
+
+test('locatePoint sends only patrol coordinates to the locate endpoint', async () => {
+  const fetchImpl = fakeFetch();
+  const link = new RobotLink({ baseUrl: 'http://host:8000', fetch: fetchImpl });
+  await link.locatePoint(2, 3);
+  assert.equal(fetchImpl.calls[0].url, 'http://host:8000/api/command/locate');
+  assert.deepEqual(fetchImpl.calls[0].body, { x: 2, y: 3 });
 });

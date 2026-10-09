@@ -32,7 +32,7 @@ flowchart TD
 flowchart TD
   H0["텔레메트리 수신 또는 호스트 틱"] --> Q1{"로봇이 state=FAILSAFE 를 새로 보고했나?"}
   Q1 -->|예 · ONBOARD_FAILSAFE| HF["호스트 FSM FAILSAFE · 지시 HALT"]
-  Q1 -->|아니요| Q2{"텔레메트리가 3000ms 이상 없나?"}
+  Q1 -->|아니요| Q2{"텔레메트리도 명령 ACK 도 3000ms 이상 없나?"}
   Q2 -->|예 · LINK_LOST| HF
   Q2 -->|아니요| H0
   HF --> OP{"사람이 원인을 확인하고 해제를 요청했나?"}
@@ -58,14 +58,14 @@ flowchart TD
   S0["거리 표본 확인 · loop 마다"] --> FRESH{"유효하고 200ms 이내인 새 표본인가?"}
   FRESH -->|아니요| KEEP["판정 유지 · 카운터 그대로"]
   KEEP --> S0
-  FRESH -->|예| NEAR{"25cm 미만인가?"}
-  NEAR -->|예| N2{"25cm 미만이 연속 2표본인가?"}
+  FRESH -->|예| NEAR{"7cm 미만인가?"}
+  NEAR -->|예| N2{"7cm 미만이 연속 2표본인가?"}
   N2 -->|아니요| S0
   N2 -->|예 · 처음 걸림| STOP["move 0,0 · flags.obstacle=true · state=AVOID 보고"]
-  NEAR -->|아니요| FAR{"30cm 이상인가?"}
-  FAR -->|아니요 · 25~30cm| MID["두 카운터 0 · 상태 유지"]
+  NEAR -->|아니요| FAR{"10cm 이상인가?"}
+  FAR -->|아니요 · 7~10cm| MID["두 카운터 0 · 상태 유지"]
   MID --> S0
-  FAR -->|예| C5{"30cm 이상이 연속 5표본인가?"}
+  FAR -->|예| C5{"10cm 이상이 연속 5표본인가?"}
   C5 -->|아니요| S0
   C5 -->|예| REL["flags.obstacle=false · 해제"]
   MV["MOVE 수신"] --> MQ{"래치 또는 서비스 모드인가?"}
@@ -82,12 +82,12 @@ flowchart TD
 | 명령 타임아웃 → 래치 | 마지막 유효 명령 뒤 600ms 이상 (첫 유효 명령을 받은 뒤, 래치가 풀려 있을 때만) | `safety.cmd_timeout_ms` · 펌웨어 `kCommandTimeoutMs` | [ADR-39](../DECISIONS.md#adr-39) |
 | 온보드 링크 두절 → 래치 | Wi-Fi 연결 끊김, 즉시 | 없음 (`WiFi.status()`) | — |
 | 링크 정상 표시 `link_ok` | 마지막 유효 명령이 3000ms 이내 (표시만 하고 래치하지 않음) | 펌웨어 `kLinkHealthyAgeMs` (`safety.link_loss_failsafe_ms` 와 같은 값) | — |
-| 호스트 링크 두절 → `LINK_LOST` | 텔레메트리 3000ms 이상 없음 (첫 수신 전에는 보지 않음) | `safety.link_loss_failsafe_ms` | — |
-| 저전압 경고 `lowbatt` | 7.0V 이하 1표본 (동작을 막지 않음) | `safety.battery_warn_v` | [저전압 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md) |
-| 저전압 셧다운 → 래치 | 6.6V 이하 새 표본 연속 3개 | `safety.battery_shutdown_v` | [저전압 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md) |
-| 셧다운 재무장 · 해제 허용 | 7.0V 초과로 회복 | `safety.battery_warn_v` | [저전압 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md) |
-| 반사 정지 | 25cm 미만 연속 2표본 (센서 주기 40ms) | `safety.obstacle_stop_cm` | [반사 정지 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md) |
-| 반사 해제 | 30cm 이상 연속 5표본 | 펌웨어 `kObstacleClearCm` · `clear_samples` (설정 키 없음) | [반사 정지 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 호스트 링크 두절 → `LINK_LOST` | 텔레메트리와 명령 ACK 가 모두 3000ms 이상 없음 (첫 수신 전에는 보지 않음). `verdict` 와 `applied` 가 있는 명령 ACK 도 텔레메트리처럼 링크 시계를 갱신하고(`host/runtime.py` `_is_command_ack`), ACK 의 `safe_latched` 는 래치 해제 확인에도 반영된다 | `safety.link_loss_failsafe_ms` | [ADR-47](../DECISIONS.md#adr-47) |
+| 저전압 경고 `lowbatt` | 7.0V 이하 1표본 (동작을 막지 않음) | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
+| 저전압 셧다운 → 래치 | 6.6V 이하 새 표본 연속 3개 | `safety.battery_shutdown_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
+| 셧다운 재무장 · 해제 허용 | 7.0V 초과로 회복 | `safety.battery_warn_v` | [저전압 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md) |
+| 반사 정지 | 7cm 미만 연속 2표본(2026-10-06 25→7) (센서 주기 40ms) | `safety.obstacle_stop_cm` | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 반사 해제 | 10cm 이상 연속 5표본(2026-10-06 30→10) | 펌웨어 `kObstacleClearCm` · `clear_samples` (설정 키 없음) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 표본 신선도 | 측정 뒤 200ms 이내, 같은 표본은 한 번만 셈 | 펌웨어 `max_sample_age_ms` (설정 키 없음) | — |
 | 반사 정지 중 허용 명령 | 후진·제자리 조향(step 0)·정지 | 없음 | [ADR-22](../DECISIONS.md#adr-22) |
 | `RESET_SAFE` 거부 | Wi-Fi 끊김 · 저전압 원인 남음 · OTA 확인 대기 이미지 | 없음 | [ADR-21](../DECISIONS.md#adr-21) |
@@ -110,24 +110,24 @@ flowchart TD
 
 | 분기 | 코드 위치 | 확인하는 테스트 |
 | :--- | :--- | :--- |
-| Wi-Fi 끊김 → 래치 | `firmware_mechdog_motion/firmware_mechdog_motion.ino` 의 `loop` · `latchFailsafe` | 펌웨어 단위 시험 없음 |
-| 유효 명령만 시각 갱신 | `firmware_mechdog_motion.ino` 의 `handlePacket` · `host/common/protocol.py` 의 `DecodeResult.refreshes_link` | `tests/test_protocol.py::test_broken_packet_is_discarded_without_refreshing_link` |
-| `ESTOP` → 래치 | `firmware_mechdog_motion.ino` 의 `applyCommand` | `tests/test_safety.py::test_estop_beats_every_other_condition` |
-| 명령 타임아웃 600ms → 래치 | `firmware_mechdog_motion.ino` 의 `loop` | 펌웨어 단위 시험 없음. `tests/test_config.py::test_command_timeout_shorter_than_link_loss` 는 설정값 관계만 본다 |
-| 저전압 셧다운 · 재무장 | `firmware_mechdog_motion/src/safety_monitor.cpp` 의 `SafetyMonitor::update` · `.ino` 의 `pollTelemetry` | `firmware_mechdog_motion/test/test_safety_monitor.cpp` (저전압 구간) · `tests/test_safety.py::test_low_battery_latches_and_beats_the_host_view` |
-| 반사 정지 · 해제 히스테리시스 · 신선도 | `firmware_mechdog_motion/src/safety_monitor.cpp` 의 `SafetyMonitor::update` · `fresh_sample` | `firmware_mechdog_motion/test/test_safety_monitor.cpp` (근거리 정지 구간) |
-| 전진만 거부 | `firmware_mechdog_motion/src/safety_monitor.h` 의 `move_allowed` · `SafetyMonitor::allows_move` | `firmware_mechdog_motion/test/test_safety_monitor.cpp` (조합 전수) · `tests/test_safety.py::test_obstacle_blocks_forward_only` |
-| `RESET_SAFE` 거부 (저전압) | `firmware_mechdog_motion/src/safety_monitor.h` 의 `reset_safe_allowed` · `.ino` 의 `applyCommand` | `tests/test_safety.py::test_reset_safe_is_refused_while_the_cause_remains` · `tests/test_safety.py::test_obstacle_does_not_block_the_reset` |
-| `RESET_SAFE` 거부 (OTA 확인 대기 · Wi-Fi 끊김) | `firmware_mechdog_motion.ino` 의 `applyCommand` | 시험 없음 |
+| Wi-Fi 끊김 → 래치 | `firmware/mechdog_motion/mechdog_motion.ino` 의 `loop` · `latchFailsafe` | 펌웨어 단위 시험 없음 |
+| 유효 명령만 시각 갱신 | `mechdog_motion.ino` 의 `handlePacket` · `host/common/protocol.py` 의 `DecodeResult.refreshes_link` | `tests/test_protocol.py::test_broken_packet_is_discarded_without_refreshing_link` |
+| `ESTOP` → 래치 | `mechdog_motion.ino` 의 `applyCommand` | `tests/test_safety.py::test_estop_beats_every_other_condition` |
+| 명령 타임아웃 600ms → 래치 | `mechdog_motion.ino` 의 `loop` | 펌웨어 단위 시험 없음. `tests/test_config.py::test_command_timeout_shorter_than_link_loss` 는 설정값 관계만 본다 |
+| 저전압 셧다운 · 재무장 | `firmware/mechdog_motion/src/safety_monitor.cpp` 의 `SafetyMonitor::update` · `.ino` 의 `pollTelemetry` | `firmware/mechdog_motion/test/test_safety_monitor.cpp` (저전압 구간) · `tests/test_safety.py::test_low_battery_latches_and_beats_the_host_view` |
+| 반사 정지 · 해제 히스테리시스 · 신선도 | `firmware/mechdog_motion/src/safety_monitor.cpp` 의 `SafetyMonitor::update` · `fresh_sample` | `firmware/mechdog_motion/test/test_safety_monitor.cpp` (근거리 정지 구간) |
+| 전진만 거부 | `firmware/mechdog_motion/src/safety_monitor.h` 의 `move_allowed` · `SafetyMonitor::allows_move` | `firmware/mechdog_motion/test/test_safety_monitor.cpp` (조합 전수) · `tests/test_safety.py::test_obstacle_blocks_forward_only` |
+| `RESET_SAFE` 거부 (저전압) | `firmware/mechdog_motion/src/safety_monitor.h` 의 `reset_safe_allowed` · `.ino` 의 `applyCommand` | `tests/test_safety.py::test_reset_safe_is_refused_while_the_cause_remains` · `tests/test_safety.py::test_obstacle_does_not_block_the_reset` |
+| `RESET_SAFE` 거부 (OTA 확인 대기 · Wi-Fi 끊김) | `mechdog_motion.ino` 의 `applyCommand` | 시험 없음 |
 | 로봇 `FAILSAFE` 보고 → 호스트 `FAILSAFE` | `host/telemetry/receiver.py` 의 `TelemetryReceiver._events_for` · `host/behavior/fsm.py` 의 `TRANSITIONS` | `tests/test_telemetry_receiver.py::test_robot_reporting_failsafe_becomes_an_event` · `tests/test_runtime.py::test_robot_failsafe_report_drives_the_host` |
 | 텔레메트리 3000ms 두절 → `LINK_LOST` | `host/behavior/fsm.py` 의 `Behavior._watch_links` | `tests/test_fsm.py::test_robot_link_loss_goes_to_failsafe` · `tests/test_fsm.py::test_links_are_not_watched_before_the_first_message` |
 | `FAILSAFE` 는 해제 외 사건 무시 | `host/behavior/fsm.py` 의 `EXCLUSIVE` · `Fsm._target_for` | `tests/test_fsm.py::test_failsafe_accepts_nothing_but_a_confirmed_reset` |
 | 래치 보고가 풀릴 때까지 해제 보류 | `host/runtime.py` 의 `Runtime.request_reset` · `Runtime._settle_reset` · `host/behavior/fsm.py` 의 `Behavior.event` | `tests/test_runtime.py::test_reset_waits_for_the_robot_latch_report` · `tests/test_fsm_guards.py::test_host_cannot_leave_failsafe_while_the_robot_reports_it` |
 
-펌웨어 C++ 시험(`test_safety_monitor.cpp`)은 함수 단위가 아니라 `main()` 하나에 구간 주석으로 나뉘어 있다. 파이썬 시험 중 `tests/test_safety.py` 는 가상 로봇(`tools/mock_mechdog.py`)을 상대로 돈다.
+펌웨어 C++ 시험(`test_safety_monitor.cpp`)은 함수 단위가 아니라 `main()` 하나에 구간 주석으로 나뉘어 있다. 파이썬 시험 중 `tests/test_safety.py` 는 가상 로봇(`tools/mock/mock_mechdog.py`)을 상대로 돈다.
 
 실측 기록
 
-- [온보드 근거리 반사 정지](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md)
-- [저전압 감시](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/battery.md)
-- [초음파 표적 시험](../../TEST_MECHDOG/results/20260916_2.1.3-sonar/summary.md)
+- [온보드 근거리 반사 정지](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md)
+- [저전압 감시](../../field_tests/results/20260917_3.2.6-obstacle-stop/battery.md)
+- [초음파 표적 시험](../../field_tests/results/20260916_2.1.3-sonar/summary.md)

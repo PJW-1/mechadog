@@ -1,0 +1,590 @@
+{
+  "provider": "DmlExecutionProvider",
+  "stride": 1,
+  "frames": 8499,
+  "agreement_frames": 8399,
+  "calibration_excluded": 100,
+  "live": {
+    "rates": {
+      "decidable_rate": 0.8253001860307796,
+      "effective_rate": 0.7852190089633012,
+      "segments": {
+        "standing-all": {
+          "count": 1449,
+          "right": 1267,
+          "wrong": 2,
+          "unknown": 180,
+          "determinate": 1269,
+          "coverage_count": 1449,
+          "coverage_determinate": 1269,
+          "coverage_right": 1267
+        },
+        "standing-nohelmet": {
+          "count": 1393,
+          "right": 822,
+          "wrong": 235,
+          "unknown": 336,
+          "determinate": 1057,
+          "coverage_count": 1393,
+          "coverage_determinate": 1057,
+          "coverage_right": 822
+        },
+        "standing-novest": {
+          "count": 1398,
+          "right": 1109,
+          "wrong": 0,
+          "unknown": 289,
+          "determinate": 1109,
+          "coverage_count": 1398,
+          "coverage_determinate": 1109,
+          "coverage_right": 1109
+        },
+        "standing-none": {
+          "count": 1673,
+          "right": 1445,
+          "wrong": 0,
+          "unknown": 228,
+          "determinate": 1445,
+          "coverage_count": 1673,
+          "coverage_determinate": 1445,
+          "coverage_right": 1445
+        }
+      }
+    },
+    "acceptance": {
+      "criteria": [
+        {
+          "key": "C1",
+          "name": "적합 구간 위반 확정",
+          "passed": true,
+          "detail": "0회 (상한 1) — standing-all 0"
+        },
+        {
+          "key": "C2",
+          "name": "위반 구간 방향별 확정",
+          "passed": true,
+          "detail": "standing-nohelmet 4방향(이월 3), standing-novest 4방향(이월 3), standing-none 4방향(이월 3) (하한 3방향)"
+        },
+        {
+          "key": "C3",
+          "name": "전신 구간 판정 가능률",
+          "passed": true,
+          "detail": "4880/5913 = 82.5% (하한 60%)"
+        }
+      ],
+      "coverage_gaps": 0,
+      "window_problems": [],
+      "passed": true
+    },
+    "alarms": 5
+  },
+  "variants": {
+    "fp32": {
+      "providers": {
+        "coco": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "ppe": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "coco_person_agreement": {
+        "inputs": 8399,
+        "inputs_identical": 8399,
+        "reference": 7825,
+        "matched": 7825,
+        "missed": 0,
+        "extra": 0,
+        "match_rate": 1.0,
+        "score_gap_mean": 0.0,
+        "score_gap_max": 0.0,
+        "iou_mean": 1.0
+      },
+      "ppe_agreement": {
+        "inputs": 7825,
+        "inputs_identical": 7825,
+        "reference": 2265,
+        "matched": 2265,
+        "missed": 0,
+        "extra": 0,
+        "match_rate": 1.0,
+        "score_gap_mean": 0.0,
+        "score_gap_max": 0.0,
+        "iou_mean": 1.0
+      },
+      "states_vs_fp32": {
+        "frames": 8399,
+        "identical": 8399
+      },
+      "states_vs_live": {
+        "frames": 8499,
+        "identical": 2823
+      },
+      "counts": {
+        "사람없음": 603,
+        "확인불가": 7822,
+        "위반": 64,
+        "적합": 36
+      },
+      "reasons": {
+        "머리 미검출": 1758,
+        "아무것도 미검출": 5721,
+        "머리 클리핑": 5,
+        "몸통 미검출": 338
+      },
+      "alarms": 4,
+      "rates": {
+        "decidable_rate": 0.0056246804158854614,
+        "effective_rate": 0.004602011249360832,
+        "segments": {
+          "standing-all": {
+            "count": 1422,
+            "right": 12,
+            "wrong": 6,
+            "unknown": 1404,
+            "determinate": 18,
+            "coverage_count": 1422,
+            "coverage_determinate": 18,
+            "coverage_right": 12
+          },
+          "standing-nohelmet": {
+            "count": 1383,
+            "right": 1,
+            "wrong": 0,
+            "unknown": 1382,
+            "determinate": 1,
+            "coverage_count": 1383,
+            "coverage_determinate": 1,
+            "coverage_right": 1
+          },
+          "standing-novest": {
+            "count": 1396,
+            "right": 14,
+            "wrong": 0,
+            "unknown": 1382,
+            "determinate": 14,
+            "coverage_count": 1396,
+            "coverage_determinate": 14,
+            "coverage_right": 14
+          },
+          "standing-none": {
+            "count": 1666,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1666,
+            "determinate": 0,
+            "coverage_count": 1666,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          }
+        }
+      },
+      "acceptance": {
+        "criteria": [
+          {
+            "key": "C1",
+            "name": "적합 구간 위반 확정",
+            "passed": true,
+            "detail": "1회 (상한 1) — standing-all 1"
+          },
+          {
+            "key": "C2",
+            "name": "위반 구간 방향별 확정",
+            "passed": false,
+            "detail": "standing-nohelmet 0방향, standing-novest 1방향, standing-none 0방향 — 하한 3방향 미달: standing-nohelmet, standing-novest, standing-none"
+          },
+          {
+            "key": "C3",
+            "name": "전신 구간 판정 가능률",
+            "passed": false,
+            "detail": "33/5867 = 0.6% (하한 60%)"
+          }
+        ],
+        "coverage_gaps": 0,
+        "window_problems": [],
+        "passed": false
+      }
+    },
+    "fp16": {
+      "providers": {
+        "coco": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "ppe": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "coco_person_agreement": {
+        "inputs": 8399,
+        "inputs_identical": 8394,
+        "reference": 7825,
+        "matched": 7822,
+        "missed": 3,
+        "extra": 2,
+        "match_rate": 0.9996166134185304,
+        "score_gap_mean": 0.0007730058256972022,
+        "score_gap_max": 0.02900075912475586,
+        "iou_mean": 0.997410540490383
+      },
+      "ppe_agreement": {
+        "inputs": 7825,
+        "inputs_identical": 7802,
+        "reference": 2265,
+        "matched": 2263,
+        "missed": 2,
+        "extra": 21,
+        "match_rate": 0.9991169977924945,
+        "score_gap_mean": 0.0025014569155684205,
+        "score_gap_max": 0.02829355001449585,
+        "iou_mean": 0.998152637410494
+      },
+      "states_vs_fp32": {
+        "frames": 8399,
+        "identical": 8380
+      },
+      "states_vs_live": {
+        "frames": 8499,
+        "identical": 2827
+      },
+      "counts": {
+        "사람없음": 602,
+        "확인불가": 7818,
+        "위반": 64,
+        "적합": 39
+      },
+      "reasons": {
+        "머리 미검출": 1803,
+        "아무것도 미검출": 5674,
+        "머리 클리핑": 5,
+        "몸통 미검출": 336
+      },
+      "alarms": 4,
+      "rates": {
+        "decidable_rate": 0.005456095481670929,
+        "effective_rate": 0.00443307757885763,
+        "segments": {
+          "standing-all": {
+            "count": 1422,
+            "right": 13,
+            "wrong": 6,
+            "unknown": 1403,
+            "determinate": 19,
+            "coverage_count": 1422,
+            "coverage_determinate": 19,
+            "coverage_right": 13
+          },
+          "standing-nohelmet": {
+            "count": 1381,
+            "right": 1,
+            "wrong": 0,
+            "unknown": 1380,
+            "determinate": 1,
+            "coverage_count": 1381,
+            "coverage_determinate": 1,
+            "coverage_right": 1
+          },
+          "standing-novest": {
+            "count": 1396,
+            "right": 12,
+            "wrong": 0,
+            "unknown": 1384,
+            "determinate": 12,
+            "coverage_count": 1396,
+            "coverage_determinate": 12,
+            "coverage_right": 12
+          },
+          "standing-none": {
+            "count": 1666,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1666,
+            "determinate": 0,
+            "coverage_count": 1666,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          }
+        }
+      },
+      "acceptance": {
+        "criteria": [
+          {
+            "key": "C1",
+            "name": "적합 구간 위반 확정",
+            "passed": true,
+            "detail": "1회 (상한 1) — standing-all 1"
+          },
+          {
+            "key": "C2",
+            "name": "위반 구간 방향별 확정",
+            "passed": false,
+            "detail": "standing-nohelmet 0방향, standing-novest 1방향, standing-none 0방향 — 하한 3방향 미달: standing-nohelmet, standing-novest, standing-none"
+          },
+          {
+            "key": "C3",
+            "name": "전신 구간 판정 가능률",
+            "passed": false,
+            "detail": "32/5865 = 0.5% (하한 60%)"
+          }
+        ],
+        "coverage_gaps": 0,
+        "window_problems": [],
+        "passed": false
+      }
+    },
+    "int8-dyn": {
+      "providers": {
+        "coco": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "ppe": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "coco_person_agreement": {
+        "inputs": 8399,
+        "inputs_identical": 7845,
+        "reference": 7825,
+        "matched": 7299,
+        "missed": 526,
+        "extra": 35,
+        "match_rate": 0.9327795527156549,
+        "score_gap_mean": 0.04879935870743529,
+        "score_gap_max": 0.3580241799354553,
+        "iou_mean": 0.8898604655167196
+      },
+      "ppe_agreement": {
+        "inputs": 7825,
+        "inputs_identical": 6891,
+        "reference": 2265,
+        "matched": 1624,
+        "missed": 641,
+        "extra": 334,
+        "match_rate": 0.7169977924944813,
+        "score_gap_mean": 0.05919982944362857,
+        "score_gap_max": 0.32958918809890747,
+        "iou_mean": 0.9391349769042945
+      },
+      "states_vs_fp32": {
+        "frames": 8399,
+        "identical": 7748
+      },
+      "states_vs_live": {
+        "frames": 8499,
+        "identical": 2448
+      },
+      "counts": {
+        "사람없음": 1120,
+        "확인불가": 7338,
+        "위반": 40,
+        "적합": 38
+      },
+      "reasons": {
+        "머리 미검출": 1320,
+        "아무것도 미검출": 5711,
+        "몸통 미검출": 298,
+        "머리 클리핑": 9
+      },
+      "alarms": 4,
+      "rates": {
+        "decidable_rate": 0.008261557391457197,
+        "effective_rate": 0.007382668307259624,
+        "segments": {
+          "standing-all": {
+            "count": 1399,
+            "right": 20,
+            "wrong": 5,
+            "unknown": 1374,
+            "determinate": 25,
+            "coverage_count": 1399,
+            "coverage_determinate": 25,
+            "coverage_right": 20
+          },
+          "standing-nohelmet": {
+            "count": 1342,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1342,
+            "determinate": 0,
+            "coverage_count": 1342,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          },
+          "standing-novest": {
+            "count": 1356,
+            "right": 22,
+            "wrong": 0,
+            "unknown": 1334,
+            "determinate": 22,
+            "coverage_count": 1356,
+            "coverage_determinate": 22,
+            "coverage_right": 22
+          },
+          "standing-none": {
+            "count": 1592,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1592,
+            "determinate": 0,
+            "coverage_count": 1592,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          }
+        }
+      },
+      "acceptance": {
+        "criteria": [
+          {
+            "key": "C1",
+            "name": "적합 구간 위반 확정",
+            "passed": true,
+            "detail": "0회 (상한 1) — standing-all 0"
+          },
+          {
+            "key": "C2",
+            "name": "위반 구간 방향별 확정",
+            "passed": false,
+            "detail": "standing-nohelmet 0방향, standing-novest 2방향(이월 1), standing-none 0방향 — 하한 3방향 미달: standing-nohelmet, standing-novest, standing-none"
+          },
+          {
+            "key": "C3",
+            "name": "전신 구간 판정 가능률",
+            "passed": false,
+            "detail": "47/5689 = 0.8% (하한 60%)"
+          }
+        ],
+        "coverage_gaps": 0,
+        "window_problems": [],
+        "passed": false
+      }
+    },
+    "int8-qdq": {
+      "providers": {
+        "coco": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "ppe": [
+          "DmlExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "coco_person_agreement": {
+        "inputs": 8399,
+        "inputs_identical": 8282,
+        "reference": 7825,
+        "matched": 7758,
+        "missed": 67,
+        "extra": 50,
+        "match_rate": 0.9914376996805112,
+        "score_gap_mean": 0.02321444724170963,
+        "score_gap_max": 0.2589413523674011,
+        "iou_mean": 0.9566728441408301
+      },
+      "ppe_agreement": {
+        "inputs": 7825,
+        "inputs_identical": 5673,
+        "reference": 2265,
+        "matched": 0,
+        "missed": 2265,
+        "extra": 0,
+        "match_rate": 0.0,
+        "score_gap_mean": null,
+        "score_gap_max": null,
+        "iou_mean": null
+      },
+      "states_vs_fp32": {
+        "frames": 8399,
+        "identical": 8187
+      },
+      "states_vs_live": {
+        "frames": 8499,
+        "identical": 2768
+      },
+      "counts": {
+        "사람없음": 635,
+        "확인불가": 7903
+      },
+      "reasons": {
+        "아무것도 미검출": 7903
+      },
+      "alarms": 0,
+      "rates": {
+        "decidable_rate": 0.0,
+        "effective_rate": 0.0,
+        "segments": {
+          "standing-all": {
+            "count": 1421,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1421,
+            "determinate": 0,
+            "coverage_count": 1421,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          },
+          "standing-nohelmet": {
+            "count": 1380,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1380,
+            "determinate": 0,
+            "coverage_count": 1380,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          },
+          "standing-novest": {
+            "count": 1397,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1397,
+            "determinate": 0,
+            "coverage_count": 1397,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          },
+          "standing-none": {
+            "count": 1671,
+            "right": 0,
+            "wrong": 0,
+            "unknown": 1671,
+            "determinate": 0,
+            "coverage_count": 1671,
+            "coverage_determinate": 0,
+            "coverage_right": 0
+          }
+        }
+      },
+      "acceptance": {
+        "criteria": [
+          {
+            "key": "C1",
+            "name": "적합 구간 위반 확정",
+            "passed": true,
+            "detail": "0회 (상한 1) — standing-all 0"
+          },
+          {
+            "key": "C2",
+            "name": "위반 구간 방향별 확정",
+            "passed": false,
+            "detail": "standing-nohelmet 0방향, standing-novest 0방향, standing-none 0방향 — 하한 3방향 미달: standing-nohelmet, standing-novest, standing-none"
+          },
+          {
+            "key": "C3",
+            "name": "전신 구간 판정 가능률",
+            "passed": false,
+            "detail": "0/5869 = 0.0% (하한 60%)"
+          }
+        ],
+        "coverage_gaps": 0,
+        "window_problems": [],
+        "passed": false
+      }
+    }
+  }
+}

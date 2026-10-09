@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.ota_update import SLOT_SIZE, RobotOta, load_package
+from tools.ops.ota_update import SLOT_SIZE, RobotOta, load_package
 
 
 def write_package(tmp_path, **changes):
@@ -251,7 +251,7 @@ def test_update_proceeds_when_service_mode_parked(tmp_path):
 def test_partition_layout_preserves_data():
     root = Path(__file__).resolve().parents[1]
     rows = {}
-    for line in (root / "firmware_mechdog_motion/ota_partitions.csv").read_text().splitlines():
+    for line in (root / "firmware/mechdog_motion/ota_partitions.csv").read_text().splitlines():
         if line and not line.startswith("#"):
             name, typ, sub, offset, size = line.split(",")
             rows[name] = (typ, sub, int(offset, 0), int(size, 0))

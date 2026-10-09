@@ -12,7 +12,7 @@ export class RobotDetailView {
     Object.assign(this, {canvas, onError, active:false, disposed:false, lost:false, frame:0, fitDistance:0});
     try {
       this.scene = new THREE.Scene();
-      this.scene.background = new THREE.Color(0x20222d);
+      this.scene.background = new THREE.Color(document.querySelector('#glass-theme')?0xdde3d8:0x20222d);
       this.renderer = new THREE.WebGLRenderer({canvas, antialias:true});
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;

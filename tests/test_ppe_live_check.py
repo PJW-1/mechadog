@@ -23,7 +23,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from host.vision.detector import Detection  # noqa: E402
-from tools import ppe_live_check as ppe  # noqa: E402
+from tools.ppe import ppe_live_check as ppe  # noqa: E402
 
 
 def det(label: str, box: tuple[float, float, float, float], score: float = 0.9) -> Detection:
@@ -204,6 +204,9 @@ class FakeDetector:
 
     def open(self) -> None:
         return None
+
+    def model_summary(self) -> dict:
+        return {"name": "fake", "sha256": None, "provider": "CPUExecutionProvider"}
 
     def detect(self, image: np.ndarray) -> list[Detection]:
         self.calls.append(image.shape[:2])
@@ -483,6 +486,8 @@ def test_main_runs_offline_and_writes_a_report(
             "1",
             "--save-dir",
             str(tmp_path / "frames"),
+            "--save-raw-dir",
+            str(tmp_path / "raw"),
             "--report",
             str(report),
             "--session",
@@ -500,3 +505,204 @@ def test_main_runs_offline_and_writes_a_report(
     text = report.read_text(encoding="utf-8")
     assert ppe.STATE_VIOLATION in text
     assert (tmp_path / "frames" / "sample.jpg").is_file()
+    # 학습용 원본은 판정을 그리기 전 그대로여야 한다. 2026-09-28 세션은 그린 프레임만
+    # 남아 난사례 학습에 쓸 수 없었다.
+    drawn = cv2.imread(str(tmp_path / "frames" / "sample.jpg"))
+    raw_frame = cv2.imread(str(tmp_path / "raw" / "sample.jpg"))
+    assert drawn.any()
+    assert np.array_equal(raw_frame, frame)
+    assert "원본 프레임" in text
+
+
+# ── 저장 폴더 가드 (얼굴 프레임 커밋 방지 · 한글 경로) ─────────────────
+REPO = Path(__file__).resolve().parents[1]
+
+
+def test_frame_folder_outside_the_repo_is_allowed(tmp_path: Path) -> None:
+    folder = tmp_path / "raw"
+    assert ppe.ensure_untracked_frame_dir(folder) == folder.resolve()
+
+
+def test_frame_folder_on_a_tracked_repo_path_is_refused() -> None:
+    """얼굴이 담긴 프레임이 깃 추적 경로에 떨어지면 커밋될 수 있다 — 시작 전에 멈춘다."""
+    with pytest.raises(SystemExit):
+        ppe.ensure_untracked_frame_dir(REPO / "docs" / "ppe_frames_should_not_exist")
+    assert not (REPO / "docs" / "ppe_frames_should_not_exist").exists()
+
+
+def test_frame_folder_under_ignored_results_is_allowed() -> None:
+    folder = REPO / "field_tests" / "results" / "x" / "raw"
+    assert ppe.ensure_untracked_frame_dir(folder) == folder.resolve()
+
+
+def _offline_args(folder: Path, *extra: str) -> list[str]:
+    return ["--images", str(folder), "--device", "mechdog-01", "--web-port", "0", *extra]
+
+
+def test_main_refuses_a_tracked_save_dir_before_loading_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_detector(*_a: object, **_kw: object) -> None:
+        raise AssertionError("저장 폴더 가드보다 모델 적재가 먼저 돌았다")
+
+    monkeypatch.setattr(ppe, "Detector", no_detector)
+    tracked = REPO / "docs" / "ppe_frames_should_not_exist"
+    for flag in ("--save-dir", "--save-raw-dir"):
+        with pytest.raises(SystemExit):
+            ppe.main(_offline_args(tmp_path, flag, str(tracked)))
+    assert not tracked.exists()
+
+
+def test_main_saves_frames_under_a_korean_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cv2.imwrite` 는 한글 경로에서 조용히 실패한다 — 저장이 실제로 되는지 본다."""
+    import cv2
+
+    from tools.ppe.index_raw import imread_any
+
+    folder = tmp_path / "images"
+    folder.mkdir()
+    frame = np.full((200, 300, 3), 30, dtype=np.uint8)
+    ok, buf = cv2.imencode(".jpg", frame)
+    assert ok
+    buf.tofile(str(folder / "sample.jpg"))
+
+    def fake_detector(_config: object, *, section: str, **_kw: object) -> FakeDetector:
+        if section == "coco":
+            return FakeDetector([det("person", (100, 40, 180, 160))])
+        return FakeDetector([det("helmet", (5, 5, 20, 20)), det("vest", (5, 40, 30, 90))])
+
+    monkeypatch.setattr(ppe, "Detector", fake_detector)
+    drawn_dir = tmp_path / "실측 세션" / "판정 프레임"
+    raw_dir = tmp_path / "실측 세션" / "원본"
+    code = ppe.main(
+        _offline_args(folder, "--save-dir", str(drawn_dir), "--save-raw-dir", str(raw_dir))
+    )
+
+    assert code == 0
+    assert (drawn_dir / "sample.jpg").is_file()
+    assert (raw_dir / "sample.jpg").is_file()
+    assert imread_any(raw_dir / "sample.jpg", cv2.IMREAD_COLOR) is not None
+
+
+def test_ppe_model_override_points_config_at_candidate_without_touching_runtime(tmp_path):
+    model = tmp_path / "candidate.onnx"
+    model.write_bytes(b"x")
+    config = {"vision": {"ppe": {"model_path": "models/ppe.onnx"}}}
+    ppe.apply_ppe_model_override(config, str(model))
+    assert config["vision"]["ppe"]["model_path"] == str(model.resolve())
+    ppe.apply_ppe_model_override(config, None)  # 옵션을 안 주면 그대로
+    assert config["vision"]["ppe"]["model_path"] == str(model.resolve())
+    with pytest.raises(SystemExit):
+        ppe.apply_ppe_model_override(config, str(tmp_path / "missing.onnx"))
+
+
+# ── 실제 실행 장치 기록 ─────────────────────────────────────────────
+
+
+class _CpuSession:
+    def get_inputs(self) -> list:
+        return [SimpleNamespace(name="images")]
+
+    def get_providers(self) -> list[str]:
+        return ["CPUExecutionProvider"]
+
+    def run(self, _outputs, _feed) -> list[np.ndarray]:
+        return [np.zeros((1, 8400, 85), dtype=np.float32)]
+
+
+def _cpu_detectors(tmp_path: Path) -> list:
+    from host.vision.coco_labels import COCO_CLASSES
+    from host.vision.detector import Detector
+
+    cfg = ppe.load_config("mechdog-01")
+    detectors = []
+    for section in ("coco", "ppe"):
+        weights = tmp_path / f"{section}.onnx"
+        weights.write_bytes(section.encode())
+        local = dict(cfg)
+        local["vision"] = dict(
+            cfg["vision"], **{section: dict(cfg["vision"][section], model_path=str(weights))}
+        )
+        labels = COCO_CLASSES if section == "coco" else list(cfg["vision"]["ppe"]["classes"])
+        detector = Detector(
+            local, section=section, labels=labels, session_factory=lambda *_: _CpuSession()
+        )
+        detector.open()
+        detectors.append(detector)
+    return detectors
+
+
+def _gpu_first_config() -> dict:
+    config = report_config()
+    config["vision"]["providers"] = ["DmlExecutionProvider", "CPUExecutionProvider"]
+    return config
+
+
+def test_session_json_records_the_provider_that_actually_ran(tmp_path: Path) -> None:
+    models = ppe.loaded_models(_cpu_detectors(tmp_path))
+    path = tmp_path / "session.json"
+    ppe.write_session(
+        path,
+        report_args(tmp_path),
+        _gpu_first_config(),
+        1500,
+        3,
+        0,
+        1.0,
+        {},
+        {},
+        [],
+        None,
+        models,
+    )
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["settings"]["providers"] == ["DmlExecutionProvider", "CPUExecutionProvider"]
+    assert [m["name"] for m in data["models"]] == ["coco", "ppe"]
+    assert all(m["provider"] == "CPUExecutionProvider" for m in data["models"])
+    assert all(len(m["sha256"]) == 64 for m in data["models"])
+
+
+def test_summary_separates_preference_from_actual_device_and_warns(tmp_path: Path) -> None:
+    path = tmp_path / "report.md"
+    ppe.write_report(
+        path,
+        report_args(tmp_path),
+        _gpu_first_config(),
+        1500,
+        3,
+        frames=0,
+        elapsed=1.0,
+        counts={},
+        reasons={},
+        events=[],
+        models=ppe.loaded_models(_cpu_detectors(tmp_path)),
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "- 프로바이더 선호 목록: ['DmlExecutionProvider', 'CPUExecutionProvider']" in text
+    assert "- 실제 실행 장치: coco=CPUExecutionProvider, ppe=CPUExecutionProvider" in text
+    assert "선호 목록 첫 값(DmlExecutionProvider)이 아니라 CPU 로 떨어졌다" in text
+
+
+def test_summary_has_no_warning_when_the_preferred_device_ran(tmp_path: Path) -> None:
+    path = tmp_path / "report.md"
+    ppe.write_report(
+        path,
+        report_args(tmp_path),
+        report_config(),
+        1500,
+        3,
+        frames=0,
+        elapsed=1.0,
+        counts={},
+        reasons={},
+        events=[],
+        models=ppe.loaded_models(_cpu_detectors(tmp_path)),
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "실제 실행 장치" in text
+    assert "CPU 로 떨어졌" not in text

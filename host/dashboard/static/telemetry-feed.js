@@ -37,25 +37,30 @@ export function decodeTelemetryMessage(data) {
     const imu = raw.imu ?? {};
     const flags = raw.flags ?? {};
     if (
-      !Number.isInteger(raw.seq) ||
-      typeof raw.boot_id !== 'string' ||
-      !isNumber(raw.batt_v) ||
-      !isNumber(raw.dist_cm) ||
-      ![imu.pitch, imu.roll, imu.yaw].every(isNumber) ||
+      typeof raw !== 'object' || Array.isArray(raw) ||
+      (raw.imu != null && (typeof raw.imu !== 'object' || Array.isArray(raw.imu))) ||
+      Array.isArray(flags) ||
+      (raw.seq != null && !Number.isInteger(raw.seq)) ||
+      (raw.boot_id != null && typeof raw.boot_id !== 'string') ||
+      (raw.batt_v != null && !isNumber(raw.batt_v)) ||
+      (raw.dist_cm != null && !isNumber(raw.dist_cm)) ||
+      ![imu.pitch, imu.roll, imu.yaw].every(value => value == null || isNumber(value)) ||
       typeof flags !== 'object'
     ) {
       throw new Error('텔레메트리 본문 형식이 올바르지 않습니다.');
     }
     telemetry = {
       deviceId: typeof raw.device_id === 'string' ? raw.device_id : null,
-      bootId: raw.boot_id,
-      seq: raw.seq,
+      bootId: raw.boot_id ?? null,
+      seq: raw.seq ?? null,
       state: typeof raw.state === 'string' ? raw.state : null,
-      battV: raw.batt_v,
-      distCm: raw.dist_cm,
-      imu: { pitch: imu.pitch, roll: imu.roll, yaw: imu.yaw },
+      battV: raw.batt_v ?? null,
+      distCm: raw.dist_cm ?? null,
+      imu: { pitch: imu.pitch ?? null, roll: imu.roll ?? null, yaw: imu.yaw ?? null },
       lastCmdAgeMs: isNumber(raw.last_cmd_age_ms) ? raw.last_cmd_age_ms : null,
-      safetyLatched: raw.safety_latched === true,
+      safetyLatched: typeof raw.safety_latched === 'boolean' ? raw.safety_latched : null,
+      partial: !raw.flags || typeof raw.safety_latched !== 'boolean' ||
+        !['lowbatt','tipped','obstacle','link_ok'].every(key=>typeof flags[key]==='boolean'),
       flags: {
         lowbatt: flags.lowbatt === true,
         tipped: flags.tipped === true,
@@ -77,7 +82,38 @@ export function decodeTelemetryMessage(data) {
     ageMs: isNumber(message.telemetry_age_ms) ? message.telemetry_age_ms : null,
     stale: message.stale !== false,
     runtimeStale: message.runtime_stale !== false,
+    vision: decodeVisionStatus(message.vision),
   };
+}
+
+/** 로드된 모델·추론 지연 (`VisionWorker.status`). 없거나 형식이 틀리면 `null` — 지어내지 않는다. */
+function decodeVisionStatus(raw) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.models)) return null;
+  const text = (value) => (typeof value === 'string' && value ? value : null);
+  const inference = raw.inference ?? {};
+  return {
+    models: raw.models
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({ name: text(item.name) ?? '이름 미상', sha256: text(item.sha256), provider: text(item.provider) })),
+    n: Number.isInteger(inference.n) ? inference.n : 0,
+    p50: isNumber(inference.p50_ms) ? inference.p50_ms : null,
+    p95: isNumber(inference.p95_ms) ? inference.p95_ms : null,
+  };
+}
+
+/** 상태 칸 두 줄 — 모델 이름 · sha256 앞 12자리 · provider, 추론 지연 p50 / p95. */
+function describeVision(vision) {
+  if (!vision) return ['비전 없음 · 미수신', '비전 없음 · 미수신'];
+  const models = vision.models.length
+    ? vision.models
+        .map((m) => `${m.name} · ${m.sha256 ? m.sha256.slice(0, 12) : '해시 없음'} · ${m.provider ?? '장치 미상'}`)
+        .join(' / ')
+    : '로드된 모델 없음';
+  const latency =
+    vision.n > 0 && vision.p50 != null && vision.p95 != null
+      ? `${vision.p50.toFixed(1)} / ${vision.p95.toFixed(1)} ms · 최근 ${vision.n}건`
+      : '측정 전';
+  return [models, latency];
 }
 
 /**
@@ -99,7 +135,7 @@ export class TelemetryTracker {
   push(snapshot, nowMs) {
     const telemetry = snapshot.telemetry;
     this.prune(nowMs);
-    if (!telemetry) return false;
+    if (!telemetry || telemetry.bootId == null || telemetry.seq == null) return false;
     if (telemetry.bootId !== this.bootId) {
       this.bootId = telemetry.bootId;
       this.lastSeq = null;
@@ -138,7 +174,8 @@ export class TelemetryTracker {
 }
 
 const ago = (ms) => (ms == null ? '—' : ms < 1000 ? `${Math.round(ms)} ms 전` : `${(ms / 1000).toFixed(1)} s 전`);
-const deg = (value) => `${value.toFixed(1)}°`;
+const number = (value, digits = 0) => isNumber(value) ? value.toFixed(digits) : '미수신';
+const deg = (value) => `${number(value, 1)}${isNumber(value) ? '°' : ''}`;
 
 /**
  * 화면 문구. 하단 상태 칸과 장치 화면의 게이지가 **같은 판단**을 쓰도록 한 곳에 둔다.
@@ -151,6 +188,7 @@ export function describeTelemetry(view) {
   const channel = view?.state ?? 'off';
   let tone = 'waiting';
   if (channel === 'closed') tone = 'closed';
+  else if (channel === 'invalid') tone = 'stale';
   else if (channel === 'live' && telemetry) tone = snapshot.stale ? 'stale' : 'live';
 
   const rate = view?.rateHz == null ? '수신률 측정 중' : `수신 ${view.rateHz.toFixed(1)} Hz`;
@@ -161,12 +199,16 @@ export function describeTelemetry(view) {
   if (telemetry?.flags.tipped) alerts.push('전도');
   if (telemetry?.flags.obstacle) alerts.push('근거리 정지');
   if (snapshot && telemetry && snapshot.runtimeStale) alerts.push('운용 루프 멈춤');
+  if (telemetry && (telemetry.partial || [telemetry.bootId,telemetry.seq,telemetry.battV,telemetry.distCm,...Object.values(telemetry.imu)].some(value=>value==null))) alerts.push('일부 상태 미수신');
 
   let headline;
   let summary;
   if (channel === 'closed') {
     headline = '상태 채널 끊김 · 다시 연결 중';
     summary = '영상·사건·명령은 따로 연결됩니다.';
+  } else if (channel === 'invalid') {
+    headline = '상태 형식 오류 · 서버 확인 필요';
+    summary = '새 상태를 표시하지 못했습니다. 마지막 값을 현재 상태로 판단하지 마세요.';
   } else if (channel !== 'live') {
     headline = '관제 서버 연결됨 · 상태 채널 연결 중';
     summary = '영상·사건·명령은 따로 연결됩니다.';
@@ -174,7 +216,7 @@ export function describeTelemetry(view) {
     headline = '관제 서버 연결됨 · 로봇 상태 미수신';
     summary = '로봇에서 받은 상태가 아직 없습니다.';
   } else {
-    const values = `배터리 ${telemetry.battV.toFixed(2)} V · 거리 ${Math.round(telemetry.distCm)} cm`;
+    const values = `배터리 ${number(telemetry.battV, 2)} V · 거리 ${number(telemetry.distCm)} cm`;
     const flagged = alerts.length ? ` · ${alerts.join(' · ')}` : '';
     if (snapshot.stale) {
       headline = `로봇 수신 끊김 · ${ago(snapshot.ageMs)}`;
@@ -185,18 +227,21 @@ export function describeTelemetry(view) {
     }
   }
 
+  const [visionModels, visionLatency] = describeVision(snapshot?.vision ?? null);
   const rows = telemetry
     ? [
         ['연결 · 마지막 수신', `${tone === 'live' ? '수신 중' : '끊김'} / ${ago(snapshot.ageMs)}`],
         ['실제 device_id', `${snapshot.deviceId} · 펌웨어 ${telemetry.deviceId ?? '미상'}`],
         ['운용 모드', MODE_NAMES[snapshot.mode] ?? '미수신 — 판단 규칙을 알 수 없음'],
         ['FSM · 대응 단계', `${snapshot.state ?? '기동 전'} / ${snapshot.escalation ?? '—'} · 온보드 ${telemetry.state ?? '—'}`],
-        ['배터리 전압', `${telemetry.battV.toFixed(2)} V${telemetry.flags.lowbatt ? ' · 저전압 (로봇 판정)' : ''}`],
-        ['전방 거리', `${Math.round(telemetry.distCm)} cm${telemetry.flags.obstacle ? ' · 근거리 정지' : ''}`],
+        ['배터리 전압', `${number(telemetry.battV, 2)} V${telemetry.flags.lowbatt ? ' · 저전압 (로봇 판정)' : ''}`],
+        ['전방 거리', `${number(telemetry.distCm)} cm${telemetry.flags.obstacle ? ' · 근거리 정지' : ''}`],
         ['IMU pitch / roll / yaw', `${deg(telemetry.imu.pitch)} / ${deg(telemetry.imu.roll)} / ${deg(telemetry.imu.yaw)}${telemetry.flags.tipped ? ' · 전도' : ''}`],
-        ['링크 · 안전 래치', `${rate}${lost} / ${telemetry.safetyLatched ? '잠김' : '해제'}`],
+        ['링크 · 안전 래치', `${rate}${lost} / ${telemetry.safetyLatched == null ? '미수신' : telemetry.safetyLatched ? '잠김' : '해제'}`],
         ['마지막 명령 수락 나이', telemetry.lastCmdAgeMs == null ? '— · 미수신' : `${Math.round(telemetry.lastCmdAgeMs)} ms · 로봇 기준`],
         ['링크 지연 (RTT)', '미측정 — 로봇과 PC 시계가 달라 빼지 않는다'],
+        ['비전 모델', visionModels],
+        ['추론 지연 p50 / p95', visionLatency],
       ]
     : null;
   const badge = { live: ['실시간', ''], stale: ['수신 끊김', 'amber'], closed: ['채널 끊김', 'amber'], waiting: ['연결 대기', ''] }[tone];
@@ -267,6 +312,7 @@ export class TelemetryFeed {
       snapshot = decodeTelemetryMessage(data);
     } catch {
       this.malformed += 1;
+      this.report('invalid');
       return;
     }
     this.snapshot = snapshot;

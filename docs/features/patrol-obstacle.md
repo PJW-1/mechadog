@@ -3,7 +3,10 @@
 로봇이 정면 장애물 앞에서 스스로 멈춘 뒤, 호스트가 물러나며 방향을 틀어 순찰을 잇게 한다. 멈춤 판정은 로봇 펌웨어가 하고([제어 링크와 페일세이프](failsafe.md) 3절), 호스트는 그 보고를 따라 회피 동작만 정한다.
 빠져나오지 못하면 정해진 횟수 뒤에 멈춘 채 사람을 기다린다. 같은 장애물 앞에서 계속 흔들어 기어를 상하게 하지 않는다.
 
-순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`tools/patrol_run.py` 가 돌리는 `PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다.
+순찰 경로는 둘이다. 운용 런타임(`host/runtime.py`)은 FSM 의 `AVOID` 상태로 회피하고, LiDAR 구역 순찰기(`PatrolController`)는 초음파 정지 중에는 멈추기만 하고 LiDAR 로 경로를 다시 짠다(시연 동선은 아래 참고).
+순찰기는 `tools/ops/patrol_run.py` 단독 도구로 돌리거나, 런타임이 `--lidar-device <id>` 로 직접 돌릴 수 있다([ADR-43](../DECISIONS.md#adr-43)): PATROL 이 LiDAR A* 경로를 따르고, 측위 자세는 구역 점검에 들어가며, LiDAR 전방 ESTOP 은 런타임 송신 락을 거친다. 플래그가 없으면 위의 `AVOID` 경로만 쓴다. `tools/ops/patrol_run.py` 는 단독 시험 도구로 남는다. ROS2 컨테이너로의 스캔 전달(`lidar.scan_forward_*`)과 ODOM 송신도 같은 플래그가 켠다. 기동 관문은 `patrol_run` 과 같다: `lidar` 절 전수 검사, `localization.track == lidar`(ADR-18), 전달·ODOM 목적지 이름 해석, 지도·구역 적재 중 하나라도 실패하면 rc 2 로 기동을 거부한다.
+이동 중 장애물이 길을 막으면 **가벼운 경고 `path_blocked`**(방송 + 대시보드 — 대시보드는 프레임이 있을 때만 뜬다. 프레임이 없거나 낡으면 방송만 나간다. 출처 `lidar`, 판정 `x`·`y`·`target` 과 원인 판독의 `fallen`·`vlm_reason`·`raw`·`latency_ms`·`wait_ms`·`vlm_path_cause`. 묻지 못했으면 `fallen` 은 `null` 이고 `vlm_reason` 에 사유가 남는다. 값은 [VLM 단일 장면 판독](vlm-reading.md))를 낸 뒤 LiDAR A* 가 빈 쪽 중 가장 짧은 쪽으로 다시 계획해 이어 간다. ([ADR-47](../DECISIONS.md#adr-47)) 이 A* 재계획은 `nav.relaxed_follow` 를 끄거나 동선이 없을 때의 동작이다. 시연 동선(`relaxed_follow`, 기본 켬)은 A* 를 쓰지 않고 정면 0.25m 이하에서 서고(`relaxed_front_stop`), 이어지면 제자리 회전하며(`relaxed_escape_turn`), `mechdog-02` 는 걸으며 우회(`relaxed_walk_detour`)하고 10초 진척이 없으면 `path_blocked` 한 번 뒤 대기(`relaxed_stuck_hold`)한다. L3 가 아니다. VLM 은 길을 정하지 않는다.
+공장 모드에서는 막힘을 확정한 그 프레임에 VLM 질문 `blocked_by_fallen`(«통로를 막은 것이 무너진 물건인가»)을 걸어, 답(`fallen`)을 같은 `path_blocked` 의 판정 근거에 싣는다([ADR-45](../DECISIONS.md#adr-45)). 물을 수 없으면(`mission` · `not_loaded` · `no_frame` · `stale_frame` · 앞 막힘을 기다리는 중의 `busy`) `path_blocked` 경고는 미뤄지지 않고 바로 나간다(프레임이 없거나 낡으면 방송만). 물었으면 답이 오거나 `vision.vlm.path_cause_wait_ms`(1500ms)에 닿을 때까지 미뤄진다. 재계획은 기다리지 않는다.
 
 ## 판단 흐름
 
@@ -39,9 +42,10 @@ flowchart TD
   ADV -->|다음 스캔| SC["LiDAR 스캔 수신"]
   SC --> EST{"전방 부채꼴 최소 거리가 estop_distance_mm 미만인가?"}
   EST -->|예| ESTOP["ESTOP 즉시 송신 · HALTED"]
-  EST -->|아니요| NEW{"새 장애물이 같은 자리에서 연속 2회 잡혔나?"}
+  EST -->|아니요| NEW{"새 장애물이 같은 자리에서 연속 3회 잡혔나?"}
   NEW -->|아니요| ADV
-  NEW -->|예| MARK["동적 장애물 표시 · 경로만 버림"]
+  NEW -->|예| WARN["가벼운 경고 path_blocked · L3 아님"]
+  WARN --> MARK["동적 장애물 표시 · 경로만 버림"]
   MARK --> RP{"같은 목표로 경로가 다시 풀리나?"}
   RP -->|예| ADV
   RP -->|아니요| RV{"이 구역 재확인이 3회 미만이고 표시를 지우면 풀리나?"}
@@ -53,7 +57,7 @@ flowchart TD
 
 | 조건 | 값 | 설정 키 | 근거 |
 | :--- | :--- | :--- | :--- |
-| 반사 정지 · 해제 | 25cm 미만 연속 2표본 · 30cm 이상 연속 5표본 | `safety.obstacle_stop_cm` (해제는 펌웨어 상수) | [반사 정지 실측](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md) |
+| 반사 정지 · 해제 | 7cm 미만 연속 2표본 · 10cm 이상 연속 5표본 (2026-10-06 25/30→7/10, LiDAR 가 먼저 선다) | `safety.obstacle_stop_cm` (해제는 펌웨어 상수) | [반사 정지 실측](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md) |
 | 해제 판단 근거 | `flags.obstacle` 의 참→거짓 변화 (플래그가 없는 펌웨어는 `AVOID`→`PATROL` 상태 변화) | 없음 | [ADR-22](../DECISIONS.md#adr-22) |
 | 회피 구간 등록 조건 | `forward_mm_per_sec` · `turn_deg_per_sec` 실측값이 있음 | `gait_calibration.*` (기체 프로파일) | [ADR-29](../DECISIONS.md#adr-29) |
 | settle · verify 정지 | 각 750ms | `localization.settle_delay_ms` | — |
@@ -62,8 +66,10 @@ flowchart TD
 | 후진 선회 미실측 기체 | 후진 200mm 뒤 전진 좌선회 30도 (옛 구간표) | `gait_calibration.reverse_mm_per_sec` (없으면 전진 속도) | [ADR-29](../DECISIONS.md#adr-29) |
 | 회피 시도 상한 | 3회 | `fsm.avoid_attempts` | — |
 | LiDAR 비상정지 거리 | 전방 ±20° 안 최소 거리 100mm 미만 | `lidar.estop_distance_mm` · `lidar.forward_fan_deg` | — |
-| 새 장애물 확정 | 1.5m 안의 빔이 지도가 예상한 거리보다 250mm 이상 가깝고, 0.3m 안 같은 자리에서 연속 2회 | `lidar.new_obstacle_check_radius_mm` · `new_obstacle_margin_mm` · `new_obstacle_confirmations` | — |
+| 새 장애물 확정 | 1.5m 안의 빔이 지도가 예상한 거리보다 250mm 이상 가깝고, 0.3m 안 같은 자리에서 연속 3회 | `lidar.new_obstacle_check_radius_mm` · `new_obstacle_margin_mm` · `new_obstacle_confirmations` | — |
 | 구역 재확인 상한 | 구역당 사이클마다 3회 | `fsm.avoid_attempts` | — |
+| 이동 중 막힘의 처리 | 가벼운 경고 `path_blocked` + LiDAR 우회 + 순찰 계속 (L3 아님) | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
+| 런타임이 LiDAR 순찰을 돌림 | 선택. `--lidar-device <id>` 가 있을 때만 | CLI 인자 | [ADR-43](../DECISIONS.md#adr-43) |
 
 ## 실패·예외 시 동작
 
@@ -74,6 +80,8 @@ flowchart TD
 - 시도 3회를 다 쓰면 `avoid_exhausted` 를 한 번 남기고 정지를 계속 보낸다. 그 뒤에도 전방이 비면 `AVOID_CLEARED` 로 순찰에 돌아간다.
 - 반사 정지 중 로봇은 후진·선회 명령을 받고 전진 명령은 거부한다(`applied=false`). 그래서 후진 선회는 반사 정지가 걸린 채로도 나간다.
 - 순찰기에서 LiDAR 비상정지는 `ESTOP` 이라 로봇이 래치된다. 사람이 해제하고 로봇이 `safety_latched=false` 를 보고해야 경로 계획으로 돌아간다.
+- 원인 판독이 «예» 이고 스위치 `change_detect.vlm_path_cause`(기본 꺼짐)가 켜져 있을 때만 방송 문장이 «무너진 물건이 통로를 막고 있어 돌아서 갑니다» 류로 바뀐다. 그 밖에는 «장애물이 있어 돌아서 갑니다» 그대로이고, 답은 판정 근거에만 남는다. 공장 모드가 아니거나(`mission`) VLM 이 적재되지 않았으면(`not_loaded`) `fallen: null` 로 바로 기록한다. 쓰러짐·구역 판독이 워커를 쓰고 있거나 앞 막힘의 늦은 판독을 비우는 중이라 판독을 걸지 못한 새 막힘은 바로 기록되지 않고, 상한에 닿을 때까지 기다렸다가 `busy` 로 기록된다. 앞 막힘의 판독을 기다리는 중에 확정된 다음 막힘만 바로 `busy` 로 기록된다.
+- `path_blocked` 는 L3 를 올리지 않는다. 우회로가 없으면 위 «구역 재확인 상한» 대로 `zone_unreachable` 로 그 구역을 건너뛴다.
 - 순찰기에서 동적 장애물 표시는 지도에 쓰지 않는다. 사이클이 끝나면 표시와 재확인 횟수를 모두 지운다.
 - 순찰기에서 텔레메트리가 `safety.link_loss_failsafe_ms`(3000ms) 넘게 없으면 `HALTED`, 측위가 `localization.pose_timeout_ms` 넘게 갱신되지 않으면 `LOST` 로 멈춘다. 둘 다 명령 송신은 계속한다.
 
@@ -90,14 +98,16 @@ flowchart TD
 | 구간 순서 · 후진 선회 | `host/behavior/actions.py` 의 `avoid_phases` · `AvoidSequence.phase_at` | `tests/test_actions.py::test_avoid_walks_the_phases_in_order` · `tests/test_actions.py::test_reverse_turn_replaces_the_reverse_then_turn_pair` · `tests/test_actions.py::test_reverse_turn_time_satisfies_the_slower_of_the_two_goals` |
 | 후진 선회 미실측 기체 | `host/behavior/actions.py` 의 `avoid_phases` | `tests/test_actions.py::test_half_measured_reverse_turn_keeps_the_old_phases` · `tests/test_actions.py::test_reverse_falls_back_to_forward_when_unmeasured` |
 | 시도 상한 3회 → 정지 | `host/behavior/actions.py` 의 `AvoidSequence.__call__` | `tests/test_actions.py::test_avoid_retries_the_configured_number_of_times` · `tests/test_actions.py::test_avoid_stops_after_exhausting_attempts` · `tests/test_actions.py::test_exhausted_is_reported` |
-| 전진만 거부 | `firmware_mechdog_motion/src/safety_monitor.h` 의 `move_allowed` | `tests/test_safety.py::test_obstacle_blocks_forward_only` |
+| 전진만 거부 | `firmware/mechdog_motion/src/safety_monitor.h` 의 `move_allowed` | `tests/test_safety.py::test_obstacle_blocks_forward_only` |
 | 순찰기 래치 보고 우선 | `host/behavior/patrol.py` 의 `PatrolController._guard` | `tests/test_lidar_patrol.py::test_onboard_latch_wins_over_host_plan` |
 | 순찰기 반사 정지 중 정지 | `host/behavior/patrol.py` 의 `PatrolController.step` · `SafetyView.obstacle_active` | `tests/test_lidar_patrol.py::test_reported_obstacle_holds_the_walk` · `tests/test_lidar_patrol.py::test_obstacle_release_is_read_from_the_flag` |
 | 순찰기 LiDAR 비상정지 | `host/behavior/patrol.py` 의 `PatrolController.guard_scan` | `tests/test_lidar_patrol.py::test_lidar_danger_sends_estop_not_stop` · `tests/test_lidar_patrol.py::test_estop_does_not_wait_for_the_tick` |
-| 새 장애물 확정 · 재계획 · 재확인 상한 | `host/behavior/patrol.py` 의 `PatrolController._check_new_obstacle` · `PatrolController._replan` | 시험 없음. `tests/test_lidar_patrol.py::test_dynamic_obstacle_does_not_change_the_map` 는 표시가 지도에 쓰이지 않는 것만 본다 |
-| 막힌 구역이 사이클을 끝내지 않음 | `host/behavior/patrol.py` 의 `PatrolController._replan` | `tests/test_lidar_patrol.py::test_blocked_zone_does_not_end_the_cycle_early` |
+| 새 장애물 확정 · 재계획 · 재확인 상한 | `host/behavior/nav_map.py` 의 `NavigationMap.project_scan` · `host/behavior/patrol.py` 의 `PatrolController._replan` | 시험 없음. `tests/test_lidar_patrol.py::test_dynamic_obstacle_does_not_change_the_map` 는 표시가 지도에 쓰이지 않는 것만 본다 |
+| `path_blocked` 경고 · 런타임 LiDAR 순찰 (`--lidar-device`) | `host/behavior/patrol.py` 의 `PatrolController.steer` · `PatrolController.take_new_obstacles` · `host/behavior/scan_relay.py` 의 `ScanRelay.observe` · `ScanRelay.record_path_blocked` · `host/telemetry/lidar_feed.py` 의 `LidarFeed.handle` | `tests/test_runtime_lidar.py::test_path_blocked_is_recorded_once_without_escalating` · `tests/test_runtime_lidar.py::test_path_blocked_without_a_frame_still_announces` · `tests/test_runtime_lidar.py::test_obstacle_outside_patrol_is_not_a_path_block` · `tests/test_runtime_lidar.py::test_reentering_patrol_replans_to_the_same_unvisited_zone` · `tests/test_runtime_lidar.py::test_close_scan_sends_estop_without_touching_the_navigator` · `tests/test_runtime_lidar.py::test_cli_lidar_device_without_zones_refuses_to_start` · `tests/test_runtime_lidar.py::test_cli_lidar_device_on_a_unit_without_the_lidar_track_refuses_to_start` · `tests/test_runtime_lidar.py::test_cli_lidar_device_with_a_bad_lidar_section_refuses_to_start` · `tests/test_lidar_patrol.py::test_steer_walks_without_announcing_state` · `tests/test_lidar_patrol.py::test_new_obstacles_are_taken_once` · `tests/test_situation.py::test_path_blocked_with_target` |
+| 막힘 원인 판독 — 물을 수 없으면 바로 기록 · 물었으면 답 또는 상한까지 대기 | `host/behavior/path_cause.py` 의 `PathCause.blocked` · `PathCause.poll` | `tests/test_path_cause.py::test_the_answer_lands_in_the_judgement_once` · `tests/test_path_cause.py::test_the_wait_is_bounded_and_the_late_answer_is_only_logged` · `tests/test_path_cause.py::test_a_stale_frame_is_not_asked_and_not_photographed` · `tests/test_path_cause.py::test_a_second_block_while_waiting_is_recorded_at_once` · `tests/test_path_cause.py::test_no_vlm_records_at_once` · `tests/test_path_cause.py::test_no_frame_announces_at_once` · `tests/test_path_cause.py::test_guard_mode_does_not_ask` |
+| 막힌 구역이 사이클을 끝내지 않음 | `host/behavior/patrol.py` 의 `PatrolController._replan` · `PatrolController._select_zone` | `tests/test_lidar_patrol.py::test_blocked_zone_does_not_end_the_cycle_early` |
 
 실측 기록
 
-- [온보드 근거리 반사 정지 — 전진 거부 · 후진 허용 · 해제](../../TEST_MECHDOG/results/20260917_3.2.6-obstacle-stop/summary.md)
-- 회피 시퀀스 전체(후진 선회 → 해제 → 순찰 재개)를 실기에서 잰 기록은 아직 없다.
+- [온보드 근거리 반사 정지 — 전진 거부 · 후진 허용 · 해제](../../field_tests/results/20260917_3.2.6-obstacle-stop/summary.md)
+- 회피 시퀀스 전체(후진 선회 → 해제 → 순찰 재개)를 실기에서 잰 기록은 없다(한계).

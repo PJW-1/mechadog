@@ -1,48 +1,15 @@
-"""사원증 ArUco 인증 (WBS 3.8.1 · FR-10.1).
+"""사원증 ArUco 인증 (WBS 3.8.1 · FR-10.1 · ADR-28).
 
-사원증에 인쇄된 **ArUco 마커**를 읽어 승인 인원을 식별한다. 로고 템플릿 매칭은
-조명·각도에 취약하고 전용 모델 학습은 데이터 수집 비용이 크다 — 사원증에 코드가
-인쇄된 형태는 현실의 출입 통제와 같으므로 타당하다(FR-10.1 설계 근거).
+픽셀에서 마커를 찾는 것은 `vision/badge.py`(cv2 를 쓰는 유일한 곳)이고, 이 파일은 누구의
+인증인지 정하고 세션을 들고 있다 — 픽셀을 모른다.
 
-두 층으로 나눈다. **파일도 나눈다** — `worker` 가 `behavior` 를 import 하게 두면
-방향이 거꾸로가 되기 때문이다.
-
-  ① `vision/badge.py` — 픽셀에서 마커를 찾는다. `cv2` 를 쓰는 유일한 곳이다.
-  ② 이 파일          — 누구의 인증인지 정하고 세션을 들고 있다. **픽셀을 모른다.**
-
-⚠️ **인증은 추적 ID 에 귀속된다** (FR-3.6.2). 여러 명일 때 누가 인증됐는지
-구분해야 하고, 추적 ID 가 사라지면 그 세션도 만료된다(FR-3.6.3). 그래서 이
-모듈은 `Track` 을 받는다 — 인증은 *프레임*의 속성이 아니라 *사람*의 속성이다.
-
-⚠️ **마커를 누구에게 귀속시킬지는 기하로 정한다.** 마커 중심이 어느 추적 박스
-안에 있는지를 본다. 사원증은 몸 앞에 들기 때문이다. 둘 이상이 포함하면 박스가
-더 큰(가까운) 쪽이다 — FR-3.8.2 와 같은 단일 기준이다.
-
-**기하가 안 통할 때의 완화 규칙이 있다.** 카메라에 바짝 붙어 사원증을 대면
-몸이 프레임을 가득 채워 `person` 검출이 무너진다 — 2026-09-13 실기에서 실제로
-확인했다. 그래서 추적이 한 명뿐이면 박스 밖 마커도 그 사람에게 귀속한다.
-`vision/worker.py` 는 사람 추적이 하나도 없으면 마커 자체를 읽지 않으므로
-(`markers = self._badges.read(image) if tracks else ()`), 추적이 아예 없을 때
-**등록된** 마커가 `BADGE_SEEN` 으로 올라가는 경로는 실제로는 도달하지 않는다.
-미등록 마커는 주인이 없으면 무시한다 — 주변에 붙은 다른 인쇄물이나 오판독이 인증
-시도를 태우면 안 되기 때문이다.
-
-⚠️ **같은 마커를 반복해서 봐도 시도 횟수는 한 번이다.** 25fps 로 도는데 프레임마다
-세면 `max_attempts: 2` 가 **80ms 에 소진된다** — 사원증을 한 번 들어 보이는 것이
-곧 "2회 실패"가 된다. 프레임 수로 무언가를 세다 실패한 것이 이 저장소에 이미
-세 번 있다(결정 22·25·27번). 그래서 **본 마커 ID 의 집합**으로 센다. 다른
-사원증을 두 번째로 들어 보이는 것이 두 번째 시도다.
-
-같은 사원증을 계속 들고 있는 경우는 이 규칙으로 잡히지 않지만, **`AUTH_WAIT` 의
-30초 타이머가 그 경로를 덮는다**(FR-10.3). 두 장치가 서로를 보완하므로 여기에
-새 시간 상수를 만들지 않는다.
-
-⚠️ **미등록 마커는 안정 검출 후에만 시도로 센다.** ArUco 는 배경 무늬·모서리를
-없는 ID 로 한 프레임짜리 오검출하는 일이 흔하다 — 2026-09-13 실기에서 없는
-마커 ID 17 이 1프레임 디코딩돼 두 번째 시도를 소진시키는 것을 실제로 봤다.
-그래서 미등록 마커는 짧은 창 안에서 `unknown_marker_min_frames` 회 이상 읽혀야
-시도로 넘긴다. 등록 마커에는 이 게이트를 걸지 않는다 — 즉시 인증이 요구사항이고,
-발급 대장에 있는 ID 가 우연히 오검출될 확률은 대장 크기만큼 작다.
+- 귀속 단위는 `auth.bind_to_track_id` 가 정한다. 켜면 세션이 추적 ID 에 붙고(FR-3.6.2) ID 가
+  사라지면 만료된다(FR-3.6.3). 끄면(운용 설정) 세션 하나(키 0)가 현장 전체에 붙는다 (ADR-27 «운용 설정»).
+- 추적 ID 귀속에서 마커 주인은 마커 중심을 품은 추적 박스이고, 둘 이상이면 큰(가까운) 쪽이다
+  (FR-3.8.2). 추적이 한 명뿐이면 박스 밖 마커도 그 사람에게 붙인다 — 바짝 붙으면 `person`
+  검출이 무너진다. 주인이 없는 미등록 마커는 무시한다.
+- 시도 횟수는 본 마커 ID 의 집합 크기다 — 같은 사원증을 계속 봐도 한 번이다 (ADR-28 ⑤).
+- 미등록 마커는 1초 창 안에 `unknown_marker_min_frames` 회 읽혀야 시도로 센다 (ADR-28 ⑤).
 """
 
 from __future__ import annotations
@@ -60,7 +27,7 @@ LOG = event_logger("mechadog.auth")
 
 
 class Outcome(Enum):
-    """관측 한 번의 결과. **호출부가 사건으로 옮긴다.**"""
+    """관측 한 번의 결과. 호출부가 사건으로 옮긴다."""
 
     NOTHING = "nothing"  # 볼 것이 없었다
     GRANTED = "granted"  # 승인 — `AUTH_OK`
@@ -71,11 +38,11 @@ class Outcome(Enum):
 
 @dataclass(slots=True)
 class Session:
-    """한 사람의 인증 상태. 추적 ID 하나에 하나씩."""
+    """한 사람(또는 현장)의 인증 상태."""
 
     holder: str | None = None
     granted_ms: int | None = None
-    #: 이미 판정한 마커 ID 들. **집합인 것이 시도 횟수 규칙이다** (모듈 주석).
+    #: 이미 판정한 마커 ID 들 — 크기가 시도 횟수다.
     seen: set[int] = field(default_factory=set)
 
     @property
@@ -84,12 +51,11 @@ class Session:
 
 
 class Authenticator:
-    """마커를 사람에게 귀속시키고 세션을 들고 있다. **시계를 만들지 않는다.**"""
+    """마커를 사람에게 귀속시키고 세션을 들고 있다. 시각은 `now_ms` 로 받는다."""
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         auth = config["auth"]
-        # ⚠️ YAML 키가 정수로 읽히든 문자열로 읽히든 같게 동작해야 한다 — 설정을
-        # 손으로 고치는 사람이 `0:` 과 `"0":` 를 구분해 쓸 이유가 없다.
+        # YAML 키가 `0:` 이든 `"0":` 이든 같게 읽는다.
         self._badges = {
             int(key): str(value) for key, value in (auth["badge_marker_map"] or {}).items()
         }
@@ -99,7 +65,7 @@ class Authenticator:
         self._sessions: dict[int, Session] = {}
         #: 추적 없이 읽힌 등록 사원증의 보류 승인 — 다음에 나타난 추적에 붙는다.
         self._pending: tuple[str, int] | None = None
-        #: 미등록 마커의 안정성 게이트 — 1프레임 오검출이 시도를 태우면 안 된다.
+        #: 미등록 마커의 안정성 게이트(프레임 수).
         self._min_unknown_frames = int(auth.get("unknown_marker_min_frames", 3))
         #: 미등록 마커 후보 — ID -> (창 안에서 읽힌 횟수, 마지막으로 읽힌 시각).
         self._unproven: dict[int, tuple[int, int]] = {}
@@ -125,10 +91,9 @@ class Authenticator:
         self._unproven.clear()
 
     def all_authenticated(self, tracks: Sequence[Track], now_ms: int) -> bool:
-        """보이는 **전원**이 인증됐나 (FR-3.8.1).
+        """보이는 전원이 인증됐나 — 한 명이라도 미인증이면 `False` (FR-3.8.1 · ADR-28 ④).
 
-        ⚠️ **한 명이라도 미인증이면 False 다.** 실제 출입 통제와 같고 안전측이다 —
-        인증된 사람 뒤에 미인증자가 따라 들어오는 것이 막아야 하는 상황이다.
+        현장 인증(`bind_to_track_id: false`)이면 현장 세션이 유효한지만 본다.
         """
         if not self._bind_to_track:
             return self.holder(0, now_ms) is not None  # 현장 인증은 보이는 ID 와 무관하다.
@@ -138,10 +103,9 @@ class Authenticator:
 
     # ── 관측 ────────────────────────────────────────────────
     def note_tracks(self, tracks: Sequence[Track]) -> None:
-        """지금 보이는 대상들을 알린다. **사라진 ID 의 세션을 만료시킨다** (FR-3.6.3).
+        """지금 보이는 대상들을 알린다. 추적 ID 귀속이면 사라진 ID 의 세션을 만료시킨다 (FR-3.6.3).
 
-        ⚠️ 세션을 남겨 두면 같은 번호를 다시 받은 사람이 물려받는다 — 추적기가
-        ID 를 재사용하지 않는 것(`3.3.4`)과 같은 이유로 여기서도 지운다.
+        추적 없이 읽혀 보류된 사원증은 다음에 나타난 가장 큰 대상에게 붙인다.
         """
         if not self._bind_to_track:
             return  # 추적 ID 변동으로 현장 인증을 취소하지 않는다.
@@ -150,9 +114,7 @@ class Authenticator:
             if track_id not in alive:
                 del self._sessions[track_id]
                 LOG.info("auth_session_dropped", track_id=track_id, reason="track_lost")
-        # 사람 없이 읽힌 사원증(탭 근접 제시)은 다음에 나타난 가장 가까운 대상에게
-        # 붙는다 — 귀속 없이 `GRANTED` 만 내리면 재등장한 대상이 미인증으로
-        # 다시 에스컬레이션을 일으킨다.
+        # 사람 없이 읽힌 사원증은 다음에 나타난 가장 가까운 대상에게 붙인다.
         if self._pending is not None and tracks:
             holder, granted_ms = self._pending
             target = max(tracks, key=lambda t: t.height)
@@ -169,11 +131,7 @@ class Authenticator:
             self._pending = None
 
     def observe(self, markers: Sequence[Marker], tracks: Sequence[Track], now_ms: int) -> Outcome:
-        """마커와 대상을 넣고 판정 하나를 낸다.
-
-        여러 마커가 보이면 **승인이 우선**이다 — 승인된 사원증을 든 사람이 있는데
-        옆의 모르는 마커 때문에 경보로 가면 안 된다.
-        """
+        """마커와 대상을 넣고 판정 하나를 낸다. 여러 마커가 보이면 승인이 우선이다."""
         if not markers:
             return Outcome.NOTHING
         outcome = Outcome.NOTHING
@@ -239,22 +197,15 @@ class Authenticator:
         return Outcome.EXHAUSTED if exhausted else Outcome.REJECTED
 
     def _proven(self, marker_id: int, now_ms: int) -> bool:
-        """미등록 마커가 충분히 안정적으로 읽혔는가 — 노이즈는 시도가 아니다.
-
-        짧은 창(1초) 안에서 `unknown_marker_min_frames` 회 읽혀야 한다. 창을 넘어
-        떨어진 카운트는 버린다 — 간헐 오검출이 시간을 두고 누적되면 안 된다.
-        """
+        """미등록 마커가 1초 창 안에 `unknown_marker_min_frames` 회 읽혔는가. 창이 끊기면 다시 센다."""
         count, last = self._unproven.get(marker_id, (0, 0))
         count = count + 1 if now_ms - last <= 1000 else 1
         self._unproven[marker_id] = (count, now_ms)
         return count >= self._min_unknown_frames
 
     def _owner(self, marker: Marker, tracks: Sequence[Track]) -> Track | None:
-        """마커를 든 사람. **중심이 박스 안에 있는가**로 정한다.
-
-        ⚠️ `bind_to_track_id` 가 꺼져 있으면 대상 하나에 몰아 준다 — 추적 없이
-        운용하는 진단용 경로이며, 그때는 여러 명을 구분할 수 없다.
-        """
+        """마커를 든 사람 — 마커 중심을 품은 박스 중 가장 큰 것. `bind_to_track_id` 가 꺼져
+        있으면 가장 큰 대상이다."""
         if not tracks:
             return None
         if not self._bind_to_track:
@@ -267,5 +218,5 @@ class Authenticator:
         ]
         if not holding:
             return None
-        # 둘 이상이 포함하면 가까운(박스가 큰) 쪽 — FR-3.8.2 와 같은 단일 기준이다.
+        # 둘 이상이 포함하면 가까운(박스가 큰) 쪽 (FR-3.8.2).
         return max(holding, key=lambda t: t.height)

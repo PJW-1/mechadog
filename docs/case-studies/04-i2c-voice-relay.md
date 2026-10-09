@@ -1,8 +1,8 @@
 # 사례 4. 로봇 I²C 를 거친 음성 파형 중계가 실측으로 불가능했던 사례
 
 - 관련 결정: [ADR-38](../DECISIONS.md#adr-38), [ADR-31](../DECISIONS.md#adr-31)
-- 측정 기록: [0x34 브리지 투명성과 MP3 모듈 0x7B](../measurements/2026-09-23-bridge-transparency.md), [실기 요약](../../TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md)
-- 시험 도구: [`i2c_bridge_probe.ino`](../../firmware_mechdog_motion/diagnostics/i2c_bridge_probe/i2c_bridge_probe.ino)
+- 측정 기록: [0x34 브리지 투명성과 MP3 모듈 0x7B](../measurements/2026-09-23-bridge-transparency.md), [실기 요약](../../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md)
+- 시험 도구: [`i2c_bridge_probe.ino`](../../firmware/mechdog_motion/diagnostics/i2c_bridge_probe/i2c_bridge_probe.ino)
 
 ## 증상
 
@@ -60,8 +60,8 @@ flowchart TD
 ## 검증
 
 - 원안 불가 판정은 위 T0–T3 실측에 근거합니다. 쓰기가 무시된 경우마다 대조군으로 모듈이 살아 있음을 확인했으므로, 무음을 모듈 고장으로 볼 여지를 없앴습니다.
-- 새 듣기 경로는 같은 날 실측했습니다(2026-09-23, XIAO ESP32S3 Sense, [ADR-38](../DECISIONS.md#adr-38) 실측 ②, [원자료 요약](../../TEST_MECHDOG/results/20260923_xiao-mic/summary.md)). USB 단독 30 cm·1 m 조건에서 Whisper 인식 6/6, Wi-Fi 로 영상과 동시에 보낼 때 음성 누락 0, DMA 넘침 0, 가장 긴 전송 정지 218 ms(DMA 여유 256 ms 안)였습니다.
-- 새 말하기 경로의 드라이버는 다음 날 실기로 확인했습니다(2026-09-24, `mechdog-01`, [실기 요약](../../TEST_MECHDOG/results/20260924_4.7.20-mp3-driver/summary.md)). 로봇이 `FAILSAFE` 래치 상태에서도 `SOUND 17` 재생, `SOUND 0` 정지, `SOUND 3001` 거부를 확인했고 판정은 통과였습니다.
+- 새 듣기 경로는 같은 날 실측했습니다(2026-09-23, XIAO ESP32S3 Sense, [ADR-38](../DECISIONS.md#adr-38) 실측 ②, [원자료 요약](../../field_tests/results/20260923_xiao-mic/summary.md)). USB 단독 30 cm·1 m 조건에서 Whisper 인식 6/6, Wi-Fi 로 영상과 동시에 보낼 때 음성 누락 0, DMA 넘침 0, 가장 긴 전송 정지 218 ms(DMA 여유 256 ms 안)였습니다.
+- 새 말하기 경로의 드라이버는 다음 날 실기로 확인했습니다(2026-09-24, `mechdog-01`, [실기 요약](../../field_tests/results/20260924_4.7.20-mp3-driver/summary.md)). 로봇이 `FAILSAFE` 래치 상태에서도 `SOUND 17` 재생, `SOUND 0` 정지, `SOUND 3001` 거부를 확인했고 판정은 통과였습니다.
 
 ## 남은 한계
 

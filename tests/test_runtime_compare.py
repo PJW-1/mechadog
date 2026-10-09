@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from host.common.protocol import TelemetryEncoder
-from tools import runtime_compare as runtime
+from tools.probe import runtime_compare as runtime
 
 IMAGE = "a" * 64
 

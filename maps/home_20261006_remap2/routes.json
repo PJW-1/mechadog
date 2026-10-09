@@ -1,0 +1,869 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "id": "demo_lap",
+      "name": "시연 동선 S0→A→B→C→D→S0",
+      "points": [
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 출발"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 3.225,
+          "y": -0.875,
+          "aim_deg": 0.0,
+          "dwell_s": 10.0,
+          "search_deg": null,
+          "label": "A 작업실"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": -0.075,
+          "y": -0.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 경유"
+        },
+        {
+          "x": -0.175,
+          "y": 0.525,
+          "aim_deg": 20.0,
+          "dwell_s": 10.0,
+          "search_deg": null,
+          "label": "B 거실(쓰러짐)"
+        },
+        {
+          "x": -1.175,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "거실 위"
+        },
+        {
+          "x": -1.975,
+          "y": -1.325,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -2.675,
+          "y": -1.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "주방 입구"
+        },
+        {
+          "x": -3.275,
+          "y": -0.975,
+          "aim_deg": -180.0,
+          "dwell_s": 5.0,
+          "search_deg": null,
+          "label": "C 주방"
+        },
+        {
+          "x": -2.675,
+          "y": -1.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "주방 입구"
+        },
+        {
+          "x": -1.775,
+          "y": -1.175,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": 0.075,
+          "y": -1.775,
+          "aim_deg": -90.0,
+          "dwell_s": 5.0,
+          "search_deg": null,
+          "label": "D 침실"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "id": "demo_from_A",
+      "name": "시연 동선(A 시작) A→B→C→D→S0",
+      "points": [
+        {
+          "x": 3.225,
+          "y": -0.875,
+          "aim_deg": 0.0,
+          "dwell_s": 10.0,
+          "search_deg": null,
+          "label": "A 작업실"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": -0.075,
+          "y": -0.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 경유"
+        },
+        {
+          "x": -0.175,
+          "y": 0.525,
+          "aim_deg": 20.0,
+          "dwell_s": 10.0,
+          "search_deg": null,
+          "label": "B 거실(쓰러짐)"
+        },
+        {
+          "x": -1.175,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "거실 위"
+        },
+        {
+          "x": -1.975,
+          "y": -1.325,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -2.675,
+          "y": -1.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "주방 입구"
+        },
+        {
+          "x": -3.275,
+          "y": -0.975,
+          "aim_deg": -180.0,
+          "dwell_s": 5.0,
+          "search_deg": null,
+          "label": "C 주방"
+        },
+        {
+          "x": -2.675,
+          "y": -1.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "주방 입구"
+        },
+        {
+          "x": -1.775,
+          "y": -1.175,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": 0.075,
+          "y": -1.775,
+          "aim_deg": -90.0,
+          "dwell_s": 5.0,
+          "search_deg": null,
+          "label": "D 침실"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "id": "demo_short",
+      "name": "짧은 동선 S0→A(중간)→B→C→S0",
+      "points": [
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 출발"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 2.875,
+          "y": -0.775,
+          "aim_deg": 0.0,
+          "dwell_s": 10.0,
+          "search_deg": null,
+          "label": "A 작업실 중간"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": -0.075,
+          "y": -0.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 경유"
+        },
+        {
+          "x": -0.175,
+          "y": 0.525,
+          "aim_deg": 20.0,
+          "dwell_s": 10.0,
+          "search_deg": null,
+          "label": "B 거실(쓰러짐)"
+        },
+        {
+          "x": -1.175,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "거실 위"
+        },
+        {
+          "x": -1.975,
+          "y": -1.325,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -2.675,
+          "y": -1.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "주방 입구"
+        },
+        {
+          "x": -3.275,
+          "y": -0.975,
+          "aim_deg": -180.0,
+          "dwell_s": 5.0,
+          "search_deg": null,
+          "label": "C 주방"
+        },
+        {
+          "x": -2.675,
+          "y": -1.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "주방 입구"
+        },
+        {
+          "x": -1.775,
+          "y": -1.175,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "id": "demo_look",
+      "name": "입구 둘러보기 동선 S0→A→B→C→D→S0",
+      "points": [
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 출발"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 2.775,
+          "y": -0.775,
+          "aim_deg": 0.0,
+          "dwell_s": 8.0,
+          "search_deg": null,
+          "label": "A 작업실 입구 확인"
+        },
+        {
+          "x": 2.775,
+          "y": -0.775,
+          "aim_deg": 90.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "A 작업실 입구 둘러보기1"
+        },
+        {
+          "x": 2.775,
+          "y": -0.775,
+          "aim_deg": -180.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "A 작업실 입구 둘러보기2"
+        },
+        {
+          "x": 2.775,
+          "y": -0.775,
+          "aim_deg": -90.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "A 작업실 입구 둘러보기3"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": -0.075,
+          "y": -0.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 경유"
+        },
+        {
+          "x": -0.175,
+          "y": 0.225,
+          "aim_deg": 20.0,
+          "dwell_s": 8.0,
+          "search_deg": null,
+          "label": "B 거실 확인"
+        },
+        {
+          "x": -0.175,
+          "y": 0.225,
+          "aim_deg": 110.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "B 거실 둘러보기1"
+        },
+        {
+          "x": -0.175,
+          "y": 0.225,
+          "aim_deg": -160.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "B 거실 둘러보기2"
+        },
+        {
+          "x": -0.175,
+          "y": 0.225,
+          "aim_deg": -70.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "B 거실 둘러보기3"
+        },
+        {
+          "x": -1.175,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "거실 위"
+        },
+        {
+          "x": -1.975,
+          "y": -1.325,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -2.775,
+          "y": -1.325,
+          "aim_deg": -180.0,
+          "dwell_s": 6.0,
+          "search_deg": null,
+          "label": "C 주방 입구 확인"
+        },
+        {
+          "x": -2.775,
+          "y": -1.325,
+          "aim_deg": -90.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "C 주방 입구 둘러보기1"
+        },
+        {
+          "x": -2.775,
+          "y": -1.325,
+          "aim_deg": 0.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "C 주방 입구 둘러보기2"
+        },
+        {
+          "x": -2.775,
+          "y": -1.325,
+          "aim_deg": 90.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "C 주방 입구 둘러보기3"
+        },
+        {
+          "x": -1.775,
+          "y": -1.175,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": -90.0,
+          "dwell_s": 6.0,
+          "search_deg": null,
+          "label": "D 침실 입구 확인"
+        },
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": 0.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "D 침실 입구 둘러보기1"
+        },
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": 90.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "D 침실 입구 둘러보기2"
+        },
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": -180.0,
+          "dwell_s": 1.0,
+          "search_deg": null,
+          "label": "D 침실 입구 둘러보기3"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "id": "demo_quick",
+      "name": "빠른 동선: 입구에서 방 쪽 4초 보고 바로 다음",
+      "points": [
+        {
+          "x": -0.02,
+          "y": -0.695,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 출발"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 2.775,
+          "y": -0.775,
+          "aim_deg": 0.0,
+          "dwell_s": 4.0,
+          "search_deg": null,
+          "label": "A 작업실 입구"
+        },
+        {
+          "x": 2.425,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "작업실 문"
+        },
+        {
+          "x": 0.925,
+          "y": -0.825,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "통로"
+        },
+        {
+          "x": -0.075,
+          "y": -0.475,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 경유"
+        },
+        {
+          "x": -0.175,
+          "y": 0.225,
+          "aim_deg": 75.0,
+          "dwell_s": 8.0,
+          "search_deg": null,
+          "label": "B 거실"
+        },
+        {
+          "x": -1.175,
+          "y": -0.775,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "거실 위"
+        },
+        {
+          "x": -1.975,
+          "y": -1.325,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -3.325,
+          "y": -1.275,
+          "aim_deg": -180.0,
+          "dwell_s": 8.0,
+          "search_deg": 60.0,
+          "label": "C 주방 안쪽"
+        },
+        {
+          "x": -1.775,
+          "y": -1.175,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 통로"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": -90.0,
+          "dwell_s": 4.0,
+          "search_deg": null,
+          "label": "D 침실 입구"
+        },
+        {
+          "x": -0.02,
+          "y": -0.475,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "id": "demo_tail",
+      "name": "끝부분: 기둥 옆 PPE → 침실 → S0",
+      "points": [
+        {
+          "x": -1.775,
+          "y": -1.175,
+          "aim_deg": null,
+          "dwell_s": 12.0,
+          "search_deg": null,
+          "label": "기둥 옆(PPE 확인)"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": -90.0,
+          "dwell_s": 4.0,
+          "search_deg": null,
+          "label": "D 침실 입구"
+        },
+        {
+          "x": -0.02,
+          "y": -0.475,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "id": "detour_test",
+      "name": "우회 시험: 기둥 옆 → 침실 문 앞(상자) → D → S0",
+      "points": [
+        {
+          "x": -1.775,
+          "y": -1.175,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "기둥 옆 출발"
+        },
+        {
+          "x": -0.025,
+          "y": -1.025,
+          "aim_deg": null,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "침실 문 앞"
+        },
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": -90.0,
+          "dwell_s": 4.0,
+          "search_deg": null,
+          "label": "D 침실 입구"
+        },
+        {
+          "x": -0.02,
+          "y": -0.475,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "id": "finish_D",
+      "name": "이어가기: D 침실 입구 → S0",
+      "points": [
+        {
+          "x": 0.025,
+          "y": -1.625,
+          "aim_deg": -90.0,
+          "dwell_s": 4.0,
+          "search_deg": null,
+          "label": "D 침실 입구"
+        },
+        {
+          "x": -0.02,
+          "y": -0.475,
+          "aim_deg": 0.0,
+          "dwell_s": null,
+          "search_deg": null,
+          "label": "S0 복귀"
+        }
+      ],
+      "repeat": 1
+    }
+  ]
+}

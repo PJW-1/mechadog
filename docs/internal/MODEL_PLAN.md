@@ -21,7 +21,7 @@
 
 | 모드 | 올리는 것 | 합계 |
 | :--- | :--- | ---: |
-| `guard` 경비 | 검출 + STT ~~(~2.5 GB)~~ + VLM *(2026-09-24 상시 적재)* | **~6.6 GB** |
+| `guard` 경비 | 검출 + STT ~~(\~2.5 GB)~~ + VLM *(2026-09-24 상시 적재)* | **~6.6 GB** |
 | `factory` 공장 | 경비 + PPE ~~+ VLM~~ *(VLM 은 경비에 이미 포함 · 2026-09-24)* | **~7.1 GB** |
 
 ⚠️ **개정 (2026-09-23 · [ADR-38](../DECISIONS.md#adr-38)) — 음성 LLM 과 현장지원 모드(`assist`)를 폐기했다.**
@@ -30,7 +30,7 @@
 프로파일은 `factory` 의 ~7.1 GB 다. ~~VLM 을 `factory` 에서만 올리는 규칙은 [ADR-35](../DECISIONS.md#adr-35) 그대로다.~~ *(2026-09-24 재개정 — **상시 적재** · 판독은 여전히 `factory` 에서만 · [ADR-35](../DECISIONS.md#adr-35))*
 
 ⚠️ **개정 (2026-09-24 · [ADR-35](../DECISIONS.md#adr-35) 개정) — VLM 은 상시 적재다.** 기동할 때 한 번 올리고 종료할 때만
-내린다. 경비 모드도 검출 + STT + VLM 으로 **~6.6 GB**, 공장 모드는 그대로 ~7.1 GB 다. 판독은 여전히 공장 모드에서만 건다.
+내린다. 경비 모드도 검출 + STT + VLM 으로 **\~6.6 GB**, 공장 모드는 그대로 \~7.1 GB 다. 판독은 여전히 공장 모드에서만 건다.
 
 ⚠️ **여유가 있으면 정밀도가 높은 쪽을 쓴다.** 양자화는 그것 없이는 들어가지 않을 때만
 꺼내는 카드다 — VLM 4bit 는 판독이 무너져 배제했다(ADR-35 대안 ⓐ).
@@ -39,13 +39,13 @@
 
 ## 1. PPE 이미지 모델 (`3.7.x`) — v1 설계와 현행 v2
 
-~~현행 `ppe-v3`는 5클래스(`person_down` 포함), 출력 `[1, 8400, 10]`, 학습에 합성 이미지 570장을 사용한다(`models/NOTICE`). `person_down`은 쓰러짐 세션과 Simuletic 데이터로 211(학습)·17(검증)개 라벨을 확보해 실제로 학습했다(검증 AP 0.439). 아래의 4클래스·공개 데이터만 사용한다는 설명은 v1 설계 기록이다. v3의 합성 데이터 사용은 OI-13 결정과 달라 승인 또는 제외 결정이 필요하며, XIAO 실사 합격 검증은 아직 없다.~~ *(2026-09-28 개정)* `ppe-v3` 이후 후보는 v12~v23b 로 이어졌고, 마지막 후보 v23b(YOLOX-S · 5클래스)가 mechdog-01 XIAO 실측(직립·전신·전부 착용 69.4초, `TEST_MECHDOG/results/20260928_ppe-xiao/`)에서 정상 착용자 오경고 4회로 기각됐다. **PPE 모델은 이제 `person_down` 을 빼고 4클래스로 간다** — 쓰러짐은 FR-9 가 아니라 `host/vision/person.py` 종횡비 의심 + VLM 확정이 맡는다(ADR-42). 아래 4클래스·공개 데이터 설계가 다음 모델의 기준이며, 데이터는 Roboflow Universe construction-safety(CC BY 4.0, project id construction-safety-gsnvb)와 XIAO 실측에서 틀린 어려운 사례로 바꿨다. 아직 학습 전이다.
+~~현행 `ppe-v3`는 5클래스(`person_down` 포함), 출력 `[1, 8400, 10]`, 학습에 합성 이미지 570장을 사용한다(`models/NOTICE`). `person_down`은 쓰러짐 세션과 Simuletic 데이터로 211(학습)·17(검증)개 라벨을 확보해 실제로 학습했다(검증 AP 0.439). 아래의 4클래스·공개 데이터만 사용한다는 설명은 v1 설계 기록이다. v3의 합성 데이터 사용은 OI-13 결정과 달라 승인 또는 제외 결정이 필요하며, XIAO 실사 합격 검증은 아직 없다.~~ *(2026-09-28 개정)* `ppe-v3` 이후 후보는 v12~v23b 로 이어졌고, 마지막 후보 v23b(YOLOX-S · 5클래스)가 mechdog-01 XIAO 실측(직립·전신·전부 착용 69.4초, `field_tests/results/20260928_ppe-xiao/`)에서 정상 착용자 오경고 4회로 기각됐다. **PPE 모델은 이제 `person_down` 을 빼고 4클래스로 간다** — 쓰러짐은 FR-9 가 아니라 `host/vision/person.py` 종횡비 의심 + VLM 확정이 맡는다(ADR-42). 아래 4클래스·공개 데이터 설계가 다음 모델의 기준이며, 데이터는 Roboflow Universe construction-safety(CC BY 4.0, project id construction-safety-gsnvb)와 XIAO 실측에서 틀린 어려운 사례로 바꿨다. 아직 학습 전이다.
 
 ### 1.1 계열 결정: **YOLOX-Nano** (직접 학습)
 
 | 후보 | 판정 | 이유 |
 | :--- | :--- | :--- |
-| **YOLOX-Nano/Tiny** | ✅ **추천** | Apache-2.0 · ①번과 동일 계열이라 **어댑터 재사용**(`ADAPTERS["yolox"]`) · 공식 `tools/export_onnx.py` 로 ONNX 바로 추출 |
+| **YOLOX-Nano/Tiny** | ✅ **추천** | Apache-2.0 · ①번과 동일 계열이라 **어댑터 재사용**(`ADAPTERS["yolox"]`) · YOLOX 업스트림의 `tools/export_onnx.py` 로 ONNX 바로 추출 |
 | Ultralytics YOLOv8/11n | ❌ | **ADR-24 가 이미 탈락시켰다** — AGPL-3.0 은 팀 코드 전체의 공개 의무다. ⚠️ WBS `3.7.2` 의 *"ultralytics 버전과 하이퍼파라미터를 기록"* 은 이 결정과 충돌하는 잔재로 **정정 필요** (아래 5절) |
 | RTMDet-tiny (mmdet) | △ | Apache-2.0 · 정확도 좋지만 export 에 MMDeploy 필요 — ADR-24 가 같은 이유로 이미 버림 |
 | 색상 휴리스틱 단독 | △ 보조 | 학습 없이 HSV 비율로 판정 — 아래 1.5 의 **베이스라인/라벨링 보조**로는 유효, 단독은 조명·원근에 취약 |
@@ -65,7 +65,7 @@
 
 | 소스 | 목표 물량 | 용도 |
 | :--- | :--- | :--- |
-| **자체 촬영 — XIAO 실기** | 클래스당 **300~500 프레임** (합계 1,200~2,000) | 학습 주체. 팀 계획의 "안전모×3·조끼×3 를 3개 장소에서" 그대로 |
+| **자체 촬영 — XIAO 실기** | 클래스당 **300\~500 프레임** (합계 1,200\~2,000) | 학습 주체. 팀 계획의 "안전모×3·조끼×3 를 3개 장소에서" 그대로 |
 | 공개 세트 (사전학습·증강) | 3,000~8,000 장 | 다양한 사람·자세·배경의 범용성 + 네거티브 |
 | **검증셋** | 자체 촬영분 중 **홀드아웃 20%** (장소·인물 겹침 없이 분리) | mAP·리콜 판정은 **이 세트로만** |
 
@@ -101,7 +101,7 @@
 | :--- | :--- | :--- |
 | 모델 | YOLOX-Nano, **공식 COCO 가중치에서 fine-tune** | 4클래스 처음부터 학습은 데이터가 모자라다 |
 | 입력 | 640×640 | `coco.onnx` 와 동일 — 어댑터·letterbox 공유 |
-| epochs | **100** (early stop patience 20) | 1.2k~2k 장이면 60~80 에 수렴하는 게 보통 |
+| epochs | **100** (early stop patience 20) | 1.2k\~2k 장이면 60\~80 에 수렴하는 게 보통 |
 | batch | 16 | RTX 5070 기준 nano 는 32 도 들어가나 16 이 안전 |
 | optimizer | SGD momentum 0.9 · lr 0.01 (cosine decay, warmup 5ep) | YOLOX 공식 레시피 |
 | augmentation | HSV(±0.015/0.7/0.4) · scale 0.5 · translate 0.1 · flip 0.5 · mosaic 1.0, **마지막 15ep mosaic OFF** | ⚠️ **색 채도 증강은 약하게** — 주황·형광이 판정 단서인데 색을 크게 흔들면 특징을 지운다 |
@@ -150,7 +150,7 @@
 | 항목 | 실측/확정 값 |
 | :--- | :--- |
 | 가중치 | `EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf` → `C:\dev\voice\models\` |
-| 런타임 | `llama-cpp-python` CUDA cu124 휠 — sm_120 PTX JIT 첫 생성 ~22s, 이후 48토큰 0.1~0.35s(수백 tok/s) |
+| 런타임 | `llama-cpp-python` CUDA cu124 휠 — sm_120 PTX JIT 첫 생성 \~22s, 이후 48토큰 0.1\~0.35s(수백 tok/s) |
 | 실측 응답 | "안녕" → 응답 **0.5s**, 한국어 품질 양호(사용자 확인) |
 | 필수 환경 | PATH 에 `site-packages\torch\lib` + `site-packages\nvidia\cublas\bin` (llama.dll 이 cudart 를 못 찾음) |
 
@@ -237,7 +237,7 @@
 ### 5.2 공간 재현 — 라이다 측정값이 씬의 뼈대
 
 ```
-실제 공간 ──LD19──▶ tools/lidar_slam.py ──▶ OccupancyGrid(2D 평면)
+실제 공간 ──LD19──▶ tools/lidar/lidar_slam.py ──▶ OccupancyGrid(2D 평면)
                                             │
                                             ▼
                                      벽을 수직 압출(extrude)
@@ -293,7 +293,8 @@
 ### 5.6 기존 자산 재사용 — LabKeeper 프로젝트 (2026-08)
 
 이전 프로젝트(LabKeeper · 작성자 개인 저장소)의 `robot-sim/` 에
-**이 구조 전체를 돌려본 코드가 있다.** 새로 짤 것이 아니라 이식이다:
+**이 구조 전체를 돌려본 코드가 있다.** 새로 짤 것이 아니라 이식이다.
+아래 표와 이 절의 파일 이름(`isaac_hal.py`·`raspbot_model.py` 등)은 모두 **외부 참고 프로젝트의 것이며 이 저장소에는 없다.**
 
 | 자산 | 이식 대상 |
 | :--- | :--- |

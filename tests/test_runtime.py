@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,9 @@ from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError
 from host.common.protocol import TelemetryEncoder
-from host.runtime import Runtime, watch_console
+from host.dashboard.wiring import dashboard_wiring
+from host.runtime import VLM_LOAD_WAIT_MS, Runtime
+from host.runtime_cli import watch_console
 from host.vision.badge import Marker
 from host.vision.detector import Detection
 from host.vision.person import FallenVerdict, Sighting
@@ -132,8 +135,9 @@ def vision_result(
     # 명시적으로 먼 박스를 넘긴다.
     box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 480.0),
     frame_width: int = 640,
+    completed_ms: int | None = None,
 ) -> VisionResult:
-    """런타임 통합 시험용 판정 결과."""
+    """런타임 통합 시험용 판정 결과. `completed_ms` 를 안 주면 수신 시각과 같다."""
     return VisionResult(
         detections=(Detection("person", 0.9, box),) if hits else (),
         jpeg=b"test-jpeg",
@@ -141,7 +145,7 @@ def vision_result(
         frame_width=frame_width,
         frame_height=480,
         frame_received_ms=at_ms,
-        completed_ms=at_ms,
+        completed_ms=at_ms if completed_ms is None else completed_ms,
         inference_ms=1.0,
         sighting=Sighting(
             present=present,
@@ -347,7 +351,7 @@ def test_newer_sound_replaces_the_one_awaiting_ack(config: dict, clock: FakeCloc
 
 
 def test_resend_never_follows_a_newer_queued_sound(config: dict, clock: FakeClock) -> None:
-    """마감 틱에 새 문장이 이미 대기열에 있으면 옛 문장을 다시 싣지 않는다 (Devin 검수).
+    """마감 틱에 새 문장이 이미 대기열에 있으면 옛 문장을 다시 싣지 않는다 (리뷰 지적).
 
     다시 실으면 `[새, 옛]` 순서로 나가 옛 문장이 새 문장을 덮고, ACK 대기도 옛 문장이
     차지해 새 문장은 유실돼도 다시 안 나간다.
@@ -448,6 +452,71 @@ def test_loop_receives_and_reacts(config: dict, clock: FakeClock) -> None:
     assert stats.accepted == 2
     assert r.behavior.state == "FAILSAFE"
     assert stats.states.get("FAILSAFE"), "전이 뒤의 틱들은 FAILSAFE 상태로 나갔다"
+
+
+class _GatedSocket(FakeSocket):
+    """틱 전문을 인코딩한 뒤 첫 `sendto` 에서 멈춘다 — 인코딩과 송신 사이의 창을 연다."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock)
+        self.armed = False
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def sendto(self, data: bytes, peer: tuple[str, int]) -> None:
+        if self.armed and threading.current_thread() is not threading.main_thread():
+            self.armed = False
+            self.entered.set()
+            assert self.release.wait(5.0)
+        super().sendto(data, peer)
+
+
+def test_dashboard_estop_is_never_sent_behind_a_tick_it_outnumbers(
+    config: dict, clock: FakeClock
+) -> None:
+    """관제 ESTOP 이 틱의 인코딩과 송신 사이에 끼어도 **송신 순서가 seq 순서다.**
+
+    로봇은 seq 가 뒤로 간 전문을 ESTOP 까지 버린다. 락이 없던 때는 이 시험에서
+    `[1, 2, 3, 4, 6, 5]` 로 나갔다 — 겹치는 순서에 따라 버려지는 쪽이 ESTOP 일 수도 있다.
+    """
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = _GatedSocket(clock)
+    r.begin(sock)
+    r.step(clock.ms)  # 세션 개시 전문과 첫 틱
+    commands = dashboard_wiring(r, config, vision=None, blackbox=None)["commands"]
+
+    clock.ms = r.next_due_ms
+    sock.armed = True
+    tick = threading.Thread(target=r.step, args=(clock.ms,))
+    tick.start()
+    assert sock.entered.wait(5.0)  # 틱이 seq 를 받고 송신 직전에 멈췄다
+
+    estop = threading.Thread(target=commands.estop)
+    estop.start()
+    estop.join(0.2)  # 락이 있으면 여기서 기다린다
+    sock.release.set()
+    tick.join(5.0)
+    estop.join(5.0)
+
+    seqs = [json.loads(line)["seq"] for _at, line in sock.sent]
+    assert seqs == sorted(seqs), f"송신 순서가 seq 순서와 다르다: {seqs}"
+    assert sock.types()[-1] == "ESTOP"
+
+
+def test_dashboard_estop_before_the_first_tick_still_opens_the_session_first(
+    config: dict, clock: FakeClock
+) -> None:
+    """첫 틱보다 관제 ESTOP 이 먼저여도 **세션 개시 `STOP` seq=1 이 첫 datagram 이다.**"""
+    r = Runtime(config, device_id=DEVICE, clock=clock)
+    sock = FakeSocket(clock)
+    r.begin(sock)
+    dashboard_wiring(r, config, vision=None, blackbox=None)["commands"].estop()
+    r.step(clock.ms)
+
+    sent = [json.loads(line) for _at, line in sock.sent]
+    assert [(m["type"], m["seq"]) for m in sent[:2]] == [("STOP", 1), ("ESTOP", 2)]
+    assert [m["seq"] for m in sent] == sorted(m["seq"] for m in sent)
+    assert sum(m["type"] == "STOP" and m["seq"] == 1 for m in sent) == 1
 
 
 def test_peer_is_learned_from_the_first_telemetry(cfg: dict, clock: FakeClock) -> None:
@@ -594,6 +663,102 @@ def test_confirmed_person_is_recorded_once_and_published(
     assert entries[0].detections[0]["label"] == "person"
 
 
+class DescribedVision(FakeVision):
+    """로드된 모델을 말하는 비전 대역 (`VisionWorker.models`)."""
+
+    MODELS = [{"name": "coco", "sha256": "ab" * 32, "provider": "DmlExecutionProvider"}]
+
+    def models(self) -> list[dict]:
+        return [dict(item) for item in self.MODELS]
+
+    def model_files(self) -> list[dict]:
+        return [{"name": "coco", "file": "coco.onnx", "sha256": "ab" * 32, "meta": {}}]
+
+
+def test_recorded_event_is_traceable(config: dict, clock: FakeClock, tmp_path) -> None:
+    """사건마다 세션·장치·프레임·모델·설정·지연을 남겨 «무엇으로 어떻게» 를 되짚는다."""
+    from host.common.trace import config_sha256
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=DescribedVision(),
+        blackbox=blackbox,
+        session_id="S-1",
+    )
+    result = vision_result(
+        42, clock.ms - 40, present=True, hits=1, last_seen_ms=None, completed_ms=clock.ms - 30
+    )
+    runtime.incidents.record_scene("person_found", result)
+
+    (entry,) = blackbox.feed()
+    assert entry.event_id
+    assert entry.session_id == "S-1" == runtime.session_id
+    assert entry.device_id == DEVICE
+    assert entry.frame_id == 42
+    assert entry.config_sha256 == config_sha256(local)
+    assert entry.models == DescribedVision.MODELS
+    assert entry.latency == {
+        "inference_ms": 1.0,
+        "frame_to_result_ms": 10,
+        "frame_to_decision_ms": 40,
+    }
+
+
+def test_runtime_makes_a_session_id_and_skips_unmeasurable_latency(
+    config: dict, clock: FakeClock, tmp_path
+) -> None:
+    """기록기가 없어도 세션 ID 는 생긴다. 시계가 어긋난 지연(음수)과 모델 목록이 없는 비전은 싣지 않는다."""
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(local, device_id=DEVICE, clock=clock, vision=FakeVision(), blackbox=blackbox)
+    other = Runtime(local, device_id=DEVICE, clock=clock)
+    assert runtime.session_id and runtime.session_id != other.session_id
+
+    future = clock.ms + 500
+    result = vision_result(1, future, present=True, hits=1, last_seen_ms=None)
+    runtime.incidents.record_scene("person_found", result)
+
+    (entry,) = blackbox.feed()
+    assert entry.session_id == runtime.session_id
+    assert entry.latency == {"inference_ms": 1.0, "frame_to_result_ms": 0}
+    meta = json.loads(entry.meta_path.read_text(encoding="utf-8"))
+    assert "models" not in meta, "모델을 말하지 못하는 비전이면 키를 쓰지 않는다"
+
+
+def test_published_event_carries_the_trace(config: dict, clock: FakeClock, tmp_path) -> None:
+    from host.dashboard.state import DashboardState
+    from host.dashboard.wiring import _publish_event
+
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    dashboard = DashboardState(DEVICE, stale_after_ms=1000)
+    blackbox = EventBlackbox(local)
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=DescribedVision(),
+        blackbox=blackbox,
+        event_publisher=_publish_event(dashboard),
+        session_id="S-2",
+    )
+    runtime.incidents.record_scene(
+        "person_found", vision_result(7, clock.ms, present=True, hits=1, last_seen_ms=None)
+    )
+    (event,), _ = dashboard.events_since(0)
+    assert event["event_id"] == blackbox.feed()[0].event_id
+    assert event["session_id"] == "S-2"
+    assert event["frame_id"] == 7
+    assert event["models"] == DescribedVision.MODELS
+    assert event["latency"]["inference_ms"] == 1.0
+
+
 # ── 상황 서술 문장 (4.8.1) — 강제 차단 시험 ──────────────────────────────────
 #
 # `describe`·`announcer` 는 관제용 부가 기능이다. 둘 중 무엇이 죽어도 사건은
@@ -605,7 +770,7 @@ def test_situation_describe_failure_does_not_block_recording(
 ) -> None:
     """`describe` 가 예외를 던져도 사건은 그대로 기록·발행되고 틱은 계속 돈다."""
     monkeypatch.setattr(
-        "host.runtime.describe",
+        "host.behavior.speaker.describe",
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     local = dict(config)
@@ -622,7 +787,7 @@ def test_situation_describe_failure_does_not_block_recording(
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     entries = blackbox.feed()
     assert len(entries) == 1, "문장 생성이 죽어도 기록은 남는다"
@@ -656,7 +821,7 @@ def test_situation_announcer_failure_does_not_block_recording(
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     entries = blackbox.feed()
     assert len(entries) == 1, "방송이 죽어도 기록은 남는다"
@@ -684,7 +849,7 @@ def test_situation_announcer_fires_without_blackbox(config: dict, clock: FakeClo
     )
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     assert announced == ["사람이 쓰러진 것으로 확인되었습니다. 확인이 필요합니다."]
 
@@ -701,7 +866,7 @@ def test_guard_mode_does_not_announce_a_fall(config: dict, clock: FakeClock, tmp
     assert runtime.mission.mode == "guard"
     result = vision_result(1, 100, present=True, hits=1, last_seen_ms=100)
 
-    runtime._record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
+    runtime.incidents.record_scene("person_fallen", result, {"fallen": True, "aspect": "supine"})
 
     assert announced == []
     entries = blackbox.feed()
@@ -785,7 +950,7 @@ def test_auth_timeout_raises_alarm_without_passing_through_apply(
 
 
 def test_person_near_an_idle_robot_raises_no_level(config: dict, clock: FakeClock) -> None:
-    """⚠️ (잠정) **대기 중인 로봇 앞을 지나간 사람으로 경보가 뜨면 안 된다.**
+    """**대기 중인 로봇 앞을 지나간 사람으로 경보가 뜨면 안 된다.**
 
     대기에서는 `AUTH_WAIT` 로 갈 수 없어, 10초 머물다 떠난 사람이 곧바로 L3 가 됐다 —
     시연 준비 중 팀원 때문에 빨간 경보가 뜨고 관리자 확인이 필요했다.
@@ -805,7 +970,7 @@ def test_person_near_an_idle_robot_raises_no_level(config: dict, clock: FakeCloc
 
 
 def test_manual_takeover_stands_down_but_keeps_an_alarm(config: dict, clock: FakeClock) -> None:
-    """(잠정) 수동 조종으로 넘어가면 L1·L2 는 내리고 **L3 는 남긴다** (관리자 확인만)."""
+    """수동 조종으로 넘어가면 L1·L2 는 내리고 **L3 는 남긴다** (관리자 확인만)."""
     vision = FakeVision()
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)
@@ -902,7 +1067,7 @@ def test_dead_vision_worker_marks_degraded(config: dict, clock: FakeClock) -> No
 
 def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> None:
     """정식 CLI가 별도 수동 조립 없이 실제 비전 경로를 붙인다."""
-    import host.runtime as runtime_module
+    import host.runtime_cli as runtime_module
 
     vision = FakeVision()
     captured: dict = {}
@@ -936,6 +1101,50 @@ def test_cli_builds_and_injects_vision_by_default(config: dict, monkeypatch) -> 
     assert captured["config"]["network"]["xiao_ip"] == "192.0.2.10"
     assert captured["duration_s"] == 0.0
     assert captured["closed"] is True
+
+
+def test_cli_shares_one_session_id_with_the_recorder_manifest(
+    config: dict, monkeypatch, tmp_path
+) -> None:
+    """세션 ID 는 런타임과 기록기 manifest 에 같은 값이고, manifest 에 모델 sha256 이 남는다."""
+    import host.runtime_cli as runtime_module
+    from host.common.trace import config_sha256
+
+    vision = DescribedVision()
+    captured: dict = {}
+
+    class CliRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, cfg, **kwargs) -> None:
+            captured["config"] = cfg
+            captured.update(kwargs)
+
+        def serve(self, _sock, *, duration_s=None) -> None:
+            pass
+
+    class CliSocket:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(runtime_module, "load_config", lambda _device: config)
+    monkeypatch.setattr(runtime_module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(runtime_module, "build_worker", lambda _cfg: vision)
+    monkeypatch.setattr(runtime_module, "Runtime", CliRuntime)
+    monkeypatch.setattr(runtime_module, "open_socket", lambda _port: CliSocket())
+
+    record_dir = tmp_path / "session"
+    assert (
+        runtime_module.main(
+            ["--device", DEVICE, "--duration", "0", "--record-dir", str(record_dir)]
+        )
+        == 0
+    )
+    manifest = json.loads((record_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["session_id"] == captured["session_id"]
+    assert manifest["session_id"]
+    assert manifest["models"] == vision.model_files()
+    assert manifest["config_sha256"] == config_sha256(captured["config"])
 
 
 def test_estop_event_is_not_forged_by_the_runtime(config: dict, clock: FakeClock) -> None:
@@ -1308,6 +1517,39 @@ def test_asking_patrol_twice_does_not_double_fire(config: dict, clock: FakeClock
     assert runtime.stats.transitions == before
 
 
+def test_patrol_waits_for_vlm_load(config: dict, clock: FakeClock) -> None:
+    """⚠️ **실기가 잡은 결함이다.** VLM 적재(수초) 중 순찰을 시작하면 적재 스레드가
+    루프를 굶겨 명령 공백이 로봇의 통신 감시를 넘겼다 (2026-10-02 ·
+    `cmd_gap 585ms` → `ONBOARD_FAILSAFE`). 적재가 끝날 때까지 보행을 미룬다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    vlm = ScriptedVlm()
+    vlm.loading = True
+    runtime._vlm = runtime._fall._vlm = runtime._zone_inspector._vlm = vlm
+
+    runtime.ask_patrol()
+    runtime.tick(clock.ms)
+    assert runtime.behavior.state == "IDLE", "적재 중에는 보행을 미룬다"
+
+    vlm.loading = False
+    runtime.tick(clock.advance(100))
+    assert runtime.behavior.state == "PATROL", "적재가 끝나면 시작한다"
+
+
+def test_patrol_starts_past_vlm_load_cap(config: dict, clock: FakeClock) -> None:
+    """적재가 붙잡혀 있어도 상한(`VLM_LOAD_WAIT_MS`)을 넘기면 시작한다 —
+    대기가 끝이 없으면 순찰이 영영 안 켜진다."""
+    runtime = Runtime(config, device_id=DEVICE, clock=clock)
+    vlm = ScriptedVlm()
+    vlm.loading = True
+    runtime._vlm = runtime._fall._vlm = runtime._zone_inspector._vlm = vlm
+
+    runtime.ask_patrol()
+    runtime.tick(clock.ms)
+    assert runtime.behavior.state == "IDLE"
+    runtime.tick(clock.advance(VLM_LOAD_WAIT_MS + 1000))
+    assert runtime.behavior.state == "PATROL"
+
+
 # ── TRACK 락온 배선 (WBS 3.5.4 · FR-3.5) ─────────────────────────
 
 
@@ -1431,7 +1673,7 @@ def test_aim_timeout_raises_the_head_for_a_dodging_target(config: dict, clock: F
     """정지선에서 대상이 분기점을 1초보다 짧게 계속 넘나들어도 **상한이 지나면 고개를 든다**.
 
     `ALERT` 에 들 때마다 자세 대기가 다시 시작되므로, 상한이 없으면 L1 에 영영 닿지
-    않는다 — 경비 로봇 앞에서 계속 피하는 사람이 L0 에 머문다 (Devin 검수 F1).
+    않는다 — 경비 로봇 앞에서 계속 피하는 사람이 L0 에 머문다 (리뷰 지적 F1).
     """
     runtime, vision = _tracking_runtime(config, clock)
     runtime.start_patrol(0)
@@ -1490,7 +1732,7 @@ def test_without_height_target_centered_person_is_the_stop_line(
     """높이 목표가 없으면(`null` · 거리 제어 끔) 추종기는 중앙 대상 앞에서 `step=0` 이다.
 
     그 자리를 정지선으로 보지 않으면 `TRACK` 에서 (0, 0) 만 보내며 영영 고개를 들지 않는다
-    — ADR-40 이전에는 `step == 0` 이 `ALERT` 로 보냈다 (Devin 검수 F3).
+    — ADR-40 이전에는 `step == 0` 이 `ALERT` 로 보냈다 (리뷰 지적 F3).
     """
     config = dict(config, fsm=dict(config["fsm"], track_target_height_px=None))
     runtime, vision = _tracking_runtime(config, clock)
@@ -1721,7 +1963,7 @@ def test_eye_led_is_reannounced_after_peer_is_learned(cfg: dict, clock: FakeCloc
     assert "LED" in sock.types()
 
 
-# ── 구역 변화 감지 배선 (WBS 3.6.x · FR-8) ───────────────────────
+# ── 구역 점검 배선 (FR-8) ────────────────────────────────────────
 
 #: 시험용 구역 앵커 (x, y m). 둘은 도착 반경의 두 배보다 멀다.
 ZONE_AT = {"A": (0.0, 0.0), "B": (2.0, 0.0)}
@@ -1734,17 +1976,16 @@ def _at(zone: str, yaw: float = 0.0) -> tuple[float, float, float]:
 
 
 def _zone_config(config: dict, tmp_path: Path, *, yaw: dict | None = None) -> dict:
-    """구역 앵커 A·B 를 놓고 기준을 임시 폴더에 쓰게 한다. `yaw` 는 구역별 바라볼 방향(rad)이다.
+    """구역 앵커 A·B 를 임시 지도 폴더에 놓는다. `yaw` 는 구역별 바라볼 방향(rad)이다.
 
-    ⚠️ **저장소에 쓰지 않는다.** 기준은 디스크에 남으므로, 기본 경로를 그대로
-    두면 시험이 저장소를 더럽히고 다음 시험이 남의 기준과 견주게 된다.
+    ⚠️ **저장소에 쓰지 않는다.** 앵커는 디스크에 남으므로, 기본 경로를 그대로
+    두면 시험이 저장소의 지도를 더럽힌다.
     """
     from copy import deepcopy
 
     from host.behavior.zones import ZoneStore
 
     changed = deepcopy(config)
-    changed["change_detect"]["snapshot_dir"] = str(tmp_path / "snapshots")
     maps = tmp_path / "maps"
     changed.setdefault("lidar", {})["maps_dir"] = str(maps)
     store = ZoneStore(changed["zones"]["ids"])
@@ -1783,7 +2024,7 @@ def _thing(label: str, x: float = 100.0) -> Detection:
 def _zone_runtime(
     config: dict, clock: FakeClock, tmp_path: Path, *, vlm_reader=None, blackbox=None, hazards=False
 ):
-    """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33 개정). 변화 감지는 경비 모드에서
+    """⚠️ **공장 모드로 만든다** (FR-11.1 · ADR-33). 변화 감지는 경비 모드에서
     아예 돌지 않으므로 기본 모드로 세우면 구역 사건이 하나도 나오지 않는다 —
     호출부는 `unlock_modes` 로 선행 기능 검사를 먼저 열어야 한다."""
     cfg = _zone_config(config, tmp_path)
@@ -1889,7 +2130,7 @@ def test_arriving_at_an_anchor_moves_patrol_into_inspect(
 @pytest.mark.usefixtures("unlock_modes")
 def test_no_pose_never_arrives(config: dict, clock: FakeClock, tmp_path: Path):
     """⚠️ **측위가 아직 없다** (5.4.3·5.4.4). 위치를 모르면 구역 도착도 없다 — 추측으로
-    도착하면 엉뚱한 장면이 그 구역의 기준으로 디스크에 남는다."""
+    도착하면 엉뚱한 장면이 그 구역의 판독으로 기록된다."""
     runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
     vision.result = _zone_frame(1, 100, detections=[_thing("chair")])
     runtime.tick(100)
@@ -1953,7 +2194,7 @@ def _yawed_runtime(config: dict, clock: FakeClock, tmp_path: Path, yaw: float):
 def test_inspection_turns_in_place_toward_the_anchor_heading(
     config: dict, clock: FakeClock, tmp_path: Path, facing: float, sign: int
 ):
-    """⚠️ **같은 방향에서 봐야 기준과 견줄 수 있다.** 앵커의 방향과 다르면 제자리에서 돈다
+    """⚠️ **매번 같은 방향에서 봐야 판독이 같은 장면을 본다.** 앵커의 방향과 다르면 제자리에서 돈다
     (ADR-40 과 같은 예외). 가까운 쪽으로 돈다 — 요는 반시계가 양수이고 `MOVE angle` 도 양수가 좌회전이다."""
     runtime, vision, cfg = _yawed_runtime(config, clock, tmp_path, yaw=1.5)
     _see(runtime, vision, seq=1, at_ms=100, detections=[_thing("chair")], pose=_at("A", facing))
@@ -1963,7 +2204,7 @@ def test_inspection_turns_in_place_toward_the_anchor_heading(
     assert move is not None
     assert move["step"] == 0.0
     assert move["angle"] == sign * cfg["zones"]["align_turn_deg"]
-    assert runtime._visit_seen == [], "돌면서 본 장면은 기준에도 비교에도 쓰지 않는다"
+    assert runtime._zone_inspector._visit_seen == [], "돌면서 본 장면은 방문 프레임으로 세지 않는다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -1984,7 +2225,7 @@ def test_inspection_starts_once_the_heading_is_within_tolerance(
                 runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], pose=_at("A", near)
             )
             at += 100
-    assert "zone_baseline_registered" in [getattr(r, "event", "") for r in caplog.records]
+    assert "zone_clear" in [getattr(r, "event", "") for r in caplog.records]
     assert runtime.behavior.state == "PATROL"
 
 
@@ -1993,7 +2234,7 @@ def test_a_heading_not_reached_in_time_leaves_unverified(
     config: dict, clock: FakeClock, tmp_path: Path, caplog
 ):
     """⚠️ **영원히 돌지 않는다.** `zones.align_timeout_ms` 안에 못 맞추면 못 본 방문
-    (`zone_unverified`)으로 순찰에 돌아간다 — 기준도 뜨지 않는다."""
+    (`zone_unverified`)으로 순찰에 돌아간다 — `zone_clear` 로도 적지 않는다."""
     runtime, vision, cfg = _yawed_runtime(config, clock, tmp_path, yaw=1.5)
     limit = cfg["zones"]["align_timeout_ms"]
     at = 100
@@ -2005,165 +2246,8 @@ def test_a_heading_not_reached_in_time_leaves_unverified(
             at += 100
     events = [getattr(r, "event", "") for r in caplog.records]
     assert "zone_unverified" in events
-    assert "zone_baseline_registered" not in events
+    assert "zone_clear" not in events
     assert runtime.behavior.state == "PATROL"
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_first_visit_registers_a_baseline_and_returns_to_patrol(
-    config: dict, clock: FakeClock, tmp_path: Path
-):
-    """FR-8.1 — 기준 없이 견주면 처음 보는 물건이 전부 반입으로 잡힌다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
-    assert runtime.behavior.state == "PATROL", "기준을 뜬 뒤에는 순찰로 돌아간다"
-    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
-    assert saved.exists(), "기준이 디스크에 남아야 다음 순회에서 견줄 수 있다"
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_the_baseline_is_the_frame_that_saw_the_most(
-    config: dict, clock: FakeClock, tmp_path: Path
-):
-    """⚠️ 깜빡인 프레임이 기준이 되면 그 뒤 순찰마다 빠진 물건이 «반입» 으로 잡힌다.
-    기준은 없을 때만 뜨므로 누가 파일을 지우기 전까지 풀리지 않는다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    both = [_thing("chair"), _thing("bottle", 400.0)]
-    frames = _same(cfg, both)
-    frames[0] = [_thing("chair")]  # 첫 프레임에서 병을 놓쳤다
-    _visit(runtime, vision, at_ms=100, frames=frames)
-    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
-    labels = sorted(entry["label"] for entry in json.loads(saved.read_text("utf-8"))["objects"])
-    assert labels == ["bottle", "chair"]
-
-
-@pytest.mark.usefixtures("unlock_modes")
-@pytest.mark.parametrize(
-    "broken",
-    ['{"schema": ', '{"schema": 999, "objects": []}', "[]"],
-    ids=["truncated", "schema", "not-a-mapping"],
-)
-def test_a_broken_baseline_file_does_not_stop_the_runtime(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog, broken: str
-):
-    """⚠️ **기준 파일 하나가 운용 루프를 죽였다.** `serve` 는 `recvfrom` 만 감싸므로
-    `load` 가 던지면 프로세스가 끝나고 로봇은 명령 타임아웃으로 선다 — 재기동해도
-    그 구역에 닿을 때마다 반복된다. 전원이 쓰기 도중에 끊기면 잘린 파일이 남는다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
-    saved.write_text(broken, encoding="utf-8")
-    with caplog.at_level(logging.INFO):
-        _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
-    assert runtime.behavior.state == "PATROL", "읽지 못한 구역 앞에 서 있지 않는다"
-    assert "zone_baseline_unreadable" in _zone_events(caplog)
-    assert saved.read_text(encoding="utf-8") == broken, (
-        "지금 장면으로 덮어쓰면 그 사이의 변화가 조용히 기준이 된다"
-    )
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_a_baseline_that_cannot_be_written_does_not_stop_the_runtime(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog, monkeypatch
-):
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-
-    def full_disk(*_args, **_kwargs):
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(runtime._baselines, "register", full_disk)
-    with caplog.at_level(logging.INFO):
-        _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
-    assert runtime.behavior.state == "PATROL"
-    events = _zone_events(caplog)
-    assert "zone_baseline_unwritable" in events
-    assert "zone_baseline_registered" not in events, "남지 않은 기준을 남았다고 적지 않는다"
-
-
-@pytest.mark.usefixtures("unlock_modes")
-@pytest.mark.parametrize(
-    ("before", "after", "event"),
-    [
-        ([_thing("chair"), _thing("bottle", 400.0)], [_thing("chair")], "zone_notice"),
-        ([_thing("chair")], [_thing("chair"), _thing("bottle", 400.0)], "zone_change_recorded"),
-    ],
-    ids=["removed", "added"],
-)
-def test_a_change_is_confirmed_on_the_second_visit_not_the_first(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog, before, after, event
-):
-    """FR-8.4 — **사이클은 방문이다.** 한 방문 안의 프레임 둘은 같은 자리에서 0.2초
-    간격으로 본 것이라, 방문마다 수 cm 달리 서서 생기는 오검출을 거르지 못한다.
-
-    ⚠️ 확정해도 **넘어짐·통로 막힘이 아니면 L3 로 가지 않는다** (2026-09-25 결정 · Z2·Z3).
-    반출은 관제에 가벼운 경고만(`zone_notice`), 반입은 기록만(`zone_change_recorded`) 남긴다.
-    """
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, before))  # 기준 등록
-    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, after))
-    assert runtime.behavior.state == "PATROL", "한 방문으로는 확정하지 않는다 (FR-8.4)"
-    assert runtime.escalation.level is Level.L0, "확정 전에는 경보로 올리지 않는다"
-    with caplog.at_level(logging.INFO):
-        _visit(runtime, vision, at_ms=at, frames=_same(cfg, after))
-    assert runtime.behavior.state == "PATROL", "반출·반입만으로는 순찰을 막지 않는다"
-    assert runtime.escalation.level is Level.L0, "반출·반입만으로는 L3 가 아니다"
-    assert event in _zone_events(caplog), "연속 2방문 확정의 결과가 종류대로 나오지 않았다"
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_a_change_that_recovers_on_the_next_visit_raises_nothing(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog
-):
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    both = [_thing("chair"), _thing("bottle", 400.0)]
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))
-    with caplog.at_level(logging.INFO):
-        at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
-        _visit(runtime, vision, at_ms=at, frames=_same(cfg, both))  # 병이 돌아왔다
-    assert runtime.behavior.state == "PATROL"
-    assert runtime.escalation.level is Level.L0
-    assert "zone_changed" not in _zone_events(caplog)
-
-
-@pytest.mark.usefixtures("unlock_modes")
-@pytest.mark.parametrize(("missing", "alarm"), [("half", False), ("majority", True)])
-def test_only_a_majority_of_frames_makes_a_visit_change(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog, missing: str, alarm: bool
-):
-    """⚠️ **검출기는 깜빡인다.** 한 방문의 프레임 가운데 과반에서 보인 변화만 그 방문의
-    관찰이다 — 과반에 못 미치면 두 방문 연속으로 깜빡여도 반출이 아니다.
-
-    ⚠️ 확정된 반출은 L3 가 아니라 `zone_notice` 다(Z2) — 그래서 `alarm` 은 여기서
-    그 경고가 났는지를 본다.
-    """
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    both = [_thing("chair"), _thing("bottle", 400.0)]
-    total = cfg["change_detect"]["visit_frames"]
-    gone = total // 2 + (1 if missing == "majority" else 0)
-    flicker = [[_thing("chair")]] * gone + [both] * (total - gone)
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))
-    at = _visit(runtime, vision, at_ms=at, frames=flicker)
-    with caplog.at_level(logging.INFO):
-        _visit(runtime, vision, at_ms=at, frames=flicker)
-    assert ("zone_notice" in _zone_events(caplog)) is alarm
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_a_confirmed_removal_is_not_raised_again_while_it_lasts(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog
-):
-    """물건이 없어진 자리는 다음 바퀴에도 비어 있다. 바퀴마다 경고하면 못 쓴다 —
-    확정기의 누적은 **방문 사이에 유지된다.** 도착할 때 지우면 이것이 깨진다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    at = _visit(
-        runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair"), _thing("bottle", 400.0)])
-    )
-    with caplog.at_level(logging.INFO):
-        at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
-        at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
-        assert runtime.behavior.state == "PATROL", "반출은 순찰을 막지 않는다 (Z2)"
-        _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
-    assert runtime.behavior.state == "PATROL"
-    assert _zone_events(caplog).count("zone_notice") == 1, "이미 확정한 반출을 다시 경고했다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -2181,7 +2265,7 @@ def test_an_unchanged_zone_returns_to_patrol(
 
 @pytest.mark.usefixtures("unlock_modes")
 def test_inspection_holds_still(config: dict, clock: FakeClock, tmp_path: Path):
-    """⚠️ 걸어 들어가면서 찍으면 기준과 현재가 다른 자리에서 찍힌다."""
+    """⚠️ 걸어 들어가면서 찍으면 방문 프레임마다 다른 자리에서 찍힌다."""
     runtime, vision, _ = _zone_runtime(config, clock, tmp_path)
     runtime.note_pose(_at("A"), 100)
     vision.result = _zone_frame(1, 100, detections=[_thing("chair")])
@@ -2203,8 +2287,8 @@ def _see_person(runtime, vision, *, seq, at_ms, detections, present) -> None:
 
 
 def _inspect_again(runtime, vision, cfg, detections) -> int:
-    """기준을 뜨고 구역을 떠났다가 다시 들어와 `ZONE_INSPECT` 에 선다. 다음 시각을 돌려준다."""
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, detections))  # 기준 등록
+    """구역을 한 번 방문하고 떠났다가 다시 들어와 `ZONE_INSPECT` 에 선다. 다음 시각을 돌려준다."""
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, detections))
     _see(runtime, vision, seq=at, at_ms=at, detections=detections, at_zone=False)
     _see(runtime, vision, seq=at + 100, at_ms=at + 100, detections=detections)
     assert runtime.behavior.state == "ZONE_INSPECT"
@@ -2241,52 +2325,10 @@ def test_a_person_during_inspection_goes_through_the_person_gate(
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_a_person_hiding_an_object_is_not_a_removal(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog
-):
-    """⚠️ 사람이 물건을 가리면 그 물건이 안 보인다 — 견주면 **거짓 반출**이 된다.
-    두 방문 연속으로 가려도 마찬가지다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    at = _visit(
-        runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair"), _thing("bottle", 400.0)])
-    )
-    with caplog.at_level(logging.INFO):
-        for _ in range(2):
-            _see(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], at_zone=False)
-            at = _linger(runtime, vision, cfg, at_ms=at + 100, detections=[_thing("chair")])
-    assert "zone_changed" not in _zone_events(caplog), "가려진 물건을 반출로 확정했다"
-    assert runtime.escalation.level is Level.L0
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_a_visit_blocked_by_a_person_neither_breaks_nor_fills_the_streak(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog
-):
-    """못 본 방문은 관찰이 아니다. **세면** 반출을 한 번 보고 확정하는 꼴이 되고,
-    **끊으면** 사람이 오가는 구역의 반출은 영영 확정되지 않는다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    at = _visit(
-        runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair"), _thing("bottle", 400.0)])
-    )
-    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))  # 반출 1방문
-    with caplog.at_level(logging.INFO):
-        _see(runtime, vision, seq=at, at_ms=at, detections=[_thing("chair")], at_zone=False)
-        at = _linger(runtime, vision, cfg, at_ms=at + 100, detections=[_thing("chair")])
-    assert "zone_unverified" in _zone_events(caplog)
-    assert runtime.behavior.state == "PATROL" and runtime.escalation.level is Level.L0, (
-        "사람 때문에 못 본 방문이 연속을 채웠다"
-    )
-    caplog.clear()
-    with caplog.at_level(logging.INFO):
-        _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))  # 반출 2방문
-    assert "zone_notice" in _zone_events(caplog), "사람 때문에 못 본 방문이 연속을 끊었다"
-
-
-@pytest.mark.usefixtures("unlock_modes")
 def test_a_person_in_front_of_the_zone_does_not_hold_the_robot(
     config: dict, clock: FakeClock, tmp_path: Path, caplog
 ):
-    """⚠️ 견주지 못해도 한도는 그대로다 — 사람이 비킬 때까지 구역 앞에 서 있지 않는다.
+    """⚠️ 구역을 보지 못해도 한도는 그대로다 — 사람이 비킬 때까지 구역 앞에 서 있지 않는다.
 
     다만 **`zone_clear` 로 적지 않는다.** 보지 못한 구역을 «변화 없음» 으로 남기면
     나중에 로그만 보고 그 구역이 확인된 줄 안다.
@@ -2308,7 +2350,7 @@ def test_an_inspected_worker_in_front_of_the_zone_does_not_hold_the_robot(
     """보호구 판정을 마친 작업자는 `PERSON_FOUND` 가 억제된다(`inspected`) — 게이트로도
     나가지 못하니 **구역의 한도가 유일한 출구**다."""
     runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))  # 기준 등록
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     # 구역 밖에서 작업자를 만나 보호구 판정을 마친다.
     from dataclasses import replace
 
@@ -2323,75 +2365,6 @@ def test_an_inspected_worker_in_front_of_the_zone_does_not_hold_the_robot(
     assert runtime.escalation.level is Level.L0
     events = _zone_events(caplog)
     assert "zone_arrived" in events and "zone_unverified" in events
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_a_person_in_front_of_the_zone_is_never_part_of_its_baseline(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog
-):
-    """⚠️ 사람이 가린 물건은 **빠진 채로 기준이 된다.** 기준은 없을 때만 뜨므로 그 뒤
-    순찰마다 그 물건이 «반입» 으로 잡히고, 누가 파일을 지우기 전까지 풀리지 않는다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path)
-    saved = Path(cfg["change_detect"]["snapshot_dir"]) / "A.json"
-    with caplog.at_level(logging.INFO):
-        at = _linger(runtime, vision, cfg, at_ms=100, detections=[_thing("chair")])
-    assert not saved.exists(), "사람이 서 있는 프레임으로 기준을 떴다"
-    assert runtime.behavior.state == "PATROL", "기준을 못 떠도 구역 앞에 서 있지 않는다"
-    assert "zone_unverified" in _zone_events(caplog)
-
-    _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
-    assert saved.exists(), "사람이 비킨 다음 순회에서는 기준을 뜬다"
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_a_confirmed_removal_is_recorded_for_the_dashboard(
-    config: dict, clock: FakeClock, tmp_path: Path
-):
-    """FR-8.3 · Z2 — **무엇이 어디서** 없어졌는지가 사건 피드에 가벼운 경고로 남아야
-    한다. 로그만 남기면 화면에는 아무것도 보이지 않는다. 형식은 대시보드와 합의한
-    계약이다."""
-    from copy import deepcopy
-
-    cfg = deepcopy(config)
-    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
-    blackbox = EventBlackbox(cfg)
-    runtime, vision, cfg = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox)
-    both = [_thing("chair"), _thing("bottle", 400.0)]
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))
-    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
-    _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
-    assert runtime.behavior.state == "PATROL", "반출은 L3 로 올리지 않는다 (Z2)"
-
-    entries = [e for e in blackbox.feed() if e.event_type == "zone_notice"]
-    assert len(entries) == 1
-    assert entries[0].judgement == {
-        "zone": "A",
-        "changes": [{"kind": "removed", "label": "bottle", "count": 1, "cell": [1, 0]}],
-        # `4.8.1` — 관제 스피커로 읽힐 한국어 한 문장이 기록에도 함께 실린다.
-        "sentence": "A 구역에서 물건이 반출된 것으로 보입니다.",
-    }
-    assert entries[0].state == "ZONE_INSPECT", "전이보다 먼저 남긴다 (`_observe_fallen` 과 같다)"
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_an_added_object_never_reaches_the_dashboard(
-    config: dict, clock: FakeClock, tmp_path: Path, caplog
-):
-    """Z3 — 반입은 알리지 않고 기록만 한다. 확정돼도 사건 피드는 조용해야 한다."""
-    from copy import deepcopy
-
-    cfg = deepcopy(config)
-    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
-    blackbox = EventBlackbox(cfg)
-    runtime, vision, cfg = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox)
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
-    changed = [_thing("chair"), _thing("bottle", 400.0)]
-    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, changed))
-    with caplog.at_level(logging.INFO):
-        _visit(runtime, vision, at_ms=at, frames=_same(cfg, changed))
-    assert runtime.behavior.state == "PATROL"
-    assert blackbox.feed() == [], "반입을 관제 사건 피드에 올렸다"
-    assert "zone_change_recorded" in _zone_events(caplog), "기록조차 남기지 않았다"
 
 
 def _zone_alarm(runtime, vision, cfg: dict) -> int:
@@ -2492,22 +2465,20 @@ def test_zone_inspection_never_blocks_on_the_vlm(config: dict, clock: FakeClock,
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_change_detection_runs_without_any_vlm(
+def test_zone_inspection_runs_without_any_vlm(
     config: dict, clock: FakeClock, tmp_path: Path, caplog
 ):
-    """⚠️ Tier 3 이다 — 판독기가 없어도 변화 감지는 그대로 확정까지 간다(Z2 경고). 경보
-    스위치가 켜져 있어도 판독을 기다리며 구역 앞에 서 있지 않는다."""
+    """⚠️ Tier 3 이다 — 판독기가 없어도 구역 방문은 그대로 끝난다. 경보 스위치가 켜져
+    있어도 판독을 기다리며 구역 앞에 서 있지 않는다."""
     runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)  # 판독기 없음
     assert runtime.vlm.available is False
-    both = [_thing("chair"), _thing("bottle", 400.0)]
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))
-    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     assert runtime.behavior.state == "PATROL", "판독기가 없는데 판독을 기다린다"
     with caplog.at_level(logging.INFO):
         _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
     assert runtime.vlm.submitted == 0
-    assert runtime.escalation.level is Level.L0, "반출만으로는 L3 가 아니다 (Z2)"
-    assert "zone_notice" in _zone_events(caplog)
+    assert runtime.escalation.level is Level.L0
+    assert "zone_clear" in _zone_events(caplog)
 
 
 class _GatedVlmSession(FakeVlmSession):
@@ -2529,7 +2500,7 @@ class _GatedVlmSession(FakeVlmSession):
 def _two_zone_runtime(config: dict, clock: FakeClock, tmp_path: Path, reader: VlmReader):
     """A·B 두 구역과 기록 대역을 붙인다. 판독이 **어느 구역·어느 프레임**으로 남는지 본다."""
     cfg = _zone_config(config, tmp_path)
-    # 방문은 한 프레임으로 끝낸다 — 이 시험들이 보려는 것은 물건 비교가 아니라 판독 대기다.
+    # 방문은 한 프레임으로 끝낸다 — 이 시험들이 보려는 것은 프레임 수집이 아니라 판독 대기다.
     cfg["change_detect"]["visit_frames"] = 1
     vision = FakeVision()
     recorded: list[tuple[str, dict]] = []
@@ -2569,14 +2540,14 @@ def test_the_robot_waits_for_its_reading_before_leaving_a_zone(
     config: dict, clock: FakeClock, tmp_path: Path, caplog
 ):
     """⚠️ 점검은 0.1~0.2초, 판독은 0.65초다. 기다리지 않으면 **경보를 울리며 그냥
-    지나간다** (2026-09-24 결정). 기준 등록·변화 없음 두 출구가 모두 기다린다."""
+    지나간다** (2026-09-24 결정). 첫 방문·다음 방문 모두 기다린다."""
     session = _GatedVlmSession()
     runtime, see, _ = _two_zone_runtime(config, clock, tmp_path, _loaded_reader(session))
     with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
         see(1, 100, A)
-        see(2, 200, A)  # 첫 방문 — 판독을 걸고 기준을 뜬다
+        see(2, 200, A)  # 첫 방문 — 판독을 건다
         see(3, 300, A)
-        assert runtime.behavior.state == "ZONE_INSPECT", "기준 등록 출구가 판독을 기다리지 않았다"
+        assert runtime.behavior.state == "ZONE_INSPECT", "첫 방문이 판독을 기다리지 않았다"
         session.gate.set()
         _settle(runtime)
         see(4, 400, A)
@@ -2586,12 +2557,14 @@ def test_the_robot_waits_for_its_reading_before_leaving_a_zone(
         see(5, 500, None)
         for seq, at_ms in ((6, 600), (7, 700), (8, 800), (9, 900)):  # 두 번째 방문
             see(seq, at_ms, A)
-        assert runtime.behavior.state == "ZONE_INSPECT", "변화 없음 출구가 판독을 기다리지 않았다"
+        assert runtime.behavior.state == "ZONE_INSPECT", "두 번째 방문이 판독을 기다리지 않았다"
         session.gate.set()
         _settle(runtime)
         see(10, 1000, A)
         assert runtime.behavior.state == "PATROL"
-    assert len(_logged(caplog, "zone_clear")) == 1, "기다리는 동안 다시 견주지 않는다"
+    assert len(_logged(caplog, "zone_clear")) == 2, (
+        "방문마다 한 번이다 — 기다리는 동안 다시 적지 않는다"
+    )
     assert [record.zone for record in _logged(caplog, "zone_reading")] == ["A", "A"]
 
 
@@ -2703,7 +2676,7 @@ def test_a_visit_without_a_loaded_reader_passes_and_says_why_once(
     runtime, see, _ = _two_zone_runtime(config, clock, tmp_path, VlmReader(None, budget_ms=10_000))
     with caplog.at_level(logging.INFO, logger="mechadog.runtime"):
         see(1, 100, A)
-        see(2, 200, A)  # 첫 방문 — 기준을 뜨고 그 자리에서 떠난다
+        see(2, 200, A)  # 첫 방문 — 그 자리에서 떠난다
         assert runtime.behavior.state == "PATROL", "판독기가 없는데 기다렸다"
         see(3, 300, None)
         for seq, at_ms in ((4, 400), (5, 500), (6, 600)):  # 두 번째 방문 — 두 사이클 점검
@@ -2736,7 +2709,7 @@ def test_a_zone_reached_while_the_last_reading_runs_says_busy_and_passes(
     assert skipped == [("B", "busy")]
 
 
-# ── 넘어짐·통로 막힘은 같은 방문에서 두 번 읽어 확정한다 (WBS 3.6.3 · FR-8.3) ──
+# ── 넘어짐·통로 막힘은 같은 방문에서 두 번 읽어 확정한다 (WBS 3.6.4 · FR-8.3) ──
 #
 # 판독은 비동기라 **다음 틱에** 돌아온다. 스레드 대신 `ScriptedVlm` 으로 순서를 고정한다.
 
@@ -2758,6 +2731,8 @@ class ScriptedVlm:
     def __init__(self, *script) -> None:
         self.available = True
         self.busy = False
+        #: 적재 중이 아니라고 답한다 — 런타임이 순찰 시작을 적재 뒤로 미루는 게이트다.
+        self.loading = False
         self.slot: Reading | None = None
         self.submitted = 0
         self.images: list[bytes] = []
@@ -2790,7 +2765,8 @@ class ScriptedVlm:
 
 def _scripted(runtime, *script) -> ScriptedVlm:
     fake = ScriptedVlm(*script)
-    runtime._vlm = fake
+    # 워커는 런타임·쓰러짐 감시·구역 점검이 함께 쥔다 — 셋 다 바꾼다.
+    runtime._vlm = runtime._fall._vlm = runtime._zone_inspector._vlm = fake
     return fake
 
 
@@ -2809,12 +2785,36 @@ UPRIGHT = {"fallen_object": False}
 
 
 @pytest.mark.usefixtures("unlock_modes")
-@pytest.mark.parametrize("kind", ["fallen_object", "blocked_path"])
+def test_a_blocked_path_read_twice_is_a_light_notice_not_l3(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """ADR-41 개정(2026-10-01): 구역 안 통로 막힘은 L3 가 아니라 `path_blocked`(vlm) 이다."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    runtime, vision, cfg = _zone_runtime(cfg, clock, tmp_path, blackbox=blackbox, hazards=True)
+    _scripted(runtime, {"blocked_path": True}, {"blocked_path": True})
+    _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
+    assert runtime.behavior.state == "PATROL"
+    assert runtime.escalation.level is not Level.L3
+    kinds = [e.event_type for e in blackbox.feed()]
+    assert "path_blocked" in kinds
+    assert "zone_changed" not in kinds
+    (entry,) = [e for e in blackbox.feed() if e.event_type == "path_blocked"]
+    assert entry.judgement["zone"] == "A"
+    assert entry.judgement["source"] == "vlm"
+    assert entry.judgement["sentence"] == "A 구역에서 통로가 막혀 있습니다."
+
+
+@pytest.mark.usefixtures("unlock_modes")
+@pytest.mark.parametrize("kind", ["fallen_object"])
 def test_a_hazard_read_twice_is_confirmed_on_the_first_visit(
     config: dict, clock: FakeClock, tmp_path: Path, kind: str
 ):
     """넘어진 소화기는 다음 바퀴를 기다리지 않는다 — **다른 프레임으로 한 번 더 읽어**
-    둘 다 «예» 면 그 방문에서 확정한다. 기준을 뜨는 첫 방문이어도 그렇다."""
+    둘 다 «예» 면 그 방문에서 확정한다. 첫 방문이어도 그렇다."""
     from copy import deepcopy
 
     cfg = deepcopy(config)
@@ -2828,35 +2828,10 @@ def test_a_hazard_read_twice_is_confirmed_on_the_first_visit(
     assert runtime.escalation.level is Level.L3
     (entry,) = [e for e in blackbox.feed() if e.event_type == "zone_changed"]
     # `4.8.1` — `sentence` 는 상황 서술 문장이다.
-    assert set(entry.judgement) == {
-        "zone",
-        "grid",
-        "changes",
-        "baseline_ms",
-        "baseline_snapshot",
-        "sentence",
-    }
+    assert set(entry.judgement) == {"zone", "ppe_required", "changes", "sentence"}
     assert entry.judgement["zone"] == "A"
-    assert entry.judgement["grid"] == [3, 3], "이번 방문에 뜬 기준을 싣는다"
+    assert entry.judgement["ppe_required"] == ["helmet", "vest"]
     assert entry.judgement["changes"] == [{"kind": kind, "source": "vlm"}]
-
-
-@pytest.mark.usefixtures("unlock_modes")
-def test_a_removal_confirmed_alongside_a_hazard_still_alarms(
-    config: dict, clock: FakeClock, tmp_path: Path
-):
-    """Z4 는 그대로다 — 같은 방문에 반출까지 함께 확정돼도 넘어짐·통로 막힘이 있으면
-    `ZONE_CHANGED` → L3 다. 반출은 L3 를 내지 않는다는 결정(Z2)이 넘어짐까지 삼키면
-    안 된다."""
-    runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)
-    fake = _scripted(runtime, UPRIGHT, UPRIGHT, FALLEN, FALLEN)
-    both = [_thing("chair"), _thing("bottle", 400.0)]
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, both))  # 기준 등록
-    at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))  # 반출 1방문
-    _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))  # 반출 2방문 + 넘어짐
-    assert fake.submitted == 4
-    assert runtime.behavior.state == "ALERT"
-    assert runtime.escalation.level is Level.L3
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -2929,7 +2904,7 @@ def test_an_unusable_second_reading_confirms_nothing_and_lets_go(
     runtime, vision, cfg = _zone_runtime(config, clock, tmp_path, hazards=True)
     second = _reading(FALLEN, degraded=True) if trouble == "degraded" else None
     _scripted(runtime, UPRIGHT, FALLEN, second)
-    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))  # 기준 등록
+    at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
     with caplog.at_level(logging.INFO):
         at = _visit(runtime, vision, at_ms=at, frames=_same(cfg, [_thing("chair")]))
         _until_left(runtime, vision, at_ms=at, detections=[_thing("chair")])
@@ -2961,7 +2936,7 @@ def test_a_confirmed_person_reaches_the_dashboard_event_feed(
 
     from host.common.blackbox import EventBlackbox
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     cfg = deepcopy(config)
     cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
@@ -3002,7 +2977,7 @@ def test_the_gate_edge_publishes_one_event_not_one_per_tick(
 
     from host.common.blackbox import EventBlackbox
     from host.dashboard.state import DashboardState
-    from host.runtime import _publish_event
+    from host.dashboard.wiring import _publish_event
 
     cfg = deepcopy(config)
     cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
@@ -3257,7 +3232,7 @@ def test_factory_ppe_settles_once_for_the_primary_track(config: dict, clock: Fak
     assert runtime.escalation.level is Level.L0
     vision.result = vision_result(5, 1600, present=False, hits=0, last_seen_ms=None)
     runtime.tick(1600)
-    assert 1 not in runtime._ppe_done
+    assert not runtime._ppe_judge.is_done(1)
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3367,10 +3342,10 @@ def test_factory_one_missing_frame_does_not_abort_posture(config: dict, clock: F
             result, ppe=PpeVerdict(1, UNDETERMINED, "머리 클리핑", clipped=True)
         )
         runtime.tick(at)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     vision.result = vision_result(8, 800, present=False, hits=0, last_seen_ms=None)
     lines = runtime.tick(800)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     assert not any('"type":"ACTION"' in line for line in lines)
 
 
@@ -3399,7 +3374,7 @@ def test_factory_boundary_jitter_does_not_return_posture(config: dict, clock: Fa
     )
     vision.result = replace(result, ppe=PpeVerdict(1, OK))
     runtime.tick(800)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     assert runtime.behavior.state == "ALERT"
 
 
@@ -3425,7 +3400,7 @@ def test_factory_target_loss_returns_to_stand_before_patrol_moves(
         )
         vision.result = replace(result, ppe=PpeVerdict(1, UNDETERMINED, clipped=True))
         runtime.tick(at)
-    assert runtime._ppe_pose_held
+    assert runtime._ppe_judge.pose_held
     vision.result = vision_result(8, 5800, present=False, hits=0, last_seen_ms=None)
     lines = runtime.tick(5800)
     assert runtime.behavior.state == "PATROL"
@@ -3473,7 +3448,7 @@ def test_mode_switch_is_refused_while_patrolling(config: dict, clock: FakeClock)
 
 def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None:
     """모르는 모드는 **기본값으로 떨어지지 않고 기동을 거부한다** (WBS 3.4.4 ①)."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
     assert module.main(["--device", "test", "--no-vision", "--mode", "safety"]) == 2
@@ -3481,10 +3456,28 @@ def test_cli_refuses_to_start_in_an_unknown_mode(monkeypatch, cfg: dict) -> None
 
 def test_cli_refuses_a_mode_without_its_implementation(monkeypatch, cfg: dict) -> None:
     """FR-11.7 — 판정기 없이 켜면 로봇이 사람 앞에 서서 아무 판정도 내지 못한다."""
-    import host.runtime as module
+    import host.runtime_cli as module
 
     monkeypatch.setattr(module, "load_config", lambda _device: dict(cfg))
     assert module.main(["--device", "test", "--no-vision", "--mode", "factory"]) == 2
+
+
+@pytest.mark.parametrize(
+    ("argv", "needle"),
+    [
+        (["--dashboard-port", "0"], "dashboard-port"),
+        (["--motion-lock", "--patrol"], "--motion-lock"),
+        (["--record-frame-ms", "0"], "--record-frame-ms"),
+    ],
+)
+def test_cli_argument_conflicts_exit_with_code_2(argv: list[str], needle: str, capsys) -> None:
+    """인자 검증 실패는 설정 거부(rc 2)·argparse 오류와 같은 종료 코드 2 다 (`SystemExit(str)` 은 1)."""
+    import host.runtime_cli as module
+
+    with pytest.raises(SystemExit) as exc:
+        module.main(["--device", "test", *argv])
+    assert exc.value.code == 2
+    assert needle in capsys.readouterr().err
 
 
 # ── 쓰러짐이 기록까지 가는가 (WBS 4.8.3 · FR-9) ──────────────────
@@ -3818,6 +3811,7 @@ def _floor(
     *,
     person: bool = True,
     lying: bool = False,
+    rule_confirmed: bool = False,
     ppe: PpeVerdict | None = None,
     box: tuple[float, float, float, float] = (300.0, 20.0, 340.0, 480.0),
 ) -> None:
@@ -3836,11 +3830,11 @@ def _floor(
         result,
         ppe=ppe,
         fallen=FallenVerdict(
-            fallen=False,
+            fallen=rule_confirmed,
             changed=False,
-            candidate=lying,
-            aspect=3.25 if lying else 0.4,
-            still_ms=0,
+            candidate=lying or rule_confirmed,
+            aspect=3.25 if lying or rule_confirmed else 0.4,
+            still_ms=3000 if rule_confirmed else 0,
         ),
     )
     runtime.tick(at_ms)
@@ -3853,7 +3847,7 @@ UP = {"person_down": False}
 def _until_alarm(runtime: Runtime, vision: FakeVision, at_ms: int, **frame) -> int:
     """쓰러짐을 확정할 때까지 0.1초마다 누운 사람 한 프레임씩 본다. 확정한 시각을 돌려준다."""
     for at in range(at_ms, at_ms + 5000, 100):
-        _floor(runtime, vision, at, lying=True, **frame)
+        _floor(runtime, vision, at, lying=True, rule_confirmed=at - at_ms >= 3000, **frame)
         if runtime.escalation.reason == "PERSON_DOWN":
             return at
     raise AssertionError("쓰러짐을 확정하지 못했다")
@@ -3904,31 +3898,21 @@ def test_a_lying_candidate_suspects_a_fall_and_approaches(config: dict, clock: F
 
 
 @pytest.mark.usefixtures("unlock_modes")
-def test_a_fall_is_confirmed_by_readings_a_gap_apart(config: dict, clock: FakeClock) -> None:
-    """확정 = 의심 뒤에 건 판독의 «예» `fsm.fall_confirm_vlm_yes` 회, 센 «예» 끼리는
-    `fsm.fall_confirm_gap_ms` 이상 떨어진 프레임이다 (2026-09-28 사용자 결정 · S4).
-
-    의심 중에는 판독이 끝날 때마다 다시 묻지만, 1초 안의 «예» 는 거의 같은 사진이라 하나로
-    센다. 누움 누적은 확정에 쓰지 않는다 — YOLOX 는 누운 사람을 거의 못 잡는다(4.8.0 벤치
-    10장 중 1장). 확정하면 `PERSON_DOWN` 이 L3 를 올리고 기록이 남는다."""
-    need = int(config["fsm"]["fall_confirm_vlm_yes"])
-    gap = int(config["fsm"]["fall_confirm_gap_ms"])
+def test_a_fall_needs_rule_and_same_frame_vlm(config: dict, clock: FakeClock) -> None:
+    """후보·누적 VLM만으로 확정하지 않고 규칙 확정 JPEG를 다시 검증한다."""
     runtime, vision, fake, recorded = _factory_runtime(config, clock, *[DOWN] * 100)
-    _floor(runtime, vision, 100, lying=True)  # 의심 진입 — 판독을 곧바로 건다
-    assert runtime.escalation.level is Level.L1
-    assert fake.keys[0] == ("person_down",), "의심 판독은 `person_down` 하나만 묻는다"
-    # 센 «예» 는 100, 100 + gap, … 에 건 프레임이다. 마지막 것은 다음 틱에 줍는다.
-    last = 100 + (need - 1) * gap
-    for at in range(200, last + 100, 100):
-        _floor(runtime, vision, at)  # 누움 후보가 없어도 판독만으로 확정한다
-        assert runtime.escalation.level is Level.L1, f"{at}ms — 간격이 차기 전에 확정했다"
-    _floor(runtime, vision, last + 100)
+    for at in range(100, 3000, 100):
+        _floor(runtime, vision, at, lying=True)
+        assert runtime.escalation.level is Level.L1
+    _floor(runtime, vision, 3000, lying=True, rule_confirmed=True)
+    assert fake.keys[-1] == ("person_down",)
+    _floor(runtime, vision, 3100, lying=True, rule_confirmed=True)
     assert runtime.escalation.level is Level.L3
-    assert runtime.escalation.reason == "PERSON_DOWN"
     falls = [entry for kind, entry in recorded if kind == "person_fallen"]
     assert len(falls) == 1
+    assert falls[0]["judgement"]["rule_yes"] is True
+    assert falls[0]["judgement"]["vlm"] is True
     assert falls[0]["judgement"]["raw"] == "yes"
-    assert falls[0]["judgement"]["vlm_yes"] == need
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -3990,7 +3974,7 @@ def test_a_reading_alone_suspects_and_its_entry_answer_does_not_count(
         assert runtime.escalation.level is Level.L1, f"진입 뒤 {now - asked}ms 만에 확정했다"
     assert fake.submitted >= need * gap // 100, "의심 중에는 판독이 끝날 때마다 다시 묻는다"
     _floor(runtime, vision, last + 100, person=False)
-    assert runtime.escalation.reason == "PERSON_DOWN", "누움 없이 판독만으로 확정하지 못했다"
+    assert runtime.escalation.reason != "PERSON_DOWN", "규칙 없이 VLM만으로 확정하면 안 된다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -4035,7 +4019,7 @@ def test_a_no_between_readings_does_not_reset_the_count(config: dict, clock: Fak
         _floor(runtime, vision, at, lying=True)
         assert runtime.escalation.level is Level.L1, f"{at}ms — 간격이 차기 전에 확정했다"
     _floor(runtime, vision, last + 100, lying=True)
-    assert runtime.escalation.reason == "PERSON_DOWN", "«아니오» 가 센 «예» 를 지웠다"
+    assert runtime.escalation.reason != "PERSON_DOWN", "규칙이 없는 누적 VLM yes로 확정하면 안 된다"
 
 
 @pytest.mark.usefixtures("unlock_modes")
@@ -4108,3 +4092,313 @@ def test_a_confirmed_fall_is_not_raised_again_right_after_the_confirm(
         _floor(runtime, vision, now, lying=True)
         assert runtime.escalation.level is Level.L0, f"확인 {now - back}ms 만에 다시 의심했다"
     assert runtime.behavior.state == "PATROL"
+
+
+def test_main_finishes_the_broadcast_preload_before_the_loop(cfg, monkeypatch) -> None:
+    """방송 합성기(piper) 적재는 **운용 루프보다 먼저** 끝난다.
+
+    루프와 겹치면 적재가 GIL 을 1.3~1.7초 쥐어 명령 간격이 600ms 를 넘고, 로봇이
+    기동 직후 페일세이프에 다시 걸린다 (`--reset-on-start` 직후 재래치).
+    """
+    import host.runtime_cli as module
+    from host.cloud import broadcast
+
+    events: list[str] = []
+
+    def slow_loader(_model_path: str, _length_scale: float):
+        time.sleep(0.3)
+        events.append("synth_loaded")
+        return lambda _text: (b"", 16000)
+
+    class FakeSocket:
+        def close(self) -> None:
+            pass
+
+    class FakeRuntime:
+        telemetry_port = 5101
+
+        def __init__(self, _config, **_kwargs) -> None:
+            pass
+
+        def serve(self, _sock, **_kwargs) -> None:
+            events.append("serve")
+
+    cfg["broadcast"]["enabled"] = True
+    monkeypatch.setattr(broadcast, "_default_synth", slow_loader)
+    monkeypatch.setattr(module, "load_config", lambda _device: cfg)
+    monkeypatch.setattr(module, "setup_logging", lambda *_args, **_kw: None)
+    monkeypatch.setattr(module, "EventBlackbox", lambda _cfg: None)
+    monkeypatch.setattr(module, "Runtime", FakeRuntime)
+    monkeypatch.setattr(module, "open_socket", lambda _port: FakeSocket())
+    monkeypatch.setattr(module.sys, "stdin", None)
+    assert module.main(["--device", "test", "--no-vision"]) == 0
+    assert events == ["synth_loaded", "serve"]
+
+
+# ── 위험물 검출기 — 금지구역에서만 켜고 경고한다 (ADR-43 대안 ⓐ 개정) ────────────────
+
+
+class HazardVision(FakeVision):
+    """위험물 검출기가 붙은 워커 대역 — 켜고 끈 순서를 남긴다."""
+
+    hazard_available = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.switches: list[bool] = []
+
+    def set_hazard_enabled(self, enabled: bool) -> None:
+        self.switches.append(enabled)
+
+
+def _hazard_runtime(config: dict, clock: FakeClock, tmp_path: Path, *, hazard_ids: list):
+    from copy import deepcopy
+
+    cfg = _zone_config(deepcopy(config), tmp_path)
+    cfg["zones"]["hazard_ids"] = hazard_ids
+    cfg["logging"]["blackbox_dir"] = str(tmp_path / "blackbox")
+    blackbox = EventBlackbox(cfg)
+    vision = HazardVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(cfg, mode="factory"),
+        blackbox=blackbox,
+    )
+    runtime.start_patrol(0)
+    return runtime, vision, blackbox
+
+
+def _lighter_visit(runtime, vision, *, frames: int = 40) -> None:
+    """구역 밖에서 A 로 와서 라이터가 확정된 프레임을 본 뒤 다시 떠난다."""
+    from dataclasses import replace
+
+    from host.vision.hazard_detector import HazardVerdict
+
+    lighter = Detection("lighter", 0.92, (200.0, 150.0, 260.0, 300.0))
+    verdict = HazardVerdict(detections=(lighter,), confirmed=("lighter",))
+    at = 100
+    for index in range(frames + 2):
+        pose = AWAY if index == 0 or index == frames + 1 else _at("A")
+        runtime.note_pose(pose, at)
+        vision.result = replace(_zone_frame(at, at, detections=[]), hazard=verdict)
+        runtime.tick(at)
+        at += 100
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_lighter_in_the_forbidden_zone_reaches_the_event_history(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """금지구역에서 검출기가 확정하면 관제 이력에 가벼운 경고가 남고 방송 문장이 붙는다.
+    검출기는 그 방문 동안만 켜지고 떠나면 꺼진다."""
+    runtime, vision, blackbox = _hazard_runtime(config, clock, tmp_path, hazard_ids=["A"])
+    _lighter_visit(runtime, vision)
+    entries = [e for e in blackbox.feed() if e.event_type == "hazard_notice"]
+    assert len(entries) == 1
+    assert entries[0].judgement == {
+        "zone": "A",
+        "ppe_required": ["helmet", "vest"],
+        "items": ["lighter"],
+        "source": "detector",
+        "vlm": False,
+        "sentence": "A 구역에서 화기 위험물 라이터가 보입니다.",
+    }
+    assert [d["label"] for d in entries[0].detections] == ["lighter"], "박스가 근거로 남는다"
+    assert True in vision.switches
+    assert vision.switches[-1] is False, "방문이 끝나면 끈다"
+    assert runtime.behavior.state == "PATROL", "가벼운 경고다 — L3 로 올리지 않는다"
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_lighter_outside_the_forbidden_zones_raises_no_alarm(
+    config: dict, clock: FakeClock, tmp_path: Path
+):
+    """금지구역이 아니면 검출기를 켜지 않고, 확정이 실려 와도 경고하지 않는다."""
+    runtime, vision, blackbox = _hazard_runtime(config, clock, tmp_path, hazard_ids=[])
+    _lighter_visit(runtime, vision)
+    assert [e for e in blackbox.feed() if e.event_type == "hazard_notice"] == []
+    assert True not in vision.switches
+
+
+# ── 사건·순찰 이력 DB (WBS 4.6.6 · ADR-46) ─────────────────────
+def _history(tmp_path: Path):
+    from host.common.history import HistoryStore
+
+    return HistoryStore(tmp_path / "history" / "mechdog.sqlite3")
+
+
+def test_history_registers_the_robot_and_zones_and_closes_runs_left_open(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """기동하면 기체·구역을 맞추고, 지난 비정상 종료가 열어 둔 판을 `interrupted` 로 닫는다."""
+    store = _history(tmp_path)
+    left = store.open_run(DEVICE, mode="guard", started_at=1)
+    local = dict(config, telemetry_device_id="mechdog-3c8a1f1d80cc")
+    Runtime(local, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+
+    [robot] = store.robots()
+    assert (robot["robot_id"], robot["serial_no"]) == (DEVICE, "mechdog-3c8a1f1d80cc")
+    assert [z["zone_id"] for z in store.zones()] == sorted(config["zones"]["ids"])
+    [run], _ = store.runs()
+    assert run["mission_id"] == left
+    assert (run["result"], run["ended_at"]) == ("interrupted", clock.ms)
+
+
+def test_a_patrol_is_one_run_closed_by_the_trigger_that_ended_it(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """대기·수동·페일세이프를 떠나면 판이 열리고, 그중 하나로 들어가면 닫힌다 (ADR-46 결정 5)."""
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    started = clock.ms
+    runtime.start_patrol(started)
+    [run], _ = store.runs()
+    assert run["mission_id"] == f"{DEVICE}-{started}"
+    assert (run["mode"], run["ended_at"], run["result"]) == (runtime.mission.mode, None, None)
+
+    clock.advance(5000)
+    assert runtime.apply_external(Event.ESTOP)
+    [run], _ = store.runs()
+    assert (run["ended_at"], run["result"], run["stop_reason"]) == (clock.ms, "failsafe", "ESTOP")
+
+
+def test_the_dashboard_patrol_stop_closes_the_run_as_stopped(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ «순찰 정지» 는 수동을 거쳐 `IDLE` 로 내린다 — 그래도 수동 조종(`manual`)과 구별해 남긴다.
+
+    FSM 에는 자율 → `IDLE` 직행 사건이 없어, 표시하지 않으면 정상 정지가 모두 `manual` 로 찍힌다.
+    """
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    commands = dashboard_wiring(runtime, config, vision=None, blackbox=None)["commands"]
+    runtime.start_patrol(clock.ms)
+    clock.advance(3000)
+    assert commands.patrol_stop().accepted
+    assert runtime.behavior.state == "IDLE"
+    clock.advance(1000)
+    runtime.start_patrol(clock.ms)
+    clock.advance(2000)
+    assert commands.manual_on().accepted
+
+    stopped, taken = sorted(store.runs()[0], key=lambda run: run["started_at"])
+    assert (stopped["result"], stopped["stop_reason"]) == ("stopped", "patrol_stop")
+    assert (taken["result"], taken["stop_reason"]) == ("manual", "MANUAL_ON")
+    store.close()
+
+
+def test_feed_events_reach_the_history_without_a_dashboard(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """⚠️ **대시보드를 켜지 않고 돈 런타임의 사건도 남는다** — 기록은 런타임이 맡는다(대안 ⓒ 미채택).
+
+    사진이 있는 사건은 블랙박스 폴더를 가리키고, 단계 변화는 경고 문구를 `detail` 로 남긴다.
+    """
+    local = dict(config)
+    local["logging"] = dict(config["logging"], blackbox_dir=str(tmp_path / "blackbox"))
+    store = _history(tmp_path)
+    vision = FakeVision()
+    runtime = Runtime(
+        local,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        blackbox=EventBlackbox(local),
+        history=store,
+    )
+    runtime.start_patrol(0)
+    _engage(runtime, vision, local, at_ms=100)
+
+    [run], _ = store.runs()
+    found, _ = store.incidents(event="person_found")
+    assert len(found) == 1
+    assert found[0]["mission_id"] == run["mission_id"]
+    assert found[0]["snapshot_path"] == f"{found[0]['blackbox_entry']}/snapshot.jpg"
+    assert found[0]["confidence"] == pytest.approx(0.9)
+    # 첫 틱의 `L0` 도 관제 피드에 뜨는 사건이다 — 피드와 같은 것을 남긴다 (최근 것부터).
+    changed, _ = store.incidents(event="escalation_changed")
+    assert [c["escalation_level"] for c in changed] == ["L1", "L0"]
+    assert set(changed[0]["detail"]) == {"warning", "reason"}
+    assert run["incident_count"] == 3
+
+
+@pytest.mark.usefixtures("unlock_modes")
+def test_a_zone_arrival_is_added_to_the_run(config: dict, clock: FakeClock, tmp_path: Path) -> None:
+    """구역 도착(앵커 반경 안)을 그 판의 방문 구역에 남긴다."""
+    cfg = _zone_config(config, tmp_path)
+    store = _history(tmp_path)
+    vision = FakeVision()
+    runtime = Runtime(
+        cfg,
+        device_id=DEVICE,
+        clock=clock,
+        vision=vision,
+        mission=Mission(cfg, mode="factory"),
+        history=store,
+    )
+    runtime.start_patrol(0)
+    _see(runtime, vision, seq=1, at_ms=100, detections=[])
+    assert runtime.behavior.state == "ZONE_INSPECT"
+
+    [run], _ = store.runs()
+    assert run["zones_visited"] == ["A"]
+
+
+def test_accepted_telemetry_marks_the_robot_as_seen(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    encoder = TelemetryEncoder(device_id=DEVICE, boot_id="boot-1")
+    runtime.ingest(telemetry(encoder), 1234)
+
+    [robot] = store.robots()
+    assert (robot["last_seen_at"], robot["status"]) == (1234, runtime.behavior.state)
+
+
+def test_stopping_the_runtime_closes_the_open_run(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=FakeVision(), history=store)
+    runtime.start_patrol(clock.ms)
+    clock.advance(700)
+    runtime.release()
+
+    [run], _ = store.runs()
+    assert (run["ended_at"], run["result"], run["stop_reason"]) == (
+        clock.ms,
+        "shutdown",
+        "runtime_stopped",
+    )
+
+
+def test_a_broken_history_does_not_stop_the_loop(
+    config: dict, clock: FakeClock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """⚠️ **DB 는 색인이다.** 쓰기가 모두 실패해도 순찰·전이·틱은 그대로 돈다."""
+    store = _history(tmp_path)
+    store.close()
+    vision = FakeVision()
+    with caplog.at_level(logging.ERROR, logger="mechadog.history"):
+        runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision, history=store)
+        assert runtime.start_patrol(0)
+        _engage(runtime, vision, config, at_ms=100)
+        runtime.release()
+    assert runtime.escalation.level is Level.L1
+    assert any(r.getMessage() == "history_write_failed" for r in caplog.records)
+
+
+def test_the_dashboard_wiring_hands_over_the_history(
+    config: dict, clock: FakeClock, tmp_path: Path
+) -> None:
+    """관제 서버(`/api/history`)는 런타임이 쓰는 **같은** 저장소를 읽는다 — 한 대·여러 대 공통."""
+    store = _history(tmp_path)
+    runtime = Runtime(config, device_id=DEVICE, clock=clock, history=store)
+    assert dashboard_wiring(runtime, config, vision=None, blackbox=None)["history"] is store
+    bare = Runtime(config, device_id=DEVICE, clock=clock)
+    assert dashboard_wiring(bare, config, vision=None, blackbox=None)["history"] is None
+    store.close()

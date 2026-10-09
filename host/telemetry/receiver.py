@@ -1,24 +1,11 @@
 """텔레메트리 수신 및 사건 변환 (FR-1.4).
 
-로봇이 10Hz 로 보내는 레코드를 받아 **FSM 사건으로 바꾼다.** 이것이 없으면
-전이표의 안전 전이(`ONBOARD_FAILSAFE`·`ONBOARD_AVOID`)를 아무도 발생시킬 수
-없다 — FSM 이 눈을 감고 있는 상태가 된다.
+로봇이 10Hz 로 보내는 레코드를 받아 FSM 사건(`ONBOARD_FAILSAFE`·`ONBOARD_AVOID` 등)으로
+바꾼다. 소켓을 만지지 않는다 (ENGINEERING_GUIDE 2.1).
 
-**이 모듈은 소켓을 만지지 않는다.** 바이트를 받아 사건 목록을 돌려줄 뿐이고
-실제 수신은 호출자가 한다 (ENGINEERING_GUIDE 2.1). 그래서 로봇 없이 골든
-픽스처와 목업으로 전부 검증된다.
-
-⚠️ **호스트가 안전을 판정하지 않는다.** 전압이 낮거나 기울기가 크다는 것을 보고
-호스트가 `ONBOARD_FAILSAFE` 를 만들지 않는다 — **로봇이 그렇게 보고했을 때만**
-옮긴다 (아키텍처 1.2 불변 규칙). 이유가 둘이다.
-
-1. **Tier 1 을 호스트로 옮기는 것이 된다.** 그러면 호스트가 꺼졌을 때 판정이
-   사라지고, 그것이 이 프로젝트가 처음부터 피한 구조다.
-2. **호스트와 로봇의 상태가 어긋난다.** 호스트만 `FAILSAFE` 인데 로봇은 걷고
-   있으면 로그를 봐도 원인을 찾을 수 없다.
-
-전압·기울기는 `Reading` 으로 그대로 올려보내며, 그것을 경고로 표시하는 것은
-대시보드의 일이다. **보여주는 것과 판정하는 것은 다르다.**
+⚠️ 호스트는 안전을 판정하지 않는다 — 전압·기울기를 보고 사건을 만들지 않고, 로봇이 보고한
+상태·플래그의 변화만 옮긴다 (아키텍처 1.2 · ADR-21 · ADR-22). 값은 `Reading` 으로 올려 화면이
+표시한다.
 """
 
 from __future__ import annotations
@@ -27,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from host.behavior.fsm import Event
+from host.common.events import Event
 from host.common.protocol import ONBOARD_STATES, DecodeResult, TelemetryDecoder
 
 
@@ -53,15 +40,10 @@ class Reading:
     #: 이 값이 계속 커지면 **로봇이 우리 명령을 폐기하고 있다** — 호스트 재시작으로
     #: seq 가 되돌아간 경우가 대표적이다 (PROTOCOL 4절 세션 개시).
     last_cmd_age_ms: int | None = None
-    #: **온보드 근거리 반사 정지가 지금 걸려 있는가.** 없으면 `None` (구형 펌웨어).
-    #:
-    #: ⚠️ `state == "AVOID"` 로는 해제를 알 수 없다 — 그 값은 호스트가 `STATE` 로
-    #: 내려보낸 것이 되돌아온 것일 수도 있다 (ADR-22). 이 플래그는 로봇의 센서
-    #: 판정이며 반향되지 않는다.
+    #: 온보드 근거리 반사 정지가 지금 걸려 있는가 — 반향되지 않는 로봇 판정이다 (ADR-22).
+    #: 없으면 `None` (구형 펌웨어).
     obstacle: bool | None = None
-    #: 온보드 서비스 모드가 켜져 있는가. 없으면 `None` (확장 이전 펌웨어).
-    #: 대시보드의 서비스 토글 라벨이 이 값을 본다 — 여기서 빠지면 화면이
-    #: 영영 "꺼짐" 만 표시한다 (실기에서 확인).
+    #: 온보드 서비스 모드가 켜져 있는가(대시보드 토글 라벨). 없으면 `None` (확장 이전 펌웨어).
     service: bool | None = None
     pitch: float | None = None
     roll: float | None = None
@@ -114,10 +96,8 @@ ONBOARD_EVENTS: dict[str, Event] = {
 
 #: 온보드 상태에서 빠져나온 것을 알리는 사건.
 #:
-#: ⚠️ **이것만으로는 부족하다.** 호스트가 `AVOID` 를 `STATE` 로 알려주면 로봇이 그
-#: 값을 되돌려주므로, 장애물이 사라져도 `state` 는 계속 `AVOID` 로 온다. 그래서
-#: 해제의 정본은 `flags.obstacle` 의 참→거짓 변화이며(ADR-22) 이 표는 그 플래그를
-#: 보내지 않는 펌웨어를 위한 폴백이다.
+#: 해제의 정본은 `flags.obstacle` 의 참→거짓 변화이고(ADR-22), 이 표는 그 플래그를 보내지
+#: 않는 펌웨어를 위한 폴백이다.
 RECOVERY_EVENTS: dict[tuple[str, str], Event] = {
     ("AVOID", "PATROL"): Event.AVOID_CLEARED,
 }
@@ -126,8 +106,7 @@ RECOVERY_EVENTS: dict[tuple[str, str], Event] = {
 class TelemetryReceiver:
     """텔레메트리를 사건으로 바꾼다. 개체별로 마지막 상태를 기억한다.
 
-    `device_id` 별로 나누는 이유 — 3대를 동시에 돌릴 때 IP 로 구분하면 안 되고
-    (DR-17), 한 개체의 `AVOID` 회복을 다른 개체의 것으로 오인하면 안 된다.
+    개체는 IP 가 아니라 `(device_id, boot_id)` 로 가른다 — 다른 개체의 회복을 섞지 않는다.
     """
 
     def __init__(self, decoder: TelemetryDecoder | None = None) -> None:
@@ -186,10 +165,8 @@ class TelemetryReceiver:
         # 되돌아온 것이므로 새 정보가 없다. **값은 기억하지 않는다** — 기억하면
         # `AVOID → ALERT → PATROL` 같은 경로에서 회복을 놓친다.
         #
-        # ⚠️ **다만 지나갔다는 사실은 남긴다.** 이것을 빼면 `FAILSAFE → IDLE →
-        # FAILSAFE` 가 "값이 같으니 변화 없음" 으로 접혀 **재진입 사건이 사라진다.**
-        # 실기에서 그렇게 나타났다 — 로봇은 잠겨 있는데 호스트는 `IDLE`·
-        # `L0`(파랑) 로 남아 관제 화면이 정상 순찰 가능 상태로 보였다.
+        # ⚠️ 다만 지나갔다는 사실은 남긴다 — 빼면 `FAILSAFE → IDLE → FAILSAFE` 의 재진입
+        # 사건이 사라져, 로봇은 잠겼는데 호스트는 정상으로 남는다.
         if reading.state not in ONBOARD_STATES:
             self._left_onboard.add(session)
             return ()

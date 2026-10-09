@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from tools import field_measure as fm
-from tools import field_plan as plan
+from tools.field import field_measure as fm
+from tools.field import field_plan as plan
 
 requires_display = pytest.mark.skipif(
     sys.platform != "win32" and not os.environ.get("DISPLAY"),
@@ -83,7 +83,7 @@ def test_legacy_unidentified_import_cannot_be_pass(tmp_path, environment):
 def test_catalog_has_unique_ids_and_retains_all_requirements():
     cases = plan.catalog()["cases"]
     ids = [c["id"] for c in cases]
-    assert len(ids) == len(set(ids)) == 91
+    assert len(ids) == len(set(ids)) == 92
     assert len([i for i in ids if i.startswith("TC-F")]) == 51
     assert len([i for i in ids if i.startswith("TC-N")]) == 20
     assert next(c for c in cases if c["id"] == "TC-N-012")["phase"] == "제외"

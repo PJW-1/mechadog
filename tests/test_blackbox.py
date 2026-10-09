@@ -188,3 +188,91 @@ def test_records_written_before_judgement_existed_still_read(blackbox: EventBlac
     entry.meta_path.write_text(json.dumps(metadata), encoding="utf-8")
 
     assert blackbox.feed()[0].judgement == {}
+
+
+# ── 사건 추적 — 누가·무엇으로·얼마나 걸려 판단했나 ─────────────────────────
+def test_record_carries_the_event_trace(blackbox: EventBlackbox) -> None:
+    models = [{"name": "coco", "sha256": "ab" * 32, "provider": "DmlExecutionProvider"}]
+    entry = blackbox.record(
+        "person_found",
+        now_ms=1000,
+        session_id="20261006T120000-abcd1234",
+        device_id="mechdog-01",
+        frame_id=17,
+        config_sha256="cd" * 32,
+        models=models,
+        latency={"inference_ms": 8.5, "frame_to_decision_ms": 40},
+    )
+    models[0]["provider"] = "바뀜"
+    metadata = json.loads(entry.meta_path.read_text(encoding="utf-8"))
+
+    assert len(metadata["event_id"]) == 32
+    assert metadata["session_id"] == "20261006T120000-abcd1234"
+    assert metadata["device_id"] == "mechdog-01"
+    assert metadata["frame_id"] == 17
+    assert metadata["config_sha256"] == "cd" * 32
+    assert metadata["models"][0]["provider"] == "DmlExecutionProvider"
+    assert metadata["latency"] == {"inference_ms": 8.5, "frame_to_decision_ms": 40}
+    # 기존 키는 그대로다.
+    assert {"ts_ms", "event", "state", "escalation", "mode", "tracks", "detections"} <= set(
+        metadata
+    )
+
+    (read,) = blackbox.feed()
+    assert read.event_id == metadata["event_id"] == entry.event_id
+    assert read.session_id == entry.session_id == "20261006T120000-abcd1234"
+    assert read.device_id == "mechdog-01"
+    assert read.frame_id == 17
+    assert read.config_sha256 == "cd" * 32
+    assert read.models == metadata["models"]
+    assert read.latency == metadata["latency"]
+
+
+def test_event_ids_are_unique(blackbox: EventBlackbox) -> None:
+    first = blackbox.record("person_found", now_ms=1000)
+    second = blackbox.record("person_found", now_ms=1000)
+    assert first.event_id and first.event_id != second.event_id
+
+
+def test_unmeasured_trace_fields_are_not_written(blackbox: EventBlackbox) -> None:
+    """주지 않은 값은 키도 쓰지 않는다 — 빈 값과 «모름» 을 섞지 않는다."""
+    entry = blackbox.record("person_found", now_ms=1000)
+    metadata = json.loads(entry.meta_path.read_text(encoding="utf-8"))
+    assert "event_id" in metadata
+    for key in ("session_id", "device_id", "frame_id", "config_sha256", "models", "latency"):
+        assert key not in metadata
+
+
+def _write_meta(directory: Path, **extra: object) -> None:
+    directory.mkdir(parents=True)
+    base = {
+        "ts_ms": int(directory.name.split("_")[0]),
+        "event": "person_found",
+        "state": "PATROL",
+        "escalation": "L0",
+        "tracks": [],
+        "detections": [],
+        "telemetry": {},
+    }
+    (directory / "meta.json").write_text(json.dumps({**base, **extra}), encoding="utf-8")
+
+
+def test_old_or_malformed_trace_is_read_as_unknown(blackbox: EventBlackbox, tmp_path: Path) -> None:
+    """추적 필드가 생기기 전의 meta.json 과 형식이 틀린 값은 빈 값(«모름»)으로 읽는다."""
+    _write_meta(tmp_path / "blackbox" / "900_person_found")
+    _write_meta(
+        tmp_path / "blackbox" / "950_person_found",
+        event_id=7,
+        session_id=3,
+        frame_id="x",
+        models={"name": "coco"},
+        latency=[1],
+    )
+    entries = blackbox.feed()
+    assert len(entries) == 2
+    for entry in entries:
+        assert entry.event_id == ""
+        assert entry.session_id == ""
+        assert entry.frame_id is None
+        assert entry.models == []
+        assert entry.latency == {}

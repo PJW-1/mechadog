@@ -12,7 +12,7 @@ I²C 예약 구간의 **`0x7B`** 에 있다는 것을 찾았다. 듣기는 XIAO 
 | 음성 모듈 | WonderEcho CI1302 · 로봇 4핀 중 **IIC1 포트**(SDA22/SCL23, 100 kHz) |
 | 로봇 펌웨어 | 진단 스케치 `firmware_mechdog_motion/diagnostics/i2c_bridge_probe` 를 app0 에만 올려 시험하고, 끝난 뒤 원래 app0 로 되돌렸다(백업 SHA256 `1084ab8d…`, 되돌린 뒤 쓰기 해시 일치) |
 | 일시 | 2026-09-23 18:15–18:50 |
-| 원자료 | [summary](../../TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md) · `robot_probe.log` · `module_uart0.log` (로그는 git 미추적) |
+| 원자료 | [summary](../../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md) · `robot_probe.log` · `module_uart0.log` (로그는 git 미추적) |
 
 > ⚠️ **`0x64` 는 장치 주소가 아니다.** 모듈이 인식한 명령 id 를 담는 `0x34` 안의 레지스터다.
 > 모듈의 I²C 주소는 `0x34` 하나다. 문서에 "로봇 I²C(`0x64`)" 처럼 주소로 적힌 곳은 이 측정을
@@ -85,7 +85,7 @@ I²C 예약 구간의 **`0x7B`** 에 있다는 것을 찾았다. 듣기는 XIAO 
 
 ## 4. 원자료
 
-[summary](../../TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md) 에 위 표의
+[summary](../../field_tests/results/20260923_4.7.9-bridge-transparency/summary.md) 에 위 표의
 원본이 있다. 같은 폴더의 `robot_probe.log`(프로브 명령·응답·NOTE)와 `module_uart0.log`(모듈
 UART0)는 **git 에 올리지 않는다** — 로그는 저장소 규칙상 추적하지 않는다.
 
@@ -100,7 +100,7 @@ UART0)는 **git 에 올리지 않는다** — 로그는 저장소 규칙상 추�
 
 그래서 듣기는 XIAO 마이크([측정](2026-09-23-xiao-mic.md)), 말하기는 MP3 모듈(TF 카드에 미리
 저장한 문장)로 옮긴다. WBS 4.7.9 는 이 판정으로 완료 처리했고 남은 예산은 4.7.19~21 로 옮겼다.
-MP3 드라이버는 벤더 `MP3Sensor` 를 쓰지 않고 센서 HAL 경유 자체 코드로 만든다(4.7.20, 미착수).
+MP3 드라이버는 벤더 `MP3Sensor` 를 쓰지 않고 센서 HAL 경유 자체 코드로 만든다(4.7.20, 측정 당시 미착수 · 2026-09-24 완료).
 
 ## 6. 남은 것
 

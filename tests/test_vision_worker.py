@@ -508,6 +508,65 @@ def test_ppe_runs_only_when_enabled_and_opens_on_mode_switch(cfg: dict, monkeypa
         assert ppe.resets > 0
 
 
+class _FakeHazard:
+    """`HazardDetector` 대역 — 부른 횟수와 비운 횟수를 센다."""
+
+    def __init__(self, *, missing: bool = False) -> None:
+        self.missing = missing
+        self.opened = 0
+        self.calls = 0
+        self.resets = 0
+
+    def open(self) -> None:
+        self.opened += 1
+        if self.missing:
+            from host.vision.detector import ModelMissingError
+
+            raise ModelMissingError("모델 파일 없음")
+
+    def observe(self, _image, _now_ms):
+        from host.vision.hazard_detector import HazardVerdict
+
+        self.calls += 1
+        return HazardVerdict(confirmed=("lighter",))
+
+    def reset(self) -> None:
+        self.resets += 1
+
+
+def test_hazard_runs_only_while_switched_on(cfg: dict, monkeypatch) -> None:
+    """위험물 추론은 켜진 동안만 돈다 — 세션은 기동 때 한 번 열고 켜고 끌 때는 열지 않는다."""
+    hazard = _FakeHazard()
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch, hazard=hazard)
+    with worker:
+        assert hazard.opened == 1
+        assert worker.hazard_available
+        worker._run_one(_frame(1), 1000)
+        assert hazard.calls == 0
+        assert worker.latest().hazard is None
+        worker.set_hazard_enabled(True)
+        worker._run_one(_frame(2), 1000)
+        assert hazard.calls == 1
+        assert worker.latest().hazard.confirmed == ("lighter",)
+        worker.set_hazard_enabled(False)
+        worker._run_one(_frame(3), 1000)
+        assert hazard.calls == 1
+        assert hazard.resets > 0, "끄면 창을 비운다"
+        assert hazard.opened == 1
+
+
+def test_a_missing_hazard_model_does_not_stop_the_worker(cfg: dict, monkeypatch) -> None:
+    """위험물 모델이 없으면 꺼질 뿐이다 — 사람 인지·순찰은 그대로 돈다."""
+    hazard = _FakeHazard(missing=True)
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch, hazard=hazard)
+    with worker:
+        assert not worker.hazard_available
+        worker.set_hazard_enabled(True)
+        assert _wait_until(lambda: worker.latest() is not None)
+        assert worker.latest().hazard is None
+        assert worker.healthy()
+
+
 def test_badges_are_not_read_without_a_person(cfg, monkeypatch):
     """사원증 판독은 사람이 있을 때만 돈다 — 귀속시킬 사람이 없으면 인증이 성립하지 않는다."""
     detector = _FakeDetector()
@@ -581,3 +640,91 @@ def test_stop_uses_one_budget_for_two_pending_threads(cfg, monkeypatch):
     worker.stop(timeout_s=0.5)
     assert waits == pytest.approx([0.5, 0.0])
     assert len(worker._threads) == 2
+
+
+# ── 모델 메타데이터 · 추론 지연 분포 ─────────────────────────────────────
+class _DescribedDetector(_FakeDetector):
+    """`Detector` 의 메타데이터 표면(`loaded`·`model_summary`·`model_file`)을 갖춘 대역."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.name = name
+
+    @property
+    def loaded(self) -> bool:
+        return self.opened > 0
+
+    def model_summary(self) -> dict:
+        return {"name": self.name, "sha256": self.name * 4, "provider": "CPUExecutionProvider"}
+
+    def model_file(self):
+        from host.vision.model_info import ModelFile
+
+        return ModelFile(name=self.name, file=f"{self.name}.onnx", sha256=self.name * 4, meta={})
+
+
+def test_models_lists_only_loaded_detectors(cfg: dict, monkeypatch) -> None:
+    from host.vision.hazard_detector import HazardDetector
+    from host.vision.ppe_detector import PpeDetector
+
+    coco = _DescribedDetector("coco")
+    ppe = PpeDetector(cfg, _DescribedDetector("ppe"))
+    hazard = HazardDetector(cfg, _DescribedDetector("hazard"))
+    worker = _worker(cfg, _FakeReader(), coco, monkeypatch, ppe=ppe, hazard=hazard)
+
+    assert worker.models() == [], "열기 전에는 로드된 모델이 없다"
+    # 매니페스트용 — 열지 않아도 설정된 가중치 전부를 해시와 함께 말한다.
+    assert [item["name"] for item in worker.model_files()] == ["coco", "ppe", "hazard"]
+    with worker:
+        assert [item["name"] for item in worker.models()] == ["coco", "hazard"]
+        worker.set_ppe_enabled(True)
+        assert [item["name"] for item in worker.models()] == ["coco", "ppe", "hazard"]
+    assert worker.models()[0] == {
+        "name": "coco",
+        "sha256": "coco" * 4,
+        "provider": "CPUExecutionProvider",
+    }
+
+
+def test_models_tolerates_detectors_without_metadata(cfg: dict, monkeypatch) -> None:
+    worker = _worker(cfg, _FakeReader(), _FakeDetector(), monkeypatch)
+    with worker:
+        assert worker.models() == []
+    assert worker.model_files() == []
+
+
+def test_inference_latency_percentiles() -> None:
+    from host.vision.worker import WorkerStats
+
+    stats = WorkerStats()
+    assert stats.latency() == {"n": 0, "p50_ms": None, "p95_ms": None}
+    for ms in range(1, 101):
+        stats.note(float(ms))
+    digest = stats.latency()
+    assert digest["n"] == 100
+    assert digest["p50_ms"] == pytest.approx(51.0)
+    assert digest["p95_ms"] == pytest.approx(95.0)
+    assert stats.inference_ms_max == 100.0
+
+
+def test_latency_window_is_bounded() -> None:
+    from host.vision.worker import LATENCY_WINDOW, WorkerStats
+
+    stats = WorkerStats()
+    for _ in range(LATENCY_WINDOW + 50):
+        stats.note(1.0)
+    assert stats.latency()["n"] == LATENCY_WINDOW
+    # 표본은 필드가 아니다 — `vision_link_check` 가 `asdict(stats)` 를 JSON 으로 남긴다.
+    import json
+    from dataclasses import asdict
+
+    assert "samples" not in json.loads(json.dumps(asdict(stats)))
+
+
+def test_status_combines_models_and_latency(cfg: dict, monkeypatch) -> None:
+    coco = _DescribedDetector("coco")
+    worker = _worker(cfg, _FakeReader(), coco, monkeypatch)
+    worker.stats.note(10.0)
+    status = worker.status()
+    assert status["models"] == []
+    assert status["inference"] == {"n": 1, "p50_ms": 10.0, "p95_ms": 10.0}

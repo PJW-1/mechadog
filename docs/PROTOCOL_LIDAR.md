@@ -15,21 +15,35 @@
 | :--- | :--- | :--- |
 | LiDAR 를 로봇 메인보드에 직결하지 않는다 | 보행 제어 루프를 방해한다 | **ADR-6** |
 | 별도 ESP32 DevKit 을 중계로 쓴다 | LiDAR → UART → DevKit → UDP → Host | 아키텍처 2절 LIDAR NODE |
-| 걸으면서 스캔하지 않는다 | 흔들려서 못 쓴다. 멈춰서 재고 다시 걷는다 | **ADR-7** |
+| 정지 측위 원칙과 보행 중 사용을 구분한다 | ADR-7은 멈춰서 재는 설계 원칙. 현재 송신은 보행 여부로 제한하지 않으며, 위험 판정과 측위 채택은 별도 조건이다 | **ADR-7**; [10-06 상태](lidar/STATUS_20261006.md) |
 
 즉 스캔 데이터그램은 **MechDog 을 거치지 않는 독립 노드**에서 온다. 기존 두
 스키마에 얹을 자리가 없어서 세 번째 링크가 된다.
 
 | 링크 | 방향 | 프로토콜 | 주기 |
 | :--- | :--- | :--- | :--- |
-| **LiDAR 스캔** | **LiDAR 중계 노드 → Host PC** | **UDP** | **정지 중에만 · 5 Hz** |
+| **LiDAR 스캔** | **LiDAR 중계 노드 → Host PC** | **UDP** | **센서 회전 약 9.90 Hz; UDP는 약 72점 청크별 송신** |
 
-> **주기가 고정이 아니다.** 제어 명령이 10Hz 고정인 것은 그 송신이 곧 링크
-> 신호이기 때문인데(PROTOCOL 1절), 스캔은 그렇지 않다 — 로봇이 걷는 동안에는
-> 쓸 수 없는 데이터라(ADR-7) 보내도 버린다. 그래서 **스캔 두절은 안전 문제가
-> 아니라 측위 능력의 상실**이다. `lidar.scan_stall_timeout_ms` 는 **정지 후 스캔을 기대하는 구간에서만** 적용한다. 걷는 동안 스캔이 없는 것은 정상이다. 기대한 스캔이 이 시간을 넘겨 없으면
-> `FAILSAFE` 가 아니라 `LOST` 로 간다. 비전의 `stall_timeout_ms` 가
-> `safety` 절 밖에 있는 것과 같은 판단이다 (`config.yaml` vision 절 각주).
+> **회전・UDP 패킷・ROS2 발행 빈도를 구별한다.** 2026-09-29 실측 인용은
+> 센서 회전 약 **9.90 Hz**, ROS2 `/scan` **9.919 Hz**다. 중계는 한 회전을
+> 약 72점 청크의 여러 UDP 데이터그램으로 나누므로 **패킷 빈도 ≠ 회전 빈도**다.
+> 이 수치는 해당 시험의 실측이며 송신 주기를 고정하는 규약이 아니다.
+> 근거: [중계 README](../firmware/lidar_relay/README.md), [WBS](internal/WBS.md) 5.4.2,
+> [실측 자료](measurements/2026-10-06-field-patrol.md#5-우회와-남은-측정).
+>
+> **송신 여부와 측위 채택 조건은 별개다.** 중계는 로봇 정지 여부로 송신을
+> 제한하지 않는다. 호스트는 보행 중에도 수신・5203 복사・청크별 근접 비상정지
+> 판정과 최신 반사점 회피를 수행한다. 측위는 완성 회전을 조립한 뒤 POSE・복귀
+> 대기・IMU 기울기 등 스캔 관문과 정합 신뢰 조건을 적용해 채택한다. 따라서
+> 패킷 수신이 측위 갱신을 보장하지 않으며, 측위에서 거절한 스캔도 위험 판정에
+> 사용할 수 있다. ADR-7의 정지 측위 원칙을 송신 중단이나 보행 중 전량 폐기로
+> 해석하지 않는다. 현장 `91362ad`는 45° 초과 IMU 이상값을 불신하지만 그 이하
+> 이상값・위치 상실 한계는 남아 있다([상태 문서](lidar/STATUS_20261006.md)).
+>
+> 스캔 입력 두절(`lidar.scan_stall_timeout_ms`)과 위치 갱신 만료
+> (`localization.pose_timeout_ms`)도 구별한다. 측위 상실의 `LOST`와 패킷별 근접
+> 위험의 비상정지는 별도 경로다. 보행 중 무수신을 일괄 정상으로 간주하지 않는다.
+> 청크 수신・완성 회전・측위 갱신 상태를 각각 기록해 판단한다.
 
 ---
 
@@ -74,12 +88,12 @@
 없으면 기형 패킷 하나로 호스트 메모리를 밀어 올릴 수 있다.
 
 > **한 데이터그램이 한 바퀴 전체는 아니다.** ESP32 의 Wi-Fi UDP 는 MTU
-> (~1460B)를 넘는 데이터그램을 잘라 낸다 (2026-09-13 실기 확인 — 4.9KB 전문이
-> 첫 조각만 도착해 JSON 이 깨졌다). 그래서 중계 노드는 한 바퀴(~450점)를
+> (\~1460B)를 넘는 데이터그램을 잘라 낸다 (2026-09-13 실기 확인 — 4.9KB 전문은
+> 첫 조각만 도착해 JSON 이 깨진다). 그래서 중계 노드는 한 바퀴(\~450점)를
 > **≤72점씩 부채꼴 조각**으로 나눠 연속된 `seq` 의 여러 데이터그램으로 보낸다.
 > 각 조각도 이 절의 유효한 SCAN 이고, 수신측 검증 규칙은 조각마다 그대로
 > 적용한다. 한 바퀴 전체가 필요한 소비자(SLAM·ROS2 브리지)는 각도로 합쳐 쓴다
-> — `scan_match.merge_batch` 가 이미 그렇게 한다.
+> — `scan_match.merge_batch` 가 그렇게 한다.
 
 > **deg·mm 를 고른 이유가 둘이다.** ① 규약 본문이 이미 그 단위다 — `step` 은 mm,
 > `imu` 는 deg, `dist_cm` 은 cm. ② **LD19 계열이 UART 로 내보내는 단위와 같아서
@@ -93,7 +107,7 @@
 
 ## 3. 수신측 검증 규칙 — 6개
 
-**①~⑤ 는 텔레메트리 링크와 같다.** 같은 위험을 갖기 때문이다 — UDP 이고,
+**①\~⑤ 는 텔레메트리 링크와 같다.** 같은 위험을 갖기 때문이다 — UDP 이고,
 송신측이 MCU 이고, 수신측이 호스트다. 규약을 새로 만들지 않고 가져왔다.
 
 | # | 규칙 | 이유 |
@@ -108,8 +122,9 @@
 > **⑥ 이 유일하게 새로운 규칙이다.**
 >
 > 360점 중 한 점이 깨졌다고 레코드를 통째로 폐기하면 **그 사이클의 지도 갱신과
-> 측위가 전부 사라진다.** 그리고 스캔은 5Hz 이하이므로 한 장의 손실이 200ms
-> 이상의 공백이다. 명령의 규칙 ②(범위 초과를 폐기가 아니라 클램핑)가
+> 측위가 전부 사라진다.** 그리고 회전은 **실측 9.9Hz** 이므로 한 장의 손실이 약 100ms
+> 의 공백이다 (2026-09-29 실측). 이 공백은 10Hz 제어 주기의 한 틱을 통째로
+> 비운다. 명령의 규칙 ②(범위 초과를 폐기가 아니라 클램핑)가
 > *"명령이 조용히 사라지는 것보다 낫다"* 고 판단한 것과 같은 종류의 선택이다.
 >
 > 버린 점의 수는 호출자에게 돌려준다. 그것이 계속 늘면 배선·전원을 의심할 수
@@ -141,7 +156,7 @@
 | :--- | :--- |
 | `tests/fixtures/lidar_samples.jsonl` | 유효 스캔 정본 — **유효 거리 경계값 포함** |
 | `tests/fixtures/lidar_invalid.jsonl` | 폐기·부분수락 대상 + `_expect` 기대 동작 |
-| `tests/test_lidar_link.py` | 위를 물려 규칙 ①~⑥ 을 검증 + **`config.yaml` 의 `lidar:` 절과 교차 검증** |
+| `tests/test_lidar_link.py` | 위를 물려 규칙 ①\~⑥ 을 검증 + **`config.yaml` 의 `lidar:` 절과 교차 검증** |
 | **`host/common/lidar_link.py`** | **수신 구현 (Python).** 중계 노드 C++ 파서의 참조 구현 |
 
 **교차 검증이 핵심이다.** 픽스처에 `range_min_mm` · `range_max_mm` 의 경계값이
@@ -155,12 +170,17 @@
 
 ### 구현자 체크리스트
 
-- [ ] `lidar_samples.jsonl` 전 라인이 파싱되는가
-- [ ] 규칙 ①~⑥ 이 `lidar_invalid.jsonl` 의 `_expect` 대로 동작하는가
-- [ ] 재부팅(`boot_id` 변경) 뒤 `seq=1` 을 **수락**하는가
-- [ ] 기형 점 하나가 스캔 전체를 폐기하지 **않는가** (규칙 ⑥)
-- [ ] 파싱 실패 패킷이 두절 타이머를 갱신하지 **않는가**
-- [ ] `ts` 를 초 단위 실수로 보내지 **않는가** — 정수 밀리초다
+수신측(`host/common/lidar_link.py` `ScanDecoder`)은 아래 항목을 시험으로 잠근다. 중계 노드의 C++
+인코더가 만든 패킷은 CI 의 «LiDAR encoder vs Python decoder» 단계가 같은 `ScanDecoder` 로 다시 검증한다.
+
+| 확인 항목 | 검증하는 시험 (`tests/test_lidar_link.py`) |
+| :--- | :--- |
+| `lidar_samples.jsonl` 전 라인이 파싱된다 | `test_all_samples_are_accepted` |
+| 규칙 ①\~⑥ 이 `lidar_invalid.jsonl` 의 `_expect` 대로 동작한다 | `test_invalid_rows_behave_as_declared` |
+| 재부팅(`boot_id` 변경) 뒤 `seq=1` 을 **수락**한다 | `test_seq_gate_is_per_device_and_boot` |
+| 기형 점 하나가 스캔 전체를 폐기하지 **않는다** (규칙 ⑥) | `lidar_invalid.jsonl` 의 `accept_dropped` 행 · `test_invalid_rows_behave_as_declared` |
+| 파싱 실패 패킷이 두절 타이머를 갱신하지 **않는다** | `test_parse_failure_does_not_refresh_the_link` |
+| `ts` 는 정수 밀리초다. 초 단위 실수는 폐기한다 | `lidar_invalid.jsonl` 의 «ts 가 초 단위 실수» 행 · `test_invalid_rows_behave_as_declared` |
 
 ---
 
@@ -172,13 +192,14 @@
 | 텔레메트리 | 5101 | `network.telemetry_port` |
 | **LiDAR 스캔** | **5201** | **`lidar.scan_port`** |
 | LiDAR 스캔 → ROS2 컨테이너 전달 | 5203 | `lidar.scan_forward_port` |
+| ROS2 지도 자세 → Host 순찰기 | 5205 | `lidar.map_pose_port` |
 
 ⚠️ **반드시 달라야 한다.** 같은 포트를 쓰면 한 소켓에 두 스키마가 섞여 들어와
 서로를 규칙 ④(모르는 타입)로 폐기하고, 로그에는 WARN 만 쌓인다.
 `test_lidar_scan_port_differs_from_the_other_links` 가 대조한다.
 
-`lidar.scan_forward_port`(5201 의 유일한 수신자인 `tools/patrol_run.py` 가
-바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
+`lidar.scan_forward_port`(5201 의 유일한 수신자인 런타임 `LidarFeed` 또는
+런타임 `--lidar-device` 또는 `tools/ops/patrol_run.py` 가 바이트 그대로 복사해 넘기는 곳)도 같은 이유로 `scan_port` 와 달라야 하고,
 `host/slam/settings.py`·`host/common/config.py` 의 설정 검증이 이를 거부한다
 (`docker/ros2/README.md` 「남은 연결」 절).
 
@@ -199,7 +220,7 @@
 | `header.frame_id` | — | 브리지가 정한다 (`laser` 권장). **`base_link` 로 두지 말 것** — 마스트 오프셋이 tf 로 표현되어야 한다 |
 | `angle_min` · `angle_max` | `0` · `2π - angle_increment` | 데이터그램은 부채꼴 조각이다 (2절) — 브리지가 각도 빈으로 한 바퀴분을 모은 뒤 발행한다 |
 | `angle_increment` | `2π / len(ranges)` | 아래 각주 참조 |
-| `time_increment` | `0` | 정지 중에만 스캔하므로(ADR-7) 빔별 시각차를 쓰지 않는다 |
+| `time_increment` | `0` | 현행 브리지는 빔별 시각차를 표현하지 않는다. 보행 중에도 수신하며 이 값이 정지 상태를 보장하지 않는다 |
 | `scan_time` | 브리지의 직전 발행 간격 (첫 회전은 `0.1`) | 실물 회전 속도에 맞춰 확인 |
 | `range_min` · `range_max` | `lidar.range_min_mm` · `range_max_mm` / 1000 | **m 로 바꾼다** |
 | `ranges[i]` | `dist_mm` / 1000 | **m 로 바꾼다** |
@@ -227,13 +248,18 @@
 
 ### 브리지가 해결하지 못하는 것 — tf
 
-`slam_toolbox` 는 `odom` → `base_link` 변환을 요구한다. **우리에게 오도메트리가
-없다** — `config/devices/*.yaml` 의 `gait_calibration.forward_mm_per_sec` ·
-`turn_deg_per_sec` 는 `mechdog-01` 에서 실측됐다 (2026-09-11 · 좌선회 **6.8 도/s**). ⚠️ **다만 한 기체뿐이고 좌우가 크게 다르다** — 우선회는 3.56 도/s 로 **절반**이며 `mechdog-02`·`-03` 은 미측정이다. 기체마다 편향의 방향까지 다르므로 값을 복사하지 않는다.
+`slam_toolbox` 는 `odom` → `base_link` 변환을 요구한다. 스캔 브리지는 이 변환을
+만들지 않는다. **로봇에는 바퀴 엔코더 같은 오도메트리 센서가 없다.** 그래서 호스트가
+보낸 명령과 기체별 보행 실측값(`config/devices/*.yaml` 의 `gait_calibration`), IMU yaw
+로 위치를 추정해 8절 `ODOM` 링크로 보내고, 컨테이너의 `odom_bridge.py` 가 이 tf 를 낸다.
 
-ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom` 드리프트인데,
-우리는 드리프트가 아니라 **odom 자체가 없는** 상태다. 그래서 이 오도메트리 링크보다
-기체별 회전 속도 실측이 먼저 닫혀야 한다 — 그 작업은 **LiDAR·마스트 없이 지금 할 수 있다.**
+보행 실측값은 기체마다 다르다. `mechdog-01` 은 좌선회 **6.8 도/s**, 우선회 3.56 도/s 로
+좌우가 크게 다르고(2026-09-11), `mechdog-02` 는 좌선회 **10.1 도/s**, 우선회 10.0 도/s
+로 대칭에 가깝다(2026-09-21/22). 기체마다 편향의 방향까지 다르므로 값을 복사하지
+않는다. 실측이 없는 기체는 `ODOM` 을 보내지 않는다(8절).
+
+ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 `odom` 드리프트다. 이 추정 odom 은
+발 미끄럼만큼 드리프트가 쌓이므로 시연의 주 측위로 쓰지 않는다(8절 적용 범위).
 
 ---
 
@@ -246,7 +272,7 @@ ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom`
 | 3 | 전선 단위 | `deg` · `mm` (센서 native · 본문 단위와 동일) |
 | 4 | 규칙 ⑥ | 기형 점만 폐기하고 스캔은 수락 |
 | 5 | `scan_port` | 5201 |
-| 6 | `quality` 필드 | 선택, 0~255 정수, 현재 판단에는 사용하지 않음 |
+| 6 | `quality` 필드 | 선택, 0\~255 정수, 현재 판단에는 사용하지 않음 |
 | 7 | `config.yaml`의 `lidar:` 절 | Phase 2 실측 전 잠정값임을 유지 |
 | 8 | 데이터그램 단위 | 한 바퀴 전체가 아니라 **≤72점 부채꼴 조각** — ESP32 UDP MTU 실측에서 정해진 값 |
 | 9 | `scan_forward_port` | 5203 — `scan_port`(5201)의 유일한 수신자인 순찰기가 바이트 그대로 복사해 ROS2 컨테이너로 넘기는 경로 |
@@ -259,7 +285,9 @@ ADR-9 가 경계한 ROS2 실패 양상 네 가지 중 하나가 정확히 `odom`
 
 ## 8. 오도메트리 전달 — `ODOM` (Host PC → ROS2 컨테이너)
 
-6절의 «우리에게 오도메트리가 없다» 를 메우는 링크다. 호스트(`tools/patrol_run.py`)가
+> **적용 범위 (2026-10-06 기준):** 5204 ODOM 개체별 추가 구현・검수는 하지 않으며 기존 송신・브리지・tf 코드는 남겨 둔다. 아래는 그 링크 규약이며 시연 주 측위의 필수 경로가 아니다. [현재 상태](lidar/STATUS_20261006.md#2-설계와-데이터-흐름)를 참조한다.
+
+6절의 tf 공백을 메우는 링크다. 호스트(런타임 `--lidar-device` 또는 `tools/ops/patrol_run.py`)가
 **실제로 보낸 명령의 시간 창 × 그 기체의 `gait_calibration` 속도**로 거리를, **IMU
 yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이너의
 `docker/ros2/odom_bridge.py` 로 보낸다. 브리지가 `odom → base_link` tf 를 낸다.
@@ -285,10 +313,10 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 | `valid` | **bool** | 거짓이면 좌표를 쓰지 않는다. `0`/`1` 은 받지 않는다 |
 
 > **단위가 로봇 규약(mm·deg)과 다르다 — 그래서 이름에 싣는다.** 양 끝이 모두 호스트
-> 쪽 파이썬이고 ROS 가 m·rad 를 요구하므로 변환할 자리가 없다. `tools/lidar_live_map.py`
+> 쪽 파이썬이고 ROS 가 m·rad 를 요구하므로 변환할 자리가 없다. `tools/lidar/lidar_live_map.py`
 > 의 자세 입력(5202)이 같은 `x_m`·`y_m`·`yaw_rad` 를 쓴다.
 
-**검증 규칙은 3절의 ①~⑤ 를 그대로 쓴다** (`host/common/odom_link.py` · `OdomDecoder`).
+**검증 규칙은 3절의 ①\~⑤ 를 그대로 쓴다** (`host/common/odom_link.py` · `OdomDecoder`).
 점 배열이 없으므로 ⑥ 은 없다. `x_m`·`y_m`·`yaw_rad` 는 유한한 수여야 하고(NaN·bool
 폐기), `valid` 는 bool 이어야 한다.
 
@@ -299,7 +327,7 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
   유효하다고 내보내지 않는다.**
 
 `gait_calibration` 이 없는 기체는 오도메트리를 만들지 않는다. 전문 자체가
-나가지 않고 순찰기가 `odometry_unavailable` 오류를 남긴다.
+나가지 않고 런타임과 `tools/ops/patrol_run.py` 가 `odometry_unavailable` 오류를 남긴다.
 
 ### 로봇의 정지 보고가 명령보다 우선한다
 
@@ -312,7 +340,7 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 풀려 있으면) **다음 `MOVE` 부터** 다시 센다. 텔레메트리 공백 뒤 `boot_id` 가 바뀌어 돌아오면
 공백 동안 보낸 `MOVE` 는 버리고 `RESET_SAFE` 를 보낼 때까지 잠금으로 본다 — 재부팅한
 로봇은 SAFE 잠금으로 켜져 새 `MOVE` 를 실행하지 않는다. 전이마다 텔레메트리 한 주기
-(~100ms · ≈1cm)의 지연 오차는 남는다 (`host/slam/odometry.py` 머리말).
+(\~100ms · ≈1cm)의 지연 오차는 남는다 (`host/slam/odometry.py` 머리말).
 
 ### 브리지 (`odom_bridge.py`)
 
@@ -321,3 +349,32 @@ yaw 의 변화량**으로 방향을 적분해(`host/slam/odometry.py`) 컨테이
 | `header.stamp` | **수신 시각.** 전문 `ts` 는 호스트 시계라 컨테이너 시계와 같다는 보장이 없다 — 6절 `LaserScan.header.stamp` 와 같은 이유 |
 | `odom → base_link` | `valid=true` 전문을 받을 때마다 1회. **무효·폐기·두절이면 내지 않는다** — 직전 값 반복이나 항등 변환으로 채우지 않는다 |
 | `base_link → laser` | `LASER_OFFSET_X_M`·`_Y_M`·`_Z_M` 이 **모두** 있을 때만 고정 변환. 없으면 경고만 한다. **회전은 0** — 장착 방향은 `scan_bridge` 디코더가 이미 적용한다(한 곳에서만 보정) |
+
+---
+
+## 9. 지도 자세 반환 — `MAP_POSE` (ROS2 컨테이너 → Host PC)
+
+> **2026-10-06 시연 런타임:** `host.runtime`은 5205 MAP_POSE를 사용하지 않고 호스트 스캔 정합・전역 재측위를 주 측위로 쓴다. 아래 규약은 별도 도구의 반환 경로다([현재 상태](lidar/STATUS_20261006.md#2-설계와-데이터-흐름)).
+
+`slam_toolbox`가 만든 `map → odom → base_link`의 합성 tf를
+`docker/ros2/pose_bridge.py`가 읽어 별도 `tools/ops/patrol_run.py` 순찰기로 돌려준다. 이 경로의 순찰기는
+내부 스캔 정합과 이 자세를 섞지 않고 `MAP_POSE`만 경로계획의 위치로 사용한다.
+LiDAR 즉시 위험 판정(`guard_scan`)은 이 링크와 무관한 직접 경로다.
+
+```json
+{"seq":42,"ts":912345,"type":"MAP_POSE","device_id":"mechdog-02","boot_id":"5c1e0a9b7d3f2468","frame_id":"map","child_frame_id":"base_link","x_m":1.204,"y_m":-0.117,"yaw_rad":0.52,"valid":true}
+```
+
+| 필드 | 타입 | 의미 |
+| :--- | :--- | :--- |
+| `seq` · `boot_id` | int · str | 브리지 프로세스 한 세션의 순서와 재기동 구분 |
+| `ts` | int | 브리지의 단조 시각 ms. 호스트는 신선도에 직접 쓰지 않고 수신 시각을 쓴다 |
+| `device_id` | str | 대상 로봇 개체 이름. 순찰기의 `--device`와 달라지면 폐기 |
+| `frame_id` · `child_frame_id` | str | 반드시 `map` · `base_link`. 다른 프레임은 폐기 |
+| `x_m` · `y_m` · `yaw_rad` | 실수 | 지도 좌표의 위치(m)와 방위(rad) |
+| `valid` | bool | tf 누락·500ms 초과 시 false. 좌표를 적용하지 않는다 |
+
+검증 규칙은 8절 ODOM과 같고, 프레임 이름 검증이 추가된다. `valid=false` 전문은
+마지막 자세를 갱신하지 않는다. 유효 자세가 `localization.pose_timeout_ms` 동안
+오지 않으면 순찰기는 `LOST`로 전환해 보행을 정지한다. 이 상태는 안전 래치가
+아니므로 측위가 돌아오면 재계획할 수 있다.
