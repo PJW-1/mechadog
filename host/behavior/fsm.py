@@ -143,7 +143,7 @@ DIRECTIVES: dict[str, Directive] = {
 
 INITIAL = "IDLE"
 
-#: 대응 단계를 올리지 않는 순찰 임무 밖 상태 (잠정). 대기 중에는 `AUTH_WAIT` 로 갈 수
+#: 대응 단계를 올리지 않는 순찰 임무 밖 상태. 대기 중에는 `AUTH_WAIT` 로 갈 수
 #: 없어 앞을 지난 사람이 L3 가 되기 때문이다. 래치된 L3·F 는 그대로다.
 STANDBY: frozenset[str] = frozenset({"IDLE", "MANUAL"})
 
@@ -338,7 +338,7 @@ class Behavior:
 
     @property
     def standby(self) -> bool:
-        """순찰 임무 밖인가 (`STANDBY` · 잠정). 대응 단계를 올리지 않는다."""
+        """순찰 임무 밖인가 (`STANDBY`). 대응 단계를 올리지 않는다."""
         return self._fsm.state in STANDBY
 
     @property

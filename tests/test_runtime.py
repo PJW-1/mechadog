@@ -950,7 +950,7 @@ def test_auth_timeout_raises_alarm_without_passing_through_apply(
 
 
 def test_person_near_an_idle_robot_raises_no_level(config: dict, clock: FakeClock) -> None:
-    """⚠️ (잠정) **대기 중인 로봇 앞을 지나간 사람으로 경보가 뜨면 안 된다.**
+    """**대기 중인 로봇 앞을 지나간 사람으로 경보가 뜨면 안 된다.**
 
     대기에서는 `AUTH_WAIT` 로 갈 수 없어, 10초 머물다 떠난 사람이 곧바로 L3 가 됐다 —
     시연 준비 중 팀원 때문에 빨간 경보가 뜨고 관리자 확인이 필요했다.
@@ -970,7 +970,7 @@ def test_person_near_an_idle_robot_raises_no_level(config: dict, clock: FakeCloc
 
 
 def test_manual_takeover_stands_down_but_keeps_an_alarm(config: dict, clock: FakeClock) -> None:
-    """(잠정) 수동 조종으로 넘어가면 L1·L2 는 내리고 **L3 는 남긴다** (관리자 확인만)."""
+    """수동 조종으로 넘어가면 L1·L2 는 내리고 **L3 는 남긴다** (관리자 확인만)."""
     vision = FakeVision()
     runtime = Runtime(config, device_id=DEVICE, clock=clock, vision=vision)
     runtime.start_patrol(clock.ms)
