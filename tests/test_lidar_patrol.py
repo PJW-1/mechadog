@@ -192,6 +192,8 @@ def test_controller_carries_no_unread_compatibility_fields() -> None:
         "new_obstacle_confirmations",
         "obstacle_mark_radius_m",
         "max_reverify_attempts",
+        "_last_imu_yaw",
+        "_last_scan_ms",
     }
     assert names.isdisjoint(unread)
 

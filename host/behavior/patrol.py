@@ -314,15 +314,12 @@ class PatrolController:
     safety: SafetyView = field(default_factory=SafetyView)
     stats: PatrolStats = field(default_factory=PatrolStats)
 
-    _last_scan_ms: int | None = None
     _local_scan_started_ms: int | None = None
     _stopped_since_ms: int | None = None
     _last_sent_moving: bool = False
     _replan_stop_required: bool = False
     _replan_wait_started_ms: int | None = None
     _replan_timeout_hold_ms: int | None = None
-    #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
-    _last_imu_yaw: float | None = None
     _reset_requested: bool = False
     #: 지금 처리 중인 스캔의 Host 시각 (`observe_scan` 이 찍는다).
     _scan_now_ms: int = 0
@@ -572,14 +569,6 @@ class PatrolController:
             self.relaxed.scan.observe(scan, now_ms, self.range_m)
             self.relaxed.scan_yaw = self.heading.steering_yaw()
         self._local_scan_pose = (*self.pose[:2], self.heading.steering_yaw())
-        # 빈 전문/범위 밖 점만 있는 전문은 관측을 복구하지 않는다.
-        if rejected is None and any(
-            math.isfinite(angle)
-            and math.isfinite(distance)
-            and self.range_m[0] <= distance <= self.range_m[1]
-            for angle, distance in scan.points
-        ):
-            self._last_scan_ms = now_ms
         return True
 
     def observe_obstacle_scan(self, scan: Scan, now_ms: int) -> None:
@@ -1303,21 +1292,11 @@ class PatrolController:
             costs=self.navmap.costs,
         )
         self.waypoint_index = 0
-        # 도달 불가 구역은 같은 목록이 바뀔 때만 기록한다 — 매 틱 재시도하면
-        # 로그가 초당 10줄씩 쌓여 진짜 신호를 덮는다 (목업에서 실제로 확인).
-        skip_key = ",".join(f"{label}:{reason}" for label, reason in skipped)
+        # 도달 불가 구역이 있으면 막힘 복구가 이어받는다.
         if skipped:
             self.plan = Plan(skipped[0][0])
             self.recovery.begin("global_path_blocked")
             return
-        if skipped and self._edge.changed("zones_unreachable", skip_key):
-            LOG.warning(
-                "zones_unreachable",
-                skipped=[label for label, _ in skipped],
-                reasons=[reason for _, reason in skipped],
-            )
-        if not skipped:
-            self._edge.changed("zones_unreachable", "")
         if self.plan.reachable:
             self._edge.changed("no_reachable_zone", False)
             LOG.info(
