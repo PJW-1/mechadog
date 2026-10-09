@@ -10,9 +10,10 @@ import numpy as np
 import pytest
 
 from host.behavior.heading import HeadingTracker
+from host.behavior.live_nav import LocalScan, NavParams
 from host.behavior.localization import LocalizationTrust
+from host.behavior.nav_state import PatrolNavState
 from host.behavior.patrol import SafetyView
-from host.common.logging_setup import EdgeTrigger
 
 
 def trust(yaw_deg: float | None = None, seen_ms: int | None = None, **config: Any) -> Any:
@@ -30,12 +31,11 @@ def trust(yaw_deg: float | None = None, seen_ms: int | None = None, **config: An
         reloc_restore_tilt_rad=math.radians(8.0),
         zone_hint_ms=60000,
         point_hint_radius_m=0.6,
-        _edge=EdgeTrigger(),
     )
     for key, value in config.items():
         setattr(owner, key, value)
     owner.heading = HeadingTracker(owner)
-    return owner, LocalizationTrust(owner)
+    return owner, LocalizationTrust(owner, PatrolNavState(local_scan=LocalScan(NavParams())))
 
 
 def test_untrusted_only_for_own_localization_without_verify_or_seed() -> None:

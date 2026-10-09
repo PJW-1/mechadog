@@ -33,7 +33,7 @@ ALLOWED = frozenset(
 EXPECTED: dict[str, int] = {
     "arrival.py": 0,
     "avoidance.py": 0,
-    "localization.py": 19,
+    "localization.py": 0,
     "nav_map.py": 0,
     "recovery.py": 55,
     "relaxed_follow.py": 0,

@@ -343,7 +343,7 @@ class PatrolController:
     def __post_init__(self) -> None:
         self.nav_state = PatrolNavState(local_scan=LocalScan(self.nav_params))
         self.heading = HeadingTracker(self)
-        self.localization = LocalizationTrust(self)
+        self.localization = LocalizationTrust(self, self.nav_state)
         self.recovery = BlockageRecovery(self)
         self.avoidance = LocalAvoidance(self, self.nav_state)
         self.route = RouteFollower(self, steering_for)
@@ -839,8 +839,6 @@ class PatrolController:
         return (
             self.phase not in (Phase.MOVING, Phase.AIMING) and not self.nav_state.spinning
         ) or self.nav_state.stopped_since_ms is not None
-
-    _is_stationary = is_stationary
 
     # ── 조작자 ────────────────────────────────────────────────
     def start(self) -> None:
