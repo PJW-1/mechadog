@@ -349,7 +349,7 @@ class PatrolController:
         self.route = RouteFollower(self, steering_for)
         self.relaxed = RelaxedFollower(self)
         self.navmap = NavigationMap(self)
-        self.arrival = ZoneArrival(self, steering_for)
+        self.arrival = ZoneArrival(self, self.nav_state, steering_for)
 
     # ── 조회 ──────────────────────────────────────────────────
     @property
