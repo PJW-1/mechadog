@@ -4,9 +4,11 @@ import threading
 import time
 
 import numpy as np
+import yaml
 
 from host.cloud import broadcast
 from host.cloud.broadcast import Broadcaster, from_config
+from host.common.config import DEFAULT_CONFIG, ROOT
 
 
 def _wait_until(predicate, timeout: float = 2.0) -> None:
@@ -223,10 +225,50 @@ def test_from_config_passes_the_settings_through() -> None:
     )
     assert broadcaster is not None
     assert (broadcaster._model_path, broadcaster._length_scale, broadcaster.volume) == (
-        "x.onnx",
+        str(ROOT / "x.onnx"),
         1.5,
         40,
     )
+    broadcaster.close()
+
+
+def _no_piper(monkeypatch) -> None:
+    """실제 piper 를 적재하려 들지 않도록 백그라운드 적재 경로를 막아 둔다."""
+    monkeypatch.setattr(
+        broadcast, "_default_synth", lambda *_a, **_k: (_ for _ in ()).throw(ImportError())
+    )
+
+
+def test_a_relative_piper_model_resolves_against_the_repo_root(monkeypatch) -> None:
+    """설정의 상대 경로는 실행 위치(CWD)가 아니라 저장소 루트 기준이다 — 비전 모델 경로와 같다."""
+    _no_piper(monkeypatch)
+    broadcaster = from_config(
+        {"broadcast": {"enabled": True, "piper_model": "models/piper/voice.onnx"}}
+    )
+    assert broadcaster is not None
+    assert broadcaster._model_path == str(ROOT / "models" / "piper" / "voice.onnx")
+    broadcaster.close()
+
+
+def test_an_absolute_piper_model_is_kept(monkeypatch, tmp_path) -> None:
+    _no_piper(monkeypatch)
+    model = tmp_path / "voice.onnx"
+    broadcaster = from_config({"broadcast": {"enabled": True, "piper_model": str(model)}})
+    assert broadcaster is not None
+    assert broadcaster._model_path == str(model)
+    broadcaster.close()
+
+
+def test_the_default_piper_model_lives_under_the_repo_models_folder(monkeypatch) -> None:
+    """기본값·설정 파일 모두 개인 PC 절대 경로가 아니라 저장소 `models/piper/` 다."""
+    _no_piper(monkeypatch)
+    expected = ROOT / "models" / "piper" / "ko_KR-kss-medium.onnx"
+    assert str(expected) == broadcast.DEFAULT_MODEL_PATH
+    section = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))["broadcast"]
+    assert section["piper_model"] == "models/piper/ko_KR-kss-medium.onnx"
+    broadcaster = from_config({"broadcast": {"enabled": True}})
+    assert broadcaster is not None
+    assert broadcaster._model_path == str(expected)
     broadcaster.close()
 
 

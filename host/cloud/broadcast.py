@@ -25,13 +25,15 @@ from typing import Any
 
 import numpy as np
 
+from host.common.config import repo_path
 from host.common.logging_setup import event_logger
 
 LOG = event_logger("mechadog.broadcast")
 
-#: 사원증 마커와 같은 규칙(ADR-20) — 모델 가중치는 저장소에 없다. 이 PC 의 실측
-#: 경로가 기본값이고, `config.yaml` 의 `broadcast.piper_model` 로 덮어쓴다.
-DEFAULT_MODEL_PATH = "C:/dev/mechadog-voice/models/piper/ko_KR-kss-medium.onnx"
+#: 사원증 마커와 같은 규칙(ADR-20) — 모델 가중치는 저장소에 올리지 않는다(`models/*` 는
+#: `.gitignore`). 받은 모델을 저장소의 `models/piper/` 에 두면 이 기본값으로 읽힌다.
+#: `config.yaml` 의 `broadcast.piper_model` 로 덮어쓰며, 상대 경로는 저장소 루트 기준이다.
+DEFAULT_MODEL_PATH = str(repo_path("models/piper/ko_KR-kss-medium.onnx"))
 
 #: 방송은 최근 사건에만 의미가 있다 — 밀리면 오래된 문장을 쌓지 않고 버린다
 #: (제어 루프와 같은 "최신 우선 드롭" 원칙, CONTRIBUTING 7절 ③).
@@ -245,7 +247,7 @@ def from_config(cfg: Mapping[str, Any]) -> Broadcaster | None:
     if not isinstance(section, Mapping) or not section.get("enabled", False):
         return None
     return Broadcaster(
-        model_path=str(section.get("piper_model", DEFAULT_MODEL_PATH)),
+        model_path=str(repo_path(section.get("piper_model", DEFAULT_MODEL_PATH))),
         length_scale=float(section.get("length_scale", 1.2)),
         volume=int(section.get("volume", 100)),
     )
