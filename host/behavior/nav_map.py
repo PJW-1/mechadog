@@ -77,7 +77,7 @@ class NavigationMap:
         )
         #: 지도에 적분한 뒤 팽창을 아직 안 다시 한 바퀴 수.
         self.updates_since_inflate: int = 0
-        #: 새 장애물 연속 확인 후보 — 현장 AG 정책은 후보 단계 없이 바로 끝점을 낸다(항상 None).
+        #: 새 장애물 연속 확인 후보 — 실시간 회피 정책은 후보 단계 없이 바로 끝점을 낸다(항상 None).
         #: 프레임 수집기(4.8.7)의 `obstacle_pending` 계약을 위해 남긴다.
         self.pending_hit: tuple[float, float] | None = None
         #: 지금 살아 있는 실시간 장애물 끝점 (순찰 좌표 m).

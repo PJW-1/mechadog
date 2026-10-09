@@ -98,7 +98,7 @@ def open_room() -> OccupancyGrid:
 
 
 def build(**overrides: object) -> PatrolController:
-    # 기존 관문 회귀 시험은 명시적으로 AV를 끈다. AV 시험은 별도 생성한다.
+    # 기존 관문 회귀 시험은 명시적으로 따라가기(`nav.relaxed_follow`)를 끈다. 따라가기 시험은 별도 생성한다.
     overrides.setdefault("nav_params", NavParams(relaxed_follow=False))
     ready = overrides.pop("ready", True)
     grid = overrides.pop("grid", None) or open_room()
@@ -1246,7 +1246,7 @@ def test_steer_uses_live_gap_for_body_overlap() -> None:
     controller.zones.place(4, 2)
     controller.resume()
     controller.observe_map_pose((*grid.to_world(40, 42), 0), 1000)
-    # AO: a scan acquired at the old pose cannot prove space at the new pose.
+    # Gap pass: a scan acquired at the old pose cannot prove space at the new pose.
     from test_live_nav import revolution
 
     controller.observe_obstacle_scan(revolution(2), 1000)

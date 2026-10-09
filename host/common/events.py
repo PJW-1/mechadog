@@ -21,7 +21,7 @@ class Event(StrEnum):
     GOAL_UNREACHABLE = "GOAL_UNREACHABLE"  # Single goto ended without reaching its goal.
     SCAN_DONE = "SCAN_DONE"  # 상체 스캔 3초 완료
     # ── 온보드 반사를 호스트가 따라간다 ──
-    ONBOARD_AVOID = "ONBOARD_AVOID"  # 초음파 25cm 반사 정지를 로봇이 보고했다
+    ONBOARD_AVOID = "ONBOARD_AVOID"  # 초음파 반사 정지(`safety.obstacle_stop_cm`)를 로봇이 보고했다
     AVOID_CLEARED = "AVOID_CLEARED"  # 회피 시퀀스 완료 & 전방 clear
     # ── 사람 대응 ──
     PERSON_FOUND = "PERSON_FOUND"  # 300ms 시간 창 안에 3회 검출 (FR-3.2)

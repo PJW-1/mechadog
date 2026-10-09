@@ -1,6 +1,6 @@
 """말하기 경로 단독 검증 — `host.behavior.speaker.Speaker` (Runtime 분할 9단계).
 
-사건 → 문장·트랙 시나리오는 `test_runtime.py`·`test_ax_demo_flow.py` 가 `Runtime` 으로 본다.
+사건 → 문장·트랙 시나리오는 `test_runtime.py`·`test_demo_flow_20261006.py` 가 `Runtime` 으로 본다.
 여기서는 런타임 없이 트랙 고르기·반복·ACK 대기·재전송을 본다.
 """
 

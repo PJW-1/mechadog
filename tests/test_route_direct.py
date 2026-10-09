@@ -1,4 +1,4 @@
-"""AR: 직접 추종, 실제 STOP 지연 회피, 복귀 및 기존 안전 경계."""
+"""동선 직접 추종(`nav.route_direct`): 실제 STOP 지연 회피, 복귀 및 기존 안전 경계."""
 
 from __future__ import annotations
 

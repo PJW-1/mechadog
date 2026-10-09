@@ -1,4 +1,4 @@
-"""AO: raw-endpoint swept body, goalward gaps and unchanged safety gates."""
+"""Gap pass: raw-endpoint swept body, goalward gaps and unchanged safety gates."""
 
 from __future__ import annotations
 

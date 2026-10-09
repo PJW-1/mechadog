@@ -1,4 +1,4 @@
-"""AV: 실제 전문 의도, 겹친 관문 우회, 빈 방향과 검사 연동."""
+"""따라가기(`nav.relaxed_follow`): 실제 전문 의도, 겹친 관문 우회, 빈 방향과 검사 연동."""
 
 from __future__ import annotations
 
