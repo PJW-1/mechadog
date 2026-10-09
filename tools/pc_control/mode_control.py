@@ -302,7 +302,7 @@ def main():
             result = {"state": "PORT_NOT_FOUND", "detail": str(exc)}
         except (ValueError, KeyError) as exc:
             result = {"state": "SAFETY_REFUSED", "detail": str(exc)}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 나머지 연결 실패도 JSON 결과로 남긴다
             result = {"state": "CONNECTION_ERROR", "detail": f"{type(exc).__name__}: {exc}"}
         result.update(
             action=args.action,

@@ -659,7 +659,7 @@ def main() -> int:  # pragma: no cover - 실기 측정용
             started = True
         try:
             result = fn(ctx)
-        except (KeyboardInterrupt, Exception) as exc:
+        except (KeyboardInterrupt, Exception) as exc:  # noqa: BLE001 — 어떤 실패든 먼저 비상 정지를 보내고 미판정으로 남긴다
             if started:
                 with contextlib.suppress(OSError):
                     sock.sendto(commander.emergency_stop().encode("utf-8"), peer)

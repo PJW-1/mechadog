@@ -1107,7 +1107,7 @@ def serving(app: FastAPI, port: int) -> Iterator[uvicorn.Server]:
         def run() -> None:
             try:
                 server.run(sockets=[sock])
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 — 스레드 안 실패를 호출 쪽에서 원인으로 다시 던진다
                 failures.append(exc)
             finally:
                 ready.set()

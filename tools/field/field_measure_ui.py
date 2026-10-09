@@ -197,7 +197,7 @@ class MeasurementWindow:
             self.payload["state"] = "collected"
         except MeasurementCancelledError as exc:
             self.payload.update(state="cancelled", error=str(exc))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 측정 실패를 화면 상태로 보여 준다
             self.payload.update(state="error", error=f"{type(exc).__name__}: {exc}")
         finally:
             self.payload["finished_at"] = datetime.now(UTC).isoformat()
