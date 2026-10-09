@@ -587,7 +587,7 @@ def test_exhaustive_coverage_counts() -> None:
     # 2026-09-24 `3.6.x` — `ZONE_INSPECT → ALERT` 사람 게이트 전이를 더했다 (FR-8.3 → FR-3).
     # 2026-09-25 `3.6.x` — `ZONE_ALARM_CONFIRMED` 와 `ALERT → PATROL` 복귀 전이를 더했다 (FR-8.4).
     # 2026-09-25 `4.8.3` — `FALL_SUSPECTED`·`FALL_RESOLVED` 와 쓰러짐 의심 진입·복귀 전이 4줄을 더했다 (S3~S5).
-    # 2026-10-06 AM: single goto failure ends in IDLE from four navigation states.
+    # 2026-10-06: single goto failure ends in IDLE from four navigation states.
     # 2026-10-06 시연 설정: `ALARM_CONFIRMED` 와 ALERT·TRACK·AUTH_WAIT → PATROL 재개 전이 3줄 (래치 경보 대기).
     assert (len(DIRECTIVES), len(Event), len(TRANSITIONS)) == (13, 34, 42)
     assert (len(effective), len(blocked), len(undefined)) == (108, 6, 334)

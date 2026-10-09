@@ -39,7 +39,7 @@ __all__ = ["config"]  # 픽스처를 다시 쓴다 (`test_runtime.config`)
 
 
 def test_scan_posture_returns_neutral_and_waits_for_level_lidar(config, clock, monkeypatch):
-    """AP 관문이 카메라 SCAN을 유지하고 복귀 확인 전 MOVE를 막는다."""
+    """기울어진 스캔 관문이 카메라 SCAN을 유지하고 복귀 확인 전 MOVE를 막는다."""
     from host.slam.scan_match import MatchResult
 
     runtime, navigator = _patrolling(config, clock)
@@ -186,7 +186,7 @@ def test_runtime_stops_when_pose_leaves_observed_free_space(
         assert navigator.phase is Phase.LOST
         assert "pose_outside_map" in caplog.text
     else:
-        # AU: a changed mask must stop at the localization gate before recovery
+        # A changed mask must stop at the localization gate before recovery
         # can rotate. This fixture has only one beam, not a settled revolution.
         assert navigator.phase is Phase.LOST
         assert navigator.local_status["reason"] == "replan_waiting_for_settled_scan"

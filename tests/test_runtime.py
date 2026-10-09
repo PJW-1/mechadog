@@ -3899,7 +3899,7 @@ def test_a_lying_candidate_suspects_a_fall_and_approaches(config: dict, clock: F
 
 @pytest.mark.usefixtures("unlock_modes")
 def test_a_fall_needs_rule_and_same_frame_vlm(config: dict, clock: FakeClock) -> None:
-    """AF: 후보·누적 VLM만으로 확정하지 않고 규칙 확정 JPEG를 다시 검증한다."""
+    """후보·누적 VLM만으로 확정하지 않고 규칙 확정 JPEG를 다시 검증한다."""
     runtime, vision, fake, recorded = _factory_runtime(config, clock, *[DOWN] * 100)
     for at in range(100, 3000, 100):
         _floor(runtime, vision, at, lying=True)

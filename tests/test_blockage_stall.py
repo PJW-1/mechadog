@@ -1,4 +1,4 @@
-"""AM: failed goto completion, bounded recovery and grid-boundary consistency."""
+"""Failed goto completion, bounded recovery and grid-boundary consistency."""
 
 from __future__ import annotations
 
