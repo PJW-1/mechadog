@@ -32,7 +32,7 @@ ALLOWED = frozenset(
 #: 파일별 비공개 접근 수의 상한 — 줄이면 함께 낮춘다(래칫). 목록 밖 파일은 0 이어야 한다.
 EXPECTED: dict[str, int] = {
     "arrival.py": 0,
-    "avoidance.py": 26,
+    "avoidance.py": 0,
     "localization.py": 19,
     "nav_map.py": 0,
     "recovery.py": 55,

@@ -345,7 +345,7 @@ class PatrolController:
         self.heading = HeadingTracker(self)
         self.localization = LocalizationTrust(self)
         self.recovery = BlockageRecovery(self)
-        self.avoidance = LocalAvoidance(self)
+        self.avoidance = LocalAvoidance(self, self.nav_state)
         self.route = RouteFollower(self, steering_for)
         self.relaxed = RelaxedFollower(self, self.nav_state)
         self.navmap = NavigationMap(self, self.nav_state)
