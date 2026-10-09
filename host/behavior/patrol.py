@@ -344,7 +344,7 @@ class PatrolController:
         self.nav_state = PatrolNavState(local_scan=LocalScan(self.nav_params))
         self.heading = HeadingTracker(self)
         self.localization = LocalizationTrust(self, self.nav_state)
-        self.recovery = BlockageRecovery(self)
+        self.recovery = BlockageRecovery(self, self.nav_state)
         self.avoidance = LocalAvoidance(self, self.nav_state)
         self.route = RouteFollower(self, self.nav_state, steering_for)
         self.relaxed = RelaxedFollower(self, self.nav_state)
@@ -602,22 +602,6 @@ class PatrolController:
         self.nav_state.goal.xy = value
 
     @property
-    def _goal_hold(self) -> bool:
-        return self.nav_state.goal.hold
-
-    @_goal_hold.setter
-    def _goal_hold(self, value: bool) -> None:
-        self.nav_state.goal.hold = value
-
-    @property
-    def _goal_hold_reason(self) -> str | None:
-        return self.nav_state.goal.hold_reason
-
-    @_goal_hold_reason.setter
-    def _goal_hold_reason(self, value: str | None) -> None:
-        self.nav_state.goal.hold_reason = value
-
-    @property
     def _now_ms(self) -> int:
         return self.nav_state.now_ms
 
@@ -786,8 +770,6 @@ class PatrolController:
             assert self.nav_state.goal.xy is not None
             return self.nav_state.goal.xy
         return self.zones.xy(label)
-
-    _target_xy = target_xy
 
     def locate_zone_ids(self) -> tuple[str, ...]:
         """사람이 «여기» 라고 알려줄 수 있는 구역 — 좌표가 붙은 순찰 구역."""

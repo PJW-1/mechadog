@@ -24,6 +24,7 @@ from host.common.logging_setup import event_logger
 from host.common.units import rad_to_deg, wrap_pi
 
 if TYPE_CHECKING:
+    from host.behavior.nav_state import PatrolNavState
     from host.behavior.patrol import PatrolController
 
 #: 순찰 컨트롤러와 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
@@ -33,8 +34,10 @@ LOG = event_logger("mechadog.behavior.patrol")
 class BlockageRecovery:
     """순찰기의 막힘 복구 시도·막힘 기억·항법 사건을 쥔다."""
 
-    def __init__(self, patrol: PatrolController) -> None:
+    def __init__(self, patrol: PatrolController, state: PatrolNavState) -> None:
         self._patrol = patrol
+        #: 순찰기와 함께 쓰는 항법 상태 — 값은 복사하지 않고 매번 여기서 읽는다.
+        self._state = state
         #: 진행 중인 복구 시도 — 없으면 None.
         self.active: Recovery | None = None
         #: 막힘 기억 — 확인된 막힘은 계획 마스크에 더해지고 일정 시간 뒤 잊힌다.
@@ -85,10 +88,10 @@ class BlockageRecovery:
             if key in item.reported:
                 return
             item.reported.add(key)
-        elif patrol._now_ms < self.unlocated_reports.get(key, -1):
+        elif self._state.now_ms < self.unlocated_reports.get(key, -1):
             return
         else:
-            self.unlocated_reports[key] = patrol._now_ms + patrol.nav_params.blockage_long_ms
+            self.unlocated_reports[key] = self._state.now_ms + patrol.nav_params.blockage_long_ms
         x, y = item.centre if item is not None else patrol.pose[:2]
         judgement = {
             "x": round(x, 3),
@@ -97,7 +100,7 @@ class BlockageRecovery:
             "source": "lidar",
             "blockage_id": item.id if item else None,
             "severity": "low" if kind == "obstacle_detour" else "medium",
-            "at_ms": patrol._now_ms,
+            "at_ms": self._state.now_ms,
             **extra,
         }
         self.events.append({"event": kind, "judgement": judgement})
@@ -111,7 +114,7 @@ class BlockageRecovery:
             return
         target = patrol.plan.label or (
             GOAL_LABEL
-            if patrol._goal is not None
+            if self._state.goal.xy is not None
             else next(
                 (z for z in patrol.zones.labels if z not in patrol.visited | patrol.skipped),
                 HOME_LABEL,
@@ -121,7 +124,7 @@ class BlockageRecovery:
         endpoint = (
             patrol.plan.waypoints[min(patrol.waypoint_index, len(patrol.plan.waypoints) - 1)]
             if patrol.plan.waypoints
-            else patrol._target_xy(target)
+            else patrol.target_xy(target)
         )
         points = []
         ax, ay = patrol.pose[:2]
@@ -138,10 +141,10 @@ class BlockageRecovery:
                 <= patrol.plan_params.body_radius_m + patrol.grid.meta.resolution
             ):
                 points.append((x, y))
-        if not points and patrol._local_scan.distance() is not None:
+        if not points and self._state.local_scan.distance() is not None:
             front = [
                 (a, d)
-                for a, d in patrol._local_scan.points
+                for a, d in self._state.local_scan.points
                 if abs(a) <= math.radians(patrol.nav_params.local_fan_deg)
             ]
             if front and min(d for _, d in front) < patrol.nav_params.local_slow_m:
@@ -149,17 +152,17 @@ class BlockageRecovery:
                 points = [
                     (ax + math.cos(patrol.pose[2] + a) * d, ay + math.sin(patrol.pose[2] + a) * d)
                 ]
-        item = self.memory.remember(patrol.grid, points, patrol._now_ms)
+        item = self.memory.remember(patrol.grid, points, self._state.now_ms)
         self.active = Recovery(
             target,
-            patrol._now_ms,
+            self._state.now_ms,
             patrol.heading.steering_yaw(),
             item.id if item else None,
             reason=reason,
         )
         patrol.phase = Phase.PLANNING
-        patrol._require_replan_stop()
-        patrol.avoidance.decide("stop", "blockage_confirm", patrol._local_scan.distance())
+        patrol.require_replan_stop()
+        patrol.avoidance.decide("stop", "blockage_confirm", self._state.local_scan.distance())
 
     def expire(self, now_ms: int) -> bool:
         """Bound every recovery wait, including waits behind safety/FSM gates.
@@ -188,11 +191,11 @@ class BlockageRecovery:
             )
         if now_ms < deadline:
             return False
-        patrol._now_ms = now_ms
+        self._state.now_ms = now_ms
         phase = patrol.phase
         reason = (
             "recovery_stop_unconfirmed"
-            if patrol._last_sent_moving or patrol._stopped_since_ms is None
+            if self._state.last_sent_moving or self._state.stopped_since_ms is None
             else "recovery_timeout"
         )
         self.fail(recovery, reason)
@@ -203,39 +206,40 @@ class BlockageRecovery:
 
     def step(self) -> None:
         patrol = self._patrol
-        if self.expire(patrol._now_ms):
+        if self.expire(self._state.now_ms):
             return
         recovery = self.active
         assert recovery is not None
-        if patrol._last_sent_moving or patrol._stopped_since_ms is None:
+        if self._state.last_sent_moving or self._state.stopped_since_ms is None:
             patrol.commander.halt()
             # 회전 중에는 STOP을 기다리는 대신 실제 자세 변화량을 모은다.
             if not recovery.scanning:
                 return
         if not recovery.scanning and recovery.settling_ms is None:
             stopped = (
-                patrol._stopped_since_ms if patrol._stopped_since_ms is not None else patrol._now_ms
+                self._state.stopped_since_ms
+                if self._state.stopped_since_ms is not None
+                else self._state.now_ms
             )
-            if patrol._now_ms - max(stopped, recovery.started_ms) < max(
+            if self._state.now_ms - max(stopped, recovery.started_ms) < max(
                 patrol.drive.settle_delay_ms, patrol.nav_params.blockage_confirm_ms
             ):
                 patrol.commander.halt()
                 return
             if (
-                patrol._local_scan.received_ms is None
-                or patrol._local_scan.received_ms < stopped + patrol.drive.settle_delay_ms
+                self._state.local_scan.received_ms is None
+                or self._state.local_scan.received_ms < stopped + patrol.drive.settle_delay_ms
             ):
                 patrol.commander.halt()
                 return
             recovery.scanning = True
-            patrol._replan_stop_required = False
-            patrol._replan_wait_started_ms = None
+            self._state.replan.clear()
             recovery.yaw = patrol.heading.steering_yaw()
-            recovery.last_motion_ms = patrol._now_ms
+            recovery.last_motion_ms = self._state.now_ms
             if recovery.blockage_id is not None and not any(
                 b.id == recovery.blockage_id for b in self.memory.items
             ):
-                recovery.settling_ms = patrol._now_ms
+                recovery.settling_ms = self._state.now_ms
                 patrol.commander.halt()
                 return
         if recovery.settling_ms is None:
@@ -244,25 +248,26 @@ class BlockageRecovery:
             # 큰 측위 점프를 실제 회전으로 세지 않는다.
             if 0 < delta <= math.radians(45):
                 recovery.swept_rad += delta
-                recovery.last_motion_ms = patrol._now_ms
-            gap = patrol._local_scan.gap(
+                recovery.last_motion_ms = self._state.now_ms
+            gap = self._state.local_scan.gap(
                 patrol.plan_params.body_radius_m,
                 patrol.plan_params.body_radius_m + patrol.grid.meta.resolution,
             )
             rotation_safe = (
                 gap is not None
                 and gap[2] >= 2 * math.pi - 1e-6
-                and min(d for _, d in patrol._local_scan.points)
+                and min(d for _, d in self._state.local_scan.points)
                 > patrol.plan_params.body_radius_m + patrol.grid.meta.resolution
             )
             done = recovery.swept_rad >= 2 * math.pi - patrol.drive.heading_tolerance_rad
             timed_out = (
-                patrol._now_ms - recovery.started_ms >= patrol.nav_params.recovery_scan_timeout_ms
-                or patrol._now_ms
+                self._state.now_ms - recovery.started_ms
+                >= patrol.nav_params.recovery_scan_timeout_ms
+                or self._state.now_ms
                 - (
                     recovery.last_motion_ms
                     if recovery.last_motion_ms is not None
-                    else patrol._now_ms
+                    else self._state.now_ms
                 )
                 >= patrol.nav_params.recovery_motion_timeout_ms
             )
@@ -271,23 +276,24 @@ class BlockageRecovery:
                     0, min(patrol.drive.spin_turn_deg, patrol.nav_params.avoidance_turn_deg)
                 )
                 patrol.avoidance.decide(
-                    "scan", "blockage_rotation_scan", patrol._local_scan.distance()
+                    "scan", "blockage_rotation_scan", self._state.local_scan.distance()
                 )
                 return
             # 주변 몸체 공간을 보증할 수 없으면 회전하지 않고 최신 360도 스캔으로 판단한다.
-            recovery.settling_ms = patrol._now_ms
+            recovery.settling_ms = self._state.now_ms
             patrol.commander.halt()
             return
         patrol.commander.halt()
         if (
-            patrol._last_sent_moving
-            or patrol._local_scan.received_ms is None
-            or patrol._local_scan.received_ms < recovery.settling_ms + patrol.drive.settle_delay_ms
+            self._state.last_sent_moving
+            or self._state.local_scan.received_ms is None
+            or self._state.local_scan.received_ms
+            < recovery.settling_ms + patrol.drive.settle_delay_ms
         ):
             return
         retry = plan_to(
             recovery.target,
-            patrol._target_xy(recovery.target),
+            patrol.target_xy(recovery.target),
             patrol.pose[:2],
             patrol.navigation_grid,
             patrol.blocked,
@@ -297,8 +303,7 @@ class BlockageRecovery:
             costs=patrol.navmap.costs,
         )
         self.active = None
-        patrol._replan_stop_required = False
-        patrol._replan_wait_started_ms = None
+        self._state.replan.clear()
         if retry.reachable:
             patrol.plan, patrol.waypoint_index, patrol.phase = retry, 0, Phase.MOVING
             if any(b.id == recovery.blockage_id for b in self.memory.items):
@@ -306,7 +311,7 @@ class BlockageRecovery:
             patrol.avoidance.decide(
                 "avoid" if recovery.blockage_id is not None else "clear",
                 "detour_planned",
-                patrol._local_scan.distance(),
+                self._state.local_scan.distance(),
             )
             return
         # 전역 격자/기억이 막아도 최신 실제 끝점 사이로 몸이 들어가면 우회한다.
@@ -314,10 +319,10 @@ class BlockageRecovery:
         if patrol.avoidance.start("lidar_corridor"):
             self.report("obstacle_detour", recovery, target=recovery.target)
             return
-        if not patrol._local_scan.complete:
+        if not self._state.local_scan.complete:
             self.active = recovery
             patrol.avoidance.decide(
-                "stop", "corridor_scan_incomplete", patrol._local_scan.distance()
+                "stop", "corridor_scan_incomplete", self._state.local_scan.distance()
             )
             return
         self.fail(recovery, retry.fail_reason)
@@ -327,8 +332,10 @@ class BlockageRecovery:
         patrol = self._patrol
         self.active = None
         patrol.avoidance.active = None
-        patrol._replan_wait_started_ms = None
-        patrol._replan_stop_required = patrol._last_sent_moving or patrol._stopped_since_ms is None
+        self._state.replan.wait_started_ms = None
+        self._state.replan.required = (
+            self._state.last_sent_moving or self._state.stopped_since_ms is None
+        )
         patrol.commander.halt()
         if recovery.target == HOME_LABEL:
             self.wait_patrol()
@@ -338,13 +345,11 @@ class BlockageRecovery:
             patrol.skipped |= {zone}
             self.report("zone_skipped", recovery, zone=zone, reason=reason)
             patrol.route.skip_point()
-        elif patrol._goal is not None:
-            patrol._goal = None
-            patrol._goal_hold = True
-            patrol._goal_hold_reason = "blocked"
+        elif self._state.goal.xy is not None:
+            self._state.goal.hold_at("blocked")
             patrol.plan = Plan(None, fail_reason=reason)
             patrol.phase = Phase.IDLE
-            patrol.avoidance.decide("stop", "goal_unreachable", patrol._local_scan.distance())
+            patrol.avoidance.decide("stop", "goal_unreachable", self._state.local_scan.distance())
             self.report("zone_skipped", recovery, zone=GOAL_LABEL, reason=reason)
         else:
             patrol.skipped |= {recovery.target}
@@ -353,7 +358,7 @@ class BlockageRecovery:
 
     def return_home(self) -> None:
         patrol = self._patrol
-        patrol._goal = None
+        self._state.goal.xy = None
         self.returning_home = True
         patrol.plan = Plan(HOME_LABEL)
         patrol.phase = Phase.PLANNING
@@ -365,7 +370,7 @@ class BlockageRecovery:
         self.waiting = True
         patrol.plan = Plan(None)
         patrol.commander.halt()
-        self.retry_after_ms = patrol._now_ms + patrol.nav_params.blockage_long_ms
+        self.retry_after_ms = self._state.now_ms + patrol.nav_params.blockage_long_ms
         self.wait_memory_ids = {b.id for b in self.memory.items}
         if not self.wait_reported:
             self.report("patrol_unavailable", zone="전체")
