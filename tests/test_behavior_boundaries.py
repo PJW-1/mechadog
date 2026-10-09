@@ -29,17 +29,6 @@ ALLOWED = frozenset(
     }
 )
 
-#: 파일별 비공개 접근 수의 상한 — 줄이면 함께 낮춘다(래칫). 목록 밖 파일은 0 이어야 한다.
-EXPECTED: dict[str, int] = {
-    "arrival.py": 0,
-    "avoidance.py": 0,
-    "localization.py": 0,
-    "nav_map.py": 0,
-    "recovery.py": 0,
-    "relaxed_follow.py": 0,
-    "route_follow.py": 0,
-}
-
 _ATTR_FUNCS = frozenset({"getattr", "setattr", "hasattr", "delattr"})
 
 
@@ -105,11 +94,10 @@ def test_the_scan_counts_attributes_and_string_attribute_calls() -> None:
 
 
 def test_behavior_modules_do_not_reach_into_private_attributes() -> None:
+    """모든 파일이 0 — 새 접근이 생기면 공유 상태나 공개 메서드로 옮긴다."""
     counts = _counts()
-    actual = {name: len(hits) for name, hits in counts.items()}
     detail = {
         name: [f"{line} {owner}.{attr}" for line, owner, attr in hits[:5]]
         for name, hits in counts.items()
-        if actual[name] != EXPECTED.get(name, 0)
     }
-    assert actual == {name: n for name, n in EXPECTED.items() if n}, detail
+    assert not counts, detail
