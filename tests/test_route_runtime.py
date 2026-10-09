@@ -96,7 +96,7 @@ def test_route_refuses_untrusted_start(untrusted: str) -> None:
     controller = build()
     fresh(controller, 1000, (2.0, 2.0, 0.0))
     if untrusted == "unverified":
-        controller._own_localization = True
+        controller.localization.own_localization = True
     accepted, detail = controller.start_route(
         route(RoutePoint(x=1.0, y=1.0)), 2000 if untrusted == "stale" else 1000
     )
@@ -108,7 +108,7 @@ def test_route_refuses_untrusted_start(untrusted: str) -> None:
 def test_route_rejects_wall_crossing_even_when_goto_can_go_around() -> None:
     controller = build()
     controller.grid.cells[10:55, 50] = 3
-    controller._rebuild_masks()
+    controller.navmap.rebuild_masks()
     fresh(controller, 1000, (1.0, 1.0, 0.0))
     assert controller.goto(4.0, 1.0)[0], "벽 끝으로 우회하는 goto는 가능하다"
     accepted, detail = controller.start_route(
@@ -132,7 +132,7 @@ def test_route_aiming_obeys_existing_safety_guards(guard: str) -> None:
     elif guard == "body":
         controller.grid.cells[controller.grid.to_cell(1.0, 1.0)] = 5.0
     elif guard == "trust":
-        controller._own_localization = True
+        controller.localization.own_localization = True
     controller.step(1800 if guard == "stale" else 1200)
     assert controller.commander.intent.type_ == "STOP"
     assert controller.route_status()["point_index"] == 0
@@ -143,7 +143,7 @@ def test_route_blocked_while_moving_does_not_fall_back_to_zone_patrol() -> None:
     fresh(controller, 1000, (1.0, 1.0, 0.0))
     assert controller.start_route(route(RoutePoint(x=4.0, y=1.0)), 1000)[0]
     controller.grid.cells[:, 50:60] = 3
-    controller._rebuild_masks()
+    controller.navmap.rebuild_masks()
     controller.plan = Plan("GOAL")
     controller.step(1000)
     assert controller.route_status()["status"] == "active"
@@ -159,8 +159,8 @@ def test_route_does_not_snap_a_dynamically_blocked_point_elsewhere(after_start):
     saved = route(RoutePoint(x=4.0, y=1.0))
     if after_start:
         assert controller.start_route(saved, 1000)[0]
-    controller._dynamic_seen[controller.grid.to_cell(4.0, 1.0)] = (4.0, 1.0, 1000)
-    controller._refresh_navigation(1000)
+    controller.navmap.dynamic_seen[controller.grid.to_cell(4.0, 1.0)] = (4.0, 1.0, 1000)
+    controller.navmap.refresh(1000)
     if after_start:
         controller.step(1000)
         assert controller.route_status()["status"] == "active"
@@ -309,7 +309,7 @@ def test_interrupted_dwell_requires_full_dwell_after_recovery(interruption):
         controller.step(1200)
         controller.safety.obstacle = False
     elif interruption == "trust":
-        controller._own_localization = True
+        controller.localization.own_localization = True
         controller.step(1200)
         controller.pose_seeded = True
     elif interruption == "alarm":

@@ -73,13 +73,13 @@ def replay(
                 c.note_sent(event["lines"], event["t"])
             elif event["kind"] == "localization" and event.get("updated"):
                 c.observe_map_pose(tuple(event["pose"]), event["t"])
-                c._pose_verified = event["verified"]
+                c.localization.verified = event["verified"]
                 if scans:
                     received, scan = scans[-1]
                     c.observe_obstacle_scan(scan, received)
     c._now_ms = now
     c.pose = (row["pose"][0], row["pose"][1], math.radians(row["pose"][2]))
-    c._blockages.items = [
+    c.recovery.memory.items = [
         Blockage(
             b["id"],
             {grid.to_cell(*p): tuple(p) for p in b["points"]},
@@ -89,7 +89,7 @@ def replay(
         )
         for b in row["blockage"]["obstacles"]
     ]
-    c._refresh_navigation(now)
+    c.navmap.refresh(now)
     trial = plan_to(
         GOAL_LABEL,
         goal,
@@ -103,11 +103,11 @@ def replay(
     c._goal = goal
     c.plan = Plan(GOAL_LABEL)
     c.phase = Phase.PLANNING
-    c._recovery = Recovery(
+    c.recovery.active = Recovery(
         GOAL_LABEL,
         now - 2100,
         c.pose[2],
-        c._blockages.items[0].id if c._blockages.items else None,
+        c.recovery.memory.items[0].id if c.recovery.memory.items else None,
         scanning=True,
         settling_ms=now - 2000,
     )
@@ -117,19 +117,19 @@ def replay(
         "recorded_recovery": row["blockage"]["recovery"],
         "pose": c.pose,
         "plan_reason": trial.fail_reason,
-        "static_body_point_clear": segment_clear(grid, c._body_blocked, c.pose[:2], c.pose[:2]),
-        "dynamic_body_point_clear": segment_clear(grid, c._dynamic, c.pose[:2], c.pose[:2]),
+        "static_body_point_clear": segment_clear(grid, c.navmap.body, c.pose[:2], c.pose[:2]),
+        "dynamic_body_point_clear": segment_clear(grid, c.navmap.dynamic, c.pose[:2], c.pose[:2]),
         "front_m": c._local_scan.distance(),
         "latest_scan_nearest_m": min(d for _, d in c._local_scan.points),
         "nearest_memory_m": min(
-            (math.dist(c.pose[:2], p) for b in c._blockages.items for p in b.points.values()),
+            (math.dist(c.pose[:2], p) for b in c.recovery.memory.items for p in b.points.values()),
             default=None,
         ),
         "last_sent_moving": c._last_sent_moving,
         "stopped_since_ms": c._stopped_since_ms,
     }
     nearest = min(
-        (p for b in c._blockages.items for p in b.points.values()),
+        (p for b in c.recovery.memory.items for p in b.points.values()),
         key=lambda p: math.dist(c.pose[:2], p),
         default=None,
     )
@@ -146,7 +146,7 @@ def replay(
         ),
         "endpoint_clear_exclusion_cells": 2,
     }
-    corridor = c._corridor_to(goal)
+    corridor = c.avoidance.corridor_to(goal)
     result["corridor"] = (
         None
         if corridor is None
@@ -157,7 +157,7 @@ def replay(
             "required_width_m": 2 * (c.plan_params.body_radius_m + c.nav_params.corridor_margin_m),
         }
     )
-    c._recover()
+    c.recovery.step()
     result["after_retry"] = {
         "phase": c.phase.value,
         "goal": c.goal,
@@ -165,19 +165,19 @@ def replay(
         "reason": c.goal_hold_reason,
         "recovery": c.blockage_status["recovery"],
         "local": c.local_status,
-        "avoidance": c._avoidance,
+        "avoidance": c.avoidance.active,
     }
-    if c._avoidance is not None:
+    if c.avoidance.active is not None:
         # 새 정책이 움직이기로 했다면 기록의 정지 궤적을 미래 이동으로 쓰지 않는다.
         # 같은 최신 관측에서 다음 명령 의도까지만 확인한다(실제 송신 없음).
-        c._avoid()
+        c.avoidance.step()
         result["next_intent"] = {
             "type": c.commander.intent.type_,
             "fields": c.commander.intent.fields,
         }
-        if c._avoidance is not None:
+        if c.avoidance.active is not None:
             # 같은 끝점의 좌표계만 선택 방위로 회전한 기하 검사. 실제 후속 센서/궤적 아님.
-            heading = c._avoidance[2]
+            heading = c.avoidance.active[2]
             scan_pose = c._local_scan_pose or c.pose
             points = []
             for a, d in c._local_scan.points:
@@ -188,7 +188,7 @@ def replay(
             scan = scans[-1][1]
             aligned = replace(scan, seq=scan.seq + 1, points=tuple(points))
             c.observe_obstacle_scan(aligned, now)
-            c._avoid()
+            c.avoidance.step()
             result["alignment_geometry_probe"] = {
                 "type": c.commander.intent.type_,
                 "fields": c.commander.intent.fields,

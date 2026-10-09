@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     planning = PlanningService(config, args.device, config_path=config_path, devices_dir=devices)
     controller = build_controller(config, maps, 7)
     controller.zone_map = ZoneMap.load(maps)
-    controller._rebuild_masks()
+    controller.navmap.rebuild_masks()
     controller.pose_seeded = True
     commander = controller.commander
     behavior = Behavior(commander, Fsm(initial="IDLE"))
@@ -403,8 +403,8 @@ def main(argv: list[str] | None = None) -> int:
                         controller.step(now_ms)
                         if controller.stats.zones_visited > visited_count:
                             visited_count = controller.stats.zones_visited
-                            if controller._inspection_zone is not None:
-                                visits.append(controller._inspection_zone)
+                            if controller.arrival.zone is not None:
+                                visits.append(controller.arrival.zone)
                         for event in controller.take_navigation_events():
                             entry = f"ah-sim-{event['judgement']['at_ms']}"
                             # 목업 증거는 물리 마스크의 합성 평면도다. 실물 카메라 사진으로 표시하지 않는다.

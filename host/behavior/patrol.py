@@ -17,48 +17,46 @@ import json
 import math
 import random
 import shutil
-import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 
-from host.behavior.blockage import BlockageMemory, Recovery
+from host.behavior.arrival import ZoneArrival
+from host.behavior.avoidance import LocalAvoidance
+from host.behavior.blockage import Recovery
 from host.behavior.commander import Commander
-from host.behavior.live_nav import LiveClear, LocalScan, NavParams
+from host.behavior.heading import HeadingTracker
+from host.behavior.live_nav import LocalScan, NavParams
+from host.behavior.localization import LocalizationTrust
+from host.behavior.nav_map import NavigationMap
+from host.behavior.patrol_phase import FSM_STATE_FOR, GOAL_LABEL, HOME_LABEL, Phase
 from host.behavior.planner import (
     Plan,
     PlanParams,
-    body_collision_mask,
-    distance_costs,
-    inflate,
-    mark_obstacle,
     min_forward_distance,
     plan_to,
     segment_clear,
 )
-from host.behavior.routes import Route, RoutePoint, validate_route
+from host.behavior.recovery import BlockageRecovery
+from host.behavior.relaxed_follow import RelaxedFollower
+from host.behavior.route_follow import RouteFollower
+from host.behavior.routes import Route
 from host.behavior.scan_gate import ScanGate
 from host.behavior.zone_map import ZoneMap
 from host.behavior.zones import ZoneStore, select_next
 from host.common.config import ConfigError
 from host.common.lidar_link import Scan
 from host.common.logging_setup import EdgeTrigger, event_logger
-from host.common.protocol import FSM_STATES, clamp
+from host.common.protocol import clamp
 from host.common.units import deg_to_rad, rad_to_deg, wrap_pi
-from host.slam.occupancy import MapMeta, OccupancyGrid
+from host.slam.occupancy import OccupancyGrid
 from host.slam.scan_match import (
     MatchParams,
-    MatchResult,
     Pose,
-    global_match,
-    integrate_scan,
-    match,
-    preprocess,
 )
 from host.slam.settings import (
     match_params_from_config,
@@ -69,38 +67,7 @@ from host.slam.settings import (
 LOG = event_logger("mechadog.behavior.patrol")
 
 
-#: 지도에서 사람이 찍은 목표의 계획 라벨 — 구역 id 와 겹치지 않는다(구역 id 는 설정의 짧은 기호).
-GOAL_LABEL = "GOAL"
-HOME_LABEL = "HOME"
 REPLAN_SETTLE_TIMEOUT_MS = 3000
-
-
-class Phase(StrEnum):
-    """순찰 내부 단계. 규약의 상태가 아니며 `FSM_STATE_FOR` 로 사상해 내려보낸다."""
-
-    IDLE = "IDLE"  # 기동 후 순찰 시작 전
-    PLANNING = "PLANNING"  # 다음 구역 선정 · 경로 생성
-    MOVING = "MOVING"  # 웨이포인트 추종
-    AIMING = "AIMING"  # 구역 도착 후 카메라 방위로 제자리 회전
-    INSPECT = "INSPECT"  # 구역 도착 — 카메라 훅
-    LOST = "LOST"  # 측위 실패
-    HALTED = "HALTED"  # 안전 래치 (사람이 풀어야 한다)
-
-
-#: 내부 단계 → FSM 상태 13종 (PROTOCOL.md 2절 `STATE`). 13종 밖의 이름은 로봇이 폐기한다.
-#: `AVOID` 는 내려보내지 않는다 — 반향되면 해제를 알 수 없다 (ADR-22).
-FSM_STATE_FOR: Mapping[Phase, str] = {
-    Phase.IDLE: "IDLE",
-    Phase.PLANNING: "PATROL",
-    Phase.MOVING: "PATROL",
-    Phase.AIMING: "PATROL",
-    Phase.INSPECT: "ZONE_INSPECT",
-    Phase.LOST: "LOST",
-    Phase.HALTED: "FAILSAFE",
-}
-
-# 사상표가 규약과 어긋나면 import 시점에 기동을 막는다.
-assert set(FSM_STATE_FOR.values()) <= FSM_STATES, "FSM 13종에 없는 상태를 사상하고 있다"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,17 +105,6 @@ class DriveParams:
 #: 조향은 규약 상한(±30deg)에 걸리므로, 더 급히 도는 손잡이는 보폭뿐이다. 호 반경
 #: 실측 전이라 설정으로 빼지 않았다.
 TURN_STEP_REDUCTION: float = 0.5
-
-#: 정합 점수가 전체 점수의 이 비율 이상일 때만 그 바퀴를 지도에 적분한다. 낮은 점수의
-#: 자세로 적분하면 틀린 위치에 벽을 찍어 지도가 스스로 오염된다 — 아래에서는
-#: «이 위치가 맞다» 는 정합만 공간 사실로 승격한다.
-MAP_WRITE_MIN_SCORE_FRAC: float = 0.6
-
-#: 지도가 자랐을 때 팽창 마스크를 다시 만드는 간격(적분한 바퀴 수). A* 는
-#: `_blocked` 를 보고 푸는데, 적분으로 새로 «확실히 빈» 셀이 생겨도 팽창이
-#: 옛 지도 그대로면 로봇이 선 자리가 계속 막혀 보인다 (2026-10-02 실기:
-#: 측위는 잠겼는데 시작 셀이 미관측이라 `no_reachable_zone`).
-MAP_INFLATE_EVERY: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,13 +319,7 @@ class PatrolController:
     waypoint_index: int = 0
     safety: SafetyView = field(default_factory=SafetyView)
     stats: PatrolStats = field(default_factory=PatrolStats)
-    _inspection_zone: str | None = None
 
-    _blocked: np.ndarray | None = None
-    _body_blocked: np.ndarray | None = None
-    _mask_frame: tuple[float, float, float] | None = None
-    _dynamic: np.ndarray | None = None
-    _last_pose_ms: int | None = None
     _last_scan_ms: int | None = None
     _local_scan_started_ms: int | None = None
     _stopped_since_ms: int | None = None
@@ -379,227 +329,76 @@ class PatrolController:
     _replan_timeout_hold_ms: int | None = None
     #: 직전 스캔 때의 IMU yaw (rad). 변화량을 내려면 이전 값이 있어야 한다.
     _last_imu_yaw: float | None = None
-    #: 마지막 정합 자세와 그때의 IMU yaw 의 차이 — 스캔 사이에 IMU 로 방위를 전파할 때
-    #: 지도 좌표계로 되돌리는 옵셋이다. 정합될 때마다 다시 맞춘다.
-    _imu_offset: float | None = None
-    #: 지도에 적분한 뒤 팽창을 아직 안 다시 한 바퀴 수.
-    _updates_since_inflate: int = 0
     _reset_requested: bool = False
-    #: 다음 지도 전역 재측위를 허용하는 시각 — 비싼 탐색이라 주기를 제한한다.
-    _reloc_next_ms: int = 0
-    #: 다음 정지 중 전역 감사 시각.
-    _verify_next_ms: int = 0
-    #: 마지막 정합 시도의 적중 비율 — 진단·불신 판정에 쓴다.
-    _match_frac: float = 0.0
-    #: 현재 자세가 지도 전역 탐색으로 확인됐는가 — 참일 때만 스캔을 지도에 적분한다.
-    #: 국소 추적만으로는 틀린 자리를 자신 있게 따라갈 수 있어, 그 동안의 적분은 지도를
-    #: 틀린 모양으로 굳힌다. 전역 확인 전에는 지도를 읽기만 한다.
-    _pose_verified: bool = False
-    #: 마지막 전역 확인 시점의 지도 — 그 뒤 적분이 틀린 것으로 드러나면 여기로 되돌린다.
-    _verified_snapshot: tuple[np.ndarray, Any] | None = None
-    #: 마지막으로 알린 구역 — 바뀔 때만 `zone_entered` 를 남긴다.
-    _last_zone: str | None = None
-    #: 연속된 전역 탐색 결과 — 서로 0.3m 안에서 `reloc_votes` 번 모이면 채택한다.
-    _global_votes: list[Pose] = field(default_factory=list)
-    # ── 전역 탐색 워커 ─────────────────────────────────────────
-    # `global_match` 는 지도 전체를 훑어 실기 PC 에서도 **1~2초**가 걸린다.
-    # `observe_scan` 이 명령 루프 스레드에서 도는데 여기서 동기로 기다리면 명령
-    # 간격이 온보드 워치독(600ms)을 넘어 `ONBOARD_FAILSAFE` 를 낸다(2026-10-04
-    # 실측: 틱 1.9s → 명령 거부 → 래치). 그래서 전역 탐색만 데몬 스레드로 보내고
-    # 결과는 루프 스레드가 `_poll_global` 로 가져와 적용한다 — **상태 변경은
-    # 루프 스레드에서만** 일어나는 규칙을 지키면서 명령은 계속 나간다.
-    #: 제출됐지만 아직 루프가 소비하지 않은 전역 탐색이 있는가 (루프 스레드만 만진다).
-    _global_inflight: bool = False
-    #: 요청 사서함 — 종류, 점, 스캔, 요청 자세, 독립된 읽기 전용 지도 사본.
-    _global_req: tuple[str, np.ndarray, Scan, Pose, OccupancyGrid] | None = None
-    #: 워커가 둔 결과 — (종류, MatchResult|None, 요청 점, 요청 스캔, 요청 때 자세).
-    _global_result: tuple[str, MatchResult | None, np.ndarray, Scan, Pose] | None = None
-    #: 요청 때의 (신선한 IMU yaw | None, 이동 명령 수, 측위 세대, monotonic ms).
-    _global_req_context: tuple[float | None, int, int, int] | None = None
-    #: 측위 세대 — 신뢰 만료 때 올린다. 이전 세대에 요청한 전역 결과는 버린다 (리뷰 지적).
-    _loc_epoch: int = 0
     #: 지금 처리 중인 스캔의 Host 시각 (`observe_scan` 이 찍는다).
     _scan_now_ms: int = 0
-    #: 마지막 표 뒤에 로봇이 움직였는가 (MOVE 송신 또는 IMU 방위 변화) — 표의 독립성.
-    _moved_since_vote: bool = True
-    _imu_at_vote: float | None = None
-    #: 이번 스캔의 IMU 변화량이 실제 측정인가 (신선한 텔레메트리 기준).
-    _imu_delta_fresh: bool = False
-    #: 지금 `pose` 가 관측된 시점의 IMU yaw — 다음 정합의 회전 예측은 «지금 IMU − 이 값».
-    #: 정합이 실패해도 앵커는 그대로라 회전량을 잃지 않고, 전역 채택 때는 그 스캔 시점의
-    #: IMU 로 다시 묶어 이중 반영하지 않는다 (리뷰 지적).
-    _imu_anchor: float | None = None
-    #: 실제로 나간 이동 명령(MOVE 0 이 아님)의 누적 수 — 비동기 결과가 낡았는지 본다.
-    _move_seq: int = 0
-    #: 신뢰를 잃었다고 기록했는가 (`trust_expiry_ms` 넘은 상실).
-    _trust_expired: bool = False
-    #: 마지막 `observe_map_pose` 때의 신선한 IMU yaw (없으면 None) — 복원 기준의 방위.
-    _last_pose_imu: float | None = None
-    #: 마지막 `observe_map_pose` 때의 이동 명령 수·몸체 기울기(pitch, roll rad) — 복원 기준의 시점.
-    _last_pose_moves: int = 0
-    _last_pose_tilt: tuple[float, float] | None = None
-    #: 가장 최근 텔레메트리의 (pitch, roll) rad.
-    _tilt: tuple[float, float] | None = None
-    #: 신뢰 복원 기준 — (확인된 마지막 자세, 그때 IMU yaw, 그 시각, 그때 이동 명령 수).
-    _restore_anchor: tuple[Pose, float, int, int, tuple[float, float] | None] | None = None
-    _restore_votes: list[Pose] = field(default_factory=list)
-    #: 워커에 넘긴 복원 기준 자세와 워커가 낸 창 안 정합 결과 (`_global_cv` 로 보호).
-    _global_req_prior: Pose | None = None
-    #: 워커에 넘긴 탐색 범위 거름 (사람이 알려준 구역) — `_global_cv` 로 보호.
-    _global_req_allowed: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
-    #: 사람이 알려준 구역과 그 시각 — 그 구역 안에서만 전역 재측위한다.
-    _zone_hint: tuple[str, int] | None = None
-    #: 사람이 찍은 현재 위치 (순찰 좌표 x, y, Host 시각).
-    _point_hint: tuple[float, float, int] | None = None
     #: 지도에서 찍은 목표 (순찰 좌표 m). 있으면 구역 순찰보다 먼저 그리로 간다.
     _goal: tuple[float, float] | None = None
     #: 찍은 곳에 도착(또는 못 가게 됨) — 사람이 순찰을 다시 시작할 때까지 그 자리에 선다.
     _goal_hold: bool = False
     #: 대기 이유 — «reached»(찍은 곳 도착) | «blocked»(가는 도중 길이 막힘) | None.
     _goal_hold_reason: str | None = None
-    _route: Route | None = None
-    _route_index: int = 0
-    _route_cycle: int = 1
-    _route_run: int = 0
-    _route_status: str = "idle"
-    _route_phase: str = "moving"
-    _route_dwell_until_ms: int | None = None
-    _route_direct_stopped_ms: int | None = None
-    _route_direct_detour_start: tuple[float, float] | None = None
-    _relaxed_leg_start: tuple[float, float] = (0.0, 0.0)
-    _relaxed_distance: float = math.inf
-    _relaxed_blocked_reported: bool = False
-    #: 새 장애물 연속 확인 후보 — 현장 AG 정책은 후보 단계 없이 바로 끝점을 낸다(항상 None).
-    #: 프레임 수집기(4.8.7)의 `obstacle_pending` 계약을 위해 남긴다.
-    _pending_hit: tuple[float, float] | None = None
-    _relaxed_progress: tuple[tuple[float, float], float, int] | None = (
-        None  # (목표, 최소 거리, 그때 시각)
-    )
-    _relaxed_stuck: bool = False
-    _relaxed_escape_turn: bool = False
-    _last_verified_pose_ms: int | None = None
-    _relaxed_scan: LocalScan = field(init=False)
-    _relaxed_scan_yaw: float = 0.0
-    _relaxed_detouring: bool = False
-    _route_search_base: float | None = None
-    _route_search_index: int = 0
-    _route_search_pause_until: int = 0
-    _route_search_started_ms: int = 0
     _now_ms: int = 0
-    _global_prior_result: MatchResult | None = None
-    #: 지금 적용 중인 전역 결과의 요청 시점 IMU (`_poll_global` 이 채운다).
-    _result_imu: float | None = None
-    _global_cv: threading.Condition = field(
-        default_factory=lambda: threading.Condition(threading.Lock())
-    )
-    _global_thread: threading.Thread | None = None
-    #: 자세가 **내장 스캔 정합**(`observe_scan`)에서 나오는가. 외부 측위(ROS2 `MAP_POSE`·
-    #: 시뮬레이션)가 `observe_map_pose` 로 넣는 자세는 그쪽이 보증하므로 확인 보류를
-    #: 적용하지 않는다.
-    _own_localization: bool = False
     _halt_reason: str = ""
     #: 직전 추종 틱이 제자리 회전이었나 (`steering_for(spinning=)`).
     _spinning: bool = False
     _edge: EdgeTrigger = field(default_factory=EdgeTrigger)
-    _obstacles: list[tuple[float, float]] = field(default_factory=list)
-    #: 아직 아무도 꺼내 가지 않은 신규 장애물 확정 (`take_new_obstacles`).
-    _new_obstacles: list[tuple[float, float]] = field(default_factory=list)
-    _live_clear: LiveClear = field(init=False)
     _local_scan: LocalScan = field(init=False)
-    _dynamic_seen: dict[tuple[int, int], tuple[float, float, int]] = field(default_factory=dict)
-    _local_status: dict[str, Any] = field(default_factory=dict)
-    _avoidance: tuple[float, float, float, int, str] | None = None
-    _needs_escape: bool = False
     _local_scan_pose: Pose | None = None
-    _projected_scan_id: tuple[str, str, int] | None = None
-    _last_obstacle_event_ms: int | None = None
-    _blockages: BlockageMemory = field(init=False)
-    _recovery: Recovery | None = None
-    _nav_events: list[dict[str, Any]] = field(default_factory=list)
     skipped: frozenset[str] = frozenset()
     _home: tuple[float, float] | None = None
-    _returning_home: bool = False
-    _patrol_wait: bool = False
-    _retry_after_ms: int = 0
-    _wait_reported: bool = False
-    _wait_memory_ids: set[int] = field(default_factory=set)
-    _unlocated_reports: dict[str, int] = field(default_factory=dict)
-    _route_skipped_indices: frozenset[int] = frozenset()
-    _costs: np.ndarray | None = None
-    _cost_blocked: np.ndarray | None = None
+    #: IMU 방위 앵커·조향 옵셋 (`host/behavior/heading.py`).
+    heading: HeadingTracker = field(init=False, repr=False, compare=False)
+    #: 측위 상태와 신뢰·전역 탐색 워커 (`host/behavior/localization.py`).
+    localization: LocalizationTrust = field(init=False, repr=False, compare=False)
+    #: 막힘 복구 시도·막힘 기억·항법 사건 (`host/behavior/recovery.py`).
+    recovery: BlockageRecovery = field(init=False, repr=False, compare=False)
+    #: 국소 판단 기록·진행 중인 회피·출발 탈출 (`host/behavior/avoidance.py`).
+    avoidance: LocalAvoidance = field(init=False, repr=False, compare=False)
+    #: 명시 동선과 그 진행 상태 (`host/behavior/route_follow.py`).
+    route: RouteFollower = field(init=False, repr=False, compare=False)
+    #: 느슨한 동선 추종 상태와 조향용 스캔 (`host/behavior/relaxed_follow.py`).
+    relaxed: RelaxedFollower = field(init=False, repr=False, compare=False)
+    #: 막힘 마스크·실시간 장애물·거리 비용 (`host/behavior/nav_map.py`).
+    navmap: NavigationMap = field(init=False, repr=False, compare=False)
+    #: 도착·조준·점검 준비·사이클 마감 (`host/behavior/arrival.py`).
+    arrival: ZoneArrival = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._blockages = BlockageMemory(self.nav_params)
-        self._live_clear = LiveClear(self.nav_params)
+        self.heading = HeadingTracker(self)
+        self.localization = LocalizationTrust(self)
+        self.recovery = BlockageRecovery(self)
+        self.avoidance = LocalAvoidance(self)
+        self.route = RouteFollower(self, steering_for)
+        self.relaxed = RelaxedFollower(self)
+        self.navmap = NavigationMap(self)
+        self.arrival = ZoneArrival(self, steering_for)
         self._local_scan = LocalScan(self.nav_params)
-        self._relaxed_scan = LocalScan(self.nav_params)
-        static = inflate(self.grid, self.plan_params)
-        self._blocked = static
-        self._body_blocked = body_collision_mask(self.grid, self.plan_params)
-        self._dynamic = np.zeros_like(static, dtype=bool)
-        self._mask_frame = (
-            self.grid.meta.resolution,
-            self.grid.meta.origin_x,
-            self.grid.meta.origin_y,
-        )
 
     # ── 조회 ──────────────────────────────────────────────────
     @property
     def navigation_grid(self) -> OccupancyGrid:
-        return self._live_clear.grid(self.grid, self._now_ms, self.plan_params.free_thresh)
+        return self.navmap.live_clear.grid(self.grid, self._now_ms, self.plan_params.free_thresh)
 
     @property
     def local_status(self) -> dict[str, Any]:
-        return {**self._local_status, **self.scan_gate.status}
+        return {**self.avoidance.status, **self.scan_gate.status}
 
     @property
     def blockage_status(self) -> dict[str, Any]:
-        return {
-            "obstacles": self._blockages.status(),
-            "skipped_zones": sorted(self.skipped),
-            "returning_home": self._returning_home,
-            "waiting": self._patrol_wait,
-            "recovery": None
-            if self._recovery is None
-            else {
-                "target": self._recovery.target,
-                "blockage_id": self._recovery.blockage_id,
-                "scanning": self._recovery.scanning,
-                "swept_deg": round(rad_to_deg(self._recovery.swept_rad), 1),
-            },
-        }
+        return self.recovery.status
 
     def take_navigation_events(self) -> tuple[dict[str, Any], ...]:
-        events = tuple(self._nav_events)
-        self._nav_events.clear()
-        return events
+        return self.recovery.take_events()
 
-    def _navigation_event(self, kind: str, recovery: Recovery | None = None, **extra: Any) -> None:
-        item = next(
-            (b for b in self._blockages.items if recovery and b.id == recovery.blockage_id), None
-        )
-        key = kind if kind != "zone_skipped" else f"{kind}:{extra.get('zone')}"
-        if item is not None:
-            if key in item.reported:
-                return
-            item.reported.add(key)
-        elif self._now_ms < self._unlocated_reports.get(key, -1):
-            return
-        else:
-            self._unlocated_reports[key] = self._now_ms + self.nav_params.blockage_long_ms
-        x, y = item.centre if item is not None else self.pose[:2]
-        judgement = {
-            "x": round(x, 3),
-            "y": round(y, 3),
-            "frame": "patrol",
-            "source": "lidar",
-            "blockage_id": item.id if item else None,
-            "severity": "low" if kind == "obstacle_detour" else "medium",
-            "at_ms": self._now_ms,
-            **extra,
-        }
-        self._nav_events.append({"event": kind, "judgement": judgement})
-        LOG.warning(kind, **judgement)
+    @property
+    def _recovery(self) -> Recovery | None:
+        """런타임(`host/runtime.py`)이 읽는 옛 이름 — 시도는 `recovery.active` 가 쥔다."""
+        return self.recovery.active
+
+    def expire_recovery(self, now_ms: int) -> bool:
+        """복구 대기의 시간 한도 (`BlockageRecovery.expire`) — 안전·FSM 관문 뒤에서도 부른다."""
+        return self.recovery.expire(now_ms)
 
     @property
     def fsm_state(self) -> str:
@@ -608,14 +407,14 @@ class PatrolController:
     @property
     def blocked(self) -> np.ndarray:
         """정적 팽창 + 이번 순찰에서 발견한 동적 장애물."""
-        assert self._blocked is not None and self._dynamic is not None
-        return cast(np.ndarray, self._blocked | self._dynamic)
+        assert self.navmap.static is not None and self.navmap.dynamic is not None
+        return cast(np.ndarray, self.navmap.static | self.navmap.dynamic)
 
     @property
     def body_blocked(self) -> np.ndarray:
         """몸체 최소 여유 + 실시간 장애물. 동적 물체는 탈출 예외로 지우지 않는다."""
-        assert self._body_blocked is not None and self._dynamic is not None
-        return cast(np.ndarray, self._body_blocked | self._dynamic)
+        assert self.navmap.body is not None and self.navmap.dynamic is not None
+        return cast(np.ndarray, self.navmap.body | self.navmap.dynamic)
 
     @property
     def target(self) -> str | None:
@@ -623,7 +422,7 @@ class PatrolController:
 
     @property
     def obstacles(self) -> tuple[tuple[float, float], ...]:
-        return tuple(self._obstacles)
+        return tuple(self.navmap.obstacles)
 
     @property
     def halt_reason(self) -> str:
@@ -632,18 +431,18 @@ class PatrolController:
     @property
     def pose_ms(self) -> int | None:
         """`pose` 를 마지막으로 갱신한 시각. 정합에 실패한 스캔은 바꾸지 않는다."""
-        return self._last_pose_ms
+        return self.localization.last_pose_ms
 
     @property
     def match_frac(self) -> float:
         """마지막 정합 시도의 적중 비율 (0~1) — 진단·포즈 불신 표시에 쓴다."""
-        return self._match_frac
+        return self.localization.match_frac
 
     @property
     def pose_verified(self) -> bool:
         """내장 전역 확인 또는 외부 측위 계층이 보증한 자세인가. 신선도는 별도 검사한다."""
-        return self._pose_verified or (
-            not self._own_localization and self._last_pose_ms is not None
+        return self.localization.verified or (
+            not self.localization.own_localization and self.localization.last_pose_ms is not None
         )
 
     @property
@@ -660,14 +459,14 @@ class PatrolController:
 
     def pose_stale(self, now_ms: int) -> bool:
         """측위가 신선하지 않은가 — 한 번도 못 잡았거나 `pose_timeout_ms` 를 넘겼다."""
-        return self._last_pose_ms is None or (
-            now_ms - self._last_pose_ms > self.drive.pose_timeout_ms
+        return self.localization.last_pose_ms is None or (
+            now_ms - self.localization.last_pose_ms > self.drive.pose_timeout_ms
         )
 
     @property
     def obstacle_pending(self) -> bool:
         """새 장애물을 확인 중인가 — 후보는 잡혔지만 연속 확정 횟수에 못 미쳤다."""
-        return self._pending_hit is not None
+        return self.navmap.pending_hit is not None
 
     def take_new_obstacles(self) -> tuple[tuple[float, float], ...]:
         """지난 호출 뒤 확정된 신규 장애물 `(x m, y m)` 을 꺼낸다 — 한 번 꺼내면 비워진다.
@@ -675,8 +474,8 @@ class PatrolController:
         ⚠️ **런타임을 받지 않고 꺼내 가게 한다.** 컨트롤러가 기록·방송 경로를 알면
         소켓 없이 닫히는 시험(이 클래스의 계약)이 깨진다.
         """
-        taken = tuple(self._new_obstacles)
-        self._new_obstacles.clear()
+        taken = tuple(self.navmap.new_obstacles)
+        self.navmap.new_obstacles.clear()
         return taken
 
     def save_map(self, directory: Path | None = None) -> dict[str, Path]:
@@ -687,7 +486,7 @@ class PatrolController:
         `slam_map.orig.*` 로 옆에 둔다. `maps_dir` 도 인자도 없으면 아무것도 안 한다.
         """
         target = directory or self.maps_dir
-        if target is None or not self.live_map_write or not self._pose_verified:
+        if target is None or not self.live_map_write or not self.localization.verified:
             return {}
         target = Path(target)
         # 적분은 정합 지도(match_grid)에 쌓인다 — loc_grid 가 따로 있으면
@@ -714,17 +513,7 @@ class PatrolController:
         )
         pitch, roll = getattr(reading, "pitch", None), getattr(reading, "roll", None)
         if isinstance(pitch, int | float) and isinstance(roll, int | float):
-            self._tilt = (deg_to_rad(float(pitch)), deg_to_rad(float(roll)))
-            anchor = self._restore_anchor
-            if (
-                anchor is not None
-                and anchor[4] is not None
-                and (
-                    abs(self._tilt[0] - anchor[4][0]) > self.reloc_restore_tilt_rad
-                    or abs(self._tilt[1] - anchor[4][1]) > self.reloc_restore_tilt_rad
-                )
-            ):
-                self._drop_restore_anchor("lifted")
+            self.localization.observe_tilt(float(pitch), float(roll))
         if self.safety.obstacle_active or self.safety.latched:
             self._note_stopped(now_ms)
         age = self.safety.last_cmd_age_ms
@@ -741,28 +530,7 @@ class PatrolController:
     # ── 입력: 스캔 ────────────────────────────────────────────
     def observe_map_pose(self, pose: Pose, now_ms: int) -> None:
         """외부 측위가 낸 ``map -> base_link`` 자세를 반영한다 (WBS 5.4.4)."""
-        if not all(math.isfinite(value) for value in pose):
-            return
-        self.pose = (float(pose[0]), float(pose[1]), wrap_pi(float(pose[2])))
-        self._last_pose_ms = now_ms
-        if self.pose_verified:
-            self._last_verified_pose_ms = now_ms
-        # 앵커는 **신선한** IMU 일 때만 — 끊긴 IMU 의 옛 값을 묶어 두면 재개 때 그사이 회전
-        # (LiDAR 가 이미 pose 에 반영한 것)을 다시 더한다 (리뷰 지적).
-        self._imu_anchor = self.safety.yaw_rad if self._imu_is_fresh(now_ms) else None
-        self._last_pose_imu = self._imu_anchor
-        self._last_pose_moves = self._move_seq
-        self._last_pose_tilt = self._tilt
-        self._trust_expired = False
-        zone = self.current_zone
-        if zone != self._last_zone:
-            self._last_zone = zone
-            LOG.info("zone_entered", zone=zone, x=round(self.pose[0], 2), y=round(self.pose[1], 2))
-        imu = self.safety.yaw_rad
-        if imu is not None:
-            # IMU 절대 yaw 는 지도 좌표계와 옵셋이 다르다 — 옵셋을 정합 시점에 맞춰 두면
-            # 다음 스캔 전까지 `imu - offset` 이 지도 방위의 연속 추정치가 된다.
-            self._imu_offset = wrap_pi(imu - self.pose[2])
+        self.localization.observe_pose(pose, now_ms)
         # 재개는 step의 전체 관문에서 한다. 새 tf 하나가 스캔 두절이나
         # 미관측 셀 정지를 해제해서는 안 된다.
 
@@ -777,9 +545,7 @@ class PatrolController:
             if message["type"] == "POSE":
                 self.scan_gate.note_pose(message, sent_ms)
                 # 명령 이전 전역 결과와 표를 복귀 후 신뢰 근거로 승격하지 않는다.
-                self._loc_epoch += 1
-                self._global_votes.clear()
-                self._restore_votes.clear()
+                self.localization.new_epoch()
                 self._local_scan.clear_allowed = False
                 self.scan_gate.status = {"scan_rejected": "pose_settling", "clear_allowed": False}
             if message["type"] == "MOVE" and not (message.get("step") or message.get("angle")):
@@ -789,8 +555,7 @@ class PatrolController:
                 self.scan_gate.note_move(sent_ms)
                 self._last_sent_moving = True
                 self._stopped_since_ms = None
-                self._moved_since_vote = True
-                self._move_seq += 1
+                self.localization.note_move()
             elif message["type"] in ("STOP", "ESTOP", "RESET_SAFE"):
                 self._note_stopped(sent_ms)
 
@@ -810,9 +575,9 @@ class PatrolController:
         rejected = self.scan_gate.check(scan, now_ms)
         self._local_scan.clear_allowed = rejected is None
         if rejected is None:
-            self._relaxed_scan.observe(scan, now_ms, self.range_m)
-            self._relaxed_scan_yaw = self._steering_yaw()
-        self._local_scan_pose = (*self.pose[:2], self._steering_yaw())
+            self.relaxed.scan.observe(scan, now_ms, self.range_m)
+            self.relaxed.scan_yaw = self.heading.steering_yaw()
+        self._local_scan_pose = (*self.pose[:2], self.heading.steering_yaw())
         # 빈 전문/범위 밖 점만 있는 전문은 관측을 복구하지 않는다.
         if rejected is None and any(
             math.isfinite(angle)
@@ -834,262 +599,14 @@ class PatrolController:
             return
         if not self._local_scan.clear_allowed or self.pose_stale(now_ms):
             return
-        self._check_new_obstacle(scan)
+        self.navmap.project_scan(scan)
 
     def observe_scan(self, scan: Scan, now_ms: int) -> None:
         """내장 스캔 정합(시뮬레이션용)으로 측위하고 신규 장애물을 확인한다."""
         self.stats.scans += 1
         if not self._note_scan(scan, now_ms):
             return
-        self._own_localization = True
-        self._expire_trust(now_ms)
-        if not self._local_scan.clear_allowed:
-            self._loc_epoch += 1
-            self._global_votes.clear()
-            self._restore_votes.clear()
-            return
-        _t_all = time.perf_counter()
-        points = preprocess(scan.points, *self.range_m)
-        if not points.size:
-            return
-        self._scan_now_ms = now_ms
-        # 워커가 끝낸 전역 탐색 결과를 먼저 가져온다 — 비어 있으면 즉시 돌아간다.
-        _t0 = time.perf_counter()
-        self._poll_global(now_ms)
-        _t_poll = time.perf_counter() - _t0
-        # ⚠️ **전역 탐색이 도는 동안에도 국소 추적을 멈추지 않는다.** 예전엔 파이썬 루프
-        # 탐색이 GIL 을 쥐어 국소 정합이 17ms→1~2.5s 로 부풀었고, 그래서 탐색 동안 국소
-        # 정합을 쉬게 했다 — 그것이 정지 감사마다(15초) 약 3.3초 LOST 를 만들었다(live_4
-        # 26회). 탐색을 벡터화해 같은 시간 국소 정합이 9ms 로 유지되므로 쉴 이유가 없다.
-        if self.pose_stale(now_ms) and self.reloc_interval_ms > 0:
-            # 한 번도 못 잡았거나 추적이 끊긴 상태 — 국소 창은 추정 위치가 틀리면
-            # 답을 못 찾으니 지도 전체를 거칠게 훑어 다시 잠근다 (FR-6.6).
-            # 비싼 탐색이라 주기를 제한한다.
-            _t1 = time.perf_counter()
-            submitted = False
-            if now_ms >= self._reloc_next_ms:
-                self._reloc_next_ms = now_ms + self.reloc_interval_ms
-                self._relocalize(points, scan, now_ms)
-                submitted = True
-            _t_stale = time.perf_counter() - _t1
-            if _t_stale > 0.2:
-                LOG.warning(
-                    "observe_scan_stale_slow",
-                    ms=round(_t_stale * 1000, 1),
-                    seeded=self.pose_seeded,
-                    last_pose=self._last_pose_ms is not None,
-                )
-            # 탐색을 던졌거나 잡힌 자세 자체가 없으면 여기서 끝. 자세가 있으면 계속
-            # 내려가 국소 창도 돌린다 — 재측위(~1.5초)가 `pose_timeout_ms`(0.5초)보다
-            # 길어 상실 표시가 붙는 사이에도, 시드·갱신된 자세라면 여기서 신선도가
-            # 회복되어 상실이 풀린다 (자세가 정말 틀렸으면 점수 0 이라 갱신이 없어
-            # 상실이 유지되고 다음 전역 탐색이 다시 찾는다). 이 fallthrough 가 없으면
-            # 전역 탐색이 국소 정합을 영원히 굶기는 기아 루프가 된다 (2026-10-03 실측).
-            if self._last_pose_ms is None:
-                return
-            del submitted
-        # ── 정지 중 주기 감사 ── 국소 창만으론 «틀린 자리에 수렴한 잠금»을 스스로
-        # 못 푼다. 서 있는 동안 지도 전체를 훑어 현재 자세가 전역으로도 맞는지 본다.
-        if self.verify_interval_ms > 0 and now_ms >= self._verify_next_ms and self._is_stationary():
-            self._verify_next_ms = now_ms + self.verify_interval_ms
-            self._verify_pose(points, scan, now_ms)
-        # 아직 한 번도 정합되지 않았으면 넓은 창으로 찾는다 — 시드 자세가 배치 오차만큼
-        # 어긋나 있어도 첫 고정은 잡히게. 잡힌 뒤에는 좁은 창으로 추적한다.
-        # 변화량만 넘긴다 — 절대 yaw 는 지도 좌표계와 옵셋이 있다.
-        yaw_delta = self._consume_yaw_delta(now_ms)
-        params = self.match_params
-        if self._last_pose_ms is None and self.first_match_params is not None:
-            params = self.first_match_params
-        elif self._imu_delta_fresh and self.imu_match_params is not None:
-            # 신선한 IMU 가 회전량을 쟀다 — 방위는 IMU 예측 근처에서만 찾는다.
-            params = self.imu_match_params
-        _t2 = time.perf_counter()
-        result = match(self.match_grid, points, self.pose, params, yaw_delta=yaw_delta)
-        _t_match = time.perf_counter() - _t2
-        if _t_match > 0.2:
-            LOG.warning(
-                "observe_scan_match_slow",
-                ms=round(_t_match * 1000, 1),
-                first=params is self.first_match_params,
-                window_m=params.search_lin_m,
-            )
-        self._match_frac = result.score / len(points)
-        if result.skipped or result.score == 0:
-            # 정합 실패 = 측위 상실 (FR-6.6). 점수 0 인 후보로 자세를 갱신하지 않는다.
-            return
-        # ⚠️ 약한 정합(frac 낮음)으로 추적을 끊지 않는다 — 가구 다리가 덜 그려진 자리에서는
-        # **참 위치도 점수가 낮다.** 끊으면 재측위가 더 높은 점수의 엉뚱한 벽으로 로봇을
-        # 옮긴다(실측 재현). 자세의 신뢰는 frac 이 아니라 전역 감사의 반복 일치
-        # (`pose_verified`)로 판단하고, 지도 기록·자율 주행이 그 플래그를 본다.
-        self.observe_map_pose(result.pose, now_ms)
-        self._grow_map(points, result.score)
-        _t0 = time.perf_counter()
-        self._check_new_obstacle(scan)
-        _t_obs = time.perf_counter() - _t0
-        if _t_obs > 0.2 or _t_poll > 0.2:
-            LOG.warning(
-                "observe_scan_phase_slow",
-                poll_ms=round(_t_poll * 1000, 1),
-                obstacle_ms=round(_t_obs * 1000, 1),
-            )
-
-    def _imu_is_fresh(self, now_ms: int) -> bool:
-        seen = self.safety.last_seen_ms
-        return (
-            self.safety.yaw_rad is not None
-            and seen is not None
-            and 0 <= now_ms - seen <= self.imu_fresh_ms
-        )
-
-    def _adopt_with_request_imu(self) -> None:
-        """전역 결과로 자세를 바꾼 직후 — IMU 앵커와 조향 오프셋을 **요청 시점** IMU 로 함께 맞춘다.
-
-        `observe_map_pose` 는 현재 IMU 로 오프셋을 만들지만, 자세는 요청 때 스캔의 것이다.
-        둘이 다르면 다음 정합 실패 동안 조향 방위가 요청 이후 회전을 빠뜨린다 (리뷰 지적).
-        """
-        self._imu_anchor = self._result_imu
-        if self._result_imu is not None:
-            self._imu_offset = wrap_pi(self._result_imu - self.pose[2])
-
-    def _expire_trust(self, now_ms: int) -> None:
-        """측위가 `trust_expiry_ms` 넘게 끊겼다 — «검증됨»·사람 시드의 신뢰를 버린다.
-
-        그 사이 로봇이 들려 옮겨졌을 수 있어, 예전 확인이나 처음 받은 시드를 근거로 계속
-        주행·지도 기록을 허용하면 안 된다. 자세값 자체는 두고(전역 탐색의 출발점) 신뢰만 내린다.
-        """
-        if (
-            self.trust_expiry_ms <= 0
-            or self._trust_expired
-            or self._last_pose_ms is None
-            or now_ms - self._last_pose_ms <= self.trust_expiry_ms
-        ):
-            return
-        self._trust_expired = True
-        self._loc_epoch += 1
-        if (
-            self.reloc_restore_enabled
-            and self._pose_verified
-            and self._last_pose_imu is not None
-            and self._last_pose_tilt is not None
-        ):
-            # 사람 시드는 기준으로 쓰지 않는다 — 전역 확인된 자세만 «제자리» 의 근거다.
-            # 이동 수·기울기는 **자세를 관측한 시점** 것 — 그 뒤 나간 MOVE 는 «이동» 이다.
-            self._restore_anchor = (
-                self.pose,
-                self._last_pose_imu,
-                self._last_pose_ms,
-                self._last_pose_moves,
-                self._last_pose_tilt,
-            )
-            self._restore_votes.clear()
-            LOG.info(
-                "restore_anchor_set",
-                x=round(self.pose[0], 2),
-                y=round(self.pose[1], 2),
-                yaw_deg=round(rad_to_deg(self.pose[2]), 1),
-            )
-        if self._pose_verified or self.pose_seeded:
-            LOG.warning(
-                "localization_trust_expired",
-                lost_ms=now_ms - self._last_pose_ms,
-                was_verified=self._pose_verified,
-                was_seeded=self.pose_seeded,
-            )
-        self._pose_verified = False
-        self.pose_seeded = False
-        self._global_votes.clear()
-
-    def _min_match_score(self, points: np.ndarray) -> int:
-        """**새 고정**(전역 재측위·시드 시작)의 채택 하한 — 연속 추적에는 적용하지 않는다."""
-        return max(1, math.ceil(self.min_match_frac * len(points)))
-
-    def _relocalize(self, points: np.ndarray, scan: Scan, now_ms: int) -> None:
-        """지도 전역 재측위 — 국소 창이 풀 수 없는 잠김(오정합·임의 배치)을 연다.
-
-        신뢰 순서는 **사람이 준 시드 > 전역 탐색 > 국소 추적**이다. 지도가 아직 덜 채워진
-        자리(가구 다리·책상 밑)에서는 전역 최적이 엉뚱한 벽에 얹힐 수 있어, 첫 고정은
-        시드가 있으면 시드 주변에서 잡고 전역 탐색은 그 뒤 **감사**로만 쓴다.
-        """
-        if self._last_pose_ms is None and self._seed_fallback(points, scan, now_ms):
-            return
-        self._submit_global("reloc", points, scan)
-
-    # ── 전역 탐색 비동기 실행 ─────────────────────────────────
-    # 동기로 돌리면 1~2초 동안 명령이 멈춰 온보드 워치독이 `ONBOARD_FAILSAFE` 를
-    # 건다 — 탐색만 워커 스레드로 보내고, 결과 해석(투표·채택·지도 쓰기·장애물
-    # 표시)은 루프 스레드가 `_poll_global` 에서 한다. 워커는 `match_grid` 를
-    # 요청 시점의 독립 사본만 읽는다. 적분·팽창·복원이 워커의 셀/메타를 바꿀 수 없다.
-
-    def _ensure_global_worker(self) -> None:
-        if self._global_thread is not None and self._global_thread.is_alive():
-            return
-        self._global_thread = threading.Thread(
-            target=self._global_worker_main,
-            name="patrol-global-match",
-            daemon=True,
-        )
-        self._global_thread.start()
-
-    def _global_worker_main(self) -> None:
-        while True:
-            with self._global_cv:
-                while self._global_req is None:
-                    self._global_cv.wait()
-                kind, points, scan, asked_pose, match_grid = self._global_req
-                prior = self._global_req_prior
-                allowed = self._global_req_allowed
-                self._global_req = None
-                self._global_req_prior = None
-                self._global_req_allowed = None
-            try:
-                result = global_match(
-                    match_grid,
-                    points,
-                    lin_step_m=self.global_match_lin_step_m,
-                    ang_step_rad=self.global_match_ang_step_rad,
-                    occ_thresh=self.match_params.occ_thresh,
-                    min_known_cells=self.match_params.min_known_cells,
-                    free_thresh=self.plan_params.free_thresh,
-                    sigma_m=self.match_params.sigma_m,
-                    full_scan_ambiguity=self.global_full_scan_ambiguity,
-                    allowed=allowed,
-                )
-            except Exception as exc:  # noqa: BLE001 — 결과를 안 두면 inflight 가 영영 안 풀린다
-                LOG.error("global_match_failed", error=f"{type(exc).__name__}: {exc}")
-                result = None
-            prior_result = None
-            if prior is not None and result is not None:
-                try:
-                    prior_result = match(match_grid, points, prior, self._restore_params())
-                except Exception as exc:  # noqa: BLE001 — 복원은 덤이다, 전역 결과는 살린다
-                    LOG.error("restore_match_failed", error=f"{type(exc).__name__}: {exc}")
-            with self._global_cv:
-                self._global_prior_result = prior_result
-                self._global_result = (kind, result, points, scan, asked_pose)
-
-    def _submit_global(self, kind: str, points: np.ndarray, scan: Scan) -> bool:
-        """전역 탐색을 워커에 맡긴다. 이미 한 건이 진행 중이면 놓친다(False)."""
-        if self._global_inflight:
-            return False
-        cells, meta = self.match_grid.snapshot()
-        cells.setflags(write=False)
-        match_grid = OccupancyGrid(meta, cells)
-        self._ensure_global_worker()
-        self._global_inflight = True
-        self._global_req_context = (
-            self.safety.yaw_rad if self._imu_is_fresh(self._scan_now_ms) else None,
-            self._move_seq,
-            self._loc_epoch,
-            self.wall_clock_ms(),
-        )
-        prior = self._restore_prior(self._scan_now_ms) if kind == "reloc" else None
-        allowed = self._zone_filter(self._scan_now_ms) if kind == "reloc" else None
-        with self._global_cv:
-            self._global_req = (kind, points.copy(), scan, self.pose, match_grid)
-            self._global_req_prior = prior
-            self._global_req_allowed = allowed
-            self._global_cv.notify()
-        return True
+        self.localization.track_scan(scan, now_ms)
 
     @property
     def goal(self) -> tuple[float, float] | None:
@@ -1114,7 +631,7 @@ class PatrolController:
         """
         if not (math.isfinite(x) and math.isfinite(y)):
             return False, "좌표가 숫자가 아니다"
-        if self._own_localization and not (self._pose_verified or self.pose_seeded):
+        if self.localization.untrusted:
             return False, "로봇이 아직 자기 위치를 확인하지 못했다 — 위치를 먼저 잡아야 한다"
         trial = plan_to(
             GOAL_LABEL,
@@ -1138,15 +655,15 @@ class PatrolController:
             and self.grid.inside(*self.grid.to_cell(x, y))
             and not self.pose_stale(self._now_ms)
             and self._local_scan.fresh(self._now_ms)
-            and self._corridor_to((x, y)) is not None
+            and self.avoidance.corridor_to((x, y)) is not None
         )
         if not trial.reachable and not can_escape:
             return False, f"지금 자리에서 그곳으로 가는 길이 없다 ({trial.fail_reason})"
         if not keep_route:
-            self.cancel_route("replaced", hold=False)
-        self._inspection_zone = None
-        self._recovery = None
-        self._avoidance = None
+            self.route.cancel("replaced", hold=False)
+        self.arrival.zone = None
+        self.recovery.active = None
+        self.avoidance.active = None
         self._replan_stop_required = False
         self._replan_wait_started_ms = None
         self._goal = (float(x), float(y))
@@ -1168,9 +685,9 @@ class PatrolController:
 
     def cancel_goal(self, reason: str) -> None:
         """찍은 목표를 버리고 구역 순찰로 돌아갈 수 있게 한다 (순찰 정지·재시작)."""
-        self.cancel_route("stopped", hold=False)
-        self._avoidance = None
-        self._recovery = None
+        self.route.cancel("stopped", hold=False)
+        self.avoidance.active = None
+        self.recovery.active = None
         self._replan_stop_required = False
         self._replan_wait_started_ms = None
         if self._goal is None and not self._goal_hold:
@@ -1183,550 +700,27 @@ class PatrolController:
             self.plan = Plan(None)
         self.phase = Phase.PLANNING
 
+    # ── 동선 (`RouteFollower` 에 위임 — 런타임·시험이 쓰는 이름) ──────────
     @property
     def route_active(self) -> bool:
-        return self._route is not None and self._route_status == "active"
+        return self.route.active
 
     @property
     def route_visit(self) -> tuple[int, int, int] | None:
-        """같은 구역도 명시 동선의 다른 방문이면 카메라 점검을 다시 연다."""
-        return (
-            (self._route_run, self._route_cycle, self._route_index) if self.route_active else None
-        )
+        return self.route.visit
 
     @property
     def route_controls_inspection(self) -> bool:
-        return self.route_active or bool(
-            self._goal_hold_reason and self._goal_hold_reason.startswith("route_")
-        )
+        return self.route.controls_inspection
 
     def route_status(self) -> dict[str, Any] | None:
-        """루프가 관제 스냅샷에 넣는 동선 진행 상황. 좌표는 순찰 좌표다."""
-        route = self._route
-        if route is None:
-            return None
-        return {
-            "id": route.id,
-            "name": route.name,
-            "point_index": self._route_index,
-            "point_count": len(route.points),
-            "cycle": self._route_cycle,
-            "repeat": route.repeat,
-            "status": self._route_status,
-            "phase": self._route_phase,
-            "points": [point.model_dump() for point in route.points],
-            "dwell_remaining_s": max(
-                0.0, ((self._route_dwell_until_ms or self._now_ms) - self._now_ms) / 1000
-            ),
-        }
+        return self.route.summary()
 
     def start_route(self, route: Route, now_ms: int) -> tuple[bool, str]:
-        """동선과 첫 접근을 검증하고 직접 추종 또는 기존 goto로 예약한다."""
-        if self.phase is Phase.HALTED or self.safety.latched:
-            return False, "안전 정지를 해제한 뒤 동선을 시작해야 한다"
-        located = (
-            self._relaxed_pose_available(now_ms)
-            if self.nav_params.relaxed_follow
-            else not self.pose_stale(now_ms)
-            and (not self._own_localization or self._pose_verified or self.pose_seeded)
-        )
-        if not located:
-            return False, "로봇이 아직 자기 위치를 확인하지 못했다 — 위치를 먼저 잡아야 한다"
-        validation = validate_route(route, self.navigation_grid, self.plan_params)
-        if not validation["valid"]:
-            return False, "동선이 벽·미관측 공간·로봇 여유 반경을 지난다 — 지점을 고쳐야 한다"
-        first = route.points[0]
-        if self.nav_params.relaxed_follow or self.nav_params.route_direct:
-            # 현재→첫 점도 직선으로 갈 수 있어야 한다. 기억/동적 마스크는
-            # 미리보기의 저장 지도 검증에 더하지 않고 실시간 거리로 다룬다.
-            if not self.nav_params.relaxed_follow and not segment_clear(
-                self.navigation_grid,
-                inflate(self.navigation_grid, self.plan_params)
-                | body_collision_mask(self.navigation_grid, self.plan_params),
-                self.pose[:2],
-                (first.x, first.y),
-            ):
-                return False, "첫 지점까지 직접 가는 선이 벽·미관측 공간을 지난다"
-            self.cancel_route("replaced", hold=False)
-            self._inspection_zone = None
-            self._goal = (first.x, first.y)
-            self._goal_hold = False
-            self._goal_hold_reason = None
-            self.plan, self.phase = Plan(GOAL_LABEL), Phase.PLANNING
-            self._replan_stop_required = False
-            self._replan_wait_started_ms = None
-            self._spinning = False
-        else:
-            accepted, detail = self.goto(first.x, first.y, exact_goal=True)
-            if not accepted:
-                return False, detail
-        self._route = route
-        self._route_run += 1
-        self._route_index = 0
-        self._route_cycle = 1
-        self._route_status = "active"
-        self._relaxed_progress, self._relaxed_stuck = None, False
-        self._relaxed_blocked_reported = False
-        self.skipped = frozenset()
-        self._route_skipped_indices = frozenset()
-        self._route_phase = "moving"
-        self._route_dwell_until_ms = None
-        self._route_direct_stopped_ms = None
-        self._route_direct_detour_start = None
-        self._relaxed_leg_start = self.pose[:2]
-        self._route_search_base = None
-        self._relaxed_detouring = False
-        self._relaxed_distance = math.inf
-        self._relaxed_blocked_reported = False
-        self._now_ms = now_ms
-        self.commander.halt()
-        return True, f"동선 ‘{route.name}’의 {len(route.points)}개 지점을 차례로 주행한다"
+        return self.route.start(route, now_ms)
 
     def cancel_route(self, reason: str = "stopped", *, hold: bool = True) -> None:
-        """동선과 대기를 취소한다. 완료·막힘도 자동 구역 순찰로 흘러가지 않는다."""
-        self._relaxed_escape_turn = False
-        self._route_search_base = None
-        self._relaxed_detouring = False
-        self._avoidance = None
-        self._recovery = None
-        self._patrol_wait = self._returning_home = False
-        self._route_direct_stopped_ms = None
-        self._route_direct_detour_start = None
-        if not self.route_active:
-            return
-        self._route_status = reason
-        self._route_phase = reason
-        self._relaxed_progress, self._relaxed_stuck = None, False
-        self._route_dwell_until_ms = None
-        self._inspection_zone = None
-        self._goal = None
-        self._goal_hold = hold
-        self._goal_hold_reason = f"route_{reason}" if hold else None
-        self.plan = Plan(None)
-        self.phase = Phase.PLANNING
-        self.commander.halt()
-
-    def _route_point(self) -> RoutePoint:
-        assert self._route is not None
-        return self._route.points[self._route_index]
-
-    def _route_aim_error(self) -> float:
-        aim = self._route_point().aim_deg
-        return 0.0 if aim is None else wrap_pi(deg_to_rad(aim) - self._steering_yaw())
-
-    def _reset_route_dwell(self) -> None:
-        if self.route_active and self._route_phase != "moving":
-            self._route_phase = "aiming"
-            self._route_dwell_until_ms = None
-            self._inspection_zone = None
-            self._route_search_base = None
-
-    def _search_route_person(self) -> None:
-        """도착 방향의 좌우를 제자리 탐색한다. dwell 마감은 회전 중에도 유지한다."""
-        assert self._route_search_base is not None
-        if self._now_ms >= (self._route_dwell_until_ms or 0):
-            self._route_search_base = None
-            self.commander.halt()  # 탐색 회전 의도가 다음 지점 첫 틱에 남지 않게 (10-06 현장 검수)
-            self._next_route_point()
-            return
-        if (
-            not self._local_scan.clear_allowed
-            or self._local_scan.received_ms is None
-            or not 0
-            <= self._now_ms - self._local_scan.received_ms
-            <= self.nav_params.scan_max_age_ms
-        ):
-            self.commander.halt()
-            return
-        extent = deg_to_rad(self._route_point().search_deg or 0.0)
-        offsets = (extent, -extent, 0.0)
-        # 짧은 dwell에서도 한쪽 회전만 하다 끝나지 않게 좌/우/중앙에 시간을 나눈다.
-        duration = max(1, (self._route_dwell_until_ms or 0) - self._route_search_started_ms)
-        slot = min(2, (self._now_ms - self._route_search_started_ms) * 3 // duration)
-        self._route_search_index = max(self._route_search_index, slot)
-        self.phase = Phase.INSPECT
-        self._route_phase = "search"
-        if self._now_ms < self._route_search_pause_until or self._route_search_index >= len(
-            offsets
-        ):
-            self.commander.halt()
-            return
-        error = wrap_pi(
-            self._route_search_base + offsets[self._route_search_index] - self._steering_yaw()
-        )
-        if abs(error) <= self.drive.heading_tolerance_rad:
-            self.commander.halt()
-            self._route_search_index += 1
-            self._route_search_pause_until = self._now_ms + self.nav_params.route_search_pause_ms
-            return
-        # 회전 중에도 일정 간격으로 멈춰 새 카메라 프레임을 받는다.
-        elapsed = self._now_ms - self._route_search_pause_until
-        if elapsed >= self.nav_params.route_search_pause_ms:
-            self.commander.halt()
-            self._route_search_pause_until = self._now_ms + self.nav_params.route_search_pause_ms
-            return
-        limit = min(abs(self.drive.spin_turn_deg), self.nav_params.route_search_turn_deg)
-        self.commander.drive(0.0, math.copysign(min(limit, rad_to_deg(abs(error))), error))
-
-    def _advance_route_arrival(self) -> None:
-        point = self._route_point()
-        if self._route_search_base is not None:
-            self._search_route_person()
-            return
-        if not self._relaxed_route and (
-            math.dist(self.pose[:2], (point.x, point.y)) >= self.drive.arrival_radius_m
-        ):
-            # 경보·측위 복구 뒤 다른 자리에 있으면 먼저 같은 지점으로 다시 접근한다.
-            self._route_phase = "moving"
-            self._route_dwell_until_ms = None
-            self._inspection_zone = None
-            self.phase = Phase.PLANNING
-            self.plan = Plan(GOAL_LABEL)
-            self.commander.halt()
-            return
-        error = self._route_aim_error()
-        if abs(error) > self.drive.heading_tolerance_rad:
-            self._route_phase = "aiming"
-            self._route_dwell_until_ms = None
-            self._inspection_zone = None
-            self.phase = Phase.AIMING
-            steering = steering_for(error, self.drive, spinning=True)
-            self._spinning = True
-            self.commander.drive(
-                0.0,
-                clamp(
-                    steering.angle_deg,
-                    -abs(self.drive.spin_turn_deg),
-                    abs(self.drive.spin_turn_deg),
-                ),
-            )
-            return
-        self.commander.halt()
-        self._spinning = False
-        self.phase = Phase.INSPECT
-        if self._route_dwell_until_ms is None:
-            self._route_phase = "dwell"
-            self._route_dwell_until_ms = self._now_ms + int((point.dwell_s or 0.0) * 1000)
-            if self.nav_params.route_person_search and point.search_deg:
-                self._route_search_base = self._steering_yaw()
-                self._route_search_index = 0
-                self._route_search_started_ms = self._now_ms
-                self._route_search_pause_until = (
-                    self._now_ms + self.nav_params.route_search_pause_ms
-                )
-                self._route_phase = "search"
-            # 영역 지도가 있으면 이름 없는 동선 점도 실제 소속 구역을 점검한다.
-            # 지도 없는 기존 동선은 명시한 앵커 라벨만 사용한다.
-            self._inspection_zone = (
-                self.current_zone
-                if self.zone_map is not None
-                else point.label
-                if point.label in self.zones.labels
-                else None
-            )
-            # 적어도 한 틱 동안 도착 상태를 공개하여 다음 카메라 프레임이 소비하게 한다.
-            return
-        if self._now_ms < self._route_dwell_until_ms:
-            return
-        label = self._inspection_zone
-        if (
-            label is not None
-            and self.wait_for_inspection is not None
-            and self.wait_for_inspection(label)
-        ):
-            self._route_phase = "inspection"
-            return
-        self._next_route_point()
-
-    def _next_route_point(self) -> None:
-        route = self._route
-        assert route is not None
-        if self._inspection_zone is not None:
-            self.stats.zones_visited += 1
-        index = self._route_index + 1
-        if index == len(route.points):
-            self.stats.cycles += 1
-            if route.repeat and self._route_cycle >= route.repeat:
-                self.cancel_route("completed")
-                return
-            index = 0
-            self._route_cycle += 1
-            self.skipped = frozenset()
-            self._route_skipped_indices = frozenset()
-        self._relaxed_leg_start = (self._route_point().x, self._route_point().y)
-        self._relaxed_distance = math.inf
-        self._relaxed_blocked_reported = False
-        self._route_index = index
-        self._route_search_base = None
-        self._relaxed_detouring = False
-        point = route.points[index]
-        # 동적 막힘은 다음 지점도 정지·스캔·우회/건너뛰기로 처리한다.
-        self._goal = (point.x, point.y)
-        self._goal_hold = False
-        self._goal_hold_reason = None
-        self.plan, self.phase = Plan(GOAL_LABEL), Phase.PLANNING
-        self._route_phase = "moving"
-        self._route_dwell_until_ms = None
-        self._route_direct_stopped_ms = None
-        self._route_direct_detour_start = None
-        self._spinning = False
-
-    @property
-    def _relaxed_route(self) -> bool:
-        return self.nav_params.relaxed_follow and self.route_active and not self._returning_home
-
-    def _relaxed_pose_available(self, now_ms: int) -> bool:
-        verified = self._last_verified_pose_ms
-        return (
-            self._last_pose_ms is not None
-            and verified is not None
-            and 0 <= now_ms - verified <= 2000
-        )
-
-    def _relaxed_stuck_check(
-        self, target: tuple[float, float], distance: float, front: float | None
-    ) -> bool:
-        """목표까지 거리가 정해진 시간 동안 0.1m 도 줄지 않으면 «길 막힘» 을 한 번 알리고 선다.
-
-        앞(±30°)이 0.45m 넘게 열리면 풀고 다시 따라간다 — 사람이 장애물을 치운 경우다.
-        정면 정지·탈출 회전을 끝없이 되풀이하는 것을 막는다(2026-10-06 목업: 침실 문 막힘).
-        """
-        prog = self._relaxed_progress
-        if prog is None or prog[0] != target or distance < prog[1] - 0.10:
-            self._relaxed_progress = (target, distance, self._now_ms)
-            if prog is not None and prog[0] != target:
-                self._relaxed_stuck = False
-            prog = self._relaxed_progress
-        if self._relaxed_stuck:
-            if front is None or front > 0.45:
-                self._relaxed_stuck = False
-                self._relaxed_blocked_reported = False
-                self._relaxed_progress = (target, distance, self._now_ms)
-                return False
-            self.commander.halt()
-            self._local_decision("stop", "relaxed_stuck_wait", front)
-            return True
-        # 정면이 실제로 막혔을 때만 «길 막힘» — 문틀 앞에서 느려진 것을 막힘으로 보지 않는다
-        # (2026-10-06 실기: 침실 문 앞 정면 0.56m 에서 오판해 계속 대기).
-        if front is None or front > 0.35:
-            self._relaxed_progress = (
-                (target, min(distance, prog[1]), self._now_ms)
-                if front is None or front > 0.45
-                else prog
-            )
-            return False
-        if self._now_ms - prog[2] >= self.nav_params.relaxed_stuck_ms:
-            self._relaxed_stuck = True
-            self.commander.halt()
-            self._local_decision("stop", "relaxed_stuck_wait", front)
-            if not self._relaxed_blocked_reported:
-                self._navigation_event("path_blocked", message="길 막힘")
-                self._relaxed_blocked_reported = True
-            return True
-        return False
-
-    def _follow_relaxed(self) -> None:
-        """동선만 단순 추종한다. 안전/측위 외에는 복구 관문을 열지 않는다."""
-        self._avoidance = self._recovery = None
-        self._needs_escape = self._replan_stop_required = False
-        scan = self._relaxed_scan
-        front = min_forward_distance(self._local_scan.points, math.radians(30))
-        stopped = front is not None and front <= 0.25
-        if stopped and self._route_direct_stopped_ms is None:
-            self._route_direct_stopped_ms = self._now_ms
-        if not stopped:
-            self._route_direct_stopped_ms = None
-            self._relaxed_escape_turn = False
-        if self._route_phase != "moving":
-            if stopped:
-                self.commander.halt()
-                self._local_decision("stop", "relaxed_front_stop", front)
-            else:
-                self._advance_route_arrival()
-            return
-        point = self._route_point()
-        target = (point.x, point.y)
-        distance = math.dist(self.pose[:2], target)
-        sx, sy = self._relaxed_leg_start
-        vx, vy = point.x - sx, point.y - sy
-        px, py = self.pose[0] - sx, self.pose[1] - sy
-        length = math.hypot(vx, vy)
-        passed = (
-            length > 1e-6
-            and px * vx + py * vy >= length * length
-            and abs(px * vy - py * vx) / length <= self.drive.arrival_radius_m
-            and distance > self._relaxed_distance
-        )
-        self._relaxed_distance = distance
-        if distance <= self.drive.arrival_radius_m or passed:
-            self._relaxed_progress, self._relaxed_stuck = None, False
-            self._arrive(GOAL_LABEL)
-            return
-        if self.nav_params.relaxed_stuck_hold and self._relaxed_stuck_check(
-            target, distance, front
-        ):
-            return
-        self.plan = Plan(GOAL_LABEL, (self.pose[:2], target), distance, effective=target)
-        self.phase = Phase.MOVING
-        # 기울어진 스캔은 조향에 덮어쓰지 않는다. 마지막 정상 바퀴도 2초를 넘기면 정지.
-        max_age = self.nav_params.scan_max_age_ms if self._local_scan.clear_allowed else 2000
-        if scan.received_ms is None or not 0 <= self._now_ms - scan.received_ms <= max_age:
-            self.commander.halt()
-            self._route_direct_stopped_ms = None
-            self._local_decision("stop", "relaxed_scan_unavailable", front)
-            return
-        heading = math.atan2(point.y - self.pose[1], point.x - self.pose[0])
-        scan_yaw = self._relaxed_scan_yaw
-        goal_heading = wrap_pi(heading - scan_yaw)
-        chosen = scan.open_heading(
-            goal_heading, travel_m=0.7 if self.nav_params.relaxed_walk_detour else 0.35
-        )
-        if chosen is None:
-            self.commander.halt()
-            self._local_decision("stop", "relaxed_path_blocked", front)
-            count = round(360 / self.nav_params.gap_bin_deg)
-            covered = {round(a / (2 * math.pi / count)) % count for a, _ in scan.points}
-            if len(covered) >= 0.9 * count and not self._relaxed_blocked_reported:
-                self._navigation_event("path_blocked", message="길 막힘")
-            self._relaxed_blocked_reported = True
-            return
-        self._relaxed_blocked_reported = False
-        deviation = abs(wrap_pi(chosen - goal_heading))
-        target_obstacle = min(
-            (
-                d
-                for a, d in scan.points
-                if d * math.cos(a - goal_heading) > 0
-                and abs(d * math.sin(a - goal_heading)) <= 0.20
-            ),
-            default=math.inf,
-        )
-        detouring = (
-            deviation >= math.radians(self.nav_params.relaxed_detour_angle_deg)
-            and target_obstacle <= self.nav_params.relaxed_detour_distance_m
-        )
-        if (
-            self.nav_params.relaxed_detour_notice
-            and detouring
-            and not self._relaxed_detouring
-            and not stopped
-        ):
-            self._navigation_event("obstacle_detour", target=self.plan.label)
-        self._relaxed_detouring = detouring
-        error = wrap_pi(scan_yaw + chosen - self._steering_yaw())
-        if stopped:
-            self.commander.halt()
-            self._local_decision("stop", "relaxed_front_stop", front)
-            since = self._route_direct_stopped_ms
-            actual_stop = self._stopped_since_ms
-            if not self._relaxed_escape_turn and (
-                since is None
-                or actual_stop is None
-                or self._last_sent_moving
-                or self._now_ms - max(since, actual_stop) < 3000
-            ):
-                return
-            self._relaxed_escape_turn = True
-            self.commander.drive(0.0, math.copysign(abs(self.drive.spin_turn_deg), error))
-            self._local_decision("turn", "relaxed_escape_turn", front)
-            return
-        # 2026-10-06 실기: 걸으며 호 조향은 약해서 보행 우편향을 못 이기고(오른쪽으로 밀려 방1 벽 앞
-        # 정지), 몸도 기운다(10-04 roll +17~26°). 오차가 8° 넘으면 멈춰서 제자리 회전으로 바로잡고,
-        # 그 안이면 조향 없이 직진한다 — 매 틱 측위 방위로 다시 재므로 폐루프다.
-        # 2026-10-06 사용자: 제자리 회전으로 자주 멈추면 느리다 → 30° 안은 걸으면서 조향.
-        # 예전 호 조향은 약해서(turn_deg·비율) 우편향을 못 이겼다 — 오차 1°당 1.2° 로 강하게, 상한 25°.
-        spin = abs(error) > math.radians(30) or (self._spinning and abs(error) > math.radians(15))
-        walking_detour = (
-            self.nav_params.relaxed_walk_detour
-            and 0 < deviation <= math.radians(60)
-            and abs(error) <= math.radians(60)
-            and abs(wrap_pi(heading - self._steering_yaw())) <= math.radians(60)
-        )
-        if walking_detour:
-            spin = False
-        self._spinning = spin
-        if spin:
-            self.commander.drive(0.0, math.copysign(self.drive.spin_turn_deg, error))
-        else:
-            angle = max(-25.0, min(25.0, math.degrees(error) * 1.2))
-            if abs(math.degrees(error)) <= 3.0:
-                angle = 0.0
-            self.commander.drive(self.drive.step_mm * (0.5 if walking_detour else 1.0), angle)
-        self._local_decision("turn" if spin else "clear", "relaxed_follow", front)
-
-    @property
-    def _route_direct_moving(self) -> bool:
-        return (
-            self.nav_params.route_direct
-            and self.route_active
-            and self._route_phase == "moving"
-            and self._goal is not None
-            and not self._returning_home
-        )
-
-    def _route_direct_obstacle_stop(self) -> None:
-        """장애물 정지만 계시한다. 측위/스캔/안전 상실은 회피 자격이 아니다."""
-        if self._relaxed_route:
-            self._route_direct_stopped_ms = None
-            self._relaxed_escape_turn = False
-            return
-        if self._own_localization and not (self._pose_verified or self.pose_seeded):
-            self._route_direct_stopped_ms = None
-            return
-        if not self._route_direct_moving or self._route_direct_detour_start is not None:
-            return
-        if self._route_direct_stopped_ms is None:
-            self._route_direct_stopped_ms = self._now_ms
-        stopped = self._stopped_since_ms
-        if (
-            self._last_sent_moving
-            or stopped is None
-            or self._now_ms - max(stopped, self._route_direct_stopped_ms)
-            < self.nav_params.route_direct_stop_ms
-        ):
-            return
-        self._route_direct_detour_start = self.pose[:2]
-        # AO의 실제 끝점 통로를 먼저 사용하고, 없으면 기존 정지/스캔/우회로 간다.
-        if not self._start_avoidance("lidar_corridor"):
-            self._begin_recovery("route_direct_obstacle")
-
-    def _follow_route_direct(self) -> None:
-        point = self._route_point()
-        target = (point.x, point.y)
-        self.plan = Plan(
-            GOAL_LABEL, (self.pose[:2], target), math.dist(self.pose[:2], target), effective=target
-        )
-        self.phase = Phase.MOVING
-        distance = self._local_scan.distance()
-        if distance is None or distance <= self.nav_params.local_stop_m:
-            self.commander.halt()
-            self._local_decision("stop", "local_stop_distance", distance)
-            if distance is not None:
-                self._route_direct_obstacle_stop()
-            else:
-                self._route_direct_stopped_ms = None
-            return
-        self._route_direct_stopped_ms = None
-        if math.dist(self.pose[:2], target) < self.drive.arrival_radius_m:
-            self._arrive(GOAL_LABEL)
-            return
-        heading = math.atan2(point.y - self.pose[1], point.x - self.pose[0])
-        error = wrap_pi(heading - self._steering_yaw())
-        steering = steering_for(error, self.drive, spinning=self._spinning)
-        self._spinning = steering.step_mm == 0 and steering.angle_deg != 0
-        if self._edge.changed("spin", self._spinning) and self._spinning:
-            LOG.info("spin_in_place", error_deg=round(rad_to_deg(error), 1), target=GOAL_LABEL)
-        scale = min(
-            1.0,
-            (distance - self.nav_params.local_stop_m)
-            / (self.nav_params.local_slow_m - self.nav_params.local_stop_m),
-        )
-        self._local_decision("slow" if scale < 1 else "clear", "route_direct", distance)
-        limit = abs(self.drive.spin_turn_deg if self._spinning else self.drive.turn_deg)
-        self.commander.drive(
-            clamp(steering.step_mm * scale, 0.0, abs(self.drive.step_mm)),
-            clamp(steering.angle_deg, -limit, limit),
-        )
+        self.route.cancel(reason, hold=hold)
 
     def _target_xy(self, label: str) -> tuple[float, float]:
         if label == HOME_LABEL:
@@ -1742,1163 +736,47 @@ class PatrolController:
         return tuple(self.zones.labels)
 
     def hint_zone(self, zone: str, now_ms: int) -> bool:
-        """사람이 «로봇은 지금 이 구역 안» 이라고 알려줬다. **루프 스레드에서만** 부른다.
-
-        지금 믿던 자세는 버린다 — 사람이 다른 곳이라고 했으니 국소 추적·복원 기준·표가 모두
-        근거를 잃는다. 다음 전역 재측위는 그 구역 안 후보만 보고(경쟁 후보도 그 안에서만 센다),
-        평소처럼 `reloc_votes` 표가 모여야 채택된다. 구역 안에서도 모호하면 계속 선다.
-        """
-        if zone not in self.zones.labels:
-            LOG.warning("zone_hint_unknown", zone=zone)
-            return False
-        self._zone_hint = (zone, now_ms)
-        self._point_hint = None
-        x, y = self.zones.xy(zone)
-        self._reset_location_hint(x, y, "zone_hint")
-        LOG.warning("zone_hint", zone=zone, hint="이 구역 안에서만 위치를 다시 찾는다")
-        return True
+        """사람이 «로봇은 지금 이 구역 안» 이라고 알려줬다 (`LocalizationTrust.hint_zone`)."""
+        return self.localization.hint_zone(zone, now_ms)
 
     def validate_hint_point(self, x: float, y: float) -> tuple[bool, str]:
-        """사람이 알려준 현재 위치가 지도 안의 비점유 셀인가. 자세·신뢰는 바꾸지 않는다."""
-        if not math.isfinite(x) or not math.isfinite(y):
-            return False, "위치 좌표는 유한한 숫자여야 한다"
-        row, col = self.grid.to_cell(x, y)
-        if not self.grid.inside(row, col):
-            return False, "알려준 위치가 지도 밖이다"
-        if self.grid.cells[row, col] >= self.plan_params.occ_thresh:
-            return False, "알려준 위치가 장애물 칸이다 — 로봇이 있는 빈 곳을 찍어 주세요"
-        return True, ""
+        """알려준 위치가 지도 안의 비점유 셀인가 (`LocalizationTrust.validate_hint_point`)."""
+        return self.localization.validate_hint_point(x, y)
 
     def hint_point(self, x: float, y: float, now_ms: int) -> bool:
-        """지도에서 알려준 점 주변만 전역 탐색한다. **루프 스레드에서만** 부른다.
+        """지도에서 알려준 점 주변만 전역 탐색한다 (`LocalizationTrust.hint_point`)."""
+        return self.localization.hint_point(x, y, now_ms)
 
-        점은 표시용 자세일 뿐이다. 기존 구역 힌트처럼 신뢰·복원 기준을 버리고 멈추며,
-        같은 표결·모호성 관문을 통과해야 실제 자세로 채택한다.
-        """
-        accepted, detail = self.validate_hint_point(x, y)
-        if not accepted:
-            LOG.warning("point_hint_rejected", reason=detail)
-            return False
-        self._point_hint = (x, y, now_ms)
-        self._zone_hint = None
-        self._reset_location_hint(x, y, "point_hint")
-        LOG.warning("point_hint", x=x, y=y, radius_m=self.point_hint_radius_m)
-        return True
+    # 런타임(`host/runtime.py`)이 읽는 옛 이름 — 상태는 `localization` 이 쥔다.
+    @property
+    def _own_localization(self) -> bool:
+        return self.localization.own_localization
 
-    def _reset_location_hint(self, x: float, y: float, reason: str) -> None:
-        """사람의 새 위치 힌트로 이전 측위 근거를 버린다. xy만 표시하고 방위는 유지한다."""
-        self._loc_epoch += 1  # 이미 날아간 전역 탐색 결과는 낡았다
-        self._last_pose_ms = None
-        self._pose_verified = False
-        self.pose_seeded = False
-        self._global_votes.clear()
-        self._drop_restore_anchor(reason)
-        self._reloc_next_ms = 0
-        self.pose = (x, y, self.pose[2])
-        self.commander.halt()
+    @property
+    def _zone_hint(self) -> tuple[str, int] | None:
+        return self.localization.zone_hint
+
+    @property
+    def _point_hint(self) -> tuple[float, float, int] | None:
+        return self.localization.point_hint
 
     def _zone_filter(self, now_ms: int) -> Callable[[np.ndarray, np.ndarray], np.ndarray] | None:
-        point = self._point_hint
-        if point is not None:
-            x, y, since_ms = point
-            if now_ms - since_ms > self.zone_hint_ms:
-                self._point_hint = None
-                LOG.warning("point_hint_expired", hint="찍은 점 주변에서도 위치를 못 찾았다")
-                return None
-            radius = self.point_hint_radius_m
-            return lambda xs, ys: np.hypot(xs - x, ys - y) <= radius
-        hint = self._zone_hint
-        if hint is None:
-            return None
-        zone, since_ms = hint
-        if now_ms - since_ms > self.zone_hint_ms:
-            self._zone_hint = None
-            LOG.warning("zone_hint_expired", zone=zone, hint="구역 안에서도 위치를 못 찾았다")
-            return None
-        zone_map = self.zone_map
-        if zone_map is not None and zone in zone_map.names.values():
-            return lambda xs, ys: zone_map.contains(zone, xs, ys)
-        ax, ay = self.zones.xy(zone)
-        radius = self.zone_hint_radius_m
-        return lambda xs, ys: np.hypot(xs - ax, ys - ay) <= radius
+        return self.localization.zone_filter(now_ms)
 
-    def _restore_params(self) -> MatchParams:
-        return MatchParams(
-            search_lin_m=self.reloc_restore_radius_m,
-            search_lin_step_m=self.match_params.search_lin_step_m,
-            search_ang_rad=self.reloc_restore_yaw_rad,
-            search_ang_step_rad=math.radians(1.0),
-            occ_thresh=self.match_params.occ_thresh,
-            min_known_cells=self.match_params.min_known_cells,
-            sigma_m=self.match_params.sigma_m,
-        )
+    # ── 항법 지도 (`NavigationMap` 에 위임 — 런타임·대시보드가 쓰는 이름) ──────────
+    @property
+    def navigation_costs(self) -> np.ndarray:
+        return self.navmap.costs
 
-    def _drop_restore_anchor(self, reason: str) -> None:
-        if self._restore_anchor is not None:
-            LOG.info("restore_anchor_dropped", reason=reason)
-        self._restore_anchor = None
-        self._restore_votes.clear()
-
-    def _restore_prior(self, now_ms: int) -> Pose | None:
-        """복원 창의 중심 — 기준이 아직 유효하면 (기준 자세, IMU 가 본 회전만 반영한 방위).
-
-        상실 뒤 이동 명령이 나갔거나, 오래됐거나, IMU 가 끊겼거나 방위가 창 넘게 바뀌었으면
-        (사람이 들어 돌렸을 수 있다) 기준을 버린다. 들어서 **같은 방위로** 옮긴 경우는 IMU 로
-        모른다 — 그때는 창 안 점수가 전역 최고에 못 미쳐 거절되는 것에 기댄다(재생 실험).
-        """
-        anchor = self._restore_anchor
-        if anchor is None or not self.reloc_restore_enabled:
-            return None
-        pose, imu0, since_ms, moves, _tilt0 = anchor
-        imu = self.safety.yaw_rad
-        if moves != self._move_seq:
-            self._drop_restore_anchor("moved")
-        elif not 0 <= now_ms - since_ms <= self.reloc_restore_max_age_ms:
-            self._drop_restore_anchor("too_old")
-        elif imu is None or not self._imu_is_fresh(now_ms):
-            self._drop_restore_anchor("imu_stale")
-        elif abs(wrap_pi(imu - imu0)) > self.reloc_restore_yaw_rad:
-            self._drop_restore_anchor("imu_turned")
-        else:
-            return (pose[0], pose[1], wrap_pi(pose[2] + wrap_pi(imu - imu0)))
-        return None
-
-    def _try_restore(
-        self,
-        result: MatchResult | None,
-        prior_result: MatchResult | None,
-        points: np.ndarray,
-        scan: Scan,
-        now_ms: int,
-    ) -> bool:
-        """창 안 정합이 전역 최고에 버금가면 한 표. `reloc_votes` 표면 신뢰를 되살린다."""
-        if self._restore_anchor is None:
-            return False
-        # 요청 뒤 결과가 오는 사이 IMU 가 돌았거나 끊겼거나 기준이 묵었을 수 있다 — 적용 직전
-        # 다시 본다 (리뷰 지적). 실패·결과 없음은 연속 표를 끊는다 (P2).
-        if self._restore_prior(now_ms) is None or prior_result is None or result is None:
-            self._restore_votes.clear()
-            return False
-        grid = self.match_grid
-        row, col = grid.to_cell(prior_result.pose[0], prior_result.pose[1])
-        standable = grid.inside(row, col) and grid.cells[row, col] <= self.plan_params.free_thresh
-        ratio = prior_result.score / max(1, result.score)
-        if (
-            prior_result.skipped
-            or prior_result.score < self._min_match_score(points)
-            or ratio < self.reloc_restore_score_ratio
-            or not standable
-        ):
-            self._restore_votes.clear()
-            if self._edge.changed("restore_rejected", True):
-                LOG.info(
-                    "restore_rejected",
-                    ratio=round(ratio, 3),
-                    frac=round(prior_result.score / len(points), 3),
-                    standable=standable,
-                )
-            return False
-        self._edge.changed("restore_rejected", False)
-        votes = self._restore_votes
-        pose = prior_result.pose
-        if votes and any(
-            math.hypot(pose[0] - v[0], pose[1] - v[1]) > 0.1
-            or abs(wrap_pi(pose[2] - v[2])) > math.radians(3.0)
-            for v in votes
-        ):
-            votes.clear()
-        votes.append(pose)
-        if len(votes) < self.reloc_votes:
-            LOG.info("restore_vote", n=len(votes), need=self.reloc_votes, ratio=round(ratio, 3))
-            return False
-        self._drop_restore_anchor("restored")
-        self._global_votes.clear()
-        LOG.warning(
-            "localization_trust_restored",
-            x=round(pose[0], 2),
-            y=round(pose[1], 2),
-            yaw_deg=round(rad_to_deg(pose[2]), 1),
-            ratio=round(ratio, 3),
-            frac=round(prior_result.score / len(points), 3),
-        )
-        self._match_frac = prior_result.score / len(points)
-        self.observe_map_pose(pose, now_ms)
-        self._adopt_with_request_imu()
-        self._mark_verified()
-        self._check_new_obstacle(scan)
-        return True
-
-    def _poll_global(self, now_ms: int) -> None:
-        """워커가 끝낸 결과를 루프 스레드에서 해석·적용한다 — 상태 변경은 여기서만."""
-        with self._global_cv:
-            done = self._global_result
-            prior_result = self._global_prior_result
-            self._global_result = None
-            self._global_prior_result = None
-        if done is None:
-            return
-        self._global_inflight = False
-        kind, result, points, scan, asked_pose = done
-        wall_now_ms = self.wall_clock_ms()
-        asked_imu, asked_moves, asked_epoch, asked_ms = self._global_req_context or (
-            None,
-            self._move_seq,
-            self._loc_epoch,
-            wall_now_ms,
-        )
-        if (
-            asked_moves != self._move_seq
-            or asked_epoch != self._loc_epoch
-            or not 0 <= wall_now_ms - asked_ms <= self.global_result_max_age_ms
-        ):
-            # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다 (리뷰 지적).
-            if self._edge.changed("global_result_stale", True):
-                LOG.info("global_result_stale", kind=kind, moves=self._move_seq - asked_moves)
-            if kind == "reloc":
-                self._global_votes.clear()
-                self._restore_votes.clear()
-            return
-        self._edge.changed("global_result_stale", False)
-        self._result_imu = asked_imu
-        if kind == "verify":
-            self._apply_verify_result(result, points, now_ms, asked_pose)
-        else:
-            if self._try_restore(result, prior_result, points, scan, now_ms):
-                self._reloc_next_ms = max(self._reloc_next_ms, now_ms + self.reloc_interval_ms)
-                return
-            self._apply_reloc_result(result, points, scan, now_ms)
-
-    def _apply_reloc_result(
-        self, result: MatchResult | None, points: np.ndarray, scan: Scan, now_ms: int
-    ) -> None:
-        """전역 재측위 결과 해석 — 요청 때의 점·스캔 기준으로 판정한다."""
-        # 다음 시도 간격은 «결과가 나온 시점»부터 센다 — 탐색(~1.5초)이 간격(1초)보다
-        # 길면 도착 직후 곧바로 재제출돼 국소 정합이 한 스캔도 못 도는 기아 루프가 된다.
-        self._reloc_next_ms = max(self._reloc_next_ms, now_ms + self.reloc_interval_ms)
-        self._match_frac = result.score / len(points) if result is not None else 0.0
-        if result is None or result.score < self._min_match_score(points):
-            if self._edge.changed("relocalize_failed", True):
-                LOG.warning("relocalize_failed", frac=round(self._match_frac, 3))
-            self._global_votes.clear()
-            self._seed_fallback(points, scan, now_ms)
-            return
-        if result.unresolved or result.peers > self.reloc_max_peers:
-            self._global_votes.clear()
-            # 스캔이 지도를 구분 못 한다 — 어느 자세든 우연이다 (벽 포켓·대칭).
-            if self._edge.changed("relocalize_ambiguous", True):
-                LOG.warning(
-                    "relocalize_ambiguous",
-                    frac=round(self._match_frac, 3),
-                    peers=result.peers,
-                    competing_peaks=result.competing_peaks,
-                    search_complete=result.search_complete,
-                )
-            self._seed_fallback(points, scan, now_ms)
-            return
-        if not self._vote_global(result.pose, result.peers):
-            return
-        self._edge.changed("relocalize_failed", False)
-        LOG.info(
-            "relocalized",
-            x=round(result.pose[0], 2),
-            y=round(result.pose[1], 2),
-            yaw_deg=round(rad_to_deg(result.pose[2]), 1),
-            frac=round(self._match_frac, 3),
-            votes=self.reloc_votes,
-        )
-        self.observe_map_pose(result.pose, now_ms)
-        # 이 자세는 요청 때 스캔의 것이다 — IMU 앵커·조향 오프셋도 그때 값으로 (이중 반영 방지).
-        self._adopt_with_request_imu()
-        # 전역 탐색이 변별력 있게 잡은 자세다 — 여기부터의 적분은 믿을 수 있다.
-        self._mark_verified()
-        self._grow_map(points, result.score)
-        self._check_new_obstacle(scan)
-
-    def _seed_fallback(self, points: np.ndarray, scan: Scan, now_ms: int) -> bool:
-        """사람이 준 시드 주변 넓은 창으로 첫 추적을 시작한다. 잡았으면 True.
-
-        아직 한 번도 못 잡은 경우에만, 시드가 있을 때만이다. 이렇게 잡은 자세는
-        `pose_verified` 가 아니라 지도에 쓰지 않고, 서 있을 때 전역 감사가 확인한다.
-        """
-        if (
-            not self.pose_seeded
-            or self._last_pose_ms is not None
-            or self.first_match_params is None
-        ):
-            return False
-        result = match(self.match_grid, points, self.pose, self.first_match_params)
-        # 사람의 말이 근거라 정합 하한은 절반만 요구한다 — 지도에 가구 다리가 빠진 자리면
-        # 참 위치도 점수가 낮다. 어차피 미검증이라 지도에는 쓰지 않는다.
-        if result.skipped or result.score < max(1, self._min_match_score(points) // 2):
-            return False
-        self._match_frac = result.score / len(points)
-        LOG.info(
-            "seed_tracking_started",
-            x=round(result.pose[0], 2),
-            y=round(result.pose[1], 2),
-            frac=round(self._match_frac, 3),
-            hint="전역 확인 전 — 지도에 쓰지 않음",
-        )
-        self.observe_map_pose(result.pose, now_ms)
-        self._check_new_obstacle(scan)
-        return True
-
-    def _vote_global(self, pose: Pose, peers: int = 0) -> bool:
-        """전역 탐색 결과 한 표. 직전 표와 0.3m 또는 `reloc_vote_yaw_rad` 넘게 다르면 다시 센다.
-
-        로봇이 직전 표 뒤에 움직이지 않았으면(같은 장면) 경쟁 후보가
-        `reloc_stationary_max_peers` 이하인 **유일한 답**일 때만 표로 센다 — 같은 장면의
-        모호한 답을 세 번 세는 것은 증거가 아니다. `reloc_votes` 표가 모이면 True 를
-        돌리고 비운다 — 호출자가 그 자세를 채택한다.
-        """
-        votes = self._global_votes
-        imu = self.safety.yaw_rad
-        if (
-            imu is not None
-            and self._imu_at_vote is not None
-            and abs(wrap_pi(imu - self._imu_at_vote)) > math.radians(5.0)
-        ):
-            # 명령 없이 방위가 바뀌었다 — 사람이 들어 옮긴 경우도 «움직임» 이다.
-            self._moved_since_vote = True
-        # **모든 표**(첫 표 기준)와 맞아야 한다 — 직전 표만 보면 0, 0.29, 0.58m 가 한 무리가 된다.
-        if votes and any(
-            math.hypot(pose[0] - v[0], pose[1] - v[1]) > 0.3
-            or abs(wrap_pi(pose[2] - v[2])) > self.reloc_vote_yaw_rad
-            for v in votes
-        ):
-            votes.clear()
-        if votes and not self._moved_since_vote and peers > self.reloc_stationary_max_peers:
-            if self._edge.changed("vote_not_independent", True):
-                LOG.info("global_vote_not_independent", peers=peers)
-            return False
-        self._edge.changed("vote_not_independent", False)
-        self._moved_since_vote = False
-        self._imu_at_vote = imu
-        votes.append(pose)
-        if len(votes) < self.reloc_votes:
-            LOG.info(
-                "global_vote",
-                n=len(votes),
-                need=self.reloc_votes,
-                x=round(pose[0], 2),
-                y=round(pose[1], 2),
-            )
-            return False
-        votes.clear()
-        return True
-
-    def _mark_verified(self) -> None:
-        """자세가 전역 확인됐다 — 지도 적분을 허용하고 되돌릴 기준점을 새로 찍는다."""
-        self._pose_verified = True
-        self._last_verified_pose_ms = self._last_pose_ms
-        if self._zone_hint is not None:
-            LOG.info("zone_hint_resolved", zone=self._zone_hint[0])
-            self._zone_hint = None
-        if self._point_hint is not None:
-            LOG.info("point_hint_resolved")
-            self._point_hint = None
-        self._global_votes.clear()
-        self._restore_anchor = None
-        self._restore_votes.clear()
-        self._verified_snapshot = self.match_grid.snapshot()
-
-    def _rebuild_masks(self) -> None:
-        """격자 모양·내용이 바뀐 직후 팽창·동적 마스크를 새로 만든다."""
-        static = inflate(self.navigation_grid, self.plan_params)
-        body = body_collision_mask(self.navigation_grid, self.plan_params)
-        frame = (self.grid.meta.resolution, self.grid.meta.origin_x, self.grid.meta.origin_y)
-        changed = (
-            self._mask_frame != frame
-            or self._blocked is None
-            or self._body_blocked is None
-            or not np.array_equal(self._blocked, static)
-            or not np.array_equal(self._body_blocked, body)
-        )
-        self._blocked, self._mask_frame = static, frame
-        self._body_blocked = body
-        dynamic = np.zeros_like(self._blocked, dtype=bool)
-        for hit in self._obstacles:
-            mark_obstacle(dynamic, self.grid, hit, self.plan_params.body_radius_m)
-        dynamic |= self._blockages.mask(self.grid, self.plan_params.body_radius_m)
-        self._dynamic = dynamic
-        self._updates_since_inflate = 0
-        if (
-            changed
-            and self.plan.reachable
-            # 직접 동선은 최신 거리로 추종한다. 저장 격자상의 선분이 막혔다고
-            # 회전마다 재계획하면 STOP/회전이 번갈아 안정 스캔을 계속 무효화한다.
-            and not (self._route_direct_moving and self._route_direct_detour_start is None)
-            and not segment_clear(
-                self.navigation_grid,
-                static,
-                self.pose[:2],
-                self.plan.waypoints[min(self.waypoint_index, len(self.plan.waypoints) - 1)],
-            )
-        ):
-            # 새 정적 장애물은 신규 탐지에서 이미 아는 것으로 빠진다. 옛 경로까지
-            # 유지하면 그 장애물을 그대로 통과하므로 목표만 보존해 다시 계획한다.
-            self.plan = Plan(self.plan.label)
-            self.waypoint_index = 0
-            if self.phase in (Phase.MOVING, Phase.AIMING) or (
-                self._spinning and self.phase is Phase.PLANNING
-            ):
-                self.phase = Phase.PLANNING
-                self._require_replan_stop()
-                self.commander.halt()
-            LOG.info("navigation_mask_changed_replan", target=self.plan.label)
+    @property
+    def local_costmap(self) -> dict[str, Any]:
+        return self.navmap.local_window
 
     def _is_stationary(self) -> bool:
         """로봇이 서 있는가 — 감사 탐색(수 초)은 서 있을 때만 돌려도 안전하다."""
         return (
             self.phase not in (Phase.MOVING, Phase.AIMING) and not self._spinning
         ) or self._stopped_since_ms is not None
-
-    def _verify_pose(self, points: np.ndarray, scan: Scan, _now_ms: int) -> bool:
-        """정지 중 자세 감사 요청 — 전역 탐색을 워커로 보낸다.
-
-        결과는 `_apply_verify_result` 가 뒤늦게 적용한다. 제출에 성공했으면 True 를
-        돌려 이번 스캔의 국소 정합도 건너뛴다 — 워커 기동 직후 같이 돌면 GIL 경합으로
-        국소 정합이 수십 배 느려져 명령 주기를 해친다.
-        """
-        return self._submit_global("verify", points, scan)
-
-    def _apply_verify_result(
-        self,
-        result: MatchResult | None,
-        points: np.ndarray,
-        now_ms: int,
-        asked_pose: Pose | None = None,
-    ) -> bool:
-        """전역 감사 결과 해석 — 다른 자리를 가리키면 자세를 바로잡고 True 를 돌린다."""
-        self._match_frac = result.score / len(points) if result is not None else 0.0
-        if (
-            result is None
-            or result.score < self._min_match_score(points)
-            or result.unresolved
-            or result.peers > self.reloc_max_peers
-        ):
-            # 구분력 없는 스캔으로는 현재 자세를 의심도 확신도 못 한다 — 유지한다.
-            self._global_votes.clear()
-            if self._edge.changed("pose_verify_ambiguous", True):
-                LOG.warning(
-                    "pose_verify_ambiguous",
-                    frac=round(self._match_frac, 3),
-                    peers=0 if result is None else result.peers,
-                )
-            return False
-        self._edge.changed("pose_verify_ambiguous", False)
-        # 탐색은 **요청 때의 스캔**으로 했다 — 그 사이 국소 추적이 자세를 옮겼을 수 있으니
-        # 요청 때 자세와 비교한다. 그 사이 로봇이 실제로 움직였으면 이 감사는 낡았다.
-        reference = self.pose if asked_pose is None else asked_pose
-        drift = math.hypot(self.pose[0] - reference[0], self.pose[1] - reference[1])
-        if drift > 0.1 or abs(wrap_pi(self.pose[2] - reference[2])) > math.radians(5):
-            return False
-        moved = math.hypot(result.pose[0] - reference[0], result.pose[1] - reference[1])
-        turned = abs(wrap_pi(result.pose[2] - reference[2]))
-        if moved <= 0.4 and turned <= self.reloc_vote_yaw_rad:
-            # 국소 창의 잠금이 전역에서도 맞다 — 여기까지의 적분을 확정한다.
-            # (신선도는 국소 추적이 계속 갱신한다 — 감사가 대신 찍지 않는다.)
-            self._mark_verified()
-            return False
-        if self.pose_seeded and not self._pose_verified:
-            # 사람이 준 자리를 아직 전역이 한 번도 확인하지 못했다 — 지도가 덜 채워진
-            # 자리(가구 다리 등)면 전역 최적 쪽이 틀릴 수 있어 **덮어쓰지 않는다.**
-            # 지도에도 쓰지 않은 채 추적만 이어 가고, 트인 곳에 나오면 감사가 맞춰 준다.
-            if self._edge.changed("pose_verify_disagree", True):
-                LOG.warning(
-                    "pose_verify_disagree",
-                    seeded=[round(self.pose[0], 2), round(self.pose[1], 2)],
-                    global_best=[round(result.pose[0], 2), round(result.pose[1], 2)],
-                    moved_m=round(moved, 2),
-                    peers=result.peers,
-                    hint="시드 자리 유지 — 지도 미기록",
-                )
-            return False
-        self._edge.changed("pose_verify_disagree", False)
-        if not self._vote_global(result.pose, result.peers):
-            # 한 번 다른 답이 나온 것으로는 안 옮긴다 — 같은 답이 `reloc_votes` 번 반복돼야 한다.
-            return False
-        LOG.warning(
-            "pose_corrected",
-            old=[round(self.pose[0], 2), round(self.pose[1], 2)],
-            new=[round(result.pose[0], 2), round(result.pose[1], 2)],
-            moved_m=round(moved, 2),
-            peers=result.peers,
-        )
-        if self._verified_snapshot is not None:
-            # 마지막 확인 뒤의 적분은 틀린 자세로 한 것이다 — 지도를 그 시점으로 되돌린다.
-            self.match_grid.restore(self._verified_snapshot)
-            self._rebuild_masks()
-            LOG.warning("map_rolled_back", to="last_verified_snapshot")
-        self.observe_map_pose(result.pose, now_ms)
-        self._adopt_with_request_imu()
-        self._mark_verified()
-        return True
-
-    def _consume_yaw_delta(self, now_ms: int | None = None) -> float:
-        """직전 스캔 이후 IMU 가 본 회전량을 소비한다(두 번 반영하지 않는다). 없으면 0.
-
-        `_imu_delta_fresh` 는 이 변화량이 신선한 텔레메트리 두 표본의 차일 때만 참이다 —
-        참이면 국소 정합이 방위를 IMU 예측 근처(`imu_match_params`)에서만 찾는다.
-        """
-        current = self.safety.yaw_rad
-        seen = self.safety.last_seen_ms
-        fresh = (
-            current is not None
-            and now_ms is not None
-            and seen is not None
-            and 0 <= now_ms - seen <= self.imu_fresh_ms
-        )
-        anchor = self._imu_anchor
-        if current is None or anchor is None:
-            self._imu_delta_fresh = False
-            if self._imu_anchor is None:
-                # 아직 앵커가 없으면 지금 값으로 — 다음부터 회전량이 이어진다.
-                self._imu_anchor = current
-            return 0.0
-        # 앵커(지금 `pose` 의 관측 시점) 이후 회전량 — 정합 실패가 이어져도 누적이 남는다.
-        self._imu_delta_fresh = bool(fresh)
-        return wrap_pi(current - anchor)
-
-    def _steering_yaw(self) -> float:
-        """조향에 쓸 방위 — 스캔 사이에는 IMU 전파값, 없으면 정합 방위 그대로.
-
-        정합 방위는 바퀴(수백 ms)마다만 갱신되므로 그 사이의 휨을 IMU 가 즉시 본다.
-        옵셋은 `observe_map_pose` 에서 정합될 때마다 다시 맞춘다.
-        """
-        imu = self.safety.yaw_rad
-        if imu is not None and self._imu_offset is not None:
-            return wrap_pi(imu - self._imu_offset)
-        return self.pose[2]
-
-    def _grow_map(self, points: np.ndarray, score: int) -> None:
-        """정합이 확실한 바퀴를 지도에 적분하고 주기적으로 팽창을 새로 만든다.
-
-        보행 속도에서 한 바퀴(~0.1초) 사이의 이동은 수 cm 이하라 이동 중 적분 오차는
-        셀 하나 이하다 — 지도는 로봇이 지나간 곳을 «확실히 빈» 셀로 채워 나간다.
-        """
-        if (
-            not self.live_map_write
-            or self.map_hit_logodds <= 0
-            or not self._pose_verified
-            or score < MAP_WRITE_MIN_SCORE_FRAC * len(points)
-        ):
-            return
-        integrate_scan(
-            self.match_grid,
-            self.pose,
-            points,
-            hit=self.map_hit_logodds,
-            miss=self.map_miss_logodds,
-            pad_cells=self.map_pad_cells,
-        )
-        self._updates_since_inflate += 1
-        # `integrate` 가 격자를 늘리면 원점이 옮겨져 두 마스크의 셀 좌표가 전부 어긋난다 —
-        # 주기와 무관하게 모양이 달라진 즉시 둘 다 새로 만든다. 장애물 표시는 월드 좌표라
-        # (`self._obstacles`) 새 격자에 다시 찍을 수 있다.
-        if self._updates_since_inflate >= MAP_INFLATE_EVERY or (
-            self._blocked is not None and self._blocked.shape != self.grid.cells.shape
-        ):
-            self._rebuild_masks()
-
-    def _check_new_obstacle(self, scan: Scan) -> None:
-        """verified 빔 비움과 실제 끝점+몸 반경만 임시로 투영한다."""
-        if not self._local_scan.clear_allowed:
-            return
-        if (scan.device_id, scan.boot_id, scan.seq) != self._local_scan.last_id:
-            return
-        if self._projected_scan_id == self._local_scan.last_id:
-            return
-        self._local_scan_pose = (*self.pose[:2], self._steering_yaw())
-        self._projected_scan_id = self._local_scan.last_id
-        if self._relaxed_scan.last_id == self._local_scan.last_id:
-            self._relaxed_scan_yaw = self._local_scan_pose[2]
-        now_ms = self._scan_now_ms
-        if self.pose_verified and not self.pose_stale(now_ms):
-            free = self._blockages.observe(self.grid, self.pose, scan, now_ms)
-            self._dynamic_seen = {
-                cell: value for cell, value in self._dynamic_seen.items() if cell not in free
-            }
-        self._live_clear.observe(
-            self.grid,
-            self.pose,
-            scan,
-            now_ms,
-            verified=self.pose_verified and not self.pose_stale(now_ms),
-            range_m=self.range_m,
-        )
-        new_hit: tuple[float, float, float] | None = None
-        if not self.pose_stale(now_ms) and (
-            not self._own_localization or self._pose_verified or self.pose_seeded
-        ):
-            for angle, distance in scan.points:
-                if (
-                    not math.isfinite(angle)
-                    or not math.isfinite(distance)
-                    or not self.range_m[0]
-                    <= distance
-                    <= min(self.new_obstacle_check_radius_m, self.nav_params.obstacle_max_m)
-                ):
-                    continue
-                heading = self.pose[2] + angle
-                x = self.pose[0] + math.cos(heading) * distance
-                y = self.pose[1] + math.sin(heading) * distance
-                cell = self.grid.to_cell(x, y)
-                if not self.grid.inside(*cell):
-                    continue
-                if (
-                    cell not in self._dynamic_seen
-                    and self.grid.cells[cell] < self.plan_params.occ_thresh
-                    and (new_hit is None or distance < new_hit[2])
-                ):
-                    new_hit = (x, y, distance)
-                self._dynamic_seen[cell] = (x, y, now_ms)
-        if new_hit is not None and (
-            self._last_obstacle_event_ms is None
-            or now_ms - self._last_obstacle_event_ms >= self.nav_params.obstacle_event_interval_ms
-        ):
-            self._new_obstacles.append(new_hit[:2])
-            self._last_obstacle_event_ms = now_ms
-        self._refresh_navigation(now_ms)
-
-    def _refresh_navigation(self, now_ms: int) -> None:
-        self._now_ms = now_ms
-        if self.pose_stale(now_ms) or (self._own_localization and not self._pose_verified):
-            self._live_clear.reset(self.grid)
-        self._dynamic_seen = {
-            cell: item
-            for cell, item in self._dynamic_seen.items()
-            if 0 <= now_ms - item[2] < self.nav_params.dynamic_ttl_ms
-        }
-        self._obstacles = [(x, y) for x, y, _ in self._dynamic_seen.values()]
-        self._blockages.expire(now_ms)
-        self._rebuild_masks()
-
-    @property
-    def navigation_costs(self) -> np.ndarray:
-        blocked = self.blocked
-        if self._cost_blocked is None or not np.array_equal(self._cost_blocked, blocked):
-            self._costs = (
-                distance_costs(
-                    blocked,
-                    self.grid.meta.resolution,
-                    self.nav_params.inflation_radius_m,
-                    self.nav_params.cost_scaling_factor,
-                )
-                * self.nav_params.cost_weight
-            )
-            self._cost_blocked = blocked.copy()
-        assert self._costs is not None
-        return self._costs
-
-    @property
-    def local_costmap(self) -> dict[str, Any]:
-        """로봇 중심 3m 창. 미관측/창 밖을 자유로 추정하지 않는다."""
-        row, col = self.grid.to_cell(*self.pose[:2])
-        half = math.ceil(self.nav_params.local_window_m / self.grid.meta.resolution / 2)
-        rows, cols = self.grid.cells.shape
-        r0, r1, c0, c1 = (
-            max(0, row - half),
-            min(rows, row + half + 1),
-            max(0, col - half),
-            min(cols, col + half + 1),
-        )
-        if r0 >= r1 or c0 >= c1:
-            return {"width": 0, "height": 0, "blocked": [], "costs": []}
-        return {
-            "resolution_m": self.grid.meta.resolution,
-            "origin": [
-                self.grid.meta.origin_x + c0 * self.grid.meta.resolution,
-                self.grid.meta.origin_y + r0 * self.grid.meta.resolution,
-            ],
-            "width": c1 - c0,
-            "height": r1 - r0,
-            "blocked": self.blocked[r0:r1, c0:c1].tolist(),
-            "costs": self.navigation_costs[r0:r1, c0:c1].round(3).tolist(),
-        }
-
-    def _local_path_clear(self, waypoint: tuple[float, float]) -> bool:
-        """로봇 중심 3m 창의 몸체 마스크로 국소 진행 선분을 확인한다."""
-        row, col = self.grid.to_cell(*self.pose[:2])
-        half = math.ceil(self.nav_params.local_window_m / self.grid.meta.resolution / 2)
-        rows, cols = self.grid.cells.shape
-        r0, r1, c0, c1 = (
-            max(0, row - half),
-            min(rows, row + half + 1),
-            max(0, col - half),
-            min(cols, col + half + 1),
-        )
-        if r0 >= r1 or c0 >= c1:
-            return False
-        local = OccupancyGrid(
-            MapMeta(
-                self.grid.meta.resolution,
-                self.grid.meta.origin_x + c0 * self.grid.meta.resolution,
-                self.grid.meta.origin_y + r0 * self.grid.meta.resolution,
-                c1 - c0,
-                r1 - r0,
-            ),
-            self.grid.cells[r0:r1, c0:c1],
-        )
-        dx, dy = waypoint[0] - self.pose[0], waypoint[1] - self.pose[1]
-        extent = self.nav_params.local_window_m / 2 - self.grid.meta.resolution
-        scale = min(1.0, extent / max(abs(dx), abs(dy), 1e-9))
-        end = (self.pose[0] + dx * scale, self.pose[1] + dy * scale)
-        return segment_clear(local, self.body_blocked[r0:r1, c0:c1], self.pose[:2], end)
-
-    def _begin_recovery(self, reason: str) -> None:
-        self.commander.halt()
-        self._avoidance = None
-        if self._recovery is not None:
-            return
-        target = self.plan.label or (
-            GOAL_LABEL
-            if self._goal is not None
-            else next(
-                (z for z in self.zones.labels if z not in self.visited | self.skipped), HOME_LABEL
-            )
-        )
-        # 진행 선분을 실제로 막는 반사점만 기억한다. 옆 벽 전체를 사건으로 만들지 않는다.
-        endpoint = (
-            self.plan.waypoints[min(self.waypoint_index, len(self.plan.waypoints) - 1)]
-            if self.plan.waypoints
-            else self._target_xy(target)
-        )
-        points = []
-        ax, ay = self.pose[:2]
-        dx, dy = endpoint[0] - ax, endpoint[1] - ay
-        denominator = dx * dx + dy * dy
-        for x, y in self._obstacles:
-            t = (
-                min(1.0, max(0.0, ((x - ax) * dx + (y - ay) * dy) / denominator))
-                if denominator
-                else 0.0
-            )
-            if (
-                math.hypot(x - ax - t * dx, y - ay - t * dy)
-                <= self.plan_params.body_radius_m + self.grid.meta.resolution
-            ):
-                points.append((x, y))
-        if not points and self._local_scan.distance() is not None:
-            front = [
-                (a, d)
-                for a, d in self._local_scan.points
-                if abs(a) <= math.radians(self.nav_params.local_fan_deg)
-            ]
-            if front and min(d for _, d in front) < self.nav_params.local_slow_m:
-                a, d = min(front, key=lambda p: p[1])
-                points = [
-                    (ax + math.cos(self.pose[2] + a) * d, ay + math.sin(self.pose[2] + a) * d)
-                ]
-        item = self._blockages.remember(self.grid, points, self._now_ms)
-        self._recovery = Recovery(
-            target, self._now_ms, self._steering_yaw(), item.id if item else None, reason=reason
-        )
-        self.phase = Phase.PLANNING
-        self._require_replan_stop()
-        self._local_decision("stop", "blockage_confirm", self._local_scan.distance())
-
-    def expire_recovery(self, now_ms: int) -> bool:
-        """Bound every recovery wait, including waits behind safety/FSM gates.
-
-        A timeout only ends the attempt with STOP; it never substitutes for
-        sent STOP or a fresh settled scan as permission to move.
-        """
-        recovery = self._recovery
-        if recovery is None:
-            return False
-        deadline = recovery.started_ms + self.nav_params.recovery_scan_timeout_ms
-        if not recovery.scanning and recovery.settling_ms is None:
-            deadline = min(
-                deadline,
-                recovery.started_ms
-                + max(self.drive.settle_delay_ms, self.nav_params.blockage_confirm_ms)
-                + self.nav_params.recovery_motion_timeout_ms,
-            )
-        elif recovery.settling_ms is not None:
-            deadline = min(
-                deadline,
-                recovery.settling_ms
-                + self.drive.settle_delay_ms
-                + self.nav_params.recovery_motion_timeout_ms,
-            )
-        if now_ms < deadline:
-            return False
-        self._now_ms = now_ms
-        phase = self.phase
-        reason = (
-            "recovery_stop_unconfirmed"
-            if self._last_sent_moving or self._stopped_since_ms is None
-            else "recovery_timeout"
-        )
-        self._fail_recovery(recovery, reason)
-        # Completing an attempt must not release an existing safety latch/loss.
-        if phase in (Phase.HALTED, Phase.LOST):
-            self.phase = phase
-        return True
-
-    def _recover(self) -> None:
-        if self.expire_recovery(self._now_ms):
-            return
-        recovery = self._recovery
-        assert recovery is not None
-        if self._last_sent_moving or self._stopped_since_ms is None:
-            self.commander.halt()
-            # 회전 중에는 STOP을 기다리는 대신 실제 자세 변화량을 모은다.
-            if not recovery.scanning:
-                return
-        if not recovery.scanning and recovery.settling_ms is None:
-            stopped = self._stopped_since_ms if self._stopped_since_ms is not None else self._now_ms
-            if self._now_ms - max(stopped, recovery.started_ms) < max(
-                self.drive.settle_delay_ms, self.nav_params.blockage_confirm_ms
-            ):
-                self.commander.halt()
-                return
-            if (
-                self._local_scan.received_ms is None
-                or self._local_scan.received_ms < stopped + self.drive.settle_delay_ms
-            ):
-                self.commander.halt()
-                return
-            recovery.scanning = True
-            self._replan_stop_required = False
-            self._replan_wait_started_ms = None
-            recovery.yaw = self._steering_yaw()
-            recovery.last_motion_ms = self._now_ms
-            if recovery.blockage_id is not None and not any(
-                b.id == recovery.blockage_id for b in self._blockages.items
-            ):
-                recovery.settling_ms = self._now_ms
-                self.commander.halt()
-                return
-        if recovery.settling_ms is None:
-            delta = wrap_pi(self._steering_yaw() - recovery.yaw)
-            recovery.yaw = self._steering_yaw()
-            # 큰 측위 점프를 실제 회전으로 세지 않는다.
-            if 0 < delta <= math.radians(45):
-                recovery.swept_rad += delta
-                recovery.last_motion_ms = self._now_ms
-            gap = self._local_scan.gap(
-                self.plan_params.body_radius_m,
-                self.plan_params.body_radius_m + self.grid.meta.resolution,
-            )
-            rotation_safe = (
-                gap is not None
-                and gap[2] >= 2 * math.pi - 1e-6
-                and min(d for _, d in self._local_scan.points)
-                > self.plan_params.body_radius_m + self.grid.meta.resolution
-            )
-            done = recovery.swept_rad >= 2 * math.pi - self.drive.heading_tolerance_rad
-            timed_out = (
-                self._now_ms - recovery.started_ms >= self.nav_params.recovery_scan_timeout_ms
-                or self._now_ms
-                - (recovery.last_motion_ms if recovery.last_motion_ms is not None else self._now_ms)
-                >= self.nav_params.recovery_motion_timeout_ms
-            )
-            if rotation_safe and not done and not timed_out:
-                self.commander.drive(
-                    0, min(self.drive.spin_turn_deg, self.nav_params.avoidance_turn_deg)
-                )
-                self._local_decision("scan", "blockage_rotation_scan", self._local_scan.distance())
-                return
-            # 주변 몸체 공간을 보증할 수 없으면 회전하지 않고 최신 360도 스캔으로 판단한다.
-            recovery.settling_ms = self._now_ms
-            self.commander.halt()
-            return
-        self.commander.halt()
-        if (
-            self._last_sent_moving
-            or self._local_scan.received_ms is None
-            or self._local_scan.received_ms < recovery.settling_ms + self.drive.settle_delay_ms
-        ):
-            return
-        retry = plan_to(
-            recovery.target,
-            self._target_xy(recovery.target),
-            self.pose[:2],
-            self.navigation_grid,
-            self.blocked,
-            self.plan_params,
-            snap_m=0.0 if self.route_active else 0.6,
-            body_blocked=self.body_blocked,
-            costs=self.navigation_costs,
-        )
-        self._recovery = None
-        self._replan_stop_required = False
-        self._replan_wait_started_ms = None
-        if retry.reachable:
-            self.plan, self.waypoint_index, self.phase = retry, 0, Phase.MOVING
-            if any(b.id == recovery.blockage_id for b in self._blockages.items):
-                self._navigation_event("obstacle_detour", recovery, target=recovery.target)
-            self._local_decision(
-                "avoid" if recovery.blockage_id is not None else "clear",
-                "detour_planned",
-                self._local_scan.distance(),
-            )
-            return
-        # 전역 격자/기억이 막아도 최신 실제 끝점 사이로 몸이 들어가면 우회한다.
-        self.plan = Plan(recovery.target)
-        if self._start_avoidance("lidar_corridor"):
-            self._navigation_event("obstacle_detour", recovery, target=recovery.target)
-            return
-        if not self._local_scan.complete:
-            self._recovery = recovery
-            self._local_decision("stop", "corridor_scan_incomplete", self._local_scan.distance())
-            return
-        self._fail_recovery(recovery, retry.fail_reason)
-
-    def _fail_recovery(self, recovery: Recovery, reason: str) -> None:
-        """End a failed attempt without treating a skipped goal as an arrival."""
-        self._recovery = None
-        self._avoidance = None
-        self._replan_wait_started_ms = None
-        self._replan_stop_required = self._last_sent_moving or self._stopped_since_ms is None
-        self.commander.halt()
-        if recovery.target == HOME_LABEL:
-            self._wait_patrol()
-        elif self.route_active:
-            point = self._route_point()
-            zone = point.label or f"지점 {self._route_index + 1}"
-            self.skipped |= {zone}
-            self._navigation_event("zone_skipped", recovery, zone=zone, reason=reason)
-            self._skip_route_point()
-        elif self._goal is not None:
-            self._goal = None
-            self._goal_hold = True
-            self._goal_hold_reason = "blocked"
-            self.plan = Plan(None, fail_reason=reason)
-            self.phase = Phase.IDLE
-            self._local_decision("stop", "goal_unreachable", self._local_scan.distance())
-            self._navigation_event("zone_skipped", recovery, zone=GOAL_LABEL, reason=reason)
-        else:
-            self.skipped |= {recovery.target}
-            self._navigation_event("zone_skipped", recovery, zone=recovery.target, reason=reason)
-            self.plan, self.phase = Plan(None), Phase.PLANNING
-
-    def _skip_route_point(self) -> None:
-        assert self._route is not None
-        self._route_direct_stopped_ms = None
-        self._inspection_zone = None
-        label = self._route_point().label
-        self._route_skipped_indices |= {
-            i
-            for i, p in enumerate(self._route.points)
-            if i == self._route_index or (label is not None and p.label == label)
-        }
-        if len(self._route_skipped_indices) == len(self._route.points):
-            self._goal = None
-            self._return_home()
-            return
-        index = self._route_index + 1
-        while index < len(self._route.points) and index in self._route_skipped_indices:
-            index += 1
-        if index == len(self._route.points):
-            if all(
-                (p.label or f"지점 {i + 1}") in self.skipped
-                for i, p in enumerate(self._route.points)
-            ):
-                self._goal = None
-                self._return_home()
-                return
-            if self._route.repeat and self._route_cycle >= self._route.repeat:
-                self.cancel_route("completed_with_skips")
-                return
-            index = 0
-            self._route_cycle += 1
-            self.skipped = frozenset()
-            self._route_skipped_indices = frozenset()
-        self._route_index = index
-        point = self._route.points[index]
-        self._goal = (point.x, point.y)
-        self._route_phase = "moving"
-        self._route_dwell_until_ms = None
-        self.plan, self.phase = Plan(GOAL_LABEL), Phase.PLANNING
-
-    def _return_home(self) -> None:
-        self._goal = None
-        self._returning_home = True
-        self.plan = Plan(HOME_LABEL)
-        self.phase = Phase.PLANNING
-        self.commander.halt()
-
-    def _wait_patrol(self) -> None:
-        self._returning_home = False
-        self._patrol_wait = True
-        self.plan = Plan(None)
-        self.commander.halt()
-        self._retry_after_ms = self._now_ms + self.nav_params.blockage_long_ms
-        self._wait_memory_ids = {b.id for b in self._blockages.items}
-        if not self._wait_reported:
-            self._navigation_event("patrol_unavailable", zone="전체")
-            self._wait_reported = True
-
-    def _local_decision(
-        self, action: str, reason: str, distance: float | None = None, gap_rad: float | None = None
-    ) -> None:
-        self._local_status = {
-            "action": action,
-            "reason": reason,
-            "distance_m": None if distance is None else round(distance, 3),
-            "gap_deg": None if gap_rad is None else round(rad_to_deg(gap_rad), 1),
-            "scan_age_ms": None
-            if self._local_scan.received_ms is None
-            else self._now_ms - self._local_scan.received_ms,
-            "slow_m": self.nav_params.local_slow_m,
-            "stop_m": self.nav_params.local_stop_m,
-            "message": (f"앞 {distance:.2f}m — " if distance is not None else "")
-            + {
-                "clear": "진행",
-                "slow": "감속",
-                "stop": "정지",
-                "avoid": "회피 중",
-                "escape": "출발 탈출",
-            }.get(action, reason),
-        }
-        if self._edge.changed("local_navigation", (action, reason)):
-            LOG.info("local_navigation", **self._local_status)
-
-    def _corridor_to(self, target: tuple[float, float]) -> tuple[float, float, float] | None:
-        scan_pose = self._local_scan_pose or self.pose
-        dx, dy = self.pose[0] - scan_pose[0], self.pose[1] - scan_pose[1]
-        c, s = math.cos(scan_pose[2]), math.sin(scan_pose[2])
-        heading = wrap_pi(
-            math.atan2(target[1] - self.pose[1], target[0] - self.pose[0]) - scan_pose[2]
-        )
-        gap = self._local_scan.corridor(
-            self.plan_params.body_radius_m,
-            heading,
-            self.nav_params.avoidance_m,
-            origin=(dx * c + dy * s, -dx * s + dy * c),
-        )
-        if gap is None:
-            return None
-        return wrap_pi(gap[0] + scan_pose[2] - self._steering_yaw()), gap[1], gap[2]
-
-    def _start_avoidance(self, reason: str) -> bool:
-        if not self._local_scan.fresh(self._now_ms) or self.pose_stale(self._now_ms):
-            self.commander.halt()
-            return False
-        if reason in {"start_escape", "lidar_corridor"}:
-            target = self.plan.label or (
-                GOAL_LABEL
-                if self._goal is not None
-                else next(
-                    (z for z in self.zones.labels if z not in self.visited | self.skipped),
-                    HOME_LABEL,
-                )
-            )
-            gap = self._corridor_to(self._target_xy(target))
-        else:
-            gap = self._local_scan.gap(self.plan_params.body_radius_m)
-        if gap is None:
-            self.commander.halt()
-            self._local_decision("stop", "no_observed_gap", self._local_scan.distance())
-            return False
-        angle, _distance, _ = gap
-        self._avoidance = (
-            self.pose[0],
-            self.pose[1],
-            wrap_pi(self._steering_yaw() + angle),
-            self._now_ms,
-            reason,
-        )
-        self.commander.halt()
-        self._local_decision(
-            "escape" if reason == "start_escape" else "avoid",
-            reason,
-            self._local_scan.distance(),
-            angle,
-        )
-        return True
-
-    def _avoid(self) -> None:
-        assert self._avoidance is not None
-        x, y, heading, started, reason = self._avoidance
-        if (
-            math.hypot(self.pose[0] - x, self.pose[1] - y) >= self.nav_params.avoidance_m
-            or self._now_ms - started >= self.nav_params.avoidance_timeout_ms
-        ):
-            self._avoidance = None
-            self.plan = Plan(self.plan.label)
-            self.phase = Phase.PLANNING
-            self.commander.halt()
-            if self._route_direct_moving:
-                self._route_direct_stopped_ms = None
-                self._route_direct_detour_start = None
-                self._spinning = False
-                self._local_decision("clear", "route_direct_resumed", self._local_scan.distance())
-                return
-            self.stats.replans += 1
-            LOG.info("local_avoidance_replan", reason=reason)
-            if reason in {"start_escape", "lidar_corridor"}:
-                self._require_replan_stop()
-                self._replan()
-            return
-        error = wrap_pi(heading - self._steering_yaw())
-        turn_needed = abs(error) > self.drive.heading_tolerance_rad
-        if reason in {"start_escape", "lidar_corridor"}:
-            scan_pose = self._local_scan_pose or self.pose
-            dx, dy = self.pose[0] - scan_pose[0], self.pose[1] - scan_pose[1]
-            c, s = math.cos(scan_pose[2]), math.sin(scan_pose[2])
-            # 일반 추종 허용각 안에서도 좁은 통로의 실제 직진 원판이 닿으면 더 맞춘다.
-            if not turn_needed and not self._local_scan.corridor_clear(
-                self.plan_params.body_radius_m,
-                wrap_pi(self._steering_yaw() - scan_pose[2]),
-                self.nav_params.avoidance_m,
-                origin=(dx * c + dy * s, -dx * s + dy * c),
-            ):
-                turn_needed = True
-            actual_heading = heading if turn_needed else self._steering_yaw()
-            if not self._local_scan.corridor_clear(
-                self.plan_params.body_radius_m,
-                wrap_pi(actual_heading - scan_pose[2]),
-                self.nav_params.avoidance_m,
-                origin=(dx * c + dy * s, -dx * s + dy * c),
-            ):
-                self._avoidance = None
-                self.commander.halt()
-                self._local_decision("stop", "corridor_closed", self._local_scan.distance(error))
-                self._begin_recovery("corridor_closed")
-                return
-        if turn_needed:
-            self.commander.drive(
-                0,
-                math.copysign(
-                    min(
-                        self.nav_params.avoidance_turn_deg,
-                        self.drive.spin_turn_deg,
-                        rad_to_deg(abs(error)),
-                    ),
-                    error,
-                ),
-            )
-            self._local_decision(
-                "escape" if reason == "start_escape" else "avoid",
-                reason,
-                self._local_scan.distance(error),
-                error,
-            )
-            return
-        distance = self._local_scan.distance()
-        if distance is None or distance < self.nav_params.local_stop_m:
-            self._avoidance = None
-            self.commander.halt()
-            self._local_decision("stop", "local_stop_distance", distance)
-            return
-        scale = min(
-            1.0,
-            max(
-                0.0,
-                (distance - self.nav_params.local_stop_m)
-                / (self.nav_params.local_slow_m - self.nav_params.local_stop_m),
-            ),
-        )
-        self.commander.drive(
-            self.drive.step_mm * min(self.nav_params.avoidance_step_scale, scale), 0
-        )
-        self._local_decision(
-            "escape" if reason == "start_escape" else "avoid", reason, distance, error
-        )
 
     # ── 조작자 ────────────────────────────────────────────────
     def start(self) -> None:
@@ -2911,11 +789,11 @@ class PatrolController:
         """`ESTOP` 전문을 돌려준다. 호출자가 즉시 보낸다."""
         self.phase = Phase.HALTED
         self._halt_reason = reason
-        self._avoidance = None
-        self._recovery = None
-        self._route_direct_stopped_ms = None
-        self._relaxed_escape_turn = False
-        self._local_decision("stop", "estop", self._local_scan.distance())
+        self.avoidance.active = None
+        self.recovery.active = None
+        self.route.direct_stopped_ms = None
+        self.relaxed.escape_turn = False
+        self.avoidance.decide("stop", "estop", self._local_scan.distance())
         self._spinning = False
         self.stats.estops += 1
         self.plan = Plan(None)
@@ -2965,8 +843,8 @@ class PatrolController:
         주기 전문은 호출자가 `commander.tick(now_ms)` 로 따로 받는다.
         """
         self._now_ms = now_ms
-        if not self._relaxed_route:
-            self.expire_recovery(now_ms)
+        if not self.relaxed.active:
+            self.recovery.expire(now_ms)
         urgent = self._guard(now_ms)
         if urgent:
             return urgent
@@ -2980,20 +858,20 @@ class PatrolController:
         if self.safety.last_seen_ms is None:
             # 첫 텔레메트리로 링크가 확인될 때까지 정지한다.
             self.commander.halt()
-            self._route_direct_stopped_ms = None
+            self.route.direct_stopped_ms = None
         elif self.phase is Phase.HALTED or self.phase is Phase.IDLE or self.phase is Phase.LOST:
             self.commander.halt()
-            self._route_direct_stopped_ms = None
+            self.route.direct_stopped_ms = None
         elif self.safety.obstacle_active:
             # 온보드가 이미 멈췄다 — 판정을 흉내내지 않고 의도만 정지로 내린다 (아키텍처 1.2).
             self.commander.halt()
-            self._local_decision(
+            self.avoidance.decide(
                 "stop",
                 "onboard_ultrasonic",
                 self.safety.dist_cm / 100 if self.safety.dist_cm is not None else None,
             )
-            self._reset_route_dwell()
-            self._route_direct_obstacle_stop()
+            self.route.reset_dwell()
+            self.route.direct_obstacle_stop()
             if self._edge.changed("obstacle", True):
                 LOG.info("onboard_obstacle_hold", dist_cm=self.safety.dist_cm)
         else:
@@ -3012,11 +890,11 @@ class PatrolController:
         여기서 그것들을 다시 판정하면 상태 알림이 둘이 되어 서로 덮는다.
         """
         self._now_ms = now_ms
-        if not self._relaxed_route:
-            self.expire_recovery(now_ms)
+        if not self.relaxed.active:
+            self.recovery.expire(now_ms)
         if self.phase in (Phase.IDLE, Phase.HALTED):
             self.commander.halt()
-            self._route_direct_stopped_ms = None
+            self.route.direct_stopped_ms = None
             return
         # FSM/링크 판정은 런타임에 남기되, 출발 자격은 step()과 같은 관문을 거친다.
         # 자세만 신선해도 미관측 공간·정지 후 스캔 부재라면 실제 주행을 허용할 수 없다.
@@ -3027,13 +905,13 @@ class PatrolController:
         if self.safety.obstacle_active:
             # 온보드가 이미 멈췄다 — 판정을 흉내내지 않고 의도만 정지로 내린다 (아키텍처 1.2).
             self.commander.halt()
-            self._local_decision(
+            self.avoidance.decide(
                 "stop",
                 "onboard_ultrasonic",
                 self.safety.dist_cm / 100 if self.safety.dist_cm is not None else None,
             )
-            self._reset_route_dwell()
-            self._route_direct_obstacle_stop()
+            self.route.reset_dwell()
+            self.route.direct_obstacle_stop()
             if self._edge.changed("obstacle", True):
                 LOG.info("onboard_obstacle_hold", dist_cm=self.safety.dist_cm)
             return
@@ -3047,16 +925,16 @@ class PatrolController:
         있다 — 옛 경로의 웨이포인트를 따라가면 엉뚱한 곳으로 되돌아간다. 목표는
         그대로라 **아직 가지 않은 구역으로 지금 자리에서** 다시 푼다 (`_replan`).
         """
-        if self.route_active and self._route_search_base is not None and not from_inspection:
-            self._route_search_base = None
-            self._next_route_point()
+        if self.route.active and self.route.search_base is not None and not from_inspection:
+            self.route.search_base = None
+            self.route.next_point()
             return
         self.plan = Plan(self.plan.label)
-        self._route_direct_stopped_ms = None
+        self.route.direct_stopped_ms = None
         if not from_inspection:
-            self._reset_route_dwell()
-        if not self.route_active:
-            self._inspection_zone = None
+            self.route.reset_dwell()
+        if not self.route.active:
+            self.arrival.zone = None
         self.waypoint_index = 0
         self.phase = Phase.PLANNING
         LOG.info("patrol_resumed", target=self.plan.label)
@@ -3101,10 +979,10 @@ class PatrolController:
         self.commander.halt()
 
     def _guard_localization(self, now_ms: int) -> tuple[str, ...]:
-        if self._relaxed_route:
-            self._avoidance = self._recovery = None
-            if not self._relaxed_pose_available(now_ms):
-                self._relaxed_escape_turn = False
+        if self.relaxed.active:
+            self.avoidance.active = self.recovery.active = None
+            if not self.relaxed.pose_available(now_ms):
+                self.relaxed.escape_turn = False
                 self._lose("relaxed_pose_stale")
             elif self.phase is Phase.LOST:
                 self.phase = Phase.PLANNING
@@ -3118,7 +996,7 @@ class PatrolController:
             self._lose("pose_stale")
             return ()
         # 마스크 갱신도 정지를 요구할 수 있으므로 출발 관문보다 먼저 적용한다.
-        self._refresh_navigation(now_ms)
+        self.navmap.refresh(now_ms)
         if self._replan_stop_required and self._replan_wait_started_ms is None:
             self._replan_wait_started_ms = now_ms
         if self._replan_stop_required and (
@@ -3152,8 +1030,8 @@ class PatrolController:
             return ()
 
         if not self._local_scan.fresh(now_ms):
-            self._avoidance = None
-            self._local_decision("stop", "scan_unavailable")
+            self.avoidance.active = None
+            self.avoidance.decide("stop", "scan_unavailable")
             self._lose("live_scan_unavailable")
             return ()
         row, col = self.grid.to_cell(*self.pose[:2])
@@ -3162,7 +1040,7 @@ class PatrolController:
             return ()
         # Use the same boundary-cell test as plan_to/escape_start. A single
         # to_cell lookup misses an adjacent blocked cell on an exact grid line.
-        self._needs_escape = not segment_clear(
+        self.avoidance.needs_escape = not segment_clear(
             self.navigation_grid, self.body_blocked, self.pose[:2], self.pose[:2]
         )
         if self.phase is Phase.LOST:
@@ -3175,17 +1053,17 @@ class PatrolController:
             # 온보드/측위/스캔 관문을 다시 통과한 뒤 추종한다.
             self._replan_timeout_hold_ms = now_ms
             self.commander.halt()
-            self._local_decision("stop", "replan_settle_timeout", self._local_scan.distance())
+            self.avoidance.decide("stop", "replan_settle_timeout", self._local_scan.distance())
             LOG.warning("replan_settle_timeout", limit_ms=REPLAN_SETTLE_TIMEOUT_MS)
         self._edge.forget("localization_problem")
         return ()
 
     def _lose(self, reason: str) -> None:
-        self._avoidance = None
-        self._route_direct_stopped_ms = None
+        self.avoidance.active = None
+        self.route.direct_stopped_ms = None
         if reason != "live_scan_unavailable":
-            self._local_decision("stop", reason, self._local_scan.distance())
-        self._reset_route_dwell()
+            self.avoidance.decide("stop", reason, self._local_scan.distance())
+        self.route.reset_dwell()
         if self.phase is not Phase.LOST:
             self.stats.lost += 1
         if self._edge.changed("localization_problem", reason):
@@ -3206,8 +1084,8 @@ class PatrolController:
 
     # ── 순찰 진행 ─────────────────────────────────────────────
     def _advance(self) -> None:
-        if self._relaxed_route:
-            self._follow_relaxed()
+        if self.relaxed.active:
+            self.relaxed.follow()
             return
         if (
             self._replan_stop_required
@@ -3218,20 +1096,20 @@ class PatrolController:
             return
         if self._home is None:
             self._home = self.pose[:2]
-        if not len(self.zones) and not self.route_active:
+        if not len(self.zones) and not self.route.active:
             self.commander.halt()
             if self._edge.changed("no_zones", True):
                 LOG.error("no_zones", hint="tools/ops/zone_select.py 를 먼저 실행한다")
             return
-        if self._own_localization and not (self._pose_verified or self.pose_seeded):
+        if self.localization.untrusted:
             # 사람도 지도도 이 자세를 보증한 적이 없다 — 걷지 않는다. 서 있으면 전역 감사가
             # 돌아 확인되거나(재개) 다른 자리로 바로잡는다.
             self.commander.halt()
-            self._local_decision("stop", "pose_unverified", self._local_scan.distance())
-            self._route_direct_stopped_ms = None
-            self._reset_route_dwell()
+            self.avoidance.decide("stop", "pose_unverified", self._local_scan.distance())
+            self.route.direct_stopped_ms = None
+            self.route.reset_dwell()
             if self._edge.changed("pose_unverified_hold", True):
-                LOG.warning("pose_unverified_hold", frac=round(self._match_frac, 3))
+                LOG.warning("pose_unverified_hold", frac=round(self.localization.match_frac, 3))
             return
         self._edge.changed("pose_unverified_hold", False)
         if self._goal_hold:
@@ -3239,39 +1117,24 @@ class PatrolController:
             self.commander.halt()
             return
 
-        if self._patrol_wait:
-            self.commander.halt()
-            removed = bool(self._wait_memory_ids) and not self._wait_memory_ids.intersection(
-                b.id for b in self._blockages.items
-            )
-            if self._now_ms < self._retry_after_ms and not removed:
-                return
-            self._patrol_wait = False
-            self._wait_reported = False
-            self._complete_cycle()
-            if self.route_active:
-                self._route_cycle += 1
-                self._route_index = 0
-                self._route_skipped_indices = frozenset()
-                point = self._route_point()
-                self._goal = (point.x, point.y)
-            self.phase = Phase.PLANNING
-
-        if self._recovery is not None:
-            self._recover()
+        if self.recovery.waiting and self._end_recovery_wait():
             return
 
-        if self._avoidance is not None:
-            self._avoid()
+        if self.recovery.active is not None:
+            self.recovery.step()
             return
-        if self._route_direct_moving:
-            start = self._route_direct_detour_start
+
+        if self.avoidance.active is not None:
+            self.avoidance.step()
+            return
+        if self.route.direct_moving:
+            start = self.route.direct_detour_start
             if start is not None and math.dist(start, self.pose[:2]) >= self.nav_params.avoidance_m:
                 # A* 우회도 설정된 회피 거리 이동 뒤 목표 방향 원판이 비었으면 직접 추종 복귀.
                 scan_pose = self._local_scan_pose or self.pose
                 dx, dy = self.pose[0] - scan_pose[0], self.pose[1] - scan_pose[1]
                 c, s = math.cos(scan_pose[2]), math.sin(scan_pose[2])
-                point = self._route_point()
+                point = self.route.point()
                 heading = math.atan2(point.y - self.pose[1], point.x - self.pose[0])
                 if self._local_scan.corridor_clear(
                     self.plan_params.body_radius_m,
@@ -3279,30 +1142,30 @@ class PatrolController:
                     self.nav_params.avoidance_m,
                     origin=(dx * c + dy * s, -dx * s + dy * c),
                 ):
-                    self._route_direct_detour_start = None
-                    self._route_direct_stopped_ms = None
+                    self.route.direct_detour_start = None
+                    self.route.direct_stopped_ms = None
                     self._spinning = False
-            if self._route_direct_detour_start is None:
-                self._follow_route_direct()
+            if self.route.direct_detour_start is None:
+                self.route.follow_direct()
                 return
-        if self._needs_escape:
-            if not self._start_avoidance("start_escape"):
-                self._begin_recovery("start_clearance_blocked")
+        if self.avoidance.needs_escape:
+            if not self.avoidance.start("start_escape"):
+                self.recovery.begin("start_clearance_blocked")
             return
-        if self.route_active and self._route_phase != "moving":
-            self._advance_route_arrival()
+        if self.route.active and self.route.stage != "moving":
+            self.route.advance_arrival()
             return
 
         if (
             self._goal is None
-            and self._inspection_zone is not None
+            and self.arrival.zone is not None
             and self.wait_for_inspection is not None
-            and self.wait_for_inspection(self._inspection_zone)
+            and self.wait_for_inspection(self.arrival.zone)
         ):
             # STOP 안정화/장애물 재계획이 끝나도 아직 카메라에 넘기지 않은 방문은 보존한다.
             # step/steer의 안전 관문을 통과한 뒤에만 다시 방향을 맞추거나 점검을 기다린다.
             self.phase = Phase.INSPECT
-            self._steer_zone_aim(self._inspection_zone)
+            self.arrival.steer_aim(self.arrival.zone)
             return
 
         if self.phase is Phase.INSPECT:
@@ -3310,7 +1173,7 @@ class PatrolController:
             self.phase = Phase.PLANNING
 
         if self.phase is Phase.AIMING:
-            self._aim_at_zone()
+            self.arrival.aim()
             return
 
         if self.phase is Phase.PLANNING or not self.plan.reachable:
@@ -3318,19 +1181,19 @@ class PatrolController:
             if not self.plan.reachable:
                 if self._goal_hold:
                     self.commander.halt()
-                elif self._recovery is None and not self._patrol_wait:
-                    self._begin_recovery("global_path_blocked")
+                elif self.recovery.active is None and not self.recovery.waiting:
+                    self.recovery.begin("global_path_blocked")
                 return
             self.phase = Phase.MOVING
 
         self._follow()
 
     def _replan(self) -> None:
-        self._inspection_zone = None
+        self.arrival.zone = None
         # 새 경로는 새 방위 오차에서 시작한다 — 지난 경로의 회전을 이어 가지 않는다.
         self._spinning = False
         start = (self.pose[0], self.pose[1])
-        if self._returning_home:
+        if self.recovery.returning_home:
             assert self._home is not None
             self.plan = plan_to(
                 HOME_LABEL,
@@ -3341,38 +1204,14 @@ class PatrolController:
                 self.plan_params,
                 snap_m=0.0,
                 body_blocked=self.body_blocked,
-                costs=self.navigation_costs,
+                costs=self.navmap.costs,
             )
             self.waypoint_index = 0
             if not self.plan.reachable:
-                self._wait_patrol()
+                self.recovery.wait_patrol()
             return
         if self._goal is not None:
-            if not self.grid.inside(*self.grid.to_cell(*self._goal)):
-                self._goal = None
-                self._goal_hold = True
-                self._goal_hold_reason = "blocked"
-                self.plan = Plan(None)
-                self.commander.halt()
-                return
-            plan = plan_to(
-                GOAL_LABEL,
-                self._goal,
-                start,
-                self.navigation_grid,
-                self.blocked,
-                self.plan_params,
-                snap_m=0.0 if self.route_active else 0.6,
-                body_blocked=self.body_blocked,
-                costs=self.navigation_costs,
-            )
-            self.waypoint_index = 0
-            if plan.reachable:
-                self.plan = plan
-                return
-            LOG.warning("goal_unreachable", reason=plan.fail_reason)
-            self.plan = Plan(GOAL_LABEL)
-            self._begin_recovery("global_path_blocked")
+            self._replan_goal(start, self._goal)
             return
         candidates = {label: self.zones.xy(label) for label in self.zones.labels}
 
@@ -3386,7 +1225,7 @@ class PatrolController:
                 self.blocked,
                 self.plan_params,
                 body_blocked=self.body_blocked,
-                costs=self.navigation_costs,
+                costs=self.navmap.costs,
             )
             if retry.reachable:
                 self.plan = retry
@@ -3394,9 +1233,65 @@ class PatrolController:
                 return
             # 정지·재확인 뒤에만 이번 바퀴 제외 여부를 결정한다.
             self.plan = Plan(self.plan.label)
-            self._begin_recovery("global_path_blocked")
+            self.recovery.begin("global_path_blocked")
             return
 
+        self._select_zone(start, candidates)
+
+    def _end_recovery_wait(self) -> bool:
+        """복구 대기가 아직이면 True. 끝났으면 사이클을 닫고 계획 단계로 돌린다."""
+        self.commander.halt()
+        removed = bool(
+            self.recovery.wait_memory_ids
+        ) and not self.recovery.wait_memory_ids.intersection(
+            b.id for b in self.recovery.memory.items
+        )
+        if self._now_ms < self.recovery.retry_after_ms and not removed:
+            return True
+        self.recovery.waiting = False
+        self.recovery.wait_reported = False
+        self.arrival.complete_cycle()
+        if self.route.active:
+            self.route.cycle += 1
+            self.route.index = 0
+            self.route.skipped_indices = frozenset()
+            point = self.route.point()
+            self._goal = (point.x, point.y)
+        self.phase = Phase.PLANNING
+        return False
+
+    def _replan_goal(self, start: tuple[float, float], goal: tuple[float, float]) -> None:
+        """찍은 곳(또는 동선 지점)까지 경로를 푼다."""
+        if not self.grid.inside(*self.grid.to_cell(*goal)):
+            self._goal = None
+            self._goal_hold = True
+            self._goal_hold_reason = "blocked"
+            self.plan = Plan(None)
+            self.commander.halt()
+            return
+        plan = plan_to(
+            GOAL_LABEL,
+            goal,
+            start,
+            self.navigation_grid,
+            self.blocked,
+            self.plan_params,
+            snap_m=0.0 if self.route.active else 0.6,
+            body_blocked=self.body_blocked,
+            costs=self.navmap.costs,
+        )
+        self.waypoint_index = 0
+        if plan.reachable:
+            self.plan = plan
+            return
+        LOG.warning("goal_unreachable", reason=plan.fail_reason)
+        self.plan = Plan(GOAL_LABEL)
+        self.recovery.begin("global_path_blocked")
+
+    def _select_zone(
+        self, start: tuple[float, float], candidates: dict[str, tuple[float, float]]
+    ) -> None:
+        """다음 구역을 고르고, 고를 수 없으면 복구·귀환·사이클 마감으로 넘긴다."""
         skipped: list[tuple[str, str]] = []
         self.plan = select_next(
             cycle=self.cycle,
@@ -3411,7 +1306,7 @@ class PatrolController:
             rng=self.rng,
             skipped_out=skipped,
             body_blocked=self.body_blocked,
-            costs=self.navigation_costs,
+            costs=self.navmap.costs,
         )
         self.waypoint_index = 0
         # 도달 불가 구역은 같은 목록이 바뀔 때만 기록한다 — 매 틱 재시도하면
@@ -3419,7 +1314,7 @@ class PatrolController:
         skip_key = ",".join(f"{label}:{reason}" for label, reason in skipped)
         if skipped:
             self.plan = Plan(skipped[0][0])
-            self._begin_recovery("global_path_blocked")
+            self.recovery.begin("global_path_blocked")
             return
         if skipped and self._edge.changed("zones_unreachable", skip_key):
             LOG.warning(
@@ -3453,22 +1348,22 @@ class PatrolController:
             )
         elif len(self.visited | self.skipped) >= len(self.zones):
             if not self.visited:
-                self._return_home()
+                self.recovery.return_home()
             else:
-                self._complete_cycle()
+                self.arrival.complete_cycle()
         elif self.visited or self.skipped:
             self.plan = Plan(
                 next(
                     label for label in self.zones.labels if label not in self.visited | self.skipped
                 )
             )
-            self._begin_recovery("global_path_blocked")
+            self.recovery.begin("global_path_blocked")
         elif self._edge.changed("no_reachable_zone", True):
             LOG.error("no_reachable_zone", visited=sorted(self.visited))
             self.plan = Plan(
                 next(z for z in self.zones.labels if z not in self.visited | self.skipped)
             )
-            self._begin_recovery("global_path_blocked")
+            self.recovery.begin("global_path_blocked")
 
     def _follow(self) -> None:
         assert self.plan.label is not None
@@ -3488,17 +1383,19 @@ class PatrolController:
             self.plan.escape_end_index < 0 or self.waypoint_index > self.plan.escape_end_index
         ):
             if self.plan.label == HOME_LABEL:
-                self._wait_patrol()
+                self.recovery.wait_patrol()
             else:
-                self._arrive(self.plan.label)
+                self.arrival.arrive(self.plan.label)
             return
 
         waypoint = self._current_waypoint()
-        if not self._local_path_clear(waypoint):
-            self._begin_recovery("path_obstacle")
+        if not self.navmap.path_clear(waypoint):
+            self.recovery.begin("path_obstacle")
             return
         heading = math.atan2(waypoint[1] - self.pose[1], waypoint[0] - self.pose[0])
-        steering = steering_for(heading - self._steering_yaw(), self.drive, spinning=self._spinning)
+        steering = steering_for(
+            heading - self.heading.steering_yaw(), self.drive, spinning=self._spinning
+        )
         spinning = steering.step_mm == 0.0 and steering.angle_deg != 0.0
         if self._edge.changed("spin", spinning) and spinning:
             LOG.info(
@@ -3510,13 +1407,13 @@ class PatrolController:
         # 규약 범위는 인코더가 자르지만(규칙 ②), 잘려서 나가는 것을 로그로
         # 보고 싶지는 않으므로 여기서 설정값 안에 둔다.
         distance = self._local_scan.distance()
-        desired_distance = self._local_scan.distance(wrap_pi(heading - self._steering_yaw()))
+        desired_distance = self._local_scan.distance(wrap_pi(heading - self.heading.steering_yaw()))
         if desired_distance is not None:
             distance = min(distance, desired_distance) if distance is not None else desired_distance
         if distance is None or distance < self.nav_params.local_stop_m:
             self.commander.halt()
-            self._local_decision("stop", "local_stop_distance", distance)
-            self._begin_recovery("path_obstacle")
+            self.avoidance.decide("stop", "local_stop_distance", distance)
+            self.recovery.begin("path_obstacle")
             return
         scale = min(
             1.0,
@@ -3524,7 +1421,7 @@ class PatrolController:
             / (self.nav_params.local_slow_m - self.nav_params.local_stop_m),
         )
         steering = Steering(steering.step_mm * max(0.0, scale), steering.angle_deg)
-        self._local_decision(
+        self.avoidance.decide(
             "slow" if scale < 1 else "clear",
             "local_slow_distance" if scale < 1 else "path_clear",
             distance,
@@ -3551,110 +1448,9 @@ class PatrolController:
             self.waypoint_index += 1
         return waypoints[min(self.waypoint_index, len(waypoints) - 1)]
 
-    def _arrive(self, label: str) -> None:
-        self.commander.halt()
-        self._spinning = False
-        if label == GOAL_LABEL:
-            if self.route_active:
-                self._route_direct_stopped_ms = None
-                self._route_direct_detour_start = None
-                self._route_phase = "aiming"
-                self.phase = Phase.AIMING
-                return
-            # 찍은 곳 — 구역 방문·점검이 아니다. 서서 기다린다.
-            LOG.info("goal_reached", x=round(self.pose[0], 2), y=round(self.pose[1], 2))
-            self._goal = None
-            self._goal_hold = True
-            self._goal_hold_reason = "reached"
-            self.plan = Plan(None)
-            self.phase = Phase.PLANNING
-            return
-        if self.zones.get(label).aim_deg is not None:
-            self.phase = Phase.AIMING
-            LOG.info("zone_aim_started", label=label, aim_deg=self.zones.get(label).aim_deg)
-            return
-        self._finish_arrival(label)
-
-    def _aim_at_zone(self) -> None:
-        """점검 전에만 돈다. step/steer의 기존 측위·장애물 관문을 통과한 뒤 호출된다."""
-        label = self.plan.label
-        assert label is not None
-        anchor = self.zones.xy(label)
-        effective = self.plan.effective or anchor
-        if min(math.dist(self.pose[:2], anchor), math.dist(self.pose[:2], effective)) >= (
-            self.drive.arrival_radius_m
-        ):
-            # 측위가 도착 반경 밖으로 바뀌면 점검하지 않고 다시 접근한다.
-            self.commander.halt()
-            self._spinning = False
-            self.phase = Phase.PLANNING
-            self.plan = Plan(label)
-            return
-        if self._steer_zone_aim(label):
-            LOG.info("zone_aim_completed", label=label)
-            self._finish_arrival(label)
-
-    def _zone_aim_error(self, label: str) -> float:
-        aim_deg = self.zones.get(label).aim_deg
-        return 0.0 if aim_deg is None else wrap_pi(deg_to_rad(aim_deg) - self._steering_yaw())
-
-    def _steer_zone_aim(self, label: str) -> bool:
-        error = self._zone_aim_error(label)
-        if abs(error) <= self.drive.heading_tolerance_rad:
-            self.commander.halt()
-            self._spinning = False
-            return True
-        steering = steering_for(error, self.drive, spinning=True)
-        self._spinning = True
-        turn_limit = abs(self.drive.spin_turn_deg)
-        self.commander.drive(0.0, clamp(steering.angle_deg, -turn_limit, turn_limit))
-        return False
-
     def inspection_ready(self, label: str, now_ms: int) -> bool:
-        """카메라 점검은 도착·조준 완료 뒤에만 시작한다 (느린 비전 프레임도 기다린다)."""
-        if self.route_active:
-            point = self._route_point()
-            return (
-                self.phase is Phase.INSPECT
-                and self._route_search_base is None
-                and self._inspection_zone == label
-                and (
-                    self._relaxed_pose_available(now_ms)
-                    if self._relaxed_route
-                    else not self.pose_stale(now_ms)
-                )
-                and not self.safety.obstacle_active
-                and (
-                    self._relaxed_route
-                    or math.dist(self.pose[:2], (point.x, point.y)) < self.drive.arrival_radius_m
-                )
-                and abs(self._route_aim_error()) <= self.drive.heading_tolerance_rad
-            )
-        return (
-            self.phase is Phase.INSPECT
-            and self._inspection_zone == label
-            and not self.pose_stale(now_ms)
-            and not self.safety.obstacle_active
-            and abs(self._zone_aim_error(label)) <= self.drive.heading_tolerance_rad
-        )
-
-    def _finish_arrival(self, label: str) -> None:
-        self.phase = Phase.INSPECT
-        self._inspection_zone = label
-        self.visited = self.visited | {label}
-        self.stats.zones_visited += 1
-        self.plan = Plan(None)
-        LOG.info("zone_arrived", label=label, cycle=self.cycle)
-        if len(self.visited) >= len(self.zones):
-            self._complete_cycle()
-
-    def _complete_cycle(self) -> None:
-        self.cycle += 1
-        self.visited = frozenset()
-        self.skipped = frozenset()
-        self.stats.cycles += 1
-        # 장애물은 재관측 시각 기준으로 만료한다. 사이클 경계가 실제 점을 지우지 않는다.
-        LOG.info("cycle_completed", cycle=self.cycle)
+        """카메라 점검은 도착·조준 완료 뒤에만 시작한다 (`ZoneArrival.ready`)."""
+        return self.arrival.ready(label, now_ms)
 
 
 # ══════════════════════════════════════════════════════════════

@@ -199,7 +199,7 @@ def test_startup_waits_for_first_telemetry_without_latching() -> None:
     controller = build()
     controller.start()
     controller.pose = (2.0, 2.0, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     assert controller.phase is Phase.PLANNING
     assert controller.commander.intent.type_ == "STOP"
@@ -214,7 +214,7 @@ def test_timestamps_are_integer_milliseconds() -> None:
     controller = build()
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     lines = list(controller.step(1000)) + controller.commander.tick(1000)
     for message in decode_all(lines):
         assert isinstance(message["ts"], int)
@@ -271,19 +271,19 @@ def test_controller_spins_then_walks() -> None:
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
     controller.pose = (2.0, 2.0, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)  # 계획을 세운다
     waypoint = controller._current_waypoint()
     toward = math.atan2(waypoint[1] - 2.0, waypoint[0] - 2.0)
 
     controller.pose = (2.0, 2.0, toward + math.pi)  # 웨이포인트를 등지게 돌려 둔다
-    controller._last_pose_ms = 1100
+    controller.localization.last_pose_ms = 1100
     controller.step(1100)
     move = [m for m in decode_all(controller.commander.tick(1100)) if m["type"] == "MOVE"]
     assert move and move[-1]["step"] == 0 and move[-1]["angle"] != 0
 
     controller.pose = (2.0, 2.0, toward)  # 방위를 맞춰 주면 걷는다
-    controller._last_pose_ms = 1200
+    controller.localization.last_pose_ms = 1200
     controller.step(1200)
     move = [m for m in decode_all(controller.commander.tick(1200)) if m["type"] == "MOVE"]
     assert move and move[-1]["step"] > 0 and move[-1]["angle"] == 0
@@ -305,7 +305,7 @@ def test_move_commands_pass_the_robot_decoder() -> None:
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
     controller.pose = (2.0, 2.0, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     messages = decode_all(controller.commander.tick(1000))
     types = {message["type"] for message in messages}
@@ -339,7 +339,7 @@ def test_host_does_not_judge_the_ultrasonic_threshold() -> None:
     controller.start()
     controller.observe_telemetry(Reading(dist_cm=5, obstacle=False), 1000)
     controller.pose = (2.0, 2.0, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     assert controller.stats.estops == 0, "호스트가 거리를 보고 판정했다"
     assert controller.phase is not Phase.HALTED
@@ -350,7 +350,7 @@ def test_reported_obstacle_holds_the_walk() -> None:
     controller = build()
     controller.start()
     controller.pose = (2.0, 2.0, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.observe_telemetry(Reading(state="AVOID", obstacle=True), 1000)
     controller.step(1000)
     assert controller.commander.intent.type_ == "STOP"
@@ -361,11 +361,11 @@ def test_obstacle_release_is_read_from_the_flag() -> None:
     controller = build()
     controller.start()
     controller.pose = (2.0, 2.0, 0.0)  # 구역 위가 아니어야 이동 의도가 나온다
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.observe_telemetry(Reading(state="AVOID", obstacle=True), 1000)
     controller.step(1000)
     controller.observe_telemetry(Reading(state="PATROL", obstacle=False), 1100)
-    controller._last_pose_ms = 1100
+    controller.localization.last_pose_ms = 1100
     controller.step(1100)
     assert controller.commander.intent.type_ == "MOVE"
 
@@ -377,7 +377,7 @@ def test_lidar_danger_sends_estop_not_stop() -> None:
     controller = build()
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     close = Scan("lidar-a", "b", 1, 1000, ((0.0, 0.10),))
     line = controller.guard_scan(close)
     assert line is not None
@@ -391,7 +391,7 @@ def test_localization_failure_is_lost_not_estop() -> None:
     controller = build()
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     controller.observe_telemetry(Reading(), 2000)
     controller.step(2000)  # pose_timeout_ms(500) 초과
@@ -406,7 +406,7 @@ def test_external_map_pose_recovers_only_after_all_guards_and_normalizes_yaw() -
     controller.phase = Phase.LOST
     controller.observe_map_pose((1.5, 2.5, 3 * math.pi), 2000)
     assert controller.pose == pytest.approx((1.5, 2.5, -math.pi))
-    assert controller._last_pose_ms == 2000
+    assert controller.localization.last_pose_ms == 2000
     assert controller.phase is Phase.LOST
     controller.observe_telemetry(Reading(), 2000)
     stationary_scan(controller, 2000)
@@ -421,9 +421,9 @@ def test_external_obstacle_scan_does_not_refresh_pose_timeout() -> None:
     controller.observe_map_pose((2.0, 2.0, 0.0), 1000)
     scan = Scan("lidar-a", "boot-a", 1, 1400, ((0.0, 1.0),))
     controller.observe_obstacle_scan(scan, 1400)
-    assert controller._last_pose_ms == 1000
+    assert controller.localization.last_pose_ms == 1000
     controller.observe_obstacle_scan(scan, 1600)
-    assert controller._last_pose_ms == 1000
+    assert controller.localization.last_pose_ms == 1000
     assert controller.stats.scans == 2
 
 
@@ -599,7 +599,7 @@ def test_telemetry_silence_halts_but_keeps_sending() -> None:
     controller = build()
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     controller.step(1000 + DRIVE.link_loss_ms + 1)
     assert controller.phase is Phase.HALTED
@@ -637,7 +637,7 @@ def test_reset_waits_for_the_robot_to_confirm_release() -> None:
 
     # 로봇이 해제를 확인했다 → 그때 재개한다
     controller.observe_telemetry(Reading(state="IDLE", safety_latched=False), 2100)
-    controller._last_pose_ms = 2100
+    controller.localization.last_pose_ms = 2100
     controller.step(2100)
     assert controller.phase is not Phase.HALTED
 
@@ -656,7 +656,7 @@ def test_reset_without_safety_latched_warns_that_it_cannot_verify() -> None:
     controller.emergency_stop("시험")
     controller.request_reset()
     controller.observe_telemetry(Reading(safety_latched=None, state="FAILSAFE"), 2000)
-    controller._last_pose_ms = 2000
+    controller.localization.last_pose_ms = 2000
     controller.step(2000)
     assert controller.phase is not Phase.HALTED, "검증 불가라도 사람이 확인했으면 재개한다"
 
@@ -724,7 +724,7 @@ def test_old_firmware_without_safety_latched_still_works() -> None:
     controller.observe_telemetry(Reading(safety_latched=None, state="PATROL"), 1000)
     assert controller.safety.latched is None
     controller.start()
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     assert controller.phase is not Phase.HALTED
 
@@ -740,7 +740,7 @@ def test_first_cycle_follows_the_configured_order() -> None:
     controller.observe_telemetry(Reading(), 1000)
     # 구역 B 에 더 가까운 자리에서 시작한다 — 그래도 첫 사이클은 A 로 간다.
     controller.pose = (3.5, 1.5, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     assert controller.target == "A", "첫 사이클은 zones.ids 순서다"
 
@@ -752,7 +752,7 @@ def test_sequential_when_random_is_disabled() -> None:
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
     controller.pose = (4.0, 3.5, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     assert controller.target == "A"
 
@@ -773,11 +773,11 @@ def test_blocked_zone_does_not_end_the_cycle_early() -> None:
     controller.visited = frozenset({"A"})
     controller.observe_telemetry(Reading(), 1000)
     controller.pose = (2.0, 2.0, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)
     assert controller.target == "B"  # 먼저 정지·스캔 재확인한다.
-    assert controller._recovery is not None
-    controller._recovery = None
+    assert controller.recovery.active is not None
+    controller.recovery.active = None
     controller.skipped = frozenset({"B"})
     controller.plan = Plan(None)
     controller._replan()
@@ -790,7 +790,7 @@ def test_arrival_marks_the_zone_and_moves_on() -> None:
     controller.start()
     controller.observe_telemetry(Reading(), 1000)
     controller.pose = (1.0, 1.0, 0.0)
-    controller._last_pose_ms = 1000
+    controller.localization.last_pose_ms = 1000
     controller.step(1000)  # A 를 목표로 잡는다 (이미 A 위에 있다)
     assert "A" in controller.visited
     assert controller.fsm_state == "ZONE_INSPECT"
@@ -997,13 +997,13 @@ def test_zone_inspection_survives_unrelated_live_obstacle() -> None:
     controller.observe_obstacle_scan(Scan("lidar-a", "boot-a", 2, 1200, ((0, 1),)), 1200)
     controller.step(1200)
     assert controller.phase is Phase.INSPECT
-    assert controller._inspection_zone == "A"
+    assert controller.arrival.zone == "A"
     assert controller.stats.zones_visited == 1
     assert controller.goto(4, 1)[0]
     stationary_scan(controller, 1300)
     controller.step(1300)
     assert controller.target == "GOAL"
-    assert controller._inspection_zone is None
+    assert controller.arrival.zone is None
 
 
 def test_full_cycle_visits_every_zone_once() -> None:
@@ -1017,7 +1017,7 @@ def test_full_cycle_visits_every_zone_once() -> None:
     now = 1000
     for _ in range(400):
         controller.observe_telemetry(Reading(), now)
-        controller._last_pose_ms = now
+        controller.localization.last_pose_ms = now
         controller.step(now)
         # 목표에 순간이동시켜 도착 판정만 본다 — 보행 모델은 별 시험이다.
         if controller.target is not None:
@@ -1036,9 +1036,9 @@ def test_dynamic_obstacle_does_not_change_the_map() -> None:
     before = controller.grid.cells.copy()
     from host.behavior.planner import mark_obstacle
 
-    mark_obstacle(controller._dynamic, controller.grid, (2.5, 2.5), 0.3)
+    mark_obstacle(controller.navmap.dynamic, controller.grid, (2.5, 2.5), 0.3)
     assert np.array_equal(controller.grid.cells, before), "지도는 그대로여야 한다"
-    assert controller._dynamic.any(), "동적 마스크에만 찍혀야 한다"
+    assert controller.navmap.dynamic.any(), "동적 마스크에만 찍혀야 한다"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1051,7 +1051,7 @@ def _steerable(now: int) -> PatrolController:
     controller.resume()
     controller.observe_telemetry(Reading(), now)
     controller.pose = (2.0, 2.0, 0.0)
-    controller._last_pose_ms = now
+    controller.localization.last_pose_ms = now
     return controller
 
 
@@ -1222,7 +1222,7 @@ def test_controller_projects_actual_leg_with_body_radius_and_expires_it() -> Non
     controller.observe_obstacle_scan(Scan("lidar-01", "boot", 2, 1000, ((0, 1),)), 1000)
     assert controller.take_new_obstacles() == ((4, 2.5),)
     assert controller.blocked[leg]
-    controller._refresh_navigation(3000)
+    controller.navmap.refresh(3000)
     assert not controller.blocked[leg]
     assert loc.cells[leg] == 3 and grid.cells[leg] == -3
 
@@ -1258,7 +1258,7 @@ def test_live_leg_replans_without_old_confirmation_or_settle_wait():
     controller.resume()
     controller.observe_obstacle_scan(Scan("lidar-01", "boot", 1, 1000, ((0, 1),)), 1000)
     controller.steer(1000)
-    assert controller._dynamic[controller.grid.to_cell(4, 2.5)]
+    assert controller.navmap.dynamic[controller.grid.to_cell(4, 2.5)]
     assert controller.plan.reachable
     assert controller.phase is Phase.MOVING
     assert controller.commander.intent.type_ == "MOVE"
@@ -1288,7 +1288,7 @@ def test_new_loc_only_obstacle_does_not_invalidate_global_route(phase: Phase) ->
     original = controller.plan
     controller.phase = phase
     loc.cells[loc.to_cell(4, 2.5)] = 3
-    controller._rebuild_masks()
+    controller.navmap.rebuild_masks()
     assert controller.plan is original
     assert controller.phase is phase
     assert not controller.blocked[grid.to_cell(4, 2.5)]
@@ -1320,32 +1320,32 @@ def test_tracking_uses_live_escape_from_old_map_clearance() -> None:
 def test_global_votes_must_agree_on_heading() -> None:
     """위치가 같아도 방위가 다르면 다른 답이다 — 58°·36° 가 한 표로 묶였던 실기(s0_live_4)."""
     controller = build(reloc_votes=3)
-    controller._moved_since_vote = True
-    assert controller._vote_global((1.9, -2.5, math.radians(58)), peers=0) is False
-    controller._moved_since_vote = True
-    assert controller._vote_global((1.95, -2.5, math.radians(36)), peers=0) is False
-    assert len(controller._global_votes) == 1, "방위가 22° 다르면 처음부터 다시 센다"
+    controller.localization.moved_since_vote = True
+    assert controller.localization.vote_global((1.9, -2.5, math.radians(58)), peers=0) is False
+    controller.localization.moved_since_vote = True
+    assert controller.localization.vote_global((1.95, -2.5, math.radians(36)), peers=0) is False
+    assert len(controller.localization.global_votes) == 1, "방위가 22° 다르면 처음부터 다시 센다"
 
 
 def test_stationary_ambiguous_votes_are_not_independent() -> None:
     """움직이지 않은 로봇의 같은 장면 — 모호한(경쟁 후보 많은) 답은 반복돼도 표가 늘지 않는다."""
     controller = build(reloc_votes=3, reloc_stationary_max_peers=10)
     pose = (1.0, 1.0, 0.5)
-    controller._vote_global(pose, peers=50)
+    controller.localization.vote_global(pose, peers=50)
     for _ in range(5):
-        assert controller._vote_global(pose, peers=50) is False
-    assert len(controller._global_votes) == 1
+        assert controller.localization.vote_global(pose, peers=50) is False
+    assert len(controller.localization.global_votes) == 1
     # 유일한 답이면 서 있어도 센다 (들어 옮겨진 로봇은 움직이지 않고도 다시 찾아야 한다).
-    assert controller._vote_global(pose, peers=2) is False
-    assert controller._vote_global(pose, peers=2) is True
+    assert controller.localization.vote_global(pose, peers=2) is False
+    assert controller.localization.vote_global(pose, peers=2) is True
 
 
 def test_motion_between_votes_makes_them_independent() -> None:
     controller = build(reloc_votes=2, reloc_stationary_max_peers=10)
     pose = (1.0, 1.0, 0.5)
-    controller._vote_global(pose, peers=50)
+    controller.localization.vote_global(pose, peers=50)
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 2000)
-    assert controller._vote_global(pose, peers=50) is True
+    assert controller.localization.vote_global(pose, peers=50) is True
 
 
 def test_imu_rotation_is_measured_from_the_pose_anchor() -> None:
@@ -1358,27 +1358,34 @@ def test_imu_rotation_is_measured_from_the_pose_anchor() -> None:
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)  # 앵커 = IMU 0°
     controller.observe_telemetry(Reading(yaw=20.0), 1100)
-    assert controller._consume_yaw_delta(1150) == pytest.approx(math.radians(20))  # 정합 실패 가정
+    assert controller.heading.consume_yaw_delta(1150) == pytest.approx(
+        math.radians(20)
+    )  # 정합 실패 가정
     controller.observe_telemetry(Reading(yaw=22.0), 1200)
-    assert controller._consume_yaw_delta(1250) == pytest.approx(math.radians(22)), (
+    assert controller.heading.consume_yaw_delta(1250) == pytest.approx(math.radians(22)), (
         "20° 를 잃지 않는다"
     )
-    assert controller._imu_delta_fresh is True
-    controller._consume_yaw_delta(2000)
-    assert controller._imu_delta_fresh is False, "텔레메트리가 0.8초 묵었다"
+    assert controller.heading.delta_fresh is True
+    controller.heading.consume_yaw_delta(2000)
+    assert controller.heading.delta_fresh is False, "텔레메트리가 0.8초 묵었다"
 
 
 def test_global_result_is_dropped_if_the_robot_walked_since_the_request() -> None:
     from host.slam.scan_match import MatchResult
 
     controller = build(reloc_votes=1, min_match_frac=0.0, wall_clock_ms=lambda: 1500)
-    controller._global_inflight = True
-    controller._global_req_context = (None, controller._move_seq, controller._loc_epoch, 1000)
+    controller.localization.worker.inflight = True
+    controller.localization.worker.context = (
+        None,
+        controller.localization.move_seq,
+        controller.localization.loc_epoch,
+        1000,
+    )
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1500)
     scan = __import__("host.common.lidar_link", fromlist=["Scan"]).Scan(
         "l", "b", 1, 1, ((0.0, 1.0),)
     )
-    controller._global_result = (
+    controller.localization.worker.result = (
         "reloc",
         MatchResult((3.0, 3.0, 0.0), 100, peers=0),
         np.zeros((100, 2)),
@@ -1386,19 +1393,19 @@ def test_global_result_is_dropped_if_the_robot_walked_since_the_request() -> Non
         controller.pose,
     )
     before = controller.pose
-    controller._poll_global(2000)
+    controller.localization.poll_global(2000)
     assert controller.pose == before, "걷기 전 스캔의 답을 지금 자세로 올리지 않는다"
 
 
 def test_trust_expires_after_a_long_loss() -> None:
     controller = build(trust_expiry_ms=5000)
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
-    controller._pose_verified = True
+    controller.localization.verified = True
     controller.pose_seeded = True
-    controller._expire_trust(5000)
-    assert controller._pose_verified is True
-    controller._expire_trust(7000)
-    assert controller._pose_verified is False and controller.pose_seeded is False
+    controller.localization.expire_trust(5000)
+    assert controller.localization.verified is True
+    controller.localization.expire_trust(7000)
+    assert controller.localization.verified is False and controller.pose_seeded is False
 
 
 def test_verify_needs_matching_heading_to_confirm() -> None:
@@ -1408,19 +1415,19 @@ def test_verify_needs_matching_heading_to_confirm() -> None:
     controller = build(reloc_votes=3, min_match_frac=0.0)
     controller.pose = (1.0, 1.0, 0.0)
     flipped = MatchResult((1.05, 1.0, math.pi), 100, peers=0)
-    controller._apply_verify_result(flipped, np.zeros((100, 2)), 5000, controller.pose)
-    assert controller._pose_verified is False
+    controller.localization.apply_verify_result(flipped, np.zeros((100, 2)), 5000, controller.pose)
+    assert controller.localization.verified is False
 
 
 def test_votes_must_agree_with_every_earlier_vote() -> None:
     """0, 0.29, 0.58m 처럼 한 칸씩 미끄러지는 답은 한 무리가 아니다."""
     controller = build(reloc_votes=3)
     for x in (0.0, 0.29):
-        controller._moved_since_vote = True
-        controller._vote_global((x, 0.0, 0.0), peers=0)
-    controller._moved_since_vote = True
-    assert controller._vote_global((0.58, 0.0, 0.0), peers=0) is False
-    assert len(controller._global_votes) == 1
+        controller.localization.moved_since_vote = True
+        controller.localization.vote_global((x, 0.0, 0.0), peers=0)
+    controller.localization.moved_since_vote = True
+    assert controller.localization.vote_global((0.58, 0.0, 0.0), peers=0) is False
+    assert len(controller.localization.global_votes) == 1
 
 
 def test_verify_result_against_pose_at_request_time() -> None:
@@ -1432,7 +1439,7 @@ def test_verify_result_against_pose_at_request_time() -> None:
     asked = (1.0, 1.0, 0.0)
     far = MatchResult((3.0, 3.0, 0.0), 100, peers=0)
     points = np.zeros((100, 2))
-    assert controller._apply_verify_result(far, points, 5000, asked) is False
+    assert controller.localization.apply_verify_result(far, points, 5000, asked) is False
     assert controller.pose == (2.0, 2.0, 0.0), "낡은 감사로 자세를 옮기지 않는다"
 
 
@@ -1440,11 +1447,16 @@ def _pending_reloc(controller, pose=(3.0, 3.0, 0.0), asked_ms=None, imu=None):
     from host.common.lidar_link import Scan
     from host.slam.scan_match import MatchResult
 
-    controller._global_inflight = True
+    controller.localization.worker.inflight = True
     if asked_ms is None:
         asked_ms = controller.wall_clock_ms()
-    controller._global_req_context = (imu, controller._move_seq, controller._loc_epoch, asked_ms)
-    controller._global_result = (
+    controller.localization.worker.context = (
+        imu,
+        controller.localization.move_seq,
+        controller.localization.loc_epoch,
+        asked_ms,
+    )
+    controller.localization.worker.result = (
         "reloc",
         MatchResult(pose, 100, peers=0),
         np.zeros((100, 2)),
@@ -1460,8 +1472,8 @@ def test_result_requested_before_trust_expiry_is_dropped() -> None:
     )
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
     _pending_reloc(controller, asked_ms=1500)
-    controller._expire_trust(7000)  # 세대가 올라간다
-    controller._poll_global(7000)
+    controller.localization.expire_trust(7000)  # 세대가 올라간다
+    controller.localization.poll_global(7000)
     assert controller.pose == (1.0, 1.0, 0.0)
 
 
@@ -1474,7 +1486,7 @@ def test_late_global_result_is_dropped() -> None:
     )
     controller.observe_map_pose((1.0, 1.0, 0.0), 1000)
     _pending_reloc(controller, asked_ms=1000)
-    controller._poll_global(1001)  # 루프 시계가 멎어 있어도 실제로 묵은 결과는 버린다.
+    controller.localization.poll_global(1001)  # 루프 시계가 멎어 있어도 실제로 묵은 결과는 버린다.
     assert controller.pose == (1.0, 1.0, 0.0), "3.5초 묵은 탐색 결과"
 
 
@@ -1483,30 +1495,30 @@ def test_stale_imu_is_not_used_as_anchor() -> None:
     controller = build(imu_fresh_ms=300)
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose((1.0, 1.0, math.radians(20)), 3000)  # IMU 는 2초 묵음
-    assert controller._imu_anchor is None
+    assert controller.heading.anchor is None
     controller.observe_telemetry(Reading(yaw=20.0), 3100)
-    assert controller._consume_yaw_delta(3150) == 0.0, "재개 시점에 다시 묶는다"
+    assert controller.heading.consume_yaw_delta(3150) == 0.0, "재개 시점에 다시 묶는다"
     controller.observe_telemetry(Reading(yaw=25.0), 3200)
-    assert controller._consume_yaw_delta(3250) == pytest.approx(math.radians(5))
+    assert controller.heading.consume_yaw_delta(3250) == pytest.approx(math.radians(5))
 
 
 def test_adopted_global_pose_aligns_steering_offset_to_request_imu() -> None:
     controller = build(reloc_votes=1, min_match_frac=0.0)
     controller.observe_telemetry(Reading(yaw=30.0), 1000)
     _pending_reloc(controller, pose=(3.0, 3.0, math.radians(10)), imu=math.radians(10))
-    controller._poll_global(1500)
+    controller.localization.poll_global(1500)
     assert controller.pose[:2] == (3.0, 3.0)
-    assert controller._imu_anchor == pytest.approx(math.radians(10))
+    assert controller.heading.anchor == pytest.approx(math.radians(10))
     # 조향 방위 = 지금 IMU(30°) − 오프셋(10°−10°=0) = 30° — 요청 이후 20° 회전이 들어 있다.
-    assert controller._steering_yaw() == pytest.approx(math.radians(30))
+    assert controller.heading.steering_yaw() == pytest.approx(math.radians(30))
 
 
 def test_move_zero_counts_as_stop() -> None:
     controller = build()
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 1000)
-    seq = controller._move_seq
+    seq = controller.localization.move_seq
     controller.note_sent([CommandEncoder().encode("MOVE", step=0, angle=0)], 2000)
-    assert controller._move_seq == seq
+    assert controller.localization.move_seq == seq
     assert controller._stopped_since_ms == 2000 and controller._last_sent_moving is False
 
 
@@ -1515,29 +1527,29 @@ def test_fast_loop_does_not_expire_a_fresh_global_result(monkeypatch) -> None:
 
     wall = [1000]
     controller = build(reloc_votes=1, min_match_frac=0.0, wall_clock_ms=lambda: wall[0])
-    monkeypatch.setattr(controller, "_ensure_global_worker", lambda: None)
+    monkeypatch.setattr(controller.localization.worker, "ensure_started", lambda: None)
     controller._scan_now_ms = 100_000
     scan = Scan("l", "b", 1, 1, ((0.0, 1.0),))
-    assert controller._submit_global("reloc", np.zeros((100, 2)), scan)
-    assert controller._global_req_context[-1] == 1000
-    _pending_reloc(controller, asked_ms=controller._global_req_context[-1])
+    assert controller.localization.submit_global("reloc", np.zeros((100, 2)), scan)
+    assert controller.localization.worker.context[-1] == 1000
+    _pending_reloc(controller, asked_ms=controller.localization.worker.context[-1])
     wall[0] += 300
-    controller._poll_global(120_000)
+    controller.localization.poll_global(120_000)
     assert controller.pose == (3.0, 3.0, 0.0)
     assert controller.pose_ms == 120_000  # 자세 신선도는 여전히 루프 시계를 쓴다.
-    assert controller._pose_verified
+    assert controller.localization.verified
 
 
 def test_global_request_owns_readonly_map_and_metadata(monkeypatch) -> None:
     from host.common.lidar_link import Scan
 
     controller = build(loc_grid=open_room())
-    monkeypatch.setattr(controller, "_ensure_global_worker", lambda: None)
+    monkeypatch.setattr(controller.localization.worker, "ensure_started", lambda: None)
     points = np.ones((60, 2))
     scan = Scan("l", "b", 1, 1, ((0.0, 1.0),))
     expected, meta = controller.match_grid.snapshot()
-    assert controller._submit_global("reloc", points, scan)
-    request = controller._global_req
+    assert controller.localization.submit_global("reloc", points, scan)
+    request = controller.localization.worker.request
     snapshot = request[4]
     controller.match_grid.cells[:] = 0.0
     controller.match_grid.meta.origin_x += 2.0
@@ -1548,8 +1560,8 @@ def test_global_request_owns_readonly_map_and_metadata(monkeypatch) -> None:
     assert np.all(request[1] == 1.0)
     with pytest.raises(ValueError):
         snapshot.cells[0, 0] = 5.0
-    assert not controller._submit_global("verify", points, scan)
-    assert controller._global_req is request
+    assert not controller.localization.submit_global("verify", points, scan)
+    assert controller.localization.worker.request is request
 
 
 @pytest.mark.parametrize("kind", ["reloc", "verify"])
@@ -1563,11 +1575,11 @@ def test_unresolved_full_scan_result_cannot_vote_or_verify(kind, diagnostics) ->
     result = MatchResult(controller.pose, 60, peers=0, **diagnostics)
     points = np.ones((60, 2))
     if kind == "reloc":
-        controller._apply_reloc_result(result, points, Scan("l", "b", 1, 1, ()), 1000)
+        controller.localization.apply_reloc_result(result, points, Scan("l", "b", 1, 1, ()), 1000)
     else:
-        controller._apply_verify_result(result, points, 1000, controller.pose)
-    assert not controller._global_votes
-    assert not controller._pose_verified
+        controller.localization.apply_verify_result(result, points, 1000, controller.pose)
+    assert not controller.localization.global_votes
+    assert not controller.localization.verified
 
 
 def test_escape_skips_nearby_points_only_with_a_safe_body_connector() -> None:
@@ -1597,7 +1609,7 @@ def test_waypoint_radius_cannot_cut_an_unsafe_corner(escape_end) -> None:
     controller = build()
     controller.pose = (1.94, 2.025, 0.0)
     controller.plan = Plan("A", ((2.025, 2.025), (2.025, 2.225)), escape_end_index=escape_end)
-    controller._body_blocked[41, 39] = True  # 다음 점으로 자르는 대각선만 막는다.
+    controller.navmap.body[41, 39] = True  # 다음 점으로 자르는 대각선만 막는다.
     assert controller._current_waypoint() == (2.025, 2.025)
     assert controller.waypoint_index == 0
 
@@ -1647,9 +1659,9 @@ def test_margin_following_preserves_stop_boundaries(hazard) -> None:
         x = 2.225  # 몸체는 안전하지만 기존 선분에서 도달 반경보다 멀다.
     elif hazard == "unknown":
         controller.grid.cells[controller.grid.to_cell(x, 2.025)] = 0.0
-        controller._rebuild_masks()
+        controller.navmap.rebuild_masks()
     elif hazard == "dynamic":
-        controller._dynamic[controller.grid.to_cell(2.325, 3.025)] = True
+        controller.navmap.dynamic[controller.grid.to_cell(2.325, 3.025)] = True
     controller.observe_map_pose((x, 2.025, math.pi / 2), 1000 if hazard == "stale" else 2000)
     controller.observe_telemetry(Reading(), 2000)
     controller.steer(2000)
@@ -1676,7 +1688,7 @@ def test_obstacle_in_front_of_known_wall_is_not_hidden_by_tracking_inflation() -
     controller.observe_map_pose((2.025, 2.025, 0), 1000)
     controller.observe_obstacle_scan(Scan("l", "b", 2, 1000, ((0, 0.6),)), 1000)
     assert controller.take_new_obstacles()[0] == pytest.approx((2.625, 2.025))
-    assert controller._dynamic[grid.to_cell(2.625, 2.025)]
+    assert controller.navmap.dynamic[grid.to_cell(2.625, 2.025)]
 
 
 @pytest.mark.parametrize("dynamic", [False, True])
@@ -1718,9 +1730,9 @@ def test_grazing_known_cell_is_not_a_new_obstacle(dynamic) -> None:
     )
     controller = build(grid=grid)
     controller.pose = pose
-    controller._dynamic[:] = mask
+    controller.navmap.dynamic[:] = mask
     for _ in range(3):
-        controller._check_new_obstacle(Scan("l", "b", 1, 1000, ((angle, distance),)))
+        controller.navmap.project_scan(Scan("l", "b", 1, 1000, ((angle, distance),)))
     assert controller.stats.replans == 0
     assert controller.take_new_obstacles() == ()
 
@@ -1790,51 +1802,51 @@ def _lost_after_verified(**overrides):
     controller = build(**params)
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose(HOME, 1000)
-    controller._pose_verified = True
-    controller._expire_trust(7000)
+    controller.localization.verified = True
+    controller.localization.expire_trust(7000)
     return controller
 
 
 def _restore_round(controller, now_ms, prior_pose=HOME, prior_score=95, global_score=100):
     """워커가 전역 결과와 창 안 결과를 함께 낸 것처럼 꾸며 루프에서 해석한다."""
-    controller._global_inflight = True
-    controller._global_req_context = (
+    controller.localization.worker.inflight = True
+    controller.localization.worker.context = (
         None,
-        controller._move_seq,
-        controller._loc_epoch,
+        controller.localization.move_seq,
+        controller.localization.loc_epoch,
         controller.wall_clock_ms(),
     )
-    controller._global_result = (
+    controller.localization.worker.result = (
         "reloc",
         MatchResult((4.5, 3.5, 2.0), global_score, peers=200),  # 모호한 엉뚱한 자리
         POINTS,
         SCAN,
         controller.pose,
     )
-    controller._global_prior_result = MatchResult(prior_pose, prior_score)
+    controller.localization.worker.prior_result = MatchResult(prior_pose, prior_score)
     controller.observe_telemetry(Reading(yaw=1.0), now_ms)
-    controller._poll_global(now_ms)
+    controller.localization.poll_global(now_ms)
 
 
 def test_restore_anchor_is_set_only_for_a_verified_pose_with_fresh_imu() -> None:
     controller = _lost_after_verified()
-    assert controller._restore_anchor is not None
-    assert controller._restore_anchor[0] == HOME
+    assert controller.localization.restore_anchor is not None
+    assert controller.localization.restore_anchor[0] == HOME
     unverified = build(reloc_restore_enabled=True, trust_expiry_ms=5000)
     unverified.observe_telemetry(Reading(yaw=0.0), 1000)
     unverified.observe_map_pose(HOME, 1000)
     unverified.pose_seeded = True  # 사람 시드는 «제자리» 근거가 아니다
-    unverified._expire_trust(7000)
-    assert unverified._restore_anchor is None
+    unverified.localization.expire_trust(7000)
+    assert unverified.localization.restore_anchor is None
 
 
 def test_restore_disabled_by_default() -> None:
     controller = build(trust_expiry_ms=5000)
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose(HOME, 1000)
-    controller._pose_verified = True
-    controller._expire_trust(7000)
-    assert controller._restore_anchor is None
+    controller.localization.verified = True
+    controller.localization.expire_trust(7000)
+    assert controller.localization.restore_anchor is None
 
 
 def test_restore_three_consistent_rounds_restore_trust_at_home() -> None:
@@ -1842,10 +1854,10 @@ def test_restore_three_consistent_rounds_restore_trust_at_home() -> None:
     for n, now in enumerate((7100, 8100, 9100), start=1):
         _restore_round(controller, now)
         if n < 3:
-            assert controller._pose_verified is False, "한두 표로는 되살리지 않는다"
-    assert controller._pose_verified is True
+            assert controller.localization.verified is False, "한두 표로는 되살리지 않는다"
+    assert controller.localization.verified is True
     assert controller.pose == HOME, "엉뚱한 전역 최고점이 아니라 제자리"
-    assert controller._restore_anchor is None
+    assert controller.localization.restore_anchor is None
 
 
 def test_restore_window_score_far_below_global_best_is_rejected() -> None:
@@ -1853,15 +1865,15 @@ def test_restore_window_score_far_below_global_best_is_rejected() -> None:
     controller = _lost_after_verified()
     for now in (7100, 8100, 9100, 10100):
         _restore_round(controller, now, prior_score=80, global_score=100)
-    assert controller._pose_verified is False
-    assert controller._restore_votes == []
+    assert controller.localization.verified is False
+    assert controller.localization.restore_votes == []
 
 
 def test_restore_weak_window_score_is_rejected_even_if_global_is_weaker() -> None:
     controller = _lost_after_verified()
     for now in (7100, 8100, 9100):
         _restore_round(controller, now, prior_score=40, global_score=40)
-    assert controller._pose_verified is False
+    assert controller.localization.verified is False
 
 
 def test_restore_votes_must_agree() -> None:
@@ -1869,35 +1881,35 @@ def test_restore_votes_must_agree() -> None:
     _restore_round(controller, 7100, prior_pose=HOME)
     _restore_round(controller, 8100, prior_pose=(2.2, 2.0, 0.0))
     _restore_round(controller, 9100, prior_pose=HOME)
-    assert controller._pose_verified is False
+    assert controller.localization.verified is False
 
 
 def test_restore_move_command_after_loss_drops_the_anchor() -> None:
     controller = _lost_after_verified()
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 7050)
     controller.observe_telemetry(Reading(yaw=0.0), 7100)
-    assert controller._restore_prior(7100) is None
-    assert controller._restore_anchor is None
+    assert controller.localization.restore_prior(7100) is None
+    assert controller.localization.restore_anchor is None
 
 
 def test_restore_imu_turn_drops_the_anchor() -> None:
     controller = _lost_after_verified()
     controller.observe_telemetry(Reading(yaw=12.0), 7100)  # 사람이 들어 돌렸다
-    assert controller._restore_prior(7100) is None
+    assert controller.localization.restore_prior(7100) is None
 
 
 def test_restore_stale_imu_or_old_anchor_drops_it() -> None:
     controller = _lost_after_verified()
-    assert controller._restore_prior(7500) is None, "IMU 가 0.3초 넘게 묵었다"
+    assert controller.localization.restore_prior(7500) is None, "IMU 가 0.3초 넘게 묵었다"
     controller = _lost_after_verified(reloc_restore_max_age_ms=10000)
     controller.observe_telemetry(Reading(yaw=0.0), 12000)
-    assert controller._restore_prior(12000) is None, "기준이 10초 넘게 묵었다"
+    assert controller.localization.restore_prior(12000) is None, "기준이 10초 넘게 묵었다"
 
 
 def test_restore_prior_yaw_follows_small_imu_rotation() -> None:
     controller = _lost_after_verified()
     controller.observe_telemetry(Reading(yaw=3.0), 7100)
-    prior = controller._restore_prior(7100)
+    prior = controller.localization.restore_prior(7100)
     assert prior is not None
     assert prior[2] == pytest.approx(math.radians(3.0))
 
@@ -1906,13 +1918,13 @@ def test_restore_submit_passes_prior_only_for_reloc() -> None:
     controller = _lost_after_verified()
     controller.observe_telemetry(Reading(yaw=0.0), 7100)
     controller._scan_now_ms = 7100
-    controller._submit_global("reloc", POINTS, SCAN)
-    assert controller._global_req_prior == HOME
-    controller._global_req = None
-    controller._global_inflight = False
-    controller._global_result = None
-    controller._submit_global("verify", POINTS, SCAN)
-    assert controller._global_req_prior is None
+    controller.localization.submit_global("reloc", POINTS, SCAN)
+    assert controller.localization.worker.request_prior == HOME
+    controller.localization.worker.request = None
+    controller.localization.worker.inflight = False
+    controller.localization.worker.result = None
+    controller.localization.submit_global("verify", POINTS, SCAN)
+    assert controller.localization.worker.request_prior is None
 
 
 @pytest.mark.parametrize(
@@ -1978,19 +1990,19 @@ def test_restore_real_worker_picks_home_in_a_symmetric_room() -> None:
     )
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose(home, 1000)
-    controller._pose_verified = True
-    controller._expire_trust(7000)
-    assert controller._restore_anchor is not None
+    controller.localization.verified = True
+    controller.localization.expire_trust(7000)
+    assert controller.localization.restore_anchor is not None
     scan = Scan("l", "b", 1, 1, _room_scan(home))
     points = preprocess(scan.points, 0.12, 8.0)
     for round_ms in (7100, 8100, 9100):
         controller._scan_now_ms = round_ms
-        assert controller._submit_global("reloc", points, scan)
+        assert controller.localization.submit_global("reloc", points, scan)
         deadline = _time.monotonic() + 20
-        while controller._global_result is None and _time.monotonic() < deadline:
+        while controller.localization.worker.result is None and _time.monotonic() < deadline:
             _time.sleep(0.02)
-        controller._poll_global(round_ms)
-    assert controller._pose_verified is True
+        controller.localization.poll_global(round_ms)
+    assert controller.localization.verified is True
     assert math.hypot(controller.pose[0] - home[0], controller.pose[1] - home[1]) <= 0.06
     assert abs(controller.pose[2] - home[2]) <= math.radians(2)
 
@@ -2000,11 +2012,11 @@ def test_restore_anchor_uses_move_count_at_pose_time() -> None:
     controller = build(reloc_restore_enabled=True, trust_expiry_ms=5000, imu_fresh_ms=300)
     controller.observe_telemetry(Reading(yaw=0.0), 1000)
     controller.observe_map_pose(HOME, 1000)
-    controller._pose_verified = True
+    controller.localization.verified = True
     controller.note_sent([CommandEncoder().encode("MOVE", step=40, angle=0)], 2000)
-    controller._expire_trust(7000)
+    controller.localization.expire_trust(7000)
     controller.observe_telemetry(Reading(yaw=0.0), 7100)
-    assert controller._restore_prior(7100) is None
+    assert controller.localization.restore_prior(7100) is None
 
 
 def test_restore_rechecks_anchor_when_the_result_arrives() -> None:
@@ -2012,25 +2024,25 @@ def test_restore_rechecks_anchor_when_the_result_arrives() -> None:
     controller = _lost_after_verified()
     _restore_round(controller, 7100)
     _restore_round(controller, 8100)
-    controller._global_inflight = True
-    controller._global_req_context = (
+    controller.localization.worker.inflight = True
+    controller.localization.worker.context = (
         None,
-        controller._move_seq,
-        controller._loc_epoch,
+        controller.localization.move_seq,
+        controller.localization.loc_epoch,
         controller.wall_clock_ms(),
     )
-    controller._global_result = (
+    controller.localization.worker.result = (
         "reloc",
         MatchResult((4.5, 3.5, 2.0), 100, peers=200),
         POINTS,
         SCAN,
         controller.pose,
     )
-    controller._global_prior_result = MatchResult(HOME, 95)
+    controller.localization.worker.prior_result = MatchResult(HOME, 95)
     controller.observe_telemetry(Reading(yaw=15.0), 9100)
-    controller._poll_global(9100)
-    assert controller._pose_verified is False
-    assert controller._restore_anchor is None
+    controller.localization.poll_global(9100)
+    assert controller.localization.verified is False
+    assert controller.localization.restore_anchor is None
 
 
 def test_restore_failure_breaks_the_vote_streak() -> None:
@@ -2038,29 +2050,31 @@ def test_restore_failure_breaks_the_vote_streak() -> None:
     controller = _lost_after_verified()
     _restore_round(controller, 7100)
     _restore_round(controller, 8100)
-    controller._try_restore(None, None, POINTS, SCAN, 8600)
-    assert controller._restore_votes == []
+    controller.localization.try_restore(None, None, POINTS, SCAN, 8600)
+    assert controller.localization.restore_votes == []
     _restore_round(controller, 9100)
-    assert controller._pose_verified is False
+    assert controller.localization.verified is False
 
 
 def test_restore_anchor_dropped_when_robot_is_lifted() -> None:
     """같은 방위로 들어 옮겨도 몸체는 기운다 — pitch·roll 변화로 기준을 버린다."""
     controller = _lost_after_verified()
     controller.observe_telemetry(Reading(yaw=0.0, pitch=4.0, roll=-3.0), 7100)
-    assert controller._restore_anchor is not None, "서 있는 동안의 작은 흔들림은 괜찮다"
+    assert controller.localization.restore_anchor is not None, "서 있는 동안의 작은 흔들림은 괜찮다"
     controller.observe_telemetry(Reading(yaw=0.0, pitch=15.0, roll=0.0), 7200)
-    assert controller._restore_anchor is None
+    assert controller.localization.restore_anchor is None
     controller.observe_telemetry(Reading(yaw=0.0), 7300)
-    assert controller._restore_prior(7300) is None, "다시 내려놓아도 기준은 돌아오지 않는다"
+    assert controller.localization.restore_prior(7300) is None, (
+        "다시 내려놓아도 기준은 돌아오지 않는다"
+    )
 
 
 def test_restore_needs_tilt_at_pose_time() -> None:
     controller = build(reloc_restore_enabled=True, trust_expiry_ms=5000)
     controller.observe_map_pose(HOME, 1000)  # 텔레메트리(IMU·기울기) 없이 잡은 자세
-    controller._pose_verified = True
-    controller._expire_trust(7000)
-    assert controller._restore_anchor is None
+    controller.localization.verified = True
+    controller.localization.expire_trust(7000)
+    assert controller.localization.restore_anchor is None
 
 
 def test_zone_hint_limits_global_search_to_that_zone() -> None:
@@ -2072,7 +2086,7 @@ def test_zone_hint_limits_global_search_to_that_zone() -> None:
     home = (1.5, 1.2, 0.3)
     controller = build(reloc_votes=3, min_match_frac=0.4, reloc_max_peers=0)
     controller.observe_map_pose((4.0, 3.5, 0.0), 1000)  # 엉뚱한 자리를 믿고 있다
-    controller._pose_verified = True
+    controller.localization.verified = True
     scan = Scan("l", "b", 1, 1, _room_scan(home))
     points = preprocess(scan.points, 0.12, 8.0)
     free = global_match(
@@ -2086,29 +2100,29 @@ def test_zone_hint_limits_global_search_to_that_zone() -> None:
     assert free is not None and free.peers > 0, "구역 없이는 거울 자리와 구별 못 한다"
 
     assert controller.hint_zone("A", 2000) is True  # 구역 A 앵커 (1.0, 1.0), 반경 1.5m
-    assert controller._pose_verified is False and controller.pose_stale(2000)
+    assert controller.localization.verified is False and controller.pose_stale(2000)
     assert controller.hint_zone("Z", 2000) is False
     for round_ms in (2100, 3100, 4100):
         controller._scan_now_ms = round_ms
-        assert controller._submit_global("reloc", points, scan)
+        assert controller.localization.submit_global("reloc", points, scan)
         deadline = _time.monotonic() + 20
-        while controller._global_result is None and _time.monotonic() < deadline:
+        while controller.localization.worker.result is None and _time.monotonic() < deadline:
             _time.sleep(0.02)
-        controller._poll_global(round_ms)
-    assert controller._pose_verified is True
+        controller.localization.poll_global(round_ms)
+    assert controller.localization.verified is True
     assert math.hypot(controller.pose[0] - home[0], controller.pose[1] - home[1]) <= 0.15
     assert abs((controller.pose[2] - home[2] + math.pi) % (2 * math.pi) - math.pi) <= math.radians(
         5
     )
-    assert controller._zone_hint is None, "잡히면 구역 힌트는 끝난다"
+    assert controller.localization.zone_hint is None, "잡히면 구역 힌트는 끝난다"
 
 
 def test_zone_hint_expires() -> None:
     controller = build(zone_hint_ms=60000)
     controller.hint_zone("B", 1000)
-    assert controller._zone_filter(30000) is not None
-    assert controller._zone_filter(62000) is None
-    assert controller._zone_hint is None
+    assert controller.localization.zone_filter(30000) is not None
+    assert controller.localization.zone_filter(62000) is None
+    assert controller.localization.zone_hint is None
 
 
 def test_zone_map_contains_matches_zone_at() -> None:
@@ -2131,13 +2145,13 @@ def test_zone_map_contains_matches_zone_at() -> None:
 def _verified_at(pose=(1.0, 1.0, 0.0)):
     controller = build()
     controller.observe_map_pose(pose, 1000)
-    controller._pose_verified = True
+    controller.localization.verified = True
     return controller
 
 
 def test_goto_refuses_without_a_trusted_pose() -> None:
     controller = build()
-    controller._own_localization = True
+    controller.localization.own_localization = True
     ok, detail = controller.goto(3.0, 2.0)
     assert ok is False and "자기 위치" in detail
     assert controller.goal is None

@@ -67,7 +67,7 @@ def main() -> int:
         else None
     )
     controller.loc_grid = loc
-    controller._own_localization = True
+    controller.localization.own_localization = True
     old_params = replace(controller.plan_params, clearance_m=0.25, soft_clearance_m=0.15)
     old_blocked = inflate(grid, old_params, obstacle_grid=loc)
     old_body = body_collision_mask(grid, old_params, obstacle_grid=loc)
@@ -123,7 +123,7 @@ def main() -> int:
                 continue
             pose = tuple(event["pose"])
             controller.observe_map_pose(pose, timestamp)
-            controller._pose_verified = bool(event["verified"])
+            controller.localization.verified = bool(event["verified"])
             controller.observe_obstacle_scan(scan, timestamp)
             target = event.get("target")
             logged_goals = [
@@ -168,7 +168,7 @@ def main() -> int:
                 and not bool((old_body | old_dynamic)[grid.to_cell(*pose[:2])]),
                 "new_path": new.reachable,
                 "new_reason": new.fail_reason,
-                "live_clear_cells": int(controller._live_clear.mask(grid, timestamp).sum()),
+                "live_clear_cells": int(controller.navmap.live_clear.mask(grid, timestamp).sum()),
                 "dynamic_points": len(controller.obstacles),
                 "front_m": controller._local_scan.distance(),
                 "gap_deg": None if gap is None else math.degrees(gap[0]),

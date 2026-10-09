@@ -14,6 +14,9 @@ from host.behavior.patrol import GOAL_LABEL, Phase
 from host.behavior.planner import Plan, mark_obstacle
 from host.common.lidar_link import Scan
 
+#: 경로 계획을 부르는 모듈 — 순찰기와 협력 객체가 각자 `plan_to` 를 import 한다.
+PLAN_TO = ("host.behavior.patrol.plan_to", "host.behavior.recovery.plan_to")
+
 
 def corridor_scan(width: float, seq: int = 50) -> Scan:
     """Raycast a 6m long passage; widths are physical, independent of the grid."""
@@ -51,13 +54,13 @@ def blocked_retry(monkeypatch, scan):
     c = ready()
     c._goal = (4, 2)
     c.plan = Plan(GOAL_LABEL)
-    c._recovery = Recovery(GOAL_LABEL, 0, 0, None, scanning=True, settling_ms=0)
+    c.recovery.active = Recovery(GOAL_LABEL, 0, 0, None, scanning=True, settling_ms=0)
     c.observe_obstacle_scan(scan, 1000)
-    monkeypatch.setattr(
-        "host.behavior.patrol.plan_to",
-        lambda *_a, **_kw: Plan(None, fail_reason="start_clearance_blocked"),
-    )
-    c._recover()
+    for target in PLAN_TO:
+        monkeypatch.setattr(
+            target, lambda *_a, **_kw: Plan(None, fail_reason="start_clearance_blocked")
+        )
+    c.recovery.step()
     return c
 
 
@@ -65,9 +68,8 @@ def blocked_retry(monkeypatch, scan):
 def test_goto_accepts_goalward_observed_gap_despite_grid_failure(monkeypatch, reason):
     c = ready()
     c.observe_obstacle_scan(corridor_scan(0.4), 1000)
-    monkeypatch.setattr(
-        "host.behavior.patrol.plan_to", lambda *_a, **_kw: Plan(None, fail_reason=reason)
-    )
+    for target in PLAN_TO:
+        monkeypatch.setattr(target, lambda *_a, **_kw: Plan(None, fail_reason=reason))
     assert c.goto(4, 2)[0]
     assert not c.goto(50, 50)[0]
 
@@ -75,7 +77,7 @@ def test_goto_accepts_goalward_observed_gap_despite_grid_failure(monkeypatch, re
 def test_grid_blocked_but_raw_corridor_moves_and_replans(monkeypatch):
     c = blocked_retry(monkeypatch, corridor_scan(0.4))
     assert c.goal == (4, 2) and not c.holding_goal and not c.skipped
-    assert c._avoidance is not None and c._recovery is None
+    assert c.avoidance.active is not None and c.recovery.active is None
     c.step(1000)
     assert c.commander.intent.type_ == "MOVE"
     assert 0 < c.commander.intent.fields["step"] <= c.drive.step_mm * 0.5
@@ -85,7 +87,7 @@ def test_grid_blocked_but_raw_corridor_moves_and_replans(monkeypatch):
     c.observe_map_pose((2.21, 2, 0), 1100)
     c.observe_obstacle_scan(corridor_scan(0.4, 51), 1100)
     c.step(1100)
-    assert c._avoidance is None and c.phase is Phase.PLANNING
+    assert c.avoidance.active is None and c.phase is Phase.PLANNING
     assert c.commander.intent.type_ == "STOP" and c.goal == (4, 2)
 
 
@@ -94,7 +96,7 @@ def test_fully_enclosed_scan_skips_but_missing_coverage_waits(monkeypatch):
     assert c.phase is Phase.IDLE and c.goal_hold_reason == "blocked"
     assert [e["event"] for e in c.take_navigation_events()] == ["zone_skipped"]
     c = blocked_retry(monkeypatch, Scan("lidar-a", "boot-a", 50, 1000, ((0, 3),)))
-    assert c._recovery is not None and c.goal == (4, 2)
+    assert c.recovery.active is not None and c.goal == (4, 2)
     assert not c.take_navigation_events()
     assert c.local_status["reason"] == "corridor_scan_incomplete"
 
@@ -121,7 +123,7 @@ def test_passage_between_angle_bins_turns_even_inside_normal_heading_tolerance(m
         tuple((a + tilt, d) for a, d in scan.points),
     )
     c = blocked_retry(monkeypatch, scan)
-    assert c._avoidance is not None
+    assert c.avoidance.active is not None
     c.step(1000)
     assert c.commander.intent.type_ == "MOVE"
     assert c.commander.intent.fields["step"] == 0
@@ -131,7 +133,7 @@ def test_passage_between_angle_bins_turns_even_inside_normal_heading_tolerance(m
 @pytest.mark.parametrize("angle,moves", [(60, True), (20, False)])
 def test_close_side_outside_stop_fan_moves_inside_fan_stops(monkeypatch, angle, moves):
     c = blocked_retry(monkeypatch, corridor_scan(0.45))
-    assert c._avoidance is not None
+    assert c.avoidance.active is not None
     scan = corridor_scan(0.45, 51)
     points = scan.points + ((math.radians(angle), 0.24),)
     c.observe_obstacle_scan(Scan(scan.device_id, scan.boot_id, scan.seq, 1000, points), 1000)
@@ -145,7 +147,7 @@ def test_close_side_outside_stop_fan_moves_inside_fan_stops(monkeypatch, angle, 
 def test_safety_overrides_raw_corridor(monkeypatch, gate):
     c = blocked_retry(monkeypatch, corridor_scan(0.4))
     if gate == "pose":
-        c._last_pose_ms = None
+        c.localization.last_pose_ms = None
     elif gate == "scan":
         c._local_scan.received_ms = None
     elif gate == "onboard":
@@ -153,8 +155,8 @@ def test_safety_overrides_raw_corridor(monkeypatch, gate):
     elif gate == "estop":
         c.emergency_stop("test")
     else:
-        c._own_localization = True
-        c._pose_verified = False
+        c.localization.own_localization = True
+        c.localization.verified = False
     c.step(1000)
     assert c.commander.intent.type_ != "MOVE"
 

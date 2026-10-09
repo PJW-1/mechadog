@@ -66,10 +66,10 @@ def test_report_separates_false_fixes_and_missing_references():
 
 class Voter:
     def __init__(self):
-        self._global_votes = [object()]
+        self.global_votes = [object()]
         self.calls = Counter()
 
-    def _vote_global(self, _pose, _peers):
+    def vote_global(self, _pose, _peers):
         self.calls["vote"] += 1
         return True
 
@@ -80,7 +80,7 @@ def test_unresolved_and_late_results_do_not_vote(diagnostic):
     result = MatchResult((0, 0, 0), 60, **diagnostic)
     entry = evaluate(result, [None] * 60, None, {}, voter, 0.1)
     assert not entry["eligible"] and not entry["confirmed"]
-    assert not voter._global_votes and not voter.calls
+    assert not voter.global_votes and not voter.calls
     entry = evaluate(MatchResult((0, 0, 0), 60), [None] * 60, None, {}, voter, 3.1)
     assert entry["eligible"] and entry["late"] and not entry["confirmed"]
     assert not voter.calls

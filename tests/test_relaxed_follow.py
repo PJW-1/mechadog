@@ -21,6 +21,10 @@ from host.report.situation import describe
 __all__ = ["config"]
 
 
+#: 경로 계획을 부르는 모듈 — 순찰기와 협력 객체가 각자 `plan_to` 를 import 한다.
+PLAN_TO = ("host.behavior.patrol.plan_to", "host.behavior.recovery.plan_to")
+
+
 def relaxed(*points, pose=(2, 2, 0), **kwargs):
     c = build(nav_params=NavParams(), **kwargs)
     c.observe_telemetry(Reading(), 1000)
@@ -67,7 +71,7 @@ def test_front_stop_then_continuous_escape_and_forward(entry):
         assert abs(c.commander.intent.fields["angle"]) == c.drive.spin_turn_deg
     tick(c, 4300, entry=entry)
     assert c.commander.intent.fields["step"] > 0
-    assert c._recovery is None and c._avoidance is None
+    assert c.recovery.active is None and c.avoidance.active is None
 
 
 def test_escape_requires_transmitted_stop():
@@ -105,21 +109,25 @@ def test_old_gates_do_not_run(monkeypatch, gate):
         c._replan_stop_required = True
         c._stopped_since_ms = None
     elif gate == "escape":
-        c._needs_escape = True
+        c.avoidance.needs_escape = True
         c.grid.cells[c.grid.to_cell(2, 2)] = 5
     elif gate == "memory":
-        c._blockages.remember(c.grid, [(2.37, 2)], 1000)
+        c.recovery.memory.remember(c.grid, [(2.37, 2)], 1000)
     else:
-        c._begin_recovery("test")
+        c.recovery.begin("test")
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("AV에서 기존 회복/계획 관문 실행")
 
-    for method in ("_replan", "_recover", "_start_avoidance", "_begin_recovery", "expire_recovery"):
+    for method in ("_replan", "expire_recovery"):
         monkeypatch.setattr(c, method, forbidden)
+    for method in ("step", "begin", "expire"):
+        monkeypatch.setattr(c.recovery, method, forbidden)
+    for method in ("start", "step"):
+        monkeypatch.setattr(c.avoidance, method, forbidden)
     tick(c, 1000)
     assert c.commander.intent.fields["step"] > 0
-    assert c._recovery is None and c._avoidance is None
+    assert c.recovery.active is None and c.avoidance.active is None
 
 
 @pytest.mark.parametrize("entry", ["step", "steer"])
@@ -145,15 +153,15 @@ def test_safety_retained(gate):
 
 def test_verified_grace_then_stops_without_exploration():
     c = relaxed()
-    c._own_localization = True
-    c._pose_verified = False
+    c.localization.own_localization = True
+    c.localization.verified = False
     for now in (1500, 3000, 3001, 6000):
         c.observe_telemetry(Reading(), now)
         c.observe_map_pose((2, 2, 0), now)  # 미검증 국소 정합으로 유예를 연장하지 않는다.
         c.observe_obstacle_scan(revolution(now), now)
         c.step(now)
         assert c.commander.intent.type_ == ("MOVE" if now <= 3000 else "STOP")
-    c._mark_verified()
+    c.localization.mark_verified()
     c.step(6000)
     assert c.commander.intent.type_ == "MOVE"
 
@@ -171,16 +179,16 @@ def test_tilt_keeps_last_normal_scan_and_does_not_restart_dwell():
     c = relaxed(RoutePoint(x=2, y=2, aim_deg=90, dwell_s=1, label="A"))
     tick(c, 1000)
     tick(c, 1100, pose=(2, 2, math.pi / 2))
-    assert c._route_phase == "dwell"
-    normal = c._relaxed_scan.last_id
+    assert c.route.stage == "dwell"
+    normal = c.relaxed.scan.last_id
     c.observe_telemetry(Reading(pitch=15), 1500)
     c.observe_obstacle_scan(revolution(1500), 1500)
     assert not c._local_scan.clear_allowed
     c.step(1500)
-    assert c._relaxed_scan.last_id == normal
+    assert c.relaxed.scan.last_id == normal
     assert c.route_status()["dwell_remaining_s"] == pytest.approx(0.6)
     c.step(2100)
-    assert c._route_status == "completed"
+    assert c.route.status == "completed"
 
 
 def test_passed_point_finishes_aim_dwell_inspection_without_returning():
@@ -189,16 +197,16 @@ def test_passed_point_finishes_aim_dwell_inspection_without_returning():
     c.wait_for_inspection = lambda _label: waiting
     tick(c, 1000, pose=(2.6, 2, 0))
     tick(c, 1100, pose=(3.6, 2, 0))
-    assert c._route_phase == "aiming"
+    assert c.route.stage == "aiming"
     tick(c, 1200, pose=(3.6, 2, 0))
     assert c.commander.intent.fields["step"] == 0
     tick(c, 1300, pose=(3.6, 2, math.pi / 2))
     tick(c, 2300, pose=(3.6, 2, math.pi / 2))
-    assert c._route_phase == "inspection"
+    assert c.route.stage == "inspection"
     assert c.inspection_ready("A", 2300)
     waiting = False
     tick(c, 2400, pose=(3.6, 2, math.pi / 2))
-    assert c._route_status == "completed"
+    assert c.route.status == "completed"
     assert c.stats.zones_visited == 1
 
 
@@ -206,14 +214,15 @@ def test_projection_does_not_skip_from_far_side():
     c = relaxed(RoutePoint(x=3, y=2))
     tick(c, 1000, pose=(2.6, 2, 0))
     tick(c, 1100, pose=(3.6, 3, 0))
-    assert c._route_phase == "moving"
+    assert c.route.stage == "moving"
 
 
 def test_first_approach_ignores_map_clearance(monkeypatch):
     c = relaxed()
     c.cancel_route()
     c.grid.cells[20:70, 60] = 5
-    monkeypatch.setattr("host.behavior.patrol.plan_to", lambda *_a, **_k: pytest.fail("A*"))
+    for target in PLAN_TO:
+        monkeypatch.setattr(target, lambda *_a, **_k: pytest.fail("A*"))
     assert c.start_route(route(RoutePoint(x=4, y=2)), 1000)[0]
     tick(c, 1000)
     assert c.commander.intent.fields["step"] > 0

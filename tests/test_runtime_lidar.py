@@ -68,7 +68,7 @@ def test_scan_posture_returns_neutral_and_waits_for_level_lidar(config, clock, m
     runtime.tick(clock.ms)
     assert runtime.commander.intent.type_ == "STOP"
     monkeypatch.setattr(
-        "host.behavior.patrol.match", lambda *_args, **_kwargs: MatchResult(navigator.pose, 1)
+        "host.behavior.localization.match", lambda *_args, **_kwargs: MatchResult(navigator.pose, 1)
     )
     navigator.observe_telemetry(SimpleReading(), clock.ms)
     runtime.attach_scans(lambda: Scan("lidar-01", "0" * 16, 3, 0, ((0.0, 3.0),)))
@@ -186,7 +186,7 @@ def test_runtime_stops_when_pose_leaves_observed_free_space(
         assert navigator.phase is Phase.LOST
         assert navigator.local_status["reason"] == "replan_waiting_for_settled_scan"
         assert navigator._replan_stop_required
-        assert navigator._recovery is None
+        assert navigator.recovery.active is None
 
 
 @pytest.mark.parametrize("missing", ["stop", "scan", "settled_scan", "fresh_scan"])
@@ -389,7 +389,7 @@ def test_navigation_decision_is_recorded_once_without_escalating(config, clock, 
         runtime, "_record_navigation_event", lambda event, now: records.append((event, now))
     )
     level = runtime.escalation.level
-    navigator._nav_events.append(
+    navigator.recovery.events.append(
         {"event": "obstacle_detour", "judgement": {"x": 2.5, "y": 2.0, "severity": "low"}}
     )
     runtime.tick(clock.ms)
@@ -406,7 +406,7 @@ def test_navigation_decision_without_frame_still_announces(config, clock, monkey
     said = []
     monkeypatch.setattr(speaker_module, "describe", lambda kind, _j: f"{kind} 문장")
     runtime, navigator = _patrolling(config, clock, announcer=said.append)
-    navigator._nav_events.append(
+    navigator.recovery.events.append(
         {
             "event": "zone_skipped",
             "judgement": {"x": 2.5, "y": 2.0, "zone": "A", "severity": "medium"},
@@ -428,7 +428,7 @@ def test_navigation_event_keeps_original_camera_frame_and_severity(config, clock
     runtime.incidents.blackbox = SimpleNamespace(
         record=lambda *args, **kwargs: calls.append((args, kwargs))
     )
-    navigator._nav_events.append(
+    navigator.recovery.events.append(
         {
             "event": "zone_skipped",
             "judgement": {"x": 2.8, "y": 3, "zone": "A", "blockage_id": 7, "severity": "medium"},
@@ -500,7 +500,7 @@ def _factory_block(
     records: list[tuple] = []
     real = runtime.incidents.record_scene
     runtime.incidents.record_scene = lambda *args: (records.append(args), real(*args))[1]  # type: ignore[method-assign]
-    navigator._new_obstacles.append((2.5, 2.0))
+    navigator.navmap.new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.ms)
     return runtime, vision, records, said
 
@@ -609,7 +609,7 @@ def test_obstacle_outside_patrol_is_not_a_path_block(
     records: list[tuple] = []
     monkeypatch.setattr(runtime.incidents, "record_scene", lambda *args: records.append(args))
     assert runtime._apply(Event.SCAN_DUE, clock.ms)
-    navigator._new_obstacles.append((2.5, 2.0))
+    navigator.navmap.new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.ms)
     assert records == []
 
@@ -642,7 +642,7 @@ def test_collector_saves_blocked_and_clear_during_patrol(
     runtime, navigator, vision = _collecting(config, clock, tmp_path)
     runtime.tick(clock.advance(100))
     assert _collected(tmp_path, "clear") == 1
-    navigator._new_obstacles.append((2.5, 2.0))
+    navigator.navmap.new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.advance(100))
     assert _collected(tmp_path, "blocked") == 1
     (entry,) = [e for e in _manifest(tmp_path) if e["label"] == "blocked"]
@@ -660,7 +660,7 @@ def test_collector_manifest_frame_ms_is_received_time_not_completed(
     vision.result = vision_result(
         7, received, present=False, hits=0, last_seen_ms=None, completed_ms=received + 30
     )
-    navigator._new_obstacles.append((2.5, 2.0))
+    navigator.navmap.new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.advance(10))
     (entry,) = [e for e in _manifest(tmp_path) if e["label"] == "blocked"]
     assert entry["frame_ms"] == received and entry["frame_seq"] == 7
@@ -679,7 +679,7 @@ def test_collector_skips_stale_blocked_frame_but_holds_off_clear(
         runtime.tick(now)
 
     clock.advance(300)  # 비전이 끊겨 마지막 결과가 낡았다
-    navigator._new_obstacles.append((2.5, 2.0))
+    navigator.navmap.new_obstacles.append((2.5, 2.0))
     tick_at(clock.ms)
     blocked_ms = clock.ms
     assert list(tmp_path.rglob("*.jpg")) == [], "낡은 프레임에는 라벨을 붙이지 않는다"
@@ -696,9 +696,9 @@ def test_collector_skips_clear_while_obstacle_active_or_pending(
     config: dict, clock: FakeClock, tmp_path
 ) -> None:
     runtime, navigator, vision = _collecting(config, clock, tmp_path)
-    navigator._pending_hit = (2.5, 2.0)
+    navigator.navmap.pending_hit = (2.5, 2.0)
     runtime.tick(clock.advance(100))
-    navigator._pending_hit = None
+    navigator.navmap.pending_hit = None
     navigator.safety.obstacle = True
     vision.result = vision_result(2, clock.ms, present=False, hits=0, last_seen_ms=None)
     runtime.tick(clock.advance(100))
@@ -708,7 +708,7 @@ def test_collector_skips_clear_while_obstacle_active_or_pending(
 def test_collector_ignores_frames_outside_patrol(config: dict, clock: FakeClock, tmp_path) -> None:
     runtime, navigator, _vision = _collecting(config, clock, tmp_path)
     assert runtime._apply(Event.SCAN_DUE, clock.ms)
-    navigator._new_obstacles.append((2.5, 2.0))
+    navigator.navmap.new_obstacles.append((2.5, 2.0))
     runtime.tick(clock.advance(100))
     assert list(tmp_path.rglob("*.jpg")) == []
 
@@ -1228,9 +1228,9 @@ def test_sent_commands_reach_the_navigator(config: dict, clock: FakeClock) -> No
     runtime.begin(sock)
     runtime._peer = ("127.0.0.1", 5001)
     navigator._stopped_since_ms = 1
-    before = navigator._move_seq
+    before = navigator.localization.move_seq
     runtime.send_immediate(CommandEncoder().encode("MOVE", step=40, angle=0))
-    assert navigator._move_seq == before + 1
+    assert navigator.localization.move_seq == before + 1
     assert navigator._stopped_since_ms is None
 
 
@@ -1481,7 +1481,7 @@ def test_navigation_event_reaches_the_history_once_with_its_blackbox_entry(confi
         event_publisher=published.append,
         history=store,
     )
-    navigator._nav_events.append(deepcopy(_BLOCKED))
+    navigator.recovery.events.append(deepcopy(_BLOCKED))
     runtime.tick(clock.ms)
 
     [run], _ = store.runs()
@@ -1496,7 +1496,7 @@ def test_navigation_event_reaches_the_history_without_a_blackbox(config, clock, 
     """⚠️ 블랙박스가 없는 구성에서도 런타임만 돌면 항법 사건이 DB 에 남는다 (ADR-46 결정 4)."""
     store = _history_store(tmp_path)
     runtime, navigator = _patrolling(config, clock, history=store)
-    navigator._nav_events.append(deepcopy(_BLOCKED))
+    navigator.recovery.events.append(deepcopy(_BLOCKED))
     runtime.tick(clock.ms)
 
     rows, total = store.incidents(event="path_blocked")
@@ -1520,7 +1520,7 @@ def test_navigation_event_history_zone_is_a_configured_zone(config, clock, tmp_p
     store = _history_store(tmp_path)
     extra = {"blackbox": EventBlackbox(local)} if with_blackbox else {}
     runtime, navigator = _patrolling(local, clock, history=store, **extra)
-    navigator._nav_events += [
+    navigator.recovery.events += [
         {"event": "zone_skipped", "judgement": {"x": 1.0, "y": 1.0, "zone": "B", "reason": "x"}},
         {"event": "patrol_unavailable", "judgement": {"x": 1.0, "y": 1.0, "zone": "전체"}},
     ]

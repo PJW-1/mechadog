@@ -70,7 +70,7 @@ flowchart TD
 | 단계 | 사건·단계 | 설정 | 코드 위치 |
 | :--- | :--- | :--- | :--- |
 | 1 순찰 | L0 | `zones.*` · `--lidar-device` | `host/runtime.py` 의 순찰 틱 · `host/behavior/patrol.py` 의 `PatrolController` |
-| 2 막힘 우회 | `path_blocked` (출처 `lidar`, 판정 `x`·`y`·`target` 과 원인 판독의 `fallen`·`vlm_reason`·`raw`·`latency_ms`·`wait_ms`·`vlm_path_cause`. 값은 [VLM 단일 장면 판독](vlm-reading.md)) · 가벼운 경고 | `lidar.new_obstacle_*` | `host/behavior/patrol.py` 의 `PatrolController._check_new_obstacle` · `_replan` |
+| 2 막힘 우회 | `path_blocked` (출처 `lidar`, 판정 `x`·`y`·`target` 과 원인 판독의 `fallen`·`vlm_reason`·`raw`·`latency_ms`·`wait_ms`·`vlm_path_cause`. 값은 [VLM 단일 장면 판독](vlm-reading.md)) · 가벼운 경고 | `lidar.new_obstacle_*` | `host/behavior/nav_map.py` 의 `NavigationMap.project_scan` · `host/behavior/patrol.py` 의 `PatrolController._replan` |
 | 3 위험물 | `hazard_notice` · 가벼운 경고 | `zones.hazard_ids` · `change_detect.vlm_hazard_items` · `vision.hazard` | `host/behavior/zone_inspector.py` 의 `ZoneInspector` · `host/vision/vlm_reader.py` 의 질문 `hazard_item` · `host/vision/hazard_detector.py` 의 `HazardDetector` |
 | 4 쓰러짐 | `FALL_SUSPECTED` → `PERSON_DOWN` · L1 → L3 | `fsm.fall_*` | `host/behavior/fall_monitor.py` ([쓰러짐 확정](factory-fall.md)) |
 | 5 PPE | PPE 위반 경고 · 자동 복귀 | `escalation.ppe_warning_hold_ms` | `host/runtime.py` ([ADR-42](../DECISIONS.md#adr-42)) |
