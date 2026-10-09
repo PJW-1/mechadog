@@ -25,7 +25,7 @@ Hiwonder MechDog(ESP32) 위에 Seeed XIAO ESP32S3 Sense 카메라와 Host PC 를
 | **임베디드·하드웨어** | 모션 펌웨어, 온보드 안전 로직, LiDAR 중계 노드, 하드웨어 연결·검증 |
 | **인지·AI** | PPE(보호구) 검출 모델 개발·검증 |
 
-세부 작업과 담당자 배정은 [담당자별 작업 목록](docs/internal/ASSIGNMENTS.md)을 참고하세요.
+WBS 항목별 담당 기록은 [담당자별 작업 목록](docs/internal/ASSIGNMENTS.md)에 있습니다. 이 목록은 WBS 항목을 두 묶음으로 기록하며, `L1·L2` 는 임베디드·하드웨어 항목이고 `S` 는 시스템·통합 항목입니다. WBS 의 PPE 항목(`3.7.x`)도 `S` 묶음에 잡혀 있습니다.
 
 **하드웨어 구성**
 
@@ -107,21 +107,23 @@ flowchart TD
 | 항목 | 수치 | 조건 | 원문 |
 | :--- | :--- | :--- | :--- |
 | 검출기 처리 시간 | 평균 8.2ms, p95 8.6ms | 2026-09-10, 기준 PC·DirectML, 전처리부터 후처리까지, n=50, 잡음 프레임(속도만 측정) | [design-decisions §4](docs/design-decisions.md), [ADR-24](docs/DECISIONS.md#adr-24) |
-| 사람 검출 신뢰도 | 0.89~0.92 | 2026-09-10 실기, 정면·밝은 조건, 거리 2~3m | [design-decisions §4](docs/design-decisions.md), [기준선 인용](field_tests/results/20260915_4.4.3-event-feed/summary.md) |
-| 프레임 도착 → 검출 완료 | 평균 49.9ms → 24.4ms | 2026-09-10 실기, 같은 스트림에서 추론률 10fps 와 25fps 비교 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| 사람 검출 신뢰도 | 2\~3m 0.89\~0.92, 근거리 0.72\~0.79 / 확정 시점 0.546\~0.866 | 2026-09-10 실기 기준선(정면·밝은 조건, 임계 0.5) / 2026-09-15 `mechdog-01` 재측정 8건(대상이 프레임을 거의 채운 근거리) | [design-decisions §4](docs/design-decisions.md#4-범용-검출기는-라이선스로-골라-yolox-s-로-정한다), [WBS 3.3.3 실기 검증](docs/internal/WBS.md), [09-15 재측정](field_tests/results/20260915_4.4.3-event-feed/summary.md#관찰--48초에-게이트가-8번-열렸다-닫혔다) |
+| 프레임 도착 → 검출 완료 | 평균 49.9ms → 24.4ms | 2026-09-10 실기, 같은 스트림에서 추론률 10fps 와 25fps 비교 | [ARCHITECTURE.md NFR-1.1](docs/ARCHITECTURE.md#nfr-11-을-어떻게-재는가-2026-09-09-확정) |
 | PC ↔ 로봇 UDP 왕복 | 평균 3.2ms, 최대 15.4ms, 손실 0% | 2026-09-09 실기, XIAO VGA 25fps 200프레임을 수신하는 동안 | [ADR-23](docs/DECISIONS.md#adr-23) |
 | 텔레메트리 수신률 | 10.00Hz (30초에 새 `seq` 300건) | 2026-09-17, `mechdog-01`, 반복된 값이 아니라 새 `seq` 로 계수 | [G1 검수 기록](field_tests/results/20260917_6.4.1-g1/summary.md) |
 | 카메라 → 판단 → 정지 명령 | 최소 81ms, 최대 121ms (예산 250ms) | 2026-09-15, `mechdog-01`, 사슬을 끝까지 확정한 프레임 4장 | [E2E 측정](docs/measurements/2026-09-15-e2e-chain.md) |
-| 관제 화면 FPV | 22.62fps (272장 / 11.982초) | 2026-09-15, 검출 박스 포함 브라우저 WebSocket, 순서 역전·JPEG 오류 0건 | [DECISIONS.md](docs/DECISIONS.md) |
+| 관제 화면 FPV | 22.62fps (272장 / 11.982초) | 2026-09-15, 검출 박스 포함 브라우저 WebSocket, 순서 역전·JPEG 오류 0건 | [ADR-32](docs/DECISIONS.md#adr-32) |
 | 초음파 반사 정지 | 9/9 통과, 상태 떨림 29회 → 0회 | 2026-09-17, `mechdog-01` 받침대 시험, 21cm 장애물, 해제 조건 수정 전후 비교. 당시 정지 거리는 25cm 였고 10-06 현장에서 7cm 로 개정했으며, 7cm 기준 받침대 시험은 하지 않았습니다(한계) | [반사 정지 실측](field_tests/results/20260917_3.2.6-obstacle-stop/summary.md), [ADR-47](docs/DECISIONS.md#adr-47) |
-| 공장 시연 동선 한 바퀴 | 약 6분 완주(16:40\~16:46), 측위 일치율 0.74\~0.92, `LINK_LOST` 0회 | 2026-10-06, `mechdog-02`, 실내 4구역 시연 동선 S0→A→B→C→D→S0, LiDAR 동선 점 추종. 17:41 리허설에서도 완주했습니다. 600초 연속 시험은 따로 하지 않았습니다(한계) | [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md) |
+| 공장 시연 동선 한 바퀴 | 약 6분 완주(16:40\~16:46), 측위 일치율 0.74\~0.92, 완주한 판의 `LINK_LOST` 0회 | 2026-10-06, `mechdog-02`, 실내 4구역 시연 동선 S0→A→B→C→D→S0, LiDAR 동선 점 추종. 17:41 리허설에서도 완주했고, 이 세션 전체에서도 `LINK_LOST` 는 0회였습니다. 그날 기록된 세션 30행 전체의 `LINK_LOST` 는 12회(10세션)이며, 600초 연속 시험은 따로 하지 않았습니다(한계) | [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md) |
 | 쓰러짐 확정(규칙 + VLM 교차검증) | 3회 확정, VLM 판독 306ms(첫 회) | 2026-10-06, `mechdog-02`, 누움 규칙이 정지 3초를 채운 프레임을 VLM 에 한 번 더 물음 | [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md) |
 
 ## 실제 시연
 
-2026-10-06 현장에서 시연 기체 `mechdog-02` 가 시연 동선 한 바퀴를 완주했고, 같은 날 리허설과 촬영에서 쓰러짐 확정·PPE 위반 경고·관제 화면의 경보 확인 뒤 순찰 재개까지 이어서 확인했습니다. 세션별 집계와 한계는 [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md)에 있습니다.
+2026-10-06 현장에서 시연 기체 `mechdog-02` 가 시연 동선 한 바퀴를 완주했고, 같은 날 리허설과 촬영에서 쓰러짐 확정·PPE 위반 경고·관제 화면의 경보 확인 뒤 순찰 재개까지 이어서 확인했습니다. 화기 위험물 경로는 시연 기체가 쓰는 로봇 시점 합성 후보(`hazard-synth-v2`)가 실물 라이터 사진 오프라인 평가에서 0.87·0.88 로 검출한 것까지 확인했고, 로봇 실시간 재검증은 하지 않았습니다. 같은 날 이전 모델 `hazard-v1` 은 실물 라이터·보조배터리를 검출하지 못했으며, 보조배터리는 시연에서 뺐습니다([위험물 검출 기록](docs/measurements/2026-10-06-field-patrol.md#4-위험물-검출과-합성-학습-후보), [시연 시나리오](docs/features/factory-demo-scenario.md)). 세션별 집계와 한계는 [10-06 현장 실측](docs/measurements/2026-10-06-field-patrol.md)에 있습니다.
 
 **로봇 없이 5분 안에 보기**
+
+Python 3.12 이상이 필요합니다([`pyproject.toml`](pyproject.toml)).
 
 ```sh
 pip install -r requirements.txt
@@ -129,7 +131,9 @@ python tools/mock/mock_mechdog.py --device mechdog-01
 python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --dashboard-port 8000
 ```
 
-둘째 줄은 가상 로봇을 띄우고, 셋째 줄은 카메라 없이 런타임과 관제 서버를 띄웁니다. 이 두 명령은 서로 다른 터미널에서 실행하고 http://127.0.0.1:8000/ 을 엽니다. 이 주소는 관제 화면(`/glass-preview/`)으로 연결됩니다. 가상 로봇은 실제 로봇처럼 안전 잠금(FAILSAFE)이 걸린 채 켜지므로, 움직이려면 먼저 관제 화면의 «안전 해제 (RESET_SAFE)» 를 누릅니다. 실제 로봇에 연결한 상태에서는 관제 화면의 수동 조작이 로봇을 움직입니다.
+첫째 줄은 의존성을 설치하고, 둘째 줄은 가상 로봇을 띄우고, 셋째 줄은 카메라 없이 런타임과 관제 서버를 띄웁니다. 둘째·셋째 명령은 서로 다른 터미널에서 실행하고 http://127.0.0.1:8000/ 을 엽니다. 이 주소는 관제 화면(`/glass-preview/`)으로 연결됩니다. 가상 로봇은 실제 로봇처럼 안전 잠금(FAILSAFE)이 걸린 채 켜지므로, 움직이려면 먼저 관제 화면의 «안전 해제 (RESET_SAFE)» 를 누릅니다. 실제 로봇에 연결한 상태에서는 관제 화면의 수동 조작이 로봇을 움직입니다.
+
+시험은 하드웨어 없이 `pip install -r requirements-dev.txt` 뒤 `python -m pytest -q` 로 돌립니다(린트·커버리지 검사까지 포함한 명령은 [CONTRIBUTING 8절](CONTRIBUTING.md#8-로컬-검증-pr-전)).
 
 외부 3D 장면 연결과 제어 화면의 미니맵은 [DASHBOARD.md](docs/DASHBOARD.md#외부-3d-장면과-제어-미니맵)에 정리했습니다.
 
@@ -163,5 +167,5 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 - **테스트**: 하드웨어 없이 도는 pytest 4,900여 건(147개 파일, 2026-10-09 기준)이 FSM 전이, 패킷 파싱, 안전 판정을 검사합니다. 관제 화면은 node 테스트(jsdom)로 따로 검사합니다.
 - **CI 게이트**: [`ci.yml`](.github/workflows/ci.yml)이 ruff 린트·포맷, mypy 타입 검사, pytest(`host`·`tools` 커버리지 80% 미만이면 실패), 펌웨어 3종 arduino-cli 빌드와 펌웨어 정적 분석을 PR 마다 돌리고, [`web.yml`](.github/workflows/web.yml)이 관제 화면 테스트와 정적 검사를 돌립니다.
 - **문서·코드 일치 검사**: [ARCHITECTURE.md](docs/ARCHITECTURE.md)의 상태 전이표와 코드의 전이표가 같은지를 테스트가 대조하고([`tests/test_fsm.py`](tests/test_fsm.py)), 작업 목록 생성 결과가 원본과 같은지(`wbs_assignments.py --check`)와 문서 상대 링크가 실제 파일을 가리키는지(`check_doc_links.py`)를 CI 가 확인합니다.
-- **커밋과 리뷰**: 커밋은 Conventional Commits 규약을 따르고, 변경은 PR 로 검토해 병합합니다(병합된 PR 460여 건, 2026-10-09 기준).
+- **커밋과 병합**: 커밋은 Conventional Commits 규약을 따릅니다. `main`·`dev` 는 보호 브랜치라 모든 변경이 PR 로 들어오며, 필수 검사 네 가지(Python Quality, Firmware Quality, MechDog-Motion 빌드, XIAO-Vision 빌드)를 통과해야 병합됩니다([CONTRIBUTING](CONTRIBUTING.md)). 병합된 PR 은 479건입니다(2026-10-09 기준).
 - **라이선스**: 저장소 코드는 [Apache-2.0](LICENSE)입니다. 검출 모델 가중치는 저장소에 넣지 않고 `python tools/fetch_models.py` 로 받으며, 출처와 라이선스는 [models/README.md](models/README.md)에 있습니다. 제조사 모션 라이브러리는 라이선스 표기가 없어 저장소에 넣지 않습니다([ADR-20](docs/DECISIONS.md#adr-20)).

@@ -3,7 +3,7 @@
 [모델·평가·출처 릴리스](https://github.com/PJW-1/mechadog/releases/tag/ppe-v12-candidate-20260924)
 
 안전모/미착용, 조끼/미착용, person_down을 함께 학습한 YOLOX-S 후보다.
-기본 운영 모델은 ppe-v4다. 실기 승인이나 WBS 실측 완료를 뜻하지 않는다.
+기본 운영 모델은 ppe-v5다([models/README.md](README.md)). 이 후보는 실기 승인이나 WBS 실측 완료를 뜻하지 않는다.
 
 ## 받기
 
