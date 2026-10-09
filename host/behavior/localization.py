@@ -31,6 +31,7 @@ from host.slam.occupancy import OccupancyGrid
 from host.slam.scan_match import MatchParams, MatchResult, Pose, global_match, match, preprocess
 
 if TYPE_CHECKING:
+    from host.behavior.nav_state import PatrolNavState
     from host.behavior.patrol import PatrolController
 
 #: 순찰 컨트롤러와 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
@@ -40,8 +41,10 @@ LOG = event_logger("mechadog.behavior.patrol")
 class LocalizationTrust:
     """순찰기의 측위 상태와 그 신뢰를 쥔다."""
 
-    def __init__(self, patrol: PatrolController) -> None:
+    def __init__(self, patrol: PatrolController, state: PatrolNavState) -> None:
         self._patrol = patrol
+        #: 순찰기와 함께 쓰는 항법 상태 — 값은 복사하지 않고 매번 여기서 읽는다.
+        self._state = state
         #: 전역 탐색 데몬 스레드와 사서함 (`host/behavior/reloc_worker.py`).
         self.worker = GlobalMatchWorker(self.global_search, self.restore_search)
         #: 마지막으로 `pose` 를 갱신한 시각 — 정합에 실패한 스캔은 바꾸지 않는다.
@@ -153,14 +156,14 @@ class LocalizationTrust:
         """받아들인 스캔으로 측위한다 — 전역 결과 적용·재측위·감사·국소 추적 순서."""
         self.own_localization = True
         self.expire_trust(now_ms)
-        if not self._patrol._local_scan.clear_allowed:
+        if not self._state.local_scan.clear_allowed:
             self.new_epoch()
             return
         _t_all = time.perf_counter()
         points = preprocess(scan.points, *self._patrol.range_m)
         if not points.size:
             return
-        self._patrol._scan_now_ms = now_ms
+        self._state.scan_now_ms = now_ms
         # 워커가 끝낸 전역 탐색 결과를 먼저 가져온다 — 비어 있으면 즉시 돌아간다.
         _t0 = time.perf_counter()
         self.poll_global(now_ms)
@@ -201,7 +204,7 @@ class LocalizationTrust:
         if (
             self._patrol.verify_interval_ms > 0
             and now_ms >= self.verify_next_ms
-            and self._patrol._is_stationary()
+            and self._patrol.is_stationary()
         ):
             self.verify_next_ms = now_ms + self._patrol.verify_interval_ms
             self.verify_pose(points, scan, now_ms)
@@ -352,14 +355,14 @@ class LocalizationTrust:
         match_grid = OccupancyGrid(meta, cells)
         context = (
             self._patrol.safety.yaw_rad
-            if self._patrol.heading.imu_is_fresh(self._patrol._scan_now_ms)
+            if self._patrol.heading.imu_is_fresh(self._state.scan_now_ms)
             else None,
             self.move_seq,
             self.loc_epoch,
             self._patrol.wall_clock_ms(),
         )
-        prior = self.restore_prior(self._patrol._scan_now_ms) if kind == "reloc" else None
-        allowed = self.zone_filter(self._patrol._scan_now_ms) if kind == "reloc" else None
+        prior = self.restore_prior(self._state.scan_now_ms) if kind == "reloc" else None
+        allowed = self.zone_filter(self._state.scan_now_ms) if kind == "reloc" else None
         self.worker.submit(
             (kind, points.copy(), scan, self._patrol.pose, match_grid), context, prior, allowed
         )
@@ -516,7 +519,7 @@ class LocalizationTrust:
             or not standable
         ):
             self.restore_votes.clear()
-            if self._patrol._edge.changed("restore_rejected", True):
+            if self._state.edge.changed("restore_rejected", True):
                 LOG.info(
                     "restore_rejected",
                     ratio=round(ratio, 3),
@@ -524,7 +527,7 @@ class LocalizationTrust:
                     standable=standable,
                 )
             return False
-        self._patrol._edge.changed("restore_rejected", False)
+        self._state.edge.changed("restore_rejected", False)
         votes = self.restore_votes
         pose = prior_result.pose
         if votes and any(
@@ -575,13 +578,13 @@ class LocalizationTrust:
             or not 0 <= wall_now_ms - asked_ms <= self._patrol.global_result_max_age_ms
         ):
             # 요청 뒤에 로봇이 걸었다 — 그 스캔의 답을 지금 자세로 올리면 안 된다.
-            if self._patrol._edge.changed("global_result_stale", True):
+            if self._state.edge.changed("global_result_stale", True):
                 LOG.info("global_result_stale", kind=kind, moves=self.move_seq - asked_moves)
             if kind == "reloc":
                 self.global_votes.clear()
                 self.restore_votes.clear()
             return
-        self._patrol._edge.changed("global_result_stale", False)
+        self._state.edge.changed("global_result_stale", False)
         self.result_imu = asked_imu
         if kind == "verify":
             self.apply_verify_result(result, points, now_ms, asked_pose)
@@ -602,7 +605,7 @@ class LocalizationTrust:
         self.reloc_next_ms = max(self.reloc_next_ms, now_ms + self._patrol.reloc_interval_ms)
         self.match_frac = result.score / len(points) if result is not None else 0.0
         if result is None or result.score < self.min_match_score(points):
-            if self._patrol._edge.changed("relocalize_failed", True):
+            if self._state.edge.changed("relocalize_failed", True):
                 LOG.warning("relocalize_failed", frac=round(self.match_frac, 3))
             self.global_votes.clear()
             self.seed_fallback(points, scan, now_ms)
@@ -610,7 +613,7 @@ class LocalizationTrust:
         if result.unresolved or result.peers > self._patrol.reloc_max_peers:
             self.global_votes.clear()
             # 스캔이 지도를 구분 못 한다 — 어느 자세든 우연이다 (벽 포켓·대칭).
-            if self._patrol._edge.changed("relocalize_ambiguous", True):
+            if self._state.edge.changed("relocalize_ambiguous", True):
                 LOG.warning(
                     "relocalize_ambiguous",
                     frac=round(self.match_frac, 3),
@@ -622,7 +625,7 @@ class LocalizationTrust:
             return
         if not self.vote_global(result.pose, result.peers):
             return
-        self._patrol._edge.changed("relocalize_failed", False)
+        self._state.edge.changed("relocalize_failed", False)
         LOG.info(
             "relocalized",
             x=round(result.pose[0], 2),
@@ -695,10 +698,10 @@ class LocalizationTrust:
         ):
             votes.clear()
         if votes and not self.moved_since_vote and peers > self._patrol.reloc_stationary_max_peers:
-            if self._patrol._edge.changed("vote_not_independent", True):
+            if self._state.edge.changed("vote_not_independent", True):
                 LOG.info("global_vote_not_independent", peers=peers)
             return False
-        self._patrol._edge.changed("vote_not_independent", False)
+        self._state.edge.changed("vote_not_independent", False)
         self.moved_since_vote = False
         self.imu_at_vote = imu
         votes.append(pose)
@@ -755,14 +758,14 @@ class LocalizationTrust:
         ):
             # 구분력 없는 스캔으로는 현재 자세를 의심도 확신도 못 한다 — 유지한다.
             self.global_votes.clear()
-            if self._patrol._edge.changed("pose_verify_ambiguous", True):
+            if self._state.edge.changed("pose_verify_ambiguous", True):
                 LOG.warning(
                     "pose_verify_ambiguous",
                     frac=round(self.match_frac, 3),
                     peers=0 if result is None else result.peers,
                 )
             return False
-        self._patrol._edge.changed("pose_verify_ambiguous", False)
+        self._state.edge.changed("pose_verify_ambiguous", False)
         # 탐색은 **요청 때의 스캔**으로 했다 — 그 사이 국소 추적이 자세를 옮겼을 수 있으니
         # 요청 때 자세와 비교한다. 그 사이 로봇이 실제로 움직였으면 이 감사는 낡았다.
         reference = self._patrol.pose if asked_pose is None else asked_pose
@@ -780,7 +783,7 @@ class LocalizationTrust:
             # 사람이 준 자리를 아직 전역이 한 번도 확인하지 못했다 — 지도가 덜 채워진
             # 자리(가구 다리 등)면 전역 최적 쪽이 틀릴 수 있어 **덮어쓰지 않는다.**
             # 지도에도 쓰지 않은 채 추적만 이어 가고, 트인 곳에 나오면 감사가 맞춰 준다.
-            if self._patrol._edge.changed("pose_verify_disagree", True):
+            if self._state.edge.changed("pose_verify_disagree", True):
                 LOG.warning(
                     "pose_verify_disagree",
                     seeded=[round(self._patrol.pose[0], 2), round(self._patrol.pose[1], 2)],
@@ -790,7 +793,7 @@ class LocalizationTrust:
                     hint="시드 자리 유지 — 지도 미기록",
                 )
             return False
-        self._patrol._edge.changed("pose_verify_disagree", False)
+        self._state.edge.changed("pose_verify_disagree", False)
         if not self.vote_global(result.pose, result.peers):
             # 한 번 다른 답이 나온 것으로는 안 옮긴다 — 같은 답이 `reloc_votes` 번 반복돼야 한다.
             return False

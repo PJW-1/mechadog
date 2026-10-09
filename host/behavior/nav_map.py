@@ -37,6 +37,7 @@ from host.slam.occupancy import MapMeta, OccupancyGrid
 from host.slam.scan_match import integrate_scan
 
 if TYPE_CHECKING:
+    from host.behavior.nav_state import PatrolNavState
     from host.behavior.patrol import PatrolController
     from host.common.lidar_link import Scan
 
@@ -58,8 +59,10 @@ MAP_INFLATE_EVERY: int = 4
 class NavigationMap:
     """순찰기의 막힘 마스크·실시간 장애물·거리 비용을 쥔다."""
 
-    def __init__(self, patrol: PatrolController) -> None:
+    def __init__(self, patrol: PatrolController, state: PatrolNavState) -> None:
         self._patrol = patrol
+        #: 순찰기와 함께 쓰는 항법 상태 — 값은 복사하지 않고 매번 여기서 읽는다.
+        self._state = state
         #: 검증된 빔이 지나간 셀을 잠시 비워 보이게 하는 덧칠.
         self.live_clear = LiveClear(patrol.nav_params)
         static = inflate(patrol.grid, patrol.plan_params)
@@ -133,10 +136,10 @@ class NavigationMap:
             patrol.plan = Plan(patrol.plan.label)
             patrol.waypoint_index = 0
             if patrol.phase in (Phase.MOVING, Phase.AIMING) or (
-                patrol._spinning and patrol.phase is Phase.PLANNING
+                self._state.spinning and patrol.phase is Phase.PLANNING
             ):
                 patrol.phase = Phase.PLANNING
-                patrol._require_replan_stop()
+                patrol.require_replan_stop()
                 patrol.commander.halt()
             LOG.info("navigation_mask_changed_replan", target=patrol.plan.label)
 
@@ -174,17 +177,17 @@ class NavigationMap:
     def project_scan(self, scan: Scan) -> None:
         """verified 빔 비움과 실제 끝점+몸 반경만 임시로 투영한다."""
         patrol = self._patrol
-        if not patrol._local_scan.clear_allowed:
+        if not self._state.local_scan.clear_allowed:
             return
-        if (scan.device_id, scan.boot_id, scan.seq) != patrol._local_scan.last_id:
+        if (scan.device_id, scan.boot_id, scan.seq) != self._state.local_scan.last_id:
             return
-        if self.projected_scan_id == patrol._local_scan.last_id:
+        if self.projected_scan_id == self._state.local_scan.last_id:
             return
-        patrol._local_scan_pose = (*patrol.pose[:2], patrol.heading.steering_yaw())
-        self.projected_scan_id = patrol._local_scan.last_id
-        if patrol.relaxed.scan.last_id == patrol._local_scan.last_id:
-            patrol.relaxed.scan_yaw = patrol._local_scan_pose[2]
-        now_ms = patrol._scan_now_ms
+        self._state.local_scan_pose = (*patrol.pose[:2], patrol.heading.steering_yaw())
+        self.projected_scan_id = self._state.local_scan.last_id
+        if patrol.relaxed.scan.last_id == self._state.local_scan.last_id:
+            patrol.relaxed.scan_yaw = self._state.local_scan_pose[2]
+        now_ms = self._state.scan_now_ms
         if patrol.pose_verified and not patrol.pose_stale(now_ms):
             free = patrol.recovery.memory.observe(patrol.grid, patrol.pose, scan, now_ms)
             self.dynamic_seen = {
@@ -232,7 +235,7 @@ class NavigationMap:
 
     def refresh(self, now_ms: int) -> None:
         patrol = self._patrol
-        patrol._now_ms = now_ms
+        self._state.now_ms = now_ms
         if patrol.pose_stale(now_ms) or (
             patrol.localization.own_localization and not patrol.localization.verified
         ):

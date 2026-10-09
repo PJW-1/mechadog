@@ -1689,7 +1689,7 @@ class Runtime:
             self._recorder.record("command_sent", lines=sent, peer=_peer_text(peer))
         self._note_odom_sent(sent)
         if self._navigator is not None and sent:
-            # ⚠️ 순찰기에도 **실제로 나간** 명령을 알린다 — 없으면 «정지 중» 판정(`_is_stationary`)이
+            # ⚠️ 순찰기에도 **실제로 나간** 명령을 알린다 — 없으면 «정지 중» 판정(`is_stationary`)이
             # AVOID·FAILSAFE 때 찍힌 정지 시각에 머물러, 걷는 중에도 감사가 돌고 표 독립성도
             # 못 본다(2026-10-03 검토: runtime 이 navigator.note_sent 를 부르지 않았다).
             self._navigator.note_sent(sent, self._clock())

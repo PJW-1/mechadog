@@ -24,6 +24,7 @@ from host.common.logging_setup import event_logger
 from host.common.units import rad_to_deg, wrap_pi
 
 if TYPE_CHECKING:
+    from host.behavior.nav_state import PatrolNavState
     from host.behavior.patrol import PatrolController
 
 #: 순찰 컨트롤러와 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
@@ -33,8 +34,10 @@ LOG = event_logger("mechadog.behavior.patrol")
 class LocalAvoidance:
     """순찰기의 국소 판단 기록과 진행 중인 회피를 쥔다."""
 
-    def __init__(self, patrol: PatrolController) -> None:
+    def __init__(self, patrol: PatrolController, state: PatrolNavState) -> None:
         self._patrol = patrol
+        #: 순찰기와 함께 쓰는 항법 상태 — 값은 복사하지 않고 매번 여기서 읽는다.
+        self._state = state
         #: 마지막 국소 판단 — 대시보드 `local_status` 로 나간다.
         self.status: dict[str, Any] = {}
         #: 진행 중인 회피 (시작 x, y, 목표 방향, 시작 시각, 이유) — 없으면 None.
@@ -52,8 +55,8 @@ class LocalAvoidance:
             "distance_m": None if distance is None else round(distance, 3),
             "gap_deg": None if gap_rad is None else round(rad_to_deg(gap_rad), 1),
             "scan_age_ms": None
-            if patrol._local_scan.received_ms is None
-            else patrol._now_ms - patrol._local_scan.received_ms,
+            if self._state.local_scan.received_ms is None
+            else self._state.now_ms - self._state.local_scan.received_ms,
             "slow_m": patrol.nav_params.local_slow_m,
             "stop_m": patrol.nav_params.local_stop_m,
             "message": (f"앞 {distance:.2f}m — " if distance is not None else "")
@@ -65,18 +68,18 @@ class LocalAvoidance:
                 "escape": "출발 탈출",
             }.get(action, reason),
         }
-        if patrol._edge.changed("local_navigation", (action, reason)):
+        if self._state.edge.changed("local_navigation", (action, reason)):
             LOG.info("local_navigation", **self.status)
 
     def corridor_to(self, target: tuple[float, float]) -> tuple[float, float, float] | None:
         patrol = self._patrol
-        scan_pose = patrol._local_scan_pose or patrol.pose
+        scan_pose = self._state.local_scan_pose or patrol.pose
         dx, dy = patrol.pose[0] - scan_pose[0], patrol.pose[1] - scan_pose[1]
         c, s = math.cos(scan_pose[2]), math.sin(scan_pose[2])
         heading = wrap_pi(
             math.atan2(target[1] - patrol.pose[1], target[0] - patrol.pose[0]) - scan_pose[2]
         )
-        gap = patrol._local_scan.corridor(
+        gap = self._state.local_scan.corridor(
             patrol.plan_params.body_radius_m,
             heading,
             patrol.nav_params.avoidance_m,
@@ -88,38 +91,40 @@ class LocalAvoidance:
 
     def start(self, reason: str) -> bool:
         patrol = self._patrol
-        if not patrol._local_scan.fresh(patrol._now_ms) or patrol.pose_stale(patrol._now_ms):
+        if not self._state.local_scan.fresh(self._state.now_ms) or patrol.pose_stale(
+            self._state.now_ms
+        ):
             patrol.commander.halt()
             return False
         if reason in {"start_escape", "lidar_corridor"}:
             target = patrol.plan.label or (
                 GOAL_LABEL
-                if patrol._goal is not None
+                if self._state.goal.xy is not None
                 else next(
                     (z for z in patrol.zones.labels if z not in patrol.visited | patrol.skipped),
                     HOME_LABEL,
                 )
             )
-            gap = self.corridor_to(patrol._target_xy(target))
+            gap = self.corridor_to(patrol.target_xy(target))
         else:
-            gap = patrol._local_scan.gap(patrol.plan_params.body_radius_m)
+            gap = self._state.local_scan.gap(patrol.plan_params.body_radius_m)
         if gap is None:
             patrol.commander.halt()
-            self.decide("stop", "no_observed_gap", patrol._local_scan.distance())
+            self.decide("stop", "no_observed_gap", self._state.local_scan.distance())
             return False
         angle, _distance, _ = gap
         self.active = (
             patrol.pose[0],
             patrol.pose[1],
             wrap_pi(patrol.heading.steering_yaw() + angle),
-            patrol._now_ms,
+            self._state.now_ms,
             reason,
         )
         patrol.commander.halt()
         self.decide(
             "escape" if reason == "start_escape" else "avoid",
             reason,
-            patrol._local_scan.distance(),
+            self._state.local_scan.distance(),
             angle,
         )
         return True
@@ -130,7 +135,7 @@ class LocalAvoidance:
         x, y, heading, started, reason = self.active
         if (
             math.hypot(patrol.pose[0] - x, patrol.pose[1] - y) >= patrol.nav_params.avoidance_m
-            or patrol._now_ms - started >= patrol.nav_params.avoidance_timeout_ms
+            or self._state.now_ms - started >= patrol.nav_params.avoidance_timeout_ms
         ):
             self.active = None
             patrol.plan = Plan(patrol.plan.label)
@@ -139,23 +144,23 @@ class LocalAvoidance:
             if patrol.route.direct_moving:
                 patrol.route.direct_stopped_ms = None
                 patrol.route.direct_detour_start = None
-                patrol._spinning = False
-                self.decide("clear", "route_direct_resumed", patrol._local_scan.distance())
+                self._state.spinning = False
+                self.decide("clear", "route_direct_resumed", self._state.local_scan.distance())
                 return
             patrol.stats.replans += 1
             LOG.info("local_avoidance_replan", reason=reason)
             if reason in {"start_escape", "lidar_corridor"}:
-                patrol._require_replan_stop()
-                patrol._replan()
+                patrol.require_replan_stop()
+                patrol.replan()
             return
         error = wrap_pi(heading - patrol.heading.steering_yaw())
         turn_needed = abs(error) > patrol.drive.heading_tolerance_rad
         if reason in {"start_escape", "lidar_corridor"}:
-            scan_pose = patrol._local_scan_pose or patrol.pose
+            scan_pose = self._state.local_scan_pose or patrol.pose
             dx, dy = patrol.pose[0] - scan_pose[0], patrol.pose[1] - scan_pose[1]
             c, s = math.cos(scan_pose[2]), math.sin(scan_pose[2])
             # 일반 추종 허용각 안에서도 좁은 통로의 실제 직진 원판이 닿으면 더 맞춘다.
-            if not turn_needed and not patrol._local_scan.corridor_clear(
+            if not turn_needed and not self._state.local_scan.corridor_clear(
                 patrol.plan_params.body_radius_m,
                 wrap_pi(patrol.heading.steering_yaw() - scan_pose[2]),
                 patrol.nav_params.avoidance_m,
@@ -163,7 +168,7 @@ class LocalAvoidance:
             ):
                 turn_needed = True
             actual_heading = heading if turn_needed else patrol.heading.steering_yaw()
-            if not patrol._local_scan.corridor_clear(
+            if not self._state.local_scan.corridor_clear(
                 patrol.plan_params.body_radius_m,
                 wrap_pi(actual_heading - scan_pose[2]),
                 patrol.nav_params.avoidance_m,
@@ -171,7 +176,7 @@ class LocalAvoidance:
             ):
                 self.active = None
                 patrol.commander.halt()
-                self.decide("stop", "corridor_closed", patrol._local_scan.distance(error))
+                self.decide("stop", "corridor_closed", self._state.local_scan.distance(error))
                 patrol.recovery.begin("corridor_closed")
                 return
         if turn_needed:
@@ -189,11 +194,11 @@ class LocalAvoidance:
             self.decide(
                 "escape" if reason == "start_escape" else "avoid",
                 reason,
-                patrol._local_scan.distance(error),
+                self._state.local_scan.distance(error),
                 error,
             )
             return
-        distance = patrol._local_scan.distance()
+        distance = self._state.local_scan.distance()
         if distance is None or distance < patrol.nav_params.local_stop_m:
             self.active = None
             patrol.commander.halt()

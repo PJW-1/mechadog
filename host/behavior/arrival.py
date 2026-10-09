@@ -28,6 +28,7 @@ from host.common.protocol import clamp
 from host.common.units import deg_to_rad, wrap_pi
 
 if TYPE_CHECKING:
+    from host.behavior.nav_state import PatrolNavState
     from host.behavior.patrol import PatrolController, Steering
 
 #: 순찰 컨트롤러와 같은 로거 이름을 쓴다 — 로그 레코드가 옮기기 전과 같아야 한다.
@@ -37,8 +38,15 @@ LOG = event_logger("mechadog.behavior.patrol")
 class ZoneArrival:
     """순찰기의 도착·조준·점검 준비 상태를 쥔다."""
 
-    def __init__(self, patrol: PatrolController, steering_for: Callable[..., Steering]) -> None:
+    def __init__(
+        self,
+        patrol: PatrolController,
+        state: PatrolNavState,
+        steering_for: Callable[..., Steering],
+    ) -> None:
         self._patrol = patrol
+        #: 순찰기와 함께 쓰는 항법 상태 — 값은 복사하지 않고 매번 여기서 읽는다.
+        self._state = state
         self._steering_for = steering_for
         #: 도착해 점검을 기다리는 구역 — 카메라에 넘기기 전까지 방문을 보존한다.
         self.zone: str | None = None
@@ -46,7 +54,7 @@ class ZoneArrival:
     def arrive(self, label: str) -> None:
         patrol = self._patrol
         patrol.commander.halt()
-        patrol._spinning = False
+        self._state.spinning = False
         if label == GOAL_LABEL:
             if patrol.route.active:
                 patrol.route.direct_stopped_ms = None
@@ -56,9 +64,7 @@ class ZoneArrival:
                 return
             # 찍은 곳 — 구역 방문·점검이 아니다. 서서 기다린다.
             LOG.info("goal_reached", x=round(patrol.pose[0], 2), y=round(patrol.pose[1], 2))
-            patrol._goal = None
-            patrol._goal_hold = True
-            patrol._goal_hold_reason = "reached"
+            self._state.goal.hold_at("reached")
             patrol.plan = Plan(None)
             patrol.phase = Phase.PLANNING
             return
@@ -80,7 +86,7 @@ class ZoneArrival:
         ):
             # 측위가 도착 반경 밖으로 바뀌면 점검하지 않고 다시 접근한다.
             patrol.commander.halt()
-            patrol._spinning = False
+            self._state.spinning = False
             patrol.phase = Phase.PLANNING
             patrol.plan = Plan(label)
             return
@@ -101,10 +107,10 @@ class ZoneArrival:
         error = self.aim_error(label)
         if abs(error) <= patrol.drive.heading_tolerance_rad:
             patrol.commander.halt()
-            patrol._spinning = False
+            self._state.spinning = False
             return True
         steering = self._steering_for(error, patrol.drive, spinning=True)
-        patrol._spinning = True
+        self._state.spinning = True
         turn_limit = abs(patrol.drive.spin_turn_deg)
         patrol.commander.drive(0.0, clamp(steering.angle_deg, -turn_limit, turn_limit))
         return False
