@@ -1,6 +1,6 @@
 # 사례 8. VLM 두 장 비교가 실패해 VLM 을 한 장 판독으로 한정한 사례
 
-- 관련 결정: [ADR-35](../DECISIONS.md#adr-35), [ADR-44](../DECISIONS.md#adr-44), [ADR-42](../DECISIONS.md#adr-42), [ADR-44](../DECISIONS.md#adr-44), [ADR-45](../DECISIONS.md#adr-45)
+- 관련 결정: [ADR-35](../DECISIONS.md#adr-35), [ADR-42](../DECISIONS.md#adr-42), [ADR-44](../DECISIONS.md#adr-44), [ADR-45](../DECISIONS.md#adr-45)
 - 측정 기록: [두 장 비교 실측](../../field_tests/results/20260920_4.8.0-vlm-compare/summary.md), [XIAO 한 장 판독 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md)
 - 코드: [`vlm_reader.py`](../../host/vision/vlm_reader.py)
 
