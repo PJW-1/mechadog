@@ -1,7 +1,7 @@
 # VLM LoRA — `Qwen2-VL-2B-Instruct` 미세조정 도구
 
 운용 VLM 의 예/아니오 판독(특히 LiDAR 막힘 확정 프레임의 `blocked_by_fallen`)을 우리 사진으로
-LoRA 미세조정한다. [ADR-43](../../docs/DECISIONS.md#adr-43) «재검토» 의 향후 방향을 따른다:
+LoRA 미세조정한다. [ADR-45](../../docs/DECISIONS.md#adr-45) 결정 5 를 따른다:
 비전 인코더는 얼리고 언어 모델 쪽 LoRA, 학습 뒤 bf16 으로 병합, **다른 날·다른 배치**의
 보류 세트로 따로 평가.
 
