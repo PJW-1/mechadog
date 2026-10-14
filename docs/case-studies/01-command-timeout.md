@@ -64,7 +64,7 @@ Host 는 100ms 마다 명령을 보냅니다. 기준이 300ms 이면 연속한 �
 
 - 기본 설정의 `cmd_timeout_ms` 가 600 이고, 0 초과 600 이하이며, 링크 두절 페일세이프보다 짧은지 확인합니다([`tests/test_config.py` L86](../../tests/test_config.py#L86), [L142](../../tests/test_config.py#L142), [L137](../../tests/test_config.py#L137)).
 - 목업 로봇이 이동 명령 뒤 601ms 에 LED 명령만 받으면 이전 이동을 재개하지 않고 정지 상태를 유지하는지 확인합니다([`tests/test_runtime_safeguards.py` L110](../../tests/test_runtime_safeguards.py#L110)).
-- 목업 로봇이 설정된 타임아웃이 지나면 펌웨어처럼 곧바로 래치하고, `RESET_SAFE` 전까지 `MOVE` 를 거부하는지 확인합니다([`tests/test_safety.py` L103](../../tests/test_safety.py#L103), [L149](../../tests/test_safety.py#L149)).
+- 목업 로봇이 설정된 타임아웃이 지나면 펌웨어처럼 곧바로 래치하고, `RESET_SAFE` 전까지 `MOVE` 를 거부하는지 확인합니다([`tests/test_safety.py` L95](../../tests/test_safety.py#L95), [L149](../../tests/test_safety.py#L149)).
 
 실기에서는 600ms 펌웨어를 올린 `mechdog-01` 로 같은 날 21:21 부터 21:39 까지 경비 대응 시험 다섯 판을 진행했습니다([실기 기록](../../field_tests/results/20260923_patrol-engage/summary.md)).
 
