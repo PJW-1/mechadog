@@ -7,7 +7,7 @@ YOLOX 누움 후보나 VLM 판독 «예» 한 번은 의심(L1)만 만든다. �
 
 ```mermaid
 flowchart TD
-  A["PATROL 또는 ZONE_INSPECT, 공장 모드"] -->|사람 확정 PERSON_FOUND| PPE["PPE 판정 (개발 중)"]
+  A["PATROL 또는 ZONE_INSPECT, 공장 모드"] -->|사람 확정 PERSON_FOUND| PPE["PPE 판정"]
   A --> B{"YOLOX 누움 후보? 가로/세로 1.5 이상, 20px 이내 정지"}
   B -->|아니요| C{"순찰 2초 주기 판독 또는 구역 판독에서 person_down 예?"}
   C -->|아니요| A

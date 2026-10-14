@@ -54,7 +54,7 @@ Host 는 100ms 마다 명령을 보냅니다. 기준이 300ms 이면 연속한 �
 - 펌웨어 상수 [`kCommandTimeoutMs = 600`](../../firmware/mechdog_motion/mechdog_motion.ino#L71) 과 설정 [`safety.cmd_timeout_ms: 600`](../../config/config.yaml#L63) 을 함께 600ms 로 올렸습니다.
 - 설정 로더의 상한도 600 으로 옮겼습니다. 로더는 600 을 넘는 값, 링크 두절 페일세이프(3000ms) 이상인 값, 송신 주기 이하인 값을 기동 전에 거부합니다([`host/common/config.py` L261-L272](../../host/common/config.py#L261-L272)).
 - 링크 두절 3초 페일세이프와 «명령 정지가 링크 페일세이프보다 먼저 동작한다» 는 순서 제약은 바꾸지 않았습니다.
-- Host 는 운용 중에 틱 간격 최댓값(`cmd_gap_ms`)과 타임아웃을 넘은 간격의 횟수(`cmd_gap_over_timeout`)를 초당 요약에 싣습니다([`host/runtime.py` L1927-L1931](../../host/runtime.py#L1927-L1931)). 이 값으로 Host 가 늦었는지 링크가 늦었는지를 Host 로그만 보고 먼저 가를 수 있습니다.
+- Host 는 운용 중에 틱 간격 최댓값(`cmd_gap_ms`)과 타임아웃을 넘은 간격의 횟수(`cmd_gap_over_timeout`)를 초당 요약에 싣습니다([`host/runtime.py` L1235-L1237](../../host/runtime.py#L1235-L1237)). 이 값으로 Host 가 늦었는지 링크가 늦었는지를 Host 로그만 보고 먼저 가를 수 있습니다.
 
 검토했지만 채택하지 않은 대안은 두 가지입니다. 송신을 20Hz 로 올리는 방법은 지연이 한 패킷이 아니라 수백 ms 구간 단위로 오기 때문에 효과가 없습니다. 공유기 채널이나 위치를 바꾸는 방법은 시연장마다 조건이 달라서 통제할 수 없습니다.
 

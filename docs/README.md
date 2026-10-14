@@ -13,6 +13,7 @@
 - [PROTOCOL.md](PROTOCOL.md) — Host와 로봇 펌웨어가 주고받는 통신 메시지의 정본이다.
 - [PROTOCOL_LIDAR.md](PROTOCOL_LIDAR.md) — LiDAR 중계 노드 링크를 위한 PROTOCOL 의 확장 규약이다.
 - [DASHBOARD.md](DASHBOARD.md) — 관제 서버와 FPV 화면이 텔레메트리·FSM 상태를 내보내는 방식을 설명한다.
+- [DATA_MODEL.md](DATA_MODEL.md) — 사건·순찰 이력을 쌓는 로컬 SQLite 색인의 스키마와 조회 API 를 정리한다.
 - [ENGINEERING_GUIDE.md](ENGINEERING_GUIDE.md) — 로깅·테스트·CI 를 짤 때 따르는 구현 기준이다.
 
 ## 기능별 동작 흐름
