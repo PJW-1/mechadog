@@ -1,4 +1,4 @@
-"""VLM LoRA 도구 검증 (`tools/vlm_lora/` · ADR-43 «재검토» 향후 방향).
+"""VLM LoRA 도구 검증 (`tools/vlm_lora/` · ADR-45 결정 5).
 
 **GPU 도 모델도 torch·peft 도 없이 닫힌다.** 사진은 임시 폴더의 가짜 JPEG 바이트이고,
 프로세서·토크나이저·판독 세션은 대역이다.
