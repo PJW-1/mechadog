@@ -5,6 +5,8 @@
 >
 > 기능 요구사항은 [PRD](internal/PRD_Physical_AI_Guard_Robot.md), 구조는 [아키텍처](ARCHITECTURE.md),
 > 통신 규약은 [PROTOCOL](PROTOCOL.md) 을 본다.
+>
+> 각 ADR 에는 지금 유효한 결정과 근거만 둔다. 번호는 다시 매기지 않으며, 34·41 은 지운 결정이라 비어 있다.
 
 ## 한눈에 보기
 
