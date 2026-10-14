@@ -156,7 +156,7 @@ python -m host.runtime --device mechdog-01 --robot-ip 127.0.0.1 --no-vision --da
 - [문서 색인](docs/README.md)
 - [기능별 판단 흐름도 9건](docs/features/)
 - [대표 설계 결정](docs/design-decisions.md)
-- [설계 결정 기록(ADR 47건)](docs/DECISIONS.md)
+- [설계 결정 기록(ADR 45건)](docs/DECISIONS.md)
 - [실기 시험 기록](field_tests/README.md)
 - [PPE 데이터 카드](docs/ppe-data-card.md): 배포 모델 ppe-v5 의 구조·전처리·클래스 규칙·평가 근거를 한곳에 모았고, 원문에서 확인하지 못한 값은 «확인 못 함» 으로 적었습니다.
 - [PPE 전처리·후처리 ablation](field_tests/results/20261006_ppe-xiao/ablation.md): 기록된 판정으로는 XIAO 기준을 재현했지만, 저장된 프레임이 판정을 덧그린 이미지라 재추론이 필요한 변형은 무효이고 누적 규칙 축만 유효합니다.

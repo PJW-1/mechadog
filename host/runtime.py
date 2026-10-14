@@ -544,7 +544,7 @@ class Runtime:
     ) -> None:
         """순찰 판정기(구역 점검·막힘 원인·스캔 중계·보호구)와 자세 보정을 만든다."""
         navigator = self._navigator
-        # 구역 점검 (FR-8 · ADR-41). 같은 판독 워커를 쓰고, 판독 «예» 는 쓰러짐 의심으로 넘긴다.
+        # 구역 점검 (FR-8 · ADR-44). 같은 판독 워커를 쓰고, 판독 «예» 는 쓰러짐 의심으로 넘긴다.
         self._zone_inspector = ZoneInspector(
             config,
             behavior=self._behavior,

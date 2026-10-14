@@ -1,4 +1,4 @@
-"""공장 모드의 구역 점검 — 순찰 앵커·동선 정지점·방향 정렬·판독 (FR-8 · ADR-41 · ADR-42).
+"""공장 모드의 구역 점검 — 순찰 앵커·동선 정지점·방향 정렬·판독 (FR-8 · ADR-44 · ADR-42).
 
 넘어짐·통로 막힘·화기 위험물은 같은 방문 안 판독 2회 «예» 에서 확정한다 (WBS 3.6.4).
 넘어짐만 `ZONE_CHANGED`(L3) 이고 통로 막힘과 화기 위험구역(`zones.hazard_ids`)의 위험물은
@@ -458,7 +458,7 @@ class ZoneInspector:
         """끝난 판독을 줍고 건 구역 이름과 건 프레임으로 남긴다.
 
         `person_down` «예» 는 쓰러짐 의심 진입 신호다(ADR-42). 넘어짐·통로 막힘은 이번
-        방문에서 건 판독 두 번이 모두 «예» 인 항목만 확정한다(`vlm_hazards` · ADR-41).
+        방문에서 건 판독 두 번이 모두 «예» 인 항목만 확정한다(`vlm_hazards` · ADR-44).
         화기 위험구역의 `hazard_item` 도 같은 규칙이되 스위치는 `vlm_hazard_items` 다.
         """
         if self._pending is None or self._vlm.busy:
@@ -520,7 +520,7 @@ class ZoneInspector:
             self._fall.suspect("zone_vlm", now_ms, yes_asked=now_ms)
 
     def _leave(self, result: VisionResult, now_ms: int, *, departed: bool = False) -> None:
-        """방문을 끝낸다 — 결론은 여기 한 곳에서 종류별로 낸다 (ADR-41 · ADR-42).
+        """방문을 끝낸다 — 결론은 여기 한 곳에서 종류별로 낸다 (ADR-44 · ADR-42).
 
         넘어짐만 `zone_changed` → `ZONE_CHANGED`(L3), 화기 위험물은 `hazard_notice`,
         통로 막힘은 `path_blocked` 다. 판독이 남았으면 `budget_ms` 까지 결론을 미룬다. `departed` 는 그 사이 상태가 방문 밖으로
@@ -570,7 +570,7 @@ class ZoneInspector:
             # 한 번만 남긴다 — 다음 틱에 같은 기록을 되풀이하지 않는다.
             self._hazards = tuple(kind for kind in self._hazards if kind != HAZARD_ITEM)
         if "blocked_path" in self._hazards:
-            # 통로 막힘도 가벼운 경고다 (ADR-41 개정 2026-10-01) — 이동 중 LiDAR 막힘과 같은
+            # 통로 막힘도 가벼운 경고다 (ADR-44 결정 6) — 이동 중 LiDAR 막힘과 같은
             # 사건 이름을 쓰고 L3 로 올리지 않는다. 같은 방문의 넘어짐 L3 와 겹쳐도 먼저 남긴다.
             LOG.warning("path_blocked", zone=self._zone, source="vlm")
             self._record(

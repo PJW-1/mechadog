@@ -70,7 +70,6 @@
   - [lidar/NAV_GUARDS_20261003.md](lidar/NAV_GUARDS_20261003.md) — 주행 관문 A 후속.
   - [lidar/LIDAR_INPUT_HEALTH_20261004.md](lidar/LIDAR_INPUT_HEALTH_20261004.md) — LiDAR 입력 품질 진단.
   - [lidar/MAP_REFINEMENT_PREP.md](lidar/MAP_REFINEMENT_PREP.md) — 자동보정 관측 순찰의 PC 사전 준비.
-- [archive/](archive/) — 더는 정본이 아닌 지난 문서를 보관한다.
 - [PPE_ACCEPTANCE.md](PPE_ACCEPTANCE.md) — 배포 PPE 모델 ppe-v5 의 XIAO 검수 절차와 실측 기록(직립 4구간 합격)이다.
 - [ppe-data-card.md](ppe-data-card.md) — 배포 PPE 모델 ppe-v5 의 데이터 출처·라이선스·분할·학습 설정·알려진 한계다.
 - [../field_tests/README.md](../field_tests/README.md) — 실기 시험 원자료 폴더의 색인과 대표 기록이다.

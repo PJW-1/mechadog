@@ -108,7 +108,7 @@ TRANSITIONS: tuple[Transition, ...] = (
     # 구역 변화의 `ALERT` 는 사람이 없으면 대상 상실이 걸리지 않으므로, 경보 확인으로
     # 순찰에 돌아간다 (FR-8.4).
     Transition("ALERT", Event.ZONE_ALARM_CONFIRMED, "PATROL"),
-    # 구역 앞의 사람은 물체 변화가 아니라 사람 대응이다 (FR-8.3 · ADR-41 결정 5).
+    # 구역 앞의 사람은 물체 변화가 아니라 사람 대응이다 (FR-8.3 · ADR-44 결정 5).
     Transition("ZONE_INSPECT", Event.PERSON_FOUND, "ALERT"),
 )
 
