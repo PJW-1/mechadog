@@ -11,7 +11,7 @@
   같은 프레임을 걸고, 끝내 못 걸면 `fallen: null` 이다.
 - 답은 스위치(`change_detect.vlm_path_cause`)와 상관없이 늘 남긴다 — 평가·학습 데이터다.
   방송 문장이 «무너진 물건» 을 말하는지는 판정 근거의 `vlm_path_cause` 를 보고
-  `host/report/situation.py` 가 정한다 (ADR-41 `vlm_hazards` 와 같은 순서: 벤치 통과 → 스위치).
+  `host/report/situation.py` 가 정한다 (ADR-44 `vlm_hazards` 와 같은 순서: 벤치 통과 → 스위치).
 """
 
 from __future__ import annotations

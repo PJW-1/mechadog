@@ -478,7 +478,7 @@ change_detect:
   vlm_hazards: false
   # 화기 위험구역(`zones.hazard_ids`)의 위험물(라이터·보조배터리 `hazard_item`) 판독으로 가벼운
   # 경고를 낼지. **기본은 켠다** — `vlm_hazards` 와 달리 L3·눈 변화 없이 방송 문장과 관제 화면에만
-  # 남는 가벼운 경고라 오경보의 값이 낮다. 확정은 같은 방문 판독 2회 «예» 다(ADR-41 과 같다).
+  # 남는 가벼운 경고라 오경보의 값이 낮다. 확정은 같은 방문 판독 2회 «예» 다(ADR-44 와 같다).
   vlm_hazard_items: true
   # LiDAR 막힘 확정 때 «무너진 물건인가» 판독(`blocked_by_fallen` · ADR-45)이 «예» 면 방송·대시보드
   # 문장이 «무너진 물건이 통로를 막고 있어 돌아서 갑니다» 류로 바뀌는지. **기본은 끈다** — `vlm_hazards` 와 같이

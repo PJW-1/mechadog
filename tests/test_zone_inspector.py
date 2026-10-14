@@ -1,4 +1,4 @@
-"""구역 점검 단독 검증 — `ZoneInspector` (FR-8 · ADR-41 · ADR-42).
+"""구역 점검 단독 검증 — `ZoneInspector` (FR-8 · ADR-44 · ADR-42).
 
 틱을 거치는 시나리오(도착·판독 두 번 확정)는 `test_runtime.py` 에 있다. 여기서는 런타임 없이 닿기 어려운 분기만
 본다 — 낡은 위치의 방향 맞추기, 크기 없는 프레임, 워커 중재, 워커 사망, 두 번째 판독 거절,
@@ -417,7 +417,7 @@ def test_a_zone_visit_no_longer_reports_removed_or_added_objects(cfg: dict) -> N
 
 
 def test_blocked_path_yes_twice_is_one_light_notice(cfg: dict) -> None:
-    """ADR-41 개정(2026-10-01): 통로 막힘 확정은 L3 없이 `path_blocked`(source vlm) 이다."""
+    """ADR-44 결정 6: 통로 막힘 확정은 L3 없이 `path_blocked`(source vlm) 이다."""
     parts = _build(cfg)
     _visit(parts, _reading({"blocked_path": True}), _reading({"blocked_path": True}))
     assert parts.records == ["zone_reading", "zone_reading", "path_blocked"]

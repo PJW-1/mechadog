@@ -47,11 +47,11 @@ flowchart TD
 | 구역 | A·B·C·D, 복도로 연결 | `zones.ids` | [ADR-43](../DECISIONS.md#adr-43) |
 | 방문 순서 | 매 바퀴 A→B→C→D 고정(시연 기체는 저장 동선 S0→A→B→C→D→S0) | `zones.random_after_first_cycle: false` | [ADR-43](../DECISIONS.md#adr-43) |
 | 화기 위험구역 | C | `zones.hazard_ids: [C]` | [ADR-43](../DECISIONS.md#adr-43) |
-| 화기 위험물 확정 | 같은 방문 안 서로 다른 프레임의 «예» 2회 | `change_detect.vlm_hazard_items` (기본 켬) | [ADR-43](../DECISIONS.md#adr-43) · [ADR-41](../DECISIONS.md#adr-41) |
+| 화기 위험물 확정 | 같은 방문 안 서로 다른 프레임의 «예» 2회 | `change_detect.vlm_hazard_items` (기본 켬) | [ADR-43](../DECISIONS.md#adr-43) · [ADR-44](../DECISIONS.md#adr-44) |
 | 화기 위험물 확정 (검출기) | 금지 대상이 1500ms 안에 3번 이상 검출 (PPE 위반과 같은 규칙). 위험구역에서 방향을 맞춘 뒤에만 켠다 | `vision.hazard` (`enabled` · `alarm_classes` · `confirm_window_ms` · `hits_required`) | [ADR-43](../DECISIONS.md#adr-43) 대안 ⓐ 개정 |
 | 이동 중 막힘 | 가벼운 경고 + LiDAR 우회, L3 아님 | 없음 | [ADR-43](../DECISIONS.md#adr-43) |
 | 막힘 원인 판독 (VLM `blocked_by_fallen`) | LiDAR 가 막힘을 확정한 프레임에 한 번 묻고 답을 `path_blocked` 판정 근거 `fallen` 에 싣는다. 물었으면 기록은 답 또는 1500ms 상한에 닿을 때까지 미루고, 물을 수 없으면 바로 기록한다. 방송 문장은 켠 뒤 «예» 일 때만 «무너진 물건» 을 말함 (꺼짐 · 벤치 통과 전) | `vision.vlm.path_cause_wait_ms` · `change_detect.vlm_path_cause` | [ADR-45](../DECISIONS.md#adr-45) |
-| 구역 방문 VLM `blocked_path` 가벼운 경고 `path_blocked` (L3 아님) | 꺼짐 (벤치 통과 전) | `change_detect.vlm_hazards` | [ADR-41](../DECISIONS.md#adr-41) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
+| 구역 방문 VLM `blocked_path` 가벼운 경고 `path_blocked` (L3 아님) | 꺼짐 (벤치 통과 전) | `change_detect.vlm_hazards` | [ADR-44](../DECISIONS.md#adr-44) · [VLM 카메라 벤치](../../field_tests/results/20260928_4.8.0-vlm-bench/summary.md) |
 | 쓰러짐 확정 | YOLOX 누움 규칙이 정지 3초를 채운 프레임의 같은 JPEG 에 VLM `person_down` «예». 불일치 · 시간 초과는 «확인 필요»(`fall_review_required`), L3 아님 | `vision.fallen.confirm_ms` · `vision.vlm.budget_ms` | [ADR-42](../DECISIONS.md#adr-42) · [ADR-47](../DECISIONS.md#adr-47) |
 | PPE | 모든 구역에서 판정, 위반은 경고 뒤 자동 복귀 | `escalation.ppe_warning_hold_ms` | [ADR-42](../DECISIONS.md#adr-42) |
 | 런타임 LiDAR 순찰 | 선택. 켜는 인자 | `python -m host.runtime ... --lidar-device <id>` | [ADR-43](../DECISIONS.md#adr-43) |

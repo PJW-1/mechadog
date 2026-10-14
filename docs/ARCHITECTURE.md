@@ -459,7 +459,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 | `LOST` `[P2]` | 재측위 성공 | `PATROL` | 순찰 재개 | 2 |
 | `PATROL` | **구역 도착** `[P2]` | `ZONE_INSPECT` | 정지 → 방향 정렬 → **장면 판독**(VLM, 위험구역은 위험물 검출기도 · FR-8) | 2 |
 | `ZONE_INSPECT` | 검사 완료 & 변화 없음 — 방문 1회 관찰을 마쳤거나 한도 시간(5초)이 지남 (FR-8.4.1 · VLM 판독용) | `PATROL` | 다음 구역으로 (순차 또는 랜덤). 사람 때문에 5장을 못 모은 방문은 `zone_unverified` 로 남긴다 | 2 |
-| `ZONE_INSPECT` | **구역 위험 확정** (FR-8.4 · [ADR-41](DECISIONS.md#adr-41)) · 공장 모드 — 이 전이(`ZONE_CHANGED`)는 **넘어짐·무너짐 확정에서만** 난다. 넘어짐·통로 막힘은 **같은 방문 안 VLM 2회 연속 «예»**로 확정한다(경보 스위치 기본 꺼짐 · 벤치 통과 뒤 켬) | `ALERT` | 에스컬레이션 **L3** + VLM 리포트 요청 ([ADR-42](DECISIONS.md#adr-42)). 위험구역(`zones.hazard_ids`)의 `hazard_item` 확정은 L3 가 아닌 가벼운 경고 `hazard_notice` 다([ADR-43](DECISIONS.md#adr-43)). 구역 안 `blocked_path` 확정도 가벼운 경고 `path_blocked`(source `vlm`)이고 방문은 `ZONE_CLEAR` 로 이어진다([ADR-41](DECISIONS.md#adr-41)). 구역 물건 검증(반출·반입·기준 재등록)은 하지 않는다([ADR-44](DECISIONS.md#adr-44)) | 2→3 |
+| `ZONE_INSPECT` | **구역 위험 확정** (FR-8.4 · [ADR-44](DECISIONS.md#adr-44)) · 공장 모드 — 이 전이(`ZONE_CHANGED`)는 **넘어짐·무너짐 확정에서만** 난다. 넘어짐·통로 막힘은 **같은 방문 안 VLM 2회 연속 «예»**로 확정한다(경보 스위치 기본 꺼짐 · 벤치 통과 뒤 켬) | `ALERT` | 에스컬레이션 **L3** + VLM 리포트 요청 ([ADR-42](DECISIONS.md#adr-42)). 위험구역(`zones.hazard_ids`)의 `hazard_item` 확정은 L3 가 아닌 가벼운 경고 `hazard_notice` 다([ADR-43](DECISIONS.md#adr-43)). 구역 안 `blocked_path` 확정도 가벼운 경고 `path_blocked`(source `vlm`)이고 방문은 `ZONE_CLEAR` 로 이어진다([ADR-44](DECISIONS.md#adr-44)). 구역 물건 검증(반출·반입·기준 재등록)은 하지 않는다([ADR-44](DECISIONS.md#adr-44)) | 2→3 |
 | `ALERT` | **구역 변화 경보(L3)를 사람이 확인** (`ZONE_ALARM_CONFIRMED`) · 공장 모드 | `PATROL` | 에스컬레이션 **L0**, 순찰 재개. 이 행은 넘어짐·무너짐 경보에만 걸린다([ADR-42](DECISIONS.md#adr-42)). ⚠️ **이 행이 없으면 경보를 확인해도 경계 자세로 서 있는다** — 구역 변화의 `ALERT` 는 사람이 보이지 않으면 대상 상실·보호구 판정 종료가 걸리지 않는다(지나가는 사람이 있으면 그 사건들로 먼저 순찰에 돌아가고 L3 는 남는다 — 단계는 별도 축이다). 사람 때문에 선 `ALERT` 는 확인해도 그대로이고, 같은 구역은 도착 반경의 두 배를 벗어난 뒤에야 다시 점검한다 | 2 |
 | `ZONE_INSPECT` | person 300ms 안에 3회 검출 (FR-8.3 인원 출현 → FR-3) · 공장 모드 | `ALERT` | 점검을 멈추고 사람 대응으로 넘긴다 — 에스컬레이션은 **L0 그대로**(사람만으로는 L1 도 올리지 않는다) — 상태만 `ALERT` 로 옮겨 PPE·쓰러짐 판정을 잇는다([ADR-42](DECISIONS.md#adr-42)). | 2 |
 | `TRACK` | **PPE 위반 검출** (FR-9.3) · 공장 모드 | `ALERT` | 에스컬레이션 **L3**, 경고 방송. `escalation.ppe_warning_hold_ms`(5000ms) 뒤 관리자 확인 없이 자동으로 L0 복귀한다 — 아래 3.1절, [ADR-42](DECISIONS.md#adr-42) 참조 | 2 |
@@ -674,7 +674,7 @@ FSM은 **Host PC(Tier 2)** 에서 실행되며, Tier 1 안전 로직은 FSM과 �
 ```
 mechdog_physical_ai/
 ├── docs/                                 ARCHITECTURE · DECISIONS · PROTOCOL · DASHBOARD · ENGINEERING_GUIDE
-│                                         features/ · case-studies/ · measurements/ · lidar/ · archive/ · internal/(PRD·WBS·HARDWARE 등)
+│                                         features/ · case-studies/ · measurements/ · lidar/ · internal/(PRD·WBS·HARDWARE 등)
 ├── config/
 │   ├── config.yaml                       전 파라미터 (Dev/Prod 프로파일)
 │   ├── devices/mechdog-0{1,2}.yaml       개체별 실측값 (서보 오프셋 등)

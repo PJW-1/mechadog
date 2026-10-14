@@ -58,7 +58,7 @@ def chat_messages(prompt: str) -> list[dict[str, Any]]:
 
 
 class QwenVlSession:
-    """`Qwen2-VL` 한 벌 — bf16 으로만 올린다(양자화하지 않는다 · ADR-35 대안 ⓐ · ADR-41 결정 7)."""
+    """`Qwen2-VL` 한 벌 — bf16 으로만 올린다(양자화하지 않는다 · ADR-35 대안 ⓐ · ADR-35 결정 7)."""
 
     def __init__(self, model_id: str, *, max_new_tokens: int = 32) -> None:
         import torch

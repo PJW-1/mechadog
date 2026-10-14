@@ -2369,7 +2369,7 @@ def test_an_inspected_worker_in_front_of_the_zone_does_not_hold_the_robot(
 
 def _zone_alarm(runtime, vision, cfg: dict) -> int:
     """구역에 넘어진 물건이 있어 같은 방문 안 VLM 2회 연속으로 확정된다 — `ALERT` · L3
-    (ADR-41 · Z4 — 넘어짐·통로 막힘만 L3). 다음 시각을 돌려준다. 호출부는
+    (ADR-44 · Z4 — 넘어짐·통로 막힘만 L3). 다음 시각을 돌려준다. 호출부는
     `_zone_runtime(..., hazards=True)` 로 만든 런타임을 넘겨야 한다."""
     _scripted(runtime, FALLEN, FALLEN)
     at = _visit(runtime, vision, at_ms=100, frames=_same(cfg, [_thing("chair")]))
@@ -2788,7 +2788,7 @@ UPRIGHT = {"fallen_object": False}
 def test_a_blocked_path_read_twice_is_a_light_notice_not_l3(
     config: dict, clock: FakeClock, tmp_path: Path
 ):
-    """ADR-41 개정(2026-10-01): 구역 안 통로 막힘은 L3 가 아니라 `path_blocked`(vlm) 이다."""
+    """ADR-44 결정 6: 구역 안 통로 막힘은 L3 가 아니라 `path_blocked`(vlm) 이다."""
     from copy import deepcopy
 
     cfg = deepcopy(config)
