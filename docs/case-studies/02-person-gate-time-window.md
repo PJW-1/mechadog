@@ -1,7 +1,7 @@
 # 사례 2. 10fps 추론이 진짜 사람 검출의 절반 이상을 놓친 문제
 
 - 관련 결정: [ADR-23](../DECISIONS.md#adr-23), [ADR-25](../DECISIONS.md#adr-25)
-- 대상: 사람 판정 게이트 [`PersonGate`](../../host/vision/person.py#L212), 설정 `vision.inference_fps` · `vision.detect_window_ms` · `vision.detect_hits_required`
+- 대상: 사람 판정 게이트 [`PersonGate`](../../host/vision/person.py#L171), 설정 `vision.inference_fps` · `vision.detect_window_ms` · `vision.detect_hits_required`
 
 ## 증상
 
@@ -38,16 +38,16 @@
 
 ## 원인
 
-3\~6프레임(120\~240ms) 길이의 짧은 검출 구간이 프레임 건너뛰기로 사라졌습니다. 20fps 에서 놓친 두 구간은 120ms 짜리였습니다. 3회를 채우려면 관측이 3개 들어가야 하는데 50ms 간격으로는 2개만 들어갑니다([`config/config.yaml` L448-L450](../../config/config.yaml#L448-L450)). 여기에 «연속» 조건이 겹쳐서, 중간에 한 프레임만 빠져도 확인이 처음부터 다시 시작되었습니다.
+3\~6프레임(120\~240ms) 길이의 짧은 검출 구간이 프레임 건너뛰기로 사라졌습니다. 20fps 에서 놓친 두 구간은 120ms 짜리였습니다. 3회를 채우려면 관측이 3개 들어가야 하는데 50ms 간격으로는 2개만 들어갑니다([`config/config.yaml` L366-L367](../../config/config.yaml#L366-L367)). 여기에 «연속» 조건이 겹쳐서, 중간에 한 프레임만 빠져도 확인이 처음부터 다시 시작되었습니다.
 
 ## 수정
 
-두 가지를 함께 바꿨습니다([`config/config.yaml` L432-L433, L453](../../config/config.yaml#L432-L453)).
+두 가지를 함께 바꿨습니다([`config/config.yaml` L366-L367, L373](../../config/config.yaml#L366-L373)).
 
 - 추론률을 수신률과 같은 25fps 로 올려 프레임을 버리지 않습니다.
 - 확정 조건을 «300ms 창 안에서 3회 검출» 로 바꿉니다. 연속을 요구하지 않고, 창이 완전히 비었을 때만 확정을 해제합니다.
 
-게이트의 판단 흐름은 [`PersonGate.observe`](../../host/vision/person.py#L235-L281) 와 같습니다.
+게이트의 판단 흐름은 [`PersonGate.observe`](../../host/vision/person.py#L194-L238) 와 같습니다.
 
 ```mermaid
 flowchart TD
@@ -65,7 +65,7 @@ flowchart TD
     J -->|"아니오"| L["확정을 유지한다"]
 ```
 
-시간 창으로 바꾸면 설정 조합에 따라 영원히 확정되지 않는 경우가 생깁니다. 예를 들어 5fps(200ms 주기)에서는 300ms 창에 양 끝을 포함해 최대 2회만 들어가므로 3회 조건을 채울 수 없습니다. 이 한계는 추론률과 창 길이가 함께 정하기 때문에 한쪽 값만 봐서는 잡히지 않습니다. 그래서 설정 로더가 `floor(창 / 주기) + 1` 로 창 안의 최대 관측 수를 계산하고, 필요한 히트 수가 그보다 크면 기동 전에 `ConfigError` 로 거부합니다([`host/common/config.py` L164-L180](../../host/common/config.py#L164-L180)).
+시간 창으로 바꾸면 설정 조합에 따라 영원히 확정되지 않는 경우가 생깁니다. 예를 들어 5fps(200ms 주기)에서는 300ms 창에 양 끝을 포함해 최대 2회만 들어가므로 3회 조건을 채울 수 없습니다. 이 한계는 추론률과 창 길이가 함께 정하기 때문에 한쪽 값만 봐서는 잡히지 않습니다. 그래서 설정 로더가 `floor(창 / 주기) + 1` 로 창 안의 최대 관측 수를 계산하고, 필요한 히트 수가 그보다 크면 기동 전에 `ConfigError` 로 거부합니다([`host/common/config.py` L168-L180](../../host/common/config.py#L168-L180)).
 
 ## 검증
 

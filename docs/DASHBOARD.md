@@ -221,7 +221,7 @@ npm test        # 화면 동작 + 모든 import 가 static/ 안에서 해결되�
 ```
 
 three 버전을 올리면 `package.json` 을 고친 뒤 `npm ci` → `npm run vendor` 로 `static/vendor` 를 다시
-채운다. 싣는 파일 목록은 `scripts/static-check.mjs` 에 있고, 모자라면 `npm test` 의 import 해석 시험이
+채운다. 싣는 파일 목록은 `host/dashboard/scripts/static-check.mjs` 에 있고, 모자라면 `npm test` 의 import 해석 시험이
 실패한다.
 
 기본 바인딩은 `127.0.0.1`이다. 브라우저 WS는 같은 포트의 localhost/127.0.0.1

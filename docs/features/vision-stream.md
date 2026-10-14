@@ -41,7 +41,7 @@ flowchart TD
   DUE -->|예| LATEST{"큐에 프레임이 있나? · 가장 새 것 하나만 꺼내고 나머지 버림"}
   LATEST -->|아니요 · 5ms 대기| I0
   LATEST -->|예| RUN["디코드 → 검출 → 사람 게이트 → 추적 → 쓰러짐 → 사원증"]
-  RUN --> PPE["PPE 판정 (개발 중)"]
+  RUN --> PPE["PPE 판정"]
   PPE --> OK{"예외 없이 끝났나?"}
   OK -->|아니요| ERR["vision_inference_failed · 오류 수 증가 · 이전 결과 유지"]
   ERR --> I0
