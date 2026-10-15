@@ -1,0 +1,758 @@
+{
+  "excluded_ms": [
+    1791204597000,
+    1791204720000
+  ],
+  "excluded_basis": "runtime zone_hint 21:49:58 minus 1s; conservative return boundary 21:52:00 from journal",
+  "decisions": [
+    {
+      "id": 0,
+      "start_ms": 1791204295510,
+      "end_ms": 1791204306710,
+      "x": 3.862058823529411,
+      "y": -1.5749999999999995,
+      "yaw": -3.083372052785683,
+      "plan": [
+        0.9629411764705891,
+        4.699999999999999
+      ],
+      "good": 97,
+      "total": 97,
+      "gap": 114,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 1,
+      "start_ms": 1791204307440,
+      "end_ms": 1791204416860,
+      "x": 3.9657500000000083,
+      "y": -1.567499999999996,
+      "yaw": 2.9675353967336062,
+      "plan": [
+        0.8592499999999919,
+        4.6924999999999955
+      ],
+      "good": 1075,
+      "total": 1075,
+      "gap": 201,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 2,
+      "start_ms": 1791204444200,
+      "end_ms": 1791204452460,
+      "x": 2.3319230769230774,
+      "y": -2.4888461538461546,
+      "yaw": -2.6492756413824994,
+      "plan": [
+        2.4930769230769227,
+        5.613846153846154
+      ],
+      "good": 0,
+      "total": 68,
+      "gap": 0,
+      "accepted": false,
+      "reasons": [
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 3,
+      "start_ms": 1791204458600,
+      "end_ms": 1791204471580,
+      "x": 2.772999999999999,
+      "y": -2.6130000000000013,
+      "yaw": -2.5517580363817416,
+      "plan": [
+        2.0520000000000014,
+        5.738000000000001
+      ],
+      "good": 0,
+      "total": 115,
+      "gap": 0,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope",
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 4,
+      "start_ms": 1791204482580,
+      "end_ms": 1791204509250,
+      "x": 2.9319999999999986,
+      "y": -1.8009999999999997,
+      "yaw": 3.0972564047462465,
+      "plan": [
+        1.8930000000000016,
+        4.926
+      ],
+      "good": 7,
+      "total": 251,
+      "gap": 12507,
+      "accepted": false,
+      "reasons": [
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 5,
+      "start_ms": 1791204513390,
+      "end_ms": 1791204539570,
+      "x": 2.131923076923077,
+      "y": -1.7380769230769226,
+      "yaw": -2.9819564698252576,
+      "plan": [
+        2.6930769230769234,
+        4.863076923076923
+      ],
+      "good": 22,
+      "total": 243,
+      "gap": 2471,
+      "accepted": false,
+      "reasons": [
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 6,
+      "start_ms": 1791204542970,
+      "end_ms": 1791204579510,
+      "x": 1.4549999999999987,
+      "y": -1.749814814814815,
+      "yaw": -3.0820923362937056,
+      "plan": [
+        3.3700000000000014,
+        4.874814814814815
+      ],
+      "good": 346,
+      "total": 346,
+      "gap": 237,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 7,
+      "start_ms": 1791204582290,
+      "end_ms": 1791204597450,
+      "x": 1.1367391304347831,
+      "y": -2.0845652173913036,
+      "yaw": -3.0610036302969936,
+      "plan": [
+        3.688260869565217,
+        5.209565217391304
+      ],
+      "good": 0,
+      "total": 137,
+      "gap": 0,
+      "accepted": false,
+      "reasons": [
+        "forced locate contaminated window",
+        "outside office and doorway scope",
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 8,
+      "start_ms": 1791204606410,
+      "end_ms": 1791204613970,
+      "x": 3.351666666666666,
+      "y": -1.8350000000000002,
+      "yaw": 0.1466028255300712,
+      "plan": [
+        1.473333333333334,
+        4.96
+      ],
+      "good": 60,
+      "total": 60,
+      "gap": 172,
+      "accepted": false,
+      "reasons": [
+        "forced locate contaminated window"
+      ]
+    },
+    {
+      "id": 9,
+      "start_ms": 1791204618770,
+      "end_ms": 1791204634620,
+      "x": 2.5850000000000004,
+      "y": -2.4566666666666657,
+      "yaw": 0.11904566035868695,
+      "plan": [
+        2.2399999999999998,
+        5.581666666666665
+      ],
+      "good": 21,
+      "total": 143,
+      "gap": 5196,
+      "accepted": false,
+      "reasons": [
+        "forced locate contaminated window",
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 10,
+      "start_ms": 1791204636670,
+      "end_ms": 1791204700150,
+      "x": 2.5067204301075234,
+      "y": -2.535430107526879,
+      "yaw": 0.6254284683731648,
+      "plan": [
+        2.3182795698924767,
+        5.660430107526879
+      ],
+      "good": 0,
+      "total": 617,
+      "gap": 0,
+      "accepted": false,
+      "reasons": [
+        "forced locate contaminated window",
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 11,
+      "start_ms": 1791204700830,
+      "end_ms": 1791204773300,
+      "x": 1.4436792452830194,
+      "y": -0.6468867924528301,
+      "yaw": 1.4608240266044545,
+      "plan": [
+        3.381320754716981,
+        3.77188679245283
+      ],
+      "good": 704,
+      "total": 704,
+      "gap": 202,
+      "accepted": false,
+      "reasons": [
+        "forced locate contaminated window"
+      ]
+    },
+    {
+      "id": 12,
+      "start_ms": 1791204784400,
+      "end_ms": 1791204799000,
+      "x": 3.4040909090909093,
+      "y": -0.7740909090909089,
+      "yaw": 1.4895412956299616,
+      "plan": [
+        1.420909090909091,
+        3.899090909090909
+      ],
+      "good": 129,
+      "total": 129,
+      "gap": 202,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 13,
+      "start_ms": 1791204801030,
+      "end_ms": 1791204828130,
+      "x": 3.707000000000002,
+      "y": -0.259,
+      "yaw": 1.7555263390836575,
+      "plan": [
+        1.117999999999998,
+        3.384
+      ],
+      "good": 255,
+      "total": 255,
+      "gap": 191,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 14,
+      "start_ms": 1791204831580,
+      "end_ms": 1791204840630,
+      "x": 3.700714285714286,
+      "y": -1.5049999999999994,
+      "yaw": 1.4716866868842093,
+      "plan": [
+        1.124285714285714,
+        4.629999999999999
+      ],
+      "good": 75,
+      "total": 75,
+      "gap": 198,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 15,
+      "start_ms": 1791204841330,
+      "end_ms": 1791204846810,
+      "x": 3.821666666666667,
+      "y": -1.4472222222222222,
+      "yaw": 1.326838071204551,
+      "plan": [
+        1.003333333333333,
+        4.572222222222222
+      ],
+      "good": 39,
+      "total": 39,
+      "gap": 182,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 16,
+      "start_ms": 1791204850230,
+      "end_ms": 1791204858530,
+      "x": 2.675,
+      "y": -1.3880769230769232,
+      "yaw": 1.6171151278265725,
+      "plan": [
+        2.1500000000000004,
+        4.513076923076923
+      ],
+      "good": 67,
+      "total": 67,
+      "gap": 201,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 17,
+      "start_ms": 1791204859880,
+      "end_ms": 1791204867400,
+      "x": 2.6750000000000003,
+      "y": -1.375,
+      "yaw": 1.575906938339359,
+      "plan": [
+        2.15,
+        4.5
+      ],
+      "good": 59,
+      "total": 59,
+      "gap": 192,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 18,
+      "start_ms": 1791204871470,
+      "end_ms": 1791204902730,
+      "x": 2.499347826086957,
+      "y": -0.7049999999999992,
+      "yaw": 1.6364359132962307,
+      "plan": [
+        2.3256521739130434,
+        3.829999999999999
+      ],
+      "good": 296,
+      "total": 296,
+      "gap": 199,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 19,
+      "start_ms": 1791204904780,
+      "end_ms": 1791204931550,
+      "x": 1.804000000000001,
+      "y": -0.785,
+      "yaw": 1.5323106553171035,
+      "plan": [
+        3.020999999999999,
+        3.91
+      ],
+      "good": 252,
+      "total": 252,
+      "gap": 196,
+      "accepted": true,
+      "reasons": []
+    },
+    {
+      "id": 20,
+      "start_ms": 1791204932900,
+      "end_ms": 1791204969290,
+      "x": 1.0409259259259247,
+      "y": -0.7449999999999997,
+      "yaw": 1.5987538983800023,
+      "plan": [
+        3.7840740740740753,
+        3.8699999999999997
+      ],
+      "good": 347,
+      "total": 347,
+      "gap": 199,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 21,
+      "start_ms": 1791204970650,
+      "end_ms": 1791205004420,
+      "x": 0.4686000000000003,
+      "y": -0.7257999999999994,
+      "yaw": 1.5668867815539087,
+      "plan": [
+        4.3564,
+        3.8507999999999996
+      ],
+      "good": 319,
+      "total": 319,
+      "gap": 200,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 22,
+      "start_ms": 1791205005820,
+      "end_ms": 1791205025030,
+      "x": -0.20637931034482762,
+      "y": -0.745,
+      "yaw": 1.4556644176295905,
+      "plan": [
+        5.031379310344827,
+        3.87
+      ],
+      "good": 178,
+      "total": 178,
+      "gap": 189,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 23,
+      "start_ms": 1791205025710,
+      "end_ms": 1791205041530,
+      "x": -0.5933333333333334,
+      "y": -0.7149999999999999,
+      "yaw": 1.5860678638432844,
+      "plan": [
+        5.418333333333334,
+        3.84
+      ],
+      "good": 143,
+      "total": 143,
+      "gap": 196,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 24,
+      "start_ms": 1791205042210,
+      "end_ms": 1791205060570,
+      "x": -0.9821428571428569,
+      "y": -0.7421428571428571,
+      "yaw": 1.5381959193219588,
+      "plan": [
+        5.807142857142857,
+        3.867142857142857
+      ],
+      "good": 168,
+      "total": 168,
+      "gap": 196,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 25,
+      "start_ms": 1791205061930,
+      "end_ms": 1791205071450,
+      "x": -1.522333333333333,
+      "y": -0.7449999999999998,
+      "yaw": 1.5726581034368399,
+      "plan": [
+        6.347333333333333,
+        3.8699999999999997
+      ],
+      "good": 76,
+      "total": 79,
+      "gap": 242,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 26,
+      "start_ms": 1791205073490,
+      "end_ms": 1791205078940,
+      "x": -2.2450000000000006,
+      "y": -0.024999999999999998,
+      "yaw": 1.7431959902292027,
+      "plan": [
+        7.07,
+        3.15
+      ],
+      "good": 1,
+      "total": 40,
+      "gap": 0,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope",
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 27,
+      "start_ms": 1791205080300,
+      "end_ms": 1791205097380,
+      "x": -2.244999999999999,
+      "y": -0.02500000000000001,
+      "yaw": 1.7388177930278634,
+      "plan": [
+        7.069999999999999,
+        3.15
+      ],
+      "good": 3,
+      "total": 155,
+      "gap": 5702,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope",
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 28,
+      "start_ms": 1791205104240,
+      "end_ms": 1791205113830,
+      "x": -1.8796666666666673,
+      "y": 0.036333333333333336,
+      "yaw": 1.2555910983026322,
+      "plan": [
+        6.704666666666667,
+        3.0886666666666667
+      ],
+      "good": 0,
+      "total": 80,
+      "gap": 0,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope",
+        "quality coverage <95%",
+        "short core or localization gap"
+      ]
+    },
+    {
+      "id": 29,
+      "start_ms": 1791205115190,
+      "end_ms": 1791205129630,
+      "x": -1.2431818181818188,
+      "y": -0.4122727272727272,
+      "yaw": 1.4917011311562647,
+      "plan": [
+        6.068181818181819,
+        3.537272727272727
+      ],
+      "good": 129,
+      "total": 129,
+      "gap": 193,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 30,
+      "start_ms": 1791205130320,
+      "end_ms": 1791205142620,
+      "x": -0.8071052631578945,
+      "y": -0.46710526315789463,
+      "yaw": 1.6138781332908951,
+      "plan": [
+        5.632105263157895,
+        3.5921052631578947
+      ],
+      "good": 107,
+      "total": 107,
+      "gap": 164,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 31,
+      "start_ms": 1791205145340,
+      "end_ms": 1791205156240,
+      "x": -0.3932352941176472,
+      "y": -0.5167647058823529,
+      "yaw": 1.5811654848568166,
+      "plan": [
+        5.2182352941176475,
+        3.641764705882353
+      ],
+      "good": 94,
+      "total": 94,
+      "gap": 157,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    },
+    {
+      "id": 32,
+      "start_ms": 1791205157610,
+      "end_ms": 1791205190850,
+      "x": 0.01214285714285715,
+      "y": -0.700918367346938,
+      "yaw": 1.537315036982103,
+      "plan": [
+        4.812857142857143,
+        3.825918367346938
+      ],
+      "good": 315,
+      "total": 315,
+      "gap": 197,
+      "accepted": false,
+      "reasons": [
+        "outside office and doorway scope"
+      ]
+    }
+  ],
+  "intervals": [
+    {
+      "start_ms": 1791204296274,
+      "end_ms": 1791204305875,
+      "x": 3.8607731958762885,
+      "y": -1.5749999999999997,
+      "yaw": -3.08066136664423,
+      "source": "verified_office",
+      "candidate_id": 0,
+      "observation_group": "office_stop_0"
+    },
+    {
+      "start_ms": 1791204308273,
+      "end_ms": 1791204416006,
+      "x": 3.964841860465066,
+      "y": -1.5665906976744504,
+      "yaw": 2.967208632903136,
+      "source": "verified_office",
+      "candidate_id": 1,
+      "observation_group": "office_stop_1"
+    },
+    {
+      "start_ms": 1791204543777,
+      "end_ms": 1791204578708,
+      "x": 1.4556936416184925,
+      "y": -1.7491040462427763,
+      "yaw": -3.0832872431029066,
+      "source": "verified_office",
+      "candidate_id": 6,
+      "observation_group": "office_stop_6"
+    },
+    {
+      "start_ms": 1791204785177,
+      "end_ms": 1791204798175,
+      "x": 3.3990310077519337,
+      "y": -0.7685658914728666,
+      "yaw": 1.4916904872857835,
+      "source": "verified_office",
+      "candidate_id": 12,
+      "observation_group": "office_stop_12"
+    },
+    {
+      "start_ms": 1791204801867,
+      "end_ms": 1791204827367,
+      "x": 3.7062156862745077,
+      "y": -0.26500000000000046,
+      "yaw": 1.7502591781683328,
+      "source": "verified_office",
+      "candidate_id": 13,
+      "observation_group": "office_stop_13"
+    },
+    {
+      "start_ms": 1791204832372,
+      "end_ms": 1791204839802,
+      "x": 3.7011333333333347,
+      "y": -1.5055333333333318,
+      "yaw": 1.4750806784501833,
+      "source": "verified_office",
+      "candidate_id": 14,
+      "observation_group": "office_stop_14"
+    },
+    {
+      "start_ms": 1791204842097,
+      "end_ms": 1791204845976,
+      "x": 3.822692307692307,
+      "y": -1.4496153846153856,
+      "yaw": 1.3234819916504594,
+      "source": "verified_office",
+      "candidate_id": 15,
+      "observation_group": "office_stop_15"
+    },
+    {
+      "start_ms": 1791204851076,
+      "end_ms": 1791204857778,
+      "x": 2.675000000000002,
+      "y": -1.385597014925374,
+      "yaw": 1.6173658267576667,
+      "source": "verified_office",
+      "candidate_id": 16,
+      "observation_group": "office_stop_16"
+    },
+    {
+      "start_ms": 1791204860678,
+      "end_ms": 1791204866566,
+      "x": 2.6750000000000007,
+      "y": -1.3850000000000005,
+      "yaw": 1.5929063045282053,
+      "source": "verified_office",
+      "candidate_id": 17,
+      "observation_group": "office_stop_17"
+    },
+    {
+      "start_ms": 1791204872274,
+      "end_ms": 1791204901970,
+      "x": 2.5013513513513455,
+      "y": -0.705000000000004,
+      "yaw": 1.6370261615993635,
+      "source": "verified_office",
+      "candidate_id": 18,
+      "observation_group": "office_stop_18"
+    },
+    {
+      "start_ms": 1791204905576,
+      "end_ms": 1791204930776,
+      "x": 1.8016666666666692,
+      "y": -0.7849999999999971,
+      "yaw": 1.5321523042978211,
+      "source": "verified_office",
+      "candidate_id": 19,
+      "observation_group": "office_stop_19"
+    },
+    {
+      "start_ms": 1791205073560,
+      "end_ms": 1791205096630,
+      "x": -2.075,
+      "y": -0.875,
+      "yaw": 1.7402233217747969,
+      "source": "post_front_measured_xy",
+      "observation_group": "post_front",
+      "reported_pose": [
+        -2.245,
+        -0.025,
+        1.7453292519943295
+      ]
+    }
+  ]
+}

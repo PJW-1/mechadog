@@ -1,8 +1,11 @@
 [project]
 name = "mechdog-physical-ai"
-version = "0.1.0"
+version = "1.0.0"
 description = "MechDog Physical AI Security & Patrol Robot"
 requires-python = ">=3.12"
+
+[project.scripts]
+mechadog-runtime = "host.runtime:main"
 
 [tool.ruff]
 line-length = 100
@@ -11,11 +14,17 @@ target-version = "py312"
 # ruff 0.16 부터 .md 안의 파이썬 코드 블록도 포맷 검사 대상이 되었는데,
 # 문서의 예시 코드는 설명을 위해 일부러 압축하거나 안티패턴으로 쓴 것이라
 # 포맷터가 강제할 대상이 아니다. 코드 품질 게이트는 실제 소스에만 건다.
-exclude = ["third_party", ".venv", "build", "*.md"]
+# tools/house_sim 은 별도로 자란 SIM 뷰어(Node 중심)를 가져온 것이라 품질 게이트 밖에 둔다 (2026-10-06).
+exclude = ["third_party", ".venv", "build", "*.md", "tools/house_sim"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH", "BLE"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# 실험 스크립트와 노트북은 한 번 돌리고 버리는 코드라 광범위 except 를 허용한다.
+"experiments/**" = ["BLE001"]
+"*.ipynb" = ["BLE001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -23,3 +32,25 @@ addopts = "-q"
 # host/ 를 import 가능하게 한다. 저장소 루트를 sys.path 에 넣는 표준 방법이며,
 # 이것이 없으면 tests/ 에서 `from host.common import ...` 가 실패한다.
 pythonpath = ["."]
+
+[tool.mypy]
+# strict 범위 — CI 는 `mypy host` (host 전체).
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+# 스텁이 없는 서드파티 — 명시한 모듈만 import 오류를 넘긴다.
+[[tool.mypy.overrides]]
+module = [
+    "onnxruntime", "onnxruntime.*", "piper", "piper.*", "sounddevice", "torch", "torch.*",
+    "transformers", "transformers.*",
+]
+ignore_missing_imports = true
+
+# 검사 범위 밖(tools)은 host 가 import 할 때 타입 정보만 읽고 오류는 보고하지 않는다.
+[[tool.mypy.overrides]]
+module = ["tools.*"]
+follow_imports = "silent"

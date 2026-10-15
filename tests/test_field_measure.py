@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from host.telemetry.receiver import Reading
-from tools.field_measure import Result, Sample, TelemetryTap, save
+from tools.field.field_measure import Result, Sample, TelemetryTap, save
 
 
 def reading(*, pitch: float | None = 0.0, roll: float | None = 0.0) -> Reading:
@@ -175,7 +175,7 @@ def test_blank_answer_is_not_yes(monkeypatch: pytest.MonkeyPatch) -> None:
     자동 판정이 아닌 항목(8번 텔레옵)은 사람이 눈으로 보고 답한다. 무심코 누른
     엔터가 통과가 되면 **아무도 안 본 항목이 통과로 기록된다.**
     """
-    from tools import field_measure
+    from tools.field import field_measure
 
     monkeypatch.setattr(field_measure, "_ask", lambda _p: "")
     assert field_measure._ask_yn("앞으로 갔나") is False
@@ -186,7 +186,7 @@ def test_yes_no_accepts_the_hangul_key(
     monkeypatch: pytest.MonkeyPatch, answer: str, expected: bool
 ) -> None:
     """한글 자판에서 `y` 를 누르면 `ㅛ` 가 들어온다 — 실기 중에 자주 난다."""
-    from tools import field_measure
+    from tools.field import field_measure
 
     monkeypatch.setattr(field_measure, "_ask", lambda _p: answer)
     assert field_measure._ask_yn("갔나") is expected
@@ -194,7 +194,7 @@ def test_yes_no_accepts_the_hangul_key(
 
 def test_number_rejects_negative_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     """줄자 값은 음수가 될 수 없다. 오타를 그대로 받으면 캘리브레이션이 뒤집힌다."""
-    from tools import field_measure
+    from tools.field import field_measure
 
     answers = iter(["-5", "여든", "820"])
     monkeypatch.setattr(field_measure, "_ask", lambda _p: next(answers))
@@ -203,7 +203,7 @@ def test_number_rejects_negative_and_retries(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_blank_number_means_not_measured(monkeypatch: pytest.MonkeyPatch) -> None:
     """빈 입력은 0 이 아니라 '안 쟀다' 다 — 0 으로 읽으면 못 걷는 로봇이 된다."""
-    from tools import field_measure
+    from tools.field import field_measure
 
     monkeypatch.setattr(field_measure, "_ask", lambda _p: "")
     assert field_measure._ask_number("이동 거리 mm: ") is None
@@ -224,7 +224,7 @@ class _FakeTap:
 
 
 def _ctx(tap: object = None):
-    from tools.field_measure import Ctx
+    from tools.field.field_measure import Ctx
 
     return Ctx(
         sock=None, peer=("127.0.0.1", 5001), commander=None, tap=tap, device="d", host="127.0.0.1"
@@ -233,8 +233,8 @@ def _ctx(tap: object = None):
 
 def _stub_a_clean_run(monkeypatch: pytest.MonkeyPatch, measured: float) -> None:
     """3회 모두 성공하고 줄자/각도 입력이 `measured` 인 시행을 흉내낸다."""
-    from tools import field_measure as fm
-    from tools.gait_calibrate import Acks
+    from tools.field import field_measure as fm
+    from tools.probe.gait_calibrate import Acks
 
     monkeypatch.setattr(fm, "_ask", lambda _p: "")  # 엔터 = 실행
     monkeypatch.setattr(fm, "_ask_number", lambda _p, **_k: measured)
@@ -249,7 +249,7 @@ def test_zero_distance_is_recorded_not_blanked(monkeypatch: pytest.MonkeyPatch) 
     "유효 시행 없음" 이고 값은 `None` 이 되어 **세 기록이 서로 모순된다.** 사람은
     도구가 고장난 줄 알고 로봇을 다시 세운다.
     """
-    from tools.field_measure import m_drive
+    from tools.field.field_measure import m_drive
 
     _stub_a_clean_run(monkeypatch, 0.0)
     result = m_drive(_ctx(), "forward")
@@ -262,7 +262,7 @@ def test_zero_distance_is_recorded_not_blanked(monkeypatch: pytest.MonkeyPatch) 
 
 def test_zero_turn_rate_is_recorded_not_blanked(monkeypatch: pytest.MonkeyPatch) -> None:
     """선회도 같다 — yaw 가 안 변한 것은 '못 쟀다' 가 아니라 '안 돌았다' 다."""
-    from tools.field_measure import m_turn
+    from tools.field.field_measure import m_turn
 
     _stub_a_clean_run(monkeypatch, 0.0)
     result = m_turn(_ctx(_FakeTap()), "turn_left")
@@ -274,7 +274,7 @@ def test_zero_turn_rate_is_recorded_not_blanked(monkeypatch: pytest.MonkeyPatch)
 
 def test_real_distance_still_reports_mean_and_spread(monkeypatch: pytest.MonkeyPatch) -> None:
     """0 을 살리면서 정상 경로가 상하지 않았는지 — 312mm/3s = 104.0 mm/s."""
-    from tools.field_measure import m_drive
+    from tools.field.field_measure import m_drive
 
     _stub_a_clean_run(monkeypatch, 312.0)
     result = m_drive(_ctx(), "forward")
@@ -289,7 +289,7 @@ def test_no_trials_still_says_nothing_was_measured(monkeypatch: pytest.MonkeyPat
 
     0 을 살리느라 빈 결과까지 값으로 만들면 반대쪽으로 거짓말한다.
     """
-    from tools import field_measure as fm
+    from tools.field import field_measure as fm
 
     _stub_a_clean_run(monkeypatch, 0.0)
     monkeypatch.setattr(fm, "_ask", lambda _p: "s")  # 3회 모두 건너뜀
@@ -310,8 +310,8 @@ def test_turn_commands_match_gait_calibrate_signs() -> None:
     있었다 — `gait_calibrate` 와 회피 시퀀스는 +20(후진+좌선회)다. 두 도구가
     갈라지면 회피가 쓰는 구동의 **반대 방향**을 재서 설정에 적게 된다.
     """
-    from tools.field_measure import TURN_COMMANDS
-    from tools.gait_calibrate import command_for
+    from tools.field.field_measure import TURN_COMMANDS
+    from tools.probe.gait_calibrate import command_for
 
     gait = {"step_length_mm": 60.0, "turn_angle_deg": 20.0}
     for mode in ("turn_left", "turn_right", "reverse_turn"):
@@ -320,7 +320,7 @@ def test_turn_commands_match_gait_calibrate_signs() -> None:
 
 def test_reverse_turn_is_the_direction_the_avoid_sequence_sends() -> None:
     """회피는 `Phase("reverse_turn", -step, +turn_deg)` — 후진+좌선회다 (ADR-29)."""
-    from tools.field_measure import TURN_COMMANDS
+    from tools.field.field_measure import TURN_COMMANDS
 
     step, angle = TURN_COMMANDS["reverse_turn"]
     assert step < 0, "후진이어야 한다"

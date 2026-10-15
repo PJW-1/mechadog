@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tools.sensor_log_check import analyze, main
+from tools.probe.sensor_log_check import analyze, main
 
 
 def status(**overrides):

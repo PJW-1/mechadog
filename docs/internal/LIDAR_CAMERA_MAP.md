@@ -1,6 +1,6 @@
 # LiDAR 지도에 카메라 사진 연결
 
-`tools/lidar_slam.py`의 기존 정지 스캔 지도에, 같은 위치에서 PC가 받은 카메라 JPEG를
+`tools/lidar/lidar_slam.py`의 기존 정지 스캔 지도에, 같은 위치에서 PC가 받은 카메라 JPEG를
 연결하는 선택 기능이다. 카메라와 라이다를 **동시에 수신**하지만, JPEG는 지도 위의
 물체 위치가 아니라 **스캔을 정합한 센서 위치**에 붙는다. 보정되지 않은 카메라의
 검출 박스를 실좌표라고 표시하지 않는다.
@@ -20,7 +20,7 @@
 ## 여러 정지 위치에서 실행
 
 ```text
-python tools/lidar_slam.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --camera-url http://<실측한카메라IP>:81/stream --steps 3 --out maps/paired-run
+python tools/lidar/lidar_slam.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --camera-url http://<실측한카메라IP>:81/stream --steps 3 --out maps/paired-run
 ```
 
 지도 작업은 기존 `localization.track: lidar` 설정이 요구된다. URL을 주지 않으면
@@ -38,11 +38,11 @@ PC 시각의 차이가 500ms 이내이고 JPEG가 정상 형식인 경우만 저
 
 ## 2026-09-27 정지 수신 확인
 
-`tools/lidar_camera_snapshot.py`는 로봇을 움직이거나 명령을 보내지 않고 현재
+`tools/lidar/lidar_camera_snapshot.py`는 로봇을 움직이거나 명령을 보내지 않고 현재
 위치에서 LiDAR 스캔과 XIAO MJPEG 한 장을 기록한다.
 
 ```powershell
-python tools/lidar_camera_snapshot.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --camera-url http://192.168.0.19:81/stream --seconds 5 --out maps/stationary-01
+python tools/lidar/lidar_camera_snapshot.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --camera-url http://192.168.0.19:81/stream --seconds 5 --out maps/stationary-01
 ```
 
 출력: 원본 `scans.jsonl`, 점유격자 `static_map.npy` + `map_meta.json`, ROS2용
@@ -61,14 +61,14 @@ Windows에서 UDP5201을 확인할 때 PowerShell 수신이 앱 방화벽 정책
 
 ## 여러 위치의 스캔 누적·재생
 
-`tools/lidar_map_replay.py`는 시간순 자세·LiDAR·JPEG 이벤트를 받아 지도를
+`tools/lidar/lidar_map_replay.py`는 시간순 자세·LiDAR·JPEG 이벤트를 받아 지도를
 누적하고 `map_view.html`에 로봇 경로와 지도 갱신 수를 표시한다. `--input -`로
 표준 입력의 연속 이벤트를 받을 수 있으며, 지도는 기본 5회 반영마다 갱신된다.
 이 도구는 로봇에 명령을 보내지 않는다.
 
 ```powershell
-python tools/lidar_map_replay.py --simulate --out maps/sim-continuous-01
-python tools/lidar_map_replay.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --input events.jsonl --camera-url http://192.168.0.19:81/stream --out maps/real-replay-01
+python tools/lidar/lidar_map_replay.py --simulate --out maps/sim-continuous-01
+python tools/lidar/lidar_map_replay.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --input events.jsonl --camera-url http://192.168.0.19:81/stream --out maps/real-replay-01
 ```
 
 입력은 각 줄에 JSON 객체 하나다. `received_ms`는 **PC에서 받은 epoch ms**이고
@@ -95,12 +95,12 @@ python tools/lidar_map_replay.py --device mechdog-02 --lidar-device lidar-b03fd3
 
 ### 실시간 수신 경로
 
-`tools/lidar_live_map.py`는 LiDAR UDP 5201, XIAO MJPEG 및 **PC 루프백에만
+`tools/lidar/lidar_live_map.py`는 LiDAR UDP 5201, XIAO MJPEG 및 **PC 루프백에만
 바인드한 자세 입력 5202**를 동시에 읽고 5회 지도 갱신마다 `map_view.html`을
 다시 쓴다. 로봇 명령 소켓은 열지 않는다.
 
 ```powershell
-python tools/lidar_live_map.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --camera-url http://192.168.0.19:81/stream --seconds 60 --out maps/live-01
+python tools/lidar/lidar_live_map.py --device mechdog-02 --lidar-device lidar-b03fd35ee950 --camera-url http://192.168.0.19:81/stream --seconds 60 --out maps/live-01
 ```
 
 자세 공급자가 루프백 UDP 5202로 보내야 할 값은 아래와 같다. 도착 시각은 수신
@@ -123,7 +123,7 @@ PC가 찍으며, 로봇의 부팅 후 `ts`를 epoch로 쓰지 않는다.
 실기 센서 연결이나 로봇 명령 없이 실행할 수 있다.
 
 ```powershell
-python tools/lidar_scene_export.py --device mechdog-02 --map maps/real-replay-01 --out maps/real-replay-01/scene.json
+python tools/lidar/lidar_scene_export.py --device mechdog-02 --map maps/real-replay-01 --out maps/real-replay-01/scene.json
 ```
 
 `scene.json`은 실측 XY 좌표 기준의 점유/빈 공간 **행 구간**, 미관측 셀,
@@ -142,7 +142,7 @@ python tools/lidar_scene_export.py --device mechdog-02 --map maps/real-replay-01
 해당 폴더의 JPEG만 읽기 전용으로 제공한다.
 
 ```powershell
-python tools/lidar_scene_view.py --map maps/real-replay-01 --port 8765
+python tools/lidar/lidar_scene_view.py --map maps/real-replay-01 --port 8765
 ```
 
 브라우저에서 `http://127.0.0.1:8765/`을 열면 관측된 빈 공간·장애물 단면·
@@ -153,8 +153,8 @@ python tools/lidar_scene_view.py --map maps/real-replay-01 --port 8765
 기존 단일 위치 실물 기록(`static_map.npy`)도 아래처럼 내보낼 수 있다.
 
 ```powershell
-python tools/lidar_scene_export.py --device mechdog-02 --map <실물_기록_폴더> --stem static_map --out <새_미리보기_폴더>/scene.json
-python tools/lidar_scene_view.py --map <새_미리보기_폴더> --port 8765
+python tools/lidar/lidar_scene_export.py --device mechdog-02 --map <실물_기록_폴더> --stem static_map --out <새_미리보기_폴더>/scene.json
+python tools/lidar/lidar_scene_view.py --map <새_미리보기_폴더> --port 8765
 ```
 
 사진을 함께 보려면 해당 미리보기 폴더의 `photos/`에 원본 사본을 두고 사본
@@ -179,7 +179,7 @@ python tools/lidar_scene_view.py --map <새_미리보기_폴더> --port 8765
 카메라가 위로 향하므로 **화면 중앙은 바닥을 보지 않는다**. 가시 바닥은 화면
 하단 일부일 수 있다. 2D 라이다 한 줄만으로는 물체 꼭대기나 벽 높이를 잴 수 없다.
 
-`tools/lidar_camera_overlay.py`는 저장된 `scans.jsonl`과 같은 자세의 정방향
+`tools/lidar/lidar_camera_overlay.py`는 저장된 `scans.jsonl`과 같은 자세의 정방향
 사진에 라이다 **스캔면** 반사점만 표시한다. `--calibration` JSON에는
 `camera.width_px/height_px`, `fx_px/fy_px/cx_px/cy_px`, `height_m=0.14`,
 `forward_m=0.10`, `left_m=0`, `pitch_down_deg=-15`, `yaw_left_deg`와
@@ -193,7 +193,7 @@ python tools/lidar_scene_view.py --map <새_미리보기_폴더> --port 8765
 `projection.json`이다. 기존 사진/스캔과 운영 지도는 변경하지 않는다.
 
 ```powershell
-python tools/lidar_camera_overlay.py --photo <같은-자세-사진.jpg> --scans <scans.jsonl> --calibration <실측-calibration.json> --out <새-출력-폴더>
+python tools/lidar/lidar_camera_overlay.py --photo <같은-자세-사진.jpg> --scans <scans.jsonl> --calibration <실측-calibration.json> --out <새-출력-폴더>
 ```
 
 현 저장된 `stationary_map_01` 사진에는 PC 모니터가 크게 찍혀 있어 라이다

@@ -1,0 +1,569 @@
+{
+  "kind": "offline_repeated_ray_candidate",
+  "exact_marker_tool_executed": false,
+  "reason": "Python executable access denied; download unavailable",
+  "fallback_runtime": "Node.js 24.19.0",
+  "source": "<local>",
+  "target": "<local>",
+  "session": "<local> 프로젝트/05_실물_측정결과/2026-10-05/지도재측정_1820",
+  "frame_id": "patrol",
+  "navigation_ready": false,
+  "activation": "none",
+  "intervals": [
+    {
+      "start_ms": 1791192215754,
+      "end_ms": 1791192219587,
+      "x": -0.013974358974358983,
+      "y": -0.6860256410256408,
+      "yaw": -0.02753985211652006,
+      "candidate_id": 1,
+      "zone": "B",
+      "min_score": 0.837,
+      "revolutions": 44,
+      "packets": 267,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192243650,
+      "end_ms": 1791192256347,
+      "x": 0.06500000000000015,
+      "y": 0.5940551181102355,
+      "yaw": -0.01818206488200843,
+      "candidate_id": 2,
+      "zone": "B",
+      "min_score": 0.748,
+      "revolutions": 146,
+      "packets": 888,
+      "rejected_packets": 1
+    },
+    {
+      "start_ms": 1791192263456,
+      "end_ms": 1791192274748,
+      "x": 0.10500000000000027,
+      "y": 1.394646017699116,
+      "yaw": 0.07177653752965793,
+      "candidate_id": 3,
+      "zone": "B",
+      "min_score": 0.895,
+      "revolutions": 130,
+      "packets": 785,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192289250,
+      "end_ms": 1791192293851,
+      "x": -0.5749999999999995,
+      "y": 0.4715957446808512,
+      "yaw": 0.07593682042941459,
+      "candidate_id": 4,
+      "zone": null,
+      "min_score": 0.806,
+      "revolutions": 53,
+      "packets": 320,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192311753,
+      "end_ms": 1791192316988,
+      "x": -0.6950000000000002,
+      "y": -0.5544339622641511,
+      "yaw": 0.0887345222388166,
+      "candidate_id": 5,
+      "zone": "B",
+      "min_score": 0.79,
+      "revolutions": 60,
+      "packets": 364,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192328152,
+      "end_ms": 1791192339448,
+      "x": -0.61570796460177,
+      "y": -1.125,
+      "yaw": 0.04085398229660761,
+      "candidate_id": 6,
+      "zone": "B",
+      "min_score": 0.752,
+      "revolutions": 130,
+      "packets": 785,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192379649,
+      "end_ms": 1791192396455,
+      "x": -0.09428571428571456,
+      "y": -2.1652380952380996,
+      "yaw": -0.02049371075044045,
+      "candidate_id": 7,
+      "zone": "D",
+      "min_score": 0.772,
+      "revolutions": 194,
+      "packets": 1171,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192404852,
+      "end_ms": 1791192414364,
+      "x": 0.5054166666666674,
+      "y": -2.285416666666664,
+      "yaw": 0.27875130849278257,
+      "candidate_id": 8,
+      "zone": "D",
+      "min_score": 0.816,
+      "revolutions": 110,
+      "packets": 662,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192421547,
+      "end_ms": 1791192435097,
+      "x": 0.9449999999999967,
+      "y": -2.1650000000000005,
+      "yaw": 0.2132010614923753,
+      "candidate_id": 9,
+      "zone": "D",
+      "min_score": 0.788,
+      "revolutions": 157,
+      "packets": 943,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192439459,
+      "end_ms": 1791192450193,
+      "x": 1.8268518518518495,
+      "y": -1.884999999999998,
+      "yaw": 0.18398565930832633,
+      "candidate_id": 10,
+      "zone": "D",
+      "min_score": 0.819,
+      "revolutions": 124,
+      "packets": 746,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192555760,
+      "end_ms": 1791192564390,
+      "x": -0.2754597701149422,
+      "y": -0.9736206896551716,
+      "yaw": 0.0029341518316034236,
+      "candidate_id": 11,
+      "zone": "B",
+      "min_score": 0.8,
+      "revolutions": 100,
+      "packets": 601,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192583961,
+      "end_ms": 1791192588456,
+      "x": -0.2793478260869567,
+      "y": -0.9706521739130443,
+      "yaw": -0.0007767379893893802,
+      "candidate_id": 12,
+      "zone": "B",
+      "min_score": 0.803,
+      "revolutions": 52,
+      "packets": 312,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192744807,
+      "end_ms": 1791192750958,
+      "x": -3.314999999999998,
+      "y": 0.103709677419355,
+      "yaw": 0.06598920777272889,
+      "candidate_id": 16,
+      "zone": "C",
+      "min_score": 0.706,
+      "revolutions": 71,
+      "packets": 429,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192778761,
+      "end_ms": 1791192787250,
+      "x": -3.3149999999999986,
+      "y": 0.8164285714285723,
+      "yaw": 0.005548164924123606,
+      "candidate_id": 18,
+      "zone": null,
+      "min_score": 0.766,
+      "revolutions": 97,
+      "packets": 586,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192790160,
+      "end_ms": 1791192799910,
+      "x": -3.3158333333333316,
+      "y": 0.8212500000000013,
+      "yaw": 0.006808736029137636,
+      "candidate_id": 19,
+      "zone": null,
+      "min_score": 0.762,
+      "revolutions": 113,
+      "packets": 679,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192802857,
+      "end_ms": 1791192809959,
+      "x": -3.3167142857142844,
+      "y": 0.8152857142857152,
+      "yaw": 0.007436666403186708,
+      "candidate_id": 20,
+      "zone": null,
+      "min_score": 0.767,
+      "revolutions": 82,
+      "packets": 494,
+      "rejected_packets": 0
+    },
+    {
+      "start_ms": 1791192818102,
+      "end_ms": 1791192823154,
+      "x": -3.314999999999998,
+      "y": 0.8184693877551021,
+      "yaw": 0.0072386807155803215,
+      "candidate_id": 21,
+      "zone": null,
+      "min_score": 0.766,
+      "revolutions": 57,
+      "packets": 347,
+      "rejected_packets": 0
+    }
+  ],
+  "accepted_intervals": 17,
+  "accepted_revolutions": 1720,
+  "counts": {
+    "nav": {
+      "changed": 1871,
+      "cleared_occupied": 383,
+      "opened_unknown": 904,
+      "new_occupied": 584,
+      "confidence_only": 0
+    },
+    "loc": {
+      "changed": 1978,
+      "cleared_occupied": 662,
+      "opened_unknown": 402,
+      "new_occupied": 304,
+      "confidence_only": 610
+    }
+  },
+  "allowed_rectangles_m": [
+    [
+      -0.5750000000000002,
+      -3.7750000000000004,
+      2.425,
+      -1.2750000000000004
+    ],
+    [
+      -2.375,
+      -1.2750000000000004,
+      1.2249999999999996,
+      2.025
+    ],
+    [
+      -4.7749999999999995,
+      -1.2750000000000004,
+      -2.375,
+      2.025
+    ],
+    [
+      1.225,
+      -1.2750000000000004,
+      2.4250000000000003,
+      -0.07500000000000018
+    ]
+  ],
+  "policy": {
+    "whole_cells_in_measured_rooms": true,
+    "min_distinct_revolutions": 5,
+    "min_distinct_one_second_buckets": 3,
+    "clear_fraction": 0.9,
+    "hit_fraction": 0.65,
+    "free_endpoint_guard_m": 0.1,
+    "structural_walls_and_keepouts_preserved_for_navigation": true,
+    "single_observation_unchanged": true
+  },
+  "warnings": [
+    "기존 verified 측위 자세를 정답으로 쓰므로 독립 실측 정답이 아님.",
+    "동일 구간 재사용: 순환 검증이며 실물 정확도 입증 아님.",
+    "지정 refine_from_markers.py 및 실제 planner 코드 검증 미실행: Python 접근 제한.",
+    "원본에서 복사한 source_masks/evidence_spec/zones_plan은 원본 이력이며 새 관측을 반영한 마스크가 아님.",
+    "원본 일지 쓰기는 사용자 제한(새 지도+out/ai만)으로 반영 대기."
+  ],
+  "input_sha256": {
+    "events.jsonl": "68b4b1fcf9c6bcd43e06c3b12a83a45b864ea6eb7ce1438cd7383f2e632e71de",
+    "nav_poll.log": "af508126ea5cf92d508bbfd291a64e56bb302226c9656e088c04274c521aabff",
+    "runtime.log": "6450d95828a3eabebbbbefb5fd288045701efa8b9873d89293576f206b7beb95",
+    "manifest.json": "8cb79f97cd56fddfa1e3342de947e5ced260fcea932f44190d2cec3f5385fc69",
+    "1.webp": "a864d1fbf3d80390550a0bafb2573d35debc24f6050d8918b144ff05c55a7fe5",
+    "2.webp": "40e7a5ab80b95611fe2728fe324c14d8c1a184a9ba3f4867bcb0488fb6a46658",
+    "5.webp": "8b711fb613674e68cb04a2058f271fc04d4259c138a6a6a5d1f475318eb87008",
+    "8.webp": "e2389c11c75a60db823368cf62eb0760aa4db3a863222828b0f3d783950d17d9"
+  },
+  "integrity_checks": {
+    "source_files_sha256_unchanged": true,
+    "source_file_count": 24,
+    "meta_preserved": true,
+    "copied_frame_zones_S0_byte_identical": true,
+    "selected_intervals_strictly_before_cutoff": true,
+    "all_windows_have_full_revolutions": true,
+    "only_new_target_and_out_ai_written": true,
+    "finite_map_values": true,
+    "outside_scope_cells_exactly_preserved": true,
+    "single_revolution_observed_cells_exactly_preserved": true,
+    "all_classification_changes_have_repeated_evidence": true,
+    "protected_structural_cells_not_cleared": true,
+    "exact_requested_marker_tool_executed": false,
+    "actual_field_and_AG_python_planners_executed": false,
+    "robot_or_field_ports_accessed": false
+  },
+  "exact_python_validation": {
+    "status": "blocked",
+    "reason": "Python312 python.exe: access denied; virtual environments use the same executable. Alternative runtime download: remote connection failed. WSL: E_ACCESSDENIED.",
+    "prepared_runner": "<local>",
+    "runner_executed": false
+  },
+  "localization_diagnostic_summary": [
+    {
+      "map": "before",
+      "mode": "local_truth",
+      "count": 17,
+      "mean_fraction": 0.8120427299689228,
+      "median_xy_m": 0.04999999999999999,
+      "p95_xy_m": 0.55,
+      "median_yaw_deg": 4.969616689786745e-17,
+      "correct_30cm_10deg": 15,
+      "ambiguous_global": null
+    },
+    {
+      "map": "before",
+      "mode": "local_offset_x_0_5m",
+      "count": 17,
+      "mean_fraction": 0.8140360173565008,
+      "median_xy_m": 0.04999999999999999,
+      "p95_xy_m": 0.55,
+      "median_yaw_deg": 4.969616689786745e-17,
+      "correct_30cm_10deg": 14,
+      "ambiguous_global": null
+    },
+    {
+      "map": "before",
+      "mode": "global",
+      "count": 17,
+      "mean_fraction": 0.8381419474221621,
+      "median_xy_m": 0.3622132508977374,
+      "p95_xy_m": 5.5450492531919675,
+      "median_yaw_deg": 2.7844789887777575,
+      "correct_30cm_10deg": 8,
+      "ambiguous_global": 15
+    },
+    {
+      "map": "after",
+      "mode": "local_truth",
+      "count": 17,
+      "mean_fraction": 0.8531119526714637,
+      "median_xy_m": 0,
+      "p95_xy_m": 0.05,
+      "median_yaw_deg": 0,
+      "correct_30cm_10deg": 16,
+      "ambiguous_global": null
+    },
+    {
+      "map": "after",
+      "mode": "local_offset_x_0_5m",
+      "count": 17,
+      "mean_fraction": 0.852113268198439,
+      "median_xy_m": 0,
+      "p95_xy_m": 0.04999999999999982,
+      "median_yaw_deg": 0,
+      "correct_30cm_10deg": 17,
+      "ambiguous_global": null
+    },
+    {
+      "map": "after",
+      "mode": "global",
+      "count": 17,
+      "mean_fraction": 0.8595784887922725,
+      "median_xy_m": 0.015592611072323122,
+      "p95_xy_m": 3.0313363389765913,
+      "median_yaw_deg": 0.41474585424549104,
+      "correct_30cm_10deg": 13,
+      "ambiguous_global": 10
+    }
+  ],
+  "routes_diagnostic_summary": [
+    {
+      "profile": "field_clearance_25cm",
+      "map": "before",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    },
+    {
+      "profile": "field_clearance_25cm",
+      "map": "after",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    },
+    {
+      "profile": "AG_clearance_20cm",
+      "map": "before",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    },
+    {
+      "profile": "AG_clearance_20cm",
+      "map": "after",
+      "pairs": 20,
+      "reachable_with_snap": 20,
+      "exact_goal_reachable": 20,
+      "failures": []
+    }
+  ],
+  "kitchen_analysis": {
+    "kitchen_patrol_rect": [
+      -4.7749999999999995,
+      -1.2750000000000004,
+      -2.375,
+      2.025
+    ],
+    "old_provisional_table_patrol_rect": [
+      -3.5200000000000005,
+      0.56,
+      -2.6099999999999994,
+      1.0499999999999998
+    ],
+    "kitchen_changes": {
+      "cleared_occupied": 108,
+      "opened_unknown": 161,
+      "new_occupied": 96
+    },
+    "table_changes": {
+      "cleared_occupied": 47,
+      "new_occupied": 0
+    },
+    "protected_wall_cells_repeated_free": 12,
+    "old_table_occupied_cells": 50,
+    "new_table_occupied_cells": 3,
+    "kitchen_old_free_cells": 2070,
+    "kitchen_new_free_cells": 2263,
+    "kitchen_free_area_change_m2": 0.48250000000000004,
+    "interpretation": "좁게 보이는 원인 중 하나는 kitchen_utility_desk 사진 추정 AABB를 채운 항법 점유 테두리. 반복 자유 관측으로 그 테두리 일부를 해제. 벽 위치 오차의 독립 실측 여부는 확인되지 않아 구조 벽/문틀은 이동하지 않음.",
+    "photo_findings": [
+      "1.webp/2.webp: 바닥 기준선과 라이다 중심 위치 참고.",
+      "5.webp: 소파 팔걸이 옆 가방·상자·문틀·책상 다리 확인. 측정 종료시 사진이며 가방이 완전히 사라졌다고 단정할 수 없음.",
+      "8.webp: 관제 화면 캡처. 이 네 사진에서 주방 청소기 거치대/스탠드의 실측 좌표는 확인되지 않음."
+    ]
+  },
+  "selection_summary": {
+    "candidate_windows": 26,
+    "selected_windows": 17,
+    "excluded_windows": [
+      {
+        "id": 0,
+        "time": [
+          "18:22:46.780",
+          "18:23:34.240"
+        ],
+        "reasons": [
+          "verified/updated/not-lost/score>=0.7 coverage <95%",
+          "핵심 정지 구간 3초 미만 또는 측위 공백>350ms"
+        ]
+      },
+      {
+        "id": 13,
+        "time": [
+          "18:30:30.800",
+          "18:30:43.230"
+        ],
+        "reasons": [
+          "verified/updated/not-lost/score>=0.7 coverage <95%"
+        ]
+      },
+      {
+        "id": 14,
+        "time": [
+          "18:30:44.590",
+          "18:30:52.090"
+        ],
+        "reasons": [
+          "verified/updated/not-lost/score>=0.7 coverage <95%"
+        ]
+      },
+      {
+        "id": 15,
+        "time": [
+          "18:31:23.470",
+          "18:31:43.660"
+        ],
+        "reasons": [
+          "verified/updated/not-lost/score>=0.7 coverage <95%",
+          "핵심 정지 구간 3초 미만 또는 측위 공백>350ms"
+        ]
+      },
+      {
+        "id": 17,
+        "time": [
+          "18:32:44.360",
+          "18:32:52.220"
+        ],
+        "reasons": [
+          "핵심 정지 구간 3초 미만 또는 측위 공백>350ms"
+        ]
+      },
+      {
+        "id": 22,
+        "time": [
+          "18:33:46.150",
+          "18:33:58.260"
+        ],
+        "reasons": [
+          "핵심 정지 구간 3초 미만 또는 측위 공백>350ms"
+        ]
+      },
+      {
+        "id": 23,
+        "time": [
+          "18:34:08.860",
+          "18:34:13.860"
+        ],
+        "reasons": [
+          "18:34 이후 또는 경계 횡단",
+          "verified/updated/not-lost/score>=0.7 coverage <95%",
+          "핵심 정지 구간 3초 미만 또는 측위 공백>350ms"
+        ]
+      },
+      {
+        "id": 24,
+        "time": [
+          "18:34:23.680",
+          "18:34:35.580"
+        ],
+        "reasons": [
+          "18:34 이후 또는 경계 횡단",
+          "verified/updated/not-lost/score>=0.7 coverage <95%"
+        ]
+      },
+      {
+        "id": 25,
+        "time": [
+          "18:34:36.960",
+          "18:34:44.040"
+        ],
+        "reasons": [
+          "18:34 이후 또는 경계 횡단",
+          "verified/updated/not-lost/score>=0.7 coverage <95%"
+        ]
+      }
+    ],
+    "note": "후보 검출 3cm/5deg/5초; 실제 국소 탐색 4cm 격자 jitter 때문에 runtime 최대 편차 10cm를 별도 허용. 이 완화는 독립 정지/수평/정답 자세 증명이 아님."
+  }
+}

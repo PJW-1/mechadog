@@ -38,6 +38,7 @@ export function decodeEventMessage(data) {
   }
   return {
     kind: 'event',
+    simulated: message.simulated === true,
     seq: message.seq,
     event: message.event,
     ts_ms: message.ts_ms,

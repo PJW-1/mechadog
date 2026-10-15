@@ -8,7 +8,7 @@ from host.common.lidar_link import Scan, points_from_wire
 from host.slam import settings
 from host.slam.photo_map import PhotoRecorder
 from host.vision.stream_client import Frame
-from tools import lidar_slam
+from tools.lidar import lidar_slam
 
 
 def _recorder() -> PhotoRecorder:

@@ -52,7 +52,7 @@ STREAM_STATS profile=VGA fps=24.7 limit=25 bytes_avg=19775 skipped=15 kbps=3905 
 ## 3. 재현
 
 ```bash
-arduino-cli compile --fqbn "esp32:esp32:XIAO_ESP32S3:PSRAM=opi" firmware_xiao_vision
+arduino-cli compile --fqbn "esp32:esp32:XIAO_ESP32S3:PSRAM=opi" firmware/xiao_vision
 ```
 
 ```bash
@@ -61,5 +61,5 @@ curl -s --max-time 6 -o audio.raw "http://<xiao>:82/audio?gain=2"
 
 `audio.raw` 가 0 바이트면 코어 버전을 먼저 본다. 16 kHz PCM16LE 모노이므로 5초면 약 160 KB 다.
 
-⚠️ Wi-Fi 자격증명은 `firmware_xiao_vision/wifi_secrets.h` 로 넣는다(`.gitignore` 등록됨).
+⚠️ Wi-Fi 자격증명은 `firmware/xiao_vision/wifi_secrets.h` 로 넣는다(`.gitignore` 등록됨).
 저장소의 `YOUR_WIFI_SSID` 자리표시자 그대로 구우면 **카메라가 네트워크에서 사라진다.**

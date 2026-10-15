@@ -12,7 +12,7 @@ from conftest import FakeClock
 from host.behavior.commander import HALT, Commander
 from host.behavior.fsm import Behavior, Event
 from host.common.protocol import CommandDecoder, CommandEncoder
-from tools.teleop import Teleop, resolve
+from tools.ops.teleop import Teleop, resolve
 
 
 def make(clock: FakeClock, release_ms: int = 600) -> Teleop:
@@ -228,7 +228,7 @@ def test_socket_opens_even_when_the_windows_ioctl_is_missing() -> None:
     이 개발 PC 에 실제로 없어서 `hasattr` 가드 없이 부르자 도구가 즉사했다.
     소켓 생성은 어떤 환경에서도 예외 없이 끝나야 한다.
     """
-    from tools.teleop import open_socket
+    from tools.ops.teleop import open_socket
 
     sock = open_socket()
     try:

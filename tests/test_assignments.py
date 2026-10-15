@@ -14,7 +14,7 @@ from dataclasses import replace
 import pytest
 from conftest import ROOT
 
-from tools.wbs_assignments import OUT, WorkPackage, is_ready, main, parse_wbs, render
+from tools.dev.wbs_assignments import OUT, WorkPackage, is_ready, main, parse_wbs, render
 
 
 @pytest.fixture(scope="module")
@@ -25,7 +25,7 @@ def packages() -> list[WorkPackage]:
 def test_generated_file_matches_wbs() -> None:
     """**WBS 를 고치고 재생성하지 않으면 여기서 실패한다.**
 
-    실패했다면 `python tools/wbs_assignments.py` 를 실행하고 결과를 커밋한다.
+    실패했다면 `python tools/dev/wbs_assignments.py` 를 실행하고 결과를 커밋한다.
     """
     assert main(["--check"]) == 0, "docs/internal/ASSIGNMENTS.md 를 재생성하고 커밋하라"
 
@@ -55,7 +55,7 @@ def test_generated_file_warns_against_hand_editing() -> None:
     """생성 파일임을 읽는 사람이 알아야 한다. 없으면 누가 직접 고친다."""
     text = OUT.read_text(encoding="utf-8")
     assert "이 파일은 생성된다" in text
-    assert "tools/wbs_assignments.py" in text
+    assert "tools/dev/wbs_assignments.py" in text
 
 
 def test_render_is_deterministic(packages: list[WorkPackage]) -> None:
@@ -75,7 +75,10 @@ def test_completed_predecessor_unlocks_work(packages: list[WorkPackage]) -> None
 def test_group_and_range_predecessors_stay_blocked(packages: list[WorkPackage]) -> None:
     """묶음 선행은 그 안의 작업이 모두 끝나야 풀린다."""
     by_id = {p.wid: p for p in packages}
-    assert not is_ready(by_id["2.5"], packages)
+    # `2.5` 의 선행 `2.1~2.4` 는 2026-10-05 에 모두 끝났으므로, 범위 안 한 칸을
+    # 미완료로 되돌려 «하나라도 남으면 대기» 를 확인한다.
+    pending = [replace(p, done=False) if p.wid == "2.4.2" else p for p in packages]
+    assert not is_ready(by_id["2.5"], pending)
     # WBS 밖 조건(장비 도착·승인)은 맞는 ID 가 없으므로 계속 대기다. 실제 예였던
     # `2.2.1` 의 «LiDAR·마스트 도착» 은 2026-09-28 장비가 와서 지웠으므로 꾸며 쓴다.
     outside = replace(by_id["2.2.1"], predecessor="LiDAR·마스트 도착")
@@ -126,8 +129,6 @@ def test_approved_phase2_packages_are_listed_as_work(
     for wid in (
         "2.2.1",
         "2.5",
-        "3.6.1",
-        "3.6.5",
         "3.9.0",
         "3.9.1",
         "3.9.2",
@@ -148,7 +149,7 @@ def test_section_headings_match_their_packages(packages: list[WorkPackage]) -> N
     """절 제목의 공수가 그 아래 워크패키지 합과 같아야 한다.
 
     `3.9.0` 을 등재하며 `#### 3.9` 와 총 공수는 고쳤지만 `### 3.0` 제목은 26.0 으로
-    남았다(2026-09-28 · Devin 검수). 총 공수 시험은 행 합만 보므로 절 제목은 못 잡았다.
+    남았다(2026-09-28 · 검수). 총 공수 시험은 행 합만 보므로 절 제목은 못 잡았다.
     """
     body = (ROOT / "docs" / "internal" / "WBS.md").read_text(encoding="utf-8")
     headings = re.findall(r"^#{3,4} (\d+\.\d+) .*? — ([\d.]+) M/D", body, re.M)
@@ -167,9 +168,35 @@ def test_section_headings_match_their_packages(packages: list[WorkPackage]) -> N
 def test_packages_without_effort_still_appear(packages: list[WorkPackage]) -> None:
     """공수가 `—` 로 비어 있어도 할 일은 목록에 보여야 한다.
 
-    `3.6.4`·`3.6.5`·`4.8.4` 는 공수 산정 전에 추가돼 파서가 건너뛰었고,
+    `3.6.4`·`4.8.4` 는 공수 산정 전에 추가돼 파서가 건너뛰었고,
     진행 중인 일이 담당 목록에서 통째로 사라져 있었다.
     """
     text = render(packages)
-    for wid in ("3.6.4", "3.6.5", "4.8.4"):
+    for wid in ("3.6.4", "4.8.4"):
         assert f"`{wid}`" in text, f"{wid}: 담당 목록에 없다"
+
+
+def test_unreadable_effort_cell_fails_instead_of_dropping_the_row(tmp_path) -> None:
+    """공수 칸이 숫자도 `—` 도 아니면 행을 조용히 버리지 않고 실패한다.
+
+    `—` 를 받게 고친 뒤에도 `3.9.3`·`4.8.6`·`4.8.7`·`5.4.6` 의 공수 칸이 `,` 로 적혀
+    같은 방식으로 담당 목록에서 사라져 있었다(2026-10-05 · 검수). `--check` 도
+    재생성 결과가 똑같이 빠지므로 잡지 못했다.
+    """
+    wbs = tmp_path / "WBS.md"
+    wbs.write_text("## 작업 사전\n\n| 9.9 | 시험 | — | DoD | C | — |, | — |\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"9\.9"):
+        parse_wbs(wbs)
+
+
+def test_retired_zone_change_packages_are_not_assigned(packages: list[WorkPackage]) -> None:
+    """`3.6.1`·`3.6.2`·`3.6.3`·`3.6.5` 는 폐기했다(2026-10-05 · ADR-44).
+
+    폐기 행은 `~~ID~~ ❌` 로 적어 파서가 건너뛴다. 다시 일반 행으로 돌아오면 공수가
+    이중 계상되고 담당 목록에 죽은 일이 올라오므로 못 박는다. 남긴 `3.6.4` 는 선행에서
+    `3.6.3` 이 빠졌는지도 본다.
+    """
+    by_id = {p.wid: p for p in packages}
+    for wid in ("3.6.1", "3.6.2", "3.6.3", "3.6.5"):
+        assert wid not in by_id, f"{wid}: 폐기한 항목이 담당 목록에 있다"
+    assert "3.6.3" not in by_id["3.6.4"].predecessor

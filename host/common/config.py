@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -44,22 +44,16 @@ class ConfigError(ValueError):
 
 
 def repo_path(value: str | Path) -> Path:
-    """설정의 상대 경로를 **저장소 루트 기준**으로 푼다. 절대 경로는 그대로 둔다.
-
-    실행 위치(CWD) 기준으로 두면 저장소 밖에서 띄웠을 때 모델을 못 찾고, 로그와
-    블랙박스가 띄운 자리마다 흩어진다.
-    """
+    """설정의 상대 경로를 CWD 가 아니라 저장소 루트 기준으로 푼다. 절대 경로는 그대로 둔다."""
     path = Path(value)
     return path if path.is_absolute() else ROOT / path
 
 
 def telemetry_ids(config: dict[str, Any], device_id: str) -> frozenset[str]:
-    """이 개체의 텔레메트리로 받아들이는 `device_id` 들.
+    """이 개체의 텔레메트리로 받아들이는 `device_id` 들 — 설정 이름과 `telemetry_device_id`.
 
-    ⚠️ **펌웨어는 설정 이름이 아니라 보드 MAC 으로 만든 이름을 보낸다**
-    (`mechdog-<MAC 12자리>` · `telemetry_publisher.cpp`). 그래서 설정 이름(`mechdog-01`)으로만
-    대조하면 우리 로봇의 텔레메트리를 전부 남의 것으로 버린다 — 2026-09-12 실기에서 그랬다.
-    개체 프로파일의 `telemetry_device_id` 로 잇고, 목업은 설정 이름을 그대로 보내므로 둘 다 받는다.
+    펌웨어는 보드 MAC 으로 만든 이름(`mechdog-<MAC 12자리>`)을 보내고 목업은 설정 이름을
+    보내므로 둘 다 받는다.
     """
     named = config.get("telemetry_device_id")
     return frozenset({device_id, named}) if named else frozenset({device_id})
@@ -80,14 +74,15 @@ def _read_mapping(path: Path) -> dict[str, Any]:
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
+        # 구역 정책은 ID 목록과 함께 교체한다. 삭제한 구역의 하위 정책을 되살리지 않는다.
+        if key != "policies" and isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _merge(out[key], value)
         else:
             out[key] = deepcopy(value)
     return out
 
 
-def _finite_number(value: Any) -> bool:
+def _finite_number(value: Any) -> TypeGuard[int | float]:
     if not isinstance(value, int | float) or isinstance(value, bool):
         return False
     try:
@@ -103,6 +98,11 @@ def _require_positive(mapping: dict[str, Any], key: str) -> None:
 
 
 def validate_base_config(config: dict[str, Any]) -> None:
+    from host.common.nav_params import (
+        NavParams,  # nav_params 가 ConfigError 를 쓰므로 여기서 읽는다
+    )
+
+    NavParams.of(config)
     if not isinstance(config.get("profile"), str) or config["profile"] not in {"dev", "prod"}:
         raise ConfigError("profile 은 dev 또는 prod 여야 함")
     missing = [
@@ -110,15 +110,23 @@ def validate_base_config(config: dict[str, Any]) -> None:
     ]
     if missing:
         raise ConfigError(f"필수 설정 섹션 누락: {missing}")
+    for section, key in (("fsm", "hold_on_latched_alarm"), ("escalation", "ppe_recheck")):
+        if not isinstance(config[section].get(key, False), bool):
+            raise ConfigError(f"{section}.{key} 는 bool이어야 함")
+    warnings = config["escalation"].get("ppe_recheck_max_warnings", 2)
+    if isinstance(warnings, bool) or not isinstance(warnings, int) or not 1 <= warnings <= 10:
+        raise ConfigError("escalation.ppe_recheck_max_warnings 는 1~10 정수여야 함")
 
     blackbox_dir = config["logging"].get("blackbox_dir")
     if not isinstance(blackbox_dir, str) or not blackbox_dir.strip():
         raise ConfigError("logging.blackbox_dir 는 비어 있지 않은 문자열이어야 함")
 
-    # ⚠️ **이름 목록을 여기 적지 않는다** (FR-11.1). 고를 수 있는 모드와 그 선행
-    # 기능의 정본은 `behavior/mission.py` 하나이며, 목록을 두 곳에 두면 모드를
-    # 늘릴 때 한쪽만 고쳐진다 — `coco_labels` 를 `config.yaml` 에 두지 않은 것과
-    # 같은 이유다. 여기서는 **자리가 있고 값이 문자열인지**까지만 본다.
+    # 이력 DB 는 색인이라 끌 수 있다 — 키가 없거나 빈 문자열이면 쓰지 않는다 (ADR-46).
+    history_db = config["logging"].get("history_db")
+    if history_db is not None and not isinstance(history_db, str):
+        raise ConfigError("logging.history_db 는 문자열이어야 함")
+
+    # 모드 이름 목록의 정본은 `behavior/mission.py` 하나다 — 여기서는 문자열인지만 본다.
     mode = config["mission"].get("mode")
     if not isinstance(mode, str) or not mode.strip():
         raise ConfigError("mission.mode 는 비어 있지 않은 문자열이어야 함")
@@ -136,15 +144,10 @@ def validate_base_config(config: dict[str, Any]) -> None:
     _require_positive(vision, "stall_timeout_ms")
     _require_positive(vision, "target_fps")
     _require_positive(vision, "inference_fps")
-    # 장착 방향 보정은 0 또는 180 뿐이다 — 펌웨어가 vflip+hmirror 합성으로 구현하므로
-    # 90·270 은 만들 수 없다. 여기서 막지 않으면 카메라가 400 을 돌려주고 그것을
-    # 기동 경고로만 보게 된다.
+    # 펌웨어가 vflip+hmirror 합성으로 돌리므로 장착 보정은 0 또는 180 뿐이다.
     if vision.get("mount_rotation", 0) not in (0, 180):
         raise ConfigError("vision.mount_rotation 은 0 또는 180 이어야 함")
-    # ⚠️ **추론률의 상한은 `target_fps` 가 아니라 `stream_fps_limit` 이다.**
-    # `target_fps` 는 NFR-1.3 이 요구하는 *하한*(≥15fps)이고 실제 수신률은 상한값이다.
-    # 하한을 상한으로 쓰면 25fps 를 받는데도 추론률을 15 위로 못 올린다 — 지키려던
-    # 불변식("낡은 프레임으로 판단하지 않는다")과 무관한 제약이 된다.
+    # 추론률의 상한은 수신 상한 `stream_fps_limit` 이다. `target_fps` 는 NFR-1.3 의 하한이다.
     if vision["inference_fps"] > vision["stream_fps_limit"]:
         raise ConfigError("vision.inference_fps 는 vision.stream_fps_limit 을 넘을 수 없음")
     if vision["stream_fps_limit"] < vision["target_fps"]:
@@ -161,14 +164,14 @@ def validate_base_config(config: dict[str, Any]) -> None:
         if family is not None and (not isinstance(family, str) or not family.strip()):
             raise ConfigError(f"vision.{section}.model_family 는 null 이거나 비어 있지 않은 문자열")
 
-    # 사람 판정 (FR-3.2) — **시간 기반이다.** 프레임 수로 두면 추론률에 종속된다.
+    # 사람 판정 (FR-3.2) — 프레임 수가 아니라 시간 창이다 (ADR-25).
     _require_positive(vision, "detect_window_ms")
     _require_positive(vision, "detect_hits_required")
     for name in ("detect_window_ms", "detect_hits_required"):
         if not isinstance(vision[name], int) or isinstance(vision[name], bool):
             raise ConfigError(f"vision.{name} 는 양의 정수여야 함")
-    # ⚠️ 창 안에 그만큼의 관측이 들어갈 수 없으면 **영원히 확정되지 않는다.**
-    # 게이트가 양 끝을 포함하므로 최대 개수는 `floor(window / period) + 1` 이다.
+    # 창 안 최대 관측 수(양 끝 포함 `floor(window / period) + 1`)보다 많이 요구하면
+    # 영원히 확정되지 않는다 (ADR-25).
     period_ms = max(1, round(1000 / vision["inference_fps"]))
     capacity = vision["detect_window_ms"] // period_ms + 1
     if vision["detect_hits_required"] > capacity:
@@ -178,8 +181,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
             f"{period_ms}ms) + 1) 를 넘어 영원히 확정되지 않음"
         )
 
-    # 다중 인원 추적 (FR-3.6) — 소실 버퍼도 **시간이다.** 프레임 수로 두면
-    # 같은 30프레임이 10fps 3초 · 25fps 1.2초가 된다 (결정 22·25번과 같은 형태).
+    # 다중 인원 추적 (FR-3.6) — 소실 버퍼도 시간이다 (ADR-27 ③).
     tracker = vision.get("tracker")
     if not isinstance(tracker, dict):
         raise ConfigError("vision.tracker 절이 없음")
@@ -189,20 +191,40 @@ def validate_base_config(config: dict[str, Any]) -> None:
     if tracker["iou_match_threshold"] >= 1:
         # 1.0 은 완전히 같은 박스만 잇는다는 뜻이라 어떤 대상도 이어지지 않는다.
         raise ConfigError("vision.tracker.iou_match_threshold 는 1 미만이어야 함")
-    # ⚠️ 소실 버퍼가 추론 주기보다 짧으면 **한 번만 놓쳐도 ID 가 바뀐다.** 실기
-    # 통과율이 52% 였으므로(ADR-25) 한 프레임 공백은 예외가 아니라 일상이다.
+    # 소실 버퍼가 추론 주기보다 짧으면 한 번만 놓쳐도 ID 가 바뀐다 (ADR-27 ③).
     if tracker["track_lost_ms"] < period_ms:
         raise ConfigError(
             f"vision.tracker.track_lost_ms({tracker['track_lost_ms']}ms) 가 추론 주기"
             f"({period_ms}ms) 보다 짧아 한 번만 놓쳐도 ID 가 바뀜"
         )
 
-    # 인증 (FR-10) — 사원증 사전과 발급 대장.
-    # 절의 존재는 `REQUIRED_SECTIONS` 가 이미 본다 — 여기서 또 보면 죽은 코드가 된다.
+    _validate_collect(vision.get("collect"))
+    # LiDAR 막힘 원인 판독 (ADR-45) — 대기 상한과 프레임 나이 상한.
+    vlm = vision.get("vlm")
+    if not isinstance(vlm, dict):
+        raise ConfigError("vision.vlm 절이 없음")
+    for name in (
+        "budget_ms",
+        "patrol_interval_ms",
+        "path_cause_wait_ms",
+        "path_cause_max_frame_age_ms",
+    ):
+        _require_positive(vlm, name)
+        if not isinstance(vlm[name], int) or isinstance(vlm[name], bool):
+            raise ConfigError(f"vision.vlm.{name} 는 양의 정수여야 함")
+    # 없으면 세션이 기본값 32 를 쓴다. 있으면 양의 정수여야 한다.
+    if "max_new_tokens" in vlm:
+        tokens = vlm["max_new_tokens"]
+        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+            raise ConfigError("vision.vlm.max_new_tokens 는 양의 정수여야 함")
+    model_id = vlm.get("model_id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ConfigError("vision.vlm.model_id 는 비어 있지 않은 문자열이어야 함")
+
+    # 인증 (FR-10) — 사원증 사전과 발급 대장. 절의 존재는 `REQUIRED_SECTIONS` 가 본다.
     auth = config["auth"]
     dictionary = auth.get("badge_dictionary")
-    # 이름이 `cv2.aruco` 에 있는지는 `BadgeReader` 가 기동 때 확인한다 — 여기서
-    # `cv2` 를 import 하면 설정 검증이 OpenCV 를 요구하게 된다.
+    # 사전 이름이 `cv2.aruco` 에 있는지는 `BadgeReader` 가 기동 때 본다(여기서는 cv2 를 쓰지 않는다).
     if not isinstance(dictionary, str) or not dictionary.strip():
         raise ConfigError("auth.badge_dictionary 는 비어 있지 않은 문자열이어야 함")
     _require_positive(auth, "session_valid_s")
@@ -266,14 +288,24 @@ def validate_base_config(config: dict[str, Any]) -> None:
         for name in names:
             _require_positive(config[section], name)
 
+    # `change_detect` 스위치는 bool 이어야 한다 — `bool("false")` 는 True 라서 따옴표로 쓴
+    # 문자열이 스위치를 켠다. 방문 키는 소비자가 `int()` 로 내린다.
+    change_detect = config["change_detect"]
+    for name in ("vlm_path_cause", "vlm_hazards", "vlm_hazard_items"):
+        if not isinstance(change_detect.get(name), bool):
+            raise ConfigError(f"change_detect.{name} 는 true 또는 false 여야 함")
+    for name in ("visit_frames", "visit_max_ms"):
+        value = change_detect.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"change_detect.{name} 는 양의 정수여야 함")
+
     fsm = config["fsm"]
     deadzone = fsm.get("track_deadzone_px")
     if not _finite_number(deadzone) or deadzone < 0:
         raise ConfigError("fsm.track_deadzone_px 는 0 이상의 유한한 수여야 함")
 
-    # 추종 지시를 이어 가는 상한은 **대상 상실 타이머보다 짧아야 한다.** 같거나 길면
-    # 상한이 하는 일이 없어지고, 대상이 사라진 뒤에도 `TRACK` 이 끝날 때까지 낡은
-    # 각도로 계속 돈다 — 이 값을 둔 이유가 바로 그것을 막는 것이다.
+    # 추종 지시를 이어 가는 상한은 대상 상실 타이머보다 짧아야 한다 — 아니면 대상이
+    # 사라진 뒤에도 `TRACK` 이 끝날 때까지 낡은 각도로 계속 돈다.
     lost_ms = float(config["fsm"]["target_lost_timeout_s"]) * 1000.0
     coast = fsm.get("track_coast_ms")
     if not _finite_number(coast) or coast <= 0:
@@ -284,15 +316,8 @@ def validate_base_config(config: dict[str, Any]) -> None:
             " — 상한이 없으면 대상이 사라져도 낡은 각도로 계속 돈다"
         )
 
-    # ⚠️ **«고개를 드는» 자세각은 음수다** — 2026-09-15 실기로 확정했다
-    # (`POSE pitch=+15` → IMU 17.4, 앞이 내려감 / `-15` → -11.6, 앞이 올라감).
-    # PROTOCOL 2절과 config 주석이 그것을 적어 두었지만 **지키는 코드가 없었다.**
-    #
-    # 여기서 막는 이유 — 같은 실수가 이미 한 번 났다. `tools/teleop.py` 의 좌우가
-    # 뒤바뀐 채 **시험이 그 버그를 굳혀 두고 있었다**(`2.2.3` 기록). 부호는 실측으로만
-    # 알 수 있고 한번 틀리면 눈으로 보고서야 아는 종류라, 실측한 결론을 설정 검증에
-    # 박아 둔다. 양수로 되돌리면 경계 자세가 **바닥을 보게 되고** 가까이 있는 사람의
-    # 머리가 더 잘린다(FR-9.2.2 가 자세로 풀려던 것과 정반대).
+    # 고개를 드는 자세각은 음수다 (양수 pitch 는 앞이 내려간다 · PROTOCOL 2절). 양수면
+    # 경계 자세가 바닥을 보고 사람 머리가 더 잘린다(FR-9.2.2).
     for section, name in (
         ("fsm", "alert_pitch_deg"),
         ("fsm", "scan_pitch_deg"),
@@ -310,8 +335,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
     track = config["localization"].get("track")
     if not isinstance(track, str) or track not in {"none", "lidar", "aruco"}:
         raise ConfigError("localization.track 은 none, lidar, aruco 중 하나여야 함")
-    # `lidar` 절은 Phase 2 이므로 없을 수 있다. 있으면 설치각만 본다 —
-    # 범위를 벗어난 값은 지도를 통째로 돌려 놓고도 조용히 지나간다.
+    # `lidar` 절은 없을 수 있다(Phase 2). 있으면 설치각·방향·전달 포트를 본다.
     lidar = config.get("lidar")
     if isinstance(lidar, dict) and "mount_yaw_deg" in lidar:
         yaw = lidar["mount_yaw_deg"]
@@ -343,6 +367,32 @@ def validate_base_config(config: dict[str, Any]) -> None:
         and not isinstance(lidar["scan_forward_enabled"], bool)
     ):
         raise ConfigError("lidar.scan_forward_enabled 는 true 또는 false 여야 함")
+    # 화기 위험구역은 순찰 구역 가운데서 고른다 — 없는 구역을 적으면 그 구역의 위험물
+    # 판독이 조용히 한 번도 돌지 않는다 (`ZoneInspector`).
+    zones = config["zones"]
+    ids = zones.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise ConfigError("zones.ids 는 비어 있지 않은 목록이어야 함")
+    hazard_ids = zones.get("hazard_ids")
+    if not isinstance(hazard_ids, list):
+        raise ConfigError("zones.hazard_ids 는 목록이어야 함")
+    unknown = [label for label in hazard_ids if label not in zones.get("ids", [])]
+    if unknown:
+        raise ConfigError(f"zones.hazard_ids 는 zones.ids 의 부분집합이어야 함: {unknown}")
+    policies = zones.get("policies", {})
+    if not isinstance(policies, dict):
+        raise ConfigError("zones.policies 는 구역별 설정 객체여야 함")
+    for label, policy in policies.items():
+        if label not in ids or not isinstance(policy, dict):
+            raise ConfigError("zones.policies 에 정의되지 않은 구역 또는 잘못된 값이 있음")
+        if any(key not in {"name", "helmet", "vest", "note"} for key in policy):
+            raise ConfigError("zones.policies 에 지원하지 않는 항목이 있음")
+        for item in ("helmet", "vest"):
+            if item in policy and not isinstance(policy[item], bool):
+                raise ConfigError(f"zones.policies.{label}.{item} 은 true/false 여야 함")
+        for key, limit in (("name", 60), ("note", 300)):
+            if key in policy and (not isinstance(policy[key], str) or len(policy[key]) > limit):
+                raise ConfigError(f"zones.policies.{label}.{key} 값이 올바르지 않음")
     ppe = config["vision"].get("ppe")
     if not isinstance(ppe, dict) or not ppe:
         raise ConfigError("vision.ppe 필수 설정 누락")
@@ -365,6 +415,7 @@ def validate_base_config(config: dict[str, Any]) -> None:
             raise ConfigError(f"vision.ppe.{name} 안전 판정 조건은 켜져 있어야 함")
     if ppe["static_frames"] < 2 or not 1 <= ppe["max_posture_retries"] <= 5:
         raise ConfigError("PPE 정지 판정은 2프레임 이상, 재시도는 1~5회여야 함")
+    _validate_hazard(config["vision"].get("hazard"))
 
     providers = config["vision"].get("providers")
     if not isinstance(providers, list) or not providers:
@@ -388,10 +439,7 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
     }:
         raise ConfigError("reference_role 은 phase1, phase2, none 중 하나여야 함")
 
-    # ⚠️ **`null` 은 "아직 안 쟀다" 이며 0 아홉 개와 다르다.** 0 은 *"보정이
-    # 필요 없다"* 는 뜻이 되고, 이 값은 유실 대비 보관본이라(호스트는 읽기만
-    # 하고 로봇에 보내지 않는다) 틀린 기록이 그대로 남는다. 3대 중 아직
-    # 안 잰 기체가 있으므로 비워 두는 길을 남긴다.
+    # `null` 은 «아직 안 쟀다» 이고 0 아홉 개(«보정 불필요»)와 다르다. 보관본이며 로봇에 보내지 않는다.
     offsets = config.get("servo_offset")
     if offsets is not None and (
         not isinstance(offsets, list)
@@ -427,15 +475,9 @@ def validate_device_config(config: dict[str, Any], device_id: str) -> None:
 
 
 def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
-    """트롯 보행 중 자세 진폭 (WBS 2.2.3 ②).
+    """트롯 보행 중 자세 진폭(WBS 2.2.3 ②)을 검증한다. 없으면 통과, 0 은 거부한다.
 
-    ⚠️ **0 을 거부하는 것이 이 함수의 존재 이유다.** WBS 가 그 함정을 이미
-    적어 두었다 — 자리만 만들어 두면 누군가 0 을 채우고 *"쟀다"* 로 보인다.
-    진폭 0 은 로봇이 걷지 않았다는 뜻이므로 측정값일 수 없다.
-
-    없으면 통과한다. 아직 재지 않은 기체가 있고(3대 중 1대만 끝났다) 없는 것과
-    0 인 것은 다르다 — 없으면 `FR-6.2.2` 판단을 미루면 되지만 0 이면 **흔들리지
-    않는다고 잘못 읽는다.**
+    진폭 0 은 걷지 않았다는 뜻이라 측정값일 수 없다. «없음» 은 아직 안 쟀다는 뜻이다.
     """
     amplitude = calibration.get("posture_amplitude")
     if amplitude is None:
@@ -463,6 +505,54 @@ def _validate_posture_amplitude(calibration: dict[str, Any]) -> None:
         raise ConfigError("posture_amplitude.source 는 phone_imu 또는 onboard_imu 여야 함")
     if not isinstance(amplitude.get("measured_on"), str) or not amplitude["measured_on"]:
         raise ConfigError("posture_amplitude.measured_on 기록이 필요함")
+
+
+def _validate_collect(collect: Any) -> None:
+    """VLM 학습용 프레임 수집 (`vision.collect`). 절이 없으면 꺼진 것이다."""
+    if collect is None:
+        return
+    if not isinstance(collect, dict):
+        raise ConfigError("vision.collect 는 매핑이어야 함")
+    for key in ("clear_every_ms", "clear_holdoff_ms", "max_files", "max_frame_age_ms"):
+        if key in collect:
+            _require_positive(collect, key)
+    root = collect.get("root")
+    if root is None:
+        return
+    if not isinstance(root, str) or not root.strip():
+        raise ConfigError("vision.collect.root 는 null 이거나 비어 있지 않은 경로 문자열이어야 함")
+    # 사진에 얼굴이 찍힌다 — 커밋될 수 있는 저장소 안에는 두지 않는다.
+    if repo_path(root).resolve().is_relative_to(ROOT.resolve()):
+        raise ConfigError(f"vision.collect.root 는 저장소 밖 경로여야 함: {root}")
+
+
+def _validate_hazard(hazard: Any) -> None:
+    """위험물 검출 절 (`vision.hazard`). 없으면 기능이 꺼진 것이다 — 있으면 값을 본다.
+
+    ⚠️ 금지 대상에 모델이 모르는 이름을 적으면 그 물건은 조용히 한 번도 경고되지 않는다.
+    """
+    if hazard is None:
+        return
+    if not isinstance(hazard, dict):
+        raise ConfigError("vision.hazard 는 매핑이어야 함")
+    if not isinstance(hazard.get("enabled"), bool):
+        raise ConfigError("vision.hazard.enabled 는 true 또는 false 여야 함")
+    classes = hazard.get("classes")
+    alarm = hazard.get("alarm_classes")
+    if not isinstance(classes, list) or not classes:
+        raise ConfigError("vision.hazard.classes 는 비어 있지 않은 목록이어야 함")
+    if not isinstance(alarm, list) or not alarm:
+        raise ConfigError("vision.hazard.alarm_classes 는 비어 있지 않은 목록이어야 함")
+    unknown = [label for label in alarm if label not in classes]
+    if unknown:
+        raise ConfigError(f"vision.hazard.alarm_classes 는 classes 의 부분집합이어야 함: {unknown}")
+    for name in ("confirm_window_ms", "hits_required"):
+        value = hazard.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"vision.hazard.{name} 는 양의 정수여야 함")
+    confidence = hazard.get("conf_threshold")
+    if not _finite_number(confidence) or not 0 < confidence <= 1:
+        raise ConfigError("vision.hazard.conf_threshold 는 0 초과 1 이하여야 함")
 
 
 def load_base_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:

@@ -35,7 +35,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .skip-link { position: fixed; top: -80px; left: 16px; z-index: 100; background: var(--brass); color: var(--bg); padding: 12px }
 .skip-link:focus { top: 8px }
 
-#app { height: 100dvh; min-height: 760px; display: grid; grid-template-rows: 55px 71px minmax(480px,1fr) 151px; overflow: hidden }
+#app { height: 100dvh; min-height: 760px; display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: 55px 71px minmax(480px,1fr) 151px; overflow: hidden }
 .topbar { display: flex; align-items: center; gap: 18px; padding: 0 14px 0 1.9%; border-bottom: 1px solid var(--rule); background: var(--bg); z-index: 20 }
 .brand { white-space: nowrap; font-size: 26px; font-weight: 700; letter-spacing: -.7px; line-height: 27px; padding-right: 21px; border-right: 1px solid var(--rule) }
 .main-nav { display: flex; align-self: stretch; gap: 13px }
@@ -96,7 +96,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .scene-controls { position: absolute; z-index: 5; right: 1.8%; bottom: 25px; display: flex; gap: 12px }
 .scene-controls button { height: 46px; width: 46px; background: #20212eea; border: 1px solid var(--rule); font-size: 14px; padding: 9px }
 #reset-view { order: -1; width: auto; min-width: 142px; padding-inline: 16px }
-.camera-dock { position: absolute; z-index: 6; left: var(--r-camera-shell-x); bottom: 16px; width: var(--r-camera-shell-w); background: var(--panel); border: 1px solid #5d5c70; box-shadow: 0 12px 32px #0c0c1c40; border-radius: 5px; overflow: hidden }
+.camera-dock { position: absolute; z-index: 6; left: var(--r-camera-shell-x); bottom: 16px; width: var(--r-camera-shell-w); max-width: calc(100% - 20px); background: var(--panel); border: 1px solid #5d5c70; box-shadow: 0 12px 32px #0c0c1c40; border-radius: 5px; overflow: hidden }
 .camera-header { display: flex; align-items: center; height: 49px; gap: 13px; padding: 0 13px 0 17px; border-bottom: 1px solid var(--rule); cursor: grab; touch-action: none }
 .camera-header:active { cursor: grabbing }
 .camera-resize { position: absolute; touch-action: none; z-index: 2 }
@@ -104,7 +104,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .resize-s { left: 0; bottom: 0; height: 7px; width: 100%; cursor: ns-resize }
 .resize-se { right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize }
 .resize-se:before { content: ""; position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-right: 2px solid #8f8fa8; border-bottom: 2px solid #8f8fa8 }
-.camera-dock.expanded .camera-resize, .camera-dock.collapsed .camera-resize { display: none }
+.camera-dock.collapsed .camera-resize { display: none }
 .op-manual-camera .camera-resize { display: none }
 .op-manual-camera .camera-header { cursor: default }
 .camera-header h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 17px; font-weight: 500; letter-spacing: .005em; white-space: nowrap }
@@ -125,7 +125,7 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .camera-robot-switch { display: flex; gap: 5px }
 .camera-robot-switch button { min-height: 32px; min-width: 79px; border: 1px solid var(--rule); padding: 4px 10px; font-size: 12px; color: #cecadf }
 .camera-robot-switch button.selected { border-color: var(--brass); color: var(--brass) }
-.camera-dock.expanded { left: 50%; bottom: 50%; width: min(920px,85%); transform: translate(-50%,50%); box-shadow: 0 20px 90px #080816bb }
+.camera-dock.expanded { transform: none; box-shadow: 0 20px 90px #080816bb }
 .camera-dock.expanded .camera-viewport { aspect-ratio: var(--vision-aspect,4/3); max-height: min(72vh, calc(100cqh - 160px)) }
 .camera-dock.collapsed { width: min(440px,calc(100% - 32px)) }
 .camera-dock.collapsed .camera-body { display: none }
@@ -161,6 +161,15 @@ svg { width: 21px; height: 21px; flex: none; stroke: currentColor; stroke-width:
 .event-summary .outline-button { margin-left: auto; min-width: 150px; height: 53px; padding: 10px 18px }
 .outline-button { border: 1px solid var(--brass); color: var(--brass); font-size: 15px; min-height: 41px; padding: 9px 18px }
 
+/* 실제 집 지도 — 서버에 연결되면 예시 공장 자리(오른쪽 넓은 칸)에 뜬다. 로봇 시점 창(왼쪽)을 가리지 않는다. */
+.live-house-map { position: absolute; z-index: 3; top: 76px; right: 2%; width: min(62%, 980px); height: calc(100% - 200px); display: flex; flex-direction: column; padding: 12px 14px; border-radius: 12px; background: var(--panel, rgba(20,24,32,.92)); box-shadow: 0 8px 28px rgba(0,0,0,.25) }
+.op-live-map canvas { display: block; max-width: 100%; height: auto }
+.op-live-map [hidden] { display: none }
+.op-live-map[data-locate-mode=true] canvas { outline: 2px solid #2563eb; outline-offset: 2px }
+@media (max-width: 900px) { .live-house-map { left: 12px; right: 12px; top: 120px; width: auto; height: 52vh } }
+.live-house-map .op-live-map { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column }
+.live-house-map canvas { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; max-width: none; object-fit: contain }
+.live-house-map .op-note { margin: 0 0 8px; font-size: 13px; color: var(--muted) }
 .map-placeholder { position: absolute; z-index: 2; top: 45%; right: 3%; max-width: 44%; transform: translateY(-50%); text-align: right; color: var(--muted); pointer-events: none }
 .map-placeholder strong { font-size: 18px; font-weight: 500; color: var(--ink) }
 .map-placeholder p { font-size: 13px; margin-top: 8px }
@@ -282,7 +291,7 @@ dialog button+button { margin-left: 8px }
  .scene-controls button { width: 34px; height: 35px; min-height: 35px }
  #reset-view { min-width: 106px; font-size: 10px; padding-inline: 9px }
  .scene-controls svg { width: 17px }
- .camera-dock { left: 14px; right: 14px; bottom: 12px; width: auto!important }
+ .camera-dock { left: 14px; right: auto; bottom: 12px; width: calc(100% - 28px) }
  .map-placeholder { top: 150px; left: 18px; right: 18px; max-width: none; transform: none; text-align: left }
  .camera-viewport { max-height: 42vh }
  .camera-header { height: 42px; padding-left: 12px; gap: 8px }
@@ -295,7 +304,7 @@ dialog button+button { margin-left: 8px }
  .camera-robot-switch { gap: 3px }
  .camera-robot-switch button { min-width: 49px; font-size: 10px; padding: 3px 6px; min-height: 28px }
  .frame-badge { font-size: 10px }
- .camera-dock.expanded { left: 14px; right: 14px; bottom: 12px; transform: none }
+ .camera-dock.expanded { transform: none }
  .camera-dock.expanded .camera-viewport { max-height: 56vh }
  .camera-dock.collapsed { bottom: 250px }
  .operation-rail { display: block; padding: 22px 20px }
@@ -318,3 +327,22 @@ dialog button+button { margin-left: 8px }
 @media(prefers-reduced-motion:reduce) {
  *,*:before,*:after { transition: none!important; animation: none!important; scroll-behavior: auto!important }
 }
+.route-location-hint { fill: rgba(37,99,235,.12); stroke: #2563eb; stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none }
+.route-map-svg[data-click-mode="move"],.route-map-svg[data-click-mode="move"] .route-pin { cursor: pointer }
+.route-map-svg[data-click-mode="locate"],.route-map-svg[data-click-mode="locate"] .route-pin { cursor: crosshair }
+
+.map-raster { image-rendering: pixelated }
+.op-live-map canvas { width: 100%; object-fit: contain }
+
+.route-snap-guide { fill: none; stroke: #2563eb; stroke-width: 2; stroke-dasharray: 5 4; pointer-events: none }
+.route-line.blocked { pointer-events: stroke; cursor: help; stroke-width: 5 }
+.route-blocked-hint { min-height: 1.5em; color: var(--danger, #b91c1c) }
+
+.route-workspace .route-line { fill: none; stroke: #16a34a; stroke-width: 3; stroke-dasharray: none }
+.route-workspace .route-line.unchecked { stroke: #6b7280; stroke-dasharray: 6 4 }
+.route-workspace .route-line.blocked { stroke: #dc2626; stroke-dasharray: none }
+.route-workspace .route-map-point .route-pin.blocked { stroke: #dc2626; stroke-width: 4 }
+.route-validation { padding: .75rem; border: 1px solid #9ca3af; border-radius: .5rem }
+.route-validation [data-route-valid="true"] { color: #15803d }
+.route-validation [data-route-valid="false"] { color: #b91c1c }
+.route-validation-error { display: flex; align-items: center; gap: .75rem; padding: .75rem; border: 2px solid #dc2626; border-radius: .5rem; color: #b91c1c }

@@ -70,6 +70,16 @@ export function overlayBoxes(header) {
       text: `${detection.label} ${Math.round(detection.score * 100)}%`,
     });
   }
+  for (const verdict of header.ppe ?? []) {
+    for (const region of verdict.regions ?? []) {
+      if (!Array.isArray(region.box) || region.box.length !== 4 || !region.box.every(Number.isFinite)) continue;
+      const unknown = region.label === 'UNDETERMINED';
+      const missing = region.label.startsWith('no_');
+      boxes.push({kind: 'ppe', box: region.box,
+        color: unknown ? '#9ca3af' : missing ? '#ef4444' : '#22c55e',
+        text: `PPE #${verdict.track_id} ${region.item === 'helmet' ? '머리' : '몸통'} ${unknown ? '판정 불가' : missing ? '미착용' : '착용'}${region.score == null ? '' : ' '+Math.round(region.score*100)+'%'}${region.reason ? ' · '+region.reason : ''}`});
+    }
+  }
   return boxes;
 }
 
@@ -97,7 +107,7 @@ export function drawOverlay(context, image, header) {
     const x2 = Math.max(0, Math.min(header.width, rawX2));
     const y2 = Math.max(0, Math.min(header.height, rawY2));
     if (x2 <= x1 || y2 <= y1) continue;
-    const color = item.kind === 'person' ? PERSON_COLOR : OBJECT_COLOR;
+    const color = item.color ?? (item.kind === 'person' ? PERSON_COLOR : OBJECT_COLOR);
     context.strokeStyle = color;
     context.strokeRect(x1, y1, x2 - x1, y2 - y1);
     const labelWidth = context.measureText(item.text).width + pad * 2;
@@ -246,6 +256,7 @@ export class VisionFeed {
       height: this.last?.height ?? null,
       detections: this.last?.detections?.length ?? 0,
       persons: this.last?.tracks?.length ?? 0,
+      ppeTest: this.last?.ppe_test_mode === true,
     });
   }
 }

@@ -1,26 +1,17 @@
 """순찰 구역 앵커와 순찰 스케줄러 (WBS 3.9.1 · 3.9.2 · FR-7).
 
-**두 작업이 한 파일에 있는 것은 작업 사전이 그렇게 정했기 때문이다** —
-`3.9.1`(구역 앵커 정의·관리)과 `3.9.2`(순차·랜덤 순찰 스케줄러)의 산출물이
-둘 다 `behavior/zones.py` 다. 실제로 붙어 있는 것이 맞다: 다음 구역을 고르는
-일은 **구역 목록과 도착 판정 반경을 함께 봐야** 하고, 그 둘이 여기 있다.
+구역 라벨의 정본은 `config.yaml` 의 `zones.ids` 다. `zones.json` 은 그 라벨에 좌표를 붙인
+것이며, 설정에 없는 라벨은 만들지 않고 파일에서 발견하면 경고와 함께 무시한다 — 구역 점검
+(FR-8)과 대시보드가 같은 라벨을 쓴다.
 
-구역의 **정본은 `config.yaml` 의 `zones.ids`** 다 (`[A, B, C]`). 여기서 만드는
-`zones.json` 은 그 라벨에 **좌표를 붙인 것**이며 라벨 목록을 새로 정하지 않는다.
-
-⚠️ 이 구분이 중요한 이유 — 변화 감지의 기준 파일(FR-8)과 대시보드가 같은 라벨로
-구역을 가리킨다. 좌표 파일이 제멋대로 `D`·`E` 를 만들면 **한쪽에만 있는 구역**이
-생긴다. 그래서 설정에 없는 라벨은 만들지 않고, 이미 있는 파일에서 발견하면 경고와
-함께 무시한다.
-
-구역 도착도 이 좌표로 판정한다(`runtime._inspect_zone` · FR-7.4 반경). 인쇄한 ArUco
-구역 마커는 2026-09-25 에 없앴다 — 멀리서 보여도 도착으로 쳤고, 변화 감지는 같은
+구역 도착은 이 좌표와 FR-7.4 반경으로 판정한다(`ZoneInspector.inspect`) — 구역 판독은 같은
 자리·같은 방향에서 봐야 성립한다.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import random
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -30,6 +21,8 @@ from typing import Any
 import numpy as np
 
 from host.behavior.planner import Plan, PlanParams, Point, plan_to
+from host.behavior.zone_map import PLAN_FILENAME
+from host.common.config import _finite_number
 from host.common.logging_setup import event_logger
 from host.slam.occupancy import OccupancyGrid
 
@@ -43,13 +36,27 @@ class Zone:
     """구역 하나. 좌표는 실공간 m 다.
 
     `yaw` 는 점검할 때 바라볼 방향(rad, 지도 좌표 · 측위 `Pose` 와 같은 규약)이다. 없으면
-    도착한 방향 그대로 본다. 변화 감지는 기준과 같은 장면이어야 하므로 두는 값이다.
+    도착한 방향 그대로 본다. 구역 판독이 방문마다 같은 장면을 봐야 하므로 두는 값이다.
+    `aim_deg` 는 도착 후 점검 전에 몸을 돌릴 순찰 좌표 방위(deg)다. 0은 +X,
+    +90은 +Y이며, 미지정이면 기존 도착 동작을 유지한다. 기존 `yaw`와는 별도다.
     """
 
     label: str
     x: float
     y: float
     yaw: float | None = None
+    aim_deg: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.aim_deg is not None and (
+            not _finite_number(self.aim_deg) or not -180 <= self.aim_deg <= 180
+        ):
+            raise ValueError("aim_deg는 -180~180 범위의 유한한 숫자여야 합니다")
+
+    @property
+    def aim_yaw(self) -> float | None:
+        """점검 정렬 방향(rad). 새 방위를 지정한 경우 기존 yaw보다 우선한다."""
+        return self.yaw if self.aim_deg is None else math.radians(self.aim_deg)
 
     @property
     def xy(self) -> tuple[float, float]:
@@ -121,6 +128,12 @@ class ZoneStore:
         self._zones[label] = zone
         return zone
 
+    def set_aim_deg(self, label: str, aim_deg: float | None) -> Zone:
+        """도착 후 카메라 방향을 정하거나 해제한다. 기존 yaw 설정은 보존한다."""
+        zone = replace(self._zones[label], aim_deg=aim_deg)
+        self._zones[label] = zone
+        return zone
+
     def undo(self) -> Zone | None:
         """가장 마지막으로 붙인 좌표를 뗀다."""
         placed = self.labels
@@ -134,12 +147,7 @@ class ZoneStore:
     # ── 파일 ──────────────────────────────────────────────────
     @classmethod
     def load(cls, directory: Path, allowed_labels: Sequence[str]) -> ZoneStore:
-        """`zones.json` 을 읽는다. 없으면 빈 저장소를 돌려준다.
-
-        설정에 없는 라벨은 **버리고 경고한다.** 조용히 받아들이면 대시보드와
-        마커 매핑에서 한쪽에만 있는 구역이 되어, 그 불일치가 실기 시험에서야
-        드러난다.
-        """
+        """`zones.json` 을 읽는다. 없으면 빈 저장소를 돌려준다. 설정에 없는 라벨은 버리고 경고한다."""
         store = cls(allowed_labels)
         path = directory / ZONES_FILENAME
         if not path.is_file():
@@ -148,6 +156,7 @@ class ZoneStore:
         if not isinstance(raw, dict):
             LOG.warning("zones_file_malformed", path=str(path))
             return store
+        plan_aims = _load_plan_aims(directory)
         unknown: list[str] = []
         for label, value in raw.items():
             if label not in store.allowed_labels:
@@ -157,8 +166,19 @@ class ZoneStore:
                 LOG.warning("zone_entry_malformed", label=label)
                 continue
             yaw = value.get("yaw")
+            if not (
+                _finite_number(value["x"])
+                and _finite_number(value["y"])
+                and (yaw is None or _finite_number(yaw))
+            ):
+                LOG.warning("zone_entry_malformed", label=label)
+                continue
             store._zones[label] = Zone(
-                label, float(value["x"]), float(value["y"]), None if yaw is None else float(yaw)
+                label,
+                float(value["x"]),
+                float(value["y"]),
+                None if yaw is None else float(yaw),
+                value.get("aim_deg", plan_aims.get(label)),
             )
         if unknown:
             LOG.warning(
@@ -174,6 +194,8 @@ class ZoneStore:
         payload: dict[str, Any] = {}
         for zone in self.as_tuple():
             payload[zone.label] = {"x": round(zone.x, 3), "y": round(zone.y, 3)}
+            # null도 기록해 별도 구역 계획의 이전 방향이 다시 살아나지 않게 한다.
+            payload[zone.label]["aim_deg"] = zone.aim_deg
             if zone.yaw is not None:
                 payload[zone.label]["yaw"] = round(zone.yaw, 3)
         path.write_text(
@@ -182,6 +204,21 @@ class ZoneStore:
         )
         LOG.info("zones_saved", path=str(path), count=len(payload))
         return path
+
+
+def _load_plan_aims(directory: Path) -> dict[str, Any]:
+    """기존 지도 구역 계획의 방향만 읽는다. 좌표의 정본은 계속 zones.json이다."""
+    path = directory / PLAN_FILENAME
+    if not path.is_file():
+        return {}
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(plan, dict) or not isinstance(plan.get("zones"), list):
+        raise ValueError("zones_plan.json의 구역 목록 형식이 올바르지 않습니다")
+    return {
+        str(zone["id"]): zone["aim_deg"]
+        for zone in plan["zones"]
+        if isinstance(zone, dict) and "id" in zone and "aim_deg" in zone
+    }
 
 
 def nearest_free_cell(
@@ -236,6 +273,9 @@ def select_next(
     params: PlanParams,
     random_after_first_cycle: bool,
     rng: random.Random | None = None,
+    skipped_out: list[tuple[str, str]] | None = None,
+    body_blocked: np.ndarray | None = None,
+    costs: np.ndarray | None = None,
 ) -> Plan:
     """다음 순찰 구역을 고른다 (FR-7.3).
 
@@ -248,27 +288,49 @@ def select_next(
     `random_after_first_cycle` 이 거짓이면 모든 사이클이 설정 순서를 따른다 —
     설정 항목이 있으니 코드가 그것을 실제로 지켜야 한다. 무작위 순찰은
     예측 가능한 순회를 막는 보안 목적이므로 끌 수 있어야 옳다.
+
+    `skipped_out` 이 주어지면 도달 불가로 건너뛴 구역의 `(label, fail_reason)` 을
+    모아 준다 — 호출자(컨트롤러)가 경계 중복 제거로 한 번만 기록하게.
     """
     remaining = [label for label in order if label not in visited and label in candidates]
     if not remaining:
         return Plan(None)
 
-    # ⚠️ **막힌 구역은 그 구역만 건너뛴다.** 첫 후보만 풀고 빈 계획을 돌려주면
-    # 호출부(`patrol._replan`)가 *방문한 구역이 있다* 는 이유로 사이클을 끝내서,
-    # 뒤에 남은 갈 수 있는 구역까지 그 사이클에서 빠진다.
+    # 막힌 구역은 그 구역만 건너뛰고 다음 후보를 푼다 — 빈 계획은 사이클을 끝낸다.
     sequential = cycle == 0 or not random_after_first_cycle
     if sequential:
-        return _first_reachable(remaining, candidates, start, grid, blocked, params)
+        return _first_reachable(
+            remaining, candidates, start, grid, blocked, params, skipped_out, body_blocked, costs
+        )
 
     if not visited:
         chooser = rng if rng is not None else random
         label = chooser.choice(remaining)
         rest = [other for other in remaining if other != label]
-        return _first_reachable([label, *rest], candidates, start, grid, blocked, params)
+        return _first_reachable(
+            [label, *rest],
+            candidates,
+            start,
+            grid,
+            blocked,
+            params,
+            skipped_out,
+            body_blocked,
+            costs,
+        )
 
     best = Plan(None)
     for label in remaining:
-        plan = plan_to(label, candidates[label], start, grid, blocked, params)
+        plan = plan_to(
+            label,
+            candidates[label],
+            start,
+            grid,
+            blocked,
+            params,
+            body_blocked=body_blocked,
+            costs=costs,
+        )
         if plan.reachable and (not best.reachable or plan.length_m < best.length_m):
             best = plan
     return best
@@ -281,11 +343,24 @@ def _first_reachable(
     grid: OccupancyGrid,
     blocked: np.ndarray,
     params: PlanParams,
+    skipped_out: list[tuple[str, str]] | None = None,
+    body_blocked: np.ndarray | None = None,
+    costs: np.ndarray | None = None,
 ) -> Plan:
     """순서대로 풀어 **처음 도달 가능한** 구역의 계획. 막힌 구역은 남긴 채 넘어간다."""
     for label in labels:
-        plan = plan_to(label, candidates[label], start, grid, blocked, params)
+        plan = plan_to(
+            label,
+            candidates[label],
+            start,
+            grid,
+            blocked,
+            params,
+            body_blocked=body_blocked,
+            costs=costs,
+        )
         if plan.reachable:
             return plan
-        LOG.warning("zone_skipped_unreachable", label=label)
+        if skipped_out is not None:
+            skipped_out.append((label, plan.fail_reason))
     return Plan(None)

@@ -3,7 +3,7 @@
 > ⚠️ **개정 (2026-09-23 실측)**: 로봇 IIC1 의 `0x34` 브리지는 **명령 id 만 오가며 PCM(음성 파형) 중계는 불가**다
 > (WBS 4.7.9 불가 판정). `0x64` 는 장치 주소가 아니라 모듈이 인식한 명령 id 를 담는, 읽으면 지워지는
 > 레지스터다(모듈 주소는 `0x34`). 운용 발화는 로봇에 붙은 MP3 모듈 `0x7B` 의 트랙 재생으로 옮긴다
-> ([ADR-38](../../../../docs/DECISIONS.md#adr-38), WBS 4.7.20·4.7.21). 원자료: `TEST_MECHDOG/results/20260923_4.7.9-bridge-transparency/summary.md`.
+> ([ADR-38](../../../../docs/DECISIONS.md#adr-38), WBS 4.7.20·4.7.21). 원자료: `field_tests/results/20260923_4.7.9-bridge-transparency/summary.md`.
 > 아래 본문은 당시 기록으로 남긴다.
 
 **코드 결함 재현·수정·빌드 완료. 기기 미설치, 실제 소리 확인은 남아 있다.**

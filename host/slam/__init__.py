@@ -8,7 +8,7 @@
 
 ---
 
-## ⚠️ 이 패키지의 절반은 `slam_toolbox` 로 교체될 자리다
+## 이 패키지의 절반은 `slam_toolbox` 로 교체될 자리다
 
 [ADR-9](../../docs/DECISIONS.md) 가 정한 것 —
 
@@ -32,27 +32,20 @@
 
 **`OccupancyGrid.load()` 가 ROS2 맵을 읽을 수 있어야 한다.** `slam_toolbox` 가
 낸 지도로 구역 지정과 순찰이 **코드 변경 없이** 돌아야 블랙박스 교체가 성립한다.
-`test_load_falls_back_to_the_ros2_pair` 가 그 계약이며, `.npy` 를 지운 상태로
-순찰을 돌려 결과가 같은 것을 확인했다.
+`test_load_falls_back_to_the_ros2_pair` 가 그 계약이다. 그 판독은 미지 영역을 자유로
+만들지 않는다 (`occupancy.load_ros2`).
 
-⚠️ 그 판독에서 **미지 영역을 자유로 만들지 않는 것**이 가장 중요하다. map_server
-기본 미지값(205)의 확률이 하필 `free_thresh` 기본값과 같아서, 임계로 분류하지
-않으면 **한 번도 관측하지 않은 공간이 통행 가능으로 새어나간다**
-(`occupancy.load_ros2` 주석 · `test_slam_toolbox_unknown_value_does_not_become_free`).
+## ROS2 쪽 구성 — Phase 2
 
-## 아직 없는 것 — Phase 2 (2026-09-28 착수 승인)
-
-| 필요한 것 | 담당 · 선행 |
+| 무엇 | 어디 |
 | :--- | :--- |
-| `docker/ros2/` (`ros:jazzy` + `slam_toolbox` + `rviz2`) | **WBS 5.4.1 · C** |
-| `SCAN` → `sensor_msgs/LaserScan` 브리지 | 필드 매핑은 [PROTOCOL_LIDAR 6절](../../docs/PROTOCOL_LIDAR.md) |
-| tf `odom` → `base_link` | ⚠️ **오도메트리가 없다** — `gait_calibration` 미실측 (WBS 2.2.3) |
+| `ros:jazzy` + `slam_toolbox` + `rviz2` 컨테이너 | `docker/ros2/` (WBS 5.4.1) |
+| `SCAN` → `sensor_msgs/LaserScan` 브리지 | `docker/ros2/scan_bridge.py` · [PROTOCOL_LIDAR 6절](../../docs/PROTOCOL_LIDAR.md) |
+| tf `odom` → `base_link` | `host/slam/odometry.py` → `host/common/odom_link.py` → `docker/ros2/odom_bridge.py` (WBS 5.4.3) |
 
 ---
 
-⚠️ **단위가 두 겹이다.** 규약의 전선 위는 mm·deg·cm·ms 이고(PROTOCOL.md 2절)
-이 패키지 안은 m·rad·s 다. 변환은 `host/common/units.py` 한 곳에서만 한다.
-
-⚠️ **Phase 2 다.** `config.localization.track` 이 `lidar` 가 아니면 실기 모드로
-기동하지 않는다. Phase 1 표준 구성에는 LiDAR 가 달려 있지 않다 (CONTRIBUTING 1절).
+단위는 전선 위 mm·deg·cm·ms(PROTOCOL.md 2절), 이 패키지 안 m·rad·s 이고 변환은
+`host/common/units.py` 한 곳에서만 한다. `config.localization.track` 이 `lidar` 가 아니면
+실기 모드로 기동하지 않는다 (Phase 1 표준 구성에는 LiDAR 가 없다).
 """

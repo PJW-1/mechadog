@@ -1,9 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Operations,parseBlackbox,csvCell,REVIEW_STATES,liveSnapshotUrl} from '../static/operations.js';
+import {Operations,parseBlackbox,csvCell,REVIEW_STATES,liveSnapshotUrl,describeEvidence} from '../static/operations.js';
+
+test('region PPE requirements appear with the actual event zone, including optional gear',()=>{
+ const optional=describeEvidence('PPE_SETTLED',{judgement:{zone:'B',ppe_required:[]}});
+ assert.deepEqual(optional.rows,[['구역','B'],['필수 보호구','없음 (착용 여부 표시)']]);
+ const required=describeEvidence('PPE_VIOLATION',{judgement:{zone:'C',ppe_required:['helmet','vest']}});
+ assert.deepEqual(required.rows,[['구역','C'],['필수 보호구','안전모 · 안전조끼']]);
+ const hazard=describeEvidence('hazard_notice',{judgement:{zone:'A',ppe_required:[]}});
+ assert.equal(hazard.rows.filter(([label])=>label==='구역').length,1);
+});
 
 const raw=()=>({ts_ms:1700000000000,event:'person_found',state:'OBSERVE',escalation:'L1',mode:'guard',tracks:[{track_id:1,box:[10,20,30,40],score:.85}],detections:[{label:'person',score:.9,box:[10,20,30,40]}],telemetry:{device_id:'mechdog-01'}});
 const memory=()=>{const data=new Map();return {getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value)}};
+
+test('point location hints require a live link and finite coordinates, and surface rejection',async()=>{
+ const calls=[];const store=new Operations();
+ assert.throws(()=>store.requestLocatePoint(2,3),/실제 제어는 연결되지 않았습니다/);
+ store.link={locatePoint:async(x,y)=>{calls.push([x,y]);return{accepted:false,detail:'장애물 칸입니다'}}};store.setDemo(false);
+ assert.throws(()=>store.requestLocatePoint(NaN,3),/좌표가 숫자가 아닙니다/);
+ assert.throws(()=>store.requestLocatePoint(2,Infinity),/좌표가 숫자가 아닙니다/);
+ assert.deepEqual(calls,[]);
+ await assert.rejects(()=>store.requestLocatePoint(2,3),/장애물 칸입니다/);
+ assert.deepEqual(calls,[[2,3]]);
+});
 
 test('initial state is preview only, stopped, unowned, no real telemetry',()=>{
  const op=new Operations();assert.equal(op.demo,true);assert.equal(op.command,'STOP');assert.equal(op.control,null);assert.equal(op.mission.status,'idle');assert.equal(op.records.length,0);
@@ -69,6 +89,18 @@ test('a broadcast TTS sentence (4.8.2) lands in the evidence rows, regardless of
  const op=new Operations(),event=op.importBlackbox({...raw(),judgement:{sentence:'2번 구역에서 사람을 확인했습니다.'}});
  assert.deepEqual(event.evidence.find(([label])=>label==='방송 문장'),['방송 문장','2번 구역에서 사람을 확인했습니다.']);
  assert.equal(op.importBlackbox(raw()).evidence.some(([label])=>label==='방송 문장'),false,'문장이 없으면 행을 지어내지 않는다');
+});
+test('an event trace (session, frame, models, latency) lands in the evidence rows; old files show none',()=>{
+ const op=new Operations(),traced={...raw(),event_id:'e'.repeat(32),session_id:'20261006T120000-abcd1234',device_id:'mechdog-01',frame_id:17,config_sha256:'cd'.repeat(32),models:[{name:'coco',sha256:'ab'.repeat(32),provider:'DmlExecutionProvider'}],latency:{inference_ms:8.5,frame_to_result_ms:12,frame_to_decision_ms:40}};
+ const rows=Object.fromEntries(op.importBlackbox(traced).evidence);
+ assert.equal(rows['사건 ID'],'e'.repeat(32));
+ assert.equal(rows['세션'],'20261006T120000-abcd1234');
+ assert.equal(rows['프레임'],'#17');
+ assert.equal(rows['설정 해시'],'cdcdcdcdcdcd');
+ assert.equal(rows['모델'],'coco · abababababab · DmlExecutionProvider');
+ assert.equal(rows['지연'],'추론 8.5 ms · 프레임→결과 12 ms · 프레임→판단 40 ms');
+ const old=Object.fromEntries(op.importBlackbox(raw()).evidence);
+ for(const label of ['사건 ID','세션','프레임','설정 해시','모델','지연'])assert.equal(old[label],undefined,label+' 를 지어내지 않는다');
 });
 test('bad blackbox fields are rejected',()=>{
  for(const modify of [v=>{v.ts_ms=-1},v=>{v.ts_ms=Infinity},v=>{v.event=''},v=>{v.mode={}},v=>{v.tracks=null},v=>{v.tracks[0].box=[3,2,1,0]},v=>{v.tracks[0].score=2},v=>{v.tracks[0].track_id={}},v=>{v.detections[0].label={}},v=>{v.telemetry=[]},v=>{v.telemetry.device_id={}}]){const input=raw();modify(input);assert.throws(()=>parseBlackbox(input))}

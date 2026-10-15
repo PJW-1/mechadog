@@ -5,19 +5,18 @@
     텔레메트리 imu.yaw ───┘
 
 `slam_toolbox` 는 `odom → base_link` 를 요구하는데 로봇에는 **센서 오도메트리가 없다**
-— 다리에 엔코더가 없다(`tools/gait_calibrate.py` 머리말). 그래서 두 가지를 합친다.
+— 다리에 엔코더가 없다(`tools/probe/gait_calibrate.py` 머리말). 그래서 두 가지를 합친다.
 
   ① **거리는 명령의 시간 창 × 그 기체의 실측 속도** (`gait_calibration`)
   ② **방향은 IMU yaw 의 변화량**
 
 **이 모듈은 소켓도 실시각도 만지지 않는다.** 보낸 전문과 그 시각, IMU 값과 수신
-시각만 받는다 (ENGINEERING_GUIDE 2.1 · `lidar_link.py` 와 같은 구조). 실제 배선은
-`tools/patrol_run.py` 가 한다.
+시각만 받는다 (ENGINEERING_GUIDE 2.1 · `lidar_link.py` 와 같은 구조). 실제 송신은
+`host/telemetry/ros2_relay.py` 의 `OdomSender` 가 하고, 호출자는 런타임과
+`tools/ops/patrol_run.py` 둘이다.
 
-⚠️ **이것은 «정확한 위치» 가 아니다.** 명령값을 적분한 추정이며, 보정은
-`slam_toolbox` 가 정지 스캔으로 한다. WBS 5.4.3 DoD 가 *«명령값만으로 정확한 위치라고
-간주하지 않는다»* 고 못박은 이유다. 그래서 **IMU 가 없거나 오래되면 자세를 무효로
-낸다** — 방향 없이 명령만으로 만든 위치를 유효하다고 내보내지 않는다.
+명령값을 적분한 추정이며 보정은 `slam_toolbox` 가 정지 스캔으로 한다 (WBS 5.4.3 DoD). IMU 가
+없거나 오래되면 자세를 무효로 낸다.
 
 ## step 과 속도 — 비례로 본다 (실측 확인 전 가정)
 
@@ -67,7 +66,7 @@
 ## 로봇이 스스로 멈춰 있다고 알려 오면 그 말이 이긴다
 
 보낸 명령으로 추정한 래치는 **호스트의 짐작**이다. 로봇은 저전압이면 `RESET_SAFE` 를
-거부하고(`firmware_mechdog_motion/README.md` 3.2.5), 재부팅하면 래치 상태로 켜진다 —
+거부하고(`firmware/mechdog_motion/README.md` 3.2.5), 재부팅하면 래치 상태로 켜진다 —
 둘 다 명령만 보면 모른다. 그동안 보낸 `MOVE` 를 이동으로 적분하면 **위치가 조용히
 앞으로 밀린다.** 그래서 텔레메트리의 `safety_latched` 와 `flags.obstacle`(근거리
 정지 — 우선순위가 호스트 명령보다 높다, 같은 README `3.2.5`)을 `note_hold` 로 받아,
@@ -131,9 +130,7 @@ class OdomPose:
 def odom_params_from_config(config: Mapping[str, Any]) -> OdomParams:
     """설정에서 오도메트리 파라미터를 만든다. **실측이 없으면 `ConfigError`.**
 
-    ⚠️ **다른 기체의 값으로 채우지 않는다.** 서보 비대칭이 개체마다 달라 속도부터
-    다르다 (`mechdog-02.yaml` 머리말). 없는 값을 추정으로 채우면 그 기체의 `odom` 이
-    조용히 늘어나거나 줄어든다.
+    다른 기체의 값이나 추정으로 채우지 않는다 — 속도는 개체마다 다르다.
     """
     calibration = config.get("gait_calibration")
     if not isinstance(calibration, Mapping):

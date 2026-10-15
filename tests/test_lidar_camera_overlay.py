@@ -3,7 +3,7 @@
 import pytest
 
 from host.common.lidar_link import encode_scan
-from tools.lidar_camera_overlay import project_saved_scans
+from tools.lidar.lidar_camera_overlay import project_saved_scans
 
 
 def test_project_saved_scan_uses_mount_and_scan_height():

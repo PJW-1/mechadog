@@ -1,4 +1,4 @@
-{"_case":"device_id 누락 — 3대 중 누구인지 알 수 없다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
+{"_case":"device_id 누락 — 2대 중 누구인지 알 수 없다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","seq":1234,"state":"PATROL","escalation":"L0","event":"fsm_transition"}
 {"_case":"seq 누락 — 어느 텔레메트리를 보고 판단했는지 짚을 수 없다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","state":"PATROL","escalation":"L0","event":"fsm_transition"}
 {"_case":"state 누락 — 당시 상태를 모르면 전이를 재구성할 수 없다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":1234,"escalation":"L0","event":"fsm_transition"}
 {"_case":"escalation 누락 — 왜 L3 로 갔는지 답할 수 없게 된다","_expect":"필수 컨텍스트 누락","ts":1756800000123,"level":"INFO","device_id":"mechdog-01","seq":1234,"state":"ALERT","event":"escalation"}

@@ -1,6 +1,6 @@
 """XIAO ESP32S3 Sense microphone over Wi-Fi (WBS 4.7.19 · ADR-38).
 
-`firmware_xiao_vision` serves `GET :82/audio?gain=0..4` as an endless HTTP
+`firmware/xiao_vision` serves `GET :82/audio?gain=0..4` as an endless HTTP
 chunked stream of `audio/L16;rate=16000;channels=1` (PCM16LE mono). This
 module keeps one connection open on a background thread, buffers what
 arrives and hands the voice loop fixed 20 ms frames — the same frame size the

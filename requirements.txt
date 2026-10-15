@@ -23,6 +23,7 @@ onnxruntime>=1.19          ; sys_platform != "win32"
 
 # ── 관제 대시보드 (WBS 4.5) ───────────────────────────────────
 fastapi>=0.115
+pydantic>=2  # host/behavior·dashboard 가 직접 import 한다 (fastapi 가 끌어오지만 명시)
 anyio>=4.0
 uvicorn[standard]>=0.32
 websockets>=13.0

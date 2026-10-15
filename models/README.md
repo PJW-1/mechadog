@@ -14,7 +14,17 @@
 | 파일 | 용도 | 확보 방법 | 상태 |
 | :--- | :--- | :--- | :--- |
 | `coco.onnx` | ① 범용 검출기 — 사람 검출(FR-3) + 변화 감지 대상 객체(FR-8) | **YOLOX-S 공식 배포 ONNX 를 받아 이름만 바꾼다.** 학습·export 불요 | ✅ 계열 확정 (ADR-24) |
-| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v3`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | ⚠️ *(2026-09-28)* `ppe-v3`(5클래스, `person_down` 포함) 이후 후보 v23b 가 XIAO 실기에서 기각됨 — 다음 모델(4클래스)은 재학습 대기 |
+| `ppe.onnx` | ② PPE 전용 — `helmet` / `no_helmet` / `vest` / `no_vest` (FR-9) | **`python tools/fetch_models.py`** — 팀 Release 자산(`ppe-v5`)에서 받고 크기·SHA-256을 자동 검증한다. `person`은 ①이 담당한다 | YOLOX-S 4클래스 · 직립 4구간 XIAO 실측 합격(2026-10-06, `docs/PPE_ACCEPTANCE.md`) |
+| `hazard.onnx` | 위험물 — `lighter` / `powerbank` (미검출 = 정상) | **`python tools/fetch_models.py`** — 팀 Release 자산(`hazard-v1`)에서 받고 크기 **35,776,558** 바이트 · SHA-256 `7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746` 을 검증한다. 학습 노트북은 `tools/hazard/colab_hazard_yolox.ipynb` | ⚠️ YOLOX-S 2클래스 · XIAO 실측 전 후보 · 위험구역(`zones.hazard_ids`) 점검 중에만 돈다 (`vision.hazard`) |
+| `hazard_synth.onnx` | 위험물 — `lighter` / `powerbank` (로봇 시점 합성 후보) | **`python tools/fetch_models.py`** — 팀 Release 자산(`hazard-synth-v2`)에서 받고 크기 **35,776,558** 바이트 · SHA-256 `06e6274aaf8f04a5d1b11598cd6db64ab997d0d8e0b8ccd3d2b82cdb5ad3c4cc` 을 검증한다. 학습 도구는 `tools/hazard/synth/` | ⚠️ `mechdog-02` 시연 설정이 쓴다(`vision.hazard.model_path`). 실물 라이터 0.87·0.88, 보조배터리 미검출(10-06 실물 9장) |
+
+### 구조화 메타 파일 — `<이름>.meta.json`
+
+가중치 옆의 `coco.meta.json`·`ppe.meta.json` 은 Git 에 싣는다(가중치가 아니다). 형식은
+`host/vision/model_info.py` 독스트링이 정본이다 — `name`·`model_family`·`input_size`·`classes`(모델 출력 순서)·
+`source{url,release,license}`·`training_data`·`sha256`·`size`. 런타임은 기동 때 가중치의 sha256 을 한 번 계산해
+세션 manifest·사건 기록에 남기고, 메타 파일이 있으면 읽어 해시·클래스가 어긋날 때 경고만 한다. 없으면 건너뛴다
+(`hazard.onnx` 는 아직 없다). `WEIGHTS`·클래스 상수와 어긋나지 않는지는 `tests/test_model_info.py` 가 대조한다.
 
 ---
 
@@ -71,9 +81,10 @@ COCO 80클래스이며 **순서가 모델과의 계약**이다. 목록은 `host/
 언젠가 순서가 흐트러진다. **순서가 어긋나면 사람을 자전거로 부르면서도 오류는 나지
 않는다.**
 
-FR-8 변화 감지는 **개방 어휘를 쓰지 않는다.** 시연에 놓을 소품을 COCO 80 안에서
+~~FR-8 변화 감지는 **개방 어휘를 쓰지 않는다.** 시연에 놓을 소품을 COCO 80 안에서
 고르는 쪽이 싸고 확실하다(`vision.coco.change_watch_classes`). 시험이 그 값들이
-어휘 안에 있는지 검사한다.
+어휘 안에 있는지 검사한다.~~ *(2026-10-05 · 반출·반입 변화 감지를 폐기해 감시 목록
+`change_watch_classes` 도 지웠다 · [ADR-44](../docs/DECISIONS.md#adr-44))*
 
 ## ③ 로컬 VLM — `Qwen2-VL-2B-Instruct`
 
@@ -182,7 +193,7 @@ CPU 빌드가 깔린 것이고, 그 상태로 돌리면 질문 하나에 수십 
 
 ```bash
 ~/.venv-mechdog-vlm/Scripts/python.exe \
-    TEST_MECHDOG/results/20260920_4.8.0-vlm-compare/vlm_compare_bench.py out.json
+    field_tests/results/20260920_4.8.0-vlm-compare/vlm_compare_bench.py out.json
 ```
 
 `blackbox/` 에 쌓인 실기 프레임을 재료로 쓴다. 정상이면 적재 후 VRAM **4.1GB**, 질문당
@@ -204,15 +215,15 @@ models/
 └── ppe.onnx        # VLM 은 여기 없다 — ③ 참조 (HF 캐시)
 ```
 
-`ppe.onnx`의 정본 식별값은 크기 **3,677,797바이트**, SHA-256
-`a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4`이다. 자체 학습
-산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v3`)으로 배포하며, `coco.onnx`와 같이
-`tools/fetch_models.py`가 받고 두 값을 검증한다. 학습·export 재현 절차는
-`firmware_xiao_vision/PPE_Train.md`에 있다.
+`ppe.onnx`의 정본 식별값은 크기 **35,779,654바이트**, SHA-256
+`145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2`이다. 자체 학습
+산출물이라 공개 URL이 없어 **팀 Release 자산**(태그 `ppe-v5`)으로 배포하며, `coco.onnx`와 같이
+`tools/fetch_models.py`가 받고 두 값을 검증한다. 같은 Release 의 `ppe.json`에 학습 설정·데이터 카드
+해시·parity·평가가 있다. 학습·변환·내보내기 도구는 `tools/ppe/`(`yolox_exp_ppe_s.py` 머리말)에 있다.
 
-**라이선스 — `models/NOTICE` 를 함께 배포한다.** v3 가중치는 라이선스가 혼합된 데이터셋(NOTICE §3)에서
-나온 파생물이라 배포 조건이 **검토 중**이다 — 현재 릴리스는
-팀 내부 테스트용이고, 베이스 모델 YOLOX는 Apache-2.0이다. 저장소 코드 자체는 루트 `LICENSE`(Apache-2.0)를 따른다. **가중치만
+**라이선스 — `models/NOTICE` 를 함께 배포한다.** v5 가중치는 CC BY 4.0 데이터 두 개와 팀 자체 촬영 사진(NOTICE §3)으로만
+학습했으므로 출처 표시와 함께 CC BY 4.0 으로 배포한다. 비상업(NC) 데이터는 쓰지 않았다.
+베이스 모델 YOLOX는 Apache-2.0이다. 저장소 코드 자체는 루트 `LICENSE`(Apache-2.0)를 따른다. **가중치만
 떼어 전달하면 출처 표시가 끊기므로 `NOTICE`를 같이 넣는다.**
 
 경로는 `config/config.yaml` 의 `vision.coco.model_path` / `vision.ppe.model_path` 에서 관리한다.

@@ -116,7 +116,7 @@ class Hub:
         쪽으로 옮기면 사건 폴링 주기(1초) 만큼 **묻기 전에 게이트만 열리는 창**이 생긴다.
 
         ⚠️ **암구호를 먼저 묻는다.** `auth.require_both` 가 참이면 암구호가 통과하기
-        전의 사원증은 판정하지 않는다(`runtime._judge_auth`). 사원증을 먼저 요구하면
+        전의 사원증은 판정하지 않는다(`AuthJudge.judge`). 사원증을 먼저 요구하면
         보여 줘도 아무 일이 일어나지 않는다.
         """
         if state == "AUTH_WAIT" and not self.auth_prompted:

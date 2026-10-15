@@ -41,7 +41,7 @@
 | :--- | :--- |
 | `ts` | 여러 노드의 로그를 **시간축에 정렬**하기 위함 |
 | `level` | 레벨링 |
-| **`device_id`** | **3대 운용이므로 어느 개체의 로그인지 구분 필수** ([CONTRIBUTING 1절](../CONTRIBUTING.md)) |
+| **`device_id`** | **2대 운용이므로 어느 개체의 로그인지 구분 필수** ([CONTRIBUTING 1절](../CONTRIBUTING.md)) |
 | `seq` | 명령·텔레메트리와 **상호 참조** |
 | `state` | 당시 FSM 상태 |
 | `escalation` | 당시 에스컬레이션 단계 |
@@ -182,7 +182,7 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 | 미지 타입 폐기 | ✅ | `protocol_invalid.jsonl` |
 | FSM 전이 | ✅ | **테이블 주도 · 전수** |
 | 안전 판정 (타임아웃·저전압) | ✅ | **fake clock** · 전도 자동 판정은 폐기(ADR-36) |
-| 에스컬레이션 L0~L3 | ✅ | 조건 조합 |
+| 에스컬레이션 L0\~L3 | ✅ | 조건 조합 |
 | bbox 클리핑 판정 | ✅ | 좌표만 필요 |
 | 추적 ID 연속성 | ✅ | 합성 박스 시퀀스 |
 | 변화 감지 비교 | ✅ | 객체 목록만 |
@@ -197,10 +197,13 @@ def is_command_stale(now_ms: int, last_cmd_ms: int, timeout_ms: int) -> bool:
 tests/
 ├── conftest.py                  공통 픽스처 — fake clock · config      ✅
 ├── fixtures/
-│   ├── protocol_samples.jsonl   정본 (10종 + 경계값)     ✅
+│   ├── protocol_samples.jsonl   정본 (11종 + 경계값)     ✅
 │   ├── protocol_invalid.jsonl   폐기·클램핑 대상          ✅
+│   ├── protocol_sessions.jsonl  재시작·이전 세션 폐기     ✅
 │   ├── telemetry_samples.jsonl  상태 13종 + 안전 경계값   ✅
 │   ├── telemetry_invalid.jsonl  폐기 대상                 ✅
+│   ├── lidar_samples.jsonl      LiDAR 스캔 정본·거리 경계 ✅
+│   ├── lidar_invalid.jsonl      LiDAR 폐기·부분 수락 대상 ✅
 │   ├── log_samples.jsonl        로그 필수 컨텍스트 정본   ✅
 │   └── log_invalid.jsonl        컨텍스트 누락·레벨 오류   ✅
 ├── test_config.py               config 스키마·불변조건    ✅
@@ -218,7 +221,7 @@ tests/
 ├── test_fsm.py                  전이표 전수               ✅
 ├── test_escalation.py           L0~L3 진입·해제
 ├── test_tracker.py              ID 연속성
-├── test_change_detect.py        객체 목록 비교
+├── test_zone_inspector.py       구역 방문·VLM 확정
 └── test_geometry.py             bbox 클리핑
 ```
 
@@ -290,11 +293,9 @@ run: pytest -q --cov=host --cov=tools --cov-report=term-missing --cov-fail-under
 
 - **`--cov-fail-under` 가 없으면 커버리지는 게이트가 아니라 장식이다.** 숫자만 찍히고 아무도 안 본다.
 - **하한을 실측치까지 올리지 않는다.** 그러면 커버리지를 떨어뜨리지 않는 것 자체가 목적이 되어
-  **의미 없는 테스트를 쓰게 된다.** 70% 는 *"핵심 경로가 검증되지 않은 채 머지되는 것"* 을 막는 하한이다.
+  **의미 없는 테스트를 쓰게 된다.** 80% 는 *"핵심 경로가 검증되지 않은 채 머지되는 것"* 을 막는 하한이다.
 - **`tools/` 를 함께 센다.** 가상 MechDog(`mock_mechdog.py`)은 시험 도구가 아니라 **시험 대상**이다 —
   목업이 틀리면 그것으로 검증한 호스트 코드가 전부 헛것이 된다.
-- 첫 Host 모듈이 들어오기 전까지는 **일부러 꺼 두었다.** 잴 코드가 없으면 `No data was collected`
-  경고만 남고 CI 는 통과한다 — 아무것도 검증하지 않으면서 통과하는 상태를 만들지 않기 위해서다.
 
 ### 앞으로 추가할 것
 

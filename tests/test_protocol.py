@@ -241,7 +241,7 @@ def test_encoder_seq_is_monotonic_and_ts_comes_from_clock() -> None:
 
 
 def test_encoder_convenience_methods_cover_every_type() -> None:
-    """편의 메서드가 10종 전부를 덮어야 한다. 빠지면 호출부가 문자열을 쓰게 된다."""
+    """편의 메서드가 11종 전부를 덮어야 한다. 빠지면 호출부가 문자열을 쓰게 된다."""
     encoder = p.CommandEncoder(clock=FakeClock())
     decoder = p.CommandDecoder()
     emitted = [
@@ -276,7 +276,7 @@ def test_known_types_match_golden_fixture() -> None:
 
 
 def test_telemetry_decoder_accepts_every_sample() -> None:
-    """3대분이 섞여 들어와도 전부 통과해야 한다 (개체별 seq 추적)."""
+    """2대분이 섞여 들어와도 전부 통과해야 한다 (개체별 seq 추적)."""
     decoder = p.TelemetryDecoder()
     for msg in TELEMETRY_SAMPLES:
         expected = p.strip_meta(msg)

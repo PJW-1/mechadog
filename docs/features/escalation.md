@@ -83,8 +83,8 @@ flowchart TD
 | L3 해제 | 관리자 경보 확인만 (코드에 고정, 설정으로 바꿀 수 없음) | — | [ADR-26](../DECISIONS.md#adr-26) |
 | F 해제 | 로봇이 래치 해제를 보고한 `RESET_CONFIRMED` 만 | — | [ADR-26](../DECISIONS.md#adr-26) |
 | 모드 전환 | `IDLE` · `MANUAL` 에서만 받고 단계는 건드리지 않음 | `mission.mode` | [ADR-33](../DECISIONS.md#adr-33) |
-| 눈 LED | L0 파랑 · L1 노랑 · L2 주황 · L3 빨강 · F 흰색 | `escalation.led` | [눈 LED 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md) |
-| L3 점멸 | 2Hz | `escalation.led.l3_blink_hz` | [눈 LED 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md) |
+| 눈 LED | L0 파랑 · L1 노랑 · L2 주황 · L3 빨강 · F 흰색 | `escalation.led` | [눈 LED 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md) |
+| L3 점멸 | 2Hz | `escalation.led.l3_blink_hz` | [눈 LED 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md) |
 | L3 문장 | 원인별 문장이 있으면 그것, 없으면 공통 문장 | `escalation.sound.l3_warning` · `escalation.sound.person_down_warning` | [ADR-38](../DECISIONS.md#adr-38) |
 
 ## 실패·예외 시 동작
@@ -98,7 +98,7 @@ flowchart TD
 - 모드 전환은 `IDLE`·`MANUAL` 에서만 받는다. 그 상태에서는 L1·L2 가 이미 L0 으로 내려가 있고, L3·F 는 전환 뒤에도 남는다. 모드를 바꾸는 것이 확인 없는 해제 경로가 되지 않는다.
 - 대기·수동에서는 사람을 확정해도 단계를 올리지 않고 인증도 판정하지 않는다.
 - 공장 모드는 사람만으로 L1 을 올리지 않고 L2 를 만들지 않는다. 공장 모드의 L1 은 쓰러짐 의심뿐이다([쓰러짐 확정](factory-fall.md)).
-- 공장 모드의 PPE 판정은 개발 중이라 이 문서에서 다루지 않는다. 그 경고는 래치하지 않는 L3 표현(`Escalation.warn`)을 쓰며, 경고 중에 경보 사건이 오면 래치된 L3 로 바뀐다.
+- 공장 모드의 PPE 판정(`host/behavior/ppe_judge.py`)은 이 문서의 범위 밖이다(합격 기준은 [PPE_ACCEPTANCE](../PPE_ACCEPTANCE.md)). 그 경고는 래치하지 않는 L3 표현(`Escalation.warn`)을 쓰며, 경고 중에 경보 사건이 오면 래치된 L3 로 바뀐다.
 
 ## 코드와 검증
 
@@ -125,6 +125,6 @@ flowchart TD
 
 실측 기록
 
-- [눈 LED 단계 표시 실기](../../TEST_MECHDOG/results/20260919_4.7.3-eye-led-host/summary.md)
-- [헤드리스 경보 해제와 판정 대기 연장 실기](../../TEST_MECHDOG/results/20260922_alarm-web-release/summary.md)
-- [경비 대응 실기: L1 에서 L2 까지](../../TEST_MECHDOG/results/20260923_patrol-engage/summary.md)
+- [눈 LED 단계 표시 실기](../../field_tests/results/20260919_4.7.3-eye-led-host/summary.md)
+- [헤드리스 경보 해제와 판정 대기 연장 실기](../../field_tests/results/20260922_alarm-web-release/summary.md)
+- [경비 대응 실기: L1 에서 L2 까지](../../field_tests/results/20260923_patrol-engage/summary.md)

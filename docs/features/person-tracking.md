@@ -75,7 +75,7 @@ flowchart TD
 - 박스가 없는 프레임에서는 추종 사건을 내지 않는다. 마지막 추종 지시는 `fsm.track_coast_ms`(1000ms)까지만 이어 가고 그 뒤에는 멈춘다.
 - 데드존이 화면 반폭 이상인 잘못된 설정이면 그 프레임의 추종을 버리고 오류를 한 번 기록한다. 순찰 루프는 계속 돈다.
 - 대기(`IDLE`)·수동(`MANUAL`)에서는 사람을 확정해도 대응 단계를 올리지 않는다. 대기에서 순찰로 들어갈 때 게이트 엣지를 다시 장전하므로, 이미 앞에 서 있던 사람도 `PERSON_FOUND` 가 된다.
-- 공장 모드는 사람을 확정하면 `ALERT` 로 멈추지만 추종·고개 들기·L1 이 없다. 눈은 파랑(L0)에 머문다. 이어지는 판단은 «PPE 판정 (개발 중)»이며 이 문서의 범위 밖이다. 쓰러짐 의심 중에는 공장 모드도 같은 추종을 쓴다([쓰러짐 확정](factory-fall.md)).
+- 공장 모드는 사람을 확정하면 `ALERT` 로 멈추지만 추종·고개 들기·L1 이 없다. 눈은 파랑(L0)에 머문다. 이어지는 판단은 PPE 판정(`host/behavior/ppe_judge.py`)이며 이 문서의 범위 밖이다. 쓰러짐 의심 중에는 공장 모드도 같은 추종을 쓴다([쓰러짐 확정](factory-fall.md)).
 
 ## 코드와 검증
 
@@ -86,13 +86,13 @@ flowchart TD
 | 긴 관측 공백 뒤 새 창 | `host/vision/person.py` 의 `PersonGate.observe` | `test_long_observation_gap_starts_a_new_confirmation` |
 | 확정 → `PERSON_FOUND` → `ALERT` | `host/runtime.py` 의 `Runtime._poll_vision` | `test_confirmed_person_raises_observe_level` · `test_person_already_in_view_when_patrol_starts_still_reaches_alert` |
 | 5초 대상 상실 → `PATROL` | `host/behavior/fsm.py` 의 `Behavior._watch_target` | `test_gate_release_waits_for_target_lost_timeout` · `test_target_lost_after_the_configured_timeout` |
-| 정지선 전 편차 → `TRACK`, 120px 초과 제자리 회전 | `host/runtime.py` 의 `Runtime._track` · `Runtime._spin_angle` | `test_off_center_person_moves_alert_into_track` · `test_far_person_beyond_split_spins_before_walking` |
-| 정지선: 박스 높이 | `host/runtime.py` 의 `Runtime._track` | `test_close_off_center_person_spins_to_center_before_pitch` · `test_without_height_target_centered_person_is_the_stop_line` |
-| 정지선: 초음파 40cm | `host/runtime.py` 의 `Runtime._track` | `test_ultrasonic_stops_approach_below_box_line` |
-| 중앙 유지 히스테리시스 | `host/runtime.py` 의 `Runtime._track` | `test_centered_target_is_held_through_detection_jitter` |
-| 조준 8초 상한 | `host/runtime.py` 의 `Runtime._track` | `test_aim_timeout_raises_the_head_for_a_dodging_target` |
+| 정지선 전 편차 → `TRACK`, 120px 초과 제자리 회전 | `host/behavior/track_controller.py` 의 `TrackController.track` · `TrackController._spin_angle` | `test_off_center_person_moves_alert_into_track` · `test_far_person_beyond_split_spins_before_walking` |
+| 정지선: 박스 높이 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_close_off_center_person_spins_to_center_before_pitch` · `test_without_height_target_centered_person_is_the_stop_line` |
+| 정지선: 초음파 40cm | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_ultrasonic_stops_approach_below_box_line` |
+| 중앙 유지 히스테리시스 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_centered_target_is_held_through_detection_jitter` |
+| 조준 8초 상한 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_aim_timeout_raises_the_head_for_a_dodging_target` |
 | ALERT 1초 체류 뒤 고개 들기 | `host/behavior/actions.py` 의 `PostureSequence` · `host/runtime.py` 의 `Runtime._alert_sequence` | `test_alert_posture_waits_out_the_flapping` · `test_alert_flapping_sends_no_pose_at_all` |
-| 고개 든 뒤 추종 없음 | `host/runtime.py` 의 `Runtime._track` | `test_engaged_robot_does_not_track_again` |
+| 고개 든 뒤 추종 없음 | `host/behavior/track_controller.py` 의 `TrackController.track` | `test_engaged_robot_does_not_track_again` |
 | 호 추종 조향 계산 | `host/behavior/tracker.py` 의 `LockOnTracker` | `test_target_on_the_right_turns_right_with_a_negative_angle` · `test_target_on_the_left_turns_left_with_a_positive_angle` |
 | IoU 결합·ID 유지 | `host/vision/tracker.py` 의 `PersonTracker._associate` | `test_same_person_keeps_the_id_across_frames` · `test_best_overlap_wins_not_the_first_acceptable_one` |
 | 소실 버퍼 만료·ID 재사용 금지 | `host/vision/tracker.py` 의 `PersonTracker._expire` · `PersonTracker._open` | `test_short_gap_keeps_the_id` · `test_long_gap_yields_a_new_id` · `test_ids_are_never_reused` |
@@ -101,6 +101,6 @@ flowchart TD
 
 실측 기록
 
-- [경비 대응 실기: 정지선·제자리 회전·고개 들기](../../TEST_MECHDOG/results/20260923_patrol-engage/summary.md)
-- [선회 추종 실기](../../TEST_MECHDOG/results/20260918_3.5.4-track/summary.md)
-- [선회 추종 재확인](../../TEST_MECHDOG/results/20260918_3.5.4-recheck/summary.md)
+- [경비 대응 실기: 정지선·제자리 회전·고개 들기](../../field_tests/results/20260923_patrol-engage/summary.md)
+- [선회 추종 실기](../../field_tests/results/20260918_3.5.4-track/summary.md)
+- [선회 추종 재확인](../../field_tests/results/20260918_3.5.4-recheck/summary.md)

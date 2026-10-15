@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from host.common.lidar_link import Scan, ScanDecoder, scan_of
 from host.slam import settings, viz
@@ -42,7 +43,7 @@ class ContinuousMap:
 
     def __init__(
         self,
-        config: dict,
+        config: dict[str, Any],
         lidar_device: str,
         photos: PhotoRecorder | None = None,
         *,

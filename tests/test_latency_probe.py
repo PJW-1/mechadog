@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.latency_probe import (
+from tools.probe.latency_probe import (
     MODULUS,
     budget_note,
     counter_page,
@@ -137,7 +137,7 @@ def test_xiao_ip_override_goes_into_network() -> None:
     """
     from host.common.config import load_config
     from host.vision.stream_client import stream_endpoints
-    from tools.latency_probe import with_xiao_ip
+    from tools.probe.latency_probe import with_xiao_ip
 
     config = with_xiao_ip(load_config("mechdog-01"), "192.168.1.100")
     assert config["network"]["xiao_ip"] == "192.168.1.100"
@@ -151,7 +151,7 @@ def test_override_none_keeps_the_profile_value(committed_devices_dir: Path) -> N
     섞여 들어온다 (`conftest.py` 의 `committed_devices_dir`).
     """
     from host.common.config import load_config
-    from tools.latency_probe import with_xiao_ip
+    from tools.probe.latency_probe import with_xiao_ip
 
     config = with_xiao_ip(load_config("mechdog-01", devices_dir=committed_devices_dir), None)
     assert config["network"]["xiao_ip"] is None
@@ -167,7 +167,7 @@ def test_chain_sums_each_frame_before_taking_statistics() -> None:
     2026-09-14 기록이 그렇게 278ms 를 냈고, 그중 한 값은 시작점이 달라 구간이
     겹치기까지 했다. 아래 두 프레임은 각 구간의 최악이 서로 다른 프레임에 있다.
     """
-    from tools.latency_probe import chain_stats
+    from tools.probe.latency_probe import chain_stats
 
     rows = [
         {"capture_ms": 150, "decode_infer_ms": 10, "ack_ms_from_detect": 10},
@@ -183,7 +183,7 @@ def test_chain_report_skips_rows_without_an_ack(tmp_path: Path, capsys) -> None:
     """ACK 이 없거나 숫자를 안 적은 행은 사슬이 끊긴 것이다 — 합에 넣으면 안 된다."""
     from types import SimpleNamespace
 
-    import tools.latency_probe as probe
+    import tools.probe.latency_probe as probe
 
     readings = tmp_path / "chain_readings.csv"
     with readings.open("w", encoding="utf-8", newline="") as handle:
@@ -206,7 +206,7 @@ def test_ack_matching_ignores_telemetry_and_other_sequences() -> None:
     """
     import json as _json
 
-    from tools.latency_probe import _await_ack
+    from tools.probe.latency_probe import _await_ack
 
     packets = [
         _json.dumps({"seq": 7, "state": "IDLE", "batt_v": 8.0}).encode(),  # 텔레메트리

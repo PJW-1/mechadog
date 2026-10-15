@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +75,10 @@ class CameraGeometry:
         forward, right, down = self._basis()
         x = (u_px - self.cx_px) / self.fx_px
         y = (v_px - self.cy_px) / self.fy_px
-        return tuple(forward[i] + x * right[i] + y * down[i] for i in range(3))
+        return cast(
+            "tuple[float, float, float]",
+            tuple(forward[i] + x * right[i] + y * down[i] for i in range(3)),
+        )
 
     def floor_xy(self, u_px: float, v_px: float) -> tuple[float, float] | None:
         """Find the floor point for a pixel *known to depict the floor*.

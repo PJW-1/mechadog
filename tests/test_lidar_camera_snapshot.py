@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import pytest
 
 from host.slam import settings
-from tools.lidar_camera_snapshot import build_map
+from tools.lidar.lidar_camera_snapshot import build_map
 
 
 @dataclass

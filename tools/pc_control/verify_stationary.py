@@ -11,7 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ops"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probe"))
 from mode_control import exclusive_operation
 from ota_update import RobotOta
 from settings import SETTINGS, require_settings
@@ -138,7 +139,7 @@ def main():
                 probe.bind((local_ip, 5101))
             report["host_receive_port_released"] = True
             report["state"] = "PASS"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 실패 원인을 판정 보고서에 남긴다
             report.update(state="FAILED", error_type=type(exc).__name__, error=str(exc))
         finally:
             report["finished_at"] = datetime.now(UTC).isoformat()

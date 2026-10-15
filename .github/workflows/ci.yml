@@ -9,6 +9,9 @@ on:
   pull_request:
     branches: [main, dev]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,29 +28,35 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: requirements-dev.lock
 
       # requirements.txt 는 환경 마커로 플랫폼을 분기한다.
       # onnxruntime-directml 은 Windows 전용이므로 리눅스 러너에서는
-      # onnxruntime(CPU)이 설치된다.
+      # onnxruntime(CPU)이 설치된다. 설치는 그 결과를 고정한 requirements-dev.lock 으로 한다
+      # (Linux·CPython 3.12 전용, 재생성 명령은 CONTRIBUTING 8절).
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
 
       # docs/internal/ASSIGNMENTS.md 는 WBS 에서 생성된다. WBS 만 고치고 재생성하지 않으면
       # 담당자별 부하가 실제와 다르게 표시되므로 여기서 막는다.
       - name: Generated docs are up to date
-        run: python tools/wbs_assignments.py --check
+        run: python tools/dev/wbs_assignments.py --check
 
       # 문서를 옮기거나 링크를 고칠 때 상대 경로가 실제 파일을 가리키는지 검사한다.
       - name: Doc links are valid
-        run: python tools/check_doc_links.py
+        run: python tools/dev/check_doc_links.py
 
       - name: Lint (ruff)
         run: ruff check .
 
       - name: Format check (ruff)
         run: ruff format --check .
+
+      # host 전체를 strict 로 본다 (pyproject.toml [tool.mypy]).
+      - name: Type check (mypy)
+        run: mypy host
 
       - name: PC maintenance offline tests
         run: |
@@ -93,13 +102,13 @@ jobs:
         if: github.event_name == 'pull_request' && !(github.base_ref == 'main' && github.head_ref == 'dev')
         run: |
           git fetch origin "${{ github.base_ref }}"
-          python3 tools/check_firmware_scope.py --base "origin/${{ github.base_ref }}"
+          python3 tools/dev/check_firmware_scope.py --base "origin/${{ github.base_ref }}"
 
       - name: Detect firmware sources
         id: detect
         run: |
-          COUNT=$(find firmware_mechdog_motion firmware_xiao_vision \
-                    firmware_lidar_relay \
+          COUNT=$(find firmware/mechdog_motion firmware/xiao_vision \
+                    firmware/lidar_relay \
                     -name '*.cpp' -o -name '*.h' -o -name '*.ino' 2>/dev/null | wc -l)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "펌웨어 소스 $COUNT 개 발견"
@@ -114,8 +123,8 @@ jobs:
       - name: Format check
         if: steps.detect.outputs.count != '0'
         run: |
-          find firmware_mechdog_motion firmware_xiao_vision \
-               firmware_lidar_relay \
+          find firmware/mechdog_motion firmware/xiao_vision \
+               firmware/lidar_relay \
                \( -name '*.cpp' -o -name '*.h' -o -name '*.ino' \) \
                -not -path '*/third_party/*' -print0 \
             | xargs -0 -r clang-format --dry-run --Werror
@@ -130,8 +139,8 @@ jobs:
                    --inline-suppr \
                    --error-exitcode=1 \
                    -i third_party \
-                   firmware_mechdog_motion firmware_xiao_vision \
-                   firmware_lidar_relay
+                   firmware/mechdog_motion firmware/xiao_vision \
+                   firmware/lidar_relay
 
       # ── WBS 4.1.3 · C++ 파서 골든 픽스처 대조 ────────────────
       #
@@ -139,96 +148,13 @@ jobs:
       #  가 여기서 실제로 돈다. Python 쪽(test_protocol_fixtures.py)과 **같은
       #  파일**을 읽으므로, 스키마를 한쪽만 바꾸면 둘 중 하나가 반드시 깨진다.
       #
-      #  실물 없이 도는 것이 요점이다 — 펌웨어 로직을 로봇 3대에 의존하지 않고
+      #  실물 없이 도는 것이 요점이다 — 펌웨어 로직을 로봇 2대에 의존하지 않고
       #  매 PR 마다 검증한다 (HAL 분리 원칙).
-      - name: Host unit test (command parser)
-        if: hashFiles('firmware_mechdog_motion/test/*.cpp') != ''
-        run: |
-          mkdir -p build
-          g++ -std=c++17 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/src/command_parser.cpp \
-              firmware_mechdog_motion/test/test_command_parser.cpp \
-              -o build/test_command_parser
-          ./build/test_command_parser tests/fixtures
+      - name: Host unit tests (MechDog motion, make)
+        run: make -C firmware/mechdog_motion/test test
 
-      - name: Host unit test (OTA health window)
+      - name: Telemetry encoder vs Python decoder (golden cross-check)
         run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_ota_health.cpp \
-              -o build/test_ota_health
-          ./build/test_ota_health
-
-      - name: Host unit test (OTA reboot deadline)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_reboot_deadline.cpp \
-              -o build/test_reboot_deadline
-          ./build/test_reboot_deadline
-
-      - name: Host unit test (sensor timing statistics)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_sensor_timing_stats.cpp \
-              -o build/test_sensor_timing_stats
-          ./build/test_sensor_timing_stats
-      - name: Host unit test (independent loop watchdog, simulated time)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/test/watchdog_stubs \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_task_watchdog.cpp \
-              -o build/test_task_watchdog
-          ./build/test_task_watchdog
-
-      - name: Host unit test (motion safety state)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_motion_safety_state.cpp \
-              -o build/test_motion_safety_state
-          ./build/test_motion_safety_state
-
-      - name: Host unit test (MP3 player sequencing)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/test/test_mp3_player.cpp \
-              -o build/test_mp3_player
-          ./build/test_mp3_player
-
-      - name: Host unit test (onboard safety monitor)
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/src/safety_monitor.cpp \
-              firmware_mechdog_motion/test/test_safety_monitor.cpp \
-              -o build/test_safety_monitor
-          ./build/test_safety_monitor
-
-      - name: Host unit test (telemetry encoder)
-        if: hashFiles('firmware_mechdog_motion/test/test_telemetry_encoder.cpp') != ''
-        run: |
-          mkdir -p build
-          g++ -std=c++11 -Wall -Wextra -Werror -O1 \
-              -I firmware_mechdog_motion/src \
-              firmware_mechdog_motion/src/command_parser.cpp \
-              firmware_mechdog_motion/src/telemetry_encoder.cpp \
-              firmware_mechdog_motion/test/test_telemetry_encoder.cpp \
-              -o build/test_telemetry_encoder
-          ./build/test_telemetry_encoder
-          ./build/test_telemetry_encoder --emit-fixtures > build/telemetry-emitted.jsonl
-          ./build/test_telemetry_encoder --emit-optional-fixtures > build/telemetry-optional.jsonl
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -252,18 +178,11 @@ jobs:
 
       # ── LiDAR 중계 노드 — LD19 파서/스캔 조립/SCAN 인코더 ──────
       #  파이썬 수신측(lidar_link.ScanDecoder)의 규약 구현과 교차 검증한다.
-      - name: Host unit test (LiDAR relay)
-        if: hashFiles('firmware_lidar_relay/test/*.cpp') != ''
+      - name: Host unit tests (LiDAR relay, make)
+        run: make -C firmware/lidar_relay/test test
+
+      - name: LiDAR encoder vs Python decoder (golden cross-check)
         run: |
-          mkdir -p build
-          g++ -std=c++17 -Wall -Wextra -Werror -O1 \
-              -I firmware_lidar_relay/src \
-              firmware_lidar_relay/src/ld19.cpp \
-              firmware_lidar_relay/src/scan_encoder.cpp \
-              firmware_lidar_relay/test/test_lidar_relay.cpp \
-              -o build/test_lidar_relay
-          ./build/test_lidar_relay
-          ./build/test_lidar_relay --emit-fixtures > build/lidar-emitted.jsonl
           python3 - <<'PY'
           from pathlib import Path
           from host.common.lidar_link import ScanDecoder
@@ -286,11 +205,12 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - dir: firmware_mechdog_motion
+          - dir: firmware/mechdog_motion
             fqbn: 'esp32:esp32:esp32:FlashMode=dio,FlashFreq=40'
             core: 'esp32:esp32@2.0.12'
             name: 'MechDog-Motion'
-          - dir: firmware_xiao_vision
+            release_name: 'firmware_mechdog_motion'
+          - dir: firmware/xiao_vision
             fqbn: 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi'
             # ⚠️ 2.0.12 로 고정한다 — 풀어 두면 CI 가 통과시키는 빌드에서 마이크가 죽는다.
             # 이 펌웨어의 `/audio` 는 구형 `driver/i2s.h` 의 `i2s_read` 를 쓰는데,
@@ -302,10 +222,12 @@ jobs:
             # 카메라도 2.0.12 가 나았다(31.3 fps 대 24.7 fps).
             core: 'esp32:esp32@2.0.12'
             name: 'XIAO-Vision'
-          - dir: firmware_lidar_relay
+            release_name: 'firmware_xiao_vision'
+          - dir: firmware/lidar_relay
             fqbn: 'esp32:esp32:esp32:FlashMode=dio,FlashFreq=40'
             core: 'esp32:esp32@2.0.12'
             name: 'Lidar-Relay'
+            release_name: 'firmware_lidar_relay'
     steps:
       - uses: actions/checkout@v7
 
@@ -322,6 +244,21 @@ jobs:
       - name: Setup arduino-cli
         if: steps.sketch.outputs.found == 'true'
         uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.3.1
+
+      # 코어(esp32 는 수백 MB)와 라이브러리를 캐시한다. 키는 CLI·코어 버전과
+      # Compile 단계에서 고정한 라이브러리 버전에 묶는다.
+      - name: Cache Arduino toolchain
+        if: steps.sketch.outputs.found == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          # 잡마다 따로 캐시한다 — 세 잡의 코어가 같아 키가 겹치면 먼저 끝난 잡의 것만 남는다.
+          # 벤더 라이브러리(third_party/)가 바뀌면 복사본이 낡지 않게 키를 새로 만든다.
+          key: arduino-${{ runner.os }}-cli1.3.1-${{ matrix.target.name }}-${{ matrix.target.core }}-SensorLib0.2.1-Madgwick1.2.0-${{ hashFiles('third_party/**') }}
 
       - name: Install ESP32 core
         if: steps.sketch.outputs.found == 'true'
@@ -332,7 +269,8 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install "${{ matrix.target.core }}"
 
-      # OI-5: HW_MechDog 라이브러리 라이선스 확인 후 third_party/ 벤더링 필요 (RISK-07)
+      # 벤더 라이브러리(HW_MechDog 등)는 라이선스 표기가 없어 저장소에 넣지 않는다 (ADR-20).
+      # third_party/ 가 로컬에 있을 때만 복사하며, CI 에는 없으므로 보통 건너뛴다.
       - name: Link vendored libraries
         if: steps.sketch.outputs.found == 'true'
         run: |
@@ -352,33 +290,48 @@ jobs:
             --export-binaries \
             "${{ matrix.target.dir }}"
 
+      # 스케치는 firmware/<이름>/<이름>.ino 로 옮겼지만, 릴리스 자산과 OTA 설정
+      # (tools/pc_control/settings.example.json 의 partition_table)이 쓰는 파일 이름은
+      # 옮기기 전과 같게 둔다 — arduino-cli 가 붙인 `<이름>.ino.*` 를 `firmware_<이름>.ino.*` 로 바꾼다.
+      - name: Keep release file names (firmware_<name>.ino.*)
+        if: steps.sketch.outputs.found == 'true'
+        run: |
+          sketch=$(basename "${{ matrix.target.dir }}")
+          release="${{ matrix.target.release_name }}"
+          for f in "${{ matrix.target.dir }}"/build/*/"$sketch".ino.*; do
+            [ -f "$f" ] || continue
+            mv "$f" "${f%/*}/$release${f##*/$sketch}"
+          done
+          ls "${{ matrix.target.dir }}"/build/*/
+          ls "${{ matrix.target.dir }}"/build/*/"$release".ino.bin
+
       - name: Compile task watchdog candidates (not release artifacts)
-        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware/mechdog_motion'
         run: |
           arduino-cli lib install SensorLib@0.2.1 Madgwick@1.2.0
           arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
             --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0' \
-            --build-path "$RUNNER_TEMP/watchdog-motion" firmware_mechdog_motion
+            --build-path "$RUNNER_TEMP/watchdog-motion" firmware/mechdog_motion
           arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
             --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0 -DMECHADOG_ENABLE_SENSORS=1' \
-            --build-path "$RUNNER_TEMP/watchdog-sensors" firmware_mechdog_motion
+            --build-path "$RUNNER_TEMP/watchdog-sensors" firmware/mechdog_motion
           arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
             --build-property 'compiler.cpp.extra_flags=-DMECHADOG_ENABLE_TASK_WDT=1 -DMECHADOG_ENABLE_ACTUATORS=0 -DMECHADOG_ENABLE_SENSORS=1 -DMECHADOG_WATCHDOG_FAULT_PROBE=1' \
-            --build-path "$RUNNER_TEMP/watchdog-live-probe" firmware_mechdog_motion
+            --build-path "$RUNNER_TEMP/watchdog-live-probe" firmware/mechdog_motion
           arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
-            --build-property "compiler.cpp.extra_flags=-I$GITHUB_WORKSPACE/firmware_mechdog_motion/src" \
+            --build-property "compiler.cpp.extra_flags=-I$GITHUB_WORKSPACE/firmware/mechdog_motion/src" \
             --build-path "$RUNNER_TEMP/watchdog-probe" \
-            firmware_mechdog_motion/diagnostics/watchdog_probe
+            firmware/mechdog_motion/diagnostics/watchdog_probe
 
       - name: Compile stationary OTA with loop watchdog (not a release artifact)
-        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware/mechdog_motion'
         run: |
           arduino-cli compile --fqbn "${{ matrix.target.fqbn }}" \
-            --build-property "compiler.cpp.extra_flags=-include $GITHUB_WORKSPACE/firmware_mechdog_motion/test/ota_compile_settings.h" \
-            --build-path "$RUNNER_TEMP/watchdog-ota" firmware_mechdog_motion
+            --build-property "compiler.cpp.extra_flags=-include $GITHUB_WORKSPACE/firmware/mechdog_motion/test/ota_compile_settings.h" \
+            --build-path "$RUNNER_TEMP/watchdog-ota" firmware/mechdog_motion
 
       - name: Actuator watchdog only via runtime SERVICE mode
-        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware_mechdog_motion'
+        if: steps.sketch.outputs.found == 'true' && matrix.target.dir == 'firmware/mechdog_motion'
         run: |
           # WBS 3.2.4 service-mode expansion: TASK_WDT+ACTUATORS is now legal —
           # the qualification moved from a compile-time ban to a runtime order
@@ -388,7 +341,7 @@ jobs:
           #  1) the sketch derives MECHADOG_SERVICE_MODE for TASK_WDT+ACTUATORS
           #  2) boot arming stays restricted to actuator-OFF builds
           #  3) the old hard compile ban is gone (service mode replaced it)
-          sketch=firmware_mechdog_motion/firmware_mechdog_motion.ino
+          sketch=firmware/mechdog_motion/mechdog_motion.ino
           grep -q 'define MECHADOG_SERVICE_MODE 1' "$sketch"
           grep -q 'MECHADOG_ENABLE_TASK_WDT && !MECHADOG_ENABLE_ACTUATORS' "$sketch"
           ! grep -q 'restricted to actuator-OFF diagnostic builds' "$sketch"

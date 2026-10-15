@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>MechaDog · 통합 집 SIM</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/embed.css">
+  <link rel="stylesheet" href="/lidar-inspector.css">
+  <link rel="stylesheet" href="/robot-link.css"><link rel="stylesheet" href="/presentation.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three.module.js","three/addons/controls/OrbitControls.js":"/vendor/OrbitControls.js"}}</script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="identity"><span class="brand-mark" aria-hidden="true">M</span><div><h1>우리 집 <span>SIM</span></h1><p id="revision-status">MechaDog · 사진과 평면도 기반 장면</p></div></div>
+    <div class="header-actions"><span id="save-state" class="save-state" role="status">장면을 불러오는 중</span><button id="save" class="primary" disabled>배치 저장</button><button id="export" disabled>Isaac 내보내기</button></div>
+  </header>
+  <main class="workspace">
+    <section class="scene-area" aria-label="집 3D 장면">
+      <div class="view-toolbar">
+        <button id="present-plan" aria-pressed="true">위에서 보기</button><button id="present-follow" aria-pressed="false">로봇 따라가기</button><button id="present-eye" aria-pressed="false">로봇 눈높이</button><div class="view-buttons" aria-label="전체 보기"><button id="view-overview" aria-pressed="true">전체</button><button id="view-plan" aria-pressed="false">평면</button></div>
+        <label class="camera-label" for="camera-select">시점</label><select id="camera-select" aria-label="방과 로봇 시점"><option value="">방 시점 선택</option></select>
+        <button id="compare" class="compare-button" aria-pressed="false" disabled>사진 비교</button>
+        <button id="open-lidar" aria-expanded="false" aria-controls="lidar-panel">실측 대조</button>
+        <button id="open-robot" aria-controls="robot-panel">로봇 위치</button>
+        <div class="toolbar-spacer"></div><button id="reset-view" class="subtle" aria-label="현재 시점의 카메라 초기화">시점 초기화</button>
+      </div>
+      <div class="live-banner"><strong id="live-summary">위치 입력 대기</strong><span id="live-delay">—</span><span id="route-note">동선 API 미연결</span></div><div id="remote-change" class="remote-change" role="status" hidden><p>새 저장본이 있습니다. 현재 수정은 보존했습니다.</p><button id="reload-scene">수정 취소 · 최신본 불러오기</button></div>
+      <div id="stage" class="stage">
+        <div id="render-pane" class="render-pane"><canvas id="scene-canvas" tabindex="0" aria-label="집 3D 뷰어. 드래그로 회전, 휠로 확대. 가구 클릭으로 선택. 선택 후 방향키로 이동, R로 회전, Delete로 삭제."></canvas><div class="stage-label"><span id="view-label">전체 장면</span><span id="view-note">현관 · 방1 · 발코니 제외</span></div><div id="loading" class="stage-message" role="status"><span class="loading-dot" aria-hidden="true"></span>집 장면을 불러오고 있습니다</div><div id="canvas-caption" class="comparison-caption" hidden>같은 카메라 · SIM</div></div>
+        <figure id="reference-pane" class="reference-pane" hidden><img id="reference-image" alt="장면 배치를 대조할 원본 사진"><figcaption><span id="source-label">원본 촬영</span><span id="alignment-label"></span></figcaption></figure>
+      </div>
+      <div class="scene-footer"><p id="interaction-hint">드래그 회전 <span>·</span> 휠 확대 <span>·</span> 가구 클릭 선택</p><span id="selection-indicator">선택 없음</span></div>
+      <div id="feedback" class="feedback" role="status" aria-live="polite" hidden></div>
+      <section id="lidar-panel" class="lidar-panel" aria-label="LiDAR 실측과 가구 근거 대조" hidden>
+        <div class="lidar-heading"><div><h2>실측과 가구 대조</h2><p id="lidar-summary">저장 관측을 불러오는 중</p></div><button id="close-lidar">3D로 돌아가기</button></div>
+        <p id="lidar-error" role="status" hidden></p>
+        <div id="lidar-body" hidden>
+          <div class="lidar-toolbar"><button id="lidar-prev" aria-label="이전 정지 관측">이전</button><label class="sr-only" for="lidar-stop">측정 정지 선택</label><select id="lidar-stop"></select><button id="lidar-next" aria-label="다음 정지 관측">다음</button><button id="lidar-local" aria-pressed="true">센서 기준</button><button id="lidar-group" aria-pressed="false">재정합 묶음</button><button id="lidar-floor" aria-pressed="false">SIM 단면 · 후보</button></div>
+          <p id="lidar-context" class="lidar-context"></p><p id="lidar-registration" class="lidar-registration"></p>
+          <div class="lidar-columns"><figure class="lidar-figure"><canvas id="lidar-plot" aria-label="선택한 정지 관측의 미터 단위 LiDAR 거리점"></canvas><figcaption id="lidar-plot-note"></figcaption></figure><figure class="lidar-figure"><img id="lidar-photo" alt="측정 당시 사진"><div id="lidar-photo-empty" class="lidar-empty" hidden>이 정지는 사진이 보관되지 않았습니다.</div><figcaption>측정 당시 카메라 · <a id="lidar-photo-link" target="_blank" rel="noopener">원본 크기로 보기</a></figcaption><p id="lidar-observation"></p><p id="lidar-limits" class="muted"></p><div id="lidar-targets" class="lidar-targets" aria-label="관련 SIM 객체"></div></figure></div>
+          <p class="lidar-help">각 장소에 내려놓고 5초 이상 대기한 기록입니다. 2D LiDAR는 한 높이의 단면을 측정합니다. 가구의 높이·색·재질은 영상과 RTAB 사진으로 대조합니다. 이 화면은 저장 자료 검토이며 실시간 로봇 위치가 아닙니다. <a href="/audit/validation/index.html" target="_blank" rel="noopener">원본 사진과 Isaac 렌더 비교</a></p>
+          <details class="lidar-help"><summary>실측으로 실행한 PC 경로계획 결과</summary><p>5개 지역의 20정지를 기존 지도·경로계획기에 입력했습니다. 15개 요청 중 8개 지역 후보가 나왔고 7개는 막힘 또는 연결 부족으로 보류했습니다. 성공에는 거의 같은 위치와 중복 목표가 포함됩니다. 미관측 영역과 장애물 여유 25cm는 유지했습니다. 집 전체 경로나 실물 주행 승인이 아닙니다.</p><a href="/audit/lidar20261001/navigation/overview.png" target="_blank" rel="noopener">지역별 실제 계획 결과 크게 보기</a><img class="navigation-preview" src="/audit/lidar20261001/navigation/overview.png" alt="실측 지역지도 5개에 대한 기존 경로계획기 실행 결과" loading="lazy"></details>
+        </div>
+      </section>
+    </section>
+    <aside class="editor" aria-label="가구 배치 편집">
+      <section id="robot-panel" class="robot-panel" aria-labelledby="robot-title" tabindex="-1">
+        <div class="section-heading"><h2 id="robot-title">MechaDog 위치</h2><span>PC · 기록 확인</span></div>
+        <p id="robot-state-label" class="robot-state-label" role="status">정지 기록을 선택하세요</p>
+        <p class="robot-help">실시간 위치와 최근 60초 궤적을 표시합니다. 회색 로봇은 마지막 정상 위치입니다.</p><button id="resume-live">실시간 위치로 돌아가기</button><p id="presentation-note"></p><label class="map-option"><input id="show-map" type="checkbox">라이다 점유 대조</label><label class="map-option"><input id="render-1080" type="checkbox">1080p 렌더 검증</label><button id="capture-evidence">현재 시점 · FPS 저장</button><p id="evidence-note"></p><a href="/comparison.html" target="_blank">통합 비교 · 위치 변경 보고</a>
+        <label for="robot-stop">측정 정지</label>
+        <select id="robot-stop" disabled><option value="">기록을 불러오는 중</option></select>
+        <div class="robot-replay-actions"><button id="robot-prev" disabled aria-label="이전 측정 정지">이전</button><button id="robot-load" disabled>기록 위치 보기</button><button id="robot-next" disabled aria-label="다음 측정 정지">다음</button></div>
+        <p id="robot-error" class="robot-error" role="status" hidden></p>
+        <div class="robot-view-actions"><button id="robot-focus" disabled>로봇 확대</button><button id="robot-eye" disabled>로봇 시점</button></div>
+        <div class="robot-options"><label><input id="robot-points" type="checkbox" checked>실측 LiDAR 점</label><label><input id="robot-follow" type="checkbox" checked>선택 위치 따라가기</label></div>
+        <dl class="robot-metadata"><dt>집 좌표</dt><dd id="robot-coordinate">위치 미선택</dd><dt>자료 시각</dt><dd id="robot-timestamp">—</dd><dt>상태</dt><dd id="robot-freshness">실시간 연결 없음</dd></dl>
+        <p id="robot-registration" class="robot-registration">확인된 집 좌표가 없는 기록은 로봇을 표시하지 않습니다.</p>
+        <figure id="robot-photo-figure" class="robot-photo" hidden><a id="robot-photo-link" target="_blank" rel="noopener"><img id="robot-photo" alt="선택한 정지의 측정 당시 사진" loading="lazy"></a><figcaption id="robot-photo-caption"></figcaption></figure>
+        <p id="robot-photo-empty" class="robot-help" hidden>이 정지는 측정 사진이 보관되지 않았습니다.</p>
+        <details class="robot-details"><summary>좌표와 모델의 근거</summary><p id="robot-frame">floorplan_xy_m_z_up · m · yaw rad</p><p id="robot-model-note">기존 MechaDog 모델을 불러오는 중입니다.</p><p>주황색 점선은 후보 위치 표시입니다. 로봇 몸체는 정지 자세의 시각 모델이며 실물 동작이나 보행을 재현하지 않습니다. 실물 명령 전송은 비활성입니다.</p></details>
+      </section>
+      <section class="object-section">
+        <div class="section-heading"><h2>가구 배치</h2><span id="object-count"></span></div>
+        <label class="sr-only" for="object-search">가구 검색</label><input id="object-search" class="search" type="search" placeholder="가구 찾기" autocomplete="off">
+        <label class="sr-only" for="room-filter">방 필터</label><select id="room-filter"><option value="all">모든 방</option></select>
+        <div id="object-list" class="object-list" role="group" aria-label="편집 가능한 가구 목록"></div>
+        <p id="list-empty" class="muted" hidden>검색에 맞는 가구가 없습니다.</p>
+      </section>
+      <section class="transform-section" aria-labelledby="selected-title">
+        <div class="selected-heading"><h2 id="selected-title">가구를 선택하세요</h2><span id="selected-room" class="muted"></span></div>
+        <div id="transform-fields" class="transform-fields"><label for="position-x">X <span>m</span><input id="position-x" type="number" step="0.05" min="-2" max="13" disabled></label><label for="position-y">Y <span>m</span><input id="position-y" type="number" step="0.05" min="-2" max="10" disabled></label><label for="rotation">방향 <span>°</span><input id="rotation" type="number" step="5" disabled></label></div>
+        <button id="move-floor" class="wide" aria-pressed="false" disabled>바닥을 찍어 이동</button>
+        <div class="edit-actions"><button id="undo" disabled>되돌리기</button><button id="cancel" disabled>수정 취소</button></div>
+        <button id="remove" class="danger wide" disabled>선택 가구 삭제</button>
+        <details class="object-evidence"><summary>사진 근거와 불확실성</summary><p id="object-evidence" class="muted">가구를 선택하면 출처를 확인할 수 있습니다.</p></details>
+      </section>
+      <details id="removed-section" class="removed-section"><summary>삭제한 가구 <span id="removed-count">0</span></summary><label class="sr-only" for="removed-select">복원할 가구</label><select id="removed-select" disabled><option value="">삭제한 가구 없음</option></select><button id="restore" class="wide" disabled>선택 가구 복원</button></details>
+      <section class="connection-status" aria-label="실물 연결 상태"><div class="status-heading"><span class="status-dot" aria-hidden="true"></span><h2>실물 연결 대기</h2></div><p id="sensor-status">카메라 미연결 · 라이다 미연결<br>지도 위치 정합 미확인</p><span class="status-note">실물 항법 미검증</span></section>
+    </aside>
+  </main>
+  <a id="download" hidden></a>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

@@ -6,7 +6,7 @@ import json
 import pytest
 from conftest import FIXTURES, load_jsonl
 
-from tools.telemetry_probe import ProbeStats, capture, exit_code, main
+from tools.probe.telemetry_probe import ProbeStats, capture, exit_code, main
 
 
 def packet(seq=1, device="dog-a", boot="boot-a", **overrides):
@@ -158,6 +158,6 @@ def test_out_of_range_rate_and_output_refuses_existing_file(tmp_path, monkeypatc
     def no_socket(*_args, **_kwargs):
         pytest.fail("existing output must be rejected before opening a socket")
 
-    monkeypatch.setattr("tools.telemetry_probe.socket.socket", no_socket)
+    monkeypatch.setattr("tools.probe.telemetry_probe.socket.socket", no_socket)
     assert main(["--output", str(target)]) == 1
     assert target.read_text(encoding="utf-8") == "existing measurement"

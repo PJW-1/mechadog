@@ -3,86 +3,73 @@ Copyright 2026 MechDog Physical AI Team
 
 이 저장소의 코드는 Apache License 2.0 을 따른다 (루트 `LICENSE`).
 아래는 `models/ppe.onnx` 가 무엇에서 만들어졌는지와, 재배포할 때 함께
-가야 하는 고지다. **이 파일은 `ppe.onnx` 와 같이 배포한다** (Release 자산).
-
-⚠️ *(2026-09-28)* 이 NOTICE 가 다루는 `ppe-v3`(5클래스, `person_down` 포함) 이후로
-이어진 후보 v12~v23b 도 XIAO 실측에서 기각됐다(마지막 후보 v23b, mechdog-01 실측
-정상 착용자 오경고 4회). 다음 모델은 `person_down` 을 빼고 4클래스
-(`helmet`/`no_helmet`/`vest`/`no_vest`)로 다시 학습하며, 그때 이 NOTICE 도 데이터
-출처·클래스 구성을 다시 쓴다.
+가야 하는 고지다. **이 파일은 `ppe.onnx` 와 같이 배포한다** (Release 자산
+`ppe-v5` 의 `NOTICE.txt` 가 같은 내용의 영문판이다).
 
 ═══════════════════════════════════════════════════════════════
 1. 배포되는 산출물
 ═══════════════════════════════════════════════════════════════
 
   파일      models/ppe.onnx
-  크기      3,677,797 바이트
-  SHA-256   a294c1b7d887fe9a80888adf5335602c741727c4963578beea183fc2876e8ed4
-  구조      YOLOX-Nano · 입력 640x640 · 5클래스
-            (helmet / no_helmet / vest / no_vest / person_down)
-  학습일    2026-09-23 · 병합셋 ppe_coco_v3
-  라이선스  ⚠️ **검토 필요** — 학습 데이터의 라이선스가 혼합(아래 §3)이라
-            가중치의 배포 조건을 아직 단정하지 않는다. 현재 배포는
-            **팀 내부 테스트용**이다. v1(ppe-v1 태그)은 CC BY 4.0 데이터만으로
-            학습돼 CC BY 4.0 이었다.
+  크기      35,779,654 바이트
+  SHA-256   145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2
+  구조      YOLOX-S · 입력 640x640 · 4클래스 (helmet / no_helmet / vest / no_vest)
+            출력은 격자 디코드 전 원시 [1, 8400, 9]
+  학습일    2026-10-02 · ppe-v4 에서 미세 조정 · 데이터 ppe4_cs_md_v2 + 하단각도 자체 촬영
+            · Release 태그 ppe-v5
+  상태      배포 모델 · 2026-10-06 mechdog-01 XIAO 직립 4구간 합격 (WBS 3.7.3, docs/PPE_ACCEPTANCE.md)
+  라이선스  CC BY 4.0 — 공개 학습 데이터 두 개가 모두 CC BY 4.0 이고(§3),
+            나머지는 팀이 직접 촬영한 사진이다(§3 (3)). 비상업(NC) 데이터는 쓰지 않았다.
 
-  학습·export 재현 절차는 `firmware_xiao_vision/PPE_Train.md` 에 있다.
+  학습 설정·데이터 카드 해시·parity·평가는 같은 Release 의 `ppe.json` 에 있다.
+  학습·변환·내보내기 도구는 `tools/ppe/` 에 있다.
 
 ═══════════════════════════════════════════════════════════════
 2. 베이스 모델
 ═══════════════════════════════════════════════════════════════
 
-  YOLOX (YOLOX-Nano)
+  YOLOX (YOLOX-S)
     Copyright (c) 2021-2022 Megvii Inc.
     Apache License 2.0
     https://github.com/Megvii-BaseDetection/YOLOX
 
-    변경 사항 — COCO 80클래스 헤드를 PPE 5클래스(person_down 포함)로 교체하고 아래 데이터셋으로
-    재학습한 뒤 ONNX 로 내보냈다.
+    변경 사항 — 공식 COCO 사전학습 가중치에서 출발해 80클래스 헤드를 PPE 4클래스로
+    교체하고 아래 데이터로 재학습했다(ppe-v4). v5 는 그 가중치에서 §3 (3) 을 더해
+    30 epoch 미세 조정한 뒤 ONNX 로 내보냈다.
 
   같은 저장소의 `models/coco.onnx` (YOLOX-S) 도 동일한 저작권·라이선스이며,
   공식 릴리스 자산을 그대로 쓴다. 이 저장소는 그 파일을 재배포하지 않는다.
 
 ═══════════════════════════════════════════════════════════════
-3. 학습 데이터셋 — 자체 합성 + 공개 데이터 3종 (ppe_coco_v3)
+3. 학습 데이터 — 공개 데이터 2종 (둘 다 CC BY 4.0) + 자체 촬영 1종
 ═══════════════════════════════════════════════════════════════
 
-  병합 후 이미지 5,914장(학습)·514장(검증) · 박스 40,591개.
+  (1) Roboflow Universe "construction safety" (Roboflow 100) — CC BY 4.0
+      https://universe.roboflow.com/j2-p/construction-safety-gsnvb-h1yhi
 
-  (1) 시뮬레이터 세션 3종 — 자체 생성 합성 데이터 570장
-      이 프로젝트의 시뮬레이터가 XIAO 카메라 실측 기하(높이 0.15m,
-      틸트 +15°±4°, FOV 74°x59°, 640x480)로 렌더링한 장면.
-      sim_factory_t15 150장 + 쓰러짐 세션 sim_fallen_t15/t15b 420장.
-      외부 라이선스 없음 (프로젝트 산출물).
+  (2) Mei-Ling Huang · Ying Cheng, "Dataset of Personal Protective Equipment (PPE)",
+      Mendeley Data v6, DOI 10.17632/zkzghjvpn2.6 — CC BY 4.0
+      https://data.mendeley.com/datasets/zkzghjvpn2/6
 
-  (2) Construction-PPE — Ultralytics 공개 자산 1,416장
-      주황 헬멧·형광 조끼 실사. 라이선스 표기 AGPL — 학습에는 사용했으나
-      원본 이미지의 재배포는 하지 않는다.
-      https://github.com/ultralytics/assets/releases (construction-ppe)
+  변경 사항 (CC BY 4.0 §3(a)(1)(B))
+  - 런타임과 같은 방식으로 사람마다 크롭했다. 여유는 검증·시험에서 런타임 값 8%,
+    학습에서는 0~20% 사이 무작위다.
+  - 클래스 이름을 helmet / no_helmet / vest / no_vest 로 맞추고 나머지 클래스는 버렸다.
+  - 머리나 몸통 라벨이 빠진 사람은 뺐다 — 라벨 없는 맨머리가 배경으로 학습되지 않게.
+  - (2)에는 사람 라벨이 없어 런타임 COCO 검출기로 사람 박스를 만들었다.
+  - (2) 중 (1)과 같은 사진(좌우 반전 포함)은 지각 해시(dHash)로 뺐다.
+  도구: `tools/ppe/rf100_prepare.py`, `tools/ppe/mendeley_prepare.py`.
 
-  (3) SHWD (Safety Helmet Wearing Dataset) — 7,581장 중 샘플링
-      hat→helmet · person→no_helmet 으로 클래스 변환.
-      연구용 라이선스 — 상업적 이용 조건 확인 필요.
-
-  (4) Simuletic CCTV_Incident (Hugging Face) — 112장
-      laying→person_down 으로 클래스 변환 (standing 은 미사용).
-      CC BY 4.0.
-      https://huggingface.co/datasets/simuletic/CCTV_Incident
-
-  변경 사항 — 출처를 하나로 병합하고 클래스 어휘를
-  helmet / no_helmet / vest / no_vest / person_down 으로 통일했다
-  (`person` 은 1단 COCO 검출기가 담당하므로 제외).
-  v2(태그 ppe-v2)는 생성기 확률 설계로 person_down 라벨이 0개였다.
-  v3는 자세 순환 강제 세션과 (4)로 211(학습)·17(검증)개를 확보해
-  실제로 학습했다 — 검증 AP 0.439.
+  (3) 하단각도 자체 촬영 — 팀 산출물, 외부 라이선스 없음 (ppe-v5 에서 추가)
+      안전모·조끼를 착용한 팀원 1명을 낮은 시점에서 360도 돌며 찍은 영상의 프레임 400장.
+      Grounding DINO (IDEA-Research, Apache-2.0) 로 helmet·vest 박스를 자동으로 만들고
+      둘 중 하나라도 없거나 잘린 사진 121장을 뺐다(279장 사용). 라벨러는 라벨 생성에만
+      썼고 배포하지 않는다. 폰 사진을 XIAO 해상도(긴 변 640)로 줄여 (1)·(2) 와 같은
+      규칙으로 사람마다 크롭했다. 도구: `tools/ppe/colab_ppe_v5_lowangle.ipynb`.
+      ⚠️ 사람 얼굴이 찍힌 사진이라 저장소·Release 어디에도 올리지 않는다.
 
   ⚠️ 원본 이미지는 이 저장소로 재배포하지 않는다. 위 출처에서 각자 받는다.
-
-  ── v1 이력 (ppe-v1 태그, 2026-09-18) ──
-  Roboflow Universe 공개 4종(ppe-detection-qlq3d · ppe-2p4ai ·
-  safety_equipments-3brcs · no-helmet-no-vest) 병합 3,219장으로 학습.
-  4종 모두 CC BY 4.0 또는 Public Domain 이라 가중치도 CC BY 4.0 이었다.
-  실기 도메인 불일치(눈높이 CCTV 시점 vs 우리 0.15m 상향)로 v2에서 폐기.
+  두 데이터의 저작자는 이 작업을 보증하지 않는다.
 
 ═══════════════════════════════════════════════════════════════
 4. 요약
@@ -91,12 +78,48 @@ Copyright 2026 MechDog Physical AI Team
   대상                        라이선스        비용    의무
   ─────────────────────────  ─────────────   ─────   ──────────────────────
   이 저장소 코드              Apache-2.0      없음    LICENSE·NOTICE 유지
-  models/ppe.onnx (가중치)    ⚠️ 검토 중      없음    NOTICE 유지 · 팀 내부용
+  models/ppe.onnx (가중치)    CC BY 4.0       없음    NOTICE 유지 · 저작자 표시
   YOLOX 베이스 모델           Apache-2.0      없음    저작권 고지 유지
-  시뮬레이터 세션             자체 산출물     없음    없음
-  Construction-PPE            AGPL 표기       없음    원본 재배포 금지
-  SHWD                        연구용          없음    상업 이용 조건 확인
-  Simuletic CCTV_Incident     CC BY 4.0       없음    저작자 표시
+  Roboflow construction-safety CC BY 4.0      없음    저작자 표시 · 변경 표시
+  Mendeley PPE2286            CC BY 4.0       없음    저작자 표시 · 변경 표시
+  하단각도 자체 촬영          팀 산출물       없음    배포하지 않음
+  Grounding DINO (라벨러)     Apache-2.0      없음    배포하지 않음 (라벨 생성에만 사용)
 
-  v1 의 "가중치 CC BY 4.0" 판정은 v3 데이터셋 구성에서 성립하지 않는다.
-  외부 배포·상업 이용 전에 (2)(3)의 라이선스 조항을 다시 확인한다.
+  이전 배포 모델(ppe-v1~v4)의 고지는 이 파일의 깃 이력에 있다. 개발 후보 v12·v23b 의
+  고지는 각 Release 의 NOTICE.txt 에 있다.
+
+═══════════════════════════════════════════════════════════════
+5. 위험물 검출 모델 — models/hazard.onnx
+═══════════════════════════════════════════════════════════════
+
+  파일      models/hazard.onnx  (Release 태그 hazard-v1 · 영문판은 같은 Release 의 NOTICE.txt)
+  크기      35,776,558 바이트
+  SHA-256   7bcf1182c2c63ddb97f316a83ef96ae3ae088ab5e93eb9fd734782e563ea9746
+  구조      YOLOX-S · 입력 640x640 · 2클래스 (lighter / powerbank)
+            출력은 격자 디코드 전 원시 [1, 8400, 7]
+  학습일    2026-10-02 · 데이터 lighter_powerbank_coco_2class
+  상태      XIAO 실측 전 후보
+  라이선스  CC BY 4.0 — 학습 데이터 세 개가 모두 CC BY 4.0 이다. 비상업(NC) 데이터는 쓰지 않았다.
+
+  베이스 모델  YOLOX-S (Megvii Inc., Apache-2.0) — §2 와 같다. 80클래스 헤드를 2클래스로
+              교체하고 아래 데이터로 재학습했다.
+
+  학습 데이터 (Roboflow Universe · 전부 CC BY 4.0)
+  (1) vision-wajsm "lighter"  https://universe.roboflow.com/vision-wajsm/lighter-wvso3
+  (2) vision-wajsm "portable charger"  https://universe.roboflow.com/vision-wajsm/portable-charger
+  (3) ia-act "My First Project"  https://universe.roboflow.com/ia-act/my-first-project-3xogl
+  사진 2,226장 전부를 파일 내용 SHA-256 으로 위 셋 중 하나와 대조해 확인했다.
+
+  변경 사항 (CC BY 4.0 §3(a)(1)(B))
+  - lighter / powerbank 만 남겼다 (portable-charger 와 (3)의 powerbank 를 powerbank 로 통합).
+    나머지 클래스는 버렸다.
+  - 대상 박스가 남지 않은 사진은 박스 없는 배경(정상) 사진으로 썼다. normal 클래스는 없다.
+  - 내용이 같은 사진(SHA-256)을 지우고 train/valid/test 를 8:1:1 로 다시 나눴다.
+
+  ⚠️ 원본 이미지는 재배포하지 않는다. 세 데이터의 저작자는 이 작업을 보증하지 않는다.
+
+  대상                        라이선스        비용    의무
+  ─────────────────────────  ─────────────   ─────   ──────────────────────
+  models/hazard.onnx          CC BY 4.0       없음    NOTICE 유지 · 저작자 표시
+  Roboflow lighter·portable charger·My First Project
+                              CC BY 4.0       없음    저작자 표시 · 변경 표시

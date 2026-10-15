@@ -131,18 +131,16 @@ class Commander:
         self.halt()
         return self._encoder.estop()
 
+    def stop_now(self) -> str:
+        """동선 취소의 즉시 STOP. 안전 래치나 주기 송신 마감은 바꾸지 않는다."""
+        self.halt()
+        return self._encoder.encode("STOP")
+
     def open_session(self) -> str:
-        """새 호스트 프로세스의 **첫 전문** (`STOP` seq=1).
+        """새 호스트 프로세스의 첫 전문 — 세션 개시 신호 `STOP` seq=1 (PROTOCOL 4절).
 
-        ⚠️ **프로세스에서 가장 먼저 인코딩해야 한다.** 로봇은 seq 역전을 폐기하므로,
-        재시작해서 seq 가 1 로 돌아간 호스트는 이전 세션의 최대 seq 를 넘을 때까지
-        **통째로 무시된다** — 10Hz 로 10분 운용했다면 그 뒤 10분 동안 `ESTOP` 조차
-        닿지 않는다. 규약은 그래서 **`STOP` seq=1 + 더 새로운 ts** 를 세션 개시
-        신호로 정해 두었다 (PROTOCOL 4절). 이 전문이 정확히 그 신호다.
-
-        `STATE` 나 `RESET_SAFE` 가 먼저 나가면 신호가 성립하지 않는다. 실제로
-        `--reset-on-start` 로 첫 전문이 `RESET_SAFE` 가 되어 목업이 우리 명령을
-        159건 폐기했다.
+        ⚠️ 프로세스에서 가장 먼저 인코딩해야 한다. 다른 전문이 먼저 나가면 로봇이 이전
+        세션의 seq 를 넘을 때까지 `ESTOP` 까지 전부 폐기한다.
         """
         self.halt()
         return self._encoder.encode("STOP")
@@ -150,8 +148,7 @@ class Commander:
     def clear_safe(self) -> str:
         """**즉시 보낼 `RESET_SAFE` 전문을 돌려준다.**
 
-        원인을 해소하고 **사람이 확인한 뒤에만** 호출한다. 자동 해제를 만들면
-        무엇 때문에 멈췄는지 모르는 채로 다시 움직인다 (DR-16).
+        원인을 해소하고 사람이 확인한 뒤에만 호출한다 (ADR-21).
         """
         self.halt()
         return self._encoder.reset_safe()

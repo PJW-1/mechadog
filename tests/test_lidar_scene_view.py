@@ -1,6 +1,6 @@
 """The offline viewer must not expose arbitrary local files."""
 
-from tools.lidar_scene_view import VENDOR, VIEWER, resolve_resource
+from tools.lidar.lidar_scene_view import VENDOR, VIEWER, resolve_resource
 
 
 def test_viewer_serves_scene_assets_and_only_map_photos(tmp_path):

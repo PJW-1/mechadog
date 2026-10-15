@@ -1,0 +1,132 @@
+{
+  "frame_id": "patrol",
+  "pose_origin": "lidar_centre",
+  "yaw_unit": "radians",
+  "truth_source": "mixed_user_authorized_verified_and_measured_xy",
+  "intervals": [
+    {
+      "start_ms": 1791204296274,
+      "end_ms": 1791204305875,
+      "x": 3.8607731958762885,
+      "y": -1.5749999999999997,
+      "yaw": -3.08066136664423,
+      "source": "verified_office",
+      "candidate_id": 0,
+      "observation_group": "office_stop_0"
+    },
+    {
+      "start_ms": 1791204308273,
+      "end_ms": 1791204416006,
+      "x": 3.964841860465066,
+      "y": -1.5665906976744504,
+      "yaw": 2.967208632903136,
+      "source": "verified_office",
+      "candidate_id": 1,
+      "observation_group": "office_stop_1"
+    },
+    {
+      "start_ms": 1791204543777,
+      "end_ms": 1791204578708,
+      "x": 1.4556936416184925,
+      "y": -1.7491040462427763,
+      "yaw": -3.0832872431029066,
+      "source": "verified_office",
+      "candidate_id": 6,
+      "observation_group": "office_stop_6"
+    },
+    {
+      "start_ms": 1791204785177,
+      "end_ms": 1791204798175,
+      "x": 3.3990310077519337,
+      "y": -0.7685658914728666,
+      "yaw": 1.4916904872857835,
+      "source": "verified_office",
+      "candidate_id": 12,
+      "observation_group": "office_stop_12"
+    },
+    {
+      "start_ms": 1791204801867,
+      "end_ms": 1791204827367,
+      "x": 3.7062156862745077,
+      "y": -0.26500000000000046,
+      "yaw": 1.7502591781683328,
+      "source": "verified_office",
+      "candidate_id": 13,
+      "observation_group": "office_stop_13"
+    },
+    {
+      "start_ms": 1791204832372,
+      "end_ms": 1791204839802,
+      "x": 3.7011333333333347,
+      "y": -1.5055333333333318,
+      "yaw": 1.4750806784501833,
+      "source": "verified_office",
+      "candidate_id": 14,
+      "observation_group": "office_stop_14"
+    },
+    {
+      "start_ms": 1791204842097,
+      "end_ms": 1791204845976,
+      "x": 3.822692307692307,
+      "y": -1.4496153846153856,
+      "yaw": 1.3234819916504594,
+      "source": "verified_office",
+      "candidate_id": 15,
+      "observation_group": "office_stop_15"
+    },
+    {
+      "start_ms": 1791204851076,
+      "end_ms": 1791204857778,
+      "x": 2.675000000000002,
+      "y": -1.385597014925374,
+      "yaw": 1.6173658267576667,
+      "source": "verified_office",
+      "candidate_id": 16,
+      "observation_group": "office_stop_16"
+    },
+    {
+      "start_ms": 1791204860678,
+      "end_ms": 1791204866566,
+      "x": 2.6750000000000007,
+      "y": -1.3850000000000005,
+      "yaw": 1.5929063045282053,
+      "source": "verified_office",
+      "candidate_id": 17,
+      "observation_group": "office_stop_17"
+    },
+    {
+      "start_ms": 1791204872274,
+      "end_ms": 1791204901970,
+      "x": 2.5013513513513455,
+      "y": -0.705000000000004,
+      "yaw": 1.6370261615993635,
+      "source": "verified_office",
+      "candidate_id": 18,
+      "observation_group": "office_stop_18"
+    },
+    {
+      "start_ms": 1791204905576,
+      "end_ms": 1791204930776,
+      "x": 1.8016666666666692,
+      "y": -0.7849999999999971,
+      "yaw": 1.5321523042978211,
+      "source": "verified_office",
+      "candidate_id": 19,
+      "observation_group": "office_stop_19"
+    },
+    {
+      "start_ms": 1791205073560,
+      "end_ms": 1791205096630,
+      "x": -2.075,
+      "y": -0.875,
+      "yaw": 1.7402233217747969,
+      "source": "post_front_measured_xy",
+      "observation_group": "post_front",
+      "reported_pose": [
+        -2.245,
+        -0.025,
+        1.7453292519943295
+      ]
+    }
+  ]
+}

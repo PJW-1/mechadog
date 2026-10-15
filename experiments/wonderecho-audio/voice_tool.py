@@ -1,6 +1,6 @@
 """WonderEcho 음성 테스트 도구 — 버튼으로 스피커/파이프라인을 확인한다.
 
-로컬 전용 도구. Git에 올리지 않는다.
+로컬 전용 도구.
 
   python -X utf8 voice_tool.py
 
@@ -21,6 +21,7 @@ import os
 import struct
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 import tkinter as tk
@@ -33,7 +34,7 @@ VOICE_API = "http://127.0.0.1:8090"
 ROBOT_API = "http://127.0.0.1:8000"
 PORT = "COM5"
 
-SITE = r"C:\Users\a9800\AppData\Local\Programs\Python\Python312\Lib\site-packages"
+SITE = sysconfig.get_paths()["purelib"]
 ENV = dict(os.environ)
 ENV["PATH"] = (
     rf"{SITE}\torch\lib;{SITE}\nvidia\cublas\bin;{SITE}\nvidia\cuda_nvrtc\bin;" + ENV["PATH"]

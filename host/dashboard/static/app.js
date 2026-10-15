@@ -2,6 +2,8 @@ import {FactoryView,renderRobotPreviews} from './scene.js';
 import {icon,renderIcons} from './icons.js';
 import {Operations,ROBOTS} from './operations.js';
 import {OperationalPanels} from './panels.js';
+import {LiveMap} from './live-map.js';
+import {Scene3D} from './scene3d.js';
 import {registerPageTools} from './webmcp.js';
 import {RobotDetailView} from './robot-view.js';
 import {RobotLink} from './robot-link.js';
@@ -14,6 +16,10 @@ renderIcons();
 const $=id=>document.getElementById(id);
 let view=null,robotView=null,toastTimer,currentPage='dashboard',lastOpener=null,observationFailed=false;
 let visionFeed=null,visionStatus={state:'connecting'};
+let panels=null;
+let mainLiveMap=null,mapAvailable=false,scene3d=null;
+// 서버가 실제 지도를 줬을 때만 예시 공장 자리를 실제 집 지도로 바꾼다. 없으면 «지도 없음» 을 그대로 말한다.
+function showLiveMap(){const three=scene3d?.shown,shown=operations.live&&mapAvailable&&!three;$('live-house-map').hidden=!shown;$('map-placeholder').hidden=operations.demo||shown||three;$('scene-subtitle').textContent=three?'집 3D SIM · 드래그 회전, 휠 확대':operations.demo?'예시 공간 · 실제 위치 미수신':shown?'실제 집 지도 · 로봇이 추정한 위치':'지도 없음 · 예시 공장 숨김'}
 // 로봇 시점 창의 문구는 **실제로 받고 있는 상태**를 말한다. 연결만 됐다고
 // "실시간" 이라 하지 않는다 — 멈춘 장면이 실시간처럼 보이면 안 된다.
 const VISION_TEXT={off:['영상 없음 · 비전 꺼짐','비전 채널 없음'],connecting:['영상 연결 중','연결 중'],waiting:['영상 대기 · 추론 결과 없음','연결됨 · 영상 대기'],live:['실시간 · 검출 박스','실시간 수신 중'],stale:['영상 멈춤 · 마지막 장면','새 영상 없음'],closed:['영상 끊김 · 다시 연결 중','연결 끊김 · 다시 연결 중']};
@@ -21,7 +27,7 @@ function syncVisionStatus(){
  $('app').classList.toggle('vision-has-frame',!!visionStatus.lastFrameAt);
  if(!operations.live)return;
  const [badge,status]=VISION_TEXT[visionStatus.state]||VISION_TEXT.connecting;
- $('frame-source').textContent=badge;
+ $('frame-source').textContent=badge+(visionStatus.ppeTest?' · PPE 시험':'');
  $('camera-status').textContent=visionStatus.state==='live'?status+' · 검출 '+visionStatus.detections+'건 · 사람 '+visionStatus.persons+'명':status;
  $('camera-resolution').hidden=visionStatus.state!=='live';
  if(visionStatus.state==='live'){
@@ -31,6 +37,7 @@ function syncVisionStatus(){
  }
  const at=visionStatus.lastFrameAt?new Date(visionStatus.lastFrameAt).toLocaleTimeString('ko-KR',{hour12:false}):'—';
  $('frame-time').innerHTML='마지막 영상 수신　'+at+' <span class="muted">· 관측 전용</span>';
+ panels?.refreshGuardReadiness();
 }
 const cameraDock=$('camera-dock'),cameraHome=cameraDock.parentElement,cameraNext=cameraDock.nextElementSibling;
 let storage=null;try{storage=localStorage}catch{/* Restricted browsers can still use session-only drafts. */}
@@ -68,7 +75,9 @@ const operations=fleetInfo
  :new Operations({storage,link:apiBase?new RobotLink({baseUrl:apiBase}):null});
 // 음성 중계는 대시보드 명령 링크와 별개다 — voice_pipeline --web 이 떠 있으면
 // 로컬 기본 주소(127.0.0.1:8090)로 자동으로 붙고, 없으면 패널이 준비만 표시한다.
-const voiceBase=await resolveVoiceBase();
+const runtimeHealth=apiBase?await fetch(apiBase+'/health').then(r=>r.ok?r.json():null).catch(()=>null):null;
+const voicePath=runtimeHealth?.capabilities?.voice_path;
+const voiceBase=apiBase&&typeof voicePath==='string'&&/^\/api\/[a-z0-9-]+$/.test(voicePath)?apiBase+voicePath:await resolveVoiceBase();
 const voiceLink=voiceBase?new VoiceLink({baseUrl:voiceBase}):null;
 const visionAvailable={},feeds=[];
 let visionRobot=null;
@@ -98,8 +107,10 @@ if(operations.connected){
  fetch(bases[ROBOTS[0]]+'/api/broadcast').then(response=>response.ok?response.json():null).then(state=>{if(state)operations.setBroadcast(state)}).catch(()=>{});
  await Promise.all(Object.entries(bases).map(async([robot,base])=>{
   const health=await fetch(base+'/health').then(response=>response.json()).catch(()=>null);
+  operations.slot(robot).capabilities=health?.capabilities??{};
+  operations.slot(robot).scene3dUrl=health?.dashboard?.scene3d_url||'';
   visionAvailable[robot]=health?.vision_clients!==null;
-  // 명령 API 가 열렸는지 (WBS 3.6.5). 옛 서버처럼 read_only 가 없으면 닫힌 것으로 본다.
+  // 명령 API 가 열렸는지. 옛 서버처럼 read_only 가 없으면 닫힌 것으로 본다.
   operations.setCommandsOpen(health?.read_only===false,robot);
   // 설정 화면의 단계 표 값 (B7). 못 받으면 화면이 «미수신» 이라고 적는다.
   fetch(base+'/api/policy').then(response=>response.ok?response.json():null).then(policy=>{if(policy)operations.setPolicy(policy,robot)}).catch(()=>{});
@@ -119,9 +130,11 @@ if(operations.connected){
  for(const feed of feeds)feed.start();
  syncVisionFeed();
 }
-function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000)}
+function toast(message){const node=$('toast');if(!node)return;node.textContent=message;node.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>node.hidden=true,5000)}
 function attempt(action){try{return action()}catch(error){toast(error.message)}}
-const panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,
+// 사건 이력 (4.6.7) — 플릿도 저장소는 하나라 첫 로봇의 경로로 묻고, 사진만 사건을 낸 로봇의 경로에서 받는다.
+const historyConfig=apiBase?{baseUrl:bases[ROBOTS[0]],fetch:(url,init)=>fetch(url,init),snapshotBase:id=>{if(!fleetInfo)return apiBase;const member=fleetInfo.find(robot=>robot.id===id);return member?apiBase+member.base:null}}:null;
+panels=new OperationalPanels({store:operations,container:$('panel-content'),title:$('panel-title'),onNavigate:navigate,onToast:toast,voiceLink,history:historyConfig,getVisionStatus:()=>visionStatus,
  onManualObservation:mount=>{
   if(mount)mount.append(cameraDock);
   else if(cameraDock.parentElement!==cameraHome)cameraHome.insertBefore(cameraDock,cameraNext);
@@ -141,7 +154,7 @@ function syncObservationView(){
  $('app').classList.toggle('observation-waiting',!operations.demo||operations.stale);
  view?.setWorldVisible(dashboard);
  // ⚠️ **실제 데이터 모드에서는 예시 공장 3D 를 그리지 않는다.** 지도가 없는데(LiDAR 미연결) 가상 공장과
- // 예시 로봇 3대·"확인 필요" 표시가 실제 화면에 섞이면 배치와 위치를 아는 것처럼 보인다. 숨긴 캔버스를
+ // 예시 로봇 2대·"확인 필요" 표시가 실제 화면에 섞이면 배치와 위치를 아는 것처럼 보인다. 숨긴 캔버스를
  // 계속 그릴 이유도 없다. LiDAR 지도가 생기면 이 자리는 2D 지도로 채운다.
  view?.setActive(!observationFailed&&operations.demo&&(dashboard||(manual&&!operations.stale)));
  view?.setCameraVisible(!observationFailed&&(dashboard||manual)&&operations.demo&&!operations.stale&&(manual||!cameraDock.classList.contains('collapsed')));
@@ -149,6 +162,7 @@ function syncObservationView(){
 function reportObservationError(message){
  observationFailed=true;panels.setObservationError(message);operations.suspend('3D 렌더링 중단');syncObservationView();$('scene-failure').hidden=false;toast(message);
 }
+scene3d=new Scene3D({document,mount:$('scene3d-mount'),controls:$('scene3d-controls'),notice:$('scene3d-notice'),onChange:showLiveMap});
 function syncMain(){
  const selected=operations.selected,playing=operations.demo&&!operations.stale&&!operations.estop&&operations.mission.status==='running';
  view?.selectRobot(selected);view?.setPatrolRobot(operations.mission.robot);view?.setPlaying(playing);
@@ -159,15 +173,20 @@ function syncMain(){
  for(const element of document.querySelectorAll('.robot-tab,.camera-robot-switch [data-robot]'))element.hidden=!operations.robots.includes(element.dataset.robot);
  syncVisionFeed();
  $('app').classList.toggle('data-waiting',!operations.demo);
- $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):operations.live?'실제 연결':'실제 데이터 대기';
+ $('source-status').textContent=operations.demo?(operations.stale?'웹 예시 · 수신 만료 시험':'웹 예시'):operations.runtimeLabel;
  // ⚠️ **머리글의 제어 문구도 사실대로 말한다.** 연결돼 있는데 "정지 명령 전달 불가" 라고 적혀 있으면
  // 운용자가 비상정지를 누르지 않거나, 반대로 화면 문구를 믿고 물리 정지 수단을 찾는다.
- {const note=document.querySelector('.safety-note>span:last-child');note.firstChild.nodeValue=operations.live?'실시간 제어 연결 ':'실시간 제어 잠김 ';note.querySelector('small').textContent=operations.live?'비상정지 즉시 전송':'미연결 · 정지 명령 전달 불가';}
+ {const note=document.querySelector('.safety-note>span:last-child');note.firstChild.nodeValue=operations.live&&!operations.readOnly?'실시간 제어 연결 ':'실시간 제어 잠김 ';note.querySelector('small').textContent=operations.readOnly?'조회·계획 전용 · 정지 명령 전달 불가':operations.live?'비상정지 즉시 전송':'미연결 · 정지 명령 전달 불가';}
  // 웹 시연 임무 칸은 실제 연결에서 숨긴다 — 실제 순찰과 헷갈린다. 실제 순찰은 제어 · 장치 화면에 있다.
  document.querySelector('.mission-summary').hidden=operations.live;
  syncTelemetry();
  $('scene-subtitle').textContent=operations.demo?'예시 공간 · 실제 위치 미수신':'지도 없음 · 예시 공장 숨김';
- $('map-placeholder').hidden=operations.demo;
+ $('map-placeholder').hidden=operations.demo||(operations.live&&mapAvailable);
+ // 실제 집 지도 — 관제 서버에 붙었을 때만. 지도를 누르면 확인 창을 거쳐 로봇을 보낸다.
+ if(operations.live&&!mainLiveMap&&panels){mainLiveMap=new LiveMap({document,getLink:()=>operations.live?operations.link:null,onPick:(x,y,where)=>panels.confirmGoto(x,y,where),onAvailability:available=>{mapAvailable=available;showLiveMap()}});$('live-house-map').append(mainLiveMap.root)}
+ scene3d.setActive(currentPage==='dashboard');
+ scene3d.setUrl(operations.live?operations.slot(operations.selected).scene3dUrl:'');
+ showLiveMap();
  if(operations.live)syncVisionStatus();
  else{
   $('app').classList.remove('vision-has-frame');
@@ -177,9 +196,11 @@ function syncMain(){
   $('frame-time').innerHTML='마지막 영상 수신　— <span class="muted">· 관측 전용</span>';
  }
  $('estop').classList.toggle('preview-latched',operations.estop);
- $('estop').setAttribute('aria-label',operations.live?'긴급 정지 · 로봇에 즉시 전송':operations.estop?'긴급 정지 안내 · 웹 예시 정지 잠금 중':'긴급 정지 안내 · 실제 장비 미연결');
+ $('estop').classList.toggle('is-live',operations.live&&!operations.readOnly);
+ $('stop-label').firstChild.nodeValue=operations.live&&!operations.readOnly?'긴급 정지':'정지 안내';
+ $('estop').setAttribute('aria-label',operations.readOnly?'정지 안내 · 조회·계획 전용 화면':operations.live?'긴급 정지 · 로봇에 즉시 전송':operations.estop?'정지 안내 · 웹 예시 정지 중':'정지 안내 · 실제 장비 미연결');
  // 버튼에 적힌 말과 실제로 하는 일이 다르면 안 된다.
- {const note=$('estop').querySelector('.mobile-stop-note');if(note)note.textContent=operations.live?'연결됨 · 즉시 전송':'장비 미연결 · 정지 전송 불가';}
+ {const note=$('estop').querySelector('.mobile-stop-note');if(note)note.textContent=operations.readOnly?'조회·계획 전용':operations.live?'연결됨 · 즉시 전송':'실제 정지 불가';}
  $('demo-toggle').innerHTML=icon(playing?'pause':'play');
  $('demo-toggle').setAttribute('aria-label',playing?'예시 순찰 일시정지':operations.mission.status==='paused'?'예시 순찰 재개':'예시 순찰 준비');
  $('demo-toggle').disabled=operations.blocked&&!playing;
@@ -190,7 +211,7 @@ function syncMain(){
  const events=operations.queryEvents(),pending=events.filter(event=>event.review==='pending').length;
  const liveCount=events.filter(event=>event.source==='LIVE_FEED').length;
  document.querySelector('.event-summary strong').textContent=(operations.demo?'예시·저장 사건':'저장 사건')+' · 검토 대기 '+pending+'건';
- document.querySelector('.event-summary p').textContent=liveCount?'실시간 '+liveCount+'건 포함 · 검토 메모와 판단 근거를 확인하세요.':events.length?'검토 메모와 판단 근거를 확인하세요.':'실시간 사건은 수신되지 않았습니다.';
+ document.querySelector('.event-summary p').textContent=liveCount?'실시간 '+liveCount+'건 포함':events.length?'':'수신된 사건 없음';
  $('attention-marker').setAttribute('aria-label','예시 사건 검토 열기');
 }
 // 하단 상태 칸 — 연결 여부와 로봇 상태를 **사실대로** 말한다 (4.6.2). 연결이 없으면 예시 문구다.
@@ -199,7 +220,7 @@ function syncTelemetry(){
  syncRobotLabels();
  syncAlarm();
  const card=document.querySelector('.actual-status');
- if(!operations.live){card.dataset.tone='off';card.querySelector('strong').textContent='현장 상태 확인 불가 · 장비 미연결';card.querySelector('p').textContent='웹 예시 화면으로, 실제 장비가 연결되어 있지 않습니다.';$('state-time').textContent='—';return}
+ if(!operations.live){card.dataset.tone='off';card.querySelector('strong').textContent='현장 상태 확인 불가 · 장비 미연결';card.querySelector('p').textContent='';$('state-time').textContent='—';return}
  const text=describeTelemetry(operations.telemetry);
  card.dataset.tone=text.tone;card.querySelector('strong').textContent=text.headline;card.querySelector('p').textContent=text.summary;
  $('state-time').textContent=text.age;
@@ -239,7 +260,7 @@ $('alarm-action').addEventListener('click',()=>{if(alarmRobot&&alarmRobot!==oper
 operations.subscribe(reason=>{if(reason==='telemetry'){syncTelemetry();panels.refresh(reason);return}syncMain();panels.refresh(reason)});
 
 function navigate(page){
- const target=['dashboard','missions','events','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
+ const target=['dashboard','missions','events','history','records','zones','devices','voice','settings'].includes(page)?page:'dashboard';
  if(location.hash!=='#'+target)location.hash=target;
  openPage(target);
 }
@@ -268,7 +289,7 @@ function openPage(page){
  syncMain();
  operations.log('화면 열기',page);
 }
-window.addEventListener('hashchange',()=>{const page=location.hash.slice(1);navigate(page==='history'?'records':page)});
+window.addEventListener('hashchange',()=>{const page=location.hash.slice(1);navigate(page)});
 document.querySelector('.skip-link').addEventListener('click',event=>{event.preventDefault();(currentPage==='dashboard'?$('scene-title'):$('panel-title')).focus()});
 for(const id of ROBOTS){const marker=document.createElement('button');marker.className='map-marker';marker.dataset.robot=id;marker.append(document.createTextNode(id+' · '));const small=document.createElement('small');small.textContent='예시';marker.append(small);$('markers').append(marker)}
 document.querySelectorAll('[data-robot]').forEach(element=>element.addEventListener('click',()=>element.closest('.camera-robot-switch')?operations.selectRobot(element.dataset.robot):openRobotDetail(element.dataset.robot)));
@@ -277,14 +298,14 @@ document.querySelectorAll('[data-camera]').forEach(element=>element.addEventList
 $('close-panel').addEventListener('click',()=>navigate('dashboard'));
 $('open-events').addEventListener('click',()=>navigate('events'));
 $('attention-marker').addEventListener('click',()=>navigate('events'));
-$('zoom-in').addEventListener('click',()=>view?.zoom(.8));$('zoom-out').addEventListener('click',()=>view?.zoom(1.25));
-$('orbit-left').addEventListener('click',()=>view?.orbit(Math.PI/8));
-$('reset-view').addEventListener('click',()=>{view?.setView('overview');toast('기본 시야로 돌아왔어요.')});
+$('zoom-in').addEventListener('click',()=>mapAvailable&&operations.live?mainLiveMap?.zoom(.8):view?.zoom(.8));$('zoom-out').addEventListener('click',()=>mapAvailable&&operations.live?mainLiveMap?.zoom(1.25):view?.zoom(1.25));
+$('orbit-left').addEventListener('click',()=>mapAvailable&&operations.live?mainLiveMap?.orbit(Math.PI/8):view?.orbit(Math.PI/8));
+$('reset-view').addEventListener('click',()=>{if(mapAvailable&&operations.live)mainLiveMap?.resetView();else view?.setView('overview');toast('기본 시야로 돌아왔어요.')});
 $('fullscreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{toast('이 브라우저에서는 전체 화면을 사용할 수 없어요.')}});
 function setCameraDockState({expanded=false,collapsed=false}){
  const dock=$('camera-dock'),expand=$('expand-camera'),collapse=$('collapse-camera');
- if(expanded){dock.saveDockGeom?.();dock.style.left='';dock.style.top='';dock.style.bottom='';dock.style.width=''}
- else if(!expanded&&dock.classList.contains('expanded'))dock.restoreDockGeom?.();
+ if(expanded&&!dock.classList.contains('expanded'))dock.expandDockInPlace?.();
+ else if(!expanded&&dock.classList.contains('expanded'))dock.restoreDockBeforeExpand?.();
  dock.classList.toggle('expanded',expanded);dock.classList.toggle('collapsed',collapsed);
  const expandLabel=expanded?'로봇 시점 원래 크기로':'로봇 시점 크게 보기';
  expand.setAttribute('aria-label',expandLabel);expand.title=expandLabel;
@@ -295,6 +316,7 @@ function setCameraDockState({expanded=false,collapsed=false}){
  syncObservationView();
  // ResizeObserver also follows later viewport changes.
  view?.resize();
+ dock.persistDock?.();
 }
 $('expand-camera').addEventListener('click',()=>setCameraDockState({expanded:!$('camera-dock').classList.contains('expanded')}));
 $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:!$('camera-dock').classList.contains('collapsed')}));
@@ -305,49 +327,93 @@ $('collapse-camera').addEventListener('click',()=>setCameraDockState({collapsed:
  const stage=$('stage'),dock=cameraDock,header=dock.querySelector('.camera-header');
  const clampTo=(v,min,max)=>Math.min(max,Math.max(min,v));
  const dockInStage=()=>dock.parentElement===stage&&currentPage==='dashboard';
- // 확대·접기 전의 자유 위치를 기억해 돌아올 때 복원한다.
- let dockGeom=null;
- const saveGeom=()=>{dockGeom={left:dock.style.left,top:dock.style.top,bottom:dock.style.bottom,width:dock.style.width}};
- const restoreGeom=()=>{if(dockGeom)Object.assign(dock.style,dockGeom)};
- dock.saveDockGeom=saveGeom;dock.restoreDockGeom=restoreGeom;
+ const storageKey='mechadog.dashboard.camera.v1';
+ const desktop=()=>!globalThis.matchMedia?.('(max-width:899px)').matches;
+ const aspect=()=>{const w=visionStatus.width,h=visionStatus.height;return w>0&&h>0?w/h:4/3};
+ // Storage is optional. Invalid/old records leave the CSS default untouched.
+ let saved=null;
+ try{
+  const record=JSON.parse(storage?.getItem(storageKey)||'null');
+  if(record?.version===1&&['left','top','width'].every(key=>Number.isFinite(record[key])&&record[key]>=0)&&record.width>=200&&typeof record.collapsed==='boolean')saved=record;
+ }catch{/* Disabled storage or malformed JSON: use the default placement. */}
+ const fitDock=()=>{
+  if(!dockInStage()||!desktop())return;
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  if(!s.width||!s.height)return;
+  const maxWidth=Math.max(1,Math.min(s.width-20,1100,Math.max(1,s.height-148)*aspect()));
+  const width=clampTo(d.width,Math.min(280,maxWidth),maxWidth);
+  dock.style.width=width+'px';
+  dock.style.left=clampTo(d.left-s.left,0,Math.max(0,s.width-width))+'px';
+  dock.style.top=clampTo(d.top-s.top,0,Math.max(0,s.height-dock.offsetHeight))+'px';
+  dock.style.bottom='auto';dock.style.right='auto';
+ };
+ dock.persistDock=()=>{
+  if(!dockInStage()||!desktop())return;
+  fitDock();
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  if(!s.width||!d.width)return;
+  try{storage?.setItem(storageKey,JSON.stringify({version:1,left:d.left-s.left,top:d.top-s.top,width:d.width,collapsed:dock.classList.contains('collapsed')}))}catch{/* Session interactions still work when storage is full or blocked. */}
+ };
+ // 확대 전 크기와 위치를 기억한다. 확대 상태에서도 이동·크기 조절이 가능하다.
+ let beforeExpandGeom=null;
+ const expandInPlace=()=>{
+  beforeExpandGeom={left:dock.style.left,top:dock.style.top,bottom:dock.style.bottom,right:dock.style.right,width:dock.style.width};
+  const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
+  const maxVideoWidth=(s.height-160)*(visionStatus.width>0&&visionStatus.height>0?visionStatus.width/visionStatus.height:4/3)+18;
+  const width=Math.min(920,s.width-20,maxVideoWidth,Math.max(d.width,s.width*.75));
+  dock.style.left=clampTo(d.left-s.left,0,Math.max(0,s.width-width))+'px';
+  dock.style.top=clampTo(d.top-s.top,0,Math.max(0,s.height-148-width/aspect()))+'px';dock.style.bottom='auto';dock.style.right='auto';dock.style.width=width+'px';
+ };
+ const restoreBeforeExpand=()=>{if(beforeExpandGeom)Object.assign(dock.style,beforeExpandGeom);beforeExpandGeom=null};
+ dock.expandDockInPlace=expandInPlace;dock.restoreDockBeforeExpand=restoreBeforeExpand;
  header.addEventListener('pointerdown',event=>{
-  if(!dockInStage()||event.target.closest('button'))return;
+  if(!dockInStage()||!desktop()||event.button!==0||event.target.closest('button'))return;
   event.preventDefault();
   const s=stage.getBoundingClientRect(),d=dock.getBoundingClientRect();
-  // ⚠️ 순서가 중요하다 — expanded 를 지우면 기본 위치로 돌아가므로, 보이는
-  // 위치(rect)를 먼저 재고 나서 지운다. 그래야 끌기 시작해도 창이 안 뛴다.
-  dock.classList.remove('expanded');
-  dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';
+  dock.style.left=(d.left-s.left)+'px';dock.style.top=(d.top-s.top)+'px';dock.style.bottom='auto';dock.style.right='auto';
   const offX=event.clientX-d.left,offY=event.clientY-d.top;
   const move=move=>{
    dock.style.left=clampTo(move.clientX-s.left-offX,0,Math.max(0,s.width-dock.offsetWidth))+'px';
    dock.style.top=clampTo(move.clientY-s.top-offY,0,Math.max(0,s.height-dock.offsetHeight))+'px';
   };
-  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  const up=()=>{header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',up);header.removeEventListener('pointercancel',up);dock.persistDock();view?.resize()};
   header.setPointerCapture?.(event.pointerId);
   header.addEventListener('pointermove',move);
   header.addEventListener('pointerup',up);
   header.addEventListener('pointercancel',up);
  });
- const aspect=()=>{const w=visionStatus.width,h=visionStatus.height;return w>0&&h>0?w/h:4/3};
  for(const grip of dock.querySelectorAll('.camera-resize'))grip.addEventListener('pointerdown',event=>{
-  if(!dockInStage())return;
+  if(!dockInStage()||!desktop()||event.button!==0)return;
   event.preventDefault();
   const edge=grip.dataset.edge,s=stage.getBoundingClientRect(),startW=dock.getBoundingClientRect().width,startX=event.clientX,startY=event.clientY;
   const move=move=>{
    const dx=move.clientX-startX,dy=move.clientY-startY;
-   const grown=edge==='e'?dx:edge==='s'?dy*aspect():Math.max(dx,dy*aspect());
-   dock.style.width=clampTo(startW+grown,280,Math.min(s.width-20,1100))+'px';
+   const verticalGrowth=dy*aspect();
+   const grown=edge==='e'?dx:edge==='s'?verticalGrowth:Math.abs(dx)>=Math.abs(verticalGrowth)?dx:verticalGrowth;
+   const videoHeight=s.height-(dock.classList.contains('expanded')?160:180);
+   const maxWidth=Math.min(s.width-20,1100,videoHeight*aspect()+18);
+   dock.style.width=clampTo(startW+grown,Math.min(280,maxWidth),maxWidth)+'px';
    // 너비가 커지면 오른쪽 경계를 넘을 수 있다 — 왼쪽을 당겨 안에 둔다.
    const over=dock.getBoundingClientRect().right-s.right;
    if(over>0)dock.style.left=clampTo((dock.offsetLeft||0)-over,0,s.width)+'px';
+   fitDock();
   };
-  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);saveGeom();view?.resize()};
+  const up=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);dock.persistDock();view?.resize()};
   grip.setPointerCapture?.(event.pointerId);
   grip.addEventListener('pointermove',move);
   grip.addEventListener('pointerup',up);
   grip.addEventListener('pointercancel',up);
  });
+ if(saved){
+  Object.assign(dock.style,{left:saved.left+'px',top:saved.top+'px',width:saved.width+'px',bottom:'auto',right:'auto'});
+  setCameraDockState({collapsed:saved.collapsed});
+ }
+ globalThis.addEventListener('resize',fitDock);
+ const observer=globalThis.ResizeObserver?new ResizeObserver(fitDock):null;
+ observer?.observe(stage);
+ observer?.observe(dock);
+ // Returning from the manual camera mount can change available space.
+ new MutationObserver(fitDock).observe(stage,{childList:true});
 }
 $('demo-toggle').addEventListener('click',()=>attempt(()=>{if(operations.mission.status==='running')operations.pauseMission();else if(operations.mission.status==='paused')operations.resumeMission();else navigate('missions')}));
 function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!$('stop-dialog').open)$('stop-dialog').showModal()}
@@ -355,7 +421,13 @@ function openStopDialog(){operations.suspend('긴급 정지 안내 열기');if(!
 // 그만큼 늦고, 그 모달은 "장비가 연결되지 않았어요" 라고 거짓을 말한다. 연결이
 // 없을 때만 안내를 띄운다 — 그때는 실제로 보낼 곳이 없다.
 function onEstopPressed(){
- if(operations.live){operations.requestEstop();toast(operations.linkError||'비상정지를 보냈습니다.');return}
+ if(operations.readOnly){toast('조회·계획 전용 서버입니다. 이 화면에서는 실제 정지 명령을 보낼 수 없습니다.');return}
+ if(operations.live){
+  operations.requestEstop().then(({serverAccepted})=>toast(serverAccepted
+   ?'서버가 비상정지 명령을 보냈습니다. 실제 정지는 본체 상태로 확인하세요.'
+   :operations.linkError||'비상정지 전달을 확인하지 못했습니다. 본체 전원 스위치를 확인하세요.'));
+  return;
+ }
  openStopDialog();
 }
 $('estop').addEventListener('click',onEstopPressed);
@@ -369,7 +441,7 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)operations.suspend('페이지 숨김 · 자동 재개 안 함')});
 window.addEventListener('blur',()=>operations.suspend('창 초점 이탈 · 자동 재개 안 함'));
-window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();for(const feed of feeds)feed.stop();robotView?.dispose();panels.dispose();view?.dispose()}});
+window.addEventListener('pagehide',event=>{operations.suspend('페이지 종료');if(!event.persisted){visionFeed?.stop();for(const feed of feeds)feed.stop();robotView?.dispose();panels.dispose();mainLiveMap?.dispose();scene3d?.dispose();view?.dispose()}});
 const unregisterTools=registerPageTools({document,store:operations,navigate,onError:()=>operations.log('페이지 도구 등록 실패','일반 화면 조작은 계속 사용 가능')});
 window.addEventListener('pagehide',event=>{if(!event.persisted)unregisterTools()});
 $('retry-render').addEventListener('click',()=>location.reload());

@@ -1,7 +1,7 @@
 # 루프 워치독 실물 검증 절차 (WBS 3.2.4)
 
 2026-09-13 에 실제로 수행해 통과한 절차를 다른 사람이 그대로 따라갈 수 있게 정리한 문서다.
-감시기의 **설계와 근거**는 [`firmware_mechdog_motion/README.md`](../../firmware_mechdog_motion/README.md)
+감시기의 **설계와 근거**는 [`firmware/mechdog_motion/README.md`](../../firmware/mechdog_motion/README.md)
 의 "3.2.4 제어 루프 감시" 절에 있다. 이 문서는 **PC 쪽에서 무엇을 어떤 순서로 실행했는지**를 다룬다.
 
 > **09-15 전:** `MECHADOG_ENABLE_ACTUATORS=1` 과의 조합은 펌웨어가 `#error` 로 막았다.
@@ -37,7 +37,7 @@
 
 - Python 3.12, `pyserial`, `esptool`
 - Arduino CLI + esp32 코어 (`esp-2021r2-patch5-8.4.0` 툴체인의 `xtensa-esp32-elf-objdump`)
-- 저장소의 `tools/ota_update.py`, `tools/telemetry_probe.py`, `host/common/protocol.py`
+- 저장소의 `tools/ops/ota_update.py`, `tools/probe/telemetry_probe.py`, `host/common/protocol.py`
 - 배타 실행 잠금과 하드웨어 래퍼 — 두 작업이 동시에 같은 포트를 열지 못하게 한다
 
 ---
@@ -282,7 +282,7 @@ verified.`), NVS·otadata 보존. 기체는 바닥에 세운 상태.
 `can_action()` 이 `service_mode` 를 보지 않아 **1초 blocking 하는 ACTION 이
 그 모드에서 통과했다.** 7절의 고장 주입(약 813 ms 리셋)과 `motion_hal.cpp` 의
 `action_run` 실측(1,003~1,006 ms)을 합치면 그대로 재부팅이다. 가드를 넣고
-실기에서 확인했다 — `tools/service_action_probe.py --regression`.
+실기에서 확인했다 — `tools/probe/service_action_probe.py --regression`.
 
 | 확인 | 결과 |
 | --- | --- |

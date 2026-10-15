@@ -321,3 +321,25 @@ def test_detail_may_be_named_level_or_event() -> None:
     finally:
         log.logger.removeHandler(handler)
     assert records[0].detail == {"level": "L0", "event": "ignored"}
+
+
+def test_every_host_event_logger_is_under_the_mechadog_namespace() -> None:
+    """`setup_logging` 은 `mechadog` 아래에만 핸들러를 붙인다 — 다른 이름의 로거는 조용히 사라진다."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "host"
+    names: list[tuple[str, str]] = []
+    for path in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "event_logger"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+            ):
+                names.append((str(path.relative_to(root)), str(node.args[0].value)))
+    assert names, "event_logger 호출을 하나도 찾지 못했다"
+    stray = [(path, name) for path, name in names if not name.startswith("mechadog.")]
+    assert stray == []

@@ -70,7 +70,7 @@ test('before the robot speaks, telemetry is null and the snapshot counts as stal
 test('malformed telemetry is refused, not guessed at', () => {
   assert.throws(() => decodeTelemetryMessage('{"type":"event"}'));
   assert.throws(() => decodeTelemetryMessage(message({ batt_v: 'full' })));
-  assert.throws(() => decodeTelemetryMessage(message({ imu: { pitch: 1, roll: NaN, yaw: 0 } })));
+  assert.throws(() => decodeTelemetryMessage(message({ imu: { pitch: 1, roll: "invalid", yaw: 0 } })));
   assert.throws(() => decodeTelemetryMessage(new ArrayBuffer(4)));
 });
 
@@ -152,6 +152,38 @@ test('robot-side alarms are surfaced from its own flags, not recomputed from thr
   assert.match(Object.fromEntries(text.rows)['배터리 전압'], /저전압 \(로봇 판정\)/);
 });
 
+const withVision = (vision) => {
+  const body = JSON.parse(message());
+  if (vision !== undefined) body.vision = vision;
+  return decodeTelemetryMessage(JSON.stringify(body));
+};
+
+test('loaded models and inference latency are shown from the server status', () => {
+  const snap = withVision({
+    models: [
+      { name: 'coco', sha256: 'ab'.repeat(32), provider: 'DmlExecutionProvider' },
+      { name: 'ppe', sha256: null, provider: null },
+    ],
+    inference: { n: 3, p50_ms: 8, p95_ms: 12.25 },
+  });
+  const rows = Object.fromEntries(describeTelemetry(view({ snapshot: snap })).rows);
+  assert.equal(rows['비전 모델'], 'coco · abababababab · DmlExecutionProvider / ppe · 해시 없음 · 장치 미상');
+  assert.equal(rows['추론 지연 p50 / p95'], '8.0 / 12.3 ms · 최근 3건');
+});
+
+test('vision status that is absent, empty or not yet measured is said as such', () => {
+  for (const vision of [undefined, null]) {
+    const rows = Object.fromEntries(describeTelemetry(view({ snapshot: withVision(vision) })).rows);
+    assert.equal(rows['비전 모델'], '비전 없음 · 미수신');
+    assert.equal(rows['추론 지연 p50 / p95'], '비전 없음 · 미수신');
+  }
+  const rows = Object.fromEntries(
+    describeTelemetry(view({ snapshot: withVision({ models: [], inference: { n: 0, p50_ms: null, p95_ms: null } }) })).rows,
+  );
+  assert.equal(rows['비전 모델'], '로드된 모델 없음');
+  assert.equal(rows['추론 지연 p50 / p95'], '측정 전');
+});
+
 test('connected but nothing from the robot yet is not shown as values', () => {
   const text = describeTelemetry(view({ snapshot: decodeTelemetryMessage(message({ telemetry: false, stale: true })) }));
   assert.equal(text.rows, null);
@@ -223,4 +255,21 @@ test('a missing mode is said to be missing, never guessed', () => {
 test('an unknown mode name is shown as sent, not translated away', () => {
   const text = describeTelemetry(view({ snapshot: decodeTelemetryMessage(message({ mode: 'sentry' })) }));
   assert.match(text.headline, /모드 미수신/, '모르는 이름에 뜻을 지어내지 않는다');
+});
+
+test('missing sensor and identity fields update the host state without inventing measurements', () => {
+ const raw=JSON.parse(message());raw.telemetry={state:'IDLE',safety_latched:true};
+ const snapshot=decodeTelemetryMessage(JSON.stringify(raw));
+ const tracker=new TelemetryTracker();assert.equal(tracker.push(snapshot,0),false);
+ const text=describeTelemetry({state:'live',snapshot});assert.match(text.summary,/미수신/);
+ assert.equal(snapshot.telemetry.battV,null);assert.equal(tracker.rateHz(3000),null);
+ const feed=new TelemetryFeed({url:'ws://test',onUpdate:()=>{}});feed.receive(JSON.stringify(raw));
+ assert.equal(feed.state,'live');assert.equal(feed.malformed,0);
+});
+
+test('a malformed update exposes an error instead of leaving the last sample apparently live',()=>{
+ const feed=new TelemetryFeed({url:'ws://test'});feed.receive(message());feed.receive('invalid');
+ assert.equal(feed.state,'invalid');const text=describeTelemetry({state:feed.state,snapshot:feed.snapshot});
+ assert.equal(text.tone,'stale');assert.match(text.headline,/상태 형식 오류/);
+ feed.receive(message({seq:2}));assert.equal(feed.state,'live');
 });

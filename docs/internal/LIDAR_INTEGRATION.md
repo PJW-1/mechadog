@@ -100,8 +100,8 @@
 >
 > ⚠️ **README 의 `host/` 목록에 없는 새 디렉터리다.** 기존 다섯 개 중 어느
 > 용도에도 측위·매핑이 들어가지 않는다. 새 디렉터리가 규칙 위반은 아니다 —
-> `WBS 4.8.1` 이 `host/cloud/vlm_report.py` 를 산출물로 두고 있고 그것도
-> README 목록에 없다. 작업이 도착하면서 디렉터리가 생기는 구조다.
+> `WBS 4.8.1` 의 산출물 `host/report/situation.py` 도
+> README 목록에 없는 `host/report/` 에 있다. 작업이 도착하면서 디렉터리가 생기는 구조다.
 
 ### `tools/` — *"목업 · 지연 측정 · 텔레오퍼레이션 · 가중치 받기"*
 
@@ -109,7 +109,7 @@
 | :--- | :--- |
 | `lidar_slam.py` | ① 매핑 실행기 |
 | `zone_select.py` | ② 구역 클릭 지정 |
-| `patrol_run.py` | ③ 순찰 운용 루프 — **소켓·실시각은 이 파일에만 있다** |
+| `patrol_run.py` | ③ 순찰 운용 루프 — **소켓·실시각은 이 파일에만 있다** (런타임 `--lidar-device` 는 `host/telemetry/lidar_feed.py` · `ros2_relay.py` 를 같이 쓴다) |
 | `mock_lidar.py` | 가상 중계 노드 (`mock_mechdog.py` 와 같은 자리) |
 
 ### 그 외
@@ -135,7 +135,7 @@
 | # | 원본 | 왜 안 되는가 | 지금 |
 | :-- | :--- | :--- | :--- |
 | 1 | `{"cmd": "FORWARD", "ts": time.time()}` | 규약에 없는 스키마. `type`·`seq` 가 없고 `ts` 가 **초 단위 실수**라 규칙 ②·⑤ 로 폐기 | `Commander` 가 만드는 `MOVE` |
-| 2 | `TURN_LEFT` · `TURN_RIGHT` | **제자리 회전은 지원하지 않는다** (DR-11). 로봇이 할 수 없는 동작 | 호(arc) `MOVE{step, angle}` — `steering_for()` |
+| 2 | `TURN_LEFT` · `TURN_RIGHT` | 시간으로 도는 **개루프 회전** — 각속도 산포 82% 라 «몇 도» 가 정해지지 않는다 (DR-11) | 호(arc) `MOVE{step, angle}`, 크게 틀어지면 측위 방위를 보며 `MOVE{0, ±30}` 제자리 회전 — `steering_for()` (2026-10-01 개정) |
 | 3 | 위험 시 `send("STOP")` | `STOP` 은 일반 보행 정지이고 **FAILSAFE 를 걸지 않는다** | `ESTOP` (즉시 · 래치) |
 | 4 | 첫 전문이 아무거나 | 로봇이 seq 역전으로 **명령을 통째로 폐기한다** | `open_session()` = `STOP` seq=1 |
 | 5 | 상태 `MOVING`·`ROTATING`·`PLANNING`·`ARRIVED`·`ESTOP` | **FSM 13종에 없다.** 로봇이 폐기 + WARN 하고 텔레메트리 `state` 가 이전 값에 머문다 | 13종으로 사상 (`FSM_STATE_FOR`) |
@@ -170,7 +170,7 @@
 
 | 조건 | 판정 주체 | 이 코드의 대응 |
 | :--- | :--- | :--- |
-| 초음파 25cm 반사 정지 | **온보드 (Tier 1)** | `flags.obstacle` 을 따라 의도를 정지로 |
+| 초음파 7cm 반사 정지 | **온보드 (Tier 1)** | `flags.obstacle` 을 따라 의도를 정지로 |
 | 저전압 · 링크두절 · E-Stop | **온보드 (Tier 1)** | `safety_latched` · `state=FAILSAFE` 를 따라 `HALTED`. 전도 자동 감지는 폐기(ADR-36) |
 | 사용자 E-STOP | 호스트 | `ESTOP` 즉시 |
 | **LiDAR 전방 위험거리** | **호스트** | `ESTOP` 즉시 — 아래 각주 |
@@ -180,8 +180,9 @@
 > **LiDAR 판정만 호스트인 이유** — LiDAR 는 호스트에 붙은 센서이므로 판정 주체가
 > 호스트일 수밖에 없다. Tier 1 을 옮기는 것이 아니라 **온보드가 볼 수 없는 것을
 > 보는 것**이다 (초음파는 정면 근거리만 본다 · DR-15). 온보드 판정을 대체하지
-> 않고 더하며, 임계를 `obstacle_stop_cm`(25cm)보다 짧은 15cm 로 두어 **온보드가
-> 먼저 반응한다.** `test_host_lidar_estop_is_tighter_than_the_onboard_threshold`
+> 않고 더하며, 임계를 온보드보다 짧게 두어 **온보드가
+> 먼저 반응한다.** (2026-10-06 개정: 초음파는 코끝 기준 7cm, LiDAR 는 센서 중심 기준
+> 0.1m 라 같은 기준점으로 옮겨 비교한다 — 코끝은 LiDAR 중심에서 약 110mm, `safety.sonar_from_lidar_mm`.) `test_host_lidar_estop_is_tighter_than_the_onboard_threshold`
 > 가 대조한다.
 
 ---
@@ -263,7 +264,7 @@
 `config.yaml` 의 `lidar.mount_yaw_deg` 와 `lidar.angle_direction` 이 정본이다.
 2026-09-26 로봇 장착 실측은 정면 270°·왼쪽 180°·뒤 90°·오른쪽 0°였다.
 각 방향에 둔 표적과의 스캔 차분으로 방위를 확인했고, 정면 줄자 판독은
-약 62.3~62.4cm로 라이다 정면값 약 62.2~62.3cm와 한 지점에서 일치했다.
+약 62.3\~62.4cm로 라이다 정면값 약 62.2\~62.3cm와 한 지점에서 일치했다.
 줄자 정렬·시작점 오차 때문에 mm 단위 정확도는 주장하지 않는다.
 
 ```
@@ -282,7 +283,7 @@
   라이다는 몇 도였나"를 되짚을 수 없고, 라이다를 다시 달 때 펌웨어를 고쳐야 한다.
 - ⚠️ **책상 단품 시험에서는 그 배치의 방향·설치각을 따로 설정한다.** 로봇 장착값을
   그대로 쓰면 책상 배치의 지도가 틀릴 수 있다.
-- `tools/motion_probe.py` 는 설정을 읽지 않으므로 `--lidar-mount-yaw 270
+- `tools/probe/motion_probe.py` 는 설정을 읽지 않으므로 `--lidar-mount-yaw 270
   --lidar-angle-direction -1` 을 함께 넘겨야 이 기체의 다른 도구와 좌표가 맞는다.
 
 장착 후 네 방위와 정면 거리 한 지점을 확인했다. 저장된 30초 실물 스캔을
@@ -310,7 +311,7 @@ ROS 회전 조립 재생은 298회전(중앙 유효 빔 450개)이었지만 실�
 대시보드 프로세스까지** 깔아야 한다. 지도를 그리는 것은 사람이 보기 위한
 일이고 순찰 자체와 무관하다.
 
-`tools/zone_select.py` 는 클릭으로 구역을 찍는 도구라 실제로 matplotlib 가
+`tools/ops/zone_select.py` 는 클릭으로 구역을 찍는 도구라 실제로 matplotlib 가
 필요하다. 없으면 `ImportError` 가 나므로 `requirements-dev.txt`에 추가했다.
 관제 화면의 정본은 대시보드(`4.5`·`4.6`)이며 `viz.py` 는 그것이 붙기
 전까지의 개발 수단이다.
@@ -486,15 +487,15 @@ pytest -q
 ruff check . && ruff format --check .
 
 # ③ 알고리즘 — 하드웨어 없이 세 단계를 순서대로
-python tools/lidar_slam.py  --simulate --steps 200 --seed 1   # 지도 → maps/
-python tools/zone_select.py                                   # 클릭으로 구역 지정
-python tools/zone_select.py --list                            # 창 없이 확인만
-python tools/patrol_run.py  --simulate --cycles 2 --seed 5    # 순찰
+python tools/lidar/lidar_slam.py  --simulate --steps 200 --seed 1   # 지도 → maps/
+python tools/ops/zone_select.py                                   # 클릭으로 구역 지정
+python tools/ops/zone_select.py --list                            # 창 없이 확인만
+python tools/ops/patrol_run.py  --simulate --cycles 2 --seed 5    # 순찰
 
 # ④ 목업으로 링크까지 (터미널 3개)
-python tools/mock_lidar.py --walk --host 127.0.0.1
-python tools/mock_mechdog.py --device mechdog-01
-python tools/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot 127.0.0.1
+python tools/mock/mock_lidar.py --walk --host 127.0.0.1
+python tools/mock/mock_mechdog.py --device mechdog-01
+python tools/ops/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot 127.0.0.1
 ```
 
 `--simulate` 는 `localization.track` 이 `none` 이어도 돌아간다. 실기 모드는
@@ -530,7 +531,7 @@ python tools/patrol_run.py --device mechdog-01 --lidar-device lidar-mock --robot
 | 대시보드 연결 (FR-4.2) | ✅ **해소됨 (2026-09-15).** `host/dashboard/` 가 생겼고 `4.5.x`·`4.6.1`·`4.6.3`·`4.6.4` 가 실기로 닫혔다. ⚠️ **LiDAR 쪽 표시는 여전히 없다** — 지도·위치·스캔을 화면에 올리는 것은 Phase 2 몫이다 |
 | 구역 도착 시 카메라 판독 (FR-8) | `change_detect` 소관. 훅 자리만 비워 뒀다 — 기다릴 시간을 여기서 정하면 그 값이 두 곳에 생긴다 |
 | ~~ArUco 구역 식별 (FR-8 `marker_map`)~~ | **폐기 (2026-09-25)** — 구역 도착은 이제 `maps/zones.json` 앵커 반경으로 판정한다(FR-7.4 · `runtime._inspect_zone`). 이 표에 남기는 이유는 그 판정에 쓸 측위 입력(WBS 5.4.3·5.4.4)이 아직 없어서다 |
-| ~~중계 노드 펌웨어 (C++)~~ | ✅ **해소됨** — PR #99 로 `firmware_lidar_relay/` 가 들어왔다(UART → Wi-Fi UDP 5201). Phase 2 착수는 2026-09-28 에 승인됐다 |
+| ~~중계 노드 펌웨어 (C++)~~ | ✅ **해소됨** — PR #99 로 `firmware/lidar_relay/` 가 들어왔다(UART → Wi-Fi UDP 5201). Phase 2 착수는 2026-09-28 에 승인됐다 |
 | `gait_calibration` 기반 실이동량 | `mechdog-01.yaml` 의 실측값이 비어 있다. 시뮬레이션은 **명목값**을 쓰며 그 숫자로 실기 성능을 말하지 않는다 |
 | LiDAR 유효 사거리 확정 | 제품은 **LD19 (D500 키트)** 로 확정됐다 (ADR-18). `range_max_mm: 8000` 은 실물로 재기 전까지 잠정값이다 |
 | 루프 클로저 | 스캔 정합만 있다. 큰 공간에서 누적 오차가 남는다 — **넣지 않은 것이 의도적이다**: `scan_match.py` 는 P2 에서 `slam_toolbox` 로 교체될 자리이므로 여기에 성능을 더 들이면 버리는 일이 늘고 교체하지 않을 이유를 만든다 (ADR-9) |

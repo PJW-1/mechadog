@@ -1,0 +1,448 @@
+{
+  "images": 50,
+  "warmup": 20,
+  "runs": 200,
+  "preliminary": "다른 작업과 GPU 를 함께 쓸 수 있는 상태에서 잰 예비 수치",
+  "results": [
+    {
+      "model": "coco",
+      "variant": "fp32",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 34.196855545043945,
+      "rss_session_mb": 292.3359375,
+      "rss_after_runs_mb": 532.75,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 8.537432501325384,
+        "p50": 8.369249873794615,
+        "p95": 9.770230087451635,
+        "min": 7.630399893969297,
+        "max": 11.531600030139089
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 5.0971269980072975,
+        "p50": 5.056950030848384,
+        "p95": 5.790210177656263,
+        "min": 4.3484000489115715,
+        "max": 6.344799883663654
+      }
+    },
+    {
+      "model": "coco",
+      "variant": "fp16",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 17.113547325134277,
+      "rss_session_mb": 278.94921875,
+      "rss_after_runs_mb": 519.0,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 7.278728996170685,
+        "p50": 7.072050007991493,
+        "p95": 8.650015073362738,
+        "min": 6.389500107616186,
+        "max": 9.183499962091446
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 3.3622115128673613,
+        "p50": 3.330449922941625,
+        "p95": 3.9226001827046275,
+        "min": 2.934100106358528,
+        "max": 4.438500152900815
+      }
+    },
+    {
+      "model": "coco",
+      "variant": "int8-dyn",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 8.661578178405762,
+      "rss_session_mb": 216.50390625,
+      "rss_after_runs_mb": 455.49609375,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 10.97621601074934,
+        "p50": 10.824549943208694,
+        "p95": 12.393304938450454,
+        "min": 10.068499948829412,
+        "max": 13.397000031545758
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 7.561548486119136,
+        "p50": 7.534749922342598,
+        "p95": 8.159224840346724,
+        "min": 6.822199793532491,
+        "max": 8.732100017368793
+      }
+    },
+    {
+      "model": "coco",
+      "variant": "int8-qdq",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 8.861328125,
+      "rss_session_mb": 140.3125,
+      "rss_after_runs_mb": 379.32421875,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 11.563928500982001,
+        "p50": 11.451999889686704,
+        "p95": 12.745300016831605,
+        "min": 10.568799916654825,
+        "max": 17.770300153642893
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 7.9577749921008945,
+        "p50": 7.90825008880347,
+        "p95": 8.554769842885435,
+        "min": 7.242199964821339,
+        "max": 8.980500046163797
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "fp32",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 34.12213706970215,
+      "rss_session_mb": 288.609375,
+      "rss_after_runs_mb": 528.78515625,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 6.343280490254983,
+        "p50": 6.308099953457713,
+        "p95": 7.110295118764043,
+        "min": 5.594999995082617,
+        "max": 7.7176999766379595
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 3.9566075010225177,
+        "p50": 3.9071000646799803,
+        "p95": 4.429124959278851,
+        "min": 3.5459999926388264,
+        "max": 5.0449001137167215
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "fp16",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 17.1177396774292,
+      "rss_session_mb": 276.9921875,
+      "rss_after_runs_mb": 517.1875,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 5.230305502191186,
+        "p50": 5.111049977131188,
+        "p95": 6.234435166697948,
+        "min": 4.390199901536107,
+        "max": 7.471200078725815
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 2.630819500191137,
+        "p50": 2.5611500022932887,
+        "p95": 3.186880052089691,
+        "min": 2.1875000093132257,
+        "max": 4.418299999088049
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "int8-dyn",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 8.77046012878418,
+      "rss_session_mb": 215.2890625,
+      "rss_after_runs_mb": 454.37109375,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 9.153774506412446,
+        "p50": 9.067749953828752,
+        "p95": 10.115800064522773,
+        "min": 8.1194001249969,
+        "max": 11.331399902701378
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 6.433855502400547,
+        "p50": 6.386349909007549,
+        "p95": 7.019130000844597,
+        "min": 5.830999929457903,
+        "max": 7.286299951374531
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "int8-qdq",
+      "provider": "DmlExecutionProvider",
+      "providers": [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 9.03592300415039,
+      "rss_session_mb": 137.8046875,
+      "rss_after_runs_mb": 374.83203125,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 10.484323508571833,
+        "p50": 10.471900110132992,
+        "p95": 11.795080034062266,
+        "min": 9.065099991858006,
+        "max": 12.54500006325543
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 7.446692493977025,
+        "p50": 7.345349877141416,
+        "p95": 8.336949907243252,
+        "min": 6.603799993172288,
+        "max": 9.746599942445755
+      }
+    },
+    {
+      "model": "coco",
+      "variant": "fp32",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 34.196855545043945,
+      "rss_session_mb": 107.16796875,
+      "rss_after_runs_mb": 379.9375,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 83.2446639961563,
+        "p50": 80.76140005141497,
+        "p95": 101.86421490507199,
+        "min": 71.40049990266562,
+        "max": 117.07979999482632
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 82.55046050064266,
+        "p50": 79.522900050506,
+        "p95": 104.21732002869248,
+        "min": 71.57670008018613,
+        "max": 120.99399999715388
+      }
+    },
+    {
+      "model": "coco",
+      "variant": "fp16",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 17.113547325134277,
+      "rss_session_mb": 109.5390625,
+      "rss_after_runs_mb": 382.88671875,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 87.44324150495231,
+        "p50": 83.0657499609515,
+        "p95": 111.76659015472976,
+        "min": 76.03009999729693,
+        "max": 151.2152999639511
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 86.21241199201904,
+        "p50": 79.77835007477552,
+        "p95": 139.42825503181666,
+        "min": 71.81139988824725,
+        "max": 171.5009999461472
+      }
+    },
+    {
+      "model": "coco",
+      "variant": "int8-dyn",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 8.661578178405762,
+      "rss_session_mb": 86.15625,
+      "rss_after_runs_mb": 341.37890625,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 152.74157200474292,
+        "p50": 143.97759991697967,
+        "p95": 216.75921507412562,
+        "min": 104.35830010101199,
+        "max": 317.4507999792695
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 129.75520349224098,
+        "p50": 123.2180999359116,
+        "p95": 173.28879989217967,
+        "min": 101.39999981038272,
+        "max": 206.48099994286895
+      }
+    },
+    {
+      "model": "coco",
+      "variant": "int8-qdq",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 8.861328125,
+      "rss_session_mb": 58.30078125,
+      "rss_after_runs_mb": 309.62109375,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 51.15207099937834,
+        "p50": 48.75580011866987,
+        "p95": 67.8101451601833,
+        "min": 42.11789998225868,
+        "max": 113.96109987981617
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 54.32794150430709,
+        "p50": 51.37859983369708,
+        "p95": 72.52854492980985,
+        "min": 40.80489999614656,
+        "max": 150.6995998788625
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "fp32",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 34.12213706970215,
+      "rss_session_mb": 106.703125,
+      "rss_after_runs_mb": 379.6015625,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 96.64003949612379,
+        "p50": 89.63555016089231,
+        "p95": 133.25711999787012,
+        "min": 76.26720005646348,
+        "max": 179.15320000611246
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 94.99364100163803,
+        "p50": 89.62680003605783,
+        "p95": 126.0780400712974,
+        "min": 75.0260001514107,
+        "max": 156.51010000146925
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "fp16",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 17.1177396774292,
+      "rss_session_mb": 109.05078125,
+      "rss_after_runs_mb": 382.71875,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 99.85685348976403,
+        "p50": 92.0794999692589,
+        "p95": 142.96206003054976,
+        "min": 78.5169000737369,
+        "max": 213.95110012963414
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 89.3657730135601,
+        "p50": 83.29305006191134,
+        "p95": 118.73371503315862,
+        "min": 73.75340000726283,
+        "max": 148.38300016708672
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "int8-dyn",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 8.77046012878418,
+      "rss_session_mb": 86.30859375,
+      "rss_after_runs_mb": 341.2578125,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 158.75360999489203,
+        "p50": 153.26789999380708,
+        "p95": 217.54524499410763,
+        "min": 112.77410015463829,
+        "max": 302.34169983305037
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 150.98507150192745,
+        "p50": 145.6175500061363,
+        "p95": 203.4018000005743,
+        "min": 105.51280016079545,
+        "max": 328.8644999265671
+      }
+    },
+    {
+      "model": "ppe",
+      "variant": "int8-qdq",
+      "provider": "CPUExecutionProvider",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "file_mb": 9.03592300415039,
+      "rss_session_mb": 59.5078125,
+      "rss_after_runs_mb": 309.0,
+      "pipeline_ms": {
+        "n": 200,
+        "mean": 57.97363249119371,
+        "p50": 55.592950084246695,
+        "p95": 75.19859008025378,
+        "min": 44.94279995560646,
+        "max": 97.44019992649555
+      },
+      "run_ms": {
+        "n": 200,
+        "mean": 51.25436800299212,
+        "p50": 48.87399997096509,
+        "p95": 68.90976008726282,
+        "min": 41.80490016005933,
+        "max": 89.78480007499456
+      }
+    }
+  ]
+}

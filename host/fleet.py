@@ -1,4 +1,4 @@
-"""여러 대를 한 프로세스로 — 다중 개체 관제 (MD-01 ~ MD-03).
+"""여러 대를 한 프로세스로 — 다중 개체 관제 (MD-01, MD-02).
 
 왜 한 프로세스인가: 펌웨어는 텔레메트리를 **호스트의 고정 포트(5101)** 로 보낸다
 (`telemetry_publisher.cpp` 의 `kTelemetryPort`). 런타임을 로봇마다 따로 띄우면 둘째부터
@@ -10,7 +10,7 @@
 
 사용:
 
-    python -m host.fleet --devices mechdog-01 mechdog-02 mechdog-03 --dashboard-port 8000
+    python -m host.fleet --devices mechdog-01 mechdog-02 --dashboard-port 8000
 """
 
 from __future__ import annotations
@@ -27,19 +27,13 @@ from typing import Any
 from host.behavior.mission import Mission
 from host.common.blackbox import EventBlackbox
 from host.common.config import ConfigError, load_config
+from host.common.history import open_history
 from host.common.logging_setup import LogContext, event_logger, setup_logging
 from host.common.protocol import system_clock_ms
 from host.dashboard.state import DashboardState
-from host.runtime import (
-    RECV_BYTES,
-    WSAEMSGSIZE,
-    Runtime,
-    _broadcaster,
-    _is_oversized_datagram,
-    _publish_event,
-    dashboard_wiring,
-    open_socket,
-)
+from host.dashboard.wiring import _publish_event, dashboard_wiring
+from host.runtime import RECV_BYTES, WSAEMSGSIZE, Runtime, _is_oversized_datagram, open_socket
+from host.runtime_cli import _broadcaster
 from host.vision.worker import build_worker
 
 LOG = event_logger("mechadog.fleet")
@@ -74,7 +68,7 @@ def telemetry_device(data: bytes) -> str | None:
     """텔레메트리의 개체 ID. 텔레메트리가 아니면(명령 응답 문자열·깨진 줄) None."""
     try:
         message = json.loads(data)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     device = message.get("device_id") if isinstance(message, dict) else None
     return device if isinstance(device, str) and device else None
@@ -93,9 +87,8 @@ class Fleet:
     def route(self, data: bytes, addr: tuple[str, int]) -> Runtime | None:
         """이 datagram 을 받을 로봇.
 
-        ⚠️ **텔레메트리는 IP 가 아니라 개체 ID 로 가른다** (DR-17). 명령 응답은 개체
-        ID 가 없는 문자열이라, 이미 그 주소로 명령을 보내고 있는 로봇에게만 넘긴다.
-        응답은 세기만 하고 판단에 쓰지 않는다.
+        텔레메트리는 IP 가 아니라 개체 ID 로 가른다. 개체 ID 가 없는 명령 응답은 그 주소로
+        명령을 보내고 있는 로봇에게만 넘기며, 세기만 하고 판단에 쓰지 않는다.
         """
         device = telemetry_device(data)
         if device is not None:
@@ -153,8 +146,7 @@ class Fleet:
                     with _acting(runtime):
                         runtime.step(clock())
         finally:
-            # ⚠️ **전부 먼저 세운다.** 한 대의 비전 워커 정리를 기다리는 동안 다른
-            # 로봇이 마지막 이동 명령을 계속 실행하면 안 된다.
+            # ⚠️ 전부 먼저 세운다 — 한 대의 정리를 기다리는 동안 다른 로봇이 계속 걷지 않게.
             for runtime in self._runtimes:
                 with _acting(runtime):
                     runtime.stop_robot(sock)
@@ -260,9 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if not 1 <= args.dashboard_port <= 65535:
-        raise SystemExit("dashboard-port must be between 1 and 65535")
+        parser.error("dashboard-port must be between 1 and 65535")
     try:
         members = load_members(
             args.devices,
@@ -273,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.no_vision and any(m.mission.enables("ppe") for m in members):
             raise ConfigError("factory 모드는 PPE 비전 없이 시작할 수 없다")
-    except (ConfigError, OSError) as exc:
+    except (OSError, ValueError) as exc:  # `ConfigError` 는 `ValueError`
         logging.basicConfig(level="ERROR")
         logging.getLogger("mechadog.fleet").error("설정을 읽을 수 없다 — %s", exc)
         return 2
@@ -287,10 +280,11 @@ def main(argv: list[str] | None = None) -> int:
     # PC 스피커는 하나다 — 방송기도 하나를 모든 로봇이 나눠 쓴다 (`4.8.2`).
     # 어느 로봇 화면에서 음량·무음을 바꿔도 같은 방송기가 바뀐다.
     broadcaster = _broadcaster(members[0].config)
+    # 이력 DB 도 하나다 — 모든 로봇의 사건·순찰을 한 파일에 쌓고, 화면은 `?robot=` 로 거른다 (ADR-46).
+    history = open_history(members[0].config)
     for member in members:
         config = member.config
-        # ⚠️ 카메라 주소가 없는 로봇은 비전 없이 돈다. 없는 주소로 워커를 켜면
-        # 스트림 연결만 계속 실패한다.
+        # 카메라 주소가 없는 로봇은 비전 없이 돈다.
         vision = None
         if not args.no_vision and config["network"].get("xiao_ip"):
             vision = build_worker(config)
@@ -309,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
             mission=member.mission,
             event_publisher=_publish_event(dashboard),
             announcer=(None if broadcaster is None else broadcaster.say),
+            history=history,
         )
         runtimes.append(runtime)
         apps[member.device_id] = create_app(
@@ -320,8 +315,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     fleet_app = create_fleet_app(apps, registered={m.device_id: m.registered for m in members})
 
-    # ⚠️ 콘솔 확인 키를 붙이지 않는다 — 여러 대면 그 키가 어느 로봇의 확인인지
-    # 정할 수 없다. 경보 확인·안전 해제는 관제 화면의 로봇별 버튼으로 한다.
+    # 콘솔 확인 키는 붙이지 않는다(어느 로봇의 확인인지 정할 수 없다) — 관제 화면의 로봇별 버튼을 쓴다.
     sock = open_socket(runtimes[0].telemetry_port)
     try:
         with serving(fleet_app, args.dashboard_port):
@@ -333,6 +327,8 @@ def main(argv: list[str] | None = None) -> int:
         LOG.info("interrupted", action="모든 로봇에 ESTOP 송신 후 종료")
     finally:
         sock.close()
+        if history is not None:
+            history.close()
     return 0
 
 

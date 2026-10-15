@@ -2,8 +2,8 @@
 
 import json
 
-from tools import field_plan as plan
-from tools import run_movement_batch as batch
+from tools.field import field_plan as plan
+from tools.probe import run_movement_batch as batch
 
 
 def _cases():
@@ -43,3 +43,11 @@ def test_save_case_writes_record_and_marks_summary(tmp_path, monkeypatch):
     text = json.dumps(record, ensure_ascii=False)
     assert "표본 3회 수집" in text
     assert record_path is None or record_path.exists()
+
+
+def test_output_dir_env_override_and_repo_default(tmp_path):
+    assert batch.output_dir({"MECHDOG_MOVEMENT_OUT": str(tmp_path)}) == tmp_path
+    default = batch.output_dir({})
+    assert default.name == "movement_batch"
+    assert default.parent.name == "_local"
+    assert (default.parent.parent / "tools" / "probe").is_dir()

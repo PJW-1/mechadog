@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "name": "ppe",
+  "model_family": "yolox",
+  "input_size": 640,
+  "classes": [
+    "helmet",
+    "no_helmet",
+    "vest",
+    "no_vest"
+  ],
+  "source": {
+    "url": "https://github.com/PJW-1/mechadog/releases/download/ppe-v5/ppe.onnx",
+    "release": "PJW-1/mechadog Release ppe-v5 (학습 설정·데이터 카드 해시는 같은 Release 의 ppe.json)",
+    "license": "CC BY 4.0 · models/NOTICE"
+  },
+  "training_data": "ppe4_cs_md_v2 + 하단각도 자체 촬영 · ppe-v4 에서 미세 조정 · 2026-10-02 (models/NOTICE §1·§3)",
+  "sha256": "145c2dc9dffc622f51e300937939ef3cf57e33fb7f42a7efa6751e28fdc790e2",
+  "size": 35779654
+}
